@@ -32,6 +32,9 @@
 #if V8_OS_MACOSX
 #include <AvailabilityMacros.h>
 #endif
+#if V8_OS_SOLARIS
+#include <execinfo.h>
+#endif
 
 #include "src/base/build_config.h"
 #include "src/base/free_deleter.h"
