@@ -103,7 +103,6 @@ distclean:
 	-rm -rf deps/icu4c*.tgz deps/icu4c*.zip deps/icu-tmp
 	-rm -f $(BINARYTAR).* $(TARBALL).*
 	-rm -rf deps/v8/testing/gmock
-	-rm -rf deps/v8/testing/gtest
 
 check: test
 
