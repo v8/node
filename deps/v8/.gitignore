@@ -40,7 +40,6 @@ gcsuspects
 shell
 shell_g
 /_*
-/base
 /build
 /gypfiles/win_toolchain.json
 /buildtools
