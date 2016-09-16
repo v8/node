@@ -36,6 +36,7 @@ std::ostream& operator<<(std::ostream& os, StoreRepresentation rep) {
 
 LoadRepresentation LoadRepresentationOf(Operator const* op) {
   DCHECK(IrOpcode::kLoad == op->opcode() ||
+         IrOpcode::kProtectedLoad == op->opcode() ||
          IrOpcode::kAtomicLoad == op->opcode());
   return OpParameter<LoadRepresentation>(op);
 }
@@ -145,12 +146,6 @@ MachineRepresentation AtomicStoreRepresentationOf(Operator const* op) {
   V(ChangeInt32ToInt64, Operator::kNoProperties, 1, 0, 1)                    \
   V(ChangeUint32ToFloat64, Operator::kNoProperties, 1, 0, 1)                 \
   V(ChangeUint32ToUint64, Operator::kNoProperties, 1, 0, 1)                  \
-  V(ImpossibleToWord32, Operator::kNoProperties, 1, 0, 1)                    \
-  V(ImpossibleToWord64, Operator::kNoProperties, 1, 0, 1)                    \
-  V(ImpossibleToFloat32, Operator::kNoProperties, 1, 0, 1)                   \
-  V(ImpossibleToFloat64, Operator::kNoProperties, 1, 0, 1)                   \
-  V(ImpossibleToTagged, Operator::kNoProperties, 1, 0, 1)                    \
-  V(ImpossibleToBit, Operator::kNoProperties, 1, 0, 1)                       \
   V(TruncateFloat64ToFloat32, Operator::kNoProperties, 1, 0, 1)              \
   V(TruncateInt64ToInt32, Operator::kNoProperties, 1, 0, 1)                  \
   V(BitcastFloat32ToInt32, Operator::kNoProperties, 1, 0, 1)                 \
@@ -428,6 +423,8 @@ MachineRepresentation AtomicStoreRepresentationOf(Operator const* op) {
   V(Int64)                   \
   V(Uint64)                  \
   V(Pointer)                 \
+  V(TaggedSigned)            \
+  V(TaggedPointer)           \
   V(AnyTagged)
 
 #define MACHINE_REPRESENTATION_LIST(V) \
@@ -504,9 +501,18 @@ struct MachineOperatorGlobalCache {
               Operator::kNoDeopt | Operator::kNoThrow | Operator::kNoWrite,  \
               "CheckedLoad", 3, 1, 1, 1, 1, 0, MachineType::Type()) {}       \
   };                                                                         \
+  struct ProtectedLoad##Type##Operator final                                 \
+      : public Operator1<ProtectedLoadRepresentation> {                      \
+    ProtectedLoad##Type##Operator()                                          \
+        : Operator1<ProtectedLoadRepresentation>(                            \
+              IrOpcode::kProtectedLoad,                                      \
+              Operator::kNoDeopt | Operator::kNoThrow | Operator::kNoWrite,  \
+              "ProtectedLoad", 4, 1, 1, 1, 1, 0, MachineType::Type()) {}     \
+  };                                                                         \
   Load##Type##Operator kLoad##Type;                                          \
   UnalignedLoad##Type##Operator kUnalignedLoad##Type;                        \
-  CheckedLoad##Type##Operator kCheckedLoad##Type;
+  CheckedLoad##Type##Operator kCheckedLoad##Type;                            \
+  ProtectedLoad##Type##Operator kProtectedLoad##Type;
   MACHINE_TYPE_LIST(LOAD)
 #undef LOAD
 
@@ -696,6 +702,17 @@ const Operator* MachineOperatorBuilder::Load(LoadRepresentation rep) {
     return &cache_.kLoad##Type;     \
   }
     MACHINE_TYPE_LIST(LOAD)
+#undef LOAD
+  UNREACHABLE();
+  return nullptr;
+}
+
+const Operator* MachineOperatorBuilder::ProtectedLoad(LoadRepresentation rep) {
+#define LOAD(Type)                       \
+  if (rep == MachineType::Type()) {      \
+    return &cache_.kProtectedLoad##Type; \
+  }
+  MACHINE_TYPE_LIST(LOAD)
 #undef LOAD
   UNREACHABLE();
   return nullptr;

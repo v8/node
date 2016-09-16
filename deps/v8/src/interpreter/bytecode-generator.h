@@ -24,7 +24,7 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
  public:
   explicit BytecodeGenerator(CompilationInfo* info);
 
-  void GenerateBytecode();
+  void GenerateBytecode(uintptr_t stack_limit);
   Handle<BytecodeArray> FinalizeBytecode(Isolate* isolate);
 
 #define DECLARE_VISIT(type) void Visit##type(type* node);
@@ -125,6 +125,12 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
   void BuildIndexedJump(Register value, size_t start_index, size_t size,
                         ZoneVector<BytecodeLabel>& targets);
 
+  void BuildNewLocalActivationContext();
+  void BuildLocalActivationContextInitialization();
+  void BuildNewLocalBlockContext(Scope* scope);
+  void BuildNewLocalCatchContext(Variable* variable, Scope* scope);
+  void BuildNewLocalWithContext(Scope* scope);
+
   void VisitGeneratorPrologue();
 
   void VisitArgumentsObject(Variable* variable);
@@ -136,15 +142,10 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
   void VisitClassLiteralStaticPrototypeWithComputedName(Register name);
   void VisitThisFunctionVariable(Variable* variable);
   void VisitNewTargetVariable(Variable* variable);
-  void VisitNewLocalFunctionContext();
-  void VisitBuildLocalActivationContext();
   void VisitBlockDeclarationsAndStatements(Block* stmt);
-  void VisitNewLocalBlockContext(Scope* scope);
-  void VisitNewLocalCatchContext(Variable* variable);
-  void VisitNewLocalWithContext();
   void VisitFunctionClosureForContext();
   void VisitSetHomeObject(Register value, Register home_object,
-                          ObjectLiteralProperty* property, int slot_number = 0);
+                          LiteralProperty* property, int slot_number = 0);
   void VisitObjectLiteralAccessor(Register home_object,
                                   ObjectLiteralProperty* property,
                                   Register value_out);

@@ -234,6 +234,13 @@ Node* CodeAssembler::ChangeInt32ToIntPtr(Node* value) {
   return value;
 }
 
+Node* CodeAssembler::RoundIntPtrToFloat64(Node* value) {
+  if (raw_assembler_->machine()->Is64()) {
+    return raw_assembler_->RoundInt64ToFloat64(value);
+  }
+  return raw_assembler_->ChangeInt32ToFloat64(value);
+}
+
 #define DEFINE_CODE_ASSEMBLER_UNARY_OP(name) \
   Node* CodeAssembler::name(Node* a) { return raw_assembler_->name(a); }
 CODE_ASSEMBLER_UNARY_OP_LIST(DEFINE_CODE_ASSEMBLER_UNARY_OP)
@@ -297,6 +304,10 @@ Node* CodeAssembler::StoreRoot(Heap::RootListIndex root_index, Node* value) {
       ExternalConstant(ExternalReference::roots_array_start(isolate()));
   return StoreNoWriteBarrier(MachineRepresentation::kTagged, roots_array_start,
                              IntPtrConstant(root_index * kPointerSize), value);
+}
+
+Node* CodeAssembler::Retain(Node* value) {
+  return raw_assembler_->Retain(value);
 }
 
 Node* CodeAssembler::Projection(int index, Node* value) {
@@ -423,6 +434,14 @@ Node* CodeAssembler::TailCallRuntime(Runtime::FunctionId function_id,
                                      Node* arg3, Node* arg4, Node* arg5) {
   return raw_assembler_->TailCallRuntime5(function_id, arg1, arg2, arg3, arg4,
                                           arg5, context);
+}
+
+Node* CodeAssembler::TailCallRuntime(Runtime::FunctionId function_id,
+                                     Node* context, Node* arg1, Node* arg2,
+                                     Node* arg3, Node* arg4, Node* arg5,
+                                     Node* arg6) {
+  return raw_assembler_->TailCallRuntime6(function_id, arg1, arg2, arg3, arg4,
+                                          arg5, arg6, context);
 }
 
 Node* CodeAssembler::CallStub(Callable const& callable, Node* context,
@@ -857,6 +876,14 @@ Node* CodeAssembler::CallJS(Callable const& callable, Node* context,
   args[5] = context;
 
   return CallN(call_descriptor, target, args);
+}
+
+Node* CodeAssembler::CallCFunction2(MachineType return_type,
+                                    MachineType arg0_type,
+                                    MachineType arg1_type, Node* function,
+                                    Node* arg0, Node* arg1) {
+  return raw_assembler_->CallCFunction2(return_type, arg0_type, arg1_type,
+                                        function, arg0, arg1);
 }
 
 void CodeAssembler::Goto(CodeAssembler::Label* label) {

@@ -82,6 +82,10 @@ Callable CodeFactory::KeyedLoadICInOptimizedCode(Isolate* isolate) {
 
 // static
 Callable CodeFactory::KeyedLoadIC_Megamorphic(Isolate* isolate) {
+  if (FLAG_tf_load_ic_stub) {
+    return Callable(isolate->builtins()->KeyedLoadIC_Megamorphic_TF(),
+                    LoadWithVectorDescriptor(isolate));
+  }
   return Callable(isolate->builtins()->KeyedLoadIC_Megamorphic(),
                   LoadWithVectorDescriptor(isolate));
 }
@@ -185,8 +189,8 @@ Callable CodeFactory::ToString(Isolate* isolate) {
 
 // static
 Callable CodeFactory::ToName(Isolate* isolate) {
-  ToNameStub stub(isolate);
-  return make_callable(stub);
+  return Callable(isolate->builtins()->ToName(),
+                  TypeConversionDescriptor(isolate));
 }
 
 // static
@@ -594,9 +598,17 @@ Callable CodeFactory::InterpreterPushArgsAndCall(Isolate* isolate,
 }
 
 // static
-Callable CodeFactory::InterpreterPushArgsAndConstruct(Isolate* isolate) {
-  return Callable(isolate->builtins()->InterpreterPushArgsAndConstruct(),
-                  InterpreterPushArgsAndConstructDescriptor(isolate));
+Callable CodeFactory::InterpreterPushArgsAndConstruct(
+    Isolate* isolate, CallableType function_type) {
+  return Callable(
+      isolate->builtins()->InterpreterPushArgsAndConstruct(function_type),
+      InterpreterPushArgsAndConstructDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::InterpreterPushArgsAndConstructArray(Isolate* isolate) {
+  return Callable(isolate->builtins()->InterpreterPushArgsAndConstructArray(),
+                  InterpreterPushArgsAndConstructArrayDescriptor(isolate));
 }
 
 // static

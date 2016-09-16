@@ -7,7 +7,7 @@
 #include "src/base/lazy-instance.h"
 #include "src/compiler/opcodes.h"
 #include "src/compiler/operator.h"
-#include "src/types.h"
+#include "src/compiler/types.h"
 
 namespace v8 {
 namespace internal {
@@ -381,6 +381,7 @@ NumberOperationHint NumberOperationHintOf(const Operator* op) {
   V(NumberTan, Operator::kNoProperties, 1, 0)                    \
   V(NumberTanh, Operator::kNoProperties, 1, 0)                   \
   V(NumberTrunc, Operator::kNoProperties, 1, 0)                  \
+  V(NumberToBoolean, Operator::kNoProperties, 1, 0)              \
   V(NumberToInt32, Operator::kNoProperties, 1, 0)                \
   V(NumberToUint32, Operator::kNoProperties, 1, 0)               \
   V(NumberSilenceNaN, Operator::kNoProperties, 1, 0)             \
@@ -398,6 +399,7 @@ NumberOperationHint NumberOperationHintOf(const Operator* op) {
   V(ChangeUint32ToTagged, Operator::kNoProperties, 1, 0)         \
   V(ChangeTaggedToBit, Operator::kNoProperties, 1, 0)            \
   V(ChangeBitToTagged, Operator::kNoProperties, 1, 0)            \
+  V(TruncateTaggedToBit, Operator::kNoProperties, 1, 0)          \
   V(TruncateTaggedToWord32, Operator::kNoProperties, 1, 0)       \
   V(TruncateTaggedToFloat64, Operator::kNoProperties, 1, 0)      \
   V(ObjectIsCallable, Operator::kNoProperties, 1, 0)             \
@@ -457,6 +459,13 @@ struct SimplifiedOperatorGlobalCache final {
   Name##Operator k##Name;
   CHECKED_OP_LIST(CHECKED)
 #undef CHECKED
+
+  struct ArrayBufferWasNeuteredOperator final : public Operator {
+    ArrayBufferWasNeuteredOperator()
+        : Operator(IrOpcode::kArrayBufferWasNeutered, Operator::kEliminatable,
+                   "ArrayBufferWasNeutered", 1, 1, 1, 1, 1, 0) {}
+  };
+  ArrayBufferWasNeuteredOperator kArrayBufferWasNeutered;
 
   template <CheckForMinusZeroMode kMode>
   struct ChangeFloat64ToTaggedOperator final
@@ -614,6 +623,7 @@ SimplifiedOperatorBuilder::SimplifiedOperatorBuilder(Zone* zone)
   const Operator* SimplifiedOperatorBuilder::Name() { return &cache_.k##Name; }
 PURE_OP_LIST(GET_FROM_CACHE)
 CHECKED_OP_LIST(GET_FROM_CACHE)
+GET_FROM_CACHE(ArrayBufferWasNeutered)
 #undef GET_FROM_CACHE
 
 const Operator* SimplifiedOperatorBuilder::ChangeFloat64ToTagged(

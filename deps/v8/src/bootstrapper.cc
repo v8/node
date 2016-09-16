@@ -210,7 +210,6 @@ class Genesis BASE_EMBEDDED {
   HARMONY_INPROGRESS(DECLARE_FEATURE_INITIALIZATION)
   HARMONY_STAGED(DECLARE_FEATURE_INITIALIZATION)
   HARMONY_SHIPPING(DECLARE_FEATURE_INITIALIZATION)
-  DECLARE_FEATURE_INITIALIZATION(intl_extra, "")
 #undef DECLARE_FEATURE_INITIALIZATION
 
   Handle<JSFunction> InstallArrayBuffer(Handle<JSObject> target,
@@ -1303,6 +1302,15 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // Install i18n fallback functions.
     SimpleInstallFunction(prototype, "toLocaleString",
                           Builtins::kNumberPrototypeToLocaleString, 0, false);
+
+    // Install the Number functions.
+    SimpleInstallFunction(number_fun, "isFinite", Builtins::kNumberIsFinite, 1,
+                          true);
+    SimpleInstallFunction(number_fun, "isInteger", Builtins::kNumberIsInteger,
+                          1, true);
+    SimpleInstallFunction(number_fun, "isNaN", Builtins::kNumberIsNaN, 1, true);
+    SimpleInstallFunction(number_fun, "isSafeInteger",
+                          Builtins::kNumberIsSafeInteger, 1, true);
   }
 
   {  // --- B o o l e a n ---
@@ -1384,6 +1392,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, true);
     SimpleInstallFunction(prototype, "charCodeAt",
                           Builtins::kStringPrototypeCharCodeAt, 1, true);
+    SimpleInstallFunction(prototype, "localeCompare",
+                          Builtins::kStringPrototypeLocaleCompare, 1, true);
+    SimpleInstallFunction(prototype, "normalize",
+                          Builtins::kStringPrototypeNormalize, 0, false);
     SimpleInstallFunction(prototype, "toString",
                           Builtins::kStringPrototypeToString, 0, true);
     SimpleInstallFunction(prototype, "trim", Builtins::kStringPrototypeTrim, 0,
@@ -1575,10 +1587,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
   {  // -- R e g E x p
     // Builtin functions for RegExp.prototype.
-    Handle<JSFunction> regexp_fun =
-        InstallFunction(global, "RegExp", JS_REGEXP_TYPE, JSRegExp::kSize,
-                        isolate->initial_object_prototype(),
-                        Builtins::kIllegal);
+    Handle<JSFunction> regexp_fun = InstallFunction(
+        global, "RegExp", JS_REGEXP_TYPE, JSRegExp::kSize,
+        isolate->initial_object_prototype(), Builtins::kIllegal);
     InstallWithIntrinsicDefaultProto(isolate, regexp_fun,
                                      Context::REGEXP_FUNCTION_INDEX);
     regexp_fun->shared()->SetConstructStub(
@@ -1840,6 +1851,39 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallGetter(prototype, factory->byte_offset_string(),
                         Builtins::kDataViewPrototypeGetByteOffset, false,
                         kDataViewByteOffset);
+
+    SimpleInstallFunction(prototype, "getInt8",
+                          Builtins::kDataViewPrototypeGetInt8, 1, false);
+    SimpleInstallFunction(prototype, "setInt8",
+                          Builtins::kDataViewPrototypeSetInt8, 2, false);
+    SimpleInstallFunction(prototype, "getUint8",
+                          Builtins::kDataViewPrototypeGetUint8, 1, false);
+    SimpleInstallFunction(prototype, "setUint8",
+                          Builtins::kDataViewPrototypeSetUint8, 2, false);
+    SimpleInstallFunction(prototype, "getInt16",
+                          Builtins::kDataViewPrototypeGetInt16, 1, false);
+    SimpleInstallFunction(prototype, "setInt16",
+                          Builtins::kDataViewPrototypeSetInt16, 2, false);
+    SimpleInstallFunction(prototype, "getUint16",
+                          Builtins::kDataViewPrototypeGetUint16, 1, false);
+    SimpleInstallFunction(prototype, "setUint16",
+                          Builtins::kDataViewPrototypeSetUint16, 2, false);
+    SimpleInstallFunction(prototype, "getInt32",
+                          Builtins::kDataViewPrototypeGetInt32, 1, false);
+    SimpleInstallFunction(prototype, "setInt32",
+                          Builtins::kDataViewPrototypeSetInt32, 2, false);
+    SimpleInstallFunction(prototype, "getUint32",
+                          Builtins::kDataViewPrototypeGetUint32, 1, false);
+    SimpleInstallFunction(prototype, "setUint32",
+                          Builtins::kDataViewPrototypeSetUint32, 2, false);
+    SimpleInstallFunction(prototype, "getFloat32",
+                          Builtins::kDataViewPrototypeGetFloat32, 1, false);
+    SimpleInstallFunction(prototype, "setFloat32",
+                          Builtins::kDataViewPrototypeSetFloat32, 2, false);
+    SimpleInstallFunction(prototype, "getFloat64",
+                          Builtins::kDataViewPrototypeGetFloat64, 1, false);
+    SimpleInstallFunction(prototype, "setFloat64",
+                          Builtins::kDataViewPrototypeSetFloat64, 2, false);
   }
 
   {  // -- M a p
@@ -2177,7 +2221,6 @@ void Genesis::InitializeExperimentalGlobal() {
   HARMONY_INPROGRESS(FEATURE_INITIALIZE_GLOBAL)
   HARMONY_STAGED(FEATURE_INITIALIZE_GLOBAL)
   HARMONY_SHIPPING(FEATURE_INITIALIZE_GLOBAL)
-  FEATURE_INITIALIZE_GLOBAL(intl_extra, "")
 #undef FEATURE_INITIALIZE_GLOBAL
 }
 
@@ -2739,6 +2782,7 @@ void Bootstrapper::ExportExperimentalFromRuntime(Isolate* isolate,
                                                  Handle<JSObject> container) {
   HandleScope scope(isolate);
 
+#ifdef V8_I18N_SUPPORT
 #define INITIALIZE_FLAG(FLAG)                                         \
   {                                                                   \
     Handle<String> name =                                             \
@@ -2747,9 +2791,8 @@ void Bootstrapper::ExportExperimentalFromRuntime(Isolate* isolate,
                           isolate->factory()->ToBoolean(FLAG), NONE); \
   }
 
-  INITIALIZE_FLAG(FLAG_intl_extra)
-
 #undef INITIALIZE_FLAG
+#endif
 }
 
 
@@ -2762,17 +2805,18 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_lookbehind)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_named_captures)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_property)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_function_sent)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(intl_extra)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_explicit_tailcalls)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_tailcalls)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrictive_declarations)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_string_padding)
 #ifdef V8_I18N_SUPPORT
+EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(datetime_format_to_parts)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(icu_case_mapping)
 #endif
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_async_await)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrictive_generators)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_trailing_commas)
+EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_class_fields)
 
 void InstallPublicSymbol(Factory* factory, Handle<Context> native_context,
                          const char* name, Handle<Symbol> value) {
@@ -3106,6 +3150,14 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     native_context()->set_global_eval_fun(*eval);
   }
 
+  // Install Global.isFinite
+  SimpleInstallFunction(global_object, "isFinite", Builtins::kGlobalIsFinite, 1,
+                        true, kGlobalIsFinite);
+
+  // Install Global.isNaN
+  SimpleInstallFunction(global_object, "isNaN", Builtins::kGlobalIsNaN, 1, true,
+                        kGlobalIsNaN);
+
   // Install Array.prototype.concat
   {
     Handle<JSFunction> array_constructor(native_context()->array_function());
@@ -3349,7 +3401,6 @@ bool Genesis::InstallExperimentalNatives() {
   static const char* harmony_regexp_named_captures_natives[] = {nullptr};
   static const char* harmony_regexp_property_natives[] = {nullptr};
   static const char* harmony_function_sent_natives[] = {nullptr};
-  static const char* intl_extra_natives[] = {"native intl-extra.js", nullptr};
   static const char* harmony_object_values_entries_natives[] = {nullptr};
   static const char* harmony_object_own_property_descriptors_natives[] = {
       nullptr};
@@ -3359,11 +3410,14 @@ bool Genesis::InstallExperimentalNatives() {
 #ifdef V8_I18N_SUPPORT
   static const char* icu_case_mapping_natives[] = {"native icu-case-mapping.js",
                                                    nullptr};
+  static const char* datetime_format_to_parts_natives[] = {
+      "native datetime-format-to-parts.js", nullptr};
 #endif
   static const char* harmony_async_await_natives[] = {
       "native harmony-async-await.js", nullptr};
   static const char* harmony_restrictive_generators_natives[] = {nullptr};
   static const char* harmony_trailing_commas_natives[] = {nullptr};
+  static const char* harmony_class_fields_natives[] = {nullptr};
 
   for (int i = ExperimentalNatives::GetDebuggerCount();
        i < ExperimentalNatives::GetBuiltinsCount(); i++) {
@@ -3382,7 +3436,6 @@ bool Genesis::InstallExperimentalNatives() {
     HARMONY_INPROGRESS(INSTALL_EXPERIMENTAL_NATIVES);
     HARMONY_STAGED(INSTALL_EXPERIMENTAL_NATIVES);
     HARMONY_SHIPPING(INSTALL_EXPERIMENTAL_NATIVES);
-    INSTALL_EXPERIMENTAL_NATIVES(intl_extra, "");
 #undef INSTALL_EXPERIMENTAL_NATIVES
   }
 
@@ -4003,9 +4056,7 @@ Genesis::Genesis(Isolate* isolate,
 
   // Check that the script context table is empty except for the 'this' binding.
   // We do not need script contexts for native scripts.
-  if (!FLAG_global_var_shortcuts) {
-    DCHECK_EQ(1, native_context()->script_context_table()->used());
-  }
+  DCHECK_EQ(1, native_context()->script_context_table()->used());
 
   result_ = native_context();
 }

@@ -14,6 +14,7 @@
 #include "src/compilation-cache.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
 #include "src/compiler.h"
+#include "src/debug/liveedit.h"
 #include "src/deoptimizer.h"
 #include "src/execution.h"
 #include "src/frames-inl.h"
@@ -1281,7 +1282,7 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
 
   // Make sure we abort incremental marking.
   isolate_->heap()->CollectAllGarbage(Heap::kMakeHeapIterableMask,
-                                      "prepare for break points");
+                                      GarbageCollectionReason::kDebugger);
 
   DCHECK(shared->is_compiled());
   bool baseline_exists = shared->HasBaselineCode();
@@ -1576,10 +1577,9 @@ bool Debug::IsBreakAtReturn(JavaScriptFrame* frame) {
   return location.IsReturn() || location.IsTailCall();
 }
 
-
 void Debug::FramesHaveBeenDropped(StackFrame::Id new_break_frame_id,
-                                  LiveEdit::FrameDropMode mode) {
-  if (mode != LiveEdit::CURRENTLY_SET_MODE) {
+                                  LiveEditFrameDropMode mode) {
+  if (mode != LIVE_EDIT_CURRENTLY_SET_MODE) {
     thread_local_.frame_drop_mode_ = mode;
   }
   thread_local_.break_frame_id_ = new_break_frame_id;
@@ -1599,7 +1599,8 @@ void Debug::ClearMirrorCache() {
 
 
 Handle<FixedArray> Debug::GetLoadedScripts() {
-  isolate_->heap()->CollectAllGarbage();
+  isolate_->heap()->CollectAllGarbage(Heap::kFinalizeIncrementalMarkingMask,
+                                      GarbageCollectionReason::kDebugger);
   Factory* factory = isolate_->factory();
   if (!factory->script_list()->IsWeakFixedArray()) {
     return factory->empty_fixed_array();
@@ -1681,22 +1682,16 @@ void Debug::OnThrow(Handle<Object> exception) {
   }
 }
 
-
-void Debug::OnPromiseReject(Handle<JSObject> promise, Handle<Object> value) {
+void Debug::OnPromiseReject(Handle<Object> promise, Handle<Object> value) {
   if (in_debug_scope() || ignore_events()) return;
   HandleScope scope(isolate_);
   // Check whether the promise has been marked as having triggered a message.
   Handle<Symbol> key = isolate_->factory()->promise_debug_marker_symbol();
-  if (JSReceiver::GetDataProperty(promise, key)->IsUndefined(isolate_)) {
+  if (!promise->IsJSObject() ||
+      JSReceiver::GetDataProperty(Handle<JSObject>::cast(promise), key)
+          ->IsUndefined(isolate_)) {
     OnException(value, promise);
   }
-}
-
-
-MaybeHandle<Object> Debug::PromiseHasUserDefinedRejectHandler(
-    Handle<JSObject> promise) {
-  Handle<JSFunction> fun = isolate_->promise_has_user_defined_reject_handler();
-  return Execution::Call(isolate_, fun, promise, 0, NULL);
 }
 
 
@@ -1706,18 +1701,14 @@ void Debug::OnException(Handle<Object> exception, Handle<Object> promise) {
   // Don't notify listener of exceptions that are internal to a desugaring.
   if (catch_type == Isolate::CAUGHT_BY_DESUGARING) return;
 
-  bool uncaught = (catch_type == Isolate::NOT_CAUGHT);
+  bool uncaught = catch_type == Isolate::NOT_CAUGHT;
   if (promise->IsJSObject()) {
     Handle<JSObject> jspromise = Handle<JSObject>::cast(promise);
     // Mark the promise as already having triggered a message.
     Handle<Symbol> key = isolate_->factory()->promise_debug_marker_symbol();
     JSObject::SetProperty(jspromise, key, key, STRICT).Assert();
     // Check whether the promise reject is considered an uncaught exception.
-    Handle<Object> has_reject_handler;
-    ASSIGN_RETURN_ON_EXCEPTION_VALUE(
-        isolate_, has_reject_handler,
-        PromiseHasUserDefinedRejectHandler(jspromise), /* void */);
-    uncaught = has_reject_handler->IsFalse(isolate_);
+    uncaught = !isolate_->PromiseHasUserDefinedRejectHandler(jspromise);
   }
   // Bail out if exception breaks are not active
   if (uncaught) {

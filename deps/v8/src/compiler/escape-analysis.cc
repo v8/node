@@ -12,13 +12,13 @@
 #include "src/compiler/common-operator.h"
 #include "src/compiler/graph-reducer.h"
 #include "src/compiler/js-operator.h"
-#include "src/compiler/node.h"
 #include "src/compiler/node-matchers.h"
 #include "src/compiler/node-properties.h"
+#include "src/compiler/node.h"
 #include "src/compiler/operator-properties.h"
 #include "src/compiler/simplified-operator.h"
+#include "src/compiler/type-cache.h"
 #include "src/objects-inl.h"
-#include "src/type-cache.h"
 
 namespace v8 {
 namespace internal {
@@ -797,6 +797,7 @@ bool EscapeStatusAnalysis::CheckUsesForEscape(Node* uses, Node* rep,
       // handled by the EscapeAnalysisReducer (similar to ObjectIsSmi).
       case IrOpcode::kObjectIsCallable:
       case IrOpcode::kObjectIsNumber:
+      case IrOpcode::kObjectIsReceiver:
       case IrOpcode::kObjectIsString:
       case IrOpcode::kObjectIsUndetectable:
         if (SetEscaped(rep)) {

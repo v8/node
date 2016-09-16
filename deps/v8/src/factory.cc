@@ -37,13 +37,15 @@ namespace internal {
     RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                 \
     /* Two GCs before panicking.  In newspace will almost always succeed. */  \
     for (int __i__ = 0; __i__ < 2; __i__++) {                                 \
-      (ISOLATE)->heap()->CollectGarbage(__allocation__.RetrySpace(),          \
-                                        "allocation failure");                \
+      (ISOLATE)->heap()->CollectGarbage(                                      \
+          __allocation__.RetrySpace(),                                        \
+          GarbageCollectionReason::kAllocationFailure);                       \
       __allocation__ = FUNCTION_CALL;                                         \
       RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                               \
     }                                                                         \
     (ISOLATE)->counters()->gc_last_resort_from_handles()->Increment();        \
-    (ISOLATE)->heap()->CollectAllAvailableGarbage("last resort gc");          \
+    (ISOLATE)->heap()->CollectAllAvailableGarbage(                            \
+        GarbageCollectionReason::kLastResort);                                \
     {                                                                         \
       AlwaysAllocateScope __scope__(ISOLATE);                                 \
       __allocation__ = FUNCTION_CALL;                                         \
@@ -53,7 +55,6 @@ namespace internal {
     v8::internal::Heap::FatalProcessOutOfMemory("CALL_AND_RETRY_LAST", true); \
     return Handle<TYPE>();                                                    \
   } while (false)
-
 
 template<typename T>
 Handle<T> Factory::New(Handle<Map> map, AllocationSpace space) {
@@ -102,14 +103,10 @@ Handle<PrototypeInfo> Factory::NewPrototypeInfo() {
   return result;
 }
 
-
-Handle<SloppyBlockWithEvalContextExtension>
-Factory::NewSloppyBlockWithEvalContextExtension(
-    Handle<ScopeInfo> scope_info, Handle<JSObject> extension) {
-  DCHECK(scope_info->is_declaration_scope());
-  Handle<SloppyBlockWithEvalContextExtension> result =
-      Handle<SloppyBlockWithEvalContextExtension>::cast(
-          NewStruct(SLOPPY_BLOCK_WITH_EVAL_CONTEXT_EXTENSION_TYPE));
+Handle<ContextExtension> Factory::NewContextExtension(
+    Handle<ScopeInfo> scope_info, Handle<Object> extension) {
+  Handle<ContextExtension> result =
+      Handle<ContextExtension>::cast(NewStruct(CONTEXT_EXTENSION_TYPE));
   result->set_scope_info(*scope_info);
   result->set_extension(*extension);
   return result;
@@ -178,6 +175,14 @@ Handle<FixedArrayBase> Factory::NewFixedDoubleArrayWithHoles(
   return array;
 }
 
+Handle<FrameArray> Factory::NewFrameArray(int number_of_frames,
+                                          PretenureFlag pretenure) {
+  DCHECK_LE(0, number_of_frames);
+  Handle<FixedArray> result =
+      NewFixedArrayWithHoles(FrameArray::LengthFor(number_of_frames));
+  result->set(FrameArray::kFrameCountIndex, Smi::FromInt(0));
+  return Handle<FrameArray>::cast(result);
+}
 
 Handle<OrderedHashSet> Factory::NewOrderedHashSet() {
   return OrderedHashSet::Allocate(isolate(), OrderedHashSet::kMinCapacity);
@@ -784,15 +789,19 @@ Handle<ScriptContextTable> Factory::NewScriptContextTable() {
   return context_table;
 }
 
-
-Handle<Context> Factory::NewModuleContext(Handle<ScopeInfo> scope_info) {
+Handle<Context> Factory::NewModuleContext(Handle<JSModule> module,
+                                          Handle<JSFunction> function,
+                                          Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), MODULE_SCOPE);
   Handle<FixedArray> array =
       NewFixedArray(scope_info->ContextLength(), TENURED);
   array->set_map_no_write_barrier(*module_context_map());
-  // Instance link will be set later.
   Handle<Context> context = Handle<Context>::cast(array);
-  context->set_extension(*the_hole_value());
+  context->set_closure(*function);
+  context->set_previous(function->context());
+  context->set_extension(*module);
+  context->set_native_context(function->native_context());
+  DCHECK(context->IsModuleContext());
   return context;
 }
 
@@ -811,35 +820,41 @@ Handle<Context> Factory::NewFunctionContext(int length,
   return context;
 }
 
-
 Handle<Context> Factory::NewCatchContext(Handle<JSFunction> function,
                                          Handle<Context> previous,
+                                         Handle<ScopeInfo> scope_info,
                                          Handle<String> name,
                                          Handle<Object> thrown_object) {
   STATIC_ASSERT(Context::MIN_CONTEXT_SLOTS == Context::THROWN_OBJECT_INDEX);
+  Handle<ContextExtension> extension = NewContextExtension(scope_info, name);
   Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS + 1);
   array->set_map_no_write_barrier(*catch_context_map());
   Handle<Context> context = Handle<Context>::cast(array);
   context->set_closure(*function);
   context->set_previous(*previous);
-  context->set_extension(*name);
+  context->set_extension(*extension);
   context->set_native_context(previous->native_context());
   context->set(Context::THROWN_OBJECT_INDEX, *thrown_object);
   return context;
 }
 
 Handle<Context> Factory::NewDebugEvaluateContext(Handle<Context> previous,
+                                                 Handle<ScopeInfo> scope_info,
                                                  Handle<JSReceiver> extension,
                                                  Handle<Context> wrapped,
                                                  Handle<StringSet> whitelist) {
   STATIC_ASSERT(Context::WHITE_LIST_INDEX == Context::MIN_CONTEXT_SLOTS + 1);
+  DCHECK(scope_info->IsDebugEvaluateScope());
+  Handle<ContextExtension> context_extension = NewContextExtension(
+      scope_info, extension.is_null() ? Handle<Object>::cast(undefined_value())
+                                      : Handle<Object>::cast(extension));
   Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS + 2);
   array->set_map_no_write_barrier(*debug_evaluate_context_map());
   Handle<Context> c = Handle<Context>::cast(array);
   c->set_closure(wrapped.is_null() ? previous->closure() : wrapped->closure());
   c->set_previous(*previous);
   c->set_native_context(previous->native_context());
-  if (!extension.is_null()) c->set(Context::EXTENSION_INDEX, *extension);
+  c->set_extension(*context_extension);
   if (!wrapped.is_null()) c->set(Context::WRAPPED_CONTEXT_INDEX, *wrapped);
   if (!whitelist.is_null()) c->set(Context::WHITE_LIST_INDEX, *whitelist);
   return c;
@@ -847,13 +862,16 @@ Handle<Context> Factory::NewDebugEvaluateContext(Handle<Context> previous,
 
 Handle<Context> Factory::NewWithContext(Handle<JSFunction> function,
                                         Handle<Context> previous,
+                                        Handle<ScopeInfo> scope_info,
                                         Handle<JSReceiver> extension) {
+  Handle<ContextExtension> context_extension =
+      NewContextExtension(scope_info, extension);
   Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS);
   array->set_map_no_write_barrier(*with_context_map());
   Handle<Context> context = Handle<Context>::cast(array);
   context->set_closure(*function);
   context->set_previous(*previous);
-  context->set_extension(*extension);
+  context->set_extension(*context_extension);
   context->set_native_context(previous->native_context());
   return context;
 }
@@ -1385,6 +1403,17 @@ Handle<ScopeInfo> Factory::NewScopeInfo(int length) {
   return scope_info;
 }
 
+Handle<ModuleInfoEntry> Factory::NewModuleInfoEntry() {
+  Handle<FixedArray> array = NewFixedArray(ModuleInfoEntry::kLength, TENURED);
+  array->set_map_no_write_barrier(*module_info_entry_map());
+  return Handle<ModuleInfoEntry>::cast(array);
+}
+
+Handle<ModuleInfo> Factory::NewModuleInfo() {
+  Handle<FixedArray> array = NewFixedArray(ModuleInfo::kLength, TENURED);
+  array->set_map_no_write_barrier(*module_info_map());
+  return Handle<ModuleInfo>::cast(array);
+}
 
 Handle<JSObject> Factory::NewExternal(void* value) {
   Handle<Foreign> foreign = NewForeign(static_cast<Address>(value));
@@ -1676,6 +1705,11 @@ Handle<JSGeneratorObject> Factory::NewJSGeneratorObject(
       JSGeneratorObject);
 }
 
+Handle<JSModule> Factory::NewJSModule() {
+  Handle<JSModule> module =
+      Handle<JSModule>::cast(NewJSObjectFromMap(js_module_map(), TENURED));
+  return module;
+}
 
 Handle<JSArrayBuffer> Factory::NewJSArrayBuffer(SharedFlag shared,
                                                 PretenureFlag pretenure) {

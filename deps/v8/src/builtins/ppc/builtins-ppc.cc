@@ -1084,6 +1084,18 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ cmp(r3, ip);
   __ bne(&switch_to_different_code_kind);
 
+  // Increment invocation count for the function.
+  __ LoadP(r7, FieldMemOperand(r4, JSFunction::kLiteralsOffset));
+  __ LoadP(r7, FieldMemOperand(r7, LiteralsArray::kFeedbackVectorOffset));
+  __ LoadP(r8, FieldMemOperand(r7, TypeFeedbackVector::kInvocationCountIndex *
+                                           kPointerSize +
+                                       TypeFeedbackVector::kHeaderSize));
+  __ AddSmiLiteral(r8, r8, Smi::FromInt(1), r0);
+  __ StoreP(r8, FieldMemOperand(r7, TypeFeedbackVector::kInvocationCountIndex *
+                                            kPointerSize +
+                                        TypeFeedbackVector::kHeaderSize),
+            r0);
+
   // Check function data field is actually a BytecodeArray object.
 
   if (FLAG_debug_code) {
@@ -1187,8 +1199,10 @@ void Builtins::Generate_InterpreterMarkBaselineOnReturn(MacroAssembler* masm) {
   __ blr();
 }
 
-static void Generate_InterpreterPushArgs(MacroAssembler* masm, Register index,
+static void Generate_InterpreterPushArgs(MacroAssembler* masm,
+                                         Register num_args, Register index,
                                          Register count, Register scratch) {
+  // TODO(mythria): Add a stack check before pushing arguments.
   Label loop;
   __ addi(index, index, Operand(kPointerSize));  // Bias up for LoadPU
   __ mtctr(count);
@@ -1213,8 +1227,9 @@ void Builtins::Generate_InterpreterPushArgsAndCallImpl(
   // Calculate number of arguments (add one for receiver).
   __ addi(r6, r3, Operand(1));
 
-  // Push the arguments.
-  Generate_InterpreterPushArgs(masm, r5, r6, r7);
+  // TODO(mythria): Add a stack check before pushing arguments.
+  // Push the arguments. r5, r6, r7 will be modified.
+  Generate_InterpreterPushArgs(masm, r6, r5, r6, r7);
 
   // Call the target.
   if (function_type == CallableType::kJSFunction) {
@@ -1230,12 +1245,14 @@ void Builtins::Generate_InterpreterPushArgsAndCallImpl(
 }
 
 // static
-void Builtins::Generate_InterpreterPushArgsAndConstruct(MacroAssembler* masm) {
+void Builtins::Generate_InterpreterPushArgsAndConstructImpl(
+    MacroAssembler* masm, CallableType construct_type) {
   // ----------- S t a t e -------------
   // -- r3 : argument count (not including receiver)
   // -- r6 : new target
   // -- r4 : constructor to call
-  // -- r5 : address of the first argument
+  // -- r5 : allocation site feedback if available, undefined otherwise.
+  // -- r7 : address of the first argument
   // -----------------------------------
 
   // Push a slot for the receiver to be constructed.
@@ -1246,11 +1263,50 @@ void Builtins::Generate_InterpreterPushArgsAndConstruct(MacroAssembler* masm) {
   Label skip;
   __ cmpi(r3, Operand::Zero());
   __ beq(&skip);
-  Generate_InterpreterPushArgs(masm, r5, r3, r7);
+  // Push the arguments. r8, r7, r9 will be modified.
+  Generate_InterpreterPushArgs(masm, r3, r7, r3, r8);
   __ bind(&skip);
 
-  // Call the constructor with r3, r4, and r6 unmodified.
-  __ Jump(masm->isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
+  __ AssertUndefinedOrAllocationSite(r5, r8);
+  if (construct_type == CallableType::kJSFunction) {
+    __ AssertFunction(r4);
+
+    // Tail call to the function-specific construct stub (still in the caller
+    // context at this point).
+    __ LoadP(r7, FieldMemOperand(r4, JSFunction::kSharedFunctionInfoOffset));
+    __ LoadP(r7, FieldMemOperand(r7, SharedFunctionInfo::kConstructStubOffset));
+    // Jump to the construct function.
+    __ addi(ip, r7, Operand(Code::kHeaderSize - kHeapObjectTag));
+    __ Jump(ip);
+
+  } else {
+    DCHECK_EQ(construct_type, CallableType::kAny);
+    // Call the constructor with r3, r4, and r6 unmodified.
+    __ Jump(masm->isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
+  }
+}
+
+// static
+void Builtins::Generate_InterpreterPushArgsAndConstructArray(
+    MacroAssembler* masm) {
+  // ----------- S t a t e -------------
+  // -- r3 : argument count (not including receiver)
+  // -- r4 : target to call verified to be Array function
+  // -- r5 : allocation site feedback if available, undefined otherwise.
+  // -- r6 : address of the first argument
+  // -----------------------------------
+
+  __ addi(r7, r3, Operand(1));  // Add one for receiver.
+
+  // TODO(mythria): Add a stack check before pushing arguments.
+  // Push the arguments. r6, r8, r3 will be modified.
+  Generate_InterpreterPushArgs(masm, r7, r6, r7, r8);
+
+  // Array constructor expects constructor in r6. It is same as r4 here.
+  __ mr(r6, r4);
+
+  ArrayConstructorStub stub(masm->isolate());
+  __ TailCallStub(&stub);
 }
 
 void Builtins::Generate_InterpreterEnterBytecodeDispatch(MacroAssembler* masm) {
@@ -1462,7 +1518,7 @@ void Builtins::Generate_InstantiateAsmJs(MacroAssembler* masm) {
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
     // Preserve argument count for later compare.
-    __ Move(r5, r3);
+    __ Move(r7, r3);
     // Push a copy of the target function and the new target.
     // Push function as parameter to the runtime call.
     __ SmiTag(r3);
@@ -1473,13 +1529,13 @@ void Builtins::Generate_InstantiateAsmJs(MacroAssembler* masm) {
     for (int j = 0; j < 4; ++j) {
       Label over;
       if (j < 3) {
-        __ cmpi(r5, Operand(j));
+        __ cmpi(r7, Operand(j));
         __ bne(&over);
       }
       for (int i = j - 1; i >= 0; --i) {
-        __ LoadP(r5, MemOperand(fp, StandardFrameConstants::kCallerSPOffset +
+        __ LoadP(r7, MemOperand(fp, StandardFrameConstants::kCallerSPOffset +
                                         i * kPointerSize));
-        __ push(r5);
+        __ push(r7);
       }
       for (int i = 0; i < 3 - j; ++i) {
         __ PushRoot(Heap::kUndefinedValueRootIndex);
@@ -1497,11 +1553,12 @@ void Builtins::Generate_InstantiateAsmJs(MacroAssembler* masm) {
     __ JumpIfSmi(r3, &failed);
 
     __ Drop(2);
-    __ pop(r5);
-    __ SmiUntag(r5);
+    __ pop(r7);
+    __ SmiUntag(r7);
     scope.GenerateLeaveFrame();
 
-    __ Drop(r5);
+    __ addi(r7, r7, Operand(1));
+    __ Drop(r7);
     __ Ret();
 
     __ bind(&failed);
@@ -1838,61 +1895,6 @@ void Builtins::Generate_OnStackReplacement(MacroAssembler* masm) {
 
 void Builtins::Generate_InterpreterOnStackReplacement(MacroAssembler* masm) {
   Generate_OnStackReplacementHelper(masm, true);
-}
-
-// static
-void Builtins::Generate_DatePrototype_GetField(MacroAssembler* masm,
-                                               int field_index) {
-  // ----------- S t a t e -------------
-  //  -- r3    : number of arguments
-  //  -- r4    : function
-  //  -- cp    : context
-  //  -- lr    : return address
-  //  -- sp[0] : receiver
-  // -----------------------------------
-
-  // 1. Pop receiver into r3 and check that it's actually a JSDate object.
-  Label receiver_not_date;
-  {
-    __ Pop(r3);
-    __ JumpIfSmi(r3, &receiver_not_date);
-    __ CompareObjectType(r3, r5, r6, JS_DATE_TYPE);
-    __ bne(&receiver_not_date);
-  }
-
-  // 2. Load the specified date field, falling back to the runtime as necessary.
-  if (field_index == JSDate::kDateValue) {
-    __ LoadP(r3, FieldMemOperand(r3, JSDate::kValueOffset));
-  } else {
-    if (field_index < JSDate::kFirstUncachedField) {
-      Label stamp_mismatch;
-      __ mov(r4, Operand(ExternalReference::date_cache_stamp(masm->isolate())));
-      __ LoadP(r4, MemOperand(r4));
-      __ LoadP(ip, FieldMemOperand(r3, JSDate::kCacheStampOffset));
-      __ cmp(r4, ip);
-      __ bne(&stamp_mismatch);
-      __ LoadP(r3, FieldMemOperand(
-                       r3, JSDate::kValueOffset + field_index * kPointerSize));
-      __ Ret();
-      __ bind(&stamp_mismatch);
-    }
-    FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-    __ PrepareCallCFunction(2, r4);
-    __ LoadSmiLiteral(r4, Smi::FromInt(field_index));
-    __ CallCFunction(
-        ExternalReference::get_date_field_function(masm->isolate()), 2);
-  }
-  __ Ret();
-
-  // 3. Raise a TypeError if the receiver is not a date.
-  __ bind(&receiver_not_date);
-  {
-    FrameScope scope(masm, StackFrame::MANUAL);
-    __ push(r3);
-    __ LoadSmiLiteral(r3, Smi::FromInt(0));
-    __ EnterBuiltinFrame(cp, r4, r3);
-    __ CallRuntime(Runtime::kThrowNotDateError);
-  }
 }
 
 // static
@@ -2858,22 +2860,6 @@ void Builtins::Generate_Abort(MacroAssembler* masm) {
   __ push(r4);
   __ LoadSmiLiteral(cp, Smi::FromInt(0));
   __ TailCallRuntime(Runtime::kAbort);
-}
-
-// static
-void Builtins::Generate_ToNumber(MacroAssembler* masm) {
-  // The ToNumber stub takes one argument in r3.
-  STATIC_ASSERT(kSmiTag == 0);
-  __ TestIfSmi(r3, r0);
-  __ Ret(eq, cr0);
-
-  __ CompareObjectType(r3, r4, r4, HEAP_NUMBER_TYPE);
-  // r3: receiver
-  // r4: receiver instance type
-  __ Ret(eq);
-
-  __ Jump(masm->isolate()->builtins()->NonNumberToNumber(),
-          RelocInfo::CODE_TARGET);
 }
 
 void Builtins::Generate_ArgumentsAdaptorTrampoline(MacroAssembler* masm) {

@@ -531,6 +531,12 @@
 }],  # 'system == windows'
 
 ##############################################################################
+['system == macos', {
+  # BUG(v8:5333)
+  'big-object-literal': [SKIP],
+}],  # 'system == macos'
+
+##############################################################################
 ['arch == s390 or arch == s390x', {
 
   # Stack manipulations in LiveEdit is not implemented for this arch.
@@ -561,6 +567,13 @@
 
   # Too slow.
   'es6/tail-call-megatest*': [SKIP],
+
+  # Ongoing implementation of modules.
+  # https://bugs.chromium.org/p/v8/issues/detail?id=1569
+  # The deopt fuzzer currently does not respect the 'variant != ignition' rule
+  # further down in this file, so we have to duplicate this here.
+  # https://bugs.chromium.org/p/v8/issues/detail?id=5374
+  'modules-*': [SKIP],
 }],  # 'deopt_fuzzer == True'
 
 ##############################################################################
@@ -583,6 +596,7 @@
 
   # stack overflow
   'big-array-literal': [SKIP],
+  'regress/regress-353551': [SKIP],
 }],  # 'arch == ppc64'
 
 ##############################################################################
@@ -631,14 +645,11 @@
   # Might trigger stack overflow.
   'unicode-test': [SKIP],
 
-  # TODO(mythria, 4780): Related to type feedback for calls in interpreter.
-  'array-literal-feedback': [FAIL],
-  'regress/regress-4121': [FAIL],
-
   # TODO(4680): Test doesn't know about three tier compiler pipeline.
   'assert-opt-and-deopt': [SKIP],
 
-  # BUG(rmcilroy,4989): Function is optimized without type feedback and so immediately deopts again, causing check failure in the test.
+  # BUG(rmcilroy,4989): Function is optimized without type feedback and so
+  # immediately deopts again, causing check failure in the test.
   'compiler/deopt-inlined-from-call': [FAIL],
   'compiler/increment-typefeedback': [FAIL],
   'compiler/manual-concurrent-recompile': [FAIL],
@@ -669,9 +680,6 @@
   'smi-mul-const': [FAIL],
   'smi-mul': [FAIL],
   'unary-minus-deopt': [FAIL],
-  'array-constructor-feedback': [FAIL],
-  'array-feedback': [FAIL],
-  'allocation-site-info': [FAIL],
 }],  # variant == ignition
 
 ['variant == ignition and arch == arm64', {
@@ -705,10 +713,6 @@
 
 ##############################################################################
 ['variant == ignition_staging', {
-  'allocation-site-info': [FAIL],
-  'array-constructor-feedback': [FAIL],
-  'array-feedback': [FAIL],
-  'array-literal-feedback': [FAIL],
   'assert-opt-and-deopt': [SKIP],
   'compiler/deopt-inlined-from-call': [FAIL],
   'compiler/increment-typefeedback': [FAIL],
@@ -730,7 +734,6 @@
   'regress/regress-3176': [FAIL],
   'regress/regress-3709': [FAIL],
   'regress/regress-385565': [FAIL],
-  'regress/regress-4121': [FAIL],
   'regress/regress-crbug-594183': [FAIL],
   'regress/regress-embedded-cons-string': [FAIL],
   'regress/regress-map-invalidation-2': [FAIL],
@@ -760,13 +763,6 @@
 
   # Might trigger stack overflow.
   'unicode-test': [SKIP],
-
-  # TODO(mythria, 4780): Related to type feedback for calls in interpreter.
-  'array-literal-feedback': [FAIL],
-  'regress/regress-4121': [FAIL],
-  'array-constructor-feedback': [FAIL],
-  'array-feedback': [FAIL],
-  'allocation-site-info': [FAIL],
 
   'wasm/asm-wasm-f32': [PASS, ['arch in [arm64]', SKIP]],
   'wasm/asm-wasm-f64': [PASS, ['arch in [arm64]', SKIP]],
@@ -815,6 +811,12 @@
   # Too slow for interpreter and msan.
   'es6/tail-call-megatest*': [SKIP],
 }],  # variant == ignition_turbofan and msan
+
+['variant != ignition', {
+  # Ongoing implementation of modules.
+  # https://bugs.chromium.org/p/v8/issues/detail?id=1569
+  'modules-*': [SKIP],
+}],  # variants != ignition
 
 ##############################################################################
 ['gcov_coverage', {

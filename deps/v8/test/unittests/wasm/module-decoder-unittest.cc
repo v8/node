@@ -213,7 +213,22 @@ TEST_F(WasmModuleVerifyTest, Global_invalid_type) {
       0,    // exported
   };
 
-  ModuleResult result = DecodeModuleNoHeader(data, data + sizeof(data));
+  ModuleResult result = DecodeModule(data, data + sizeof(data));
+  EXPECT_FALSE(result.ok());
+  if (result.val) delete result.val;
+}
+
+TEST_F(WasmModuleVerifyTest, Global_invalid_type2) {
+  static const byte data[] = {
+      SECTION(GLOBALS, 5),  // --
+      1,
+      NAME_LENGTH(1),
+      'g',         // name
+      kLocalVoid,  // invalid memory type
+      0,           // exported
+  };
+
+  ModuleResult result = DecodeModule(data, data + sizeof(data));
   EXPECT_FALSE(result.ok());
   if (result.val) delete result.val;
 }
@@ -276,6 +291,18 @@ TEST_F(WasmModuleVerifyTest, GlobalWithInvalidNameOffset) {
       0,        // exported
   };
 
+  EXPECT_FAILURE(data);
+}
+
+TEST_F(WasmModuleVerifyTest, GlobalWithInvalidNameLength) {
+  static const byte data[] = {
+      SECTION(GLOBALS, 5),  // --
+      1,
+      NAME_LENGTH(56),  // invalid length
+      'g',              // name
+      kLocalI32,        // memory type
+      0,                // exported
+  };
   EXPECT_FAILURE(data);
 }
 
@@ -1009,6 +1036,20 @@ TEST_F(WasmModuleVerifyTest, ExportTableOne) {
   EXPECT_EQ(1, result.val->export_table.size());
 
   if (result.val) delete result.val;
+}
+
+TEST_F(WasmModuleVerifyTest, ExportNameWithInvalidStringLength) {
+  static const byte data[] = {// signatures
+                              SIGNATURES_SECTION_VOID_VOID,
+                              ONE_EMPTY_FUNCTION,
+                              SECTION(EXPORT_TABLE, 12),
+                              1,                // exports
+                              FUNC_INDEX(0),    // --
+                              NAME_LENGTH(84),  // invalid string length
+                              'e',              // --
+                              ONE_EMPTY_BODY};
+
+  EXPECT_FAILURE(data);
 }
 
 TEST_F(WasmModuleVerifyTest, ExportTableTwo) {

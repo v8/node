@@ -55,13 +55,21 @@
     defined(__ARM_ARCH_7R__) || \
     defined(__ARM_ARCH_7__)
 # define CAN_USE_ARMV7_INSTRUCTIONS 1
+#ifdef __ARM_ARCH_EXT_IDIV__
+#define CAN_USE_SUDIV 1
+#endif
 # ifndef CAN_USE_VFP3_INSTRUCTIONS
-#  define CAN_USE_VFP3_INSTRUCTIONS
+#define CAN_USE_VFP3_INSTRUCTIONS 1
 # endif
 #endif
 
 #if defined(__ARM_ARCH_8A__)
+#define CAN_USE_ARMV7_INSTRUCTIONS 1
+#define CAN_USE_SUDIV 1
 # define CAN_USE_ARMV8_INSTRUCTIONS 1
+#ifndef CAN_USE_VFP3_INSTRUCTIONS
+#define CAN_USE_VFP3_INSTRUCTIONS 1
+#endif
 #endif
 
 
@@ -200,7 +208,7 @@
 // Bump up for Power Linux due to larger (64K) page size.
 const int kPageSizeBits = 22;
 #else
-const int kPageSizeBits = 20;
+const int kPageSizeBits = 19;
 #endif
 
 #endif  // V8_BASE_BUILD_CONFIG_H_

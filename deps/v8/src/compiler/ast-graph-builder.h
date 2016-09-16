@@ -37,6 +37,7 @@ class TypeHintAnalysis;
 class AstGraphBuilder : public AstVisitor<AstGraphBuilder> {
  public:
   AstGraphBuilder(Zone* local_zone, CompilationInfo* info, JSGraph* jsgraph,
+                  float invocation_frequency,
                   LoopAssignmentAnalysis* loop_assignment = nullptr,
                   TypeHintAnalysis* type_hint_analysis = nullptr);
   virtual ~AstGraphBuilder() {}
@@ -80,6 +81,7 @@ class AstGraphBuilder : public AstVisitor<AstGraphBuilder> {
   Zone* local_zone_;
   CompilationInfo* info_;
   JSGraph* jsgraph_;
+  float const invocation_frequency_;
   Environment* environment_;
   AstContext* ast_context_;
 
@@ -264,6 +266,9 @@ class AstGraphBuilder : public AstVisitor<AstGraphBuilder> {
   uint32_t ComputeBitsetForDynamicGlobal(Variable* variable);
   uint32_t ComputeBitsetForDynamicContext(Variable* variable);
 
+  // Computes the frequency for JSCallFunction and JSCallConstruct nodes.
+  float ComputeCallFrequency(FeedbackVectorSlot slot) const;
+
   // ===========================================================================
   // The following build methods all generate graph fragments and return one
   // resulting node. The operand stack height remains the same, variables and
@@ -278,8 +283,8 @@ class AstGraphBuilder : public AstVisitor<AstGraphBuilder> {
   // Builder to create an arguments object if it is used.
   Node* BuildArgumentsObject(Variable* arguments);
 
-  // Builder to create an array of rest parameters if used
-  Node* BuildRestArgumentsArray(Variable* rest, int index);
+  // Builder to create an array of rest parameters if used.
+  Node* BuildRestArgumentsArray(Variable* rest);
 
   // Builder that assigns to the {.this_function} internal variable if needed.
   Node* BuildThisFunctionVariable(Variable* this_function_var);
@@ -342,8 +347,7 @@ class AstGraphBuilder : public AstVisitor<AstGraphBuilder> {
   // Builder for adding the [[HomeObject]] to a value if the value came from a
   // function literal and needs a home object. Do nothing otherwise.
   Node* BuildSetHomeObject(Node* value, Node* home_object,
-                           ObjectLiteralProperty* property,
-                           int slot_number = 0);
+                           LiteralProperty* property, int slot_number = 0);
 
   // Builders for error reporting at runtime.
   Node* BuildThrowError(Node* exception, BailoutId bailout_id);

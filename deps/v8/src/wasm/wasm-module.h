@@ -234,7 +234,7 @@ struct WasmModule {
 
   // Creates a new instantiation of the module in the given isolate.
   static MaybeHandle<JSObject> Instantiate(Isolate* isolate,
-                                           Handle<FixedArray> compiled_module,
+                                           Handle<JSObject> module_object,
                                            Handle<JSReceiver> ffi,
                                            Handle<JSArrayBuffer> memory);
 
@@ -399,18 +399,33 @@ void PopulateFunctionTable(Handle<FixedArray> table, uint32_t table_size,
                            const std::vector<Handle<Code>>* code_table);
 
 Handle<JSObject> CreateCompiledModuleObject(Isolate* isolate,
-                                            Handle<FixedArray> compiled_module);
+                                            Handle<FixedArray> compiled_module,
+                                            ModuleOrigin origin);
+
+MaybeHandle<JSObject> CreateModuleObjectFromBytes(Isolate* isolate,
+                                                  const byte* start,
+                                                  const byte* end,
+                                                  ErrorThrower* thrower,
+                                                  ModuleOrigin origin);
+
+// Assumed to be called with a code object associated to a wasm module instance.
+// Intended to be called from runtime functions.
+// Returns undefined if the runtime support was not setup, nullptr if the
+// instance
+// was collected, or the instance object owning the Code object
+Object* GetOwningWasmInstance(Object* undefined, Code* code);
+
+MaybeHandle<JSArrayBuffer> GetInstanceMemory(Isolate* isolate,
+                                             Handle<JSObject> instance);
+void SetInstanceMemory(Handle<JSObject> instance, JSArrayBuffer* buffer);
 
 namespace testing {
 
-// Decode, verify, and run the function labeled "main" in the
-// given encoded module. The module should have no imports.
-int32_t CompileAndRunWasmModule(Isolate* isolate, const byte* module_start,
-                                const byte* module_end, bool asm_js = false);
+void ValidateInstancesChain(Isolate* isolate, Handle<JSObject> module_obj,
+                            int instance_count);
+void ValidateModuleState(Isolate* isolate, Handle<JSObject> module_obj);
+void ValidateOrphanedInstance(Isolate* isolate, Handle<JSObject> instance);
 
-int32_t CallFunction(Isolate* isolate, Handle<JSObject> instance,
-                     ErrorThrower* thrower, const char* name, int argc,
-                     Handle<Object> argv[]);
 }  // namespace testing
 }  // namespace wasm
 }  // namespace internal

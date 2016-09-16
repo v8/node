@@ -15,8 +15,6 @@ namespace internal {
 // Forward declarations.
 class CompilationDependencies;
 class Factory;
-class TypeCache;
-
 
 namespace compiler {
 
@@ -24,9 +22,8 @@ namespace compiler {
 class CommonOperatorBuilder;
 class JSGraph;
 class JSOperatorBuilder;
-class MachineOperatorBuilder;
 class SimplifiedOperatorBuilder;
-
+class TypeCache;
 
 // Lowers JS-level operators to simplified operators based on types.
 class JSTypedLowering final : public AdvancedReducer {
@@ -69,17 +66,10 @@ class JSTypedLowering final : public AdvancedReducer {
   Reduction ReduceJSConvertReceiver(Node* node);
   Reduction ReduceJSCallConstruct(Node* node);
   Reduction ReduceJSCallFunction(Node* node);
-  Reduction ReduceJSForInDone(Node* node);
   Reduction ReduceJSForInNext(Node* node);
-  Reduction ReduceJSForInStep(Node* node);
   Reduction ReduceJSGeneratorStore(Node* node);
   Reduction ReduceJSGeneratorRestoreContinuation(Node* node);
   Reduction ReduceJSGeneratorRestoreRegister(Node* node);
-  Reduction ReduceCheckMaps(Node* node);
-  Reduction ReduceCheckString(Node* node);
-  Reduction ReduceLoadField(Node* node);
-  Reduction ReduceNumberRoundop(Node* node);
-  Reduction ReduceSelect(Node* node);
   Reduction ReduceNumberBinop(Node* node);
   Reduction ReduceInt32Binop(Node* node);
   Reduction ReduceUI32Shift(Node* node, Signedness signedness);
@@ -91,7 +81,6 @@ class JSTypedLowering final : public AdvancedReducer {
   JSOperatorBuilder* javascript() const;
   CommonOperatorBuilder* common() const;
   SimplifiedOperatorBuilder* simplified() const;
-  MachineOperatorBuilder* machine() const;
   CompilationDependencies* dependencies() const;
   Flags flags() const { return flags_; }
 
@@ -99,8 +88,6 @@ class JSTypedLowering final : public AdvancedReducer {
   Flags flags_;
   JSGraph* jsgraph_;
   Type* shifted_int32_ranges_[4];
-  Type* const true_type_;
-  Type* const false_type_;
   Type* const the_hole_type_;
   TypeCache const& type_cache_;
 };

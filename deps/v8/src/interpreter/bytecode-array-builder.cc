@@ -4,7 +4,6 @@
 
 #include "src/interpreter/bytecode-array-builder.h"
 
-#include "src/compiler.h"
 #include "src/globals.h"
 #include "src/interpreter/bytecode-array-writer.h"
 #include "src/interpreter/bytecode-dead-code-optimizer.h"
@@ -175,9 +174,14 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::TypeOf() {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CompareOperation(Token::Value op,
-                                                             Register reg) {
-  Output(BytecodeForCompareOperation(op), RegisterOperand(reg));
+BytecodeArrayBuilder& BytecodeArrayBuilder::CompareOperation(
+    Token::Value op, Register reg, int feedback_slot) {
+  if (op == Token::INSTANCEOF || op == Token::IN) {
+    Output(BytecodeForCompareOperation(op), RegisterOperand(reg));
+  } else {
+    Output(BytecodeForCompareOperation(op), RegisterOperand(reg),
+           UnsignedOperand(feedback_slot));
+  }
   return *this;
 }
 
@@ -266,16 +270,18 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StoreGlobal(
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::LoadContextSlot(Register context,
-                                                            int slot_index) {
+                                                            int slot_index,
+                                                            int depth) {
   Output(Bytecode::kLdaContextSlot, RegisterOperand(context),
-         UnsignedOperand(slot_index));
+         UnsignedOperand(slot_index), UnsignedOperand(depth));
   return *this;
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::StoreContextSlot(Register context,
-                                                             int slot_index) {
+                                                             int slot_index,
+                                                             int depth) {
   Output(Bytecode::kStaContextSlot, RegisterOperand(context),
-         UnsignedOperand(slot_index));
+         UnsignedOperand(slot_index), UnsignedOperand(depth));
   return *this;
 }
 
@@ -346,10 +352,11 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CreateBlockContext(
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::CreateCatchContext(
-    Register exception, Handle<String> name) {
+    Register exception, Handle<String> name, Handle<ScopeInfo> scope_info) {
   size_t name_index = GetConstantPoolEntry(name);
+  size_t scope_info_index = GetConstantPoolEntry(scope_info);
   Output(Bytecode::kCreateCatchContext, RegisterOperand(exception),
-         UnsignedOperand(name_index));
+         UnsignedOperand(name_index), UnsignedOperand(scope_info_index));
   return *this;
 }
 
@@ -358,8 +365,11 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CreateFunctionContext(int slots) {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CreateWithContext(Register object) {
-    Output(Bytecode::kCreateWithContext, RegisterOperand(object));
+BytecodeArrayBuilder& BytecodeArrayBuilder::CreateWithContext(
+    Register object, Handle<ScopeInfo> scope_info) {
+  size_t scope_info_index = GetConstantPoolEntry(scope_info);
+  Output(Bytecode::kCreateWithContext, RegisterOperand(object),
+         UnsignedOperand(scope_info_index));
   return *this;
 }
 
@@ -411,19 +421,19 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::PopContext(Register context) {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CastAccumulatorToJSObject(
+BytecodeArrayBuilder& BytecodeArrayBuilder::ConvertAccumulatorToObject(
     Register out) {
   Output(Bytecode::kToObject, RegisterOperand(out));
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CastAccumulatorToName(
+BytecodeArrayBuilder& BytecodeArrayBuilder::ConvertAccumulatorToName(
     Register out) {
   Output(Bytecode::kToName, RegisterOperand(out));
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CastAccumulatorToNumber(
+BytecodeArrayBuilder& BytecodeArrayBuilder::ConvertAccumulatorToNumber(
     Register out) {
   Output(Bytecode::kToNumber, RegisterOperand(out));
   return *this;
@@ -442,43 +452,54 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::Bind(const BytecodeLabel& target,
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::OutputJump(Bytecode jump_bytecode,
+BytecodeArrayBuilder& BytecodeArrayBuilder::OutputJump(BytecodeNode* node,
                                                        BytecodeLabel* label) {
-  BytecodeNode node(jump_bytecode, 0);
-  AttachSourceInfo(&node);
-  pipeline_->WriteJump(&node, label);
+  AttachSourceInfo(node);
+  pipeline_->WriteJump(node, label);
   LeaveBasicBlock();
   return *this;
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::Jump(BytecodeLabel* label) {
-  return OutputJump(Bytecode::kJump, label);
+  BytecodeNode node(Bytecode::kJump, 0);
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfTrue(BytecodeLabel* label) {
   // The peephole optimizer attempts to simplify JumpIfToBooleanTrue
   // to JumpIfTrue.
-  return OutputJump(Bytecode::kJumpIfToBooleanTrue, label);
+  BytecodeNode node(Bytecode::kJumpIfToBooleanTrue, 0);
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfFalse(BytecodeLabel* label) {
   // The peephole optimizer attempts to simplify JumpIfToBooleanFalse
   // to JumpIfFalse.
-  return OutputJump(Bytecode::kJumpIfToBooleanFalse, label);
+  BytecodeNode node(Bytecode::kJumpIfToBooleanFalse, 0);
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNull(BytecodeLabel* label) {
-  return OutputJump(Bytecode::kJumpIfNull, label);
+  BytecodeNode node(Bytecode::kJumpIfNull, 0);
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfUndefined(
     BytecodeLabel* label) {
-  return OutputJump(Bytecode::kJumpIfUndefined, label);
+  BytecodeNode node(Bytecode::kJumpIfUndefined, 0);
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNotHole(
     BytecodeLabel* label) {
-  return OutputJump(Bytecode::kJumpIfNotHole, label);
+  BytecodeNode node(Bytecode::kJumpIfNotHole, 0);
+  return OutputJump(&node, label);
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpLoop(BytecodeLabel* label,
+                                                     int loop_depth) {
+  BytecodeNode node(Bytecode::kJumpLoop, 0, UnsignedOperand(loop_depth));
+  return OutputJump(&node, label);
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::StackCheck(int position) {
@@ -496,11 +517,6 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StackCheck(int position) {
     latest_source_info_.ForceExpressionPosition(position);
   }
   Output(Bytecode::kStackCheck);
-  return *this;
-}
-
-BytecodeArrayBuilder& BytecodeArrayBuilder::OsrPoll(int loop_depth) {
-  Output(Bytecode::kOsrPoll, UnsignedOperand(loop_depth));
   return *this;
 }
 
@@ -533,9 +549,9 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::ForInPrepare(
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::ForInDone(Register index,
-                                                      Register cache_length) {
-  Output(Bytecode::kForInDone, RegisterOperand(index),
+BytecodeArrayBuilder& BytecodeArrayBuilder::ForInContinue(
+    Register index, Register cache_length) {
+  Output(Bytecode::kForInContinue, RegisterOperand(index),
          RegisterOperand(cache_length));
   return *this;
 }
@@ -612,13 +628,15 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::Call(Register callable,
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::New(Register constructor,
                                                 Register first_arg,
-                                                size_t arg_count) {
+                                                size_t arg_count,
+                                                int feedback_slot_id) {
   if (!first_arg.is_valid()) {
     DCHECK_EQ(0u, arg_count);
     first_arg = Register(0);
   }
   Output(Bytecode::kNew, RegisterOperand(constructor),
-         RegisterOperand(first_arg), UnsignedOperand(arg_count));
+         RegisterOperand(first_arg), UnsignedOperand(arg_count),
+         UnsignedOperand(feedback_slot_id));
   return *this;
 }
 
@@ -770,10 +788,10 @@ bool BytecodeArrayBuilder::OperandsAreValid(
         }
         break;
       case OperandType::kIdx:
-        // TODO(oth): Consider splitting OperandType::kIdx into two
-        // operand types. One which is a constant pool index that can
-        // be checked, and the other is an unsigned value.
+        // TODO(leszeks): Possibly split this up into constant pool indices and
+        // other indices, for checking
         break;
+      case OperandType::kUImm:
       case OperandType::kImm:
         break;
       case OperandType::kMaybeReg:

@@ -12,6 +12,8 @@
 // Imports
 
 var InternalArray = utils.InternalArray;
+var promiseAwaitHandlerSymbol =
+    utils.ImportNow("promise_await_handler_symbol");
 var promiseCombinedDeferredSymbol =
     utils.ImportNow("promise_combined_deferred_symbol");
 var promiseHasHandlerSymbol =
@@ -22,6 +24,8 @@ var promiseFulfillReactionsSymbol =
     utils.ImportNow("promise_fulfill_reactions_symbol");
 var promiseDeferredReactionsSymbol =
     utils.ImportNow("promise_deferred_reactions_symbol");
+var promiseHandledHintSymbol =
+    utils.ImportNow("promise_handled_hint_symbol");
 var promiseRawSymbol = utils.ImportNow("promise_raw_symbol");
 var promiseStateSymbol = utils.ImportNow("promise_state_symbol");
 var promiseResultSymbol = utils.ImportNow("promise_result_symbol");
@@ -216,8 +220,8 @@ function PromiseAttachCallbacks(promise, deferred, onResolve, onReject) {
   }
 }
 
-function PromiseIdResolveHandler(x) { return x }
-function PromiseIdRejectHandler(r) { throw r }
+function PromiseIdResolveHandler(x) { return x; }
+function PromiseIdRejectHandler(r) { %_ReThrow(r); }
 
 function PromiseNopResolver() {}
 
@@ -381,32 +385,6 @@ function PromiseReject(r) {
   }
 }
 
-// Shortcut Promise.reject and Promise.resolve() implementations, used by
-// Async Functions implementation.
-function PromiseCreateRejected(r) {
-  var promise = PromiseCreateAndSet(kRejected, r);
-  // This is called from the desugaring of async/await; no reason to
-  // create a redundant reject event.
-  %PromiseRejectEvent(promise, r, false);
-  return promise;
-}
-
-function PromiseCreateResolved(value) {
-  var promise = PromiseInit(new GlobalPromise(promiseRawSymbol));
-  var resolveResult = ResolvePromise(promise, value);
-  return promise;
-}
-
-function PromiseCastResolved(value) {
-  if (IsPromise(value)) {
-    return value;
-  } else {
-    var promise = PromiseInit(new GlobalPromise(promiseRawSymbol));
-    var resolveResult = ResolvePromise(promise, value);
-    return promise;
-  }
-}
-
 function PerformPromiseThen(promise, onResolve, onReject, resultCapability) {
   if (!IS_CALLABLE(onResolve)) onResolve = PromiseIdResolveHandler;
   if (!IS_CALLABLE(onReject)) onReject = PromiseIdRejectHandler;
@@ -559,6 +537,9 @@ function PromiseRace(iterable) {
 // Utility for debugger
 
 function PromiseHasUserDefinedRejectHandlerCheck(handler, deferred) {
+  // If this handler was installed by async/await, it does not indicate
+  // that there is a user-defined reject handler.
+  if (GET_PRIVATE(handler, promiseAwaitHandlerSymbol)) return false;
   if (handler !== PromiseIdRejectHandler) {
     var combinedDeferred = GET_PRIVATE(handler, promiseCombinedDeferredSymbol);
     if (IS_UNDEFINED(combinedDeferred)) return true;
@@ -572,16 +553,22 @@ function PromiseHasUserDefinedRejectHandlerCheck(handler, deferred) {
 }
 
 function PromiseHasUserDefinedRejectHandlerRecursive(promise) {
+  // If this promise was marked as being handled by a catch block
+  // in an async function, then it has a user-defined reject handler.
+  if (GET_PRIVATE(promise, promiseHandledHintSymbol)) return true;
+
   var queue = GET_PRIVATE(promise, promiseRejectReactionsSymbol);
   var deferreds = GET_PRIVATE(promise, promiseDeferredReactionsSymbol);
+
   if (IS_UNDEFINED(queue)) return false;
+
   if (!IS_ARRAY(queue)) {
     return PromiseHasUserDefinedRejectHandlerCheck(queue, deferreds);
-  } else {
-    for (var i = 0; i < queue.length; i += 2) {
-      if (PromiseHasUserDefinedRejectHandlerCheck(queue[i], queue[i + 1])) {
-        return true;
-      }
+  }
+
+  for (var i = 0; i < queue.length; i += 2) {
+    if (PromiseHasUserDefinedRejectHandlerCheck(queue[i], queue[i + 1])) {
+      return true;
     }
   }
   return false;
@@ -627,8 +614,6 @@ utils.InstallFunctions(GlobalPromise.prototype, DONT_ENUM, [
   "promise_reject", DoRejectPromise,
   "promise_resolve", ResolvePromise,
   "promise_then", PromiseThen,
-  "promise_create_rejected", PromiseCreateRejected,
-  "promise_create_resolved", PromiseCreateResolved
 ]);
 
 // This allows extras to create promises quickly without building extra
@@ -641,12 +626,15 @@ utils.InstallFunctions(extrasUtils, 0, [
 ]);
 
 utils.Export(function(to) {
-  to.PromiseCastResolved = PromiseCastResolved;
+  to.IsPromise = IsPromise;
+  to.PromiseCreate = PromiseCreate;
   to.PromiseThen = PromiseThen;
 
   to.GlobalPromise = GlobalPromise;
   to.NewPromiseCapability = NewPromiseCapability;
   to.PerformPromiseThen = PerformPromiseThen;
+  to.ResolvePromise = ResolvePromise;
+  to.RejectPromise = RejectPromise;
 });
 
 })

@@ -23,7 +23,6 @@
 #include "src/messages.h"
 #include "src/regexp/regexp-stack.h"
 #include "src/runtime/runtime.h"
-#include "src/tracing/trace-event.h"
 #include "src/zone.h"
 
 namespace v8 {
@@ -52,6 +51,7 @@ class Counters;
 class CpuFeatures;
 class CpuProfiler;
 class DeoptimizerData;
+class DescriptorLookupCache;
 class Deserializer;
 class EmptyStatement;
 class ExternalCallbackScope;
@@ -63,6 +63,7 @@ class HStatistics;
 class HTracer;
 class InlineRuntimeFunctionsTable;
 class InnerPointerToCodeCache;
+class KeyedLookupCache;
 class Logger;
 class MaterializedObjectStore;
 class OptimizingCompileDispatcher;
@@ -672,7 +673,13 @@ class Isolate {
   // Push and pop a promise and the current try-catch handler.
   void PushPromise(Handle<JSObject> promise);
   void PopPromise();
+
+  // Return the relevant Promise that a throw/rejection pertains to, based
+  // on the contents of the Promise stack
   Handle<Object> GetPromiseOnStackOnThrow();
+
+  // Heuristically guess whether a Promise is handled by user catch handler
+  bool PromiseHasUserDefinedRejectHandler(Handle<Object> promise);
 
   class ExceptionScope {
    public:
@@ -750,7 +757,9 @@ class Isolate {
     NOT_CAUGHT,
     CAUGHT_BY_JAVASCRIPT,
     CAUGHT_BY_EXTERNAL,
-    CAUGHT_BY_DESUGARING
+    CAUGHT_BY_DESUGARING,
+    CAUGHT_BY_PROMISE,
+    CAUGHT_BY_ASYNC_AWAIT
   };
   CatchType PredictExceptionCatcher();
 
@@ -843,9 +852,6 @@ class Isolate {
     DCHECK(counters_ != NULL);
     return counters_;
   }
-  tracing::TraceEventStatsTable* trace_event_stats_table() {
-    return &trace_event_stats_table_;
-  }
   RuntimeProfiler* runtime_profiler() { return runtime_profiler_; }
   CompilationCache* compilation_cache() { return compilation_cache_; }
   Logger* logger() {
@@ -889,7 +895,6 @@ class Isolate {
     return handle_scope_implementer_;
   }
   Zone* runtime_zone() { return runtime_zone_; }
-  Zone* interface_descriptor_zone() { return interface_descriptor_zone_; }
 
   UnicodeCache* unicode_cache() {
     return unicode_cache_;
@@ -1165,6 +1170,12 @@ class Isolate {
 
   bool IsIsolateInBackground() { return is_isolate_in_background_; }
 
+  PRINTF_FORMAT(2, 3) void PrintWithTimestamp(const char* format, ...);
+
+#ifdef USE_SIMULATOR
+  base::Mutex* simulator_i_cache_mutex() { return &simulator_i_cache_mutex_; }
+#endif
+
  protected:
   explicit Isolate(bool enable_serializer);
   bool IsArrayOrObjectPrototype(Object* object);
@@ -1303,7 +1314,6 @@ class Isolate {
   RuntimeProfiler* runtime_profiler_;
   CompilationCache* compilation_cache_;
   Counters* counters_;
-  tracing::TraceEventStatsTable trace_event_stats_table_;
   base::RecursiveMutex break_access_;
   Logger* logger_;
   StackGuard stack_guard_;
@@ -1326,7 +1336,6 @@ class Isolate {
   UnicodeCache* unicode_cache_;
   base::AccountingAllocator* allocator_;
   Zone* runtime_zone_;
-  Zone* interface_descriptor_zone_;
   InnerPointerToCodeCache* inner_pointer_to_code_cache_;
   GlobalHandles* global_handles_;
   EternalHandles* eternal_handles_;
@@ -1442,6 +1451,10 @@ class Isolate {
 
   v8::Isolate::AbortOnUncaughtExceptionCallback
       abort_on_uncaught_exception_callback_;
+
+#ifdef USE_SIMULATOR
+  base::Mutex simulator_i_cache_mutex_;
+#endif
 
   friend class ExecutionAccess;
   friend class HandleScopeImplementer;

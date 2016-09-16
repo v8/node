@@ -14,12 +14,18 @@ namespace internal {
 
 
 class AstRawString;
-
+class ModuleInfoEntry;
 
 class ModuleDescriptor : public ZoneObject {
  public:
   explicit ModuleDescriptor(Zone* zone)
-      : exports_(1, zone), special_imports_(1, zone), regular_imports_(zone) {}
+      : special_exports_(1, zone),
+        special_imports_(1, zone),
+        regular_exports_(zone),
+        regular_imports_(zone) {}
+
+  // The following Add* methods are high-level convenience functions for use by
+  // the parser.
 
   // import x from "foo.js";
   // import {x} from "foo.js";
@@ -67,38 +73,87 @@ class ModuleDescriptor : public ZoneObject {
   bool Validate(ModuleScope* module_scope,
                 PendingCompilationErrorHandler* error_handler, Zone* zone);
 
-  struct ModuleEntry : public ZoneObject {
+  struct Entry : public ZoneObject {
     const Scanner::Location location;
     const AstRawString* export_name;
     const AstRawString* local_name;
     const AstRawString* import_name;
     const AstRawString* module_request;
 
-    explicit ModuleEntry(Scanner::Location loc)
+    // TODO(neis): Remove local_name component?
+    explicit Entry(Scanner::Location loc)
         : location(loc),
           export_name(nullptr),
           local_name(nullptr),
           import_name(nullptr),
           module_request(nullptr) {}
+
+    // (De-)serialization support.
+    // Note that the location value is not preserved as it's only needed by the
+    // parser.  (A Deserialize'd entry has an invalid location.)
+    Handle<ModuleInfoEntry> Serialize(Isolate* isolate) const;
+    static Entry* Deserialize(Isolate* isolate, AstValueFactory* avfactory,
+                              Handle<ModuleInfoEntry> entry);
   };
 
-  const ZoneList<ModuleEntry*>& exports() const { return exports_; }
-
   // Empty imports and namespace imports.
-  const ZoneList<const ModuleEntry*>& special_imports() const {
+  const ZoneList<const Entry*>& special_imports() const {
     return special_imports_;
   }
 
   // All the remaining imports, indexed by local name.
-  const ZoneMap<const AstRawString*, const ModuleEntry*>& regular_imports()
-      const {
+  const ZoneMap<const AstRawString*, const Entry*>& regular_imports() const {
     return regular_imports_;
   }
 
+  // Star exports and explicitly indirect exports.
+  const ZoneList<const Entry*>& special_exports() const {
+    return special_exports_;
+  }
+
+  // All the remaining exports, indexed by local name.
+  const ZoneMultimap<const AstRawString*, Entry*>& regular_exports() const {
+    return regular_exports_;
+  }
+
+  void AddRegularExport(Entry* entry) {
+    DCHECK_NOT_NULL(entry->export_name);
+    DCHECK_NOT_NULL(entry->local_name);
+    DCHECK_NULL(entry->import_name);
+    regular_exports_.insert(std::make_pair(entry->local_name, entry));
+  }
+
+  void AddSpecialExport(const Entry* entry, Zone* zone) {
+    DCHECK_NOT_NULL(entry->module_request);
+    special_exports_.Add(entry, zone);
+  }
+
+  void AddRegularImport(const Entry* entry) {
+    DCHECK_NOT_NULL(entry->import_name);
+    DCHECK_NOT_NULL(entry->local_name);
+    DCHECK_NOT_NULL(entry->module_request);
+    DCHECK_NULL(entry->export_name);
+    regular_imports_.insert(std::make_pair(entry->local_name, entry));
+    // We don't care if there's already an entry for this local name, as in that
+    // case we will report an error when declaring the variable.
+  }
+
+  void AddSpecialImport(const Entry* entry, Zone* zone) {
+    DCHECK_NOT_NULL(entry->module_request);
+    DCHECK_NULL(entry->export_name);
+    special_imports_.Add(entry, zone);
+  }
+
  private:
-  ZoneList<ModuleEntry*> exports_;
-  ZoneList<const ModuleEntry*> special_imports_;
-  ZoneMap<const AstRawString*, const ModuleEntry*> regular_imports_;
+  // TODO(neis): Use STL datastructure instead of ZoneList?
+  ZoneList<const Entry*> special_exports_;
+  ZoneList<const Entry*> special_imports_;
+  ZoneMultimap<const AstRawString*, Entry*> regular_exports_;
+  ZoneMap<const AstRawString*, const Entry*> regular_imports_;
+
+  // If there are multiple export entries with the same export name, return the
+  // last of them (in source order).  Otherwise return nullptr.
+  const Entry* FindDuplicateExport(Zone* zone) const;
 
   // Find any implicitly indirect exports and make them explicit.
   //
@@ -116,7 +171,7 @@ class ModuleDescriptor : public ZoneObject {
   // into:
   //   import {a as b} from "X"; export {a as c} from "X";
   // (The import entry is never deleted.)
-  void MakeIndirectExportsExplicit();
+  void MakeIndirectExportsExplicit(Zone* zone);
 };
 
 }  // namespace internal

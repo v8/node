@@ -23,10 +23,10 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-class MachineOperatorReducerTest : public TypedGraphTest {
+class MachineOperatorReducerTest : public GraphTest {
  public:
   explicit MachineOperatorReducerTest(int num_parameters = 2)
-      : TypedGraphTest(num_parameters), machine_(zone()) {}
+      : GraphTest(num_parameters), machine_(zone()) {}
 
  protected:
   Reduction Reduce(Node* node) {
@@ -1768,6 +1768,37 @@ TEST_F(MachineOperatorReducerTest, Float64Log1pWithConstant) {
     EXPECT_THAT(
         r.replacement(),
         IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::log1p(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Pow
+
+TEST_F(MachineOperatorReducerTest, Float64PowWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    TRACED_FOREACH(double, y, kFloat64Values) {
+      Reduction const r = Reduce(graph()->NewNode(
+          machine()->Float64Pow(), Float64Constant(x), Float64Constant(y)));
+      ASSERT_TRUE(r.Changed());
+      EXPECT_THAT(r.replacement(),
+                  IsFloat64Constant(NanSensitiveDoubleEq(Pow(x, y))));
+    }
+  }
+}
+
+TEST_F(MachineOperatorReducerTest, Float64PowWithZeroExponent) {
+  Node* const p0 = Parameter(0);
+  {
+    Reduction const r = Reduce(
+        graph()->NewNode(machine()->Float64Pow(), p0, Float64Constant(-0.0)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(), IsFloat64Constant(1.0));
+  }
+  {
+    Reduction const r = Reduce(
+        graph()->NewNode(machine()->Float64Pow(), p0, Float64Constant(0.0)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(), IsFloat64Constant(1.0));
   }
 }
 

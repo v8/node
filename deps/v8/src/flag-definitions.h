@@ -119,31 +119,27 @@ struct MaybeBoolFlag {
 #else
 #define DEBUG_BOOL false
 #endif
-#if (defined CAN_USE_VFP3_INSTRUCTIONS) || !(defined ARM_TEST_NO_FEATURE_PROBE)
-#define ENABLE_VFP3_DEFAULT true
+
+// Supported ARM configurations are:
+//  "armv6":       ARMv6 + VFPv2
+//  "armv7":       ARMv7 + VFPv3-D32 + NEON
+//  "armv7+sudiv": ARMv7 + VFPv4-D32 + NEON + SUDIV
+//  "armv8":       ARMv8 (including all of the above)
+#if !defined(ARM_TEST_NO_FEATURE_PROBE) ||                            \
+    (defined(CAN_USE_ARMV8_INSTRUCTIONS) &&                           \
+     defined(CAN_USE_ARMV7_INSTRUCTIONS) && defined(CAN_USE_SUDIV) && \
+     defined(CAN_USE_NEON) && defined(CAN_USE_VFP3_INSTRUCTIONS))
+#define ARM_ARCH_DEFAULT "armv8"
+#elif defined(CAN_USE_ARMV7_INSTRUCTIONS) && defined(CAN_USE_SUDIV) && \
+    defined(CAN_USE_NEON) && defined(CAN_USE_VFP3_INSTRUCTIONS)
+#define ARM_ARCH_DEFAULT "armv7+sudiv"
+#elif defined(CAN_USE_ARMV7_INSTRUCTIONS) && defined(CAN_USE_NEON) && \
+    defined(CAN_USE_VFP3_INSTRUCTIONS)
+#define ARM_ARCH_DEFAULT "armv7"
 #else
-#define ENABLE_VFP3_DEFAULT false
+#define ARM_ARCH_DEFAULT "armv6"
 #endif
-#if (defined CAN_USE_ARMV7_INSTRUCTIONS) || !(defined ARM_TEST_NO_FEATURE_PROBE)
-#define ENABLE_ARMV7_DEFAULT true
-#else
-#define ENABLE_ARMV7_DEFAULT false
-#endif
-#if (defined CAN_USE_ARMV8_INSTRUCTIONS) || !(defined ARM_TEST_NO_FEATURE_PROBE)
-#define ENABLE_ARMV8_DEFAULT true
-#else
-#define ENABLE_ARMV8_DEFAULT false
-#endif
-#if (defined CAN_USE_VFP32DREGS) || !(defined ARM_TEST_NO_FEATURE_PROBE)
-#define ENABLE_32DREGS_DEFAULT true
-#else
-#define ENABLE_32DREGS_DEFAULT false
-#endif
-#if (defined CAN_USE_NEON) || !(defined ARM_TEST_NO_FEATURE_PROBE)
-# define ENABLE_NEON_DEFAULT true
-#else
-# define ENABLE_NEON_DEFAULT false
-#endif
+
 #ifdef V8_OS_WIN
 # define ENABLE_LOG_COLOUR false
 #else
@@ -184,9 +180,6 @@ DEFINE_BOOL(harmony, false, "enable all completed harmony features")
 DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
 DEFINE_IMPLICATION(es_staging, harmony)
 
-DEFINE_BOOL(intl_extra, false, "additional V8 Intl functions")
-// Removing extra Intl functions is shipped
-DEFINE_NEG_VALUE_IMPLICATION(harmony_shipping, intl_extra, true)
 
 // Activate on ClusterFuzz.
 DEFINE_IMPLICATION(es_staging, harmony_regexp_lookbehind)
@@ -206,7 +199,8 @@ DEFINE_IMPLICATION(es_staging, move_object_start)
   V(harmony_regexp_property, "harmony unicode regexp property classes") \
   V(harmony_for_in, "harmony for-in syntax")                            \
   V(harmony_trailing_commas,                                            \
-    "harmony trailing commas in function parameter lists")
+    "harmony trailing commas in function parameter lists")              \
+  V(harmony_class_fields, "harmony public fields in class literals")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED_BASE(V)                                               \
@@ -216,8 +210,9 @@ DEFINE_IMPLICATION(es_staging, move_object_start)
   V(harmony_string_padding, "harmony String-padding methods")
 
 #ifdef V8_I18N_SUPPORT
-#define HARMONY_STAGED(V) \
-  HARMONY_STAGED_BASE(V)  \
+#define HARMONY_STAGED(V)                                          \
+  HARMONY_STAGED_BASE(V)                                           \
+  V(datetime_format_to_parts, "Intl.DateTimeFormat.formatToParts") \
   V(icu_case_mapping, "case mapping with ICU rather than Unibrow")
 #else
 #define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
@@ -405,6 +400,8 @@ DEFINE_BOOL(flush_optimized_code_cache, false,
 DEFINE_BOOL(inline_construct, true, "inline constructor calls")
 DEFINE_BOOL(inline_arguments, true, "inline functions with arguments object")
 DEFINE_BOOL(inline_accessors, true, "inline JavaScript accessors")
+DEFINE_BOOL(inline_into_try, false, "inline into try blocks")
+DEFINE_IMPLICATION(turbo, inline_into_try)
 DEFINE_INT(escape_analysis_iterations, 2,
            "maximum number of escape analysis fix-point iterations")
 
@@ -530,6 +527,10 @@ DEFINE_BOOL(wasm_simd_prototype, false,
 DEFINE_BOOL(wasm_eh_prototype, false,
             "enable prototype exception handling opcodes for wasm")
 
+DEFINE_BOOL(wasm_trap_handler, false,
+            "use signal handlers to catch out of bounds memory access in wasm"
+            " (currently Linux x86_64 only)")
+
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
 // 0x1800 fits in the immediate field of an ARM instruction.
@@ -548,6 +549,7 @@ DEFINE_IMPLICATION(trace_opt_verbose, trace_opt)
 DEFINE_BOOL(debug_code, false, "generate extra code (assertions) for debugging")
 DEFINE_BOOL(code_comments, false, "emit comments in code disassembly")
 DEFINE_BOOL(enable_sse3, true, "enable use of SSE3 instructions if available")
+DEFINE_BOOL(enable_ssse3, true, "enable use of SSSE3 instructions if available")
 DEFINE_BOOL(enable_sse4_1, true,
             "enable use of SSE4.1 instructions if available")
 DEFINE_BOOL(enable_sahf, true,
@@ -559,35 +561,29 @@ DEFINE_BOOL(enable_bmi2, true, "enable use of BMI2 instructions if available")
 DEFINE_BOOL(enable_lzcnt, true, "enable use of LZCNT instruction if available")
 DEFINE_BOOL(enable_popcnt, true,
             "enable use of POPCNT instruction if available")
-DEFINE_BOOL(enable_vfp3, ENABLE_VFP3_DEFAULT,
-            "enable use of VFP3 instructions if available")
-DEFINE_BOOL(enable_armv7, ENABLE_ARMV7_DEFAULT,
-            "enable use of ARMv7 instructions if available (ARM only)")
-DEFINE_BOOL(enable_armv8, ENABLE_ARMV8_DEFAULT,
-            "enable use of ARMv8 instructions if available (ARM 32-bit only)")
-DEFINE_BOOL(enable_neon, ENABLE_NEON_DEFAULT,
-            "enable use of NEON instructions if available (ARM only)")
-DEFINE_BOOL(enable_sudiv, true,
-            "enable use of SDIV and UDIV instructions if available (ARM only)")
+DEFINE_STRING(arm_arch, ARM_ARCH_DEFAULT,
+              "generate instructions for the selected ARM architecture if "
+              "available: armv6, armv7, armv7+sudiv or armv8")
 DEFINE_BOOL(enable_movw_movt, false,
-            "enable loading 32-bit constant by means of movw/movt "
-            "instruction pairs (ARM only)")
-DEFINE_BOOL(enable_32dregs, ENABLE_32DREGS_DEFAULT,
-            "enable use of d16-d31 registers on ARM - this requires VFP3")
+            "prefer to load 32-bit constants using movw/movt instruction pairs "
+            "(ARM only)")
 DEFINE_BOOL(enable_vldr_imm, false,
             "enable use of constant pools for double immediate (ARM only)")
 DEFINE_BOOL(force_long_branches, false,
             "force all emitted branches to be in long mode (MIPS/PPC only)")
 DEFINE_STRING(mcpu, "auto", "enable optimization for specific cpu")
 
+// Deprecated ARM flags (replaced by arm_arch).
+DEFINE_MAYBE_BOOL(enable_armv7, "deprecated (use --arm_arch instead)")
+DEFINE_MAYBE_BOOL(enable_vfp3, "deprecated (use --arm_arch instead)")
+DEFINE_MAYBE_BOOL(enable_32dregs, "deprecated (use --arm_arch instead)")
+DEFINE_MAYBE_BOOL(enable_neon, "deprecated (use --arm_arch instead)")
+DEFINE_MAYBE_BOOL(enable_sudiv, "deprecated (use --arm_arch instead)")
+DEFINE_MAYBE_BOOL(enable_armv8, "deprecated (use --arm_arch instead)")
+
 // regexp-macro-assembler-*.cc
 DEFINE_BOOL(enable_regexp_unaligned_accesses, true,
             "enable unaligned accesses for the regexp engine")
-
-DEFINE_IMPLICATION(enable_armv8, enable_vfp3)
-DEFINE_IMPLICATION(enable_armv8, enable_neon)
-DEFINE_IMPLICATION(enable_armv8, enable_32dregs)
-DEFINE_IMPLICATION(enable_armv8, enable_sudiv)
 
 // bootstrapper.cc
 DEFINE_STRING(expose_natives_as, NULL, "expose natives in global object")
@@ -736,7 +732,7 @@ DEFINE_BOOL(age_code, true,
             "track un-executed functions to age code and flush only "
             "old code (required for code flushing)")
 DEFINE_BOOL(incremental_marking, true, "use incremental marking")
-DEFINE_BOOL(incremental_marking_wrappers, true,
+DEFINE_BOOL(incremental_marking_wrappers, false,
             "use incremental marking for marking wrappers")
 DEFINE_INT(min_progress_during_incremental_marking_finalization, 32,
            "keep finalizing incremental marking as long as we discover at "
@@ -924,11 +920,6 @@ DEFINE_BOOL(stress_compaction, false,
 DEFINE_BOOL(manual_evacuation_candidates_selection, false,
             "Test mode only flag. It allows an unit test to select evacuation "
             "candidates pages (requires --stress_compaction).")
-
-// api.cc
-DEFINE_INT(external_allocation_limit_incremental_time, 1,
-           "Time spent in incremental marking steps (in ms) once the external "
-           "allocation limit is reached")
 
 DEFINE_BOOL(disable_old_api_accessors, false,
             "Disable old-style API accessors whose setters trigger through the "
@@ -1187,8 +1178,6 @@ DEFINE_BOOL(enable_embedded_constant_pool, V8_EMBEDDED_CONSTANT_POOL,
 DEFINE_BOOL(unbox_double_fields, V8_DOUBLE_FIELDS_UNBOXING,
             "enable in-object double fields unboxing (64-bit only)")
 DEFINE_IMPLICATION(unbox_double_fields, track_double_fields)
-
-DEFINE_BOOL(global_var_shortcuts, false, "use ic-less global loads and stores")
 
 
 // Cleanup...

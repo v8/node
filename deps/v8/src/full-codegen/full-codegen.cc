@@ -10,6 +10,7 @@
 #include "src/ast/scopes.h"
 #include "src/code-factory.h"
 #include "src/codegen.h"
+#include "src/compilation-info.h"
 #include "src/compiler.h"
 #include "src/debug/debug.h"
 #include "src/debug/liveedit.h"
@@ -25,15 +26,69 @@ namespace internal {
 
 #define __ ACCESS_MASM(masm())
 
+class FullCodegenCompilationJob final : public CompilationJob {
+ public:
+  explicit FullCodegenCompilationJob(CompilationInfo* info)
+      : CompilationJob(info->isolate(), info, "Full-Codegen") {}
+
+  bool can_execute_on_background_thread() const override { return false; }
+
+  CompilationJob::Status PrepareJobImpl() final { return SUCCEEDED; }
+
+  CompilationJob::Status ExecuteJobImpl() final {
+    DCHECK(ThreadId::Current().Equals(isolate()->thread_id()));
+    return FullCodeGenerator::MakeCode(info(), stack_limit()) ? SUCCEEDED
+                                                              : FAILED;
+  }
+
+  CompilationJob::Status FinalizeJobImpl() final { return SUCCEEDED; }
+};
+
+FullCodeGenerator::FullCodeGenerator(MacroAssembler* masm,
+                                     CompilationInfo* info,
+                                     uintptr_t stack_limit)
+    : masm_(masm),
+      info_(info),
+      isolate_(info->isolate()),
+      zone_(info->zone()),
+      scope_(info->scope()),
+      nesting_stack_(NULL),
+      loop_depth_(0),
+      operand_stack_depth_(0),
+      globals_(NULL),
+      context_(NULL),
+      bailout_entries_(info->HasDeoptimizationSupport()
+                           ? info->literal()->ast_node_count()
+                           : 0,
+                       info->zone()),
+      back_edges_(2, info->zone()),
+      handler_table_(info->zone()),
+      source_position_table_builder_(info->zone(),
+                                     info->SourcePositionRecordingMode()),
+      ic_total_count_(0) {
+  DCHECK(!info->IsStub());
+  Initialize(stack_limit);
+}
+
+// static
+CompilationJob* FullCodeGenerator::NewCompilationJob(CompilationInfo* info) {
+  return new FullCodegenCompilationJob(info);
+}
+
+// static
 bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
+  return MakeCode(info, info->isolate()->stack_guard()->real_climit());
+}
+
+// static
+bool FullCodeGenerator::MakeCode(CompilationInfo* info, uintptr_t stack_limit) {
   Isolate* isolate = info->isolate();
 
   DCHECK(!FLAG_minimal);
   RuntimeCallTimerScope runtimeTimer(isolate,
                                      &RuntimeCallStats::CompileFullCode);
   TimerEventScope<TimerEventCompileFullCode> timer(info->isolate());
-  TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_SCOPED(
-      isolate, &tracing::TraceEventStatsTable::CompileFullCode);
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileFullCode");
 
   Handle<Script> script = info->script();
   if (!script->IsUndefined(isolate) &&
@@ -47,7 +102,7 @@ bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
                       CodeObjectRequired::kYes);
   if (info->will_serialize()) masm.enable_serializer();
 
-  FullCodeGenerator cgen(&masm, info);
+  FullCodeGenerator cgen(&masm, info, stack_limit);
   cgen.Generate();
   if (cgen.HasStackOverflow()) {
     DCHECK(!isolate->has_pending_exception());
@@ -157,9 +212,8 @@ bool FullCodeGenerator::MustCreateArrayLiteralWithRuntime(
          expr->values()->length() > JSArray::kInitialMaxFastElementArray;
 }
 
-
-void FullCodeGenerator::Initialize() {
-  InitializeAstVisitor(info_->isolate());
+void FullCodeGenerator::Initialize(uintptr_t stack_limit) {
+  InitializeAstVisitor(stack_limit);
   masm_->set_emit_debug_code(FLAG_debug_code);
   masm_->set_predictable_code_size(true);
 }
@@ -186,6 +240,12 @@ void FullCodeGenerator::CallStoreIC(TypeFeedbackId id) {
   CallIC(ic, id);
 }
 
+void FullCodeGenerator::CallKeyedStoreIC() {
+  Handle<Code> ic =
+      CodeFactory::KeyedStoreIC(isolate(), language_mode()).code();
+  CallIC(ic);
+  RestoreContext();
+}
 
 void FullCodeGenerator::RecordJSReturnSite(Call* call) {
   // We record the offset of the function return so we can rebuild the frame
@@ -816,8 +876,8 @@ void FullCodeGenerator::VisitForTypeofValue(Expression* expr) {
   DCHECK(!context()->IsEffect());
   DCHECK(!context()->IsTest());
 
-  if (proxy != NULL && (proxy->var()->IsUnallocatedOrGlobalSlot() ||
-                        proxy->var()->IsLookupSlot())) {
+  if (proxy != NULL &&
+      (proxy->var()->IsUnallocated() || proxy->var()->IsLookupSlot())) {
     EmitVariableLoad(proxy, INSIDE_TYPEOF);
     PrepareForBailout(proxy, BailoutState::TOS_REGISTER);
   } else {
@@ -896,6 +956,7 @@ void FullCodeGenerator::EmitContinue(Statement* target) {
   // accumulator on the stack.
   ClearAccumulator();
   while (!current->IsContinueTarget(target)) {
+    if (HasStackOverflow()) return;
     if (current->IsTryFinally()) {
       Comment cmnt(masm(), "[ Deferred continue through finally");
       current->Exit(&context_length);
@@ -936,6 +997,7 @@ void FullCodeGenerator::EmitBreak(Statement* target) {
   // accumulator on the stack.
   ClearAccumulator();
   while (!current->IsBreakTarget(target)) {
+    if (HasStackOverflow()) return;
     if (current->IsTryFinally()) {
       Comment cmnt(masm(), "[ Deferred break through finally");
       current->Exit(&context_length);
@@ -971,6 +1033,7 @@ void FullCodeGenerator::EmitUnwindAndReturn() {
   NestedStatement* current = nesting_stack_;
   int context_length = 0;
   while (current != NULL) {
+    if (HasStackOverflow()) return;
     if (current->IsTryFinally()) {
       Comment cmnt(masm(), "[ Deferred return through finally");
       current->Exit(&context_length);
@@ -1031,7 +1094,7 @@ void FullCodeGenerator::EmitKeyedPropertyLoad(Property* prop) {
   __ Move(LoadDescriptor::SlotRegister(),
           SmiFromSlot(prop->PropertyFeedbackSlot()));
   CallIC(ic);
-  if (FLAG_tf_load_ic_stub) RestoreContext();
+  RestoreContext();
 }
 
 void FullCodeGenerator::EmitKeyedSuperPropertyLoad(Property* prop) {
@@ -1040,7 +1103,7 @@ void FullCodeGenerator::EmitKeyedSuperPropertyLoad(Property* prop) {
   CallRuntimeWithOperands(Runtime::kLoadKeyedFromSuper);
 }
 
-void FullCodeGenerator::EmitPropertyKey(ObjectLiteralProperty* property,
+void FullCodeGenerator::EmitPropertyKey(LiteralProperty* property,
                                         BailoutId bailout_id) {
   VisitForStackValue(property->key());
   CallRuntimeWithOperands(Runtime::kToName);
@@ -1073,6 +1136,7 @@ void FullCodeGenerator::VisitWithStatement(WithStatement* stmt) {
   RestoreContext();
   PrepareForBailoutForId(stmt->ToObjectId(), BailoutState::TOS_REGISTER);
   PushOperand(result_register());
+  PushOperand(stmt->scope()->scope_info());
   PushFunctionArgumentForContextAllocation();
   CallRuntimeWithOperands(Runtime::kPushWithContext);
   StoreToFrameField(StandardFrameConstants::kContextOffset, context_register());
@@ -1274,6 +1338,7 @@ void FullCodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   { Comment cmnt(masm_, "[ Extend catch context");
     PushOperand(stmt->variable()->name());
     PushOperand(result_register());
+    PushOperand(stmt->scope()->scope_info());
     PushFunctionArgumentForContextAllocation();
     CallRuntimeWithOperands(Runtime::kPushCatchContext);
     StoreToFrameField(StandardFrameConstants::kContextOffset,
@@ -1847,7 +1912,7 @@ FullCodeGenerator::EnterBlockScopeIfNeeded::EnterBlockScopeIfNeeded(
     {
       if (needs_block_context_) {
         Comment cmnt(masm(), "[ Extend block context");
-        codegen_->PushOperand(scope->GetScopeInfo(codegen->isolate()));
+        codegen_->PushOperand(scope->scope_info());
         codegen_->PushFunctionArgumentForContextAllocation();
         codegen_->CallRuntimeWithOperands(Runtime::kPushBlockContext);
 
@@ -1939,6 +2004,17 @@ bool FullCodeGenerator::NeedsHoleCheckForLoad(VariableProxy* proxy) {
          var->initializer_position() >= proxy->position();
 }
 
+Handle<Script> FullCodeGenerator::script() { return info_->script(); }
+
+LanguageMode FullCodeGenerator::language_mode() {
+  return scope()->language_mode();
+}
+
+bool FullCodeGenerator::has_simple_parameters() {
+  return info_->has_simple_parameters();
+}
+
+FunctionLiteral* FullCodeGenerator::literal() const { return info_->literal(); }
 
 #undef __
 

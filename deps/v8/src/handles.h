@@ -206,6 +206,10 @@ class MaybeHandle final {
     USE(a);
   }
 
+  template <typename S>
+  V8_INLINE MaybeHandle(S* object, Isolate* isolate)
+      : MaybeHandle(handle(object, isolate)) {}
+
   V8_INLINE void Assert() const { DCHECK_NOT_NULL(location_); }
   V8_INLINE void Check() const { CHECK_NOT_NULL(location_); }
 
@@ -293,8 +297,6 @@ class HandleScope {
 
  private:
   // Prevent heap allocation or illegal handle scopes.
-  HandleScope(const HandleScope&);
-  void operator=(const HandleScope&);
   void* operator new(size_t size);
   void operator delete(void* size_t);
 
@@ -320,6 +322,8 @@ class HandleScope {
   friend class DeferredHandleScope;
   friend class HandleScopeImplementer;
   friend class Isolate;
+
+  DISALLOW_COPY_AND_ASSIGN(HandleScope);
 };
 
 

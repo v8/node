@@ -1719,7 +1719,6 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   // r5 : feedback vector
   // r6 : slot in feedback vector (Smi)
   Label initialize, done, miss, megamorphic, not_array_function;
-  Label done_initialize_count, done_increment_count;
 
   DCHECK_EQ(*TypeFeedbackVector::MegamorphicSentinel(masm->isolate()),
             masm->isolate()->heap()->megamorphic_symbol());
@@ -1742,7 +1741,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   Register weak_value = r10;
   __ LoadP(weak_value, FieldMemOperand(r8, WeakCell::kValueOffset));
   __ cmp(r4, weak_value);
-  __ beq(&done_increment_count);
+  __ beq(&done);
   __ CompareRoot(r8, Heap::kmegamorphic_symbolRootIndex);
   __ beq(&done);
   __ LoadP(feedback_map, FieldMemOperand(r8, HeapObject::kMapOffset));
@@ -1765,7 +1764,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r8);
   __ cmp(r4, r8);
   __ bne(&megamorphic);
-  __ b(&done_increment_count);
+  __ b(&done);
 
   __ bind(&miss);
 
@@ -1795,32 +1794,22 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   // slot.
   CreateAllocationSiteStub create_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &create_stub);
-  __ b(&done_initialize_count);
+  __ b(&done);
 
   __ bind(&not_array_function);
 
   CreateWeakCellStub weak_cell_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &weak_cell_stub);
 
-  __ bind(&done_initialize_count);
-  // Initialize the call counter.
-  __ LoadSmiLiteral(r8, Smi::FromInt(1));
-  __ SmiToPtrArrayOffset(r7, r6);
-  __ add(r7, r5, r7);
-  __ StoreP(r8, FieldMemOperand(r7, count_offset), r0);
-  __ b(&done);
+  __ bind(&done);
 
-  __ bind(&done_increment_count);
-
-  // Increment the call count for monomorphic function calls.
+  // Increment the call count for all function calls.
   __ SmiToPtrArrayOffset(r8, r6);
   __ add(r8, r5, r8);
 
   __ LoadP(r7, FieldMemOperand(r8, count_offset));
   __ AddSmiLiteral(r7, r7, Smi::FromInt(1), r0);
   __ StoreP(r7, FieldMemOperand(r8, count_offset), r0);
-
-  __ bind(&done);
 }
 
 
@@ -2461,37 +2450,6 @@ void ToStringStub::Generate(MacroAssembler* masm) {
 
   __ push(r3);  // Push argument.
   __ TailCallRuntime(Runtime::kToString);
-}
-
-
-void ToNameStub::Generate(MacroAssembler* masm) {
-  // The ToName stub takes one argument in r3.
-  Label is_number;
-  __ JumpIfSmi(r3, &is_number);
-
-  STATIC_ASSERT(FIRST_NAME_TYPE == FIRST_TYPE);
-  __ CompareObjectType(r3, r4, r4, LAST_NAME_TYPE);
-  // r3: receiver
-  // r4: receiver instance type
-  __ Ret(le);
-
-  Label not_heap_number;
-  __ cmpi(r4, Operand(HEAP_NUMBER_TYPE));
-  __ bne(&not_heap_number);
-  __ bind(&is_number);
-  NumberToStringStub stub(isolate());
-  __ TailCallStub(&stub);
-  __ bind(&not_heap_number);
-
-  Label not_oddball;
-  __ cmpi(r4, Operand(ODDBALL_TYPE));
-  __ bne(&not_oddball);
-  __ LoadP(r3, FieldMemOperand(r3, Oddball::kToStringOffset));
-  __ Ret();
-  __ bind(&not_oddball);
-
-  __ push(r3);  // Push argument.
-  __ TailCallRuntime(Runtime::kToName);
 }
 
 
@@ -4581,7 +4539,7 @@ void FastNewRestParameterStub::Generate(MacroAssembler* masm) {
     // Fall back to %AllocateInNewSpace (if not too big).
     Label too_big_for_new_space;
     __ bind(&allocate);
-    __ Cmpi(r10, Operand(Page::kMaxRegularHeapObjectSize), r0);
+    __ Cmpi(r10, Operand(kMaxRegularHeapObjectSize), r0);
     __ bgt(&too_big_for_new_space);
     {
       FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
@@ -4972,7 +4930,7 @@ void FastNewStrictArgumentsStub::Generate(MacroAssembler* masm) {
   // Fall back to %AllocateInNewSpace (if not too big).
   Label too_big_for_new_space;
   __ bind(&allocate);
-  __ Cmpi(r10, Operand(Page::kMaxRegularHeapObjectSize), r0);
+  __ Cmpi(r10, Operand(kMaxRegularHeapObjectSize), r0);
   __ bgt(&too_big_for_new_space);
   {
     FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);

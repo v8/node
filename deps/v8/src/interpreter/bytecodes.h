@@ -33,6 +33,7 @@ namespace interpreter {
   V(Flag8, OperandTypeInfo::kFixedUnsignedByte)       \
   V(IntrinsicId, OperandTypeInfo::kFixedUnsignedByte) \
   V(Idx, OperandTypeInfo::kScalableUnsignedByte)      \
+  V(UImm, OperandTypeInfo::kScalableUnsignedByte)     \
   V(Imm, OperandTypeInfo::kScalableSignedByte)        \
   V(RegCount, OperandTypeInfo::kScalableUnsignedByte) \
   V(RuntimeId, OperandTypeInfo::kFixedUnsignedShort)
@@ -106,11 +107,11 @@ namespace interpreter {
   V(PushContext, AccumulatorUse::kRead, OperandType::kRegOut)                  \
   V(PopContext, AccumulatorUse::kNone, OperandType::kReg)                      \
   V(LdaContextSlot, AccumulatorUse::kWrite, OperandType::kReg,                 \
-    OperandType::kIdx)                                                         \
+    OperandType::kIdx, OperandType::kUImm)                                     \
   V(LdrContextSlot, AccumulatorUse::kNone, OperandType::kReg,                  \
-    OperandType::kIdx, OperandType::kRegOut)                                   \
+    OperandType::kIdx, OperandType::kUImm, OperandType::kRegOut)               \
   V(StaContextSlot, AccumulatorUse::kRead, OperandType::kReg,                  \
-    OperandType::kIdx)                                                         \
+    OperandType::kIdx, OperandType::kUImm)                                     \
                                                                                \
   /* Load-Store lookup slots */                                                \
   V(LdaLookupSlot, AccumulatorUse::kWrite, OperandType::kIdx)                  \
@@ -205,16 +206,23 @@ namespace interpreter {
                                                                                \
   /* New operator */                                                           \
   V(New, AccumulatorUse::kReadWrite, OperandType::kReg,                        \
-    OperandType::kMaybeReg, OperandType::kRegCount)                            \
+    OperandType::kMaybeReg, OperandType::kRegCount, OperandType::kIdx)         \
                                                                                \
   /* Test Operators */                                                         \
-  V(TestEqual, AccumulatorUse::kReadWrite, OperandType::kReg)                  \
-  V(TestNotEqual, AccumulatorUse::kReadWrite, OperandType::kReg)               \
-  V(TestEqualStrict, AccumulatorUse::kReadWrite, OperandType::kReg)            \
-  V(TestLessThan, AccumulatorUse::kReadWrite, OperandType::kReg)               \
-  V(TestGreaterThan, AccumulatorUse::kReadWrite, OperandType::kReg)            \
-  V(TestLessThanOrEqual, AccumulatorUse::kReadWrite, OperandType::kReg)        \
-  V(TestGreaterThanOrEqual, AccumulatorUse::kReadWrite, OperandType::kReg)     \
+  V(TestEqual, AccumulatorUse::kReadWrite, OperandType::kReg,                  \
+    OperandType::kIdx)                                                         \
+  V(TestNotEqual, AccumulatorUse::kReadWrite, OperandType::kReg,               \
+    OperandType::kIdx)                                                         \
+  V(TestEqualStrict, AccumulatorUse::kReadWrite, OperandType::kReg,            \
+    OperandType::kIdx)                                                         \
+  V(TestLessThan, AccumulatorUse::kReadWrite, OperandType::kReg,               \
+    OperandType::kIdx)                                                         \
+  V(TestGreaterThan, AccumulatorUse::kReadWrite, OperandType::kReg,            \
+    OperandType::kIdx)                                                         \
+  V(TestLessThanOrEqual, AccumulatorUse::kReadWrite, OperandType::kReg,        \
+    OperandType::kIdx)                                                         \
+  V(TestGreaterThanOrEqual, AccumulatorUse::kReadWrite, OperandType::kReg,     \
+    OperandType::kIdx)                                                         \
   V(TestInstanceOf, AccumulatorUse::kReadWrite, OperandType::kReg)             \
   V(TestIn, AccumulatorUse::kReadWrite, OperandType::kReg)                     \
                                                                                \
@@ -238,10 +246,10 @@ namespace interpreter {
   /* Context allocation */                                                     \
   V(CreateBlockContext, AccumulatorUse::kReadWrite, OperandType::kIdx)         \
   V(CreateCatchContext, AccumulatorUse::kReadWrite, OperandType::kReg,         \
+    OperandType::kIdx, OperandType::kIdx)                                      \
+  V(CreateFunctionContext, AccumulatorUse::kWrite, OperandType::kUImm)         \
+  V(CreateWithContext, AccumulatorUse::kReadWrite, OperandType::kReg,          \
     OperandType::kIdx)                                                         \
-  /* TODO(klaasb) rename Idx or add unsigned Imm OperandType? */               \
-  V(CreateFunctionContext, AccumulatorUse::kWrite, OperandType::kIdx)          \
-  V(CreateWithContext, AccumulatorUse::kReadWrite, OperandType::kReg)          \
                                                                                \
   /* Arguments allocation */                                                   \
   V(CreateMappedArguments, AccumulatorUse::kWrite)                             \
@@ -265,20 +273,19 @@ namespace interpreter {
   V(JumpIfUndefinedConstant, AccumulatorUse::kRead, OperandType::kIdx)         \
   V(JumpIfNotHole, AccumulatorUse::kRead, OperandType::kImm)                   \
   V(JumpIfNotHoleConstant, AccumulatorUse::kRead, OperandType::kIdx)           \
+  V(JumpLoop, AccumulatorUse::kNone, OperandType::kImm, OperandType::kImm)     \
                                                                                \
   /* Complex flow control For..in */                                           \
   V(ForInPrepare, AccumulatorUse::kNone, OperandType::kReg,                    \
     OperandType::kRegOutTriple)                                                \
-  V(ForInDone, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg)   \
+  V(ForInContinue, AccumulatorUse::kWrite, OperandType::kReg,                  \
+    OperandType::kReg)                                                         \
   V(ForInNext, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,   \
     OperandType::kRegPair, OperandType::kIdx)                                  \
   V(ForInStep, AccumulatorUse::kWrite, OperandType::kReg)                      \
                                                                                \
   /* Perform a stack guard check */                                            \
   V(StackCheck, AccumulatorUse::kNone)                                         \
-                                                                               \
-  /* Perform a check to trigger on-stack replacement */                        \
-  V(OsrPoll, AccumulatorUse::kNone, OperandType::kImm)                         \
                                                                                \
   /* Non-local flow control */                                                 \
   V(Throw, AccumulatorUse::kRead)                                              \

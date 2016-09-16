@@ -13,6 +13,7 @@
 #include "src/wasm/ast-decoder.h"
 #include "src/wasm/wasm-macro-gen.h"
 #include "src/wasm/wasm-module.h"
+#include "src/wasm/wasm-opcodes.h"
 
 namespace v8 {
 namespace internal {
@@ -207,7 +208,7 @@ TEST_F(AstDecoderTest, Float32Const) {
   byte code[] = {kExprF32Const, 0, 0, 0, 0};
   float* ptr = reinterpret_cast<float*>(code + 1);
   for (int i = 0; i < 30; i++) {
-    *ptr = i * -7.75f;
+    WriteLittleEndianValue<float>(ptr, i * -7.75f);
     EXPECT_VERIFIES(sigs.f_ff(), code);
   }
 }
@@ -216,7 +217,7 @@ TEST_F(AstDecoderTest, Float64Const) {
   byte code[] = {kExprF64Const, 0, 0, 0, 0, 0, 0, 0, 0};
   double* ptr = reinterpret_cast<double*>(code + 1);
   for (int i = 0; i < 30; i++) {
-    *ptr = i * 33.45;
+    WriteLittleEndianValue<double>(ptr, i * 33.45);
     EXPECT_VERIFIES(sigs.d_dd(), code);
   }
 }
@@ -236,6 +237,11 @@ TEST_F(AstDecoderTest, GetLocal0_param) {
 TEST_F(AstDecoderTest, GetLocal0_local) {
   AddLocals(kAstI32, 1);
   EXPECT_VERIFIES(sigs.i_v(), kCodeGetLocal0);
+}
+
+TEST_F(AstDecoderTest, TooManyLocals) {
+  AddLocals(kAstI32, 4034986500);
+  EXPECT_FAILURE(sigs.i_v(), kCodeGetLocal0);
 }
 
 TEST_F(AstDecoderTest, GetLocal0_param_n) {
@@ -269,8 +275,23 @@ TEST_F(AstDecoderTest, GetLocal_off_end) {
   EXPECT_FAILURE(sigs.i_i(), code);
 }
 
+TEST_F(AstDecoderTest, NumLocalBelowLimit) {
+  AddLocals(kAstI32, kMaxNumWasmLocals - 1);
+  EXPECT_VERIFIES_INLINE(sigs.v_v(), WASM_NOP);
+}
+
+TEST_F(AstDecoderTest, NumLocalAtLimit) {
+  AddLocals(kAstI32, kMaxNumWasmLocals);
+  EXPECT_VERIFIES_INLINE(sigs.v_v(), WASM_NOP);
+}
+
+TEST_F(AstDecoderTest, NumLocalAboveLimit) {
+  AddLocals(kAstI32, kMaxNumWasmLocals + 1);
+  EXPECT_FAILURE_INLINE(sigs.v_v(), WASM_NOP);
+}
+
 TEST_F(AstDecoderTest, GetLocal_varint) {
-  const int kMaxLocals = 8000000;
+  const int kMaxLocals = kMaxNumWasmLocals;
   AddLocals(kAstI32, kMaxLocals);
 
   for (int index = 0; index < kMaxLocals; index = index * 11 + 5) {
@@ -1059,17 +1080,45 @@ TEST_F(AstDecoderTest, MemorySize) {
   EXPECT_FAILURE(sigs.f_ff(), code);
 }
 
-TEST_F(AstDecoderTest, GrowMemory) {
-  byte code[] = {WASM_UNOP(kExprGrowMemory, WASM_GET_LOCAL(0))};
-  EXPECT_VERIFIES(sigs.i_i(), code);
-  EXPECT_FAILURE(sigs.i_d(), code);
-}
-
 TEST_F(AstDecoderTest, LoadMemOffset) {
   for (int offset = 0; offset < 128; offset += 7) {
     byte code[] = {kExprI8Const, 0, kExprI32LoadMem, ZERO_ALIGNMENT,
                    static_cast<byte>(offset)};
     EXPECT_VERIFIES(sigs.i_i(), code);
+  }
+}
+
+TEST_F(AstDecoderTest, LoadMemAlignment) {
+  struct {
+    WasmOpcode instruction;
+    uint32_t maximum_aligment;
+  } values[] = {
+      {kExprI32LoadMem8U, 0},   // --
+      {kExprI32LoadMem8S, 0},   // --
+      {kExprI32LoadMem16U, 1},  // --
+      {kExprI32LoadMem16S, 1},  // --
+      {kExprI64LoadMem8U, 0},   // --
+      {kExprI64LoadMem8S, 0},   // --
+      {kExprI64LoadMem16U, 1},  // --
+      {kExprI64LoadMem16S, 1},  // --
+      {kExprI64LoadMem32U, 2},  // --
+      {kExprI64LoadMem32S, 2},  // --
+      {kExprI32LoadMem, 2},     // --
+      {kExprI64LoadMem, 3},     // --
+      {kExprF32LoadMem, 2},     // --
+      {kExprF64LoadMem, 3},     // --
+  };
+
+  for (int i = 0; i < arraysize(values); i++) {
+    for (byte alignment = 0; alignment <= 4; alignment++) {
+      byte code[] = {kExprI8Const, 0, static_cast<byte>(values[i].instruction),
+                     alignment, ZERO_OFFSET};
+      if (static_cast<uint32_t>(alignment) <= values[i].maximum_aligment) {
+        EXPECT_VERIFIES(sigs.v_i(), code);
+      } else {
+        EXPECT_FAILURE(sigs.v_i(), code);
+      }
+    }
   }
 }
 
@@ -1441,6 +1490,116 @@ TEST_F(AstDecoderTest, AllSetGlobalCombinations) {
       } else {
         EXPECT_FAILURE_INLINE(&sig, WASM_SET_GLOBAL(0, WASM_GET_LOCAL(0)));
       }
+    }
+  }
+}
+
+TEST_F(AstDecoderTest, WasmGrowMemory) {
+  TestModuleEnv module_env;
+  module = &module_env;
+  module->origin = kWasmOrigin;
+
+  byte code[] = {WASM_UNOP(kExprGrowMemory, WASM_GET_LOCAL(0))};
+  EXPECT_VERIFIES(sigs.i_i(), code);
+  EXPECT_FAILURE(sigs.i_d(), code);
+}
+
+TEST_F(AstDecoderTest, AsmJsGrowMemory) {
+  TestModuleEnv module_env;
+  module = &module_env;
+  module->origin = kAsmJsOrigin;
+
+  byte code[] = {WASM_UNOP(kExprGrowMemory, WASM_GET_LOCAL(0))};
+  EXPECT_FAILURE(sigs.i_i(), code);
+}
+
+TEST_F(AstDecoderTest, AsmJsBinOpsCheckOrigin) {
+  LocalType float32int32float32[] = {kAstF32, kAstI32, kAstF32};
+  FunctionSig sig_f_if(1, 2, float32int32float32);
+  LocalType float64int32float64[] = {kAstF64, kAstI32, kAstF64};
+  FunctionSig sig_d_id(1, 2, float64int32float64);
+  struct {
+    WasmOpcode op;
+    FunctionSig* sig;
+  } AsmJsBinOps[] = {
+      {kExprF64Atan2, sigs.d_dd()},
+      {kExprF64Pow, sigs.d_dd()},
+      {kExprF64Mod, sigs.d_dd()},
+      {kExprI32AsmjsDivS, sigs.i_ii()},
+      {kExprI32AsmjsDivU, sigs.i_ii()},
+      {kExprI32AsmjsRemS, sigs.i_ii()},
+      {kExprI32AsmjsRemU, sigs.i_ii()},
+      {kExprI32AsmjsStoreMem8, sigs.i_ii()},
+      {kExprI32AsmjsStoreMem16, sigs.i_ii()},
+      {kExprI32AsmjsStoreMem, sigs.i_ii()},
+      {kExprF32AsmjsStoreMem, &sig_f_if},
+      {kExprF64AsmjsStoreMem, &sig_d_id},
+  };
+
+  {
+    TestModuleEnv module_env;
+    module = &module_env;
+    module->origin = kAsmJsOrigin;
+    for (int i = 0; i < arraysize(AsmJsBinOps); i++) {
+      TestBinop(AsmJsBinOps[i].op, AsmJsBinOps[i].sig);
+    }
+  }
+
+  {
+    TestModuleEnv module_env;
+    module = &module_env;
+    module->origin = kWasmOrigin;
+    for (int i = 0; i < arraysize(AsmJsBinOps); i++) {
+      byte code[] = {
+          WASM_BINOP(AsmJsBinOps[i].op, WASM_GET_LOCAL(0), WASM_GET_LOCAL(1))};
+      EXPECT_FAILURE(AsmJsBinOps[i].sig, code);
+    }
+  }
+}
+
+TEST_F(AstDecoderTest, AsmJsUnOpsCheckOrigin) {
+  LocalType float32int32[] = {kAstF32, kAstI32};
+  FunctionSig sig_f_i(1, 2, float32int32);
+  LocalType float64int32[] = {kAstF64, kAstI32};
+  FunctionSig sig_d_i(1, 2, float64int32);
+  struct {
+    WasmOpcode op;
+    FunctionSig* sig;
+  } AsmJsUnOps[] = {{kExprF64Acos, sigs.d_d()},
+                    {kExprF64Asin, sigs.d_d()},
+                    {kExprF64Atan, sigs.d_d()},
+                    {kExprF64Cos, sigs.d_d()},
+                    {kExprF64Sin, sigs.d_d()},
+                    {kExprF64Tan, sigs.d_d()},
+                    {kExprF64Exp, sigs.d_d()},
+                    {kExprF64Log, sigs.d_d()},
+                    {kExprI32AsmjsLoadMem8S, sigs.i_i()},
+                    {kExprI32AsmjsLoadMem8U, sigs.i_i()},
+                    {kExprI32AsmjsLoadMem16S, sigs.i_i()},
+                    {kExprI32AsmjsLoadMem16U, sigs.i_i()},
+                    {kExprI32AsmjsLoadMem, sigs.i_i()},
+                    {kExprF32AsmjsLoadMem, &sig_f_i},
+                    {kExprF64AsmjsLoadMem, &sig_d_i},
+                    {kExprI32AsmjsSConvertF32, sigs.i_f()},
+                    {kExprI32AsmjsUConvertF32, sigs.i_f()},
+                    {kExprI32AsmjsSConvertF64, sigs.i_d()},
+                    {kExprI32AsmjsUConvertF64, sigs.i_d()}};
+  {
+    TestModuleEnv module_env;
+    module = &module_env;
+    module->origin = kAsmJsOrigin;
+    for (int i = 0; i < arraysize(AsmJsUnOps); i++) {
+      TestUnop(AsmJsUnOps[i].op, AsmJsUnOps[i].sig);
+    }
+  }
+
+  {
+    TestModuleEnv module_env;
+    module = &module_env;
+    module->origin = kWasmOrigin;
+    for (int i = 0; i < arraysize(AsmJsUnOps); i++) {
+      byte code[] = {WASM_UNOP(AsmJsUnOps[i].op, WASM_GET_LOCAL(0))};
+      EXPECT_FAILURE(AsmJsUnOps[i].sig, code);
     }
   }
 }
@@ -1844,73 +2003,17 @@ TEST_F(AstDecoderTest, Throw) {
 #define WASM_CATCH(local) kExprCatch, static_cast<byte>(local)
 TEST_F(AstDecoderTest, TryCatch) {
   FLAG_wasm_eh_prototype = true;
-  EXPECT_VERIFIES_INLINE(sigs.v_i(), kExprTryCatch, WASM_CATCH(0), kExprEnd);
+  EXPECT_VERIFIES_INLINE(sigs.v_i(), kExprTry, WASM_CATCH(0), kExprEnd);
 
   // Missing catch.
-  EXPECT_FAILURE_INLINE(sigs.v_v(), kExprTryCatch, kExprEnd);
+  EXPECT_FAILURE_INLINE(sigs.v_v(), kExprTry, kExprEnd);
 
   // Missing end.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatch, WASM_CATCH(0));
+  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTry, WASM_CATCH(0));
 
   // Double catch.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatch, WASM_CATCH(0), WASM_CATCH(0),
+  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTry, WASM_CATCH(0), WASM_CATCH(0),
                         kExprEnd);
-
-  // Unexpected finally.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatch, WASM_CATCH(0), kExprFinally,
-                        kExprEnd);
-}
-
-TEST_F(AstDecoderTest, TryFinally) {
-  FLAG_wasm_eh_prototype = true;
-  EXPECT_VERIFIES_INLINE(sigs.v_v(), kExprTryFinally, kExprFinally, kExprEnd);
-
-  // Mising finally.
-  EXPECT_FAILURE_INLINE(sigs.v_v(), kExprTryFinally, kExprEnd);
-
-  // Missing end.
-  EXPECT_FAILURE_INLINE(sigs.v_v(), kExprTryFinally, kExprFinally);
-
-  // Double finally.
-  EXPECT_FAILURE_INLINE(sigs.v_v(), kExprTryFinally, kExprFinally, kExprFinally,
-                        kExprEnd);
-
-  // Unexpected catch.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatch, WASM_CATCH(0), kExprFinally,
-                        kExprEnd);
-}
-
-TEST_F(AstDecoderTest, TryCatchFinally) {
-  FLAG_wasm_eh_prototype = true;
-  EXPECT_VERIFIES_INLINE(sigs.v_i(), kExprTryCatchFinally, WASM_CATCH(0),
-                         kExprFinally, kExprEnd);
-
-  // Missing catch.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, kExprFinally,
-                        kExprEnd);
-
-  // Double catch.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, WASM_CATCH(0),
-                        WASM_CATCH(0), kExprFinally, kExprEnd);
-
-  // Missing finally.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, WASM_CATCH(0),
-                        kExprEnd);
-
-  // Double finally.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, WASM_CATCH(0),
-                        kExprFinally, kExprFinally, kExprEnd);
-
-  // Finally before catch.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, kExprFinally,
-                        WASM_CATCH(0), kExprEnd);
-
-  // Missing both try and finally.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, kExprEnd);
-
-  // Missing end.
-  EXPECT_FAILURE_INLINE(sigs.v_i(), kExprTryCatchFinally, WASM_CATCH(0),
-                        kExprFinally);
 }
 
 class WasmOpcodeLengthTest : public TestWithZone {
@@ -1941,11 +2044,8 @@ TEST_F(WasmOpcodeLengthTest, Statements) {
   EXPECT_LENGTH(3, kExprBr);
   EXPECT_LENGTH(3, kExprBrIf);
   EXPECT_LENGTH(1, kExprThrow);
-  EXPECT_LENGTH(1, kExprTryCatch);
-  EXPECT_LENGTH(1, kExprTryFinally);
-  EXPECT_LENGTH(1, kExprTryCatchFinally);
+  EXPECT_LENGTH(1, kExprTry);
   EXPECT_LENGTH(2, kExprCatch);
-  EXPECT_LENGTH(1, kExprFinally);
 }
 
 TEST_F(WasmOpcodeLengthTest, MiscExpressions) {
@@ -2189,11 +2289,8 @@ TEST_F(WasmOpcodeArityTest, Control) {
   }
 
   EXPECT_ARITY(0, kExprThrow);
-  EXPECT_ARITY(0, kExprTryCatch);
-  EXPECT_ARITY(0, kExprTryFinally);
-  EXPECT_ARITY(0, kExprTryCatchFinally);
+  EXPECT_ARITY(0, kExprTry);
   EXPECT_ARITY(1, kExprCatch, 2);
-  EXPECT_ARITY(0, kExprFinally);
 }
 
 TEST_F(WasmOpcodeArityTest, Misc) {

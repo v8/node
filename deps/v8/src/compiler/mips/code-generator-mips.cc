@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/ast/scopes.h"
 #include "src/compiler/code-generator.h"
+#include "src/compilation-info.h"
 #include "src/compiler/code-generator-impl.h"
 #include "src/compiler/gap-resolver.h"
 #include "src/compiler/node-matchers.h"
@@ -692,9 +692,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kArchDebugBreak:
       __ stop("kArchDebugBreak");
-      break;
-    case kArchImpossible:
-      __ Abort(kConversionFromImpossibleValue);
       break;
     case kArchComment: {
       Address comment_string = i.InputExternalReference(0).address();
