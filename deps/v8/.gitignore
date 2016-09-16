@@ -59,7 +59,12 @@ shell_g
 /test/test262/data.tar
 /test/test262/harness
 /testing/gmock
-/testing/gtest
+/testing/gtest/*
+!/testing/gtest/include
+/testing/gtest/include/*
+!/testing/gtest/include/gtest
+/testing/gtest/include/gtest/*
+!/testing/gtest/include/gtest/gtest_prod.h
 /third_party
 /third_party/android_tools
 /third_party/cygwin
