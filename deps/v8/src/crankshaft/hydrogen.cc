@@ -9,6 +9,7 @@
 
 #include "src/allocation-site-scopes.h"
 #include "src/ast/ast-numbering.h"
+#include "src/ast/compile-time-value.h"
 #include "src/ast/scopes.h"
 #include "src/code-factory.h"
 #include "src/crankshaft/hydrogen-bce.h"
@@ -42,7 +43,6 @@
 // GetRootConstructor
 #include "src/ic/ic-inl.h"
 #include "src/isolate-inl.h"
-#include "src/parsing/parser.h"
 #include "src/runtime/runtime.h"
 
 #if V8_TARGET_ARCH_IA32
@@ -2129,8 +2129,7 @@ HValue* HGraphBuilder::BuildRegExpConstructResult(HValue* length,
   return result;
 }
 
-
-HValue* HGraphBuilder::BuildNumberToString(HValue* object, Type* type) {
+HValue* HGraphBuilder::BuildNumberToString(HValue* object, AstType* type) {
   NoObservableSideEffectsScope scope(this);
 
   // Convert constant numbers at compile time.
@@ -2180,7 +2179,7 @@ HValue* HGraphBuilder::BuildNumberToString(HValue* object, Type* type) {
   }
   if_objectissmi.Else();
   {
-    if (type->Is(Type::SignedSmall())) {
+    if (type->Is(AstType::SignedSmall())) {
       if_objectissmi.Deopt(DeoptimizeReason::kExpectedSmi);
     } else {
       // Check if the object is a heap number.
@@ -2236,7 +2235,7 @@ HValue* HGraphBuilder::BuildNumberToString(HValue* object, Type* type) {
       }
       if_objectisnumber.Else();
       {
-        if (type->Is(Type::Number())) {
+        if (type->Is(AstType::Number())) {
           if_objectisnumber.Deopt(DeoptimizeReason::kExpectedHeapNumber);
         }
       }
@@ -2652,7 +2651,7 @@ HValue* HGraphBuilder::BuildUncheckedStringAdd(
 
       IfBuilder if_size(this);
       if_size.If<HCompareNumericAndBranch>(
-          size, Add<HConstant>(Page::kMaxRegularHeapObjectSize), Token::LT);
+          size, Add<HConstant>(kMaxRegularHeapObjectSize), Token::LT);
       if_size.Then();
       {
         // Allocate the string object. HAllocate does not care whether we pass
@@ -3075,9 +3074,10 @@ HValue* HGraphBuilder::BuildGrowElementsCapacity(HValue* object,
                                                  ElementsKind new_kind,
                                                  HValue* length,
                                                  HValue* new_capacity) {
-  Add<HBoundsCheck>(new_capacity, Add<HConstant>(
-          (Page::kMaxRegularHeapObjectSize - FixedArray::kHeaderSize) >>
-          ElementsKindToShiftSize(new_kind)));
+  Add<HBoundsCheck>(
+      new_capacity,
+      Add<HConstant>((kMaxRegularHeapObjectSize - FixedArray::kHeaderSize) >>
+                     ElementsKindToShiftSize(new_kind)));
 
   HValue* new_elements =
       BuildAllocateAndInitializeArray(new_kind, new_capacity);
@@ -3399,16 +3399,6 @@ HInstruction* HGraphBuilder::BuildGetNativeContext(HValue* closure) {
   return Add<HLoadNamedField>(
       context, nullptr,
       HObjectAccess::ForContextSlot(Context::NATIVE_CONTEXT_INDEX));
-}
-
-
-HInstruction* HGraphBuilder::BuildGetScriptContext(int context_index) {
-  HValue* native_context = BuildGetNativeContext();
-  HValue* script_context_table = Add<HLoadNamedField>(
-      native_context, nullptr,
-      HObjectAccess::ForContextSlot(Context::SCRIPT_CONTEXT_TABLE_INDEX));
-  return Add<HLoadNamedField>(script_context_table, nullptr,
-                              HObjectAccess::ForScriptContext(context_index));
 }
 
 
@@ -4651,9 +4641,7 @@ void HOptimizedGraphBuilder::SetUpScope(DeclarationScope* scope) {
     environment()->Bind(scope->arguments(), arguments_object);
   }
 
-  int rest_index;
-  Variable* rest = scope->rest_parameter(&rest_index);
-  if (rest) {
+  if (scope->rest_parameter() != nullptr) {
     return Bailout(kRestParameter);
   }
 
@@ -4704,7 +4692,7 @@ void HOptimizedGraphBuilder::VisitBlock(Block* stmt) {
         }
         AddInstruction(function);
         // Allocate a block context and store it to the stack frame.
-        HValue* scope_info = Add<HConstant>(scope->GetScopeInfo(isolate()));
+        HValue* scope_info = Add<HConstant>(scope->scope_info());
         Add<HPushArguments>(scope_info, function);
         HInstruction* inner_context = Add<HCallRuntime>(
             Runtime::FunctionForId(Runtime::kPushBlockContext), 2);
@@ -5001,7 +4989,7 @@ void HOptimizedGraphBuilder::VisitSwitchStatement(SwitchStatement* stmt) {
   CHECK_ALIVE(VisitForValue(stmt->tag()));
   Add<HSimulate>(stmt->EntryId());
   HValue* tag_value = Top();
-  Type* tag_type = bounds_.get(stmt->tag()).lower;
+  AstType* tag_type = bounds_.get(stmt->tag()).lower;
 
   // 1. Build all the tests, with dangling true branches
   BailoutId default_id = BailoutId::None();
@@ -5018,8 +5006,8 @@ void HOptimizedGraphBuilder::VisitSwitchStatement(SwitchStatement* stmt) {
     if (current_block() == NULL) return Bailout(kUnsupportedSwitchStatement);
     HValue* label_value = Pop();
 
-    Type* label_type = bounds_.get(clause->label()).lower;
-    Type* combined_type = clause->compare_type();
+    AstType* label_type = bounds_.get(clause->label()).lower;
+    AstType* combined_type = clause->compare_type();
     HControlInstruction* compare = BuildCompareInstruction(
         Token::EQ_STRICT, tag_value, label_value, tag_type, label_type,
         combined_type,
@@ -5634,7 +5622,6 @@ void HOptimizedGraphBuilder::VisitVariableProxy(VariableProxy* expr) {
   DCHECK(current_block()->HasPredecessor());
   Variable* variable = expr->var();
   switch (variable->location()) {
-    case VariableLocation::GLOBAL:
     case VariableLocation::UNALLOCATED: {
       if (IsLexicalVariableMode(variable->mode())) {
         // TODO(rossberg): should this be an DCHECK?
@@ -6218,7 +6205,7 @@ bool HOptimizedGraphBuilder::PropertyAccessInfo::IsCompatible(
     PropertyAccessInfo* info) {
   if (!CanInlinePropertyAccess(map_)) return false;
 
-  // Currently only handle Type::Number as a polymorphic case.
+  // Currently only handle AstType::Number as a polymorphic case.
   // TODO(verwaest): Support monomorphic handling of numbers with a HCheckNumber
   // instruction.
   if (IsNumberType()) return false;
@@ -6950,7 +6937,6 @@ void HOptimizedGraphBuilder::HandleCompoundAssignment(Assignment* expr) {
     CHECK_ALIVE(VisitForValue(operation));
 
     switch (var->location()) {
-      case VariableLocation::GLOBAL:
       case VariableLocation::UNALLOCATED:
         HandleGlobalVariableAssignment(var, Top(), expr->AssignmentSlot(),
                                        expr->AssignmentId());
@@ -6958,9 +6944,6 @@ void HOptimizedGraphBuilder::HandleCompoundAssignment(Assignment* expr) {
 
       case VariableLocation::PARAMETER:
       case VariableLocation::LOCAL:
-        if (var->mode() == CONST_LEGACY)  {
-          return Bailout(kUnsupportedConstCompoundAssignment);
-        }
         if (var->mode() == CONST) {
           return Bailout(kNonInitializerAssignmentToConst);
         }
@@ -6990,9 +6973,7 @@ void HOptimizedGraphBuilder::HandleCompoundAssignment(Assignment* expr) {
             mode = HStoreContextSlot::kCheckDeoptimize;
             break;
           case CONST:
-            return Bailout(kNonInitializerAssignmentToConst);
-          case CONST_LEGACY:
-            if (is_strict(function_language_mode())) {
+            if (var->throw_on_const_assignment(function_language_mode())) {
               return Bailout(kNonInitializerAssignmentToConst);
             } else {
               return ast_context()->ReturnValue(Pop());
@@ -7064,25 +7045,12 @@ void HOptimizedGraphBuilder::VisitAssignment(Assignment* expr) {
 
     if (var->mode() == CONST) {
       if (expr->op() != Token::INIT) {
-        return Bailout(kNonInitializerAssignmentToConst);
-      }
-    } else if (var->mode() == CONST_LEGACY) {
-      if (expr->op() != Token::INIT) {
-        if (is_strict(function_language_mode())) {
+        if (var->throw_on_const_assignment(function_language_mode())) {
           return Bailout(kNonInitializerAssignmentToConst);
         } else {
           CHECK_ALIVE(VisitForValue(expr->value()));
           return ast_context()->ReturnValue(Pop());
         }
-      }
-
-      // TODO(adamk): Is this required? Legacy const variables are always
-      // initialized before use.
-      if (var->IsStackAllocated()) {
-        // We insert a use of the old value to detect unsupported uses of const
-        // variables (e.g. initialization inside a loop).
-        HValue* old_value = environment()->Lookup(var);
-        Add<HUseConst>(old_value);
       }
     }
 
@@ -7090,7 +7058,6 @@ void HOptimizedGraphBuilder::VisitAssignment(Assignment* expr) {
 
     // Handle the assignment.
     switch (var->location()) {
-      case VariableLocation::GLOBAL:
       case VariableLocation::UNALLOCATED:
         CHECK_ALIVE(VisitForValue(expr->value()));
         HandleGlobalVariableAssignment(var, Top(), expr->AssignmentSlot(),
@@ -7139,10 +7106,10 @@ void HOptimizedGraphBuilder::VisitAssignment(Assignment* expr) {
               mode = HStoreContextSlot::kCheckDeoptimize;
               break;
             case CONST:
-              // This case is checked statically so no need to
-              // perform checks here
-              UNREACHABLE();
-            case CONST_LEGACY:
+              // If we reached this point, the only possibility
+              // is a sloppy assignment to a function name.
+              DCHECK(function_language_mode() == SLOPPY &&
+                     !var->throw_on_const_assignment(SLOPPY));
               return ast_context()->ReturnValue(Pop());
             default:
               mode = HStoreContextSlot::kNoCheck;
@@ -7835,7 +7802,7 @@ HValue* HOptimizedGraphBuilder::BuildNamedAccess(
     }
 
     HValue* checked_object;
-    // Type::Number() is only supported by polymorphic load/call handling.
+    // AstType::Number() is only supported by polymorphic load/call handling.
     DCHECK(!info.IsNumberType());
     BuildCheckHeapObject(object);
     if (AreStringTypes(maps)) {
@@ -8401,14 +8368,12 @@ bool HOptimizedGraphBuilder::TryInline(Handle<JSFunction> target,
     return false;
   }
 
-  if (target_info.scope()->num_heap_slots() > 0) {
+  if (target_info.scope()->NeedsContext()) {
     TraceInline(target, caller, "target has context-allocated variables");
     return false;
   }
 
-  int rest_index;
-  Variable* rest = target_info.scope()->rest_parameter(&rest_index);
-  if (rest) {
+  if (target_info.scope()->rest_parameter() != nullptr) {
     TraceInline(target, caller, "target uses rest parameters");
     return false;
   }
@@ -9967,7 +9932,7 @@ bool HOptimizedGraphBuilder::TryInlineArrayCall(Expression* expression,
   HValue* elements_size = BuildCalculateElementsSize(kind, capacity);
 
   // Bail out for large objects.
-  HValue* max_size = Add<HConstant>(Page::kMaxRegularHeapObjectSize);
+  HValue* max_size = Add<HConstant>(kMaxRegularHeapObjectSize);
   Add<HBoundsCheck>(elements_size, max_size);
 
   // Allocate (dealing with failure appropriately).
@@ -10594,7 +10559,7 @@ void HOptimizedGraphBuilder::VisitDelete(UnaryOperation* expr) {
     return ast_context()->ReturnInstruction(instr, expr->id());
   } else if (proxy != NULL) {
     Variable* var = proxy->var();
-    if (var->IsUnallocatedOrGlobalSlot()) {
+    if (var->IsUnallocated()) {
       Bailout(kDeleteWithGlobalVariable);
     } else if (var->IsStackAllocated() || var->IsContextSlot()) {
       // Result of deleting non-global variables is false.  'this' is not really
@@ -10672,13 +10637,12 @@ void HOptimizedGraphBuilder::VisitNot(UnaryOperation* expr) {
   if (join != NULL) return ast_context()->ReturnValue(Pop());
 }
 
-
-static Representation RepresentationFor(Type* type) {
+static Representation RepresentationFor(AstType* type) {
   DisallowHeapAllocation no_allocation;
-  if (type->Is(Type::None())) return Representation::None();
-  if (type->Is(Type::SignedSmall())) return Representation::Smi();
-  if (type->Is(Type::Signed32())) return Representation::Integer32();
-  if (type->Is(Type::Number())) return Representation::Double();
+  if (type->Is(AstType::None())) return Representation::None();
+  if (type->Is(AstType::SignedSmall())) return Representation::Smi();
+  if (type->Is(AstType::Signed32())) return Representation::Integer32();
+  if (type->Is(AstType::Number())) return Representation::Double();
   return Representation::Tagged();
 }
 
@@ -10755,9 +10719,6 @@ void HOptimizedGraphBuilder::VisitCountOperation(CountOperation* expr) {
 
   if (proxy != NULL) {
     Variable* var = proxy->var();
-    if (var->mode() == CONST_LEGACY)  {
-      return Bailout(kUnsupportedCountOperationWithConst);
-    }
     if (var->mode() == CONST) {
       return Bailout(kNonInitializerAssignmentToConst);
     }
@@ -10770,7 +10731,6 @@ void HOptimizedGraphBuilder::VisitCountOperation(CountOperation* expr) {
     Push(after);
 
     switch (var->location()) {
-      case VariableLocation::GLOBAL:
       case VariableLocation::UNALLOCATED:
         HandleGlobalVariableAssignment(var, after, expr->CountSlot(),
                                        expr->AssignmentId());
@@ -10931,27 +10891,24 @@ bool CanBeZero(HValue* right) {
   return true;
 }
 
-
-HValue* HGraphBuilder::EnforceNumberType(HValue* number,
-                                         Type* expected) {
-  if (expected->Is(Type::SignedSmall())) {
+HValue* HGraphBuilder::EnforceNumberType(HValue* number, AstType* expected) {
+  if (expected->Is(AstType::SignedSmall())) {
     return AddUncasted<HForceRepresentation>(number, Representation::Smi());
   }
-  if (expected->Is(Type::Signed32())) {
+  if (expected->Is(AstType::Signed32())) {
     return AddUncasted<HForceRepresentation>(number,
                                              Representation::Integer32());
   }
   return number;
 }
 
-
-HValue* HGraphBuilder::TruncateToNumber(HValue* value, Type** expected) {
+HValue* HGraphBuilder::TruncateToNumber(HValue* value, AstType** expected) {
   if (value->IsConstant()) {
     HConstant* constant = HConstant::cast(value);
     Maybe<HConstant*> number =
         constant->CopyToTruncatedNumber(isolate(), zone());
     if (number.IsJust()) {
-      *expected = Type::Number();
+      *expected = AstType::Number();
       return AddInstruction(number.FromJust());
     }
   }
@@ -10961,24 +10918,24 @@ HValue* HGraphBuilder::TruncateToNumber(HValue* value, Type** expected) {
   // pushes with a NoObservableSideEffectsScope.
   NoObservableSideEffectsScope no_effects(this);
 
-  Type* expected_type = *expected;
+  AstType* expected_type = *expected;
 
   // Separate the number type from the rest.
-  Type* expected_obj =
-      Type::Intersect(expected_type, Type::NonNumber(), zone());
-  Type* expected_number =
-      Type::Intersect(expected_type, Type::Number(), zone());
+  AstType* expected_obj =
+      AstType::Intersect(expected_type, AstType::NonNumber(), zone());
+  AstType* expected_number =
+      AstType::Intersect(expected_type, AstType::Number(), zone());
 
   // We expect to get a number.
-  // (We need to check first, since Type::None->Is(Type::Any()) == true.
-  if (expected_obj->Is(Type::None())) {
-    DCHECK(!expected_number->Is(Type::None()));
+  // (We need to check first, since AstType::None->Is(AstType::Any()) == true.
+  if (expected_obj->Is(AstType::None())) {
+    DCHECK(!expected_number->Is(AstType::None()));
     return value;
   }
 
-  if (expected_obj->Is(Type::Undefined())) {
+  if (expected_obj->Is(AstType::Undefined())) {
     // This is already done by HChange.
-    *expected = Type::Union(expected_number, Type::Number(), zone());
+    *expected = AstType::Union(expected_number, AstType::Number(), zone());
     return value;
   }
 
@@ -10991,9 +10948,9 @@ HValue* HOptimizedGraphBuilder::BuildBinaryOperation(
     HValue* left,
     HValue* right,
     PushBeforeSimulateBehavior push_sim_result) {
-  Type* left_type = bounds_.get(expr->left()).lower;
-  Type* right_type = bounds_.get(expr->right()).lower;
-  Type* result_type = bounds_.get(expr).lower;
+  AstType* left_type = bounds_.get(expr->left()).lower;
+  AstType* right_type = bounds_.get(expr->right()).lower;
+  AstType* result_type = bounds_.get(expr).lower;
   Maybe<int> fixed_right_arg = expr->fixed_right_arg();
   Handle<AllocationSite> allocation_site = expr->allocation_site();
 
@@ -11019,12 +10976,10 @@ HValue* HOptimizedGraphBuilder::BuildBinaryOperation(
   return result;
 }
 
-HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
-                                            HValue* right, Type* left_type,
-                                            Type* right_type, Type* result_type,
-                                            Maybe<int> fixed_right_arg,
-                                            HAllocationMode allocation_mode,
-                                            BailoutId opt_id) {
+HValue* HGraphBuilder::BuildBinaryOperation(
+    Token::Value op, HValue* left, HValue* right, AstType* left_type,
+    AstType* right_type, AstType* result_type, Maybe<int> fixed_right_arg,
+    HAllocationMode allocation_mode, BailoutId opt_id) {
   bool maybe_string_add = false;
   if (op == Token::ADD) {
     // If we are adding constant string with something for which we don't have
@@ -11032,18 +10987,18 @@ HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
     // generate deopt instructions.
     if (!left_type->IsInhabited() && right->IsConstant() &&
         HConstant::cast(right)->HasStringValue()) {
-      left_type = Type::String();
+      left_type = AstType::String();
     }
 
     if (!right_type->IsInhabited() && left->IsConstant() &&
         HConstant::cast(left)->HasStringValue()) {
-      right_type = Type::String();
+      right_type = AstType::String();
     }
 
-    maybe_string_add = (left_type->Maybe(Type::String()) ||
-                        left_type->Maybe(Type::Receiver()) ||
-                        right_type->Maybe(Type::String()) ||
-                        right_type->Maybe(Type::Receiver()));
+    maybe_string_add = (left_type->Maybe(AstType::String()) ||
+                        left_type->Maybe(AstType::Receiver()) ||
+                        right_type->Maybe(AstType::String()) ||
+                        right_type->Maybe(AstType::Receiver()));
   }
 
   Representation left_rep = RepresentationFor(left_type);
@@ -11053,7 +11008,7 @@ HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
     Add<HDeoptimize>(
         DeoptimizeReason::kInsufficientTypeFeedbackForLHSOfBinaryOperation,
         Deoptimizer::SOFT);
-    left_type = Type::Any();
+    left_type = AstType::Any();
     left_rep = RepresentationFor(left_type);
     maybe_string_add = op == Token::ADD;
   }
@@ -11062,7 +11017,7 @@ HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
     Add<HDeoptimize>(
         DeoptimizeReason::kInsufficientTypeFeedbackForRHSOfBinaryOperation,
         Deoptimizer::SOFT);
-    right_type = Type::Any();
+    right_type = AstType::Any();
     right_rep = RepresentationFor(right_type);
     maybe_string_add = op == Token::ADD;
   }
@@ -11074,34 +11029,34 @@ HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
 
   // Special case for string addition here.
   if (op == Token::ADD &&
-      (left_type->Is(Type::String()) || right_type->Is(Type::String()))) {
+      (left_type->Is(AstType::String()) || right_type->Is(AstType::String()))) {
     // Validate type feedback for left argument.
-    if (left_type->Is(Type::String())) {
+    if (left_type->Is(AstType::String())) {
       left = BuildCheckString(left);
     }
 
     // Validate type feedback for right argument.
-    if (right_type->Is(Type::String())) {
+    if (right_type->Is(AstType::String())) {
       right = BuildCheckString(right);
     }
 
     // Convert left argument as necessary.
-    if (left_type->Is(Type::Number())) {
-      DCHECK(right_type->Is(Type::String()));
+    if (left_type->Is(AstType::Number())) {
+      DCHECK(right_type->Is(AstType::String()));
       left = BuildNumberToString(left, left_type);
-    } else if (!left_type->Is(Type::String())) {
-      DCHECK(right_type->Is(Type::String()));
+    } else if (!left_type->Is(AstType::String())) {
+      DCHECK(right_type->Is(AstType::String()));
       return AddUncasted<HStringAdd>(
           left, right, allocation_mode.GetPretenureMode(),
           STRING_ADD_CONVERT_LEFT, allocation_mode.feedback_site());
     }
 
     // Convert right argument as necessary.
-    if (right_type->Is(Type::Number())) {
-      DCHECK(left_type->Is(Type::String()));
+    if (right_type->Is(AstType::Number())) {
+      DCHECK(left_type->Is(AstType::String()));
       right = BuildNumberToString(right, right_type);
-    } else if (!right_type->Is(Type::String())) {
-      DCHECK(left_type->Is(Type::String()));
+    } else if (!right_type->Is(AstType::String())) {
+      DCHECK(left_type->Is(AstType::String()));
       return AddUncasted<HStringAdd>(
           left, right, allocation_mode.GetPretenureMode(),
           STRING_ADD_CONVERT_RIGHT, allocation_mode.feedback_site());
@@ -11259,8 +11214,8 @@ HValue* HGraphBuilder::BuildBinaryOperation(Token::Value op, HValue* left,
         break;
       case Token::BIT_OR: {
         HValue *operand, *shift_amount;
-        if (left_type->Is(Type::Signed32()) &&
-            right_type->Is(Type::Signed32()) &&
+        if (left_type->Is(AstType::Signed32()) &&
+            right_type->Is(AstType::Signed32()) &&
             MatchRotateRight(left, right, &operand, &shift_amount)) {
           instr = AddUncasted<HRor>(operand, shift_amount);
         } else {
@@ -11532,9 +11487,9 @@ void HOptimizedGraphBuilder::VisitCompareOperation(CompareOperation* expr) {
     return ast_context()->ReturnControl(instr, expr->id());
   }
 
-  Type* left_type = bounds_.get(expr->left()).lower;
-  Type* right_type = bounds_.get(expr->right()).lower;
-  Type* combined_type = expr->combined_type();
+  AstType* left_type = bounds_.get(expr->left()).lower;
+  AstType* right_type = bounds_.get(expr->right()).lower;
+  AstType* combined_type = expr->combined_type();
 
   CHECK_ALIVE(VisitForValue(expr->left()));
   CHECK_ALIVE(VisitForValue(expr->right()));
@@ -11606,10 +11561,9 @@ void HOptimizedGraphBuilder::VisitCompareOperation(CompareOperation* expr) {
   return ast_context()->ReturnControl(compare, expr->id());
 }
 
-
 HControlInstruction* HOptimizedGraphBuilder::BuildCompareInstruction(
-    Token::Value op, HValue* left, HValue* right, Type* left_type,
-    Type* right_type, Type* combined_type, SourcePosition left_position,
+    Token::Value op, HValue* left, HValue* right, AstType* left_type,
+    AstType* right_type, AstType* combined_type, SourcePosition left_position,
     SourcePosition right_position, PushBeforeSimulateBehavior push_sim_result,
     BailoutId bailout_id) {
   // Cases handled below depend on collected type feedback. They should
@@ -11619,14 +11573,14 @@ HControlInstruction* HOptimizedGraphBuilder::BuildCompareInstruction(
         DeoptimizeReason::
             kInsufficientTypeFeedbackForCombinedTypeOfBinaryOperation,
         Deoptimizer::SOFT);
-    combined_type = left_type = right_type = Type::Any();
+    combined_type = left_type = right_type = AstType::Any();
   }
 
   Representation left_rep = RepresentationFor(left_type);
   Representation right_rep = RepresentationFor(right_type);
   Representation combined_rep = RepresentationFor(combined_type);
 
-  if (combined_type->Is(Type::Receiver())) {
+  if (combined_type->Is(AstType::Receiver())) {
     if (Token::IsEqualityOp(op)) {
       // HCompareObjectEqAndBranch can only deal with object, so
       // exclude numbers.
@@ -11710,7 +11664,7 @@ HControlInstruction* HOptimizedGraphBuilder::BuildCompareInstruction(
       Bailout(kUnsupportedNonPrimitiveCompare);
       return NULL;
     }
-  } else if (combined_type->Is(Type::InternalizedString()) &&
+  } else if (combined_type->Is(AstType::InternalizedString()) &&
              Token::IsEqualityOp(op)) {
     // If we have a constant argument, it should be consistent with the type
     // feedback (otherwise we fail assertions in HCompareObjectEqAndBranch).
@@ -11731,7 +11685,7 @@ HControlInstruction* HOptimizedGraphBuilder::BuildCompareInstruction(
     HCompareObjectEqAndBranch* result =
         New<HCompareObjectEqAndBranch>(left, right);
     return result;
-  } else if (combined_type->Is(Type::String())) {
+  } else if (combined_type->Is(AstType::String())) {
     BuildCheckHeapObject(left);
     Add<HCheckInstanceType>(left, HCheckInstanceType::IS_STRING);
     BuildCheckHeapObject(right);
@@ -11739,7 +11693,7 @@ HControlInstruction* HOptimizedGraphBuilder::BuildCompareInstruction(
     HStringCompareAndBranch* result =
         New<HStringCompareAndBranch>(left, right, op);
     return result;
-  } else if (combined_type->Is(Type::Boolean())) {
+  } else if (combined_type->Is(AstType::Boolean())) {
     AddCheckMap(left, isolate()->factory()->boolean_map());
     AddCheckMap(right, isolate()->factory()->boolean_map());
     if (Token::IsEqualityOp(op)) {
@@ -11878,7 +11832,7 @@ HInstruction* HOptimizedGraphBuilder::BuildFastLiteral(
       Add<HAllocate>(object_size_constant, type, pretenure_flag, instance_type,
                      graph()->GetConstant0(), top_site);
 
-  // If allocation folding reaches Page::kMaxRegularHeapObjectSize the
+  // If allocation folding reaches kMaxRegularHeapObjectSize the
   // elements array may not get folded into the object. Hence, we set the
   // elements pointer to empty fixed array and let store elimination remove
   // this store in the folding case.
@@ -12175,7 +12129,6 @@ void HOptimizedGraphBuilder::VisitVariableDeclaration(
   VariableProxy* proxy = declaration->proxy();
   Variable* variable = proxy->var();
   switch (variable->location()) {
-    case VariableLocation::GLOBAL:
     case VariableLocation::UNALLOCATED: {
       DCHECK(!variable->binding_needs_init());
       FeedbackVectorSlot slot = proxy->VariableFeedbackSlot();
@@ -12215,7 +12168,6 @@ void HOptimizedGraphBuilder::VisitFunctionDeclaration(
   VariableProxy* proxy = declaration->proxy();
   Variable* variable = proxy->var();
   switch (variable->location()) {
-    case VariableLocation::GLOBAL:
     case VariableLocation::UNALLOCATED: {
       FeedbackVectorSlot slot = proxy->VariableFeedbackSlot();
       DCHECK(!slot.IsInvalid());
@@ -12546,7 +12498,7 @@ void HOptimizedGraphBuilder::GenerateNumberToString(CallRuntime* call) {
   DCHECK_EQ(1, call->arguments()->length());
   CHECK_ALIVE(VisitForValue(call->arguments()->at(0)));
   HValue* number = Pop();
-  HValue* result = BuildNumberToString(number, Type::Any());
+  HValue* result = BuildNumberToString(number, AstType::Any());
   return ast_context()->ReturnValue(result);
 }
 

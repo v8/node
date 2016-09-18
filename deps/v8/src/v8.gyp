@@ -34,10 +34,11 @@
     'warmup_script%': "",
     'v8_extra_library_files%': [],
     'v8_experimental_extra_library_files%': [],
+    'v8_enable_inspector%': 0,
     'mksnapshot_exec': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)mksnapshot<(EXECUTABLE_SUFFIX)',
     'mkpeephole_exec': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)mkpeephole<(EXECUTABLE_SUFFIX)',
   },
-  'includes': ['../gypfiles/toolchain.gypi', '../gypfiles/features.gypi'],
+  'includes': ['../gypfiles/toolchain.gypi', '../gypfiles/features.gypi', 'inspector/inspector.gypi'],
   'targets': [
     {
       'target_name': 'v8',
@@ -451,10 +452,14 @@
         'ast/ast-numbering.h',
         'ast/ast-traversal-visitor.h',
         'ast/ast-type-bounds.h',
+        'ast/ast-types.cc',
+        'ast/ast-types.h',
         'ast/ast-value-factory.cc',
         'ast/ast-value-factory.h',
         'ast/ast.cc',
         'ast/ast.h',
+        'ast/compile-time-value.cc',
+        'ast/compile-time-value.h',
         'ast/context-slot-cache.cc',
         'ast/context-slot-cache.h',
         'ast/modules.cc',
@@ -462,7 +467,6 @@
         'ast/prettyprinter.cc',
         'ast/prettyprinter.h',
         'ast/scopeinfo.cc',
-        'ast/scopeinfo.h',
         'ast/scopes.cc',
         'ast/scopes.h',
         'ast/variables.cc',
@@ -534,6 +538,8 @@
         'compilation-cache.h',
         'compilation-dependencies.cc',
         'compilation-dependencies.h',
+        'compilation-info.cc',
+        'compilation-info.h',
         'compilation-statistics.cc',
         'compilation-statistics.h',
         'compiler/access-builder.cc',
@@ -720,10 +726,16 @@
         'compiler/store-store-elimination.h',
         'compiler/tail-call-optimization.cc',
         'compiler/tail-call-optimization.h',
+        'compiler/types.cc',
+        'compiler/types.h',
+        'compiler/type-cache.cc',
+        'compiler/type-cache.h',
         'compiler/type-hint-analyzer.cc',
         'compiler/type-hint-analyzer.h',
         'compiler/type-hints.cc',
         'compiler/type-hints.h',
+        'compiler/typed-optimization.cc',
+        'compiler/typed-optimization.h',
         'compiler/typer.cc',
         'compiler/typer.h',
         'compiler/unwinding-info-writer.h',
@@ -1023,6 +1035,9 @@
         'log-utils.h',
         'log.cc',
         'log.h',
+        'lookup-cache-inl.h',
+        'lookup-cache.cc',
+        'lookup-cache.h',
         'lookup.cc',
         'lookup.h',
         'macro-assembler.h',
@@ -1040,6 +1055,8 @@
         'objects.h',
         'ostreams.cc',
         'ostreams.h',
+        'parsing/duplicate-finder.cc',
+        'parsing/duplicate-finder.h',
         'parsing/expression-classifier.h',
         'parsing/func-name-inferrer.cc',
         'parsing/func-name-inferrer.h',
@@ -1199,15 +1216,11 @@
         'transitions-inl.h',
         'transitions.cc',
         'transitions.h',
-        'type-cache.cc',
-        'type-cache.h',
         'type-feedback-vector-inl.h',
         'type-feedback-vector.cc',
         'type-feedback-vector.h',
         'type-info.cc',
         'type-info.h',
-        'types.cc',
-        'types.h',
         'unicode-inl.h',
         'unicode.cc',
         'unicode.h',
@@ -1271,10 +1284,8 @@
           'toolsets': ['target'],
         }],
         ['want_separate_host_toolset_mkpeephole==1', {
-          'toolsets': ['host', 'target'],
           'dependencies': ['mkpeephole#host'],
         }, {
-          'toolsets': ['target'],
           'dependencies': ['mkpeephole'],
         }],
         ['v8_target_arch=="arm"', {
@@ -1572,6 +1583,7 @@
             'x64/interface-descriptors-x64.cc',
             'x64/macro-assembler-x64.cc',
             'x64/macro-assembler-x64.h',
+            'x64/sse-instr.h',
             'debug/x64/debug-x64.cc',
             'full-codegen/x64/full-codegen-x64.cc',
             'ic/x64/access-compiler-x64.cc',
@@ -1723,6 +1735,29 @@
           'sources!': [
             'i18n.cc',
             'i18n.h',
+          ],
+        }],
+        ['v8_enable_inspector==1', {
+          'sources': [
+            '<@(inspector_all_sources)'
+          ],
+          'dependencies': [
+            'inspector/inspector.gyp:protocol_generated_sources',
+            'inspector/inspector.gyp:inspector_injected_script',
+            'inspector/inspector.gyp:inspector_debugger_script',
+          ],
+          # TODO(dgozman): fix these warnings and enable them.
+          'msvs_disabled_warnings': [
+            4267,  # Truncation from size_t to int.
+            4305,  # Truncation from 'type1' to 'type2'.
+            4324,  # Struct padded due to declspec(align).
+            4714,  # Function marked forceinline not inlined.
+            4800,  # Value forced to bool.
+            4996,  # Deprecated function call.
+          ],
+          'cflags': [
+            '-Wno-shorten-64-to-32',
+            '-Wno-deprecated-declarations',
           ],
         }],
         ['OS=="win" and v8_enable_i18n_support==1', {
@@ -1943,6 +1978,7 @@
         ],
         ['OS=="aix"', {
           'sources': [
+            'base/debug/stack_trace_posix.cc',
             'base/platform/platform-aix.cc',
             'base/platform/platform-posix.cc'
           ]},
@@ -2203,8 +2239,8 @@
           ['v8_enable_i18n_support==1', {
             'library_files': ['js/i18n.js'],
             'experimental_library_files': [
+              'js/datetime-format-to-parts.js',
               'js/icu-case-mapping.js',
-              'js/intl-extra.js',
              ],
           }],
         ],

@@ -52,6 +52,9 @@ class Factory final {
       int size,
       PretenureFlag pretenure = NOT_TENURED);
 
+  Handle<FrameArray> NewFrameArray(int number_of_frames,
+                                   PretenureFlag pretenure = NOT_TENURED);
+
   Handle<OrderedHashSet> NewOrderedHashSet();
   Handle<OrderedHashMap> NewOrderedHashMap();
 
@@ -61,10 +64,9 @@ class Factory final {
   // Create a new PrototypeInfo struct.
   Handle<PrototypeInfo> NewPrototypeInfo();
 
-  // Create a new SloppyBlockWithEvalContextExtension struct.
-  Handle<SloppyBlockWithEvalContextExtension>
-  NewSloppyBlockWithEvalContextExtension(Handle<ScopeInfo> scope_info,
-                                         Handle<JSObject> extension);
+  // Create a new ContextExtension struct.
+  Handle<ContextExtension> NewContextExtension(Handle<ScopeInfo> scope_info,
+                                               Handle<Object> extension);
 
   // Create a pre-tenured empty AccessorPair.
   Handle<AccessorPair> NewAccessorPair();
@@ -255,7 +257,9 @@ class Factory final {
   Handle<ScriptContextTable> NewScriptContextTable();
 
   // Create a module context.
-  Handle<Context> NewModuleContext(Handle<ScopeInfo> scope_info);
+  Handle<Context> NewModuleContext(Handle<JSModule> module,
+                                   Handle<JSFunction> function,
+                                   Handle<ScopeInfo> scope_info);
 
   // Create a function context.
   Handle<Context> NewFunctionContext(int length, Handle<JSFunction> function);
@@ -263,15 +267,18 @@ class Factory final {
   // Create a catch context.
   Handle<Context> NewCatchContext(Handle<JSFunction> function,
                                   Handle<Context> previous,
+                                  Handle<ScopeInfo> scope_info,
                                   Handle<String> name,
                                   Handle<Object> thrown_object);
 
   // Create a 'with' context.
   Handle<Context> NewWithContext(Handle<JSFunction> function,
                                  Handle<Context> previous,
+                                 Handle<ScopeInfo> scope_info,
                                  Handle<JSReceiver> extension);
 
   Handle<Context> NewDebugEvaluateContext(Handle<Context> previous,
+                                          Handle<ScopeInfo> scope_info,
                                           Handle<JSReceiver> extension,
                                           Handle<Context> wrapped,
                                           Handle<StringSet> whitelist);
@@ -470,6 +477,8 @@ class Factory final {
 
   Handle<JSGeneratorObject> NewJSGeneratorObject(Handle<JSFunction> function);
 
+  Handle<JSModule> NewJSModule();
+
   Handle<JSArrayBuffer> NewJSArrayBuffer(
       SharedFlag shared = SharedFlag::kNotShared,
       PretenureFlag pretenure = NOT_TENURED);
@@ -553,6 +562,9 @@ class Factory final {
 
   // Create a serialized scope info.
   Handle<ScopeInfo> NewScopeInfo(int length);
+
+  Handle<ModuleInfoEntry> NewModuleInfoEntry();
+  Handle<ModuleInfo> NewModuleInfo();
 
   // Create an External object for V8's external API.
   Handle<JSObject> NewExternal(void* value);

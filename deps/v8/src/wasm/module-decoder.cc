@@ -461,11 +461,15 @@ class ModuleDecoder : public Decoder {
   // Decodes a single global entry inside a module starting at {pc_}.
   void DecodeGlobalInModule(WasmGlobal* global) {
     global->name_offset = consume_string(&global->name_length, false);
-    if (!unibrow::Utf8::Validate(start_ + global->name_offset,
+    if (ok() &&
+        !unibrow::Utf8::Validate(start_ + global->name_offset,
                                  global->name_length)) {
       error("global name is not valid utf8");
     }
     global->type = consume_local_type();
+    if (global->type == kAstStmt) {
+      error("invalid global type");
+    }
     global->offset = 0;
     global->exported = consume_u8("exported") != 0;
   }
@@ -586,10 +590,13 @@ class ModuleDecoder : public Decoder {
     *length = consume_u32v("string length");
     uint32_t offset = pc_offset();
     TRACE("  +%u  %-20s: (%u bytes)\n", offset, "string", *length);
-    if (validate_utf8 && !unibrow::Utf8::Validate(pc_, *length)) {
-      error(pc_, "no valid UTF-8 string");
-    }
+    const byte* string_start = pc_;
+    // Consume bytes before validation to guarantee that the string is not oob.
     consume_bytes(*length);
+    if (ok() && validate_utf8 &&
+        !unibrow::Utf8::Validate(string_start, *length)) {
+      error(string_start, "no valid UTF-8 string");
+    }
     return offset;
   }
 

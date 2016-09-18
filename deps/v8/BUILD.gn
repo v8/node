@@ -62,6 +62,9 @@ declare_args() {
   # tools/gen-postmortem-metadata.py for details.
   v8_postmortem_support = false
 
+  # Switches off inlining in V8.
+  v8_no_inline = false
+
   # Similar to vfp but on MIPS.
   v8_can_use_fpu_instructions = true
 
@@ -93,6 +96,11 @@ if (v8_object_print == "") {
 if (v8_enable_disassembler == "") {
   v8_enable_disassembler = is_debug && !v8_optimized_debug
 }
+
+# Specifies if the target build is a simulator build. Comparing target cpu
+# with v8 target cpu to not affect simulator builds for making cross-compile
+# snapshots.
+is_target_simulator = target_cpu != v8_target_cpu
 
 v8_generated_peephole_source = "$target_gen_dir/bytecode-peephole-table.cc"
 v8_random_seed = "314159265"
@@ -140,6 +148,9 @@ config("external_config") {
     ]
   }
   include_dirs = [ "include" ]
+  if (v8_enable_inspector_override) {
+    include_dirs += [ "$target_gen_dir/include" ]
+  }
   libs = []
   if (is_android && current_toolchain != host_toolchain) {
     libs += [ "log" ]
@@ -200,7 +211,7 @@ config("toolchain") {
 
   if (v8_current_cpu == "arm") {
     defines += [ "V8_TARGET_ARCH_ARM" ]
-    if (arm_version == 7) {
+    if (arm_version >= 7) {
       defines += [ "CAN_USE_ARMV7_INSTRUCTIONS" ]
     }
     if (arm_fpu == "vfpv3-d16") {
@@ -231,6 +242,12 @@ config("toolchain") {
   }
   if (v8_current_cpu == "arm64") {
     defines += [ "V8_TARGET_ARCH_ARM64" ]
+  }
+
+  # Mips64el/mipsel simulators.
+  if (is_target_simulator &&
+      (v8_current_cpu == "mipsel" || v8_current_cpu == "mips64el")) {
+    defines += [ "_MIPS_TARGET_SIMULATOR" ]
   }
 
   # TODO(jochen): Add support for mips.
@@ -343,6 +360,13 @@ config("toolchain") {
   } else if (dcheck_always_on) {
     defines += [ "DEBUG" ]
   }
+
+  if (v8_no_inline) {
+    cflags += [
+      "-fno-inline-functions",
+      "-fno-inline",
+    ]
+  }
 }
 
 ###############################################################################
@@ -439,8 +463,8 @@ action("js2c_experimental") {
 
   if (v8_enable_i18n_support) {
     sources += [
+      "src/js/datetime-format-to-parts.js",
       "src/js/icu-case-mapping.js",
-      "src/js/intl-extra.js",
     ]
   }
 
@@ -857,10 +881,14 @@ v8_source_set("v8_base") {
     "src/ast/ast-numbering.h",
     "src/ast/ast-traversal-visitor.h",
     "src/ast/ast-type-bounds.h",
+    "src/ast/ast-types.cc",
+    "src/ast/ast-types.h",
     "src/ast/ast-value-factory.cc",
     "src/ast/ast-value-factory.h",
     "src/ast/ast.cc",
     "src/ast/ast.h",
+    "src/ast/compile-time-value.cc",
+    "src/ast/compile-time-value.h",
     "src/ast/context-slot-cache.cc",
     "src/ast/context-slot-cache.h",
     "src/ast/modules.cc",
@@ -868,7 +896,6 @@ v8_source_set("v8_base") {
     "src/ast/prettyprinter.cc",
     "src/ast/prettyprinter.h",
     "src/ast/scopeinfo.cc",
-    "src/ast/scopeinfo.h",
     "src/ast/scopes.cc",
     "src/ast/scopes.h",
     "src/ast/variables.cc",
@@ -940,6 +967,8 @@ v8_source_set("v8_base") {
     "src/compilation-cache.h",
     "src/compilation-dependencies.cc",
     "src/compilation-dependencies.h",
+    "src/compilation-info.cc",
+    "src/compilation-info.h",
     "src/compilation-statistics.cc",
     "src/compilation-statistics.h",
     "src/compiler-dispatcher/compiler-dispatcher-job.cc",
@@ -1132,12 +1161,18 @@ v8_source_set("v8_base") {
     "src/compiler/store-store-elimination.h",
     "src/compiler/tail-call-optimization.cc",
     "src/compiler/tail-call-optimization.h",
+    "src/compiler/type-cache.cc",
+    "src/compiler/type-cache.h",
     "src/compiler/type-hint-analyzer.cc",
     "src/compiler/type-hint-analyzer.h",
     "src/compiler/type-hints.cc",
     "src/compiler/type-hints.h",
+    "src/compiler/typed-optimization.cc",
+    "src/compiler/typed-optimization.h",
     "src/compiler/typer.cc",
     "src/compiler/typer.h",
+    "src/compiler/types.cc",
+    "src/compiler/types.h",
     "src/compiler/unwinding-info-writer.h",
     "src/compiler/value-numbering-reducer.cc",
     "src/compiler/value-numbering-reducer.h",
@@ -1216,6 +1251,7 @@ v8_source_set("v8_base") {
     "src/crankshaft/lithium-allocator.h",
     "src/crankshaft/lithium-codegen.cc",
     "src/crankshaft/lithium-codegen.h",
+    "src/crankshaft/lithium-inl.h",
     "src/crankshaft/lithium.cc",
     "src/crankshaft/lithium.h",
     "src/crankshaft/typing.cc",
@@ -1314,6 +1350,7 @@ v8_source_set("v8_base") {
     "src/heap/heap-inl.h",
     "src/heap/heap.cc",
     "src/heap/heap.h",
+    "src/heap/incremental-marking-inl.h",
     "src/heap/incremental-marking-job.cc",
     "src/heap/incremental-marking-job.h",
     "src/heap/incremental-marking.cc",
@@ -1351,6 +1388,7 @@ v8_source_set("v8_base") {
     "src/ic/call-optimization.h",
     "src/ic/handler-compiler.cc",
     "src/ic/handler-compiler.h",
+    "src/ic/handler-configuration.h",
     "src/ic/ic-compiler.cc",
     "src/ic/ic-compiler.h",
     "src/ic/ic-inl.h",
@@ -1422,11 +1460,16 @@ v8_source_set("v8_base") {
     "src/layout-descriptor.h",
     "src/list-inl.h",
     "src/list.h",
+    "src/locked-queue-inl.h",
+    "src/locked-queue.h",
     "src/log-inl.h",
     "src/log-utils.cc",
     "src/log-utils.h",
     "src/log.cc",
     "src/log.h",
+    "src/lookup-cache-inl.h",
+    "src/lookup-cache.cc",
+    "src/lookup-cache.h",
     "src/lookup.cc",
     "src/lookup.h",
     "src/machine-type.cc",
@@ -1444,6 +1487,8 @@ v8_source_set("v8_base") {
     "src/objects.h",
     "src/ostreams.cc",
     "src/ostreams.h",
+    "src/parsing/duplicate-finder.cc",
+    "src/parsing/duplicate-finder.h",
     "src/parsing/expression-classifier.h",
     "src/parsing/func-name-inferrer.cc",
     "src/parsing/func-name-inferrer.h",
@@ -1601,15 +1646,11 @@ v8_source_set("v8_base") {
     "src/transitions-inl.h",
     "src/transitions.cc",
     "src/transitions.h",
-    "src/type-cache.cc",
-    "src/type-cache.h",
     "src/type-feedback-vector-inl.h",
     "src/type-feedback-vector.cc",
     "src/type-feedback-vector.h",
     "src/type-info.cc",
     "src/type-info.h",
-    "src/types.cc",
-    "src/types.h",
     "src/unicode-cache-inl.h",
     "src/unicode-cache.h",
     "src/unicode-decoder.cc",
@@ -1629,6 +1670,7 @@ v8_source_set("v8_base") {
     "src/v8threads.h",
     "src/value-serializer.cc",
     "src/value-serializer.h",
+    "src/vector.h",
     "src/version.cc",
     "src/version.h",
     "src/vm-state-inl.h",
@@ -1696,6 +1738,8 @@ v8_source_set("v8_base") {
       "src/ia32/interface-descriptors-ia32.cc",
       "src/ia32/macro-assembler-ia32.cc",
       "src/ia32/macro-assembler-ia32.h",
+      "src/ia32/simulator-ia32.cc",
+      "src/ia32/simulator-ia32.h",
       "src/ic/ia32/access-compiler-ia32.cc",
       "src/ic/ia32/handler-compiler-ia32.cc",
       "src/ic/ia32/ic-compiler-ia32.cc",
@@ -1744,6 +1788,9 @@ v8_source_set("v8_base") {
       "src/x64/interface-descriptors-x64.cc",
       "src/x64/macro-assembler-x64.cc",
       "src/x64/macro-assembler-x64.h",
+      "src/x64/simulator-x64.cc",
+      "src/x64/simulator-x64.h",
+      "src/x64/sse-instr.h",
     ]
   } else if (v8_current_cpu == "arm") {
     sources += [
@@ -2010,6 +2057,10 @@ v8_source_set("v8_base") {
     sources += [ "$target_gen_dir/debug-support.cc" ]
     deps += [ ":postmortem-metadata" ]
   }
+
+  if (v8_enable_inspector_override) {
+    deps += [ "src/inspector:inspector" ]
+  }
 }
 
 v8_source_set("v8_libbase") {
@@ -2035,6 +2086,7 @@ v8_source_set("v8_libbase") {
     "src/base/bits.cc",
     "src/base/bits.h",
     "src/base/build_config.h",
+    "src/base/compiler-specific.h",
     "src/base/cpu.cc",
     "src/base/cpu.h",
     "src/base/debug/stack_trace.cc",
@@ -2552,6 +2604,15 @@ v8_source_set("regexp_fuzzer") {
 v8_fuzzer("regexp_fuzzer") {
 }
 
+v8_source_set("wasm_module_runner") {
+  sources = [
+    "test/common/wasm/wasm-module-runner.cc",
+    "test/common/wasm/wasm-module-runner.h",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
 v8_source_set("wasm_fuzzer") {
   sources = [
     "test/fuzzer/wasm.cc",
@@ -2559,6 +2620,7 @@ v8_source_set("wasm_fuzzer") {
 
   deps = [
     ":fuzzer_support",
+    ":wasm_module_runner",
   ]
 
   configs = [ ":internal_config" ]
@@ -2574,10 +2636,155 @@ v8_source_set("wasm_asmjs_fuzzer") {
 
   deps = [
     ":fuzzer_support",
+    ":wasm_module_runner",
   ]
 
   configs = [ ":internal_config" ]
 }
 
 v8_fuzzer("wasm_asmjs_fuzzer") {
+}
+
+v8_source_set("wasm_code_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-code.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_code_fuzzer") {
+}
+
+v8_source_set("lib_wasm_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-section-fuzzers.cc",
+    "test/fuzzer/wasm-section-fuzzers.h",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_source_set("wasm_types_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-types-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_types_section_fuzzer") {
+}
+
+v8_source_set("wasm_names_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-names-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_names_section_fuzzer") {
+}
+
+v8_source_set("wasm_globals_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-globals-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_globals_section_fuzzer") {
+}
+
+v8_source_set("wasm_imports_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-imports-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_imports_section_fuzzer") {
+}
+
+v8_source_set("wasm_function_sigs_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-function-sigs-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_function_sigs_section_fuzzer") {
+}
+
+v8_source_set("wasm_memory_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-memory-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_memory_section_fuzzer") {
+}
+
+v8_source_set("wasm_data_section_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-data-section.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_section_fuzzer",
+    ":wasm_module_runner",
+  ]
+
+  configs = [ ":internal_config" ]
+}
+
+v8_fuzzer("wasm_data_section_fuzzer") {
 }

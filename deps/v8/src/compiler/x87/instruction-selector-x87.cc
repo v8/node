@@ -211,6 +211,10 @@ void InstructionSelector::VisitLoad(Node* node) {
   Emit(code, 1, outputs, input_count, inputs);
 }
 
+void InstructionSelector::VisitProtectedLoad(Node* node) {
+  // TODO(eholk)
+  UNIMPLEMENTED();
+}
 
 void InstructionSelector::VisitStore(Node* node) {
   X87OperandGenerator g(this);
@@ -223,7 +227,7 @@ void InstructionSelector::VisitStore(Node* node) {
   MachineRepresentation rep = store_rep.representation();
 
   if (write_barrier_kind != kNoWriteBarrier) {
-    DCHECK_EQ(MachineRepresentation::kTagged, rep);
+    DCHECK(CanBeTaggedPointer(rep));
     AddressingMode addressing_mode;
     InstructionOperand inputs[3];
     size_t input_count = 0;
@@ -972,6 +976,12 @@ void InstructionSelector::VisitFloat64Mod(Node* node) {
   Emit(kX87Float64Mod, g.DefineAsFixed(node, stX_0), 1, temps)->MarkAsCall();
 }
 
+void InstructionSelector::VisitFloat32Max(Node* node) {
+  X87OperandGenerator g(this);
+  Emit(kX87PushFloat32, g.NoOutput(), g.Use(node->InputAt(0)));
+  Emit(kX87PushFloat32, g.NoOutput(), g.Use(node->InputAt(1)));
+  Emit(kX87Float32Max, g.DefineAsFixed(node, stX_0), 0, nullptr);
+}
 
 void InstructionSelector::VisitFloat64Max(Node* node) {
   X87OperandGenerator g(this);
@@ -980,6 +990,12 @@ void InstructionSelector::VisitFloat64Max(Node* node) {
   Emit(kX87Float64Max, g.DefineAsFixed(node, stX_0), 0, nullptr);
 }
 
+void InstructionSelector::VisitFloat32Min(Node* node) {
+  X87OperandGenerator g(this);
+  Emit(kX87PushFloat32, g.NoOutput(), g.Use(node->InputAt(0)));
+  Emit(kX87PushFloat32, g.NoOutput(), g.Use(node->InputAt(1)));
+  Emit(kX87Float32Min, g.DefineAsFixed(node, stX_0), 0, nullptr);
+}
 
 void InstructionSelector::VisitFloat64Min(Node* node) {
   X87OperandGenerator g(this);

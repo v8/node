@@ -6,6 +6,7 @@
 
 #include <cmath>  // For isfinite.
 
+#include "src/ast/compile-time-value.h"
 #include "src/ast/prettyprinter.h"
 #include "src/ast/scopes.h"
 #include "src/base/hashmap.h"
@@ -13,7 +14,6 @@
 #include "src/code-stubs.h"
 #include "src/contexts.h"
 #include "src/conversions.h"
-#include "src/parsing/parser.h"
 #include "src/property-details.h"
 #include "src/property.h"
 #include "src/string-stream.h"
@@ -83,18 +83,14 @@ bool Expression::IsNullLiteral() const {
 }
 
 bool Expression::IsUndefinedLiteral() const {
-  if (IsLiteral()) {
-    if (AsLiteral()->raw_value()->IsUndefined()) {
-      return true;
-    }
-  }
+  if (IsLiteral() && AsLiteral()->raw_value()->IsUndefined()) return true;
 
   const VariableProxy* var_proxy = AsVariableProxy();
-  if (var_proxy == NULL) return false;
+  if (var_proxy == nullptr) return false;
   Variable* var = var_proxy->var();
   // The global identifier "undefined" is immutable. Everything
   // else could be reassigned.
-  return var != NULL && var->IsUnallocatedOrGlobalSlot() &&
+  return var != NULL && var->IsUnallocated() &&
          var_proxy->raw_name()->IsOneByteEqualTo("undefined");
 }
 
@@ -176,10 +172,10 @@ VariableProxy::VariableProxy(Variable* var, int start_position,
 }
 
 VariableProxy::VariableProxy(const AstRawString* name,
-                             Variable::Kind variable_kind, int start_position,
+                             VariableKind variable_kind, int start_position,
                              int end_position)
     : Expression(start_position, kVariableProxy),
-      bit_field_(IsThisField::encode(variable_kind == Variable::THIS) |
+      bit_field_(IsThisField::encode(variable_kind == THIS_VARIABLE) |
                  IsAssignedField::encode(false) |
                  IsResolvedField::encode(false)),
       end_position_(end_position),
@@ -327,27 +323,16 @@ bool FunctionLiteral::NeedsHomeObject(Expression* expr) {
   return expr->AsFunctionLiteral()->scope()->NeedsHomeObject();
 }
 
-
 ObjectLiteralProperty::ObjectLiteralProperty(Expression* key, Expression* value,
-                                             Kind kind, bool is_static,
-                                             bool is_computed_name)
-    : key_(key),
-      value_(value),
+                                             Kind kind, bool is_computed_name)
+    : LiteralProperty(key, value, is_computed_name),
       kind_(kind),
-      emit_store_(true),
-      is_static_(is_static),
-      is_computed_name_(is_computed_name) {}
-
+      emit_store_(true) {}
 
 ObjectLiteralProperty::ObjectLiteralProperty(AstValueFactory* ast_value_factory,
                                              Expression* key, Expression* value,
-                                             bool is_static,
                                              bool is_computed_name)
-    : key_(key),
-      value_(value),
-      emit_store_(true),
-      is_static_(is_static),
-      is_computed_name_(is_computed_name) {
+    : LiteralProperty(key, value, is_computed_name), emit_store_(true) {
   if (!is_computed_name &&
       key->AsLiteral()->raw_value()->EqualsString(
           ast_value_factory->proto_string())) {
@@ -361,12 +346,19 @@ ObjectLiteralProperty::ObjectLiteralProperty(AstValueFactory* ast_value_factory,
   }
 }
 
-bool ObjectLiteralProperty::NeedsSetFunctionName() const {
+bool LiteralProperty::NeedsSetFunctionName() const {
   return is_computed_name_ &&
          (value_->IsAnonymousFunctionDefinition() ||
           (value_->IsFunctionLiteral() &&
            IsConciseMethod(value_->AsFunctionLiteral()->kind())));
 }
+
+ClassLiteralProperty::ClassLiteralProperty(Expression* key, Expression* value,
+                                           Kind kind, bool is_static,
+                                           bool is_computed_name)
+    : LiteralProperty(key, value, is_computed_name),
+      kind_(kind),
+      is_static_(is_static) {}
 
 void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                              FeedbackVectorSpec* spec,
@@ -379,7 +371,7 @@ void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
   }
 
   for (int i = 0; i < properties()->length(); i++) {
-    ObjectLiteral::Property* property = properties()->at(i);
+    ClassLiteral::Property* property = properties()->at(i);
     Expression* value = property->value();
     if (FunctionLiteral::NeedsHomeObject(value)) {
       property->SetSlot(spec->AddStoreICSlot());
@@ -387,8 +379,7 @@ void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
   }
 }
 
-
-bool ObjectLiteral::Property::IsCompileTimeValue() {
+bool ObjectLiteral::Property::IsCompileTimeValue() const {
   return kind_ == CONSTANT ||
       (kind_ == MATERIALIZED_LITERAL &&
        CompileTimeValue::IsCompileTimeValue(value_));
@@ -399,11 +390,7 @@ void ObjectLiteral::Property::set_emit_store(bool emit_store) {
   emit_store_ = emit_store;
 }
 
-
-bool ObjectLiteral::Property::emit_store() {
-  return emit_store_;
-}
-
+bool ObjectLiteral::Property::emit_store() const { return emit_store_; }
 
 void ObjectLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                               FeedbackVectorSpec* spec,
@@ -662,8 +649,7 @@ void ArrayLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                              FeedbackVectorSlotCache* cache) {
   // This logic that computes the number of slots needed for vector store
   // ics must mirror FullCodeGenerator::VisitArrayLiteral.
-  int array_index = 0;
-  for (; array_index < values()->length(); array_index++) {
+  for (int array_index = 0; array_index < values()->length(); array_index++) {
     Expression* subexpr = values()->at(array_index);
     DCHECK(!subexpr->IsSpread());
     if (CompileTimeValue::IsCompileTimeValue(subexpr)) continue;
@@ -741,6 +727,20 @@ static bool IsTypeof(Expression* expr) {
   return maybe_unary != NULL && maybe_unary->op() == Token::TYPEOF;
 }
 
+void CompareOperation::AssignFeedbackVectorSlots(
+    Isolate* isolate, FeedbackVectorSpec* spec,
+    FeedbackVectorSlotCache* cache_) {
+  // Feedback vector slot is only used by interpreter for binary operations.
+  // Full-codegen uses AstId to record type feedback.
+  switch (op()) {
+    // instanceof and in do not collect type feedback.
+    case Token::INSTANCEOF:
+    case Token::IN:
+      return;
+    default:
+      type_feedback_slot_ = spec->AddGeneralSlot();
+  }
+}
 
 // Check for the pattern: typeof <expression> equals <string literal>.
 static bool MatchLiteralCompareTypeof(Expression* left,
@@ -913,7 +913,7 @@ Call::CallType Call::GetCallType() const {
   if (proxy != NULL) {
     if (is_possibly_eval()) {
       return POSSIBLY_EVAL_CALL;
-    } else if (proxy->var()->IsUnallocatedOrGlobalSlot()) {
+    } else if (proxy->var()->IsUnallocated()) {
       return GLOBAL_CALL;
     } else if (proxy->var()->IsLookupSlot()) {
       return LOOKUP_SLOT_CALL;
@@ -940,7 +940,13 @@ CaseClause::CaseClause(Expression* label, ZoneList<Statement*>* statements,
     : Expression(pos, kCaseClause),
       label_(label),
       statements_(statements),
-      compare_type_(Type::None()) {}
+      compare_type_(AstType::None()) {}
+
+void CaseClause::AssignFeedbackVectorSlots(Isolate* isolate,
+                                           FeedbackVectorSpec* spec,
+                                           FeedbackVectorSlotCache* cache) {
+  type_feedback_slot_ = spec->AddGeneralSlot();
+}
 
 uint32_t Literal::Hash() {
   return raw_value()->IsString()

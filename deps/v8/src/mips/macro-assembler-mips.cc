@@ -184,9 +184,7 @@ void MacroAssembler::InNewSpace(Register object,
                                 Condition cc,
                                 Label* branch) {
   DCHECK(cc == eq || cc == ne);
-  const int mask =
-      1 << MemoryChunk::IN_FROM_SPACE | 1 << MemoryChunk::IN_TO_SPACE;
-  CheckPageFlag(object, scratch, mask, cc, branch);
+  CheckPageFlag(object, scratch, MemoryChunk::kIsInNewSpaceMask, cc, branch);
 }
 
 
@@ -1915,9 +1913,12 @@ void MacroAssembler::Ins(Register rt,
 }
 
 void MacroAssembler::Neg_s(FPURegister fd, FPURegister fs) {
-  Register scratch1 = t8;
-  Register scratch2 = t9;
-  if (IsMipsArchVariant(kMips32r2)) {
+  if (IsMipsArchVariant(kMips32r6)) {
+    // r6 neg_s changes the sign for NaN-like operands as well.
+    neg_s(fd, fs);
+  } else {
+    DCHECK(IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r1) ||
+           IsMipsArchVariant(kLoongson));
     Label is_nan, done;
     Register scratch1 = t8;
     Register scratch2 = t9;
@@ -1926,7 +1927,6 @@ void MacroAssembler::Neg_s(FPURegister fd, FPURegister fs) {
     // For NaN input, neg_s will return the same NaN value,
     // while the sign has to be changed separately.
     neg_s(fd, fs);  // In delay slot.
-
     bind(&is_nan);
     mfc1(scratch1, fs);
     And(scratch2, scratch1, Operand(~kBinary32SignMask));
@@ -1935,27 +1935,24 @@ void MacroAssembler::Neg_s(FPURegister fd, FPURegister fs) {
     Or(scratch2, scratch2, scratch1);
     mtc1(scratch2, fd);
     bind(&done);
-  } else {
-    mfc1(scratch1, fs);
-    And(scratch2, scratch1, Operand(~kBinary32SignMask));
-    And(scratch1, scratch1, Operand(kBinary32SignMask));
-    Xor(scratch1, scratch1, Operand(kBinary32SignMask));
-    Or(scratch2, scratch2, scratch1);
-    mtc1(scratch2, fd);
   }
 }
 
 void MacroAssembler::Neg_d(FPURegister fd, FPURegister fs) {
-  Register scratch1 = t8;
-  Register scratch2 = t9;
-  if (IsMipsArchVariant(kMips32r2)) {
+  if (IsMipsArchVariant(kMips32r6)) {
+    // r6 neg_d changes the sign for NaN-like operands as well.
+    neg_d(fd, fs);
+  } else {
+    DCHECK(IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r1) ||
+           IsMipsArchVariant(kLoongson));
     Label is_nan, done;
+    Register scratch1 = t8;
+    Register scratch2 = t9;
     BranchF64(nullptr, &is_nan, eq, fs, fs);
     Branch(USE_DELAY_SLOT, &done);
     // For NaN input, neg_d will return the same NaN value,
     // while the sign has to be changed separately.
     neg_d(fd, fs);  // In delay slot.
-
     bind(&is_nan);
     Mfhc1(scratch1, fs);
     And(scratch2, scratch1, Operand(~HeapNumber::kSignMask));
@@ -1964,14 +1961,6 @@ void MacroAssembler::Neg_d(FPURegister fd, FPURegister fs) {
     Or(scratch2, scratch2, scratch1);
     Mthc1(scratch2, fd);
     bind(&done);
-  } else {
-    Move_d(fd, fs);
-    Mfhc1(scratch1, fs);
-    And(scratch2, scratch1, Operand(~HeapNumber::kSignMask));
-    And(scratch1, scratch1, Operand(HeapNumber::kSignMask));
-    Xor(scratch1, scratch1, Operand(HeapNumber::kSignMask));
-    Or(scratch2, scratch2, scratch1);
-    Mthc1(scratch2, fd);
   }
 }
 
@@ -4220,7 +4209,7 @@ void MacroAssembler::Allocate(int object_size,
                               Register scratch2,
                               Label* gc_required,
                               AllocationFlags flags) {
-  DCHECK(object_size <= Page::kMaxRegularHeapObjectSize);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
   DCHECK((flags & ALLOCATION_FOLDED) == 0);
   if (!FLAG_inline_new) {
     if (emit_debug_code()) {
@@ -4402,7 +4391,7 @@ void MacroAssembler::Allocate(Register object_size, Register result,
 void MacroAssembler::FastAllocate(int object_size, Register result,
                                   Register scratch1, Register scratch2,
                                   AllocationFlags flags) {
-  DCHECK(object_size <= Page::kMaxRegularHeapObjectSize);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
   DCHECK(!AreAliased(result, scratch1, scratch2, t9, at));
 
   // Make object size into bytes.

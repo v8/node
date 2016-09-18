@@ -150,10 +150,8 @@
   V(JSCallFunction)                 \
   V(JSCallRuntime)                  \
   V(JSConvertReceiver)              \
-  V(JSForInDone)                    \
   V(JSForInNext)                    \
   V(JSForInPrepare)                 \
-  V(JSForInStep)                    \
   V(JSLoadMessage)                  \
   V(JSStoreMessage)                 \
   V(JSGeneratorStore)               \
@@ -181,7 +179,8 @@
   V(ChangeTaggedToBit)               \
   V(ChangeBitToTagged)               \
   V(TruncateTaggedToWord32)          \
-  V(TruncateTaggedToFloat64)
+  V(TruncateTaggedToFloat64)         \
+  V(TruncateTaggedToBit)
 
 #define SIMPLIFIED_CHECKED_OP_LIST(V) \
   V(CheckedInt32Add)                  \
@@ -270,6 +269,7 @@
   V(NumberTan)                         \
   V(NumberTanh)                        \
   V(NumberTrunc)                       \
+  V(NumberToBoolean)                   \
   V(NumberToInt32)                     \
   V(NumberToUint32)                    \
   V(NumberSilenceNaN)
@@ -306,6 +306,7 @@
   V(ObjectIsSmi)                    \
   V(ObjectIsString)                 \
   V(ObjectIsUndetectable)           \
+  V(ArrayBufferWasNeutered)         \
   V(EnsureWritableFastElements)     \
   V(MaybeGrowFastElements)          \
   V(TransitionElementsKind)
@@ -407,12 +408,6 @@
   V(ChangeInt32ToInt64)         \
   V(ChangeUint32ToFloat64)      \
   V(ChangeUint32ToUint64)       \
-  V(ImpossibleToBit)            \
-  V(ImpossibleToWord32)         \
-  V(ImpossibleToWord64)         \
-  V(ImpossibleToFloat32)        \
-  V(ImpossibleToFloat64)        \
-  V(ImpossibleToTagged)         \
   V(TruncateFloat64ToFloat32)   \
   V(TruncateInt64ToInt32)       \
   V(RoundFloat64ToInt32)        \
@@ -492,6 +487,7 @@
   V(Word32PairShl)              \
   V(Word32PairShr)              \
   V(Word32PairSar)              \
+  V(ProtectedLoad)              \
   V(AtomicLoad)                 \
   V(AtomicStore)                \
   V(UnsafePointerAdd)

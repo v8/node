@@ -18,6 +18,8 @@
 namespace v8 {
 namespace internal {
 
+class ObjectLiteral;
+
 // List of code stubs used on all platforms.
 #define CODE_STUB_LIST_ALL_PLATFORMS(V)       \
   /* --- PlatformCodeStubs --- */             \
@@ -42,7 +44,6 @@ namespace internal {
   V(StoreElement)                             \
   V(SubString)                                \
   V(ToString)                                 \
-  V(ToName)                                   \
   V(StoreIC)                                  \
   V(KeyedStoreIC)                             \
   V(KeyedLoadIC)                              \
@@ -81,17 +82,10 @@ namespace internal {
   /* as part of the new IC system, ask */     \
   /* ishell before doing anything  */         \
   V(KeyedLoadGeneric)                         \
-  V(KeyedLoadSloppyArguments)                 \
-  V(KeyedStoreSloppyArguments)                \
   V(LoadConstant)                             \
   V(LoadDictionaryElement)                    \
   V(LoadFastElement)                          \
   V(LoadField)                                \
-  V(LoadScriptContextField)                   \
-  V(StoreFastElement)                         \
-  V(StoreField)                               \
-  V(StoreGlobal)                              \
-  V(StoreScriptContextField)                  \
   V(StoreTransition)                          \
   /* These should never be ported to TF */    \
   /* because they are either used only by */  \
@@ -151,6 +145,10 @@ namespace internal {
   V(GreaterThanOrEqual)                       \
   V(Equal)                                    \
   V(NotEqual)                                 \
+  V(KeyedLoadSloppyArguments)                 \
+  V(KeyedStoreSloppyArguments)                \
+  V(LoadScriptContextField)                   \
+  V(StoreScriptContextField)                  \
   V(StrictEqual)                              \
   V(StrictNotEqual)                           \
   V(StringEqual)                              \
@@ -166,6 +164,9 @@ namespace internal {
   V(GetProperty)                              \
   V(LoadICTF)                                 \
   V(KeyedLoadICTF)                            \
+  V(StoreFastElement)                         \
+  V(StoreField)                               \
+  V(StoreGlobal)                              \
   V(StoreInterceptor)                         \
   V(LoadApiGetter)                            \
   V(LoadIndexedInterceptor)                   \
@@ -564,7 +565,7 @@ class CodeStubDescriptor {
     return call_descriptor().GetRegisterParameter(index);
   }
 
-  Type* GetParameterType(int index) const {
+  MachineType GetParameterType(int index) const {
     return call_descriptor().GetParameterType(index);
   }
 
@@ -1549,35 +1550,36 @@ class LoadFieldStub: public HandlerStub {
   DEFINE_HANDLER_CODE_STUB(LoadField, HandlerStub);
 };
 
-
-class KeyedLoadSloppyArgumentsStub : public HandlerStub {
+class KeyedLoadSloppyArgumentsStub : public TurboFanCodeStub {
  public:
   explicit KeyedLoadSloppyArgumentsStub(Isolate* isolate)
-      : HandlerStub(isolate) {}
+      : TurboFanCodeStub(isolate) {}
+
+  Code::Kind GetCodeKind() const override { return Code::HANDLER; }
+  ExtraICState GetExtraICState() const override { return Code::LOAD_IC; }
 
  protected:
-  Code::Kind kind() const override { return Code::KEYED_LOAD_IC; }
-
   DEFINE_CALL_INTERFACE_DESCRIPTOR(LoadWithVector);
-  DEFINE_HANDLER_CODE_STUB(KeyedLoadSloppyArguments, HandlerStub);
+  DEFINE_TURBOFAN_CODE_STUB(KeyedLoadSloppyArguments, TurboFanCodeStub);
 };
 
 
 class CommonStoreModeBits : public BitField<KeyedAccessStoreMode, 0, 3> {};
 
-class KeyedStoreSloppyArgumentsStub : public HandlerStub {
+class KeyedStoreSloppyArgumentsStub : public TurboFanCodeStub {
  public:
   explicit KeyedStoreSloppyArgumentsStub(Isolate* isolate,
                                          KeyedAccessStoreMode mode)
-      : HandlerStub(isolate) {
-    set_sub_minor_key(CommonStoreModeBits::encode(mode));
+      : TurboFanCodeStub(isolate) {
+    minor_key_ = CommonStoreModeBits::encode(mode);
   }
 
- protected:
-  Code::Kind kind() const override { return Code::KEYED_STORE_IC; }
+  Code::Kind GetCodeKind() const override { return Code::HANDLER; }
+  ExtraICState GetExtraICState() const override { return Code::STORE_IC; }
 
+ protected:
   DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_HANDLER_CODE_STUB(KeyedStoreSloppyArguments, HandlerStub);
+  DEFINE_TURBOFAN_CODE_STUB(KeyedStoreSloppyArguments, TurboFanCodeStub);
 };
 
 
@@ -1630,37 +1632,38 @@ class LoadApiGetterStub : public TurboFanCodeStub {
   DEFINE_TURBOFAN_CODE_STUB(LoadApiGetter, TurboFanCodeStub);
 };
 
-class StoreFieldStub : public HandlerStub {
+class StoreFieldStub : public TurboFanCodeStub {
  public:
   StoreFieldStub(Isolate* isolate, FieldIndex index,
                  Representation representation)
-      : HandlerStub(isolate) {
+      : TurboFanCodeStub(isolate) {
     int property_index_key = index.GetFieldAccessStubKey();
-    uint8_t repr = PropertyDetails::EncodeRepresentation(representation);
-    set_sub_minor_key(StoreFieldByIndexBits::encode(property_index_key) |
-                      RepresentationBits::encode(repr));
+    minor_key_ = StoreFieldByIndexBits::encode(property_index_key) |
+                 RepresentationBits::encode(representation.kind());
   }
 
+  Code::Kind GetCodeKind() const override { return Code::HANDLER; }
+  ExtraICState GetExtraICState() const override { return Code::STORE_IC; }
+
   FieldIndex index() const {
-    int property_index_key = StoreFieldByIndexBits::decode(sub_minor_key());
+    int property_index_key = StoreFieldByIndexBits::decode(minor_key_);
     return FieldIndex::FromFieldAccessStubKey(property_index_key);
   }
 
-  Representation representation() {
-    uint8_t repr = RepresentationBits::decode(sub_minor_key());
-    return PropertyDetails::DecodeRepresentation(repr);
+  Representation representation() const {
+    return Representation::FromKind(RepresentationBits::decode(minor_key_));
   }
-
- protected:
-  Code::Kind kind() const override { return Code::STORE_IC; }
 
  private:
   class StoreFieldByIndexBits : public BitField<int, 0, 13> {};
-  class RepresentationBits : public BitField<uint8_t, 13, 4> {};
+  class RepresentationBits
+      : public BitField<Representation::Kind, StoreFieldByIndexBits::kNext, 4> {
+  };
+  STATIC_ASSERT(Representation::kNumRepresentations - 1 <
+                RepresentationBits::kMax);
 
-  // TODO(ishell): The stub uses only kReceiver and kValue parameters.
   DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_HANDLER_CODE_STUB(StoreField, HandlerStub);
+  DEFINE_TURBOFAN_CODE_STUB(StoreField, TurboFanCodeStub);
 };
 
 
@@ -1771,19 +1774,21 @@ class StoreTransitionStub : public HandlerStub {
   DEFINE_HANDLER_CODE_STUB(StoreTransition, HandlerStub);
 };
 
-
-class StoreGlobalStub : public HandlerStub {
+class StoreGlobalStub : public TurboFanCodeStub {
  public:
   StoreGlobalStub(Isolate* isolate, PropertyCellType type,
                   Maybe<PropertyCellConstantType> constant_type,
                   bool check_global)
-      : HandlerStub(isolate) {
+      : TurboFanCodeStub(isolate) {
     PropertyCellConstantType encoded_constant_type =
         constant_type.FromMaybe(PropertyCellConstantType::kSmi);
-    set_sub_minor_key(CellTypeBits::encode(type) |
-                      ConstantTypeBits::encode(encoded_constant_type) |
-                      CheckGlobalBits::encode(check_global));
+    minor_key_ = CellTypeBits::encode(type) |
+                 ConstantTypeBits::encode(encoded_constant_type) |
+                 CheckGlobalBits::encode(check_global);
   }
+
+  Code::Kind GetCodeKind() const override { return Code::HANDLER; }
+  ExtraICState GetExtraICState() const override { return Code::STORE_IC; }
 
   static Handle<HeapObject> property_cell_placeholder(Isolate* isolate) {
     return isolate->factory()->uninitialized_value();
@@ -1805,37 +1810,25 @@ class StoreGlobalStub : public HandlerStub {
     return CodeStub::GetCodeCopy(pattern);
   }
 
-  Code::Kind kind() const override { return Code::STORE_IC; }
-
   PropertyCellType cell_type() const {
-    return CellTypeBits::decode(sub_minor_key());
+    return CellTypeBits::decode(minor_key_);
   }
 
   PropertyCellConstantType constant_type() const {
     DCHECK(PropertyCellType::kConstantType == cell_type());
-    return ConstantTypeBits::decode(sub_minor_key());
+    return ConstantTypeBits::decode(minor_key_);
   }
 
-  bool check_global() const { return CheckGlobalBits::decode(sub_minor_key()); }
-
-  Representation representation() {
-    return Representation::FromKind(
-        RepresentationBits::decode(sub_minor_key()));
-  }
-
-  void set_representation(Representation r) {
-    set_sub_minor_key(RepresentationBits::update(sub_minor_key(), r.kind()));
-  }
+  bool check_global() const { return CheckGlobalBits::decode(minor_key_); }
 
  private:
   class CellTypeBits : public BitField<PropertyCellType, 0, 2> {};
-  class ConstantTypeBits : public BitField<PropertyCellConstantType, 2, 2> {};
-  class RepresentationBits : public BitField<Representation::Kind, 4, 8> {};
-  class CheckGlobalBits : public BitField<bool, 12, 1> {};
+  class ConstantTypeBits
+      : public BitField<PropertyCellConstantType, CellTypeBits::kNext, 2> {};
+  class CheckGlobalBits : public BitField<bool, ConstantTypeBits::kNext, 1> {};
 
-  // TODO(ishell): The stub uses only kValue parameter.
   DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_HANDLER_CODE_STUB(StoreGlobal, HandlerStub);
+  DEFINE_TURBOFAN_CODE_STUB(StoreGlobal, TurboFanCodeStub);
 };
 
 // TODO(ishell): remove, once StoreGlobalIC is implemented.
@@ -2689,23 +2682,21 @@ class DoubleToIStub : public PlatformCodeStub {
   DEFINE_PLATFORM_CODE_STUB(DoubleToI, PlatformCodeStub);
 };
 
-
-class ScriptContextFieldStub : public HandlerStub {
+class ScriptContextFieldStub : public TurboFanCodeStub {
  public:
   ScriptContextFieldStub(Isolate* isolate,
                          const ScriptContextTable::LookupResult* lookup_result)
-      : HandlerStub(isolate) {
+      : TurboFanCodeStub(isolate) {
     DCHECK(Accepted(lookup_result));
-    STATIC_ASSERT(kContextIndexBits + kSlotIndexBits <= kSubMinorKeyBits);
-    set_sub_minor_key(ContextIndexBits::encode(lookup_result->context_index) |
-                      SlotIndexBits::encode(lookup_result->slot_index));
+    minor_key_ = ContextIndexBits::encode(lookup_result->context_index) |
+                 SlotIndexBits::encode(lookup_result->slot_index);
   }
 
-  int context_index() const {
-    return ContextIndexBits::decode(sub_minor_key());
-  }
+  Code::Kind GetCodeKind() const override { return Code::HANDLER; }
 
-  int slot_index() const { return SlotIndexBits::decode(sub_minor_key()); }
+  int context_index() const { return ContextIndexBits::decode(minor_key_); }
+
+  int slot_index() const { return SlotIndexBits::decode(minor_key_); }
 
   static bool Accepted(const ScriptContextTable::LookupResult* lookup_result) {
     return ContextIndexBits::is_valid(lookup_result->context_index) &&
@@ -2719,7 +2710,7 @@ class ScriptContextFieldStub : public HandlerStub {
   class SlotIndexBits
       : public BitField<int, kContextIndexBits, kSlotIndexBits> {};
 
-  DEFINE_CODE_STUB_BASE(ScriptContextFieldStub, HandlerStub);
+  DEFINE_CODE_STUB_BASE(ScriptContextFieldStub, TurboFanCodeStub);
 };
 
 
@@ -2729,11 +2720,11 @@ class LoadScriptContextFieldStub : public ScriptContextFieldStub {
       Isolate* isolate, const ScriptContextTable::LookupResult* lookup_result)
       : ScriptContextFieldStub(isolate, lookup_result) {}
 
- private:
-  Code::Kind kind() const override { return Code::LOAD_IC; }
+  ExtraICState GetExtraICState() const override { return Code::LOAD_IC; }
 
+ private:
   DEFINE_CALL_INTERFACE_DESCRIPTOR(LoadWithVector);
-  DEFINE_HANDLER_CODE_STUB(LoadScriptContextField, ScriptContextFieldStub);
+  DEFINE_TURBOFAN_CODE_STUB(LoadScriptContextField, ScriptContextFieldStub);
 };
 
 
@@ -2743,11 +2734,11 @@ class StoreScriptContextFieldStub : public ScriptContextFieldStub {
       Isolate* isolate, const ScriptContextTable::LookupResult* lookup_result)
       : ScriptContextFieldStub(isolate, lookup_result) {}
 
- private:
-  Code::Kind kind() const override { return Code::STORE_IC; }
+  ExtraICState GetExtraICState() const override { return Code::STORE_IC; }
 
+ private:
   DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_HANDLER_CODE_STUB(StoreScriptContextField, ScriptContextFieldStub);
+  DEFINE_TURBOFAN_CODE_STUB(StoreScriptContextField, ScriptContextFieldStub);
 };
 
 
@@ -2783,38 +2774,38 @@ class LoadFastElementStub : public HandlerStub {
   DEFINE_HANDLER_CODE_STUB(LoadFastElement, HandlerStub);
 };
 
-
-class StoreFastElementStub : public HydrogenCodeStub {
+class StoreFastElementStub : public TurboFanCodeStub {
  public:
   StoreFastElementStub(Isolate* isolate, bool is_js_array,
                        ElementsKind elements_kind, KeyedAccessStoreMode mode)
-      : HydrogenCodeStub(isolate) {
-    set_sub_minor_key(CommonStoreModeBits::encode(mode) |
-                      ElementsKindBits::encode(elements_kind) |
-                      IsJSArrayBits::encode(is_js_array));
+      : TurboFanCodeStub(isolate) {
+    minor_key_ = CommonStoreModeBits::encode(mode) |
+                 ElementsKindBits::encode(elements_kind) |
+                 IsJSArrayBits::encode(is_js_array);
   }
 
   static void GenerateAheadOfTime(Isolate* isolate);
 
-  bool is_js_array() const { return IsJSArrayBits::decode(sub_minor_key()); }
+  bool is_js_array() const { return IsJSArrayBits::decode(minor_key_); }
 
   ElementsKind elements_kind() const {
-    return ElementsKindBits::decode(sub_minor_key());
+    return ElementsKindBits::decode(minor_key_);
   }
 
   KeyedAccessStoreMode store_mode() const {
-    return CommonStoreModeBits::decode(sub_minor_key());
+    return CommonStoreModeBits::decode(minor_key_);
   }
 
   Code::Kind GetCodeKind() const override { return Code::HANDLER; }
   ExtraICState GetExtraICState() const override { return Code::KEYED_STORE_IC; }
 
  private:
-  class ElementsKindBits : public BitField<ElementsKind, 3, 8> {};
-  class IsJSArrayBits : public BitField<bool, 11, 1> {};
+  class ElementsKindBits
+      : public BitField<ElementsKind, CommonStoreModeBits::kNext, 8> {};
+  class IsJSArrayBits : public BitField<bool, ElementsKindBits::kNext, 1> {};
 
   DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_HYDROGEN_CODE_STUB(StoreFastElement, HydrogenCodeStub);
+  DEFINE_TURBOFAN_CODE_STUB(StoreFastElement, TurboFanCodeStub);
 };
 
 
@@ -3013,7 +3004,8 @@ class StoreElementStub : public PlatformCodeStub {
     return ElementsKindBits::decode(minor_key_);
   }
 
-  class ElementsKindBits : public BitField<ElementsKind, 3, 8> {};
+  class ElementsKindBits
+      : public BitField<ElementsKind, CommonStoreModeBits::kNext, 8> {};
 
   DEFINE_PLATFORM_CODE_STUB(StoreElement, PlatformCodeStub);
 };
@@ -3113,7 +3105,8 @@ class ElementsTransitionAndStoreStub : public HydrogenCodeStub {
   ExtraICState GetExtraICState() const override { return Code::KEYED_STORE_IC; }
 
  private:
-  class FromBits : public BitField<ElementsKind, 3, 8> {};
+  class FromBits
+      : public BitField<ElementsKind, CommonStoreModeBits::kNext, 8> {};
   class ToBits : public BitField<ElementsKind, 11, 8> {};
   class IsJSArrayBits : public BitField<bool, 19, 1> {};
 
@@ -3201,14 +3194,6 @@ class ToStringStub final : public PlatformCodeStub {
   DEFINE_PLATFORM_CODE_STUB(ToString, PlatformCodeStub);
 };
 
-class ToNameStub final : public PlatformCodeStub {
- public:
-  explicit ToNameStub(Isolate* isolate) : PlatformCodeStub(isolate) {}
-
-  DEFINE_CALL_INTERFACE_DESCRIPTOR(TypeConversion);
-  DEFINE_PLATFORM_CODE_STUB(ToName, PlatformCodeStub);
-};
-
 class ToObjectStub final : public TurboFanCodeStub {
  public:
   explicit ToObjectStub(Isolate* isolate) : TurboFanCodeStub(isolate) {}
@@ -3224,7 +3209,7 @@ class ToObjectStub final : public TurboFanCodeStub {
 #undef DEFINE_CODE_STUB
 #undef DEFINE_CODE_STUB_BASE
 
-extern Representation RepresentationFromType(Type* type);
+extern Representation RepresentationFromMachineType(MachineType type);
 
 }  // namespace internal
 }  // namespace v8

@@ -1726,7 +1726,6 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   // r4 : feedback vector
   // r5 : slot in feedback vector (Smi)
   Label initialize, done, miss, megamorphic, not_array_function;
-  Label done_initialize_count, done_increment_count;
 
   DCHECK_EQ(*TypeFeedbackVector::MegamorphicSentinel(masm->isolate()),
             masm->isolate()->heap()->megamorphic_symbol());
@@ -1749,7 +1748,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   Register weak_value = r9;
   __ LoadP(weak_value, FieldMemOperand(r7, WeakCell::kValueOffset));
   __ CmpP(r3, weak_value);
-  __ beq(&done_increment_count, Label::kNear);
+  __ beq(&done, Label::kNear);
   __ CompareRoot(r7, Heap::kmegamorphic_symbolRootIndex);
   __ beq(&done, Label::kNear);
   __ LoadP(feedback_map, FieldMemOperand(r7, HeapObject::kMapOffset));
@@ -1772,7 +1771,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r7);
   __ CmpP(r3, r7);
   __ bne(&megamorphic);
-  __ b(&done_increment_count, Label::kNear);
+  __ b(&done, Label::kNear);
 
   __ bind(&miss);
 
@@ -1802,32 +1801,22 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   // slot.
   CreateAllocationSiteStub create_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &create_stub);
-  __ b(&done_initialize_count, Label::kNear);
+  __ b(&done, Label::kNear);
 
   __ bind(&not_array_function);
 
   CreateWeakCellStub weak_cell_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &weak_cell_stub);
 
-  __ bind(&done_initialize_count);
-  // Initialize the call counter.
-  __ LoadSmiLiteral(r7, Smi::FromInt(1));
-  __ SmiToPtrArrayOffset(r6, r5);
-  __ AddP(r6, r4, r6);
-  __ StoreP(r7, FieldMemOperand(r6, count_offset), r0);
-  __ b(&done, Label::kNear);
+  __ bind(&done);
 
-  __ bind(&done_increment_count);
-
-  // Increment the call count for monomorphic function calls.
+  // Increment the call count for all function calls.
   __ SmiToPtrArrayOffset(r7, r5);
   __ AddP(r7, r4, r7);
 
   __ LoadP(r6, FieldMemOperand(r7, count_offset));
   __ AddSmiLiteral(r6, r6, Smi::FromInt(1), r0);
   __ StoreP(r6, FieldMemOperand(r7, count_offset), r0);
-
-  __ bind(&done);
 }
 
 void CallConstructStub::Generate(MacroAssembler* masm) {
@@ -2464,36 +2453,6 @@ void ToStringStub::Generate(MacroAssembler* masm) {
 
   __ bind(&done);
   __ Ret();
-}
-
-void ToNameStub::Generate(MacroAssembler* masm) {
-  // The ToName stub takes one argument in r2.
-  Label is_number;
-  __ JumpIfSmi(r2, &is_number);
-
-  STATIC_ASSERT(FIRST_NAME_TYPE == FIRST_TYPE);
-  __ CompareObjectType(r2, r3, r3, LAST_NAME_TYPE);
-  // r2: receiver
-  // r3: receiver instance type
-  __ Ret(le);
-
-  Label not_heap_number;
-  __ CmpP(r3, Operand(HEAP_NUMBER_TYPE));
-  __ bne(&not_heap_number);
-  __ bind(&is_number);
-  NumberToStringStub stub(isolate());
-  __ TailCallStub(&stub);
-  __ bind(&not_heap_number);
-
-  Label not_oddball;
-  __ CmpP(r3, Operand(ODDBALL_TYPE));
-  __ bne(&not_oddball);
-  __ LoadP(r2, FieldMemOperand(r2, Oddball::kToStringOffset));
-  __ Ret();
-  __ bind(&not_oddball);
-
-  __ push(r2);  // Push argument.
-  __ TailCallRuntime(Runtime::kToName);
 }
 
 void StringHelper::GenerateFlatOneByteStringEquals(MacroAssembler* masm,
@@ -4521,7 +4480,7 @@ void FastNewRestParameterStub::Generate(MacroAssembler* masm) {
     // Fall back to %AllocateInNewSpace (if not too big).
     Label too_big_for_new_space;
     __ bind(&allocate);
-    __ CmpP(r9, Operand(Page::kMaxRegularHeapObjectSize));
+    __ CmpP(r9, Operand(kMaxRegularHeapObjectSize));
     __ bgt(&too_big_for_new_space);
     {
       FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
@@ -4896,7 +4855,7 @@ void FastNewStrictArgumentsStub::Generate(MacroAssembler* masm) {
   // Fall back to %AllocateInNewSpace (if not too big).
   Label too_big_for_new_space;
   __ bind(&allocate);
-  __ CmpP(r9, Operand(Page::kMaxRegularHeapObjectSize));
+  __ CmpP(r9, Operand(kMaxRegularHeapObjectSize));
   __ bgt(&too_big_for_new_space);
   {
     FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);

@@ -59,44 +59,47 @@ enum ContextLookupFlags {
   V(MATH_FLOOR_INDEX, JSFunction, math_floor)                           \
   V(MATH_POW_INDEX, JSFunction, math_pow)
 
-#define NATIVE_CONTEXT_IMPORTED_FIELDS(V)                                   \
-  V(ARRAY_CONCAT_INDEX, JSFunction, array_concat)                           \
-  V(ARRAY_POP_INDEX, JSFunction, array_pop)                                 \
-  V(ARRAY_PUSH_INDEX, JSFunction, array_push)                               \
-  V(ARRAY_SHIFT_INDEX, JSFunction, array_shift)                             \
-  V(ARRAY_SPLICE_INDEX, JSFunction, array_splice)                           \
-  V(ARRAY_SLICE_INDEX, JSFunction, array_slice)                             \
-  V(ARRAY_UNSHIFT_INDEX, JSFunction, array_unshift)                         \
-  V(ARRAY_VALUES_ITERATOR_INDEX, JSFunction, array_values_iterator)         \
-  V(ASYNC_FUNCTION_AWAIT_INDEX, JSFunction, async_function_await)           \
-  V(DERIVED_GET_TRAP_INDEX, JSFunction, derived_get_trap)                   \
-  V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                       \
-  V(ERROR_TO_STRING, JSFunction, error_to_string)                           \
-  V(EVAL_ERROR_FUNCTION_INDEX, JSFunction, eval_error_function)             \
-  V(GLOBAL_EVAL_FUN_INDEX, JSFunction, global_eval_fun)                     \
-  V(MAP_DELETE_METHOD_INDEX, JSFunction, map_delete)                        \
-  V(MAP_GET_METHOD_INDEX, JSFunction, map_get)                              \
-  V(MAP_HAS_METHOD_INDEX, JSFunction, map_has)                              \
-  V(MAP_SET_METHOD_INDEX, JSFunction, map_set)                              \
-  V(OBJECT_VALUE_OF, JSFunction, object_value_of)                           \
-  V(OBJECT_TO_STRING, JSFunction, object_to_string)                         \
-  V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                         \
-  V(PROMISE_CREATE_INDEX, JSFunction, promise_create)                       \
-  V(PROMISE_FUNCTION_INDEX, JSFunction, promise_function)                   \
-  V(PROMISE_HAS_USER_DEFINED_REJECT_HANDLER_INDEX, JSFunction,              \
-    promise_has_user_defined_reject_handler)                                \
-  V(PROMISE_REJECT_INDEX, JSFunction, promise_reject)                       \
-  V(PROMISE_RESOLVE_INDEX, JSFunction, promise_resolve)                     \
-  V(PROMISE_CREATE_RESOLVED_INDEX, JSFunction, promise_create_resolved)     \
-  V(PROMISE_CREATE_REJECTED_INDEX, JSFunction, promise_create_rejected)     \
-  V(PROMISE_THEN_INDEX, JSFunction, promise_then)                           \
-  V(RANGE_ERROR_FUNCTION_INDEX, JSFunction, range_error_function)           \
-  V(REFERENCE_ERROR_FUNCTION_INDEX, JSFunction, reference_error_function)   \
-  V(SET_ADD_METHOD_INDEX, JSFunction, set_add)                              \
-  V(SET_DELETE_METHOD_INDEX, JSFunction, set_delete)                        \
-  V(SET_HAS_METHOD_INDEX, JSFunction, set_has)                              \
-  V(SYNTAX_ERROR_FUNCTION_INDEX, JSFunction, syntax_error_function)         \
-  V(TYPE_ERROR_FUNCTION_INDEX, JSFunction, type_error_function)             \
+#define NATIVE_CONTEXT_IMPORTED_FIELDS(V)                                 \
+  V(ARRAY_CONCAT_INDEX, JSFunction, array_concat)                         \
+  V(ARRAY_POP_INDEX, JSFunction, array_pop)                               \
+  V(ARRAY_PUSH_INDEX, JSFunction, array_push)                             \
+  V(ARRAY_SHIFT_INDEX, JSFunction, array_shift)                           \
+  V(ARRAY_SPLICE_INDEX, JSFunction, array_splice)                         \
+  V(ARRAY_SLICE_INDEX, JSFunction, array_slice)                           \
+  V(ARRAY_UNSHIFT_INDEX, JSFunction, array_unshift)                       \
+  V(ARRAY_VALUES_ITERATOR_INDEX, JSFunction, array_values_iterator)       \
+  V(ASYNC_FUNCTION_AWAIT_CAUGHT_INDEX, JSFunction,                        \
+    async_function_await_caught)                                          \
+  V(ASYNC_FUNCTION_AWAIT_UNCAUGHT_INDEX, JSFunction,                      \
+    async_function_await_uncaught)                                        \
+  V(DERIVED_GET_TRAP_INDEX, JSFunction, derived_get_trap)                 \
+  V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                     \
+  V(ERROR_TO_STRING, JSFunction, error_to_string)                         \
+  V(EVAL_ERROR_FUNCTION_INDEX, JSFunction, eval_error_function)           \
+  V(GLOBAL_EVAL_FUN_INDEX, JSFunction, global_eval_fun)                   \
+  V(MAP_DELETE_METHOD_INDEX, JSFunction, map_delete)                      \
+  V(MAP_GET_METHOD_INDEX, JSFunction, map_get)                            \
+  V(MAP_HAS_METHOD_INDEX, JSFunction, map_has)                            \
+  V(MAP_SET_METHOD_INDEX, JSFunction, map_set)                            \
+  V(OBJECT_VALUE_OF, JSFunction, object_value_of)                         \
+  V(OBJECT_TO_STRING, JSFunction, object_to_string)                       \
+  V(PROMISE_CATCH_INDEX, JSFunction, promise_catch)                       \
+  V(PROMISE_CREATE_INDEX, JSFunction, promise_create)                     \
+  V(PROMISE_FUNCTION_INDEX, JSFunction, promise_function)                 \
+  V(PROMISE_HAS_USER_DEFINED_REJECT_HANDLER_INDEX, JSFunction,            \
+    promise_has_user_defined_reject_handler)                              \
+  V(PROMISE_REJECT_INDEX, JSFunction, promise_reject)                     \
+  V(PROMISE_RESOLVE_INDEX, JSFunction, promise_resolve)                   \
+  V(PROMISE_THEN_INDEX, JSFunction, promise_then)                         \
+  V(RANGE_ERROR_FUNCTION_INDEX, JSFunction, range_error_function)         \
+  V(REJECT_PROMISE_NO_DEBUG_EVENT_INDEX, JSFunction,                      \
+    reject_promise_no_debug_event)                                        \
+  V(REFERENCE_ERROR_FUNCTION_INDEX, JSFunction, reference_error_function) \
+  V(SET_ADD_METHOD_INDEX, JSFunction, set_add)                            \
+  V(SET_DELETE_METHOD_INDEX, JSFunction, set_delete)                      \
+  V(SET_HAS_METHOD_INDEX, JSFunction, set_has)                            \
+  V(SYNTAX_ERROR_FUNCTION_INDEX, JSFunction, syntax_error_function)       \
+  V(TYPE_ERROR_FUNCTION_INDEX, JSFunction, type_error_function)           \
   V(URI_ERROR_FUNCTION_INDEX, JSFunction, uri_error_function)
 
 #define NATIVE_CONTEXT_FIELDS(V)                                               \
@@ -227,6 +230,7 @@ enum ContextLookupFlags {
   V(UINT8_ARRAY_FUN_INDEX, JSFunction, uint8_array_fun)                        \
   V(UINT8_CLAMPED_ARRAY_FUN_INDEX, JSFunction, uint8_clamped_array_fun)        \
   V(UINT8X16_FUNCTION_INDEX, JSFunction, uint8x16_function)                    \
+  V(CURRENT_MODULE_INDEX, JSModule, current_module)                            \
   NATIVE_CONTEXT_INTRINSIC_FUNCTIONS(V)                                        \
   NATIVE_CONTEXT_IMPORTED_FIELDS(V)
 
@@ -298,18 +302,29 @@ class ScriptContextTable : public FixedArray {
 //
 // [ previous  ]  A pointer to the previous context.
 //
-// [ extension ]  A pointer to an extension JSObject, or "the hole". Used to
-//                implement 'with' statements and dynamic declarations
-//                (through 'eval'). The object in a 'with' statement is
-//                stored in the extension slot of a 'with' context.
-//                Dynamically declared variables/functions are also added
-//                to lazily allocated extension object. Context::Lookup
-//                searches the extension object for properties.
-//                For script and block contexts, contains the respective
-//                ScopeInfo. For block contexts representing sloppy declaration
-//                block scopes, it may also be a struct being a
-//                SloppyBlockWithEvalContextExtension, pairing the ScopeInfo
-//                with an extension object.
+// [ extension ]  Additional data.
+//
+//                For script contexts, it contains the respective ScopeInfo.
+//
+//                For catch contexts, it contains a ContextExtension object
+//                consisting of the ScopeInfo and the name of the catch
+//                variable.
+//
+//                For module contexts, it contains the module object.
+//
+//                For block contexts, it contains either the respective
+//                ScopeInfo or a ContextExtension object consisting of the
+//                ScopeInfo and an "extension object" (see below).
+//
+//                For with contexts, it contains a ContextExtension object
+//                consisting of the ScopeInfo and an "extension object".
+//
+//                An "extension object" is used to dynamically extend a context
+//                with additional variables, namely in the implementation of the
+//                'with' construct and the 'eval' construct.  For instance,
+//                Context::Lookup also searches the extension object for
+//                properties.  (Storing the extension object is the original
+//                purpose of this context slot, hence the name.)
 //
 // [ native_context ]  A pointer to the native context.
 //
@@ -387,6 +402,10 @@ class Context: public FixedArray {
   ScopeInfo* scope_info();
   String* catch_name();
 
+  // Find the module context (assuming there is one) and return the associated
+  // module object.
+  JSModule* module();
+
   // Get the context where var declarations will be hoisted to, which
   // may be the context itself.
   Context* declaration_context();
@@ -423,9 +442,6 @@ class Context: public FixedArray {
 
   inline bool HasSameSecurityTokenAs(Context* that);
 
-  // Initializes global variable bindings in given script context.
-  void InitializeGlobalSlots();
-
   // A native context holds a list of all functions with optimized code.
   void AddOptimizedFunction(JSFunction* function);
   void RemoveOptimizedFunction(JSFunction* function);
@@ -444,6 +460,7 @@ class Context: public FixedArray {
 
   static int ImportedFieldIndexForName(Handle<String> name);
   static int IntrinsicIndexForName(Handle<String> name);
+  static int IntrinsicIndexForName(const unsigned char* name, int length);
 
 #define NATIVE_CONTEXT_FIELD_ACCESSORS(index, type, name) \
   inline void set_##name(type* value);                    \

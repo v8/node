@@ -391,7 +391,19 @@ void InterpreterPushArgsAndConstructDescriptor::InitializePlatformSpecific(
       rax,  // argument count (not including receiver)
       rdx,  // new target
       rdi,  // constructor
-      rbx,  // address of first argument
+      rbx,  // allocation site feedback if available, undefined otherwise
+      rcx,  // address of first argument
+  };
+  data->InitializePlatformSpecific(arraysize(registers), registers);
+}
+
+void InterpreterPushArgsAndConstructArrayDescriptor::InitializePlatformSpecific(
+    CallInterfaceDescriptorData* data) {
+  Register registers[] = {
+      rax,  // argument count (not including receiver)
+      rdx,  // target to the call. It is checked to be Array function.
+      rbx,  // allocation site feedback
+      rcx,  // address of first argument
   };
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }

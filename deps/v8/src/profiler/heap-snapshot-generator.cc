@@ -476,7 +476,7 @@ void HeapObjectsMap::UpdateHeapObjectsMap() {
            entries_map_.occupancy());
   }
   heap_->CollectAllGarbage(Heap::kMakeHeapIterableMask,
-                          "HeapObjectsMap::UpdateHeapObjectsMap");
+                           GarbageCollectionReason::kHeapProfiler);
   HeapIterator iterator(heap_);
   for (HeapObject* obj = iterator.next();
        obj != NULL;
@@ -1216,8 +1216,7 @@ void V8HeapExplorer::ExtractContextReferences(int entry, Context* context) {
     }
     if (scope_info->HasFunctionName()) {
       String* name = scope_info->FunctionName();
-      VariableMode mode;
-      int idx = scope_info->FunctionContextSlotIndex(name, &mode);
+      int idx = scope_info->FunctionContextSlotIndex(name);
       if (idx >= 0) {
         SetContextReference(context, entry, name, context->get(idx),
                             Context::OffsetOfElementAt(idx));
@@ -1831,6 +1830,7 @@ bool V8HeapExplorer::IsEssentialObject(Object* object) {
          object != heap_->empty_byte_array() &&
          object != heap_->empty_fixed_array() &&
          object != heap_->empty_descriptor_array() &&
+         object != heap_->empty_type_feedback_vector() &&
          object != heap_->fixed_array_map() && object != heap_->cell_map() &&
          object != heap_->global_property_cell_map() &&
          object != heap_->shared_function_info_map() &&
@@ -2507,12 +2507,10 @@ bool HeapSnapshotGenerator::GenerateSnapshot() {
   // full GC is reachable from the root when computing dominators.
   // This is not true for weakly reachable objects.
   // As a temporary solution we call GC twice.
-  heap_->CollectAllGarbage(
-      Heap::kMakeHeapIterableMask,
-      "HeapSnapshotGenerator::GenerateSnapshot");
-  heap_->CollectAllGarbage(
-      Heap::kMakeHeapIterableMask,
-      "HeapSnapshotGenerator::GenerateSnapshot");
+  heap_->CollectAllGarbage(Heap::kMakeHeapIterableMask,
+                           GarbageCollectionReason::kHeapProfiler);
+  heap_->CollectAllGarbage(Heap::kMakeHeapIterableMask,
+                           GarbageCollectionReason::kHeapProfiler);
 
 #ifdef VERIFY_HEAP
   Heap* debug_heap = heap_;

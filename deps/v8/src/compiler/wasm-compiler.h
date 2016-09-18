@@ -9,6 +9,7 @@
 
 // Clients of this interface shouldn't depend on lots of compiler internals.
 // Do not include anything from src/compiler here!
+#include "src/compilation-info.h"
 #include "src/compiler.h"
 #include "src/wasm/wasm-opcodes.h"
 #include "src/wasm/wasm-result.h"
@@ -132,6 +133,8 @@ class WasmGraphBuilder {
               wasm::WasmCodePosition position = wasm::kNoCodePosition);
   Node* Unop(wasm::WasmOpcode opcode, Node* input,
              wasm::WasmCodePosition position = wasm::kNoCodePosition);
+  Node* GrowMemory(Node* input);
+  Node* Throw(Node* input);
   unsigned InputCount(Node* node);
   bool IsPhiWithMerge(Node* phi, Node* merge);
   void AppendToMerge(Node* merge, Node* from);
@@ -197,6 +200,7 @@ class WasmGraphBuilder {
   Node* DefaultS128Value();
 
   Node* SimdOp(wasm::WasmOpcode opcode, const NodeVector& inputs);
+  Node* SimdExtractLane(wasm::WasmOpcode opcode, uint8_t lane, Node* input);
 
  private:
   static const int kDefaultBufferSize = 16;
@@ -303,6 +307,7 @@ class WasmGraphBuilder {
 
   Node* BuildJavaScriptToNumber(Node* node, Node* context, Node* effect,
                                 Node* control);
+
   Node* BuildChangeInt32ToTagged(Node* value);
   Node* BuildChangeFloat64ToTagged(Node* value);
   Node* BuildChangeTaggedToFloat64(Node* value);
@@ -317,7 +322,6 @@ class WasmGraphBuilder {
   Node* BuildAllocateHeapNumberWithValue(Node* value, Node* control);
   Node* BuildLoadHeapNumberValue(Node* value, Node* control);
   Node* BuildHeapNumberValueIndexConstant();
-  Node* BuildGrowMemory(Node* input);
 
   // Asm.js specific functionality.
   Node* BuildI32AsmjsSConvertF32(Node* input);
@@ -336,6 +340,9 @@ class WasmGraphBuilder {
     if (buf != buffer) memcpy(buf, buffer, old_count * sizeof(Node*));
     return buf;
   }
+
+  int AddParameterNodes(Node** args, int pos, int param_count,
+                        wasm::FunctionSig* sig);
 };
 }  // namespace compiler
 }  // namespace internal

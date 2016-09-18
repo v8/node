@@ -25,9 +25,11 @@ GCTracer::Scope::Scope(GCTracer* tracer, ScopeId scope)
     : tracer_(tracer), scope_(scope) {
   start_time_ = tracer_->heap_->MonotonicallyIncreasingTimeInMs();
   // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (FLAG_runtime_call_stats) {
-    RuntimeCallStats::Enter(tracer_->heap_->isolate(), &timer_,
-                            &RuntimeCallStats::GC);
+  if (TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_ENABLED() ||
+      FLAG_runtime_call_stats) {
+    RuntimeCallStats::Enter(
+        tracer_->heap_->isolate()->counters()->runtime_call_stats(), &timer_,
+        &RuntimeCallStats::GC);
   }
 }
 
@@ -35,18 +37,10 @@ GCTracer::Scope::~Scope() {
   tracer_->AddScopeSample(
       scope_, tracer_->heap_->MonotonicallyIncreasingTimeInMs() - start_time_);
   // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (FLAG_runtime_call_stats) {
-    RuntimeCallStats::Leave(tracer_->heap_->isolate(), &timer_);
-  }
-}
-
-void GCTracer::AddScopeSample(Scope::ScopeId scope, double duration) {
-  DCHECK(scope < Scope::NUMBER_OF_SCOPES);
-  if (scope >= Scope::FIRST_INCREMENTAL_SCOPE &&
-      scope <= Scope::LAST_INCREMENTAL_SCOPE) {
-    cumulative_incremental_scopes_[scope] += duration;
-  } else {
-    current_.scopes[scope] += duration;
+  if (TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_ENABLED() ||
+      FLAG_runtime_call_stats) {
+    RuntimeCallStats::Leave(
+        tracer_->heap_->isolate()->counters()->runtime_call_stats(), &timer_);
   }
 }
 
@@ -63,7 +57,7 @@ const char* GCTracer::Scope::Name(ScopeId id) {
   return "(unknown)";
 }
 
-GCTracer::Event::Event(Type type, const char* gc_reason,
+GCTracer::Event::Event(Type type, GarbageCollectionReason gc_reason,
                        const char* collector_reason)
     : type(type),
       gc_reason(gc_reason),
@@ -79,23 +73,10 @@ GCTracer::Event::Event(Type type, const char* gc_reason,
       end_holes_size(0),
       new_space_object_size(0),
       survived_new_space_object_size(0),
-      cumulative_incremental_marking_steps(0),
-      incremental_marking_steps(0),
       cumulative_incremental_marking_bytes(0),
       incremental_marking_bytes(0),
-      cumulative_incremental_marking_duration(0.0),
-      incremental_marking_duration(0.0),
       cumulative_pure_incremental_marking_duration(0.0),
-      pure_incremental_marking_duration(0.0),
-      longest_incremental_marking_step(0.0),
-      cumulative_incremental_marking_finalization_steps(0),
-      cumulative_incremental_marking_finalizaton_duration(0),
-      longest_incremental_marking_finalization_step(0),
-      incremental_marking_finalizaton_steps(0),
-      incremental_marking_finalization_duration(0) {
-  for (int i = 0; i < Scope::NUMBER_OF_INCREMENTAL_SCOPES; i++) {
-    cumulative_incremental_scopes[i] = 0;
-  }
+      pure_incremental_marking_duration(0.0) {
   for (int i = 0; i < Scope::NUMBER_OF_SCOPES; i++) {
     scopes[i] = 0;
   }
@@ -127,17 +108,14 @@ const char* GCTracer::Event::TypeName(bool short_name) const {
   return "Unknown Event Type";
 }
 
-
 GCTracer::GCTracer(Heap* heap)
     : heap_(heap),
-      cumulative_incremental_marking_steps_(0),
+      current_(Event::START, GarbageCollectionReason::kUnknown, nullptr),
+      previous_(current_),
+      previous_incremental_mark_compactor_event_(current_),
       cumulative_incremental_marking_bytes_(0),
       cumulative_incremental_marking_duration_(0.0),
       cumulative_pure_incremental_marking_duration_(0.0),
-      longest_incremental_marking_step_(0.0),
-      cumulative_incremental_marking_finalization_steps_(0),
-      cumulative_incremental_marking_finalization_duration_(0.0),
-      longest_incremental_marking_finalization_step_(0.0),
       cumulative_marking_duration_(0.0),
       cumulative_sweeping_duration_(0.0),
       allocation_time_ms_(0.0),
@@ -148,21 +126,22 @@ GCTracer::GCTracer(Heap* heap)
       old_generation_allocation_in_bytes_since_gc_(0),
       combined_mark_compact_speed_cache_(0.0),
       start_counter_(0) {
-  current_ = Event(Event::START, NULL, NULL);
   current_.end_time = heap_->MonotonicallyIncreasingTimeInMs();
-  previous_ = previous_incremental_mark_compactor_event_ = current_;
 }
 
 void GCTracer::ResetForTesting() {
-  cumulative_incremental_marking_steps_ = 0.0;
+  current_ = Event(Event::START, GarbageCollectionReason::kTesting, nullptr);
+  current_.end_time = heap_->MonotonicallyIncreasingTimeInMs();
+  previous_ = previous_incremental_mark_compactor_event_ = current_;
   cumulative_incremental_marking_bytes_ = 0.0;
   cumulative_incremental_marking_duration_ = 0.0;
   cumulative_pure_incremental_marking_duration_ = 0.0;
-  longest_incremental_marking_step_ = 0.0;
-  cumulative_incremental_marking_finalization_steps_ = 0.0;
-  cumulative_incremental_marking_finalization_duration_ = 0.0;
-  longest_incremental_marking_finalization_step_ = 0.0;
   cumulative_marking_duration_ = 0.0;
+  for (int i = 0; i < Scope::NUMBER_OF_INCREMENTAL_SCOPES; i++) {
+    incremental_marking_scopes_[i].cumulative_duration = 0.0;
+    incremental_marking_scopes_[i].steps = 0;
+    incremental_marking_scopes_[i].longest_step = 0.0;
+  }
   cumulative_sweeping_duration_ = 0.0;
   allocation_time_ms_ = 0.0;
   new_space_allocation_counter_bytes_ = 0.0;
@@ -171,16 +150,20 @@ void GCTracer::ResetForTesting() {
   new_space_allocation_in_bytes_since_gc_ = 0.0;
   old_generation_allocation_in_bytes_since_gc_ = 0.0;
   combined_mark_compact_speed_cache_ = 0.0;
+  recorded_scavenges_total_.Reset();
+  recorded_scavenges_survived_.Reset();
+  recorded_compactions_.Reset();
+  recorded_mark_compacts_.Reset();
+  recorded_incremental_mark_compacts_.Reset();
+  recorded_new_generation_allocations_.Reset();
+  recorded_old_generation_allocations_.Reset();
+  recorded_context_disposal_times_.Reset();
+  recorded_survival_ratios_.Reset();
   start_counter_ = 0;
-  for (int i = 0; i < Scope::NUMBER_OF_INCREMENTAL_SCOPES; i++) {
-    cumulative_incremental_scopes_[i] = 0;
-  }
-  current_ = Event(Event::START, NULL, NULL);
-  current_.end_time = heap_->MonotonicallyIncreasingTimeInMs();
-  previous_ = previous_incremental_mark_compactor_event_ = current_;
 }
 
-void GCTracer::Start(GarbageCollector collector, const char* gc_reason,
+void GCTracer::Start(GarbageCollector collector,
+                     GarbageCollectionReason gc_reason,
                      const char* collector_reason) {
   start_counter_++;
   if (start_counter_ != 1) return;
@@ -211,21 +194,10 @@ void GCTracer::Start(GarbageCollector collector, const char* gc_reason,
   current_.new_space_object_size =
       heap_->new_space()->top() - heap_->new_space()->bottom();
 
-  current_.cumulative_incremental_marking_steps =
-      cumulative_incremental_marking_steps_;
   current_.cumulative_incremental_marking_bytes =
       cumulative_incremental_marking_bytes_;
-  current_.cumulative_incremental_marking_duration =
-      cumulative_incremental_marking_duration_;
   current_.cumulative_pure_incremental_marking_duration =
       cumulative_pure_incremental_marking_duration_;
-  current_.longest_incremental_marking_step = longest_incremental_marking_step_;
-  current_.cumulative_incremental_marking_finalization_steps =
-      cumulative_incremental_marking_finalization_steps_;
-  current_.cumulative_incremental_marking_finalizaton_duration =
-      cumulative_incremental_marking_finalization_duration_;
-  current_.longest_incremental_marking_finalization_step =
-      longest_incremental_marking_finalization_step_;
 
   for (int i = 0; i < Scope::NUMBER_OF_SCOPES; i++) {
     current_.scopes[i] = 0;
@@ -233,22 +205,47 @@ void GCTracer::Start(GarbageCollector collector, const char* gc_reason,
 
   int committed_memory = static_cast<int>(heap_->CommittedMemory() / KB);
   int used_memory = static_cast<int>(current_.start_object_size / KB);
-  heap_->isolate()->counters()->aggregated_memory_heap_committed()->AddSample(
-      start_time, committed_memory);
-  heap_->isolate()->counters()->aggregated_memory_heap_used()->AddSample(
-      start_time, used_memory);
+
+  Counters* counters = heap_->isolate()->counters();
+
+  if (collector == SCAVENGER) {
+    counters->scavenge_reason()->AddSample(static_cast<int>(gc_reason));
+  } else {
+    counters->mark_compact_reason()->AddSample(static_cast<int>(gc_reason));
+  }
+  counters->aggregated_memory_heap_committed()->AddSample(start_time,
+                                                          committed_memory);
+  counters->aggregated_memory_heap_used()->AddSample(start_time, used_memory);
   // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (FLAG_runtime_call_stats) {
-    RuntimeCallStats::Enter(heap_->isolate(), &timer_, &RuntimeCallStats::GC);
+  if (TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_ENABLED() ||
+      FLAG_runtime_call_stats) {
+    RuntimeCallStats::Enter(heap_->isolate()->counters()->runtime_call_stats(),
+                            &timer_, &RuntimeCallStats::GC);
+  }
+}
+
+void GCTracer::MergeBaseline(const Event& baseline) {
+  current_.incremental_marking_bytes =
+      current_.cumulative_incremental_marking_bytes -
+      baseline.cumulative_incremental_marking_bytes;
+  current_.pure_incremental_marking_duration =
+      current_.cumulative_pure_incremental_marking_duration -
+      baseline.cumulative_pure_incremental_marking_duration;
+  for (int i = Scope::FIRST_INCREMENTAL_SCOPE;
+       i <= Scope::LAST_INCREMENTAL_SCOPE; i++) {
+    current_.scopes[i] =
+        current_.incremental_marking_scopes[i].cumulative_duration -
+        baseline.incremental_marking_scopes[i].cumulative_duration;
   }
 }
 
 void GCTracer::Stop(GarbageCollector collector) {
   start_counter_--;
   if (start_counter_ != 0) {
-    Output("[Finished reentrant %s during %s.]\n",
-           collector == SCAVENGER ? "Scavenge" : "Mark-sweep",
-           current_.TypeName(false));
+    heap_->isolate()->PrintWithTimestamp(
+        "[Finished reentrant %s during %s.]\n",
+        collector == SCAVENGER ? "Scavenge" : "Mark-sweep",
+        current_.TypeName(false));
     return;
   }
 
@@ -260,8 +257,7 @@ void GCTracer::Stop(GarbageCollector collector) {
 
   for (int i = Scope::FIRST_INCREMENTAL_SCOPE;
        i <= Scope::LAST_INCREMENTAL_SCOPE; i++) {
-    current_.cumulative_incremental_scopes[i] =
-        cumulative_incremental_scopes_[i];
+    current_.incremental_marking_scopes[i] = incremental_marking_scopes_[i];
   }
 
   current_.end_time = heap_->MonotonicallyIncreasingTimeInMs();
@@ -281,57 +277,31 @@ void GCTracer::Stop(GarbageCollector collector) {
 
   double duration = current_.end_time - current_.start_time;
 
-  const Event* baseline = nullptr;
   if (current_.type == Event::SCAVENGER) {
-    baseline = &previous_;
+    MergeBaseline(previous_);
     recorded_scavenges_total_.Push(
         MakeBytesAndDuration(current_.new_space_object_size, duration));
     recorded_scavenges_survived_.Push(MakeBytesAndDuration(
         current_.survived_new_space_object_size, duration));
   } else if (current_.type == Event::INCREMENTAL_MARK_COMPACTOR) {
-    baseline = &previous_incremental_mark_compactor_event_;
-    longest_incremental_marking_step_ = 0.0;
-    longest_incremental_marking_finalization_step_ = 0.0;
+    MergeBaseline(previous_incremental_mark_compactor_event_);
     recorded_incremental_marking_steps_.Push(
         MakeBytesAndDuration(current_.incremental_marking_bytes,
                              current_.pure_incremental_marking_duration));
     recorded_incremental_mark_compacts_.Push(
         MakeBytesAndDuration(current_.start_object_size, duration));
     combined_mark_compact_speed_cache_ = 0.0;
+    for (int i = 0; i < Scope::NUMBER_OF_INCREMENTAL_SCOPES; i++) {
+      incremental_marking_scopes_[i].ResetCurrentCycle();
+    }
   } else {
     DCHECK(current_.incremental_marking_bytes == 0);
-    DCHECK(current_.incremental_marking_duration == 0);
     DCHECK(current_.pure_incremental_marking_duration == 0);
-    longest_incremental_marking_step_ = 0.0;
-    longest_incremental_marking_finalization_step_ = 0.0;
     recorded_mark_compacts_.Push(
         MakeBytesAndDuration(current_.start_object_size, duration));
     combined_mark_compact_speed_cache_ = 0.0;
-  }
-
-  if (baseline != nullptr) {
-    current_.incremental_marking_steps =
-        current_.cumulative_incremental_marking_steps -
-        baseline->cumulative_incremental_marking_steps;
-    current_.incremental_marking_bytes =
-        current_.cumulative_incremental_marking_bytes -
-        baseline->cumulative_incremental_marking_bytes;
-    current_.incremental_marking_duration =
-        current_.cumulative_incremental_marking_duration -
-        baseline->cumulative_incremental_marking_duration;
-    current_.pure_incremental_marking_duration =
-        current_.cumulative_pure_incremental_marking_duration -
-        baseline->cumulative_pure_incremental_marking_duration;
-    current_.incremental_marking_finalizaton_steps =
-        current_.cumulative_incremental_marking_finalization_steps -
-        baseline->cumulative_incremental_marking_finalization_steps;
-    current_.incremental_marking_finalization_duration =
-        current_.cumulative_incremental_marking_finalizaton_duration -
-        baseline->cumulative_incremental_marking_finalizaton_duration;
-    for (int i = Scope::FIRST_INCREMENTAL_SCOPE;
-         i <= Scope::LAST_INCREMENTAL_SCOPE; i++) {
-      current_.scopes[i] = current_.cumulative_incremental_scopes[i] -
-                           baseline->cumulative_incremental_scopes[i];
+    for (int i = 0; i < Scope::NUMBER_OF_INCREMENTAL_SCOPES; i++) {
+      incremental_marking_scopes_[i].ResetCurrentCycle();
     }
   }
 
@@ -353,8 +323,10 @@ void GCTracer::Stop(GarbageCollector collector) {
   }
 
   // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (FLAG_runtime_call_stats) {
-    RuntimeCallStats::Leave(heap_->isolate(), &timer_);
+  if (TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_ENABLED() ||
+      FLAG_runtime_call_stats) {
+    RuntimeCallStats::Leave(heap_->isolate()->counters()->runtime_call_stats(),
+                            &timer_);
   }
 }
 
@@ -420,25 +392,13 @@ void GCTracer::AddSurvivalRatio(double promotion_ratio) {
 
 
 void GCTracer::AddIncrementalMarkingStep(double duration, intptr_t bytes) {
-  cumulative_incremental_marking_steps_++;
   cumulative_incremental_marking_bytes_ += bytes;
   cumulative_incremental_marking_duration_ += duration;
-  longest_incremental_marking_step_ =
-      Max(longest_incremental_marking_step_, duration);
   cumulative_marking_duration_ += duration;
   if (bytes > 0) {
     cumulative_pure_incremental_marking_duration_ += duration;
   }
 }
-
-
-void GCTracer::AddIncrementalMarkingFinalizationStep(double duration) {
-  cumulative_incremental_marking_finalization_steps_++;
-  cumulative_incremental_marking_finalization_duration_ += duration;
-  longest_incremental_marking_finalization_step_ =
-      Max(longest_incremental_marking_finalization_step_, duration);
-}
-
 
 void GCTracer::Output(const char* format, ...) const {
   if (FLAG_trace_gc) {
@@ -459,48 +419,39 @@ void GCTracer::Output(const char* format, ...) const {
   heap_->AddToRingBuffer(buffer.start());
 }
 
-
 void GCTracer::Print() const {
-  if (FLAG_trace_gc) {
-    PrintIsolate(heap_->isolate(), "%s", "");
-  }
-  Output("%8.0f ms: ", heap_->isolate()->time_millis_since_init());
-
-  Output("%s %.1f (%.1f) -> %.1f (%.1f) MB, ", current_.TypeName(false),
-         static_cast<double>(current_.start_object_size) / MB,
-         static_cast<double>(current_.start_memory_size) / MB,
-         static_cast<double>(current_.end_object_size) / MB,
-         static_cast<double>(current_.end_memory_size) / MB);
-
   double duration = current_.end_time - current_.start_time;
-  Output("%.1f / %.1f ms", duration, TotalExternalTime());
+  const size_t kIncrementalStatsSize = 128;
+  char incremental_buffer[kIncrementalStatsSize] = {0};
 
-  if (current_.type == Event::SCAVENGER) {
-    if (current_.incremental_marking_steps > 0) {
-      Output(" (+ %.1f ms in %d steps since last GC)",
-             current_.incremental_marking_duration,
-             current_.incremental_marking_steps);
-    }
-  } else {
-    if (current_.incremental_marking_steps > 0) {
-      Output(
-          " (+ %.1f ms in %d steps since start of marking, "
-          "biggest step %.1f ms)",
-          current_.incremental_marking_duration,
-          current_.incremental_marking_steps,
-          current_.longest_incremental_marking_step);
-    }
+  if (current_.type == Event::INCREMENTAL_MARK_COMPACTOR) {
+    base::OS::SNPrintF(
+        incremental_buffer, kIncrementalStatsSize,
+        " (+ %.1f ms in %d steps since start of marking, "
+        "biggest step %.1f ms, walltime since start of marking %.f ms)",
+        current_.scopes[Scope::MC_INCREMENTAL],
+        current_.incremental_marking_scopes[Scope::MC_INCREMENTAL].steps,
+        current_.incremental_marking_scopes[Scope::MC_INCREMENTAL].longest_step,
+        current_.end_time - incremental_marking_start_time_);
   }
 
-  if (current_.gc_reason != NULL) {
-    Output(" [%s]", current_.gc_reason);
-  }
-
-  if (current_.collector_reason != NULL) {
-    Output(" [%s]", current_.collector_reason);
-  }
-
-  Output(".\n");
+  // Avoid PrintF as Output also appends the string to the tracing ring buffer
+  // that gets printed on OOM failures.
+  Output(
+      "[%d:%p] "
+      "%8.0f ms: "
+      "%s %.1f (%.1f) -> %.1f (%.1f) MB, "
+      "%.1f / %.1f ms %s %s %s\n",
+      base::OS::GetCurrentProcessId(),
+      reinterpret_cast<void*>(heap_->isolate()),
+      heap_->isolate()->time_millis_since_init(), current_.TypeName(false),
+      static_cast<double>(current_.start_object_size) / MB,
+      static_cast<double>(current_.start_memory_size) / MB,
+      static_cast<double>(current_.end_object_size) / MB,
+      static_cast<double>(current_.end_memory_size) / MB, duration,
+      TotalExternalTime(), incremental_buffer,
+      Heap::GarbageCollectionReasonToString(current_.gc_reason),
+      current_.collector_reason != nullptr ? current_.collector_reason : "");
 }
 
 
@@ -510,82 +461,85 @@ void GCTracer::PrintNVP() const {
   intptr_t allocated_since_last_gc =
       current_.start_object_size - previous_.end_object_size;
 
+  double incremental_walltime_duration = 0;
+
+  if (current_.type == Event::INCREMENTAL_MARK_COMPACTOR) {
+    incremental_walltime_duration =
+        current_.end_time - incremental_marking_start_time_;
+  }
+
   switch (current_.type) {
     case Event::SCAVENGER:
-      PrintIsolate(heap_->isolate(),
-                   "%8.0f ms: "
-                   "pause=%.1f "
-                   "mutator=%.1f "
-                   "gc=%s "
-                   "reduce_memory=%d "
-                   "scavenge=%.2f "
-                   "old_new=%.2f "
-                   "weak=%.2f "
-                   "roots=%.2f "
-                   "code=%.2f "
-                   "semispace=%.2f "
-                   "object_groups=%.2f "
-                   "external_prologue=%.2f "
-                   "external_epilogue=%.2f "
-                   "external_weak_global_handles=%.2f "
-                   "steps_count=%d "
-                   "steps_took=%.1f "
-                   "scavenge_throughput=%.f "
-                   "total_size_before=%" V8PRIdPTR
-                   " "
-                   "total_size_after=%" V8PRIdPTR
-                   " "
-                   "holes_size_before=%" V8PRIdPTR
-                   " "
-                   "holes_size_after=%" V8PRIdPTR
-                   " "
-                   "allocated=%" V8PRIdPTR
-                   " "
-                   "promoted=%" V8PRIdPTR
-                   " "
-                   "semi_space_copied=%" V8PRIdPTR
-                   " "
-                   "nodes_died_in_new=%d "
-                   "nodes_copied_in_new=%d "
-                   "nodes_promoted=%d "
-                   "promotion_ratio=%.1f%% "
-                   "average_survival_ratio=%.1f%% "
-                   "promotion_rate=%.1f%% "
-                   "semi_space_copy_rate=%.1f%% "
-                   "new_space_allocation_throughput=%.1f "
-                   "context_disposal_rate=%.1f\n",
-                   heap_->isolate()->time_millis_since_init(), duration,
-                   spent_in_mutator, current_.TypeName(true),
-                   current_.reduce_memory,
-                   current_.scopes[Scope::SCAVENGER_SCAVENGE],
-                   current_.scopes[Scope::SCAVENGER_OLD_TO_NEW_POINTERS],
-                   current_.scopes[Scope::SCAVENGER_WEAK],
-                   current_.scopes[Scope::SCAVENGER_ROOTS],
-                   current_.scopes[Scope::SCAVENGER_CODE_FLUSH_CANDIDATES],
-                   current_.scopes[Scope::SCAVENGER_SEMISPACE],
-                   current_.scopes[Scope::SCAVENGER_OBJECT_GROUPS],
-                   current_.scopes[Scope::SCAVENGER_EXTERNAL_PROLOGUE],
-                   current_.scopes[Scope::SCAVENGER_EXTERNAL_EPILOGUE],
-                   current_.scopes[Scope::EXTERNAL_WEAK_GLOBAL_HANDLES],
-                   current_.incremental_marking_steps,
-                   current_.incremental_marking_duration,
-                   ScavengeSpeedInBytesPerMillisecond(),
-                   current_.start_object_size, current_.end_object_size,
-                   current_.start_holes_size, current_.end_holes_size,
-                   allocated_since_last_gc, heap_->promoted_objects_size(),
-                   heap_->semi_space_copied_object_size(),
-                   heap_->nodes_died_in_new_space_,
-                   heap_->nodes_copied_in_new_space_, heap_->nodes_promoted_,
-                   heap_->promotion_ratio_, AverageSurvivalRatio(),
-                   heap_->promotion_rate_, heap_->semi_space_copied_rate_,
-                   NewSpaceAllocationThroughputInBytesPerMillisecond(),
-                   ContextDisposalRateInMilliseconds());
+      heap_->isolate()->PrintWithTimestamp(
+          "pause=%.1f "
+          "mutator=%.1f "
+          "gc=%s "
+          "reduce_memory=%d "
+          "scavenge=%.2f "
+          "old_new=%.2f "
+          "weak=%.2f "
+          "roots=%.2f "
+          "code=%.2f "
+          "semispace=%.2f "
+          "object_groups=%.2f "
+          "external_prologue=%.2f "
+          "external_epilogue=%.2f "
+          "external_weak_global_handles=%.2f "
+          "steps_count=%d "
+          "steps_took=%.1f "
+          "scavenge_throughput=%.f "
+          "total_size_before=%" V8PRIdPTR
+          " "
+          "total_size_after=%" V8PRIdPTR
+          " "
+          "holes_size_before=%" V8PRIdPTR
+          " "
+          "holes_size_after=%" V8PRIdPTR
+          " "
+          "allocated=%" V8PRIdPTR
+          " "
+          "promoted=%" V8PRIdPTR
+          " "
+          "semi_space_copied=%" V8PRIdPTR
+          " "
+          "nodes_died_in_new=%d "
+          "nodes_copied_in_new=%d "
+          "nodes_promoted=%d "
+          "promotion_ratio=%.1f%% "
+          "average_survival_ratio=%.1f%% "
+          "promotion_rate=%.1f%% "
+          "semi_space_copy_rate=%.1f%% "
+          "new_space_allocation_throughput=%.1f "
+          "context_disposal_rate=%.1f\n",
+          duration, spent_in_mutator, current_.TypeName(true),
+          current_.reduce_memory, current_.scopes[Scope::SCAVENGER_SCAVENGE],
+          current_.scopes[Scope::SCAVENGER_OLD_TO_NEW_POINTERS],
+          current_.scopes[Scope::SCAVENGER_WEAK],
+          current_.scopes[Scope::SCAVENGER_ROOTS],
+          current_.scopes[Scope::SCAVENGER_CODE_FLUSH_CANDIDATES],
+          current_.scopes[Scope::SCAVENGER_SEMISPACE],
+          current_.scopes[Scope::SCAVENGER_OBJECT_GROUPS],
+          current_.scopes[Scope::SCAVENGER_EXTERNAL_PROLOGUE],
+          current_.scopes[Scope::SCAVENGER_EXTERNAL_EPILOGUE],
+          current_.scopes[Scope::EXTERNAL_WEAK_GLOBAL_HANDLES],
+          current_.incremental_marking_scopes[GCTracer::Scope::MC_INCREMENTAL]
+              .steps,
+          current_.scopes[Scope::MC_INCREMENTAL],
+          ScavengeSpeedInBytesPerMillisecond(), current_.start_object_size,
+          current_.end_object_size, current_.start_holes_size,
+          current_.end_holes_size, allocated_since_last_gc,
+          heap_->promoted_objects_size(),
+          heap_->semi_space_copied_object_size(),
+          heap_->nodes_died_in_new_space_, heap_->nodes_copied_in_new_space_,
+          heap_->nodes_promoted_, heap_->promotion_ratio_,
+          AverageSurvivalRatio(), heap_->promotion_rate_,
+          heap_->semi_space_copied_rate_,
+          NewSpaceAllocationThroughputInBytesPerMillisecond(),
+          ContextDisposalRateInMilliseconds());
       break;
     case Event::MARK_COMPACTOR:
     case Event::INCREMENTAL_MARK_COMPACTOR:
-      PrintIsolate(
-          heap_->isolate(),
-          "%8.0f ms: "
+      heap_->isolate()->PrintWithTimestamp(
           "pause=%.1f "
           "mutator=%.1f "
           "gc=%s "
@@ -632,16 +586,20 @@ void GCTracer::PrintNVP() const {
           "sweep.old=%.1f "
           "incremental=%.1f "
           "incremental.finalize=%.1f "
+          "incremental.finalize.body=%.1f "
           "incremental.finalize.external.prologue=%.1f "
           "incremental.finalize.external.epilogue=%.1f "
           "incremental.finalize.object_grouping=%.1f "
+          "incremental.sweeping=%.1f "
           "incremental.wrapper_prologue=%.1f "
           "incremental.wrapper_tracing=%.1f "
+          "incremental_wrapper_tracing_longest_step=%.1f "
           "incremental_finalize_longest_step=%.1f "
           "incremental_finalize_steps_count=%d "
-          "incremental_steps_count=%d "
           "incremental_longest_step=%.1f "
+          "incremental_steps_count=%d "
           "incremental_marking_throughput=%.f "
+          "incremental_walltime_duration=%.f "
           "total_size_before=%" V8PRIdPTR
           " "
           "total_size_after=%" V8PRIdPTR
@@ -666,9 +624,8 @@ void GCTracer::PrintNVP() const {
           "new_space_allocation_throughput=%.1f "
           "context_disposal_rate=%.1f "
           "compaction_speed=%.f\n",
-          heap_->isolate()->time_millis_since_init(), duration,
-          spent_in_mutator, current_.TypeName(true), current_.reduce_memory,
-          current_.scopes[Scope::MC_CLEAR],
+          duration, spent_in_mutator, current_.TypeName(true),
+          current_.reduce_memory, current_.scopes[Scope::MC_CLEAR],
           current_.scopes[Scope::MC_CLEAR_CODE_FLUSH],
           current_.scopes[Scope::MC_CLEAR_DEPENDENT_CODE],
           current_.scopes[Scope::MC_CLEAR_GLOBAL_HANDLES],
@@ -707,21 +664,32 @@ void GCTracer::PrintNVP() const {
           current_.scopes[Scope::MC_SWEEP_CODE],
           current_.scopes[Scope::MC_SWEEP_MAP],
           current_.scopes[Scope::MC_SWEEP_OLD],
-          current_.incremental_marking_duration,
+          current_.scopes[Scope::MC_INCREMENTAL],
           current_.scopes[Scope::MC_INCREMENTAL_FINALIZE],
+          current_.scopes[Scope::MC_INCREMENTAL_FINALIZE_BODY],
           current_.scopes[Scope::MC_INCREMENTAL_EXTERNAL_PROLOGUE],
           current_.scopes[Scope::MC_INCREMENTAL_EXTERNAL_EPILOGUE],
           current_.scopes[Scope::MC_INCREMENTAL_FINALIZE_OBJECT_GROUPING],
+          current_.scopes[Scope::MC_INCREMENTAL_SWEEPING],
           current_.scopes[Scope::MC_INCREMENTAL_WRAPPER_PROLOGUE],
           current_.scopes[Scope::MC_INCREMENTAL_WRAPPER_TRACING],
-          current_.longest_incremental_marking_finalization_step,
-          current_.incremental_marking_finalizaton_steps,
-          current_.incremental_marking_steps,
-          current_.longest_incremental_marking_step,
+          current_
+              .incremental_marking_scopes[Scope::MC_INCREMENTAL_WRAPPER_TRACING]
+              .longest_step,
+          current_
+              .incremental_marking_scopes[Scope::MC_INCREMENTAL_FINALIZE_BODY]
+              .longest_step,
+          current_
+              .incremental_marking_scopes[Scope::MC_INCREMENTAL_FINALIZE_BODY]
+              .steps,
+          current_.incremental_marking_scopes[Scope::MC_INCREMENTAL]
+              .longest_step,
+          current_.incremental_marking_scopes[Scope::MC_INCREMENTAL].steps,
           IncrementalMarkingSpeedInBytesPerMillisecond(),
-          current_.start_object_size, current_.end_object_size,
-          current_.start_holes_size, current_.end_holes_size,
-          allocated_since_last_gc, heap_->promoted_objects_size(),
+          incremental_walltime_duration, current_.start_object_size,
+          current_.end_object_size, current_.start_holes_size,
+          current_.end_holes_size, allocated_since_last_gc,
+          heap_->promoted_objects_size(),
           heap_->semi_space_copied_object_size(),
           heap_->nodes_died_in_new_space_, heap_->nodes_copied_in_new_space_,
           heap_->nodes_promoted_, heap_->promotion_ratio_,
@@ -866,5 +834,10 @@ bool GCTracer::SurvivalEventsRecorded() const {
 }
 
 void GCTracer::ResetSurvivalEvents() { recorded_survival_ratios_.Reset(); }
+
+void GCTracer::NotifyIncrementalMarkingStart() {
+  incremental_marking_start_time_ = heap_->MonotonicallyIncreasingTimeInMs();
+}
+
 }  // namespace internal
 }  // namespace v8

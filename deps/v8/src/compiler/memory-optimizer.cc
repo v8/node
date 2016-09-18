@@ -122,9 +122,9 @@ void MemoryOptimizer::VisitAllocate(Node* node, AllocationState const* state) {
   // Check if we can fold this allocation into a previous allocation represented
   // by the incoming {state}.
   Int32Matcher m(size);
-  if (m.HasValue() && m.Value() < Page::kMaxRegularHeapObjectSize) {
+  if (m.HasValue() && m.Value() < kMaxRegularHeapObjectSize) {
     int32_t const object_size = m.Value();
-    if (state->size() <= Page::kMaxRegularHeapObjectSize - object_size &&
+    if (state->size() <= kMaxRegularHeapObjectSize - object_size &&
         state->group()->pretenure() == pretenure) {
       // We can fold this Allocate {node} into the allocation {group}
       // represented by the given {state}. Compute the upper bound for
@@ -282,8 +282,9 @@ void MemoryOptimizer::VisitAllocate(Node* node, AllocationState const* state) {
 
     control = graph()->NewNode(common()->Merge(2), if_true, if_false);
     effect = graph()->NewNode(common()->EffectPhi(2), etrue, efalse, control);
-    value = graph()->NewNode(common()->Phi(MachineRepresentation::kTagged, 2),
-                             vtrue, vfalse, control);
+    value = graph()->NewNode(
+        common()->Phi(MachineRepresentation::kTaggedPointer, 2), vtrue, vfalse,
+        control);
 
     // Create an unfoldable allocation group.
     AllocationGroup* group =

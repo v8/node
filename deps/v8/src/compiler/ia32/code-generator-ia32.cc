@@ -4,7 +4,7 @@
 
 #include "src/compiler/code-generator.h"
 
-#include "src/ast/scopes.h"
+#include "src/compilation-info.h"
 #include "src/compiler/code-generator-impl.h"
 #include "src/compiler/gap-resolver.h"
 #include "src/compiler/node-matchers.h"
@@ -636,9 +636,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kArchDebugBreak:
       __ int3();
-      break;
-    case kArchImpossible:
-      __ Abort(kConversionFromImpossibleValue);
       break;
     case kArchNop:
     case kArchThrowTerminator:

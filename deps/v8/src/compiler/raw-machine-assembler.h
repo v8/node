@@ -135,6 +135,7 @@ class RawMachineAssembler {
     return AddNode(machine()->Store(StoreRepresentation(rep, write_barrier)),
                    base, index, value);
   }
+  Node* Retain(Node* value) { return AddNode(common()->Retain(), value); }
 
   // Unaligned memory operations
   Node* UnalignedLoad(MachineType rep, Node* base) {
@@ -659,6 +660,9 @@ class RawMachineAssembler {
   Node* Float64InsertHighWord32(Node* a, Node* b) {
     return AddNode(machine()->Float64InsertHighWord32(), a, b);
   }
+  Node* Float64SilenceNaN(Node* a) {
+    return AddNode(machine()->Float64SilenceNaN(), a);
+  }
 
   // Stack operations.
   Node* LoadStackPointer() { return AddNode(machine()->LoadStackPointer()); }
@@ -744,6 +748,10 @@ class RawMachineAssembler {
   // Tail call to a runtime function with five arguments.
   Node* TailCallRuntime5(Runtime::FunctionId function, Node* arg1, Node* arg2,
                          Node* arg3, Node* arg4, Node* arg5, Node* context);
+  // Tail call to a runtime function with six arguments.
+  Node* TailCallRuntime6(Runtime::FunctionId function, Node* arg1, Node* arg2,
+                         Node* arg3, Node* arg4, Node* arg5, Node* arg6,
+                         Node* context);
 
   // ===========================================================================
   // The following utility methods deal with control flow, hence might switch

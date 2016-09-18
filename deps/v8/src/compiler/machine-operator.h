@@ -41,6 +41,7 @@ class OptionalOperator final {
 
 // A Load needs a MachineType.
 typedef MachineType LoadRepresentation;
+typedef LoadRepresentation ProtectedLoadRepresentation;
 
 LoadRepresentation LoadRepresentationOf(Operator const*);
 
@@ -301,16 +302,6 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* ChangeInt32ToInt64();
   const Operator* ChangeUint32ToFloat64();
   const Operator* ChangeUint32ToUint64();
-
-  // These are changes from impossible values (for example a smi-checked
-  // string).  They can safely emit an abort instruction, which should
-  // never be reached.
-  const Operator* ImpossibleToWord32();
-  const Operator* ImpossibleToWord64();
-  const Operator* ImpossibleToFloat32();
-  const Operator* ImpossibleToFloat64();
-  const Operator* ImpossibleToTagged();
-  const Operator* ImpossibleToBit();
 
   // These operators truncate or round numbers, both changing the representation
   // of the number and mapping multiple input values onto the same output value.
@@ -611,6 +602,7 @@ class MachineOperatorBuilder final : public ZoneObject {
 
   // load [base + index]
   const Operator* Load(LoadRepresentation rep);
+  const Operator* ProtectedLoad(LoadRepresentation rep);
 
   // store [base + index], value
   const Operator* Store(StoreRepresentation rep);

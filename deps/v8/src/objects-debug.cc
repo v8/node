@@ -166,6 +166,9 @@ void HeapObject::HeapObjectVerify() {
     case JS_PROXY_TYPE:
       JSProxy::cast(this)->JSProxyVerify();
       break;
+    case JS_MODULE_TYPE:
+      JSModule::cast(this)->JSModuleVerify();
+      break;
     case FOREIGN_TYPE:
       Foreign::cast(this)->ForeignVerify();
       break;
@@ -831,6 +834,7 @@ void JSRegExp::JSRegExpVerify() {
   }
 }
 
+void JSModule::JSModuleVerify() { CHECK(IsJSModule()); }
 
 void JSProxy::JSProxyVerify() {
   CHECK(IsJSProxy());
@@ -911,10 +915,8 @@ void PrototypeInfo::PrototypeInfoVerify() {
   CHECK(validity_cell()->IsCell() || validity_cell()->IsSmi());
 }
 
-
-void SloppyBlockWithEvalContextExtension::
-    SloppyBlockWithEvalContextExtensionVerify() {
-  CHECK(IsSloppyBlockWithEvalContextExtension());
+void ContextExtension::ContextExtensionVerify() {
+  CHECK(IsContextExtension());
   VerifyObjectField(kScopeInfoOffset);
   VerifyObjectField(kExtensionOffset);
 }

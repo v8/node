@@ -193,9 +193,17 @@ const size_t kCodeRangeAreaAlignment = 4 * KB;  // OS page.
 const size_t kReservedCodeRangePages = 0;
 #endif
 
-// The external allocation limit should be below 256 MB on all architectures
-// to avoid that resource-constrained embedders run low on memory.
-const int kExternalAllocationLimit = 192 * 1024 * 1024;
+// Trigger an incremental GCs once the external memory reaches this limit.
+const int kExternalAllocationSoftLimit = 64 * MB;
+
+// Maximum object size that gets allocated into regular pages. Objects larger
+// than that size are allocated in large object space and are never moved in
+// memory. This also applies to new space allocation, since objects are never
+// migrated from new space to large object space. Takes double alignment into
+// account.
+//
+// Current value: Page::kAllocatableMemory (on 32-bit arch) - 512 (slack).
+const int kMaxRegularHeapObjectSize = 507136;
 
 STATIC_ASSERT(kPointerSize == (1 << kPointerSizeLog2));
 
@@ -722,6 +730,7 @@ struct AccessorDescriptor {
 enum CpuFeature {
   // x86
   SSE4_1,
+  SSSE3,
   SSE3,
   SAHF,
   AVX,
@@ -732,13 +741,12 @@ enum CpuFeature {
   POPCNT,
   ATOM,
   // ARM
-  VFP3,
-  ARMv7,
-  ARMv8,
-  SUDIV,
+  // - Standard configurations. The baseline is ARMv6+VFPv2.
+  ARMv7,        // ARMv7-A + VFPv3-D32 + NEON
+  ARMv7_SUDIV,  // ARMv7-A + VFPv4-D32 + NEON + SUDIV
+  ARMv8,        // ARMv8-A (+ all of the above)
+  // - Additional tuning flags.
   MOVW_MOVT_IMMEDIATE_LOADS,
-  VFP32DREGS,
-  NEON,
   // MIPS, MIPS64
   FPU,
   FP64FPU,
@@ -755,10 +763,14 @@ enum CpuFeature {
   DISTINCT_OPS,
   GENERAL_INSTR_EXT,
   FLOATING_POINT_EXT,
-  // PPC/S390
-  UNALIGNED_ACCESSES,
 
-  NUMBER_OF_CPU_FEATURES
+  NUMBER_OF_CPU_FEATURES,
+
+  // ARM feature aliases (based on the standard configurations above).
+  VFP3 = ARMv7,
+  NEON = ARMv7,
+  VFP32DREGS = ARMv7,
+  SUDIV = ARMv7_SUDIV
 };
 
 // Defines hints about receiver values based on structural knowledge.
@@ -840,8 +852,7 @@ enum SmiCheckType {
   DO_SMI_CHECK
 };
 
-
-enum ScopeType {
+enum ScopeType : uint8_t {
   EVAL_SCOPE,      // The top-level scope for an eval source.
   FUNCTION_SCOPE,  // The top-level scope for a function.
   MODULE_SCOPE,    // The scope introduced by a module literal
@@ -878,11 +889,9 @@ const double kMaxSafeInteger = 9007199254740991.0;  // 2^53-1
 
 
 // The order of this enum has to be kept in sync with the predicates below.
-enum VariableMode {
+enum VariableMode : uint8_t {
   // User declared variables:
   VAR,  // declared via 'var', and 'function' declarations
-
-  CONST_LEGACY,  // declared via legacy 'const' declarations
 
   LET,  // declared via 'let' declarations (first lexical)
 
@@ -899,10 +908,45 @@ enum VariableMode {
                    // variable is global unless it has been shadowed
                    // by an eval-introduced variable
 
-  DYNAMIC_LOCAL  // requires dynamic lookup, but we know that the
-                 // variable is local and where it is unless it
-                 // has been shadowed by an eval-introduced
-                 // variable
+  DYNAMIC_LOCAL,  // requires dynamic lookup, but we know that the
+                  // variable is local and where it is unless it
+                  // has been shadowed by an eval-introduced
+                  // variable
+
+  kLastVariableMode = DYNAMIC_LOCAL
+};
+
+// Printing support
+#ifdef DEBUG
+inline const char* VariableMode2String(VariableMode mode) {
+  switch (mode) {
+    case VAR:
+      return "VAR";
+    case LET:
+      return "LET";
+    case CONST:
+      return "CONST";
+    case DYNAMIC:
+      return "DYNAMIC";
+    case DYNAMIC_GLOBAL:
+      return "DYNAMIC_GLOBAL";
+    case DYNAMIC_LOCAL:
+      return "DYNAMIC_LOCAL";
+    case TEMPORARY:
+      return "TEMPORARY";
+  }
+  UNREACHABLE();
+  return NULL;
+}
+#endif
+
+enum VariableKind : uint8_t {
+  NORMAL_VARIABLE,
+  FUNCTION_VARIABLE,
+  THIS_VARIABLE,
+  ARGUMENTS_VARIABLE,
+  SLOPPY_FUNCTION_NAME_VARIABLE,
+  kLastKind = SLOPPY_FUNCTION_NAME_VARIABLE
 };
 
 inline bool IsDynamicVariableMode(VariableMode mode) {
@@ -911,7 +955,8 @@ inline bool IsDynamicVariableMode(VariableMode mode) {
 
 
 inline bool IsDeclaredVariableMode(VariableMode mode) {
-  return mode >= VAR && mode <= CONST;
+  STATIC_ASSERT(VAR == 0);  // Implies that mode >= VAR.
+  return mode <= CONST;
 }
 
 
@@ -919,12 +964,7 @@ inline bool IsLexicalVariableMode(VariableMode mode) {
   return mode >= LET && mode <= CONST;
 }
 
-
-inline bool IsImmutableVariableMode(VariableMode mode) {
-  return mode == CONST || mode == CONST_LEGACY;
-}
-
-enum class VariableLocation {
+enum VariableLocation : uint8_t {
   // Before and during variable allocation, a variable whose location is
   // not yet determined.  After allocation, a variable looked up as a
   // property on the global object (and possibly absent).  name() is the
@@ -945,19 +985,15 @@ enum class VariableLocation {
   // corresponding scope.
   CONTEXT,
 
-  // An indexed slot in a script context that contains a respective global
-  // property cell.  name() is the variable name, index() is the variable
-  // index in the context object on the heap, starting at 0.  scope() is the
-  // corresponding script scope.
-  GLOBAL,
-
   // A named slot in a heap context.  name() is the variable name in the
   // context object on the heap, with lookup starting at the current
   // context.  index() is invalid.
   LOOKUP,
 
   // A named slot in a module's export table.
-  MODULE
+  MODULE,
+
+  kLastVariableLocation = MODULE
 };
 
 // ES6 Draft Rev3 10.2 specifies declarative environment records with mutable
@@ -991,14 +1027,9 @@ enum class VariableLocation {
 // The following enum specifies a flag that indicates if the binding needs a
 // distinct initialization step (kNeedsInitialization) or if the binding is
 // immediately initialized upon creation (kCreatedInitialized).
-enum InitializationFlag {
-  kNeedsInitialization,
-  kCreatedInitialized
-};
+enum InitializationFlag : uint8_t { kNeedsInitialization, kCreatedInitialized };
 
-
-enum MaybeAssignedFlag { kNotAssigned, kMaybeAssigned };
-
+enum MaybeAssignedFlag : uint8_t { kNotAssigned, kMaybeAssigned };
 
 // Serialized in PreparseData, so numeric values should not be changed.
 enum ParseErrorType { kSyntaxError = 0, kReferenceError = 1 };
@@ -1155,6 +1186,26 @@ inline uint32_t ObjectHash(Address address) {
 class BinaryOperationFeedback {
  public:
   enum { kNone = 0x00, kSignedSmall = 0x01, kNumber = 0x3, kAny = 0x7 };
+};
+
+// TODO(epertoso): consider unifying this with BinaryOperationFeedback.
+class CompareOperationFeedback {
+ public:
+  enum { kNone = 0x00, kSignedSmall = 0x01, kNumber = 0x3, kAny = 0x7 };
+};
+
+// Describes how exactly a frame has been dropped from stack.
+enum LiveEditFrameDropMode {
+  // No frame has been dropped.
+  LIVE_EDIT_FRAMES_UNTOUCHED,
+  // The top JS frame had been calling debug break slot stub. Patch the
+  // address this stub jumps to in the end.
+  LIVE_EDIT_FRAME_DROPPED_IN_DEBUG_SLOT_CALL,
+  // The top JS frame had been calling some C++ function. The return address
+  // gets patched automatically.
+  LIVE_EDIT_FRAME_DROPPED_IN_DIRECT_CALL,
+  LIVE_EDIT_FRAME_DROPPED_IN_RETURN_CALL,
+  LIVE_EDIT_CURRENTLY_SET_MODE
 };
 
 }  // namespace internal

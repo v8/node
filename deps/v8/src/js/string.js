@@ -87,17 +87,6 @@ function StringLastIndexOf(pat, pos) {  // length == 1
 %FunctionSetLength(StringLastIndexOf, 1);
 
 
-// ECMA-262 section 15.5.4.9
-//
-// This function is implementation specific.  For now, we do not
-// do anything locale specific.
-function StringLocaleCompareJS(other) {
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.localeCompare");
-
-  return %StringLocaleCompare(TO_STRING(this), TO_STRING(other));
-}
-
-
 // ES6 21.1.3.11.
 function StringMatchJS(pattern) {
   CHECK_OBJECT_COERCIBLE(this, "String.prototype.match");
@@ -116,30 +105,6 @@ function StringMatchJS(pattern) {
   RegExpInitialize(regexp, pattern);
   return regexp[matchSymbol](subject);
 }
-
-
-// ECMA-262 v6, section 21.1.3.12
-//
-// For now we do nothing, as proper normalization requires big tables.
-// If Intl is enabled, then i18n.js will override it and provide the the
-// proper functionality.
-function StringNormalize(formArg) {  // length == 0
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.normalize");
-  var s = TO_STRING(this);
-
-  var form = IS_UNDEFINED(formArg) ? 'NFC' : TO_STRING(formArg);
-
-  var NORMALIZATION_FORMS = ['NFC', 'NFD', 'NFKC', 'NFKD'];
-  var normalizationForm = %ArrayIndexOf(NORMALIZATION_FORMS, form, 0);
-  if (normalizationForm === -1) {
-    throw %make_range_error(kNormalizationForm,
-                         %_Call(ArrayJoin, NORMALIZATION_FORMS, ', '));
-  }
-
-  return s;
-}
-
-%FunctionSetLength(StringNormalize, 0);
 
 
 // This has the same size as the RegExpLastMatchInfo array, and can be used
@@ -738,9 +703,7 @@ utils.InstallFunctions(GlobalString.prototype, DONT_ENUM, [
   "includes", StringIncludes,
   "indexOf", StringIndexOf,
   "lastIndexOf", StringLastIndexOf,
-  "localeCompare", StringLocaleCompareJS,
   "match", StringMatchJS,
-  "normalize", StringNormalize,
   "repeat", StringRepeat,
   "replace", StringReplace,
   "search", StringSearch,

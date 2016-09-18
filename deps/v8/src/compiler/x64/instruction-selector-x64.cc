@@ -155,11 +155,8 @@ class X64OperandGenerator final : public OperandGenerator {
   }
 };
 
-
-void InstructionSelector::VisitLoad(Node* node) {
-  LoadRepresentation load_rep = LoadRepresentationOf(node->op());
-  X64OperandGenerator g(this);
-
+namespace {
+ArchOpcode GetLoadOpcode(LoadRepresentation load_rep) {
   ArchOpcode opcode = kArchNop;
   switch (load_rep.representation()) {
     case MachineRepresentation::kFloat32:
@@ -187,9 +184,17 @@ void InstructionSelector::VisitLoad(Node* node) {
     case MachineRepresentation::kSimd128:  // Fall through.
     case MachineRepresentation::kNone:
       UNREACHABLE();
-      return;
+      break;
   }
+  return opcode;
+}
+}  // namespace
 
+void InstructionSelector::VisitLoad(Node* node) {
+  LoadRepresentation load_rep = LoadRepresentationOf(node->op());
+  X64OperandGenerator g(this);
+
+  ArchOpcode opcode = GetLoadOpcode(load_rep);
   InstructionOperand outputs[1];
   outputs[0] = g.DefineAsRegister(node);
   InstructionOperand inputs[3];
@@ -200,6 +205,24 @@ void InstructionSelector::VisitLoad(Node* node) {
   Emit(code, 1, outputs, input_count, inputs);
 }
 
+void InstructionSelector::VisitProtectedLoad(Node* node) {
+  LoadRepresentation load_rep = LoadRepresentationOf(node->op());
+  X64OperandGenerator g(this);
+
+  ArchOpcode opcode = GetLoadOpcode(load_rep);
+  InstructionOperand outputs[1];
+  outputs[0] = g.DefineAsRegister(node);
+  InstructionOperand inputs[4];
+  size_t input_count = 0;
+  AddressingMode mode =
+      g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count);
+  // Add the context parameter as an input.
+  inputs[input_count++] = g.UseUniqueRegister(node->InputAt(2));
+  // Add the source position as an input
+  inputs[input_count++] = g.UseImmediate(node->InputAt(3));
+  InstructionCode code = opcode | AddressingModeField::encode(mode);
+  Emit(code, 1, outputs, input_count, inputs);
+}
 
 void InstructionSelector::VisitStore(Node* node) {
   X64OperandGenerator g(this);
@@ -212,7 +235,7 @@ void InstructionSelector::VisitStore(Node* node) {
   MachineRepresentation rep = store_rep.representation();
 
   if (write_barrier_kind != kNoWriteBarrier) {
-    DCHECK_EQ(MachineRepresentation::kTagged, rep);
+    DCHECK(CanBeTaggedPointer(rep));
     AddressingMode addressing_mode;
     InstructionOperand inputs[3];
     size_t input_count = 0;
@@ -1170,11 +1193,10 @@ void InstructionSelector::VisitChangeInt32ToInt64(Node* node) {
   }
 }
 
+namespace {
 
-void InstructionSelector::VisitChangeUint32ToUint64(Node* node) {
-  X64OperandGenerator g(this);
-  Node* value = node->InputAt(0);
-  switch (value->opcode()) {
+bool ZeroExtendsWord32ToWord64(Node* node) {
+  switch (node->opcode()) {
     case IrOpcode::kWord32And:
     case IrOpcode::kWord32Or:
     case IrOpcode::kWord32Xor:
@@ -1195,14 +1217,36 @@ void InstructionSelector::VisitChangeUint32ToUint64(Node* node) {
     case IrOpcode::kUint32LessThan:
     case IrOpcode::kUint32LessThanOrEqual:
     case IrOpcode::kUint32Mod:
-    case IrOpcode::kUint32MulHigh: {
+    case IrOpcode::kUint32MulHigh:
       // These 32-bit operations implicitly zero-extend to 64-bit on x64, so the
       // zero-extension is a no-op.
-      Emit(kArchNop, g.DefineSameAsFirst(node), g.Use(value));
-      return;
+      return true;
+    case IrOpcode::kProjection: {
+      Node* const value = node->InputAt(0);
+      switch (value->opcode()) {
+        case IrOpcode::kInt32AddWithOverflow:
+        case IrOpcode::kInt32SubWithOverflow:
+        case IrOpcode::kInt32MulWithOverflow:
+          return true;
+        default:
+          return false;
+      }
     }
     default:
-      break;
+      return false;
+  }
+}
+
+}  // namespace
+
+void InstructionSelector::VisitChangeUint32ToUint64(Node* node) {
+  X64OperandGenerator g(this);
+  Node* value = node->InputAt(0);
+  if (ZeroExtendsWord32ToWord64(value)) {
+    // These 32-bit operations implicitly zero-extend to 64-bit on x64, so the
+    // zero-extension is a no-op.
+    Emit(kArchNop, g.DefineSameAsFirst(node), g.Use(value));
+    return;
   }
   Emit(kX64Movl, g.DefineAsRegister(node), g.Use(value));
 }

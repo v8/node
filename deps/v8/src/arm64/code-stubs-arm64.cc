@@ -1845,7 +1845,6 @@ static void GenerateRecordCallTarget(MacroAssembler* masm, Register argc,
   //  feedback_vector : the feedback vector
   //  index :           slot in feedback vector (smi)
   Label initialize, done, miss, megamorphic, not_array_function;
-  Label done_initialize_count, done_increment_count;
 
   DCHECK_EQ(*TypeFeedbackVector::MegamorphicSentinel(masm->isolate()),
             masm->isolate()->heap()->megamorphic_symbol());
@@ -1868,7 +1867,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm, Register argc,
   Label check_allocation_site;
   __ Ldr(feedback_value, FieldMemOperand(feedback, WeakCell::kValueOffset));
   __ Cmp(function, feedback_value);
-  __ B(eq, &done_increment_count);
+  __ B(eq, &done);
   __ CompareRoot(feedback, Heap::kmegamorphic_symbolRootIndex);
   __ B(eq, &done);
   __ Ldr(feedback_map, FieldMemOperand(feedback, HeapObject::kMapOffset));
@@ -1890,7 +1889,7 @@ static void GenerateRecordCallTarget(MacroAssembler* masm, Register argc,
   __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, scratch1);
   __ Cmp(function, scratch1);
   __ B(ne, &megamorphic);
-  __ B(&done_increment_count);
+  __ B(&done);
 
   __ Bind(&miss);
 
@@ -1921,33 +1920,22 @@ static void GenerateRecordCallTarget(MacroAssembler* masm, Register argc,
   CreateAllocationSiteStub create_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &create_stub, argc, function,
                              feedback_vector, index, new_target);
-  __ B(&done_initialize_count);
+  __ B(&done);
 
   __ Bind(&not_array_function);
   CreateWeakCellStub weak_cell_stub(masm->isolate());
   CallStubInRecordCallTarget(masm, &weak_cell_stub, argc, function,
                              feedback_vector, index, new_target);
 
-  __ bind(&done_initialize_count);
-  // Initialize the call counter.
-  __ Mov(scratch1, Operand(Smi::FromInt(1)));
-  __ Adds(scratch2, feedback_vector,
-          Operand::UntagSmiAndScale(index, kPointerSizeLog2));
-  __ Str(scratch1,
-         FieldMemOperand(scratch2, FixedArray::kHeaderSize + kPointerSize));
-  __ b(&done);
+  __ Bind(&done);
 
-  __ bind(&done_increment_count);
-
-  // Increment the call count for monomorphic function calls.
+  // Increment the call count for all function calls.
   __ Add(scratch1, feedback_vector,
          Operand::UntagSmiAndScale(index, kPointerSizeLog2));
   __ Add(scratch1, scratch1, Operand(FixedArray::kHeaderSize + kPointerSize));
   __ Ldr(scratch2, FieldMemOperand(scratch1, 0));
   __ Add(scratch2, scratch2, Operand(Smi::FromInt(1)));
   __ Str(scratch2, FieldMemOperand(scratch1, 0));
-
-  __ Bind(&done);
 }
 
 
@@ -1995,6 +1983,17 @@ void CallConstructStub::Generate(MacroAssembler* masm) {
   __ Jump(isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
 }
 
+// Note: feedback_vector and slot are clobbered after the call.
+static void IncrementCallCount(MacroAssembler* masm, Register feedback_vector,
+                               Register slot) {
+  __ Add(feedback_vector, feedback_vector,
+         Operand::UntagSmiAndScale(slot, kPointerSizeLog2));
+  __ Add(feedback_vector, feedback_vector,
+         Operand(FixedArray::kHeaderSize + kPointerSize));
+  __ Ldr(slot, FieldMemOperand(feedback_vector, 0));
+  __ Add(slot, slot, Operand(Smi::FromInt(1)));
+  __ Str(slot, FieldMemOperand(feedback_vector, 0));
+}
 
 void CallICStub::HandleArrayCase(MacroAssembler* masm, Label* miss) {
   // x1 - function
@@ -2014,13 +2013,7 @@ void CallICStub::HandleArrayCase(MacroAssembler* masm, Label* miss) {
   __ Mov(x0, Operand(arg_count()));
 
   // Increment the call count for monomorphic function calls.
-  __ Add(feedback_vector, feedback_vector,
-         Operand::UntagSmiAndScale(index, kPointerSizeLog2));
-  __ Add(feedback_vector, feedback_vector,
-         Operand(FixedArray::kHeaderSize + kPointerSize));
-  __ Ldr(index, FieldMemOperand(feedback_vector, 0));
-  __ Add(index, index, Operand(Smi::FromInt(1)));
-  __ Str(index, FieldMemOperand(feedback_vector, 0));
+  IncrementCallCount(masm, feedback_vector, index);
 
   // Set up arguments for the array constructor stub.
   Register allocation_site_arg = feedback_vector;
@@ -2038,7 +2031,7 @@ void CallICStub::Generate(MacroAssembler* masm) {
   // x1 - function
   // x3 - slot id (Smi)
   // x2 - vector
-  Label extra_checks_or_miss, call, call_function;
+  Label extra_checks_or_miss, call, call_function, call_count_incremented;
   int argc = arg_count();
   ParameterCount actual(argc);
 
@@ -2073,16 +2066,11 @@ void CallICStub::Generate(MacroAssembler* masm) {
   // convincing us that we have a monomorphic JSFunction.
   __ JumpIfSmi(function, &extra_checks_or_miss);
 
-  // Increment the call count for monomorphic function calls.
-  __ Add(feedback_vector, feedback_vector,
-         Operand::UntagSmiAndScale(index, kPointerSizeLog2));
-  __ Add(feedback_vector, feedback_vector,
-         Operand(FixedArray::kHeaderSize + kPointerSize));
-  __ Ldr(index, FieldMemOperand(feedback_vector, 0));
-  __ Add(index, index, Operand(Smi::FromInt(1)));
-  __ Str(index, FieldMemOperand(feedback_vector, 0));
-
   __ Bind(&call_function);
+
+  // Increment the call count for monomorphic function calls.
+  IncrementCallCount(masm, feedback_vector, index);
+
   __ Mov(x0, argc);
   __ Jump(masm->isolate()->builtins()->CallFunction(convert_mode(),
                                                     tail_call_mode()),
@@ -2106,6 +2094,7 @@ void CallICStub::Generate(MacroAssembler* masm) {
     __ jmp(&miss);
   }
 
+  // TODO(mvstanton): the code below is effectively disabled. Investigate.
   __ JumpIfRoot(x4, Heap::kuninitialized_symbolRootIndex, &miss);
 
   // We are going megamorphic. If the feedback is a JSFunction, it is fine
@@ -2118,6 +2107,11 @@ void CallICStub::Generate(MacroAssembler* masm) {
   __ Str(x5, FieldMemOperand(x4, FixedArray::kHeaderSize));
 
   __ Bind(&call);
+
+  // Increment the call count for megamorphic function calls.
+  IncrementCallCount(masm, feedback_vector, index);
+
+  __ Bind(&call_count_incremented);
   __ Mov(x0, argc);
   __ Jump(masm->isolate()->builtins()->Call(convert_mode(), tail_call_mode()),
           RelocInfo::CODE_TARGET);
@@ -2143,12 +2137,6 @@ void CallICStub::Generate(MacroAssembler* masm) {
   __ Cmp(x4, x5);
   __ B(ne, &miss);
 
-  // Initialize the call counter.
-  __ Mov(x5, Smi::FromInt(1));
-  __ Adds(x4, feedback_vector,
-          Operand::UntagSmiAndScale(index, kPointerSizeLog2));
-  __ Str(x5, FieldMemOperand(x4, FixedArray::kHeaderSize + kPointerSize));
-
   // Store the function. Use a stub since we need a frame for allocation.
   // x2 - vector
   // x3 - slot
@@ -2156,9 +2144,13 @@ void CallICStub::Generate(MacroAssembler* masm) {
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
     CreateWeakCellStub create_stub(masm->isolate());
+    __ Push(feedback_vector, index);
+
     __ Push(cp, function);
     __ CallStub(&create_stub);
     __ Pop(cp, function);
+
+    __ Pop(feedback_vector, index);
   }
 
   __ B(&call_function);
@@ -2168,7 +2160,8 @@ void CallICStub::Generate(MacroAssembler* masm) {
   __ bind(&miss);
   GenerateMiss(masm);
 
-  __ B(&call);
+  // The runtime increments the call count in the vector for us.
+  __ B(&call_count_incremented);
 }
 
 
@@ -2960,39 +2953,6 @@ void ToStringStub::Generate(MacroAssembler* masm) {
 
   __ Push(x0);  // Push argument.
   __ TailCallRuntime(Runtime::kToString);
-}
-
-
-void ToNameStub::Generate(MacroAssembler* masm) {
-  // The ToName stub takes one argument in x0.
-  Label is_number;
-  __ JumpIfSmi(x0, &is_number);
-
-  Label not_name;
-  STATIC_ASSERT(FIRST_NAME_TYPE == FIRST_TYPE);
-  __ JumpIfObjectType(x0, x1, x1, LAST_NAME_TYPE, &not_name, hi);
-  // x0: receiver
-  // x1: receiver instance type
-  __ Ret();
-  __ Bind(&not_name);
-
-  Label not_heap_number;
-  __ Cmp(x1, HEAP_NUMBER_TYPE);
-  __ B(ne, &not_heap_number);
-  __ Bind(&is_number);
-  NumberToStringStub stub(isolate());
-  __ TailCallStub(&stub);
-  __ Bind(&not_heap_number);
-
-  Label not_oddball;
-  __ Cmp(x1, ODDBALL_TYPE);
-  __ B(ne, &not_oddball);
-  __ Ldr(x0, FieldMemOperand(x0, Oddball::kToStringOffset));
-  __ Ret();
-  __ Bind(&not_oddball);
-
-  __ Push(x0);  // Push argument.
-  __ TailCallRuntime(Runtime::kToName);
 }
 
 
@@ -4673,7 +4633,7 @@ void FastNewRestParameterStub::Generate(MacroAssembler* masm) {
     // Fall back to %AllocateInNewSpace (if not too big).
     Label too_big_for_new_space;
     __ Bind(&allocate);
-    __ Cmp(x6, Operand(Page::kMaxRegularHeapObjectSize));
+    __ Cmp(x6, Operand(kMaxRegularHeapObjectSize));
     __ B(gt, &too_big_for_new_space);
     {
       FrameScope scope(masm, StackFrame::INTERNAL);
@@ -5093,7 +5053,7 @@ void FastNewStrictArgumentsStub::Generate(MacroAssembler* masm) {
   // Fall back to %AllocateInNewSpace (if not too big).
   Label too_big_for_new_space;
   __ Bind(&allocate);
-  __ Cmp(x6, Operand(Page::kMaxRegularHeapObjectSize));
+  __ Cmp(x6, Operand(kMaxRegularHeapObjectSize));
   __ B(gt, &too_big_for_new_space);
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
