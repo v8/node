@@ -888,6 +888,60 @@ void BytecodeGraphBuilder::VisitLdaLookupSlotInsideTypeof() {
   BuildLdaLookupSlot(TypeofMode::INSIDE_TYPEOF);
 }
 
+void BytecodeGraphBuilder::BuildLdaLookupContextSlot(TypeofMode typeof_mode) {
+  // TODO(leszeks): Build the fast path here.
+
+  // Slow path, do a runtime load lookup.
+  {
+    FrameStateBeforeAndAfter states(this);
+
+    Node* name =
+        jsgraph()->Constant(bytecode_iterator().GetConstantForIndexOperand(0));
+
+    const Operator* op =
+        javascript()->CallRuntime(typeof_mode == TypeofMode::NOT_INSIDE_TYPEOF
+                                      ? Runtime::kLoadLookupSlot
+                                      : Runtime::kLoadLookupSlotInsideTypeof);
+    Node* value = NewNode(op, name);
+    environment()->BindAccumulator(value, &states);
+  }
+}
+
+void BytecodeGraphBuilder::VisitLdaLookupContextSlot() {
+  BuildLdaLookupContextSlot(TypeofMode::NOT_INSIDE_TYPEOF);
+}
+
+void BytecodeGraphBuilder::VisitLdaLookupContextSlotInsideTypeof() {
+  BuildLdaLookupContextSlot(TypeofMode::INSIDE_TYPEOF);
+}
+
+void BytecodeGraphBuilder::BuildLdaLookupGlobalSlot(TypeofMode typeof_mode) {
+  // TODO(leszeks): Build the fast path here.
+
+  // Slow path, do a runtime load lookup.
+  {
+    FrameStateBeforeAndAfter states(this);
+
+    Node* name =
+        jsgraph()->Constant(bytecode_iterator().GetConstantForIndexOperand(0));
+
+    const Operator* op =
+        javascript()->CallRuntime(typeof_mode == TypeofMode::NOT_INSIDE_TYPEOF
+                                      ? Runtime::kLoadLookupSlot
+                                      : Runtime::kLoadLookupSlotInsideTypeof);
+    Node* value = NewNode(op, name);
+    environment()->BindAccumulator(value, &states);
+  }
+}
+
+void BytecodeGraphBuilder::VisitLdaLookupGlobalSlot() {
+  BuildLdaLookupGlobalSlot(TypeofMode::NOT_INSIDE_TYPEOF);
+}
+
+void BytecodeGraphBuilder::VisitLdaLookupGlobalSlotInsideTypeof() {
+  BuildLdaLookupGlobalSlot(TypeofMode::INSIDE_TYPEOF);
+}
+
 void BytecodeGraphBuilder::BuildStaLookupSlot(LanguageMode language_mode) {
   FrameStateBeforeAndAfter states(this);
   Node* value = environment()->LookupAccumulator();
@@ -1326,13 +1380,10 @@ BinaryOperationHint BytecodeGraphBuilder::GetBinaryOperationHint(
     int operand_index) {
   FeedbackVectorSlot slot = feedback_vector()->ToSlot(
       bytecode_iterator().GetIndexOperand(operand_index));
-  DCHECK_EQ(FeedbackVectorSlotKind::GENERAL, feedback_vector()->GetKind(slot));
-  Object* feedback = feedback_vector()->Get(slot);
-  BinaryOperationHint hint = BinaryOperationHint::kAny;
-  if (feedback->IsSmi()) {
-    hint = BinaryOperationHintFromFeedback((Smi::cast(feedback))->value());
-  }
-  return hint;
+  DCHECK_EQ(FeedbackVectorSlotKind::INTERPRETER_BINARYOP_IC,
+            feedback_vector()->GetKind(slot));
+  BinaryOpICNexus nexus(feedback_vector(), slot);
+  return nexus.GetBinaryOperationFeedback();
 }
 
 // Helper function to create compare operation hint from the recorded type
@@ -1344,13 +1395,10 @@ CompareOperationHint BytecodeGraphBuilder::GetCompareOperationHint() {
   }
   FeedbackVectorSlot slot =
       feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(1));
-  DCHECK_EQ(FeedbackVectorSlotKind::GENERAL, feedback_vector()->GetKind(slot));
-  Object* feedback = feedback_vector()->Get(slot);
-  CompareOperationHint hint = CompareOperationHint::kAny;
-  if (feedback->IsSmi()) {
-    hint = CompareOperationHintFromFeedback((Smi::cast(feedback))->value());
-  }
-  return hint;
+  DCHECK_EQ(FeedbackVectorSlotKind::INTERPRETER_COMPARE_IC,
+            feedback_vector()->GetKind(slot));
+  CompareICNexus nexus(feedback_vector(), slot);
+  return nexus.GetCompareOperationFeedback();
 }
 
 float BytecodeGraphBuilder::ComputeCallFrequency(int slot_id) const {

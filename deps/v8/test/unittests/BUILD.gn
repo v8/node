@@ -8,6 +8,8 @@ v8_executable("unittests") {
   testonly = true
 
   sources = [
+    "../../testing/gmock-support.h",
+    "../../testing/gtest-support.h",
     "base/atomic-utils-unittest.cc",
     "base/bits-unittest.cc",
     "base/cpu-unittest.cc",
@@ -54,6 +56,7 @@ v8_executable("unittests") {
     "compiler/js-operator-unittest.cc",
     "compiler/js-typed-lowering-unittest.cc",
     "compiler/linkage-tail-call-unittest.cc",
+    "compiler/live-range-builder.h",
     "compiler/live-range-unittest.cc",
     "compiler/liveness-analyzer-unittest.cc",
     "compiler/load-elimination-unittest.cc",
@@ -100,6 +103,7 @@ v8_executable("unittests") {
     "interpreter/bytecode-pipeline-unittest.cc",
     "interpreter/bytecode-register-allocator-unittest.cc",
     "interpreter/bytecode-register-optimizer-unittest.cc",
+    "interpreter/bytecode-utils.h",
     "interpreter/bytecodes-unittest.cc",
     "interpreter/constant-array-builder-unittest.cc",
     "interpreter/interpreter-assembler-unittest.cc",

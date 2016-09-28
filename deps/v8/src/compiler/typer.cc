@@ -558,7 +558,7 @@ Type* Typer::Visitor::TypeRetain(Node* node) {
 Type* Typer::Visitor::TypeInt32Constant(Node* node) {
   double number = OpParameter<int32_t>(node);
   return Type::Intersect(Type::Range(number, number, zone()),
-                         Type::UntaggedIntegral32(), zone());
+                         Type::Integral32(), zone());
 }
 
 
@@ -1571,6 +1571,16 @@ Type* Typer::Visitor::TypeCheckBounds(Node* node) {
   return Type::Range(min, max, zone());
 }
 
+Type* Typer::Visitor::TypeCheckHeapObject(Node* node) {
+  Type* type = Operand(node, 0);
+  return type;
+}
+
+Type* Typer::Visitor::TypeCheckIf(Node* node) {
+  UNREACHABLE();
+  return nullptr;
+}
+
 Type* Typer::Visitor::TypeCheckMaps(Node* node) {
   UNREACHABLE();
   return nullptr;
@@ -1581,24 +1591,14 @@ Type* Typer::Visitor::TypeCheckNumber(Node* node) {
   return Type::Intersect(arg, Type::Number(), zone());
 }
 
+Type* Typer::Visitor::TypeCheckSmi(Node* node) {
+  Type* arg = Operand(node, 0);
+  return Type::Intersect(arg, Type::SignedSmall(), zone());
+}
+
 Type* Typer::Visitor::TypeCheckString(Node* node) {
   Type* arg = Operand(node, 0);
   return Type::Intersect(arg, Type::String(), zone());
-}
-
-Type* Typer::Visitor::TypeCheckIf(Node* node) {
-  UNREACHABLE();
-  return nullptr;
-}
-
-Type* Typer::Visitor::TypeCheckTaggedPointer(Node* node) {
-  Type* type = Operand(node, 0);
-  return type;
-}
-
-Type* Typer::Visitor::TypeCheckTaggedSigned(Node* node) {
-  Type* arg = Operand(node, 0);
-  return Type::Intersect(arg, typer_->cache_.kSmi, zone());
 }
 
 Type* Typer::Visitor::TypeCheckFloat64Hole(Node* node) {

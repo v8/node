@@ -364,7 +364,7 @@ void RuntimeCallStats::Reset() {
   in_use_ = true;
 }
 
-const char* RuntimeCallStats::Dump() {
+std::string RuntimeCallStats::Dump() {
   buffer_.str(std::string());
   buffer_.clear();
   buffer_ << "{";
@@ -394,7 +394,7 @@ const char* RuntimeCallStats::Dump() {
 #undef DUMP_COUNTER
   buffer_ << "\"END\":[]}";
   in_use_ = false;
-  return buffer_.str().c_str();
+  return buffer_.str();
 }
 
 }  // namespace internal

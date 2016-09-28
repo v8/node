@@ -15,7 +15,7 @@
 #include "src/heap/heap.h"
 #include "src/machine-type.h"
 #include "src/runtime/runtime.h"
-#include "src/zone-containers.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
@@ -379,8 +379,13 @@ class CodeAssembler {
                  const Arg& arg3, const Arg& arg4, const Arg& arg5,
                  size_t result_size = 1);
 
+  Node* CallStubN(const CallInterfaceDescriptor& descriptor,
+                  int js_parameter_count, Node* target, Node** args,
+                  size_t result_size = 1);
   Node* CallStubN(const CallInterfaceDescriptor& descriptor, Node* target,
-                  Node** args, size_t result_size = 1);
+                  Node** args, size_t result_size = 1) {
+    return CallStubN(descriptor, 0, target, args, result_size);
+  }
 
   Node* TailCallStub(Callable const& callable, Node* context, Node* arg1,
                      size_t result_size = 1);
@@ -402,6 +407,9 @@ class CodeAssembler {
   Node* TailCallStub(const CallInterfaceDescriptor& descriptor, Node* target,
                      Node* context, Node* arg1, Node* arg2, Node* arg3,
                      Node* arg4, size_t result_size = 1);
+  Node* TailCallStub(const CallInterfaceDescriptor& descriptor, Node* target,
+                     Node* context, Node* arg1, Node* arg2, Node* arg3,
+                     Node* arg4, Node* arg5, size_t result_size = 1);
 
   Node* TailCallStub(const CallInterfaceDescriptor& descriptor, Node* target,
                      Node* context, const Arg& arg1, const Arg& arg2,

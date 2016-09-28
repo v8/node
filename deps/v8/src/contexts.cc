@@ -124,12 +124,12 @@ ScopeInfo* Context::scope_info() {
   return ScopeInfo::cast(object);
 }
 
-JSModule* Context::module() {
+Module* Context::module() {
   Context* current = this;
   while (!current->IsModuleContext()) {
     current = current->previous();
   }
-  return JSModule::cast(current->extension());
+  return Module::cast(current->extension());
 }
 
 String* Context::catch_name() {
@@ -261,8 +261,14 @@ Handle<Object> Context::Lookup(Handle<String> name, ContextLookupFlags flags,
           object->IsJSContextExtensionObject()) {
         maybe = JSReceiver::GetOwnPropertyAttributes(object, name);
       } else if (context->IsWithContext()) {
-        // A with context will never bind "this".
-        if (name->Equals(*isolate->factory()->this_string())) {
+        // A with context will never bind "this", but debug-eval may look into
+        // a with context when resolving "this". Other synthetic variables such
+        // as new.target may be resolved as DYNAMIC_LOCAL due to bug v8:5405 ,
+        // skipping them here serves as a workaround until a more thorough
+        // fix can be applied.
+        // TODO(v8:5405): Replace this check with a DCHECK when resolution of
+        // of synthetic variables does not go through this code path.
+        if (ScopeInfo::VariableIsSynthetic(*name)) {
           maybe = Just(ABSENT);
         } else {
           LookupIterator it(object, name, object);

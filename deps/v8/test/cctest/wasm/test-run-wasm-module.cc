@@ -7,7 +7,6 @@
 
 #include "src/wasm/encoder.h"
 #include "src/wasm/module-decoder.h"
-#include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-macro-gen.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-opcodes.h"
@@ -29,7 +28,7 @@ void TestModule(Zone* zone, WasmModuleBuilder* builder,
 
   Isolate* isolate = CcTest::InitIsolateOnce();
   HandleScope scope(isolate);
-  WasmJs::SetupIsolateForWasm(isolate);
+  testing::SetupIsolateForWasmModule(isolate);
   int32_t result = testing::CompileAndRunWasmModule(
       isolate, buffer.begin(), buffer.end(), ModuleOrigin::kWasmOrigin);
   CHECK_EQ(expected_result, result);
@@ -50,7 +49,7 @@ void ExportAsMain(WasmFunctionBuilder* f) {
 TEST(Run_WasmModule_Return114) {
   static const int32_t kReturnValue = 114;
   TestSignatures sigs;
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
 
   WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
@@ -64,7 +63,7 @@ TEST(Run_WasmModule_Return114) {
 }
 
 TEST(Run_WasmModule_CallAdd) {
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   TestSignatures sigs;
 
@@ -90,7 +89,7 @@ TEST(Run_WasmModule_CallAdd) {
 
 TEST(Run_WasmModule_ReadLoadedDataSegment) {
   static const byte kDataSegmentDest0 = 12;
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   TestSignatures sigs;
 
@@ -111,7 +110,7 @@ TEST(Run_WasmModule_ReadLoadedDataSegment) {
 
 TEST(Run_WasmModule_CheckMemoryIsZero) {
   static const int kCheckSize = 16 * 1024;
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   TestSignatures sigs;
 
@@ -134,7 +133,7 @@ TEST(Run_WasmModule_CheckMemoryIsZero) {
 }
 
 TEST(Run_WasmModule_CallMain_recursive) {
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   TestSignatures sigs;
 
@@ -158,7 +157,7 @@ TEST(Run_WasmModule_CallMain_recursive) {
 }
 
 TEST(Run_WasmModule_Global) {
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   TestSignatures sigs;
 
@@ -184,7 +183,7 @@ TEST(Run_WasmModule_Global) {
 
 TEST(Run_WasmModule_Serialization) {
   static const char* kFunctionName = "increment";
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
 
   WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
@@ -205,7 +204,7 @@ TEST(Run_WasmModule_Serialization) {
   v8::WasmCompiledModule::SerializedModule data;
   {
     HandleScope scope(isolate);
-    WasmJs::SetupIsolateForWasm(isolate);
+    testing::SetupIsolateForWasmModule(isolate);
 
     ModuleResult decoding_result = DecodeWasmModule(
         isolate, &zone, buffer.begin(), buffer.end(), false, kWasmOrigin);
@@ -236,7 +235,7 @@ TEST(Run_WasmModule_Serialization) {
     v8::Local<v8::Context> new_ctx = v8::Context::New(v8_isolate);
     new_ctx->Enter();
     isolate = reinterpret_cast<Isolate*>(v8_isolate);
-    WasmJs::SetupIsolateForWasm(isolate);
+    testing::SetupIsolateForWasmModule(isolate);
 
     v8::MaybeLocal<v8::WasmCompiledModule> deserialized =
         v8::WasmCompiledModule::Deserialize(v8_isolate, data);
@@ -263,7 +262,7 @@ TEST(Run_WasmModule_MemSize_GrowMem) {
   // Initial memory size = 16 + GrowMemory(10)
   static const int kExpectedValue = kPageSize * 26;
   TestSignatures sigs;
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
 
   WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
@@ -278,7 +277,7 @@ TEST(Run_WasmModule_MemSize_GrowMem) {
 
 TEST(Run_WasmModule_GrowMemoryInIf) {
   TestSignatures sigs;
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   Zone zone(&allocator);
   WasmModuleBuilder* builder = new (&zone) WasmModuleBuilder(&zone);
   uint16_t f_index = builder->AddFunction();

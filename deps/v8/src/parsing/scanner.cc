@@ -19,9 +19,6 @@
 namespace v8 {
 namespace internal {
 
-const size_t Utf16CharacterStream::kNoBookmark =
-    std::numeric_limits<size_t>::max();
-
 Handle<String> Scanner::LiteralBuffer::Internalize(Isolate* isolate) const {
   if (is_one_byte()) {
     return isolate->factory()->InternalizeOneByteString(one_byte_literal());
@@ -29,21 +26,60 @@ Handle<String> Scanner::LiteralBuffer::Internalize(Isolate* isolate) const {
   return isolate->factory()->InternalizeTwoByteString(two_byte_literal());
 }
 
+// ----------------------------------------------------------------------------
+// Scanner::BookmarkScope
 
+const size_t Scanner::BookmarkScope::kBookmarkAtFirstPos =
+    std::numeric_limits<size_t>::max() - 2;
+const size_t Scanner::BookmarkScope::kNoBookmark =
+    std::numeric_limits<size_t>::max() - 1;
+const size_t Scanner::BookmarkScope::kBookmarkWasApplied =
+    std::numeric_limits<size_t>::max();
+
+void Scanner::BookmarkScope::Set() {
+  DCHECK_EQ(bookmark_, kNoBookmark);
+  DCHECK_EQ(scanner_->next_next_.token, Token::UNINITIALIZED);
+
+  // The first token is a bit special, since current_ will still be
+  // uninitialized. In this case, store kBookmarkAtFirstPos and special-case it
+  // when
+  // applying the bookmark.
+  DCHECK_IMPLIES(
+      scanner_->current_.token == Token::UNINITIALIZED,
+      scanner_->current_.location.beg_pos == scanner_->next_.location.beg_pos);
+  bookmark_ = (scanner_->current_.token == Token::UNINITIALIZED)
+                  ? kBookmarkAtFirstPos
+                  : scanner_->location().beg_pos;
+}
+
+void Scanner::BookmarkScope::Apply() {
+  DCHECK(HasBeenSet());  // Caller hasn't called SetBookmark.
+  if (bookmark_ == kBookmarkAtFirstPos) {
+    scanner_->SeekNext(0);
+  } else {
+    scanner_->SeekNext(bookmark_);
+    scanner_->Next();
+    DCHECK_EQ(scanner_->location().beg_pos, bookmark_);
+  }
+  bookmark_ = kBookmarkWasApplied;
+}
+
+bool Scanner::BookmarkScope::HasBeenSet() {
+  return bookmark_ != kNoBookmark && bookmark_ != kBookmarkWasApplied;
+}
+
+bool Scanner::BookmarkScope::HasBeenApplied() {
+  return bookmark_ == kBookmarkWasApplied;
+}
 
 // ----------------------------------------------------------------------------
 // Scanner
 
 Scanner::Scanner(UnicodeCache* unicode_cache)
     : unicode_cache_(unicode_cache),
-      bookmark_c0_(kNoBookmark),
       octal_pos_(Location::invalid()),
       decimal_with_leading_zero_pos_(Location::invalid()),
       found_html_comment_(false) {
-  bookmark_current_.literal_chars = &bookmark_current_literal_;
-  bookmark_current_.raw_literal_chars = &bookmark_current_raw_literal_;
-  bookmark_next_.literal_chars = &bookmark_next_literal_;
-  bookmark_next_.raw_literal_chars = &bookmark_next_raw_literal_;
 }
 
 
@@ -304,14 +340,14 @@ static inline bool IsLittleEndianByteOrderMark(uc32 c) {
   return c == 0xFFFE;
 }
 
-
 bool Scanner::SkipWhiteSpace() {
   int start_position = source_pos();
 
   while (true) {
     while (true) {
-      // The unicode cache accepts unsigned inputs.
+      // Don't skip behind the end of input.
       if (c0_ == kEndOfInput) break;
+
       // Advance as long as character is a WhiteSpace or LineTerminator.
       // Remember if the latter is the case.
       if (unicode_cache_->IsLineTerminator(c0_)) {
@@ -327,25 +363,27 @@ bool Scanner::SkipWhiteSpace() {
     // line (with only whitespace in front of it), we treat the rest
     // of the line as a comment. This is in line with the way
     // SpiderMonkey handles it.
-    if (c0_ == '-' && has_line_terminator_before_next_) {
-      Advance();
-      if (c0_ == '-') {
-        Advance();
-        if (c0_ == '>') {
-          // Treat the rest of the line as a comment.
-          SkipSingleLineComment();
-          // Continue skipping white space after the comment.
-          continue;
-        }
-        PushBack('-');  // undo Advance()
-      }
-      PushBack('-');  // undo Advance()
-    }
-    // Return whether or not we skipped any characters.
-    return source_pos() != start_position;
-  }
-}
+    if (c0_ != '-' || !has_line_terminator_before_next_) break;
 
+    Advance();
+    if (c0_ != '-') {
+      PushBack('-');  // undo Advance()
+      break;
+    }
+
+    Advance();
+    if (c0_ != '>') {
+      PushBack2('-', '-');  // undo 2x Advance();
+      break;
+    }
+
+    // Treat the rest of the line as a comment.
+    SkipSingleLineComment();
+  }
+
+  // Return whether or not we skipped any characters.
+  return source_pos() != start_position;
+}
 
 Token::Value Scanner::SkipSingleLineComment() {
   Advance();
@@ -449,24 +487,24 @@ Token::Value Scanner::SkipMultiLineComment() {
   return Token::ILLEGAL;
 }
 
-
 Token::Value Scanner::ScanHtmlComment() {
   // Check for <!-- comments.
   DCHECK(c0_ == '!');
   Advance();
-  if (c0_ == '-') {
-    Advance();
-    if (c0_ == '-') {
-      found_html_comment_ = true;
-      return SkipSingleLineComment();
-    }
-    PushBack('-');  // undo Advance()
+  if (c0_ != '-') {
+    PushBack('!');  // undo Advance()
+    return Token::LT;
   }
-  PushBack('!');  // undo Advance()
-  DCHECK(c0_ == '!');
-  return Token::LT;
-}
 
+  Advance();
+  if (c0_ != '-') {
+    PushBack2('-', '!');  // undo 2x Advance()
+    return Token::LT;
+  }
+
+  found_html_comment_ = true;
+  return SkipSingleLineComment();
+}
 
 void Scanner::Scan() {
   next_.literal_chars = NULL;
@@ -789,7 +827,7 @@ void Scanner::SeekForward(int pos) {
   // Positions inside the lookahead token aren't supported.
   DCHECK(pos >= current_pos);
   if (pos != current_pos) {
-    source_->SeekForward(pos - source_->pos());
+    source_->Seek(pos);
     Advance();
     // This function is only called to seek to the location
     // of the end of a function (at the "}" token). It doesn't matter
@@ -1584,59 +1622,24 @@ int Scanner::FindSymbol(DuplicateFinder* finder, int value) {
   return finder->AddTwoByteSymbol(literal_two_byte_string(), value);
 }
 
+void Scanner::SeekNext(size_t position) {
+  // Use with care: This cleanly resets most, but not all scanner state.
+  // TODO(vogelheim): Fix this, or at least DCHECK the relevant conditions.
 
-bool Scanner::SetBookmark() {
-  if (c0_ != kNoBookmark && bookmark_c0_ == kNoBookmark &&
-      next_next_.token == Token::UNINITIALIZED && source_->SetBookmark()) {
-    bookmark_c0_ = c0_;
-    CopyTokenDesc(&bookmark_current_, &current_);
-    CopyTokenDesc(&bookmark_next_, &next_);
-    return true;
-  }
-  return false;
+  // To re-scan from a given character position, we need to:
+  // 1, Reset the current_, next_ and next_next_ tokens
+  //    (next_ + next_next_ will be overwrittem by Next(),
+  //     current_ will remain unchanged, so overwrite it fully.)
+  current_ = {{0, 0}, nullptr, nullptr, 0, Token::UNINITIALIZED};
+  next_.token = Token::UNINITIALIZED;
+  next_next_.token = Token::UNINITIALIZED;
+  // 2, reset the source to the desired position,
+  source_->Seek(position);
+  // 3, re-scan, by scanning the look-ahead char + 1 token (next_).
+  c0_ = source_->Advance();
+  Next();
+  DCHECK_EQ(next_.location.beg_pos, position);
 }
-
-
-void Scanner::ResetToBookmark() {
-  DCHECK(BookmarkHasBeenSet());  // Caller hasn't called SetBookmark.
-
-  source_->ResetToBookmark();
-  c0_ = bookmark_c0_;
-  CopyToNextTokenDesc(&bookmark_current_);
-  current_ = next_;
-  CopyToNextTokenDesc(&bookmark_next_);
-  bookmark_c0_ = kBookmarkWasApplied;
-}
-
-
-bool Scanner::BookmarkHasBeenSet() { return bookmark_c0_ >= 0; }
-
-
-bool Scanner::BookmarkHasBeenReset() {
-  return bookmark_c0_ == kBookmarkWasApplied;
-}
-
-
-void Scanner::DropBookmark() { bookmark_c0_ = kNoBookmark; }
-
-void Scanner::CopyToNextTokenDesc(TokenDesc* from) {
-  StartLiteral();
-  StartRawLiteral();
-  CopyTokenDesc(&next_, from);
-  if (next_.literal_chars->length() == 0) next_.literal_chars = nullptr;
-  if (next_.raw_literal_chars->length() == 0) next_.raw_literal_chars = nullptr;
-}
-
-void Scanner::CopyTokenDesc(TokenDesc* to, TokenDesc* from) {
-  DCHECK_NOT_NULL(to);
-  DCHECK_NOT_NULL(from);
-  to->token = from->token;
-  to->location = from->location;
-  to->literal_chars->CopyFrom(from->literal_chars);
-  to->raw_literal_chars->CopyFrom(from->raw_literal_chars);
-}
-
-
 
 }  // namespace internal
 }  // namespace v8

@@ -51,7 +51,7 @@
       'target_name': 'parser_fuzzer_lib',
       'type': 'static_library',
       'dependencies': [
-        'fuzzer_support',
+        'fuzzer_support_nocomponent',
       ],
       'include_dirs': [
         '../..',
@@ -196,8 +196,8 @@
         'wasm-data-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -226,8 +226,8 @@
         'wasm-function-sigs-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -256,8 +256,8 @@
         'wasm-globals-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -286,8 +286,8 @@
         'wasm-imports-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -316,8 +316,8 @@
         'wasm-memory-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -346,8 +346,8 @@
         'wasm-names-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
@@ -376,12 +376,27 @@
         'wasm-types-section.cc',
         '../common/wasm/wasm-module-runner.cc',
         '../common/wasm/wasm-module-runner.h',
-        '../fuzzer/wasm-section-fuzzers.cc',
-        '../fuzzer/wasm-section-fuzzers.h',
+        'wasm-section-fuzzers.cc',
+        'wasm-section-fuzzers.h',
       ],
     },
     {
       'target_name': 'fuzzer_support',
+      'type': 'static_library',
+      'dependencies': [
+        '../../src/v8.gyp:v8',
+        '../../src/v8.gyp:v8_libplatform',
+      ],
+      'include_dirs': [
+        '../..',
+      ],
+      'sources': [  ### gcmole(all) ###
+        'fuzzer-support.cc',
+        'fuzzer-support.h',
+      ],
+    },
+    {
+      'target_name': 'fuzzer_support_nocomponent',
       'type': 'static_library',
       'dependencies': [
         '../../src/v8.gyp:v8_libplatform',

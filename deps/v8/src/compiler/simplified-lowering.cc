@@ -1243,7 +1243,7 @@ class RepresentationSelector {
       // based on the feedback types of the inputs.
       VisitBinop(node,
                  UseInfo(MachineRepresentation::kWord32, Truncation::Float64()),
-                 MachineRepresentation::kWord32);
+                 MachineRepresentation::kWord32, Type::Number());
       if (lower()) DeferReplacement(node, lowering->Uint32Mod(node));
       return;
     }
@@ -1255,7 +1255,7 @@ class RepresentationSelector {
       // based on the feedback types of the inputs.
       VisitBinop(node,
                  UseInfo(MachineRepresentation::kWord32, Truncation::Float64()),
-                 MachineRepresentation::kWord32);
+                 MachineRepresentation::kWord32, Type::Number());
       if (lower()) DeferReplacement(node, lowering->Int32Mod(node));
       return;
     }
@@ -2126,6 +2126,15 @@ class RepresentationSelector {
         }
         return;
       }
+      case IrOpcode::kCheckHeapObject: {
+        if (InputCannotBe(node, Type::SignedSmall())) {
+          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
+          if (lower()) DeferReplacement(node, node->InputAt(0));
+        } else {
+          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
+        }
+        return;
+      }
       case IrOpcode::kCheckIf: {
         ProcessInput(node, 0, UseInfo::Bool());
         ProcessRemainingInputs(node, 1);
@@ -2151,28 +2160,20 @@ class RepresentationSelector {
         }
         return;
       }
-      case IrOpcode::kCheckString: {
-        if (InputIs(node, Type::String())) {
-          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
-        }
-        return;
-      }
-      case IrOpcode::kCheckTaggedPointer: {
-        if (InputCannotBe(node, Type::SignedSmall())) {
-          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
-        }
-        return;
-      }
-      case IrOpcode::kCheckTaggedSigned: {
+      case IrOpcode::kCheckSmi: {
         if (SmiValuesAre32Bits() && truncation.IsUsedAsWord32()) {
           VisitUnop(node, UseInfo::CheckedSignedSmallAsWord32(),
                     MachineRepresentation::kWord32);
+        } else {
+          VisitUnop(node, UseInfo::CheckedSignedSmallAsTaggedSigned(),
+                    MachineRepresentation::kTaggedSigned);
+        }
+        if (lower()) DeferReplacement(node, node->InputAt(0));
+        return;
+      }
+      case IrOpcode::kCheckString: {
+        if (InputIs(node, Type::String())) {
+          VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
           if (lower()) DeferReplacement(node, node->InputAt(0));
         } else {
           VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);

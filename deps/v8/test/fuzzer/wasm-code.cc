@@ -7,13 +7,15 @@
 
 #include "include/v8.h"
 #include "src/isolate.h"
+#include "src/objects.h"
 #include "src/wasm/encoder.h"
 #include "src/wasm/wasm-interpreter.h"
-#include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-module.h"
 #include "test/cctest/wasm/test-signatures.h"
 #include "test/common/wasm/wasm-module-runner.h"
 #include "test/fuzzer/fuzzer-support.h"
+
+#define WASM_CODE_FUZZER_HASH_SEED 83
 
 using namespace v8::internal::wasm;
 
@@ -33,7 +35,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   v8::Context::Scope context_scope(support->GetContext());
   v8::TryCatch try_catch(isolate);
 
-  v8::base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
   v8::internal::Zone zone(&allocator);
 
   TestSignatures sigs;
@@ -50,7 +52,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   ZoneBuffer buffer(&zone);
   builder.WriteTo(buffer);
 
-  v8::internal::WasmJs::SetupIsolateForWasm(i_isolate);
+  v8::internal::wasm::testing::SetupIsolateForWasmModule(i_isolate);
 
   v8::internal::HandleScope scope(i_isolate);
 
@@ -93,6 +95,14 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     CHECK(i_isolate->has_pending_exception());
     i_isolate->clear_pending_exception();
   } else {
+    if (result_interpreted != result_compiled) {
+      V8_Fatal(
+          __FILE__, __LINE__,
+          "Interpreter result (%d) != compiled module result (%d). Hash: %u",
+          result_interpreted, result_compiled,
+          v8::internal::StringHasher::HashSequentialString(
+              data, static_cast<int>(size), WASM_CODE_FUZZER_HASH_SEED));
+    }
     CHECK_EQ(result_interpreted, result_compiled);
   }
   return 0;

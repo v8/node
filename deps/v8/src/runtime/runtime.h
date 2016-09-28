@@ -11,7 +11,7 @@
 #include "src/base/platform/time.h"
 #include "src/objects.h"
 #include "src/unicode.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -290,6 +290,7 @@ namespace internal {
   F(CheckIsBootstrapping, 0, 1)                     \
   F(CreateListFromArrayLike, 1, 1)                  \
   F(EnqueueMicrotask, 1, 1)                         \
+  F(EnqueuePromiseResolveThenableJob, 6, 1)         \
   F(GetAndResetRuntimeCallStats, -1 /* <= 2 */, 1)  \
   F(ExportExperimentalFromRuntime, 1, 1)            \
   F(ExportFromRuntime, 1, 1)                        \
@@ -419,6 +420,7 @@ namespace internal {
   F(IsAccessCheckNeeded, 1, 1)                       \
   F(CreateDataProperty, 3, 1)                        \
   F(LoadModuleExport, 1, 1)                          \
+  F(LoadModuleImport, 2, 1)                          \
   F(StoreModuleExport, 2, 1)
 
 #define FOR_EACH_INTRINSIC_OPERATORS(F) \
@@ -801,7 +803,7 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_STRINGS(F)     \
   F(StringReplaceOneCharWithString, 3, 1) \
   F(StringIndexOf, 3, 1)                  \
-  F(StringLastIndexOf, 3, 1)              \
+  F(StringLastIndexOf, 2, 1)              \
   F(SubString, 3, 1)                      \
   F(StringAdd, 2, 1)                      \
   F(InternalizeString, 1, 1)              \
@@ -926,30 +928,26 @@ namespace internal {
 
 // Most intrinsics are implemented in the runtime/ directory, but ICs are
 // implemented in ic.cc for now.
-#define FOR_EACH_INTRINSIC_IC(F)                 \
-  F(BinaryOpIC_Miss, 2, 1)                       \
-  F(BinaryOpIC_MissWithAllocationSite, 3, 1)     \
-  F(CallIC_Miss, 3, 1)                           \
-  F(CompareIC_Miss, 3, 1)                        \
-  F(ElementsTransitionAndStoreIC_Miss, 5, 1)     \
-  F(KeyedLoadIC_Miss, 4, 1)                      \
-  F(KeyedLoadIC_MissFromStubFailure, 4, 1)       \
-  F(KeyedStoreIC_Miss, 5, 1)                     \
-  F(KeyedStoreIC_MissFromStubFailure, 5, 1)      \
-  F(KeyedStoreIC_Slow, 5, 1)                     \
-  F(LoadElementWithInterceptor, 2, 1)            \
-  F(LoadGlobalIC_Miss, 2, 1)                     \
-  F(LoadGlobalIC_Slow, 2, 1)                     \
-  F(LoadIC_Miss, 4, 1)                           \
-  F(LoadIC_MissFromStubFailure, 4, 1)            \
-  F(LoadPropertyWithInterceptor, 3, 1)           \
-  F(LoadPropertyWithInterceptorOnly, 3, 1)       \
-  F(StoreCallbackProperty, 6, 1)                 \
-  F(StoreIC_Miss, 5, 1)                          \
-  F(StoreIC_MissFromStubFailure, 5, 1)           \
-  F(TransitionStoreIC_MissFromStubFailure, 6, 1) \
-  F(StorePropertyWithInterceptor, 3, 1)          \
-  F(ToBooleanIC_Miss, 1, 1)                      \
+#define FOR_EACH_INTRINSIC_IC(F)             \
+  F(BinaryOpIC_Miss, 2, 1)                   \
+  F(BinaryOpIC_MissWithAllocationSite, 3, 1) \
+  F(CallIC_Miss, 3, 1)                       \
+  F(CompareIC_Miss, 3, 1)                    \
+  F(ElementsTransitionAndStoreIC_Miss, 6, 1) \
+  F(KeyedLoadIC_Miss, 4, 1)                  \
+  F(KeyedLoadIC_MissFromStubFailure, 4, 1)   \
+  F(KeyedStoreIC_Miss, 5, 1)                 \
+  F(KeyedStoreIC_Slow, 5, 1)                 \
+  F(LoadElementWithInterceptor, 2, 1)        \
+  F(LoadGlobalIC_Miss, 2, 1)                 \
+  F(LoadGlobalIC_Slow, 2, 1)                 \
+  F(LoadIC_Miss, 4, 1)                       \
+  F(LoadPropertyWithInterceptor, 3, 1)       \
+  F(LoadPropertyWithInterceptorOnly, 3, 1)   \
+  F(StoreCallbackProperty, 6, 1)             \
+  F(StoreIC_Miss, 5, 1)                      \
+  F(StorePropertyWithInterceptor, 3, 1)      \
+  F(ToBooleanIC_Miss, 1, 1)                  \
   F(Unreachable, 0, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_OBJECT(F) \
