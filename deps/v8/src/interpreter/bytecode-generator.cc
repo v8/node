@@ -1876,8 +1876,14 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
 
 void BytecodeGenerator::VisitArrayLiteral(ArrayLiteral* expr) {
   // Deep-copy the literal boilerplate.
+  int runtime_flags = expr->ComputeFlags();
+  bool use_fast_shallow_clone =
+      (runtime_flags & ArrayLiteral::kShallowElements) != 0 &&
+      expr->values()->length() <= JSArray::kInitialMaxFastElementArray;
+  uint8_t flags =
+      CreateArrayLiteralFlags::Encode(use_fast_shallow_clone, runtime_flags);
   builder()->CreateArrayLiteral(expr->constant_elements(),
-                                expr->literal_index(), expr->ComputeFlags());
+                                expr->literal_index(), flags);
   Register index, literal;
 
   // Evaluate all the non-constant subexpressions and store them into the
@@ -1967,7 +1973,25 @@ void BytecodeGenerator::VisitVariableLoad(Variable* variable,
       break;
     }
     case VariableLocation::LOOKUP: {
-      builder()->LoadLookupSlot(variable->name(), typeof_mode);
+      switch (variable->mode()) {
+        case DYNAMIC_LOCAL: {
+          Variable* local_variable = variable->local_if_not_shadowed();
+          int depth =
+              execution_context()->ContextChainDepth(local_variable->scope());
+          builder()->LoadLookupContextSlot(variable->name(), typeof_mode,
+                                           local_variable->index(), depth);
+          BuildHoleCheckForVariableLoad(variable);
+          break;
+        }
+        case DYNAMIC_GLOBAL: {
+          int depth = scope()->ContextChainLengthUntilOutermostSloppyEval();
+          builder()->LoadLookupGlobalSlot(variable->name(), typeof_mode,
+                                          feedback_index(slot), depth);
+          break;
+        }
+        default:
+          builder()->LoadLookupSlot(variable->name(), typeof_mode);
+      }
       break;
     }
     case VariableLocation::MODULE: {
@@ -1981,7 +2005,18 @@ void BytecodeGenerator::VisitVariableLoad(Variable* variable,
             .StoreAccumulatorInRegister(export_name)
             .CallRuntime(Runtime::kLoadModuleExport, export_name, 1);
       } else {
-        UNIMPLEMENTED();
+        auto it = descriptor->regular_imports().find(variable->raw_name());
+        DCHECK(it != descriptor->regular_imports().end());
+        register_allocator()->PrepareForConsecutiveAllocations(2);
+        Register import_name = register_allocator()->NextConsecutiveRegister();
+        Register module_request =
+            register_allocator()->NextConsecutiveRegister();
+        builder()
+            ->LoadLiteral(it->second->import_name->string())
+            .StoreAccumulatorInRegister(import_name)
+            .LoadLiteral(Smi::FromInt(it->second->module_request))
+            .StoreAccumulatorInRegister(module_request)
+            .CallRuntime(Runtime::kLoadModuleImport, import_name, 2);
       }
       break;
     }
@@ -2181,6 +2216,8 @@ void BytecodeGenerator::VisitVariableAssignment(Variable* variable,
       DCHECK(variable->IsExport());
 
       ModuleDescriptor* mod = scope()->GetModuleScope()->module();
+      // There may be several export names for this local name, but it doesn't
+      // matter which one we pick, as they all map to the same cell.
       auto it = mod->regular_exports().find(variable->raw_name());
       DCHECK(it != mod->regular_exports().end());
 

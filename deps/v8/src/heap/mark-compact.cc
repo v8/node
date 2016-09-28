@@ -567,6 +567,7 @@ void MarkCompactCollector::EnsureSweepingCompleted() {
 }
 
 bool MarkCompactCollector::Sweeper::IsSweepingCompleted() {
+  DCHECK(FLAG_concurrent_sweeping);
   while (pending_sweeper_tasks_semaphore_.WaitFor(
       base::TimeDelta::FromSeconds(0))) {
     num_sweeping_tasks_.Increment(-1);
@@ -3864,6 +3865,12 @@ int MarkCompactCollector::Sweeper::ParallelSweepPage(Page* page,
     } else {
       max_freed = RawSweep(page, REBUILD_FREE_LIST, free_space_mode);
     }
+
+    // After finishing sweeping of a page we clean up its remembered set.
+    if (page->typed_old_to_new_slots()) {
+      page->typed_old_to_new_slots()->FreeToBeFreedChunks();
+    }
+
     {
       base::LockGuard<base::Mutex> guard(&mutex_);
       swept_list_[identity].Add(page);

@@ -65,11 +65,20 @@ static const WasmOpcode kInt32BinopOpcodes[] = {
     Verify(kSuccess, sigs.v_i(), code, code + sizeof(code)); \
   } while (false)
 
+static bool old_eh_flag;
+
 class AstDecoderTest : public TestWithZone {
  public:
   typedef std::pair<uint32_t, LocalType> LocalsDecl;
 
   AstDecoderTest() : module(nullptr), local_decls(zone()) {}
+
+  static void SetUpTestCase() { old_eh_flag = FLAG_wasm_eh_prototype; }
+
+  static void TearDownTestCase() {
+    // Reset the wasm_eh_prototype flag
+    FLAG_wasm_eh_prototype = old_eh_flag;
+  }
 
   TestSignatures sigs;
   ModuleEnv* module;
@@ -1559,9 +1568,9 @@ TEST_F(AstDecoderTest, AsmJsBinOpsCheckOrigin) {
 
 TEST_F(AstDecoderTest, AsmJsUnOpsCheckOrigin) {
   LocalType float32int32[] = {kAstF32, kAstI32};
-  FunctionSig sig_f_i(1, 2, float32int32);
+  FunctionSig sig_f_i(1, 1, float32int32);
   LocalType float64int32[] = {kAstF64, kAstI32};
-  FunctionSig sig_d_i(1, 2, float64int32);
+  FunctionSig sig_d_i(1, 1, float64int32);
   struct {
     WasmOpcode op;
     FunctionSig* sig;
@@ -2493,7 +2502,7 @@ typedef ZoneVector<LocalType> LocalTypeMap;
 
 class LocalDeclDecoderTest : public TestWithZone {
  public:
-  base::AccountingAllocator allocator;
+  v8::internal::AccountingAllocator allocator;
 
   size_t ExpectRun(LocalTypeMap map, size_t pos, LocalType expected,
                    size_t count) {

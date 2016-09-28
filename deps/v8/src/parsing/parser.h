@@ -143,7 +143,7 @@ struct ParserTypes<Parser> {
   typedef ParserBase<Parser> Base;
   typedef Parser Impl;
 
-  typedef Variable GeneratorVariable;
+  typedef v8::internal::Variable Variable;
 
   // Return types for traversing functions.
   typedef const AstRawString* Identifier;
@@ -386,8 +386,6 @@ class Parser : public ParserBase<Parser> {
     DEFINE_AST_VISITOR_MEMBERS_WITHOUT_STACKOVERFLOW()
   };
 
-  Statement* ParseForStatement(ZoneList<const AstRawString*>* labels, bool* ok);
-
   // !%_IsJSReceiver(result = iterator.next()) &&
   //     %ThrowIteratorResultNotAnObject(result)
   Expression* BuildIteratorNextResult(Expression* iterator, Variable* result,
@@ -403,10 +401,15 @@ class Parser : public ParserBase<Parser> {
                                       Expression* iterable, Statement* body,
                                       bool finalize,
                                       int next_result_pos = kNoSourcePosition);
+  Block* RewriteForVarInLegacy(const ForInfo& for_info);
+  void DesugarBindingInForEachStatement(ForInfo* for_info, Block** body_block,
+                                        Expression** each_variable, bool* ok);
+  Block* CreateForEachStatementTDZ(Block* init_block, const ForInfo& for_info,
+                                   bool* ok);
+
   Statement* DesugarLexicalBindingsInForStatement(
-      Scope* inner_scope, VariableMode mode,
-      ZoneList<const AstRawString*>* names, ForStatement* loop, Statement* init,
-      Expression* cond, Statement* next, Statement* body, bool* ok);
+      ForStatement* loop, Statement* init, Expression* cond, Statement* next,
+      Statement* body, Scope* inner_scope, const ForInfo& for_info, bool* ok);
 
   void DesugarAsyncFunctionBody(Scope* scope, ZoneList<Statement*>* body,
                                 FunctionKind kind, FunctionBodyType type,
@@ -583,8 +586,7 @@ class Parser : public ParserBase<Parser> {
   Expression* BuildCreateJSGeneratorObject(int pos, FunctionKind kind);
   Expression* BuildResolvePromise(Expression* value, int pos);
   Expression* BuildRejectPromise(Expression* value, int pos);
-  VariableProxy* BuildDotPromise();
-  VariableProxy* BuildDotDebugIsActive();
+  Variable* PromiseVariable();
 
   // Generic AST generator for throwing errors from compiled code.
   Expression* NewThrowError(Runtime::FunctionId function_id,
@@ -960,11 +962,6 @@ class Parser : public ParserBase<Parser> {
     return new (zone()) ZoneList<CaseClause*>(size, zone());
   }
 
-  V8_INLINE Block* NewBlock(ZoneList<const AstRawString*>* labels, int capacity,
-                            bool ignore_completion_value, int pos) {
-    return factory()->NewBlock(labels, capacity, ignore_completion_value, pos);
-  }
-
   V8_INLINE Expression* NewV8Intrinsic(const AstRawString* name,
                                        ZoneList<Expression*>* args, int pos,
                                        bool* ok);
@@ -1087,10 +1084,6 @@ class Parser : public ParserBase<Parser> {
   HistogramTimer* pre_parse_timer_;
 
   bool parsing_on_main_thread_;
-
-#ifdef DEBUG
-  void Print(AstNode* node);
-#endif  // DEBUG
 };
 
 }  // namespace internal

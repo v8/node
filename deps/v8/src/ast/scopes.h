@@ -8,7 +8,7 @@
 #include "src/base/hashmap.h"
 #include "src/globals.h"
 #include "src/objects.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -374,6 +374,9 @@ class Scope: public ZoneObject {
   // Find the module scope, assuming there is one.
   ModuleScope* GetModuleScope();
 
+  // Find the innermost outer scope that needs a context.
+  Scope* GetOuterScopeWithContext();
+
   // Analyze() must have been called once to create the ScopeInfo.
   Handle<ScopeInfo> scope_info() {
     DCHECK(!scope_info_.is_null());
@@ -411,6 +414,10 @@ class Scope: public ZoneObject {
   void set_is_debug_evaluate_scope() { is_debug_evaluate_scope_ = true; }
   bool is_debug_evaluate_scope() const { return is_debug_evaluate_scope_; }
 
+  void set_is_lazily_parsed(bool is_lazily_parsed) {
+    is_lazily_parsed_ = is_lazily_parsed;
+  }
+
  protected:
   explicit Scope(Zone* zone);
 
@@ -437,8 +444,13 @@ class Scope: public ZoneObject {
   // should also be invoked after resolution.
   bool NeedsScopeInfo() const {
     DCHECK(!already_resolved_);
-    return NeedsContext() || is_script_scope() || is_function_scope() ||
-           is_eval_scope() || is_module_scope();
+    // A lazily parsed scope doesn't contain enough information to create a
+    // ScopeInfo from it.
+    if (is_lazily_parsed_) return false;
+    // The debugger expects all functions to have scope infos.
+    // TODO(jochen|yangguo): Remove this requirement.
+    if (is_function_scope()) return true;
+    return NeedsContext();
   }
 
   Zone* zone_;
@@ -506,6 +518,8 @@ class Scope: public ZoneObject {
   // True if it holds 'var' declarations.
   bool is_declaration_scope_ : 1;
 
+  bool is_lazily_parsed_ : 1;
+
   // Create a non-local variable with a given name.
   // These variables are looked up dynamically at runtime.
   Variable* NonLocal(const AstRawString* name, VariableMode mode);
@@ -515,11 +529,7 @@ class Scope: public ZoneObject {
   // scope, and stopping when reaching the outer_scope_end scope. If the code is
   // executed because of a call to 'eval', the context parameter should be set
   // to the calling context of 'eval'.
-  // {declare_free} indicates whether nullptr should be returned for free
-  // variables when falling off outer_scope_end, or whether they should be
-  // declared automatically as non-locals.
-  Variable* LookupRecursive(VariableProxy* proxy, bool declare_free,
-                            Scope* outer_scope_end);
+  Variable* LookupRecursive(VariableProxy* proxy, Scope* outer_scope_end);
   void ResolveTo(ParseInfo* info, VariableProxy* proxy, Variable* var);
   void ResolveVariable(ParseInfo* info, VariableProxy* proxy);
   void ResolveVariablesRecursively(ParseInfo* info);
@@ -628,15 +638,14 @@ class DeclarationScope : public Scope {
   void DeclareArguments(AstValueFactory* ast_value_factory);
   void DeclareDefaultFunctionVariables(AstValueFactory* ast_value_factory);
 
-  // This lookup corresponds to a lookup in the "intermediate" scope sitting
-  // between this scope and the outer scope. (ECMA-262, 3rd., requires that
-  // the name of named function literal is kept in an intermediate scope
-  // in between this scope and the next outer scope.)
-  Variable* LookupFunctionVar(const AstRawString* name);
-
   // Declare the function variable for a function literal. This variable
   // is in an intermediate scope between this function scope and the the
   // outer scope. Only possible for function scopes; at most one variable.
+  //
+  // This function needs to be called after all other variables have been
+  // declared in the scope. It will add a variable for {name} to {variables_};
+  // either the function variable itself, or a non-local in case the function
+  // calls sloppy eval.
   Variable* DeclareFunctionVar(const AstRawString* name);
 
   // Declare a parameter in this scope.  When there are duplicated
@@ -850,6 +859,11 @@ class ModuleScope final : public DeclarationScope {
  public:
   ModuleScope(DeclarationScope* script_scope,
               AstValueFactory* ast_value_factory);
+
+  // Deserialization.
+  // The generated ModuleDescriptor does not preserve all information.  In
+  // particular, its module_requests map will be empty because we no longer need
+  // the map after parsing.
   ModuleScope(Isolate* isolate, Handle<ScopeInfo> scope_info,
               AstValueFactory* ast_value_factory);
 

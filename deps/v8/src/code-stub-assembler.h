@@ -72,6 +72,9 @@ class CodeStubAssembler : public compiler::CodeAssembler {
 
   compiler::Node* BooleanMapConstant();
   compiler::Node* EmptyStringConstant();
+  compiler::Node* FixedArrayMapConstant();
+  compiler::Node* FixedCowArrayMapConstant();
+  compiler::Node* FixedDoubleArrayMapConstant();
   compiler::Node* HeapNumberMapConstant();
   compiler::Node* NoContextConstant();
   compiler::Node* NanConstant();
@@ -116,6 +119,9 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   compiler::Node* SmiMod(compiler::Node* a, compiler::Node* b);
   // Computes a * b for Smi inputs a and b; result is not necessarily a Smi.
   compiler::Node* SmiMul(compiler::Node* a, compiler::Node* b);
+  compiler::Node* SmiOr(compiler::Node* a, compiler::Node* b) {
+    return WordOr(a, b);
+  }
 
   // Allocate an object of the given size.
   compiler::Node* Allocate(compiler::Node* size, AllocationFlags flags = kNone);
@@ -210,6 +216,8 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   compiler::Node* LoadProperties(compiler::Node* object);
   // Load the elements backing store of a JSObject.
   compiler::Node* LoadElements(compiler::Node* object);
+  // Load the length of a JSArray instance.
+  compiler::Node* LoadJSArrayLength(compiler::Node* array);
   // Load the length of a fixed array base instance.
   compiler::Node* LoadFixedArrayBaseLength(compiler::Node* array);
   // Load the length of a fixed array base instance.
@@ -317,12 +325,24 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   compiler::Node* AllocateSeqTwoByteString(int length);
   compiler::Node* AllocateSeqTwoByteString(compiler::Node* context,
                                            compiler::Node* length);
-  // Allocated an JSArray
-  compiler::Node* AllocateJSArray(ElementsKind kind, compiler::Node* array_map,
-                                  compiler::Node* capacity,
-                                  compiler::Node* length,
-                                  compiler::Node* allocation_site = nullptr,
-                                  ParameterMode mode = INTEGER_PARAMETERS);
+  // Allocate a JSArray without elements and initialize the header fields.
+  compiler::Node* AllocateUninitializedJSArrayWithoutElements(
+      ElementsKind kind, compiler::Node* array_map, compiler::Node* length,
+      compiler::Node* allocation_site);
+  // Allocate and return a JSArray with initialized header fields and its
+  // uninitialized elements.
+  // The ParameterMode argument is only used for the capacity parameter.
+  std::pair<compiler::Node*, compiler::Node*>
+  AllocateUninitializedJSArrayWithElements(
+      ElementsKind kind, compiler::Node* array_map, compiler::Node* length,
+      compiler::Node* allocation_site, compiler::Node* capacity,
+      ParameterMode capacity_mode = INTEGER_PARAMETERS);
+  // Allocate a JSArray and fill elements with the hole.
+  // The ParameterMode argument is only used for the capacity parameter.
+  compiler::Node* AllocateJSArray(
+      ElementsKind kind, compiler::Node* array_map, compiler::Node* capacity,
+      compiler::Node* length, compiler::Node* allocation_site = nullptr,
+      ParameterMode capacity_mode = INTEGER_PARAMETERS);
 
   compiler::Node* AllocateFixedArray(ElementsKind kind,
                                      compiler::Node* capacity,
@@ -438,6 +458,15 @@ class CodeStubAssembler : public compiler::CodeAssembler {
                                     compiler::Node* input);
   // Convert any object to a Number.
   compiler::Node* ToNumber(compiler::Node* context, compiler::Node* input);
+
+  enum ToIntegerTruncationMode {
+    kNoTruncation,
+    kTruncateMinusZero,
+  };
+
+  // Convert any object to an Integer.
+  compiler::Node* ToInteger(compiler::Node* context, compiler::Node* input,
+                            ToIntegerTruncationMode mode = kNoTruncation);
 
   // Returns a node that contains a decoded (unsigned!) value of a bit
   // field |T| in |word32|. Returns result as an uint32 node.
@@ -578,7 +607,7 @@ class CodeStubAssembler : public compiler::CodeAssembler {
                                       compiler::Node* callable,
                                       compiler::Node* object);
 
-  // LoadIC helpers.
+  // Load/StoreIC helpers.
   struct LoadICParameters {
     LoadICParameters(compiler::Node* context, compiler::Node* receiver,
                      compiler::Node* name, compiler::Node* slot,
@@ -596,6 +625,15 @@ class CodeStubAssembler : public compiler::CodeAssembler {
     compiler::Node* vector;
   };
 
+  struct StoreICParameters : public LoadICParameters {
+    StoreICParameters(compiler::Node* context, compiler::Node* receiver,
+                      compiler::Node* name, compiler::Node* value,
+                      compiler::Node* slot, compiler::Node* vector)
+        : LoadICParameters(context, receiver, name, slot, vector),
+          value(value) {}
+    compiler::Node* value;
+  };
+
   // Load type feedback vector from the stub caller's frame.
   compiler::Node* LoadTypeFeedbackVectorForStub();
 
@@ -607,12 +645,12 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   compiler::Node* LoadReceiverMap(compiler::Node* receiver);
 
   // Checks monomorphic case. Returns {feedback} entry of the vector.
-  compiler::Node* TryMonomorphicCase(const LoadICParameters* p,
+  compiler::Node* TryMonomorphicCase(compiler::Node* slot,
+                                     compiler::Node* vector,
                                      compiler::Node* receiver_map,
                                      Label* if_handler, Variable* var_handler,
                                      Label* if_miss);
-  void HandlePolymorphicCase(const LoadICParameters* p,
-                             compiler::Node* receiver_map,
+  void HandlePolymorphicCase(compiler::Node* receiver_map,
                              compiler::Node* feedback, Label* if_handler,
                              Variable* var_handler, Label* if_miss,
                              int unroll_count);
@@ -636,6 +674,9 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   void TryProbeStubCache(StubCache* stub_cache, compiler::Node* receiver,
                          compiler::Node* name, Label* if_handler,
                          Variable* var_handler, Label* if_miss);
+
+  // Extends properties backing store by JSObject::kFieldsAdded elements.
+  void ExtendPropertiesBackingStore(compiler::Node* object);
 
   compiler::Node* PrepareValueForWrite(compiler::Node* value,
                                        Representation representation,
@@ -690,6 +731,15 @@ class CodeStubAssembler : public compiler::CodeAssembler {
   void LoadGlobalIC(const LoadICParameters* p);
   void KeyedLoadIC(const LoadICParameters* p);
   void KeyedLoadICGeneric(const LoadICParameters* p);
+  void StoreIC(const StoreICParameters* p);
+
+  void TransitionElementsKind(compiler::Node* object, compiler::Node* map,
+                              ElementsKind from_kind, ElementsKind to_kind,
+                              bool is_jsarray, Label* bailout);
+
+  void TrapAllocationMemento(compiler::Node* object, Label* memento_found);
+
+  compiler::Node* PageFromAddress(compiler::Node* address);
 
   // Get the enumerable length from |map| and return the result as a Smi.
   compiler::Node* EnumLength(compiler::Node* map);
@@ -719,6 +769,16 @@ class CodeStubAssembler : public compiler::CodeAssembler {
 
  private:
   enum ElementSupport { kOnlyProperties, kSupportElements };
+
+  void DescriptorLookupLinear(compiler::Node* unique_name,
+                              compiler::Node* descriptors, compiler::Node* nof,
+                              Label* if_found, Variable* var_name_index,
+                              Label* if_not_found);
+  compiler::Node* CallGetterIfAccessor(compiler::Node* value,
+                                       compiler::Node* details,
+                                       compiler::Node* context,
+                                       compiler::Node* receiver,
+                                       Label* if_bailout);
 
   void HandleLoadICHandlerCase(
       const LoadICParameters* p, compiler::Node* handler, Label* miss,
@@ -751,6 +811,13 @@ class CodeStubAssembler : public compiler::CodeAssembler {
                                        AllocationFlags flags,
                                        compiler::Node* top_adddress,
                                        compiler::Node* limit_address);
+  // Allocate and return a JSArray of given total size in bytes with header
+  // fields initialized.
+  compiler::Node* AllocateUninitializedJSArray(ElementsKind kind,
+                                               compiler::Node* array_map,
+                                               compiler::Node* length,
+                                               compiler::Node* allocation_site,
+                                               compiler::Node* size_in_bytes);
 
   compiler::Node* SmiShiftBitsConstant();
 

@@ -18,7 +18,7 @@
 #include "src/interpreter/interpreter-assembler.h"
 #include "src/interpreter/interpreter-intrinsics.h"
 #include "src/log.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -421,16 +421,14 @@ void Interpreter::DoMov(InterpreterAssembler* assembler) {
   __ Dispatch();
 }
 
-Node* Interpreter::BuildLoadGlobal(Callable ic,
+Node* Interpreter::BuildLoadGlobal(Callable ic, Node* context,
+                                   Node* feedback_slot,
                                    InterpreterAssembler* assembler) {
   typedef LoadGlobalWithVectorDescriptor Descriptor;
-  // Get the global object.
-  Node* context = __ GetContext();
 
   // Load the global via the LoadGlobalIC.
   Node* code_target = __ HeapConstant(ic.code());
-  Node* raw_slot = __ BytecodeOperandIdx(0);
-  Node* smi_slot = __ SmiTag(raw_slot);
+  Node* smi_slot = __ SmiTag(feedback_slot);
   Node* type_feedback_vector = __ LoadTypeFeedbackVector();
   return __ CallStub(ic.descriptor(), code_target, context,
                      Arg(Descriptor::kSlot, smi_slot),
@@ -444,7 +442,11 @@ Node* Interpreter::BuildLoadGlobal(Callable ic,
 void Interpreter::DoLdaGlobal(InterpreterAssembler* assembler) {
   Callable ic =
       CodeFactory::LoadGlobalICInOptimizedCode(isolate_, NOT_INSIDE_TYPEOF);
-  Node* result = BuildLoadGlobal(ic, assembler);
+
+  Node* context = __ GetContext();
+
+  Node* raw_slot = __ BytecodeOperandIdx(0);
+  Node* result = BuildLoadGlobal(ic, context, raw_slot, assembler);
   __ SetAccumulator(result);
   __ Dispatch();
 }
@@ -456,7 +458,11 @@ void Interpreter::DoLdaGlobal(InterpreterAssembler* assembler) {
 void Interpreter::DoLdrGlobal(InterpreterAssembler* assembler) {
   Callable ic =
       CodeFactory::LoadGlobalICInOptimizedCode(isolate_, NOT_INSIDE_TYPEOF);
-  Node* result = BuildLoadGlobal(ic, assembler);
+
+  Node* context = __ GetContext();
+
+  Node* raw_slot = __ BytecodeOperandIdx(0);
+  Node* result = BuildLoadGlobal(ic, context, raw_slot, assembler);
   Node* destination = __ BytecodeOperandReg(1);
   __ StoreRegister(result, destination);
   __ Dispatch();
@@ -469,7 +475,11 @@ void Interpreter::DoLdrGlobal(InterpreterAssembler* assembler) {
 void Interpreter::DoLdaGlobalInsideTypeof(InterpreterAssembler* assembler) {
   Callable ic =
       CodeFactory::LoadGlobalICInOptimizedCode(isolate_, INSIDE_TYPEOF);
-  Node* result = BuildLoadGlobal(ic, assembler);
+
+  Node* context = __ GetContext();
+
+  Node* raw_slot = __ BytecodeOperandIdx(0);
+  Node* result = BuildLoadGlobal(ic, context, raw_slot, assembler);
   __ SetAccumulator(result);
   __ Dispatch();
 }
@@ -563,8 +573,8 @@ void Interpreter::DoStaContextSlot(InterpreterAssembler* assembler) {
 
 void Interpreter::DoLdaLookupSlot(Runtime::FunctionId function_id,
                                   InterpreterAssembler* assembler) {
-  Node* index = __ BytecodeOperandIdx(0);
-  Node* name = __ LoadConstantPoolEntry(index);
+  Node* name_index = __ BytecodeOperandIdx(0);
+  Node* name = __ LoadConstantPoolEntry(name_index);
   Node* context = __ GetContext();
   Node* result = __ CallRuntime(function_id, context, name);
   __ SetAccumulator(result);
@@ -585,6 +595,103 @@ void Interpreter::DoLdaLookupSlot(InterpreterAssembler* assembler) {
 // dynamically without causing a NoReferenceError.
 void Interpreter::DoLdaLookupSlotInsideTypeof(InterpreterAssembler* assembler) {
   DoLdaLookupSlot(Runtime::kLoadLookupSlotInsideTypeof, assembler);
+}
+
+void Interpreter::DoLdaLookupContextSlot(Runtime::FunctionId function_id,
+                                         InterpreterAssembler* assembler) {
+  Node* context = __ GetContext();
+  Node* name_index = __ BytecodeOperandIdx(0);
+  Node* slot_index = __ BytecodeOperandIdx(1);
+  Node* depth = __ BytecodeOperandUImm(2);
+
+  Label slowpath(assembler, Label::kDeferred);
+
+  // Check for context extensions to allow the fast path.
+  __ GotoIfHasContextExtensionUpToDepth(context, depth, &slowpath);
+
+  // Fast path does a normal load context.
+  {
+    Node* slot_context = __ GetContextAtDepth(context, depth);
+    Node* result = __ LoadContextSlot(slot_context, slot_index);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
+
+  // Slow path when we have to call out to the runtime.
+  __ Bind(&slowpath);
+  {
+    Node* name = __ LoadConstantPoolEntry(name_index);
+    Node* result = __ CallRuntime(function_id, context, name);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
+}
+
+// LdaLookupSlot <name_index>
+//
+// Lookup the object with the name in constant pool entry |name_index|
+// dynamically.
+void Interpreter::DoLdaLookupContextSlot(InterpreterAssembler* assembler) {
+  DoLdaLookupContextSlot(Runtime::kLoadLookupSlot, assembler);
+}
+
+// LdaLookupSlotInsideTypeof <name_index>
+//
+// Lookup the object with the name in constant pool entry |name_index|
+// dynamically without causing a NoReferenceError.
+void Interpreter::DoLdaLookupContextSlotInsideTypeof(
+    InterpreterAssembler* assembler) {
+  DoLdaLookupContextSlot(Runtime::kLoadLookupSlotInsideTypeof, assembler);
+}
+
+void Interpreter::DoLdaLookupGlobalSlot(Runtime::FunctionId function_id,
+                                        InterpreterAssembler* assembler) {
+  Node* context = __ GetContext();
+  Node* name_index = __ BytecodeOperandIdx(0);
+  Node* feedback_slot = __ BytecodeOperandIdx(1);
+  Node* depth = __ BytecodeOperandUImm(2);
+
+  Label slowpath(assembler, Label::kDeferred);
+
+  // Check for context extensions to allow the fast path
+  __ GotoIfHasContextExtensionUpToDepth(context, depth, &slowpath);
+
+  // Fast path does a normal load global
+  {
+    Callable ic = CodeFactory::LoadGlobalICInOptimizedCode(
+        isolate_, function_id == Runtime::kLoadLookupSlotInsideTypeof
+                      ? INSIDE_TYPEOF
+                      : NOT_INSIDE_TYPEOF);
+    Node* result = BuildLoadGlobal(ic, context, feedback_slot, assembler);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
+
+  // Slow path when we have to call out to the runtime
+  __ Bind(&slowpath);
+  {
+    Node* name = __ LoadConstantPoolEntry(name_index);
+    Node* result = __ CallRuntime(function_id, context, name);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
+}
+
+// LdaLookupGlobalSlot <name_index> <feedback_slot> <depth>
+//
+// Lookup the object with the name in constant pool entry |name_index|
+// dynamically.
+void Interpreter::DoLdaLookupGlobalSlot(InterpreterAssembler* assembler) {
+  DoLdaLookupGlobalSlot(Runtime::kLoadLookupSlot, assembler);
+}
+
+// LdaLookupGlobalSlotInsideTypeof <name_index> <feedback_slot> <depth>
+//
+// Lookup the object with the name in constant pool entry |name_index|
+// dynamically without causing a NoReferenceError.
+void Interpreter::DoLdaLookupGlobalSlotInsideTypeof(
+    InterpreterAssembler* assembler) {
+  DoLdaLookupGlobalSlot(Runtime::kLoadLookupSlotInsideTypeof, assembler);
 }
 
 void Interpreter::DoStaLookupSlot(LanguageMode language_mode,
@@ -1904,21 +2011,47 @@ void Interpreter::DoCreateRegExpLiteral(InterpreterAssembler* assembler) {
 
 // CreateArrayLiteral <element_idx> <literal_idx> <flags>
 //
-// Creates an array literal for literal index <literal_idx> with flags <flags>
-// and constant elements in <element_idx>.
+// Creates an array literal for literal index <literal_idx> with
+// CreateArrayLiteral flags <flags> and constant elements in <element_idx>.
 void Interpreter::DoCreateArrayLiteral(InterpreterAssembler* assembler) {
-  Node* index = __ BytecodeOperandIdx(0);
-  Node* constant_elements = __ LoadConstantPoolEntry(index);
   Node* literal_index_raw = __ BytecodeOperandIdx(1);
   Node* literal_index = __ SmiTag(literal_index_raw);
-  Node* flags_raw = __ BytecodeOperandFlag(2);
-  Node* flags = __ SmiTag(flags_raw);
   Node* closure = __ LoadRegister(Register::function_closure());
   Node* context = __ GetContext();
-  Node* result = __ CallRuntime(Runtime::kCreateArrayLiteral, context, closure,
-                                literal_index, constant_elements, flags);
-  __ SetAccumulator(result);
-  __ Dispatch();
+  Node* bytecode_flags = __ BytecodeOperandFlag(2);
+
+  Label fast_shallow_clone(assembler),
+      call_runtime(assembler, Label::kDeferred);
+  Node* use_fast_shallow_clone = __ Word32And(
+      bytecode_flags,
+      __ Int32Constant(CreateArrayLiteralFlags::FastShallowCloneBit::kMask));
+  __ BranchIf(use_fast_shallow_clone, &fast_shallow_clone, &call_runtime);
+
+  __ Bind(&fast_shallow_clone);
+  {
+    DCHECK(FLAG_allocation_site_pretenuring);
+    Node* result = FastCloneShallowArrayStub::Generate(
+        assembler, closure, literal_index, context, &call_runtime,
+        TRACK_ALLOCATION_SITE);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
+
+  __ Bind(&call_runtime);
+  {
+    STATIC_ASSERT(CreateArrayLiteralFlags::FlagsBits::kShift == 0);
+    Node* flags_raw = __ Word32And(
+        bytecode_flags,
+        __ Int32Constant(CreateArrayLiteralFlags::FlagsBits::kMask));
+    Node* flags = __ SmiTag(flags_raw);
+    Node* index = __ BytecodeOperandIdx(0);
+    Node* constant_elements = __ LoadConstantPoolEntry(index);
+    Node* result =
+        __ CallRuntime(Runtime::kCreateArrayLiteral, context, closure,
+                       literal_index, constant_elements, flags);
+    __ SetAccumulator(result);
+    __ Dispatch();
+  }
 }
 
 // CreateObjectLiteral <element_idx> <literal_idx> <flags>

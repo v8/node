@@ -568,6 +568,8 @@ class RuntimeCallTimer {
   V(Message_GetLineNumber)                                 \
   V(Message_GetSourceLine)                                 \
   V(Message_GetStartColumn)                                \
+  V(Module_Evaluate)                                       \
+  V(Module_Instantiate)                                    \
   V(NumberObject_New)                                      \
   V(NumberObject_NumberValue)                              \
   V(Object_CallAsConstructor)                              \
@@ -791,7 +793,7 @@ class RuntimeCallStats {
 
   void Reset();
   V8_NOINLINE void Print(std::ostream& os);
-  V8_NOINLINE const char* Dump();
+  V8_NOINLINE std::string Dump();
 
   RuntimeCallStats() {
     Reset();

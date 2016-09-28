@@ -14,7 +14,7 @@
 #include "src/identity-map.h"
 #include "src/messages.h"
 #include "src/vector.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -253,7 +253,7 @@ class ValueDeserializer {
   uint32_t next_id_ = 0;
 
   // Always global handles.
-  Handle<SeededNumberDictionary> id_map_;
+  Handle<FixedArray> id_map_;
   MaybeHandle<SeededNumberDictionary> array_buffer_transfer_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ValueDeserializer);

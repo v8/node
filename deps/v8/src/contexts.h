@@ -72,6 +72,10 @@ enum ContextLookupFlags {
     async_function_await_caught)                                          \
   V(ASYNC_FUNCTION_AWAIT_UNCAUGHT_INDEX, JSFunction,                      \
     async_function_await_uncaught)                                        \
+  V(ASYNC_FUNCTION_PROMISE_CREATE_INDEX, JSFunction,                      \
+    async_function_promise_create)                                        \
+  V(ASYNC_FUNCTION_PROMISE_RELEASE_INDEX, JSFunction,                     \
+    async_function_promise_release)                                       \
   V(DERIVED_GET_TRAP_INDEX, JSFunction, derived_get_trap)                 \
   V(ERROR_FUNCTION_INDEX, JSFunction, error_function)                     \
   V(ERROR_TO_STRING, JSFunction, error_to_string)                         \
@@ -148,6 +152,7 @@ enum ContextLookupFlags {
   V(GENERATOR_OBJECT_PROTOTYPE_MAP_INDEX, Map, generator_object_prototype_map) \
   V(INITIAL_ARRAY_PROTOTYPE_INDEX, JSObject, initial_array_prototype)          \
   V(INITIAL_GENERATOR_PROTOTYPE_INDEX, JSObject, initial_generator_prototype)  \
+  V(INITIAL_ITERATOR_PROTOTYPE_INDEX, JSObject, initial_iterator_prototype)    \
   V(INITIAL_OBJECT_PROTOTYPE_INDEX, JSObject, initial_object_prototype)        \
   V(INT16_ARRAY_FUN_INDEX, JSFunction, int16_array_fun)                        \
   V(INT16X8_FUNCTION_INDEX, JSFunction, int16x8_function)                      \
@@ -207,7 +212,11 @@ enum ContextLookupFlags {
   V(WASM_FUNCTION_MAP_INDEX, Map, wasm_function_map)                           \
   V(WASM_MODULE_CONSTRUCTOR_INDEX, JSFunction, wasm_module_constructor)        \
   V(WASM_INSTANCE_CONSTRUCTOR_INDEX, JSFunction, wasm_instance_constructor)    \
+  V(WASM_TABLE_CONSTRUCTOR_INDEX, JSFunction, wasm_table_constructor)          \
+  V(WASM_MEMORY_CONSTRUCTOR_INDEX, JSFunction, wasm_memory_constructor)        \
   V(WASM_MODULE_SYM_INDEX, Symbol, wasm_module_sym)                            \
+  V(WASM_TABLE_SYM_INDEX, Symbol, wasm_table_sym)                              \
+  V(WASM_MEMORY_SYM_INDEX, Symbol, wasm_memory_sym)                            \
   V(WASM_INSTANCE_SYM_INDEX, Symbol, wasm_instance_sym)                        \
   V(SLOPPY_ASYNC_FUNCTION_MAP_INDEX, Map, sloppy_async_function_map)           \
   V(SLOPPY_GENERATOR_FUNCTION_MAP_INDEX, Map, sloppy_generator_function_map)   \
@@ -230,7 +239,7 @@ enum ContextLookupFlags {
   V(UINT8_ARRAY_FUN_INDEX, JSFunction, uint8_array_fun)                        \
   V(UINT8_CLAMPED_ARRAY_FUN_INDEX, JSFunction, uint8_clamped_array_fun)        \
   V(UINT8X16_FUNCTION_INDEX, JSFunction, uint8x16_function)                    \
-  V(CURRENT_MODULE_INDEX, JSModule, current_module)                            \
+  V(CURRENT_MODULE_INDEX, Module, current_module)                              \
   NATIVE_CONTEXT_INTRINSIC_FUNCTIONS(V)                                        \
   NATIVE_CONTEXT_IMPORTED_FIELDS(V)
 
@@ -404,7 +413,7 @@ class Context: public FixedArray {
 
   // Find the module context (assuming there is one) and return the associated
   // module object.
-  JSModule* module();
+  Module* module();
 
   // Get the context where var declarations will be hoisted to, which
   // may be the context itself.
@@ -419,7 +428,7 @@ class Context: public FixedArray {
   void set_global_proxy(JSObject* global);
 
   // Get the JSGlobalObject object.
-  JSGlobalObject* global_object();
+  V8_EXPORT_PRIVATE JSGlobalObject* global_object();
 
   // Get the script context by traversing the context chain.
   Context* script_context();
@@ -542,7 +551,8 @@ class Context: public FixedArray {
  private:
 #ifdef DEBUG
   // Bootstrapping-aware type checks.
-  static bool IsBootstrappingOrNativeContext(Isolate* isolate, Object* object);
+  V8_EXPORT_PRIVATE static bool IsBootstrappingOrNativeContext(Isolate* isolate,
+                                                               Object* object);
   static bool IsBootstrappingOrValidParentContext(Object* object, Context* kid);
 #endif
 

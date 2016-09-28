@@ -100,6 +100,14 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .StoreLookupSlot(name, LanguageMode::SLOPPY)
       .StoreLookupSlot(name, LanguageMode::STRICT);
 
+  // Emit load / store lookup slots with context fast paths.
+  builder.LoadLookupContextSlot(name, TypeofMode::NOT_INSIDE_TYPEOF, 1, 0)
+      .LoadLookupContextSlot(name, TypeofMode::INSIDE_TYPEOF, 1, 0);
+
+  // Emit load / store lookup slots with global fast paths.
+  builder.LoadLookupGlobalSlot(name, TypeofMode::NOT_INSIDE_TYPEOF, 1, 0)
+      .LoadLookupGlobalSlot(name, TypeofMode::INSIDE_TYPEOF, 1, 0);
+
   // Emit closure operations.
   builder.CreateClosure(0, NOT_TENURED);
 

@@ -11,7 +11,7 @@
 #include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-result.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -46,6 +46,9 @@ int32_t CompileAndRunWasmModule(Isolate* isolate, const byte* module_start,
 int32_t InterpretWasmModule(Isolate* isolate, ErrorThrower* thrower,
                             const WasmModule* module, int function_index,
                             WasmVal* args);
+
+// Install function map, module symbol for testing
+void SetupIsolateForWasmModule(Isolate* isolate);
 }  // namespace testing
 }  // namespace wasm
 }  // namespace internal

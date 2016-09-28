@@ -23,12 +23,11 @@
 #include "src/messages.h"
 #include "src/regexp/regexp-stack.h"
 #include "src/runtime/runtime.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 
 namespace base {
-class AccountingAllocator;
 class RandomNumberGenerator;
 }
 
@@ -94,14 +93,6 @@ class Simulator;
 namespace interpreter {
 class Interpreter;
 }
-
-// Static indirection table for handles to constants.  If a frame
-// element represents a constant, the data contains an index into
-// this table of handles to the actual constants.
-// Static indirection table for handles to constants.  If a Result
-// represents a constant, the data contains an index into this table
-// of handles to the actual constants.
-typedef ZoneList<Handle<Object> > ZoneObjectList;
 
 #define RETURN_FAILURE_IF_SCHEDULED_EXCEPTION(isolate)    \
   do {                                                    \
@@ -1010,6 +1001,7 @@ class Isolate {
   inline bool IsHasInstanceLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact(JSReceiver* receiver);
+  inline bool IsStringLengthOverflowIntact();
 
   // On intent to set an element in object, make sure that appropriate
   // notifications occur if the set is on the elements of the array or
@@ -1028,6 +1020,7 @@ class Isolate {
   void InvalidateArraySpeciesProtector();
   void InvalidateHasInstanceProtector();
   void InvalidateIsConcatSpreadableProtector();
+  void InvalidateStringLengthOverflowProtector();
 
   // Returns true if array is the initial array prototype in any native context.
   bool IsAnyInitialArrayPrototype(Handle<JSArray> array);
@@ -1069,12 +1062,6 @@ class Isolate {
 
   void* stress_deopt_count_address() { return &stress_deopt_count_; }
 
-  void* virtual_handler_register_address() {
-    return &virtual_handler_register_;
-  }
-
-  void* virtual_slot_register_address() { return &virtual_slot_register_; }
-
   base::RandomNumberGenerator* random_number_generator();
 
   // Given an address occupied by a live code object, return that object.
@@ -1113,6 +1100,9 @@ class Isolate {
   void ReportPromiseReject(Handle<JSObject> promise, Handle<Object> value,
                            v8::PromiseRejectEvent event);
 
+  void PromiseResolveThenableJob(Handle<PromiseContainer> container,
+                                 MaybeHandle<Object>* result,
+                                 MaybeHandle<Object>* maybe_exception);
   void EnqueueMicrotask(Handle<Object> microtask);
   void RunMicrotasks();
   bool IsRunningMicrotasks() const { return is_running_microtasks_; }
@@ -1158,7 +1148,7 @@ class Isolate {
 
   interpreter::Interpreter* interpreter() const { return interpreter_; }
 
-  base::AccountingAllocator* allocator() { return allocator_; }
+  AccountingAllocator* allocator() { return allocator_; }
 
   bool IsInAnyContext(Object* object, uint32_t index);
 
@@ -1334,7 +1324,7 @@ class Isolate {
   HandleScopeData handle_scope_data_;
   HandleScopeImplementer* handle_scope_implementer_;
   UnicodeCache* unicode_cache_;
-  base::AccountingAllocator* allocator_;
+  AccountingAllocator* allocator_;
   Zone* runtime_zone_;
   InnerPointerToCodeCache* inner_pointer_to_code_cache_;
   GlobalHandles* global_handles_;
@@ -1416,9 +1406,6 @@ class Isolate {
   // Counts deopt points if deopt_every_n_times is enabled.
   unsigned int stress_deopt_count_;
 
-  Address virtual_handler_register_;
-  Address virtual_slot_register_;
-
   int next_optimization_id_;
 
   // Counts javascript calls from the API. Wraps around on overflow.
@@ -1498,8 +1485,8 @@ class PromiseOnStack {
 // versions of GCC. See V8 issue 122 for details.
 class SaveContext BASE_EMBEDDED {
  public:
-  explicit inline SaveContext(Isolate* isolate);
-  inline ~SaveContext();
+  explicit SaveContext(Isolate* isolate);
+  ~SaveContext();
 
   Handle<Context> context() { return context_; }
   SaveContext* prev() { return prev_; }
@@ -1508,8 +1495,6 @@ class SaveContext BASE_EMBEDDED {
   bool IsBelowFrame(StandardFrame* frame) {
     return (c_entry_fp_ == 0) || (c_entry_fp_ > frame->sp());
   }
-
-  Isolate* isolate() { return isolate_; }
 
  private:
   Isolate* const isolate_;

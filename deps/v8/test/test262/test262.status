@@ -619,6 +619,10 @@
   'built-ins/ArrayBuffer/length-is-too-large-throws': [SKIP],
 }],  # asan == True or msan == True or tsan == True
 
+['variant == asm_wasm', {
+  '*': [SKIP],
+}],  # variant == asm_wasm
+
 # Module-related tests
 # https://bugs.chromium.org/p/v8/issues/detail?id=1569
 ['variant != ignition', {
@@ -633,7 +637,6 @@
   'language/module-code/eval-*': [SKIP],
   'language/module-code/instn-*': [SKIP],
   'language/module-code/namespace/*': [SKIP],
-  'language/module-code/parse-err-*': [SKIP],
 }],  # 'variant == ignition'
 
 ]

@@ -152,6 +152,9 @@ void HeapObject::HeapObjectVerify() {
     case JS_MAP_ITERATOR_TYPE:
       JSMapIterator::cast(this)->JSMapIteratorVerify();
       break;
+    case JS_STRING_ITERATOR_TYPE:
+      JSStringIterator::cast(this)->JSStringIteratorVerify();
+      break;
     case JS_WEAK_MAP_TYPE:
       JSWeakMap::cast(this)->JSWeakMapVerify();
       break;
@@ -165,9 +168,6 @@ void HeapObject::HeapObjectVerify() {
       break;
     case JS_PROXY_TYPE:
       JSProxy::cast(this)->JSProxyVerify();
-      break;
-    case JS_MODULE_TYPE:
-      JSModule::cast(this)->JSModuleVerify();
       break;
     case FOREIGN_TYPE:
       Foreign::cast(this)->ForeignVerify();
@@ -565,6 +565,7 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
   VerifyObjectField(kOptimizedCodeMapOffset);
   VerifyObjectField(kFeedbackMetadataOffset);
   VerifyObjectField(kScopeInfoOffset);
+  VerifyObjectField(kOuterScopeInfoOffset);
   VerifyObjectField(kInstanceClassNameOffset);
   CHECK(function_data()->IsUndefined(GetIsolate()) || IsApiFunction() ||
         HasBytecodeArray() || HasAsmWasmData());
@@ -781,6 +782,13 @@ void JSWeakMap::JSWeakMapVerify() {
   CHECK(table()->IsHashTable() || table()->IsUndefined(GetIsolate()));
 }
 
+void JSStringIterator::JSStringIteratorVerify() {
+  CHECK(IsJSStringIterator());
+  JSObjectVerify();
+  CHECK(string()->IsString());
+  CHECK_GE(index(), 0);
+  CHECK_LE(index(), String::kMaxLength);
+}
 
 void JSWeakSet::JSWeakSetVerify() {
   CHECK(IsJSWeakSet());
@@ -833,8 +841,6 @@ void JSRegExp::JSRegExpVerify() {
       break;
   }
 }
-
-void JSModule::JSModuleVerify() { CHECK(IsJSModule()); }
 
 void JSProxy::JSProxyVerify() {
   CHECK(IsJSProxy());
@@ -904,6 +910,27 @@ void Box::BoxVerify() {
   value()->ObjectVerify();
 }
 
+void PromiseContainer::PromiseContainerVerify() {
+  CHECK(IsPromiseContainer());
+  thenable()->ObjectVerify();
+  then()->ObjectVerify();
+  resolve()->ObjectVerify();
+  reject()->ObjectVerify();
+  before_debug_event()->ObjectVerify();
+  after_debug_event()->ObjectVerify();
+}
+
+void Module::ModuleVerify() {
+  CHECK(IsModule());
+  CHECK(code()->IsSharedFunctionInfo() || code()->IsJSFunction());
+  code()->ObjectVerify();
+  exports()->ObjectVerify();
+  requested_modules()->ObjectVerify();
+  VerifySmiField(kFlagsOffset);
+  embedder_data()->ObjectVerify();
+  CHECK(shared()->name()->IsSymbol());
+  // TODO(neis): Check more.
+}
 
 void PrototypeInfo::PrototypeInfoVerify() {
   CHECK(IsPrototypeInfo());

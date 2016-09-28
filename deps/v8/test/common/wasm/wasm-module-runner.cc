@@ -10,9 +10,10 @@
 #include "src/property-descriptor.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-interpreter.h"
+#include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-result.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -65,10 +66,14 @@ const Handle<JSObject> InstantiateModuleForTesting(Isolate* isolate,
       isolate, module->module_start, module->module_end, thrower,
       ModuleOrigin::kWasmOrigin);
   if (module_object.is_null()) return Handle<JSObject>::null();
-  return WasmModule::Instantiate(isolate, module_object.ToHandleChecked(),
-                                 Handle<JSReceiver>::null(),
-                                 Handle<JSArrayBuffer>::null())
-      .ToHandleChecked();
+  MaybeHandle<JSObject> maybe_instance = WasmModule::Instantiate(
+      isolate, module_object.ToHandleChecked(), Handle<JSReceiver>::null(),
+      Handle<JSArrayBuffer>::null());
+  Handle<JSObject> instance;
+  if (!maybe_instance.ToHandle(&instance)) {
+    return Handle<JSObject>::null();
+  }
+  return instance;
 }
 
 int32_t CompileAndRunWasmModule(Isolate* isolate, const byte* module_start,
@@ -197,6 +202,12 @@ int32_t CallWasmFunctionForTesting(Isolate* isolate, Handle<JSObject> instance,
   }
   thrower->Error("WASM.compileRun() failed: Return value should be number");
   return -1;
+}
+
+void SetupIsolateForWasmModule(Isolate* isolate) {
+  WasmJs::InstallWasmMapsIfNeeded(isolate, isolate->native_context());
+  WasmJs::InstallWasmModuleSymbolIfNeeded(isolate, isolate->global_object(),
+                                          isolate->native_context());
 }
 
 }  // namespace testing

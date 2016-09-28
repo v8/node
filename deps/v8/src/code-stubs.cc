@@ -498,6 +498,138 @@ void KeyedLoadICTFStub::GenerateAssembly(CodeStubAssembler* assembler) const {
   assembler->KeyedLoadIC(&p);
 }
 
+void StoreICTrampolineTFStub::GenerateAssembly(
+    CodeStubAssembler* assembler) const {
+  typedef compiler::Node Node;
+
+  Node* receiver = assembler->Parameter(Descriptor::kReceiver);
+  Node* name = assembler->Parameter(Descriptor::kName);
+  Node* value = assembler->Parameter(Descriptor::kValue);
+  Node* slot = assembler->Parameter(Descriptor::kSlot);
+  Node* context = assembler->Parameter(Descriptor::kContext);
+  Node* vector = assembler->LoadTypeFeedbackVectorForStub();
+
+  CodeStubAssembler::StoreICParameters p(context, receiver, name, value, slot,
+                                         vector);
+  assembler->StoreIC(&p);
+}
+
+void StoreICTFStub::GenerateAssembly(CodeStubAssembler* assembler) const {
+  typedef compiler::Node Node;
+
+  Node* receiver = assembler->Parameter(Descriptor::kReceiver);
+  Node* name = assembler->Parameter(Descriptor::kName);
+  Node* value = assembler->Parameter(Descriptor::kValue);
+  Node* slot = assembler->Parameter(Descriptor::kSlot);
+  Node* vector = assembler->Parameter(Descriptor::kVector);
+  Node* context = assembler->Parameter(Descriptor::kContext);
+
+  CodeStubAssembler::StoreICParameters p(context, receiver, name, value, slot,
+                                         vector);
+  assembler->StoreIC(&p);
+}
+
+void StoreTransitionStub::GenerateAssembly(CodeStubAssembler* assembler) const {
+  typedef CodeStubAssembler::Label Label;
+  typedef compiler::Node Node;
+
+  Node* receiver = assembler->Parameter(Descriptor::kReceiver);
+  Node* name = assembler->Parameter(Descriptor::kName);
+  Node* value = assembler->Parameter(Descriptor::kValue);
+  Node* map = assembler->Parameter(Descriptor::kMap);
+  Node* slot = assembler->Parameter(Descriptor::kSlot);
+  Node* vector = assembler->Parameter(Descriptor::kVector);
+  Node* context = assembler->Parameter(Descriptor::kContext);
+
+  StoreMode store_mode = this->store_mode();
+  Node* prepared_value = value;
+
+  Label miss(assembler);
+  bool needs_miss_case = false;
+
+  if (store_mode != StoreTransitionStub::StoreMapOnly) {
+    Representation representation = this->representation();
+    FieldIndex index = this->index();
+    assembler->Comment(
+        "Prepare value for write: representation: %s, index.is_inobject: %d, "
+        "index.offset: %d",
+        representation.Mnemonic(), index.is_inobject(), index.offset());
+    prepared_value =
+        assembler->PrepareValueForWrite(prepared_value, representation, &miss);
+    // Only store to tagged field never bails out.
+    needs_miss_case |= !representation.IsTagged();
+  }
+
+  switch (store_mode) {
+    case StoreTransitionStub::ExtendStorageAndStoreMapAndValue:
+      assembler->Comment("Extend storage");
+      assembler->ExtendPropertiesBackingStore(receiver);
+    // Fall through.
+    case StoreTransitionStub::StoreMapAndValue:
+      assembler->Comment("Store value");
+      // Store the new value into the "extended" object.
+      assembler->StoreNamedField(receiver, index(), representation(),
+                                 prepared_value, true);
+    // Fall through.
+    case StoreTransitionStub::StoreMapOnly:
+      assembler->Comment("Store map");
+      // And finally update the map.
+      assembler->StoreObjectField(receiver, JSObject::kMapOffset, map);
+      break;
+  }
+  assembler->Return(value);
+
+  if (needs_miss_case) {
+    assembler->Bind(&miss);
+    {
+      assembler->Comment("Miss");
+      assembler->TailCallRuntime(Runtime::kStoreIC_Miss, context, value, slot,
+                                 vector, receiver, name);
+    }
+  }
+}
+
+void ElementsTransitionAndStoreStub::GenerateAssembly(
+    CodeStubAssembler* assembler) const {
+  typedef CodeStubAssembler::Label Label;
+  typedef compiler::Node Node;
+
+  Node* receiver = assembler->Parameter(Descriptor::kReceiver);
+  Node* key = assembler->Parameter(Descriptor::kName);
+  Node* value = assembler->Parameter(Descriptor::kValue);
+  Node* map = assembler->Parameter(Descriptor::kMap);
+  Node* slot = assembler->Parameter(Descriptor::kSlot);
+  Node* vector = assembler->Parameter(Descriptor::kVector);
+  Node* context = assembler->Parameter(Descriptor::kContext);
+
+  assembler->Comment(
+      "ElementsTransitionAndStoreStub: from_kind=%s, to_kind=%s,"
+      " is_jsarray=%d, store_mode=%d",
+      ElementsKindToString(from_kind()), ElementsKindToString(to_kind()),
+      is_jsarray(), store_mode());
+
+  Label miss(assembler);
+
+  if (FLAG_trace_elements_transitions) {
+    // Tracing elements transitions is the job of the runtime.
+    assembler->Goto(&miss);
+  } else {
+    assembler->TransitionElementsKind(receiver, map, from_kind(), to_kind(),
+                                      is_jsarray(), &miss);
+    assembler->EmitElementStore(receiver, key, value, is_jsarray(), to_kind(),
+                                store_mode(), &miss);
+    assembler->Return(value);
+  }
+
+  assembler->Bind(&miss);
+  {
+    assembler->Comment("Miss");
+    assembler->TailCallRuntime(Runtime::kElementsTransitionAndStoreIC_Miss,
+                               context, receiver, key, value, map, slot,
+                               vector);
+  }
+}
+
 void AllocateHeapNumberStub::GenerateAssembly(
     CodeStubAssembler* assembler) const {
   typedef compiler::Node Node;
@@ -4465,8 +4597,8 @@ void StoreFieldStub::GenerateAssembly(CodeStubAssembler* assembler) const {
     assembler->Bind(&miss);
     {
       assembler->Comment("Miss");
-      assembler->TailCallRuntime(Runtime::kStoreIC_Miss, context, receiver,
-                                 name, value, slot, vector);
+      assembler->TailCallRuntime(Runtime::kStoreIC_Miss, context, value, slot,
+                                 vector, receiver, name);
     }
   }
 }
@@ -4561,8 +4693,8 @@ void StoreGlobalStub::GenerateAssembly(CodeStubAssembler* assembler) const {
   assembler->Bind(&miss);
   {
     assembler->Comment("Miss");
-    assembler->TailCallRuntime(Runtime::kStoreIC_Miss, context, receiver, name,
-                               value, slot, vector);
+    assembler->TailCallRuntime(Runtime::kStoreIC_Miss, context, value, slot,
+                               vector, receiver, name);
   }
 }
 
@@ -4610,8 +4742,8 @@ void KeyedStoreSloppyArgumentsStub::GenerateAssembly(
   assembler->Bind(&miss);
   {
     assembler->Comment("Miss");
-    assembler->TailCallRuntime(Runtime::kKeyedStoreIC_Miss, context, receiver,
-                               key, value, slot, vector);
+    assembler->TailCallRuntime(Runtime::kKeyedStoreIC_Miss, context, value,
+                               slot, vector, receiver, key);
   }
 }
 
@@ -4817,64 +4949,12 @@ void ToLengthStub::GenerateAssembly(CodeStubAssembler* assembler) const {
 }
 
 void ToIntegerStub::GenerateAssembly(CodeStubAssembler* assembler) const {
-  typedef CodeStubAssembler::Label Label;
   typedef compiler::Node Node;
-  typedef CodeStubAssembler::Variable Variable;
 
-  Node* context = assembler->Parameter(1);
+  Node* input = assembler->Parameter(Descriptor::kArgument);
+  Node* context = assembler->Parameter(Descriptor::kContext);
 
-  // We might need to loop once for ToNumber conversion.
-  Variable var_arg(assembler, MachineRepresentation::kTagged);
-  Label loop(assembler, &var_arg);
-  var_arg.Bind(assembler->Parameter(0));
-  assembler->Goto(&loop);
-  assembler->Bind(&loop);
-  {
-    // Shared entry points.
-    Label return_arg(assembler), return_zero(assembler, Label::kDeferred);
-
-    // Load the current {arg} value.
-    Node* arg = var_arg.value();
-
-    // Check if {arg} is a Smi.
-    assembler->GotoIf(assembler->WordIsSmi(arg), &return_arg);
-
-    // Check if {arg} is a HeapNumber.
-    Label if_argisheapnumber(assembler),
-        if_argisnotheapnumber(assembler, Label::kDeferred);
-    assembler->Branch(assembler->WordEqual(assembler->LoadMap(arg),
-                                           assembler->HeapNumberMapConstant()),
-                      &if_argisheapnumber, &if_argisnotheapnumber);
-
-    assembler->Bind(&if_argisheapnumber);
-    {
-      // Load the floating-point value of {arg}.
-      Node* arg_value = assembler->LoadHeapNumberValue(arg);
-
-      // Check if {arg} is NaN.
-      assembler->GotoUnless(assembler->Float64Equal(arg_value, arg_value),
-                            &return_zero);
-
-      // Truncate {arg} towards zero.
-      Node* value = assembler->Float64Trunc(arg_value);
-      var_arg.Bind(assembler->ChangeFloat64ToTagged(value));
-      assembler->Goto(&return_arg);
-    }
-
-    assembler->Bind(&if_argisnotheapnumber);
-    {
-      // Need to convert {arg} to a Number first.
-      Callable callable = CodeFactory::NonNumberToNumber(assembler->isolate());
-      var_arg.Bind(assembler->CallStub(callable, context, arg));
-      assembler->Goto(&loop);
-    }
-
-    assembler->Bind(&return_arg);
-    assembler->Return(var_arg.value());
-
-    assembler->Bind(&return_zero);
-    assembler->Return(assembler->SmiConstant(Smi::FromInt(0)));
-  }
+  assembler->Return(assembler->ToInteger(context, input));
 }
 
 void StoreInterceptorStub::GenerateAssembly(
@@ -4941,13 +5021,13 @@ compiler::Node* FastCloneShallowObjectStub::GenerateFastPath(
   typedef compiler::CodeAssembler::Label Label;
   typedef compiler::CodeAssembler::Variable Variable;
 
-  Node* undefined = assembler->UndefinedConstant();
   Node* literals_array =
       assembler->LoadObjectField(closure, JSFunction::kLiteralsOffset);
   Node* allocation_site = assembler->LoadFixedArrayElement(
       literals_array, literals_index,
       LiteralsArray::kFirstLiteralIndex * kPointerSize,
       CodeStubAssembler::SMI_PARAMETERS);
+  Node* undefined = assembler->UndefinedConstant();
   assembler->GotoIf(assembler->WordEqual(allocation_site, undefined),
                     call_runtime);
 
@@ -5100,14 +5180,10 @@ void KeyedLoadGenericStub::InitializeDescriptor(
 
 
 void HandlerStub::InitializeDescriptor(CodeStubDescriptor* descriptor) {
-  if (kind() == Code::STORE_IC) {
-    descriptor->Initialize(FUNCTION_ADDR(Runtime_StoreIC_MissFromStubFailure));
-  } else if (kind() == Code::KEYED_LOAD_IC) {
+  DCHECK(kind() == Code::LOAD_IC || kind() == Code::KEYED_LOAD_IC);
+  if (kind() == Code::KEYED_LOAD_IC) {
     descriptor->Initialize(
         FUNCTION_ADDR(Runtime_KeyedLoadIC_MissFromStubFailure));
-  } else if (kind() == Code::KEYED_STORE_IC) {
-    descriptor->Initialize(
-        FUNCTION_ADDR(Runtime_KeyedStoreIC_MissFromStubFailure));
   }
 }
 
@@ -5122,30 +5198,10 @@ CallInterfaceDescriptor HandlerStub::GetCallInterfaceDescriptor() const {
 }
 
 
-void ElementsTransitionAndStoreStub::InitializeDescriptor(
-    CodeStubDescriptor* descriptor) {
-  descriptor->Initialize(
-      FUNCTION_ADDR(Runtime_ElementsTransitionAndStoreIC_Miss));
-}
-
-void StoreTransitionStub::InitializeDescriptor(CodeStubDescriptor* descriptor) {
-  descriptor->Initialize(
-      FUNCTION_ADDR(Runtime_TransitionStoreIC_MissFromStubFailure));
-}
-
 void NumberToStringStub::InitializeDescriptor(CodeStubDescriptor* descriptor) {
   descriptor->Initialize(
       Runtime::FunctionForId(Runtime::kNumberToString)->entry);
   descriptor->SetMissHandler(Runtime::kNumberToString);
-}
-
-
-void FastCloneShallowArrayStub::InitializeDescriptor(
-    CodeStubDescriptor* descriptor) {
-  FastCloneShallowArrayDescriptor call_descriptor(isolate());
-  descriptor->Initialize(
-      Runtime::FunctionForId(Runtime::kCreateArrayLiteralStubBailout)->entry);
-  descriptor->SetMissHandler(Runtime::kCreateArrayLiteralStubBailout);
 }
 
 void RegExpConstructResultStub::InitializeDescriptor(
@@ -5656,6 +5712,199 @@ void FastCloneRegExpStub::GenerateAssembly(CodeStubAssembler* assembler) const {
       Generate(assembler, closure, literal_index, pattern, flags, context));
 }
 
+namespace {
+
+compiler::Node* NonEmptyShallowClone(CodeStubAssembler* assembler,
+                                     compiler::Node* boilerplate,
+                                     compiler::Node* boilerplate_map,
+                                     compiler::Node* boilerplate_elements,
+                                     compiler::Node* allocation_site,
+                                     compiler::Node* capacity,
+                                     ElementsKind kind) {
+  typedef compiler::Node Node;
+  typedef CodeStubAssembler::ParameterMode ParameterMode;
+
+  ParameterMode param_mode = CodeStubAssembler::SMI_PARAMETERS;
+
+  Node* length = assembler->LoadJSArrayLength(boilerplate);
+
+  if (assembler->Is64()) {
+    capacity = assembler->SmiUntag(capacity);
+    param_mode = CodeStubAssembler::INTEGER_PARAMETERS;
+  }
+
+  Node *array, *elements;
+  std::tie(array, elements) =
+      assembler->AllocateUninitializedJSArrayWithElements(
+          kind, boilerplate_map, length, allocation_site, capacity, param_mode);
+
+  assembler->Comment("copy elements header");
+  for (int offset = 0; offset < FixedArrayBase::kHeaderSize;
+       offset += kPointerSize) {
+    Node* value = assembler->LoadObjectField(boilerplate_elements, offset);
+    assembler->StoreObjectField(elements, offset, value);
+  }
+
+  if (assembler->Is64()) {
+    length = assembler->SmiUntag(length);
+  }
+
+  assembler->Comment("copy boilerplate elements");
+  assembler->CopyFixedArrayElements(kind, boilerplate_elements, elements,
+                                    length, SKIP_WRITE_BARRIER, param_mode);
+  assembler->IncrementCounter(
+      assembler->isolate()->counters()->inlined_copied_elements(), 1);
+
+  return array;
+}
+
+}  // namespace
+
+// static
+compiler::Node* FastCloneShallowArrayStub::Generate(
+    CodeStubAssembler* assembler, compiler::Node* closure,
+    compiler::Node* literal_index, compiler::Node* context,
+    CodeStubAssembler::Label* call_runtime,
+    AllocationSiteMode allocation_site_mode) {
+  typedef CodeStubAssembler::Label Label;
+  typedef CodeStubAssembler::Variable Variable;
+  typedef compiler::Node Node;
+
+  Label zero_capacity(assembler), cow_elements(assembler),
+      fast_elements(assembler), return_result(assembler);
+  Variable result(assembler, MachineRepresentation::kTagged);
+
+  Node* literals_array =
+      assembler->LoadObjectField(closure, JSFunction::kLiteralsOffset);
+  Node* allocation_site = assembler->LoadFixedArrayElement(
+      literals_array, literal_index,
+      LiteralsArray::kFirstLiteralIndex * kPointerSize,
+      CodeStubAssembler::SMI_PARAMETERS);
+
+  Node* undefined = assembler->UndefinedConstant();
+  assembler->GotoIf(assembler->WordEqual(allocation_site, undefined),
+                    call_runtime);
+  allocation_site = assembler->LoadFixedArrayElement(
+      literals_array, literal_index,
+      LiteralsArray::kFirstLiteralIndex * kPointerSize,
+      CodeStubAssembler::SMI_PARAMETERS);
+
+  Node* boilerplate = assembler->LoadObjectField(
+      allocation_site, AllocationSite::kTransitionInfoOffset);
+  Node* boilerplate_map = assembler->LoadMap(boilerplate);
+  Node* boilerplate_elements = assembler->LoadElements(boilerplate);
+  Node* capacity = assembler->LoadFixedArrayBaseLength(boilerplate_elements);
+  allocation_site =
+      allocation_site_mode == TRACK_ALLOCATION_SITE ? allocation_site : nullptr;
+
+  Node* zero = assembler->SmiConstant(Smi::FromInt(0));
+  assembler->GotoIf(assembler->SmiEqual(capacity, zero), &zero_capacity);
+
+  Node* elements_map = assembler->LoadMap(boilerplate_elements);
+  assembler->GotoIf(
+      assembler->WordEqual(elements_map, assembler->FixedCowArrayMapConstant()),
+      &cow_elements);
+
+  assembler->GotoIf(
+      assembler->WordEqual(elements_map, assembler->FixedArrayMapConstant()),
+      &fast_elements);
+  {
+    assembler->Comment("fast double elements path");
+    if (FLAG_debug_code) {
+      Label correct_elements_map(assembler), abort(assembler, Label::kDeferred);
+      assembler->BranchIf(
+          assembler->WordEqual(elements_map,
+                               assembler->FixedDoubleArrayMapConstant()),
+          &correct_elements_map, &abort);
+
+      assembler->Bind(&abort);
+      {
+        Node* abort_id = assembler->SmiConstant(
+            Smi::FromInt(BailoutReason::kExpectedFixedDoubleArrayMap));
+        assembler->TailCallRuntime(Runtime::kAbort, context, abort_id);
+      }
+      assembler->Bind(&correct_elements_map);
+    }
+
+    Node* array = NonEmptyShallowClone(assembler, boilerplate, boilerplate_map,
+                                       boilerplate_elements, allocation_site,
+                                       capacity, FAST_DOUBLE_ELEMENTS);
+    result.Bind(array);
+    assembler->Goto(&return_result);
+  }
+
+  assembler->Bind(&fast_elements);
+  {
+    assembler->Comment("fast elements path");
+    Node* array = NonEmptyShallowClone(assembler, boilerplate, boilerplate_map,
+                                       boilerplate_elements, allocation_site,
+                                       capacity, FAST_ELEMENTS);
+    result.Bind(array);
+    assembler->Goto(&return_result);
+  }
+
+  Variable length(assembler, MachineRepresentation::kTagged),
+      elements(assembler, MachineRepresentation::kTagged);
+  Label allocate_without_elements(assembler);
+
+  assembler->Bind(&cow_elements);
+  {
+    assembler->Comment("fixed cow path");
+    length.Bind(assembler->LoadJSArrayLength(boilerplate));
+    elements.Bind(boilerplate_elements);
+
+    assembler->Goto(&allocate_without_elements);
+  }
+
+  assembler->Bind(&zero_capacity);
+  {
+    assembler->Comment("zero capacity path");
+    length.Bind(zero);
+    elements.Bind(assembler->LoadRoot(Heap::kEmptyFixedArrayRootIndex));
+
+    assembler->Goto(&allocate_without_elements);
+  }
+
+  assembler->Bind(&allocate_without_elements);
+  {
+    Node* array = assembler->AllocateUninitializedJSArrayWithoutElements(
+        FAST_ELEMENTS, boilerplate_map, length.value(), allocation_site);
+    assembler->StoreObjectField(array, JSObject::kElementsOffset,
+                                elements.value());
+    result.Bind(array);
+    assembler->Goto(&return_result);
+  }
+
+  assembler->Bind(&return_result);
+  return result.value();
+}
+
+void FastCloneShallowArrayStub::GenerateAssembly(
+    CodeStubAssembler* assembler) const {
+  typedef compiler::Node Node;
+  typedef CodeStubAssembler::Label Label;
+  Node* closure = assembler->Parameter(Descriptor::kClosure);
+  Node* literal_index = assembler->Parameter(Descriptor::kLiteralIndex);
+  Node* constant_elements = assembler->Parameter(Descriptor::kConstantElements);
+  Node* context = assembler->Parameter(Descriptor::kContext);
+  Label call_runtime(assembler, Label::kDeferred);
+  assembler->Return(Generate(assembler, closure, literal_index, context,
+                             &call_runtime, allocation_site_mode()));
+
+  assembler->Bind(&call_runtime);
+  {
+    assembler->Comment("call runtime");
+    Node* flags = assembler->SmiConstant(
+        Smi::FromInt(ArrayLiteral::kShallowElements |
+                     (allocation_site_mode() == TRACK_ALLOCATION_SITE
+                          ? 0
+                          : ArrayLiteral::kDisableMementos)));
+    assembler->Return(assembler->CallRuntime(Runtime::kCreateArrayLiteral,
+                                             context, closure, literal_index,
+                                             constant_elements, flags));
+  }
+}
+
 void CreateAllocationSiteStub::GenerateAheadOfTime(Isolate* isolate) {
   CreateAllocationSiteStub stub(isolate);
   stub.GetCode();
@@ -5698,8 +5947,8 @@ void StoreFastElementStub::GenerateAssembly(
   assembler->Bind(&miss);
   {
     assembler->Comment("Miss");
-    assembler->TailCallRuntime(Runtime::kKeyedStoreIC_Miss, context, receiver,
-                               key, value, slot, vector);
+    assembler->TailCallRuntime(Runtime::kKeyedStoreIC_Miss, context, value,
+                               slot, vector, receiver, key);
   }
 }
 
@@ -5861,7 +6110,7 @@ void ArrayNoArgumentConstructorStub::GenerateAssembly(
   Node* array = assembler->AllocateJSArray(
       elements_kind(), array_map,
       assembler->IntPtrConstant(JSArray::kPreallocatedArrayElements),
-      assembler->IntPtrConstant(0), allocation_site);
+      assembler->SmiConstant(Smi::FromInt(0)), allocation_site);
   assembler->Return(array);
 }
 
@@ -5874,7 +6123,7 @@ void InternalArrayNoArgumentConstructorStub::GenerateAssembly(
   Node* array = assembler->AllocateJSArray(
       elements_kind(), array_map,
       assembler->IntPtrConstant(JSArray::kPreallocatedArrayElements),
-      assembler->IntPtrConstant(0), nullptr);
+      assembler->SmiConstant(Smi::FromInt(0)), nullptr);
   assembler->Return(array);
 }
 

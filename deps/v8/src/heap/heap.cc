@@ -972,22 +972,6 @@ bool Heap::CollectGarbage(GarbageCollector collector,
     }
   }
 
-  if (collector == MARK_COMPACTOR && !ShouldFinalizeIncrementalMarking() &&
-      !ShouldAbortIncrementalMarking() && !incremental_marking()->IsStopped() &&
-      !incremental_marking()->should_hurry() && FLAG_incremental_marking &&
-      OldGenerationAllocationLimitReached()) {
-    if (!incremental_marking()->IsComplete() &&
-        !mark_compact_collector()->marking_deque_.IsEmpty() &&
-        !FLAG_gc_global) {
-      if (FLAG_trace_incremental_marking) {
-        isolate()->PrintWithTimestamp(
-            "[IncrementalMarking] Delaying MarkSweep.\n");
-      }
-      collector = SCAVENGER;
-      collector_reason = "incremental marking delaying mark-sweep";
-    }
-  }
-
   bool next_gc_likely_to_collect_more = false;
   intptr_t committed_memory_before = 0;
 
@@ -2302,7 +2286,6 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, scope_info)
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, module_info_entry)
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, module_info)
-    ALLOCATE_MAP(JS_MODULE_TYPE, JSModule::kSize, js_module)
     ALLOCATE_PRIMITIVE_MAP(HEAP_NUMBER_TYPE, HeapNumber::kSize, heap_number,
                            Context::NUMBER_FUNCTION_INDEX)
     ALLOCATE_MAP(MUTABLE_HEAP_NUMBER_TYPE, HeapNumber::kSize,
@@ -2411,6 +2394,12 @@ bool Heap::CreateInitialMaps() {
   }
 
   {
+    AllocationResult allocation = AllocateEmptyScopeInfo();
+    if (!allocation.To(&obj)) return false;
+  }
+
+  set_empty_scope_info(ScopeInfo::cast(obj));
+  {
     AllocationResult allocation = Allocate(boolean_map(), OLD_SPACE);
     if (!allocation.To(&obj)) return false;
   }
@@ -2507,7 +2496,6 @@ AllocationResult Heap::AllocateCell(Object* value) {
   Cell::cast(result)->set_value(value);
   return result;
 }
-
 
 AllocationResult Heap::AllocatePropertyCell() {
   int size = PropertyCell::kSize;
@@ -2912,6 +2900,10 @@ void Heap::CreateInitialObjects() {
   Handle<Cell> species_cell = factory->NewCell(
       handle(Smi::FromInt(Isolate::kArrayProtectorValid), isolate()));
   set_species_protector(*species_cell);
+
+  cell = factory->NewPropertyCell();
+  cell->set_value(Smi::FromInt(Isolate::kArrayProtectorValid));
+  set_string_length_protector(*cell);
 
   set_serialized_templates(empty_fixed_array());
 
@@ -3807,6 +3799,18 @@ AllocationResult Heap::AllocateEmptyFixedArray() {
   return result;
 }
 
+AllocationResult Heap::AllocateEmptyScopeInfo() {
+  int size = FixedArray::SizeFor(0);
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRaw(size, OLD_SPACE);
+    if (!allocation.To(&result)) return allocation;
+  }
+  // Initialize the object.
+  result->set_map_no_write_barrier(scope_info_map());
+  FixedArray::cast(result)->set_length(0);
+  return result;
+}
 
 AllocationResult Heap::CopyAndTenureFixedCOWArray(FixedArray* src) {
   if (!InNewSpace(src)) {

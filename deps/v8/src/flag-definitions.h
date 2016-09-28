@@ -23,14 +23,21 @@
 // this will just be an extern declaration, but for a readonly flag we let the
 // compiler make better optimizations by giving it the value.
 #if defined(FLAG_MODE_DECLARE)
-#define FLAG_FULL(ftype, ctype, nam, def, cmt) extern ctype FLAG_##nam;
+#define FLAG_FULL(ftype, ctype, nam, def, cmt) \
+  V8_EXPORT_PRIVATE extern ctype FLAG_##nam;
 #define FLAG_READONLY(ftype, ctype, nam, def, cmt) \
   static ctype const FLAG_##nam = def;
 
 // We want to supply the actual storage and value for the flag variable in the
 // .cc file.  We only do this for writable flags.
 #elif defined(FLAG_MODE_DEFINE)
-#define FLAG_FULL(ftype, ctype, nam, def, cmt) ctype FLAG_##nam = def;
+#ifdef USING_V8_SHARED
+#define FLAG_FULL(ftype, ctype, nam, def, cmt) \
+  V8_EXPORT_PRIVATE extern ctype FLAG_##nam;
+#else
+#define FLAG_FULL(ftype, ctype, nam, def, cmt) \
+  V8_EXPORT_PRIVATE ctype FLAG_##nam = def;
+#endif
 
 // We need to define all of our default values so that the Flag structure can
 // access them by pointer.  These are just used internally inside of one .cc,
@@ -206,7 +213,6 @@ DEFINE_IMPLICATION(es_staging, move_object_start)
 #define HARMONY_STAGED_BASE(V)                                               \
   V(harmony_regexp_lookbehind, "harmony regexp lookbehind")                  \
   V(harmony_tailcalls, "harmony tail calls")                                 \
-  V(harmony_async_await, "harmony async-await")                              \
   V(harmony_string_padding, "harmony String-padding methods")
 
 #ifdef V8_I18N_SUPPORT
@@ -220,6 +226,7 @@ DEFINE_IMPLICATION(es_staging, move_object_start)
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                                  \
+  V(harmony_async_await, "harmony async-await")                              \
   V(harmony_restrictive_declarations,                                        \
     "harmony limitations on sloppy mode function declarations")              \
   V(harmony_object_values_entries, "harmony Object.values / Object.entries") \
@@ -330,7 +337,7 @@ DEFINE_BOOL(use_write_barrier_elimination, true,
 DEFINE_INT(max_inlining_levels, 5, "maximum number of inlining levels")
 DEFINE_INT(max_inlined_source_size, 600,
            "maximum source size in bytes considered for a single inlining")
-DEFINE_INT(max_inlined_nodes, 196,
+DEFINE_INT(max_inlined_nodes, 200,
            "maximum number of AST nodes considered for a single inlining")
 DEFINE_INT(max_inlined_nodes_cumulative, 400,
            "maximum cumulative number of AST nodes considered for inlining")
@@ -484,9 +491,8 @@ DEFINE_BOOL(turbo_instruction_scheduling, false,
             "enable instruction scheduling in TurboFan")
 DEFINE_BOOL(turbo_stress_instruction_scheduling, false,
             "randomly schedule instructions to stress dependency tracking")
-DEFINE_BOOL(turbo_store_elimination, false,
+DEFINE_BOOL(turbo_store_elimination, true,
             "enable store-store elimination in TurboFan")
-DEFINE_IMPLICATION(turbo, turbo_store_elimination)
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
@@ -796,6 +802,7 @@ DEFINE_BOOL(use_idle_notification, true,
 DEFINE_BOOL(use_ic, true, "use inline caching")
 DEFINE_BOOL(trace_ic, false, "trace inline cache state transitions")
 DEFINE_BOOL(tf_load_ic_stub, true, "use TF LoadIC stub")
+DEFINE_BOOL(tf_store_ic_stub, false, "use TF StoreIC stub")
 
 // macro-assembler-ia32.cc
 DEFINE_BOOL(native_code_counters, false,

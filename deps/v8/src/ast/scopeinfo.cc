@@ -272,7 +272,7 @@ Handle<ScopeInfo> ScopeInfo::Create(Isolate* isolate, Zone* zone, Scope* scope,
   // Module-specific information (only for module scopes).
   if (scope->is_module_scope()) {
     Handle<ModuleInfo> module_info =
-        ModuleInfo::New(isolate, scope->AsModuleScope()->module());
+        ModuleInfo::New(isolate, zone, scope->AsModuleScope()->module());
     DCHECK_EQ(index, scope_info->ModuleInfoIndex());
     scope_info->set(index++, *module_info);
     DCHECK_EQ(index, scope_info->ModuleVariableCountIndex());
@@ -396,7 +396,7 @@ Handle<ScopeInfo> ScopeInfo::CreateGlobalThisBinding(Isolate* isolate) {
 
 
 ScopeInfo* ScopeInfo::Empty(Isolate* isolate) {
-  return reinterpret_cast<ScopeInfo*>(isolate->heap()->empty_fixed_array());
+  return isolate->heap()->empty_scope_info();
 }
 
 
@@ -852,7 +852,15 @@ Handle<ModuleInfoEntry> ModuleInfoEntry::New(Isolate* isolate,
   return result;
 }
 
-Handle<ModuleInfo> ModuleInfo::New(Isolate* isolate, ModuleDescriptor* descr) {
+Handle<ModuleInfo> ModuleInfo::New(Isolate* isolate, Zone* zone,
+                                   ModuleDescriptor* descr) {
+  // Serialize module requests.
+  Handle<FixedArray> module_requests = isolate->factory()->NewFixedArray(
+      static_cast<int>(descr->module_requests().size()));
+  for (const auto& elem : descr->module_requests()) {
+    module_requests->set(elem.second, *elem.first->string());
+  }
+
   // Serialize special exports.
   Handle<FixedArray> special_exports =
       isolate->factory()->NewFixedArray(descr->special_exports().length());
@@ -863,19 +871,36 @@ Handle<ModuleInfo> ModuleInfo::New(Isolate* isolate, ModuleDescriptor* descr) {
     }
   }
 
-  // Serialize regular exports.
-  Handle<FixedArray> regular_exports = isolate->factory()->NewFixedArray(
-      static_cast<int>(descr->regular_exports().size()));
+  // Serialize namespace imports.
+  Handle<FixedArray> namespace_imports =
+      isolate->factory()->NewFixedArray(descr->namespace_imports().length());
   {
     int i = 0;
-    for (const auto& it : descr->regular_exports()) {
-      regular_exports->set(i++, *it.second->Serialize(isolate));
+    for (auto entry : descr->namespace_imports()) {
+      namespace_imports->set(i++, *entry->Serialize(isolate));
+    }
+  }
+
+  // Serialize regular exports.
+  Handle<FixedArray> regular_exports =
+      descr->SerializeRegularExports(isolate, zone);
+
+  // Serialize regular imports.
+  Handle<FixedArray> regular_imports = isolate->factory()->NewFixedArray(
+      static_cast<int>(descr->regular_imports().size()));
+  {
+    int i = 0;
+    for (const auto& elem : descr->regular_imports()) {
+      regular_imports->set(i++, *elem.second->Serialize(isolate));
     }
   }
 
   Handle<ModuleInfo> result = isolate->factory()->NewModuleInfo();
+  result->set(kModuleRequestsIndex, *module_requests);
   result->set(kSpecialExportsIndex, *special_exports);
   result->set(kRegularExportsIndex, *regular_exports);
+  result->set(kNamespaceImportsIndex, *namespace_imports);
+  result->set(kRegularImportsIndex, *regular_imports);
   return result;
 }
 
