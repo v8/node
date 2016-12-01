@@ -311,7 +311,7 @@
             'deps/v8/src/third_party/vtune/v8vtune.gyp:v8_vtune'
           ],
         }],
-        [ 'v8_inspector=="true"', {
+        [ 'v8_enable_inspector==1', {
           'defines': [
             'HAVE_INSPECTOR=1',
           ],
@@ -322,11 +322,11 @@
             'src/inspector_agent.h',
           ],
           'dependencies': [
-            'deps/v8_inspector/src/inspector/inspector.gyp:standalone_inspector',
-            'v8_inspector_compress_protocol_json#host',
+            #'deps/v8_inspector/src/inspector/inspector.gyp:standalone_inspector',
+            #'v8_inspector_compress_protocol_json#host',
           ],
           'include_dirs': [
-            'deps/v8_inspector/include',
+            #'deps/v8_inspector/include',
             '<(SHARED_INTERMEDIATE_DIR)/include', # for inspector
             '<(SHARED_INTERMEDIATE_DIR)',
           ],
@@ -669,13 +669,13 @@
       'type': 'none',
       'toolsets': ['host'],
       'conditions': [
-        [ 'v8_inspector=="true"', {
+        [ 'v8_enable_inspector==1', {
           'actions': [
             {
               'action_name': 'v8_inspector_compress_protocol_json',
               'process_outputs_as_sources': 1,
               'inputs': [
-                'deps/v8_inspector/src/inspector/js_protocol.json',
+                'deps/v8/src/inspector/js_protocol.json',
               ],
               'outputs': [
                 '<(SHARED_INTERMEDIATE_DIR)/v8_inspector_protocol_json.h',
@@ -885,7 +885,7 @@
       ],
 
       'conditions': [
-        ['v8_inspector=="true"', {
+        ['v8_enable_inspector==1', {
           'sources': [
             'src/inspector_socket.cc',
             'test/cctest/test_inspector_socket.cc'
