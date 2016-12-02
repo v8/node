@@ -65,7 +65,7 @@ SamplingHeapProfiler::SamplingHeapProfiler(
       stack_depth_(stack_depth),
       rate_(rate),
       flags_(flags) {
-  CHECK_GT(rate_, 0);
+  CHECK_GT(rate_, 0u);
   heap->new_space()->AddAllocationObserver(new_space_observer_.get());
   AllSpaces spaces(heap);
   for (Space* space = spaces.next(); space != nullptr; space = spaces.next()) {
@@ -259,8 +259,8 @@ v8::AllocationProfile::Node* SamplingHeapProfiler::TranslateAllocationNode(
 
 v8::AllocationProfile* SamplingHeapProfiler::GetAllocationProfile() {
   if (flags_ & v8::HeapProfiler::kSamplingForceGC) {
-    isolate_->heap()->CollectAllGarbage(Heap::kNoGCFlags,
-                                        "SamplingHeapProfiler");
+    isolate_->heap()->CollectAllGarbage(
+        Heap::kNoGCFlags, GarbageCollectionReason::kSamplingProfiler);
   }
   // To resolve positions to line/column numbers, we will need to look up
   // scripts. Build a map to allow fast mapping from script id to script.

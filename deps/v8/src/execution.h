@@ -21,11 +21,9 @@ class Execution final : public AllStatic {
   // When the function called is not in strict mode, receiver is
   // converted to an object.
   //
-  MUST_USE_RESULT static MaybeHandle<Object> Call(Isolate* isolate,
-                                                  Handle<Object> callable,
-                                                  Handle<Object> receiver,
-                                                  int argc,
-                                                  Handle<Object> argv[]);
+  V8_EXPORT_PRIVATE MUST_USE_RESULT static MaybeHandle<Object> Call(
+      Isolate* isolate, Handle<Object> callable, Handle<Object> receiver,
+      int argc, Handle<Object> argv[]);
 
   // Construct object from function, the caller supplies an array of
   // arguments.
@@ -48,11 +46,6 @@ class Execution final : public AllStatic {
                                      Handle<Object> receiver, int argc,
                                      Handle<Object> argv[],
                                      MaybeHandle<Object>* exception_out = NULL);
-
-  static Handle<String> GetStackTraceLine(Handle<Object> recv,
-                                          Handle<JSFunction> fun,
-                                          Handle<Object> pos,
-                                          Handle<Object> is_global);
 };
 
 
@@ -86,13 +79,13 @@ class StackGuard final {
   // it has been set up.
   void ClearThread(const ExecutionAccess& lock);
 
-#define INTERRUPT_LIST(V)                                          \
-  V(DEBUGBREAK, DebugBreak, 0)                                     \
-  V(DEBUGCOMMAND, DebugCommand, 1)                                 \
-  V(TERMINATE_EXECUTION, TerminateExecution, 2)                    \
-  V(GC_REQUEST, GC, 3)                                             \
-  V(INSTALL_CODE, InstallCode, 4)                                  \
-  V(API_INTERRUPT, ApiInterrupt, 5)                                \
+#define INTERRUPT_LIST(V)                       \
+  V(DEBUGBREAK, DebugBreak, 0)                  \
+  V(DEBUGCOMMAND, DebugCommand, 1)              \
+  V(TERMINATE_EXECUTION, TerminateExecution, 2) \
+  V(GC_REQUEST, GC, 3)                          \
+  V(INSTALL_CODE, InstallCode, 4)               \
+  V(API_INTERRUPT, ApiInterrupt, 5)             \
   V(DEOPT_MARKED_ALLOCATION_SITES, DeoptMarkedAllocationSites, 6)
 
 #define V(NAME, Name, id)                                          \

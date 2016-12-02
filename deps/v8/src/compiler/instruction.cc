@@ -12,7 +12,8 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-const auto GetRegConfig = RegisterConfiguration::Turbofan;
+const RegisterConfiguration* (*GetRegConfig)() =
+    RegisterConfiguration::Turbofan;
 
 FlagsCondition CommuteFlagsCondition(FlagsCondition condition) {
   switch (condition) {
@@ -64,8 +65,35 @@ FlagsCondition CommuteFlagsCondition(FlagsCondition condition) {
   return condition;
 }
 
-bool InstructionOperand::InterferesWith(const InstructionOperand& that) const {
-  return EqualsCanonicalized(that);
+bool InstructionOperand::InterferesWith(const InstructionOperand& other) const {
+  if (kSimpleFPAliasing || !this->IsFPLocationOperand() ||
+      !other.IsFPLocationOperand())
+    return EqualsCanonicalized(other);
+  // Aliasing is complex and both operands are fp locations.
+  const LocationOperand& loc = *LocationOperand::cast(this);
+  const LocationOperand& other_loc = LocationOperand::cast(other);
+  LocationOperand::LocationKind kind = loc.location_kind();
+  LocationOperand::LocationKind other_kind = other_loc.location_kind();
+  if (kind != other_kind) return false;
+  MachineRepresentation rep = loc.representation();
+  MachineRepresentation other_rep = other_loc.representation();
+  if (rep == other_rep) return EqualsCanonicalized(other);
+  if (kind == LocationOperand::REGISTER) {
+    // FP register-register interference.
+    return GetRegConfig()->AreAliases(rep, loc.register_code(), other_rep,
+                                      other_loc.register_code());
+  } else {
+    // FP slot-slot interference. Slots of different FP reps can alias because
+    // the gap resolver may break a move into 2 or 4 equivalent smaller moves.
+    DCHECK_EQ(LocationOperand::STACK_SLOT, kind);
+    int index_hi = loc.index();
+    int index_lo = index_hi - (1 << ElementSizeLog2Of(rep)) / kPointerSize + 1;
+    int other_index_hi = other_loc.index();
+    int other_index_lo =
+        other_index_hi - (1 << ElementSizeLog2Of(other_rep)) / kPointerSize + 1;
+    return other_index_hi >= index_lo && index_hi >= other_index_lo;
+  }
+  return false;
 }
 
 void InstructionOperand::Print(const RegisterConfiguration* config) const {
@@ -232,27 +260,30 @@ bool ParallelMove::IsRedundant() const {
   return true;
 }
 
-
-MoveOperands* ParallelMove::PrepareInsertAfter(MoveOperands* move) const {
+void ParallelMove::PrepareInsertAfter(
+    MoveOperands* move, ZoneVector<MoveOperands*>* to_eliminate) const {
+  bool no_aliasing =
+      kSimpleFPAliasing || !move->destination().IsFPLocationOperand();
   MoveOperands* replacement = nullptr;
-  MoveOperands* to_eliminate = nullptr;
+  MoveOperands* eliminated = nullptr;
   for (MoveOperands* curr : *this) {
     if (curr->IsEliminated()) continue;
     if (curr->destination().EqualsCanonicalized(move->source())) {
+      // We must replace move's source with curr's destination in order to
+      // insert it into this ParallelMove.
       DCHECK(!replacement);
       replacement = curr;
-      if (to_eliminate != nullptr) break;
-    } else if (curr->destination().EqualsCanonicalized(move->destination())) {
-      DCHECK(!to_eliminate);
-      to_eliminate = curr;
-      if (replacement != nullptr) break;
+      if (no_aliasing && eliminated != nullptr) break;
+    } else if (curr->destination().InterferesWith(move->destination())) {
+      // We can eliminate curr, since move overwrites at least a part of its
+      // destination, implying its value is no longer live.
+      eliminated = curr;
+      to_eliminate->push_back(curr);
+      if (no_aliasing && replacement != nullptr) break;
     }
   }
-  DCHECK_IMPLIES(replacement == to_eliminate, replacement == nullptr);
   if (replacement != nullptr) move->set_source(replacement->source());
-  return to_eliminate;
 }
-
 
 ExplicitOperand::ExplicitOperand(LocationKind kind, MachineRepresentation rep,
                                  int index)
@@ -313,7 +344,6 @@ bool Instruction::AreMovesRedundant() const {
   }
   return true;
 }
-
 
 void Instruction::Print(const RegisterConfiguration* config) const {
   OFStream os(stdout);
@@ -569,6 +599,10 @@ void PhiInstruction::SetInput(size_t offset, int virtual_register) {
   operands_[offset] = virtual_register;
 }
 
+void PhiInstruction::RenameInput(size_t offset, int virtual_register) {
+  DCHECK_NE(InstructionOperand::kInvalidVirtualRegister, operands_[offset]);
+  operands_[offset] = virtual_register;
+}
 
 InstructionBlock::InstructionBlock(Zone* zone, RpoNumber rpo_number,
                                    RpoNumber loop_header, RpoNumber loop_end,
@@ -586,9 +620,7 @@ InstructionBlock::InstructionBlock(Zone* zone, RpoNumber rpo_number,
       handler_(handler),
       needs_frame_(false),
       must_construct_frame_(false),
-      must_deconstruct_frame_(false),
-      last_deferred_(RpoNumber::Invalid()) {}
-
+      must_deconstruct_frame_(false) {}
 
 size_t InstructionBlock::PredecessorIndexOf(RpoNumber rpo_number) const {
   size_t j = 0;
@@ -629,6 +661,58 @@ static InstructionBlock* InstructionBlockFor(Zone* zone,
     instr_block->predecessors().push_back(GetRpo(predecessor));
   }
   return instr_block;
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         PrintableInstructionBlock& printable_block) {
+  const InstructionBlock* block = printable_block.block_;
+  const RegisterConfiguration* config = printable_block.register_configuration_;
+  const InstructionSequence* code = printable_block.code_;
+
+  os << "B" << block->rpo_number();
+  os << ": AO#" << block->ao_number();
+  if (block->IsDeferred()) os << " (deferred)";
+  if (!block->needs_frame()) os << " (no frame)";
+  if (block->must_construct_frame()) os << " (construct frame)";
+  if (block->must_deconstruct_frame()) os << " (deconstruct frame)";
+  if (block->IsLoopHeader()) {
+    os << " loop blocks: [" << block->rpo_number() << ", " << block->loop_end()
+       << ")";
+  }
+  os << "  instructions: [" << block->code_start() << ", " << block->code_end()
+     << ")" << std::endl
+     << " predecessors:";
+
+  for (RpoNumber pred : block->predecessors()) {
+    os << " B" << pred.ToInt();
+  }
+  os << std::endl;
+
+  for (const PhiInstruction* phi : block->phis()) {
+    PrintableInstructionOperand printable_op = {config, phi->output()};
+    os << "     phi: " << printable_op << " =";
+    for (int input : phi->operands()) {
+      os << " v" << input;
+    }
+    os << std::endl;
+  }
+
+  ScopedVector<char> buf(32);
+  PrintableInstruction printable_instr;
+  printable_instr.register_configuration_ = config;
+  for (int j = block->first_instruction_index();
+       j <= block->last_instruction_index(); j++) {
+    // TODO(svenpanne) Add some basic formatting to our streams.
+    SNPrintF(buf, "%5d", j);
+    printable_instr.instr_ = code->InstructionAt(j);
+    os << "   " << buf.start() << ": " << printable_instr << std::endl;
+  }
+
+  for (RpoNumber succ : block->successors()) {
+    os << " B" << succ.ToInt();
+  }
+  os << std::endl;
+  return os;
 }
 
 InstructionBlocks* InstructionSequence::InstructionBlocksFor(
@@ -730,6 +814,7 @@ InstructionSequence::InstructionSequence(Isolate* isolate,
       next_virtual_register_(0),
       reference_maps_(zone()),
       representations_(zone()),
+      representation_mask_(0),
       deoptimization_entries_(zone()),
       current_block_(nullptr) {}
 
@@ -835,6 +920,7 @@ void InstructionSequence::MarkAsRepresentation(MachineRepresentation rep,
   DCHECK_IMPLIES(representations_[virtual_register] != rep,
                  representations_[virtual_register] == DefaultRepresentation());
   representations_[virtual_register] = rep;
+  representation_mask_ |= 1 << static_cast<int>(rep);
 }
 
 int InstructionSequence::AddDeoptimizationEntry(
@@ -874,7 +960,6 @@ void InstructionSequence::SetSourcePosition(const Instruction* instr,
   source_positions_.insert(std::make_pair(instr, value));
 }
 
-
 void InstructionSequence::Print(const RegisterConfiguration* config) const {
   OFStream os(stdout);
   PrintableInstructionSequence wrapper;
@@ -891,53 +976,17 @@ void InstructionSequence::PrintBlock(const RegisterConfiguration* config,
   RpoNumber rpo = RpoNumber::FromInt(block_id);
   const InstructionBlock* block = InstructionBlockAt(rpo);
   CHECK(block->rpo_number() == rpo);
-
-  os << "B" << block->rpo_number();
-  os << ": AO#" << block->ao_number();
-  if (block->IsDeferred()) os << " (deferred)";
-  if (!block->needs_frame()) os << " (no frame)";
-  if (block->must_construct_frame()) os << " (construct frame)";
-  if (block->must_deconstruct_frame()) os << " (deconstruct frame)";
-  if (block->IsLoopHeader()) {
-    os << " loop blocks: [" << block->rpo_number() << ", " << block->loop_end()
-       << ")";
-  }
-  os << "  instructions: [" << block->code_start() << ", " << block->code_end()
-     << ")\n  predecessors:";
-
-  for (RpoNumber pred : block->predecessors()) {
-    os << " B" << pred.ToInt();
-  }
-  os << "\n";
-
-  for (const PhiInstruction* phi : block->phis()) {
-    PrintableInstructionOperand printable_op = {config, phi->output()};
-    os << "     phi: " << printable_op << " =";
-    for (int input : phi->operands()) {
-      os << " v" << input;
-    }
-    os << "\n";
-  }
-
-  ScopedVector<char> buf(32);
-  PrintableInstruction printable_instr;
-  printable_instr.register_configuration_ = config;
-  for (int j = block->first_instruction_index();
-       j <= block->last_instruction_index(); j++) {
-    // TODO(svenpanne) Add some basic formatting to our streams.
-    SNPrintF(buf, "%5d", j);
-    printable_instr.instr_ = InstructionAt(j);
-    os << "   " << buf.start() << ": " << printable_instr << "\n";
-  }
-
-  for (RpoNumber succ : block->successors()) {
-    os << " B" << succ.ToInt();
-  }
-  os << "\n";
+  PrintableInstructionBlock printable_block = {config, block, this};
+  os << printable_block << std::endl;
 }
 
 void InstructionSequence::PrintBlock(int block_id) const {
   PrintBlock(GetRegConfig(), block_id);
+}
+
+const RegisterConfiguration*
+InstructionSequence::GetRegisterConfigurationForTesting() {
+  return GetRegConfig();
 }
 
 FrameStateDescriptor::FrameStateDescriptor(
@@ -1020,8 +1069,11 @@ std::ostream& operator<<(std::ostream& os,
        it != code.constants_.end(); ++i, ++it) {
     os << "CST#" << i << ": v" << it->first << " = " << it->second << "\n";
   }
+  PrintableInstructionBlock printable_block = {
+      printable.register_configuration_, nullptr, printable.sequence_};
   for (int i = 0; i < code.InstructionBlockCount(); i++) {
-    printable.sequence_->PrintBlock(printable.register_configuration_, i);
+    printable_block.block_ = code.InstructionBlockAt(RpoNumber::FromInt(i));
+    os << printable_block;
   }
   return os;
 }

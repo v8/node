@@ -66,13 +66,6 @@ class InnerPointerToCodeCache {
 };
 
 
-// Every try-block pushes the context register.
-class TryBlockConstant : public AllStatic {
- public:
-  static const int kElementCount = 1;
-};
-
-
 class StackHandlerConstants : public AllStatic {
  public:
   static const int kNextOffset = 0 * kPointerSize;
@@ -218,6 +211,48 @@ class StandardFrameConstants : public CommonFrameConstants {
   static const int kLastObjectOffset = kContextOffset;
 };
 
+// OptimizedBuiltinFrameConstants are used for TF-generated builtins. They
+// always have a context below the saved fp/constant pool and below that the
+// JSFunction of the executing function and below that an integer (not a Smi)
+// containing the number of arguments passed to the builtin.
+//
+//  slot      JS frame
+//       +-----------------+--------------------------------
+//  -n-1 |   parameter 0   |                            ^
+//       |- - - - - - - - -|                            |
+//  -n   |                 |                          Caller
+//  ...  |       ...       |                       frame slots
+//  -2   |  parameter n-1  |                       (slot < 0)
+//       |- - - - - - - - -|                            |
+//  -1   |   parameter n   |                            v
+//  -----+-----------------+--------------------------------
+//   0   |   return addr   |   ^                        ^
+//       |- - - - - - - - -|   |                        |
+//   1   | saved frame ptr | Fixed                      |
+//       |- - - - - - - - -| Header <-- frame ptr       |
+//   2   | [Constant Pool] |   |                        |
+//       |- - - - - - - - -|   |                        |
+// 2+cp  |     Context     |   |   if a constant pool   |
+//       |- - - - - - - - -|   |    is used, cp = 1,    |
+// 3+cp  |    JSFunction   |   |   otherwise, cp = 0    |
+//       |- - - - - - - - -|   |                        |
+// 4+cp  |      argc       |   v                        |
+//       +-----------------+----                        |
+// 5+cp  |                 |   ^                      Callee
+//       |- - - - - - - - -|   |                   frame slots
+//  ...  |                 | Frame slots           (slot >= 0)
+//       |- - - - - - - - -|   |                        |
+//       |                 |   v                        |
+//  -----+-----------------+----- <-- stack ptr -------------
+//
+class OptimizedBuiltinFrameConstants : public StandardFrameConstants {
+ public:
+  static const int kArgCSize = kPointerSize;
+  static const int kArgCOffset = -3 * kPointerSize - kCPSlotSize;
+  static const int kFixedFrameSize = kFixedFrameSizeAboveFp - kArgCOffset;
+  static const int kFixedSlotCount = kFixedFrameSize / kPointerSize;
+};
+
 // TypedFrames have a SMI type maker value below the saved FP/constant pool to
 // distinguish them from StandardFrames, which have a context in that position
 // instead.
@@ -308,10 +343,9 @@ class ConstructFrameConstants : public TypedFrameConstants {
  public:
   // FP-relative.
   static const int kContextOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(0);
-  static const int kAllocationSiteOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(1);
-  static const int kLengthOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(2);
-  static const int kImplicitReceiverOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(3);
-  DEFINE_TYPED_FRAME_SIZES(4);
+  static const int kLengthOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(1);
+  static const int kImplicitReceiverOffset = TYPED_FRAME_PUSHED_VALUE_OFFSET(2);
+  DEFINE_TYPED_FRAME_SIZES(3);
 };
 
 class StubFailureTrampolineFrameConstants : public InternalFrameConstants {
@@ -525,6 +559,8 @@ class StackFrame BASE_EMBEDDED {
 
   Isolate* isolate() const { return isolate_; }
 
+  void operator=(const StackFrame& original) = delete;
+
  protected:
   inline explicit StackFrame(StackFrameIteratorBase* iterator);
   virtual ~StackFrame() { }
@@ -563,9 +599,6 @@ class StackFrame BASE_EMBEDDED {
   friend class StackFrameIteratorBase;
   friend class StackHandlerIterator;
   friend class SafeStackFrameIterator;
-
- private:
-  void operator=(const StackFrame& original);
 };
 
 
@@ -735,6 +768,7 @@ class StandardFrame : public StackFrame {
   virtual Object* receiver() const;
   virtual Script* script() const;
   virtual Object* context() const;
+  virtual int position() const;
 
   // Access the expressions in the stack frame including locals.
   inline Object* GetExpression(int index) const;
@@ -822,9 +856,6 @@ class JavaScriptFrame : public StandardFrame {
   inline Object* GetOperand(int index) const;
   inline int ComputeOperandsCount() const;
 
-  // Generator support to preserve operand stack.
-  void SaveOperandStack(FixedArray* store) const;
-
   // Debugger access.
   void SetParameterValue(int index, Object* value) const;
 
@@ -856,7 +887,6 @@ class JavaScriptFrame : public StandardFrame {
 
   // Lookup exception handler for current {pc}, returns -1 if none found. Also
   // returns data associated with the handler site specific to the frame type:
-  //  - JavaScriptFrame : Data is the stack depth at entry of the try-block.
   //  - OptimizedFrame  : Data is the stack slot count of the entire frame.
   //  - InterpretedFrame: Data is the register index holding the context.
   virtual int LookupExceptionHandlerInTable(
@@ -872,8 +902,8 @@ class JavaScriptFrame : public StandardFrame {
     return static_cast<JavaScriptFrame*>(frame);
   }
 
-  static void PrintFunctionAndOffset(JSFunction* function, Code* code,
-                                     Address pc, FILE* file,
+  static void PrintFunctionAndOffset(JSFunction* function, AbstractCode* code,
+                                     int code_offset, FILE* file,
                                      bool print_line_number);
 
   static void PrintTop(Isolate* isolate, FILE* file, bool print_args,
@@ -942,6 +972,8 @@ class OptimizedFrame : public JavaScriptFrame {
 
   DeoptimizationInputData* GetDeoptimizationData(int* deopt_index) const;
 
+  Object* receiver() const override;
+
   static int StackSlotOffsetRelativeToFp(int slot_index);
 
  protected:
@@ -957,6 +989,9 @@ class OptimizedFrame : public JavaScriptFrame {
 class InterpretedFrame : public JavaScriptFrame {
  public:
   Type type() const override { return INTERPRETED; }
+
+  // Accessors.
+  int position() const override;
 
   // Lookup exception handler for current {pc}, returns -1 if none found.
   int LookupExceptionHandlerInTable(
@@ -984,6 +1019,8 @@ class InterpretedFrame : public JavaScriptFrame {
   void Summarize(
       List<FrameSummary>* frames,
       FrameSummary::Mode mode = FrameSummary::kExactSummary) const override;
+
+  static int GetBytecodeOffset(Address fp);
 
  protected:
   inline explicit InterpretedFrame(StackFrameIteratorBase* iterator);
@@ -1057,13 +1094,18 @@ class WasmFrame : public StandardFrame {
   void Print(StringStream* accumulator, PrintMode mode,
              int index) const override;
 
+  // Lookup exception handler for current {pc}, returns -1 if none found. Also
+  // returns the stack slot count of the entire frame.
+  int LookupExceptionHandlerInTable(int* data);
+
   // Determine the code for the frame.
   Code* unchecked_code() const override;
 
   // Accessors.
-  Object* wasm_obj() const;
+  Object* wasm_instance() const;
   uint32_t function_index() const;
   Script* script() const override;
+  int position() const override;
 
   static WasmFrame* cast(StackFrame* frame) {
     DCHECK(frame->is_wasm());

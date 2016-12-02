@@ -11,6 +11,8 @@
 namespace v8 {
 namespace internal {
 
+class ParseInfo;
+
 // Iterate over the actual scopes visible from a stack frame or from a closure.
 // The iteration proceeds from the innermost visible nested scope outwards.
 // All scopes are backed by an actual context except the local scope,
@@ -48,12 +50,7 @@ class ScopeIterator {
   MUST_USE_RESULT MaybeHandle<JSObject> MaterializeScopeDetails();
 
   // More scopes?
-  bool Done() {
-    DCHECK(!failed_);
-    return context_.is_null();
-  }
-
-  bool Failed() { return failed_; }
+  bool Done() { return context_.is_null(); }
 
   // Move to the next scope.
   void Next();
@@ -101,7 +98,6 @@ class ScopeIterator {
   List<ExtendedScopeInfo> nested_scope_chain_;
   Handle<StringSet> non_locals_;
   bool seen_script_scope_;
-  bool failed_;
 
   inline JavaScriptFrame* GetFrame() {
     return frame_inspector_->GetArgumentsFrame();
@@ -151,6 +147,9 @@ class ScopeIterator {
   void CopyContextLocalsToScopeObject(Handle<ScopeInfo> scope_info,
                                       Handle<Context> context,
                                       Handle<JSObject> scope_object);
+  void CopyModuleVarsToScopeObject(Handle<ScopeInfo> scope_info,
+                                   Handle<Context> context,
+                                   Handle<JSObject> scope_object);
   void CopyContextExtensionToScopeObject(Handle<Context> context,
                                          Handle<JSObject> scope_object,
                                          KeyCollectionMode mode);

@@ -6,8 +6,8 @@
 
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/value-helper.h"
-#include "test/cctest/wasm/test-signatures.h"
 #include "test/cctest/wasm/wasm-run-utils.h"
+#include "test/common/wasm/test-signatures.h"
 
 using namespace v8::base;
 using namespace v8::internal;
@@ -88,10 +88,10 @@ TEST(Unreachable) {
       Execution::TryCall(isolate, js_trampoline, global, 1, args, &maybe_exc);
   CHECK(returnObjMaybe.is_null());
 
-  // The column is 1-based, so add 1 to the actual byte offset.
+  // Line and column are 1-based, so add 1 for the expected wasm output.
   ExceptionInfo expected_exceptions[] = {
-      {"<WASM UNNAMED>", static_cast<int>(wasm_index), 2},  // --
-      {"callFn", 1, 24}                                     // --
+      {"<WASM UNNAMED>", static_cast<int>(wasm_index) + 1, 2},  // --
+      {"callFn", 1, 24}                                         // --
   };
   CheckExceptionInfos(maybe_exc.ToHandleChecked(), expected_exceptions);
 }
@@ -104,8 +104,9 @@ TEST(IllegalLoad) {
   WasmFunctionCompiler comp1(sigs.v_v(), &module, ArrayVector("mem_oob"));
   // Set the execution context, such that a runtime error can be thrown.
   comp1.SetModuleContext();
-  BUILD(comp1, WASM_IF(WASM_ONE,
-                       WASM_LOAD_MEM(MachineType::Int32(), WASM_I32V_1(-3))));
+  BUILD(comp1, WASM_IF(WASM_ONE, WASM_SEQ(WASM_LOAD_MEM(MachineType::Int32(),
+                                                        WASM_I32V_1(-3)),
+                                          WASM_DROP)));
   uint32_t wasm_index = comp1.CompileAndAdd();
 
   WasmFunctionCompiler comp2(sigs.v_v(), &module, ArrayVector("call_mem_oob"));
@@ -129,11 +130,11 @@ TEST(IllegalLoad) {
       Execution::TryCall(isolate, js_trampoline, global, 1, args, &maybe_exc);
   CHECK(returnObjMaybe.is_null());
 
-  // The column is 1-based, so add 1 to the actual byte offset.
+  // Line and column are 1-based, so add 1 for the expected wasm output.
   ExceptionInfo expected_exceptions[] = {
-      {"<WASM UNNAMED>", static_cast<int>(wasm_index), 7},    // --
-      {"<WASM UNNAMED>", static_cast<int>(wasm_index_2), 3},  // --
-      {"callFn", 1, 24}                                       // --
+      {"<WASM UNNAMED>", static_cast<int>(wasm_index) + 1, 8},    // --
+      {"<WASM UNNAMED>", static_cast<int>(wasm_index_2) + 1, 3},  // --
+      {"callFn", 1, 24}                                           // --
   };
   CheckExceptionInfos(maybe_exc.ToHandleChecked(), expected_exceptions);
 }

@@ -9,14 +9,15 @@
 #include "src/debug/debug-frames.h"
 #include "src/debug/debug-scopes.h"
 #include "src/debug/debug.h"
+#include "src/debug/liveedit.h"
 #include "src/frames-inl.h"
 #include "src/globals.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter.h"
 #include "src/isolate-inl.h"
 #include "src/runtime/runtime.h"
-#include "src/wasm/wasm-debug.h"
 #include "src/wasm/wasm-module.h"
+#include "src/wasm/wasm-objects.h"
 
 namespace v8 {
 namespace internal {
@@ -46,7 +47,7 @@ RUNTIME_FUNCTION(Runtime_DebugBreakOnBytecode) {
   isolate->debug()->Break(it.frame());
 
   // If live-edit has dropped frames, we are not going back to dispatch.
-  if (LiveEdit::SetAfterBreakTarget(isolate->debug())) return Smi::FromInt(0);
+  if (LiveEdit::SetAfterBreakTarget(isolate->debug())) return Smi::kZero;
 
   // Return the handler from the original bytecode array.
   DCHECK(it.frame()->is_interpreted());
@@ -255,14 +256,14 @@ MaybeHandle<JSArray> Runtime::GetInternalProperties(Isolate* isolate,
     const char* status = "rejected";
     int status_val = Handle<Smi>::cast(status_obj)->value();
     switch (status_val) {
-      case +1:
+      case kPromiseFulfilled:
         status = "resolved";
         break;
-      case 0:
+      case kPromisePending:
         status = "pending";
         break;
       default:
-        DCHECK_EQ(-1, status_val);
+        DCHECK_EQ(kPromiseRejected, status_val);
     }
 
     Handle<FixedArray> result = factory->NewFixedArray(2 * 2);
@@ -456,7 +457,7 @@ RUNTIME_FUNCTION(Runtime_GetFrameCount) {
   StackFrame::Id id = isolate->debug()->break_frame_id();
   if (id == StackFrame::NO_ID) {
     // If there is no JavaScript stack frame count is 0.
-    return Smi::FromInt(0);
+    return Smi::kZero;
   }
 
   for (StackTraceFrameIterator it(isolate, id); !it.done(); it.Advance()) {
@@ -550,10 +551,11 @@ RUNTIME_FUNCTION(Runtime_GetFrameDetails) {
     details->set(kFrameDetailsFrameIdIndex, *frame_id);
 
     // Add the function name.
-    Handle<Object> wasm_obj(it.wasm_frame()->wasm_obj(), isolate);
+    Handle<Object> wasm_instance_or_undef(it.wasm_frame()->wasm_instance(),
+                                          isolate);
     int func_index = it.wasm_frame()->function_index();
     Handle<String> func_name =
-        wasm::GetWasmFunctionName(isolate, wasm_obj, func_index);
+        wasm::GetWasmFunctionName(isolate, wasm_instance_or_undef, func_index);
     details->set(kFrameDetailsFunctionIndex, *func_name);
 
     // Add the script wrapper
@@ -562,14 +564,29 @@ RUNTIME_FUNCTION(Runtime_GetFrameDetails) {
     details->set(kFrameDetailsScriptIndex, *script_wrapper);
 
     // Add the arguments count.
-    details->set(kFrameDetailsArgumentCountIndex, Smi::FromInt(0));
+    details->set(kFrameDetailsArgumentCountIndex, Smi::kZero);
 
     // Add the locals count
-    details->set(kFrameDetailsLocalCountIndex, Smi::FromInt(0));
+    details->set(kFrameDetailsLocalCountIndex, Smi::kZero);
 
     // Add the source position.
-    if (position != kNoSourcePosition) {
-      details->set(kFrameDetailsSourcePositionIndex, Smi::FromInt(position));
+    // For wasm, it is function-local, so translate it to a module-relative
+    // position, such that together with the script it uniquely identifies the
+    // position.
+    Handle<Object> positionValue;
+    if (position != kNoSourcePosition &&
+        !wasm_instance_or_undef->IsUndefined(isolate)) {
+      int translated_position = position;
+      if (!wasm::WasmIsAsmJs(*wasm_instance_or_undef, isolate)) {
+        Handle<WasmCompiledModule> compiled_module(
+            WasmInstanceObject::cast(*wasm_instance_or_undef)
+                ->get_compiled_module(),
+            isolate);
+        translated_position +=
+            wasm::GetFunctionCodeOffset(compiled_module, func_index);
+      }
+      details->set(kFrameDetailsSourcePositionIndex,
+                   Smi::FromInt(translated_position));
     }
 
     // Add the constructor information.
@@ -765,7 +782,7 @@ RUNTIME_FUNCTION(Runtime_GetFrameDetails) {
 
   // Add the receiver (same as in function frame).
   Handle<Object> receiver(it.frame()->receiver(), isolate);
-  DCHECK(!function->shared()->IsBuiltin());
+  DCHECK(function->shared()->IsUserJavaScript());
   DCHECK_IMPLIES(is_sloppy(shared->language_mode()), receiver->IsJSReceiver());
   details->set(kFrameDetailsReceiverIndex, *receiver);
 
@@ -928,7 +945,7 @@ RUNTIME_FUNCTION(Runtime_GetGeneratorScopeCount) {
   HandleScope scope(isolate);
   DCHECK_EQ(1, args.length());
 
-  if (!args[0]->IsJSGeneratorObject()) return Smi::FromInt(0);
+  if (!args[0]->IsJSGeneratorObject()) return Smi::kZero;
 
   // Check arguments.
   CONVERT_ARG_HANDLE_CHECKED(JSGeneratorObject, gen, 0);
@@ -947,7 +964,7 @@ RUNTIME_FUNCTION(Runtime_GetGeneratorScopeDetails) {
   DCHECK(args.length() == 2);
 
   if (!args[0]->IsJSGeneratorObject()) {
-    return *isolate->factory()->undefined_value();
+    return isolate->heap()->undefined_value();
   }
 
   // Check arguments.
@@ -1223,6 +1240,18 @@ RUNTIME_FUNCTION(Runtime_PrepareStep) {
   return isolate->heap()->undefined_value();
 }
 
+RUNTIME_FUNCTION(Runtime_PrepareStepFrame) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(0, args.length());
+  CHECK(isolate->debug()->CheckExecutionState());
+
+  // Clear all current stepping setup.
+  isolate->debug()->ClearStepping();
+
+  // Prepare step.
+  isolate->debug()->PrepareStep(StepFrame);
+  return isolate->heap()->undefined_value();
+}
 
 // Clear all stepping set by PrepareStep.
 RUNTIME_FUNCTION(Runtime_ClearStepping) {
@@ -1428,6 +1457,7 @@ RUNTIME_FUNCTION(Runtime_DebugGetPrototype) {
 
 
 // Patches script source (should be called upon BeforeCompile event).
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_DebugSetScriptSource) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 2);
@@ -1521,7 +1551,8 @@ RUNTIME_FUNCTION(Runtime_GetDebugContext) {
 RUNTIME_FUNCTION(Runtime_CollectGarbage) {
   SealHandleScope shs(isolate);
   DCHECK(args.length() == 1);
-  isolate->heap()->CollectAllGarbage(Heap::kNoGCFlags, "%CollectGarbage");
+  isolate->heap()->CollectAllGarbage(Heap::kNoGCFlags,
+                                     GarbageCollectionReason::kRuntime);
   return isolate->heap()->undefined_value();
 }
 
@@ -1567,6 +1598,7 @@ RUNTIME_FUNCTION(Runtime_GetScript) {
   return *Script::GetWrapper(found);
 }
 
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptLineCount) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 1);
@@ -1575,12 +1607,42 @@ RUNTIME_FUNCTION(Runtime_ScriptLineCount) {
   CHECK(script->value()->IsScript());
   Handle<Script> script_handle = Handle<Script>(Script::cast(script->value()));
 
+  if (script_handle->type() == Script::TYPE_WASM) {
+    // Return 0 for now; this function will disappear soon anyway.
+    return Smi::FromInt(0);
+  }
+
   Script::InitLineEnds(script_handle);
 
   FixedArray* line_ends_array = FixedArray::cast(script_handle->line_ends());
   return Smi::FromInt(line_ends_array->length());
 }
 
+namespace {
+
+int ScriptLinePosition(Handle<Script> script, int line) {
+  if (line < 0) return -1;
+
+  if (script->type() == Script::TYPE_WASM) {
+    return WasmCompiledModule::cast(script->wasm_compiled_module())
+        ->GetFunctionOffset(line);
+  }
+
+  Script::InitLineEnds(script);
+
+  FixedArray* line_ends_array = FixedArray::cast(script->line_ends());
+  const int line_count = line_ends_array->length();
+  DCHECK_LT(0, line_count);
+
+  if (line == 0) return 0;
+  // If line == line_count, we return the first position beyond the last line.
+  if (line > line_count) return -1;
+  return Smi::cast(line_ends_array->get(line - 1))->value() + 1;
+}
+
+}  // namespace
+
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptLineStartPosition) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 2);
@@ -1590,23 +1652,10 @@ RUNTIME_FUNCTION(Runtime_ScriptLineStartPosition) {
   CHECK(script->value()->IsScript());
   Handle<Script> script_handle = Handle<Script>(Script::cast(script->value()));
 
-  Script::InitLineEnds(script_handle);
-
-  FixedArray* line_ends_array = FixedArray::cast(script_handle->line_ends());
-  const int line_count = line_ends_array->length();
-
-  // If line == line_count, we return the first position beyond the last line.
-  if (line < 0 || line > line_count) {
-    return Smi::FromInt(-1);
-  } else if (line == 0) {
-    return Smi::FromInt(0);
-  } else {
-    DCHECK(0 < line && line <= line_count);
-    const int pos = Smi::cast(line_ends_array->get(line - 1))->value() + 1;
-    return Smi::FromInt(pos);
-  }
+  return Smi::FromInt(ScriptLinePosition(script_handle, line));
 }
 
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptLineEndPosition) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 2);
@@ -1615,6 +1664,11 @@ RUNTIME_FUNCTION(Runtime_ScriptLineEndPosition) {
 
   CHECK(script->value()->IsScript());
   Handle<Script> script_handle = Handle<Script>(Script::cast(script->value()));
+
+  if (script_handle->type() == Script::TYPE_WASM) {
+    // Return zero for now; this function will disappear soon anyway.
+    return Smi::FromInt(0);
+  }
 
   Script::InitLineEnds(script_handle);
 
@@ -1632,7 +1686,7 @@ static Handle<Object> GetJSPositionInfo(Handle<Script> script, int position,
                                         Script::OffsetFlag offset_flag,
                                         Isolate* isolate) {
   Script::PositionInfo info;
-  if (!script->GetPositionInfo(position, &info, offset_flag)) {
+  if (!Script::GetPositionInfo(script, position, &info, offset_flag)) {
     return isolate->factory()->null_value();
   }
 
@@ -1659,6 +1713,65 @@ static Handle<Object> GetJSPositionInfo(Handle<Script> script, int position,
   return jsinfo;
 }
 
+namespace {
+
+int ScriptLinePositionWithOffset(Handle<Script> script, int line, int offset) {
+  if (line < 0 || offset < 0) return -1;
+
+  if (line == 0) return ScriptLinePosition(script, line) + offset;
+
+  Script::PositionInfo info;
+  if (!Script::GetPositionInfo(script, offset, &info, Script::NO_OFFSET)) {
+    return -1;
+  }
+
+  const int total_line = info.line + line;
+  return ScriptLinePosition(script, total_line);
+}
+
+Handle<Object> ScriptLocationFromLine(Isolate* isolate, Handle<Script> script,
+                                      Handle<Object> opt_line,
+                                      Handle<Object> opt_column,
+                                      int32_t offset) {
+  // Line and column are possibly undefined and we need to handle these cases,
+  // additionally subtracting corresponding offsets.
+
+  int32_t line = 0;
+  if (!opt_line->IsNull(isolate) && !opt_line->IsUndefined(isolate)) {
+    CHECK(opt_line->IsNumber());
+    line = NumberToInt32(*opt_line) - script->line_offset();
+  }
+
+  int32_t column = 0;
+  if (!opt_column->IsNull(isolate) && !opt_column->IsUndefined(isolate)) {
+    CHECK(opt_column->IsNumber());
+    column = NumberToInt32(*opt_column);
+    if (line == 0) column -= script->column_offset();
+  }
+
+  int line_position = ScriptLinePositionWithOffset(script, line, offset);
+  if (line_position < 0 || column < 0) return isolate->factory()->null_value();
+
+  return GetJSPositionInfo(script, line_position + column, Script::NO_OFFSET,
+                           isolate);
+}
+
+// Slow traversal over all scripts on the heap.
+bool GetScriptById(Isolate* isolate, int needle, Handle<Script>* result) {
+  Script::Iterator iterator(isolate);
+  Script* script = NULL;
+  while ((script = iterator.Next()) != NULL) {
+    if (script->id() == needle) {
+      *result = handle(script);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+}  // namespace
+
 // Get information on a specific source line and column possibly offset by a
 // fixed source position. This function is used to find a source position from
 // a line and column position. The fixed source position offset is typically
@@ -1667,68 +1780,38 @@ static Handle<Object> GetJSPositionInfo(Handle<Script> script, int position,
 // start position of the source for the function within the full script source.
 // Note that incoming line and column parameters may be undefined, and are
 // assumed to be passed *with* offsets.
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptLocationFromLine) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 4);
-  CONVERT_ARG_CHECKED(JSValue, script, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSValue, script, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, opt_line, 1);
+  CONVERT_ARG_HANDLE_CHECKED(Object, opt_column, 2);
+  CONVERT_NUMBER_CHECKED(int32_t, offset, Int32, args[3]);
 
   CHECK(script->value()->IsScript());
   Handle<Script> script_handle = Handle<Script>(Script::cast(script->value()));
 
-  // Line and column are possibly undefined and we need to handle these cases,
-  // additionally subtracting corresponding offsets.
-
-  int32_t line;
-  if (args[1]->IsNull(isolate) || args[1]->IsUndefined(isolate)) {
-    line = 0;
-  } else {
-    CHECK(args[1]->IsNumber());
-    line = NumberToInt32(args[1]) - script_handle->line_offset();
-  }
-
-  int32_t column;
-  if (args[2]->IsNull(isolate) || args[2]->IsUndefined(isolate)) {
-    column = 0;
-  } else {
-    CHECK(args[2]->IsNumber());
-    column = NumberToInt32(args[2]);
-    if (line == 0) column -= script_handle->column_offset();
-  }
-
-  CONVERT_NUMBER_CHECKED(int32_t, offset_position, Int32, args[3]);
-
-  if (line < 0 || column < 0 || offset_position < 0) {
-    return isolate->heap()->null_value();
-  }
-
-  Script::InitLineEnds(script_handle);
-
-  FixedArray* line_ends_array = FixedArray::cast(script_handle->line_ends());
-  const int line_count = line_ends_array->length();
-
-  int position;
-  if (line == 0) {
-    position = offset_position + column;
-  } else {
-    Script::PositionInfo info;
-    if (!script_handle->GetPositionInfo(offset_position, &info,
-                                        Script::NO_OFFSET) ||
-        info.line + line >= line_count) {
-      return isolate->heap()->null_value();
-    }
-
-    const int offset_line = info.line + line;
-    const int offset_line_position =
-        (offset_line == 0)
-            ? 0
-            : Smi::cast(line_ends_array->get(offset_line - 1))->value() + 1;
-    position = offset_line_position + column;
-  }
-
-  return *GetJSPositionInfo(script_handle, position, Script::NO_OFFSET,
-                            isolate);
+  return *ScriptLocationFromLine(isolate, script_handle, opt_line, opt_column,
+                                 offset);
 }
 
+// TODO(5530): Rename once conflicting function has been deleted.
+RUNTIME_FUNCTION(Runtime_ScriptLocationFromLine2) {
+  HandleScope scope(isolate);
+  DCHECK(args.length() == 4);
+  CONVERT_NUMBER_CHECKED(int32_t, scriptid, Int32, args[0]);
+  CONVERT_ARG_HANDLE_CHECKED(Object, opt_line, 1);
+  CONVERT_ARG_HANDLE_CHECKED(Object, opt_column, 2);
+  CONVERT_NUMBER_CHECKED(int32_t, offset, Int32, args[3]);
+
+  Handle<Script> script;
+  CHECK(GetScriptById(isolate, scriptid, &script));
+
+  return *ScriptLocationFromLine(isolate, script, opt_line, opt_column, offset);
+}
+
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptPositionInfo) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 3);
@@ -1744,8 +1827,25 @@ RUNTIME_FUNCTION(Runtime_ScriptPositionInfo) {
   return *GetJSPositionInfo(script_handle, position, offset_flag, isolate);
 }
 
+// TODO(5530): Rename once conflicting function has been deleted.
+RUNTIME_FUNCTION(Runtime_ScriptPositionInfo2) {
+  HandleScope scope(isolate);
+  DCHECK(args.length() == 3);
+  CONVERT_NUMBER_CHECKED(int32_t, scriptid, Int32, args[0]);
+  CONVERT_NUMBER_CHECKED(int32_t, position, Int32, args[1]);
+  CONVERT_BOOLEAN_ARG_CHECKED(with_offset, 2);
+
+  Handle<Script> script;
+  CHECK(GetScriptById(isolate, scriptid, &script));
+
+  const Script::OffsetFlag offset_flag =
+      with_offset ? Script::WITH_OFFSET : Script::NO_OFFSET;
+  return *GetJSPositionInfo(script, position, offset_flag, isolate);
+}
+
 // Returns the given line as a string, or null if line is out of bounds.
 // The parameter line is expected to include the script's line offset.
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_ScriptSourceLine) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 2);
@@ -1754,6 +1854,11 @@ RUNTIME_FUNCTION(Runtime_ScriptSourceLine) {
 
   CHECK(script->value()->IsScript());
   Handle<Script> script_handle = Handle<Script>(Script::cast(script->value()));
+
+  if (script_handle->type() == Script::TYPE_WASM) {
+    // Return null for now; this function will disappear soon anyway.
+    return isolate->heap()->null_value();
+  }
 
   Script::InitLineEnds(script_handle);
 
@@ -1795,12 +1900,12 @@ RUNTIME_FUNCTION(Runtime_DebugPrepareStepInSuspendedGenerator) {
   return isolate->heap()->undefined_value();
 }
 
-RUNTIME_FUNCTION(Runtime_DebugRecordAsyncFunction) {
+RUNTIME_FUNCTION(Runtime_DebugRecordGenerator) {
   HandleScope scope(isolate);
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSGeneratorObject, generator, 0);
   CHECK(isolate->debug()->last_step_action() >= StepNext);
-  isolate->debug()->RecordAsyncFunction(generator);
+  isolate->debug()->RecordGenerator(generator);
   return isolate->heap()->undefined_value();
 }
 
@@ -1820,12 +1925,19 @@ RUNTIME_FUNCTION(Runtime_DebugPopPromise) {
   return isolate->heap()->undefined_value();
 }
 
+RUNTIME_FUNCTION(Runtime_DebugNextMicrotaskId) {
+  HandleScope scope(isolate);
+  DCHECK(args.length() == 0);
+  return Smi::FromInt(isolate->GetNextDebugMicrotaskId());
+}
 
 RUNTIME_FUNCTION(Runtime_DebugAsyncTaskEvent) {
-  DCHECK(args.length() == 1);
+  DCHECK(args.length() == 3);
   HandleScope scope(isolate);
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, data, 0);
-  isolate->debug()->OnAsyncTaskEvent(data);
+  CONVERT_ARG_HANDLE_CHECKED(String, type, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, id, 1);
+  CONVERT_ARG_HANDLE_CHECKED(String, name, 2);
+  isolate->debug()->OnAsyncTaskEvent(type, id, name);
   return isolate->heap()->undefined_value();
 }
 
@@ -1839,35 +1951,6 @@ RUNTIME_FUNCTION(Runtime_DebugIsActive) {
 RUNTIME_FUNCTION(Runtime_DebugBreakInOptimizedCode) {
   UNIMPLEMENTED();
   return NULL;
-}
-
-RUNTIME_FUNCTION(Runtime_GetWasmFunctionOffsetTable) {
-  DCHECK(args.length() == 1);
-  HandleScope scope(isolate);
-  CONVERT_ARG_CHECKED(JSValue, script_val, 0);
-
-  CHECK(script_val->value()->IsScript());
-  Handle<Script> script = Handle<Script>(Script::cast(script_val->value()));
-
-  Handle<wasm::WasmDebugInfo> debug_info =
-      wasm::GetDebugInfo(handle(script->wasm_object(), isolate));
-  Handle<FixedArray> elements = wasm::WasmDebugInfo::GetFunctionOffsetTable(
-      debug_info, script->wasm_function_index());
-  return *isolate->factory()->NewJSArrayWithElements(elements);
-}
-
-RUNTIME_FUNCTION(Runtime_DisassembleWasmFunction) {
-  DCHECK(args.length() == 1);
-  HandleScope scope(isolate);
-  CONVERT_ARG_CHECKED(JSValue, script_val, 0);
-
-  CHECK(script_val->value()->IsScript());
-  Handle<Script> script = Handle<Script>(Script::cast(script_val->value()));
-
-  Handle<wasm::WasmDebugInfo> debug_info =
-      wasm::GetDebugInfo(handle(script->wasm_object(), isolate));
-  return *wasm::WasmDebugInfo::DisassembleFunction(
-      debug_info, script->wasm_function_index());
 }
 
 }  // namespace internal

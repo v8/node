@@ -28,7 +28,8 @@ void Object::Print() {
 
 void Object::Print(std::ostream& os) {  // NOLINT
   if (IsSmi()) {
-    Smi::cast(this)->SmiPrint(os);
+    os << "Smi: " << std::hex << "0x" << Smi::cast(this)->value();
+    os << std::dec << " (" << Smi::cast(this)->value() << ")\n";
   } else {
     HeapObject::cast(this)->HeapObjectPrint(os);
   }
@@ -52,6 +53,7 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
   HandleScope scope(GetIsolate());
   if (instance_type < FIRST_NONSTRING_TYPE) {
     String::cast(this)->StringPrint(os);
+    os << "\n";
     return;
   }
 
@@ -64,11 +66,12 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       break;
     case HEAP_NUMBER_TYPE:
       HeapNumber::cast(this)->HeapNumberPrint(os);
+      os << "\n";
       break;
     case MUTABLE_HEAP_NUMBER_TYPE:
       os << "<mutable ";
       HeapNumber::cast(this)->HeapNumberPrint(os);
-      os << ">";
+      os << ">\n";
       break;
     case SIMD128_VALUE_TYPE:
       Simd128Value::cast(this)->Simd128ValuePrint(os);
@@ -99,6 +102,44 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
 
     TYPED_ARRAYS(PRINT_FIXED_TYPED_ARRAY)
 #undef PRINT_FIXED_TYPED_ARRAY
+
+    case JS_TYPED_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT8_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_INT16_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_INT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE:
+      JSArrayIterator::cast(this)->JSArrayIteratorPrint(os);
+      break;
 
     case FILLER_TYPE:
       os << "filler";
@@ -164,6 +205,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_WEAK_SET_TYPE:
       JSWeakSet::cast(this)->JSWeakSetPrint(os);
       break;
+    case JS_MODULE_NAMESPACE_TYPE:
+      JSModuleNamespace::cast(this)->JSModuleNamespacePrint(os);
+      break;
     case FOREIGN_TYPE:
       Foreign::cast(this)->ForeignPrint(os);
       break;
@@ -187,6 +231,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       break;
     case JS_TYPED_ARRAY_TYPE:
       JSTypedArray::cast(this)->JSTypedArrayPrint(os);
+      break;
+    case JS_FIXED_ARRAY_ITERATOR_TYPE:
+      JSFixedArrayIterator::cast(this)->JSFixedArrayIteratorPrint(os);
       break;
     case JS_DATA_VIEW_TYPE:
       JSDataView::cast(this)->JSDataViewPrint(os);
@@ -318,18 +365,37 @@ void JSObject::PrintProperties(std::ostream& os) {  // NOLINT
   }
 }
 
+namespace {
+
+template <class T>
+double GetScalarElement(T* array, int index) {
+  return array->get_scalar(index);
+}
+
+double GetScalarElement(FixedDoubleArray* array, int index) {
+  if (array->is_the_hole(index)) return bit_cast<double>(kHoleNanInt64);
+  return array->get_scalar(index);
+}
+
+bool is_the_hole(double maybe_hole) {
+  return bit_cast<uint64_t>(maybe_hole) == kHoleNanInt64;
+}
+
+}  // namespace
+
 template <class T, bool print_the_hole>
 static void DoPrintElements(std::ostream& os, Object* object) {  // NOLINT
   T* array = T::cast(object);
   if (array->length() == 0) return;
   int previous_index = 0;
-  double previous_value = array->get_scalar(0);
+  double previous_value = GetScalarElement(array, 0);
   double value = 0.0;
   int i;
   for (i = 1; i <= array->length(); i++) {
-    if (i < array->length()) value = array->get_scalar(i);
+    if (i < array->length()) value = GetScalarElement(array, i);
     bool values_are_nan = std::isnan(previous_value) && std::isnan(value);
-    if ((previous_value == value || values_are_nan) && i != array->length()) {
+    if (i != array->length() && (previous_value == value || values_are_nan) &&
+        is_the_hole(previous_value) == is_the_hole(value)) {
       continue;
     }
     os << "\n";
@@ -339,8 +405,7 @@ static void DoPrintElements(std::ostream& os, Object* object) {  // NOLINT
       ss << '-' << (i - 1);
     }
     os << std::setw(12) << ss.str() << ": ";
-    if (print_the_hole &&
-        FixedDoubleArray::cast(object)->is_the_hole(previous_index)) {
+    if (print_the_hole && is_the_hole(previous_value)) {
       os << "<the_hole>";
     } else {
       os << previous_value;
@@ -390,22 +455,12 @@ void JSObject::PrintElements(std::ostream& os) {  // NOLINT
       break;
     }
 
-#define PRINT_ELEMENTS(Kind, Type)                \
-  case Kind: {                                    \
-    DoPrintElements<Type, false>(os, elements()); \
-    break;                                        \
+#define PRINT_ELEMENTS(Type, type, TYPE, elementType, size)     \
+  case TYPE##_ELEMENTS: {                                       \
+    DoPrintElements<Fixed##Type##Array, false>(os, elements()); \
+    break;                                                      \
   }
-
-      PRINT_ELEMENTS(UINT8_ELEMENTS, FixedUint8Array)
-      PRINT_ELEMENTS(UINT8_CLAMPED_ELEMENTS, FixedUint8ClampedArray)
-      PRINT_ELEMENTS(INT8_ELEMENTS, FixedInt8Array)
-      PRINT_ELEMENTS(UINT16_ELEMENTS, FixedUint16Array)
-      PRINT_ELEMENTS(INT16_ELEMENTS, FixedInt16Array)
-      PRINT_ELEMENTS(UINT32_ELEMENTS, FixedUint32Array)
-      PRINT_ELEMENTS(INT32_ELEMENTS, FixedInt32Array)
-      PRINT_ELEMENTS(FLOAT32_ELEMENTS, FixedFloat32Array)
-      PRINT_ELEMENTS(FLOAT64_ELEMENTS, FixedFloat64Array)
-
+      TYPED_ARRAYS(PRINT_ELEMENTS)
 #undef PRINT_ELEMENTS
 
     case DICTIONARY_ELEMENTS:
@@ -456,7 +511,7 @@ static void JSObjectPrintHeader(std::ostream& os, JSObject* obj,
 
 static void JSObjectPrintBody(std::ostream& os, JSObject* obj,  // NOLINT
                               bool print_elements = true) {
-  os << "\n - properties = {";
+  os << "\n - properties = " << Brief(obj->properties()) << " {";
   obj->PrintProperties(os);
   os << "\n }\n";
   if (print_elements && obj->elements()->length() > 0) {
@@ -542,7 +597,8 @@ void Map::MapPrint(std::ostream& os) {  // NOLINT
      << "#" << NumberOfOwnDescriptors() << ": "
      << Brief(instance_descriptors());
   if (FLAG_unbox_double_fields) {
-    os << "\n - layout descriptor: " << Brief(layout_descriptor());
+    os << "\n - layout descriptor: ";
+    layout_descriptor()->ShortPrint(os);
   }
   int nof_transitions = TransitionArray::NumberOfTransitions(raw_transitions());
   if (nof_transitions > 0) {
@@ -631,16 +687,11 @@ void FeedbackVectorSpecBase<Derived>::FeedbackVectorSpecPrint(
     return;
   }
 
-  for (int slot = 0, name_index = 0; slot < slot_count;) {
+  for (int slot = 0; slot < slot_count;) {
     FeedbackVectorSlotKind kind = This()->GetKind(slot);
     int entry_size = TypeFeedbackMetadata::GetSlotSize(kind);
     DCHECK_LT(0, entry_size);
-
     os << "\n Slot #" << slot << " " << kind;
-    if (TypeFeedbackMetadata::SlotRequiresName(kind)) {
-      os << ", " << Brief(*This()->GetName(name_index++));
-    }
-
     slot += entry_size;
   }
   os << "\n";
@@ -668,9 +719,6 @@ void TypeFeedbackMetadata::TypeFeedbackMetadataPrint(
     FeedbackVectorSlot slot = iter.Next();
     FeedbackVectorSlotKind kind = iter.kind();
     os << "\n Slot " << slot << " " << kind;
-    if (TypeFeedbackMetadata::SlotRequiresName(kind)) {
-      os << ", " << Brief(iter.name());
-    }
   }
   os << "\n";
 }
@@ -697,9 +745,6 @@ void TypeFeedbackVector::TypeFeedbackVectorPrint(std::ostream& os) {  // NOLINT
     FeedbackVectorSlotKind kind = iter.kind();
 
     os << "\n Slot " << slot << " " << kind;
-    if (TypeFeedbackMetadata::SlotRequiresName(kind)) {
-      os << ", " << Brief(iter.name());
-    }
     os << " ";
     switch (kind) {
       case FeedbackVectorSlotKind::LOAD_IC: {
@@ -729,6 +774,16 @@ void TypeFeedbackVector::TypeFeedbackVectorPrint(std::ostream& os) {  // NOLINT
       }
       case FeedbackVectorSlotKind::KEYED_STORE_IC: {
         KeyedStoreICNexus nexus(this, slot);
+        os << Code::ICState2String(nexus.StateFromFeedback());
+        break;
+      }
+      case FeedbackVectorSlotKind::INTERPRETER_BINARYOP_IC: {
+        BinaryOpICNexus nexus(this, slot);
+        os << Code::ICState2String(nexus.StateFromFeedback());
+        break;
+      }
+      case FeedbackVectorSlotKind::INTERPRETER_COMPARE_IC: {
+        CompareICNexus nexus(this, slot);
         os << Code::ICState2String(nexus.StateFromFeedback());
         break;
       }
@@ -911,7 +966,7 @@ void JSArrayBuffer::JSArrayBufferPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSArrayBuffer");
   os << "\n - backing_store = " << backing_store();
   os << "\n - byte_length = " << Brief(byte_length());
-  if (was_neutered()) os << " - neutered\n";
+  if (was_neutered()) os << "\n - neutered";
   JSObjectPrintBody(os, this, !was_neutered());
 }
 
@@ -922,17 +977,45 @@ void JSTypedArray::JSTypedArrayPrint(std::ostream& os) {  // NOLINT
   os << "\n - byte_offset = " << Brief(byte_offset());
   os << "\n - byte_length = " << Brief(byte_length());
   os << "\n - length = " << Brief(length());
-  if (WasNeutered()) os << " - neutered\n";
+  if (WasNeutered()) os << "\n - neutered";
   JSObjectPrintBody(os, this, !WasNeutered());
 }
 
+void JSArrayIterator::JSArrayIteratorPrint(std::ostream& os) {  // NOLING
+  JSObjectPrintHeader(os, this, "JSArrayIterator");
+
+  InstanceType instance_type = map()->instance_type();
+  std::string type;
+  if (instance_type <= LAST_ARRAY_KEY_ITERATOR_TYPE) {
+    type = "keys";
+  } else if (instance_type <= LAST_ARRAY_KEY_VALUE_ITERATOR_TYPE) {
+    type = "entries";
+  } else {
+    type = "values";
+  }
+
+  os << "\n - type = " << type;
+  os << "\n - object = " << Brief(object());
+  os << "\n - index = " << Brief(index());
+
+  JSObjectPrintBody(os, this);
+}
+
+void JSFixedArrayIterator::JSFixedArrayIteratorPrint(
+    std::ostream& os) {  // NOLINT
+  JSObjectPrintHeader(os, this, "JSFixedArrayIterator");
+  os << "\n - array = " << Brief(array());
+  os << "\n - index = " << index();
+  os << "\n - initial_next = " << Brief(initial_next());
+  JSObjectPrintBody(os, this);
+}
 
 void JSDataView::JSDataViewPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSDataView");
   os << "\n - buffer =" << Brief(buffer());
   os << "\n - byte_offset = " << Brief(byte_offset());
   os << "\n - byte_length = " << Brief(byte_length());
-  if (WasNeutered()) os << " - neutered\n";
+  if (WasNeutered()) os << "\n - neutered";
   JSObjectPrintBody(os, this, !WasNeutered());
 }
 
@@ -954,9 +1037,9 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
   os << "\n - name = " << Brief(shared()->name());
   os << "\n - formal_parameter_count = "
      << shared()->internal_formal_parameter_count();
-  if (shared()->is_generator()) {
+  if (IsGeneratorFunction(shared()->kind())) {
     os << "\n   - generator";
-  } else if (shared()->is_async()) {
+  } else if (IsAsyncFunction(shared()->kind())) {
     os << "\n   - async";
   }
   os << "\n - context = " << Brief(context());
@@ -1011,18 +1094,18 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
 
 
 void JSGlobalProxy::JSGlobalProxyPrint(std::ostream& os) {  // NOLINT
-  os << "global_proxy ";
-  JSObjectPrint(os);
-  os << "native context : " << Brief(native_context());
-  os << "\n";
+  JSObjectPrintHeader(os, this, "JSGlobalProxy");
+  os << "\n - native context = " << Brief(native_context());
+  os << "\n - hash = " << Brief(hash());
+  JSObjectPrintBody(os, this);
 }
 
 
 void JSGlobalObject::JSGlobalObjectPrint(std::ostream& os) {  // NOLINT
-  os << "global ";
-  JSObjectPrint(os);
-  os << "native context : " << Brief(native_context());
-  os << "\n";
+  JSObjectPrintHeader(os, this, "JSGlobalObject");
+  os << "\n - native context = " << Brief(native_context());
+  os << "\n - global proxy = " << Brief(global_proxy());
+  JSObjectPrintBody(os, this);
 }
 
 
@@ -1127,19 +1210,78 @@ void Box::BoxPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
-
-void PrototypeInfo::PrototypeInfoPrint(std::ostream& os) {  // NOLINT
-  HeapObject::PrintHeader(os, "PrototypeInfo");
-  os << "\n - prototype users: " << Brief(prototype_users());
-  os << "\n - registry slot: " << registry_slot();
-  os << "\n - validity cell: " << Brief(validity_cell());
+void PromiseResolveThenableJobInfo::PromiseResolveThenableJobInfoPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseResolveThenableJobInfo");
+  os << "\n - thenable: " << Brief(thenable());
+  os << "\n - then: " << Brief(then());
+  os << "\n - resolve: " << Brief(resolve());
+  os << "\n - reject: " << Brief(reject());
+  os << "\n - debug id: " << Brief(debug_id());
+  os << "\n - debug name: " << Brief(debug_name());
+  os << "\n - context: " << Brief(context());
   os << "\n";
 }
 
+void PromiseReactionJobInfo::PromiseReactionJobInfoPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseReactionJobInfo");
+  os << "\n - value: " << Brief(value());
+  os << "\n - tasks: " << Brief(tasks());
+  os << "\n - deferred: " << Brief(deferred());
+  os << "\n - debug id: " << Brief(debug_id());
+  os << "\n - debug name: " << Brief(debug_name());
+  os << "\n - reaction context: " << Brief(context());
+  os << "\n";
+}
 
-void SloppyBlockWithEvalContextExtension::
-    SloppyBlockWithEvalContextExtensionPrint(std::ostream& os) {  // NOLINT
-  HeapObject::PrintHeader(os, "SloppyBlockWithEvalContextExtension");
+void ModuleInfoEntry::ModuleInfoEntryPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "ModuleInfoEntry");
+  os << "\n - export_name: " << Brief(export_name());
+  os << "\n - local_name: " << Brief(local_name());
+  os << "\n - import_name: " << Brief(import_name());
+  os << "\n - module_request: " << module_request();
+  os << "\n - cell_index: " << cell_index();
+  os << "\n - beg_pos: " << beg_pos();
+  os << "\n - end_pos: " << end_pos();
+  os << "\n";
+}
+
+void Module::ModulePrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "Module");
+  os << "\n - code: " << Brief(code());
+  os << "\n - exports: " << Brief(exports());
+  os << "\n - requested_modules: " << Brief(requested_modules());
+  os << "\n - evaluated: " << evaluated();
+  os << "\n";
+}
+
+void JSModuleNamespace::JSModuleNamespacePrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "JSModuleNamespace");
+  os << "\n - module: " << Brief(module());
+  os << "\n";
+}
+
+void PrototypeInfo::PrototypeInfoPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PrototypeInfo");
+  os << "\n - weak cell: " << Brief(weak_cell());
+  os << "\n - prototype users: " << Brief(prototype_users());
+  os << "\n - registry slot: " << registry_slot();
+  os << "\n - validity cell: " << Brief(validity_cell());
+  os << "\n - object create map: " << Brief(object_create_map());
+  os << "\n";
+}
+
+void Tuple3::Tuple3Print(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "Tuple3");
+  os << "\n - value1: " << Brief(value1());
+  os << "\n - value2: " << Brief(value2());
+  os << "\n - value3: " << Brief(value3());
+  os << "\n";
+}
+
+void ContextExtension::ContextExtensionPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "ContextExtension");
   os << "\n - scope_info: " << Brief(scope_info());
   os << "\n - extension: " << Brief(extension());
   os << "\n";
@@ -1200,6 +1342,7 @@ void FunctionTemplateInfo::FunctionTemplateInfoPrint(
   os << "\n - instance_template: " << Brief(instance_template());
   os << "\n - signature: " << Brief(signature());
   os << "\n - access_check_info: " << Brief(access_check_info());
+  os << "\n - cached_property_name: " << Brief(cached_property_name());
   os << "\n - hidden_prototype: " << (hidden_prototype() ? "true" : "false");
   os << "\n - undetectable: " << (undetectable() ? "true" : "false");
   os << "\n - need_access_check: " << (needs_access_check() ? "true" : "false");
@@ -1307,16 +1450,24 @@ void LayoutDescriptor::Print() {
   os << std::flush;
 }
 
+void LayoutDescriptor::ShortPrint(std::ostream& os) {
+  if (IsSmi()) {
+    os << this;  // Print tagged value for easy use with "jld" gdb macro.
+  } else {
+    os << Brief(this);
+  }
+}
 
 void LayoutDescriptor::Print(std::ostream& os) {  // NOLINT
   os << "Layout descriptor: ";
-  if (IsOddball() && IsUninitialized(HeapObject::cast(this)->GetIsolate())) {
-    os << "<uninitialized>";
-  } else if (IsFastPointerLayout()) {
+  if (IsFastPointerLayout()) {
     os << "<all tagged>";
   } else if (IsSmi()) {
     os << "fast";
     PrintBitMask(os, static_cast<uint32_t>(Smi::cast(this)->value()));
+  } else if (IsOddball() &&
+             IsUninitialized(HeapObject::cast(this)->GetIsolate())) {
+    os << "<uninitialized>";
   } else {
     os << "slow";
     int len = length();
@@ -1493,6 +1644,15 @@ extern void _v8_internal_Print_DescriptorArray(void* object) {
     printf("Not a descriptor array\n");
   } else {
     reinterpret_cast<i::DescriptorArray*>(object)->Print();
+  }
+}
+
+extern void _v8_internal_Print_LayoutDescriptor(void* object) {
+  i::Object* o = reinterpret_cast<i::Object*>(object);
+  if (!o->IsLayoutDescriptor()) {
+    printf("Not a layout descriptor\n");
+  } else {
+    reinterpret_cast<i::LayoutDescriptor*>(object)->Print();
   }
 }
 

@@ -88,7 +88,7 @@ class PropertyCallbackArguments
         Smi::FromInt(should_throw == Object::THROW_ON_ERROR ? 1 : 0);
 
     // Here the hole is set as default value.
-    // It cannot escape into js as it's remove in Call below.
+    // It cannot escape into js as it's removed in Call below.
     values[T::kReturnValueDefaultValueIndex] =
         isolate->heap()->the_hole_value();
     values[T::kReturnValueIndex] = isolate->heap()->the_hole_value();
@@ -119,8 +119,15 @@ class PropertyCallbackArguments
   inline Handle<Object> Call(GenericNamedPropertySetterCallback f,
                              Handle<Name> name, Handle<Object> value);
 
+  inline Handle<Object> Call(GenericNamedPropertyDefinerCallback f,
+                             Handle<Name> name,
+                             const v8::PropertyDescriptor& desc);
+
   inline Handle<Object> Call(IndexedPropertySetterCallback f, uint32_t index,
                              Handle<Object> value);
+
+  inline Handle<Object> Call(IndexedPropertyDefinerCallback f, uint32_t index,
+                             const v8::PropertyDescriptor& desc);
 
   inline void Call(AccessorNameSetterCallback f, Handle<Name> name,
                    Handle<Object> value);

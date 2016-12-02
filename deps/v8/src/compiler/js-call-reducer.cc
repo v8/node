@@ -14,30 +14,6 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-namespace {
-
-VectorSlotPair CallCountFeedback(VectorSlotPair p) {
-  // Extract call count from {p}.
-  if (!p.IsValid()) return VectorSlotPair();
-  CallICNexus n(p.vector(), p.slot());
-  int const call_count = n.ExtractCallCount();
-  if (call_count <= 0) return VectorSlotPair();
-
-  // Create megamorphic CallIC feedback with the given {call_count}.
-  StaticFeedbackVectorSpec spec;
-  FeedbackVectorSlot slot = spec.AddCallICSlot();
-  Handle<TypeFeedbackMetadata> metadata =
-      TypeFeedbackMetadata::New(n.GetIsolate(), &spec);
-  Handle<TypeFeedbackVector> vector =
-      TypeFeedbackVector::New(n.GetIsolate(), metadata);
-  CallICNexus nexus(vector, slot);
-  nexus.ConfigureMegamorphic(call_count);
-  return VectorSlotPair(vector, slot);
-}
-
-}  // namespace
-
-
 Reduction JSCallReducer::Reduce(Node* node) {
   switch (node->opcode()) {
     case IrOpcode::kJSCallConstruct:
@@ -166,7 +142,7 @@ Reduction JSCallReducer::ReduceFunctionPrototypeApply(Node* node) {
   }
   // Change {node} to the new {JSCallFunction} operator.
   NodeProperties::ChangeOp(
-      node, javascript()->CallFunction(arity, CallCountFeedback(p.feedback()),
+      node, javascript()->CallFunction(arity, p.frequency(), VectorSlotPair(),
                                        convert_mode, p.tail_call_mode()));
   // Change context of {node} to the Function.prototype.apply context,
   // to ensure any exception is thrown in the correct context.
@@ -206,19 +182,108 @@ Reduction JSCallReducer::ReduceFunctionPrototypeCall(Node* node) {
     --arity;
   }
   NodeProperties::ChangeOp(
-      node, javascript()->CallFunction(arity, CallCountFeedback(p.feedback()),
+      node, javascript()->CallFunction(arity, p.frequency(), VectorSlotPair(),
                                        convert_mode, p.tail_call_mode()));
   // Try to further reduce the JSCallFunction {node}.
   Reduction const reduction = ReduceJSCallFunction(node);
   return reduction.Changed() ? reduction : Changed(node);
 }
 
+// ES6 section 19.2.3.6 Function.prototype [ @@hasInstance ] (V)
+Reduction JSCallReducer::ReduceFunctionPrototypeHasInstance(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSCallFunction, node->opcode());
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* object = (node->op()->ValueInputCount() >= 3)
+                     ? NodeProperties::GetValueInput(node, 2)
+                     : jsgraph()->UndefinedConstant();
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+
+  // TODO(turbofan): If JSOrdinaryToInstance raises an exception, the
+  // stack trace doesn't contain the @@hasInstance call; we have the
+  // corresponding bug in the baseline case. Some massaging of the frame
+  // state would be necessary here.
+
+  // Morph this {node} into a JSOrdinaryHasInstance node.
+  node->ReplaceInput(0, receiver);
+  node->ReplaceInput(1, object);
+  node->ReplaceInput(2, context);
+  node->ReplaceInput(3, frame_state);
+  node->ReplaceInput(4, effect);
+  node->ReplaceInput(5, control);
+  node->TrimInputCount(6);
+  NodeProperties::ChangeOp(node, javascript()->OrdinaryHasInstance());
+  return Changed(node);
+}
+
+namespace {
+
+// TODO(turbofan): Shall we move this to the NodeProperties? Or some (untyped)
+// alias analyzer?
+bool IsSame(Node* a, Node* b) {
+  if (a == b) {
+    return true;
+  } else if (a->opcode() == IrOpcode::kCheckHeapObject) {
+    return IsSame(a->InputAt(0), b);
+  } else if (b->opcode() == IrOpcode::kCheckHeapObject) {
+    return IsSame(a, b->InputAt(0));
+  }
+  return false;
+}
+
+// TODO(turbofan): Share with similar functionality in JSInliningHeuristic
+// and JSNativeContextSpecialization, i.e. move to NodeProperties helper?!
+MaybeHandle<Map> InferReceiverMap(Node* node) {
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  // Check if the {node} is dominated by a CheckMaps with a single map
+  // for the {receiver}, and if so use that map for the lowering below.
+  for (Node* dominator = effect;;) {
+    if (dominator->opcode() == IrOpcode::kCheckMaps &&
+        IsSame(dominator->InputAt(0), receiver)) {
+      if (dominator->op()->ValueInputCount() == 2) {
+        HeapObjectMatcher m(dominator->InputAt(1));
+        if (m.HasValue()) return Handle<Map>::cast(m.Value());
+      }
+      return MaybeHandle<Map>();
+    }
+    if (dominator->op()->EffectInputCount() != 1) {
+      // Didn't find any appropriate CheckMaps node.
+      return MaybeHandle<Map>();
+    }
+    dominator = NodeProperties::GetEffectInput(dominator);
+  }
+}
+
+}  // namespace
+
+// ES6 section B.2.2.1.1 get Object.prototype.__proto__
+Reduction JSCallReducer::ReduceObjectPrototypeGetProto(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSCallFunction, node->opcode());
+
+  // Try to determine the {receiver} map.
+  Handle<Map> receiver_map;
+  if (InferReceiverMap(node).ToHandle(&receiver_map)) {
+    // Check if we can constant-fold the {receiver} map.
+    if (!receiver_map->IsJSProxyMap() &&
+        !receiver_map->has_hidden_prototype() &&
+        !receiver_map->is_access_check_needed()) {
+      Handle<Object> receiver_prototype(receiver_map->prototype(), isolate());
+      Node* value = jsgraph()->Constant(receiver_prototype);
+      ReplaceWithValue(node, value);
+      return Replace(value);
+    }
+  }
+
+  return NoChange();
+}
 
 Reduction JSCallReducer::ReduceJSCallFunction(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCallFunction, node->opcode());
   CallFunctionParameters const& p = CallFunctionParametersOf(node->op());
   Node* target = NodeProperties::GetValueInput(node, 0);
-  Node* context = NodeProperties::GetContextInput(node);
   Node* control = NodeProperties::GetControlInput(node);
   Node* effect = NodeProperties::GetEffectInput(node);
 
@@ -239,25 +304,24 @@ Reduction JSCallReducer::ReduceJSCallFunction(Node* node) {
       }
 
       // Check for known builtin functions.
-      if (shared->HasBuiltinFunctionId()) {
-        switch (shared->builtin_function_id()) {
-          case kFunctionApply:
-            return ReduceFunctionPrototypeApply(node);
-          case kFunctionCall:
-            return ReduceFunctionPrototypeCall(node);
-          default:
-            break;
-        }
+      switch (shared->code()->builtin_index()) {
+        case Builtins::kFunctionPrototypeApply:
+          return ReduceFunctionPrototypeApply(node);
+        case Builtins::kFunctionPrototypeCall:
+          return ReduceFunctionPrototypeCall(node);
+        case Builtins::kFunctionPrototypeHasInstance:
+          return ReduceFunctionPrototypeHasInstance(node);
+        case Builtins::kNumberConstructor:
+          return ReduceNumberConstructor(node);
+        case Builtins::kObjectPrototypeGetProto:
+          return ReduceObjectPrototypeGetProto(node);
+        default:
+          break;
       }
 
       // Check for the Array constructor.
       if (*function == function->native_context()->array_function()) {
         return ReduceArrayConstructor(node);
-      }
-
-      // Check for the Number constructor.
-      if (*function == function->native_context()->number_function()) {
-        return ReduceNumberConstructor(node);
       }
     } else if (m.Value()->IsJSBoundFunction()) {
       Handle<JSBoundFunction> function =
@@ -287,7 +351,7 @@ Reduction JSCallReducer::ReduceJSCallFunction(Node* node) {
         arity++;
       }
       NodeProperties::ChangeOp(node, javascript()->CallFunction(
-                                         arity, CallCountFeedback(p.feedback()),
+                                         arity, p.frequency(), VectorSlotPair(),
                                          convert_mode, p.tail_call_mode()));
       // Try to further reduce the JSCallFunction {node}.
       Reduction const reduction = ReduceJSCallFunction(node);
@@ -305,22 +369,25 @@ Reduction JSCallReducer::ReduceJSCallFunction(Node* node) {
   // Extract feedback from the {node} using the CallICNexus.
   if (!p.feedback().IsValid()) return NoChange();
   CallICNexus nexus(p.feedback().vector(), p.feedback().slot());
+  if (nexus.IsUninitialized() && (flags() & kBailoutOnUninitialized)) {
+    Node* frame_state = NodeProperties::FindFrameStateBefore(node);
+    Node* deoptimize = graph()->NewNode(
+        common()->Deoptimize(
+            DeoptimizeKind::kSoft,
+            DeoptimizeReason::kInsufficientTypeFeedbackForCall),
+        frame_state, effect, control);
+    // TODO(bmeurer): This should be on the AdvancedReducer somehow.
+    NodeProperties::MergeControlToEnd(graph(), common(), deoptimize);
+    Revisit(graph()->end());
+    node->TrimInputCount(0);
+    NodeProperties::ChangeOp(node, common()->Dead());
+    return Changed(node);
+  }
   Handle<Object> feedback(nexus.GetFeedback(), isolate());
   if (feedback->IsAllocationSite()) {
     // Retrieve the Array function from the {node}.
-    Node* array_function;
-    Handle<Context> native_context;
-    if (GetNativeContext(node).ToHandle(&native_context)) {
-      array_function = jsgraph()->HeapConstant(
-          handle(native_context->array_function(), isolate()));
-    } else {
-      Node* native_context = effect = graph()->NewNode(
-          javascript()->LoadContext(0, Context::NATIVE_CONTEXT_INDEX, true),
-          context, context, effect);
-      array_function = effect = graph()->NewNode(
-          javascript()->LoadContext(0, Context::ARRAY_FUNCTION_INDEX, true),
-          native_context, native_context, effect);
-    }
+    Node* array_function = jsgraph()->HeapConstant(
+        handle(native_context()->array_function(), isolate()));
 
     // Check that the {target} is still the {array_function}.
     Node* check = graph()->NewNode(simplified()->ReferenceEqual(), target,
@@ -363,7 +430,6 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
   int const arity = static_cast<int>(p.arity() - 2);
   Node* target = NodeProperties::GetValueInput(node, 0);
   Node* new_target = NodeProperties::GetValueInput(node, arity + 1);
-  Node* context = NodeProperties::GetContextInput(node);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
@@ -377,7 +443,8 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
       if (!function->IsConstructor()) {
         NodeProperties::ReplaceValueInputs(node, target);
         NodeProperties::ChangeOp(
-            node, javascript()->CallRuntime(Runtime::kThrowCalledNonCallable));
+            node, javascript()->CallRuntime(
+                      Runtime::kThrowConstructedNonConstructable));
         return Changed(node);
       }
 
@@ -386,8 +453,8 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
         // Check if we have an allocation site.
         Handle<AllocationSite> site;
         if (p.feedback().IsValid()) {
-          Handle<Object> feedback(
-              p.feedback().vector()->Get(p.feedback().slot()), isolate());
+          CallICNexus nexus(p.feedback().vector(), p.feedback().slot());
+          Handle<Object> feedback(nexus.GetFeedback(), isolate());
           if (feedback->IsAllocationSite()) {
             site = Handle<AllocationSite>::cast(feedback);
           }
@@ -412,10 +479,9 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
   // Not much we can do if deoptimization support is disabled.
   if (!(flags() & kDeoptimizationEnabled)) return NoChange();
 
-  // TODO(mvstanton): Use ConstructICNexus here, once available.
-  Handle<Object> feedback;
   if (!p.feedback().IsValid()) return NoChange();
-  feedback = handle(p.feedback().vector()->Get(p.feedback().slot()), isolate());
+  CallICNexus nexus(p.feedback().vector(), p.feedback().slot());
+  Handle<Object> feedback(nexus.GetFeedback(), isolate());
   if (feedback->IsAllocationSite()) {
     // The feedback is an AllocationSite, which means we have called the
     // Array function and collected transition (and pretenuring) feedback
@@ -424,19 +490,8 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
     Handle<AllocationSite> site = Handle<AllocationSite>::cast(feedback);
 
     // Retrieve the Array function from the {node}.
-    Node* array_function;
-    Handle<Context> native_context;
-    if (GetNativeContext(node).ToHandle(&native_context)) {
-      array_function = jsgraph()->HeapConstant(
-          handle(native_context->array_function(), isolate()));
-    } else {
-      Node* native_context = effect = graph()->NewNode(
-          javascript()->LoadContext(0, Context::NATIVE_CONTEXT_INDEX, true),
-          context, context, effect);
-      array_function = effect = graph()->NewNode(
-          javascript()->LoadContext(0, Context::ARRAY_FUNCTION_INDEX, true),
-          native_context, native_context, effect);
-    }
+    Node* array_function = jsgraph()->HeapConstant(
+        handle(native_context()->array_function(), isolate()));
 
     // Check that the {target} is still the {array_function}.
     Node* check = graph()->NewNode(simplified()->ReferenceEqual(), target,
@@ -480,24 +535,13 @@ Reduction JSCallReducer::ReduceJSCallConstruct(Node* node) {
   return NoChange();
 }
 
-
-MaybeHandle<Context> JSCallReducer::GetNativeContext(Node* node) {
-  Node* const context = NodeProperties::GetContextInput(node);
-  return NodeProperties::GetSpecializationNativeContext(context,
-                                                        native_context());
-}
-
-
 Graph* JSCallReducer::graph() const { return jsgraph()->graph(); }
 
-
 Isolate* JSCallReducer::isolate() const { return jsgraph()->isolate(); }
-
 
 CommonOperatorBuilder* JSCallReducer::common() const {
   return jsgraph()->common();
 }
-
 
 JSOperatorBuilder* JSCallReducer::javascript() const {
   return jsgraph()->javascript();

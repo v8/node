@@ -95,42 +95,14 @@ TEST(OperandScaling, ScalableAndNonScalable) {
 
 TEST(Bytecodes, RegisterOperands) {
   CHECK(Bytecodes::IsRegisterOperandType(OperandType::kReg));
+  CHECK(Bytecodes::IsRegisterOperandType(OperandType::kRegPair));
   CHECK(Bytecodes::IsRegisterInputOperandType(OperandType::kReg));
+  CHECK(Bytecodes::IsRegisterInputOperandType(OperandType::kRegPair));
+  CHECK(Bytecodes::IsRegisterInputOperandType(OperandType::kRegList));
   CHECK(!Bytecodes::IsRegisterOutputOperandType(OperandType::kReg));
   CHECK(!Bytecodes::IsRegisterInputOperandType(OperandType::kRegOut));
   CHECK(Bytecodes::IsRegisterOutputOperandType(OperandType::kRegOut));
-
-#define IS_REGISTER_OPERAND_TYPE(Name, _) \
-  CHECK(Bytecodes::IsRegisterOperandType(OperandType::k##Name));
-  REGISTER_OPERAND_TYPE_LIST(IS_REGISTER_OPERAND_TYPE)
-#undef IS_REGISTER_OPERAND_TYPE
-
-#define IS_NOT_REGISTER_OPERAND_TYPE(Name, _) \
-  CHECK(!Bytecodes::IsRegisterOperandType(OperandType::k##Name));
-  NON_REGISTER_OPERAND_TYPE_LIST(IS_NOT_REGISTER_OPERAND_TYPE)
-#undef IS_NOT_REGISTER_OPERAND_TYPE
-
-#define IS_REGISTER_INPUT_OPERAND_TYPE(Name, _) \
-  CHECK(Bytecodes::IsRegisterInputOperandType(OperandType::k##Name));
-  REGISTER_INPUT_OPERAND_TYPE_LIST(IS_REGISTER_INPUT_OPERAND_TYPE)
-#undef IS_REGISTER_INPUT_OPERAND_TYPE
-
-#define IS_NOT_REGISTER_INPUT_OPERAND_TYPE(Name, _) \
-  CHECK(!Bytecodes::IsRegisterInputOperandType(OperandType::k##Name));
-  NON_REGISTER_OPERAND_TYPE_LIST(IS_NOT_REGISTER_INPUT_OPERAND_TYPE);
-  REGISTER_OUTPUT_OPERAND_TYPE_LIST(IS_NOT_REGISTER_INPUT_OPERAND_TYPE)
-#undef IS_NOT_REGISTER_INPUT_OPERAND_TYPE
-
-#define IS_REGISTER_OUTPUT_OPERAND_TYPE(Name, _) \
-  CHECK(Bytecodes::IsRegisterOutputOperandType(OperandType::k##Name));
-  REGISTER_OUTPUT_OPERAND_TYPE_LIST(IS_REGISTER_OUTPUT_OPERAND_TYPE)
-#undef IS_REGISTER_OUTPUT_OPERAND_TYPE
-
-#define IS_NOT_REGISTER_OUTPUT_OPERAND_TYPE(Name, _) \
-  CHECK(!Bytecodes::IsRegisterOutputOperandType(OperandType::k##Name));
-  NON_REGISTER_OPERAND_TYPE_LIST(IS_NOT_REGISTER_OUTPUT_OPERAND_TYPE)
-  REGISTER_INPUT_OPERAND_TYPE_LIST(IS_NOT_REGISTER_OUTPUT_OPERAND_TYPE)
-#undef IS_NOT_REGISTER_INPUT_OPERAND_TYPE
+  CHECK(Bytecodes::IsRegisterOutputOperandType(OperandType::kRegOutPair));
 }
 
 TEST(Bytecodes, DebugBreakExistForEachBytecode) {
@@ -161,18 +133,47 @@ TEST(Bytecodes, PrefixMappings) {
   }
 }
 
-TEST(Bytecodes, SizesForSignedOperands) {
-  CHECK(Bytecodes::SizeForSignedOperand(0) == OperandSize::kByte);
-  CHECK(Bytecodes::SizeForSignedOperand(kMaxInt8) == OperandSize::kByte);
-  CHECK(Bytecodes::SizeForSignedOperand(kMinInt8) == OperandSize::kByte);
-  CHECK(Bytecodes::SizeForSignedOperand(kMaxInt8 + 1) == OperandSize::kShort);
-  CHECK(Bytecodes::SizeForSignedOperand(kMinInt8 - 1) == OperandSize::kShort);
-  CHECK(Bytecodes::SizeForSignedOperand(kMaxInt16) == OperandSize::kShort);
-  CHECK(Bytecodes::SizeForSignedOperand(kMinInt16) == OperandSize::kShort);
-  CHECK(Bytecodes::SizeForSignedOperand(kMaxInt16 + 1) == OperandSize::kQuad);
-  CHECK(Bytecodes::SizeForSignedOperand(kMinInt16 - 1) == OperandSize::kQuad);
-  CHECK(Bytecodes::SizeForSignedOperand(kMaxInt) == OperandSize::kQuad);
-  CHECK(Bytecodes::SizeForSignedOperand(kMinInt) == OperandSize::kQuad);
+TEST(Bytecodes, ScaleForSignedOperand) {
+  CHECK(Bytecodes::ScaleForSignedOperand(0) == OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMaxInt8) == OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMinInt8) == OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMaxInt8 + 1) ==
+        OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMinInt8 - 1) ==
+        OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMaxInt16) == OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMinInt16) == OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMaxInt16 + 1) ==
+        OperandScale::kQuadruple);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMinInt16 - 1) ==
+        OperandScale::kQuadruple);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMaxInt) == OperandScale::kQuadruple);
+  CHECK(Bytecodes::ScaleForSignedOperand(kMinInt) == OperandScale::kQuadruple);
+}
+
+TEST(Bytecodes, ScaleForUnsignedOperands) {
+  // int overloads
+  CHECK(Bytecodes::ScaleForUnsignedOperand(0) == OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(kMaxUInt8) == OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(kMaxUInt8 + 1) ==
+        OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(kMaxUInt16) ==
+        OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(kMaxUInt16 + 1) ==
+        OperandScale::kQuadruple);
+  // size_t overloads
+  CHECK(Bytecodes::ScaleForUnsignedOperand(static_cast<size_t>(0)) ==
+        OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(static_cast<size_t>(kMaxUInt8)) ==
+        OperandScale::kSingle);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(
+            static_cast<size_t>(kMaxUInt8 + 1)) == OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(static_cast<size_t>(kMaxUInt16)) ==
+        OperandScale::kDouble);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(
+            static_cast<size_t>(kMaxUInt16 + 1)) == OperandScale::kQuadruple);
+  CHECK(Bytecodes::ScaleForUnsignedOperand(static_cast<size_t>(kMaxUInt32)) ==
+        OperandScale::kQuadruple);
 }
 
 TEST(Bytecodes, SizesForUnsignedOperands) {
@@ -236,14 +237,6 @@ TEST(AccumulatorUse, SampleBytecodes) {
            AccumulatorUse::kReadWrite);
 }
 
-TEST(AccumulatorUse, AccumulatorUseToString) {
-  std::set<std::string> names;
-  names.insert(Bytecodes::AccumulatorUseToString(AccumulatorUse::kNone));
-  names.insert(Bytecodes::AccumulatorUseToString(AccumulatorUse::kRead));
-  names.insert(Bytecodes::AccumulatorUseToString(AccumulatorUse::kWrite));
-  names.insert(Bytecodes::AccumulatorUseToString(AccumulatorUse::kReadWrite));
-  CHECK_EQ(names.size(), 4);
-}
 }  // namespace interpreter
 }  // namespace internal
 }  // namespace v8

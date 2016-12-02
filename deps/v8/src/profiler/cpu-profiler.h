@@ -11,7 +11,6 @@
 #include "src/base/atomic-utils.h"
 #include "src/base/atomicops.h"
 #include "src/base/platform/time.h"
-#include "src/compiler.h"
 #include "src/isolate.h"
 #include "src/libsampler/sampler.h"
 #include "src/locked-queue.h"
@@ -84,7 +83,6 @@ class CodeDeoptEventRecord : public CodeEventRecord {
  public:
   Address start;
   const char* deopt_reason;
-  SourcePosition position;
   int deopt_id;
   void* pc;
   int fp_to_sp_delta;
@@ -124,7 +122,7 @@ class CodeEventsContainer {
     CodeEventRecord generic;
 #define DECLARE_CLASS(ignore, type) type type##_;
     CODE_EVENTS_TYPE_LIST(DECLARE_CLASS)
-#undef DECLARE_TYPE
+#undef DECLARE_CLASS
   };
 };
 

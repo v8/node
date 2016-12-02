@@ -29,7 +29,6 @@
 [ALWAYS, {
   # All tests prefixed with 'Bug' are expected to fail.
   'test-api/Bug*': [FAIL],
-  'test-serialize/Bug*': [FAIL],
 
   ##############################################################################
 
@@ -66,18 +65,17 @@
   # This tests only the type system, no point in running several variants.
   'test-hydrogen-types/*': [PASS, NO_VARIANTS],
   'test-types/*': [PASS, NO_VARIANTS],
+  'test-ast-types/*': [PASS, NO_VARIANTS],
 
   # This tests API threading, no point in running several variants.
-  'test-api/Threading*': [PASS, NO_VARIANTS],
+  # They are also slow in debug mode.
+  'test-api/Threading*': [PASS, NO_VARIANTS, ['mode == debug', SLOW]],
 
   # BUG(2999). The cpu profiler tests are notoriously flaky.
   'test-cpu-profiler/CpuProfileDeepStack': [SKIP],
   'test-cpu-profiler/CollectCpuProfile': [SKIP],
   'test-cpu-profiler/HotDeoptNoFrameEntry': [SKIP],
   'test-cpu-profiler/SampleWhenFrameIsNotSetup': [SKIP],
-
-  # BUG(v8:4358). Hangs flakily.
-  'test-debug/ProcessDebugMessagesThreaded': [SKIP],
 
   # BUG(2340). Preprocessing stack traces is disabled at the moment.
   'test-heap/PreprocessStackTrace': [FAIL],
@@ -89,12 +87,11 @@
   # BUG(3742).
   'test-mark-compact/MarkCompactCollector': [PASS, ['arch==arm', NO_VARIANTS]],
 
+  # Test that serialization with unknown external reference fails.
+  'test-serialize/SnapshotCreatorUnknownExternalReferences': [FAIL],
+
   ############################################################################
   # Slow tests.
-  'test-api/Threading1': [PASS, ['mode == debug', SLOW]],
-  'test-api/Threading2': [PASS, ['mode == debug', SLOW]],
-  'test-api/Threading3': [PASS, ['mode == debug', SLOW]],
-  'test-api/Threading4': [PASS, ['mode == debug', SLOW]],
   'test-debug/CallFunctionInDebugger': [PASS, ['mode == debug', SLOW]],
   'test-strings/StringOOM*': [PASS, ['mode == debug', SKIP]],
   'test-serialize/CustomSnapshotDataBlobImmortalImmovableRoots': [PASS, ['mode == debug', SKIP]],
@@ -131,8 +128,6 @@
 
   # Pass but take too long with the simulator.
   'test-api/ExternalArrays': [PASS, TIMEOUT],
-  'test-api/Threading1': [SKIP],
-  'test-api/Threading2': [SKIP],
 }],  # 'arch == arm64 and simulator_run == True'
 
 ['arch == arm64 and mode == debug and simulator_run == True', {
@@ -150,6 +145,12 @@
 ['asan == True', {
   # Skip tests not suitable for ASAN.
   'test-assembler-x64/AssemblerX64XchglOperations': [SKIP],
+
+  # BUG(v8:5243).
+  'test-cpu-profiler/JsNative1JsNative2JsSample': [SKIP],
+  'test-cpu-profiler/JsNativeJsRuntimeJsSample': [SKIP],
+  'test-cpu-profiler/JsNativeJsRuntimeJsSampleMultiple': [SKIP],
+  'test-cpu-profiler/JsNativeJsSample': [SKIP],
 }],  # 'asan == True'
 
 ##############################################################################
@@ -158,10 +159,7 @@
   'test-strings/CountBreakIterator': [SKIP],
 
   # Slow tests.
-  'test-api/Threading1': [PASS, SLOW],
-  'test-api/Threading2': [PASS, SLOW],
-  'test-api/Threading3': [PASS, SLOW],
-  'test-api/Threading4': [PASS, SLOW],
+  'test-api/Threading*': [PASS, SLOW],
 }],  # 'msan == True'
 
 ##############################################################################
@@ -220,10 +218,7 @@
 
   ############################################################################
   # Slow tests.
-  'test-api/Threading1': [PASS, SLOW],
-  'test-api/Threading2': [PASS, SLOW],
-  'test-api/Threading3': [PASS, SLOW],
-  'test-api/Threading4': [PASS, SLOW],
+  'test-api/Threading*': [PASS, SLOW],
 }],  # 'arch == arm'
 
 ##############################################################################
@@ -247,7 +242,8 @@
 
   # TODO(mips-team): Currently fails on mips board.
   'test-parsing/TooManyArguments': [SKIP],
-  'test-api/Threading3': [SKIP],
+  'test-api/Threading5': [SKIP],
+  'test-api/Threading6': [SKIP],
 }],  # 'arch == mips'
 
 ##############################################################################
@@ -284,6 +280,8 @@
   'test-run-machops/RunFloat64Tan': [SKIP],
   'test-cpu-profiler/Inlining': [SKIP],
   'test-gap-resolver/FuzzResolver': [SKIP],
+  'test-run-wasm/RunWasmCompiled_MultiReturnSelect_f32': [SKIP],
+  'test-run-wasm/RunWasmCompiled_MultiReturnSelect_f64': [SKIP],
 }],  # 'arch == x87'
 
 ##############################################################################
@@ -318,223 +316,60 @@
 ['arch == ppc and simulator_run == True or arch == ppc64 and simulator_run == True', {
 
   # Pass but take too long with the simulator.
-  'test-api/Threading1': [PASS, SLOW],
-  'test-api/Threading2': [PASS, SLOW],
+  'test-api/Threading*': [PASS, SLOW],
   'test-api/ExternalArrays': [PASS, SLOW],
 
 }],  # 'arch == ppc64 and simulator_run == True'
 
 ##############################################################################
-['variant == turbofan', {
-
-  # TODO(bmeurer): TurboFan embeds strong references to all kinds of objects
-  # via deoptimization data (Crankshaft also does this, but lack proper test
-  # coverage).
-  'test-heap/ObjectsInOptimizedCodeAreWeak': [FAIL],
-
-  # TurboFan cpu profiler result is different.
-  'test-cpu-profiler/CollectDeoptEvents': [FAIL],
-  'test-cpu-profiler/DeoptAtFirstLevelInlinedSource': [FAIL],
-  'test-cpu-profiler/DeoptAtSecondLevelInlinedSource': [FAIL],
-
-}],  # variant == turbofan
-
-##############################################################################
 ['variant == turbofan_opt', {
-  # BUG(5193): Flaky.
-  'test-cpu-profiler/FunctionApplySample': [PASS, ['system == windows', SKIP]],
+  # BUG(v8:5457)
+  'test-api/SetJitCodeEventHandler': [PASS, ['no_snap', SKIP]],
 }],  # variant == turbofan_opt
 
 ##############################################################################
-['variant == ignition', {
-  # TODO(rmcilroy,4680): Related to lack of code flushing. Check failed: !function->shared()->is_compiled() || function->IsOptimized().
-  'test-heap/TestCodeFlushingPreAged': [FAIL],
-  'test-heap/TestCodeFlushingIncrementalScavenge': [FAIL],
-  'test-heap/TestCodeFlushing': [FAIL],
-  'test-heap/TestCodeFlushingIncremental': [FAIL],
-  'test-heap/TestCodeFlushingIncrementalAbort': [PASS, ['mode == debug or dcheck_always_on == True', FAIL]],
-
-  # TODO(mythria,4780): Related to type feedback support for Array function.
-  'test-feedback-vector/VectorCallFeedbackForArray': [FAIL],
-
-  # TODO(mythria,4780): Related to type feedback support for constructor.
-  'test-feedback-vector/VectorConstructCounts': [FAIL],
-  'test-heap/WeakFunctionInConstructor': [FAIL],
-  'test-heap/IncrementalMarkingPreservesMonomorphicConstructor': [FAIL],
-
-  # TODO(mythria,4680): Lack of code-ageing in interpreter.
-  'test-heap/Regress169209': [FAIL],
-
-  # TODO(mythria,4680): Lack of code-ageing and/or lack of compilation cache
-  # in interpreter.
-  'test-heap/CompilationCacheCachingBehavior': [FAIL],
-
-  # BUG(rmcilroy,4680): Function is optimized without type feedback and so immediately deopts again, causing check failure in the test.
-  'test-heap/ResetSharedFunctionInfoCountersDuringIncrementalMarking': [FAIL],
-  'test-heap/ResetSharedFunctionInfoCountersDuringMarkSweep': [FAIL],
-
-  # BUG(4680): Missing type feedback makes optimistic optimizations fail.
-  'test-cpu-profiler/CollectDeoptEvents': [FAIL],
-  'test-cpu-profiler/DeoptUntrackedFunction': [SKIP],
-
-  # BUG(4680): Ignition doesn't support allocation sites currently.
-  'test-heap/EnsureAllocationSiteDependentCodesProcessed': [FAIL],
-  'test-heap/OptimizedPretenuringAllocationFolding': [FAIL],
-  'test-heap/OptimizedPretenuringdoubleArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedDoubleLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedMixedArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedObjectLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringObjectArrayLiterals': [FAIL],
-
-  # BUG(4751). Flaky with ignition.
-  'test-cpu-profiler/JsNativeJsSample': [PASS, FAIL],
-
-  # TODO(ignition): Fails due to missing type info when optimizing from bytecode
-  # with crankshaft.
-  'test-cpu-profiler/TickLinesOptimized': [SKIP],
-
-  # TurboFan cpu profiler result is different.
-  'test-cpu-profiler/DeoptAtFirstLevelInlinedSource': [FAIL],
-  'test-cpu-profiler/DeoptAtSecondLevelInlinedSource': [FAIL],
-
-  # BUG(5193): Flaky.
-  'test-cpu-profiler/FunctionApplySample': [PASS, ['system == windows', SKIP]],
-}],  # variant == ignition
-
-##############################################################################
-['variant == ignition_staging', {
-  'test-cpu-profiler/DeoptUntrackedFunction': [SKIP],
-  'test-cpu-profiler/TickLinesOptimized': [SKIP],
-  'test-cpu-profiler/CollectDeoptEvents': [FAIL],
-  'test-cpu-profiler/DeoptAtFirstLevelInlinedSource': [FAIL],
-  'test-cpu-profiler/DeoptAtSecondLevelInlinedSource': [FAIL],
-  'test-feedback-vector/VectorCallFeedbackForArray': [FAIL],
-  'test-feedback-vector/VectorConstructCounts': [FAIL],
-  'test-heap/CompilationCacheCachingBehavior': [FAIL],
-  'test-heap/EnsureAllocationSiteDependentCodesProcessed': [FAIL],
-  'test-heap/IncrementalMarkingPreservesMonomorphicConstructor': [FAIL],
-  'test-heap/OptimizedPretenuringAllocationFolding': [FAIL],
-  'test-heap/OptimizedPretenuringdoubleArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedDoubleLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedMixedArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedObjectLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringObjectArrayLiterals': [FAIL],
-  'test-heap/Regress169209': [FAIL],
-  'test-heap/ResetSharedFunctionInfoCountersDuringIncrementalMarking': [FAIL],
-  'test-heap/ResetSharedFunctionInfoCountersDuringMarkSweep': [FAIL],
-  'test-heap/TestCodeFlushing': [FAIL],
-  'test-heap/TestCodeFlushingIncremental': [FAIL],
-  'test-heap/TestCodeFlushingIncrementalScavenge': [FAIL],
-  'test-heap/TestCodeFlushingPreAged': [FAIL],
-  'test-heap/WeakFunctionInConstructor': [FAIL],
-  'test-run-inlining/InlineBuiltin': [FAIL],
-  'test-run-inlining/InlineLoopGuardedEmpty': [FAIL],
-  'test-run-inlining/InlineLoopGuardedOnce': [FAIL],
-  'test-run-inlining/InlineLoopGuardedTwice': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedEmpty': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedOnce': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedTwice': [FAIL],
-  'test-run-inlining/InlineMutuallyRecursive': [FAIL],
-  'test-run-inlining/InlineNestedBuiltin': [FAIL],
-  'test-run-inlining/InlineOmitArgumentsDeopt': [FAIL],
-  'test-run-inlining/InlineOmitArguments': [FAIL],
-  'test-run-inlining/InlineOmitArgumentsObject': [FAIL],
-  'test-run-inlining/InlineSurplusArgumentsDeopt': [FAIL],
-  'test-run-inlining/InlineSurplusArguments': [FAIL],
-  'test-run-inlining/InlineSurplusArgumentsObject': [FAIL],
-  'test-run-inlining/InlineTwiceDependentDiamondDifferent': [FAIL],
-  'test-run-inlining/InlineTwiceDependentDiamond': [FAIL],
-  'test-run-inlining/InlineTwiceDependent': [FAIL],
-  'test-run-inlining/InlineTwice': [FAIL],
-  'test-run-inlining/InlineWithArguments': [FAIL],
-  'test-run-inlining/SimpleInliningContextDeopt': [FAIL],
-  'test-run-inlining/SimpleInliningContext': [FAIL],
-  'test-run-inlining/SimpleInlining': [FAIL],
-
-  # BUG(5193): Flaky.
-  'test-cpu-profiler/FunctionApplySample': [PASS, ['system == windows', SKIP]],
-}],  # variant == ignition_staging
-
-##############################################################################
-['variant == ignition_turbofan', {
-  # TODO(5251): Inlining is currently disabled for the BytecodeGraphBuilder.
-  'test-run-inlining/InlineLoopGuardedTwice': [FAIL],
-  'test-run-inlining/InlineSurplusArgumentsDeopt': [FAIL],
-  'test-run-inlining/InlineTwice': [FAIL],
-  'test-run-inlining/InlineSurplusArgumentsObject': [FAIL],
-  'test-run-inlining/InlineTwiceDependentDiamond': [FAIL],
-  'test-run-inlining/InlineWithArguments': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedTwice': [FAIL],
-  'test-run-inlining/InlineOmitArgumentsObject': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedOnce': [FAIL],
-  'test-run-inlining/InlineOmitArgumentsDeopt': [FAIL],
-  'test-run-inlining/InlineTwiceDependentDiamondDifferent': [FAIL],
-  'test-run-inlining/SimpleInliningContext': [FAIL],
-  'test-run-inlining/InlineMutuallyRecursive': [FAIL],
-  'test-run-inlining/InlineLoopGuardedEmpty': [FAIL],
-  'test-run-inlining/InlineLoopGuardedOnce': [FAIL],
-  'test-run-inlining/InlineOmitArguments': [FAIL],
-  'test-run-inlining/SimpleInlining': [FAIL],
-  'test-run-inlining/InlineLoopUnguardedEmpty': [FAIL],
-  'test-run-inlining/InlineNestedBuiltin': [FAIL],
-  'test-run-inlining/InlineSurplusArguments': [FAIL],
-  'test-run-inlining/InlineBuiltin': [FAIL],
-  'test-run-inlining/InlineTwiceDependent': [FAIL],
-  'test-run-inlining/SimpleInliningContextDeopt': [FAIL],
-
-  # TODO(rmcilroy,4766): Requires BytecodeGraphBuilder to track source position
-  # on nodes (behind --turbo_source_positions flag).
-  'test-cpu-profiler/TickLinesOptimized': [FAIL],
-
-  # TODO(rmcilroy,4680): Related to lack of code flushing. Check failed: !function->shared()->is_compiled() || function->IsOptimized().
-  'test-heap/TestCodeFlushingPreAged': [FAIL],
-  'test-heap/TestCodeFlushingIncrementalScavenge': [FAIL],
-  'test-heap/TestCodeFlushing': [FAIL],
-  'test-heap/TestCodeFlushingIncremental': [FAIL],
-  'test-heap/TestCodeFlushingIncrementalAbort': [PASS, ['mode == debug or dcheck_always_on == True', FAIL]],
-
-  # TODO(mythria,4780): Related to type feedback support for Array function.
-  'test-feedback-vector/VectorCallFeedbackForArray': [FAIL],
-
-  # TODO(mythria,4780): Related to type feedback support for constructor.
-  'test-feedback-vector/VectorConstructCounts': [FAIL],
-  'test-heap/WeakFunctionInConstructor': [FAIL],
-  'test-heap/IncrementalMarkingPreservesMonomorphicConstructor': [FAIL],
-
-  # TODO(mythria,4680): Lack of code-ageing in interpreter.
-  'test-heap/Regress169209': [FAIL],
-
-  # TODO(mythria,4680): Lack of code-ageing and/or lack of compilation cache
-  # in interpreter.
-  'test-heap/CompilationCacheCachingBehavior': [FAIL],
-
-  # BUG(4680): Missing type feedback makes optimistic optimizations fail.
-  'test-cpu-profiler/CollectDeoptEvents': [FAIL],
-  'test-cpu-profiler/DeoptUntrackedFunction': [SKIP],
-
-  # BUG(4680): Ignition doesn't support allocation sites currently.
-  'test-heap/EnsureAllocationSiteDependentCodesProcessed': [FAIL],
-  'test-heap/OptimizedPretenuringAllocationFolding': [FAIL],
-  'test-heap/OptimizedPretenuringdoubleArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedDoubleLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedMixedArrayLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringNestedObjectLiterals': [FAIL],
-  'test-heap/OptimizedPretenuringObjectArrayLiterals': [FAIL],
+['variant == turbofan or variant == ignition_turbofan', {
+  # BUG(4751). Deopts with kNotASmi instead of expected deopt reason.
+  'test-cpu-profiler/CollectDeoptEvents': [SKIP],
 
   # BUG(4751). Flaky with Ignition.
   'test-cpu-profiler/JsNativeJsSample': [SKIP],
 
-  # TODO(bmeurer): TurboFan embeds strong references to all kinds of objects
-  # via deoptimization data (Crankshaft also does this, but lack proper test
-  # coverage).
-  'test-heap/ObjectsInOptimizedCodeAreWeak': [FAIL],
-
-  # TurboFan cpu profiler result is different.
-  'test-cpu-profiler/DeoptAtFirstLevelInlinedSource': [FAIL],
-  'test-cpu-profiler/DeoptAtSecondLevelInlinedSource': [FAIL],
+  # TODO(vogelheim,5548): Turbofan does support cached accessors.
+  'test-api-accessors/CachedAccessorCrankshaft': [FAIL],
 
   # BUG(5193): Flaky.
   'test-cpu-profiler/FunctionApplySample': [PASS, ['system == windows', SKIP]],
-}],  # variant == ignition_turbofan
+}],  # variant == turbofan or variant == ignition_turbofan
+
+##############################################################################
+['variant == asm_wasm', {
+  '*': [SKIP],
+}],  # variant == asm_wasm
+
+##############################################################################
+['variant == wasm_traps', {
+  'test-accessors/*': [SKIP],
+  'test-api-interceptors/*': [SKIP],
+  'test-api/*': [SKIP],
+  'test-bignum-dtoa/*': [SKIP],
+  'test-cpu-profiler/*': [SKIP],
+  'test-debug/*': [SKIP],
+  'test-global-handles/*': [SKIP],
+  'test-heap-profiler/*': [SKIP],
+  'test-heap/*': [SKIP],
+  'test-inobject-slack-tracking/*': [SKIP],
+  'test-lockers/*': [SKIP],
+  'test-run-machops/*': [SKIP],
+  'test-serialize/*': [SKIP],
+  'test-strings/*': [SKIP],
+  'test-field-type-tracking/*': [SKIP],
+  'test-parsing/*': [SKIP],
+  'test-page-promotion/*': [SKIP],
+  'test-decls/*': [SKIP],
+  'test-log/*': [SKIP],
+  'test-gap-resolver/*': [SKIP],
+  'test-dtoa/*': [SKIP],
+}],  # variant == wasm_traps
 
 ]

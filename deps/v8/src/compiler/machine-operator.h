@@ -5,7 +5,9 @@
 #ifndef V8_COMPILER_MACHINE_OPERATOR_H_
 #define V8_COMPILER_MACHINE_OPERATOR_H_
 
+#include "src/base/compiler-specific.h"
 #include "src/base/flags.h"
+#include "src/globals.h"
 #include "src/machine-type.h"
 
 namespace v8 {
@@ -61,12 +63,12 @@ class StoreRepresentation final {
   WriteBarrierKind write_barrier_kind_;
 };
 
-bool operator==(StoreRepresentation, StoreRepresentation);
+V8_EXPORT_PRIVATE bool operator==(StoreRepresentation, StoreRepresentation);
 bool operator!=(StoreRepresentation, StoreRepresentation);
 
 size_t hash_value(StoreRepresentation);
 
-std::ostream& operator<<(std::ostream&, StoreRepresentation);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, StoreRepresentation);
 
 StoreRepresentation const& StoreRepresentationOf(Operator const*);
 
@@ -98,7 +100,8 @@ MachineRepresentation AtomicStoreRepresentationOf(Operator const* op);
 // Interface for building machine-level operators. These operators are
 // machine-level but machine-independent and thus define a language suitable
 // for generating code to run on architectures such as ia32, x64, arm, etc.
-class MachineOperatorBuilder final : public ZoneObject {
+class V8_EXPORT_PRIVATE MachineOperatorBuilder final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   // Flags that specify which operations are available. This is useful
   // for operations that are unsupported by some back-ends.
@@ -276,8 +279,14 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* Uint64LessThanOrEqual();
   const Operator* Uint64Mod();
 
+  // This operator reinterprets the bits of a tagged pointer as word.
+  const Operator* BitcastTaggedToWord();
+
   // This operator reinterprets the bits of a word as tagged pointer.
   const Operator* BitcastWordToTagged();
+
+  // This operator reinterprets the bits of a word as a Smi.
+  const Operator* BitcastWordToTaggedSigned();
 
   // JavaScript float64 to int32/uint32 truncation.
   const Operator* TruncateFloat64ToWord32();
@@ -301,16 +310,6 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* ChangeInt32ToInt64();
   const Operator* ChangeUint32ToFloat64();
   const Operator* ChangeUint32ToUint64();
-
-  // These are changes from impossible values (for example a smi-checked
-  // string).  They can safely emit an abort instruction, which should
-  // never be reached.
-  const Operator* ImpossibleToWord32();
-  const Operator* ImpossibleToWord64();
-  const Operator* ImpossibleToFloat32();
-  const Operator* ImpossibleToFloat64();
-  const Operator* ImpossibleToTagged();
-  const Operator* ImpossibleToBit();
 
   // These operators truncate or round numbers, both changing the representation
   // of the number and mapping multiple input values onto the same output value.
@@ -448,9 +447,6 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* Float32x4LessThanOrEqual();
   const Operator* Float32x4GreaterThan();
   const Operator* Float32x4GreaterThanOrEqual();
-  const Operator* Float32x4Select();
-  const Operator* Float32x4Swizzle();
-  const Operator* Float32x4Shuffle();
   const Operator* Float32x4FromInt32x4();
   const Operator* Float32x4FromUint32x4();
 
@@ -471,9 +467,6 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* Int32x4LessThanOrEqual();
   const Operator* Int32x4GreaterThan();
   const Operator* Int32x4GreaterThanOrEqual();
-  const Operator* Int32x4Select();
-  const Operator* Int32x4Swizzle();
-  const Operator* Int32x4Shuffle();
   const Operator* Int32x4FromFloat32x4();
 
   const Operator* Uint32x4Min();
@@ -608,12 +601,17 @@ class MachineOperatorBuilder final : public ZoneObject {
   const Operator* Simd128Or();
   const Operator* Simd128Xor();
   const Operator* Simd128Not();
+  const Operator* Simd32x4Select();
+  const Operator* Simd32x4Swizzle();
+  const Operator* Simd32x4Shuffle();
 
   // load [base + index]
   const Operator* Load(LoadRepresentation rep);
+  const Operator* ProtectedLoad(LoadRepresentation rep);
 
   // store [base + index], value
   const Operator* Store(StoreRepresentation rep);
+  const Operator* ProtectedStore(MachineRepresentation rep);
 
   // unaligned load [base + index]
   const Operator* UnalignedLoad(UnalignedLoadRepresentation rep);

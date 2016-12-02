@@ -2,30 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
-// Defined when linking against shared lib on Windows.
-#if defined(USING_V8_SHARED) && !defined(V8_SHARED)
-#define V8_SHARED
-#endif
-
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
-#ifdef V8_SHARED
-#include <assert.h>
-#endif  // V8_SHARED
-
-#ifndef V8_SHARED
 #include <algorithm>
 #include <fstream>
+#include <unordered_map>
+#include <utility>
 #include <vector>
-#endif  // !V8_SHARED
-
-#ifdef V8_SHARED
-#include "include/v8-testing.h"
-#endif  // V8_SHARED
 
 #ifdef ENABLE_VTUNE_JIT_INTERFACE
 #include "src/third_party/vtune/v8-vtune.h"
@@ -36,7 +22,6 @@
 
 #include "include/libplatform/libplatform.h"
 #include "include/libplatform/v8-tracing.h"
-#ifndef V8_SHARED
 #include "src/api.h"
 #include "src/base/cpu.h"
 #include "src/base/debug/stack_trace.h"
@@ -45,10 +30,14 @@
 #include "src/base/sys-info.h"
 #include "src/basic-block-profiler.h"
 #include "src/interpreter/interpreter.h"
+#include "src/msan.h"
 #include "src/snapshot/natives.h"
 #include "src/utils.h"
 #include "src/v8.h"
-#endif  // !V8_SHARED
+
+#ifdef V8_INSPECTOR_ENABLED
+#include "include/v8-inspector.h"
+#endif  // V8_INSPECTOR_ENABLED
 
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <unistd.h>  // NOLINT
@@ -72,19 +61,72 @@ namespace v8 {
 namespace {
 
 const int MB = 1024 * 1024;
-#ifndef V8_SHARED
 const int kMaxWorkers = 50;
-#endif
 
+#define USE_VM 1
+#define VM_THRESHOLD 65536
+// TODO(titzer): allocations should fail if >= 2gb because of
+// array buffers storing the lengths as a SMI internally.
+#define TWO_GB (2u * 1024u * 1024u * 1024u)
 
 class ShellArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
  public:
   virtual void* Allocate(size_t length) {
+#if USE_VM
+    if (RoundToPageSize(&length)) {
+      void* data = VirtualMemoryAllocate(length);
+#if DEBUG
+      if (data) {
+        // In debug mode, check the memory is zero-initialized.
+        size_t limit = length / sizeof(uint64_t);
+        uint64_t* ptr = reinterpret_cast<uint64_t*>(data);
+        for (size_t i = 0; i < limit; i++) {
+          DCHECK_EQ(0u, ptr[i]);
+        }
+      }
+#endif
+      return data;
+    }
+#endif
     void* data = AllocateUninitialized(length);
     return data == NULL ? data : memset(data, 0, length);
   }
-  virtual void* AllocateUninitialized(size_t length) { return malloc(length); }
-  virtual void Free(void* data, size_t) { free(data); }
+  virtual void* AllocateUninitialized(size_t length) {
+#if USE_VM
+    if (RoundToPageSize(&length)) return VirtualMemoryAllocate(length);
+#endif
+    return malloc(length);
+  }
+  virtual void Free(void* data, size_t length) {
+#if USE_VM
+    if (RoundToPageSize(&length)) {
+      base::VirtualMemory::ReleaseRegion(data, length);
+      return;
+    }
+#endif
+    free(data);
+  }
+  // If {length} is at least {VM_THRESHOLD}, round up to next page size
+  // and return {true}. Otherwise return {false}.
+  bool RoundToPageSize(size_t* length) {
+    const size_t kPageSize = base::OS::CommitPageSize();
+    if (*length >= VM_THRESHOLD && *length < TWO_GB) {
+      *length = ((*length + kPageSize - 1) / kPageSize) * kPageSize;
+      return true;
+    }
+    return false;
+  }
+#if USE_VM
+  void* VirtualMemoryAllocate(size_t length) {
+    void* data = base::VirtualMemory::ReserveRegion(length);
+    if (data && !base::VirtualMemory::CommitRegion(data, length, false)) {
+      base::VirtualMemory::ReleaseRegion(data, length);
+      return nullptr;
+    }
+    MSAN_MEMORY_IS_INITIALIZED(data, length);
+    return data;
+  }
+#endif
 };
 
 
@@ -102,7 +144,6 @@ class MockArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
 };
 
 
-#ifndef V8_SHARED
 // Predictable v8::Platform implementation. All background and foreground
 // tasks are run immediately, delayed tasks are not executed at all.
 class PredictablePlatform : public Platform {
@@ -136,6 +177,7 @@ class PredictablePlatform : public Platform {
     return synthetic_time_in_sec_ += 0.00001;
   }
 
+  using Platform::AddTraceEvent;
   uint64_t AddTraceEvent(char phase, const uint8_t* categoryEnabledFlag,
                          const char* name, const char* scope, uint64_t id,
                          uint64_t bind_id, int numArgs, const char** argNames,
@@ -163,11 +205,9 @@ class PredictablePlatform : public Platform {
 
   DISALLOW_COPY_AND_ASSIGN(PredictablePlatform);
 };
-#endif  // !V8_SHARED
 
 
 v8::Platform* g_platform = NULL;
-
 
 static Local<Value> Throw(Isolate* isolate, const char* message) {
   return isolate->ThrowException(
@@ -176,7 +216,6 @@ static Local<Value> Throw(Isolate* isolate, const char* message) {
 }
 
 
-#ifndef V8_SHARED
 bool FindInObjectList(Local<Object> object, const Shell::ObjectList& list) {
   for (int i = 0; i < list.length(); ++i) {
     if (list[i]->StrictEquals(object)) {
@@ -202,7 +241,6 @@ Worker* GetWorkerFromInternalField(Isolate* isolate, Local<Object> object) {
 
   return worker;
 }
-#endif  // !V8_SHARED
 
 
 }  // namespace
@@ -217,11 +255,9 @@ const char kRecordContinuously[] = "record-continuously";
 const char kRecordAsMuchAsPossible[] = "record-as-much-as-possible";
 
 const char kRecordModeParam[] = "record_mode";
-const char kEnableSamplingParam[] = "enable_sampling";
 const char kEnableSystraceParam[] = "enable_systrace";
 const char kEnableArgumentFilterParam[] = "enable_argument_filter";
 const char kIncludedCategoriesParam[] = "included_categories";
-const char kExcludedCategoriesParam[] = "excluded_categories";
 
 class TraceConfigParser {
  public:
@@ -242,10 +278,6 @@ class TraceConfigParser {
     trace_config->SetTraceRecordMode(
         GetTraceRecordMode(isolate, context, trace_config_object));
     if (GetBoolean(isolate, context, trace_config_object,
-                   kEnableSamplingParam)) {
-      trace_config->EnableSampling();
-    }
-    if (GetBoolean(isolate, context, trace_config_object,
                    kEnableSystraceParam)) {
       trace_config->EnableSystrace();
     }
@@ -253,10 +285,8 @@ class TraceConfigParser {
                    kEnableArgumentFilterParam)) {
       trace_config->EnableArgumentFilter();
     }
-    UpdateCategoriesList(isolate, context, trace_config_object,
-                         kIncludedCategoriesParam, trace_config);
-    UpdateCategoriesList(isolate, context, trace_config_object,
-                         kExcludedCategoriesParam, trace_config);
+    UpdateIncludedCategoriesList(isolate, context, trace_config_object,
+                                 trace_config);
   }
 
  private:
@@ -270,10 +300,11 @@ class TraceConfigParser {
     return false;
   }
 
-  static int UpdateCategoriesList(
+  static int UpdateIncludedCategoriesList(
       v8::Isolate* isolate, Local<Context> context, Local<v8::Object> object,
-      const char* property, platform::tracing::TraceConfig* trace_config) {
-    Local<Value> value = GetValue(isolate, context, object, property);
+      platform::tracing::TraceConfig* trace_config) {
+    Local<Value> value =
+        GetValue(isolate, context, object, kIncludedCategoriesParam);
     if (value->IsArray()) {
       Local<Array> v8_array = Local<Array>::Cast(value);
       for (int i = 0, length = v8_array->Length(); i < length; ++i) {
@@ -282,11 +313,7 @@ class TraceConfigParser {
                              ->ToString(context)
                              .ToLocalChecked();
         String::Utf8Value str(v->ToString(context).ToLocalChecked());
-        if (kIncludedCategoriesParam == property) {
-          trace_config->AddIncludedCategory(*str);
-        } else {
-          trace_config->AddExcludedCategory(*str);
-        }
+        trace_config->AddIncludedCategory(*str);
       }
       return v8_array->Length();
     }
@@ -370,7 +397,6 @@ class PerIsolateData {
 };
 
 
-#ifndef V8_SHARED
 CounterMap* Shell::counter_map_;
 base::OS::MemoryMappedFile* Shell::counters_file_ = NULL;
 CounterCollection Shell::local_counters_;
@@ -383,20 +409,17 @@ base::LazyMutex Shell::workers_mutex_;
 bool Shell::allow_new_workers_ = true;
 i::List<Worker*> Shell::workers_;
 i::List<SharedArrayBuffer::Contents> Shell::externalized_shared_contents_;
-#endif  // !V8_SHARED
 
 Global<Context> Shell::evaluation_context_;
 ArrayBuffer::Allocator* Shell::array_buffer_allocator;
 ShellOptions Shell::options;
 base::OnceType Shell::quit_once_ = V8_ONCE_INIT;
 
-#ifndef V8_SHARED
 bool CounterMap::Match(void* key1, void* key2) {
   const char* name1 = reinterpret_cast<const char*>(key1);
   const char* name2 = reinterpret_cast<const char*>(key2);
   return strcmp(name1, name2) == 0;
 }
-#endif  // !V8_SHARED
 
 
 // Converts a V8 value to a C string.
@@ -460,18 +483,12 @@ ScriptCompiler::CachedData* CompileForCachedData(
 // Compile a string within the current v8 context.
 MaybeLocal<Script> Shell::CompileString(
     Isolate* isolate, Local<String> source, Local<Value> name,
-    ScriptCompiler::CompileOptions compile_options, SourceType source_type) {
+    ScriptCompiler::CompileOptions compile_options) {
   Local<Context> context(isolate->GetCurrentContext());
   ScriptOrigin origin(name);
-  // TODO(adamk): Make use of compile options for Modules.
-  if (compile_options == ScriptCompiler::kNoCompileOptions ||
-      source_type == MODULE) {
+  if (compile_options == ScriptCompiler::kNoCompileOptions) {
     ScriptCompiler::Source script_source(source, origin);
-    return source_type == SCRIPT
-               ? ScriptCompiler::Compile(context, &script_source,
-                                         compile_options)
-               : ScriptCompiler::CompileModule(context, &script_source,
-                                               compile_options);
+    return ScriptCompiler::Compile(context, &script_source, compile_options);
   }
 
   ScriptCompiler::CachedData* data =
@@ -485,7 +502,6 @@ MaybeLocal<Script> Shell::CompileString(
     DCHECK(false);  // A new compile option?
   }
   if (data == NULL) compile_options = ScriptCompiler::kNoCompileOptions;
-  DCHECK_EQ(SCRIPT, source_type);
   MaybeLocal<Script> result =
       ScriptCompiler::Compile(context, &cached_source, compile_options);
   CHECK(data == NULL || !data->rejected);
@@ -496,7 +512,7 @@ MaybeLocal<Script> Shell::CompileString(
 // Executes a string within the current v8 context.
 bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
                           Local<Value> name, bool print_result,
-                          bool report_exceptions, SourceType source_type) {
+                          bool report_exceptions) {
   HandleScope handle_scope(isolate);
   TryCatch try_catch(isolate);
   try_catch.SetVerbose(true);
@@ -508,8 +524,8 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
         Local<Context>::New(isolate, data->realms_[data->realm_current_]);
     Context::Scope context_scope(realm);
     Local<Script> script;
-    if (!Shell::CompileString(isolate, source, name, options.compile_options,
-                              source_type).ToLocal(&script)) {
+    if (!Shell::CompileString(isolate, source, name, options.compile_options)
+             .ToLocal(&script)) {
       // Print errors that happened during compilation.
       if (report_exceptions) ReportException(isolate, &try_catch);
       return false;
@@ -527,9 +543,7 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
   }
   DCHECK(!try_catch.HasCaught());
   if (print_result) {
-#if !defined(V8_SHARED)
     if (options.test_shell) {
-#endif
       if (!result->IsUndefined()) {
         // If all went well and the result wasn't undefined then print
         // the returned value.
@@ -537,17 +551,216 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
         fwrite(*str, sizeof(**str), str.length(), stdout);
         printf("\n");
       }
-#if !defined(V8_SHARED)
     } else {
       v8::String::Utf8Value str(Stringify(isolate, result));
       fwrite(*str, sizeof(**str), str.length(), stdout);
       printf("\n");
     }
-#endif
   }
   return true;
 }
 
+namespace {
+
+std::string ToSTLString(Local<String> v8_str) {
+  String::Utf8Value utf8(v8_str);
+  // Should not be able to fail since the input is a String.
+  CHECK(*utf8);
+  return *utf8;
+}
+
+bool IsAbsolutePath(const std::string& path) {
+#if defined(_WIN32) || defined(_WIN64)
+  // TODO(adamk): This is an incorrect approximation, but should
+  // work for all our test-running cases.
+  return path.find(':') != std::string::npos;
+#else
+  return path[0] == '/';
+#endif
+}
+
+std::string GetWorkingDirectory() {
+#if defined(_WIN32) || defined(_WIN64)
+  char system_buffer[MAX_PATH];
+  // TODO(adamk): Support Unicode paths.
+  DWORD len = GetCurrentDirectoryA(MAX_PATH, system_buffer);
+  CHECK(len > 0);
+  return system_buffer;
+#else
+  char curdir[PATH_MAX];
+  CHECK_NOT_NULL(getcwd(curdir, PATH_MAX));
+  return curdir;
+#endif
+}
+
+// Returns the directory part of path, without the trailing '/'.
+std::string DirName(const std::string& path) {
+  DCHECK(IsAbsolutePath(path));
+  size_t last_slash = path.find_last_of('/');
+  DCHECK(last_slash != std::string::npos);
+  return path.substr(0, last_slash);
+}
+
+// Resolves path to an absolute path if necessary, and does some
+// normalization (eliding references to the current directory
+// and replacing backslashes with slashes).
+std::string NormalizePath(const std::string& path,
+                          const std::string& dir_name) {
+  std::string result;
+  if (IsAbsolutePath(path)) {
+    result = path;
+  } else {
+    result = dir_name + '/' + path;
+  }
+  std::replace(result.begin(), result.end(), '\\', '/');
+  size_t i;
+  while ((i = result.find("/./")) != std::string::npos) {
+    result.erase(i, 2);
+  }
+  return result;
+}
+
+// Per-context Module data, allowing sharing of module maps
+// across top-level module loads.
+class ModuleEmbedderData {
+ private:
+  class ModuleGlobalHash {
+   public:
+    explicit ModuleGlobalHash(Isolate* isolate) : isolate_(isolate) {}
+    size_t operator()(const Global<Module>& module) const {
+      return module.Get(isolate_)->GetIdentityHash();
+    }
+
+   private:
+    Isolate* isolate_;
+  };
+
+ public:
+  explicit ModuleEmbedderData(Isolate* isolate)
+      : module_to_directory_map(10, ModuleGlobalHash(isolate)) {}
+
+  // Map from normalized module specifier to Module.
+  std::unordered_map<std::string, Global<Module>> specifier_to_module_map;
+  // Map from Module to the directory that Module was loaded from.
+  std::unordered_map<Global<Module>, std::string, ModuleGlobalHash>
+      module_to_directory_map;
+};
+
+enum {
+  // The debugger reserves the first slot in the Context embedder data.
+  kDebugIdIndex = Context::kDebugIdIndex,
+  kModuleEmbedderDataIndex,
+  kInspectorClientIndex
+};
+
+void InitializeModuleEmbedderData(Local<Context> context) {
+  context->SetAlignedPointerInEmbedderData(
+      kModuleEmbedderDataIndex, new ModuleEmbedderData(context->GetIsolate()));
+}
+
+ModuleEmbedderData* GetModuleDataFromContext(Local<Context> context) {
+  return static_cast<ModuleEmbedderData*>(
+      context->GetAlignedPointerFromEmbedderData(kModuleEmbedderDataIndex));
+}
+
+void DisposeModuleEmbedderData(Local<Context> context) {
+  delete GetModuleDataFromContext(context);
+  context->SetAlignedPointerInEmbedderData(kModuleEmbedderDataIndex, nullptr);
+}
+
+MaybeLocal<Module> ResolveModuleCallback(Local<Context> context,
+                                         Local<String> specifier,
+                                         Local<Module> referrer) {
+  Isolate* isolate = context->GetIsolate();
+  ModuleEmbedderData* d = GetModuleDataFromContext(context);
+  auto dir_name_it =
+      d->module_to_directory_map.find(Global<Module>(isolate, referrer));
+  CHECK(dir_name_it != d->module_to_directory_map.end());
+  std::string absolute_path =
+      NormalizePath(ToSTLString(specifier), dir_name_it->second);
+  auto module_it = d->specifier_to_module_map.find(absolute_path);
+  CHECK(module_it != d->specifier_to_module_map.end());
+  return module_it->second.Get(isolate);
+}
+
+}  // anonymous namespace
+
+MaybeLocal<Module> Shell::FetchModuleTree(Local<Context> context,
+                                          const std::string& file_name) {
+  DCHECK(IsAbsolutePath(file_name));
+  Isolate* isolate = context->GetIsolate();
+  TryCatch try_catch(isolate);
+  try_catch.SetVerbose(true);
+  Local<String> source_text = ReadFile(isolate, file_name.c_str());
+  if (source_text.IsEmpty()) {
+    printf("Error reading '%s'\n", file_name.c_str());
+    Shell::Exit(1);
+  }
+  ScriptOrigin origin(
+      String::NewFromUtf8(isolate, file_name.c_str(), NewStringType::kNormal)
+          .ToLocalChecked());
+  ScriptCompiler::Source source(source_text, origin);
+  Local<Module> module;
+  if (!ScriptCompiler::CompileModule(isolate, &source).ToLocal(&module)) {
+    ReportException(isolate, &try_catch);
+    return MaybeLocal<Module>();
+  }
+
+  ModuleEmbedderData* d = GetModuleDataFromContext(context);
+  CHECK(d->specifier_to_module_map
+            .insert(std::make_pair(file_name, Global<Module>(isolate, module)))
+            .second);
+
+  std::string dir_name = DirName(file_name);
+  CHECK(d->module_to_directory_map
+            .insert(std::make_pair(Global<Module>(isolate, module), dir_name))
+            .second);
+
+  for (int i = 0, length = module->GetModuleRequestsLength(); i < length; ++i) {
+    Local<String> name = module->GetModuleRequest(i);
+    std::string absolute_path = NormalizePath(ToSTLString(name), dir_name);
+    if (!d->specifier_to_module_map.count(absolute_path)) {
+      if (FetchModuleTree(context, absolute_path).IsEmpty()) {
+        return MaybeLocal<Module>();
+      }
+    }
+  }
+
+  return module;
+}
+
+bool Shell::ExecuteModule(Isolate* isolate, const char* file_name) {
+  HandleScope handle_scope(isolate);
+
+  PerIsolateData* data = PerIsolateData::Get(isolate);
+  Local<Context> realm = data->realms_[data->realm_current_].Get(isolate);
+  Context::Scope context_scope(realm);
+
+  std::string absolute_path = NormalizePath(file_name, GetWorkingDirectory());
+
+  Local<Module> root_module;
+  if (!FetchModuleTree(realm, absolute_path).ToLocal(&root_module)) {
+    return false;
+  }
+
+  TryCatch try_catch(isolate);
+  try_catch.SetVerbose(true);
+
+  MaybeLocal<Value> maybe_result;
+  if (root_module->Instantiate(realm, ResolveModuleCallback)) {
+    maybe_result = root_module->Evaluate(realm);
+    EmptyMessageQueues(isolate);
+  }
+  Local<Value> result;
+  if (!maybe_result.ToLocal(&result)) {
+    DCHECK(try_catch.HasCaught());
+    // Print errors that happened during execution.
+    ReportException(isolate, &try_catch);
+    return false;
+  }
+  DCHECK(!try_catch.HasCaught());
+  return true;
+}
 
 PerIsolateData::RealmScope::RealmScope(PerIsolateData* data) : data_(data) {
   data_->realm_count_ = 1;
@@ -561,9 +774,15 @@ PerIsolateData::RealmScope::RealmScope(PerIsolateData* data) : data_(data) {
 
 PerIsolateData::RealmScope::~RealmScope() {
   // Drop realms to avoid keeping them alive.
-  for (int i = 0; i < data_->realm_count_; ++i)
-    data_->realms_[i].Reset();
+  for (int i = 0; i < data_->realm_count_; ++i) {
+    Global<Context>& realm = data_->realms_[i];
+    if (realm.IsEmpty()) continue;
+    DisposeModuleEmbedderData(realm.Get(data_->isolate_));
+    // TODO(adamk): No need to reset manually, Globals reset when destructed.
+    realm.Reset();
+  }
   delete[] data_->realms_;
+  // TODO(adamk): No need to reset manually, Globals reset when destructed.
   if (!data_->realm_shared_.IsEmpty())
     data_->realm_shared_.Reset();
 }
@@ -595,7 +814,6 @@ int PerIsolateData::RealmIndexOrThrow(
 }
 
 
-#ifndef V8_SHARED
 // performance.now() returns a time stamp as double, measured in milliseconds.
 // When FLAG_verify_predictable mode is enabled it returns result of
 // v8::Platform::MonotonicallyIncreasingTime().
@@ -608,7 +826,6 @@ void Shell::PerformanceNow(const v8::FunctionCallbackInfo<v8::Value>& args) {
     args.GetReturnValue().Set(delta.InMillisecondsF());
   }
 }
-#endif  // !V8_SHARED
 
 
 // Realm.current() returns the index of the currently active realm.
@@ -668,6 +885,7 @@ MaybeLocal<Context> Shell::CreateRealm(
     try_catch.ReThrow();
     return MaybeLocal<Context>();
   }
+  InitializeModuleEmbedderData(context);
   data->realms_[index].Reset(isolate, context);
   args.GetReturnValue().Set(index);
   return context;
@@ -701,6 +919,7 @@ void Shell::RealmDispose(const v8::FunctionCallbackInfo<v8::Value>& args) {
     Throw(args.GetIsolate(), "Invalid realm index");
     return;
   }
+  DisposeModuleEmbedderData(data->realms_[index].Get(isolate));
   data->realms_[index].Reset();
   isolate->ContextDisposedNotification();
   isolate->IdleNotificationDeadline(g_platform->MonotonicallyIncreasingTime());
@@ -763,19 +982,11 @@ void Shell::RealmSharedSet(Local<String> property,
   data->realm_shared_.Reset(isolate, value);
 }
 
-
-void Shell::Print(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  Write(args);
-  printf("\n");
-  fflush(stdout);
-}
-
-
-void Shell::Write(const v8::FunctionCallbackInfo<v8::Value>& args) {
+void WriteToFile(FILE* file, const v8::FunctionCallbackInfo<v8::Value>& args) {
   for (int i = 0; i < args.Length(); i++) {
     HandleScope handle_scope(args.GetIsolate());
     if (i != 0) {
-      printf(" ");
+      fprintf(file, " ");
     }
 
     // Explicitly catch potential exceptions in toString().
@@ -793,14 +1004,32 @@ void Shell::Write(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
 
     v8::String::Utf8Value str(str_obj);
-    int n = static_cast<int>(fwrite(*str, sizeof(**str), str.length(), stdout));
+    int n = static_cast<int>(fwrite(*str, sizeof(**str), str.length(), file));
     if (n != str.length()) {
       printf("Error in fwrite\n");
-      Exit(1);
+      Shell::Exit(1);
     }
   }
 }
 
+void WriteAndFlush(FILE* file,
+                   const v8::FunctionCallbackInfo<v8::Value>& args) {
+  WriteToFile(file, args);
+  fprintf(file, "\n");
+  fflush(file);
+}
+
+void Shell::Print(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  WriteAndFlush(stdout, args);
+}
+
+void Shell::PrintErr(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  WriteAndFlush(stderr, args);
+}
+
+void Shell::Write(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  WriteToFile(stdout, args);
+}
 
 void Shell::Read(const v8::FunctionCallbackInfo<v8::Value>& args) {
   String::Utf8Value file(args[0]);
@@ -879,7 +1108,6 @@ void Shell::Load(const v8::FunctionCallbackInfo<v8::Value>& args) {
 }
 
 
-#ifndef V8_SHARED
 void Shell::WorkerNew(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Isolate* isolate = args.GetIsolate();
   HandleScope handle_scope(isolate);
@@ -1001,16 +1229,13 @@ void Shell::WorkerTerminate(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   worker->Terminate();
 }
-#endif  // !V8_SHARED
 
 
 void Shell::QuitOnce(v8::FunctionCallbackInfo<v8::Value>* args) {
   int exit_code = (*args)[0]
                       ->Int32Value(args->GetIsolate()->GetCurrentContext())
                       .FromMaybe(0);
-#ifndef V8_SHARED
   CleanupWorkers();
-#endif  // !V8_SHARED
   OnExit(args->GetIsolate());
   Exit(exit_code);
 }
@@ -1031,14 +1256,12 @@ void Shell::Version(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 void Shell::ReportException(Isolate* isolate, v8::TryCatch* try_catch) {
   HandleScope handle_scope(isolate);
-#ifndef V8_SHARED
   Local<Context> context;
   bool enter_context = !isolate->InContext();
   if (enter_context) {
     context = Local<Context>::New(isolate, evaluation_context_);
     context->Enter();
   }
-#endif  // !V8_SHARED
   v8::String::Utf8Value exception(try_catch->Exception());
   const char* exception_string = ToCString(exception);
   Local<Message> message = try_catch->Message();
@@ -1082,13 +1305,10 @@ void Shell::ReportException(Isolate* isolate, v8::TryCatch* try_catch) {
     }
   }
   printf("\n");
-#ifndef V8_SHARED
   if (enter_context) context->Exit();
-#endif  // !V8_SHARED
 }
 
 
-#ifndef V8_SHARED
 int32_t* Counter::Bind(const char* name, bool is_histogram) {
   int i;
   for (i = 0; i < kMaxNameSize - 1 && name[i]; i++)
@@ -1217,7 +1437,6 @@ Local<String> Shell::Stringify(Isolate* isolate, Local<Value> value) {
   if (result.IsEmpty()) return String::Empty(isolate);
   return result.ToLocalChecked().As<String>();
 }
-#endif  // !V8_SHARED
 
 
 Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
@@ -1226,6 +1445,10 @@ Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
       String::NewFromUtf8(isolate, "print", NewStringType::kNormal)
           .ToLocalChecked(),
       FunctionTemplate::New(isolate, Print));
+  global_template->Set(
+      String::NewFromUtf8(isolate, "printErr", NewStringType::kNormal)
+          .ToLocalChecked(),
+      FunctionTemplate::New(isolate, PrintErr));
   global_template->Set(
       String::NewFromUtf8(isolate, "write", NewStringType::kNormal)
           .ToLocalChecked(),
@@ -1308,7 +1531,6 @@ Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
           .ToLocalChecked(),
       realm_template);
 
-#ifndef V8_SHARED
   Local<ObjectTemplate> performance_template = ObjectTemplate::New(isolate);
   performance_template->Set(
       String::NewFromUtf8(isolate, "now", NewStringType::kNormal)
@@ -1347,7 +1569,6 @@ Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
       String::NewFromUtf8(isolate, "Worker", NewStringType::kNormal)
           .ToLocalChecked(),
       worker_fun_template);
-#endif  // !V8_SHARED
 
   Local<ObjectTemplate> os_templ = ObjectTemplate::New(isolate);
   AddOSMethods(isolate, os_templ);
@@ -1365,29 +1586,25 @@ static void EmptyMessageCallback(Local<Message> message, Local<Value> error) {
 }
 
 void Shell::Initialize(Isolate* isolate) {
-#ifndef V8_SHARED
   // Set up counters
   if (i::StrLength(i::FLAG_map_counters) != 0)
     MapCounters(isolate, i::FLAG_map_counters);
-#endif  // !V8_SHARED
   // Disable default message reporting.
   isolate->AddMessageListener(EmptyMessageCallback);
 }
 
 
 Local<Context> Shell::CreateEvaluationContext(Isolate* isolate) {
-#ifndef V8_SHARED
   // This needs to be a critical section since this is not thread-safe
   base::LockGuard<base::Mutex> lock_guard(context_mutex_.Pointer());
-#endif  // !V8_SHARED
   // Initialize the global objects
   Local<ObjectTemplate> global_template = CreateGlobalTemplate(isolate);
   EscapableHandleScope handle_scope(isolate);
   Local<Context> context = Context::New(isolate, NULL, global_template);
   DCHECK(!context.IsEmpty());
+  InitializeModuleEmbedderData(context);
   Context::Scope scope(context);
 
-#ifndef V8_SHARED
   i::Factory* factory = reinterpret_cast<i::Isolate*>(isolate)->factory();
   i::JSArguments js_args = i::FLAG_js_arguments;
   i::Handle<i::FixedArray> arguments_array =
@@ -1405,21 +1622,9 @@ Local<Context> Shell::CreateEvaluationContext(Isolate* isolate) {
                 .ToLocalChecked(),
             Utils::ToLocal(arguments_jsarray))
       .FromJust();
-#endif  // !V8_SHARED
   return handle_scope.Escape(context);
 }
 
-
-void Shell::Exit(int exit_code) {
-  // Use _exit instead of exit to avoid races between isolate
-  // threads and static destructors.
-  fflush(stdout);
-  fflush(stderr);
-  _exit(exit_code);
-}
-
-
-#ifndef V8_SHARED
 struct CounterAndKey {
   Counter* counter;
   const char* key;
@@ -1444,11 +1649,8 @@ void Shell::WriteIgnitionDispatchCountersFile(v8::Isolate* isolate) {
       JSON::Stringify(context, dispatch_counters).ToLocalChecked());
 }
 
-#endif  // !V8_SHARED
-
 
 void Shell::OnExit(v8::Isolate* isolate) {
-#ifndef V8_SHARED
   if (i::FLAG_dump_counters) {
     int number_of_counters = 0;
     for (CounterMap::Iterator i(counter_map_); i.More(); i.Next()) {
@@ -1484,7 +1686,6 @@ void Shell::OnExit(v8::Isolate* isolate) {
 
   delete counters_file_;
   delete counter_map_;
-#endif  // !V8_SHARED
 }
 
 
@@ -1616,12 +1817,148 @@ void Shell::RunShell(Isolate* isolate) {
   printf("\n");
 }
 
+#ifdef V8_INSPECTOR_ENABLED
+class InspectorFrontend final : public v8_inspector::V8Inspector::Channel {
+ public:
+  explicit InspectorFrontend(Local<Context> context) {
+    isolate_ = context->GetIsolate();
+    context_.Reset(isolate_, context);
+  }
+  virtual ~InspectorFrontend() = default;
+
+ private:
+  void sendResponse(
+      int callId,
+      std::unique_ptr<v8_inspector::StringBuffer> message) override {
+    Send(message->string());
+  }
+  void sendNotification(
+      std::unique_ptr<v8_inspector::StringBuffer> message) override {
+    Send(message->string());
+  }
+  void flushProtocolNotifications() override {}
+
+  void Send(const v8_inspector::StringView& string) {
+    int length = static_cast<int>(string.length());
+    DCHECK(length < v8::String::kMaxLength);
+    Local<String> message =
+        (string.is8Bit()
+             ? v8::String::NewFromOneByte(
+                   isolate_,
+                   reinterpret_cast<const uint8_t*>(string.characters8()),
+                   v8::NewStringType::kNormal, length)
+             : v8::String::NewFromTwoByte(
+                   isolate_,
+                   reinterpret_cast<const uint16_t*>(string.characters16()),
+                   v8::NewStringType::kNormal, length))
+            .ToLocalChecked();
+    Local<String> callback_name =
+        v8::String::NewFromUtf8(isolate_, "receive", v8::NewStringType::kNormal)
+            .ToLocalChecked();
+    Local<Context> context = context_.Get(isolate_);
+    Local<Value> callback =
+        context->Global()->Get(context, callback_name).ToLocalChecked();
+    if (callback->IsFunction()) {
+      v8::TryCatch try_catch(isolate_);
+      Local<Value> args[] = {message};
+      MaybeLocal<Value> result = Local<Function>::Cast(callback)->Call(
+          context, Undefined(isolate_), 1, args);
+#ifdef DEBUG
+      if (try_catch.HasCaught()) {
+        Local<Object> exception = Local<Object>::Cast(try_catch.Exception());
+        Local<String> key = v8::String::NewFromUtf8(isolate_, "message",
+                                                    v8::NewStringType::kNormal)
+                                .ToLocalChecked();
+        Local<String> expected =
+            v8::String::NewFromUtf8(isolate_,
+                                    "Maximum call stack size exceeded",
+                                    v8::NewStringType::kNormal)
+                .ToLocalChecked();
+        CHECK(exception->Get(context, key)
+                  .ToLocalChecked()
+                  ->StrictEquals(expected));
+      }
+#endif
+    }
+  }
+
+  Isolate* isolate_;
+  Global<Context> context_;
+};
+
+class InspectorClient : public v8_inspector::V8InspectorClient {
+ public:
+  InspectorClient(Local<Context> context, bool connect) {
+    if (!connect) return;
+    isolate_ = context->GetIsolate();
+    channel_.reset(new InspectorFrontend(context));
+    inspector_ = v8_inspector::V8Inspector::create(isolate_, this);
+    session_ =
+        inspector_->connect(1, channel_.get(), v8_inspector::StringView());
+    context->SetAlignedPointerInEmbedderData(kInspectorClientIndex, this);
+    inspector_->contextCreated(v8_inspector::V8ContextInfo(
+        context, kContextGroupId, v8_inspector::StringView()));
+
+    Local<Value> function =
+        FunctionTemplate::New(isolate_, SendInspectorMessage)
+            ->GetFunction(context)
+            .ToLocalChecked();
+    Local<String> function_name =
+        String::NewFromUtf8(isolate_, "send", NewStringType::kNormal)
+            .ToLocalChecked();
+    CHECK(context->Global()->Set(context, function_name, function).FromJust());
+
+    context_.Reset(isolate_, context);
+  }
+
+ private:
+  static v8_inspector::V8InspectorSession* GetSession(Local<Context> context) {
+    InspectorClient* inspector_client = static_cast<InspectorClient*>(
+        context->GetAlignedPointerFromEmbedderData(kInspectorClientIndex));
+    return inspector_client->session_.get();
+  }
+
+  Local<Context> ensureDefaultContextInGroup(int group_id) override {
+    DCHECK(isolate_);
+    DCHECK_EQ(kContextGroupId, group_id);
+    return context_.Get(isolate_);
+  }
+
+  static void SendInspectorMessage(
+      const v8::FunctionCallbackInfo<v8::Value>& args) {
+    Isolate* isolate = args.GetIsolate();
+    v8::HandleScope handle_scope(isolate);
+    Local<Context> context = isolate->GetCurrentContext();
+    args.GetReturnValue().Set(Undefined(isolate));
+    Local<String> message = args[0]->ToString(context).ToLocalChecked();
+    v8_inspector::V8InspectorSession* session =
+        InspectorClient::GetSession(context);
+    int length = message->Length();
+    std::unique_ptr<uint16_t[]> buffer(new uint16_t[length]);
+    message->Write(buffer.get(), 0, length);
+    v8_inspector::StringView message_view(buffer.get(), length);
+    session->dispatchProtocolMessage(message_view);
+    args.GetReturnValue().Set(True(isolate));
+  }
+
+  static const int kContextGroupId = 1;
+
+  std::unique_ptr<v8_inspector::V8Inspector> inspector_;
+  std::unique_ptr<v8_inspector::V8InspectorSession> session_;
+  std::unique_ptr<v8_inspector::V8Inspector::Channel> channel_;
+  Global<Context> context_;
+  Isolate* isolate_;
+};
+#else   // V8_INSPECTOR_ENABLED
+class InspectorClient {
+ public:
+  InspectorClient(Local<Context> context, bool connect) { CHECK(!connect); }
+};
+#endif  // V8_INSPECTOR_ENABLED
 
 SourceGroup::~SourceGroup() {
-#ifndef V8_SHARED
   delete thread_;
   thread_ = NULL;
-#endif  // !V8_SHARED
 }
 
 
@@ -1629,7 +1966,6 @@ void SourceGroup::Execute(Isolate* isolate) {
   bool exception_was_thrown = false;
   for (int i = begin_offset_; i < end_offset_; ++i) {
     const char* arg = argv_[i];
-    Shell::SourceType source_type = Shell::SCRIPT;
     if (strcmp(arg, "-e") == 0 && i + 1 < end_offset_) {
       // Execute argument given to -e option directly.
       HandleScope handle_scope(isolate);
@@ -1648,8 +1984,13 @@ void SourceGroup::Execute(Isolate* isolate) {
       continue;
     } else if (strcmp(arg, "--module") == 0 && i + 1 < end_offset_) {
       // Treat the next file as a module.
-      source_type = Shell::MODULE;
       arg = argv_[++i];
+      Shell::options.script_executed = true;
+      if (!Shell::ExecuteModule(isolate, arg)) {
+        exception_was_thrown = true;
+        break;
+      }
+      continue;
     } else if (arg[0] == '-') {
       // Ignore other options. They have been parsed already.
       continue;
@@ -1666,8 +2007,7 @@ void SourceGroup::Execute(Isolate* isolate) {
       Shell::Exit(1);
     }
     Shell::options.script_executed = true;
-    if (!Shell::ExecuteString(isolate, source, file_name, false, true,
-                              source_type)) {
+    if (!Shell::ExecuteString(isolate, source, file_name, false, true)) {
       exception_was_thrown = true;
       break;
     }
@@ -1690,7 +2030,6 @@ Local<String> SourceGroup::ReadFile(Isolate* isolate, const char* name) {
 }
 
 
-#ifndef V8_SHARED
 base::Thread::Options SourceGroup::GetThreadOptions() {
   // On some systems (OSX 10.6) the stack size default is 0.5Mb or less
   // which is not enough to parse the big literal expressions used in tests.
@@ -1698,7 +2037,6 @@ base::Thread::Options SourceGroup::GetThreadOptions() {
   // OS-specific padding for thread startup code.  2Mbytes seems to be enough.
   return base::Thread::Options("IsolateThread", 2 * MB);
 }
-
 
 void SourceGroup::ExecuteInThread() {
   Isolate::CreateParams create_params;
@@ -1714,9 +2052,12 @@ void SourceGroup::ExecuteInThread() {
         Local<Context> context = Shell::CreateEvaluationContext(isolate);
         {
           Context::Scope cscope(context);
+          InspectorClient inspector_client(context,
+                                           Shell::options.enable_inspector);
           PerIsolateData::RealmScope realm_scope(PerIsolateData::Get(isolate));
           Execute(isolate);
         }
+        DisposeModuleEmbedderData(context);
       }
       Shell::CollectGarbage(isolate);
     }
@@ -1976,6 +2317,7 @@ void Worker::ExecuteInThread() {
           }
         }
       }
+      DisposeModuleEmbedderData(context);
     }
     Shell::CollectGarbage(isolate);
   }
@@ -2014,7 +2356,6 @@ void Worker::PostMessageOut(const v8::FunctionCallbackInfo<v8::Value>& args) {
     delete data;
   }
 }
-#endif  // !V8_SHARED
 
 
 void SetFlagsFromString(const char* flags) {
@@ -2070,30 +2411,16 @@ bool Shell::SetOptions(int argc, char* argv[]) {
       // JavaScript engines.
       continue;
     } else if (strcmp(argv[i], "--isolate") == 0) {
-#ifdef V8_SHARED
-      printf("D8 with shared library does not support multi-threading\n");
-      return false;
-#endif  // V8_SHARED
       options.num_isolates++;
     } else if (strcmp(argv[i], "--dump-heap-constants") == 0) {
-#ifdef V8_SHARED
-      printf("D8 with shared library does not support constant dumping\n");
-      return false;
-#else
       options.dump_heap_constants = true;
       argv[i] = NULL;
-#endif  // V8_SHARED
     } else if (strcmp(argv[i], "--throws") == 0) {
       options.expected_to_throw = true;
       argv[i] = NULL;
     } else if (strncmp(argv[i], "--icu-data-file=", 16) == 0) {
       options.icu_data_file = argv[i] + 16;
       argv[i] = NULL;
-#ifdef V8_SHARED
-    } else if (strcmp(argv[i], "--dump-counters") == 0) {
-      printf("D8 with shared library does not include counters\n");
-      return false;
-#endif  // V8_SHARED
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
     } else if (strncmp(argv[i], "--natives_blob=", 15) == 0) {
       options.natives_blob = argv[i] + 15;
@@ -2121,6 +2448,9 @@ bool Shell::SetOptions(int argc, char* argv[]) {
       argv[i] = NULL;
     } else if (strncmp(argv[i], "--trace-config=", 15) == 0) {
       options.trace_config = argv[i] + 15;
+      argv[i] = NULL;
+    } else if (strcmp(argv[i], "--enable-inspector") == 0) {
+      options.enable_inspector = true;
       argv[i] = NULL;
     }
   }
@@ -2159,11 +2489,9 @@ bool Shell::SetOptions(int argc, char* argv[]) {
 
 
 int Shell::RunMain(Isolate* isolate, int argc, char* argv[], bool last_run) {
-#ifndef V8_SHARED
   for (int i = 1; i < options.num_isolates; ++i) {
     options.isolate_sources[i].StartExecuteInThread();
   }
-#endif  // !V8_SHARED
   {
     HandleScope scope(isolate);
     Local<Context> context = CreateEvaluationContext(isolate);
@@ -2173,12 +2501,13 @@ int Shell::RunMain(Isolate* isolate, int argc, char* argv[], bool last_run) {
     }
     {
       Context::Scope cscope(context);
+      InspectorClient inspector_client(context, options.enable_inspector);
       PerIsolateData::RealmScope realm_scope(PerIsolateData::Get(isolate));
       options.isolate_sources[0].Execute(isolate);
     }
+    DisposeModuleEmbedderData(context);
   }
   CollectGarbage(isolate);
-#ifndef V8_SHARED
   for (int i = 1; i < options.num_isolates; ++i) {
     if (last_run) {
       options.isolate_sources[i].JoinThread();
@@ -2187,7 +2516,6 @@ int Shell::RunMain(Isolate* isolate, int argc, char* argv[], bool last_run) {
     }
   }
   CleanupWorkers();
-#endif  // !V8_SHARED
   return 0;
 }
 
@@ -2209,17 +2537,12 @@ void Shell::CollectGarbage(Isolate* isolate) {
 
 
 void Shell::EmptyMessageQueues(Isolate* isolate) {
-#ifndef V8_SHARED
   if (!i::FLAG_verify_predictable) {
-#endif
     while (v8::platform::PumpMessageLoop(g_platform, isolate)) continue;
-#ifndef V8_SHARED
   }
-#endif
 }
 
 
-#ifndef V8_SHARED
 bool Shell::SerializeValue(Isolate* isolate, Local<Value> value,
                            const ObjectList& to_transfer,
                            ObjectList* seen_objects,
@@ -2534,14 +2857,11 @@ static void DumpHeapConstants(i::Isolate* isolate) {
   printf("}\n");
 #undef ROOT_LIST_CASE
 }
-#endif  // !V8_SHARED
 
 
 int Shell::Main(int argc, char* argv[]) {
   std::ofstream trace_file;
-#ifndef V8_SHARED
   v8::base::debug::EnableInProcessStackDumping();
-#endif
 #if (defined(_WIN32) || defined(_WIN64))
   UINT new_flags =
       SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
@@ -2559,13 +2879,23 @@ int Shell::Main(int argc, char* argv[]) {
 #endif  // defined(_WIN32) || defined(_WIN64)
   if (!SetOptions(argc, argv)) return 1;
   v8::V8::InitializeICUDefaultLocation(argv[0], options.icu_data_file);
-#ifndef V8_SHARED
   g_platform = i::FLAG_verify_predictable
                    ? new PredictablePlatform()
                    : v8::platform::CreateDefaultPlatform();
-#else
-  g_platform = v8::platform::CreateDefaultPlatform();
-#endif  // !V8_SHARED
+
+  platform::tracing::TracingController* tracing_controller;
+  if (options.trace_enabled) {
+    trace_file.open("v8_trace.json");
+    tracing_controller = new platform::tracing::TracingController();
+    platform::tracing::TraceBuffer* trace_buffer =
+        platform::tracing::TraceBuffer::CreateTraceBufferRingBuffer(
+            platform::tracing::TraceBuffer::kRingBufferChunks,
+            platform::tracing::TraceWriter::CreateJSONTraceWriter(trace_file));
+    tracing_controller->Initialize(trace_buffer);
+    if (!i::FLAG_verify_predictable) {
+      platform::SetTracingController(g_platform, tracing_controller);
+    }
+  }
 
   v8::V8::InitializePlatform(g_platform);
   v8::V8::Initialize();
@@ -2591,18 +2921,17 @@ int Shell::Main(int argc, char* argv[]) {
 #ifdef ENABLE_VTUNE_JIT_INTERFACE
   create_params.code_event_handler = vTune::GetVtuneCodeEventHandler();
 #endif
-#ifndef V8_SHARED
   create_params.constraints.ConfigureDefaults(
       base::SysInfo::AmountOfPhysicalMemory(),
       base::SysInfo::AmountOfVirtualMemory());
 
   Shell::counter_map_ = new CounterMap();
-  if (i::FLAG_dump_counters || i::FLAG_track_gc_object_stats) {
+  if (i::FLAG_dump_counters || i::FLAG_gc_stats) {
     create_params.counter_lookup_callback = LookupCounter;
     create_params.create_histogram_callback = CreateHistogram;
     create_params.add_histogram_sample_callback = AddHistogramSample;
   }
-#endif
+
   Isolate* isolate = Isolate::New(create_params);
   {
     Isolate::Scope scope(isolate);
@@ -2610,14 +2939,6 @@ int Shell::Main(int argc, char* argv[]) {
     PerIsolateData data(isolate);
 
     if (options.trace_enabled) {
-      trace_file.open("v8_trace.json");
-      platform::tracing::TracingController* tracing_controller =
-          new platform::tracing::TracingController();
-      platform::tracing::TraceBuffer* trace_buffer =
-          platform::tracing::TraceBuffer::CreateTraceBufferRingBuffer(
-              platform::tracing::TraceBuffer::kRingBufferChunks,
-              platform::tracing::TraceWriter::CreateJSONTraceWriter(
-                  trace_file));
       platform::tracing::TraceConfig* trace_config;
       if (options.trace_config) {
         int size = 0;
@@ -2630,23 +2951,13 @@ int Shell::Main(int argc, char* argv[]) {
         trace_config =
             platform::tracing::TraceConfig::CreateDefaultTraceConfig();
       }
-      tracing_controller->Initialize(trace_buffer);
       tracing_controller->StartTracing(trace_config);
-#ifndef V8_SHARED
-      if (!i::FLAG_verify_predictable) {
-        platform::SetTracingController(g_platform, tracing_controller);
-      }
-#else
-      platform::SetTracingController(g_platform, tracing_controller);
-#endif
     }
 
-#ifndef V8_SHARED
     if (options.dump_heap_constants) {
       DumpHeapConstants(reinterpret_cast<i::Isolate*>(isolate));
       return 0;
     }
-#endif
 
     if (options.stress_opt || options.stress_deopt) {
       Testing::SetStressRunType(options.stress_opt
@@ -2662,7 +2973,6 @@ int Shell::Main(int argc, char* argv[]) {
       }
       printf("======== Full Deoptimization =======\n");
       Testing::DeoptimizeAll(isolate);
-#if !defined(V8_SHARED)
     } else if (i::FLAG_stress_runs > 0) {
       options.stress_runs = i::FLAG_stress_runs;
       for (int i = 0; i < options.stress_runs && result == 0; i++) {
@@ -2671,7 +2981,6 @@ int Shell::Main(int argc, char* argv[]) {
         bool last_run = i == options.stress_runs - 1;
         result = RunMain(isolate, argc, argv, last_run);
       }
-#endif
     } else {
       bool last_run = true;
       result = RunMain(isolate, argc, argv, last_run);
@@ -2683,33 +2992,30 @@ int Shell::Main(int argc, char* argv[]) {
       RunShell(isolate);
     }
 
-#ifndef V8_SHARED
-    if (i::FLAG_ignition && i::FLAG_trace_ignition_dispatches &&
+    if (i::FLAG_trace_ignition_dispatches &&
         i::FLAG_trace_ignition_dispatches_output_file != nullptr) {
       WriteIgnitionDispatchCountersFile(isolate);
     }
-#endif
 
     // Shut down contexts and collect garbage.
     evaluation_context_.Reset();
-#ifndef V8_SHARED
     stringify_function_.Reset();
-#endif  // !V8_SHARED
     CollectGarbage(isolate);
   }
   OnExit(isolate);
-#ifndef V8_SHARED
   // Dump basic block profiling data.
   if (i::BasicBlockProfiler* profiler =
           reinterpret_cast<i::Isolate*>(isolate)->basic_block_profiler()) {
     i::OFStream os(stdout);
     os << *profiler;
   }
-#endif  // !V8_SHARED
   isolate->Dispose();
   V8::Dispose();
   V8::ShutdownPlatform();
   delete g_platform;
+  if (i::FLAG_verify_predictable) {
+    delete tracing_controller;
+  }
 
   return result;
 }

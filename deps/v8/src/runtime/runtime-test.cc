@@ -8,6 +8,7 @@
 
 #include "src/arguments.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
+#include "src/compiler.h"
 #include "src/deoptimizer.h"
 #include "src/frames-inl.h"
 #include "src/full-codegen/full-codegen.h"
@@ -16,6 +17,7 @@
 #include "src/snapshot/code-serializer.h"
 #include "src/snapshot/natives.h"
 #include "src/wasm/wasm-module.h"
+#include "src/wasm/wasm-objects.h"
 
 namespace v8 {
 namespace internal {
@@ -122,6 +124,12 @@ RUNTIME_FUNCTION(Runtime_OptimizeFunctionOnNextCall) {
   if (!(function->shared()->allows_lazy_compilation() ||
         (function->code()->kind() == Code::FUNCTION &&
          !function->shared()->optimization_disabled()))) {
+    return isolate->heap()->undefined_value();
+  }
+
+  // If function isn't compiled, compile it now.
+  if (!function->shared()->is_compiled() &&
+      !Compiler::Compile(function, Compiler::CLEAR_EXCEPTION)) {
     return isolate->heap()->undefined_value();
   }
 
@@ -266,6 +274,9 @@ RUNTIME_FUNCTION(Runtime_GetOptimizationStatus) {
   if (function->IsOptimized() && function->code()->is_turbofanned()) {
     return Smi::FromInt(7);  // 7 == "TurboFan compiler".
   }
+  if (function->IsInterpreted()) {
+    return Smi::FromInt(8);  // 8 == "Interpreted".
+  }
   return function->IsOptimized() ? Smi::FromInt(1)   // 1 == "yes".
                                  : Smi::FromInt(2);  // 2 == "no".
 }
@@ -288,6 +299,9 @@ RUNTIME_FUNCTION(Runtime_GetOptimizationCount) {
   return Smi::FromInt(function->shared()->opt_count());
 }
 
+static void ReturnThis(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetReturnValue().Set(args.This());
+}
 
 RUNTIME_FUNCTION(Runtime_GetUndetectable) {
   HandleScope scope(isolate);
@@ -296,6 +310,7 @@ RUNTIME_FUNCTION(Runtime_GetUndetectable) {
 
   Local<v8::ObjectTemplate> desc = v8::ObjectTemplate::New(v8_isolate);
   desc->MarkAsUndetectable();
+  desc->SetCallAsFunctionHandler(ReturnThis);
   Local<v8::Object> obj;
   if (!desc->NewInstance(v8_isolate->GetCurrentContext()).ToLocal(&obj)) {
     return nullptr;
@@ -419,8 +434,8 @@ RUNTIME_FUNCTION(Runtime_SetAllocationTimeout) {
   SealHandleScope shs(isolate);
   DCHECK(args.length() == 2 || args.length() == 3);
 #ifdef DEBUG
-  CONVERT_SMI_ARG_CHECKED(interval, 0);
-  CONVERT_SMI_ARG_CHECKED(timeout, 1);
+  CONVERT_INT32_ARG_CHECKED(interval, 0);
+  CONVERT_INT32_ARG_CHECKED(timeout, 1);
   isolate->heap()->set_allocation_timeout(timeout);
   FLAG_gc_interval = interval;
   if (args.length() == 3) {
@@ -443,7 +458,7 @@ RUNTIME_FUNCTION(Runtime_DebugPrint) {
 
   OFStream os(stdout);
 #ifdef DEBUG
-  if (args[0]->IsString()) {
+  if (args[0]->IsString() && isolate->context() != nullptr) {
     // If we have a string, assume it's a code "marker"
     // and print some interesting cpu debugging info.
     JavaScriptFrameIterator it(isolate);
@@ -456,7 +471,6 @@ RUNTIME_FUNCTION(Runtime_DebugPrint) {
   }
   args[0]->Print(os);
   if (args[0]->IsHeapObject()) {
-    os << "\n";
     HeapObject::cast(args[0])->map()->Print(os);
   }
 #else
@@ -546,8 +560,7 @@ RUNTIME_FUNCTION(Runtime_NativeScriptsCount) {
   return Smi::FromInt(Natives::GetBuiltinsCount());
 }
 
-
-// Returns V8 version as a string.
+// TODO(5510): remove this.
 RUNTIME_FUNCTION(Runtime_GetV8Version) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 0);
@@ -733,15 +746,18 @@ RUNTIME_FUNCTION(Runtime_SpeciesProtector) {
   return isolate->heap()->ToBoolean(isolate->IsArraySpeciesLookupChainIntact());
 }
 
+#define CONVERT_ARG_HANDLE_CHECKED_2(Type, name, index) \
+  CHECK(Type::Is##Type(args[index]));                   \
+  Handle<Type> name = args.at<Type>(index);
+
 // Take a compiled wasm module, serialize it and copy the buffer into an array
 // buffer, which is then returned.
 RUNTIME_FUNCTION(Runtime_SerializeWasmModule) {
   HandleScope shs(isolate);
   DCHECK(args.length() == 1);
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, module_obj, 0);
+  CONVERT_ARG_HANDLE_CHECKED_2(WasmModuleObject, module_obj, 0);
 
-  Handle<FixedArray> orig =
-      handle(FixedArray::cast(module_obj->GetInternalField(0)));
+  Handle<WasmCompiledModule> orig = handle(module_obj->get_compiled_module());
   std::unique_ptr<ScriptData> data =
       WasmCompiledModuleSerializer::SerializeWasmModule(isolate, orig);
   void* buff = isolate->array_buffer_allocator()->Allocate(data->length());
@@ -755,20 +771,63 @@ RUNTIME_FUNCTION(Runtime_SerializeWasmModule) {
 // Return undefined if unsuccessful.
 RUNTIME_FUNCTION(Runtime_DeserializeWasmModule) {
   HandleScope shs(isolate);
-  DCHECK(args.length() == 1);
+  DCHECK(args.length() == 2);
   CONVERT_ARG_HANDLE_CHECKED(JSArrayBuffer, buffer, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSArrayBuffer, wire_bytes, 1);
 
   Address mem_start = static_cast<Address>(buffer->backing_store());
   int mem_size = static_cast<int>(buffer->byte_length()->Number());
 
+  // DeserializeWasmModule will allocate. We assume JSArrayBuffer doesn't
+  // get relocated.
   ScriptData sc(mem_start, mem_size);
+  bool already_external = wire_bytes->is_external();
+  if (!already_external) {
+    wire_bytes->set_is_external(true);
+    isolate->heap()->UnregisterArrayBuffer(*wire_bytes);
+  }
   MaybeHandle<FixedArray> maybe_compiled_module =
-      WasmCompiledModuleSerializer::DeserializeWasmModule(isolate, &sc);
+      WasmCompiledModuleSerializer::DeserializeWasmModule(
+          isolate, &sc,
+          Vector<const uint8_t>(
+              reinterpret_cast<uint8_t*>(wire_bytes->backing_store()),
+              static_cast<int>(wire_bytes->byte_length()->Number())));
+  if (!already_external) {
+    wire_bytes->set_is_external(false);
+    isolate->heap()->RegisterNewArrayBuffer(*wire_bytes);
+  }
   Handle<FixedArray> compiled_module;
   if (!maybe_compiled_module.ToHandle(&compiled_module)) {
     return isolate->heap()->undefined_value();
   }
-  return *wasm::CreateCompiledModuleObject(isolate, compiled_module);
+  return *WasmModuleObject::New(
+      isolate, Handle<WasmCompiledModule>::cast(compiled_module));
+}
+
+RUNTIME_FUNCTION(Runtime_ValidateWasmInstancesChain) {
+  HandleScope shs(isolate);
+  DCHECK(args.length() == 2);
+  CONVERT_ARG_HANDLE_CHECKED_2(WasmModuleObject, module_obj, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Smi, instance_count, 1);
+  wasm::testing::ValidateInstancesChain(isolate, module_obj,
+                                        instance_count->value());
+  return isolate->heap()->ToBoolean(true);
+}
+
+RUNTIME_FUNCTION(Runtime_ValidateWasmModuleState) {
+  HandleScope shs(isolate);
+  DCHECK(args.length() == 1);
+  CONVERT_ARG_HANDLE_CHECKED_2(WasmModuleObject, module_obj, 0);
+  wasm::testing::ValidateModuleState(isolate, module_obj);
+  return isolate->heap()->ToBoolean(true);
+}
+
+RUNTIME_FUNCTION(Runtime_ValidateWasmOrphanedInstance) {
+  HandleScope shs(isolate);
+  DCHECK(args.length() == 1);
+  CONVERT_ARG_HANDLE_CHECKED_2(WasmInstanceObject, instance, 0);
+  wasm::testing::ValidateOrphanedInstance(isolate, instance);
+  return isolate->heap()->ToBoolean(true);
 }
 
 }  // namespace internal

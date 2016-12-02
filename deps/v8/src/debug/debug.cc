@@ -14,6 +14,7 @@
 #include "src/compilation-cache.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
 #include "src/compiler.h"
+#include "src/debug/liveedit.h"
 #include "src/deoptimizer.h"
 #include "src/execution.h"
 #include "src/frames-inl.h"
@@ -26,7 +27,6 @@
 #include "src/log.h"
 #include "src/messages.h"
 #include "src/snapshot/natives.h"
-#include "src/wasm/wasm-debug.h"
 #include "src/wasm/wasm-module.h"
 
 #include "include/v8-debug.h"
@@ -211,7 +211,7 @@ void CodeBreakIterator::Next() {
   int offset = code_offset();
   while (!source_position_iterator_.done() &&
          source_position_iterator_.code_offset() <= offset) {
-    position_ = source_position_iterator_.source_position();
+    position_ = source_position_iterator_.source_position().ScriptOffset();
     if (source_position_iterator_.is_statement()) {
       statement_position_ = position_;
     }
@@ -295,7 +295,7 @@ void BytecodeArrayBreakIterator::Next() {
     if (!first) source_position_iterator_.Advance();
     first = false;
     if (Done()) return;
-    position_ = source_position_iterator_.source_position();
+    position_ = source_position_iterator_.source_position().ScriptOffset();
     if (source_position_iterator_.is_statement()) {
       statement_position_ = position_;
     }
@@ -935,7 +935,7 @@ void Debug::PrepareStepOnThrow() {
     it.Advance();
   }
 
-  if (last_step_action() == StepNext) {
+  if (last_step_action() == StepNext || last_step_action() == StepOut) {
     while (!it.done()) {
       Address current_fp = it.frame()->UnpaddedFP();
       if (current_fp >= thread_local_.target_fp_) break;
@@ -1176,34 +1176,6 @@ static Address ComputeNewPcForRedirect(Code* new_code, Code* old_code,
 }
 
 
-// Count the number of continuations at which the current pc offset is at.
-static int ComputeContinuationIndexFromPcOffset(Code* code, int pc_offset) {
-  DCHECK_EQ(code->kind(), Code::FUNCTION);
-  Address pc = code->instruction_start() + pc_offset;
-  int mask = RelocInfo::ModeMask(RelocInfo::GENERATOR_CONTINUATION);
-  int index = 0;
-  for (RelocIterator it(code, mask); !it.done(); it.next()) {
-    index++;
-    RelocInfo* rinfo = it.rinfo();
-    Address current_pc = rinfo->pc();
-    if (current_pc == pc) break;
-    DCHECK(current_pc < pc);
-  }
-  return index;
-}
-
-
-// Find the pc offset for the given continuation index.
-static int ComputePcOffsetFromContinuationIndex(Code* code, int index) {
-  DCHECK_EQ(code->kind(), Code::FUNCTION);
-  DCHECK(code->has_debug_break_slots());
-  int mask = RelocInfo::ModeMask(RelocInfo::GENERATOR_CONTINUATION);
-  RelocIterator it(code, mask);
-  for (int i = 1; i < index; i++) it.next();
-  return static_cast<int>(it.rinfo()->pc() - code->instruction_start());
-}
-
-
 class RedirectActiveFunctions : public ThreadVisitor {
  public:
   explicit RedirectActiveFunctions(SharedFunctionInfo* shared)
@@ -1267,7 +1239,6 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
   }
 
   List<Handle<JSFunction> > functions;
-  List<Handle<JSGeneratorObject> > suspended_generators;
 
   // Flush all optimized code maps. Note that the below heap iteration does not
   // cover this, because the given function might have been inlined into code
@@ -1281,7 +1252,7 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
 
   // Make sure we abort incremental marking.
   isolate_->heap()->CollectAllGarbage(Heap::kMakeHeapIterableMask,
-                                      "prepare for break points");
+                                      GarbageCollectionReason::kDebugger);
 
   DCHECK(shared->is_compiled());
   bool baseline_exists = shared->HasBaselineCode();
@@ -1292,8 +1263,6 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
     // smarter here and avoid the heap walk.
     HeapIterator iterator(isolate_->heap());
     HeapObject* obj;
-    // Continuation from old-style generators need to be recomputed.
-    bool find_resumables = baseline_exists && shared->is_resumable();
 
     while ((obj = iterator.next())) {
       if (obj->IsJSFunction()) {
@@ -1305,41 +1274,21 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
         if (baseline_exists && function->shared() == *shared) {
           functions.Add(handle(function));
         }
-      } else if (find_resumables && obj->IsJSGeneratorObject()) {
-        // This case handles async functions as well, as they use generator
-        // objects for in-progress async function execution.
-        JSGeneratorObject* generator_obj = JSGeneratorObject::cast(obj);
-        if (!generator_obj->is_suspended()) continue;
-        JSFunction* function = generator_obj->function();
-        if (!function->Inlines(*shared)) continue;
-        int pc_offset = generator_obj->continuation();
-        int index =
-            ComputeContinuationIndexFromPcOffset(function->code(), pc_offset);
-        generator_obj->set_continuation(index);
-        suspended_generators.Add(handle(generator_obj));
       }
     }
   }
 
   // We do not need to replace code to debug bytecode.
   DCHECK(baseline_exists || functions.is_empty());
-  DCHECK(baseline_exists || suspended_generators.is_empty());
 
   // We do not need to recompile to debug bytecode.
   if (baseline_exists && !shared->code()->has_debug_break_slots()) {
-    DCHECK(functions.length() > 0);
-    if (!Compiler::CompileDebugCode(functions.first())) return false;
+    if (!Compiler::CompileDebugCode(shared)) return false;
   }
 
   for (Handle<JSFunction> const function : functions) {
     function->ReplaceCode(shared->code());
     JSFunction::EnsureLiterals(function);
-  }
-
-  for (Handle<JSGeneratorObject> const generator_obj : suspended_generators) {
-    int index = generator_obj->continuation();
-    int pc_offset = ComputePcOffsetFromContinuationIndex(shared->code(), index);
-    generator_obj->set_continuation(pc_offset);
   }
 
   // Update PCs on the stack to point to recompiled code.
@@ -1350,9 +1299,97 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
   return true;
 }
 
-void Debug::RecordAsyncFunction(Handle<JSGeneratorObject> generator_object) {
+namespace {
+template <typename Iterator>
+void GetBreakablePositions(Iterator* it, int start_position, int end_position,
+                           BreakPositionAlignment alignment,
+                           std::set<int>* positions) {
+  it->SkipToPosition(start_position, alignment);
+  while (!it->Done() && it->position() < end_position &&
+         it->position() >= start_position) {
+    positions->insert(alignment == STATEMENT_ALIGNED ? it->statement_position()
+                                                     : it->position());
+    it->Next();
+  }
+}
+
+void FindBreakablePositions(Handle<DebugInfo> debug_info, int start_position,
+                            int end_position, BreakPositionAlignment alignment,
+                            std::set<int>* positions) {
+  if (debug_info->HasDebugCode()) {
+    CodeBreakIterator it(debug_info, ALL_BREAK_LOCATIONS);
+    GetBreakablePositions(&it, start_position, end_position, alignment,
+                          positions);
+  } else {
+    DCHECK(debug_info->HasDebugBytecodeArray());
+    BytecodeArrayBreakIterator it(debug_info, ALL_BREAK_LOCATIONS);
+    GetBreakablePositions(&it, start_position, end_position, alignment,
+                          positions);
+  }
+}
+}  // namespace
+
+bool Debug::GetPossibleBreakpoints(Handle<Script> script, int start_position,
+                                   int end_position, std::set<int>* positions) {
+  while (true) {
+    if (!script->shared_function_infos()->IsWeakFixedArray()) return false;
+
+    WeakFixedArray* infos =
+        WeakFixedArray::cast(script->shared_function_infos());
+    HandleScope scope(isolate_);
+    List<Handle<SharedFunctionInfo>> candidates;
+    {
+      WeakFixedArray::Iterator iterator(infos);
+      SharedFunctionInfo* info;
+      while ((info = iterator.Next<SharedFunctionInfo>())) {
+        if (info->end_position() < start_position ||
+            info->start_position() >= end_position) {
+          continue;
+        }
+        if (!info->IsSubjectToDebugging()) continue;
+        if (!info->HasDebugCode() && !info->allows_lazy_compilation()) continue;
+        candidates.Add(i::handle(info));
+      }
+    }
+
+    bool was_compiled = false;
+    for (int i = 0; i < candidates.length(); ++i) {
+      // Code that cannot be compiled lazily are internal and not debuggable.
+      DCHECK(candidates[i]->allows_lazy_compilation());
+      if (!candidates[i]->HasDebugCode()) {
+        if (!Compiler::CompileDebugCode(candidates[i])) {
+          return false;
+        } else {
+          was_compiled = true;
+        }
+      }
+      if (!EnsureDebugInfo(candidates[i], Handle<JSFunction>::null()))
+        return false;
+    }
+    if (was_compiled) continue;
+
+    for (int i = 0; i < candidates.length(); ++i) {
+      CHECK(candidates[i]->HasDebugInfo());
+      Handle<DebugInfo> debug_info(candidates[i]->GetDebugInfo());
+      FindBreakablePositions(debug_info, start_position, end_position,
+                             STATEMENT_ALIGNED, positions);
+    }
+    return true;
+  }
+  UNREACHABLE();
+  return false;
+}
+
+void Debug::RecordGenerator(Handle<JSGeneratorObject> generator_object) {
   if (last_step_action() <= StepOut) return;
-  if (!generator_object->function()->shared()->is_async()) return;
+
+  if (last_step_action() == StepNext) {
+    // Only consider this generator a step-next target if not stepping in.
+    JavaScriptFrameIterator stack_iterator(isolate_);
+    JavaScriptFrame* frame = stack_iterator.frame();
+    if (frame->UnpaddedFP() < thread_local_.target_fp_) return;
+  }
+
   DCHECK(!has_suspended_generator());
   thread_local_.suspended_generator_ = *generator_object;
   ClearStepping();
@@ -1448,44 +1485,11 @@ Handle<Object> Debug::FindSharedFunctionInfoInScript(Handle<Script> script,
         return shared_handle;
       }
     }
-    // If not, compile to reveal inner functions, if possible.
-    if (shared->allows_lazy_compilation_without_context()) {
-      HandleScope scope(isolate_);
-      if (!Compiler::CompileDebugCode(handle(shared))) break;
-      continue;
-    }
-
-    // If not possible, comb the heap for the best suitable compile target.
-    JSFunction* closure;
-    {
-      HeapIterator it(isolate_->heap());
-      SharedFunctionInfoFinder finder(position);
-      while (HeapObject* object = it.next()) {
-        JSFunction* candidate_closure = NULL;
-        SharedFunctionInfo* candidate = NULL;
-        if (object->IsJSFunction()) {
-          candidate_closure = JSFunction::cast(object);
-          candidate = candidate_closure->shared();
-        } else if (object->IsSharedFunctionInfo()) {
-          candidate = SharedFunctionInfo::cast(object);
-          if (!candidate->allows_lazy_compilation_without_context()) continue;
-        } else {
-          continue;
-        }
-        if (candidate->script() == *script) {
-          finder.NewCandidate(candidate, candidate_closure);
-        }
-      }
-      closure = finder.ResultClosure();
-      shared = finder.Result();
-    }
-    if (shared == NULL) break;
+    // If not, compile to reveal inner functions.
     HandleScope scope(isolate_);
-    if (closure == NULL) {
-      if (!Compiler::CompileDebugCode(handle(shared))) break;
-    } else {
-      if (!Compiler::CompileDebugCode(handle(closure))) break;
-    }
+    // Code that cannot be compiled lazily are internal and not debuggable.
+    DCHECK(shared->allows_lazy_compilation());
+    if (!Compiler::CompileDebugCode(handle(shared))) break;
   }
   return isolate_->factory()->undefined_value();
 }
@@ -1576,10 +1580,9 @@ bool Debug::IsBreakAtReturn(JavaScriptFrame* frame) {
   return location.IsReturn() || location.IsTailCall();
 }
 
-
 void Debug::FramesHaveBeenDropped(StackFrame::Id new_break_frame_id,
-                                  LiveEdit::FrameDropMode mode) {
-  if (mode != LiveEdit::CURRENTLY_SET_MODE) {
+                                  LiveEditFrameDropMode mode) {
+  if (mode != LIVE_EDIT_CURRENTLY_SET_MODE) {
     thread_local_.frame_drop_mode_ = mode;
   }
   thread_local_.break_frame_id_ = new_break_frame_id;
@@ -1599,7 +1602,8 @@ void Debug::ClearMirrorCache() {
 
 
 Handle<FixedArray> Debug::GetLoadedScripts() {
-  isolate_->heap()->CollectAllGarbage();
+  isolate_->heap()->CollectAllGarbage(Heap::kFinalizeIncrementalMarkingMask,
+                                      GarbageCollectionReason::kDebugger);
   Factory* factory = isolate_->factory();
   if (!factory->script_list()->IsWeakFixedArray()) {
     return factory->empty_fixed_array();
@@ -1656,10 +1660,12 @@ MaybeHandle<Object> Debug::MakeCompileEvent(Handle<Script> script,
   return CallFunction("MakeCompileEvent", arraysize(argv), argv);
 }
 
-
-MaybeHandle<Object> Debug::MakeAsyncTaskEvent(Handle<JSObject> task_event) {
+MaybeHandle<Object> Debug::MakeAsyncTaskEvent(Handle<String> type,
+                                              Handle<Object> id,
+                                              Handle<String> name) {
+  DCHECK(id->IsNumber());
   // Create the async task event object.
-  Handle<Object> argv[] = { task_event };
+  Handle<Object> argv[] = {type, id, name};
   return CallFunction("MakeAsyncTaskEvent", arraysize(argv), argv);
 }
 
@@ -1681,22 +1687,16 @@ void Debug::OnThrow(Handle<Object> exception) {
   }
 }
 
-
-void Debug::OnPromiseReject(Handle<JSObject> promise, Handle<Object> value) {
+void Debug::OnPromiseReject(Handle<Object> promise, Handle<Object> value) {
   if (in_debug_scope() || ignore_events()) return;
   HandleScope scope(isolate_);
   // Check whether the promise has been marked as having triggered a message.
   Handle<Symbol> key = isolate_->factory()->promise_debug_marker_symbol();
-  if (JSReceiver::GetDataProperty(promise, key)->IsUndefined(isolate_)) {
+  if (!promise->IsJSObject() ||
+      JSReceiver::GetDataProperty(Handle<JSObject>::cast(promise), key)
+          ->IsUndefined(isolate_)) {
     OnException(value, promise);
   }
-}
-
-
-MaybeHandle<Object> Debug::PromiseHasUserDefinedRejectHandler(
-    Handle<JSObject> promise) {
-  Handle<JSFunction> fun = isolate_->promise_has_user_defined_reject_handler();
-  return Execution::Call(isolate_, fun, promise, 0, NULL);
 }
 
 
@@ -1711,18 +1711,14 @@ void Debug::OnException(Handle<Object> exception, Handle<Object> promise) {
   // Don't notify listener of exceptions that are internal to a desugaring.
   if (catch_type == Isolate::CAUGHT_BY_DESUGARING) return;
 
-  bool uncaught = (catch_type == Isolate::NOT_CAUGHT);
+  bool uncaught = catch_type == Isolate::NOT_CAUGHT;
   if (promise->IsJSObject()) {
     Handle<JSObject> jspromise = Handle<JSObject>::cast(promise);
     // Mark the promise as already having triggered a message.
     Handle<Symbol> key = isolate_->factory()->promise_debug_marker_symbol();
     JSObject::SetProperty(jspromise, key, key, STRICT).Assert();
     // Check whether the promise reject is considered an uncaught exception.
-    Handle<Object> has_reject_handler;
-    ASSIGN_RETURN_ON_EXCEPTION_VALUE(
-        isolate_, has_reject_handler,
-        PromiseHasUserDefinedRejectHandler(jspromise), /* void */);
-    uncaught = has_reject_handler->IsFalse(isolate_);
+    uncaught = !isolate_->PromiseHasUserDefinedRejectHandler(jspromise);
   }
   // Bail out if exception breaks are not active
   if (uncaught) {
@@ -1755,7 +1751,6 @@ void Debug::OnException(Handle<Object> exception, Handle<Object> promise) {
   // Return to continue execution from where the exception was thrown.
 }
 
-
 void Debug::OnDebugBreak(Handle<Object> break_points_hit, bool auto_continue) {
   // The caller provided for DebugScope.
   AssertDebugContext();
@@ -1773,8 +1768,7 @@ void Debug::OnDebugBreak(Handle<Object> break_points_hit, bool auto_continue) {
   if (!MakeBreakEvent(break_points_hit).ToHandle(&event_data)) return;
 
   // Process debug event.
-  ProcessDebugEvent(v8::Break,
-                    Handle<JSObject>::cast(event_data),
+  ProcessDebugEvent(v8::Break, Handle<JSObject>::cast(event_data),
                     auto_continue);
 }
 
@@ -1783,19 +1777,18 @@ void Debug::OnCompileError(Handle<Script> script) {
   ProcessCompileEvent(v8::CompileError, script);
 }
 
-
 void Debug::OnBeforeCompile(Handle<Script> script) {
   ProcessCompileEvent(v8::BeforeCompile, script);
 }
-
 
 // Handle debugger actions when a new script is compiled.
 void Debug::OnAfterCompile(Handle<Script> script) {
   ProcessCompileEvent(v8::AfterCompile, script);
 }
 
-
-void Debug::OnAsyncTaskEvent(Handle<JSObject> data) {
+void Debug::OnAsyncTaskEvent(Handle<String> type, Handle<Object> id,
+                             Handle<String> name) {
+  DCHECK(id->IsNumber());
   if (in_debug_scope() || ignore_events()) return;
 
   HandleScope scope(isolate_);
@@ -1805,17 +1798,14 @@ void Debug::OnAsyncTaskEvent(Handle<JSObject> data) {
   // Create the script collected state object.
   Handle<Object> event_data;
   // Bail out and don't call debugger if exception.
-  if (!MakeAsyncTaskEvent(data).ToHandle(&event_data)) return;
+  if (!MakeAsyncTaskEvent(type, id, name).ToHandle(&event_data)) return;
 
   // Process debug event.
-  ProcessDebugEvent(v8::AsyncTaskEvent,
-                    Handle<JSObject>::cast(event_data),
+  ProcessDebugEvent(v8::AsyncTaskEvent, Handle<JSObject>::cast(event_data),
                     true);
 }
 
-
-void Debug::ProcessDebugEvent(v8::DebugEvent event,
-                              Handle<JSObject> event_data,
+void Debug::ProcessDebugEvent(v8::DebugEvent event, Handle<JSObject> event_data,
                               bool auto_continue) {
   HandleScope scope(isolate_);
 
@@ -1826,9 +1816,7 @@ void Debug::ProcessDebugEvent(v8::DebugEvent event,
 
   // First notify the message handler if any.
   if (message_handler_ != NULL) {
-    NotifyMessageHandler(event,
-                         Handle<JSObject>::cast(exec_state),
-                         event_data,
+    NotifyMessageHandler(event, Handle<JSObject>::cast(exec_state), event_data,
                          auto_continue);
   }
   // Notify registered debug event listener. This can be either a C or
@@ -1851,8 +1839,8 @@ void Debug::CallEventCallback(v8::DebugEvent event,
   in_debug_event_listener_ = true;
   if (event_listener_->IsForeign()) {
     // Invoke the C debug event listener.
-    v8::Debug::EventCallback callback =
-        FUNCTION_CAST<v8::Debug::EventCallback>(
+    v8::DebugInterface::EventCallback callback =
+        FUNCTION_CAST<v8::DebugInterface::EventCallback>(
             Handle<Foreign>::cast(event_listener_)->foreign_address());
     EventDetailsImpl event_details(event,
                                    Handle<JSObject>::cast(exec_state),
@@ -1860,7 +1848,7 @@ void Debug::CallEventCallback(v8::DebugEvent event,
                                    event_listener_data_,
                                    client_data);
     callback(event_details);
-    DCHECK(!isolate_->has_scheduled_exception());
+    CHECK(!isolate_->has_scheduled_exception());
   } else {
     // Invoke the JavaScript debug event listener.
     DCHECK(event_listener_->IsJSFunction());
@@ -1869,8 +1857,10 @@ void Debug::CallEventCallback(v8::DebugEvent event,
                               event_data,
                               event_listener_data_ };
     Handle<JSReceiver> global = isolate_->global_proxy();
-    Execution::TryCall(isolate_, Handle<JSFunction>::cast(event_listener_),
-                       global, arraysize(argv), argv);
+    MaybeHandle<Object> result =
+        Execution::Call(isolate_, Handle<JSFunction>::cast(event_listener_),
+                        global, arraysize(argv), argv);
+    CHECK(!result.is_null());  // Listeners must not throw.
   }
   in_debug_event_listener_ = previous;
 }
@@ -1878,6 +1868,10 @@ void Debug::CallEventCallback(v8::DebugEvent event,
 
 void Debug::ProcessCompileEvent(v8::DebugEvent event, Handle<Script> script) {
   if (ignore_events()) return;
+  if (script->type() != i::Script::TYPE_NORMAL &&
+      script->type() != i::Script::TYPE_WASM) {
+    return;
+  }
   SuppressDebug while_processing(this);
 
   bool in_nested_debug_scope = in_debug_scope();
@@ -1925,7 +1919,6 @@ Handle<Context> Debug::GetDebugContext() {
   return handle(*debug_context(), isolate_);
 }
 
-
 void Debug::NotifyMessageHandler(v8::DebugEvent event,
                                  Handle<JSObject> exec_state,
                                  Handle<JSObject> event_data,
@@ -1962,9 +1955,7 @@ void Debug::NotifyMessageHandler(v8::DebugEvent event,
   // active in which case no event is send.
   if (sendEventMessage) {
     MessageImpl message = MessageImpl::NewEvent(
-        event,
-        auto_continue,
-        Handle<JSObject>::cast(exec_state),
+        event, auto_continue, Handle<JSObject>::cast(exec_state),
         Handle<JSObject>::cast(event_data));
     InvokeMessageHandler(message);
   }
@@ -1981,7 +1972,7 @@ void Debug::NotifyMessageHandler(v8::DebugEvent event,
   Handle<Object> cmd_processor_ctor =
       JSReceiver::GetProperty(isolate_, exec_state, "debugCommandProcessor")
           .ToHandleChecked();
-  Handle<Object> ctor_args[] = { isolate_->factory()->ToBoolean(running) };
+  Handle<Object> ctor_args[] = {isolate_->factory()->ToBoolean(running)};
   Handle<JSReceiver> cmd_processor = Handle<JSReceiver>::cast(
       Execution::Call(isolate_, cmd_processor_ctor, exec_state, 1, ctor_args)
           .ToHandleChecked());
@@ -2010,9 +2001,10 @@ void Debug::NotifyMessageHandler(v8::DebugEvent event,
     Vector<const uc16> command_text(
         const_cast<const uc16*>(command.text().start()),
         command.text().length());
-    Handle<String> request_text = isolate_->factory()->NewStringFromTwoByte(
-        command_text).ToHandleChecked();
-    Handle<Object> request_args[] = { request_text };
+    Handle<String> request_text = isolate_->factory()
+                                      ->NewStringFromTwoByte(command_text)
+                                      .ToHandleChecked();
+    Handle<Object> request_args[] = {request_text};
     Handle<Object> answer_value;
     Handle<String> answer;
     MaybeHandle<Object> maybe_exception;
@@ -2033,9 +2025,9 @@ void Debug::NotifyMessageHandler(v8::DebugEvent event,
         PrintF("%s\n", answer->ToCString().get());
       }
 
-      Handle<Object> is_running_args[] = { answer };
-      maybe_result = Execution::Call(
-          isolate_, is_running, cmd_processor, 1, is_running_args);
+      Handle<Object> is_running_args[] = {answer};
+      maybe_result = Execution::Call(isolate_, is_running, cmd_processor, 1,
+                                     is_running_args);
       Handle<Object> result;
       if (!maybe_result.ToHandle(&result)) break;
       running = result->IsTrue(isolate_);
@@ -2060,7 +2052,6 @@ void Debug::NotifyMessageHandler(v8::DebugEvent event,
   command_queue_.Clear();
 }
 
-
 void Debug::SetEventListener(Handle<Object> callback,
                              Handle<Object> data) {
   GlobalHandles* global_handles = isolate_->global_handles();
@@ -2081,7 +2072,6 @@ void Debug::SetEventListener(Handle<Object> callback,
   UpdateState();
 }
 
-
 void Debug::SetMessageHandler(v8::Debug::MessageHandler handler) {
   message_handler_ = handler;
   UpdateState();
@@ -2091,8 +2081,6 @@ void Debug::SetMessageHandler(v8::Debug::MessageHandler handler) {
     EnqueueCommandMessage(Vector<const uint16_t>::empty());
   }
 }
-
-
 
 void Debug::UpdateState() {
   bool is_active = message_handler_ != NULL || !event_listener_.is_null();
@@ -2108,13 +2096,11 @@ void Debug::UpdateState() {
   is_active_ = is_active;
 }
 
-
 // Calls the registered debug message handler. This callback is part of the
 // public API.
 void Debug::InvokeMessageHandler(MessageImpl message) {
   if (message_handler_ != NULL) message_handler_(message);
 }
-
 
 // Puts a command coming from the public API on the queue.  Creates
 // a copy of the command string managed by the debugger.  Up to this
@@ -2134,7 +2120,6 @@ void Debug::EnqueueCommandMessage(Vector<const uint16_t> command,
   // Set the debug command break flag to have the command processed.
   if (!in_debug_scope()) isolate_->stack_guard()->RequestDebugCommand();
 }
-
 
 MaybeHandle<Object> Debug::Call(Handle<Object> fun, Handle<Object> data) {
   DebugScope debug_scope(this);
@@ -2193,7 +2178,6 @@ void Debug::HandleDebugBreak() {
 
   ProcessDebugMessages(debug_command_only);
 }
-
 
 void Debug::ProcessDebugMessages(bool debug_command_only) {
   isolate_->stack_guard()->ClearDebugCommand();
@@ -2309,32 +2293,25 @@ DebugScope::~DebugScope() {
   debug_->UpdateState();
 }
 
-
-MessageImpl MessageImpl::NewEvent(DebugEvent event,
-                                  bool running,
+MessageImpl MessageImpl::NewEvent(DebugEvent event, bool running,
                                   Handle<JSObject> exec_state,
                                   Handle<JSObject> event_data) {
-  MessageImpl message(true, event, running,
-                      exec_state, event_data, Handle<String>(), NULL);
+  MessageImpl message(true, event, running, exec_state, event_data,
+                      Handle<String>(), NULL);
   return message;
 }
 
-
-MessageImpl MessageImpl::NewResponse(DebugEvent event,
-                                     bool running,
+MessageImpl MessageImpl::NewResponse(DebugEvent event, bool running,
                                      Handle<JSObject> exec_state,
                                      Handle<JSObject> event_data,
                                      Handle<String> response_json,
                                      v8::Debug::ClientData* client_data) {
-  MessageImpl message(false, event, running,
-                      exec_state, event_data, response_json, client_data);
+  MessageImpl message(false, event, running, exec_state, event_data,
+                      response_json, client_data);
   return message;
 }
 
-
-MessageImpl::MessageImpl(bool is_event,
-                         DebugEvent event,
-                         bool running,
+MessageImpl::MessageImpl(bool is_event, DebugEvent event, bool running,
                          Handle<JSObject> exec_state,
                          Handle<JSObject> event_data,
                          Handle<String> response_json,
@@ -2347,41 +2324,25 @@ MessageImpl::MessageImpl(bool is_event,
       response_json_(response_json),
       client_data_(client_data) {}
 
+bool MessageImpl::IsEvent() const { return is_event_; }
 
-bool MessageImpl::IsEvent() const {
-  return is_event_;
-}
+bool MessageImpl::IsResponse() const { return !is_event_; }
 
+DebugEvent MessageImpl::GetEvent() const { return event_; }
 
-bool MessageImpl::IsResponse() const {
-  return !is_event_;
-}
-
-
-DebugEvent MessageImpl::GetEvent() const {
-  return event_;
-}
-
-
-bool MessageImpl::WillStartRunning() const {
-  return running_;
-}
-
+bool MessageImpl::WillStartRunning() const { return running_; }
 
 v8::Local<v8::Object> MessageImpl::GetExecutionState() const {
   return v8::Utils::ToLocal(exec_state_);
 }
 
-
 v8::Isolate* MessageImpl::GetIsolate() const {
   return reinterpret_cast<v8::Isolate*>(exec_state_->GetIsolate());
 }
 
-
 v8::Local<v8::Object> MessageImpl::GetEventData() const {
   return v8::Utils::ToLocal(event_data_);
 }
-
 
 v8::Local<v8::String> MessageImpl::GetJSON() const {
   Isolate* isolate = event_data_->GetIsolate();
@@ -2427,11 +2388,9 @@ v8::Local<v8::Context> MessageImpl::GetEventContext() const {
   return context;
 }
 
-
 v8::Debug::ClientData* MessageImpl::GetClientData() const {
   return client_data_;
 }
-
 
 EventDetailsImpl::EventDetailsImpl(DebugEvent event,
                                    Handle<JSObject> exec_state,
@@ -2478,17 +2437,12 @@ v8::Isolate* EventDetailsImpl::GetIsolate() const {
   return reinterpret_cast<v8::Isolate*>(exec_state_->GetIsolate());
 }
 
-CommandMessage::CommandMessage() : text_(Vector<uint16_t>::empty()),
-                                   client_data_(NULL) {
-}
-
+CommandMessage::CommandMessage()
+    : text_(Vector<uint16_t>::empty()), client_data_(NULL) {}
 
 CommandMessage::CommandMessage(const Vector<uint16_t>& text,
                                v8::Debug::ClientData* data)
-    : text_(text),
-      client_data_(data) {
-}
-
+    : text_(text), client_data_(data) {}
 
 void CommandMessage::Dispose() {
   text_.Dispose();
@@ -2496,24 +2450,20 @@ void CommandMessage::Dispose() {
   client_data_ = NULL;
 }
 
-
 CommandMessage CommandMessage::New(const Vector<uint16_t>& command,
                                    v8::Debug::ClientData* data) {
   return CommandMessage(command.Clone(), data);
 }
 
-
-CommandMessageQueue::CommandMessageQueue(int size) : start_(0), end_(0),
-                                                     size_(size) {
+CommandMessageQueue::CommandMessageQueue(int size)
+    : start_(0), end_(0), size_(size) {
   messages_ = NewArray<CommandMessage>(size);
 }
-
 
 CommandMessageQueue::~CommandMessageQueue() {
   while (!IsEmpty()) Get().Dispose();
   DeleteArray(messages_);
 }
-
 
 CommandMessage CommandMessageQueue::Get() {
   DCHECK(!IsEmpty());
@@ -2522,7 +2472,6 @@ CommandMessage CommandMessageQueue::Get() {
   return messages_[result];
 }
 
-
 void CommandMessageQueue::Put(const CommandMessage& message) {
   if ((end_ + 1) % size_ == start_) {
     Expand();
@@ -2530,7 +2479,6 @@ void CommandMessageQueue::Put(const CommandMessage& message) {
   messages_[end_] = message;
   end_ = (end_ + 1) % size_;
 }
-
 
 void CommandMessageQueue::Expand() {
   CommandMessageQueue new_queue(size_ * 2);
@@ -2545,16 +2493,13 @@ void CommandMessageQueue::Expand() {
   // Automatic destructor called on new_queue, freeing array_to_free.
 }
 
-
 LockingCommandMessageQueue::LockingCommandMessageQueue(Logger* logger, int size)
     : logger_(logger), queue_(size) {}
-
 
 bool LockingCommandMessageQueue::IsEmpty() const {
   base::LockGuard<base::Mutex> lock_guard(&mutex_);
   return queue_.IsEmpty();
 }
-
 
 CommandMessage LockingCommandMessageQueue::Get() {
   base::LockGuard<base::Mutex> lock_guard(&mutex_);
@@ -2563,13 +2508,11 @@ CommandMessage LockingCommandMessageQueue::Get() {
   return result;
 }
 
-
 void LockingCommandMessageQueue::Put(const CommandMessage& message) {
   base::LockGuard<base::Mutex> lock_guard(&mutex_);
   queue_.Put(message);
   logger_->DebugEvent("Put", message.text());
 }
-
 
 void LockingCommandMessageQueue::Clear() {
   base::LockGuard<base::Mutex> lock_guard(&mutex_);

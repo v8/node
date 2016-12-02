@@ -5,6 +5,8 @@
 #ifndef V8_INTERPRETER_BYTECODE_DEAD_CODE_OPTIMIZER_H_
 #define V8_INTERPRETER_BYTECODE_DEAD_CODE_OPTIMIZER_H_
 
+#include "src/base/compiler-specific.h"
+#include "src/globals.h"
 #include "src/interpreter/bytecode-pipeline.h"
 
 namespace v8 {
@@ -13,8 +15,9 @@ namespace interpreter {
 
 // An optimization stage for eliminating obviously dead code in bytecode
 // generation.
-class BytecodeDeadCodeOptimizer final : public BytecodePipelineStage,
-                                        public ZoneObject {
+class V8_EXPORT_PRIVATE BytecodeDeadCodeOptimizer final
+    : public NON_EXPORTED_BASE(BytecodePipelineStage),
+      public NON_EXPORTED_BASE(ZoneObject) {
  public:
   explicit BytecodeDeadCodeOptimizer(BytecodePipelineStage* next_stage);
 
@@ -24,7 +27,7 @@ class BytecodeDeadCodeOptimizer final : public BytecodePipelineStage,
   void BindLabel(BytecodeLabel* label) override;
   void BindLabel(const BytecodeLabel& target, BytecodeLabel* label) override;
   Handle<BytecodeArray> ToBytecodeArray(
-      Isolate* isolate, int fixed_register_count, int parameter_count,
+      Isolate* isolate, int register_count, int parameter_count,
       Handle<FixedArray> handler_table) override;
 
  private:

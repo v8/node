@@ -9,6 +9,7 @@
 #include "src/deoptimize-reason.h"
 #include "src/macro-assembler.h"
 #include "src/source-position.h"
+#include "src/zone/zone-chunk-list.h"
 
 namespace v8 {
 namespace internal {
@@ -253,7 +254,7 @@ class TranslatedState {
   void Prepare(bool has_adapted_arguments, Address stack_frame_pointer);
 
   // Store newly materialized values into the isolate.
-  void StoreMaterializedValuesAndDeopt();
+  void StoreMaterializedValuesAndDeopt(JavaScriptFrame* frame);
 
   typedef std::vector<TranslatedFrame>::iterator iterator;
   iterator begin() { return frames_.begin(); }
@@ -383,8 +384,7 @@ class Deoptimizer : public Malloced {
     bool needs_frame;
   };
 
-  static bool TraceEnabledFor(BailoutType deopt_type,
-                              StackFrame::Type frame_type);
+  static bool TraceEnabledFor(StackFrame::Type frame_type);
   static const char* MessageFor(BailoutType type);
 
   int output_count() const { return output_count_; }
@@ -419,8 +419,9 @@ class Deoptimizer : public Malloced {
 
   // Deoptimize the function now. Its current optimized code will never be run
   // again and any activations of the optimized code will get deoptimized when
-  // execution returns.
-  static void DeoptimizeFunction(JSFunction* function);
+  // execution returns. If {code} is specified then the given code is targeted
+  // instead of the function code (e.g. OSR code not installed on function).
+  static void DeoptimizeFunction(JSFunction* function, Code* code = nullptr);
 
   // Deoptimize all code in the given isolate.
   static void DeoptimizeAll(Isolate* isolate);
@@ -500,8 +501,6 @@ class Deoptimizer : public Malloced {
     int count_;
   };
 
-  int ConvertJSFrameIndexToFrameIndex(int jsframe_index);
-
   static size_t GetMaxDeoptTableSize();
 
   static void EnsureCodeForDeoptimizationEntry(Isolate* isolate,
@@ -514,14 +513,9 @@ class Deoptimizer : public Malloced {
   static const int kMinNumberOfEntries = 64;
   static const int kMaxNumberOfEntries = 16384;
 
-  Deoptimizer(Isolate* isolate,
-              JSFunction* function,
-              BailoutType type,
-              unsigned bailout_id,
-              Address from,
-              int fp_to_sp_delta,
-              Code* optimized_code);
-  Code* FindOptimizedCode(JSFunction* function, Code* optimized_code);
+  Deoptimizer(Isolate* isolate, JSFunction* function, BailoutType type,
+              unsigned bailout_id, Address from, int fp_to_sp_delta);
+  Code* FindOptimizedCode(JSFunction* function);
   void PrintFunctionName();
   void DeleteFrameDescriptions();
 
@@ -559,8 +553,6 @@ class Deoptimizer : public Malloced {
 
   static unsigned ComputeIncomingArgumentSize(SharedFunctionInfo* shared);
   static unsigned ComputeOutgoingArgumentSize(Code* code, unsigned bailout_id);
-
-  Object* ComputeLiteral(int index) const;
 
   static void GenerateDeoptimizationEntries(
       MacroAssembler* masm, int count, BailoutType type);
@@ -711,8 +703,6 @@ class FrameDescription {
     return static_cast<uint32_t>(frame_size_);
   }
 
-  unsigned GetOffsetFromSlotIndex(int slot_index);
-
   intptr_t GetFrameSlot(unsigned offset) {
     return *GetFrameSlotPointer(offset);
   }
@@ -833,8 +823,6 @@ class FrameDescription {
     return reinterpret_cast<intptr_t*>(
         reinterpret_cast<Address>(this) + frame_content_offset() + offset);
   }
-
-  int ComputeFixedSize();
 };
 
 
@@ -858,15 +846,15 @@ class DeoptimizerData {
 
 class TranslationBuffer BASE_EMBEDDED {
  public:
-  explicit TranslationBuffer(Zone* zone) : contents_(256, zone) { }
+  explicit TranslationBuffer(Zone* zone) : contents_(zone) {}
 
-  int CurrentIndex() const { return contents_.length(); }
-  void Add(int32_t value, Zone* zone);
+  int CurrentIndex() const { return static_cast<int>(contents_.size()); }
+  void Add(int32_t value);
 
   Handle<ByteArray> CreateByteArray(Factory* factory);
 
  private:
-  ZoneList<uint8_t> contents_;
+  ZoneChunkList<uint8_t> contents_;
 };
 
 
@@ -931,9 +919,9 @@ class Translation BASE_EMBEDDED {
       : buffer_(buffer),
         index_(buffer->CurrentIndex()),
         zone_(zone) {
-    buffer_->Add(BEGIN, zone);
-    buffer_->Add(frame_count, zone);
-    buffer_->Add(jsframe_count, zone);
+    buffer_->Add(BEGIN);
+    buffer_->Add(frame_count);
+    buffer_->Add(jsframe_count);
   }
 
   int index() const { return index_; }

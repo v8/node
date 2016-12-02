@@ -252,14 +252,7 @@ void VisitBinop(InstructionSelector* selector, Node* node,
     inputs[input_count++] = g.Label(cont->false_block());
   }
 
-  if (cont->IsDeoptimize()) {
-    // If we can deoptimize as a result of the binop, we need to make sure that
-    // the deopt inputs are not overwritten by the binop result. One way
-    // to achieve that is to declare the output register as same-as-first.
-    outputs[output_count++] = g.DefineSameAsFirst(node);
-  } else {
-    outputs[output_count++] = g.DefineAsRegister(node);
-  }
+  outputs[output_count++] = g.DefineAsRegister(node);
   if (cont->IsSet()) {
     outputs[output_count++] = g.DefineAsRegister(cont->result());
   }
@@ -419,6 +412,10 @@ void InstructionSelector::VisitLoad(Node* node) {
   EmitLoad(this, opcode, &output, base, index);
 }
 
+void InstructionSelector::VisitProtectedLoad(Node* node) {
+  // TODO(eholk)
+  UNIMPLEMENTED();
+}
 
 void InstructionSelector::VisitStore(Node* node) {
   ArmOperandGenerator g(this);
@@ -431,7 +428,7 @@ void InstructionSelector::VisitStore(Node* node) {
   MachineRepresentation rep = store_rep.representation();
 
   if (write_barrier_kind != kNoWriteBarrier) {
-    DCHECK_EQ(MachineRepresentation::kTagged, rep);
+    DCHECK(CanBeTaggedPointer(rep));
     AddressingMode addressing_mode;
     InstructionOperand inputs[3];
     size_t input_count = 0;
@@ -502,6 +499,11 @@ void InstructionSelector::VisitStore(Node* node) {
     inputs[input_count++] = g.UseRegister(base);
     EmitStore(this, opcode, input_count, inputs, index);
   }
+}
+
+void InstructionSelector::VisitProtectedStore(Node* node) {
+  // TODO(eholk)
+  UNIMPLEMENTED();
 }
 
 void InstructionSelector::VisitUnalignedLoad(Node* node) {
@@ -960,53 +962,83 @@ void InstructionSelector::VisitWord32Sar(Node* node) {
 void InstructionSelector::VisitInt32PairAdd(Node* node) {
   ArmOperandGenerator g(this);
 
-  // We use UseUniqueRegister here to avoid register sharing with the output
-  // registers.
-  InstructionOperand inputs[] = {
-      g.UseRegister(node->InputAt(0)), g.UseUniqueRegister(node->InputAt(1)),
-      g.UseRegister(node->InputAt(2)), g.UseUniqueRegister(node->InputAt(3))};
+  Node* projection1 = NodeProperties::FindProjection(node, 1);
+  if (projection1) {
+    // We use UseUniqueRegister here to avoid register sharing with the output
+    // registers.
+    InstructionOperand inputs[] = {
+        g.UseRegister(node->InputAt(0)), g.UseUniqueRegister(node->InputAt(1)),
+        g.UseRegister(node->InputAt(2)), g.UseUniqueRegister(node->InputAt(3))};
 
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
+    InstructionOperand outputs[] = {
+        g.DefineAsRegister(node),
+        g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
 
-  Emit(kArmAddPair, 2, outputs, 4, inputs);
+    Emit(kArmAddPair, 2, outputs, 4, inputs);
+  } else {
+    // The high word of the result is not used, so we emit the standard 32 bit
+    // instruction.
+    Emit(kArmAdd | AddressingModeField::encode(kMode_Operand2_R),
+         g.DefineSameAsFirst(node), g.UseRegister(node->InputAt(0)),
+         g.UseRegister(node->InputAt(2)));
+  }
 }
 
 void InstructionSelector::VisitInt32PairSub(Node* node) {
   ArmOperandGenerator g(this);
 
-  // We use UseUniqueRegister here to avoid register sharing with the output
-  // register.
-  InstructionOperand inputs[] = {
-      g.UseRegister(node->InputAt(0)), g.UseUniqueRegister(node->InputAt(1)),
-      g.UseRegister(node->InputAt(2)), g.UseUniqueRegister(node->InputAt(3))};
+  Node* projection1 = NodeProperties::FindProjection(node, 1);
+  if (projection1) {
+    // We use UseUniqueRegister here to avoid register sharing with the output
+    // register.
+    InstructionOperand inputs[] = {
+        g.UseRegister(node->InputAt(0)), g.UseUniqueRegister(node->InputAt(1)),
+        g.UseRegister(node->InputAt(2)), g.UseUniqueRegister(node->InputAt(3))};
 
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
+    InstructionOperand outputs[] = {
+        g.DefineAsRegister(node),
+        g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
 
-  Emit(kArmSubPair, 2, outputs, 4, inputs);
+    Emit(kArmSubPair, 2, outputs, 4, inputs);
+  } else {
+    // The high word of the result is not used, so we emit the standard 32 bit
+    // instruction.
+    Emit(kArmSub | AddressingModeField::encode(kMode_Operand2_R),
+         g.DefineSameAsFirst(node), g.UseRegister(node->InputAt(0)),
+         g.UseRegister(node->InputAt(2)));
+  }
 }
 
 void InstructionSelector::VisitInt32PairMul(Node* node) {
   ArmOperandGenerator g(this);
-  InstructionOperand inputs[] = {g.UseUniqueRegister(node->InputAt(0)),
-                                 g.UseUniqueRegister(node->InputAt(1)),
-                                 g.UseUniqueRegister(node->InputAt(2)),
-                                 g.UseUniqueRegister(node->InputAt(3))};
+  Node* projection1 = NodeProperties::FindProjection(node, 1);
+  if (projection1) {
+    InstructionOperand inputs[] = {g.UseUniqueRegister(node->InputAt(0)),
+                                   g.UseUniqueRegister(node->InputAt(1)),
+                                   g.UseUniqueRegister(node->InputAt(2)),
+                                   g.UseUniqueRegister(node->InputAt(3))};
 
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
+    InstructionOperand outputs[] = {
+        g.DefineAsRegister(node),
+        g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
 
-  Emit(kArmMulPair, 2, outputs, 4, inputs);
+    Emit(kArmMulPair, 2, outputs, 4, inputs);
+  } else {
+    // The high word of the result is not used, so we emit the standard 32 bit
+    // instruction.
+    Emit(kArmMul | AddressingModeField::encode(kMode_Operand2_R),
+         g.DefineSameAsFirst(node), g.UseRegister(node->InputAt(0)),
+         g.UseRegister(node->InputAt(2)));
+  }
 }
 
-void InstructionSelector::VisitWord32PairShl(Node* node) {
-  ArmOperandGenerator g(this);
-  // We use g.UseUniqueRegister here for InputAt(0) to guarantee that there is
-  // no register aliasing with output registers.
+namespace {
+// Shared routine for multiple shift operations.
+void VisitWord32PairShift(InstructionSelector* selector, InstructionCode opcode,
+                          Node* node) {
+  ArmOperandGenerator g(selector);
+  // We use g.UseUniqueRegister here to guarantee that there is
+  // no register aliasing of input registers with output registers.
   Int32Matcher m(node->InputAt(2));
   InstructionOperand shift_operand;
   if (m.HasValue()) {
@@ -1016,60 +1048,36 @@ void InstructionSelector::VisitWord32PairShl(Node* node) {
   }
 
   InstructionOperand inputs[] = {g.UseUniqueRegister(node->InputAt(0)),
-                                 g.UseRegister(node->InputAt(1)),
+                                 g.UseUniqueRegister(node->InputAt(1)),
                                  shift_operand};
 
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
+  Node* projection1 = NodeProperties::FindProjection(node, 1);
 
-  Emit(kArmLslPair, 2, outputs, 3, inputs);
+  InstructionOperand outputs[2];
+  InstructionOperand temps[1];
+  int32_t output_count = 0;
+  int32_t temp_count = 0;
+
+  outputs[output_count++] = g.DefineAsRegister(node);
+  if (projection1) {
+    outputs[output_count++] = g.DefineAsRegister(projection1);
+  } else {
+    temps[temp_count++] = g.TempRegister();
+  }
+
+  selector->Emit(opcode, output_count, outputs, 3, inputs, temp_count, temps);
+}
+}  // namespace
+void InstructionSelector::VisitWord32PairShl(Node* node) {
+  VisitWord32PairShift(this, kArmLslPair, node);
 }
 
 void InstructionSelector::VisitWord32PairShr(Node* node) {
-  ArmOperandGenerator g(this);
-  // We use g.UseUniqueRegister here for InputAt(1) and InputAt(2) to to
-  // guarantee that there is no register aliasing with output register.
-  Int32Matcher m(node->InputAt(2));
-  InstructionOperand shift_operand;
-  if (m.HasValue()) {
-    shift_operand = g.UseImmediate(m.node());
-  } else {
-    shift_operand = g.UseUniqueRegister(m.node());
-  }
-
-  InstructionOperand inputs[] = {g.UseRegister(node->InputAt(0)),
-                                 g.UseUniqueRegister(node->InputAt(1)),
-                                 shift_operand};
-
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
-
-  Emit(kArmLsrPair, 2, outputs, 3, inputs);
+  VisitWord32PairShift(this, kArmLsrPair, node);
 }
 
 void InstructionSelector::VisitWord32PairSar(Node* node) {
-  ArmOperandGenerator g(this);
-  // We use g.UseUniqueRegister here for InputAt(1) and InputAt(2) to to
-  // guarantee that there is no register aliasing with output register.
-  Int32Matcher m(node->InputAt(2));
-  InstructionOperand shift_operand;
-  if (m.HasValue()) {
-    shift_operand = g.UseImmediate(m.node());
-  } else {
-    shift_operand = g.UseUniqueRegister(m.node());
-  }
-
-  InstructionOperand inputs[] = {g.UseRegister(node->InputAt(0)),
-                                 g.UseUniqueRegister(node->InputAt(1)),
-                                 shift_operand};
-
-  InstructionOperand outputs[] = {
-      g.DefineAsRegister(node),
-      g.DefineAsRegister(NodeProperties::FindProjection(node, 1))};
-
-  Emit(kArmAsrPair, 2, outputs, 3, inputs);
+  VisitWord32PairShift(this, kArmAsrPair, node);
 }
 
 void InstructionSelector::VisitWord32Ror(Node* node) {
@@ -1516,46 +1524,55 @@ void InstructionSelector::VisitFloat64Sqrt(Node* node) {
 
 
 void InstructionSelector::VisitFloat32RoundDown(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintmF32, node);
 }
 
 
 void InstructionSelector::VisitFloat64RoundDown(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintmF64, node);
 }
 
 
 void InstructionSelector::VisitFloat32RoundUp(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintpF32, node);
 }
 
 
 void InstructionSelector::VisitFloat64RoundUp(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintpF64, node);
 }
 
 
 void InstructionSelector::VisitFloat32RoundTruncate(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintzF32, node);
 }
 
 
 void InstructionSelector::VisitFloat64RoundTruncate(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintzF64, node);
 }
 
 
 void InstructionSelector::VisitFloat64RoundTiesAway(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintaF64, node);
 }
 
 
 void InstructionSelector::VisitFloat32RoundTiesEven(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintnF32, node);
 }
 
 
 void InstructionSelector::VisitFloat64RoundTiesEven(Node* node) {
+  DCHECK(CpuFeatures::IsSupported(ARMv8));
   VisitRR(this, kArmVrintnF64, node);
 }
 
@@ -1864,21 +1881,22 @@ void VisitWordCompare(InstructionSelector* selector, Node* node,
 // Shared routine for word comparisons against zero.
 void VisitWordCompareZero(InstructionSelector* selector, Node* user,
                           Node* value, FlagsContinuation* cont) {
-  while (selector->CanCover(user, value)) {
+  // Try to combine with comparisons against 0 by simply inverting the branch.
+  while (value->opcode() == IrOpcode::kWord32Equal &&
+         selector->CanCover(user, value)) {
+    Int32BinopMatcher m(value);
+    if (!m.right().Is(0)) break;
+
+    user = value;
+    value = m.left().node();
+    cont->Negate();
+  }
+
+  if (selector->CanCover(user, value)) {
     switch (value->opcode()) {
-      case IrOpcode::kWord32Equal: {
-        // Combine with comparisons against 0 by simply inverting the
-        // continuation.
-        Int32BinopMatcher m(value);
-        if (m.right().Is(0)) {
-          user = value;
-          value = m.left().node();
-          cont->Negate();
-          continue;
-        }
+      case IrOpcode::kWord32Equal:
         cont->OverwriteAndNegateIfEqual(kEqual);
         return VisitWordCompare(selector, value, cont);
-      }
       case IrOpcode::kInt32LessThan:
         cont->OverwriteAndNegateIfEqual(kSignedLessThan);
         return VisitWordCompare(selector, value, cont);
@@ -1962,7 +1980,10 @@ void VisitWordCompareZero(InstructionSelector* selector, Node* user,
       default:
         break;
     }
-    break;
+  }
+
+  if (user->opcode() == IrOpcode::kWord32Equal) {
+    return VisitWordCompare(selector, user, cont);
   }
 
   // Continuation could not be combined with a compare, emit compare against 0.

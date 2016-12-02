@@ -76,6 +76,11 @@ bool Isolate::is_catchable_by_javascript(Object* exception) {
   return exception != heap()->termination_exception();
 }
 
+bool Isolate::is_catchable_by_wasm(Object* exception) {
+  return is_catchable_by_javascript(exception) &&
+         (exception->IsNumber() || exception->IsSmi());
+}
+
 void Isolate::FireBeforeCallEnteredCallback() {
   for (int i = 0; i < before_call_entered_callbacks_.length(); i++) {
     before_call_entered_callbacks_.at(i)(reinterpret_cast<v8::Isolate*>(this));
@@ -98,20 +103,6 @@ Isolate::ExceptionScope::ExceptionScope(Isolate* isolate)
 
 Isolate::ExceptionScope::~ExceptionScope() {
   isolate_->set_pending_exception(*pending_exception_);
-}
-
-SaveContext::SaveContext(Isolate* isolate)
-    : isolate_(isolate), prev_(isolate->save_context()) {
-  if (isolate->context() != NULL) {
-    context_ = Handle<Context>(isolate->context());
-  }
-  isolate->set_save_context(this);
-  c_entry_fp_ = isolate->c_entry_fp(isolate->thread_local_top());
-}
-
-SaveContext::~SaveContext() {
-  isolate_->set_context(context_.is_null() ? NULL : *context_);
-  isolate_->set_save_context(prev_);
 }
 
 #define NATIVE_CONTEXT_FIELD_ACCESSOR(index, type, name)     \
@@ -139,12 +130,32 @@ bool Isolate::IsArraySpeciesLookupChainIntact() {
 
   Cell* species_cell = heap()->species_protector();
   return species_cell->value()->IsSmi() &&
-         Smi::cast(species_cell->value())->value() == kArrayProtectorValid;
+         Smi::cast(species_cell->value())->value() == kProtectorValid;
 }
 
 bool Isolate::IsHasInstanceLookupChainIntact() {
   PropertyCell* has_instance_cell = heap()->has_instance_protector();
-  return has_instance_cell->value() == Smi::FromInt(kArrayProtectorValid);
+  return has_instance_cell->value() == Smi::FromInt(kProtectorValid);
+}
+
+bool Isolate::IsStringLengthOverflowIntact() {
+  PropertyCell* has_instance_cell = heap()->string_length_protector();
+  return has_instance_cell->value() == Smi::FromInt(kProtectorValid);
+}
+
+bool Isolate::IsFastArrayIterationIntact() {
+  Cell* fast_iteration = heap()->fast_array_iteration_protector();
+  return fast_iteration->value() == Smi::FromInt(kProtectorValid);
+}
+
+bool Isolate::IsArrayBufferNeuteringIntact() {
+  PropertyCell* fast_iteration = heap()->array_buffer_neutering_protector();
+  return fast_iteration->value() == Smi::FromInt(kProtectorValid);
+}
+
+bool Isolate::IsArrayIteratorLookupChainIntact() {
+  Cell* array_iterator_cell = heap()->array_iterator_protector();
+  return array_iterator_cell->value() == Smi::FromInt(kProtectorValid);
 }
 
 }  // namespace internal

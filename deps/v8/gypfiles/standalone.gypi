@@ -46,6 +46,7 @@
     'msvs_multi_core_compile%': '1',
     'mac_deployment_target%': '10.7',
     'release_extra_cflags%': '',
+    'v8_enable_inspector%': 0,
     'variables': {
       'variables': {
         'variables': {
@@ -319,7 +320,7 @@
             'android_ndk_root%': '<(base_dir)/third_party/android_tools/ndk/',
             'android_host_arch%': "<!(uname -m | sed -e 's/i[3456]86/x86/')",
             # Version of the NDK. Used to ensure full rebuilds on NDK rolls.
-            'android_ndk_version%': 'r11c',
+            'android_ndk_version%': 'r12b',
             'host_os%': "<!(uname -s | sed -e 's/Linux/linux/;s/Darwin/mac/')",
             'os_folder_name%': "<!(uname -s | sed -e 's/Linux/linux/;s/Darwin/darwin/')",
           },
@@ -377,6 +378,9 @@
         'android_toolchain%': '<(android_toolchain)',
         'arm_version%': '<(arm_version)',
         'host_os%': '<(host_os)',
+
+        # Print to stdout on Android.
+        'v8_android_log_stdout%': 1,
 
         'conditions': [
           ['android_ndk_root==""', {
@@ -451,6 +455,7 @@
     'variables': {
       'v8_code%': '<(v8_code)',
       'clang_warning_flags': [
+        '-Wsign-compare',
         # TODO(thakis): https://crbug.com/604888
         '-Wno-undefined-var-template',
         # TODO(yangguo): issue 5258
@@ -499,7 +504,9 @@
     },
     'conditions':[
       ['clang==0', {
-        'cflags+': ['-Wno-sign-compare',],
+        'cflags+': [
+          '-Wno-uninitialized',
+        ],
       }],
       ['clang==1 or host_clang==1', {
         # This is here so that all files get recompiled after a clang roll and

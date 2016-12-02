@@ -12,10 +12,8 @@
 var ArrayJoin;
 var GlobalRegExp = global.RegExp;
 var GlobalString = global.String;
-var IsRegExp;
 var MaxSimple;
 var MinSimple;
-var RegExpInitialize;
 var matchSymbol = utils.ImportNow("match_symbol");
 var replaceSymbol = utils.ImportNow("replace_symbol");
 var searchSymbol = utils.ImportNow("search_symbol");
@@ -23,10 +21,8 @@ var splitSymbol = utils.ImportNow("split_symbol");
 
 utils.Import(function(from) {
   ArrayJoin = from.ArrayJoin;
-  IsRegExp = from.IsRegExp;
   MaxSimple = from.MaxSimple;
   MinSimple = from.MinSimple;
-  RegExpInitialize = from.RegExpInitialize;
 });
 
 //-------------------------------------------------------------------
@@ -44,60 +40,6 @@ function StringConcat(other /* and more */) {  // length == 1
 }
 
 
-// ECMA-262 section 15.5.4.7
-function StringIndexOf(pattern, position) {  // length == 1
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.indexOf");
-
-  var subject = TO_STRING(this);
-  pattern = TO_STRING(pattern);
-  var index = TO_INTEGER(position);
-  if (index < 0) index = 0;
-  if (index > subject.length) index = subject.length;
-  return %StringIndexOf(subject, pattern, index);
-}
-
-%FunctionSetLength(StringIndexOf, 1);
-
-
-// ECMA-262 section 15.5.4.8
-function StringLastIndexOf(pat, pos) {  // length == 1
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.lastIndexOf");
-
-  var sub = TO_STRING(this);
-  var subLength = sub.length;
-  var pat = TO_STRING(pat);
-  var patLength = pat.length;
-  var index = subLength - patLength;
-  var position = TO_NUMBER(pos);
-  if (!NUMBER_IS_NAN(position)) {
-    position = TO_INTEGER(position);
-    if (position < 0) {
-      position = 0;
-    }
-    if (position + patLength < subLength) {
-      index = position;
-    }
-  }
-  if (index < 0) {
-    return -1;
-  }
-  return %StringLastIndexOf(sub, pat, index);
-}
-
-%FunctionSetLength(StringLastIndexOf, 1);
-
-
-// ECMA-262 section 15.5.4.9
-//
-// This function is implementation specific.  For now, we do not
-// do anything locale specific.
-function StringLocaleCompareJS(other) {
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.localeCompare");
-
-  return %StringLocaleCompare(TO_STRING(this), TO_STRING(other));
-}
-
-
 // ES6 21.1.3.11.
 function StringMatchJS(pattern) {
   CHECK_OBJECT_COERCIBLE(this, "String.prototype.match");
@@ -112,43 +54,94 @@ function StringMatchJS(pattern) {
   var subject = TO_STRING(this);
 
   // Equivalent to RegExpCreate (ES#sec-regexpcreate)
-  var regexp = %_NewObject(GlobalRegExp, GlobalRegExp);
-  RegExpInitialize(regexp, pattern);
+  var regexp = %RegExpCreate(pattern);
   return regexp[matchSymbol](subject);
 }
 
+// ES#sec-getsubstitution
+// GetSubstitution(matched, str, position, captures, replacement)
+// Expand the $-expressions in the string and return a new string with
+// the result.
+function GetSubstitution(matched, string, position, captures, replacement) {
+  var matchLength = matched.length;
+  var stringLength = string.length;
+  var capturesLength = captures.length;
+  var tailPos = position + matchLength;
+  var result = "";
+  var pos, expansion, peek, next, scaledIndex, advance, newScaledIndex;
 
-// ECMA-262 v6, section 21.1.3.12
-//
-// For now we do nothing, as proper normalization requires big tables.
-// If Intl is enabled, then i18n.js will override it and provide the the
-// proper functionality.
-function StringNormalize(formArg) {  // length == 0
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.normalize");
-  var s = TO_STRING(this);
-
-  var form = IS_UNDEFINED(formArg) ? 'NFC' : TO_STRING(formArg);
-
-  var NORMALIZATION_FORMS = ['NFC', 'NFD', 'NFKC', 'NFKD'];
-  var normalizationForm = %ArrayIndexOf(NORMALIZATION_FORMS, form, 0);
-  if (normalizationForm === -1) {
-    throw %make_range_error(kNormalizationForm,
-                         %_Call(ArrayJoin, NORMALIZATION_FORMS, ', '));
+  var next = %StringIndexOf(replacement, '$', 0);
+  if (next < 0) {
+    result += replacement;
+    return result;
   }
 
-  return s;
+  if (next > 0) result += %_SubString(replacement, 0, next);
+
+  while (true) {
+    expansion = '$';
+    pos = next + 1;
+    if (pos < replacement.length) {
+      peek = %_StringCharCodeAt(replacement, pos);
+      if (peek == 36) {         // $$
+        ++pos;
+        result += '$';
+      } else if (peek == 38) {  // $& - match
+        ++pos;
+        result += matched;
+      } else if (peek == 96) {  // $` - prefix
+        ++pos;
+        result += %_SubString(string, 0, position);
+      } else if (peek == 39) {  // $' - suffix
+        ++pos;
+        result += %_SubString(string, tailPos, stringLength);
+      } else if (peek >= 48 && peek <= 57) {
+        // Valid indices are $1 .. $9, $01 .. $09 and $10 .. $99
+        scaledIndex = (peek - 48);
+        advance = 1;
+        if (pos + 1 < replacement.length) {
+          next = %_StringCharCodeAt(replacement, pos + 1);
+          if (next >= 48 && next <= 57) {
+            newScaledIndex = scaledIndex * 10 + ((next - 48));
+            if (newScaledIndex < capturesLength) {
+              scaledIndex = newScaledIndex;
+              advance = 2;
+            }
+          }
+        }
+        if (scaledIndex != 0 && scaledIndex < capturesLength) {
+          var capture = captures.at(scaledIndex);
+          if (!IS_UNDEFINED(capture)) result += capture;
+          pos += advance;
+        } else {
+          result += '$';
+        }
+      } else {
+        result += '$';
+      }
+    } else {
+      result += '$';
+    }
+
+    // Go the the next $ in the replacement.
+    next = %StringIndexOf(replacement, '$', pos);
+
+    // Return if there are no more $ characters in the replacement. If we
+    // haven't reached the end, we need to append the suffix.
+    if (next < 0) {
+      if (pos < replacement.length) {
+        result += %_SubString(replacement, pos, replacement.length);
+      }
+      return result;
+    }
+
+    // Append substring between the previous and the next $ character.
+    if (next > pos) {
+      result += %_SubString(replacement, pos, next);
+    }
+  }
+  return result;
 }
-
-%FunctionSetLength(StringNormalize, 0);
-
-
-// This has the same size as the RegExpLastMatchInfo array, and can be used
-// for functions that expect that structure to be returned.  It is used when
-// the needle is a string rather than a regexp.  In this case we can't update
-// lastMatchArray without erroneously affecting the properties on the global
-// RegExp object.
-var reusableMatchInfo = [2, "", "", -1, -1];
-
 
 // ES6, section 21.1.3.14
 function StringReplace(search, replace) {
@@ -201,98 +194,15 @@ function StringReplace(search, replace) {
   if (IS_CALLABLE(replace)) {
     result += replace(search, start, subject);
   } else {
-    reusableMatchInfo[CAPTURE0] = start;
-    reusableMatchInfo[CAPTURE1] = end;
-    result = ExpandReplacement(TO_STRING(replace),
-                               subject,
-                               reusableMatchInfo,
-                               result);
+    // In this case, we don't have any capture groups and can get away with
+    // faking the captures object by simply setting its length to 1.
+    const captures = { length: 1 };
+    const matched = %_SubString(subject, start, end);
+    result += GetSubstitution(matched, subject, start, captures,
+                              TO_STRING(replace));
   }
 
   return result + %_SubString(subject, end, subject.length);
-}
-
-
-// Expand the $-expressions in the string and return a new string with
-// the result.
-function ExpandReplacement(string, subject, matchInfo, result) {
-  var length = string.length;
-  var next = %StringIndexOf(string, '$', 0);
-  if (next < 0) {
-    if (length > 0) result += string;
-    return result;
-  }
-
-  if (next > 0) result += %_SubString(string, 0, next);
-
-  while (true) {
-    var expansion = '$';
-    var position = next + 1;
-    if (position < length) {
-      var peek = %_StringCharCodeAt(string, position);
-      if (peek == 36) {         // $$
-        ++position;
-        result += '$';
-      } else if (peek == 38) {  // $& - match
-        ++position;
-        result +=
-          %_SubString(subject, matchInfo[CAPTURE0], matchInfo[CAPTURE1]);
-      } else if (peek == 96) {  // $` - prefix
-        ++position;
-        result += %_SubString(subject, 0, matchInfo[CAPTURE0]);
-      } else if (peek == 39) {  // $' - suffix
-        ++position;
-        result += %_SubString(subject, matchInfo[CAPTURE1], subject.length);
-      } else if (peek >= 48 && peek <= 57) {
-        // Valid indices are $1 .. $9, $01 .. $09 and $10 .. $99
-        var scaled_index = (peek - 48) << 1;
-        var advance = 1;
-        var number_of_captures = NUMBER_OF_CAPTURES(matchInfo);
-        if (position + 1 < string.length) {
-          var next = %_StringCharCodeAt(string, position + 1);
-          if (next >= 48 && next <= 57) {
-            var new_scaled_index = scaled_index * 10 + ((next - 48) << 1);
-            if (new_scaled_index < number_of_captures) {
-              scaled_index = new_scaled_index;
-              advance = 2;
-            }
-          }
-        }
-        if (scaled_index != 0 && scaled_index < number_of_captures) {
-          var start = matchInfo[CAPTURE(scaled_index)];
-          if (start >= 0) {
-            result +=
-              %_SubString(subject, start, matchInfo[CAPTURE(scaled_index + 1)]);
-          }
-          position += advance;
-        } else {
-          result += '$';
-        }
-      } else {
-        result += '$';
-      }
-    } else {
-      result += '$';
-    }
-
-    // Go the the next $ in the string.
-    next = %StringIndexOf(string, '$', position);
-
-    // Return if there are no more $ characters in the string. If we
-    // haven't reached the end, we need to append the suffix.
-    if (next < 0) {
-      if (position < length) {
-        result += %_SubString(string, position, length);
-      }
-      return result;
-    }
-
-    // Append substring between the previous and the next $ character.
-    if (next > position) {
-      result += %_SubString(string, position, next);
-    }
-  }
-  return result;
 }
 
 
@@ -310,8 +220,7 @@ function StringSearch(pattern) {
   var subject = TO_STRING(this);
 
   // Equivalent to RegExpCreate (ES#sec-regexpcreate)
-  var regexp = %_NewObject(GlobalRegExp, GlobalRegExp);
-  RegExpInitialize(regexp, pattern);
+  var regexp = %RegExpCreate(pattern);
   return %_Call(regexp[searchSymbol], regexp, subject);
 }
 
@@ -387,55 +296,6 @@ function StringSplitJS(separator, limit) {
   if (separator_length === 0) return %StringToArray(subject, limit);
 
   return %StringSplit(subject, separator_string, limit);
-}
-
-
-// ECMA-262 section 15.5.4.15
-function StringSubstring(start, end) {
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.subString");
-
-  var s = TO_STRING(this);
-  var s_len = s.length;
-
-  var start_i = TO_INTEGER(start);
-  if (start_i < 0) {
-    start_i = 0;
-  } else if (start_i > s_len) {
-    start_i = s_len;
-  }
-
-  var end_i = s_len;
-  if (!IS_UNDEFINED(end)) {
-    end_i = TO_INTEGER(end);
-    if (end_i > s_len) {
-      end_i = s_len;
-    } else {
-      if (end_i < 0) end_i = 0;
-      if (start_i > end_i) {
-        var tmp = end_i;
-        end_i = start_i;
-        start_i = tmp;
-      }
-    }
-  }
-
-  return %_SubString(s, start_i, end_i);
-}
-
-
-// ecma262/#sec-string.prototype.substr
-function StringSubstr(start, length) {
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.substr");
-  var s = TO_STRING(this);
-  var size = s.length;
-  start = TO_INTEGER(start);
-  length = IS_UNDEFINED(length) ? size : TO_INTEGER(length);
-
-  if (start < 0) start = MaxSimple(size + start, 0);
-  length = MinSimple(MaxSimple(length, 0), size - start);
-
-  if (length <= 0) return '';
-  return %_SubString(s, start, start + length);
 }
 
 
@@ -596,87 +456,6 @@ function StringRepeat(count) {
 }
 
 
-// ES6 draft 04-05-14, section 21.1.3.18
-function StringStartsWith(searchString, position) {  // length == 1
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.startsWith");
-
-  var s = TO_STRING(this);
-
-  if (IsRegExp(searchString)) {
-    throw %make_type_error(kFirstArgumentNotRegExp, "String.prototype.startsWith");
-  }
-
-  var ss = TO_STRING(searchString);
-  var pos = TO_INTEGER(position);
-
-  var s_len = s.length;
-  var start = MinSimple(MaxSimple(pos, 0), s_len);
-  var ss_len = ss.length;
-  if (ss_len + start > s_len) {
-    return false;
-  }
-
-  return %_SubString(s, start, start + ss_len) === ss;
-}
-
-%FunctionSetLength(StringStartsWith, 1);
-
-
-// ES6 draft 04-05-14, section 21.1.3.7
-function StringEndsWith(searchString, position) {  // length == 1
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.endsWith");
-
-  var s = TO_STRING(this);
-
-  if (IsRegExp(searchString)) {
-    throw %make_type_error(kFirstArgumentNotRegExp, "String.prototype.endsWith");
-  }
-
-  var ss = TO_STRING(searchString);
-  var s_len = s.length;
-  var pos = !IS_UNDEFINED(position) ? TO_INTEGER(position) : s_len
-
-  var end = MinSimple(MaxSimple(pos, 0), s_len);
-  var ss_len = ss.length;
-  var start = end - ss_len;
-  if (start < 0) {
-    return false;
-  }
-
-  return %_SubString(s, start, start + ss_len) === ss;
-}
-
-%FunctionSetLength(StringEndsWith, 1);
-
-
-// ES6 draft 04-05-14, section 21.1.3.6
-function StringIncludes(searchString, position) {  // length == 1
-  CHECK_OBJECT_COERCIBLE(this, "String.prototype.includes");
-
-  var string = TO_STRING(this);
-
-  if (IsRegExp(searchString)) {
-    throw %make_type_error(kFirstArgumentNotRegExp, "String.prototype.includes");
-  }
-
-  searchString = TO_STRING(searchString);
-  var pos = TO_INTEGER(position);
-
-  var stringLength = string.length;
-  if (pos < 0) pos = 0;
-  if (pos > stringLength) pos = stringLength;
-  var searchStringLength = searchString.length;
-
-  if (searchStringLength + pos > stringLength) {
-    return false;
-  }
-
-  return %StringIndexOf(string, searchString, pos) !== -1;
-}
-
-%FunctionSetLength(StringIncludes, 1);
-
-
 // ES6 Draft 05-22-2014, section 21.1.3.3
 function StringCodePointAt(pos) {
   CHECK_OBJECT_COERCIBLE(this, "String.prototype.codePointAt");
@@ -734,21 +513,12 @@ utils.InstallFunctions(GlobalString, DONT_ENUM, [
 utils.InstallFunctions(GlobalString.prototype, DONT_ENUM, [
   "codePointAt", StringCodePointAt,
   "concat", StringConcat,
-  "endsWith", StringEndsWith,
-  "includes", StringIncludes,
-  "indexOf", StringIndexOf,
-  "lastIndexOf", StringLastIndexOf,
-  "localeCompare", StringLocaleCompareJS,
   "match", StringMatchJS,
-  "normalize", StringNormalize,
   "repeat", StringRepeat,
   "replace", StringReplace,
   "search", StringSearch,
   "slice", StringSlice,
   "split", StringSplitJS,
-  "substring", StringSubstring,
-  "substr", StringSubstr,
-  "startsWith", StringStartsWith,
   "toLowerCase", StringToLowerCaseJS,
   "toLocaleLowerCase", StringToLocaleLowerCase,
   "toUpperCase", StringToUpperCaseJS,
@@ -773,15 +543,10 @@ utils.InstallFunctions(GlobalString.prototype, DONT_ENUM, [
 // Exports
 
 utils.Export(function(to) {
-  to.ExpandReplacement = ExpandReplacement;
-  to.StringIndexOf = StringIndexOf;
-  to.StringLastIndexOf = StringLastIndexOf;
   to.StringMatch = StringMatchJS;
   to.StringReplace = StringReplace;
   to.StringSlice = StringSlice;
   to.StringSplit = StringSplitJS;
-  to.StringSubstr = StringSubstr;
-  to.StringSubstring = StringSubstring;
 });
 
 })

@@ -5,6 +5,7 @@
 #ifndef V8_TYPE_FEEDBACK_VECTOR_INL_H_
 #define V8_TYPE_FEEDBACK_VECTOR_INL_H_
 
+#include "src/globals.h"
 #include "src/type-feedback-vector.h"
 
 namespace v8 {
@@ -52,47 +53,30 @@ TypeFeedbackVector* TypeFeedbackVector::cast(Object* obj) {
 int TypeFeedbackMetadata::GetSlotSize(FeedbackVectorSlotKind kind) {
   DCHECK_NE(FeedbackVectorSlotKind::INVALID, kind);
   DCHECK_NE(FeedbackVectorSlotKind::KINDS_NUMBER, kind);
-  return kind == FeedbackVectorSlotKind::GENERAL ? 1 : 2;
-}
-
-bool TypeFeedbackMetadata::SlotRequiresName(FeedbackVectorSlotKind kind) {
-  switch (kind) {
-    case FeedbackVectorSlotKind::LOAD_GLOBAL_IC:
-      return true;
-
-    case FeedbackVectorSlotKind::CALL_IC:
-    case FeedbackVectorSlotKind::LOAD_IC:
-    case FeedbackVectorSlotKind::KEYED_LOAD_IC:
-    case FeedbackVectorSlotKind::STORE_IC:
-    case FeedbackVectorSlotKind::KEYED_STORE_IC:
-    case FeedbackVectorSlotKind::GENERAL:
-    case FeedbackVectorSlotKind::INVALID:
-      return false;
-
-    case FeedbackVectorSlotKind::KINDS_NUMBER:
-      break;
+  if (kind == FeedbackVectorSlotKind::GENERAL ||
+      kind == FeedbackVectorSlotKind::INTERPRETER_BINARYOP_IC ||
+      kind == FeedbackVectorSlotKind::INTERPRETER_COMPARE_IC) {
+    return 1;
   }
-  UNREACHABLE();
-  return false;
+
+  return 2;
 }
 
 bool TypeFeedbackVector::is_empty() const {
-  if (length() == 0) return true;
-  DCHECK(length() > kReservedIndexCount);
-  return false;
+  return length() == kReservedIndexCount;
 }
 
-
 int TypeFeedbackVector::slot_count() const {
-  if (length() == 0) return 0;
-  DCHECK(length() > kReservedIndexCount);
   return length() - kReservedIndexCount;
 }
 
 
 TypeFeedbackMetadata* TypeFeedbackVector::metadata() const {
-  return is_empty() ? TypeFeedbackMetadata::cast(GetHeap()->empty_fixed_array())
-                    : TypeFeedbackMetadata::cast(get(kMetadataIndex));
+  return TypeFeedbackMetadata::cast(get(kMetadataIndex));
+}
+
+int TypeFeedbackVector::invocation_count() const {
+  return Smi::cast(get(kInvocationCountIndex))->value();
 }
 
 // Conversion from an integer index to either a slot or an ic slot.
@@ -113,32 +97,117 @@ void TypeFeedbackVector::Set(FeedbackVectorSlot slot, Object* value,
   set(GetIndex(slot), value, mode);
 }
 
+// Helper function to transform the feedback to BinaryOperationHint.
+BinaryOperationHint BinaryOperationHintFromFeedback(int type_feedback) {
+  switch (type_feedback) {
+    case BinaryOperationFeedback::kNone:
+      return BinaryOperationHint::kNone;
+    case BinaryOperationFeedback::kSignedSmall:
+      return BinaryOperationHint::kSignedSmall;
+    case BinaryOperationFeedback::kNumber:
+    case BinaryOperationFeedback::kNumberOrOddball:
+      return BinaryOperationHint::kNumberOrOddball;
+    case BinaryOperationFeedback::kString:
+      return BinaryOperationHint::kString;
+    case BinaryOperationFeedback::kAny:
+    default:
+      return BinaryOperationHint::kAny;
+  }
+  UNREACHABLE();
+  return BinaryOperationHint::kNone;
+}
 
-void TypeFeedbackVector::ComputeCounts(int* with_type_info, int* generic) {
-  Object* uninitialized_sentinel =
-      TypeFeedbackVector::RawUninitializedSentinel(GetIsolate());
+// Helper function to transform the feedback to CompareOperationHint.
+CompareOperationHint CompareOperationHintFromFeedback(int type_feedback) {
+  switch (type_feedback) {
+    case CompareOperationFeedback::kNone:
+      return CompareOperationHint::kNone;
+    case CompareOperationFeedback::kSignedSmall:
+      return CompareOperationHint::kSignedSmall;
+    case CompareOperationFeedback::kNumber:
+      return CompareOperationHint::kNumber;
+    case CompareOperationFeedback::kNumberOrOddball:
+      return CompareOperationHint::kNumberOrOddball;
+    case CompareOperationFeedback::kString:
+      return CompareOperationHint::kString;
+    default:
+      return CompareOperationHint::kAny;
+  }
+  UNREACHABLE();
+  return CompareOperationHint::kNone;
+}
+
+void TypeFeedbackVector::ComputeCounts(int* with_type_info, int* generic,
+                                       int* vector_ic_count,
+                                       bool code_is_interpreted) {
   Object* megamorphic_sentinel =
       *TypeFeedbackVector::MegamorphicSentinel(GetIsolate());
   int with = 0;
   int gen = 0;
+  int total = 0;
   TypeFeedbackMetadataIterator iter(metadata());
   while (iter.HasNext()) {
     FeedbackVectorSlot slot = iter.Next();
     FeedbackVectorSlotKind kind = iter.kind();
 
-    Object* obj = Get(slot);
-    if (obj != uninitialized_sentinel &&
-        kind != FeedbackVectorSlotKind::GENERAL) {
-      if (obj->IsWeakCell() || obj->IsFixedArray() || obj->IsString()) {
-        with++;
-      } else if (obj == megamorphic_sentinel) {
-        gen++;
+    Object* const obj = Get(slot);
+    switch (kind) {
+      case FeedbackVectorSlotKind::CALL_IC:
+      case FeedbackVectorSlotKind::LOAD_IC:
+      case FeedbackVectorSlotKind::LOAD_GLOBAL_IC:
+      case FeedbackVectorSlotKind::KEYED_LOAD_IC:
+      case FeedbackVectorSlotKind::STORE_IC:
+      case FeedbackVectorSlotKind::KEYED_STORE_IC: {
+        if (obj->IsWeakCell() || obj->IsFixedArray() || obj->IsString()) {
+          with++;
+        } else if (obj == megamorphic_sentinel) {
+          gen++;
+        }
+        total++;
+        break;
       }
+      case FeedbackVectorSlotKind::INTERPRETER_BINARYOP_IC:
+      case FeedbackVectorSlotKind::INTERPRETER_COMPARE_IC: {
+        // If we are not running interpreted code, we need to ignore the special
+        // IC slots for binaryop/compare used by the interpreter.
+        // TODO(mvstanton): Remove code_is_interpreted when full code is retired
+        // from service.
+        if (code_is_interpreted) {
+          int const feedback = Smi::cast(obj)->value();
+          if (kind == FeedbackVectorSlotKind::INTERPRETER_COMPARE_IC) {
+            CompareOperationHint hint =
+                CompareOperationHintFromFeedback(feedback);
+            if (hint == CompareOperationHint::kAny) {
+              gen++;
+            } else if (hint != CompareOperationHint::kNone) {
+              with++;
+            }
+          } else {
+            DCHECK_EQ(FeedbackVectorSlotKind::INTERPRETER_BINARYOP_IC, kind);
+            BinaryOperationHint hint =
+                BinaryOperationHintFromFeedback(feedback);
+            if (hint == BinaryOperationHint::kAny) {
+              gen++;
+            } else if (hint != BinaryOperationHint::kNone) {
+              with++;
+            }
+          }
+          total++;
+        }
+        break;
+      }
+      case FeedbackVectorSlotKind::GENERAL:
+        break;
+      case FeedbackVectorSlotKind::INVALID:
+      case FeedbackVectorSlotKind::KINDS_NUMBER:
+        UNREACHABLE();
+        break;
     }
   }
 
   *with_type_info = with;
   *generic = gen;
+  *vector_ic_count = total;
 }
 
 Handle<Symbol> TypeFeedbackVector::UninitializedSentinel(Isolate* isolate) {

@@ -5,8 +5,10 @@
 #ifndef V8_COMPILER_ACCESS_BUILDER_H_
 #define V8_COMPILER_ACCESS_BUILDER_H_
 
+#include "src/base/compiler-specific.h"
 #include "src/compiler/simplified-operator.h"
 #include "src/elements-kind.h"
+#include "src/globals.h"
 
 namespace v8 {
 namespace internal {
@@ -15,8 +17,15 @@ namespace compiler {
 // This access builder provides a set of static methods constructing commonly
 // used FieldAccess and ElementAccess descriptors. These descriptors serve as
 // parameters to simplified load/store operators.
-class AccessBuilder final : public AllStatic {
+class V8_EXPORT_PRIVATE AccessBuilder final
+    : public NON_EXPORTED_BASE(AllStatic) {
  public:
+  // ===========================================================================
+  // Access to external values (based on external references).
+
+  // Provides access to a double field identified by an external reference.
+  static FieldAccess ForExternalDoubleValue();
+
   // ===========================================================================
   // Access to heap object fields and elements (based on tagged pointer).
 
@@ -62,8 +71,8 @@ class AccessBuilder final : public AllStatic {
   // Provides access to JSGeneratorObject::input_or_debug_pos() field.
   static FieldAccess ForJSGeneratorObjectInputOrDebugPos();
 
-  // Provides access to JSGeneratorObject::operand_stack() field.
-  static FieldAccess ForJSGeneratorObjectOperandStack();
+  // Provides access to JSGeneratorObject::register_file() field.
+  static FieldAccess ForJSGeneratorObjectRegisterFile();
 
   // Provides access to JSGeneratorObject::resume_mode() field.
   static FieldAccess ForJSGeneratorObjectResumeMode();
@@ -88,6 +97,9 @@ class AccessBuilder final : public AllStatic {
 
   // Provides access to JSTypedArray::length() field.
   static FieldAccess ForJSTypedArrayLength();
+
+  // Provides access to JSDate::value() field.
+  static FieldAccess ForJSDateValue();
 
   // Provides access to JSDate fields.
   static FieldAccess ForJSDateField(JSDate::FieldIndex index);
@@ -134,6 +146,12 @@ class AccessBuilder final : public AllStatic {
   // Provides access to Map::prototype() field.
   static FieldAccess ForMapPrototype();
 
+  // Provides access to Module::regular_exports() field.
+  static FieldAccess ForModuleRegularExports();
+
+  // Provides access to Module::regular_imports() field.
+  static FieldAccess ForModuleRegularImports();
+
   // Provides access to Name::hash_field() field.
   static FieldAccess ForNameHashField();
 
@@ -173,8 +191,27 @@ class AccessBuilder final : public AllStatic {
   // Provides access to JSGlobalObject::native_context() field.
   static FieldAccess ForJSGlobalObjectNativeContext();
 
+  // Provides access to JSArrayIterator::object() field.
+  static FieldAccess ForJSArrayIteratorObject();
+
+  // Provides access to JSArrayIterator::index() field.
+  static FieldAccess ForJSArrayIteratorIndex(InstanceType type = JS_OBJECT_TYPE,
+                                             ElementsKind kind = NO_ELEMENTS);
+
+  // Provides access to JSArrayIterator::object_map() field.
+  static FieldAccess ForJSArrayIteratorObjectMap();
+
+  // Provides access to JSStringIterator::string() field.
+  static FieldAccess ForJSStringIteratorString();
+
+  // Provides access to JSStringIterator::index() field.
+  static FieldAccess ForJSStringIteratorIndex();
+
   // Provides access to JSValue::value() field.
   static FieldAccess ForValue();
+
+  // Provides access to Cell::value() field.
+  static FieldAccess ForCellValue();
 
   // Provides access to arguments object fields.
   static FieldAccess ForArgumentsLength();
@@ -186,9 +223,9 @@ class AccessBuilder final : public AllStatic {
   // Provides access to Context slots.
   static FieldAccess ForContextSlot(size_t index);
 
-  // Provides access to PropertyCell::value() field.
-  static FieldAccess ForPropertyCellValue();
-  static FieldAccess ForPropertyCellValue(Type* type);
+  // Provides access to ContextExtension fields.
+  static FieldAccess ForContextExtensionScopeInfo();
+  static FieldAccess ForContextExtensionExtension();
 
   // Provides access to FixedArray elements.
   static ElementAccess ForFixedArrayElement();

@@ -7,7 +7,10 @@
 
 #include <iosfwd>
 
+#include "src/base/compiler-specific.h"
 #include "src/compiler/operator.h"
+#include "src/compiler/types.h"
+#include "src/globals.h"
 #include "src/handles.h"
 #include "src/machine-type.h"
 #include "src/objects.h"
@@ -16,9 +19,7 @@ namespace v8 {
 namespace internal {
 
 // Forward declarations.
-class Type;
 class Zone;
-
 
 namespace compiler {
 
@@ -46,15 +47,15 @@ class BufferAccess final {
   ExternalArrayType const external_array_type_;
 };
 
-bool operator==(BufferAccess, BufferAccess);
+V8_EXPORT_PRIVATE bool operator==(BufferAccess, BufferAccess);
 bool operator!=(BufferAccess, BufferAccess);
 
 size_t hash_value(BufferAccess);
 
-std::ostream& operator<<(std::ostream&, BufferAccess);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, BufferAccess);
 
-BufferAccess const BufferAccessOf(const Operator* op) WARN_UNUSED_RESULT;
-
+V8_EXPORT_PRIVATE BufferAccess const BufferAccessOf(const Operator* op)
+    WARN_UNUSED_RESULT;
 
 // An access descriptor for loads/stores of fixed structures like field
 // accesses of heap objects. Accesses from either tagged or untagged base
@@ -70,12 +71,12 @@ struct FieldAccess {
   int tag() const { return base_is_tagged == kTaggedBase ? kHeapObjectTag : 0; }
 };
 
-bool operator==(FieldAccess const&, FieldAccess const&);
+V8_EXPORT_PRIVATE bool operator==(FieldAccess const&, FieldAccess const&);
 bool operator!=(FieldAccess const&, FieldAccess const&);
 
 size_t hash_value(FieldAccess const&);
 
-std::ostream& operator<<(std::ostream&, FieldAccess const&);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, FieldAccess const&);
 
 FieldAccess const& FieldAccessOf(const Operator* op) WARN_UNUSED_RESULT;
 
@@ -97,14 +98,15 @@ struct ElementAccess {
   int tag() const { return base_is_tagged == kTaggedBase ? kHeapObjectTag : 0; }
 };
 
-bool operator==(ElementAccess const&, ElementAccess const&);
+V8_EXPORT_PRIVATE bool operator==(ElementAccess const&, ElementAccess const&);
 bool operator!=(ElementAccess const&, ElementAccess const&);
 
 size_t hash_value(ElementAccess const&);
 
-std::ostream& operator<<(std::ostream&, ElementAccess const&);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, ElementAccess const&);
 
-ElementAccess const& ElementAccessOf(const Operator* op) WARN_UNUSED_RESULT;
+V8_EXPORT_PRIVATE ElementAccess const& ElementAccessOf(const Operator* op)
+    WARN_UNUSED_RESULT;
 
 ExternalArrayType ExternalArrayTypeOf(const Operator* op) WARN_UNUSED_RESULT;
 
@@ -179,10 +181,14 @@ enum class NumberOperationHint : uint8_t {
 
 size_t hash_value(NumberOperationHint);
 
-std::ostream& operator<<(std::ostream&, NumberOperationHint);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, NumberOperationHint);
 
 NumberOperationHint NumberOperationHintOf(const Operator* op)
     WARN_UNUSED_RESULT;
+
+PretenureFlag PretenureFlagOf(const Operator* op) WARN_UNUSED_RESULT;
+
+UnicodeEncoding UnicodeEncodingOf(const Operator*) WARN_UNUSED_RESULT;
 
 // Interface for building simplified operators, which represent the
 // medium-level operations of V8, including adding numbers, allocating objects,
@@ -206,7 +212,8 @@ NumberOperationHint NumberOperationHintOf(const Operator* op)
 //   - Bool: a tagged pointer to either the canonical JS #false or
 //           the canonical JS #true object
 //   - Bit: an untagged integer 0 or 1, but word-sized
-class SimplifiedOperatorBuilder final : public ZoneObject {
+class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   explicit SimplifiedOperatorBuilder(Zone* zone);
 
@@ -259,8 +266,10 @@ class SimplifiedOperatorBuilder final : public ZoneObject {
   const Operator* NumberTan();
   const Operator* NumberTanh();
   const Operator* NumberTrunc();
+  const Operator* NumberToBoolean();
   const Operator* NumberToInt32();
   const Operator* NumberToUint32();
+  const Operator* NumberToUint8Clamped();
 
   const Operator* NumberSilenceNaN();
 
@@ -287,6 +296,7 @@ class SimplifiedOperatorBuilder final : public ZoneObject {
   const Operator* StringLessThanOrEqual();
   const Operator* StringCharCodeAt();
   const Operator* StringFromCharCode();
+  const Operator* StringFromCodePoint(UnicodeEncoding encoding);
 
   const Operator* PlainPrimitiveToNumber();
   const Operator* PlainPrimitiveToWord32();
@@ -299,19 +309,22 @@ class SimplifiedOperatorBuilder final : public ZoneObject {
   const Operator* ChangeInt31ToTaggedSigned();
   const Operator* ChangeInt32ToTagged();
   const Operator* ChangeUint32ToTagged();
-  const Operator* ChangeFloat64ToTagged(CheckForMinusZeroMode);
+  const Operator* ChangeFloat64ToTagged();
+  const Operator* ChangeFloat64ToTaggedPointer();
   const Operator* ChangeTaggedToBit();
   const Operator* ChangeBitToTagged();
   const Operator* TruncateTaggedToWord32();
   const Operator* TruncateTaggedToFloat64();
+  const Operator* TruncateTaggedToBit();
 
   const Operator* CheckIf();
   const Operator* CheckBounds();
   const Operator* CheckMaps(int map_input_count);
+
+  const Operator* CheckHeapObject();
   const Operator* CheckNumber();
+  const Operator* CheckSmi();
   const Operator* CheckString();
-  const Operator* CheckTaggedPointer();
-  const Operator* CheckTaggedSigned();
 
   const Operator* CheckedInt32Add();
   const Operator* CheckedInt32Sub();
@@ -320,11 +333,15 @@ class SimplifiedOperatorBuilder final : public ZoneObject {
   const Operator* CheckedUint32Div();
   const Operator* CheckedUint32Mod();
   const Operator* CheckedInt32Mul(CheckForMinusZeroMode);
+  const Operator* CheckedInt32ToTaggedSigned();
   const Operator* CheckedUint32ToInt32();
+  const Operator* CheckedUint32ToTaggedSigned();
   const Operator* CheckedFloat64ToInt32(CheckForMinusZeroMode);
   const Operator* CheckedTaggedSignedToInt32();
   const Operator* CheckedTaggedToInt32(CheckForMinusZeroMode);
   const Operator* CheckedTaggedToFloat64(CheckTaggedInputMode);
+  const Operator* CheckedTaggedToTaggedSigned();
+  const Operator* CheckedTaggedToTaggedPointer();
   const Operator* CheckedTruncateTaggedToWord32();
 
   const Operator* CheckFloat64Hole(CheckFloat64HoleMode);
@@ -337,6 +354,9 @@ class SimplifiedOperatorBuilder final : public ZoneObject {
   const Operator* ObjectIsSmi();
   const Operator* ObjectIsString();
   const Operator* ObjectIsUndetectable();
+
+  // array-buffer-was-neutered buffer
+  const Operator* ArrayBufferWasNeutered();
 
   // ensure-writable-fast-elements object, elements
   const Operator* EnsureWritableFastElements();

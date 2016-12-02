@@ -75,7 +75,13 @@ class IC {
            kind == Code::STORE_IC || kind == Code::KEYED_STORE_IC;
   }
 
+  // The ICs that don't pass slot and vector through the stack have to
+  // save/restore them in the dispatcher.
+  static bool ShouldPushPopSlotAndVector(Code::Kind kind);
+
   static InlineCacheState StateFromCode(Code* code);
+
+  static inline bool IsHandler(Object* object);
 
  protected:
   Address fp() const { return fp_; }
@@ -87,7 +93,6 @@ class IC {
   // Get the code object of the caller.
   Code* GetCode() const;
 
-  bool AddressIsOptimizedCode() const;
   inline bool AddressIsDeoptimizedCode() const;
   inline static bool AddressIsDeoptimizedCode(Isolate* isolate,
                                               Address address);
@@ -135,6 +140,8 @@ class IC {
   static void OnTypeFeedbackChanged(Isolate* isolate, Code* host);
   static void PostPatching(Address address, Code* target, Code* old_target);
 
+  void TraceHandlerCacheHitStats(LookupIterator* lookup);
+
   // Compute the handler either by compiling or by retrieving a cached version.
   Handle<Object> ComputeHandler(LookupIterator* lookup,
                                 Handle<Object> value = Handle<Code>::null());
@@ -142,11 +149,11 @@ class IC {
     UNREACHABLE();
     return Handle<Code>::null();
   }
-  virtual Handle<Code> CompileHandler(LookupIterator* lookup,
-                                      Handle<Object> value,
-                                      CacheHolderFlag cache_holder) {
+  virtual Handle<Object> CompileHandler(LookupIterator* lookup,
+                                        Handle<Object> value,
+                                        CacheHolderFlag cache_holder) {
     UNREACHABLE();
-    return Handle<Code>::null();
+    return Handle<Object>::null();
   }
 
   void UpdateMonomorphicIC(Handle<Object> handler, Handle<Name> name);
@@ -168,7 +175,7 @@ class IC {
            kind_ == Code::KEYED_STORE_IC);
     return kind_;
   }
-  bool ShouldRecomputeHandler(Handle<Object> receiver, Handle<String> name);
+  bool ShouldRecomputeHandler(Handle<String> name);
 
   ExtraICState extra_ic_state() const { return extra_ic_state_; }
 
@@ -300,11 +307,22 @@ class LoadIC : public IC {
 
   Handle<Object> GetMapIndependentHandler(LookupIterator* lookup) override;
 
-  Handle<Code> CompileHandler(LookupIterator* lookup, Handle<Object> unused,
-                              CacheHolderFlag cache_holder) override;
+  Handle<Object> CompileHandler(LookupIterator* lookup, Handle<Object> unused,
+                                CacheHolderFlag cache_holder) override;
 
  private:
+  // Creates a data handler that represents a load of a field by given index.
   Handle<Object> SimpleFieldLoad(FieldIndex index);
+
+  // Creates a data handler that represents a prototype chain check followed
+  // by given Smi-handler that encoded a load from the holder.
+  // Can be used only if GetPrototypeCheckCount() returns non negative value.
+  Handle<Object> LoadFromPrototype(Handle<Map> receiver_map,
+                                   Handle<JSObject> holder, Handle<Name> name,
+                                   Handle<Object> smi_handler);
+
+  // Creates a data handler that represents a load of a non-existent property.
+  Handle<Object> LoadNonExistent(Handle<Map> receiver_map, Handle<Name> name);
 
   friend class IC;
 };
@@ -338,10 +356,6 @@ class KeyedLoadIC : public LoadIC {
   // Code generator routines.
   static void GenerateMiss(MacroAssembler* masm);
   static void GenerateRuntimeGetProperty(MacroAssembler* masm);
-  static void GenerateMegamorphic(MacroAssembler* masm);
-
-  static Handle<Code> ChooseMegamorphicStub(Isolate* isolate,
-                                            ExtraICState extra_state);
 
   static void Clear(Isolate* isolate, Code* host, KeyedLoadICNexus* nexus);
 
@@ -399,10 +413,14 @@ class StoreIC : public IC {
   void UpdateCaches(LookupIterator* lookup, Handle<Object> value,
                     JSReceiver::StoreFromKeyed store_mode);
   Handle<Object> GetMapIndependentHandler(LookupIterator* lookup) override;
-  Handle<Code> CompileHandler(LookupIterator* lookup, Handle<Object> value,
-                              CacheHolderFlag cache_holder) override;
+  Handle<Object> CompileHandler(LookupIterator* lookup, Handle<Object> value,
+                                CacheHolderFlag cache_holder) override;
 
  private:
+  Handle<Object> StoreTransition(Handle<Map> receiver_map,
+                                 Handle<JSObject> holder,
+                                 Handle<Map> transition, Handle<Name> name);
+
   friend class IC;
 };
 
@@ -432,9 +450,6 @@ class KeyedStoreIC : public StoreIC {
   static void GenerateSlow(MacroAssembler* masm);
   static void GenerateMegamorphic(MacroAssembler* masm,
                                   LanguageMode language_mode);
-
-  static Handle<Code> ChooseMegamorphicStub(Isolate* isolate,
-                                            ExtraICState extra_state);
 
   static void Clear(Isolate* isolate, Code* host, KeyedStoreICNexus* nexus);
 

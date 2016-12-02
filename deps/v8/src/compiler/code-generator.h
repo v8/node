@@ -5,7 +5,6 @@
 #ifndef V8_COMPILER_CODE_GENERATOR_H_
 #define V8_COMPILER_CODE_GENERATOR_H_
 
-#include "src/compiler.h"
 #include "src/compiler/gap-resolver.h"
 #include "src/compiler/instruction.h"
 #include "src/compiler/unwinding-info-writer.h"
@@ -13,9 +12,13 @@
 #include "src/macro-assembler.h"
 #include "src/safepoint-table.h"
 #include "src/source-position-table.h"
+#include "src/trap-handler/trap-handler.h"
 
 namespace v8 {
 namespace internal {
+
+class CompilationInfo;
+
 namespace compiler {
 
 // Forward declarations.
@@ -50,7 +53,9 @@ class InstructionOperandIterator {
 class CodeGenerator final : public GapResolver::Assembler {
  public:
   explicit CodeGenerator(Frame* frame, Linkage* linkage,
-                         InstructionSequence* code, CompilationInfo* info);
+                         InstructionSequence* code, CompilationInfo* info,
+                         ZoneVector<trap_handler::ProtectedInstructionData>*
+                             protected_instructions = nullptr);
 
   // Generate native code.
   Handle<Code> GenerateCode();
@@ -58,10 +63,12 @@ class CodeGenerator final : public GapResolver::Assembler {
   InstructionSequence* code() const { return code_; }
   FrameAccessState* frame_access_state() const { return frame_access_state_; }
   const Frame* frame() const { return frame_access_state_->frame(); }
-  Isolate* isolate() const { return info_->isolate(); }
+  Isolate* isolate() const;
   Linkage* linkage() const { return linkage_; }
 
   Label* GetLabel(RpoNumber rpo) { return &labels_[rpo.ToSize()]; }
+
+  void AddProtectedInstruction(int instr_offset, int landing_offset);
 
  private:
   MacroAssembler* masm() { return &masm_; }
@@ -118,7 +125,8 @@ class CodeGenerator final : public GapResolver::Assembler {
   void AssembleArchTableSwitch(Instruction* instr);
 
   CodeGenResult AssembleDeoptimizerCall(int deoptimization_id,
-                                        Deoptimizer::BailoutType bailout_type);
+                                        Deoptimizer::BailoutType bailout_type,
+                                        SourcePosition pos);
 
   // Generates an architecture-specific, descriptor-specific prologue
   // to set up a stack frame.
@@ -126,7 +134,7 @@ class CodeGenerator final : public GapResolver::Assembler {
 
   // Generates an architecture-specific, descriptor-specific return sequence
   // to tear down a stack frame.
-  void AssembleReturn();
+  void AssembleReturn(InstructionOperand* pop);
 
   void AssembleDeconstructFrame();
 
@@ -277,6 +285,7 @@ class CodeGenerator final : public GapResolver::Assembler {
   OutOfLineCode* ools_;
   int osr_pc_offset_;
   SourcePositionTableBuilder source_position_table_builder_;
+  ZoneVector<trap_handler::ProtectedInstructionData>* protected_instructions_;
 };
 
 }  // namespace compiler

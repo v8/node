@@ -5,6 +5,9 @@
 #include "src/compiler-dispatcher/compiler-dispatcher-job.h"
 
 #include "src/assert-scope.h"
+#include "src/compilation-info.h"
+#include "src/compiler-dispatcher/compiler-dispatcher-tracer.h"
+#include "src/compiler.h"
 #include "src/global-handles.h"
 #include "src/isolate.h"
 #include "src/objects-inl.h"
@@ -12,21 +15,23 @@
 #include "src/parsing/parser.h"
 #include "src/parsing/scanner-character-streams.h"
 #include "src/unicode-cache.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
 
 CompilerDispatcherJob::CompilerDispatcherJob(Isolate* isolate,
-                                             Handle<JSFunction> function,
+                                             Handle<SharedFunctionInfo> shared,
                                              size_t max_stack_size)
     : isolate_(isolate),
-      function_(Handle<JSFunction>::cast(
-          isolate_->global_handles()->Create(*function))),
-      max_stack_size_(max_stack_size) {
+      tracer_(isolate_->compiler_dispatcher_tracer()),
+      shared_(Handle<SharedFunctionInfo>::cast(
+          isolate_->global_handles()->Create(*shared))),
+      max_stack_size_(max_stack_size),
+      can_compile_on_background_thread_(false) {
   HandleScope scope(isolate_);
-  Handle<SharedFunctionInfo> shared(function_->shared(), isolate_);
-  Handle<Script> script(Script::cast(shared->script()), isolate_);
+  DCHECK(!shared_->outer_scope_info()->IsTheHole(isolate_));
+  Handle<Script> script(Script::cast(shared_->script()), isolate_);
   Handle<String> source(String::cast(script->source()), isolate_);
   can_parse_on_background_thread_ =
       source->IsExternalTwoByteString() || source->IsExternalOneByteString();
@@ -36,55 +41,52 @@ CompilerDispatcherJob::~CompilerDispatcherJob() {
   DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
   DCHECK(status_ == CompileJobStatus::kInitial ||
          status_ == CompileJobStatus::kDone);
-  i::GlobalHandles::Destroy(Handle<Object>::cast(function_).location());
+  i::GlobalHandles::Destroy(Handle<Object>::cast(shared_).location());
 }
 
 void CompilerDispatcherJob::PrepareToParseOnMainThread() {
   DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
   DCHECK(status() == CompileJobStatus::kInitial);
+  COMPILER_DISPATCHER_TRACE_SCOPE(tracer_, kPrepareToParse);
   HandleScope scope(isolate_);
   unicode_cache_.reset(new UnicodeCache());
-  zone_.reset(new Zone(isolate_->allocator()));
-  Handle<SharedFunctionInfo> shared(function_->shared(), isolate_);
-  Handle<Script> script(Script::cast(shared->script()), isolate_);
+  zone_.reset(new Zone(isolate_->allocator(), ZONE_NAME));
+  Handle<Script> script(Script::cast(shared_->script()), isolate_);
   DCHECK(script->type() != Script::TYPE_NATIVE);
 
   Handle<String> source(String::cast(script->source()), isolate_);
-  if (source->IsExternalTwoByteString()) {
-    character_stream_.reset(new ExternalTwoByteStringUtf16CharacterStream(
-        Handle<ExternalTwoByteString>::cast(source), shared->start_position(),
-        shared->end_position()));
-  } else if (source->IsExternalOneByteString()) {
-    character_stream_.reset(new ExternalOneByteStringUtf16CharacterStream(
-        Handle<ExternalOneByteString>::cast(source), shared->start_position(),
-        shared->end_position()));
+  if (source->IsExternalTwoByteString() || source->IsExternalOneByteString()) {
+    character_stream_.reset(ScannerStream::For(
+        source, shared_->start_position(), shared_->end_position()));
   } else {
     source = String::Flatten(source);
     // Have to globalize the reference here, so it survives between function
     // calls.
     source_ = Handle<String>::cast(isolate_->global_handles()->Create(*source));
-    character_stream_.reset(new GenericStringUtf16CharacterStream(
-        source_, shared->start_position(), shared->end_position()));
+    character_stream_.reset(ScannerStream::For(
+        source_, shared_->start_position(), shared_->end_position()));
   }
   parse_info_.reset(new ParseInfo(zone_.get()));
   parse_info_->set_isolate(isolate_);
   parse_info_->set_character_stream(character_stream_.get());
-  parse_info_->set_lazy();
   parse_info_->set_hash_seed(isolate_->heap()->HashSeed());
-  parse_info_->set_is_named_expression(shared->is_named_expression());
-  parse_info_->set_calls_eval(shared->scope_info()->CallsEval());
-  parse_info_->set_compiler_hints(shared->compiler_hints());
-  parse_info_->set_start_position(shared->start_position());
-  parse_info_->set_end_position(shared->end_position());
+  parse_info_->set_is_named_expression(shared_->is_named_expression());
+  parse_info_->set_compiler_hints(shared_->compiler_hints());
+  parse_info_->set_start_position(shared_->start_position());
+  parse_info_->set_end_position(shared_->end_position());
   parse_info_->set_unicode_cache(unicode_cache_.get());
-  parse_info_->set_language_mode(shared->language_mode());
+  parse_info_->set_language_mode(shared_->language_mode());
+  parse_info_->set_function_literal_id(shared_->function_literal_id());
 
   parser_.reset(new Parser(parse_info_.get()));
-  parser_->DeserializeScopeChain(
-      parse_info_.get(), handle(function_->context(), isolate_),
-      Scope::DeserializationMode::kDeserializeOffHeap);
+  Handle<ScopeInfo> outer_scope_info(
+      handle(ScopeInfo::cast(shared_->outer_scope_info())));
+  parser_->DeserializeScopeChain(parse_info_.get(),
+                                 outer_scope_info->length() > 0
+                                     ? MaybeHandle<ScopeInfo>(outer_scope_info)
+                                     : MaybeHandle<ScopeInfo>());
 
-  Handle<String> name(String::cast(shared->name()));
+  Handle<String> name(String::cast(shared_->name()));
   parse_info_->set_function_name(
       parse_info_->ast_value_factory()->GetString(name));
   status_ = CompileJobStatus::kReadyToParse;
@@ -94,6 +96,9 @@ void CompilerDispatcherJob::Parse() {
   DCHECK(can_parse_on_background_thread_ ||
          ThreadId::Current().Equals(isolate_->thread_id()));
   DCHECK(status() == CompileJobStatus::kReadyToParse);
+  COMPILER_DISPATCHER_TRACE_SCOPE_WITH_NUM(
+      tracer_, kParse,
+      parse_info_->end_position() - parse_info_->start_position());
 
   DisallowHeapAllocation no_allocation;
   DisallowHandleAllocation no_handles;
@@ -108,8 +113,7 @@ void CompilerDispatcherJob::Parse() {
   // use it.
   parse_info_->set_isolate(nullptr);
 
-  uintptr_t stack_limit =
-      reinterpret_cast<uintptr_t>(&stack_limit) - max_stack_size_ * KB;
+  uintptr_t stack_limit = GetCurrentStackPosition() - max_stack_size_ * KB;
 
   parser_->set_stack_limit(stack_limit);
   parser_->ParseOnBackground(parse_info_.get());
@@ -122,6 +126,7 @@ void CompilerDispatcherJob::Parse() {
 bool CompilerDispatcherJob::FinalizeParsingOnMainThread() {
   DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
   DCHECK(status() == CompileJobStatus::kParsed);
+  COMPILER_DISPATCHER_TRACE_SCOPE(tracer_, kFinalizeParsing);
 
   if (!source_.is_null()) {
     i::GlobalHandles::Destroy(Handle<Object>::cast(source_).location());
@@ -131,24 +136,23 @@ bool CompilerDispatcherJob::FinalizeParsingOnMainThread() {
   if (parse_info_->literal() == nullptr) {
     status_ = CompileJobStatus::kFailed;
   } else {
-    status_ = CompileJobStatus::kReadyToCompile;
+    status_ = CompileJobStatus::kReadyToAnalyse;
   }
 
   DeferredHandleScope scope(isolate_);
   {
-    // Create a canonical handle scope before internalizing parsed values if
-    // compiling bytecode. This is required for off-thread bytecode generation.
-    std::unique_ptr<CanonicalHandleScope> canonical;
-    if (FLAG_ignition) canonical.reset(new CanonicalHandleScope(isolate_));
-
-    Handle<SharedFunctionInfo> shared(function_->shared(), isolate_);
-    Handle<Script> script(Script::cast(shared->script()), isolate_);
+    Handle<Script> script(Script::cast(shared_->script()), isolate_);
 
     parse_info_->set_script(script);
-    parse_info_->set_context(handle(function_->context(), isolate_));
+    Handle<ScopeInfo> outer_scope_info(
+        handle(ScopeInfo::cast(shared_->outer_scope_info())));
+    if (outer_scope_info->length() > 0) {
+      parse_info_->set_outer_scope_info(outer_scope_info);
+    }
+    parse_info_->set_shared_info(shared_);
 
-    // Do the parsing tasks which need to be done on the main thread. This will
-    // also handle parse errors.
+    // Do the parsing tasks which need to be done on the main thread. This
+    // will also handle parse errors.
     parser_->Internalize(isolate_, script, parse_info_->literal() == nullptr);
     parser_->HandleSourceURLComments(isolate_, script);
 
@@ -163,6 +167,76 @@ bool CompilerDispatcherJob::FinalizeParsingOnMainThread() {
   return status_ != CompileJobStatus::kFailed;
 }
 
+bool CompilerDispatcherJob::PrepareToCompileOnMainThread() {
+  DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
+  DCHECK(status() == CompileJobStatus::kReadyToAnalyse);
+  COMPILER_DISPATCHER_TRACE_SCOPE(tracer_, kPrepareToCompile);
+
+  compile_info_.reset(
+      new CompilationInfo(parse_info_.get(), Handle<JSFunction>::null()));
+
+  DeferredHandleScope scope(isolate_);
+  if (Compiler::Analyze(parse_info_.get())) {
+    compile_job_.reset(
+        Compiler::PrepareUnoptimizedCompilationJob(compile_info_.get()));
+  }
+  compile_info_->set_deferred_handles(scope.Detach());
+
+  if (!compile_job_.get()) {
+    if (!isolate_->has_pending_exception()) isolate_->StackOverflow();
+    status_ = CompileJobStatus::kFailed;
+    return false;
+  }
+
+  can_compile_on_background_thread_ =
+      compile_job_->can_execute_on_background_thread();
+  status_ = CompileJobStatus::kReadyToCompile;
+  return true;
+}
+
+void CompilerDispatcherJob::Compile() {
+  DCHECK(status() == CompileJobStatus::kReadyToCompile);
+  DCHECK(can_compile_on_background_thread_ ||
+         ThreadId::Current().Equals(isolate_->thread_id()));
+  COMPILER_DISPATCHER_TRACE_SCOPE_WITH_NUM(
+      tracer_, kCompile, parse_info_->literal()->ast_node_count());
+
+  // Disallowing of handle dereference and heap access dealt with in
+  // CompilationJob::ExecuteJob.
+
+  uintptr_t stack_limit = GetCurrentStackPosition() - max_stack_size_ * KB;
+  compile_job_->set_stack_limit(stack_limit);
+
+  CompilationJob::Status status = compile_job_->ExecuteJob();
+  USE(status);
+
+  // Always transition to kCompiled - errors will be reported by
+  // FinalizeCompilingOnMainThread.
+  status_ = CompileJobStatus::kCompiled;
+}
+
+bool CompilerDispatcherJob::FinalizeCompilingOnMainThread() {
+  DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
+  DCHECK(status() == CompileJobStatus::kCompiled);
+  COMPILER_DISPATCHER_TRACE_SCOPE(tracer_, kFinalizeCompiling);
+
+  if (compile_job_->state() == CompilationJob::State::kFailed ||
+      !Compiler::FinalizeCompilationJob(compile_job_.release())) {
+    if (!isolate_->has_pending_exception()) isolate_->StackOverflow();
+    status_ = CompileJobStatus::kFailed;
+    return false;
+  }
+
+  zone_.reset();
+  parse_info_.reset();
+  compile_info_.reset();
+  compile_job_.reset();
+  handles_from_parsing_.reset();
+
+  status_ = CompileJobStatus::kDone;
+  return true;
+}
+
 void CompilerDispatcherJob::ResetOnMainThread() {
   DCHECK(ThreadId::Current().Equals(isolate_->thread_id()));
 
@@ -172,6 +246,8 @@ void CompilerDispatcherJob::ResetOnMainThread() {
   parse_info_.reset();
   zone_.reset();
   handles_from_parsing_.reset();
+  compile_info_.reset();
+  compile_job_.reset();
 
   if (!source_.is_null()) {
     i::GlobalHandles::Destroy(Handle<Object>::cast(source_).location());

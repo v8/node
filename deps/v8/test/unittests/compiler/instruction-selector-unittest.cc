@@ -5,6 +5,7 @@
 #include "test/unittests/compiler/instruction-selector-unittest.h"
 
 #include "src/code-factory.h"
+#include "src/compiler/compiler-source-position-table.h"
 #include "src/compiler/graph.h"
 #include "src/compiler/schedule.h"
 #include "src/flags.h"
@@ -41,7 +42,8 @@ InstructionSelectorTest::Stream InstructionSelectorTest::StreamBuilder::Build(
   SourcePositionTable source_position_table(graph());
   InstructionSelector selector(test_->zone(), node_count, &linkage, &sequence,
                                schedule, &source_position_table, nullptr,
-                               source_position_mode, features);
+                               source_position_mode, features,
+                               InstructionSelector::kDisableScheduling);
   selector.SelectInstructions();
   if (FLAG_trace_turbo) {
     OFStream out(stdout);
@@ -165,7 +167,7 @@ TARGET_TEST_F(InstructionSelectorTest, ReturnFloat32Constant) {
   ASSERT_EQ(InstructionOperand::CONSTANT, s[0]->OutputAt(0)->kind());
   EXPECT_FLOAT_EQ(kValue, s.ToFloat32(s[0]->OutputAt(0)));
   EXPECT_EQ(kArchRet, s[1]->arch_opcode());
-  EXPECT_EQ(1U, s[1]->InputCount());
+  EXPECT_EQ(2U, s[1]->InputCount());
 }
 
 
@@ -177,7 +179,7 @@ TARGET_TEST_F(InstructionSelectorTest, ReturnParameter) {
   EXPECT_EQ(kArchNop, s[0]->arch_opcode());
   ASSERT_EQ(1U, s[0]->OutputCount());
   EXPECT_EQ(kArchRet, s[1]->arch_opcode());
-  EXPECT_EQ(1U, s[1]->InputCount());
+  EXPECT_EQ(2U, s[1]->InputCount());
 }
 
 
@@ -191,7 +193,7 @@ TARGET_TEST_F(InstructionSelectorTest, ReturnZero) {
   EXPECT_EQ(InstructionOperand::CONSTANT, s[0]->OutputAt(0)->kind());
   EXPECT_EQ(0, s.ToInt32(s[0]->OutputAt(0)));
   EXPECT_EQ(kArchRet, s[1]->arch_opcode());
-  EXPECT_EQ(1U, s[1]->InputCount());
+  EXPECT_EQ(2U, s[1]->InputCount());
 }
 
 
@@ -244,19 +246,13 @@ TARGET_TEST_F(InstructionSelectorTest, FinishRegion) {
       m.AddNode(m.common()->FinishRegion(), param, m.graph()->start());
   m.Return(finish);
   Stream s = m.Build(kAllInstructions);
-  ASSERT_EQ(4U, s.size());
+  ASSERT_EQ(3U, s.size());
   EXPECT_EQ(kArchNop, s[0]->arch_opcode());
   ASSERT_EQ(1U, s[0]->OutputCount());
   ASSERT_TRUE(s[0]->Output()->IsUnallocated());
+  EXPECT_EQ(kArchRet, s[1]->arch_opcode());
   EXPECT_EQ(s.ToVreg(param), s.ToVreg(s[0]->Output()));
-  EXPECT_EQ(kArchNop, s[1]->arch_opcode());
-  ASSERT_EQ(1U, s[1]->InputCount());
-  ASSERT_TRUE(s[1]->InputAt(0)->IsUnallocated());
-  EXPECT_EQ(s.ToVreg(param), s.ToVreg(s[1]->InputAt(0)));
-  ASSERT_EQ(1U, s[1]->OutputCount());
-  ASSERT_TRUE(s[1]->Output()->IsUnallocated());
-  EXPECT_TRUE(UnallocatedOperand::cast(s[1]->Output())->HasSameAsInputPolicy());
-  EXPECT_EQ(s.ToVreg(finish), s.ToVreg(s[1]->Output()));
+  EXPECT_EQ(s.ToVreg(param), s.ToVreg(s[1]->InputAt(1)));
   EXPECT_TRUE(s.IsReference(finish));
 }
 

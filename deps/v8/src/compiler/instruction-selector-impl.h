@@ -90,6 +90,12 @@ class OperandGenerator {
                                         GetVReg(node)));
   }
 
+  InstructionOperand UseAnyAtEnd(Node* node) {
+    return Use(node, UnallocatedOperand(UnallocatedOperand::ANY,
+                                        UnallocatedOperand::USED_AT_END,
+                                        GetVReg(node)));
+  }
+
   InstructionOperand UseAny(Node* node) {
     return Use(node, UnallocatedOperand(UnallocatedOperand::ANY,
                                         UnallocatedOperand::USED_AT_START,
@@ -381,6 +387,7 @@ class FlagsContinuation final {
   void Overwrite(FlagsCondition condition) { condition_ = condition; }
 
   void OverwriteAndNegateIfEqual(FlagsCondition condition) {
+    DCHECK(condition_ == kEqual || condition_ == kNotEqual);
     bool negate = condition_ == kEqual;
     condition_ = condition;
     if (negate) Negate();

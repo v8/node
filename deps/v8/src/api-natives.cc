@@ -17,42 +17,39 @@ namespace {
 
 class InvokeScope {
  public:
-  explicit InvokeScope(Isolate* isolate) : save_context_(isolate) {}
+  explicit InvokeScope(Isolate* isolate)
+      : isolate_(isolate), save_context_(isolate) {}
   ~InvokeScope() {
-    Isolate* isolate = save_context_.isolate();
-    bool has_exception = isolate->has_pending_exception();
+    bool has_exception = isolate_->has_pending_exception();
     if (has_exception) {
-      isolate->ReportPendingMessages();
+      isolate_->ReportPendingMessages();
     } else {
-      isolate->clear_pending_message();
+      isolate_->clear_pending_message();
     }
   }
 
  private:
+  Isolate* isolate_;
   SaveContext save_context_;
 };
 
-enum class CacheCheck { kCheck, kSkip };
+MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
+                                        Handle<ObjectTemplateInfo> data,
+                                        Handle<JSReceiver> new_target,
+                                        bool is_hidden_prototype);
 
-MaybeHandle<JSObject> InstantiateObject(
-    Isolate* isolate, Handle<ObjectTemplateInfo> data,
-    Handle<JSReceiver> new_target, CacheCheck cache_check = CacheCheck::kCheck,
-    bool is_hidden_prototype = false);
-
-MaybeHandle<JSFunction> InstantiateFunction(
-    Isolate* isolate, Handle<FunctionTemplateInfo> data,
-    CacheCheck cache_check = CacheCheck::kCheck,
-    Handle<Name> name = Handle<Name>());
+MaybeHandle<JSFunction> InstantiateFunction(Isolate* isolate,
+                                            Handle<FunctionTemplateInfo> data,
+                                            Handle<Name> name = Handle<Name>());
 
 MaybeHandle<Object> Instantiate(Isolate* isolate, Handle<Object> data,
                                 Handle<Name> name = Handle<Name>()) {
   if (data->IsFunctionTemplateInfo()) {
     return InstantiateFunction(isolate,
-                               Handle<FunctionTemplateInfo>::cast(data),
-                               CacheCheck::kCheck, name);
+                               Handle<FunctionTemplateInfo>::cast(data), name);
   } else if (data->IsObjectTemplateInfo()) {
     return InstantiateObject(isolate, Handle<ObjectTemplateInfo>::cast(data),
-                             Handle<JSReceiver>());
+                             Handle<JSReceiver>(), false);
   } else {
     return data;
   }
@@ -199,15 +196,14 @@ MaybeHandle<JSObject> ConfigureInstance(Isolate* isolate, Handle<JSObject> obj,
     Handle<FixedArray> array =
         isolate->factory()->NewFixedArray(max_number_of_properties);
 
-    info = *data;
-    while (info != nullptr) {
+    for (Handle<TemplateInfoT> temp(*data); *temp != nullptr;
+         temp = handle(temp->GetParent(isolate), isolate)) {
       // Accumulate accessors.
-      Object* maybe_properties = info->property_accessors();
+      Object* maybe_properties = temp->property_accessors();
       if (!maybe_properties->IsUndefined(isolate)) {
         valid_descriptors = AccessorInfo::AppendUnique(
             handle(maybe_properties, isolate), array, valid_descriptors);
       }
-      info = info->GetParent(isolate);
     }
 
     // Install accumulated accessors.
@@ -339,17 +335,9 @@ bool IsSimpleInstantiation(Isolate* isolate, ObjectTemplateInfo* info,
   return fun->context()->native_context() == isolate->raw_native_context();
 }
 
-MaybeHandle<JSObject> InstantiateObjectWithInvokeScope(
-    Isolate* isolate, Handle<ObjectTemplateInfo> info,
-    Handle<JSReceiver> new_target) {
-  InvokeScope invoke_scope(isolate);
-  return InstantiateObject(isolate, info, new_target, CacheCheck::kSkip);
-}
-
 MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
                                         Handle<ObjectTemplateInfo> info,
                                         Handle<JSReceiver> new_target,
-                                        CacheCheck cache_check,
                                         bool is_hidden_prototype) {
   Handle<JSFunction> constructor;
   int serial_number = Smi::cast(info->serial_number())->value();
@@ -363,7 +351,7 @@ MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
   }
   // Fast path.
   Handle<JSObject> result;
-  if (serial_number && cache_check == CacheCheck::kCheck) {
+  if (serial_number) {
     if (ProbeInstantiationsCache(isolate, serial_number).ToHandle(&result)) {
       return isolate->factory()->CopyJSObject(result);
     }
@@ -397,6 +385,7 @@ MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
   if (info->immutable_proto()) {
     JSObject::SetImmutableProto(object);
   }
+  // TODO(dcarney): is this necessary?
   JSObject::MigrateSlowToFast(result, 0, "ApiNatives::InstantiateObject");
 
   if (serial_number) {
@@ -406,58 +395,68 @@ MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
   return result;
 }
 
-MaybeHandle<JSFunction> InstantiateFunctionWithInvokeScope(
-    Isolate* isolate, Handle<FunctionTemplateInfo> info) {
-  InvokeScope invoke_scope(isolate);
-  return InstantiateFunction(isolate, info, CacheCheck::kSkip);
+namespace {
+MaybeHandle<Object> GetInstancePrototype(Isolate* isolate,
+                                         Object* function_template) {
+  // Enter a new scope.  Recursion could otherwise create a lot of handles.
+  HandleScope scope(isolate);
+  Handle<JSFunction> parent_instance;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, parent_instance,
+      InstantiateFunction(
+          isolate,
+          handle(FunctionTemplateInfo::cast(function_template), isolate)),
+      JSFunction);
+  Handle<Object> instance_prototype;
+  // TODO(cbruni): decide what to do here.
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, instance_prototype,
+      JSObject::GetProperty(parent_instance,
+                            isolate->factory()->prototype_string()),
+      JSFunction);
+  return scope.CloseAndEscape(instance_prototype);
 }
+}  // namespace
 
 MaybeHandle<JSFunction> InstantiateFunction(Isolate* isolate,
                                             Handle<FunctionTemplateInfo> data,
-                                            CacheCheck cache_check,
                                             Handle<Name> name) {
   int serial_number = Smi::cast(data->serial_number())->value();
-  if (serial_number && cache_check == CacheCheck::kCheck) {
+  if (serial_number) {
     Handle<JSObject> result;
     if (ProbeInstantiationsCache(isolate, serial_number).ToHandle(&result)) {
       return Handle<JSFunction>::cast(result);
     }
   }
-  Handle<JSObject> prototype;
+  Handle<Object> prototype;
   if (!data->remove_prototype()) {
     Object* prototype_templ = data->prototype_template();
     if (prototype_templ->IsUndefined(isolate)) {
-      prototype = isolate->factory()->NewJSObject(isolate->object_function());
+      Object* protoype_provider_templ = data->prototype_provider_template();
+      if (protoype_provider_templ->IsUndefined(isolate)) {
+        prototype = isolate->factory()->NewJSObject(isolate->object_function());
+      } else {
+        ASSIGN_RETURN_ON_EXCEPTION(
+            isolate, prototype,
+            GetInstancePrototype(isolate, protoype_provider_templ), JSFunction);
+      }
     } else {
       ASSIGN_RETURN_ON_EXCEPTION(
           isolate, prototype,
           InstantiateObject(
               isolate,
               handle(ObjectTemplateInfo::cast(prototype_templ), isolate),
-              Handle<JSReceiver>(), CacheCheck::kCheck,
-              data->hidden_prototype()),
+              Handle<JSReceiver>(), data->hidden_prototype()),
           JSFunction);
     }
     Object* parent = data->parent_template();
     if (!parent->IsUndefined(isolate)) {
-      // Enter a new scope.  Recursion could otherwise create a lot of handles.
-      HandleScope scope(isolate);
-      Handle<JSFunction> parent_instance;
-      ASSIGN_RETURN_ON_EXCEPTION(
-          isolate, parent_instance,
-          InstantiateFunction(
-              isolate, handle(FunctionTemplateInfo::cast(parent), isolate)),
-          JSFunction);
-      // TODO(dcarney): decide what to do here.
       Handle<Object> parent_prototype;
-      ASSIGN_RETURN_ON_EXCEPTION(
-          isolate, parent_prototype,
-          JSObject::GetProperty(parent_instance,
-                                isolate->factory()->prototype_string()),
-          JSFunction);
-      MAYBE_RETURN(JSObject::SetPrototype(prototype, parent_prototype, false,
-                                          Object::THROW_ON_ERROR),
-                   MaybeHandle<JSFunction>());
+      ASSIGN_RETURN_ON_EXCEPTION(isolate, parent_prototype,
+                                 GetInstancePrototype(isolate, parent),
+                                 JSFunction);
+      JSObject::ForceSetPrototype(Handle<JSObject>::cast(prototype),
+                                  parent_prototype);
     }
   }
   Handle<JSFunction> function = ApiNatives::CreateApiFunction(
@@ -505,31 +504,17 @@ void AddPropertyToPropertyList(Isolate* isolate, Handle<TemplateInfo> templ,
 }  // namespace
 
 MaybeHandle<JSFunction> ApiNatives::InstantiateFunction(
-    Handle<FunctionTemplateInfo> info) {
-  Isolate* isolate = info->GetIsolate();
-  int serial_number = Smi::cast(info->serial_number())->value();
-  if (serial_number) {
-    Handle<JSObject> result;
-    if (ProbeInstantiationsCache(isolate, serial_number).ToHandle(&result)) {
-      return Handle<JSFunction>::cast(result);
-    }
-  }
-  return InstantiateFunctionWithInvokeScope(isolate, info);
+    Handle<FunctionTemplateInfo> data) {
+  Isolate* isolate = data->GetIsolate();
+  InvokeScope invoke_scope(isolate);
+  return ::v8::internal::InstantiateFunction(isolate, data);
 }
 
 MaybeHandle<JSObject> ApiNatives::InstantiateObject(
-    Handle<ObjectTemplateInfo> info, Handle<JSReceiver> new_target) {
-  Isolate* isolate = info->GetIsolate();
-  int serial_number = Smi::cast(info->serial_number())->value();
-  if (serial_number && !new_target.is_null() &&
-      IsSimpleInstantiation(isolate, *info, *new_target)) {
-    // Fast path.
-    Handle<JSObject> result;
-    if (ProbeInstantiationsCache(isolate, serial_number).ToHandle(&result)) {
-      return isolate->factory()->CopyJSObject(result);
-    }
-  }
-  return InstantiateObjectWithInvokeScope(isolate, info, new_target);
+    Handle<ObjectTemplateInfo> data, Handle<JSReceiver> new_target) {
+  Isolate* isolate = data->GetIsolate();
+  InvokeScope invoke_scope(isolate);
+  return ::v8::internal::InstantiateObject(isolate, data, new_target, false);
 }
 
 MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
@@ -565,24 +550,22 @@ MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
 void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  Handle<Name> name, Handle<Object> value,
                                  PropertyAttributes attributes) {
-  const int kSize = 3;
   PropertyDetails details(attributes, DATA, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
-  Handle<Object> data[kSize] = {name, details_handle, value};
-  AddPropertyToPropertyList(isolate, info, kSize, data);
+  Handle<Object> data[] = {name, details_handle, value};
+  AddPropertyToPropertyList(isolate, info, arraysize(data), data);
 }
 
 
 void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  Handle<Name> name, v8::Intrinsic intrinsic,
                                  PropertyAttributes attributes) {
-  const int kSize = 4;
   auto value = handle(Smi::FromInt(intrinsic), isolate);
   auto intrinsic_marker = isolate->factory()->true_value();
   PropertyDetails details(attributes, DATA, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
-  Handle<Object> data[kSize] = {name, intrinsic_marker, details_handle, value};
-  AddPropertyToPropertyList(isolate, info, kSize, data);
+  Handle<Object> data[] = {name, intrinsic_marker, details_handle, value};
+  AddPropertyToPropertyList(isolate, info, arraysize(data), data);
 }
 
 
@@ -592,11 +575,10 @@ void ApiNatives::AddAccessorProperty(Isolate* isolate,
                                      Handle<FunctionTemplateInfo> getter,
                                      Handle<FunctionTemplateInfo> setter,
                                      PropertyAttributes attributes) {
-  const int kSize = 4;
   PropertyDetails details(attributes, ACCESSOR, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
-  Handle<Object> data[kSize] = {name, details_handle, getter, setter};
-  AddPropertyToPropertyList(isolate, info, kSize, data);
+  Handle<Object> data[] = {name, details_handle, getter, setter};
+  AddPropertyToPropertyList(isolate, info, arraysize(data), data);
 }
 
 
@@ -643,17 +625,19 @@ Handle<JSFunction> ApiNatives::CreateApiFunction(
 
   if (prototype->IsTheHole(isolate)) {
     prototype = isolate->factory()->NewFunctionPrototype(result);
-  } else {
+  } else if (obj->prototype_provider_template()->IsUndefined(isolate)) {
     JSObject::AddProperty(Handle<JSObject>::cast(prototype),
                           isolate->factory()->constructor_string(), result,
                           DONT_ENUM);
   }
 
   int internal_field_count = 0;
+  bool immutable_proto = false;
   if (!obj->instance_template()->IsUndefined(isolate)) {
     Handle<ObjectTemplateInfo> instance_template = Handle<ObjectTemplateInfo>(
         ObjectTemplateInfo::cast(obj->instance_template()));
     internal_field_count = instance_template->internal_field_count();
+    immutable_proto = instance_template->immutable_proto();
   }
 
   // TODO(svenpanne) Kill ApiInstanceType and refactor things by generalizing
@@ -691,6 +675,12 @@ Handle<JSFunction> ApiNatives::CreateApiFunction(
 
   // Mark as undetectable if needed.
   if (obj->undetectable()) {
+    // We only allow callable undetectable receivers here, since this whole
+    // undetectable business is only to support document.all, which is both
+    // undetectable and callable. If we ever see the need to have an object
+    // that is undetectable but not callable, we need to update the types.h
+    // to allow encoding this.
+    CHECK(!obj->instance_call_handler()->IsUndefined(isolate));
     map->set_is_undetectable();
   }
 
@@ -712,6 +702,8 @@ Handle<JSFunction> ApiNatives::CreateApiFunction(
     map->set_is_callable();
     map->set_is_constructor(true);
   }
+
+  if (immutable_proto) map->set_immutable_proto(true);
 
   return result;
 }

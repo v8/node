@@ -95,8 +95,8 @@ void CompareStringsOneWay(const char* s1, const char* s2,
                           int expected_diff_parameter = -1) {
   StringCompareInput input(s1, s2);
 
-  v8::base::AccountingAllocator allocator;
-  Zone zone(&allocator);
+  v8::internal::AccountingAllocator allocator;
+  Zone zone(&allocator, ZONE_NAME);
 
   DiffChunkStruct* first_chunk;
   ListDiffOutputWriter writer(&first_chunk, &zone);

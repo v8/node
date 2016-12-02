@@ -38,6 +38,7 @@
 #include "src/allocation.h"
 #include "src/builtins/builtins.h"
 #include "src/deoptimize-reason.h"
+#include "src/globals.h"
 #include "src/isolate.h"
 #include "src/log.h"
 #include "src/register-configuration.h"
@@ -51,6 +52,7 @@ class ApiFunction;
 namespace internal {
 
 // Forward declarations.
+class SourcePosition;
 class StatsCounter;
 
 // -----------------------------------------------------------------------------
@@ -80,8 +82,13 @@ class AssemblerBase: public Malloced {
   void set_enabled_cpu_features(uint64_t features) {
     enabled_cpu_features_ = features;
   }
+  // Features are usually enabled by CpuFeatureScope, which also asserts that
+  // the features are supported before they are enabled.
   bool IsEnabled(CpuFeature f) {
     return (enabled_cpu_features_ & (static_cast<uint64_t>(1) << f)) != 0;
+  }
+  void EnableCpuFeature(CpuFeature f) {
+    enabled_cpu_features_ |= (static_cast<uint64_t>(1) << f);
   }
 
   bool is_constant_pool_available() const {
@@ -184,15 +191,22 @@ class PredictableCodeSizeScope {
 // Enable a specified feature within a scope.
 class CpuFeatureScope BASE_EMBEDDED {
  public:
+  enum CheckPolicy {
+    kCheckSupported,
+    kDontCheckSupported,
+  };
+
 #ifdef DEBUG
-  CpuFeatureScope(AssemblerBase* assembler, CpuFeature f);
+  CpuFeatureScope(AssemblerBase* assembler, CpuFeature f,
+                  CheckPolicy check = kCheckSupported);
   ~CpuFeatureScope();
 
  private:
   AssemblerBase* assembler_;
   uint64_t old_enabled_;
 #else
-  CpuFeatureScope(AssemblerBase* assembler, CpuFeature f) {}
+  CpuFeatureScope(AssemblerBase* assembler, CpuFeature f,
+                  CheckPolicy check = kCheckSupported) {}
 #endif
 };
 
@@ -399,17 +413,15 @@ class RelocInfo {
     // Encoded internal reference, used only on MIPS, MIPS64 and PPC.
     INTERNAL_REFERENCE_ENCODED,
 
-    // Continuation points for a generator yield.
-    GENERATOR_CONTINUATION,
-
     // Marks constant and veneer pools. Only used on ARM and ARM64.
     // They use a custom noncompact encoding.
     CONST_POOL,
     VENEER_POOL,
 
-    DEOPT_POSITION,  // Deoptimization source position.
-    DEOPT_REASON,    // Deoptimization reason index.
-    DEOPT_ID,        // Deoptimization inlining id.
+    DEOPT_SCRIPT_OFFSET,
+    DEOPT_INLINING_ID,  // Deoptimization source position.
+    DEOPT_REASON,       // Deoptimization reason index.
+    DEOPT_ID,           // Deoptimization inlining id.
 
     // This is not an actual reloc mode, but used to encode a long pc jump that
     // cannot be encoded as part of another record.
@@ -467,7 +479,7 @@ class RelocInfo {
     return mode == VENEER_POOL;
   }
   static inline bool IsDeoptPosition(Mode mode) {
-    return mode == DEOPT_POSITION;
+    return mode == DEOPT_SCRIPT_OFFSET || mode == DEOPT_INLINING_ID;
   }
   static inline bool IsDeoptReason(Mode mode) {
     return mode == DEOPT_REASON;
@@ -508,9 +520,6 @@ class RelocInfo {
   }
   static inline bool IsCodeAgeSequence(Mode mode) {
     return mode == CODE_AGE_SEQUENCE;
-  }
-  static inline bool IsGeneratorContinuation(Mode mode) {
-    return mode == GENERATOR_CONTINUATION;
   }
   static inline bool IsWasmMemoryReference(Mode mode) {
     return mode == WASM_MEMORY_REFERENCE;
@@ -938,10 +947,6 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference log_enter_external_function(Isolate* isolate);
   static ExternalReference log_leave_external_function(Isolate* isolate);
 
-  // Static data in the keyed lookup cache.
-  static ExternalReference keyed_lookup_cache_keys(Isolate* isolate);
-  static ExternalReference keyed_lookup_cache_field_offsets(Isolate* isolate);
-
   // Static variable Heap::roots_array_start()
   static ExternalReference roots_array_start(Isolate* isolate);
 
@@ -949,7 +954,8 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference allocation_sites_list_address(Isolate* isolate);
 
   // Static variable StackGuard::address_of_jslimit()
-  static ExternalReference address_of_stack_limit(Isolate* isolate);
+  V8_EXPORT_PRIVATE static ExternalReference address_of_stack_limit(
+      Isolate* isolate);
 
   // Static variable StackGuard::address_of_real_jslimit()
   static ExternalReference address_of_real_stack_limit(Isolate* isolate);
@@ -1035,10 +1041,8 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference invoke_function_callback(Isolate* isolate);
   static ExternalReference invoke_accessor_getter_callback(Isolate* isolate);
 
-  static ExternalReference virtual_handler_register(Isolate* isolate);
-  static ExternalReference virtual_slot_register(Isolate* isolate);
-
-  static ExternalReference runtime_function_table_address(Isolate* isolate);
+  V8_EXPORT_PRIVATE static ExternalReference runtime_function_table_address(
+      Isolate* isolate);
 
   Address address() const { return reinterpret_cast<Address>(address_); }
 
@@ -1098,12 +1102,12 @@ class ExternalReference BASE_EMBEDDED {
   void* address_;
 };
 
-bool operator==(ExternalReference, ExternalReference);
+V8_EXPORT_PRIVATE bool operator==(ExternalReference, ExternalReference);
 bool operator!=(ExternalReference, ExternalReference);
 
 size_t hash_value(ExternalReference);
 
-std::ostream& operator<<(std::ostream&, ExternalReference);
+V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, ExternalReference);
 
 // -----------------------------------------------------------------------------
 // Utility functions

@@ -33,7 +33,7 @@ class Vector {
 
   // Returns a vector using the same backing storage as this one,
   // spanning from and including 'from', to but not including 'to'.
-  Vector<T> SubVector(int from, int to) {
+  Vector<T> SubVector(int from, int to) const {
     DCHECK(0 <= from);
     SLOW_DCHECK(from < to);
     SLOW_DCHECK(static_cast<unsigned>(to) <= static_cast<unsigned>(length_));
@@ -51,7 +51,8 @@ class Vector {
 
   // Access individual vector elements - checks bounds in debug mode.
   T& operator[](int index) const {
-    DCHECK(0 <= index && index < length_);
+    DCHECK_LE(0, index);
+    DCHECK_LT(index, length_);
     return start_[index];
   }
 

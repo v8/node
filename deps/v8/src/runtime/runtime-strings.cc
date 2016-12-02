@@ -90,152 +90,15 @@ RUNTIME_FUNCTION(Runtime_StringReplaceOneCharWithString) {
 RUNTIME_FUNCTION(Runtime_StringIndexOf) {
   HandleScope scope(isolate);
   DCHECK(args.length() == 3);
-
-  CONVERT_ARG_HANDLE_CHECKED(String, sub, 0);
-  CONVERT_ARG_HANDLE_CHECKED(String, pat, 1);
-  CONVERT_ARG_HANDLE_CHECKED(Object, index, 2);
-
-  uint32_t start_index = 0;
-  if (!index->ToArrayIndex(&start_index)) return Smi::FromInt(-1);
-
-  CHECK(start_index <= static_cast<uint32_t>(sub->length()));
-  int position = String::IndexOf(isolate, sub, pat, start_index);
-  return Smi::FromInt(position);
+  return String::IndexOf(isolate, args.at<Object>(0), args.at<Object>(1),
+                         args.at<Object>(2));
 }
-
-
-template <typename schar, typename pchar>
-static int StringMatchBackwards(Vector<const schar> subject,
-                                Vector<const pchar> pattern, int idx) {
-  int pattern_length = pattern.length();
-  DCHECK(pattern_length >= 1);
-  DCHECK(idx + pattern_length <= subject.length());
-
-  if (sizeof(schar) == 1 && sizeof(pchar) > 1) {
-    for (int i = 0; i < pattern_length; i++) {
-      uc16 c = pattern[i];
-      if (c > String::kMaxOneByteCharCode) {
-        return -1;
-      }
-    }
-  }
-
-  pchar pattern_first_char = pattern[0];
-  for (int i = idx; i >= 0; i--) {
-    if (subject[i] != pattern_first_char) continue;
-    int j = 1;
-    while (j < pattern_length) {
-      if (pattern[j] != subject[i + j]) {
-        break;
-      }
-      j++;
-    }
-    if (j == pattern_length) {
-      return i;
-    }
-  }
-  return -1;
-}
-
 
 RUNTIME_FUNCTION(Runtime_StringLastIndexOf) {
-  HandleScope scope(isolate);
-  DCHECK(args.length() == 3);
-
-  CONVERT_ARG_HANDLE_CHECKED(String, sub, 0);
-  CONVERT_ARG_HANDLE_CHECKED(String, pat, 1);
-  CONVERT_ARG_HANDLE_CHECKED(Object, index, 2);
-
-  uint32_t start_index = 0;
-  if (!index->ToArrayIndex(&start_index)) return Smi::FromInt(-1);
-
-  uint32_t pat_length = pat->length();
-  uint32_t sub_length = sub->length();
-
-  if (start_index + pat_length > sub_length) {
-    start_index = sub_length - pat_length;
-  }
-
-  if (pat_length == 0) {
-    return Smi::FromInt(start_index);
-  }
-
-  sub = String::Flatten(sub);
-  pat = String::Flatten(pat);
-
-  int position = -1;
-  DisallowHeapAllocation no_gc;  // ensure vectors stay valid
-
-  String::FlatContent sub_content = sub->GetFlatContent();
-  String::FlatContent pat_content = pat->GetFlatContent();
-
-  if (pat_content.IsOneByte()) {
-    Vector<const uint8_t> pat_vector = pat_content.ToOneByteVector();
-    if (sub_content.IsOneByte()) {
-      position = StringMatchBackwards(sub_content.ToOneByteVector(), pat_vector,
-                                      start_index);
-    } else {
-      position = StringMatchBackwards(sub_content.ToUC16Vector(), pat_vector,
-                                      start_index);
-    }
-  } else {
-    Vector<const uc16> pat_vector = pat_content.ToUC16Vector();
-    if (sub_content.IsOneByte()) {
-      position = StringMatchBackwards(sub_content.ToOneByteVector(), pat_vector,
-                                      start_index);
-    } else {
-      position = StringMatchBackwards(sub_content.ToUC16Vector(), pat_vector,
-                                      start_index);
-    }
-  }
-
-  return Smi::FromInt(position);
-}
-
-
-RUNTIME_FUNCTION(Runtime_StringLocaleCompare) {
   HandleScope handle_scope(isolate);
-  DCHECK(args.length() == 2);
-
-  CONVERT_ARG_HANDLE_CHECKED(String, str1, 0);
-  CONVERT_ARG_HANDLE_CHECKED(String, str2, 1);
-
-  if (str1.is_identical_to(str2)) return Smi::FromInt(0);  // Equal.
-  int str1_length = str1->length();
-  int str2_length = str2->length();
-
-  // Decide trivial cases without flattening.
-  if (str1_length == 0) {
-    if (str2_length == 0) return Smi::FromInt(0);  // Equal.
-    return Smi::FromInt(-str2_length);
-  } else {
-    if (str2_length == 0) return Smi::FromInt(str1_length);
-  }
-
-  int end = str1_length < str2_length ? str1_length : str2_length;
-
-  // No need to flatten if we are going to find the answer on the first
-  // character.  At this point we know there is at least one character
-  // in each string, due to the trivial case handling above.
-  int d = str1->Get(0) - str2->Get(0);
-  if (d != 0) return Smi::FromInt(d);
-
-  str1 = String::Flatten(str1);
-  str2 = String::Flatten(str2);
-
-  DisallowHeapAllocation no_gc;
-  String::FlatContent flat1 = str1->GetFlatContent();
-  String::FlatContent flat2 = str2->GetFlatContent();
-
-  for (int i = 0; i < end; i++) {
-    if (flat1.Get(i) != flat2.Get(i)) {
-      return Smi::FromInt(flat1.Get(i) - flat2.Get(i));
-    }
-  }
-
-  return Smi::FromInt(str1_length - str2_length);
+  return String::LastIndexOf(isolate, args.at<Object>(0), args.at<Object>(1),
+                             isolate->factory()->undefined_value());
 }
-
 
 RUNTIME_FUNCTION(Runtime_SubString) {
   HandleScope scope(isolate);
@@ -294,59 +157,6 @@ RUNTIME_FUNCTION(Runtime_InternalizeString) {
 }
 
 
-RUNTIME_FUNCTION(Runtime_StringMatch) {
-  HandleScope handles(isolate);
-  DCHECK(args.length() == 3);
-
-  CONVERT_ARG_HANDLE_CHECKED(String, subject, 0);
-  CONVERT_ARG_HANDLE_CHECKED(JSRegExp, regexp, 1);
-  CONVERT_ARG_HANDLE_CHECKED(JSArray, regexp_info, 2);
-
-  CHECK(regexp_info->HasFastObjectElements());
-
-  RegExpImpl::GlobalCache global_cache(regexp, subject, isolate);
-  if (global_cache.HasException()) return isolate->heap()->exception();
-
-  int capture_count = regexp->CaptureCount();
-
-  ZoneScope zone_scope(isolate->runtime_zone());
-  ZoneList<int> offsets(8, zone_scope.zone());
-
-  while (true) {
-    int32_t* match = global_cache.FetchNext();
-    if (match == NULL) break;
-    offsets.Add(match[0], zone_scope.zone());  // start
-    offsets.Add(match[1], zone_scope.zone());  // end
-  }
-
-  if (global_cache.HasException()) return isolate->heap()->exception();
-
-  if (offsets.length() == 0) {
-    // Not a single match.
-    return isolate->heap()->null_value();
-  }
-
-  RegExpImpl::SetLastMatchInfo(regexp_info, subject, capture_count,
-                               global_cache.LastSuccessfulMatch());
-
-  int matches = offsets.length() / 2;
-  Handle<FixedArray> elements = isolate->factory()->NewFixedArray(matches);
-  Handle<String> substring =
-      isolate->factory()->NewSubString(subject, offsets.at(0), offsets.at(1));
-  elements->set(0, *substring);
-  FOR_WITH_HANDLE_SCOPE(isolate, int, i = 1, i, i < matches, i++, {
-    int from = offsets.at(i * 2);
-    int to = offsets.at(i * 2 + 1);
-    Handle<String> substring =
-        isolate->factory()->NewProperSubString(subject, from, to);
-    elements->set(i, *substring);
-  });
-  Handle<JSArray> result = isolate->factory()->NewJSArrayWithElements(elements);
-  result->set_length(Smi::FromInt(matches));
-  return *result;
-}
-
-
 RUNTIME_FUNCTION(Runtime_StringCharCodeAtRT) {
   HandleScope handle_scope(isolate);
   DCHECK(args.length() == 2);
@@ -384,7 +194,7 @@ RUNTIME_FUNCTION(Runtime_StringCompare) {
       break;
   }
   UNREACHABLE();
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
 
@@ -701,13 +511,13 @@ static int CopyCachedOneByteCharsToArray(Heap* heap, const uint8_t* chars,
     elements->set(i, value, mode);
   }
   if (i < length) {
-    DCHECK(Smi::FromInt(0) == 0);
+    DCHECK(Smi::kZero == 0);
     memset(elements->data_start() + i, 0, kPointerSize * (length - i));
   }
 #ifdef DEBUG
   for (int j = 0; j < length; ++j) {
     Object* element = elements->get(j);
-    DCHECK(element == Smi::FromInt(0) ||
+    DCHECK(element == Smi::kZero ||
            (element->IsString() && String::cast(element)->LooksValid()));
   }
 #endif
@@ -1070,7 +880,7 @@ RUNTIME_FUNCTION(Runtime_StringLessThan) {
       break;
   }
   UNREACHABLE();
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
 RUNTIME_FUNCTION(Runtime_StringLessThanOrEqual) {
@@ -1088,7 +898,7 @@ RUNTIME_FUNCTION(Runtime_StringLessThanOrEqual) {
       break;
   }
   UNREACHABLE();
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
 RUNTIME_FUNCTION(Runtime_StringGreaterThan) {
@@ -1106,7 +916,7 @@ RUNTIME_FUNCTION(Runtime_StringGreaterThan) {
       break;
   }
   UNREACHABLE();
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
 RUNTIME_FUNCTION(Runtime_StringGreaterThanOrEqual) {
@@ -1124,7 +934,7 @@ RUNTIME_FUNCTION(Runtime_StringGreaterThanOrEqual) {
       break;
   }
   UNREACHABLE();
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
 RUNTIME_FUNCTION(Runtime_StringEqual) {

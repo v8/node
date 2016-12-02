@@ -10,18 +10,17 @@
 #include "src/handles-inl.h"
 #include "src/objects.h"  // For FAA::LoadInternalField impl.
 
-using v8::internal::CodeStubAssembler;
 using v8::internal::compiler::Node;
 
 namespace v8 {
 namespace internal {
 
 FastAccessorAssembler::FastAccessorAssembler(Isolate* isolate)
-    : zone_(isolate->allocator()),
+    : zone_(isolate->allocator(), ZONE_NAME),
       isolate_(isolate),
-      assembler_(new CodeStubAssembler(isolate, zone(), 1,
-                                       Code::ComputeFlags(Code::STUB),
-                                       "FastAccessorAssembler")),
+      assembler_state_(isolate, zone(), 1, Code::ComputeFlags(Code::STUB),
+                       "FastAccessorAssembler"),
+      assembler_(new CodeStubAssembler(&assembler_state_)),
       state_(kBuilding) {}
 
 FastAccessorAssembler::~FastAccessorAssembler() { Clear(); }
@@ -179,27 +178,35 @@ FastAccessorAssembler::ValueId FastAccessorAssembler::Call(
                              ExternalReference::DIRECT_API_CALL, isolate());
 
   // Create & call API callback via stub.
-  CallApiCallbackStub stub(isolate(), 1, true, true);
-  DCHECK_EQ(5, stub.GetCallInterfaceDescriptor().GetParameterCount());
-  DCHECK_EQ(1, stub.GetCallInterfaceDescriptor().GetStackParameterCount());
+  const int kJSParameterCount = 1;
+  CallApiCallbackStub stub(isolate(), kJSParameterCount, true, true);
+  CallInterfaceDescriptor descriptor = stub.GetCallInterfaceDescriptor();
+  DCHECK_EQ(4, descriptor.GetParameterCount());
+  DCHECK_EQ(0, descriptor.GetStackParameterCount());
   // TODO(vogelheim): There is currently no clean way to retrieve the context
   //     parameter for a stub and the implementation details are hidden in
   //     compiler/*. The context_paramter is computed as:
   //       Linkage::GetJSCallContextParamIndex(descriptor->JSParameterCount())
-  const int context_parameter = 3;
-  Node* call = assembler_->CallStub(
-      stub.GetCallInterfaceDescriptor(),
-      assembler_->HeapConstant(stub.GetCode()),
-      assembler_->Parameter(context_parameter),
+  const int kContextParameter = 3;
+  Node* context = assembler_->Parameter(kContextParameter);
+  Node* target = assembler_->HeapConstant(stub.GetCode());
 
-      // Stub/register parameters:
-      assembler_->UndefinedConstant(), /* callee (there's no JSFunction) */
-      assembler_->UndefinedConstant(), /* call_data (undefined) */
-      assembler_->Parameter(0), /* receiver (same as holder in this case) */
-      assembler_->ExternalConstant(callback), /* API callback function */
+  int param_count = descriptor.GetParameterCount();
+  Node** args = zone()->NewArray<Node*>(param_count + 1 + kJSParameterCount);
+  // Stub/register parameters:
+  args[0] = assembler_->UndefinedConstant();  // callee (there's no JSFunction)
+  args[1] = assembler_->UndefinedConstant();  // call_data (undefined)
+  args[2] = assembler_->Parameter(0);  // receiver (same as holder in this case)
+  args[3] = assembler_->ExternalConstant(callback);  // API callback function
 
-      // JS arguments, on stack:
-      FromId(arg));
+  // JS arguments, on stack:
+  args[4] = FromId(arg);
+
+  // Context.
+  args[5] = context;
+
+  Node* call =
+      assembler_->CallStubN(descriptor, kJSParameterCount, target, args);
 
   return FromRaw(call);
 }
@@ -240,7 +247,7 @@ void FastAccessorAssembler::CheckIsJSObjectOrJump(ValueId value_id,
 
 MaybeHandle<Code> FastAccessorAssembler::Build() {
   CHECK_EQ(kBuilding, state_);
-  Handle<Code> code = assembler_->GenerateCode();
+  Handle<Code> code = compiler::CodeAssembler::GenerateCode(&assembler_state_);
   state_ = !code.is_null() ? kBuilt : kError;
   Clear();
   return code;

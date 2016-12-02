@@ -374,9 +374,9 @@ const int32_t  kDefaultStopCode = -1;
 // Type of VFP register. Determines register encoding.
 enum VFPRegPrecision {
   kSinglePrecision = 0,
-  kDoublePrecision = 1
+  kDoublePrecision = 1,
+  kSimd128Precision = 2
 };
-
 
 // VFP FPSCR constants.
 enum VFPConversionMode {
@@ -477,39 +477,41 @@ class Instruction {
     *reinterpret_cast<Instr*>(this) = value;
   }
 
-  // Read one particular bit out of the instruction bits.
+  // Extract a single bit from the instruction bits and return it as bit 0 in
+  // the result.
   inline int Bit(int nr) const {
     return (InstructionBits() >> nr) & 1;
   }
 
-  // Read a bit field's value out of the instruction bits.
+  // Extract a bit field <hi:lo> from the instruction bits and return it in the
+  // least-significant bits of the result.
   inline int Bits(int hi, int lo) const {
     return (InstructionBits() >> lo) & ((2 << (hi - lo)) - 1);
   }
 
-  // Read a bit field out of the instruction bits.
+  // Read a bit field <hi:lo>, leaving its position unchanged in the result.
   inline int BitField(int hi, int lo) const {
     return InstructionBits() & (((2 << (hi - lo)) - 1) << lo);
   }
 
   // Static support.
 
-  // Read one particular bit out of the instruction bits.
+  // Extract a single bit from the instruction bits and return it as bit 0 in
+  // the result.
   static inline int Bit(Instr instr, int nr) {
     return (instr >> nr) & 1;
   }
 
-  // Read the value of a bit field out of the instruction bits.
+  // Extract a bit field <hi:lo> from the instruction bits and return it in the
+  // least-significant bits of the result.
   static inline int Bits(Instr instr, int hi, int lo) {
     return (instr >> lo) & ((2 << (hi - lo)) - 1);
   }
 
-
-  // Read a bit field out of the instruction bits.
+  // Read a bit field <hi:lo>, leaving its position unchanged in the result.
   static inline int BitField(Instr instr, int hi, int lo) {
     return instr & (((2 << (hi - lo)) - 1) << lo);
   }
-
 
   // Accessors for the different named fields used in the ARM encoding.
   // The naming of these accessor corresponds to figure A3-1.
@@ -525,13 +527,11 @@ class Instruction {
 
 
   // Generally applicable fields
-  inline Condition ConditionValue() const {
-    return static_cast<Condition>(Bits(31, 28));
-  }
+  inline int ConditionValue() const { return Bits(31, 28); }
   inline Condition ConditionField() const {
     return static_cast<Condition>(BitField(31, 28));
   }
-  DECLARE_STATIC_TYPED_ACCESSOR(Condition, ConditionValue);
+  DECLARE_STATIC_TYPED_ACCESSOR(int, ConditionValue);
   DECLARE_STATIC_TYPED_ACCESSOR(Condition, ConditionField);
 
   inline int TypeValue() const { return Bits(27, 25); }
@@ -674,8 +674,15 @@ class Instruction {
   inline int VFPGlueRegValue(VFPRegPrecision pre, int four_bit, int one_bit) {
     if (pre == kSinglePrecision) {
       return (Bits(four_bit + 3, four_bit) << 1) | Bit(one_bit);
+    } else {
+      int reg_num = (Bit(one_bit) << 4) | Bits(four_bit + 3, four_bit);
+      if (pre == kDoublePrecision) {
+        return reg_num;
+      }
+      DCHECK_EQ(kSimd128Precision, pre);
+      DCHECK_EQ(reg_num & 1, 0);
+      return reg_num / 2;
     }
-    return (Bit(one_bit) << 4) | Bits(four_bit + 3, four_bit);
   }
 
   // We need to prevent the creation of instances of class Instruction.

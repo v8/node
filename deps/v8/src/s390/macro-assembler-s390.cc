@@ -251,10 +251,7 @@ void MacroAssembler::StoreRoot(Register source, Heap::RootListIndex index,
 void MacroAssembler::InNewSpace(Register object, Register scratch,
                                 Condition cond, Label* branch) {
   DCHECK(cond == eq || cond == ne);
-  // TODO(joransiu): check if we can merge mov Operand into AndP.
-  const int mask =
-      (1 << MemoryChunk::IN_FROM_SPACE) | (1 << MemoryChunk::IN_TO_SPACE);
-  CheckPageFlag(object, scratch, mask, cond, branch);
+  CheckPageFlag(object, scratch, MemoryChunk::kIsInNewSpaceMask, cond, branch);
 }
 
 void MacroAssembler::RecordWriteField(
@@ -1505,87 +1502,6 @@ void MacroAssembler::PopStackHandler() {
   StoreP(r3, MemOperand(ip));
 }
 
-void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
-                                            Register scratch, Label* miss) {
-  Label same_contexts;
-
-  DCHECK(!holder_reg.is(scratch));
-  DCHECK(!holder_reg.is(ip));
-  DCHECK(!scratch.is(ip));
-
-  // Load current lexical context from the active StandardFrame, which
-  // may require crawling past STUB frames.
-  Label load_context;
-  Label has_context;
-  DCHECK(!ip.is(scratch));
-  LoadRR(ip, fp);
-  bind(&load_context);
-  LoadP(scratch,
-        MemOperand(ip, CommonFrameConstants::kContextOrFrameTypeOffset));
-  JumpIfNotSmi(scratch, &has_context);
-  LoadP(ip, MemOperand(ip, CommonFrameConstants::kCallerFPOffset));
-  b(&load_context);
-  bind(&has_context);
-
-// In debug mode, make sure the lexical context is set.
-#ifdef DEBUG
-  CmpP(scratch, Operand::Zero());
-  Check(ne, kWeShouldNotHaveAnEmptyLexicalContext);
-#endif
-
-  // Load the native context of the current context.
-  LoadP(scratch, ContextMemOperand(scratch, Context::NATIVE_CONTEXT_INDEX));
-
-  // Check the context is a native context.
-  if (emit_debug_code()) {
-    // Cannot use ip as a temporary in this verification code. Due to the fact
-    // that ip is clobbered as part of cmp with an object Operand.
-    push(holder_reg);  // Temporarily save holder on the stack.
-    // Read the first word and compare to the native_context_map.
-    LoadP(holder_reg, FieldMemOperand(scratch, HeapObject::kMapOffset));
-    CompareRoot(holder_reg, Heap::kNativeContextMapRootIndex);
-    Check(eq, kJSGlobalObjectNativeContextShouldBeANativeContext);
-    pop(holder_reg);  // Restore holder.
-  }
-
-  // Check if both contexts are the same.
-  LoadP(ip, FieldMemOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
-  CmpP(scratch, ip);
-  beq(&same_contexts, Label::kNear);
-
-  // Check the context is a native context.
-  if (emit_debug_code()) {
-    // TODO(119): avoid push(holder_reg)/pop(holder_reg)
-    // Cannot use ip as a temporary in this verification code. Due to the fact
-    // that ip is clobbered as part of cmp with an object Operand.
-    push(holder_reg);        // Temporarily save holder on the stack.
-    LoadRR(holder_reg, ip);  // Move ip to its holding place.
-    CompareRoot(holder_reg, Heap::kNullValueRootIndex);
-    Check(ne, kJSGlobalProxyContextShouldNotBeNull);
-
-    LoadP(holder_reg, FieldMemOperand(holder_reg, HeapObject::kMapOffset));
-    CompareRoot(holder_reg, Heap::kNativeContextMapRootIndex);
-    Check(eq, kJSGlobalObjectNativeContextShouldBeANativeContext);
-    // Restore ip is not needed. ip is reloaded below.
-    pop(holder_reg);  // Restore holder.
-    // Restore ip to holder's context.
-    LoadP(ip, FieldMemOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
-  }
-
-  // Check that the security token in the calling global object is
-  // compatible with the security token in the receiving global
-  // object.
-  int token_offset =
-      Context::kHeaderSize + Context::SECURITY_TOKEN_INDEX * kPointerSize;
-
-  LoadP(scratch, FieldMemOperand(scratch, token_offset));
-  LoadP(ip, FieldMemOperand(ip, token_offset));
-  CmpP(scratch, ip);
-  bne(miss);
-
-  bind(&same_contexts);
-}
-
 // Compute the hash code from the untagged key.  This must be kept in sync with
 // ComputeIntegerHash in utils.h and KeyedLoadGenericStub in
 // code-stub-hydrogen.cc
@@ -1627,89 +1543,10 @@ void MacroAssembler::GetNumberHash(Register t0, Register scratch) {
   ExtractBitRange(t0, t0, 29, 0);
 }
 
-void MacroAssembler::LoadFromNumberDictionary(Label* miss, Register elements,
-                                              Register key, Register result,
-                                              Register t0, Register t1,
-                                              Register t2) {
-  // Register use:
-  //
-  // elements - holds the slow-case elements of the receiver on entry.
-  //            Unchanged unless 'result' is the same register.
-  //
-  // key      - holds the smi key on entry.
-  //            Unchanged unless 'result' is the same register.
-  //
-  // result   - holds the result on exit if the load succeeded.
-  //            Allowed to be the same as 'key' or 'result'.
-  //            Unchanged on bailout so 'key' or 'result' can be used
-  //            in further computation.
-  //
-  // Scratch registers:
-  //
-  // t0 - holds the untagged key on entry and holds the hash once computed.
-  //
-  // t1 - used to hold the capacity mask of the dictionary
-  //
-  // t2 - used for the index into the dictionary.
-  Label done;
-
-  GetNumberHash(t0, t1);
-
-  // Compute the capacity mask.
-  LoadP(t1, FieldMemOperand(elements, SeededNumberDictionary::kCapacityOffset));
-  SmiUntag(t1);
-  SubP(t1, Operand(1));
-
-  // Generate an unrolled loop that performs a few probes before giving up.
-  for (int i = 0; i < kNumberDictionaryProbes; i++) {
-    // Use t2 for index calculations and keep the hash intact in t0.
-    LoadRR(t2, t0);
-    // Compute the masked index: (hash + i + i * i) & mask.
-    if (i > 0) {
-      AddP(t2, Operand(SeededNumberDictionary::GetProbeOffset(i)));
-    }
-    AndP(t2, t1);
-
-    // Scale the index by multiplying by the element size.
-    DCHECK(SeededNumberDictionary::kEntrySize == 3);
-    LoadRR(ip, t2);
-    sll(ip, Operand(1));
-    AddP(t2, ip);  // t2 = t2 * 3
-
-    // Check if the key is identical to the name.
-    sll(t2, Operand(kPointerSizeLog2));
-    AddP(t2, elements);
-    LoadP(ip,
-          FieldMemOperand(t2, SeededNumberDictionary::kElementsStartOffset));
-    CmpP(key, ip);
-    if (i != kNumberDictionaryProbes - 1) {
-      beq(&done, Label::kNear);
-    } else {
-      bne(miss);
-    }
-  }
-
-  bind(&done);
-  // Check that the value is a field property.
-  // t2: elements + (index * kPointerSize)
-  const int kDetailsOffset =
-      SeededNumberDictionary::kElementsStartOffset + 2 * kPointerSize;
-  LoadP(t1, FieldMemOperand(t2, kDetailsOffset));
-  LoadSmiLiteral(ip, Smi::FromInt(PropertyDetails::TypeField::kMask));
-  DCHECK_EQ(DATA, 0);
-  AndP(r0, ip, t1);
-  bne(miss);
-
-  // Get the value at the masked, scaled index and return.
-  const int kValueOffset =
-      SeededNumberDictionary::kElementsStartOffset + kPointerSize;
-  LoadP(result, FieldMemOperand(t2, kValueOffset));
-}
-
 void MacroAssembler::Allocate(int object_size, Register result,
                               Register scratch1, Register scratch2,
                               Label* gc_required, AllocationFlags flags) {
-  DCHECK(object_size <= Page::kMaxRegularHeapObjectSize);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
   DCHECK((flags & ALLOCATION_FOLDED) == 0);
   if (!FLAG_inline_new) {
     if (emit_debug_code()) {
@@ -1965,7 +1802,7 @@ void MacroAssembler::FastAllocate(Register object_size, Register result,
 void MacroAssembler::FastAllocate(int object_size, Register result,
                                   Register scratch1, Register scratch2,
                                   AllocationFlags flags) {
-  DCHECK(object_size <= Page::kMaxRegularHeapObjectSize);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
   DCHECK(!AreAliased(result, scratch1, scratch2, ip));
 
   // Make object size into bytes.
@@ -2119,73 +1956,9 @@ void MacroAssembler::CompareRoot(Register obj, Heap::RootListIndex index) {
   CmpP(obj, MemOperand(kRootRegister, index << kPointerSizeLog2));
 }
 
-void MacroAssembler::CheckFastElements(Register map, Register scratch,
-                                       Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  STATIC_ASSERT(FAST_ELEMENTS == 2);
-  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-  STATIC_ASSERT(Map::kMaximumBitField2FastHoleyElementValue < 0x8000);
-  CmpLogicalByte(FieldMemOperand(map, Map::kBitField2Offset),
-                 Operand(Map::kMaximumBitField2FastHoleyElementValue));
-  bgt(fail);
-}
-
-void MacroAssembler::CheckFastObjectElements(Register map, Register scratch,
-                                             Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  STATIC_ASSERT(FAST_ELEMENTS == 2);
-  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-  CmpLogicalByte(FieldMemOperand(map, Map::kBitField2Offset),
-                 Operand(Map::kMaximumBitField2FastHoleySmiElementValue));
-  ble(fail);
-  CmpLogicalByte(FieldMemOperand(map, Map::kBitField2Offset),
-                 Operand(Map::kMaximumBitField2FastHoleyElementValue));
-  bgt(fail);
-}
-
-void MacroAssembler::CheckFastSmiElements(Register map, Register scratch,
-                                          Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  CmpLogicalByte(FieldMemOperand(map, Map::kBitField2Offset),
-                 Operand(Map::kMaximumBitField2FastHoleySmiElementValue));
-  bgt(fail);
-}
-
 void MacroAssembler::SmiToDouble(DoubleRegister value, Register smi) {
   SmiUntag(ip, smi);
   ConvertIntToDouble(ip, value);
-}
-void MacroAssembler::StoreNumberToDoubleElements(
-    Register value_reg, Register key_reg, Register elements_reg,
-    Register scratch1, DoubleRegister double_scratch, Label* fail,
-    int elements_offset) {
-  DCHECK(!AreAliased(value_reg, key_reg, elements_reg, scratch1));
-  Label smi_value, store;
-
-  // Handle smi values specially.
-  JumpIfSmi(value_reg, &smi_value);
-
-  // Ensure that the object is a heap number
-  CheckMap(value_reg, scratch1, isolate()->factory()->heap_number_map(), fail,
-           DONT_DO_SMI_CHECK);
-
-  LoadDouble(double_scratch,
-             FieldMemOperand(value_reg, HeapNumber::kValueOffset));
-  // Force a canonical NaN.
-  CanonicalizeNaN(double_scratch);
-  b(&store);
-
-  bind(&smi_value);
-  SmiToDouble(double_scratch, value_reg);
-
-  bind(&store);
-  SmiToDoubleArrayOffset(scratch1, key_reg);
-  StoreDouble(double_scratch,
-              FieldMemOperand(elements_reg, scratch1,
-                              FixedDoubleArray::kHeaderSize - elements_offset));
 }
 
 void MacroAssembler::CompareMap(Register obj, Register scratch, Handle<Map> map,
@@ -2303,16 +2076,6 @@ void MacroAssembler::TailCallStub(CodeStub* stub, Condition cond) {
 
 bool MacroAssembler::AllowThisStubCall(CodeStub* stub) {
   return has_frame_ || !stub->SometimesSetsUpAFrame();
-}
-
-void MacroAssembler::IndexFromHash(Register hash, Register index) {
-  // If the hash field contains an array index pick it out. The assert checks
-  // that the constants for the maximum number of digits for an array index
-  // cached in the hash field and the number of bits reserved for it does not
-  // conflict.
-  DCHECK(TenToThe(String::kMaxCachedArrayIndexLength) <
-         (1 << String::kArrayIndexValueBits));
-  DecodeFieldToSmi<String::ArrayIndexValueBits>(index, hash);
 }
 
 void MacroAssembler::TestDoubleIsInt32(DoubleRegister double_input,
@@ -2676,23 +2439,6 @@ void MacroAssembler::LoadContext(Register dst, int context_chain_length) {
   }
 }
 
-void MacroAssembler::LoadTransitionedArrayMapConditional(
-    ElementsKind expected_kind, ElementsKind transitioned_kind,
-    Register map_in_out, Register scratch, Label* no_map_match) {
-  DCHECK(IsFastElementsKind(expected_kind));
-  DCHECK(IsFastElementsKind(transitioned_kind));
-
-  // Check that the function's map is the same as the expected cached map.
-  LoadP(scratch, NativeContextMemOperand());
-  LoadP(ip, ContextMemOperand(scratch, Context::ArrayMapIndex(expected_kind)));
-  CmpP(map_in_out, ip);
-  bne(no_map_match);
-
-  // Use the transitioned cached map.
-  LoadP(map_in_out,
-        ContextMemOperand(scratch, Context::ArrayMapIndex(transitioned_kind)));
-}
-
 void MacroAssembler::LoadNativeContextSlot(int index, Register dst) {
   LoadP(dst, NativeContextMemOperand());
   LoadP(dst, ContextMemOperand(dst, index));
@@ -2775,25 +2521,6 @@ void MacroAssembler::UntagAndJumpIfSmi(Register dst, Register src,
   SmiUntag(dst, src);
   TestIfSmi(src);
   beq(smi_case);
-}
-
-void MacroAssembler::UntagAndJumpIfNotSmi(Register dst, Register src,
-                                          Label* non_smi_case) {
-  STATIC_ASSERT(kSmiTag == 0);
-  STATIC_ASSERT(kSmiTagSize == 1);
-
-  // We can more optimally use TestIfSmi if dst != src
-  // otherwise, the UnTag operation will kill the CC and we cannot
-  // test the Tag bit.
-  if (src.code() != dst.code()) {
-    SmiUntag(dst, src);
-    TestIfSmi(src);
-  } else {
-    TestBit(src, 0, r0);
-    SmiUntag(dst, src);
-    LoadAndTestRR(r0, r0);
-  }
-  bne(non_smi_case);
 }
 
 void MacroAssembler::JumpIfEitherSmi(Register reg1, Register reg2,
@@ -3025,51 +2752,6 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
 }
 
-void MacroAssembler::CopyBytes(Register src, Register dst, Register length,
-                               Register scratch) {
-  Label big_loop, left_bytes, done, fake_call;
-
-  DCHECK(!scratch.is(r0));
-
-  // big loop moves 256 bytes at a time
-  bind(&big_loop);
-  CmpP(length, Operand(static_cast<intptr_t>(0x100)));
-  blt(&left_bytes);
-
-  mvc(MemOperand(dst), MemOperand(src), 0x100);
-
-  AddP(src, Operand(static_cast<intptr_t>(0x100)));
-  AddP(dst, Operand(static_cast<intptr_t>(0x100)));
-  SubP(length, Operand(static_cast<intptr_t>(0x100)));
-  b(&big_loop);
-
-  bind(&left_bytes);
-  CmpP(length, Operand::Zero());
-  beq(&done);
-
-  // TODO(john.yan): More optimal version is to use MVC
-  // Sequence below has some undiagnosed issue.
-  /*
-  b(scratch, &fake_call);  // use brasl to Save mvc addr to scratch
-  mvc(MemOperand(dst), MemOperand(src), 1);
-  bind(&fake_call);
-  SubP(length, Operand(static_cast<intptr_t>(-1)));
-  ex(length, MemOperand(scratch));  // execute mvc instr above
-  AddP(src, length);
-  AddP(dst, length);
-  AddP(src, Operand(static_cast<intptr_t>(0x1)));
-  AddP(dst, Operand(static_cast<intptr_t>(0x1)));
-  */
-
-  mvc(MemOperand(dst), MemOperand(src), 1);
-  AddP(src, Operand(static_cast<intptr_t>(0x1)));
-  AddP(dst, Operand(static_cast<intptr_t>(0x1)));
-  SubP(length, Operand(static_cast<intptr_t>(0x1)));
-
-  b(&left_bytes);
-  bind(&done);
-}
-
 void MacroAssembler::InitializeNFieldsWithFiller(Register current_address,
                                                  Register count,
                                                  Register filler) {
@@ -3174,7 +2856,7 @@ void MacroAssembler::EmitSeqStringSetCharCheck(Register string, Register index,
   CmpP(index, ip);
   Check(lt, kIndexIsTooLarge);
 
-  DCHECK(Smi::FromInt(0) == 0);
+  DCHECK(Smi::kZero == 0);
   CmpP(index, Operand::Zero());
   Check(ge, kIndexIsNegative);
 
@@ -3499,7 +3181,7 @@ void MacroAssembler::CheckEnumCache(Label* call_runtime) {
 
   // For all objects but the receiver, check that the cache is empty.
   EnumLength(r5, r3);
-  CmpSmiLiteral(r5, Smi::FromInt(0), r0);
+  CmpSmiLiteral(r5, Smi::kZero, r0);
   bne(call_runtime);
 
   bind(&start);
@@ -3584,7 +3266,8 @@ void MacroAssembler::TestJSArrayForAllocationMemento(Register receiver_reg,
   ExternalReference new_space_allocation_top_adr =
       ExternalReference::new_space_allocation_top_address(isolate());
   const int kMementoMapOffset = JSArray::kSize - kHeapObjectTag;
-  const int kMementoEndOffset = kMementoMapOffset + AllocationMemento::kSize;
+  const int kMementoLastWordOffset =
+      kMementoMapOffset + AllocationMemento::kSize - kPointerSize;
 
   DCHECK(!AreAliased(receiver_reg, scratch_reg));
 
@@ -3595,7 +3278,7 @@ void MacroAssembler::TestJSArrayForAllocationMemento(Register receiver_reg,
 
   // If the object is in new space, we need to check whether it is on the same
   // page as the current top.
-  AddP(scratch_reg, receiver_reg, Operand(kMementoEndOffset));
+  AddP(scratch_reg, receiver_reg, Operand(kMementoLastWordOffset));
   mov(ip, Operand(new_space_allocation_top_adr));
   LoadP(ip, MemOperand(ip));
   XorP(r0, scratch_reg, ip);
@@ -3613,7 +3296,7 @@ void MacroAssembler::TestJSArrayForAllocationMemento(Register receiver_reg,
   // we are below top.
   bind(&top_check);
   CmpP(scratch_reg, ip);
-  bgt(no_memento_found);
+  bge(no_memento_found);
   // Memento map check.
   bind(&map_check);
   LoadP(scratch_reg, MemOperand(receiver_reg, kMementoMapOffset));
@@ -3640,42 +3323,6 @@ Register GetRegisterThatIsNotOneOf(Register reg1, Register reg2, Register reg3,
   }
   UNREACHABLE();
   return no_reg;
-}
-
-void MacroAssembler::JumpIfDictionaryInPrototypeChain(Register object,
-                                                      Register scratch0,
-                                                      Register scratch1,
-                                                      Label* found) {
-  DCHECK(!scratch1.is(scratch0));
-  Register current = scratch0;
-  Label loop_again, end;
-
-  // scratch contained elements pointer.
-  LoadRR(current, object);
-  LoadP(current, FieldMemOperand(current, HeapObject::kMapOffset));
-  LoadP(current, FieldMemOperand(current, Map::kPrototypeOffset));
-  CompareRoot(current, Heap::kNullValueRootIndex);
-  beq(&end);
-
-  // Loop based on the map going up the prototype chain.
-  bind(&loop_again);
-  LoadP(current, FieldMemOperand(current, HeapObject::kMapOffset));
-
-  STATIC_ASSERT(JS_PROXY_TYPE < JS_OBJECT_TYPE);
-  STATIC_ASSERT(JS_VALUE_TYPE < JS_OBJECT_TYPE);
-  LoadlB(scratch1, FieldMemOperand(current, Map::kInstanceTypeOffset));
-  CmpP(scratch1, Operand(JS_OBJECT_TYPE));
-  blt(found);
-
-  LoadlB(scratch1, FieldMemOperand(current, Map::kBitField2Offset));
-  DecodeField<Map::ElementsKindBits>(scratch1);
-  CmpP(scratch1, Operand(DICTIONARY_ELEMENTS));
-  beq(found);
-  LoadP(current, FieldMemOperand(current, Map::kPrototypeOffset));
-  CompareRoot(current, Heap::kNullValueRootIndex);
-  bne(&loop_again);
-
-  bind(&end);
 }
 
 void MacroAssembler::mov(Register dst, const Operand& src) {
@@ -4184,8 +3831,8 @@ void MacroAssembler::SubP(Register dst, const MemOperand& opnd) {
 }
 
 void MacroAssembler::MovIntToFloat(DoubleRegister dst, Register src) {
-  sllg(src, src, Operand(32));
-  ldgr(dst, src);
+  sllg(r0, src, Operand(32));
+  ldgr(dst, r0);
 }
 
 void MacroAssembler::MovFloatToInt(Register dst, DoubleRegister src) {

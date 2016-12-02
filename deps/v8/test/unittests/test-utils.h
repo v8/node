@@ -8,7 +8,8 @@
 #include "include/v8.h"
 #include "src/base/macros.h"
 #include "src/base/utils/random-number-generator.h"
-#include "src/zone.h"
+#include "src/zone/accounting-allocator.h"
+#include "src/zone/zone.h"
 #include "testing/gtest-support.h"
 
 namespace v8 {
@@ -94,34 +95,44 @@ class TestWithIsolate : public virtual ::v8::TestWithIsolate {
   DISALLOW_COPY_AND_ASSIGN(TestWithIsolate);
 };
 
-
 class TestWithZone : public virtual ::testing::Test {
  public:
-  TestWithZone() : zone_(&allocator_) {}
+  TestWithZone() : zone_(&allocator_, ZONE_NAME) {}
   virtual ~TestWithZone();
 
   Zone* zone() { return &zone_; }
 
  private:
-  base::AccountingAllocator allocator_;
+  v8::internal::AccountingAllocator allocator_;
   Zone zone_;
 
   DISALLOW_COPY_AND_ASSIGN(TestWithZone);
 };
 
-
 class TestWithIsolateAndZone : public virtual TestWithIsolate {
  public:
-  TestWithIsolateAndZone() : zone_(&allocator_) {}
+  TestWithIsolateAndZone() : zone_(&allocator_, ZONE_NAME) {}
   virtual ~TestWithIsolateAndZone();
 
   Zone* zone() { return &zone_; }
 
  private:
-  base::AccountingAllocator allocator_;
+  v8::internal::AccountingAllocator allocator_;
   Zone zone_;
 
   DISALLOW_COPY_AND_ASSIGN(TestWithIsolateAndZone);
+};
+
+class TestWithNativeContext : public virtual ::v8::TestWithContext,
+                              public virtual TestWithIsolate {
+ public:
+  TestWithNativeContext() {}
+  virtual ~TestWithNativeContext();
+
+  Handle<Context> native_context() const;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestWithNativeContext);
 };
 
 }  // namespace internal

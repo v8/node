@@ -15,7 +15,7 @@
 #include "src/isolate-inl.h"
 #include "src/messages.h"
 #include "src/parsing/parse-info.h"
-#include "src/parsing/parser.h"
+#include "src/parsing/parsing.h"
 #include "src/wasm/wasm-module.h"
 
 namespace v8 {
@@ -100,59 +100,21 @@ RUNTIME_FUNCTION(Runtime_ThrowStackOverflow) {
   return isolate->StackOverflow();
 }
 
-RUNTIME_FUNCTION(Runtime_ThrowWasmError) {
+RUNTIME_FUNCTION(Runtime_ThrowTypeError) {
   HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_SMI_ARG_CHECKED(message_id, 0);
-  CONVERT_SMI_ARG_CHECKED(byte_offset, 1);
-  Handle<Object> error_obj = isolate->factory()->NewError(
-      static_cast<MessageTemplate::Template>(message_id));
+  DCHECK_LE(1, args.length());
+  CONVERT_SMI_ARG_CHECKED(message_id_smi, 0);
 
-  // For wasm traps, the byte offset (a.k.a source position) can not be
-  // determined from relocation info, since the explicit checks for traps
-  // converge in one singe block which calls this runtime function.
-  // We hence pass the byte offset explicitely, and patch it into the top-most
-  // frame (a wasm frame) on the collected stack trace.
-  // TODO(wasm): This implementation is temporary, see bug #5007:
-  // https://bugs.chromium.org/p/v8/issues/detail?id=5007
-  Handle<JSObject> error = Handle<JSObject>::cast(error_obj);
-  Handle<Object> stack_trace_obj = JSReceiver::GetDataProperty(
-      error, isolate->factory()->stack_trace_symbol());
-  // Patch the stack trace (array of <receiver, function, code, position>).
-  if (stack_trace_obj->IsJSArray()) {
-    Handle<FixedArray> stack_elements(
-        FixedArray::cast(JSArray::cast(*stack_trace_obj)->elements()));
-    DCHECK_EQ(1, stack_elements->length() % 4);
-    DCHECK(Code::cast(stack_elements->get(3))->kind() == Code::WASM_FUNCTION);
-    DCHECK(stack_elements->get(4)->IsSmi() &&
-           Smi::cast(stack_elements->get(4))->value() >= 0);
-    stack_elements->set(4, Smi::FromInt(-1 - byte_offset));
-  }
-  Handle<Object> detailed_stack_trace_obj = JSReceiver::GetDataProperty(
-      error, isolate->factory()->detailed_stack_trace_symbol());
-  // Patch the detailed stack trace (array of JSObjects with various
-  // properties).
-  if (detailed_stack_trace_obj->IsJSArray()) {
-    Handle<FixedArray> stack_elements(
-        FixedArray::cast(JSArray::cast(*detailed_stack_trace_obj)->elements()));
-    DCHECK_GE(stack_elements->length(), 1);
-    Handle<JSObject> top_frame(JSObject::cast(stack_elements->get(0)));
-    Handle<String> wasm_offset_key =
-        isolate->factory()->InternalizeOneByteString(
-            STATIC_CHAR_VECTOR("column"));
-    LookupIterator it(top_frame, wasm_offset_key, top_frame,
-                      LookupIterator::PROTOTYPE_CHAIN_SKIP_INTERCEPTOR);
-    if (it.IsFound()) {
-      DCHECK(JSReceiver::GetDataProperty(&it)->IsSmi());
-      // Make column number 1-based here.
-      Maybe<bool> data_set = JSReceiver::SetDataProperty(
-          &it, handle(Smi::FromInt(byte_offset + 1), isolate));
-      DCHECK(data_set.IsJust() && data_set.FromJust() == true);
-      USE(data_set);
-    }
-  }
+  Handle<Object> undefined = isolate->factory()->undefined_value();
+  Handle<Object> arg0 = (args.length() > 1) ? args.at<Object>(1) : undefined;
+  Handle<Object> arg1 = (args.length() > 2) ? args.at<Object>(2) : undefined;
+  Handle<Object> arg2 = (args.length() > 3) ? args.at<Object>(3) : undefined;
 
-  return isolate->Throw(*error_obj);
+  MessageTemplate::Template message_id =
+      static_cast<MessageTemplate::Template>(message_id_smi);
+
+  THROW_NEW_ERROR_RETURN_FAILURE(isolate,
+                                 NewTypeError(message_id, arg0, arg1, arg2));
 }
 
 RUNTIME_FUNCTION(Runtime_UnwindAndFindExceptionHandler) {
@@ -235,8 +197,7 @@ RUNTIME_FUNCTION(Runtime_ThrowIncompatibleMethodReceiver) {
 
 RUNTIME_FUNCTION(Runtime_ThrowInvalidStringLength) {
   HandleScope scope(isolate);
-  THROW_NEW_ERROR_RETURN_FAILURE(
-      isolate, NewRangeError(MessageTemplate::kInvalidStringLength));
+  THROW_NEW_ERROR_RETURN_FAILURE(isolate, NewInvalidStringLengthError());
 }
 
 RUNTIME_FUNCTION(Runtime_ThrowIteratorResultNotAnObject) {
@@ -273,36 +234,6 @@ RUNTIME_FUNCTION(Runtime_ThrowApplyNonFunction) {
 }
 
 
-RUNTIME_FUNCTION(Runtime_PromiseRejectEvent) {
-  DCHECK(args.length() == 3);
-  HandleScope scope(isolate);
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, promise, 0);
-  CONVERT_ARG_HANDLE_CHECKED(Object, value, 1);
-  CONVERT_BOOLEAN_ARG_CHECKED(debug_event, 2);
-  if (debug_event) isolate->debug()->OnPromiseReject(promise, value);
-  Handle<Symbol> key = isolate->factory()->promise_has_handler_symbol();
-  // Do not report if we actually have a handler.
-  if (JSReceiver::GetDataProperty(promise, key)->IsUndefined(isolate)) {
-    isolate->ReportPromiseReject(promise, value,
-                                 v8::kPromiseRejectWithNoHandler);
-  }
-  return isolate->heap()->undefined_value();
-}
-
-
-RUNTIME_FUNCTION(Runtime_PromiseRevokeReject) {
-  DCHECK(args.length() == 1);
-  HandleScope scope(isolate);
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, promise, 0);
-  Handle<Symbol> key = isolate->factory()->promise_has_handler_symbol();
-  // At this point, no revocation has been issued before
-  CHECK(JSReceiver::GetDataProperty(promise, key)->IsUndefined(isolate));
-  isolate->ReportPromiseReject(promise, Handle<Object>(),
-                               v8::kPromiseHandlerAddedAfterReject);
-  return isolate->heap()->undefined_value();
-}
-
-
 RUNTIME_FUNCTION(Runtime_StackGuard) {
   SealHandleScope shs(isolate);
   DCHECK(args.length() == 0);
@@ -330,7 +261,7 @@ RUNTIME_FUNCTION(Runtime_AllocateInNewSpace) {
   CONVERT_SMI_ARG_CHECKED(size, 0);
   CHECK(IsAligned(size, kPointerSize));
   CHECK(size > 0);
-  CHECK(size <= Page::kMaxRegularHeapObjectSize);
+  CHECK(size <= kMaxRegularHeapObjectSize);
   return *isolate->factory()->NewFillerObject(size, false, NEW_SPACE);
 }
 
@@ -342,7 +273,7 @@ RUNTIME_FUNCTION(Runtime_AllocateInTargetSpace) {
   CONVERT_SMI_ARG_CHECKED(flags, 1);
   CHECK(IsAligned(size, kPointerSize));
   CHECK(size > 0);
-  CHECK(size <= Page::kMaxRegularHeapObjectSize);
+  CHECK(size <= kMaxRegularHeapObjectSize);
   bool double_align = AllocateDoubleAlignFlag::decode(flags);
   AllocationSpace space = AllocateTargetSpace::decode(flags);
   return *isolate->factory()->NewFillerObject(size, double_align, space);
@@ -380,20 +311,19 @@ namespace {
 bool ComputeLocation(Isolate* isolate, MessageLocation* target) {
   JavaScriptFrameIterator it(isolate);
   if (!it.done()) {
-    JavaScriptFrame* frame = it.frame();
-    JSFunction* fun = frame->function();
-    Object* script = fun->shared()->script();
+    // Compute the location from the function and the relocation info of the
+    // baseline code. For optimized code this will use the deoptimization
+    // information to get canonical location information.
+    List<FrameSummary> frames(FLAG_max_inlining_levels + 1);
+    it.frame()->Summarize(&frames);
+    FrameSummary& summary = frames.last();
+    Handle<JSFunction> function = summary.function();
+    Handle<Object> script(function->shared()->script(), isolate);
+    int pos = summary.abstract_code()->SourcePosition(summary.code_offset());
     if (script->IsScript() &&
-        !(Script::cast(script)->source()->IsUndefined(isolate))) {
-      Handle<Script> casted_script(Script::cast(script), isolate);
-      // Compute the location from the function and the relocation info of the
-      // baseline code. For optimized code this will use the deoptimization
-      // information to get canonical location information.
-      List<FrameSummary> frames(FLAG_max_inlining_levels + 1);
-      it.frame()->Summarize(&frames);
-      FrameSummary& summary = frames.last();
-      int pos = summary.abstract_code()->SourcePosition(summary.code_offset());
-      *target = MessageLocation(casted_script, pos, pos + 1, handle(fun));
+        !(Handle<Script>::cast(script)->source()->IsUndefined(isolate))) {
+      Handle<Script> casted_script = Handle<Script>::cast(script);
+      *target = MessageLocation(casted_script, pos, pos + 1, function);
       return true;
     }
   }
@@ -404,13 +334,16 @@ bool ComputeLocation(Isolate* isolate, MessageLocation* target) {
 Handle<String> RenderCallSite(Isolate* isolate, Handle<Object> object) {
   MessageLocation location;
   if (ComputeLocation(isolate, &location)) {
-    Zone zone(isolate->allocator());
-    std::unique_ptr<ParseInfo> info(
-        location.function()->shared()->is_function()
-            ? new ParseInfo(&zone, location.function())
-            : new ParseInfo(&zone, location.script()));
-    if (Parser::ParseStatic(info.get())) {
-      CallPrinter printer(isolate, location.function()->shared()->IsBuiltin());
+    Zone zone(isolate->allocator(), ZONE_NAME);
+    std::unique_ptr<ParseInfo> info;
+    if (location.function()->shared()->is_function()) {
+      info.reset(new ParseInfo(&zone, handle(location.function()->shared())));
+    } else {
+      info.reset(new ParseInfo(&zone, location.script()));
+    }
+    if (parsing::ParseAny(info.get())) {
+      CallPrinter printer(isolate,
+                          location.function()->shared()->IsUserJavaScript());
       Handle<String> str = printer.Print(info->literal(), location.start_pos());
       if (str->length() > 0) return str;
     } else {
@@ -528,21 +461,6 @@ RUNTIME_FUNCTION(Runtime_GetAndResetRuntimeCallStats) {
   }
 }
 
-RUNTIME_FUNCTION(Runtime_EnqueueMicrotask) {
-  HandleScope scope(isolate);
-  DCHECK(args.length() == 1);
-  CONVERT_ARG_HANDLE_CHECKED(JSFunction, microtask, 0);
-  isolate->EnqueueMicrotask(microtask);
-  return isolate->heap()->undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_RunMicrotasks) {
-  HandleScope scope(isolate);
-  DCHECK(args.length() == 0);
-  isolate->RunMicrotasks();
-  return isolate->heap()->undefined_value();
-}
-
 RUNTIME_FUNCTION(Runtime_OrdinaryHasInstance) {
   HandleScope scope(isolate);
   DCHECK_EQ(2, args.length());
@@ -550,15 +468,6 @@ RUNTIME_FUNCTION(Runtime_OrdinaryHasInstance) {
   CONVERT_ARG_HANDLE_CHECKED(Object, object, 1);
   RETURN_RESULT_OR_FAILURE(
       isolate, Object::OrdinaryHasInstance(isolate, callable, object));
-}
-
-RUNTIME_FUNCTION(Runtime_IsWasmObject) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_CHECKED(Object, object, 0);
-  bool is_wasm_object =
-      object->IsJSObject() && wasm::IsWasmObject(JSObject::cast(object));
-  return *isolate->factory()->ToBoolean(is_wasm_object);
 }
 
 RUNTIME_FUNCTION(Runtime_Typeof) {

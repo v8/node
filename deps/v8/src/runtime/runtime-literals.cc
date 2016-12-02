@@ -6,8 +6,9 @@
 
 #include "src/allocation-site-scopes.h"
 #include "src/arguments.h"
+#include "src/ast/ast.h"
+#include "src/ast/compile-time-value.h"
 #include "src/isolate-inl.h"
-#include "src/parsing/parser.h"
 #include "src/runtime/runtime.h"
 
 namespace v8 {
@@ -85,7 +86,7 @@ MUST_USE_RESULT static MaybeHandle<Object> CreateObjectLiteralBoilerplate(
     if (key->ToArrayIndex(&element_index)) {
       // Array index (uint32).
       if (value->IsUninitialized(isolate)) {
-        value = handle(Smi::FromInt(0), isolate);
+        value = handle(Smi::kZero, isolate);
       }
       maybe_result = JSObject::SetOwnElementIgnoreAttributes(
           boilerplate, element_index, value, NONE);

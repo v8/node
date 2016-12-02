@@ -3,10 +3,18 @@
 // found in the LICENSE file.
 
 #include "src/background-parsing-task.h"
+
 #include "src/debug/debug.h"
+#include "src/parsing/parser.h"
 
 namespace v8 {
 namespace internal {
+
+void StreamedSource::Release() {
+  parser.reset();
+  info.reset();
+  zone.reset();
+}
 
 BackgroundParsingTask::BackgroundParsingTask(
     StreamedSource* source, ScriptCompiler::CompileOptions options,
@@ -21,30 +29,25 @@ BackgroundParsingTask::BackgroundParsingTask(
 
   // Prepare the data for the internalization phase and compilation phase, which
   // will happen in the main thread after parsing.
-  Zone* zone = new Zone(isolate->allocator());
+  Zone* zone = new Zone(isolate->allocator(), ZONE_NAME);
   ParseInfo* info = new ParseInfo(zone);
+  info->set_toplevel();
   source->zone.reset(zone);
   source->info.reset(info);
   info->set_isolate(isolate);
   info->set_source_stream(source->source_stream.get());
   info->set_source_stream_encoding(source->encoding);
   info->set_hash_seed(isolate->heap()->HashSeed());
-  info->set_global();
   info->set_unicode_cache(&source_->unicode_cache);
   info->set_compile_options(options);
-  // Parse eagerly with ignition since we will compile eagerly.
-  info->set_allow_lazy_parsing(!(i::FLAG_ignition && i::FLAG_ignition_eager));
+  info->set_allow_lazy_parsing();
 
-  if (options == ScriptCompiler::kProduceParserCache ||
-      options == ScriptCompiler::kProduceCodeCache) {
-    source_->info->set_cached_data(&script_data_);
-  }
+  source_->info->set_cached_data(&script_data_);
   // Parser needs to stay alive for finalizing the parsing on the main
   // thread.
   source_->parser.reset(new Parser(source_->info.get()));
-  source_->parser->DeserializeScopeChain(
-      source_->info.get(), Handle<Context>::null(),
-      Scope::DeserializationMode::kDeserializeOffHeap);
+  source_->parser->DeserializeScopeChain(source_->info.get(),
+                                         MaybeHandle<ScopeInfo>());
 }
 
 
@@ -55,8 +58,7 @@ void BackgroundParsingTask::Run() {
 
   // Reset the stack limit of the parser to reflect correctly that we're on a
   // background thread.
-  uintptr_t stack_limit =
-      reinterpret_cast<uintptr_t>(&stack_limit) - stack_size_ * KB;
+  uintptr_t stack_limit = GetCurrentStackPosition() - stack_size_ * KB;
   source_->parser->set_stack_limit(stack_limit);
 
   // Nullify the Isolate temporarily so that the background parser doesn't

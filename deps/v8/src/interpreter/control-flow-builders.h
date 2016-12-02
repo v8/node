@@ -8,13 +8,13 @@
 #include "src/interpreter/bytecode-array-builder.h"
 
 #include "src/interpreter/bytecode-label.h"
-#include "src/zone-containers.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
 namespace interpreter {
 
-class ControlFlowBuilder BASE_EMBEDDED {
+class V8_EXPORT_PRIVATE ControlFlowBuilder BASE_EMBEDDED {
  public:
   explicit ControlFlowBuilder(BytecodeArrayBuilder* builder)
       : builder_(builder) {}
@@ -29,7 +29,8 @@ class ControlFlowBuilder BASE_EMBEDDED {
   DISALLOW_COPY_AND_ASSIGN(ControlFlowBuilder);
 };
 
-class BreakableControlFlowBuilder : public ControlFlowBuilder {
+class V8_EXPORT_PRIVATE BreakableControlFlowBuilder
+    : public ControlFlowBuilder {
  public:
   explicit BreakableControlFlowBuilder(BytecodeArrayBuilder* builder)
       : ControlFlowBuilder(builder), break_labels_(builder->zone()) {}
@@ -63,7 +64,8 @@ class BreakableControlFlowBuilder : public ControlFlowBuilder {
 
 
 // Class to track control flow for block statements (which can break in JS).
-class BlockBuilder final : public BreakableControlFlowBuilder {
+class V8_EXPORT_PRIVATE BlockBuilder final
+    : public BreakableControlFlowBuilder {
  public:
   explicit BlockBuilder(BytecodeArrayBuilder* builder)
       : BreakableControlFlowBuilder(builder) {}
@@ -77,7 +79,7 @@ class BlockBuilder final : public BreakableControlFlowBuilder {
 
 // A class to help with co-ordinating break and continue statements with
 // their loop.
-class LoopBuilder final : public BreakableControlFlowBuilder {
+class V8_EXPORT_PRIVATE LoopBuilder final : public BreakableControlFlowBuilder {
  public:
   explicit LoopBuilder(BytecodeArrayBuilder* builder)
       : BreakableControlFlowBuilder(builder),
@@ -85,9 +87,8 @@ class LoopBuilder final : public BreakableControlFlowBuilder {
         header_labels_(builder->zone()) {}
   ~LoopBuilder();
 
-  void LoopHeader(ZoneVector<BytecodeLabel>* additional_labels);
-  void JumpToHeader();
-  void JumpToHeaderIfTrue();
+  void LoopHeader(ZoneVector<BytecodeLabel>* additional_labels = nullptr);
+  void JumpToHeader(int loop_depth);
   void BindContinueTarget();
   void EndLoop();
 
@@ -98,9 +99,6 @@ class LoopBuilder final : public BreakableControlFlowBuilder {
   void ContinueIfTrue() { EmitJumpIfTrue(&continue_labels_); }
   void ContinueIfUndefined() { EmitJumpIfUndefined(&continue_labels_); }
   void ContinueIfNull() { EmitJumpIfNull(&continue_labels_); }
-
-  BytecodeLabels* header_labels() { return &header_labels_; }
-  BytecodeLabels* continue_labels() { return &continue_labels_; }
 
  private:
   BytecodeLabel loop_header_;
@@ -113,7 +111,8 @@ class LoopBuilder final : public BreakableControlFlowBuilder {
 
 
 // A class to help with co-ordinating break statements with their switch.
-class SwitchBuilder final : public BreakableControlFlowBuilder {
+class V8_EXPORT_PRIVATE SwitchBuilder final
+    : public BreakableControlFlowBuilder {
  public:
   explicit SwitchBuilder(BytecodeArrayBuilder* builder, int number_of_cases)
       : BreakableControlFlowBuilder(builder),
@@ -143,7 +142,7 @@ class SwitchBuilder final : public BreakableControlFlowBuilder {
 
 
 // A class to help with co-ordinating control flow in try-catch statements.
-class TryCatchBuilder final : public ControlFlowBuilder {
+class V8_EXPORT_PRIVATE TryCatchBuilder final : public ControlFlowBuilder {
  public:
   explicit TryCatchBuilder(BytecodeArrayBuilder* builder,
                            HandlerTable::CatchPrediction catch_prediction)
@@ -164,7 +163,7 @@ class TryCatchBuilder final : public ControlFlowBuilder {
 
 
 // A class to help with co-ordinating control flow in try-finally statements.
-class TryFinallyBuilder final : public ControlFlowBuilder {
+class V8_EXPORT_PRIVATE TryFinallyBuilder final : public ControlFlowBuilder {
  public:
   explicit TryFinallyBuilder(BytecodeArrayBuilder* builder,
                              HandlerTable::CatchPrediction catch_prediction)

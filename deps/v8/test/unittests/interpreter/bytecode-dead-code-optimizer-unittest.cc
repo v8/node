@@ -16,17 +16,18 @@ namespace interpreter {
 class BytecodeDeadCodeOptimizerTest : public BytecodePipelineStage,
                                       public TestWithIsolateAndZone {
  public:
-  BytecodeDeadCodeOptimizerTest() : dead_code_optimizer_(this) {}
+  BytecodeDeadCodeOptimizerTest()
+      : dead_code_optimizer_(this), last_written_(Bytecode::kIllegal) {}
   ~BytecodeDeadCodeOptimizerTest() override {}
 
   void Write(BytecodeNode* node) override {
     write_count_++;
-    last_written_.Clone(node);
+    last_written_ = *node;
   }
 
   void WriteJump(BytecodeNode* node, BytecodeLabel* label) override {
     write_count_++;
-    last_written_.Clone(node);
+    last_written_ = *node;
   }
 
   void BindLabel(BytecodeLabel* label) override {}

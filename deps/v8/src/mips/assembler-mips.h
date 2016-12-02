@@ -878,7 +878,14 @@ class Assembler : public AssemblerBase {
   void sub_d(FPURegister fd, FPURegister fs, FPURegister ft);
   void mul_s(FPURegister fd, FPURegister fs, FPURegister ft);
   void mul_d(FPURegister fd, FPURegister fs, FPURegister ft);
+  void madd_s(FPURegister fd, FPURegister fr, FPURegister fs, FPURegister ft);
   void madd_d(FPURegister fd, FPURegister fr, FPURegister fs, FPURegister ft);
+  void msub_s(FPURegister fd, FPURegister fr, FPURegister fs, FPURegister ft);
+  void msub_d(FPURegister fd, FPURegister fr, FPURegister fs, FPURegister ft);
+  void maddf_s(FPURegister fd, FPURegister fs, FPURegister ft);
+  void maddf_d(FPURegister fd, FPURegister fs, FPURegister ft);
+  void msubf_s(FPURegister fd, FPURegister fs, FPURegister ft);
+  void msubf_d(FPURegister fd, FPURegister fs, FPURegister ft);
   void div_s(FPURegister fd, FPURegister fs, FPURegister ft);
   void div_d(FPURegister fd, FPURegister fs, FPURegister ft);
   void abs_s(FPURegister fd, FPURegister fs);
@@ -1022,9 +1029,6 @@ class Assembler : public AssemblerBase {
 
   // Debugging.
 
-  // Mark generator continuation.
-  void RecordGeneratorContinuation();
-
   // Mark address of a debug break slot.
   void RecordDebugBreakSlot(RelocInfo::Mode mode);
 
@@ -1048,7 +1052,8 @@ class Assembler : public AssemblerBase {
 
   // Record a deoptimization reason that can be used by a log or cpu profiler.
   // Use --trace-deopt to enable.
-  void RecordDeoptReason(DeoptimizeReason reason, int raw_position, int id);
+  void RecordDeoptReason(DeoptimizeReason reason, SourcePosition position,
+                         int id);
 
   static int RelocateInternalReference(RelocInfo::Mode rmode, byte* pc,
                                        intptr_t pc_delta);
@@ -1170,6 +1175,8 @@ class Assembler : public AssemblerBase {
 
   // Helpers.
   void LoadRegPlusOffsetToAt(const MemOperand& src);
+  int32_t LoadRegPlusUpperOffsetPartToAt(const MemOperand& src);
+  int32_t LoadUpperOffsetForTwoMemoryAccesses(const MemOperand& src);
 
   // Relocation for a type-recording IC has the AST id added to it.  This
   // member variable is a way to pass the information from the call site to
@@ -1445,6 +1452,10 @@ class Assembler : public AssemblerBase {
   // Internal reference positions, required for unbounded internal reference
   // labels.
   std::set<int> internal_reference_positions_;
+  bool is_internal_reference(Label* L) {
+    return internal_reference_positions_.find(L->pos()) !=
+           internal_reference_positions_.end();
+  }
 
   void EmittedCompactBranchInstruction() { prev_instr_compact_branch_ = true; }
   void ClearCompactBranchState() { prev_instr_compact_branch_ = false; }

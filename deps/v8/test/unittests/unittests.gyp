@@ -42,6 +42,7 @@
       'compiler/graph-trimmer-unittest.cc',
       'compiler/graph-unittest.cc',
       'compiler/graph-unittest.h',
+      'compiler/instruction-unittest.cc',
       'compiler/instruction-selector-unittest.cc',
       'compiler/instruction-selector-unittest.h',
       'compiler/instruction-sequence-unittest.cc',
@@ -54,6 +55,7 @@
       'compiler/js-typed-lowering-unittest.cc',
       'compiler/linkage-tail-call-unittest.cc',
       'compiler/liveness-analyzer-unittest.cc',
+      'compiler/live-range-builder.h',
       'compiler/live-range-unittest.cc',
       'compiler/load-elimination-unittest.cc',
       'compiler/loop-peeling-unittest.cc',
@@ -75,16 +77,19 @@
       'compiler/simplified-operator-unittest.cc',
       'compiler/state-values-utils-unittest.cc',
       'compiler/tail-call-optimization-unittest.cc',
+      'compiler/typed-optimization-unittest.cc',
       'compiler/typer-unittest.cc',
       'compiler/value-numbering-reducer-unittest.cc',
-      'compiler/zone-pool-unittest.cc',
+      'compiler/zone-stats-unittest.cc',
       'compiler-dispatcher/compiler-dispatcher-job-unittest.cc',
+      'compiler-dispatcher/compiler-dispatcher-tracer-unittest.cc',
       'counters-unittest.cc',
       'eh-frame-iterator-unittest.cc',
       'eh-frame-writer-unittest.cc',
       'interpreter/bytecodes-unittest.cc',
       'interpreter/bytecode-array-builder-unittest.cc',
       'interpreter/bytecode-array-iterator-unittest.cc',
+      'interpreter/bytecode-array-reverse-iterator-unittest.cc',
       'interpreter/bytecode-array-writer-unittest.cc',
       'interpreter/bytecode-dead-code-optimizer-unittest.cc',
       'interpreter/bytecode-decoder-unittest.cc',
@@ -92,6 +97,7 @@
       'interpreter/bytecode-pipeline-unittest.cc',
       'interpreter/bytecode-register-allocator-unittest.cc',
       'interpreter/bytecode-register-optimizer-unittest.cc',
+      'interpreter/bytecode-utils.h',
       'interpreter/constant-array-builder-unittest.cc',
       'interpreter/interpreter-assembler-unittest.cc',
       'interpreter/interpreter-assembler-unittest.h',
@@ -112,17 +118,20 @@
       'source-position-table-unittest.cc',
       'test-utils.h',
       'test-utils.cc',
+      'unicode-unittest.cc',
       'value-serializer-unittest.cc',
+      'zone/segmentpool-unittest.cc',
+      'zone/zone-chunk-list-unittest.cc',
       'wasm/asm-types-unittest.cc',
       'wasm/ast-decoder-unittest.cc',
       'wasm/control-transfer-unittest.cc',
       'wasm/decoder-unittest.cc',
-      'wasm/encoder-unittest.cc',
       'wasm/leb-helper-unittest.cc',
       'wasm/loop-assignment-analysis-unittest.cc',
       'wasm/module-decoder-unittest.cc',
       'wasm/switch-logic-unittest.cc',
       'wasm/wasm-macro-gen-unittest.cc',
+      'wasm/wasm-module-builder-unittest.cc',
     ],
     'unittests_sources_arm': [  ### gcmole(arch:arm) ###
       'compiler/arm/instruction-selector-arm-unittest.cc',
@@ -160,6 +169,8 @@
       'dependencies': [
         '../../testing/gmock.gyp:gmock',
         '../../testing/gtest.gyp:gtest',
+        '../../src/v8.gyp:v8',
+        '../../src/v8.gyp:v8_libbase',
         '../../src/v8.gyp:v8_libplatform',
       ],
       'include_dirs': [
@@ -222,12 +233,11 @@
         ['OS=="aix"', {
           'ldflags': [ '-Wl,-bbigtoc' ],
         }],
-        ['component=="shared_library"', {
-          # compiler-unittests can't be built against a shared library, so we
-          # need to depend on the underlying static target in that case.
-          'dependencies': ['../../src/v8.gyp:v8_maybe_snapshot'],
-        }, {
-          'dependencies': ['../../src/v8.gyp:v8'],
+        ['v8_enable_i18n_support==1', {
+          'dependencies': [
+            '<(icu_gyp_path):icui18n',
+            '<(icu_gyp_path):icuuc',
+          ],
         }],
         ['os_posix == 1', {
           # TODO(svenpanne): This is a temporary work-around to fix the warnings

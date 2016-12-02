@@ -6,6 +6,7 @@
 
 #include <cmath>  // For isfinite.
 
+#include "src/ast/compile-time-value.h"
 #include "src/ast/prettyprinter.h"
 #include "src/ast/scopes.h"
 #include "src/base/hashmap.h"
@@ -13,7 +14,7 @@
 #include "src/code-stubs.h"
 #include "src/contexts.h"
 #include "src/conversions.h"
-#include "src/parsing/parser.h"
+#include "src/elements.h"
 #include "src/property-details.h"
 #include "src/property.h"
 #include "src/string-stream.h"
@@ -83,18 +84,14 @@ bool Expression::IsNullLiteral() const {
 }
 
 bool Expression::IsUndefinedLiteral() const {
-  if (IsLiteral()) {
-    if (AsLiteral()->raw_value()->IsUndefined()) {
-      return true;
-    }
-  }
+  if (IsLiteral() && AsLiteral()->raw_value()->IsUndefined()) return true;
 
   const VariableProxy* var_proxy = AsVariableProxy();
-  if (var_proxy == NULL) return false;
+  if (var_proxy == nullptr) return false;
   Variable* var = var_proxy->var();
   // The global identifier "undefined" is immutable. Everything
   // else could be reassigned.
-  return var != NULL && var->IsUnallocatedOrGlobalSlot() &&
+  return var != NULL && var->IsUnallocated() &&
          var_proxy->raw_name()->IsOneByteEqualTo("undefined");
 }
 
@@ -163,39 +160,34 @@ bool Statement::IsJump() const {
   }
 }
 
-VariableProxy::VariableProxy(Variable* var, int start_position,
-                             int end_position)
+VariableProxy::VariableProxy(Variable* var, int start_position)
     : Expression(start_position, kVariableProxy),
-      bit_field_(IsThisField::encode(var->is_this()) |
-                 IsAssignedField::encode(false) |
-                 IsResolvedField::encode(false)),
-      end_position_(end_position),
       raw_name_(var->raw_name()),
       next_unresolved_(nullptr) {
+  bit_field_ |= IsThisField::encode(var->is_this()) |
+                IsAssignedField::encode(false) |
+                IsResolvedField::encode(false) |
+                HoleCheckModeField::encode(HoleCheckMode::kElided);
   BindTo(var);
 }
 
 VariableProxy::VariableProxy(const AstRawString* name,
-                             Variable::Kind variable_kind, int start_position,
-                             int end_position)
+                             VariableKind variable_kind, int start_position)
     : Expression(start_position, kVariableProxy),
-      bit_field_(IsThisField::encode(variable_kind == Variable::THIS) |
-                 IsAssignedField::encode(false) |
-                 IsResolvedField::encode(false)),
-      end_position_(end_position),
       raw_name_(name),
-      next_unresolved_(nullptr) {}
+      next_unresolved_(nullptr) {
+  bit_field_ |= IsThisField::encode(variable_kind == THIS_VARIABLE) |
+                IsAssignedField::encode(false) |
+                IsResolvedField::encode(false) |
+                HoleCheckModeField::encode(HoleCheckMode::kElided);
+}
 
 VariableProxy::VariableProxy(const VariableProxy* copy_from)
     : Expression(copy_from->position(), kVariableProxy),
-      bit_field_(copy_from->bit_field_),
-      end_position_(copy_from->end_position_),
       next_unresolved_(nullptr) {
-  if (copy_from->is_resolved()) {
-    var_ = copy_from->var_;
-  } else {
-    raw_name_ = copy_from->raw_name_;
-  }
+  bit_field_ = copy_from->bit_field_;
+  DCHECK(!copy_from->is_resolved());
+  raw_name_ = copy_from->raw_name_;
 }
 
 void VariableProxy::BindTo(Variable* var) {
@@ -219,7 +211,7 @@ void VariableProxy::AssignFeedbackVectorSlots(Isolate* isolate,
             static_cast<int>(reinterpret_cast<intptr_t>(entry->value)));
         return;
       }
-      variable_feedback_slot_ = spec->AddLoadGlobalICSlot(var()->name());
+      variable_feedback_slot_ = spec->AddLoadGlobalICSlot();
       cache->Put(var(), variable_feedback_slot_);
     } else {
       variable_feedback_slot_ = spec->AddLoadICSlot();
@@ -253,12 +245,13 @@ void ForInStatement::AssignFeedbackVectorSlots(Isolate* isolate,
 Assignment::Assignment(Token::Value op, Expression* target, Expression* value,
                        int pos)
     : Expression(pos, kAssignment),
-      bit_field_(
-          IsUninitializedField::encode(false) | KeyTypeField::encode(ELEMENT) |
-          StoreModeField::encode(STANDARD_STORE) | TokenField::encode(op)),
       target_(target),
       value_(value),
-      binary_operation_(NULL) {}
+      binary_operation_(NULL) {
+  bit_field_ |= IsUninitializedField::encode(false) |
+                KeyTypeField::encode(ELEMENT) |
+                StoreModeField::encode(STANDARD_STORE) | TokenField::encode(op);
+}
 
 void Assignment::AssignFeedbackVectorSlots(Isolate* isolate,
                                            FeedbackVectorSpec* spec,
@@ -273,7 +266,7 @@ void CountOperation::AssignFeedbackVectorSlots(Isolate* isolate,
   AssignVectorSlots(expression(), spec, &slot_);
   // Assign a slot to collect feedback about binary operations. Used only in
   // ignition. Fullcodegen uses AstId to record type feedback.
-  binary_operation_slot_ = spec->AddGeneralSlot();
+  binary_operation_slot_ = spec->AddInterpreterBinaryOpICSlot();
 }
 
 
@@ -295,14 +288,16 @@ Token::Value Assignment::binary_op() const {
   return Token::ILLEGAL;
 }
 
+bool FunctionLiteral::ShouldEagerCompile() const {
+  return scope()->ShouldEagerCompile();
+}
+
+void FunctionLiteral::SetShouldEagerCompile() {
+  scope()->set_should_eager_compile();
+}
 
 bool FunctionLiteral::AllowsLazyCompilation() {
   return scope()->AllowsLazyCompilation();
-}
-
-
-bool FunctionLiteral::AllowsLazyCompilationWithoutContext() {
-  return scope()->AllowsLazyCompilationWithoutContext();
 }
 
 
@@ -320,6 +315,7 @@ LanguageMode FunctionLiteral::language_mode() const {
   return scope()->language_mode();
 }
 
+FunctionKind FunctionLiteral::kind() const { return scope()->function_kind(); }
 
 bool FunctionLiteral::NeedsHomeObject(Expression* expr) {
   if (expr == nullptr || !expr->IsFunctionLiteral()) return false;
@@ -327,27 +323,16 @@ bool FunctionLiteral::NeedsHomeObject(Expression* expr) {
   return expr->AsFunctionLiteral()->scope()->NeedsHomeObject();
 }
 
-
 ObjectLiteralProperty::ObjectLiteralProperty(Expression* key, Expression* value,
-                                             Kind kind, bool is_static,
-                                             bool is_computed_name)
-    : key_(key),
-      value_(value),
+                                             Kind kind, bool is_computed_name)
+    : LiteralProperty(key, value, is_computed_name),
       kind_(kind),
-      emit_store_(true),
-      is_static_(is_static),
-      is_computed_name_(is_computed_name) {}
-
+      emit_store_(true) {}
 
 ObjectLiteralProperty::ObjectLiteralProperty(AstValueFactory* ast_value_factory,
                                              Expression* key, Expression* value,
-                                             bool is_static,
                                              bool is_computed_name)
-    : key_(key),
-      value_(value),
-      emit_store_(true),
-      is_static_(is_static),
-      is_computed_name_(is_computed_name) {
+    : LiteralProperty(key, value, is_computed_name), emit_store_(true) {
   if (!is_computed_name &&
       key->AsLiteral()->raw_value()->EqualsString(
           ast_value_factory->proto_string())) {
@@ -361,12 +346,19 @@ ObjectLiteralProperty::ObjectLiteralProperty(AstValueFactory* ast_value_factory,
   }
 }
 
-bool ObjectLiteralProperty::NeedsSetFunctionName() const {
+bool LiteralProperty::NeedsSetFunctionName() const {
   return is_computed_name_ &&
          (value_->IsAnonymousFunctionDefinition() ||
           (value_->IsFunctionLiteral() &&
            IsConciseMethod(value_->AsFunctionLiteral()->kind())));
 }
+
+ClassLiteralProperty::ClassLiteralProperty(Expression* key, Expression* value,
+                                           Kind kind, bool is_static,
+                                           bool is_computed_name)
+    : LiteralProperty(key, value, is_computed_name),
+      kind_(kind),
+      is_static_(is_static) {}
 
 void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                              FeedbackVectorSpec* spec,
@@ -379,7 +371,7 @@ void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
   }
 
   for (int i = 0; i < properties()->length(); i++) {
-    ObjectLiteral::Property* property = properties()->at(i);
+    ClassLiteral::Property* property = properties()->at(i);
     Expression* value = property->value();
     if (FunctionLiteral::NeedsHomeObject(value)) {
       property->SetSlot(spec->AddStoreICSlot());
@@ -387,8 +379,7 @@ void ClassLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
   }
 }
 
-
-bool ObjectLiteral::Property::IsCompileTimeValue() {
+bool ObjectLiteral::Property::IsCompileTimeValue() const {
   return kind_ == CONSTANT ||
       (kind_ == MATERIALIZED_LITERAL &&
        CompileTimeValue::IsCompileTimeValue(value_));
@@ -399,11 +390,7 @@ void ObjectLiteral::Property::set_emit_store(bool emit_store) {
   emit_store_ = emit_store;
 }
 
-
-bool ObjectLiteral::Property::emit_store() {
-  return emit_store_;
-}
-
+bool ObjectLiteral::Property::emit_store() const { return emit_store_; }
 
 void ObjectLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                               FeedbackVectorSpec* spec,
@@ -473,8 +460,8 @@ void ObjectLiteral::CalculateEmitStore(Zone* zone) {
 
   ZoneAllocationPolicy allocator(zone);
 
-  ZoneHashMap table(Literal::Match, ZoneHashMap::kDefaultHashMapCapacity,
-                    allocator);
+  CustomMatcherZoneHashMap table(
+      Literal::Match, ZoneHashMap::kDefaultHashMapCapacity, allocator);
   for (int i = properties()->length() - 1; i >= 0; i--) {
     ObjectLiteral::Property* property = properties()->at(i);
     if (property->is_computed_name()) continue;
@@ -525,7 +512,7 @@ void ObjectLiteral::BuildConstantProperties(Isolate* isolate) {
       continue;
     }
 
-    if (position == boilerplate_properties_ * 2) {
+    if (static_cast<uint32_t>(position) == boilerplate_properties_ * 2) {
       DCHECK(property->is_computed_name());
       is_simple = false;
       break;
@@ -551,7 +538,7 @@ void ObjectLiteral::BuildConstantProperties(Isolate* isolate) {
     // TODO(verwaest): Remove once we can store them inline.
     if (FLAG_track_double_fields &&
         (value->IsNumber() || value->IsUninitialized(isolate))) {
-      may_store_doubles_ = true;
+      bit_field_ = MayStoreDoublesField::update(bit_field_, true);
     }
 
     is_simple = is_simple && !value->IsUninitialized(isolate);
@@ -578,9 +565,11 @@ void ObjectLiteral::BuildConstantProperties(Isolate* isolate) {
   }
 
   constant_properties_ = constant_properties;
-  fast_elements_ =
-      (max_element_index <= 32) || ((2 * elements) >= max_element_index);
-  has_elements_ = elements > 0;
+  bit_field_ = FastElementsField::update(
+      bit_field_,
+      (max_element_index <= 32) || ((2 * elements) >= max_element_index));
+  bit_field_ = HasElementsField::update(bit_field_, elements > 0);
+
   set_is_simple(is_simple);
   set_depth(depth_acc);
 }
@@ -592,11 +581,9 @@ void ArrayLiteral::BuildConstantElements(Isolate* isolate) {
   if (!constant_elements_.is_null()) return;
 
   int constants_length = values()->length();
-
-  // Allocate a fixed array to hold all the object literals.
-  Handle<JSArray> array = isolate->factory()->NewJSArray(
-      FAST_HOLEY_SMI_ELEMENTS, constants_length, constants_length,
-      INITIALIZE_ARRAY_ELEMENTS_WITH_HOLE);
+  ElementsKind kind = FIRST_FAST_ELEMENTS_KIND;
+  Handle<FixedArray> fixed_array =
+      isolate->factory()->NewFixedArrayWithHoles(constants_length);
 
   // Fill in the literals.
   bool is_simple = true;
@@ -623,33 +610,38 @@ void ArrayLiteral::BuildConstantElements(Isolate* isolate) {
     }
 
     if (boilerplate_value->IsUninitialized(isolate)) {
-      boilerplate_value = handle(Smi::FromInt(0), isolate);
+      boilerplate_value = handle(Smi::kZero, isolate);
       is_simple = false;
     }
 
-    JSObject::AddDataElement(array, array_index, boilerplate_value, NONE)
-        .Assert();
+    kind = GetMoreGeneralElementsKind(kind,
+                                      boilerplate_value->OptimalElementsKind());
+    fixed_array->set(array_index, *boilerplate_value);
   }
 
-  JSObject::ValidateElements(array);
-  Handle<FixedArrayBase> element_values(array->elements());
+  if (is_holey) kind = GetHoleyElementsKind(kind);
 
   // Simple and shallow arrays can be lazily copied, we transform the
   // elements array to a copy-on-write array.
   if (is_simple && depth_acc == 1 && array_index > 0 &&
-      array->HasFastSmiOrObjectElements()) {
-    element_values->set_map(isolate->heap()->fixed_cow_array_map());
+      IsFastSmiOrObjectElementsKind(kind)) {
+    fixed_array->set_map(isolate->heap()->fixed_cow_array_map());
+  }
+
+  Handle<FixedArrayBase> elements = fixed_array;
+  if (IsFastDoubleElementsKind(kind)) {
+    ElementsAccessor* accessor = ElementsAccessor::ForKind(kind);
+    elements = isolate->factory()->NewFixedDoubleArray(constants_length);
+    // We are copying from non-fast-double to fast-double.
+    ElementsKind from_kind = TERMINAL_FAST_ELEMENTS_KIND;
+    accessor->CopyElements(fixed_array, from_kind, elements, constants_length);
   }
 
   // Remember both the literal's constant values as well as the ElementsKind
   // in a 2-element FixedArray.
   Handle<FixedArray> literals = isolate->factory()->NewFixedArray(2, TENURED);
-
-  ElementsKind kind = array->GetElementsKind();
-  kind = is_holey ? GetHoleyElementsKind(kind) : GetPackedElementsKind(kind);
-
   literals->set(0, Smi::FromInt(kind));
-  literals->set(1, *element_values);
+  literals->set(1, *elements);
 
   constant_elements_ = literals;
   set_is_simple(is_simple);
@@ -662,8 +654,7 @@ void ArrayLiteral::AssignFeedbackVectorSlots(Isolate* isolate,
                                              FeedbackVectorSlotCache* cache) {
   // This logic that computes the number of slots needed for vector store
   // ics must mirror FullCodeGenerator::VisitArrayLiteral.
-  int array_index = 0;
-  for (; array_index < values()->length(); array_index++) {
+  for (int array_index = 0; array_index < values()->length(); array_index++) {
     Expression* subexpr = values()->at(array_index);
     DCHECK(!subexpr->IsSpread());
     if (CompileTimeValue::IsCompileTimeValue(subexpr)) continue;
@@ -731,7 +722,7 @@ void BinaryOperation::AssignFeedbackVectorSlots(
     case Token::OR:
       return;
     default:
-      type_feedback_slot_ = spec->AddGeneralSlot();
+      type_feedback_slot_ = spec->AddInterpreterBinaryOpICSlot();
       return;
   }
 }
@@ -741,6 +732,20 @@ static bool IsTypeof(Expression* expr) {
   return maybe_unary != NULL && maybe_unary->op() == Token::TYPEOF;
 }
 
+void CompareOperation::AssignFeedbackVectorSlots(
+    Isolate* isolate, FeedbackVectorSpec* spec,
+    FeedbackVectorSlotCache* cache_) {
+  // Feedback vector slot is only used by interpreter for binary operations.
+  // Full-codegen uses AstId to record type feedback.
+  switch (op()) {
+    // instanceof and in do not collect type feedback.
+    case Token::INSTANCEOF:
+    case Token::IN:
+      return;
+    default:
+      type_feedback_slot_ = spec->AddInterpreterCompareICSlot();
+  }
+}
 
 // Check for the pattern: typeof <expression> equals <string literal>.
 static bool MatchLiteralCompareTypeof(Expression* left,
@@ -759,8 +764,8 @@ static bool MatchLiteralCompareTypeof(Expression* left,
 
 bool CompareOperation::IsLiteralCompareTypeof(Expression** expr,
                                               Handle<String>* check) {
-  return MatchLiteralCompareTypeof(left_, op_, right_, expr, check) ||
-      MatchLiteralCompareTypeof(right_, op_, left_, expr, check);
+  return MatchLiteralCompareTypeof(left_, op(), right_, expr, check) ||
+         MatchLiteralCompareTypeof(right_, op(), left_, expr, check);
 }
 
 
@@ -790,8 +795,8 @@ static bool MatchLiteralCompareUndefined(Expression* left,
 }
 
 bool CompareOperation::IsLiteralCompareUndefined(Expression** expr) {
-  return MatchLiteralCompareUndefined(left_, op_, right_, expr) ||
-         MatchLiteralCompareUndefined(right_, op_, left_, expr);
+  return MatchLiteralCompareUndefined(left_, op(), right_, expr) ||
+         MatchLiteralCompareUndefined(right_, op(), left_, expr);
 }
 
 
@@ -809,8 +814,8 @@ static bool MatchLiteralCompareNull(Expression* left,
 
 
 bool CompareOperation::IsLiteralCompareNull(Expression** expr) {
-  return MatchLiteralCompareNull(left_, op_, right_, expr) ||
-      MatchLiteralCompareNull(right_, op_, left_, expr);
+  return MatchLiteralCompareNull(left_, op(), right_, expr) ||
+         MatchLiteralCompareNull(right_, op(), left_, expr);
 }
 
 
@@ -887,36 +892,20 @@ bool Expression::IsMonomorphic() const {
   }
 }
 
-bool Call::IsUsingCallFeedbackICSlot() const {
-  return GetCallType() != POSSIBLY_EVAL_CALL;
-}
-
-bool Call::IsUsingCallFeedbackSlot() const {
-  // SuperConstructorCall uses a CallConstructStub, which wants
-  // a Slot, in addition to any IC slots requested elsewhere.
-  return GetCallType() == SUPER_CALL;
-}
-
-
 void Call::AssignFeedbackVectorSlots(Isolate* isolate, FeedbackVectorSpec* spec,
                                      FeedbackVectorSlotCache* cache) {
-  if (IsUsingCallFeedbackICSlot()) {
-    ic_slot_ = spec->AddCallICSlot();
-  }
-  if (IsUsingCallFeedbackSlot()) {
-    stub_slot_ = spec->AddGeneralSlot();
-  }
+  ic_slot_ = spec->AddCallICSlot();
 }
 
 Call::CallType Call::GetCallType() const {
   VariableProxy* proxy = expression()->AsVariableProxy();
   if (proxy != NULL) {
-    if (is_possibly_eval()) {
-      return POSSIBLY_EVAL_CALL;
-    } else if (proxy->var()->IsUnallocatedOrGlobalSlot()) {
+    if (proxy->var()->IsUnallocated()) {
       return GLOBAL_CALL;
     } else if (proxy->var()->IsLookupSlot()) {
-      return LOOKUP_SLOT_CALL;
+      // Calls going through 'with' always use DYNAMIC rather than DYNAMIC_LOCAL
+      // or DYNAMIC_GLOBAL.
+      return proxy->var()->mode() == DYNAMIC ? WITH_CALL : OTHER_CALL;
     }
   }
 
@@ -940,7 +929,13 @@ CaseClause::CaseClause(Expression* label, ZoneList<Statement*>* statements,
     : Expression(pos, kCaseClause),
       label_(label),
       statements_(statements),
-      compare_type_(Type::None()) {}
+      compare_type_(AstType::None()) {}
+
+void CaseClause::AssignFeedbackVectorSlots(Isolate* isolate,
+                                           FeedbackVectorSpec* spec,
+                                           FeedbackVectorSlotCache* cache) {
+  type_feedback_slot_ = spec->AddInterpreterCompareICSlot();
+}
 
 uint32_t Literal::Hash() {
   return raw_value()->IsString()

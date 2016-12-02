@@ -11,10 +11,10 @@
 #include "src/field-type.h"
 #include "src/messages.h"
 #include "src/objects-inl.h"
-#include "src/parsing/scanner.h"
 #include "src/parsing/token.h"
 #include "src/property-descriptor.h"
 #include "src/transitions.h"
+#include "src/unicode-cache.h"
 
 namespace v8 {
 namespace internal {
@@ -104,7 +104,7 @@ JsonParser<seq_one_byte>::JsonParser(Isolate* isolate, Handle<String> source)
       source_length_(source->length()),
       isolate_(isolate),
       factory_(isolate_->factory()),
-      zone_(isolate_->allocator()),
+      zone_(isolate_->allocator(), ZONE_NAME),
       object_constructor_(isolate_->native_context()->object_function(),
                           isolate_),
       position_(-1) {

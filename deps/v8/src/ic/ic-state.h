@@ -6,6 +6,7 @@
 #define V8_IC_STATE_H_
 
 #include "src/macro-assembler.h"
+#include "src/parsing/token.h"
 
 namespace v8 {
 namespace internal {
@@ -25,10 +26,8 @@ class CallICState final BASE_EMBEDDED {
  public:
   explicit CallICState(ExtraICState extra_ic_state)
       : bit_field_(extra_ic_state) {}
-  CallICState(int argc, ConvertReceiverMode convert_mode,
-              TailCallMode tail_call_mode)
-      : bit_field_(ArgcBits::encode(argc) |
-                   ConvertModeBits::encode(convert_mode) |
+  CallICState(ConvertReceiverMode convert_mode, TailCallMode tail_call_mode)
+      : bit_field_(ConvertModeBits::encode(convert_mode) |
                    TailCallModeBits::encode(tail_call_mode)) {}
 
   ExtraICState GetExtraICState() const { return bit_field_; }
@@ -37,7 +36,6 @@ class CallICState final BASE_EMBEDDED {
                                   void (*Generate)(Isolate*,
                                                    const CallICState&));
 
-  int argc() const { return ArgcBits::decode(bit_field_); }
   ConvertReceiverMode convert_mode() const {
     return ConvertModeBits::decode(bit_field_);
   }
@@ -46,8 +44,7 @@ class CallICState final BASE_EMBEDDED {
   }
 
  private:
-  typedef BitField<int, 0, Code::kArgumentsBits> ArgcBits;
-  typedef BitField<ConvertReceiverMode, ArgcBits::kNext, 2> ConvertModeBits;
+  typedef BitField<ConvertReceiverMode, 0, 2> ConvertModeBits;
   typedef BitField<TailCallMode, ConvertModeBits::kNext, 1> TailCallModeBits;
 
   int const bit_field_;
@@ -120,9 +117,9 @@ class BinaryOpICState final BASE_EMBEDDED {
   Token::Value op() const { return op_; }
   Maybe<int> fixed_right_arg() const { return fixed_right_arg_; }
 
-  Type* GetLeftType() const { return KindToType(left_kind_); }
-  Type* GetRightType() const { return KindToType(right_kind_); }
-  Type* GetResultType() const;
+  AstType* GetLeftType() const { return KindToType(left_kind_); }
+  AstType* GetRightType() const { return KindToType(right_kind_); }
+  AstType* GetResultType() const;
 
   void Update(Handle<Object> left, Handle<Object> right, Handle<Object> result);
 
@@ -140,7 +137,7 @@ class BinaryOpICState final BASE_EMBEDDED {
   Kind UpdateKind(Handle<Object> object, Kind kind) const;
 
   static const char* KindToString(Kind kind);
-  static Type* KindToType(Kind kind);
+  static AstType* KindToType(Kind kind);
   static bool KindMaybeSmi(Kind kind) {
     return (kind >= SMI && kind <= NUMBER) || kind == GENERIC;
   }
@@ -202,8 +199,8 @@ class CompareICState {
     GENERIC
   };
 
-  static Type* StateToType(Zone* zone, State state,
-                           Handle<Map> map = Handle<Map>());
+  static AstType* StateToType(Zone* zone, State state,
+                              Handle<Map> map = Handle<Map>());
 
   static State NewInputState(State old_state, Handle<Object> value);
 

@@ -13,7 +13,7 @@
 
 #include "src/compiler/node.h"
 #include "src/wasm/wasm-module.h"
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -60,6 +60,9 @@ void Int64Lowering::LowerGraph() {
           // To break cycles with phi nodes we push phis on a separate stack so
           // that they are processed after all other nodes.
           PreparePhiReplacement(input);
+          stack_.push_front({input, 0});
+        } else if (input->opcode() == IrOpcode::kEffectPhi ||
+                   input->opcode() == IrOpcode::kLoop) {
           stack_.push_front({input, 0});
         } else {
           stack_.push_back({input, 0});
@@ -240,7 +243,7 @@ void Int64Lowering::LowerNode(Node* node) {
     case IrOpcode::kStart: {
       int parameter_count = GetParameterCountAfterLowering(signature());
       // Only exchange the node if the parameter count actually changed.
-      if (parameter_count != signature()->parameter_count()) {
+      if (parameter_count != static_cast<int>(signature()->parameter_count())) {
         int delta =
             parameter_count - static_cast<int>(signature()->parameter_count());
         int new_output_count = node->op()->ValueOutputCount() + delta;
@@ -255,7 +258,7 @@ void Int64Lowering::LowerNode(Node* node) {
       // the only input of a parameter node, only changes if the parameter count
       // changes.
       if (GetParameterCountAfterLowering(signature()) !=
-          signature()->parameter_count()) {
+          static_cast<int>(signature()->parameter_count())) {
         int old_index = ParameterIndexOf(node->op());
         int new_index = GetParameterIndexAfterLowering(signature(), old_index);
         NodeProperties::ChangeOp(node, common()->Parameter(new_index));
@@ -273,7 +276,7 @@ void Int64Lowering::LowerNode(Node* node) {
     case IrOpcode::kReturn: {
       DefaultLowering(node);
       int new_return_count = GetReturnCountAfterLowering(signature());
-      if (signature()->return_count() != new_return_count) {
+      if (static_cast<int>(signature()->return_count()) != new_return_count) {
         NodeProperties::ChangeOp(node, common()->Return(new_return_count));
       }
       break;
@@ -775,6 +778,18 @@ void Int64Lowering::LowerNode(Node* node) {
         }
       } else {
         DefaultLowering(node);
+      }
+      break;
+    }
+    case IrOpcode::kProjection: {
+      Node* call = node->InputAt(0);
+      DCHECK_EQ(IrOpcode::kCall, call->opcode());
+      CallDescriptor* descriptor =
+          const_cast<CallDescriptor*>(CallDescriptorOf(call->op()));
+      for (size_t i = 0; i < descriptor->ReturnCount(); i++) {
+        if (descriptor->GetReturnType(i) == MachineType::Int64()) {
+          UNREACHABLE();  // TODO(titzer): implement multiple i64 returns.
+        }
       }
       break;
     }

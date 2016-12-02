@@ -10,14 +10,14 @@
 #include "src/v8.h"
 
 #include "src/compilation-cache.h"
-#include "src/compiler.h"
+#include "src/compilation-dependencies.h"
+#include "src/compilation-info.h"
 #include "src/execution.h"
 #include "src/factory.h"
 #include "src/field-type.h"
 #include "src/global-handles.h"
 #include "src/ic/stub-cache.h"
 #include "src/macro-assembler.h"
-#include "src/types.h"
 
 using namespace v8::internal;
 
@@ -473,7 +473,7 @@ TEST(ReconfigureAccessorToNonExistingDataField) {
       map, 0, kData, NONE, Representation::None(), none_type, FORCE_FIELD);
   CHECK_EQ(*new_map, *new_map2);
 
-  Handle<Object> value(Smi::FromInt(0), isolate);
+  Handle<Object> value(Smi::kZero, isolate);
   Handle<Map> prepared_map = Map::PrepareForDataProperty(new_map, 0, value);
   // None to Smi generalization is trivial, map does not change.
   CHECK_EQ(*new_map, *prepared_map);
@@ -589,7 +589,7 @@ static void TestGeneralizeRepresentation(
   CHECK(map->is_stable());
   CHECK(expectations.Check(*map));
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
 
   if (is_detached_map) {
     detach_point_map = Map::ReconfigureProperty(
@@ -604,10 +604,10 @@ static void TestGeneralizeRepresentation(
 
   // Create new maps by generalizing representation of propX field.
   Handle<Map> field_owner(map->FindFieldOwner(property_index), isolate);
-  CompilationInfo info(ArrayVector("testing"), isolate, &zone);
-  CHECK(!info.dependencies()->HasAborted());
+  CompilationDependencies dependencies(isolate, &zone);
+  CHECK(!dependencies.HasAborted());
 
-  info.dependencies()->AssumeFieldType(field_owner);
+  dependencies.AssumeFieldOwner(field_owner);
 
   Handle<Map> new_map =
       Map::ReconfigureProperty(map, property_index, kData, NONE,
@@ -624,21 +624,21 @@ static void TestGeneralizeRepresentation(
     CHECK(map->is_deprecated());
     CHECK_NE(*map, *new_map);
     CHECK_EQ(expected_field_type_dependency && !field_owner->is_deprecated(),
-             info.dependencies()->HasAborted());
+             dependencies.HasAborted());
 
   } else if (expected_deprecation) {
     CHECK(!map->is_stable());
     CHECK(map->is_deprecated());
     CHECK(field_owner->is_deprecated());
     CHECK_NE(*map, *new_map);
-    CHECK(!info.dependencies()->HasAborted());
+    CHECK(!dependencies.HasAborted());
 
   } else {
     CHECK(!field_owner->is_deprecated());
     CHECK(map->is_stable());  // Map did not change, must be left stable.
     CHECK_EQ(*map, *new_map);
 
-    CHECK_EQ(expected_field_type_dependency, info.dependencies()->HasAborted());
+    CHECK_EQ(expected_field_type_dependency, dependencies.HasAborted());
   }
 
   {
@@ -652,7 +652,7 @@ static void TestGeneralizeRepresentation(
     }
   }
 
-  info.dependencies()->Rollback();  // Properly cleanup compilation info.
+  dependencies.Rollback();  // Properly cleanup compilation info.
 
   // Update all deprecated maps and check that they are now the same.
   Handle<Map> updated_map = Map::Update(map);
@@ -981,11 +981,11 @@ static void TestReconfigureDataFieldAttribute_GeneralizeRepresentation(
   CHECK(map2->is_stable());
   CHECK(expectations2.Check(*map2));
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   Handle<Map> field_owner(map->FindFieldOwner(kSplitProp), isolate);
-  CompilationInfo info(ArrayVector("testing"), isolate, &zone);
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->AssumeFieldType(field_owner);
+  CompilationDependencies dependencies(isolate, &zone);
+  CHECK(!dependencies.HasAborted());
+  dependencies.AssumeFieldOwner(field_owner);
 
   // Reconfigure attributes of property |kSplitProp| of |map2| to NONE, which
   // should generalize representations in |map1|.
@@ -1003,8 +1003,8 @@ static void TestReconfigureDataFieldAttribute_GeneralizeRepresentation(
     expectations.SetDataField(i, expected_representation, expected_type);
   }
   CHECK(map->is_deprecated());
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->Rollback();  // Properly cleanup compilation info.
+  CHECK(!dependencies.HasAborted());
+  dependencies.Rollback();  // Properly cleanup compilation info.
   CHECK_NE(*map, *new_map);
 
   CHECK(!new_map->is_deprecated());
@@ -1066,11 +1066,11 @@ static void TestReconfigureDataFieldAttribute_GeneralizeRepresentationTrivial(
   CHECK(map2->is_stable());
   CHECK(expectations2.Check(*map2));
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   Handle<Map> field_owner(map->FindFieldOwner(kSplitProp), isolate);
-  CompilationInfo info(ArrayVector("testing"), isolate, &zone);
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->AssumeFieldType(field_owner);
+  CompilationDependencies dependencies(isolate, &zone);
+  CHECK(!dependencies.HasAborted());
+  dependencies.AssumeFieldOwner(field_owner);
 
   // Reconfigure attributes of property |kSplitProp| of |map2| to NONE, which
   // should generalize representations in |map1|.
@@ -1092,8 +1092,8 @@ static void TestReconfigureDataFieldAttribute_GeneralizeRepresentationTrivial(
   }
   CHECK(!map->is_deprecated());
   CHECK_EQ(*map, *new_map);
-  CHECK_EQ(expected_field_type_dependency, info.dependencies()->HasAborted());
-  info.dependencies()->Rollback();  // Properly cleanup compilation info.
+  CHECK_EQ(expected_field_type_dependency, dependencies.HasAborted());
+  dependencies.Rollback();  // Properly cleanup compilation info.
 
   CHECK(!new_map->is_deprecated());
   CHECK(expectations.Check(*new_map));
@@ -1597,11 +1597,11 @@ static void TestReconfigureElementsKind_GeneralizeRepresentation(
   CHECK(map2->is_stable());
   CHECK(expectations2.Check(*map2));
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   Handle<Map> field_owner(map->FindFieldOwner(kDiffProp), isolate);
-  CompilationInfo info(ArrayVector("testing"), isolate, &zone);
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->AssumeFieldType(field_owner);
+  CompilationDependencies dependencies(isolate, &zone);
+  CHECK(!dependencies.HasAborted());
+  dependencies.AssumeFieldOwner(field_owner);
 
   // Reconfigure elements kinds of |map2|, which should generalize
   // representations in |map|.
@@ -1617,8 +1617,8 @@ static void TestReconfigureElementsKind_GeneralizeRepresentation(
   expectations.SetDataField(kDiffProp, expected_representation, expected_type);
 
   CHECK(map->is_deprecated());
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->Rollback();  // Properly cleanup compilation info.
+  CHECK(!dependencies.HasAborted());
+  dependencies.Rollback();  // Properly cleanup compilation info.
   CHECK_NE(*map, *new_map);
 
   CHECK(!new_map->is_deprecated());
@@ -1690,11 +1690,11 @@ static void TestReconfigureElementsKind_GeneralizeRepresentationTrivial(
   CHECK(map2->is_stable());
   CHECK(expectations2.Check(*map2));
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   Handle<Map> field_owner(map->FindFieldOwner(kDiffProp), isolate);
-  CompilationInfo info(ArrayVector("testing"), isolate, &zone);
-  CHECK(!info.dependencies()->HasAborted());
-  info.dependencies()->AssumeFieldType(field_owner);
+  CompilationDependencies dependencies(isolate, &zone);
+  CHECK(!dependencies.HasAborted());
+  dependencies.AssumeFieldOwner(field_owner);
 
   // Reconfigure elements kinds of |map2|, which should generalize
   // representations in |map|.
@@ -1713,8 +1713,8 @@ static void TestReconfigureElementsKind_GeneralizeRepresentationTrivial(
   expectations.SetDataField(kDiffProp, expected_representation, expected_type);
   CHECK(!map->is_deprecated());
   CHECK_EQ(*map, *new_map);
-  CHECK_EQ(expected_field_type_dependency, info.dependencies()->HasAborted());
-  info.dependencies()->Rollback();  // Properly cleanup compilation info.
+  CHECK_EQ(expected_field_type_dependency, dependencies.HasAborted());
+  dependencies.Rollback();  // Properly cleanup compilation info.
 
   CHECK(!new_map->is_deprecated());
   CHECK(expectations.Check(*new_map));
@@ -2332,7 +2332,7 @@ TEST(TransitionDataFieldToDataField) {
   Isolate* isolate = CcTest::i_isolate();
   Handle<FieldType> any_type = FieldType::Any(isolate);
 
-  Handle<Object> value1 = handle(Smi::FromInt(0), isolate);
+  Handle<Object> value1 = handle(Smi::kZero, isolate);
   TransitionToDataFieldOperator transition_op1(Representation::Smi(), any_type,
                                                value1);
 
@@ -2416,10 +2416,10 @@ TEST(FieldTypeConvertSimple) {
   v8::HandleScope scope(CcTest::isolate());
   Isolate* isolate = CcTest::i_isolate();
 
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
 
-  CHECK_EQ(FieldType::Any()->Convert(&zone), Type::NonInternal());
-  CHECK_EQ(FieldType::None()->Convert(&zone), Type::None());
+  CHECK_EQ(FieldType::Any()->Convert(&zone), AstType::NonInternal());
+  CHECK_EQ(FieldType::None()->Convert(&zone), AstType::None());
 }
 
 // TODO(ishell): add this test once IS_ACCESSOR_FIELD_SUPPORTED is supported.

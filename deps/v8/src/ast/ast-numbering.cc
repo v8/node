@@ -37,9 +37,9 @@ class AstNumberingVisitor final : public AstVisitor<AstNumberingVisitor> {
   void VisitReference(Expression* expr);
 
   void VisitStatements(ZoneList<Statement*>* statements);
-  void VisitDeclarations(ZoneList<Declaration*>* declarations);
+  void VisitDeclarations(Declaration::List* declarations);
   void VisitArguments(ZoneList<Expression*>* arguments);
-  void VisitObjectLiteralProperty(ObjectLiteralProperty* property);
+  void VisitLiteralProperty(LiteralProperty* property);
 
   int ReserveIdRange(int n) {
     int tmp = next_id_;
@@ -55,8 +55,8 @@ class AstNumberingVisitor final : public AstVisitor<AstNumberingVisitor> {
     dont_optimize_reason_ = reason;
     DisableSelfOptimization();
   }
-  void DisableCrankshaft(BailoutReason reason) {
-    properties_.flags() |= AstProperties::kDontCrankshaft;
+  void DisableFullCodegenAndCrankshaft(BailoutReason reason) {
+    properties_.flags() |= AstProperties::kMustUseIgnitionTurbo;
   }
 
   template <typename Node>
@@ -147,8 +147,16 @@ void AstNumberingVisitor::VisitRegExpLiteral(RegExpLiteral* node) {
 
 void AstNumberingVisitor::VisitVariableProxyReference(VariableProxy* node) {
   IncrementNodeCount();
-  if (node->var()->IsLookupSlot()) {
-    DisableCrankshaft(kReferenceToAVariableWhichRequiresDynamicLookup);
+  switch (node->var()->location()) {
+    case VariableLocation::LOOKUP:
+      DisableFullCodegenAndCrankshaft(
+          kReferenceToAVariableWhichRequiresDynamicLookup);
+      break;
+    case VariableLocation::MODULE:
+      DisableFullCodegenAndCrankshaft(kReferenceToModuleVariable);
+      break;
+    default:
+      break;
   }
   node->set_base_id(ReserveIdRange(VariableProxy::num_ids()));
 }
@@ -169,7 +177,7 @@ void AstNumberingVisitor::VisitThisFunction(ThisFunction* node) {
 void AstNumberingVisitor::VisitSuperPropertyReference(
     SuperPropertyReference* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kSuperReference);
+  DisableFullCodegenAndCrankshaft(kSuperReference);
   node->set_base_id(ReserveIdRange(SuperPropertyReference::num_ids()));
   Visit(node->this_var());
   Visit(node->home_object());
@@ -178,7 +186,7 @@ void AstNumberingVisitor::VisitSuperPropertyReference(
 
 void AstNumberingVisitor::VisitSuperCallReference(SuperCallReference* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kSuperReference);
+  DisableFullCodegenAndCrankshaft(kSuperReference);
   node->set_base_id(ReserveIdRange(SuperCallReference::num_ids()));
   Visit(node->this_var());
   Visit(node->new_target_var());
@@ -233,14 +241,6 @@ void AstNumberingVisitor::VisitCountOperation(CountOperation* node) {
 void AstNumberingVisitor::VisitBlock(Block* node) {
   IncrementNodeCount();
   node->set_base_id(ReserveIdRange(Block::num_ids()));
-
-  if (FLAG_ignition && node->scope() != nullptr &&
-      node->scope()->NeedsContext()) {
-    // Create ScopeInfo while on the main thread to avoid allocation during
-    // potentially concurrent bytecode generation.
-    node->scope()->GetScopeInfo(isolate_);
-  }
-
   if (node->scope() != NULL) VisitDeclarations(node->scope()->declarations());
   VisitStatements(node->statements());
 }
@@ -257,13 +257,33 @@ void AstNumberingVisitor::VisitCallRuntime(CallRuntime* node) {
   IncrementNodeCount();
   node->set_base_id(ReserveIdRange(CallRuntime::num_ids()));
   VisitArguments(node->arguments());
+  // To support catch prediction within async/await:
+  //
+  // The AstNumberingVisitor is when catch prediction currently occurs, and it
+  // is the only common point that has access to this information. The parser
+  // just doesn't know yet. Take the following two cases of catch prediction:
+  //
+  // try { await fn(); } catch (e) { }
+  // try { await fn(); } finally { }
+  //
+  // When parsing the await that we want to mark as caught or uncaught, it's
+  // not yet known whether it will be followed by a 'finally' or a 'catch.
+  // The AstNumberingVisitor is what learns whether it is caught. To make
+  // the information available later to the runtime, the AstNumberingVisitor
+  // has to stash it somewhere. Changing the runtime function into another
+  // one in ast-numbering seemed like a simple and straightforward solution to
+  // that problem.
+  if (node->is_jsruntime() &&
+      node->context_index() == Context::ASYNC_FUNCTION_AWAIT_CAUGHT_INDEX &&
+      catch_prediction_ == HandlerTable::ASYNC_AWAIT) {
+    node->set_context_index(Context::ASYNC_FUNCTION_AWAIT_UNCAUGHT_INDEX);
+  }
 }
 
 
 void AstNumberingVisitor::VisitWithStatement(WithStatement* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kWithStatement);
-  node->set_base_id(ReserveIdRange(WithStatement::num_ids()));
+  DisableFullCodegenAndCrankshaft(kWithStatement);
   Visit(node->expression());
   Visit(node->statement());
 }
@@ -293,7 +313,7 @@ void AstNumberingVisitor::VisitWhileStatement(WhileStatement* node) {
 
 void AstNumberingVisitor::VisitTryCatchStatement(TryCatchStatement* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kTryCatchStatement);
+  DisableFullCodegenAndCrankshaft(kTryCatchStatement);
   {
     const HandlerTable::CatchPrediction old_prediction = catch_prediction_;
     // This node uses its own prediction, unless it's "uncaught", in which case
@@ -312,7 +332,7 @@ void AstNumberingVisitor::VisitTryCatchStatement(TryCatchStatement* node) {
 
 void AstNumberingVisitor::VisitTryFinallyStatement(TryFinallyStatement* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kTryFinallyStatement);
+  DisableFullCodegenAndCrankshaft(kTryFinallyStatement);
   // We can't know whether the finally block will override ("catch") an
   // exception thrown in the try block, so we just adopt the outer prediction.
   node->set_catch_prediction(catch_prediction_);
@@ -370,11 +390,16 @@ void AstNumberingVisitor::VisitCompareOperation(CompareOperation* node) {
   node->set_base_id(ReserveIdRange(CompareOperation::num_ids()));
   Visit(node->left());
   Visit(node->right());
+  ReserveFeedbackSlots(node);
 }
 
-
-void AstNumberingVisitor::VisitSpread(Spread* node) { UNREACHABLE(); }
-
+void AstNumberingVisitor::VisitSpread(Spread* node) {
+  IncrementNodeCount();
+  // We can only get here from super calls currently.
+  DisableFullCodegenAndCrankshaft(kSuperReference);
+  node->set_base_id(ReserveIdRange(Spread::num_ids()));
+  Visit(node->expression());
+}
 
 void AstNumberingVisitor::VisitEmptyParentheses(EmptyParentheses* node) {
   UNREACHABLE();
@@ -396,7 +421,7 @@ void AstNumberingVisitor::VisitForInStatement(ForInStatement* node) {
 
 void AstNumberingVisitor::VisitForOfStatement(ForOfStatement* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kForOfStatement);
+  DisableFullCodegenAndCrankshaft(kForOfStatement);
   node->set_base_id(ReserveIdRange(ForOfStatement::num_ids()));
   Visit(node->assign_iterator());  // Not part of loop.
   node->set_first_yield_id(yield_count_);
@@ -444,6 +469,7 @@ void AstNumberingVisitor::VisitCaseClause(CaseClause* node) {
   node->set_base_id(ReserveIdRange(CaseClause::num_ids()));
   if (!node->is_default()) Visit(node->label());
   VisitStatements(node->statements());
+  ReserveFeedbackSlots(node);
 }
 
 
@@ -462,15 +488,15 @@ void AstNumberingVisitor::VisitForStatement(ForStatement* node) {
 
 void AstNumberingVisitor::VisitClassLiteral(ClassLiteral* node) {
   IncrementNodeCount();
-  DisableCrankshaft(kClassLiteral);
-  node->set_base_id(ReserveIdRange(node->num_ids()));
+  DisableFullCodegenAndCrankshaft(kClassLiteral);
+  node->set_base_id(ReserveIdRange(ClassLiteral::num_ids()));
   if (node->extends()) Visit(node->extends());
   if (node->constructor()) Visit(node->constructor());
   if (node->class_variable_proxy()) {
     VisitVariableProxy(node->class_variable_proxy());
   }
   for (int i = 0; i < node->properties()->length(); i++) {
-    VisitObjectLiteralProperty(node->properties()->at(i));
+    VisitLiteralProperty(node->properties()->at(i));
   }
   ReserveFeedbackSlots(node);
 }
@@ -480,7 +506,7 @@ void AstNumberingVisitor::VisitObjectLiteral(ObjectLiteral* node) {
   IncrementNodeCount();
   node->set_base_id(ReserveIdRange(node->num_ids()));
   for (int i = 0; i < node->properties()->length(); i++) {
-    VisitObjectLiteralProperty(node->properties()->at(i));
+    VisitLiteralProperty(node->properties()->at(i));
   }
   node->BuildConstantProperties(isolate_);
   // Mark all computed expressions that are bound to a key that
@@ -490,14 +516,12 @@ void AstNumberingVisitor::VisitObjectLiteral(ObjectLiteral* node) {
   ReserveFeedbackSlots(node);
 }
 
-
-void AstNumberingVisitor::VisitObjectLiteralProperty(
-    ObjectLiteralProperty* node) {
-  if (node->is_computed_name()) DisableCrankshaft(kComputedPropertyName);
+void AstNumberingVisitor::VisitLiteralProperty(LiteralProperty* node) {
+  if (node->is_computed_name())
+    DisableFullCodegenAndCrankshaft(kComputedPropertyName);
   Visit(node->key());
   Visit(node->value());
 }
-
 
 void AstNumberingVisitor::VisitArrayLiteral(ArrayLiteral* node) {
   IncrementNodeCount();
@@ -511,6 +535,9 @@ void AstNumberingVisitor::VisitArrayLiteral(ArrayLiteral* node) {
 
 
 void AstNumberingVisitor::VisitCall(Call* node) {
+  if (node->is_possibly_eval()) {
+    DisableFullCodegenAndCrankshaft(kFunctionCallsEval);
+  }
   IncrementNodeCount();
   ReserveFeedbackSlots(node);
   node->set_base_id(ReserveIdRange(Call::num_ids()));
@@ -535,12 +562,8 @@ void AstNumberingVisitor::VisitStatements(ZoneList<Statement*>* statements) {
   }
 }
 
-
-void AstNumberingVisitor::VisitDeclarations(
-    ZoneList<Declaration*>* declarations) {
-  for (int i = 0; i < declarations->length(); i++) {
-    Visit(declarations->at(i));
-  }
+void AstNumberingVisitor::VisitDeclarations(Declaration::List* decls) {
+  for (Declaration* decl : *decls) Visit(decl);
 }
 
 
@@ -569,28 +592,26 @@ void AstNumberingVisitor::VisitRewritableExpression(
 
 bool AstNumberingVisitor::Renumber(FunctionLiteral* node) {
   DeclarationScope* scope = node->scope();
-  if (scope->new_target_var()) DisableCrankshaft(kSuperReference);
-  if (scope->calls_eval()) DisableOptimization(kFunctionCallsEval);
-  if (scope->arguments() != NULL && !scope->arguments()->IsStackAllocated()) {
-    DisableCrankshaft(kContextAllocatedArguments);
+  if (scope->new_target_var() != nullptr ||
+      scope->this_function_var() != nullptr) {
+    DisableFullCodegenAndCrankshaft(kSuperReference);
   }
 
-  int rest_index;
-  if (scope->rest_parameter(&rest_index)) {
-    DisableCrankshaft(kRestParameter);
+  if (scope->arguments() != nullptr &&
+      !scope->arguments()->IsStackAllocated()) {
+    DisableFullCodegenAndCrankshaft(kContextAllocatedArguments);
   }
 
-  if (FLAG_ignition && scope->NeedsContext() && scope->is_script_scope()) {
-    // Create ScopeInfo while on the main thread to avoid allocation during
-    // potentially concurrent bytecode generation.
-    node->scope()->GetScopeInfo(isolate_);
+  if (scope->rest_parameter() != nullptr) {
+    DisableFullCodegenAndCrankshaft(kRestParameter);
   }
 
-  if (IsGeneratorFunction(node->kind()) || IsAsyncFunction(node->kind())) {
-    // TODO(neis): We may want to allow Turbofan optimization here if
-    // --turbo-from-bytecode is set and we know that Ignition is used.
-    // Unfortunately we can't express that here.
-    DisableOptimization(kGenerator);
+  if (IsResumableFunction(node->kind())) {
+    DisableFullCodegenAndCrankshaft(kGenerator);
+  }
+
+  if (IsClassConstructor(node->kind())) {
+    DisableFullCodegenAndCrankshaft(kClassConstructorFunction);
   }
 
   VisitDeclarations(scope->declarations());

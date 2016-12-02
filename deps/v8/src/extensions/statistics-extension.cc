@@ -35,14 +35,14 @@ static void AddCounter(v8::Isolate* isolate,
   }
 }
 
-static void AddNumber(v8::Isolate* isolate,
-                      v8::Local<v8::Object> object,
-                      intptr_t value,
-                      const char* name) {
-  object->Set(isolate->GetCurrentContext(),
-              v8::String::NewFromUtf8(isolate, name, NewStringType::kNormal)
-                  .ToLocalChecked(),
-              v8::Number::New(isolate, static_cast<double>(value))).FromJust();
+static void AddNumber(v8::Isolate* isolate, v8::Local<v8::Object> object,
+                      double value, const char* name) {
+  object
+      ->Set(isolate->GetCurrentContext(),
+            v8::String::NewFromUtf8(isolate, name, NewStringType::kNormal)
+                .ToLocalChecked(),
+            v8::Number::New(isolate, value))
+      .FromJust();
 }
 
 
@@ -67,7 +67,8 @@ void StatisticsExtension::GetCounters(
         args[0]
             ->BooleanValue(args.GetIsolate()->GetCurrentContext())
             .FromMaybe(false)) {
-      heap->CollectAllGarbage(Heap::kNoGCFlags, "counters extension");
+      heap->CollectAllGarbage(Heap::kNoGCFlags,
+                              GarbageCollectionReason::kCountersExtension);
     }
   }
 
@@ -111,7 +112,7 @@ void StatisticsExtension::GetCounters(
   }
 
   struct StatisticNumber {
-    intptr_t number;
+    size_t number;
     const char* name;
   };
 

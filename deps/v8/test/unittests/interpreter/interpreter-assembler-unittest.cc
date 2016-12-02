@@ -5,7 +5,6 @@
 #include "test/unittests/interpreter/interpreter-assembler-unittest.h"
 
 #include "src/code-factory.h"
-#include "src/compiler/graph.h"
 #include "src/compiler/node.h"
 #include "src/interface-descriptors.h"
 #include "src/isolate.h"
@@ -20,6 +19,14 @@ namespace internal {
 using namespace compiler;
 
 namespace interpreter {
+
+InterpreterAssemblerTestState::InterpreterAssemblerTestState(
+    InterpreterAssemblerTest* test, Bytecode bytecode)
+    : compiler::CodeAssemblerState(
+          test->isolate(), test->zone(),
+          InterpreterDispatchDescriptor(test->isolate()),
+          Code::ComputeFlags(Code::BYTECODE_HANDLER),
+          Bytecodes::ToString(bytecode), Bytecodes::ReturnCount(bytecode)) {}
 
 const interpreter::Bytecode kBytecodes[] = {
 #define DEFINE_BYTECODE(Name, ...) interpreter::Bytecode::k##Name,
@@ -298,7 +305,8 @@ InterpreterAssemblerTest::InterpreterAssemblerForTest::IsUnsignedOperand(
 
 TARGET_TEST_F(InterpreterAssemblerTest, Dispatch) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* tail_call_node = m.Dispatch();
 
     OperandScale operand_scale = OperandScale::kSingle;
@@ -335,7 +343,7 @@ TARGET_TEST_F(InterpreterAssemblerTest, Dispatch) {
             IsChangeUint32ToUint64(after_lookahead_bytecode);
       }
       target_bytecode_matcher =
-          IsPhi(MachineRepresentation::kWord8, target_bytecode_matcher,
+          IsPhi(MachineType::PointerRepresentation(), target_bytecode_matcher,
                 after_lookahead_bytecode, _);
       code_target_matcher =
           m.IsLoad(MachineType::Pointer(),
@@ -364,7 +372,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, Jump) {
     TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
       if (!interpreter::Bytecodes::IsJump(bytecode)) return;
 
-      InterpreterAssemblerForTest m(this, bytecode);
+      InterpreterAssemblerTestState state(this, bytecode);
+      InterpreterAssemblerForTest m(&state, bytecode);
       Node* tail_call_node = m.Jump(m.IntPtrConstant(jump_offset));
 
       Matcher<Node*> next_bytecode_offset_matcher = IsIntPtrAdd(
@@ -398,7 +407,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
       OperandScale::kSingle, OperandScale::kDouble, OperandScale::kQuadruple};
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
     TRACED_FOREACH(interpreter::OperandScale, operand_scale, kOperandScales) {
-      InterpreterAssemblerForTest m(this, bytecode, operand_scale);
+      InterpreterAssemblerTestState state(this, bytecode);
+      InterpreterAssemblerForTest m(&state, bytecode, operand_scale);
       int number_of_operands =
           interpreter::Bytecodes::NumberOfOperands(bytecode);
       for (int i = 0; i < number_of_operands; i++) {
@@ -421,12 +431,16 @@ TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
             EXPECT_THAT(m.BytecodeOperandIdx(i),
                         m.IsUnsignedOperand(offset, operand_size));
             break;
+          case interpreter::OperandType::kUImm:
+            EXPECT_THAT(m.BytecodeOperandUImm(i),
+                        m.IsUnsignedOperand(offset, operand_size));
+            break;
           case interpreter::OperandType::kImm: {
             EXPECT_THAT(m.BytecodeOperandImm(i),
                         m.IsSignedOperand(offset, operand_size));
             break;
           }
-          case interpreter::OperandType::kMaybeReg:
+          case interpreter::OperandType::kRegList:
           case interpreter::OperandType::kReg:
           case interpreter::OperandType::kRegOut:
           case interpreter::OperandType::kRegOutPair:
@@ -459,7 +473,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, GetSetAccumulator) {
       continue;
     }
 
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     // Should be incoming accumulator if not set.
     EXPECT_THAT(m.GetAccumulator(),
                 IsParameter(InterpreterDispatchDescriptor::kAccumulator));
@@ -481,7 +496,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, GetSetAccumulator) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, GetContext) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     EXPECT_THAT(
         m.GetContext(),
         m.IsLoad(MachineType::AnyTagged(), IsLoadParentFramePointer(),
@@ -492,7 +508,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, GetContext) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, RegisterLocation) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* reg_index_node = m.IntPtrConstant(44);
     Node* reg_location_node = m.RegisterLocation(reg_index_node);
     EXPECT_THAT(reg_location_node,
@@ -504,7 +521,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, RegisterLocation) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, LoadRegister) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* reg_index_node = m.IntPtrConstant(44);
     Node* load_reg_node = m.LoadRegister(reg_index_node);
     EXPECT_THAT(load_reg_node,
@@ -516,7 +534,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadRegister) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, StoreRegister) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* store_value = m.Int32Constant(0xdeadbeef);
     Node* reg_index_node = m.IntPtrConstant(44);
     Node* store_reg_node = m.StoreRegister(store_value, reg_index_node);
@@ -532,20 +551,22 @@ TARGET_TEST_F(InterpreterAssemblerTest, StoreRegister) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, SmiTag) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* value = m.Int32Constant(44);
-    EXPECT_THAT(m.SmiTag(value),
-                IsIntPtrConstant(static_cast<intptr_t>(44)
-                                 << (kSmiShiftSize + kSmiTagSize)));
-    EXPECT_THAT(
-        m.SmiUntag(value),
-        IsWordSar(value, IsIntPtrConstant(kSmiShiftSize + kSmiTagSize)));
+    EXPECT_THAT(m.SmiTag(value), IsBitcastWordToTaggedSigned(IsIntPtrConstant(
+                                     static_cast<intptr_t>(44)
+                                     << (kSmiShiftSize + kSmiTagSize))));
+    EXPECT_THAT(m.SmiUntag(value),
+                IsWordSar(IsBitcastTaggedToWord(value),
+                          IsIntPtrConstant(kSmiShiftSize + kSmiTagSize)));
   }
 }
 
 TARGET_TEST_F(InterpreterAssemblerTest, IntPtrAdd) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* a = m.Int32Constant(0);
     Node* b = m.Int32Constant(1);
     Node* add = m.IntPtrAdd(a, b);
@@ -555,7 +576,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, IntPtrAdd) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, IntPtrSub) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* a = m.Int32Constant(0);
     Node* b = m.Int32Constant(1);
     Node* add = m.IntPtrSub(a, b);
@@ -565,7 +587,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, IntPtrSub) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, WordShl) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* a = m.IntPtrConstant(0);
     Node* add = m.WordShl(a, 10);
     EXPECT_THAT(add, IsWordShl(a, IsIntPtrConstant(10)));
@@ -574,7 +597,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, WordShl) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, LoadConstantPoolEntry) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* index = m.IntPtrConstant(2);
     Node* load_constant = m.LoadConstantPoolEntry(index);
     Matcher<Node*> constant_pool_matcher = m.IsLoad(
@@ -592,7 +616,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadConstantPoolEntry) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, LoadObjectField) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* object = m.IntPtrConstant(0xdeadbeef);
     int offset = 16;
     Node* load_field = m.LoadObjectField(object, offset);
@@ -602,42 +627,10 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadObjectField) {
   }
 }
 
-TARGET_TEST_F(InterpreterAssemblerTest, LoadContextSlot) {
-  TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
-    Node* context = m.IntPtrConstant(1);
-    Node* slot_index = m.IntPtrConstant(22);
-    Node* load_context_slot = m.LoadContextSlot(context, slot_index);
-
-    Matcher<Node*> offset =
-        IsIntPtrAdd(IsWordShl(slot_index, IsIntPtrConstant(kPointerSizeLog2)),
-                    IsIntPtrConstant(Context::kHeaderSize - kHeapObjectTag));
-    EXPECT_THAT(load_context_slot,
-                m.IsLoad(MachineType::AnyTagged(), context, offset));
-  }
-}
-
-TARGET_TEST_F(InterpreterAssemblerTest, StoreContextSlot) {
-  TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
-    Node* context = m.IntPtrConstant(1);
-    Node* slot_index = m.IntPtrConstant(22);
-    Node* value = m.SmiConstant(Smi::FromInt(100));
-    Node* store_context_slot = m.StoreContextSlot(context, slot_index, value);
-
-    Matcher<Node*> offset =
-        IsIntPtrAdd(IsWordShl(slot_index, IsIntPtrConstant(kPointerSizeLog2)),
-                    IsIntPtrConstant(Context::kHeaderSize - kHeapObjectTag));
-    EXPECT_THAT(store_context_slot,
-                m.IsStore(StoreRepresentation(MachineRepresentation::kTagged,
-                                              kFullWriteBarrier),
-                          context, offset, value));
-  }
-}
-
 TARGET_TEST_F(InterpreterAssemblerTest, CallRuntime2) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* arg1 = m.Int32Constant(2);
     Node* arg2 = m.Int32Constant(3);
     Node* context = m.Int32Constant(4);
@@ -651,7 +644,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, CallRuntime) {
   const int kResultSizes[] = {1, 2};
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
     TRACED_FOREACH(int, result_size, kResultSizes) {
-      InterpreterAssemblerForTest m(this, bytecode);
+      InterpreterAssemblerTestState state(this, bytecode);
+      InterpreterAssemblerForTest m(&state, bytecode);
       Callable builtin = CodeFactory::InterpreterCEntry(isolate(), result_size);
 
       Node* function_id = m.Int32Constant(0);
@@ -682,7 +676,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, CallJS) {
                                     TailCallMode::kAllow};
   TRACED_FOREACH(TailCallMode, tail_call_mode, tail_call_modes) {
     TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-      InterpreterAssemblerForTest m(this, bytecode);
+      InterpreterAssemblerTestState state(this, bytecode);
+      InterpreterAssemblerForTest m(&state, bytecode);
       Callable builtin =
           CodeFactory::InterpreterPushArgsAndCall(isolate(), tail_call_mode);
       Node* function = m.Int32Constant(0);
@@ -699,7 +694,8 @@ TARGET_TEST_F(InterpreterAssemblerTest, CallJS) {
 
 TARGET_TEST_F(InterpreterAssemblerTest, LoadTypeFeedbackVector) {
   TRACED_FOREACH(interpreter::Bytecode, bytecode, kBytecodes) {
-    InterpreterAssemblerForTest m(this, bytecode);
+    InterpreterAssemblerTestState state(this, bytecode);
+    InterpreterAssemblerForTest m(&state, bytecode);
     Node* feedback_vector = m.LoadTypeFeedbackVector();
 
     Matcher<Node*> load_function_matcher =

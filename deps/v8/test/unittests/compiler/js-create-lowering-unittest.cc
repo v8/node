@@ -40,7 +40,8 @@ class JSCreateLoweringTest : public TypedGraphTest {
     // TODO(titzer): mock the GraphReducer here for better unit testing.
     GraphReducer graph_reducer(zone(), graph());
     JSCreateLowering reducer(&graph_reducer, &deps_, &jsgraph,
-                             MaybeHandle<LiteralsArray>(), zone());
+                             MaybeHandle<LiteralsArray>(), native_context(),
+                             zone());
     return reducer.Reduce(node);
   }
 
@@ -64,7 +65,7 @@ class JSCreateLoweringTest : public TypedGraphTest {
 
 TEST_F(JSCreateLoweringTest, JSCreate) {
   Handle<JSFunction> function = isolate()->object_function();
-  Node* const target = Parameter(Type::Constant(function, graph()->zone()));
+  Node* const target = Parameter(Type::HeapConstant(function, graph()->zone()));
   Node* const context = Parameter(Type::Any());
   Node* const effect = graph()->start();
   Reduction r = Reduce(graph()->NewNode(javascript()->Create(), target, target,
@@ -174,14 +175,15 @@ TEST_F(JSCreateLoweringTest, JSCreateFunctionContextViaInlinedAllocation) {
 // JSCreateWithContext
 
 TEST_F(JSCreateLoweringTest, JSCreateWithContext) {
+  Handle<ScopeInfo> scope_info(factory()->NewScopeInfo(1));
   Node* const object = Parameter(Type::Receiver());
   Node* const closure = Parameter(Type::Function());
   Node* const context = Parameter(Type::Any());
   Node* const effect = graph()->start();
   Node* const control = graph()->start();
   Reduction r =
-      Reduce(graph()->NewNode(javascript()->CreateWithContext(), object,
-                              closure, context, effect, control));
+      Reduce(graph()->NewNode(javascript()->CreateWithContext(scope_info),
+                              object, closure, context, effect, control));
   ASSERT_TRUE(r.Changed());
   EXPECT_THAT(r.replacement(),
               IsFinishRegion(IsAllocate(IsNumberConstant(Context::SizeFor(
@@ -195,14 +197,15 @@ TEST_F(JSCreateLoweringTest, JSCreateWithContext) {
 
 TEST_F(JSCreateLoweringTest, JSCreateCatchContext) {
   Handle<String> name = factory()->length_string();
+  Handle<ScopeInfo> scope_info(factory()->NewScopeInfo(1));
   Node* const exception = Parameter(Type::Receiver());
   Node* const closure = Parameter(Type::Function());
   Node* const context = Parameter(Type::Any());
   Node* const effect = graph()->start();
   Node* const control = graph()->start();
-  Reduction r =
-      Reduce(graph()->NewNode(javascript()->CreateCatchContext(name), exception,
-                              closure, context, effect, control));
+  Reduction r = Reduce(
+      graph()->NewNode(javascript()->CreateCatchContext(name, scope_info),
+                       exception, closure, context, effect, control));
   ASSERT_TRUE(r.Changed());
   EXPECT_THAT(r.replacement(),
               IsFinishRegion(IsAllocate(IsNumberConstant(Context::SizeFor(

@@ -7,7 +7,6 @@
 
 #include "src/ic/ic.h"
 
-#include "src/compiler.h"
 #include "src/debug/debug.h"
 #include "src/macro-assembler.h"
 #include "src/prototype.h"
@@ -91,6 +90,12 @@ void IC::set_target(Code* code) {
 
 Code* IC::target() const {
   return GetTargetAtAddress(address(), constant_pool());
+}
+
+bool IC::IsHandler(Object* object) {
+  return (object->IsSmi() && (object != nullptr)) || object->IsTuple3() ||
+         object->IsFixedArray() ||
+         (object->IsCode() && Code::cast(object)->is_handler());
 }
 
 Handle<Map> IC::GetHandlerCacheHolder(Handle<Map> receiver_map,

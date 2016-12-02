@@ -6,13 +6,13 @@
 #define V8_CRANKSHAFT_LITHIUM_CODEGEN_H_
 
 #include "src/bailout-reason.h"
-#include "src/compiler.h"
 #include "src/deoptimizer.h"
 #include "src/source-position-table.h"
 
 namespace v8 {
 namespace internal {
 
+class CompilationInfo;
 class HGraph;
 class LChunk;
 class LEnvironment;
@@ -29,7 +29,7 @@ class LCodeGenBase BASE_EMBEDDED {
   // Simple accessors.
   MacroAssembler* masm() const { return masm_; }
   CompilationInfo* info() const { return info_; }
-  Isolate* isolate() const { return info_->isolate(); }
+  Isolate* isolate() const;
   Factory* factory() const { return isolate()->factory(); }
   Heap* heap() const { return isolate()->heap(); }
   Zone* zone() const { return zone_; }
@@ -50,7 +50,7 @@ class LCodeGenBase BASE_EMBEDDED {
   virtual void GenerateBodyInstructionPost(LInstruction* instr) {}
 
   virtual void EnsureSpaceForLazyDeopt(int space_needed) = 0;
-  void RecordAndWritePosition(int position);
+  void RecordAndWritePosition(SourcePosition position);
 
   int GetNextEmittedBlock() const;
 

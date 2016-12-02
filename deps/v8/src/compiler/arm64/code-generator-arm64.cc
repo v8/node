@@ -6,7 +6,7 @@
 
 #include "src/arm64/frames-arm64.h"
 #include "src/arm64/macro-assembler-arm64.h"
-#include "src/ast/scopes.h"
+#include "src/compilation-info.h"
 #include "src/compiler/code-generator-impl.h"
 #include "src/compiler/gap-resolver.h"
 #include "src/compiler/node-matchers.h"
@@ -709,8 +709,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       frame_access_state()->ClearSPDelta();
       break;
     }
-    case kArchTailCallJSFunctionFromJSFunction:
-    case kArchTailCallJSFunction: {
+    case kArchTailCallJSFunctionFromJSFunction: {
       Register func = i.InputRegister(0);
       if (FLAG_debug_code) {
         // Check the function's context matches the context argument.
@@ -720,11 +719,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ cmp(cp, temp);
         __ Assert(eq, kWrongFunctionContext);
       }
-      if (arch_opcode == kArchTailCallJSFunctionFromJSFunction) {
-        AssemblePopArgumentsAdaptorFrame(kJavaScriptCallArgCountRegister,
-                                         i.TempRegister(0), i.TempRegister(1),
-                                         i.TempRegister(2));
-      }
+      AssemblePopArgumentsAdaptorFrame(kJavaScriptCallArgCountRegister,
+                                       i.TempRegister(0), i.TempRegister(1),
+                                       i.TempRegister(2));
       __ Ldr(x10, FieldMemOperand(func, JSFunction::kCodeEntryOffset));
       __ Jump(x10);
       frame_access_state()->ClearSPDelta();
@@ -766,9 +763,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchDebugBreak:
       __ Debug("kArchDebugBreak", 0, BREAK);
       break;
-    case kArchImpossible:
-      __ Abort(kConversionFromImpossibleValue);
-      break;
     case kArchComment: {
       Address comment_string = i.InputExternalReference(0).address();
       __ RecordComment(reinterpret_cast<const char*>(comment_string));
@@ -783,13 +777,13 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
           BuildTranslation(instr, -1, 0, OutputFrameStateCombine::Ignore());
       Deoptimizer::BailoutType bailout_type =
           Deoptimizer::BailoutType(MiscField::decode(instr->opcode()));
-      CodeGenResult result =
-          AssembleDeoptimizerCall(deopt_state_id, bailout_type);
+      CodeGenResult result = AssembleDeoptimizerCall(
+          deopt_state_id, bailout_type, current_source_position_);
       if (result != kSuccess) return result;
       break;
     }
     case kArchRet:
-      AssembleReturn();
+      AssembleReturn(instr->InputAt(0));
       break;
     case kArchStackPointer:
       __ mov(i.OutputRegister(), masm()->StackPointer());
@@ -1755,13 +1749,14 @@ void CodeGenerator::AssembleArchTableSwitch(Instruction* instr) {
 }
 
 CodeGenerator::CodeGenResult CodeGenerator::AssembleDeoptimizerCall(
-    int deoptimization_id, Deoptimizer::BailoutType bailout_type) {
+    int deoptimization_id, Deoptimizer::BailoutType bailout_type,
+    SourcePosition pos) {
   Address deopt_entry = Deoptimizer::GetDeoptimizationEntry(
       isolate(), deoptimization_id, bailout_type);
   if (deopt_entry == nullptr) return kTooManyDeoptimizationBailouts;
   DeoptimizeReason deoptimization_reason =
       GetDeoptimizationReason(deoptimization_id);
-  __ RecordDeoptReason(deoptimization_reason, 0, deoptimization_id);
+  __ RecordDeoptReason(deoptimization_reason, pos, deoptimization_id);
   __ Call(deopt_entry, RelocInfo::RUNTIME_ENTRY);
   return kSuccess;
 }
@@ -1800,43 +1795,57 @@ void CodeGenerator::AssembleConstructFrame() {
     __ AssertCspAligned();
   }
 
+  int fixed_frame_size = descriptor->CalculateFixedFrameSize();
+  int shrink_slots =
+      frame()->GetTotalFrameSlotCount() - descriptor->CalculateFixedFrameSize();
+
   if (frame_access_state()->has_frame()) {
+    // Link the frame
     if (descriptor->IsJSFunctionCall()) {
       DCHECK(!descriptor->UseNativeStack());
       __ Prologue(this->info()->GeneratePreagedPrologue());
     } else {
-      if (descriptor->IsCFunctionCall()) {
-        __ Push(lr, fp);
-        __ Mov(fp, masm_.StackPointer());
-        __ Claim(frame()->GetSpillSlotCount());
-      } else {
-        __ StubPrologue(info()->GetOutputStackFrameType(),
-                        frame()->GetTotalFrameSlotCount());
-      }
+      __ Push(lr, fp);
+      __ Mov(fp, masm_.StackPointer());
     }
-
     if (!info()->GeneratePreagedPrologue()) {
       unwinding_info_writer_.MarkFrameConstructed(__ pc_offset());
     }
-  }
 
-  int shrink_slots = frame()->GetSpillSlotCount();
+    // Create OSR entry if applicable
+    if (info()->is_osr()) {
+      // TurboFan OSR-compiled functions cannot be entered directly.
+      __ Abort(kShouldNotDirectlyEnterOsrFunction);
 
-  if (info()->is_osr()) {
-    // TurboFan OSR-compiled functions cannot be entered directly.
-    __ Abort(kShouldNotDirectlyEnterOsrFunction);
+      // Unoptimized code jumps directly to this entrypoint while the
+      // unoptimized
+      // frame is still on the stack. Optimized code uses OSR values directly
+      // from
+      // the unoptimized frame. Thus, all that needs to be done is to allocate
+      // the
+      // remaining stack slots.
+      if (FLAG_code_comments) __ RecordComment("-- OSR entrypoint --");
+      osr_pc_offset_ = __ pc_offset();
+      shrink_slots -= OsrHelper(info()).UnoptimizedFrameSlots();
+    }
 
-    // Unoptimized code jumps directly to this entrypoint while the unoptimized
-    // frame is still on the stack. Optimized code uses OSR values directly from
-    // the unoptimized frame. Thus, all that needs to be done is to allocate the
-    // remaining stack slots.
-    if (FLAG_code_comments) __ RecordComment("-- OSR entrypoint --");
-    osr_pc_offset_ = __ pc_offset();
-    shrink_slots -= OsrHelper(info()).UnoptimizedFrameSlots();
-  }
-
-  if (descriptor->IsJSFunctionCall()) {
-    __ Claim(shrink_slots);
+    // Build remainder of frame, including accounting for and filling-in
+    // frame-specific header information, e.g. claiming the extra slot that
+    // other platforms explicitly push for STUB frames and frames recording
+    // their argument count.
+    __ Claim(shrink_slots + (fixed_frame_size & 1));
+    if (descriptor->PushArgumentCount()) {
+      __ Str(kJavaScriptCallArgCountRegister,
+             MemOperand(fp, OptimizedBuiltinFrameConstants::kArgCOffset));
+    }
+    bool is_stub_frame =
+        !descriptor->IsJSFunctionCall() && !descriptor->IsCFunctionCall();
+    if (is_stub_frame) {
+      UseScratchRegisterScope temps(masm());
+      Register temp = temps.AcquireX();
+      __ Mov(temp, Smi::FromInt(info()->GetOutputStackFrameType()));
+      __ Str(temp, MemOperand(fp, TypedFrameConstants::kFrameTypeOffset));
+    }
   }
 
   // Save FP registers.
@@ -1859,8 +1868,7 @@ void CodeGenerator::AssembleConstructFrame() {
   }
 }
 
-
-void CodeGenerator::AssembleReturn() {
+void CodeGenerator::AssembleReturn(InstructionOperand* pop) {
   CallDescriptor* descriptor = linkage()->GetIncomingDescriptor();
 
   // Restore registers.
@@ -1879,16 +1887,25 @@ void CodeGenerator::AssembleReturn() {
 
   unwinding_info_writer_.MarkBlockWillExit();
 
+  Arm64OperandConverter g(this, nullptr);
   int pop_count = static_cast<int>(descriptor->StackParameterCount());
   if (descriptor->IsCFunctionCall()) {
     AssembleDeconstructFrame();
   } else if (frame_access_state()->has_frame()) {
-    // Canonicalize JSFunction return sites for now.
-    if (return_label_.is_bound()) {
-      __ B(&return_label_);
-      return;
+    // Canonicalize JSFunction return sites for now unless they have an variable
+    // number of stack slot pops.
+    if (pop->IsImmediate() && g.ToConstant(pop).ToInt32() == 0) {
+      if (return_label_.is_bound()) {
+        __ B(&return_label_);
+        return;
+      } else {
+        __ Bind(&return_label_);
+        AssembleDeconstructFrame();
+        if (descriptor->UseNativeStack()) {
+          pop_count += (pop_count & 1);  // align
+        }
+      }
     } else {
-      __ Bind(&return_label_);
       AssembleDeconstructFrame();
       if (descriptor->UseNativeStack()) {
         pop_count += (pop_count & 1);  // align
@@ -1897,7 +1914,16 @@ void CodeGenerator::AssembleReturn() {
   } else if (descriptor->UseNativeStack()) {
     pop_count += (pop_count & 1);  // align
   }
-  __ Drop(pop_count);
+
+  if (pop->IsImmediate()) {
+    DCHECK_EQ(Constant::kInt32, g.ToConstant(pop).type());
+    pop_count += g.ToConstant(pop).ToInt32();
+    __ Drop(pop_count);
+  } else {
+    Register pop_reg = g.ToRegister(pop);
+    __ Add(pop_reg, pop_reg, pop_count);
+    __ Drop(pop_reg);
+  }
 
   if (descriptor->UseNativeStack()) {
     __ AssertCspAligned();
@@ -1956,10 +1982,14 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
         __ Fmov(dst, src.ToFloat32());
       } else {
         DCHECK(destination->IsFPStackSlot());
-        UseScratchRegisterScope scope(masm());
-        FPRegister temp = scope.AcquireS();
-        __ Fmov(temp, src.ToFloat32());
-        __ Str(temp, g.ToMemOperand(destination, masm()));
+        if (bit_cast<int32_t>(src.ToFloat32()) == 0) {
+          __ Str(wzr, g.ToMemOperand(destination, masm()));
+        } else {
+          UseScratchRegisterScope scope(masm());
+          FPRegister temp = scope.AcquireS();
+          __ Fmov(temp, src.ToFloat32());
+          __ Str(temp, g.ToMemOperand(destination, masm()));
+        }
       }
     } else {
       DCHECK_EQ(Constant::kFloat64, src.type());
@@ -1968,10 +1998,14 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
         __ Fmov(dst, src.ToFloat64());
       } else {
         DCHECK(destination->IsFPStackSlot());
-        UseScratchRegisterScope scope(masm());
-        FPRegister temp = scope.AcquireD();
-        __ Fmov(temp, src.ToFloat64());
-        __ Str(temp, g.ToMemOperand(destination, masm()));
+        if (bit_cast<int64_t>(src.ToFloat64()) == 0) {
+          __ Str(xzr, g.ToMemOperand(destination, masm()));
+        } else {
+          UseScratchRegisterScope scope(masm());
+          FPRegister temp = scope.AcquireD();
+          __ Fmov(temp, src.ToFloat64());
+          __ Str(temp, g.ToMemOperand(destination, masm()));
+        }
       }
     }
   } else if (source->IsFPRegister()) {

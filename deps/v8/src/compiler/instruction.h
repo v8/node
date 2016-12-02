@@ -10,30 +10,43 @@
 #include <map>
 #include <set>
 
+#include "src/base/compiler-specific.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/frame.h"
 #include "src/compiler/instruction-codes.h"
 #include "src/compiler/opcodes.h"
-#include "src/compiler/source-position.h"
+#include "src/globals.h"
 #include "src/macro-assembler.h"
 #include "src/register-configuration.h"
-#include "src/zone-allocator.h"
+#include "src/zone/zone-allocator.h"
 
 namespace v8 {
 namespace internal {
+
+class SourcePosition;
+
 namespace compiler {
 
-// Forward declarations.
 class Schedule;
+class SourcePositionTable;
 
-
-class InstructionOperand {
+class V8_EXPORT_PRIVATE InstructionOperand {
  public:
   static const int kInvalidVirtualRegister = -1;
 
   // TODO(dcarney): recover bit. INVALID can be represented as UNALLOCATED with
   // kInvalidVirtualRegister and some DCHECKS.
-  enum Kind { INVALID, UNALLOCATED, CONSTANT, IMMEDIATE, EXPLICIT, ALLOCATED };
+  enum Kind {
+    INVALID,
+    UNALLOCATED,
+    CONSTANT,
+    IMMEDIATE,
+    // Location operand kinds.
+    EXPLICIT,
+    ALLOCATED,
+    FIRST_LOCATION_OPERAND_KIND = EXPLICIT
+    // Location operand kinds must be last.
+  };
 
   InstructionOperand() : InstructionOperand(INVALID) {}
 
@@ -64,12 +77,16 @@ class InstructionOperand {
   INSTRUCTION_OPERAND_PREDICATE(Allocated, ALLOCATED)
 #undef INSTRUCTION_OPERAND_PREDICATE
 
+  inline bool IsAnyLocationOperand() const;
+  inline bool IsLocationOperand() const;
+  inline bool IsFPLocationOperand() const;
   inline bool IsAnyRegister() const;
   inline bool IsRegister() const;
   inline bool IsFPRegister() const;
   inline bool IsFloatRegister() const;
   inline bool IsDoubleRegister() const;
   inline bool IsSimd128Register() const;
+  inline bool IsAnyStackSlot() const;
   inline bool IsStackSlot() const;
   inline bool IsFPStackSlot() const;
   inline bool IsFloatStackSlot() const;
@@ -103,8 +120,9 @@ class InstructionOperand {
     return this->GetCanonicalizedValue() < that.GetCanonicalizedValue();
   }
 
-  bool InterferesWith(const InstructionOperand& that) const;
+  bool InterferesWith(const InstructionOperand& other) const;
 
+  // APIs to aid debugging. For general-stream APIs, use operator<<
   void Print(const RegisterConfiguration* config) const;
   void Print() const;
 
@@ -481,17 +499,17 @@ class LocationOperand : public InstructionOperand {
   }
 
   static LocationOperand* cast(InstructionOperand* op) {
-    DCHECK(ALLOCATED == op->kind() || EXPLICIT == op->kind());
+    DCHECK(op->IsAnyLocationOperand());
     return static_cast<LocationOperand*>(op);
   }
 
   static const LocationOperand* cast(const InstructionOperand* op) {
-    DCHECK(ALLOCATED == op->kind() || EXPLICIT == op->kind());
+    DCHECK(op->IsAnyLocationOperand());
     return static_cast<const LocationOperand*>(op);
   }
 
   static LocationOperand cast(const InstructionOperand& op) {
-    DCHECK(ALLOCATED == op.kind() || EXPLICIT == op.kind());
+    DCHECK(op.IsAnyLocationOperand());
     return *static_cast<const LocationOperand*>(&op);
   }
 
@@ -501,8 +519,8 @@ class LocationOperand : public InstructionOperand {
   class IndexField : public BitField64<int32_t, 35, 29> {};
 };
 
-
-class ExplicitOperand : public LocationOperand {
+class V8_EXPORT_PRIVATE ExplicitOperand
+    : public NON_EXPORTED_BASE(LocationOperand) {
  public:
   ExplicitOperand(LocationKind kind, MachineRepresentation rep, int index);
 
@@ -531,9 +549,22 @@ class AllocatedOperand : public LocationOperand {
 
 #undef INSTRUCTION_OPERAND_CASTS
 
+bool InstructionOperand::IsAnyLocationOperand() const {
+  return this->kind() >= FIRST_LOCATION_OPERAND_KIND;
+}
+
+bool InstructionOperand::IsLocationOperand() const {
+  return IsAnyLocationOperand() &&
+         !IsFloatingPoint(LocationOperand::cast(this)->representation());
+}
+
+bool InstructionOperand::IsFPLocationOperand() const {
+  return IsAnyLocationOperand() &&
+         IsFloatingPoint(LocationOperand::cast(this)->representation());
+}
 
 bool InstructionOperand::IsAnyRegister() const {
-  return (IsAllocated() || IsExplicit()) &&
+  return IsAnyLocationOperand() &&
          LocationOperand::cast(this)->location_kind() ==
              LocationOperand::REGISTER;
 }
@@ -567,22 +598,24 @@ bool InstructionOperand::IsSimd128Register() const {
              MachineRepresentation::kSimd128;
 }
 
-bool InstructionOperand::IsStackSlot() const {
-  return (IsAllocated() || IsExplicit()) &&
+bool InstructionOperand::IsAnyStackSlot() const {
+  return IsAnyLocationOperand() &&
          LocationOperand::cast(this)->location_kind() ==
-             LocationOperand::STACK_SLOT &&
+             LocationOperand::STACK_SLOT;
+}
+
+bool InstructionOperand::IsStackSlot() const {
+  return IsAnyStackSlot() &&
          !IsFloatingPoint(LocationOperand::cast(this)->representation());
 }
 
 bool InstructionOperand::IsFPStackSlot() const {
-  return (IsAllocated() || IsExplicit()) &&
-         LocationOperand::cast(this)->location_kind() ==
-             LocationOperand::STACK_SLOT &&
+  return IsAnyStackSlot() &&
          IsFloatingPoint(LocationOperand::cast(this)->representation());
 }
 
 bool InstructionOperand::IsFloatStackSlot() const {
-  return (IsAllocated() || IsExplicit()) &&
+  return IsAnyLocationOperand() &&
          LocationOperand::cast(this)->location_kind() ==
              LocationOperand::STACK_SLOT &&
          LocationOperand::cast(this)->representation() ==
@@ -590,7 +623,7 @@ bool InstructionOperand::IsFloatStackSlot() const {
 }
 
 bool InstructionOperand::IsDoubleStackSlot() const {
-  return (IsAllocated() || IsExplicit()) &&
+  return IsAnyLocationOperand() &&
          LocationOperand::cast(this)->location_kind() ==
              LocationOperand::STACK_SLOT &&
          LocationOperand::cast(this)->representation() ==
@@ -598,7 +631,7 @@ bool InstructionOperand::IsDoubleStackSlot() const {
 }
 
 bool InstructionOperand::IsSimd128StackSlot() const {
-  return (IsAllocated() || IsExplicit()) &&
+  return IsAnyLocationOperand() &&
          LocationOperand::cast(this)->location_kind() ==
              LocationOperand::STACK_SLOT &&
          LocationOperand::cast(this)->representation() ==
@@ -606,11 +639,17 @@ bool InstructionOperand::IsSimd128StackSlot() const {
 }
 
 uint64_t InstructionOperand::GetCanonicalizedValue() const {
-  if (IsAllocated() || IsExplicit()) {
+  if (IsAnyLocationOperand()) {
     MachineRepresentation canonical = MachineRepresentation::kNone;
     if (IsFPRegister()) {
-      // We treat all FP register operands the same for simple aliasing.
-      canonical = MachineRepresentation::kFloat64;
+      if (kSimpleFPAliasing) {
+        // We treat all FP register operands the same for simple aliasing.
+        canonical = MachineRepresentation::kFloat64;
+      } else {
+        // We need to distinguish FP register operands of different reps when
+        // aliasing is not simple (e.g. ARM).
+        canonical = LocationOperand::cast(this)->representation();
+      }
     }
     return InstructionOperand::KindField::update(
         LocationOperand::RepresentationField::update(this->value_, canonical),
@@ -627,8 +666,8 @@ struct CompareOperandModuloType {
   }
 };
 
-
-class MoveOperands final : public ZoneObject {
+class V8_EXPORT_PRIVATE MoveOperands final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   MoveOperands(const InstructionOperand& source,
                const InstructionOperand& destination)
@@ -653,11 +692,6 @@ class MoveOperands final : public ZoneObject {
   }
   void SetPending() { destination_ = InstructionOperand(); }
 
-  // True if this move is a move into the given destination operand.
-  bool Blocks(const InstructionOperand& destination) const {
-    return !IsEliminated() && source().InterferesWith(destination);
-  }
-
   // A move is redundant if it's been eliminated or if its source and
   // destination are the same.
   bool IsRedundant() const {
@@ -672,6 +706,7 @@ class MoveOperands final : public ZoneObject {
     return source_.IsInvalid();
   }
 
+  // APIs to aid debugging. For general-stream APIs, use operator<<
   void Print(const RegisterConfiguration* config) const;
   void Print() const;
 
@@ -691,8 +726,9 @@ struct PrintableMoveOperands {
 
 std::ostream& operator<<(std::ostream& os, const PrintableMoveOperands& mo);
 
-
-class ParallelMove final : public ZoneVector<MoveOperands*>, public ZoneObject {
+class V8_EXPORT_PRIVATE ParallelMove final
+    : public NON_EXPORTED_BASE(ZoneVector<MoveOperands *>),
+      public NON_EXPORTED_BASE(ZoneObject) {
  public:
   explicit ParallelMove(Zone* zone) : ZoneVector<MoveOperands*>(zone) {
     reserve(4);
@@ -715,9 +751,10 @@ class ParallelMove final : public ZoneVector<MoveOperands*>, public ZoneObject {
   bool IsRedundant() const;
 
   // Prepare this ParallelMove to insert move as if it happened in a subsequent
-  // ParallelMove.  move->source() may be changed.  The MoveOperand returned
-  // must be Eliminated.
-  MoveOperands* PrepareInsertAfter(MoveOperands* move) const;
+  // ParallelMove.  move->source() may be changed.  Any MoveOperands added to
+  // to_eliminate must be Eliminated.
+  void PrepareInsertAfter(MoveOperands* move,
+                          ZoneVector<MoveOperands*>* to_eliminate) const;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ParallelMove);
@@ -761,7 +798,7 @@ std::ostream& operator<<(std::ostream& os, const ReferenceMap& pm);
 
 class InstructionBlock;
 
-class Instruction final {
+class V8_EXPORT_PRIVATE Instruction final {
  public:
   size_t OutputCount() const { return OutputCountField::decode(bit_field_); }
   const InstructionOperand* OutputAt(size_t i) const {
@@ -856,10 +893,7 @@ class Instruction final {
     reference_map_ = nullptr;
   }
 
-  bool IsNop() const {
-    return arch_opcode() == kArchNop && InputCount() == 0 &&
-           OutputCount() == 0 && TempCount() == 0;
-  }
+  bool IsNop() const { return arch_opcode() == kArchNop; }
 
   bool IsDeoptimizeCall() const {
     return arch_opcode() == ArchOpcode::kArchDeoptimize ||
@@ -871,7 +905,6 @@ class Instruction final {
   bool IsTailCall() const {
     return arch_opcode() == ArchOpcode::kArchTailCallCodeObject ||
            arch_opcode() == ArchOpcode::kArchTailCallCodeObjectFromJSFunction ||
-           arch_opcode() == ArchOpcode::kArchTailCallJSFunction ||
            arch_opcode() == ArchOpcode::kArchTailCallJSFunctionFromJSFunction ||
            arch_opcode() == ArchOpcode::kArchTailCallAddress;
   }
@@ -915,8 +948,17 @@ class Instruction final {
     block_ = block;
   }
 
+  // APIs to aid debugging. For general-stream APIs, use operator<<
   void Print(const RegisterConfiguration* config) const;
   void Print() const;
+
+  typedef BitField<size_t, 0, 8> OutputCountField;
+  typedef BitField<size_t, 8, 16> InputCountField;
+  typedef BitField<size_t, 24, 6> TempCountField;
+
+  static const size_t kMaxOutputCount = OutputCountField::kMax;
+  static const size_t kMaxInputCount = InputCountField::kMax;
+  static const size_t kMaxTempCount = TempCountField::kMax;
 
  private:
   explicit Instruction(InstructionCode opcode);
@@ -926,9 +968,6 @@ class Instruction final {
               InstructionOperand* inputs, size_t temp_count,
               InstructionOperand* temps);
 
-  typedef BitField<size_t, 0, 8> OutputCountField;
-  typedef BitField<size_t, 8, 16> InputCountField;
-  typedef BitField<size_t, 24, 6> TempCountField;
   typedef BitField<bool, 30, 1> IsCallField;
 
   InstructionCode opcode_;
@@ -985,8 +1024,7 @@ class RpoNumber final {
 
 std::ostream& operator<<(std::ostream&, const RpoNumber&);
 
-
-class Constant final {
+class V8_EXPORT_PRIVATE Constant final {
  public:
   enum Type {
     kInt32,
@@ -1177,13 +1215,15 @@ class DeoptimizationEntry final {
 
 typedef ZoneVector<DeoptimizationEntry> DeoptimizationVector;
 
-class PhiInstruction final : public ZoneObject {
+class V8_EXPORT_PRIVATE PhiInstruction final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   typedef ZoneVector<InstructionOperand> Inputs;
 
   PhiInstruction(Zone* zone, int virtual_register, size_t input_count);
 
   void SetInput(size_t offset, int virtual_register);
+  void RenameInput(size_t offset, int virtual_register);
 
   int virtual_register() const { return virtual_register_; }
   const IntVector& operands() const { return operands_; }
@@ -1201,7 +1241,8 @@ class PhiInstruction final : public ZoneObject {
 
 
 // Analogue of BasicBlock for Instructions instead of Nodes.
-class InstructionBlock final : public ZoneObject {
+class V8_EXPORT_PRIVATE InstructionBlock final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   InstructionBlock(Zone* zone, RpoNumber rpo_number, RpoNumber loop_header,
                    RpoNumber loop_end, bool deferred, bool handler);
@@ -1251,6 +1292,7 @@ class InstructionBlock final : public ZoneObject {
 
   typedef ZoneVector<PhiInstruction*> PhiInstructions;
   const PhiInstructions& phis() const { return phis_; }
+  PhiInstruction* PhiAt(size_t i) const { return phis_[i]; }
   void AddPhi(PhiInstruction* phi) { phis_.push_back(phi); }
 
   void set_ao_number(RpoNumber ao_number) { ao_number_ = ao_number; }
@@ -1263,9 +1305,6 @@ class InstructionBlock final : public ZoneObject {
 
   bool must_deconstruct_frame() const { return must_deconstruct_frame_; }
   void mark_must_deconstruct_frame() { must_deconstruct_frame_ = true; }
-
-  void set_last_deferred(RpoNumber last) { last_deferred_ = last; }
-  RpoNumber last_deferred() const { return last_deferred_; }
 
  private:
   Successors successors_;
@@ -1282,8 +1321,18 @@ class InstructionBlock final : public ZoneObject {
   bool needs_frame_;
   bool must_construct_frame_;
   bool must_deconstruct_frame_;
-  RpoNumber last_deferred_;
 };
+
+class InstructionSequence;
+
+struct PrintableInstructionBlock {
+  const RegisterConfiguration* register_configuration_;
+  const InstructionBlock* block_;
+  const InstructionSequence* code_;
+};
+
+std::ostream& operator<<(std::ostream& os,
+                         const PrintableInstructionBlock& printable_block);
 
 typedef ZoneDeque<Constant> ConstantDeque;
 typedef std::map<int, Constant, std::less<int>,
@@ -1300,7 +1349,8 @@ struct PrintableInstructionSequence;
 
 // Represents architecture-specific generated code before, during, and after
 // register allocation.
-class InstructionSequence final : public ZoneObject {
+class V8_EXPORT_PRIVATE InstructionSequence final
+    : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   static InstructionBlocks* InstructionBlocksFor(Zone* zone,
                                                  const Schedule* schedule);
@@ -1341,21 +1391,13 @@ class InstructionSequence final : public ZoneObject {
   }
   MachineRepresentation GetRepresentation(int virtual_register) const;
   void MarkAsRepresentation(MachineRepresentation rep, int virtual_register);
+  int representation_mask() const { return representation_mask_; }
 
   bool IsReference(int virtual_register) const {
-    return GetRepresentation(virtual_register) ==
-           MachineRepresentation::kTagged;
+    return CanBeTaggedPointer(GetRepresentation(virtual_register));
   }
   bool IsFP(int virtual_register) const {
     return IsFloatingPoint(GetRepresentation(virtual_register));
-  }
-  bool IsFloat(int virtual_register) const {
-    return GetRepresentation(virtual_register) ==
-           MachineRepresentation::kFloat32;
-  }
-  bool IsDouble(int virtual_register) const {
-    return GetRepresentation(virtual_register) ==
-           MachineRepresentation::kFloat64;
   }
 
   Instruction* GetBlockStart(RpoNumber rpo) const;
@@ -1445,6 +1487,8 @@ class InstructionSequence final : public ZoneObject {
     }
     return false;
   }
+
+  // APIs to aid debugging. For general-stream APIs, use operator<<
   void Print(const RegisterConfiguration* config) const;
   void Print() const;
 
@@ -1456,9 +1500,11 @@ class InstructionSequence final : public ZoneObject {
   void ValidateDeferredBlockEntryPaths() const;
   void ValidateSSA() const;
 
+  const RegisterConfiguration* GetRegisterConfigurationForTesting();
+
  private:
-  friend std::ostream& operator<<(std::ostream& os,
-                                  const PrintableInstructionSequence& code);
+  friend V8_EXPORT_PRIVATE std::ostream& operator<<(
+      std::ostream& os, const PrintableInstructionSequence& code);
 
   typedef ZoneMap<const Instruction*, SourcePosition> SourcePositionMap;
 
@@ -1472,6 +1518,7 @@ class InstructionSequence final : public ZoneObject {
   int next_virtual_register_;
   ReferenceMapDeque reference_maps_;
   ZoneVector<MachineRepresentation> representations_;
+  int representation_mask_;
   DeoptimizationVector deoptimization_entries_;
 
   // Used at construction time
@@ -1486,9 +1533,8 @@ struct PrintableInstructionSequence {
   const InstructionSequence* sequence_;
 };
 
-
-std::ostream& operator<<(std::ostream& os,
-                         const PrintableInstructionSequence& code);
+V8_EXPORT_PRIVATE std::ostream& operator<<(
+    std::ostream& os, const PrintableInstructionSequence& code);
 
 }  // namespace compiler
 }  // namespace internal

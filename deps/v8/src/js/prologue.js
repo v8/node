@@ -120,7 +120,7 @@ function InstallGetterSetter(object, name, getter, setter, attributes) {
   SetFunctionName(setter, name, "set");
   %FunctionRemovePrototype(getter);
   %FunctionRemovePrototype(setter);
-  %DefineAccessorPropertyUnchecked(object, name, getter, setter, DONT_ENUM);
+  %DefineAccessorPropertyUnchecked(object, name, getter, setter, attributes);
   %SetNativeFlag(getter);
   %SetNativeFlag(setter);
 }
@@ -181,58 +181,24 @@ function PostNatives(utils) {
 
   // Whitelist of exports from normal natives to experimental natives and debug.
   var expose_list = [
-    "AddBoundMethod",
-    "ArrayToString",
-    "AsyncFunctionNext",
-    "AsyncFunctionThrow",
-    "GetIterator",
-    "GetMethod",
-    "GlobalPromise",
-    "IntlParseDate",
-    "IntlParseNumber",
-    "IsNaN",
+    "FormatDateToParts",
     "MapEntries",
     "MapIterator",
     "MapIteratorNext",
     "MaxSimple",
     "MinSimple",
-    "NewPromiseCapability",
-    "NumberIsInteger",
-    "PerformPromiseThen",
-    "PromiseCastResolved",
-    "PromiseThen",
-    "RegExpSubclassExecJS",
-    "RegExpSubclassMatch",
-    "RegExpSubclassReplace",
-    "RegExpSubclassSearch",
-    "RegExpSubclassSplit",
-    "RegExpSubclassTest",
     "SetIterator",
     "SetIteratorNext",
     "SetValues",
     "ToLocaleLowerCaseI18N",
     "ToLocaleUpperCaseI18N",
     "ToLowerCaseI18N",
-    "ToPositiveInteger",
     "ToUpperCaseI18N",
     // From runtime:
-    "is_concat_spreadable_symbol",
-    "iterator_symbol",
     "promise_result_symbol",
     "promise_state_symbol",
-    "object_freeze",
-    "object_is_frozen",
-    "object_is_sealed",
     "reflect_apply",
-    "reflect_construct",
-    "regexp_flags_symbol",
     "to_string_tag_symbol",
-    "object_to_string",
-    "species_symbol",
-    "match_symbol",
-    "replace_symbol",
-    "search_symbol",
-    "split_symbol",
   ];
 
   var filtered_exports = {};

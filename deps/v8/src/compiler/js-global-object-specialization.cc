@@ -11,9 +11,9 @@
 #include "src/compiler/js-operator.h"
 #include "src/compiler/node-properties.h"
 #include "src/compiler/simplified-operator.h"
+#include "src/compiler/type-cache.h"
 #include "src/lookup.h"
 #include "src/objects-inl.h"
-#include "src/type-cache.h"
 
 namespace v8 {
 namespace internal {
@@ -25,16 +25,14 @@ struct JSGlobalObjectSpecialization::ScriptContextTableLookupResult {
   int index;
 };
 
-
 JSGlobalObjectSpecialization::JSGlobalObjectSpecialization(
-    Editor* editor, JSGraph* jsgraph,
-    MaybeHandle<Context> native_context, CompilationDependencies* dependencies)
+    Editor* editor, JSGraph* jsgraph, Handle<JSGlobalObject> global_object,
+    CompilationDependencies* dependencies)
     : AdvancedReducer(editor),
       jsgraph_(jsgraph),
-      native_context_(native_context),
+      global_object_(global_object),
       dependencies_(dependencies),
       type_cache_(TypeCache::Get()) {}
-
 
 Reduction JSGlobalObjectSpecialization::Reduce(Node* node) {
   switch (node->opcode()) {
@@ -48,31 +46,44 @@ Reduction JSGlobalObjectSpecialization::Reduce(Node* node) {
   return NoChange();
 }
 
+namespace {
+
+FieldAccess ForPropertyCellValue(MachineRepresentation representation,
+                                 Type* type, Handle<Name> name) {
+  WriteBarrierKind kind = kFullWriteBarrier;
+  if (representation == MachineRepresentation::kTaggedSigned) {
+    kind = kNoWriteBarrier;
+  } else if (representation == MachineRepresentation::kTaggedPointer) {
+    kind = kPointerWriteBarrier;
+  }
+  MachineType r = MachineType::TypeForRepresentation(representation);
+  FieldAccess access = {kTaggedBase, PropertyCell::kValueOffset, name, type, r,
+                        kind};
+  return access;
+}
+}  // namespace
+
 Reduction JSGlobalObjectSpecialization::ReduceJSLoadGlobal(Node* node) {
   DCHECK_EQ(IrOpcode::kJSLoadGlobal, node->opcode());
   Handle<Name> name = LoadGlobalParametersOf(node->op()).name();
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
-  // Retrieve the global object from the given {node}.
-  Handle<JSGlobalObject> global_object;
-  if (!GetGlobalObject(node).ToHandle(&global_object)) return NoChange();
-
   // Try to lookup the name on the script context table first (lexical scoping).
   ScriptContextTableLookupResult result;
-  if (LookupInScriptContextTable(global_object, name, &result)) {
-    if (result.context->is_the_hole(result.index)) return NoChange();
+  if (LookupInScriptContextTable(name, &result)) {
+    if (result.context->is_the_hole(isolate(), result.index)) return NoChange();
     Node* context = jsgraph()->HeapConstant(result.context);
     Node* value = effect = graph()->NewNode(
         javascript()->LoadContext(0, result.index, result.immutable), context,
-        context, effect);
+        effect);
     ReplaceWithValue(node, value, effect);
     return Replace(value);
   }
 
   // Lookup on the global object instead.  We only deal with own data
   // properties of the global object here (represented as PropertyCell).
-  LookupIterator it(global_object, name, LookupIterator::OWN);
+  LookupIterator it(global_object(), name, LookupIterator::OWN);
   if (it.state() != LookupIterator::DATA) return NoChange();
   if (!it.GetHolder<JSObject>()->IsJSGlobalObject()) return NoChange();
   Handle<PropertyCell> property_cell = it.GetPropertyCell();
@@ -104,24 +115,29 @@ Reduction JSGlobalObjectSpecialization::ReduceJSLoadGlobal(Node* node) {
   }
 
   // Load from constant type cell can benefit from type feedback.
-  Type* property_cell_value_type = Type::Tagged();
+  Type* property_cell_value_type = Type::NonInternal();
+  MachineRepresentation representation = MachineRepresentation::kTagged;
   if (property_details.cell_type() == PropertyCellType::kConstantType) {
     // Compute proper type based on the current value in the cell.
     if (property_cell_value->IsSmi()) {
-      property_cell_value_type = type_cache_.kSmi;
+      property_cell_value_type = Type::SignedSmall();
+      representation = MachineRepresentation::kTaggedSigned;
     } else if (property_cell_value->IsNumber()) {
-      property_cell_value_type = type_cache_.kHeapNumber;
+      property_cell_value_type = Type::Number();
+      representation = MachineRepresentation::kTaggedPointer;
     } else {
+      // TODO(turbofan): Track the property_cell_value_map on the FieldAccess
+      // below and use it in LoadElimination to eliminate map checks.
       Handle<Map> property_cell_value_map(
           Handle<HeapObject>::cast(property_cell_value)->map(), isolate());
-      property_cell_value_type =
-          Type::Class(property_cell_value_map, graph()->zone());
+      property_cell_value_type = Type::For(property_cell_value_map);
+      representation = MachineRepresentation::kTaggedPointer;
     }
   }
-  Node* value = effect = graph()->NewNode(
-      simplified()->LoadField(
-          AccessBuilder::ForPropertyCellValue(property_cell_value_type)),
-      jsgraph()->HeapConstant(property_cell), effect, control);
+  Node* value = effect =
+      graph()->NewNode(simplified()->LoadField(ForPropertyCellValue(
+                           representation, property_cell_value_type, name)),
+                       jsgraph()->HeapConstant(property_cell), effect, control);
   ReplaceWithValue(node, value, effect, control);
   return Replace(value);
 }
@@ -134,25 +150,21 @@ Reduction JSGlobalObjectSpecialization::ReduceJSStoreGlobal(Node* node) {
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
 
-  // Retrieve the global object from the given {node}.
-  Handle<JSGlobalObject> global_object;
-  if (!GetGlobalObject(node).ToHandle(&global_object)) return NoChange();
-
   // Try to lookup the name on the script context table first (lexical scoping).
   ScriptContextTableLookupResult result;
-  if (LookupInScriptContextTable(global_object, name, &result)) {
-    if (result.context->is_the_hole(result.index)) return NoChange();
+  if (LookupInScriptContextTable(name, &result)) {
+    if (result.context->is_the_hole(isolate(), result.index)) return NoChange();
     if (result.immutable) return NoChange();
     Node* context = jsgraph()->HeapConstant(result.context);
     effect = graph()->NewNode(javascript()->StoreContext(0, result.index),
-                              context, value, context, effect, control);
+                              value, context, effect, control);
     ReplaceWithValue(node, value, effect, control);
     return Replace(value);
   }
 
   // Lookup on the global object instead.  We only deal with own data
   // properties of the global object here (represented as PropertyCell).
-  LookupIterator it(global_object, name, LookupIterator::OWN);
+  LookupIterator it(global_object(), name, LookupIterator::OWN);
   if (it.state() != LookupIterator::DATA) return NoChange();
   if (!it.GetHolder<JSObject>()->IsJSGlobalObject()) return NoChange();
   Handle<PropertyCell> property_cell = it.GetPropertyCell();
@@ -180,6 +192,7 @@ Reduction JSGlobalObjectSpecialization::ReduceJSStoreGlobal(Node* node) {
       // values' type doesn't match the type of the previous value in the cell.
       dependencies()->AssumePropertyCell(property_cell);
       Type* property_cell_value_type;
+      MachineRepresentation representation = MachineRepresentation::kTagged;
       if (property_cell_value->IsHeapObject()) {
         // We cannot do anything if the {property_cell_value}s map is no
         // longer stable.
@@ -189,37 +202,35 @@ Reduction JSGlobalObjectSpecialization::ReduceJSStoreGlobal(Node* node) {
         dependencies()->AssumeMapStable(property_cell_value_map);
 
         // Check that the {value} is a HeapObject.
-        value = effect = graph()->NewNode(simplified()->CheckTaggedPointer(),
+        value = effect = graph()->NewNode(simplified()->CheckHeapObject(),
                                           value, effect, control);
 
         // Check {value} map agains the {property_cell} map.
         effect = graph()->NewNode(
             simplified()->CheckMaps(1), value,
             jsgraph()->HeapConstant(property_cell_value_map), effect, control);
-        property_cell_value_type = Type::TaggedPointer();
+        property_cell_value_type = Type::OtherInternal();
+        representation = MachineRepresentation::kTaggedPointer;
       } else {
         // Check that the {value} is a Smi.
-        value = effect = graph()->NewNode(simplified()->CheckTaggedSigned(),
-                                          value, effect, control);
-        property_cell_value_type = Type::TaggedSigned();
+        value = effect =
+            graph()->NewNode(simplified()->CheckSmi(), value, effect, control);
+        property_cell_value_type = Type::SignedSmall();
+        representation = MachineRepresentation::kTaggedSigned;
       }
       effect = graph()->NewNode(
-          simplified()->StoreField(
-              AccessBuilder::ForPropertyCellValue(property_cell_value_type)),
+          simplified()->StoreField(ForPropertyCellValue(
+              representation, property_cell_value_type, name)),
           jsgraph()->HeapConstant(property_cell), value, effect, control);
       break;
     }
     case PropertyCellType::kMutable: {
-      // Store to non-configurable, data property on the global can be lowered
-      // to a field store, even without recording a code dependency on the cell,
-      // because the property cannot be deleted or reconfigured to an accessor
-      // or interceptor property.
-      if (property_details.IsConfigurable()) {
-        // Protect lowering by recording a code dependency on the cell.
-        dependencies()->AssumePropertyCell(property_cell);
-      }
+      // Record a code dependency on the cell, and just deoptimize if the
+      // property ever becomes read-only.
+      dependencies()->AssumePropertyCell(property_cell);
       effect = graph()->NewNode(
-          simplified()->StoreField(AccessBuilder::ForPropertyCellValue()),
+          simplified()->StoreField(ForPropertyCellValue(
+              MachineRepresentation::kTagged, Type::NonInternal(), name)),
           jsgraph()->HeapConstant(property_cell), value, effect, control);
       break;
     }
@@ -228,21 +239,11 @@ Reduction JSGlobalObjectSpecialization::ReduceJSStoreGlobal(Node* node) {
   return Replace(value);
 }
 
-
-MaybeHandle<JSGlobalObject> JSGlobalObjectSpecialization::GetGlobalObject(
-    Node* node) {
-  Node* const context = NodeProperties::GetContextInput(node);
-  return NodeProperties::GetSpecializationGlobalObject(context,
-                                                       native_context());
-}
-
-
 bool JSGlobalObjectSpecialization::LookupInScriptContextTable(
-    Handle<JSGlobalObject> global_object, Handle<Name> name,
-    ScriptContextTableLookupResult* result) {
+    Handle<Name> name, ScriptContextTableLookupResult* result) {
   if (!name->IsString()) return false;
   Handle<ScriptContextTable> script_context_table(
-      global_object->native_context()->script_context_table(), isolate());
+      global_object()->native_context()->script_context_table(), isolate());
   ScriptContextTable::LookupResult lookup_result;
   if (!ScriptContextTable::Lookup(script_context_table,
                                   Handle<String>::cast(name), &lookup_result)) {
@@ -251,31 +252,26 @@ bool JSGlobalObjectSpecialization::LookupInScriptContextTable(
   Handle<Context> script_context = ScriptContextTable::GetContext(
       script_context_table, lookup_result.context_index);
   result->context = script_context;
-  result->immutable = IsImmutableVariableMode(lookup_result.mode);
+  result->immutable = lookup_result.mode == CONST;
   result->index = lookup_result.slot_index;
   return true;
 }
-
 
 Graph* JSGlobalObjectSpecialization::graph() const {
   return jsgraph()->graph();
 }
 
-
 Isolate* JSGlobalObjectSpecialization::isolate() const {
   return jsgraph()->isolate();
 }
-
 
 CommonOperatorBuilder* JSGlobalObjectSpecialization::common() const {
   return jsgraph()->common();
 }
 
-
 JSOperatorBuilder* JSGlobalObjectSpecialization::javascript() const {
   return jsgraph()->javascript();
 }
-
 
 SimplifiedOperatorBuilder* JSGlobalObjectSpecialization::simplified() const {
   return jsgraph()->simplified();

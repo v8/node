@@ -26,15 +26,17 @@ TEST_F(BytecodeArrayIteratorTest, IteratesBytecodeArray) {
   Factory* factory = isolate()->factory();
   Handle<HeapObject> heap_num_0 = factory->NewHeapNumber(2.718);
   Handle<HeapObject> heap_num_1 = factory->NewHeapNumber(2147483647);
-  Smi* zero = Smi::FromInt(0);
+  Smi* zero = Smi::kZero;
   Smi* smi_0 = Smi::FromInt(64);
   Smi* smi_1 = Smi::FromInt(-65536);
   Register reg_0(0);
   Register reg_1(1);
+  RegisterList pair(0, 2);
+  RegisterList triple(0, 3);
   Register param = Register::FromParameterIndex(2, builder.parameter_count());
   Handle<String> name = factory->NewStringFromStaticChars("abc");
-  int name_index = 2;
-  int feedback_slot = 97;
+  uint32_t name_index = 2;
+  uint32_t feedback_slot = 97;
 
   builder.LoadLiteral(heap_num_0)
       .StoreAccumulatorInRegister(reg_0)
@@ -54,11 +56,11 @@ TEST_F(BytecodeArrayIteratorTest, IteratesBytecodeArray) {
       .LoadNamedProperty(reg_1, name, feedback_slot)
       .BinaryOperation(Token::Value::ADD, reg_0, 3)
       .StoreAccumulatorInRegister(param)
-      .CallRuntimeForPair(Runtime::kLoadLookupSlotForCall, param, 1, reg_0)
-      .ForInPrepare(reg_0, reg_0)
-      .CallRuntime(Runtime::kLoadIC_Miss, reg_0, 1)
+      .CallRuntimeForPair(Runtime::kLoadLookupSlotForCall, param, pair)
+      .ForInPrepare(reg_0, triple)
+      .CallRuntime(Runtime::kLoadIC_Miss, reg_0)
       .Debugger()
-      .LoadGlobal(0x10000000, TypeofMode::NOT_INSIDE_TYPEOF)
+      .LoadGlobal(name, 0x10000000, TypeofMode::NOT_INSIDE_TYPEOF)
       .Return();
 
   // Test iterator sees the expected output from the builder.
@@ -227,7 +229,7 @@ TEST_F(BytecodeArrayIteratorTest, IteratesBytecodeArray) {
   CHECK_EQ(iterator.GetRuntimeIdOperand(0), Runtime::kLoadLookupSlotForCall);
   CHECK_EQ(iterator.GetRegisterOperand(1).index(), param.index());
   CHECK_EQ(iterator.GetRegisterOperandRange(1), 1);
-  CHECK_EQ(iterator.GetRegisterCountOperand(2), 1);
+  CHECK_EQ(iterator.GetRegisterCountOperand(2), 1u);
   CHECK_EQ(iterator.GetRegisterOperand(3).index(), reg_0.index());
   CHECK_EQ(iterator.GetRegisterOperandRange(3), 2);
   CHECK(!iterator.done());
@@ -251,7 +253,7 @@ TEST_F(BytecodeArrayIteratorTest, IteratesBytecodeArray) {
   CHECK_EQ(iterator.current_operand_scale(), OperandScale::kSingle);
   CHECK_EQ(iterator.GetRuntimeIdOperand(0), Runtime::kLoadIC_Miss);
   CHECK_EQ(iterator.GetRegisterOperand(1).index(), reg_0.index());
-  CHECK_EQ(iterator.GetRegisterCountOperand(2), 1);
+  CHECK_EQ(iterator.GetRegisterCountOperand(2), 1u);
   CHECK(!iterator.done());
   offset += Bytecodes::Size(Bytecode::kCallRuntime, OperandScale::kSingle);
   iterator.Advance();
@@ -266,8 +268,8 @@ TEST_F(BytecodeArrayIteratorTest, IteratesBytecodeArray) {
   CHECK_EQ(iterator.current_bytecode(), Bytecode::kLdaGlobal);
   CHECK_EQ(iterator.current_offset(), offset);
   CHECK_EQ(iterator.current_operand_scale(), OperandScale::kQuadruple);
-  CHECK_EQ(iterator.current_bytecode_size(), 6);
-  CHECK_EQ(iterator.GetIndexOperand(0), 0x10000000);
+  CHECK_EQ(iterator.current_bytecode_size(), 10);
+  CHECK_EQ(iterator.GetIndexOperand(1), 0x10000000u);
   offset += Bytecodes::Size(Bytecode::kLdaGlobal, OperandScale::kQuadruple) +
             kPrefixByteSize;
   iterator.Advance();

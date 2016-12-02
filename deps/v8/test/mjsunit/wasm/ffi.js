@@ -16,7 +16,7 @@ function testCallFFI(func, check) {
     .addBody([
       kExprGetLocal, 0,            // --
       kExprGetLocal, 1,            // --
-      kExprCallImport, kArity2, 0  // --
+      kExprCallFunction, 0  // --
     ])        // --
     .exportFunc();
 
@@ -80,7 +80,7 @@ print("Constructor");
     .addBody([
       kExprGetLocal, 0,            // --
       kExprGetLocal, 1,            // --
-      kExprCallImport, kArity2, 0  // --
+      kExprCallFunction, 0  // --
     ])        // --
     .exportFunc();
 
@@ -94,11 +94,11 @@ print("Native function");
 
   var builder = new WasmModuleBuilder();
 
-  var sig_index = builder.addType(kSig_d);
+  var sig_index = builder.addType(kSig_d_v);
   builder.addImport("func", sig_index);
   builder.addFunction("main", sig_index)
     .addBody([
-      kExprCallImport, kArity0, 0  // --
+      kExprCallFunction, 0  // --
     ])        // --
     .exportFunc();
 
@@ -247,7 +247,7 @@ function testCallBinopVoid(type, func, check) {
     .addBody([
       kExprGetLocal, 0,            // --
       kExprGetLocal, 1,            // --
-      kExprCallImport, kArity2, 0, // --
+      kExprCallFunction, 0,        // --
       kExprI8Const, 99             // --
     ])                             // --
     .exportFunc()
@@ -295,23 +295,46 @@ testCallBinopVoid(kAstF64);
 
 
 
-function testCallPrint() {
+(function testCallPrint() {
   var builder = new WasmModuleBuilder();
 
   builder.addImport("print", makeSig_v_x(kAstI32));
   builder.addImport("print", makeSig_v_x(kAstF64));
   builder.addFunction("main", makeSig_v_x(kAstF64))
     .addBody([
-      kExprI8Const, 97,             // --
-      kExprCallImport, kArity1, 0,  // --
-      kExprGetLocal, 0,             // --
-      kExprCallImport, kArity1, 1   // --
-    ])        // --
+      kExprI8Const, 97,      // --
+      kExprCallFunction, 0,  // --
+      kExprGetLocal, 0,      // --
+      kExprCallFunction, 1   // --
+    ])                       // --
     .exportFunc()
 
   var main = builder.instantiate({print: print}).exports.main;
   for (var i = -9; i < 900; i += 6.125) main(i);
-}
+})();
 
-testCallPrint();
-testCallPrint();
+
+(function testImportNumbers() {
+  var builder = new WasmModuleBuilder();
+
+  builder.addImport('0', kSig_v_i);
+
+  builder.instantiate({0: print});
+})();
+
+(function testImportNumbers2() {
+  var builder = new WasmModuleBuilder();
+
+  builder.addImportWithModule('foo', '0', kSig_v_i);
+  builder.addImportWithModule('0', 'foo', kSig_v_i);
+  builder.addImportWithModule('0', '0', kSig_v_i);
+  builder.addImportWithModule('18', '-3', kSig_v_i);
+  builder.addImportWithModule('-3', '18', kSig_v_i);
+
+  builder.instantiate({
+    foo: {0: print},
+    0: {0: print, foo: print},
+    18: {'-3': print},
+    '-3': {18: print}
+  });
+})();

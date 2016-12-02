@@ -9,6 +9,7 @@
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
 #include "src/frames.h"
+#include "src/globals.h"
 #include "src/interpreter/bytecode-register.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/runtime/runtime.h"
@@ -17,9 +18,9 @@ namespace v8 {
 namespace internal {
 namespace interpreter {
 
-class InterpreterAssembler : public CodeStubAssembler {
+class V8_EXPORT_PRIVATE InterpreterAssembler : public CodeStubAssembler {
  public:
-  InterpreterAssembler(Isolate* isolate, Zone* zone, Bytecode bytecode,
+  InterpreterAssembler(compiler::CodeAssemblerState* state, Bytecode bytecode,
                        OperandScale operand_scale);
   virtual ~InterpreterAssembler();
 
@@ -32,6 +33,9 @@ class InterpreterAssembler : public CodeStubAssembler {
   // Returns the index immediate for bytecode operand |operand_index| in the
   // current bytecode.
   compiler::Node* BytecodeOperandIdx(int operand_index);
+  // Returns the UImm8 immediate for bytecode operand |operand_index| in the
+  // current bytecode.
+  compiler::Node* BytecodeOperandUImm(int operand_index);
   // Returns the Imm8 immediate for bytecode operand |operand_index| in the
   // current bytecode.
   compiler::Node* BytecodeOperandImm(int operand_index);
@@ -52,6 +56,15 @@ class InterpreterAssembler : public CodeStubAssembler {
   // Context.
   compiler::Node* GetContext();
   void SetContext(compiler::Node* value);
+
+  // Context at |depth| in the context chain starting at |context|.
+  compiler::Node* GetContextAtDepth(compiler::Node* context,
+                                    compiler::Node* depth);
+
+  // Goto the given |target| if the context chain starting at |context| has any
+  // extensions up to the given |depth|.
+  void GotoIfHasContextExtensionUpToDepth(compiler::Node* context,
+                                          compiler::Node* depth, Label* target);
 
   // Number of registers.
   compiler::Node* RegisterCount();
@@ -80,17 +93,13 @@ class InterpreterAssembler : public CodeStubAssembler {
   // Load and untag constant at |index| in the constant pool.
   compiler::Node* LoadAndUntagConstantPoolEntry(compiler::Node* index);
 
-  // Load |slot_index| from |context|.
-  compiler::Node* LoadContextSlot(compiler::Node* context, int slot_index);
-  compiler::Node* LoadContextSlot(compiler::Node* context,
-                                  compiler::Node* slot_index);
-  // Stores |value| into |slot_index| of |context|.
-  compiler::Node* StoreContextSlot(compiler::Node* context,
-                                   compiler::Node* slot_index,
-                                   compiler::Node* value);
-
   // Load the TypeFeedbackVector for the current function.
   compiler::Node* LoadTypeFeedbackVector();
+
+  // Increment the call count for a CALL_IC or construct call.
+  // The call count is located at feedback_vector[slot_id + 1].
+  compiler::Node* IncrementCallCount(compiler::Node* type_feedback_vector,
+                                     compiler::Node* slot_id);
 
   // Call JSFunction or Callable |function| with |arg_count|
   // arguments (not including receiver) and the first argument
@@ -120,7 +129,9 @@ class InterpreterAssembler : public CodeStubAssembler {
                                 compiler::Node* context,
                                 compiler::Node* new_target,
                                 compiler::Node* first_arg,
-                                compiler::Node* arg_count);
+                                compiler::Node* arg_count,
+                                compiler::Node* slot_id,
+                                compiler::Node* type_feedback_vector);
 
   // Call runtime function with |arg_count| arguments and the first argument
   // located at |first_arg|.

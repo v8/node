@@ -22,6 +22,7 @@ namespace internal {
 class Isolate;
 class Callable;
 class CompilationInfo;
+class CompilationJob;
 
 namespace compiler {
 class Node;
@@ -42,8 +43,8 @@ class Interpreter {
   // Returns the interrupt budget which should be used for the profiler counter.
   static int InterruptBudget();
 
-  // Generate bytecode for |info|.
-  static bool MakeBytecode(CompilationInfo* info);
+  // Creates a compilation job which will generate bytecode for |info|.
+  static CompilationJob* NewCompilationJob(CompilationInfo* info);
 
   // Return bytecode handler for |bytecode|.
   Code* GetBytecodeHandler(Bytecode bytecode, OperandScale operand_scale);
@@ -55,7 +56,7 @@ class Interpreter {
   void TraceCodegen(Handle<Code> code);
   const char* LookupNameOfBytecodeHandler(Code* code);
 
-  Local<v8::Object> GetDispatchCountersObject();
+  V8_EXPORT_PRIVATE Local<v8::Object> GetDispatchCountersObject();
 
   Address dispatch_table_address() {
     return reinterpret_cast<Address>(&dispatch_table_[0]);
@@ -77,11 +78,12 @@ class Interpreter {
 
   // Generates code to perform the binary operation via |Generator|.
   template <class Generator>
-  void DoBinaryOp(InterpreterAssembler* assembler);
-
-  // Generates code to perform the binary operation via |Generator|.
-  template <class Generator>
   void DoBinaryOpWithFeedback(InterpreterAssembler* assembler);
+
+  // Generates code to perform the comparison via |Generator| while gathering
+  // type feedback.
+  void DoCompareOpWithFeedback(Token::Value compare_op,
+                               InterpreterAssembler* assembler);
 
   // Generates code to perform the bitwise binary operation corresponding to
   // |bitwise_op| while gathering type feedback.
@@ -92,10 +94,6 @@ class Interpreter {
   // an immediate value rather the accumulator as the rhs operand.
   template <class Generator>
   void DoBinaryOpWithImmediate(InterpreterAssembler* assembler);
-
-  // Generates code to perform the unary operation via |Generator|.
-  template <class Generator>
-  void DoUnaryOp(InterpreterAssembler* assembler);
 
   // Generates code to perform the unary operation via |Generator| while
   // gatering type feedback.
@@ -118,18 +116,6 @@ class Interpreter {
   // Generates code to perform a JS call that collects type feedback.
   void DoJSCall(InterpreterAssembler* assembler, TailCallMode tail_call_mode);
 
-  // Generates code to perform a runtime call.
-  void DoCallRuntimeCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a runtime call returning a pair.
-  void DoCallRuntimeForPairCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a JS runtime call.
-  void DoCallJSRuntimeCommon(InterpreterAssembler* assembler);
-
-  // Generates code to perform a constructor call.
-  void DoCallConstruct(InterpreterAssembler* assembler);
-
   // Generates code to perform delete via function_id.
   void DoDelete(Runtime::FunctionId function_id,
                 InterpreterAssembler* assembler);
@@ -138,26 +124,26 @@ class Interpreter {
   void DoLdaLookupSlot(Runtime::FunctionId function_id,
                        InterpreterAssembler* assembler);
 
-  // Generates code to perform a lookup slot store depending on |language_mode|.
+  // Generates code to perform a lookup slot load via |function_id| that can
+  // fast path to a context slot load.
+  void DoLdaLookupContextSlot(Runtime::FunctionId function_id,
+                              InterpreterAssembler* assembler);
+
+  // Generates code to perform a lookup slot load via |function_id| that can
+  // fast path to a global load.
+  void DoLdaLookupGlobalSlot(Runtime::FunctionId function_id,
+                             InterpreterAssembler* assembler);
+
+  // Generates code to perform a lookup slot store depending on
+  // |language_mode|.
   void DoStaLookupSlot(LanguageMode language_mode,
                        InterpreterAssembler* assembler);
 
-  // Generates a node with the undefined constant.
-  compiler::Node* BuildLoadUndefined(InterpreterAssembler* assembler);
-
-  // Generates code to load a context slot.
-  compiler::Node* BuildLoadContextSlot(InterpreterAssembler* assembler);
-
   // Generates code to load a global.
-  compiler::Node* BuildLoadGlobal(Callable ic, InterpreterAssembler* assembler);
-
-  // Generates code to load a named property.
-  compiler::Node* BuildLoadNamedProperty(Callable ic,
-                                         InterpreterAssembler* assembler);
-
-  // Generates code to load a keyed property.
-  compiler::Node* BuildLoadKeyedProperty(Callable ic,
-                                         InterpreterAssembler* assembler);
+  compiler::Node* BuildLoadGlobal(Callable ic, compiler::Node* context,
+                                  compiler::Node* name_index,
+                                  compiler::Node* feedback_slot,
+                                  InterpreterAssembler* assembler);
 
   // Generates code to prepare the result for ForInPrepare. Cache data
   // are placed into the consecutive series of registers starting at
@@ -179,6 +165,7 @@ class Interpreter {
                                       OperandScale operand_scale);
 
   bool IsDispatchTableInitialized();
+  bool ShouldInitializeDispatchTable();
 
   static const int kNumberOfWideVariants = 3;
   static const int kDispatchTableSize = kNumberOfWideVariants * (kMaxUInt8 + 1);

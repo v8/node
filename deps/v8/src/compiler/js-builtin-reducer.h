@@ -5,8 +5,10 @@
 #ifndef V8_COMPILER_JS_BUILTIN_REDUCER_H_
 #define V8_COMPILER_JS_BUILTIN_REDUCER_H_
 
+#include "src/base/compiler-specific.h"
 #include "src/base/flags.h"
 #include "src/compiler/graph-reducer.h"
+#include "src/globals.h"
 
 namespace v8 {
 namespace internal {
@@ -14,7 +16,6 @@ namespace internal {
 // Forward declarations.
 class CompilationDependencies;
 class Factory;
-class TypeCache;
 
 namespace compiler {
 
@@ -22,10 +23,12 @@ namespace compiler {
 class CommonOperatorBuilder;
 struct FieldAccess;
 class JSGraph;
+class JSOperatorBuilder;
 class SimplifiedOperatorBuilder;
+class TypeCache;
 
-
-class JSBuiltinReducer final : public AdvancedReducer {
+class V8_EXPORT_PRIVATE JSBuiltinReducer final
+    : public NON_EXPORTED_BASE(AdvancedReducer) {
  public:
   // Flags that control the mode of operation.
   enum Flag {
@@ -35,14 +38,28 @@ class JSBuiltinReducer final : public AdvancedReducer {
   typedef base::Flags<Flag> Flags;
 
   JSBuiltinReducer(Editor* editor, JSGraph* jsgraph, Flags flags,
-                   CompilationDependencies* dependencies);
+                   CompilationDependencies* dependencies,
+                   Handle<Context> native_context);
   ~JSBuiltinReducer() final {}
 
   Reduction Reduce(Node* node) final;
 
  private:
+  Reduction ReduceArrayIterator(Node* node, IterationKind kind);
+  Reduction ReduceTypedArrayIterator(Node* node, IterationKind kind);
+  Reduction ReduceArrayIterator(Handle<Map> receiver_map, Node* node,
+                                IterationKind kind,
+                                ArrayIteratorKind iter_kind);
+  Reduction ReduceArrayIteratorNext(Node* node);
+  Reduction ReduceFastArrayIteratorNext(Handle<Map> iterator_map, Node* node,
+                                        IterationKind kind);
+  Reduction ReduceTypedArrayIteratorNext(Handle<Map> iterator_map, Node* node,
+                                         IterationKind kind);
   Reduction ReduceArrayPop(Node* node);
   Reduction ReduceArrayPush(Node* node);
+  Reduction ReduceDateGetTime(Node* node);
+  Reduction ReduceGlobalIsFinite(Node* node);
+  Reduction ReduceGlobalIsNaN(Node* node);
   Reduction ReduceMathAbs(Node* node);
   Reduction ReduceMathAcos(Node* node);
   Reduction ReduceMathAcosh(Node* node);
@@ -76,10 +93,16 @@ class JSBuiltinReducer final : public AdvancedReducer {
   Reduction ReduceMathTan(Node* node);
   Reduction ReduceMathTanh(Node* node);
   Reduction ReduceMathTrunc(Node* node);
+  Reduction ReduceNumberIsFinite(Node* node);
+  Reduction ReduceNumberIsInteger(Node* node);
+  Reduction ReduceNumberIsNaN(Node* node);
+  Reduction ReduceNumberIsSafeInteger(Node* node);
   Reduction ReduceNumberParseInt(Node* node);
   Reduction ReduceStringCharAt(Node* node);
   Reduction ReduceStringCharCodeAt(Node* node);
   Reduction ReduceStringFromCharCode(Node* node);
+  Reduction ReduceStringIterator(Node* node);
+  Reduction ReduceStringIteratorNext(Node* node);
   Reduction ReduceArrayBufferViewAccessor(Node* node,
                                           InstanceType instance_type,
                                           FieldAccess const& access);
@@ -92,13 +115,16 @@ class JSBuiltinReducer final : public AdvancedReducer {
   Factory* factory() const;
   JSGraph* jsgraph() const { return jsgraph_; }
   Isolate* isolate() const;
+  Handle<Context> native_context() const { return native_context_; }
   CommonOperatorBuilder* common() const;
   SimplifiedOperatorBuilder* simplified() const;
+  JSOperatorBuilder* javascript() const;
   CompilationDependencies* dependencies() const { return dependencies_; }
 
   CompilationDependencies* const dependencies_;
   Flags const flags_;
   JSGraph* const jsgraph_;
+  Handle<Context> const native_context_;
   TypeCache const& type_cache_;
 };
 

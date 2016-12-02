@@ -84,20 +84,22 @@ assertEquals("abci\u0307", "aBcI\u0307".toLocaleLowerCase(["en", "tr"]));
 assertEquals("abci\u0307", "aBcI\u0307".toLowerCase());
 
 // Greek uppercasing: not covered by intl402/String/*, yet. Tonos (U+0301) and
-// other diacritic marks are dropped. This rule is based on the current CLDR's
-// el-Upper transformation, but Greek uppercasing rules are more sophisticated
-// than this. See http://bugs.icu-project.org/trac/ticket/10582 and
-// http://unicode.org/cldr/trac/ticket/7905 .
+// other diacritic marks are dropped.  See
+// http://bugs.icu-project.org/trac/ticket/5456#comment:19 for more examples.
+// See also http://bugs.icu-project.org/trac/ticket/12845 .
 assertEquals("Α", "α\u0301".toLocaleUpperCase("el"));
 assertEquals("Α", "α\u0301".toLocaleUpperCase("el-GR"));
 assertEquals("Α", "α\u0301".toLocaleUpperCase("el-Grek"));
 assertEquals("Α", "α\u0301".toLocaleUpperCase("el-Grek-GR"));
 assertEquals("Α", "ά".toLocaleUpperCase("el"));
-assertEquals("ΑΟΥΩ", "άόύώ".toLocaleUpperCase("el"));
-assertEquals("ΑΟΥΩ", "α\u0301ο\u0301υ\u0301ω\u0301".toLocaleUpperCase("el"));
-assertEquals("ΑΟΥΩ", "άόύώ".toLocaleUpperCase("el"));
+assertEquals("ΑΟΫΩ", "άόύώ".toLocaleUpperCase("el"));
+assertEquals("ΑΟΫΩ", "α\u0301ο\u0301υ\u0301ω\u0301".toLocaleUpperCase("el"));
+assertEquals("ΑΟΫΩ", "άόύώ".toLocaleUpperCase("el"));
 assertEquals("ΟΕ", "Ό\u1f15".toLocaleUpperCase("el"));
 assertEquals("ΟΕ", "Ο\u0301ε\u0314\u0301".toLocaleUpperCase("el"));
+assertEquals("ΡΩΜΕΪΚΑ", "ρωμέικα".toLocaleUpperCase("el"));
+assertEquals("ΜΑΪΟΥ, ΤΡΟΛΕΪ", "Μαΐου, τρόλεϊ".toLocaleUpperCase("el"));
+assertEquals("ΤΟ ΕΝΑ Ή ΤΟ ΑΛΛΟ.", "Το ένα ή το άλλο.".toLocaleUpperCase("el"));
 
 // Input and output are identical.
 assertEquals("αβγδε", "αβγδε".toLocaleLowerCase("el"));
@@ -136,3 +138,29 @@ assertEquals("\u{10CC0}", "\u{10C80}".toLocaleLowerCase());
 assertEquals("\u{10C80}", "\u{10CC0}".toLocaleUpperCase(["tr"]));
 assertEquals("\u{10C80}", "\u{10CC0}".toLocaleUpperCase(["tr"]));
 assertEquals("\u{10CC0}", "\u{10C80}".toLocaleLowerCase());
+
+// check fast path for Latin-1 supplement (U+00A0 ~ U+00FF)
+var latin1Suppl = "\u00A0¡¢£¤¥¦§¨©ª«¬\u00AD®°±²³´µ¶·¸¹º»¼½¾¿" +
+    "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ";
+var latin1SupplLowercased = "\u00A0¡¢£¤¥¦§¨©ª«¬\u00AD®°±²³´µ¶·¸¹º»¼½¾¿" +
+    "àáâãäåæçèéêëìíîïðñòóôõö×øùúûüýþßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ";
+var latin1SupplUppercased = "\u00A0¡¢£¤¥¦§¨©ª«¬\u00AD®°±²³´\u039C¶·¸¹º»¼½¾¿" +
+    "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞSSÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ÷ØÙÚÛÜÝÞ\u0178";
+
+assertEquals(latin1SupplLowercased, latin1Suppl.toLowerCase());
+assertEquals(latin1SupplUppercased, latin1Suppl.toUpperCase());
+assertEquals(latin1SupplLowercased, latin1Suppl.toLocaleLowerCase("de"));
+assertEquals(latin1SupplUppercased, latin1Suppl.toLocaleUpperCase("de"));
+assertEquals(latin1SupplLowercased, latin1Suppl.toLocaleLowerCase("el"));
+assertEquals(latin1SupplUppercased, latin1Suppl.toLocaleUpperCase("el"));
+assertEquals(latin1SupplUppercased, latin1Suppl.toLocaleUpperCase("tr"));
+assertEquals(latin1SupplLowercased, latin1Suppl.toLocaleLowerCase("tr"));
+assertEquals(latin1SupplUppercased, latin1Suppl.toLocaleUpperCase("az"));
+assertEquals(latin1SupplLowercased, latin1Suppl.toLocaleLowerCase("az"));
+assertEquals(latin1SupplUppercased, latin1Suppl.toLocaleUpperCase("lt"));
+// Lithuanian need to have a dot-above for U+00CC(Ì) and U+00CD(Í) when
+// lowercasing.
+assertEquals("\u00A0¡¢£¤¥¦§¨©ª«¬\u00AD®°±²³´µ¶·¸¹º»¼½¾¿" +
+    "àáâãäåæçèéêëi\u0307\u0300i\u0307\u0301îïðñòóôõö×øùúûüýþß" +
+    "àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ",
+    latin1Suppl.toLocaleLowerCase("lt"));

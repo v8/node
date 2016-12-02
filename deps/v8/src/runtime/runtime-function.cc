@@ -55,7 +55,7 @@ RUNTIME_FUNCTION(Runtime_FunctionRemovePrototype) {
   return isolate->heap()->undefined_value();
 }
 
-
+// TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_FunctionGetScript) {
   HandleScope scope(isolate);
   DCHECK_EQ(1, args.length());
@@ -71,6 +71,20 @@ RUNTIME_FUNCTION(Runtime_FunctionGetScript) {
   return isolate->heap()->undefined_value();
 }
 
+RUNTIME_FUNCTION(Runtime_FunctionGetScriptId) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, function, 0);
+
+  if (function->IsJSFunction()) {
+    Handle<Object> script(
+        Handle<JSFunction>::cast(function)->shared()->script(), isolate);
+    if (script->IsScript()) {
+      return Smi::FromInt(Handle<Script>::cast(script)->id());
+    }
+  }
+  return Smi::FromInt(-1);
+}
 
 RUNTIME_FUNCTION(Runtime_FunctionGetSourceCode) {
   HandleScope scope(isolate);
@@ -174,6 +188,7 @@ RUNTIME_FUNCTION(Runtime_SetCode) {
     target_shared->set_bytecode_array(source_shared->bytecode_array());
   }
   target_shared->set_scope_info(source_shared->scope_info());
+  target_shared->set_outer_scope_info(source_shared->outer_scope_info());
   target_shared->set_length(source_shared->length());
   target_shared->set_num_literals(source_shared->num_literals());
   target_shared->set_feedback_metadata(source_shared->feedback_metadata());
@@ -188,6 +203,7 @@ RUNTIME_FUNCTION(Runtime_SetCode) {
       source_shared->opt_count_and_bailout_reason());
   target_shared->set_native(was_native);
   target_shared->set_profiler_ticks(source_shared->profiler_ticks());
+  target_shared->set_function_literal_id(source_shared->function_literal_id());
   SharedFunctionInfo::SetScript(
       target_shared, Handle<Object>(source_shared->script(), isolate));
 

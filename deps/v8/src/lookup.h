@@ -6,13 +6,14 @@
 #define V8_LOOKUP_H_
 
 #include "src/factory.h"
+#include "src/globals.h"
 #include "src/isolate.h"
 #include "src/objects.h"
 
 namespace v8 {
 namespace internal {
 
-class LookupIterator final BASE_EMBEDDED {
+class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
  public:
   enum Configuration {
     // Configuration bits.
@@ -43,30 +44,26 @@ class LookupIterator final BASE_EMBEDDED {
 
   LookupIterator(Handle<Object> receiver, Handle<Name> name,
                  Configuration configuration = DEFAULT)
-      : configuration_(ComputeConfiguration(configuration, name)),
-        interceptor_state_(InterceptorState::kUninitialized),
-        property_details_(PropertyDetails::Empty()),
-        isolate_(name->GetIsolate()),
-        name_(isolate_->factory()->InternalizeName(name)),
-        receiver_(receiver),
-        initial_holder_(GetRoot(isolate_, receiver)),
-        // kMaxUInt32 isn't a valid index.
-        index_(kMaxUInt32),
-        number_(DescriptorArray::kNotFound) {
-#ifdef DEBUG
-    uint32_t index;  // Assert that the name is not an array index.
-    DCHECK(!name->AsArrayIndex(&index));
-#endif  // DEBUG
-    Start<false>();
-  }
+      : LookupIterator(name->GetIsolate(), receiver, name, configuration) {}
+
+  LookupIterator(Isolate* isolate, Handle<Object> receiver, Handle<Name> name,
+                 Configuration configuration = DEFAULT)
+      : LookupIterator(isolate, receiver, name, GetRoot(isolate, receiver),
+                       configuration) {}
 
   LookupIterator(Handle<Object> receiver, Handle<Name> name,
+                 Handle<JSReceiver> holder,
+                 Configuration configuration = DEFAULT)
+      : LookupIterator(name->GetIsolate(), receiver, name, holder,
+                       configuration) {}
+
+  LookupIterator(Isolate* isolate, Handle<Object> receiver, Handle<Name> name,
                  Handle<JSReceiver> holder,
                  Configuration configuration = DEFAULT)
       : configuration_(ComputeConfiguration(configuration, name)),
         interceptor_state_(InterceptorState::kUninitialized),
         property_details_(PropertyDetails::Empty()),
-        isolate_(name->GetIsolate()),
+        isolate_(isolate),
         name_(isolate_->factory()->InternalizeName(name)),
         receiver_(receiver),
         initial_holder_(holder),
@@ -82,18 +79,8 @@ class LookupIterator final BASE_EMBEDDED {
 
   LookupIterator(Isolate* isolate, Handle<Object> receiver, uint32_t index,
                  Configuration configuration = DEFAULT)
-      : configuration_(configuration),
-        interceptor_state_(InterceptorState::kUninitialized),
-        property_details_(PropertyDetails::Empty()),
-        isolate_(isolate),
-        receiver_(receiver),
-        initial_holder_(GetRoot(isolate, receiver, index)),
-        index_(index),
-        number_(DescriptorArray::kNotFound) {
-    // kMaxUInt32 isn't a valid index.
-    DCHECK_NE(kMaxUInt32, index_);
-    Start<true>();
-  }
+      : LookupIterator(isolate, receiver, index,
+                       GetRoot(isolate, receiver, index), configuration) {}
 
   LookupIterator(Isolate* isolate, Handle<Object> receiver, uint32_t index,
                  Handle<JSReceiver> holder,
@@ -251,6 +238,7 @@ class LookupIterator final BASE_EMBEDDED {
   }
   FieldIndex GetFieldIndex() const;
   Handle<FieldType> GetFieldType() const;
+  int GetFieldDescriptorIndex() const;
   int GetAccessorIndex() const;
   int GetConstantIndex() const;
   Handle<PropertyCell> GetPropertyCell() const;
@@ -270,10 +258,16 @@ class LookupIterator final BASE_EMBEDDED {
     if (*name_ == heap()->is_concat_spreadable_symbol() ||
         *name_ == heap()->constructor_string() ||
         *name_ == heap()->species_symbol() ||
-        *name_ == heap()->has_instance_symbol()) {
+        *name_ == heap()->has_instance_symbol() ||
+        *name_ == heap()->iterator_symbol()) {
       InternalUpdateProtector();
     }
   }
+
+  // Lookup a 'cached' private property for an accessor.
+  // If not found returns false and leaves the LookupIterator unmodified.
+  bool TryLookupCachedProperty();
+  bool LookupCachedProperty();
 
  private:
   void InternalUpdateProtector();
@@ -289,7 +283,7 @@ class LookupIterator final BASE_EMBEDDED {
   MUST_USE_RESULT inline JSReceiver* NextHolder(Map* map);
 
   template <bool is_element>
-  void Start();
+  V8_EXPORT_PRIVATE void Start();
   template <bool is_element>
   void NextInternal(Map* map, JSReceiver* holder);
   template <bool is_element>

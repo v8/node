@@ -5,6 +5,8 @@
 #ifndef V8_INTERPRETER_BYTECODE_ARRAY_WRITER_H_
 #define V8_INTERPRETER_BYTECODE_ARRAY_WRITER_H_
 
+#include "src/base/compiler-specific.h"
+#include "src/globals.h"
 #include "src/interpreter/bytecode-pipeline.h"
 #include "src/source-position-table.h"
 
@@ -20,7 +22,8 @@ class ConstantArrayBuilder;
 
 // Class for emitting bytecode as the final stage of the bytecode
 // generation pipeline.
-class BytecodeArrayWriter final : public BytecodePipelineStage {
+class V8_EXPORT_PRIVATE BytecodeArrayWriter final
+    : public NON_EXPORTED_BASE(BytecodePipelineStage) {
  public:
   BytecodeArrayWriter(
       Zone* zone, ConstantArrayBuilder* constant_array_builder,
@@ -33,7 +36,7 @@ class BytecodeArrayWriter final : public BytecodePipelineStage {
   void BindLabel(BytecodeLabel* label) override;
   void BindLabel(const BytecodeLabel& target, BytecodeLabel* label) override;
   Handle<BytecodeArray> ToBytecodeArray(
-      Isolate* isolate, int fixed_register_count, int parameter_count,
+      Isolate* isolate, int register_count, int parameter_count,
       Handle<FixedArray> handler_table) override;
 
  private:
@@ -69,10 +72,8 @@ class BytecodeArrayWriter final : public BytecodePipelineStage {
   ConstantArrayBuilder* constant_array_builder() {
     return constant_array_builder_;
   }
-  int max_register_count() { return max_register_count_; }
 
   ZoneVector<uint8_t> bytecodes_;
-  int max_register_count_;
   int unbound_jumps_;
   SourcePositionTableBuilder source_position_table_builder_;
   ConstantArrayBuilder* constant_array_builder_;

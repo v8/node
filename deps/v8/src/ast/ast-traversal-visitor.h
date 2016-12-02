@@ -40,7 +40,7 @@ class AstTraversalVisitor : public AstVisitor<Subclass> {
   bool VisitExpression(Expression* node) { return true; }
 
   // Iteration left-to-right.
-  void VisitDeclarations(ZoneList<Declaration*>* declarations);
+  void VisitDeclarations(Declaration::List* declarations);
   void VisitStatements(ZoneList<Statement*>* statements);
 
 // Individual nodes
@@ -104,9 +104,8 @@ AstTraversalVisitor<Subclass>::AstTraversalVisitor(uintptr_t stack_limit,
 
 template <class Subclass>
 void AstTraversalVisitor<Subclass>::VisitDeclarations(
-    ZoneList<Declaration*>* decls) {
-  for (int i = 0; i < decls->length(); ++i) {
-    Declaration* decl = decls->at(i);
+    Declaration::List* decls) {
+  for (Declaration* decl : *decls) {
     RECURSE(Visit(decl));
   }
 }
@@ -288,6 +287,8 @@ void AstTraversalVisitor<Subclass>::VisitFunctionLiteral(
   PROCESS_EXPRESSION(expr);
   DeclarationScope* scope = expr->scope();
   RECURSE_EXPRESSION(VisitDeclarations(scope->declarations()));
+  // A lazily parsed function literal won't have a body.
+  if (expr->scope()->is_lazily_parsed()) return;
   RECURSE_EXPRESSION(VisitStatements(expr->body()));
 }
 
@@ -447,9 +448,9 @@ void AstTraversalVisitor<Subclass>::VisitClassLiteral(ClassLiteral* expr) {
     RECURSE_EXPRESSION(Visit(expr->extends()));
   }
   RECURSE_EXPRESSION(Visit(expr->constructor()));
-  ZoneList<ObjectLiteralProperty*>* props = expr->properties();
+  ZoneList<ClassLiteralProperty*>* props = expr->properties();
   for (int i = 0; i < props->length(); ++i) {
-    ObjectLiteralProperty* prop = props->at(i);
+    ClassLiteralProperty* prop = props->at(i);
     if (!prop->key()->IsLiteral()) {
       RECURSE_EXPRESSION(Visit(prop->key()));
     }

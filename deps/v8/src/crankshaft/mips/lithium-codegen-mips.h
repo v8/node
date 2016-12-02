@@ -340,8 +340,6 @@ class LCodeGen: public LCodeGenBase {
 
   template <class T>
   void EmitVectorLoadICRegisters(T* instr);
-  template <class T>
-  void EmitVectorStoreICRegisters(T* instr);
 
   ZoneList<Deoptimizer::JumpTableEntry> jump_table_;
   Scope* const scope_;
@@ -359,24 +357,9 @@ class LCodeGen: public LCodeGenBase {
 
   class PushSafepointRegistersScope final BASE_EMBEDDED {
    public:
-    explicit PushSafepointRegistersScope(LCodeGen* codegen)
-        : codegen_(codegen) {
-      DCHECK(codegen_->info()->is_calling());
-      DCHECK(codegen_->expected_safepoint_kind_ == Safepoint::kSimple);
-      codegen_->expected_safepoint_kind_ = Safepoint::kWithRegisters;
+    explicit PushSafepointRegistersScope(LCodeGen* codegen);
 
-      StoreRegistersStateStub stub(codegen_->isolate());
-      codegen_->masm_->push(ra);
-      codegen_->masm_->CallStub(&stub);
-    }
-
-    ~PushSafepointRegistersScope() {
-      DCHECK(codegen_->expected_safepoint_kind_ == Safepoint::kWithRegisters);
-      RestoreRegistersStateStub stub(codegen_->isolate());
-      codegen_->masm_->push(ra);
-      codegen_->masm_->CallStub(&stub);
-      codegen_->expected_safepoint_kind_ = Safepoint::kSimple;
-    }
+    ~PushSafepointRegistersScope();
 
    private:
     LCodeGen* codegen_;

@@ -12,7 +12,7 @@
 #include "src/crankshaft/compilation-phase.h"
 #include "src/crankshaft/hydrogen.h"
 #include "src/safepoint-table.h"
-#include "src/zone-allocator.h"
+#include "src/zone/zone-allocator.h"
 
 namespace v8 {
 namespace internal {
@@ -660,14 +660,6 @@ class LChunk : public ZoneObject {
   int LookupDestination(int block_id) const;
   Label* GetAssemblyLabel(int block_id) const;
 
-  const ZoneList<Handle<SharedFunctionInfo>>& inlined_functions() const {
-    return inlined_functions_;
-  }
-
-  void AddInlinedFunction(Handle<SharedFunctionInfo> closure) {
-    inlined_functions_.Add(closure, zone());
-  }
-
   void AddDeprecationDependency(Handle<Map> map) {
     DCHECK(!map->is_deprecated());
     if (!map->CanBeDeprecated()) return;
@@ -705,7 +697,6 @@ class LChunk : public ZoneObject {
   BitVector* allocated_double_registers_;
   ZoneList<LInstruction*> instructions_;
   ZoneList<LPointerMap*> pointer_maps_;
-  ZoneList<Handle<SharedFunctionInfo>> inlined_functions_;
   ZoneList<Handle<Map>> deprecation_dependencies_;
   ZoneList<Handle<Map>> stability_dependencies_;
 };

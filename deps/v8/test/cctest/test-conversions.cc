@@ -27,9 +27,20 @@
 
 #include <stdlib.h>
 
-#include "src/v8.h"
-
 #include "src/base/platform/platform.h"
+#include "src/conversions.h"
+#include "src/factory.h"
+#include "src/isolate.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/factory.h -> src/objects-inl.h
+#include "src/objects-inl.h"
+#include "src/objects.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/type-feedback-vector.h ->
+// src/type-feedback-vector-inl.h
+#include "src/type-feedback-vector-inl.h"
+#include "src/unicode-cache.h"
+#include "src/v8.h"
 #include "test/cctest/cctest.h"
 
 using namespace v8::internal;
@@ -414,7 +425,7 @@ TEST(NoHandlesForTryNumberToSize) {
     SealHandleScope no_handles(isolate);
     Smi* smi = Smi::FromInt(1);
     CHECK(TryNumberToSize(smi, &result));
-    CHECK_EQ(result, 1);
+    CHECK_EQ(result, 1u);
   }
   result = 0;
   {
@@ -423,7 +434,7 @@ TEST(NoHandlesForTryNumberToSize) {
     {
       SealHandleScope no_handles(isolate);
       CHECK(TryNumberToSize(*heap_number1, &result));
-      CHECK_EQ(result, 2);
+      CHECK_EQ(result, 2u);
     }
     Handle<HeapNumber> heap_number2 = isolate->factory()->NewHeapNumber(
         static_cast<double>(std::numeric_limits<size_t>::max()) + 10000.0);

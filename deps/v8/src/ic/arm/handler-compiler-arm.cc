@@ -111,15 +111,21 @@ void NamedStoreHandlerCompiler::GenerateStoreViaSetter(
 void PropertyHandlerCompiler::PushVectorAndSlot(Register vector,
                                                 Register slot) {
   MacroAssembler* masm = this->masm();
-  __ push(vector);
+  STATIC_ASSERT(LoadWithVectorDescriptor::kSlot <
+                LoadWithVectorDescriptor::kVector);
+  STATIC_ASSERT(StoreWithVectorDescriptor::kSlot <
+                StoreWithVectorDescriptor::kVector);
+  STATIC_ASSERT(StoreTransitionDescriptor::kSlot <
+                StoreTransitionDescriptor::kVector);
   __ push(slot);
+  __ push(vector);
 }
 
 
 void PropertyHandlerCompiler::PopVectorAndSlot(Register vector, Register slot) {
   MacroAssembler* masm = this->masm();
-  __ pop(slot);
   __ pop(vector);
+  __ pop(slot);
 }
 
 
@@ -129,6 +135,13 @@ void PropertyHandlerCompiler::DiscardVectorAndSlot() {
   __ add(sp, sp, Operand(2 * kPointerSize));
 }
 
+void PropertyHandlerCompiler::PushReturnAddress(Register tmp) {
+  // No-op. Return address is in lr register.
+}
+
+void PropertyHandlerCompiler::PopReturnAddress(Register tmp) {
+  // No-op. Return address is in lr register.
+}
 
 void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
     MacroAssembler* masm, Label* miss_label, Register receiver,
@@ -330,24 +343,6 @@ void PropertyHandlerCompiler::GenerateApiAccessorCall(
   __ TailCallStub(&stub);
 }
 
-
-static void StoreIC_PushArgs(MacroAssembler* masm) {
-  __ Push(StoreDescriptor::ReceiverRegister(), StoreDescriptor::NameRegister(),
-          StoreDescriptor::ValueRegister(),
-          StoreWithVectorDescriptor::SlotRegister(),
-          StoreWithVectorDescriptor::VectorRegister());
-}
-
-
-void ElementHandlerCompiler::GenerateStoreSlow(MacroAssembler* masm) {
-  StoreIC_PushArgs(masm);
-
-  // The slow case calls into the runtime to complete the store without causing
-  // an IC miss that would otherwise cause a transition to the generic stub.
-  __ TailCallRuntime(Runtime::kKeyedStoreIC_Slow);
-}
-
-
 #undef __
 #define __ ACCESS_MASM(masm())
 
@@ -363,12 +358,6 @@ void NamedStoreHandlerCompiler::GenerateRestoreName(Label* label,
 
 void NamedStoreHandlerCompiler::GenerateRestoreName(Handle<Name> name) {
   __ mov(this->name(), Operand(name));
-}
-
-
-void NamedStoreHandlerCompiler::RearrangeVectorAndSlot(
-    Register current_map, Register destination_map) {
-  DCHECK(false);  // Not implemented.
 }
 
 
@@ -418,10 +407,34 @@ void NamedStoreHandlerCompiler::GenerateFieldTypeChecks(FieldType* field_type,
   }
 }
 
+void PropertyHandlerCompiler::GenerateAccessCheck(
+    Handle<WeakCell> native_context_cell, Register scratch1, Register scratch2,
+    Label* miss, bool compare_native_contexts_only) {
+  Label done;
+  // Load current native context.
+  __ ldr(scratch1, NativeContextMemOperand());
+  // Load expected native context.
+  __ LoadWeakValue(scratch2, native_context_cell, miss);
+  __ cmp(scratch1, scratch2);
+
+  if (!compare_native_contexts_only) {
+    __ b(eq, &done);
+
+    // Compare security tokens of current and expected native contexts.
+    __ ldr(scratch1,
+           ContextMemOperand(scratch1, Context::SECURITY_TOKEN_INDEX));
+    __ ldr(scratch2,
+           ContextMemOperand(scratch2, Context::SECURITY_TOKEN_INDEX));
+    __ cmp(scratch1, scratch2);
+  }
+  __ b(ne, miss);
+
+  __ bind(&done);
+}
 
 Register PropertyHandlerCompiler::CheckPrototypes(
     Register object_reg, Register holder_reg, Register scratch1,
-    Register scratch2, Handle<Name> name, Label* miss, PrototypeCheckType check,
+    Register scratch2, Handle<Name> name, Label* miss,
     ReturnHolder return_what) {
   Handle<Map> receiver_map = map();
 
@@ -440,17 +453,6 @@ Register PropertyHandlerCompiler::CheckPrototypes(
     __ b(ne, miss);
   }
 
-  // The prototype chain of primitives (and their JSValue wrappers) depends
-  // on the native context, which can't be guarded by validity cells.
-  // |object_reg| holds the native context specific prototype in this case;
-  // we need to check its map.
-  if (check == CHECK_ALL_MAPS) {
-    __ ldr(scratch1, FieldMemOperand(object_reg, HeapObject::kMapOffset));
-    Handle<WeakCell> cell = Map::WeakCellForMap(receiver_map);
-    __ CmpWeakValue(scratch1, cell, scratch2);
-    __ b(ne, miss);
-  }
-
   // Keep track of the current object in register reg.
   Register reg = object_reg;
   int depth = 0;
@@ -460,46 +462,28 @@ Register PropertyHandlerCompiler::CheckPrototypes(
     current = isolate()->global_object();
   }
 
-  // Check access rights to the global object.  This has to happen after
-  // the map check so that we know that the object is actually a global
-  // object.
-  // This allows us to install generated handlers for accesses to the
-  // global proxy (as opposed to using slow ICs). See corresponding code
-  // in LookupForRead().
-  if (receiver_map->IsJSGlobalProxyMap()) {
-    __ CheckAccessGlobalProxy(reg, scratch2, miss);
-  }
-
-  Handle<JSObject> prototype = Handle<JSObject>::null();
-  Handle<Map> current_map = receiver_map;
+  Handle<Map> current_map(receiver_map->GetPrototypeChainRootMap(isolate()),
+                          isolate());
   Handle<Map> holder_map(holder()->map());
   // Traverse the prototype chain and check the maps in the prototype chain for
   // fast and global objects or do negative lookup for normal objects.
   while (!current_map.is_identical_to(holder_map)) {
     ++depth;
 
-    // Only global objects and objects that do not require access
-    // checks are allowed in stubs.
-    DCHECK(current_map->IsJSGlobalProxyMap() ||
-           !current_map->is_access_check_needed());
-
-    prototype = handle(JSObject::cast(current_map->prototype()));
     if (current_map->IsJSGlobalObjectMap()) {
       GenerateCheckPropertyCell(masm(), Handle<JSGlobalObject>::cast(current),
                                 name, scratch2, miss);
     } else if (current_map->is_dictionary_map()) {
       DCHECK(!current_map->IsJSGlobalProxyMap());  // Proxy maps are fast.
-      if (!name->IsUniqueName()) {
-        DCHECK(name->IsString());
-        name = factory()->InternalizeString(Handle<String>::cast(name));
-      }
+      DCHECK(name->IsUniqueName());
       DCHECK(current.is_null() ||
              current->property_dictionary()->FindEntry(name) ==
                  NameDictionary::kNotFound);
 
       if (depth > 1) {
-        // TODO(jkummerow): Cache and re-use weak cell.
-        __ LoadWeakValue(reg, isolate()->factory()->NewWeakCell(current), miss);
+        Handle<WeakCell> weak_cell =
+            Map::GetOrCreatePrototypeWeakCell(current, isolate());
+        __ LoadWeakValue(reg, weak_cell, miss);
       }
       GenerateDictionaryNegativeLookup(masm(), miss, reg, name, scratch1,
                                        scratch2);
@@ -507,7 +491,7 @@ Register PropertyHandlerCompiler::CheckPrototypes(
 
     reg = holder_reg;  // From now on the object will be in holder_reg.
     // Go to the next object in the prototype chain.
-    current = prototype;
+    current = handle(JSObject::cast(current_map->prototype()));
     current_map = handle(current->map());
   }
 
@@ -518,7 +502,9 @@ Register PropertyHandlerCompiler::CheckPrototypes(
 
   bool return_holder = return_what == RETURN_HOLDER;
   if (return_holder && depth != 0) {
-    __ LoadWeakValue(reg, isolate()->factory()->NewWeakCell(current), miss);
+    Handle<WeakCell> weak_cell =
+        Map::GetOrCreatePrototypeWeakCell(current, isolate());
+    __ LoadWeakValue(reg, weak_cell, miss);
   }
 
   // Return the register containing the holder.
@@ -629,6 +615,9 @@ void NamedLoadHandlerCompiler::GenerateLoadInterceptor(Register holder_reg) {
   __ TailCallRuntime(Runtime::kLoadPropertyWithInterceptor);
 }
 
+void NamedStoreHandlerCompiler::ZapStackArgumentsRegisterAliases() {
+  STATIC_ASSERT(!StoreWithVectorDescriptor::kPassLastArgsOnStack);
+}
 
 Handle<Code> NamedStoreHandlerCompiler::CompileStoreCallback(
     Handle<JSObject> object, Handle<Name> name, Handle<AccessorInfo> callback,

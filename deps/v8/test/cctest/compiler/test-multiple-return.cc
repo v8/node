@@ -64,8 +64,8 @@ CallDescriptor* GetCallDescriptor(Zone* zone, int return_count,
 
 
 TEST(ReturnThreeValues) {
-  base::AccountingAllocator allocator;
-  Zone zone(&allocator);
+  v8::internal::AccountingAllocator allocator;
+  Zone zone(&allocator, ZONE_NAME);
   CallDescriptor* desc = GetCallDescriptor(&zone, 3, 2);
   HandleAndZoneScope handles;
   RawMachineAssembler m(handles.main_isolate(),
@@ -81,7 +81,7 @@ TEST(ReturnThreeValues) {
   m.Return(add, sub, mul);
 
   CompilationInfo info(ArrayVector("testing"), handles.main_isolate(),
-                       handles.main_zone());
+                       handles.main_zone(), Code::ComputeFlags(Code::STUB));
   Handle<Code> code =
       Pipeline::GenerateCodeForTesting(&info, desc, m.graph(), m.Export());
 #ifdef ENABLE_DISASSEMBLER

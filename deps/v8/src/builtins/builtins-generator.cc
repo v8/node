@@ -26,7 +26,8 @@ void Generate_GeneratorPrototypeResume(
 
   // Check if the {receiver} is actually a JSGeneratorObject.
   Label if_receiverisincompatible(assembler, Label::kDeferred);
-  assembler->GotoIf(assembler->WordIsSmi(receiver), &if_receiverisincompatible);
+  assembler->GotoIf(assembler->TaggedIsSmi(receiver),
+                    &if_receiverisincompatible);
   Node* receiver_instance_type = assembler->LoadInstanceType(receiver);
   assembler->GotoUnless(assembler->Word32Equal(
                             receiver_instance_type,
@@ -95,20 +96,26 @@ void Generate_GeneratorPrototypeResume(
 }  // anonymous namespace
 
 // ES6 section 25.3.1.2 Generator.prototype.next ( value )
-void Builtins::Generate_GeneratorPrototypeNext(CodeStubAssembler* assembler) {
-  Generate_GeneratorPrototypeResume(assembler, JSGeneratorObject::kNext,
+void Builtins::Generate_GeneratorPrototypeNext(
+    compiler::CodeAssemblerState* state) {
+  CodeStubAssembler assembler(state);
+  Generate_GeneratorPrototypeResume(&assembler, JSGeneratorObject::kNext,
                                     "[Generator].prototype.next");
 }
 
 // ES6 section 25.3.1.3 Generator.prototype.return ( value )
-void Builtins::Generate_GeneratorPrototypeReturn(CodeStubAssembler* assembler) {
-  Generate_GeneratorPrototypeResume(assembler, JSGeneratorObject::kReturn,
+void Builtins::Generate_GeneratorPrototypeReturn(
+    compiler::CodeAssemblerState* state) {
+  CodeStubAssembler assembler(state);
+  Generate_GeneratorPrototypeResume(&assembler, JSGeneratorObject::kReturn,
                                     "[Generator].prototype.return");
 }
 
 // ES6 section 25.3.1.4 Generator.prototype.throw ( exception )
-void Builtins::Generate_GeneratorPrototypeThrow(CodeStubAssembler* assembler) {
-  Generate_GeneratorPrototypeResume(assembler, JSGeneratorObject::kThrow,
+void Builtins::Generate_GeneratorPrototypeThrow(
+    compiler::CodeAssemblerState* state) {
+  CodeStubAssembler assembler(state);
+  Generate_GeneratorPrototypeResume(&assembler, JSGeneratorObject::kThrow,
                                     "[Generator].prototype.throw");
 }
 

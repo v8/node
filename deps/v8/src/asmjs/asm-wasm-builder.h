@@ -8,27 +8,42 @@
 #include "src/allocation.h"
 #include "src/asmjs/asm-typer.h"
 #include "src/objects.h"
-#include "src/wasm/encoder.h"
-#include "src/zone.h"
+#include "src/wasm/wasm-module-builder.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
 
 class FunctionLiteral;
+class Script;
 
 namespace wasm {
 
 class AsmWasmBuilder {
  public:
-  explicit AsmWasmBuilder(Isolate* isolate, Zone* zone, FunctionLiteral* root,
-                          AsmTyper* typer);
-  ZoneBuffer* Run(Handle<FixedArray>* foreign_args);
+  struct Result {
+    ZoneBuffer* module_bytes;
+    ZoneBuffer* asm_offset_table;
+    bool success;
+  };
+
+  explicit AsmWasmBuilder(Isolate* isolate, Zone* zone,
+                          AstValueFactory* ast_value_factory, Script* script,
+                          FunctionLiteral* root);
+  Result Run(Handle<FixedArray>* foreign_args);
+
+  static const char* foreign_init_name;
+  static const char* single_function_name;
+
+  const AsmTyper* typer() { return &typer_; }
 
  private:
   Isolate* isolate_;
   Zone* zone_;
+  AstValueFactory* ast_value_factory_;
+  Script* script_;
   FunctionLiteral* literal_;
-  AsmTyper* typer_;
+  AsmTyper typer_;
 };
 }  // namespace wasm
 }  // namespace internal

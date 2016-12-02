@@ -77,8 +77,12 @@ Reduction CommonOperatorReducer::ReduceBranch(Node* node) {
   // Swap IfTrue/IfFalse on {branch} if {cond} is a BooleanNot and use the input
   // to BooleanNot as new condition for {branch}. Note we assume that {cond} was
   // already properly optimized before we get here (as guaranteed by the graph
-  // reduction logic).
-  if (cond->opcode() == IrOpcode::kBooleanNot) {
+  // reduction logic). The same applies if {cond} is a Select acting as boolean
+  // not (i.e. true being returned in the false case and vice versa).
+  if (cond->opcode() == IrOpcode::kBooleanNot ||
+      (cond->opcode() == IrOpcode::kSelect &&
+       DecideCondition(cond->InputAt(1)) == Decision::kFalse &&
+       DecideCondition(cond->InputAt(2)) == Decision::kTrue)) {
     for (Node* const use : node->uses()) {
       switch (use->opcode()) {
         case IrOpcode::kIfTrue:
@@ -280,7 +284,7 @@ Reduction CommonOperatorReducer::ReducePhi(Node* node) {
 
 Reduction CommonOperatorReducer::ReduceReturn(Node* node) {
   DCHECK_EQ(IrOpcode::kReturn, node->opcode());
-  Node* const value = node->InputAt(0);
+  Node* const value = node->InputAt(1);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* const control = NodeProperties::GetControlInput(node);
   bool changed = false;
@@ -307,8 +311,9 @@ Reduction CommonOperatorReducer::ReduceReturn(Node* node) {
       // {end} as revisit, because we mark {node} as {Dead} below, which was
       // previously connected to {end}, so we know for sure that at some point
       // the reducer logic will visit {end} again.
-      Node* ret = graph()->NewNode(common()->Return(), value->InputAt(i),
-                                   effect->InputAt(i), control->InputAt(i));
+      Node* ret = graph()->NewNode(common()->Return(), node->InputAt(0),
+                                   value->InputAt(i), effect->InputAt(i),
+                                   control->InputAt(i));
       NodeProperties::MergeControlToEnd(graph(), common(), ret);
     }
     // Mark the merge {control} and return {node} as {dead}.

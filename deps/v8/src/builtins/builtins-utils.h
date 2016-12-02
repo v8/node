@@ -48,9 +48,8 @@ class BuiltinArguments : public Arguments {
   static const int kNumExtraArgs = 3;
   static const int kNumExtraArgsWithReceiver = 4;
 
-  template <class S>
-  Handle<S> target() {
-    return Arguments::at<S>(Arguments::length() - 1 - kTargetOffset);
+  Handle<JSFunction> target() {
+    return Arguments::at<JSFunction>(Arguments::length() - 1 - kTargetOffset);
   }
   Handle<HeapObject> new_target() {
     return Arguments::at<HeapObject>(Arguments::length() - 1 -
@@ -76,33 +75,56 @@ class BuiltinArguments : public Arguments {
 // through the BuiltinArguments object args.
 // TODO(cbruni): add global flag to check whether any tracing events have been
 // enabled.
-// TODO(cbruni): Convert the IsContext CHECK back to a DCHECK.
-#define BUILTIN(name)                                                        \
-  MUST_USE_RESULT static Object* Builtin_Impl_##name(BuiltinArguments args,  \
-                                                     Isolate* isolate);      \
-                                                                             \
-  V8_NOINLINE static Object* Builtin_Impl_Stats_##name(                      \
-      int args_length, Object** args_object, Isolate* isolate) {             \
-    BuiltinArguments args(args_length, args_object);                         \
-    RuntimeCallTimerScope timer(isolate, &RuntimeCallStats::Builtin_##name); \
-    TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_SCOPED(                           \
-        isolate, &tracing::TraceEventStatsTable::Builtin_##name);            \
-    return Builtin_Impl_##name(args, isolate);                               \
-  }                                                                          \
-                                                                             \
-  MUST_USE_RESULT Object* Builtin_##name(                                    \
-      int args_length, Object** args_object, Isolate* isolate) {             \
-    CHECK(isolate->context() == nullptr || isolate->context()->IsContext()); \
-    if (V8_UNLIKELY(TRACE_EVENT_RUNTIME_CALL_STATS_TRACING_ENABLED() ||      \
-                    FLAG_runtime_call_stats)) {                              \
-      return Builtin_Impl_Stats_##name(args_length, args_object, isolate);   \
-    }                                                                        \
-    BuiltinArguments args(args_length, args_object);                         \
-    return Builtin_Impl_##name(args, isolate);                               \
-  }                                                                          \
-                                                                             \
-  MUST_USE_RESULT static Object* Builtin_Impl_##name(BuiltinArguments args,  \
+#define BUILTIN(name)                                                         \
+  MUST_USE_RESULT static Object* Builtin_Impl_##name(BuiltinArguments args,   \
+                                                     Isolate* isolate);       \
+                                                                              \
+  V8_NOINLINE static Object* Builtin_Impl_Stats_##name(                       \
+      int args_length, Object** args_object, Isolate* isolate) {              \
+    BuiltinArguments args(args_length, args_object);                          \
+    RuntimeCallTimerScope timer(isolate, &RuntimeCallStats::Builtin_##name);  \
+    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.runtime"),                     \
+                 "V8.Builtin_" #name);                                        \
+    return Builtin_Impl_##name(args, isolate);                                \
+  }                                                                           \
+                                                                              \
+  MUST_USE_RESULT Object* Builtin_##name(                                     \
+      int args_length, Object** args_object, Isolate* isolate) {              \
+    DCHECK(isolate->context() == nullptr || isolate->context()->IsContext()); \
+    if (V8_UNLIKELY(FLAG_runtime_stats)) {                                    \
+      return Builtin_Impl_Stats_##name(args_length, args_object, isolate);    \
+    }                                                                         \
+    BuiltinArguments args(args_length, args_object);                          \
+    return Builtin_Impl_##name(args, isolate);                                \
+  }                                                                           \
+                                                                              \
+  MUST_USE_RESULT static Object* Builtin_Impl_##name(BuiltinArguments args,   \
                                                      Isolate* isolate)
+
+// ----------------------------------------------------------------------------
+// Support macro for defining builtins with Turbofan.
+// ----------------------------------------------------------------------------
+//
+// A builtin function is defined by writing:
+//
+//   TF_BUILTIN(name, code_assember_base_class) {
+//     ...
+//   }
+//
+// In the body of the builtin function the arguments can be accessed
+// as "Parameter(n)".
+#define TF_BUILTIN(Name, AssemblerBase)                                 \
+  class Name##Assembler : public AssemblerBase {                        \
+   public:                                                              \
+    explicit Name##Assembler(compiler::CodeAssemblerState* state)       \
+        : AssemblerBase(state) {}                                       \
+    void Generate##Name();                                              \
+  };                                                                    \
+  void Builtins::Generate_##Name(compiler::CodeAssemblerState* state) { \
+    Name##Assembler assembler(state);                                   \
+    assembler.Generate##Name();                                         \
+  }                                                                     \
+  void Name##Assembler::Generate##Name()
 
 // ----------------------------------------------------------------------------
 

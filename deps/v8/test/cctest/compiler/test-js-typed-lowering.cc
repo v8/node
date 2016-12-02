@@ -11,6 +11,13 @@
 #include "src/compiler/operator-properties.h"
 #include "src/compiler/simplified-operator.h"
 #include "src/compiler/typer.h"
+#include "src/factory.h"
+#include "src/isolate.h"
+#include "src/objects-inl.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/type-feedback-vector.h ->
+// src/type-feedback-vector-inl.h
+#include "src/type-feedback-vector-inl.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
@@ -31,7 +38,7 @@ class JSTypedLoweringTester : public HandleAndZoneScope {
         common(main_zone()),
         deps(main_isolate(), main_zone()),
         graph(main_zone()),
-        typer(main_isolate(), &graph),
+        typer(main_isolate(), Typer::kNoFlags, &graph),
         context_node(NULL),
         flags(flags) {
     graph.SetStart(graph.NewNode(common.Start(num_parameters)));
@@ -160,11 +167,6 @@ class JSTypedLoweringTester : public HandleAndZoneScope {
 
   void CheckEffectInput(Node* effect, Node* use) {
     CHECK_EQ(effect, NodeProperties::GetEffectInput(use));
-  }
-
-  void CheckInt32Constant(int32_t expected, Node* result) {
-    CHECK_EQ(IrOpcode::kInt32Constant, result->opcode());
-    CHECK_EQ(expected, OpParameter<int32_t>(result));
   }
 
   void CheckNumberConstant(double expected, Node* result) {
@@ -463,10 +465,9 @@ TEST(JSToNumber_replacement) {
 TEST(JSToNumberOfConstant) {
   JSTypedLoweringTester R;
 
-  const Operator* ops[] = {
-      R.common.NumberConstant(0), R.common.NumberConstant(-1),
-      R.common.NumberConstant(0.1), R.common.Int32Constant(1177),
-      R.common.Float64Constant(0.99)};
+  const Operator* ops[] = {R.common.NumberConstant(0),
+                           R.common.NumberConstant(-1),
+                           R.common.NumberConstant(0.1)};
 
   for (size_t i = 0; i < arraysize(ops); i++) {
     Node* n = R.graph.NewNode(ops[i]);
@@ -688,6 +689,7 @@ TEST(RemoveToNumberEffects) {
   JSTypedLoweringTester R;
 
   Node* effect_use = NULL;
+  Node* zero = R.graph.NewNode(R.common.NumberConstant(0));
   for (int i = 0; i < 10; i++) {
     Node* p0 = R.Parameter(Type::Number());
     Node* ton = R.Unop(R.javascript.ToNumber(), p0);
@@ -718,10 +720,12 @@ TEST(RemoveToNumberEffects) {
                                      R.context(), frame_state, ton, R.start());
         break;
       case 5:
-        effect_use = R.graph.NewNode(R.common.Return(), p0, ton, R.start());
+        effect_use =
+            R.graph.NewNode(R.common.Return(), zero, p0, ton, R.start());
         break;
       case 6:
-        effect_use = R.graph.NewNode(R.common.Return(), ton, ton, R.start());
+        effect_use =
+            R.graph.NewNode(R.common.Return(), zero, ton, ton, R.start());
     }
 
     R.CheckEffectInput(R.start(), ton);

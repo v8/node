@@ -5,7 +5,7 @@
 #ifndef V8_SIGNATURE_H_
 #define V8_SIGNATURE_H_
 
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
@@ -32,7 +32,16 @@ class Signature : public ZoneObject {
     return reps_[index];
   }
 
-  const T* raw_data() const { return reps_; }
+  bool Equals(Signature* that) {
+    if (this == that) return true;
+    if (this->parameter_count() != that->parameter_count()) return false;
+    if (this->return_count() != that->return_count()) return false;
+    size_t size = this->return_count() + this->parameter_count();
+    for (size_t i = 0; i < size; i++) {
+      if (this->reps_[i] != that->reps_[i]) return false;
+    }
+    return true;
+  }
 
   // For incrementally building signatures.
   class Builder {

@@ -253,9 +253,8 @@ void MacroAssembler::InNewSpace(Register object,
                                 Condition cc,
                                 Label* branch,
                                 Label::Distance distance) {
-  const int mask =
-      (1 << MemoryChunk::IN_FROM_SPACE) | (1 << MemoryChunk::IN_TO_SPACE);
-  CheckPageFlag(object, scratch, mask, cc, branch, distance);
+  CheckPageFlag(object, scratch, MemoryChunk::kIsInNewSpaceMask, cc, branch,
+                distance);
 }
 
 
@@ -676,20 +675,6 @@ void MacroAssembler::StubReturn(int argc) {
 bool MacroAssembler::AllowThisStubCall(CodeStub* stub) {
   return has_frame_ || !stub->SometimesSetsUpAFrame();
 }
-
-
-void MacroAssembler::IndexFromHash(Register hash, Register index) {
-  // The assert checks that the constants for the maximum number of digits
-  // for an array index cached in the hash field and the number of bits
-  // reserved for it does not conflict.
-  DCHECK(TenToThe(String::kMaxCachedArrayIndexLength) <
-         (1 << String::kArrayIndexValueBits));
-  if (!hash.is(index)) {
-    movl(index, hash);
-  }
-  DecodeFieldToSmi<String::ArrayIndexValueBits>(index);
-}
-
 
 void MacroAssembler::CallRuntime(const Runtime::Function* f,
                                  int num_arguments,
@@ -2372,7 +2357,7 @@ void MacroAssembler::SelectNonSmi(Register dst,
   Check(not_both_smis, kBothRegistersWereSmisInSelectNonSmi);
 #endif
   STATIC_ASSERT(kSmiTag == 0);
-  DCHECK_EQ(static_cast<Smi*>(0), Smi::FromInt(0));
+  DCHECK_EQ(static_cast<Smi*>(0), Smi::kZero);
   movl(kScratchRegister, Immediate(kSmiTagMask));
   andp(kScratchRegister, src1);
   testl(kScratchRegister, src2);
@@ -3325,12 +3310,12 @@ void MacroAssembler::Pextrd(Register dst, XMMRegister src, int8_t imm8) {
     Movd(dst, src);
     return;
   }
-  DCHECK_EQ(1, imm8);
   if (CpuFeatures::IsSupported(SSE4_1)) {
     CpuFeatureScope sse_scope(this, SSE4_1);
     pextrd(dst, src, imm8);
     return;
   }
+  DCHECK_EQ(1, imm8);
   movq(dst, src);
   shrq(dst, Immediate(32));
 }
@@ -3677,80 +3662,6 @@ void MacroAssembler::CmpInstanceType(Register map, InstanceType type) {
   cmpb(FieldOperand(map, Map::kInstanceTypeOffset),
        Immediate(static_cast<int8_t>(type)));
 }
-
-
-void MacroAssembler::CheckFastElements(Register map,
-                                       Label* fail,
-                                       Label::Distance distance) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  STATIC_ASSERT(FAST_ELEMENTS == 2);
-  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-  cmpb(FieldOperand(map, Map::kBitField2Offset),
-       Immediate(Map::kMaximumBitField2FastHoleyElementValue));
-  j(above, fail, distance);
-}
-
-
-void MacroAssembler::CheckFastObjectElements(Register map,
-                                             Label* fail,
-                                             Label::Distance distance) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  STATIC_ASSERT(FAST_ELEMENTS == 2);
-  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-  cmpb(FieldOperand(map, Map::kBitField2Offset),
-       Immediate(Map::kMaximumBitField2FastHoleySmiElementValue));
-  j(below_equal, fail, distance);
-  cmpb(FieldOperand(map, Map::kBitField2Offset),
-       Immediate(Map::kMaximumBitField2FastHoleyElementValue));
-  j(above, fail, distance);
-}
-
-
-void MacroAssembler::CheckFastSmiElements(Register map,
-                                          Label* fail,
-                                          Label::Distance distance) {
-  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-  cmpb(FieldOperand(map, Map::kBitField2Offset),
-       Immediate(Map::kMaximumBitField2FastHoleySmiElementValue));
-  j(above, fail, distance);
-}
-
-
-void MacroAssembler::StoreNumberToDoubleElements(
-    Register maybe_number,
-    Register elements,
-    Register index,
-    XMMRegister xmm_scratch,
-    Label* fail,
-    int elements_offset) {
-  Label smi_value, done;
-
-  JumpIfSmi(maybe_number, &smi_value, Label::kNear);
-
-  CheckMap(maybe_number,
-           isolate()->factory()->heap_number_map(),
-           fail,
-           DONT_DO_SMI_CHECK);
-
-  // Double value, turn potential sNaN into qNaN.
-  Move(xmm_scratch, 1.0);
-  mulsd(xmm_scratch, FieldOperand(maybe_number, HeapNumber::kValueOffset));
-  jmp(&done, Label::kNear);
-
-  bind(&smi_value);
-  // Value is a smi. convert to a double and store.
-  // Preserve original value.
-  SmiToInteger32(kScratchRegister, maybe_number);
-  Cvtlsi2sd(xmm_scratch, kScratchRegister);
-  bind(&done);
-  Movsd(FieldOperand(elements, index, times_8,
-                     FixedDoubleArray::kHeaderSize - elements_offset),
-        xmm_scratch);
-}
-
 
 void MacroAssembler::CompareMap(Register obj, Handle<Map> map) {
   Cmp(FieldOperand(obj, HeapObject::kMapOffset), map);
@@ -4687,82 +4598,6 @@ void MacroAssembler::LeaveExitFrameEpilogue(bool restore_context) {
 }
 
 
-void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
-                                            Register scratch,
-                                            Label* miss) {
-  Label same_contexts;
-
-  DCHECK(!holder_reg.is(scratch));
-  DCHECK(!scratch.is(kScratchRegister));
-  // Load current lexical context from the active StandardFrame, which
-  // may require crawling past STUB frames.
-  Label load_context;
-  Label has_context;
-  movp(scratch, rbp);
-  bind(&load_context);
-  DCHECK(SmiValuesAre32Bits());
-  // This is "JumpIfNotSmi" but without loading the value into a register.
-  cmpl(MemOperand(scratch, CommonFrameConstants::kContextOrFrameTypeOffset),
-       Immediate(0));
-  j(not_equal, &has_context);
-  movp(scratch, MemOperand(scratch, CommonFrameConstants::kCallerFPOffset));
-  jmp(&load_context);
-  bind(&has_context);
-  movp(scratch,
-       MemOperand(scratch, CommonFrameConstants::kContextOrFrameTypeOffset));
-
-  // When generating debug code, make sure the lexical context is set.
-  if (emit_debug_code()) {
-    cmpp(scratch, Immediate(0));
-    Check(not_equal, kWeShouldNotHaveAnEmptyLexicalContext);
-  }
-  // Load the native context of the current context.
-  movp(scratch, ContextOperand(scratch, Context::NATIVE_CONTEXT_INDEX));
-
-  // Check the context is a native context.
-  if (emit_debug_code()) {
-    Cmp(FieldOperand(scratch, HeapObject::kMapOffset),
-        isolate()->factory()->native_context_map());
-    Check(equal, kJSGlobalObjectNativeContextShouldBeANativeContext);
-  }
-
-  // Check if both contexts are the same.
-  cmpp(scratch, FieldOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
-  j(equal, &same_contexts);
-
-  // Compare security tokens.
-  // Check that the security token in the calling global object is
-  // compatible with the security token in the receiving global
-  // object.
-
-  // Check the context is a native context.
-  if (emit_debug_code()) {
-    // Preserve original value of holder_reg.
-    Push(holder_reg);
-    movp(holder_reg,
-         FieldOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
-    CompareRoot(holder_reg, Heap::kNullValueRootIndex);
-    Check(not_equal, kJSGlobalProxyContextShouldNotBeNull);
-
-    // Read the first word and compare to native_context_map(),
-    movp(holder_reg, FieldOperand(holder_reg, HeapObject::kMapOffset));
-    CompareRoot(holder_reg, Heap::kNativeContextMapRootIndex);
-    Check(equal, kJSGlobalObjectNativeContextShouldBeANativeContext);
-    Pop(holder_reg);
-  }
-
-  movp(kScratchRegister,
-       FieldOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
-  int token_offset =
-      Context::kHeaderSize + Context::SECURITY_TOKEN_INDEX * kPointerSize;
-  movp(scratch, FieldOperand(scratch, token_offset));
-  cmpp(scratch, FieldOperand(kScratchRegister, token_offset));
-  j(not_equal, miss);
-
-  bind(&same_contexts);
-}
-
-
 // Compute the hash code from the untagged key.  This must be kept in sync with
 // ComputeIntegerHash in utils.h and KeyedLoadGenericStub in
 // code-stub-hydrogen.cc
@@ -4800,87 +4635,6 @@ void MacroAssembler::GetNumberHash(Register r0, Register scratch) {
   xorl(r0, scratch);
   andl(r0, Immediate(0x3fffffff));
 }
-
-
-
-void MacroAssembler::LoadFromNumberDictionary(Label* miss,
-                                              Register elements,
-                                              Register key,
-                                              Register r0,
-                                              Register r1,
-                                              Register r2,
-                                              Register result) {
-  // Register use:
-  //
-  // elements - holds the slow-case elements of the receiver on entry.
-  //            Unchanged unless 'result' is the same register.
-  //
-  // key      - holds the smi key on entry.
-  //            Unchanged unless 'result' is the same register.
-  //
-  // Scratch registers:
-  //
-  // r0 - holds the untagged key on entry and holds the hash once computed.
-  //
-  // r1 - used to hold the capacity mask of the dictionary
-  //
-  // r2 - used for the index into the dictionary.
-  //
-  // result - holds the result on exit if the load succeeded.
-  //          Allowed to be the same as 'key' or 'result'.
-  //          Unchanged on bailout so 'key' or 'result' can be used
-  //          in further computation.
-
-  Label done;
-
-  GetNumberHash(r0, r1);
-
-  // Compute capacity mask.
-  SmiToInteger32(r1, FieldOperand(elements,
-                                  SeededNumberDictionary::kCapacityOffset));
-  decl(r1);
-
-  // Generate an unrolled loop that performs a few probes before giving up.
-  for (int i = 0; i < kNumberDictionaryProbes; i++) {
-    // Use r2 for index calculations and keep the hash intact in r0.
-    movp(r2, r0);
-    // Compute the masked index: (hash + i + i * i) & mask.
-    if (i > 0) {
-      addl(r2, Immediate(SeededNumberDictionary::GetProbeOffset(i)));
-    }
-    andp(r2, r1);
-
-    // Scale the index by multiplying by the entry size.
-    DCHECK(SeededNumberDictionary::kEntrySize == 3);
-    leap(r2, Operand(r2, r2, times_2, 0));  // r2 = r2 * 3
-
-    // Check if the key matches.
-    cmpp(key, FieldOperand(elements,
-                           r2,
-                           times_pointer_size,
-                           SeededNumberDictionary::kElementsStartOffset));
-    if (i != (kNumberDictionaryProbes - 1)) {
-      j(equal, &done);
-    } else {
-      j(not_equal, miss);
-    }
-  }
-
-  bind(&done);
-  // Check that the value is a field property.
-  const int kDetailsOffset =
-      SeededNumberDictionary::kElementsStartOffset + 2 * kPointerSize;
-  DCHECK_EQ(DATA, 0);
-  Test(FieldOperand(elements, r2, times_pointer_size, kDetailsOffset),
-       Smi::FromInt(PropertyDetails::TypeField::kMask));
-  j(not_zero, miss);
-
-  // Get the value at the masked, scaled index.
-  const int kValueOffset =
-      SeededNumberDictionary::kElementsStartOffset + kPointerSize;
-  movp(result, FieldOperand(elements, r2, times_pointer_size, kValueOffset));
-}
-
 
 void MacroAssembler::LoadAllocationTopHelper(Register result,
                                              Register scratch,
@@ -4974,7 +4728,7 @@ void MacroAssembler::Allocate(int object_size,
                               Label* gc_required,
                               AllocationFlags flags) {
   DCHECK((flags & (RESULT_CONTAINS_TOP | SIZE_IN_WORDS)) == 0);
-  DCHECK(object_size <= Page::kMaxRegularHeapObjectSize);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
   DCHECK((flags & ALLOCATION_FOLDED) == 0);
   if (!FLAG_inline_new) {
     if (emit_debug_code()) {
@@ -5284,93 +5038,6 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
 }
 
-
-// Copy memory, byte-by-byte, from source to destination.  Not optimized for
-// long or aligned copies.  The contents of scratch and length are destroyed.
-// Destination is incremented by length, source, length and scratch are
-// clobbered.
-// A simpler loop is faster on small copies, but slower on large ones.
-// The cld() instruction must have been emitted, to set the direction flag(),
-// before calling this function.
-void MacroAssembler::CopyBytes(Register destination,
-                               Register source,
-                               Register length,
-                               int min_length,
-                               Register scratch) {
-  DCHECK(min_length >= 0);
-  if (emit_debug_code()) {
-    cmpl(length, Immediate(min_length));
-    Assert(greater_equal, kInvalidMinLength);
-  }
-  Label short_loop, len8, len16, len24, done, short_string;
-
-  const int kLongStringLimit = 4 * kPointerSize;
-  if (min_length <= kLongStringLimit) {
-    cmpl(length, Immediate(kPointerSize));
-    j(below, &short_string, Label::kNear);
-  }
-
-  DCHECK(source.is(rsi));
-  DCHECK(destination.is(rdi));
-  DCHECK(length.is(rcx));
-
-  if (min_length <= kLongStringLimit) {
-    cmpl(length, Immediate(2 * kPointerSize));
-    j(below_equal, &len8, Label::kNear);
-    cmpl(length, Immediate(3 * kPointerSize));
-    j(below_equal, &len16, Label::kNear);
-    cmpl(length, Immediate(4 * kPointerSize));
-    j(below_equal, &len24, Label::kNear);
-  }
-
-  // Because source is 8-byte aligned in our uses of this function,
-  // we keep source aligned for the rep movs operation by copying the odd bytes
-  // at the end of the ranges.
-  movp(scratch, length);
-  shrl(length, Immediate(kPointerSizeLog2));
-  repmovsp();
-  // Move remaining bytes of length.
-  andl(scratch, Immediate(kPointerSize - 1));
-  movp(length, Operand(source, scratch, times_1, -kPointerSize));
-  movp(Operand(destination, scratch, times_1, -kPointerSize), length);
-  addp(destination, scratch);
-
-  if (min_length <= kLongStringLimit) {
-    jmp(&done, Label::kNear);
-    bind(&len24);
-    movp(scratch, Operand(source, 2 * kPointerSize));
-    movp(Operand(destination, 2 * kPointerSize), scratch);
-    bind(&len16);
-    movp(scratch, Operand(source, kPointerSize));
-    movp(Operand(destination, kPointerSize), scratch);
-    bind(&len8);
-    movp(scratch, Operand(source, 0));
-    movp(Operand(destination, 0), scratch);
-    // Move remaining bytes of length.
-    movp(scratch, Operand(source, length, times_1, -kPointerSize));
-    movp(Operand(destination, length, times_1, -kPointerSize), scratch);
-    addp(destination, length);
-    jmp(&done, Label::kNear);
-
-    bind(&short_string);
-    if (min_length == 0) {
-      testl(length, length);
-      j(zero, &done, Label::kNear);
-    }
-
-    bind(&short_loop);
-    movb(scratch, Operand(source, 0));
-    movb(Operand(destination, 0), scratch);
-    incp(source);
-    incp(destination);
-    decl(length);
-    j(not_zero, &short_loop, Label::kNear);
-  }
-
-  bind(&done);
-}
-
-
 void MacroAssembler::InitializeFieldsWithFiller(Register current_address,
                                                 Register end_address,
                                                 Register filler) {
@@ -5409,28 +5076,6 @@ void MacroAssembler::LoadContext(Register dst, int context_chain_length) {
     Check(not_equal, kVariableResolvedToWithContext);
   }
 }
-
-
-void MacroAssembler::LoadTransitionedArrayMapConditional(
-    ElementsKind expected_kind,
-    ElementsKind transitioned_kind,
-    Register map_in_out,
-    Register scratch,
-    Label* no_map_match) {
-  DCHECK(IsFastElementsKind(expected_kind));
-  DCHECK(IsFastElementsKind(transitioned_kind));
-
-  // Check that the function's map is the same as the expected cached map.
-  movp(scratch, NativeContextOperand());
-  cmpp(map_in_out,
-       ContextOperand(scratch, Context::ArrayMapIndex(expected_kind)));
-  j(not_equal, no_map_match);
-
-  // Use the transitioned cached map.
-  movp(map_in_out,
-       ContextOperand(scratch, Context::ArrayMapIndex(transitioned_kind)));
-}
-
 
 #ifdef _WIN64
 static const int kRegisterPassedArguments = 4;
@@ -5504,7 +5149,7 @@ void MacroAssembler::EmitSeqStringSetCharCheck(Register string,
   SmiCompare(index, FieldOperand(string, String::kLengthOffset));
   Check(less, kIndexIsTooLarge);
 
-  SmiCompare(index, Smi::FromInt(0));
+  SmiCompare(index, Smi::kZero);
   Check(greater_equal, kIndexIsNegative);
 
   // Restore the index
@@ -5709,7 +5354,7 @@ void MacroAssembler::CheckEnumCache(Label* call_runtime) {
 
   // For all objects but the receiver, check that the cache is empty.
   EnumLength(rdx, rbx);
-  Cmp(rdx, Smi::FromInt(0));
+  Cmp(rdx, Smi::kZero);
   j(not_equal, call_runtime);
 
   bind(&start);
@@ -5742,20 +5387,21 @@ void MacroAssembler::TestJSArrayForAllocationMemento(
   ExternalReference new_space_allocation_top =
       ExternalReference::new_space_allocation_top_address(isolate());
   const int kMementoMapOffset = JSArray::kSize - kHeapObjectTag;
-  const int kMementoEndOffset = kMementoMapOffset + AllocationMemento::kSize;
+  const int kMementoLastWordOffset =
+      kMementoMapOffset + AllocationMemento::kSize - kPointerSize;
 
   // Bail out if the object is not in new space.
   JumpIfNotInNewSpace(receiver_reg, scratch_reg, no_memento_found);
   // If the object is in new space, we need to check whether it is on the same
   // page as the current top.
-  leap(scratch_reg, Operand(receiver_reg, kMementoEndOffset));
+  leap(scratch_reg, Operand(receiver_reg, kMementoLastWordOffset));
   xorp(scratch_reg, ExternalOperand(new_space_allocation_top));
   testp(scratch_reg, Immediate(~Page::kPageAlignmentMask));
   j(zero, &top_check);
   // The object is on a different page than allocation top. Bail out if the
   // object sits on the page boundary as no memento can follow and we cannot
   // touch the memory following it.
-  leap(scratch_reg, Operand(receiver_reg, kMementoEndOffset));
+  leap(scratch_reg, Operand(receiver_reg, kMementoLastWordOffset));
   xorp(scratch_reg, receiver_reg);
   testp(scratch_reg, Immediate(~Page::kPageAlignmentMask));
   j(not_zero, no_memento_found);
@@ -5764,50 +5410,14 @@ void MacroAssembler::TestJSArrayForAllocationMemento(
   // If top is on the same page as the current object, we need to check whether
   // we are below top.
   bind(&top_check);
-  leap(scratch_reg, Operand(receiver_reg, kMementoEndOffset));
+  leap(scratch_reg, Operand(receiver_reg, kMementoLastWordOffset));
   cmpp(scratch_reg, ExternalOperand(new_space_allocation_top));
-  j(greater, no_memento_found);
+  j(greater_equal, no_memento_found);
   // Memento map check.
   bind(&map_check);
   CompareRoot(MemOperand(receiver_reg, kMementoMapOffset),
               Heap::kAllocationMementoMapRootIndex);
 }
-
-
-void MacroAssembler::JumpIfDictionaryInPrototypeChain(
-    Register object,
-    Register scratch0,
-    Register scratch1,
-    Label* found) {
-  DCHECK(!(scratch0.is(kScratchRegister) && scratch1.is(kScratchRegister)));
-  DCHECK(!scratch1.is(scratch0));
-  Register current = scratch0;
-  Label loop_again, end;
-
-  movp(current, object);
-  movp(current, FieldOperand(current, HeapObject::kMapOffset));
-  movp(current, FieldOperand(current, Map::kPrototypeOffset));
-  CompareRoot(current, Heap::kNullValueRootIndex);
-  j(equal, &end);
-
-  // Loop based on the map going up the prototype chain.
-  bind(&loop_again);
-  movp(current, FieldOperand(current, HeapObject::kMapOffset));
-  STATIC_ASSERT(JS_PROXY_TYPE < JS_OBJECT_TYPE);
-  STATIC_ASSERT(JS_VALUE_TYPE < JS_OBJECT_TYPE);
-  CmpInstanceType(current, JS_OBJECT_TYPE);
-  j(below, found);
-  movp(scratch1, FieldOperand(current, Map::kBitField2Offset));
-  DecodeField<Map::ElementsKindBits>(scratch1);
-  cmpp(scratch1, Immediate(DICTIONARY_ELEMENTS));
-  j(equal, found);
-  movp(current, FieldOperand(current, Map::kPrototypeOffset));
-  CompareRoot(current, Heap::kNullValueRootIndex);
-  j(not_equal, &loop_again);
-
-  bind(&end);
-}
-
 
 void MacroAssembler::TruncatingDiv(Register dividend, int32_t divisor) {
   DCHECK(!dividend.is(rax));

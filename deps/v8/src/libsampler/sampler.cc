@@ -217,7 +217,7 @@ class Sampler::PlatformData {
 
 class SamplerManager {
  public:
-  SamplerManager() : sampler_map_(base::HashMap::PointersMatch) {}
+  SamplerManager() : sampler_map_() {}
 
   void AddSampler(Sampler* sampler) {
     AtomicGuard atomic_guard(&samplers_access_counter_);
@@ -281,7 +281,7 @@ class SamplerManager {
     if (!entry) return;
     SamplerList& samplers = *static_cast<SamplerList*>(entry->value);
 
-    for (int i = 0; i < samplers.size(); ++i) {
+    for (size_t i = 0; i < samplers.size(); ++i) {
       Sampler* sampler = samplers[i];
       Isolate* isolate = sampler->isolate();
       // We require a fully initialized and entered isolate.

@@ -8,6 +8,7 @@
 #include "src/base/flags.h"
 #include "src/compiler/graph-reducer.h"
 #include "src/deoptimize-reason.h"
+#include "src/type-feedback-vector.h"
 
 namespace v8 {
 namespace internal {
@@ -15,9 +16,6 @@ namespace internal {
 // Forward declarations.
 class CompilationDependencies;
 class Factory;
-class FeedbackNexus;
-class TypeCache;
-
 
 namespace compiler {
 
@@ -30,7 +28,7 @@ class JSOperatorBuilder;
 class MachineOperatorBuilder;
 class PropertyAccessInfo;
 class SimplifiedOperatorBuilder;
-
+class TypeCache;
 
 // Specializes a given JSGraph to a given native context, potentially constant
 // folding some {LoadGlobal} nodes or strength reducing some {StoreGlobal}
@@ -48,13 +46,15 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   typedef base::Flags<Flag> Flags;
 
   JSNativeContextSpecialization(Editor* editor, JSGraph* jsgraph, Flags flags,
-                                MaybeHandle<Context> native_context,
+                                Handle<Context> native_context,
                                 CompilationDependencies* dependencies,
                                 Zone* zone);
 
   Reduction Reduce(Node* node) final;
 
  private:
+  Reduction ReduceJSInstanceOf(Node* node);
+  Reduction ReduceJSOrdinaryHasInstance(Node* node);
   Reduction ReduceJSLoadContext(Node* node);
   Reduction ReduceJSLoadNamed(Node* node);
   Reduction ReduceJSStoreNamed(Node* node);
@@ -80,7 +80,8 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                               MapHandleList const& receiver_maps,
                               Handle<Name> name, AccessMode access_mode,
                               LanguageMode language_mode,
-                              Node* index = nullptr);
+                              Handle<TypeFeedbackVector> vector,
+                              FeedbackVectorSlot slot, Node* index = nullptr);
 
   Reduction ReduceSoftDeoptimize(Node* node, DeoptimizeReason reason);
 
@@ -101,38 +102,37 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   };
 
   // Construct the appropriate subgraph for property access.
-  ValueEffectControl BuildPropertyAccess(Node* receiver, Node* value,
-                                         Node* context, Node* frame_state,
-                                         Node* effect, Node* control,
-                                         Handle<Name> name,
-                                         Handle<Context> native_context,
-                                         PropertyAccessInfo const& access_info,
-                                         AccessMode access_mode);
+  ValueEffectControl BuildPropertyAccess(
+      Node* receiver, Node* value, Node* context, Node* frame_state,
+      Node* effect, Node* control, Handle<Name> name,
+      PropertyAccessInfo const& access_info, AccessMode access_mode,
+      LanguageMode language_mode, Handle<TypeFeedbackVector> vector,
+      FeedbackVectorSlot slot);
 
   // Construct the appropriate subgraph for element access.
-  ValueEffectControl BuildElementAccess(
-      Node* receiver, Node* index, Node* value, Node* effect, Node* control,
-      Handle<Context> native_context, ElementAccessInfo const& access_info,
-      AccessMode access_mode, KeyedAccessStoreMode store_mode);
+  ValueEffectControl BuildElementAccess(Node* receiver, Node* index,
+                                        Node* value, Node* effect,
+                                        Node* control,
+                                        ElementAccessInfo const& access_info,
+                                        AccessMode access_mode,
+                                        KeyedAccessStoreMode store_mode);
+
+  // Construct an appropriate heap object check.
+  Node* BuildCheckHeapObject(Node* receiver, Node** effect, Node* control);
 
   // Construct an appropriate map check.
   Node* BuildCheckMaps(Node* receiver, Node* effect, Node* control,
                        std::vector<Handle<Map>> const& maps);
 
-  // Construct an appropriate heap object check.
-  Node* BuildCheckTaggedPointer(Node* receiver, Node* effect, Node* control);
-
   // Adds stability dependencies on all prototypes of every class in
   // {receiver_type} up to (and including) the {holder}.
   void AssumePrototypesStable(std::vector<Handle<Map>> const& receiver_maps,
-                              Handle<Context> native_context,
                               Handle<JSObject> holder);
 
   // Checks if we can turn the hole into undefined when loading an element
   // from an object with one of the {receiver_maps}; sets up appropriate
   // code dependencies and might use the array protector cell.
-  bool CanTreatHoleAsUndefined(std::vector<Handle<Map>> const& receiver_maps,
-                               Handle<Context> native_context);
+  bool CanTreatHoleAsUndefined(std::vector<Handle<Map>> const& receiver_maps);
 
   // Extract receiver maps from {nexus} and filter based on {receiver} if
   // possible.
@@ -148,8 +148,11 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   // program location.
   MaybeHandle<Map> InferReceiverRootMap(Node* receiver);
 
-  // Retrieve the native context from the given {node} if known.
-  MaybeHandle<Context> GetNativeContext(Node* node);
+  ValueEffectControl InlineApiCall(
+      Node* receiver, Node* context, Node* target, Node* frame_state,
+      ZoneVector<Node*>* stack_parameters, Node* effect, Node* control,
+      Handle<SharedFunctionInfo> shared_info,
+      Handle<FunctionTemplateInfo> function_template_info);
 
   Graph* graph() const;
   JSGraph* jsgraph() const { return jsgraph_; }
@@ -160,13 +163,13 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   SimplifiedOperatorBuilder* simplified() const;
   MachineOperatorBuilder* machine() const;
   Flags flags() const { return flags_; }
-  MaybeHandle<Context> native_context() const { return native_context_; }
+  Handle<Context> native_context() const { return native_context_; }
   CompilationDependencies* dependencies() const { return dependencies_; }
   Zone* zone() const { return zone_; }
 
   JSGraph* const jsgraph_;
   Flags const flags_;
-  MaybeHandle<Context> native_context_;
+  Handle<Context> native_context_;
   CompilationDependencies* const dependencies_;
   Zone* const zone_;
   TypeCache const& type_cache_;

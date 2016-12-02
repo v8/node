@@ -302,6 +302,20 @@ struct QwNeonRegister {
     *m = (encoded_code & 0x10) >> 4;
     *vm = encoded_code & 0x0F;
   }
+  DwVfpRegister low() const {
+    DwVfpRegister reg;
+    reg.reg_code = reg_code * 2;
+
+    DCHECK(reg.is_valid());
+    return reg;
+  }
+  DwVfpRegister high() const {
+    DwVfpRegister reg;
+    reg.reg_code = reg_code * 2 + 1;
+
+    DCHECK(reg.is_valid());
+    return reg;
+  }
 
   int reg_code;
 };
@@ -403,9 +417,11 @@ const QwNeonRegister q15 = { 15 };
 // compilation unit that includes this header doesn't use the variables.
 #define kFirstCalleeSavedDoubleReg d8
 #define kLastCalleeSavedDoubleReg d15
+// kDoubleRegZero and kScratchDoubleReg must pair to form kScratchQuadReg.
 #define kDoubleRegZero d14
 #define kScratchDoubleReg d15
-
+// After using kScratchQuadReg, kDoubleRegZero must be reset to 0.
+#define kScratchQuadReg q7
 
 // Coprocessor register
 struct CRegister {
@@ -1022,7 +1038,8 @@ class Assembler : public AssemblerBase {
   void bkpt(uint32_t imm16);  // v5 and above
   void svc(uint32_t imm24, Condition cond = al);
 
-  // Synchronization instructions
+  // Synchronization instructions.
+  // On ARMv6, an equivalent CP15 operation will be used.
   void dmb(BarrierOption option);
   void dsb(BarrierOption option);
   void isb(BarrierOption option);
@@ -1258,6 +1275,19 @@ class Assembler : public AssemblerBase {
   void vcmp(const SwVfpRegister src1, const float src2,
             const Condition cond = al);
 
+  void vmaxnm(const DwVfpRegister dst,
+              const DwVfpRegister src1,
+              const DwVfpRegister src2);
+  void vmaxnm(const SwVfpRegister dst,
+              const SwVfpRegister src1,
+              const SwVfpRegister src2);
+  void vminnm(const DwVfpRegister dst,
+              const DwVfpRegister src1,
+              const DwVfpRegister src2);
+  void vminnm(const SwVfpRegister dst,
+              const SwVfpRegister src1,
+              const SwVfpRegister src2);
+
   // VSEL supports cond in {eq, ne, ge, lt, gt, le, vs, vc}.
   void vsel(const Condition cond,
             const DwVfpRegister dst,
@@ -1289,8 +1319,8 @@ class Assembler : public AssemblerBase {
               const Condition cond = al);
 
   // Support for NEON.
-  // All these APIs support D0 to D31 and Q0 to Q15.
 
+  // All these APIs support D0 to D31 and Q0 to Q15.
   void vld1(NeonSize size,
             const NeonListOperand& dst,
             const NeonMemOperand& src);
@@ -1298,6 +1328,12 @@ class Assembler : public AssemblerBase {
             const NeonListOperand& src,
             const NeonMemOperand& dst);
   void vmovl(NeonDataType dt, QwNeonRegister dst, DwVfpRegister src);
+
+  void vmov(const QwNeonRegister dst, const QwNeonRegister src);
+  void vswp(DwVfpRegister dst, DwVfpRegister src);
+  void vswp(QwNeonRegister dst, QwNeonRegister src);
+  void veor(DwVfpRegister dst, DwVfpRegister src1, DwVfpRegister src2);
+  void veor(QwNeonRegister dst, QwNeonRegister src1, QwNeonRegister src2);
 
   // Pseudo instructions
 
@@ -1378,9 +1414,6 @@ class Assembler : public AssemblerBase {
 
   // Debugging
 
-  // Mark generator continuation.
-  void RecordGeneratorContinuation();
-
   // Mark address of a debug break slot.
   void RecordDebugBreakSlot(RelocInfo::Mode mode);
 
@@ -1404,7 +1437,8 @@ class Assembler : public AssemblerBase {
 
   // Record a deoptimization reason that can be used by a log or cpu profiler.
   // Use --trace-deopt to enable.
-  void RecordDeoptReason(DeoptimizeReason reason, int raw_position, int id);
+  void RecordDeoptReason(DeoptimizeReason reason, SourcePosition position,
+                         int id);
 
   // Record the emission of a constant pool.
   //
@@ -1568,7 +1602,8 @@ class Assembler : public AssemblerBase {
       // Check the constant pool hasn't been blocked for too long.
       DCHECK(pending_32_bit_constants_.empty() ||
              (start + pending_64_bit_constants_.size() * kDoubleSize <
-              (first_const_pool_32_use_ + kMaxDistToIntPool)));
+              static_cast<size_t>(first_const_pool_32_use_ +
+                                  kMaxDistToIntPool)));
       DCHECK(pending_64_bit_constants_.empty() ||
              (start < (first_const_pool_64_use_ + kMaxDistToFPPool)));
 #endif
@@ -1584,6 +1619,18 @@ class Assembler : public AssemblerBase {
   bool is_const_pool_blocked() const {
     return (const_pool_blocked_nesting_ > 0) ||
            (pc_offset() < no_const_pool_before_);
+  }
+
+  bool VfpRegisterIsAvailable(DwVfpRegister reg) {
+    DCHECK(reg.is_valid());
+    return IsEnabled(VFP32DREGS) ||
+           (reg.reg_code < LowDwVfpRegister::kMaxNumLowRegisters);
+  }
+
+  bool VfpRegisterIsAvailable(QwNeonRegister reg) {
+    DCHECK(reg.is_valid());
+    return IsEnabled(VFP32DREGS) ||
+           (reg.reg_code < LowDwVfpRegister::kMaxNumLowRegisters / 2);
   }
 
  private:

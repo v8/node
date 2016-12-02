@@ -2,19 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/features.gni")
-import("//build/config/ui.gni")
 import("//build/config/v8_target_cpu.gni")
-import("//gni/v8.gni")
 
-if (is_android) {
-  import("//build/config/android/config.gni")
-}
-
-if (((v8_current_cpu == "x86" ||
-      v8_current_cpu == "x64" ||
-      v8_current_cpu=="x87") &&
-     (is_linux || is_mac)) ||
+if (((v8_current_cpu == "x86" || v8_current_cpu == "x64" ||
+      v8_current_cpu == "x87") && (is_linux || is_mac)) ||
     (v8_current_cpu == "ppc64" && is_linux)) {
   v8_enable_gdbjit_default = true
 }
@@ -23,4 +14,12 @@ v8_imminent_deprecation_warnings_default = true
 
 # Add simple extras solely for the purpose of the cctests.
 v8_extra_library_files = [ "//test/cctest/test-extra.js" ]
-v8_experimental_extra_library_files = [ "//test/cctest/test-experimental-extra.js" ]
+v8_experimental_extra_library_files =
+    [ "//test/cctest/test-experimental-extra.js" ]
+
+v8_enable_inspector_override = true
+
+declare_args() {
+  # Use static libraries instead of source_sets.
+  v8_static_library = false
+}

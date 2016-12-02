@@ -28,11 +28,13 @@ RUNTIME_FUNCTION(Runtime_FinishArrayPrototypeSetup) {
   // This is necessary to enable fast checks for absence of elements
   // on Array.prototype and below.
   prototype->set_elements(isolate->heap()->empty_fixed_array());
-  return Smi::FromInt(0);
+  return Smi::kZero;
 }
 
-static void InstallCode(Isolate* isolate, Handle<JSObject> holder,
-                        const char* name, Handle<Code> code, int argc = -1) {
+static void InstallCode(
+    Isolate* isolate, Handle<JSObject> holder, const char* name,
+    Handle<Code> code, int argc = -1,
+    BuiltinFunctionId id = static_cast<BuiltinFunctionId>(-1)) {
   Handle<String> key = isolate->factory()->InternalizeUtf8String(name);
   Handle<JSFunction> optimized =
       isolate->factory()->NewFunctionWithoutPrototype(key, code);
@@ -41,15 +43,19 @@ static void InstallCode(Isolate* isolate, Handle<JSObject> holder,
   } else {
     optimized->shared()->set_internal_formal_parameter_count(argc);
   }
+  if (id >= 0) {
+    optimized->shared()->set_builtin_function_id(id);
+  }
   JSObject::AddProperty(holder, key, optimized, NONE);
 }
 
-static void InstallBuiltin(Isolate* isolate, Handle<JSObject> holder,
-                           const char* name, Builtins::Name builtin_name,
-                           int argc = -1) {
+static void InstallBuiltin(
+    Isolate* isolate, Handle<JSObject> holder, const char* name,
+    Builtins::Name builtin_name, int argc = -1,
+    BuiltinFunctionId id = static_cast<BuiltinFunctionId>(-1)) {
   InstallCode(isolate, holder, name,
-              handle(isolate->builtins()->builtin(builtin_name), isolate),
-              argc);
+              handle(isolate->builtins()->builtin(builtin_name), isolate), argc,
+              id);
 }
 
 RUNTIME_FUNCTION(Runtime_SpecialArrayFunctions) {
@@ -59,18 +65,19 @@ RUNTIME_FUNCTION(Runtime_SpecialArrayFunctions) {
       isolate->factory()->NewJSObject(isolate->object_function());
 
   InstallBuiltin(isolate, holder, "pop", Builtins::kArrayPop);
-  if (FLAG_minimal) {
-    InstallBuiltin(isolate, holder, "push", Builtins::kArrayPush);
-  } else {
-    FastArrayPushStub stub(isolate);
-    InstallCode(isolate, holder, "push", stub.GetCode());
-  }
+  InstallBuiltin(isolate, holder, "push", Builtins::kFastArrayPush);
   InstallBuiltin(isolate, holder, "shift", Builtins::kArrayShift);
   InstallBuiltin(isolate, holder, "unshift", Builtins::kArrayUnshift);
   InstallBuiltin(isolate, holder, "slice", Builtins::kArraySlice);
   InstallBuiltin(isolate, holder, "splice", Builtins::kArraySplice);
   InstallBuiltin(isolate, holder, "includes", Builtins::kArrayIncludes, 2);
   InstallBuiltin(isolate, holder, "indexOf", Builtins::kArrayIndexOf, 2);
+  InstallBuiltin(isolate, holder, "keys", Builtins::kArrayPrototypeKeys, 0,
+                 kArrayKeys);
+  InstallBuiltin(isolate, holder, "values", Builtins::kArrayPrototypeValues, 0,
+                 kArrayValues);
+  InstallBuiltin(isolate, holder, "entries", Builtins::kArrayPrototypeEntries,
+                 0, kArrayEntries);
 
   return *holder;
 }
@@ -140,7 +147,7 @@ RUNTIME_FUNCTION(Runtime_MoveArrayContents) {
   to->set_length(from->length());
 
   JSObject::ResetElements(from);
-  from->set_length(Smi::FromInt(0));
+  from->set_length(Smi::kZero);
 
   JSObject::ValidateElements(to);
   return *to;
@@ -237,8 +244,7 @@ RUNTIME_FUNCTION(Runtime_GetArrayKeys) {
   }
 
   if (j != keys->length()) {
-    isolate->heap()->RightTrimFixedArray<Heap::CONCURRENT_TO_SWEEPER>(
-        *keys, keys->length() - j);
+    isolate->heap()->RightTrimFixedArray(*keys, keys->length() - j);
   }
 
   return *isolate->factory()->NewJSArrayWithElements(keys);
@@ -375,15 +381,9 @@ RUNTIME_FUNCTION(Runtime_GrowArrayElements) {
   uint32_t index = static_cast<uint32_t>(key);
 
   if (index >= capacity) {
-    if (object->map()->is_prototype_map() ||
-        object->WouldConvertToSlowElements(index)) {
-      // We don't want to allow operations that cause lazy deopt. Return a Smi
-      // as a signal that optimized code should eagerly deoptimize.
-      return Smi::FromInt(0);
+    if (!object->GetElementsAccessor()->GrowCapacity(object, index)) {
+      return Smi::kZero;
     }
-
-    uint32_t new_capacity = JSObject::NewElementsCapacity(index + 1);
-    object->GetElementsAccessor()->GrowCapacityAndConvert(object, new_capacity);
   }
 
   // On success, return the fixed array elements.
@@ -428,21 +428,6 @@ RUNTIME_FUNCTION(Runtime_IsArray) {
   CONVERT_ARG_CHECKED(Object, obj, 0);
   return isolate->heap()->ToBoolean(obj->IsJSArray());
 }
-
-RUNTIME_FUNCTION(Runtime_HasCachedArrayIndex) {
-  SealHandleScope shs(isolate);
-  DCHECK(args.length() == 1);
-  return isolate->heap()->false_value();
-}
-
-
-RUNTIME_FUNCTION(Runtime_GetCachedArrayIndex) {
-  // This can never be reached, because Runtime_HasCachedArrayIndex always
-  // returns false.
-  UNIMPLEMENTED();
-  return nullptr;
-}
-
 
 RUNTIME_FUNCTION(Runtime_ArraySpeciesConstructor) {
   HandleScope scope(isolate);
@@ -643,6 +628,95 @@ RUNTIME_FUNCTION(Runtime_ArrayIndexOf) {
     }
   }
   return Smi::FromInt(-1);
+}
+
+namespace {
+
+bool MustIterate(Isolate* isolate, Handle<Object> spread) {
+  if (spread->IsJSArray()) {
+    // Check that the spread arg has fast elements
+    Handle<JSArray> spread_array = Handle<JSArray>::cast(spread);
+    ElementsKind array_kind = spread_array->GetElementsKind();
+
+    // And that it has the orignal ArrayPrototype
+    JSObject* array_proto = JSObject::cast(spread_array->map()->prototype());
+    Map* iterator_map = isolate->initial_array_iterator_prototype()->map();
+
+    // Check that the iterator acts as expected.
+    // If IsArrayIteratorLookupChainIntact(), then we know that the initial
+    // ArrayIterator is being used. If the map of the prototype has changed,
+    // then take the slow path.
+    if (isolate->is_initial_array_prototype(array_proto) &&
+        isolate->IsArrayIteratorLookupChainIntact() &&
+        isolate->is_initial_array_iterator_prototype_map(iterator_map)) {
+      if (IsFastPackedElementsKind(array_kind)) {
+        return false;
+      }
+      if (IsFastHoleyElementsKind(array_kind) &&
+          isolate->IsFastArrayConstructorPrototypeChainIntact()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+}  //  namespace
+
+RUNTIME_FUNCTION(Runtime_SpreadIterablePrepare) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(Object, spread, 0);
+
+  // Iterate over the spread if we need to.
+  if (MustIterate(isolate, spread)) {
+    Handle<JSFunction> spread_iterable_function = isolate->spread_iterable();
+    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+        isolate, spread,
+        Execution::Call(isolate, spread_iterable_function,
+                        isolate->factory()->undefined_value(), 1, &spread));
+  }
+
+  return *spread;
+}
+
+RUNTIME_FUNCTION(Runtime_SpreadIterablePrepareVarargs) {
+  HandleScope scope(isolate);
+  DCHECK_LE(1, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(Object, spread, args.length() - 1);
+
+  // Iterate over the spread if we need to.
+  if (MustIterate(isolate, spread)) {
+    Handle<JSFunction> spread_iterable_function = isolate->spread_iterable();
+    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+        isolate, spread,
+        Execution::Call(isolate, spread_iterable_function,
+                        isolate->factory()->undefined_value(), 1, &spread));
+  }
+
+  if (args.length() == 1) return *spread;
+
+  JSArray* spread_array = JSArray::cast(*spread);
+  uint32_t spread_length;
+  CHECK(spread_array->length()->ToArrayIndex(&spread_length));
+
+  // Append each of the individual args to the result.
+  int result_length = args.length() - 1 + spread_length;
+  Handle<FixedArray> result = isolate->factory()->NewFixedArray(result_length);
+  for (int i = 0; i < args.length() - 1; i++) {
+    result->set(i, *args.at<Object>(i));
+  }
+
+  // Append element of the spread to the result.
+  for (uint32_t i = 0; i < spread_length; i++) {
+    LookupIterator it(isolate, spread, i);
+    Handle<Object> element = spread_array->GetDataProperty(&it);
+    result->set(args.length() - 1 + i, *element);
+  }
+
+  Handle<JSArray> r = isolate->factory()->NewJSArrayWithElements(
+      result, FAST_ELEMENTS, result_length);
+  return *r;
 }
 
 }  // namespace internal
