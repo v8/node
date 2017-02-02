@@ -253,6 +253,9 @@ class ContextifyContext {
   }
 
 
+  static void DummyDebugEventListener(const Debug::EventDetails&) {}
+
+
   static void RunInDebugContext(const FunctionCallbackInfo<Value>& args) {
     Local<String> script_source(args[0]->ToString(args.GetIsolate()));
     if (script_source.IsEmpty())
@@ -261,7 +264,7 @@ class ContextifyContext {
     Environment* env = Environment::GetCurrent(args);
     if (debug_context.IsEmpty()) {
       // Force-load the debug context.
-      Debug::GetMirror(args.GetIsolate()->GetCurrentContext(), args[0]);
+      Debug::SetDebugEventListener(args.GetIsolate(), DummyDebugEventListener);
       debug_context = Debug::GetDebugContext(args.GetIsolate());
       CHECK(!debug_context.IsEmpty());
       // Ensure that the debug context has an Environment assigned in case
