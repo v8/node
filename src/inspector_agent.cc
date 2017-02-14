@@ -322,11 +322,14 @@ class ChannelImpl final : public v8_inspector::V8Inspector::Channel {
   explicit ChannelImpl(AgentImpl* agent): agent_(agent) {}
   virtual ~ChannelImpl() {}
  private:
-  void sendResponse(int callId, std::unique_ptr<v8_inspector::StringBuffer> message) override {
+  void sendResponse(int callId,
+                    std::unique_ptr<v8_inspector::StringBuffer> message)
+    override {
     sendMessageToFrontend(message->string());
   }
 
-  void sendNotification(std::unique_ptr<v8_inspector::StringBuffer> message) override {
+  void sendNotification(std::unique_ptr<v8_inspector::StringBuffer> message)
+    override {
     sendMessageToFrontend(message->string());
   }
 
