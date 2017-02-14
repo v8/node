@@ -12,7 +12,9 @@
 #include "src/base/platform/platform.h"
 #include "src/compilation-cache.h"
 #include "src/execution.h"
+#include "src/objects-inl.h"
 #include "src/objects.h"
+#include "src/runtime/runtime.h"
 #include "src/unicode-inl.h"
 #include "src/utils.h"
 
@@ -380,11 +382,8 @@ void InterceptorHasOwnPropertyGetterGC(
   CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
 }
 
-}  // namespace
-
 int query_counter_int = 0;
 
-namespace {
 void QueryCallback(Local<Name> property,
                    const v8::PropertyCallbackInfo<v8::Integer>& info) {
   query_counter_int++;
@@ -406,12 +405,12 @@ THREADED_TEST(QueryInterceptor) {
                                             ->NewInstance(env.local())
                                             .ToLocalChecked())
       .FromJust();
-  CHECK_EQ(query_counter_int, 0);
+  CHECK_EQ(0, query_counter_int);
   v8::Local<Value> result =
       v8_compile("Object.getOwnPropertyDescriptor(obj, 'x');")
           ->Run(env.local())
           .ToLocalChecked();
-  CHECK_EQ(query_counter_int, 1);
+  CHECK_EQ(1, query_counter_int);
   CHECK_EQ(v8::PropertyAttribute::None,
            static_cast<v8::PropertyAttribute>(
                result->Int32Value(env.local()).FromJust()));
@@ -419,72 +418,73 @@ THREADED_TEST(QueryInterceptor) {
   v8_compile("Object.defineProperty(obj, 'not_enum', {value: 17});")
       ->Run(env.local())
       .ToLocalChecked();
-  CHECK_EQ(query_counter_int, 2);
+  CHECK_EQ(2, query_counter_int);
 
   v8_compile(
       "Object.defineProperty(obj, 'enum', {value: 17, enumerable: true, "
       "writable: true});")
       ->Run(env.local())
       .ToLocalChecked();
-  CHECK_EQ(query_counter_int, 3);
+  CHECK_EQ(3, query_counter_int);
 
   CHECK(v8_compile("obj.propertyIsEnumerable('enum');")
             ->Run(env.local())
             .ToLocalChecked()
             ->BooleanValue(env.local())
             .FromJust());
-  CHECK_EQ(query_counter_int, 4);
+  CHECK_EQ(4, query_counter_int);
 
   CHECK(!v8_compile("obj.propertyIsEnumerable('not_enum');")
              ->Run(env.local())
              .ToLocalChecked()
              ->BooleanValue(env.local())
              .FromJust());
-  CHECK_EQ(query_counter_int, 5);
+  CHECK_EQ(5, query_counter_int);
 
   CHECK(v8_compile("obj.hasOwnProperty('enum');")
             ->Run(env.local())
             .ToLocalChecked()
             ->BooleanValue(env.local())
             .FromJust());
-  CHECK_EQ(query_counter_int, 5);
+  CHECK_EQ(5, query_counter_int);
 
   CHECK(v8_compile("obj.hasOwnProperty('not_enum');")
             ->Run(env.local())
             .ToLocalChecked()
             ->BooleanValue(env.local())
             .FromJust());
-  CHECK_EQ(query_counter_int, 5);
+  CHECK_EQ(5, query_counter_int);
 
   CHECK(!v8_compile("obj.hasOwnProperty('x');")
              ->Run(env.local())
              .ToLocalChecked()
              ->BooleanValue(env.local())
              .FromJust());
-  CHECK_EQ(query_counter_int, 6);
+  CHECK_EQ(6, query_counter_int);
 
   CHECK(!v8_compile("obj.propertyIsEnumerable('undef');")
              ->Run(env.local())
              .ToLocalChecked()
              ->BooleanValue(env.local())
              .FromJust());
-  CHECK_EQ(query_counter_int, 7);
+  CHECK_EQ(7, query_counter_int);
 
   v8_compile("Object.defineProperty(obj, 'enum', {value: 42});")
       ->Run(env.local())
       .ToLocalChecked();
-  CHECK_EQ(query_counter_int, 8);
+  CHECK_EQ(8, query_counter_int);
 
   v8_compile("Object.isFrozen('obj.x');")->Run(env.local()).ToLocalChecked();
-  CHECK_EQ(query_counter_int, 8);
+  CHECK_EQ(8, query_counter_int);
 }
+
+namespace {
 
 bool get_was_called = false;
 bool set_was_called = false;
 
 int set_was_called_counter = 0;
 
-namespace {
 void GetterCallback(Local<Name> property,
                     const v8::PropertyCallbackInfo<v8::Value>& info) {
   get_was_called = true;
@@ -494,6 +494,12 @@ void SetterCallback(Local<Name> property, Local<Value> value,
                     const v8::PropertyCallbackInfo<v8::Value>& info) {
   set_was_called = true;
   set_was_called_counter++;
+}
+
+void InterceptingSetterCallback(
+    Local<Name> property, Local<Value> value,
+    const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetReturnValue().Set(value);
 }
 
 }  // namespace
@@ -519,8 +525,8 @@ THREADED_TEST(DefinerCallbackAccessorInterceptor) {
   v8_compile("Object.defineProperty(obj, 'x', {set: function() {return 17;}});")
       ->Run(env.local())
       .ToLocalChecked();
-  CHECK_EQ(get_was_called, true);
-  CHECK_EQ(set_was_called, false);
+  CHECK(get_was_called);
+  CHECK(!set_was_called);
 }
 
 // Check that set callback is called for function declarations.
@@ -546,7 +552,7 @@ THREADED_TEST(SetterCallbackFunctionDeclarationInterceptor) {
                    .ToLocalChecked()
                    ->Int32Value(ctx)
                    .FromJust());
-  CHECK_EQ(set_was_called_counter, 1);
+  CHECK_EQ(1, set_was_called_counter);
 
   // Redeclare function.
   code = v8_str("function x() {return 43;}; x();");
@@ -556,7 +562,7 @@ THREADED_TEST(SetterCallbackFunctionDeclarationInterceptor) {
                    .ToLocalChecked()
                    ->Int32Value(ctx)
                    .FromJust());
-  CHECK_EQ(set_was_called_counter, 2);
+  CHECK_EQ(2, set_was_called_counter);
 
   // Redefine function.
   code = v8_str("x = function() {return 44;}; x();");
@@ -566,7 +572,54 @@ THREADED_TEST(SetterCallbackFunctionDeclarationInterceptor) {
                    .ToLocalChecked()
                    ->Int32Value(ctx)
                    .FromJust());
-  CHECK_EQ(set_was_called_counter, 3);
+  CHECK_EQ(3, set_was_called_counter);
+}
+
+namespace {
+void QueryCallbackSetDontDelete(
+    Local<Name> property, const v8::PropertyCallbackInfo<v8::Integer>& info) {
+  info.GetReturnValue().Set(v8::PropertyAttribute::DontDelete);
+}
+
+}  // namespace
+
+// Regression for a Node.js test that fails in debug mode.
+THREADED_TEST(InterceptorFunctionRedeclareWithQueryCallback) {
+  v8::HandleScope scope(CcTest::isolate());
+  LocalContext env;
+  v8::Local<v8::FunctionTemplate> templ =
+      v8::FunctionTemplate::New(CcTest::isolate());
+
+  v8::Local<ObjectTemplate> object_template = templ->InstanceTemplate();
+  object_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
+      nullptr, nullptr, QueryCallbackSetDontDelete));
+  v8::Local<v8::Context> ctx =
+      v8::Context::New(CcTest::isolate(), nullptr, object_template);
+
+  // Declare and redeclare function.
+  v8::Local<v8::String> code = v8_str(
+      "function x() {return 42;};"
+      "function x() {return 43;};");
+  v8::Script::Compile(ctx, code).ToLocalChecked()->Run(ctx).ToLocalChecked();
+}
+
+// Regression test for chromium bug 656648.
+// Do not crash on non-masking, intercepting setter callbacks.
+THREADED_TEST(NonMaskingInterceptor) {
+  v8::HandleScope scope(CcTest::isolate());
+  LocalContext env;
+  v8::Local<v8::FunctionTemplate> templ =
+      v8::FunctionTemplate::New(CcTest::isolate());
+
+  v8::Local<ObjectTemplate> object_template = templ->InstanceTemplate();
+  object_template->SetHandler(v8::NamedPropertyHandlerConfiguration(
+      nullptr, InterceptingSetterCallback, nullptr, nullptr, nullptr,
+      Local<Value>(), v8::PropertyHandlerFlags::kNonMasking));
+  v8::Local<v8::Context> ctx =
+      v8::Context::New(CcTest::isolate(), nullptr, object_template);
+
+  v8::Local<v8::String> code = v8_str("function x() {return 43;};");
+  v8::Script::Compile(ctx, code).ToLocalChecked()->Run(ctx).ToLocalChecked();
 }
 
 // Check that function re-declarations throw if they are read-only.
@@ -597,7 +650,7 @@ THREADED_TEST(SetterCallbackFunctionDeclarationInterceptorThrow) {
                    ->Int32Value(ctx)
                    .FromJust());
 
-  CHECK_EQ(set_was_called, true);
+  CHECK(set_was_called);
 
   v8::TryCatch try_catch(CcTest::isolate());
   set_was_called = false;
@@ -607,25 +660,26 @@ THREADED_TEST(SetterCallbackFunctionDeclarationInterceptorThrow) {
   CHECK(v8::Script::Compile(ctx, code).ToLocalChecked()->Run(ctx).IsEmpty());
   CHECK(try_catch.HasCaught());
 
-  CHECK_EQ(set_was_called, false);
+  CHECK(!set_was_called);
 }
+
+
+namespace {
 
 bool get_was_called_in_order = false;
 bool define_was_called_in_order = false;
 
-namespace {
-
 void GetterCallbackOrder(Local<Name> property,
                          const v8::PropertyCallbackInfo<v8::Value>& info) {
   get_was_called_in_order = true;
-  CHECK_EQ(define_was_called_in_order, true);
+  CHECK(define_was_called_in_order);
   info.GetReturnValue().Set(property);
 }
 
 void DefinerCallbackOrder(Local<Name> property,
                           const v8::PropertyDescriptor& desc,
                           const v8::PropertyCallbackInfo<v8::Value>& info) {
-  CHECK_EQ(get_was_called_in_order, false);  // Define called before get.
+  CHECK(!get_was_called_in_order);  // Define called before get.
   define_was_called_in_order = true;
 }
 
@@ -646,14 +700,76 @@ THREADED_TEST(DefinerCallbackGetAndDefine) {
                                             .ToLocalChecked())
       .FromJust();
 
-  CHECK_EQ(get_was_called_in_order, false);
-  CHECK_EQ(define_was_called_in_order, false);
+  CHECK(!get_was_called_in_order);
+  CHECK(!define_was_called_in_order);
 
   v8_compile("Object.defineProperty(obj, 'x', {set: function() {return 17;}});")
       ->Run(env.local())
       .ToLocalChecked();
-  CHECK_EQ(get_was_called_in_order, true);
-  CHECK_EQ(define_was_called_in_order, true);
+  CHECK(get_was_called_in_order);
+  CHECK(define_was_called_in_order);
+}
+
+namespace {  //  namespace for InObjectLiteralDefinitionWithInterceptor
+
+// Workaround for no-snapshot builds: only intercept once Context::New() is
+// done, otherwise we'll intercept
+// bootstrapping like defining array on the global object.
+bool context_is_done = false;
+bool getter_callback_was_called = false;
+
+void ReturnUndefinedGetterCallback(
+    Local<Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+  if (context_is_done) {
+    getter_callback_was_called = true;
+    info.GetReturnValue().SetUndefined();
+  }
+}
+
+}  // namespace
+
+// Check that an interceptor is not invoked during ES6 style definitions inside
+// an object literal.
+THREADED_TEST(InObjectLiteralDefinitionWithInterceptor) {
+  v8::HandleScope scope(CcTest::isolate());
+  LocalContext env;
+
+  // Set up a context in which all global object definitions are intercepted.
+  v8::Local<v8::FunctionTemplate> templ =
+      v8::FunctionTemplate::New(CcTest::isolate());
+  v8::Local<ObjectTemplate> object_template = templ->InstanceTemplate();
+  object_template->SetHandler(
+      v8::NamedPropertyHandlerConfiguration(ReturnUndefinedGetterCallback));
+  v8::Local<v8::Context> ctx =
+      v8::Context::New(CcTest::isolate(), nullptr, object_template);
+
+  context_is_done = true;
+
+  // The interceptor returns undefined for any global object,
+  // so setting a property on an object should throw.
+  v8::Local<v8::String> code = v8_str("var o = {}; o.x = 5");
+  {
+    getter_callback_was_called = false;
+    v8::TryCatch try_catch(CcTest::isolate());
+    CHECK(v8::Script::Compile(ctx, code).ToLocalChecked()->Run(ctx).IsEmpty());
+    CHECK(try_catch.HasCaught());
+    CHECK(getter_callback_was_called);
+  }
+
+  // Defining a property in the object literal should not throw
+  // because the interceptor is not invoked.
+  {
+    getter_callback_was_called = false;
+    v8::TryCatch try_catch(CcTest::isolate());
+    code = v8_str("var l = {x: 5};");
+    CHECK(v8::Script::Compile(ctx, code)
+              .ToLocalChecked()
+              ->Run(ctx)
+              .ToLocalChecked()
+              ->IsUndefined());
+    CHECK(!try_catch.HasCaught());
+    CHECK(!getter_callback_was_called);
+  }
 }
 
 THREADED_TEST(InterceptorHasOwnProperty) {
@@ -672,15 +788,15 @@ THREADED_TEST(InterceptorHasOwnProperty) {
   v8::Local<Value> value = CompileRun(
       "var o = new constructor();"
       "o.hasOwnProperty('ostehaps');");
-  CHECK_EQ(false, value->BooleanValue(context.local()).FromJust());
+  CHECK(!value->BooleanValue(context.local()).FromJust());
   value = CompileRun(
       "o.ostehaps = 42;"
       "o.hasOwnProperty('ostehaps');");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
   value = CompileRun(
       "var p = new constructor();"
       "p.hasOwnProperty('ostehaps');");
-  CHECK_EQ(false, value->BooleanValue(context.local()).FromJust());
+  CHECK(!value->BooleanValue(context.local()).FromJust());
 }
 
 
@@ -714,7 +830,7 @@ THREADED_TEST(InterceptorHasOwnPropertyCausingGC) {
       "var o = new constructor();"
       "o.__proto__ = new String(x);"
       "o.hasOwnProperty('ostehaps');");
-  CHECK_EQ(false, value->BooleanValue(context.local()).FromJust());
+  CHECK(!value->BooleanValue(context.local()).FromJust());
 }
 
 
@@ -1190,7 +1306,7 @@ THREADED_TEST(InterceptorLoadGlobalICGlobalWithInterceptor) {
       "  f();"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 
   value = CompileRun(
       "var f = function() { "
@@ -1205,7 +1321,7 @@ THREADED_TEST(InterceptorLoadGlobalICGlobalWithInterceptor) {
       "  f();"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 
   value = CompileRun(
       "var f = function() { "
@@ -1220,7 +1336,7 @@ THREADED_TEST(InterceptorLoadGlobalICGlobalWithInterceptor) {
       "  f();"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 }
 
 static void InterceptorLoadICGetter0(
@@ -1387,9 +1503,9 @@ THREADED_TEST(NamedPropertyHandlerGetter) {
                                             ->NewInstance(env.local())
                                             .ToLocalChecked())
       .FromJust();
-  CHECK_EQ(echo_named_call_count, 0);
+  CHECK_EQ(0, echo_named_call_count);
   v8_compile("obj.x")->Run(env.local()).ToLocalChecked();
-  CHECK_EQ(echo_named_call_count, 1);
+  CHECK_EQ(1, echo_named_call_count);
   const char* code = "var str = 'oddle'; obj[str] + obj.poddle;";
   v8::Local<Value> str = CompileRun(code);
   String::Utf8Value value(str);
@@ -1910,8 +2026,9 @@ THREADED_TEST(PropertyDescriptorCallback) {
   }
 }
 
+namespace {
 int echo_indexed_call_count = 0;
-
+}  // namespace
 
 static void EchoIndexedProperty(
     uint32_t index, const v8::PropertyCallbackInfo<v8::Value>& info) {
@@ -1938,11 +2055,10 @@ THREADED_TEST(IndexedPropertyHandlerGetter) {
                                             .ToLocalChecked())
       .FromJust();
   Local<Script> script = v8_compile("obj[900]");
-  CHECK_EQ(script->Run(env.local())
-               .ToLocalChecked()
-               ->Int32Value(env.local())
-               .FromJust(),
-           900);
+  CHECK_EQ(900, script->Run(env.local())
+                    .ToLocalChecked()
+                    ->Int32Value(env.local())
+                    .FromJust());
 }
 
 
@@ -2568,7 +2684,7 @@ THREADED_TEST(NamedInterceptorMapTransitionRead) {
   CompileRun("var o = new F(); o.x = 23;");
   // Create an instance of F and invoke the getter. The result should be 23.
   Local<Value> result = CompileRun("o = new F(); o.x");
-  CHECK_EQ(result->Int32Value(context.local()).FromJust(), 23);
+  CHECK_EQ(23, result->Int32Value(context.local()).FromJust());
 }
 
 
@@ -3872,7 +3988,7 @@ THREADED_TEST(InterceptorICReferenceErrors) {
       "  return false;"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
   interceptor_call_count = 0;
   value = CompileRun(
       "function g() {"
@@ -3882,7 +3998,7 @@ THREADED_TEST(InterceptorICReferenceErrors) {
       "  return false;"
       "};"
       "g();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 }
 
 
@@ -3928,7 +4044,7 @@ THREADED_TEST(InterceptorICGetterExceptions) {
       "  return false;"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
   interceptor_ic_exception_get_count = 0;
   value = CompileRun(
       "function f() {"
@@ -3938,7 +4054,7 @@ THREADED_TEST(InterceptorICGetterExceptions) {
       "  return false;"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 }
 
 
@@ -3972,7 +4088,7 @@ THREADED_TEST(InterceptorICSetterExceptions) {
       "  return false;"
       "};"
       "f();");
-  CHECK_EQ(true, value->BooleanValue(context.local()).FromJust());
+  CHECK(value->BooleanValue(context.local()).FromJust());
 }
 
 
@@ -4031,6 +4147,7 @@ THREADED_TEST(NamedPropertyHandlerGetterAttributes) {
 
 
 THREADED_TEST(Regress256330) {
+  if (!i::FLAG_crankshaft) return;
   i::FLAG_allow_natives_syntax = true;
   LocalContext context;
   v8::HandleScope scope(context->GetIsolate());
@@ -4046,7 +4163,10 @@ THREADED_TEST(Regress256330) {
       "f(o); f(o); f(o);"
       "%OptimizeFunctionOnNextCall(f);"
       "f(o);");
-  ExpectBoolean("%GetOptimizationStatus(f) != 2", true);
+  int status = v8_run_int32value(v8_compile("%GetOptimizationStatus(f)"));
+  int mask = static_cast<int>(i::OptimizationStatus::kIsFunction) |
+             static_cast<int>(i::OptimizationStatus::kOptimized);
+  CHECK_EQ(mask, status & mask);
 }
 
 

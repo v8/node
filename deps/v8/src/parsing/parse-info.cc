@@ -4,14 +4,19 @@
 
 #include "src/parsing/parse-info.h"
 
+#include "src/api.h"
 #include "src/ast/ast-value-factory.h"
 #include "src/ast/ast.h"
+#include "src/heap/heap-inl.h"
+#include "src/objects-inl.h"
+#include "src/objects/scope-info.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
 
-ParseInfo::ParseInfo(Zone* zone)
-    : zone_(zone),
+ParseInfo::ParseInfo(AccountingAllocator* zone_allocator)
+    : zone_(std::make_shared<Zone>(zone_allocator, ZONE_NAME)),
       flags_(0),
       source_stream_(nullptr),
       source_stream_encoding_(ScriptCompiler::StreamedSource::ONE_BYTE),
@@ -19,59 +24,72 @@ ParseInfo::ParseInfo(Zone* zone)
       extension_(nullptr),
       compile_options_(ScriptCompiler::kNoCompileOptions),
       script_scope_(nullptr),
+      asm_function_scope_(nullptr),
       unicode_cache_(nullptr),
       stack_limit_(0),
       hash_seed_(0),
       compiler_hints_(0),
       start_position_(0),
       end_position_(0),
+      function_literal_id_(FunctionLiteral::kIdTypeInvalid),
+      max_function_literal_id_(FunctionLiteral::kIdTypeInvalid),
       isolate_(nullptr),
       cached_data_(nullptr),
       ast_value_factory_(nullptr),
       function_name_(nullptr),
-      literal_(nullptr) {}
+      literal_(nullptr),
+      deferred_handles_(nullptr) {}
 
-ParseInfo::ParseInfo(Zone* zone, Handle<JSFunction> function)
-    : ParseInfo(zone, Handle<SharedFunctionInfo>(function->shared())) {
-  if (!function->context()->IsNativeContext()) {
-    set_outer_scope_info(handle(function->context()->scope_info()));
-  }
-}
-
-ParseInfo::ParseInfo(Zone* zone, Handle<SharedFunctionInfo> shared)
-    : ParseInfo(zone) {
+ParseInfo::ParseInfo(Handle<SharedFunctionInfo> shared)
+    : ParseInfo(shared->GetIsolate()->allocator()) {
   isolate_ = shared->GetIsolate();
 
-  set_lazy();
+  set_toplevel(shared->is_toplevel());
+  set_allow_lazy_parsing(FLAG_lazy_inner_functions);
   set_hash_seed(isolate_->heap()->HashSeed());
   set_is_named_expression(shared->is_named_expression());
   set_calls_eval(shared->scope_info()->CallsEval());
   set_compiler_hints(shared->compiler_hints());
   set_start_position(shared->start_position());
   set_end_position(shared->end_position());
+  function_literal_id_ = shared->function_literal_id();
   set_stack_limit(isolate_->stack_guard()->real_climit());
   set_unicode_cache(isolate_->unicode_cache());
   set_language_mode(shared->language_mode());
   set_shared_info(shared);
+  set_module(shared->kind() == FunctionKind::kModule);
 
   Handle<Script> script(Script::cast(shared->script()));
   set_script(script);
-  if (!script.is_null() && script->type() == Script::TYPE_NATIVE) {
-    set_native();
+  set_native(script->type() == Script::TYPE_NATIVE);
+  set_eval(script->compilation_type() == Script::COMPILATION_TYPE_EVAL);
+
+  Handle<HeapObject> scope_info(shared->outer_scope_info());
+  if (!scope_info->IsTheHole(isolate()) &&
+      Handle<ScopeInfo>::cast(scope_info)->length() > 0) {
+    set_outer_scope_info(Handle<ScopeInfo>::cast(scope_info));
   }
 }
 
-ParseInfo::ParseInfo(Zone* zone, Handle<Script> script) : ParseInfo(zone) {
+ParseInfo::ParseInfo(Handle<SharedFunctionInfo> shared,
+                     std::shared_ptr<Zone> zone)
+    : ParseInfo(shared) {
+  zone_.swap(zone);
+}
+
+ParseInfo::ParseInfo(Handle<Script> script)
+    : ParseInfo(script->GetIsolate()->allocator()) {
   isolate_ = script->GetIsolate();
 
+  set_allow_lazy_parsing();
+  set_toplevel();
   set_hash_seed(isolate_->heap()->HashSeed());
   set_stack_limit(isolate_->stack_guard()->real_climit());
   set_unicode_cache(isolate_->unicode_cache());
   set_script(script);
 
-  if (script->type() == Script::TYPE_NATIVE) {
-    set_native();
-  }
+  set_native(script->type() == Script::TYPE_NATIVE);
+  set_eval(script->compilation_type() == Script::COMPILATION_TYPE_EVAL);
 }
 
 ParseInfo::~ParseInfo() {
@@ -88,17 +106,19 @@ bool ParseInfo::is_declaration() const {
   return (compiler_hints_ & (1 << SharedFunctionInfo::kIsDeclaration)) != 0;
 }
 
-bool ParseInfo::requires_class_field_init() const {
-  return (compiler_hints_ &
-          (1 << SharedFunctionInfo::kRequiresClassFieldInit)) != 0;
-}
-bool ParseInfo::is_class_field_initializer() const {
-  return (compiler_hints_ &
-          (1 << SharedFunctionInfo::kIsClassFieldInitializer)) != 0;
-}
-
 FunctionKind ParseInfo::function_kind() const {
   return SharedFunctionInfo::FunctionKindBits::decode(compiler_hints_);
+}
+
+void ParseInfo::set_deferred_handles(
+    std::shared_ptr<DeferredHandles> deferred_handles) {
+  DCHECK(deferred_handles_.get() == nullptr);
+  deferred_handles_.swap(deferred_handles);
+}
+
+void ParseInfo::set_deferred_handles(DeferredHandles* deferred_handles) {
+  DCHECK(deferred_handles_.get() == nullptr);
+  deferred_handles_.reset(deferred_handles);
 }
 
 #ifdef DEBUG

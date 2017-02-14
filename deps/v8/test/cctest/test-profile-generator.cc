@@ -29,6 +29,7 @@
 
 #include "include/v8-profiler.h"
 #include "src/api.h"
+#include "src/objects-inl.h"
 #include "src/profiler/cpu-profiler.h"
 #include "src/profiler/profile-generator-inl.h"
 #include "src/v8.h"
@@ -344,8 +345,9 @@ class TestSetup {
 
 TEST(RecordTickSample) {
   TestSetup test_setup;
-  CpuProfilesCollection profiles(CcTest::i_isolate());
-  CpuProfiler profiler(CcTest::i_isolate());
+  i::Isolate* isolate = CcTest::i_isolate();
+  CpuProfilesCollection profiles(isolate);
+  CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("", false);
   ProfileGenerator generator(&profiles);
@@ -416,8 +418,9 @@ static void CheckNodeIds(ProfileNode* node, unsigned* expectedId) {
 
 TEST(SampleIds) {
   TestSetup test_setup;
-  CpuProfilesCollection profiles(CcTest::i_isolate());
-  CpuProfiler profiler(CcTest::i_isolate());
+  i::Isolate* isolate = CcTest::i_isolate();
+  CpuProfilesCollection profiles(isolate);
+  CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("", true);
   ProfileGenerator generator(&profiles);
@@ -473,8 +476,9 @@ TEST(SampleIds) {
 
 TEST(NoSamples) {
   TestSetup test_setup;
-  CpuProfilesCollection profiles(CcTest::i_isolate());
-  CpuProfiler profiler(CcTest::i_isolate());
+  i::Isolate* isolate = CcTest::i_isolate();
+  CpuProfilesCollection profiles(isolate);
+  CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
   profiles.StartProfiling("", false);
   ProfileGenerator generator(&profiles);
@@ -681,7 +685,7 @@ TEST(LineNumber) {
 
   profiler.processor()->StopSynchronously();
 
-  bool is_lazy = i::FLAG_lazy && !(i::FLAG_ignition && i::FLAG_ignition_eager);
+  bool is_lazy = i::FLAG_lazy;
   CHECK_EQ(1, GetFunctionLineNumber(profiler, env, "foo_at_the_first_line"));
   CHECK_EQ(is_lazy ? 0 : 4,
            GetFunctionLineNumber(profiler, env, "lazy_func_at_forth_line"));

@@ -300,8 +300,27 @@ bool Node::OwnedBy(Node const* owner1, Node const* owner2) const {
 void Node::Print() const {
   OFStream os(stdout);
   os << *this << std::endl;
+  for (Node* input : this->inputs()) {
+    os << "  " << *input << std::endl;
+  }
 }
 
+std::ostream& operator<<(std::ostream& os, const Node& n) {
+  os << n.id() << ": " << *n.op();
+  if (n.InputCount() > 0) {
+    os << "(";
+    for (int i = 0; i < n.InputCount(); ++i) {
+      if (i != 0) os << ", ";
+      if (n.InputAt(i)) {
+        os << n.InputAt(i)->id();
+      } else {
+        os << "null";
+      }
+    }
+    os << ")";
+  }
+  return os;
+}
 
 Node::Node(NodeId id, const Operator* op, int inline_count, int inline_capacity)
     : op_(op),
@@ -378,25 +397,6 @@ void Node::Verify() {
 }
 #endif
 
-
-std::ostream& operator<<(std::ostream& os, const Node& n) {
-  os << n.id() << ": " << *n.op();
-  if (n.InputCount() > 0) {
-    os << "(";
-    for (int i = 0; i < n.InputCount(); ++i) {
-      if (i != 0) os << ", ";
-      if (n.InputAt(i)) {
-        os << n.InputAt(i)->id();
-      } else {
-        os << "null";
-      }
-    }
-    os << ")";
-  }
-  return os;
-}
-
-
 Node::InputEdges::iterator Node::InputEdges::iterator::operator++(int n) {
   iterator result(*this);
   ++(*this);
@@ -404,17 +404,11 @@ Node::InputEdges::iterator Node::InputEdges::iterator::operator++(int n) {
 }
 
 
-bool Node::InputEdges::empty() const { return begin() == end(); }
-
-
 Node::Inputs::const_iterator Node::Inputs::const_iterator::operator++(int n) {
   const_iterator result(*this);
   ++(*this);
   return result;
 }
-
-
-bool Node::Inputs::empty() const { return begin() == end(); }
 
 
 Node::UseEdges::iterator Node::UseEdges::iterator::operator++(int n) {

@@ -172,8 +172,11 @@ static int DecodeIt(Isolate* isolate, std::ostream* os,
       }
 
       RelocInfo::Mode rmode = relocinfo.rmode();
-      if (rmode == RelocInfo::DEOPT_POSITION) {
-        out.AddFormatted("    ;; debug: deopt position '%d'",
+      if (rmode == RelocInfo::DEOPT_SCRIPT_OFFSET) {
+        out.AddFormatted("    ;; debug: deopt position, script offset '%d'",
+                         static_cast<int>(relocinfo.data()));
+      } else if (rmode == RelocInfo::DEOPT_INLINING_ID) {
+        out.AddFormatted("    ;; debug: deopt position, inlining id '%d'",
                          static_cast<int>(relocinfo.data()));
       } else if (rmode == RelocInfo::DEOPT_REASON) {
         DeoptimizeReason reason =
@@ -198,11 +201,6 @@ static int DecodeIt(Isolate* isolate, std::ostream* os,
         Code* code = Code::GetCodeFromTargetAddress(relocinfo.target_address());
         Code::Kind kind = code->kind();
         if (code->is_inline_cache_stub()) {
-          if (kind == Code::LOAD_GLOBAL_IC &&
-              LoadGlobalICState::GetTypeofMode(code->extra_ic_state()) ==
-                  INSIDE_TYPEOF) {
-            out.AddFormatted(" inside typeof,");
-          }
           out.AddFormatted(" %s", Code::Kind2String(kind));
           if (!IC::ICUseVector(kind)) {
             InlineCacheState ic_state = IC::StateFromCode(code);

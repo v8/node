@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("../gni/isolate.gni")
-import("//build_overrides/v8.gni")
+import("../gni/v8.gni")
 
 group("gn_all") {
   testonly = true
@@ -21,7 +21,7 @@ group("gn_all") {
     ]
   }
 
-  if (v8_enable_inspector_override) {
+  if (v8_enable_inspector) {
     deps += [ "inspector:inspector-test" ]
   }
 
@@ -31,7 +31,6 @@ group("gn_all") {
       ":bot_default_run",
       ":default_run",
       ":mozilla_run",
-      ":simdjs_run",
       "test262:test262_run",
     ]
   }
@@ -48,6 +47,7 @@ group("default_tests") {
     deps = [
       ":cctest_run",
       ":fuzzer_run",
+      ":inspector-test_run",
       ":intl_run",
       ":message_run",
       ":mjsunit_run",
@@ -77,6 +77,7 @@ v8_isolate_run("default") {
 v8_isolate_run("optimize_for_size") {
   deps = [
     ":cctest_run",
+    ":inspector-test_run",
     ":intl_run",
     ":mjsunit_run",
     ":webkit_run",
@@ -134,6 +135,15 @@ v8_isolate_run("fuzzer") {
   isolate = "fuzzer/fuzzer.isolate"
 }
 
+v8_isolate_run("inspector-test") {
+  deps = []
+  if (v8_enable_inspector) {
+    deps += [ "inspector:inspector-test" ]
+  }
+
+  isolate = "inspector/inspector.isolate"
+}
+
 v8_isolate_run("intl") {
   deps = [
     "..:d8_run",
@@ -172,14 +182,6 @@ v8_isolate_run("preparser") {
   ]
 
   isolate = "preparser/preparser.isolate"
-}
-
-v8_isolate_run("simdjs") {
-  deps = [
-    "..:d8_run",
-  ]
-
-  isolate = "simdjs/simdjs.isolate"
 }
 
 v8_isolate_run("unittests") {

@@ -19,21 +19,27 @@ using v8::ScriptOrigin;
 using v8::String;
 using v8::Value;
 
+ScriptOrigin ModuleOrigin(Local<v8::Value> resource_name, Isolate* isolate) {
+  ScriptOrigin origin(resource_name, Local<v8::Integer>(), Local<v8::Integer>(),
+                      Local<v8::Boolean>(), Local<v8::Integer>(),
+                      Local<v8::Value>(), Local<v8::Boolean>(),
+                      Local<v8::Boolean>(), True(isolate));
+  return origin;
+}
+
 MaybeLocal<Module> AlwaysEmptyResolveCallback(Local<Context> context,
                                               Local<String> specifier,
-                                              Local<Module> referrer,
-                                              Local<Value> data) {
+                                              Local<Module> referrer) {
   return MaybeLocal<Module>();
 }
 
 static int g_count = 0;
 MaybeLocal<Module> FailOnSecondCallResolveCallback(Local<Context> context,
                                                    Local<String> specifier,
-                                                   Local<Module> referrer,
-                                                   Local<Value> data) {
+                                                   Local<Module> referrer) {
   if (g_count++ > 0) return MaybeLocal<Module>();
   Local<String> source_text = v8_str("");
-  ScriptOrigin origin(v8_str("module.js"));
+  ScriptOrigin origin = ModuleOrigin(v8_str("module.js"), CcTest::isolate());
   ScriptCompiler::Source source(source_text, origin);
   return ScriptCompiler::CompileModule(CcTest::isolate(), &source)
       .ToLocalChecked();
@@ -47,7 +53,7 @@ TEST(ModuleInstantiationFailures) {
   Local<String> source_text = v8_str(
       "import './foo.js';"
       "export {} from './bar.js';");
-  ScriptOrigin origin(v8_str("file.js"));
+  ScriptOrigin origin = ModuleOrigin(v8_str("file.js"), CcTest::isolate());
   ScriptCompiler::Source source(source_text, origin);
   Local<Module> module =
       ScriptCompiler::CompileModule(isolate, &source).ToLocalChecked();
@@ -67,9 +73,8 @@ TEST(ModuleInstantiationFailures) {
 }
 
 static MaybeLocal<Module> CompileSpecifierAsModuleResolveCallback(
-    Local<Context> context, Local<String> specifier, Local<Module> referrer,
-    Local<Value> data) {
-  ScriptOrigin origin(v8_str("module.js"));
+    Local<Context> context, Local<String> specifier, Local<Module> referrer) {
+  ScriptOrigin origin = ModuleOrigin(v8_str("module.js"), CcTest::isolate());
   ScriptCompiler::Source source(specifier, origin);
   return ScriptCompiler::CompileModule(CcTest::isolate(), &source)
       .ToLocalChecked();
@@ -83,7 +88,7 @@ TEST(ModuleEvaluation) {
   Local<String> source_text = v8_str(
       "import 'Object.expando = 5';"
       "import 'Object.expando *= 2';");
-  ScriptOrigin origin(v8_str("file.js"));
+  ScriptOrigin origin = ModuleOrigin(v8_str("file.js"), CcTest::isolate());
   ScriptCompiler::Source source(source_text, origin);
   Local<Module> module =
       ScriptCompiler::CompileModule(isolate, &source).ToLocalChecked();
@@ -91,21 +96,6 @@ TEST(ModuleEvaluation) {
                             CompileSpecifierAsModuleResolveCallback));
   CHECK(!module->Evaluate(env.local()).IsEmpty());
   ExpectInt32("Object.expando", 10);
-}
-
-TEST(EmbedderData) {
-  Isolate* isolate = CcTest::isolate();
-  HandleScope scope(isolate);
-  LocalContext env;
-
-  Local<String> source_text = v8_str("");
-  ScriptOrigin origin(v8_str("file.js"));
-  ScriptCompiler::Source source(source_text, origin);
-  Local<Module> module =
-      ScriptCompiler::CompileModule(isolate, &source).ToLocalChecked();
-  CHECK(module->GetEmbedderData()->IsUndefined());
-  module->SetEmbedderData(v8_num(42));
-  CHECK_EQ(42, Local<v8::Int32>::Cast(module->GetEmbedderData())->Value());
 }
 
 }  // anonymous namespace

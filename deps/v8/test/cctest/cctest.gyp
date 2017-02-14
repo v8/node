@@ -60,12 +60,10 @@
       'compiler/test-multiple-return.cc',
       'compiler/test-node.cc',
       'compiler/test-operator.cc',
-      'compiler/test-osr.cc',
       'compiler/test-representation-change.cc',
       'compiler/test-run-bytecode-graph-builder.cc',
       'compiler/test-run-calls-to-external-references.cc',
       'compiler/test-run-deopt.cc',
-      'compiler/test-run-inlining.cc',
       'compiler/test-run-intrinsics.cc',
       'compiler/test-run-jsbranches.cc',
       'compiler/test-run-jscalls.cc',
@@ -83,6 +81,7 @@
       'cctest.cc',
       'cctest.h',
       'expression-type-collector-macros.h',
+      'ffi/test-ffi.cc',
       'interpreter/interpreter-tester.cc',
       'interpreter/interpreter-tester.h',
       'interpreter/source-position-matcher.cc',
@@ -113,13 +112,17 @@
       'heap/test-spaces.cc',
       'libplatform/test-tracing.cc',
       'libsampler/test-sampler.cc',
+      'parsing/test-parse-decision.cc',
+      'parsing/test-preparser.cc',
       'parsing/test-scanner-streams.cc',
       'parsing/test-scanner.cc',
       'print-extension.cc',
       'print-extension.h',
       'profiler-extension.cc',
       'profiler-extension.h',
+      'scope-test-helper.h',
       'test-access-checks.cc',
+      'test-accessor-assembler.cc',
       'test-accessors.cc',
       'test-api.cc',
       'test-api.h',
@@ -180,13 +183,13 @@
       'test-representation.cc',
       'test-sampler-api.cc',
       'test-serialize.cc',
-      'test-simd.cc',
       'test-strings.cc',
       'test-symbols.cc',
       'test-strtod.cc',
       'test-thread-termination.cc',
       'test-threads.cc',
       'test-trace-event.cc',
+      'test-traced-value.cc',
       'test-transitions.cc',
       'test-typedarrays.cc',
       'test-ast-types.cc',
@@ -203,6 +206,8 @@
       'trace-extension.cc',
       'trace-extension.h',
       'types-fuzz.h',
+      'unicode-helpers.h',
+      'wasm/test-managed.cc',
       'wasm/test-run-wasm.cc',
       'wasm/test-run-wasm-64.cc',
       'wasm/test-run-wasm-asmjs.cc',
@@ -210,7 +215,7 @@
       'wasm/test-run-wasm-js.cc',
       'wasm/test-run-wasm-module.cc',
       'wasm/test-run-wasm-relocation.cc',
-      'wasm/test-wasm-function-name-table.cc',
+      'wasm/test-wasm-breakpoints.cc',
       'wasm/test-wasm-stack.cc',
       'wasm/test-wasm-trap-position.cc',
       'wasm/wasm-run-utils.h',
@@ -223,7 +228,8 @@
       'test-disasm-ia32.cc',
       'test-macro-assembler-ia32.cc',
       'test-log-stack-tracer.cc',
-      'test-run-wasm-relocation-ia32.cc'
+      'test-run-wasm-relocation-ia32.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_x64': [  ### gcmole(arch:x64) ###
       'test-assembler-x64.cc',
@@ -234,7 +240,7 @@
       'test-macro-assembler-x64.cc',
       'test-log-stack-tracer.cc',
       'test-run-wasm-relocation-x64.cc',
-      'wasm/test-run-wasm-simd.cc'
+      'wasm/test-run-wasm-simd.cc',
     ],
     'cctest_sources_arm': [  ### gcmole(arch:arm) ###
       'test-assembler-arm.cc',
@@ -243,7 +249,9 @@
       'test-code-stubs-arm.cc',
       'test-disasm-arm.cc',
       'test-macro-assembler-arm.cc',
-      'test-run-wasm-relocation-arm.cc'
+      'test-run-wasm-relocation-arm.cc',
+      'test-simulator-arm.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_arm64': [  ### gcmole(arch:arm64) ###
       'test-utils-arm64.cc',
@@ -256,19 +264,22 @@
       'test-fuzz-arm64.cc',
       'test-javascript-arm64.cc',
       'test-js-arm64-variables.cc',
-      'test-run-wasm-relocation-arm64.cc'
+      'test-run-wasm-relocation-arm64.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_s390': [  ### gcmole(arch:s390) ###
       'test-assembler-s390.cc',
       'test-code-stubs.cc',
       'test-code-stubs.h',
-      'test-disasm-s390.cc'
+      'test-disasm-s390.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_ppc': [  ### gcmole(arch:ppc) ###
       'test-assembler-ppc.cc',
       'test-code-stubs.cc',
       'test-code-stubs.h',
-      'test-disasm-ppc.cc'
+      'test-disasm-ppc.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_mips': [  ### gcmole(arch:mips) ###
       'test-assembler-mips.cc',
@@ -276,7 +287,8 @@
       'test-code-stubs.h',
       'test-code-stubs-mips.cc',
       'test-disasm-mips.cc',
-      'test-macro-assembler-mips.cc'
+      'test-macro-assembler-mips.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_mipsel': [  ### gcmole(arch:mipsel) ###
       'test-assembler-mips.cc',
@@ -284,7 +296,8 @@
       'test-code-stubs.h',
       'test-code-stubs-mips.cc',
       'test-disasm-mips.cc',
-      'test-macro-assembler-mips.cc'
+      'test-macro-assembler-mips.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_mips64': [  ### gcmole(arch:mips64) ###
       'test-assembler-mips64.cc',
@@ -292,7 +305,8 @@
       'test-code-stubs.h',
       'test-code-stubs-mips64.cc',
       'test-disasm-mips64.cc',
-      'test-macro-assembler-mips64.cc'
+      'test-macro-assembler-mips64.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_mips64el': [  ### gcmole(arch:mips64el) ###
       'test-assembler-mips64.cc',
@@ -300,7 +314,8 @@
       'test-code-stubs.h',
       'test-code-stubs-mips64.cc',
       'test-disasm-mips64.cc',
-      'test-macro-assembler-mips64.cc'
+      'test-macro-assembler-mips64.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
     'cctest_sources_x87': [  ### gcmole(arch:x87) ###
       'test-assembler-x87.cc',
@@ -310,7 +325,8 @@
       'test-disasm-x87.cc',
       'test-macro-assembler-x87.cc',
       'test-log-stack-tracer.cc',
-      'test-run-wasm-relocation-x87.cc'
+      'test-run-wasm-relocation-x87.cc',
+      'wasm/test-run-wasm-simd-lowering.cc'
     ],
   },
   'includes': ['../../gypfiles/toolchain.gypi', '../../gypfiles/features.gypi'],
@@ -320,6 +336,7 @@
       'type': 'executable',
       'dependencies': [
         'resources',
+        '../../src/v8.gyp:v8_libbase',
         '../../src/v8.gyp:v8_libplatform',
       ],
       'include_dirs': [
@@ -416,7 +433,9 @@
         }],
         ['v8_target_arch=="ppc" or v8_target_arch=="ppc64" \
           or v8_target_arch=="arm" or v8_target_arch=="arm64" \
-          or v8_target_arch=="s390" or v8_target_arch=="s390x"', {
+          or v8_target_arch=="s390" or v8_target_arch=="s390x" \
+          or v8_target_arch=="mips" or v8_target_arch=="mips64" \
+          or v8_target_arch=="mipsel" or v8_target_arch=="mips64el"', {
           # disable fmadd/fmsub so that expected results match generated code in
           # RunFloat64MulAndFloat64Add1 and friends.
           'cflags': ['-ffp-contract=off'],
@@ -428,6 +447,7 @@
           # cctest can't be built against a shared library, so we need to
           # depend on the underlying static target in that case.
           'dependencies': ['../../src/v8.gyp:v8_maybe_snapshot'],
+          'defines': [ 'BUILDING_V8_SHARED', ]
         }, {
           'dependencies': ['../../src/v8.gyp:v8'],
         }],
@@ -472,15 +492,9 @@
       'target_name': 'generate-bytecode-expectations',
       'type': 'executable',
       'dependencies': [
+        '../../src/v8.gyp:v8',
+        '../../src/v8.gyp:v8_libbase',
         '../../src/v8.gyp:v8_libplatform',
-      ],
-      'conditions': [
-        ['component=="shared_library"', {
-          # Same as cctest, we need to depend on the underlying static target.
-          'dependencies': ['../../src/v8.gyp:v8_maybe_snapshot'],
-        }, {
-          'dependencies': ['../../src/v8.gyp:v8'],
-        }],
       ],
       'include_dirs+': [
         '../..',

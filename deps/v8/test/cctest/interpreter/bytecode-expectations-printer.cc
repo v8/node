@@ -25,6 +25,21 @@ namespace v8 {
 namespace internal {
 namespace interpreter {
 
+static const char* NameForNativeContextIntrinsicIndex(uint32_t idx) {
+  switch (idx) {
+#define COMPARE_NATIVE_CONTEXT_INTRINSIC_IDX(NAME, Type, name) \
+  case Context::NAME:                                          \
+    return #name;
+
+    NATIVE_CONTEXT_INTRINSIC_FUNCTIONS(COMPARE_NATIVE_CONTEXT_INTRINSIC_IDX)
+
+    default:
+      break;
+  }
+
+  return "UnknownIntrinsicIndex";
+}
+
 // static
 const char* const BytecodeExpectationsPrinter::kDefaultTopFunctionName =
     "__genbckexp_wrapper__";
@@ -55,7 +70,11 @@ v8::Local<v8::Script> BytecodeExpectationsPrinter::CompileScript(
 
 v8::Local<v8::Module> BytecodeExpectationsPrinter::CompileModule(
     const char* program) const {
-  v8::ScriptCompiler::Source source(V8StringFromUTF8(program));
+  ScriptOrigin origin(
+      Local<v8::Value>(), Local<v8::Integer>(), Local<v8::Integer>(),
+      Local<v8::Boolean>(), Local<v8::Integer>(), Local<v8::Value>(),
+      Local<v8::Boolean>(), Local<v8::Boolean>(), True(isolate_));
+  v8::ScriptCompiler::Source source(V8StringFromUTF8(program), origin);
   return v8::ScriptCompiler::CompileModule(isolate_, &source).ToLocalChecked();
 }
 
@@ -83,7 +102,9 @@ i::Handle<i::BytecodeArray>
 BytecodeExpectationsPrinter::GetBytecodeArrayForModule(
     v8::Local<v8::Module> module) const {
   i::Handle<i::Module> i_module = v8::Utils::OpenHandle(*module);
-  return i::handle(i_module->shared()->bytecode_array(), i_isolate());
+  CHECK(!i_module->instantiated());
+  return i::handle(SharedFunctionInfo::cast(i_module->code())->bytecode_array(),
+                   i_isolate());
 }
 
 i::Handle<i::BytecodeArray>
@@ -154,31 +175,42 @@ void BytecodeExpectationsPrinter::PrintBytecodeOperand(
       stream << '(' << register_value.index() << ')';
     }
   } else {
-    stream << 'U' << size_tag << '(';
-
     switch (op_type) {
       case OperandType::kFlag8:
+        stream << 'U' << size_tag << '(';
         stream << bytecode_iterator.GetFlagOperand(op_index);
         break;
-      case OperandType::kIdx:
-        stream << bytecode_iterator.GetIndexOperand(op_index);
+      case OperandType::kIdx: {
+        stream << 'U' << size_tag << '(';
+        uint32_t idx = bytecode_iterator.GetIndexOperand(op_index);
+        if (bytecode == Bytecode::kCallJSRuntime && op_index == 0) {
+          stream << "%" << NameForNativeContextIntrinsicIndex(idx);
+        } else {
+          stream << idx;
+        }
         break;
+      }
       case OperandType::kUImm:
+        stream << 'U' << size_tag << '(';
         stream << bytecode_iterator.GetUnsignedImmediateOperand(op_index);
         break;
       case OperandType::kImm:
+        stream << 'I' << size_tag << '(';
         stream << bytecode_iterator.GetImmediateOperand(op_index);
         break;
       case OperandType::kRegCount:
+        stream << 'U' << size_tag << '(';
         stream << bytecode_iterator.GetRegisterCountOperand(op_index);
         break;
       case OperandType::kRuntimeId: {
+        stream << 'U' << size_tag << '(';
         Runtime::FunctionId id =
             bytecode_iterator.GetRuntimeIdOperand(op_index);
         stream << "Runtime::k" << i::Runtime::FunctionForId(id)->name;
         break;
       }
       case OperandType::kIntrinsicId: {
+        stream << 'U' << size_tag << '(';
         Runtime::FunctionId id =
             bytecode_iterator.GetIntrinsicIdOperand(op_index);
         stream << "Runtime::k" << i::Runtime::FunctionForId(id)->name;
@@ -217,7 +249,7 @@ void BytecodeExpectationsPrinter::PrintSourcePosition(
   if (!source_iterator.done() &&
       source_iterator.code_offset() == bytecode_offset) {
     stream << "/* " << std::setw(kPositionWidth)
-           << source_iterator.source_position();
+           << source_iterator.source_position().ScriptOffset();
     if (source_iterator.is_statement()) {
       stream << " S> */ ";
     } else {

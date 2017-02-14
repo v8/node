@@ -7,6 +7,10 @@
 #include "src/api-arguments.h"
 #include "src/api-natives.h"
 #include "src/builtins/builtins-utils.h"
+#include "src/counters.h"
+#include "src/log.h"
+#include "src/objects-inl.h"
+#include "src/prototype.h"
 
 namespace v8 {
 namespace internal {
@@ -122,7 +126,7 @@ MUST_USE_RESULT MaybeHandle<Object> HandleApiCallHelper(
 
 BUILTIN(HandleApiCall) {
   HandleScope scope(isolate);
-  Handle<JSFunction> function = args.target<JSFunction>();
+  Handle<JSFunction> function = args.target();
   Handle<Object> receiver = args.receiver();
   Handle<HeapObject> new_target = args.new_target();
   Handle<FunctionTemplateInfo> fun_data(function->shared()->get_api_func_data(),

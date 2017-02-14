@@ -136,12 +136,6 @@ class Logger : public CodeEventListener {
   // object.
   void SuspectReadEvent(Name* name, Object* obj);
 
-  // Emits an event when a message is put on or read from a debugging queue.
-  // DebugTag lets us put a call-site specific label on the event.
-  void DebugTag(const char* call_site_tag);
-  void DebugEvent(const char* event_type, Vector<uint16_t> parameter);
-
-
   // ==== Events logged by --log-api. ====
   void ApiSecurityCheck();
   void ApiNamedPropertyAccess(const char* tag, JSObject* holder, Object* name);
@@ -217,11 +211,6 @@ class Logger : public CodeEventListener {
 
   INLINE(static void CallEventLogger(Isolate* isolate, const char* name,
                                      StartEnd se, bool expose_to_api));
-
-  // ==== Events logged by --log-regexp ====
-  // Regexp compilation and execution events.
-
-  void RegExpCompileEvent(Handle<JSRegExp> regexp, bool in_cache);
 
   bool is_logging() {
     return is_logging_;
@@ -346,8 +335,7 @@ class Logger : public CodeEventListener {
   V(CompileCode, true)          \
   V(DeoptimizeCode, true)       \
   V(Execute, true)              \
-  V(External, true)             \
-  V(IcMiss, false)
+  V(External, true)
 
 #define V(TimerName, expose)                                                  \
   class TimerEvent##TimerName : public AllStatic {                            \

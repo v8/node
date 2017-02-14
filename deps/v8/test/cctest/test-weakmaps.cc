@@ -36,9 +36,9 @@
 // (disallowed) include: src/factory.h -> src/objects-inl.h
 #include "src/objects-inl.h"
 // FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/type-feedback-vector.h ->
-// src/type-feedback-vector-inl.h
-#include "src/type-feedback-vector-inl.h"
+// (disallowed) include: src/feedback-vector.h ->
+// src/feedback-vector-inl.h
+#include "src/feedback-vector-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/heap/heap-utils.h"
 
@@ -111,13 +111,10 @@ TEST(Weakness) {
       0, ObjectHashTable::cast(weakmap->table())->NumberOfDeletedElements());
 
   // Make the global reference to the key weak.
-  {
-    HandleScope scope(isolate);
-    std::pair<Handle<Object>*, int> handle_and_id(&key, 1234);
-    GlobalHandles::MakeWeak(
-        key.location(), reinterpret_cast<void*>(&handle_and_id),
-        &WeakPointerCallback, v8::WeakCallbackType::kParameter);
-  }
+  std::pair<Handle<Object>*, int> handle_and_id(&key, 1234);
+  GlobalHandles::MakeWeak(
+      key.location(), reinterpret_cast<void*>(&handle_and_id),
+      &WeakPointerCallback, v8::WeakCallbackType::kParameter);
   CHECK(global_handles->IsWeak(key.location()));
 
   CcTest::CollectAllGarbage(Heap::kAbortIncrementalMarkingMask);
@@ -249,6 +246,7 @@ TEST(Regress2060b) {
 
 
 TEST(Regress399527) {
+  if (!FLAG_incremental_marking) return;
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
   Isolate* isolate = CcTest::i_isolate();

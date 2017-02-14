@@ -20,7 +20,8 @@ Protocol = new Proxy({}, {
           var eventName = match[2];
           eventName = eventName.charAt(0).toLowerCase() + eventName.slice(1);
           if (match[1])
-            return (args) => InspectorTest._waitForEventPromise(`${agentName}.${eventName}`, args || {});
+            return () => InspectorTest._waitForEventPromise(
+                       `${agentName}.${eventName}`);
           else
             return (listener) => { InspectorTest._eventHandler[`${agentName}.${eventName}`] = listener };
         }
@@ -31,12 +32,13 @@ Protocol = new Proxy({}, {
 
 InspectorTest.log = print.bind(null);
 
-InspectorTest.logMessage = function(message)
+InspectorTest.logMessage = function(originalMessage)
 {
+  var message = JSON.parse(JSON.stringify(originalMessage));
   if (message.id)
     message.id = "<messageId>";
 
-  const nonStableFields = new Set(["objectId", "scriptId", "exceptionId", "timestamp", "executionContextId", "callFrameId"]);
+  const nonStableFields = new Set(["objectId", "scriptId", "exceptionId", "timestamp", "executionContextId", "callFrameId", "breakpointId"]);
   var objects = [ message ];
   while (objects.length) {
     var object = objects.shift();
@@ -49,7 +51,7 @@ InspectorTest.logMessage = function(message)
   }
 
   InspectorTest.logObject(message);
-  return message;
+  return originalMessage;
 }
 
 InspectorTest.logObject = function(object, title)
@@ -96,31 +98,54 @@ InspectorTest.logObject = function(object, title)
     lines.push(prefix + "]");
   }
 
-  dumpValue(object, "", title);
+  dumpValue(object, "", title || "");
   InspectorTest.log(lines.join("\n"));
 }
 
-InspectorTest.completeTest = quit.bind(null);
+InspectorTest.logCallFrames = function(callFrames)
+{
+  for (var frame of callFrames) {
+    var functionName = frame.functionName || '(anonymous)';
+    var url = frame.url ? frame.url : InspectorTest._scriptMap.get(frame.location.scriptId).url;
+    var lineNumber = frame.location ? frame.location.lineNumber : frame.lineNumber;
+    var columnNumber = frame.location ? frame.location.columnNumber : frame.columnNumber;
+    InspectorTest.log(`${functionName} (${url}:${lineNumber}:${columnNumber})`);
+  }
+}
+
+InspectorTest.logAsyncStackTrace = function(asyncStackTrace)
+{
+  while (asyncStackTrace) {
+    if (asyncStackTrace.promiseCreationFrame) {
+      var frame = asyncStackTrace.promiseCreationFrame;
+      InspectorTest.log(`-- ${asyncStackTrace.description} (${frame.url
+                        }:${frame.lineNumber}:${frame.columnNumber})--`);
+    } else {
+      InspectorTest.log(`-- ${asyncStackTrace.description} --`);
+    }
+    InspectorTest.logCallFrames(asyncStackTrace.callFrames);
+    asyncStackTrace = asyncStackTrace.parent;
+  }
+}
+
+InspectorTest.completeTest = function()
+{
+  Protocol.Debugger.disable().then(() => quit());
+}
 
 InspectorTest.completeTestAfterPendingTimeouts = function()
 {
-  Protocol.Runtime.evaluate({
-    expression: "new Promise(resolve => setTimeout(resolve, 0))",
-    awaitPromise: true }).then(InspectorTest.completeTest);
+  InspectorTest.waitPendingTasks().then(InspectorTest.completeTest);
 }
 
-InspectorTest.addScript = function(string)
+InspectorTest.waitPendingTasks = function()
 {
-  return InspectorTest._sendCommandPromise("Runtime.evaluate", { "expression": string }).then(dumpErrorIfNeeded);
+  return Protocol.Runtime.evaluate({ expression: "new Promise(r => setTimeout(r, 0))//# sourceURL=wait-pending-tasks.js", awaitPromise: true });
+}
 
-  function dumpErrorIfNeeded(message)
-  {
-    if (message.error) {
-      InspectorTest.log("Error while executing '" + string + "': " + message.error.message);
-      InspectorTest.completeTest();
-    }
-  }
-};
+InspectorTest.addScript = (string, lineOffset, columnOffset) => compileAndRunWithOrigin(string, "", lineOffset || 0, columnOffset || 0, false);
+InspectorTest.addScriptWithUrl = (string, url) => compileAndRunWithOrigin(string, url, 0, 0, false);
+InspectorTest.addModule = (string, url, lineOffset, columnOffset) => compileAndRunWithOrigin(string, url, lineOffset || 0, columnOffset || 0, true);
 
 InspectorTest.startDumpingProtocolMessages = function()
 {
@@ -148,6 +173,12 @@ InspectorTest.checkExpectation = function(fail, name, messageObject)
 }
 InspectorTest.expectedSuccess = InspectorTest.checkExpectation.bind(null, false);
 InspectorTest.expectedError = InspectorTest.checkExpectation.bind(null, true);
+
+InspectorTest.setupScriptMap = function() {
+  if (InspectorTest._scriptMap)
+    return;
+  InspectorTest._scriptMap = new Map();
+}
 
 InspectorTest.runTestSuite = function(testSuite)
 {
@@ -200,6 +231,10 @@ InspectorTest._dispatchMessage = function(messageObject)
     } else {
       var eventName = messageObject["method"];
       var eventHandler = InspectorTest._eventHandler[eventName];
+      if (InspectorTest._scriptMap && eventName === "Debugger.scriptParsed")
+        InspectorTest._scriptMap.set(messageObject.params.scriptId, JSON.parse(JSON.stringify(messageObject.params)));
+      if (eventName === "Debugger.scriptParsed" && messageObject.params.url === "wait-pending-tasks.js")
+        return;
       if (eventHandler)
         eventHandler(messageObject);
     }
