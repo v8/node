@@ -5,6 +5,7 @@
 #include "src/compiler-dispatcher/compiler-dispatcher-tracer.h"
 
 #include "src/isolate.h"
+#include "src/utils.h"
 
 namespace v8 {
 namespace internal {
@@ -16,17 +17,14 @@ double MonotonicallyIncreasingTimeInMs() {
          static_cast<double>(base::Time::kMillisecondsPerSecond);
 }
 
+const double kEstimatedRuntimeWithoutData = 1.0;
+
 }  // namespace
 
 CompilerDispatcherTracer::Scope::Scope(CompilerDispatcherTracer* tracer,
                                        ScopeID scope_id, size_t num)
     : tracer_(tracer), scope_id_(scope_id), num_(num) {
   start_time_ = MonotonicallyIncreasingTimeInMs();
-  // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (V8_UNLIKELY(FLAG_runtime_stats)) {
-    RuntimeCallStats::Enter(tracer_->runtime_call_stats_, &timer_,
-                            &RuntimeCallStats::CompilerDispatcher);
-  }
 }
 
 CompilerDispatcherTracer::Scope::~Scope() {
@@ -41,6 +39,9 @@ CompilerDispatcherTracer::Scope::~Scope() {
     case ScopeID::kFinalizeParsing:
       tracer_->RecordFinalizeParsing(elapsed);
       break;
+    case ScopeID::kAnalyze:
+      tracer_->RecordAnalyze(elapsed);
+      break;
     case ScopeID::kPrepareToCompile:
       tracer_->RecordPrepareToCompile(elapsed);
       break;
@@ -50,10 +51,6 @@ CompilerDispatcherTracer::Scope::~Scope() {
     case ScopeID::kFinalizeCompiling:
       tracer_->RecordFinalizeCompiling(elapsed);
       break;
-  }
-  // TODO(cbruni): remove once we fully moved to a trace-based system.
-  if (V8_UNLIKELY(FLAG_runtime_stats)) {
-    RuntimeCallStats::Leave(tracer_->runtime_call_stats_, &timer_);
   }
 }
 
@@ -66,6 +63,8 @@ const char* CompilerDispatcherTracer::Scope::Name(ScopeID scope_id) {
       return "V8.BackgroundCompile_Parse";
     case ScopeID::kFinalizeParsing:
       return "V8.BackgroundCompile_FinalizeParsing";
+    case ScopeID::kAnalyze:
+      return "V8.BackgroundCompile_Analyze";
     case ScopeID::kPrepareToCompile:
       return "V8.BackgroundCompile_PrepareToCompile";
     case ScopeID::kCompile:
@@ -103,6 +102,11 @@ void CompilerDispatcherTracer::RecordFinalizeParsing(double duration_ms) {
   finalize_parsing_events_.Push(duration_ms);
 }
 
+void CompilerDispatcherTracer::RecordAnalyze(double duration_ms) {
+  base::LockGuard<base::Mutex> lock(&mutex_);
+  analyze_events_.Push(duration_ms);
+}
+
 void CompilerDispatcherTracer::RecordPrepareToCompile(double duration_ms) {
   base::LockGuard<base::Mutex> lock(&mutex_);
   prepare_compile_events_.Push(duration_ms);
@@ -129,24 +133,42 @@ double CompilerDispatcherTracer::EstimateParseInMs(size_t source_length) const {
   return Estimate(parse_events_, source_length);
 }
 
-double CompilerDispatcherTracer::EstimateFinalizeParsingInMs() {
+double CompilerDispatcherTracer::EstimateFinalizeParsingInMs() const {
   base::LockGuard<base::Mutex> lock(&mutex_);
   return Average(finalize_parsing_events_);
 }
 
-double CompilerDispatcherTracer::EstimatePrepareToCompileInMs() {
+double CompilerDispatcherTracer::EstimateAnalyzeInMs() const {
+  base::LockGuard<base::Mutex> lock(&mutex_);
+  return Average(analyze_events_);
+}
+
+double CompilerDispatcherTracer::EstimatePrepareToCompileInMs() const {
   base::LockGuard<base::Mutex> lock(&mutex_);
   return Average(prepare_compile_events_);
 }
 
-double CompilerDispatcherTracer::EstimateCompileInMs(size_t ast_size_in_bytes) {
+double CompilerDispatcherTracer::EstimateCompileInMs(
+    size_t ast_size_in_bytes) const {
   base::LockGuard<base::Mutex> lock(&mutex_);
   return Estimate(compile_events_, ast_size_in_bytes);
 }
 
-double CompilerDispatcherTracer::EstimateFinalizeCompilingInMs() {
+double CompilerDispatcherTracer::EstimateFinalizeCompilingInMs() const {
   base::LockGuard<base::Mutex> lock(&mutex_);
   return Average(finalize_compiling_events_);
+}
+
+void CompilerDispatcherTracer::DumpStatistics() const {
+  PrintF(
+      "CompilerDispatcherTracer: "
+      "prepare_parsing=%.2lfms parsing=%.2lfms/kb finalize_parsing=%.2lfms "
+      "analyze=%.2lfms prepare_compiling=%.2lfms compiling=%.2lfms/kb "
+      "finalize_compiling=%.2lfms\n",
+      EstimatePrepareToParseInMs(), EstimateParseInMs(1 * KB),
+      EstimateFinalizeParsingInMs(), EstimateAnalyzeInMs(),
+      EstimatePrepareToCompileInMs(), EstimateCompileInMs(1 * KB),
+      EstimateFinalizeCompilingInMs());
 }
 
 double CompilerDispatcherTracer::Average(
@@ -158,7 +180,7 @@ double CompilerDispatcherTracer::Average(
 
 double CompilerDispatcherTracer::Estimate(
     const base::RingBuffer<std::pair<size_t, double>>& buffer, size_t num) {
-  if (buffer.Count() == 0) return 0.0;
+  if (buffer.Count() == 0) return kEstimatedRuntimeWithoutData;
   std::pair<size_t, double> sum = buffer.Sum(
       [](std::pair<size_t, double> a, std::pair<size_t, double> b) {
         return std::make_pair(a.first + b.first, a.second + b.second);

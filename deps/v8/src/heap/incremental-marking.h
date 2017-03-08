@@ -22,7 +22,7 @@ class PagedSpace;
 
 enum class StepOrigin { kV8, kTask };
 
-class IncrementalMarking {
+class V8_EXPORT_PRIVATE IncrementalMarking {
  public:
   enum State { STOPPED, SWEEPING, MARKING, COMPLETE };
 
@@ -151,14 +151,13 @@ class IncrementalMarking {
   INLINE(void RecordWriteOfCodeEntry(JSFunction* host, Object** slot,
                                      Code* value));
 
-  V8_EXPORT_PRIVATE void RecordWriteSlow(HeapObject* obj, Object** slot,
-                                         Object* value);
+  void RecordWriteSlow(HeapObject* obj, Object** slot, Object* value);
   void RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo, Object* value);
   void RecordWriteOfCodeEntrySlow(JSFunction* host, Object** slot, Code* value);
   void RecordCodeTargetPatch(Code* host, Address pc, HeapObject* value);
   void RecordCodeTargetPatch(Address pc, HeapObject* value);
 
-  void WhiteToGreyAndPush(HeapObject* obj, MarkBit mark_bit);
+  void WhiteToGreyAndPush(HeapObject* obj);
 
   inline void SetOldSpacePageFlags(MemoryChunk* chunk) {
     SetOldSpacePageFlags(chunk, IsMarking(), IsCompacting());
@@ -184,28 +183,21 @@ class IncrementalMarking {
 
   static void MarkBlack(HeapObject* object, int size);
 
-  static void TransferMark(Heap* heap, Address old_start, Address new_start);
+  static void TransferMark(Heap* heap, HeapObject* from, HeapObject* to);
 
-  // Returns true if the color transfer requires live bytes updating.
-  INLINE(static bool TransferColor(HeapObject* from, HeapObject* to,
+  INLINE(static void TransferColor(HeapObject* from, HeapObject* to,
                                    int size)) {
-    MarkBit from_mark_bit = ObjectMarking::MarkBitFrom(from);
-    MarkBit to_mark_bit = ObjectMarking::MarkBitFrom(to);
-
-    if (Marking::IsBlack(to_mark_bit)) {
+    if (ObjectMarking::IsBlack(to)) {
       DCHECK(to->GetHeap()->incremental_marking()->black_allocation());
-      return false;
+      return;
     }
 
-    DCHECK(Marking::IsWhite(to_mark_bit));
-    if (from_mark_bit.Get()) {
-      to_mark_bit.Set();
-      if (from_mark_bit.Next().Get()) {
-        to_mark_bit.Next().Set();
-        return true;
-      }
+    DCHECK(ObjectMarking::IsWhite(to));
+    if (ObjectMarking::IsGrey(from)) {
+      ObjectMarking::WhiteToGrey(to);
+    } else if (ObjectMarking::IsBlack(from)) {
+      ObjectMarking::WhiteToBlack(to);
     }
-    return false;
   }
 
   void IterateBlackObject(HeapObject* object);
@@ -245,7 +237,6 @@ class IncrementalMarking {
   void FinishBlackAllocation();
 
   void MarkRoots();
-  void MarkObjectGroups();
   void ProcessWeakCells();
   // Retain dying maps for <FLAG_retain_maps_for_n_gc> garbage collections to
   // increase chances of reusing of map transition tree in future.
@@ -298,6 +289,7 @@ class IncrementalMarking {
   bool was_activated_;
   bool black_allocation_;
   bool finalize_marking_completed_;
+  bool trace_wrappers_toggle_;
 
   GCRequestType request_type_;
 

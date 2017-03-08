@@ -4,6 +4,12 @@
 
 // Flags: --validate-asm --allow-natives-syntax
 
+// Note that this test file contains tests that explicitly check modules are
+// valid asm.js and then break them with invalid instantiation arguments. If
+// this script is run more than once (e.g. --stress-opt) then modules remain
+// broken in the second run and assertions would fail. We prevent re-runs.
+// Flags: --nostress-opt
+
 function assertValidAsm(func) {
   assertTrue(%IsAsmWasmCode(func));
 }
@@ -75,7 +81,7 @@ function assertValidAsm(func) {
   assertEquals(Math.fround(-3.0), m.fVar());
 
   var m = DisallowAssignToConstGlobal();
-  assertTrue(%IsNotAsmWasmCode(DisallowAssignToConstGlobal));
+  assertFalse(%IsAsmWasmCode(DisallowAssignToConstGlobal));
 })();
 
 (function TestModuleArgs() {
@@ -119,7 +125,7 @@ function assertValidAsm(func) {
     return { foo: foo };
   }
   var m = Module({});
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals(123, m.foo());
 })();
 
@@ -130,7 +136,7 @@ function assertValidAsm(func) {
     return {};
   }
   var m = Module(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals({}, m);
 })();
 
@@ -141,7 +147,7 @@ function assertValidAsm(func) {
     return {};
   }
   var m = Module(1, 2);
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals({}, m);
 })();
 
@@ -164,7 +170,7 @@ function assertValidAsm(func) {
   }
   var heap = new ArrayBuffer(1024 * 1024);
   var m = Module({}, {}, heap);
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals(123, m.foo());
 })();
 
@@ -198,9 +204,9 @@ function assertValidAsm(func) {
     return { foo: foo };
   }
   var m1 = Module(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   var m2 = Module(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals(123, m1.foo());
   assertEquals(123, m2.foo());
 })();
@@ -219,9 +225,9 @@ function assertValidAsm(func) {
   var Module2 = MkModule();
   var heap = new ArrayBuffer(1024 * 1024);
   var m1 = Module1(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module1));
+  assertFalse(%IsAsmWasmCode(Module1));
   var m2 = Module2({}, {}, heap);
-  assertTrue(%IsNotAsmWasmCode(Module2));
+  assertFalse(%IsAsmWasmCode(Module2));
   assertEquals(123, m1.foo());
   assertEquals(123, m2.foo());
 })();
@@ -242,7 +248,7 @@ function assertValidAsm(func) {
   var m1 = Module1({NaN: NaN}, {}, heap);
   assertValidAsm(Module1);
   var m2 = Module2(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module2));
+  assertFalse(%IsAsmWasmCode(Module2));
   assertEquals(123, m1.foo());
   assertEquals(123, m2.foo());
 })();
@@ -263,9 +269,9 @@ function assertValidAsm(func) {
   var m1a = Module1({NaN: NaN}, {}, heap);
   assertValidAsm(Module1);
   var m2 = Module2(1, 2, 3);
-  assertTrue(%IsNotAsmWasmCode(Module2));
+  assertFalse(%IsAsmWasmCode(Module2));
   var m1b = Module1({NaN: NaN}, {}, heap);
-  assertTrue(%IsNotAsmWasmCode(Module1));
+  assertFalse(%IsAsmWasmCode(Module1));
   assertEquals(123, m1a.foo());
   assertEquals(123, m1b.foo());
   assertEquals(123, m2.foo());
@@ -292,6 +298,201 @@ function assertValidAsm(func) {
     return { foo: foo };
   }
   var m = Module();
-  assertTrue(%IsNotAsmWasmCode(Module));
+  assertFalse(%IsAsmWasmCode(Module));
   assertEquals(0xffffffff, m.foo());
+})();
+
+(function TestBadBooleanParamAnnotation() {
+  function Module() {
+    "use asm";
+    function foo(x) {
+      x = x | true;
+      return x;
+    }
+    return { foo: foo };
+  }
+  var m = Module();
+  assertFalse(%IsAsmWasmCode(Module));
+  assertEquals(3, m.foo(3));
+})();
+
+(function TestBadExportTwice() {
+  function Module() {
+    "use asm";
+    function bar() { return 1; }
+    function baz() { return 2; }
+    return {foo: bar, foo: baz};
+  }
+  var m = Module();
+  assertTrue(%IsAsmWasmCode(Module));
+  assertEquals(2, m.foo());
+})();
+
+(function TestBadImport() {
+  function Module(stdlib) {
+    "use asm";
+    var set = 0;
+    var foo = stdlib[set];
+    return {};
+  }
+  var m = Module(this);
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestBadishBooleanExprAnnotation() {
+  function Module() {
+    "use asm";
+    function foo(x) {
+      x = x | 0;
+      x = (x + 1) | false;
+      return x | 0;
+    }
+    return { foo: foo };
+  }
+  var m = Module();
+  // We all false here because the parser optimizes expressons like:
+  // !123 to false.
+  assertTrue(%IsAsmWasmCode(Module));
+  assertEquals(4, m.foo(3));
+})();
+
+(function TestBadFroundTrue() {
+  function Module(stdlib) {
+    "use asm";
+    var fround = stdlib.Math.fround;
+    function foo() {
+      var x = fround(true);
+      return +x;
+    }
+    return { foo: foo };
+  }
+  var m = Module(this);
+  assertFalse(%IsAsmWasmCode(Module));
+  assertEquals(1, m.foo());
+})();
+
+(function TestBadCase() {
+  function Module() {
+    "use asm";
+    function foo(x) {
+      x = x | 0;
+      switch (x|0) {
+        case true:
+          return 42;
+        default:
+          return 43;
+      }
+      return 0;
+    }
+    return { foo: foo };
+  }
+  var m = Module();
+  assertFalse(%IsAsmWasmCode(Module));
+  assertEquals(43, m.foo(3));
+})();
+
+(function TestVarHidesExport() {
+  function Module() {
+    "use asm";
+    var foo;
+    function foo() {}
+    return foo;
+  }
+  Module();
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestUndefinedGlobalCall() {
+  function Module() {
+    "use asm";
+    function foo() {
+      return bar() | 0;
+    }
+    return foo;
+  }
+  Module();
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestConditionalReturn() {
+  function Module() {
+    'use asm';
+    function foo(a, b) {
+      a = +a;
+      b = +b;
+      // Allowed, despite not matching the spec, as emscripten emits this in
+      // practice.
+      return a == b ? +a : +b;
+    }
+    return foo;
+  }
+  var m = Module();
+  assertEquals(4, m(4, 4));
+  assertEquals(5, m(4, 5));
+  assertEquals(4, m(5, 4));
+  assertValidAsm(Module);
+})();
+
+(function TestMismatchedConditionalReturn() {
+  function Module() {
+    'use asm';
+    function foo(a, b) {
+      a = +a;
+      return a == 0.0 ? 0 : +a;
+    }
+    return foo;
+  }
+  Module();
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestBadIntConditionalReturn() {
+  function Module() {
+    'use asm';
+    function foo(a, b) {
+      a = a | 0;
+      b = b | 0;
+      // Disallowed because signature must be signed, but these will be int.
+      return 1 ? a : b;
+    }
+    return foo;
+  }
+  Module();
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestBadSignedConditionalReturn() {
+  function Module() {
+    'use asm';
+    function foo(a, b) {
+      a = a | 0;
+      b = b | 0;
+      // Disallowed because conditional yields int, even when both sides
+      // are signed.
+      return 1 ? a | 0 : b | 0;
+    }
+    return foo;
+  }
+  Module();
+  assertFalse(%IsAsmWasmCode(Module));
+})();
+
+(function TestAsmIsRegular() {
+  function Module() {
+    'use asm';
+    var g = 123;
+    function foo() {
+      return g | 0;
+    }
+    return {x: foo};
+  }
+  var o = Module();
+  assertValidAsm(Module);
+  assertFalse(o instanceof WebAssembly.Instance);
+  assertTrue(o instanceof Object);
+  assertTrue(o.__proto__ === Object.prototype);
+  o.x = 5;
+  assertTrue(typeof o.x === 'number');
+  assertTrue(o.__single_function__ === undefined);
+  assertTrue(o.__foreign_init__ === undefined);
 })();

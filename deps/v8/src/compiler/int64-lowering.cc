@@ -12,6 +12,7 @@
 #include "src/compiler/node-properties.h"
 
 #include "src/compiler/node.h"
+#include "src/objects-inl.h"
 #include "src/wasm/wasm-module.h"
 #include "src/zone/zone.h"
 
@@ -61,7 +62,8 @@ void Int64Lowering::LowerGraph() {
           // that they are processed after all other nodes.
           PreparePhiReplacement(input);
           stack_.push_front({input, 0});
-        } else if (input->opcode() == IrOpcode::kEffectPhi) {
+        } else if (input->opcode() == IrOpcode::kEffectPhi ||
+                   input->opcode() == IrOpcode::kLoop) {
           stack_.push_front({input, 0});
         } else {
           stack_.push_back({input, 0});
@@ -71,6 +73,8 @@ void Int64Lowering::LowerGraph() {
     }
   }
 }
+
+namespace {
 
 static int GetParameterIndexAfterLowering(
     Signature<MachineRepresentation>* signature, int old_index) {
@@ -83,16 +87,7 @@ static int GetParameterIndexAfterLowering(
   return result;
 }
 
-int Int64Lowering::GetParameterCountAfterLowering(
-    Signature<MachineRepresentation>* signature) {
-  // GetParameterIndexAfterLowering(parameter_count) returns the parameter count
-  // after lowering.
-  return GetParameterIndexAfterLowering(
-      signature, static_cast<int>(signature->parameter_count()));
-}
-
-static int GetReturnCountAfterLowering(
-    Signature<MachineRepresentation>* signature) {
+int GetReturnCountAfterLowering(Signature<MachineRepresentation>* signature) {
   int result = static_cast<int>(signature->return_count());
   for (int i = 0; i < static_cast<int>(signature->return_count()); i++) {
     if (signature->GetReturn(i) == MachineRepresentation::kWord64) {
@@ -102,8 +97,28 @@ static int GetReturnCountAfterLowering(
   return result;
 }
 
+}  // namespace
+
+// static
+int Int64Lowering::GetParameterCountAfterLowering(
+    Signature<MachineRepresentation>* signature) {
+  // GetParameterIndexAfterLowering(parameter_count) returns the parameter count
+  // after lowering.
+  return GetParameterIndexAfterLowering(
+      signature, static_cast<int>(signature->parameter_count()));
+}
+
+// static
+bool Int64Lowering::IsI64AsTwoParameters(MachineOperatorBuilder* machine,
+                                         MachineRepresentation type) {
+  return machine->Is32() && type == MachineRepresentation::kWord64;
+}
+
 void Int64Lowering::GetIndexNodes(Node* index, Node*& index_low,
                                   Node*& index_high) {
+  if (HasReplacementLow(index)) {
+    index = GetReplacementLow(index);
+  }
 #if defined(V8_TARGET_LITTLE_ENDIAN)
   index_low = index;
   index_high = graph()->NewNode(machine()->Int32Add(), index,
@@ -114,14 +129,6 @@ void Int64Lowering::GetIndexNodes(Node* index, Node*& index_low,
   index_high = index;
 #endif
 }
-
-#if defined(V8_TARGET_LITTLE_ENDIAN)
-const int Int64Lowering::kLowerWordOffset = 0;
-const int Int64Lowering::kHigherWordOffset = 4;
-#elif defined(V8_TARGET_BIG_ENDIAN)
-const int Int64Lowering::kLowerWordOffset = 4;
-const int Int64Lowering::kHigherWordOffset = 0;
-#endif
 
 void Int64Lowering::LowerNode(Node* node) {
   switch (node->opcode()) {
@@ -233,9 +240,7 @@ void Int64Lowering::LowerNode(Node* node) {
         NodeProperties::ChangeOp(node, store_op);
         ReplaceNode(node, node, high_node);
       } else {
-        if (HasReplacementLow(node->InputAt(2))) {
-          node->ReplaceInput(2, GetReplacementLow(node->InputAt(2)));
-        }
+        DefaultLowering(node, true);
       }
       break;
     }
@@ -558,7 +563,8 @@ void Int64Lowering::LowerNode(Node* node) {
               StoreRepresentation(MachineRepresentation::kWord32,
                                   WriteBarrierKind::kNoWriteBarrier)),
           stack_slot,
-          graph()->NewNode(common()->Int32Constant(kHigherWordOffset)),
+          graph()->NewNode(
+              common()->Int32Constant(kInt64UpperHalfMemoryOffset)),
           GetReplacementHigh(input), graph()->start(), graph()->start());
 
       Node* store_low_word = graph()->NewNode(
@@ -566,7 +572,8 @@ void Int64Lowering::LowerNode(Node* node) {
               StoreRepresentation(MachineRepresentation::kWord32,
                                   WriteBarrierKind::kNoWriteBarrier)),
           stack_slot,
-          graph()->NewNode(common()->Int32Constant(kLowerWordOffset)),
+          graph()->NewNode(
+              common()->Int32Constant(kInt64LowerHalfMemoryOffset)),
           GetReplacementLow(input), store_high_word, graph()->start());
 
       Node* load =
@@ -594,13 +601,15 @@ void Int64Lowering::LowerNode(Node* node) {
 
       Node* high_node = graph()->NewNode(
           machine()->Load(MachineType::Int32()), stack_slot,
-          graph()->NewNode(common()->Int32Constant(kHigherWordOffset)), store,
-          graph()->start());
+          graph()->NewNode(
+              common()->Int32Constant(kInt64UpperHalfMemoryOffset)),
+          store, graph()->start());
 
       Node* low_node = graph()->NewNode(
           machine()->Load(MachineType::Int32()), stack_slot,
-          graph()->NewNode(common()->Int32Constant(kLowerWordOffset)), store,
-          graph()->start());
+          graph()->NewNode(
+              common()->Int32Constant(kInt64LowerHalfMemoryOffset)),
+          store, graph()->start());
       ReplaceNode(node, low_node, high_node);
       break;
     }
@@ -824,7 +833,7 @@ void Int64Lowering::LowerComparison(Node* node, const Operator* high_word_op,
   ReplaceNode(node, replacement, nullptr);
 }
 
-bool Int64Lowering::DefaultLowering(Node* node) {
+bool Int64Lowering::DefaultLowering(Node* node, bool low_word_only) {
   bool something_changed = false;
   for (int i = NodeProperties::PastValueIndex(node) - 1; i >= 0; i--) {
     Node* input = node->InputAt(i);
@@ -832,7 +841,7 @@ bool Int64Lowering::DefaultLowering(Node* node) {
       something_changed = true;
       node->ReplaceInput(i, GetReplacementLow(input));
     }
-    if (HasReplacementHigh(input)) {
+    if (!low_word_only && HasReplacementHigh(input)) {
       something_changed = true;
       node->InsertInput(zone(), i + 1, GetReplacementHigh(input));
     }

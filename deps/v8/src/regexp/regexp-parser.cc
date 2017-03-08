@@ -13,7 +13,7 @@
 #include "src/utils.h"
 
 #ifdef V8_I18N_SUPPORT
-#include "unicode/uset.h"
+#include "unicode/uniset.h"
 #endif  // V8_I18N_SUPPORT
 
 namespace v8 {
@@ -75,6 +75,7 @@ void RegExpParser::Advance() {
   if (has_next()) {
     StackLimitCheck check(isolate());
     if (check.HasOverflowed()) {
+      if (FLAG_abort_on_stack_overflow) FATAL("Aborting on stack overflow");
       ReportError(CStrVector(
           MessageTemplate::TemplateString(MessageTemplate::kStackOverflow)));
     } else if (zone()->excess_allocation()) {
@@ -215,7 +216,9 @@ RegExpTree* RegExpParser::ParseDisjunction() {
           RegExpCapture* capture = GetCapture(capture_index);
           capture->set_body(body);
           body = capture;
-        } else if (group_type != GROUPING) {
+        } else if (group_type == GROUPING) {
+          body = new (zone()) RegExpGroup(body);
+        } else {
           DCHECK(group_type == POSITIVE_LOOKAROUND ||
                  group_type == NEGATIVE_LOOKAROUND);
           bool is_positive = (group_type == POSITIVE_LOOKAROUND);
@@ -267,7 +270,7 @@ RegExpTree* RegExpParser::ParseDisjunction() {
         // everything except \x0a, \x0d, \u2028 and \u2029
         ZoneList<CharacterRange>* ranges =
             new (zone()) ZoneList<CharacterRange>(2, zone());
-        CharacterRange::AddClassEscape('.', ranges, zone());
+        CharacterRange::AddClassEscape('.', ranges, false, zone());
         RegExpCharacterClass* cc =
             new (zone()) RegExpCharacterClass(ranges, false);
         builder->AddCharacterClass(cc);
@@ -374,7 +377,8 @@ RegExpTree* RegExpParser::ParseDisjunction() {
             Advance(2);
             ZoneList<CharacterRange>* ranges =
                 new (zone()) ZoneList<CharacterRange>(2, zone());
-            CharacterRange::AddClassEscape(c, ranges, zone());
+            CharacterRange::AddClassEscape(c, ranges,
+                                           unicode() && ignore_case(), zone());
             RegExpCharacterClass* cc =
                 new (zone()) RegExpCharacterClass(ranges, false);
             builder->AddCharacterClass(cc);
@@ -1082,37 +1086,37 @@ bool IsExactPropertyValueAlias(const char* property_value_name,
 bool LookupPropertyValueName(UProperty property,
                              const char* property_value_name, bool negate,
                              ZoneList<CharacterRange>* result, Zone* zone) {
+  UProperty property_for_lookup = property;
+  if (property_for_lookup == UCHAR_SCRIPT_EXTENSIONS) {
+    // For the property Script_Extensions, we have to do the property value
+    // name lookup as if the property is Script.
+    property_for_lookup = UCHAR_SCRIPT;
+  }
   int32_t property_value =
-      u_getPropertyValueEnum(property, property_value_name);
+      u_getPropertyValueEnum(property_for_lookup, property_value_name);
   if (property_value == UCHAR_INVALID_CODE) return false;
 
   // We require the property name to match exactly to one of the property value
   // aliases. However, u_getPropertyValueEnum uses loose matching.
-  if (!IsExactPropertyValueAlias(property_value_name, property,
+  if (!IsExactPropertyValueAlias(property_value_name, property_for_lookup,
                                  property_value)) {
     return false;
   }
 
-  USet* set = uset_openEmpty();
   UErrorCode ec = U_ZERO_ERROR;
-  uset_applyIntPropertyValue(set, property, property_value, &ec);
-  bool success = ec == U_ZERO_ERROR && !uset_isEmpty(set);
+  icu::UnicodeSet set;
+  set.applyIntPropertyValue(property, property_value, ec);
+  bool success = ec == U_ZERO_ERROR && !set.isEmpty();
 
   if (success) {
-    uset_removeAllStrings(set);
-    if (negate) uset_complement(set);
-    int item_count = uset_getItemCount(set);
-    int item_result = 0;
-    for (int i = 0; i < item_count; i++) {
-      uc32 start = 0;
-      uc32 end = 0;
-      item_result += uset_getItem(set, i, &start, &end, nullptr, 0, &ec);
-      result->Add(CharacterRange::Range(start, end), zone);
+    set.removeAllStrings();
+    if (negate) set.complement();
+    for (int i = 0; i < set.getRangeCount(); i++) {
+      result->Add(
+          CharacterRange::Range(set.getRangeStart(i), set.getRangeEnd(i)),
+          zone);
     }
-    DCHECK_EQ(U_ZERO_ERROR, ec);
-    DCHECK_EQ(0, item_result);
   }
-  uset_close(set);
   return success;
 }
 
@@ -1196,9 +1200,14 @@ bool RegExpParser::ParsePropertyClass(ZoneList<CharacterRange>* result,
     const char* property_name = first_part.ToConstVector().start();
     const char* value_name = second_part.ToConstVector().start();
     UProperty property = u_getPropertyEnum(property_name);
-    if (property < UCHAR_INT_START) return false;
-    if (property >= UCHAR_INT_LIMIT) return false;
     if (!IsExactPropertyAlias(property_name, property)) return false;
+    if (property == UCHAR_GENERAL_CATEGORY) {
+      // We want to allow aggregate value names such as "Letter".
+      property = UCHAR_GENERAL_CATEGORY_MASK;
+    } else if (property != UCHAR_SCRIPT &&
+               property != UCHAR_SCRIPT_EXTENSIONS) {
+      return false;
+    }
     return LookupPropertyValueName(property, value_name, negate, result,
                                    zone());
   }
@@ -1381,9 +1390,11 @@ static const uc16 kNoCharClass = 0;
 // escape (i.e., 's' means whitespace, from '\s').
 static inline void AddRangeOrEscape(ZoneList<CharacterRange>* ranges,
                                     uc16 char_class, CharacterRange range,
+                                    bool add_unicode_case_equivalents,
                                     Zone* zone) {
   if (char_class != kNoCharClass) {
-    CharacterRange::AddClassEscape(char_class, ranges, zone);
+    CharacterRange::AddClassEscape(char_class, ranges,
+                                   add_unicode_case_equivalents, zone);
   } else {
     ranges->Add(range, zone);
   }
@@ -1423,6 +1434,7 @@ RegExpTree* RegExpParser::ParseCharacterClass() {
   }
   ZoneList<CharacterRange>* ranges =
       new (zone()) ZoneList<CharacterRange>(2, zone());
+  bool add_unicode_case_equivalents = unicode() && ignore_case();
   while (has_more() && current() != ']') {
     bool parsed_property = ParseClassProperty(ranges CHECK_FAILED);
     if (parsed_property) continue;
@@ -1435,7 +1447,8 @@ RegExpTree* RegExpParser::ParseCharacterClass() {
         // following code report an error.
         break;
       } else if (current() == ']') {
-        AddRangeOrEscape(ranges, char_class, first, zone());
+        AddRangeOrEscape(ranges, char_class, first,
+                         add_unicode_case_equivalents, zone());
         ranges->Add(CharacterRange::Singleton('-'), zone());
         break;
       }
@@ -1447,9 +1460,11 @@ RegExpTree* RegExpParser::ParseCharacterClass() {
           // ES2015 21.2.2.15.1 step 1.
           return ReportError(CStrVector(kRangeInvalid));
         }
-        AddRangeOrEscape(ranges, char_class, first, zone());
+        AddRangeOrEscape(ranges, char_class, first,
+                         add_unicode_case_equivalents, zone());
         ranges->Add(CharacterRange::Singleton('-'), zone());
-        AddRangeOrEscape(ranges, char_class_2, next, zone());
+        AddRangeOrEscape(ranges, char_class_2, next,
+                         add_unicode_case_equivalents, zone());
         continue;
       }
       // ES2015 21.2.2.15.1 step 6.
@@ -1458,7 +1473,8 @@ RegExpTree* RegExpParser::ParseCharacterClass() {
       }
       ranges->Add(CharacterRange::Range(first.from(), next.to()), zone());
     } else {
-      AddRangeOrEscape(ranges, char_class, first, zone());
+      AddRangeOrEscape(ranges, char_class, first, add_unicode_case_equivalents,
+                       zone());
     }
   }
   if (!has_more()) {
@@ -1720,12 +1736,10 @@ bool RegExpBuilder::NeedsDesugaringForUnicode(RegExpCharacterClass* cc) {
 bool RegExpBuilder::NeedsDesugaringForIgnoreCase(uc32 c) {
 #ifdef V8_I18N_SUPPORT
   if (unicode() && ignore_case()) {
-    USet* set = uset_open(c, c);
-    uset_closeOver(set, USET_CASE_INSENSITIVE);
-    uset_removeAllStrings(set);
-    bool result = uset_size(set) > 1;
-    uset_close(set);
-    return result;
+    icu::UnicodeSet set(c, c);
+    set.closeOver(USET_CASE_INSENSITIVE);
+    set.removeAllStrings();
+    return set.size() > 1;
   }
   // In the case where ICU is not included, we act as if the unicode flag is
   // not set, and do not desugar.

@@ -37,6 +37,7 @@
 #include "src/api.h"
 #include "src/factory.h"
 #include "src/messages.h"
+#include "src/objects-inl.h"
 #include "src/objects.h"
 #include "src/unicode-decoder.h"
 #include "test/cctest/cctest.h"
@@ -1194,6 +1195,33 @@ class OneByteVectorResource : public v8::String::ExternalOneByteStringResource {
   i::Vector<const char> data_;
 };
 
+TEST(InternalizeExternal) {
+  FLAG_thin_strings = true;
+  CcTest::InitializeVM();
+  i::Isolate* isolate = CcTest::i_isolate();
+  Factory* factory = isolate->factory();
+  // This won't leak; the external string mechanism will call Dispose() on it.
+  OneByteVectorResource* resource =
+      new OneByteVectorResource(i::Vector<const char>("prop", 4));
+  {
+    v8::HandleScope scope(CcTest::isolate());
+    v8::Local<v8::String> ext_string =
+        v8::String::NewExternalOneByte(CcTest::isolate(), resource)
+            .ToLocalChecked();
+    Handle<String> string = v8::Utils::OpenHandle(*ext_string);
+    CHECK(string->IsExternalString());
+    CHECK(!string->IsInternalizedString());
+    CHECK(isolate->heap()->InNewSpace(*string));
+    factory->InternalizeName(string);
+    CHECK(string->IsThinString());
+    CcTest::CollectGarbage(i::NEW_SPACE);
+    CcTest::CollectGarbage(i::NEW_SPACE);
+    CHECK(string->IsInternalizedString());
+    CHECK(!isolate->heap()->InNewSpace(*string));
+  }
+  CcTest::CollectGarbage(i::OLD_SPACE);
+  CcTest::CollectGarbage(i::OLD_SPACE);
+}
 
 TEST(SliceFromExternal) {
   FLAG_string_slices = true;
@@ -1607,4 +1635,39 @@ TEST(Regress609831) {
         "432, 432, 432, 432, 432, 432, 432, 432, 432)");
     CHECK(v8::Utils::OpenHandle(*result)->IsSeqTwoByteString());
   }
+}
+
+TEST(ExternalStringIndexOf) {
+  CcTest::InitializeVM();
+  LocalContext context;
+  v8::HandleScope scope(CcTest::isolate());
+
+  const char* raw_string = "abcdefghijklmnopqrstuvwxyz";
+  v8::Local<v8::String> string =
+      v8::String::NewExternalOneByte(CcTest::isolate(),
+                                     new StaticOneByteResource(raw_string))
+          .ToLocalChecked();
+  v8::Local<v8::Object> global = context->Global();
+  global->Set(context.local(), v8_str("external"), string).FromJust();
+
+  char source[] = "external.indexOf('%')";
+  for (size_t i = 0; i < strlen(raw_string); i++) {
+    source[18] = raw_string[i];
+    int result_position = static_cast<int>(i);
+    CHECK_EQ(result_position,
+             CompileRun(source)->Int32Value(context.local()).FromJust());
+  }
+  CHECK_EQ(-1,
+           CompileRun("external.indexOf('abcdefghijklmnopqrstuvwxyz%%%%%%')")
+               ->Int32Value(context.local())
+               .FromJust());
+  CHECK_EQ(1, CompileRun("external.indexOf('', 1)")
+                  ->Int32Value(context.local())
+                  .FromJust());
+  CHECK_EQ(-1, CompileRun("external.indexOf('a', 1)")
+                   ->Int32Value(context.local())
+                   .FromJust());
+  CHECK_EQ(-1, CompileRun("external.indexOf('$')")
+                   ->Int32Value(context.local())
+                   .FromJust());
 }

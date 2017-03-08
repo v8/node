@@ -15,9 +15,9 @@
 #include "src/isolate.h"
 #include "src/objects-inl.h"
 // FIXME(mstarzinger, marja): This is weird, but required because of the missing
-// (disallowed) include: src/type-feedback-vector.h ->
-// src/type-feedback-vector-inl.h
-#include "src/type-feedback-vector-inl.h"
+// (disallowed) include: src/feedback-vector.h ->
+// src/feedback-vector-inl.h
+#include "src/feedback-vector-inl.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
@@ -77,9 +77,12 @@ class JSTypedLoweringTester : public HandleAndZoneScope {
   }
 
   Node* EmptyFrameState(Node* context) {
-    Node* parameters = graph.NewNode(common.StateValues(0));
-    Node* locals = graph.NewNode(common.StateValues(0));
-    Node* stack = graph.NewNode(common.StateValues(0));
+    Node* parameters =
+        graph.NewNode(common.StateValues(0, SparseInputMask::Dense()));
+    Node* locals =
+        graph.NewNode(common.StateValues(0, SparseInputMask::Dense()));
+    Node* stack =
+        graph.NewNode(common.StateValues(0, SparseInputMask::Dense()));
 
     Node* state_node = graph.NewNode(
         common.FrameState(BailoutId::None(), OutputFrameStateCombine::Ignore(),
@@ -261,11 +264,11 @@ TEST(AddNumber1) {
 TEST(NumberBinops) {
   JSTypedLoweringTester R;
   const Operator* ops[] = {
-      R.javascript.Add(R.binop_hints),      R.simplified.NumberAdd(),
-      R.javascript.Subtract(R.binop_hints), R.simplified.NumberSubtract(),
-      R.javascript.Multiply(R.binop_hints), R.simplified.NumberMultiply(),
-      R.javascript.Divide(R.binop_hints),   R.simplified.NumberDivide(),
-      R.javascript.Modulus(R.binop_hints),  R.simplified.NumberModulus(),
+      R.javascript.Add(R.binop_hints), R.simplified.NumberAdd(),
+      R.javascript.Subtract(),         R.simplified.NumberSubtract(),
+      R.javascript.Multiply(),         R.simplified.NumberMultiply(),
+      R.javascript.Divide(),           R.simplified.NumberDivide(),
+      R.javascript.Modulus(),          R.simplified.NumberModulus(),
   };
 
   for (size_t i = 0; i < arraysize(kNumberTypes); ++i) {
@@ -307,11 +310,11 @@ class JSBitwiseShiftTypedLoweringTester : public JSTypedLoweringTester {
  public:
   JSBitwiseShiftTypedLoweringTester() : JSTypedLoweringTester() {
     int i = 0;
-    set(i++, javascript.ShiftLeft(binop_hints), true);
+    set(i++, javascript.ShiftLeft(), true);
     set(i++, simplified.NumberShiftLeft(), false);
-    set(i++, javascript.ShiftRight(binop_hints), true);
+    set(i++, javascript.ShiftRight(), true);
     set(i++, simplified.NumberShiftRight(), false);
-    set(i++, javascript.ShiftRightLogical(binop_hints), false);
+    set(i++, javascript.ShiftRightLogical(), false);
     set(i++, simplified.NumberShiftRightLogical(), false);
   }
   static const int kNumberOps = 6;
@@ -363,11 +366,11 @@ class JSBitwiseTypedLoweringTester : public JSTypedLoweringTester {
  public:
   JSBitwiseTypedLoweringTester() : JSTypedLoweringTester() {
     int i = 0;
-    set(i++, javascript.BitwiseOr(binop_hints), true);
+    set(i++, javascript.BitwiseOr(), true);
     set(i++, simplified.NumberBitwiseOr(), true);
-    set(i++, javascript.BitwiseXor(binop_hints), true);
+    set(i++, javascript.BitwiseXor(), true);
     set(i++, simplified.NumberBitwiseXor(), true);
-    set(i++, javascript.BitwiseAnd(binop_hints), true);
+    set(i++, javascript.BitwiseAnd(), true);
     set(i++, simplified.NumberBitwiseAnd(), true);
   }
   static const int kNumberOps = 6;
@@ -821,17 +824,6 @@ void CheckEqualityReduction(JSTypedLoweringTester* R, bool strict, Node* l,
       Node* r = R->reduce(eq);
       R->CheckBinop(expected, r);
     }
-
-    {
-      const Operator* op =
-          strict ? R->javascript.StrictNotEqual(CompareOperationHint::kAny)
-                 : R->javascript.NotEqual(CompareOperationHint::kAny);
-      Node* ne = R->Binop(op, p0, p1);
-      Node* n = R->reduce(ne);
-      CHECK_EQ(IrOpcode::kBooleanNot, n->opcode());
-      Node* r = n->InputAt(0);
-      R->CheckBinop(expected, r);
-    }
   }
 }
 
@@ -896,13 +888,13 @@ TEST(RemovePureNumberBinopEffects) {
       R.simplified.NumberEqual(),
       R.javascript.Add(R.binop_hints),
       R.simplified.NumberAdd(),
-      R.javascript.Subtract(R.binop_hints),
+      R.javascript.Subtract(),
       R.simplified.NumberSubtract(),
-      R.javascript.Multiply(R.binop_hints),
+      R.javascript.Multiply(),
       R.simplified.NumberMultiply(),
-      R.javascript.Divide(R.binop_hints),
+      R.javascript.Divide(),
       R.simplified.NumberDivide(),
-      R.javascript.Modulus(R.binop_hints),
+      R.javascript.Modulus(),
       R.simplified.NumberModulus(),
       R.javascript.LessThan(R.compare_hints),
       R.simplified.NumberLessThan(),
@@ -928,8 +920,8 @@ TEST(OrderNumberBinopEffects1) {
   JSTypedLoweringTester R;
 
   const Operator* ops[] = {
-      R.javascript.Subtract(R.binop_hints), R.simplified.NumberSubtract(),
-      R.javascript.Multiply(R.binop_hints), R.simplified.NumberMultiply(),
+      R.javascript.Subtract(), R.simplified.NumberSubtract(),
+      R.javascript.Multiply(), R.simplified.NumberMultiply(),
   };
 
   for (size_t j = 0; j < arraysize(ops); j += 2) {
@@ -953,9 +945,9 @@ TEST(OrderNumberBinopEffects2) {
   JSTypedLoweringTester R;
 
   const Operator* ops[] = {
-      R.javascript.Add(R.binop_hints),      R.simplified.NumberAdd(),
-      R.javascript.Subtract(R.binop_hints), R.simplified.NumberSubtract(),
-      R.javascript.Multiply(R.binop_hints), R.simplified.NumberMultiply(),
+      R.javascript.Add(R.binop_hints), R.simplified.NumberAdd(),
+      R.javascript.Subtract(),         R.simplified.NumberSubtract(),
+      R.javascript.Multiply(),         R.simplified.NumberMultiply(),
   };
 
   for (size_t j = 0; j < arraysize(ops); j += 2) {

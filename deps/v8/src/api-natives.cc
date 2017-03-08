@@ -36,7 +36,8 @@ class InvokeScope {
 MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
                                         Handle<ObjectTemplateInfo> data,
                                         Handle<JSReceiver> new_target,
-                                        bool is_hidden_prototype);
+                                        bool is_hidden_prototype,
+                                        bool is_prototype);
 
 MaybeHandle<JSFunction> InstantiateFunction(Isolate* isolate,
                                             Handle<FunctionTemplateInfo> data,
@@ -49,7 +50,7 @@ MaybeHandle<Object> Instantiate(Isolate* isolate, Handle<Object> data,
                                Handle<FunctionTemplateInfo>::cast(data), name);
   } else if (data->IsObjectTemplateInfo()) {
     return InstantiateObject(isolate, Handle<ObjectTemplateInfo>::cast(data),
-                             Handle<JSReceiver>(), false);
+                             Handle<JSReceiver>(), false, false);
   } else {
     return data;
   }
@@ -338,7 +339,8 @@ bool IsSimpleInstantiation(Isolate* isolate, ObjectTemplateInfo* info,
 MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
                                         Handle<ObjectTemplateInfo> info,
                                         Handle<JSReceiver> new_target,
-                                        bool is_hidden_prototype) {
+                                        bool is_hidden_prototype,
+                                        bool is_prototype) {
   Handle<JSFunction> constructor;
   int serial_number = Smi::cast(info->serial_number())->value();
   if (!new_target.is_null()) {
@@ -379,22 +381,51 @@ MaybeHandle<JSObject> InstantiateObject(Isolate* isolate,
   Handle<JSObject> object;
   ASSIGN_RETURN_ON_EXCEPTION(isolate, object,
                              JSObject::New(constructor, new_target), JSObject);
+
+  if (is_prototype) JSObject::OptimizeAsPrototype(object, FAST_PROTOTYPE);
+
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate, result,
       ConfigureInstance(isolate, object, info, is_hidden_prototype), JSObject);
   if (info->immutable_proto()) {
     JSObject::SetImmutableProto(object);
   }
-  // TODO(dcarney): is this necessary?
-  JSObject::MigrateSlowToFast(result, 0, "ApiNatives::InstantiateObject");
-
-  if (serial_number) {
-    CacheTemplateInstantiation(isolate, serial_number, result);
-    result = isolate->factory()->CopyJSObject(result);
+  if (!is_prototype) {
+    // Keep prototypes in slow-mode. Let them be lazily turned fast later on.
+    // TODO(dcarney): is this necessary?
+    JSObject::MigrateSlowToFast(result, 0, "ApiNatives::InstantiateObject");
+    // Don't cache prototypes.
+    if (serial_number) {
+      CacheTemplateInstantiation(isolate, serial_number, result);
+      result = isolate->factory()->CopyJSObject(result);
+    }
   }
+
   return result;
 }
 
+namespace {
+MaybeHandle<Object> GetInstancePrototype(Isolate* isolate,
+                                         Object* function_template) {
+  // Enter a new scope.  Recursion could otherwise create a lot of handles.
+  HandleScope scope(isolate);
+  Handle<JSFunction> parent_instance;
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, parent_instance,
+      InstantiateFunction(
+          isolate,
+          handle(FunctionTemplateInfo::cast(function_template), isolate)),
+      JSFunction);
+  Handle<Object> instance_prototype;
+  // TODO(cbruni): decide what to do here.
+  ASSIGN_RETURN_ON_EXCEPTION(
+      isolate, instance_prototype,
+      JSObject::GetProperty(parent_instance,
+                            isolate->factory()->prototype_string()),
+      JSFunction);
+  return scope.CloseAndEscape(instance_prototype);
+}
+}  // namespace
 
 MaybeHandle<JSFunction> InstantiateFunction(Isolate* isolate,
                                             Handle<FunctionTemplateInfo> data,
@@ -406,38 +437,35 @@ MaybeHandle<JSFunction> InstantiateFunction(Isolate* isolate,
       return Handle<JSFunction>::cast(result);
     }
   }
-  Handle<JSObject> prototype;
+  Handle<Object> prototype;
   if (!data->remove_prototype()) {
     Object* prototype_templ = data->prototype_template();
     if (prototype_templ->IsUndefined(isolate)) {
-      prototype = isolate->factory()->NewJSObject(isolate->object_function());
+      Object* protoype_provider_templ = data->prototype_provider_template();
+      if (protoype_provider_templ->IsUndefined(isolate)) {
+        prototype = isolate->factory()->NewJSObject(isolate->object_function());
+      } else {
+        ASSIGN_RETURN_ON_EXCEPTION(
+            isolate, prototype,
+            GetInstancePrototype(isolate, protoype_provider_templ), JSFunction);
+      }
     } else {
       ASSIGN_RETURN_ON_EXCEPTION(
           isolate, prototype,
           InstantiateObject(
               isolate,
               handle(ObjectTemplateInfo::cast(prototype_templ), isolate),
-              Handle<JSReceiver>(), data->hidden_prototype()),
+              Handle<JSReceiver>(), data->hidden_prototype(), true),
           JSFunction);
     }
     Object* parent = data->parent_template();
     if (!parent->IsUndefined(isolate)) {
-      // Enter a new scope.  Recursion could otherwise create a lot of handles.
-      HandleScope scope(isolate);
-      Handle<JSFunction> parent_instance;
-      ASSIGN_RETURN_ON_EXCEPTION(
-          isolate, parent_instance,
-          InstantiateFunction(
-              isolate, handle(FunctionTemplateInfo::cast(parent), isolate)),
-          JSFunction);
-      // TODO(dcarney): decide what to do here.
       Handle<Object> parent_prototype;
-      ASSIGN_RETURN_ON_EXCEPTION(
-          isolate, parent_prototype,
-          JSObject::GetProperty(parent_instance,
-                                isolate->factory()->prototype_string()),
-          JSFunction);
-      JSObject::ForceSetPrototype(prototype, parent_prototype);
+      ASSIGN_RETURN_ON_EXCEPTION(isolate, parent_prototype,
+                                 GetInstancePrototype(isolate, parent),
+                                 JSFunction);
+      JSObject::ForceSetPrototype(Handle<JSObject>::cast(prototype),
+                                  parent_prototype);
     }
   }
   Handle<JSFunction> function = ApiNatives::CreateApiFunction(
@@ -495,7 +523,8 @@ MaybeHandle<JSObject> ApiNatives::InstantiateObject(
     Handle<ObjectTemplateInfo> data, Handle<JSReceiver> new_target) {
   Isolate* isolate = data->GetIsolate();
   InvokeScope invoke_scope(isolate);
-  return ::v8::internal::InstantiateObject(isolate, data, new_target, false);
+  return ::v8::internal::InstantiateObject(isolate, data, new_target, false,
+                                           false);
 }
 
 MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
@@ -519,8 +548,6 @@ MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
   JSFunction::SetInitialMap(object_function, object_map,
                             isolate->factory()->null_value());
   object_map->set_is_access_check_needed(true);
-  object_map->set_is_callable();
-  object_map->set_is_constructor(true);
 
   Handle<JSObject> object = isolate->factory()->NewJSObject(object_function);
   JSObject::ForceSetPrototype(object, isolate->factory()->null_value());
@@ -531,7 +558,7 @@ MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
 void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  Handle<Name> name, Handle<Object> value,
                                  PropertyAttributes attributes) {
-  PropertyDetails details(attributes, DATA, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, details_handle, value};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);
@@ -543,7 +570,7 @@ void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  PropertyAttributes attributes) {
   auto value = handle(Smi::FromInt(intrinsic), isolate);
   auto intrinsic_marker = isolate->factory()->true_value();
-  PropertyDetails details(attributes, DATA, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, intrinsic_marker, details_handle, value};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);
@@ -556,7 +583,7 @@ void ApiNatives::AddAccessorProperty(Isolate* isolate,
                                      Handle<FunctionTemplateInfo> getter,
                                      Handle<FunctionTemplateInfo> setter,
                                      PropertyAttributes attributes) {
-  PropertyDetails details(attributes, ACCESSOR, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kAccessor, attributes, 0, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, details_handle, getter, setter};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);
@@ -606,7 +633,7 @@ Handle<JSFunction> ApiNatives::CreateApiFunction(
 
   if (prototype->IsTheHole(isolate)) {
     prototype = isolate->factory()->NewFunctionPrototype(result);
-  } else {
+  } else if (obj->prototype_provider_template()->IsUndefined(isolate)) {
     JSObject::AddProperty(Handle<JSObject>::cast(prototype),
                           isolate->factory()->constructor_string(), result,
                           DONT_ENUM);
@@ -656,6 +683,12 @@ Handle<JSFunction> ApiNatives::CreateApiFunction(
 
   // Mark as undetectable if needed.
   if (obj->undetectable()) {
+    // We only allow callable undetectable receivers here, since this whole
+    // undetectable business is only to support document.all, which is both
+    // undetectable and callable. If we ever see the need to have an object
+    // that is undetectable but not callable, we need to update the types.h
+    // to allow encoding this.
+    CHECK(!obj->instance_call_handler()->IsUndefined(isolate));
     map->set_is_undetectable();
   }
 

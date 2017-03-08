@@ -30,8 +30,10 @@
 #include "src/v8.h"
 
 #include "include/v8-profiler.h"
+#include "src/api.h"
 #include "src/base/platform/platform.h"
 #include "src/deoptimizer.h"
+#include "src/objects-inl.h"
 #include "src/profiler/cpu-profiler-inl.h"
 #include "src/profiler/profiler-listener.h"
 #include "src/utils.h"
@@ -78,7 +80,7 @@ static const char* reason(const i::DeoptimizeReason reason) {
 TEST(StartStop) {
   i::Isolate* isolate = CcTest::i_isolate();
   CpuProfilesCollection profiles(isolate);
-  ProfileGenerator generator(isolate, &profiles);
+  ProfileGenerator generator(&profiles);
   std::unique_ptr<ProfilerEventsProcessor> processor(
       new ProfilerEventsProcessor(isolate, &generator,
                                   v8::base::TimeDelta::FromMicroseconds(100)));
@@ -163,7 +165,7 @@ TEST(CodeEvents) {
   i::AbstractCode* args4_code = CreateCode(&env);
 
   CpuProfilesCollection* profiles = new CpuProfilesCollection(isolate);
-  ProfileGenerator* generator = new ProfileGenerator(isolate, profiles);
+  ProfileGenerator* generator = new ProfileGenerator(profiles);
   ProfilerEventsProcessor* processor = new ProfilerEventsProcessor(
       isolate, generator, v8::base::TimeDelta::FromMicroseconds(100));
   CpuProfiler profiler(isolate, profiles, generator, processor);
@@ -231,7 +233,7 @@ TEST(TickEvents) {
   i::AbstractCode* frame3_code = CreateCode(&env);
 
   CpuProfilesCollection* profiles = new CpuProfilesCollection(isolate);
-  ProfileGenerator* generator = new ProfileGenerator(isolate, profiles);
+  ProfileGenerator* generator = new ProfileGenerator(profiles);
   ProfilerEventsProcessor* processor =
       new ProfilerEventsProcessor(CcTest::i_isolate(), generator,
                                   v8::base::TimeDelta::FromMicroseconds(100));
@@ -304,7 +306,7 @@ TEST(Issue1398) {
   i::AbstractCode* code = CreateCode(&env);
 
   CpuProfilesCollection* profiles = new CpuProfilesCollection(isolate);
-  ProfileGenerator* generator = new ProfileGenerator(isolate, profiles);
+  ProfileGenerator* generator = new ProfileGenerator(profiles);
   ProfilerEventsProcessor* processor =
       new ProfilerEventsProcessor(CcTest::i_isolate(), generator,
                                   v8::base::TimeDelta::FromMicroseconds(100));
@@ -1077,7 +1079,7 @@ static void TickLines(bool optimize) {
   CHECK(code_address);
 
   CpuProfilesCollection* profiles = new CpuProfilesCollection(isolate);
-  ProfileGenerator* generator = new ProfileGenerator(isolate, profiles);
+  ProfileGenerator* generator = new ProfileGenerator(profiles);
   ProfilerEventsProcessor* processor =
       new ProfilerEventsProcessor(CcTest::i_isolate(), generator,
                                   v8::base::TimeDelta::FromMicroseconds(100));
@@ -1575,6 +1577,7 @@ TEST(JsNativeJsRuntimeJsSampleMultiple) {
 static const char* inlining_test_source =
     "%NeverOptimizeFunction(action);\n"
     "%NeverOptimizeFunction(start);\n"
+    "level1()\n"
     "%OptimizeFunctionOnNextCall(level1);\n"
     "%OptimizeFunctionOnNextCall(level2);\n"
     "%OptimizeFunctionOnNextCall(level3);\n"
@@ -1871,15 +1874,20 @@ TEST(CollectDeoptEvents) {
 
   {
     const char* branch[] = {"", "opt_function0", "opt_function0"};
-    CHECK_EQ(reason(i::DeoptimizeReason::kNotAHeapNumber),
-             GetBranchDeoptReason(env, iprofile, branch, arraysize(branch)));
+    const char* deopt_reason =
+        GetBranchDeoptReason(env, iprofile, branch, arraysize(branch));
+    if (deopt_reason != reason(i::DeoptimizeReason::kNotAHeapNumber) &&
+        deopt_reason != reason(i::DeoptimizeReason::kNotASmi)) {
+      FATAL(deopt_reason);
+    }
   }
   {
     const char* branch[] = {"", "opt_function1", "opt_function1"};
     const char* deopt_reason =
         GetBranchDeoptReason(env, iprofile, branch, arraysize(branch));
     if (deopt_reason != reason(i::DeoptimizeReason::kNaN) &&
-        deopt_reason != reason(i::DeoptimizeReason::kLostPrecisionOrNaN)) {
+        deopt_reason != reason(i::DeoptimizeReason::kLostPrecisionOrNaN) &&
+        deopt_reason != reason(i::DeoptimizeReason::kNotASmi)) {
       FATAL(deopt_reason);
     }
   }

@@ -28,10 +28,14 @@ PageIteratorImpl<PAGE_TYPE> PageIteratorImpl<PAGE_TYPE>::operator++(int) {
   return tmp;
 }
 
-NewSpacePageRange::NewSpacePageRange(Address start, Address limit)
-    : range_(Page::FromAddress(start),
-             Page::FromAllocationAreaAddress(limit)->next_page()) {
-  SemiSpace::AssertValidRange(start, limit);
+PageRange::PageRange(Address start, Address limit)
+    : begin_(Page::FromAddress(start)),
+      end_(Page::FromAllocationAreaAddress(limit)->next_page()) {
+#ifdef DEBUG
+  if (begin_->InNewSpace()) {
+    SemiSpace::AssertValidRange(start, limit);
+  }
+#endif  // DEBUG
 }
 
 // -----------------------------------------------------------------------------
@@ -204,8 +208,9 @@ Page* Page::Initialize(Heap* heap, MemoryChunk* chunk, Executability executable,
 }
 
 Page* Page::ConvertNewToOld(Page* old_page) {
-  OldSpace* old_space = old_page->heap()->old_space();
+  DCHECK(!old_page->is_anchor());
   DCHECK(old_page->InNewSpace());
+  OldSpace* old_space = old_page->heap()->old_space();
   old_page->set_owner(old_space);
   old_page->SetFlags(0, ~0);
   old_space->AccountCommitted(old_page->size());
@@ -221,41 +226,56 @@ void Page::InitializeFreeListCategories() {
   }
 }
 
-void MemoryChunk::IncrementLiveBytesFromGC(HeapObject* object, int by) {
-  MemoryChunk::FromAddress(object->address())->IncrementLiveBytes(by);
+template <MarkingMode mode>
+void MemoryChunk::IncrementLiveBytes(HeapObject* object, int by) {
+  MemoryChunk::FromAddress(object->address())->IncrementLiveBytes<mode>(by);
 }
 
+template <MarkingMode mode>
+void MemoryChunk::TraceLiveBytes(intptr_t old_value, intptr_t new_value) {
+  if (!FLAG_trace_live_bytes) return;
+  PrintIsolate(heap()->isolate(),
+               "live-bytes[%p:%s]: %" V8PRIdPTR "-> %" V8PRIdPTR "\n",
+               static_cast<void*>(this),
+               mode == MarkingMode::FULL ? "internal" : "external", old_value,
+               new_value);
+}
+
+template <MarkingMode mode>
 void MemoryChunk::ResetLiveBytes() {
-  if (FLAG_trace_live_bytes) {
-    PrintIsolate(heap()->isolate(), "live-bytes: reset page=%p %d->0\n",
-                 static_cast<void*>(this), live_byte_count_);
+  switch (mode) {
+    case MarkingMode::FULL:
+      TraceLiveBytes(live_byte_count_, 0);
+      live_byte_count_ = 0;
+      break;
+    case MarkingMode::YOUNG_GENERATION:
+      TraceLiveBytes(young_generation_live_byte_count_, 0);
+      young_generation_live_byte_count_ = 0;
+      break;
   }
-  live_byte_count_ = 0;
 }
 
+template <MarkingMode mode>
 void MemoryChunk::IncrementLiveBytes(int by) {
-  if (FLAG_trace_live_bytes) {
-    PrintIsolate(
-        heap()->isolate(), "live-bytes: update page=%p delta=%d %d->%d\n",
-        static_cast<void*>(this), by, live_byte_count_, live_byte_count_ + by);
+  switch (mode) {
+    case MarkingMode::FULL:
+      TraceLiveBytes(live_byte_count_, live_byte_count_ + by);
+      live_byte_count_ += by;
+      DCHECK_GE(live_byte_count_, 0);
+      DCHECK_LE(static_cast<size_t>(live_byte_count_), size_);
+      break;
+    case MarkingMode::YOUNG_GENERATION:
+      TraceLiveBytes(young_generation_live_byte_count_,
+                     young_generation_live_byte_count_ + by);
+      young_generation_live_byte_count_ += by;
+      DCHECK_GE(young_generation_live_byte_count_, 0);
+      DCHECK_LE(static_cast<size_t>(young_generation_live_byte_count_), size_);
+      break;
   }
-  live_byte_count_ += by;
-  DCHECK_GE(live_byte_count_, 0);
-  DCHECK_LE(static_cast<size_t>(live_byte_count_), size_);
-}
-
-void MemoryChunk::IncrementLiveBytesFromMutator(HeapObject* object, int by) {
-  MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
-  if (!chunk->InNewSpace() && !static_cast<Page*>(chunk)->SweepingDone()) {
-    static_cast<PagedSpace*>(chunk->owner())->Allocate(by);
-  }
-  chunk->IncrementLiveBytes(by);
 }
 
 bool PagedSpace::Contains(Address addr) {
-  Page* p = Page::FromAddress(addr);
-  if (!Page::IsValid(p)) return false;
-  return p->owner() == this;
+  return MemoryChunk::FromAnyPointerAddress(heap(), addr)->owner() == this;
 }
 
 bool PagedSpace::Contains(Object* o) {
@@ -288,7 +308,7 @@ MemoryChunk* MemoryChunk::FromAnyPointerAddress(Heap* heap, Address addr) {
   MemoryChunk* chunk = MemoryChunk::FromAddress(addr);
   uintptr_t offset = addr - chunk->address();
   if (offset < MemoryChunk::kHeaderSize || !chunk->HasPageHeader()) {
-    chunk = heap->lo_space()->FindPage(addr);
+    chunk = heap->lo_space()->FindPageThreadSafe(addr);
   }
   return chunk;
 }
@@ -436,11 +456,10 @@ AllocationResult PagedSpace::AllocateRawUnaligned(
     if (object == NULL) {
       object = SlowAllocateRaw(size_in_bytes);
     }
-    if (object != NULL) {
-      if (heap()->incremental_marking()->black_allocation()) {
-        Marking::MarkBlack(ObjectMarking::MarkBitFrom(object));
-        MemoryChunk::IncrementLiveBytesFromGC(object, size_in_bytes);
-      }
+    if (object != NULL && heap()->incremental_marking()->black_allocation()) {
+      Address start = object->address();
+      Address end = object->address() + size_in_bytes;
+      Page::FromAllocationAreaAddress(start)->CreateBlackArea(start, end);
     }
   }
 
@@ -479,12 +498,19 @@ AllocationResult PagedSpace::AllocateRawAligned(int size_in_bytes,
     if (object == NULL) {
       object = SlowAllocateRaw(allocation_size);
     }
-    if (object != NULL && filler_size != 0) {
-      object = heap()->AlignWithFiller(object, size_in_bytes, allocation_size,
-                                       alignment);
-      // Filler objects are initialized, so mark only the aligned object memory
-      // as uninitialized.
-      allocation_size = size_in_bytes;
+    if (object != NULL) {
+      if (heap()->incremental_marking()->black_allocation()) {
+        Address start = object->address();
+        Address end = object->address() + allocation_size;
+        Page::FromAllocationAreaAddress(start)->CreateBlackArea(start, end);
+      }
+      if (filler_size != 0) {
+        object = heap()->AlignWithFiller(object, size_in_bytes, allocation_size,
+                                         alignment);
+        // Filler objects are initialized, so mark only the aligned object
+        // memory as uninitialized.
+        allocation_size = size_in_bytes;
+      }
     }
   }
 
@@ -596,6 +622,17 @@ LargePage* LargePage::Initialize(Heap* heap, MemoryChunk* chunk,
     FATAL("Code page is too large.");
   }
   heap->incremental_marking()->SetOldSpacePageFlags(chunk);
+
+  MSAN_ALLOCATED_UNINITIALIZED_MEMORY(chunk->area_start(), chunk->area_size());
+
+  // Initialize the owner field for each contained page (except the first, which
+  // is initialized by MemoryChunk::Initialize).
+  for (Address addr = chunk->address() + Page::kPageSize + Page::kOwnerOffset;
+       addr < chunk->area_end(); addr += Page::kPageSize) {
+    // Clear out kPageHeaderTag.
+    Memory::Address_at(addr) = 0;
+  }
+
   return static_cast<LargePage*>(chunk);
 }
 

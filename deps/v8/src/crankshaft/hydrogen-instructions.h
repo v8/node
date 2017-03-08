@@ -1944,14 +1944,12 @@ class HDeclareGlobals final : public HUnaryOperation {
  public:
   DECLARE_INSTRUCTION_WITH_CONTEXT_FACTORY_P3(HDeclareGlobals,
                                               Handle<FixedArray>, int,
-                                              Handle<TypeFeedbackVector>);
+                                              Handle<FeedbackVector>);
 
   HValue* context() { return OperandAt(0); }
-  Handle<FixedArray> pairs() const { return pairs_; }
+  Handle<FixedArray> declarations() const { return declarations_; }
   int flags() const { return flags_; }
-  Handle<TypeFeedbackVector> feedback_vector() const {
-    return feedback_vector_;
-  }
+  Handle<FeedbackVector> feedback_vector() const { return feedback_vector_; }
 
   DECLARE_CONCRETE_INSTRUCTION(DeclareGlobals)
 
@@ -1960,18 +1958,18 @@ class HDeclareGlobals final : public HUnaryOperation {
   }
 
  private:
-  HDeclareGlobals(HValue* context, Handle<FixedArray> pairs, int flags,
-                  Handle<TypeFeedbackVector> feedback_vector)
+  HDeclareGlobals(HValue* context, Handle<FixedArray> declarations, int flags,
+                  Handle<FeedbackVector> feedback_vector)
       : HUnaryOperation(context),
-        pairs_(pairs),
+        declarations_(declarations),
         feedback_vector_(feedback_vector),
         flags_(flags) {
     set_representation(Representation::Tagged());
     SetAllSideEffects();
   }
 
-  Handle<FixedArray> pairs_;
-  Handle<TypeFeedbackVector> feedback_vector_;
+  Handle<FixedArray> declarations_;
+  Handle<FeedbackVector> feedback_vector_;
   int flags_;
 };
 
@@ -3088,11 +3086,8 @@ class HConstant final : public HTemplateInstruction<0> {
     return double_value_;
   }
   uint64_t DoubleValueAsBits() const {
-    uint64_t bits;
     DCHECK(HasDoubleValue());
-    STATIC_ASSERT(sizeof(bits) == sizeof(double_value_));
-    std::memcpy(&bits, &double_value_, sizeof(bits));
-    return bits;
+    return bit_cast<uint64_t>(double_value_);
   }
   bool IsTheHole() const {
     if (HasDoubleValue() && DoubleValueAsBits() == kHoleNanInt64) {
@@ -5125,10 +5120,6 @@ class HObjectAccess final {
 
   static HObjectAccess ForElementsPointer() {
     return HObjectAccess(kElementsPointer, JSObject::kElementsOffset);
-  }
-
-  static HObjectAccess ForLiteralsPointer() {
-    return HObjectAccess(kInobject, JSFunction::kLiteralsOffset);
   }
 
   static HObjectAccess ForNextFunctionLinkPointer() {

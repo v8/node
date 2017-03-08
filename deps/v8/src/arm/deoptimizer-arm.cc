@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/assembler-inl.h"
 #include "src/codegen.h"
 #include "src/deoptimizer.h"
 #include "src/full-codegen/full-codegen.h"
+#include "src/objects-inl.h"
 #include "src/register-configuration.h"
 #include "src/safepoint-table.h"
 
@@ -95,7 +97,7 @@ void Deoptimizer::SetPlatformCompiledStubRegisters(
 
 void Deoptimizer::CopyDoubleRegisters(FrameDescription* output_frame) {
   for (int i = 0; i < DwVfpRegister::kMaxNumRegisters; ++i) {
-    double double_value = input_->GetDoubleRegister(i);
+    Float64 double_value = input_->GetDoubleRegister(i);
     output_frame->SetDoubleRegister(i, double_value);
   }
 }

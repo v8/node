@@ -6,3 +6,7 @@ jarin@chromium.org
 mstarzinger@chromium.org
 mtrofin@chromium.org
 titzer@chromium.org
+danno@chromium.org
+
+per-file wasm-*=ahaas@chromium.org
+per-file wasm-*=clemensh@chromium.org

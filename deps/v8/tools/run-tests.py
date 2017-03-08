@@ -65,9 +65,9 @@ ARCH_GUESS = utils.DefaultArch()
 TEST_MAP = {
   # This needs to stay in sync with test/bot_default.isolate.
   "bot_default": [
+    "debugger",
     "mjsunit",
     "cctest",
-    "debugger",
     "inspector",
     "webkit",
     "fuzzer",
@@ -78,9 +78,9 @@ TEST_MAP = {
   ],
   # This needs to stay in sync with test/default.isolate.
   "default": [
+    "debugger",
     "mjsunit",
     "cctest",
-    "debugger",
     "inspector",
     "fuzzer",
     "message",
@@ -90,9 +90,9 @@ TEST_MAP = {
   ],
   # This needs to stay in sync with test/optimize_for_size.isolate.
   "optimize_for_size": [
+    "debugger",
     "mjsunit",
     "cctest",
-    "debugger",
     "inspector",
     "webkit",
     "intl",
@@ -104,16 +104,18 @@ TEST_MAP = {
 
 TIMEOUT_DEFAULT = 60
 
-VARIANTS = ["default", "turbofan", "ignition_staging"]
+# Variants ordered by expected runtime (slowest first).
+VARIANTS = ["ignition_staging", "default", "turbofan"]
 
 MORE_VARIANTS = [
-  "ignition",
   "stress",
   "turbofan_opt",
+  "ignition",
   "asm_wasm",
+  "wasm_traps",
 ]
 
-EXHAUSTIVE_VARIANTS = VARIANTS + MORE_VARIANTS
+EXHAUSTIVE_VARIANTS = MORE_VARIANTS + VARIANTS
 
 VARIANT_ALIASES = {
   # The default for developer workstations.
@@ -126,7 +128,7 @@ VARIANT_ALIASES = {
 
 DEBUG_FLAGS = ["--nohard-abort", "--nodead-code-elimination",
                "--nofold-constants", "--enable-slow-asserts",
-               "--debug-code", "--verify-heap"]
+               "--verify-heap"]
 RELEASE_FLAGS = ["--nohard-abort", "--nodead-code-elimination",
                  "--nofold-constants"]
 
@@ -321,6 +323,8 @@ def BuildOptions():
                     default=False, action="store_true")
   result.add_option("--json-test-results",
                     help="Path to a file for storing json results.")
+  result.add_option("--flakiness-results",
+                    help="Path to a file for storing flakiness json.")
   result.add_option("--rerun-failures-count",
                     help=("Number of times to rerun each failing test case. "
                           "Very slow tests will be rerun only once."),
@@ -402,7 +406,15 @@ def SetupEnvironment(options):
   )
 
   if options.asan:
-    os.environ['ASAN_OPTIONS'] = symbolizer
+    asan_options = [symbolizer]
+    if not utils.GuessOS() == 'macos':
+      # LSAN is not available on mac.
+      asan_options.append('detect_leaks=1')
+      os.environ['LSAN_OPTIONS'] = ":".join([
+        'suppressions=%s' % os.path.join(
+            BASE_DIR, 'tools', 'memory', 'lsan', 'suppressions.txt'),
+      ])
+    os.environ['ASAN_OPTIONS'] = ":".join(asan_options)
 
   if options.sancov_dir:
     assert os.path.exists(options.sancov_dir)
@@ -868,6 +880,9 @@ def Execute(arch, mode, args, options, suites):
     progress_indicator.Register(progress.JsonTestProgressIndicator(
         options.json_test_results, arch, MODES[mode]["execution_mode"],
         ctx.random_seed))
+  if options.flakiness_results:
+    progress_indicator.Register(progress.FlakinessTestProgressIndicator(
+        options.flakiness_results))
 
   run_networked = not options.no_network
   if not run_networked:

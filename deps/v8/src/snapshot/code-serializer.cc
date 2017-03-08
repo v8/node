@@ -7,8 +7,10 @@
 #include <memory>
 
 #include "src/code-stubs.h"
+#include "src/counters.h"
 #include "src/log.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/snapshot/deserializer.h"
 #include "src/snapshot/snapshot.h"
 #include "src/version.h"
@@ -88,7 +90,12 @@ void CodeSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
 #define IC_KIND_CASE(KIND) case Code::KIND:
         IC_KIND_LIST(IC_KIND_CASE)
 #undef IC_KIND_CASE
-        SerializeCodeStub(code_object, how_to_code, where_to_point);
+        if (code_object->builtin_index() == -1) {
+          SerializeCodeStub(code_object, how_to_code, where_to_point);
+        } else {
+          SerializeBuiltin(code_object->builtin_index(), how_to_code,
+                           where_to_point);
+        }
         return;
       case Code::FUNCTION:
         DCHECK(code_object->has_reloc_info_for_serialization());
@@ -104,6 +111,12 @@ void CodeSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
     return SerializeObject(isolate()->heap()->undefined_value(), how_to_code,
                            where_to_point, skip);
   }
+
+  if (obj->IsScript()) {
+    // Wrapper object is a context-dependent JSValue. Reset it here.
+    Script::cast(obj)->set_wrapper(isolate()->heap()->undefined_value());
+  }
+
   // Past this point we should not see any (context-specific) maps anymore.
   CHECK(!obj->IsMap());
   // There should be no references to the global object embedded.
@@ -218,23 +231,33 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
   return scope.CloseAndEscape(result);
 }
 
+WasmCompiledModuleSerializer::WasmCompiledModuleSerializer(
+    Isolate* isolate, uint32_t source_hash, Handle<Context> native_context,
+    Handle<SeqOneByteString> module_bytes)
+    : CodeSerializer(isolate, source_hash) {
+  reference_map()->AddAttachedReference(*isolate->native_context());
+  reference_map()->AddAttachedReference(*module_bytes);
+}
+
 std::unique_ptr<ScriptData> WasmCompiledModuleSerializer::SerializeWasmModule(
     Isolate* isolate, Handle<FixedArray> input) {
   Handle<WasmCompiledModule> compiled_module =
       Handle<WasmCompiledModule>::cast(input);
-  WasmCompiledModuleSerializer wasm_cs(isolate, 0);
-  wasm_cs.reference_map()->AddAttachedReference(*isolate->native_context());
-  wasm_cs.reference_map()->AddAttachedReference(
-      *compiled_module->module_bytes());
+  WasmCompiledModuleSerializer wasm_cs(isolate, 0, isolate->native_context(),
+                                       handle(compiled_module->module_bytes()));
   ScriptData* data = wasm_cs.Serialize(compiled_module);
   return std::unique_ptr<ScriptData>(data);
 }
 
 MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
     Isolate* isolate, ScriptData* data, Vector<const byte> wire_bytes) {
+  MaybeHandle<FixedArray> nothing;
+  if (!wasm::IsWasmCodegenAllowed(isolate, isolate->native_context())) {
+    return nothing;
+  }
   SerializedCodeData::SanityCheckResult sanity_check_result =
       SerializedCodeData::CHECK_SUCCESS;
-  MaybeHandle<FixedArray> nothing;
+
   const SerializedCodeData scd = SerializedCodeData::FromCachedData(
       isolate, data, 0, &sanity_check_result);
 
@@ -262,11 +285,37 @@ MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
 
   MaybeHandle<HeapObject> obj = deserializer.DeserializeObject(isolate);
   if (obj.is_null() || !obj.ToHandleChecked()->IsFixedArray()) return nothing;
-  Handle<WasmCompiledModule> compiled_module =
-      Handle<WasmCompiledModule>::cast(obj.ToHandleChecked());
+  // Cast without type checks, as the module wrapper is not there yet.
+  Handle<WasmCompiledModule> compiled_module(
+      static_cast<WasmCompiledModule*>(*obj.ToHandleChecked()), isolate);
 
-  WasmCompiledModule::RecreateModuleWrapper(isolate, compiled_module);
+  WasmCompiledModule::ReinitializeAfterDeserialization(isolate,
+                                                       compiled_module);
+  DCHECK(WasmCompiledModule::IsWasmCompiledModule(*compiled_module));
   return compiled_module;
+}
+
+void WasmCompiledModuleSerializer::SerializeCodeObject(
+    Code* code_object, HowToCode how_to_code, WhereToPoint where_to_point) {
+  Code::Kind kind = code_object->kind();
+  switch (kind) {
+    case Code::WASM_FUNCTION:
+    case Code::JS_TO_WASM_FUNCTION:
+      // Just serialize the code_object.
+      break;
+    case Code::WASM_TO_JS_FUNCTION:
+      // Serialize the illegal builtin instead. On instantiation of a
+      // deserialized module, these will be replaced again.
+      code_object = *isolate()->builtins()->Illegal();
+      break;
+    default:
+      UNREACHABLE();
+  }
+  SerializeGeneric(code_object, how_to_code, where_to_point);
+}
+
+bool WasmCompiledModuleSerializer::ElideObject(Object* obj) {
+  return obj->IsWeakCell() || obj->IsForeign() || obj->IsBreakPointInfo();
 }
 
 class Checksum {
@@ -338,6 +387,9 @@ SerializedCodeData::SerializedCodeData(const List<byte>* payload,
   SetHeaderValue(kNumCodeStubKeysOffset, num_stub_keys);
   SetHeaderValue(kPayloadLengthOffset, payload->length());
 
+  // Zero out any padding in the header.
+  memset(data_ + kUnalignedHeaderSize, 0, kHeaderSize - kUnalignedHeaderSize);
+
   // Copy reservation chunk sizes.
   CopyBytes(data_ + kHeaderSize, reinterpret_cast<byte*>(reservations.begin()),
             reservation_size);
@@ -346,6 +398,7 @@ SerializedCodeData::SerializedCodeData(const List<byte>* payload,
   CopyBytes(data_ + kHeaderSize + reservation_size,
             reinterpret_cast<byte*>(stub_keys->begin()), stub_keys_size);
 
+  // Zero out any padding before the payload.
   memset(data_ + payload_offset, 0, padded_payload_offset - payload_offset);
 
   // Copy serialized data.
@@ -362,10 +415,14 @@ SerializedCodeData::SanityCheckResult SerializedCodeData::SanityCheck(
   if (this->size_ < kHeaderSize) return INVALID_HEADER;
   uint32_t magic_number = GetMagicNumber();
   if (magic_number != ComputeMagicNumber(isolate)) return MAGIC_NUMBER_MISMATCH;
+  if (GetExtraReferences() > GetExtraReferences(isolate)) {
+    return MAGIC_NUMBER_MISMATCH;
+  }
   uint32_t version_hash = GetHeaderValue(kVersionHashOffset);
   uint32_t source_hash = GetHeaderValue(kSourceHashOffset);
   uint32_t cpu_features = GetHeaderValue(kCpuFeaturesOffset);
   uint32_t flags_hash = GetHeaderValue(kFlagHashOffset);
+  uint32_t payload_length = GetHeaderValue(kPayloadLengthOffset);
   uint32_t c1 = GetHeaderValue(kChecksum1Offset);
   uint32_t c2 = GetHeaderValue(kChecksum2Offset);
   if (version_hash != Version::Hash()) return VERSION_MISMATCH;
@@ -374,6 +431,12 @@ SerializedCodeData::SanityCheckResult SerializedCodeData::SanityCheck(
     return CPU_FEATURES_MISMATCH;
   }
   if (flags_hash != FlagList::Hash()) return FLAGS_MISMATCH;
+  uint32_t max_payload_length =
+      this->size_ -
+      POINTER_SIZE_ALIGN(kHeaderSize +
+                         GetHeaderValue(kNumReservationsOffset) * kInt32Size +
+                         GetHeaderValue(kNumCodeStubKeysOffset) * kInt32Size);
+  if (payload_length > max_payload_length) return LENGTH_MISMATCH;
   if (!Checksum(DataWithoutHeader()).Check(c1, c2)) return CHECKSUM_MISMATCH;
   return CHECK_SUCCESS;
 }

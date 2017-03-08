@@ -7,6 +7,7 @@
 #include "src/crankshaft/ia32/lithium-codegen-ia32.h"
 
 #include "src/base/bits.h"
+#include "src/builtins/builtins-constructor.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
 #include "src/codegen.h"
@@ -176,15 +177,18 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
       __ CallRuntime(Runtime::kNewScriptContext);
       deopt_mode = Safepoint::kLazyDeopt;
     } else {
-      if (slots <= FastNewFunctionContextStub::kMaximumSlots) {
-        FastNewFunctionContextStub stub(isolate());
+      if (slots <=
+          ConstructorBuiltinsAssembler::MaximumFunctionContextSlots()) {
+        Callable callable = CodeFactory::FastNewFunctionContext(
+            isolate(), info()->scope()->scope_type());
         __ mov(FastNewFunctionContextDescriptor::SlotsRegister(),
                Immediate(slots));
-        __ CallStub(&stub);
-        // Result of FastNewFunctionContextStub is always in new space.
+        __ Call(callable.code(), RelocInfo::CODE_TARGET);
+        // Result of the FastNewFunctionContext builtin is always in new space.
         need_write_barrier = false;
       } else {
-        __ push(edi);
+        __ Push(edi);
+        __ Push(Smi::FromInt(info()->scope()->scope_type()));
         __ CallRuntime(Runtime::kNewFunctionContext);
       }
     }
@@ -305,7 +309,7 @@ bool LCodeGen::GenerateJumpTable() {
     // building, install a special marker there instead.
     DCHECK(info()->IsStub());
     __ mov(MemOperand(esp, 2 * kPointerSize),
-           Immediate(Smi::FromInt(StackFrame::STUB)));
+           Immediate(StackFrame::TypeToMarker(StackFrame::STUB)));
 
     /* stack layout
        3: old ebp
@@ -342,7 +346,7 @@ bool LCodeGen::GenerateDeferredCode() {
         frame_is_built_ = true;
         // Build the frame in such a way that esi isn't trashed.
         __ push(ebp);  // Caller's frame pointer.
-        __ push(Immediate(Smi::FromInt(StackFrame::STUB)));
+        __ push(Immediate(StackFrame::TypeToMarker(StackFrame::STUB)));
         __ lea(ebp, Operand(esp, TypedFrameConstants::kFixedFrameSizeFromFp));
         Comment(";;; Deferred code");
       }
@@ -1923,12 +1927,6 @@ void LCodeGen::DoBranch(LBranch* instr) {
         __ j(equal, instr->TrueLabel(chunk_));
       }
 
-      if (expected & ToBooleanHint::kSimdValue) {
-        // SIMD value -> true.
-        __ CmpInstanceType(map, SIMD128_VALUE_TYPE);
-        __ j(equal, instr->TrueLabel(chunk_));
-      }
-
       if (expected & ToBooleanHint::kHeapNumber) {
         // heap number -> false iff +0, -0, or NaN.
         Label not_heap_number;
@@ -2692,7 +2690,7 @@ void LCodeGen::DoArgumentsElements(LArgumentsElements* instr) {
     __ mov(result,
            Operand(result, CommonFrameConstants::kContextOrFrameTypeOffset));
     __ cmp(Operand(result),
-           Immediate(Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR)));
+           Immediate(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
     __ j(equal, &adapted, Label::kNear);
 
     // No arguments adaptor frame.
@@ -2762,9 +2760,9 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
 
   // Normal function. Replace undefined or null with global receiver.
   __ cmp(receiver, factory()->null_value());
-  __ j(equal, &global_object, Label::kNear);
+  __ j(equal, &global_object, dist);
   __ cmp(receiver, factory()->undefined_value());
-  __ j(equal, &global_object, Label::kNear);
+  __ j(equal, &global_object, dist);
 
   // The receiver should be a JS object.
   __ test(receiver, Immediate(kSmiTagMask));
@@ -2772,7 +2770,7 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
   __ CmpObjectType(receiver, FIRST_JS_RECEIVER_TYPE, scratch);
   DeoptimizeIf(below, instr, DeoptimizeReason::kNotAJavaScriptObject);
 
-  __ jmp(&receiver_ok, Label::kNear);
+  __ jmp(&receiver_ok, dist);
   __ bind(&global_object);
   __ mov(receiver, FieldOperand(function, JSFunction::kContextOffset));
   __ mov(receiver, ContextOperand(receiver, Context::NATIVE_CONTEXT_INDEX));
@@ -2869,7 +2867,7 @@ void LCodeGen::DoContext(LContext* instr) {
 
 void LCodeGen::DoDeclareGlobals(LDeclareGlobals* instr) {
   DCHECK(ToRegister(instr->context()).is(esi));
-  __ push(Immediate(instr->hydrogen()->pairs()));
+  __ push(Immediate(instr->hydrogen()->declarations()));
   __ push(Immediate(Smi::FromInt(instr->hydrogen()->flags())));
   __ push(Immediate(instr->hydrogen()->feedback_vector()));
   CallRuntime(Runtime::kDeclareGlobals, instr);
@@ -3394,7 +3392,7 @@ void LCodeGen::PrepareForTailCall(const ParameterCount& actual,
   Label no_arguments_adaptor, formal_parameter_count_loaded;
   __ mov(scratch2, Operand(ebp, StandardFrameConstants::kCallerFPOffset));
   __ cmp(Operand(scratch2, StandardFrameConstants::kContextOffset),
-         Immediate(Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR)));
+         Immediate(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
   __ j(not_equal, &no_arguments_adaptor, Label::kNear);
 
   // Drop current frame and load arguments count from arguments adaptor frame.
@@ -3855,13 +3853,18 @@ void LCodeGen::DoDeferredMaybeGrowElements(LMaybeGrowElements* instr) {
       if (Smi::IsValid(int_key)) {
         __ mov(ebx, Immediate(Smi::FromInt(int_key)));
       } else {
-        // We should never get here at runtime because there is a smi check on
-        // the key before this point.
-        __ int3();
+        Abort(kArrayIndexConstantValueTooBig);
       }
     } else {
+      Label is_smi;
       __ Move(ebx, ToRegister(key));
       __ SmiTag(ebx);
+      // Deopt if the key is outside Smi range. The stub expects Smi and would
+      // bump the elements into dictionary mode (and trigger a deopt) anyways.
+      __ j(no_overflow, &is_smi);
+      __ PopSafepointRegisters();
+      DeoptimizeIf(no_condition, instr, DeoptimizeReason::kOverflow);
+      __ bind(&is_smi);
     }
 
     GrowArrayElementsStub stub(isolate(), instr->hydrogen()->kind());
@@ -4539,6 +4542,15 @@ void LCodeGen::DoCheckValue(LCheckValue* instr) {
 
 
 void LCodeGen::DoDeferredInstanceMigration(LCheckMaps* instr, Register object) {
+  Label deopt, done;
+  // If the map is not deprecated the migration attempt does not make sense.
+  __ push(object);
+  __ mov(object, FieldOperand(object, HeapObject::kMapOffset));
+  __ test(FieldOperand(object, Map::kBitField3Offset),
+          Immediate(Map::Deprecated::kMask));
+  __ pop(object);
+  __ j(zero, &deopt);
+
   {
     PushSafepointRegistersScope scope(this);
     __ push(object);
@@ -4549,7 +4561,12 @@ void LCodeGen::DoDeferredInstanceMigration(LCheckMaps* instr, Register object) {
 
     __ test(eax, Immediate(kSmiTagMask));
   }
-  DeoptimizeIf(zero, instr, DeoptimizeReason::kInstanceMigrationFailed);
+  __ j(not_zero, &done);
+
+  __ bind(&deopt);
+  DeoptimizeIf(no_condition, instr, DeoptimizeReason::kInstanceMigrationFailed);
+
+  __ bind(&done);
 }
 
 
@@ -4890,18 +4907,6 @@ Condition LCodeGen::EmitTypeofIs(LTypeofIsAndBranch* instr, Register input) {
     __ test_b(FieldOperand(input, Map::kBitFieldOffset),
               Immediate((1 << Map::kIsCallable) | (1 << Map::kIsUndetectable)));
     final_branch_condition = zero;
-
-// clang-format off
-#define SIMD128_TYPE(TYPE, Type, type, lane_count, lane_type)         \
-  } else if (String::Equals(type_name, factory()->type##_string())) { \
-    __ JumpIfSmi(input, false_label, false_distance);                 \
-    __ cmp(FieldOperand(input, HeapObject::kMapOffset),               \
-           factory()->type##_map());                                  \
-    final_branch_condition = equal;
-  SIMD128_TYPES(SIMD128_TYPE)
-#undef SIMD128_TYPE
-    // clang-format on
-
   } else {
     __ jmp(false_label, false_distance);
   }

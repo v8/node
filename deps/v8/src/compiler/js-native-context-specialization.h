@@ -8,7 +8,7 @@
 #include "src/base/flags.h"
 #include "src/compiler/graph-reducer.h"
 #include "src/deoptimize-reason.h"
-#include "src/type-feedback-vector.h"
+#include "src/feedback-vector.h"
 
 namespace v8 {
 namespace internal {
@@ -53,12 +53,19 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   Reduction Reduce(Node* node) final;
 
  private:
+  Reduction ReduceJSAdd(Node* node);
+  Reduction ReduceJSGetSuperConstructor(Node* node);
   Reduction ReduceJSInstanceOf(Node* node);
+  Reduction ReduceJSOrdinaryHasInstance(Node* node);
   Reduction ReduceJSLoadContext(Node* node);
+  Reduction ReduceJSLoadGlobal(Node* node);
+  Reduction ReduceJSStoreGlobal(Node* node);
   Reduction ReduceJSLoadNamed(Node* node);
   Reduction ReduceJSStoreNamed(Node* node);
   Reduction ReduceJSLoadProperty(Node* node);
   Reduction ReduceJSStoreProperty(Node* node);
+  Reduction ReduceJSStoreNamedOwn(Node* node);
+  Reduction ReduceJSStoreDataPropertyInLiteral(Node* node);
 
   Reduction ReduceElementAccess(Node* node, Node* index, Node* value,
                                 MapHandleList const& receiver_maps,
@@ -79,8 +86,11 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                               MapHandleList const& receiver_maps,
                               Handle<Name> name, AccessMode access_mode,
                               LanguageMode language_mode,
-                              Handle<TypeFeedbackVector> vector,
-                              FeedbackVectorSlot slot, Node* index = nullptr);
+                              Handle<FeedbackVector> vector, FeedbackSlot slot,
+                              Node* index = nullptr);
+  Reduction ReduceGlobalAccess(Node* node, Node* receiver, Node* value,
+                               Handle<Name> name, AccessMode access_mode,
+                               Node* index = nullptr);
 
   Reduction ReduceSoftDeoptimize(Node* node, DeoptimizeReason reason);
 
@@ -105,8 +115,8 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
       Node* receiver, Node* value, Node* context, Node* frame_state,
       Node* effect, Node* control, Handle<Name> name,
       PropertyAccessInfo const& access_info, AccessMode access_mode,
-      LanguageMode language_mode, Handle<TypeFeedbackVector> vector,
-      FeedbackVectorSlot slot);
+      LanguageMode language_mode, Handle<FeedbackVector> vector,
+      FeedbackSlot slot);
 
   // Construct the appropriate subgraph for element access.
   ValueEffectControl BuildElementAccess(Node* receiver, Node* index,
@@ -115,6 +125,9 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                                         ElementAccessInfo const& access_info,
                                         AccessMode access_mode,
                                         KeyedAccessStoreMode store_mode);
+
+  // Construct an appropriate heap object check.
+  Node* BuildCheckHeapObject(Node* receiver, Node** effect, Node* control);
 
   // Construct an appropriate map check.
   Node* BuildCheckMaps(Node* receiver, Node* effect, Node* control,
@@ -136,19 +149,26 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                            FeedbackNexus const& nexus,
                            MapHandleList* receiver_maps);
 
-  // Try to infer a map for the given {receiver} at the current {effect}.
-  // If a map is returned then you can be sure that the {receiver} definitely
-  // has the returned map at this point in the program (identified by {effect}).
-  MaybeHandle<Map> InferReceiverMap(Node* receiver, Node* effect);
+  // Try to infer maps for the given {receiver} at the current {effect}.
+  // If maps are returned then you can be sure that the {receiver} definitely
+  // has one of the returned maps at this point in the program (identified
+  // by {effect}).
+  bool InferReceiverMaps(Node* receiver, Node* effect,
+                         MapHandleList* receiver_maps);
   // Try to infer a root map for the {receiver} independent of the current
   // program location.
   MaybeHandle<Map> InferReceiverRootMap(Node* receiver);
 
   ValueEffectControl InlineApiCall(
       Node* receiver, Node* context, Node* target, Node* frame_state,
-      ZoneVector<Node*>* stack_parameters, Node* effect, Node* control,
+      Node* parameter, Node* effect, Node* control,
       Handle<SharedFunctionInfo> shared_info,
       Handle<FunctionTemplateInfo> function_template_info);
+
+  // Script context lookup logic.
+  struct ScriptContextTableLookupResult;
+  bool LookupInScriptContextTable(Handle<Name> name,
+                                  ScriptContextTableLookupResult* result);
 
   Graph* graph() const;
   JSGraph* jsgraph() const { return jsgraph_; }
@@ -159,12 +179,16 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   SimplifiedOperatorBuilder* simplified() const;
   MachineOperatorBuilder* machine() const;
   Flags flags() const { return flags_; }
+  Handle<JSGlobalObject> global_object() const { return global_object_; }
+  Handle<JSGlobalProxy> global_proxy() const { return global_proxy_; }
   Handle<Context> native_context() const { return native_context_; }
   CompilationDependencies* dependencies() const { return dependencies_; }
   Zone* zone() const { return zone_; }
 
   JSGraph* const jsgraph_;
   Flags const flags_;
+  Handle<JSGlobalObject> global_object_;
+  Handle<JSGlobalProxy> global_proxy_;
   Handle<Context> native_context_;
   CompilationDependencies* const dependencies_;
   Zone* const zone_;

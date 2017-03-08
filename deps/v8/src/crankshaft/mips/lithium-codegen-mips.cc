@@ -28,6 +28,7 @@
 #include "src/crankshaft/mips/lithium-codegen-mips.h"
 
 #include "src/base/bits.h"
+#include "src/builtins/builtins-constructor.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
 #include "src/crankshaft/hydrogen-osr.h"
@@ -202,15 +203,18 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
       __ CallRuntime(Runtime::kNewScriptContext);
       deopt_mode = Safepoint::kLazyDeopt;
     } else {
-      if (slots <= FastNewFunctionContextStub::kMaximumSlots) {
-        FastNewFunctionContextStub stub(isolate());
+      if (slots <=
+          ConstructorBuiltinsAssembler::MaximumFunctionContextSlots()) {
+        Callable callable = CodeFactory::FastNewFunctionContext(
+            isolate(), info()->scope()->scope_type());
         __ li(FastNewFunctionContextDescriptor::SlotsRegister(),
               Operand(slots));
-        __ CallStub(&stub);
-        // Result of FastNewFunctionContextStub is always in new space.
+        __ Call(callable.code(), RelocInfo::CODE_TARGET);
+        // Result of the FastNewFunctionContext builtin is always in new space.
         need_write_barrier = false;
       } else {
         __ push(a1);
+        __ Push(Smi::FromInt(info()->scope()->scope_type()));
         __ CallRuntime(Runtime::kNewFunctionContext);
       }
     }
@@ -299,7 +303,7 @@ bool LCodeGen::GenerateDeferredCode() {
         DCHECK(!frame_is_built_);
         DCHECK(info()->IsStub());
         frame_is_built_ = true;
-        __ li(scratch0(), Operand(Smi::FromInt(StackFrame::STUB)));
+        __ li(scratch0(), Operand(StackFrame::TypeToMarker(StackFrame::STUB)));
         __ PushCommonFrame(scratch0());
         Comment(";;; Deferred code");
       }
@@ -358,7 +362,7 @@ bool LCodeGen::GenerateJumpTable() {
       // This variant of deopt can only be used with stubs. Since we don't
       // have a function pointer to install in the stack frame that we're
       // building, install a special marker there instead.
-      __ li(at, Operand(Smi::FromInt(StackFrame::STUB)));
+      __ li(at, Operand(StackFrame::TypeToMarker(StackFrame::STUB)));
       __ push(at);
       DCHECK(info()->IsStub());
     }
@@ -1764,18 +1768,18 @@ void LCodeGen::DoMathMinMax(LMathMinMax* instr) {
     FPURegister left_reg = ToDoubleRegister(left);
     FPURegister right_reg = ToDoubleRegister(right);
     FPURegister result_reg = ToDoubleRegister(instr->result());
+
     Label nan, done;
     if (operation == HMathMinMax::kMathMax) {
-      __ MaxNaNCheck_d(result_reg, left_reg, right_reg, &nan);
+      __ Float64Max(result_reg, left_reg, right_reg, &nan);
     } else {
       DCHECK(operation == HMathMinMax::kMathMin);
-      __ MinNaNCheck_d(result_reg, left_reg, right_reg, &nan);
+      __ Float64Min(result_reg, left_reg, right_reg, &nan);
     }
     __ Branch(&done);
 
     __ bind(&nan);
-    __ LoadRoot(scratch, Heap::kNanValueRootIndex);
-    __ ldc1(result_reg, FieldMemOperand(scratch, HeapNumber::kValueOffset));
+    __ add_d(result_reg, left_reg, right_reg);
 
     __ bind(&done);
   }
@@ -2019,14 +2023,6 @@ void LCodeGen::DoBranch(LBranch* instr) {
         const Register scratch = scratch1();
         __ lbu(scratch, FieldMemOperand(map, Map::kInstanceTypeOffset));
         __ Branch(instr->TrueLabel(chunk_), eq, scratch, Operand(SYMBOL_TYPE));
-      }
-
-      if (expected & ToBooleanHint::kSimdValue) {
-        // SIMD value -> true.
-        const Register scratch = scratch1();
-        __ lbu(scratch, FieldMemOperand(map, Map::kInstanceTypeOffset));
-        __ Branch(instr->TrueLabel(chunk_), eq, scratch,
-                  Operand(SIMD128_VALUE_TYPE));
       }
 
       if (expected & ToBooleanHint::kHeapNumber) {
@@ -2799,7 +2795,7 @@ void LCodeGen::DoLoadKeyedFixedArray(LLoadKeyed* instr) {
       // protector cell contains (Smi) Isolate::kProtectorValid. Otherwise
       // it needs to bail out.
       __ LoadRoot(result, Heap::kArrayProtectorRootIndex);
-      __ lw(result, FieldMemOperand(result, Cell::kValueOffset));
+      __ lw(result, FieldMemOperand(result, PropertyCell::kValueOffset));
       DeoptimizeIf(ne, instr, DeoptimizeReason::kHole, result,
                    Operand(Smi::FromInt(Isolate::kProtectorValid)));
     }
@@ -2870,7 +2866,8 @@ void LCodeGen::DoArgumentsElements(LArgumentsElements* instr) {
     __ lw(scratch, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
     __ lw(result,
           MemOperand(scratch, CommonFrameConstants::kContextOrFrameTypeOffset));
-    __ Xor(temp, result, Operand(Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR)));
+    __ Xor(temp, result,
+           Operand(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
 
     // Result is the frame pointer for the frame if not adapted and for the real
     // frame below the adaptor frame if adapted.
@@ -3058,7 +3055,7 @@ void LCodeGen::DoContext(LContext* instr) {
 
 void LCodeGen::DoDeclareGlobals(LDeclareGlobals* instr) {
   DCHECK(ToRegister(instr->context()).is(cp));
-  __ li(scratch0(), instr->hydrogen()->pairs());
+  __ li(scratch0(), instr->hydrogen()->declarations());
   __ li(scratch1(), Operand(Smi::FromInt(instr->hydrogen()->flags())));
   __ Push(scratch0(), scratch1());
   __ li(scratch0(), instr->hydrogen()->feedback_vector());
@@ -3482,7 +3479,7 @@ void LCodeGen::PrepareForTailCall(const ParameterCount& actual,
   __ lw(scratch2, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
   __ lw(scratch3, MemOperand(scratch2, StandardFrameConstants::kContextOffset));
   __ Branch(&no_arguments_adaptor, ne, scratch3,
-            Operand(Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR)));
+            Operand(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
 
   // Drop current frame and load arguments count from arguments adaptor frame.
   __ mov(fp, scratch2);
@@ -4016,13 +4013,19 @@ void LCodeGen::DoDeferredMaybeGrowElements(LMaybeGrowElements* instr) {
       if (Smi::IsValid(int_key)) {
         __ li(a3, Operand(Smi::FromInt(int_key)));
       } else {
-        // We should never get here at runtime because there is a smi check on
-        // the key before this point.
-        __ stop("expected smi");
+        Abort(kArrayIndexConstantValueTooBig);
       }
     } else {
-      __ mov(a3, ToRegister(key));
-      __ SmiTag(a3);
+      Label is_smi;
+      __ SmiTagCheckOverflow(a3, ToRegister(key), at);
+      // Deopt if the key is outside Smi range. The stub expects Smi and would
+      // bump the elements into dictionary mode (and trigger a deopt) anyways.
+      __ BranchOnNoOverflow(&is_smi, at);
+      RestoreRegistersStateStub stub(isolate());
+      __ push(ra);
+      __ CallStub(&stub);
+      DeoptimizeIf(al, instr, DeoptimizeReason::kOverflow);
+      __ bind(&is_smi);
     }
 
     GrowArrayElementsStub stub(isolate(), instr->hydrogen()->kind());
@@ -4758,6 +4761,13 @@ void LCodeGen::DoCheckValue(LCheckValue* instr) {
 
 
 void LCodeGen::DoDeferredInstanceMigration(LCheckMaps* instr, Register object) {
+  Label deopt, done;
+  // If the map is not deprecated the migration attempt does not make sense.
+  __ lw(scratch0(), FieldMemOperand(object, HeapObject::kMapOffset));
+  __ lw(scratch0(), FieldMemOperand(scratch0(), Map::kBitField3Offset));
+  __ And(at, scratch0(), Operand(Map::Deprecated::kMask));
+  __ Branch(&deopt, eq, at, Operand(zero_reg));
+
   {
     PushSafepointRegistersScope scope(this);
     __ push(object);
@@ -4768,8 +4778,15 @@ void LCodeGen::DoDeferredInstanceMigration(LCheckMaps* instr, Register object) {
     __ StoreToSafepointRegisterSlot(v0, scratch0());
   }
   __ SmiTst(scratch0(), at);
-  DeoptimizeIf(eq, instr, DeoptimizeReason::kInstanceMigrationFailed, at,
+  __ Branch(&done, ne, at, Operand(zero_reg));
+
+  __ bind(&deopt);
+  // In case of "al" condition the operands are not used so just pass zero_reg
+  // there.
+  DeoptimizeIf(al, instr, DeoptimizeReason::kInstanceMigrationFailed, zero_reg,
                Operand(zero_reg));
+
+  __ bind(&done);
 }
 
 
@@ -5145,19 +5162,6 @@ Condition LCodeGen::EmitTypeofIs(Label* true_label,
     *cmp1 = at;
     *cmp2 = Operand(zero_reg);
     final_branch_condition = eq;
-
-// clang-format off
-#define SIMD128_TYPE(TYPE, Type, type, lane_count, lane_type)        \
-  } else if (String::Equals(type_name, factory->type##_string())) {  \
-    __ JumpIfSmi(input, false_label);                                \
-    __ lw(input, FieldMemOperand(input, HeapObject::kMapOffset));    \
-    __ LoadRoot(at, Heap::k##Type##MapRootIndex);                    \
-    *cmp1 = input;                                                   \
-    *cmp2 = Operand(at);                                             \
-    final_branch_condition = eq;
-  SIMD128_TYPES(SIMD128_TYPE)
-#undef SIMD128_TYPE
-    // clang-format on
 
   } else {
     *cmp1 = at;

@@ -21,12 +21,17 @@ namespace internal {
 
 RUNTIME_FUNCTION(Runtime_InterpreterNewClosure) {
   HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
+  DCHECK_EQ(4, args.length());
   CONVERT_ARG_HANDLE_CHECKED(SharedFunctionInfo, shared, 0);
-  CONVERT_SMI_ARG_CHECKED(pretenured_flag, 1);
+  CONVERT_ARG_HANDLE_CHECKED(FeedbackVector, vector, 1);
+  CONVERT_SMI_ARG_CHECKED(index, 2);
+  CONVERT_SMI_ARG_CHECKED(pretenured_flag, 3);
   Handle<Context> context(isolate->context(), isolate);
+  FeedbackSlot slot = FeedbackVector::ToSlot(index);
+  Handle<Cell> vector_cell(Cell::cast(vector->Get(slot)), isolate);
   return *isolate->factory()->NewFunctionFromSharedFunctionInfo(
-      shared, context, static_cast<PretenureFlag>(pretenured_flag));
+      shared, context, vector_cell,
+      static_cast<PretenureFlag>(pretenured_flag));
 }
 
 namespace {
@@ -152,22 +157,6 @@ RUNTIME_FUNCTION(Runtime_InterpreterTraceBytecodeExit) {
     PrintRegisters(os, false, bytecode_iterator, accumulator);
     os << std::flush;
   }
-  return isolate->heap()->undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_InterpreterClearPendingMessage) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(0, args.length());
-  Object* message = isolate->thread_local_top()->pending_message_obj_;
-  isolate->clear_pending_message();
-  return message;
-}
-
-RUNTIME_FUNCTION(Runtime_InterpreterSetPendingMessage) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(Object, message, 0);
-  isolate->thread_local_top()->pending_message_obj_ = *message;
   return isolate->heap()->undefined_value();
 }
 

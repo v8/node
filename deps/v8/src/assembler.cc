@@ -35,8 +35,11 @@
 #include "src/assembler.h"
 
 #include <math.h>
+#include <string.h>
 #include <cmath>
+
 #include "src/api.h"
+#include "src/assembler-inl.h"
 #include "src/base/cpu.h"
 #include "src/base/functional.h"
 #include "src/base/ieee754.h"
@@ -61,28 +64,6 @@
 #include "src/simulator.h"  // For flushing instruction cache.
 #include "src/snapshot/serializer-common.h"
 #include "src/wasm/wasm-external-refs.h"
-
-#if V8_TARGET_ARCH_IA32
-#include "src/ia32/assembler-ia32-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_X64
-#include "src/x64/assembler-x64-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_ARM64
-#include "src/arm64/assembler-arm64-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_ARM
-#include "src/arm/assembler-arm-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_PPC
-#include "src/ppc/assembler-ppc-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_MIPS
-#include "src/mips/assembler-mips-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_MIPS64
-#include "src/mips64/assembler-mips64-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_S390
-#include "src/s390/assembler-s390-inl.h"  // NOLINT
-#elif V8_TARGET_ARCH_X87
-#include "src/x87/assembler-x87-inl.h"  // NOLINT
-#else
-#error "Unknown architecture."
-#endif
 
 // Include native regexp-macro-assembler.
 #ifndef V8_INTERPRETED_REGEXP
@@ -254,17 +235,6 @@ unsigned CpuFeatures::icache_line_size_ = 0;
 unsigned CpuFeatures::dcache_line_size_ = 0;
 
 // -----------------------------------------------------------------------------
-// Implementation of Label
-
-int Label::pos() const {
-  if (pos_ < 0) return -pos_ - 1;
-  if (pos_ > 0) return  pos_ - 1;
-  UNREACHABLE();
-  return 0;
-}
-
-
-// -----------------------------------------------------------------------------
 // Implementation of RelocInfoWriter and RelocIterator
 //
 // Relocation information is written backwards in memory, from high addresses
@@ -338,44 +308,41 @@ const int kCodeWithIdTag = 0;
 const int kDeoptReasonTag = 1;
 
 void RelocInfo::update_wasm_memory_reference(
-    Address old_base, Address new_base, uint32_t old_size, uint32_t new_size,
-    ICacheFlushMode icache_flush_mode) {
-  DCHECK(IsWasmMemoryReference(rmode_) || IsWasmMemorySizeReference(rmode_));
-  if (IsWasmMemoryReference(rmode_)) {
-    Address updated_reference;
-    DCHECK_GE(wasm_memory_reference(), old_base);
-    updated_reference = new_base + (wasm_memory_reference() - old_base);
-    // The reference is not checked here but at runtime. Validity of references
-    // may change over time.
-    unchecked_update_wasm_memory_reference(updated_reference,
-                                           icache_flush_mode);
-  } else if (IsWasmMemorySizeReference(rmode_)) {
-    uint32_t current_size_reference = wasm_memory_size_reference();
-    uint32_t updated_size_reference =
-        new_size + (current_size_reference - old_size);
-    unchecked_update_wasm_memory_size(updated_size_reference,
-                                      icache_flush_mode);
-  } else {
-    UNREACHABLE();
-  }
-  if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
-    Assembler::FlushICache(isolate_, pc_, sizeof(int64_t));
-  }
+    Address old_base, Address new_base, ICacheFlushMode icache_flush_mode) {
+  DCHECK(IsWasmMemoryReference(rmode_));
+  DCHECK_GE(wasm_memory_reference(), old_base);
+  Address updated_reference = new_base + (wasm_memory_reference() - old_base);
+  // The reference is not checked here but at runtime. Validity of references
+  // may change over time.
+  unchecked_update_wasm_memory_reference(updated_reference, icache_flush_mode);
+}
+
+void RelocInfo::update_wasm_memory_size(uint32_t old_size, uint32_t new_size,
+                                        ICacheFlushMode icache_flush_mode) {
+  DCHECK(IsWasmMemorySizeReference(rmode_));
+  uint32_t current_size_reference = wasm_memory_size_reference();
+  uint32_t updated_size_reference =
+      new_size + (current_size_reference - old_size);
+  unchecked_update_wasm_size(updated_size_reference, icache_flush_mode);
 }
 
 void RelocInfo::update_wasm_global_reference(
     Address old_base, Address new_base, ICacheFlushMode icache_flush_mode) {
   DCHECK(IsWasmGlobalReference(rmode_));
   Address updated_reference;
-  DCHECK(reinterpret_cast<uintptr_t>(old_base) <=
-         reinterpret_cast<uintptr_t>(wasm_global_reference()));
+  DCHECK_LE(old_base, wasm_global_reference());
   updated_reference = new_base + (wasm_global_reference() - old_base);
-  DCHECK(reinterpret_cast<uintptr_t>(new_base) <=
-         reinterpret_cast<uintptr_t>(updated_reference));
+  DCHECK_LE(new_base, updated_reference);
   unchecked_update_wasm_memory_reference(updated_reference, icache_flush_mode);
-  if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
-    Assembler::FlushICache(isolate_, pc_, sizeof(int32_t));
-  }
+}
+
+void RelocInfo::update_wasm_function_table_size_reference(
+    uint32_t old_size, uint32_t new_size, ICacheFlushMode icache_flush_mode) {
+  DCHECK(IsWasmFunctionTableSizeReference(rmode_));
+  uint32_t current_size_reference = wasm_function_table_size_reference();
+  uint32_t updated_size_reference =
+      new_size + (current_size_reference - old_size);
+  unchecked_update_wasm_size(updated_size_reference, icache_flush_mode);
 }
 
 void RelocInfo::set_target_address(Address target,
@@ -496,7 +463,8 @@ void RelocInfoWriter::Write(const RelocInfo* rinfo) {
       WriteData(rinfo->data());
     } else if (RelocInfo::IsConstPool(rmode) ||
                RelocInfo::IsVeneerPool(rmode) || RelocInfo::IsDeoptId(rmode) ||
-               RelocInfo::IsDeoptPosition(rmode)) {
+               RelocInfo::IsDeoptPosition(rmode) ||
+               RelocInfo::IsWasmProtectedLanding(rmode)) {
       WriteIntData(static_cast<int>(rinfo->data()));
     }
   }
@@ -645,7 +613,8 @@ void RelocIterator::next() {
         } else if (RelocInfo::IsConstPool(rmode) ||
                    RelocInfo::IsVeneerPool(rmode) ||
                    RelocInfo::IsDeoptId(rmode) ||
-                   RelocInfo::IsDeoptPosition(rmode)) {
+                   RelocInfo::IsDeoptPosition(rmode) ||
+                   RelocInfo::IsWasmProtectedLanding(rmode)) {
           if (SetMode(rmode)) {
             AdvanceReadInt();
             return;
@@ -742,8 +711,6 @@ const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
       return "no reloc 64";
     case EMBEDDED_OBJECT:
       return "embedded object";
-    case DEBUGGER_STATEMENT:
-      return "debugger statement";
     case CODE_TARGET:
       return "code target";
     case CODE_TARGET_WITH_ID:
@@ -782,14 +749,16 @@ const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
       return "debug break slot at tail call";
     case CODE_AGE_SEQUENCE:
       return "code age sequence";
-    case GENERATOR_CONTINUATION:
-      return "generator continuation";
     case WASM_MEMORY_REFERENCE:
       return "wasm memory reference";
     case WASM_MEMORY_SIZE_REFERENCE:
       return "wasm memory size reference";
     case WASM_GLOBAL_REFERENCE:
       return "wasm global value reference";
+    case WASM_FUNCTION_TABLE_SIZE_REFERENCE:
+      return "wasm function table size reference";
+    case WASM_PROTECTED_INSTRUCTION_LANDING:
+      return "wasm protected instruction landing";
     case NUMBER_OF_MODES:
     case PC_JUMP:
       UNREACHABLE();
@@ -849,7 +818,6 @@ void RelocInfo::Verify(Isolate* isolate) {
     case CELL:
       Object::VerifyPointer(target_cell());
       break;
-    case DEBUGGER_STATEMENT:
     case CODE_TARGET_WITH_ID:
     case CODE_TARGET: {
       // convert inline target address to code object
@@ -884,10 +852,12 @@ void RelocInfo::Verify(Isolate* isolate) {
     case DEBUG_BREAK_SLOT_AT_RETURN:
     case DEBUG_BREAK_SLOT_AT_CALL:
     case DEBUG_BREAK_SLOT_AT_TAIL_CALL:
-    case GENERATOR_CONTINUATION:
     case WASM_MEMORY_REFERENCE:
     case WASM_MEMORY_SIZE_REFERENCE:
     case WASM_GLOBAL_REFERENCE:
+    case WASM_FUNCTION_TABLE_SIZE_REFERENCE:
+    case WASM_PROTECTED_INSTRUCTION_LANDING:
+    // TODO(eholk): make sure the protected instruction is in range.
     case NONE32:
     case NONE64:
       break;
@@ -1202,6 +1172,12 @@ static void f64_mod_wrapper(double* param0, double* param1) {
 ExternalReference ExternalReference::f64_mod_wrapper_function(
     Isolate* isolate) {
   return ExternalReference(Redirect(isolate, FUNCTION_ADDR(f64_mod_wrapper)));
+}
+
+ExternalReference ExternalReference::wasm_call_trap_callback_for_testing(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(wasm::call_trap_callback_for_testing)));
 }
 
 ExternalReference ExternalReference::log_enter_external_function(
@@ -1548,6 +1524,22 @@ ExternalReference ExternalReference::ieee754_tanh_function(Isolate* isolate) {
       Redirect(isolate, FUNCTION_ADDR(base::ieee754::tanh), BUILTIN_FP_CALL));
 }
 
+void* libc_memchr(void* string, int character, size_t search_length) {
+  return memchr(string, character, search_length);
+}
+
+ExternalReference ExternalReference::libc_memchr_function(Isolate* isolate) {
+  return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memchr)));
+}
+
+void* libc_memset(void* string, int character, size_t n) {
+  return memset(string, character, n);
+}
+
+ExternalReference ExternalReference::libc_memset_function(Isolate* isolate) {
+  return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memset)));
+}
+
 ExternalReference ExternalReference::page_flags(Page* page) {
   return ExternalReference(reinterpret_cast<Address>(page) +
                            MemoryChunk::kFlagsOffset);
@@ -1569,17 +1561,20 @@ ExternalReference ExternalReference::is_tail_call_elimination_enabled_address(
   return ExternalReference(isolate->is_tail_call_elimination_enabled_address());
 }
 
+ExternalReference ExternalReference::promise_hook_or_debug_is_active_address(
+    Isolate* isolate) {
+  return ExternalReference(isolate->promise_hook_or_debug_is_active_address());
+}
+
 ExternalReference ExternalReference::debug_is_active_address(
     Isolate* isolate) {
   return ExternalReference(isolate->debug()->is_active_address());
 }
 
-
-ExternalReference ExternalReference::debug_after_break_target_address(
+ExternalReference ExternalReference::debug_hook_on_function_call_address(
     Isolate* isolate) {
-  return ExternalReference(isolate->debug()->after_break_target_address());
+  return ExternalReference(isolate->debug()->hook_on_function_call_address());
 }
-
 
 ExternalReference ExternalReference::runtime_function_table_address(
     Isolate* isolate) {
@@ -1659,6 +1654,11 @@ ExternalReference ExternalReference::debug_last_step_action_address(
 ExternalReference ExternalReference::debug_suspended_generator_address(
     Isolate* isolate) {
   return ExternalReference(isolate->debug()->suspended_generator_address());
+}
+
+ExternalReference ExternalReference::debug_restart_fp_address(
+    Isolate* isolate) {
+  return ExternalReference(isolate->debug()->restart_fp_address());
 }
 
 ExternalReference ExternalReference::fixed_typed_array_base_data_offset() {
@@ -1911,12 +1911,6 @@ void Assembler::RecordComment(const char* msg) {
     EnsureSpace ensure_space(this);
     RecordRelocInfo(RelocInfo::COMMENT, reinterpret_cast<intptr_t>(msg));
   }
-}
-
-
-void Assembler::RecordGeneratorContinuation() {
-  EnsureSpace ensure_space(this);
-  RecordRelocInfo(RelocInfo::GENERATOR_CONTINUATION);
 }
 
 

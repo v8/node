@@ -28,7 +28,6 @@
 
 #if V8_TARGET_ARCH_ARM64
 
-#define ARM64_DEFINE_REG_STATICS
 #include "src/arm64/assembler-arm64.h"
 
 #include "src/arm64/assembler-arm64-inl.h"
@@ -194,14 +193,20 @@ Address RelocInfo::wasm_global_reference() {
   return Memory::Address_at(Assembler::target_pointer_address_at(pc_));
 }
 
+uint32_t RelocInfo::wasm_function_table_size_reference() {
+  DCHECK(IsWasmFunctionTableSizeReference(rmode_));
+  return Memory::uint32_at(Assembler::target_pointer_address_at(pc_));
+}
+
 void RelocInfo::unchecked_update_wasm_memory_reference(
     Address address, ICacheFlushMode flush_mode) {
   Assembler::set_target_address_at(isolate_, pc_, host_, address, flush_mode);
 }
 
-void RelocInfo::unchecked_update_wasm_memory_size(uint32_t size,
-                                                  ICacheFlushMode flush_mode) {
+void RelocInfo::unchecked_update_wasm_size(uint32_t size,
+                                           ICacheFlushMode flush_mode) {
   Memory::uint32_at(Assembler::target_pointer_address_at(pc_)) = size;
+  // No icache flushing needed, see comment in set_target_address_at.
 }
 
 Register GetAllocatableRegisterThatIsNotOneOf(Register reg1, Register reg2,
@@ -2950,15 +2955,13 @@ void Assembler::RecordRelocInfo(RelocInfo::Mode rmode, intptr_t data) {
       (rmode == RelocInfo::CONST_POOL) || (rmode == RelocInfo::VENEER_POOL) ||
       (rmode == RelocInfo::DEOPT_SCRIPT_OFFSET) ||
       (rmode == RelocInfo::DEOPT_INLINING_ID) ||
-      (rmode == RelocInfo::DEOPT_REASON) || (rmode == RelocInfo::DEOPT_ID) ||
-      (rmode == RelocInfo::GENERATOR_CONTINUATION)) {
+      (rmode == RelocInfo::DEOPT_REASON) || (rmode == RelocInfo::DEOPT_ID)) {
     // Adjust code for new modes.
     DCHECK(RelocInfo::IsDebugBreakSlot(rmode) || RelocInfo::IsComment(rmode) ||
            RelocInfo::IsDeoptReason(rmode) || RelocInfo::IsDeoptId(rmode) ||
            RelocInfo::IsDeoptPosition(rmode) ||
            RelocInfo::IsInternalReference(rmode) ||
-           RelocInfo::IsConstPool(rmode) || RelocInfo::IsVeneerPool(rmode) ||
-           RelocInfo::IsGeneratorContinuation(rmode));
+           RelocInfo::IsConstPool(rmode) || RelocInfo::IsVeneerPool(rmode));
     // These modes do not need an entry in the constant pool.
   } else {
     constpool_.RecordEntry(data, rmode);

@@ -9,6 +9,7 @@
 
 #include "src/base/cpu.h"
 #include "src/debug/debug.h"
+#include "src/objects-inl.h"
 #include "src/v8memory.h"
 
 namespace v8 {
@@ -16,15 +17,13 @@ namespace internal {
 
 bool CpuFeatures::SupportsCrankshaft() { return true; }
 
-bool CpuFeatures::SupportsSimd128() { return false; }
+bool CpuFeatures::SupportsSimd128() { return true; }
 
 // -----------------------------------------------------------------------------
 // Implementation of Assembler
 
 
 static const byte kCallOpcode = 0xE8;
-// The length of pushq(rbp), movp(rbp, rsp), Push(rsi) and Push(rdi).
-static const int kNoCodeAgeSequenceLength = kPointerSize == kInt64Size ? 6 : 17;
 
 
 void Assembler::emitl(uint32_t x) {
@@ -83,6 +82,12 @@ void Assembler::emit_runtime_entry(Address entry, RelocInfo::Mode rmode) {
       entry - isolate()->heap()->memory_allocator()->code_range()->start()));
 }
 
+void Assembler::emit(Immediate x) {
+  if (!RelocInfo::IsNone(x.rmode_)) {
+    RecordRelocInfo(x.rmode_);
+  }
+  emitl(x.value_);
+}
 
 void Assembler::emit_rex_64(Register reg, Register rm_reg) {
   emit(0x48 | reg.high_bit() << 2 | rm_reg.high_bit());
@@ -281,6 +286,17 @@ void Assembler::set_target_address_at(Isolate* isolate, Address pc,
   }
 }
 
+Address Assembler::target_address_at(Address pc, Code* code) {
+  Address constant_pool = code ? code->constant_pool() : NULL;
+  return target_address_at(pc, constant_pool);
+}
+
+void Assembler::set_target_address_at(Isolate* isolate, Address pc, Code* code,
+                                      Address target,
+                                      ICacheFlushMode icache_flush_mode) {
+  Address constant_pool = code ? code->constant_pool() : NULL;
+  set_target_address_at(isolate, pc, constant_pool, target, icache_flush_mode);
+}
 
 void Assembler::deserialization_set_target_internal_reference_at(
     Isolate* isolate, Address pc, Address target, RelocInfo::Mode mode) {
@@ -292,8 +308,12 @@ Address Assembler::target_address_from_return_address(Address pc) {
   return pc - kCallTargetAddressOffset;
 }
 
+void Assembler::deserialization_set_special_target_at(
+    Isolate* isolate, Address instruction_payload, Code* code, Address target) {
+  set_target_address_at(isolate, instruction_payload, code, target);
+}
 
-Handle<Object> Assembler::code_target_object_handle_at(Address pc) {
+Handle<Code> Assembler::code_target_object_handle_at(Address pc) {
   return code_targets_[Memory::int32_at(pc)];
 }
 
@@ -349,17 +369,15 @@ int RelocInfo::target_address_size() {
   }
 }
 
-
-Object* RelocInfo::target_object() {
+HeapObject* RelocInfo::target_object() {
   DCHECK(IsCodeTarget(rmode_) || rmode_ == EMBEDDED_OBJECT);
-  return Memory::Object_at(pc_);
+  return HeapObject::cast(Memory::Object_at(pc_));
 }
 
-
-Handle<Object> RelocInfo::target_object_handle(Assembler* origin) {
+Handle<HeapObject> RelocInfo::target_object_handle(Assembler* origin) {
   DCHECK(IsCodeTarget(rmode_) || rmode_ == EMBEDDED_OBJECT);
   if (rmode_ == EMBEDDED_OBJECT) {
-    return Memory::Object_Handle_at(pc_);
+    return Handle<HeapObject>::cast(Memory::Object_Handle_at(pc_));
   } else {
     return origin->code_target_object_handle_at(pc_);
   }
@@ -383,8 +401,7 @@ Address RelocInfo::target_internal_reference_address() {
   return reinterpret_cast<Address>(pc_);
 }
 
-
-void RelocInfo::set_target_object(Object* target,
+void RelocInfo::set_target_object(HeapObject* target,
                                   WriteBarrierMode write_barrier_mode,
                                   ICacheFlushMode icache_flush_mode) {
   DCHECK(IsCodeTarget(rmode_) || rmode_ == EMBEDDED_OBJECT);
@@ -392,11 +409,9 @@ void RelocInfo::set_target_object(Object* target,
   if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
     Assembler::FlushICache(isolate_, pc_, sizeof(Address));
   }
-  if (write_barrier_mode == UPDATE_WRITE_BARRIER &&
-      host() != NULL &&
-      target->IsHeapObject()) {
-    host()->GetHeap()->incremental_marking()->RecordWriteIntoCode(
-        host(), this, HeapObject::cast(target));
+  if (write_barrier_mode == UPDATE_WRITE_BARRIER && host() != NULL) {
+    host()->GetHeap()->incremental_marking()->RecordWriteIntoCode(host(), this,
+                                                                  target);
     host()->GetHeap()->RecordWriteIntoCode(host(), this, target);
   }
 }
@@ -461,8 +476,7 @@ void RelocInfo::WipeOut() {
   }
 }
 
-
-Handle<Object> RelocInfo::code_age_stub_handle(Assembler* origin) {
+Handle<Code> RelocInfo::code_age_stub_handle(Assembler* origin) {
   DCHECK(rmode_ == RelocInfo::CODE_AGE_SEQUENCE);
   DCHECK(*pc_ == kCallOpcode);
   return origin->code_target_object_handle_at(pc_ + 1);

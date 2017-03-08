@@ -4,13 +4,17 @@
 
 #include "src/snapshot/deserializer.h"
 
+#include "src/api.h"
+#include "src/assembler-inl.h"
 #include "src/bootstrapper.h"
 #include "src/external-reference-table.h"
-#include "src/heap/heap.h"
+#include "src/heap/heap-inl.h"
 #include "src/isolate.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/snapshot/natives.h"
 #include "src/v8.h"
+#include "src/v8threads.h"
 
 namespace v8 {
 namespace internal {
@@ -72,6 +76,10 @@ void Deserializer::Initialize(Isolate* isolate) {
   external_reference_table_ = ExternalReferenceTable::instance(isolate);
   CHECK_EQ(magic_number_,
            SerializedData::ComputeMagicNumber(external_reference_table_));
+  // The current isolate must have at least as many API-provided external
+  // references as the to-be-deserialized snapshot expects and refers to.
+  CHECK_LE(num_extra_references_,
+           SerializedData::GetExtraReferences(external_reference_table_));
 }
 
 void Deserializer::Deserialize(Isolate* isolate) {
@@ -93,6 +101,7 @@ void Deserializer::Deserialize(Isolate* isolate) {
     isolate_->heap()->IterateWeakRoots(this, VISIT_ALL);
     DeserializeDeferredObjects();
     FlushICacheForNewIsolate();
+    RestoreExternalReferenceRedirectors(&accessor_infos_);
   }
 
   isolate_->heap()->set_native_contexts_list(
@@ -111,7 +120,8 @@ void Deserializer::Deserialize(Isolate* isolate) {
 }
 
 MaybeHandle<Object> Deserializer::DeserializePartial(
-    Isolate* isolate, Handle<JSGlobalProxy> global_proxy) {
+    Isolate* isolate, Handle<JSGlobalProxy> global_proxy,
+    v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
   Initialize(isolate);
   if (!ReserveSpace()) {
     V8::FatalProcessOutOfMemory("deserialize context");
@@ -128,7 +138,7 @@ MaybeHandle<Object> Deserializer::DeserializePartial(
   Object* root;
   VisitPointer(&root);
   DeserializeDeferredObjects();
-  DeserializeInternalFields();
+  DeserializeInternalFields(internal_fields_deserializer);
 
   isolate->heap()->RegisterReservationsForBlackAllocation(reservations_);
 
@@ -213,14 +223,13 @@ void Deserializer::DeserializeDeferredObjects() {
   }
 }
 
-void Deserializer::DeserializeInternalFields() {
+void Deserializer::DeserializeInternalFields(
+    v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
   if (!source_.HasMore() || source_.Get() != kInternalFieldsData) return;
   DisallowHeapAllocation no_gc;
   DisallowJavascriptExecution no_js(isolate_);
   DisallowCompilation no_compile(isolate_);
-  v8::DeserializeInternalFieldsCallback callback =
-      isolate_->deserialize_internal_fields_callback();
-  DCHECK_NOT_NULL(callback);
+  DCHECK_NOT_NULL(internal_fields_deserializer.callback);
   for (int code = source_.Get(); code != kSynchronize; code = source_.Get()) {
     HandleScope scope(isolate_);
     int space = code & kSpaceMask;
@@ -232,8 +241,9 @@ void Deserializer::DeserializeInternalFields() {
     int size = source_.GetInt();
     byte* data = new byte[size];
     source_.CopyRaw(data, size);
-    callback(v8::Utils::ToLocal(obj), index,
-             {reinterpret_cast<char*>(data), size});
+    internal_fields_deserializer.callback(v8::Utils::ToLocal(obj), index,
+                                          {reinterpret_cast<char*>(data), size},
+                                          internal_fields_deserializer.data);
     delete[] data;
   }
 }
@@ -315,6 +325,10 @@ HeapObject* Deserializer::PostProcessNewObject(HeapObject* obj, int space) {
     // When deserializing user code, remember each individual code object.
     if (deserializing_user_code() || space == LO_SPACE) {
       new_code_objects_.Add(Code::cast(obj));
+    }
+  } else if (obj->IsAccessorInfo()) {
+    if (isolate_->external_reference_redirector()) {
+      accessor_infos_.Add(AccessorInfo::cast(obj));
     }
   }
   // Check alignment.

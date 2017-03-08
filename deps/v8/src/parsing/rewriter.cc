@@ -6,6 +6,7 @@
 
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
+#include "src/objects-inl.h"
 #include "src/parsing/parse-info.h"
 #include "src/parsing/parser.h"
 
@@ -14,8 +15,8 @@ namespace internal {
 
 class Processor final : public AstVisitor<Processor> {
  public:
-  Processor(Isolate* isolate, DeclarationScope* closure_scope, Variable* result,
-            AstValueFactory* ast_value_factory)
+  Processor(uintptr_t stack_limit, DeclarationScope* closure_scope,
+            Variable* result, AstValueFactory* ast_value_factory)
       : result_(result),
         result_assigned_(false),
         replacement_(nullptr),
@@ -25,7 +26,7 @@ class Processor final : public AstVisitor<Processor> {
         closure_scope_(closure_scope),
         factory_(ast_value_factory) {
     DCHECK_EQ(closure_scope, closure_scope->GetClosureScope());
-    InitializeAstVisitor(isolate);
+    InitializeAstVisitor(stack_limit);
   }
 
   Processor(Parser* parser, DeclarationScope* closure_scope, Variable* result,
@@ -111,10 +112,8 @@ class Processor final : public AstVisitor<Processor> {
 
 
 Statement* Processor::AssignUndefinedBefore(Statement* s) {
-  Expression* result_proxy = factory()->NewVariableProxy(result_);
   Expression* undef = factory()->NewUndefinedLiteral(kNoSourcePosition);
-  Expression* assignment = factory()->NewAssignment(Token::ASSIGN, result_proxy,
-                                                    undef, kNoSourcePosition);
+  Expression* assignment = SetResult(undef);
   Block* b = factory()->NewBlock(NULL, 2, false, kNoSourcePosition);
   b->statements()->Add(
       factory()->NewExpressionStatement(assignment, kNoSourcePosition), zone());
@@ -243,7 +242,6 @@ void Processor::VisitTryFinallyStatement(TryFinallyStatement* node) {
   // Only rewrite finally if it could contain 'break' or 'continue'. Always
   // rewrite try.
   if (breakable_) {
-    bool set_after = is_set_;
     // Only set result before a 'break' or 'continue'.
     is_set_ = true;
     Visit(node->finally_block());
@@ -265,7 +263,6 @@ void Processor::VisitTryFinallyStatement(TryFinallyStatement* node) {
         0, factory()->NewExpressionStatement(save, kNoSourcePosition), zone());
     node->finally_block()->statements()->Add(
         factory()->NewExpressionStatement(restore, kNoSourcePosition), zone());
-    is_set_ = set_after;
   }
   Visit(node->try_block());
   node->set_try_block(replacement_->AsBlock());
@@ -356,35 +353,62 @@ DECLARATION_NODE_LIST(DEF_VISIT)
 // Assumes code has been parsed.  Mutates the AST, so the AST should not
 // continue to be used in the case of failure.
 bool Rewriter::Rewrite(ParseInfo* info) {
+  DisallowHeapAllocation no_allocation;
+  DisallowHandleAllocation no_handles;
+  DisallowHandleDereference no_deref;
+
+  RuntimeCallTimerScope runtimeTimer(
+      info->isolate(), &RuntimeCallStats::CompileRewriteReturnResult);
+
   FunctionLiteral* function = info->literal();
   DCHECK_NOT_NULL(function);
   Scope* scope = function->scope();
   DCHECK_NOT_NULL(scope);
-  if (!scope->is_script_scope() && !scope->is_eval_scope()) return true;
-  DeclarationScope* closure_scope = scope->GetClosureScope();
+  DCHECK_EQ(scope, scope->GetClosureScope());
+
+  if (!(scope->is_script_scope() || scope->is_eval_scope() ||
+        scope->is_module_scope())) {
+    return true;
+  }
 
   ZoneList<Statement*>* body = function->body();
+  DCHECK_IMPLIES(scope->is_module_scope(), !body->is_empty());
   if (!body->is_empty()) {
-    Variable* result = closure_scope->NewTemporary(
+    Variable* result = scope->AsDeclarationScope()->NewTemporary(
         info->ast_value_factory()->dot_result_string());
-    // The name string must be internalized at this point.
-    info->ast_value_factory()->Internalize(info->isolate());
-    DCHECK(!result->name().is_null());
-    Processor processor(info->isolate(), closure_scope, result,
+    Processor processor(info->isolate()->stack_guard()->real_climit(),
+                        scope->AsDeclarationScope(), result,
                         info->ast_value_factory());
     processor.Process(body);
+
+    DCHECK_IMPLIES(scope->is_module_scope(), processor.result_assigned());
+    if (processor.result_assigned()) {
+      int pos = kNoSourcePosition;
+      Expression* result_value =
+          processor.factory()->NewVariableProxy(result, pos);
+      if (scope->is_module_scope()) {
+        auto args = new (info->zone()) ZoneList<Expression*>(2, info->zone());
+        args->Add(result_value, info->zone());
+        args->Add(processor.factory()->NewBooleanLiteral(true, pos),
+                  info->zone());
+        result_value = processor.factory()->NewCallRuntime(
+            Runtime::kInlineCreateIterResultObject, args, pos);
+      }
+      Statement* result_statement =
+          processor.factory()->NewReturnStatement(result_value, pos);
+      body->Add(result_statement, info->zone());
+    }
+
+    // TODO(leszeks): Remove this check and releases once internalization is
+    // moved out of parsing/analysis.
+    DCHECK(ThreadId::Current().Equals(info->isolate()->thread_id()));
+    no_deref.Release();
+    no_handles.Release();
+    no_allocation.Release();
+
     // Internalize any values created during rewriting.
     info->ast_value_factory()->Internalize(info->isolate());
     if (processor.HasStackOverflow()) return false;
-
-    if (processor.result_assigned()) {
-      int pos = kNoSourcePosition;
-      VariableProxy* result_proxy =
-          processor.factory()->NewVariableProxy(result, pos);
-      Statement* result_statement =
-          processor.factory()->NewReturnStatement(result_proxy, pos);
-      body->Add(result_statement, info->zone());
-    }
   }
 
   return true;
@@ -392,6 +416,10 @@ bool Rewriter::Rewrite(ParseInfo* info) {
 
 bool Rewriter::Rewrite(Parser* parser, DeclarationScope* closure_scope,
                        DoExpression* expr, AstValueFactory* factory) {
+  DisallowHeapAllocation no_allocation;
+  DisallowHandleAllocation no_handles;
+  DisallowHandleDereference no_deref;
+
   Block* block = expr->block();
   DCHECK_EQ(closure_scope, closure_scope->GetClosureScope());
   DCHECK(block->scope() == nullptr ||

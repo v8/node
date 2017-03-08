@@ -11,10 +11,16 @@ namespace internal {
 
 std::ostream& operator<<(std::ostream& out, const SourcePositionInfo& pos) {
   Handle<SharedFunctionInfo> function(pos.function);
-  Handle<Script> script(Script::cast(function->script()));
+  String* name = nullptr;
+  if (function->script()->IsScript()) {
+    Script* script = Script::cast(function->script());
+    if (script->name()->IsString()) {
+      name = String::cast(script->name());
+    }
+  }
   out << "<";
-  if (script->name()->IsString()) {
-    out << String::cast(script->name())->ToCString(DISALLOW_NULLS).get();
+  if (name != nullptr) {
+    out << name->ToCString(DISALLOW_NULLS).get();
   } else {
     out << "unknown";
   }
@@ -43,29 +49,16 @@ std::ostream& operator<<(std::ostream& out, const SourcePosition& pos) {
   return out;
 }
 
-SourcePositionInfo SourcePosition::Info(
-    Handle<SharedFunctionInfo> function) const {
-  SourcePositionInfo result(*this, function);
-  Handle<Script> script(Script::cast(function->script()));
-  Script::PositionInfo pos;
-  if (Script::GetPositionInfo(script, ScriptOffset(), &pos,
-                              Script::WITH_OFFSET)) {
-    result.line = pos.line;
-    result.column = pos.column;
-  }
-  return result;
-}
-
 std::vector<SourcePositionInfo> SourcePosition::InliningStack(
     CompilationInfo* cinfo) const {
   SourcePosition pos = *this;
   std::vector<SourcePositionInfo> stack;
   while (pos.isInlined()) {
     const auto& inl = cinfo->inlined_functions()[pos.InliningId()];
-    stack.push_back(pos.Info(inl.shared_info));
+    stack.push_back(SourcePositionInfo(pos, inl.shared_info));
     pos = inl.position.position;
   }
-  stack.push_back(pos.Info(cinfo->shared_info()));
+  stack.push_back(SourcePositionInfo(pos, cinfo->shared_info()));
   return stack;
 }
 
@@ -80,23 +73,26 @@ std::vector<SourcePositionInfo> SourcePosition::InliningStack(
         deopt_data->InliningPositions()->get(pos.InliningId());
     Handle<SharedFunctionInfo> function(
         deopt_data->GetInlinedFunction(inl.inlined_function_id));
-    stack.push_back(pos.Info(function));
+    stack.push_back(SourcePositionInfo(pos, function));
     pos = inl.position;
   }
   Handle<SharedFunctionInfo> function(
       SharedFunctionInfo::cast(deopt_data->SharedFunctionInfo()));
-  stack.push_back(pos.Info(function));
+  stack.push_back(SourcePositionInfo(pos, function));
   return stack;
 }
 
 void SourcePosition::Print(std::ostream& out,
                            SharedFunctionInfo* function) const {
-  Script* script = Script::cast(function->script());
-  Object* source_name = script->name();
   Script::PositionInfo pos;
-  script->GetPositionInfo(ScriptOffset(), &pos, Script::WITH_OFFSET);
+  Object* source_name = nullptr;
+  if (function->script()->IsScript()) {
+    Script* script = Script::cast(function->script());
+    source_name = script->name();
+    script->GetPositionInfo(ScriptOffset(), &pos, Script::WITH_OFFSET);
+  }
   out << "<";
-  if (source_name->IsString()) {
+  if (source_name != nullptr && source_name->IsString()) {
     out << String::cast(source_name)
                ->ToCString(DISALLOW_NULLS, ROBUST_STRING_TRAVERSAL)
                .get();
@@ -124,6 +120,20 @@ void SourcePosition::Print(std::ostream& out, Code* code) const {
     }
     out << " inlined at ";
     inl.position.Print(out, code);
+  }
+}
+
+SourcePositionInfo::SourcePositionInfo(SourcePosition pos,
+                                       Handle<SharedFunctionInfo> f)
+    : position(pos), function(f) {
+  if (function->script()->IsScript()) {
+    Handle<Script> script(Script::cast(function->script()));
+    Script::PositionInfo info;
+    if (Script::GetPositionInfo(script, pos.ScriptOffset(), &info,
+                                Script::WITH_OFFSET)) {
+      line = info.line;
+      column = info.column;
+    }
   }
 }
 

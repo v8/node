@@ -13,10 +13,12 @@
 
 var GlobalObject = global.Object;
 var MaxSimple;
+var MinSimple;
 var toStringTagSymbol = utils.ImportNow("to_string_tag_symbol");
 
 utils.Import(function(from) {
   MaxSimple = from.MaxSimple;
+  MinSimple = from.MinSimple;
 });
 
 // -------------------------------------------------------------------
@@ -93,15 +95,8 @@ function AtomicsXorJS(ia, index, value) {
   return %_AtomicsXor(ia, index, value);
 }
 
-function AtomicsExchangeJS(ia, index, value) {
-  CheckSharedIntegerTypedArray(ia);
-  index = ValidateIndex(index, %_TypedArrayGetLength(ia));
-  value = TO_NUMBER(value);
-  return %_AtomicsExchange(ia, index, value);
-}
-
 function AtomicsIsLockFreeJS(size) {
-  return %_AtomicsIsLockFree(size);
+  return %_AtomicsIsLockFree(TO_INTEGER(size));
 }
 
 function AtomicsWaitJS(ia, index, value, timeout) {
@@ -123,7 +118,12 @@ function AtomicsWaitJS(ia, index, value, timeout) {
 function AtomicsWakeJS(ia, index, count) {
   CheckSharedInteger32TypedArray(ia);
   index = ValidateIndex(index, %_TypedArrayGetLength(ia));
-  count = MaxSimple(0, TO_INTEGER(count));
+  if (IS_UNDEFINED(count)) {
+    count = kMaxUint32;
+  } else {
+    // Clamp to [0, kMaxUint32].
+    count = MinSimple(MaxSimple(0, TO_INTEGER(count)), kMaxUint32);
+  }
   return %AtomicsWake(ia, index, count);
 }
 
@@ -144,7 +144,6 @@ utils.InstallFunctions(Atomics, DONT_ENUM, [
   "and", AtomicsAndJS,
   "or", AtomicsOrJS,
   "xor", AtomicsXorJS,
-  "exchange", AtomicsExchangeJS,
   "isLockFree", AtomicsIsLockFreeJS,
   "wait", AtomicsWaitJS,
   "wake", AtomicsWakeJS,

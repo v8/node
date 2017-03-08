@@ -92,6 +92,7 @@ bool operator==(FieldAccess const& lhs, FieldAccess const& rhs) {
   // really only relevant for eliminating loads and they don't care about the
   // write barrier mode.
   return lhs.base_is_tagged == rhs.base_is_tagged && lhs.offset == rhs.offset &&
+         lhs.map.address() == rhs.map.address() &&
          lhs.machine_type == rhs.machine_type;
 }
 
@@ -117,6 +118,10 @@ std::ostream& operator<<(std::ostream& os, FieldAccess const& access) {
   if (access.name.ToHandle(&name)) {
     name->Print(os);
     os << ", ";
+  }
+  Handle<Map> map;
+  if (access.map.ToHandle(&map)) {
+    os << Brief(*map) << ", ";
   }
 #endif
   access.type->PrintTo(os);
@@ -229,6 +234,44 @@ std::ostream& operator<<(std::ostream& os, CheckForMinusZeroMode mode) {
   return os;
 }
 
+std::ostream& operator<<(std::ostream& os, CheckMapsFlags flags) {
+  bool empty = true;
+  if (flags & CheckMapsFlag::kTryMigrateInstance) {
+    os << "TryMigrateInstance";
+    empty = false;
+  }
+  if (empty) os << "None";
+  return os;
+}
+
+bool operator==(CheckMapsParameters const& lhs,
+                CheckMapsParameters const& rhs) {
+  return lhs.flags() == rhs.flags() && lhs.maps() == rhs.maps();
+}
+
+bool operator!=(CheckMapsParameters const& lhs,
+                CheckMapsParameters const& rhs) {
+  return !(lhs == rhs);
+}
+
+size_t hash_value(CheckMapsParameters const& p) {
+  return base::hash_combine(p.flags(), p.maps());
+}
+
+std::ostream& operator<<(std::ostream& os, CheckMapsParameters const& p) {
+  ZoneHandleSet<Map> const& maps = p.maps();
+  os << p.flags();
+  for (size_t i = 0; i < maps.size(); ++i) {
+    os << ", " << Brief(*maps[i]);
+  }
+  return os;
+}
+
+CheckMapsParameters const& CheckMapsParametersOf(Operator const* op) {
+  DCHECK_EQ(IrOpcode::kCheckMaps, op->opcode());
+  return OpParameter<CheckMapsParameters>(op);
+}
+
 size_t hash_value(CheckTaggedInputMode mode) {
   return static_cast<size_t>(mode);
 }
@@ -274,22 +317,36 @@ GrowFastElementsFlags GrowFastElementsFlagsOf(const Operator* op) {
   return OpParameter<GrowFastElementsFlags>(op);
 }
 
+bool operator==(ElementsTransition const& lhs, ElementsTransition const& rhs) {
+  return lhs.mode() == rhs.mode() &&
+         lhs.source().address() == rhs.source().address() &&
+         lhs.target().address() == rhs.target().address();
+}
+
+bool operator!=(ElementsTransition const& lhs, ElementsTransition const& rhs) {
+  return !(lhs == rhs);
+}
+
 size_t hash_value(ElementsTransition transition) {
-  return static_cast<uint8_t>(transition);
+  return base::hash_combine(static_cast<uint8_t>(transition.mode()),
+                            transition.source().address(),
+                            transition.target().address());
 }
 
 std::ostream& operator<<(std::ostream& os, ElementsTransition transition) {
-  switch (transition) {
+  switch (transition.mode()) {
     case ElementsTransition::kFastTransition:
-      return os << "fast-transition";
+      return os << "fast-transition from " << Brief(*transition.source())
+                << " to " << Brief(*transition.target());
     case ElementsTransition::kSlowTransition:
-      return os << "slow-transition";
+      return os << "slow-transition from " << Brief(*transition.source())
+                << " to " << Brief(*transition.target());
   }
   UNREACHABLE();
   return os;
 }
 
-ElementsTransition ElementsTransitionOf(const Operator* op) {
+ElementsTransition const& ElementsTransitionOf(const Operator* op) {
   DCHECK_EQ(IrOpcode::kTransitionElementsKind, op->opcode());
   return OpParameter<ElementsTransition>(op);
 }
@@ -395,8 +452,10 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(NumberToUint32, Operator::kNoProperties, 1, 0)               \
   V(NumberToUint8Clamped, Operator::kNoProperties, 1, 0)         \
   V(NumberSilenceNaN, Operator::kNoProperties, 1, 0)             \
+  V(StringCharAt, Operator::kNoProperties, 2, 1)                 \
   V(StringCharCodeAt, Operator::kNoProperties, 2, 1)             \
   V(StringFromCharCode, Operator::kNoProperties, 1, 0)           \
+  V(StringIndexOf, Operator::kNoProperties, 3, 0)                \
   V(PlainPrimitiveToNumber, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToWord32, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToFloat64, Operator::kNoProperties, 1, 0)      \
@@ -404,6 +463,7 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(ChangeTaggedToInt32, Operator::kNoProperties, 1, 0)          \
   V(ChangeTaggedToUint32, Operator::kNoProperties, 1, 0)         \
   V(ChangeTaggedToFloat64, Operator::kNoProperties, 1, 0)        \
+  V(ChangeTaggedToTaggedSigned, Operator::kNoProperties, 1, 0)   \
   V(ChangeFloat64ToTagged, Operator::kNoProperties, 1, 0)        \
   V(ChangeFloat64ToTaggedPointer, Operator::kNoProperties, 1, 0) \
   V(ChangeInt31ToTaggedSigned, Operator::kNoProperties, 1, 0)    \
@@ -412,9 +472,12 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(ChangeTaggedToBit, Operator::kNoProperties, 1, 0)            \
   V(ChangeBitToTagged, Operator::kNoProperties, 1, 0)            \
   V(TruncateTaggedToBit, Operator::kNoProperties, 1, 0)          \
+  V(TruncateTaggedPointerToBit, Operator::kNoProperties, 1, 0)   \
   V(TruncateTaggedToWord32, Operator::kNoProperties, 1, 0)       \
   V(TruncateTaggedToFloat64, Operator::kNoProperties, 1, 0)      \
-  V(ObjectIsCallable, Operator::kNoProperties, 1, 0)             \
+  V(ObjectIsDetectableCallable, Operator::kNoProperties, 1, 0)   \
+  V(ObjectIsNaN, Operator::kNoProperties, 1, 0)                  \
+  V(ObjectIsNonCallable, Operator::kNoProperties, 1, 0)          \
   V(ObjectIsNumber, Operator::kNoProperties, 1, 0)               \
   V(ObjectIsReceiver, Operator::kNoProperties, 1, 0)             \
   V(ObjectIsSmi, Operator::kNoProperties, 1, 0)                  \
@@ -436,7 +499,9 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(CheckBounds, 2, 1)                  \
   V(CheckHeapObject, 1, 1)              \
   V(CheckIf, 1, 0)                      \
+  V(CheckInternalizedString, 1, 1)      \
   V(CheckNumber, 1, 1)                  \
+  V(CheckReceiver, 1, 1)                \
   V(CheckSmi, 1, 1)                     \
   V(CheckString, 1, 1)                  \
   V(CheckTaggedHole, 1, 1)              \
@@ -494,6 +559,21 @@ struct SimplifiedOperatorGlobalCache final {
                    "ArrayBufferWasNeutered", 1, 1, 1, 1, 1, 0) {}
   };
   ArrayBufferWasNeuteredOperator kArrayBufferWasNeutered;
+
+  struct ArgumentsFrameOperator final : public Operator {
+    ArgumentsFrameOperator()
+        : Operator(IrOpcode::kArgumentsFrame, Operator::kPure, "ArgumentsFrame",
+                   0, 0, 0, 1, 0, 0) {}
+  };
+  ArgumentsFrameOperator kArgumentsFrame;
+
+  struct NewUnmappedArgumentsElementsOperator final : public Operator {
+    NewUnmappedArgumentsElementsOperator()
+        : Operator(IrOpcode::kNewUnmappedArgumentsElements,
+                   Operator::kEliminatable, "NewUnmappedArgumentsElements", 2,
+                   1, 0, 1, 1, 0) {}
+  };
+  NewUnmappedArgumentsElementsOperator kNewUnmappedArgumentsElements;
 
   template <CheckForMinusZeroMode kMode>
   struct CheckedInt32MulOperator final
@@ -639,6 +719,8 @@ SimplifiedOperatorBuilder::SimplifiedOperatorBuilder(Zone* zone)
 PURE_OP_LIST(GET_FROM_CACHE)
 CHECKED_OP_LIST(GET_FROM_CACHE)
 GET_FROM_CACHE(ArrayBufferWasNeutered)
+GET_FROM_CACHE(ArgumentsFrame)
+GET_FROM_CACHE(NewUnmappedArgumentsElements)
 #undef GET_FROM_CACHE
 
 const Operator* SimplifiedOperatorBuilder::CheckedInt32Mul(
@@ -689,16 +771,15 @@ const Operator* SimplifiedOperatorBuilder::CheckedTaggedToFloat64(
   return nullptr;
 }
 
-const Operator* SimplifiedOperatorBuilder::CheckMaps(int map_input_count) {
-  // TODO(bmeurer): Cache the most important versions of this operator.
-  DCHECK_LT(0, map_input_count);
-  int const value_input_count = 1 + map_input_count;
-  return new (zone()) Operator1<int>(           // --
-      IrOpcode::kCheckMaps,                     // opcode
-      Operator::kNoThrow | Operator::kNoWrite,  // flags
-      "CheckMaps",                              // name
-      value_input_count, 1, 1, 0, 1, 0,         // counts
-      map_input_count);                         // parameter
+const Operator* SimplifiedOperatorBuilder::CheckMaps(CheckMapsFlags flags,
+                                                     ZoneHandleSet<Map> maps) {
+  CheckMapsParameters const parameters(flags, maps);
+  return new (zone()) Operator1<CheckMapsParameters>(  // --
+      IrOpcode::kCheckMaps,                            // opcode
+      Operator::kNoThrow | Operator::kNoWrite,         // flags
+      "CheckMaps",                                     // name
+      1, 1, 1, 0, 1, 0,                                // counts
+      parameters);                                     // parameter
 }
 
 const Operator* SimplifiedOperatorBuilder::CheckFloat64Hole(
@@ -733,8 +814,53 @@ const Operator* SimplifiedOperatorBuilder::TransitionElementsKind(
       IrOpcode::kTransitionElementsKind,              // opcode
       Operator::kNoDeopt | Operator::kNoThrow,        // flags
       "TransitionElementsKind",                       // name
-      3, 1, 1, 0, 1, 0,                               // counts
+      1, 1, 1, 0, 1, 0,                               // counts
       transition);                                    // parameter
+}
+
+namespace {
+
+struct ArgumentsLengthParameters {
+  int formal_parameter_count;
+  bool is_rest_length;
+};
+
+bool operator==(ArgumentsLengthParameters first,
+                ArgumentsLengthParameters second) {
+  return first.formal_parameter_count == second.formal_parameter_count &&
+         first.is_rest_length == second.is_rest_length;
+}
+
+size_t hash_value(ArgumentsLengthParameters param) {
+  return base::hash_combine(param.formal_parameter_count, param.is_rest_length);
+}
+
+std::ostream& operator<<(std::ostream& os, ArgumentsLengthParameters param) {
+  return os << param.formal_parameter_count << ", "
+            << (param.is_rest_length ? "rest length" : "not rest length");
+}
+
+}  // namespace
+
+const Operator* SimplifiedOperatorBuilder::ArgumentsLength(
+    int formal_parameter_count, bool is_rest_length) {
+  return new (zone()) Operator1<ArgumentsLengthParameters>(  // --
+      IrOpcode::kArgumentsLength,                            // opcode
+      Operator::kPure,                                       // flags
+      "ArgumentsLength",                                     // name
+      1, 0, 0, 1, 0, 0,                                      // counts
+      ArgumentsLengthParameters{formal_parameter_count,
+                                is_rest_length});  // parameter
+}
+
+int FormalParameterCountOf(const Operator* op) {
+  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  return OpParameter<ArgumentsLengthParameters>(op).formal_parameter_count;
+}
+
+bool IsRestLengthOf(const Operator* op) {
+  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  return OpParameter<ArgumentsLengthParameters>(op).is_rest_length;
 }
 
 const Operator* SimplifiedOperatorBuilder::Allocate(PretenureFlag pretenure) {

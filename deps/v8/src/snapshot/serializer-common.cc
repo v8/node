@@ -7,6 +7,7 @@
 #include "src/external-reference-table.h"
 #include "src/ic/stub-cache.h"
 #include "src/list-inl.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -21,8 +22,9 @@ ExternalReferenceEncoder::ExternalReferenceEncoder(Isolate* isolate) {
   ExternalReferenceTable* table = ExternalReferenceTable::instance(isolate);
   for (uint32_t i = 0; i < table->size(); ++i) {
     Address addr = table->address(i);
-    DCHECK(map_->Get(addr).IsNothing() ||
-           strncmp(table->name(i), "Redirect to ", 12) == 0);
+    // Ignore duplicate API references.
+    if (table->is_api_reference(i) && !map_->Get(addr).IsNothing()) continue;
+    DCHECK(map_->Get(addr).IsNothing());
     map_->Set(addr, i);
     DCHECK(map_->Get(addr).IsJust());
   }
@@ -79,6 +81,15 @@ void SerializerDeserializer::Iterate(Isolate* isolate, ObjectVisitor* visitor) {
 
 bool SerializerDeserializer::CanBeDeferred(HeapObject* o) {
   return !o->IsString() && !o->IsScript();
+}
+
+void SerializerDeserializer::RestoreExternalReferenceRedirectors(
+    List<AccessorInfo*>* accessor_infos) {
+  // Restore wiped accessor infos.
+  for (AccessorInfo* info : *accessor_infos) {
+    Foreign::cast(info->js_getter())
+        ->set_foreign_address(info->redirected_getter());
+  }
 }
 
 }  // namespace internal

@@ -34,10 +34,11 @@
 
 #include "src/ast/ast.h"
 #include "src/char-predicates-inl.h"
+#include "src/objects-inl.h"
 #include "src/ostreams.h"
 #include "src/regexp/jsregexp.h"
-#include "src/regexp/regexp-macro-assembler.h"
 #include "src/regexp/regexp-macro-assembler-irregexp.h"
+#include "src/regexp/regexp-macro-assembler.h"
 #include "src/regexp/regexp-parser.h"
 #include "src/splay-tree-inl.h"
 #include "src/string-stream.h"
@@ -198,8 +199,8 @@ void TestRegExpParser(bool lookbehind) {
   CheckParseEq("xyz{1,}?", "(: 'xy' (# 1 - n 'z'))");
   CheckParseEq("a\\fb\\nc\\rd\\te\\vf", "'a\\x0cb\\x0ac\\x0dd\\x09e\\x0bf'");
   CheckParseEq("a\\nb\\bc", "(: 'a\\x0ab' @b 'c')");
-  CheckParseEq("(?:foo)", "'foo'");
-  CheckParseEq("(?: foo )", "' foo '");
+  CheckParseEq("(?:foo)", "(?: 'foo')");
+  CheckParseEq("(?: foo )", "(?: ' foo ')");
   CheckParseEq("(foo|bar|baz)", "(^ (| 'foo' 'bar' 'baz'))");
   CheckParseEq("foo|(bar|baz)|quux", "(| 'foo' (^ (| 'bar' 'baz')) 'quux')");
   CheckParseEq("foo(?=bar)baz", "(: 'foo' (-> + 'bar') 'baz')");
@@ -293,7 +294,7 @@ void TestRegExpParser(bool lookbehind) {
   CheckParseEq("(?!\\1(a\\1)\\1)\\1",
                "(: (-> - (: (<- 1) (^ 'a') (<- 1))) (<- 1))");
   CheckParseEq("\\1\\2(a(?:\\1(b\\1\\2))\\2)\\1",
-               "(: (<- 1) (<- 2) (^ (: 'a' (^ 'b') (<- 2))) (<- 1))");
+               "(: (<- 1) (<- 2) (^ (: 'a' (?: (^ 'b')) (<- 2))) (<- 1))");
   if (lookbehind) {
     CheckParseEq("\\1\\2(a(?<=\\1(b\\1\\2))\\2)\\1",
                  "(: (<- 1) (<- 2) (^ (: 'a' (<- + (^ 'b')) (<- 2))) (<- 1))");

@@ -4,7 +4,10 @@
 
 #include "src/ic/ic-state.h"
 
+#include "src/ast/ast-types.h"
+#include "src/feedback-vector.h"
 #include "src/ic/ic.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -13,11 +16,6 @@ namespace internal {
 void ICUtility::Clear(Isolate* isolate, Address address,
                       Address constant_pool) {
   IC::Clear(isolate, address, constant_pool);
-}
-
-
-std::ostream& operator<<(std::ostream& os, const CallICState& s) {
-  return os << "(" << s.convert_mode() << ", " << s.tail_call_mode() << ")";
 }
 
 
@@ -61,6 +59,23 @@ ExtraICState BinaryOpICState::GetExtraICState() const {
   return extra_ic_state;
 }
 
+std::string BinaryOpICState::ToString() const {
+  std::string ret = "(";
+  ret += Token::Name(op_);
+  if (CouldCreateAllocationMementos()) ret += "_CreateAllocationMementos";
+  ret += ":";
+  ret += BinaryOpICState::KindToString(left_kind_);
+  ret += "*";
+  if (fixed_right_arg_.IsJust()) {
+    ret += fixed_right_arg_.FromJust();
+  } else {
+    ret += BinaryOpICState::KindToString(right_kind_);
+  }
+  ret += "->";
+  ret += BinaryOpICState::KindToString(result_kind_);
+  ret += ")";
+  return ret;
+}
 
 // static
 void BinaryOpICState::GenerateAheadOfTime(

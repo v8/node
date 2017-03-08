@@ -18,6 +18,12 @@
       'ia32.debug': 'default_debug_x86',
       'ia32.optdebug': 'default_optdebug_x86',
       'ia32.release': 'default_release_x86',
+      'mipsel.debug': 'default_debug_mipsel',
+      'mipsel.optdebug': 'default_optdebug_mipsel',
+      'mipsel.release': 'default_release_mipsel',
+      'mips64el.debug': 'default_debug_mips64el',
+      'mips64el.optdebug': 'default_optdebug_mips64el',
+      'mips64el.release': 'default_release_mips64el',
       'x64.debug': 'default_debug_x64',
       'x64.optdebug': 'default_optdebug_x64',
       'x64.release': 'default_release_x64',
@@ -39,12 +45,14 @@
       'V8 Linux - nosnap debug builder': 'gn_debug_x86_no_snap',
       'V8 Linux - shared': 'gn_release_x86_shared_verify_heap',
       'V8 Linux - noi18n - debug': 'gn_debug_x86_no_i18n',
+      'V8 Linux - verify csa': 'gn_release_x86_verify_csa',
       # Linux64.
       'V8 Linux64 - builder': 'gn_release_x64_valgrind',
       'V8 Linux64 - debug builder': 'gn_debug_x64_valgrind',
       'V8 Linux64 - custom snapshot - debug builder': 'gn_debug_x64_custom',
       'V8 Linux64 - internal snapshot': 'gn_release_x64_internal',
       'V8 Linux64 - gyp': 'gyp_release_x64',
+      'V8 Linux64 - verify csa': 'gn_release_x64_verify_csa',
       # Windows.
       'V8 Win32 - builder': 'gn_release_x86_minimal_symbols',
       'V8 Win32 - debug builder': 'gn_debug_x86_minimal_symbols',
@@ -66,6 +74,7 @@
       'V8 Linux64 TSAN': 'gn_release_x64_tsan',
       'V8 Linux - arm64 - sim - MSAN': 'gn_release_simulate_arm64_msan',
       # Clusterfuzz.
+      'V8 Linux64 - release builder': 'gn_release_x64_correctness_fuzzer',
       'V8 Linux64 ASAN no inline - release builder':
           'gn_release_x64_asan_symbolized_edge_verify_heap',
       'V8 Linux64 ASAN - debug builder': 'gn_debug_x64_asan_edge',
@@ -116,8 +125,7 @@
       'V8 Linux - s390 - sim': 'gyp_release_simulate_s390',
       'V8 Linux - s390x - sim': 'gyp_release_simulate_s390x',
       # X87.
-      'V8 Linux - x87 - nosnap - debug builder':
-          'gyp_debug_simulate_x87_no_snap',
+      'V8 Linux - x87 - nosnap - debug builder': 'gyp_debug_simulate_x87',
     },
     'client.v8.branches': {
       'V8 Linux - beta branch': 'gn_release_x86',
@@ -147,6 +155,7 @@
     },
     'tryserver.v8': {
       'v8_linux_rel_ng': 'gn_release_x86_gcmole_trybot',
+      'v8_linux_verify_csa_rel_ng': 'gn_release_x86_verify_csa',
       'v8_linux_avx2_dbg': 'gn_debug_x86_trybot',
       'v8_linux_nodcheck_rel_ng': 'gn_release_x86_minimal_symbols',
       'v8_linux_dbg_ng': 'gn_debug_x86_trybot',
@@ -157,6 +166,7 @@
       'v8_linux_gcc_compile_rel': 'gn_release_x86_gcc_minimal_symbols',
       'v8_linux_gcc_rel': 'gn_release_x86_gcc_minimal_symbols',
       'v8_linux64_rel_ng': 'gn_release_x64_valgrind_trybot',
+      'v8_linux64_verify_csa_rel_ng': 'gn_release_x64_verify_csa',
       'v8_linux64_gyp_rel_ng': 'gyp_release_x64',
       'v8_linux64_avx2_rel_ng': 'gn_release_x64_trybot',
       'v8_linux64_avx2_dbg': 'gn_debug_x64_trybot',
@@ -210,6 +220,20 @@
       'gn', 'debug', 'simulate_arm64', 'v8_enable_slow_dchecks'],
     'default_release_arm64': [
       'gn', 'release', 'simulate_arm64'],
+    'default_debug_mipsel': [
+      'gn', 'debug', 'simulate_mipsel', 'v8_enable_slow_dchecks',
+      'v8_full_debug'],
+    'default_optdebug_mipsel': [
+      'gn', 'debug', 'simulate_mipsel', 'v8_enable_slow_dchecks'],
+    'default_release_mipsel': [
+      'gn', 'release', 'simulate_mipsel'],
+    'default_debug_mips64el': [
+      'gn', 'debug', 'simulate_mips64el', 'v8_enable_slow_dchecks',
+      'v8_full_debug'],
+    'default_optdebug_mips64el': [
+      'gn', 'debug', 'simulate_mips64el', 'v8_enable_slow_dchecks'],
+    'default_release_mips64el': [
+      'gn', 'release', 'simulate_mips64el'],
     'default_debug_x64': [
       'gn', 'debug', 'x64', 'v8_enable_slow_dchecks', 'v8_full_debug'],
     'default_optdebug_x64': [
@@ -286,6 +310,8 @@
       'v8_verify_heap'],
     'gn_release_x64_clang': [
       'gn', 'release_bot', 'x64', 'clang', 'swarming'],
+    'gn_release_x64_correctness_fuzzer' : [
+      'gn', 'release_bot', 'x64', 'v8_correctness_fuzzer'],
     'gn_release_x64_internal': [
       'gn', 'release_bot', 'x64', 'swarming', 'v8_snapshot_internal'],
     'gn_release_x64_minimal_symbols': [
@@ -300,6 +326,9 @@
       'gn', 'release_bot', 'x64', 'swarming', 'valgrind'],
     'gn_release_x64_valgrind_trybot': [
       'gn', 'release_trybot', 'x64', 'swarming', 'valgrind'],
+    'gn_release_x64_verify_csa': [
+      'gn', 'release_bot', 'x64', 'swarming', 'dcheck_always_on',
+      'v8_enable_slow_dchecks', 'v8_verify_csa'],
 
     # GN debug configs for x64.
     'gn_debug_x64': [
@@ -357,11 +386,13 @@
       'gn', 'release', 'x86', 'goma', 'shared', 'swarming', 'v8_verify_heap'],
     'gn_release_x86_trybot': [
       'gn', 'release_trybot', 'x86', 'swarming'],
+    'gn_release_x86_verify_csa': [
+      'gn', 'release_bot', 'x86', 'swarming', 'dcheck_always_on',
+      'v8_enable_slow_dchecks', 'v8_verify_csa'],
 
     # Gyp debug configs for simulators.
-    'gyp_debug_simulate_x87_no_snap': [
-      'gyp', 'debug_bot_static', 'simulate_x87', 'swarming',
-      'v8_snapshot_none'],
+    'gyp_debug_simulate_x87': [
+      'gyp', 'debug_bot_static', 'simulate_x87', 'swarming'],
 
     # Gyp debug configs for x86.
     'gyp_debug_x86': [
@@ -626,6 +657,10 @@
       'gyp_defines': 'v8_enable_i18n_support=0 icu_use_data_file_flag=0',
     },
 
+    'v8_correctness_fuzzer': {
+      'gn_args': 'v8_correctness_fuzzer=true v8_multi_arch_build=true',
+    },
+
     'v8_disable_inspector': {
       'gn_args': 'v8_enable_inspector=false',
       'gyp_defines': 'v8_enable_inspector=0 ',
@@ -687,6 +722,10 @@
     'v8_verify_heap': {
       'gn_args': 'v8_enable_verify_heap=true',
       'gyp_defines': 'v8_enable_verify_heap=1',
+    },
+
+    'v8_verify_csa': {
+      'gn_args': 'v8_enable_verify_csa=true',
     },
 
     'x64': {

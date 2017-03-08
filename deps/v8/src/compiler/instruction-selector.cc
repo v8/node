@@ -14,6 +14,7 @@
 #include "src/compiler/schedule.h"
 #include "src/compiler/state-values-utils.h"
 #include "src/deoptimizer.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -126,7 +127,6 @@ void InstructionSelector::AddInstruction(Instruction* instr) {
     sequence()->AddInstruction(instr);
   }
 }
-
 
 Instruction* InstructionSelector::Emit(InstructionCode opcode,
                                        InstructionOperand output,
@@ -414,13 +414,10 @@ void InstructionSelector::MarkAsRepresentation(MachineRepresentation rep,
   sequence()->MarkAsRepresentation(rep, GetVirtualRegister(node));
 }
 
-
 namespace {
 
-enum class FrameStateInputKind { kAny, kStackSlot };
-
-InstructionOperand OperandForDeopt(OperandGenerator* g, Node* input,
-                                   FrameStateInputKind kind,
+InstructionOperand OperandForDeopt(Isolate* isolate, OperandGenerator* g,
+                                   Node* input, FrameStateInputKind kind,
                                    MachineRepresentation rep) {
   if (rep == MachineRepresentation::kNone) {
     return g->TempImmediate(FrameStateDescriptor::kImpossibleValue);
@@ -432,8 +429,32 @@ InstructionOperand OperandForDeopt(OperandGenerator* g, Node* input,
     case IrOpcode::kNumberConstant:
     case IrOpcode::kFloat32Constant:
     case IrOpcode::kFloat64Constant:
-    case IrOpcode::kHeapConstant:
       return g->UseImmediate(input);
+    case IrOpcode::kHeapConstant: {
+      if (!CanBeTaggedPointer(rep)) {
+        // If we have inconsistent static and dynamic types, e.g. if we
+        // smi-check a string, we can get here with a heap object that
+        // says it is a smi. In that case, we return an invalid instruction
+        // operand, which will be interpreted as an optimized-out value.
+
+        // TODO(jarin) Ideally, we should turn the current instruction
+        // into an abort (we should never execute it).
+        return InstructionOperand();
+      }
+
+      Handle<HeapObject> constant = OpParameter<Handle<HeapObject>>(input);
+      Heap::RootListIndex root_index;
+      if (isolate->heap()->IsRootHandle(constant, &root_index) &&
+          root_index == Heap::kOptimizedOutRootIndex) {
+        // For an optimized-out object we return an invalid instruction
+        // operand, so that we take the fast path for optimized-out values.
+        return InstructionOperand();
+      }
+
+      return g->UseImmediate(input);
+    }
+    case IrOpcode::kArgumentsElementsState:
+    case IrOpcode::kArgumentsLengthState:
     case IrOpcode::kObjectState:
     case IrOpcode::kTypedObjectState:
       UNREACHABLE();
@@ -452,6 +473,7 @@ InstructionOperand OperandForDeopt(OperandGenerator* g, Node* input,
   return InstructionOperand();
 }
 
+}  // namespace
 
 class StateObjectDeduplicator {
  public:
@@ -477,15 +499,25 @@ class StateObjectDeduplicator {
   ZoneVector<Node*> objects_;
 };
 
-
 // Returns the number of instruction operands added to inputs.
-size_t AddOperandToStateValueDescriptor(StateValueDescriptor* descriptor,
-                                        InstructionOperandVector* inputs,
-                                        OperandGenerator* g,
-                                        StateObjectDeduplicator* deduplicator,
-                                        Node* input, MachineType type,
-                                        FrameStateInputKind kind, Zone* zone) {
+size_t InstructionSelector::AddOperandToStateValueDescriptor(
+    StateValueList* values, InstructionOperandVector* inputs,
+    OperandGenerator* g, StateObjectDeduplicator* deduplicator, Node* input,
+    MachineType type, FrameStateInputKind kind, Zone* zone) {
+  if (input == nullptr) {
+    values->PushOptimizedOut();
+    return 0;
+  }
+
   switch (input->opcode()) {
+    case IrOpcode::kArgumentsElementsState: {
+      values->PushArgumentsElements(IsRestOf(input->op()));
+      return 0;
+    }
+    case IrOpcode::kArgumentsLengthState: {
+      values->PushArgumentsLength(IsRestOf(input->op()));
+      return 0;
+    }
     case IrOpcode::kObjectState: {
       UNREACHABLE();
       return 0;
@@ -495,41 +527,45 @@ size_t AddOperandToStateValueDescriptor(StateValueDescriptor* descriptor,
       if (id == StateObjectDeduplicator::kNotDuplicated) {
         size_t entries = 0;
         id = deduplicator->InsertObject(input);
-        descriptor->fields().push_back(
-            StateValueDescriptor::Recursive(zone, id));
-        StateValueDescriptor* new_desc = &descriptor->fields().back();
+        StateValueList* nested = values->PushRecursiveField(zone, id);
         int const input_count = input->op()->ValueInputCount();
         ZoneVector<MachineType> const* types = MachineTypesOf(input->op());
         for (int i = 0; i < input_count; ++i) {
           entries += AddOperandToStateValueDescriptor(
-              new_desc, inputs, g, deduplicator, input->InputAt(i),
-              types->at(i), kind, zone);
+              nested, inputs, g, deduplicator, input->InputAt(i), types->at(i),
+              kind, zone);
         }
         return entries;
       } else {
         // Crankshaft counts duplicate objects for the running id, so we have
         // to push the input again.
         deduplicator->InsertObject(input);
-        descriptor->fields().push_back(
-            StateValueDescriptor::Duplicate(zone, id));
+        values->PushDuplicate(id);
         return 0;
       }
     }
     default: {
-      inputs->push_back(OperandForDeopt(g, input, kind, type.representation()));
-      descriptor->fields().push_back(StateValueDescriptor::Plain(zone, type));
-      return 1;
+      InstructionOperand op =
+          OperandForDeopt(isolate(), g, input, kind, type.representation());
+      if (op.kind() == InstructionOperand::INVALID) {
+        // Invalid operand means the value is impossible or optimized-out.
+        values->PushOptimizedOut();
+        return 0;
+      } else {
+        inputs->push_back(op);
+        values->PushPlain(type);
+        return 1;
+      }
     }
   }
 }
 
 
 // Returns the number of instruction operands added to inputs.
-size_t AddInputsToFrameStateDescriptor(FrameStateDescriptor* descriptor,
-                                       Node* state, OperandGenerator* g,
-                                       StateObjectDeduplicator* deduplicator,
-                                       InstructionOperandVector* inputs,
-                                       FrameStateInputKind kind, Zone* zone) {
+size_t InstructionSelector::AddInputsToFrameStateDescriptor(
+    FrameStateDescriptor* descriptor, Node* state, OperandGenerator* g,
+    StateObjectDeduplicator* deduplicator, InstructionOperandVector* inputs,
+    FrameStateInputKind kind, Zone* zone) {
   DCHECK_EQ(IrOpcode::kFrameState, state->op()->opcode());
 
   size_t entries = 0;
@@ -553,8 +589,12 @@ size_t AddInputsToFrameStateDescriptor(FrameStateDescriptor* descriptor,
   DCHECK_EQ(descriptor->locals_count(), StateValuesAccess(locals).size());
   DCHECK_EQ(descriptor->stack_count(), StateValuesAccess(stack).size());
 
-  StateValueDescriptor* values_descriptor =
-      descriptor->GetStateValueDescriptor();
+  StateValueList* values_descriptor = descriptor->GetStateValueDescriptors();
+
+  DCHECK_EQ(values_descriptor->size(), 0u);
+  values_descriptor->ReserveSize(
+      descriptor->GetSize(OutputFrameStateCombine::Ignore()));
+
   entries += AddOperandToStateValueDescriptor(
       values_descriptor, inputs, g, deduplicator, function,
       MachineType::AnyTagged(), FrameStateInputKind::kStackSlot, zone);
@@ -582,8 +622,6 @@ size_t AddInputsToFrameStateDescriptor(FrameStateDescriptor* descriptor,
   DCHECK_EQ(initial_size + entries, inputs->size());
   return entries;
 }
-
-}  // namespace
 
 
 // An internal helper class for generating the operands to calls.
@@ -643,12 +681,13 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
       buffer->output_nodes.push_back(call);
     } else {
       buffer->output_nodes.resize(buffer->descriptor->ReturnCount(), nullptr);
-      for (auto use : call->uses()) {
-        if (use->opcode() != IrOpcode::kProjection) continue;
-        size_t const index = ProjectionIndexOf(use->op());
+      for (Edge const edge : call->use_edges()) {
+        if (!NodeProperties::IsValueEdge(edge)) continue;
+        DCHECK(edge.from()->opcode() == IrOpcode::kProjection);
+        size_t const index = ProjectionIndexOf(edge.from()->op());
         DCHECK_LT(index, buffer->output_nodes.size());
         DCHECK(!buffer->output_nodes[index]);
-        buffer->output_nodes[index] = use;
+        buffer->output_nodes[index] = edge.from();
       }
     }
 
@@ -733,7 +772,8 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
     }
 
     int const state_id = sequence()->AddDeoptimizationEntry(
-        buffer->frame_state_descriptor, DeoptimizeReason::kNoReason);
+        buffer->frame_state_descriptor, DeoptimizeKind::kEager,
+        DeoptimizeReason::kNoReason);
     buffer->instruction_args.push_back(g.TempImmediate(state_id));
 
     StateObjectDeduplicator deduplicator(instruction_zone());
@@ -796,20 +836,33 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
   }
 }
 
+bool InstructionSelector::IsSourcePositionUsed(Node* node) {
+  return (source_position_mode_ == kAllSourcePositions ||
+          node->opcode() == IrOpcode::kCall ||
+          node->opcode() == IrOpcode::kTrapIf ||
+          node->opcode() == IrOpcode::kTrapUnless);
+}
+
 void InstructionSelector::VisitBlock(BasicBlock* block) {
   DCHECK(!current_block_);
   current_block_ = block;
-  int current_block_end = static_cast<int>(instructions_.size());
+  auto current_num_instructions = [&] {
+    DCHECK_GE(kMaxInt, instructions_.size());
+    return static_cast<int>(instructions_.size());
+  };
+  int current_block_end = current_num_instructions();
 
   int effect_level = 0;
   for (Node* const node : *block) {
+    SetEffectLevel(node, effect_level);
     if (node->opcode() == IrOpcode::kStore ||
         node->opcode() == IrOpcode::kUnalignedStore ||
         node->opcode() == IrOpcode::kCheckedStore ||
-        node->opcode() == IrOpcode::kCall) {
+        node->opcode() == IrOpcode::kCall ||
+        node->opcode() == IrOpcode::kProtectedLoad ||
+        node->opcode() == IrOpcode::kProtectedStore) {
       ++effect_level;
     }
-    SetEffectLevel(node, effect_level);
   }
 
   // We visit the control first, then the nodes in the block, so the block's
@@ -818,10 +871,25 @@ void InstructionSelector::VisitBlock(BasicBlock* block) {
     SetEffectLevel(block->control_input(), effect_level);
   }
 
+  auto FinishEmittedInstructions = [&](Node* node, int instruction_start) {
+    if (instruction_selection_failed()) return false;
+    if (current_num_instructions() == instruction_start) return true;
+    std::reverse(instructions_.begin() + instruction_start,
+                 instructions_.end());
+    if (!node) return true;
+    SourcePosition source_position = source_positions_->GetSourcePosition(node);
+    if (source_position.IsKnown() && IsSourcePositionUsed(node)) {
+      sequence()->SetSourcePosition(instructions_[instruction_start],
+                                    source_position);
+    }
+    return true;
+  };
+
   // Generate code for the block control "top down", but schedule the code
   // "bottom up".
   VisitControl(block);
-  std::reverse(instructions_.begin() + current_block_end, instructions_.end());
+  if (!FinishEmittedInstructions(block->control_input(), current_block_end))
+    return;
 
   // Visit code in reverse control flow order, because architecture-specific
   // matching may cover more than one node at a time.
@@ -830,19 +898,9 @@ void InstructionSelector::VisitBlock(BasicBlock* block) {
     if (!IsUsed(node) || IsDefined(node)) continue;
     // Generate code for this node "top down", but schedule the code "bottom
     // up".
-    size_t current_node_end = instructions_.size();
+    int current_node_end = current_num_instructions();
     VisitNode(node);
-    if (instruction_selection_failed()) return;
-    std::reverse(instructions_.begin() + current_node_end, instructions_.end());
-    if (instructions_.size() == current_node_end) continue;
-    // Mark source position on first instruction emitted.
-    SourcePosition source_position = source_positions_->GetSourcePosition(node);
-    if (source_position.IsKnown() &&
-        (source_position_mode_ == kAllSourcePositions ||
-         node->opcode() == IrOpcode::kCall)) {
-      sequence()->SetSourcePosition(instructions_[current_node_end],
-                                    source_position);
-    }
+    if (!FinishEmittedInstructions(node, current_node_end)) return;
   }
 
   // We're done with the block.
@@ -862,6 +920,8 @@ void InstructionSelector::VisitControl(BasicBlock* block) {
   if (block->SuccessorCount() > 1) {
     for (BasicBlock* const successor : block->successors()) {
       for (Node* const node : *successor) {
+        // If this CHECK fails, you might have specified merged variables
+        // for a label with only one predecessor.
         CHECK(!IrOpcode::IsPhiOpcode(node->opcode()));
       }
     }
@@ -928,7 +988,7 @@ void InstructionSelector::VisitControl(BasicBlock* block) {
     }
     case BasicBlock::kThrow:
       DCHECK_EQ(IrOpcode::kThrow, input->opcode());
-      return VisitThrow(input->InputAt(0));
+      return VisitThrow(input);
     case BasicBlock::kNone: {
       // Exit block doesn't have control.
       DCHECK_NULL(input);
@@ -1013,6 +1073,12 @@ void InstructionSelector::VisitNode(Node* node) {
       return VisitDeoptimizeIf(node);
     case IrOpcode::kDeoptimizeUnless:
       return VisitDeoptimizeUnless(node);
+    case IrOpcode::kTrapIf:
+      return VisitTrapIf(node, static_cast<Runtime::FunctionId>(
+                                   OpParameter<int32_t>(node->op())));
+    case IrOpcode::kTrapUnless:
+      return VisitTrapUnless(node, static_cast<Runtime::FunctionId>(
+                                       OpParameter<int32_t>(node->op())));
     case IrOpcode::kFrameState:
     case IrOpcode::kStateValues:
     case IrOpcode::kObjectState:
@@ -1033,6 +1099,8 @@ void InstructionSelector::VisitNode(Node* node) {
     }
     case IrOpcode::kStore:
       return VisitStore(node);
+    case IrOpcode::kProtectedStore:
+      return VisitProtectedStore(node);
     case IrOpcode::kWord32And:
       return MarkAsWord32(node), VisitWord32And(node);
     case IrOpcode::kWord32Or:
@@ -1387,15 +1455,257 @@ void InstructionSelector::VisitNode(Node* node) {
     }
     case IrOpcode::kAtomicStore:
       return VisitAtomicStore(node);
-    case IrOpcode::kProtectedLoad:
+    case IrOpcode::kAtomicExchange: {
+      MachineType type = AtomicExchangeRepresentationOf(node->op());
+      MarkAsRepresentation(type.representation(), node);
+      return VisitAtomicExchange(node);
+    }
+    case IrOpcode::kProtectedLoad: {
+      LoadRepresentation type = LoadRepresentationOf(node->op());
+      MarkAsRepresentation(type.representation(), node);
       return VisitProtectedLoad(node);
+    }
     case IrOpcode::kUnsafePointerAdd:
       MarkAsRepresentation(MachineType::PointerRepresentation(), node);
       return VisitUnsafePointerAdd(node);
-    case IrOpcode::kCreateInt32x4:
-      return MarkAsSimd128(node), VisitCreateInt32x4(node);
+    case IrOpcode::kFloat32x4Splat:
+      return MarkAsSimd128(node), VisitFloat32x4Splat(node);
+    case IrOpcode::kFloat32x4ExtractLane:
+      return MarkAsFloat32(node), VisitFloat32x4ExtractLane(node);
+    case IrOpcode::kFloat32x4ReplaceLane:
+      return MarkAsSimd128(node), VisitFloat32x4ReplaceLane(node);
+    case IrOpcode::kFloat32x4FromInt32x4:
+      return MarkAsSimd128(node), VisitFloat32x4FromInt32x4(node);
+    case IrOpcode::kFloat32x4FromUint32x4:
+      return MarkAsSimd128(node), VisitFloat32x4FromUint32x4(node);
+    case IrOpcode::kFloat32x4Abs:
+      return MarkAsSimd128(node), VisitFloat32x4Abs(node);
+    case IrOpcode::kFloat32x4Neg:
+      return MarkAsSimd128(node), VisitFloat32x4Neg(node);
+    case IrOpcode::kFloat32x4RecipApprox:
+      return MarkAsSimd128(node), VisitFloat32x4RecipApprox(node);
+    case IrOpcode::kFloat32x4RecipRefine:
+      return MarkAsSimd128(node), VisitFloat32x4RecipRefine(node);
+    case IrOpcode::kFloat32x4RecipSqrtApprox:
+      return MarkAsSimd128(node), VisitFloat32x4RecipSqrtApprox(node);
+    case IrOpcode::kFloat32x4RecipSqrtRefine:
+      return MarkAsSimd128(node), VisitFloat32x4RecipSqrtRefine(node);
+    case IrOpcode::kFloat32x4Add:
+      return MarkAsSimd128(node), VisitFloat32x4Add(node);
+    case IrOpcode::kFloat32x4Sub:
+      return MarkAsSimd128(node), VisitFloat32x4Sub(node);
+    case IrOpcode::kFloat32x4Mul:
+      return MarkAsSimd128(node), VisitFloat32x4Mul(node);
+    case IrOpcode::kFloat32x4Min:
+      return MarkAsSimd128(node), VisitFloat32x4Min(node);
+    case IrOpcode::kFloat32x4Max:
+      return MarkAsSimd128(node), VisitFloat32x4Max(node);
+    case IrOpcode::kFloat32x4Equal:
+      return MarkAsSimd1x4(node), VisitFloat32x4Equal(node);
+    case IrOpcode::kFloat32x4NotEqual:
+      return MarkAsSimd1x4(node), VisitFloat32x4NotEqual(node);
+    case IrOpcode::kFloat32x4LessThan:
+      return MarkAsSimd1x4(node), VisitFloat32x4LessThan(node);
+    case IrOpcode::kFloat32x4LessThanOrEqual:
+      return MarkAsSimd1x4(node), VisitFloat32x4LessThanOrEqual(node);
+    case IrOpcode::kInt32x4Splat:
+      return MarkAsSimd128(node), VisitInt32x4Splat(node);
     case IrOpcode::kInt32x4ExtractLane:
       return MarkAsWord32(node), VisitInt32x4ExtractLane(node);
+    case IrOpcode::kInt32x4ReplaceLane:
+      return MarkAsSimd128(node), VisitInt32x4ReplaceLane(node);
+    case IrOpcode::kInt32x4FromFloat32x4:
+      return MarkAsSimd128(node), VisitInt32x4FromFloat32x4(node);
+    case IrOpcode::kUint32x4FromFloat32x4:
+      return MarkAsSimd128(node), VisitUint32x4FromFloat32x4(node);
+    case IrOpcode::kInt32x4Neg:
+      return MarkAsSimd128(node), VisitInt32x4Neg(node);
+    case IrOpcode::kInt32x4ShiftLeftByScalar:
+      return MarkAsSimd128(node), VisitInt32x4ShiftLeftByScalar(node);
+    case IrOpcode::kInt32x4ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitInt32x4ShiftRightByScalar(node);
+    case IrOpcode::kInt32x4Add:
+      return MarkAsSimd128(node), VisitInt32x4Add(node);
+    case IrOpcode::kInt32x4Sub:
+      return MarkAsSimd128(node), VisitInt32x4Sub(node);
+    case IrOpcode::kInt32x4Mul:
+      return MarkAsSimd128(node), VisitInt32x4Mul(node);
+    case IrOpcode::kInt32x4Min:
+      return MarkAsSimd128(node), VisitInt32x4Min(node);
+    case IrOpcode::kInt32x4Max:
+      return MarkAsSimd128(node), VisitInt32x4Max(node);
+    case IrOpcode::kInt32x4Equal:
+      return MarkAsSimd1x4(node), VisitInt32x4Equal(node);
+    case IrOpcode::kInt32x4NotEqual:
+      return MarkAsSimd1x4(node), VisitInt32x4NotEqual(node);
+    case IrOpcode::kInt32x4LessThan:
+      return MarkAsSimd1x4(node), VisitInt32x4LessThan(node);
+    case IrOpcode::kInt32x4LessThanOrEqual:
+      return MarkAsSimd1x4(node), VisitInt32x4LessThanOrEqual(node);
+    case IrOpcode::kUint32x4ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitUint32x4ShiftRightByScalar(node);
+    case IrOpcode::kUint32x4Min:
+      return MarkAsSimd128(node), VisitUint32x4Min(node);
+    case IrOpcode::kUint32x4Max:
+      return MarkAsSimd128(node), VisitUint32x4Max(node);
+    case IrOpcode::kUint32x4LessThan:
+      return MarkAsSimd1x4(node), VisitUint32x4LessThan(node);
+    case IrOpcode::kUint32x4LessThanOrEqual:
+      return MarkAsSimd1x4(node), VisitUint32x4LessThanOrEqual(node);
+    case IrOpcode::kInt16x8Splat:
+      return MarkAsSimd128(node), VisitInt16x8Splat(node);
+    case IrOpcode::kInt16x8ExtractLane:
+      return MarkAsWord32(node), VisitInt16x8ExtractLane(node);
+    case IrOpcode::kInt16x8ReplaceLane:
+      return MarkAsSimd128(node), VisitInt16x8ReplaceLane(node);
+    case IrOpcode::kInt16x8Neg:
+      return MarkAsSimd128(node), VisitInt16x8Neg(node);
+    case IrOpcode::kInt16x8ShiftLeftByScalar:
+      return MarkAsSimd128(node), VisitInt16x8ShiftLeftByScalar(node);
+    case IrOpcode::kInt16x8ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitInt16x8ShiftRightByScalar(node);
+    case IrOpcode::kInt16x8Add:
+      return MarkAsSimd128(node), VisitInt16x8Add(node);
+    case IrOpcode::kInt16x8AddSaturate:
+      return MarkAsSimd128(node), VisitInt16x8AddSaturate(node);
+    case IrOpcode::kInt16x8Sub:
+      return MarkAsSimd128(node), VisitInt16x8Sub(node);
+    case IrOpcode::kInt16x8SubSaturate:
+      return MarkAsSimd128(node), VisitInt16x8SubSaturate(node);
+    case IrOpcode::kInt16x8Mul:
+      return MarkAsSimd128(node), VisitInt16x8Mul(node);
+    case IrOpcode::kInt16x8Min:
+      return MarkAsSimd128(node), VisitInt16x8Min(node);
+    case IrOpcode::kInt16x8Max:
+      return MarkAsSimd128(node), VisitInt16x8Max(node);
+    case IrOpcode::kInt16x8Equal:
+      return MarkAsSimd1x8(node), VisitInt16x8Equal(node);
+    case IrOpcode::kInt16x8NotEqual:
+      return MarkAsSimd1x8(node), VisitInt16x8NotEqual(node);
+    case IrOpcode::kInt16x8LessThan:
+      return MarkAsSimd1x8(node), VisitInt16x8LessThan(node);
+    case IrOpcode::kInt16x8LessThanOrEqual:
+      return MarkAsSimd1x8(node), VisitInt16x8LessThanOrEqual(node);
+    case IrOpcode::kUint16x8ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitUint16x8ShiftRightByScalar(node);
+    case IrOpcode::kUint16x8AddSaturate:
+      return MarkAsSimd128(node), VisitUint16x8AddSaturate(node);
+    case IrOpcode::kUint16x8SubSaturate:
+      return MarkAsSimd128(node), VisitUint16x8SubSaturate(node);
+    case IrOpcode::kUint16x8Min:
+      return MarkAsSimd128(node), VisitUint16x8Min(node);
+    case IrOpcode::kUint16x8Max:
+      return MarkAsSimd128(node), VisitUint16x8Max(node);
+    case IrOpcode::kUint16x8LessThan:
+      return MarkAsSimd1x8(node), VisitUint16x8LessThan(node);
+    case IrOpcode::kUint16x8LessThanOrEqual:
+      return MarkAsSimd1x8(node), VisitUint16x8LessThanOrEqual(node);
+    case IrOpcode::kInt8x16Splat:
+      return MarkAsSimd128(node), VisitInt8x16Splat(node);
+    case IrOpcode::kInt8x16ExtractLane:
+      return MarkAsWord32(node), VisitInt8x16ExtractLane(node);
+    case IrOpcode::kInt8x16ReplaceLane:
+      return MarkAsSimd128(node), VisitInt8x16ReplaceLane(node);
+    case IrOpcode::kInt8x16Neg:
+      return MarkAsSimd128(node), VisitInt8x16Neg(node);
+    case IrOpcode::kInt8x16ShiftLeftByScalar:
+      return MarkAsSimd128(node), VisitInt8x16ShiftLeftByScalar(node);
+    case IrOpcode::kInt8x16ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitInt8x16ShiftRightByScalar(node);
+    case IrOpcode::kInt8x16Add:
+      return MarkAsSimd128(node), VisitInt8x16Add(node);
+    case IrOpcode::kInt8x16AddSaturate:
+      return MarkAsSimd128(node), VisitInt8x16AddSaturate(node);
+    case IrOpcode::kInt8x16Sub:
+      return MarkAsSimd128(node), VisitInt8x16Sub(node);
+    case IrOpcode::kInt8x16SubSaturate:
+      return MarkAsSimd128(node), VisitInt8x16SubSaturate(node);
+    case IrOpcode::kInt8x16Mul:
+      return MarkAsSimd128(node), VisitInt8x16Mul(node);
+    case IrOpcode::kInt8x16Min:
+      return MarkAsSimd128(node), VisitInt8x16Min(node);
+    case IrOpcode::kInt8x16Max:
+      return MarkAsSimd128(node), VisitInt8x16Max(node);
+    case IrOpcode::kInt8x16Equal:
+      return MarkAsSimd1x16(node), VisitInt8x16Equal(node);
+    case IrOpcode::kInt8x16NotEqual:
+      return MarkAsSimd1x16(node), VisitInt8x16NotEqual(node);
+    case IrOpcode::kInt8x16LessThan:
+      return MarkAsSimd1x16(node), VisitInt8x16LessThan(node);
+    case IrOpcode::kInt8x16LessThanOrEqual:
+      return MarkAsSimd1x16(node), VisitInt8x16LessThanOrEqual(node);
+    case IrOpcode::kUint8x16ShiftRightByScalar:
+      return MarkAsSimd128(node), VisitUint8x16ShiftRightByScalar(node);
+    case IrOpcode::kUint8x16AddSaturate:
+      return MarkAsSimd128(node), VisitUint8x16AddSaturate(node);
+    case IrOpcode::kUint8x16SubSaturate:
+      return MarkAsSimd128(node), VisitUint8x16SubSaturate(node);
+    case IrOpcode::kUint8x16Min:
+      return MarkAsSimd128(node), VisitUint8x16Min(node);
+    case IrOpcode::kUint8x16Max:
+      return MarkAsSimd128(node), VisitUint8x16Max(node);
+    case IrOpcode::kUint8x16LessThan:
+      return MarkAsSimd1x16(node), VisitUint8x16LessThan(node);
+    case IrOpcode::kUint8x16LessThanOrEqual:
+      return MarkAsSimd1x16(node), VisitUint16x8LessThanOrEqual(node);
+    case IrOpcode::kSimd128Zero:
+      return MarkAsSimd128(node), VisitSimd128Zero(node);
+    case IrOpcode::kSimd128And:
+      return MarkAsSimd128(node), VisitSimd128And(node);
+    case IrOpcode::kSimd128Or:
+      return MarkAsSimd128(node), VisitSimd128Or(node);
+    case IrOpcode::kSimd128Xor:
+      return MarkAsSimd128(node), VisitSimd128Xor(node);
+    case IrOpcode::kSimd128Not:
+      return MarkAsSimd128(node), VisitSimd128Not(node);
+    case IrOpcode::kSimd32x4Select:
+      return MarkAsSimd128(node), VisitSimd32x4Select(node);
+    case IrOpcode::kSimd16x8Select:
+      return MarkAsSimd128(node), VisitSimd16x8Select(node);
+    case IrOpcode::kSimd8x16Select:
+      return MarkAsSimd128(node), VisitSimd8x16Select(node);
+    case IrOpcode::kSimd1x4Zero:
+      return MarkAsSimd1x4(node), VisitSimd1x4Zero(node);
+    case IrOpcode::kSimd1x4And:
+      return MarkAsSimd1x4(node), VisitSimd1x4And(node);
+    case IrOpcode::kSimd1x4Or:
+      return MarkAsSimd1x4(node), VisitSimd1x4Or(node);
+    case IrOpcode::kSimd1x4Xor:
+      return MarkAsSimd1x4(node), VisitSimd1x4Xor(node);
+    case IrOpcode::kSimd1x4Not:
+      return MarkAsSimd1x4(node), VisitSimd1x4Not(node);
+    case IrOpcode::kSimd1x4AnyTrue:
+      return MarkAsWord32(node), VisitSimd1x4AnyTrue(node);
+    case IrOpcode::kSimd1x4AllTrue:
+      return MarkAsWord32(node), VisitSimd1x4AllTrue(node);
+    case IrOpcode::kSimd1x8Zero:
+      return MarkAsSimd1x8(node), VisitSimd1x8Zero(node);
+    case IrOpcode::kSimd1x8And:
+      return MarkAsSimd1x8(node), VisitSimd1x8And(node);
+    case IrOpcode::kSimd1x8Or:
+      return MarkAsSimd1x8(node), VisitSimd1x8Or(node);
+    case IrOpcode::kSimd1x8Xor:
+      return MarkAsSimd1x8(node), VisitSimd1x8Xor(node);
+    case IrOpcode::kSimd1x8Not:
+      return MarkAsSimd1x8(node), VisitSimd1x8Not(node);
+    case IrOpcode::kSimd1x8AnyTrue:
+      return MarkAsWord32(node), VisitSimd1x8AnyTrue(node);
+    case IrOpcode::kSimd1x8AllTrue:
+      return MarkAsWord32(node), VisitSimd1x8AllTrue(node);
+    case IrOpcode::kSimd1x16Zero:
+      return MarkAsSimd1x16(node), VisitSimd1x16Zero(node);
+    case IrOpcode::kSimd1x16And:
+      return MarkAsSimd1x16(node), VisitSimd1x16And(node);
+    case IrOpcode::kSimd1x16Or:
+      return MarkAsSimd1x16(node), VisitSimd1x16Or(node);
+    case IrOpcode::kSimd1x16Xor:
+      return MarkAsSimd1x16(node), VisitSimd1x16Xor(node);
+    case IrOpcode::kSimd1x16Not:
+      return MarkAsSimd1x16(node), VisitSimd1x16Not(node);
+    case IrOpcode::kSimd1x16AnyTrue:
+      return MarkAsWord32(node), VisitSimd1x16AnyTrue(node);
+    case IrOpcode::kSimd1x16AllTrue:
+      return MarkAsWord32(node), VisitSimd1x16AllTrue(node);
     default:
       V8_Fatal(__FILE__, __LINE__, "Unexpected operator #%d:%s @ node #%d",
                node->opcode(), node->op()->mnemonic(), node->id());
@@ -1538,7 +1848,7 @@ void InstructionSelector::EmitLookupSwitch(const SwitchInfo& sw,
 }
 
 void InstructionSelector::VisitStackSlot(Node* node) {
-  int size = 1 << ElementSizeLog2Of(StackSlotRepresentationOf(node->op()));
+  int size = StackSlotSizeOf(node->op());
   int slot = frame_->AllocateSpillSlot(size);
   OperandGenerator g(this);
 
@@ -1547,8 +1857,7 @@ void InstructionSelector::VisitStackSlot(Node* node) {
 }
 
 void InstructionSelector::VisitBitcastTaggedToWord(Node* node) {
-  OperandGenerator g(this);
-  Emit(kArchNop, g.DefineSameAsFirst(node), g.Use(node->InputAt(0)));
+  EmitIdentity(node);
 }
 
 void InstructionSelector::VisitBitcastWordToTagged(Node* node) {
@@ -1697,7 +2006,6 @@ void InstructionSelector::VisitRoundUint64ToFloat64(Node* node) {
   UNIMPLEMENTED();
 }
 
-
 void InstructionSelector::VisitBitcastFloat64ToInt64(Node* node) {
   UNIMPLEMENTED();
 }
@@ -1723,13 +2031,331 @@ void InstructionSelector::VisitWord32PairShr(Node* node) { UNIMPLEMENTED(); }
 void InstructionSelector::VisitWord32PairSar(Node* node) { UNIMPLEMENTED(); }
 #endif  // V8_TARGET_ARCH_64_BIT
 
-#if !V8_TARGET_ARCH_X64
-void InstructionSelector::VisitCreateInt32x4(Node* node) { UNIMPLEMENTED(); }
+#if !V8_TARGET_ARCH_X64 && !V8_TARGET_ARCH_ARM
+void InstructionSelector::VisitInt32x4Splat(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitInt32x4ExtractLane(Node* node) {
   UNIMPLEMENTED();
 }
-#endif  // !V8_TARGET_ARCH_X64
+
+void InstructionSelector::VisitInt32x4ReplaceLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt32x4Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd128Zero(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4Zero(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8Zero(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16Zero(Node* node) { UNIMPLEMENTED(); }
+#endif  // !V8_TARGET_ARCH_X64 && !V8_TARGET_ARCH_ARM
+
+#if !V8_TARGET_ARCH_ARM
+void InstructionSelector::VisitFloat32x4Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4ExtractLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4ReplaceLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4FromInt32x4(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4FromUint32x4(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4Abs(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4RecipApprox(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4RecipRefine(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4RecipSqrtApprox(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4RecipSqrtRefine(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4Equal(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitFloat32x4NotEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4LessThan(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitFloat32x4LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt32x4FromFloat32x4(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint32x4FromFloat32x4(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt32x4Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4ShiftLeftByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt32x4ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt32x4Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4Equal(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4NotEqual(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt32x4LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint32x4ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint32x4Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint32x4Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint32x4LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint32x4LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8ExtractLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8ReplaceLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8ShiftLeftByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8AddSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8SubSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt16x8Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8Equal(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8NotEqual(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt16x8LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint16x8ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint16x8AddSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint16x8SubSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint16x8Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint16x8Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint16x8LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint16x8LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16ExtractLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16ReplaceLane(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16ShiftLeftByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16AddSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16SubSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitInt8x16Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16Equal(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16NotEqual(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitInt8x16LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint8x16ShiftRightByScalar(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint8x16AddSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint8x16SubSaturate(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitUint8x16Max(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint8x16Min(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint8x16LessThan(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitUint8x16LessThanOrEqual(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitSimd128And(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd128Or(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd128Xor(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd128Not(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd32x4Select(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd16x8Select(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd8x16Select(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4And(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4Or(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4Xor(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4Not(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4AnyTrue(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x4AllTrue(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8And(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8Or(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8Xor(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8Not(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8AnyTrue(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x8AllTrue(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16And(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16Or(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16Xor(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16Not(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16AnyTrue(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitSimd1x16AllTrue(Node* node) { UNIMPLEMENTED(); }
+#endif  // !V8_TARGET_ARCH_ARM
 
 void InstructionSelector::VisitFinishRegion(Node* node) { EmitIdentity(node); }
 
@@ -1970,7 +2596,8 @@ void InstructionSelector::VisitReturn(Node* ret) {
   DCHECK_GE(input_count, 1);
   auto value_locations = zone()->NewArray<InstructionOperand>(input_count);
   Node* pop_count = ret->InputAt(0);
-  value_locations[0] = pop_count->opcode() == IrOpcode::kInt32Constant
+  value_locations[0] = (pop_count->opcode() == IrOpcode::kInt32Constant ||
+                        pop_count->opcode() == IrOpcode::kInt64Constant)
                            ? g.UseImmediate(pop_count)
                            : g.UseRegister(pop_count);
   for (int i = 1; i < input_count; ++i) {
@@ -1980,32 +2607,31 @@ void InstructionSelector::VisitReturn(Node* ret) {
   Emit(kArchRet, 0, nullptr, input_count, value_locations);
 }
 
-Instruction* InstructionSelector::EmitDeoptimize(InstructionCode opcode,
-                                                 InstructionOperand output,
-                                                 InstructionOperand a,
-                                                 DeoptimizeReason reason,
-                                                 Node* frame_state) {
+Instruction* InstructionSelector::EmitDeoptimize(
+    InstructionCode opcode, InstructionOperand output, InstructionOperand a,
+    DeoptimizeKind kind, DeoptimizeReason reason, Node* frame_state) {
   size_t output_count = output.IsInvalid() ? 0 : 1;
   InstructionOperand inputs[] = {a};
   size_t input_count = arraysize(inputs);
   return EmitDeoptimize(opcode, output_count, &output, input_count, inputs,
-                        reason, frame_state);
+                        kind, reason, frame_state);
 }
 
 Instruction* InstructionSelector::EmitDeoptimize(
     InstructionCode opcode, InstructionOperand output, InstructionOperand a,
-    InstructionOperand b, DeoptimizeReason reason, Node* frame_state) {
+    InstructionOperand b, DeoptimizeKind kind, DeoptimizeReason reason,
+    Node* frame_state) {
   size_t output_count = output.IsInvalid() ? 0 : 1;
   InstructionOperand inputs[] = {a, b};
   size_t input_count = arraysize(inputs);
   return EmitDeoptimize(opcode, output_count, &output, input_count, inputs,
-                        reason, frame_state);
+                        kind, reason, frame_state);
 }
 
 Instruction* InstructionSelector::EmitDeoptimize(
     InstructionCode opcode, size_t output_count, InstructionOperand* outputs,
-    size_t input_count, InstructionOperand* inputs, DeoptimizeReason reason,
-    Node* frame_state) {
+    size_t input_count, InstructionOperand* inputs, DeoptimizeKind kind,
+    DeoptimizeReason reason, Node* frame_state) {
   OperandGenerator g(this);
   FrameStateDescriptor* const descriptor = GetFrameStateDescriptor(frame_state);
   InstructionOperandVector args(instruction_zone());
@@ -2014,7 +2640,8 @@ Instruction* InstructionSelector::EmitDeoptimize(
     args.push_back(inputs[i]);
   }
   opcode |= MiscField::encode(static_cast<int>(input_count));
-  int const state_id = sequence()->AddDeoptimizationEntry(descriptor, reason);
+  int const state_id =
+      sequence()->AddDeoptimizationEntry(descriptor, kind, reason);
   args.push_back(g.TempImmediate(state_id));
   StateObjectDeduplicator deduplicator(instruction_zone());
   AddInputsToFrameStateDescriptor(descriptor, frame_state, &g, &deduplicator,
@@ -2033,20 +2660,10 @@ void InstructionSelector::EmitIdentity(Node* node) {
 void InstructionSelector::VisitDeoptimize(DeoptimizeKind kind,
                                           DeoptimizeReason reason,
                                           Node* value) {
-  InstructionCode opcode = kArchDeoptimize;
-  switch (kind) {
-    case DeoptimizeKind::kEager:
-      opcode |= MiscField::encode(Deoptimizer::EAGER);
-      break;
-    case DeoptimizeKind::kSoft:
-      opcode |= MiscField::encode(Deoptimizer::SOFT);
-      break;
-  }
-  EmitDeoptimize(opcode, 0, nullptr, 0, nullptr, reason, value);
+  EmitDeoptimize(kArchDeoptimize, 0, nullptr, 0, nullptr, kind, reason, value);
 }
 
-
-void InstructionSelector::VisitThrow(Node* value) {
+void InstructionSelector::VisitThrow(Node* node) {
   OperandGenerator g(this);
   Emit(kArchThrowTerminator, g.NoOutput());
 }

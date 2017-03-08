@@ -8,6 +8,7 @@
 #include "src/debug/debug.h"
 #include "src/deoptimizer.h"
 #include "src/global-handles.h"
+#include "src/objects-inl.h"
 #include "src/profiler/cpu-profiler.h"
 #include "src/profiler/profile-generator-inl.h"
 #include "src/tracing/trace-event.h"
@@ -635,9 +636,8 @@ void CpuProfilesCollection::AddPathToCurrentProfiles(
   current_profiles_semaphore_.Signal();
 }
 
-ProfileGenerator::ProfileGenerator(Isolate* isolate,
-                                   CpuProfilesCollection* profiles)
-    : isolate_(isolate), profiles_(profiles) {}
+ProfileGenerator::ProfileGenerator(CpuProfilesCollection* profiles)
+    : profiles_(profiles) {}
 
 void ProfileGenerator::RecordTickSample(const TickSample& sample) {
   std::vector<CodeEntry*> entries;
@@ -742,20 +742,7 @@ void ProfileGenerator::RecordTickSample(const TickSample& sample) {
 }
 
 CodeEntry* ProfileGenerator::FindEntry(void* address) {
-  CodeEntry* entry = code_map_.FindEntry(reinterpret_cast<Address>(address));
-  if (!entry) {
-    RuntimeCallStats* rcs = isolate_->counters()->runtime_call_stats();
-    void* start = reinterpret_cast<void*>(rcs);
-    void* end = reinterpret_cast<void*>(rcs + 1);
-    if (start <= address && address < end) {
-      RuntimeCallCounter* counter =
-          reinterpret_cast<RuntimeCallCounter*>(address);
-      entry = new CodeEntry(CodeEventListener::FUNCTION_TAG, counter->name,
-                            CodeEntry::kEmptyNamePrefix, "native V8Runtime");
-      code_map_.AddCode(reinterpret_cast<Address>(address), entry, 1);
-    }
-  }
-  return entry;
+  return code_map_.FindEntry(reinterpret_cast<Address>(address));
 }
 
 CodeEntry* ProfileGenerator::EntryForVMState(StateTag tag) {

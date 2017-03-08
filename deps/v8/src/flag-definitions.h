@@ -19,6 +19,10 @@
 #define DEFINE_NEG_NEG_IMPLICATION(whenflag, thenflag) \
   DEFINE_NEG_VALUE_IMPLICATION(whenflag, thenflag, false)
 
+#define DEFINE_DUAL_IMPLICATION(whenflag, thenflag) \
+  DEFINE_IMPLICATION(whenflag, thenflag)            \
+  DEFINE_NEG_NEG_IMPLICATION(whenflag, thenflag)
+
 // We want to declare the names of the variables for the header file.  Normally
 // this will just be an extern declaration, but for a readonly flag we let the
 // compiler make better optimizations by giving it the value.
@@ -159,6 +163,7 @@ struct MaybeBoolFlag {
 #define DEFINE_MAYBE_BOOL(nam, cmt) \
   FLAG(MAYBE_BOOL, MaybeBoolFlag, nam, {false COMMA false}, cmt)
 #define DEFINE_INT(nam, def, cmt) FLAG(INT, int, nam, def, cmt)
+#define DEFINE_UINT(nam, def, cmt) FLAG(UINT, unsigned int, nam, def, cmt)
 #define DEFINE_FLOAT(nam, def, cmt) FLAG(FLOAT, double, nam, def, cmt)
 #define DEFINE_STRING(nam, def, cmt) FLAG(STRING, const char*, nam, def, cmt)
 #define DEFINE_ARGS(nam, cmt) FLAG(ARGS, JSArguments, nam, {0 COMMA NULL}, cmt)
@@ -196,34 +201,39 @@ DEFINE_IMPLICATION(es_staging, move_object_start)
 #define HARMONY_INPROGRESS(V)                                           \
   V(harmony_array_prototype_values, "harmony Array.prototype.values")   \
   V(harmony_function_sent, "harmony function.sent")                     \
+  V(harmony_tailcalls, "harmony tail calls")                            \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")             \
-  V(harmony_simd, "harmony simd")                                       \
   V(harmony_do_expressions, "harmony do-expressions")                   \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
   V(harmony_regexp_property, "harmony unicode regexp property classes") \
-  V(harmony_class_fields, "harmony public fields in class literals")
+  V(harmony_function_tostring, "harmony Function.prototype.toString")   \
+  V(harmony_class_fields, "harmony public fields in class literals")    \
+  V(harmony_async_iteration, "harmony async iteration")                 \
+  V(harmony_dynamic_import, "harmony dynamic import")                   \
+  V(harmony_promise_finally, "harmony Promise.prototype.finally")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
-#define HARMONY_STAGED_BASE(V)                              \
-  V(harmony_regexp_lookbehind, "harmony regexp lookbehind") \
-  V(harmony_restrictive_generators,                         \
-    "harmony restrictions on generator declarations")       \
-  V(harmony_tailcalls, "harmony tail calls")                \
-  V(harmony_trailing_commas,                                \
-    "harmony trailing commas in function parameter lists")  \
-  V(harmony_string_padding, "harmony String-padding methods")
+#define HARMONY_STAGED(V)                                                \
+  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")              \
+  V(harmony_restrictive_generators,                                      \
+    "harmony restrictions on generator declarations")                    \
+  V(harmony_object_rest_spread, "harmony object rest spread properties") \
+  V(harmony_template_escapes,                                            \
+    "harmony invalid escapes in tagged template literals")
+
+// Features that are shipping (turned on by default, but internal flag remains).
+#define HARMONY_SHIPPING_BASE(V) \
+  V(harmony_trailing_commas,     \
+    "harmony trailing commas in function parameter lists")
 
 #ifdef V8_I18N_SUPPORT
-#define HARMONY_STAGED(V)                                          \
-  HARMONY_STAGED_BASE(V)                                           \
+#define HARMONY_SHIPPING(V)                                        \
+  HARMONY_SHIPPING_BASE(V)                                         \
   V(datetime_format_to_parts, "Intl.DateTimeFormat.formatToParts") \
   V(icu_case_mapping, "case mapping with ICU rather than Unibrow")
 #else
-#define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
+#define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
 #endif
-
-// Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING(V) V(harmony_async_await, "harmony async-await")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -248,17 +258,35 @@ HARMONY_STAGED(FLAG_STAGED_FEATURES)
 HARMONY_SHIPPING(FLAG_SHIPPING_FEATURES)
 #undef FLAG_SHIPPING_FEATURES
 
-DEFINE_BOOL(future, false,
+#ifdef V8_ENABLE_FUTURE
+#define FUTURE_BOOL true
+#else
+#define FUTURE_BOOL false
+#endif
+DEFINE_BOOL(future, FUTURE_BOOL,
             "Implies all staged features that we want to ship in the "
             "not-too-far future")
-DEFINE_IMPLICATION(future, ignition_staging)
+DEFINE_IMPLICATION(future, turbo)
+
+DEFINE_DUAL_IMPLICATION(turbo, ignition_staging)
+DEFINE_DUAL_IMPLICATION(turbo, enable_fast_array_builtins)
+DEFINE_DUAL_IMPLICATION(turbo, thin_strings)
+
+// TODO(rmcilroy): Remove ignition-staging and set these implications directly
+// with the turbo flag.
+DEFINE_BOOL(ignition_staging, false, "use ignition with all staged features")
+DEFINE_DUAL_IMPLICATION(ignition_staging, ignition)
+DEFINE_DUAL_IMPLICATION(ignition_staging, compiler_dispatcher)
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
             "pretenure with allocation sites")
+DEFINE_BOOL(mark_shared_functions_for_tier_up, true,
+            "mark shared functions for tier up")
 DEFINE_BOOL(page_promotion, true, "promote pages based on utilization")
 DEFINE_INT(page_promotion_threshold, 70,
            "min percentage of live bytes on a page to enable fast evacuation")
+DEFINE_BOOL(smi_binop, true, "support smi representation in binary operations")
 DEFINE_BOOL(trace_pretenuring, false,
             "trace pretenuring decisions of HAllocate instructions")
 DEFINE_BOOL(trace_pretenuring_statistics, false,
@@ -273,9 +301,9 @@ DEFINE_IMPLICATION(track_computed_fields, track_fields)
 DEFINE_BOOL(track_field_types, true, "track field types")
 DEFINE_IMPLICATION(track_field_types, track_fields)
 DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
-DEFINE_BOOL(smi_binop, true, "support smi representation in binary operations")
-DEFINE_BOOL(mark_shared_functions_for_tier_up, true,
-            "mark shared functions for tier up")
+DEFINE_BOOL(type_profile, false, "collect type information")
+DEFINE_BOOL(feedback_normalization, false,
+            "feed back normalization to constructors")
 
 // Flags for optimization types.
 DEFINE_BOOL(optimize_for_size, false,
@@ -290,9 +318,6 @@ DEFINE_BOOL(string_slices, true, "use string slices")
 
 // Flags for Ignition.
 DEFINE_BOOL(ignition, false, "use ignition interpreter")
-DEFINE_BOOL(ignition_staging, false, "use ignition with all staged features")
-DEFINE_IMPLICATION(ignition_staging, ignition)
-DEFINE_STRING(ignition_filter, "*", "filter for ignition interpreter")
 DEFINE_BOOL(ignition_deadcode, true,
             "use ignition dead code elimination optimizer")
 DEFINE_BOOL(ignition_osr, true, "enable support for OSR from ignition code")
@@ -302,6 +327,8 @@ DEFINE_BOOL(ignition_filter_expression_positions, true,
             "filter expression positions before the bytecode pipeline")
 DEFINE_BOOL(print_bytecode, false,
             "print bytecode generated by ignition interpreter")
+DEFINE_STRING(print_bytecode_filter, "*",
+              "filter for selecting which functions to print bytecode")
 DEFINE_BOOL(trace_ignition, false,
             "trace the bytecodes executed by the ignition interpreter")
 DEFINE_BOOL(trace_ignition_codegen, false,
@@ -399,7 +426,7 @@ DEFINE_BOOL(inline_construct, true, "inline constructor calls")
 DEFINE_BOOL(inline_arguments, true, "inline functions with arguments object")
 DEFINE_BOOL(inline_accessors, true, "inline JavaScript accessors")
 DEFINE_BOOL(inline_into_try, true, "inline into try blocks")
-DEFINE_INT(escape_analysis_iterations, 2,
+DEFINE_INT(escape_analysis_iterations, 1,
            "maximum number of escape analysis fix-point iterations")
 
 DEFINE_BOOL(concurrent_recompilation, true,
@@ -418,15 +445,18 @@ DEFINE_BOOL(omit_map_checks_for_leaf_maps, true,
             "deoptimize the optimized code if the layout of the maps changes.")
 
 // Flags for TurboFan.
-DEFINE_BOOL(turbo, false, "enable TurboFan compiler")
-DEFINE_IMPLICATION(turbo, turbo_asm_deoptimization)
-DEFINE_IMPLICATION(turbo, turbo_loop_peeling)
-DEFINE_IMPLICATION(turbo, turbo_escape)
+#ifdef V8_DISABLE_TURBO
+// Allow to disable turbofan with a build flag after it's turned on by default.
+#define TURBO_BOOL false
+#else
+// TODO(mvstanton): Turn on turbofan here.
+#define TURBO_BOOL false
+#endif
+DEFINE_BOOL(turbo, TURBO_BOOL, "enable TurboFan compiler")
 DEFINE_BOOL(turbo_sp_frame_access, false,
             "use stack pointer-relative access to frame wherever possible")
 DEFINE_BOOL(turbo_preprocess_ranges, true,
             "run pre-register allocation heuristics")
-DEFINE_BOOL(turbo_loop_stackcheck, true, "enable stack checks in loops")
 DEFINE_STRING(turbo_filter, "~~", "optimization filter for TurboFan compiler")
 DEFINE_BOOL(trace_turbo, false, "trace generated TurboFan IR")
 DEFINE_BOOL(trace_turbo_graph, false, "trace generated TurboFan graphs")
@@ -441,17 +471,26 @@ DEFINE_BOOL(trace_turbo_jt, false, "trace TurboFan's jump threading")
 DEFINE_BOOL(trace_turbo_ceq, false, "trace TurboFan's control equivalence")
 DEFINE_BOOL(trace_turbo_loop, false, "trace TurboFan's loop optimizations")
 DEFINE_BOOL(turbo_asm, true, "enable TurboFan for asm.js code")
-DEFINE_BOOL(turbo_asm_deoptimization, false,
-            "enable deoptimization in TurboFan for asm.js code")
 DEFINE_BOOL(turbo_verify, DEBUG_BOOL, "verify TurboFan graphs at each phase")
 DEFINE_STRING(turbo_verify_machine_graph, nullptr,
               "verify TurboFan machine graph before instruction selection")
+#ifdef ENABLE_VERIFY_CSA
+DEFINE_BOOL(verify_csa, DEBUG_BOOL,
+            "verify TurboFan machine graph of code stubs")
+#else
+// Define the flag as read-only-false so that code still compiles even in the
+// non-ENABLE_VERIFY_CSA configuration.
+DEFINE_BOOL_READONLY(verify_csa, false,
+                     "verify TurboFan machine graph of code stubs")
+#endif
+DEFINE_BOOL(trace_verify_csa, false, "trace code stubs verification")
+DEFINE_STRING(csa_trap_on_node, nullptr,
+              "trigger break point when a node with given id is created in "
+              "given stub. The format is: StubName,NodeId")
 DEFINE_BOOL(turbo_stats, false, "print TurboFan statistics")
 DEFINE_BOOL(turbo_stats_nvp, false,
             "print TurboFan statistics in machine-readable format")
 DEFINE_BOOL(turbo_splitting, true, "split nodes during scheduling in TurboFan")
-DEFINE_BOOL(turbo_type_feedback, true,
-            "use typed feedback for representation inference in Turbofan")
 DEFINE_BOOL(function_context_specialization, false,
             "enable function context specialization in TurboFan")
 DEFINE_BOOL(turbo_inlining, true, "enable inlining in TurboFan")
@@ -465,19 +504,21 @@ DEFINE_BOOL(turbo_verify_allocation, DEBUG_BOOL,
             "verify register allocation in TurboFan")
 DEFINE_BOOL(turbo_move_optimization, true, "optimize gap moves in TurboFan")
 DEFINE_BOOL(turbo_jt, true, "enable jump threading in TurboFan")
-DEFINE_BOOL(turbo_stress_loop_peeling, false,
-            "stress loop peeling optimization")
-DEFINE_BOOL(turbo_loop_peeling, false, "Turbofan loop peeling")
+DEFINE_BOOL(turbo_loop_peeling, true, "Turbofan loop peeling")
 DEFINE_BOOL(turbo_loop_variable, true, "Turbofan loop variable optimization")
 DEFINE_BOOL(turbo_cf_optimization, true, "optimize control flow in TurboFan")
 DEFINE_BOOL(turbo_frame_elision, true, "elide frames in TurboFan")
-DEFINE_BOOL(turbo_escape, false, "enable escape analysis")
+DEFINE_BOOL(turbo_escape, true, "enable escape analysis")
 DEFINE_BOOL(turbo_instruction_scheduling, false,
             "enable instruction scheduling in TurboFan")
 DEFINE_BOOL(turbo_stress_instruction_scheduling, false,
             "randomly schedule instructions to stress dependency tracking")
 DEFINE_BOOL(turbo_store_elimination, true,
             "enable store-store elimination in TurboFan")
+DEFINE_BOOL(turbo_experimental, false,
+            "enable crashing features, for testing purposes only")
+// TODO(turbofan): Rename --crankshaft to --optimize eventually.
+DEFINE_IMPLICATION(turbo, crankshaft)
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
@@ -488,9 +529,17 @@ DEFINE_NEG_IMPLICATION(minimal, crankshaft)
 DEFINE_NEG_IMPLICATION(minimal, use_ic)
 
 // Flags for native WebAssembly.
-DEFINE_BOOL(expose_wasm, false, "expose WASM interface to JavaScript")
+DEFINE_BOOL(expose_wasm, true, "expose WASM interface to JavaScript")
+DEFINE_BOOL(assume_asmjs_origin, false,
+            "force wasm decoder to assume input is internal asm-wasm format")
+DEFINE_BOOL(wasm_disable_structured_cloning, false,
+            "disable WASM structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
+DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,
+            "maximum memory size of a wasm instance")
+DEFINE_UINT(wasm_max_table_size, v8::internal::wasm::kV8MaxWasmTableSize,
+            "maximum table size of a wasm instance")
 DEFINE_BOOL(trace_wasm_encoder, false, "trace encoding of wasm code")
 DEFINE_BOOL(trace_wasm_decoder, false, "trace decoding of wasm code")
 DEFINE_BOOL(trace_wasm_decode_time, false, "trace decoding time of wasm code")
@@ -499,13 +548,20 @@ DEFINE_BOOL(trace_wasm_interpreter, false, "trace interpretation of wasm code")
 DEFINE_INT(trace_wasm_ast_start, 0,
            "start function for WASM AST trace (inclusive)")
 DEFINE_INT(trace_wasm_ast_end, 0, "end function for WASM AST trace (exclusive)")
-DEFINE_INT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
+DEFINE_INT(trace_wasm_text_start, 0,
+           "start function for WASM text generation (inclusive)")
+DEFINE_INT(trace_wasm_text_end, 0,
+           "end function for WASM text generation (exclusive)")
+DEFINE_UINT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
 DEFINE_BOOL(wasm_break_on_decoder_error, false,
             "debug break when wasm decoder encounters an error")
 DEFINE_BOOL(wasm_loop_assignment_analysis, true,
             "perform loop assignment analysis for WASM")
 
 DEFINE_BOOL(validate_asm, false, "validate asm.js modules before compiling")
+DEFINE_BOOL(suppress_asm_messages, false,
+            "don't emit asm.js related messages (for golden file testing)")
+DEFINE_BOOL(trace_asm_time, false, "log asm.js timing info to the console")
 
 DEFINE_BOOL(dump_wasm_module, false, "dump WASM module bytes")
 DEFINE_STRING(dump_wasm_module_path, NULL, "directory to dump wasm modules to")
@@ -522,9 +578,24 @@ DEFINE_BOOL(wasm_mv_prototype, false,
 DEFINE_BOOL(wasm_atomics_prototype, false,
             "enable prototype atomic opcodes for wasm")
 
+DEFINE_BOOL(wasm_opt, true, "enable wasm optimization")
+DEFINE_BOOL(wasm_no_bounds_checks, false,
+            "disable bounds checks (performance testing only)")
+DEFINE_BOOL(wasm_no_stack_checks, false,
+            "disable stack checks (performance testing only)")
+
 DEFINE_BOOL(wasm_trap_handler, false,
             "use signal handlers to catch out of bounds memory access in wasm"
-            " (currently Linux x86_64 only)")
+            " (experimental, currently Linux x86_64 only)")
+DEFINE_BOOL(wasm_guard_pages, false,
+            "add guard pages to the end of WebWassembly memory"
+            " (experimental, no effect on 32-bit)")
+DEFINE_IMPLICATION(wasm_trap_handler, wasm_guard_pages)
+DEFINE_BOOL(wasm_trap_if, true,
+            "enable the use of the trap_if operator for traps")
+DEFINE_BOOL(wasm_code_fuzzer_gen_test, false,
+            "Generate a test case when running the wasm-code fuzzer")
+DEFINE_BOOL(print_wasm_code, false, "Print WebAssembly code")
 
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
@@ -540,8 +611,117 @@ DEFINE_INT(self_opt_count, 130, "call count before self-optimization")
 DEFINE_BOOL(trace_opt_verbose, false, "extra verbose compilation tracing")
 DEFINE_IMPLICATION(trace_opt_verbose, trace_opt)
 
+// Garbage collections flags.
+DEFINE_INT(min_semi_space_size, 0,
+           "min size of a semi-space (in MBytes), the new space consists of two"
+           "semi-spaces")
+DEFINE_INT(max_semi_space_size, 0,
+           "max size of a semi-space (in MBytes), the new space consists of two"
+           "semi-spaces")
+DEFINE_INT(semi_space_growth_factor, 2, "factor by which to grow the new space")
+DEFINE_BOOL(experimental_new_space_growth_heuristic, false,
+            "Grow the new space based on the percentage of survivors instead "
+            "of their absolute value.")
+DEFINE_INT(max_old_space_size, 0, "max size of the old space (in Mbytes)")
+DEFINE_INT(initial_old_space_size, 0, "initial old space size (in Mbytes)")
+DEFINE_INT(max_executable_size, 0, "max size of executable memory (in Mbytes)")
+DEFINE_BOOL(gc_global, false, "always perform global GCs")
+DEFINE_INT(gc_interval, -1, "garbage collect after <n> allocations")
+DEFINE_INT(retain_maps_for_n_gc, 2,
+           "keeps maps alive for <n> old space garbage collections")
+DEFINE_BOOL(trace_gc, false,
+            "print one trace line following each garbage collection")
+DEFINE_BOOL(trace_gc_nvp, false,
+            "print one detailed trace line in name=value format "
+            "after each garbage collection")
+DEFINE_BOOL(trace_gc_ignore_scavenger, false,
+            "do not print trace line after scavenger collection")
+DEFINE_BOOL(trace_idle_notification, false,
+            "print one trace line following each idle notification")
+DEFINE_BOOL(trace_idle_notification_verbose, false,
+            "prints the heap state used by the idle notification")
+DEFINE_BOOL(trace_gc_verbose, false,
+            "print more details following each garbage collection")
+DEFINE_INT(trace_allocation_stack_interval, -1,
+           "print stack trace after <n> free-list allocations")
+DEFINE_BOOL(trace_fragmentation, false, "report fragmentation for old space")
+DEFINE_BOOL(trace_fragmentation_verbose, false,
+            "report fragmentation for old space (detailed)")
+DEFINE_BOOL(trace_evacuation, false, "report evacuation statistics")
+DEFINE_BOOL(trace_mutator_utilization, false,
+            "print mutator utilization, allocation speed, gc speed")
+DEFINE_BOOL(flush_code, true, "flush code that we expect not to use again")
+DEFINE_BOOL(trace_code_flushing, false, "trace code flushing progress")
+DEFINE_BOOL(age_code, true,
+            "track un-executed functions to age code and flush only "
+            "old code (required for code flushing)")
+DEFINE_BOOL(incremental_marking, true, "use incremental marking")
+DEFINE_BOOL(incremental_marking_wrappers, true,
+            "use incremental marking for marking wrappers")
+DEFINE_BOOL(concurrent_marking, false, "use concurrent marking")
+DEFINE_INT(min_progress_during_incremental_marking_finalization, 32,
+           "keep finalizing incremental marking as long as we discover at "
+           "least this many unmarked objects")
+DEFINE_INT(max_incremental_marking_finalization_rounds, 3,
+           "at most try this many times to finalize incremental marking")
+DEFINE_BOOL(minor_mc, false, "perform young generation mark compact GCs")
+DEFINE_BOOL(black_allocation, true, "use black allocation")
+DEFINE_BOOL(concurrent_store_buffer, true,
+            "use concurrent store buffer processing")
+DEFINE_BOOL(concurrent_sweeping, true, "use concurrent sweeping")
+DEFINE_BOOL(parallel_compaction, true, "use parallel compaction")
+DEFINE_BOOL(parallel_pointer_update, true,
+            "use parallel pointer update during compaction")
+DEFINE_BOOL(trace_incremental_marking, false,
+            "trace progress of the incremental marking")
+DEFINE_BOOL(track_gc_object_stats, false,
+            "track object counts and memory usage")
+DEFINE_BOOL(trace_gc_object_stats, false,
+            "trace object counts and memory usage")
+DEFINE_INT(gc_stats, 0, "Used by tracing internally to enable gc statistics")
+DEFINE_IMPLICATION(trace_gc_object_stats, track_gc_object_stats)
+DEFINE_VALUE_IMPLICATION(track_gc_object_stats, gc_stats, 1)
+DEFINE_VALUE_IMPLICATION(trace_gc_object_stats, gc_stats, 1)
+DEFINE_NEG_IMPLICATION(trace_gc_object_stats, incremental_marking)
+DEFINE_BOOL(track_detached_contexts, true,
+            "track native contexts that are expected to be garbage collected")
+DEFINE_BOOL(trace_detached_contexts, false,
+            "trace native contexts that are expected to be garbage collected")
+DEFINE_IMPLICATION(trace_detached_contexts, track_detached_contexts)
+#ifdef VERIFY_HEAP
+DEFINE_BOOL(verify_heap, false, "verify heap pointers before and after GC")
+#endif
+DEFINE_BOOL(move_object_start, true, "enable moving of object starts")
+DEFINE_BOOL(memory_reducer, true, "use memory reducer")
+DEFINE_INT(heap_growing_percent, 0,
+           "specifies heap growing factor as (1 + heap_growing_percent/100)")
+DEFINE_INT(v8_os_page_size, 0, "override OS page size (in KBytes)")
+DEFINE_BOOL(always_compact, false, "Perform compaction on every full GC")
+DEFINE_BOOL(never_compact, false,
+            "Never perform compaction on full GC - testing only")
+DEFINE_BOOL(compact_code_space, true, "Compact code space on full collections")
+DEFINE_BOOL(cleanup_code_caches_at_gc, true,
+            "Flush code caches in maps during mark compact cycle.")
+DEFINE_BOOL(use_marking_progress_bar, true,
+            "Use a progress bar to scan large objects in increments when "
+            "incremental marking is active.")
+DEFINE_BOOL(zap_code_space, DEBUG_BOOL,
+            "Zap free memory in code space with 0xCC while sweeping.")
+DEFINE_BOOL(force_marking_deque_overflows, false,
+            "force overflows of marking deque by reducing it's size "
+            "to 64 words")
+DEFINE_BOOL(stress_compaction, false,
+            "stress the GC compactor to flush out bugs (implies "
+            "--force_marking_deque_overflows)")
+DEFINE_BOOL(manual_evacuation_candidates_selection, false,
+            "Test mode only flag. It allows an unit test to select evacuation "
+            "candidates pages (requires --stress_compaction).")
+DEFINE_BOOL(fast_promotion_new_space, false,
+            "fast promote new space on high survival rates")
+
 // assembler-ia32.cc / assembler-arm.cc / assembler-x64.cc
-DEFINE_BOOL(debug_code, false, "generate extra code (assertions) for debugging")
+DEFINE_BOOL(debug_code, DEBUG_BOOL,
+            "generate extra code (assertions) for debugging")
 DEFINE_BOOL(code_comments, false, "emit comments in code disassembly")
 DEFINE_BOOL(enable_sse3, true, "enable use of SSE3 instructions if available")
 DEFINE_BOOL(enable_ssse3, true, "enable use of SSSE3 instructions if available")
@@ -579,10 +759,12 @@ DEFINE_BOOL(enable_regexp_unaligned_accesses, true,
 
 // api.cc
 DEFINE_BOOL(script_streaming, true, "enable parsing on background")
+DEFINE_BOOL(disable_old_api_accessors, false,
+            "Disable old-style API accessors whose setters trigger through the "
+            "prototype chain")
 
 // bootstrapper.cc
 DEFINE_STRING(expose_natives_as, NULL, "expose natives in global object")
-DEFINE_STRING(expose_debug_as, NULL, "expose debug in global object")
 DEFINE_BOOL(expose_free_buffer, false, "expose freeBuffer extension")
 DEFINE_BOOL(expose_gc, false, "expose gc extension")
 DEFINE_STRING(expose_gc_as, NULL,
@@ -596,6 +778,7 @@ DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
 
 // builtins.cc
+DEFINE_BOOL(enable_fast_array_builtins, false, "use optimized builtins")
 DEFINE_BOOL(allow_unsafe_function_constructor, false,
             "allow invoking the function constructor without security checks")
 
@@ -633,8 +816,6 @@ DEFINE_BOOL(external_reference_stats, false,
 #endif  // DEBUG
 
 // compiler.cc
-DEFINE_INT(min_preparse_length, 1024,
-           "minimum length for automatic enable preparsing")
 DEFINE_INT(max_opt_count, 10,
            "maximum number of optimization attempts before giving up.")
 
@@ -642,6 +823,18 @@ DEFINE_INT(max_opt_count, 10,
 DEFINE_BOOL(compilation_cache, true, "enable compilation cache")
 
 DEFINE_BOOL(cache_prototype_transitions, true, "cache prototype transitions")
+
+// compiler-dispatcher.cc
+DEFINE_BOOL(compiler_dispatcher, false, "enable compiler dispatcher")
+DEFINE_BOOL(compiler_dispatcher_eager_inner, false,
+            "enable background compilation of eager inner functions")
+DEFINE_BOOL(trace_compiler_dispatcher, false,
+            "trace compiler dispatcher activity")
+
+// compiler-dispatcher-job.cc
+DEFINE_BOOL(
+    trace_compiler_dispatcher_jobs, false,
+    "trace progress of individual jobs managed by the compiler dispatcher")
 
 // cpu-profiler.cc
 DEFINE_INT(cpu_profiler_sampling_interval, 1000,
@@ -660,6 +853,9 @@ DEFINE_IMPLICATION(trace_array_abuse, trace_external_array_abuse)
 // debugger
 DEFINE_BOOL(trace_debug_json, false, "trace debugging JSON request/response")
 DEFINE_BOOL(enable_liveedit, true, "enable liveedit experimental feature")
+DEFINE_BOOL(
+    trace_side_effect_free_debug_evaluate, false,
+    "print debug messages for side-effect-free debug-evaluate for testing")
 DEFINE_BOOL(hard_abort, true, "abort by crashing")
 
 // execution.cc
@@ -676,99 +872,6 @@ DEFINE_BOOL(always_inline_smi_code, false,
 DEFINE_BOOL(verify_operand_stack_depth, false,
             "emit debug code that verifies the static tracking of the operand "
             "stack depth")
-
-// heap.cc
-DEFINE_INT(min_semi_space_size, 0,
-           "min size of a semi-space (in MBytes), the new space consists of two"
-           "semi-spaces")
-DEFINE_INT(max_semi_space_size, 0,
-           "max size of a semi-space (in MBytes), the new space consists of two"
-           "semi-spaces")
-DEFINE_INT(semi_space_growth_factor, 2, "factor by which to grow the new space")
-DEFINE_BOOL(experimental_new_space_growth_heuristic, false,
-            "Grow the new space based on the percentage of survivors instead "
-            "of their absolute value.")
-DEFINE_INT(max_old_space_size, 0, "max size of the old space (in Mbytes)")
-DEFINE_INT(initial_old_space_size, 0, "initial old space size (in Mbytes)")
-DEFINE_INT(max_executable_size, 0, "max size of executable memory (in Mbytes)")
-DEFINE_BOOL(gc_global, false, "always perform global GCs")
-DEFINE_INT(gc_interval, -1, "garbage collect after <n> allocations")
-DEFINE_INT(retain_maps_for_n_gc, 2,
-           "keeps maps alive for <n> old space garbage collections")
-DEFINE_BOOL(trace_gc, false,
-            "print one trace line following each garbage collection")
-DEFINE_BOOL(trace_gc_nvp, false,
-            "print one detailed trace line in name=value format "
-            "after each garbage collection")
-DEFINE_BOOL(trace_gc_ignore_scavenger, false,
-            "do not print trace line after scavenger collection")
-DEFINE_BOOL(trace_idle_notification, false,
-            "print one trace line following each idle notification")
-DEFINE_BOOL(trace_idle_notification_verbose, false,
-            "prints the heap state used by the idle notification")
-DEFINE_BOOL(print_max_heap_committed, false,
-            "print statistics of the maximum memory committed for the heap "
-            "in name=value format on exit")
-DEFINE_BOOL(trace_gc_verbose, false,
-            "print more details following each garbage collection")
-DEFINE_INT(trace_allocation_stack_interval, -1,
-           "print stack trace after <n> free-list allocations")
-DEFINE_BOOL(trace_fragmentation, false, "report fragmentation for old space")
-DEFINE_BOOL(trace_fragmentation_verbose, false,
-            "report fragmentation for old space (detailed)")
-DEFINE_BOOL(trace_evacuation, false, "report evacuation statistics")
-DEFINE_BOOL(trace_mutator_utilization, false,
-            "print mutator utilization, allocation speed, gc speed")
-DEFINE_BOOL(weak_embedded_maps_in_optimized_code, true,
-            "make maps embedded in optimized code weak")
-DEFINE_BOOL(weak_embedded_objects_in_optimized_code, true,
-            "make objects embedded in optimized code weak")
-DEFINE_BOOL(flush_code, true, "flush code that we expect not to use again")
-DEFINE_BOOL(trace_code_flushing, false, "trace code flushing progress")
-DEFINE_BOOL(age_code, true,
-            "track un-executed functions to age code and flush only "
-            "old code (required for code flushing)")
-DEFINE_BOOL(incremental_marking, true, "use incremental marking")
-DEFINE_BOOL(incremental_marking_wrappers, true,
-            "use incremental marking for marking wrappers")
-DEFINE_INT(min_progress_during_incremental_marking_finalization, 32,
-           "keep finalizing incremental marking as long as we discover at "
-           "least this many unmarked objects")
-DEFINE_INT(max_incremental_marking_finalization_rounds, 3,
-           "at most try this many times to finalize incremental marking")
-DEFINE_BOOL(minor_mc, false, "perform young generation mark compact GCs")
-DEFINE_NEG_IMPLICATION(minor_mc, incremental_marking)
-DEFINE_BOOL(black_allocation, false, "use black allocation")
-DEFINE_BOOL(concurrent_sweeping, true, "use concurrent sweeping")
-DEFINE_BOOL(parallel_compaction, true, "use parallel compaction")
-DEFINE_BOOL(parallel_pointer_update, true,
-            "use parallel pointer update during compaction")
-DEFINE_BOOL(trace_incremental_marking, false,
-            "trace progress of the incremental marking")
-DEFINE_BOOL(track_gc_object_stats, false,
-            "track object counts and memory usage")
-DEFINE_BOOL(trace_gc_object_stats, false,
-            "trace object counts and memory usage")
-DEFINE_INT(gc_stats, 0, "Used by tracing internally to enable gc statistics")
-DEFINE_IMPLICATION(trace_gc_object_stats, track_gc_object_stats)
-DEFINE_VALUE_IMPLICATION(track_gc_object_stats, gc_stats, 1)
-DEFINE_VALUE_IMPLICATION(trace_gc_object_stats, gc_stats, 1)
-DEFINE_NEG_IMPLICATION(trace_gc_object_stats, incremental_marking)
-DEFINE_BOOL(track_detached_contexts, true,
-            "track native contexts that are expected to be garbage collected")
-DEFINE_BOOL(trace_detached_contexts, false,
-            "trace native contexts that are expected to be garbage collected")
-DEFINE_IMPLICATION(trace_detached_contexts, track_detached_contexts)
-#ifdef VERIFY_HEAP
-DEFINE_BOOL(verify_heap, false, "verify heap pointers before and after GC")
-#endif
-DEFINE_BOOL(move_object_start, true, "enable moving of object starts")
-DEFINE_BOOL(memory_reducer, true, "use memory reducer")
-DEFINE_INT(heap_growing_percent, 0,
-           "specifies heap growing factor as (1 + heap_growing_percent/100)")
-
-// spaces.cc
-DEFINE_INT(v8_os_page_size, 0, "override OS page size (in KBytes)")
 
 // execution.cc, messages.cc
 DEFINE_BOOL(clear_exceptions_on_js_entry, false,
@@ -798,31 +901,18 @@ DEFINE_BOOL(use_idle_notification, true,
 // ic.cc
 DEFINE_BOOL(use_ic, true, "use inline caching")
 DEFINE_BOOL(trace_ic, false, "trace inline cache state transitions")
-DEFINE_BOOL_READONLY(tf_load_ic_stub, true, "use TF LoadIC stub")
-DEFINE_BOOL(tf_store_ic_stub, true, "use TF StoreIC stub")
+DEFINE_IMPLICATION(trace_ic, log_code)
+DEFINE_INT(ic_stats, 0, "inline cache state transitions statistics")
+DEFINE_VALUE_IMPLICATION(trace_ic, ic_stats, 1)
+DEFINE_BOOL_READONLY(track_constant_fields, false,
+                     "enable constant field tracking")
 
 // macro-assembler-ia32.cc
 DEFINE_BOOL(native_code_counters, false,
             "generate extra code for manipulating stats counters")
 
-// mark-compact.cc
-DEFINE_BOOL(always_compact, false, "Perform compaction on every full GC")
-DEFINE_BOOL(never_compact, false,
-            "Never perform compaction on full GC - testing only")
-DEFINE_BOOL(compact_code_space, true, "Compact code space on full collections")
-DEFINE_BOOL(cleanup_code_caches_at_gc, true,
-            "Flush inline caches prior to mark compact collection and "
-            "flush code caches in maps during mark compact cycle.")
-DEFINE_BOOL(use_marking_progress_bar, true,
-            "Use a progress bar to scan large objects in increments when "
-            "incremental marking is active.")
-DEFINE_BOOL(zap_code_space, DEBUG_BOOL,
-            "Zap free memory in code space with 0xCC while sweeping.")
-DEFINE_INT(random_seed, 0,
-           "Default seed for initializing random generator "
-           "(0, the default, means to use system random).")
-
 // objects.cc
+DEFINE_BOOL(thin_strings, false, "Enable ThinString support")
 DEFINE_BOOL(trace_weak_arrays, false, "Trace WeakFixedArray usage")
 DEFINE_BOOL(trace_prototype_users, false,
             "Trace updates to prototype user tracking")
@@ -836,7 +926,13 @@ DEFINE_BOOL(trace_maps, false, "trace map creation")
 DEFINE_BOOL(allow_natives_syntax, false, "allow natives syntax")
 DEFINE_BOOL(trace_parse, false, "trace parsing and preparsing")
 DEFINE_BOOL(trace_preparse, false, "trace preparsing decisions")
-DEFINE_BOOL(lazy_inner_functions, false, "enable lazy parsing inner functions")
+DEFINE_BOOL(lazy_inner_functions, true, "enable lazy parsing inner functions")
+DEFINE_BOOL(aggressive_lazy_inner_functions, false,
+            "even lazier inner function parsing")
+DEFINE_IMPLICATION(aggressive_lazy_inner_functions, lazy_inner_functions)
+DEFINE_BOOL(preparser_scope_analysis, false,
+            "perform scope analysis for preparsed inner functions")
+DEFINE_IMPLICATION(preparser_scope_analysis, lazy_inner_functions)
 
 // simulator-arm.cc, simulator-arm64.cc and simulator-mips.cc
 DEFINE_BOOL(trace_sim, false, "Trace simulator execution")
@@ -880,6 +976,9 @@ DEFINE_BOOL(randomize_hashes, true,
 DEFINE_INT(hash_seed, 0,
            "Fixed seed to use to hash property keys (0 means random)"
            "(with snapshots this option cannot override the baked-in seed)")
+DEFINE_INT(random_seed, 0,
+           "Default seed for initializing random generator "
+           "(0, the default, means to use system random).")
 DEFINE_BOOL(trace_rail, false, "trace RAIL mode")
 DEFINE_BOOL(print_all_exceptions, false,
             "print exception object and stack trace on each thrown exception")
@@ -917,29 +1016,14 @@ DEFINE_STRING(startup_blob, NULL,
 DEFINE_BOOL(profile_hydrogen_code_stub_compilation, false,
             "Print the time it takes to lazily compile hydrogen code stubs.")
 
-// mark-compact.cc
-DEFINE_BOOL(force_marking_deque_overflows, false,
-            "force overflows of marking deque by reducing it's size "
-            "to 64 words")
-
-DEFINE_BOOL(stress_compaction, false,
-            "stress the GC compactor to flush out bugs (implies "
-            "--force_marking_deque_overflows)")
-
-DEFINE_BOOL(manual_evacuation_candidates_selection, false,
-            "Test mode only flag. It allows an unit test to select evacuation "
-            "candidates pages (requires --stress_compaction).")
-
-DEFINE_BOOL(disable_old_api_accessors, false,
-            "Disable old-style API accessors whose setters trigger through the "
-            "prototype chain")
-
 //
 // Dev shell flags
 //
 
 DEFINE_BOOL(help, false, "Print usage message, including flags, on console")
 DEFINE_BOOL(dump_counters, false, "Dump counters on exit")
+DEFINE_BOOL(dump_counters_nvp, false,
+            "Dump counters as name-value pairs on exit")
 
 DEFINE_STRING(map_counters, "", "Map counters to a file")
 DEFINE_ARGS(js_arguments,
@@ -1074,10 +1158,9 @@ DEFINE_IMPLICATION(perf_basic_prof_only_functions, perf_basic_prof)
 DEFINE_BOOL(perf_prof, false,
             "Enable perf linux profiler (experimental annotate support).")
 DEFINE_NEG_IMPLICATION(perf_prof, compact_code_space)
-DEFINE_BOOL(perf_prof_debug_info, false,
-            "Enable debug info for perf linux profiler (experimental).")
 DEFINE_BOOL(perf_prof_unwinding_info, false,
             "Enable unwinding info for perf linux profiler (experimental).")
+DEFINE_IMPLICATION(perf_prof, perf_prof_unwinding_info)
 DEFINE_STRING(gc_fake_mmap, "/tmp/__v8_gc__",
               "Specify the name of the file for fake gc mmap used in ll_prof")
 DEFINE_BOOL(log_internal_timer_events, false, "Time internal events.")
@@ -1099,6 +1182,10 @@ DEFINE_STRING(redirect_code_traces_to, NULL,
 
 DEFINE_BOOL(hydrogen_track_positions, false,
             "track source code positions when building IR")
+
+DEFINE_BOOL(print_opt_source, false,
+            "print source code of optimized and inlined functions")
+DEFINE_IMPLICATION(hydrogen_track_positions, print_opt_source)
 
 //
 // Disassembler only flags
@@ -1124,6 +1211,9 @@ DEFINE_BOOL(test_secondary_stub_cache, false,
 DEFINE_BOOL(test_primary_stub_cache, false,
             "test primary stub cache by disabling the secondary one")
 
+DEFINE_BOOL(test_small_max_function_context_stub_size, false,
+            "enable testing the function context size overflow path "
+            "by making the maximum size smaller")
 
 // codegen-ia32.cc / codegen-arm.cc
 DEFINE_BOOL(print_code, false, "print generated code")
@@ -1169,6 +1259,7 @@ DEFINE_IMPLICATION(print_all_code, trace_codegen)
 DEFINE_BOOL(predictable, false, "enable predictable mode")
 DEFINE_IMPLICATION(predictable, single_threaded)
 DEFINE_NEG_IMPLICATION(predictable, memory_reducer)
+DEFINE_VALUE_IMPLICATION(single_threaded, wasm_num_compilation_tasks, 0)
 
 //
 // Threading related flags.
@@ -1178,7 +1269,7 @@ DEFINE_BOOL(single_threaded, false, "disable the use of background tasks")
 DEFINE_NEG_IMPLICATION(single_threaded, concurrent_recompilation)
 DEFINE_NEG_IMPLICATION(single_threaded, concurrent_sweeping)
 DEFINE_NEG_IMPLICATION(single_threaded, parallel_compaction)
-
+DEFINE_NEG_IMPLICATION(single_threaded, concurrent_store_buffer)
 
 #undef FLAG
 

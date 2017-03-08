@@ -201,6 +201,35 @@
       ],
     },
     {
+      'target_name': 'v8_simple_wasm_compile_fuzzer',
+      'type': 'executable',
+      'dependencies': [
+        'wasm_compile_fuzzer_lib',
+      ],
+      'include_dirs': [
+        '../..',
+      ],
+      'sources': [
+        'fuzzer.cc',
+      ],
+    },
+    {
+      'target_name': 'wasm_compile_fuzzer_lib',
+      'type': 'static_library',
+      'dependencies': [
+        'fuzzer_support',
+      ],
+      'include_dirs': [
+        '../..',
+      ],
+      'sources': [  ### gcmole(all) ###
+        'wasm-compile.cc',
+        '../common/wasm/test-signatures.h',
+        '../common/wasm/wasm-module-runner.cc',
+        '../common/wasm/wasm-module-runner.h',
+      ],
+    },
+    {
       'target_name': 'v8_simple_wasm_data_section_fuzzer',
       'type': 'executable',
       'dependencies': [
@@ -424,6 +453,14 @@
       'sources': [  ### gcmole(all) ###
         'fuzzer-support.cc',
         'fuzzer-support.h',
+      ],
+      'conditions': [
+        ['v8_enable_i18n_support==1', {
+          'dependencies': [
+            '<(icu_gyp_path):icui18n',
+            '<(icu_gyp_path):icuuc',
+          ],
+        }],
       ],
     },
   ],

@@ -59,6 +59,7 @@
 // Control.
 //------------------------------------------------------------------------------
 #define WASM_NOP kExprNop
+#define WASM_END kExprEnd
 
 #define ARITY_0 0
 #define ARITY_1 1
@@ -71,13 +72,13 @@
 #define WASM_BLOCK(...) kExprBlock, kLocalVoid, __VA_ARGS__, kExprEnd
 
 #define WASM_BLOCK_T(t, ...)                                       \
-  kExprBlock, static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t)), \
+  kExprBlock, static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t)), \
       __VA_ARGS__, kExprEnd
 
 #define WASM_BLOCK_TT(t1, t2, ...)                                       \
   kExprBlock, kMultivalBlock, 0,                                         \
-      static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t1)),              \
-      static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t2)), __VA_ARGS__, \
+      static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t1)),              \
+      static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t2)), __VA_ARGS__, \
       kExprEnd
 
 #define WASM_BLOCK_I(...) kExprBlock, kLocalI32, __VA_ARGS__, kExprEnd
@@ -99,13 +100,13 @@
   cond, kExprIf, kLocalVoid, tstmt, kExprElse, fstmt, kExprEnd
 
 #define WASM_IF_ELSE_T(t, cond, tstmt, fstmt)                                \
-  cond, kExprIf, static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t)), tstmt, \
+  cond, kExprIf, static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t)), tstmt, \
       kExprElse, fstmt, kExprEnd
 
 #define WASM_IF_ELSE_TT(t1, t2, cond, tstmt, fstmt)                           \
   cond, kExprIf, kMultivalBlock, 0,                                           \
-      static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t1)),                   \
-      static_cast<byte>(WasmOpcodes::LocalTypeCodeFor(t2)), tstmt, kExprElse, \
+      static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t1)),                   \
+      static_cast<byte>(WasmOpcodes::ValueTypeCodeFor(t2)), tstmt, kExprElse, \
       fstmt, kExprEnd
 
 #define WASM_IF_ELSE_I(cond, tstmt, fstmt) \
@@ -140,9 +141,8 @@
 // Misc expressions.
 //------------------------------------------------------------------------------
 #define WASM_ID(...) __VA_ARGS__
-#define WASM_ZERO kExprI8Const, 0
-#define WASM_ONE kExprI8Const, 1
-#define WASM_I8(val) kExprI8Const, static_cast<byte>(val)
+#define WASM_ZERO kExprI32Const, 0
+#define WASM_ONE kExprI32Const, 1
 
 #define I32V_MIN(length) -(1 << (6 + (7 * ((length) - 1))))
 #define I32V_MAX(length) ((1 << (6 + (7 * ((length) - 1)))) - 1)
@@ -195,7 +195,7 @@ class LocalDeclEncoder {
     pos = WriteUint32v(buffer, pos, static_cast<uint32_t>(local_decls.size()));
     for (size_t i = 0; i < local_decls.size(); ++i) {
       pos = WriteUint32v(buffer, pos, local_decls[i].first);
-      buffer[pos++] = WasmOpcodes::LocalTypeCodeFor(local_decls[i].second);
+      buffer[pos++] = WasmOpcodes::ValueTypeCodeFor(local_decls[i].second);
     }
     DCHECK_EQ(Size(), pos);
     return pos;
@@ -203,7 +203,7 @@ class LocalDeclEncoder {
 
   // Add locals declarations to this helper. Return the index of the newly added
   // local(s), with an optional adjustment for the parameters.
-  uint32_t AddLocals(uint32_t count, LocalType type) {
+  uint32_t AddLocals(uint32_t count, ValueType type) {
     uint32_t result =
         static_cast<uint32_t>(total + (sig ? sig->parameter_count() : 0));
     total += count;
@@ -211,7 +211,7 @@ class LocalDeclEncoder {
       count += local_decls.back().first;
       local_decls.pop_back();
     }
-    local_decls.push_back(std::pair<uint32_t, LocalType>(count, type));
+    local_decls.push_back(std::pair<uint32_t, ValueType>(count, type));
     return result;
   }
 
@@ -227,7 +227,7 @@ class LocalDeclEncoder {
 
  private:
   FunctionSig* sig;
-  ZoneVector<std::pair<uint32_t, LocalType>> local_decls;
+  ZoneVector<std::pair<uint32_t, ValueType>> local_decls;
   size_t total;
 
   size_t SizeofUint32v(uint32_t val) const {
@@ -372,15 +372,16 @@ class LocalDeclEncoder {
       static_cast<byte>(bit_cast<uint32_t>(static_cast<float>(val)) >> 8),  \
       static_cast<byte>(bit_cast<uint32_t>(static_cast<float>(val)) >> 16), \
       static_cast<byte>(bit_cast<uint32_t>(static_cast<float>(val)) >> 24)
-#define WASM_F64(val)                                        \
-  kExprF64Const, static_cast<byte>(bit_cast<uint64_t>(val)), \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 8),       \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 16),      \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 24),      \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 32),      \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 40),      \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 48),      \
-      static_cast<byte>(bit_cast<uint64_t>(val) >> 56)
+#define WASM_F64(val)                                                        \
+  kExprF64Const,                                                             \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val))),       \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 8),  \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 16), \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 24), \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 32), \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 40), \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 48), \
+      static_cast<byte>(bit_cast<uint64_t>(static_cast<double>(val)) >> 56)
 #define WASM_GET_LOCAL(index) kExprGetLocal, static_cast<byte>(index)
 #define WASM_SET_LOCAL(index, val) val, kExprSetLocal, static_cast<byte>(index)
 #define WASM_TEE_LOCAL(index, val) val, kExprTeeLocal, static_cast<byte>(index)
@@ -447,15 +448,15 @@ class LocalDeclEncoder {
 #define WASM_WHILE(x, y)                                              \
   kExprLoop, kLocalVoid, x, kExprIf, kLocalVoid, y, kExprBr, DEPTH_1, \
       kExprEnd, kExprEnd
-#define WASM_INC_LOCAL(index)                                            \
-  kExprGetLocal, static_cast<byte>(index), kExprI8Const, 1, kExprI32Add, \
+#define WASM_INC_LOCAL(index)                                             \
+  kExprGetLocal, static_cast<byte>(index), kExprI32Const, 1, kExprI32Add, \
       kExprTeeLocal, static_cast<byte>(index)
 #define WASM_INC_LOCAL_BYV(index, count)                    \
-  kExprGetLocal, static_cast<byte>(index), kExprI8Const,    \
+  kExprGetLocal, static_cast<byte>(index), kExprI32Const,   \
       static_cast<byte>(count), kExprI32Add, kExprTeeLocal, \
       static_cast<byte>(index)
 #define WASM_INC_LOCAL_BY(index, count)                     \
-  kExprGetLocal, static_cast<byte>(index), kExprI8Const,    \
+  kExprGetLocal, static_cast<byte>(index), kExprI32Const,   \
       static_cast<byte>(count), kExprI32Add, kExprSetLocal, \
       static_cast<byte>(index)
 #define WASM_UNOP(opcode, x) x, static_cast<byte>(opcode)
@@ -617,18 +618,6 @@ class LocalDeclEncoder {
 //------------------------------------------------------------------------------
 #define WASM_GROW_MEMORY(x) x, kExprGrowMemory, 0
 #define WASM_MEMORY_SIZE kExprMemorySize, 0
-
-//------------------------------------------------------------------------------
-// Simd Operations.
-//------------------------------------------------------------------------------
-#define WASM_SIMD_I32x4_SPLAT(x) x, kSimdPrefix, kExprI32x4Splat & 0xff
-#define WASM_SIMD_I32x4_EXTRACT_LANE(lane, x) \
-  x, kSimdPrefix, kExprI32x4ExtractLane & 0xff, static_cast<byte>(lane)
-#define WASM_SIMD_I32x4_ADD(x, y) x, y, kSimdPrefix, kExprI32x4Add & 0xff
-#define WASM_SIMD_F32x4_SPLAT(x) x, kSimdPrefix, kExprF32x4Splat & 0xff
-#define WASM_SIMD_F32x4_EXTRACT_LANE(lane, x) \
-  x, kSimdPrefix, kExprF32x4ExtractLane & 0xff, static_cast<byte>(lane)
-#define WASM_SIMD_F32x4_ADD(x, y) x, y, kSimdPrefix, kExprF32x4Add & 0xff
 
 #define SIG_ENTRY_v_v kWasmFunctionTypeForm, 0, 0
 #define SIZEOF_SIG_ENTRY_v_v 3

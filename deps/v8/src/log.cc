@@ -1249,28 +1249,6 @@ void Logger::HeapSampleItemEvent(const char* type, int number, int bytes) {
 }
 
 
-void Logger::DebugTag(const char* call_site_tag) {
-  if (!log_->IsEnabled() || !FLAG_log) return;
-  Log::MessageBuilder msg(log_);
-  msg.Append("debug-tag,%s", call_site_tag);
-  msg.WriteToLogFile();
-}
-
-
-void Logger::DebugEvent(const char* event_type, Vector<uint16_t> parameter) {
-  if (!log_->IsEnabled() || !FLAG_log) return;
-  StringBuilder s(parameter.length() + 1);
-  for (int i = 0; i < parameter.length(); ++i) {
-    s.AddCharacter(static_cast<char>(parameter[i]));
-  }
-  char* parameter_string = s.Finalize();
-  Log::MessageBuilder msg(log_);
-  msg.Append("debug-queue-event,%s,%15.3f,%s", event_type,
-             base::OS::TimeCurrentMillis(), parameter_string);
-  DeleteArray(parameter_string);
-  msg.WriteToLogFile();
-}
-
 void Logger::RuntimeCallTimerEvent() {
   RuntimeCallStats* stats = isolate_->counters()->runtime_call_stats();
   RuntimeCallTimer* timer = stats->current_timer();
@@ -1279,7 +1257,7 @@ void Logger::RuntimeCallTimerEvent() {
   if (counter == nullptr) return;
   Log::MessageBuilder msg(log_);
   msg.Append("active-runtime-timer,");
-  msg.AppendDoubleQuotedString(counter->name);
+  msg.AppendDoubleQuotedString(counter->name());
   msg.WriteToLogFile();
 }
 
@@ -1312,6 +1290,93 @@ void Logger::TickEvent(v8::TickSample* sample, bool overflow) {
   msg.WriteToLogFile();
 }
 
+void Logger::ICEvent(const char* type, bool keyed, const Address pc, int line,
+                     int column, Map* map, Object* key, char old_state,
+                     char new_state, const char* modifier,
+                     const char* slow_stub_reason) {
+  if (!log_->IsEnabled() || !FLAG_trace_ic) return;
+  Log::MessageBuilder msg(log_);
+  if (keyed) msg.Append("Keyed");
+  msg.Append("%s,", type);
+  msg.AppendAddress(pc);
+  msg.Append(",%d,%d,", line, column);
+  msg.Append(old_state);
+  msg.Append(",");
+  msg.Append(new_state);
+  msg.Append(",");
+  msg.AppendAddress(reinterpret_cast<Address>(map));
+  msg.Append(",");
+  if (key->IsSmi()) {
+    msg.Append("%d", Smi::cast(key)->value());
+  } else if (key->IsNumber()) {
+    msg.Append("%lf", key->Number());
+  } else if (key->IsString()) {
+    msg.AppendDetailed(String::cast(key), false);
+  } else if (key->IsSymbol()) {
+    msg.AppendSymbolName(Symbol::cast(key));
+  }
+  msg.Append(",%s,", modifier);
+  if (slow_stub_reason != nullptr) {
+    msg.AppendDoubleQuotedString(slow_stub_reason);
+  }
+  msg.WriteToLogFile();
+}
+
+void Logger::CompareIC(const Address pc, int line, int column, Code* stub,
+                       const char* op, const char* old_left,
+                       const char* old_right, const char* old_state,
+                       const char* new_left, const char* new_right,
+                       const char* new_state) {
+  if (!log_->IsEnabled() || !FLAG_trace_ic) return;
+  Log::MessageBuilder msg(log_);
+  msg.Append("CompareIC,");
+  msg.AppendAddress(pc);
+  msg.Append(",%d,%d,", line, column);
+  msg.AppendAddress(reinterpret_cast<Address>(stub));
+  msg.Append(",%s,%s,%s,%s,%s,%s,%s", op, old_left, old_right, old_state,
+             new_left, new_right, new_state);
+  msg.WriteToLogFile();
+}
+
+void Logger::BinaryOpIC(const Address pc, int line, int column, Code* stub,
+                        const char* old_state, const char* new_state,
+                        AllocationSite* allocation_site) {
+  if (!log_->IsEnabled() || !FLAG_trace_ic) return;
+  Log::MessageBuilder msg(log_);
+  msg.Append("BinaryOpIC,");
+  msg.AppendAddress(pc);
+  msg.Append(",%d,%d,", line, column);
+  msg.AppendAddress(reinterpret_cast<Address>(stub));
+  msg.Append(",%s,%s,", old_state, new_state);
+  if (allocation_site != nullptr) {
+    msg.AppendAddress(reinterpret_cast<Address>(allocation_site));
+  }
+  msg.WriteToLogFile();
+}
+
+void Logger::ToBooleanIC(const Address pc, int line, int column, Code* stub,
+                         const char* old_state, const char* new_state) {
+  if (!log_->IsEnabled() || !FLAG_trace_ic) return;
+  Log::MessageBuilder msg(log_);
+  msg.Append("ToBooleanIC,");
+  msg.AppendAddress(pc);
+  msg.Append(",%d,%d,", line, column);
+  msg.AppendAddress(reinterpret_cast<Address>(stub));
+  msg.Append(",%s,%s,", old_state, new_state);
+  msg.WriteToLogFile();
+}
+
+void Logger::PatchIC(const Address pc, const Address test, int delta) {
+  if (!log_->IsEnabled() || !FLAG_trace_ic) return;
+  Log::MessageBuilder msg(log_);
+  msg.Append("PatchIC,");
+  msg.AppendAddress(pc);
+  msg.Append(",");
+  msg.AppendAddress(test);
+  msg.Append(",");
+  msg.Append("%d,", delta);
+  msg.WriteToLogFile();
+}
 
 void Logger::StopProfiler() {
   if (!log_->IsEnabled()) return;
@@ -1329,6 +1394,17 @@ void Logger::LogFailure() {
   StopProfiler();
 }
 
+static void AddFunctionAndCode(SharedFunctionInfo* sfi,
+                               AbstractCode* code_object,
+                               Handle<SharedFunctionInfo>* sfis,
+                               Handle<AbstractCode>* code_objects, int offset) {
+  if (sfis != NULL) {
+    sfis[offset] = Handle<SharedFunctionInfo>(sfi);
+  }
+  if (code_objects != NULL) {
+    code_objects[offset] = Handle<AbstractCode>(code_object);
+  }
+}
 
 class EnumerateOptimizedFunctionsVisitor: public OptimizedFunctionVisitor {
  public:
@@ -1337,22 +1413,16 @@ class EnumerateOptimizedFunctionsVisitor: public OptimizedFunctionVisitor {
                                      int* count)
       : sfis_(sfis), code_objects_(code_objects), count_(count) {}
 
-  virtual void EnterContext(Context* context) {}
-  virtual void LeaveContext(Context* context) {}
-
   virtual void VisitFunction(JSFunction* function) {
     SharedFunctionInfo* sfi = SharedFunctionInfo::cast(function->shared());
     Object* maybe_script = sfi->script();
     if (maybe_script->IsScript()
         && !Script::cast(maybe_script)->HasValidSource()) return;
-    if (sfis_ != NULL) {
-      sfis_[*count_] = Handle<SharedFunctionInfo>(sfi);
-    }
-    if (code_objects_ != NULL) {
-      DCHECK(function->abstract_code()->kind() ==
-             AbstractCode::OPTIMIZED_FUNCTION);
-      code_objects_[*count_] = Handle<AbstractCode>(function->abstract_code());
-    }
+
+    DCHECK(function->abstract_code()->kind() ==
+           AbstractCode::OPTIMIZED_FUNCTION);
+    AddFunctionAndCode(sfi, function->abstract_code(), sfis_, code_objects_,
+                       *count_);
     *count_ = *count_ + 1;
   }
 
@@ -1377,14 +1447,19 @@ static int EnumerateCompiledFunctions(Heap* heap,
     if (sfi->is_compiled()
         && (!sfi->script()->IsScript()
             || Script::cast(sfi->script())->HasValidSource())) {
-      if (sfis != NULL) {
-        sfis[compiled_funcs_count] = Handle<SharedFunctionInfo>(sfi);
+      // In some cases, an SFI might have (and have executing!) both bytecode
+      // and baseline code, so check for both and add them both if needed.
+      if (sfi->HasBytecodeArray()) {
+        AddFunctionAndCode(sfi, AbstractCode::cast(sfi->bytecode_array()), sfis,
+                           code_objects, compiled_funcs_count);
+        ++compiled_funcs_count;
       }
-      if (code_objects != NULL) {
-        code_objects[compiled_funcs_count] =
-            Handle<AbstractCode>(sfi->abstract_code());
+
+      if (!sfi->IsInterpreted()) {
+        AddFunctionAndCode(sfi, AbstractCode::cast(sfi->code()), sfis,
+                           code_objects, compiled_funcs_count);
+        ++compiled_funcs_count;
       }
-      ++compiled_funcs_count;
     }
   }
 
@@ -1445,10 +1520,6 @@ void Logger::LogCodeObject(Object* object) {
       description = "A load global IC from the snapshot";
       tag = Logger::LOAD_GLOBAL_IC_TAG;
       break;
-    case AbstractCode::CALL_IC:
-      description = "A call IC from the snapshot";
-      tag = CodeEventListener::CALL_IC_TAG;
-      break;
     case AbstractCode::STORE_IC:
       description = "A store IC from the snapshot";
       tag = CodeEventListener::STORE_IC_TAG;
@@ -1467,6 +1538,10 @@ void Logger::LogCodeObject(Object* object) {
       break;
     case AbstractCode::WASM_TO_JS_FUNCTION:
       description = "A Wasm to JavaScript adapter";
+      tag = CodeEventListener::STUB_TAG;
+      break;
+    case AbstractCode::WASM_INTERPRETER_ENTRY:
+      description = "A Wasm to Interpreter adapter";
       tag = CodeEventListener::STUB_TAG;
       break;
     case AbstractCode::NUMBER_OF_KINDS:
@@ -1512,7 +1587,6 @@ void Logger::LogBytecodeHandlers() {
 
 void Logger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
                                  Handle<AbstractCode> code) {
-  Handle<String> func_name(shared->DebugName());
   if (shared->script()->IsScript()) {
     Handle<Script> script(Script::cast(shared->script()));
     int line_num = Script::GetLineNumber(script, shared->start_position()) + 1;
@@ -1551,11 +1625,12 @@ void Logger::LogExistingFunction(Handle<SharedFunctionInfo> shared,
 #if USES_FUNCTION_DESCRIPTORS
       entry_point = *FUNCTION_ENTRYPOINT_ADDRESS(entry_point);
 #endif
-      PROFILE(isolate_, CallbackEvent(*func_name, entry_point));
+      PROFILE(isolate_, CallbackEvent(shared->DebugName(), entry_point));
     }
   } else {
-    PROFILE(isolate_, CodeCreateEvent(CodeEventListener::LAZY_COMPILE_TAG,
-                                      *code, *shared, *func_name));
+    PROFILE(isolate_,
+            CodeCreateEvent(CodeEventListener::LAZY_COMPILE_TAG, *code, *shared,
+                            isolate_->heap()->empty_string()));
   }
 }
 

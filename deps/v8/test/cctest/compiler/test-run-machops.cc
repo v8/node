@@ -10,6 +10,7 @@
 #include "src/base/ieee754.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/codegen.h"
+#include "src/objects-inl.h"
 #include "src/utils.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/codegen-tester.h"
@@ -3797,6 +3798,30 @@ TEST(RunFloat32Min) {
   }
 }
 
+TEST(RunFloat64Max) {
+  RawMachineAssemblerTester<int32_t> m;
+  Float64BinopTester bt(&m);
+  bt.AddReturn(m.Float64Max(bt.param0, bt.param1));
+
+  FOR_FLOAT64_INPUTS(pl) {
+    FOR_FLOAT64_INPUTS(pr) {
+      CHECK_DOUBLE_EQ(JSMax(*pl, *pr), bt.call(*pl, *pr));
+    }
+  }
+}
+
+TEST(RunFloat64Min) {
+  RawMachineAssemblerTester<int32_t> m;
+  Float64BinopTester bt(&m);
+  bt.AddReturn(m.Float64Min(bt.param0, bt.param1));
+
+  FOR_FLOAT64_INPUTS(pl) {
+    FOR_FLOAT64_INPUTS(pr) {
+      CHECK_DOUBLE_EQ(JSMin(*pl, *pr), bt.call(*pl, *pr));
+    }
+  }
+}
+
 TEST(RunFloat32SubP) {
   RawMachineAssemblerTester<int32_t> m;
   Float32BinopTester bt(&m);
@@ -6683,6 +6708,60 @@ TEST(ParentFramePointer) {
   Node* phi = r.Phi(MachineRepresentation::kWord32, fa, fb);
   r.Return(phi);
   CHECK_EQ(1, r.Call(1));
+}
+
+#if V8_TARGET_ARCH_64_BIT
+
+TEST(Regression5923) {
+  {
+    BufferedRawMachineAssemblerTester<int64_t> m(MachineType::Int64());
+    m.Return(m.Int64Add(
+        m.Word64Shr(m.Parameter(0), m.Int64Constant(4611686018427387888)),
+        m.Parameter(0)));
+    int64_t input = 16;
+    m.Call(input);
+  }
+  {
+    BufferedRawMachineAssemblerTester<int64_t> m(MachineType::Int64());
+    m.Return(m.Int64Add(
+        m.Parameter(0),
+        m.Word64Shr(m.Parameter(0), m.Int64Constant(4611686018427387888))));
+    int64_t input = 16;
+    m.Call(input);
+  }
+}
+
+TEST(Regression5951) {
+  BufferedRawMachineAssemblerTester<int64_t> m(MachineType::Int64());
+  m.Return(m.Word64And(m.Word64Shr(m.Parameter(0), m.Int64Constant(0)),
+                       m.Int64Constant(0xffffffffffffffffl)));
+  int64_t input = 1234;
+  CHECK_EQ(input, m.Call(input));
+}
+
+TEST(Regression6046a) {
+  BufferedRawMachineAssemblerTester<int64_t> m;
+  m.Return(m.Word64Shr(m.Word64And(m.Int64Constant(0), m.Int64Constant(0)),
+                       m.Int64Constant(64)));
+  CHECK_EQ(0, m.Call());
+}
+
+TEST(Regression6046b) {
+  BufferedRawMachineAssemblerTester<int32_t> m;
+  m.Return(m.Word32Shr(m.Word32And(m.Int32Constant(0), m.Int32Constant(0)),
+                       m.Int32Constant(32)));
+  CHECK_EQ(0, m.Call());
+}
+
+#endif  // V8_TARGET_ARCH_64_BIT
+
+TEST(Regression6028) {
+  BufferedRawMachineAssemblerTester<int32_t> m;
+  m.Return(m.Word32Equal(
+      m.Word32And(m.Int32Constant(0x23),
+                  m.Word32Sar(m.Int32Constant(1), m.Int32Constant(18))),
+      m.Int32Constant(0)));
+  CHECK_EQ(1, m.Call());
 }
 
 }  // namespace compiler

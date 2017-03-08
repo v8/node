@@ -5,6 +5,7 @@
 #include "src/compiler/ast-loop-assignment-analyzer.h"
 #include "src/ast/scopes.h"
 #include "src/compilation-info.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -201,6 +202,7 @@ void ALAA::VisitSpread(Spread* e) { UNREACHABLE(); }
 
 void ALAA::VisitEmptyParentheses(EmptyParentheses* e) { UNREACHABLE(); }
 
+void ALAA::VisitGetIterator(GetIterator* e) { UNREACHABLE(); }
 
 void ALAA::VisitCaseClause(CaseClause* cc) {
   if (!cc->is_default()) Visit(cc->label());
@@ -220,8 +222,7 @@ void ALAA::VisitSloppyBlockFunctionStatement(
 void ALAA::VisitTryCatchStatement(TryCatchStatement* stmt) {
   Visit(stmt->try_block());
   Visit(stmt->catch_block());
-  // TODO(turbofan): are catch variables well-scoped?
-  AnalyzeAssignment(stmt->variable());
+  AnalyzeAssignment(stmt->scope()->catch_variable());
 }
 
 

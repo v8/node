@@ -8,6 +8,7 @@
 #include "src/compiler/node.h"
 #include "src/compiler/types.h"
 #include "src/globals.h"
+#include "src/zone/zone-handle-set.h"
 
 namespace v8 {
 namespace internal {
@@ -74,8 +75,9 @@ class V8_EXPORT_PRIVATE NodeProperties final {
   }
 
   // Determines whether exceptions thrown by the given node are handled locally
-  // within the graph (i.e. an IfException projection is present).
-  static bool IsExceptionalCall(Node* node);
+  // within the graph (i.e. an IfException projection is present). Optionally
+  // the present IfException projection is returned via {out_exception}.
+  static bool IsExceptionalCall(Node* node, Node** out_exception = nullptr);
 
   // ---------------------------------------------------------------------------
   // Miscellaneous mutators.
@@ -123,6 +125,15 @@ class V8_EXPORT_PRIVATE NodeProperties final {
   //  - Switch: [ IfValue, ..., IfDefault ]
   static void CollectControlProjections(Node* node, Node** proj, size_t count);
 
+  // Checks if two nodes are the same, looking past {CheckHeapObject}.
+  static bool IsSame(Node* a, Node* b);
+
+  // Walks up the {effect} chain to find a witness that provides map
+  // information about the {receiver}. Doesn't look through potentially
+  // side effecting nodes.
+  static bool InferReceiverMaps(Node* receiver, Node* effect,
+                                ZoneHandleSet<Map>* maps_return);
+
   // ---------------------------------------------------------------------------
   // Context.
 
@@ -131,6 +142,11 @@ class V8_EXPORT_PRIVATE NodeProperties final {
   // {context}.
   static MaybeHandle<Context> GetSpecializationContext(
       Node* node, MaybeHandle<Context> context = MaybeHandle<Context>());
+
+  // Walk up the context chain from the given {node} until we reduce the {depth}
+  // to 0 or hit a node that does not extend the context chain ({depth} will be
+  // updated accordingly).
+  static Node* GetOuterContext(Node* node, size_t* depth);
 
   // ---------------------------------------------------------------------------
   // Type.

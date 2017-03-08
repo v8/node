@@ -33,6 +33,8 @@ HandleScope::HandleScope(Isolate* isolate) {
   data->level++;
 }
 
+template <typename T>
+Handle<T>::Handle(T* object, Isolate* isolate) : HandleBase(object, isolate) {}
 
 template <typename T>
 inline std::ostream& operator<<(std::ostream& os, Handle<T> handle) {
@@ -93,7 +95,6 @@ Handle<T> HandleScope::CloseAndEscape(Handle<T> handle_value) {
   current->level++;
   return result;
 }
-
 
 Object** HandleScope::CreateHandle(Isolate* isolate, Object* value) {
   DCHECK(AllowHandleAllocation::IsAllowed());

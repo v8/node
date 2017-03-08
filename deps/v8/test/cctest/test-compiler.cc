@@ -35,6 +35,7 @@
 #include "src/disasm.h"
 #include "src/factory.h"
 #include "src/interpreter/interpreter.h"
+#include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
 
 using namespace v8::internal;
@@ -64,7 +65,7 @@ static Handle<JSFunction> Compile(const char* source) {
   Handle<SharedFunctionInfo> shared = Compiler::GetSharedFunctionInfoForScript(
       source_code, Handle<String>(), 0, 0, v8::ScriptOriginOptions(),
       Handle<Object>(), Handle<Context>(isolate->native_context()), NULL, NULL,
-      v8::ScriptCompiler::kNoCompileOptions, NOT_NATIVES_CODE, false);
+      v8::ScriptCompiler::kNoCompileOptions, NOT_NATIVES_CODE);
   return isolate->factory()->NewFunctionFromSharedFunctionInfo(
       shared, isolate->native_context());
 }
@@ -307,11 +308,11 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   // We shouldn't have deoptimization support. We want to recompile and
   // verify that our feedback vector preserves information.
   CHECK(!f->shared()->has_deoptimization_support());
-  Handle<TypeFeedbackVector> feedback_vector(f->feedback_vector());
+  Handle<FeedbackVector> feedback_vector(f->feedback_vector());
 
   // Verify that we gathered feedback.
   CHECK(!feedback_vector->is_empty());
-  FeedbackVectorSlot slot_for_a(0);
+  FeedbackSlot slot_for_a(0);
   Object* object = feedback_vector->Get(slot_for_a);
   CHECK(object->IsWeakCell() &&
         WeakCell::cast(object)->value()->IsJSFunction());
@@ -360,7 +361,6 @@ TEST(FeedbackVectorUnaffectedByScopeChanges) {
   // If we are compiling lazily then it should not be compiled, and so no
   // feedback vector allocated yet.
   CHECK(!f->shared()->is_compiled());
-  CHECK(f->feedback_vector()->is_empty());
 
   CompileRun("morphing_call();");
 
@@ -385,10 +385,12 @@ TEST(OptimizedCodeSharing1) {
         "  return function() { return x; };"
         "}"
         "var closure0 = MakeClosure();"
+        "var closure1 = MakeClosure();"  // We only share optimized code
+                                         // if there are at least two closures.
         "%DebugPrint(closure0());"
         "%OptimizeFunctionOnNextCall(closure0);"
         "%DebugPrint(closure0());"
-        "var closure1 = MakeClosure(); closure1();"
+        "closure1();"
         "var closure2 = MakeClosure(); closure2();");
     Handle<JSFunction> fun1 = Handle<JSFunction>::cast(
         v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
@@ -625,7 +627,6 @@ TEST(IgnitionEntryTrampolineSelfHealing) {
   CcTest::InitializeVM();
   FLAG_ignition = true;
   Isolate* isolate = CcTest::i_isolate();
-  isolate->interpreter()->Initialize();
   v8::HandleScope scope(CcTest::isolate());
 
   CompileRun(

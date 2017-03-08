@@ -7,6 +7,7 @@
 
 #include "src/globals.h"
 #include "src/machine-type.h"
+#include "src/runtime/runtime.h"
 #include "src/signature.h"
 
 namespace v8 {
@@ -14,37 +15,42 @@ namespace internal {
 namespace wasm {
 
 // Binary encoding of local types.
-enum LocalTypeCode {
+enum ValueTypeCode {
   kLocalVoid = 0x40,
   kLocalI32 = 0x7f,
   kLocalI64 = 0x7e,
   kLocalF32 = 0x7d,
   kLocalF64 = 0x7c,
-  kLocalS128 = 0x7b
+  kLocalS128 = 0x7b,
+  kLocalS1x4 = 0x7a,
+  kLocalS1x8 = 0x79,
+  kLocalS1x16 = 0x78
 };
 
 // Type code for multi-value block types.
 static const uint8_t kMultivalBlock = 0x41;
 
-// We reuse the internal machine type to represent WebAssembly AST types.
+// We reuse the internal machine type to represent WebAssembly types.
 // A typedef improves readability without adding a whole new type system.
-typedef MachineRepresentation LocalType;
-const LocalType kAstStmt = MachineRepresentation::kNone;
-const LocalType kAstI32 = MachineRepresentation::kWord32;
-const LocalType kAstI64 = MachineRepresentation::kWord64;
-const LocalType kAstF32 = MachineRepresentation::kFloat32;
-const LocalType kAstF64 = MachineRepresentation::kFloat64;
-const LocalType kAstS128 = MachineRepresentation::kSimd128;
-// We use kTagged here because kNone is already used by kAstStmt.
-const LocalType kAstEnd = MachineRepresentation::kTagged;
+typedef MachineRepresentation ValueType;
+constexpr ValueType kWasmStmt = MachineRepresentation::kNone;
+constexpr ValueType kWasmI32 = MachineRepresentation::kWord32;
+constexpr ValueType kWasmI64 = MachineRepresentation::kWord64;
+constexpr ValueType kWasmF32 = MachineRepresentation::kFloat32;
+constexpr ValueType kWasmF64 = MachineRepresentation::kFloat64;
+constexpr ValueType kWasmS128 = MachineRepresentation::kSimd128;
+constexpr ValueType kWasmS1x4 = MachineRepresentation::kSimd1x4;
+constexpr ValueType kWasmS1x8 = MachineRepresentation::kSimd1x8;
+constexpr ValueType kWasmS1x16 = MachineRepresentation::kSimd1x16;
+constexpr ValueType kWasmVar = MachineRepresentation::kTagged;
 
-typedef Signature<LocalType> FunctionSig;
+typedef Signature<ValueType> FunctionSig;
 std::ostream& operator<<(std::ostream& os, const FunctionSig& function);
 
 typedef Vector<const char> WasmName;
 
 typedef int WasmCodePosition;
-const WasmCodePosition kNoCodePosition = -1;
+constexpr WasmCodePosition kNoCodePosition = -1;
 
 // Control expressions and blocks.
 #define FOREACH_CONTROL_OPCODE(V)      \
@@ -77,8 +83,7 @@ const WasmCodePosition kNoCodePosition = -1;
   V(I32Const, 0x41, _)         \
   V(I64Const, 0x42, _)         \
   V(F32Const, 0x43, _)         \
-  V(F64Const, 0x44, _)         \
-  V(I8Const, 0xcb, _ /* TODO(titzer): V8 specific, remove */)
+  V(F64Const, 0x44, _)
 
 // Load memory expressions.
 #define FOREACH_LOAD_MEM_OPCODE(V) \
@@ -276,12 +281,11 @@ const WasmCodePosition kNoCodePosition = -1;
 
 #define FOREACH_SIMD_0_OPERAND_OPCODE(V) \
   V(F32x4Splat, 0xe500, s_f)             \
-  V(F32x4ReplaceLane, 0xe502, s_sif)     \
   V(F32x4Abs, 0xe503, s_s)               \
   V(F32x4Neg, 0xe504, s_s)               \
   V(F32x4Sqrt, 0xe505, s_s)              \
   V(F32x4RecipApprox, 0xe506, s_s)       \
-  V(F32x4SqrtApprox, 0xe507, s_s)        \
+  V(F32x4RecipSqrtApprox, 0xe507, s_s)   \
   V(F32x4Add, 0xe508, s_ss)              \
   V(F32x4Sub, 0xe509, s_ss)              \
   V(F32x4Mul, 0xe50a, s_ss)              \
@@ -290,152 +294,170 @@ const WasmCodePosition kNoCodePosition = -1;
   V(F32x4Max, 0xe50d, s_ss)              \
   V(F32x4MinNum, 0xe50e, s_ss)           \
   V(F32x4MaxNum, 0xe50f, s_ss)           \
-  V(F32x4Eq, 0xe510, s_ss)               \
-  V(F32x4Ne, 0xe511, s_ss)               \
-  V(F32x4Lt, 0xe512, s_ss)               \
-  V(F32x4Le, 0xe513, s_ss)               \
-  V(F32x4Gt, 0xe514, s_ss)               \
-  V(F32x4Ge, 0xe515, s_ss)               \
-  V(F32x4Select, 0xe516, s_sss)          \
-  V(F32x4Swizzle, 0xe517, s_s)           \
-  V(F32x4Shuffle, 0xe518, s_ss)          \
-  V(F32x4FromInt32x4, 0xe519, s_s)       \
-  V(F32x4FromUint32x4, 0xe51a, s_s)      \
+  V(F32x4RecipRefine, 0xe592, s_ss)      \
+  V(F32x4RecipSqrtRefine, 0xe593, s_ss)  \
+  V(F32x4Eq, 0xe510, s1x4_ss)            \
+  V(F32x4Ne, 0xe511, s1x4_ss)            \
+  V(F32x4Lt, 0xe512, s1x4_ss)            \
+  V(F32x4Le, 0xe513, s1x4_ss)            \
+  V(F32x4Gt, 0xe514, s1x4_ss)            \
+  V(F32x4Ge, 0xe515, s1x4_ss)            \
+  V(F32x4SConvertI32x4, 0xe519, s_s)     \
+  V(F32x4UConvertI32x4, 0xe51a, s_s)     \
   V(I32x4Splat, 0xe51b, s_i)             \
-  V(I32x4ReplaceLane, 0xe51d, s_sii)     \
   V(I32x4Neg, 0xe51e, s_s)               \
   V(I32x4Add, 0xe51f, s_ss)              \
   V(I32x4Sub, 0xe520, s_ss)              \
   V(I32x4Mul, 0xe521, s_ss)              \
-  V(I32x4Min_s, 0xe522, s_ss)            \
-  V(I32x4Max_s, 0xe523, s_ss)            \
-  V(I32x4Shl, 0xe524, s_si)              \
-  V(I32x4Shr_s, 0xe525, s_si)            \
-  V(I32x4Eq, 0xe526, s_ss)               \
-  V(I32x4Ne, 0xe527, s_ss)               \
-  V(I32x4Lt_s, 0xe528, s_ss)             \
-  V(I32x4Le_s, 0xe529, s_ss)             \
-  V(I32x4Gt_s, 0xe52a, s_ss)             \
-  V(I32x4Ge_s, 0xe52b, s_ss)             \
-  V(I32x4Select, 0xe52c, s_sss)          \
-  V(I32x4Swizzle, 0xe52d, s_s)           \
-  V(I32x4Shuffle, 0xe52e, s_ss)          \
-  V(I32x4FromFloat32x4, 0xe52f, s_s)     \
-  V(I32x4Min_u, 0xe530, s_ss)            \
-  V(I32x4Max_u, 0xe531, s_ss)            \
-  V(I32x4Shr_u, 0xe532, s_ss)            \
-  V(I32x4Lt_u, 0xe533, s_ss)             \
-  V(I32x4Le_u, 0xe534, s_ss)             \
-  V(I32x4Gt_u, 0xe535, s_ss)             \
-  V(I32x4Ge_u, 0xe536, s_ss)             \
-  V(Ui32x4FromFloat32x4, 0xe537, s_s)    \
+  V(I32x4MinS, 0xe522, s_ss)             \
+  V(I32x4MaxS, 0xe523, s_ss)             \
+  V(I32x4Eq, 0xe526, s1x4_ss)            \
+  V(I32x4Ne, 0xe527, s1x4_ss)            \
+  V(I32x4LtS, 0xe528, s1x4_ss)           \
+  V(I32x4LeS, 0xe529, s1x4_ss)           \
+  V(I32x4GtS, 0xe52a, s1x4_ss)           \
+  V(I32x4GeS, 0xe52b, s1x4_ss)           \
+  V(I32x4SConvertF32x4, 0xe52f, s_s)     \
+  V(I32x4MinU, 0xe530, s_ss)             \
+  V(I32x4MaxU, 0xe531, s_ss)             \
+  V(I32x4LtU, 0xe533, s1x4_ss)           \
+  V(I32x4LeU, 0xe534, s1x4_ss)           \
+  V(I32x4GtU, 0xe535, s1x4_ss)           \
+  V(I32x4GeU, 0xe536, s1x4_ss)           \
+  V(I32x4UConvertF32x4, 0xe537, s_s)     \
   V(I16x8Splat, 0xe538, s_i)             \
-  V(I16x8ReplaceLane, 0xe53a, s_sii)     \
   V(I16x8Neg, 0xe53b, s_s)               \
   V(I16x8Add, 0xe53c, s_ss)              \
-  V(I16x8AddSaturate_s, 0xe53d, s_ss)    \
+  V(I16x8AddSaturateS, 0xe53d, s_ss)     \
   V(I16x8Sub, 0xe53e, s_ss)              \
-  V(I16x8SubSaturate_s, 0xe53f, s_ss)    \
+  V(I16x8SubSaturateS, 0xe53f, s_ss)     \
   V(I16x8Mul, 0xe540, s_ss)              \
-  V(I16x8Min_s, 0xe541, s_ss)            \
-  V(I16x8Max_s, 0xe542, s_ss)            \
-  V(I16x8Shl, 0xe543, s_si)              \
-  V(I16x8Shr_s, 0xe544, s_si)            \
-  V(I16x8Eq, 0xe545, s_ss)               \
-  V(I16x8Ne, 0xe546, s_ss)               \
-  V(I16x8Lt_s, 0xe547, s_ss)             \
-  V(I16x8Le_s, 0xe548, s_ss)             \
-  V(I16x8Gt_s, 0xe549, s_ss)             \
-  V(I16x8Ge_s, 0xe54a, s_ss)             \
-  V(I16x8Select, 0xe54b, s_sss)          \
-  V(I16x8Swizzle, 0xe54c, s_s)           \
-  V(I16x8Shuffle, 0xe54d, s_ss)          \
-  V(I16x8AddSaturate_u, 0xe54e, s_ss)    \
-  V(I16x8SubSaturate_u, 0xe54f, s_ss)    \
-  V(I16x8Min_u, 0xe550, s_ss)            \
-  V(I16x8Max_u, 0xe551, s_ss)            \
-  V(I16x8Shr_u, 0xe552, s_si)            \
-  V(I16x8Lt_u, 0xe553, s_ss)             \
-  V(I16x8Le_u, 0xe554, s_ss)             \
-  V(I16x8Gt_u, 0xe555, s_ss)             \
-  V(I16x8Ge_u, 0xe556, s_ss)             \
+  V(I16x8MinS, 0xe541, s_ss)             \
+  V(I16x8MaxS, 0xe542, s_ss)             \
+  V(I16x8Eq, 0xe545, s1x8_ss)            \
+  V(I16x8Ne, 0xe546, s1x8_ss)            \
+  V(I16x8LtS, 0xe547, s1x8_ss)           \
+  V(I16x8LeS, 0xe548, s1x8_ss)           \
+  V(I16x8GtS, 0xe549, s1x8_ss)           \
+  V(I16x8GeS, 0xe54a, s1x8_ss)           \
+  V(I16x8AddSaturateU, 0xe54e, s_ss)     \
+  V(I16x8SubSaturateU, 0xe54f, s_ss)     \
+  V(I16x8MinU, 0xe550, s_ss)             \
+  V(I16x8MaxU, 0xe551, s_ss)             \
+  V(I16x8LtU, 0xe553, s1x8_ss)           \
+  V(I16x8LeU, 0xe554, s1x8_ss)           \
+  V(I16x8GtU, 0xe555, s1x8_ss)           \
+  V(I16x8GeU, 0xe556, s1x8_ss)           \
   V(I8x16Splat, 0xe557, s_i)             \
-  V(I8x16ReplaceLane, 0xe559, s_sii)     \
   V(I8x16Neg, 0xe55a, s_s)               \
   V(I8x16Add, 0xe55b, s_ss)              \
-  V(I8x16AddSaturate_s, 0xe55c, s_ss)    \
+  V(I8x16AddSaturateS, 0xe55c, s_ss)     \
   V(I8x16Sub, 0xe55d, s_ss)              \
-  V(I8x16SubSaturate_s, 0xe55e, s_ss)    \
+  V(I8x16SubSaturateS, 0xe55e, s_ss)     \
   V(I8x16Mul, 0xe55f, s_ss)              \
-  V(I8x16Min_s, 0xe560, s_ss)            \
-  V(I8x16Max_s, 0xe561, s_ss)            \
-  V(I8x16Shl, 0xe562, s_si)              \
-  V(I8x16Shr_s, 0xe563, s_si)            \
-  V(I8x16Eq, 0xe564, s_ss)               \
-  V(I8x16Neq, 0xe565, s_ss)              \
-  V(I8x16Lt_s, 0xe566, s_ss)             \
-  V(I8x16Le_s, 0xe567, s_ss)             \
-  V(I8x16Gt_s, 0xe568, s_ss)             \
-  V(I8x16Ge_s, 0xe569, s_ss)             \
-  V(I8x16Select, 0xe56a, s_sss)          \
-  V(I8x16Swizzle, 0xe56b, s_s)           \
-  V(I8x16Shuffle, 0xe56c, s_ss)          \
-  V(I8x16AddSaturate_u, 0xe56d, s_ss)    \
-  V(I8x16Sub_saturate_u, 0xe56e, s_ss)   \
-  V(I8x16Min_u, 0xe56f, s_ss)            \
-  V(I8x16Max_u, 0xe570, s_ss)            \
-  V(I8x16Shr_u, 0xe571, s_ss)            \
-  V(I8x16Lt_u, 0xe572, s_ss)             \
-  V(I8x16Le_u, 0xe573, s_ss)             \
-  V(I8x16Gt_u, 0xe574, s_ss)             \
-  V(I8x16Ge_u, 0xe575, s_ss)             \
+  V(I8x16MinS, 0xe560, s_ss)             \
+  V(I8x16MaxS, 0xe561, s_ss)             \
+  V(I8x16Eq, 0xe564, s1x16_ss)           \
+  V(I8x16Ne, 0xe565, s1x16_ss)           \
+  V(I8x16LtS, 0xe566, s1x16_ss)          \
+  V(I8x16LeS, 0xe567, s1x16_ss)          \
+  V(I8x16GtS, 0xe568, s1x16_ss)          \
+  V(I8x16GeS, 0xe569, s1x16_ss)          \
+  V(I8x16AddSaturateU, 0xe56d, s_ss)     \
+  V(I8x16SubSaturateU, 0xe56e, s_ss)     \
+  V(I8x16MinU, 0xe56f, s_ss)             \
+  V(I8x16MaxU, 0xe570, s_ss)             \
+  V(I8x16LtU, 0xe572, s1x16_ss)          \
+  V(I8x16LeU, 0xe573, s1x16_ss)          \
+  V(I8x16GtU, 0xe574, s1x16_ss)          \
+  V(I8x16GeU, 0xe575, s1x16_ss)          \
   V(S128And, 0xe576, s_ss)               \
-  V(S128Ior, 0xe577, s_ss)               \
+  V(S128Or, 0xe577, s_ss)                \
   V(S128Xor, 0xe578, s_ss)               \
-  V(S128Not, 0xe579, s_s)
+  V(S128Not, 0xe579, s_s)                \
+  V(S32x4Select, 0xe52c, s_s1x4ss)       \
+  V(S32x4Swizzle, 0xe52d, s_s)           \
+  V(S32x4Shuffle, 0xe52e, s_ss)          \
+  V(S16x8Select, 0xe54b, s_s1x8ss)       \
+  V(S16x8Swizzle, 0xe54c, s_s)           \
+  V(S16x8Shuffle, 0xe54d, s_ss)          \
+  V(S8x16Select, 0xe56a, s_s1x16ss)      \
+  V(S8x16Swizzle, 0xe56b, s_s)           \
+  V(S8x16Shuffle, 0xe56c, s_ss)          \
+  V(S1x4And, 0xe580, s1x4_s1x4s1x4)      \
+  V(S1x4Or, 0xe581, s1x4_s1x4s1x4)       \
+  V(S1x4Xor, 0xe582, s1x4_s1x4s1x4)      \
+  V(S1x4Not, 0xe583, s1x4_s1x4)          \
+  V(S1x4AnyTrue, 0xe584, i_s1x4)         \
+  V(S1x4AllTrue, 0xe585, i_s1x4)         \
+  V(S1x8And, 0xe586, s1x8_s1x8s1x8)      \
+  V(S1x8Or, 0xe587, s1x8_s1x8s1x8)       \
+  V(S1x8Xor, 0xe588, s1x8_s1x8s1x8)      \
+  V(S1x8Not, 0xe589, s1x8_s1x8)          \
+  V(S1x8AnyTrue, 0xe58a, i_s1x8)         \
+  V(S1x8AllTrue, 0xe58b, i_s1x8)         \
+  V(S1x16And, 0xe58c, s1x16_s1x16s1x16)  \
+  V(S1x16Or, 0xe58d, s1x16_s1x16s1x16)   \
+  V(S1x16Xor, 0xe58e, s1x16_s1x16s1x16)  \
+  V(S1x16Not, 0xe58f, s1x16_s1x16)       \
+  V(S1x16AnyTrue, 0xe590, i_s1x16)       \
+  V(S1x16AllTrue, 0xe591, i_s1x16)
 
 #define FOREACH_SIMD_1_OPERAND_OPCODE(V) \
   V(F32x4ExtractLane, 0xe501, _)         \
+  V(F32x4ReplaceLane, 0xe502, _)         \
   V(I32x4ExtractLane, 0xe51c, _)         \
+  V(I32x4ReplaceLane, 0xe51d, _)         \
+  V(I32x4Shl, 0xe524, _)                 \
+  V(I32x4ShrS, 0xe525, _)                \
+  V(I32x4ShrU, 0xe532, _)                \
   V(I16x8ExtractLane, 0xe539, _)         \
-  V(I8x16ExtractLane, 0xe558, _)
+  V(I16x8ReplaceLane, 0xe53a, _)         \
+  V(I16x8Shl, 0xe543, _)                 \
+  V(I16x8ShrS, 0xe544, _)                \
+  V(I16x8ShrU, 0xe552, _)                \
+  V(I8x16ExtractLane, 0xe558, _)         \
+  V(I8x16ReplaceLane, 0xe559, _)         \
+  V(I8x16Shl, 0xe562, _)                 \
+  V(I8x16ShrS, 0xe563, _)                \
+  V(I8x16ShrU, 0xe571, _)
 
 #define FOREACH_ATOMIC_OPCODE(V)               \
   V(I32AtomicAdd8S, 0xe601, i_ii)              \
   V(I32AtomicAdd8U, 0xe602, i_ii)              \
   V(I32AtomicAdd16S, 0xe603, i_ii)             \
   V(I32AtomicAdd16U, 0xe604, i_ii)             \
-  V(I32AtomicAdd32, 0xe605, i_ii)              \
+  V(I32AtomicAdd, 0xe605, i_ii)                \
   V(I32AtomicAnd8S, 0xe606, i_ii)              \
   V(I32AtomicAnd8U, 0xe607, i_ii)              \
   V(I32AtomicAnd16S, 0xe608, i_ii)             \
   V(I32AtomicAnd16U, 0xe609, i_ii)             \
-  V(I32AtomicAnd32, 0xe60a, i_ii)              \
+  V(I32AtomicAnd, 0xe60a, i_ii)                \
   V(I32AtomicCompareExchange8S, 0xe60b, i_ii)  \
   V(I32AtomicCompareExchange8U, 0xe60c, i_ii)  \
   V(I32AtomicCompareExchange16S, 0xe60d, i_ii) \
   V(I32AtomicCompareExchange16U, 0xe60e, i_ii) \
-  V(I32AtomicCompareExchange32, 0xe60f, i_ii)  \
+  V(I32AtomicCompareExchange, 0xe60f, i_ii)    \
   V(I32AtomicExchange8S, 0xe610, i_ii)         \
   V(I32AtomicExchange8U, 0xe611, i_ii)         \
   V(I32AtomicExchange16S, 0xe612, i_ii)        \
   V(I32AtomicExchange16U, 0xe613, i_ii)        \
-  V(I32AtomicExchange32, 0xe614, i_ii)         \
+  V(I32AtomicExchange, 0xe614, i_ii)           \
   V(I32AtomicOr8S, 0xe615, i_ii)               \
   V(I32AtomicOr8U, 0xe616, i_ii)               \
   V(I32AtomicOr16S, 0xe617, i_ii)              \
   V(I32AtomicOr16U, 0xe618, i_ii)              \
-  V(I32AtomicOr32, 0xe619, i_ii)               \
+  V(I32AtomicOr, 0xe619, i_ii)                 \
   V(I32AtomicSub8S, 0xe61a, i_ii)              \
   V(I32AtomicSub8U, 0xe61b, i_ii)              \
   V(I32AtomicSub16S, 0xe61c, i_ii)             \
   V(I32AtomicSub16U, 0xe61d, i_ii)             \
-  V(I32AtomicSub32, 0xe61e, i_ii)              \
+  V(I32AtomicSub, 0xe61e, i_ii)                \
   V(I32AtomicXor8S, 0xe61f, i_ii)              \
   V(I32AtomicXor8U, 0xe620, i_ii)              \
   V(I32AtomicXor16S, 0xe621, i_ii)             \
   V(I32AtomicXor16U, 0xe622, i_ii)             \
-  V(I32AtomicXor32, 0xe623, i_ii)
+  V(I32AtomicXor, 0xe623, i_ii)
 
 // All opcodes.
 #define FOREACH_OPCODE(V)          \
@@ -451,45 +473,58 @@ const WasmCodePosition kNoCodePosition = -1;
   FOREACH_ATOMIC_OPCODE(V)
 
 // All signatures.
-#define FOREACH_SIGNATURE(V)         \
-  FOREACH_SIMD_SIGNATURE(V)          \
-  V(i_ii, kAstI32, kAstI32, kAstI32) \
-  V(i_i, kAstI32, kAstI32)           \
-  V(i_v, kAstI32)                    \
-  V(i_ff, kAstI32, kAstF32, kAstF32) \
-  V(i_f, kAstI32, kAstF32)           \
-  V(i_dd, kAstI32, kAstF64, kAstF64) \
-  V(i_d, kAstI32, kAstF64)           \
-  V(i_l, kAstI32, kAstI64)           \
-  V(l_ll, kAstI64, kAstI64, kAstI64) \
-  V(i_ll, kAstI32, kAstI64, kAstI64) \
-  V(l_l, kAstI64, kAstI64)           \
-  V(l_i, kAstI64, kAstI32)           \
-  V(l_f, kAstI64, kAstF32)           \
-  V(l_d, kAstI64, kAstF64)           \
-  V(f_ff, kAstF32, kAstF32, kAstF32) \
-  V(f_f, kAstF32, kAstF32)           \
-  V(f_d, kAstF32, kAstF64)           \
-  V(f_i, kAstF32, kAstI32)           \
-  V(f_l, kAstF32, kAstI64)           \
-  V(d_dd, kAstF64, kAstF64, kAstF64) \
-  V(d_d, kAstF64, kAstF64)           \
-  V(d_f, kAstF64, kAstF32)           \
-  V(d_i, kAstF64, kAstI32)           \
-  V(d_l, kAstF64, kAstI64)           \
-  V(d_id, kAstF64, kAstI32, kAstF64) \
-  V(f_if, kAstF32, kAstI32, kAstF32) \
-  V(l_il, kAstI64, kAstI32, kAstI64)
+#define FOREACH_SIGNATURE(V)            \
+  FOREACH_SIMD_SIGNATURE(V)             \
+  V(i_ii, kWasmI32, kWasmI32, kWasmI32) \
+  V(i_i, kWasmI32, kWasmI32)            \
+  V(i_v, kWasmI32)                      \
+  V(i_ff, kWasmI32, kWasmF32, kWasmF32) \
+  V(i_f, kWasmI32, kWasmF32)            \
+  V(i_dd, kWasmI32, kWasmF64, kWasmF64) \
+  V(i_d, kWasmI32, kWasmF64)            \
+  V(i_l, kWasmI32, kWasmI64)            \
+  V(l_ll, kWasmI64, kWasmI64, kWasmI64) \
+  V(i_ll, kWasmI32, kWasmI64, kWasmI64) \
+  V(l_l, kWasmI64, kWasmI64)            \
+  V(l_i, kWasmI64, kWasmI32)            \
+  V(l_f, kWasmI64, kWasmF32)            \
+  V(l_d, kWasmI64, kWasmF64)            \
+  V(f_ff, kWasmF32, kWasmF32, kWasmF32) \
+  V(f_f, kWasmF32, kWasmF32)            \
+  V(f_d, kWasmF32, kWasmF64)            \
+  V(f_i, kWasmF32, kWasmI32)            \
+  V(f_l, kWasmF32, kWasmI64)            \
+  V(d_dd, kWasmF64, kWasmF64, kWasmF64) \
+  V(d_d, kWasmF64, kWasmF64)            \
+  V(d_f, kWasmF64, kWasmF32)            \
+  V(d_i, kWasmF64, kWasmI32)            \
+  V(d_l, kWasmF64, kWasmI64)            \
+  V(d_id, kWasmF64, kWasmI32, kWasmF64) \
+  V(f_if, kWasmF32, kWasmI32, kWasmF32) \
+  V(l_il, kWasmI64, kWasmI32, kWasmI64)
 
-#define FOREACH_SIMD_SIGNATURE(V)                  \
-  V(s_s, kAstS128, kAstS128)                       \
-  V(s_f, kAstS128, kAstF32)                        \
-  V(s_sif, kAstS128, kAstS128, kAstI32, kAstF32)   \
-  V(s_ss, kAstS128, kAstS128, kAstS128)            \
-  V(s_sss, kAstS128, kAstS128, kAstS128, kAstS128) \
-  V(s_i, kAstS128, kAstI32)                        \
-  V(s_sii, kAstS128, kAstS128, kAstI32, kAstI32)   \
-  V(s_si, kAstS128, kAstS128, kAstI32)
+#define FOREACH_SIMD_SIGNATURE(V)                           \
+  V(s_s, kWasmS128, kWasmS128)                              \
+  V(s_f, kWasmS128, kWasmF32)                               \
+  V(s_ss, kWasmS128, kWasmS128, kWasmS128)                  \
+  V(s1x4_ss, kWasmS1x4, kWasmS128, kWasmS128)               \
+  V(s1x8_ss, kWasmS1x8, kWasmS128, kWasmS128)               \
+  V(s1x16_ss, kWasmS1x16, kWasmS128, kWasmS128)             \
+  V(s_i, kWasmS128, kWasmI32)                               \
+  V(s_si, kWasmS128, kWasmS128, kWasmI32)                   \
+  V(i_s, kWasmI32, kWasmS128)                               \
+  V(i_s1x4, kWasmI32, kWasmS1x4)                            \
+  V(i_s1x8, kWasmI32, kWasmS1x8)                            \
+  V(i_s1x16, kWasmI32, kWasmS1x16)                          \
+  V(s_s1x4ss, kWasmS128, kWasmS1x4, kWasmS128, kWasmS128)   \
+  V(s_s1x8ss, kWasmS128, kWasmS1x8, kWasmS128, kWasmS128)   \
+  V(s_s1x16ss, kWasmS128, kWasmS1x16, kWasmS128, kWasmS128) \
+  V(s1x4_s1x4, kWasmS1x4, kWasmS1x4)                        \
+  V(s1x4_s1x4s1x4, kWasmS1x4, kWasmS1x4, kWasmS1x4)         \
+  V(s1x8_s1x8, kWasmS1x8, kWasmS1x8)                        \
+  V(s1x8_s1x8s1x8, kWasmS1x8, kWasmS1x8, kWasmS1x8)         \
+  V(s1x16_s1x16, kWasmS1x16, kWasmS1x16)                    \
+  V(s1x16_s1x16s1x16, kWasmS1x16, kWasmS1x16, kWasmS1x16)
 
 #define FOREACH_PREFIX(V) \
   V(Simd, 0xe5)           \
@@ -514,8 +549,7 @@ enum WasmOpcode {
   V(TrapRemByZero)                 \
   V(TrapFloatUnrepresentable)      \
   V(TrapFuncInvalid)               \
-  V(TrapFuncSigMismatch)           \
-  V(TrapInvalidIndex)
+  V(TrapFuncSigMismatch)
 
 enum TrapReason {
 #define DECLARE_ENUM(name) k##name,
@@ -528,7 +562,6 @@ enum TrapReason {
 class V8_EXPORT_PRIVATE WasmOpcodes {
  public:
   static const char* OpcodeName(WasmOpcode opcode);
-  static const char* ShortOpcodeName(WasmOpcode opcode);
   static FunctionSig* Signature(WasmOpcode opcode);
   static FunctionSig* AsmjsSignature(WasmOpcode opcode);
   static FunctionSig* AtomicSignature(WasmOpcode opcode);
@@ -541,21 +574,27 @@ class V8_EXPORT_PRIVATE WasmOpcodes {
     return 1 << ElementSizeLog2Of(type.representation());
   }
 
-  static byte MemSize(LocalType type) { return 1 << ElementSizeLog2Of(type); }
+  static byte MemSize(ValueType type) { return 1 << ElementSizeLog2Of(type); }
 
-  static LocalTypeCode LocalTypeCodeFor(LocalType type) {
+  static ValueTypeCode ValueTypeCodeFor(ValueType type) {
     switch (type) {
-      case kAstI32:
+      case kWasmI32:
         return kLocalI32;
-      case kAstI64:
+      case kWasmI64:
         return kLocalI64;
-      case kAstF32:
+      case kWasmF32:
         return kLocalF32;
-      case kAstF64:
+      case kWasmF64:
         return kLocalF64;
-      case kAstS128:
+      case kWasmS128:
         return kLocalS128;
-      case kAstStmt:
+      case kWasmS1x4:
+        return kLocalS1x4;
+      case kWasmS1x8:
+        return kLocalS1x8;
+      case kWasmS1x16:
+        return kLocalS1x16;
+      case kWasmStmt:
         return kLocalVoid;
       default:
         UNREACHABLE();
@@ -563,19 +602,25 @@ class V8_EXPORT_PRIVATE WasmOpcodes {
     }
   }
 
-  static MachineType MachineTypeFor(LocalType type) {
+  static MachineType MachineTypeFor(ValueType type) {
     switch (type) {
-      case kAstI32:
+      case kWasmI32:
         return MachineType::Int32();
-      case kAstI64:
+      case kWasmI64:
         return MachineType::Int64();
-      case kAstF32:
+      case kWasmF32:
         return MachineType::Float32();
-      case kAstF64:
+      case kWasmF64:
         return MachineType::Float64();
-      case kAstS128:
+      case kWasmS128:
         return MachineType::Simd128();
-      case kAstStmt:
+      case kWasmS1x4:
+        return MachineType::Simd1x4();
+      case kWasmS1x8:
+        return MachineType::Simd1x8();
+      case kWasmS1x16:
+        return MachineType::Simd1x16();
+      case kWasmStmt:
         return MachineType::None();
       default:
         UNREACHABLE();
@@ -583,32 +628,38 @@ class V8_EXPORT_PRIVATE WasmOpcodes {
     }
   }
 
-  static LocalType LocalTypeFor(MachineType type) {
+  static ValueType ValueTypeFor(MachineType type) {
     if (type == MachineType::Int8()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Uint8()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Int16()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Uint16()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Int32()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Uint32()) {
-      return kAstI32;
+      return kWasmI32;
     } else if (type == MachineType::Int64()) {
-      return kAstI64;
+      return kWasmI64;
     } else if (type == MachineType::Uint64()) {
-      return kAstI64;
+      return kWasmI64;
     } else if (type == MachineType::Float32()) {
-      return kAstF32;
+      return kWasmF32;
     } else if (type == MachineType::Float64()) {
-      return kAstF64;
+      return kWasmF64;
     } else if (type == MachineType::Simd128()) {
-      return kAstS128;
+      return kWasmS128;
+    } else if (type == MachineType::Simd1x4()) {
+      return kWasmS1x4;
+    } else if (type == MachineType::Simd1x8()) {
+      return kWasmS1x8;
+    } else if (type == MachineType::Simd1x16()) {
+      return kWasmS1x16;
     } else {
       UNREACHABLE();
-      return kAstI32;
+      return kWasmI32;
     }
   }
 
@@ -639,44 +690,52 @@ class V8_EXPORT_PRIVATE WasmOpcodes {
     }
   }
 
-  static char ShortNameOf(LocalType type) {
+  static char ShortNameOf(ValueType type) {
     switch (type) {
-      case kAstI32:
+      case kWasmI32:
         return 'i';
-      case kAstI64:
+      case kWasmI64:
         return 'l';
-      case kAstF32:
+      case kWasmF32:
         return 'f';
-      case kAstF64:
+      case kWasmF64:
         return 'd';
-      case kAstS128:
+      case kWasmS128:
+      case kWasmS1x4:
+      case kWasmS1x8:
+      case kWasmS1x16:
         return 's';
-      case kAstStmt:
+      case kWasmStmt:
         return 'v';
-      case kAstEnd:
-        return 'x';
+      case kWasmVar:
+        return '*';
       default:
-        UNREACHABLE();
         return '?';
     }
   }
 
-  static const char* TypeName(LocalType type) {
+  static const char* TypeName(ValueType type) {
     switch (type) {
-      case kAstI32:
+      case kWasmI32:
         return "i32";
-      case kAstI64:
+      case kWasmI64:
         return "i64";
-      case kAstF32:
+      case kWasmF32:
         return "f32";
-      case kAstF64:
+      case kWasmF64:
         return "f64";
-      case kAstS128:
+      case kWasmS128:
         return "s128";
-      case kAstStmt:
+      case kWasmS1x4:
+        return "s1x4";
+      case kWasmS1x8:
+        return "s1x8";
+      case kWasmS1x16:
+        return "s1x16";
+      case kWasmStmt:
         return "<stmt>";
-      case kAstEnd:
-        return "<end>";
+      case kWasmVar:
+        return "<var>";
       default:
         return "<unknown>";
     }

@@ -4,6 +4,7 @@
 
 #include "src/v8.h"
 
+#include "src/api.h"
 #include "src/assembler.h"
 #include "src/base/once.h"
 #include "src/base/platform/platform.h"
@@ -15,7 +16,7 @@
 #include "src/frames.h"
 #include "src/isolate.h"
 #include "src/libsampler/sampler.h"
-#include "src/objects.h"
+#include "src/objects-inl.h"
 #include "src/profiler/heap-profiler.h"
 #include "src/runtime-profiler.h"
 #include "src/snapshot/natives.h"
@@ -66,7 +67,7 @@ void V8::InitializeOncePerProcessImpl() {
     FLAG_max_semi_space_size = 1;
   }
 
-  if (FLAG_turbo && strcmp(FLAG_turbo_filter, "~~") == 0) {
+  if (FLAG_opt && FLAG_turbo && strcmp(FLAG_turbo_filter, "~~") == 0) {
     const char* filter_flag = "--turbo-filter=*";
     FlagList::SetFlagsFromString(filter_flag, StrLength(filter_flag));
   }

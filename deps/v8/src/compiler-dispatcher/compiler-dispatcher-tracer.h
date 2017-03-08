@@ -35,6 +35,7 @@ class V8_EXPORT_PRIVATE CompilerDispatcherTracer {
     kPrepareToParse,
     kParse,
     kFinalizeParsing,
+    kAnalyze,
     kPrepareToCompile,
     kCompile,
     kFinalizeCompiling
@@ -52,7 +53,6 @@ class V8_EXPORT_PRIVATE CompilerDispatcherTracer {
     ScopeID scope_id_;
     size_t num_;
     double start_time_;
-    RuntimeCallTimer timer_;
 
     DISALLOW_COPY_AND_ASSIGN(Scope);
   };
@@ -63,16 +63,20 @@ class V8_EXPORT_PRIVATE CompilerDispatcherTracer {
   void RecordPrepareToParse(double duration_ms);
   void RecordParse(double duration_ms, size_t source_length);
   void RecordFinalizeParsing(double duration_ms);
+  void RecordAnalyze(double duration_ms);
   void RecordPrepareToCompile(double duration_ms);
   void RecordCompile(double duration_ms, size_t ast_size_in_bytes);
   void RecordFinalizeCompiling(double duration_ms);
 
   double EstimatePrepareToParseInMs() const;
   double EstimateParseInMs(size_t source_length) const;
-  double EstimateFinalizeParsingInMs();
-  double EstimatePrepareToCompileInMs();
-  double EstimateCompileInMs(size_t ast_size_in_bytes);
-  double EstimateFinalizeCompilingInMs();
+  double EstimateFinalizeParsingInMs() const;
+  double EstimateAnalyzeInMs() const;
+  double EstimatePrepareToCompileInMs() const;
+  double EstimateCompileInMs(size_t ast_size_in_bytes) const;
+  double EstimateFinalizeCompilingInMs() const;
+
+  void DumpStatistics() const;
 
  private:
   static double Average(const base::RingBuffer<double>& buffer);
@@ -83,6 +87,7 @@ class V8_EXPORT_PRIVATE CompilerDispatcherTracer {
   base::RingBuffer<double> prepare_parse_events_;
   base::RingBuffer<std::pair<size_t, double>> parse_events_;
   base::RingBuffer<double> finalize_parsing_events_;
+  base::RingBuffer<double> analyze_events_;
   base::RingBuffer<double> prepare_compile_events_;
   base::RingBuffer<std::pair<size_t, double>> compile_events_;
   base::RingBuffer<double> finalize_compiling_events_;

@@ -83,16 +83,6 @@ void PropertyHandlerCompiler::DiscardVectorAndSlot() {
   __ add(esp, Immediate(2 * kPointerSize));
 }
 
-void PropertyHandlerCompiler::PushReturnAddress(Register tmp) {
-  MacroAssembler* masm = this->masm();
-  __ push(tmp);
-}
-
-void PropertyHandlerCompiler::PopReturnAddress(Register tmp) {
-  MacroAssembler* masm = this->masm();
-  __ pop(tmp);
-}
-
 void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
     MacroAssembler* masm, Label* miss_label, Register receiver,
     Handle<Name> name, Register scratch0, Register scratch1) {
@@ -131,27 +121,6 @@ void PropertyHandlerCompiler::GenerateDictionaryNegativeLookup(
   __ bind(&done);
   __ DecrementCounter(counters->negative_lookups_miss(), 1);
 }
-
-
-void NamedLoadHandlerCompiler::GenerateDirectLoadGlobalFunctionPrototype(
-    MacroAssembler* masm, int index, Register result, Label* miss) {
-  __ LoadGlobalFunction(index, result);
-  // Load its initial map. The global functions all have initial maps.
-  __ mov(result,
-         FieldOperand(result, JSFunction::kPrototypeOrInitialMapOffset));
-  // Load the prototype from the initial map.
-  __ mov(result, FieldOperand(result, Map::kPrototypeOffset));
-}
-
-
-void NamedLoadHandlerCompiler::GenerateLoadFunctionPrototype(
-    MacroAssembler* masm, Register receiver, Register scratch1,
-    Register scratch2, Label* miss_label) {
-  // TODO(mvstanton): This isn't used on ia32. Move all the other
-  // platform implementations into a code stub so this method can be removed.
-  UNREACHABLE();
-}
-
 
 // Generate call to api function.
 // This function uses push() to generate smaller, faster code than
@@ -324,10 +293,12 @@ void NamedStoreHandlerCompiler::GenerateStoreViaSetter(
   }
 }
 
+static void CompileCallLoadPropertyWithInterceptor(
+    MacroAssembler* masm, Register receiver, Register holder, Register name,
+    Handle<JSObject> holder_obj, Runtime::FunctionId id) {
+  DCHECK(NamedLoadHandlerCompiler::kInterceptorArgsLength ==
+         Runtime::FunctionForId(id)->nargs);
 
-static void PushInterceptorArguments(MacroAssembler* masm, Register receiver,
-                                     Register holder, Register name,
-                                     Handle<JSObject> holder_obj) {
   STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsNameIndex == 0);
   STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsThisIndex == 1);
   STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsHolderIndex == 2);
@@ -335,15 +306,7 @@ static void PushInterceptorArguments(MacroAssembler* masm, Register receiver,
   __ push(name);
   __ push(receiver);
   __ push(holder);
-}
 
-
-static void CompileCallLoadPropertyWithInterceptor(
-    MacroAssembler* masm, Register receiver, Register holder, Register name,
-    Handle<JSObject> holder_obj, Runtime::FunctionId id) {
-  DCHECK(NamedLoadHandlerCompiler::kInterceptorArgsLength ==
-         Runtime::FunctionForId(id)->nargs);
-  PushInterceptorArguments(masm, receiver, holder, name, holder_obj);
   __ CallRuntime(id);
 }
 
@@ -356,58 +319,6 @@ void NamedStoreHandlerCompiler::GenerateRestoreName(Label* label,
   if (!label->is_unused()) {
     __ bind(label);
     __ mov(this->name(), Immediate(name));
-  }
-}
-
-
-void NamedStoreHandlerCompiler::GenerateRestoreName(Handle<Name> name) {
-  __ mov(this->name(), Immediate(name));
-}
-
-
-void NamedStoreHandlerCompiler::GenerateRestoreMap(Handle<Map> transition,
-                                                   Register map_reg,
-                                                   Register scratch,
-                                                   Label* miss) {
-  Handle<WeakCell> cell = Map::WeakCellForMap(transition);
-  DCHECK(!map_reg.is(scratch));
-  __ LoadWeakValue(map_reg, cell, miss);
-  if (transition->CanBeDeprecated()) {
-    __ mov(scratch, FieldOperand(map_reg, Map::kBitField3Offset));
-    __ and_(scratch, Immediate(Map::Deprecated::kMask));
-    __ j(not_zero, miss);
-  }
-}
-
-
-void NamedStoreHandlerCompiler::GenerateConstantCheck(Register map_reg,
-                                                      int descriptor,
-                                                      Register value_reg,
-                                                      Register scratch,
-                                                      Label* miss_label) {
-  DCHECK(!map_reg.is(scratch));
-  DCHECK(!map_reg.is(value_reg));
-  DCHECK(!value_reg.is(scratch));
-  __ LoadInstanceDescriptors(map_reg, scratch);
-  __ mov(scratch,
-         FieldOperand(scratch, DescriptorArray::GetValueOffset(descriptor)));
-  __ cmp(value_reg, scratch);
-  __ j(not_equal, miss_label);
-}
-
-void NamedStoreHandlerCompiler::GenerateFieldTypeChecks(FieldType* field_type,
-                                                        Register value_reg,
-                                                        Label* miss_label) {
-  Register map_reg = scratch1();
-  Register scratch = scratch2();
-  DCHECK(!value_reg.is(map_reg));
-  DCHECK(!value_reg.is(scratch));
-  __ JumpIfSmi(value_reg, miss_label);
-  if (field_type->IsClass()) {
-    __ mov(map_reg, FieldOperand(value_reg, HeapObject::kMapOffset));
-    __ CmpWeakValue(map_reg, Map::WeakCellForMap(field_type->AsClass()),
-                    scratch);
-    __ j(not_equal, miss_label);
   }
 }
 
@@ -540,14 +451,6 @@ void NamedStoreHandlerCompiler::FrontendFooter(Handle<Name> name, Label* miss) {
   }
 }
 
-
-void NamedLoadHandlerCompiler::GenerateLoadConstant(Handle<Object> value) {
-  // Return the constant value.
-  __ LoadObject(eax, value);
-  __ ret(0);
-}
-
-
 void NamedLoadHandlerCompiler::GenerateLoadInterceptorWithFollowup(
     LookupIterator* it, Register holder_reg) {
   DCHECK(holder()->HasNamedInterceptor());
@@ -620,10 +523,26 @@ void NamedLoadHandlerCompiler::GenerateLoadInterceptor(Register holder_reg) {
   DCHECK(holder()->HasNamedInterceptor());
   DCHECK(!holder()->GetNamedInterceptor()->getter()->IsUndefined(isolate()));
   // Call the runtime system to load the interceptor.
-  __ pop(scratch2());  // save old return address
-  PushInterceptorArguments(masm(), receiver(), holder_reg, this->name(),
-                           holder());
-  __ push(scratch2());  // restore old return address
+
+  // Stack:
+  //   return address
+
+  STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsNameIndex == 0);
+  STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsThisIndex == 1);
+  STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsHolderIndex == 2);
+  STATIC_ASSERT(NamedLoadHandlerCompiler::kInterceptorArgsLength == 3);
+  __ push(receiver());
+  __ push(holder_reg);
+  // See NamedLoadHandlerCompiler::InterceptorVectorSlotPop() for details.
+  if (holder_reg.is(receiver())) {
+    __ push(slot());
+    __ push(vector());
+  } else {
+    __ push(scratch3());  // slot
+    __ push(scratch2());  // vector
+  }
+  __ push(Operand(esp, 4 * kPointerSize));  // return address
+  __ mov(Operand(esp, 5 * kPointerSize), name());
 
   __ TailCallRuntime(Runtime::kLoadPropertyWithInterceptor);
 }

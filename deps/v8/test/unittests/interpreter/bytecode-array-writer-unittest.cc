@@ -10,6 +10,7 @@
 #include "src/interpreter/bytecode-label.h"
 #include "src/interpreter/constant-array-builder.h"
 #include "src/isolate.h"
+#include "src/objects-inl.h"
 #include "src/source-position-table.h"
 #include "src/utils.h"
 #include "test/unittests/interpreter/bytecode-utils.h"
@@ -22,7 +23,7 @@ namespace interpreter {
 class BytecodeArrayWriterUnittest : public TestWithIsolateAndZone {
  public:
   BytecodeArrayWriterUnittest()
-      : constant_array_builder_(zone(), isolate()->factory()->the_hole_value()),
+      : constant_array_builder_(zone()),
         bytecode_array_writer_(
             zone(), &constant_array_builder_,
             SourcePositionTableBuilder::RECORD_SOURCE_POSITIONS) {}
@@ -167,7 +168,7 @@ TEST_F(BytecodeArrayWriterUnittest, ComplexExample) {
       /* 36 85 S> */ B(Return),
       /* 37       */ B(ForInStep), R8(7),
       /* 39       */ B(Star), R8(7),
-      /* 41       */ B(JumpLoop), U8(-24), U8(0),
+      /* 41       */ B(JumpLoop), U8(24), U8(0),
       /* 44       */ B(LdaUndefined),
       /* 45 85 S> */ B(Return),
       // clang-format on

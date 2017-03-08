@@ -211,8 +211,9 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
   bool IsCacheableTransition() {
     DCHECK_EQ(TRANSITION, state_);
     return transition_->IsPropertyCell() ||
-           (!transition_map()->is_dictionary_map() &&
-            transition_map()->GetBackPointer()->IsMap());
+           (transition_map()->is_dictionary_map() &&
+            !GetStoreTarget()->HasFastProperties()) ||
+           transition_map()->GetBackPointer()->IsMap();
   }
   void ApplyTransitionToDataProperty(Handle<JSObject> receiver);
   void ReconfigureDataProperty(Handle<Object> value,
@@ -236,6 +237,9 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
   Representation representation() const {
     return property_details().representation();
   }
+  PropertyLocation location() const { return property_details().location(); }
+  PropertyConstness constness() const { return property_details().constness(); }
+  Handle<Map> GetFieldOwnerMap() const;
   FieldIndex GetFieldIndex() const;
   Handle<FieldType> GetFieldType() const;
   int GetFieldDescriptorIndex() const;
@@ -252,7 +256,7 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
   }
   Handle<InterceptorInfo> GetInterceptorForFailedAccessCheck() const;
   Handle<Object> GetDataValue() const;
-  void WriteDataValue(Handle<Object> value);
+  void WriteDataValue(Handle<Object> value, bool initializing_store);
   inline void UpdateProtector() {
     if (IsElement()) return;
     if (*name_ == heap()->is_concat_spreadable_symbol() ||
@@ -288,7 +292,7 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
   void NextInternal(Map* map, JSReceiver* holder);
   template <bool is_element>
   inline State LookupInHolder(Map* map, JSReceiver* holder) {
-    return map->instance_type() <= LAST_SPECIAL_RECEIVER_TYPE
+    return map->IsSpecialReceiverMap()
                ? LookupInSpecialHolder<is_element>(map, holder)
                : LookupInRegularHolder<is_element>(map, holder);
   }
@@ -303,6 +307,7 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
   template <bool is_element>
   void RestartInternal(InterceptorState interceptor_state);
   Handle<Object> FetchValue() const;
+  bool IsConstFieldValueEqualTo(Object* value) const;
   template <bool is_element>
   void ReloadPropertyInformation();
 

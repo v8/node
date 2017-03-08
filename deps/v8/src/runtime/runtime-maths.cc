@@ -9,13 +9,16 @@
 #include "src/base/utils/random-number-generator.h"
 #include "src/bootstrapper.h"
 #include "src/codegen.h"
+#include "src/counters.h"
+#include "src/double.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
 
 RUNTIME_FUNCTION(Runtime_GenerateRandomNumbers) {
   HandleScope scope(isolate);
-  DCHECK(args.length() == 0);
+  DCHECK_EQ(0, args.length());
 
   Handle<Context> native_context = isolate->native_context();
   DCHECK_EQ(0, native_context->math_random_index()->value());

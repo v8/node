@@ -7,6 +7,10 @@
 #include "src/api-arguments.h"
 #include "src/api-natives.h"
 #include "src/builtins/builtins-utils.h"
+#include "src/counters.h"
+#include "src/log.h"
+#include "src/objects-inl.h"
+#include "src/prototype.h"
 
 namespace v8 {
 namespace internal {
@@ -77,6 +81,7 @@ MUST_USE_RESULT MaybeHandle<Object> HandleApiCallHelper(
         !isolate->MayAccess(handle(isolate->context()), js_receiver)) {
       isolate->ReportFailedAccessCheck(js_receiver);
       RETURN_EXCEPTION_IF_SCHEDULED_EXCEPTION(isolate, Object);
+      return isolate->factory()->undefined_value();
     }
 
     raw_holder = GetCompatibleReceiver(isolate, *fun_data, *js_receiver);
