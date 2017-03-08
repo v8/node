@@ -1,6 +1,6 @@
 before
+/usr/local/google/home/yangguo/node/test/message/stack_overflow.js:14
+JSON.stringify(array);
+     ^
 
-*test*message*stack_overflow.js:*
-function stackOverflow() {
-                      ^
 RangeError: Maximum call stack size exceeded
