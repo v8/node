@@ -500,11 +500,13 @@ void JSPromise::JSPromisePrint(std::ostream& os) {  // NOLINT
   os << "\n - fulfill_reactions = " << Brief(fulfill_reactions());
   os << "\n - reject_reactions = " << Brief(reject_reactions());
   os << "\n - has_handler = " << has_handler();
+  os << "\n ";
 }
 
 void JSRegExp::JSRegExpPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSRegExp");
   os << "\n - data = " << Brief(data());
+  os << "\n - source = " << Brief(source());
   JSObjectPrintBody(os, this);
 }
 
@@ -538,6 +540,7 @@ void Map::MapPrint(std::ostream& os) {  // NOLINT
   }
   if (is_deprecated()) os << "\n - deprecated_map";
   if (is_stable()) os << "\n - stable_map";
+  if (is_migration_target()) os << "\n - migration_target";
   if (is_dictionary_map()) os << "\n - dictionary_map";
   if (has_hidden_prototype()) os << "\n - has_hidden_prototype";
   if (has_named_interceptor()) os << "\n - named_interceptor";
@@ -717,8 +720,9 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
         os << Code::ICState2String(nexus.StateFromFeedback());
         break;
       }
-      case FeedbackSlotKind::kStorePropertySloppy:
-      case FeedbackSlotKind::kStorePropertyStrict: {
+      case FeedbackSlotKind::kStoreNamedSloppy:
+      case FeedbackSlotKind::kStoreNamedStrict:
+      case FeedbackSlotKind::kStoreOwnNamed: {
         StoreICNexus nexus(this, slot);
         os << Code::ICState2String(nexus.StateFromFeedback());
         break;
@@ -785,6 +789,9 @@ void JSMessageObject::JSMessageObjectPrint(std::ostream& os) {  // NOLINT
 
 
 void String::StringPrint(std::ostream& os) {  // NOLINT
+  if (!HasOnlyOneByteChars()) {
+    os << "u";
+  }
   if (StringShape(this).IsInternalized()) {
     os << "#";
   } else if (StringShape(this).IsCons()) {
@@ -1001,12 +1008,42 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintBody(os, this);
 }
 
+namespace {
+
+std::ostream& operator<<(std::ostream& os, FunctionKind kind) {
+  os << "[";
+  if (kind == FunctionKind::kNormalFunction) {
+    os << " NormalFunction";
+  } else {
+#define PRINT_FLAG(name)                                                  \
+  if (static_cast<int>(kind) & static_cast<int>(FunctionKind::k##name)) { \
+    os << " " << #name;                                                   \
+  }
+
+    PRINT_FLAG(ArrowFunction)
+    PRINT_FLAG(GeneratorFunction)
+    PRINT_FLAG(ConciseMethod)
+    PRINT_FLAG(DefaultConstructor)
+    PRINT_FLAG(DerivedConstructor)
+    PRINT_FLAG(BaseConstructor)
+    PRINT_FLAG(GetterFunction)
+    PRINT_FLAG(SetterFunction)
+    PRINT_FLAG(AsyncFunction)
+    PRINT_FLAG(Module)
+#undef PRINT_FLAG
+  }
+  return os << " ]";
+}
+
+}  // namespace
 
 void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "SharedFunctionInfo");
   os << "\n - name = " << Brief(name());
+  os << "\n - kind = " << kind();
   os << "\n - formal_parameter_count = " << internal_formal_parameter_count();
   os << "\n - expected_nof_properties = " << expected_nof_properties();
+  os << "\n - language_mode = " << language_mode();
   os << "\n - ast_node_count = " << ast_node_count();
   os << "\n - instance class name = ";
   instance_class_name()->Print(os);
@@ -1039,7 +1076,6 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
     os << "\n - no debug info";
   }
   os << "\n - length = " << length();
-  os << "\n - num_literals = " << num_literals();
   os << "\n - optimized_code_map = " << Brief(optimized_code_map());
   os << "\n - feedback_metadata = ";
   feedback_metadata()->FeedbackMetadataPrint(os);
@@ -1166,12 +1202,6 @@ void AccessorInfo::AccessorInfoPrint(std::ostream& os) {  // NOLINT
 }
 
 
-void Box::BoxPrint(std::ostream& os) {  // NOLINT
-  HeapObject::PrintHeader(os, "Box");
-  os << "\n - value: " << Brief(value());
-  os << "\n";
-}
-
 void PromiseResolveThenableJobInfo::PromiseResolveThenableJobInfoPrint(
     std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "PromiseResolveThenableJobInfo");
@@ -1209,10 +1239,19 @@ void ModuleInfoEntry::ModuleInfoEntryPrint(std::ostream& os) {  // NOLINT
 
 void Module::ModulePrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "Module");
+  // TODO(neis): Simplify once modules have a script field.
+  if (!evaluated()) {
+    SharedFunctionInfo* shared = code()->IsSharedFunctionInfo()
+                                     ? SharedFunctionInfo::cast(code())
+                                     : JSFunction::cast(code())->shared();
+    Object* origin = Script::cast(shared->script())->GetNameOrSourceURL();
+    os << "\n - origin: " << Brief(origin);
+  }
   os << "\n - code: " << Brief(code());
   os << "\n - exports: " << Brief(exports());
   os << "\n - requested_modules: " << Brief(requested_modules());
-  os << "\n - evaluated: " << evaluated();
+  os << "\n - instantiated, evaluated: " << instantiated() << ", "
+     << evaluated();
   os << "\n";
 }
 
@@ -1630,7 +1669,7 @@ extern void _v8_internal_Print_Code(void* object) {
 
 extern void _v8_internal_Print_FeedbackMetadata(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a type feedback metadata object\n");
+    printf("Not a feedback metadata object\n");
   } else {
     reinterpret_cast<i::FeedbackMetadata*>(object)->Print();
   }
@@ -1638,7 +1677,7 @@ extern void _v8_internal_Print_FeedbackMetadata(void* object) {
 
 extern void _v8_internal_Print_FeedbackVector(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a type feedback vector\n");
+    printf("Not a feedback vector\n");
   } else {
     reinterpret_cast<i::FeedbackVector*>(object)->Print();
   }

@@ -480,6 +480,7 @@
         'builtins/builtins-arguments.h',
         'builtins/builtins-arraybuffer.cc',
         'builtins/builtins-array.cc',
+        'builtins/builtins-async-iterator.cc',
         'builtins/builtins-async-function.cc',
         'builtins/builtins-async.cc',
         'builtins/builtins-async.h',
@@ -493,6 +494,8 @@
         'builtins/builtins-date.cc',
         'builtins/builtins-debug.cc',
         'builtins/builtins-error.cc',
+        'builtins/builtins-forin.cc',
+        'builtins/builtins-forin.h',
         'builtins/builtins-function.cc',
         'builtins/builtins-generator.cc',
         'builtins/builtins-global.cc',
@@ -504,7 +507,6 @@
         'builtins/builtins-math.cc',
         'builtins/builtins-number.cc',
         'builtins/builtins-object.cc',
-        'builtins/builtins-object.h',
         'builtins/builtins-promise.cc',
         'builtins/builtins-promise.h',
         'builtins/builtins-proxy.cc',
@@ -516,6 +518,7 @@
         'builtins/builtins-symbol.cc',
         'builtins/builtins-typedarray.cc',
         'builtins/builtins-utils.h',
+        'builtins/builtins-wasm.cc',
         'builtins/builtins.cc',
         'builtins/builtins.h',
         'cached-powers.cc',
@@ -648,6 +651,8 @@
         'compiler/js-native-context-specialization.h',
         'compiler/js-operator.cc',
         'compiler/js-operator.h',
+        'compiler/js-type-hint-lowering.cc',
+        'compiler/js-type-hint-lowering.h',
         'compiler/js-typed-lowering.cc',
         'compiler/js-typed-lowering.h',
         'compiler/jump-threading.cc',
@@ -902,6 +907,7 @@
         'field-index-inl.h',
         'field-type.cc',
         'field-type.h',
+        'find-and-replace-pattern.h',
         'fixed-dtoa.cc',
         'fixed-dtoa.h',
         'flag-definitions.h',
@@ -928,6 +934,8 @@
         'heap/array-buffer-tracker.h',
         'heap/code-stats.cc',
         'heap/code-stats.h',
+        'heap/concurrent-marking.cc',
+        'heap/concurrent-marking.h',
         'heap/embedder-tracing.cc',
         'heap/embedder-tracing.h',
         'heap/memory-reducer.cc',
@@ -988,8 +996,6 @@
         'ic/ic-stats.h',
         'ic/ic.cc',
         'ic/ic.h',
-        'ic/ic-compiler.cc',
-        'ic/ic-compiler.h',
         'ic/keyed-store-generic.cc',
         'ic/keyed-store-generic.h',
         'identity-map.cc',
@@ -1075,6 +1081,7 @@
         'macro-assembler.h',
         'machine-type.cc',
         'machine-type.h',
+        'managed.h',
         'messages.cc',
         'messages.h',
         'msan.h',
@@ -1085,12 +1092,12 @@
         'objects-printer.cc',
         'objects.cc',
         'objects.h',
+        'objects/literal-objects.cc',
+        'objects/literal-objects.h',
         'objects/module-info.h',
         'objects/object-macros.h',
         'objects/object-macros-undef.h',
         'objects/regexp-match-info.h',
-        'objects/literal-objects.cc',
-        'objects/literal-objects.h',
         'objects/scope-info.cc',
         'objects/scope-info.h',
         'ostreams.cc',
@@ -1306,11 +1313,12 @@
         'wasm/function-body-decoder.h',
         'wasm/function-body-decoder-impl.h',
         'wasm/leb-helper.h',
-        'wasm/managed.h',
         'wasm/module-decoder.cc',
         'wasm/module-decoder.h',
         'wasm/signature-map.cc',
         'wasm/signature-map.h',
+        'wasm/wasm-code-specialization.h',
+        'wasm/wasm-code-specialization.cc',
         'wasm/wasm-debug.cc',
         'wasm/wasm-external-refs.cc',
         'wasm/wasm-external-refs.h',
@@ -1478,6 +1486,7 @@
             'ia32/macro-assembler-ia32.h',
             'ia32/simulator-ia32.cc',
             'ia32/simulator-ia32.h',
+            'ia32/sse-instr.h',
             'builtins/ia32/builtins-ia32.cc',
             'compiler/ia32/code-generator-ia32.cc',
             'compiler/ia32/instruction-codes-ia32.h',
@@ -1868,6 +1877,7 @@
         'base/safe_math_impl.h',
         'base/sys-info.cc',
         'base/sys-info.h',
+        'base/timezone-cache.h',
         'base/utils/random-number-generator.cc',
         'base/utils/random-number-generator.h',
       ],
@@ -1908,6 +1918,7 @@
             'sources': [
               'base/debug/stack_trace_posix.cc',
               'base/platform/platform-linux.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
             ],
           }
@@ -1915,6 +1926,7 @@
         ['OS=="android"', {
             'sources': [
               'base/debug/stack_trace_android.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
             ],
             'link_settings': {
@@ -1970,6 +1982,7 @@
             },
             'sources': [
               'base/debug/stack_trace_posix.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
               'base/qnx-math.h'
             ],
@@ -2000,6 +2013,7 @@
             'sources': [
               'base/debug/stack_trace_posix.cc',
               'base/platform/platform-freebsd.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
             ],
           }
@@ -2011,6 +2025,7 @@
             ]},
             'sources': [
               'base/platform/platform-openbsd.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc'
             ],
           }
@@ -2023,6 +2038,7 @@
             'sources': [
               'base/debug/stack_trace_posix.cc',
               'base/platform/platform-openbsd.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
             ],
           }
@@ -2031,6 +2047,7 @@
           'sources': [
             'base/debug/stack_trace_posix.cc',
             'base/platform/platform-aix.cc',
+            'base/platform/platform-posix.h',
             'base/platform/platform-posix.cc'
           ]},
         ],
@@ -2042,6 +2059,7 @@
             'sources': [
               'base/debug/stack_trace_posix.cc',
               'base/platform/platform-solaris.cc',
+              'base/platform/platform-posix.h',
               'base/platform/platform-posix.cc',
             ],
           }
@@ -2050,6 +2068,7 @@
           'sources': [
             'base/debug/stack_trace_posix.cc',
             'base/platform/platform-macos.cc',
+            'base/platform/platform-posix.h',
             'base/platform/platform-posix.cc',
           ]},
         ],
@@ -2070,6 +2089,7 @@
                   'sources': [
                     'base/debug/stack_trace_posix.cc',
                     'base/platform/platform-cygwin.cc',
+                    'base/platform/platform-posix.h',
                     'base/platform/platform-posix.cc',
                   ],
                 }, {
@@ -2261,7 +2281,6 @@
           'js/v8natives.js',
           'js/array.js',
           'js/string.js',
-          'js/arraybuffer.js',
           'js/typedarray.js',
           'js/collection.js',
           'js/weak-collection.js',
@@ -2288,10 +2307,6 @@
         'conditions': [
           ['v8_enable_i18n_support==1', {
             'library_files': ['js/i18n.js'],
-            'experimental_library_files': [
-              'js/datetime-format-to-parts.js',
-              'js/icu-case-mapping.js',
-             ],
           }],
         ],
       },
