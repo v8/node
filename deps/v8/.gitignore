@@ -40,6 +40,7 @@ gcsuspects
 shell
 shell_g
 /_*
+/base
 /build
 /gypfiles/win_toolchain.json
 /buildtools
@@ -58,7 +59,7 @@ shell_g
 /test/test262/data.tar
 /test/test262/harness
 /testing/gmock
-/testing/gtest/*n!/testing/gtest/includen/testing/gtest/include/*n!/testing/gtest/include/gtestn/testing/gtest/include/gtest/*n!/testing/gtest/include/gtest/gtest_prod.h
+/testing/gtest
 /third_party/*
 !/third_party/binutils
 !/third_party/inspector_protocol
@@ -96,5 +97,7 @@ v8.ignition_dispatches_table.json
 /test/fuzzer/wasm_asmjs.tar.gz
 /src/inspector/build/closure-compiler.tar.gz
 /src/inspector/build/closure-compiler
+/test/wasm-js
+!/testing/gtest
 !/third_party/jinja2
 !/third_party/markupsafe

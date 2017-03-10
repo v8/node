@@ -8,6 +8,7 @@
 
 #include "src/api.h"
 #include "src/arguments.h"
+#include "src/assembler-inl.h"
 #include "src/bootstrapper.h"
 #include "src/code-stubs.h"
 #include "src/codegen.h"
@@ -41,7 +42,7 @@ Debug::Debug(Isolate* isolate)
       is_active_(false),
       hook_on_function_call_(false),
       is_suppressed_(false),
-      live_edit_enabled_(true),  // TODO(yangguo): set to false by default.
+      live_edit_enabled_(false),
       break_disabled_(false),
       break_points_active_(true),
       break_on_exception_(false),
@@ -124,6 +125,20 @@ bool BreakLocation::HasBreakPoint(Handle<DebugInfo> debug_info) const {
   }
 }
 
+debug::BreakLocationType BreakLocation::type() const {
+  switch (type_) {
+    case DEBUGGER_STATEMENT:
+      return debug::kDebuggerStatementBreakLocation;
+    case DEBUG_BREAK_SLOT_AT_CALL:
+      return debug::kCallBreakLocation;
+    case DEBUG_BREAK_SLOT_AT_RETURN:
+      return debug::kReturnBreakLocation;
+    default:
+      return debug::kCommonBreakLocation;
+  }
+  return debug::kCommonBreakLocation;
+}
+
 std::unique_ptr<BreakIterator> BreakIterator::GetIterator(
     Handle<DebugInfo> debug_info, Handle<AbstractCode> abstract_code) {
   if (abstract_code->IsBytecodeArray()) {
@@ -183,7 +198,6 @@ int CodeBreakIterator::GetModeMask() {
   mask |= RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT_AT_CALL);
   mask |= RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT_AT_TAIL_CALL);
   mask |= RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT_AT_POSITION);
-  mask |= RelocInfo::ModeMask(RelocInfo::DEBUGGER_STATEMENT);
   return mask;
 }
 
@@ -208,8 +222,7 @@ void CodeBreakIterator::Next() {
     source_position_iterator_.Advance();
   }
 
-  DCHECK(RelocInfo::IsDebugBreakSlot(rmode()) ||
-         RelocInfo::IsDebuggerStatement(rmode()));
+  DCHECK(RelocInfo::IsDebugBreakSlot(rmode()));
   break_index_++;
 }
 
@@ -222,8 +235,6 @@ DebugBreakType CodeBreakIterator::GetDebugBreakType() {
     return isolate()->is_tail_call_elimination_enabled()
                ? DEBUG_BREAK_SLOT_AT_TAIL_CALL
                : DEBUG_BREAK_SLOT_AT_CALL;
-  } else if (RelocInfo::IsDebuggerStatement(rmode())) {
-    return DEBUGGER_STATEMENT;
   } else if (RelocInfo::IsDebugBreakSlot(rmode())) {
     return DEBUG_BREAK_SLOT;
   } else {
@@ -239,7 +250,6 @@ void CodeBreakIterator::SkipToPosition(int position,
 
 void CodeBreakIterator::SetDebugBreak() {
   DebugBreakType debug_break_type = GetDebugBreakType();
-  if (debug_break_type == DEBUGGER_STATEMENT) return;
   DCHECK(debug_break_type >= DEBUG_BREAK_SLOT);
   Builtins* builtins = isolate()->builtins();
   Handle<Code> target = debug_break_type == DEBUG_BREAK_SLOT_AT_RETURN
@@ -249,16 +259,12 @@ void CodeBreakIterator::SetDebugBreak() {
 }
 
 void CodeBreakIterator::ClearDebugBreak() {
-  DebugBreakType debug_break_type = GetDebugBreakType();
-  if (debug_break_type == DEBUGGER_STATEMENT) return;
-  DCHECK(debug_break_type >= DEBUG_BREAK_SLOT);
+  DCHECK(GetDebugBreakType() >= DEBUG_BREAK_SLOT);
   DebugCodegen::ClearDebugBreakSlot(isolate(), rinfo()->pc());
 }
 
 bool CodeBreakIterator::IsDebugBreak() {
-  DebugBreakType debug_break_type = GetDebugBreakType();
-  if (debug_break_type == DEBUGGER_STATEMENT) return false;
-  DCHECK(debug_break_type >= DEBUG_BREAK_SLOT);
+  DCHECK(GetDebugBreakType() >= DEBUG_BREAK_SLOT);
   return DebugCodegen::DebugBreakSlotIsPatched(rinfo()->pc());
 }
 
@@ -481,8 +487,6 @@ void Debug::Unload() {
 }
 
 void Debug::Break(JavaScriptFrame* frame) {
-  HandleScope scope(isolate_);
-
   // Initialize LiveEdit.
   LiveEdit::InitializeThreadLocal(this);
 
@@ -1325,35 +1329,47 @@ bool Debug::PrepareFunctionForBreakPoints(Handle<SharedFunctionInfo> shared) {
 namespace {
 template <typename Iterator>
 void GetBreakablePositions(Iterator* it, int start_position, int end_position,
-                           BreakPositionAlignment alignment,
-                           std::set<int>* positions) {
-  it->SkipToPosition(start_position, alignment);
+                           std::vector<BreakLocation>* locations) {
+  it->SkipToPosition(start_position, BREAK_POSITION_ALIGNED);
   while (!it->Done() && it->position() < end_position &&
          it->position() >= start_position) {
-    positions->insert(alignment == STATEMENT_ALIGNED ? it->statement_position()
-                                                     : it->position());
+    locations->push_back(it->GetBreakLocation());
     it->Next();
   }
 }
 
 void FindBreakablePositions(Handle<DebugInfo> debug_info, int start_position,
-                            int end_position, BreakPositionAlignment alignment,
-                            std::set<int>* positions) {
+                            int end_position,
+                            std::vector<BreakLocation>* locations) {
   if (debug_info->HasDebugCode()) {
     CodeBreakIterator it(debug_info);
-    GetBreakablePositions(&it, start_position, end_position, alignment,
-                          positions);
+    GetBreakablePositions(&it, start_position, end_position, locations);
   } else {
     DCHECK(debug_info->HasDebugBytecodeArray());
     BytecodeArrayBreakIterator it(debug_info);
-    GetBreakablePositions(&it, start_position, end_position, alignment,
-                          positions);
+    GetBreakablePositions(&it, start_position, end_position, locations);
   }
 }
 }  // namespace
 
 bool Debug::GetPossibleBreakpoints(Handle<Script> script, int start_position,
-                                   int end_position, std::set<int>* positions) {
+                                   int end_position, bool restrict_to_function,
+                                   std::vector<BreakLocation>* locations) {
+  if (restrict_to_function) {
+    Handle<Object> result =
+        FindSharedFunctionInfoInScript(script, start_position);
+    if (result->IsUndefined(isolate_)) return false;
+
+    // Make sure the function has set up the debug info.
+    Handle<SharedFunctionInfo> shared =
+        Handle<SharedFunctionInfo>::cast(result);
+    if (!EnsureDebugInfo(shared)) return false;
+
+    Handle<DebugInfo> debug_info(shared->GetDebugInfo());
+    FindBreakablePositions(debug_info, start_position, end_position, locations);
+    return true;
+  }
+
   while (true) {
     HandleScope scope(isolate_);
     List<Handle<SharedFunctionInfo>> candidates;
@@ -1388,7 +1404,7 @@ bool Debug::GetPossibleBreakpoints(Handle<Script> script, int start_position,
       CHECK(candidates[i]->HasDebugInfo());
       Handle<DebugInfo> debug_info(candidates[i]->GetDebugInfo());
       FindBreakablePositions(debug_info, start_position, end_position,
-                             STATEMENT_ALIGNED, positions);
+                             locations);
     }
     return true;
   }
@@ -1722,12 +1738,7 @@ bool Debug::IsExceptionBlackboxed(bool uncaught) {
   // caught exception if top frame is blackboxed.
   bool is_top_frame_blackboxed = IsFrameBlackboxed(it.frame());
   if (!uncaught || !is_top_frame_blackboxed) return is_top_frame_blackboxed;
-  it.Advance();
-  while (!it.done()) {
-    if (!IsFrameBlackboxed(it.frame())) return false;
-    it.Advance();
-  }
-  return true;
+  return AllFramesOnStackAreBlackboxed();
 }
 
 bool Debug::IsFrameBlackboxed(JavaScriptFrame* frame) {
@@ -1982,6 +1993,15 @@ bool Debug::IsBlackboxed(Handle<SharedFunctionInfo> shared) {
   return shared->debug_is_blackboxed();
 }
 
+bool Debug::AllFramesOnStackAreBlackboxed() {
+  HandleScope scope(isolate_);
+  for (StackTraceFrameIterator it(isolate_); !it.done(); it.Advance()) {
+    if (!it.is_javascript()) continue;
+    if (!IsFrameBlackboxed(it.javascript_frame())) return false;
+  }
+  return true;
+}
+
 void Debug::OnAsyncTaskEvent(debug::PromiseDebugActionType type, int id,
                              int parent_id) {
   if (in_debug_scope() || ignore_events()) return;
@@ -1992,7 +2012,19 @@ void Debug::OnAsyncTaskEvent(debug::PromiseDebugActionType type, int id,
   HandleScope scope(isolate_);
   PostponeInterruptsScope no_interrupts(isolate_);
   DisableBreak no_recursive_break(this);
-  debug_delegate_->PromiseEventOccurred(type, id, parent_id);
+  bool created_by_user = false;
+  if (type == debug::kDebugPromiseCreated) {
+    JavaScriptFrameIterator it(isolate_);
+    // We need to skip top frame which contains instrumentation.
+    it.Advance();
+    created_by_user =
+        !it.done() &&
+        it.frame()->function()->shared()->IsSubjectToDebugging() &&
+        !IsFrameBlackboxed(it.frame());
+  }
+  debug_delegate_->PromiseEventOccurred(
+      Utils::ToLocal(debug_scope.GetContext()), type, id, parent_id,
+      created_by_user);
 }
 
 void Debug::ProcessCompileEvent(v8::DebugEvent event, Handle<Script> script) {
@@ -2206,7 +2238,6 @@ DebugScope::DebugScope(Debug* debug)
   // Store the previous break id, frame id and return value.
   break_id_ = debug_->break_id();
   break_frame_id_ = debug_->break_frame_id();
-  return_value_ = handle(debug_->return_value(), isolate());
 
   // Create the new break info. If there is no proper frames there is no break
   // frame id.
@@ -2232,9 +2263,16 @@ DebugScope::~DebugScope() {
   // Restore to the previous break state.
   debug_->thread_local_.break_frame_id_ = break_frame_id_;
   debug_->thread_local_.break_id_ = break_id_;
-  debug_->thread_local_.return_value_ = *return_value_;
 
   debug_->UpdateState();
+}
+
+ReturnValueScope::ReturnValueScope(Debug* debug) : debug_(debug) {
+  return_value_ = debug_->return_value_handle();
+}
+
+ReturnValueScope::~ReturnValueScope() {
+  debug_->set_return_value(*return_value_);
 }
 
 bool Debug::PerformSideEffectCheck(Handle<JSFunction> function) {
@@ -2266,7 +2304,8 @@ bool Debug::PerformSideEffectCheckForCallback(Address function) {
 }
 
 void LegacyDebugDelegate::PromiseEventOccurred(
-    v8::debug::PromiseDebugActionType type, int id, int parent_id) {
+    v8::Local<v8::Context> context, v8::debug::PromiseDebugActionType type,
+    int id, int parent_id, bool created_by_user) {
   Handle<Object> event_data;
   if (isolate_->debug()->MakeAsyncTaskEvent(type, id).ToHandle(&event_data)) {
     ProcessDebugEvent(v8::AsyncTaskEvent, Handle<JSObject>::cast(event_data));

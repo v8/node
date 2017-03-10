@@ -1250,7 +1250,6 @@ void Assembler::rrfe_form(Opcode op, Condition m3, Condition m4, Register r1,
 // end of S390 Instruction generation
 
 // start of S390 instruction
-RXE_FORM_EMIT(ceb, CEB)
 SS1_FORM_EMIT(ed, ED)
 SS1_FORM_EMIT(mvn, MVN)
 SS1_FORM_EMIT(nc, NC)
@@ -1845,9 +1844,27 @@ void Assembler::adb(DoubleRegister r1, const MemOperand& opnd) {
            opnd.offset());
 }
 
+// Add Register-Storage (LB)
+void Assembler::aeb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(AEB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
+           opnd.offset());
+}
+
+// Sub Register-Storage (LB)
+void Assembler::seb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(SEB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
+           opnd.offset());
+}
+
 // Divide Register-Storage (LB)
 void Assembler::ddb(DoubleRegister r1, const MemOperand& opnd) {
   rxe_form(DDB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
+           opnd.offset());
+}
+
+// Divide Register-Storage (LB)
+void Assembler::deb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(DEB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
            opnd.offset());
 }
 
@@ -1857,9 +1874,25 @@ void Assembler::mdb(DoubleRegister r1, const MemOperand& opnd) {
            opnd.offset());
 }
 
+// Multiply Register-Storage (LB)
+void Assembler::meeb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(MEEB, Register::from_code(r1.code()), opnd.rb(), opnd.rx(),
+           opnd.offset());
+}
+
 // Subtract Register-Storage (LB)
 void Assembler::sdb(DoubleRegister r1, const MemOperand& opnd) {
   rxe_form(SDB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
+           opnd.offset());
+}
+
+void Assembler::ceb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(CEB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
+           opnd.offset());
+}
+
+void Assembler::cdb(DoubleRegister r1, const MemOperand& opnd) {
+  rxe_form(CDB, Register::from_code(r1.code()), opnd.rx(), opnd.rb(),
            opnd.offset());
 }
 

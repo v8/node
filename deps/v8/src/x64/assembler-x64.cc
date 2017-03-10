@@ -15,7 +15,9 @@
 #include <sys/sysctl.h>
 #endif
 
+#include "src/assembler-inl.h"
 #include "src/base/bits.h"
+#include "src/base/cpu.h"
 #include "src/macro-assembler.h"
 #include "src/v8.h"
 
@@ -141,13 +143,19 @@ uint32_t RelocInfo::wasm_function_table_size_reference() {
 }
 
 void RelocInfo::unchecked_update_wasm_memory_reference(
-    Address address, ICacheFlushMode flush_mode) {
+    Address address, ICacheFlushMode icache_flush_mode) {
   Memory::Address_at(pc_) = address;
+  if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
+    Assembler::FlushICache(isolate_, pc_, sizeof(Address));
+  }
 }
 
 void RelocInfo::unchecked_update_wasm_size(uint32_t size,
-                                           ICacheFlushMode flush_mode) {
+                                           ICacheFlushMode icache_flush_mode) {
   Memory::uint32_at(pc_) = size;
+  if (icache_flush_mode != SKIP_ICACHE_FLUSH) {
+    Assembler::FlushICache(isolate_, pc_, sizeof(uint32_t));
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -4669,9 +4677,9 @@ void Assembler::emit_sse_operand(XMMRegister dst) {
   emit(0xD8 | dst.low_bits());
 }
 
-void Assembler::RecordProtectedInstruction(int pc_offset, byte* landing) {
+void Assembler::RecordProtectedInstructionLanding(int pc_offset) {
   EnsureSpace ensure_space(this);
-  RelocInfo rinfo(isolate(), landing,
+  RelocInfo rinfo(isolate(), pc(),
                   RelocInfo::WASM_PROTECTED_INSTRUCTION_LANDING, pc_offset,
                   nullptr);
   reloc_info_writer.Write(&rinfo);

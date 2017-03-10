@@ -11,11 +11,14 @@
 #include "src/bootstrapper.h"
 #include "src/code-factory.h"
 #include "src/code-stub-assembler.h"
+#include "src/counters.h"
 #include "src/factory.h"
 #include "src/gdb-jit.h"
+#include "src/heap/heap-inl.h"
 #include "src/ic/ic-stats.h"
 #include "src/ic/ic.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/tracing/tracing-category-observer.h"
 
 namespace v8 {
@@ -104,8 +107,7 @@ Code::Flags CodeStub::GetCodeFlags() const {
   return Code::ComputeFlags(GetCodeKind(), GetExtraICState());
 }
 
-
-Handle<Code> CodeStub::GetCodeCopy(const Code::FindAndReplacePattern& pattern) {
+Handle<Code> CodeStub::GetCodeCopy(const FindAndReplacePattern& pattern) {
   Handle<Code> ic = GetCode();
   ic = isolate()->factory()->CopyCode(ic);
   ic->FindAndReplace(pattern);
@@ -582,8 +584,8 @@ compiler::Node* AddWithFeedbackStub::Generate(CodeStubAssembler* assembler,
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if the {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       var_fadd_lhs.Bind(assembler->SmiToFloat64(lhs));
       var_fadd_rhs.Bind(assembler->LoadHeapNumberValue(rhs));
@@ -597,8 +599,8 @@ compiler::Node* AddWithFeedbackStub::Generate(CodeStubAssembler* assembler,
     Node* lhs_map = assembler->LoadMap(lhs);
 
     // Check if {lhs} is a HeapNumber.
-    assembler->GotoUnless(assembler->IsHeapNumberMap(lhs_map),
-                          &if_lhsisnotnumber);
+    assembler->GotoIfNot(assembler->IsHeapNumberMap(lhs_map),
+                         &if_lhsisnotnumber);
 
     // Check if the {rhs} is Smi.
     Label if_rhsissmi(assembler), if_rhsisnotsmi(assembler);
@@ -618,8 +620,8 @@ compiler::Node* AddWithFeedbackStub::Generate(CodeStubAssembler* assembler,
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if the {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       var_fadd_lhs.Bind(assembler->LoadHeapNumberValue(lhs));
       var_fadd_rhs.Bind(assembler->LoadHeapNumberValue(rhs));
@@ -663,8 +665,8 @@ compiler::Node* AddWithFeedbackStub::Generate(CodeStubAssembler* assembler,
     assembler->Bind(&if_lhsisnotoddball);
     {
       // Exit unless {lhs} is a string
-      assembler->GotoUnless(assembler->IsStringInstanceType(lhs_instance_type),
-                            &call_with_any_feedback);
+      assembler->GotoIfNot(assembler->IsStringInstanceType(lhs_instance_type),
+                           &call_with_any_feedback);
 
       // Check if the {rhs} is a smi, and exit the string check early if it is.
       assembler->GotoIf(assembler->TaggedIsSmi(rhs), &call_with_any_feedback);
@@ -673,8 +675,8 @@ compiler::Node* AddWithFeedbackStub::Generate(CodeStubAssembler* assembler,
 
       // Exit unless {rhs} is a string. Since {lhs} is a string we no longer
       // need an Oddball check.
-      assembler->GotoUnless(assembler->IsStringInstanceType(rhs_instance_type),
-                            &call_with_any_feedback);
+      assembler->GotoIfNot(assembler->IsStringInstanceType(rhs_instance_type),
+                           &call_with_any_feedback);
 
       var_type_feedback.Bind(
           assembler->SmiConstant(BinaryOperationFeedback::kString));
@@ -789,8 +791,8 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       // Perform a floating point subtraction.
       var_fsub_lhs.Bind(assembler->SmiToFloat64(lhs));
@@ -805,8 +807,8 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
     Node* lhs_map = assembler->LoadMap(lhs);
 
     // Check if the {lhs} is a HeapNumber.
-    assembler->GotoUnless(assembler->IsHeapNumberMap(lhs_map),
-                          &if_lhsisnotnumber);
+    assembler->GotoIfNot(assembler->IsHeapNumberMap(lhs_map),
+                         &if_lhsisnotnumber);
 
     // Check if the {rhs} is a Smi.
     Label if_rhsissmi(assembler), if_rhsisnotsmi(assembler);
@@ -827,8 +829,8 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if the {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       // Perform a floating point subtraction.
       var_fsub_lhs.Bind(assembler->LoadHeapNumberValue(lhs));
@@ -855,7 +857,7 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
     Node* lhs_instance_type = assembler->LoadInstanceType(lhs);
     Node* lhs_is_oddball = assembler->Word32Equal(
         lhs_instance_type, assembler->Int32Constant(ODDBALL_TYPE));
-    assembler->GotoUnless(lhs_is_oddball, &call_with_any_feedback);
+    assembler->GotoIfNot(lhs_is_oddball, &call_with_any_feedback);
 
     Label if_rhsissmi(assembler), if_rhsisnotsmi(assembler);
     assembler->Branch(assembler->TaggedIsSmi(rhs), &if_rhsissmi,
@@ -874,8 +876,8 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       var_type_feedback.Bind(
           assembler->SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
@@ -890,7 +892,7 @@ compiler::Node* SubtractWithFeedbackStub::Generate(
     Node* rhs_instance_type = assembler->LoadInstanceType(rhs);
     Node* rhs_is_oddball = assembler->Word32Equal(
         rhs_instance_type, assembler->Int32Constant(ODDBALL_TYPE));
-    assembler->GotoUnless(rhs_is_oddball, &call_with_any_feedback);
+    assembler->GotoIfNot(rhs_is_oddball, &call_with_any_feedback);
 
     var_type_feedback.Bind(
         assembler->SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
@@ -963,8 +965,8 @@ compiler::Node* MultiplyWithFeedbackStub::Generate(
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       // Convert {lhs} to a double and multiply it with the value of {rhs}.
       var_lhs_float64.Bind(assembler->SmiToFloat64(lhs));
@@ -978,8 +980,8 @@ compiler::Node* MultiplyWithFeedbackStub::Generate(
     Node* lhs_map = assembler->LoadMap(lhs);
 
     // Check if {lhs} is a HeapNumber.
-    assembler->GotoUnless(assembler->IsHeapNumberMap(lhs_map),
-                          &if_lhsisnotnumber);
+    assembler->GotoIfNot(assembler->IsHeapNumberMap(lhs_map),
+                         &if_lhsisnotnumber);
 
     // Check if {rhs} is a Smi.
     Label rhs_is_smi(assembler), rhs_is_not_smi(assembler);
@@ -999,8 +1001,8 @@ compiler::Node* MultiplyWithFeedbackStub::Generate(
       Node* rhs_map = assembler->LoadMap(rhs);
 
       // Check if {rhs} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(rhs_map),
-                            &check_rhsisoddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(rhs_map),
+                           &check_rhsisoddball);
 
       // Both {lhs} and {rhs} are HeapNumbers. Load their values and
       // multiply them.
@@ -1028,7 +1030,7 @@ compiler::Node* MultiplyWithFeedbackStub::Generate(
     Node* lhs_instance_type = assembler->LoadInstanceType(lhs);
     Node* lhs_is_oddball = assembler->Word32Equal(
         lhs_instance_type, assembler->Int32Constant(ODDBALL_TYPE));
-    assembler->GotoUnless(lhs_is_oddball, &call_with_any_feedback);
+    assembler->GotoIfNot(lhs_is_oddball, &call_with_any_feedback);
 
     assembler->GotoIf(assembler->TaggedIsSmi(rhs), &call_with_oddball_feedback);
 
@@ -1181,8 +1183,8 @@ compiler::Node* DivideWithFeedbackStub::Generate(
       Node* divisor_map = assembler->LoadMap(divisor);
 
       // Check if {divisor} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(divisor_map),
-                            &check_divisor_for_oddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(divisor_map),
+                           &check_divisor_for_oddball);
 
       // Convert {dividend} to a double and divide it with the value of
       // {divisor}.
@@ -1196,8 +1198,8 @@ compiler::Node* DivideWithFeedbackStub::Generate(
       Node* dividend_map = assembler->LoadMap(dividend);
 
       // Check if {dividend} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(dividend_map),
-                            &dividend_is_not_number);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(dividend_map),
+                           &dividend_is_not_number);
 
       // Check if {divisor} is a Smi.
       Label divisor_is_smi(assembler), divisor_is_not_smi(assembler);
@@ -1218,8 +1220,8 @@ compiler::Node* DivideWithFeedbackStub::Generate(
         Node* divisor_map = assembler->LoadMap(divisor);
 
         // Check if {divisor} is a HeapNumber.
-        assembler->GotoUnless(assembler->IsHeapNumberMap(divisor_map),
-                              &check_divisor_for_oddball);
+        assembler->GotoIfNot(assembler->IsHeapNumberMap(divisor_map),
+                             &check_divisor_for_oddball);
 
         // Both {dividend} and {divisor} are HeapNumbers. Load their values
         // and divide them.
@@ -1247,7 +1249,7 @@ compiler::Node* DivideWithFeedbackStub::Generate(
     Node* dividend_instance_type = assembler->LoadInstanceType(dividend);
     Node* dividend_is_oddball = assembler->Word32Equal(
         dividend_instance_type, assembler->Int32Constant(ODDBALL_TYPE));
-    assembler->GotoUnless(dividend_is_oddball, &call_with_any_feedback);
+    assembler->GotoIfNot(dividend_is_oddball, &call_with_any_feedback);
 
     assembler->GotoIf(assembler->TaggedIsSmi(divisor),
                       &call_with_oddball_feedback);
@@ -1342,8 +1344,8 @@ compiler::Node* ModulusWithFeedbackStub::Generate(
       Node* divisor_map = assembler->LoadMap(divisor);
 
       // Check if {divisor} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(divisor_map),
-                            &check_divisor_for_oddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(divisor_map),
+                           &check_divisor_for_oddball);
 
       // Convert {dividend} to a double and divide it with the value of
       // {divisor}.
@@ -1358,8 +1360,8 @@ compiler::Node* ModulusWithFeedbackStub::Generate(
     Node* dividend_map = assembler->LoadMap(dividend);
 
     // Check if {dividend} is a HeapNumber.
-    assembler->GotoUnless(assembler->IsHeapNumberMap(dividend_map),
-                          &dividend_is_not_number);
+    assembler->GotoIfNot(assembler->IsHeapNumberMap(dividend_map),
+                         &dividend_is_not_number);
 
     // Check if {divisor} is a Smi.
     Label divisor_is_smi(assembler), divisor_is_not_smi(assembler);
@@ -1380,8 +1382,8 @@ compiler::Node* ModulusWithFeedbackStub::Generate(
       Node* divisor_map = assembler->LoadMap(divisor);
 
       // Check if {divisor} is a HeapNumber.
-      assembler->GotoUnless(assembler->IsHeapNumberMap(divisor_map),
-                            &check_divisor_for_oddball);
+      assembler->GotoIfNot(assembler->IsHeapNumberMap(divisor_map),
+                           &check_divisor_for_oddball);
 
       // Both {dividend} and {divisor} are HeapNumbers. Load their values
       // and divide them.
@@ -1408,7 +1410,7 @@ compiler::Node* ModulusWithFeedbackStub::Generate(
     Node* dividend_instance_type = assembler->LoadInstanceType(dividend);
     Node* dividend_is_oddball = assembler->Word32Equal(
         dividend_instance_type, assembler->Int32Constant(ODDBALL_TYPE));
-    assembler->GotoUnless(dividend_is_oddball, &call_with_any_feedback);
+    assembler->GotoIfNot(dividend_is_oddball, &call_with_any_feedback);
 
     assembler->GotoIf(assembler->TaggedIsSmi(divisor),
                       &call_with_oddball_feedback);
@@ -1546,7 +1548,7 @@ void StoreGlobalStub::GenerateAssembly(
     if (cell_type == PropertyCellType::kConstantType) {
       switch (constant_type()) {
         case PropertyCellConstantType::kSmi:
-          assembler.GotoUnless(assembler.TaggedIsSmi(value), &miss);
+          assembler.GotoIfNot(assembler.TaggedIsSmi(value), &miss);
           value_is_smi = true;
           break;
         case PropertyCellConstantType::kStableMap: {
@@ -1704,30 +1706,6 @@ void LoadIndexedInterceptorStub::GenerateAssembly(
                             slot, vector);
 }
 
-template<class StateType>
-void HydrogenCodeStub::TraceTransition(StateType from, StateType to) {
-  // Note: Although a no-op transition is semantically OK, it is hinting at a
-  // bug somewhere in our state transition machinery.
-  DCHECK(from != to);
-  if (V8_LIKELY(!FLAG_ic_stats)) return;
-  if (FLAG_ic_stats &
-      v8::tracing::TracingCategoryObserver::ENABLED_BY_TRACING) {
-    auto ic_stats = ICStats::instance();
-    ic_stats->Begin();
-    ICInfo& ic_info = ic_stats->Current();
-    ic_info.type = MajorName(MajorKey());
-    ic_info.state = ToString(from);
-    ic_info.state += "=>";
-    ic_info.state += ToString(to);
-    ic_stats->End();
-    return;
-  }
-  OFStream os(stdout);
-  os << "[";
-  PrintBaseName(os);
-  os << ": " << from << "=>" << to << "]" << std::endl;
-}
-
 void CallICStub::PrintState(std::ostream& os) const {  // NOLINT
   os << convert_mode() << ", " << tail_call_mode();
 }
@@ -1778,7 +1756,7 @@ void CallICStub::GenerateAssembly(compiler::CodeAssemblerState* state) const {
   Node* feedback_element = assembler.LoadFixedArrayElement(vector, slot);
   Node* feedback_value = assembler.LoadWeakCellValueUnchecked(feedback_element);
   Node* is_monomorphic = assembler.WordEqual(target, feedback_value);
-  assembler.GotoUnless(is_monomorphic, &extra_checks);
+  assembler.GotoIfNot(is_monomorphic, &extra_checks);
 
   // The compare above could have been a SMI/SMI comparison. Guard against
   // this convincing us that we have a monomorphic JSFunction.
@@ -1807,7 +1785,7 @@ void CallICStub::GenerateAssembly(compiler::CodeAssemblerState* state) const {
     assembler.GotoIf(is_megamorphic, &call);
 
     assembler.Comment("check if it is an allocation site");
-    assembler.GotoUnless(
+    assembler.GotoIfNot(
         assembler.IsAllocationSiteMap(assembler.LoadMap(feedback_element)),
         &check_initialized);
 
@@ -1815,7 +1793,7 @@ void CallICStub::GenerateAssembly(compiler::CodeAssemblerState* state) const {
     Node* context_slot = assembler.LoadContextElement(
         assembler.LoadNativeContext(context), Context::ARRAY_FUNCTION_INDEX);
     Node* is_array_function = assembler.WordEqual(context_slot, target);
-    assembler.GotoUnless(is_array_function, &mark_megamorphic);
+    assembler.GotoIfNot(is_array_function, &mark_megamorphic);
 
     // Call ArrayConstructorStub.
     Callable callable = CodeFactory::ArrayConstructor(isolate());
@@ -1830,7 +1808,7 @@ void CallICStub::GenerateAssembly(compiler::CodeAssemblerState* state) const {
           feedback_element,
           assembler.HeapConstant(
               FeedbackVector::UninitializedSentinel(isolate())));
-      assembler.GotoUnless(is_uninitialized, &mark_megamorphic);
+      assembler.GotoIfNot(is_uninitialized, &mark_megamorphic);
 
       assembler.Comment("handle unitinitialized");
       // If it is not a JSFunction mark it as megamorphic.
@@ -1839,7 +1817,7 @@ void CallICStub::GenerateAssembly(compiler::CodeAssemblerState* state) const {
 
       // Check if function is an object of JSFunction type.
       Node* is_js_function = assembler.IsJSFunction(target);
-      assembler.GotoUnless(is_js_function, &mark_megamorphic);
+      assembler.GotoIfNot(is_js_function, &mark_megamorphic);
 
       // Check if it is the Array() function.
       Node* context_slot = assembler.LoadContextElement(
@@ -2135,7 +2113,7 @@ bool ToBooleanICStub::UpdateStatus(Handle<Object> object) {
     UNREACHABLE();
     to_boolean_value = true;
   }
-  TraceTransition(old_hints, new_hints);
+
   set_sub_minor_key(HintsBits::update(sub_minor_key(), new_hints));
   return to_boolean_value;
 }
