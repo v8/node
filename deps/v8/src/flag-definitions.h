@@ -276,7 +276,6 @@ DEFINE_DUAL_IMPLICATION(turbo, thin_strings)
 // with the turbo flag.
 DEFINE_BOOL(ignition_staging, false, "use ignition with all staged features")
 DEFINE_DUAL_IMPLICATION(ignition_staging, ignition)
-DEFINE_DUAL_IMPLICATION(ignition_staging, compiler_dispatcher)
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
@@ -449,8 +448,7 @@ DEFINE_BOOL(omit_map_checks_for_leaf_maps, true,
 // Allow to disable turbofan with a build flag after it's turned on by default.
 #define TURBO_BOOL false
 #else
-// TODO(mvstanton): Turn on turbofan here.
-#define TURBO_BOOL false
+#define TURBO_BOOL true
 #endif
 DEFINE_BOOL(turbo, TURBO_BOOL, "enable TurboFan compiler")
 DEFINE_BOOL(turbo_sp_frame_access, false,
@@ -517,8 +515,6 @@ DEFINE_BOOL(turbo_store_elimination, true,
             "enable store-store elimination in TurboFan")
 DEFINE_BOOL(turbo_experimental, false,
             "enable crashing features, for testing purposes only")
-// TODO(turbofan): Rename --crankshaft to --optimize eventually.
-DEFINE_IMPLICATION(turbo, crankshaft)
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
@@ -851,7 +847,6 @@ DEFINE_IMPLICATION(trace_array_abuse, trace_js_array_abuse)
 DEFINE_IMPLICATION(trace_array_abuse, trace_external_array_abuse)
 
 // debugger
-DEFINE_BOOL(trace_debug_json, false, "trace debugging JSON request/response")
 DEFINE_BOOL(enable_liveedit, true, "enable liveedit experimental feature")
 DEFINE_BOOL(
     trace_side_effect_free_debug_evaluate, false,
@@ -906,6 +901,7 @@ DEFINE_INT(ic_stats, 0, "inline cache state transitions statistics")
 DEFINE_VALUE_IMPLICATION(trace_ic, ic_stats, 1)
 DEFINE_BOOL_READONLY(track_constant_fields, false,
                      "enable constant field tracking")
+DEFINE_BOOL_READONLY(modify_map_inplace, false, "enable in-place map updates")
 
 // macro-assembler-ia32.cc
 DEFINE_BOOL(native_code_counters, false,
@@ -1142,6 +1138,18 @@ DEFINE_BOOL(log_handles, false, "Log global handle events.")
 DEFINE_BOOL(log_suspect, false, "Log suspect operations.")
 DEFINE_BOOL(prof, false,
             "Log statistical profiling information (implies --log-code).")
+
+#if defined(ANDROID)
+// Phones and tablets have processors that are much slower than desktop
+// and laptop computers for which current heuristics are tuned.
+#define DEFAULT_PROF_SAMPLING_INTERVAL 5000
+#else
+#define DEFAULT_PROF_SAMPLING_INTERVAL 1000
+#endif
+DEFINE_INT(prof_sampling_interval, DEFAULT_PROF_SAMPLING_INTERVAL,
+           "Interval for --prof samples (in microseconds).")
+#undef DEFAULT_PROF_SAMPLING_INTERVAL
+
 DEFINE_BOOL(prof_cpp, false, "Like --prof, but ignore generated code.")
 DEFINE_IMPLICATION(prof, prof_cpp)
 DEFINE_BOOL(prof_browser_mode, true,

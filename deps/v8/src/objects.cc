@@ -1620,9 +1620,7 @@ MaybeHandle<Object> GetPropertyWithInterceptorInternal(
     Handle<Name> name = it->name();
     DCHECK(!name->IsPrivate());
 
-    if (name->IsSymbol() && !interceptor->can_intercept_symbols()) {
-      return isolate->factory()->undefined_value();
-    }
+    DCHECK_IMPLIES(name->IsSymbol(), interceptor->can_intercept_symbols());
 
     v8::GenericNamedPropertyGetterCallback getter =
         v8::ToCData<v8::GenericNamedPropertyGetterCallback>(
@@ -1646,10 +1644,8 @@ Maybe<PropertyAttributes> GetPropertyAttributesWithInterceptorInternal(
   HandleScope scope(isolate);
 
   Handle<JSObject> holder = it->GetHolder<JSObject>();
-  if (!it->IsElement() && it->name()->IsSymbol() &&
-      !interceptor->can_intercept_symbols()) {
-    return Just(ABSENT);
-  }
+  DCHECK_IMPLIES(!it->IsElement() && it->name()->IsSymbol(),
+                 interceptor->can_intercept_symbols());
   Handle<Object> receiver = it->GetReceiver();
   if (!receiver->IsJSReceiver()) {
     ASSIGN_RETURN_ON_EXCEPTION_VALUE(isolate, receiver,
@@ -1733,9 +1729,7 @@ Maybe<bool> SetPropertyWithInterceptorInternal(
     Handle<Name> name = it->name();
     DCHECK(!name->IsPrivate());
 
-    if (name->IsSymbol() && !interceptor->can_intercept_symbols()) {
-      return Just(false);
-    }
+    DCHECK_IMPLIES(name->IsSymbol(), interceptor->can_intercept_symbols());
 
     v8::GenericNamedPropertySetterCallback setter =
         v8::ToCData<v8::GenericNamedPropertySetterCallback>(
@@ -1798,9 +1792,7 @@ Maybe<bool> DefinePropertyWithInterceptorInternal(
     Handle<Name> name = it->name();
     DCHECK(!name->IsPrivate());
 
-    if (name->IsSymbol() && !interceptor->can_intercept_symbols()) {
-      return Just(false);
-    }
+    DCHECK_IMPLIES(name->IsSymbol(), interceptor->can_intercept_symbols());
 
     v8::GenericNamedPropertyDefinerCallback definer =
         v8::ToCData<v8::GenericNamedPropertyDefinerCallback>(
@@ -4005,14 +3997,16 @@ void Map::UpdateFieldType(int descriptor, Handle<Name> name,
     PropertyDetails details = descriptors->GetDetails(descriptor);
 
     // Currently constness change implies map change.
-    DCHECK_EQ(new_constness, details.constness());
+    DCHECK_IMPLIES(new_constness != details.constness(),
+                   FLAG_modify_map_inplace);
 
     // It is allowed to change representation here only from None to something.
     DCHECK(details.representation().Equals(new_representation) ||
            details.representation().IsNone());
 
     // Skip if already updated the shared descriptor.
-    if (descriptors->GetValue(descriptor) != *new_wrapped_type) {
+    if ((FLAG_modify_map_inplace && new_constness != details.constness()) ||
+        descriptors->GetValue(descriptor) != *new_wrapped_type) {
       DCHECK_IMPLIES(!FLAG_track_constant_fields, new_constness == kMutable);
       Descriptor d = Descriptor::DataField(
           name, descriptors->GetFieldIndex(descriptor), details.attributes(),
@@ -4060,7 +4054,11 @@ void Map::GeneralizeField(Handle<Map> map, int modify_index,
   Handle<FieldType> old_field_type(old_descriptors->GetFieldType(modify_index),
                                    isolate);
 
-  if (old_constness == new_constness &&
+  // Return if the current map is general enough to hold requested contness and
+  // representation/field type.
+  if (((FLAG_modify_map_inplace &&
+        IsGeneralizableTo(new_constness, old_constness)) ||
+       (!FLAG_modify_map_inplace && (old_constness == new_constness))) &&
       old_representation.Equals(new_representation) &&
       !FieldTypeIsCleared(new_representation, *new_field_type) &&
       // Checking old_field_type for being cleared is not necessary because
@@ -4081,6 +4079,9 @@ void Map::GeneralizeField(Handle<Map> map, int modify_index,
   new_field_type =
       Map::GeneralizeFieldType(old_representation, old_field_type,
                                new_representation, new_field_type, isolate);
+  if (FLAG_modify_map_inplace) {
+    new_constness = GeneralizeConstness(old_constness, new_constness);
+  }
 
   PropertyDetails details = descriptors->GetDetails(modify_index);
   Handle<Name> name(descriptors->GetKey(modify_index));
@@ -5941,9 +5942,9 @@ Maybe<bool> JSObject::DeletePropertyWithInterceptor(LookupIterator* it,
     v8::IndexedPropertyDeleterCallback deleter =
         v8::ToCData<v8::IndexedPropertyDeleterCallback>(interceptor->deleter());
     result = args.Call(deleter, index);
-  } else if (it->name()->IsSymbol() && !interceptor->can_intercept_symbols()) {
-    return Nothing<bool>();
   } else {
+    DCHECK_IMPLIES(it->name()->IsSymbol(),
+                   interceptor->can_intercept_symbols());
     Handle<Name> name = it->name();
     DCHECK(!name->IsPrivate());
     v8::GenericNamedPropertyDeleterCallback deleter =
@@ -15801,23 +15802,6 @@ void Dictionary<Derived, Shape, Key>::Print() {
 #endif
 
 
-template<typename Derived, typename Shape, typename Key>
-void Dictionary<Derived, Shape, Key>::CopyValuesTo(FixedArray* elements) {
-  Isolate* isolate = this->GetIsolate();
-  int pos = 0;
-  int capacity = this->Capacity();
-  DisallowHeapAllocation no_gc;
-  WriteBarrierMode mode = elements->GetWriteBarrierMode(no_gc);
-  for (int i = 0; i < capacity; i++) {
-    Object* k = this->KeyAt(i);
-    if (this->IsKey(isolate, k)) {
-      elements->set(pos++, this->ValueAt(i), mode);
-    }
-  }
-  DCHECK(pos == elements->length());
-}
-
-
 MaybeHandle<Object> JSObject::GetPropertyWithInterceptor(LookupIterator* it,
                                                          bool* done) {
   DCHECK_EQ(LookupIterator::INTERCEPTOR, it->state());
@@ -16111,7 +16095,7 @@ inline Handle<StringType> WriteEscapedRegExpSource(Handle<String> source,
 
 MaybeHandle<String> EscapeRegExpSource(Isolate* isolate,
                                        Handle<String> source) {
-  String::Flatten(source);
+  DCHECK(source->IsFlat());
   if (source->length() == 0) return isolate->factory()->query_colon_string();
   bool one_byte = source->IsOneByteRepresentationUnderneath();
   int escapes = one_byte ? CountRequiredEscapes<uint8_t>(source)
@@ -16159,6 +16143,8 @@ MaybeHandle<JSRegExp> JSRegExp::Initialize(Handle<JSRegExp> regexp,
   // If source is the empty string we set it to "(?:)" instead as
   // suggested by ECMA-262, 5th, section 15.10.4.1.
   if (source->length() == 0) source = factory->query_colon_string();
+
+  source = String::Flatten(source);
 
   Handle<String> escaped_source;
   ASSIGN_RETURN_ON_EXCEPTION(isolate, escaped_source,
@@ -17969,6 +17955,20 @@ Handle<SeededNumberDictionary> SeededNumberDictionary::AtNumberPut(
   return AtPut(dictionary, key, value);
 }
 
+void SeededNumberDictionary::CopyValuesTo(FixedArray* elements) {
+  Isolate* isolate = this->GetIsolate();
+  int pos = 0;
+  int capacity = this->Capacity();
+  DisallowHeapAllocation no_gc;
+  WriteBarrierMode mode = elements->GetWriteBarrierMode(no_gc);
+  for (int i = 0; i < capacity; i++) {
+    Object* k = this->KeyAt(i);
+    if (this->IsKey(isolate, k)) {
+      elements->set(pos++, this->ValueAt(i), mode);
+    }
+  }
+  DCHECK(pos == elements->length());
+}
 
 Handle<UnseededNumberDictionary> UnseededNumberDictionary::AtNumberPut(
     Handle<UnseededNumberDictionary> dictionary,

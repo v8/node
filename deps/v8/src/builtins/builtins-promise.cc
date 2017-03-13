@@ -13,10 +13,6 @@
 namespace v8 {
 namespace internal {
 
-typedef compiler::Node Node;
-typedef CodeStubAssembler::ParameterMode ParameterMode;
-typedef compiler::CodeAssemblerState CodeAssemblerState;
-
 Node* PromiseBuiltinsAssembler::AllocateJSPromise(Node* context) {
   Node* const native_context = LoadNativeContext(context);
   Node* const promise_fun =
@@ -685,7 +681,7 @@ void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
 
   Bind(&cycle_check);
   // 6. If SameValue(resolution, promise) is true, then
-  GotoIf(SameValue(promise, result, context), &if_cycle);
+  GotoIf(SameValue(promise, result), &if_cycle);
 
   // 7. If Type(resolution) is not Object, then
   GotoIf(TaggedIsSmi(result), &fulfill);
@@ -746,7 +742,7 @@ void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
         Goto(&reject);
 
         Bind(&reject);
-        // Don't cause a debug event as this case is forwarding a rejection
+        // Don't cause a debug event as this case is forwarding a rejection.
         InternalPromiseReject(context, promise, thenable_value, false);
         PromiseSetHasHandler(result);
         Goto(&out);
@@ -829,7 +825,8 @@ void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
   // 9.a Return RejectPromise(promise, then.[[Value]]).
   Bind(&if_rejectpromise);
   {
-    InternalPromiseReject(context, promise, var_reason.value(), true);
+    // Don't cause a debug event as this case is forwarding a rejection.
+    InternalPromiseReject(context, promise, var_reason.value(), false);
     Goto(&out);
   }
 
@@ -1430,7 +1427,7 @@ TF_BUILTIN(PromiseResolve, PromiseBuiltinsAssembler) {
         CallStub(getproperty_callable, context, value, constructor_str);
 
     // 3.b If SameValue(xConstructor, C) is true, return x.
-    GotoIfNot(SameValue(constructor, receiver, context), &if_valueisnotpromise);
+    GotoIfNot(SameValue(constructor, receiver), &if_valueisnotpromise);
 
     Return(value);
   }
