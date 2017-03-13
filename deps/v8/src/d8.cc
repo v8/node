@@ -881,11 +881,8 @@ MaybeLocal<Context> Shell::CreateRealm(
   Local<ObjectTemplate> global_template = CreateGlobalTemplate(isolate);
   Local<Context> context =
       Context::New(isolate, NULL, global_template, global_object);
-  if (context.IsEmpty()) {
-    DCHECK(try_catch.HasCaught());
-    try_catch.ReThrow();
-    return MaybeLocal<Context>();
-  }
+  DCHECK(!try_catch.HasCaught());
+  if (context.IsEmpty()) return MaybeLocal<Context>();
   InitializeModuleEmbedderData(context);
   data->realms_[index].Reset(isolate, context);
   args.GetReturnValue().Set(index);
@@ -2032,6 +2029,8 @@ class InspectorClient : public v8_inspector::V8InspectorClient {
         String::NewFromUtf8(isolate_, "send", NewStringType::kNormal)
             .ToLocalChecked();
     CHECK(context->Global()->Set(context, function_name, function).FromJust());
+
+    v8::debug::SetLiveEditEnabled(isolate_, true);
 
     context_.Reset(isolate_, context);
   }
