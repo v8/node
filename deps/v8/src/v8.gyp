@@ -171,7 +171,6 @@
       ],
       'sources': [
         '<(SHARED_INTERMEDIATE_DIR)/libraries.cc',
-        '<(SHARED_INTERMEDIATE_DIR)/experimental-libraries.cc',
         '<(SHARED_INTERMEDIATE_DIR)/extras-libraries.cc',
         '<(SHARED_INTERMEDIATE_DIR)/experimental-extras-libraries.cc',
         '<(INTERMEDIATE_DIR)/snapshot.cc',
@@ -230,7 +229,6 @@
       ],
       'sources': [
         '<(SHARED_INTERMEDIATE_DIR)/libraries.cc',
-        '<(SHARED_INTERMEDIATE_DIR)/experimental-libraries.cc',
         '<(SHARED_INTERMEDIATE_DIR)/extras-libraries.cc',
         '<(SHARED_INTERMEDIATE_DIR)/experimental-extras-libraries.cc',
         'snapshot/snapshot-empty.cc',
@@ -392,7 +390,6 @@
       }],
       'sources': [  ### gcmole(all) ###
         '../include/v8-debug.h',
-        '../include/v8-experimental.h',
         '../include/v8-platform.h',
         '../include/v8-profiler.h',
         '../include/v8-testing.h',
@@ -409,8 +406,6 @@
         'allocation.h',
         'allocation-site-scopes.cc',
         'allocation-site-scopes.h',
-        'api-experimental.cc',
-        'api-experimental.h',
         'api.cc',
         'api.h',
         'api-arguments-inl.h',
@@ -894,8 +889,6 @@
         'external-reference-table.h',
         'factory.cc',
         'factory.h',
-        'fast-accessor-assembler.cc',
-        'fast-accessor-assembler.h',
         'fast-dtoa.cc',
         'fast-dtoa.h',
         'feedback-vector-inl.h',
@@ -1279,7 +1272,10 @@
         'transitions-inl.h',
         'transitions.cc',
         'transitions.h',
+        'trap-handler/handler-outside.cc',
+        'trap-handler/handler-shared.cc',
         'trap-handler/trap-handler.h',
+        'trap-handler/trap-handler-internal.h',
         'type-hints.cc',
         'type-hints.h',
         'type-info.cc',
@@ -1671,6 +1667,9 @@
             'regexp/x64/regexp-macro-assembler-x64.h',
             'third_party/valgrind/valgrind.h',
           ],
+        }],
+        ['v8_target_arch=="x64" and OS=="linux"', {
+            'sources': ['trap-handler/handler-inside.cc']
         }],
         ['v8_target_arch=="ppc" or v8_target_arch=="ppc64"', {
           'sources': [  ### gcmole(arch:ppc) ###
@@ -2221,7 +2220,6 @@
             'inputs': [
               '../tools/concatenate-files.py',
               '<(SHARED_INTERMEDIATE_DIR)/libraries.bin',
-              '<(SHARED_INTERMEDIATE_DIR)/libraries-experimental.bin',
               '<(SHARED_INTERMEDIATE_DIR)/libraries-extras.bin',
               '<(SHARED_INTERMEDIATE_DIR)/libraries-experimental-extras.bin',
             ],
@@ -2295,13 +2293,7 @@
           'debug/debug.js',
           'debug/liveedit.js',
         ],
-        'experimental_library_files': [
-          'js/macros.py',
-          'messages.h',
-          'js/harmony-atomics.js',
-        ],
         'libraries_bin_file': '<(SHARED_INTERMEDIATE_DIR)/libraries.bin',
-        'libraries_experimental_bin_file': '<(SHARED_INTERMEDIATE_DIR)/libraries-experimental.bin',
         'libraries_extras_bin_file': '<(SHARED_INTERMEDIATE_DIR)/libraries-extras.bin',
         'libraries_experimental_extras_bin_file': '<(SHARED_INTERMEDIATE_DIR)/libraries-experimental-extras.bin',
         'conditions': [
@@ -2340,38 +2332,6 @@
             'CORE',
             '<@(library_files)',
             '--startup_blob', '<@(libraries_bin_file)',
-            '--nojs',
-          ],
-        },
-        {
-          'action_name': 'js2c_experimental',
-          'inputs': [
-            '../tools/js2c.py',
-            '<@(experimental_library_files)',
-          ],
-          'outputs': ['<(SHARED_INTERMEDIATE_DIR)/experimental-libraries.cc'],
-          'action': [
-            'python',
-            '../tools/js2c.py',
-            '<(SHARED_INTERMEDIATE_DIR)/experimental-libraries.cc',
-            'EXPERIMENTAL',
-            '<@(experimental_library_files)',
-          ],
-        },
-        {
-          'action_name': 'js2c_experimental_bin',
-          'inputs': [
-            '../tools/js2c.py',
-            '<@(experimental_library_files)',
-          ],
-          'outputs': ['<@(libraries_experimental_bin_file)'],
-          'action': [
-            'python',
-            '../tools/js2c.py',
-            '<(SHARED_INTERMEDIATE_DIR)/experimental-libraries.cc',
-            'EXPERIMENTAL',
-            '<@(experimental_library_files)',
-            '--startup_blob', '<@(libraries_experimental_bin_file)',
             '--nojs',
           ],
         },
