@@ -282,6 +282,8 @@ DEFINE_BOOL(allocation_site_pretenuring, true,
             "pretenure with allocation sites")
 DEFINE_BOOL(mark_shared_functions_for_tier_up, true,
             "mark shared functions for tier up")
+DEFINE_BOOL(mark_optimizing_shared_functions, true,
+            "mark shared functions if they are concurrently optimizing")
 DEFINE_BOOL(page_promotion, true, "promote pages based on utilization")
 DEFINE_INT(page_promotion_threshold, 70,
            "min percentage of live bytes on a page to enable fast evacuation")
@@ -544,10 +546,6 @@ DEFINE_BOOL(trace_wasm_interpreter, false, "trace interpretation of wasm code")
 DEFINE_INT(trace_wasm_ast_start, 0,
            "start function for WASM AST trace (inclusive)")
 DEFINE_INT(trace_wasm_ast_end, 0, "end function for WASM AST trace (exclusive)")
-DEFINE_INT(trace_wasm_text_start, 0,
-           "start function for WASM text generation (inclusive)")
-DEFINE_INT(trace_wasm_text_end, 0,
-           "end function for WASM text generation (exclusive)")
 DEFINE_UINT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
 DEFINE_BOOL(wasm_break_on_decoder_error, false,
             "debug break when wasm decoder encounters an error")
@@ -592,6 +590,8 @@ DEFINE_BOOL(wasm_trap_if, true,
 DEFINE_BOOL(wasm_code_fuzzer_gen_test, false,
             "Generate a test case when running the wasm-code fuzzer")
 DEFINE_BOOL(print_wasm_code, false, "Print WebAssembly code")
+DEFINE_BOOL(wasm_interpret_all, false,
+            "Execute all wasm code in the wasm interpreter")
 
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
