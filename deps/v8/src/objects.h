@@ -2984,17 +2984,21 @@ class FrameArray : public FixedArray {
 #undef DECLARE_FRAME_ARRAY_ACCESSORS
 
   inline bool IsWasmFrame(int frame_ix) const;
+  inline bool IsWasmInterpretedFrame(int frame_ix) const;
   inline bool IsAsmJsWasmFrame(int frame_ix) const;
   inline int FrameCount() const;
 
   void ShrinkToFit();
 
   // Flags.
-  static const int kIsWasmFrame = 1 << 0;
-  static const int kIsAsmJsWasmFrame = 1 << 1;
-  static const int kIsStrict = 1 << 2;
-  static const int kForceConstructor = 1 << 3;
-  static const int kAsmJsAtNumberConversion = 1 << 4;
+  enum Flag {
+    kIsWasmFrame = 1 << 0,
+    kIsWasmInterpretedFrame = 1 << 1,
+    kIsAsmJsWasmFrame = 1 << 2,
+    kIsStrict = 1 << 3,
+    kForceConstructor = 1 << 4,
+    kAsmJsAtNumberConversion = 1 << 5
+  };
 
   static Handle<FrameArray> AppendJSFrame(Handle<FrameArray> in,
                                           Handle<Object> receiver,
@@ -7255,6 +7259,9 @@ class SharedFunctionInfo: public HeapObject {
   // Whether this function was marked to be tiered up.
   DECL_BOOLEAN_ACCESSORS(marked_for_tier_up)
 
+  // Whether this function has a concurrent compilation job running.
+  DECL_BOOLEAN_ACCESSORS(has_concurrent_optimization_job)
+
   // Indicates that asm->wasm conversion failed and should not be re-attempted.
   DECL_BOOLEAN_ACCESSORS(is_asm_wasm_broken)
 
@@ -7537,9 +7544,9 @@ class SharedFunctionInfo: public HeapObject {
     kDontFlush,
     kIsDeclaration,
     kIsAsmWasmBroken,
+    kHasConcurrentOptimizationJob,
 
     kUnused1,  // Unused fields.
-    kUnused2,
 
     // byte 2
     kFunctionKind,

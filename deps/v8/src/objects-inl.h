@@ -2690,6 +2690,11 @@ bool FrameArray::IsWasmFrame(int frame_ix) const {
   return (flags & kIsWasmFrame) != 0;
 }
 
+bool FrameArray::IsWasmInterpretedFrame(int frame_ix) const {
+  const int flags = Flags(frame_ix)->value();
+  return (flags & kIsWasmInterpretedFrame) != 0;
+}
+
 bool FrameArray::IsAsmJsWasmFrame(int frame_ix) const {
   const int flags = Flags(frame_ix)->value();
   return (flags & kIsAsmJsWasmFrame) != 0;
@@ -5966,6 +5971,8 @@ BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, is_declaration,
                kIsDeclaration)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, marked_for_tier_up,
                kMarkedForTierUp)
+BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints,
+               has_concurrent_optimization_job, kHasConcurrentOptimizationJob)
 
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, needs_home_object,
                kNeedsHomeObject)
