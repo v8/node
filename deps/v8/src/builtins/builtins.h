@@ -182,7 +182,6 @@ class Isolate;
   API(HandleApiCall)                                                           \
   API(HandleApiCallAsFunction)                                                 \
   API(HandleApiCallAsConstructor)                                              \
-  ASM(HandleFastApiCall)                                                       \
                                                                                \
   /* Adapters for Turbofan into runtime */                                     \
   ASM(AllocateInNewSpace)                                                      \
@@ -275,6 +274,8 @@ class Isolate;
   CPP(ArraySplice)                                                             \
   CPP(ArrayUnshift)                                                            \
   TFJ(ArrayForEach, 2)                                                         \
+  TFJ(ArrayEvery, 2)                                                           \
+  TFJ(ArraySome, 2)                                                            \
   /* ES6 #sec-array.prototype.entries */                                       \
   TFJ(ArrayPrototypeEntries, 0)                                                \
   /* ES6 #sec-array.prototype.keys */                                          \
@@ -732,6 +733,15 @@ class Isolate;
   TFJ(AtomicsLoad, 2)                                                          \
   TFJ(AtomicsStore, 3)                                                         \
   TFJ(AtomicsExchange, 3)                                                      \
+  CPP(AtomicsCompareExchange)                                                  \
+  CPP(AtomicsAdd)                                                              \
+  CPP(AtomicsSub)                                                              \
+  CPP(AtomicsAnd)                                                              \
+  CPP(AtomicsOr)                                                               \
+  CPP(AtomicsXor)                                                              \
+  CPP(AtomicsIsLockFree)                                                       \
+  CPP(AtomicsWait)                                                             \
+  CPP(AtomicsWake)                                                             \
                                                                                \
   /* String */                                                                 \
   ASM(StringConstructor)                                                       \
@@ -806,6 +816,7 @@ class Isolate;
   TFJ(SymbolPrototypeValueOf, 0)                                               \
                                                                                \
   /* TypedArray */                                                             \
+  TFJ(TypedArrayConstructByArrayBuffer, 5)                                     \
   TFJ(TypedArrayConstructByLength, 3)                                          \
   TFJ(TypedArrayInitialize, 6)                                                 \
   CPP(TypedArrayPrototypeBuffer)                                               \
@@ -825,6 +836,8 @@ class Isolate;
   CPP(TypedArrayPrototypeCopyWithin)                                           \
   /* ES7 #sec-%typedarray%.prototype.includes */                               \
   CPP(TypedArrayPrototypeIncludes)                                             \
+  /* ES6 #sec-%typedarray%.prototype.indexof */                                \
+  CPP(TypedArrayPrototypeIndexOf)                                              \
                                                                                \
   /* Wasm */                                                                   \
   TFS(WasmStackGuard, BUILTIN, kNoExtraICState, WasmRuntimeCall, 1)            \
@@ -851,6 +864,11 @@ class Isolate;
                                                                                \
   /* proposal-async-iteration/#sec-async-iterator-value-unwrap-functions */    \
   TFJ(AsyncIteratorValueUnwrap, 1)
+
+#define BUILTIN_EXCEPTION_PREDICTION_LIST(V)                    \
+  V(AsyncFromSyncIteratorPrototypeNext, is_promise_rejection)   \
+  V(AsyncFromSyncIteratorPrototypeReturn, is_promise_rejection) \
+  V(AsyncFromSyncIteratorPrototypeThrow, is_promise_rejection)
 
 #define IGNORE_BUILTIN(...)
 

@@ -127,51 +127,6 @@ function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2, conservative) {
 }
 
 macro TYPED_ARRAY_CONSTRUCTOR(ARRAY_ID, NAME, ELEMENT_SIZE)
-function NAMEConstructByArrayBuffer(obj, buffer, byteOffset, length) {
-  var offset;
-  if (!IS_UNDEFINED(byteOffset)) {
-    offset = ToIndex(byteOffset, kInvalidTypedArrayLength);
-    if (offset % ELEMENT_SIZE !== 0) {
-      throw %make_range_error(kInvalidTypedArrayAlignment,
-                           "start offset", "NAME", ELEMENT_SIZE);
-    }
-  } else {
-    offset = 0;
-  }
-  if (!IS_UNDEFINED(length)) {
-    length = ToIndex(length, kInvalidTypedArrayLength);
-  }
-  if (length > %_MaxSmi()) {
-    // Note: this is not per spec, but rather a constraint of our current
-    // representation (which uses smi's).
-    throw %make_range_error(kInvalidTypedArrayLength);
-  }
-
-  var bufferByteLength = %_ArrayBufferGetByteLength(buffer);
-
-  var newByteLength;
-  if (IS_UNDEFINED(length)) {
-    if (bufferByteLength % ELEMENT_SIZE !== 0) {
-      throw %make_range_error(kInvalidTypedArrayAlignment,
-                           "byte length", "NAME", ELEMENT_SIZE);
-    }
-    newByteLength = bufferByteLength - offset;
-    if (newByteLength < 0) {
-      throw %make_range_error(kInvalidOffset, offset);
-    }
-  } else {
-    newByteLength = length * ELEMENT_SIZE;
-    if (offset + newByteLength > bufferByteLength) {
-      throw %make_range_error(kInvalidTypedArrayLength);
-    }
-  }
-  var newLength = newByteLength / ELEMENT_SIZE;
-  if (newLength > %_MaxSmi()) {
-    throw %make_range_error(kInvalidTypedArrayLength);
-  }
-  %typed_array_initialize(obj, newLength, buffer, offset, newByteLength, true);
-}
-
 function NAMEConstructByArrayLike(obj, arrayLike, length) {
   var l = ToPositiveInteger(length, kInvalidTypedArrayLength);
 
@@ -234,7 +189,8 @@ function NAMEConstructByTypedArray(obj, typedArray) {
 function NAMEConstructor(arg1, arg2, arg3) {
   if (!IS_UNDEFINED(new.target)) {
     if (IS_ARRAYBUFFER(arg1) || IS_SHAREDARRAYBUFFER(arg1)) {
-      NAMEConstructByArrayBuffer(this, arg1, arg2, arg3);
+      %typed_array_construct_by_array_buffer(
+              this, arg1, arg2, arg3, ELEMENT_SIZE);
     } else if (IS_TYPEDARRAY(arg1)) {
       NAMEConstructByTypedArray(this, arg1);
     } else if (IS_RECEIVER(arg1)) {
@@ -514,40 +470,6 @@ function TypedArraySort(comparefn) {
 }
 
 
-// ES6 section 22.2.3.13
-function TypedArrayIndexOf(element, index) {
-  if (!IS_TYPEDARRAY(this)) throw %make_type_error(kNotTypedArray);
-
-  var length = %_TypedArrayGetLength(this);
-
-  if (length === 0) return -1;
-  if (!IS_NUMBER(element)) return -1;
-  var n = TO_INTEGER(index);
-
-  var k;
-  if (n === 0) {
-    k = 0;
-  } else if (n > 0) {
-    k = n;
-  } else {
-    k = length + n;
-    if (k < 0) {
-      k = 0;
-    }
-  }
-
-  while (k < length) {
-    var elementK = this[k];
-    if (element === elementK) {
-      return k;
-    }
-    ++k;
-  }
-  return -1;
-}
-%FunctionSetLength(TypedArrayIndexOf, 1);
-
-
 // ES6 section 22.2.3.16
 function TypedArrayLastIndexOf(element, index) {
   if (!IS_TYPEDARRAY(this)) throw %make_type_error(kNotTypedArray);
@@ -780,7 +702,6 @@ utils.InstallFunctions(GlobalTypedArray.prototype, DONT_ENUM, [
   "filter", TypedArrayFilter,
   "find", TypedArrayFind,
   "findIndex", TypedArrayFindIndex,
-  "indexOf", TypedArrayIndexOf,
   "join", TypedArrayJoin,
   "lastIndexOf", TypedArrayLastIndexOf,
   "forEach", TypedArrayForEach,

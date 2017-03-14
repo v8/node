@@ -137,10 +137,6 @@ class CallHandlerHelper;
 class EscapableHandleScope;
 template<typename T> class ReturnValue;
 
-namespace experimental {
-class FastAccessorBuilder;
-}  // namespace experimental
-
 namespace internal {
 class Arguments;
 class Heap;
@@ -5101,16 +5097,6 @@ class V8_EXPORT FunctionTemplate : public Template {
                                                    size_t index);
 
   /**
-   * Creates a function template with a fast handler. If a fast handler is set,
-   * the callback cannot be null.
-   */
-  static Local<FunctionTemplate> NewWithFastHandler(
-      Isolate* isolate, FunctionCallback callback,
-      experimental::FastAccessorBuilder* fast_handler = nullptr,
-      Local<Value> data = Local<Value>(),
-      Local<Signature> signature = Local<Signature>(), int length = 0);
-
-  /**
    * Creates a function template backed/cached by a private property.
    */
   static Local<FunctionTemplate> NewWithCache(
@@ -5137,9 +5123,8 @@ class V8_EXPORT FunctionTemplate : public Template {
    * callback is called whenever the function created from this
    * FunctionTemplate is called.
    */
-  void SetCallHandler(
-      FunctionCallback callback, Local<Value> data = Local<Value>(),
-      experimental::FastAccessorBuilder* fast_handler = nullptr);
+  void SetCallHandler(FunctionCallback callback,
+                      Local<Value> data = Local<Value>());
 
   /** Set the predefined length property for the FunctionTemplate. */
   void SetLength(int length);
@@ -7632,6 +7617,35 @@ class V8_EXPORT V8 {
    * V8 was disposed.
    */
   static void ShutdownPlatform();
+
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+  /**
+   * Give the V8 signal handler a chance to handle a fault.
+   *
+   * This function determines whether a memory access violation can be recovered
+   * by V8. If so, it will return true and modify context to return to a code
+   * fragment that can recover from the fault. Otherwise, TryHandleSignal will
+   * return false.
+   *
+   * The parameters to this function correspond to those passed to a Linux
+   * signal handler.
+   *
+   * \param signal_number The signal number.
+   *
+   * \param info A pointer to the siginfo_t structure provided to the signal
+   * handler.
+   *
+   * \param context The third argument passed to the Linux signal handler, which
+   * points to a ucontext_t structure.
+   */
+  static bool TryHandleSignal(int signal_number, void* info, void* context);
+#endif  // V8_OS_LINUX
+
+  /**
+   * Enable the default signal handler rather than using one provided by the
+   * embedder.
+   */
+  static bool RegisterDefaultSignalHandler();
 
  private:
   V8();

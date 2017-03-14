@@ -63,16 +63,7 @@ namespace internal {
   F(ThrowNotIntegerSharedTypedArrayError, 1, 1) \
   F(ThrowNotInt32SharedTypedArrayError, 1, 1)   \
   F(ThrowInvalidAtomicAccessIndexError, 0, 1)   \
-  F(AtomicsCompareExchange, 4, 1)               \
-  F(AtomicsAdd, 3, 1)                           \
-  F(AtomicsSub, 3, 1)                           \
-  F(AtomicsAnd, 3, 1)                           \
-  F(AtomicsOr, 3, 1)                            \
-  F(AtomicsXor, 3, 1)                           \
   F(AtomicsExchange, 3, 1)                      \
-  F(AtomicsIsLockFree, 1, 1)                    \
-  F(AtomicsWait, 4, 1)                          \
-  F(AtomicsWake, 3, 1)                          \
   F(AtomicsNumWaitersForTesting, 2, 1)          \
   F(SetAllowAtomicsWait, 1, 1)
 
@@ -317,6 +308,7 @@ namespace internal {
   F(ThrowIncompatibleMethodReceiver, 2, 1)          \
   F(ThrowInvalidHint, 1, 1)                         \
   F(ThrowInvalidStringLength, 0, 1)                 \
+  F(ThrowInvalidTypedArrayAlignment, 2, 1)          \
   F(ThrowIteratorResultNotAnObject, 1, 1)           \
   F(ThrowSymbolIteratorInvalid, 0, 1)               \
   F(ThrowNonCallableInInstanceOfCheck, 0, 1)        \
@@ -641,7 +633,9 @@ namespace internal {
   F(WasmThrow, 2, 1)                   \
   F(WasmGetCaughtExceptionValue, 1, 1) \
   F(WasmRunInterpreter, 3, 1)          \
-  F(WasmStackGuard, 0, 1)
+  F(WasmStackGuard, 0, 1)              \
+  F(SetThreadInWasm, 0, 1)             \
+  F(ClearThreadInWasm, 0, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_PAIR(F) \
   F(LoadLookupSlotForCall, 1, 2)
@@ -796,6 +790,8 @@ class Runtime : public AllStatic {
   static void ArrayIdToTypeAndSize(int array_id, ExternalArrayType* type,
                                    ElementsKind* fixed_elements_kind,
                                    size_t* element_size);
+
+  static const char* ElementsKindToType(ElementsKind fixed_elements_kind);
 
   static MaybeHandle<JSArray> GetInternalProperties(Isolate* isolate,
                                                     Handle<Object>);
