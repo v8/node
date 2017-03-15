@@ -268,22 +268,15 @@ DEFINE_BOOL(future, FUTURE_BOOL,
             "not-too-far future")
 DEFINE_IMPLICATION(future, turbo)
 
-DEFINE_DUAL_IMPLICATION(turbo, ignition_staging)
+DEFINE_DUAL_IMPLICATION(turbo, ignition)
 DEFINE_DUAL_IMPLICATION(turbo, enable_fast_array_builtins)
 DEFINE_DUAL_IMPLICATION(turbo, thin_strings)
-
-// TODO(rmcilroy): Remove ignition-staging and set these implications directly
-// with the turbo flag.
-DEFINE_BOOL(ignition_staging, false, "use ignition with all staged features")
-DEFINE_DUAL_IMPLICATION(ignition_staging, ignition)
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
             "pretenure with allocation sites")
 DEFINE_BOOL(mark_shared_functions_for_tier_up, true,
             "mark shared functions for tier up")
-DEFINE_BOOL(mark_optimizing_shared_functions, true,
-            "mark shared functions if they are concurrently optimizing")
 DEFINE_BOOL(page_promotion, true, "promote pages based on utilization")
 DEFINE_INT(page_promotion_threshold, 70,
            "min percentage of live bytes on a page to enable fast evacuation")
@@ -918,6 +911,10 @@ DEFINE_BOOL(trace_for_in_enumerate, false, "Trace for-in enumerate slow-paths")
 DEFINE_BOOL(trace_maps, false, "trace map creation")
 #endif
 
+// preparser.cc
+DEFINE_BOOL(use_parse_tasks, false, "use parse tasks")
+DEFINE_BOOL(trace_parse_tasks, false, "trace parse task creation")
+
 // parser.cc
 DEFINE_BOOL(allow_natives_syntax, false, "allow natives syntax")
 DEFINE_BOOL(trace_parse, false, "trace parsing and preparsing")
@@ -1278,6 +1275,7 @@ DEFINE_NEG_IMPLICATION(single_threaded, concurrent_recompilation)
 DEFINE_NEG_IMPLICATION(single_threaded, concurrent_sweeping)
 DEFINE_NEG_IMPLICATION(single_threaded, parallel_compaction)
 DEFINE_NEG_IMPLICATION(single_threaded, concurrent_store_buffer)
+DEFINE_NEG_IMPLICATION(single_threaded, compiler_dispatcher)
 
 #undef FLAG
 

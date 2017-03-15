@@ -637,9 +637,15 @@ static inline int32_t ExecuteGrowMemory(uint32_t delta_pages,
             instance->module->max_mem_pages) {
       return -1;
     }
-    new_mem_start = static_cast<byte*>(realloc(instance->mem_start, new_size));
-    if (!new_mem_start) {
-      return -1;
+    if (EnableGuardRegions()) {
+      v8::base::OS::Unprotect(instance->mem_start, new_size);
+      new_mem_start = instance->mem_start;
+    } else {
+      new_mem_start =
+          static_cast<byte*>(realloc(instance->mem_start, new_size));
+      if (!new_mem_start) {
+        return -1;
+      }
     }
     // Zero initializing uninitialized memory from realloc
     memset(new_mem_start + old_size, 0, new_size - old_size);
@@ -847,25 +853,27 @@ class CodeMap {
   CodeMap(const WasmModule* module, const uint8_t* module_start, Zone* zone)
       : zone_(zone), module_(module), interpreter_code_(zone) {
     if (module == nullptr) return;
-    for (size_t i = 0; i < module->functions.size(); ++i) {
-      const WasmFunction* function = &module->functions[i];
-      const byte* code_start = module_start + function->code_start_offset;
-      const byte* code_end = module_start + function->code_end_offset;
-      AddFunction(function, code_start, code_end);
+    interpreter_code_.reserve(module->functions.size());
+    for (const WasmFunction& function : module->functions) {
+      if (function.imported) {
+        DCHECK_EQ(function.code_start_offset, function.code_end_offset);
+        AddFunction(&function, nullptr, nullptr);
+      } else {
+        const byte* code_start = module_start + function.code_start_offset;
+        const byte* code_end = module_start + function.code_end_offset;
+        AddFunction(&function, code_start, code_end);
+      }
     }
   }
 
-  InterpreterCode* FindCode(const WasmFunction* function) {
-    if (function->func_index < interpreter_code_.size()) {
-      InterpreterCode* code = &interpreter_code_[function->func_index];
-      DCHECK_EQ(function, code->function);
-      return Preprocess(code);
-    }
-    return nullptr;
+  InterpreterCode* GetCode(const WasmFunction* function) {
+    InterpreterCode* code = GetCode(function->func_index);
+    DCHECK_EQ(function, code->function);
+    return code;
   }
 
   InterpreterCode* GetCode(uint32_t function_index) {
-    CHECK_LT(function_index, interpreter_code_.size());
+    DCHECK_LT(function_index, interpreter_code_.size());
     return Preprocess(&interpreter_code_[function_index]);
   }
 
@@ -880,7 +888,8 @@ class CodeMap {
   }
 
   InterpreterCode* Preprocess(InterpreterCode* code) {
-    if (code->targets == nullptr && code->start) {
+    DCHECK_EQ(code->function->imported, code->start == nullptr);
+    if (code->targets == nullptr && code->start != nullptr) {
       // Compute the control targets map and the local declarations.
       CHECK(DecodeLocalDecls(&code->locals, code->start, code->end));
       code->targets = new (zone_) ControlTransfers(
@@ -889,8 +898,8 @@ class CodeMap {
     return code;
   }
 
-  int AddFunction(const WasmFunction* function, const byte* code_start,
-                  const byte* code_end) {
+  void AddFunction(const WasmFunction* function, const byte* code_start,
+                   const byte* code_end) {
     InterpreterCode code = {
         function, BodyLocalDecls(zone_),         code_start,
         code_end, const_cast<byte*>(code_start), const_cast<byte*>(code_end),
@@ -898,20 +907,19 @@ class CodeMap {
 
     DCHECK_EQ(interpreter_code_.size(), function->func_index);
     interpreter_code_.push_back(code);
-    return static_cast<int>(interpreter_code_.size()) - 1;
   }
 
-  bool SetFunctionCode(const WasmFunction* function, const byte* start,
+  void SetFunctionCode(const WasmFunction* function, const byte* start,
                        const byte* end) {
-    InterpreterCode* code = FindCode(function);
-    if (code == nullptr) return false;
+    DCHECK_LT(function->func_index, interpreter_code_.size());
+    InterpreterCode* code = &interpreter_code_[function->func_index];
+    DCHECK_EQ(function, code->function);
     code->targets = nullptr;
     code->orig_start = start;
     code->orig_end = end;
     code->start = const_cast<byte*>(start);
     code->end = const_cast<byte*>(end);
     Preprocess(code);
-    return true;
   }
 };
 
@@ -932,41 +940,31 @@ class ThreadImpl {
 
   WasmInterpreter::State state() { return state_; }
 
-  void PushFrame(const WasmFunction* function, WasmVal* args) {
-    InterpreterCode* code = codemap()->FindCode(function);
-    CHECK_NOT_NULL(code);
-    ++num_interpreted_calls_;
-    frames_.push_back({code, 0, stack_.size()});
+  void InitFrame(const WasmFunction* function, WasmVal* args) {
+    InterpreterCode* code = codemap()->GetCode(function);
     for (size_t i = 0; i < function->sig->parameter_count(); ++i) {
       stack_.push_back(args[i]);
     }
-    frames_.back().pc = InitLocals(code);
-    blocks_.push_back(
-        {0, stack_.size(), frames_.size(),
-         static_cast<uint32_t>(code->function->sig->return_count())});
-    TRACE("  => PushFrame(#%u @%zu)\n", code->function->func_index,
-          frames_.back().pc);
+    PushFrame(code);
   }
 
   WasmInterpreter::State Run() {
+    DCHECK(state_ == WasmInterpreter::STOPPED ||
+           state_ == WasmInterpreter::PAUSED);
     do {
       TRACE("  => Run()\n");
-      if (state_ == WasmInterpreter::STOPPED ||
-          state_ == WasmInterpreter::PAUSED) {
-        state_ = WasmInterpreter::RUNNING;
-        Execute(frames_.back().code, frames_.back().pc, kRunSteps);
-      }
+      state_ = WasmInterpreter::RUNNING;
+      Execute(frames_.back().code, frames_.back().pc, kRunSteps);
     } while (state_ == WasmInterpreter::STOPPED);
     return state_;
   }
 
   WasmInterpreter::State Step() {
+    DCHECK(state_ == WasmInterpreter::STOPPED ||
+           state_ == WasmInterpreter::PAUSED);
     TRACE("  => Step()\n");
-    if (state_ == WasmInterpreter::STOPPED ||
-        state_ == WasmInterpreter::PAUSED) {
-      state_ = WasmInterpreter::RUNNING;
-      Execute(frames_.back().code, frames_.back().pc, 1);
-    }
+    state_ = WasmInterpreter::RUNNING;
+    Execute(frames_.back().code, frames_.back().pc, 1);
     return state_;
   }
 
@@ -1059,21 +1057,19 @@ class ThreadImpl {
   }
 
   // Push a frame with arguments already on the stack.
-  void PushFrame(InterpreterCode* code, pc_t pc) {
-    CHECK_NOT_NULL(code);
-    DCHECK(!frames_.empty());
+  void PushFrame(InterpreterCode* code) {
+    DCHECK_NOT_NULL(code);
     ++num_interpreted_calls_;
-    frames_.back().pc = pc;
     size_t arity = code->function->sig->parameter_count();
-    DCHECK_GE(stack_.size(), arity);
     // The parameters will overlap the arguments already on the stack.
+    DCHECK_GE(stack_.size(), arity);
     frames_.push_back({code, 0, stack_.size() - arity});
     blocks_.push_back(
         {0, stack_.size(), frames_.size(),
          static_cast<uint32_t>(code->function->sig->return_count())});
     frames_.back().pc = InitLocals(code);
-    TRACE("  => push func#%u @%zu\n", code->function->func_index,
-          frames_.back().pc);
+    TRACE("  => PushFrame #%zu (#%u @%zu)\n", frames_.size() - 1,
+          code->function->func_index, frames_.back().pc);
   }
 
   pc_t InitLocals(InterpreterCode* code) {
@@ -1102,9 +1098,8 @@ class ThreadImpl {
   }
 
   void CommitPc(pc_t pc) {
-    if (!frames_.empty()) {
-      frames_.back().pc = pc;
-    }
+    DCHECK(!frames_.empty());
+    frames_.back().pc = pc;
   }
 
   bool SkipBreakpoint(InterpreterCode* code, pc_t pc) {
@@ -1167,7 +1162,8 @@ class ThreadImpl {
       decoder->Reset((*code)->start, (*code)->end);
       *pc = ReturnPc(decoder, *code, top->pc);
       *limit = top->code->end - top->code->start;
-      TRACE("  => pop func#%u @%zu\n", (*code)->function->func_index, *pc);
+      TRACE("  => Return to #%zu (#%u @%zu)\n", frames_.size() - 1,
+            (*code)->function->func_index, *pc);
       DoStackTransfer(dest, arity);
       return true;
     }
@@ -1175,7 +1171,8 @@ class ThreadImpl {
 
   void DoCall(Decoder* decoder, InterpreterCode* target, pc_t* pc,
               pc_t* limit) {
-    PushFrame(target, *pc);
+    frames_.back().pc = *pc;
+    PushFrame(target);
     *pc = frames_.back().pc;
     *limit = target->end - target->start;
     decoder->Reset(target->start, target->end);
@@ -1415,6 +1412,10 @@ class ThreadImpl {
         case kExprCallFunction: {
           CallFunctionOperand operand(&decoder, code->at(pc));
           code = codemap()->GetCode(operand.index);
+          if (code->function->imported) {
+            // TODO(clemensh): Call imported function.
+            UNREACHABLE();
+          }
           DoCall(&decoder, code, &pc, &limit);
           PAUSE_IF_BREAK_FLAG(AfterCall);
           continue;
@@ -1425,9 +1426,8 @@ class ThreadImpl {
           // Assume only one table for now.
           DCHECK_LE(module()->function_tables.size(), 1u);
           InterpreterCode* target = codemap()->GetIndirectCode(0, entry_index);
-          if (target == nullptr) {
-            return DoTrap(kTrapFuncInvalid, pc);
-          } else if (target->function->sig_index != operand.index) {
+          if (target == nullptr) return DoTrap(kTrapFuncInvalid, pc);
+          if (target->function->sig_index != operand.index) {
             // If not an exact match, we have to do a canonical check.
             // TODO(titzer): make this faster with some kind of caching?
             const WasmIndirectFunctionTable* table =
@@ -1439,7 +1439,10 @@ class ThreadImpl {
               return DoTrap(kTrapFuncSigMismatch, pc);
             }
           }
-
+          if (target->function->imported) {
+            // TODO(clemensh): Call imported function.
+            UNREACHABLE();
+          }
           DoCall(&decoder, target, &pc, &limit);
           code = target;
           PAUSE_IF_BREAK_FLAG(AfterCall);
@@ -1707,7 +1710,8 @@ class ThreadImpl {
 
   void Push(pc_t pc, WasmVal val) {
     // TODO(titzer): store PC as well?
-    if (val.type != kWasmStmt) stack_.push_back(val);
+    DCHECK_NE(kWasmStmt, val.type);
+    stack_.push_back(val);
   }
 
   void TraceStack(const char* phase, pc_t pc) {
@@ -1780,9 +1784,9 @@ static ThreadImpl* ToImpl(WasmInterpreter::Thread* thread) {
 WasmInterpreter::State WasmInterpreter::Thread::state() {
   return ToImpl(this)->state();
 }
-void WasmInterpreter::Thread::PushFrame(const WasmFunction* function,
+void WasmInterpreter::Thread::InitFrame(const WasmFunction* function,
                                         WasmVal* args) {
-  return ToImpl(this)->PushFrame(function, args);
+  ToImpl(this)->InitFrame(function, args);
 }
 WasmInterpreter::State WasmInterpreter::Thread::Run() {
   return ToImpl(this)->Run();
@@ -1866,8 +1870,7 @@ void WasmInterpreter::Pause() { internals_->threads_[0].Pause(); }
 
 bool WasmInterpreter::SetBreakpoint(const WasmFunction* function, pc_t pc,
                                     bool enabled) {
-  InterpreterCode* code = internals_->codemap_.FindCode(function);
-  if (!code) return false;
+  InterpreterCode* code = internals_->codemap_.GetCode(function);
   size_t size = static_cast<size_t>(code->end - code->start);
   // Check bounds for {pc}.
   if (pc < code->locals.encoded_size || pc >= size) return false;
@@ -1887,8 +1890,7 @@ bool WasmInterpreter::SetBreakpoint(const WasmFunction* function, pc_t pc,
 }
 
 bool WasmInterpreter::GetBreakpoint(const WasmFunction* function, pc_t pc) {
-  InterpreterCode* code = internals_->codemap_.FindCode(function);
-  if (!code) return false;
+  InterpreterCode* code = internals_->codemap_.GetCode(function);
   size_t size = static_cast<size_t>(code->end - code->start);
   // Check bounds for {pc}.
   if (pc < code->locals.encoded_size || pc >= size) return false;
@@ -1923,14 +1925,14 @@ void WasmInterpreter::WriteMemory(size_t offset, WasmVal val) {
   UNIMPLEMENTED();
 }
 
-int WasmInterpreter::AddFunctionForTesting(const WasmFunction* function) {
-  return internals_->codemap_.AddFunction(function, nullptr, nullptr);
+void WasmInterpreter::AddFunctionForTesting(const WasmFunction* function) {
+  internals_->codemap_.AddFunction(function, nullptr, nullptr);
 }
 
-bool WasmInterpreter::SetFunctionCodeForTesting(const WasmFunction* function,
+void WasmInterpreter::SetFunctionCodeForTesting(const WasmFunction* function,
                                                 const byte* start,
                                                 const byte* end) {
-  return internals_->codemap_.SetFunctionCode(function, start, end);
+  internals_->codemap_.SetFunctionCode(function, start, end);
 }
 
 ControlTransferMap WasmInterpreter::ComputeControlTransfersForTesting(
