@@ -507,7 +507,6 @@ Parser::Parser(ParseInfo* info)
                          true),
       scanner_(info->unicode_cache()),
       reusable_preparser_(nullptr),
-      original_scope_(nullptr),
       mode_(PARSE_EAGERLY),  // Lazy mode must be set explicitly.
       target_stack_(nullptr),
       compile_options_(info->compile_options()),
@@ -624,6 +623,12 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
 
   {
     std::unique_ptr<Utf16CharacterStream> stream(ScannerStream::For(source));
+    if (FLAG_use_parse_tasks) {
+      // FIXME(wiktorg) make it useful for something
+      scanner_.Initialize(stream.get());
+      reusable_preparser()->PreParseProgram();
+      stream->Seek(0);
+    }
     scanner_.Initialize(stream.get());
     result = DoParseProgram(info);
   }
@@ -2781,6 +2786,31 @@ Parser::LazyParsingResult Parser::SkipFunction(
       return kLazyParsingComplete;
     }
     cached_parse_data_->Reject();
+  }
+
+  if (FLAG_use_parse_tasks && !is_inner_function &&
+      reusable_preparser()->preparse_data()) {
+    // All top-level functions are already preparsed and parser tasks for eager
+    // functions are already created. Use data gathered during the preparse step
+    // to skip the function.
+    PreParseData::FunctionData data =
+        reusable_preparser()->preparse_data()->GetTopLevelFunctionData(
+            function_scope->start_position());
+    if (data.is_valid()) {
+      if (FLAG_trace_parse_tasks) {
+        PrintF("Skipping top level func @ %d : %d using preparse data\n",
+               data.start, data.end);
+      }
+      function_scope->set_end_position(data.end);
+      scanner()->SeekForward(data.end - 1);
+      Expect(Token::RBRACE, CHECK_OK_VALUE(kLazyParsingComplete));
+      *num_parameters = data.num_parameters;
+      *function_length = data.function_length;
+      *has_duplicate_parameters = data.has_duplicate_parameters;
+      *expected_property_count = data.expected_property_count;
+      SkipFunctionLiterals(data.num_inner_functions);
+      return kLazyParsingComplete;
+    }
   }
 
   // With no cached data, we partially parse the function, without building an
