@@ -17,6 +17,7 @@
 #include "src/frames-inl.h"
 #include "src/globals.h"
 #include "src/isolate-inl.h"
+#include "src/macro-assembler-inl.h"
 #include "src/macro-assembler.h"
 #include "src/snapshot/snapshot.h"
 #include "src/tracing/trace-event.h"
@@ -1444,10 +1445,11 @@ void FullCodeGenerator::VisitRewritableExpression(RewritableExpression* expr) {
 
 bool FullCodeGenerator::TryLiteralCompare(CompareOperation* expr) {
   Expression* sub_expr;
-  Handle<String> check;
-  if (expr->IsLiteralCompareTypeof(&sub_expr, &check)) {
+  Literal* literal;
+  if (expr->IsLiteralCompareTypeof(&sub_expr, &literal)) {
     SetExpressionPosition(expr);
-    EmitLiteralCompareTypeof(expr, sub_expr, check);
+    EmitLiteralCompareTypeof(expr, sub_expr,
+                             Handle<String>::cast(literal->value()));
     return true;
   }
 

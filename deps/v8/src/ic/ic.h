@@ -58,25 +58,6 @@ class IC {
     return IsStoreIC() || IsStoreOwnIC() || IsKeyedStoreIC();
   }
 
-  static inline Handle<Map> GetHandlerCacheHolder(Handle<Map> receiver_map,
-                                                  bool receiver_is_holder,
-                                                  Isolate* isolate,
-                                                  CacheHolderFlag* flag);
-  static inline Handle<Map> GetICCacheHolder(Handle<Map> receiver_map,
-                                             Isolate* isolate,
-                                             CacheHolderFlag* flag);
-
-  static bool ICUseVector(Code::Kind kind) {
-    return kind == Code::LOAD_IC || kind == Code::LOAD_GLOBAL_IC ||
-           kind == Code::KEYED_LOAD_IC || kind == Code::STORE_IC ||
-           kind == Code::KEYED_STORE_IC;
-  }
-  static bool ICUseVector(FeedbackSlotKind kind) {
-    return IsLoadICKind(kind) || IsLoadGlobalICKind(kind) ||
-           IsKeyedLoadICKind(kind) || IsStoreICKind(kind) ||
-           IsStoreOwnICKind(kind) || IsKeyedStoreICKind(kind);
-  }
-
   // The ICs that don't pass slot and vector through the stack have to
   // save/restore them in the dispatcher.
   static bool ShouldPushPopSlotAndVector(Code::Kind kind);
@@ -107,13 +88,6 @@ class IC {
   // Set the call-site target.
   inline void set_target(Code* code);
   bool is_vector_set() { return vector_set_; }
-
-  bool UseVector() const {
-    bool use = ICUseVector(kind());
-    // If we are supposed to use the nexus, verify the nexus is non-null.
-    DCHECK(!use || nexus_ != nullptr);
-    return use;
-  }
 
   // Configure for most states.
   void ConfigureVectorState(IC::State new_state, Handle<Object> key);
@@ -155,8 +129,7 @@ class IC {
     return Handle<Code>::null();
   }
   virtual Handle<Object> CompileHandler(LookupIterator* lookup,
-                                        Handle<Object> value,
-                                        CacheHolderFlag cache_holder) {
+                                        Handle<Object> value) {
     UNREACHABLE();
     return Handle<Object>::null();
   }
@@ -229,7 +202,6 @@ class IC {
   void FindTargetMaps() {
     if (target_maps_set_) return;
     target_maps_set_ = true;
-    DCHECK(UseVector());
     nexus()->ExtractMaps(&target_maps_);
   }
 
@@ -306,8 +278,8 @@ class LoadIC : public IC {
 
   Handle<Object> GetMapIndependentHandler(LookupIterator* lookup) override;
 
-  Handle<Object> CompileHandler(LookupIterator* lookup, Handle<Object> unused,
-                                CacheHolderFlag cache_holder) override;
+  Handle<Object> CompileHandler(LookupIterator* lookup,
+                                Handle<Object> unused) override;
 
  private:
   // Creates a data handler that represents a load of a field by given index.
@@ -393,8 +365,8 @@ class StoreIC : public IC {
   void UpdateCaches(LookupIterator* lookup, Handle<Object> value,
                     JSReceiver::StoreFromKeyed store_mode);
   Handle<Object> GetMapIndependentHandler(LookupIterator* lookup) override;
-  Handle<Object> CompileHandler(LookupIterator* lookup, Handle<Object> value,
-                                CacheHolderFlag cache_holder) override;
+  Handle<Object> CompileHandler(LookupIterator* lookup,
+                                Handle<Object> value) override;
 
  private:
   Handle<Object> StoreTransition(Handle<Map> receiver_map,

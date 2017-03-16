@@ -206,7 +206,7 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
     cached_parse_data_ = NULL;
   }
 
-  static bool const IsPreParser() { return false; }
+  static bool IsPreParser() { return false; }
 
   void ParseOnBackground(ParseInfo* info);
 
@@ -307,6 +307,7 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
                         parsing_on_main_thread_);
 #define SET_ALLOW(name) reusable_preparser_->set_allow_##name(allow_##name());
       SET_ALLOW(natives);
+      SET_ALLOW(tailcalls);
       SET_ALLOW(harmony_do_expressions);
       SET_ALLOW(harmony_function_sent);
       SET_ALLOW(harmony_trailing_commas);
@@ -314,6 +315,7 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
       SET_ALLOW(harmony_object_rest_spread);
       SET_ALLOW(harmony_dynamic_import);
       SET_ALLOW(harmony_async_iteration);
+      SET_ALLOW(harmony_template_escapes);
 #undef SET_ALLOW
     }
     return reusable_preparser_;

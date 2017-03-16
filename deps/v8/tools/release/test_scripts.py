@@ -1271,7 +1271,7 @@ LOG=N
       Cmd("git commit -aF \"%s\"" % TEST_CONFIG["COMMITMSG_FILE"], ""),
       RL("reviewer@chromium.org"),  # V8 reviewer.
       Cmd("git cl upload --send-mail -r \"reviewer@chromium.org\" "
-          "--bypass-hooks --cc \"ulan@chromium.org\"", ""),
+          "--bypass-hooks --cc \"ulan@chromium.org\" --gerrit", ""),
       Cmd("git checkout -f %s" % TEST_CONFIG["BRANCHNAME"], ""),
       RL("LGTM"),  # Enter LGTM for V8 CL.
       Cmd("git cl presubmit", "Presubmit successfull\n"),
@@ -1653,7 +1653,7 @@ NOTREECHECKS=true
       Cmd("git commit -aF \"%s\"" % TEST_CONFIG["COMMITMSG_FILE"], ""),
       RL("reviewer@chromium.org"),  # V8 reviewer.
       Cmd("git cl upload --send-mail -r \"reviewer@chromium.org\" "
-          "--bypass-hooks --cc \"ulan@chromium.org\"", ""),
+          "--bypass-hooks --cc \"ulan@chromium.org\" --gerrit", ""),
       Cmd("git checkout -f %s" % TEST_CONFIG["BRANCHNAME"], ""),
       RL("LGTM"),  # Enter LGTM for V8 CL.
       Cmd("git cl presubmit", "Presubmit successfull\n"),
@@ -1920,3 +1920,6 @@ Cr-Commit-Position: refs/heads/4.2.71@{#1}
       },],
     }
     self.assertEquals(expected_json, json.loads(FileToText(json_output)))
+
+if __name__ == '__main__':
+  unittest.main()

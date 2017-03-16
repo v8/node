@@ -1061,6 +1061,22 @@ Node* WasmGraphBuilder::HeapConstant(Handle<HeapObject> value) {
   return jsgraph()->HeapConstant(value);
 }
 
+Node* WasmGraphBuilder::ZeroConstant(wasm::ValueType type) {
+  switch (type) {
+    case wasm::kWasmI32:
+      return Int32Constant(0);
+    case wasm::kWasmI64:
+      return Int64Constant(0);
+    case wasm::kWasmF32:
+      return Float32Constant(0);
+    case wasm::kWasmF64:
+      return Float64Constant(0);
+    default:
+      UNIMPLEMENTED();
+      return nullptr;
+  }
+}
+
 namespace {
 Node* Branch(JSGraph* jsgraph, Node* cond, Node** true_node, Node** false_node,
              Node* control, BranchHint hint) {
@@ -2525,65 +2541,6 @@ Node* WasmGraphBuilder::BuildChangeTaggedToFloat64(Node* value) {
   MachineOperatorBuilder* machine = jsgraph()->machine();
   CommonOperatorBuilder* common = jsgraph()->common();
 
-  if (CanCover(value, IrOpcode::kJSToNumber)) {
-    // ChangeTaggedToFloat64(JSToNumber(x)) =>
-    //   if IsSmi(x) then ChangeSmiToFloat64(x)
-    //   else let y = JSToNumber(x) in
-    //     if IsSmi(y) then ChangeSmiToFloat64(y)
-    //     else BuildLoadHeapNumberValue(y)
-    Node* object = NodeProperties::GetValueInput(value, 0);
-    Node* context = NodeProperties::GetContextInput(value);
-    Node* frame_state = NodeProperties::GetFrameStateInput(value);
-    Node* effect = NodeProperties::GetEffectInput(value);
-    Node* control = NodeProperties::GetControlInput(value);
-
-    const Operator* merge_op = common->Merge(2);
-    const Operator* ephi_op = common->EffectPhi(2);
-    const Operator* phi_op = common->Phi(MachineRepresentation::kFloat64, 2);
-
-    Node* check1 = BuildTestNotSmi(object);
-    Node* branch1 =
-        graph()->NewNode(common->Branch(BranchHint::kFalse), check1, control);
-
-    Node* if_true1 = graph()->NewNode(common->IfTrue(), branch1);
-    Node* vtrue1 = graph()->NewNode(value->op(), object, context, frame_state,
-                                    effect, if_true1);
-    Node* etrue1 = vtrue1;
-
-    Node* check2 = BuildTestNotSmi(vtrue1);
-    Node* branch2 = graph()->NewNode(common->Branch(), check2, if_true1);
-
-    Node* if_true2 = graph()->NewNode(common->IfTrue(), branch2);
-    Node* vtrue2 = BuildLoadHeapNumberValue(vtrue1, if_true2);
-
-    Node* if_false2 = graph()->NewNode(common->IfFalse(), branch2);
-    Node* vfalse2 = BuildChangeSmiToFloat64(vtrue1);
-
-    if_true1 = graph()->NewNode(merge_op, if_true2, if_false2);
-    vtrue1 = graph()->NewNode(phi_op, vtrue2, vfalse2, if_true1);
-
-    Node* if_false1 = graph()->NewNode(common->IfFalse(), branch1);
-    Node* vfalse1 = BuildChangeSmiToFloat64(object);
-    Node* efalse1 = effect;
-
-    Node* merge1 = graph()->NewNode(merge_op, if_true1, if_false1);
-    Node* ephi1 = graph()->NewNode(ephi_op, etrue1, efalse1, merge1);
-    Node* phi1 = graph()->NewNode(phi_op, vtrue1, vfalse1, merge1);
-
-    // Wire the new diamond into the graph, {JSToNumber} can still throw.
-    NodeProperties::ReplaceUses(value, phi1, ephi1, etrue1, etrue1);
-
-    // TODO(mstarzinger): This iteration cuts out the IfSuccess projection from
-    // the node and places it inside the diamond. Come up with a helper method!
-    for (Node* use : etrue1->uses()) {
-      if (use->opcode() == IrOpcode::kIfSuccess) {
-        use->ReplaceUses(merge1);
-        NodeProperties::ReplaceControlInput(branch2, use);
-      }
-    }
-    return phi1;
-  }
-
   Node* check = BuildTestNotSmi(value);
   Node* branch = graph()->NewNode(common->Branch(BranchHint::kFalse), check,
                                   graph()->start());
@@ -2863,9 +2820,17 @@ void WasmGraphBuilder::BuildWasmToJSWrapper(Handle<JSReceiver> target,
     // regenerated at instantiation time.
     Node* context =
         jsgraph()->HeapConstant(jsgraph()->isolate()->native_context());
-    Return(BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError,
-                                         jsgraph(), context, nullptr, 0,
-                                         effect_, *control_));
+    BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, jsgraph(),
+                                  context, nullptr, 0, effect_, *control_);
+    // TODO(wasm): Support multi-return.
+    if (sig->return_count() == 0) {
+      Return(Int32Constant(0));
+    } else if (Int64Lowering::IsI64AsTwoParameters(jsgraph()->machine(),
+                                                   sig->GetReturn())) {
+      Return(Int32Constant(0), Int32Constant(0));
+    } else {
+      Return(ZeroConstant(sig->GetReturn()));
+    }
     return;
   }
 
@@ -2949,9 +2914,8 @@ void WasmGraphBuilder::BuildWasmToJSWrapper(Handle<JSReceiver> target,
   }
 
   // Convert the return value back.
-  Node* i32_zero = jsgraph()->Int32Constant(0);
   Node* val = sig->return_count() == 0
-                  ? i32_zero
+                  ? jsgraph()->Int32Constant(0)
                   : FromJS(call, HeapConstant(isolate->native_context()),
                            sig->GetReturn());
   Return(val);
@@ -4091,7 +4055,7 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
         .LowerGraph();
   }
 
-  if (builder.has_simd() && !CpuFeatures::SupportsSimd128()) {
+  if (builder.has_simd() && !CpuFeatures::SupportsWasmSimd128()) {
     SimdScalarLowering(jsgraph_, func_body_.sig).LowerGraph();
   }
 
