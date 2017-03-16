@@ -45,7 +45,7 @@
 #include "src/heap/mark-compact.h"
 #include "src/heap/memory-reducer.h"
 #include "src/ic/ic.h"
-#include "src/macro-assembler.h"
+#include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
 #include "src/regexp/jsregexp.h"
 #include "src/snapshot/snapshot.h"
@@ -4912,7 +4912,6 @@ void CheckIC(Handle<JSFunction> function, Code::Kind kind, int slot_index,
   } else {
     Code* ic = FindFirstIC(function->code(), kind);
     CHECK(ic->is_inline_cache_stub());
-    CHECK(!IC::ICUseVector(kind));
     CHECK_EQ(state, IC::StateFromCode(ic));
   }
 }

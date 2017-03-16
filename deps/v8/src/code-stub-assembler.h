@@ -41,6 +41,7 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
   V(MinusZeroValue, MinusZero)                        \
   V(NanValue, Nan)                                    \
   V(NullValue, Null)                                  \
+  V(GlobalPropertyCellMap, PropertyCellMap)           \
   V(SymbolMap, SymbolMap)                             \
   V(TheHoleValue, TheHole)                            \
   V(TrueValue, True)                                  \
@@ -385,7 +386,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadMapInobjectProperties(Node* map);
   // Load the constructor function index of a Map (only for primitive maps).
   Node* LoadMapConstructorFunctionIndex(Node* map);
-  // Load the constructor of a Map (equivalent to Map::GetConstructor()).
+  // Load the constructor of a Map (equivalent to
+  // Map::GetConstructor()).
   Node* LoadMapConstructor(Node* map);
   // Loads a value from the specially encoded integer fields in the
   // SharedFunctionInfo object.
@@ -700,6 +702,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsDeprecatedMap(Node* map);
   Node* IsCallable(Node* object);
   Node* IsBoolean(Node* object);
+  Node* IsPropertyCell(Node* object);
   Node* IsHeapNumber(Node* object);
   Node* IsName(Node* object);
   Node* IsSymbol(Node* object);

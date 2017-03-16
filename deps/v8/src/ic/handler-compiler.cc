@@ -4,6 +4,7 @@
 
 #include "src/ic/handler-compiler.h"
 
+#include "src/assembler-inl.h"
 #include "src/field-type.h"
 #include "src/ic/call-optimization.h"
 #include "src/ic/handler-configuration-inl.h"
@@ -16,9 +17,8 @@ namespace internal {
 
 Handle<Code> PropertyHandlerCompiler::Find(Handle<Name> name,
                                            Handle<Map> stub_holder,
-                                           Code::Kind kind,
-                                           CacheHolderFlag cache_holder) {
-  Code::Flags flags = Code::ComputeHandlerFlags(kind, cache_holder);
+                                           Code::Kind kind) {
+  Code::Flags flags = Code::ComputeHandlerFlags(kind);
   Code* code = stub_holder->LookupInCodeCache(*name, flags);
   if (code == nullptr) return Handle<Code>();
   return handle(code);
@@ -26,10 +26,27 @@ Handle<Code> PropertyHandlerCompiler::Find(Handle<Name> name,
 
 Handle<Code> PropertyHandlerCompiler::GetCode(Code::Kind kind,
                                               Handle<Name> name) {
-  Code::Flags flags = Code::ComputeHandlerFlags(kind, cache_holder());
-  Handle<Code> code = GetCodeWithFlags(flags, name);
+  Code::Flags flags = Code::ComputeHandlerFlags(kind);
+
+  // Create code object in the heap.
+  CodeDesc desc;
+  masm()->GetCode(&desc);
+  Handle<Code> code = factory()->NewCode(desc, flags, masm()->CodeObject());
+  if (code->IsCodeStubOrIC()) code->set_stub_key(CodeStub::NoCacheKey());
+#ifdef ENABLE_DISASSEMBLER
+  if (FLAG_print_code_stubs) {
+    char* raw_name = !name.is_null() && name->IsString()
+                         ? String::cast(*name)->ToCString().get()
+                         : nullptr;
+    CodeTracer::Scope trace_scope(isolate()->GetCodeTracer());
+    OFStream os(trace_scope.file());
+    code->Disassemble(raw_name, os);
+  }
+#endif
+
   PROFILE(isolate(), CodeCreateEvent(CodeEventListener::HANDLER_TAG,
                                      AbstractCode::cast(*code), *name));
+
 #ifdef DEBUG
   code->VerifyEmbeddedObjects();
 #endif
@@ -39,11 +56,9 @@ Handle<Code> PropertyHandlerCompiler::GetCode(Code::Kind kind,
 
 #define __ ACCESS_MASM(masm())
 
-
 Register NamedLoadHandlerCompiler::FrontendHeader(Register object_reg,
                                                   Handle<Name> name,
-                                                  Label* miss,
-                                                  ReturnHolder return_what) {
+                                                  Label* miss) {
   if (map()->IsPrimitiveMap() || map()->IsJSGlobalProxyMap()) {
     // If the receiver is a global proxy and if we get to this point then
     // the compile-time (current) native context has access to global proxy's
@@ -60,7 +75,7 @@ Register NamedLoadHandlerCompiler::FrontendHeader(Register object_reg,
 
   // Check that the maps starting from the prototype haven't changed.
   return CheckPrototypes(object_reg, scratch1(), scratch2(), scratch3(), name,
-                         miss, return_what);
+                         miss);
 }
 
 
@@ -68,8 +83,7 @@ Register NamedLoadHandlerCompiler::FrontendHeader(Register object_reg,
 // miss.
 Register NamedStoreHandlerCompiler::FrontendHeader(Register object_reg,
                                                    Handle<Name> name,
-                                                   Label* miss,
-                                                   ReturnHolder return_what) {
+                                                   Label* miss) {
   if (map()->IsJSGlobalProxyMap()) {
     Handle<Context> native_context = isolate()->native_context();
     Handle<WeakCell> weak_cell(native_context->self_weak_cell(), isolate());
@@ -77,7 +91,7 @@ Register NamedStoreHandlerCompiler::FrontendHeader(Register object_reg,
   }
 
   return CheckPrototypes(object_reg, this->name(), scratch1(), scratch2(), name,
-                         miss, return_what);
+                         miss);
 }
 
 
@@ -86,7 +100,7 @@ Register PropertyHandlerCompiler::Frontend(Handle<Name> name) {
   if (IC::ShouldPushPopSlotAndVector(kind())) {
     PushVectorAndSlot();
   }
-  Register reg = FrontendHeader(receiver(), name, &miss, RETURN_HOLDER);
+  Register reg = FrontendHeader(receiver(), name, &miss);
   FrontendFooter(name, &miss);
   // The footer consumes the vector and slot from the stack if miss occurs.
   if (IC::ShouldPushPopSlotAndVector(kind())) {

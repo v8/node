@@ -16,7 +16,7 @@ namespace internal {
 
 bool CpuFeatures::SupportsCrankshaft() { return true; }
 
-bool CpuFeatures::SupportsSimd128() { return false; }
+bool CpuFeatures::SupportsWasmSimd128() { return false; }
 
 void RelocInfo::apply(intptr_t delta) {
   // On arm64 only internal references need extra work.
@@ -772,7 +772,6 @@ void RelocInfo::set_target_cell(Cell* cell,
 }
 
 
-static const int kNoCodeAgeSequenceLength = 5 * kInstructionSize;
 static const int kCodeAgeStubEntryOffset = 3 * kInstructionSize;
 
 Handle<Code> RelocInfo::code_age_stub_handle(Assembler* origin) {

@@ -1941,18 +1941,14 @@ InterceptorInfo* JSObject::GetNamedInterceptor() {
 
 InterceptorInfo* Map::GetNamedInterceptor() {
   DCHECK(has_named_interceptor());
-  JSFunction* constructor = JSFunction::cast(GetConstructor());
-  DCHECK(constructor->shared()->IsApiFunction());
-  return InterceptorInfo::cast(
-      constructor->shared()->get_api_func_data()->named_property_handler());
+  FunctionTemplateInfo* info = GetFunctionTemplateInfo();
+  return InterceptorInfo::cast(info->named_property_handler());
 }
 
 InterceptorInfo* Map::GetIndexedInterceptor() {
   DCHECK(has_indexed_interceptor());
-  JSFunction* constructor = JSFunction::cast(GetConstructor());
-  DCHECK(constructor->shared()->IsApiFunction());
-  return InterceptorInfo::cast(
-      constructor->shared()->get_api_func_data()->indexed_property_handler());
+  FunctionTemplateInfo* info = GetFunctionTemplateInfo();
+  return InterceptorInfo::cast(info->indexed_property_handler());
 }
 
 double Oddball::to_number_raw() const {
@@ -5186,18 +5182,15 @@ Address Code::constant_pool() {
   return constant_pool;
 }
 
-Code::Flags Code::ComputeFlags(Kind kind, ExtraICState extra_ic_state,
-                               CacheHolderFlag holder) {
+Code::Flags Code::ComputeFlags(Kind kind, ExtraICState extra_ic_state) {
   // Compute the bit mask.
-  unsigned int bits = KindField::encode(kind) |
-                      ExtraICStateField::encode(extra_ic_state) |
-                      CacheHolderField::encode(holder);
+  unsigned int bits =
+      KindField::encode(kind) | ExtraICStateField::encode(extra_ic_state);
   return static_cast<Flags>(bits);
 }
 
-Code::Flags Code::ComputeHandlerFlags(Kind handler_kind,
-                                      CacheHolderFlag holder) {
-  return ComputeFlags(Code::HANDLER, handler_kind, holder);
+Code::Flags Code::ComputeHandlerFlags(Kind handler_kind) {
+  return ComputeFlags(Code::HANDLER, handler_kind);
 }
 
 
@@ -5208,16 +5201,6 @@ Code::Kind Code::ExtractKindFromFlags(Flags flags) {
 
 ExtraICState Code::ExtractExtraICStateFromFlags(Flags flags) {
   return ExtraICStateField::decode(flags);
-}
-
-
-CacheHolderFlag Code::ExtractCacheHolderFromFlags(Flags flags) {
-  return CacheHolderField::decode(flags);
-}
-
-Code::Flags Code::RemoveHolderFromFlags(Flags flags) {
-  int bits = flags & ~CacheHolderField::kMask;
-  return static_cast<Flags>(bits);
 }
 
 
@@ -5491,7 +5474,6 @@ ACCESSORS(Map, weak_cell_cache, Object, kWeakCellCacheOffset)
 ACCESSORS(Map, constructor_or_backpointer, Object,
           kConstructorOrBackPointerOffset)
 
-
 Object* Map::GetConstructor() const {
   Object* maybe_constructor = constructor_or_backpointer();
   // Follow any back pointers.
@@ -5502,6 +5484,15 @@ Object* Map::GetConstructor() const {
   return maybe_constructor;
 }
 
+FunctionTemplateInfo* Map::GetFunctionTemplateInfo() const {
+  Object* constructor = GetConstructor();
+  if (constructor->IsJSFunction()) {
+    DCHECK(JSFunction::cast(constructor)->shared()->IsApiFunction());
+    return JSFunction::cast(constructor)->shared()->get_api_func_data();
+  }
+  DCHECK(constructor->IsFunctionTemplateInfo());
+  return FunctionTemplateInfo::cast(constructor);
+}
 
 void Map::SetConstructor(Object* constructor, WriteBarrierMode mode) {
   // Never overwrite a back pointer with a constructor.
@@ -5971,6 +5962,8 @@ BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, is_declaration,
                kIsDeclaration)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, marked_for_tier_up,
                kMarkedForTierUp)
+BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints,
+               has_concurrent_optimization_job, kHasConcurrentOptimizationJob)
 
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, needs_home_object,
                kNeedsHomeObject)
@@ -6534,6 +6527,7 @@ Object* JSFunction::prototype() {
     Object* prototype = map()->GetConstructor();
     // The map must have a prototype in that field, not a back pointer.
     DCHECK(!prototype->IsMap());
+    DCHECK(!prototype->IsFunctionTemplateInfo());
     return prototype;
   }
   return instance_prototype();

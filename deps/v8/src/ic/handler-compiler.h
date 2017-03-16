@@ -13,24 +13,19 @@ namespace internal {
 
 class CallOptimization;
 
-enum ReturnHolder { RETURN_HOLDER, DONT_RETURN_ANYTHING };
-
 class PropertyHandlerCompiler : public PropertyAccessCompiler {
  public:
-  static Handle<Code> Find(Handle<Name> name, Handle<Map> map, Code::Kind kind,
-                           CacheHolderFlag cache_holder);
+  static Handle<Code> Find(Handle<Name> name, Handle<Map> map, Code::Kind kind);
 
  protected:
   PropertyHandlerCompiler(Isolate* isolate, Code::Kind kind, Handle<Map> map,
-                          Handle<JSObject> holder, CacheHolderFlag cache_holder)
-      : PropertyAccessCompiler(isolate, kind, cache_holder),
-        map_(map),
-        holder_(holder) {}
+                          Handle<JSObject> holder)
+      : PropertyAccessCompiler(isolate, kind), map_(map), holder_(holder) {}
 
   virtual ~PropertyHandlerCompiler() {}
 
   virtual Register FrontendHeader(Register object_reg, Handle<Name> name,
-                                  Label* miss, ReturnHolder return_what) {
+                                  Label* miss) {
     UNREACHABLE();
     return receiver();
   }
@@ -104,13 +99,10 @@ class PropertyHandlerCompiler : public PropertyAccessCompiler {
   // holder_reg.
   Register CheckPrototypes(Register object_reg, Register holder_reg,
                            Register scratch1, Register scratch2,
-                           Handle<Name> name, Label* miss,
-                           ReturnHolder return_what);
+                           Handle<Name> name, Label* miss);
 
   Handle<Code> GetCode(Code::Kind kind, Handle<Name> name);
-  void set_holder(Handle<JSObject> holder) { holder_ = holder; }
   Handle<Map> map() const { return map_; }
-  void set_map(Handle<Map> map) { map_ = map; }
   Handle<JSObject> holder() const { return holder_; }
 
  private:
@@ -122,10 +114,8 @@ class PropertyHandlerCompiler : public PropertyAccessCompiler {
 class NamedLoadHandlerCompiler : public PropertyHandlerCompiler {
  public:
   NamedLoadHandlerCompiler(Isolate* isolate, Handle<Map> map,
-                           Handle<JSObject> holder,
-                           CacheHolderFlag cache_holder)
-      : PropertyHandlerCompiler(isolate, Code::LOAD_IC, map, holder,
-                                cache_holder) {}
+                           Handle<JSObject> holder)
+      : PropertyHandlerCompiler(isolate, Code::LOAD_IC, map, holder) {}
 
   virtual ~NamedLoadHandlerCompiler() {}
 
@@ -135,9 +125,6 @@ class NamedLoadHandlerCompiler : public PropertyHandlerCompiler {
 
   Handle<Code> CompileLoadViaGetter(Handle<Name> name, int accessor_index,
                                     int expected_arguments);
-
-  Handle<Code> CompileLoadGlobal(Handle<PropertyCell> cell, Handle<Name> name,
-                                 bool is_configurable);
 
   static void GenerateLoadViaGetter(MacroAssembler* masm, Handle<Map> map,
                                     Register receiver, Register holder,
@@ -151,7 +138,7 @@ class NamedLoadHandlerCompiler : public PropertyHandlerCompiler {
 
  protected:
   virtual Register FrontendHeader(Register object_reg, Handle<Name> name,
-                                  Label* miss, ReturnHolder return_what);
+                                  Label* miss);
 
   virtual void FrontendFooter(Handle<Name> name, Label* miss);
 
@@ -167,8 +154,7 @@ class NamedStoreHandlerCompiler : public PropertyHandlerCompiler {
 
   explicit NamedStoreHandlerCompiler(Isolate* isolate, Handle<Map> map,
                                      Handle<JSObject> holder)
-      : PropertyHandlerCompiler(isolate, Code::STORE_IC, map, holder,
-                                kCacheOnReceiver) {
+      : PropertyHandlerCompiler(isolate, Code::STORE_IC, map, holder) {
 #ifdef DEBUG
     if (Descriptor::kPassLastArgsOnStack) {
       ZapStackArgumentsRegisterAliases();
@@ -202,7 +188,7 @@ class NamedStoreHandlerCompiler : public PropertyHandlerCompiler {
 
  protected:
   virtual Register FrontendHeader(Register object_reg, Handle<Name> name,
-                                  Label* miss, ReturnHolder return_what);
+                                  Label* miss);
 
   virtual void FrontendFooter(Handle<Name> name, Label* miss);
   void GenerateRestoreName(Label* label, Handle<Name> name);
@@ -216,8 +202,8 @@ class ElementHandlerCompiler : public PropertyHandlerCompiler {
  public:
   explicit ElementHandlerCompiler(Isolate* isolate)
       : PropertyHandlerCompiler(isolate, Code::KEYED_LOAD_IC,
-                                Handle<Map>::null(), Handle<JSObject>::null(),
-                                kCacheOnReceiver) {}
+                                Handle<Map>::null(), Handle<JSObject>::null()) {
+  }
 
   virtual ~ElementHandlerCompiler() {}
 
