@@ -6142,7 +6142,7 @@ bool v8::V8::Initialize() {
   return true;
 }
 
-#if V8_OS_LINUX && V8_TARGET_ARCH_X64
+#if V8_OS_LINUX && V8_TARGET_ARCH_X64 && !V8_OS_ANDROID
 bool V8::TryHandleSignal(int signum, void* info, void* context) {
   return v8::internal::trap_handler::TryHandleSignal(
       signum, static_cast<siginfo_t*>(info), static_cast<ucontext_t*>(context));
@@ -9406,7 +9406,7 @@ void debug::GetLoadedScripts(v8::Isolate* v8_isolate,
     i::Script::Iterator iterator(isolate);
     i::Script* script;
     while ((script = iterator.Next())) {
-      if (script->type() != i::Script::TYPE_NORMAL) continue;
+      if (!script->IsUserJavaScript()) continue;
       if (script->HasValidSource()) {
         i::HandleScope handle_scope(isolate);
         i::Handle<i::Script> script_handle(script, isolate);

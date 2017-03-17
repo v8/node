@@ -5,6 +5,7 @@
 #include "src/builtins/builtins.h"
 #include "src/api.h"
 #include "src/assembler-inl.h"
+#include "src/callable.h"
 #include "src/code-events.h"
 #include "src/compiler/code-assembler.h"
 #include "src/ic/ic-state.h"
@@ -201,6 +202,94 @@ const char* Builtins::Lookup(byte* pc) {
     }
   }
   return NULL;
+}
+
+Handle<Code> Builtins::NewFunctionContext(ScopeType scope_type) {
+  switch (scope_type) {
+    case ScopeType::EVAL_SCOPE:
+      return FastNewFunctionContextEval();
+    case ScopeType::FUNCTION_SCOPE:
+      return FastNewFunctionContextFunction();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NewCloneShallowArray(
+    AllocationSiteMode allocation_mode) {
+  switch (allocation_mode) {
+    case TRACK_ALLOCATION_SITE:
+      return FastCloneShallowArrayTrack();
+    case DONT_TRACK_ALLOCATION_SITE:
+      return FastCloneShallowArrayDontTrack();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NewCloneShallowObject(int length) {
+  switch (length) {
+    case 0:
+      return FastCloneShallowObject0();
+    case 1:
+      return FastCloneShallowObject1();
+    case 2:
+      return FastCloneShallowObject2();
+    case 3:
+      return FastCloneShallowObject3();
+    case 4:
+      return FastCloneShallowObject4();
+    case 5:
+      return FastCloneShallowObject5();
+    case 6:
+      return FastCloneShallowObject6();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NonPrimitiveToPrimitive(ToPrimitiveHint hint) {
+  switch (hint) {
+    case ToPrimitiveHint::kDefault:
+      return NonPrimitiveToPrimitive_Default();
+    case ToPrimitiveHint::kNumber:
+      return NonPrimitiveToPrimitive_Number();
+    case ToPrimitiveHint::kString:
+      return NonPrimitiveToPrimitive_String();
+  }
+  UNREACHABLE();
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
+  switch (hint) {
+    case OrdinaryToPrimitiveHint::kNumber:
+      return OrdinaryToPrimitive_Number();
+    case OrdinaryToPrimitiveHint::kString:
+      return OrdinaryToPrimitive_String();
+  }
+  UNREACHABLE();
+  return Handle<Code>::null();
+}
+
+// static
+Callable Builtins::CallableFor(Isolate* isolate, Name name) {
+  switch (name) {
+#define CASE(Name, _, __, InterfaceDescriptor, ...)                      \
+  case k##Name: {                                                        \
+    Handle<Code> code(Code::cast(isolate->builtins()->builtins_[name])); \
+    auto descriptor = InterfaceDescriptor##Descriptor(isolate);          \
+    return Callable(code, descriptor);                                   \
+  }
+    BUILTIN_LIST_TFS(CASE)
+#undef CASE
+    default:
+      UNREACHABLE();
+      return Callable(Handle<Code>::null(), VoidDescriptor(isolate));
+  }
 }
 
 // static

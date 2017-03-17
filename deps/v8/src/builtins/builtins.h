@@ -11,6 +11,7 @@
 namespace v8 {
 namespace internal {
 
+class Callable;
 template <typename T>
 class Handle;
 class Isolate;
@@ -276,6 +277,9 @@ class Isolate;
   CPP(ArraySlice)                                                              \
   CPP(ArraySplice)                                                             \
   CPP(ArrayUnshift)                                                            \
+  TFJ(ArrayForEachLoopContinuation, 6)                                         \
+  TFJ(ArrayEveryLoopContinuation, 6)                                           \
+  TFJ(ArraySomeLoopContinuation, 6)                                            \
   TFJ(ArrayForEach, 2)                                                         \
   TFJ(ArrayEvery, 2)                                                           \
   TFJ(ArraySome, 2)                                                            \
@@ -736,7 +740,7 @@ class Isolate;
   TFJ(AtomicsLoad, 2)                                                          \
   TFJ(AtomicsStore, 3)                                                         \
   TFJ(AtomicsExchange, 3)                                                      \
-  CPP(AtomicsCompareExchange)                                                  \
+  TFJ(AtomicsCompareExchange, 4)                                               \
   CPP(AtomicsAdd)                                                              \
   CPP(AtomicsSub)                                                              \
   CPP(AtomicsAnd)                                                              \
@@ -841,6 +845,8 @@ class Isolate;
   CPP(TypedArrayPrototypeIncludes)                                             \
   /* ES6 #sec-%typedarray%.prototype.indexof */                                \
   CPP(TypedArrayPrototypeIndexOf)                                              \
+  /* ES6 #sec-%typedarray%.prototype.indexof */                                \
+  CPP(TypedArrayPrototypeLastIndexOf)                                          \
                                                                                \
   /* Wasm */                                                                   \
   TFS(WasmStackGuard, BUILTIN, kNoExtraICState, WasmRuntimeCall, 1)            \
@@ -885,6 +891,10 @@ class Isolate;
 #define IGNORE_BUILTIN(...)
 
 #define BUILTIN_LIST_ALL(V) BUILTIN_LIST(V, V, V, V, V, V, V)
+
+#define BUILTIN_LIST_TFS(V)                                       \
+  BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, V, \
+               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
 
 #define BUILTIN_LIST_C(V)                                            \
   BUILTIN_LIST(V, V, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
@@ -958,6 +968,8 @@ class Builtins {
   Address builtin_address(Name name) {
     return reinterpret_cast<Address>(&builtins_[name]);
   }
+
+  static Callable CallableFor(Isolate* isolate, Name name);
 
   static const char* name(int index);
 
