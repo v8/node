@@ -148,6 +148,7 @@ class V8_EXPORT_PRIVATE WasmInterpreter {
     const InterpretedFrame GetFrame(int index);
     InterpretedFrame GetMutableFrame(int index);
     WasmVal GetReturnValue(int index = 0);
+    TrapReason GetTrapReason();
 
     // Returns true if the thread executed an instruction which may produce
     // nondeterministic results, e.g. float div, float sqrt, and float mul,
@@ -184,6 +185,11 @@ class V8_EXPORT_PRIVATE WasmInterpreter {
 
   // Enable or disable tracing for {function}. Return the previous state.
   bool SetTracing(const WasmFunction* function, bool enabled);
+
+  // Add an imported function.
+  // We store the passed Handle internally, so the caller must ensure that it
+  // stays valid at least as long as the WasmInterpreter.
+  void AddImportedFunction(Handle<HeapObject>);
 
   //==========================================================================
   // Thread iteration and inspection.

@@ -21,6 +21,27 @@ using namespace v8::internal::wasm;
 
 namespace {
 
+// Unwrap a wasm to js wrapper, return the callable heap object.
+// Only call this method for proper wrappers that do not throw a type error.
+HeapObject* UnwrapJSWrapper(Code* js_wrapper) {
+  int mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
+  for (RelocIterator it(js_wrapper, mask);; it.next()) {
+    DCHECK(!it.done());
+    HeapObject* obj = it.rinfo()->target_object();
+    if (!obj->IsCallable()) continue;
+#ifdef DEBUG
+    // There should only be this reference to a callable object.
+    for (it.next(); !it.done(); it.next()) {
+      HeapObject* other = it.rinfo()->target_object();
+      DCHECK(!other->IsCallable());
+    }
+#endif
+    return obj;
+  }
+  UNREACHABLE();
+  return nullptr;
+}
+
 // Forward declaration.
 class InterpreterHandle;
 InterpreterHandle* GetInterpreterHandle(WasmDebugInfo* debug_info);
@@ -32,6 +53,7 @@ class InterpreterHandle {
   Isolate* isolate_;
   StepAction next_step_action_ = StepNone;
   int last_step_stack_depth_ = 0;
+  DeferredHandles* import_handles_ = nullptr;
 
  public:
   // Initialize in the right order, using helper methods to make this possible.
@@ -50,6 +72,32 @@ class InterpreterHandle {
       instance_.mem_start = nullptr;
       instance_.mem_size = 0;
     }
+    if (instance_.module->num_imported_functions > 0) {
+      int num_imported_functions =
+          static_cast<int>(instance_.module->num_imported_functions);
+      Handle<WasmCompiledModule> compiled_module(
+          debug_info->wasm_instance()->compiled_module(), isolate);
+      Handle<FixedArray> code_table = compiled_module->code_table();
+      DeferredHandleScope deferred_scope(isolate_);
+      instance_.context =
+          handle(compiled_module->ptr_to_native_context(), isolate_);
+      for (int i = 0; i < num_imported_functions; ++i) {
+        Code* code = Code::cast(code_table->get(i));
+        Handle<HeapObject> called_obj;
+        if (code->kind() == Code::WASM_FUNCTION) {
+          called_obj = handle(code, isolate_);
+        } else if (IsJSCompatibleSignature(
+                       instance_.module->functions[i].sig)) {
+          called_obj = handle(UnwrapJSWrapper(code), isolate_);
+        }
+        interpreter_.AddImportedFunction(called_obj);
+      }
+      import_handles_ = deferred_scope.Detach();
+    }
+  }
+
+  ~InterpreterHandle() {
+    delete import_handles_;  // might be nullptr, which is ok.
   }
 
   static ModuleBytesEnv GetBytesEnv(WasmInstance* instance,
@@ -77,7 +125,7 @@ class InterpreterHandle {
     return interpreter()->GetThread(0)->GetFrameCount();
   }
 
-  void Execute(uint32_t func_index, uint8_t* arg_buffer) {
+  bool Execute(uint32_t func_index, uint8_t* arg_buffer) {
     DCHECK_GE(module()->functions.size(), func_index);
     FunctionSig* sig = module()->functions[func_index].sig;
     DCHECK_GE(kMaxInt, sig->parameter_count());
@@ -107,7 +155,8 @@ class InterpreterHandle {
     // We do not support reentering an already running interpreter at the moment
     // (like INTERPRETER -> JS -> WASM -> INTERPRETER).
     DCHECK(thread->state() == WasmInterpreter::STOPPED ||
-           thread->state() == WasmInterpreter::FINISHED);
+           thread->state() == WasmInterpreter::FINISHED ||
+           thread->state() == WasmInterpreter::TRAPPED);
     thread->Reset();
     thread->InitFrame(&module()->functions[func_index], wasm_args.start());
     bool finished = false;
@@ -122,10 +171,15 @@ class InterpreterHandle {
           // Perfect, just break the switch and exit the loop.
           finished = true;
           break;
-        case WasmInterpreter::State::TRAPPED:
-          // TODO(clemensh): Generate appropriate JS exception.
-          UNIMPLEMENTED();
-          break;
+        case WasmInterpreter::State::TRAPPED: {
+          int message_id =
+              WasmOpcodes::TrapReasonToMessageId(thread->GetTrapReason());
+          Handle<Object> exception = isolate_->factory()->NewWasmRuntimeError(
+              static_cast<MessageTemplate::Template>(message_id));
+          isolate_->Throw(*exception);
+          // And hard exit the execution.
+          return false;
+        } break;
         // STOPPED and RUNNING should never occur here.
         case WasmInterpreter::State::STOPPED:
         case WasmInterpreter::State::RUNNING:
@@ -155,6 +209,7 @@ class InterpreterHandle {
           UNREACHABLE();
       }
     }
+    return true;
   }
 
   WasmInterpreter::State ContinueExecution(WasmInterpreter::Thread* thread) {
@@ -426,10 +481,10 @@ void WasmDebugInfo::PrepareStep(StepAction step_action) {
   GetInterpreterHandle(this)->PrepareStep(step_action);
 }
 
-void WasmDebugInfo::RunInterpreter(int func_index, uint8_t* arg_buffer) {
+bool WasmDebugInfo::RunInterpreter(int func_index, uint8_t* arg_buffer) {
   DCHECK_LE(0, func_index);
-  GetInterpreterHandle(this)->Execute(static_cast<uint32_t>(func_index),
-                                      arg_buffer);
+  return GetInterpreterHandle(this)->Execute(static_cast<uint32_t>(func_index),
+                                             arg_buffer);
 }
 
 std::vector<std::pair<uint32_t, int>> WasmDebugInfo::GetInterpretedStack(

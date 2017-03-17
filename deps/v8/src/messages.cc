@@ -686,13 +686,14 @@ MaybeHandle<String> WasmStackFrame::ToString() {
 
   builder.AppendCString(" (<WASM>[");
 
-  Handle<Smi> ix(Smi::FromInt(wasm_func_index_), isolate_);
-  builder.AppendString(isolate_->factory()->NumberToString(ix));
+  char buffer[16];
+  SNPrintF(ArrayVector(buffer), "%u", wasm_func_index_);
+  builder.AppendCString(buffer);
 
   builder.AppendCString("]+");
 
-  Handle<Object> pos(Smi::FromInt(GetPosition()), isolate_);
-  builder.AppendString(isolate_->factory()->NumberToString(pos));
+  SNPrintF(ArrayVector(buffer), "%d", GetPosition());
+  builder.AppendCString(buffer);
   builder.AppendCString(")");
 
   return builder.Finish();
@@ -739,7 +740,7 @@ Handle<Object> AsmJsWasmStackFrame::GetFunction() const {
 Handle<Object> AsmJsWasmStackFrame::GetFileName() {
   Handle<Script> script =
       wasm::GetScript(Handle<JSObject>::cast(wasm_instance_));
-  DCHECK_EQ(Script::TYPE_NORMAL, script->type());
+  DCHECK(script->IsUserJavaScript());
   return handle(script->name(), isolate_);
 }
 
@@ -765,7 +766,7 @@ int AsmJsWasmStackFrame::GetLineNumber() {
   DCHECK_LE(0, GetPosition());
   Handle<Script> script =
       wasm::GetScript(Handle<JSObject>::cast(wasm_instance_));
-  DCHECK_EQ(Script::TYPE_NORMAL, script->type());
+  DCHECK(script->IsUserJavaScript());
   return Script::GetLineNumber(script, GetPosition()) + 1;
 }
 
@@ -773,7 +774,7 @@ int AsmJsWasmStackFrame::GetColumnNumber() {
   DCHECK_LE(0, GetPosition());
   Handle<Script> script =
       wasm::GetScript(Handle<JSObject>::cast(wasm_instance_));
-  DCHECK_EQ(Script::TYPE_NORMAL, script->type());
+  DCHECK(script->IsUserJavaScript());
   return Script::GetColumnNumber(script, GetPosition()) + 1;
 }
 

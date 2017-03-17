@@ -3431,6 +3431,9 @@ class HashTable : public HashTableBase {
  protected:
   friend class ObjectHashTable;
 
+  MUST_USE_RESULT static Handle<Derived> New(Isolate* isolate, int capacity,
+                                             PretenureFlag pretenure);
+
   // Find the entry at which to insert element with the given key that
   // has the given hash value.
   uint32_t FindInsertionEntry(uint32_t hash);
@@ -3651,6 +3654,10 @@ class Dictionary: public HashTable<Derived, Shape, Key> {
       Isolate* isolate, int at_least_space_for,
       PretenureFlag pretenure = NOT_TENURED,
       MinimumCapacity capacity_option = USE_DEFAULT_MINIMUM_CAPACITY);
+
+  // Creates an dictionary with minimal possible capacity.
+  MUST_USE_RESULT static Handle<Derived> NewEmpty(
+      Isolate* isolate, PretenureFlag pretenure = NOT_TENURED);
 
   // Ensures that a new dictionary is created when the capacity is checked.
   void SetRequiresCopyOnCapacityChange();
@@ -6687,6 +6694,8 @@ class Script: public Struct {
   bool GetPositionInfo(int position, PositionInfo* info,
                        OffsetFlag offset_flag) const;
 
+  bool IsUserJavaScript();
+
   // Wrappers for GetPositionInfo
   static int GetColumnNumber(Handle<Script> script, int code_offset);
   int GetColumnNumber(int code_pos) const;
@@ -6888,7 +6897,8 @@ class Script: public Struct {
 #define ATOMIC_FUNCTIONS_WITH_ID_LIST(V) \
   V(Atomics, load, AtomicsLoad)          \
   V(Atomics, store, AtomicsStore)        \
-  V(Atomics, exchange, AtomicsExchange)
+  V(Atomics, exchange, AtomicsExchange)  \
+  V(Atomics, compareExchange, AtomicsCompareExchange)
 
 enum BuiltinFunctionId {
   kArrayCode,
@@ -8592,16 +8602,6 @@ class JSRegExp: public JSObject {
   static const int kIrregexpCaptureNameMapIndex = kDataIndex + 6;
 
   static const int kIrregexpDataSize = kIrregexpCaptureNameMapIndex + 1;
-
-  // Offsets directly into the data fixed array.
-  static const int kDataTagOffset =
-      FixedArray::kHeaderSize + kTagIndex * kPointerSize;
-  static const int kDataOneByteCodeOffset =
-      FixedArray::kHeaderSize + kIrregexpLatin1CodeIndex * kPointerSize;
-  static const int kDataUC16CodeOffset =
-      FixedArray::kHeaderSize + kIrregexpUC16CodeIndex * kPointerSize;
-  static const int kIrregexpCaptureCountOffset =
-      FixedArray::kHeaderSize + kIrregexpCaptureCountIndex * kPointerSize;
 
   // In-object fields.
   static const int kLastIndexFieldIndex = 0;

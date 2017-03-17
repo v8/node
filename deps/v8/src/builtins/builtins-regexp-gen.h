@@ -10,13 +10,9 @@
 namespace v8 {
 namespace internal {
 
-typedef compiler::Node Node;
-typedef compiler::CodeAssemblerState CodeAssemblerState;
-typedef compiler::CodeAssemblerLabel CodeAssemblerLabel;
-
 class RegExpBuiltinsAssembler : public CodeStubAssembler {
  public:
-  explicit RegExpBuiltinsAssembler(CodeAssemblerState* state)
+  explicit RegExpBuiltinsAssembler(compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state) {}
 
   void BranchIfFastRegExp(Node* const context, Node* const map,
@@ -32,6 +28,18 @@ class RegExpBuiltinsAssembler : public CodeStubAssembler {
   void SlowStoreLastIndex(Node* context, Node* regexp, Node* value);
   void StoreLastIndex(Node* context, Node* regexp, Node* value,
                       bool is_fastpath);
+
+  // Loads {var_string_start} and {var_string_end} with the corresponding
+  // offsets into the given {string_data}.
+  void GetStringPointers(Node* const string_data, Node* const offset,
+                         Node* const last_index, Node* const string_length,
+                         String::Encoding encoding, Variable* var_string_start,
+                         Variable* var_string_end);
+
+  // Low level logic around the actual call into generated Irregexp code.
+  Node* IrregexpExec(Node* const context, Node* const regexp,
+                     Node* const string, Node* const last_index,
+                     Node* const match_info);
 
   Node* ConstructNewResultFromMatchInfo(Node* const context, Node* const regexp,
                                         Node* const match_info,

@@ -691,6 +691,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsSpecialReceiverMap(Node* map);
   Node* IsSpecialReceiverInstanceType(Node* instance_type);
   Node* IsStringInstanceType(Node* instance_type);
+  Node* IsOneByteStringInstanceType(Node* instance_type);
+  Node* IsExternalStringInstanceType(Node* instance_type);
+  Node* IsShortExternalStringInstanceType(Node* instance_type);
+  Node* IsSequentialStringInstanceType(Node* instance_type);
   Node* IsString(Node* object);
   Node* IsJSObject(Node* object);
   Node* IsJSGlobalProxy(Node* object);
@@ -1014,8 +1018,17 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Label* if_not_found, Label* if_bailout);
 
   Node* GetProperty(Node* context, Node* receiver, Handle<Name> name) {
+    return GetProperty(context, receiver, HeapConstant(name));
+  }
+
+  Node* GetProperty(Node* context, Node* receiver, Node* const name) {
     return CallStub(CodeFactory::GetProperty(isolate()), context, receiver,
-                    HeapConstant(name));
+                    name);
+  }
+
+  template <class... TArgs>
+  Node* CallBuiltin(Builtins::Name id, Node* context, TArgs... args) {
+    return CallStub(Builtins::CallableFor(isolate(), id), context, args...);
   }
 
   void LoadPropertyFromFastObject(Node* object, Node* map, Node* descriptors,
@@ -1387,6 +1400,42 @@ class CodeStubArguments {
   Node* argc_;
   Node* arguments_;
   Node* fp_;
+};
+
+class ToDirectStringAssembler : public CodeStubAssembler {
+ private:
+  enum StringPointerKind { PTR_TO_DATA, PTR_TO_STRING };
+
+ public:
+  explicit ToDirectStringAssembler(compiler::CodeAssemblerState* state,
+                                   Node* string);
+
+  // Converts flat cons, thin, and sliced strings and returns the direct
+  // string. The result can be either a sequential or external string.
+  Node* TryToDirect(Label* if_bailout);
+
+  // Returns a pointer to the beginning of the string data.
+  Node* PointerToData(Label* if_bailout) {
+    return TryToSequential(PTR_TO_DATA, if_bailout);
+  }
+
+  // Returns a pointer that, offset-wise, looks like a String.
+  Node* PointerToString(Label* if_bailout) {
+    return TryToSequential(PTR_TO_STRING, if_bailout);
+  }
+
+  Node* string() { return var_string_.value(); }
+  Node* instance_type() { return var_instance_type_.value(); }
+  Node* offset() { return var_offset_.value(); }
+  Node* is_external() { return var_is_external_.value(); }
+
+ private:
+  Node* TryToSequential(StringPointerKind ptr_kind, Label* if_bailout);
+
+  Variable var_string_;
+  Variable var_instance_type_;
+  Variable var_offset_;
+  Variable var_is_external_;
 };
 
 #ifdef DEBUG

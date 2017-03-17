@@ -64,6 +64,7 @@ namespace internal {
   F(ThrowNotInt32SharedTypedArrayError, 1, 1)   \
   F(ThrowInvalidAtomicAccessIndexError, 0, 1)   \
   F(AtomicsExchange, 3, 1)                      \
+  F(AtomicsCompareExchange, 4, 1)               \
   F(AtomicsNumWaitersForTesting, 2, 1)          \
   F(SetAllowAtomicsWait, 1, 1)
 
@@ -394,6 +395,7 @@ namespace internal {
   F(IsJSGlobalProxy, 1, 1)                                      \
   F(DefineAccessorPropertyUnchecked, 5, 1)                      \
   F(DefineDataPropertyInLiteral, 6, 1)                          \
+  F(CollectTypeProfile, 4, 1)                                   \
   F(GetDataProperty, 2, 1)                                      \
   F(GetConstructorName, 1, 1)                                   \
   F(HasFastPackedElements, 1, 1)                                \
@@ -456,7 +458,9 @@ namespace internal {
   F(PromiseRevokeReject, 1, 1)              \
   F(PromiseResult, 1, 1)                    \
   F(PromiseStatus, 1, 1)                    \
-  F(ReportPromiseReject, 2, 1)
+  F(ReportPromiseReject, 2, 1)              \
+  F(IncrementWaitCount, 0, 1)               \
+  F(DecrementWaitCount, 0, 1)
 
 #define FOR_EACH_INTRINSIC_PROXY(F)     \
   F(IsJSProxy, 1, 1)                    \
@@ -471,7 +475,7 @@ namespace internal {
   F(RegExpCreate, 1, 1)                             \
   F(RegExpExec, 4, 1)                               \
   F(RegExpExecMultiple, 4, 1)                       \
-  F(RegExpExecReThrow, 4, 1)                        \
+  F(RegExpExecReThrow, 0, 1)                        \
   F(RegExpInitializeAndCompile, 3, 1)               \
   F(RegExpInternalReplace, 3, 1)                    \
   F(RegExpReplace, 3, 1)                            \
@@ -605,7 +609,8 @@ namespace internal {
   F(ValidateWasmOrphanedInstance, 1, 1)       \
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
-  F(Verify, 1, 1)
+  F(Verify, 1, 1)                             \
+  F(WasmNumInterpretedCalls, 1, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F)     \
   F(ArrayBufferGetByteLength, 1, 1)          \

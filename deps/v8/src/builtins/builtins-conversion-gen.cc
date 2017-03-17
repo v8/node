@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/builtins/builtins-utils.h"
+#include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-factory.h"
 #include "src/code-stub-assembler.h"
@@ -22,19 +22,6 @@ class ConversionBuiltinsAssembler : public CodeStubAssembler {
   void Generate_OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint);
 };
 
-Handle<Code> Builtins::NonPrimitiveToPrimitive(ToPrimitiveHint hint) {
-  switch (hint) {
-    case ToPrimitiveHint::kDefault:
-      return NonPrimitiveToPrimitive_Default();
-    case ToPrimitiveHint::kNumber:
-      return NonPrimitiveToPrimitive_Number();
-    case ToPrimitiveHint::kString:
-      return NonPrimitiveToPrimitive_String();
-  }
-  UNREACHABLE();
-  return Handle<Code>::null();
-}
-
 // ES6 section 7.1.1 ToPrimitive ( input [ , PreferredType ] )
 void ConversionBuiltinsAssembler::Generate_NonPrimitiveToPrimitive(
     ToPrimitiveHint hint) {
@@ -42,10 +29,8 @@ void ConversionBuiltinsAssembler::Generate_NonPrimitiveToPrimitive(
   Node* context = Parameter(TypeConversionDescriptor::kContext);
 
   // Lookup the @@toPrimitive property on the {input}.
-  Callable callable = CodeFactory::GetProperty(isolate());
-  Node* to_primitive_symbol = HeapConstant(factory()->to_primitive_symbol());
   Node* exotic_to_prim =
-      CallStub(callable, context, input, to_primitive_symbol);
+      GetProperty(context, input, factory()->to_primitive_symbol());
 
   // Check if {exotic_to_prim} is neither null nor undefined.
   Label ordinary_to_primitive(this);
@@ -171,17 +156,6 @@ TF_BUILTIN(ToString, CodeStubAssembler) {
   { Return(CallRuntime(Runtime::kToString, context, input)); }
 }
 
-Handle<Code> Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
-  switch (hint) {
-    case OrdinaryToPrimitiveHint::kNumber:
-      return OrdinaryToPrimitive_Number();
-    case OrdinaryToPrimitiveHint::kString:
-      return OrdinaryToPrimitive_String();
-  }
-  UNREACHABLE();
-  return Handle<Code>::null();
-}
-
 // 7.1.1.1 OrdinaryToPrimitive ( O, hint )
 void ConversionBuiltinsAssembler::Generate_OrdinaryToPrimitive(
     OrdinaryToPrimitiveHint hint) {
@@ -204,9 +178,7 @@ void ConversionBuiltinsAssembler::Generate_OrdinaryToPrimitive(
   }
   for (Handle<String> name : method_names) {
     // Lookup the {name} on the {input}.
-    Callable callable = CodeFactory::GetProperty(isolate());
-    Node* name_string = HeapConstant(name);
-    Node* method = CallStub(callable, context, input, name_string);
+    Node* method = GetProperty(context, input, name);
 
     // Check if the {method} is callable.
     Label if_methodiscallable(this),
