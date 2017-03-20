@@ -133,11 +133,11 @@ class InterpreterHandle {
     ScopedVector<WasmVal> wasm_args(num_params);
     uint8_t* arg_buf_ptr = arg_buffer;
     for (int i = 0; i < num_params; ++i) {
-      int param_size = 1 << ElementSizeLog2Of(sig->GetParam(i));
+      uint32_t param_size = 1 << ElementSizeLog2Of(sig->GetParam(i));
 #define CASE_ARG_TYPE(type, ctype)                                  \
   case type:                                                        \
     DCHECK_EQ(param_size, sizeof(ctype));                           \
-    wasm_args[i] = WasmVal(*reinterpret_cast<ctype*>(arg_buf_ptr)); \
+    wasm_args[i] = WasmVal(ReadUnalignedValue<ctype>(arg_buf_ptr)); \
     break;
       switch (sig->GetParam(i)) {
         CASE_ARG_TYPE(kWasmI32, uint32_t)
@@ -148,7 +148,7 @@ class InterpreterHandle {
         default:
           UNREACHABLE();
       }
-      arg_buf_ptr += RoundUpToMultipleOfPowOf2(param_size, 8);
+      arg_buf_ptr += param_size;
     }
 
     WasmInterpreter::Thread* thread = interpreter_.GetThread(0);
@@ -197,7 +197,7 @@ class InterpreterHandle {
 #define CASE_RET_TYPE(type, ctype)                                       \
   case type:                                                             \
     DCHECK_EQ(1 << ElementSizeLog2Of(sig->GetReturn(0)), sizeof(ctype)); \
-    *reinterpret_cast<ctype*>(arg_buffer) = ret_val.to<ctype>();         \
+    WriteUnalignedValue<ctype>(arg_buffer, ret_val.to<ctype>());         \
     break;
       switch (sig->GetReturn(0)) {
         CASE_RET_TYPE(kWasmI32, uint32_t)
@@ -386,7 +386,8 @@ void RedirectCallsitesInCode(Code* code, Code* old_target, Code* new_target) {
     DCHECK(RelocInfo::IsCodeTarget(it.rinfo()->rmode()));
     Code* target = Code::GetCodeFromTargetAddress(it.rinfo()->target_address());
     if (target != old_target) continue;
-    it.rinfo()->set_target_address(new_target->instruction_start());
+    it.rinfo()->set_target_address(code->GetIsolate(),
+                                   new_target->instruction_start());
   }
 }
 

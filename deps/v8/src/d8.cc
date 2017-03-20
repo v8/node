@@ -24,7 +24,6 @@
 #include "include/libplatform/v8-tracing.h"
 #include "src/api.h"
 #include "src/base/cpu.h"
-#include "src/base/debug/stack_trace.h"
 #include "src/base/logging.h"
 #include "src/base/platform/platform.h"
 #include "src/base/platform/time.h"
@@ -226,7 +225,6 @@ static Local<Value> Throw(Isolate* isolate, const char* message) {
       String::NewFromUtf8(isolate, message, NewStringType::kNormal)
           .ToLocalChecked());
 }
-
 
 Worker* GetWorkerFromInternalField(Isolate* isolate, Local<Object> object) {
   if (object->InternalFieldCount() != 1) {
@@ -1148,7 +1146,7 @@ void Shell::WorkerNew(const v8::FunctionCallbackInfo<v8::Value>& args) {
       return;
     }
 
-    // Initialize the internal field to NULL; if we return early without
+    // Initialize the embedder field to NULL; if we return early without
     // creating a new Worker (because the main thread is terminating) we can
     // early-out from the instance calls.
     args.Holder()->SetAlignedPointerInInternalField(0, NULL);
@@ -1985,8 +1983,8 @@ class InspectorFrontend final : public v8_inspector::V8Inspector::Channel {
     if (callback->IsFunction()) {
       v8::TryCatch try_catch(isolate_);
       Local<Value> args[] = {message};
-      MaybeLocal<Value> result = Local<Function>::Cast(callback)->Call(
-          context, Undefined(isolate_), 1, args);
+      USE(Local<Function>::Cast(callback)->Call(context, Undefined(isolate_), 1,
+                                                args));
 #ifdef DEBUG
       if (try_catch.HasCaught()) {
         Local<Object> exception = Local<Object>::Cast(try_catch.Exception());
@@ -2893,7 +2891,6 @@ static void DumpHeapConstants(i::Isolate* isolate) {
 
 int Shell::Main(int argc, char* argv[]) {
   std::ofstream trace_file;
-  v8::base::debug::EnableInProcessStackDumping();
 #if (defined(_WIN32) || defined(_WIN64))
   UINT new_flags =
       SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;

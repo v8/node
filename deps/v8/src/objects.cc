@@ -11914,8 +11914,8 @@ bool Map::EquivalentToForNormalization(Map* other,
       mode == CLEAR_INOBJECT_PROPERTIES ? 0 : other->GetInObjectProperties();
   return CheckEquivalent(this, other) && bit_field2() == other->bit_field2() &&
          GetInObjectProperties() == properties &&
-         JSObject::GetInternalFieldCount(this) ==
-             JSObject::GetInternalFieldCount(other);
+         JSObject::GetEmbedderFieldCount(this) ==
+             JSObject::GetEmbedderFieldCount(other);
 }
 
 
@@ -12351,7 +12351,7 @@ static void InvalidatePrototypeChainsInternal(Map* map) {
   WeakFixedArray::Iterator iterator(proto_info->prototype_users());
   // For now, only maps register themselves as users.
   Map* user;
-  while ((user = iterator.Next<Map>())) {
+  while ((user = iterator.Next<Map>()) != nullptr) {
     // Walk the prototype chain (backwards, towards leaf objects) if necessary.
     InvalidatePrototypeChainsInternal(user);
   }
@@ -12792,14 +12792,14 @@ MaybeHandle<Map> JSFunction::GetDerivedMap(Isolate* isolate,
       Handle<Object> prototype(function->instance_prototype(), isolate);
       InstanceType instance_type = constructor_initial_map->instance_type();
       DCHECK(CanSubclassHaveInobjectProperties(instance_type));
-      int internal_fields =
-          JSObject::GetInternalFieldCount(*constructor_initial_map);
+      int embedder_fields =
+          JSObject::GetEmbedderFieldCount(*constructor_initial_map);
       int pre_allocated = constructor_initial_map->GetInObjectProperties() -
                           constructor_initial_map->unused_property_fields();
       int instance_size;
       int in_object_properties;
       function->CalculateInstanceSizeForDerivedClass(
-          instance_type, internal_fields, &instance_size,
+          instance_type, embedder_fields, &instance_size,
           &in_object_properties);
 
       int unused_property_fields = in_object_properties - pre_allocated;
@@ -13260,6 +13260,15 @@ Script::Iterator::Iterator(Isolate* isolate)
 
 Script* Script::Iterator::Next() { return iterator_.Next<Script>(); }
 
+bool Script::HasPreparsedScopeData() const {
+  return preparsed_scope_data()->length() > 0;
+}
+
+Handle<FixedUint32Array> Script::GetPreparsedScopeData() const {
+  return Handle<FixedUint32Array>::cast(
+      Handle<FixedTypedArrayBase>(preparsed_scope_data()));
+}
+
 SharedFunctionInfo::ScriptIterator::ScriptIterator(Handle<Script> script)
     : ScriptIterator(script->GetIsolate(),
                      handle(script->shared_function_infos())) {}
@@ -13333,7 +13342,7 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
     if (FLAG_enable_slow_asserts) {
       WeakFixedArray::Iterator iterator(*list);
       SharedFunctionInfo* next;
-      while ((next = iterator.Next<SharedFunctionInfo>())) {
+      while ((next = iterator.Next<SharedFunctionInfo>()) != nullptr) {
         DCHECK_NE(next, *shared);
       }
     }
@@ -13458,35 +13467,33 @@ int SharedFunctionInfo::SourceSize() {
 }
 
 void JSFunction::CalculateInstanceSizeHelper(InstanceType instance_type,
-                                             int requested_internal_fields,
+                                             int requested_embedder_fields,
                                              int requested_in_object_properties,
                                              int* instance_size,
                                              int* in_object_properties) {
   int header_size = JSObject::GetHeaderSize(instance_type);
-  DCHECK_LE(requested_internal_fields,
+  DCHECK_LE(requested_embedder_fields,
             (JSObject::kMaxInstanceSize - header_size) >> kPointerSizeLog2);
   *instance_size =
       Min(header_size +
-              ((requested_internal_fields + requested_in_object_properties)
+              ((requested_embedder_fields + requested_in_object_properties)
                << kPointerSizeLog2),
           JSObject::kMaxInstanceSize);
   *in_object_properties = ((*instance_size - header_size) >> kPointerSizeLog2) -
-                          requested_internal_fields;
+                          requested_embedder_fields;
 }
 
-
 void JSFunction::CalculateInstanceSize(InstanceType instance_type,
-                                       int requested_internal_fields,
+                                       int requested_embedder_fields,
                                        int* instance_size,
                                        int* in_object_properties) {
-  CalculateInstanceSizeHelper(instance_type, requested_internal_fields,
+  CalculateInstanceSizeHelper(instance_type, requested_embedder_fields,
                               shared()->expected_nof_properties(),
                               instance_size, in_object_properties);
 }
 
-
 void JSFunction::CalculateInstanceSizeForDerivedClass(
-    InstanceType instance_type, int requested_internal_fields,
+    InstanceType instance_type, int requested_embedder_fields,
     int* instance_size, int* in_object_properties) {
   Isolate* isolate = GetIsolate();
   int expected_nof_properties = 0;
@@ -13501,7 +13508,7 @@ void JSFunction::CalculateInstanceSizeForDerivedClass(
       break;
     }
   }
-  CalculateInstanceSizeHelper(instance_type, requested_internal_fields,
+  CalculateInstanceSizeHelper(instance_type, requested_embedder_fields,
                               expected_nof_properties, instance_size,
                               in_object_properties);
 }
@@ -13896,12 +13903,12 @@ void Code::CopyFrom(const CodeDesc& desc) {
       // pointers to the first instruction in the code object
       Handle<Object> p = it.rinfo()->target_object_handle(origin);
       Code* code = Code::cast(*p);
-      it.rinfo()->set_target_address(code->instruction_start(),
+      it.rinfo()->set_target_address(GetIsolate(), code->instruction_start(),
                                      UPDATE_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
     } else if (RelocInfo::IsRuntimeEntry(mode)) {
       Address p = it.rinfo()->target_runtime_entry(origin);
-      it.rinfo()->set_target_runtime_entry(p, UPDATE_WRITE_BARRIER,
-                                           SKIP_ICACHE_FLUSH);
+      it.rinfo()->set_target_runtime_entry(
+          GetIsolate(), p, UPDATE_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
     } else if (mode == RelocInfo::CODE_AGE_SEQUENCE) {
       Handle<Object> p = it.rinfo()->code_age_stub_handle(origin);
       Code* code = Code::cast(*p);
@@ -15068,10 +15075,12 @@ bool DependentCode::MarkCodeForDeoptimization(
 void DependentCode::DeoptimizeDependentCodeGroup(
     Isolate* isolate,
     DependentCode::DependencyGroup group) {
-  DCHECK(AllowCodeDependencyChange::IsAllowed());
   DisallowHeapAllocation no_allocation_scope;
   bool marked = MarkCodeForDeoptimization(isolate, group);
-  if (marked) Deoptimizer::DeoptimizeMarkedCode(isolate);
+  if (marked) {
+    DCHECK(AllowCodeDependencyChange::IsAllowed());
+    Deoptimizer::DeoptimizeMarkedCode(isolate);
+  }
 }
 
 
@@ -19325,10 +19334,10 @@ void JSArrayBuffer::Neuter() {
 void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
                           bool is_external, void* data, size_t allocated_length,
                           SharedFlag shared) {
-  DCHECK(array_buffer->GetInternalFieldCount() ==
-         v8::ArrayBuffer::kInternalFieldCount);
-  for (int i = 0; i < v8::ArrayBuffer::kInternalFieldCount; i++) {
-    array_buffer->SetInternalField(i, Smi::kZero);
+  DCHECK(array_buffer->GetEmbedderFieldCount() ==
+         v8::ArrayBuffer::kEmbedderFieldCount);
+  for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
+    array_buffer->SetEmbedderField(i, Smi::kZero);
   }
   array_buffer->set_bit_field(0);
   array_buffer->set_is_external(is_external);

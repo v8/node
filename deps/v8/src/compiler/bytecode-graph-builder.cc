@@ -6,10 +6,8 @@
 
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
-#include "src/compilation-info.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/compiler-source-position-table.h"
-#include "src/compiler/js-type-hint-lowering.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/operator-properties.h"
 #include "src/compiler/simplified-operator.h"
@@ -466,7 +464,8 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
     Zone* local_zone, Handle<SharedFunctionInfo> shared_info,
     Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
     JSGraph* jsgraph, float invocation_frequency,
-    SourcePositionTable* source_positions, int inlining_id)
+    SourcePositionTable* source_positions, int inlining_id,
+    JSTypeHintLowering::Flags flags)
     : local_zone_(local_zone),
       jsgraph_(jsgraph),
       invocation_frequency_(invocation_frequency),
@@ -474,6 +473,7 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
       exception_handler_table_(
           handle(HandlerTable::cast(bytecode_array()->handler_table()))),
       feedback_vector_(feedback_vector),
+      type_hint_lowering_(jsgraph, feedback_vector, flags),
       frame_state_function_info_(common()->CreateFrameStateFunctionInfo(
           FrameStateType::kInterpretedFunction,
           bytecode_array()->parameter_count(),
@@ -1064,8 +1064,15 @@ void BytecodeGraphBuilder::VisitLdaNamedProperty() {
   VectorSlotPair feedback =
       CreateVectorSlotPair(bytecode_iterator().GetIndexOperand(2));
 
-  const Operator* op = javascript()->LoadNamed(name, feedback);
-  Node* node = NewNode(op, object);
+  Node* node = nullptr;
+  if (Node* simplified = TryBuildSimplifiedLoadNamed(feedback.slot())) {
+    if (environment() == nullptr) return;
+    node = simplified;
+  } else {
+    const Operator* op = javascript()->LoadNamed(name, feedback);
+    node = NewNode(op, object);
+  }
+
   environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
@@ -1621,24 +1628,6 @@ void BytecodeGraphBuilder::VisitReThrow() {
   MergeControlToLeaveFunction(control);
 }
 
-Node* BytecodeGraphBuilder::TryBuildSimplifiedBinaryOp(const Operator* op,
-                                                       Node* left, Node* right,
-                                                       FeedbackSlot slot) {
-  Node* effect = environment()->GetEffectDependency();
-  Node* control = environment()->GetControlDependency();
-  JSTypeHintLowering type_hint_lowering(jsgraph(), feedback_vector());
-  Reduction early_reduction = type_hint_lowering.ReduceBinaryOperation(
-      op, left, right, effect, control, slot);
-  if (early_reduction.Changed()) {
-    Node* node = early_reduction.replacement();
-    if (node->op()->EffectOutputCount() > 0) {
-      environment()->UpdateEffectDependency(node);
-    }
-    return node;
-  }
-  return nullptr;
-}
-
 void BytecodeGraphBuilder::BuildBinaryOp(const Operator* op) {
   PrepareEagerCheckpoint();
   Node* left =
@@ -2100,7 +2089,7 @@ void BytecodeGraphBuilder::VisitDebugger() {
 DEBUG_BREAK_BYTECODE_LIST(DEBUG_BREAK);
 #undef DEBUG_BREAK
 
-void BytecodeGraphBuilder::BuildForInPrepare() {
+void BytecodeGraphBuilder::VisitForInPrepare() {
   PrepareEagerCheckpoint();
   Node* receiver =
       environment()->LookupRegister(bytecode_iterator().GetRegisterOperand(0));
@@ -2109,8 +2098,6 @@ void BytecodeGraphBuilder::BuildForInPrepare() {
       bytecode_iterator().GetRegisterOperand(1), prepare,
       Environment::kAttachFrameState);
 }
-
-void BytecodeGraphBuilder::VisitForInPrepare() { BuildForInPrepare(); }
 
 void BytecodeGraphBuilder::VisitForInContinue() {
   PrepareEagerCheckpoint();
@@ -2124,7 +2111,7 @@ void BytecodeGraphBuilder::VisitForInContinue() {
   environment()->BindAccumulator(exit_cond, Environment::kAttachFrameState);
 }
 
-void BytecodeGraphBuilder::BuildForInNext() {
+void BytecodeGraphBuilder::VisitForInNext() {
   PrepareEagerCheckpoint();
   Node* receiver =
       environment()->LookupRegister(bytecode_iterator().GetRegisterOperand(0));
@@ -2140,8 +2127,6 @@ void BytecodeGraphBuilder::BuildForInNext() {
                         cache_type, index);
   environment()->BindAccumulator(value, Environment::kAttachFrameState);
 }
-
-void BytecodeGraphBuilder::VisitForInNext() { BuildForInNext(); }
 
 void BytecodeGraphBuilder::VisitForInStep() {
   PrepareEagerCheckpoint();
@@ -2390,6 +2375,48 @@ void BytecodeGraphBuilder::BuildJumpIfJSReceiver() {
   Node* accumulator = environment()->LookupAccumulator();
   Node* condition = NewNode(simplified()->ObjectIsReceiver(), accumulator);
   BuildJumpIf(condition);
+}
+
+Node* BytecodeGraphBuilder::TryBuildSimplifiedBinaryOp(const Operator* op,
+                                                       Node* left, Node* right,
+                                                       FeedbackSlot slot) {
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  Reduction early_reduction = type_hint_lowering().ReduceBinaryOperation(
+      op, left, right, effect, control, slot);
+  if (early_reduction.Changed()) {
+    Node* node = early_reduction.replacement();
+    if (node->op()->EffectOutputCount() > 0) {
+      environment()->UpdateEffectDependency(node);
+    }
+    if (IrOpcode::IsGraphTerminator(node->opcode())) {
+      MergeControlToLeaveFunction(node);
+    }
+    return node;
+  }
+  return nullptr;
+}
+
+Node* BytecodeGraphBuilder::TryBuildSimplifiedLoadNamed(FeedbackSlot slot) {
+  // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
+  // pruned from the graph by a soft-deopt. It can happen that a LoadIC that
+  // control-dominates the OSR entry is still in "uninitialized" state.
+  if (!osr_ast_id_.IsNone()) return nullptr;
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  Reduction early_reduction =
+      type_hint_lowering().ReduceLoadNamedOperation(effect, control, slot);
+  if (early_reduction.Changed()) {
+    Node* node = early_reduction.replacement();
+    if (node->op()->EffectOutputCount() > 0) {
+      environment()->UpdateEffectDependency(node);
+    }
+    if (IrOpcode::IsGraphTerminator(node->opcode())) {
+      MergeControlToLeaveFunction(node);
+    }
+    return node;
+  }
+  return nullptr;
 }
 
 Node** BytecodeGraphBuilder::EnsureInputBufferSize(int size) {

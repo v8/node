@@ -495,7 +495,7 @@ struct SnapshotCreatorData {
   Persistent<Context> default_context_;
   PersistentValueVector<Context> contexts_;
   PersistentValueVector<Template> templates_;
-  std::vector<SerializeInternalFieldsCallback> internal_fields_serializers_;
+  std::vector<SerializeInternalFieldsCallback> embedder_fields_serializers_;
   bool created_;
 };
 
@@ -554,7 +554,7 @@ size_t SnapshotCreator::AddContext(Local<Context> context,
   CHECK_EQ(isolate, context->GetIsolate());
   size_t index = static_cast<int>(data->contexts_.Size());
   data->contexts_.Append(context);
-  data->internal_fields_serializers_.push_back(callback);
+  data->embedder_fields_serializers_.push_back(callback);
   return index;
 }
 
@@ -644,7 +644,7 @@ StartupData SnapshotCreator::CreateBlob(
   i::List<i::SnapshotData*> context_snapshots(num_additional_contexts + 1);
 
   {
-    // The default snapshot does not support internal fields.
+    // The default snapshot does not support embedder fields.
     i::PartialSerializer partial_serializer(
         isolate, &startup_serializer, v8::SerializeInternalFieldsCallback());
     partial_serializer.Serialize(&default_context, false);
@@ -653,7 +653,7 @@ StartupData SnapshotCreator::CreateBlob(
 
   for (int i = 0; i < num_additional_contexts; i++) {
     i::PartialSerializer partial_serializer(
-        isolate, &startup_serializer, data->internal_fields_serializers_[i]);
+        isolate, &startup_serializer, data->embedder_fields_serializers_[i]);
     partial_serializer.Serialize(&contexts[i], true);
     context_snapshots.Add(new i::SnapshotData(&partial_serializer));
   }
@@ -913,19 +913,19 @@ void V8::RegisterExternallyReferencedObject(i::Object** object,
 }
 
 void V8::MakeWeak(i::Object** location, void* parameter,
-                  int internal_field_index1, int internal_field_index2,
+                  int embedder_field_index1, int embedder_field_index2,
                   WeakCallbackInfo<void>::Callback weak_callback) {
   WeakCallbackType type = WeakCallbackType::kParameter;
-  if (internal_field_index1 == 0) {
-    if (internal_field_index2 == 1) {
+  if (embedder_field_index1 == 0) {
+    if (embedder_field_index2 == 1) {
       type = WeakCallbackType::kInternalFields;
     } else {
-      DCHECK_EQ(internal_field_index2, -1);
+      DCHECK_EQ(embedder_field_index2, -1);
       type = WeakCallbackType::kInternalFields;
     }
   } else {
-    DCHECK_EQ(internal_field_index1, -1);
-    DCHECK_EQ(internal_field_index2, -1);
+    DCHECK_EQ(embedder_field_index1, -1);
+    DCHECK_EQ(embedder_field_index2, -1);
   }
   i::GlobalHandles::MakeWeak(location, parameter, weak_callback, type);
 }
@@ -948,17 +948,13 @@ void V8::DisposeGlobal(i::Object** location) {
   i::GlobalHandles::Destroy(location);
 }
 
-
-void V8::Eternalize(Isolate* v8_isolate, Value* value, int* index) {
+Value* V8::Eternalize(Isolate* v8_isolate, Value* value) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
   i::Object* object = *Utils::OpenHandle(value);
-  isolate->eternal_handles()->Create(isolate, object, index);
-}
-
-
-Local<Value> V8::GetEternal(Isolate* v8_isolate, int index) {
-  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
-  return Utils::ToLocal(isolate->eternal_handles()->Get(index));
+  int index = -1;
+  isolate->eternal_handles()->Create(isolate, object, &index);
+  return reinterpret_cast<Value*>(
+      isolate->eternal_handles()->Get(index).location());
 }
 
 
@@ -970,7 +966,6 @@ void V8::FromJustIsNothing() {
 void V8::ToLocalEmpty() {
   Utils::ApiCheck(false, "v8::ToLocalChecked", "Empty MaybeLocal.");
 }
-
 
 void V8::InternalFieldOutOfBounds(int index) {
   Utils::ApiCheck(0 <= index && index < kInternalFieldsInWeakCallback,
@@ -1861,27 +1856,25 @@ void ObjectTemplate::SetCallAsFunctionHandler(FunctionCallback callback,
   cons->set_instance_call_handler(*obj);
 }
 
-
 int ObjectTemplate::InternalFieldCount() {
-  return Utils::OpenHandle(this)->internal_field_count();
+  return Utils::OpenHandle(this)->embedder_field_count();
 }
-
 
 void ObjectTemplate::SetInternalFieldCount(int value) {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   if (!Utils::ApiCheck(i::Smi::IsValid(value),
                        "v8::ObjectTemplate::SetInternalFieldCount()",
-                       "Invalid internal field count")) {
+                       "Invalid embedder field count")) {
     return;
   }
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   if (value > 0) {
-    // The internal field count is set by the constructor function's
+    // The embedder field count is set by the constructor function's
     // construct code, so we ensure that there is a constructor
     // function to do the setting.
     EnsureConstructor(isolate, this);
   }
-  Utils::OpenHandle(this)->set_internal_field_count(value);
+  Utils::OpenHandle(this)->set_embedder_field_count(value);
 }
 
 bool ObjectTemplate::IsImmutableProto() {
@@ -2693,7 +2686,7 @@ void v8::TryCatch::SetCaptureMessage(bool value) {
 
 Local<String> Message::Get() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   i::Handle<i::Object> obj = Utils::OpenHandle(this);
   i::Handle<i::String> raw_result = i::MessageHandler::GetMessage(isolate, obj);
@@ -2704,6 +2697,7 @@ Local<String> Message::Get() const {
 
 ScriptOrigin Message::GetScriptOrigin() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   auto message = i::Handle<i::JSMessageObject>::cast(Utils::OpenHandle(this));
   auto script_wraper = i::Handle<i::Object>(message->script(), isolate);
   auto script_value = i::Handle<i::JSValue>::cast(script_wraper);
@@ -2719,7 +2713,7 @@ v8::Local<Value> Message::GetScriptResourceName() const {
 
 v8::Local<v8::StackTrace> Message::GetStackTrace() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   auto message = i::Handle<i::JSMessageObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::Object> stackFramesObj(message->stack_frames(), isolate);
@@ -2732,7 +2726,7 @@ v8::Local<v8::StackTrace> Message::GetStackTrace() const {
 Maybe<int> Message::GetLineNumber(Local<Context> context) const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
   return Just(msg->GetLineNumber());
@@ -2764,7 +2758,7 @@ int Message::ErrorLevel() const {
 Maybe<int> Message::GetStartColumn(Local<Context> context) const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
   return Just(msg->GetColumnNumber());
@@ -2781,7 +2775,7 @@ int Message::GetStartColumn() const {
 Maybe<int> Message::GetEndColumn(Local<Context> context) const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
   const int column_number = msg->GetColumnNumber();
@@ -2801,7 +2795,7 @@ int Message::GetEndColumn() const {
 
 bool Message::IsSharedCrossOrigin() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   auto self = Utils::OpenHandle(this);
   auto script = i::Handle<i::JSValue>::cast(
       i::Handle<i::Object>(self->script(), isolate));
@@ -2812,7 +2806,7 @@ bool Message::IsSharedCrossOrigin() const {
 
 bool Message::IsOpaque() const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   auto self = Utils::OpenHandle(this);
   auto script = i::Handle<i::JSValue>::cast(
       i::Handle<i::Object>(self->script(), isolate));
@@ -2823,7 +2817,7 @@ bool Message::IsOpaque() const {
 MaybeLocal<String> Message::GetSourceLine(Local<Context> context) const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
   RETURN_ESCAPED(Utils::ToLocal(msg->GetSourceLine()));
@@ -2838,7 +2832,7 @@ Local<String> Message::GetSourceLine() const {
 
 void Message::PrintCurrentStackTrace(Isolate* isolate, FILE* out) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  ENTER_V8(i_isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(i_isolate);
   i_isolate->PrintCurrentStackTrace(out);
 }
 
@@ -6037,57 +6031,52 @@ uint32_t Uint32::Value() const {
   }
 }
 
-
 int v8::Object::InternalFieldCount() {
   i::Handle<i::JSReceiver> self = Utils::OpenHandle(this);
   if (!self->IsJSObject()) return 0;
-  return i::Handle<i::JSObject>::cast(self)->GetInternalFieldCount();
+  return i::Handle<i::JSObject>::cast(self)->GetEmbedderFieldCount();
 }
-
 
 static bool InternalFieldOK(i::Handle<i::JSReceiver> obj, int index,
                             const char* location) {
   return Utils::ApiCheck(
       obj->IsJSObject() &&
-          (index < i::Handle<i::JSObject>::cast(obj)->GetInternalFieldCount()),
+          (index < i::Handle<i::JSObject>::cast(obj)->GetEmbedderFieldCount()),
       location, "Internal field out of bounds");
 }
-
 
 Local<Value> v8::Object::SlowGetInternalField(int index) {
   i::Handle<i::JSReceiver> obj = Utils::OpenHandle(this);
   const char* location = "v8::Object::GetInternalField()";
   if (!InternalFieldOK(obj, index, location)) return Local<Value>();
   i::Handle<i::Object> value(
-      i::Handle<i::JSObject>::cast(obj)->GetInternalField(index),
+      i::Handle<i::JSObject>::cast(obj)->GetEmbedderField(index),
       obj->GetIsolate());
   return Utils::ToLocal(value);
 }
-
 
 void v8::Object::SetInternalField(int index, v8::Local<Value> value) {
   i::Handle<i::JSReceiver> obj = Utils::OpenHandle(this);
   const char* location = "v8::Object::SetInternalField()";
   if (!InternalFieldOK(obj, index, location)) return;
   i::Handle<i::Object> val = Utils::OpenHandle(*value);
-  i::Handle<i::JSObject>::cast(obj)->SetInternalField(index, *val);
+  i::Handle<i::JSObject>::cast(obj)->SetEmbedderField(index, *val);
 }
-
 
 void* v8::Object::SlowGetAlignedPointerFromInternalField(int index) {
   i::Handle<i::JSReceiver> obj = Utils::OpenHandle(this);
   const char* location = "v8::Object::GetAlignedPointerFromInternalField()";
   if (!InternalFieldOK(obj, index, location)) return NULL;
   return DecodeSmiToAligned(
-      i::Handle<i::JSObject>::cast(obj)->GetInternalField(index), location);
+      i::Handle<i::JSObject>::cast(obj)->GetEmbedderField(index), location);
 }
 
 void v8::Object::SetAlignedPointerInInternalField(int index, void* value) {
   i::Handle<i::JSReceiver> obj = Utils::OpenHandle(this);
   const char* location = "v8::Object::SetAlignedPointerInInternalField()";
   if (!InternalFieldOK(obj, index, location)) return;
-  i::Handle<i::JSObject>::cast(obj)
-      ->SetInternalField(index, EncodeAlignedAsSmi(value, location));
+  i::Handle<i::JSObject>::cast(obj)->SetEmbedderField(
+      index, EncodeAlignedAsSmi(value, location));
   DCHECK_EQ(value, GetAlignedPointerFromInternalField(index));
 }
 
@@ -6097,15 +6086,15 @@ void v8::Object::SetAlignedPointerInInternalFields(int argc, int indices[],
   const char* location = "v8::Object::SetAlignedPointerInInternalFields()";
   i::DisallowHeapAllocation no_gc;
   i::JSObject* object = i::JSObject::cast(*obj);
-  int nof_internal_fields = object->GetInternalFieldCount();
+  int nof_embedder_fields = object->GetEmbedderFieldCount();
   for (int i = 0; i < argc; i++) {
     int index = indices[i];
-    if (!Utils::ApiCheck(index < nof_internal_fields, location,
+    if (!Utils::ApiCheck(index < nof_embedder_fields, location,
                          "Internal field out of bounds")) {
       return;
     }
     void* value = values[i];
-    object->SetInternalField(index, EncodeAlignedAsSmi(value, location));
+    object->SetEmbedderField(index, EncodeAlignedAsSmi(value, location));
     DCHECK_EQ(value, GetAlignedPointerFromInternalField(index));
   }
 }
@@ -6116,7 +6105,7 @@ static void* ExternalValue(i::Object* obj) {
       obj->IsUndefined(i::HeapObject::cast(obj)->GetIsolate())) {
     return NULL;
   }
-  i::Object* foreign = i::JSObject::cast(obj)->GetInternalField(0);
+  i::Object* foreign = i::JSObject::cast(obj)->GetEmbedderField(0);
   return i::Foreign::cast(foreign)->foreign_address();
 }
 
@@ -6232,10 +6221,10 @@ struct InvokeBootstrapper<i::Context> {
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
       v8::Local<v8::ObjectTemplate> global_object_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
-      v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
+      v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     return isolate->bootstrapper()->CreateEnvironment(
         maybe_global_proxy, global_object_template, extensions,
-        context_snapshot_index, internal_fields_deserializer);
+        context_snapshot_index, embedder_fields_deserializer);
   }
 };
 
@@ -6245,7 +6234,7 @@ struct InvokeBootstrapper<i::JSGlobalProxy> {
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
       v8::Local<v8::ObjectTemplate> global_object_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
-      v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
+      v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     USE(extensions);
     USE(context_snapshot_index);
     return isolate->bootstrapper()->NewRemoteContext(maybe_global_proxy,
@@ -6258,7 +6247,7 @@ static i::Handle<ObjectType> CreateEnvironment(
     i::Isolate* isolate, v8::ExtensionConfiguration* extensions,
     v8::MaybeLocal<ObjectTemplate> maybe_global_template,
     v8::MaybeLocal<Value> maybe_global_proxy, size_t context_snapshot_index,
-    v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
+    v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
   i::Handle<ObjectType> result;
 
   {
@@ -6331,7 +6320,7 @@ static i::Handle<ObjectType> CreateEnvironment(
     InvokeBootstrapper<ObjectType> invoke;
     result =
         invoke.Invoke(isolate, maybe_proxy, proxy_template, extensions,
-                      context_snapshot_index, internal_fields_deserializer);
+                      context_snapshot_index, embedder_fields_deserializer);
 
     // Restore the access check info and interceptors on the global template.
     if (!maybe_global_template.IsEmpty()) {
@@ -6354,7 +6343,7 @@ Local<Context> NewContext(
     v8::Isolate* external_isolate, v8::ExtensionConfiguration* extensions,
     v8::MaybeLocal<ObjectTemplate> global_template,
     v8::MaybeLocal<Value> global_object, size_t context_snapshot_index,
-    v8::DeserializeInternalFieldsCallback internal_fields_deserializer) {
+    v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(external_isolate);
   TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.NewContext");
   LOG_API(isolate, Context, New);
@@ -6363,7 +6352,7 @@ Local<Context> NewContext(
   if (extensions == NULL) extensions = &no_extensions;
   i::Handle<i::Context> env = CreateEnvironment<i::Context>(
       isolate, extensions, global_template, global_object,
-      context_snapshot_index, internal_fields_deserializer);
+      context_snapshot_index, embedder_fields_deserializer);
   if (env.is_null()) {
     if (isolate->has_pending_exception()) isolate->clear_pending_exception();
     return Local<Context>();
@@ -6381,7 +6370,7 @@ Local<Context> v8::Context::New(v8::Isolate* external_isolate,
 
 MaybeLocal<Context> v8::Context::FromSnapshot(
     v8::Isolate* external_isolate, size_t context_snapshot_index,
-    v8::DeserializeInternalFieldsCallback internal_fields_deserializer,
+    v8::DeserializeInternalFieldsCallback embedder_fields_deserializer,
     v8::ExtensionConfiguration* extensions, MaybeLocal<Value> global_object) {
   size_t index_including_default_context = context_snapshot_index + 1;
   if (!i::Snapshot::HasContextSnapshot(
@@ -6391,7 +6380,7 @@ MaybeLocal<Context> v8::Context::FromSnapshot(
   }
   return NewContext(external_isolate, extensions, MaybeLocal<ObjectTemplate>(),
                     global_object, index_including_default_context,
-                    internal_fields_deserializer);
+                    embedder_fields_deserializer);
 }
 
 MaybeLocal<Object> v8::Context::NewRemoteContext(
@@ -7512,7 +7501,7 @@ Local<String> WasmCompiledModule::GetWasmWireBytes() {
   i::Handle<i::JSObject> obj =
       i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
-      i::handle(i::WasmCompiledModule::cast(obj->GetInternalField(0)));
+      i::handle(i::WasmCompiledModule::cast(obj->GetEmbedderField(0)));
   i::Handle<i::String> wire_bytes(compiled_part->module_bytes());
   return Local<String>::Cast(Utils::ToLocal(wire_bytes));
 }
@@ -7521,7 +7510,7 @@ WasmCompiledModule::SerializedModule WasmCompiledModule::Serialize() {
   i::Handle<i::JSObject> obj =
       i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
-      i::handle(i::WasmCompiledModule::cast(obj->GetInternalField(0)));
+      i::handle(i::WasmCompiledModule::cast(obj->GetEmbedderField(0)));
 
   std::unique_ptr<i::ScriptData> script_data =
       i::WasmCompiledModuleSerializer::SerializeWasmModule(obj->GetIsolate(),
@@ -9405,7 +9394,7 @@ void debug::GetLoadedScripts(v8::Isolate* v8_isolate,
     i::DisallowHeapAllocation no_gc;
     i::Script::Iterator iterator(isolate);
     i::Script* script;
-    while ((script = iterator.Next())) {
+    while ((script = iterator.Next()) != nullptr) {
       if (!script->IsUserJavaScript()) continue;
       if (script->HasValidSource()) {
         i::HandleScope handle_scope(isolate);

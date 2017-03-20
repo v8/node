@@ -18,43 +18,13 @@ namespace internal {
 
 #define __ ACCESS_MASM(masm)
 
-
-void NamedLoadHandlerCompiler::GenerateLoadViaGetter(
-    MacroAssembler* masm, Handle<Map> map, Register receiver, Register holder,
-    int accessor_index, int expected_arguments, Register scratch) {
-  // ----------- S t a t e -------------
-  //  -- r0    : receiver
-  //  -- r2    : name
-  //  -- lr    : return address
-  // -----------------------------------
+void NamedLoadHandlerCompiler::GenerateLoadViaGetterForDeopt(
+    MacroAssembler* masm) {
   {
     FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-
-    // Save context register
-    __ push(cp);
-
-    if (accessor_index >= 0) {
-      DCHECK(!holder.is(scratch));
-      DCHECK(!receiver.is(scratch));
-      // Call the JavaScript getter with the receiver on the stack.
-      if (map->IsJSGlobalObjectMap()) {
-        // Swap in the global receiver.
-        __ ldr(scratch,
-               FieldMemOperand(receiver, JSGlobalObject::kGlobalProxyOffset));
-        receiver = scratch;
-      }
-      __ push(receiver);
-      __ LoadAccessor(r1, holder, accessor_index, ACCESSOR_GETTER);
-      __ mov(r0, Operand(0));
-      __ Call(masm->isolate()->builtins()->CallFunction(
-                  ConvertReceiverMode::kNotNullOrUndefined),
-              RelocInfo::CODE_TARGET);
-    } else {
-      // If we generate a global code snippet for deoptimization only, remember
-      // the place to continue after deoptimization.
-      masm->isolate()->heap()->SetGetterStubDeoptPCOffset(masm->pc_offset());
-    }
-
+    // If we generate a global code snippet for deoptimization only, remember
+    // the place to continue after deoptimization.
+    masm->isolate()->heap()->SetGetterStubDeoptPCOffset(masm->pc_offset());
     // Restore context register.
     __ pop(cp);
   }

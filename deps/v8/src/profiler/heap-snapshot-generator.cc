@@ -1662,11 +1662,11 @@ void V8HeapExplorer::ExtractElementReferences(JSObject* js_obj, int entry) {
 
 
 void V8HeapExplorer::ExtractInternalReferences(JSObject* js_obj, int entry) {
-  int length = js_obj->GetInternalFieldCount();
+  int length = js_obj->GetEmbedderFieldCount();
   for (int i = 0; i < length; ++i) {
-    Object* o = js_obj->GetInternalField(i);
-    SetInternalReference(
-        js_obj, entry, i, o, js_obj->GetInternalFieldOffset(i));
+    Object* o = js_obj->GetEmbedderField(i);
+    SetInternalReference(js_obj, entry, i, o,
+                         js_obj->GetEmbedderFieldOffset(i));
   }
 }
 
@@ -1715,6 +1715,7 @@ class RootsReferencesExtractor : public ObjectVisitor {
   void FillReferences(V8HeapExplorer* explorer) {
     DCHECK(strong_references_.length() <= all_references_.length());
     Builtins* builtins = heap_->isolate()->builtins();
+    USE(builtins);
     int strong_index = 0, all_index = 0, tags_index = 0, builtin_index = 0;
     while (all_index < all_references_.length()) {
       bool is_strong = strong_index < strong_references_.length()

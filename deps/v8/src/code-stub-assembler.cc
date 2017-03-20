@@ -2971,6 +2971,10 @@ Node* CodeStubAssembler::IsPropertyCell(Node* object) {
   return IsPropertyCellMap(LoadMap(object));
 }
 
+Node* CodeStubAssembler::IsAccessorPair(Node* object) {
+  return IsAccessorPairMap(LoadMap(object));
+}
+
 Node* CodeStubAssembler::IsHeapNumber(Node* object) {
   return IsHeapNumberMap(LoadMap(object));
 }
@@ -3363,7 +3367,8 @@ Node* ToDirectStringAssembler::TryToDirect(Label* if_bailout) {
   Label if_isthin(this);
   Label out(this);
 
-  Goto(&dispatch);
+  Branch(IsSequentialStringInstanceType(var_instance_type_.value()), &out,
+         &dispatch);
 
   // Dispatch based on string representation.
   Bind(&dispatch);
@@ -3440,7 +3445,7 @@ Node* ToDirectStringAssembler::TryToSequential(StringPointerKind ptr_kind,
   CHECK(ptr_kind == PTR_TO_DATA || ptr_kind == PTR_TO_STRING);
 
   Variable var_result(this, MachineType::PointerRepresentation());
-  Label out(this), if_issequential(this), if_isexternal(this);
+  Label out(this), if_issequential(this), if_isexternal(this, Label::kDeferred);
   Branch(is_external(), &if_isexternal, &if_issequential);
 
   Bind(&if_issequential);
@@ -5061,7 +5066,7 @@ Node* CodeStubAssembler::CallGetterIfAccessor(Node* value, Node* details,
     GotoIf(Word32Equal(LoadInstanceType(accessor_pair),
                        Int32Constant(ACCESSOR_INFO_TYPE)),
            if_bailout);
-    CSA_ASSERT(this, HasInstanceType(accessor_pair, ACCESSOR_PAIR_TYPE));
+    CSA_ASSERT(this, IsAccessorPair(accessor_pair));
     Node* getter = LoadObjectField(accessor_pair, AccessorPair::kGetterOffset);
     Node* getter_map = LoadMap(getter);
     Node* instance_type = LoadMapInstanceType(getter_map);

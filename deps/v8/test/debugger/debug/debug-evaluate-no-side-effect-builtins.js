@@ -24,6 +24,7 @@ function listener(event, exec_state, event_data, data) {
     }
 
     // Test some Object functions.
+    success({}, `new Object()`);
     success({p : 3}, `Object.create({}, { p: { value: 3 } })`);
     success("[[\"a\",1],[\"b\",2]]",
             `JSON.stringify(Object.entries({a:1, b:2}))`);
@@ -58,6 +59,7 @@ function listener(event, exec_state, event_data, data) {
     success(3, `(object_with_callbacks).valueOf()`);
 
     // Test Array functions.
+    success([], `new Array()`);
     var function_param = [
       "forEach", "every", "some", "reduce", "reduceRight", "find", "filter",
       "map", "findIndex"
@@ -91,6 +93,7 @@ function listener(event, exec_state, event_data, data) {
     }
 
     // Test Number functions.
+    success(new Number(0), `new Number()`);
     for (f of Object.getOwnPropertyNames(Number)) {
       if (typeof Number[f] === "function") {
         success(Number[f](0.5), `Number.${f}(0.5);`);
@@ -104,15 +107,20 @@ function listener(event, exec_state, event_data, data) {
     }
 
     // Test String functions.
+    success(new String(), `new String()`);
     success(" ", "String.fromCodePoint(0x20)");
     success(" ", "String.fromCharCode(0x20)");
     for (f of Object.getOwnPropertyNames(String.prototype)) {
       if (typeof String.prototype[f] === "function") {
         // Do not expect locale-specific or regexp-related functions to work.
-        // {Lower,Upper}Case (Locale-specific or not) do not work either.
+        // {Lower,Upper}Case (Locale-specific or not) do not work either
+        // if Intl is enabled.
         if (f.indexOf("locale") >= 0) continue;
-        if (f.indexOf("Lower") >= 0) continue;
-        if (f.indexOf("Upper") >= 0) continue;
+        if (f.indexOf("Locale") >= 0) continue;
+        if (typeof Intl !== 'undefined') {
+          if (f == "toUpperCase") continue;
+          if (f == "toLowerCase") continue;
+        }
         if (f == "normalize") continue;
         if (f == "match") continue;
         if (f == "search") continue;
@@ -123,10 +131,12 @@ function listener(event, exec_state, event_data, data) {
         success("abcd"[f](2), `"abcd".${f}(2);`);
       }
     }
-    fail("'abCd'.toLowerCase()");
-    fail("'abcd'.toUpperCase()");
     fail("'abCd'.toLocaleLowerCase()");
     fail("'abcd'.toLocaleUpperCase()");
+    if (typeof Intl !== 'undefined') {
+      fail("'abCd'.toLowerCase()");
+      fail("'abcd'.toUpperCase()");
+    }
     fail("'abcd'.match(/a/)");
     fail("'abcd'.replace(/a/)");
     fail("'abcd'.search(/a/)");
