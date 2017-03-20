@@ -7,6 +7,7 @@
 
 #include "src/compiler/bytecode-analysis.h"
 #include "src/compiler/js-graph.h"
+#include "src/compiler/js-type-hint-lowering.h"
 #include "src/compiler/liveness-analyzer.h"
 #include "src/compiler/state-values-utils.h"
 #include "src/interpreter/bytecode-array-iterator.h"
@@ -24,12 +25,13 @@ class SourcePositionTable;
 // interpreter bytecodes.
 class BytecodeGraphBuilder {
  public:
-  BytecodeGraphBuilder(Zone* local_zone, Handle<SharedFunctionInfo> shared,
-                       Handle<FeedbackVector> feedback_vector,
-                       BailoutId osr_ast_id, JSGraph* jsgraph,
-                       float invocation_frequency,
-                       SourcePositionTable* source_positions,
-                       int inlining_id = SourcePosition::kNotInlined);
+  BytecodeGraphBuilder(
+      Zone* local_zone, Handle<SharedFunctionInfo> shared,
+      Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
+      JSGraph* jsgraph, float invocation_frequency,
+      SourcePositionTable* source_positions,
+      int inlining_id = SourcePosition::kNotInlined,
+      JSTypeHintLowering::Flags flags = JSTypeHintLowering::kNoFlags);
 
   // Creates a graph by visiting bytecodes.
   bool CreateGraph(bool stack_check = true);
@@ -164,16 +166,12 @@ class BytecodeGraphBuilder {
     BuildCall(tail_call_mode, receiver_hint, args.begin(), args.size(),
               slot_id);
   }
-  void BuildThrow();
   void BuildBinaryOp(const Operator* op);
   void BuildBinaryOpWithImmediate(const Operator* op);
   void BuildCompareOp(const Operator* op);
   void BuildTestingOp(const Operator* op);
   void BuildDelete(LanguageMode language_mode);
   void BuildCastOperator(const Operator* op);
-  void BuildForInPrepare();
-  void BuildForInNext();
-  void BuildInvokeIntrinsic();
 
   // Optional early lowering to the simplified operator level. Returns the node
   // representing the lowered operation or {nullptr} if no lowering available.
@@ -181,6 +179,7 @@ class BytecodeGraphBuilder {
   // any other invocation of {NewNode} would do.
   Node* TryBuildSimplifiedBinaryOp(const Operator* op, Node* left, Node* right,
                                    FeedbackSlot slot);
+  Node* TryBuildSimplifiedLoadNamed(FeedbackSlot slot);
 
   // Check the context chain for extensions, for lookup fast paths.
   Environment* CheckContextExtensions(uint32_t depth);
@@ -268,6 +267,9 @@ class BytecodeGraphBuilder {
   const Handle<FeedbackVector>& feedback_vector() const {
     return feedback_vector_;
   }
+  const JSTypeHintLowering& type_hint_lowering() const {
+    return type_hint_lowering_;
+  }
   const FrameStateFunctionInfo* frame_state_function_info() const {
     return frame_state_function_info_;
   }
@@ -304,6 +306,7 @@ class BytecodeGraphBuilder {
   Handle<BytecodeArray> bytecode_array_;
   Handle<HandlerTable> exception_handler_table_;
   Handle<FeedbackVector> feedback_vector_;
+  const JSTypeHintLowering type_hint_lowering_;
   const FrameStateFunctionInfo* frame_state_function_info_;
   const interpreter::BytecodeArrayIterator* bytecode_iterator_;
   const BytecodeAnalysis* bytecode_analysis_;

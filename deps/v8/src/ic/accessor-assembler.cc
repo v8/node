@@ -297,7 +297,7 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
   }
 
   Label constant(this), field(this), normal(this, Label::kDeferred),
-      interceptor(this, Label::kDeferred), nonexistent(this),
+      interceptor(this, Label::kDeferred), nonexistent(this), accessor(this),
       global(this, Label::kDeferred);
   GotoIf(WordEqual(handler_kind, IntPtrConstant(LoadHandler::kField)), &field);
 
@@ -309,6 +309,9 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
 
   GotoIf(WordEqual(handler_kind, IntPtrConstant(LoadHandler::kNormal)),
          &normal);
+
+  GotoIf(WordEqual(handler_kind, IntPtrConstant(LoadHandler::kAccessor)),
+         &accessor);
 
   Branch(WordEqual(handler_kind, IntPtrConstant(LoadHandler::kGlobal)), &global,
          &interceptor);
@@ -371,6 +374,29 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
                                          p->context, p->receiver, miss);
       exit_point->Return(value);
     }
+  }
+
+  Bind(&accessor);
+  {
+    Comment("accessor_load");
+    Node* descriptors = LoadMapDescriptors(LoadMap(holder));
+    Node* descriptor = DecodeWord<LoadHandler::DescriptorBits>(handler_word);
+    Node* scaled_descriptor =
+        IntPtrMul(descriptor, IntPtrConstant(DescriptorArray::kEntrySize));
+    Node* value_index =
+        IntPtrAdd(scaled_descriptor,
+                  IntPtrConstant(DescriptorArray::kFirstIndex +
+                                 DescriptorArray::kEntryValueIndex));
+    CSA_ASSERT(this,
+               UintPtrLessThan(descriptor,
+                               LoadAndUntagFixedArrayBaseLength(descriptors)));
+    Node* accessor_pair = LoadFixedArrayElement(descriptors, value_index);
+    CSA_ASSERT(this, IsAccessorPair(accessor_pair));
+    Node* getter = LoadObjectField(accessor_pair, AccessorPair::kGetterOffset);
+    CSA_ASSERT(this, Word32BinaryNot(IsTheHole(getter)));
+
+    Callable callable = CodeFactory::Call(isolate());
+    exit_point->Return(CallJS(callable, p->context, getter, p->receiver));
   }
 
   Bind(&global);
@@ -471,10 +497,10 @@ void AccessorAssembler::HandleLoadICProtoHandlerCase(
 
     Bind(&load_from_cached_holder);
     {
-      Node* holder = LoadWeakCellValue(maybe_holder_cell);
-      // The |holder| is guaranteed to be alive at this point since we passed
-      // both the receiver map check and the validity cell check.
-      CSA_ASSERT(this, WordNotEqual(holder, IntPtrConstant(0)));
+      // For regular holders, having passed the receiver map check and the
+      // validity cell check implies that |holder| is alive. However, for
+      // global object receivers, the |maybe_holder_cell| may be cleared.
+      Node* holder = LoadWeakCellValue(maybe_holder_cell, miss);
 
       var_holder->Bind(holder);
       Goto(&done);
@@ -545,11 +571,10 @@ Node* AccessorAssembler::EmitLoadICProtoArrayCheck(const LoadICParameters* p,
   GotoIf(WordEqual(maybe_holder_cell, NullConstant()), &done);
 
   {
-    var_holder.Bind(LoadWeakCellValue(maybe_holder_cell));
-    // The |holder| is guaranteed to be alive at this point since we passed
-    // the receiver map check, the validity cell check and the prototype chain
-    // check.
-    CSA_ASSERT(this, WordNotEqual(var_holder.value(), IntPtrConstant(0)));
+    // For regular holders, having passed the receiver map check and the
+    // validity cell check implies that |holder| is alive. However, for
+    // global object receivers, the |maybe_holder_cell| may be cleared.
+    var_holder.Bind(LoadWeakCellValue(maybe_holder_cell, miss));
     Goto(&done);
   }
 
@@ -563,7 +588,7 @@ void AccessorAssembler::HandleLoadGlobalICHandlerCase(
   LoadICParameters p = *pp;
   DCHECK_NULL(p.receiver);
   Node* native_context = LoadNativeContext(p.context);
-  p.receiver = LoadContextElement(native_context, Context::EXTENSION_INDEX);
+  p.receiver = LoadContextElement(native_context, Context::GLOBAL_PROXY_INDEX);
 
   Variable var_holder(this, MachineRepresentation::kTagged);
   Variable var_smi_handler(this, MachineRepresentation::kTagged);
@@ -1911,8 +1936,10 @@ void AccessorAssembler::LoadGlobalIC_TryHandlerCase(const LoadICParameters* pp,
     LoadICParameters p = *pp;
     DCHECK_NULL(p.receiver);
     Node* native_context = LoadNativeContext(p.context);
-    p.receiver = LoadContextElement(native_context, Context::EXTENSION_INDEX);
-    HandleLoadICSmiHandlerCase(&p, p.receiver, handler, miss, exit_point,
+    p.receiver =
+        LoadContextElement(native_context, Context::GLOBAL_PROXY_INDEX);
+    Node* holder = LoadContextElement(native_context, Context::EXTENSION_INDEX);
+    HandleLoadICSmiHandlerCase(&p, holder, handler, miss, exit_point,
                                throw_reference_error_if_nonexistent,
                                kOnlyProperties);
   }
@@ -1928,7 +1955,7 @@ void AccessorAssembler::LoadGlobalIC_TryHandlerCase(const LoadICParameters* pp,
     LoadWithVectorDescriptor descriptor(isolate());
     Node* native_context = LoadNativeContext(pp->context);
     Node* receiver =
-        LoadContextElement(native_context, Context::EXTENSION_INDEX);
+        LoadContextElement(native_context, Context::GLOBAL_PROXY_INDEX);
     exit_point->ReturnCallStub(descriptor, handler, pp->context, receiver,
                                pp->name, pp->slot, pp->vector);
   }

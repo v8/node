@@ -698,6 +698,8 @@ class Isolate;
   CPP(ReflectSetPrototypeOf)                                                   \
                                                                                \
   /* RegExp */                                                                 \
+  TFS(RegExpPrototypeExecSlow, BUILTIN, kNoExtraICState,                       \
+      RegExpPrototypeExecSlow, 1)                                              \
   CPP(RegExpCapture1Getter)                                                    \
   CPP(RegExpCapture2Getter)                                                    \
   CPP(RegExpCapture3Getter)                                                    \
@@ -907,6 +909,9 @@ class Isolate;
 #define BUILTIN_LIST_DBG(V)                                                    \
   BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
                IGNORE_BUILTIN, IGNORE_BUILTIN, V)
+
+// TODO(clemensh): Add WasmCompileLazy once that CL lands.
+#define BUILTINS_WITH_UNTAGGED_PARAMS(V)
 
 // Forward declarations.
 class ObjectVisitor;

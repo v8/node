@@ -465,7 +465,7 @@ class WasmFunctionWrapper : private GraphAndBuilders {
         common()->Return(), zero,
         graph()->NewNode(common()->Int32Constant(WASM_WRAPPER_RETURN_VALUE)),
         effect, graph()->start());
-    graph()->SetEnd(graph()->NewNode(common()->End(2), r, graph()->start()));
+    graph()->SetEnd(graph()->NewNode(common()->End(1), r));
   }
 
   template <typename ReturnType, typename... ParamTypes>
@@ -852,15 +852,6 @@ bool WasmRunnerBase::trap_happened;
       return;                                            \
     }                                                    \
     RunWasm_##name(kExecuteCompiled);                    \
-  }                                                      \
-  TEST(RunWasmCompiledWithoutTrapIf_##name) {            \
-    if (trap_handler::UseTrapHandler()) {                \
-      return;                                            \
-    }                                                    \
-    bool trap_if = FLAG_wasm_trap_if;                    \
-    FLAG_wasm_trap_if = true;                            \
-    RunWasm_##name(kExecuteCompiled);                    \
-    FLAG_wasm_trap_if = trap_if;                         \
   }                                                      \
   TEST(RunWasmInterpreted_##name) {                      \
     if (trap_handler::UseTrapHandler()) {                \

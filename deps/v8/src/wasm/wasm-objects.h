@@ -45,7 +45,7 @@ class WasmInstanceWrapper;
 class WasmModuleObject : public JSObject {
  public:
   // If a second field is added, we need a kWrapperTracerHeader field as well.
-  // TODO(titzer): add the brand as an internal field instead of a property.
+  // TODO(titzer): add the brand as an embedder field instead of a property.
   enum Fields { kCompiledModule, kFieldCount };
 
   DECLARE_CASTS(WasmModuleObject);
@@ -60,7 +60,7 @@ class WasmModuleObject : public JSObject {
 class WasmTableObject : public JSObject {
  public:
   // The 0-th field is used by the Blink Wrapper Tracer.
-  // TODO(titzer): add the brand as an internal field instead of a property.
+  // TODO(titzer): add the brand as an embedder field instead of a property.
   enum Fields {
     kWrapperTracerHeader,
     kFunctions,
@@ -92,7 +92,7 @@ class WasmTableObject : public JSObject {
 class WasmMemoryObject : public JSObject {
  public:
   // The 0-th field is used by the Blink Wrapper Tracer.
-  // TODO(titzer): add the brand as an internal field instead of a property.
+  // TODO(titzer): add the brand as an embedder field instead of a property.
   enum Fields : uint8_t {
     kWrapperTracerHeader,
     kArrayBuffer,
@@ -123,7 +123,7 @@ class WasmMemoryObject : public JSObject {
 class WasmInstanceObject : public JSObject {
  public:
   // The 0-th field is used by the Blink Wrapper Tracer.
-  // TODO(titzer): add the brand as an internal field instead of a property.
+  // TODO(titzer): add the brand as an embedder field instead of a property.
   enum Fields {
     kWrapperTracerHeader,
     kCompiledModule,
@@ -294,7 +294,7 @@ class WasmCompiledModule : public FixedArray {
 #define DEBUG_ONLY_TABLE(MACRO) MACRO(SMALL_NUMBER, uint32_t, instance_id)
 #else
 #define DEBUG_ONLY_TABLE(IGNORE)
-  uint32_t instance_id() const { return -1; }
+  uint32_t instance_id() const { return static_cast<uint32_t>(-1); }
 #endif
 
 #define WCM_PROPERTY_TABLE(MACRO) \

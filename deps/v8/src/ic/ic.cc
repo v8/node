@@ -891,7 +891,10 @@ int InitPrototypeChecks(Isolate* isolate, Handle<Map> receiver_map,
     }
     checks_count++;
 
-  } else if (receiver_map->IsJSGlobalObjectMap()) {
+  } else if (receiver_map->IsJSGlobalObjectMap() &&
+             (holder.is_null() || holder->map() != *receiver_map)) {
+    // If we are creating a handler for [Load/Store]GlobalIC then we need to
+    // check that the property did not appear in the global object.
     if (fill_array) {
       Handle<JSGlobalObject> global = isolate->global_object();
       Handle<PropertyCell> cell = JSGlobalObject::EnsureEmptyPropertyCell(
@@ -1258,6 +1261,7 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
       }
 
       if (receiver_is_holder) {
+        DCHECK(map->has_named_interceptor());
         TRACE_HANDLER_STATS(isolate(), LoadIC_LoadInterceptorDH);
         return smi_handler;
       }
@@ -1284,11 +1288,30 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
           return ComputeHandler(lookup);
         }
 
-        if (!holder->HasFastProperties() ||
-            // When debugging we need to go the slow path to flood the accessor.
-            GetHostFunction()->shared()->HasDebugInfo()) {
+        // When debugging we need to go the slow path to flood the accessor.
+        if (GetHostFunction()->shared()->HasDebugInfo()) {
           TRACE_HANDLER_STATS(isolate(), LoadIC_SlowStub);
           return slow_stub();
+        }
+
+        if (!holder->HasFastProperties()) {
+          // Global loads always need the extended data handler since it embeds
+          // the PropertyCell.
+          if (receiver_is_holder && !holder->IsJSGlobalObject()) {
+            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalDH);
+            return LoadHandler::LoadNormal(isolate());
+          }
+
+          Handle<Smi> smi_handler;
+          if (holder->IsJSGlobalObject()) {
+            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadGlobalFromPrototypeDH);
+            smi_handler = LoadHandler::LoadGlobal(isolate());
+          } else {
+            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalFromPrototypeDH);
+            smi_handler = LoadHandler::LoadNormal(isolate());
+          }
+
+          return LoadFromPrototype(map, holder, lookup->name(), smi_handler);
         }
 
         Handle<Object> getter(AccessorPair::cast(*accessors)->getter(),
@@ -1307,13 +1330,31 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
           return slow_stub();
         }
 
-        CallOptimization call_optimization(getter);
-        if (call_optimization.is_simple_api_call() &&
-            !call_optimization.IsCompatibleReceiverMap(map, holder)) {
-          return slow_stub();
+        Handle<Smi> smi_handler;
+        if (holder->HasFastProperties()) {
+          CallOptimization call_optimization(getter);
+          if (call_optimization.is_simple_api_call()) {
+            if (!call_optimization.IsCompatibleReceiverMap(map, holder)) {
+              return slow_stub();
+            }
+            break;
+          }
+          smi_handler =
+              LoadHandler::LoadAccessor(isolate(), lookup->GetAccessorIndex());
+
+          if (receiver_is_holder) return smi_handler;
+        } else if (receiver_is_holder && !holder->IsJSGlobalObject()) {
+          TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalDH);
+          return LoadHandler::LoadNormal(isolate());
+        } else if (holder->IsJSGlobalObject()) {
+          TRACE_HANDLER_STATS(isolate(), LoadIC_LoadGlobalFromPrototypeDH);
+          smi_handler = LoadHandler::LoadGlobal(isolate());
+        } else {
+          TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalFromPrototypeDH);
+          smi_handler = LoadHandler::LoadNormal(isolate());
         }
 
-        break;
+        return LoadFromPrototype(map, holder, lookup->name(), smi_handler);
       }
 
       Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(accessors);
@@ -1418,19 +1459,12 @@ Handle<Object> LoadIC::CompileHandler(LookupIterator* lookup,
                             isolate());
       CallOptimization call_optimization(getter);
       NamedLoadHandlerCompiler compiler(isolate(), map, holder);
-      if (call_optimization.is_simple_api_call()) {
-        TRACE_HANDLER_STATS(isolate(), LoadIC_LoadCallback);
-        int index = lookup->GetAccessorIndex();
-        Handle<Code> code = compiler.CompileLoadCallback(
-            lookup->name(), call_optimization, index, slow_stub());
-        return code;
-      }
-      TRACE_HANDLER_STATS(isolate(), LoadIC_LoadViaGetter);
-      int expected_arguments = Handle<JSFunction>::cast(getter)
-                                   ->shared()
-                                   ->internal_formal_parameter_count();
-      return compiler.CompileLoadViaGetter(
-          lookup->name(), lookup->GetAccessorIndex(), expected_arguments);
+      DCHECK(call_optimization.is_simple_api_call());
+      TRACE_HANDLER_STATS(isolate(), LoadIC_LoadCallback);
+      int index = lookup->GetAccessorIndex();
+      Handle<Code> code = compiler.CompileLoadCallback(
+          lookup->name(), call_optimization, index, slow_stub());
+      return code;
     }
 
     case LookupIterator::INTERCEPTOR:
@@ -1814,18 +1848,19 @@ Handle<Object> StoreIC::StoreTransition(Handle<Map> receiver_map,
   return handler_array;
 }
 
-static Handle<Code> PropertyCellStoreHandler(
-    Isolate* isolate, Handle<JSObject> receiver, Handle<JSGlobalObject> holder,
-    Handle<Name> name, Handle<PropertyCell> cell, PropertyCellType type) {
+static Handle<Code> PropertyCellStoreHandler(Isolate* isolate,
+                                             Handle<JSObject> store_target,
+                                             Handle<Name> name,
+                                             Handle<PropertyCell> cell,
+                                             PropertyCellType type) {
   auto constant_type = Nothing<PropertyCellConstantType>();
   if (type == PropertyCellType::kConstantType) {
     constant_type = Just(cell->GetConstantType());
   }
-  StoreGlobalStub stub(isolate, type, constant_type,
-                       receiver->IsJSGlobalProxy());
-  auto code = stub.GetCodeCopyFromTemplate(holder, cell);
+  StoreGlobalStub stub(isolate, type, constant_type);
+  auto code = stub.GetCodeCopyFromTemplate(cell);
   // TODO(verwaest): Move caching of these NORMAL stubs outside as well.
-  HeapObject::UpdateMapCodeCache(receiver, name, code);
+  HeapObject::UpdateMapCodeCache(store_target, name, code);
   return code;
 }
 
@@ -1976,9 +2011,9 @@ Handle<Object> StoreIC::CompileHandler(LookupIterator* lookup,
         TRACE_HANDLER_STATS(isolate(), StoreIC_StoreGlobalTransition);
         Handle<PropertyCell> cell = lookup->transition_cell();
         cell->set_value(*value);
-        Handle<Code> code = PropertyCellStoreHandler(
-            isolate(), store_target, Handle<JSGlobalObject>::cast(store_target),
-            lookup->name(), cell, PropertyCellType::kConstant);
+        Handle<Code> code =
+            PropertyCellStoreHandler(isolate(), receiver, lookup->name(), cell,
+                                     PropertyCellType::kConstant);
         cell->set_value(isolate()->heap()->the_hole_value());
         return code;
       }
@@ -2044,7 +2079,6 @@ Handle<Object> StoreIC::CompileHandler(LookupIterator* lookup,
       auto updated_type =
           PropertyCell::UpdatedType(cell, value, lookup->property_details());
       auto code = PropertyCellStoreHandler(isolate(), receiver,
-                                           Handle<JSGlobalObject>::cast(holder),
                                            lookup->name(), cell, updated_type);
       return code;
     }
@@ -2490,7 +2524,8 @@ RUNTIME_FUNCTION(Runtime_LoadIC_Miss) {
     RETURN_RESULT_OR_FAILURE(isolate, ic.Load(receiver, key));
 
   } else if (IsLoadGlobalICKind(kind)) {
-    DCHECK_EQ(*isolate->global_object(), *receiver);
+    DCHECK_EQ(isolate->native_context()->global_proxy(), *receiver);
+    receiver = isolate->global_object();
     LoadGlobalICNexus nexus(vector, vector_slot);
     LoadGlobalIC ic(isolate, &nexus);
     ic.UpdateState(receiver, key);

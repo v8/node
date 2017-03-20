@@ -1559,11 +1559,6 @@ bool Isolate::ComputeLocation(MessageLocation* target) {
     return false;
   }
 
-  // TODO(wasm): Remove this once trap-if is always on.
-  // Background: Without trap-if, the information on the stack trace is
-  // incomplete (see bug v8:5007).
-  if (summary.IsWasmCompiled() && !FLAG_wasm_trap_if) return false;
-
   if (summary.IsJavaScript()) {
     shared = handle(summary.AsJavaScript().function()->shared());
   }
@@ -2699,8 +2694,6 @@ bool Isolate::Init(Deserializer* des) {
 #endif
 #endif
 
-  code_aging_helper_ = new CodeAgingHelper(this);
-
   { // NOLINT
     // Ensure that the thread has a valid stack guard.  The v8::Locker object
     // will ensure this too, but we don't have to use lockers if we are only
@@ -2715,6 +2708,8 @@ bool Isolate::Init(Deserializer* des) {
     V8::FatalProcessOutOfMemory("heap setup");
     return false;
   }
+
+  code_aging_helper_ = new CodeAgingHelper(this);
 
 // Initialize the interface descriptors ahead of time.
 #define INTERFACE_DESCRIPTOR(V) \
