@@ -8,6 +8,7 @@
 #include "src/debug/debug.h"
 #include "src/factory.h"
 #include "src/frames-inl.h"
+#include "src/identity-map.h"
 #include "src/isolate.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-interpreter.h"
@@ -71,6 +72,10 @@ class InterpreterHandle {
       DCHECK_EQ(0, instance_.module->min_mem_pages);
       instance_.mem_start = nullptr;
       instance_.mem_size = 0;
+    }
+    if (debug_info->wasm_instance()->has_globals_buffer()) {
+      instance_.globals_start = reinterpret_cast<byte*>(
+          debug_info->wasm_instance()->globals_buffer()->backing_store());
     }
     if (instance_.module->num_imported_functions > 0) {
       int num_imported_functions =
@@ -154,9 +159,7 @@ class InterpreterHandle {
     WasmInterpreter::Thread* thread = interpreter_.GetThread(0);
     // We do not support reentering an already running interpreter at the moment
     // (like INTERPRETER -> JS -> WASM -> INTERPRETER).
-    DCHECK(thread->state() == WasmInterpreter::STOPPED ||
-           thread->state() == WasmInterpreter::FINISHED ||
-           thread->state() == WasmInterpreter::TRAPPED);
+    DCHECK_EQ(0, thread->GetFrameCount());
     thread->Reset();
     thread->InitFrame(&module()->functions[func_index], wasm_args.start());
     bool finished = false;
@@ -180,8 +183,11 @@ class InterpreterHandle {
           // And hard exit the execution.
           return false;
         } break;
-        // STOPPED and RUNNING should never occur here.
         case WasmInterpreter::State::STOPPED:
+          // Then an exception happened, and the stack was unwound.
+          DCHECK_EQ(0, thread->GetFrameCount());
+          return false;
+        // RUNNING should never occur here.
         case WasmInterpreter::State::RUNNING:
         default:
           UNREACHABLE();
@@ -329,6 +335,17 @@ class InterpreterHandle {
         new wasm::InterpretedFrame(thread->GetMutableFrame(idx)));
   }
 
+  void Unwind(Address frame_pointer) {
+    // TODO(clemensh): Use frame_pointer.
+    USE(frame_pointer);
+
+    using ExceptionResult = WasmInterpreter::Thread::ExceptionHandlingResult;
+    ExceptionResult result =
+        interpreter()->GetThread(0)->HandleException(isolate_);
+    // TODO(wasm): Handle exceptions caught in wasm land.
+    CHECK_EQ(ExceptionResult::UNWOUND, result);
+  }
+
   uint64_t NumInterpretedCalls() {
     DCHECK_EQ(1, interpreter()->GetThreadCount());
     return interpreter()->GetThread(0)->NumInterpretedCalls();
@@ -379,26 +396,28 @@ Handle<FixedArray> GetOrCreateInterpretedFunctions(
   return new_arr;
 }
 
-void RedirectCallsitesInCode(Code* code, Code* old_target, Code* new_target) {
+using CodeRelocationMap = IdentityMap<Handle<Code>, FreeStoreAllocationPolicy>;
+
+void RedirectCallsitesInCode(Code* code, CodeRelocationMap& map) {
   DisallowHeapAllocation no_gc;
   for (RelocIterator it(code, RelocInfo::kCodeTargetMask); !it.done();
        it.next()) {
     DCHECK(RelocInfo::IsCodeTarget(it.rinfo()->rmode()));
     Code* target = Code::GetCodeFromTargetAddress(it.rinfo()->target_address());
-    if (target != old_target) continue;
+    Handle<Code>* new_target = map.Find(target);
+    if (!new_target) continue;
     it.rinfo()->set_target_address(code->GetIsolate(),
-                                   new_target->instruction_start());
+                                   (*new_target)->instruction_start());
   }
 }
 
 void RedirectCallsitesInInstance(Isolate* isolate, WasmInstanceObject* instance,
-                                 Code* old_target, Code* new_target) {
+                                 CodeRelocationMap& map) {
   DisallowHeapAllocation no_gc;
   // Redirect all calls in wasm functions.
   FixedArray* code_table = instance->compiled_module()->ptr_to_code_table();
   for (int i = 0, e = GetNumFunctions(instance); i < e; ++i) {
-    RedirectCallsitesInCode(Code::cast(code_table->get(i)), old_target,
-                            new_target);
+    RedirectCallsitesInCode(Code::cast(code_table->get(i)), map);
   }
 
   // Redirect all calls in exported functions.
@@ -408,7 +427,7 @@ void RedirectCallsitesInInstance(Isolate* isolate, WasmInstanceObject* instance,
     WeakCell* weak_function = WeakCell::cast(weak_exported_functions->get(i));
     if (weak_function->cleared()) continue;
     Code* code = JSFunction::cast(weak_function->value())->code();
-    RedirectCallsitesInCode(code, old_target, new_target);
+    RedirectCallsitesInCode(code, map);
   }
 }
 
@@ -448,34 +467,38 @@ void WasmDebugInfo::SetBreakpoint(Handle<WasmDebugInfo> debug_info,
                                   int func_index, int offset) {
   Isolate* isolate = debug_info->GetIsolate();
   InterpreterHandle* handle = GetOrCreateInterpreterHandle(isolate, debug_info);
-  RedirectToInterpreter(debug_info, func_index);
+  RedirectToInterpreter(debug_info, Vector<int>(&func_index, 1));
   const WasmFunction* func = &handle->module()->functions[func_index];
   handle->interpreter()->SetBreakpoint(func, offset, true);
 }
 
 void WasmDebugInfo::RedirectToInterpreter(Handle<WasmDebugInfo> debug_info,
-                                          int func_index) {
+                                          Vector<int> func_indexes) {
   Isolate* isolate = debug_info->GetIsolate();
-  DCHECK_LE(0, func_index);
-  DCHECK_GT(debug_info->wasm_instance()->module()->functions.size(),
-            func_index);
-  Handle<FixedArray> interpreted_functions =
-      GetOrCreateInterpretedFunctions(isolate, debug_info);
-  if (!interpreted_functions->get(func_index)->IsUndefined(isolate)) return;
-
   // Ensure that the interpreter is instantiated.
   GetOrCreateInterpreterHandle(isolate, debug_info);
+  Handle<FixedArray> interpreted_functions =
+      GetOrCreateInterpretedFunctions(isolate, debug_info);
   Handle<WasmInstanceObject> instance(debug_info->wasm_instance(), isolate);
-  Handle<Code> new_code = compiler::CompileWasmInterpreterEntry(
-      isolate, func_index,
-      instance->compiled_module()->module()->functions[func_index].sig,
-      instance);
-
   Handle<FixedArray> code_table = instance->compiled_module()->code_table();
-  Handle<Code> old_code(Code::cast(code_table->get(func_index)), isolate);
-  interpreted_functions->set(func_index, *new_code);
+  CodeRelocationMap code_to_relocate(isolate->heap());
+  for (int func_index : func_indexes) {
+    DCHECK_LE(0, func_index);
+    DCHECK_GT(debug_info->wasm_instance()->module()->functions.size(),
+              func_index);
+    if (!interpreted_functions->get(func_index)->IsUndefined(isolate)) continue;
 
-  RedirectCallsitesInInstance(isolate, *instance, *old_code, *new_code);
+    Handle<Code> new_code = compiler::CompileWasmInterpreterEntry(
+        isolate, func_index,
+        instance->compiled_module()->module()->functions[func_index].sig,
+        instance);
+
+    Code* old_code = Code::cast(code_table->get(func_index));
+    interpreted_functions->set(func_index, *new_code);
+    DCHECK_NULL(code_to_relocate.Find(old_code));
+    code_to_relocate.Set(old_code, new_code);
+  }
+  RedirectCallsitesInInstance(isolate, *instance, code_to_relocate);
 }
 
 void WasmDebugInfo::PrepareStep(StepAction step_action) {
@@ -496,6 +519,10 @@ std::vector<std::pair<uint32_t, int>> WasmDebugInfo::GetInterpretedStack(
 std::unique_ptr<wasm::InterpretedFrame> WasmDebugInfo::GetInterpretedFrame(
     Address frame_pointer, int idx) {
   return GetInterpreterHandle(this)->GetInterpretedFrame(frame_pointer, idx);
+}
+
+void WasmDebugInfo::Unwind(Address frame_pointer) {
+  return GetInterpreterHandle(this)->Unwind(frame_pointer);
 }
 
 uint64_t WasmDebugInfo::NumInterpretedCalls() {

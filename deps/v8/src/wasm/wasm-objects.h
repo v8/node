@@ -184,6 +184,7 @@ class WasmSharedModuleData : public FixedArray {
     kScript,
     kAsmJsOffsetTable,
     kBreakPointInfos,
+    kLazyCompilationOrchestrator,
     kFieldCount
   };
 
@@ -212,6 +213,12 @@ class WasmSharedModuleData : public FixedArray {
 
   static void SetBreakpointsOnNewInstance(Handle<WasmSharedModuleData>,
                                           Handle<WasmInstanceObject>);
+
+  static void PrepareForLazyCompilation(Handle<WasmSharedModuleData>);
+
+ private:
+  DECLARE_OPTIONAL_GETTER(lazy_compilation_orchestrator, Foreign);
+  friend class WasmCompiledModule;
 };
 
 class WasmCompiledModule : public FixedArray {
@@ -420,6 +427,19 @@ class WasmCompiledModule : public FixedArray {
   // FixedArray with all hit breakpoint objects.
   MaybeHandle<FixedArray> CheckBreakPoints(int position);
 
+  // Compile lazily the function called in the given caller code object at the
+  // given offset.
+  // If the called function cannot be determined from the caller (indirect
+  // call / exported function), func_index must be set. Otherwise it can be -1.
+  // If patch_caller is set, then all direct calls to functions which were
+  // already lazily compiled are patched (at least the given call site).
+  // Returns the Code to be called at the given call site, or an empty Handle if
+  // an error occured during lazy compilation. In this case, an exception has
+  // been set on the isolate.
+  static MaybeHandle<Code> CompileLazy(Isolate*, Handle<WasmInstanceObject>,
+                                       Handle<Code> caller, int offset,
+                                       int func_index, bool patch_caller);
+
  private:
   void InitId();
 
@@ -447,9 +467,10 @@ class WasmDebugInfo : public FixedArray {
   // interpreter and will always pause at the given offset.
   static void SetBreakpoint(Handle<WasmDebugInfo>, int func_index, int offset);
 
-  // Make a function always execute in the interpreter without setting a
+  // Make a set of functions always execute in the interpreter without setting
   // breakpoints.
-  static void RedirectToInterpreter(Handle<WasmDebugInfo>, int func_index);
+  static void RedirectToInterpreter(Handle<WasmDebugInfo>,
+                                    Vector<int> func_indexes);
 
   void PrepareStep(StepAction);
 
@@ -466,6 +487,10 @@ class WasmDebugInfo : public FixedArray {
 
   std::unique_ptr<wasm::InterpretedFrame> GetInterpretedFrame(
       Address frame_pointer, int idx);
+
+  // Unwind the interpreted stack belonging to the passed interpreter entry
+  // frame.
+  void Unwind(Address frame_pointer);
 
   // Returns the number of calls / function frames executed in the interpreter.
   uint64_t NumInterpretedCalls();
