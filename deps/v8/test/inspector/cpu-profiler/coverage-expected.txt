@@ -368,7 +368,7 @@ Running test: testEnablePreciseCoverageAtPause
                         ranges : [
                             [0] : {
                                 count : 1
-                                endOffset : 113
+                                endOffset : 114
                                 startOffset : 0
                             }
                         ]
@@ -388,7 +388,7 @@ Running test: testEnablePreciseCoverageAtPause
                         ranges : [
                             [0] : {
                                 count : 4
-                                endOffset : 82
+                                endOffset : 83
                                 startOffset : 30
                             }
                         ]
@@ -398,8 +398,8 @@ Running test: testEnablePreciseCoverageAtPause
                         ranges : [
                             [0] : {
                                 count : 0
-                                endOffset : 106
-                                startOffset : 83
+                                endOffset : 107
+                                startOffset : 84
                             }
                         ]
                     }

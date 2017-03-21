@@ -473,6 +473,7 @@ config("toolchain") {
       "/wd4702",  # Unreachable code.
       "/wd4703",  # Potentially uninitialized local pointer variable.
       "/wd4709",  # Comma operator within array index expr (bugged).
+      "/wd4714",  # Function marked forceinline not inlined.
       "/wd4718",  # Recursive call has no side-effect.
       "/wd4800",  # Forcing value to bool.
     ]
@@ -933,6 +934,8 @@ v8_source_set("v8_builtins_generators") {
     "src/builtins/builtins-typedarray-gen.cc",
     "src/builtins/builtins-utils-gen.h",
     "src/builtins/builtins-wasm-gen.cc",
+    "src/interpreter/interpreter-generator.cc",
+    "src/interpreter/interpreter-generator.h",
   ]
 
   configs = [ ":internal_config" ]
@@ -1049,6 +1052,7 @@ v8_source_set("v8_base") {
     "src/builtins/builtins-dataview.cc",
     "src/builtins/builtins-date.cc",
     "src/builtins/builtins-debug.cc",
+    "src/builtins/builtins-descriptors.h",
     "src/builtins/builtins-error.cc",
     "src/builtins/builtins-forin.h",
     "src/builtins/builtins-function.cc",
@@ -1596,6 +1600,7 @@ v8_source_set("v8_base") {
     "src/interpreter/handler-table-builder.h",
     "src/interpreter/interpreter-assembler.cc",
     "src/interpreter/interpreter-assembler.h",
+    "src/interpreter/interpreter-generator.h",
     "src/interpreter/interpreter-intrinsics.cc",
     "src/interpreter/interpreter-intrinsics.h",
     "src/interpreter/interpreter.cc",

@@ -870,9 +870,7 @@ template <bool fill_array = true>
 int InitPrototypeChecks(Isolate* isolate, Handle<Map> receiver_map,
                         Handle<JSObject> holder, Handle<Name> name,
                         Handle<FixedArray> array, int first_index) {
-  // We don't encode the requirement to check access rights because we already
-  // passed the access check for current native context and the access
-  // can't be revoked.
+  if (!holder.is_null() && holder->map() == *receiver_map) return 0;
 
   HandleScope scope(isolate);
   int checks_count = 0;
@@ -891,8 +889,7 @@ int InitPrototypeChecks(Isolate* isolate, Handle<Map> receiver_map,
     }
     checks_count++;
 
-  } else if (receiver_map->IsJSGlobalObjectMap() &&
-             (holder.is_null() || holder->map() != *receiver_map)) {
+  } else if (receiver_map->IsJSGlobalObjectMap()) {
     // If we are creating a handler for [Load/Store]GlobalIC then we need to
     // check that the property did not appear in the global object.
     if (fill_array) {
@@ -1294,38 +1291,9 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
           return slow_stub();
         }
 
-        if (!holder->HasFastProperties()) {
-          // Global loads always need the extended data handler since it embeds
-          // the PropertyCell.
-          if (receiver_is_holder && !holder->IsJSGlobalObject()) {
-            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalDH);
-            return LoadHandler::LoadNormal(isolate());
-          }
-
-          Handle<Smi> smi_handler;
-          if (holder->IsJSGlobalObject()) {
-            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadGlobalFromPrototypeDH);
-            smi_handler = LoadHandler::LoadGlobal(isolate());
-          } else {
-            TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNormalFromPrototypeDH);
-            smi_handler = LoadHandler::LoadNormal(isolate());
-          }
-
-          return LoadFromPrototype(map, holder, lookup->name(), smi_handler);
-        }
-
         Handle<Object> getter(AccessorPair::cast(*accessors)->getter(),
                               isolate());
-        if (getter->IsJSFunction()) {
-          Handle<JSFunction> function = Handle<JSFunction>::cast(getter);
-          if (!receiver->IsJSObject() &&
-              function->shared()->IsUserJavaScript() &&
-              is_sloppy(function->shared()->language_mode())) {
-            // Calling sloppy non-builtins with a value as the receiver
-            // requires boxing.
-            return slow_stub();
-          }
-        } else if (!getter->IsFunctionTemplateInfo()) {
+        if (!getter->IsJSFunction() && !getter->IsFunctionTemplateInfo()) {
           TRACE_HANDLER_STATS(isolate(), LoadIC_SlowStub);
           return slow_stub();
         }
@@ -1925,10 +1893,6 @@ Handle<Object> StoreIC::GetMapIndependentHandler(LookupIterator* lookup) {
           TRACE_HANDLER_STATS(isolate(), StoreIC_SlowStub);
           return slow_stub();
         }
-        if (info->is_sloppy() && !receiver->IsJSReceiver()) {
-          TRACE_HANDLER_STATS(isolate(), StoreIC_SlowStub);
-          return slow_stub();
-        }
         break;  // Custom-compiled handler.
       } else if (accessors->IsAccessorPair()) {
         Handle<Object> setter(Handle<AccessorPair>::cast(accessors)->setter(),
@@ -2033,7 +1997,6 @@ Handle<Object> StoreIC::CompileHandler(LookupIterator* lookup,
                lookup->HolderIsReceiverOrHiddenPrototype());
         DCHECK(AccessorInfo::IsCompatibleReceiverMap(isolate(), info,
                                                      receiver_map()));
-        DCHECK(!info->is_sloppy() || receiver->IsJSReceiver());
         TRACE_HANDLER_STATS(isolate(), StoreIC_StoreCallback);
         NamedStoreHandlerCompiler compiler(isolate(), receiver_map(), holder);
         // TODO(ishell): don't hard-code language mode into the handler because
