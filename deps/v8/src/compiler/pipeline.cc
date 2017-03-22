@@ -1074,7 +1074,7 @@ struct EffectControlLinearizationPhase {
     // effects (such as changing representation to tagged or
     // 'floating' allocation regions.)
     Schedule* schedule = Scheduler::ComputeSchedule(temp_zone, data->graph(),
-                                                    Scheduler::kNoFlags);
+                                                    Scheduler::kTempSchedule);
     if (FLAG_turbo_verify) ScheduleVerifier::Run(schedule);
     TraceSchedule(data->info(), schedule);
 
@@ -1503,8 +1503,6 @@ bool PipelineImpl::CreateGraph() {
   // Perform OSR deconstruction.
   if (info()->is_osr()) {
     Run<OsrDeconstructionPhase>();
-
-    Run<UntyperPhase>();
     RunPrintAndVerify("OSR deconstruction", true);
   }
 

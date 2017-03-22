@@ -544,8 +544,6 @@ DEFINE_INT(trace_wasm_ast_end, 0, "end function for WASM AST trace (exclusive)")
 DEFINE_UINT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
 DEFINE_BOOL(wasm_break_on_decoder_error, false,
             "debug break when wasm decoder encounters an error")
-DEFINE_BOOL(wasm_loop_assignment_analysis, true,
-            "perform loop assignment analysis for WASM")
 
 DEFINE_BOOL(validate_asm, false, "validate asm.js modules before compiling")
 DEFINE_BOOL(suppress_asm_messages, false,
@@ -589,6 +587,7 @@ DEFINE_BOOL(wasm_interpret_all, false,
             "Execute all wasm code in the wasm interpreter")
 DEFINE_BOOL(asm_wasm_lazy_compilation, false,
             "enable lazy compilation for asm-wasm modules")
+DEFINE_IMPLICATION(validate_asm, asm_wasm_lazy_compilation)
 
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
@@ -658,6 +657,8 @@ DEFINE_INT(min_progress_during_incremental_marking_finalization, 32,
 DEFINE_INT(max_incremental_marking_finalization_rounds, 3,
            "at most try this many times to finalize incremental marking")
 DEFINE_BOOL(minor_mc, false, "perform young generation mark compact GCs")
+DEFINE_NEG_IMPLICATION(minor_mc, page_promotion)
+DEFINE_NEG_IMPLICATION(minor_mc, flush_code)
 DEFINE_BOOL(black_allocation, true, "use black allocation")
 DEFINE_BOOL(concurrent_store_buffer, true,
             "use concurrent store buffer processing")
@@ -772,6 +773,8 @@ DEFINE_BOOL(builtins_in_stack_traces, false,
 
 // builtins.cc
 DEFINE_BOOL(enable_fast_array_builtins, false, "use optimized builtins")
+DEFINE_BOOL(experimental_array_builtins, false,
+            "Experimental versions of array builtins")
 DEFINE_BOOL(allow_unsafe_function_constructor, false,
             "allow invoking the function constructor without security checks")
 

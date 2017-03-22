@@ -97,11 +97,6 @@ class IC {
   // Configure the vector for POLYMORPHIC.
   void ConfigureVectorState(Handle<Name> name, MapHandleList* maps,
                             List<Handle<Object>>* handlers);
-  // Configure the vector for POLYMORPHIC with transitions (only for element
-  // keyed stores).
-  void ConfigureVectorState(MapHandleList* maps,
-                            MapHandleList* transitioned_maps,
-                            List<Handle<Object>>* handlers);
 
   char TransitionMarkFromState(IC::State state);
   void TraceIC(const char* type, Handle<Object> name);
@@ -408,7 +403,6 @@ class KeyedStoreIC : public StoreIC {
                                      KeyedAccessStoreMode store_mode);
 
   void StoreElementPolymorphicHandlers(MapHandleList* receiver_maps,
-                                       MapHandleList* transitioned_maps,
                                        List<Handle<Object>>* handlers,
                                        KeyedAccessStoreMode store_mode);
 

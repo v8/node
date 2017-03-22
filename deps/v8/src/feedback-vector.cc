@@ -250,7 +250,9 @@ Handle<FeedbackVector> FeedbackVector::New(Isolate* isolate,
   }
 
   Handle<FeedbackVector> result = Handle<FeedbackVector>::cast(array);
-  if (isolate->IsCodeCoverageEnabled()) AddToCodeCoverageList(isolate, result);
+  if (!isolate->is_best_effort_code_coverage()) {
+    AddToCodeCoverageList(isolate, result);
+  }
   return result;
 }
 
@@ -260,14 +262,16 @@ Handle<FeedbackVector> FeedbackVector::Copy(Isolate* isolate,
   Handle<FeedbackVector> result;
   result = Handle<FeedbackVector>::cast(
       isolate->factory()->CopyFixedArray(Handle<FixedArray>::cast(vector)));
-  if (isolate->IsCodeCoverageEnabled()) AddToCodeCoverageList(isolate, result);
+  if (!isolate->is_best_effort_code_coverage()) {
+    AddToCodeCoverageList(isolate, result);
+  }
   return result;
 }
 
 // static
 void FeedbackVector::AddToCodeCoverageList(Isolate* isolate,
                                            Handle<FeedbackVector> vector) {
-  DCHECK(isolate->IsCodeCoverageEnabled());
+  DCHECK(!isolate->is_best_effort_code_coverage());
   if (!vector->shared_function_info()->IsSubjectToDebugging()) return;
   Handle<ArrayList> list =
       Handle<ArrayList>::cast(isolate->factory()->code_coverage_list());
@@ -418,18 +422,6 @@ Handle<FixedArray> FeedbackNexus::EnsureExtraArrayOfSize(int length) {
   return Handle<FixedArray>::cast(feedback_extra);
 }
 
-void FeedbackNexus::InstallHandlers(Handle<FixedArray> array,
-                                    MapHandleList* maps,
-                                    List<Handle<Object>>* handlers) {
-  int receiver_count = maps->length();
-  for (int current = 0; current < receiver_count; ++current) {
-    Handle<Map> map = maps->at(current);
-    Handle<WeakCell> cell = Map::WeakCellForMap(map);
-    array->set(current * 2, *cell);
-    array->set(current * 2 + 1, *handlers->at(current));
-  }
-}
-
 void FeedbackNexus::ConfigureUninitialized() {
   SetFeedback(*FeedbackVector::UninitializedSentinel(GetIsolate()),
               SKIP_WRITE_BARRIER);
@@ -444,27 +436,7 @@ void FeedbackNexus::ConfigurePremonomorphic() {
                    SKIP_WRITE_BARRIER);
 }
 
-void FeedbackNexus::ConfigureMegamorphic() {
-  // Keyed ICs must use ConfigureMegamorphicKeyed.
-  DCHECK(!vector()->IsKeyedLoadIC(slot()));
-  DCHECK(!vector()->IsKeyedStoreIC(slot()));
-
-  Isolate* isolate = GetIsolate();
-  SetFeedback(*FeedbackVector::MegamorphicSentinel(isolate),
-              SKIP_WRITE_BARRIER);
-  SetFeedbackExtra(*FeedbackVector::UninitializedSentinel(isolate),
-                   SKIP_WRITE_BARRIER);
-}
-
-void KeyedLoadICNexus::ConfigureMegamorphicKeyed(IcCheckType property_type) {
-  Isolate* isolate = GetIsolate();
-  SetFeedback(*FeedbackVector::MegamorphicSentinel(isolate),
-              SKIP_WRITE_BARRIER);
-  SetFeedbackExtra(Smi::FromInt(static_cast<int>(property_type)),
-                   SKIP_WRITE_BARRIER);
-}
-
-void KeyedStoreICNexus::ConfigureMegamorphicKeyed(IcCheckType property_type) {
+void FeedbackNexus::ConfigureMegamorphic(IcCheckType property_type) {
   Isolate* isolate = GetIsolate();
   SetFeedback(*FeedbackVector::MegamorphicSentinel(isolate),
               SKIP_WRITE_BARRIER);
@@ -621,43 +593,6 @@ void CallICNexus::ConfigureUninitialized() {
   SetFeedbackExtra(Smi::kZero, SKIP_WRITE_BARRIER);
 }
 
-void CallICNexus::ConfigureMonomorphicArray() {
-  Object* feedback = GetFeedback();
-  if (!feedback->IsAllocationSite()) {
-    Handle<AllocationSite> new_site =
-        GetIsolate()->factory()->NewAllocationSite();
-    SetFeedback(*new_site);
-  }
-  SetFeedbackExtra(Smi::FromInt(1), SKIP_WRITE_BARRIER);
-}
-
-void CallICNexus::ConfigureMonomorphic(Handle<JSFunction> function) {
-  Handle<WeakCell> new_cell = GetIsolate()->factory()->NewWeakCell(function);
-  SetFeedback(*new_cell);
-  SetFeedbackExtra(Smi::FromInt(1), SKIP_WRITE_BARRIER);
-}
-
-void CallICNexus::ConfigureMegamorphic() {
-  SetFeedback(*FeedbackVector::MegamorphicSentinel(GetIsolate()),
-              SKIP_WRITE_BARRIER);
-  Smi* count = Smi::cast(GetFeedbackExtra());
-  int new_count = count->value() + 1;
-  SetFeedbackExtra(Smi::FromInt(new_count), SKIP_WRITE_BARRIER);
-}
-
-void CallICNexus::ConfigureMegamorphic(int call_count) {
-  SetFeedback(*FeedbackVector::MegamorphicSentinel(GetIsolate()),
-              SKIP_WRITE_BARRIER);
-  SetFeedbackExtra(Smi::FromInt(call_count), SKIP_WRITE_BARRIER);
-}
-
-void LoadICNexus::ConfigureMonomorphic(Handle<Map> receiver_map,
-                                       Handle<Object> handler) {
-  Handle<WeakCell> cell = Map::WeakCellForMap(receiver_map);
-  SetFeedback(*cell);
-  SetFeedbackExtra(*handler);
-}
-
 void LoadGlobalICNexus::ConfigureUninitialized() {
   Isolate* isolate = GetIsolate();
   SetFeedback(isolate->heap()->empty_weak_cell(), SKIP_WRITE_BARRIER);
@@ -677,9 +612,9 @@ void LoadGlobalICNexus::ConfigureHandlerMode(Handle<Object> handler) {
   SetFeedbackExtra(*handler);
 }
 
-void KeyedLoadICNexus::ConfigureMonomorphic(Handle<Name> name,
-                                            Handle<Map> receiver_map,
-                                            Handle<Object> handler) {
+void FeedbackNexus::ConfigureMonomorphic(Handle<Name> name,
+                                         Handle<Map> receiver_map,
+                                         Handle<Object> handler) {
   Handle<WeakCell> cell = Map::WeakCellForMap(receiver_map);
   if (name.is_null()) {
     SetFeedback(*cell);
@@ -692,41 +627,8 @@ void KeyedLoadICNexus::ConfigureMonomorphic(Handle<Name> name,
   }
 }
 
-void StoreICNexus::ConfigureMonomorphic(Handle<Map> receiver_map,
-                                        Handle<Object> handler) {
-  Handle<WeakCell> cell = Map::WeakCellForMap(receiver_map);
-  SetFeedback(*cell);
-  SetFeedbackExtra(*handler);
-}
-
-void KeyedStoreICNexus::ConfigureMonomorphic(Handle<Name> name,
-                                             Handle<Map> receiver_map,
-                                             Handle<Object> handler) {
-  Handle<WeakCell> cell = Map::WeakCellForMap(receiver_map);
-  if (name.is_null()) {
-    SetFeedback(*cell);
-    SetFeedbackExtra(*handler);
-  } else {
-    Handle<FixedArray> array = EnsureExtraArrayOfSize(2);
-    SetFeedback(*name);
-    array->set(0, *cell);
-    array->set(1, *handler);
-  }
-}
-
-void LoadICNexus::ConfigurePolymorphic(MapHandleList* maps,
-                                       List<Handle<Object>>* handlers) {
-  Isolate* isolate = GetIsolate();
-  int receiver_count = maps->length();
-  Handle<FixedArray> array = EnsureArrayOfSize(receiver_count * 2);
-  InstallHandlers(array, maps, handlers);
-  SetFeedbackExtra(*FeedbackVector::UninitializedSentinel(isolate),
-                   SKIP_WRITE_BARRIER);
-}
-
-void KeyedLoadICNexus::ConfigurePolymorphic(Handle<Name> name,
-                                            MapHandleList* maps,
-                                            List<Handle<Object>>* handlers) {
+void FeedbackNexus::ConfigurePolymorphic(Handle<Name> name, MapHandleList* maps,
+                                         List<Handle<Object>>* handlers) {
   int receiver_count = maps->length();
   DCHECK(receiver_count > 1);
   Handle<FixedArray> array;
@@ -739,79 +641,13 @@ void KeyedLoadICNexus::ConfigurePolymorphic(Handle<Name> name,
     SetFeedback(*name);
   }
 
-  InstallHandlers(array, maps, handlers);
-}
-
-void StoreICNexus::ConfigurePolymorphic(MapHandleList* maps,
-                                        List<Handle<Object>>* handlers) {
-  Isolate* isolate = GetIsolate();
-  int receiver_count = maps->length();
-  Handle<FixedArray> array = EnsureArrayOfSize(receiver_count * 2);
-  InstallHandlers(array, maps, handlers);
-  SetFeedbackExtra(*FeedbackVector::UninitializedSentinel(isolate),
-                   SKIP_WRITE_BARRIER);
-}
-
-void KeyedStoreICNexus::ConfigurePolymorphic(Handle<Name> name,
-                                             MapHandleList* maps,
-                                             List<Handle<Object>>* handlers) {
-  int receiver_count = maps->length();
-  DCHECK(receiver_count > 1);
-  Handle<FixedArray> array;
-  if (name.is_null()) {
-    array = EnsureArrayOfSize(receiver_count * 2);
-    SetFeedbackExtra(*FeedbackVector::UninitializedSentinel(GetIsolate()),
-                     SKIP_WRITE_BARRIER);
-  } else {
-    array = EnsureExtraArrayOfSize(receiver_count * 2);
-    SetFeedback(*name);
-  }
-
-  InstallHandlers(array, maps, handlers);
-}
-
-void KeyedStoreICNexus::ConfigurePolymorphic(MapHandleList* maps,
-                                             MapHandleList* transitioned_maps,
-                                             List<Handle<Object>>* handlers) {
-  int receiver_count = maps->length();
-  DCHECK(receiver_count > 1);
-  Handle<FixedArray> array = EnsureArrayOfSize(receiver_count * 3);
-  SetFeedbackExtra(*FeedbackVector::UninitializedSentinel(GetIsolate()),
-                   SKIP_WRITE_BARRIER);
-
-  Handle<Oddball> undefined_value = GetIsolate()->factory()->undefined_value();
-  for (int i = 0; i < receiver_count; ++i) {
-    Handle<Map> map = maps->at(i);
+  for (int current = 0; current < receiver_count; ++current) {
+    Handle<Map> map = maps->at(current);
     Handle<WeakCell> cell = Map::WeakCellForMap(map);
-    array->set(i * 3, *cell);
-    if (!transitioned_maps->at(i).is_null()) {
-      Handle<Map> transitioned_map = transitioned_maps->at(i);
-      cell = Map::WeakCellForMap(transitioned_map);
-      array->set((i * 3) + 1, *cell);
-    } else {
-      array->set((i * 3) + 1, *undefined_value);
-    }
-    array->set((i * 3) + 2, *handlers->at(i));
+    array->set(current * 2, *cell);
+    array->set(current * 2 + 1, *handlers->at(current));
   }
 }
-
-namespace {
-
-int GetStepSize(FixedArray* array, Isolate* isolate) {
-  // The array should be of the form
-  // [map, handler, map, handler, ...]
-  // or
-  // [map, map, handler, map, map, handler, ...]
-  // where "map" is either a WeakCell or |undefined|,
-  // and "handler" is either a Code object or a Smi.
-  DCHECK(array->length() >= 2);
-  Object* second = array->get(1);
-  if (second->IsWeakCell() || second->IsUndefined(isolate)) return 3;
-  DCHECK(IC::IsHandler(second));
-  return 2;
-}
-
-}  // namespace
 
 int FeedbackNexus::ExtractMaps(MapHandleList* maps) const {
   Isolate* isolate = GetIsolate();
@@ -823,7 +659,7 @@ int FeedbackNexus::ExtractMaps(MapHandleList* maps) const {
       feedback = GetFeedbackExtra();
     }
     FixedArray* array = FixedArray::cast(feedback);
-    int increment = GetStepSize(array, isolate);
+    const int increment = 2;
     for (int i = 0; i < array->length(); i += increment) {
       DCHECK(array->get(i)->IsWeakCell());
       WeakCell* cell = WeakCell::cast(array->get(i));
@@ -855,7 +691,7 @@ MaybeHandle<Object> FeedbackNexus::FindHandlerForMap(Handle<Map> map) const {
       feedback = GetFeedbackExtra();
     }
     FixedArray* array = FixedArray::cast(feedback);
-    int increment = GetStepSize(array, isolate);
+    const int increment = 2;
     for (int i = 0; i < array->length(); i += increment) {
       DCHECK(array->get(i)->IsWeakCell());
       WeakCell* cell = WeakCell::cast(array->get(i));
@@ -894,7 +730,7 @@ bool FeedbackNexus::FindHandlers(List<Handle<Object>>* code_list,
       feedback = GetFeedbackExtra();
     }
     FixedArray* array = FixedArray::cast(feedback);
-    int increment = GetStepSize(array, isolate);
+    const int increment = 2;
     for (int i = 0; i < array->length(); i += increment) {
       DCHECK(array->get(i)->IsWeakCell());
       WeakCell* cell = WeakCell::cast(array->get(i));
@@ -947,10 +783,16 @@ KeyedAccessStoreMode KeyedStoreICNexus::GetKeyedAccessStoreMode() const {
     // The first handler that isn't the slow handler will have the bits we need.
     Handle<Object> maybe_code_handler = handlers.at(i);
     Handle<Code> handler;
-    if (maybe_code_handler->IsTuple2()) {
+    if (maybe_code_handler->IsTuple3()) {
+      // Elements transition.
+      Handle<Tuple3> data_handler = Handle<Tuple3>::cast(maybe_code_handler);
+      handler = handle(Code::cast(data_handler->value2()));
+    } else if (maybe_code_handler->IsTuple2()) {
+      // Element store with prototype chain check.
       Handle<Tuple2> data_handler = Handle<Tuple2>::cast(maybe_code_handler);
       handler = handle(Code::cast(data_handler->value2()));
     } else {
+      // Element store without prototype chain check.
       handler = Handle<Code>::cast(maybe_code_handler);
     }
     CodeStub::Major major_key = CodeStub::MajorKeyFromKey(handler->stub_key());

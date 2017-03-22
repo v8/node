@@ -126,43 +126,6 @@ void AccessorAssembler::HandlePolymorphicCase(Node* receiver_map,
   Goto(if_miss);
 }
 
-void AccessorAssembler::HandleKeyedStorePolymorphicCase(
-    Node* receiver_map, Node* feedback, Label* if_handler,
-    Variable* var_handler, Label* if_transition_handler,
-    Variable* var_transition_map_cell, Label* if_miss) {
-  DCHECK_EQ(MachineRepresentation::kTagged, var_handler->rep());
-  DCHECK_EQ(MachineRepresentation::kTagged, var_transition_map_cell->rep());
-
-  const int kEntrySize = 3;
-
-  Node* init = IntPtrConstant(0);
-  Node* length = LoadAndUntagFixedArrayBaseLength(feedback);
-  BuildFastLoop(init, length,
-                [this, receiver_map, feedback, if_handler, var_handler,
-                 if_transition_handler, var_transition_map_cell](Node* index) {
-                  Node* cached_map =
-                      LoadWeakCellValue(LoadFixedArrayElement(feedback, index));
-                  Label next_entry(this);
-                  GotoIf(WordNotEqual(receiver_map, cached_map), &next_entry);
-
-                  Node* maybe_transition_map_cell =
-                      LoadFixedArrayElement(feedback, index, kPointerSize);
-
-                  var_handler->Bind(
-                      LoadFixedArrayElement(feedback, index, 2 * kPointerSize));
-                  GotoIf(WordEqual(maybe_transition_map_cell,
-                                   LoadRoot(Heap::kUndefinedValueRootIndex)),
-                         if_handler);
-                  var_transition_map_cell->Bind(maybe_transition_map_cell);
-                  Goto(if_transition_handler);
-
-                  Bind(&next_entry);
-                },
-                kEntrySize, INTPTR_PARAMETERS, IndexAdvanceMode::kPost);
-  // The loop falls through if no handler was found.
-  Goto(if_miss);
-}
-
 void AccessorAssembler::HandleLoadICHandlerCase(
     const LoadICParameters* p, Node* handler, Label* miss,
     ExitPoint* exit_point, ElementSupport support_elements) {
@@ -617,7 +580,8 @@ void AccessorAssembler::HandleStoreICHandlerCase(
     const StoreICParameters* p, Node* handler, Label* miss,
     ElementSupport support_elements) {
   Label if_smi_handler(this), if_nonsmi_handler(this);
-  Label if_proto_handler(this), if_element_handler(this), call_handler(this);
+  Label if_proto_handler(this), if_element_handler(this), call_handler(this),
+      store_global(this);
 
   Branch(TaggedIsSmi(handler), &if_smi_handler, &if_nonsmi_handler);
 
@@ -665,6 +629,7 @@ void AccessorAssembler::HandleStoreICHandlerCase(
     if (support_elements == kSupportElements) {
       GotoIf(IsTuple2Map(handler_map), &if_element_handler);
     }
+    GotoIf(IsWeakCellMap(handler_map), &store_global);
     Branch(IsCodeMap(handler_map), &call_handler, &if_proto_handler);
   }
 
@@ -674,9 +639,7 @@ void AccessorAssembler::HandleStoreICHandlerCase(
   }
 
   Bind(&if_proto_handler);
-  {
-    HandleStoreICProtoHandler(p, handler, miss);
-  }
+  { HandleStoreICProtoHandler(p, handler, miss, support_elements); }
 
   // |handler| is a heap object. Must be code, call it.
   Bind(&call_handler);
@@ -684,6 +647,66 @@ void AccessorAssembler::HandleStoreICHandlerCase(
     StoreWithVectorDescriptor descriptor(isolate());
     TailCallStub(descriptor, handler, p->context, p->receiver, p->name,
                  p->value, p->slot, p->vector);
+  }
+
+  Bind(&store_global);
+  {
+    Node* cell = LoadWeakCellValue(handler, miss);
+    CSA_ASSERT(this, IsPropertyCell(cell));
+
+    // Load the payload of the global parameter cell. A hole indicates that
+    // the cell has been invalidated and that the store must be handled by the
+    // runtime.
+    Node* cell_contents = LoadObjectField(cell, PropertyCell::kValueOffset);
+    Node* details =
+        LoadAndUntagToWord32ObjectField(cell, PropertyCell::kDetailsOffset);
+    Node* type = DecodeWord32<PropertyDetails::PropertyCellTypeField>(details);
+
+    Label constant(this), store(this), not_smi(this);
+
+    GotoIf(
+        Word32Equal(
+            type, Int32Constant(static_cast<int>(PropertyCellType::kConstant))),
+        &constant);
+
+    GotoIf(IsTheHole(cell_contents), miss);
+
+    GotoIf(
+        Word32Equal(
+            type, Int32Constant(static_cast<int>(PropertyCellType::kMutable))),
+        &store);
+    CSA_ASSERT(this,
+               Word32Or(Word32Equal(type,
+                                    Int32Constant(static_cast<int>(
+                                        PropertyCellType::kConstantType))),
+                        Word32Equal(type,
+                                    Int32Constant(static_cast<int>(
+                                        PropertyCellType::kUndefined)))));
+
+    GotoIfNot(TaggedIsSmi(cell_contents), &not_smi);
+    GotoIfNot(TaggedIsSmi(p->value), miss);
+    Goto(&store);
+
+    Bind(&not_smi);
+    {
+      GotoIf(TaggedIsSmi(p->value), miss);
+      Node* expected_map = LoadMap(cell_contents);
+      Node* map = LoadMap(p->value);
+      GotoIfNot(WordEqual(expected_map, map), miss);
+      Goto(&store);
+    }
+
+    Bind(&store);
+    {
+      StoreObjectField(cell, PropertyCell::kValueOffset, p->value);
+      Return(p->value);
+    }
+
+    Bind(&constant);
+    {
+      GotoIfNot(WordEqual(cell_contents, p->value), miss);
+      Return(p->value);
+    }
   }
 }
 
@@ -704,8 +727,9 @@ void AccessorAssembler::HandleStoreICElementHandlerCase(
                p->value, p->slot, p->vector);
 }
 
-void AccessorAssembler::HandleStoreICProtoHandler(const StoreICParameters* p,
-                                                  Node* handler, Label* miss) {
+void AccessorAssembler::HandleStoreICProtoHandler(
+    const StoreICParameters* p, Node* handler, Label* miss,
+    ElementSupport support_elements) {
   // IC dispatchers rely on these assumptions to be held.
   STATIC_ASSERT(FixedArray::kLengthOffset ==
                 StoreHandler::kTransitionCellOffset);
@@ -727,8 +751,7 @@ void AccessorAssembler::HandleStoreICProtoHandler(const StoreICParameters* p,
   Goto(&validity_cell_check_done);
 
   Bind(&validity_cell_check_done);
-  Node* smi_handler = LoadObjectField(handler, StoreHandler::kSmiHandlerOffset);
-  CSA_ASSERT(this, TaggedIsSmi(smi_handler));
+  Node* smi_or_code = LoadObjectField(handler, StoreHandler::kSmiHandlerOffset);
 
   Node* maybe_transition_cell =
       LoadObjectField(handler, StoreHandler::kTransitionCellOffset);
@@ -767,9 +790,26 @@ void AccessorAssembler::HandleStoreICProtoHandler(const StoreICParameters* p,
   {
     Node* holder = p->receiver;
     Node* transition = var_transition.value();
-    Node* handler_word = SmiUntag(smi_handler);
 
     GotoIf(IsDeprecatedMap(transition), miss);
+
+    if (support_elements == kSupportElements) {
+      Label if_smi_handler(this);
+
+      GotoIf(TaggedIsSmi(smi_or_code), &if_smi_handler);
+      Node* code_handler = smi_or_code;
+      CSA_ASSERT(this, IsCodeMap(LoadMap(code_handler)));
+
+      StoreTransitionDescriptor descriptor(isolate());
+      TailCallStub(descriptor, code_handler, p->context, p->receiver, p->name,
+                   transition, p->value, p->slot, p->vector);
+
+      Bind(&if_smi_handler);
+    }
+
+    Node* smi_handler = smi_or_code;
+    CSA_ASSERT(this, TaggedIsSmi(smi_handler));
+    Node* handler_word = SmiUntag(smi_handler);
 
     Node* handler_kind = DecodeWord<StoreHandler::KindBits>(handler_word);
     GotoIf(WordEqual(handler_kind, IntPtrConstant(StoreHandler::kStoreNormal)),
@@ -2172,47 +2212,8 @@ void AccessorAssembler::KeyedStoreIC(const StoreICParameters* p,
       GotoIfNot(
           WordEqual(LoadMap(feedback), LoadRoot(Heap::kFixedArrayMapRootIndex)),
           &try_megamorphic);
-      Label if_transition_handler(this);
-      Variable var_transition_map_cell(this, MachineRepresentation::kTagged);
-      HandleKeyedStorePolymorphicCase(receiver_map, feedback, &if_handler,
-                                      &var_handler, &if_transition_handler,
-                                      &var_transition_map_cell, &miss);
-      Bind(&if_transition_handler);
-      Comment("KeyedStoreIC_polymorphic_transition");
-      {
-        Node* handler = var_handler.value();
-
-        Label call_handler(this);
-        Variable var_code_handler(this, MachineRepresentation::kTagged);
-        var_code_handler.Bind(handler);
-        GotoIfNot(IsTuple2Map(LoadMap(handler)), &call_handler);
-        {
-          CSA_ASSERT(this, IsTuple2Map(LoadMap(handler)));
-
-          // Check validity cell.
-          Node* validity_cell = LoadObjectField(handler, Tuple2::kValue1Offset);
-          Node* cell_value = LoadObjectField(validity_cell, Cell::kValueOffset);
-          GotoIf(
-              WordNotEqual(cell_value, SmiConstant(Map::kPrototypeChainValid)),
-              &miss);
-
-          var_code_handler.Bind(
-              LoadObjectField(handler, Tuple2::kValue2Offset));
-          Goto(&call_handler);
-        }
-
-        Bind(&call_handler);
-        {
-          Node* code_handler = var_code_handler.value();
-          CSA_ASSERT(this, IsCodeMap(LoadMap(code_handler)));
-
-          Node* transition_map =
-              LoadWeakCellValue(var_transition_map_cell.value(), &miss);
-          StoreTransitionDescriptor descriptor(isolate());
-          TailCallStub(descriptor, code_handler, p->context, p->receiver,
-                       p->name, transition_map, p->value, p->slot, p->vector);
-        }
-      }
+      HandlePolymorphicCase(receiver_map, feedback, &if_handler, &var_handler,
+                            &miss, 2);
     }
 
     Bind(&try_megamorphic);
