@@ -216,6 +216,8 @@ class Genesis BASE_EMBEDDED {
   HARMONY_SHIPPING(DECLARE_FEATURE_INITIALIZATION)
 #undef DECLARE_FEATURE_INITIALIZATION
 
+  void InstallOneBuiltinFunction(const char* object, const char* method,
+                                 Builtins::Name name);
   void InitializeGlobal_enable_fast_array_builtins();
 
   Handle<JSFunction> InstallArrayBuffer(Handle<JSObject> target,
@@ -1688,6 +1690,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, true);
     SimpleInstallFunction(prototype, "charCodeAt",
                           Builtins::kStringPrototypeCharCodeAt, 1, true);
+    SimpleInstallFunction(prototype, "concat", Builtins::kStringPrototypeConcat,
+                          1, false);
     SimpleInstallFunction(prototype, "endsWith",
                           Builtins::kStringPrototypeEndsWith, 1, false);
     SimpleInstallFunction(prototype, "includes",
@@ -3662,50 +3666,40 @@ void InstallPublicSymbol(Factory* factory, Handle<Context> native_context,
   JSObject::AddProperty(symbol, name_string, value, attributes);
 }
 
-void Genesis::InitializeGlobal_enable_fast_array_builtins() {
-  if (!FLAG_enable_fast_array_builtins) return;
-
+void Genesis::InstallOneBuiltinFunction(const char* object_name,
+                                        const char* method_name,
+                                        Builtins::Name builtin_name) {
   Handle<JSGlobalObject> global(native_context()->global_object());
   Isolate* isolate = global->GetIsolate();
   Factory* factory = isolate->factory();
 
-  LookupIterator it1(global, factory->NewStringFromAsciiChecked("Array"),
+  LookupIterator it1(global, factory->NewStringFromAsciiChecked(object_name),
                      LookupIterator::OWN_SKIP_INTERCEPTOR);
-  Handle<Object> array_object = Object::GetProperty(&it1).ToHandleChecked();
-  LookupIterator it2(array_object,
-                     factory->NewStringFromAsciiChecked("prototype"),
+  Handle<Object> object = Object::GetProperty(&it1).ToHandleChecked();
+  LookupIterator it2(object, factory->NewStringFromAsciiChecked("prototype"),
                      LookupIterator::OWN_SKIP_INTERCEPTOR);
-  Handle<Object> array_prototype = Object::GetProperty(&it2).ToHandleChecked();
-  LookupIterator it3(array_prototype,
-                     factory->NewStringFromAsciiChecked("forEach"),
-                     LookupIterator::OWN_SKIP_INTERCEPTOR);
-  Handle<Object> for_each_function =
-      Object::GetProperty(&it3).ToHandleChecked();
-  Handle<JSFunction>::cast(for_each_function)
-      ->set_code(isolate->builtins()->builtin(Builtins::kArrayForEach));
-  Handle<JSFunction>::cast(for_each_function)
-      ->shared()
-      ->set_code(isolate->builtins()->builtin(Builtins::kArrayForEach));
+  Handle<Object> prototype = Object::GetProperty(&it2).ToHandleChecked();
 
-  LookupIterator it4(array_prototype,
-                     factory->NewStringFromAsciiChecked("every"),
+  LookupIterator it3(prototype, factory->NewStringFromAsciiChecked(method_name),
                      LookupIterator::OWN_SKIP_INTERCEPTOR);
-  Handle<Object> every_function = Object::GetProperty(&it4).ToHandleChecked();
-  Handle<JSFunction>::cast(every_function)
-      ->set_code(isolate->builtins()->builtin(Builtins::kArrayEvery));
-  Handle<JSFunction>::cast(every_function)
-      ->shared()
-      ->set_code(isolate->builtins()->builtin(Builtins::kArrayEvery));
+  Handle<Object> function = Object::GetProperty(&it3).ToHandleChecked();
+  Handle<JSFunction>::cast(function)->set_code(
+      isolate->builtins()->builtin(builtin_name));
+  Handle<JSFunction>::cast(function)->shared()->set_code(
+      isolate->builtins()->builtin(builtin_name));
+}
 
-  LookupIterator it5(array_prototype,
-                     factory->NewStringFromAsciiChecked("some"),
-                     LookupIterator::OWN_SKIP_INTERCEPTOR);
-  Handle<Object> some_function = Object::GetProperty(&it5).ToHandleChecked();
-  Handle<JSFunction>::cast(some_function)
-      ->set_code(isolate->builtins()->builtin(Builtins::kArraySome));
-  Handle<JSFunction>::cast(some_function)
-      ->shared()
-      ->set_code(isolate->builtins()->builtin(Builtins::kArraySome));
+void Genesis::InitializeGlobal_enable_fast_array_builtins() {
+  if (!FLAG_enable_fast_array_builtins) return;
+
+  InstallOneBuiltinFunction("Array", "forEach", Builtins::kArrayForEach);
+  InstallOneBuiltinFunction("Array", "every", Builtins::kArrayEvery);
+  InstallOneBuiltinFunction("Array", "some", Builtins::kArraySome);
+  InstallOneBuiltinFunction("Array", "reduce", Builtins::kArrayReduce);
+
+  if (FLAG_experimental_array_builtins) {
+    InstallOneBuiltinFunction("Array", "filter", Builtins::kArrayFilter);
+  }
 }
 
 void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {

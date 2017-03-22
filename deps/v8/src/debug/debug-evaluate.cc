@@ -434,6 +434,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kArrayForEach:
     case Builtins::kArrayEvery:
     case Builtins::kArraySome:
+    case Builtins::kArrayReduce:
     // Boolean bulitins.
     case Builtins::kBooleanConstructor:
     case Builtins::kBooleanPrototypeToString:
@@ -524,6 +525,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kStringConstructor:
     case Builtins::kStringPrototypeCharAt:
     case Builtins::kStringPrototypeCharCodeAt:
+    case Builtins::kStringPrototypeConcat:
     case Builtins::kStringPrototypeEndsWith:
     case Builtins::kStringPrototypeIncludes:
     case Builtins::kStringPrototypeIndexOf:

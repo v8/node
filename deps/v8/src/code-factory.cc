@@ -489,6 +489,12 @@ Callable CodeFactory::ArrayPush(Isolate* isolate) {
 }
 
 // static
+Callable CodeFactory::ArrayFilterLoopContinuation(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayFilterLoopContinuation(),
+                  IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
+}
+
+// static
 Callable CodeFactory::ArrayForEachLoopContinuation(Isolate* isolate) {
   return Callable(isolate->builtins()->ArrayForEachLoopContinuation(),
                   IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
@@ -503,6 +509,12 @@ Callable CodeFactory::ArraySomeLoopContinuation(Isolate* isolate) {
 // static
 Callable CodeFactory::ArrayEveryLoopContinuation(Isolate* isolate) {
   return Callable(isolate->builtins()->ArrayEveryLoopContinuation(),
+                  IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::ArrayReduceLoopContinuation(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayReduceLoopContinuation(),
                   IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
 }
 

@@ -2960,7 +2960,7 @@ Node* CodeStubAssembler::IsJSArray(Node* object) {
 }
 
 Node* CodeStubAssembler::IsWeakCell(Node* object) {
-  return HasInstanceType(object, WEAK_CELL_TYPE);
+  return IsWeakCellMap(LoadMap(object));
 }
 
 Node* CodeStubAssembler::IsBoolean(Node* object) {
@@ -8078,6 +8078,16 @@ Node* CodeStubAssembler::AllocateJSArrayIterator(Node* array, Node* array_map,
   StoreObjectFieldNoWriteBarrier(
       iterator, JSArrayIterator::kIteratedObjectMapOffset, array_map);
   return iterator;
+}
+
+Node* CodeStubAssembler::ArraySpeciesCreate(Node* context, Node* originalArray,
+                                            Node* len) {
+  // TODO(mvstanton): Install a fast path as well, which avoids the runtime
+  // call.
+  Node* constructor =
+      CallRuntime(Runtime::kArraySpeciesConstructor, context, originalArray);
+  return ConstructJS(CodeFactory::Construct(isolate()), context, constructor,
+                     len);
 }
 
 Node* CodeStubAssembler::IsDetachedBuffer(Node* buffer) {

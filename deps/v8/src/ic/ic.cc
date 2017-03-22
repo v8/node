@@ -436,6 +436,8 @@ void IC::OnFeedbackChanged(Isolate* isolate, JSFunction* host_function) {
     TypeFeedbackInfo* info = TypeFeedbackInfo::cast(host->type_feedback_info());
     info->change_own_type_change_checksum();
     host->set_profiler_ticks(0);
+  } else if (host_function->IsInterpreted()) {
+    host_function->shared()->set_profiler_ticks(0);
   }
   isolate->runtime_profiler()->NotifyICChanged();
   // TODO(2029): When an optimized function is patched, it would
@@ -516,16 +518,8 @@ void IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
   if (new_state == PREMONOMORPHIC) {
     nexus()->ConfigurePremonomorphic();
   } else if (new_state == MEGAMORPHIC) {
-    if (IsLoadIC() || IsStoreIC() || IsStoreOwnIC()) {
-      nexus()->ConfigureMegamorphic();
-    } else if (IsKeyedLoadIC()) {
-      KeyedLoadICNexus* nexus = casted_nexus<KeyedLoadICNexus>();
-      nexus->ConfigureMegamorphicKeyed(key->IsName() ? PROPERTY : ELEMENT);
-    } else {
-      DCHECK(IsKeyedStoreIC());
-      KeyedStoreICNexus* nexus = casted_nexus<KeyedStoreICNexus>();
-      nexus->ConfigureMegamorphicKeyed(key->IsName() ? PROPERTY : ELEMENT);
-    }
+    DCHECK_IMPLIES(!is_keyed(), key->IsName());
+    nexus()->ConfigureMegamorphic(key->IsName() ? PROPERTY : ELEMENT);
   } else {
     UNREACHABLE();
   }
@@ -536,49 +530,13 @@ void IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
 
 void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
                               Handle<Object> handler) {
-  switch (kind_) {
-    case FeedbackSlotKind::kLoadProperty: {
-      LoadICNexus* nexus = casted_nexus<LoadICNexus>();
-      nexus->ConfigureMonomorphic(map, handler);
-      break;
-    }
-    case FeedbackSlotKind::kLoadGlobalNotInsideTypeof:
-    case FeedbackSlotKind::kLoadGlobalInsideTypeof: {
-      LoadGlobalICNexus* nexus = casted_nexus<LoadGlobalICNexus>();
-      nexus->ConfigureHandlerMode(handler);
-      break;
-    }
-    case FeedbackSlotKind::kLoadKeyed: {
-      KeyedLoadICNexus* nexus = casted_nexus<KeyedLoadICNexus>();
-      nexus->ConfigureMonomorphic(name, map, handler);
-      break;
-    }
-    case FeedbackSlotKind::kStoreNamedSloppy:
-    case FeedbackSlotKind::kStoreNamedStrict:
-    case FeedbackSlotKind::kStoreOwnNamed: {
-      StoreICNexus* nexus = casted_nexus<StoreICNexus>();
-      nexus->ConfigureMonomorphic(map, handler);
-      break;
-    }
-    case FeedbackSlotKind::kStoreKeyedSloppy:
-    case FeedbackSlotKind::kStoreKeyedStrict: {
-      KeyedStoreICNexus* nexus = casted_nexus<KeyedStoreICNexus>();
-      nexus->ConfigureMonomorphic(name, map, handler);
-      break;
-    }
-    case FeedbackSlotKind::kCall:
-    case FeedbackSlotKind::kBinaryOp:
-    case FeedbackSlotKind::kCompareOp:
-    case FeedbackSlotKind::kToBoolean:
-    case FeedbackSlotKind::kCreateClosure:
-    case FeedbackSlotKind::kLiteral:
-    case FeedbackSlotKind::kGeneral:
-    case FeedbackSlotKind::kStoreDataPropertyInLiteral:
-    case FeedbackSlotKind::kTypeProfile:
-    case FeedbackSlotKind::kInvalid:
-    case FeedbackSlotKind::kKindsNumber:
-      UNREACHABLE();
-      break;
+  if (IsLoadGlobalIC()) {
+    LoadGlobalICNexus* nexus = casted_nexus<LoadGlobalICNexus>();
+    nexus->ConfigureHandlerMode(handler);
+  } else {
+    // Non-keyed ICs don't track the name explicitly.
+    if (!is_keyed()) name = Handle<Name>::null();
+    nexus()->ConfigureMonomorphic(name, map, handler);
   }
 
   vector_set_ = true;
@@ -587,62 +545,14 @@ void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
 
 void IC::ConfigureVectorState(Handle<Name> name, MapHandleList* maps,
                               List<Handle<Object>>* handlers) {
-  switch (kind_) {
-    case FeedbackSlotKind::kLoadProperty: {
-      LoadICNexus* nexus = casted_nexus<LoadICNexus>();
-      nexus->ConfigurePolymorphic(maps, handlers);
-      break;
-    }
-    case FeedbackSlotKind::kLoadKeyed: {
-      KeyedLoadICNexus* nexus = casted_nexus<KeyedLoadICNexus>();
-      nexus->ConfigurePolymorphic(name, maps, handlers);
-      break;
-    }
-    case FeedbackSlotKind::kStoreNamedSloppy:
-    case FeedbackSlotKind::kStoreNamedStrict:
-    case FeedbackSlotKind::kStoreOwnNamed: {
-      StoreICNexus* nexus = casted_nexus<StoreICNexus>();
-      nexus->ConfigurePolymorphic(maps, handlers);
-      break;
-    }
-    case FeedbackSlotKind::kStoreKeyedSloppy:
-    case FeedbackSlotKind::kStoreKeyedStrict: {
-      KeyedStoreICNexus* nexus = casted_nexus<KeyedStoreICNexus>();
-      nexus->ConfigurePolymorphic(name, maps, handlers);
-      break;
-    }
-    case FeedbackSlotKind::kCall:
-    case FeedbackSlotKind::kLoadGlobalNotInsideTypeof:
-    case FeedbackSlotKind::kLoadGlobalInsideTypeof:
-    case FeedbackSlotKind::kBinaryOp:
-    case FeedbackSlotKind::kCompareOp:
-    case FeedbackSlotKind::kToBoolean:
-    case FeedbackSlotKind::kCreateClosure:
-    case FeedbackSlotKind::kLiteral:
-    case FeedbackSlotKind::kGeneral:
-    case FeedbackSlotKind::kStoreDataPropertyInLiteral:
-    case FeedbackSlotKind::kTypeProfile:
-    case FeedbackSlotKind::kInvalid:
-    case FeedbackSlotKind::kKindsNumber:
-      UNREACHABLE();
-      break;
-  }
+  DCHECK(!IsLoadGlobalIC());
+  // Non-keyed ICs don't track the name explicitly.
+  if (!is_keyed()) name = Handle<Name>::null();
+  nexus()->ConfigurePolymorphic(name, maps, handlers);
 
   vector_set_ = true;
   OnFeedbackChanged(isolate(), GetHostFunction());
 }
-
-void IC::ConfigureVectorState(MapHandleList* maps,
-                              MapHandleList* transitioned_maps,
-                              List<Handle<Object>>* handlers) {
-  DCHECK(IsKeyedStoreIC());
-  KeyedStoreICNexus* nexus = casted_nexus<KeyedStoreICNexus>();
-  nexus->ConfigurePolymorphic(maps, transitioned_maps, handlers);
-
-  vector_set_ = true;
-  OnFeedbackChanged(isolate(), GetHostFunction());
-}
-
 
 MaybeHandle<Object> LoadIC::Load(Handle<Object> object, Handle<Name> name) {
   // If the object is undefined or null it's illegal to try to get any
@@ -1377,8 +1287,8 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
       return LoadFromPrototype(map, holder, lookup->name(), smi_handler);
     }
     case LookupIterator::INTEGER_INDEXED_EXOTIC:
-      TRACE_HANDLER_STATS(isolate(), LoadIC_SlowStub);
-      return slow_stub();
+      TRACE_HANDLER_STATS(isolate(), LoadIC_LoadIntegerIndexedExoticDH);
+      return LoadHandler::LoadNonExistent(isolate());
     case LookupIterator::ACCESS_CHECK:
     case LookupIterator::JSPROXY:
     case LookupIterator::NOT_FOUND:
@@ -1797,7 +1707,7 @@ Handle<Object> StoreIC::StoreTransition(Handle<Map> receiver_map,
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
   if (validity_cell.is_null()) {
     DCHECK_EQ(0, checks_count);
-    validity_cell = handle(Smi::FromInt(0), isolate());
+    validity_cell = handle(Smi::kZero, isolate());
   }
 
   Handle<WeakCell> transition_cell = Map::WeakCellForMap(transition);
@@ -1816,21 +1726,13 @@ Handle<Object> StoreIC::StoreTransition(Handle<Map> receiver_map,
   return handler_array;
 }
 
-static Handle<Code> PropertyCellStoreHandler(Isolate* isolate,
-                                             Handle<JSObject> store_target,
-                                             Handle<Name> name,
-                                             Handle<PropertyCell> cell,
-                                             PropertyCellType type) {
-  auto constant_type = Nothing<PropertyCellConstantType>();
-  if (type == PropertyCellType::kConstantType) {
-    constant_type = Just(cell->GetConstantType());
-  }
-  StoreGlobalStub stub(isolate, type, constant_type);
-  auto code = stub.GetCodeCopyFromTemplate(cell);
-  // TODO(verwaest): Move caching of these NORMAL stubs outside as well.
-  HeapObject::UpdateMapCodeCache(store_target, name, code);
-  return code;
+namespace {
+
+Handle<Object> StoreGlobal(Isolate* isolate, Handle<PropertyCell> cell) {
+  return isolate->factory()->NewWeakCell(cell);
 }
+
+}  // namespace
 
 Handle<Object> StoreIC::GetMapIndependentHandler(LookupIterator* lookup) {
   DCHECK_NE(LookupIterator::JSPROXY, lookup->state());
@@ -1844,7 +1746,8 @@ Handle<Object> StoreIC::GetMapIndependentHandler(LookupIterator* lookup) {
     case LookupIterator::TRANSITION: {
       auto store_target = lookup->GetStoreTarget();
       if (store_target->IsJSGlobalObject()) {
-        break;  // Custom-compiled handler.
+        TRACE_HANDLER_STATS(isolate(), StoreIC_StoreGlobalTransitionDH);
+        return StoreGlobal(isolate(), lookup->transition_cell());
       }
       // Currently not handled by CompileStoreTransition.
       if (!holder->HasFastProperties()) {
@@ -1921,7 +1824,8 @@ Handle<Object> StoreIC::GetMapIndependentHandler(LookupIterator* lookup) {
       DCHECK_EQ(kData, lookup->property_details().kind());
       if (lookup->is_dictionary_holder()) {
         if (holder->IsJSGlobalObject()) {
-          break;  // Custom-compiled handler.
+          TRACE_HANDLER_STATS(isolate(), StoreIC_StoreGlobalDH);
+          return StoreGlobal(isolate(), lookup->GetPropertyCell());
         }
         TRACE_HANDLER_STATS(isolate(), StoreIC_StoreNormalDH);
         DCHECK(holder.is_identical_to(receiver));
@@ -1969,24 +1873,6 @@ Handle<Object> StoreIC::CompileHandler(LookupIterator* lookup,
   DCHECK(!receiver->IsAccessCheckNeeded() || lookup->name()->IsPrivate());
 
   switch (lookup->state()) {
-    case LookupIterator::TRANSITION: {
-      auto store_target = lookup->GetStoreTarget();
-      if (store_target->IsJSGlobalObject()) {
-        TRACE_HANDLER_STATS(isolate(), StoreIC_StoreGlobalTransition);
-        Handle<PropertyCell> cell = lookup->transition_cell();
-        cell->set_value(*value);
-        Handle<Code> code =
-            PropertyCellStoreHandler(isolate(), receiver, lookup->name(), cell,
-                                     PropertyCellType::kConstant);
-        cell->set_value(isolate()->heap()->the_hole_value());
-        return code;
-      }
-      UNREACHABLE();
-    }
-
-    case LookupIterator::INTERCEPTOR:
-      UNREACHABLE();
-
     case LookupIterator::ACCESSOR: {
       DCHECK(holder->HasFastProperties());
       Handle<Object> accessors = lookup->GetAccessors();
@@ -2032,20 +1918,9 @@ Handle<Object> StoreIC::CompileHandler(LookupIterator* lookup,
       }
     }
 
-    case LookupIterator::DATA: {
-      DCHECK(lookup->is_dictionary_holder());
-      DCHECK(holder->IsJSGlobalObject());
-      TRACE_HANDLER_STATS(isolate(), StoreIC_StoreGlobal);
-      DCHECK(holder.is_identical_to(receiver) ||
-             receiver->map()->prototype() == *holder);
-      auto cell = lookup->GetPropertyCell();
-      auto updated_type =
-          PropertyCell::UpdatedType(cell, value, lookup->property_details());
-      auto code = PropertyCellStoreHandler(isolate(), receiver,
-                                           lookup->name(), cell, updated_type);
-      return code;
-    }
-
+    case LookupIterator::DATA:
+    case LookupIterator::TRANSITION:
+    case LookupIterator::INTERCEPTOR:
     case LookupIterator::INTEGER_INDEXED_EXOTIC:
     case LookupIterator::ACCESS_CHECK:
     case LookupIterator::JSPROXY:
@@ -2166,11 +2041,9 @@ void KeyedStoreIC::UpdateStoreElement(Handle<Map> receiver_map,
     }
   }
 
-  MapHandleList transitioned_maps(target_receiver_maps.length());
   List<Handle<Object>> handlers(target_receiver_maps.length());
-  StoreElementPolymorphicHandlers(&target_receiver_maps, &transitioned_maps,
-                                  &handlers, store_mode);
-  ConfigureVectorState(&target_receiver_maps, &transitioned_maps, &handlers);
+  StoreElementPolymorphicHandlers(&target_receiver_maps, &handlers, store_mode);
+  ConfigureVectorState(Handle<Name>(), &target_receiver_maps, &handlers);
 }
 
 
@@ -2230,15 +2103,13 @@ Handle<Object> KeyedStoreIC::StoreElementHandler(
   }
   Handle<Object> validity_cell =
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
-  if (validity_cell.is_null()) {
-    return stub;
-  }
+  if (validity_cell.is_null()) return stub;
   return isolate()->factory()->NewTuple2(validity_cell, stub);
 }
 
 void KeyedStoreIC::StoreElementPolymorphicHandlers(
-    MapHandleList* receiver_maps, MapHandleList* transitioned_maps,
-    List<Handle<Object>>* handlers, KeyedAccessStoreMode store_mode) {
+    MapHandleList* receiver_maps, List<Handle<Object>>* handlers,
+    KeyedAccessStoreMode store_mode) {
   DCHECK(store_mode == STANDARD_STORE ||
          store_mode == STORE_AND_GROW_NO_TRANSITION ||
          store_mode == STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS ||
@@ -2281,17 +2152,17 @@ void KeyedStoreIC::StoreElementPolymorphicHandlers(
         Handle<Object> validity_cell =
             Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
         if (validity_cell.is_null()) {
-          handler = stub;
-        } else {
-          handler = isolate()->factory()->NewTuple2(validity_cell, stub);
+          validity_cell = handle(Smi::kZero, isolate());
         }
+        Handle<WeakCell> transition = Map::WeakCellForMap(transitioned_map);
+        handler =
+            isolate()->factory()->NewTuple3(transition, stub, validity_cell);
       } else {
         handler = StoreElementHandler(receiver_map, store_mode);
       }
     }
     DCHECK(!handler.is_null());
     handlers->Add(handler);
-    transitioned_maps->Add(transitioned_map);
   }
 }
 

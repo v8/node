@@ -526,6 +526,14 @@ class MemoryChunk {
                : young_generation_bitmap_;
   }
 
+  template <MarkingMode mode = MarkingMode::FULL>
+  inline int* live_bytes_address() {
+    // TODO(mlippautz): Fix type of live_byte_count_.
+    return mode == MarkingMode::FULL
+               ? &live_byte_count_
+               : reinterpret_cast<int*>(&young_generation_live_byte_count_);
+  }
+
   inline uint32_t AddressToMarkbitIndex(Address addr) const {
     return static_cast<uint32_t>(addr - this->address()) >> kPointerSizeLog2;
   }

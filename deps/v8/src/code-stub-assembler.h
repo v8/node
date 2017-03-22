@@ -48,7 +48,8 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
   V(TrueValue, True)                                  \
   V(Tuple2Map, Tuple2Map)                             \
   V(Tuple3Map, Tuple3Map)                             \
-  V(UndefinedValue, Undefined)
+  V(UndefinedValue, Undefined)                        \
+  V(WeakCellMap, WeakCellMap)
 
 // Provides JavaScript-specific "macro-assembler" functionality on top of the
 // CodeAssembler. By factoring the JavaScript-isms out of the CodeAssembler,
@@ -585,6 +586,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                             Node* context, IterationKind mode);
 
   Node* AllocateJSArrayIterator(Node* array, Node* array_map, Node* map);
+
+  // Perform ArraySpeciesCreate (ES6 #sec-arrayspeciescreate).
+  Node* ArraySpeciesCreate(Node* context, Node* originalArray, Node* len);
 
   void FillFixedArrayWithValue(ElementsKind kind, Node* array, Node* from_index,
                                Node* to_index,
