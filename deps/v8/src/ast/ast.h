@@ -91,7 +91,7 @@ namespace internal {
   V(Conditional)                \
   V(VariableProxy)              \
   V(Literal)                    \
-  V(Yield)                      \
+  V(Suspend)                    \
   V(Throw)                      \
   V(CallRuntime)                \
   V(UnaryOperation)             \
@@ -563,11 +563,11 @@ class IterationStatement : public BreakableStatement {
   Statement* body() const { return body_; }
   void set_body(Statement* s) { body_ = s; }
 
-  int yield_count() const { return yield_count_; }
-  int first_yield_id() const { return first_yield_id_; }
-  void set_yield_count(int yield_count) { yield_count_ = yield_count; }
-  void set_first_yield_id(int first_yield_id) {
-    first_yield_id_ = first_yield_id;
+  int suspend_count() const { return suspend_count_; }
+  int first_suspend_id() const { return first_suspend_id_; }
+  void set_suspend_count(int suspend_count) { suspend_count_ = suspend_count; }
+  void set_first_suspend_id(int first_suspend_id) {
+    first_suspend_id_ = first_suspend_id;
   }
 
   static int num_ids() { return parent_num_ids() + 1; }
@@ -581,8 +581,8 @@ class IterationStatement : public BreakableStatement {
                      NodeType type)
       : BreakableStatement(labels, TARGET_FOR_ANONYMOUS, pos, type),
         body_(NULL),
-        yield_count_(0),
-        first_yield_id_(0) {}
+        suspend_count_(0),
+        first_suspend_id_(0) {}
   static int parent_num_ids() { return BreakableStatement::num_ids(); }
   void Initialize(Statement* body) { body_ = body; }
 
@@ -594,8 +594,8 @@ class IterationStatement : public BreakableStatement {
 
   Statement* body_;
   Label continue_target_;
-  int yield_count_;
-  int first_yield_id_;
+  int suspend_count_;
+  int first_suspend_id_;
 };
 
 
@@ -904,15 +904,6 @@ class ReturnStatement final : public JumpStatement {
   Type type() const { return TypeField::decode(bit_field_); }
   bool is_async_return() const { return type() == kAsyncReturn; }
 
-  FeedbackSlot TypeProfileSlot() const {
-    DCHECK(HasTypeProfileSlot());
-    return type_profile_slot_;
-  }
-
-  void SetTypeProfileSlot(FeedbackSlot slot) { type_profile_slot_ = slot; }
-
-  bool HasTypeProfileSlot() const { return !type_profile_slot_.IsInvalid(); }
-
  private:
   friend class AstNodeFactory;
 
@@ -920,8 +911,6 @@ class ReturnStatement final : public JumpStatement {
       : JumpStatement(pos, kReturnStatement), expression_(expression) {
     bit_field_ |= TypeField::encode(type);
   }
-
-  FeedbackSlot type_profile_slot_;
 
   Expression* expression_;
 
@@ -2425,16 +2414,8 @@ class Assignment final : public Expression {
   }
 
   void AssignFeedbackSlots(FeedbackVectorSpec* spec, LanguageMode language_mode,
-                           FeedbackSlotCache* cache,
-                           bool collect_type_profile = false);
+                           FeedbackSlotCache* cache);
   FeedbackSlot AssignmentSlot() const { return slot_; }
-
-  FeedbackSlot TypeProfileSlot() const {
-    DCHECK(HasTypeProfileSlot());
-    return type_profile_slot_;
-  }
-
-  bool HasTypeProfileSlot() const { return !type_profile_slot_.IsInvalid(); }
 
  private:
   friend class AstNodeFactory;
@@ -2457,8 +2438,6 @@ class Assignment final : public Expression {
   Expression* value_;
   BinaryOperation* binary_operation_;
   SmallMapList receiver_types_;
-
-  FeedbackSlot type_profile_slot_;
 };
 
 
@@ -2510,12 +2489,26 @@ class RewritableExpression final : public Expression {
       : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
 };
 
+// There are several types of Suspend node:
+//
+// Yield
+// YieldStar
+// Await
+//
 // Our Yield is different from the JS yield in that it "returns" its argument as
 // is, without wrapping it in an iterator result object.  Such wrapping, if
 // desired, must be done beforehand (see the parser).
-class Yield final : public Expression {
+class Suspend final : public Expression {
  public:
   enum OnException { kOnExceptionThrow, kOnExceptionRethrow };
+  using Flags = SuspendGeneratorFlags;
+
+  // Convenient aliases
+  static constexpr Flags kYield = Flags::kYield;
+  static constexpr Flags kYieldStar = Flags::kYieldStar;
+  static constexpr Flags kAwait = Flags::kAwait;
+
+  static constexpr Flags kAsyncGenerator = Flags::kAsyncGenerator;
 
   Expression* generator_object() const { return generator_object_; }
   Expression* expression() const { return expression_; }
@@ -2525,30 +2518,49 @@ class Yield final : public Expression {
   bool rethrow_on_exception() const {
     return on_exception() == kOnExceptionRethrow;
   }
-  int yield_id() const { return yield_id_; }
+
+  int suspend_id() const { return suspend_id_; }
+  Flags suspend_type() const {
+    return static_cast<Flags>(FlagsField::decode(bit_field_) &
+                              Flags::kSuspendTypeMask);
+  }
+  bool is_yield() const { return suspend_type() == Flags::kYield; }
+  bool is_yield_star() const { return suspend_type() == Flags::kYieldStar; }
+  bool is_await() const { return suspend_type() == Flags::kAwait; }
+  bool is_async_generator() const {
+    return (suspend_type() & Flags::kGeneratorTypeMask) == kAsyncGenerator;
+  }
 
   void set_generator_object(Expression* e) { generator_object_ = e; }
   void set_expression(Expression* e) { expression_ = e; }
-  void set_yield_id(int yield_id) { yield_id_ = yield_id; }
+  void set_suspend_id(int id) { suspend_id_ = id; }
+  void set_suspend_type(Flags type) {
+    DCHECK_EQ(0, static_cast<int>(type & ~Flags::kSuspendTypeMask));
+    bit_field_ = FlagsField::update(bit_field_, type);
+  }
 
  private:
   friend class AstNodeFactory;
 
-  Yield(Expression* generator_object, Expression* expression, int pos,
-        OnException on_exception)
-      : Expression(pos, kYield),
-        yield_id_(-1),
+  Suspend(Expression* generator_object, Expression* expression, int pos,
+          OnException on_exception, Flags flags)
+      : Expression(pos, kSuspend),
+        suspend_id_(-1),
         generator_object_(generator_object),
         expression_(expression) {
-    bit_field_ |= OnExceptionField::encode(on_exception);
+    bit_field_ |=
+        OnExceptionField::encode(on_exception) | FlagsField::encode(flags);
   }
 
-  int yield_id_;
+  int suspend_id_;
   Expression* generator_object_;
   Expression* expression_;
 
   class OnExceptionField
       : public BitField<OnException, Expression::kNextBitFieldIndex, 1> {};
+  static constexpr int kFlagsBitWidth = static_cast<int>(Flags::kBitWidth);
+  class FlagsField
+      : public BitField<Flags, OnExceptionField::kNext, kFlagsBitWidth> {};
 };
 
 
@@ -2606,7 +2618,10 @@ class FunctionLiteral final : public Expression {
     literal_feedback_slot_ = spec->AddCreateClosureSlot();
   }
 
+  void SetTypeProfileSlot(FeedbackSlot slot) { type_profile_slot_ = slot; }
+
   FeedbackSlot LiteralFeedbackSlot() const { return literal_feedback_slot_; }
+  FeedbackSlot TypeProfileSlot() const { return type_profile_slot_; }
 
   static bool NeedsHomeObject(Expression* expr);
 
@@ -2699,8 +2714,8 @@ class FunctionLiteral final : public Expression {
     return is_anonymous_expression();
   }
 
-  int yield_count() { return yield_count_; }
-  void set_yield_count(int yield_count) { yield_count_ = yield_count; }
+  int suspend_count() { return suspend_count_; }
+  void set_suspend_count(int suspend_count) { suspend_count_ = suspend_count; }
 
   int return_position() {
     return std::max(start_position(), end_position() - (has_braces_ ? 1 : 0));
@@ -2727,7 +2742,7 @@ class FunctionLiteral final : public Expression {
         parameter_count_(parameter_count),
         function_length_(function_length),
         function_token_position_(kNoSourcePosition),
-        yield_count_(0),
+        suspend_count_(0),
         has_braces_(has_braces),
         raw_name_(name),
         scope_(scope),
@@ -2758,7 +2773,7 @@ class FunctionLiteral final : public Expression {
   int parameter_count_;
   int function_length_;
   int function_token_position_;
-  int yield_count_;
+  int suspend_count_;
   bool has_braces_;
 
   const AstString* raw_name_;
@@ -2769,6 +2784,7 @@ class FunctionLiteral final : public Expression {
   AstProperties ast_properties_;
   int function_literal_id_;
   FeedbackSlot literal_feedback_slot_;
+  FeedbackSlot type_profile_slot_;
 };
 
 // Property is used for passing information
@@ -3493,10 +3509,12 @@ class AstNodeFactory final BASE_EMBEDDED {
     return assign;
   }
 
-  Yield* NewYield(Expression* generator_object, Expression* expression, int pos,
-                  Yield::OnException on_exception) {
+  Suspend* NewSuspend(Expression* generator_object, Expression* expression,
+                      int pos, Suspend::OnException on_exception,
+                      Suspend::Flags flags) {
     if (!expression) expression = NewUndefinedLiteral(pos);
-    return new (zone_) Yield(generator_object, expression, pos, on_exception);
+    return new (zone_)
+        Suspend(generator_object, expression, pos, on_exception, flags);
   }
 
   Throw* NewThrow(Expression* exception, int pos) {

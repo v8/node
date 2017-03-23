@@ -2820,10 +2820,12 @@ void WasmGraphBuilder::BuildWasmInterpreterEntry(
     MachineType load_rep = wasm::WasmOpcodes::MachineTypeFor(wasm::kWasmI32);
     Node* lower =
         graph()->NewNode(jsgraph()->machine()->Load(load_rep), arg_buffer,
-                         Int32Constant(0), *effect_, *control_);
+                         Int32Constant(kInt64LowerHalfMemoryOffset), *effect_,
+                         *control_);
     Node* upper =
         graph()->NewNode(jsgraph()->machine()->Load(load_rep), arg_buffer,
-                         Int32Constant(sizeof(int32_t)), lower, *control_);
+                         Int32Constant(kInt64UpperHalfMemoryOffset), lower,
+                         *control_);
     *effect_ = upper;
     Return(lower, upper);
   } else {
@@ -2944,9 +2946,9 @@ Node* WasmGraphBuilder::SetGlobal(uint32_t index, Node* val) {
 void WasmGraphBuilder::BoundsCheckMem(MachineType memtype, Node* index,
                                       uint32_t offset,
                                       wasm::WasmCodePosition position) {
-  DCHECK(module_ && module_->instance);
   if (FLAG_wasm_no_bounds_checks) return;
-  uint32_t size = module_->instance->mem_size;
+  uint32_t size =
+      module_ && module_->instance ? module_->instance->mem_size : 0;
   byte memsize = wasm::WasmOpcodes::MemSize(memtype);
 
   size_t effective_size;

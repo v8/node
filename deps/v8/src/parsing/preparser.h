@@ -333,7 +333,6 @@ class PreParserExpression {
   PreParserExpression* operator->() { return this; }
 
   // More dummy implementations of things PreParser doesn't need to track:
-  void set_index(int index) {}  // For YieldExpressions
   void SetShouldEagerCompile() {}
   void set_should_be_used_once_hint() {}
 
@@ -635,9 +634,10 @@ class PreParserFactory {
     // default value inside an arrow function parameter list.
     return PreParserExpression::Assignment(left.variables_);
   }
-  PreParserExpression NewYield(PreParserExpression generator_object,
-                               PreParserExpression expression, int pos,
-                               Yield::OnException on_exception) {
+  PreParserExpression NewSuspend(PreParserExpression generator_object,
+                                 PreParserExpression expression, int pos,
+                                 Suspend::OnException on_exception,
+                                 Suspend::Flags flags) {
     return PreParserExpression::Default();
   }
   PreParserExpression NewConditional(PreParserExpression condition,
@@ -834,6 +834,7 @@ struct ParserTypes<PreParser> {
   typedef PreParserExpression FunctionLiteral;
   typedef PreParserExpression ObjectLiteralProperty;
   typedef PreParserExpression ClassLiteralProperty;
+  typedef PreParserExpression Suspend;
   typedef PreParserExpressionList ExpressionList;
   typedef PreParserExpressionList ObjectPropertyList;
   typedef PreParserExpressionList ClassPropertyList;

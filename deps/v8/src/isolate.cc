@@ -1846,8 +1846,7 @@ bool Isolate::OptionalRescheduleException(bool is_bottom_call) {
 void Isolate::PushPromise(Handle<JSObject> promise) {
   ThreadLocalTop* tltop = thread_local_top();
   PromiseOnStack* prev = tltop->promise_on_stack_;
-  Handle<JSObject> global_promise =
-      Handle<JSObject>::cast(global_handles()->Create(*promise));
+  Handle<JSObject> global_promise = global_handles()->Create(*promise);
   tltop->promise_on_stack_ = new PromiseOnStack(global_promise, prev);
 }
 
@@ -3318,8 +3317,6 @@ void Isolate::FireCallCompletedCallback() {
           v8::MicrotasksPolicy::kAuto;
 
   if (run_microtasks) RunMicrotasks();
-  // Prevent stepping from spilling into the next call made by the embedder.
-  if (debug()->is_active()) debug()->ClearStepping();
 
   if (call_completed_callbacks_.is_empty()) return;
   // Fire callbacks.  Increase call depth to prevent recursive callbacks.

@@ -3004,15 +3004,16 @@ class V8_EXPORT Object : public Value {
                                         Local<Value> key);
 
   V8_DEPRECATE_SOON("Use maybe version", bool Delete(Local<Value> key));
-  // TODO(dcarney): mark V8_WARN_UNUSED_RESULT
-  Maybe<bool> Delete(Local<Context> context, Local<Value> key);
+  V8_WARN_UNUSED_RESULT Maybe<bool> Delete(Local<Context> context,
+                                           Local<Value> key);
 
   V8_DEPRECATED("Use maybe version", bool Has(uint32_t index));
-  V8_WARN_UNUSED_RESULT Maybe<bool> Has(Local<Context> context, uint32_t index);
+  V8_WARN_UNUSED_RESULT Maybe<bool> Has(Local<Context> context,
+                                        uint32_t index);
 
   V8_DEPRECATED("Use maybe version", bool Delete(uint32_t index));
-  // TODO(dcarney): mark V8_WARN_UNUSED_RESULT
-  Maybe<bool> Delete(Local<Context> context, uint32_t index);
+  V8_WARN_UNUSED_RESULT Maybe<bool> Delete(Local<Context> context,
+                                           uint32_t index);
 
   V8_DEPRECATED("Use maybe version",
                 bool SetAccessor(Local<String> name,
@@ -3028,8 +3029,8 @@ class V8_EXPORT Object : public Value {
                                  Local<Value> data = Local<Value>(),
                                  AccessControl settings = DEFAULT,
                                  PropertyAttribute attribute = None));
-  // TODO(dcarney): mark V8_WARN_UNUSED_RESULT
-  Maybe<bool> SetAccessor(Local<Context> context, Local<Name> name,
+  V8_WARN_UNUSED_RESULT Maybe<bool> SetAccessor(Local<Context> context,
+                          Local<Name> name,
                           AccessorNameGetterCallback getter,
                           AccessorNameSetterCallback setter = 0,
                           MaybeLocal<Value> data = MaybeLocal<Value>(),
@@ -3761,12 +3762,12 @@ class V8_EXPORT Promise : public Object {
      * Ignored if the promise is no longer pending.
      */
     V8_DEPRECATE_SOON("Use maybe version", void Resolve(Local<Value> value));
-    // TODO(dcarney): mark V8_WARN_UNUSED_RESULT
-    Maybe<bool> Resolve(Local<Context> context, Local<Value> value);
+    V8_WARN_UNUSED_RESULT Maybe<bool> Resolve(Local<Context> context,
+                                              Local<Value> value);
 
     V8_DEPRECATE_SOON("Use maybe version", void Reject(Local<Value> value));
-    // TODO(dcarney): mark V8_WARN_UNUSED_RESULT
-    Maybe<bool> Reject(Local<Context> context, Local<Value> value);
+    V8_WARN_UNUSED_RESULT Maybe<bool> Reject(Local<Context> context,
+                                             Local<Value> value);
 
     V8_INLINE static Resolver* Cast(Value* obj);
 
@@ -3913,6 +3914,8 @@ class V8_EXPORT Proxy : public Object {
   static void CheckCast(Value* obj);
 };
 
+// TODO(mtrofin): rename WasmCompiledModule to WasmModuleObject, for
+// consistency with internal APIs.
 class V8_EXPORT WasmCompiledModule : public Object {
  public:
   typedef std::pair<std::unique_ptr<const uint8_t[]>, size_t> SerializedModule;
@@ -3964,6 +3967,10 @@ class V8_EXPORT WasmCompiledModule : public Object {
   V8_INLINE static WasmCompiledModule* Cast(Value* obj);
 
  private:
+  // TODO(ahaas): please remove the friend once streamed compilation is
+  // implemented
+  friend class WasmModuleObjectBuilder;
+
   static MaybeLocal<WasmCompiledModule> Deserialize(
       Isolate* isolate, const CallerOwnedBuffer& serialized_module,
       const CallerOwnedBuffer& wire_bytes);
@@ -3977,6 +3984,29 @@ class V8_EXPORT WasmCompiledModule : public Object {
 
   WasmCompiledModule();
   static void CheckCast(Value* obj);
+};
+
+class V8_EXPORT WasmModuleObjectBuilder final {
+ public:
+  WasmModuleObjectBuilder(Isolate* isolate) : isolate_(isolate) {}
+  void OnBytesReceived(std::unique_ptr<const uint8_t[]>&& bytes, size_t size);
+  MaybeLocal<WasmCompiledModule> Finish();
+
+ private:
+  Isolate* isolate_ = nullptr;
+  // TODO(ahaas): We probably need none of this below here once streamed
+  // compilation is implemented.
+  typedef std::pair<std::unique_ptr<const uint8_t[]>, size_t> Buffer;
+
+  // Disable copy semantics *in this implementation*. We can choose to
+  // relax this, albeit it's not clear why.
+  WasmModuleObjectBuilder(const WasmModuleObjectBuilder&) = delete;
+  WasmModuleObjectBuilder(WasmModuleObjectBuilder&&) = default;
+  WasmModuleObjectBuilder& operator=(const WasmModuleObjectBuilder&) = delete;
+  WasmModuleObjectBuilder& operator=(WasmModuleObjectBuilder&&) = default;
+
+  std::vector<Buffer> received_buffers_;
+  size_t total_size_ = 0;
 };
 
 #ifndef V8_ARRAY_BUFFER_INTERNAL_FIELD_COUNT

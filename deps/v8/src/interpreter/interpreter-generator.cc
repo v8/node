@@ -14,6 +14,7 @@
 #include "src/code-factory.h"
 #include "src/factory.h"
 #include "src/ic/accessor-assembler.h"
+#include "src/ic/binary-op-assembler.h"
 #include "src/interpreter/bytecode-flags.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/interpreter/interpreter-assembler.h"
@@ -39,11 +40,16 @@ class InterpreterGenerator {
 #undef DECLARE_BYTECODE_HANDLER_GENERATOR
 
  private:
-  // Generates code to perform the binary operation via |Generator|.
-  template <class Generator>
-  void DoBinaryOpWithFeedback(InterpreterAssembler* assembler);
+  typedef Node* (BinaryOpAssembler::*BinaryOpGenerator)(Node* context,
+                                                        Node* left, Node* right,
+                                                        Node* slot,
+                                                        Node* vector);
 
-  // Generates code to perform the comparison via |Generator| while gathering
+  // Generates code to perform the binary operation via |generator|.
+  void DoBinaryOpWithFeedback(InterpreterAssembler* assembler,
+                              BinaryOpGenerator generator);
+
+  // Generates code to perform the |compare_op| comparison while gathering
   // type feedback.
   void DoCompareOpWithFeedback(Token::Value compare_op,
                                InterpreterAssembler* assembler);
@@ -52,16 +58,6 @@ class InterpreterGenerator {
   // |bitwise_op| while gathering type feedback.
   void DoBitwiseBinaryOp(Token::Value bitwise_op,
                          InterpreterAssembler* assembler);
-
-  // Generates code to perform the binary operation via |Generator| using
-  // an immediate value rather the accumulator as the rhs operand.
-  template <class Generator>
-  void DoBinaryOpWithImmediate(InterpreterAssembler* assembler);
-
-  // Generates code to perform the unary operation via |Generator| while
-  // gatering type feedback.
-  template <class Generator>
-  void DoUnaryOpWithFeedback(InterpreterAssembler* assembler);
 
   // Generates code to perform the comparison operation associated with
   // |compare_op|.
@@ -963,17 +959,18 @@ void InterpreterGenerator::DoCompareOp(Token::Value compare_op,
   __ Dispatch();
 }
 
-template <class Generator>
 void InterpreterGenerator::DoBinaryOpWithFeedback(
-    InterpreterAssembler* assembler) {
+    InterpreterAssembler* assembler, BinaryOpGenerator generator) {
   Node* reg_index = __ BytecodeOperandReg(0);
   Node* lhs = __ LoadRegister(reg_index);
   Node* rhs = __ GetAccumulator();
   Node* context = __ GetContext();
   Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
-  Node* result = Generator::Generate(assembler, lhs, rhs, slot_index,
-                                     feedback_vector, context);
+
+  BinaryOpAssembler binop_asm(assembler->state());
+  Node* result =
+      (binop_asm.*generator)(context, lhs, rhs, slot_index, feedback_vector);
   __ SetAccumulator(result);
   __ Dispatch();
 }
@@ -987,164 +984,152 @@ void InterpreterGenerator::DoCompareOpWithFeedback(
   Node* slot_index = __ BytecodeOperandIdx(1);
   Node* feedback_vector = __ LoadFeedbackVector();
 
-  // TODO(interpreter): the only reason this check is here is because we
-  // sometimes emit comparisons that shouldn't collect feedback (e.g.
-  // try-finally blocks and generators), and we could get rid of this by
-  // introducing Smi equality tests.
-  Label gather_type_feedback(assembler), do_compare(assembler);
-  __ Branch(__ WordEqual(slot_index, __ IntPtrConstant(0)), &do_compare,
-            &gather_type_feedback);
+  Variable var_type_feedback(assembler, MachineRepresentation::kTaggedSigned);
+  Label lhs_is_not_smi(assembler), lhs_is_not_number(assembler),
+      lhs_is_not_string(assembler), gather_rhs_type(assembler),
+      update_feedback(assembler), do_compare(assembler);
 
-  __ Bind(&gather_type_feedback);
+  __ GotoIfNot(__ TaggedIsSmi(lhs), &lhs_is_not_smi);
+
+  var_type_feedback.Bind(
+      __ SmiConstant(CompareOperationFeedback::kSignedSmall));
+  __ Goto(&gather_rhs_type);
+
+  __ Bind(&lhs_is_not_smi);
   {
-    Variable var_type_feedback(assembler, MachineRepresentation::kTaggedSigned);
-    Label lhs_is_not_smi(assembler), lhs_is_not_number(assembler),
-        lhs_is_not_string(assembler), gather_rhs_type(assembler),
-        update_feedback(assembler);
+    Node* lhs_map = __ LoadMap(lhs);
+    __ GotoIfNot(__ IsHeapNumberMap(lhs_map), &lhs_is_not_number);
 
-    __ GotoIfNot(__ TaggedIsSmi(lhs), &lhs_is_not_smi);
-
-    var_type_feedback.Bind(
-        __ SmiConstant(CompareOperationFeedback::kSignedSmall));
+    var_type_feedback.Bind(__ SmiConstant(CompareOperationFeedback::kNumber));
     __ Goto(&gather_rhs_type);
 
-    __ Bind(&lhs_is_not_smi);
+    __ Bind(&lhs_is_not_number);
     {
-      Node* lhs_map = __ LoadMap(lhs);
-      __ GotoIfNot(__ IsHeapNumberMap(lhs_map), &lhs_is_not_number);
+      Node* lhs_instance_type = __ LoadInstanceType(lhs);
+      if (Token::IsOrderedRelationalCompareOp(compare_op)) {
+        Label lhs_is_not_oddball(assembler);
+        __ GotoIfNot(
+            __ Word32Equal(lhs_instance_type, __ Int32Constant(ODDBALL_TYPE)),
+            &lhs_is_not_oddball);
 
-      var_type_feedback.Bind(__ SmiConstant(CompareOperationFeedback::kNumber));
-      __ Goto(&gather_rhs_type);
-
-      __ Bind(&lhs_is_not_number);
-      {
-        Node* lhs_instance_type = __ LoadInstanceType(lhs);
-        if (Token::IsOrderedRelationalCompareOp(compare_op)) {
-          Label lhs_is_not_oddball(assembler);
-          __ GotoIfNot(
-              __ Word32Equal(lhs_instance_type, __ Int32Constant(ODDBALL_TYPE)),
-              &lhs_is_not_oddball);
-
-          var_type_feedback.Bind(
-              __ SmiConstant(CompareOperationFeedback::kNumberOrOddball));
-          __ Goto(&gather_rhs_type);
-
-          __ Bind(&lhs_is_not_oddball);
-        }
-
-        Label lhs_is_not_string(assembler);
-        __ GotoIfNot(__ IsStringInstanceType(lhs_instance_type),
-                     &lhs_is_not_string);
-
-        if (Token::IsOrderedRelationalCompareOp(compare_op)) {
-          var_type_feedback.Bind(
-              __ SmiConstant(CompareOperationFeedback::kString));
-        } else {
-          var_type_feedback.Bind(__ SelectSmiConstant(
-              __ Word32Equal(
-                  __ Word32And(lhs_instance_type,
-                               __ Int32Constant(kIsNotInternalizedMask)),
-                  __ Int32Constant(kInternalizedTag)),
-              CompareOperationFeedback::kInternalizedString,
-              CompareOperationFeedback::kString));
-        }
+        var_type_feedback.Bind(
+            __ SmiConstant(CompareOperationFeedback::kNumberOrOddball));
         __ Goto(&gather_rhs_type);
 
-        __ Bind(&lhs_is_not_string);
+        __ Bind(&lhs_is_not_oddball);
+      }
+
+      Label lhs_is_not_string(assembler);
+      __ GotoIfNot(__ IsStringInstanceType(lhs_instance_type),
+                   &lhs_is_not_string);
+
+      if (Token::IsOrderedRelationalCompareOp(compare_op)) {
+        var_type_feedback.Bind(
+            __ SmiConstant(CompareOperationFeedback::kString));
+      } else {
+        var_type_feedback.Bind(__ SelectSmiConstant(
+            __ Word32Equal(
+                __ Word32And(lhs_instance_type,
+                             __ Int32Constant(kIsNotInternalizedMask)),
+                __ Int32Constant(kInternalizedTag)),
+            CompareOperationFeedback::kInternalizedString,
+            CompareOperationFeedback::kString));
+      }
+      __ Goto(&gather_rhs_type);
+
+      __ Bind(&lhs_is_not_string);
+      if (Token::IsEqualityOp(compare_op)) {
+        var_type_feedback.Bind(
+            __ SelectSmiConstant(__ IsJSReceiverInstanceType(lhs_instance_type),
+                                 CompareOperationFeedback::kReceiver,
+                                 CompareOperationFeedback::kAny));
+      } else {
+        var_type_feedback.Bind(__ SmiConstant(CompareOperationFeedback::kAny));
+      }
+      __ Goto(&gather_rhs_type);
+    }
+  }
+
+  __ Bind(&gather_rhs_type);
+  {
+    Label rhs_is_not_smi(assembler), rhs_is_not_number(assembler);
+
+    __ GotoIfNot(__ TaggedIsSmi(rhs), &rhs_is_not_smi);
+
+    var_type_feedback.Bind(
+        __ SmiOr(var_type_feedback.value(),
+                 __ SmiConstant(CompareOperationFeedback::kSignedSmall)));
+    __ Goto(&update_feedback);
+
+    __ Bind(&rhs_is_not_smi);
+    {
+      Node* rhs_map = __ LoadMap(rhs);
+      __ GotoIfNot(__ IsHeapNumberMap(rhs_map), &rhs_is_not_number);
+
+      var_type_feedback.Bind(
+          __ SmiOr(var_type_feedback.value(),
+                   __ SmiConstant(CompareOperationFeedback::kNumber)));
+      __ Goto(&update_feedback);
+
+      __ Bind(&rhs_is_not_number);
+      {
+        Node* rhs_instance_type = __ LoadInstanceType(rhs);
+        if (Token::IsOrderedRelationalCompareOp(compare_op)) {
+          Label rhs_is_not_oddball(assembler);
+          __ GotoIfNot(
+              __ Word32Equal(rhs_instance_type, __ Int32Constant(ODDBALL_TYPE)),
+              &rhs_is_not_oddball);
+
+          var_type_feedback.Bind(__ SmiOr(
+              var_type_feedback.value(),
+              __ SmiConstant(CompareOperationFeedback::kNumberOrOddball)));
+          __ Goto(&update_feedback);
+
+          __ Bind(&rhs_is_not_oddball);
+        }
+
+        Label rhs_is_not_string(assembler);
+        __ GotoIfNot(__ IsStringInstanceType(rhs_instance_type),
+                     &rhs_is_not_string);
+
+        if (Token::IsOrderedRelationalCompareOp(compare_op)) {
+          var_type_feedback.Bind(
+              __ SmiOr(var_type_feedback.value(),
+                       __ SmiConstant(CompareOperationFeedback::kString)));
+        } else {
+          var_type_feedback.Bind(__ SmiOr(
+              var_type_feedback.value(),
+              __ SelectSmiConstant(
+                  __ Word32Equal(
+                      __ Word32And(rhs_instance_type,
+                                   __ Int32Constant(kIsNotInternalizedMask)),
+                      __ Int32Constant(kInternalizedTag)),
+                  CompareOperationFeedback::kInternalizedString,
+                  CompareOperationFeedback::kString)));
+        }
+        __ Goto(&update_feedback);
+
+        __ Bind(&rhs_is_not_string);
         if (Token::IsEqualityOp(compare_op)) {
-          var_type_feedback.Bind(__ SelectSmiConstant(
-              __ IsJSReceiverInstanceType(lhs_instance_type),
-              CompareOperationFeedback::kReceiver,
-              CompareOperationFeedback::kAny));
+          var_type_feedback.Bind(
+              __ SmiOr(var_type_feedback.value(),
+                       __ SelectSmiConstant(
+                           __ IsJSReceiverInstanceType(rhs_instance_type),
+                           CompareOperationFeedback::kReceiver,
+                           CompareOperationFeedback::kAny)));
         } else {
           var_type_feedback.Bind(
               __ SmiConstant(CompareOperationFeedback::kAny));
         }
-        __ Goto(&gather_rhs_type);
-      }
-    }
-
-    __ Bind(&gather_rhs_type);
-    {
-      Label rhs_is_not_smi(assembler), rhs_is_not_number(assembler);
-
-      __ GotoIfNot(__ TaggedIsSmi(rhs), &rhs_is_not_smi);
-
-      var_type_feedback.Bind(
-          __ SmiOr(var_type_feedback.value(),
-                   __ SmiConstant(CompareOperationFeedback::kSignedSmall)));
-      __ Goto(&update_feedback);
-
-      __ Bind(&rhs_is_not_smi);
-      {
-        Node* rhs_map = __ LoadMap(rhs);
-        __ GotoIfNot(__ IsHeapNumberMap(rhs_map), &rhs_is_not_number);
-
-        var_type_feedback.Bind(
-            __ SmiOr(var_type_feedback.value(),
-                     __ SmiConstant(CompareOperationFeedback::kNumber)));
         __ Goto(&update_feedback);
-
-        __ Bind(&rhs_is_not_number);
-        {
-          Node* rhs_instance_type = __ LoadInstanceType(rhs);
-          if (Token::IsOrderedRelationalCompareOp(compare_op)) {
-            Label rhs_is_not_oddball(assembler);
-            __ GotoIfNot(__ Word32Equal(rhs_instance_type,
-                                        __ Int32Constant(ODDBALL_TYPE)),
-                         &rhs_is_not_oddball);
-
-            var_type_feedback.Bind(__ SmiOr(
-                var_type_feedback.value(),
-                __ SmiConstant(CompareOperationFeedback::kNumberOrOddball)));
-            __ Goto(&update_feedback);
-
-            __ Bind(&rhs_is_not_oddball);
-          }
-
-          Label rhs_is_not_string(assembler);
-          __ GotoIfNot(__ IsStringInstanceType(rhs_instance_type),
-                       &rhs_is_not_string);
-
-          if (Token::IsOrderedRelationalCompareOp(compare_op)) {
-            var_type_feedback.Bind(
-                __ SmiOr(var_type_feedback.value(),
-                         __ SmiConstant(CompareOperationFeedback::kString)));
-          } else {
-            var_type_feedback.Bind(__ SmiOr(
-                var_type_feedback.value(),
-                __ SelectSmiConstant(
-                    __ Word32Equal(
-                        __ Word32And(rhs_instance_type,
-                                     __ Int32Constant(kIsNotInternalizedMask)),
-                        __ Int32Constant(kInternalizedTag)),
-                    CompareOperationFeedback::kInternalizedString,
-                    CompareOperationFeedback::kString)));
-          }
-          __ Goto(&update_feedback);
-
-          __ Bind(&rhs_is_not_string);
-          if (Token::IsEqualityOp(compare_op)) {
-            var_type_feedback.Bind(
-                __ SmiOr(var_type_feedback.value(),
-                         __ SelectSmiConstant(
-                             __ IsJSReceiverInstanceType(rhs_instance_type),
-                             CompareOperationFeedback::kReceiver,
-                             CompareOperationFeedback::kAny)));
-          } else {
-            var_type_feedback.Bind(
-                __ SmiConstant(CompareOperationFeedback::kAny));
-          }
-          __ Goto(&update_feedback);
-        }
       }
     }
+  }
 
-    __ Bind(&update_feedback);
-    {
-      __ UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-      __ Goto(&do_compare);
-    }
+  __ Bind(&update_feedback);
+  {
+    __ UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
+    __ Goto(&do_compare);
   }
 
   __ Bind(&do_compare);
@@ -1183,35 +1168,40 @@ void InterpreterGenerator::DoCompareOpWithFeedback(
 //
 // Add register <src> to accumulator.
 void InterpreterGenerator::DoAdd(InterpreterAssembler* assembler) {
-  DoBinaryOpWithFeedback<AddWithFeedbackStub>(assembler);
+  DoBinaryOpWithFeedback(assembler,
+                         &BinaryOpAssembler::Generate_AddWithFeedback);
 }
 
 // Sub <src>
 //
 // Subtract register <src> from accumulator.
 void InterpreterGenerator::DoSub(InterpreterAssembler* assembler) {
-  DoBinaryOpWithFeedback<SubtractWithFeedbackStub>(assembler);
+  DoBinaryOpWithFeedback(assembler,
+                         &BinaryOpAssembler::Generate_SubtractWithFeedback);
 }
 
 // Mul <src>
 //
 // Multiply accumulator by register <src>.
 void InterpreterGenerator::DoMul(InterpreterAssembler* assembler) {
-  DoBinaryOpWithFeedback<MultiplyWithFeedbackStub>(assembler);
+  DoBinaryOpWithFeedback(assembler,
+                         &BinaryOpAssembler::Generate_MultiplyWithFeedback);
 }
 
 // Div <src>
 //
 // Divide register <src> by accumulator.
 void InterpreterGenerator::DoDiv(InterpreterAssembler* assembler) {
-  DoBinaryOpWithFeedback<DivideWithFeedbackStub>(assembler);
+  DoBinaryOpWithFeedback(assembler,
+                         &BinaryOpAssembler::Generate_DivideWithFeedback);
 }
 
 // Mod <src>
 //
 // Modulo register <src> by accumulator.
 void InterpreterGenerator::DoMod(InterpreterAssembler* assembler) {
-  DoBinaryOpWithFeedback<ModulusWithFeedbackStub>(assembler);
+  DoBinaryOpWithFeedback(assembler,
+                         &BinaryOpAssembler::Generate_ModulusWithFeedback);
 }
 
 void InterpreterGenerator::DoBitwiseBinaryOp(Token::Value bitwise_op,
@@ -1377,12 +1367,10 @@ void InterpreterGenerator::DoAddSmi(InterpreterAssembler* assembler) {
   __ Bind(&slowpath);
   {
     Node* context = __ GetContext();
-    AddWithFeedbackStub stub(__ isolate());
-    Callable callable =
-        Callable(stub.GetCode(), AddWithFeedbackStub::Descriptor(__ isolate()));
-    var_result.Bind(__ CallStub(callable, context, left, right,
-                                __ TruncateWordToWord32(slot_index),
-                                feedback_vector));
+    // TODO(ishell): pass slot as word-size value.
+    var_result.Bind(__ CallBuiltin(Builtins::kAddWithFeedback, context, left,
+                                   right, __ TruncateWordToWord32(slot_index),
+                                   feedback_vector));
     __ Goto(&end);
   }
   __ Bind(&end);
@@ -1431,12 +1419,10 @@ void InterpreterGenerator::DoSubSmi(InterpreterAssembler* assembler) {
   __ Bind(&slowpath);
   {
     Node* context = __ GetContext();
-    SubtractWithFeedbackStub stub(__ isolate());
-    Callable callable = Callable(
-        stub.GetCode(), SubtractWithFeedbackStub::Descriptor(__ isolate()));
-    var_result.Bind(__ CallStub(callable, context, left, right,
-                                __ TruncateWordToWord32(slot_index),
-                                feedback_vector));
+    // TODO(ishell): pass slot as word-size value.
+    var_result.Bind(
+        __ CallBuiltin(Builtins::kSubtractWithFeedback, context, left, right,
+                       __ TruncateWordToWord32(slot_index), feedback_vector));
     __ Goto(&end);
   }
   __ Bind(&end);
@@ -1564,19 +1550,6 @@ Node* InterpreterGenerator::BuildUnaryOp(Callable callable,
   Node* accumulator = __ GetAccumulator();
   Node* context = __ GetContext();
   return __ CallStub(callable.descriptor(), target, context, accumulator);
-}
-
-template <class Generator>
-void InterpreterGenerator::DoUnaryOpWithFeedback(
-    InterpreterAssembler* assembler) {
-  Node* value = __ GetAccumulator();
-  Node* context = __ GetContext();
-  Node* slot_index = __ BytecodeOperandIdx(0);
-  Node* feedback_vector = __ LoadFeedbackVector();
-  Node* result = Generator::Generate(assembler, value, context, feedback_vector,
-                                     slot_index);
-  __ SetAccumulator(result);
-  __ Dispatch();
 }
 
 // ToName
@@ -2289,6 +2262,24 @@ void InterpreterGenerator::DoTestLessThanOrEqual(
 void InterpreterGenerator::DoTestGreaterThanOrEqual(
     InterpreterAssembler* assembler) {
   DoCompareOpWithFeedback(Token::Value::GTE, assembler);
+}
+
+// TestEqualStrictNoFeedback <src>
+//
+// Test if the value in the <src> register is strictly equal to the accumulator.
+// Type feedback is not collected.
+void InterpreterGenerator::DoTestEqualStrictNoFeedback(
+    InterpreterAssembler* assembler) {
+  Node* reg_index = __ BytecodeOperandReg(0);
+  Node* lhs = __ LoadRegister(reg_index);
+  Node* rhs = __ GetAccumulator();
+  // TODO(5310): This is called only when lhs and rhs are Smis (for ex:
+  // try-finally or generators) or strings (only when visiting
+  // ClassLiteralProperties). We should be able to optimize this and not perform
+  // the full strict equality.
+  Node* result = assembler->StrictEqual(lhs, rhs);
+  __ SetAccumulator(result);
+  __ Dispatch();
 }
 
 // TestIn <src>

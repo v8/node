@@ -5,6 +5,7 @@
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
+#include "src/ic/binary-op-assembler.h"
 
 namespace v8 {
 namespace internal {
@@ -18,11 +19,12 @@ class NumberBuiltinsAssembler : public CodeStubAssembler {
       : CodeStubAssembler(state) {}
 
  protected:
-  template <Signedness signed_result = kSigned>
-  void BitwiseOp(std::function<Node*(Node* lhs, Node* rhs)> body) {
-    Node* left = Parameter(0);
-    Node* right = Parameter(1);
-    Node* context = Parameter(2);
+  template <typename Descriptor>
+  void BitwiseOp(std::function<Node*(Node* lhs, Node* rhs)> body,
+                 Signedness signed_result = kSigned) {
+    Node* left = Parameter(Descriptor::kLeft);
+    Node* right = Parameter(Descriptor::kRight);
+    Node* context = Parameter(Descriptor::kContext);
 
     Node* lhs_value = TruncateTaggedToWord32(context, left);
     Node* rhs_value = TruncateTaggedToWord32(context, right);
@@ -32,18 +34,22 @@ class NumberBuiltinsAssembler : public CodeStubAssembler {
     Return(result);
   }
 
-  template <Signedness signed_result = kSigned>
-  void BitwiseShiftOp(std::function<Node*(Node* lhs, Node* shift_count)> body) {
-    BitwiseOp<signed_result>([=](Node* lhs, Node* rhs) {
-      Node* shift_count = Word32And(rhs, Int32Constant(0x1f));
-      return body(lhs, shift_count);
-    });
+  template <typename Descriptor>
+  void BitwiseShiftOp(std::function<Node*(Node* lhs, Node* shift_count)> body,
+                      Signedness signed_result = kSigned) {
+    BitwiseOp<Descriptor>(
+        [=](Node* lhs, Node* rhs) {
+          Node* shift_count = Word32And(rhs, Int32Constant(0x1f));
+          return body(lhs, shift_count);
+        },
+        signed_result);
   }
 
+  template <typename Descriptor>
   void RelationalComparisonBuiltin(RelationalComparisonMode mode) {
-    Node* lhs = Parameter(0);
-    Node* rhs = Parameter(1);
-    Node* context = Parameter(2);
+    Node* lhs = Parameter(Descriptor::kLeft);
+    Node* rhs = Parameter(Descriptor::kRight);
+    Node* context = Parameter(Descriptor::kContext);
 
     Return(RelationalComparison(mode, lhs, rhs, context));
   }
@@ -1324,64 +1330,89 @@ TF_BUILTIN(Modulus, CodeStubAssembler) {
 }
 
 TF_BUILTIN(ShiftLeft, NumberBuiltinsAssembler) {
-  BitwiseShiftOp([this](Node* lhs, Node* shift_count) {
+  BitwiseShiftOp<Descriptor>([=](Node* lhs, Node* shift_count) {
     return Word32Shl(lhs, shift_count);
   });
 }
 
 TF_BUILTIN(ShiftRight, NumberBuiltinsAssembler) {
-  BitwiseShiftOp([this](Node* lhs, Node* shift_count) {
+  BitwiseShiftOp<Descriptor>([=](Node* lhs, Node* shift_count) {
     return Word32Sar(lhs, shift_count);
   });
 }
 
 TF_BUILTIN(ShiftRightLogical, NumberBuiltinsAssembler) {
-  BitwiseShiftOp<kUnsigned>([this](Node* lhs, Node* shift_count) {
-    return Word32Shr(lhs, shift_count);
-  });
+  BitwiseShiftOp<Descriptor>(
+      [=](Node* lhs, Node* shift_count) { return Word32Shr(lhs, shift_count); },
+      kUnsigned);
 }
 
 TF_BUILTIN(BitwiseAnd, NumberBuiltinsAssembler) {
-  BitwiseOp([this](Node* lhs, Node* rhs) { return Word32And(lhs, rhs); });
+  BitwiseOp<Descriptor>(
+      [=](Node* lhs, Node* rhs) { return Word32And(lhs, rhs); });
 }
 
 TF_BUILTIN(BitwiseOr, NumberBuiltinsAssembler) {
-  BitwiseOp([this](Node* lhs, Node* rhs) { return Word32Or(lhs, rhs); });
+  BitwiseOp<Descriptor>(
+      [=](Node* lhs, Node* rhs) { return Word32Or(lhs, rhs); });
 }
 
 TF_BUILTIN(BitwiseXor, NumberBuiltinsAssembler) {
-  BitwiseOp([this](Node* lhs, Node* rhs) { return Word32Xor(lhs, rhs); });
+  BitwiseOp<Descriptor>(
+      [=](Node* lhs, Node* rhs) { return Word32Xor(lhs, rhs); });
 }
 
 TF_BUILTIN(LessThan, NumberBuiltinsAssembler) {
-  RelationalComparisonBuiltin(kLessThan);
+  RelationalComparisonBuiltin<Descriptor>(kLessThan);
 }
 
 TF_BUILTIN(LessThanOrEqual, NumberBuiltinsAssembler) {
-  RelationalComparisonBuiltin(kLessThanOrEqual);
+  RelationalComparisonBuiltin<Descriptor>(kLessThanOrEqual);
 }
 
 TF_BUILTIN(GreaterThan, NumberBuiltinsAssembler) {
-  RelationalComparisonBuiltin(kGreaterThan);
+  RelationalComparisonBuiltin<Descriptor>(kGreaterThan);
 }
 
 TF_BUILTIN(GreaterThanOrEqual, NumberBuiltinsAssembler) {
-  RelationalComparisonBuiltin(kGreaterThanOrEqual);
+  RelationalComparisonBuiltin<Descriptor>(kGreaterThanOrEqual);
 }
 
 TF_BUILTIN(Equal, CodeStubAssembler) {
-  Node* lhs = Parameter(0);
-  Node* rhs = Parameter(1);
-  Node* context = Parameter(2);
+  Node* lhs = Parameter(Descriptor::kLeft);
+  Node* rhs = Parameter(Descriptor::kRight);
+  Node* context = Parameter(Descriptor::kContext);
 
   Return(Equal(lhs, rhs, context));
 }
 
 TF_BUILTIN(StrictEqual, CodeStubAssembler) {
-  Node* lhs = Parameter(0);
-  Node* rhs = Parameter(1);
+  Node* lhs = Parameter(Descriptor::kLeft);
+  Node* rhs = Parameter(Descriptor::kRight);
 
   Return(StrictEqual(lhs, rhs));
+}
+
+TF_BUILTIN(AddWithFeedback, BinaryOpAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* left = Parameter(Descriptor::kLeft);
+  Node* right = Parameter(Descriptor::kRight);
+  Node* slot = Parameter(Descriptor::kSlot);
+  Node* vector = Parameter(Descriptor::kVector);
+
+  Return(Generate_AddWithFeedback(context, left, right,
+                                  ChangeUint32ToWord(slot), vector));
+}
+
+TF_BUILTIN(SubtractWithFeedback, BinaryOpAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* left = Parameter(Descriptor::kLeft);
+  Node* right = Parameter(Descriptor::kRight);
+  Node* slot = Parameter(Descriptor::kSlot);
+  Node* vector = Parameter(Descriptor::kVector);
+
+  Return(Generate_SubtractWithFeedback(context, left, right,
+                                       ChangeUint32ToWord(slot), vector));
 }
 
 }  // namespace internal

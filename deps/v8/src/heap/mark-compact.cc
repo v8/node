@@ -65,13 +65,112 @@ MarkCompactCollector::MarkCompactCollector(Heap* heap)
 }
 
 #ifdef VERIFY_HEAP
-class VerifyMarkingVisitor : public ObjectVisitor {
+class MarkingVerifier : public ObjectVisitor {
  public:
+  virtual void Run() = 0;
+
+ protected:
+  explicit MarkingVerifier(Heap* heap) : heap_(heap) {}
+
+  virtual MarkingState marking_state(MemoryChunk* chunk) = 0;
+
+  void VerifyRoots(VisitMode mode);
+  void VerifyMarkingOnPage(const Page& page, const MarkingState& state,
+                           Address start, Address end);
+  void VerifyMarking(NewSpace* new_space);
+  void VerifyMarking(PagedSpace* paged_space);
+
+  Heap* heap_;
+};
+
+void MarkingVerifier::VerifyRoots(VisitMode mode) {
+  heap_->IterateStrongRoots(this, mode);
+}
+
+void MarkingVerifier::VerifyMarkingOnPage(const Page& page,
+                                          const MarkingState& state,
+                                          Address start, Address end) {
+  HeapObject* object;
+  Address next_object_must_be_here_or_later = start;
+  for (Address current = start; current < end;) {
+    object = HeapObject::FromAddress(current);
+    // One word fillers at the end of a black area can be grey.
+    if (ObjectMarking::IsBlackOrGrey(object, state) &&
+        object->map() != heap_->one_pointer_filler_map()) {
+      CHECK(ObjectMarking::IsBlack(object, state));
+      CHECK(current >= next_object_must_be_here_or_later);
+      object->Iterate(this);
+      next_object_must_be_here_or_later = current + object->Size();
+      // The object is either part of a black area of black allocation or a
+      // regular black object
+      CHECK(
+          state.bitmap->AllBitsSetInRange(
+              page.AddressToMarkbitIndex(current),
+              page.AddressToMarkbitIndex(next_object_must_be_here_or_later)) ||
+          state.bitmap->AllBitsClearInRange(
+              page.AddressToMarkbitIndex(current + kPointerSize * 2),
+              page.AddressToMarkbitIndex(next_object_must_be_here_or_later)));
+      current = next_object_must_be_here_or_later;
+    } else {
+      current += kPointerSize;
+    }
+  }
+}
+
+void MarkingVerifier::VerifyMarking(NewSpace* space) {
+  Address end = space->top();
+  // The bottom position is at the start of its page. Allows us to use
+  // page->area_start() as start of range on all pages.
+  CHECK_EQ(space->bottom(), Page::FromAddress(space->bottom())->area_start());
+
+  PageRange range(space->bottom(), end);
+  for (auto it = range.begin(); it != range.end();) {
+    Page* page = *(it++);
+    Address limit = it != range.end() ? page->area_end() : end;
+    CHECK(limit == end || !page->Contains(end));
+    VerifyMarkingOnPage(*page, marking_state(page), page->area_start(), limit);
+  }
+}
+
+void MarkingVerifier::VerifyMarking(PagedSpace* space) {
+  for (Page* p : *space) {
+    VerifyMarkingOnPage(*p, marking_state(p), p->area_start(), p->area_end());
+  }
+}
+
+class FullMarkingVerifier : public MarkingVerifier {
+ public:
+  explicit FullMarkingVerifier(Heap* heap) : MarkingVerifier(heap) {}
+
+  void Run() override {
+    VerifyRoots(VISIT_ONLY_STRONG);
+    VerifyMarking(heap_->new_space());
+    VerifyMarking(heap_->old_space());
+    VerifyMarking(heap_->code_space());
+    VerifyMarking(heap_->map_space());
+
+    LargeObjectIterator it(heap_->lo_space());
+    for (HeapObject* obj = it.Next(); obj != NULL; obj = it.Next()) {
+      if (ObjectMarking::IsBlackOrGrey(obj, marking_state(obj))) {
+        obj->Iterate(this);
+      }
+    }
+  }
+
+ protected:
+  MarkingState marking_state(MemoryChunk* chunk) override {
+    return MarkingState::FromPageInternal(chunk);
+  }
+
+  MarkingState marking_state(HeapObject* object) {
+    return marking_state(Page::FromAddress(object->address()));
+  }
+
   void VisitPointers(Object** start, Object** end) override {
     for (Object** current = start; current < end; current++) {
       if ((*current)->IsHeapObject()) {
         HeapObject* object = HeapObject::cast(*current);
-        CHECK(ObjectMarking::IsBlackOrGrey(object));
+        CHECK(ObjectMarking::IsBlackOrGrey(object, marking_state(object)));
       }
     }
   }
@@ -93,78 +192,33 @@ class VerifyMarkingVisitor : public ObjectVisitor {
   }
 };
 
+class YoungGenerationMarkingVerifier : public MarkingVerifier {
+ public:
+  explicit YoungGenerationMarkingVerifier(Heap* heap) : MarkingVerifier(heap) {}
 
-static void VerifyMarking(Heap* heap, Address bottom, Address top) {
-  VerifyMarkingVisitor visitor;
-  HeapObject* object;
-  Address next_object_must_be_here_or_later = bottom;
-  for (Address current = bottom; current < top;) {
-    object = HeapObject::FromAddress(current);
-    // One word fillers at the end of a black area can be grey.
-    if (ObjectMarking::IsBlackOrGrey(object) &&
-        object->map() != heap->one_pointer_filler_map()) {
-      CHECK(ObjectMarking::IsBlack(object));
-      CHECK(current >= next_object_must_be_here_or_later);
-      object->Iterate(&visitor);
-      next_object_must_be_here_or_later = current + object->Size();
-      // The object is either part of a black area of black allocation or a
-      // regular black object
-      Page* page = Page::FromAddress(current);
-      CHECK(
-          page->markbits()->AllBitsSetInRange(
-              page->AddressToMarkbitIndex(current),
-              page->AddressToMarkbitIndex(next_object_must_be_here_or_later)) ||
-          page->markbits()->AllBitsClearInRange(
-              page->AddressToMarkbitIndex(current + kPointerSize * 2),
-              page->AddressToMarkbitIndex(next_object_must_be_here_or_later)));
-      current = next_object_must_be_here_or_later;
-    } else {
-      current += kPointerSize;
+  MarkingState marking_state(MemoryChunk* chunk) override {
+    return MarkingState::FromPageExternal(chunk);
+  }
+
+  MarkingState marking_state(HeapObject* object) {
+    return marking_state(Page::FromAddress(object->address()));
+  }
+
+  void Run() override {
+    VerifyRoots(VISIT_ALL_IN_SCAVENGE);
+    VerifyMarking(heap_->new_space());
+  }
+
+  void VisitPointers(Object** start, Object** end) override {
+    for (Object** current = start; current < end; current++) {
+      if ((*current)->IsHeapObject()) {
+        HeapObject* object = HeapObject::cast(*current);
+        if (!heap_->InNewSpace(object)) return;
+        CHECK(ObjectMarking::IsBlackOrGrey(object, marking_state(object)));
+      }
     }
   }
-}
-
-static void VerifyMarking(NewSpace* space) {
-  Address end = space->top();
-  // The bottom position is at the start of its page. Allows us to use
-  // page->area_start() as start of range on all pages.
-  CHECK_EQ(space->bottom(), Page::FromAddress(space->bottom())->area_start());
-
-  PageRange range(space->bottom(), end);
-  for (auto it = range.begin(); it != range.end();) {
-    Page* page = *(it++);
-    Address limit = it != range.end() ? page->area_end() : end;
-    CHECK(limit == end || !page->Contains(end));
-    VerifyMarking(space->heap(), page->area_start(), limit);
-  }
-}
-
-
-static void VerifyMarking(PagedSpace* space) {
-  for (Page* p : *space) {
-    VerifyMarking(space->heap(), p->area_start(), p->area_end());
-  }
-}
-
-
-static void VerifyMarking(Heap* heap) {
-  VerifyMarking(heap->old_space());
-  VerifyMarking(heap->code_space());
-  VerifyMarking(heap->map_space());
-  VerifyMarking(heap->new_space());
-
-  VerifyMarkingVisitor visitor;
-
-  LargeObjectIterator it(heap->lo_space());
-  for (HeapObject* obj = it.Next(); obj != NULL; obj = it.Next()) {
-    if (ObjectMarking::IsBlackOrGrey(obj)) {
-      obj->Iterate(&visitor);
-    }
-  }
-
-  heap->IterateStrongRoots(&visitor, VISIT_ONLY_STRONG);
-}
-
+};
 
 class VerifyEvacuationVisitor : public ObjectVisitor {
  public:
@@ -310,7 +364,8 @@ void MarkCompactCollector::CollectGarbage() {
 
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
-    VerifyMarking(heap_);
+    FullMarkingVerifier verifier(heap());
+    verifier.Run();
   }
 #endif
 
@@ -1624,9 +1679,11 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
  protected:
   enum MigrationMode { kFast, kProfiled };
 
-  EvacuateVisitorBase(Heap* heap, CompactionSpaceCollection* compaction_spaces)
+  EvacuateVisitorBase(Heap* heap, CompactionSpaceCollection* compaction_spaces,
+                      RecordMigratedSlotVisitor* record_visitor)
       : heap_(heap),
         compaction_spaces_(compaction_spaces),
+        record_visitor_(record_visitor),
         profiling_(
             heap->isolate()->is_profiling() ||
             heap->isolate()->logger()->is_logging_code_events() ||
@@ -1671,8 +1728,7 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
         PROFILE(heap_->isolate(),
                 CodeMoveEvent(AbstractCode::cast(src), dst_addr));
       }
-      RecordMigratedSlotVisitor visitor(heap_->mark_compact_collector());
-      dst->IterateBodyFast(dst->map()->instance_type(), size, &visitor);
+      dst->IterateBodyFast(dst->map()->instance_type(), size, record_visitor_);
     } else if (dest == CODE_SPACE) {
       DCHECK_CODEOBJECT_SIZE(size, heap_->code_space());
       if (mode == kProfiled) {
@@ -1682,7 +1738,7 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
       heap_->CopyBlock(dst_addr, src_addr, size);
       Code::cast(dst)->Relocate(dst_addr - src_addr);
       RecordMigratedSlotVisitor visitor(heap_->mark_compact_collector());
-      dst->IterateBodyFast(dst->map()->instance_type(), size, &visitor);
+      dst->IterateBodyFast(dst->map()->instance_type(), size, record_visitor_);
     } else {
       DCHECK_OBJECT_SIZE(size);
       DCHECK(dest == NEW_SPACE);
@@ -1717,6 +1773,7 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
 
   Heap* heap_;
   CompactionSpaceCollection* compaction_spaces_;
+  RecordMigratedSlotVisitor* record_visitor_;
   bool profiling_;
 };
 
@@ -1727,8 +1784,9 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
 
   explicit EvacuateNewSpaceVisitor(Heap* heap,
                                    CompactionSpaceCollection* compaction_spaces,
+                                   RecordMigratedSlotVisitor* record_visitor,
                                    base::HashMap* local_pretenuring_feedback)
-      : EvacuateVisitorBase(heap, compaction_spaces),
+      : EvacuateVisitorBase(heap, compaction_spaces, record_visitor),
         buffer_(LocalAllocationBuffer::InvalidBuffer()),
         space_to_allocate_(NEW_SPACE),
         promoted_size_(0),
@@ -1866,8 +1924,10 @@ template <PageEvacuationMode mode>
 class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
  public:
   explicit EvacuateNewSpacePageVisitor(
-      Heap* heap, base::HashMap* local_pretenuring_feedback)
+      Heap* heap, RecordMigratedSlotVisitor* record_visitor,
+      base::HashMap* local_pretenuring_feedback)
       : heap_(heap),
+        record_visitor_(record_visitor),
         moved_bytes_(0),
         local_pretenuring_feedback_(local_pretenuring_feedback) {}
 
@@ -1890,8 +1950,7 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
     heap_->UpdateAllocationSite<Heap::kCached>(object,
                                                local_pretenuring_feedback_);
     if (mode == NEW_TO_OLD) {
-      RecordMigratedSlotVisitor visitor(heap_->mark_compact_collector());
-      object->IterateBodyFast(&visitor);
+      object->IterateBodyFast(record_visitor_);
     }
     return true;
   }
@@ -1901,6 +1960,7 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
 
  private:
   Heap* heap_;
+  RecordMigratedSlotVisitor* record_visitor_;
   intptr_t moved_bytes_;
   base::HashMap* local_pretenuring_feedback_;
 };
@@ -1908,8 +1968,9 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
 class EvacuateOldSpaceVisitor final : public EvacuateVisitorBase {
  public:
   EvacuateOldSpaceVisitor(Heap* heap,
-                          CompactionSpaceCollection* compaction_spaces)
-      : EvacuateVisitorBase(heap, compaction_spaces) {}
+                          CompactionSpaceCollection* compaction_spaces,
+                          RecordMigratedSlotVisitor* record_visitor)
+      : EvacuateVisitorBase(heap, compaction_spaces, record_visitor) {}
 
   inline bool Visit(HeapObject* object) override {
     CompactionSpace* target_space = compaction_spaces_->Get(
@@ -2354,7 +2415,16 @@ void MinorMarkCompactCollector::EmptyMarkingDeque() {
   }
 }
 
-void MinorMarkCompactCollector::CollectGarbage() { MarkLiveObjects(); }
+void MinorMarkCompactCollector::CollectGarbage() {
+  MarkLiveObjects();
+
+#ifdef VERIFY_HEAP
+  if (FLAG_verify_heap) {
+    YoungGenerationMarkingVerifier verifier(heap());
+    verifier.Run();
+  }
+#endif  // VERIFY_HEAP
+}
 
 void MarkCompactCollector::MarkLiveObjects() {
   TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_MARK);
@@ -3016,20 +3086,24 @@ class Evacuator : public Malloced {
     return Page::kAllocatableMemory + kPointerSize;
   }
 
-  explicit Evacuator(Heap* heap)
+  Evacuator(Heap* heap, RecordMigratedSlotVisitor* record_visitor)
       : heap_(heap),
         compaction_spaces_(heap_),
         local_pretenuring_feedback_(kInitialLocalPretenuringFeedbackCapacity),
-        new_space_visitor_(heap_, &compaction_spaces_,
+        new_space_visitor_(heap_, &compaction_spaces_, record_visitor,
                            &local_pretenuring_feedback_),
-        new_to_new_page_visitor_(heap_, &local_pretenuring_feedback_),
-        new_to_old_page_visitor_(heap_, &local_pretenuring_feedback_),
+        new_to_new_page_visitor_(heap_, record_visitor,
+                                 &local_pretenuring_feedback_),
+        new_to_old_page_visitor_(heap_, record_visitor,
+                                 &local_pretenuring_feedback_),
 
-        old_space_visitor_(heap_, &compaction_spaces_),
+        old_space_visitor_(heap_, &compaction_spaces_, record_visitor),
         duration_(0.0),
         bytes_compacted_(0) {}
 
-  inline bool EvacuatePage(Page* chunk);
+  virtual ~Evacuator() {}
+
+  virtual bool EvacuatePage(Page* page, const MarkingState& state) = 0;
 
   // Merge back locally cached info sequentially. Note that this method needs
   // to be called from the main thread.
@@ -3038,7 +3112,7 @@ class Evacuator : public Malloced {
   CompactionSpaceCollection* compaction_spaces() { return &compaction_spaces_; }
   AllocationInfo CloseNewSpaceLAB() { return new_space_visitor_.CloseLAB(); }
 
- private:
+ protected:
   static const int kInitialLocalPretenuringFeedbackCapacity = 256;
 
   inline Heap* heap() { return heap_; }
@@ -3067,16 +3141,41 @@ class Evacuator : public Malloced {
   intptr_t bytes_compacted_;
 };
 
-bool Evacuator::EvacuatePage(Page* page) {
+void Evacuator::Finalize() {
+  heap()->old_space()->MergeCompactionSpace(compaction_spaces_.Get(OLD_SPACE));
+  heap()->code_space()->MergeCompactionSpace(
+      compaction_spaces_.Get(CODE_SPACE));
+  heap()->tracer()->AddCompactionEvent(duration_, bytes_compacted_);
+  heap()->IncrementPromotedObjectsSize(new_space_visitor_.promoted_size() +
+                                       new_to_old_page_visitor_.moved_bytes());
+  heap()->IncrementSemiSpaceCopiedObjectSize(
+      new_space_visitor_.semispace_copied_size() +
+      new_to_new_page_visitor_.moved_bytes());
+  heap()->IncrementYoungSurvivorsCounter(
+      new_space_visitor_.promoted_size() +
+      new_space_visitor_.semispace_copied_size() +
+      new_to_old_page_visitor_.moved_bytes() +
+      new_to_new_page_visitor_.moved_bytes());
+  heap()->MergeAllocationSitePretenuringFeedback(local_pretenuring_feedback_);
+}
+
+class FullEvacuator : public Evacuator {
+ public:
+  FullEvacuator(Heap* heap, RecordMigratedSlotVisitor* record_visitor)
+      : Evacuator(heap, record_visitor) {}
+
+  bool EvacuatePage(Page* page, const MarkingState& state) override;
+};
+
+bool FullEvacuator::EvacuatePage(Page* page, const MarkingState& state) {
   bool success = false;
   DCHECK(page->SweepingDone());
-  int saved_live_bytes = page->LiveBytes();
+  int saved_live_bytes = *state.live_bytes;
   double evacuation_time = 0.0;
   {
     AlwaysAllocateScope always_allocate(heap()->isolate());
     TimedScope timed_scope(&evacuation_time);
     LiveObjectVisitor object_visitor;
-    const MarkingState state = MarkingState::FromPageInternal(page);
     switch (ComputeEvacuationMode(page)) {
       case kObjectsNewToOld:
         success =
@@ -3145,24 +3244,6 @@ bool Evacuator::EvacuatePage(Page* page) {
   return success;
 }
 
-void Evacuator::Finalize() {
-  heap()->old_space()->MergeCompactionSpace(compaction_spaces_.Get(OLD_SPACE));
-  heap()->code_space()->MergeCompactionSpace(
-      compaction_spaces_.Get(CODE_SPACE));
-  heap()->tracer()->AddCompactionEvent(duration_, bytes_compacted_);
-  heap()->IncrementPromotedObjectsSize(new_space_visitor_.promoted_size() +
-                                       new_to_old_page_visitor_.moved_bytes());
-  heap()->IncrementSemiSpaceCopiedObjectSize(
-      new_space_visitor_.semispace_copied_size() +
-      new_to_new_page_visitor_.moved_bytes());
-  heap()->IncrementYoungSurvivorsCounter(
-      new_space_visitor_.promoted_size() +
-      new_space_visitor_.semispace_copied_size() +
-      new_to_old_page_visitor_.moved_bytes() +
-      new_to_new_page_visitor_.moved_bytes());
-  heap()->MergeAllocationSitePretenuringFeedback(local_pretenuring_feedback_);
-}
-
 int MarkCompactCollector::NumberOfParallelCompactionTasks(int pages,
                                                           intptr_t live_bytes) {
   if (!FLAG_parallel_compaction) return 1;
@@ -3200,7 +3281,8 @@ class EvacuationJobTraits {
 
   static bool ProcessPageInParallel(Heap* heap, PerTaskData evacuator,
                                     MemoryChunk* chunk, PerPageData) {
-    return evacuator->EvacuatePage(reinterpret_cast<Page*>(chunk));
+    return evacuator->EvacuatePage(reinterpret_cast<Page*>(chunk),
+                                   MarkingState::FromPageInternal(chunk));
   }
 
   static void FinalizePageSequentially(Heap* heap, MemoryChunk* chunk,
@@ -3274,9 +3356,10 @@ void MarkCompactCollector::EvacuatePagesInParallel() {
 
   const int wanted_num_tasks =
       NumberOfParallelCompactionTasks(job.NumberOfPages(), live_bytes);
-  Evacuator** evacuators = new Evacuator*[wanted_num_tasks];
+  FullEvacuator** evacuators = new FullEvacuator*[wanted_num_tasks];
+  RecordMigratedSlotVisitor record_visitor(this);
   for (int i = 0; i < wanted_num_tasks; i++) {
-    evacuators[i] = new Evacuator(heap());
+    evacuators[i] = new FullEvacuator(heap(), &record_visitor);
   }
   job.Run(wanted_num_tasks, [evacuators](int i) { return evacuators[i]; });
   const Address top = heap()->new_space()->top();

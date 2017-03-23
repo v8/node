@@ -215,6 +215,16 @@ var failWithMessage;
             var mapped = ArrayPrototypeMap.call(value, PrettyPrintArrayElement);
             var joined = ArrayPrototypeJoin.call(mapped, ",");
             return "[" + joined + "]";
+          case "Uint8Array":
+          case "Int8Array":
+          case "Int16Array":
+          case "Uint16Array":
+          case "Uint32Array":
+          case "Int32Array":
+          case "Float32Array":
+          case "Float64Array":
+            var joined = ArrayPrototypeJoin.call(value, ",");
+            return objectClass + "([" + joined + "])";
           case "Object":
             break;
           default:
@@ -396,19 +406,18 @@ var failWithMessage;
 
 
   assertThrows = function assertThrows(code, type_opt, cause_opt) {
-    var threwException = true;
     try {
       if (typeof code === 'function') {
         code();
       } else {
         eval(code);
       }
-      threwException = false;
     } catch (e) {
       if (typeof type_opt === 'function') {
         assertInstanceof(e, type_opt);
       } else if (type_opt !== void 0) {
-        failWithMessage("invalid use of assertThrows, maybe you want assertThrowsEquals");
+        failWithMessage(
+            'invalid use of assertThrows, maybe you want assertThrowsEquals');
       }
       if (arguments.length >= 3) {
         assertEquals(e.message, cause_opt);
@@ -416,7 +425,7 @@ var failWithMessage;
       // Success.
       return;
     }
-    failWithMessage("Did not throw exception");
+    failWithMessage('Did not throw exception');
   };
 
 
