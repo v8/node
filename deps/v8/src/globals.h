@@ -1100,7 +1100,11 @@ enum FunctionKind : uint16_t {
   kClassConstructor =
       kBaseConstructor | kDerivedConstructor | kDefaultConstructor,
   kAsyncArrowFunction = kArrowFunction | kAsyncFunction,
-  kAsyncConciseMethod = kAsyncFunction | kConciseMethod
+  kAsyncConciseMethod = kAsyncFunction | kConciseMethod,
+
+  // https://tc39.github.io/proposal-async-iteration/
+  kAsyncConciseGeneratorMethod = kAsyncFunction | kConciseGeneratorMethod,
+  kAsyncGeneratorFunction = kAsyncFunction | kGeneratorFunction
 };
 
 inline bool IsValidFunctionKind(FunctionKind kind) {
@@ -1119,7 +1123,9 @@ inline bool IsValidFunctionKind(FunctionKind kind) {
          kind == FunctionKind::kDerivedConstructor ||
          kind == FunctionKind::kAsyncFunction ||
          kind == FunctionKind::kAsyncArrowFunction ||
-         kind == FunctionKind::kAsyncConciseMethod;
+         kind == FunctionKind::kAsyncConciseMethod ||
+         kind == FunctionKind::kAsyncConciseGeneratorMethod ||
+         kind == FunctionKind::kAsyncGeneratorFunction;
 }
 
 
@@ -1142,6 +1148,12 @@ inline bool IsModule(FunctionKind kind) {
 inline bool IsAsyncFunction(FunctionKind kind) {
   DCHECK(IsValidFunctionKind(kind));
   return (kind & FunctionKind::kAsyncFunction) != 0;
+}
+
+inline bool IsAsyncGeneratorFunction(FunctionKind kind) {
+  DCHECK(IsValidFunctionKind(kind));
+  const FunctionKind kMask = FunctionKind::kAsyncGeneratorFunction;
+  return (kind & kMask) == kMask;
 }
 
 inline bool IsResumableFunction(FunctionKind kind) {
@@ -1333,6 +1345,56 @@ enum ExternalArrayType {
   kExternalFloat64Array,
   kExternalUint8ClampedArray,
 };
+
+enum class SuspendGeneratorFlags {
+  kYield = 0,
+  kYieldStar = 1,
+  kAwait = 2,
+  kSuspendTypeMask = 3,
+
+  kGenerator = 0 << 2,
+  kAsyncGenerator = 1 << 2,
+  kGeneratorTypeMask = 1 << 2,
+
+  kBitWidth = 3,
+};
+
+inline constexpr SuspendGeneratorFlags operator&(SuspendGeneratorFlags lhs,
+                                                 SuspendGeneratorFlags rhs) {
+  return static_cast<SuspendGeneratorFlags>(static_cast<uint8_t>(lhs) &
+                                            static_cast<uint8_t>(rhs));
+}
+
+inline constexpr SuspendGeneratorFlags operator|(SuspendGeneratorFlags lhs,
+                                                 SuspendGeneratorFlags rhs) {
+  return static_cast<SuspendGeneratorFlags>(static_cast<uint8_t>(lhs) |
+                                            static_cast<uint8_t>(rhs));
+}
+
+inline SuspendGeneratorFlags& operator|=(SuspendGeneratorFlags& lhs,
+                                         SuspendGeneratorFlags rhs) {
+  lhs = lhs | rhs;
+  return lhs;
+}
+
+inline SuspendGeneratorFlags operator~(SuspendGeneratorFlags lhs) {
+  return static_cast<SuspendGeneratorFlags>(~static_cast<uint8_t>(lhs));
+}
+
+inline const char* SuspendTypeFor(SuspendGeneratorFlags flags) {
+  switch (flags & SuspendGeneratorFlags::kSuspendTypeMask) {
+    case SuspendGeneratorFlags::kYield:
+      return "yield";
+    case SuspendGeneratorFlags::kYieldStar:
+      return "yield*";
+    case SuspendGeneratorFlags::kAwait:
+      return "await";
+    default:
+      break;
+  }
+  UNREACHABLE();
+  return "";
+}
 
 }  // namespace internal
 }  // namespace v8

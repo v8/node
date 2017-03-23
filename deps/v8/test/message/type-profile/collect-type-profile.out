@@ -1,19 +1,26 @@
 Function: testFunction
-424: Object
-374: number
-424: string
-424: number
+246: Object
+246: number
+246: string
+246: number
 
 Function: testFunction
-424: Object
-374: number
-424: string
-424: number
-424: undefined
-374: string
-374: Object
-424: Object
+246: Object
+246: number
+246: string
+246: number
+246: undefined
+246: string
+246: Object
+246: Object
+246: MyClass
 
-*%(basename)s:51: throw otherwise test fails with --stress-opt
+Function: try_finally
+956: string
+
+Function: fall_off
+1105: undefined
+
+*%(basename)s:60: throw otherwise test fails with --stress-opt
 throw "throw otherwise test fails with --stress-opt";
 ^

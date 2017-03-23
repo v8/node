@@ -1,4 +1,4 @@
-// Copyright 2016 the V8 project authors. All rights reserved.
+// Copyright 2017 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,10 @@ function testFunction(param, flag) {
   return second_var;
 }
 
+class MyClass {
+  constructor() {}
+}
+
 %PrintTypeProfile(testFunction);
 
 testFunction({});
@@ -26,25 +30,30 @@ testFunction(undefined);
 testFunction('hello', true);
 testFunction({x: 12}, true);
 testFunction({x: 12});
+testFunction(new MyClass());
 
 %PrintTypeProfile(testFunction);
-
-class MyClass {
-  constructor() {}
-}
-
-
-function testConstructorNames(param) {
-  var my_var = param;
-}
-
-testConstructorNames(new MyClass());
-testConstructorNames({});
-testConstructorNames(2);
 
 function testReturnOfNonVariable() {
   return 32;
 }
+
+// Return statement is reached but its expression is never really returned.
+function try_finally() {
+  try {
+    return 23;
+  } finally {
+    return "nope, string is better"
+  }
+}
+try_finally();
+%PrintTypeProfile(try_finally);
+
+function fall_off() {
+  //nothing
+}
+fall_off();
+%PrintTypeProfile(fall_off);
 
 testReturnOfNonVariable();
 

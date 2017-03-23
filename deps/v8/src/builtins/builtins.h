@@ -51,7 +51,7 @@ class Isolate;
 // DBG: Builtin in platform-dependent assembly, used by the debugger.
 //      Args: name
 
-#define BUILTIN_LIST(CPP, API, TFJ, TFS, ASM, ASH, DBG)                        \
+#define BUILTIN_LIST_BASE(CPP, API, TFJ, TFS, ASM, ASH, DBG)                   \
   ASM(Abort)                                                                   \
   /* Code aging */                                                             \
   CODE_AGE_LIST_WITH_ARG(DECLARE_CODE_AGE_BUILTIN, ASM)                        \
@@ -222,7 +222,7 @@ class Isolate;
   TFS(ToLength, BUILTIN, kNoExtraICState, TypeConversion, 1)                   \
   TFS(ClassOf, BUILTIN, kNoExtraICState, Typeof, 1)                            \
   TFS(Typeof, BUILTIN, kNoExtraICState, Typeof, 1)                             \
-  TFS(GetSuperConstructor, BUILTIN, kNoExtraICState, TypeConversion, 1)        \
+  TFS(GetSuperConstructor, BUILTIN, kNoExtraICState, Typeof, 1)                \
                                                                                \
   /* Handlers */                                                               \
   TFS(LoadICProtoArray, BUILTIN, kNoExtraICState, LoadICProtoArray, 1)         \
@@ -285,24 +285,24 @@ class Isolate;
   /* ES6 #sec-array.prototype.unshift */                                       \
   CPP(ArrayUnshift)                                                            \
   /* ES6 #sec-array.prototype.foreach */                                       \
-  TFJ(ArrayForEachLoopContinuation, 6, kCallbackFn, kThisArg, kArray, kObject, \
-      kInitialK, kLength)                                                      \
+  TFJ(ArrayForEachLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject, \
+      kInitialK, kLength, kTo)                                                 \
   TFJ(ArrayForEach, 2, kCallbackFn, kThisArg)                                  \
   /* ES6 #sec-array.prototype.every */                                         \
-  TFJ(ArrayEveryLoopContinuation, 6, kCallbackFn, kThisArg, kArray, kObject,   \
-      kInitialK, kLength)                                                      \
+  TFJ(ArrayEveryLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject,   \
+      kInitialK, kLength, kTo)                                                 \
   TFJ(ArrayEvery, 2, kCallbackFn, kThisArg)                                    \
   /* ES6 #sec-array.prototype.some */                                          \
-  TFJ(ArraySomeLoopContinuation, 6, kCallbackFn, kThisArg, kArray, kObject,    \
-      kInitialK, kLength)                                                      \
+  TFJ(ArraySomeLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject,    \
+      kInitialK, kLength, kTo)                                                 \
   TFJ(ArraySome, 2, kCallbackFn, kThisArg)                                     \
   /* ES6 #sec-array.prototype.filter */                                        \
-  TFJ(ArrayFilterLoopContinuation, 6, kCallbackFn, kThisArg, kArray, kObject,  \
-      kInitialK, kLength)                                                      \
+  TFJ(ArrayFilterLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject,  \
+      kInitialK, kLength, kTo)                                                 \
   TFJ(ArrayFilter, 2, kCallbackFn, kThisArg)                                   \
   /* ES6 #sec-array.prototype.reduce */                                        \
-  TFJ(ArrayReduceLoopContinuation, 6, kCallbackFn, kThisArg, kAccumulator,     \
-      kObject, kInitialK, kLength)                                             \
+  TFJ(ArrayReduceLoopContinuation, 7, kCallbackFn, kThisArg, kAccumulator,     \
+      kObject, kInitialK, kLength, kTo)                                        \
   TFJ(ArrayReduce, 2, kCallbackFn, kInitialValue)                              \
   /* ES6 #sec-array.prototype.entries */                                       \
   TFJ(ArrayPrototypeEntries, 0)                                                \
@@ -635,6 +635,8 @@ class Isolate;
   TFS(GreaterThanOrEqual, BUILTIN, kNoExtraICState, Compare, 1)                \
   TFS(Equal, BUILTIN, kNoExtraICState, Compare, 1)                             \
   TFS(StrictEqual, BUILTIN, kNoExtraICState, Compare, 1)                       \
+  TFS(AddWithFeedback, BUILTIN, kNoExtraICState, BinaryOpWithVector, 1)        \
+  TFS(SubtractWithFeedback, BUILTIN, kNoExtraICState, BinaryOpWithVector, 1)   \
                                                                                \
   /* Object */                                                                 \
   CPP(ObjectAssign)                                                            \
@@ -653,7 +655,7 @@ class Isolate;
   CPP(ObjectGetPrototypeOf)                                                    \
   CPP(ObjectSetPrototypeOf)                                                    \
   /* ES6 #sec-object.prototype.hasownproperty */                               \
-  TFJ(ObjectHasOwnProperty, 1)                                                 \
+  TFJ(ObjectHasOwnProperty, 1, kKey)                                           \
   CPP(ObjectIs)                                                                \
   CPP(ObjectIsExtensible)                                                      \
   CPP(ObjectIsFrozen)                                                          \
@@ -843,9 +845,9 @@ class Isolate;
   CPP(StringPrototypeToLocaleLowerCase)                                        \
   /* ES #sec-string.prototype.tolocaleuppercase */                             \
   CPP(StringPrototypeToLocaleUpperCase)                                        \
-  /* ES #sec-string.prototype.tolowercase */                                   \
+  /* (obsolete) Unibrow version */                                             \
   CPP(StringPrototypeToLowerCase)                                              \
-  /* ES #sec-string.prototype.touppercase */                                   \
+  /* (obsolete) Unibrow version */                                             \
   CPP(StringPrototypeToUpperCase)                                              \
   CPP(StringPrototypeTrim)                                                     \
   CPP(StringPrototypeTrimLeft)                                                 \
@@ -933,6 +935,19 @@ class Isolate;
   TFJ(AsyncFromSyncIteratorPrototypeReturn, 1, kValue)                         \
   /* #sec-async-iterator-value-unwrap-functions */                             \
   TFJ(AsyncIteratorValueUnwrap, 1, kValue)
+
+#ifdef V8_I18N_SUPPORT
+#define BUILTIN_LIST(CPP, API, TFJ, TFS, ASM, ASH, DBG) \
+  BUILTIN_LIST_BASE(CPP, API, TFJ, TFS, ASM, ASH, DBG)  \
+                                                        \
+  /* ES #sec-string.prototype.tolowercase */            \
+  CPP(StringPrototypeToLowerCaseI18N)                   \
+  /* ES #sec-string.prototype.touppercase */            \
+  CPP(StringPrototypeToUpperCaseI18N)
+#else
+#define BUILTIN_LIST(CPP, API, TFJ, TFS, ASM, ASH, DBG) \
+  BUILTIN_LIST_BASE(CPP, API, TFJ, TFS, ASM, ASH, DBG)
+#endif  // V8_I18N_SUPPORT
 
 #define BUILTIN_PROMISE_REJECTION_PREDICTION_LIST(V) \
   V(AsyncFromSyncIteratorPrototypeNext)              \

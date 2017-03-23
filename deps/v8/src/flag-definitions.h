@@ -269,7 +269,6 @@ DEFINE_BOOL(future, FUTURE_BOOL,
 DEFINE_IMPLICATION(future, turbo)
 
 DEFINE_DUAL_IMPLICATION(turbo, ignition)
-DEFINE_DUAL_IMPLICATION(turbo, enable_fast_array_builtins)
 DEFINE_DUAL_IMPLICATION(turbo, thin_strings)
 
 // Flags for experimental implementation features.
@@ -529,6 +528,8 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable WASM structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
+// Parallel compilation confuses turbo_stats, force single threaded.
+DEFINE_VALUE_IMPLICATION(turbo_stats, wasm_num_compilation_tasks, 0)
 DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,
             "maximum memory size of a wasm instance")
 DEFINE_UINT(wasm_max_table_size, v8::internal::wasm::kV8MaxWasmTableSize,
@@ -588,6 +589,8 @@ DEFINE_BOOL(wasm_interpret_all, false,
 DEFINE_BOOL(asm_wasm_lazy_compilation, false,
             "enable lazy compilation for asm-wasm modules")
 DEFINE_IMPLICATION(validate_asm, asm_wasm_lazy_compilation)
+DEFINE_BOOL(wasm_lazy_compilation, false,
+            "enable lazy compilation for all wasm modules")
 
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
@@ -772,9 +775,8 @@ DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
 
 // builtins.cc
-DEFINE_BOOL(enable_fast_array_builtins, false, "use optimized builtins")
-DEFINE_BOOL(experimental_array_builtins, false,
-            "Experimental versions of array builtins")
+DEFINE_BOOL(experimental_fast_array_builtins, false,
+            "use experimental array builtins")
 DEFINE_BOOL(allow_unsafe_function_constructor, false,
             "allow invoking the function constructor without security checks")
 
@@ -852,6 +854,10 @@ DEFINE_BOOL(
     trace_side_effect_free_debug_evaluate, false,
     "print debug messages for side-effect-free debug-evaluate for testing")
 DEFINE_BOOL(hard_abort, true, "abort by crashing")
+
+// inspector
+DEFINE_BOOL(expose_inspector_scripts, false,
+            "expose injected-script-source.js for debugging")
 
 // execution.cc
 DEFINE_INT(stack_size, V8_DEFAULT_STACK_SIZE_KB,

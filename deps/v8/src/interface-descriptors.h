@@ -280,6 +280,12 @@ class V8_EXPORT_PRIVATE CallInterfaceDescriptor {
                                                                         \
  public:
 
+#define DEFINE_EMPTY_PARAMETERS()                       \
+  enum ParameterIndices {                               \
+    kParameterCount,                                    \
+    kContext = kParameterCount /* implicit parameter */ \
+  };
+
 #define DEFINE_PARAMETERS(...)                          \
   enum ParameterIndices {                               \
     __VA_ARGS__,                                        \
@@ -571,6 +577,7 @@ class FastCloneShallowArrayDescriptor : public CallInterfaceDescriptor {
 
 class FastCloneShallowObjectDescriptor : public CallInterfaceDescriptor {
  public:
+  DEFINE_PARAMETERS(kClosure, kLiteralIndex, kConstantProperties, kFlags)
   DECLARE_DESCRIPTOR(FastCloneShallowObjectDescriptor, CallInterfaceDescriptor)
 };
 
@@ -696,6 +703,7 @@ class TransitionElementsKindDescriptor : public CallInterfaceDescriptor {
 
 class AllocateHeapNumberDescriptor : public CallInterfaceDescriptor {
  public:
+  DEFINE_EMPTY_PARAMETERS()
   DECLARE_DESCRIPTOR(AllocateHeapNumberDescriptor, CallInterfaceDescriptor)
 };
 
@@ -720,7 +728,7 @@ class IteratingArrayBuiltinLoopContinuationDescriptor
     : public BuiltinDescriptor {
  public:
   DEFINE_BUILTIN_PARAMETERS(kCallback, kThisArg, kArray, kObject, kInitialK,
-                            kLength)
+                            kLength, kTo)
   DECLARE_BUILTIN_DESCRIPTOR(IteratingArrayBuiltinLoopContinuationDescriptor)
 };
 
@@ -977,6 +985,7 @@ class PromiseHandleRejectDescriptor final : public CallInterfaceDescriptor {
 
 class WasmRuntimeCallDescriptor final : public CallInterfaceDescriptor {
  public:
+  DEFINE_EMPTY_PARAMETERS()
   DECLARE_DEFAULT_DESCRIPTOR(WasmRuntimeCallDescriptor, CallInterfaceDescriptor,
                              0)
 };

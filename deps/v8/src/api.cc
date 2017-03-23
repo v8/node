@@ -7615,6 +7615,24 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Compile(Isolate* isolate,
       Utils::ToLocal(maybe_compiled.ToHandleChecked()));
 }
 
+void WasmModuleObjectBuilder::OnBytesReceived(
+    std::unique_ptr<const uint8_t[]>&& bytes, size_t size) {
+  received_buffers_.push_back(Buffer(std::move(bytes), size));
+  total_size_ += size;
+}
+
+MaybeLocal<WasmCompiledModule> WasmModuleObjectBuilder::Finish() {
+  std::unique_ptr<uint8_t[]> wire_bytes(new uint8_t[total_size_]);
+  uint8_t* insert_at = wire_bytes.get();
+
+  for (size_t i = 0; i < received_buffers_.size(); ++i) {
+    const Buffer& buff = received_buffers_[i];
+    memcpy(insert_at, buff.first.get(), buff.second);
+    insert_at += buff.second;
+  }
+  return WasmCompiledModule::Compile(isolate_, wire_bytes.get(), total_size_);
+}
+
 // static
 v8::ArrayBuffer::Allocator* v8::ArrayBuffer::Allocator::NewDefaultAllocator() {
   return new ArrayBufferAllocator();
@@ -9465,7 +9483,9 @@ MaybeLocal<UnboundScript> debug::CompileInspectorScript(Isolate* v8_isolate,
     result = i::Compiler::GetSharedFunctionInfoForScript(
         str, i::Handle<i::Object>(), 0, 0, origin_options,
         i::Handle<i::Object>(), isolate->native_context(), NULL, &script_data,
-        ScriptCompiler::kNoCompileOptions, i::INSPECTOR_CODE);
+        ScriptCompiler::kNoCompileOptions,
+        i::FLAG_expose_inspector_scripts ? i::NOT_NATIVES_CODE
+                                         : i::INSPECTOR_CODE);
     has_pending_exception = result.is_null();
     RETURN_ON_FAILED_EXECUTION(UnboundScript);
   }
