@@ -1261,6 +1261,10 @@ class ElementsAccessorBase : public ElementsAccessor {
     return Subclass::LastIndexOfValueImpl(isolate, receiver, value, start_from);
   }
 
+  static void ReverseImpl(JSObject* receiver) { UNREACHABLE(); }
+
+  void Reverse(JSObject* receiver) final { Subclass::ReverseImpl(receiver); }
+
   static uint32_t GetIndexForEntryImpl(FixedArrayBase* backing_store,
                                        uint32_t entry) {
     return entry;
@@ -2863,16 +2867,23 @@ class TypedElementsAccessor
     Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(receiver);
     DCHECK(!array->WasNeutered());
 
-    if (!obj_value->IsNumber()) {
-      return FillNumberSlowPath(isolate, array, obj_value, start, end);
-    }
-
-    ctype value = 0;
+    ctype value;
     if (obj_value->IsSmi()) {
       value = BackingStore::from_int(Smi::cast(*obj_value)->value());
     } else {
-      DCHECK(obj_value->IsHeapNumber());
-      value = BackingStore::from_double(HeapNumber::cast(*obj_value)->value());
+      Handle<HeapObject> heap_obj_value = Handle<HeapObject>::cast(obj_value);
+      if (heap_obj_value->IsHeapNumber()) {
+        value = BackingStore::from_double(
+            HeapNumber::cast(*heap_obj_value)->value());
+      } else if (heap_obj_value->IsOddball()) {
+        value = BackingStore::from_double(
+            Oddball::ToNumber(Handle<Oddball>::cast(heap_obj_value))->Number());
+      } else if (heap_obj_value->IsString()) {
+        value = BackingStore::from_double(
+            String::ToNumber(Handle<String>::cast(heap_obj_value))->Number());
+      } else {
+        return FillNumberSlowPath(isolate, array, obj_value, start, end);
+      }
     }
 
     // Ensure indexes are within array bounds
@@ -3027,6 +3038,19 @@ class TypedElementsAccessor
       if (element_k == typed_search_value) return Just<int64_t>(k);
     } while (k-- != 0);
     return Just<int64_t>(-1);
+  }
+
+  static void ReverseImpl(JSObject* receiver) {
+    DisallowHeapAllocation no_gc;
+    DCHECK(!WasNeutered(receiver));
+
+    BackingStore* elements = BackingStore::cast(receiver->elements());
+
+    uint32_t len = elements->length();
+    if (len == 0) return;
+
+    ctype* data = static_cast<ctype*>(elements->DataPtr());
+    std::reverse(data, data + len);
   }
 };
 

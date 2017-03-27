@@ -4149,12 +4149,12 @@ Node* CodeStubAssembler::JSReceiverToPrimitive(Node* context, Node* input) {
 Node* CodeStubAssembler::ToSmiIndex(Node* const input, Node* const context,
                                     Label* range_error) {
   Variable result(this, MachineRepresentation::kTagged, input);
-  Label check_undefined(this), undefined(this), defined(this),
+  Label check_undefined(this), return_zero(this), defined(this),
       negative_check(this), done(this);
   Branch(TaggedIsSmi(result.value()), &negative_check, &check_undefined);
 
   Bind(&check_undefined);
-  Branch(IsUndefined(result.value()), &undefined, &defined);
+  Branch(IsUndefined(result.value()), &return_zero, &defined);
 
   Bind(&defined);
   result.Bind(ToInteger(context, result.value(),
@@ -4164,10 +4164,33 @@ Node* CodeStubAssembler::ToSmiIndex(Node* const input, Node* const context,
   Goto(&negative_check);
 
   Bind(&negative_check);
-  GotoIf(SmiLessThan(result.value(), SmiConstant(0)), range_error);
+  Branch(SmiLessThan(result.value(), SmiConstant(0)), range_error, &done);
+
+  Bind(&return_zero);
+  result.Bind(SmiConstant(0));
   Goto(&done);
 
-  Bind(&undefined);
+  Bind(&done);
+  return result.value();
+}
+
+Node* CodeStubAssembler::ToSmiLength(Node* input, Node* const context,
+                                     Label* range_error) {
+  Variable result(this, MachineRepresentation::kTagged, input);
+  Label to_integer(this), negative_check(this), return_zero(this), done(this);
+  Branch(TaggedIsSmi(result.value()), &negative_check, &to_integer);
+
+  Bind(&to_integer);
+  result.Bind(ToInteger(context, result.value(),
+                        CodeStubAssembler::kTruncateMinusZero));
+  GotoIfNot(TaggedIsSmi(result.value()), range_error);
+  CSA_ASSERT(this, TaggedIsSmi(result.value()));
+  Goto(&negative_check);
+
+  Bind(&negative_check);
+  Branch(SmiLessThan(result.value(), SmiConstant(0)), &return_zero, &done);
+
+  Bind(&return_zero);
   result.Bind(SmiConstant(0));
   Goto(&done);
 
@@ -5147,7 +5170,7 @@ void CodeStubAssembler::TryGetOwnProperty(
 void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
                                          Node* instance_type,
                                          Node* intptr_index, Label* if_found,
-                                         Label* if_not_found,
+                                         Label* if_absent, Label* if_not_found,
                                          Label* if_bailout) {
   // Handle special objects in runtime.
   GotoIf(Int32LessThanOrEqual(instance_type,
@@ -5158,7 +5181,8 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
 
   // TODO(verwaest): Support other elements kinds as well.
   Label if_isobjectorsmi(this), if_isdouble(this), if_isdictionary(this),
-      if_isfaststringwrapper(this), if_isslowstringwrapper(this), if_oob(this);
+      if_isfaststringwrapper(this), if_isslowstringwrapper(this), if_oob(this),
+      if_typedarray(this);
   // clang-format off
   int32_t values[] = {
       // Handled by {if_isobjectorsmi}.
@@ -5174,6 +5198,16 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
       SLOW_STRING_WRAPPER_ELEMENTS,
       // Handled by {if_not_found}.
       NO_ELEMENTS,
+      // Handled by {if_typed_array}.
+      UINT8_ELEMENTS,
+      INT8_ELEMENTS,
+      UINT16_ELEMENTS,
+      INT16_ELEMENTS,
+      UINT32_ELEMENTS,
+      INT32_ELEMENTS,
+      FLOAT32_ELEMENTS,
+      FLOAT64_ELEMENTS,
+      UINT8_CLAMPED_ELEMENTS,
   };
   Label* labels[] = {
       &if_isobjectorsmi, &if_isobjectorsmi, &if_isobjectorsmi,
@@ -5183,6 +5217,15 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
       &if_isfaststringwrapper,
       &if_isslowstringwrapper,
       if_not_found,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
+      &if_typedarray,
   };
   // clang-format on
   STATIC_ASSERT(arraysize(values) == arraysize(labels));
@@ -5238,6 +5281,15 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
     Node* length = LoadStringLength(string);
     GotoIf(UintPtrLessThan(intptr_index, SmiUntag(length)), if_found);
     Goto(&if_isdictionary);
+  }
+  Bind(&if_typedarray);
+  {
+    Node* buffer = LoadObjectField(object, JSArrayBufferView::kBufferOffset);
+    GotoIf(IsDetachedBuffer(buffer), if_absent);
+
+    Node* length = TryToIntptr(
+        LoadObjectField(object, JSTypedArray::kLengthOffset), if_bailout);
+    Branch(UintPtrLessThan(intptr_index, length), if_found, if_absent);
   }
   Bind(&if_oob);
   {
@@ -7519,11 +7571,12 @@ Node* CodeStubAssembler::HasProperty(
       };
 
   CodeStubAssembler::LookupInHolder lookup_element_in_holder =
-      [this, &return_true](Node* receiver, Node* holder, Node* holder_map,
-                           Node* holder_instance_type, Node* index,
-                           Label* next_holder, Label* if_bailout) {
+      [this, &return_true, &return_false](
+          Node* receiver, Node* holder, Node* holder_map,
+          Node* holder_instance_type, Node* index, Label* next_holder,
+          Label* if_bailout) {
         TryLookupElement(holder, holder_map, holder_instance_type, index,
-                         &return_true, next_holder, if_bailout);
+                         &return_true, &return_false, next_holder, if_bailout);
       };
 
   TryPrototypeChainLookup(object, key, lookup_property_in_holder,
@@ -7853,6 +7906,58 @@ Node* CodeStubAssembler::NumberInc(Node* value) {
     Node* one = Float64Constant(1.0);
     Node* finc_result = Float64Add(finc_value, one);
     var_result.Bind(AllocateHeapNumberWithValue(finc_result));
+    Goto(&end);
+  }
+
+  Bind(&end);
+  return var_result.value();
+}
+
+Node* CodeStubAssembler::NumberDec(Node* value) {
+  Variable var_result(this, MachineRepresentation::kTagged),
+      var_fdec_value(this, MachineRepresentation::kFloat64);
+  Label if_issmi(this), if_isnotsmi(this), do_fdec(this), end(this);
+  Branch(TaggedIsSmi(value), &if_issmi, &if_isnotsmi);
+
+  Bind(&if_issmi);
+  {
+    // Try fast Smi addition first.
+    Node* one = SmiConstant(Smi::FromInt(1));
+    Node* pair = IntPtrSubWithOverflow(BitcastTaggedToWord(value),
+                                       BitcastTaggedToWord(one));
+    Node* overflow = Projection(1, pair);
+
+    // Check if the Smi addition overflowed.
+    Label if_overflow(this), if_notoverflow(this);
+    Branch(overflow, &if_overflow, &if_notoverflow);
+
+    Bind(&if_notoverflow);
+    var_result.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
+    Goto(&end);
+
+    Bind(&if_overflow);
+    {
+      var_fdec_value.Bind(SmiToFloat64(value));
+      Goto(&do_fdec);
+    }
+  }
+
+  Bind(&if_isnotsmi);
+  {
+    // Check if the value is a HeapNumber.
+    CSA_ASSERT(this, IsHeapNumberMap(LoadMap(value)));
+
+    // Load the HeapNumber value.
+    var_fdec_value.Bind(LoadHeapNumberValue(value));
+    Goto(&do_fdec);
+  }
+
+  Bind(&do_fdec);
+  {
+    Node* fdec_value = var_fdec_value.value();
+    Node* minus_one = Float64Constant(-1.0);
+    Node* fdec_result = Float64Add(fdec_value, minus_one);
+    var_result.Bind(AllocateHeapNumberWithValue(fdec_result));
     Goto(&end);
   }
 

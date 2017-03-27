@@ -240,6 +240,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Smi | HeapNumber operations.
   Node* NumberInc(Node* value);
+  Node* NumberDec(Node* value);
   void GotoIfNotNumber(Node* value, Label* is_not_number);
   void GotoIfNumber(Node* value, Label* is_number);
 
@@ -798,6 +799,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // ES6 7.1.17 ToIndex, but jumps to range_error if the result is not a Smi.
   Node* ToSmiIndex(Node* const input, Node* const context, Label* range_error);
 
+  // ES6 7.1.15 ToLength, but jumps to range_error if the result is not a Smi.
+  Node* ToSmiLength(Node* input, Node* const context, Label* range_error);
+
   // Convert any object to an Integer.
   Node* ToInteger(Node* context, Node* input,
                   ToIntegerTruncationMode mode = kNoTruncation);
@@ -1067,8 +1071,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Variable* var_meta_storage, Variable* var_name_index,
                          Label* if_not_found, Label* if_bailout);
 
+  // This method jumps to if_found if the element is known to exist. To
+  // if_absent if it's known to not exist. To if_not_found if the prototype
+  // chain needs to be checked. And if_bailout if the lookup is unsupported.
   void TryLookupElement(Node* object, Node* map, Node* instance_type,
-                        Node* intptr_index, Label* if_found,
+                        Node* intptr_index, Label* if_found, Label* if_absent,
                         Label* if_not_found, Label* if_bailout);
 
   // This is a type of a lookup in holder generator function. In case of a

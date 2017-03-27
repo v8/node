@@ -300,10 +300,18 @@ class Isolate;
   TFJ(ArrayFilterLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject,  \
       kInitialK, kLength, kTo)                                                 \
   TFJ(ArrayFilter, 2, kCallbackFn, kThisArg)                                   \
+  /* ES6 #sec-array.prototype.foreach */                                       \
+  TFJ(ArrayMapLoopContinuation, 7, kCallbackFn, kThisArg, kArray, kObject,     \
+      kInitialK, kLength, kTo)                                                 \
+  TFJ(ArrayMap, 2, kCallbackFn, kThisArg)                                      \
   /* ES6 #sec-array.prototype.reduce */                                        \
   TFJ(ArrayReduceLoopContinuation, 7, kCallbackFn, kThisArg, kAccumulator,     \
       kObject, kInitialK, kLength, kTo)                                        \
   TFJ(ArrayReduce, 2, kCallbackFn, kInitialValue)                              \
+  /* ES6 #sec-array.prototype.reduceRight */                                   \
+  TFJ(ArrayReduceRightLoopContinuation, 7, kCallbackFn, kThisArg,              \
+      kAccumulator, kObject, kInitialK, kLength, kTo)                          \
+  TFJ(ArrayReduceRight, 2, kCallbackFn, kInitialValue)                         \
   /* ES6 #sec-array.prototype.entries */                                       \
   TFJ(ArrayPrototypeEntries, 0)                                                \
   /* ES6 #sec-array.prototype.keys */                                          \
@@ -792,6 +800,7 @@ class Isolate;
                                                                                \
   /* SharedArrayBuffer */                                                      \
   CPP(SharedArrayBufferPrototypeGetByteLength)                                 \
+  CPP(SharedArrayBufferPrototypeSlice)                                         \
   TFJ(AtomicsLoad, 2, kArray, kIndex)                                          \
   TFJ(AtomicsStore, 3, kArray, kIndex, kValue)                                 \
   TFJ(AtomicsExchange, 3, kArray, kIndex, kValue)                              \
@@ -879,6 +888,8 @@ class Isolate;
   /* ES6 #sec-typedarray-buffer-byteoffset-length */                           \
   TFJ(TypedArrayConstructByArrayBuffer, 5, kHolder, kBuffer, kByteOffset,      \
       kLength, kElementSize)                                                   \
+  TFJ(TypedArrayConstructByArrayLike, 4, kHolder, kArrayLike, kLength,         \
+      kElementSize)                                                            \
   /* ES6 #sec-typedarray-length */                                             \
   TFJ(TypedArrayConstructByLength, 3, kHolder, kLength, kElementSize)          \
   TFJ(TypedArrayInitialize, 6, kHolder, kLength, kBuffer, kByteOffset,         \
@@ -904,8 +915,10 @@ class Isolate;
   CPP(TypedArrayPrototypeIncludes)                                             \
   /* ES6 #sec-%typedarray%.prototype.indexof */                                \
   CPP(TypedArrayPrototypeIndexOf)                                              \
-  /* ES6 #sec-%typedarray%.prototype.indexof */                                \
+  /* ES6 #sec-%typedarray%.prototype.lastindexof */                            \
   CPP(TypedArrayPrototypeLastIndexOf)                                          \
+  /* ES6 #sec-%typedarray%.prototype.reverse */                                \
+  CPP(TypedArrayPrototypeReverse)                                              \
                                                                                \
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \

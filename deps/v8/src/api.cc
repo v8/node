@@ -2841,7 +2841,7 @@ void Message::PrintCurrentStackTrace(Isolate* isolate, FILE* out) {
 
 Local<StackFrame> StackTrace::GetFrame(uint32_t index) const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   auto self = Utils::OpenHandle(this);
   auto obj = i::JSReceiver::GetElement(isolate, self, index).ToHandleChecked();
@@ -2865,10 +2865,7 @@ Local<StackTrace> StackTrace::CurrentStackTrace(
     int frame_limit,
     StackTraceOptions options) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  ENTER_V8(i_isolate);
-  // TODO(dcarney): remove when ScriptDebugServer is fixed.
-  options = static_cast<StackTraceOptions>(
-      static_cast<int>(options) | kExposeFramesAcrossSecurityOrigins);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(i_isolate);
   i::Handle<i::JSArray> stackTrace =
       i_isolate->CaptureCurrentStackTrace(frame_limit, options);
   return Utils::StackTraceToLocal(stackTrace);
@@ -2880,7 +2877,7 @@ Local<StackTrace> StackTrace::CurrentStackTrace(
 static int getIntProperty(const StackFrame* f, const char* propertyName,
                           int defaultValue) {
   i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   i::HandleScope scope(isolate);
   i::Handle<i::JSObject> self = Utils::OpenHandle(f);
   i::Handle<i::Object> obj =
@@ -2907,7 +2904,7 @@ int StackFrame::GetScriptId() const {
 static Local<String> getStringProperty(const StackFrame* f,
                                        const char* propertyName) {
   i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   i::Handle<i::JSObject> self = Utils::OpenHandle(f);
   i::Handle<i::Object> obj =
@@ -2935,7 +2932,7 @@ Local<String> StackFrame::GetFunctionName() const {
 
 static bool getBoolProperty(const StackFrame* f, const char* propertyName) {
   i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8(isolate);
+  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   i::HandleScope scope(isolate);
   i::Handle<i::JSObject> self = Utils::OpenHandle(f);
   i::Handle<i::Object> obj =
@@ -8738,6 +8735,18 @@ void Isolate::SetAllowWasmInstantiateCallback(
   isolate->set_allow_wasm_instantiate_callback(callback);
 }
 
+#define CALLBACK_SETTER(ExternalName, Type, InternalName)      \
+  void Isolate::Set##ExternalName(Type callback) {             \
+    i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this); \
+    isolate->set_##InternalName(callback);                     \
+  }
+
+CALLBACK_SETTER(WasmModuleCallback, ExtensionCallback, wasm_module_callback)
+CALLBACK_SETTER(WasmCompileCallback, ExtensionCallback, wasm_compile_callback)
+CALLBACK_SETTER(WasmInstanceCallback, ExtensionCallback, wasm_instance_callback)
+CALLBACK_SETTER(WasmInstantiateCallback, ExtensionCallback,
+                wasm_instantiate_callback)
+
 bool Isolate::IsDead() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   return isolate->IsDead();
@@ -9557,6 +9566,36 @@ v8::MaybeLocal<v8::Array> debug::EntriesPreview(Isolate* v8_isolate,
         SetAsArray(isolate, it->table(), i::Smi::cast(it->index())->value()));
   }
   return v8::MaybeLocal<v8::Array>();
+}
+
+Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  ENTER_V8(isolate);
+  i::HandleScope handle_scope(isolate);
+  i::Builtins::Name name;
+  switch (builtin) {
+    case kObjectKeys:
+      name = i::Builtins::kObjectKeys;
+      break;
+    case kObjectGetPrototypeOf:
+      name = i::Builtins::kObjectGetPrototypeOf;
+      break;
+    case kObjectGetOwnPropertyDescriptor:
+      name = i::Builtins::kObjectGetOwnPropertyDescriptor;
+      break;
+    case kObjectGetOwnPropertyNames:
+      name = i::Builtins::kObjectGetOwnPropertyNames;
+      break;
+    case kObjectGetOwnPropertySymbols:
+      name = i::Builtins::kObjectGetOwnPropertySymbols;
+      break;
+  }
+  i::Handle<i::Code> call_code(isolate->builtins()->builtin(name));
+  i::Handle<i::JSFunction> fun =
+      isolate->factory()->NewFunctionWithoutPrototype(
+          isolate->factory()->empty_string(), call_code, false);
+  fun->shared()->DontAdaptArguments();
+  return Utils::ToLocal(handle_scope.CloseAndEscape(fun));
 }
 
 MaybeLocal<debug::Script> debug::GeneratorObject::Script() {

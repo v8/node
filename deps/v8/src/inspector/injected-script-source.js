@@ -38,12 +38,6 @@
 (function (InjectedScriptHost, inspectedGlobalObject, injectedScriptId) {
 
 /**
- * Protect against Object overwritten by the user code.
- * @suppress {duplicate}
- */
-var Object = /** @type {function(new:Object, *=)} */ ({}.constructor);
-
-/**
  * @param {!Array.<T>} array
  * @param {...} var_args
  * @template T
@@ -114,14 +108,12 @@ function isArrayLike(obj)
 {
     if (typeof obj !== "object")
         return false;
-    try {
-        if (typeof obj.splice === "function") {
-            if (!InjectedScriptHost.objectHasOwnProperty(/** @type {!Object} */ (obj), "length"))
-                return false;
-            var len = obj.length;
-            return typeof len === "number" && isUInt32(len);
-        }
-    } catch (e) {
+    var splice = InjectedScriptHost.getProperty(obj, "splice");
+    if (typeof splice === "function") {
+        if (!InjectedScriptHost.objectHasOwnProperty(/** @type {!Object} */ (obj), "length"))
+            return false;
+        var len = InjectedScriptHost.getProperty(obj, "length");
+        return typeof len === "number" && isUInt32(len);
     }
     return false;
 }
@@ -157,11 +149,11 @@ function isSymbol(obj)
  * @type {!Object<string, !Object<string, boolean>>}
  * @const
  */
-var domAttributesWithObservableSideEffectOnGet = nullifyObjectProto({});
-domAttributesWithObservableSideEffectOnGet["Request"] = nullifyObjectProto({});
-domAttributesWithObservableSideEffectOnGet["Request"]["body"] = true;
-domAttributesWithObservableSideEffectOnGet["Response"] = nullifyObjectProto({});
-domAttributesWithObservableSideEffectOnGet["Response"]["body"] = true;
+var domAttributesWithObservableSideEffectOnGet = {
+    Request: { body: true, __proto__: null },
+    Response: { body: true, __proto__: null },
+    __proto__: null
+}
 
 /**
  * @param {!Object} object
@@ -186,9 +178,10 @@ function doesAttributeHaveObservableSideEffectOnGet(object, attribute)
 var InjectedScript = function()
 {
 }
+InjectedScriptHost.nullifyPrototype(InjectedScript);
 
 /**
- * @type {!Object.<string, boolean>}
+ * @type {!Object<string, boolean>}
  * @const
  */
 InjectedScript.primitiveTypes = {
@@ -374,7 +367,7 @@ InjectedScript.prototype = {
         if (InjectedScriptHost.subtype(object) === "proxy")
             return null;
         try {
-            return Object.getPrototypeOf(object);
+            return InjectedScriptHost.getPrototypeOf(object);
         } catch (e) {
             return null;
         }
@@ -391,7 +384,7 @@ InjectedScript.prototype = {
     _propertyDescriptors: function(object, addPropertyIfNeeded, ownProperties, accessorPropertiesOnly, propertyNamesOnly)
     {
         var descriptors = [];
-        descriptors.__proto__ = null;
+        InjectedScriptHost.nullifyPrototype(descriptors);
         var propertyProcessed = { __proto__: null };
         var subtype = InjectedScriptHost.subtype(object);
 
@@ -421,7 +414,8 @@ InjectedScript.prototype = {
 
                 var descriptor;
                 try {
-                    descriptor = Object.getOwnPropertyDescriptor(o, property);
+                    descriptor = InjectedScriptHost.getOwnPropertyDescriptor(o, property);
+                    InjectedScriptHost.nullifyPrototype(descriptor);
                     var isAccessorProperty = descriptor && ("get" in descriptor || "set" in descriptor);
                     if (accessorPropertiesOnly && !isAccessorProperty)
                         continue;
@@ -436,14 +430,14 @@ InjectedScript.prototype = {
                 } catch (e) {
                     if (accessorPropertiesOnly)
                         continue;
-                    descriptor = { value: e, wasThrown: true };
+                    descriptor = { value: e, wasThrown: true, __proto__: null };
                 }
 
                 // Not all bindings provide proper descriptors. Fall back to the non-configurable, non-enumerable,
                 // non-writable property.
                 if (!descriptor) {
                     try {
-                        descriptor = { value: o[property], writable: false };
+                        descriptor = { value: o[property], writable: false, __proto__: null };
                     } catch (e) {
                         // Silent catch.
                         continue;
@@ -496,15 +490,13 @@ InjectedScript.prototype = {
                         return descriptors;
                 } else {
                     // First call Object.keys() to enforce ordering of the property descriptors.
-                    if (!process(o, Object.keys(o)))
+                    if (!process(o, InjectedScriptHost.keys(o)))
                         return descriptors;
-                    if (!process(o, Object.getOwnPropertyNames(o)))
-                        return descriptors;
-                }
-                if (Object.getOwnPropertySymbols) {
-                    if (!process(o, Object.getOwnPropertySymbols(o)))
+                    if (!process(o, InjectedScriptHost.getOwnPropertyNames(o)))
                         return descriptors;
                 }
+                if (!process(o, InjectedScriptHost.getOwnPropertySymbols(o)))
+                    return descriptors;
 
                 if (ownProperties) {
                     var proto = this._objectPrototype(o);

@@ -410,6 +410,7 @@ class FullCodeGenerator final : public AstVisitor<FullCodeGenerator> {
   F(IsJSReceiver)                       \
   F(GetSuperConstructor)                \
   F(DebugBreakInOptimizedCode)          \
+  F(ClassOf)                            \
   F(StringCharCodeAt)                   \
   F(SubString)                          \
   F(ToInteger)                          \
@@ -512,8 +513,9 @@ class FullCodeGenerator final : public AstVisitor<FullCodeGenerator> {
               TypeFeedbackId id = TypeFeedbackId::None());
 
   void CallLoadIC(FeedbackSlot slot, Handle<Object> name);
+  enum StoreICKind { kStoreNamed, kStoreOwn, kStoreGlobal };
   void CallStoreIC(FeedbackSlot slot, Handle<Object> name,
-                   bool store_own_property = false);
+                   StoreICKind store_ic_kind = kStoreNamed);
   void CallKeyedStoreIC(FeedbackSlot slot);
 
   void SetFunctionPosition(FunctionLiteral* fun);

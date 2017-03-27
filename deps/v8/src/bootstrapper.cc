@@ -221,8 +221,10 @@ class Genesis BASE_EMBEDDED {
   void InitializeGlobal_experimental_fast_array_builtins();
 
   Handle<JSFunction> InstallArrayBuffer(Handle<JSObject> target,
-                                        const char* name, Builtins::Name call,
-                                        BuiltinFunctionId id, bool is_shared);
+                                        const char* name,
+                                        Builtins::Name call_byteLength,
+                                        BuiltinFunctionId byteLength_id,
+                                        Builtins::Name call_slice);
   Handle<JSFunction> InstallInternalArray(Handle<JSObject> target,
                                           const char* name,
                                           ElementsKind elements_kind);
@@ -2562,7 +2564,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   {  // -- A r r a y B u f f e r
     Handle<JSFunction> array_buffer_fun = InstallArrayBuffer(
         global, "ArrayBuffer", Builtins::kArrayBufferPrototypeGetByteLength,
-        BuiltinFunctionId::kArrayBufferByteLength, false);
+        BuiltinFunctionId::kArrayBufferByteLength,
+        Builtins::kArrayBufferPrototypeSlice);
     InstallWithIntrinsicDefaultProto(isolate, array_buffer_fun,
                                      Context::ARRAY_BUFFER_FUN_INDEX);
     InstallSpeciesGetter(array_buffer_fun);
@@ -2628,6 +2631,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtins::kTypedArrayPrototypeIndexOf, 1, false);
     SimpleInstallFunction(prototype, "lastIndexOf",
                           Builtins::kTypedArrayPrototypeLastIndexOf, 1, false);
+    SimpleInstallFunction(prototype, "reverse",
+                          Builtins::kTypedArrayPrototypeReverse, 0, false);
   }
 
   {  // -- T y p e d A r r a y s
@@ -2645,26 +2650,30 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     Handle<JSFunction> typed_array_initialize = SimpleCreateFunction(
         isolate, factory->NewStringFromAsciiChecked("typedArrayInitialize"),
         Builtins::kTypedArrayInitialize, 6, false);
-    InstallWithIntrinsicDefaultProto(isolate, typed_array_initialize,
-                                     Context::TYPED_ARRAY_INITIALIZE_INDEX);
+    native_context()->set_typed_array_initialize(*typed_array_initialize);
 
     // %typed_array_construct_by_length
     Handle<JSFunction> construct_by_length = SimpleCreateFunction(
         isolate,
         factory->NewStringFromAsciiChecked("typedArrayConstructByLength"),
         Builtins::kTypedArrayConstructByLength, 3, false);
-    InstallWithIntrinsicDefaultProto(
-        isolate, construct_by_length,
-        Context::TYPED_ARRAY_CONSTRUCT_BY_LENGTH_INDEX);
+    native_context()->set_typed_array_construct_by_length(*construct_by_length);
 
     // %typed_array_construct_by_array_buffer
     Handle<JSFunction> construct_by_buffer = SimpleCreateFunction(
         isolate,
         factory->NewStringFromAsciiChecked("typedArrayConstructByArrayBuffer"),
         Builtins::kTypedArrayConstructByArrayBuffer, 5, false);
-    InstallWithIntrinsicDefaultProto(
-        isolate, construct_by_buffer,
-        Context::TYPED_ARRAY_CONSTRUCT_BY_ARRAY_BUFFER_INDEX);
+    native_context()->set_typed_array_construct_by_array_buffer(
+        *construct_by_buffer);
+
+    // %typed_array_construct_by_array_like
+    Handle<JSFunction> construct_by_array_like = SimpleCreateFunction(
+        isolate,
+        factory->NewStringFromAsciiChecked("typedArrayConstructByArrayLike"),
+        Builtins::kTypedArrayConstructByArrayLike, 4, false);
+    native_context()->set_typed_array_construct_by_array_like(
+        *construct_by_array_like);
   }
 
   {  // -- D a t a V i e w
@@ -3711,6 +3720,7 @@ void Genesis::InitializeGlobal_experimental_fast_array_builtins() {
 
   // Insert experimental fast array builtins here.
   InstallOneBuiltinFunction("Array", "filter", Builtins::kArrayFilter);
+  InstallOneBuiltinFunction("Array", "map", Builtins::kArrayMap);
 }
 
 void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {
@@ -3723,7 +3733,8 @@ void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {
   Handle<JSFunction> shared_array_buffer_fun =
       InstallArrayBuffer(global, "SharedArrayBuffer",
                          Builtins::kSharedArrayBufferPrototypeGetByteLength,
-                         BuiltinFunctionId::kSharedArrayBufferByteLength, true);
+                         BuiltinFunctionId::kSharedArrayBufferByteLength,
+                         Builtins::kSharedArrayBufferPrototypeSlice);
   native_context()->set_shared_array_buffer_fun(*shared_array_buffer_fun);
 
   Handle<String> name = factory->InternalizeUtf8String("Atomics");
@@ -3927,9 +3938,9 @@ void Genesis::InitializeGlobal_icu_case_mapping() {
 
 Handle<JSFunction> Genesis::InstallArrayBuffer(Handle<JSObject> target,
                                                const char* name,
-                                               Builtins::Name call,
-                                               BuiltinFunctionId id,
-                                               bool is_shared) {
+                                               Builtins::Name call_byteLength,
+                                               BuiltinFunctionId byteLength_id,
+                                               Builtins::Name call_slice) {
   // Create the %ArrayBufferPrototype%
   // Setup the {prototype} with the given {name} for @@toStringTag.
   Handle<JSObject> prototype =
@@ -3956,14 +3967,10 @@ Handle<JSFunction> Genesis::InstallArrayBuffer(Handle<JSObject> target,
                         Builtins::kArrayBufferIsView, 1, true);
 
   // Install the "byteLength" getter on the {prototype}.
-  SimpleInstallGetter(prototype, factory()->byte_length_string(), call, false,
-                      id);
+  SimpleInstallGetter(prototype, factory()->byte_length_string(),
+                      call_byteLength, false, byteLength_id);
 
-  // TODO(binji): support SharedArrayBuffer.prototype.slice as well.
-  if (!is_shared) {
-    SimpleInstallFunction(prototype, "slice",
-                          Builtins::kArrayBufferPrototypeSlice, 2, true);
-  }
+  SimpleInstallFunction(prototype, "slice", call_slice, 2, true);
 
   return array_buffer_fun;
 }
@@ -4196,6 +4203,10 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
 
     // Install Array.prototype.reduce
     InstallArrayBuiltinFunction(proto, "reduce", Builtins::kArrayReduce, 2);
+
+    // Install Array.prototype.reduceRight
+    InstallArrayBuiltinFunction(proto, "reduceRight",
+                                Builtins::kArrayReduceRight, 2);
   }
 
   // Install InternalArray.prototype.concat

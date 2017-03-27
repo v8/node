@@ -54,6 +54,7 @@
 #include "src/map-updater.h"
 #include "src/messages.h"
 #include "src/objects-body-descriptors-inl.h"
+#include "src/objects/frame-array-inl.h"
 #include "src/property-descriptor.h"
 #include "src/prototype.h"
 #include "src/regexp/jsregexp.h"
@@ -1051,12 +1052,6 @@ MaybeHandle<Object> JSProxy::GetProperty(Isolate* isolate,
                                          Handle<Object> receiver,
                                          bool* was_found) {
   *was_found = true;
-  if (receiver->IsJSGlobalObject()) {
-    THROW_NEW_ERROR(
-        isolate,
-        NewTypeError(MessageTemplate::kReadGlobalReferenceThroughProxy, name),
-        Object);
-  }
 
   DCHECK(!name->IsPrivate());
   STACK_CHECK(isolate, MaybeHandle<Object>());
@@ -18555,8 +18550,13 @@ Handle<FixedArray> OrderedHashSet::ConvertToKeysArray(
   for (int i = 0; i < length; i++) {
     int index = kHashTableStartIndex + nof_buckets + (i * kEntrySize);
     Object* key = table->get(index);
-    if (convert == GetKeysConversion::kConvertToString && key->IsNumber()) {
-      key = *isolate->factory()->NumberToString(handle(key, isolate));
+    if (convert == GetKeysConversion::kConvertToString) {
+      uint32_t index_value;
+      if (key->ToArrayIndex(&index_value)) {
+        key = *isolate->factory()->Uint32ToString(index_value);
+      } else {
+        CHECK(key->IsName());
+      }
     }
     result->set(i, key);
   }

@@ -1232,7 +1232,7 @@ void FullCodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
             VisitForAccumulatorValue(value);
             DCHECK(StoreDescriptor::ValueRegister().is(r3));
             __ LoadP(StoreDescriptor::ReceiverRegister(), MemOperand(sp));
-            CallStoreIC(property->GetSlot(0), key->value(), true);
+            CallStoreIC(property->GetSlot(0), key->value(), kStoreOwn);
             PrepareForBailoutForId(key->id(), BailoutState::NO_REGISTERS);
 
             if (NeedsHomeObject(value)) {
@@ -1731,7 +1731,7 @@ void FullCodeGenerator::EmitVariableAssignment(Variable* var, Token::Value op,
   if (var->IsUnallocated()) {
     // Global var, const, or let.
     __ LoadGlobalObject(StoreDescriptor::ReceiverRegister());
-    CallStoreIC(slot, var->name());
+    CallStoreIC(slot, var->name(), kStoreGlobal);
 
   } else if (IsLexicalVariableMode(var->mode()) && op != Token::INIT) {
     DCHECK(!var->IsLookupSlot());
@@ -2051,6 +2051,57 @@ void FullCodeGenerator::EmitIsJSProxy(CallRuntime* expr) {
   context()->Plug(if_true, if_false);
 }
 
+void FullCodeGenerator::EmitClassOf(CallRuntime* expr) {
+  ZoneList<Expression*>* args = expr->arguments();
+  DCHECK(args->length() == 1);
+  Label done, null, function, non_function_constructor;
+
+  VisitForAccumulatorValue(args->at(0));
+
+  // If the object is not a JSReceiver, we return null.
+  __ JumpIfSmi(r3, &null);
+  STATIC_ASSERT(LAST_JS_RECEIVER_TYPE == LAST_TYPE);
+  __ CompareObjectType(r3, r3, r4, FIRST_JS_RECEIVER_TYPE);
+  // Map is now in r3.
+  __ blt(&null);
+
+  // Return 'Function' for JSFunction and JSBoundFunction objects.
+  __ cmpli(r4, Operand(FIRST_FUNCTION_TYPE));
+  STATIC_ASSERT(LAST_FUNCTION_TYPE == LAST_TYPE);
+  __ bge(&function);
+
+  // Check if the constructor in the map is a JS function.
+  Register instance_type = r5;
+  __ GetMapConstructor(r3, r3, r4, instance_type);
+  __ cmpi(instance_type, Operand(JS_FUNCTION_TYPE));
+  __ bne(&non_function_constructor);
+
+  // r3 now contains the constructor function. Grab the
+  // instance class name from there.
+  __ LoadP(r3, FieldMemOperand(r3, JSFunction::kSharedFunctionInfoOffset));
+  __ LoadP(r3,
+           FieldMemOperand(r3, SharedFunctionInfo::kInstanceClassNameOffset));
+  __ b(&done);
+
+  // Functions have class 'Function'.
+  __ bind(&function);
+  __ LoadRoot(r3, Heap::kFunction_stringRootIndex);
+  __ b(&done);
+
+  // Objects with a non-function constructor have class 'Object'.
+  __ bind(&non_function_constructor);
+  __ LoadRoot(r3, Heap::kObject_stringRootIndex);
+  __ b(&done);
+
+  // Non-JS objects have class null.
+  __ bind(&null);
+  __ LoadRoot(r3, Heap::kNullValueRootIndex);
+
+  // All done.
+  __ bind(&done);
+
+  context()->Plug(r3);
+}
 
 void FullCodeGenerator::EmitStringCharCodeAt(CallRuntime* expr) {
   ZoneList<Expression*>* args = expr->arguments();

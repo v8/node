@@ -503,8 +503,7 @@ Expression* Parser::NewV8Intrinsic(const AstRawString* name,
 Parser::Parser(ParseInfo* info)
     : ParserBase<Parser>(info->zone(), &scanner_, info->stack_limit(),
                          info->extension(), info->ast_value_factory(),
-                         info->isolate()->counters()->runtime_call_stats(),
-                         true),
+                         info->runtime_call_stats(), true),
       scanner_(info->unicode_cache()),
       reusable_preparser_(nullptr),
       mode_(PARSE_EAGERLY),  // Lazy mode must be set explicitly.
@@ -542,7 +541,7 @@ Parser::Parser(ParseInfo* info)
                 info->extension() == nullptr && can_compile_lazily;
   set_allow_natives(FLAG_allow_natives_syntax || info->is_native());
   set_allow_tailcalls(FLAG_harmony_tailcalls && !info->is_native() &&
-                      info->isolate()->is_tail_call_elimination_enabled());
+                      info->is_tail_call_elimination_enabled());
   set_allow_harmony_do_expressions(FLAG_harmony_do_expressions);
   set_allow_harmony_function_sent(FLAG_harmony_function_sent);
   set_allow_harmony_restrictive_generators(FLAG_harmony_restrictive_generators);
@@ -559,7 +558,7 @@ Parser::Parser(ParseInfo* info)
   if (info->ast_value_factory() == NULL) {
     // info takes ownership of AstValueFactory.
     info->set_ast_value_factory(new AstValueFactory(
-        zone(), info->isolate()->ast_string_constants(), info->hash_seed()));
+        zone(), info->ast_string_constants(), info->hash_seed()));
     info->set_ast_value_factory_owned();
     ast_value_factory_ = info->ast_value_factory();
     ast_node_factory_.set_ast_value_factory(ast_value_factory_);
@@ -3312,8 +3311,8 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
     class_info->constructor = GetPropertyValue(property)->AsFunctionLiteral();
     DCHECK_NOT_NULL(class_info->constructor);
     class_info->constructor->set_raw_name(
-        class_name != nullptr ? class_name
-                              : ast_value_factory()->empty_string());
+        class_name != nullptr ? ast_value_factory()->NewConsString(class_name)
+                              : ast_value_factory()->empty_cons_string());
     return;
   }
 
@@ -4272,10 +4271,11 @@ void Parser::SetFunctionName(Expression* value, const AstRawString* name) {
   if (!value->IsAnonymousFunctionDefinition()) return;
   auto function = value->AsFunctionLiteral();
   if (function != nullptr) {
-    function->set_raw_name(name);
+    function->set_raw_name(ast_value_factory()->NewConsString(name));
   } else {
     DCHECK(value->IsDoExpression());
-    value->AsDoExpression()->represented_function()->set_raw_name(name);
+    value->AsDoExpression()->represented_function()->set_raw_name(
+        ast_value_factory()->NewConsString(name));
   }
 }
 

@@ -24,13 +24,11 @@ var InnerArrayFilter;
 var InnerArrayFind;
 var InnerArrayFindIndex;
 var InnerArrayJoin;
-var InnerArrayReduceRight;
 var InnerArraySort;
 var InnerArrayToLocaleString;
 var InternalArray = utils.InternalArray;
 var MaxSimple;
 var MinSimple;
-var PackedArrayReverse;
 var SpeciesConstructor;
 var ToPositiveInteger;
 var ToIndex;
@@ -66,12 +64,10 @@ utils.Import(function(from) {
   InnerArrayFind = from.InnerArrayFind;
   InnerArrayFindIndex = from.InnerArrayFindIndex;
   InnerArrayJoin = from.InnerArrayJoin;
-  InnerArrayReduceRight = from.InnerArrayReduceRight;
   InnerArraySort = from.InnerArraySort;
   InnerArrayToLocaleString = from.InnerArrayToLocaleString;
   MaxSimple = from.MaxSimple;
   MinSimple = from.MinSimple;
-  PackedArrayReverse = from.PackedArrayReverse;
   SpeciesConstructor = from.SpeciesConstructor;
   ToPositiveInteger = from.ToPositiveInteger;
   ToIndex = from.ToIndex;
@@ -117,29 +113,6 @@ function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2, conservative) {
 }
 
 macro TYPED_ARRAY_CONSTRUCTOR(ARRAY_ID, NAME, ELEMENT_SIZE)
-function NAMEConstructByArrayLike(obj, arrayLike, length) {
-  var l = ToPositiveInteger(length, kInvalidTypedArrayLength);
-
-  if (l > %_MaxSmi()) {
-    throw %make_range_error(kInvalidTypedArrayLength);
-  }
-  var initialized = false;
-  var byteLength = l * ELEMENT_SIZE;
-  if (byteLength <= %_TypedArrayMaxSizeInHeap()) {
-    %typed_array_initialize(obj, l, null, 0, byteLength, false);
-  } else {
-    initialized =
-        %TypedArrayInitializeFromArrayLike(obj, ARRAY_ID, arrayLike, l);
-  }
-  if (!initialized) {
-    for (var i = 0; i < l; i++) {
-      // It is crucial that we let any execptions from arrayLike[i]
-      // propagate outside the function.
-      obj[i] = arrayLike[i];
-    }
-  }
-}
-
 function NAMEConstructByIterable(obj, iterable, iteratorFn) {
   var list = new InternalArray();
   // Reading the Symbol.iterator property of iterable twice would be
@@ -157,7 +130,7 @@ function NAMEConstructByIterable(obj, iterable, iteratorFn) {
   for (var value of newIterable) {
     list.push(value);
   }
-  NAMEConstructByArrayLike(obj, list, list.length);
+  %typed_array_construct_by_array_like(obj, list, list.length, ELEMENT_SIZE);
 }
 
 // ES#sec-typedarray-typedarray TypedArray ( typedArray )
@@ -167,7 +140,7 @@ function NAMEConstructByTypedArray(obj, typedArray) {
   var length = %_TypedArrayGetLength(typedArray);
   var byteLength = %_ArrayBufferViewGetByteLength(typedArray);
   var newByteLength = length * ELEMENT_SIZE;
-  NAMEConstructByArrayLike(obj, typedArray, length);
+  %typed_array_construct_by_array_like(obj, typedArray, length, ELEMENT_SIZE);
   var bufferConstructor = SpeciesConstructor(srcData, GlobalArrayBuffer);
   var prototype = bufferConstructor.prototype;
   // TODO(littledan): Use the right prototype based on bufferConstructor's realm
@@ -180,13 +153,14 @@ function NAMEConstructor(arg1, arg2, arg3) {
   if (!IS_UNDEFINED(new.target)) {
     if (IS_ARRAYBUFFER(arg1) || IS_SHAREDARRAYBUFFER(arg1)) {
       %typed_array_construct_by_array_buffer(
-              this, arg1, arg2, arg3, ELEMENT_SIZE);
+          this, arg1, arg2, arg3, ELEMENT_SIZE);
     } else if (IS_TYPEDARRAY(arg1)) {
       NAMEConstructByTypedArray(this, arg1);
     } else if (IS_RECEIVER(arg1)) {
       var iteratorFn = arg1[iteratorSymbol];
       if (IS_UNDEFINED(iteratorFn)) {
-        NAMEConstructByArrayLike(this, arg1, arg1.length);
+        %typed_array_construct_by_array_like(
+            this, arg1, arg1.length, ELEMENT_SIZE);
       } else {
         NAMEConstructByIterable(this, arg1, iteratorFn);
       }
@@ -456,15 +430,6 @@ function TypedArrayFindIndex(predicate, thisArg) {
 %FunctionSetLength(TypedArrayFindIndex, 1);
 
 
-// ES6 draft 05-18-15, section 22.2.3.21
-function TypedArrayReverse() {
-  if (!IS_TYPEDARRAY(this)) throw %make_type_error(kNotTypedArray);
-
-  var length = %_TypedArrayGetLength(this);
-
-  return PackedArrayReverse(this, length);
-}
-
 // ES6 draft 05-18-15, section 22.2.3.25
 function TypedArraySort(comparefn) {
   if (!IS_TYPEDARRAY(this)) throw %make_type_error(kNotTypedArray);
@@ -572,6 +537,31 @@ function TypedArrayReduce(callback, current) {
 }
 %FunctionSetLength(TypedArrayReduce, 1);
 
+function InnerArrayReduceRight(callback, current, array, length,
+                               argumentsLength) {
+  if (!IS_CALLABLE(callback)) {
+    throw %make_type_error(kCalledNonCallable, callback);
+  }
+
+  var i = length - 1;
+  find_initial: if (argumentsLength < 2) {
+    for (; i >= 0; i--) {
+      if (i in array) {
+        current = array[i--];
+        break find_initial;
+      }
+    }
+    throw %make_type_error(kReduceNoInitial);
+  }
+
+  for (; i >= 0; i--) {
+    if (i in array) {
+      var element = array[i];
+      current = callback(current, element, i, array);
+    }
+  }
+  return current;
+}
 
 // ES6 draft 07-15-13, section 22.2.3.19
 function TypedArrayReduceRight(callback, current) {
@@ -711,7 +701,6 @@ utils.InstallFunctions(GlobalTypedArray.prototype, DONT_ENUM, [
   "map", TypedArrayMap,
   "reduce", TypedArrayReduce,
   "reduceRight", TypedArrayReduceRight,
-  "reverse", TypedArrayReverse,
   "slice", TypedArraySlice,
   "some", TypedArraySome,
   "sort", TypedArraySort,

@@ -774,6 +774,8 @@ class RuntimeCallTimer final {
   V(KeyedStoreIC_StoreElementStub)               \
   V(LoadIC_FunctionPrototypeStub)                \
   V(LoadIC_HandlerCacheHit_Accessor)             \
+  V(LoadIC_LoadAccessorDH)                       \
+  V(LoadIC_LoadAccessorFromPrototypeDH)          \
   V(LoadIC_LoadApiGetterDH)                      \
   V(LoadIC_LoadApiGetterFromPrototypeDH)         \
   V(LoadIC_LoadCallback)                         \
@@ -955,13 +957,19 @@ class RuntimeCallTimerScope {
   /* Total JavaScript execution time (including callbacks and runtime calls */ \
   HT(execute, V8.Execute, 1000000, MICROSECOND)                                \
   /* Asm/Wasm */                                                               \
-  HT(wasm_instantiate_module_time, V8.WasmInstantiateModuleMicroSeconds,       \
+  /* TODO(karlschimpf) Update chrome flags to reflect asm/wasm split. */       \
+  HT(wasm_instantiate_asm_module_time, V8.WasmInstantiateModuleMicroSeconds,   \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_instantiate_wasm_module_time, V8.WasmInstantiateModuleMicroSeconds,  \
      1000000, MICROSECOND)                                                     \
   HT(wasm_decode_module_time, V8.WasmDecodeModuleMicroSeconds, 1000000,        \
      MICROSECOND)                                                              \
   HT(wasm_decode_function_time, V8.WasmDecodeFunctionMicroSeconds, 1000000,    \
      MICROSECOND)                                                              \
-  HT(wasm_compile_module_time, V8.WasmCompileModuleMicroSeconds, 1000000,      \
+  /* TODO(kschimpf) Update chrome flags to reflect asm/wasm split. */          \
+  HT(wasm_compile_asm_module_time, V8.WasmCompileModuleMicroSeconds, 1000000,  \
+     MICROSECOND)                                                              \
+  HT(wasm_compile_wasm_module_time, V8.WasmCompileModuleMicroSeconds, 1000000, \
      MICROSECOND)                                                              \
   HT(wasm_compile_function_time, V8.WasmCompileFunctionMicroSeconds, 1000000,  \
      MICROSECOND)                                                              \

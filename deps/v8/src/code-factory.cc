@@ -148,6 +148,25 @@ Callable CodeFactory::StoreOwnICInOptimizedCode(Isolate* isolate) {
 }
 
 // static
+Callable CodeFactory::StoreGlobalIC(Isolate* isolate,
+                                    LanguageMode language_mode) {
+  // TODO(ishell): Use StoreGlobalIC[Strict]Trampoline when it's ready.
+  return Callable(language_mode == STRICT
+                      ? isolate->builtins()->StoreICStrictTrampoline()
+                      : isolate->builtins()->StoreICTrampoline(),
+                  StoreDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::StoreGlobalICInOptimizedCode(Isolate* isolate,
+                                                   LanguageMode language_mode) {
+  // TODO(ishell): Use StoreGlobalIC[Strict] when it's ready.
+  return Callable(language_mode == STRICT ? isolate->builtins()->StoreICStrict()
+                                          : isolate->builtins()->StoreIC(),
+                  StoreWithVectorDescriptor(isolate));
+}
+
+// static
 Callable CodeFactory::KeyedStoreIC(Isolate* isolate,
                                    LanguageMode language_mode) {
   return Callable(language_mode == STRICT
@@ -495,6 +514,12 @@ Callable CodeFactory::ArrayFilterLoopContinuation(Isolate* isolate) {
 }
 
 // static
+Callable CodeFactory::ArrayMapLoopContinuation(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayMapLoopContinuation(),
+                  IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
+}
+
+// static
 Callable CodeFactory::ArrayForEachLoopContinuation(Isolate* isolate) {
   return Callable(isolate->builtins()->ArrayForEachLoopContinuation(),
                   IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
@@ -515,6 +540,12 @@ Callable CodeFactory::ArrayEveryLoopContinuation(Isolate* isolate) {
 // static
 Callable CodeFactory::ArrayReduceLoopContinuation(Isolate* isolate) {
   return Callable(isolate->builtins()->ArrayReduceLoopContinuation(),
+                  IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
+}
+
+// static
+Callable CodeFactory::ArrayReduceRightLoopContinuation(Isolate* isolate) {
+  return Callable(isolate->builtins()->ArrayReduceRightLoopContinuation(),
                   IteratingArrayBuiltinLoopContinuationDescriptor(isolate));
 }
 

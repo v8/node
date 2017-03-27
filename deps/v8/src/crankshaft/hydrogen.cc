@@ -6573,13 +6573,15 @@ void HOptimizedGraphBuilder::HandleGlobalVariableAssignment(Variable* var,
     HValue* name = Add<HConstant>(var->name());
     HValue* vector_value = Add<HConstant>(vector);
     HValue* slot_value = Add<HConstant>(vector->GetIndex(slot));
+    DCHECK(vector->IsStoreGlobalIC(slot));
     DCHECK_EQ(vector->GetLanguageMode(slot), function_language_mode());
-    Callable callable = CodeFactory::StoreICInOptimizedCode(
+    Callable callable = CodeFactory::StoreGlobalICInOptimizedCode(
         isolate(), function_language_mode());
     HValue* stub = Add<HConstant>(callable.code());
     HValue* values[] = {global_object, name, value, slot_value, vector_value};
-    HCallWithDescriptor* instr = Add<HCallWithDescriptor>(
-        Code::STORE_IC, stub, 0, callable.descriptor(), ArrayVector(values));
+    HCallWithDescriptor* instr =
+        Add<HCallWithDescriptor>(Code::STORE_GLOBAL_IC, stub, 0,
+                                 callable.descriptor(), ArrayVector(values));
     USE(instr);
     DCHECK(instr->HasObservableSideEffects());
     Add<HSimulate>(ast_id, REMOVABLE_SIMULATE);
@@ -10699,6 +10701,19 @@ HValue* HGraphBuilder::BuildBinaryOperation(
   return instr;
 }
 
+// Check for the form (%_ClassOf(foo) === 'BarClass').
+static bool IsClassOfTest(CompareOperation* expr) {
+  if (expr->op() != Token::EQ_STRICT) return false;
+  CallRuntime* call = expr->left()->AsCallRuntime();
+  if (call == NULL) return false;
+  Literal* literal = expr->right()->AsLiteral();
+  if (literal == NULL) return false;
+  if (!literal->value()->IsString()) return false;
+  if (call->is_jsruntime()) return false;
+  if (call->function()->function_id != Runtime::kInlineClassOf) return false;
+  DCHECK_EQ(call->arguments()->length(), 1);
+  return true;
+}
 
 void HOptimizedGraphBuilder::VisitBinaryOperation(BinaryOperation* expr) {
   DCHECK(!HasStackOverflow());
@@ -10887,6 +10902,17 @@ void HOptimizedGraphBuilder::VisitCompareOperation(CompareOperation* expr) {
   }
   if (expr->IsLiteralCompareNull(&sub_expr)) {
     return HandleLiteralCompareNil(expr, sub_expr, kNullValue);
+  }
+
+  if (IsClassOfTest(expr)) {
+    CallRuntime* call = expr->left()->AsCallRuntime();
+    DCHECK(call->arguments()->length() == 1);
+    CHECK_ALIVE(VisitForValue(call->arguments()->at(0)));
+    HValue* value = Pop();
+    Literal* literal = expr->right()->AsLiteral();
+    Handle<String> rhs = Handle<String>::cast(literal->value());
+    HClassOfTestAndBranch* instr = New<HClassOfTestAndBranch>(value, rhs);
+    return ast_context()->ReturnControl(instr, expr->id());
   }
 
   AstType* left_type = bounds_.get(expr->left()).lower;
