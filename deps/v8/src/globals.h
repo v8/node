@@ -778,6 +778,7 @@ enum CpuFeature {
   MIPSr1,
   MIPSr2,
   MIPSr6,
+  MIPS_SIMD,  // MSA instructions
   // ARM64
   ALWAYS_ALIGN_CSP,
   // PPC
@@ -1203,8 +1204,7 @@ inline bool IsClassConstructor(FunctionKind kind) {
   return (kind & FunctionKind::kClassConstructor) != 0;
 }
 
-
-inline bool IsConstructable(FunctionKind kind, LanguageMode mode) {
+inline bool IsConstructable(FunctionKind kind) {
   if (IsAccessorFunction(kind)) return false;
   if (IsConciseMethod(kind)) return false;
   if (IsArrowFunction(kind)) return false;

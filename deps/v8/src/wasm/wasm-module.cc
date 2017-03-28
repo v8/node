@@ -542,8 +542,10 @@ class CompilationHelper {
       temp_instance.function_code[i] = init_builtin;
     }
 
-    isolate_->counters()->wasm_functions_per_module()->AddSample(
-        static_cast<int>(module_->functions.size()));
+    (module_->is_wasm() ? isolate_->counters()->wasm_functions_per_wasm_module()
+                        : isolate_->counters()->wasm_functions_per_asm_module())
+        ->AddSample(static_cast<int>(module_->functions.size()));
+
     if (!lazy_compile) {
       CompilationHelper helper(isolate_, module_);
       size_t funcs_to_compile =
@@ -2356,7 +2358,8 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   Handle<JSArrayBuffer> old_buffer;
   Address old_mem_start = nullptr;
   uint32_t old_size = 0;
-  if (buffer.ToHandle(&old_buffer) && old_buffer->backing_store() != nullptr) {
+  if (buffer.ToHandle(&old_buffer) && old_buffer->backing_store() != nullptr &&
+      old_buffer->byte_length()->IsNumber()) {
     old_mem_start = static_cast<Address>(old_buffer->backing_store());
     DCHECK_NOT_NULL(old_mem_start);
     old_size = old_buffer->byte_length()->Number();
@@ -2399,28 +2402,30 @@ void UncheckedUpdateInstanceMemory(Isolate* isolate,
   code_specialization.ApplyToWholeInstance(*instance);
 }
 
-void DetachArrayBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer) {
-  const bool has_guard_regions =
-      (!buffer.is_null() && buffer->has_guard_region());
+void wasm::DetachWebAssemblyMemoryBuffer(Isolate* isolate,
+                                         Handle<JSArrayBuffer> buffer) {
+  int64_t byte_length =
+      buffer->byte_length()->IsNumber()
+          ? static_cast<uint32_t>(buffer->byte_length()->Number())
+          : 0;
+  if (buffer.is_null() || byte_length == 0) return;
+  const bool has_guard_regions = buffer->has_guard_region();
   const bool is_external = buffer->is_external();
   void* backing_store = buffer->backing_store();
-  if (backing_store != nullptr) {
-    DCHECK(!buffer->is_neuterable());
-    int64_t byte_length = NumberToSize(buffer->byte_length());
-    buffer->set_is_neuterable(true);
-    if (!has_guard_regions && !is_external) {
-      buffer->set_is_external(true);
-      isolate->heap()->UnregisterArrayBuffer(*buffer);
-    }
-    buffer->Neuter();
-    if (has_guard_regions) {
-      base::OS::Free(backing_store, RoundUp(i::wasm::kWasmMaxHeapOffset,
-                                            base::OS::CommitPageSize()));
-      reinterpret_cast<v8::Isolate*>(isolate)
-          ->AdjustAmountOfExternalAllocatedMemory(-byte_length);
-    } else if (!has_guard_regions && !is_external) {
-      isolate->array_buffer_allocator()->Free(backing_store, byte_length);
-    }
+  DCHECK(!buffer->is_neuterable());
+  if (!has_guard_regions && !is_external) {
+    buffer->set_is_external(true);
+    isolate->heap()->UnregisterArrayBuffer(*buffer);
+  }
+  buffer->set_is_neuterable(true);
+  buffer->Neuter();
+  if (has_guard_regions) {
+    base::OS::Free(backing_store, RoundUp(i::wasm::kWasmMaxHeapOffset,
+                                          base::OS::CommitPageSize()));
+    reinterpret_cast<v8::Isolate*>(isolate)
+        ->AdjustAmountOfExternalAllocatedMemory(-byte_length);
+  } else if (!has_guard_regions && !is_external) {
+    isolate->array_buffer_allocator()->Free(backing_store, byte_length);
   }
 }
 
@@ -2434,8 +2439,10 @@ int32_t wasm::GrowWebAssemblyMemory(Isolate* isolate,
   Handle<JSArrayBuffer> old_buffer;
   uint32_t old_size = 0;
   Address old_mem_start = nullptr;
+  // Force byte_length to 0, if byte_length fails IsNumber() check.
   if (memory_buffer.ToHandle(&old_buffer) &&
-      old_buffer->backing_store() != nullptr) {
+      old_buffer->backing_store() != nullptr &&
+      old_buffer->byte_length()->IsNumber()) {
     old_size = old_buffer->byte_length()->Number();
     old_mem_start = static_cast<Address>(old_buffer->backing_store());
   }
@@ -2495,7 +2502,6 @@ int32_t wasm::GrowWebAssemblyMemory(Isolate* isolate,
     }
   }
   memory_object->set_buffer(*new_buffer);
-  DetachArrayBuffer(isolate, old_buffer);
   DCHECK(old_size % WasmModule::kPageSize == 0);
   return (old_size / WasmModule::kPageSize);
 }
@@ -2875,7 +2881,7 @@ void RejectPromise(Isolate* isolate, ErrorThrower* thrower,
   Handle<Context> context(isolate->context(), isolate);
   auto maybe = resolver->Reject(v8::Utils::ToLocal(context),
                    v8::Utils::ToLocal(thrower->Reify()));
-  CHECK_IMPLIES(!maybe.FromMaybe(false), isolate->has_scheduled_exception());
+  CHECK(!maybe.IsNothing());
 }
 
 void ResolvePromise(Isolate* isolate, Handle<JSPromise> promise,
@@ -2885,7 +2891,7 @@ void ResolvePromise(Isolate* isolate, Handle<JSPromise> promise,
   Handle<Context> context(isolate->context(), isolate);
   auto maybe = resolver->Resolve(v8::Utils::ToLocal(context),
                                  v8::Utils::ToLocal(result));
-  CHECK_IMPLIES(!maybe.FromMaybe(false), isolate->has_scheduled_exception());
+  CHECK(!maybe.IsNothing());
 }
 
 }  // namespace

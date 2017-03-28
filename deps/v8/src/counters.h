@@ -926,7 +926,8 @@ class RuntimeCallTimerScope {
   HR(scavenge_reason, V8.GCScavengeReason, 0, 21, 22)                         \
   HR(young_generation_handling, V8.GCYoungGenerationHandling, 0, 2, 3)        \
   /* Asm/Wasm. */                                                             \
-  HR(wasm_functions_per_module, V8.WasmFunctionsPerModule, 1, 10000, 51)
+  HR(wasm_functions_per_asm_module, V8.WasmFunctionsPerModule, 1, 10000, 51)  \
+  HR(wasm_functions_per_wasm_module, V8.WasmFunctionsPerModule, 1, 10000, 51)
 
 #define HISTOGRAM_TIMER_LIST(HT)                                               \
   /* Garbage collection timers. */                                             \
@@ -962,7 +963,10 @@ class RuntimeCallTimerScope {
      1000000, MICROSECOND)                                                     \
   HT(wasm_instantiate_wasm_module_time, V8.WasmInstantiateModuleMicroSeconds,  \
      1000000, MICROSECOND)                                                     \
-  HT(wasm_decode_module_time, V8.WasmDecodeModuleMicroSeconds, 1000000,        \
+  /* TODO(karlschimpf) Update chrome flags to reflect asm/wasm split. */       \
+  HT(wasm_decode_asm_module_time, V8.WasmDecodeModuleMicroSeconds, 1000000,    \
+     MICROSECOND)                                                              \
+  HT(wasm_decode_wasm_module_time, V8.WasmDecodeModuleMicroSeconds, 1000000,   \
      MICROSECOND)                                                              \
   HT(wasm_decode_function_time, V8.WasmDecodeFunctionMicroSeconds, 1000000,    \
      MICROSECOND)                                                              \
