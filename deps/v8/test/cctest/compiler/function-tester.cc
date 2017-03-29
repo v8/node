@@ -169,7 +169,7 @@ Handle<JSFunction> FunctionTester::Compile(Handle<JSFunction> function) {
   if (info.shared_info()->HasBytecodeArray()) {
     info.MarkAsOptimizeFromBytecode();
   } else {
-    CHECK(Compiler::ParseAndAnalyze(info.parse_info()));
+    CHECK(Compiler::ParseAndAnalyze(&info));
     CHECK(Compiler::EnsureDeoptimizationSupport(&info));
   }
   JSFunction::EnsureLiterals(function);
@@ -189,7 +189,7 @@ Handle<JSFunction> FunctionTester::CompileGraph(Graph* graph) {
   CompilationInfo info(parse_info.zone(), &parse_info, function->GetIsolate(),
                        function);
 
-  CHECK(parsing::ParseFunction(info.parse_info()));
+  CHECK(parsing::ParseFunction(info.parse_info(), info.isolate()));
   info.SetOptimizing();
 
   Handle<Code> code = Pipeline::GenerateCodeForTesting(&info, graph);

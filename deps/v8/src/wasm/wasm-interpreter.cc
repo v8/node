@@ -38,7 +38,7 @@ namespace wasm {
 #define FOREACH_INTERNAL_OPCODE(V) V(Breakpoint, 0xFF)
 
 #define WASM_CTYPES(V) \
-  V(I32, uint32_t) V(I64, uint64_t) V(F32, float) V(F64, double)
+  V(I32, int32_t) V(I64, int64_t) V(F32, float) V(F64, double)
 
 #define FOREACH_SIMPLE_BINOP(V) \
   V(I32Add, uint32_t, +)        \
@@ -1058,14 +1058,32 @@ Handle<Object> WasmValToNumber(Factory* factory, WasmVal val,
   }
 }
 
-WasmVal NumberToWasmVal(Handle<Object> number, wasm::ValueType type) {
-  double val = number->Number();
+// Convert JS value to WebAssembly, spec here:
+// https://github.com/WebAssembly/design/blob/master/JS.md#towebassemblyvalue
+WasmVal ToWebAssemblyValue(Isolate* isolate, Handle<Object> value,
+                           wasm::ValueType type) {
   switch (type) {
-#define CASE_TYPE(wasm, ctype) \
-  case kWasm##wasm:            \
-    return WasmVal(static_cast<ctype>(val));
-    WASM_CTYPES(CASE_TYPE)
-#undef CASE_TYPE
+    case kWasmI32: {
+      MaybeHandle<Object> maybe_i32 = Object::ToInt32(isolate, value);
+      // TODO(clemensh): Handle failure here (unwind).
+      int32_t value;
+      CHECK(maybe_i32.ToHandleChecked()->ToInt32(&value));
+      return WasmVal(value);
+    }
+    case kWasmI64:
+      // If the signature contains i64, a type error was thrown before.
+      UNREACHABLE();
+    case kWasmF32: {
+      MaybeHandle<Object> maybe_number = Object::ToNumber(value);
+      // TODO(clemensh): Handle failure here (unwind).
+      return WasmVal(
+          static_cast<float>(maybe_number.ToHandleChecked()->Number()));
+    }
+    case kWasmF64: {
+      MaybeHandle<Object> maybe_number = Object::ToNumber(value);
+      // TODO(clemensh): Handle failure here (unwind).
+      return WasmVal(maybe_number.ToHandleChecked()->Number());
+    }
     default:
       // TODO(wasm): Handle simd.
       UNIMPLEMENTED();
@@ -1114,7 +1132,8 @@ class ThreadImpl {
       TRACE("  => Run()\n");
       state_ = WasmInterpreter::RUNNING;
       Execute(frames_.back().code, frames_.back().pc, kRunSteps);
-    } while (state_ == WasmInterpreter::STOPPED && !frames_.empty());
+    } while (state_ == WasmInterpreter::PAUSED && !frames_.empty() &&
+             !PausedAtBreakpoint());
     return state_;
   }
 
@@ -1169,6 +1188,12 @@ class ThreadImpl {
   TrapReason GetTrapReason() { return trap_reason_; }
 
   pc_t GetBreakpointPc() { return break_pc_; }
+
+  bool PausedAtBreakpoint() {
+    DCHECK_IMPLIES(break_pc_ != kInvalidPc,
+                   !frames_.empty() && break_pc_ == frames_.back().pc);
+    return break_pc_ != kInvalidPc;
+  }
 
   bool PossibleNondeterminism() { return possible_nondeterminism_; }
 
@@ -1453,9 +1478,14 @@ class ThreadImpl {
   void Execute(InterpreterCode* code, pc_t pc, int max) {
     Decoder decoder(code->start, code->end);
     pc_t limit = code->end - code->start;
-    while (--max >= 0) {
-#define PAUSE_IF_BREAK_FLAG(flag) \
-  if (V8_UNLIKELY(break_flags_ & WasmInterpreter::BreakFlag::flag)) max = 0;
+    bool hit_break = false;
+
+    while (true) {
+#define PAUSE_IF_BREAK_FLAG(flag)                                     \
+  if (V8_UNLIKELY(break_flags_ & WasmInterpreter::BreakFlag::flag)) { \
+    hit_break = true;                                                 \
+    max = 0;                                                          \
+  }
 
       DCHECK_GT(limit, pc);
       DCHECK_NOT_NULL(code->start);
@@ -1474,9 +1504,13 @@ class ThreadImpl {
                 WasmOpcodes::OpcodeName(static_cast<WasmOpcode>(orig)));
           TraceValueStack();
           TRACE("\n");
+          hit_break = true;
           break;
         }
       }
+
+      // If max == 0, do only break after setting hit_break correctly.
+      if (--max < 0) break;
 
       USE(skip);
       TRACE("@%-3zu: %s%-24s:", pc, skip,
@@ -1906,10 +1940,9 @@ class ThreadImpl {
         PAUSE_IF_BREAK_FLAG(AfterReturn);
       }
     }
-    // Set break_pc_, even though we might have stopped because max was reached.
-    // We don't want to stop after executing zero instructions next time.
-    break_pc_ = pc;
+
     state_ = WasmInterpreter::PAUSED;
+    break_pc_ = hit_break ? pc : kInvalidPc;
     CommitPc(pc);
   }
 
@@ -2048,13 +2081,13 @@ class ThreadImpl {
     if (maybe_retval.is_null()) return TryHandleException(isolate);
 
     Handle<Object> retval = maybe_retval.ToHandleChecked();
-    // TODO(clemensh): Call ToNumber on retval.
     // Pop arguments off the stack.
     stack_.resize(stack_.size() - num_args);
     if (signature->return_count() > 0) {
       // TODO(wasm): Handle multiple returns.
       DCHECK_EQ(1, signature->return_count());
-      stack_.push_back(NumberToWasmVal(retval, signature->GetReturn()));
+      stack_.push_back(
+          ToWebAssemblyValue(isolate, retval, signature->GetReturn()));
     }
     return {ExternalCallResult::EXTERNAL_RETURNED};
   }
