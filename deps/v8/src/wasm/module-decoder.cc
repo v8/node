@@ -1162,8 +1162,9 @@ ModuleResult DecodeWasmModule(Isolate* isolate, const byte* module_start,
   if (size >= kV8MaxWasmModuleSize)
     return ModuleError("size > maximum module size");
   // TODO(bradnelson): Improve histogram handling of size_t.
-  isolate->counters()->wasm_module_size_bytes()->AddSample(
-      static_cast<int>(size));
+  (IsWasm(origin) ? isolate->counters()->wasm_wasm_module_size_bytes()
+                  : isolate->counters()->wasm_asm_module_size_bytes())
+      ->AddSample(static_cast<int>(size));
   // Signatures are stored in zone memory, which have the same lifetime
   // as the {module}.
   Zone* zone = new Zone(isolate->allocator(), ZONE_NAME);
@@ -1173,8 +1174,10 @@ ModuleResult DecodeWasmModule(Isolate* isolate, const byte* module_start,
   // TODO(titzer): this isn't accurate, since it doesn't count the data
   // allocated on the C++ heap.
   // https://bugs.chromium.org/p/chromium/issues/detail?id=657320
-  isolate->counters()->wasm_decode_module_peak_memory_bytes()->AddSample(
-      static_cast<int>(zone->allocation_size()));
+  (IsWasm(origin)
+       ? isolate->counters()->wasm_decode_wasm_module_peak_memory_bytes()
+       : isolate->counters()->wasm_decode_asm_module_peak_memory_bytes())
+      ->AddSample(static_cast<int>(zone->allocation_size()));
   return result;
 }
 
@@ -1195,14 +1198,17 @@ FunctionResult DecodeWasmFunction(Isolate* isolate, Zone* zone,
                                   ModuleBytesEnv* module_env,
                                   const byte* function_start,
                                   const byte* function_end) {
+  bool is_wasm = module_env->module_env.is_wasm();
   HistogramTimerScope wasm_decode_function_time_scope(
-      isolate->counters()->wasm_decode_function_time());
+      is_wasm ? isolate->counters()->wasm_decode_wasm_function_time()
+              : isolate->counters()->wasm_decode_asm_function_time());
   size_t size = function_end - function_start;
   if (function_start > function_end) return FunctionError("start > end");
   if (size > kV8MaxWasmFunctionSize)
     return FunctionError("size > maximum function size");
-  isolate->counters()->wasm_function_size_bytes()->AddSample(
-      static_cast<int>(size));
+  (is_wasm ? isolate->counters()->wasm_wasm_function_size_bytes()
+           : isolate->counters()->wasm_asm_function_size_bytes())
+      ->AddSample(static_cast<int>(size));
   WasmFunction* function = new WasmFunction();
   ModuleDecoder decoder(zone, function_start, function_end, kWasmOrigin);
   return decoder.DecodeSingleFunction(module_env, function);

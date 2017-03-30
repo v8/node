@@ -193,6 +193,10 @@ class V8_EXPORT_PRIVATE CodeFactory final {
   static Callable ArrayReduceRightLoopContinuation(Isolate* isolate);
   static Callable FunctionPrototypeBind(Isolate* isolate);
   static Callable PromiseHandleReject(Isolate* isolate);
+
+  static Callable AsyncGeneratorResolve(Isolate* isolate);
+  static Callable AsyncGeneratorReject(Isolate* isolate);
+  static Callable AsyncGeneratorResumeNext(Isolate* isolate);
 };
 
 }  // namespace internal

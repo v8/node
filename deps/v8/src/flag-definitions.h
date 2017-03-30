@@ -554,6 +554,7 @@ DEFINE_BOOL(suppress_asm_messages, false,
 DEFINE_BOOL(trace_asm_time, false, "log asm.js timing info to the console")
 DEFINE_BOOL(trace_asm_scanner, false,
             "log tokens encountered by asm.js scanner")
+DEFINE_BOOL(trace_asm_parser, false, "verbose logging of asm.js parse failures")
 DEFINE_BOOL(stress_validate_asm, false, "try to validate everything as asm.js")
 
 DEFINE_BOOL(dump_wasm_module, false, "dump WASM module bytes")
@@ -1098,8 +1099,6 @@ DEFINE_BOOL(check_handle_count, false,
 DEFINE_BOOL(print_global_handles, false, "report global handles after GC")
 
 // TurboFan debug-only flags.
-DEFINE_BOOL(print_turbo_replay, false,
-            "print C++ code to recreate TurboFan graphs")
 DEFINE_BOOL(trace_turbo_escape, false, "enable tracing in escape analysis")
 
 // objects.cc

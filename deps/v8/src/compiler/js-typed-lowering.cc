@@ -842,63 +842,7 @@ Reduction JSTypedLowering::ReduceJSTypeOf(Node* node) {
   return NoChange();
 }
 
-Reduction JSTypedLowering::ReduceJSEqualTypeOf(Node* node) {
-  Node* input;
-  Handle<String> type;
-  HeapObjectBinopMatcher m(node);
-  if (m.left().IsJSTypeOf() && m.right().HasValue() &&
-      m.right().Value()->IsString()) {
-    input = m.left().InputAt(0);
-    type = Handle<String>::cast(m.right().Value());
-  } else if (m.right().IsJSTypeOf() && m.left().HasValue() &&
-             m.left().Value()->IsString()) {
-    input = m.right().InputAt(0);
-    type = Handle<String>::cast(m.left().Value());
-  } else {
-    return NoChange();
-  }
-  Node* value;
-  if (String::Equals(type, factory()->boolean_string())) {
-    value =
-        graph()->NewNode(common()->Select(MachineRepresentation::kTagged),
-                         graph()->NewNode(simplified()->ReferenceEqual(), input,
-                                          jsgraph()->TrueConstant()),
-                         jsgraph()->TrueConstant(),
-                         graph()->NewNode(simplified()->ReferenceEqual(), input,
-                                          jsgraph()->FalseConstant()));
-  } else if (String::Equals(type, factory()->function_string())) {
-    value = graph()->NewNode(simplified()->ObjectIsDetectableCallable(), input);
-  } else if (String::Equals(type, factory()->number_string())) {
-    value = graph()->NewNode(simplified()->ObjectIsNumber(), input);
-  } else if (String::Equals(type, factory()->object_string())) {
-    value = graph()->NewNode(
-        common()->Select(MachineRepresentation::kTagged),
-        graph()->NewNode(simplified()->ObjectIsNonCallable(), input),
-        jsgraph()->TrueConstant(),
-        graph()->NewNode(simplified()->ReferenceEqual(), input,
-                         jsgraph()->NullConstant()));
-  } else if (String::Equals(type, factory()->string_string())) {
-    value = graph()->NewNode(simplified()->ObjectIsString(), input);
-  } else if (String::Equals(type, factory()->symbol_string())) {
-    value = graph()->NewNode(simplified()->ObjectIsSymbol(), input);
-  } else if (String::Equals(type, factory()->undefined_string())) {
-    value = graph()->NewNode(
-        common()->Select(MachineRepresentation::kTagged),
-        graph()->NewNode(simplified()->ReferenceEqual(), input,
-                         jsgraph()->NullConstant()),
-        jsgraph()->FalseConstant(),
-        graph()->NewNode(simplified()->ObjectIsUndetectable(), input));
-  } else {
-    return NoChange();
-  }
-  ReplaceWithValue(node, value);
-  return Replace(value);
-}
-
 Reduction JSTypedLowering::ReduceJSEqual(Node* node) {
-  Reduction const reduction = ReduceJSEqualTypeOf(node);
-  if (reduction.Changed()) return reduction;
-
   JSBinopReduction r(this, node);
 
   if (r.BothInputsAre(Type::UniqueName())) {
@@ -960,9 +904,6 @@ Reduction JSTypedLowering::ReduceJSStrictEqual(Node* node) {
       return Replace(replacement);
     }
   }
-
-  Reduction const reduction = ReduceJSEqualTypeOf(node);
-  if (reduction.Changed()) return reduction;
 
   if (r.BothInputsAre(Type::Unique())) {
     return r.ChangeToPureOperator(simplified()->ReferenceEqual());
@@ -2255,19 +2196,21 @@ Reduction JSTypedLowering::ReduceJSGeneratorStore(Node* node) {
   Node* context = NodeProperties::GetContextInput(node);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
-  int register_count = OpParameter<int>(node);
+  const GeneratorStoreParameters& p = GeneratorStoreParametersOf(node->op());
 
   FieldAccess array_field = AccessBuilder::ForJSGeneratorObjectRegisterFile();
   FieldAccess context_field = AccessBuilder::ForJSGeneratorObjectContext();
   FieldAccess continuation_field =
       AccessBuilder::ForJSGeneratorObjectContinuation();
   FieldAccess input_or_debug_pos_field =
-      AccessBuilder::ForJSGeneratorObjectInputOrDebugPos();
+      p.suspend_flags() == SuspendFlags::kAsyncGeneratorAwait
+          ? AccessBuilder::ForJSAsyncGeneratorObjectAwaitInputOrDebugPos()
+          : AccessBuilder::ForJSGeneratorObjectInputOrDebugPos();
 
   Node* array = effect = graph()->NewNode(simplified()->LoadField(array_field),
                                           generator, effect, control);
 
-  for (int i = 0; i < register_count; ++i) {
+  for (int i = 0; i < p.register_count(); ++i) {
     Node* value = NodeProperties::GetValueInput(node, 3 + i);
     effect = graph()->NewNode(
         simplified()->StoreField(AccessBuilder::ForFixedArraySlot(i)), array,

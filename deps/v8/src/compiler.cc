@@ -399,8 +399,7 @@ bool UseCompilerDispatcher(Compiler::ConcurrencyMode inner_function_mode,
                            DeclarationScope* scope,
                            Handle<SharedFunctionInfo> shared_info,
                            bool is_debug, bool will_serialize) {
-  return FLAG_compiler_dispatcher_eager_inner &&
-         inner_function_mode == Compiler::CONCURRENT &&
+  return inner_function_mode == Compiler::CONCURRENT &&
          dispatcher->IsEnabled() && !is_debug && !will_serialize &&
          !UseAsmWasm(scope, shared_info, is_debug);
 }
@@ -473,6 +472,8 @@ CompilationJob::Status FinalizeUnoptimizedCompilationJob(CompilationJob* job) {
 void SetSharedFunctionFlagsFromLiteral(FunctionLiteral* literal,
                                        Handle<SharedFunctionInfo> shared_info) {
   shared_info->set_ast_node_count(literal->ast_node_count());
+  shared_info->set_has_duplicate_parameters(
+      literal->has_duplicate_parameters());
   if (literal->dont_optimize_reason() != kNoReason) {
     shared_info->DisableOptimization(literal->dont_optimize_reason());
   }
@@ -1092,9 +1093,12 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
           script->GetPreparsedScopeData());
     }
   }
+  Compiler::ConcurrencyMode inner_function_mode =
+      FLAG_compiler_dispatcher_eager_inner ? Compiler::CONCURRENT
+                                           : Compiler::NOT_CONCURRENT;
   Handle<Code> result;
   ASSIGN_RETURN_ON_EXCEPTION(
-      isolate, result, GetUnoptimizedCode(&info, Compiler::CONCURRENT), Code);
+      isolate, result, GetUnoptimizedCode(&info, inner_function_mode), Code);
 
   if (FLAG_always_opt && !info.shared_info()->HasAsmWasmData()) {
     Handle<Code> opt_code;
@@ -1115,6 +1119,9 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
   PostponeInterruptsScope postpone(isolate);
   DCHECK(!isolate->native_context().is_null());
   ParseInfo* parse_info = info->parse_info();
+  Compiler::ConcurrencyMode inner_function_mode =
+      FLAG_compiler_dispatcher_eager_inner ? Compiler::CONCURRENT
+                                           : Compiler::NOT_CONCURRENT;
 
   RuntimeCallTimerScope runtimeTimer(
       isolate, parse_info->is_eval() ? &RuntimeCallStats::CompileEval
@@ -1126,11 +1133,12 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
 
   { VMState<COMPILER> state(info->isolate());
     if (parse_info->literal() == nullptr) {
-      if (!parsing::ParseProgram(parse_info, info->isolate(), false)) {
+      if (!parsing::ParseProgram(parse_info, info->isolate(),
+                                 inner_function_mode != Compiler::CONCURRENT)) {
         return Handle<SharedFunctionInfo>::null();
       }
 
-      {
+      if (inner_function_mode == Compiler::CONCURRENT) {
         ParseHandleScope parse_handles(parse_info, info->isolate());
         parse_info->ReopenHandlesInNewHandleScope();
         parse_info->ast_value_factory()->Internalize(info->isolate());
@@ -1158,7 +1166,7 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
     parse_info->set_function_literal_id(result->function_literal_id());
 
     // Compile the code.
-    if (!CompileUnoptimizedCode(info, Compiler::CONCURRENT)) {
+    if (!CompileUnoptimizedCode(info, inner_function_mode)) {
       return Handle<SharedFunctionInfo>::null();
     }
 

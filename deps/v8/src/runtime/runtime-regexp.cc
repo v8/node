@@ -606,7 +606,10 @@ MUST_USE_RESULT static Object* StringReplaceGlobalRegExpWithString(
   JSRegExp::Type typeTag = regexp->TypeTag();
   if (typeTag == JSRegExp::IRREGEXP) {
     // Ensure the RegExp is compiled so we can access the capture-name map.
-    RegExpImpl::IrregexpPrepare(regexp, subject);
+    if (RegExpImpl::IrregexpPrepare(regexp, subject) == -1) {
+      DCHECK(isolate->has_pending_exception());
+      return isolate->heap()->exception();
+    }
   }
 
   // CompiledReplacement uses zone allocation.
@@ -1125,7 +1128,7 @@ Handle<JSObject> ConstructNamedCaptureGroupsObject(
     DCHECK(1 <= capture_ix && capture_ix <= capture_count);
 
     Handle<Object> capture_value(f_get_capture(capture_ix), isolate);
-    DCHECK(capture_value->IsString());
+    DCHECK(capture_value->IsUndefined(isolate) || capture_value->IsString());
 
     JSObject::AddProperty(groups, capture_name, capture_value, NONE);
   }

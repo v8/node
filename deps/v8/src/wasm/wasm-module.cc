@@ -649,77 +649,6 @@ class CompilationHelper {
 }
 };
 
-static void ResetCompiledModule(Isolate* isolate, WasmInstanceObject* owner,
-                                WasmCompiledModule* compiled_module) {
-  TRACE("Resetting %d\n", compiled_module->instance_id());
-  Object* undefined = *isolate->factory()->undefined_value();
-  Object* fct_obj = compiled_module->ptr_to_code_table();
-  if (fct_obj != nullptr && fct_obj != undefined) {
-    uint32_t old_mem_size = compiled_module->mem_size();
-    uint32_t default_mem_size = compiled_module->default_mem_size();
-    Object* mem_start = compiled_module->maybe_ptr_to_memory();
-
-    // Patch code to update memory references, global references, and function
-    // table references.
-    Zone specialization_zone(isolate->allocator(), ZONE_NAME);
-    CodeSpecialization code_specialization(isolate, &specialization_zone);
-
-    if (old_mem_size > 0) {
-      CHECK_NE(mem_start, undefined);
-      Address old_mem_address =
-          static_cast<Address>(JSArrayBuffer::cast(mem_start)->backing_store());
-      code_specialization.RelocateMemoryReferences(
-          old_mem_address, old_mem_size, nullptr, default_mem_size);
-    }
-
-    if (owner->has_globals_buffer()) {
-      Address globals_start =
-          static_cast<Address>(owner->globals_buffer()->backing_store());
-      code_specialization.RelocateGlobals(globals_start, nullptr);
-    }
-
-    // Reset function tables.
-    if (compiled_module->has_function_tables()) {
-      FixedArray* function_tables = compiled_module->ptr_to_function_tables();
-      FixedArray* empty_function_tables =
-          compiled_module->ptr_to_empty_function_tables();
-      DCHECK_EQ(function_tables->length(), empty_function_tables->length());
-      for (int i = 0, e = function_tables->length(); i < e; ++i) {
-        code_specialization.RelocateObject(
-            handle(function_tables->get(i), isolate),
-            handle(empty_function_tables->get(i), isolate));
-      }
-      compiled_module->set_ptr_to_function_tables(empty_function_tables);
-    }
-
-    FixedArray* functions = FixedArray::cast(fct_obj);
-    for (int i = compiled_module->num_imported_functions(),
-             end = functions->length();
-         i < end; ++i) {
-      Code* code = Code::cast(functions->get(i));
-      // Skip lazy compile stubs.
-      if (code->builtin_index() == Builtins::kWasmCompileLazy) continue;
-      if (code->kind() != Code::WASM_FUNCTION) {
-        // From here on, there should only be wrappers for exported functions.
-        for (; i < end; ++i) {
-          DCHECK_EQ(Code::JS_TO_WASM_FUNCTION,
-                    Code::cast(functions->get(i))->kind());
-        }
-        break;
-      }
-      bool changed =
-          code_specialization.ApplyToWasmCode(code, SKIP_ICACHE_FLUSH);
-      // TODO(wasm): Check if this is faster than passing FLUSH_ICACHE_IF_NEEDED
-      // above.
-      if (changed) {
-        Assembler::FlushICache(isolate, code->instruction_start(),
-                               code->instruction_size());
-      }
-    }
-  }
-  compiled_module->reset_memory();
-}
-
 static void MemoryInstanceFinalizer(Isolate* isolate,
                                     WasmInstanceObject* instance) {
   DisallowHeapAllocation no_gc;
@@ -805,7 +734,7 @@ static void InstanceFinalizer(const v8::WeakCallbackInfo<void>& data) {
 
     if (current_template == compiled_module) {
       if (next == nullptr) {
-        ResetCompiledModule(isolate, owner, compiled_module);
+        WasmCompiledModule::Reset(isolate, compiled_module);
       } else {
         DCHECK(next->value()->IsFixedArray());
         wasm_module->SetEmbedderField(0, next->value());
@@ -1268,15 +1197,17 @@ class InstantiationHelper {
         thrower_->RangeError("Out of memory: wasm globals");
         return {};
       }
-      Address old_globals_start = nullptr;
-      if (!owner.is_null()) {
-        DCHECK(owner.ToHandleChecked()->has_globals_buffer());
-        old_globals_start = static_cast<Address>(
-            owner.ToHandleChecked()->globals_buffer()->backing_store());
-      }
+      Address old_globals_start = compiled_module_->GetGlobalsStartOrNull();
       Address new_globals_start =
           static_cast<Address>(global_buffer->backing_store());
       code_specialization.RelocateGlobals(old_globals_start, new_globals_start);
+      // The address of the backing buffer for the golbals is in native memory
+      // and, thus, not moving. We need it saved for
+      // serialization/deserialization purposes - so that the other end
+      // understands how to relocate the references. We still need to save the
+      // JSArrayBuffer on the instance, to keep it all alive.
+      WasmCompiledModule::SetGlobalsStartAddressFrom(factory, compiled_module_,
+                                                     global_buffer);
       instance->set_globals_buffer(*global_buffer);
     }
 
@@ -1312,10 +1243,10 @@ class InstantiationHelper {
     //--------------------------------------------------------------------------
     // Set up the memory for the new instance.
     //--------------------------------------------------------------------------
-    MaybeHandle<JSArrayBuffer> old_memory;
-
     uint32_t min_mem_pages = module_->min_mem_pages;
-    isolate_->counters()->wasm_min_mem_pages_count()->AddSample(min_mem_pages);
+    (module_->is_wasm() ? isolate_->counters()->wasm_wasm_min_mem_pages_count()
+                        : isolate_->counters()->wasm_asm_min_mem_pages_count())
+        ->AddSample(min_mem_pages);
 
     if (!memory_.is_null()) {
       // Set externally passed ArrayBuffer non neuterable.
@@ -1360,25 +1291,24 @@ class InstantiationHelper {
     // Initialize memory.
     //--------------------------------------------------------------------------
     if (!memory_.is_null()) {
-      instance->set_memory_buffer(*memory_);
       Address mem_start = static_cast<Address>(memory_->backing_store());
       uint32_t mem_size =
           static_cast<uint32_t>(memory_->byte_length()->Number());
       LoadDataSegments(mem_start, mem_size);
 
       uint32_t old_mem_size = compiled_module_->mem_size();
-      Address old_mem_start =
-          compiled_module_->has_memory()
-              ? static_cast<Address>(
-                    compiled_module_->memory()->backing_store())
-              : nullptr;
+      Address old_mem_start = compiled_module_->GetEmbeddedMemStartOrNull();
       // We might get instantiated again with the same memory. No patching
       // needed in this case.
       if (old_mem_start != mem_start || old_mem_size != mem_size) {
         code_specialization.RelocateMemoryReferences(
             old_mem_start, old_mem_size, mem_start, mem_size);
       }
-      compiled_module_->set_memory(memory_);
+      // Just like with globals, we need to keep both the JSArrayBuffer
+      // and save the start pointer.
+      instance->set_memory_buffer(*memory_);
+      WasmCompiledModule::SetSpecializationMemInfoFrom(
+          factory, compiled_module_, memory_);
     }
 
     //--------------------------------------------------------------------------
@@ -1835,7 +1765,7 @@ class InstantiationHelper {
                             module_name, import_name);
             return -1;
           }
-          if (FLAG_fast_validate_asm) {
+          if (module_->is_asm_js() && FLAG_fast_validate_asm) {
             if (module_->globals[import.index].type == kWasmI32) {
               value = Object::ToInt32(isolate_, value).ToHandleChecked();
             } else {
@@ -2316,11 +2246,12 @@ MaybeHandle<JSArrayBuffer> wasm::GetInstanceMemory(
   return MaybeHandle<JSArrayBuffer>();
 }
 
-void SetInstanceMemory(Handle<WasmInstanceObject> instance,
-                       JSArrayBuffer* buffer) {
-  DisallowHeapAllocation no_gc;
-  instance->set_memory_buffer(buffer);
-  instance->compiled_module()->set_ptr_to_memory(buffer);
+// May GC, because SetSpecializationMemInfoFrom may GC
+void SetInstanceMemory(Isolate* isolate, Handle<WasmInstanceObject> instance,
+                       Handle<JSArrayBuffer> buffer) {
+  instance->set_memory_buffer(*buffer);
+  WasmCompiledModule::SetSpecializationMemInfoFrom(
+      isolate->factory(), handle(instance->compiled_module()), buffer);
 }
 
 int32_t wasm::GetInstanceMemorySize(Isolate* isolate,
@@ -2345,9 +2276,12 @@ uint32_t GetMaxInstanceMemoryPages(Isolate* isolate,
       if (maximum < FLAG_wasm_max_mem_pages) return maximum;
     }
   }
-  uint32_t compiled_max_pages = instance->compiled_module()->max_mem_pages();
-  isolate->counters()->wasm_max_mem_pages_count()->AddSample(
-      compiled_max_pages);
+  WasmCompiledModule* compiled_module = instance->compiled_module();
+  uint32_t compiled_max_pages = compiled_module->max_mem_pages();
+  (compiled_module->module()->is_wasm()
+       ? isolate->counters()->wasm_wasm_max_mem_pages_count()
+       : isolate->counters()->wasm_asm_max_mem_pages_count())
+      ->AddSample(compiled_max_pages);
   if (compiled_max_pages != 0) return compiled_max_pages;
   return FLAG_wasm_max_mem_pages;
 }
@@ -2490,14 +2424,14 @@ int32_t wasm::GrowWebAssemblyMemory(Isolate* isolate,
     new_buffer = GrowMemoryBuffer(isolate, memory_buffer, pages, max_pages);
     if (new_buffer.is_null()) return -1;
     DCHECK(!instance_wrapper->has_previous());
-    SetInstanceMemory(instance, *new_buffer);
+    SetInstanceMemory(isolate, instance, new_buffer);
     UncheckedUpdateInstanceMemory(isolate, instance, old_mem_start, old_size);
     while (instance_wrapper->has_next()) {
       instance_wrapper = instance_wrapper->next_wrapper();
       DCHECK(WasmInstanceWrapper::IsWasmInstanceWrapper(*instance_wrapper));
       Handle<WasmInstanceObject> instance = instance_wrapper->instance_object();
       DCHECK(IsWasmInstance(*instance));
-      SetInstanceMemory(instance, *new_buffer);
+      SetInstanceMemory(isolate, instance, new_buffer);
       UncheckedUpdateInstanceMemory(isolate, instance, old_mem_start, old_size);
     }
   }
@@ -2527,7 +2461,7 @@ int32_t wasm::GrowMemory(Isolate* isolate, Handle<WasmInstanceObject> instance,
     Handle<JSArrayBuffer> buffer =
         GrowMemoryBuffer(isolate, instance_buffer, pages, max_pages);
     if (buffer.is_null()) return -1;
-    SetInstanceMemory(instance, *buffer);
+    SetInstanceMemory(isolate, instance, buffer);
     UncheckedUpdateInstanceMemory(isolate, instance, old_mem_start, old_size);
     DCHECK(old_size % WasmModule::kPageSize == 0);
     return (old_size / WasmModule::kPageSize);
@@ -3105,7 +3039,7 @@ bool LazyCompilationOrchestrator::CompileFunction(
   CodeSpecialization code_specialization(isolate, &specialization_zone);
   if (module_env.module->globals_size) {
     Address globals_start =
-        reinterpret_cast<Address>(instance->globals_buffer()->backing_store());
+        reinterpret_cast<Address>(compiled_module->globals_start());
     code_specialization.RelocateGlobals(nullptr, globals_start);
   }
   if (instance->has_memory_buffer()) {

@@ -305,6 +305,9 @@ TFS_BUILTIN(StringLessThan)
 TFS_BUILTIN(StringLessThanOrEqual)
 TFS_BUILTIN(StringGreaterThan)
 TFS_BUILTIN(StringGreaterThanOrEqual)
+TFS_BUILTIN(AsyncGeneratorResolve)
+TFS_BUILTIN(AsyncGeneratorReject)
+TFS_BUILTIN(AsyncGeneratorResumeNext)
 
 #undef TFS_BUILTIN
 

@@ -12,7 +12,7 @@
 #include "src/bailout-reason.h"
 #include "src/base/bits.h"
 #include "src/base/flags.h"
-#include "src/builtins/builtins.h"
+#include "src/builtins/builtins-definitions.h"
 #include "src/checks.h"
 #include "src/elements-kind.h"
 #include "src/field-index.h"
@@ -364,6 +364,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(CONSTANT_ELEMENTS_PAIR_TYPE)                                \
   V(MODULE_TYPE)                                                \
   V(MODULE_INFO_ENTRY_TYPE)                                     \
+  V(ASYNC_GENERATOR_REQUEST_TYPE)                               \
   V(FIXED_ARRAY_TYPE)                                           \
   V(TRANSITION_ARRAY_TYPE)                                      \
   V(SHARED_FUNCTION_INFO_TYPE)                                  \
@@ -383,6 +384,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(JS_ARGUMENTS_TYPE)                                          \
   V(JS_CONTEXT_EXTENSION_OBJECT_TYPE)                           \
   V(JS_GENERATOR_OBJECT_TYPE)                                   \
+  V(JS_ASYNC_GENERATOR_OBJECT_TYPE)                             \
   V(JS_MODULE_NAMESPACE_TYPE)                                   \
   V(JS_ARRAY_TYPE)                                              \
   V(JS_ARRAY_BUFFER_TYPE)                                       \
@@ -532,7 +534,8 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(CONTEXT_EXTENSION, ContextExtension, context_extension)                  \
   V(CONSTANT_ELEMENTS_PAIR, ConstantElementsPair, constant_elements_pair)    \
   V(MODULE, Module, module)                                                  \
-  V(MODULE_INFO_ENTRY, ModuleInfoEntry, module_info_entry)
+  V(MODULE_INFO_ENTRY, ModuleInfoEntry, module_info_entry)                   \
+  V(ASYNC_GENERATOR_REQUEST, AsyncGeneratorRequest, async_generator_request)
 
 // We use the full 8 bits of the instance_type field to encode heap object
 // instance types.  The high-order bit (bit 7) is set if the object is not a
@@ -703,6 +706,7 @@ enum InstanceType {
   CONSTANT_ELEMENTS_PAIR_TYPE,
   MODULE_TYPE,
   MODULE_INFO_ENTRY_TYPE,
+  ASYNC_GENERATOR_REQUEST_TYPE,
   FIXED_ARRAY_TYPE,
   TRANSITION_ARRAY_TYPE,
   SHARED_FUNCTION_INFO_TYPE,
@@ -729,6 +733,7 @@ enum InstanceType {
   JS_ARGUMENTS_TYPE,
   JS_CONTEXT_EXTENSION_OBJECT_TYPE,
   JS_GENERATOR_OBJECT_TYPE,
+  JS_ASYNC_GENERATOR_OBJECT_TYPE,
   JS_MODULE_NAMESPACE_TYPE,
   JS_ARRAY_TYPE,
   JS_ARRAY_BUFFER_TYPE,
@@ -1004,6 +1009,7 @@ template <class C> inline bool Is(Object* obj);
   V(JSArgumentsObject)           \
   V(JSContextExtensionObject)    \
   V(JSGeneratorObject)           \
+  V(JSAsyncGeneratorObject)      \
   V(JSModuleNamespace)           \
   V(Map)                         \
   V(DescriptorArray)             \
@@ -2553,6 +2559,7 @@ class JSObject: public JSReceiver {
   STATIC_ASSERT(kHeaderSize == Internals::kJSObjectHeaderSize);
 
   class BodyDescriptor;
+  class FastBodyDescriptor;
 
   // Gets the number of currently used elements.
   int GetFastElementsUsage();
@@ -3049,7 +3056,6 @@ class HashTableBase : public FixedArray {
 
   // Tells whether k is a real key.  The hole and undefined are not allowed
   // as keys and can be used to indicate missing or deleted elements.
-  inline bool IsKey(Object* k);
   inline bool IsKey(Isolate* isolate, Object* k);
 
   // Compute the probe offset (quadratic probing).
@@ -3430,10 +3436,6 @@ class Dictionary: public HashTable<Derived, Shape, Key> {
   // Add entry to dictionary. Returns entry value.
   static int AddEntry(Handle<Derived> dictionary, Key key, Handle<Object> value,
                       PropertyDetails details, uint32_t hash);
-  // Generate new enumeration indices to avoid enumeration index overflow.
-  // Returns iteration indices array for the |dictionary|.
-  static Handle<FixedArray> GenerateNewEnumerationIndices(
-      Handle<Derived> dictionary);
 };
 
 
@@ -3499,9 +3501,6 @@ class NameDictionary
 
  public:
   DECLARE_CAST(NameDictionary)
-
-  inline static Handle<FixedArray> DoGenerateNewEnumerationIndices(
-      Handle<NameDictionary> dictionary);
 
   static const int kEntryValueIndex = 1;
   static const int kEntryDetailsIndex = 2;
@@ -6172,6 +6171,28 @@ class PromiseReactionJobInfo : public Struct {
   DISALLOW_IMPLICIT_CONSTRUCTORS(PromiseReactionJobInfo);
 };
 
+class AsyncGeneratorRequest : public Struct {
+ public:
+  // Holds an AsyncGeneratorRequest, or Undefined.
+  DECL_ACCESSORS(next, Object)
+  DECL_INT_ACCESSORS(resume_mode)
+  DECL_ACCESSORS(value, Object)
+  DECL_ACCESSORS(promise, Object)
+
+  static const int kNextOffset = Struct::kHeaderSize;
+  static const int kResumeModeOffset = kNextOffset + kPointerSize;
+  static const int kValueOffset = kResumeModeOffset + kPointerSize;
+  static const int kPromiseOffset = kValueOffset + kPointerSize;
+  static const int kSize = kPromiseOffset + kPointerSize;
+
+  DECLARE_CAST(AsyncGeneratorRequest)
+  DECLARE_PRINTER(AsyncGeneratorRequest)
+  DECLARE_VERIFIER(AsyncGeneratorRequest)
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(AsyncGeneratorRequest);
+};
+
 // Container for metadata stored on each prototype map.
 class PrototypeInfo : public Struct {
  public:
@@ -7476,6 +7497,39 @@ class JSGeneratorObject: public JSObject {
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSGeneratorObject);
+};
+
+class JSAsyncGeneratorObject : public JSGeneratorObject {
+ public:
+  DECLARE_CAST(JSAsyncGeneratorObject)
+
+  // Dispatched behavior.
+  DECLARE_VERIFIER(JSAsyncGeneratorObject)
+
+  // [queue]
+  // Pointer to the head of a singly linked list of AsyncGeneratorRequest, or
+  // undefined.
+  DECL_ACCESSORS(queue, HeapObject)
+
+  // [await_input_or_debug_pos]
+  // Holds the value to resume generator with after an Await(), in order to
+  // avoid clobbering function.sent. If awaited_promise is not undefined, holds
+  // current bytecode offset for debugging instead.
+  DECL_ACCESSORS(await_input_or_debug_pos, Object)
+
+  // [awaited_promise]
+  // A reference to the Promise of an AwaitExpression.
+  DECL_ACCESSORS(awaited_promise, HeapObject)
+
+  // Layout description.
+  static const int kQueueOffset = JSGeneratorObject::kSize;
+  static const int kAwaitInputOrDebugPosOffset = kQueueOffset + kPointerSize;
+  static const int kAwaitedPromiseOffset =
+      kAwaitInputOrDebugPosOffset + kPointerSize;
+  static const int kSize = kAwaitedPromiseOffset + kPointerSize;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncGeneratorObject);
 };
 
 // When importing a module namespace (import * as foo from "bar"), a
@@ -10449,6 +10503,9 @@ class JSArrayBuffer: public JSObject {
   inline uint32_t bit_field() const;
   inline void set_bit_field(uint32_t bits);
 
+  // [is_external]: true indicates that the embedder is in charge of freeing the
+  // backing_store, while is_external == false means that v8 will free the
+  // memory block once all ArrayBuffers referencing it are collected by the GC.
   inline bool is_external();
   inline void set_is_external(bool value);
 

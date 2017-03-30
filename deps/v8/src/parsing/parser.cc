@@ -1051,7 +1051,7 @@ void Parser::ParseExportClause(ZoneList<const AstRawString*>* export_names,
     const AstRawString* local_name = ParseIdentifierName(CHECK_OK_VOID);
     const AstRawString* export_name = NULL;
     Scanner::Location location = scanner()->location();
-    if (CheckContextualKeyword(CStrVector("as"))) {
+    if (CheckContextualKeyword(Token::AS)) {
       export_name = ParseIdentifierName(CHECK_OK_VOID);
       // Set the location to the whole "a as b" string, so that it makes sense
       // both for errors due to "a" and for errors due to "b".
@@ -1096,7 +1096,7 @@ ZoneList<const Parser::NamedImport*>* Parser::ParseNamedImports(
     // In the presence of 'as', the left-side of the 'as' can
     // be any IdentifierName. But without 'as', it must be a valid
     // BindingIdentifier.
-    if (CheckContextualKeyword(CStrVector("as"))) {
+    if (CheckContextualKeyword(Token::AS)) {
       local_name = ParseIdentifierName(CHECK_OK);
     }
     if (!Token::IsIdentifier(scanner()->current_token(), STRICT, false,
@@ -1173,7 +1173,7 @@ void Parser::ParseImportDeclaration(bool* ok) {
     switch (peek()) {
       case Token::MUL: {
         Consume(Token::MUL);
-        ExpectContextualKeyword(CStrVector("as"), CHECK_OK_VOID);
+        ExpectContextualKeyword(Token::AS, CHECK_OK_VOID);
         module_namespace_binding =
             ParseIdentifier(kDontAllowRestrictedIdentifiers, CHECK_OK_VOID);
         module_namespace_binding_loc = scanner()->location();
@@ -1193,7 +1193,7 @@ void Parser::ParseImportDeclaration(bool* ok) {
     }
   }
 
-  ExpectContextualKeyword(CStrVector("from"), CHECK_OK_VOID);
+  ExpectContextualKeyword(Token::FROM, CHECK_OK_VOID);
   const AstRawString* module_specifier = ParseModuleSpecifier(CHECK_OK_VOID);
   ExpectSemicolon(CHECK_OK_VOID);
 
@@ -1316,7 +1316,7 @@ Statement* Parser::ParseExportDeclaration(bool* ok) {
     case Token::MUL: {
       Consume(Token::MUL);
       loc = scanner()->location();
-      ExpectContextualKeyword(CStrVector("from"), CHECK_OK);
+      ExpectContextualKeyword(Token::FROM, CHECK_OK);
       const AstRawString* module_specifier = ParseModuleSpecifier(CHECK_OK);
       ExpectSemicolon(CHECK_OK);
       module()->AddStarExport(module_specifier, loc, zone());
@@ -1342,7 +1342,7 @@ Statement* Parser::ParseExportDeclaration(bool* ok) {
       ParseExportClause(&export_names, &export_locations, &original_names,
                         &reserved_loc, CHECK_OK);
       const AstRawString* module_specifier = nullptr;
-      if (CheckContextualKeyword(CStrVector("from"))) {
+      if (CheckContextualKeyword(Token::FROM)) {
         module_specifier = ParseModuleSpecifier(CHECK_OK);
       } else if (reserved_loc.IsValid()) {
         // No FromClause, so reserved words are invalid in ExportClause.
@@ -2705,10 +2705,10 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     if (is_lazy_top_level_function || is_lazy_inner_function) {
       Scanner::BookmarkScope bookmark(scanner());
       bookmark.Set();
-      LazyParsingResult result = SkipFunction(
-          kind, scope, &num_parameters, &function_length,
-          &has_duplicate_parameters, &expected_property_count,
-          is_lazy_inner_function, is_lazy_top_level_function, CHECK_OK);
+      LazyParsingResult result =
+          SkipFunction(kind, scope, &num_parameters, &function_length,
+                       &expected_property_count, is_lazy_inner_function,
+                       is_lazy_top_level_function, CHECK_OK);
 
       if (result == kLazyParsingAborted) {
         DCHECK(is_lazy_top_level_function);
@@ -2803,9 +2803,8 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
 
 Parser::LazyParsingResult Parser::SkipFunction(
     FunctionKind kind, DeclarationScope* function_scope, int* num_parameters,
-    int* function_length, bool* has_duplicate_parameters,
-    int* expected_property_count, bool is_inner_function, bool may_abort,
-    bool* ok) {
+    int* function_length, int* expected_property_count, bool is_inner_function,
+    bool may_abort, bool* ok) {
   DCHECK_NE(kNoSourcePosition, function_scope->start_position());
   DCHECK_EQ(kNoSourcePosition, parameters_end_pos_);
   if (produce_cached_parse_data()) CHECK(log_);
@@ -2831,7 +2830,6 @@ Parser::LazyParsingResult Parser::SkipFunction(
       Expect(Token::RBRACE, CHECK_OK_VALUE(kLazyParsingComplete));
       *num_parameters = entry.num_parameters();
       *function_length = entry.function_length();
-      *has_duplicate_parameters = entry.has_duplicate_parameters();
       *expected_property_count = entry.property_count();
       SetLanguageMode(function_scope, entry.language_mode());
       if (entry.uses_super_property())
@@ -2861,7 +2859,6 @@ Parser::LazyParsingResult Parser::SkipFunction(
       Expect(Token::RBRACE, CHECK_OK_VALUE(kLazyParsingComplete));
       *num_parameters = data.num_parameters;
       *function_length = data.function_length;
-      *has_duplicate_parameters = data.has_duplicate_parameters;
       *expected_property_count = data.expected_property_count;
       SetLanguageMode(function_scope, data.language_mode);
       if (data.uses_super_property) {
@@ -2922,17 +2919,15 @@ Parser::LazyParsingResult Parser::SkipFunction(
       function_scope->end_position() - function_scope->start_position();
   *num_parameters = logger->num_parameters();
   *function_length = logger->function_length();
-  *has_duplicate_parameters = logger->has_duplicate_parameters();
   *expected_property_count = logger->properties();
   SkipFunctionLiterals(logger->num_inner_functions());
   if (!is_inner_function && produce_cached_parse_data()) {
     DCHECK(log_);
     log_->LogFunction(
         function_scope->start_position(), function_scope->end_position(),
-        *num_parameters, *function_length, *has_duplicate_parameters,
-        *expected_property_count, language_mode(),
-        function_scope->uses_super_property(), function_scope->calls_eval(),
-        logger->num_inner_functions());
+        *num_parameters, *function_length, *expected_property_count,
+        language_mode(), function_scope->uses_super_property(),
+        function_scope->calls_eval(), logger->num_inner_functions());
   }
   return kLazyParsingComplete;
 }
@@ -3210,7 +3205,7 @@ Expression* Parser::BuildInitialYield(int pos, FunctionKind kind) {
   // caused by calling the .throw method on a generator suspended at the
   // initial yield (i.e. right after generator instantiation).
   return BuildSuspend(generator, assignment, scope()->start_position(),
-                      Suspend::kOnExceptionThrow, Suspend::kYield);
+                      Suspend::kOnExceptionThrow, SuspendFlags::kYield);
 }
 
 ZoneList<Statement*>* Parser::ParseFunction(
@@ -3987,7 +3982,7 @@ Expression* Parser::RewriteAwaitExpression(Expression* value, int await_pos) {
     Expression* do_expr = factory()->NewDoExpression(
         do_block, AsyncGeneratorAwaitVariable(), nopos);
     return BuildSuspend(generator_object, do_expr, nopos,
-                        Suspend::kOnExceptionRethrow, Suspend::kAwait);
+                        Suspend::kOnExceptionRethrow, SuspendFlags::kAwait);
   }
 
   // The parser emits calls to AsyncFunctionAwaitCaught or but the
@@ -4007,8 +4002,9 @@ Expression* Parser::RewriteAwaitExpression(Expression* value, int await_pos) {
   Expression* do_expr =
       factory()->NewDoExpression(do_block, PromiseVariable(), nopos);
 
-  return BuildSuspend(generator_object, do_expr, nopos,
-                      Suspend::kOnExceptionRethrow, Suspend::kAwait);
+  return factory()->NewSuspend(generator_object, do_expr, nopos,
+                               Suspend::kOnExceptionRethrow,
+                               SuspendFlags::kAwait);
 }
 
 class NonPatternRewriter : public AstExpressionRewriter {
@@ -4573,7 +4569,7 @@ Expression* Parser::RewriteYieldStar(Expression* generator,
     Expression* output_proxy = factory()->NewVariableProxy(var_output);
     Suspend* yield =
         BuildSuspend(generator, output_proxy, nopos, Suspend::kOnExceptionThrow,
-                     Suspend::kYieldStar);
+                     SuspendFlags::kYieldStar);
     yield_output = factory()->NewExpressionStatement(yield, nopos);
   }
 

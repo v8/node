@@ -29,7 +29,6 @@
 #include "src/code-stubs.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
 #include "src/compiler.h"
-#include "src/context-measure.h"
 #include "src/contexts.h"
 #include "src/conversions-inl.h"
 #include "src/counters.h"
@@ -4600,8 +4599,8 @@ Maybe<bool> v8::Object::SetIntegrityLevel(Local<Context> context,
   auto self = Utils::OpenHandle(this);
   i::JSReceiver::IntegrityLevel i_level =
       level == IntegrityLevel::kFrozen ? i::FROZEN : i::SEALED;
-  Maybe<bool> result =
-      i::JSReceiver::SetIntegrityLevel(self, i_level, i::Object::DONT_THROW);
+  Maybe<bool> result = i::JSReceiver::SetIntegrityLevel(
+      self, i_level, i::Object::THROW_ON_ERROR);
   has_pending_exception = result.IsNothing();
   RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
   return result;
@@ -6506,12 +6505,7 @@ void Context::SetErrorMessageForCodeGenerationFromStrings(Local<String> error) {
   context->set_error_message_for_code_gen_from_strings(*error_handle);
 }
 
-
-size_t Context::EstimatedSize() {
-  return static_cast<size_t>(
-      i::ContextMeasure(*Utils::OpenHandle(this)).Size());
-}
-
+size_t Context::EstimatedSize() { return 0; }
 
 MaybeLocal<v8::Object> ObjectTemplate::NewInstance(Local<Context> context) {
   PREPARE_FOR_EXECUTION(context, ObjectTemplate, NewInstance, Object);

@@ -17029,6 +17029,7 @@ static void AsmJsWarningListener(v8::Local<v8::Message> message,
 
 TEST(AsmJsWarning) {
   i::FLAG_validate_asm = true;
+  if (i::FLAG_suppress_asm_messages) return;
 
   LocalContext env;
   v8::Isolate* isolate = env->GetIsolate();
@@ -25774,14 +25775,6 @@ TEST(FutexInterruption) {
       "Atomics.wait(i32a, 0, 0);");
   CHECK(try_catch.HasTerminated());
   timeout_thread.Join();
-}
-
-
-TEST(EstimatedContextSize) {
-  v8::Isolate* isolate = CcTest::isolate();
-  v8::HandleScope scope(isolate);
-  LocalContext env;
-  CHECK(50000 < env->EstimatedSize());
 }
 
 

@@ -41,6 +41,10 @@ namespace internal {
 namespace {
 
 PreParserIdentifier GetSymbolHelper(Scanner* scanner) {
+  // These symbols require slightly different treatement:
+  // - regular keywords (enum, await, etc.; treated in 1st switch.)
+  // - 'contextual' keywords (and may contain escaped; treated in 2nd switch.)
+  // - 'contextual' keywords, but may not be escaped (3rd switch).
   switch (scanner->current_token()) {
     case Token::ENUM:
       return PreParserIdentifier::Enum();
@@ -57,20 +61,31 @@ PreParserIdentifier GetSymbolHelper(Scanner* scanner) {
     case Token::ASYNC:
       return PreParserIdentifier::Async();
     default:
-      if (scanner->UnescapedLiteralMatches("eval", 4))
-        return PreParserIdentifier::Eval();
-      if (scanner->UnescapedLiteralMatches("arguments", 9))
-        return PreParserIdentifier::Arguments();
-      if (scanner->UnescapedLiteralMatches("undefined", 9))
-        return PreParserIdentifier::Undefined();
-      if (scanner->LiteralMatches("prototype", 9))
-        return PreParserIdentifier::Prototype();
-      if (scanner->LiteralMatches("constructor", 11))
-        return PreParserIdentifier::Constructor();
-      if (scanner->LiteralMatches("name", 4))
-        return PreParserIdentifier::Name();
-      return PreParserIdentifier::Default();
+      break;
   }
+  switch (scanner->current_contextual_token()) {
+    case Token::PROTOTYPE:
+      return PreParserIdentifier::Prototype();
+    case Token::CONSTRUCTOR:
+      return PreParserIdentifier::Constructor();
+    case Token::NAME:
+      return PreParserIdentifier::Name();
+    default:
+      break;
+  }
+  if (scanner->literal_contains_escapes())
+    return PreParserIdentifier::Default();
+  switch (scanner->current_contextual_token()) {
+    case Token::EVAL:
+      return PreParserIdentifier::Eval();
+    case Token::ARGUMENTS:
+      return PreParserIdentifier::Arguments();
+    case Token::UNDEFINED:
+      return PreParserIdentifier::Undefined();
+    default:
+      break;
+  }
+  return PreParserIdentifier::Default();
 }
 
 }  // unnamed namespace
@@ -145,7 +160,6 @@ PreParser::PreParseResult PreParser::PreParseFunction(
   bool* ok = &ok_holder;
 
   PreParserFormalParameters formals(function_scope);
-  bool has_duplicate_parameters = false;
   DuplicateFinder duplicate_finder;
   std::unique_ptr<ExpressionClassifier> formals_classifier;
 
@@ -162,8 +176,6 @@ PreParser::PreParseResult PreParser::PreParseFunction(
     CheckArityRestrictions(
         formals.arity, kind, formals.has_rest, function_scope->start_position(),
         formals_end_position, CHECK_OK_VALUE(kPreParseSuccess));
-    has_duplicate_parameters =
-        !classifier()->is_valid_formal_parameter_list_without_duplicates();
   }
 
   Expect(Token::LBRACE, CHECK_OK_VALUE(kPreParseSuccess));
@@ -177,8 +189,7 @@ PreParser::PreParseResult PreParser::PreParseFunction(
 
   {
     BlockState block_state(&scope_, inner_scope);
-    result = ParseStatementListAndLogFunction(
-        &formals, has_duplicate_parameters, may_abort, ok);
+    result = ParseStatementListAndLogFunction(&formals, may_abort, ok);
   }
 
   if (!formals.is_simple) {
@@ -316,12 +327,9 @@ PreParser::Expression PreParser::ParseFunctionLiteral(
   }
 
   if (FLAG_use_parse_tasks && is_top_level && preparse_data_) {
-    bool has_duplicate_parameters =
-        !formals_classifier.is_valid_formal_parameter_list_without_duplicates();
     preparse_data_->AddTopLevelFunctionData(PreParseData::FunctionData(
         start_position, end_position, formals.num_parameters(),
-        formals.function_length, has_duplicate_parameters,
-        function_state_->expected_property_count(),
+        formals.function_length, function_state_->expected_property_count(),
         GetLastFunctionLiteralId() - func_id, language_mode,
         function_scope->uses_super_property(), function_scope->calls_eval()));
     // TODO(wiktorg) spin-off a parse task
@@ -330,8 +338,6 @@ PreParser::Expression PreParser::ParseFunctionLiteral(
              end_position);
       PrintF("\t- %d params\n", formals.num_parameters());
       PrintF("\t- %d function length\n", formals.function_length);
-      PrintF("\t- %s duplicate parameters\n",
-             has_duplicate_parameters ? "SOME" : "NO");
       PrintF("\t- %d expected properties\n",
              function_state_->expected_property_count());
       PrintF("\t- %d inner-funcs\n", GetLastFunctionLiteralId() - func_id);
@@ -349,8 +355,7 @@ PreParser::Expression PreParser::ParseFunctionLiteral(
 }
 
 PreParser::LazyParsingResult PreParser::ParseStatementListAndLogFunction(
-    PreParserFormalParameters* formals, bool has_duplicate_parameters,
-    bool may_abort, bool* ok) {
+    PreParserFormalParameters* formals, bool may_abort, bool* ok) {
   PreParserStatementList body;
   LazyParsingResult result = ParseStatementList(
       body, Token::RBRACE, may_abort, CHECK_OK_VALUE(kLazyParsingComplete));
@@ -360,10 +365,9 @@ PreParser::LazyParsingResult PreParser::ParseStatementListAndLogFunction(
   DCHECK_EQ(Token::RBRACE, scanner()->peek());
   int body_end = scanner()->peek_location().end_pos;
   DCHECK_EQ(this->scope()->is_function_scope(), formals->is_simple);
-  log_.LogFunction(body_end, formals->num_parameters(),
-                   formals->function_length, has_duplicate_parameters,
-                   function_state_->expected_property_count(),
-                   GetLastFunctionLiteralId());
+  log_.LogFunction(
+      body_end, formals->num_parameters(), formals->function_length,
+      function_state_->expected_property_count(), GetLastFunctionLiteralId());
   return kLazyParsingComplete;
 }
 

@@ -131,6 +131,31 @@ class JSObject::BodyDescriptor final : public BodyDescriptorBase {
   }
 };
 
+class JSObject::FastBodyDescriptor final : public BodyDescriptorBase {
+ public:
+  static const int kStartOffset = JSReceiver::kPropertiesOffset;
+
+  static bool IsValidSlot(HeapObject* obj, int offset) {
+    return offset >= kStartOffset;
+  }
+
+  template <typename ObjectVisitor>
+  static inline void IterateBody(HeapObject* obj, int object_size,
+                                 ObjectVisitor* v) {
+    IteratePointers(obj, kStartOffset, object_size, v);
+  }
+
+  template <typename StaticVisitor>
+  static inline void IterateBody(HeapObject* obj, int object_size) {
+    Heap* heap = obj->GetHeap();
+    IteratePointers<StaticVisitor>(heap, obj, kStartOffset, object_size);
+  }
+
+  static inline int SizeOf(Map* map, HeapObject* object) {
+    return map->instance_size();
+  }
+};
+
 // Iterates the function object according to the visiting policy.
 template <JSFunction::BodyVisitingPolicy body_visiting_policy>
 class JSFunction::BodyDescriptorImpl final : public BodyDescriptorBase {
@@ -485,6 +510,7 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3) {
     case JS_PROMISE_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
     case JS_GENERATOR_OBJECT_TYPE:
+    case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_VALUE_TYPE:
     case JS_DATE_TYPE:
     case JS_ARRAY_TYPE:
