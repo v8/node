@@ -611,13 +611,12 @@ namespace internal {
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
   F(Verify, 1, 1)                             \
-  F(WasmNumInterpretedCalls, 1, 1)
+  F(WasmNumInterpretedCalls, 1, 1)            \
+  F(RedirectToWasmInterpreter, 2, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F)     \
   F(ArrayBufferGetByteLength, 1, 1)          \
   F(ArrayBufferNeuter, 1, 1)                 \
-  F(TypedArrayCopyElements, 3, 1)            \
-  F(TypedArrayInitializeFromArrayLike, 3, 1) \
   F(ArrayBufferViewGetByteLength, 1, 1)      \
   F(ArrayBufferViewGetByteOffset, 1, 1)      \
   F(TypedArrayGetLength, 1, 1)               \

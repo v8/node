@@ -595,47 +595,62 @@ inline int64_t ExecuteI64ReinterpretF64(WasmVal a) {
   return a.to_unchecked<int64_t>();
 }
 
-inline int32_t ExecuteGrowMemory(uint32_t delta_pages, WasmInstance* instance) {
+inline int32_t ExecuteGrowMemory(uint32_t delta_pages,
+                                 MaybeHandle<WasmInstanceObject> instance_obj,
+                                 WasmInstance* instance) {
+  DCHECK_EQ(0, instance->mem_size % WasmModule::kPageSize);
+  uint32_t old_pages = instance->mem_size / WasmModule::kPageSize;
+
+  // If an instance is set, execute GrowMemory on the instance. This will also
+  // update the WasmInstance struct used here.
+  if (!instance_obj.is_null()) {
+    Isolate* isolate = instance_obj.ToHandleChecked()->GetIsolate();
+    int32_t ret = WasmInstanceObject::GrowMemory(
+        isolate, instance_obj.ToHandleChecked(), delta_pages);
+    // Some sanity checks.
+    DCHECK_EQ(ret == -1 ? old_pages : old_pages + delta_pages,
+              instance->mem_size / WasmModule::kPageSize);
+    DCHECK(ret == -1 || static_cast<uint32_t>(ret) == old_pages);
+    return ret;
+  }
+
   // TODO(ahaas): Move memory allocation to wasm-module.cc for better
   // encapsulation.
   if (delta_pages > FLAG_wasm_max_mem_pages ||
       delta_pages > instance->module->max_mem_pages) {
     return -1;
   }
-  uint32_t old_size = instance->mem_size;
-  uint32_t new_size;
+
+  uint32_t new_pages = old_pages + delta_pages;
+  if (new_pages > FLAG_wasm_max_mem_pages ||
+      new_pages > instance->module->max_mem_pages) {
+    return -1;
+  }
+
   byte* new_mem_start;
   if (instance->mem_size == 0) {
     // TODO(gdeepti): Fix bounds check to take into account size of memtype.
-    new_size = delta_pages * wasm::WasmModule::kPageSize;
-    new_mem_start = static_cast<byte*>(calloc(new_size, sizeof(byte)));
-    if (!new_mem_start) {
-      return -1;
-    }
+    new_mem_start = static_cast<byte*>(
+        calloc(new_pages * WasmModule::kPageSize, sizeof(byte)));
+    if (!new_mem_start) return -1;
   } else {
     DCHECK_NOT_NULL(instance->mem_start);
-    new_size = old_size + delta_pages * wasm::WasmModule::kPageSize;
-    if (new_size / wasm::WasmModule::kPageSize > FLAG_wasm_max_mem_pages ||
-        new_size / wasm::WasmModule::kPageSize >
-            instance->module->max_mem_pages) {
-      return -1;
-    }
     if (EnableGuardRegions()) {
-      v8::base::OS::Unprotect(instance->mem_start, new_size);
+      v8::base::OS::Unprotect(instance->mem_start,
+                              new_pages * WasmModule::kPageSize);
       new_mem_start = instance->mem_start;
     } else {
-      new_mem_start =
-          static_cast<byte*>(realloc(instance->mem_start, new_size));
-      if (!new_mem_start) {
-        return -1;
-      }
+      new_mem_start = static_cast<byte*>(
+          realloc(instance->mem_start, new_pages * WasmModule::kPageSize));
+      if (!new_mem_start) return -1;
     }
     // Zero initializing uninitialized memory from realloc
-    memset(new_mem_start + old_size, 0, new_size - old_size);
+    memset(new_mem_start + old_pages * WasmModule::kPageSize, 0,
+           delta_pages * WasmModule::kPageSize);
   }
   instance->mem_start = new_mem_start;
-  instance->mem_size = new_size;
-  return static_cast<int32_t>(old_size / WasmModule::kPageSize);
+  instance->mem_size = new_pages * WasmModule::kPageSize;
+  return static_cast<int32_t>(old_pages);
 }
 
 enum InternalOpcode {
@@ -922,6 +937,9 @@ class CodeMap {
   Handle<WasmInstanceObject> instance() const {
     DCHECK(has_instance());
     return instance_;
+  }
+  MaybeHandle<WasmInstanceObject> maybe_instance() const {
+    return has_instance() ? instance_ : MaybeHandle<WasmInstanceObject>();
   }
 
   void SetInstanceObject(WasmInstanceObject* instance) {
@@ -1406,13 +1424,17 @@ class ThreadImpl {
     }
   }
 
-  void DoCall(Decoder* decoder, InterpreterCode* target, pc_t* pc,
-              pc_t* limit) {
+  // Returns true if the call was successful, false if the stack check failed
+  // and the current activation was fully unwound.
+  bool DoCall(Decoder* decoder, InterpreterCode* target, pc_t* pc,
+              pc_t* limit) WARN_UNUSED_RESULT {
     frames_.back().pc = *pc;
     PushFrame(target);
+    if (!DoStackCheck()) return false;
     *pc = frames_.back().pc;
     *limit = target->end - target->start;
     decoder->Reset(target->start, target->end);
+    return true;
   }
 
   // Copies {arity} values on the top of the stack down the stack to {dest},
@@ -1473,6 +1495,30 @@ class ThreadImpl {
       possible_nondeterminism_ |= std::isnan(val.to<double>());
     }
     return true;
+  }
+
+  // Check if our control stack (frames_) exceeds the limit. Trigger stack
+  // overflow if it does, and unwinding the current frame.
+  // Returns true if execution can continue, false if the current activation was
+  // fully unwound.
+  // Do call this function immediately *after* pushing a new frame. The pc of
+  // the top frame will be reset to 0 if the stack check fails.
+  bool DoStackCheck() WARN_UNUSED_RESULT {
+    // Sum up the size of all dynamically growing structures.
+    if (V8_LIKELY(frames_.size() <= kV8MaxWasmInterpretedStackSize)) {
+      return true;
+    }
+    if (!codemap()->has_instance()) {
+      // In test mode: Just abort.
+      FATAL("wasm interpreter: stack overflow");
+    }
+    // The pc of the top frame is initialized to the first instruction. We reset
+    // it to 0 here such that we report the same position as in compiled code.
+    frames_.back().pc = 0;
+    Isolate* isolate = codemap()->instance()->GetIsolate();
+    HandleScope handle_scope(isolate);
+    isolate->StackOverflow();
+    return HandleException(isolate) == WasmInterpreter::Thread::HANDLED;
   }
 
   void Execute(InterpreterCode* code, pc_t pc, int max) {
@@ -1683,7 +1729,7 @@ class ThreadImpl {
             if (result.type != ExternalCallResult::INTERNAL) break;
           }
           // Execute an internal call.
-          DoCall(&decoder, target, &pc, &limit);
+          if (!DoCall(&decoder, target, &pc, &limit)) return;
           code = target;
           PAUSE_IF_BREAK_FLAG(AfterCall);
           continue;  // don't bump pc
@@ -1698,7 +1744,8 @@ class ThreadImpl {
           switch (result.type) {
             case ExternalCallResult::INTERNAL:
               // The import is a function of this instance. Call it directly.
-              DoCall(&decoder, result.interpreter_code, &pc, &limit);
+              if (!DoCall(&decoder, result.interpreter_code, &pc, &limit))
+                return;
               code = result.interpreter_code;
               PAUSE_IF_BREAK_FLAG(AfterCall);
               continue;  // don't bump pc
@@ -1838,7 +1885,8 @@ class ThreadImpl {
         case kExprGrowMemory: {
           MemoryIndexOperand operand(&decoder, code->at(pc));
           uint32_t delta_pages = Pop().to<uint32_t>();
-          Push(pc, WasmVal(ExecuteGrowMemory(delta_pages, instance())));
+          Push(pc, WasmVal(ExecuteGrowMemory(
+                       delta_pages, codemap_->maybe_instance(), instance())));
           len = 1 + operand.length;
           break;
         }

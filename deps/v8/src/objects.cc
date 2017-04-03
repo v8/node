@@ -14751,8 +14751,8 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   if (!it.done()) {
     os << "Source positions:\n pc offset  position\n";
     for (; !it.done(); it.Advance()) {
-      os << std::setw(10) << it.code_offset() << std::setw(10)
-         << it.source_position().ScriptOffset()
+      os << std::setw(10) << std::hex << it.code_offset() << std::dec
+         << std::setw(10) << it.source_position().ScriptOffset()
          << (it.is_statement() ? "  statement" : "") << "\n";
     }
     os << "\n";
@@ -14775,7 +14775,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
     for (unsigned i = 0; i < table.length(); i++) {
       unsigned pc_offset = table.GetPcOffset(i);
       os << static_cast<const void*>(instruction_start() + pc_offset) << "  ";
-      os << std::setw(4) << pc_offset << "  ";
+      os << std::setw(4) << std::hex << pc_offset << std::dec << "  ";
       table.PrintEntry(i, os);
       os << " (sp -> fp)  ";
       SafepointEntry entry = table.GetEntry(i);
@@ -14803,8 +14803,8 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
 
       for (uint32_t i = 0; i < back_edges.length(); i++) {
         os << std::setw(6) << back_edges.ast_id(i).ToInt() << "  "
-           << std::setw(9) << back_edges.pc_offset(i) << "  " << std::setw(10)
-           << back_edges.loop_depth(i) << "\n";
+           << std::setw(9) << std::hex << back_edges.pc_offset(i) << std::dec
+           << "  " << std::setw(10) << back_edges.loop_depth(i) << "\n";
       }
 
       os << "\n";
@@ -16144,6 +16144,13 @@ JSRegExp::Flags RegExpFlagsFromString(Handle<String> flags, bool* success) {
       case 'm':
         flag = JSRegExp::kMultiline;
         break;
+      case 's':
+        if (FLAG_harmony_regexp_dotall) {
+          flag = JSRegExp::kDotAll;
+        } else {
+          return JSRegExp::Flags(0);
+        }
+        break;
       case 'u':
         flag = JSRegExp::kUnicode;
         break;
@@ -16745,6 +16752,10 @@ Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>::New(
 
 template Handle<SeededNumberDictionary>
 Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,
+           uint32_t>::NewEmpty(Isolate*, PretenureFlag pretenure);
+
+template Handle<UnseededNumberDictionary>
+Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape,
            uint32_t>::NewEmpty(Isolate*, PretenureFlag pretenure);
 
 template Handle<UnseededNumberDictionary>
@@ -19462,13 +19473,24 @@ bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
   // Prevent creating array buffers when serializing.
   DCHECK(!isolate->serializer_enabled());
   if (allocated_length != 0) {
+    constexpr size_t kMinBigAllocation = 1 << 20;
+    if (allocated_length >= kMinBigAllocation) {
+      isolate->counters()->array_buffer_big_allocations()->AddSample(
+          sizeof(uint64_t) * kBitsPerByte -
+          base::bits::CountLeadingZeros64(allocated_length));
+    }
     if (initialize) {
       data = isolate->array_buffer_allocator()->Allocate(allocated_length);
     } else {
       data = isolate->array_buffer_allocator()->AllocateUninitialized(
           allocated_length);
     }
-    if (data == NULL) return false;
+    if (data == NULL) {
+      isolate->counters()->array_buffer_new_size_failures()->AddSample(
+          sizeof(uint64_t) * kBitsPerByte -
+          base::bits::CountLeadingZeros64(allocated_length));
+      return false;
+    }
   } else {
     data = NULL;
   }

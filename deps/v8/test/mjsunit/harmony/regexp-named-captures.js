@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-regexp-named-captures
+// Flags: --harmony-regexp-named-captures --harmony-regexp-lookbehind
 
 // Malformed named captures.
 assertThrows("/(?<>a)/u");  // Empty name.
@@ -67,13 +67,19 @@ assertNull("baa".match(/(?<b>.).\k<b>/u));
 
 // Nested groups.
 assertEquals(["bab", "bab", "ab", "b"], "bab".match(/(?<a>.(?<b>.(?<c>.)))/u));
+assertEquals({a: "bab", b: "ab", c: "b"},
+             "bab".match(/(?<a>.(?<b>.(?<c>.)))/u).groups);
 
 // Reference inside group.
 assertEquals(["bab", "b"], "bab".match(/(?<a>\k<a>\w)../u));
+assertEquals({a: "b"}, "bab".match(/(?<a>\k<a>\w)../u).groups);
 
 // Reference before group.
 assertEquals(["bab", "b"], "bab".match(/\k<a>(?<a>b)\w\k<a>/u));
+assertEquals({a: "b"}, "bab".match(/\k<a>(?<a>b)\w\k<a>/u).groups);
 assertEquals(["bab", "b", "a"], "bab".match(/(?<b>b)\k<a>(?<a>a)\k<b>/u));
+assertEquals({a: "a", b: "b"},
+             "bab".match(/(?<b>b)\k<a>(?<a>a)\k<b>/u).groups);
 
 // Reference properties.
 assertEquals("a", /(?<a>a)(?<b>b)\k<a>/u.exec("aba").groups.a);
@@ -93,9 +99,36 @@ assertEquals("a", /(?<ಠ_ಠ>a)/u.exec("bab").groups.ಠ_ಠ);
 assertThrows('/(?<❤>a)/u', SyntaxError);
 assertThrows('/(?<𐒤>a)/u', SyntaxError);  // ID_Continue but not ID_Start.
 
+// Interaction with lookbehind assertions.
+assertEquals(["f", "c"], "abcdef".match(/(?<=(?<a>\w){3})f/u));
+assertEquals({a: "c"}, "abcdef".match(/(?<=(?<a>\w){3})f/u).groups);
+assertEquals({a: "b"}, "abcdef".match(/(?<=(?<a>\w){4})f/u).groups);
+assertEquals({a: "a"}, "abcdef".match(/(?<=(?<a>\w)+)f/u).groups);
+assertNull("abcdef".match(/(?<=(?<a>\w){6})f/u));
+
+assertEquals(["f", ""], "abcdef".match(/((?<=\w{3}))f/u));
+assertEquals(["f", ""], "abcdef".match(/(?<a>(?<=\w{3}))f/u));
+
+assertEquals(["f", undefined], "abcdef".match(/(?<!(?<a>\d){3})f/u));
+assertNull("abcdef".match(/(?<!(?<a>\D){3})f/u));
+
+assertEquals(["f", undefined], "abcdef".match(/(?<!(?<a>\D){3})f|f/u));
+assertEquals(["f", undefined], "abcdef".match(/(?<a>(?<!\D{3}))f|f/u));
+
+// Properties created on result.groups.
+assertEquals(["fst", "snd"],
+             Object.getOwnPropertyNames(
+                 /(?<fst>.)|(?<snd>.)/u.exec("abcd").groups));
+
 // The '__proto__' property on the groups object.
 assertEquals(undefined, /(?<a>.)/u.exec("a").groups.__proto__);
 assertEquals("a", /(?<__proto__>a)/u.exec("a").groups.__proto__);
+
+// Backreference before the group (exercises the capture mini-parser).
+assertThrows("/\\1(?:.)/u", SyntaxError);
+assertThrows("/\\1(?<=a)./u", SyntaxError);
+assertThrows("/\\1(?<!a)./u", SyntaxError);
+assertEquals(["a", "a"], /\1(?<a>.)/u.exec("abcd"));
 
 // @@replace with a callable replacement argument (no named captures).
 {

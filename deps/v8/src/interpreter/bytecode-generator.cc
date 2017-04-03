@@ -762,6 +762,16 @@ void BytecodeGenerator::GenerateBytecodeBody() {
   // Emit tracing call if requested to do so.
   if (FLAG_trace) builder()->CallRuntime(Runtime::kTraceEnter);
 
+  // Emit type profile call.
+  if (info()->literal()->feedback_vector_spec()->HasTypeProfileSlot()) {
+    int num_parameters = closure_scope()->num_parameters();
+    for (int i = 0; i < num_parameters; i++) {
+      Register parameter(builder()->Parameter(i));
+      builder()->LoadAccumulatorWithRegister(parameter).CollectTypeProfile(
+          closure_scope()->parameter(i)->initializer_position());
+    }
+  }
+
   // Visit declarations within the function scope.
   VisitDeclarations(closure_scope()->declarations());
 
@@ -889,7 +899,7 @@ void BytecodeGenerator::VisitVariableDeclaration(VariableDeclaration* decl) {
     }
     case VariableLocation::LOCAL:
       if (variable->binding_needs_init()) {
-        Register destination(variable->index());
+        Register destination(builder()->Local(variable->index()));
         builder()->LoadTheHole().StoreAccumulatorInRegister(destination);
       }
       break;
@@ -1912,7 +1922,7 @@ void BytecodeGenerator::BuildVariableLoad(Variable* variable, FeedbackSlot slot,
                                           TypeofMode typeof_mode) {
   switch (variable->location()) {
     case VariableLocation::LOCAL: {
-      Register source(Register(variable->index()));
+      Register source(builder()->Local(variable->index()));
       // We need to load the variable into the accumulator, even when in a
       // VisitForRegisterScope, in order to avoid register aliasing if
       // subsequent expressions assign to the same variable.
@@ -2025,7 +2035,7 @@ void BytecodeGenerator::BuildReturn() {
         Runtime::kTraceExit, result);
   }
   if (info()->literal()->feedback_vector_spec()->HasTypeProfileSlot()) {
-    builder()->CollectTypeProfile(info()->literal()->position());
+    builder()->CollectTypeProfile(info()->literal()->return_position());
   }
   builder()->Return();
 }
@@ -2140,12 +2150,12 @@ void BytecodeGenerator::BuildVariableAssignment(Variable* variable,
       Register destination;
       if (VariableLocation::PARAMETER == variable->location()) {
         if (variable->IsReceiver()) {
-          destination = Register(builder()->Receiver());
+          destination = builder()->Receiver();
         } else {
-          destination = Register(builder()->Parameter(variable->index()));
+          destination = builder()->Parameter(variable->index());
         }
       } else {
-        destination = Register(variable->index());
+        destination = builder()->Local(variable->index());
       }
 
       if (hole_check_mode == HoleCheckMode::kRequired) {

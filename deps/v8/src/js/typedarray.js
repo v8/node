@@ -113,23 +113,30 @@ function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2, conservative) {
 
 macro TYPED_ARRAY_CONSTRUCTOR(NAME, ELEMENT_SIZE)
 function NAMEConstructByIterable(obj, iterable, iteratorFn) {
-  var list = new InternalArray();
-  // Reading the Symbol.iterator property of iterable twice would be
-  // observable with getters, so instead, we call the function which
-  // was already looked up, and wrap it in another iterable. The
-  // __proto__ of the new iterable is set to null to avoid any chance
-  // of modifications to Object.prototype being observable here.
-  var iterator = %_Call(iteratorFn, iterable);
-  var newIterable = {
-    __proto__: null
-  };
-  // TODO(littledan): Computed properties don't work yet in nosnap.
-  // Rephrase when they do.
-  newIterable[iteratorSymbol] = function() { return iterator; }
-  for (var value of newIterable) {
-    list.push(value);
+  if (%has_iteration_side_effects(iterable)) {
+    var list = new InternalArray();
+    // Reading the Symbol.iterator property of iterable twice would be
+    // observable with getters, so instead, we call the function which
+    // was already looked up, and wrap it in another iterable. The
+    // __proto__ of the new iterable is set to null to avoid any chance
+    // of modifications to Object.prototype being observable here.
+    var iterator = %_Call(iteratorFn, iterable);
+    var newIterable = {
+      __proto__: null
+    };
+    // TODO(littledan): Computed properties don't work yet in nosnap.
+    // Rephrase when they do.
+    newIterable[iteratorSymbol] = function() { return iterator; }
+    for (var value of newIterable) {
+      list.push(value);
+    }
+    %typed_array_construct_by_array_like(obj, list, list.length, ELEMENT_SIZE);
+  } else {
+    // This .length access is unobservable, because it being observable would
+    // mean that iteration has side effects, and we wouldn't reach this path.
+    %typed_array_construct_by_array_like(
+        obj, iterable, iterable.length, ELEMENT_SIZE);
   }
-  %typed_array_construct_by_array_like(obj, list, list.length, ELEMENT_SIZE);
 }
 
 // ES#sec-typedarray-typedarray TypedArray ( typedArray )
@@ -236,6 +243,9 @@ function TypedArraySetFromArrayLike(target, source, sourceLength, offset) {
     }
   }
 }
+
+%InstallToContext([
+  'typed_array_set_from_array_like', TypedArraySetFromArrayLike]);
 
 function TypedArraySetFromOverlappingTypedArray(target, source, offset) {
   var sourceElementSize = source.BYTES_PER_ELEMENT;
@@ -573,49 +583,6 @@ function TypedArrayReduceRight(callback, current) {
 %FunctionSetLength(TypedArrayReduceRight, 1);
 
 
-function TypedArraySlice(start, end) {
-  if (!IS_TYPEDARRAY(this)) throw %make_type_error(kNotTypedArray);
-  var len = %_TypedArrayGetLength(this);
-
-  var relativeStart = TO_INTEGER(start);
-
-  var k;
-  if (relativeStart < 0) {
-    k = MaxSimple(len + relativeStart, 0);
-  } else {
-    k = MinSimple(relativeStart, len);
-  }
-
-  var relativeEnd;
-  if (IS_UNDEFINED(end)) {
-    relativeEnd = len;
-  } else {
-    relativeEnd = TO_INTEGER(end);
-  }
-
-  var final;
-  if (relativeEnd < 0) {
-    final = MaxSimple(len + relativeEnd, 0);
-  } else {
-    final = MinSimple(relativeEnd, len);
-  }
-
-  var count = MaxSimple(final - k, 0);
-  var array = TypedArraySpeciesCreate(this, count);
-  // The code below is the 'then' branch; the 'else' branch species
-  // a memcpy. Because V8 doesn't canonicalize NaN, the difference is
-  // unobservable.
-  var n = 0;
-  while (k < final) {
-    var kValue = this[k];
-    array[n] = kValue;
-    k++;
-    n++;
-  }
-  return array;
-}
-
-
 // ES6 draft 08-24-14, section 22.2.2.2
 function TypedArrayOf() {
   var length = arguments.length;
@@ -700,7 +667,6 @@ utils.InstallFunctions(GlobalTypedArray.prototype, DONT_ENUM, [
   "map", TypedArrayMap,
   "reduce", TypedArrayReduce,
   "reduceRight", TypedArrayReduceRight,
-  "slice", TypedArraySlice,
   "some", TypedArraySome,
   "sort", TypedArraySort,
   "toLocaleString", TypedArrayToLocaleString

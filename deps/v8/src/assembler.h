@@ -923,6 +923,9 @@ class ExternalReference BASE_EMBEDDED {
   // Static variable RegExpStack::limit_address()
   static ExternalReference address_of_regexp_stack_limit(Isolate* isolate);
 
+  // Direct access to FLAG_harmony_regexp_dotall.
+  static ExternalReference address_of_regexp_dotall_flag(Isolate* isolate);
+
   // Static variables for RegExp.
   static ExternalReference address_of_static_offsets_vector(Isolate* isolate);
   static ExternalReference address_of_regexp_stack_memory_address(
@@ -986,6 +989,7 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference ieee754_tanh_function(Isolate* isolate);
 
   static ExternalReference libc_memchr_function(Isolate* isolate);
+  static ExternalReference libc_memcpy_function(Isolate* isolate);
   static ExternalReference libc_memset_function(Isolate* isolate);
 
   static ExternalReference page_flags(Page* page);
@@ -1082,7 +1086,6 @@ V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, ExternalReference);
 
 // -----------------------------------------------------------------------------
 // Utility functions
-void* libc_memchr(void* string, int character, size_t search_length);
 
 inline int NumberOfBitsSet(uint32_t x) {
   unsigned int num_bits_set;

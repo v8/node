@@ -236,6 +236,7 @@ namespace internal {
   /* Array */                                                                  \
   ASM(ArrayCode)                                                               \
   ASM(InternalArrayCode)                                                       \
+  CPP(HasIterationSideEffects)                                                 \
   CPP(ArrayConcat)                                                             \
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kArg)                                                   \
@@ -737,6 +738,8 @@ namespace internal {
   TFJ(RegExpPrototypeCompile, 2, kPattern, kFlags)                             \
   /* ES #sec-regexp.prototype.exec */                                          \
   TFJ(RegExpPrototypeExec, 1, kString)                                         \
+  /* ES #sec-get-regexp.prototype.dotAll */                                    \
+  TFJ(RegExpPrototypeDotAllGetter, 0)                                          \
   /* ES #sec-get-regexp.prototype.flags */                                     \
   TFJ(RegExpPrototypeFlagsGetter, 0)                                           \
   /* ES #sec-get-regexp.prototype.global */                                    \
@@ -889,6 +892,8 @@ namespace internal {
   CPP(TypedArrayPrototypeLastIndexOf)                                          \
   /* ES6 #sec-%typedarray%.prototype.reverse */                                \
   CPP(TypedArrayPrototypeReverse)                                              \
+  /* ES6 #sec-%typedarray%.prototype.slice */                                  \
+  CPP(TypedArrayPrototypeSlice)                                                \
   /* ES6 %TypedArray%.prototype.every */                                       \
   TFJ(TypedArrayPrototypeEvery, 2, kCallbackFn, kThisArg)                      \
   /* ES6 %TypedArray%.prototype.some */                                        \

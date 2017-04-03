@@ -1524,6 +1524,11 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         array_function, isolate->factory()->InternalizeUtf8String("isArray"),
         Builtins::kArrayIsArray, 1, true);
     native_context()->set_is_arraylike(*is_arraylike);
+
+    Handle<JSFunction> has_side_effects = SimpleCreateFunction(
+        isolate, factory->NewStringFromAsciiChecked("hasIterationSideEffects"),
+        Builtins::kHasIterationSideEffects, 1, false);
+    native_context()->set_has_iteration_side_effects(*has_side_effects);
   }
 
   {  // --- A r r a y I t e r a t o r ---
@@ -2432,6 +2437,15 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     native_context()->set_regexp_last_match_info(*last_match_info);
     Handle<RegExpMatchInfo> internal_match_info = factory->NewRegExpMatchInfo();
     native_context()->set_regexp_internal_match_info(*internal_match_info);
+
+    // Force the RegExp constructor to fast properties, so that we can use the
+    // fast paths for various things like
+    //
+    //   x instanceof RegExp
+    //
+    // etc. We should probably come up with a more principled approach once
+    // the JavaScript builtins are gone.
+    JSObject::MigrateSlowToFast(regexp_fun, 0, "Bootstrapping");
   }
 
   {  // -- E r r o r
@@ -2736,6 +2750,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           Builtins::kTypedArrayPrototypeLastIndexOf, 1, false);
     SimpleInstallFunction(prototype, "reverse",
                           Builtins::kTypedArrayPrototypeReverse, 0, false);
+    SimpleInstallFunction(prototype, "slice",
+                          Builtins::kTypedArrayPrototypeSlice, 2, false);
   }
 
   {  // -- T y p e d A r r a y s
@@ -4002,6 +4018,22 @@ void Genesis::InitializeGlobal_harmony_promise_finally() {
     info->set_length(0);
     native_context()->set_promise_thrower_finally_shared_fun(*info);
   }
+}
+
+void Genesis::InitializeGlobal_harmony_regexp_dotall() {
+  if (!FLAG_harmony_regexp_dotall) return;
+
+  Handle<JSFunction> constructor(native_context()->regexp_function());
+  Handle<JSObject> prototype(JSObject::cast(constructor->instance_prototype()));
+
+  SimpleInstallGetter(prototype, isolate()->factory()->dotAll_string(),
+                      Builtins::kRegExpPrototypeDotAllGetter, true);
+
+  // The regexp prototype map has changed because we added a property
+  // to it, so we update the saved map.
+  Handle<Map> prototype_map(prototype->map());
+  Map::SetShouldBeFastPrototypeMap(prototype_map, true, isolate());
+  native_context()->set_regexp_prototype_map(*prototype_map);
 }
 
 #ifdef V8_I18N_SUPPORT

@@ -1228,6 +1228,11 @@ ExternalReference ExternalReference::address_of_regexp_stack_limit(
   return ExternalReference(isolate->regexp_stack()->limit_address());
 }
 
+ExternalReference ExternalReference::address_of_regexp_dotall_flag(
+    Isolate* isolate) {
+  return ExternalReference(&FLAG_harmony_regexp_dotall);
+}
+
 ExternalReference ExternalReference::store_buffer_top(Isolate* isolate) {
   return ExternalReference(isolate->heap()->store_buffer_top_address());
 }
@@ -1540,8 +1545,17 @@ ExternalReference ExternalReference::libc_memchr_function(Isolate* isolate) {
   return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memchr)));
 }
 
-void* libc_memset(void* string, int character, size_t n) {
-  return memset(string, character, n);
+void* libc_memcpy(void* dest, const void* src, size_t n) {
+  return memcpy(dest, src, n);
+}
+
+ExternalReference ExternalReference::libc_memcpy_function(Isolate* isolate) {
+  return ExternalReference(Redirect(isolate, FUNCTION_ADDR(libc_memcpy)));
+}
+
+void* libc_memset(void* dest, int byte, size_t n) {
+  DCHECK_EQ(static_cast<char>(byte), byte);
+  return memset(dest, byte, n);
 }
 
 ExternalReference ExternalReference::libc_memset_function(Isolate* isolate) {
