@@ -1108,7 +1108,10 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     explicit Unmapper(MemoryAllocator* allocator)
         : allocator_(allocator),
           pending_unmapping_tasks_semaphore_(0),
-          concurrent_unmapping_tasks_active_(0) {}
+          concurrent_unmapping_tasks_active_(0) {
+      chunks_[kRegular].reserve(kReservedQueueingSlots);
+      chunks_[kPooled].reserve(kReservedQueueingSlots);
+    }
 
     void AddMemoryChunkSafe(MemoryChunk* chunk) {
       if ((chunk->size() == Page::kPageSize) &&
@@ -1141,6 +1144,8 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     void TearDown();
 
    private:
+    static const int kReservedQueueingSlots = 64;
+
     enum ChunkQueueType {
       kRegular,     // Pages of kPageSize that do not live in a CodeRange and
                     // can thus be used for stealing.
@@ -1169,8 +1174,8 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     MemoryChunk* GetMemoryChunkSafe() {
       base::LockGuard<base::Mutex> guard(&mutex_);
       if (chunks_[type].empty()) return nullptr;
-      MemoryChunk* chunk = chunks_[type].front();
-      chunks_[type].pop_front();
+      MemoryChunk* chunk = chunks_[type].back();
+      chunks_[type].pop_back();
       return chunk;
     }
 
@@ -1180,7 +1185,7 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
     base::Mutex mutex_;
     MemoryAllocator* allocator_;
-    std::list<MemoryChunk*> chunks_[kNumberOfChunkQueues];
+    std::vector<MemoryChunk*> chunks_[kNumberOfChunkQueues];
     // Delayed chunks cannot be processed in the current unmapping cycle because
     // of dependencies such as an active sweeper.
     // See MemoryAllocator::CanFreeMemoryChunk.
@@ -2456,34 +2461,24 @@ class NewSpace : public Space {
   }
 
   size_t AllocatedSinceLastGC() {
-    bool seen_age_mark = false;
-    Address age_mark = to_space_.age_mark();
-    Page* current_page = to_space_.first_page();
-    Page* age_mark_page = Page::FromAddress(age_mark);
-    Page* last_page = Page::FromAddress(top() - kPointerSize);
-    if (age_mark_page == last_page) {
-      if (top() - age_mark >= 0) {
-        return top() - age_mark;
-      }
-      // Top was reset at some point, invalidating this metric.
-      return 0;
-    }
-    while (current_page != last_page) {
-      if (current_page == age_mark_page) {
-        seen_age_mark = true;
-        break;
-      }
+    const Address age_mark = to_space_.age_mark();
+    DCHECK_NOT_NULL(age_mark);
+    DCHECK_NOT_NULL(top());
+    Page* const age_mark_page = Page::FromAllocationAreaAddress(age_mark);
+    Page* const last_page = Page::FromAllocationAreaAddress(top());
+    Page* current_page = age_mark_page;
+    size_t allocated = 0;
+    if (current_page != last_page) {
+      DCHECK_EQ(current_page, age_mark_page);
+      DCHECK_GE(age_mark_page->area_end(), age_mark);
+      allocated += age_mark_page->area_end() - age_mark;
       current_page = current_page->next_page();
+    } else {
+      DCHECK_GE(top(), age_mark);
+      return top() - age_mark;
     }
-    if (!seen_age_mark) {
-      // Top was reset at some point, invalidating this metric.
-      return 0;
-    }
-    DCHECK_GE(age_mark_page->area_end(), age_mark);
-    size_t allocated = age_mark_page->area_end() - age_mark;
-    DCHECK_EQ(current_page, age_mark_page);
-    current_page = age_mark_page->next_page();
     while (current_page != last_page) {
+      DCHECK_NE(current_page, age_mark_page);
       allocated += Page::kAllocatableMemory;
       current_page = current_page->next_page();
     }
