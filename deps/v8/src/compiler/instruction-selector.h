@@ -114,14 +114,15 @@ class V8_EXPORT_PRIVATE InstructionSelector final {
   // ===========================================================================
 
   Instruction* EmitDeoptimize(InstructionCode opcode, InstructionOperand output,
-                              InstructionOperand a, DeoptimizeReason reason,
-                              Node* frame_state);
+                              InstructionOperand a, DeoptimizeKind kind,
+                              DeoptimizeReason reason, Node* frame_state);
   Instruction* EmitDeoptimize(InstructionCode opcode, InstructionOperand output,
                               InstructionOperand a, InstructionOperand b,
-                              DeoptimizeReason reason, Node* frame_state);
+                              DeoptimizeKind kind, DeoptimizeReason reason,
+                              Node* frame_state);
   Instruction* EmitDeoptimize(InstructionCode opcode, size_t output_count,
                               InstructionOperand* outputs, size_t input_count,
-                              InstructionOperand* inputs,
+                              InstructionOperand* inputs, DeoptimizeKind kind,
                               DeoptimizeReason reason, Node* frame_state);
 
   // ===========================================================================
@@ -262,6 +263,27 @@ class V8_EXPORT_PRIVATE InstructionSelector final {
   void MarkAsSimd128(Node* node) {
     MarkAsRepresentation(MachineRepresentation::kSimd128, node);
   }
+  void MarkAsSimd1x4(Node* node) {
+    if (kSimdMaskRegisters) {
+      MarkAsRepresentation(MachineRepresentation::kSimd1x4, node);
+    } else {
+      MarkAsSimd128(node);
+    }
+  }
+  void MarkAsSimd1x8(Node* node) {
+    if (kSimdMaskRegisters) {
+      MarkAsRepresentation(MachineRepresentation::kSimd1x8, node);
+    } else {
+      MarkAsSimd128(node);
+    }
+  }
+  void MarkAsSimd1x16(Node* node) {
+    if (kSimdMaskRegisters) {
+      MarkAsRepresentation(MachineRepresentation::kSimd1x16, node);
+    } else {
+      MarkAsSimd128(node);
+    }
+  }
   void MarkAsReference(Node* node) {
     MarkAsRepresentation(MachineRepresentation::kTagged, node);
   }
@@ -343,7 +365,7 @@ class V8_EXPORT_PRIVATE InstructionSelector final {
   void VisitDeoptimize(DeoptimizeKind kind, DeoptimizeReason reason,
                        Node* value);
   void VisitReturn(Node* ret);
-  void VisitThrow(Node* value);
+  void VisitThrow(Node* node);
   void VisitRetain(Node* node);
 
   void EmitPrepareArguments(ZoneVector<compiler::PushParameter>* arguments,

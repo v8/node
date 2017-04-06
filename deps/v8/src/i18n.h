@@ -6,7 +6,6 @@
 #ifndef V8_I18N_H_
 #define V8_I18N_H_
 
-#include "src/handles.h"
 #include "src/objects.h"
 #include "unicode/uversion.h"
 
@@ -19,6 +18,9 @@ class SimpleDateFormat;
 
 namespace v8 {
 namespace internal {
+
+template <typename T>
+class Handle;
 
 class DateFormat {
  public:
@@ -125,6 +127,16 @@ class V8BreakIterator {
  private:
   V8BreakIterator();
 };
+
+const UChar* GetUCharBufferFromFlat(const String::FlatContent& flat,
+                                    std::unique_ptr<uc16[]>* dest,
+                                    int32_t length);
+MUST_USE_RESULT Object* LocaleConvertCase(Handle<String> s, Isolate* isolate,
+                                          bool is_to_upper, const char* lang);
+MUST_USE_RESULT Object* ConvertToLower(Handle<String> s, Isolate* isolate);
+MUST_USE_RESULT Object* ConvertToUpper(Handle<String> s, Isolate* isolate);
+MUST_USE_RESULT Object* ConvertCase(Handle<String> s, bool is_upper,
+                                    Isolate* isolate);
 
 }  // namespace internal
 }  // namespace v8

@@ -10,6 +10,7 @@
 #include "src/counters.h"
 #include "src/deoptimizer.h"
 #include "src/ic/stub-cache.h"
+#include "src/objects-inl.h"
 
 #if defined(DEBUG) && defined(V8_OS_LINUX) && !defined(V8_OS_ANDROID)
 #define SYMBOLIZE_FUNCTION
@@ -44,7 +45,7 @@ ExternalReferenceTable::ExternalReferenceTable(Isolate* isolate) {
   AddIsolateAddresses(isolate);
   AddAccessors(isolate);
   AddStubCache(isolate);
-  AddDeoptEntries(isolate);
+  // API references must be added last.
   AddApiReferences(isolate);
 }
 
@@ -232,6 +233,10 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "wasm::call_trap_callback_for_testing");
   Add(ExternalReference::libc_memchr_function(isolate).address(),
       "libc_memchr");
+  Add(ExternalReference::libc_memcpy_function(isolate).address(),
+      "libc_memcpy");
+  Add(ExternalReference::libc_memset_function(isolate).address(),
+      "libc_memset");
   Add(ExternalReference::log_enter_external_function(isolate).address(),
       "Logger::EnterExternal");
   Add(ExternalReference::log_leave_external_function(isolate).address(),
@@ -253,12 +258,11 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "double_absolute_constant");
   Add(ExternalReference::address_of_double_neg_constant().address(),
       "double_negate_constant");
-  Add(ExternalReference::promise_hook_address(isolate).address(),
-      "Isolate::promise_hook_address()");
+  Add(ExternalReference::promise_hook_or_debug_is_active_address(isolate)
+          .address(),
+      "Isolate::promise_hook_or_debug_is_active_address()");
 
   // Debug addresses
-  Add(ExternalReference::debug_after_break_target_address(isolate).address(),
-      "Debug::after_break_target_address()");
   Add(ExternalReference::debug_is_active_address(isolate).address(),
       "Debug::is_active_address()");
   Add(ExternalReference::debug_hook_on_function_call_address(isolate).address(),
@@ -267,6 +271,11 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "Debug::step_in_enabled_address()");
   Add(ExternalReference::debug_suspended_generator_address(isolate).address(),
       "Debug::step_suspended_generator_address()");
+  Add(ExternalReference::debug_restart_fp_address(isolate).address(),
+      "Debug::restart_fp_address()");
+
+  Add(ExternalReference::address_of_regexp_dotall_flag(isolate).address(),
+      "FLAG_harmony_regexp_dotall");
 
 #ifndef V8_INTERPRETED_REGEXP
   Add(ExternalReference::re_case_insensitive_compare_uc16(isolate).address(),
@@ -426,22 +435,10 @@ void ExternalReferenceTable::AddStubCache(Isolate* isolate) {
       "Store StubCache::secondary_->map");
 }
 
-void ExternalReferenceTable::AddDeoptEntries(Isolate* isolate) {
-  // Add a small set of deopt entry addresses to encoder without generating
-  // the
-  // deopt table code, which isn't possible at deserialization time.
-  HandleScope scope(isolate);
-  for (int entry = 0; entry < kDeoptTableSerializeEntryCount; ++entry) {
-    Address address = Deoptimizer::GetDeoptimizationEntry(
-        isolate, entry, Deoptimizer::LAZY,
-        Deoptimizer::CALCULATE_ENTRY_ADDRESS);
-    Add(address, "lazy_deopt");
-  }
-}
-
 void ExternalReferenceTable::AddApiReferences(Isolate* isolate) {
   // Add external references provided by the embedder (a null-terminated
   // array).
+  api_refs_start_ = size();
   intptr_t* api_external_references = isolate->api_external_references();
   if (api_external_references != nullptr) {
     while (*api_external_references != 0) {

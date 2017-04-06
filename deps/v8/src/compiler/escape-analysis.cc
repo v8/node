@@ -694,6 +694,15 @@ void EscapeStatusAnalysis::Process(Node* node) {
           RevisitInputs(rep);
           RevisitUses(rep);
         }
+      } else {
+        Node* from = NodeProperties::GetValueInput(node, 0);
+        from = object_analysis_->ResolveReplacement(from);
+        if (SetEscaped(from)) {
+          TRACE("Setting #%d (%s) to escaped because of unresolved load #%i\n",
+                from->id(), from->op()->mnemonic(), node->id());
+          RevisitInputs(from);
+          RevisitUses(from);
+        }
       }
       RevisitUses(node);
       break;
@@ -798,6 +807,7 @@ bool EscapeStatusAnalysis::CheckUsesForEscape(Node* uses, Node* rep,
       case IrOpcode::kStateValues:
       case IrOpcode::kReferenceEqual:
       case IrOpcode::kFinishRegion:
+      case IrOpcode::kCheckMaps:
         if (IsEscaped(use) && SetEscaped(rep)) {
           TRACE(
               "Setting #%d (%s) to escaped because of use by escaping node "
@@ -828,10 +838,14 @@ bool EscapeStatusAnalysis::CheckUsesForEscape(Node* uses, Node* rep,
       case IrOpcode::kPlainPrimitiveToFloat64:
       case IrOpcode::kStringCharAt:
       case IrOpcode::kStringCharCodeAt:
-      case IrOpcode::kObjectIsCallable:
+      case IrOpcode::kStringIndexOf:
+      case IrOpcode::kObjectIsDetectableCallable:
+      case IrOpcode::kObjectIsNaN:
+      case IrOpcode::kObjectIsNonCallable:
       case IrOpcode::kObjectIsNumber:
       case IrOpcode::kObjectIsReceiver:
       case IrOpcode::kObjectIsString:
+      case IrOpcode::kObjectIsSymbol:
       case IrOpcode::kObjectIsUndetectable:
         if (SetEscaped(rep)) {
           TRACE("Setting #%d (%s) to escaped because of use by #%d (%s)\n",
@@ -844,9 +858,9 @@ bool EscapeStatusAnalysis::CheckUsesForEscape(Node* uses, Node* rep,
         if (use->op()->EffectInputCount() == 0 &&
             uses->op()->EffectInputCount() > 0 &&
             !IrOpcode::IsJsOpcode(use->opcode())) {
-          TRACE("Encountered unaccounted use by #%d (%s)\n", use->id(),
-                use->op()->mnemonic());
-          UNREACHABLE();
+          V8_Fatal(__FILE__, __LINE__,
+                   "Encountered unaccounted use by #%d (%s)\n", use->id(),
+                   use->op()->mnemonic());
         }
         if (SetEscaped(rep)) {
           TRACE("Setting #%d (%s) to escaped because of use by #%d (%s)\n",
@@ -867,6 +881,7 @@ void EscapeStatusAnalysis::ProcessFinishRegion(Node* node) {
   }
   if (CheckUsesForEscape(node, true)) {
     RevisitInputs(node);
+    RevisitUses(node);
   }
 }
 
@@ -896,7 +911,7 @@ EscapeAnalysis::EscapeAnalysis(Graph* graph, CommonOperatorBuilder* common,
 
 EscapeAnalysis::~EscapeAnalysis() {}
 
-void EscapeAnalysis::Run() {
+bool EscapeAnalysis::Run() {
   replacements_.resize(graph()->NodeCount());
   status_analysis_->AssignAliases();
   if (status_analysis_->AliasCount() > 0) {
@@ -905,6 +920,9 @@ void EscapeAnalysis::Run() {
     status_analysis_->ResizeStatusVector();
     RunObjectAnalysis();
     status_analysis_->RunStatusAnalysis();
+    return true;
+  } else {
+    return false;
   }
 }
 
@@ -1110,6 +1128,9 @@ bool EscapeAnalysis::Process(Node* node) {
     case IrOpcode::kLoadElement:
       ProcessLoadElement(node);
       break;
+    case IrOpcode::kCheckMaps:
+      ProcessCheckMaps(node);
+      break;
     case IrOpcode::kStart:
       ProcessStart(node);
       break;
@@ -1147,6 +1168,10 @@ void EscapeAnalysis::ProcessAllocationUsers(Node* node) {
       case IrOpcode::kFinishRegion:
       case IrOpcode::kObjectIsSmi:
         break;
+      case IrOpcode::kCheckMaps: {
+        CheckMapsParameters params = CheckMapsParametersOf(node->op());
+        if (params.flags() == CheckMapsFlag::kNone) break;
+      }  // Fallthrough.
       default:
         VirtualState* state = virtual_states_[node->id()];
         if (VirtualObject* obj =
@@ -1497,6 +1522,46 @@ void EscapeAnalysis::ProcessLoadField(Node* node) {
     ProcessLoadFromPhi(offset, from, node, state);
   } else {
     UpdateReplacement(state, node, nullptr);
+  }
+}
+
+void EscapeAnalysis::ProcessCheckMaps(Node* node) {
+  DCHECK_EQ(node->opcode(), IrOpcode::kCheckMaps);
+  ForwardVirtualState(node);
+  Node* checked = ResolveReplacement(NodeProperties::GetValueInput(node, 0));
+  if (FLAG_turbo_experimental) {
+    VirtualState* state = virtual_states_[node->id()];
+    if (VirtualObject* object = GetVirtualObject(state, checked)) {
+      if (!object->IsTracked()) {
+        if (status_analysis_->SetEscaped(node)) {
+          TRACE(
+              "Setting #%d (%s) to escaped because checked object #%i is not "
+              "tracked\n",
+              node->id(), node->op()->mnemonic(), object->id());
+        }
+        return;
+      }
+      CheckMapsParameters params = CheckMapsParametersOf(node->op());
+
+      Node* value = object->GetField(HeapObject::kMapOffset / kPointerSize);
+      if (value) {
+        value = ResolveReplacement(value);
+        // TODO(tebbi): We want to extend this beyond constant folding with a
+        // CheckMapsValue operator that takes the load-eliminated map value as
+        // input.
+        if (value->opcode() == IrOpcode::kHeapConstant &&
+            params.maps().contains(ZoneHandleSet<Map>(
+                Handle<Map>::cast(OpParameter<Handle<HeapObject>>(value))))) {
+          TRACE("CheckMaps #%i seems to be redundant (until now).\n",
+                node->id());
+          return;
+        }
+      }
+    }
+  }
+  if (status_analysis_->SetEscaped(node)) {
+    TRACE("Setting #%d (%s) to escaped (checking #%i)\n", node->id(),
+          node->op()->mnemonic(), checked->id());
   }
 }
 

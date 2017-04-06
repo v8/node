@@ -89,6 +89,16 @@ enum class RecordWriteMode { kValueIsMap, kValueIsPointer, kValueIsAny };
   V(AtomicStoreWord8)                     \
   V(AtomicStoreWord16)                    \
   V(AtomicStoreWord32)                    \
+  V(AtomicExchangeInt8)                   \
+  V(AtomicExchangeUint8)                  \
+  V(AtomicExchangeInt16)                  \
+  V(AtomicExchangeUint16)                 \
+  V(AtomicExchangeWord32)                 \
+  V(AtomicCompareExchangeInt8)            \
+  V(AtomicCompareExchangeUint8)           \
+  V(AtomicCompareExchangeInt16)           \
+  V(AtomicCompareExchangeUint16)          \
+  V(AtomicCompareExchangeWord32)          \
   V(Ieee754Float64Acos)                   \
   V(Ieee754Float64Acosh)                  \
   V(Ieee754Float64Asin)                   \
@@ -206,11 +216,11 @@ typedef int32_t InstructionCode;
 // for code generation. We encode the instruction, addressing mode, and flags
 // continuation into a single InstructionCode which is stored as part of
 // the instruction.
-typedef BitField<ArchOpcode, 0, 8> ArchOpcodeField;
-typedef BitField<AddressingMode, 8, 5> AddressingModeField;
-typedef BitField<FlagsMode, 13, 3> FlagsModeField;
-typedef BitField<FlagsCondition, 16, 5> FlagsConditionField;
-typedef BitField<int, 21, 11> MiscField;
+typedef BitField<ArchOpcode, 0, 9> ArchOpcodeField;
+typedef BitField<AddressingMode, 9, 5> AddressingModeField;
+typedef BitField<FlagsMode, 14, 3> FlagsModeField;
+typedef BitField<FlagsCondition, 17, 5> FlagsConditionField;
+typedef BitField<int, 22, 10> MiscField;
 
 }  // namespace compiler
 }  // namespace internal

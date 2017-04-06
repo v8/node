@@ -26,7 +26,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // Flags: --allow-natives-syntax --max-opt-count=100 --noalways-opt
-// Flags: --nocollect-maps
+// Flags: --nocollect-maps --crankshaft
 
 // We specify max-opt-count because we opt/deopt the same function many
 // times.
@@ -70,7 +70,7 @@ if (standalone) {
     %OptimizeFunctionOnNextCall(name);
   }
   clearFunctionTypeFeedback = function(name) {
-    %ClearFunctionTypeFeedback(name);
+    %ClearFunctionFeedback(name);
   }
   deoptimizeFunction = function(name) {
     %DeoptimizeFunction(name);
@@ -87,6 +87,7 @@ function base_getter_test(create_func) {
   ap.__defineGetter__(0, function() { calls++; return 0; });
 
   foo(a);
+  assertUnoptimized(foo);
   foo(a);
   foo(a);
   delete a[0];
@@ -165,6 +166,15 @@ function base_getter_test(create_func) {
   bar(a);
   assertOptimized(bar);
   assertEquals(1, calls);
+
+  // Reset the state of foo and bar.
+  clearFunctionTypeFeedback(foo);
+  deoptimizeFunction(foo);
+  clearFunctionTypeFeedback(foo);
+
+  clearFunctionTypeFeedback(bar);
+  deoptimizeFunction(bar);
+  clearFunctionTypeFeedback(bar);
 }
 
 // Verify that map transitions don't confuse us.

@@ -8,6 +8,7 @@
 #include "include/v8.h"
 #include "src/base/platform/time.h"
 #include "src/cancelable-task.h"
+#include "src/compilation-info.h"
 #include "src/compiler-dispatcher/compiler-dispatcher-job.h"
 #include "src/compiler-dispatcher/compiler-dispatcher-tracer.h"
 #include "src/flags.h"
@@ -23,6 +24,13 @@ enum class ExceptionHandling { kSwallow, kThrow };
 bool DoNextStepOnMainThread(Isolate* isolate, CompilerDispatcherJob* job,
                             ExceptionHandling exception_handling) {
   DCHECK(ThreadId::Current().Equals(isolate->thread_id()));
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherForgroundStep");
+
+  // Ensure we are in the correct context for the job.
+  SaveContext save(isolate);
+  isolate->set_context(job->context());
+
   switch (job->status()) {
     case CompileJobStatus::kInitial:
       job->PrepareToParseOnMainThread();
@@ -36,7 +44,11 @@ bool DoNextStepOnMainThread(Isolate* isolate, CompilerDispatcherJob* job,
       job->FinalizeParsingOnMainThread();
       break;
 
-    case CompileJobStatus::kReadyToAnalyse:
+    case CompileJobStatus::kReadyToAnalyze:
+      job->AnalyzeOnMainThread();
+      break;
+
+    case CompileJobStatus::kAnalyzed:
       job->PrepareToCompileOnMainThread();
       break;
 
@@ -74,6 +86,9 @@ bool CanRunOnAnyThread(CompilerDispatcherJob* job) {
 
 void DoNextStepOnBackgroundThread(CompilerDispatcherJob* job) {
   DCHECK(CanRunOnAnyThread(job));
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherBackgroundStep");
+
   switch (job->status()) {
     case CompileJobStatus::kReadyToParse:
       job->Parse();
@@ -206,10 +221,12 @@ CompilerDispatcher::CompilerDispatcher(Isolate* isolate, Platform* platform,
       trace_compiler_dispatcher_(FLAG_trace_compiler_dispatcher),
       tracer_(new CompilerDispatcherTracer(isolate_)),
       task_manager_(new CancelableTaskManager()),
+      next_job_id_(0),
+      shared_to_job_id_(isolate->heap()),
       memory_pressure_level_(MemoryPressureLevel::kNone),
       abort_(false),
       idle_task_scheduled_(false),
-      num_scheduled_background_tasks_(0),
+      num_background_tasks_(0),
       main_thread_blocking_on_job_(nullptr),
       block_for_testing_(false),
       semaphore_for_testing_(0) {
@@ -224,7 +241,7 @@ CompilerDispatcher::~CompilerDispatcher() {
   task_manager_->CancelAndWait();
 }
 
-bool CompilerDispatcher::Enqueue(Handle<SharedFunctionInfo> function) {
+bool CompilerDispatcher::CanEnqueue(Handle<SharedFunctionInfo> function) {
   if (!IsEnabled()) return false;
 
   DCHECK(FLAG_ignition);
@@ -245,24 +262,47 @@ bool CompilerDispatcher::Enqueue(Handle<SharedFunctionInfo> function) {
     return false;
   }
 
+  return true;
+}
+
+CompilerDispatcher::JobId CompilerDispatcher::Enqueue(
+    std::unique_ptr<CompilerDispatcherJob> job) {
+  DCHECK(!IsFinished(job.get()));
+  bool added;
+  JobMap::const_iterator it;
+  std::tie(it, added) =
+      jobs_.insert(std::make_pair(next_job_id_++, std::move(job)));
+  DCHECK(added);
+  if (!it->second->shared().is_null()) {
+    shared_to_job_id_.Set(it->second->shared(), it->first);
+  }
+  ConsiderJobForBackgroundProcessing(it->second.get());
+  ScheduleIdleTaskIfNeeded();
+  return it->first;
+}
+
+bool CompilerDispatcher::Enqueue(Handle<SharedFunctionInfo> function) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherEnqueue");
+  if (!CanEnqueue(function)) return false;
   if (IsEnqueued(function)) return true;
 
   if (trace_compiler_dispatcher_) {
     PrintF("CompilerDispatcher: enqueuing ");
     function->ShortPrint();
-    PrintF("\n");
+    PrintF(" for parse and compile\n");
   }
 
   std::unique_ptr<CompilerDispatcherJob> job(new CompilerDispatcherJob(
       isolate_, tracer_.get(), function, max_stack_size_));
-  std::pair<int, int> key(Script::cast(function->script())->id(),
-                          function->function_literal_id());
-  jobs_.insert(std::make_pair(key, std::move(job)));
-  ScheduleIdleTaskIfNeeded();
+  Enqueue(std::move(job));
   return true;
 }
 
 bool CompilerDispatcher::EnqueueAndStep(Handle<SharedFunctionInfo> function) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherEnqueueAndStep");
+  if (IsEnqueued(function)) return true;
   if (!Enqueue(function)) return false;
 
   if (trace_compiler_dispatcher_) {
@@ -277,17 +317,68 @@ bool CompilerDispatcher::EnqueueAndStep(Handle<SharedFunctionInfo> function) {
   return true;
 }
 
-bool CompilerDispatcher::IsEnabled() const {
-  v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate_);
-  return FLAG_compiler_dispatcher && platform_->IdleTasksEnabled(v8_isolate);
+bool CompilerDispatcher::Enqueue(
+    Handle<Script> script, Handle<SharedFunctionInfo> function,
+    FunctionLiteral* literal, std::shared_ptr<Zone> parse_zone,
+    std::shared_ptr<DeferredHandles> parse_handles,
+    std::shared_ptr<DeferredHandles> compile_handles) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherEnqueue");
+  if (!CanEnqueue(function)) return false;
+  if (IsEnqueued(function)) return true;
+
+  if (trace_compiler_dispatcher_) {
+    PrintF("CompilerDispatcher: enqueuing ");
+    function->ShortPrint();
+    PrintF(" for compile\n");
+  }
+
+  std::unique_ptr<CompilerDispatcherJob> job(new CompilerDispatcherJob(
+      isolate_, tracer_.get(), script, function, literal, parse_zone,
+      parse_handles, compile_handles, max_stack_size_));
+  Enqueue(std::move(job));
+  return true;
 }
 
+bool CompilerDispatcher::EnqueueAndStep(
+    Handle<Script> script, Handle<SharedFunctionInfo> function,
+    FunctionLiteral* literal, std::shared_ptr<Zone> parse_zone,
+    std::shared_ptr<DeferredHandles> parse_handles,
+    std::shared_ptr<DeferredHandles> compile_handles) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherEnqueueAndStep");
+  if (IsEnqueued(function)) return true;
+  if (!Enqueue(script, function, literal, parse_zone, parse_handles,
+               compile_handles)) {
+    return false;
+  }
+
+  if (trace_compiler_dispatcher_) {
+    PrintF("CompilerDispatcher: stepping ");
+    function->ShortPrint();
+    PrintF("\n");
+  }
+  JobMap::const_iterator job = GetJobFor(function);
+  DoNextStepOnMainThread(isolate_, job->second.get(),
+                         ExceptionHandling::kSwallow);
+  ConsiderJobForBackgroundProcessing(job->second.get());
+  return true;
+}
+
+bool CompilerDispatcher::IsEnabled() const { return FLAG_compiler_dispatcher; }
+
 bool CompilerDispatcher::IsEnqueued(Handle<SharedFunctionInfo> function) const {
+  if (jobs_.empty()) return false;
   return GetJobFor(function) != jobs_.end();
 }
 
 void CompilerDispatcher::WaitForJobIfRunningOnBackground(
     CompilerDispatcherJob* job) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherWaitForBackgroundJob");
+  RuntimeCallTimerScope runtimeTimer(
+      isolate_, &RuntimeCallStats::CompileWaitForDispatcher);
+
   base::LockGuard<base::Mutex> lock(&mutex_);
   if (running_background_jobs_.find(job) == running_background_jobs_.end()) {
     pending_background_jobs_.erase(job);
@@ -303,6 +394,8 @@ void CompilerDispatcher::WaitForJobIfRunningOnBackground(
 }
 
 bool CompilerDispatcher::FinishNow(Handle<SharedFunctionInfo> function) {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherFinishNow");
   JobMap::const_iterator job = GetJobFor(function);
   CHECK(job != jobs_.end());
 
@@ -327,10 +420,13 @@ bool CompilerDispatcher::FinishNow(Handle<SharedFunctionInfo> function) {
   }
 
   job->second->ResetOnMainThread();
+  if (!job->second->shared().is_null()) {
+    shared_to_job_id_.Delete(job->second->shared());
+  }
   jobs_.erase(job);
   if (jobs_.empty()) {
     base::LockGuard<base::Mutex> lock(&mutex_);
-    abort_ = false;
+    if (num_background_tasks_ == 0) abort_ = false;
   }
   return result;
 }
@@ -349,6 +445,7 @@ void CompilerDispatcher::AbortAll(BlockingBehavior blocking) {
       it.second->ResetOnMainThread();
     }
     jobs_.clear();
+    shared_to_job_id_.Clear();
     {
       base::LockGuard<base::Mutex> lock(&mutex_);
       DCHECK(pending_background_jobs_.empty());
@@ -394,11 +491,14 @@ void CompilerDispatcher::AbortInactiveJobs() {
       PrintF("\n");
     }
     job->second->ResetOnMainThread();
+    if (!job->second->shared().is_null()) {
+      shared_to_job_id_.Delete(job->second->shared());
+    }
     jobs_.erase(job);
   }
   if (jobs_.empty()) {
     base::LockGuard<base::Mutex> lock(&mutex_);
-    abort_ = false;
+    if (num_background_tasks_ == 0) abort_ = false;
   }
 }
 
@@ -435,14 +535,13 @@ void CompilerDispatcher::MemoryPressureNotification(
 
 CompilerDispatcher::JobMap::const_iterator CompilerDispatcher::GetJobFor(
     Handle<SharedFunctionInfo> shared) const {
-  if (!shared->script()->IsScript()) return jobs_.end();
-  std::pair<int, int> key(Script::cast(shared->script())->id(),
-                          shared->function_literal_id());
-  auto range = jobs_.equal_range(key);
-  for (auto job = range.first; job != range.second; ++job) {
-    if (job->second->IsAssociatedWith(shared)) return job;
+  JobId* job_id_ptr = shared_to_job_id_.Find(shared);
+  JobMap::const_iterator job = jobs_.end();
+  if (job_id_ptr) {
+    job = jobs_.find(*job_id_ptr);
+    DCHECK(job == jobs_.end() || job->second->IsAssociatedWith(shared));
   }
-  return jobs_.end();
+  return job;
 }
 
 void CompilerDispatcher::ScheduleIdleTaskFromAnyThread() {
@@ -479,15 +578,16 @@ void CompilerDispatcher::ConsiderJobForBackgroundProcessing(
 }
 
 void CompilerDispatcher::ScheduleMoreBackgroundTasksIfNeeded() {
-  if (FLAG_single_threaded) return;
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
+               "V8.CompilerDispatcherScheduleMoreBackgroundTasksIfNeeded");
   {
     base::LockGuard<base::Mutex> lock(&mutex_);
     if (pending_background_jobs_.empty()) return;
     if (platform_->NumberOfAvailableBackgroundThreads() <=
-        num_scheduled_background_tasks_) {
+        num_background_tasks_) {
       return;
     }
-    ++num_scheduled_background_tasks_;
+    ++num_background_tasks_;
   }
   platform_->CallOnBackgroundThread(
       new BackgroundTask(isolate_, task_manager_.get(), this),
@@ -495,49 +595,53 @@ void CompilerDispatcher::ScheduleMoreBackgroundTasksIfNeeded() {
 }
 
 void CompilerDispatcher::DoBackgroundWork() {
-  CompilerDispatcherJob* job = nullptr;
-  {
-    base::LockGuard<base::Mutex> lock(&mutex_);
-    --num_scheduled_background_tasks_;
-    if (!pending_background_jobs_.empty()) {
-      auto it = pending_background_jobs_.begin();
-      job = *it;
-      pending_background_jobs_.erase(it);
-      running_background_jobs_.insert(job);
+  for (;;) {
+    CompilerDispatcherJob* job = nullptr;
+    {
+      base::LockGuard<base::Mutex> lock(&mutex_);
+      if (!pending_background_jobs_.empty()) {
+        auto it = pending_background_jobs_.begin();
+        job = *it;
+        pending_background_jobs_.erase(it);
+        running_background_jobs_.insert(job);
+      }
+    }
+    if (job == nullptr) break;
+
+    if (V8_UNLIKELY(block_for_testing_.Value())) {
+      block_for_testing_.SetValue(false);
+      semaphore_for_testing_.Wait();
+    }
+
+    if (trace_compiler_dispatcher_) {
+      PrintF("CompilerDispatcher: doing background work\n");
+    }
+
+    DoNextStepOnBackgroundThread(job);
+    // Unconditionally schedule an idle task, as all background steps have to be
+    // followed by a main thread step.
+    ScheduleIdleTaskFromAnyThread();
+
+    {
+      base::LockGuard<base::Mutex> lock(&mutex_);
+      running_background_jobs_.erase(job);
+
+      if (main_thread_blocking_on_job_ == job) {
+        main_thread_blocking_on_job_ = nullptr;
+        main_thread_blocking_signal_.NotifyOne();
+      }
     }
   }
-  if (job == nullptr) return;
-
-  if (V8_UNLIKELY(block_for_testing_.Value())) {
-    block_for_testing_.SetValue(false);
-    semaphore_for_testing_.Wait();
-  }
-
-  if (trace_compiler_dispatcher_) {
-    PrintF("CompilerDispatcher: doing background work\n");
-  }
-
-  DoNextStepOnBackgroundThread(job);
-
-  ScheduleMoreBackgroundTasksIfNeeded();
-  // Unconditionally schedule an idle task, as all background steps have to be
-  // followed by a main thread step.
-  ScheduleIdleTaskFromAnyThread();
 
   {
     base::LockGuard<base::Mutex> lock(&mutex_);
-    running_background_jobs_.erase(job);
+    --num_background_tasks_;
 
     if (running_background_jobs_.empty() && abort_) {
       // This is the last background job that finished. The abort task
       // scheduled by AbortAll might already have ran, so schedule another
       // one to be on the safe side.
       ScheduleAbortTask();
-    }
-
-    if (main_thread_blocking_on_job_ == job) {
-      main_thread_blocking_on_job_ = nullptr;
-      main_thread_blocking_signal_.NotifyOne();
     }
   }
   // Don't touch |this| anymore after this point, as it might have been
@@ -611,6 +715,9 @@ void CompilerDispatcher::DoIdleWork(double deadline_in_seconds) {
         tracer_->DumpStatistics();
       }
       job->second->ResetOnMainThread();
+      if (!job->second->shared().is_null()) {
+        shared_to_job_id_.Delete(job->second->shared());
+      }
       job = jobs_.erase(job);
       continue;
     } else {

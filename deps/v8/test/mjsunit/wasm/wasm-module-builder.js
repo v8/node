@@ -98,11 +98,12 @@ class WasmFunctionBuilder {
 
   addBody(body) {
     for (let b of body) {
-      if (typeof b != 'number') throw new Error("invalid body");
+      if (typeof b != 'number')
+        throw new Error('invalid body (entries have to be numbers): ' + body);
     }
-    this.body = body;
+    this.body = body.slice();
     // Automatically add the end for the function block to the body.
-    body.push(kExprEnd);
+    this.body.push(kExprEnd);
     return this;
   }
 
@@ -166,6 +167,22 @@ class WasmModuleBuilder {
   addExplicitSection(bytes) {
     this.explicit.push(bytes);
     return this;
+  }
+
+  stringToBytes(name) {
+    var result = new Binary();
+    result.emit_u32v(name.length);
+    for (var i = 0; i < name.length; i++) {
+      result.emit_u8(name.charCodeAt(i));
+    }
+    return result;
+  }
+
+  addCustomSection(name, bytes) {
+    name = this.stringToBytes(name);
+    var length = new Binary();
+    length.emit_u32v(name.length + bytes.length);
+    this.explicit.push([0, ...length, ...name, ...bytes]);
   }
 
   addType(type) {
@@ -248,6 +265,10 @@ class WasmModuleBuilder {
   }
 
   appendToTable(array) {
+    for (let n of array) {
+      if (typeof n != 'number')
+        throw new Error('invalid table (entries have to be numbers): ' + array);
+    }
     return this.addFunctionTableInit(this.function_table.length, false, array);
   }
 

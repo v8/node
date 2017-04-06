@@ -14,6 +14,7 @@
 #include "src/builtins/builtins.h"
 #include "src/contexts.h"
 #include "src/date.h"
+#include "src/debug/debug-interface.h"
 #include "src/execution.h"
 #include "src/frames.h"
 #include "src/futex-emulation.h"
@@ -29,6 +30,10 @@ namespace v8 {
 
 namespace base {
 class RandomNumberGenerator;
+}
+
+namespace debug {
+class ConsoleDelegate;
 }
 
 namespace internal {
@@ -394,8 +399,10 @@ typedef List<HeapObject*> DebugObjectCache;
   V(OOMErrorCallback, oom_behavior, nullptr)                                  \
   V(LogEventCallback, event_logger, nullptr)                                  \
   V(AllowCodeGenerationFromStringsCallback, allow_code_gen_callback, nullptr) \
-  V(AllowWasmCompileCallback, allow_wasm_compile_callback, nullptr)           \
-  V(AllowWasmInstantiateCallback, allow_wasm_instantiate_callback, nullptr)   \
+  V(ExtensionCallback, wasm_module_callback, &NoExtension)                    \
+  V(ExtensionCallback, wasm_instance_callback, &NoExtension)                  \
+  V(ExtensionCallback, wasm_compile_callback, &NoExtension)                   \
+  V(ExtensionCallback, wasm_instantiate_callback, &NoExtension)               \
   V(ExternalReferenceRedirectorPointer*, external_reference_redirector,       \
     nullptr)                                                                  \
   /* State for Relocatable. */                                                \
@@ -422,6 +429,8 @@ typedef List<HeapObject*> DebugObjectCache;
   V(bool, formatting_stack_trace, false)                                      \
   /* Perform side effect checks on function call and API callbacks. */        \
   V(bool, needs_side_effect_check, false)                                     \
+  /* Current code coverage mode */                                            \
+  V(debug::Coverage::Mode, code_coverage_mode, debug::Coverage::kBestEffort)  \
   ISOLATE_INIT_SIMULATOR_LIST(V)
 
 #define THREAD_LOCAL_TOP_ACCESSOR(type, name)                        \
@@ -532,6 +541,8 @@ class Isolate {
   // Sets default isolate into "has_been_disposed" state rather then destroying,
   // for legacy API reasons.
   void TearDown();
+
+  void ReleaseManagedObjects();
 
   static void GlobalTearDown();
 
@@ -730,6 +741,11 @@ class Isolate {
     return MaybeHandle<T>();
   }
 
+  void set_console_delegate(debug::ConsoleDelegate* delegate) {
+    console_delegate_ = delegate;
+  }
+  debug::ConsoleDelegate* console_delegate() { return console_delegate_; }
+
   // Re-throw an exception.  This involves no error reporting since error
   // reporting was handled when the exception was thrown originally.
   Object* ReThrow(Object* exception);
@@ -914,6 +930,11 @@ class Isolate {
 
   RegExpStack* regexp_stack() { return regexp_stack_; }
 
+  size_t total_regexp_code_generated() { return total_regexp_code_generated_; }
+  void IncreaseTotalRegexpCodeGenerated(int size) {
+    total_regexp_code_generated_ += size;
+  }
+
   List<int>* regexp_indices() { return &regexp_indices_; }
 
   unibrow::Mapping<unibrow::Ecma262Canonicalize>*
@@ -962,11 +983,25 @@ class Isolate {
   bool IsDead() { return has_fatal_error_; }
   void SignalFatalError() { has_fatal_error_ = true; }
 
-  bool use_crankshaft() const;
+  bool use_crankshaft();
 
   bool initialized_from_snapshot() { return initialized_from_snapshot_; }
 
   bool NeedsSourcePositionsForProfiling() const;
+
+  bool is_best_effort_code_coverage() const {
+    return code_coverage_mode() == debug::Coverage::kBestEffort;
+  }
+
+  bool is_precise_count_code_coverage() const {
+    return code_coverage_mode() == debug::Coverage::kPreciseCount;
+  }
+
+  bool is_precise_binary_code_coverage() const {
+    return code_coverage_mode() == debug::Coverage::kPreciseBinary;
+  }
+
+  void SetCodeCoverageList(Object* value);
 
   double time_millis_since_init() {
     return heap_.MonotonicallyIncreasingTimeInMs() - time_millis_at_init_;
@@ -990,7 +1025,6 @@ class Isolate {
 
   bool IsFastArrayConstructorPrototypeChainIntact();
   inline bool IsArraySpeciesLookupChainIntact();
-  inline bool IsHasInstanceLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact(JSReceiver* receiver);
   inline bool IsStringLengthOverflowIntact();
@@ -1017,7 +1051,6 @@ class Isolate {
     UpdateArrayProtectorOnSetElement(object);
   }
   void InvalidateArraySpeciesProtector();
-  void InvalidateHasInstanceProtector();
   void InvalidateIsConcatSpreadableProtector();
   void InvalidateStringLengthOverflowProtector();
   void InvalidateArrayIteratorProtector();
@@ -1057,7 +1090,7 @@ class Isolate {
   HTracer* GetHTracer();
   CodeTracer* GetCodeTracer();
 
-  void DumpAndResetCompilationStats();
+  void DumpAndResetStats();
 
   FunctionEntryHook function_entry_hook() { return function_entry_hook_; }
   void set_function_entry_hook(FunctionEntryHook function_entry_hook) {
@@ -1124,9 +1157,12 @@ class Isolate {
   int GetNextUniqueSharedFunctionInfoId() { return next_unique_sfi_id_++; }
 #endif
 
-  Address promise_hook_address() {
-    return reinterpret_cast<Address>(&promise_hook_);
+  Address promise_hook_or_debug_is_active_address() {
+    return reinterpret_cast<Address>(&promise_hook_or_debug_is_active_);
   }
+
+  void DebugStateUpdated();
+
   void SetPromiseHook(PromiseHook hook);
   void RunPromiseHook(PromiseHookType type, Handle<JSPromise> promise,
                       Handle<Object> parent);
@@ -1158,7 +1194,7 @@ class Isolate {
     return cancelable_task_manager_;
   }
 
-  AstStringConstants* ast_string_constants() const {
+  const AstStringConstants* ast_string_constants() const {
     return ast_string_constants_;
   }
 
@@ -1195,6 +1231,47 @@ class Isolate {
 #ifdef USE_SIMULATOR
   base::Mutex* simulator_i_cache_mutex() { return &simulator_i_cache_mutex_; }
 #endif
+
+  void set_allow_atomics_wait(bool set) { allow_atomics_wait_ = set; }
+  bool allow_atomics_wait() { return allow_atomics_wait_; }
+
+  // List of native heap values allocated by the runtime as part of its
+  // implementation that must be freed at isolate deinit.
+  class ManagedObjectFinalizer final {
+   public:
+    typedef void (*Deleter)(void*);
+    void Dispose() { deleter_(value_); }
+
+   private:
+    friend class Isolate;
+
+    ManagedObjectFinalizer() {
+      DCHECK_EQ(reinterpret_cast<void*>(this),
+                reinterpret_cast<void*>(&value_));
+    }
+
+    // value_ must be the first member
+    void* value_ = nullptr;
+    Deleter deleter_ = nullptr;
+    ManagedObjectFinalizer* prev_ = nullptr;
+    ManagedObjectFinalizer* next_ = nullptr;
+  };
+
+  // Register a native value for destruction at isolate teardown.
+  ManagedObjectFinalizer* RegisterForReleaseAtTeardown(
+      void* value, ManagedObjectFinalizer::Deleter deleter);
+
+  // Unregister a previously registered value from release at
+  // isolate teardown, deleting the ManagedObjectFinalizer.
+  // This transfers the responsibility of the previously managed value's
+  // deletion to the caller. Pass by pointer, because *finalizer_ptr gets
+  // reset to nullptr.
+  void UnregisterFromReleaseAtTeardown(ManagedObjectFinalizer** finalizer_ptr);
+
+  // Used by mjsunit tests to force d8 to wait for certain things to run.
+  inline void IncrementWaitCountForTesting() { wait_count_++; }
+  inline void DecrementWaitCountForTesting() { wait_count_--; }
+  inline int GetWaitCountForTesting() { return wait_count_; }
 
  protected:
   explicit Isolate(bool enable_serializer);
@@ -1299,10 +1376,6 @@ class Isolate {
   // then return true.
   bool PropagatePendingExceptionToExternalTryCatch();
 
-  // Remove per-frame stored materialized objects when we are unwinding
-  // the frame.
-  void RemoveMaterializedObjectsOnUnwind(StackFrame* frame);
-
   void RunMicrotasksInternal();
 
   const char* RAILModeName(RAILMode rail_mode) const {
@@ -1369,6 +1442,7 @@ class Isolate {
   AccessCompilerData* access_compiler_data_;
   base::RandomNumberGenerator* random_number_generator_;
   base::AtomicValue<RAILMode> rail_mode_;
+  bool promise_hook_or_debug_is_active_;
   PromiseHook promise_hook_;
   base::Mutex rail_mutex_;
   double load_start_time_ms_;
@@ -1404,7 +1478,7 @@ class Isolate {
   std::unique_ptr<CodeEventDispatcher> code_event_dispatcher_;
   FunctionEntryHook function_entry_hook_;
 
-  AstStringConstants* ast_string_constants_;
+  const AstStringConstants* ast_string_constants_;
 
   interpreter::Interpreter* interpreter_;
 
@@ -1467,12 +1541,22 @@ class Isolate {
 
   CancelableTaskManager* cancelable_task_manager_;
 
+  debug::ConsoleDelegate* console_delegate_ = nullptr;
+
   v8::Isolate::AbortOnUncaughtExceptionCallback
       abort_on_uncaught_exception_callback_;
 
 #ifdef USE_SIMULATOR
   base::Mutex simulator_i_cache_mutex_;
 #endif
+
+  bool allow_atomics_wait_;
+
+  ManagedObjectFinalizer managed_object_finalizers_list_;
+
+  size_t total_regexp_code_generated_;
+
+  int wait_count_ = 0;
 
   friend class ExecutionAccess;
   friend class HandleScopeImplementer;

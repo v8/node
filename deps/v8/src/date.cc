@@ -38,7 +38,9 @@ void DateCache::ResetDateCache() {
   after_ = &dst_[1];
   local_offset_ms_ = kInvalidLocalOffsetInMs;
   ymd_valid_ = false;
-  base::OS::ClearTimezoneCache(tz_cache_);
+  tz_cache_->Clear();
+  tz_name_ = nullptr;
+  dst_tz_name_ = nullptr;
 }
 
 

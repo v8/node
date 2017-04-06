@@ -242,7 +242,8 @@ V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, NumberOperationHint);
 NumberOperationHint NumberOperationHintOf(const Operator* op)
     WARN_UNUSED_RESULT;
 
-int ParameterCountOf(const Operator* op) WARN_UNUSED_RESULT;
+int FormalParameterCountOf(const Operator* op) WARN_UNUSED_RESULT;
+bool IsRestLengthOf(const Operator* op) WARN_UNUSED_RESULT;
 
 PretenureFlag PretenureFlagOf(const Operator* op) WARN_UNUSED_RESULT;
 
@@ -356,6 +357,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* StringCharCodeAt();
   const Operator* StringFromCharCode();
   const Operator* StringFromCodePoint(UnicodeEncoding encoding);
+  const Operator* StringIndexOf();
 
   const Operator* PlainPrimitiveToNumber();
   const Operator* PlainPrimitiveToWord32();
@@ -365,6 +367,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* ChangeTaggedToInt32();
   const Operator* ChangeTaggedToUint32();
   const Operator* ChangeTaggedToFloat64();
+  const Operator* ChangeTaggedToTaggedSigned();
   const Operator* ChangeInt31ToTaggedSigned();
   const Operator* ChangeInt32ToTagged();
   const Operator* ChangeUint32ToTagged();
@@ -375,6 +378,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* TruncateTaggedToWord32();
   const Operator* TruncateTaggedToFloat64();
   const Operator* TruncateTaggedToBit();
+  const Operator* TruncateTaggedPointerToBit();
 
   const Operator* CheckIf();
   const Operator* CheckBounds();
@@ -385,6 +389,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckNumber();
   const Operator* CheckSmi();
   const Operator* CheckString();
+  const Operator* CheckReceiver();
 
   const Operator* CheckedInt32Add();
   const Operator* CheckedInt32Sub();
@@ -408,18 +413,22 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckTaggedHole();
   const Operator* ConvertTaggedHoleToUndefined();
 
-  const Operator* ObjectIsCallable();
+  const Operator* ObjectIsDetectableCallable();
+  const Operator* ObjectIsNaN();
+  const Operator* ObjectIsNonCallable();
   const Operator* ObjectIsNumber();
   const Operator* ObjectIsReceiver();
   const Operator* ObjectIsSmi();
   const Operator* ObjectIsString();
+  const Operator* ObjectIsSymbol();
   const Operator* ObjectIsUndetectable();
 
-  // new-rest-parameter-elements
-  const Operator* NewRestParameterElements(int parameter_count);
+  const Operator* ArgumentsFrame();
+  const Operator* ArgumentsLength(int formal_parameter_count,
+                                  bool is_rest_length);
 
   // new-unmapped-arguments-elements
-  const Operator* NewUnmappedArgumentsElements(int parameter_count);
+  const Operator* NewUnmappedArgumentsElements();
 
   // array-buffer-was-neutered buffer
   const Operator* ArrayBufferWasNeutered();

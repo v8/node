@@ -46,7 +46,6 @@
     'msvs_multi_core_compile%': '1',
     'mac_deployment_target%': '10.7',
     'release_extra_cflags%': '',
-    'v8_enable_inspector%': 0,
     'variables': {
       'variables': {
         'variables': {
@@ -93,16 +92,16 @@
           ['OS=="linux" and use_sysroot==1', {
             'conditions': [
               ['target_arch=="arm"', {
-                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_wheezy_arm-sysroot',
+                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_jessie_arm-sysroot',
               }],
               ['target_arch=="x64"', {
-                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_wheezy_amd64-sysroot',
+                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_jessie_amd64-sysroot',
               }],
               ['target_arch=="ia32"', {
-                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_wheezy_i386-sysroot',
+                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_jessie_i386-sysroot',
               }],
               ['target_arch=="mipsel"', {
-                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_wheezy_mips-sysroot',
+                'sysroot%': '<!(cd <(DEPTH) && pwd -P)/build/linux/debian_jessie_mips-sysroot',
               }],
             ],
           }], # OS=="linux" and use_sysroot==1
@@ -242,9 +241,6 @@
 
     # Relative path to icu.gyp from this file.
     'icu_gyp_path': '../third_party/icu/icu.gyp',
-
-    # Relative path to inspector.gyp from this file.
-    'inspector_gyp_path': '../src/v8-inspector/inspector.gyp',
 
     'conditions': [
       ['(v8_target_arch=="arm" and host_arch!="arm") or \

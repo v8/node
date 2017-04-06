@@ -13,50 +13,47 @@ namespace v8 {
 namespace internal {
 
 void MarkCompactCollector::PushBlack(HeapObject* obj) {
-  DCHECK(Marking::IsBlack(ObjectMarking::MarkBitFrom(obj)));
-  if (marking_deque()->Push(obj)) {
-    MemoryChunk::IncrementLiveBytes(obj, obj->Size());
-  } else {
-    MarkBit mark_bit = ObjectMarking::MarkBitFrom(obj);
-    Marking::BlackToGrey(mark_bit);
+  DCHECK((ObjectMarking::IsBlack<MarkBit::NON_ATOMIC>(
+      obj, MarkingState::Internal(obj))));
+  if (!marking_deque()->Push(obj)) {
+    ObjectMarking::BlackToGrey<MarkBit::NON_ATOMIC>(
+        obj, MarkingState::Internal(obj));
   }
 }
 
+void MinorMarkCompactCollector::PushBlack(HeapObject* obj) {
+  DCHECK((ObjectMarking::IsBlack<MarkBit::NON_ATOMIC>(
+      obj, MarkingState::External(obj))));
+  if (!marking_deque()->Push(obj)) {
+    ObjectMarking::BlackToGrey<MarkBit::NON_ATOMIC>(
+        obj, MarkingState::External(obj));
+  }
+}
 
 void MarkCompactCollector::UnshiftBlack(HeapObject* obj) {
-  DCHECK(Marking::IsBlack(ObjectMarking::MarkBitFrom(obj)));
+  DCHECK(ObjectMarking::IsBlack(obj, MarkingState::Internal(obj)));
   if (!marking_deque()->Unshift(obj)) {
-    MemoryChunk::IncrementLiveBytes(obj, -obj->Size());
-    MarkBit mark_bit = ObjectMarking::MarkBitFrom(obj);
-    Marking::BlackToGrey(mark_bit);
+    ObjectMarking::BlackToGrey(obj, MarkingState::Internal(obj));
   }
 }
 
-
-void MarkCompactCollector::MarkObject(HeapObject* obj, MarkBit mark_bit) {
-  DCHECK(ObjectMarking::MarkBitFrom(obj) == mark_bit);
-  if (Marking::IsWhite(mark_bit)) {
-    Marking::WhiteToBlack(mark_bit);
-    DCHECK(obj->GetIsolate()->heap()->Contains(obj));
+void MarkCompactCollector::MarkObject(HeapObject* obj) {
+  if (ObjectMarking::IsWhite<MarkBit::NON_ATOMIC>(
+          obj, MarkingState::Internal(obj))) {
+    ObjectMarking::WhiteToBlack<MarkBit::NON_ATOMIC>(
+        obj, MarkingState::Internal(obj));
     PushBlack(obj);
   }
 }
 
-
-void MarkCompactCollector::SetMark(HeapObject* obj, MarkBit mark_bit) {
-  DCHECK(Marking::IsWhite(mark_bit));
-  DCHECK(ObjectMarking::MarkBitFrom(obj) == mark_bit);
-  Marking::WhiteToBlack(mark_bit);
-  MemoryChunk::IncrementLiveBytes(obj, obj->Size());
+void MinorMarkCompactCollector::MarkObject(HeapObject* obj) {
+  if (ObjectMarking::IsWhite<MarkBit::NON_ATOMIC>(
+          obj, MarkingState::External(obj))) {
+    ObjectMarking::WhiteToBlack<MarkBit::NON_ATOMIC>(
+        obj, MarkingState::External(obj));
+    PushBlack(obj);
+  }
 }
-
-
-bool MarkCompactCollector::IsMarked(Object* obj) {
-  DCHECK(obj->IsHeapObject());
-  HeapObject* heap_object = HeapObject::cast(obj);
-  return Marking::IsBlackOrGrey(ObjectMarking::MarkBitFrom(heap_object));
-}
-
 
 void MarkCompactCollector::RecordSlot(HeapObject* object, Object** slot,
                                       Object* target) {
@@ -64,7 +61,8 @@ void MarkCompactCollector::RecordSlot(HeapObject* object, Object** slot,
   Page* source_page = Page::FromAddress(reinterpret_cast<Address>(object));
   if (target_page->IsEvacuationCandidate() &&
       !ShouldSkipEvacuationSlotRecording(object)) {
-    DCHECK(Marking::IsBlackOrGrey(ObjectMarking::MarkBitFrom(object)));
+    DCHECK(
+        ObjectMarking::IsBlackOrGrey(object, MarkingState::Internal(object)));
     RememberedSet<OLD_TO_OLD>::Insert(source_page,
                                       reinterpret_cast<Address>(slot));
   }
@@ -132,6 +130,9 @@ void CodeFlusher::ClearNextCandidate(SharedFunctionInfo* candidate) {
 
 template <LiveObjectIterationMode T>
 HeapObject* LiveObjectIterator<T>::Next() {
+  Map* one_word_filler = heap()->one_pointer_filler_map();
+  Map* two_word_filler = heap()->two_pointer_filler_map();
+  Map* free_space_map = heap()->free_space_map();
   while (!it_.Done()) {
     HeapObject* object = nullptr;
     while (current_cell_ != 0) {
@@ -158,7 +159,9 @@ HeapObject* LiveObjectIterator<T>::Next() {
                      ->one_pointer_filler_map());
           return nullptr;
         }
-        it_.Advance();
+        bool not_done = it_.Advance();
+        USE(not_done);
+        DCHECK(not_done);
         cell_base_ = it_.CurrentCellBase();
         current_cell_ = *it_.CurrentCell();
       }
@@ -201,9 +204,17 @@ HeapObject* LiveObjectIterator<T>::Next() {
 
       // We found a live object.
       if (object != nullptr) {
-        if (map == heap()->one_pointer_filler_map()) {
-          // Black areas together with slack tracking may result in black one
-          // word filler objects. We filter these objects out in the iterator.
+        // Do not use IsFiller() here. This may cause a data race for reading
+        // out the instance type when a new map concurrently is written into
+        // this object while iterating over the object.
+        if (map == one_word_filler || map == two_word_filler ||
+            map == free_space_map) {
+          // There are two reasons why we can get black or grey fillers:
+          // 1) Black areas together with slack tracking may result in black one
+          // word filler objects.
+          // 2) Left trimming may leave black or grey fillers behind because we
+          // do not clear the old location of the object start.
+          // We filter these objects out in the iterator.
           object = nullptr;
         } else {
           break;
@@ -212,8 +223,7 @@ HeapObject* LiveObjectIterator<T>::Next() {
     }
 
     if (current_cell_ == 0) {
-      if (!it_.Done()) {
-        it_.Advance();
+      if (!it_.Done() && it_.Advance()) {
         cell_base_ = it_.CurrentCellBase();
         current_cell_ = *it_.CurrentCell();
       }

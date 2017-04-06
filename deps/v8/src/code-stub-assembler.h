@@ -23,27 +23,33 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
 
 #define HEAP_CONSTANT_LIST(V)                         \
   V(AccessorInfoMap, AccessorInfoMap)                 \
+  V(AccessorPairMap, AccessorPairMap)                 \
   V(AllocationSiteMap, AllocationSiteMap)             \
   V(BooleanMap, BooleanMap)                           \
   V(CodeMap, CodeMap)                                 \
   V(empty_string, EmptyString)                        \
   V(EmptyFixedArray, EmptyFixedArray)                 \
-  V(EmptyLiteralsArray, EmptyLiteralsArray)           \
   V(FalseValue, False)                                \
   V(FixedArrayMap, FixedArrayMap)                     \
   V(FixedCOWArrayMap, FixedCOWArrayMap)               \
   V(FixedDoubleArrayMap, FixedDoubleArrayMap)         \
   V(FunctionTemplateInfoMap, FunctionTemplateInfoMap) \
+  V(has_instance_symbol, HasInstanceSymbol)           \
   V(HeapNumberMap, HeapNumberMap)                     \
+  V(NoClosuresCellMap, NoClosuresCellMap)             \
+  V(OneClosureCellMap, OneClosureCellMap)             \
+  V(ManyClosuresCellMap, ManyClosuresCellMap)         \
   V(MinusZeroValue, MinusZero)                        \
   V(NanValue, Nan)                                    \
   V(NullValue, Null)                                  \
+  V(GlobalPropertyCellMap, PropertyCellMap)           \
   V(SymbolMap, SymbolMap)                             \
   V(TheHoleValue, TheHole)                            \
   V(TrueValue, True)                                  \
   V(Tuple2Map, Tuple2Map)                             \
   V(Tuple3Map, Tuple3Map)                             \
-  V(UndefinedValue, Undefined)
+  V(UndefinedValue, Undefined)                        \
+  V(WeakCellMap, WeakCellMap)
 
 // Provides JavaScript-specific "macro-assembler" functionality on top of the
 // CodeAssembler. By factoring the JavaScript-isms out of the CodeAssembler,
@@ -77,10 +83,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return Is64() ? INTPTR_PARAMETERS : SMI_PARAMETERS;
   }
 
+  MachineRepresentation ParameterRepresentation(ParameterMode mode) const {
+    return mode == INTPTR_PARAMETERS ? MachineType::PointerRepresentation()
+                                     : MachineRepresentation::kTaggedSigned;
+  }
+
   MachineRepresentation OptimalParameterRepresentation() const {
-    return OptimalParameterMode() == INTPTR_PARAMETERS
-               ? MachineType::PointerRepresentation()
-               : MachineRepresentation::kTaggedSigned;
+    return ParameterRepresentation(OptimalParameterMode());
   }
 
   Node* ParameterToWord(Node* value, ParameterMode mode) {
@@ -112,8 +121,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       return IntPtrOpName(a, b);                         \
     }                                                    \
   }
+  PARAMETER_BINOP(IntPtrOrSmiMin, IntPtrMin, SmiMin)
   PARAMETER_BINOP(IntPtrOrSmiAdd, IntPtrAdd, SmiAdd)
+  PARAMETER_BINOP(IntPtrOrSmiSub, IntPtrSub, SmiSub)
   PARAMETER_BINOP(IntPtrOrSmiLessThan, IntPtrLessThan, SmiLessThan)
+  PARAMETER_BINOP(IntPtrOrSmiLessThanOrEqual, IntPtrLessThanOrEqual,
+                  SmiLessThanOrEqual)
   PARAMETER_BINOP(IntPtrOrSmiGreaterThan, IntPtrGreaterThan, SmiGreaterThan)
   PARAMETER_BINOP(IntPtrOrSmiGreaterThanOrEqual, IntPtrGreaterThanOrEqual,
                   SmiGreaterThanOrEqual)
@@ -135,6 +148,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* StaleRegisterConstant();
 
   Node* IntPtrOrSmiConstant(int value, ParameterMode mode);
+
+  bool IsIntPtrOrSmiConstantZero(Node* test);
 
   // Round the 32bits payload of the provided word up to the next power of two.
   Node* IntPtrRoundUpToPowerOfTwo32(Node* value);
@@ -207,6 +222,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return IntPtrOpName(BitcastTaggedToWord(a), BitcastTaggedToWord(b)); \
   }
   SMI_COMPARISON_OP(SmiEqual, WordEqual)
+  SMI_COMPARISON_OP(SmiNotEqual, WordNotEqual)
   SMI_COMPARISON_OP(SmiAbove, UintPtrGreaterThan)
   SMI_COMPARISON_OP(SmiAboveOrEqual, UintPtrGreaterThanOrEqual)
   SMI_COMPARISON_OP(SmiBelow, UintPtrLessThan)
@@ -224,10 +240,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Smi | HeapNumber operations.
   Node* NumberInc(Node* value);
+  Node* NumberDec(Node* value);
   void GotoIfNotNumber(Node* value, Label* is_not_number);
   void GotoIfNumber(Node* value, Label* is_number);
 
   // Allocate an object of the given size.
+  Node* AllocateInNewSpace(Node* size, AllocationFlags flags = kNone);
+  Node* AllocateInNewSpace(int size, AllocationFlags flags = kNone);
   Node* Allocate(Node* size, AllocationFlags flags = kNone);
   Node* Allocate(int size, AllocationFlags flags = kNone);
   Node* InnerAllocate(Node* previous, int offset);
@@ -294,14 +313,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // otherwise goes to {if_false}.
   void BranchIfToBooleanIsTrue(Node* value, Label* if_true, Label* if_false);
 
-  void BranchIfSimd128Equal(Node* lhs, Node* lhs_map, Node* rhs, Node* rhs_map,
-                            Label* if_equal, Label* if_notequal);
-  void BranchIfSimd128Equal(Node* lhs, Node* rhs, Label* if_equal,
-                            Label* if_notequal) {
-    BranchIfSimd128Equal(lhs, LoadMap(lhs), rhs, LoadMap(rhs), if_equal,
-                         if_notequal);
-  }
-
   void BranchIfJSReceiver(Node* object, Label* if_true, Label* if_false);
   void BranchIfJSObject(Node* object, Label* if_true, Label* if_false);
 
@@ -332,6 +343,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadAndUntagSmi(Node* base, int index);
   // Load a SMI root, untag it, and convert to Word32.
   Node* LoadAndUntagToWord32Root(Heap::RootListIndex root_index);
+
+  // Tag a smi and store it.
+  Node* StoreAndTagSmi(Node* base, int offset, Node* value);
 
   // Load the floating point value of a HeapNumber.
   Node* LoadHeapNumberValue(Node* object);
@@ -375,8 +389,17 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadMapInobjectProperties(Node* map);
   // Load the constructor function index of a Map (only for primitive maps).
   Node* LoadMapConstructorFunctionIndex(Node* map);
-  // Load the constructor of a Map (equivalent to Map::GetConstructor()).
+  // Load the constructor of a Map (equivalent to
+  // Map::GetConstructor()).
   Node* LoadMapConstructor(Node* map);
+  // Loads a value from the specially encoded integer fields in the
+  // SharedFunctionInfo object.
+  // TODO(danno): This currently only works for the integer fields that are
+  // mapped to the upper part of 64-bit words. We should customize
+  // SFI::BodyDescriptor and store int32 values directly.
+  Node* LoadSharedFunctionInfoSpecialField(Node* shared, int offset,
+                                           ParameterMode param_mode);
+
   // Check if the map is set for slow properties.
   Node* IsDictionaryMap(Node* map);
 
@@ -422,6 +445,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       Node* base, Node* offset, Label* if_hole,
       MachineType machine_type = MachineType::Float64());
   Node* LoadFixedTypedArrayElement(
+      Node* data_pointer, Node* index_node, ElementsKind elements_kind,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS);
+  Node* LoadFixedTypedArrayElementAsTagged(
       Node* data_pointer, Node* index_node, ElementsKind elements_kind,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
@@ -565,6 +591,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* AllocateJSArrayIterator(Node* array, Node* array_map, Node* map);
 
+  // Perform ArraySpeciesCreate (ES6 #sec-arrayspeciescreate).
+  Node* ArraySpeciesCreate(Node* context, Node* originalArray, Node* len);
+
   void FillFixedArrayWithValue(ElementsKind kind, Node* array, Node* from_index,
                                Node* to_index,
                                Heap::RootListIndex value_root_index,
@@ -647,6 +676,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* ChangeInt32ToTagged(Node* value);
   Node* ChangeUint32ToTagged(Node* value);
   Node* ChangeNumberToFloat64(Node* value);
+  Node* ChangeNumberToIntPtr(Node* value);
 
   // Type conversions.
   // Throws a TypeError for {method_name} if {value} is not coercible to Object,
@@ -671,13 +701,24 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsSpecialReceiverMap(Node* map);
   Node* IsSpecialReceiverInstanceType(Node* instance_type);
   Node* IsStringInstanceType(Node* instance_type);
+  Node* IsOneByteStringInstanceType(Node* instance_type);
+  Node* IsExternalStringInstanceType(Node* instance_type);
+  Node* IsShortExternalStringInstanceType(Node* instance_type);
+  Node* IsSequentialStringInstanceType(Node* instance_type);
   Node* IsString(Node* object);
   Node* IsJSObject(Node* object);
   Node* IsJSGlobalProxy(Node* object);
   Node* IsJSReceiverInstanceType(Node* instance_type);
   Node* IsJSReceiver(Node* object);
+  Node* IsJSReceiverMap(Node* map);
   Node* IsMap(Node* object);
   Node* IsCallableMap(Node* map);
+  Node* IsDeprecatedMap(Node* map);
+  Node* IsCallable(Node* object);
+  Node* IsBoolean(Node* object);
+  Node* IsPropertyCell(Node* object);
+  Node* IsAccessorPair(Node* object);
+  Node* IsHeapNumber(Node* object);
   Node* IsName(Node* object);
   Node* IsSymbol(Node* object);
   Node* IsPrivateSymbol(Node* object);
@@ -691,6 +732,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsUnseededNumberDictionary(Node* object);
   Node* IsConstructorMap(Node* map);
   Node* IsJSFunction(Node* object);
+  Node* IsJSTypedArray(Node* object);
+  Node* IsFixedTypedArray(Node* object);
 
   // ElementsKind helpers:
   Node* IsFastElementsKind(Node* elements_kind);
@@ -710,12 +753,25 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* StringAdd(Node* context, Node* first, Node* second,
                   AllocationFlags flags = kNone);
 
-  // Return the first index >= {from} at which {needle_char} was found in
-  // {string}, or -1 if such an index does not exist. The returned value is
-  // a Smi, {string} is expected to be a String, {needle_char} is an intptr,
-  // and {from} is expected to be tagged.
-  Node* StringIndexOfChar(Node* context, Node* string, Node* needle_char,
-                          Node* from);
+  // Unpack the external string, returning a pointer that (offset-wise) looks
+  // like a sequential string.
+  // Note that this pointer is not tagged and does not point to a real
+  // sequential string instance, and may only be used to access the string
+  // data. The pointer is GC-safe as long as a reference to the container
+  // ExternalString is live.
+  // |string| must be an external string. Bailout for short external strings.
+  Node* TryDerefExternalString(Node* const string, Node* const instance_type,
+                               Label* if_bailout);
+
+  // Check if |var_string| has an indirect (thin or flat cons) string type,
+  // and unpack it if so.
+  void MaybeDerefIndirectString(Variable* var_string, Node* instance_type,
+                                Variable* var_did_something);
+  // Check if |var_left| or |var_right| has an indirect (thin or flat cons)
+  // string type, and unpack it/them if so. Fall through if nothing was done.
+  void MaybeDerefIndirectStrings(Variable* var_left, Node* left_instance_type,
+                                 Variable* var_right, Node* right_instance_type,
+                                 Label* did_something);
 
   Node* StringFromCodePoint(Node* codepoint, UnicodeEncoding encoding);
 
@@ -731,7 +787,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* ToNumber(Node* context, Node* input);
 
   // Converts |input| to one of 2^32 integer values in the range 0 through
-  // 2^32−1, inclusive.
+  // 2^32-1, inclusive.
   // ES#sec-touint32
   compiler::Node* ToUint32(compiler::Node* context, compiler::Node* input);
 
@@ -741,13 +797,16 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Convert any object to a Primitive.
   Node* JSReceiverToPrimitive(Node* context, Node* input);
 
-  // Convert a String to a flat String.
-  Node* FlattenString(Node* string);
-
   enum ToIntegerTruncationMode {
     kNoTruncation,
     kTruncateMinusZero,
   };
+
+  // ES6 7.1.17 ToIndex, but jumps to range_error if the result is not a Smi.
+  Node* ToSmiIndex(Node* const input, Node* const context, Label* range_error);
+
+  // ES6 7.1.15 ToLength, but jumps to range_error if the result is not a Smi.
+  Node* ToSmiLength(Node* input, Node* const context, Label* range_error);
 
   // Convert any object to an Integer.
   Node* ToInteger(Node* context, Node* input,
@@ -856,7 +915,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Various building blocks for stubs doing property lookups.
   void TryToName(Node* key, Label* if_keyisindex, Variable* var_index,
-                 Label* if_keyisunique, Label* if_bailout);
+                 Label* if_keyisunique, Variable* var_unique,
+                 Label* if_bailout);
 
   // Calculates array index for given dictionary entry and entry field.
   // See Dictionary::EntryToIndex().
@@ -866,6 +926,49 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* EntryToIndex(Node* entry) {
     return EntryToIndex<Dictionary>(entry, Dictionary::kEntryKeyIndex);
   }
+
+  // Loads the details for the entry with the given key_index.
+  // Returns an untagged int32.
+  template <class ContainerType>
+  Node* LoadDetailsByKeyIndex(Node* container, Node* key_index) {
+    const int kKeyToDetailsOffset =
+        (ContainerType::kEntryDetailsIndex - ContainerType::kEntryKeyIndex) *
+        kPointerSize;
+    return LoadAndUntagToWord32FixedArrayElement(container, key_index,
+                                                 kKeyToDetailsOffset);
+  }
+
+  // Loads the value for the entry with the given key_index.
+  // Returns a tagged value.
+  template <class ContainerType>
+  Node* LoadValueByKeyIndex(Node* container, Node* key_index) {
+    const int kKeyToValueOffset =
+        (ContainerType::kEntryValueIndex - ContainerType::kEntryKeyIndex) *
+        kPointerSize;
+    return LoadFixedArrayElement(container, key_index, kKeyToValueOffset);
+  }
+
+  // Stores the details for the entry with the given key_index.
+  // |details| must be a Smi.
+  template <class ContainerType>
+  void StoreDetailsByKeyIndex(Node* container, Node* key_index, Node* details) {
+    const int kKeyToDetailsOffset =
+        (ContainerType::kEntryDetailsIndex - ContainerType::kEntryKeyIndex) *
+        kPointerSize;
+    StoreFixedArrayElement(container, key_index, details, SKIP_WRITE_BARRIER,
+                           kKeyToDetailsOffset);
+  }
+
+  // Stores the value for the entry with the given key_index.
+  template <class ContainerType>
+  void StoreValueByKeyIndex(Node* container, Node* key_index, Node* value) {
+    const int kKeyToValueOffset =
+        (ContainerType::kEntryValueIndex - ContainerType::kEntryKeyIndex) *
+        kPointerSize;
+    StoreFixedArrayElement(container, key_index, value, UPDATE_WRITE_BARRIER,
+                           kKeyToValueOffset);
+  }
+
   // Calculate a valid size for the a hash table.
   Node* HashTableComputeCapacity(Node* at_least_space_for);
 
@@ -930,6 +1033,20 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Label* if_found, Variable* var_value,
                          Label* if_not_found, Label* if_bailout);
 
+  Node* GetProperty(Node* context, Node* receiver, Handle<Name> name) {
+    return GetProperty(context, receiver, HeapConstant(name));
+  }
+
+  Node* GetProperty(Node* context, Node* receiver, Node* const name) {
+    return CallStub(CodeFactory::GetProperty(isolate()), context, receiver,
+                    name);
+  }
+
+  template <class... TArgs>
+  Node* CallBuiltin(Builtins::Name id, Node* context, TArgs... args) {
+    return CallStub(Builtins::CallableFor(isolate(), id), context, args...);
+  }
+
   void LoadPropertyFromFastObject(Node* object, Node* map, Node* descriptors,
                                   Node* name_index, Variable* var_details,
                                   Variable* var_value);
@@ -960,8 +1077,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Variable* var_meta_storage, Variable* var_name_index,
                          Label* if_not_found, Label* if_bailout);
 
+  // This method jumps to if_found if the element is known to exist. To
+  // if_absent if it's known to not exist. To if_not_found if the prototype
+  // chain needs to be checked. And if_bailout if the lookup is unsupported.
   void TryLookupElement(Node* object, Node* map, Node* instance_type,
-                        Node* intptr_index, Label* if_found,
+                        Node* intptr_index, Label* if_found, Label* if_absent,
                         Label* if_not_found, Label* if_bailout);
 
   // This is a type of a lookup in holder generator function. In case of a
@@ -1039,14 +1159,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* PageFromAddress(Node* address);
 
-  // Get the enumerable length from |map| and return the result as a Smi.
-  Node* EnumLength(Node* map);
-
-  // Check the cache validity for |receiver|. Branch to |use_cache| if
-  // the cache is valid, otherwise branch to |use_runtime|.
-  void CheckEnumCache(Node* receiver, CodeStubAssembler::Label* use_cache,
-                      CodeStubAssembler::Label* use_runtime);
-
   // Create a new weak cell with a specified value and install it into a
   // feedback vector.
   Node* CreateWeakCellInFeedbackVector(Node* feedback_vector, Node* slot,
@@ -1059,16 +1171,17 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   typedef std::function<void(Node* index)> FastLoopBody;
 
-  void BuildFastLoop(const VariableList& var_list,
-                     MachineRepresentation index_rep, Node* start_index,
-                     Node* end_index, const FastLoopBody& body, int increment,
-                     IndexAdvanceMode mode = IndexAdvanceMode::kPre);
+  Node* BuildFastLoop(const VariableList& var_list, Node* start_index,
+                      Node* end_index, const FastLoopBody& body, int increment,
+                      ParameterMode parameter_mode,
+                      IndexAdvanceMode advance_mode = IndexAdvanceMode::kPre);
 
-  void BuildFastLoop(MachineRepresentation index_rep, Node* start_index,
-                     Node* end_index, const FastLoopBody& body, int increment,
-                     IndexAdvanceMode mode = IndexAdvanceMode::kPre) {
-    BuildFastLoop(VariableList(0, zone()), index_rep, start_index, end_index,
-                  body, increment, mode);
+  Node* BuildFastLoop(Node* start_index, Node* end_index,
+                      const FastLoopBody& body, int increment,
+                      ParameterMode parameter_mode,
+                      IndexAdvanceMode advance_mode = IndexAdvanceMode::kPre) {
+    return BuildFastLoop(VariableList(0, zone()), start_index, end_index, body,
+                         increment, parameter_mode, advance_mode);
   }
 
   enum class ForEachDirection { kForward, kReverse };
@@ -1077,10 +1190,21 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       FastFixedArrayForEachBody;
 
   void BuildFastFixedArrayForEach(
-      Node* fixed_array, ElementsKind kind, Node* first_element_inclusive,
+      const CodeStubAssembler::VariableList& vars, Node* fixed_array,
+      ElementsKind kind, Node* first_element_inclusive,
       Node* last_element_exclusive, const FastFixedArrayForEachBody& body,
       ParameterMode mode = INTPTR_PARAMETERS,
       ForEachDirection direction = ForEachDirection::kReverse);
+
+  void BuildFastFixedArrayForEach(
+      Node* fixed_array, ElementsKind kind, Node* first_element_inclusive,
+      Node* last_element_exclusive, const FastFixedArrayForEachBody& body,
+      ParameterMode mode = INTPTR_PARAMETERS,
+      ForEachDirection direction = ForEachDirection::kReverse) {
+    CodeStubAssembler::VariableList list(0, zone());
+    BuildFastFixedArrayForEach(list, fixed_array, kind, first_element_inclusive,
+                               last_element_exclusive, body, mode, direction);
+  }
 
   Node* GetArrayAllocationSize(Node* element_count, ElementsKind kind,
                                ParameterMode mode, int header_size) {
@@ -1092,6 +1216,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return GetArrayAllocationSize(element_count, kind, mode,
                                   FixedArray::kHeaderSize);
   }
+
+  void GotoIfFixedArraySizeDoesntFitInNewSpace(Node* element_count,
+                                               Label* doesnt_fit, int base_size,
+                                               ParameterMode mode);
 
   void InitializeFieldsWithRoot(Node* object, Node* start_offset,
                                 Node* end_offset, Heap::RootListIndex root);
@@ -1112,25 +1240,24 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   void GotoUnlessNumberLessThan(Node* lhs, Node* rhs, Label* if_false);
 
-  enum ResultMode { kDontNegateResult, kNegateResult };
+  Node* Equal(Node* lhs, Node* rhs, Node* context);
 
-  Node* Equal(ResultMode mode, Node* lhs, Node* rhs, Node* context);
-
-  Node* StrictEqual(ResultMode mode, Node* lhs, Node* rhs, Node* context);
+  Node* StrictEqual(Node* lhs, Node* rhs);
 
   // ECMA#sec-samevalue
   // Similar to StrictEqual except that NaNs are treated as equal and minus zero
   // differs from positive zero.
   // Unlike Equal and StrictEqual, returns a value suitable for use in Branch
   // instructions, e.g. Branch(SameValue(...), &label).
-  Node* SameValue(Node* lhs, Node* rhs, Node* context);
+  Node* SameValue(Node* lhs, Node* rhs);
 
   Node* HasProperty(
       Node* object, Node* key, Node* context,
       Runtime::FunctionId fallback_runtime_function_id = Runtime::kHasProperty);
-  Node* ForInFilter(Node* key, Node* object, Node* context);
 
-  Node* Typeof(Node* value, Node* context);
+  Node* ClassOf(Node* object);
+
+  Node* Typeof(Node* value);
 
   Node* GetSuperConstructor(Node* value, Node* context);
 
@@ -1149,15 +1276,42 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                           Node* context);
 
   // Promise helpers
-  Node* IsPromiseHookEnabled();
+  Node* IsPromiseHookEnabledOrDebugIsActive();
 
   Node* AllocatePromiseReactionJobInfo(Node* value, Node* tasks,
                                        Node* deferred_promise,
                                        Node* deferred_on_resolve,
                                        Node* deferred_on_reject, Node* context);
 
+  // Helpers for StackFrame markers.
+  Node* MarkerIsFrameType(Node* marker_or_function,
+                          StackFrame::Type frame_type);
+  Node* MarkerIsNotFrameType(Node* marker_or_function,
+                             StackFrame::Type frame_type);
+
+  // Support for printf-style debugging
+  void Print(const char* s);
+  void Print(const char* prefix, Node* tagged_value);
+  inline void Print(Node* tagged_value) { return Print(nullptr, tagged_value); }
+
+  template <class... TArgs>
+  Node* MakeTypeError(MessageTemplate::Template message, Node* context,
+                      TArgs... args) {
+    STATIC_ASSERT(sizeof...(TArgs) <= 3);
+    Node* const make_type_error = LoadContextElement(
+        LoadNativeContext(context), Context::MAKE_TYPE_ERROR_INDEX);
+    return CallJS(CodeFactory::Call(isolate()), context, make_type_error,
+                  UndefinedConstant(), SmiConstant(message), args...);
+  }
+
  protected:
+  void DescriptorLookup(Node* unique_name, Node* descriptors, Node* bitfield3,
+                        Label* if_found, Variable* var_name_index,
+                        Label* if_not_found);
   void DescriptorLookupLinear(Node* unique_name, Node* descriptors, Node* nof,
+                              Label* if_found, Variable* var_name_index,
+                              Label* if_not_found);
+  void DescriptorLookupBinary(Node* unique_name, Node* descriptors, Node* nof,
                               Label* if_found, Variable* var_name_index,
                               Label* if_not_found);
 
@@ -1175,10 +1329,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   void HandleBreakOnNode();
 
-  Node* AllocateRawAligned(Node* size_in_bytes, AllocationFlags flags,
-                           Node* top_address, Node* limit_address);
+  Node* AllocateRawDoubleAligned(Node* size_in_bytes, AllocationFlags flags,
+                                 Node* top_address, Node* limit_address);
   Node* AllocateRawUnaligned(Node* size_in_bytes, AllocationFlags flags,
                              Node* top_adddress, Node* limit_address);
+  Node* AllocateRaw(Node* size_in_bytes, AllocationFlags flags,
+                    Node* top_address, Node* limit_address);
   // Allocate and return a JSArray of given total size in bytes with header
   // fields initialized.
   Node* AllocateUninitializedJSArray(ElementsKind kind, Node* array_map,
@@ -1198,6 +1354,19 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* AllocateConsString(Heap::RootListIndex map_root_index, Node* length,
                            Node* first, Node* second, AllocationFlags flags);
 
+  // Implements DescriptorArray::number_of_entries.
+  // Returns an untagged int32.
+  Node* DescriptorArrayNumberOfEntries(Node* descriptors);
+  // Implements DescriptorArray::ToKeyIndex.
+  // Returns an untagged IntPtr.
+  Node* DescriptorArrayToKeyIndex(Node* descriptor_number);
+  // Implements DescriptorArray::GetSortedKeyIndex.
+  // Returns an untagged int32.
+  Node* DescriptorArrayGetSortedKeyIndex(Node* descriptors,
+                                         Node* descriptor_number);
+  // Implements DescriptorArray::GetKey.
+  Node* DescriptorArrayGetKey(Node* descriptors, Node* descriptor_number);
+
   static const int kElementLoopUnrollThreshold = 8;
 };
 
@@ -1207,9 +1376,16 @@ class CodeStubArguments {
 
   // |argc| is an uint32 value which specifies the number of arguments passed
   // to the builtin excluding the receiver.
-  CodeStubArguments(CodeStubAssembler* assembler, Node* argc);
+  CodeStubArguments(CodeStubAssembler* assembler, Node* argc)
+      : CodeStubArguments(assembler, argc, nullptr,
+                          CodeStubAssembler::INTPTR_PARAMETERS) {}
+  CodeStubArguments(CodeStubAssembler* assembler, Node* argc, Node* fp,
+                    CodeStubAssembler::ParameterMode param_mode);
 
   Node* GetReceiver() const;
+
+  Node* AtIndexPtr(Node* index, CodeStubAssembler::ParameterMode mode =
+                                    CodeStubAssembler::INTPTR_PARAMETERS) const;
 
   // |index| is zero-based and does not include the receiver
   Node* AtIndex(Node* index, CodeStubAssembler::ParameterMode mode =
@@ -1241,23 +1417,58 @@ class CodeStubArguments {
   Node* GetArguments();
 
   CodeStubAssembler* assembler_;
+  CodeStubAssembler::ParameterMode argc_mode_;
   Node* argc_;
   Node* arguments_;
   Node* fp_;
 };
 
+class ToDirectStringAssembler : public CodeStubAssembler {
+ private:
+  enum StringPointerKind { PTR_TO_DATA, PTR_TO_STRING };
+
+ public:
+  explicit ToDirectStringAssembler(compiler::CodeAssemblerState* state,
+                                   Node* string);
+
+  // Converts flat cons, thin, and sliced strings and returns the direct
+  // string. The result can be either a sequential or external string.
+  Node* TryToDirect(Label* if_bailout);
+
+  // Returns a pointer to the beginning of the string data.
+  Node* PointerToData(Label* if_bailout) {
+    return TryToSequential(PTR_TO_DATA, if_bailout);
+  }
+
+  // Returns a pointer that, offset-wise, looks like a String.
+  Node* PointerToString(Label* if_bailout) {
+    return TryToSequential(PTR_TO_STRING, if_bailout);
+  }
+
+  Node* string() { return var_string_.value(); }
+  Node* instance_type() { return var_instance_type_.value(); }
+  Node* offset() { return var_offset_.value(); }
+  Node* is_external() { return var_is_external_.value(); }
+
+ private:
+  Node* TryToSequential(StringPointerKind ptr_kind, Label* if_bailout);
+
+  Variable var_string_;
+  Variable var_instance_type_;
+  Variable var_offset_;
+  Variable var_is_external_;
+};
+
 #ifdef DEBUG
 #define CSA_ASSERT(csa, x) \
   (csa)->Assert([&] { return (x); }, #x, __FILE__, __LINE__)
-#define CSA_ASSERT_JS_ARGC_OP(csa, Op, op, expected)               \
-  (csa)->Assert(                                                   \
-      [&] {                                                        \
-        const CodeAssemblerState* state = (csa)->state();          \
-        /* See Linkage::GetJSCallDescriptor(). */                  \
-        int argc_index = state->parameter_count() - 2;             \
-        compiler::Node* const argc = (csa)->Parameter(argc_index); \
-        return (csa)->Op(argc, (csa)->Int32Constant(expected));    \
-      },                                                           \
+#define CSA_ASSERT_JS_ARGC_OP(csa, Op, op, expected)             \
+  (csa)->Assert(                                                 \
+      [&] {                                                      \
+        compiler::Node* const argc =                             \
+            (csa)->Parameter(Descriptor::kActualArgumentsCount); \
+        return (csa)->Op(argc, (csa)->Int32Constant(expected));  \
+      },                                                         \
       "argc " #op " " #expected, __FILE__, __LINE__)
 
 #define CSA_ASSERT_JS_ARGC_EQ(csa, expected) \

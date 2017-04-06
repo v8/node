@@ -19,6 +19,7 @@
 #include "src/interpreter/bytecodes.h"
 #include "src/machine-type.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/utils.h"
 #include "src/zone/zone.h"
 
@@ -30,6 +31,11 @@
 #define REPEAT_1_TO_7(V, T) REPEAT_1_TO_6(V, T) V(T, T, T, T, T, T, T)
 #define REPEAT_1_TO_8(V, T) REPEAT_1_TO_7(V, T) V(T, T, T, T, T, T, T, T)
 #define REPEAT_1_TO_9(V, T) REPEAT_1_TO_8(V, T) V(T, T, T, T, T, T, T, T, T)
+#define REPEAT_1_TO_10(V, T) REPEAT_1_TO_9(V, T) V(T, T, T, T, T, T, T, T, T, T)
+#define REPEAT_1_TO_11(V, T) \
+  REPEAT_1_TO_10(V, T) V(T, T, T, T, T, T, T, T, T, T, T)
+#define REPEAT_1_TO_12(V, T) \
+  REPEAT_1_TO_11(V, T) V(T, T, T, T, T, T, T, T, T, T, T, T)
 
 namespace v8 {
 namespace internal {
@@ -159,6 +165,19 @@ bool CodeAssembler::IsFloat64RoundTruncateSupported() const {
   return raw_assembler()->machine()->Float64RoundTruncate().IsSupported();
 }
 
+bool CodeAssembler::IsInt32AbsWithOverflowSupported() const {
+  return raw_assembler()->machine()->Int32AbsWithOverflow().IsSupported();
+}
+
+bool CodeAssembler::IsInt64AbsWithOverflowSupported() const {
+  return raw_assembler()->machine()->Int64AbsWithOverflow().IsSupported();
+}
+
+bool CodeAssembler::IsIntPtrAbsWithOverflowSupported() const {
+  return Is64() ? IsInt64AbsWithOverflowSupported()
+                : IsInt32AbsWithOverflowSupported();
+}
+
 Node* CodeAssembler::Int32Constant(int32_t value) {
   return raw_assembler()->Int32Constant(value);
 }
@@ -185,6 +204,10 @@ Node* CodeAssembler::SmiConstant(int value) {
 
 Node* CodeAssembler::HeapConstant(Handle<HeapObject> object) {
   return raw_assembler()->HeapConstant(object);
+}
+
+Node* CodeAssembler::CStringConstant(const char* str) {
+  return HeapConstant(factory()->NewStringFromAsciiChecked(str, TENURED));
 }
 
 Node* CodeAssembler::BooleanConstant(bool value) {
@@ -249,15 +272,43 @@ Node* CodeAssembler::Parameter(int value) {
   return raw_assembler()->Parameter(value);
 }
 
+Node* CodeAssembler::GetJSContextParameter() {
+  CallDescriptor* desc = raw_assembler()->call_descriptor();
+  DCHECK(desc->IsJSFunctionCall());
+  return Parameter(Linkage::GetJSCallContextParamIndex(
+      static_cast<int>(desc->JSParameterCount())));
+}
+
 void CodeAssembler::Return(Node* value) {
   return raw_assembler()->Return(value);
+}
+
+void CodeAssembler::Return(Node* value1, Node* value2) {
+  return raw_assembler()->Return(value1, value2);
+}
+
+void CodeAssembler::Return(Node* value1, Node* value2, Node* value3) {
+  return raw_assembler()->Return(value1, value2, value3);
 }
 
 void CodeAssembler::PopAndReturn(Node* pop, Node* value) {
   return raw_assembler()->PopAndReturn(pop, value);
 }
 
+void CodeAssembler::ReturnIf(Node* condition, Node* value) {
+  Label if_return(this), if_continue(this);
+  Branch(condition, &if_return, &if_continue);
+  Bind(&if_return);
+  Return(value);
+  Bind(&if_continue);
+}
+
 void CodeAssembler::DebugBreak() { raw_assembler()->DebugBreak(); }
+
+void CodeAssembler::Unreachable() {
+  DebugBreak();
+  raw_assembler()->Unreachable();
+}
 
 void CodeAssembler::Comment(const char* format, ...) {
   if (!FLAG_code_comments) return;
@@ -366,6 +417,13 @@ Node* CodeAssembler::ChangeInt32ToIntPtr(Node* value) {
   return value;
 }
 
+Node* CodeAssembler::ChangeFloat64ToUintPtr(Node* value) {
+  if (raw_assembler()->machine()->Is64()) {
+    return raw_assembler()->ChangeFloat64ToUint64(value);
+  }
+  return raw_assembler()->ChangeFloat64ToUint32(value);
+}
+
 Node* CodeAssembler::RoundIntPtrToFloat64(Node* value) {
   if (raw_assembler()->machine()->Is64()) {
     return raw_assembler()->RoundInt64ToFloat64(value);
@@ -437,6 +495,18 @@ Node* CodeAssembler::AtomicStore(MachineRepresentation rep, Node* base,
   return raw_assembler()->AtomicStore(rep, base, offset, value);
 }
 
+Node* CodeAssembler::AtomicExchange(MachineType type, Node* base, Node* offset,
+                                    Node* value) {
+  return raw_assembler()->AtomicExchange(type, base, offset, value);
+}
+
+Node* CodeAssembler::AtomicCompareExchange(MachineType type, Node* base,
+                                           Node* offset, Node* old_value,
+                                           Node* new_value) {
+  return raw_assembler()->AtomicCompareExchange(type, base, offset, old_value,
+                                                new_value);
+}
+
 Node* CodeAssembler::StoreRoot(Heap::RootListIndex root_index, Node* value) {
   DCHECK(Heap::RootCanBeWrittenAfterInitialization(root_index));
   Node* roots_array_start =
@@ -495,7 +565,7 @@ Node* CodeAssembler::CallRuntime(Runtime::FunctionId function, Node* context,
   return return_value;
 }
 
-// Instantiate CallRuntime() with up to 6 arguments.
+// Instantiate CallRuntime() for argument counts used by CSA-generated code
 #define INSTANTIATE(...)                                       \
   template V8_EXPORT_PRIVATE Node* CodeAssembler::CallRuntime( \
       Runtime::FunctionId, __VA_ARGS__);
@@ -521,7 +591,7 @@ Node* CodeAssembler::TailCallRuntime(Runtime::FunctionId function,
   return raw_assembler()->TailCallN(desc, arraysize(nodes), nodes);
 }
 
-// Instantiate TailCallRuntime() with up to 6 arguments.
+// Instantiate TailCallRuntime() for argument counts used by CSA-generated code
 #define INSTANTIATE(...)                                           \
   template V8_EXPORT_PRIVATE Node* CodeAssembler::TailCallRuntime( \
       Runtime::FunctionId, __VA_ARGS__);
@@ -536,11 +606,11 @@ Node* CodeAssembler::CallStubR(const CallInterfaceDescriptor& descriptor,
   return CallStubN(descriptor, result_size, arraysize(nodes), nodes);
 }
 
-// Instantiate CallStubR() with up to 6 arguments.
+// Instantiate CallStubR() for argument counts used by CSA-generated code.
 #define INSTANTIATE(...)                                     \
   template V8_EXPORT_PRIVATE Node* CodeAssembler::CallStubR( \
       const CallInterfaceDescriptor& descriptor, size_t, Node*, __VA_ARGS__);
-REPEAT_1_TO_7(INSTANTIATE, Node*)
+REPEAT_1_TO_8(INSTANTIATE, Node*)
 #undef INSTANTIATE
 
 Node* CodeAssembler::CallStubN(const CallInterfaceDescriptor& descriptor,
@@ -575,15 +645,15 @@ Node* CodeAssembler::TailCallStub(const CallInterfaceDescriptor& descriptor,
       MachineType::AnyTagged(), result_size);
 
   Node* nodes[] = {target, args..., context};
-
+  CHECK_EQ(descriptor.GetParameterCount() + 2, arraysize(nodes));
   return raw_assembler()->TailCallN(desc, arraysize(nodes), nodes);
 }
 
-// Instantiate TailCallStub() with up to 6 arguments.
+// Instantiate TailCallStub() for argument counts used by CSA-generated code
 #define INSTANTIATE(...)                                        \
   template V8_EXPORT_PRIVATE Node* CodeAssembler::TailCallStub( \
       const CallInterfaceDescriptor& descriptor, Node*, __VA_ARGS__);
-REPEAT_1_TO_7(INSTANTIATE, Node*)
+REPEAT_1_TO_12(INSTANTIATE, Node*)
 #undef INSTANTIATE
 
 template <class... TArgs>
@@ -594,13 +664,21 @@ Node* CodeAssembler::TailCallBytecodeDispatch(
       isolate(), zone(), descriptor, descriptor.GetStackParameterCount());
 
   Node* nodes[] = {target, args...};
+  CHECK_EQ(descriptor.GetParameterCount() + 1, arraysize(nodes));
   return raw_assembler()->TailCallN(desc, arraysize(nodes), nodes);
 }
 
-// Instantiate TailCallBytecodeDispatch() with 4 arguments.
+// Instantiate TailCallBytecodeDispatch() for argument counts used by
+// CSA-generated code
 template V8_EXPORT_PRIVATE Node* CodeAssembler::TailCallBytecodeDispatch(
     const CallInterfaceDescriptor& descriptor, Node* target, Node*, Node*,
     Node*, Node*);
+
+Node* CodeAssembler::CallCFunctionN(Signature<MachineType>* signature,
+                                    int input_count, Node* const* inputs) {
+  CallDescriptor* desc = Linkage::GetSimplifiedCDescriptor(zone(), signature);
+  return raw_assembler()->CallN(desc, input_count, inputs);
+}
 
 Node* CodeAssembler::CallCFunction2(MachineType return_type,
                                     MachineType arg0_type,
@@ -630,7 +708,7 @@ void CodeAssembler::GotoIf(Node* condition, Label* true_label) {
   Bind(&false_label);
 }
 
-void CodeAssembler::GotoUnless(Node* condition, Label* false_label) {
+void CodeAssembler::GotoIfNot(Node* condition, Label* false_label) {
   Label true_label(this);
   Branch(condition, &true_label, false_label);
   Bind(&true_label);
@@ -687,6 +765,13 @@ CodeAssemblerVariable::CodeAssemblerVariable(CodeAssembler* assembler,
   state_->variables_.insert(impl_);
 }
 
+CodeAssemblerVariable::CodeAssemblerVariable(CodeAssembler* assembler,
+                                             MachineRepresentation rep,
+                                             Node* initial_value)
+    : CodeAssemblerVariable(assembler, rep) {
+  Bind(initial_value);
+}
+
 CodeAssemblerVariable::~CodeAssemblerVariable() {
   state_->variables_.erase(impl_);
 }
@@ -704,7 +789,7 @@ bool CodeAssemblerVariable::IsBound() const { return impl_->value_ != nullptr; }
 
 CodeAssemblerLabel::CodeAssemblerLabel(CodeAssembler* assembler,
                                        size_t vars_count,
-                                       CodeAssemblerVariable** vars,
+                                       CodeAssemblerVariable* const* vars,
                                        CodeAssemblerLabel::Type type)
     : bound_(false),
       merge_count_(0),
@@ -718,6 +803,8 @@ CodeAssemblerLabel::CodeAssemblerLabel(CodeAssembler* assembler,
     variable_phis_[vars[i]->impl_] = nullptr;
   }
 }
+
+CodeAssemblerLabel::~CodeAssemblerLabel() { label_->~RawMachineLabel(); }
 
 void CodeAssemblerLabel::MergeVariables() {
   ++merge_count_;

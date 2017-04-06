@@ -8,10 +8,13 @@
 
 #include "test/common/wasm/test-signatures.h"
 
+#include "src/objects-inl.h"
 #include "src/objects.h"
 
+#include "src/wasm/function-body-decoder-impl.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/signature-map.h"
+#include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-macro-gen.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-opcodes.h"
@@ -134,18 +137,15 @@ class FunctionBodyDecoderTest : public TestWithZone {
 
     if (result.error_code != expected) {
       ptrdiff_t pc = result.error_pc - result.start;
-      ptrdiff_t pt = result.error_pt - result.start;
       std::ostringstream str;
       if (expected == kSuccess) {
-        str << "Verification failed: " << result.error_code << " pc = +" << pc;
-        if (result.error_pt) str << ", pt = +" << pt;
-        str << ", msg = " << result.error_msg.get();
+        str << "Verification failed: " << result.error_code << " pc = +" << pc
+            << ", msg = " << result.error_msg.get();
       } else {
         str << "Verification expected: " << expected << ", but got "
             << result.error_code;
         if (result.error_code != kSuccess) {
           str << " pc = +" << pc;
-          if (result.error_pt) str << ", pt = +" << pt;
         }
       }
       EXPECT_TRUE(false) << str.str().c_str();
@@ -208,7 +208,7 @@ class TestModuleEnv : public ModuleEnv {
  public:
   explicit TestModuleEnv(ModuleOrigin origin = kWasmOrigin)
       : ModuleEnv(&mod, nullptr) {
-    mod.origin = origin;
+    mod.set_origin(origin);
   }
   byte AddGlobal(ValueType type, bool mutability = true) {
     mod.globals.push_back({type, mutability, WasmInitExpr(), 0, false, false});
@@ -372,22 +372,22 @@ TEST_F(FunctionBodyDecoderTest, GetLocal_off_end) {
 }
 
 TEST_F(FunctionBodyDecoderTest, NumLocalBelowLimit) {
-  AddLocals(kWasmI32, kMaxNumWasmLocals - 1);
+  AddLocals(kWasmI32, kV8MaxWasmFunctionLocals - 1);
   EXPECT_VERIFIES(v_v, WASM_NOP);
 }
 
 TEST_F(FunctionBodyDecoderTest, NumLocalAtLimit) {
-  AddLocals(kWasmI32, kMaxNumWasmLocals);
+  AddLocals(kWasmI32, kV8MaxWasmFunctionLocals);
   EXPECT_VERIFIES(v_v, WASM_NOP);
 }
 
 TEST_F(FunctionBodyDecoderTest, NumLocalAboveLimit) {
-  AddLocals(kWasmI32, kMaxNumWasmLocals + 1);
+  AddLocals(kWasmI32, kV8MaxWasmFunctionLocals + 1);
   EXPECT_FAILURE(v_v, WASM_NOP);
 }
 
 TEST_F(FunctionBodyDecoderTest, GetLocal_varint) {
-  const int kMaxLocals = kMaxNumWasmLocals - 1;
+  const int kMaxLocals = kV8MaxWasmFunctionLocals - 1;
   AddLocals(kWasmI32, kMaxLocals);
 
   EXPECT_VERIFIES(i_i, kExprGetLocal, U32V_1(66));
@@ -408,7 +408,7 @@ TEST_F(FunctionBodyDecoderTest, GetLocal_varint) {
 }
 
 TEST_F(FunctionBodyDecoderTest, GetLocal_toomany) {
-  AddLocals(kWasmI32, kMaxNumWasmLocals - 100);
+  AddLocals(kWasmI32, kV8MaxWasmFunctionLocals - 100);
   AddLocals(kWasmI32, 100);
 
   EXPECT_VERIFIES(i_v, kExprGetLocal, U32V_1(66));
@@ -2333,15 +2333,15 @@ class BranchTableIteratorTest : public TestWithZone {
   BranchTableIteratorTest() : TestWithZone() {}
   void CheckBrTableSize(const byte* start, const byte* end) {
     Decoder decoder(start, end);
-    BranchTableOperand operand(&decoder, start);
-    BranchTableIterator iterator(&decoder, operand);
+    BranchTableOperand<true> operand(&decoder, start);
+    BranchTableIterator<true> iterator(&decoder, operand);
     EXPECT_EQ(end - start - 1u, iterator.length());
     EXPECT_TRUE(decoder.ok());
   }
   void CheckBrTableError(const byte* start, const byte* end) {
     Decoder decoder(start, end);
-    BranchTableOperand operand(&decoder, start);
-    BranchTableIterator iterator(&decoder, operand);
+    BranchTableOperand<true> operand(&decoder, start);
+    BranchTableIterator<true> iterator(&decoder, operand);
     iterator.length();
     EXPECT_FALSE(decoder.ok());
   }

@@ -19,8 +19,10 @@ void LocalArrayBufferTracker::Free() {
   for (TrackingData::iterator it = array_buffers_.begin();
        it != array_buffers_.end();) {
     JSArrayBuffer* buffer = reinterpret_cast<JSArrayBuffer*>(it->first);
+    // TODO(mlippautz): Create a dependency on the collector to avoid getting
+    // the marking state out of thin air.
     if ((free_mode == kFreeAll) ||
-        Marking::IsWhite(ObjectMarking::MarkBitFrom(buffer))) {
+        ObjectMarking::IsWhite(buffer, MarkingState::Internal(buffer))) {
       const size_t len = it->second;
       heap_->isolate()->array_buffer_allocator()->Free(buffer->backing_store(),
                                                        len);

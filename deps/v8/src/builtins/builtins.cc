@@ -3,13 +3,17 @@
 // found in the LICENSE file.
 
 #include "src/builtins/builtins.h"
+#include "src/api.h"
+#include "src/assembler-inl.h"
+#include "src/builtins/builtins-descriptors.h"
+#include "src/callable.h"
 #include "src/code-events.h"
 #include "src/compiler/code-assembler.h"
 #include "src/ic/ic-state.h"
 #include "src/interface-descriptors.h"
 #include "src/isolate.h"
 #include "src/macro-assembler.h"
-#include "src/objects.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -98,7 +102,8 @@ Code* BuildWithCodeStubAssemblerJS(Isolate* isolate,
 Code* BuildWithCodeStubAssemblerCS(Isolate* isolate,
                                    CodeAssemblerGenerator generator,
                                    CallDescriptors::Key interface_descriptor,
-                                   Code::Flags flags, const char* name) {
+                                   Code::Flags flags, const char* name,
+                                   int result_size) {
   HandleScope scope(isolate);
   Zone zone(isolate->allocator(), ZONE_NAME);
   // The interface descriptor with given key must be initialized at this point
@@ -106,7 +111,8 @@ Code* BuildWithCodeStubAssemblerCS(Isolate* isolate,
   CallInterfaceDescriptor descriptor(isolate, interface_descriptor);
   // Ensure descriptor is already initialized.
   DCHECK_LE(0, descriptor.GetRegisterParameterCount());
-  compiler::CodeAssemblerState state(isolate, &zone, descriptor, flags, name);
+  compiler::CodeAssemblerState state(isolate, &zone, descriptor, flags, name,
+                                     result_size);
   generator(&state);
   Handle<Code> code = compiler::CodeAssembler::GenerateCode(&state);
   PostBuildProfileAndTracing(isolate, *code, name);
@@ -132,38 +138,58 @@ void Builtins::SetUp(Isolate* isolate, bool create_heap_objects) {
   code = BuildAdaptor(isolate, FUNCTION_ADDR(Builtin_##Name), EXIT, \
                       kBuiltinFlags, #Name);                        \
   builtins_[index++] = code;
-#define BUILD_TFJ(Name, Argc)                                          \
+#define BUILD_TFJ(Name, Argc, ...)                                     \
   code = BuildWithCodeStubAssemblerJS(isolate, &Generate_##Name, Argc, \
                                       kBuiltinFlags, #Name);           \
   builtins_[index++] = code;
-#define BUILD_TFS(Name, Kind, Extra, InterfaceDescriptor)              \
+#define BUILD_TFS(Name, InterfaceDescriptor, result_size)                   \
+  { InterfaceDescriptor##Descriptor descriptor(isolate); }                  \
+  code = BuildWithCodeStubAssemblerCS(isolate, &Generate_##Name,            \
+                                      CallDescriptors::InterfaceDescriptor, \
+                                      kBuiltinFlags, #Name, result_size);   \
+  builtins_[index++] = code;
+#define BUILD_TFH(Name, Kind, Extra, InterfaceDescriptor)              \
   { InterfaceDescriptor##Descriptor descriptor(isolate); }             \
+  /* Return size for IC builtins/handlers is always 1. */              \
   code = BuildWithCodeStubAssemblerCS(                                 \
       isolate, &Generate_##Name, CallDescriptors::InterfaceDescriptor, \
-      Code::ComputeFlags(Code::Kind, Extra), #Name);                   \
+      Code::ComputeFlags(Code::Kind, Extra), #Name, 1);                \
   builtins_[index++] = code;
 #define BUILD_ASM(Name)                                                        \
   code =                                                                       \
       BuildWithMacroAssembler(isolate, Generate_##Name, kBuiltinFlags, #Name); \
   builtins_[index++] = code;
-#define BUILD_ASH(Name, Kind, Extra)                                           \
-  code = BuildWithMacroAssembler(                                              \
-      isolate, Generate_##Name, Code::ComputeFlags(Code::Kind, Extra), #Name); \
-  builtins_[index++] = code;
 
-    BUILTIN_LIST(BUILD_CPP, BUILD_API, BUILD_TFJ, BUILD_TFS, BUILD_ASM,
-                 BUILD_ASH, BUILD_ASM);
+    BUILTIN_LIST(BUILD_CPP, BUILD_API, BUILD_TFJ, BUILD_TFS, BUILD_TFH,
+                 BUILD_ASM, BUILD_ASM);
 
 #undef BUILD_CPP
 #undef BUILD_API
 #undef BUILD_TFJ
 #undef BUILD_TFS
+#undef BUILD_TFH
 #undef BUILD_ASM
-#undef BUILD_ASH
     CHECK_EQ(builtin_count, index);
     for (int i = 0; i < builtin_count; i++) {
       Code::cast(builtins_[i])->set_builtin_index(i);
     }
+
+#define SET_PROMISE_REJECTION_PREDICTION(Name) \
+  Code::cast(builtins_[k##Name])->set_is_promise_rejection(true);
+
+    BUILTIN_PROMISE_REJECTION_PREDICTION_LIST(SET_PROMISE_REJECTION_PREDICTION)
+#undef SET_PROMISE_REJECTION_PREDICTION
+
+#define SET_EXCEPTION_CAUGHT_PREDICTION(Name) \
+  Code::cast(builtins_[k##Name])->set_is_exception_caught(true);
+
+    BUILTIN_EXCEPTION_CAUGHT_PREDICTION_LIST(SET_EXCEPTION_CAUGHT_PREDICTION)
+#undef SET_EXCEPTION_CAUGHT_PREDICTION
+
+#define SET_CODE_NON_TAGGED_PARAMS(Name) \
+  Code::cast(builtins_[k##Name])->set_has_tagged_params(false);
+    BUILTINS_WITH_UNTAGGED_PARAMS(SET_CODE_NON_TAGGED_PARAMS)
+#undef SET_CODE_NON_TAGGED_PARAMS
   }
 
   // Mark as initialized.
@@ -185,6 +211,95 @@ const char* Builtins::Lookup(byte* pc) {
     }
   }
   return NULL;
+}
+
+Handle<Code> Builtins::NewFunctionContext(ScopeType scope_type) {
+  switch (scope_type) {
+    case ScopeType::EVAL_SCOPE:
+      return FastNewFunctionContextEval();
+    case ScopeType::FUNCTION_SCOPE:
+      return FastNewFunctionContextFunction();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NewCloneShallowArray(
+    AllocationSiteMode allocation_mode) {
+  switch (allocation_mode) {
+    case TRACK_ALLOCATION_SITE:
+      return FastCloneShallowArrayTrack();
+    case DONT_TRACK_ALLOCATION_SITE:
+      return FastCloneShallowArrayDontTrack();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NewCloneShallowObject(int length) {
+  switch (length) {
+    case 0:
+      return FastCloneShallowObject0();
+    case 1:
+      return FastCloneShallowObject1();
+    case 2:
+      return FastCloneShallowObject2();
+    case 3:
+      return FastCloneShallowObject3();
+    case 4:
+      return FastCloneShallowObject4();
+    case 5:
+      return FastCloneShallowObject5();
+    case 6:
+      return FastCloneShallowObject6();
+    default:
+      UNREACHABLE();
+  }
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::NonPrimitiveToPrimitive(ToPrimitiveHint hint) {
+  switch (hint) {
+    case ToPrimitiveHint::kDefault:
+      return NonPrimitiveToPrimitive_Default();
+    case ToPrimitiveHint::kNumber:
+      return NonPrimitiveToPrimitive_Number();
+    case ToPrimitiveHint::kString:
+      return NonPrimitiveToPrimitive_String();
+  }
+  UNREACHABLE();
+  return Handle<Code>::null();
+}
+
+Handle<Code> Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
+  switch (hint) {
+    case OrdinaryToPrimitiveHint::kNumber:
+      return OrdinaryToPrimitive_Number();
+    case OrdinaryToPrimitiveHint::kString:
+      return OrdinaryToPrimitive_String();
+  }
+  UNREACHABLE();
+  return Handle<Code>::null();
+}
+
+// static
+Callable Builtins::CallableFor(Isolate* isolate, Name name) {
+  switch (name) {
+#define CASE(Name, ...)                                                  \
+  case k##Name: {                                                        \
+    Handle<Code> code(Code::cast(isolate->builtins()->builtins_[name])); \
+    auto descriptor = Builtin_##Name##_InterfaceDescriptor(isolate);     \
+    return Callable(code, descriptor);                                   \
+  }
+    BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, CASE, CASE,
+                 IGNORE_BUILTIN, IGNORE_BUILTIN)
+#undef CASE
+    default:
+      UNREACHABLE();
+      return Callable(Handle<Code>::null(), VoidDescriptor(isolate));
+  }
 }
 
 // static

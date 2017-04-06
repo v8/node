@@ -5,11 +5,13 @@
 #include "src/signature.h"
 
 #include "src/handles.h"
+#include "src/objects-inl.h"
 #include "src/v8.h"
 #include "src/zone/zone-containers.h"
 
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/leb-helper.h"
+#include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-macro-gen.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/wasm/wasm-module.h"
@@ -61,13 +63,20 @@ WasmFunctionBuilder::WasmFunctionBuilder(WasmModuleBuilder* builder)
       direct_calls_(builder->zone()),
       asm_offsets_(builder->zone(), 8) {}
 
-void WasmFunctionBuilder::EmitVarInt(uint32_t val) {
-  byte buffer[8];
+void WasmFunctionBuilder::EmitVarInt(int32_t val) {
+  byte buffer[5];
+  byte* ptr = buffer;
+  LEBHelper::write_i32v(&ptr, val);
+  DCHECK_GE(5, ptr - buffer);
+  body_.insert(body_.end(), buffer, ptr);
+}
+
+void WasmFunctionBuilder::EmitVarUint(uint32_t val) {
+  byte buffer[5];
   byte* ptr = buffer;
   LEBHelper::write_u32v(&ptr, val);
-  for (byte* p = buffer; p < ptr; p++) {
-    body_.push_back(*p);
-  }
+  DCHECK_GE(5, ptr - buffer);
+  body_.insert(body_.end(), buffer, ptr);
 }
 
 void WasmFunctionBuilder::SetSignature(FunctionSig* sig) {
@@ -82,15 +91,15 @@ uint32_t WasmFunctionBuilder::AddLocal(ValueType type) {
 }
 
 void WasmFunctionBuilder::EmitGetLocal(uint32_t local_index) {
-  EmitWithVarInt(kExprGetLocal, local_index);
+  EmitWithVarUint(kExprGetLocal, local_index);
 }
 
 void WasmFunctionBuilder::EmitSetLocal(uint32_t local_index) {
-  EmitWithVarInt(kExprSetLocal, local_index);
+  EmitWithVarUint(kExprSetLocal, local_index);
 }
 
 void WasmFunctionBuilder::EmitTeeLocal(uint32_t local_index) {
-  EmitWithVarInt(kExprTeeLocal, local_index);
+  EmitWithVarUint(kExprTeeLocal, local_index);
 }
 
 void WasmFunctionBuilder::EmitCode(const byte* code, uint32_t code_size) {
@@ -115,20 +124,19 @@ void WasmFunctionBuilder::EmitWithU8U8(WasmOpcode opcode, const byte imm1,
   body_.push_back(imm2);
 }
 
-void WasmFunctionBuilder::EmitWithVarInt(WasmOpcode opcode,
-                                         uint32_t immediate) {
+void WasmFunctionBuilder::EmitWithVarInt(WasmOpcode opcode, int32_t immediate) {
   body_.push_back(static_cast<byte>(opcode));
   EmitVarInt(immediate);
 }
 
+void WasmFunctionBuilder::EmitWithVarUint(WasmOpcode opcode,
+                                          uint32_t immediate) {
+  body_.push_back(static_cast<byte>(opcode));
+  EmitVarUint(immediate);
+}
+
 void WasmFunctionBuilder::EmitI32Const(int32_t value) {
-  if (-64 <= value && value <= 63) {
-    EmitWithU8(kExprI32Const, static_cast<byte>(value & 0x7F));
-  } else {
-    // TODO(titzer): variable-length signed and unsigned i32 constants.
-    byte code[] = {WASM_I32V_5(value)};
-    EmitCode(code, sizeof(code));
-  }
+  EmitWithVarInt(kExprI32Const, value);
 }
 
 void WasmFunctionBuilder::EmitDirectCallIndex(uint32_t index) {
@@ -177,6 +185,18 @@ void WasmFunctionBuilder::SetAsmFunctionStartPosition(int position) {
   last_asm_source_position_ = position;
 }
 
+void WasmFunctionBuilder::StashCode(std::vector<byte>* dst, size_t position) {
+  if (dst == nullptr) {
+    body_.resize(position);
+    return;
+  }
+  DCHECK_LE(position, body_.size());
+  size_t len = body_.size() - position;
+  dst->resize(len);
+  memcpy(dst->data(), body_.data() + position, len);
+  body_.resize(position);
+}
+
 void WasmFunctionBuilder::WriteSignature(ZoneBuffer& buffer) const {
   buffer.write_u32v(signature_index_);
 }
@@ -186,8 +206,8 @@ void WasmFunctionBuilder::WriteExports(ZoneBuffer& buffer) const {
     buffer.write_size(name.size());
     buffer.write(reinterpret_cast<const byte*>(name.data()), name.size());
     buffer.write_u8(kExternalFunction);
-    buffer.write_u32v(func_index_ +
-                      static_cast<uint32_t>(builder_->imports_.size()));
+    buffer.write_u32v(func_index_ + static_cast<uint32_t>(
+                                        builder_->function_imports_.size()));
   }
 }
 
@@ -204,7 +224,8 @@ void WasmFunctionBuilder::WriteBody(ZoneBuffer& buffer) const {
     for (DirectCallIndex call : direct_calls_) {
       buffer.patch_u32v(
           base + call.offset,
-          call.direct_index + static_cast<uint32_t>(builder_->imports_.size()));
+          call.direct_index +
+              static_cast<uint32_t>(builder_->function_imports_.size()));
     }
   }
 }
@@ -229,7 +250,8 @@ void WasmFunctionBuilder::WriteAsmWasmOffsetTable(ZoneBuffer& buffer) const {
 WasmModuleBuilder::WasmModuleBuilder(Zone* zone)
     : zone_(zone),
       signatures_(zone),
-      imports_(zone),
+      function_imports_(zone),
+      global_imports_(zone),
       functions_(zone),
       data_segments_(zone),
       indirect_functions_(zone),
@@ -295,8 +317,15 @@ void WasmModuleBuilder::SetIndirectFunction(uint32_t indirect,
 
 uint32_t WasmModuleBuilder::AddImport(const char* name, int name_length,
                                       FunctionSig* sig) {
-  imports_.push_back({AddSignature(sig), name, name_length});
-  return static_cast<uint32_t>(imports_.size() - 1);
+  function_imports_.push_back({AddSignature(sig), name, name_length});
+  return static_cast<uint32_t>(function_imports_.size() - 1);
+}
+
+uint32_t WasmModuleBuilder::AddGlobalImport(const char* name, int name_length,
+                                            ValueType type) {
+  global_imports_.push_back(
+      {WasmOpcodes::ValueTypeCodeFor(type), name, name_length});
+  return static_cast<uint32_t>(global_imports_.size() - 1);
 }
 
 void WasmModuleBuilder::MarkStartFunction(WasmFunctionBuilder* function) {
@@ -326,22 +355,31 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     for (FunctionSig* sig : signatures_) {
       buffer.write_u8(kWasmFunctionTypeForm);
       buffer.write_size(sig->parameter_count());
-      for (size_t j = 0; j < sig->parameter_count(); j++) {
-        buffer.write_u8(WasmOpcodes::ValueTypeCodeFor(sig->GetParam(j)));
+      for (auto param : sig->parameters()) {
+        buffer.write_u8(WasmOpcodes::ValueTypeCodeFor(param));
       }
       buffer.write_size(sig->return_count());
-      for (size_t j = 0; j < sig->return_count(); j++) {
-        buffer.write_u8(WasmOpcodes::ValueTypeCodeFor(sig->GetReturn(j)));
+      for (auto ret : sig->returns()) {
+        buffer.write_u8(WasmOpcodes::ValueTypeCodeFor(ret));
       }
     }
     FixupSection(buffer, start);
   }
 
   // == Emit imports ===========================================================
-  if (imports_.size() > 0) {
+  if (global_imports_.size() + function_imports_.size() > 0) {
     size_t start = EmitSection(kImportSectionCode, buffer);
-    buffer.write_size(imports_.size());
-    for (auto import : imports_) {
+    buffer.write_size(global_imports_.size() + function_imports_.size());
+    for (auto import : global_imports_) {
+      buffer.write_u32v(0);                   // module name length
+      buffer.write_u32v(import.name_length);  // field name length
+      buffer.write(reinterpret_cast<const byte*>(import.name),  // field name
+                   import.name_length);
+      buffer.write_u8(kExternalGlobal);
+      buffer.write_u8(import.type_code);
+      buffer.write_u8(0);  // immutable
+    }
+    for (auto import : function_imports_) {
       buffer.write_u32v(0);                   // module name length
       buffer.write_u32v(import.name_length);  // field name length
       buffer.write(reinterpret_cast<const byte*>(import.name),  // field name
@@ -359,7 +397,7 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     buffer.write_size(functions_.size());
     for (auto function : functions_) {
       function->WriteSignature(buffer);
-      exports += function->exported_names_.size();
+      exports += static_cast<uint32_t>(function->exported_names_.size());
       if (function->name_.size() > 0) has_names = true;
     }
     FixupSection(buffer, start);
@@ -470,7 +508,7 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
   if (start_function_index_ >= 0) {
     size_t start = EmitSection(kStartSectionCode, buffer);
     buffer.write_u32v(start_function_index_ +
-                      static_cast<uint32_t>(imports_.size()));
+                      static_cast<uint32_t>(function_imports_.size()));
     FixupSection(buffer, start);
   }
 
@@ -485,7 +523,8 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     buffer.write_size(indirect_functions_.size());  // element count
 
     for (auto index : indirect_functions_) {
-      buffer.write_u32v(index + static_cast<uint32_t>(imports_.size()));
+      buffer.write_u32v(index +
+                        static_cast<uint32_t>(function_imports_.size()));
     }
 
     FixupSection(buffer, start);
@@ -527,9 +566,9 @@ void WasmModuleBuilder::WriteTo(ZoneBuffer& buffer) const {
     buffer.write_size(4);
     buffer.write(reinterpret_cast<const byte*>("name"), 4);
     // Emit the names.
-    size_t count = functions_.size() + imports_.size();
+    size_t count = functions_.size() + function_imports_.size();
     buffer.write_size(count);
-    for (size_t i = 0; i < imports_.size(); i++) {
+    for (size_t i = 0; i < function_imports_.size(); i++) {
       buffer.write_u8(0);  // empty name for import
       buffer.write_u8(0);  // no local variables
     }

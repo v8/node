@@ -85,6 +85,8 @@ typedef std::function<void()> CodeAssemblerCallback;
   V(Float64Mod)                            \
   V(Float64Atan2)                          \
   V(Float64Pow)                            \
+  V(Float64Max)                            \
+  V(Float64Min)                            \
   V(Float64InsertLowWord32)                \
   V(Float64InsertHighWord32)               \
   V(IntPtrAddWithOverflow)                 \
@@ -151,6 +153,7 @@ typedef std::function<void()> CodeAssemblerCallback;
   V(TruncateInt64ToInt32)               \
   V(ChangeFloat32ToFloat64)             \
   V(ChangeFloat64ToUint32)              \
+  V(ChangeFloat64ToUint64)              \
   V(ChangeInt32ToFloat64)               \
   V(ChangeInt32ToInt64)                 \
   V(ChangeUint32ToFloat64)              \
@@ -164,6 +167,9 @@ typedef std::function<void()> CodeAssemblerCallback;
   V(Float64RoundTruncate)               \
   V(Word32Clz)                          \
   V(Word32Not)                          \
+  V(Int32AbsWithOverflow)               \
+  V(Int64AbsWithOverflow)               \
+  V(IntPtrAbsWithOverflow)              \
   V(Word32BinaryNot)
 
 // A "public" interface used by components outside of compiler directory to
@@ -198,6 +204,9 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   bool IsFloat64RoundDownSupported() const;
   bool IsFloat64RoundTiesEvenSupported() const;
   bool IsFloat64RoundTruncateSupported() const;
+  bool IsInt32AbsWithOverflowSupported() const;
+  bool IsInt64AbsWithOverflowSupported() const;
+  bool IsIntPtrAbsWithOverflowSupported() const;
 
   // Shortened aliases for use in CodeAssembler subclasses.
   typedef CodeAssemblerLabel Label;
@@ -216,6 +225,7 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   Node* SmiConstant(Smi* value);
   Node* SmiConstant(int value);
   Node* HeapConstant(Handle<HeapObject> object);
+  Node* CStringConstant(const char* str);
   Node* BooleanConstant(bool value);
   Node* ExternalConstant(ExternalReference address);
   Node* Float64Constant(double value);
@@ -227,16 +237,22 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   bool ToIntPtrConstant(Node* node, intptr_t& out_value);
 
   Node* Parameter(int value);
+  Node* GetJSContextParameter();
   void Return(Node* value);
+  void Return(Node* value1, Node* value2);
+  void Return(Node* value1, Node* value2, Node* value3);
   void PopAndReturn(Node* pop, Node* value);
 
+  void ReturnIf(Node* condition, Node* value);
+
   void DebugBreak();
+  void Unreachable();
   void Comment(const char* format, ...);
 
   void Bind(Label* label);
   void Goto(Label* label);
   void GotoIf(Node* condition, Label* true_label);
-  void GotoUnless(Node* condition, Label* false_label);
+  void GotoIfNot(Node* condition, Label* false_label);
   void Branch(Node* condition, Label* true_label, Label* false_label);
 
   void Switch(Node* index, Label* default_label, const int32_t* case_values,
@@ -267,6 +283,13 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   Node* AtomicStore(MachineRepresentation rep, Node* base, Node* offset,
                     Node* value);
 
+  // Exchange value at raw memory location
+  Node* AtomicExchange(MachineType type, Node* base, Node* offset, Node* value);
+
+  // Compare and Exchange value at raw memory location
+  Node* AtomicCompareExchange(MachineType type, Node* base, Node* offset,
+                              Node* old_value, Node* new_value);
+
   // Store a value to the root array.
   Node* StoreRoot(Heap::RootListIndex root_index, Node* value);
 
@@ -286,6 +309,10 @@ class V8_EXPORT_PRIVATE CodeAssembler {
 #define DECLARE_CODE_ASSEMBLER_UNARY_OP(name) Node* name(Node* a);
   CODE_ASSEMBLER_UNARY_OP_LIST(DECLARE_CODE_ASSEMBLER_UNARY_OP)
 #undef DECLARE_CODE_ASSEMBLER_UNARY_OP
+
+  // Changes a double to an inptr_t for pointer arithmetic outside of Smi range.
+  // Assumes that the double can be exactly represented as an int.
+  Node* ChangeFloat64ToUintPtr(Node* value);
 
   // Changes an intptr_t to a double, e.g. for storing an element index
   // outside Smi range in a HeapNumber. Lossless on 32-bit,
@@ -364,6 +391,9 @@ class V8_EXPORT_PRIVATE CodeAssembler {
                     args...);
   }
 
+  Node* CallCFunctionN(Signature<MachineType>* signature, int input_count,
+                       Node* const* inputs);
+
   // Call to a C function with two arguments.
   Node* CallCFunction2(MachineType return_type, MachineType arg0_type,
                        MachineType arg1_type, Node* function, Node* arg0,
@@ -409,6 +439,8 @@ class CodeAssemblerVariable {
  public:
   explicit CodeAssemblerVariable(CodeAssembler* assembler,
                                  MachineRepresentation rep);
+  CodeAssemblerVariable(CodeAssembler* assembler, MachineRepresentation rep,
+                        Node* initial_value);
   ~CodeAssemblerVariable();
   void Bind(Node* value);
   Node* value() const;
@@ -438,13 +470,21 @@ class CodeAssemblerLabel {
       : CodeAssemblerLabel(assembler, merged_variables.length(),
                            &(merged_variables[0]), type) {}
   CodeAssemblerLabel(
-      CodeAssembler* assembler, size_t count, CodeAssemblerVariable** vars,
+      CodeAssembler* assembler, size_t count,
+      CodeAssemblerVariable* const* vars,
       CodeAssemblerLabel::Type type = CodeAssemblerLabel::kNonDeferred);
+  CodeAssemblerLabel(
+      CodeAssembler* assembler,
+      std::initializer_list<CodeAssemblerVariable*> vars,
+      CodeAssemblerLabel::Type type = CodeAssemblerLabel::kNonDeferred)
+      : CodeAssemblerLabel(assembler, vars.size(), vars.begin(), type) {}
   CodeAssemblerLabel(
       CodeAssembler* assembler, CodeAssemblerVariable* merged_variable,
       CodeAssemblerLabel::Type type = CodeAssemblerLabel::kNonDeferred)
       : CodeAssemblerLabel(assembler, 1, &merged_variable, type) {}
-  ~CodeAssemblerLabel() {}
+  ~CodeAssemblerLabel();
+
+  inline bool is_bound() const { return bound_; }
 
  private:
   friend class CodeAssembler;

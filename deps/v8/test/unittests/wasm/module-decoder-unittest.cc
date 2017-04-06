@@ -919,7 +919,21 @@ TEST_F(WasmSignatureDecodeTest, Fail_invalid_param_type2) {
   EXPECT_EQ(nullptr, sig);
 }
 
-class WasmFunctionVerifyTest : public TestWithIsolateAndZone {};
+class WasmFunctionVerifyTest : public TestWithIsolateAndZone {
+ public:
+  WasmFunctionVerifyTest()
+      : instance(&module), env(&module, &instance, bytes) {}
+  virtual ~WasmFunctionVerifyTest() {}
+
+  ModuleBytesEnv* get_env() { return &env; }
+
+ private:
+  WasmModule module;
+  WasmInstance instance;
+  Vector<const byte> bytes;
+  ModuleBytesEnv env;
+  DISALLOW_COPY_AND_ASSIGN(WasmFunctionVerifyTest);
+};
 
 TEST_F(WasmFunctionVerifyTest, Ok_v_v_empty) {
   static const byte data[] = {
@@ -936,8 +950,8 @@ TEST_F(WasmFunctionVerifyTest, Ok_v_v_empty) {
       kExprEnd    // body
   };
 
-  FunctionResult result =
-      DecodeWasmFunction(isolate(), zone(), nullptr, data, data + sizeof(data));
+  FunctionResult result = DecodeWasmFunction(isolate(), zone(), get_env(), data,
+                                             data + sizeof(data));
   EXPECT_OK(result);
 
   if (result.val && result.ok()) {
@@ -1457,6 +1471,25 @@ TEST_F(WasmModuleVerifyTest, Names_two_empty) {
       NO_LOCAL_NAMES,  // --
       FOO_STRING,
       NO_LOCAL_NAMES,  // --
+  };
+  EXPECT_VERIFIES(data);
+}
+
+TEST_F(WasmModuleVerifyTest, Regression684855) {
+  static const byte data[] = {
+      SECTION_NAMES(12),
+      0xfb,  // functions count
+      0x27,  // |
+      0x00,  // function name length
+      0xff,  // local names count
+      0xff,  // |
+      0xff,  // |
+      0xff,  // |
+      0xff,  // |
+      0xff,  // error: "varint too large"
+      0xff,  // |
+      0x00,  // --
+      0x00   // --
   };
   EXPECT_VERIFIES(data);
 }

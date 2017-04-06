@@ -9,7 +9,6 @@
 #include "src/inspector/v8-debugger.h"
 #include "src/inspector/v8-inspector-impl.h"
 
-#include "include/v8-debug.h"
 #include "include/v8-version.h"
 
 namespace v8_inspector {
@@ -20,7 +19,8 @@ static const v8::StackTrace::StackTraceOptions stackTraceOptions =
     static_cast<v8::StackTrace::StackTraceOptions>(
         v8::StackTrace::kLineNumber | v8::StackTrace::kColumnOffset |
         v8::StackTrace::kScriptId | v8::StackTrace::kScriptNameOrSourceURL |
-        v8::StackTrace::kFunctionName);
+        v8::StackTrace::kFunctionName |
+        v8::StackTrace::kExposeFramesAcrossSecurityOrigins);
 
 V8StackTraceImpl::Frame toFrame(v8::Local<v8::StackFrame> frame,
                                 WasmTranslation* wasmTranslation,
@@ -40,9 +40,8 @@ V8StackTraceImpl::Frame toFrame(v8::Local<v8::StackFrame> frame,
   int sourceColumn = frame->GetColumn() - 1;
   // TODO(clemensh): Figure out a way to do this translation only right before
   // sending the stack trace over wire.
-  if (wasmTranslation)
-    wasmTranslation->TranslateWasmScriptLocationToProtocolLocation(
-        &scriptId, &sourceLineNumber, &sourceColumn);
+  wasmTranslation->TranslateWasmScriptLocationToProtocolLocation(
+      &scriptId, &sourceLineNumber, &sourceColumn);
   return V8StackTraceImpl::Frame(functionName, scriptId, sourceName,
                                  sourceLineNumber + 1, sourceColumn + 1);
 }
@@ -55,8 +54,7 @@ void toFramesVector(v8::Local<v8::StackTrace> stackTrace,
   int frameCount = stackTrace->GetFrameCount();
   if (frameCount > static_cast<int>(maxStackSize))
     frameCount = static_cast<int>(maxStackSize);
-  WasmTranslation* wasmTranslation =
-      debugger ? debugger->wasmTranslation() : nullptr;
+  WasmTranslation* wasmTranslation = debugger->wasmTranslation();
   for (int i = 0; i < frameCount; i++) {
     v8::Local<v8::StackFrame> stackFrame = stackTrace->GetFrame(i);
     frames.push_back(toFrame(stackFrame, wasmTranslation, contextGroupId));
@@ -118,7 +116,8 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::create(
     V8Debugger* debugger, int contextGroupId,
     v8::Local<v8::StackTrace> stackTrace, size_t maxStackSize,
     const String16& description) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  DCHECK(debugger);
+  v8::Isolate* isolate = debugger->inspector()->isolate();
   v8::HandleScope scope(isolate);
   std::vector<V8StackTraceImpl::Frame> frames;
   if (!stackTrace.IsEmpty())
@@ -127,7 +126,7 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::create(
 
   int maxAsyncCallChainDepth = 1;
   V8StackTraceImpl* asyncCallChain = nullptr;
-  if (debugger && maxStackSize > 1) {
+  if (maxStackSize > 1) {
     asyncCallChain = debugger->currentAsyncCallChain();
     maxAsyncCallChainDepth = debugger->maxAsyncCallChainDepth();
   }
@@ -141,10 +140,13 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::create(
     maxAsyncCallChainDepth = 1;
   }
 
-  // Only the top stack in the chain may be empty, so ensure that second stack
-  // is non-empty (it's the top of appended chain).
-  if (asyncCallChain && asyncCallChain->isEmpty())
+  // Only the top stack in the chain may be empty and doesn't contain creation
+  // stack , so ensure that second stack is non-empty (it's the top of appended
+  // chain).
+  if (asyncCallChain && asyncCallChain->isEmpty() &&
+      !asyncCallChain->m_creation) {
     asyncCallChain = asyncCallChain->m_parent.get();
+  }
 
   if (stackTrace.IsEmpty() && !asyncCallChain) return nullptr;
 
@@ -167,7 +169,8 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::create(
 std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::capture(
     V8Debugger* debugger, int contextGroupId, size_t maxStackSize,
     const String16& description) {
-  v8::Isolate* isolate = v8::Isolate::GetCurrent();
+  DCHECK(debugger);
+  v8::Isolate* isolate = debugger->inspector()->isolate();
   v8::HandleScope handleScope(isolate);
   v8::Local<v8::StackTrace> stackTrace;
   if (isolate->InContext()) {
@@ -180,9 +183,11 @@ std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::capture(
 
 std::unique_ptr<V8StackTraceImpl> V8StackTraceImpl::cloneImpl() {
   std::vector<Frame> framesCopy(m_frames);
-  return std::unique_ptr<V8StackTraceImpl>(
+  std::unique_ptr<V8StackTraceImpl> copy(
       new V8StackTraceImpl(m_contextGroupId, m_description, framesCopy,
                            m_parent ? m_parent->cloneImpl() : nullptr));
+  if (m_creation) copy->setCreation(m_creation->cloneImpl());
+  return copy;
 }
 
 std::unique_ptr<V8StackTrace> V8StackTraceImpl::clone() {
@@ -204,6 +209,19 @@ V8StackTraceImpl::V8StackTraceImpl(int contextGroupId,
 }
 
 V8StackTraceImpl::~V8StackTraceImpl() {}
+
+void V8StackTraceImpl::setCreation(std::unique_ptr<V8StackTraceImpl> creation) {
+  m_creation = std::move(creation);
+  // When async call chain is empty but doesn't contain useful schedule stack
+  // and parent async call chain contains creationg stack but doesn't
+  // synchronous we can merge them together.
+  // e.g. Promise ThenableJob.
+  if (m_parent && isEmpty() && m_description == m_parent->m_description &&
+      !m_parent->m_creation) {
+    m_frames.swap(m_parent->m_frames);
+    m_parent = std::move(m_parent->m_parent);
+  }
+}
 
 StringView V8StackTraceImpl::topSourceURL() const {
   DCHECK(m_frames.size());
@@ -243,12 +261,17 @@ V8StackTraceImpl::buildInspectorObjectImpl() const {
           .build();
   if (!m_description.isEmpty()) stackTrace->setDescription(m_description);
   if (m_parent) stackTrace->setParent(m_parent->buildInspectorObjectImpl());
+  if (m_creation && m_creation->m_frames.size()) {
+    stackTrace->setPromiseCreationFrame(
+        m_creation->m_frames[0].buildInspectorObject());
+  }
   return stackTrace;
 }
 
 std::unique_ptr<protocol::Runtime::StackTrace>
 V8StackTraceImpl::buildInspectorObjectForTail(V8Debugger* debugger) const {
-  v8::HandleScope handleScope(v8::Isolate::GetCurrent());
+  DCHECK(debugger);
+  v8::HandleScope handleScope(debugger->inspector()->isolate());
   // Next call collapses possible empty stack and ensures
   // maxAsyncCallChainDepth.
   std::unique_ptr<V8StackTraceImpl> fullChain = V8StackTraceImpl::create(

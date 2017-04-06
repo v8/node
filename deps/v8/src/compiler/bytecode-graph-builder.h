@@ -7,6 +7,7 @@
 
 #include "src/compiler/bytecode-analysis.h"
 #include "src/compiler/js-graph.h"
+#include "src/compiler/js-type-hint-lowering.h"
 #include "src/compiler/liveness-analyzer.h"
 #include "src/compiler/state-values-utils.h"
 #include "src/interpreter/bytecode-array-iterator.h"
@@ -18,18 +19,20 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
+class Reduction;
 class SourcePositionTable;
 
 // The BytecodeGraphBuilder produces a high-level IR graph based on
 // interpreter bytecodes.
 class BytecodeGraphBuilder {
  public:
-  BytecodeGraphBuilder(Zone* local_zone, Handle<SharedFunctionInfo> shared,
-                       Handle<FeedbackVector> feedback_vector,
-                       BailoutId osr_ast_id, JSGraph* jsgraph,
-                       float invocation_frequency,
-                       SourcePositionTable* source_positions,
-                       int inlining_id = SourcePosition::kNotInlined);
+  BytecodeGraphBuilder(
+      Zone* local_zone, Handle<SharedFunctionInfo> shared,
+      Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
+      JSGraph* jsgraph, float invocation_frequency,
+      SourcePositionTable* source_positions,
+      int inlining_id = SourcePosition::kNotInlined,
+      JSTypeHintLowering::Flags flags = JSTypeHintLowering::kNoFlags);
 
   // Creates a graph by visiting bytecodes.
   bool CreateGraph(bool stack_check = true);
@@ -104,16 +107,26 @@ class BytecodeGraphBuilder {
 
   // The main node creation chokepoint. Adds context, frame state, effect,
   // and control dependencies depending on the operator.
-  Node* MakeNode(const Operator* op, int value_input_count, Node** value_inputs,
-                 bool incomplete);
+  Node* MakeNode(const Operator* op, int value_input_count,
+                 Node* const* value_inputs, bool incomplete);
 
   Node** EnsureInputBufferSize(int size);
 
+  Node* const* GetCallArgumentsFromRegister(Node* callee,
+                                            interpreter::Register first_arg,
+                                            size_t arity);
+  Node* ProcessCallArguments(const Operator* call_op, Node* const* args,
+                             size_t arg_count);
   Node* ProcessCallArguments(const Operator* call_op, Node* callee,
                              interpreter::Register receiver, size_t arity);
-  Node* ProcessCallNewArguments(const Operator* call_new_op, Node* callee,
-                                Node* new_target,
-                                interpreter::Register first_arg, size_t arity);
+  Node* ProcessConstructArguments(const Operator* call_new_op, Node* callee,
+                                  Node* new_target,
+                                  interpreter::Register first_arg,
+                                  size_t arity);
+  Node* ProcessConstructWithSpreadArguments(const Operator* op, Node* callee,
+                                            Node* new_target,
+                                            interpreter::Register first_arg,
+                                            size_t arity);
   Node* ProcessCallRuntimeArguments(const Operator* call_runtime_op,
                                     interpreter::Register first_arg,
                                     size_t arity);
@@ -132,23 +145,52 @@ class BytecodeGraphBuilder {
   Node* BuildLoadGlobal(Handle<Name> name, uint32_t feedback_slot_index,
                         TypeofMode typeof_mode);
   void BuildStoreGlobal(LanguageMode language_mode);
-  void BuildNamedStore(LanguageMode language_mode);
+
+  enum class StoreMode {
+    // Check the prototype chain before storing.
+    kNormal,
+    // Store value to the receiver without checking the prototype chain.
+    kOwn,
+  };
+  void BuildNamedStore(LanguageMode language_mode, StoreMode store_mode);
   void BuildKeyedStore(LanguageMode language_mode);
   void BuildLdaLookupSlot(TypeofMode typeof_mode);
   void BuildLdaLookupContextSlot(TypeofMode typeof_mode);
   void BuildLdaLookupGlobalSlot(TypeofMode typeof_mode);
   void BuildStaLookupSlot(LanguageMode language_mode);
-  void BuildCall(TailCallMode tail_call_mode,
-                 ConvertReceiverMode receiver_hint);
-  void BuildThrow();
+  void BuildCallVarArgs(TailCallMode tail_call_mode,
+                        ConvertReceiverMode receiver_hint);
+  void BuildCall(TailCallMode tail_call_mode, ConvertReceiverMode receiver_hint,
+                 Node* const* args, size_t arg_count, int slot_id);
+  void BuildCall(TailCallMode tail_call_mode, ConvertReceiverMode receiver_hint,
+                 std::initializer_list<Node*> args, int slot_id) {
+    BuildCall(tail_call_mode, receiver_hint, args.begin(), args.size(),
+              slot_id);
+  }
   void BuildBinaryOp(const Operator* op);
   void BuildBinaryOpWithImmediate(const Operator* op);
   void BuildCompareOp(const Operator* op);
+  void BuildTestingOp(const Operator* op);
   void BuildDelete(LanguageMode language_mode);
   void BuildCastOperator(const Operator* op);
-  void BuildForInPrepare();
-  void BuildForInNext();
-  void BuildInvokeIntrinsic();
+
+  // Optional early lowering to the simplified operator level. Returns the node
+  // representing the lowered operation or {nullptr} if no lowering available.
+  // Note that the result has already been wired into the environment just like
+  // any other invocation of {NewNode} would do.
+  Node* TryBuildSimplifiedBinaryOp(const Operator* op, Node* left, Node* right,
+                                   FeedbackSlot slot);
+  Node* TryBuildSimplifiedLoadNamed(const Operator* op, Node* receiver,
+                                    FeedbackSlot slot);
+  Node* TryBuildSimplifiedLoadKeyed(const Operator* op, Node* receiver,
+                                    Node* key, FeedbackSlot slot);
+  Node* TryBuildSimplifiedStoreNamed(const Operator* op, Node* receiver,
+                                     Node* value, FeedbackSlot slot);
+  Node* TryBuildSimplifiedStoreKeyed(const Operator* op, Node* receiver,
+                                     Node* key, Node* value, FeedbackSlot slot);
+
+  // Applies the given early reduction onto the current environment.
+  void ApplyEarlyReduction(Reduction reduction);
 
   // Check the context chain for extensions, for lookup fast paths.
   Environment* CheckContextExtensions(uint32_t depth);
@@ -170,6 +212,7 @@ class BytecodeGraphBuilder {
   void BuildJumpIf(Node* condition);
   void BuildJumpIfNot(Node* condition);
   void BuildJumpIfEqual(Node* comperand);
+  void BuildJumpIfNotEqual(Node* comperand);
   void BuildJumpIfTrue();
   void BuildJumpIfFalse();
   void BuildJumpIfToBooleanTrue();
@@ -236,6 +279,9 @@ class BytecodeGraphBuilder {
   const Handle<FeedbackVector>& feedback_vector() const {
     return feedback_vector_;
   }
+  const JSTypeHintLowering& type_hint_lowering() const {
+    return type_hint_lowering_;
+  }
   const FrameStateFunctionInfo* frame_state_function_info() const {
     return frame_state_function_info_;
   }
@@ -257,8 +303,9 @@ class BytecodeGraphBuilder {
     bytecode_analysis_ = bytecode_analysis;
   }
 
-  bool IsLivenessAnalysisEnabled() const {
-    return this->is_liveness_analysis_enabled_;
+  bool needs_eager_checkpoint() const { return needs_eager_checkpoint_; }
+  void mark_as_needing_eager_checkpoint(bool value) {
+    needs_eager_checkpoint_ = value;
   }
 
 #define DECLARE_VISIT_BYTECODE(name, ...) void Visit##name();
@@ -271,6 +318,7 @@ class BytecodeGraphBuilder {
   Handle<BytecodeArray> bytecode_array_;
   Handle<HandlerTable> exception_handler_table_;
   Handle<FeedbackVector> feedback_vector_;
+  const JSTypeHintLowering type_hint_lowering_;
   const FrameStateFunctionInfo* frame_state_function_info_;
   const interpreter::BytecodeArrayIterator* bytecode_iterator_;
   const BytecodeAnalysis* bytecode_analysis_;
@@ -291,6 +339,11 @@ class BytecodeGraphBuilder {
   int input_buffer_size_;
   Node** input_buffer_;
 
+  // Optimization to only create checkpoints when the current position in the
+  // control-flow is not effect-dominated by another checkpoint already. All
+  // operations that do not have observable side-effects can be re-evaluated.
+  bool needs_eager_checkpoint_;
+
   // Nodes representing values in the activation record.
   SetOncePointer<Node> function_context_;
   SetOncePointer<Node> function_closure_;
@@ -298,8 +351,6 @@ class BytecodeGraphBuilder {
 
   // Control nodes that exit the function body.
   ZoneVector<Node*> exit_controls_;
-
-  bool const is_liveness_analysis_enabled_;
 
   StateValuesCache state_values_cache_;
 

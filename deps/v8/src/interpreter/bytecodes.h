@@ -51,7 +51,10 @@ namespace interpreter {
   V(PopContext, AccumulatorUse::kNone, OperandType::kReg)                      \
   V(LdaContextSlot, AccumulatorUse::kWrite, OperandType::kReg,                 \
     OperandType::kIdx, OperandType::kUImm)                                     \
+  V(LdaImmutableContextSlot, AccumulatorUse::kWrite, OperandType::kReg,        \
+    OperandType::kIdx, OperandType::kUImm)                                     \
   V(LdaCurrentContextSlot, AccumulatorUse::kWrite, OperandType::kIdx)          \
+  V(LdaImmutableCurrentContextSlot, AccumulatorUse::kWrite, OperandType::kIdx) \
   V(StaContextSlot, AccumulatorUse::kRead, OperandType::kReg,                  \
     OperandType::kIdx, OperandType::kUImm)                                     \
   V(StaCurrentContextSlot, AccumulatorUse::kRead, OperandType::kIdx)           \
@@ -94,12 +97,15 @@ namespace interpreter {
     OperandType::kIdx, OperandType::kIdx)                                      \
   V(StaNamedPropertyStrict, AccumulatorUse::kRead, OperandType::kReg,          \
     OperandType::kIdx, OperandType::kIdx)                                      \
+  V(StaNamedOwnProperty, AccumulatorUse::kRead, OperandType::kReg,             \
+    OperandType::kIdx, OperandType::kIdx)                                      \
   V(StaKeyedPropertySloppy, AccumulatorUse::kRead, OperandType::kReg,          \
     OperandType::kReg, OperandType::kIdx)                                      \
   V(StaKeyedPropertyStrict, AccumulatorUse::kRead, OperandType::kReg,          \
     OperandType::kReg, OperandType::kIdx)                                      \
   V(StaDataPropertyInLiteral, AccumulatorUse::kRead, OperandType::kReg,        \
     OperandType::kReg, OperandType::kFlag8, OperandType::kIdx)                 \
+  V(CollectTypeProfile, AccumulatorUse::kRead, OperandType::kImm)              \
                                                                                \
   /* Binary Operators */                                                       \
   V(Add, AccumulatorUse::kReadWrite, OperandType::kReg, OperandType::kIdx)     \
@@ -149,8 +155,23 @@ namespace interpreter {
   /* Call operations */                                                        \
   V(Call, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kRegList,    \
     OperandType::kRegCount, OperandType::kIdx)                                 \
+  V(Call0, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
+    OperandType::kIdx)                                                         \
+  V(Call1, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
+    OperandType::kReg, OperandType::kIdx)                                      \
+  V(Call2, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
+    OperandType::kReg, OperandType::kReg, OperandType::kIdx)                   \
   V(CallProperty, AccumulatorUse::kWrite, OperandType::kReg,                   \
     OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
+  V(CallProperty0, AccumulatorUse::kWrite, OperandType::kReg,                  \
+    OperandType::kReg, OperandType::kIdx)                                      \
+  V(CallProperty1, AccumulatorUse::kWrite, OperandType::kReg,                  \
+    OperandType::kReg, OperandType::kReg, OperandType::kIdx)                   \
+  V(CallProperty2, AccumulatorUse::kWrite, OperandType::kReg,                  \
+    OperandType::kReg, OperandType::kReg, OperandType::kReg,                   \
+    OperandType::kIdx)                                                         \
+  V(CallWithSpread, AccumulatorUse::kWrite, OperandType::kReg,                 \
+    OperandType::kRegList, OperandType::kRegCount)                             \
   V(TailCall, AccumulatorUse::kWrite, OperandType::kReg,                       \
     OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
   V(CallRuntime, AccumulatorUse::kWrite, OperandType::kRuntimeId,              \
@@ -164,16 +185,14 @@ namespace interpreter {
   V(InvokeIntrinsic, AccumulatorUse::kWrite, OperandType::kIntrinsicId,        \
     OperandType::kRegList, OperandType::kRegCount)                             \
                                                                                \
-  /* New operators */                                                          \
-  V(New, AccumulatorUse::kReadWrite, OperandType::kReg, OperandType::kRegList, \
-    OperandType::kRegCount, OperandType::kIdx)                                 \
-  V(NewWithSpread, AccumulatorUse::kWrite, OperandType::kRegList,              \
-    OperandType::kRegCount)                                                    \
+  /* Construct operators */                                                    \
+  V(Construct, AccumulatorUse::kReadWrite, OperandType::kReg,                  \
+    OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
+  V(ConstructWithSpread, AccumulatorUse::kReadWrite, OperandType::kReg,        \
+    OperandType::kRegList, OperandType::kRegCount)                             \
                                                                                \
   /* Test Operators */                                                         \
   V(TestEqual, AccumulatorUse::kReadWrite, OperandType::kReg,                  \
-    OperandType::kIdx)                                                         \
-  V(TestNotEqual, AccumulatorUse::kReadWrite, OperandType::kReg,               \
     OperandType::kIdx)                                                         \
   V(TestEqualStrict, AccumulatorUse::kReadWrite, OperandType::kReg,            \
     OperandType::kIdx)                                                         \
@@ -185,13 +204,13 @@ namespace interpreter {
     OperandType::kIdx)                                                         \
   V(TestGreaterThanOrEqual, AccumulatorUse::kReadWrite, OperandType::kReg,     \
     OperandType::kIdx)                                                         \
+  V(TestEqualStrictNoFeedback, AccumulatorUse::kReadWrite, OperandType::kReg)  \
   V(TestInstanceOf, AccumulatorUse::kReadWrite, OperandType::kReg)             \
   V(TestIn, AccumulatorUse::kReadWrite, OperandType::kReg)                     \
-                                                                               \
-  /* TestEqual with Null or Undefined */                                       \
-  V(TestUndetectable, AccumulatorUse::kWrite, OperandType::kReg)               \
-  V(TestNull, AccumulatorUse::kWrite, OperandType::kReg)                       \
-  V(TestUndefined, AccumulatorUse::kWrite, OperandType::kReg)                  \
+  V(TestUndetectable, AccumulatorUse::kReadWrite)                              \
+  V(TestNull, AccumulatorUse::kReadWrite)                                      \
+  V(TestUndefined, AccumulatorUse::kReadWrite)                                 \
+  V(TestTypeOf, AccumulatorUse::kReadWrite, OperandType::kFlag8)               \
                                                                                \
   /* Cast operators */                                                         \
   V(ToName, AccumulatorUse::kRead, OperandType::kRegOut)                       \
@@ -226,15 +245,17 @@ namespace interpreter {
                                                                                \
   /* Control Flow -- carefully ordered for efficient checks */                 \
   /* - [Unconditional jumps] */                                                \
-  V(JumpLoop, AccumulatorUse::kNone, OperandType::kImm, OperandType::kImm)     \
+  V(JumpLoop, AccumulatorUse::kNone, OperandType::kUImm, OperandType::kImm)    \
   /* - [Forward jumps] */                                                      \
-  V(Jump, AccumulatorUse::kNone, OperandType::kImm)                            \
+  V(Jump, AccumulatorUse::kNone, OperandType::kUImm)                           \
   /* - [Start constant jumps] */                                               \
   V(JumpConstant, AccumulatorUse::kNone, OperandType::kIdx)                    \
   /* - [Conditional jumps] */                                                  \
   /* - [Conditional constant jumps] */                                         \
   V(JumpIfNullConstant, AccumulatorUse::kRead, OperandType::kIdx)              \
+  V(JumpIfNotNullConstant, AccumulatorUse::kRead, OperandType::kIdx)           \
   V(JumpIfUndefinedConstant, AccumulatorUse::kRead, OperandType::kIdx)         \
+  V(JumpIfNotUndefinedConstant, AccumulatorUse::kRead, OperandType::kIdx)      \
   V(JumpIfTrueConstant, AccumulatorUse::kRead, OperandType::kIdx)              \
   V(JumpIfFalseConstant, AccumulatorUse::kRead, OperandType::kIdx)             \
   V(JumpIfJSReceiverConstant, AccumulatorUse::kRead, OperandType::kIdx)        \
@@ -244,15 +265,17 @@ namespace interpreter {
   V(JumpIfToBooleanFalseConstant, AccumulatorUse::kRead, OperandType::kIdx)    \
   /* - [End constant jumps] */                                                 \
   /* - [Conditional immediate jumps] */                                        \
-  V(JumpIfToBooleanTrue, AccumulatorUse::kRead, OperandType::kImm)             \
-  V(JumpIfToBooleanFalse, AccumulatorUse::kRead, OperandType::kImm)            \
+  V(JumpIfToBooleanTrue, AccumulatorUse::kRead, OperandType::kUImm)            \
+  V(JumpIfToBooleanFalse, AccumulatorUse::kRead, OperandType::kUImm)           \
   /* - [End ToBoolean jumps] */                                                \
-  V(JumpIfTrue, AccumulatorUse::kRead, OperandType::kImm)                      \
-  V(JumpIfFalse, AccumulatorUse::kRead, OperandType::kImm)                     \
-  V(JumpIfNull, AccumulatorUse::kRead, OperandType::kImm)                      \
-  V(JumpIfUndefined, AccumulatorUse::kRead, OperandType::kImm)                 \
-  V(JumpIfJSReceiver, AccumulatorUse::kRead, OperandType::kImm)                \
-  V(JumpIfNotHole, AccumulatorUse::kRead, OperandType::kImm)                   \
+  V(JumpIfTrue, AccumulatorUse::kRead, OperandType::kUImm)                     \
+  V(JumpIfFalse, AccumulatorUse::kRead, OperandType::kUImm)                    \
+  V(JumpIfNull, AccumulatorUse::kRead, OperandType::kUImm)                     \
+  V(JumpIfNotNull, AccumulatorUse::kRead, OperandType::kUImm)                  \
+  V(JumpIfUndefined, AccumulatorUse::kRead, OperandType::kUImm)                \
+  V(JumpIfNotUndefined, AccumulatorUse::kRead, OperandType::kUImm)             \
+  V(JumpIfJSReceiver, AccumulatorUse::kRead, OperandType::kUImm)               \
+  V(JumpIfNotHole, AccumulatorUse::kRead, OperandType::kUImm)                  \
                                                                                \
   /* Complex flow control For..in */                                           \
   V(ForInPrepare, AccumulatorUse::kNone, OperandType::kReg,                    \
@@ -275,7 +298,8 @@ namespace interpreter {
   V(Return, AccumulatorUse::kRead)                                             \
                                                                                \
   /* Generators */                                                             \
-  V(SuspendGenerator, AccumulatorUse::kRead, OperandType::kReg)                \
+  V(SuspendGenerator, AccumulatorUse::kRead, OperandType::kReg,                \
+    OperandType::kFlag8)                                                       \
   V(ResumeGenerator, AccumulatorUse::kWrite, OperandType::kReg)                \
                                                                                \
   /* Debugger */                                                               \
@@ -343,14 +367,18 @@ namespace interpreter {
   V(JumpIfTrue)                                         \
   V(JumpIfFalse)                                        \
   V(JumpIfNull)                                         \
+  V(JumpIfNotNull)                                      \
   V(JumpIfUndefined)                                    \
+  V(JumpIfNotUndefined)                                 \
   V(JumpIfJSReceiver)                                   \
   V(JumpIfNotHole)
 
 #define JUMP_CONDITIONAL_CONSTANT_BYTECODE_LIST(V)     \
   JUMP_TOBOOLEAN_CONDITIONAL_CONSTANT_BYTECODE_LIST(V) \
   V(JumpIfNullConstant)                                \
+  V(JumpIfNotNullConstant)                             \
   V(JumpIfUndefinedConstant)                           \
+  V(JumpIfNotUndefinedConstant)                        \
   V(JumpIfTrueConstant)                                \
   V(JumpIfFalseConstant)                               \
   V(JumpIfJSReceiverConstant)                          \
@@ -400,7 +428,7 @@ enum class Bytecode : uint8_t {
 class V8_EXPORT_PRIVATE Bytecodes final {
  public:
   //  The maximum number of operands a bytecode may have.
-  static const int kMaxOperands = 4;
+  static const int kMaxOperands = 5;
 
   // Returns string representation of |bytecode|.
   static const char* ToString(Bytecode bytecode);
@@ -472,32 +500,6 @@ class V8_EXPORT_PRIVATE Bytecodes final {
     return BytecodeOperands::WritesAccumulator(GetAccumulatorUse(bytecode));
   }
 
-  // Return true if |bytecode| writes the accumulator with a boolean value.
-  static bool WritesBooleanToAccumulator(Bytecode bytecode) {
-    switch (bytecode) {
-      case Bytecode::kLdaTrue:
-      case Bytecode::kLdaFalse:
-      case Bytecode::kToBooleanLogicalNot:
-      case Bytecode::kLogicalNot:
-      case Bytecode::kTestEqual:
-      case Bytecode::kTestNotEqual:
-      case Bytecode::kTestEqualStrict:
-      case Bytecode::kTestLessThan:
-      case Bytecode::kTestLessThanOrEqual:
-      case Bytecode::kTestGreaterThan:
-      case Bytecode::kTestGreaterThanOrEqual:
-      case Bytecode::kTestInstanceOf:
-      case Bytecode::kTestIn:
-      case Bytecode::kTestUndetectable:
-      case Bytecode::kForInContinue:
-      case Bytecode::kTestUndefined:
-      case Bytecode::kTestNull:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   // Return true if |bytecode| is an accumulator load without effects,
   // e.g. LdaConstant, LdaTrue, Ldar.
   static constexpr bool IsAccumulatorLoadWithoutEffects(Bytecode bytecode) {
@@ -508,7 +510,18 @@ class V8_EXPORT_PRIVATE Bytecodes final {
            bytecode == Bytecode::kLdaTheHole ||
            bytecode == Bytecode::kLdaConstant ||
            bytecode == Bytecode::kLdaContextSlot ||
-           bytecode == Bytecode::kLdaCurrentContextSlot;
+           bytecode == Bytecode::kLdaCurrentContextSlot ||
+           bytecode == Bytecode::kLdaImmutableContextSlot ||
+           bytecode == Bytecode::kLdaImmutableCurrentContextSlot;
+  }
+
+  // Returns true if |bytecode| is a compare operation without external effects
+  // (e.g., Type cooersion).
+  static constexpr bool IsCompareWithoutEffects(Bytecode bytecode) {
+    return bytecode == Bytecode::kTestUndetectable ||
+           bytecode == Bytecode::kTestNull ||
+           bytecode == Bytecode::kTestUndefined ||
+           bytecode == Bytecode::kTestTypeOf;
   }
 
   // Return true if |bytecode| is a register load without effects,
@@ -596,7 +609,8 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   static constexpr bool IsWithoutExternalSideEffects(Bytecode bytecode) {
     return (IsAccumulatorLoadWithoutEffects(bytecode) ||
             IsRegisterLoadWithoutEffects(bytecode) ||
-            bytecode == Bytecode::kNop || IsJumpWithoutEffects(bytecode));
+            IsCompareWithoutEffects(bytecode) || bytecode == Bytecode::kNop ||
+            IsJumpWithoutEffects(bytecode));
   }
 
   // Returns true if the bytecode is Ldar or Star.
@@ -610,9 +624,20 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   }
 
   // Returns true if the bytecode is a call or a constructor call.
-  static constexpr bool IsCallOrNew(Bytecode bytecode) {
+  static constexpr bool IsCallOrConstruct(Bytecode bytecode) {
     return bytecode == Bytecode::kCall || bytecode == Bytecode::kCallProperty ||
-           bytecode == Bytecode::kTailCall || bytecode == Bytecode::kNew;
+           bytecode == Bytecode::kCall0 ||
+           bytecode == Bytecode::kCallProperty0 ||
+           bytecode == Bytecode::kCall1 ||
+           bytecode == Bytecode::kCallProperty1 ||
+           bytecode == Bytecode::kCall2 ||
+           bytecode == Bytecode::kCallProperty2 ||
+           bytecode == Bytecode::kTailCall ||
+           bytecode == Bytecode::kConstruct ||
+           bytecode == Bytecode::kCallWithSpread ||
+           bytecode == Bytecode::kConstructWithSpread ||
+           bytecode == Bytecode::kInvokeIntrinsic ||
+           bytecode == Bytecode::kCallJSRuntime;
   }
 
   // Returns true if the bytecode is a call to the runtime.
@@ -717,6 +742,10 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   // Returns the equivalent jump bytecode without the accumulator coercion.
   static Bytecode GetJumpWithoutToBoolean(Bytecode bytecode);
 
+  // Returns true if there is a call in the most-frequently executed path
+  // through the bytecode's handler.
+  static bool MakesCallAlongCriticalPath(Bytecode bytecode);
+
   // Returns true if the bytecode is a debug break.
   static bool IsDebugBreak(Bytecode bytecode);
 
@@ -753,6 +782,7 @@ class V8_EXPORT_PRIVATE Bytecodes final {
       default:
         return 0;
     }
+    UNREACHABLE();
     return 0;
   }
 

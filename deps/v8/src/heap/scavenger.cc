@@ -5,11 +5,13 @@
 #include "src/heap/scavenger.h"
 
 #include "src/contexts.h"
-#include "src/heap/heap.h"
+#include "src/heap/heap-inl.h"
+#include "src/heap/incremental-marking.h"
 #include "src/heap/objects-visiting-inl.h"
 #include "src/heap/scavenger-inl.h"
 #include "src/isolate.h"
 #include "src/log.h"
+#include "src/profiler/heap-profiler.h"
 
 namespace v8 {
 namespace internal {
@@ -30,6 +32,7 @@ class ScavengingVisitor : public StaticVisitorBase {
     table_.Register(kVisitSeqOneByteString, &EvacuateSeqOneByteString);
     table_.Register(kVisitSeqTwoByteString, &EvacuateSeqTwoByteString);
     table_.Register(kVisitShortcutCandidate, &EvacuateShortcutCandidate);
+    table_.Register(kVisitThinString, &EvacuateThinString);
     table_.Register(kVisitByteArray, &EvacuateByteArray);
     table_.Register(kVisitFixedArray, &EvacuateFixedArray);
     table_.Register(kVisitFixedDoubleArray, &EvacuateFixedDoubleArray);
@@ -71,22 +74,29 @@ class ScavengingVisitor : public StaticVisitorBase {
 
     table_.Register(kVisitJSFunction, &EvacuateJSFunction);
 
-    table_.RegisterSpecializations<ObjectEvacuationStrategy<DATA_OBJECT>,
-                                   kVisitDataObject, kVisitDataObjectGeneric>();
+    table_.Register(kVisitDataObject,
+                    &ObjectEvacuationStrategy<DATA_OBJECT>::Visit);
 
-    table_.RegisterSpecializations<ObjectEvacuationStrategy<POINTER_OBJECT>,
-                                   kVisitJSObject, kVisitJSObjectGeneric>();
+    table_.Register(kVisitJSObjectFast,
+                    &ObjectEvacuationStrategy<POINTER_OBJECT>::Visit);
+    table_.Register(kVisitJSObject,
+                    &ObjectEvacuationStrategy<POINTER_OBJECT>::Visit);
 
-    table_
-        .RegisterSpecializations<ObjectEvacuationStrategy<POINTER_OBJECT>,
-                                 kVisitJSApiObject, kVisitJSApiObjectGeneric>();
+    table_.Register(kVisitJSApiObject,
+                    &ObjectEvacuationStrategy<POINTER_OBJECT>::Visit);
 
-    table_.RegisterSpecializations<ObjectEvacuationStrategy<POINTER_OBJECT>,
-                                   kVisitStruct, kVisitStructGeneric>();
+    table_.Register(kVisitStruct,
+                    &ObjectEvacuationStrategy<POINTER_OBJECT>::Visit);
   }
 
   static VisitorDispatchTable<ScavengingCallback>* GetTable() {
     return &table_;
+  }
+
+  static void EvacuateThinStringNoShortcut(Map* map, HeapObject** slot,
+                                           HeapObject* object) {
+    EvacuateObject<POINTER_OBJECT, kWordAligned>(map, slot, object,
+                                                 ThinString::kSize);
   }
 
  private:
@@ -138,9 +148,7 @@ class ScavengingVisitor : public StaticVisitorBase {
     }
 
     if (marks_handling == TRANSFER_MARKS) {
-      if (IncrementalMarking::TransferColor(source, target, size)) {
-        MemoryChunk::IncrementLiveBytes(target, size);
-      }
+      IncrementalMarking::TransferColor(source, target);
     }
   }
 
@@ -193,9 +201,10 @@ class ScavengingVisitor : public StaticVisitorBase {
                                    reinterpret_cast<base::AtomicWord>(target));
 
       if (object_contents == POINTER_OBJECT) {
+        // TODO(mlippautz): Query collector for marking state.
         heap->promotion_queue()->insert(
             target, object_size,
-            Marking::IsBlack(ObjectMarking::MarkBitFrom(object)));
+            ObjectMarking::IsBlack(object, MarkingState::Internal(object)));
       }
       heap->IncrementPromotedObjectsSize(object_size);
       return true;
@@ -239,8 +248,9 @@ class ScavengingVisitor : public StaticVisitorBase {
     DCHECK(map_word.IsForwardingAddress());
     HeapObject* target = map_word.ToForwardingAddress();
 
-    MarkBit mark_bit = ObjectMarking::MarkBitFrom(target);
-    if (Marking::IsBlack(mark_bit)) {
+    // TODO(mlippautz): Notify collector of this object so we don't have to
+    // retrieve the state our of thin air.
+    if (ObjectMarking::IsBlack(target, MarkingState::Internal(target))) {
       // This object is black and it might not be rescanned by marker.
       // We should explicitly record code entry slot for compaction because
       // promotion queue processing (IteratePromotedObjectPointers) will
@@ -339,6 +349,22 @@ class ScavengingVisitor : public StaticVisitorBase {
                                                  object_size);
   }
 
+  static inline void EvacuateThinString(Map* map, HeapObject** slot,
+                                        HeapObject* object) {
+    if (marks_handling == IGNORE_MARKS) {
+      HeapObject* actual = ThinString::cast(object)->actual();
+      *slot = actual;
+      // ThinStrings always refer to internalized strings, which are
+      // always in old space.
+      DCHECK(!map->GetHeap()->InNewSpace(actual));
+      object->set_map_word(MapWord::FromForwardingAddress(actual));
+      return;
+    }
+
+    EvacuateObject<POINTER_OBJECT, kWordAligned>(map, slot, object,
+                                                 ThinString::kSize);
+  }
+
   template <ObjectContents object_contents>
   class ObjectEvacuationStrategy {
    public:
@@ -423,6 +449,10 @@ void Scavenger::SelectScavengingVisitorsTable() {
           StaticVisitorBase::kVisitShortcutCandidate,
           scavenging_visitors_table_.GetVisitorById(
               StaticVisitorBase::kVisitConsString));
+      scavenging_visitors_table_.Register(
+          StaticVisitorBase::kVisitThinString,
+          &ScavengingVisitor<TRANSFER_MARKS, LOGGING_AND_PROFILING_DISABLED>::
+              EvacuateThinStringNoShortcut);
     }
   }
 }

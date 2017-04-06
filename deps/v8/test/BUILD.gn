@@ -10,6 +10,7 @@ group("gn_all") {
 
   deps = [
     ":default_tests",
+    "inspector:inspector-test",
   ]
 
   if (host_os != "mac" || !is_android) {
@@ -21,17 +22,12 @@ group("gn_all") {
     ]
   }
 
-  if (v8_enable_inspector) {
-    deps += [ "inspector:inspector-test" ]
-  }
-
   if (v8_test_isolation_mode != "noop") {
     deps += [
       ":benchmarks_run",
       ":bot_default_run",
       ":default_run",
       ":mozilla_run",
-      ":simdjs_run",
       "test262:test262_run",
     ]
   }
@@ -137,10 +133,9 @@ v8_isolate_run("fuzzer") {
 }
 
 v8_isolate_run("inspector-test") {
-  deps = []
-  if (v8_enable_inspector) {
-    deps += [ "inspector:inspector-test" ]
-  }
+  deps = [
+    "inspector:inspector-test",
+  ]
 
   isolate = "inspector/inspector.isolate"
 }
@@ -183,14 +178,6 @@ v8_isolate_run("preparser") {
   ]
 
   isolate = "preparser/preparser.isolate"
-}
-
-v8_isolate_run("simdjs") {
-  deps = [
-    "..:d8_run",
-  ]
-
-  isolate = "simdjs/simdjs.isolate"
 }
 
 v8_isolate_run("unittests") {

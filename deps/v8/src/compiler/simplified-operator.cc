@@ -388,12 +388,6 @@ NumberOperationHint NumberOperationHintOf(const Operator* op) {
   return OpParameter<NumberOperationHint>(op);
 }
 
-int ParameterCountOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kNewUnmappedArgumentsElements ||
-         op->opcode() == IrOpcode::kNewRestParameterElements);
-  return OpParameter<int>(op);
-}
-
 PretenureFlag PretenureFlagOf(const Operator* op) {
   DCHECK_EQ(IrOpcode::kAllocate, op->opcode());
   return OpParameter<PretenureFlag>(op);
@@ -461,6 +455,7 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(StringCharAt, Operator::kNoProperties, 2, 1)                 \
   V(StringCharCodeAt, Operator::kNoProperties, 2, 1)             \
   V(StringFromCharCode, Operator::kNoProperties, 1, 0)           \
+  V(StringIndexOf, Operator::kNoProperties, 3, 0)                \
   V(PlainPrimitiveToNumber, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToWord32, Operator::kNoProperties, 1, 0)       \
   V(PlainPrimitiveToFloat64, Operator::kNoProperties, 1, 0)      \
@@ -468,6 +463,7 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(ChangeTaggedToInt32, Operator::kNoProperties, 1, 0)          \
   V(ChangeTaggedToUint32, Operator::kNoProperties, 1, 0)         \
   V(ChangeTaggedToFloat64, Operator::kNoProperties, 1, 0)        \
+  V(ChangeTaggedToTaggedSigned, Operator::kNoProperties, 1, 0)   \
   V(ChangeFloat64ToTagged, Operator::kNoProperties, 1, 0)        \
   V(ChangeFloat64ToTaggedPointer, Operator::kNoProperties, 1, 0) \
   V(ChangeInt31ToTaggedSigned, Operator::kNoProperties, 1, 0)    \
@@ -476,13 +472,17 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(ChangeTaggedToBit, Operator::kNoProperties, 1, 0)            \
   V(ChangeBitToTagged, Operator::kNoProperties, 1, 0)            \
   V(TruncateTaggedToBit, Operator::kNoProperties, 1, 0)          \
+  V(TruncateTaggedPointerToBit, Operator::kNoProperties, 1, 0)   \
   V(TruncateTaggedToWord32, Operator::kNoProperties, 1, 0)       \
   V(TruncateTaggedToFloat64, Operator::kNoProperties, 1, 0)      \
-  V(ObjectIsCallable, Operator::kNoProperties, 1, 0)             \
+  V(ObjectIsDetectableCallable, Operator::kNoProperties, 1, 0)   \
+  V(ObjectIsNaN, Operator::kNoProperties, 1, 0)                  \
+  V(ObjectIsNonCallable, Operator::kNoProperties, 1, 0)          \
   V(ObjectIsNumber, Operator::kNoProperties, 1, 0)               \
   V(ObjectIsReceiver, Operator::kNoProperties, 1, 0)             \
   V(ObjectIsSmi, Operator::kNoProperties, 1, 0)                  \
   V(ObjectIsString, Operator::kNoProperties, 1, 0)               \
+  V(ObjectIsSymbol, Operator::kNoProperties, 1, 0)               \
   V(ObjectIsUndetectable, Operator::kNoProperties, 1, 0)         \
   V(ConvertTaggedHoleToUndefined, Operator::kNoProperties, 1, 0) \
   V(ReferenceEqual, Operator::kCommutative, 2, 0)                \
@@ -502,6 +502,7 @@ UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
   V(CheckIf, 1, 0)                      \
   V(CheckInternalizedString, 1, 1)      \
   V(CheckNumber, 1, 1)                  \
+  V(CheckReceiver, 1, 1)                \
   V(CheckSmi, 1, 1)                     \
   V(CheckString, 1, 1)                  \
   V(CheckTaggedHole, 1, 1)              \
@@ -559,6 +560,21 @@ struct SimplifiedOperatorGlobalCache final {
                    "ArrayBufferWasNeutered", 1, 1, 1, 1, 1, 0) {}
   };
   ArrayBufferWasNeuteredOperator kArrayBufferWasNeutered;
+
+  struct ArgumentsFrameOperator final : public Operator {
+    ArgumentsFrameOperator()
+        : Operator(IrOpcode::kArgumentsFrame, Operator::kPure, "ArgumentsFrame",
+                   0, 0, 0, 1, 0, 0) {}
+  };
+  ArgumentsFrameOperator kArgumentsFrame;
+
+  struct NewUnmappedArgumentsElementsOperator final : public Operator {
+    NewUnmappedArgumentsElementsOperator()
+        : Operator(IrOpcode::kNewUnmappedArgumentsElements,
+                   Operator::kEliminatable, "NewUnmappedArgumentsElements", 2,
+                   1, 0, 1, 1, 0) {}
+  };
+  NewUnmappedArgumentsElementsOperator kNewUnmappedArgumentsElements;
 
   template <CheckForMinusZeroMode kMode>
   struct CheckedInt32MulOperator final
@@ -704,6 +720,8 @@ SimplifiedOperatorBuilder::SimplifiedOperatorBuilder(Zone* zone)
 PURE_OP_LIST(GET_FROM_CACHE)
 CHECKED_OP_LIST(GET_FROM_CACHE)
 GET_FROM_CACHE(ArrayBufferWasNeutered)
+GET_FROM_CACHE(ArgumentsFrame)
+GET_FROM_CACHE(NewUnmappedArgumentsElements)
 #undef GET_FROM_CACHE
 
 const Operator* SimplifiedOperatorBuilder::CheckedInt32Mul(
@@ -801,24 +819,49 @@ const Operator* SimplifiedOperatorBuilder::TransitionElementsKind(
       transition);                                    // parameter
 }
 
-const Operator* SimplifiedOperatorBuilder::NewUnmappedArgumentsElements(
-    int parameter_count) {
-  return new (zone()) Operator1<int>(           // --
-      IrOpcode::kNewUnmappedArgumentsElements,  // opcode
-      Operator::kEliminatable,                  // flags
-      "NewUnmappedArgumentsElements",           // name
-      0, 1, 0, 1, 1, 0,                         // counts
-      parameter_count);                         // parameter
+namespace {
+
+struct ArgumentsLengthParameters {
+  int formal_parameter_count;
+  bool is_rest_length;
+};
+
+bool operator==(ArgumentsLengthParameters first,
+                ArgumentsLengthParameters second) {
+  return first.formal_parameter_count == second.formal_parameter_count &&
+         first.is_rest_length == second.is_rest_length;
 }
 
-const Operator* SimplifiedOperatorBuilder::NewRestParameterElements(
-    int parameter_count) {
-  return new (zone()) Operator1<int>(       // --
-      IrOpcode::kNewRestParameterElements,  // opcode
-      Operator::kEliminatable,              // flags
-      "NewRestParameterElements",           // name
-      0, 1, 0, 1, 1, 0,                     // counts
-      parameter_count);                     // parameter
+size_t hash_value(ArgumentsLengthParameters param) {
+  return base::hash_combine(param.formal_parameter_count, param.is_rest_length);
+}
+
+std::ostream& operator<<(std::ostream& os, ArgumentsLengthParameters param) {
+  return os << param.formal_parameter_count << ", "
+            << (param.is_rest_length ? "rest length" : "not rest length");
+}
+
+}  // namespace
+
+const Operator* SimplifiedOperatorBuilder::ArgumentsLength(
+    int formal_parameter_count, bool is_rest_length) {
+  return new (zone()) Operator1<ArgumentsLengthParameters>(  // --
+      IrOpcode::kArgumentsLength,                            // opcode
+      Operator::kPure,                                       // flags
+      "ArgumentsLength",                                     // name
+      1, 0, 0, 1, 0, 0,                                      // counts
+      ArgumentsLengthParameters{formal_parameter_count,
+                                is_rest_length});  // parameter
+}
+
+int FormalParameterCountOf(const Operator* op) {
+  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  return OpParameter<ArgumentsLengthParameters>(op).formal_parameter_count;
+}
+
+bool IsRestLengthOf(const Operator* op) {
+  DCHECK(op->opcode() == IrOpcode::kArgumentsLength);
+  return OpParameter<ArgumentsLengthParameters>(op).is_rest_length;
 }
 
 const Operator* SimplifiedOperatorBuilder::Allocate(PretenureFlag pretenure) {

@@ -187,7 +187,7 @@ static void CopyDictionaryToObjectElements(
                                             : SKIP_WRITE_BARRIER;
   Isolate* isolate = from->GetIsolate();
   for (int i = 0; i < copy_size; i++) {
-    int entry = from->FindEntry(i + from_start);
+    int entry = from->FindEntry(isolate, i + from_start);
     if (entry != SeededNumberDictionary::kNotFound) {
       Object* value = from->ValueAt(entry);
       DCHECK(!value->IsTheHole(isolate));
@@ -417,8 +417,9 @@ static void CopyDictionaryToDoubleElements(FixedArrayBase* from_base,
   if (to_start + copy_size > to_length) {
     copy_size = to_length - to_start;
   }
+  Isolate* isolate = from->GetIsolate();
   for (int i = 0; i < copy_size; i++) {
-    int entry = from->FindEntry(i + from_start);
+    int entry = from->FindEntry(isolate, i + from_start);
     if (entry != SeededNumberDictionary::kNotFound) {
       to->set(i + to_start, from->ValueAt(entry)->Number());
     } else {
@@ -683,15 +684,27 @@ class ElementsAccessorBase : public ElementsAccessor {
     return 0;
   }
 
-  Handle<JSArray> Slice(Handle<JSObject> receiver, uint32_t start,
-                        uint32_t end) final {
+  Handle<JSObject> Slice(Handle<JSObject> receiver, uint32_t start,
+                         uint32_t end) final {
     return Subclass::SliceImpl(receiver, start, end);
   }
 
-  static Handle<JSArray> SliceImpl(Handle<JSObject> receiver,
-                                   uint32_t start, uint32_t end) {
+  Handle<JSObject> Slice(Handle<JSObject> receiver, uint32_t start,
+                         uint32_t end, Handle<JSObject> result) final {
+    return Subclass::SliceWithResultImpl(receiver, start, end, result);
+  }
+
+  static Handle<JSObject> SliceImpl(Handle<JSObject> receiver, uint32_t start,
+                                    uint32_t end) {
     UNREACHABLE();
-    return Handle<JSArray>();
+    return Handle<JSObject>();
+  }
+
+  static Handle<JSObject> SliceWithResultImpl(Handle<JSObject> receiver,
+                                              uint32_t start, uint32_t end,
+                                              Handle<JSObject> result) {
+    UNREACHABLE();
+    return Handle<JSObject>();
   }
 
   Handle<JSArray> Splice(Handle<JSArray> receiver, uint32_t start,
@@ -1190,6 +1203,18 @@ class ElementsAccessorBase : public ElementsAccessor {
     return Subclass::GetCapacityImpl(holder, backing_store);
   }
 
+  static Object* FillImpl(Isolate* isolate, Handle<JSObject> receiver,
+                          Handle<Object> obj_value, uint32_t start,
+                          uint32_t end) {
+    UNREACHABLE();
+    return *receiver;
+  }
+
+  Object* Fill(Isolate* isolate, Handle<JSObject> receiver,
+               Handle<Object> obj_value, uint32_t start, uint32_t end) {
+    return Subclass::FillImpl(isolate, receiver, obj_value, start, end);
+  }
+
   static Maybe<bool> IncludesValueImpl(Isolate* isolate,
                                        Handle<JSObject> receiver,
                                        Handle<Object> value,
@@ -1217,6 +1242,24 @@ class ElementsAccessorBase : public ElementsAccessor {
     return Subclass::IndexOfValueImpl(isolate, receiver, value, start_from,
                                       length);
   }
+
+  static Maybe<int64_t> LastIndexOfValueImpl(Isolate* isolate,
+                                             Handle<JSObject> receiver,
+                                             Handle<Object> value,
+                                             uint32_t start_from) {
+    UNREACHABLE();
+    return Just<int64_t>(-1);
+  }
+
+  Maybe<int64_t> LastIndexOfValue(Isolate* isolate, Handle<JSObject> receiver,
+                                  Handle<Object> value,
+                                  uint32_t start_from) final {
+    return Subclass::LastIndexOfValueImpl(isolate, receiver, value, start_from);
+  }
+
+  static void ReverseImpl(JSObject* receiver) { UNREACHABLE(); }
+
+  void Reverse(JSObject* receiver) final { Subclass::ReverseImpl(receiver); }
 
   static uint32_t GetIndexForEntryImpl(FixedArrayBase* backing_store,
                                        uint32_t entry) {
@@ -1628,7 +1671,7 @@ class DictionaryElementsAccessor
     // Iterate through entire range, as accessing elements out of order is
     // observable
     for (uint32_t k = start_from; k < length; ++k) {
-      int entry = dictionary->FindEntry(k);
+      int entry = dictionary->FindEntry(isolate, k);
       if (entry == SeededNumberDictionary::kNotFound) {
         if (search_for_hole) return Just(true);
         continue;
@@ -1694,7 +1737,7 @@ class DictionaryElementsAccessor
     // Iterate through entire range, as accessing elements out of order is
     // observable.
     for (uint32_t k = start_from; k < length; ++k) {
-      int entry = dictionary->FindEntry(k);
+      int entry = dictionary->FindEntry(isolate, k);
       if (entry == SeededNumberDictionary::kNotFound) {
         continue;
       }
@@ -2002,8 +2045,8 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
                                   AT_START);
   }
 
-  static Handle<JSArray> SliceImpl(Handle<JSObject> receiver,
-                                   uint32_t start, uint32_t end) {
+  static Handle<JSObject> SliceImpl(Handle<JSObject> receiver, uint32_t start,
+                                    uint32_t end) {
     Isolate* isolate = receiver->GetIsolate();
     Handle<FixedArrayBase> backing_store(receiver->elements(), isolate);
     int result_len = end < start ? 0u : end - start;
@@ -2637,9 +2680,9 @@ class FastDoubleElementsAccessor
     FixedArrayBase* elements_base = receiver->elements();
     Object* value = *search_value;
 
-    if (start_from >= length) return Just<int64_t>(-1);
-
     length = std::min(static_cast<uint32_t>(elements_base->length()), length);
+
+    if (start_from >= length) return Just<int64_t>(-1);
 
     if (!value->IsNumber()) {
       return Just<int64_t>(-1);
@@ -2814,11 +2857,37 @@ class TypedElementsAccessor
     return Just(true);
   }
 
+  static Object* FillImpl(Isolate* isolate, Handle<JSObject> receiver,
+                          Handle<Object> obj_value, uint32_t start,
+                          uint32_t end) {
+    Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(receiver);
+    DCHECK(!array->WasNeutered());
+    DCHECK(obj_value->IsNumber());
+
+    ctype value;
+    if (obj_value->IsSmi()) {
+      value = BackingStore::from_int(Smi::cast(*obj_value)->value());
+    } else {
+      DCHECK(obj_value->IsHeapNumber());
+      value = BackingStore::from_double(HeapNumber::cast(*obj_value)->value());
+    }
+
+    // Ensure indexes are within array bounds
+    DCHECK_LE(0, start);
+    DCHECK_LE(start, end);
+    DCHECK_LE(end, array->length_value());
+
+    DisallowHeapAllocation no_gc;
+    BackingStore* elements = BackingStore::cast(receiver->elements());
+    ctype* data = static_cast<ctype*>(elements->DataPtr());
+    std::fill(data + start, data + end, value);
+    return *array;
+  }
+
   static Maybe<bool> IncludesValueImpl(Isolate* isolate,
                                        Handle<JSObject> receiver,
                                        Handle<Object> value,
                                        uint32_t start_from, uint32_t length) {
-    DCHECK(JSObject::PrototypeHasNoElements(isolate, *receiver));
     DisallowHeapAllocation no_gc;
 
     // TODO(caitp): return Just(false) here when implementing strict throwing on
@@ -2873,7 +2942,6 @@ class TypedElementsAccessor
                                          Handle<JSObject> receiver,
                                          Handle<Object> value,
                                          uint32_t start_from, uint32_t length) {
-    DCHECK(JSObject::PrototypeHasNoElements(isolate, *receiver));
     DisallowHeapAllocation no_gc;
 
     if (WasNeutered(*receiver)) return Just<int64_t>(-1);
@@ -2915,6 +2983,102 @@ class TypedElementsAccessor
       if (element_k == typed_search_value) return Just<int64_t>(k);
     }
     return Just<int64_t>(-1);
+  }
+
+  static Maybe<int64_t> LastIndexOfValueImpl(Isolate* isolate,
+                                             Handle<JSObject> receiver,
+                                             Handle<Object> value,
+                                             uint32_t start_from) {
+    DisallowHeapAllocation no_gc;
+    DCHECK(!WasNeutered(*receiver));
+
+    if (!value->IsNumber()) return Just<int64_t>(-1);
+    BackingStore* elements = BackingStore::cast(receiver->elements());
+
+    double search_value = value->Number();
+
+    if (!std::isfinite(search_value)) {
+      if (std::is_integral<ctype>::value) {
+        // Integral types cannot represent +Inf or NaN.
+        return Just<int64_t>(-1);
+      } else if (std::isnan(search_value)) {
+        // Strict Equality Comparison of NaN is always false.
+        return Just<int64_t>(-1);
+      }
+    } else if (search_value < std::numeric_limits<ctype>::lowest() ||
+               search_value > std::numeric_limits<ctype>::max()) {
+      // Return -1 if value can't be represented in this ElementsKind.
+      return Just<int64_t>(-1);
+    }
+
+    ctype typed_search_value = static_cast<ctype>(search_value);
+    if (static_cast<double>(typed_search_value) != search_value) {
+      return Just<int64_t>(-1);  // Loss of precision.
+    }
+
+    DCHECK_LT(start_from, elements->length());
+
+    uint32_t k = start_from;
+    do {
+      ctype element_k = elements->get_scalar(k);
+      if (element_k == typed_search_value) return Just<int64_t>(k);
+    } while (k-- != 0);
+    return Just<int64_t>(-1);
+  }
+
+  static void ReverseImpl(JSObject* receiver) {
+    DisallowHeapAllocation no_gc;
+    DCHECK(!WasNeutered(receiver));
+
+    BackingStore* elements = BackingStore::cast(receiver->elements());
+
+    uint32_t len = elements->length();
+    if (len == 0) return;
+
+    ctype* data = static_cast<ctype*>(elements->DataPtr());
+    std::reverse(data, data + len);
+  }
+
+  static Handle<JSObject> SliceWithResultImpl(Handle<JSObject> receiver,
+                                              uint32_t start, uint32_t end,
+                                              Handle<JSObject> result) {
+    Isolate* isolate = receiver->GetIsolate();
+    DCHECK(!WasNeutered(*receiver));
+    DCHECK(result->IsJSTypedArray());
+    DCHECK(!WasNeutered(*result));
+    DCHECK_LE(start, end);
+
+    Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(receiver);
+    Handle<JSTypedArray> result_array = Handle<JSTypedArray>::cast(result);
+    DCHECK_LE(end, array->length_value());
+
+    // Fast path for the same type result array
+    if (result_array->type() == array->type()) {
+      int64_t element_size = array->element_size();
+      int64_t count = end - start;
+
+      DisallowHeapAllocation no_gc;
+      BackingStore* src_elements = BackingStore::cast(receiver->elements());
+      BackingStore* result_elements =
+          BackingStore::cast(result_array->elements());
+
+      DCHECK_LE(count, result_elements->length());
+
+      uint8_t* src = static_cast<uint8_t*>(src_elements->DataPtr());
+      uint8_t* result = static_cast<uint8_t*>(result_elements->DataPtr());
+      std::memcpy(result, src + start * element_size, count * element_size);
+      return result_array;
+    }
+
+    // If the types of the two typed arrays are different, properly convert
+    // elements
+    Handle<BackingStore> from(BackingStore::cast(array->elements()), isolate);
+    ElementsAccessor* result_accessor = result_array->GetElementsAccessor();
+    for (uint32_t i = start; i < end; i++) {
+      Handle<Object> elem = AccessorClass::GetImpl(isolate, *from, i);
+      result_accessor->Set(result_array, i, *elem);
+    }
+    return result_array;
   }
 };
 
@@ -3353,8 +3517,8 @@ class FastSloppyArgumentsElementsAccessor
     return Handle<FixedArray>(FixedArray::cast(parameter_map->get(1)), isolate);
   }
 
-  static Handle<JSArray> SliceImpl(Handle<JSObject> receiver, uint32_t start,
-                                   uint32_t end) {
+  static Handle<JSObject> SliceImpl(Handle<JSObject> receiver, uint32_t start,
+                                    uint32_t end) {
     Isolate* isolate = receiver->GetIsolate();
     uint32_t result_len = end < start ? 0u : end - start;
     Handle<JSArray> result_array = isolate->factory()->NewJSArray(

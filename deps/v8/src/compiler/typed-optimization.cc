@@ -92,6 +92,8 @@ Reduction TypedOptimization::Reduce(Node* node) {
       return ReduceNumberToUint8Clamped(node);
     case IrOpcode::kPhi:
       return ReducePhi(node);
+    case IrOpcode::kReferenceEqual:
+      return ReduceReferenceEqual(node);
     case IrOpcode::kSelect:
       return ReduceSelect(node);
     default:
@@ -193,7 +195,8 @@ Reduction TypedOptimization::ReduceNumberFloor(Node* node) {
     return Replace(input);
   }
   if (input_type->Is(Type::PlainNumber()) &&
-      input->opcode() == IrOpcode::kNumberDivide) {
+      (input->opcode() == IrOpcode::kNumberDivide ||
+       input->opcode() == IrOpcode::kSpeculativeNumberDivide)) {
     Node* const lhs = NodeProperties::GetValueInput(input, 0);
     Type* const lhs_type = NodeProperties::GetType(lhs);
     Node* const rhs = NodeProperties::GetValueInput(input, 1);
@@ -254,6 +257,18 @@ Reduction TypedOptimization::ReducePhi(Node* node) {
     type = Type::Intersect(node_type, type, graph()->zone());
     NodeProperties::SetType(node, type);
     return Changed(node);
+  }
+  return NoChange();
+}
+
+Reduction TypedOptimization::ReduceReferenceEqual(Node* node) {
+  DCHECK_EQ(IrOpcode::kReferenceEqual, node->opcode());
+  Node* const lhs = NodeProperties::GetValueInput(node, 0);
+  Node* const rhs = NodeProperties::GetValueInput(node, 1);
+  Type* const lhs_type = NodeProperties::GetType(lhs);
+  Type* const rhs_type = NodeProperties::GetType(rhs);
+  if (!lhs_type->Maybe(rhs_type)) {
+    return Replace(jsgraph()->FalseConstant());
   }
   return NoChange();
 }
