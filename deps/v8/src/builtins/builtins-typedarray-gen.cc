@@ -168,7 +168,7 @@ void TypedArrayBuiltinsAssembler::DoInitialize(Node* const holder, Node* length,
     //  - Set IsExternal and IsNeuterable bits of BitFieldSlot.
     //  - Set the byte_length field to byte_length.
     //  - Set backing_store to null/Smi(0).
-    //  - Set all internal fields to Smi(0).
+    //  - Set all embedder fields to Smi(0).
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBitFieldSlot,
                                    SmiConstant(Smi::kZero));
     int32_t bitfield_value = (1 << JSArrayBuffer::IsExternal::kShift) |
@@ -214,7 +214,7 @@ void TypedArrayBuiltinsAssembler::DoInitialize(Node* const holder, Node* length,
     // Allocate a FixedTypedArray and set the length, base pointer and external
     // pointer.
     CSA_ASSERT(this, IsRegularHeapObjectSize(total_size.value()));
-    Node* elements = Allocate(total_size.value());
+    Node* elements = AllocateInNewSpace(total_size.value(), kDoubleAlignment);
 
     StoreMapNoWriteBarrier(elements, fixed_typed_map.value());
     StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset, length);
@@ -533,14 +533,17 @@ TF_BUILTIN(TypedArrayConstructByArrayLike, TypedArrayBuiltinsAssembler) {
   Node* byte_offset = SmiConstant(0);
   Node* initialize = BooleanConstant(false);
 
-  Label invalid_length(this), fast_copy(this);
+  Label invalid_length(this), fill(this), fast_copy(this);
 
   // The caller has looked up length on array_like, which is observable.
   length = ToSmiLength(length, context, &invalid_length);
 
   InitializeBasedOnLength(holder, length, element_size, byte_offset, initialize,
                           context);
+  GotoIf(SmiNotEqual(length, SmiConstant(0)), &fill);
+  Return(UndefinedConstant());
 
+  Bind(&fill);
   Node* holder_kind = LoadMapElementsKind(LoadMap(holder));
   Node* source_kind = LoadMapElementsKind(LoadMap(array_like));
   GotoIf(Word32Equal(holder_kind, source_kind), &fast_copy);
@@ -558,12 +561,14 @@ TF_BUILTIN(TypedArrayConstructByArrayLike, TypedArrayBuiltinsAssembler) {
     Node* holder_data_ptr = LoadDataPtr(holder);
     Node* source_data_ptr = LoadDataPtr(array_like);
 
-    // When the typed arrays have the same elements kind, their byte_length will
-    // be exactly the same, so we don't need to calculate it. The byte_length
-    // already takes into account the byte_offset, so we don't need to use that
-    // here.
-    Node* byte_length =
-        LoadObjectField(array_like, JSArrayBufferView::kByteLengthOffset);
+    // Calculate the byte length. We shouldn't be trying to copy if the typed
+    // array was neutered.
+    CSA_ASSERT(this, SmiNotEqual(length, SmiConstant(0)));
+    CSA_ASSERT(this, Word32Equal(IsDetachedBuffer(LoadObjectField(
+                                     array_like, JSTypedArray::kBufferOffset)),
+                                 Int32Constant(0)));
+
+    Node* byte_length = SmiMul(length, element_size);
     CSA_ASSERT(this, ByteLengthIsValid(byte_length));
     Node* byte_length_intptr = ChangeNumberToIntPtr(byte_length);
     CSA_ASSERT(this, UintPtrLessThanOrEqual(

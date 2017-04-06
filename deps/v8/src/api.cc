@@ -25,6 +25,7 @@
 #include "src/base/safe_conversions.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/bootstrapper.h"
+#include "src/builtins/builtins-utils.h"
 #include "src/char-predicates-inl.h"
 #include "src/code-stubs.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
@@ -2296,8 +2297,10 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
     }
     i::Handle<i::String> brackets;
     if (i::FLAG_harmony_function_tostring) {
-      brackets = factory->NewStringFromStaticChars("\n) {");
-      parameters_end_pos = source_string->length() - 3;
+      // Append linefeed and signal that text beyond the linefeed is not part of
+      // the formal parameters.
+      brackets = factory->NewStringFromStaticChars("\n) {\n");
+      parameters_end_pos = source_string->length() + 1;
     } else {
       brackets = factory->NewStringFromStaticChars("){");
     }
@@ -2307,8 +2310,8 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
   } else {
     if (i::FLAG_harmony_function_tostring) {
       source_string =
-          factory->NewStringFromStaticChars("(function anonymous(\n) {");
-      parameters_end_pos = source_string->length() - 3;
+          factory->NewStringFromStaticChars("(function anonymous(\n) {\n");
+      parameters_end_pos = source_string->length() - 4;
     } else {
       source_string = factory->NewStringFromStaticChars("(function(){");
     }
@@ -2844,8 +2847,8 @@ Local<StackFrame> StackTrace::GetFrame(uint32_t index) const {
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   auto self = Utils::OpenHandle(this);
   auto obj = i::JSReceiver::GetElement(isolate, self, index).ToHandleChecked();
-  auto jsobj = i::Handle<i::JSObject>::cast(obj);
-  return scope.Escape(Utils::StackFrameToLocal(jsobj));
+  auto info = i::Handle<i::StackFrameInfo>::cast(obj);
+  return scope.Escape(Utils::StackFrameToLocal(info));
 }
 
 
@@ -2873,77 +2876,59 @@ Local<StackTrace> StackTrace::CurrentStackTrace(
 
 // --- S t a c k F r a m e ---
 
-static int getIntProperty(const StackFrame* f, const char* propertyName,
-                          int defaultValue) {
-  i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
-  i::HandleScope scope(isolate);
-  i::Handle<i::JSObject> self = Utils::OpenHandle(f);
-  i::Handle<i::Object> obj =
-      i::JSReceiver::GetProperty(isolate, self, propertyName).ToHandleChecked();
-  return obj->IsSmi() ? i::Smi::cast(*obj)->value() : defaultValue;
-}
-
-
 int StackFrame::GetLineNumber() const {
-  return getIntProperty(this, "lineNumber", Message::kNoLineNumberInfo);
+  int v = Utils::OpenHandle(this)->line_number();
+  return v ? v : Message::kNoLineNumberInfo;
 }
 
 
 int StackFrame::GetColumn() const {
-  return getIntProperty(this, "column", Message::kNoColumnInfo);
+  int v = Utils::OpenHandle(this)->column_number();
+  return v ? v : Message::kNoLineNumberInfo;
 }
 
 
 int StackFrame::GetScriptId() const {
-  return getIntProperty(this, "scriptId", Message::kNoScriptIdInfo);
+  int v = Utils::OpenHandle(this)->script_id();
+  return v ? v : Message::kNoScriptIdInfo;
 }
 
-
-static Local<String> getStringProperty(const StackFrame* f,
-                                       const char* propertyName) {
-  i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
+Local<String> StackFrame::GetScriptName() const {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
-  i::Handle<i::JSObject> self = Utils::OpenHandle(f);
-  i::Handle<i::Object> obj =
-      i::JSReceiver::GetProperty(isolate, self, propertyName).ToHandleChecked();
+  i::Handle<i::StackFrameInfo> self = Utils::OpenHandle(this);
+  i::Handle<i::Object> obj(self->script_name(), isolate);
   return obj->IsString()
              ? scope.Escape(Local<String>::Cast(Utils::ToLocal(obj)))
              : Local<String>();
 }
 
 
-Local<String> StackFrame::GetScriptName() const {
-  return getStringProperty(this, "scriptName");
-}
-
-
 Local<String> StackFrame::GetScriptNameOrSourceURL() const {
-  return getStringProperty(this, "scriptNameOrSourceURL");
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
+  i::Handle<i::StackFrameInfo> self = Utils::OpenHandle(this);
+  i::Handle<i::Object> obj(self->script_name_or_source_url(), isolate);
+  return obj->IsString()
+             ? scope.Escape(Local<String>::Cast(Utils::ToLocal(obj)))
+             : Local<String>();
 }
 
 
 Local<String> StackFrame::GetFunctionName() const {
-  return getStringProperty(this, "functionName");
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
+  i::Handle<i::StackFrameInfo> self = Utils::OpenHandle(this);
+  i::Handle<i::Object> obj(self->function_name(), isolate);
+  return obj->IsString()
+             ? scope.Escape(Local<String>::Cast(Utils::ToLocal(obj)))
+             : Local<String>();
 }
 
-
-static bool getBoolProperty(const StackFrame* f, const char* propertyName) {
-  i::Isolate* isolate = Utils::OpenHandle(f)->GetIsolate();
-  ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
-  i::HandleScope scope(isolate);
-  i::Handle<i::JSObject> self = Utils::OpenHandle(f);
-  i::Handle<i::Object> obj =
-      i::JSReceiver::GetProperty(isolate, self, propertyName).ToHandleChecked();
-  return obj->IsTrue(isolate);
-}
-
-bool StackFrame::IsEval() const { return getBoolProperty(this, "isEval"); }
-
+bool StackFrame::IsEval() const { return Utils::OpenHandle(this)->is_eval(); }
 
 bool StackFrame::IsConstructor() const {
-  return getBoolProperty(this, "isConstructor");
+  return Utils::OpenHandle(this)->is_constructor();
 }
 
 
@@ -2979,8 +2964,7 @@ void NativeWeakMap::Set(Local<Value> v8_key, Local<Value> v8_value) {
   i::JSWeakCollection::Set(weak_collection, key, value, hash);
 }
 
-
-Local<Value> NativeWeakMap::Get(Local<Value> v8_key) {
+Local<Value> NativeWeakMap::Get(Local<Value> v8_key) const {
   i::Handle<i::JSWeakMap> weak_collection = Utils::OpenHandle(this);
   i::Isolate* isolate = weak_collection->GetIsolate();
   ENTER_V8(isolate);
@@ -3143,6 +3127,11 @@ struct ValueSerializer::PrivateData {
   i::Isolate* isolate;
   i::ValueSerializer serializer;
 };
+
+// static
+uint32_t ValueSerializer::GetCurrentDataFormatVersion() {
+  return i::ValueSerializer::GetCurrentDataFormatVersion();
+}
 
 ValueSerializer::ValueSerializer(Isolate* isolate)
     : ValueSerializer(isolate, nullptr) {}
@@ -7606,9 +7595,14 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Compile(Isolate* isolate,
       Utils::ToLocal(maybe_compiled.ToHandleChecked()));
 }
 
-void WasmModuleObjectBuilder::OnBytesReceived(
-    std::unique_ptr<const uint8_t[]>&& bytes, size_t size) {
-  received_buffers_.push_back(Buffer(std::move(bytes), size));
+void WasmModuleObjectBuilder::OnBytesReceived(const uint8_t* bytes,
+                                              size_t size) {
+  std::unique_ptr<uint8_t[]> cloned_bytes(new uint8_t[size]);
+  memcpy(cloned_bytes.get(), bytes, size);
+  received_buffers_.push_back(
+      Buffer(std::unique_ptr<const uint8_t[]>(
+                 const_cast<const uint8_t*>(cloned_bytes.release())),
+             size));
   total_size_ += size;
 }
 
@@ -9579,6 +9573,22 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
   fun->shared()->DontAdaptArguments();
   return Utils::ToLocal(handle_scope.CloseAndEscape(fun));
 }
+
+void debug::SetConsoleDelegate(Isolate* v8_isolate, ConsoleDelegate* delegate) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  ENTER_V8(isolate);
+  isolate->set_console_delegate(delegate);
+}
+
+debug::ConsoleCallArguments::ConsoleCallArguments(
+    const v8::FunctionCallbackInfo<v8::Value>& info)
+    : v8::FunctionCallbackInfo<v8::Value>(nullptr, info.values_, info.length_) {
+}
+
+debug::ConsoleCallArguments::ConsoleCallArguments(
+    internal::BuiltinArguments& args)
+    : v8::FunctionCallbackInfo<v8::Value>(nullptr, &args[0] - 1,
+                                          args.length() - 1) {}
 
 MaybeLocal<debug::Script> debug::GeneratorObject::Script() {
   i::Handle<i::JSGeneratorObject> obj = Utils::OpenHandle(this);

@@ -395,6 +395,17 @@ class ParserBase {
       return scope()->promise_var();
     }
 
+    void RewindDestructuringAssignments(int pos) {
+      destructuring_assignments_to_rewrite_.Rewind(pos);
+    }
+
+    void SetDestructuringAssignmentsScope(int pos, Scope* scope) {
+      for (int i = pos; i < destructuring_assignments_to_rewrite_.length();
+           ++i) {
+        destructuring_assignments_to_rewrite_[i].scope = scope;
+      }
+    }
+
     const ZoneList<DestructuringAssignment>&
         destructuring_assignments_to_rewrite() const {
       return destructuring_assignments_to_rewrite_;
@@ -1108,9 +1119,14 @@ class ParserBase {
   ExpressionT ParseMemberExpression(bool* is_async, bool* ok);
   ExpressionT ParseMemberExpressionContinuation(ExpressionT expression,
                                                 bool* is_async, bool* ok);
+
+  // `rewritable_length`: length of the destructuring_assignments_to_rewrite()
+  // queue in the parent function state, prior to parsing of formal parameters.
+  // If the arrow function is lazy, any items added during formal parameter
+  // parsing are removed from the queue.
   ExpressionT ParseArrowFunctionLiteral(bool accept_IN,
                                         const FormalParametersT& parameters,
-                                        bool* ok);
+                                        int rewritable_length, bool* ok);
   void ParseAsyncFunctionBody(Scope* scope, StatementListT body,
                               FunctionKind kind, FunctionBodyType type,
                               bool accept_IN, int pos, bool* ok);
@@ -1438,7 +1454,7 @@ class ParserBase {
 
   // Pops and discards the classifier that is on top of the stack
   // without accumulating.
-  V8_INLINE void Discard() {
+  V8_INLINE void DiscardExpressionClassifier() {
     DCHECK_NOT_NULL(classifier_);
     classifier_->Discard();
     classifier_ = classifier_->previous();
@@ -1924,7 +1940,7 @@ ParserBase<Impl>::ParseExpressionCoverGrammar(bool accept_IN, bool* ok) {
     }
     // No need to accumulate binding pattern-related errors, since
     // an Expression can't be a binding pattern anyway.
-    impl()->AccumulateNonBindingPatternErrors();
+    AccumulateNonBindingPatternErrors();
     if (!impl()->IsIdentifier(right)) classifier()->RecordNonSimpleParameter();
     if (impl()->IsEmptyExpression(result)) {
       // First time through the loop.
@@ -2139,7 +2155,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParsePropertyName(
       ExpressionClassifier computed_name_classifier(this);
       expression = ParseAssignmentExpression(true, CHECK_OK);
       impl()->RewriteNonPattern(CHECK_OK);
-      impl()->AccumulateFormalParameterContainmentErrors();
+      AccumulateFormalParameterContainmentErrors();
       Expect(Token::RBRACK, CHECK_OK);
       break;
     }
@@ -2482,7 +2498,7 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
         ExpressionT rhs = ParseAssignmentExpression(
             true, CHECK_OK_CUSTOM(EmptyObjectLiteralProperty));
         impl()->RewriteNonPattern(CHECK_OK_CUSTOM(EmptyObjectLiteralProperty));
-        impl()->AccumulateFormalParameterContainmentErrors();
+        AccumulateFormalParameterContainmentErrors();
         value = factory()->NewAssignment(Token::ASSIGN, lhs, rhs,
                                          kNoSourcePosition);
         classifier()->RecordExpressionError(
@@ -2711,6 +2727,8 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
       this, classifier()->duplicate_finder());
 
   Scope::Snapshot scope_snapshot(scope());
+  int rewritable_length =
+      function_state_->destructuring_assignments_to_rewrite().length();
 
   bool is_async = peek() == Token::ASYNC &&
                   !scanner()->HasAnyLineTerminatorAfterNext() &&
@@ -2762,6 +2780,7 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
     // Because the arrow's parameters were parsed in the outer scope,
     // we need to fix up the scope chain appropriately.
     scope_snapshot.Reparent(scope);
+    function_state_->SetDestructuringAssignmentsScope(rewritable_length, scope);
 
     FormalParametersT parameters(scope);
     if (!classifier()->is_simple_parameter_list()) {
@@ -2776,8 +2795,9 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
     if (duplicate_loc.IsValid()) {
       classifier()->RecordDuplicateFormalParameterError(duplicate_loc);
     }
-    expression = ParseArrowFunctionLiteral(accept_IN, parameters, CHECK_OK);
-    impl()->Discard();
+    expression = ParseArrowFunctionLiteral(accept_IN, parameters,
+                                           rewritable_length, CHECK_OK);
+    DiscardExpressionClassifier();
     classifier()->RecordPatternError(arrow_loc,
                                      MessageTemplate::kUnexpectedToken,
                                      Token::String(Token::ARROW));
@@ -2813,11 +2833,11 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
   if (!Token::IsAssignmentOp(peek())) {
     // Parsed conditional expression only (no assignment).
     // Pending non-pattern expressions must be merged.
-    impl()->Accumulate(productions);
+    Accumulate(productions);
     return expression;
   } else {
     // Pending non-pattern expressions must be discarded.
-    impl()->Accumulate(productions, false);
+    Accumulate(productions, false);
   }
 
   if (is_destructuring_assignment) {
@@ -2842,7 +2862,7 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
 
   ExpressionT right = ParseAssignmentExpression(accept_IN, CHECK_OK);
   impl()->RewriteNonPattern(CHECK_OK);
-  impl()->AccumulateFormalParameterContainmentErrors();
+  AccumulateFormalParameterContainmentErrors();
 
   // We try to estimate the set of properties set by constructors. We define a
   // new property whenever there is an assignment to a property of 'this'. We
@@ -2967,7 +2987,7 @@ ParserBase<Impl>::ParseConditionalExpression(bool accept_IN,
     // expressions we always accept the 'in' keyword; see ECMA-262,
     // section 11.12, page 58.
     left = ParseAssignmentExpression(true, CHECK_OK);
-    impl()->AccumulateNonBindingPatternErrors();
+    AccumulateNonBindingPatternErrors();
   }
   impl()->RewriteNonPattern(CHECK_OK);
   Expect(Token::COLON, CHECK_OK);
@@ -2975,7 +2995,7 @@ ParserBase<Impl>::ParseConditionalExpression(bool accept_IN,
   {
     ExpressionClassifier classifier(this);
     right = ParseAssignmentExpression(accept_IN, CHECK_OK);
-    impl()->AccumulateNonBindingPatternErrors();
+    AccumulateNonBindingPatternErrors();
   }
   impl()->RewriteNonPattern(CHECK_OK);
   return factory()->NewConditional(expression, left, right, pos);
@@ -3217,7 +3237,7 @@ ParserBase<Impl>::ParseLeftHandSideExpression(bool* ok) {
             // async () => ...
             return factory()->NewEmptyParentheses(pos);
           } else {
-            impl()->AccumulateFormalParameterContainmentErrors();
+            AccumulateFormalParameterContainmentErrors();
           }
         } else {
           args = ParseArguments(&spread_pos, false, CHECK_OK);
@@ -3591,7 +3611,7 @@ void ParserBase<Impl>::ParseFormalParameter(FormalParametersT* parameters,
     impl()->RewriteNonPattern(CHECK_OK_CUSTOM(Void));
     ValidateFormalParameterInitializer(CHECK_OK_CUSTOM(Void));
     parameters->is_simple = false;
-    impl()->Discard();
+    DiscardExpressionClassifier();
     classifier()->RecordNonSimpleParameter();
 
     impl()->SetFunctionNameFromIdentifierRef(initializer, pattern);
@@ -4146,7 +4166,8 @@ bool ParserBase<Impl>::IsTrivialExpression() {
 template <typename Impl>
 typename ParserBase<Impl>::ExpressionT
 ParserBase<Impl>::ParseArrowFunctionLiteral(
-    bool accept_IN, const FormalParametersT& formal_parameters, bool* ok) {
+    bool accept_IN, const FormalParametersT& formal_parameters,
+    int rewritable_length, bool* ok) {
   const RuntimeCallStats::CounterId counters[2][2] = {
       {&RuntimeCallStats::ParseBackgroundArrowFunctionLiteral,
        &RuntimeCallStats::ParseArrowFunctionLiteral},
@@ -4202,8 +4223,7 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
         DCHECK((kind & FunctionKind::kArrowFunction) != 0);
         LazyParsingResult result = impl()->SkipFunction(
             kind, formal_parameters.scope, &dummy_num_parameters,
-            &dummy_function_length, &expected_property_count, false, true,
-            CHECK_OK);
+            &dummy_function_length, false, true, CHECK_OK);
         formal_parameters.scope->ResetAfterPreparsing(
             ast_value_factory_, result == kLazyParsingAborted);
 
@@ -4276,6 +4296,14 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
     }
     impl()->CheckConflictingVarDeclarations(formal_parameters.scope, CHECK_OK);
 
+    if (is_lazy_top_level_function) {
+      FunctionState* parent_state = function_state.outer();
+      DCHECK_NOT_NULL(parent_state);
+      DCHECK_GE(parent_state->destructuring_assignments_to_rewrite().length(),
+                rewritable_length);
+      parent_state->RewindDestructuringAssignments(rewritable_length);
+    }
+
     impl()->RewriteDestructuringAssignments();
   }
 
@@ -4334,7 +4362,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseClassLiteral(
     ExpressionClassifier extends_classifier(this);
     class_info.extends = ParseLeftHandSideExpression(CHECK_OK);
     impl()->RewriteNonPattern(CHECK_OK);
-    impl()->AccumulateFormalParameterContainmentErrors();
+    AccumulateFormalParameterContainmentErrors();
   }
 
   ClassLiteralChecker checker(this);
@@ -4363,7 +4391,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseClassLiteral(
     }
     is_constructor &= class_info.has_seen_constructor;
     impl()->RewriteNonPattern(CHECK_OK);
-    impl()->AccumulateFormalParameterContainmentErrors();
+    AccumulateFormalParameterContainmentErrors();
 
     impl()->DeclareClassProperty(name, property, property_kind, is_static,
                                  is_constructor, &class_info, CHECK_OK);

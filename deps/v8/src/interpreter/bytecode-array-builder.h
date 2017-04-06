@@ -297,8 +297,13 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   // Type feedback will be recorded in the |feedback_slot|
   BytecodeArrayBuilder& CountOperation(Token::Value op, int feedback_slot);
 
+  enum class ToBooleanMode {
+    kConvertToBoolean,  // Perform ToBoolean conversion on accumulator.
+    kAlreadyBoolean,    // Accumulator is already a Boolean.
+  };
+
   // Unary Operators.
-  BytecodeArrayBuilder& LogicalNot();
+  BytecodeArrayBuilder& LogicalNot(ToBooleanMode mode);
   BytecodeArrayBuilder& TypeOf();
 
   // Expects a heap object in the accumulator. Returns its super constructor in
@@ -314,6 +319,10 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   BytecodeArrayBuilder& CompareOperation(Token::Value op, Register reg,
                                          int feedback_slot);
   BytecodeArrayBuilder& CompareOperation(Token::Value op, Register reg);
+  BytecodeArrayBuilder& CompareUndetectable();
+  BytecodeArrayBuilder& CompareUndefined();
+  BytecodeArrayBuilder& CompareNull();
+  BytecodeArrayBuilder& CompareNil(Token::Value op, NilValue nil);
   BytecodeArrayBuilder& CompareTypeOf(
       TestTypeOfFlags::LiteralFlag literal_flag);
 
@@ -327,13 +336,20 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   BytecodeArrayBuilder& Bind(const BytecodeLabel& target, BytecodeLabel* label);
 
   BytecodeArrayBuilder& Jump(BytecodeLabel* label);
-  BytecodeArrayBuilder& JumpIfTrue(BytecodeLabel* label);
-  BytecodeArrayBuilder& JumpIfFalse(BytecodeLabel* label);
+  BytecodeArrayBuilder& JumpLoop(BytecodeLabel* label, int loop_depth);
+
+  BytecodeArrayBuilder& JumpIfTrue(ToBooleanMode mode, BytecodeLabel* label);
+  BytecodeArrayBuilder& JumpIfFalse(ToBooleanMode mode, BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfNotHole(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfJSReceiver(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfNull(BytecodeLabel* label);
+  BytecodeArrayBuilder& JumpIfNotNull(BytecodeLabel* label);
   BytecodeArrayBuilder& JumpIfUndefined(BytecodeLabel* label);
-  BytecodeArrayBuilder& JumpLoop(BytecodeLabel* label, int loop_depth);
+  BytecodeArrayBuilder& JumpIfNotUndefined(BytecodeLabel* label);
+  BytecodeArrayBuilder& JumpIfNil(BytecodeLabel* label, Token::Value op,
+                                  NilValue nil);
+  BytecodeArrayBuilder& JumpIfNotNil(BytecodeLabel* label, Token::Value op,
+                                     NilValue nil);
 
   BytecodeArrayBuilder& StackCheck(int position);
 
@@ -494,6 +510,9 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
 
   DISALLOW_COPY_AND_ASSIGN(BytecodeArrayBuilder);
 };
+
+V8_EXPORT_PRIVATE std::ostream& operator<<(
+    std::ostream& os, const BytecodeArrayBuilder::ToBooleanMode& mode);
 
 }  // namespace interpreter
 }  // namespace internal

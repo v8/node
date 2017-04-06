@@ -95,6 +95,9 @@ class AsmJsParser {
     AsmJsScanner::token_t label;
   };
 
+  // Helper class to make {TempVariable} safe for nesting.
+  class TemporaryVariableScope;
+
   Zone* zone_;
   AsmJsScanner scanner_;
   WasmModuleBuilder* module_builder_;
@@ -108,6 +111,7 @@ class AsmJsParser {
 
   int function_temp_locals_offset_;
   int function_temp_locals_used_;
+  int function_temp_locals_depth_;
 
   // Error Handling related
   bool failed_;
@@ -142,6 +146,9 @@ class AsmJsParser {
   // For +callsite(..) or fround(callsite(..)) use this value to pass
   // along the coercion.
   AsmType* call_coercion_;
+
+  // The source position associated with the above {call_coercion}.
+  size_t call_coercion_position_;
 
   // Used to track the last label we've seen so it can be matched to later
   // statements it's attached to.
@@ -219,7 +226,9 @@ class AsmJsParser {
                      ValueType vtype,
                      const WasmInitExpr& init = WasmInitExpr());
 
-  int32_t TempVariable(int i);
+  // Allocates a temporary local variable. The given {index} is absolute within
+  // the function body, consider using {TemporaryVariableScope} when nesting.
+  uint32_t TempVariable(int index);
 
   void AddGlobalImport(std::string name, AsmType* type, ValueType vtype,
                        bool mutable_variable, VarInfo* info);
@@ -303,4 +312,5 @@ class AsmJsParser {
 }  // namespace wasm
 }  // namespace internal
 }  // namespace v8
-#endif
+
+#endif  // V8_ASMJS_ASM_PARSER_H_

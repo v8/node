@@ -43,6 +43,19 @@ def UninitGit(path):
     print ">> Cleaning up %s" % path
     shutil.rmtree(target)
 
+def CommitPatch(options):
+  """Makes a dummy commit for the changes in the index.
+
+  On trybots, bot_updated applies the patch to the index. We commit it to make
+  the fake git clone fetch it into node.js. We can leave the commit, as
+  bot_update will ensure a clean state on each run.
+  """
+  print ">> Comitting patch"
+  subprocess.check_call(
+      ["git", "commit", "--allow-empty", "-m", "placeholder-commit"],
+      cwd=options.v8_path,
+  )
+
 def UpdateTarget(repository, options):
   source = os.path.join(options.v8_path, *repository)
   target = os.path.join(options.node_path, TARGET_SUBDIR, *repository)
@@ -108,6 +121,8 @@ def ParseOptions(args):
   parser.add_argument("node_path", help="Path to Node.js checkout")
   parser.add_argument("--gclient", action="store_true", help="Run gclient sync")
   parser.add_argument("--commit", action="store_true", help="Create commit")
+  parser.add_argument("--with-patch", action="store_true",
+                      help="Apply also staged files")
   options = parser.parse_args(args)
   assert os.path.isdir(options.v8_path)
   options.v8_path = os.path.abspath(options.v8_path)
@@ -119,6 +134,9 @@ def Main(args):
   options = ParseOptions(args)
   if options.gclient:
     RunGclient(options.v8_path)
+  # Commit patch on trybots to main V8 repository.
+  if options.with_patch:
+    CommitPatch(options)
   # Update main V8 repository.
   UpdateTarget([""], options)
   # Patch .gitignore before updating sub-repositories.

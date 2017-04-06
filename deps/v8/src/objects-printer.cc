@@ -454,7 +454,7 @@ static void JSObjectPrintHeader(std::ostream& os, JSObject* obj,
   }
   os << "]";
   if (obj->GetEmbedderFieldCount() > 0) {
-    os << "\n - internal fields: " << obj->GetEmbedderFieldCount();
+    os << "\n - embedder fields: " << obj->GetEmbedderFieldCount();
   }
 }
 
@@ -471,7 +471,7 @@ static void JSObjectPrintBody(std::ostream& os, JSObject* obj,  // NOLINT
   }
   int embedder_fields = obj->GetEmbedderFieldCount();
   if (embedder_fields > 0) {
-    os << " - internal fields = {";
+    os << " - embedder fields = {";
     for (int i = 0; i < embedder_fields; i++) {
       os << "\n    " << obj->GetEmbedderField(i);
     }
@@ -1472,6 +1472,19 @@ void BreakPointInfo::BreakPointInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+void StackFrameInfo::StackFrameInfoPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "StackFrame");
+  os << "\n - line_number: " << line_number();
+  os << "\n - column_number: " << column_number();
+  os << "\n - script_id: " << script_id();
+  os << "\n - script_name: " << Brief(script_name());
+  os << "\n - script_name_or_source_url: "
+     << Brief(script_name_or_source_url());
+  os << "\n - function_name: " << Brief(function_name());
+  os << "\n - is_eval: " << (is_eval() ? "true" : "false");
+  os << "\n - is_constructor: " << (is_constructor() ? "true" : "false");
+  os << "\n";
+}
 
 static void PrintBitMask(std::ostream& os, uint32_t value) {  // NOLINT
   for (int i = 0; i < 32; i++) {

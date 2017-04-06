@@ -1,0 +1,131 @@
+0 info it worked if it ends with ok
+1 verbose cli [ '/usr/bin/nodejs',
+1 verbose cli   '/usr/bin/npm',
+1 verbose cli   'install',
+1 verbose cli   '-g',
+1 verbose cli   'core-validate-commit' ]
+2 info using npm@1.3.10
+3 info using node@v0.10.25
+4 verbose cache add [ 'core-validate-commit', null ]
+5 verbose cache add name=undefined spec="core-validate-commit" args=["core-validate-commit",null]
+6 verbose parsed url { protocol: null,
+6 verbose parsed url   slashes: null,
+6 verbose parsed url   auth: null,
+6 verbose parsed url   host: null,
+6 verbose parsed url   port: null,
+6 verbose parsed url   hostname: null,
+6 verbose parsed url   hash: null,
+6 verbose parsed url   search: null,
+6 verbose parsed url   query: null,
+6 verbose parsed url   pathname: 'core-validate-commit',
+6 verbose parsed url   path: 'core-validate-commit',
+6 verbose parsed url   href: 'core-validate-commit' }
+7 silly lockFile 5bfb6322-core-validate-commit core-validate-commit
+8 verbose lock core-validate-commit /usr/local/google/home/yangguo/.npm/5bfb6322-core-validate-commit.lock
+9 silly lockFile 5bfb6322-core-validate-commit core-validate-commit
+10 silly lockFile 5bfb6322-core-validate-commit core-validate-commit
+11 verbose addNamed [ 'core-validate-commit', '' ]
+12 verbose addNamed [ null, '*' ]
+13 silly lockFile ff7793fc-core-validate-commit core-validate-commit@
+14 verbose lock core-validate-commit@ /usr/local/google/home/yangguo/.npm/ff7793fc-core-validate-commit.lock
+15 silly addNameRange { name: 'core-validate-commit', range: '*', hasData: false }
+16 verbose url raw core-validate-commit
+17 verbose url resolving [ 'https://registry.npmjs.org/', './core-validate-commit' ]
+18 verbose url resolved https://registry.npmjs.org/core-validate-commit
+19 info trying registry request attempt 1 at 10:03:16
+20 verbose etag "58d703de-3851"
+21 http GET https://registry.npmjs.org/core-validate-commit
+22 http 304 https://registry.npmjs.org/core-validate-commit
+23 silly registry.get cb [ 304,
+23 silly registry.get   { date: 'Thu, 06 Apr 2017 08:03:21 GMT',
+23 silly registry.get     via: '1.1 varnish',
+23 silly registry.get     'cache-control': 'max-age=300',
+23 silly registry.get     etag: '"58d703de-3851"',
+23 silly registry.get     age: '0',
+23 silly registry.get     connection: 'keep-alive',
+23 silly registry.get     'x-served-by': 'cache-fra1251-FRA',
+23 silly registry.get     'x-cache': 'MISS',
+23 silly registry.get     'x-cache-hits': '0',
+23 silly registry.get     'x-timer': 'S1491465802.791546,VS0,VE2',
+23 silly registry.get     vary: 'Accept-Encoding' } ]
+24 verbose etag core-validate-commit from cache
+25 silly addNameRange number 2 { name: 'core-validate-commit', range: '*', hasData: true }
+26 silly addNameRange versions [ 'core-validate-commit',
+26 silly addNameRange   [ '1.0.0',
+26 silly addNameRange     '1.1.0',
+26 silly addNameRange     '2.0.0',
+26 silly addNameRange     '2.1.0',
+26 silly addNameRange     '2.1.1',
+26 silly addNameRange     '2.2.0',
+26 silly addNameRange     '3.0.0',
+26 silly addNameRange     '3.0.1',
+26 silly addNameRange     '3.1.0' ] ]
+27 verbose addNamed [ 'core-validate-commit', '3.1.0' ]
+28 verbose addNamed [ '3.1.0', '3.1.0' ]
+29 silly lockFile f50dcc0c-core-validate-commit-3-1-0 core-validate-commit@3.1.0
+30 verbose lock core-validate-commit@3.1.0 /usr/local/google/home/yangguo/.npm/f50dcc0c-core-validate-commit-3-1-0.lock
+31 silly lockFile f50dcc0c-core-validate-commit-3-1-0 core-validate-commit@3.1.0
+32 silly lockFile f50dcc0c-core-validate-commit-3-1-0 core-validate-commit@3.1.0
+33 silly lockFile ff7793fc-core-validate-commit core-validate-commit@
+34 silly lockFile ff7793fc-core-validate-commit core-validate-commit@
+35 silly resolved [ { name: 'core-validate-commit',
+35 silly resolved     version: '3.1.0',
+35 silly resolved     description: 'Validate the commit message for a particular commit in node core',
+35 silly resolved     main: 'commit.js',
+35 silly resolved     scripts: { pretest: 'lintit', test: 'tap test --cov' },
+35 silly resolved     dependencies:
+35 silly resolved      { chalk: '~1.1.1',
+35 silly resolved        'gitlint-parser-node': '^1.1.0',
+35 silly resolved        help: '^2.1.3',
+35 silly resolved        nopt: '^3.0.6' },
+35 silly resolved     devDependencies: { lintit: '~1.0.1', tap: '^6.3.0' },
+35 silly resolved     license: 'MIT',
+35 silly resolved     bin: { 'core-validate-commit': './bin/cmd.js' },
+35 silly resolved     author: { name: 'Evan Lucas', email: 'evanlucas@me.com' },
+35 silly resolved     repository:
+35 silly resolved      { type: 'git',
+35 silly resolved        url: 'https://github.com/evanlucas/core-validate-commit' },
+35 silly resolved     homepage: 'https://github.com/evanlucas/core-validate-commit',
+35 silly resolved     bugs: { url: 'https://github.com/evanlucas/core-validate-commit/issues' },
+35 silly resolved     readme: '# core-validate-commit\n\n[![Build Status](https://travis-ci.org/evanlucas/core-validate-commit.svg)](https://travis-ci.org/evanlucas/core-validate-commit)\n[![Coverage Status](https://coveralls.io/repos/evanlucas/core-validate-commit/badge.svg?branch=master&service=github)](https://coveralls.io/github/evanlucas/core-validate-commit?branch=master)\n\nValidate the commit message for a particular commit in node core\n\n## Install\n\n```bash\n$ npm install [-g] core-validate-commit\n```\n\n## Usage\n\n```bash\n# for a single commit\n$ core-validate-commit <sha>\n\n# validate since <sha>\n$ git rev-list <sha>..HEAD | xargs core-validate-commit\n\n# list all rules\n$ core-validate-commit --list\n    fixes-url enforce format of Fixes URLs\n  line-length enforce max length of lines in commit body\n metadata-end enforce that metadata is at the end of commit messages\n       pr-url enforce PR-URL\n    reviewers enforce having reviewers\n    subsystem enforce subsystem validity\n title-length enforce max length of commit title\n```\n\n## Test\n\n```bash\n$ npm test\n```\n\n## Author\n\nEvan Lucas\n\n## License\n\nMIT (See `LICENSE` for more info)\n',
+35 silly resolved     readmeFilename: 'README.md',
+35 silly resolved     _id: 'core-validate-commit@3.1.0',
+35 silly resolved     _from: 'core-validate-commit@' } ]
+36 info install core-validate-commit@3.1.0 into /usr/local/lib
+37 info installOne core-validate-commit@3.1.0
+38 info /usr/local/lib/node_modules/core-validate-commit unbuild
+39 verbose tar unpack /usr/local/google/home/yangguo/.npm/core-validate-commit/3.1.0/package.tgz
+40 silly lockFile 768b1364-ode-modules-core-validate-commit tar:///usr/local/lib/node_modules/core-validate-commit
+41 verbose lock tar:///usr/local/lib/node_modules/core-validate-commit /usr/local/google/home/yangguo/.npm/768b1364-ode-modules-core-validate-commit.lock
+42 silly lockFile 599d5b4f-alidate-commit-3-1-0-package-tgz tar:///usr/local/google/home/yangguo/.npm/core-validate-commit/3.1.0/package.tgz
+43 verbose lock tar:///usr/local/google/home/yangguo/.npm/core-validate-commit/3.1.0/package.tgz /usr/local/google/home/yangguo/.npm/599d5b4f-alidate-commit-3-1-0-package-tgz.lock
+44 silly gunzTarPerm modes [ '755', '644' ]
+45 error Error: EACCES, mkdir '/usr/local/lib/node_modules'
+45 error  { [Error: EACCES, mkdir '/usr/local/lib/node_modules']
+45 error   errno: 3,
+45 error   code: 'EACCES',
+45 error   path: '/usr/local/lib/node_modules',
+45 error   fstream_type: 'Directory',
+45 error   fstream_path: '/usr/local/lib/node_modules/core-validate-commit',
+45 error   fstream_class: 'DirWriter',
+45 error   fstream_stack:
+45 error    [ '/usr/lib/nodejs/fstream/lib/writer.js:171:23',
+45 error      '/usr/lib/nodejs/mkdirp/index.js:37:53',
+45 error      'Object.oncomplete (fs.js:107:15)' ] }
+46 error Please try running this command again as root/Administrator.
+47 error System Linux 4.2.0-42-generic
+48 error command "/usr/bin/nodejs" "/usr/bin/npm" "install" "-g" "core-validate-commit"
+49 error cwd /usr/local/google/home/yangguo/node
+50 error node -v v0.10.25
+51 error npm -v 1.3.10
+52 error path /usr/local/lib/node_modules
+53 error fstream_path /usr/local/lib/node_modules/core-validate-commit
+54 error fstream_type Directory
+55 error fstream_class DirWriter
+56 error code EACCES
+57 error errno 3
+58 error stack Error: EACCES, mkdir '/usr/local/lib/node_modules'
+59 error fstream_stack /usr/lib/nodejs/fstream/lib/writer.js:171:23
+59 error fstream_stack /usr/lib/nodejs/mkdirp/index.js:37:53
+59 error fstream_stack Object.oncomplete (fs.js:107:15)
+60 verbose exit [ 3, true ]

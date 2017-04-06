@@ -746,8 +746,8 @@ class Heap {
   // when introducing gaps within pages. If slots could have been recorded in
   // the freed area, then pass ClearRecordedSlots::kYes as the mode. Otherwise,
   // pass ClearRecordedSlots::kNo.
-  HeapObject* CreateFillerObjectAt(Address addr, int size,
-                                   ClearRecordedSlots mode);
+  V8_EXPORT_PRIVATE HeapObject* CreateFillerObjectAt(Address addr, int size,
+                                                     ClearRecordedSlots mode);
 
   bool CanMoveObjectStart(HeapObject* object);
 
@@ -1091,9 +1091,7 @@ class Heap {
   Object** roots_array_start() { return roots_; }
 
   // Sets the stub_cache_ (only used when expanding the dictionary).
-  void SetRootCodeStubs(UnseededNumberDictionary* value) {
-    roots_[kCodeStubsRootIndex] = value;
-  }
+  void SetRootCodeStubs(UnseededNumberDictionary* value);
 
   void SetRootMaterializedObjects(FixedArray* objects) {
     roots_[kMaterializedObjectsRootIndex] = objects;

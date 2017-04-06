@@ -328,8 +328,13 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CountOperation(Token::Value op,
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::LogicalNot() {
-  OutputToBooleanLogicalNot();
+BytecodeArrayBuilder& BytecodeArrayBuilder::LogicalNot(ToBooleanMode mode) {
+  if (mode == ToBooleanMode::kAlreadyBoolean) {
+    OutputLogicalNot();
+  } else {
+    DCHECK_EQ(mode, ToBooleanMode::kConvertToBoolean);
+    OutputToBooleanLogicalNot();
+  }
   return *this;
 }
 
@@ -387,6 +392,36 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CompareOperation(Token::Value op,
       UNREACHABLE();
   }
   return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CompareUndetectable() {
+  OutputTestUndetectable();
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CompareUndefined() {
+  OutputTestUndefined();
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CompareNull() {
+  OutputTestNull();
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CompareNil(Token::Value op,
+                                                       NilValue nil) {
+  if (op == Token::EQ) {
+    return CompareUndetectable();
+  } else {
+    DCHECK_EQ(Token::EQ_STRICT, op);
+    if (nil == kUndefinedValue) {
+      return CompareUndefined();
+    } else {
+      DCHECK_EQ(kNullValue, nil);
+      return CompareNull();
+    }
+  }
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::CompareTypeOf(
@@ -865,17 +900,27 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::Jump(BytecodeLabel* label) {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfTrue(BytecodeLabel* label) {
-  // The peephole optimizer attempts to simplify JumpIfToBooleanTrue
-  // to JumpIfTrue.
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfTrue(ToBooleanMode mode,
+                                                       BytecodeLabel* label) {
   DCHECK(!label->is_bound());
-  OutputJumpIfToBooleanTrue(label, 0);
+  if (mode == ToBooleanMode::kAlreadyBoolean) {
+    OutputJumpIfTrue(label, 0);
+  } else {
+    DCHECK_EQ(mode, ToBooleanMode::kConvertToBoolean);
+    OutputJumpIfToBooleanTrue(label, 0);
+  }
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfFalse(BytecodeLabel* label) {
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfFalse(ToBooleanMode mode,
+                                                        BytecodeLabel* label) {
   DCHECK(!label->is_bound());
-  OutputJumpIfToBooleanFalse(label, 0);
+  if (mode == ToBooleanMode::kAlreadyBoolean) {
+    OutputJumpIfFalse(label, 0);
+  } else {
+    DCHECK_EQ(mode, ToBooleanMode::kConvertToBoolean);
+    OutputJumpIfToBooleanFalse(label, 0);
+  }
   return *this;
 }
 
@@ -885,11 +930,61 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNull(BytecodeLabel* label) {
   return *this;
 }
 
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNotNull(
+    BytecodeLabel* label) {
+  DCHECK(!label->is_bound());
+  OutputJumpIfNotNull(label, 0);
+  return *this;
+}
+
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfUndefined(
     BytecodeLabel* label) {
   DCHECK(!label->is_bound());
   OutputJumpIfUndefined(label, 0);
   return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNotUndefined(
+    BytecodeLabel* label) {
+  DCHECK(!label->is_bound());
+  OutputJumpIfNotUndefined(label, 0);
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNil(BytecodeLabel* label,
+                                                      Token::Value op,
+                                                      NilValue nil) {
+  if (op == Token::EQ) {
+    // TODO(rmcilroy): Implement JumpIfUndetectable.
+    return CompareUndetectable().JumpIfTrue(ToBooleanMode::kAlreadyBoolean,
+                                            label);
+  } else {
+    DCHECK_EQ(Token::EQ_STRICT, op);
+    if (nil == kUndefinedValue) {
+      return JumpIfUndefined(label);
+    } else {
+      DCHECK_EQ(kNullValue, nil);
+      return JumpIfNull(label);
+    }
+  }
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNotNil(BytecodeLabel* label,
+                                                         Token::Value op,
+                                                         NilValue nil) {
+  if (op == Token::EQ) {
+    // TODO(rmcilroy): Implement JumpIfUndetectable.
+    return CompareUndetectable().JumpIfFalse(ToBooleanMode::kAlreadyBoolean,
+                                             label);
+  } else {
+    DCHECK_EQ(Token::EQ_STRICT, op);
+    if (nil == kUndefinedValue) {
+      return JumpIfNotUndefined(label);
+    } else {
+      DCHECK_EQ(kNullValue, nil);
+      return JumpIfNotNull(label);
+    }
+  }
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::JumpIfNotHole(
@@ -1248,6 +1343,18 @@ uint32_t BytecodeArrayBuilder::GetOutputRegisterListOperand(
   if (register_optimizer_)
     register_optimizer_->PrepareOutputRegisterList(reg_list);
   return static_cast<uint32_t>(reg_list.first_register().ToOperand());
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         const BytecodeArrayBuilder::ToBooleanMode& mode) {
+  switch (mode) {
+    case BytecodeArrayBuilder::ToBooleanMode::kAlreadyBoolean:
+      return os << "AlreadyBoolean";
+    case BytecodeArrayBuilder::ToBooleanMode::kConvertToBoolean:
+      return os << "ConvertToBoolean";
+  }
+  UNREACHABLE();
+  return os;
 }
 
 }  // namespace interpreter

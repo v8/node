@@ -808,22 +808,22 @@ class ControlTransfers : public ZoneObject {
           break;
         }
         case kExprBr: {
-          BreakDepthOperand operand(&i, i.pc());
+          BreakDepthOperand<false> operand(&i, i.pc());
           TRACE("control @%u: Br[depth=%u]\n", i.pc_offset(), operand.depth);
           Control* c = &control_stack[control_stack.size() - operand.depth - 1];
           c->Ref(&map_, start, i.pc());
           break;
         }
         case kExprBrIf: {
-          BreakDepthOperand operand(&i, i.pc());
+          BreakDepthOperand<false> operand(&i, i.pc());
           TRACE("control @%u: BrIf[depth=%u]\n", i.pc_offset(), operand.depth);
           Control* c = &control_stack[control_stack.size() - operand.depth - 1];
           c->Ref(&map_, start, i.pc());
           break;
         }
         case kExprBrTable: {
-          BranchTableOperand operand(&i, i.pc());
-          BranchTableIterator iterator(&i, operand);
+          BranchTableOperand<false> operand(&i, i.pc());
+          BranchTableIterator<false> iterator(&i, operand);
           TRACE("control @%u: BrTable[count=%u]\n", i.pc_offset(),
                 operand.table_count);
           while (iterator.has_next()) {
@@ -926,10 +926,12 @@ class CodeMap {
   }
 
   ~CodeMap() {
-    // Destroy the global handles (passing nullptr is ok).
-    GlobalHandles::Destroy(Handle<Object>::cast(instance_).location());
+    // Destroy the global handles.
+    // Cast the location, not the handle, because the handle cast might access
+    // the object behind the handle.
+    GlobalHandles::Destroy(reinterpret_cast<Object**>(instance_.location()));
     GlobalHandles::Destroy(
-        Handle<Object>::cast(imported_functions_).location());
+        reinterpret_cast<Object**>(imported_functions_.location()));
   }
 
   const WasmModule* module() const { return module_; }
@@ -1150,8 +1152,10 @@ class ThreadImpl {
       TRACE("  => Run()\n");
       state_ = WasmInterpreter::RUNNING;
       Execute(frames_.back().code, frames_.back().pc, kRunSteps);
-    } while (state_ == WasmInterpreter::PAUSED && !frames_.empty() &&
-             !PausedAtBreakpoint());
+    } while (state_ == WasmInterpreter::PAUSED && !PausedAtBreakpoint());
+    // If state_ is STOPPED, the current activation must be fully unwound.
+    DCHECK_IMPLIES(state_ == WasmInterpreter::STOPPED,
+                   current_activation().fp == frames_.size());
     return state_;
   }
 
@@ -1381,11 +1385,11 @@ class ThreadImpl {
   pc_t ReturnPc(Decoder* decoder, InterpreterCode* code, pc_t pc) {
     switch (code->orig_start[pc]) {
       case kExprCallFunction: {
-        CallFunctionOperand operand(decoder, code->at(pc));
+        CallFunctionOperand<false> operand(decoder, code->at(pc));
         return pc + 1 + operand.length;
       }
       case kExprCallIndirect: {
-        CallIndirectOperand operand(decoder, code->at(pc));
+        CallIndirectOperand<false> operand(decoder, code->at(pc));
         return pc + 1 + operand.length;
       }
       default:
@@ -1454,13 +1458,17 @@ class ThreadImpl {
     stack_.resize(stack_.size() - pop_count);
   }
 
+  template <typename mtype>
+  inline bool BoundsCheck(uint32_t mem_size, uint32_t offset, uint32_t index) {
+    return sizeof(mtype) <= mem_size && offset <= mem_size - sizeof(mtype) &&
+           index <= mem_size - sizeof(mtype) - offset;
+  }
+
   template <typename ctype, typename mtype>
   bool ExecuteLoad(Decoder* decoder, InterpreterCode* code, pc_t pc, int& len) {
-    MemoryAccessOperand operand(decoder, code->at(pc), sizeof(ctype));
+    MemoryAccessOperand<false> operand(decoder, code->at(pc), sizeof(ctype));
     uint32_t index = Pop().to<uint32_t>();
-    size_t effective_mem_size = instance()->mem_size - sizeof(mtype);
-    if (operand.offset > effective_mem_size ||
-        index > (effective_mem_size - operand.offset)) {
+    if (!BoundsCheck<mtype>(instance()->mem_size, operand.offset, index)) {
       DoTrap(kTrapMemOutOfBounds, pc);
       return false;
     }
@@ -1475,13 +1483,11 @@ class ThreadImpl {
   template <typename ctype, typename mtype>
   bool ExecuteStore(Decoder* decoder, InterpreterCode* code, pc_t pc,
                     int& len) {
-    MemoryAccessOperand operand(decoder, code->at(pc), sizeof(ctype));
+    MemoryAccessOperand<false> operand(decoder, code->at(pc), sizeof(ctype));
     WasmVal val = Pop();
 
     uint32_t index = Pop().to<uint32_t>();
-    size_t effective_mem_size = instance()->mem_size - sizeof(mtype);
-    if (operand.offset > effective_mem_size ||
-        index > (effective_mem_size - operand.offset)) {
+    if (!BoundsCheck<mtype>(instance()->mem_size, operand.offset, index)) {
       DoTrap(kTrapMemOutOfBounds, pc);
       return false;
     }
@@ -1568,19 +1574,19 @@ class ThreadImpl {
         case kExprNop:
           break;
         case kExprBlock: {
-          BlockTypeOperand operand(&decoder, code->at(pc));
+          BlockTypeOperand<false> operand(&decoder, code->at(pc));
           blocks_.push_back({pc, stack_.size(), frames_.size(), operand.arity});
           len = 1 + operand.length;
           break;
         }
         case kExprLoop: {
-          BlockTypeOperand operand(&decoder, code->at(pc));
+          BlockTypeOperand<false> operand(&decoder, code->at(pc));
           blocks_.push_back({pc, stack_.size(), frames_.size(), 0});
           len = 1 + operand.length;
           break;
         }
         case kExprIf: {
-          BlockTypeOperand operand(&decoder, code->at(pc));
+          BlockTypeOperand<false> operand(&decoder, code->at(pc));
           WasmVal cond = Pop();
           bool is_true = cond.to<uint32_t>() != 0;
           blocks_.push_back({pc, stack_.size(), frames_.size(), operand.arity});
@@ -1608,13 +1614,13 @@ class ThreadImpl {
           break;
         }
         case kExprBr: {
-          BreakDepthOperand operand(&decoder, code->at(pc));
+          BreakDepthOperand<false> operand(&decoder, code->at(pc));
           len = DoBreak(code, pc, operand.depth);
           TRACE("  br => @%zu\n", pc + len);
           break;
         }
         case kExprBrIf: {
-          BreakDepthOperand operand(&decoder, code->at(pc));
+          BreakDepthOperand<false> operand(&decoder, code->at(pc));
           WasmVal cond = Pop();
           bool is_true = cond.to<uint32_t>() != 0;
           if (is_true) {
@@ -1627,8 +1633,8 @@ class ThreadImpl {
           break;
         }
         case kExprBrTable: {
-          BranchTableOperand operand(&decoder, code->at(pc));
-          BranchTableIterator iterator(&decoder, operand);
+          BranchTableOperand<false> operand(&decoder, code->at(pc));
+          BranchTableIterator<false> iterator(&decoder, operand);
           uint32_t key = Pop().to<uint32_t>();
           uint32_t depth = 0;
           if (key >= operand.table_count) key = operand.table_count;
@@ -1654,44 +1660,44 @@ class ThreadImpl {
           break;
         }
         case kExprI32Const: {
-          ImmI32Operand operand(&decoder, code->at(pc));
+          ImmI32Operand<false> operand(&decoder, code->at(pc));
           Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprI64Const: {
-          ImmI64Operand operand(&decoder, code->at(pc));
+          ImmI64Operand<false> operand(&decoder, code->at(pc));
           Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprF32Const: {
-          ImmF32Operand operand(&decoder, code->at(pc));
+          ImmF32Operand<false> operand(&decoder, code->at(pc));
           Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprF64Const: {
-          ImmF64Operand operand(&decoder, code->at(pc));
+          ImmF64Operand<false> operand(&decoder, code->at(pc));
           Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprGetLocal: {
-          LocalIndexOperand operand(&decoder, code->at(pc));
+          LocalIndexOperand<false> operand(&decoder, code->at(pc));
           Push(pc, stack_[frames_.back().sp + operand.index]);
           len = 1 + operand.length;
           break;
         }
         case kExprSetLocal: {
-          LocalIndexOperand operand(&decoder, code->at(pc));
+          LocalIndexOperand<false> operand(&decoder, code->at(pc));
           WasmVal val = Pop();
           stack_[frames_.back().sp + operand.index] = val;
           len = 1 + operand.length;
           break;
         }
         case kExprTeeLocal: {
-          LocalIndexOperand operand(&decoder, code->at(pc));
+          LocalIndexOperand<false> operand(&decoder, code->at(pc));
           WasmVal val = Pop();
           stack_[frames_.back().sp + operand.index] = val;
           Push(pc, val);
@@ -1703,7 +1709,7 @@ class ThreadImpl {
           break;
         }
         case kExprCallFunction: {
-          CallFunctionOperand operand(&decoder, code->at(pc));
+          CallFunctionOperand<false> operand(&decoder, code->at(pc));
           InterpreterCode* target = codemap()->GetCode(operand.index);
           if (target->function->imported) {
             CommitPc(pc);
@@ -1735,7 +1741,7 @@ class ThreadImpl {
           continue;  // don't bump pc
         } break;
         case kExprCallIndirect: {
-          CallIndirectOperand operand(&decoder, code->at(pc));
+          CallIndirectOperand<false> operand(&decoder, code->at(pc));
           uint32_t entry_index = Pop().to<uint32_t>();
           // Assume only one table for now.
           DCHECK_LE(module()->function_tables.size(), 1u);
@@ -1762,7 +1768,7 @@ class ThreadImpl {
           }
         } break;
         case kExprGetGlobal: {
-          GlobalIndexOperand operand(&decoder, code->at(pc));
+          GlobalIndexOperand<false> operand(&decoder, code->at(pc));
           const WasmGlobal* global = &module()->globals[operand.index];
           byte* ptr = instance()->globals_start + global->offset;
           WasmVal val;
@@ -1781,7 +1787,7 @@ class ThreadImpl {
           break;
         }
         case kExprSetGlobal: {
-          GlobalIndexOperand operand(&decoder, code->at(pc));
+          GlobalIndexOperand<false> operand(&decoder, code->at(pc));
           const WasmGlobal* global = &module()->globals[operand.index];
           byte* ptr = instance()->globals_start + global->offset;
           WasmVal val = Pop();
@@ -1842,7 +1848,7 @@ class ThreadImpl {
   case kExpr##name: {                                               \
     uint32_t index = Pop().to<uint32_t>();                          \
     ctype result;                                                   \
-    if (index >= (instance()->mem_size - sizeof(mtype))) {          \
+    if (!BoundsCheck<mtype>(instance()->mem_size, 0, index)) {      \
       result = defval;                                              \
     } else {                                                        \
       byte* addr = instance()->mem_start + index;                   \
@@ -1867,7 +1873,7 @@ class ThreadImpl {
   case kExpr##name: {                                                          \
     WasmVal val = Pop();                                                       \
     uint32_t index = Pop().to<uint32_t>();                                     \
-    if (index < (instance()->mem_size - sizeof(mtype))) {                      \
+    if (BoundsCheck<mtype>(instance()->mem_size, 0, index)) {                  \
       byte* addr = instance()->mem_start + index;                              \
       /* TODO(titzer): alignment for asmjs store mem? */                       \
       *(reinterpret_cast<mtype*>(addr)) = static_cast<mtype>(val.to<ctype>()); \
@@ -1883,7 +1889,7 @@ class ThreadImpl {
           ASMJS_STORE_CASE(F64AsmjsStoreMem, double, double);
 #undef ASMJS_STORE_CASE
         case kExprGrowMemory: {
-          MemoryIndexOperand operand(&decoder, code->at(pc));
+          MemoryIndexOperand<false> operand(&decoder, code->at(pc));
           uint32_t delta_pages = Pop().to<uint32_t>();
           Push(pc, WasmVal(ExecuteGrowMemory(
                        delta_pages, codemap_->maybe_instance(), instance())));
@@ -1891,7 +1897,7 @@ class ThreadImpl {
           break;
         }
         case kExprMemorySize: {
-          MemoryIndexOperand operand(&decoder, code->at(pc));
+          MemoryIndexOperand<false> operand(&decoder, code->at(pc));
           Push(pc, WasmVal(static_cast<uint32_t>(instance()->mem_size /
                                                  WasmModule::kPageSize)));
           len = 1 + operand.length;
@@ -2124,8 +2130,16 @@ class ThreadImpl {
                                      signature->GetParam(i)));
     }
 
-    MaybeHandle<Object> maybe_retval = Execution::Call(
-        isolate, target, isolate->global_proxy(), num_args, args.data());
+    // The receiver is the global proxy if in sloppy mode (default), undefined
+    // if in strict mode.
+    Handle<Object> receiver = isolate->global_proxy();
+    if (target->IsJSFunction() &&
+        is_strict(JSFunction::cast(*target)->shared()->language_mode())) {
+      receiver = isolate->factory()->undefined_value();
+    }
+
+    MaybeHandle<Object> maybe_retval =
+        Execution::Call(isolate, target, receiver, num_args, args.data());
     if (maybe_retval.is_null()) return TryHandleException(isolate);
 
     Handle<Object> retval = maybe_retval.ToHandleChecked();
@@ -2341,8 +2355,6 @@ class WasmInterpreterInternals : public ZoneObject {
         threads_(zone) {
     threads_.emplace_back(zone, &codemap_, env.module_env.instance);
   }
-
-  void Delete() { threads_.clear(); }
 };
 
 //============================================================================
@@ -2352,7 +2364,7 @@ WasmInterpreter::WasmInterpreter(Isolate* isolate, const ModuleBytesEnv& env)
     : zone_(isolate->allocator(), ZONE_NAME),
       internals_(new (&zone_) WasmInterpreterInternals(isolate, &zone_, env)) {}
 
-WasmInterpreter::~WasmInterpreter() { internals_->Delete(); }
+WasmInterpreter::~WasmInterpreter() { internals_->~WasmInterpreterInternals(); }
 
 void WasmInterpreter::Run() { internals_->threads_[0].Run(); }
 

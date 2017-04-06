@@ -137,18 +137,15 @@ class FunctionBodyDecoderTest : public TestWithZone {
 
     if (result.error_code != expected) {
       ptrdiff_t pc = result.error_pc - result.start;
-      ptrdiff_t pt = result.error_pt - result.start;
       std::ostringstream str;
       if (expected == kSuccess) {
-        str << "Verification failed: " << result.error_code << " pc = +" << pc;
-        if (result.error_pt) str << ", pt = +" << pt;
-        str << ", msg = " << result.error_msg.get();
+        str << "Verification failed: " << result.error_code << " pc = +" << pc
+            << ", msg = " << result.error_msg.get();
       } else {
         str << "Verification expected: " << expected << ", but got "
             << result.error_code;
         if (result.error_code != kSuccess) {
           str << " pc = +" << pc;
-          if (result.error_pt) str << ", pt = +" << pt;
         }
       }
       EXPECT_TRUE(false) << str.str().c_str();
@@ -2336,15 +2333,15 @@ class BranchTableIteratorTest : public TestWithZone {
   BranchTableIteratorTest() : TestWithZone() {}
   void CheckBrTableSize(const byte* start, const byte* end) {
     Decoder decoder(start, end);
-    BranchTableOperand operand(&decoder, start);
-    BranchTableIterator iterator(&decoder, operand);
+    BranchTableOperand<true> operand(&decoder, start);
+    BranchTableIterator<true> iterator(&decoder, operand);
     EXPECT_EQ(end - start - 1u, iterator.length());
     EXPECT_TRUE(decoder.ok());
   }
   void CheckBrTableError(const byte* start, const byte* end) {
     Decoder decoder(start, end);
-    BranchTableOperand operand(&decoder, start);
-    BranchTableIterator iterator(&decoder, operand);
+    BranchTableOperand<true> operand(&decoder, start);
+    BranchTableIterator<true> iterator(&decoder, operand);
     iterator.length();
     EXPECT_FALSE(decoder.ok());
   }
