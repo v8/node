@@ -58,6 +58,7 @@ class RegExpBuiltinsAssembler : public CodeStubAssembler {
                              char const* method_name);
 
   // Analogous to BranchIfFastRegExp, for use in asserts.
+  Node* IsFastRegExp(Node* const context, Node* const object);
   Node* IsFastRegExp(Node* const context, Node* const object, Node* const map);
 
   // Performs fast path checks on the given object itself, but omits prototype
@@ -88,7 +89,7 @@ class RegExpBuiltinsAssembler : public CodeStubAssembler {
   Node* RegExpExec(Node* context, Node* regexp, Node* string);
 
   Node* AdvanceStringIndex(Node* const string, Node* const index,
-                           Node* const is_unicode);
+                           Node* const is_unicode, bool is_fastpath);
 
   void RegExpPrototypeMatchBody(Node* const context, Node* const regexp,
                                 Node* const string, const bool is_fastpath);
