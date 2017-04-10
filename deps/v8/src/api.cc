@@ -2930,6 +2930,7 @@ bool StackFrame::IsConstructor() const {
   return Utils::OpenHandle(this)->is_constructor();
 }
 
+bool StackFrame::IsWasm() const { return Utils::OpenHandle(this)->is_wasm(); }
 
 // --- N a t i v e W e a k M a p ---
 
@@ -8181,6 +8182,12 @@ Isolate* Isolate::GetCurrent() {
 
 Isolate* Isolate::New(const Isolate::CreateParams& params) {
   i::Isolate* isolate = new i::Isolate(false);
+  return IsolateNewImpl(isolate, params);
+}
+
+// This is separate so that tests can provide a different |isolate|.
+Isolate* IsolateNewImpl(internal::Isolate* isolate,
+                        const v8::Isolate::CreateParams& params) {
   Isolate* v8_isolate = reinterpret_cast<Isolate*>(isolate);
   CHECK(params.array_buffer_allocator != NULL);
   isolate->set_array_buffer_allocator(params.array_buffer_allocator);
@@ -8796,30 +8803,10 @@ bool Isolate::IsInUse() {
 }
 
 
-class VisitorAdapter : public i::ObjectVisitor {
- public:
-  explicit VisitorAdapter(PersistentHandleVisitor* visitor)
-      : visitor_(visitor) {}
-  void VisitPointers(i::Object** start, i::Object** end) override {
-    UNREACHABLE();
-  }
-  DISABLE_CFI_PERF
-  void VisitEmbedderReference(i::Object** p, uint16_t class_id) override {
-    Value* value = ToApi<Value>(i::Handle<i::Object>(p));
-    visitor_->VisitPersistentHandle(
-        reinterpret_cast<Persistent<Value>*>(&value), class_id);
-  }
-
- private:
-  PersistentHandleVisitor* visitor_;
-};
-
-
 void Isolate::VisitHandlesWithClassIds(PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateAllRootsWithClassIds(&visitor_adapter);
+  isolate->global_handles()->IterateAllRootsWithClassIds(visitor);
 }
 
 
@@ -8827,18 +8814,14 @@ void Isolate::VisitHandlesForPartialDependence(
     PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateAllRootsInNewSpaceWithClassIds(
-      &visitor_adapter);
+  isolate->global_handles()->IterateAllRootsInNewSpaceWithClassIds(visitor);
 }
 
 
 void Isolate::VisitWeakHandles(PersistentHandleVisitor* visitor) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::DisallowHeapAllocation no_allocation;
-  VisitorAdapter visitor_adapter(visitor);
-  isolate->global_handles()->IterateWeakRootsInNewSpaceWithClassIds(
-      &visitor_adapter);
+  isolate->global_handles()->IterateWeakRootsInNewSpaceWithClassIds(visitor);
 }
 
 

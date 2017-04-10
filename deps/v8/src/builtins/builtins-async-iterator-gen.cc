@@ -85,10 +85,9 @@ void AsyncFromSyncBuiltinsAssembler::Generate_AsyncFromSyncIteratorMethod(
   Node* const native_context = LoadNativeContext(context);
   Node* const promise = AllocateAndInitJSPromise(context);
 
-  Variable var_exception(this, MachineRepresentation::kTagged,
-                         initial_exception_value == nullptr
-                             ? UndefinedConstant()
-                             : initial_exception_value);
+  VARIABLE(var_exception, MachineRepresentation::kTagged,
+           initial_exception_value == nullptr ? UndefinedConstant()
+                                              : initial_exception_value);
   Label reject_promise(this, reject_label_type);
 
   ThrowIfNotAsyncFromSyncIterator(context, iterator, &reject_promise,
@@ -120,7 +119,7 @@ void AsyncFromSyncBuiltinsAssembler::Generate_AsyncFromSyncIteratorMethod(
 
   // Perform ! Call(valueWrapperCapability.[[Resolve]], undefined, «
   // throwValue »).
-  InternalResolvePromise(context, wrapper, value);
+  CallBuiltin(Builtins::kResolveNativePromise, context, wrapper, value);
 
   // Let onFulfilled be a new built-in function object as defined in
   // Async Iterator Value Unwrap Functions.
@@ -129,16 +128,14 @@ void AsyncFromSyncBuiltinsAssembler::Generate_AsyncFromSyncIteratorMethod(
 
   // Perform ! PerformPromiseThen(valueWrapperCapability.[[Promise]],
   //     onFulfilled, undefined, promiseCapability).
-  Node* const undefined = UndefinedConstant();
-  InternalPerformPromiseThen(context, wrapper, on_fulfilled, undefined, promise,
-                             undefined, undefined);
-  Return(promise);
+  Return(CallBuiltin(Builtins::kPerformNativePromiseThen, context, wrapper,
+                     on_fulfilled, UndefinedConstant(), promise));
 
   BIND(&reject_promise);
   {
     Node* const exception = var_exception.value();
-    InternalPromiseReject(context, promise, exception, TrueConstant());
-
+    CallBuiltin(Builtins::kRejectNativePromise, context, promise, exception,
+                TrueConstant());
     Return(promise);
   }
 }
@@ -156,8 +153,8 @@ std::pair<Node*, Node*> AsyncFromSyncBuiltinsAssembler::LoadIteratorResult(
   Node* const fast_iter_result_map =
       LoadContextElement(native_context, Context::ITERATOR_RESULT_MAP_INDEX);
 
-  Variable var_value(this, MachineRepresentation::kTagged);
-  Variable var_done(this, MachineRepresentation::kTagged);
+  VARIABLE(var_value, MachineRepresentation::kTagged);
+  VARIABLE(var_done, MachineRepresentation::kTagged);
   Branch(WordEqual(iter_result_map, fast_iter_result_map), &if_fastpath,
          &if_slowpath);
 

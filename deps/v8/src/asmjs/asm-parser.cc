@@ -741,9 +741,12 @@ void AsmJsParser::ValidateFunction() {
     function_info->kind = VarKind::kFunction;
     function_info->function_builder = module_builder_->AddFunction();
     function_info->index = function_info->function_builder->func_index();
+  } else if (function_info->kind != VarKind::kFunction) {
+    FAIL("Function name collides with variable");
   } else if (function_info->function_defined) {
     FAIL("Function redefined");
   }
+
   function_info->function_defined = true;
   // TODO(bradnelson): Cleanup memory management here.
   // WasmModuleBuilder should own these.
@@ -795,25 +798,18 @@ void AsmJsParser::ValidateFunction() {
   // End function
   current_function_builder_->Emit(kExprEnd);
 
-  // Add in function type.
+  // Record (or validate) function type.
   AsmType* function_type = AsmType::Function(zone(), return_type_);
   for (auto t : params) {
     function_type->AsFunctionType()->AddArgument(t);
   }
   function_info = GetVarInfo(function_name);
-  if (function_info->kind == VarKind::kUnused) {
-    function_info->kind = VarKind::kFunction;
-    function_info->index = current_function_builder_->func_index();
+  if (function_info->type->IsA(AsmType::None())) {
+    DCHECK(function_info->kind == VarKind::kFunction);
     function_info->type = function_type;
-  } else {
-    if (function_info->kind != VarKind::kFunction) {
-      FAIL("Function name collides with variable");
-    }
+  } else if (!function_type->IsA(function_info->type)) {
     // TODO(bradnelson): Should IsExactly be used here?
-    if (!function_info->type->IsA(AsmType::None()) &&
-        !function_type->IsA(function_info->type)) {
-      FAIL("Function definition doesn't match use");
-    }
+    FAIL("Function definition doesn't match use");
   }
 
   scanner_.ResetLocals();

@@ -2564,6 +2564,7 @@ class JSObject: public JSReceiver {
   STATIC_ASSERT(kHeaderSize == Internals::kJSObjectHeaderSize);
 
   class BodyDescriptor;
+  class FastBodyDescriptor;
 
   // Gets the number of currently used elements.
   int GetFastElementsUsage();
@@ -8183,11 +8184,15 @@ class String: public Name {
     virtual Handle<String> GetPrefix() = 0;
     virtual Handle<String> GetSuffix() = 0;
 
+    // A named capture can be invalid (if it is not specified in the pattern),
+    // unmatched (specified but not matched in the current string), and matched.
+    enum CaptureState { INVALID, UNMATCHED, MATCHED };
+
     virtual int CaptureCount() = 0;
     virtual bool HasNamedCaptures() = 0;
     virtual MaybeHandle<String> GetCapture(int i, bool* capture_exists) = 0;
     virtual MaybeHandle<String> GetNamedCapture(Handle<String> name,
-                                                bool* capture_exists) = 0;
+                                                CaptureState* state) = 0;
 
     virtual ~Match() {}
   };
@@ -10107,6 +10112,7 @@ class StackFrameInfo : public Struct {
   DECL_ACCESSORS(function_name, Object)
   DECL_BOOLEAN_ACCESSORS(is_eval)
   DECL_BOOLEAN_ACCESSORS(is_constructor)
+  DECL_BOOLEAN_ACCESSORS(is_wasm)
   DECL_INT_ACCESSORS(flag)
 
   DECLARE_CAST(StackFrameInfo)
@@ -10130,6 +10136,7 @@ class StackFrameInfo : public Struct {
   // Bit position in the flag, from least significant bit position.
   static const int kIsEvalBit = 0;
   static const int kIsConstructorBit = 1;
+  static const int kIsWasmBit = 2;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(StackFrameInfo);
 };
@@ -10197,12 +10204,6 @@ class ObjectVisitor BASE_EMBEDDED {
   // Visits a runtime entry in the instruction stream.
   virtual void VisitRuntimeEntry(RelocInfo* rinfo) {}
 
-  // Visits the resource of an one-byte or two-byte string.
-  virtual void VisitExternalOneByteString(
-      v8::String::ExternalOneByteStringResource** resource) {}
-  virtual void VisitExternalTwoByteString(
-      v8::String::ExternalStringResource** resource) {}
-
   // Visits a debug call target in the instruction stream.
   virtual void VisitDebugTarget(RelocInfo* rinfo);
 
@@ -10221,9 +10222,6 @@ class ObjectVisitor BASE_EMBEDDED {
 
   // Visits an (encoded) internal reference.
   virtual void VisitInternalReference(RelocInfo* rinfo) {}
-
-  // Visits a handle that has an embedder-assigned class ID.
-  virtual void VisitEmbedderReference(Object** p, uint16_t class_id) {}
 
   // Intended for serialization/deserialization checking: insert, or
   // check for the presence of, a tag at this position in the stream.

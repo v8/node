@@ -147,7 +147,7 @@ assertThrows('/(?<𐒤>a)/u', SyntaxError);  // ID_Continue but not ID_Start.
 assertEquals("a", /(?<π>a)/.exec("bab").groups.π);
 assertEquals("a", /(?<$>a)/.exec("bab").groups.$);
 assertEquals("a", /(?<_>a)/.exec("bab").groups._);
-assertThrows("/(?<$𐒤>a)/", SyntaxError);
+assertEquals("a", /(?<$𐒤>a)/.exec("bab").groups.$𐒤);
 assertEquals("a", /(?<ಠ_ಠ>a)/.exec("bab").groups.ಠ_ಠ);
 assertThrows('/(?<❤>a)/', SyntaxError);
 assertThrows('/(?<𐒤>a)/', SyntaxError);  // ID_Continue but not ID_Start.
@@ -186,6 +186,31 @@ assertThrows("/\\1(?:.)/u", SyntaxError);
 assertThrows("/\\1(?<=a)./u", SyntaxError);
 assertThrows("/\\1(?<!a)./u", SyntaxError);
 assertEquals(["a", "a"], /\1(?<a>.)/u.exec("abcd"));
+
+// Unicode escapes in capture names.
+assertTrue(/(?<a\uD801\uDCA4>.)/u.test("a"));  // \u Lead \u Trail
+assertThrows("/(?<a\\uD801>.)/u", SyntaxError);  // \u Lead
+assertThrows("/(?<a\\uDCA4>.)/u", SyntaxError);  // \u Trail
+assertTrue(/(?<\u0041>.)/u.test("a"));  // \u NonSurrogate
+assertTrue(/(?<\u{0041}>.)/u.test("a"));  // \u{ Non-surrogate }
+assertTrue(/(?<a\u{104A4}>.)/u.test("a"));  // \u{ Surrogate, ID_Continue }
+assertThrows("/(?<a\\u{110000}>.)/u", SyntaxError);  // \u{ Out-of-bounds }
+assertThrows("/(?<a\uD801>.)/u", SyntaxError);  // Lead
+assertThrows("/(?<a\uDCA4>.)/u", SyntaxError);  // Trail
+assertTrue(RegExp("(?<\u{0041}>.)", "u").test("a"));  // Non-surrogate
+assertTrue(RegExp("(?<a\u{104A4}>.)", "u").test("a"));  // Surrogate,ID_Continue
+
+assertThrows("/(?<a\\uD801\uDCA4>.)/", SyntaxError);
+assertThrows("/(?<a\\uD801>.)/", SyntaxError);
+assertThrows("/(?<a\\uDCA4>.)/", SyntaxError);
+assertTrue(/(?<\u0041>.)/.test("a"));
+assertThrows("/(?<\\u{0041}>.)/", SyntaxError);
+assertThrows("/(?<a\\u{104A4}>.)/", SyntaxError);
+assertThrows("/(?<a\\u{10FFFF}>.)/", SyntaxError);
+assertThrows("/(?<a\uD801>.)/", SyntaxError);  // Lead
+assertThrows("/(?<a\uDCA4>.)/", SyntaxError);  // Trail
+assertTrue(RegExp("(?<\u{0041}>.)").test("a"));  // Non-surrogate
+assertTrue(RegExp("(?<a\u{104A4}>.)").test("a"));  // Surrogate, ID_Continue
 
 // @@replace with a callable replacement argument (no named captures).
 {
@@ -320,56 +345,61 @@ function toSlowMode(re) {
 
 // @@replace with a string replacement argument (no named captures).
 {
-  let re = /(.)(.)/u;
+  let re = /(.)(.)|(x)/u;
   assertEquals("$<snd>$<fst>cd", "abcd".replace(re, "$<snd>$<fst>"));
   assertEquals("bacd", "abcd".replace(re, "$2$1"));
+  assertEquals("cd", "abcd".replace(re, "$3"));
   assertEquals("$<sndcd", "abcd".replace(re, "$<snd"));
   assertEquals("$<42a>cd", "abcd".replace(re, "$<42$1>"));
-  assertEquals("$<thd>cd", "abcd".replace(re, "$<thd>"));
+  assertEquals("$<fth>cd", "abcd".replace(re, "$<fth>"));
   assertEquals("$<a>cd", "abcd".replace(re, "$<$1>"));
 }
 
 // @@replace with a string replacement argument (global, named captures).
 {
-  let re = /(?<fst>.)(?<snd>.)/gu;
+  let re = /(?<fst>.)(?<snd>.)|(?<thd>x)/gu;
   assertEquals("badc", "abcd".replace(re, "$<snd>$<fst>"));
   assertEquals("badc", "abcd".replace(re, "$2$1"));
-  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
-  assertEquals("", "abcd".replace(re, "$<42$1>"));
   assertEquals("", "abcd".replace(re, "$<thd>"));
-  assertEquals("", "abcd".replace(re, "$<$1>"));
+  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<42$1>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<fth>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<$1>"), SyntaxError);
 }
 
 // @@replace with a string replacement argument (non-global, named captures).
 {
-  let re = /(?<fst>.)(?<snd>.)/u;
+  let re = /(?<fst>.)(?<snd>.)|(?<thd>x)/u;
   assertEquals("bacd", "abcd".replace(re, "$<snd>$<fst>"));
   assertEquals("bacd", "abcd".replace(re, "$2$1"));
-  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
-  assertEquals("cd", "abcd".replace(re, "$<42$1>"));
   assertEquals("cd", "abcd".replace(re, "$<thd>"));
-  assertEquals("cd", "abcd".replace(re, "$<$1>"));
+  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<42$1>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<fth>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<$1>"), SyntaxError);
 }
 
 // @@replace with a string replacement argument (slow, global, named captures).
 {
-  let re = toSlowMode(/(?<fst>.)(?<snd>.)/gu);
+  let re = toSlowMode(/(?<fst>.)(?<snd>.)|(?<thd>x)/gu);
   assertEquals("badc", "abcd".replace(re, "$<snd>$<fst>"));
   assertEquals("badc", "abcd".replace(re, "$2$1"));
-  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
-  assertEquals("", "abcd".replace(re, "$<42$1>"));
   assertEquals("", "abcd".replace(re, "$<thd>"));
-  assertEquals("", "abcd".replace(re, "$<$1>"));
+  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<42$1>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<fth>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<$1>"), SyntaxError);
 }
 
 // @@replace with a string replacement argument (slow, non-global,
 // named captures).
 {
-  let re = toSlowMode(/(?<fst>.)(?<snd>.)/u);
+  let re = toSlowMode(/(?<fst>.)(?<snd>.)|(?<thd>x)/u);
   assertEquals("bacd", "abcd".replace(re, "$<snd>$<fst>"));
   assertEquals("bacd", "abcd".replace(re, "$2$1"));
-  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
-  assertEquals("cd", "abcd".replace(re, "$<42$1>"));
   assertEquals("cd", "abcd".replace(re, "$<thd>"));
-  assertEquals("cd", "abcd".replace(re, "$<$1>"));
+  assertThrows(() => "abcd".replace(re, "$<snd"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<42$1>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<fth>"), SyntaxError);
+  assertThrows(() => "abcd".replace(re, "$<$1>"), SyntaxError);
 }

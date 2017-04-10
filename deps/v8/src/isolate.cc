@@ -44,6 +44,7 @@
 #include "src/prototype.h"
 #include "src/regexp/regexp-stack.h"
 #include "src/runtime-profiler.h"
+#include "src/setup-isolate.h"
 #include "src/simulator.h"
 #include "src/snapshot/deserializer.h"
 #include "src/tracing/tracing-category-observer.h"
@@ -678,6 +679,7 @@ class CaptureStackTraceHelper {
     if (options_ & StackTrace::kIsConstructor) {
       frame->set_is_constructor(summ.is_constructor());
     }
+    frame->set_is_wasm(false);
     return frame;
   }
 
@@ -706,6 +708,7 @@ class CaptureStackTraceHelper {
     if (options_ & StackTrace::kScriptId) {
       info->set_script_id(summ.script()->id());
     }
+    info->set_is_wasm(true);
     return info;
   }
 
@@ -1241,6 +1244,29 @@ Object* Isolate::UnwindAndFindHandler() {
         return FoundHandler(nullptr, code, offset, return_sp, frame->fp());
       }
 
+      case StackFrame::STUB: {
+        // Some stubs are able to handle exceptions.
+        if (!catchable_by_js) break;
+        StubFrame* stub_frame = static_cast<StubFrame*>(frame);
+        Code* code = stub_frame->LookupCode();
+        if (!code->IsCode() || code->kind() != Code::BUILTIN ||
+            !code->handler_table()->length() || !code->is_turbofanned()) {
+          break;
+        }
+
+        int stack_slots = 0;  // Will contain stack slot count of frame.
+        int offset = stub_frame->LookupExceptionHandlerInTable(&stack_slots);
+        if (offset < 0) break;
+
+        // Compute the stack pointer from the frame pointer. This ensures
+        // that argument slots on the stack are dropped as returning would.
+        Address return_sp = frame->fp() +
+                            StandardFrameConstants::kFixedFrameSizeAboveFp -
+                            stack_slots * kPointerSize;
+
+        return FoundHandler(nullptr, code, offset, return_sp, frame->fp());
+      }
+
       case StackFrame::INTERPRETED: {
         // For interpreted frame we perform a range lookup in the handler table.
         if (!catchable_by_js) break;
@@ -1398,6 +1424,25 @@ Isolate::CatchType Isolate::PredictExceptionCatcher() {
             return CAUGHT_BY_DESUGARING;
           case HandlerTable::ASYNC_AWAIT:
             return CAUGHT_BY_ASYNC_AWAIT;
+        }
+      } break;
+
+      case StackFrame::STUB: {
+        Handle<Code> code(frame->LookupCode());
+        if (code->kind() == Code::BUILTIN && code->is_turbofanned() &&
+            code->handler_table()->length()) {
+          if (code->is_promise_rejection()) {
+            return CAUGHT_BY_PROMISE;
+          }
+
+          // This the exception throw in PromiseHandle which doesn't
+          // cause a promise rejection.
+          if (code->is_exception_caught()) {
+            return CAUGHT_BY_JAVASCRIPT;
+          }
+
+          // The built-in must be marked with an exception prediction.
+          UNREACHABLE();
         }
       } break;
 
@@ -2247,6 +2292,7 @@ Isolate::Isolate(bool enable_serializer)
       global_handles_(NULL),
       eternal_handles_(NULL),
       thread_manager_(NULL),
+      setup_delegate_(NULL),
       regexp_stack_(NULL),
       date_cache_(NULL),
       call_descriptor_data_(NULL),
@@ -2665,8 +2711,8 @@ bool Isolate::Init(Deserializer* des) {
   code_aging_helper_ = new CodeAgingHelper(this);
 
 // Initialize the interface descriptors ahead of time.
-#define INTERFACE_DESCRIPTOR(V) \
-  { V##Descriptor(this); }
+#define INTERFACE_DESCRIPTOR(Name, ...) \
+  { Name##Descriptor(this); }
   INTERFACE_DESCRIPTOR_LIST(INTERFACE_DESCRIPTOR)
 #undef INTERFACE_DESCRIPTOR
 
@@ -2686,7 +2732,10 @@ bool Isolate::Init(Deserializer* des) {
   InitializeThreadLocal();
 
   bootstrapper_->Initialize(create_heap_objects);
-  builtins_.SetUp(this, create_heap_objects);
+  if (setup_delegate_ == nullptr) {
+    setup_delegate_ = new SetupIsolateDelegate();
+  }
+  setup_delegate_->SetupBuiltins(this, create_heap_objects);
   if (create_heap_objects) heap_.CreateFixedStubs();
 
   if (FLAG_log_internal_timer_events) {
@@ -2713,10 +2762,12 @@ bool Isolate::Init(Deserializer* des) {
     }
     load_stub_cache_->Initialize();
     store_stub_cache_->Initialize();
-    interpreter_->Initialize();
+    setup_delegate_->SetupInterpreter(interpreter_, create_heap_objects);
 
     heap_.NotifyDeserializationComplete();
   }
+  delete setup_delegate_;
+  setup_delegate_ = nullptr;
 
   // Finish initialization of ThreadLocal after deserialization is done.
   clear_pending_exception();

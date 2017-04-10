@@ -1646,6 +1646,11 @@ class V8_EXPORT StackFrame {
    * constructor via "new".
    */
   bool IsConstructor() const;
+
+  /**
+   * Returns whether or not the associated functions is defined in wasm.
+   */
+  bool IsWasm() const;
 };
 
 
@@ -4755,7 +4760,8 @@ class V8_EXPORT External : public Value {
   F(ArrayProto_entries, array_entries_iterator)  \
   F(ArrayProto_forEach, array_for_each_iterator) \
   F(ArrayProto_keys, array_keys_iterator)        \
-  F(ArrayProto_values, array_values_iterator)
+  F(ArrayProto_values, array_values_iterator)    \
+  F(IteratorPrototype, initial_iterator_prototype)
 
 enum Intrinsic {
 #define V8_DECL_INTRINSIC(name, iname) k##name,

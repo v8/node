@@ -1679,12 +1679,7 @@ class RecordMigratedSlotVisitor final : public ObjectVisitor {
   inline void VisitExternalReference(RelocInfo* rinfo) final {}
   inline void VisitExternalReference(Address* p) final {}
   inline void VisitRuntimeEntry(RelocInfo* rinfo) final {}
-  inline void VisitExternalOneByteString(
-      v8::String::ExternalOneByteStringResource** resource) final {}
-  inline void VisitExternalTwoByteString(
-      v8::String::ExternalStringResource** resource) final {}
   inline void VisitInternalReference(RelocInfo* rinfo) final {}
-  inline void VisitEmbedderReference(Object** p, uint16_t class_id) final {}
 
  private:
   inline void RecordMigratedSlot(Object* value, Address slot) {
