@@ -389,6 +389,48 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::BinaryOperation(Token::Value op,
   return *this;
 }
 
+BytecodeArrayBuilder& BytecodeArrayBuilder::BinaryOperationSmiLiteral(
+    Token::Value op, Smi* literal, int feedback_slot) {
+  switch (op) {
+    case Token::Value::ADD:
+      OutputAddSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::SUB:
+      OutputSubSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::MUL:
+      OutputMulSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::DIV:
+      OutputDivSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::MOD:
+      OutputModSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::BIT_OR:
+      OutputBitwiseOrSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::BIT_XOR:
+      OutputBitwiseXorSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::BIT_AND:
+      OutputBitwiseAndSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::SHL:
+      OutputShiftLeftSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::SAR:
+      OutputShiftRightSmi(literal->value(), feedback_slot);
+      break;
+    case Token::Value::SHR:
+      OutputShiftRightLogicalSmi(literal->value(), feedback_slot);
+      break;
+    default:
+      UNREACHABLE();
+  }
+  return *this;
+}
+
 BytecodeArrayBuilder& BytecodeArrayBuilder::CountOperation(Token::Value op,
                                                            int feedback_slot) {
   if (op == Token::Value::ADD) {
@@ -1210,39 +1252,47 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::MarkTryEnd(int handler_id) {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::Call(Register callable,
-                                                 RegisterList args,
-                                                 int feedback_slot,
-                                                 Call::CallType call_type,
-                                                 TailCallMode tail_call_mode) {
-  if (tail_call_mode == TailCallMode::kDisallow) {
-    if (call_type == Call::NAMED_PROPERTY_CALL ||
-        call_type == Call::KEYED_PROPERTY_CALL) {
-      if (args.register_count() == 1) {
-        OutputCallProperty0(callable, args[0], feedback_slot);
-      } else if (args.register_count() == 2) {
-        OutputCallProperty1(callable, args[0], args[1], feedback_slot);
-      } else if (args.register_count() == 3) {
-        OutputCallProperty2(callable, args[0], args[1], args[2], feedback_slot);
-      } else {
-        OutputCallProperty(callable, args, args.register_count(),
-                           feedback_slot);
-      }
-    } else {
-      if (args.register_count() == 1) {
-        OutputCall0(callable, args[0], feedback_slot);
-      } else if (args.register_count() == 2) {
-        OutputCall1(callable, args[0], args[1], feedback_slot);
-      } else if (args.register_count() == 3) {
-        OutputCall2(callable, args[0], args[1], args[2], feedback_slot);
-      } else {
-        OutputCall(callable, args, args.register_count(), feedback_slot);
-      }
-    }
+BytecodeArrayBuilder& BytecodeArrayBuilder::CallProperty(Register callable,
+                                                         RegisterList args,
+                                                         int feedback_slot) {
+  if (args.register_count() == 1) {
+    OutputCallProperty0(callable, args[0], feedback_slot);
+  } else if (args.register_count() == 2) {
+    OutputCallProperty1(callable, args[0], args[1], feedback_slot);
+  } else if (args.register_count() == 3) {
+    OutputCallProperty2(callable, args[0], args[1], args[2], feedback_slot);
   } else {
-    DCHECK(tail_call_mode == TailCallMode::kAllow);
-    OutputTailCall(callable, args, args.register_count(), feedback_slot);
+    OutputCallProperty(callable, args, args.register_count(), feedback_slot);
   }
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CallUndefinedReceiver(
+    Register callable, RegisterList args, int feedback_slot) {
+  if (args.register_count() == 0) {
+    OutputCallUndefinedReceiver0(callable, feedback_slot);
+  } else if (args.register_count() == 1) {
+    OutputCallUndefinedReceiver1(callable, args[0], feedback_slot);
+  } else if (args.register_count() == 2) {
+    OutputCallUndefinedReceiver2(callable, args[0], args[1], feedback_slot);
+  } else {
+    OutputCallUndefinedReceiver(callable, args, args.register_count(),
+                                feedback_slot);
+  }
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::CallAnyReceiver(Register callable,
+                                                            RegisterList args,
+                                                            int feedback_slot) {
+  OutputCallAnyReceiver(callable, args, args.register_count(), feedback_slot);
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::TailCall(Register callable,
+                                                     RegisterList args,
+                                                     int feedback_slot) {
+  OutputTailCall(callable, args, args.register_count(), feedback_slot);
   return *this;
 }
 

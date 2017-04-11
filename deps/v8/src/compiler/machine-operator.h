@@ -97,9 +97,7 @@ int StackSlotSizeOf(Operator const* op);
 
 MachineRepresentation AtomicStoreRepresentationOf(Operator const* op);
 
-MachineType AtomicExchangeRepresentationOf(Operator const* op);
-
-MachineType AtomicCompareExchangeRepresentationOf(Operator const* op);
+MachineType AtomicOpRepresentationOf(Operator const* op);
 
 // Interface for building machine-level operators. These operators are
 // machine-level but machine-independent and thus define a language suitable
@@ -465,6 +463,8 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I32x4ExtractLane(int32_t);
   const Operator* I32x4ReplaceLane(int32_t);
   const Operator* I32x4SConvertF32x4();
+  const Operator* I32x4SConvertI16x8Low();
+  const Operator* I32x4SConvertI16x8High();
   const Operator* I32x4Neg();
   const Operator* I32x4Shl(int32_t);
   const Operator* I32x4ShrS(int32_t);
@@ -479,6 +479,8 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I32x4LeS();
 
   const Operator* I32x4UConvertF32x4();
+  const Operator* I32x4UConvertI16x8Low();
+  const Operator* I32x4UConvertI16x8High();
   const Operator* I32x4ShrU(int32_t);
   const Operator* I32x4MinU();
   const Operator* I32x4MaxU();
@@ -488,9 +490,12 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I16x8Splat();
   const Operator* I16x8ExtractLane(int32_t);
   const Operator* I16x8ReplaceLane(int32_t);
+  const Operator* I16x8SConvertI8x16Low();
+  const Operator* I16x8SConvertI8x16High();
   const Operator* I16x8Neg();
   const Operator* I16x8Shl(int32_t);
   const Operator* I16x8ShrS(int32_t);
+  const Operator* I16x8SConvertI32x4();
   const Operator* I16x8Add();
   const Operator* I16x8AddSaturateS();
   const Operator* I16x8Sub();
@@ -503,7 +508,10 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I16x8LtS();
   const Operator* I16x8LeS();
 
+  const Operator* I16x8UConvertI8x16Low();
+  const Operator* I16x8UConvertI8x16High();
   const Operator* I16x8ShrU(int32_t);
+  const Operator* I16x8UConvertI32x4();
   const Operator* I16x8AddSaturateU();
   const Operator* I16x8SubSaturateU();
   const Operator* I16x8MinU();
@@ -517,6 +525,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I8x16Neg();
   const Operator* I8x16Shl(int32_t);
   const Operator* I8x16ShrS(int32_t);
+  const Operator* I8x16SConvertI16x8();
   const Operator* I8x16Add();
   const Operator* I8x16AddSaturateS();
   const Operator* I8x16Sub();
@@ -530,6 +539,7 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* I8x16LeS();
 
   const Operator* I8x16ShrU(int32_t);
+  const Operator* I8x16UConvertI16x8();
   const Operator* I8x16AddSaturateU();
   const Operator* I8x16SubSaturateU();
   const Operator* I8x16MinU();
@@ -615,6 +625,16 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* AtomicExchange(MachineType rep);
   // atomic-compare-exchange [base + index], old_value, new_value
   const Operator* AtomicCompareExchange(MachineType rep);
+  // atomic-add [base + index], value
+  const Operator* AtomicAdd(MachineType rep);
+  // atomic-sub [base + index], value
+  const Operator* AtomicSub(MachineType rep);
+  // atomic-and [base + index], value
+  const Operator* AtomicAnd(MachineType rep);
+  // atomic-or [base + index], value
+  const Operator* AtomicOr(MachineType rep);
+  // atomic-xor [base + index], value
+  const Operator* AtomicXor(MachineType rep);
 
   // Target machine word-size assumed by this builder.
   bool Is32() const { return word() == MachineRepresentation::kWord32; }

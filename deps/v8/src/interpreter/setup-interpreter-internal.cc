@@ -54,26 +54,23 @@ bool SetupInterpreter::ReuseExistingHandler(Address* dispatch_table,
                                             OperandScale operand_scale) {
   size_t index = Interpreter::GetDispatchTableIndex(bytecode, operand_scale);
   switch (bytecode) {
-    case Bytecode::kCallProperty:
-    case Bytecode::kCallProperty0:
-    case Bytecode::kCallProperty1:
-    case Bytecode::kCallProperty2: {
-      const int offset = static_cast<int>(Bytecode::kCallProperty) -
-                         static_cast<int>(Bytecode::kCall);
-      STATIC_ASSERT(offset == static_cast<int>(Bytecode::kCallProperty0) -
-                                  static_cast<int>(Bytecode::kCall0));
-      STATIC_ASSERT(offset == static_cast<int>(Bytecode::kCallProperty1) -
-                                  static_cast<int>(Bytecode::kCall1));
-      STATIC_ASSERT(offset == static_cast<int>(Bytecode::kCallProperty2) -
-                                  static_cast<int>(Bytecode::kCall2));
-      CHECK_LT(offset, index);
-      dispatch_table[index] = dispatch_table[index - offset];
+    case Bytecode::kLdaImmutableContextSlot:
+      STATIC_ASSERT(static_cast<int>(Bytecode::kLdaContextSlot) <
+                    static_cast<int>(Bytecode::kLdaImmutableContextSlot));
+      dispatch_table[index] = dispatch_table[Interpreter::GetDispatchTableIndex(
+          Bytecode::kLdaContextSlot, operand_scale)];
       return true;
-      break;
-    }
+    case Bytecode::kLdaImmutableCurrentContextSlot:
+      STATIC_ASSERT(
+          static_cast<int>(Bytecode::kLdaCurrentContextSlot) <
+          static_cast<int>(Bytecode::kLdaImmutableCurrentContextSlot));
+      dispatch_table[index] = dispatch_table[Interpreter::GetDispatchTableIndex(
+          Bytecode::kLdaCurrentContextSlot, operand_scale)];
+      return true;
     default:
       return false;
   }
+  return false;
 }
 
 // static

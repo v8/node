@@ -127,18 +127,23 @@ namespace interpreter {
     OperandType::kIdx)                                                         \
                                                                                \
   /* Binary operators with immediate operands */                               \
-  V(AddSmi, AccumulatorUse::kWrite, OperandType::kImm, OperandType::kReg,      \
+  V(AddSmi, AccumulatorUse::kReadWrite, OperandType::kImm, OperandType::kIdx)  \
+  V(SubSmi, AccumulatorUse::kReadWrite, OperandType::kImm, OperandType::kIdx)  \
+  V(MulSmi, AccumulatorUse::kReadWrite, OperandType::kImm, OperandType::kIdx)  \
+  V(DivSmi, AccumulatorUse::kReadWrite, OperandType::kImm, OperandType::kIdx)  \
+  V(ModSmi, AccumulatorUse::kReadWrite, OperandType::kImm, OperandType::kIdx)  \
+  V(BitwiseOrSmi, AccumulatorUse::kReadWrite, OperandType::kImm,               \
     OperandType::kIdx)                                                         \
-  V(SubSmi, AccumulatorUse::kWrite, OperandType::kImm, OperandType::kReg,      \
+  V(BitwiseXorSmi, AccumulatorUse::kReadWrite, OperandType::kImm,              \
     OperandType::kIdx)                                                         \
-  V(BitwiseOrSmi, AccumulatorUse::kWrite, OperandType::kImm,                   \
-    OperandType::kReg, OperandType::kIdx)                                      \
-  V(BitwiseAndSmi, AccumulatorUse::kWrite, OperandType::kImm,                  \
-    OperandType::kReg, OperandType::kIdx)                                      \
-  V(ShiftLeftSmi, AccumulatorUse::kWrite, OperandType::kImm,                   \
-    OperandType::kReg, OperandType::kIdx)                                      \
-  V(ShiftRightSmi, AccumulatorUse::kWrite, OperandType::kImm,                  \
-    OperandType::kReg, OperandType::kIdx)                                      \
+  V(BitwiseAndSmi, AccumulatorUse::kReadWrite, OperandType::kImm,              \
+    OperandType::kIdx)                                                         \
+  V(ShiftLeftSmi, AccumulatorUse::kReadWrite, OperandType::kImm,               \
+    OperandType::kIdx)                                                         \
+  V(ShiftRightSmi, AccumulatorUse::kReadWrite, OperandType::kImm,              \
+    OperandType::kIdx)                                                         \
+  V(ShiftRightLogicalSmi, AccumulatorUse::kReadWrite, OperandType::kImm,       \
+    OperandType::kIdx)                                                         \
                                                                                \
   /* Unary Operators */                                                        \
   V(Inc, AccumulatorUse::kReadWrite, OperandType::kIdx)                        \
@@ -153,14 +158,8 @@ namespace interpreter {
   V(GetSuperConstructor, AccumulatorUse::kRead, OperandType::kRegOut)          \
                                                                                \
   /* Call operations */                                                        \
-  V(Call, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kRegList,    \
-    OperandType::kRegCount, OperandType::kIdx)                                 \
-  V(Call0, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
-    OperandType::kIdx)                                                         \
-  V(Call1, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
-    OperandType::kReg, OperandType::kIdx)                                      \
-  V(Call2, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kReg,       \
-    OperandType::kReg, OperandType::kReg, OperandType::kIdx)                   \
+  V(CallAnyReceiver, AccumulatorUse::kWrite, OperandType::kReg,                \
+    OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
   V(CallProperty, AccumulatorUse::kWrite, OperandType::kReg,                   \
     OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
   V(CallProperty0, AccumulatorUse::kWrite, OperandType::kReg,                  \
@@ -170,6 +169,14 @@ namespace interpreter {
   V(CallProperty2, AccumulatorUse::kWrite, OperandType::kReg,                  \
     OperandType::kReg, OperandType::kReg, OperandType::kReg,                   \
     OperandType::kIdx)                                                         \
+  V(CallUndefinedReceiver, AccumulatorUse::kWrite, OperandType::kReg,          \
+    OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
+  V(CallUndefinedReceiver0, AccumulatorUse::kWrite, OperandType::kReg,         \
+    OperandType::kIdx)                                                         \
+  V(CallUndefinedReceiver1, AccumulatorUse::kWrite, OperandType::kReg,         \
+    OperandType::kReg, OperandType::kIdx)                                      \
+  V(CallUndefinedReceiver2, AccumulatorUse::kWrite, OperandType::kReg,         \
+    OperandType::kReg, OperandType::kReg, OperandType::kIdx)                   \
   V(CallWithSpread, AccumulatorUse::kWrite, OperandType::kReg,                 \
     OperandType::kRegList, OperandType::kRegCount)                             \
   V(TailCall, AccumulatorUse::kWrite, OperandType::kReg,                       \
@@ -427,7 +434,7 @@ enum class Bytecode : uint8_t {
 
 class V8_EXPORT_PRIVATE Bytecodes final {
  public:
-  //  The maximum number of operands a bytecode may have.
+  // The maximum number of operands a bytecode may have.
   static const int kMaxOperands = 5;
 
   // Returns string representation of |bytecode|.
@@ -620,13 +627,15 @@ class V8_EXPORT_PRIVATE Bytecodes final {
 
   // Returns true if the bytecode is a call or a constructor call.
   static constexpr bool IsCallOrConstruct(Bytecode bytecode) {
-    return bytecode == Bytecode::kCall || bytecode == Bytecode::kCallProperty ||
-           bytecode == Bytecode::kCall0 ||
+    return bytecode == Bytecode::kCallAnyReceiver ||
+           bytecode == Bytecode::kCallProperty ||
            bytecode == Bytecode::kCallProperty0 ||
-           bytecode == Bytecode::kCall1 ||
            bytecode == Bytecode::kCallProperty1 ||
-           bytecode == Bytecode::kCall2 ||
            bytecode == Bytecode::kCallProperty2 ||
+           bytecode == Bytecode::kCallUndefinedReceiver ||
+           bytecode == Bytecode::kCallUndefinedReceiver0 ||
+           bytecode == Bytecode::kCallUndefinedReceiver1 ||
+           bytecode == Bytecode::kCallUndefinedReceiver2 ||
            bytecode == Bytecode::kTailCall ||
            bytecode == Bytecode::kConstruct ||
            bytecode == Bytecode::kCallWithSpread ||
@@ -740,6 +749,34 @@ class V8_EXPORT_PRIVATE Bytecodes final {
   // Returns true if there is a call in the most-frequently executed path
   // through the bytecode's handler.
   static bool MakesCallAlongCriticalPath(Bytecode bytecode);
+
+  // Returns the receiver mode of the given call bytecode.
+  static ConvertReceiverMode GetReceiverMode(Bytecode bytecode) {
+    DCHECK(IsCallOrConstruct(bytecode));
+    switch (bytecode) {
+      case Bytecode::kCallProperty:
+      case Bytecode::kCallProperty0:
+      case Bytecode::kCallProperty1:
+      case Bytecode::kCallProperty2:
+        return ConvertReceiverMode::kNotNullOrUndefined;
+      case Bytecode::kCallUndefinedReceiver:
+      case Bytecode::kCallUndefinedReceiver0:
+      case Bytecode::kCallUndefinedReceiver1:
+      case Bytecode::kCallUndefinedReceiver2:
+        return ConvertReceiverMode::kNullOrUndefined;
+      case Bytecode::kCallAnyReceiver:
+      case Bytecode::kTailCall:
+      case Bytecode::kConstruct:
+      case Bytecode::kCallWithSpread:
+      case Bytecode::kConstructWithSpread:
+      case Bytecode::kInvokeIntrinsic:
+      case Bytecode::kCallJSRuntime:
+        return ConvertReceiverMode::kAny;
+      default:
+        UNREACHABLE();
+        return ConvertReceiverMode::kAny;
+    }
+  }
 
   // Returns true if the bytecode is a debug break.
   static bool IsDebugBreak(Bytecode bytecode);

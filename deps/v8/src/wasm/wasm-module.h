@@ -391,8 +391,6 @@ struct WasmFunctionName {
   WasmName name_;
 };
 
-std::ostream& operator<<(std::ostream& os, const WasmModule& module);
-std::ostream& operator<<(std::ostream& os, const WasmFunction& function);
 std::ostream& operator<<(std::ostream& os, const WasmFunctionName& name);
 
 // Get the debug info associated with the given wasm object.
@@ -426,10 +424,6 @@ V8_EXPORT_PRIVATE Handle<JSArray> GetExports(Isolate* isolate,
 V8_EXPORT_PRIVATE Handle<JSArray> GetCustomSections(
     Isolate* isolate, Handle<WasmModuleObject> module, Handle<String> name,
     ErrorThrower* thrower);
-
-// Get the offset of the code of a function within a module.
-int GetFunctionCodeOffset(Handle<WasmCompiledModule> compiled_module,
-                          int func_index);
 
 // Assumed to be called with a code object associated to a wasm module instance.
 // Intended to be called from runtime functions.

@@ -805,8 +805,8 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info) {
     std::unique_ptr<Utf16CharacterStream> stream(ScannerStream::For(
         source, shared_info->start_position(), shared_info->end_position()));
     Handle<String> name(String::cast(shared_info->name()));
-    result = DoParseFunction(info, ast_value_factory()->GetString(name),
-                             stream.get());
+    scanner_.Initialize(stream.get());
+    result = DoParseFunction(info, ast_value_factory()->GetString(name));
     if (result != nullptr) {
       Handle<String> inferred_name(shared_info->inferred_name());
       result->set_inferred_name(inferred_name);
@@ -836,9 +836,8 @@ static FunctionLiteral::FunctionType ComputeFunctionType(ParseInfo* info) {
 }
 
 FunctionLiteral* Parser::DoParseFunction(ParseInfo* info,
-                                         const AstRawString* raw_name,
-                                         Utf16CharacterStream* source) {
-  scanner_.Initialize(source);
+                                         const AstRawString* raw_name) {
+  DCHECK_NOT_NULL(raw_name);
   DCHECK_NULL(scope_);
   DCHECK_NULL(target_stack_);
 
@@ -2835,12 +2834,12 @@ Parser::LazyParsingResult Parser::SkipFunction(
     // functions are already created. Use data gathered during the preparse step
     // to skip the function.
     PreParseData::FunctionData data =
-        reusable_preparser()->preparse_data()->GetTopLevelFunctionData(
+        reusable_preparser()->preparse_data()->GetFunctionData(
             function_scope->start_position());
     if (data.is_valid()) {
       if (FLAG_trace_parse_tasks) {
         PrintF("Skipping top level func @ %d : %d using preparse data\n",
-               data.start, data.end);
+               function_scope->start_position(), data.end);
       }
       function_scope->set_end_position(data.end);
       scanner()->SeekForward(data.end - 1);
@@ -2862,15 +2861,25 @@ Parser::LazyParsingResult Parser::SkipFunction(
   // FIXME(marja): There are 3 ways to skip functions now. Unify them.
   if (preparsed_scope_data_->Consuming()) {
     DCHECK(FLAG_preparser_scope_analysis);
-    int end_pos = kNoSourcePosition;
-    if (preparsed_scope_data_->FindFunctionEnd(function_scope->start_position(),
-                                               &end_pos)) {
-      function_scope->set_end_position(end_pos);
+    const PreParseData::FunctionData& data =
+        preparsed_scope_data_->FindFunction(function_scope->start_position());
+    if (data.is_valid()) {
       function_scope->set_is_skipped_function(true);
       function_scope->outer_scope()->SetMustUsePreParsedScopeData();
-      scanner()->SeekForward(end_pos - 1);
+
+      function_scope->set_end_position(data.end);
+      scanner()->SeekForward(data.end - 1);
       Expect(Token::RBRACE, CHECK_OK_VALUE(kLazyParsingComplete));
-      // FIXME(marja): SkipFunctionLiterals still needed.
+      *num_parameters = data.num_parameters;
+      *function_length = data.function_length;
+      SetLanguageMode(function_scope, data.language_mode);
+      if (data.uses_super_property) {
+        function_scope->RecordSuperPropertyUsage();
+      }
+      if (data.calls_eval) {
+        function_scope->RecordEvalCall();
+      }
+      SkipFunctionLiterals(data.num_inner_functions);
       return kLazyParsingComplete;
     }
   }
@@ -3534,6 +3543,7 @@ void Parser::ParseOnBackground(ParseInfo* info) {
                                     runtime_call_stats_));
     stream_ptr = stream.get();
   }
+  scanner_.Initialize(stream_ptr);
   DCHECK(info->maybe_outer_scope_info().is_null());
 
   DCHECK(original_scope_);
@@ -3546,10 +3556,14 @@ void Parser::ParseOnBackground(ParseInfo* info) {
   // scopes) and set their end position after we know the script length.
   if (info->is_toplevel()) {
     fni_ = new (zone()) FuncNameInferrer(ast_value_factory(), zone());
-    scanner_.Initialize(stream_ptr);
     result = DoParseProgram(info);
   } else {
-    result = DoParseFunction(info, info->function_name(), stream_ptr);
+    const AstRawString* function_name = info->function_name();
+    if (!function_name) {
+      // FIXME(wiktorg) solve fni in parse tasks
+      function_name = ast_value_factory()->empty_string();
+    }
+    result = DoParseFunction(info, function_name);
   }
 
   info->set_literal(result);

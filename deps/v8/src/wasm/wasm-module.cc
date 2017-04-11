@@ -359,7 +359,7 @@ class CompilationHelper {
       compilation_units_.push_back(
           new compiler::WasmCompilationUnit(isolate_, &module_env, func));
     }
-    return num_funcs;
+    return funcs_to_compile;
   }
 
   void InitializeHandles() {
@@ -625,9 +625,6 @@ class CompilationHelper {
     // object.
     Handle<WasmCompiledModule> compiled_module = WasmCompiledModule::New(
         isolate_, shared, code_table, function_tables, signature_tables);
-    if (function_table_count > 0) {
-      compiled_module->set_function_tables(function_tables);
-    }
 
     // If we created a wasm script, finish it now and make it public to the
     // debugger.
@@ -782,18 +779,6 @@ static void InstanceFinalizer(const v8::WeakCallbackInfo<void>& data) {
   TRACE("}\n");
 }
 
-std::pair<int, int> GetFunctionOffsetAndLength(
-    Handle<WasmCompiledModule> compiled_module, int func_index) {
-  WasmModule* module = compiled_module->module();
-  if (func_index < 0 ||
-      static_cast<size_t>(func_index) > module->functions.size()) {
-    return {0, 0};
-  }
-  WasmFunction& func = module->functions[func_index];
-  return {static_cast<int>(func.code_start_offset),
-          static_cast<int>(func.code_end_offset - func.code_start_offset)};
-}
-
 int AdvanceSourcePositionTableIterator(SourcePositionTableIterator& iterator,
                                        int offset) {
   DCHECK(!iterator.done());
@@ -912,24 +897,6 @@ void wasm::UnpackAndRegisterProtectedInstructions(
   }
 }
 
-std::ostream& wasm::operator<<(std::ostream& os, const WasmModule& module) {
-  os << "WASM module with ";
-  os << (module.min_mem_pages * module.kPageSize) << " min mem";
-  os << (module.max_mem_pages * module.kPageSize) << " max mem";
-  os << module.functions.size() << " functions";
-  os << module.functions.size() << " globals";
-  os << module.functions.size() << " data segments";
-  return os;
-}
-
-std::ostream& wasm::operator<<(std::ostream& os, const WasmFunction& function) {
-  os << "WASM function with signature " << *function.sig;
-
-  os << " code bytes: "
-     << (function.code_end_offset - function.code_start_offset);
-  return os;
-}
-
 std::ostream& wasm::operator<<(std::ostream& os, const WasmFunctionName& name) {
   os << "#" << name.function_->func_index;
   if (name.function_->name_offset > 0) {
@@ -955,11 +922,6 @@ WasmInstanceObject* wasm::GetOwningWasmInstance(Code* code) {
   WeakCell* cell = WeakCell::cast(weak_link);
   if (cell->cleared()) return nullptr;
   return WasmInstanceObject::cast(cell->value());
-}
-
-int wasm::GetFunctionCodeOffset(Handle<WasmCompiledModule> compiled_module,
-                                int func_index) {
-  return GetFunctionOffsetAndLength(compiled_module, func_index).first;
 }
 
 WasmModule::WasmModule(Zone* owned)
@@ -1249,7 +1211,7 @@ class InstantiationHelper {
     // Set up the indirect function tables for the new instance.
     //--------------------------------------------------------------------------
     if (function_table_count > 0)
-      InitializeTables(code_table, instance, &code_specialization);
+      InitializeTables(instance, &code_specialization);
 
     //--------------------------------------------------------------------------
     // Set up the memory for the new instance.
@@ -2054,8 +2016,7 @@ class InstantiationHelper {
     }
   }
 
-  void InitializeTables(Handle<FixedArray> code_table,
-                        Handle<WasmInstanceObject> instance,
+  void InitializeTables(Handle<WasmInstanceObject> instance,
                         CodeSpecialization* code_specialization) {
     int function_table_count =
         static_cast<int>(module_->function_tables.size());
@@ -2735,6 +2696,17 @@ class AsyncCompileJob {
   size_t outstanding_units_ = 0;
   size_t num_background_tasks_ = 0;
 
+  void ReopenHandlesInDeferredScope() {
+    DeferredHandleScope deferred(isolate_);
+    module_wrapper_ = handle(*module_wrapper_, isolate_);
+    function_tables_ = handle(*function_tables_, isolate_);
+    signature_tables_ = handle(*signature_tables_, isolate_);
+    code_table_ = handle(*code_table_, isolate_);
+    temp_instance_->ReopenHandles(isolate_);
+    helper_->InitializeHandles();
+    deferred_handles_.push_back(deferred.Detach());
+  }
+
   //==========================================================================
   // Step 1: (async) Decode the module.
   //==========================================================================
@@ -2823,9 +2795,7 @@ class AsyncCompileJob {
     size_t num_functions =
         module_->functions.size() - module_->num_imported_functions;
     if (num_functions == 0) {
-      DeferredHandleScope deferred(isolate_);
-      module_wrapper_ = handle(*module_wrapper_, isolate_);
-      deferred_handles_.push_back(deferred.Detach());
+      ReopenHandlesInDeferredScope();
       // Degenerate case of an empty module.
       return DoSync(&AsyncCompileJob::FinishCompile);
     }
@@ -2843,15 +2813,7 @@ class AsyncCompileJob {
         module_->functions, *module_bytes_env_);
 
     // Reopen all handles which should survive in the DeferredHandleScope.
-    DeferredHandleScope deferred(isolate_);
-    module_wrapper_ = handle(*module_wrapper_, isolate_);
-    function_tables_ = handle(*function_tables_, isolate_);
-    signature_tables_ = handle(*signature_tables_, isolate_);
-    code_table_ = handle(*code_table_, isolate_);
-    temp_instance_->ReopenHandles(isolate_);
-    helper_->InitializeHandles();
-    deferred_handles_.push_back(deferred.Detach());
-
+    ReopenHandlesInDeferredScope();
     task_ids_ =
         std::unique_ptr<uint32_t[]>(new uint32_t[num_background_tasks_]);
     for (size_t i = 0; i < num_background_tasks_; ++i) {
@@ -2899,7 +2861,7 @@ class AsyncCompileJob {
       failed_ = true;
     } else {
       DCHECK(func_index >= 0);
-      code_table_->set(func_index + module_->num_imported_functions, *(result));
+      code_table_->set(func_index, *(result));
     }
     if (failed_ || --outstanding_units_ == 0) {
       // All compilation units are done. We still need to wait for the

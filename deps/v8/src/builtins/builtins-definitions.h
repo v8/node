@@ -133,15 +133,17 @@ namespace internal {
                                                                                \
   /* Interpreter */                                                            \
   ASM(InterpreterEntryTrampoline)                                              \
-  ASM(InterpreterPushArgsAndCall)                                              \
-  ASM(InterpreterPushArgsAndCallFunction)                                      \
-  ASM(InterpreterPushArgsAndCallWithFinalSpread)                               \
-  ASM(InterpreterPushArgsAndTailCall)                                          \
-  ASM(InterpreterPushArgsAndTailCallFunction)                                  \
-  ASM(InterpreterPushArgsAndConstruct)                                         \
-  ASM(InterpreterPushArgsAndConstructFunction)                                 \
-  ASM(InterpreterPushArgsAndConstructArray)                                    \
-  ASM(InterpreterPushArgsAndConstructWithFinalSpread)                          \
+  ASM(InterpreterPushArgsThenCall)                                             \
+  ASM(InterpreterPushUndefinedAndArgsThenCall)                                 \
+  ASM(InterpreterPushArgsThenCallFunction)                                     \
+  ASM(InterpreterPushUndefinedAndArgsThenCallFunction)                         \
+  ASM(InterpreterPushArgsThenCallWithFinalSpread)                              \
+  ASM(InterpreterPushArgsThenTailCall)                                         \
+  ASM(InterpreterPushArgsThenTailCallFunction)                                 \
+  ASM(InterpreterPushArgsThenConstruct)                                        \
+  ASM(InterpreterPushArgsThenConstructFunction)                                \
+  ASM(InterpreterPushArgsThenConstructArray)                                   \
+  ASM(InterpreterPushArgsThenConstructWithFinalSpread)                         \
   ASM(InterpreterEnterBytecodeAdvance)                                         \
   ASM(InterpreterEnterBytecodeDispatch)                                        \
   ASM(InterpreterOnStackReplacement)                                           \
@@ -243,7 +245,6 @@ namespace internal {
   /* Array */                                                                  \
   ASM(ArrayCode)                                                               \
   ASM(InternalArrayCode)                                                       \
-  CPP(HasIterationSideEffects)                                                 \
   CPP(ArrayConcat)                                                             \
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kArg)                                                   \
@@ -625,6 +626,9 @@ namespace internal {
   TFC(StrictEqual, Compare, 1)                                                 \
   TFC(AddWithFeedback, BinaryOpWithVector, 1)                                  \
   TFC(SubtractWithFeedback, BinaryOpWithVector, 1)                             \
+  TFC(MultiplyWithFeedback, BinaryOpWithVector, 1)                             \
+  TFC(DivideWithFeedback, BinaryOpWithVector, 1)                               \
+  TFC(ModulusWithFeedback, BinaryOpWithVector, 1)                              \
                                                                                \
   /* Object */                                                                 \
   CPP(ObjectAssign)                                                            \
@@ -786,11 +790,11 @@ namespace internal {
   TFJ(AtomicsStore, 3, kArray, kIndex, kValue)                                 \
   TFJ(AtomicsExchange, 3, kArray, kIndex, kValue)                              \
   TFJ(AtomicsCompareExchange, 4, kArray, kIndex, kOldValue, kNewValue)         \
-  CPP(AtomicsAdd)                                                              \
-  CPP(AtomicsSub)                                                              \
-  CPP(AtomicsAnd)                                                              \
-  CPP(AtomicsOr)                                                               \
-  CPP(AtomicsXor)                                                              \
+  TFJ(AtomicsAdd, 3, kArray, kIndex, kValue)                                   \
+  TFJ(AtomicsSub, 3, kArray, kIndex, kValue)                                   \
+  TFJ(AtomicsAnd, 3, kArray, kIndex, kValue)                                   \
+  TFJ(AtomicsOr, 3, kArray, kIndex, kValue)                                    \
+  TFJ(AtomicsXor, 3, kArray, kIndex, kValue)                                   \
   CPP(AtomicsIsLockFree)                                                       \
   CPP(AtomicsWait)                                                             \
   CPP(AtomicsWake)                                                             \
