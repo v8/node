@@ -202,7 +202,10 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_class_fields, "harmony public fields in class literals")    \
   V(harmony_async_iteration, "harmony async iteration")                 \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
-  V(harmony_promise_finally, "harmony Promise.prototype.finally")
+  V(harmony_promise_finally, "harmony Promise.prototype.finally")       \
+  V(harmony_restrict_constructor_return,                                \
+    "harmony disallow non undefined primitive return value from class " \
+    "constructor")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                                \
@@ -253,6 +256,11 @@ HARMONY_STAGED(FLAG_STAGED_FEATURES)
   DEFINE_NEG_NEG_IMPLICATION(harmony_shipping, id)
 HARMONY_SHIPPING(FLAG_SHIPPING_FEATURES)
 #undef FLAG_SHIPPING_FEATURES
+
+#ifdef V8_I18N_SUPPORT
+DEFINE_BOOL(icu_timezone_data, false,
+            "get information about timezones from ICU")
+#endif
 
 #ifdef V8_ENABLE_FUTURE
 #define FUTURE_BOOL true
@@ -309,10 +317,9 @@ DEFINE_BOOL(string_slices, true, "use string slices")
 
 // Flags for Ignition.
 DEFINE_BOOL(ignition, false, "use ignition interpreter")
-DEFINE_BOOL(ignition_deadcode, true,
-            "use ignition dead code elimination optimizer")
 DEFINE_BOOL(ignition_osr, true, "enable support for OSR from ignition code")
-DEFINE_BOOL(ignition_peephole, true, "use ignition peephole optimizer")
+DEFINE_BOOL(ignition_elide_noneffectful_bytecodes, true,
+            "elide bytecodes which won't have any external effect")
 DEFINE_BOOL(ignition_reo, true, "use ignition register equivalence optimizer")
 DEFINE_BOOL(ignition_filter_expression_positions, true,
             "filter expression positions before the bytecode pipeline")

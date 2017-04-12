@@ -5,6 +5,7 @@
 #ifndef V8_WASM_RESULT_H_
 #define V8_WASM_RESULT_H_
 
+#include <cstdarg>
 #include <memory>
 
 #include "src/base/compiler-specific.h"
@@ -105,7 +106,8 @@ class V8_EXPORT_PRIVATE ErrorThrower {
   template <typename T>
   void CompileFailed(const char* error, Result<T>& result) {
     DCHECK(result.failed());
-    CompileError("%s", result.error_msg.c_str());
+    CompileError("%s: %s @+%u", error, result.error_msg.c_str(),
+                 result.error_offset);
   }
 
   i::Handle<i::Object> Reify() {

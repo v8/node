@@ -365,7 +365,7 @@ assertErrorMessage(
 assertErrorMessage(
     () => new Instance(importingModule, {'': {g: () => {}}}), LinkError, '');
 assertErrorMessage(
-    () => new Instance(importingModule, {t: {f: () => {}}}), LinkError, '');
+    () => new Instance(importingModule, {t: {f: () => {}}}), TypeError, '');
 
 assertTrue(new Instance(emptyModule) instanceof Instance);
 assertTrue(new Instance(emptyModule, {}) instanceof Instance);
@@ -713,7 +713,6 @@ function assertCompileError(args, err, msg) {
   var error = null;
   assertPromiseResult(compile(...args), unexpectedSuccess, error => {
     assertTrue(error instanceof err);
-    assertTrue(Boolean(error.stack.match('js-api.js')));
     // TODO  assertTrue(Boolean(error.message.match(msg)));
   });
 }
@@ -760,7 +759,6 @@ function assertInstantiateError(args, err, msg) {
   var error = null;
   assertPromiseResult(instantiate(...args), unexpectedSuccess, error => {
     assertTrue(error instanceof err);
-    assertTrue(Boolean(error.stack.match('js-api.js')));
     // TODO assertTrue(Boolean(error.message.match(msg)));
   });
 }
@@ -793,12 +791,12 @@ assertInstantiateError(
 assertInstantiateError(
     [importingModuleBinary, undefined], TypeError, /TODO: error messages?/);
 assertInstantiateError(
-    [importingModuleBinary, {}], LinkError, /TODO: error messages?/);
+    [importingModuleBinary, {}], TypeError, /TODO: error messages?/);
 assertInstantiateError(
     [importingModuleBinary, {'': {g: () => {}}}], LinkError,
     /TODO: error messages?/);
 assertInstantiateError(
-    [importingModuleBinary, {t: {f: () => {}}}], LinkError,
+    [importingModuleBinary, {t: {f: () => {}}}], TypeError,
     /TODO: error messages?/);
 assertInstantiateError(
     [memoryImportingModuleBinary, null], TypeError, /TODO: error messages?/);
@@ -806,10 +804,10 @@ assertInstantiateError(
     [memoryImportingModuleBinary, undefined], TypeError,
     /TODO: error messages?/);
 assertInstantiateError(
-    [memoryImportingModuleBinary, {}], LinkError, /TODO: error messages?/);
+    [memoryImportingModuleBinary, {}], TypeError, /TODO: error messages?/);
 assertInstantiateError(
     [memoryImportingModuleBinary, {'mod': {'my_memory': scratch_memory}}],
-    LinkError, /TODO: error messages?/);
+    TypeError, /TODO: error messages?/);
 assertInstantiateError(
     [memoryImportingModuleBinary, {'': {'memory': scratch_memory}}], LinkError,
     /TODO: error messages?/);

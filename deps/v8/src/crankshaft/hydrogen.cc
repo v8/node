@@ -9780,7 +9780,10 @@ void HOptimizedGraphBuilder::VisitCallNew(CallNew* expr) {
         constructor->shared()->construct_stub() ==
             isolate()->builtins()->builtin(Builtins::kJSConstructStubGeneric) ||
         constructor->shared()->construct_stub() ==
-            isolate()->builtins()->builtin(Builtins::kJSConstructStubApi));
+            isolate()->builtins()->builtin(Builtins::kJSConstructStubApi) ||
+        constructor->shared()->construct_stub() ==
+            isolate()->builtins()->builtin(
+                Builtins::kJSBuiltinsConstructStubForBase));
     HValue* check = Add<HCheckValue>(function, constructor);
 
     // Force completion of inobject slack tracking before generating
@@ -11240,6 +11243,11 @@ void HOptimizedGraphBuilder::VisitGetIterator(GetIterator* expr) {
   UNREACHABLE();
 }
 
+void HOptimizedGraphBuilder::VisitImportCallExpression(
+    ImportCallExpression* expr) {
+  UNREACHABLE();
+}
+
 HValue* HOptimizedGraphBuilder::AddThisFunction() {
   return AddInstruction(BuildThisFunction());
 }
@@ -11302,6 +11310,14 @@ HInstruction* HOptimizedGraphBuilder::BuildFastLiteral(
   // properties to a safe value.
   BuildInitializeInobjectProperties(object, initial_map);
 
+  // Copy in-object properties.
+  if (initial_map->NumberOfFields() != 0 ||
+      initial_map->unused_property_fields() > 0) {
+    BuildEmitInObjectProperties(boilerplate_object, object, site_context,
+                                pretenure_flag);
+  }
+
+  // Copy elements.
   Handle<FixedArrayBase> elements(boilerplate_object->elements());
   int elements_size = (elements->length() > 0 &&
       elements->map() != isolate()->heap()->fixed_cow_array_map()) ?
@@ -11339,12 +11355,6 @@ HInstruction* HOptimizedGraphBuilder::BuildFastLiteral(
                           object_elements_cow);
   }
 
-  // Copy in-object properties.
-  if (initial_map->NumberOfFields() != 0 ||
-      initial_map->unused_property_fields() > 0) {
-    BuildEmitInObjectProperties(boilerplate_object, object, site_context,
-                                pretenure_flag);
-  }
   return object;
 }
 

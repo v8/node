@@ -93,6 +93,7 @@ namespace internal {
   ASM(JSConstructStubApi)                                                      \
   ASM(JSConstructStubGeneric)                                                  \
   ASM(JSBuiltinsConstructStub)                                                 \
+  ASM(JSBuiltinsConstructStubForBase)                                          \
   ASM(JSBuiltinsConstructStubForDerived)                                       \
   TFC(FastNewClosure, FastNewClosure, 1)                                       \
   TFC(FastNewFunctionContextEval, FastNewFunctionContext, 1)                   \
@@ -908,6 +909,10 @@ namespace internal {
   TFJ(TypedArrayPrototypeEvery, 2, kCallbackFn, kThisArg)                      \
   /* ES6 %TypedArray%.prototype.some */                                        \
   TFJ(TypedArrayPrototypeSome, 2, kCallbackFn, kThisArg)                       \
+  /* ES6 %TypedArray%.prototype.reduce */                                      \
+  TFJ(TypedArrayPrototypeReduce, 2, kCallbackFn, kInitialValue)                \
+  /* ES6 %TypedArray%.prototype.reduceRight */                                 \
+  TFJ(TypedArrayPrototypeReduceRight, 2, kCallbackFn, kInitialValue)           \
                                                                                \
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \
