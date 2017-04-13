@@ -154,11 +154,6 @@ Reduction JSNativeContextSpecialization::ReduceJSGetSuperConstructor(
     if (function_prototype->IsConstructor()) {
       ReplaceWithValue(node, value);
       return Replace(value);
-    } else {
-      node->InsertInput(graph()->zone(), 0, value);
-      NodeProperties::ChangeOp(
-          node, javascript()->CallRuntime(Runtime::kThrowNotSuperConstructor));
-      return Changed(node);
     }
   }
 
@@ -1962,10 +1957,12 @@ JSNativeContextSpecialization::BuildElementAccess(
     if (access_mode == AccessMode::kLoad) {
       // Compute the real element access type, which includes the hole in case
       // of holey backing stores.
-      if (elements_kind == FAST_HOLEY_ELEMENTS ||
-          elements_kind == FAST_HOLEY_SMI_ELEMENTS) {
+      if (IsHoleyElementsKind(elements_kind)) {
         element_access.type =
             Type::Union(element_type, Type::Hole(), graph()->zone());
+      }
+      if (elements_kind == FAST_HOLEY_ELEMENTS ||
+          elements_kind == FAST_HOLEY_SMI_ELEMENTS) {
         element_access.machine_type = MachineType::AnyTagged();
       }
       // Perform the actual backing store access.
@@ -2267,7 +2264,19 @@ bool JSNativeContextSpecialization::ExtractReceiverMaps(
 bool JSNativeContextSpecialization::InferReceiverMaps(
     Node* receiver, Node* effect, MapHandleList* receiver_maps) {
   ZoneHandleSet<Map> maps;
-  if (NodeProperties::InferReceiverMaps(receiver, effect, &maps)) {
+  NodeProperties::InferReceiverMapsResult result =
+      NodeProperties::InferReceiverMaps(receiver, effect, &maps);
+  if (result == NodeProperties::kReliableReceiverMaps) {
+    for (size_t i = 0; i < maps.size(); ++i) {
+      receiver_maps->Add(maps[i]);
+    }
+    return true;
+  } else if (result == NodeProperties::kUnreliableReceiverMaps) {
+    // For untrusted receiver maps, we can still use the information
+    // if the maps are stable.
+    for (size_t i = 0; i < maps.size(); ++i) {
+      if (!maps[i]->is_stable()) return false;
+    }
     for (size_t i = 0; i < maps.size(); ++i) {
       receiver_maps->Add(maps[i]);
     }

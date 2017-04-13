@@ -57,55 +57,74 @@ struct WasmVal {
   FOREACH_UNION_MEMBER(DECLARE_CONSTRUCTOR)
 #undef DECLARE_CONSTRUCTOR
 
+  bool operator==(const WasmVal& other) const {
+    if (type != other.type) return false;
+#define CHECK_VAL_EQ(field, localtype, ctype) \
+  if (type == localtype) {                    \
+    return val.field == other.val.field;      \
+  }
+    FOREACH_UNION_MEMBER(CHECK_VAL_EQ)
+#undef CHECK_VAL_EQ
+    UNREACHABLE();
+    return false;
+  }
+
   template <typename T>
-  inline T to() {
+  inline T to() const {
     UNREACHABLE();
   }
 
   template <typename T>
-  inline T to_unchecked() {
+  inline T to_unchecked() const {
     UNREACHABLE();
   }
 };
 
-#define DECLARE_CAST(field, localtype, ctype) \
-  template <>                                 \
-  inline ctype WasmVal::to_unchecked() {      \
-    return val.field;                         \
-  }                                           \
-  template <>                                 \
-  inline ctype WasmVal::to() {                \
-    CHECK_EQ(localtype, type);                \
-    return val.field;                         \
+#define DECLARE_CAST(field, localtype, ctype)  \
+  template <>                                  \
+  inline ctype WasmVal::to_unchecked() const { \
+    return val.field;                          \
+  }                                            \
+  template <>                                  \
+  inline ctype WasmVal::to() const {           \
+    CHECK_EQ(localtype, type);                 \
+    return val.field;                          \
   }
 FOREACH_UNION_MEMBER(DECLARE_CAST)
 #undef DECLARE_CAST
 
 // Representation of frames within the interpreter.
+//
+// Layout of a frame:
+// -----------------
+// stack slot #N  ‾\.
+// ...             |  stack entries: GetStackHeight(); GetStackValue()
+// stack slot #0  _/·
+// local #L       ‾\.
+// ...             |  locals: GetLocalCount(); GetLocalValue()
+// local #P+1      |
+// param #P        |   ‾\.
+// ...             |    | parameters: GetParameterCount(); GetLocalValue()
+// param #0       _/·  _/·
+// -----------------
+//
 class InterpretedFrame {
  public:
-  const WasmFunction* function() const { return function_; }
-  int pc() const { return pc_; }
+  const WasmFunction* function() const;
+  int pc() const;
 
-  //==========================================================================
-  // Stack frame inspection.
-  //==========================================================================
   int GetParameterCount() const;
-  WasmVal GetLocalVal(int index) const;
-  WasmVal GetExprVal(int pc) const;
-  void SetLocalVal(int index, WasmVal val);
-  void SetExprVal(int pc, WasmVal val);
+  int GetLocalCount() const;
+  int GetStackHeight() const;
+  WasmVal GetLocalValue(int index) const;
+  WasmVal GetStackValue(int index) const;
 
  private:
   friend class WasmInterpreter;
-
-  InterpretedFrame(const WasmFunction* function, int pc, int fp, int sp)
-      : function_(function), pc_(pc), fp_(fp), sp_(sp) {}
-
-  const WasmFunction* function_;
-  int pc_;
-  int fp_;
-  int sp_;
+  // Don't instante InterpretedFrames; they will be allocated as
+  // InterpretedFrameImpl in the interpreter implementation.
+  InterpretedFrame() = delete;
+  DISALLOW_COPY_AND_ASSIGN(InterpretedFrame);
 };
 
 // An interpreter capable of executing WASM.
@@ -154,8 +173,8 @@ class V8_EXPORT_PRIVATE WasmInterpreter {
     pc_t GetBreakpointPc();
     // TODO(clemensh): Make this uint32_t.
     int GetFrameCount();
-    const InterpretedFrame GetFrame(int index);
-    InterpretedFrame GetMutableFrame(int index);
+    // The InterpretedFrame is only valid as long as the Thread is paused.
+    std::unique_ptr<InterpretedFrame> GetFrame(int index);
     WasmVal GetReturnValue(int index = 0);
     TrapReason GetTrapReason();
 

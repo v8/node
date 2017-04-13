@@ -519,7 +519,7 @@ namespace internal {
   F(StoreLookupSlot_Strict, 2, 1)
 
 #define FOR_EACH_INTRINSIC_STRINGS(F)     \
-  F(GetSubstitution, 4, 1)                \
+  F(GetSubstitution, 5, 1)                \
   F(StringReplaceOneCharWithString, 3, 1) \
   F(StringIndexOf, 3, 1)                  \
   F(StringIndexOfUnchecked, 3, 1)         \
@@ -616,8 +616,6 @@ namespace internal {
   F(ValidateWasmOrphanedInstance, 1, 1)       \
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
-  F(SetWasmCompileFromPromiseOverload, 0, 1)  \
-  F(ResetWasmOverloads, 1, 1)                 \
   F(HeapObjectVerify, 1, 1)                   \
   F(WasmNumInterpretedCalls, 1, 1)            \
   F(RedirectToWasmInterpreter, 2, 1)

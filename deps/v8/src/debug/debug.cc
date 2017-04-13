@@ -186,7 +186,7 @@ CodeBreakIterator::CodeBreakIterator(Handle<DebugInfo> debug_info)
     : BreakIterator(debug_info),
       reloc_iterator_(debug_info->DebugCode(), GetModeMask()),
       source_position_iterator_(
-          debug_info->DebugCode()->source_position_table()) {
+          debug_info->DebugCode()->SourcePositionTable()) {
   // There is at least one break location.
   DCHECK(!Done());
   Next();
@@ -277,7 +277,7 @@ BytecodeArrayBreakIterator::BytecodeArrayBreakIterator(
     Handle<DebugInfo> debug_info)
     : BreakIterator(debug_info),
       source_position_iterator_(
-          debug_info->DebugBytecodeArray()->source_position_table()) {
+          debug_info->DebugBytecodeArray()->SourcePositionTable()) {
   // There is at least one break location.
   DCHECK(!Done());
   Next();
@@ -2066,8 +2066,7 @@ void Debug::OnAsyncTaskEvent(debug::PromiseDebugActionType type, int id,
 void Debug::ProcessCompileEvent(v8::DebugEvent event, Handle<Script> script) {
   // Attach the correct debug id to the script. The debug id is used by the
   // inspector to filter scripts by native context.
-  FixedArray* array = isolate_->native_context()->embedder_data();
-  script->set_context_data(array->get(v8::Context::kDebugIdIndex));
+  script->set_context_data(isolate_->native_context()->debug_context_id());
   if (ignore_events()) return;
   if (!script->IsUserJavaScript() && script->type() != i::Script::TYPE_WASM) {
     return;

@@ -8706,7 +8706,6 @@ bool Isolate::IdleNotificationDeadline(double deadline_in_seconds) {
   return isolate->heap()->IdleNotification(deadline_in_seconds);
 }
 
-
 void Isolate::LowMemoryNotification() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   {
@@ -8715,6 +8714,15 @@ void Isolate::LowMemoryNotification() {
     TRACE_EVENT0("v8", "V8.GCLowMemoryNotification");
     isolate->heap()->CollectAllAvailableGarbage(
         i::GarbageCollectionReason::kLowMemoryNotification);
+  }
+  {
+    i::HeapIterator iterator(isolate->heap());
+    i::HeapObject* obj;
+    while ((obj = iterator.next()) != nullptr) {
+      if (obj->IsAbstractCode()) {
+        i::AbstractCode::cast(obj)->DropStackFrameCache();
+      }
+    }
   }
 }
 
@@ -9137,6 +9145,15 @@ void Debug::SetTailCallEliminationEnabled(Isolate* isolate, bool enabled) {
 MaybeLocal<Array> Debug::GetInternalProperties(Isolate* v8_isolate,
                                                Local<Value> value) {
   return debug::GetInternalProperties(v8_isolate, value);
+}
+
+void debug::SetContextId(Local<Context> context, int id) {
+  Utils::OpenHandle(*context)->set_debug_context_id(i::Smi::FromInt(id));
+}
+
+int debug::GetContextId(Local<Context> context) {
+  i::Object* value = Utils::OpenHandle(*context)->debug_context_id();
+  return (value->IsSmi()) ? i::Smi::cast(value)->value() : 0;
 }
 
 Local<Context> debug::GetDebugContext(Isolate* isolate) {

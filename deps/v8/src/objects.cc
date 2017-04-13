@@ -11440,8 +11440,10 @@ int String::IndexOf(Isolate* isolate, Handle<String> receiver,
 }
 
 MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
-                                            Handle<String> replacement) {
+                                            Handle<String> replacement,
+                                            int start_index) {
   DCHECK_IMPLIES(match->HasNamedCaptures(), FLAG_harmony_regexp_named_captures);
+  DCHECK_GE(start_index, 0);
 
   Factory* factory = isolate->factory();
 
@@ -11452,7 +11454,8 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
 
   Handle<String> dollar_string =
       factory->LookupSingleCharacterStringFromCode('$');
-  int next_dollar_ix = String::IndexOf(isolate, replacement, dollar_string, 0);
+  int next_dollar_ix =
+      String::IndexOf(isolate, replacement, dollar_string, start_index);
   if (next_dollar_ix < 0) {
     return replacement;
   }
@@ -13123,7 +13126,12 @@ void Oddball::Initialize(Isolate* isolate, Handle<Oddball> oddball,
       isolate->factory()->InternalizeUtf8String(to_string);
   Handle<String> internalized_type_of =
       isolate->factory()->InternalizeUtf8String(type_of);
-  oddball->set_to_number_raw(to_number->Number());
+  if (to_number->IsHeapNumber()) {
+    oddball->set_to_number_raw_as_bits(
+        Handle<HeapNumber>::cast(to_number)->value_as_bits());
+  } else {
+    oddball->set_to_number_raw(to_number->Number());
+  }
   oddball->set_to_number(*to_number);
   oddball->set_to_string(*internalized_to_string);
   oddball->set_type_of(*internalized_type_of);
@@ -14120,6 +14128,55 @@ void Code::ClearInlineCaches() {
   }
 }
 
+namespace {
+template <typename Code>
+void SetStackFrameCacheCommon(Handle<Code> code,
+                              Handle<UnseededNumberDictionary> cache) {
+  Handle<Object> maybe_table(code->source_position_table(), code->GetIsolate());
+  if (maybe_table->IsSourcePositionTableWithFrameCache()) {
+    Handle<SourcePositionTableWithFrameCache>::cast(maybe_table)
+        ->set_stack_frame_cache(*cache);
+    return;
+  }
+  DCHECK(maybe_table->IsByteArray());
+  Handle<ByteArray> table(Handle<ByteArray>::cast(maybe_table));
+  Handle<SourcePositionTableWithFrameCache> table_with_cache =
+      code->GetIsolate()->factory()->NewSourcePositionTableWithFrameCache(
+          table, cache);
+  code->set_source_position_table(*table_with_cache);
+}
+}  // namespace
+
+// static
+void AbstractCode::SetStackFrameCache(Handle<AbstractCode> abstract_code,
+                                      Handle<UnseededNumberDictionary> cache) {
+  if (abstract_code->IsCode()) {
+    SetStackFrameCacheCommon(handle(abstract_code->GetCode()), cache);
+  } else {
+    SetStackFrameCacheCommon(handle(abstract_code->GetBytecodeArray()), cache);
+  }
+}
+
+namespace {
+template <typename Code>
+void DropStackFrameCacheCommon(Code* code) {
+  i::Object* maybe_table = code->source_position_table();
+  if (maybe_table->IsByteArray()) return;
+  DCHECK(maybe_table->IsSourcePositionTableWithFrameCache());
+  code->set_source_position_table(
+      i::SourcePositionTableWithFrameCache::cast(maybe_table)
+          ->source_position_table());
+}
+}  // namespace
+
+void AbstractCode::DropStackFrameCache() {
+  if (IsCode()) {
+    DropStackFrameCacheCommon(GetCode());
+  } else {
+    DropStackFrameCacheCommon(GetBytecodeArray());
+  }
+}
+
 int AbstractCode::SourcePosition(int offset) {
   int position = 0;
   // Subtract one because the current PC is one instruction after the call site.
@@ -14776,7 +14833,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   }
   os << "\n";
 
-  SourcePositionTableIterator it(source_position_table());
+  SourcePositionTableIterator it(SourcePositionTable());
   if (!it.done()) {
     os << "Source positions:\n pc offset  position\n";
     for (; !it.done(); it.Advance()) {
@@ -14878,7 +14935,7 @@ void BytecodeArray::Disassemble(std::ostream& os) {
   os << "Frame size " << frame_size() << "\n";
 
   const uint8_t* base_address = GetFirstBytecodeAddress();
-  SourcePositionTableIterator source_positions(source_position_table());
+  SourcePositionTableIterator source_positions(SourcePositionTable());
 
   interpreter::BytecodeArrayIterator iterator(handle(this));
   while (!iterator.done()) {

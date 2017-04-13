@@ -145,6 +145,7 @@
 //       - DebugInfo
 //       - BreakPointInfo
 //       - StackFrameInfo
+//       - SourcePositionTableWithFrameCache
 //       - CodeCache
 //       - PrototypeInfo
 //       - Module
@@ -1098,7 +1099,8 @@ template <class C> inline bool Is(Object* obj);
   V(ObjectHashSet)               \
   V(WeakHashTable)               \
   V(OrderedHashTable)            \
-  V(SloppyArgumentsElements)
+  V(SloppyArgumentsElements)     \
+  V(SourcePositionTableWithFrameCache)
 
 #define ODDBALL_LIST(V)                 \
   V(Undefined, undefined_value)         \
@@ -3294,8 +3296,10 @@ class BytecodeArray : public FixedArrayBase {
   DECL_ACCESSORS(handler_table, FixedArray)
 
   // Accessors for source position table containing mappings between byte code
-  // offset and source position.
-  DECL_ACCESSORS(source_position_table, ByteArray)
+  // offset and source position or SourcePositionTableWithFrameCache.
+  DECL_ACCESSORS(source_position_table, Object)
+
+  inline ByteArray* SourcePositionTable();
 
   DECLARE_CAST(BytecodeArray)
 
@@ -3707,8 +3711,11 @@ class Code: public HeapObject {
   // [deoptimization_data]: Array containing data for deopt.
   DECL_ACCESSORS(deoptimization_data, FixedArray)
 
-  // [source_position_table]: ByteArray for the source positions table.
-  DECL_ACCESSORS(source_position_table, ByteArray)
+  // [source_position_table]: ByteArray for the source positions table or
+  // SourcePositionTableWithFrameCache.
+  DECL_ACCESSORS(source_position_table, Object)
+
+  inline ByteArray* SourcePositionTable();
 
   // [trap_handler_index]: An index into the trap handler's master list of code
   // objects.
@@ -4239,6 +4246,11 @@ class AbstractCode : public HeapObject {
 
   // Set the source position table.
   inline void set_source_position_table(ByteArray* source_position_table);
+
+  inline Object* stack_frame_cache();
+  static void SetStackFrameCache(Handle<AbstractCode> abstract_code,
+                                 Handle<UnseededNumberDictionary> cache);
+  void DropStackFrameCache();
 
   // Returns the size of instructions and the metadata.
   inline int SizeIncludingMetadata();
@@ -8203,8 +8215,11 @@ class String: public Name {
   // GetSubstitution(matched, str, position, captures, replacement)
   // Expand the $-expressions in the string and return a new string with
   // the result.
+  // A {start_index} can be passed to specify where to start scanning the
+  // replacement string.
   MUST_USE_RESULT static MaybeHandle<String> GetSubstitution(
-      Isolate* isolate, Match* match, Handle<String> replacement);
+      Isolate* isolate, Match* match, Handle<String> replacement,
+      int start_index = 0);
 
   // String equality operations.
   inline bool Equals(String* other);
@@ -8839,6 +8854,7 @@ class Oddball: public HeapObject {
   // [to_number_raw]: Cached raw to_number computed at startup.
   inline double to_number_raw() const;
   inline void set_to_number_raw(double value);
+  inline void set_to_number_raw_as_bits(uint64_t bits);
 
   // [to_string]: Cached to_string computed at startup.
   DECL_ACCESSORS(to_string, String)
@@ -10141,6 +10157,22 @@ class StackFrameInfo : public Struct {
   static const int kIsWasmBit = 2;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(StackFrameInfo);
+};
+
+class SourcePositionTableWithFrameCache : public Tuple2 {
+ public:
+  DECL_ACCESSORS(source_position_table, ByteArray)
+  DECL_ACCESSORS(stack_frame_cache, UnseededNumberDictionary)
+
+  DECLARE_CAST(SourcePositionTableWithFrameCache)
+
+  static const int kSourcePositionTableIndex = Struct::kHeaderSize;
+  static const int kStackFrameCacheIndex =
+      kSourcePositionTableIndex + kPointerSize;
+  static const int kSize = kStackFrameCacheIndex + kPointerSize;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(SourcePositionTableWithFrameCache);
 };
 
 #define VISITOR_SYNCHRONIZATION_TAGS_LIST(V)                               \
