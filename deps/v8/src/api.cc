@@ -2751,8 +2751,8 @@ v8::Local<v8::StackTrace> Message::GetStackTrace() const {
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
   auto message = i::Handle<i::JSMessageObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::Object> stackFramesObj(message->stack_frames(), isolate);
-  if (!stackFramesObj->IsJSArray()) return v8::Local<v8::StackTrace>();
-  auto stackTrace = i::Handle<i::JSArray>::cast(stackFramesObj);
+  if (!stackFramesObj->IsFixedArray()) return v8::Local<v8::StackTrace>();
+  auto stackTrace = i::Handle<i::FixedArray>::cast(stackFramesObj);
   return scope.Escape(Utils::StackTraceToLocal(stackTrace));
 }
 
@@ -2877,15 +2877,14 @@ Local<StackFrame> StackTrace::GetFrame(uint32_t index) const {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope scope(reinterpret_cast<Isolate*>(isolate));
-  auto self = Utils::OpenHandle(this);
-  auto obj = i::JSReceiver::GetElement(isolate, self, index).ToHandleChecked();
+  auto obj = handle(Utils::OpenHandle(this)->get(index), isolate);
   auto info = i::Handle<i::StackFrameInfo>::cast(obj);
   return scope.Escape(Utils::StackFrameToLocal(info));
 }
 
 
 int StackTrace::GetFrameCount() const {
-  return i::Smi::cast(Utils::OpenHandle(this)->length())->value();
+  return Utils::OpenHandle(this)->length();
 }
 
 namespace {
@@ -2933,12 +2932,12 @@ i::Handle<i::JSObject> NewFrameObject(i::Isolate* isolate,
 
 Local<Array> StackTrace::AsArray() {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  i::Handle<i::JSArray> self = Utils::OpenHandle(this);
-  int frame_count = GetFrameCount();
+  i::Handle<i::FixedArray> self = Utils::OpenHandle(this);
+  int frame_count = self->length();
   i::Handle<i::FixedArray> frames =
       isolate->factory()->NewFixedArray(frame_count);
   for (int i = 0; i < frame_count; ++i) {
-    auto obj = i::JSReceiver::GetElement(isolate, self, i).ToHandleChecked();
+    auto obj = handle(self->get(i), isolate);
     auto frame = i::Handle<i::StackFrameInfo>::cast(obj);
     i::Handle<i::JSObject> frame_obj = NewFrameObject(isolate, frame);
     frames->set(i, *frame_obj);
@@ -2954,7 +2953,7 @@ Local<StackTrace> StackTrace::CurrentStackTrace(
     StackTraceOptions options) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(i_isolate);
-  i::Handle<i::JSArray> stackTrace =
+  i::Handle<i::FixedArray> stackTrace =
       i_isolate->CaptureCurrentStackTrace(frame_limit, options);
   return Utils::StackTraceToLocal(stackTrace);
 }
@@ -4181,6 +4180,18 @@ Local<String> Value::TypeOf(v8::Isolate* external_isolate) {
   return Utils::ToLocal(i::Object::TypeOf(isolate, Utils::OpenHandle(this)));
 }
 
+Maybe<bool> Value::InstanceOf(v8::Local<v8::Context> context,
+                              v8::Local<v8::Object> object) {
+  PREPARE_FOR_EXECUTION_PRIMITIVE(context, Value, InstanceOf, bool);
+  auto left = Utils::OpenHandle(this);
+  auto right = Utils::OpenHandle(*object);
+  i::Handle<i::Object> result;
+  has_pending_exception =
+      !i::Object::InstanceOf(isolate, left, right).ToHandle(&result);
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return Just(result->IsTrue(isolate));
+}
+
 Maybe<bool> v8::Object::Set(v8::Local<v8::Context> context,
                             v8::Local<Value> key, v8::Local<Value> value) {
   PREPARE_FOR_EXECUTION_PRIMITIVE(context, Object, Set, bool);
@@ -5373,7 +5384,6 @@ Local<v8::Value> Function::GetBoundFunction() const {
   }
   return v8::Undefined(reinterpret_cast<v8::Isolate*>(self->GetIsolate()));
 }
-
 
 int Name::GetIdentityHash() {
   auto self = Utils::OpenHandle(this);
@@ -8015,34 +8025,28 @@ Local<Symbol> v8::Symbol::ForApi(Isolate* isolate, Local<String> name) {
       i_isolate->SymbolFor(i::Heap::kApiSymbolTableRootIndex, i_name, false));
 }
 
+#define WELL_KNOWN_SYMBOLS(V)                 \
+  V(HasInstance, has_instance)                \
+  V(IsConcatSpreadable, is_concat_spreadable) \
+  V(Iterator, iterator)                       \
+  V(Match, match)                             \
+  V(Replace, replace)                         \
+  V(Search, search)                           \
+  V(Split, split)                             \
+  V(ToPrimitive, to_primitive)                \
+  V(ToStringTag, to_string_tag)               \
+  V(Unscopables, unscopables)
 
-Local<Symbol> v8::Symbol::GetIterator(Isolate* isolate) {
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return Utils::ToLocal(i_isolate->factory()->iterator_symbol());
-}
+#define SYMBOL_GETTER(Name, name)                                   \
+  Local<Symbol> v8::Symbol::Get##Name(Isolate* isolate) {           \
+    i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate); \
+    return Utils::ToLocal(i_isolate->factory()->name##_symbol());   \
+  }
 
+WELL_KNOWN_SYMBOLS(SYMBOL_GETTER)
 
-Local<Symbol> v8::Symbol::GetUnscopables(Isolate* isolate) {
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return Utils::ToLocal(i_isolate->factory()->unscopables_symbol());
-}
-
-Local<Symbol> v8::Symbol::GetToPrimitive(Isolate* isolate) {
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return Utils::ToLocal(i_isolate->factory()->to_primitive_symbol());
-}
-
-Local<Symbol> v8::Symbol::GetToStringTag(Isolate* isolate) {
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return Utils::ToLocal(i_isolate->factory()->to_string_tag_symbol());
-}
-
-
-Local<Symbol> v8::Symbol::GetIsConcatSpreadable(Isolate* isolate) {
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return Utils::ToLocal(i_isolate->factory()->is_concat_spreadable_symbol());
-}
-
+#undef SYMBOL_GETTER
+#undef WELL_KNOWN_SYMBOLS
 
 Local<Private> v8::Private::New(Isolate* isolate, Local<String> name) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);

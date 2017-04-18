@@ -565,6 +565,7 @@ namespace internal {
   F(GetOptimizationStatus, -1, 1)             \
   F(UnblockConcurrentRecompilation, 0, 1)     \
   F(GetOptimizationCount, 1, 1)               \
+  F(GetDeoptCount, 1, 1)                      \
   F(GetUndetectable, 0, 1)                    \
   F(GetCallable, 0, 1)                        \
   F(ClearFunctionFeedback, 1, 1)              \
@@ -616,6 +617,8 @@ namespace internal {
   F(ValidateWasmOrphanedInstance, 1, 1)       \
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
+  F(SetWasmCompileFromPromiseOverload, 0, 1)  \
+  F(ResetWasmOverloads, 0, 1)                 \
   F(HeapObjectVerify, 1, 1)                   \
   F(WasmNumInterpretedCalls, 1, 1)            \
   F(RedirectToWasmInterpreter, 2, 1)

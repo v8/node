@@ -214,21 +214,20 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_regexp_lookbehind, "harmony regexp lookbehind")              \
   V(harmony_regexp_named_captures, "harmony regexp named captures")      \
   V(harmony_regexp_property, "harmony unicode regexp property classes")  \
-  V(harmony_restrictive_generators,                                      \
-    "harmony restrictions on generator declarations")                    \
   V(harmony_object_rest_spread, "harmony object rest spread properties") \
   V(harmony_template_escapes,                                            \
     "harmony invalid escapes in tagged template literals")
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING_BASE(V) \
-  V(harmony_trailing_commas,     \
+#define HARMONY_SHIPPING_BASE(V)                      \
+  V(harmony_restrictive_generators,                   \
+    "harmony restrictions on generator declarations") \
+  V(harmony_trailing_commas,                          \
     "harmony trailing commas in function parameter lists")
 
 #ifdef V8_I18N_SUPPORT
 #define HARMONY_SHIPPING(V)                                        \
   HARMONY_SHIPPING_BASE(V)                                         \
-  V(datetime_format_to_parts, "Intl.DateTimeFormat.formatToParts") \
   V(icu_case_mapping, "case mapping with ICU rather than Unibrow")
 #else
 #define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
@@ -303,6 +302,9 @@ DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
 DEFINE_BOOL(type_profile, false, "collect type information")
 DEFINE_BOOL(feedback_normalization, false,
             "feed back normalization to constructors")
+// TODO(jkummerow): This currently adds too much load on the stub cache.
+DEFINE_BOOL_READONLY(internalize_on_the_fly, false,
+                     "internalize string keys for generic keyed ICs on the fly")
 
 // Flags for optimization types.
 DEFINE_BOOL(optimize_for_size, false,
@@ -531,6 +533,8 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable WASM structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
+DEFINE_BOOL(wasm_async_compilation, true,
+            "enable actual asynchronous compilation for WebAssembly.compile")
 // Parallel compilation confuses turbo_stats, force single threaded.
 DEFINE_VALUE_IMPLICATION(turbo_stats, wasm_num_compilation_tasks, 0)
 DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,
@@ -822,8 +826,9 @@ DEFINE_BOOL(external_reference_stats, false,
 #endif  // DEBUG
 
 // compiler.cc
-DEFINE_INT(max_opt_count, 10,
-           "maximum number of optimization attempts before giving up.")
+DEFINE_INT(max_deopt_count, 10,
+           "maximum number of deoptimizations before giving up optimization of "
+           "a function.")
 
 // compilation-cache.cc
 DEFINE_BOOL(compilation_cache, true, "enable compilation cache")
@@ -1319,7 +1324,7 @@ DEFINE_INT(dump_allocations_digest_at_alloc, -1,
 
 // assembler.h
 DEFINE_BOOL(enable_embedded_constant_pool, V8_EMBEDDED_CONSTANT_POOL,
-            "enable use of embedded constant pools (ARM/PPC only)")
+            "enable use of embedded constant pools (PPC only)")
 
 DEFINE_BOOL(unbox_double_fields, V8_DOUBLE_FIELDS_UNBOXING,
             "enable in-object double fields unboxing (64-bit only)")
