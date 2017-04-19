@@ -25,6 +25,7 @@
 #include "src/base/safe_conversions.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/bootstrapper.h"
+#include "src/builtins/builtins-utils.h"
 #include "src/char-predicates-inl.h"
 #include "src/code-stubs.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
@@ -1387,7 +1388,7 @@ void FunctionTemplate::SetCallHandler(FunctionCallback callback,
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   i::HandleScope scope(isolate);
   i::Handle<i::Struct> struct_obj =
-      isolate->factory()->NewStruct(i::CALL_HANDLER_INFO_TYPE);
+      isolate->factory()->NewStruct(i::TUPLE2_TYPE);
   i::Handle<i::CallHandlerInfo> obj =
       i::Handle<i::CallHandlerInfo>::cast(struct_obj);
   SET_FIELD_WRAPPED(obj, set_callback, callback);
@@ -1844,7 +1845,7 @@ void ObjectTemplate::SetCallAsFunctionHandler(FunctionCallback callback,
   auto cons = EnsureConstructor(isolate, this);
   EnsureNotInstantiated(cons, "v8::ObjectTemplate::SetCallAsFunctionHandler");
   i::Handle<i::Struct> struct_obj =
-      isolate->factory()->NewStruct(i::CALL_HANDLER_INFO_TYPE);
+      isolate->factory()->NewStruct(i::TUPLE2_TYPE);
   i::Handle<i::CallHandlerInfo> obj =
       i::Handle<i::CallHandlerInfo>::cast(struct_obj);
   SET_FIELD_WRAPPED(obj, set_callback, callback);
@@ -8617,7 +8618,7 @@ void Isolate::EnqueueMicrotask(MicrotaskCallback microtask, void* data) {
   i::HandleScope scope(isolate);
   i::Handle<i::CallHandlerInfo> callback_info =
       i::Handle<i::CallHandlerInfo>::cast(
-          isolate->factory()->NewStruct(i::CALL_HANDLER_INFO_TYPE));
+          isolate->factory()->NewStruct(i::TUPLE2_TYPE));
   SET_FIELD_WRAPPED(callback_info, set_callback, microtask);
   SET_FIELD_WRAPPED(callback_info, set_data, data);
   isolate->EnqueueMicrotask(callback_info);
@@ -9670,6 +9671,22 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
   fun->shared()->DontAdaptArguments();
   return Utils::ToLocal(handle_scope.CloseAndEscape(fun));
 }
+
+void debug::SetConsoleDelegate(Isolate* v8_isolate, ConsoleDelegate* delegate) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  ENTER_V8(isolate);
+  isolate->set_console_delegate(delegate);
+}
+
+debug::ConsoleCallArguments::ConsoleCallArguments(
+    const v8::FunctionCallbackInfo<v8::Value>& info)
+    : v8::FunctionCallbackInfo<v8::Value>(nullptr, info.values_, info.length_) {
+}
+
+debug::ConsoleCallArguments::ConsoleCallArguments(
+    internal::BuiltinArguments& args)
+    : v8::FunctionCallbackInfo<v8::Value>(nullptr, &args[0] - 1,
+                                          args.length() - 1) {}
 
 MaybeLocal<debug::Script> debug::GeneratorObject::Script() {
   i::Handle<i::JSGeneratorObject> obj = Utils::OpenHandle(this);

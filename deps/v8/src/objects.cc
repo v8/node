@@ -5290,15 +5290,16 @@ MaybeHandle<Smi> JSFunction::GetLength(Isolate* isolate,
                                        Handle<JSFunction> function) {
   int length = 0;
   if (function->shared()->is_compiled()) {
-    length = function->shared()->length();
+    length = function->shared()->GetLength();
   } else {
     // If the function isn't compiled yet, the length is not computed
     // correctly yet. Compile it now and return the right length.
     if (Compiler::Compile(function, Compiler::KEEP_EXCEPTION)) {
-      length = function->shared()->length();
+      length = function->shared()->GetLength();
     }
     if (isolate->has_pending_exception()) return MaybeHandle<Smi>();
   }
+  DCHECK_GE(length, 0);
   return handle(Smi::FromInt(length), isolate);
 }
 
@@ -13742,7 +13743,6 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
     Handle<SharedFunctionInfo> shared_info, FunctionLiteral* lit) {
   // When adding fields here, make sure DeclarationScope::AnalyzePartially is
   // updated accordingly.
-  shared_info->set_length(lit->function_length());
   shared_info->set_internal_formal_parameter_count(lit->parameter_count());
   shared_info->set_function_token_position(lit->function_token_position());
   shared_info->set_start_position(lit->start_position());
@@ -13768,8 +13768,14 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   // SetSharedFunctionFlagsFromLiteral (compiler.cc), when the function is
   // really parsed and compiled.
   if (lit->body() != nullptr) {
+    shared_info->set_length(lit->function_length());
     shared_info->set_has_duplicate_parameters(lit->has_duplicate_parameters());
     shared_info->SetExpectedNofPropertiesFromEstimate(lit);
+  } else {
+    // Set an invalid length for lazy functions. This way we can set the correct
+    // value after compiling, but avoid overwriting values set manually by the
+    // bootstrapper.
+    shared_info->set_length(SharedFunctionInfo::kInvalidLength);
   }
 }
 
@@ -14897,7 +14903,11 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
     }
 #ifdef OBJECT_PRINT
     if (!type_feedback_info()->IsUndefined(GetIsolate())) {
-      TypeFeedbackInfo::cast(type_feedback_info())->TypeFeedbackInfoPrint(os);
+      TypeFeedbackInfo* info = TypeFeedbackInfo::cast(type_feedback_info());
+      HeapObject::PrintHeader(os, "TypeFeedbackInfo");
+      os << "\n - ic_total_count: " << info->ic_total_count()
+         << ", ic_with_type_info_count: " << info->ic_with_type_info_count()
+         << ", ic_generic_count: " << info->ic_generic_count() << "\n";
       os << "\n";
     }
 #endif
@@ -18860,7 +18870,9 @@ bool OrderedHashTable<Derived, entrysize>::HasKey(Handle<Derived> table,
 Handle<OrderedHashSet> OrderedHashSet::Add(Handle<OrderedHashSet> table,
                                            Handle<Object> key) {
   int hash = Object::GetOrCreateHash(table->GetIsolate(), key)->value();
-  int entry = table->HashToEntry(hash);
+  int bucket = table->HashToBucket(hash);
+  int previous_entry = table->HashToEntry(hash, bucket);
+  int entry = previous_entry;
   // Walk the chain of the bucket and try finding the key.
   while (entry != kNotFound) {
     Object* candidate_key = table->KeyAt(entry);
@@ -18871,8 +18883,6 @@ Handle<OrderedHashSet> OrderedHashSet::Add(Handle<OrderedHashSet> table,
 
   table = OrderedHashSet::EnsureGrowable(table);
   // Read the existing bucket values.
-  int bucket = table->HashToBucket(hash);
-  int previous_entry = table->HashToEntry(hash);
   int nof = table->NumberOfElements();
   // Insert a new entry at the end,
   int new_entry = nof + table->NumberOfDeletedElements();

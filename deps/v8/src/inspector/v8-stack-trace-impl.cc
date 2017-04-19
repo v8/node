@@ -233,9 +233,9 @@ std::unique_ptr<StringBuffer> V8StackTraceImpl::toString() const {
     stackTrace.append(" (");
     stackTrace.append(frame.sourceURL());
     stackTrace.append(':');
-    stackTrace.append(String16::fromInteger(frame.lineNumber()));
+    stackTrace.append(String16::fromInteger(frame.lineNumber() + 1));
     stackTrace.append(':');
-    stackTrace.append(String16::fromInteger(frame.columnNumber()));
+    stackTrace.append(String16::fromInteger(frame.columnNumber() + 1));
     stackTrace.append(')');
   }
   String16 string = stackTrace.toString();

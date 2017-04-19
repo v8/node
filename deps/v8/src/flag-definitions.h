@@ -203,6 +203,8 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_async_iteration, "harmony async iteration")                 \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
   V(harmony_promise_finally, "harmony Promise.prototype.finally")       \
+  V(harmony_strict_legacy_accessor_builtins,                            \
+    "treat __defineGetter__ and related functions as strict")           \
   V(harmony_restrict_constructor_return,                                \
     "harmony disallow non undefined primitive return value from class " \
     "constructor")
@@ -895,10 +897,6 @@ DEFINE_BOOL(clear_exceptions_on_js_entry, false,
 DEFINE_INT(histogram_interval, 600000,
            "time interval in ms for aggregating memory histograms")
 
-// global-handles.cc
-DEFINE_BOOL(trace_object_groups, false,
-            "print object groups detected during each garbage collection")
-
 // heap-snapshot-generator.cc
 DEFINE_BOOL(heap_profiler_trace_objects, false,
             "Dump heap object allocations/movements/size_updates")
@@ -949,9 +947,9 @@ DEFINE_BOOL(lazy_inner_functions, true, "enable lazy parsing inner functions")
 DEFINE_BOOL(aggressive_lazy_inner_functions, false,
             "even lazier inner function parsing")
 DEFINE_IMPLICATION(aggressive_lazy_inner_functions, lazy_inner_functions)
-DEFINE_BOOL(preparser_scope_analysis, false,
+DEFINE_BOOL(experimental_preparser_scope_analysis, false,
             "perform scope analysis for preparsed inner functions")
-DEFINE_IMPLICATION(preparser_scope_analysis, lazy_inner_functions)
+DEFINE_IMPLICATION(experimental_preparser_scope_analysis, lazy_inner_functions)
 
 // simulator-arm.cc, simulator-arm64.cc and simulator-mips.cc
 DEFINE_BOOL(trace_sim, false, "Trace simulator execution")

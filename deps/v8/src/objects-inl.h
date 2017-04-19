@@ -139,10 +139,13 @@ int PropertyDetails::field_width_in_words() const {
     return map()->instance_type() == instancetype; \
   }
 
+TYPE_CHECKER(BreakPointInfo, TUPLE2_TYPE)
 TYPE_CHECKER(ByteArray, BYTE_ARRAY_TYPE)
 TYPE_CHECKER(BytecodeArray, BYTECODE_ARRAY_TYPE)
+TYPE_CHECKER(CallHandlerInfo, TUPLE2_TYPE)
 TYPE_CHECKER(Cell, CELL_TYPE)
 TYPE_CHECKER(Code, CODE_TYPE)
+TYPE_CHECKER(ConstantElementsPair, TUPLE2_TYPE)
 TYPE_CHECKER(FixedDoubleArray, FIXED_DOUBLE_ARRAY_TYPE)
 TYPE_CHECKER(Foreign, FOREIGN_TYPE)
 TYPE_CHECKER(FreeSpace, FREE_SPACE_TYPE)
@@ -181,6 +184,7 @@ TYPE_CHECKER(SharedFunctionInfo, SHARED_FUNCTION_INFO_TYPE)
 TYPE_CHECKER(SourcePositionTableWithFrameCache, TUPLE2_TYPE)
 TYPE_CHECKER(Symbol, SYMBOL_TYPE)
 TYPE_CHECKER(TransitionArray, TRANSITION_ARRAY_TYPE)
+TYPE_CHECKER(TypeFeedbackInfo, TUPLE3_TYPE)
 TYPE_CHECKER(WeakCell, WEAK_CELL_TYPE)
 TYPE_CHECKER(WeakFixedArray, FIXED_ARRAY_TYPE)
 
@@ -202,6 +206,10 @@ bool HeapObject::IsFixedArray() const {
 }
 
 bool HeapObject::IsSloppyArgumentsElements() const { return IsFixedArray(); }
+
+bool HeapObject::IsJSSloppyArgumentsObject() const {
+  return IsJSArgumentsObject();
+}
 
 bool HeapObject::IsJSGeneratorObject() const {
   return map()->instance_type() == JS_GENERATOR_OBJECT_TYPE ||
@@ -613,11 +621,14 @@ bool Object::IsMinusZero() const {
 CAST_ACCESSOR(AbstractCode)
 CAST_ACCESSOR(ArrayList)
 CAST_ACCESSOR(BoilerplateDescription)
+CAST_ACCESSOR(BreakPointInfo)
 CAST_ACCESSOR(ByteArray)
 CAST_ACCESSOR(BytecodeArray)
+CAST_ACCESSOR(CallHandlerInfo)
 CAST_ACCESSOR(Cell)
 CAST_ACCESSOR(Code)
 CAST_ACCESSOR(ConsString)
+CAST_ACCESSOR(ConstantElementsPair)
 CAST_ACCESSOR(DeoptimizationInputData)
 CAST_ACCESSOR(DeoptimizationOutputData)
 CAST_ACCESSOR(DependentCode)
@@ -633,6 +644,7 @@ CAST_ACCESSOR(Foreign)
 CAST_ACCESSOR(GlobalDictionary)
 CAST_ACCESSOR(HandlerTable)
 CAST_ACCESSOR(HeapObject)
+CAST_ACCESSOR(JSArgumentsObject);
 CAST_ACCESSOR(JSArray)
 CAST_ACCESSOR(JSArrayBuffer)
 CAST_ACCESSOR(JSArrayBufferView)
@@ -656,6 +668,7 @@ CAST_ACCESSOR(JSPromiseCapability)
 CAST_ACCESSOR(JSPromise)
 CAST_ACCESSOR(JSSet)
 CAST_ACCESSOR(JSSetIterator)
+CAST_ACCESSOR(JSSloppyArgumentsObject)
 CAST_ACCESSOR(JSAsyncFromSyncIterator)
 CAST_ACCESSOR(JSStringIterator)
 CAST_ACCESSOR(JSArrayIterator)
@@ -687,6 +700,7 @@ CAST_ACCESSOR(SeqTwoByteString)
 CAST_ACCESSOR(SharedFunctionInfo)
 CAST_ACCESSOR(SourcePositionTableWithFrameCache)
 CAST_ACCESSOR(SlicedString)
+CAST_ACCESSOR(SloppyArgumentsElements)
 CAST_ACCESSOR(Smi)
 CAST_ACCESSOR(String)
 CAST_ACCESSOR(StringSet)
@@ -695,11 +709,11 @@ CAST_ACCESSOR(Struct)
 CAST_ACCESSOR(Symbol)
 CAST_ACCESSOR(TemplateInfo)
 CAST_ACCESSOR(ThinString)
+CAST_ACCESSOR(TypeFeedbackInfo)
 CAST_ACCESSOR(UnseededNumberDictionary)
 CAST_ACCESSOR(WeakCell)
 CAST_ACCESSOR(WeakFixedArray)
 CAST_ACCESSOR(WeakHashTable)
-CAST_ACCESSOR(SloppyArgumentsElements)
 
 #define MAKE_STRUCT_CAST(NAME, Name, name) CAST_ACCESSOR(Name)
 STRUCT_LIST(MAKE_STRUCT_CAST)
@@ -5502,6 +5516,9 @@ void Map::SetBackPointer(Object* value, WriteBarrierMode mode) {
   set_constructor_or_backpointer(value, mode);
 }
 
+ACCESSORS(JSArgumentsObject, length, Object, kLengthOffset);
+ACCESSORS(JSSloppyArgumentsObject, callee, Object, kCalleeOffset);
+
 ACCESSORS(Map, code_cache, FixedArray, kCodeCacheOffset)
 ACCESSORS(Map, dependent_code, DependentCode, kDependentCodeOffset)
 ACCESSORS(Map, weak_cell_cache, Object, kWeakCellCacheOffset)
@@ -6181,6 +6198,16 @@ bool SharedFunctionInfo::is_compiled() const {
   return code() != builtins->builtin(Builtins::kCompileLazy);
 }
 
+int SharedFunctionInfo::GetLength() const {
+  DCHECK(is_compiled());
+  DCHECK(HasLength());
+  return length();
+}
+
+bool SharedFunctionInfo::HasLength() const {
+  DCHECK_IMPLIES(length() < 0, length() == kInvalidLength);
+  return length() != kInvalidLength;
+}
 
 bool SharedFunctionInfo::has_simple_parameters() {
   return scope_info()->HasSimpleParameters();

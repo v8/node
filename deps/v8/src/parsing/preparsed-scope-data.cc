@@ -20,7 +20,7 @@ class VariableMaybeAssignedField
 class VariableContextAllocatedField
     : public BitField16<bool, VariableMaybeAssignedField::kNext, 1> {};
 
-const int kFunctionDataSize = 9;
+const int kFunctionDataSize = 8;
 
 }  // namespace
 
@@ -52,20 +52,12 @@ const int kFunctionDataSize = 9;
 void PreParsedScopeData::SaveData(Scope* scope) {
   DCHECK(!has_data_);
 
-  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE) {
+  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE &&
+      !scope->AsDeclarationScope()->is_arrow_scope()) {
     // This cast is OK since we're not going to have more than 2^32 elements in
     // the data. FIXME(marja): Implement limits for the data size.
     function_data_positions_[scope->start_position()] =
         static_cast<uint32_t>(backing_store_.size());
-    // FIXME(marja): Fill in the missing fields: function_length +
-    // num_inner_functions.
-    function_index_.AddFunctionData(
-        scope->start_position(),
-        PreParseData::FunctionData(
-            scope->end_position(), scope->num_parameters(), -1, -1,
-            scope->language_mode(),
-            scope->AsDeclarationScope()->uses_super_property(),
-            scope->calls_eval()));
   }
 
   if (!ScopeNeedsData(scope)) {
@@ -95,6 +87,11 @@ void PreParsedScopeData::SaveData(Scope* scope) {
   backing_store_[data_end_index] = backing_store_.size();
 }
 
+void PreParsedScopeData::AddFunction(
+    int start_position, const PreParseData::FunctionData& function_data) {
+  function_index_.AddFunctionData(start_position, function_data);
+}
+
 void PreParsedScopeData::RestoreData(DeclarationScope* scope) const {
   int index = -1;
 
@@ -119,9 +116,8 @@ void PreParsedScopeData::RestoreData(Scope* scope, int* index_ptr) const {
 
 #ifdef DEBUG
   // Data integrity check.
-  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE) {
-    // FIXME(marja): Compare the missing fields too (function length,
-    // num_inner_functions).
+  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE &&
+      !scope->AsDeclarationScope()->is_arrow_scope()) {
     const PreParseData::FunctionData& data =
         FindFunction(scope->start_position());
     DCHECK_EQ(data.end, scope->end_position());
@@ -183,7 +179,6 @@ FixedUint32Array* PreParsedScopeData::Serialize(Isolate* isolate) const {
     array->set(i++, it->second);  // position in data
     array->set(i++, function_data.end);
     array->set(i++, function_data.num_parameters);
-    array->set(i++, function_data.function_length);
     array->set(i++, function_data.num_inner_functions);
     array->set(i++, function_data.language_mode);
     array->set(i++, function_data.uses_super_property);
@@ -212,11 +207,11 @@ void PreParsedScopeData::Deserialize(Handle<FixedUint32Array> array) {
     int start = array->get_scalar(i);
     function_data_positions_[start] = array->get_scalar(i + 1);
     function_index_.AddFunctionData(
-        start, PreParseData::FunctionData(
-                   array->get_scalar(i + 2), array->get_scalar(i + 3),
-                   array->get_scalar(i + 4), array->get_scalar(i + 5),
-                   LanguageMode(array->get_scalar(i + 6)),
-                   array->get_scalar(i + 7), array->get_scalar(i + 8)));
+        start,
+        PreParseData::FunctionData(
+            array->get_scalar(i + 2), array->get_scalar(i + 3),
+            array->get_scalar(i + 4), LanguageMode(array->get_scalar(i + 5)),
+            array->get_scalar(i + 6), array->get_scalar(i + 7)));
   }
   CHECK_EQ(function_index_.size(), function_count);
 
