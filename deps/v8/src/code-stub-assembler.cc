@@ -2900,10 +2900,27 @@ Node* CodeStubAssembler::ToThisValue(Node* context, Node* value,
 
   BIND(&done_throw);
   {
+    const char* primitive_name = nullptr;
+    switch (primitive_type) {
+      case PrimitiveType::kBoolean:
+        primitive_name = "Boolean";
+        break;
+      case PrimitiveType::kNumber:
+        primitive_name = "Number";
+        break;
+      case PrimitiveType::kString:
+        primitive_name = "String";
+        break;
+      case PrimitiveType::kSymbol:
+        primitive_name = "Symbol";
+        break;
+    }
+    CHECK_NOT_NULL(primitive_name);
+
     // The {value} is not a compatible receiver for this method.
-    CallRuntime(Runtime::kThrowNotGeneric, context,
-                HeapConstant(factory()->NewStringFromAsciiChecked(method_name,
-                                                                  TENURED)));
+    CallRuntime(Runtime::kThrowTypeError, context,
+                SmiConstant(MessageTemplate::kNotGeneric),
+                CStringConstant(method_name), CStringConstant(primitive_name));
     Unreachable();
   }
 
@@ -5777,6 +5794,21 @@ void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
   Node* combined_feedback = SmiOr(previous_feedback, feedback);
   StoreFixedArrayElement(feedback_vector, slot_id, combined_feedback,
                          SKIP_WRITE_BARRIER);
+}
+
+void CodeStubAssembler::CheckForAssociatedProtector(Node* name,
+                                                    Label* if_protector) {
+  // This list must be kept in sync with LookupIterator::UpdateProtector!
+  // TODO(jkummerow): Would it be faster to have a bit in Symbol::flags()?
+  GotoIf(WordEqual(name, LoadRoot(Heap::kconstructor_stringRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kiterator_symbolRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kspecies_symbolRootIndex)),
+         if_protector);
+  GotoIf(WordEqual(name, LoadRoot(Heap::kis_concat_spreadable_symbolRootIndex)),
+         if_protector);
+  // Fall through if no case matched.
 }
 
 Node* CodeStubAssembler::LoadReceiverMap(Node* receiver) {
