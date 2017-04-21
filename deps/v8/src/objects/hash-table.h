@@ -341,9 +341,9 @@ class ObjectHashSet
 // Originally attributed to Tyler Close.
 //
 // Memory layout:
-//   [0]: bucket count
-//   [1]: element count
-//   [2]: deleted element count
+//   [0]: element count
+//   [1]: deleted element count
+//   [2]: bucket count
 //   [3..(3 + NumberOfBuckets() - 1)]: "hash table", where each item is an
 //                            offset into the data table (see below) where the
 //                            first item in this bucket is stored.
@@ -410,18 +410,17 @@ class OrderedHashTable : public FixedArray {
 
   int HashToBucket(int hash) { return hash & (NumberOfBuckets() - 1); }
 
-  int HashToEntry(int hash, int bucket) {
+  int HashToEntry(int hash) {
+    int bucket = HashToBucket(hash);
     Object* entry = this->get(kHashTableStartIndex + bucket);
     return Smi::cast(entry)->value();
   }
 
   int KeyToFirstEntry(Isolate* isolate, Object* key) {
-    Object* hash_obj = key->GetHash();
+    Object* hash = key->GetHash();
     // If the object does not have an identity hash, it was never used as a key
-    if (hash_obj->IsUndefined(isolate)) return kNotFound;
-    int hash = Smi::cast(hash_obj)->value();
-    int bucket = HashToBucket(hash);
-    return HashToEntry(hash, bucket);
+    if (hash->IsUndefined(isolate)) return kNotFound;
+    return HashToEntry(Smi::cast(hash)->value());
   }
 
   int NextChainEntry(int entry) {

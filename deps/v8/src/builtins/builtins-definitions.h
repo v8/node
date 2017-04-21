@@ -243,6 +243,8 @@ namespace internal {
   CPP(UnsupportedThrower)                                                      \
   TFJ(ReturnReceiver, 0)                                                       \
                                                                                \
+  TFS(DeleteProperty, kObject, kKey, kLanguageMode)                            \
+                                                                               \
   /* Array */                                                                  \
   ASM(ArrayCode)                                                               \
   ASM(InternalArrayCode)                                                       \
@@ -361,6 +363,7 @@ namespace internal {
   CPP(ConsoleClear)                                                            \
   CPP(ConsoleCount)                                                            \
   CPP(ConsoleAssert)                                                           \
+  TFJ(FastConsoleAssert, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
   CPP(ConsoleMarkTimeline)                                                     \
   CPP(ConsoleProfile)                                                          \
   CPP(ConsoleProfileEnd)                                                       \

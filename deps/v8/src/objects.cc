@@ -12624,12 +12624,9 @@ Handle<Object> CacheInitialJSArrayMaps(
   return initial_map;
 }
 
-
 void JSFunction::SetInstancePrototype(Handle<JSFunction> function,
-                                      Handle<Object> value) {
+                                      Handle<JSReceiver> value) {
   Isolate* isolate = function->GetIsolate();
-
-  DCHECK(value->IsJSReceiver());
 
   // Now some logic for the maps of the objects that are created by using this
   // function as a constructor.
@@ -12686,7 +12683,7 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
                               Handle<Object> value) {
   DCHECK(function->IsConstructor() ||
          IsGeneratorFunction(function->shared()->kind()));
-  Handle<Object> construct_prototype = value;
+  Handle<JSReceiver> construct_prototype;
 
   // If the value is not a JSReceiver, store the value in the map's
   // constructor field so it can be accessed.  Also, set the prototype
@@ -12706,18 +12703,19 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
     FunctionKind kind = function->shared()->kind();
     Handle<Context> native_context(function->context()->native_context());
 
-    construct_prototype =
-        handle(IsGeneratorFunction(kind)
-                   ? IsAsyncFunction(kind)
-                         ? native_context->initial_async_generator_prototype()
-                         : native_context->initial_generator_prototype()
-                   : native_context->initial_object_prototype(),
-               isolate);
+    construct_prototype = Handle<JSReceiver>(
+        IsGeneratorFunction(kind)
+            ? IsAsyncFunction(kind)
+                  ? native_context->initial_async_generator_prototype()
+                  : native_context->initial_generator_prototype()
+            : native_context->initial_object_prototype(),
+        isolate);
   } else {
+    construct_prototype = Handle<JSReceiver>::cast(value);
     function->map()->set_non_instance_prototype(false);
   }
 
-  return SetInstancePrototype(function, construct_prototype);
+  SetInstancePrototype(function, construct_prototype);
 }
 
 
@@ -18870,9 +18868,7 @@ bool OrderedHashTable<Derived, entrysize>::HasKey(Handle<Derived> table,
 Handle<OrderedHashSet> OrderedHashSet::Add(Handle<OrderedHashSet> table,
                                            Handle<Object> key) {
   int hash = Object::GetOrCreateHash(table->GetIsolate(), key)->value();
-  int bucket = table->HashToBucket(hash);
-  int previous_entry = table->HashToEntry(hash, bucket);
-  int entry = previous_entry;
+  int entry = table->HashToEntry(hash);
   // Walk the chain of the bucket and try finding the key.
   while (entry != kNotFound) {
     Object* candidate_key = table->KeyAt(entry);
@@ -18883,6 +18879,8 @@ Handle<OrderedHashSet> OrderedHashSet::Add(Handle<OrderedHashSet> table,
 
   table = OrderedHashSet::EnsureGrowable(table);
   // Read the existing bucket values.
+  int bucket = table->HashToBucket(hash);
+  int previous_entry = table->HashToEntry(hash);
   int nof = table->NumberOfElements();
   // Insert a new entry at the end,
   int new_entry = nof + table->NumberOfDeletedElements();

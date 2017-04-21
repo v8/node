@@ -369,9 +369,9 @@
       'dependencies': [
         'v8_libbase',
         'v8_libsampler',
-        'inspector/inspector.gyp:protocol_generated_sources',
-        'inspector/inspector.gyp:inspector_injected_script',
-        'inspector/inspector.gyp:inspector_debugger_script',
+        'inspector/inspector.gyp:protocol_generated_sources#target',
+        'inspector/inspector.gyp:inspector_injected_script#target',
+        'inspector/inspector.gyp:inspector_debugger_script#target',
       ],
       'objs': ['foo.o'],
       'variables': {
@@ -487,6 +487,7 @@
         'builtins/builtins-call-gen.cc',
         'builtins/builtins-callsite.cc',
         'builtins/builtins-console.cc',
+        'builtins/builtins-console-gen.cc',
         'builtins/builtins-constructor-gen.cc',
         'builtins/builtins-constructor-gen.h',
         'builtins/builtins-constructor.h',

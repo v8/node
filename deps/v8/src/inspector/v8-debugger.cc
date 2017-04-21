@@ -133,6 +133,17 @@ v8::MaybeLocal<v8::Object> generatorObjectLocation(
                        suspendedLocation.GetColumnNumber());
 }
 
+template <typename Map>
+void cleanupExpiredWeakPointers(Map& map) {
+  for (auto it = map.begin(); it != map.end();) {
+    if (it->second.expired()) {
+      it = map.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 }  // namespace
 
 static bool inLiveEditScope = false;
@@ -666,10 +677,6 @@ void V8Debugger::PromiseEventOccurred(v8::debug::PromiseDebugActionType type,
       asyncTaskFinishedForStack(task);
       asyncTaskFinishedForStepping(task);
       break;
-    case v8::debug::kDebugPromiseCollected:
-      asyncTaskCanceledForStack(task);
-      asyncTaskCanceledForStepping(task);
-      break;
   }
 }
 
@@ -979,6 +986,7 @@ void V8Debugger::allAsyncTasksCanceled() {
   m_parentTask.clear();
   m_asyncTaskCreationStacks.clear();
 
+  m_framesCache.clear();
   m_allAsyncStacks.clear();
   m_asyncStacksCount = 0;
 }
@@ -1020,37 +1028,59 @@ void V8Debugger::collectOldAsyncStacksIfNeeded() {
     m_allAsyncStacks.pop_front();
     --m_asyncStacksCount;
   }
-  removeOldAsyncTasks(m_asyncTaskStacks);
-  removeOldAsyncTasks(m_asyncTaskCreationStacks);
-  protocol::HashSet<void*> recurringLeft;
-  for (auto task : m_recurringTasks) {
-    if (m_asyncTaskStacks.find(task) == m_asyncTaskStacks.end()) continue;
-    recurringLeft.insert(task);
-  }
-  m_recurringTasks.swap(recurringLeft);
-  protocol::HashMap<void*, void*> parentLeft;
-  for (auto it : m_parentTask) {
-    if (m_asyncTaskCreationStacks.find(it.second) ==
-        m_asyncTaskCreationStacks.end()) {
-      continue;
+  cleanupExpiredWeakPointers(m_asyncTaskStacks);
+  cleanupExpiredWeakPointers(m_asyncTaskCreationStacks);
+  for (auto it = m_recurringTasks.begin(); it != m_recurringTasks.end();) {
+    if (m_asyncTaskStacks.find(*it) == m_asyncTaskStacks.end()) {
+      it = m_recurringTasks.erase(it);
+    } else {
+      ++it;
     }
-    parentLeft.insert(it);
   }
-  m_parentTask.swap(parentLeft);
+  for (auto it = m_parentTask.begin(); it != m_parentTask.end();) {
+    if (m_asyncTaskCreationStacks.find(it->second) ==
+        m_asyncTaskCreationStacks.end()) {
+      it = m_parentTask.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  cleanupExpiredWeakPointers(m_framesCache);
 }
 
-void V8Debugger::removeOldAsyncTasks(AsyncTaskToStackTrace& map) {
-  AsyncTaskToStackTrace cleanCopy;
-  for (auto it : map) {
-    if (!it.second.expired()) cleanCopy.insert(it);
+std::shared_ptr<StackFrame> V8Debugger::symbolize(
+    v8::Local<v8::StackFrame> v8Frame) {
+  auto it = m_framesCache.end();
+  int frameId = 0;
+  if (m_maxAsyncCallStackDepth) {
+    frameId = v8::debug::GetStackFrameId(v8Frame);
+    it = m_framesCache.find(frameId);
   }
-  map.swap(cleanCopy);
+  if (it != m_framesCache.end() && it->second.lock()) return it->second.lock();
+  std::shared_ptr<StackFrame> frame(new StackFrame(v8Frame));
+  // TODO(clemensh): Figure out a way to do this translation only right before
+  // sending the stack trace over wire.
+  if (v8Frame->IsWasm()) frame->translate(&m_wasmTranslation);
+  if (m_maxAsyncCallStackDepth) {
+    m_framesCache[frameId] = frame;
+  }
+  return frame;
 }
 
 void V8Debugger::setMaxAsyncTaskStacksForTest(int limit) {
   m_maxAsyncCallStacks = 0;
   collectOldAsyncStacksIfNeeded();
   m_maxAsyncCallStacks = limit;
+}
+
+void V8Debugger::dumpAsyncTaskStacksStateForTest() {
+  fprintf(stdout, "Async stacks count: %d\n", m_asyncStacksCount);
+  fprintf(stdout, "Scheduled async tasks: %zu\n", m_asyncTaskStacks.size());
+  fprintf(stdout, "Created async tasks: %zu\n",
+          m_asyncTaskCreationStacks.size());
+  fprintf(stdout, "Async tasks with parent: %zu\n", m_parentTask.size());
+  fprintf(stdout, "Recurring async tasks: %zu\n", m_recurringTasks.size());
+  fprintf(stdout, "\n");
 }
 
 }  // namespace v8_inspector
