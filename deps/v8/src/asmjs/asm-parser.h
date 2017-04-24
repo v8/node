@@ -5,14 +5,12 @@
 #ifndef V8_ASMJS_ASM_PARSER_H_
 #define V8_ASMJS_ASM_PARSER_H_
 
-#include <list>
 #include <string>
 #include <vector>
 
 #include "src/asmjs/asm-scanner.h"
 #include "src/asmjs/asm-typer.h"
 #include "src/asmjs/asm-types.h"
-#include "src/wasm/signature-map.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/zone/zone-containers.h"
 
@@ -61,8 +59,7 @@ class AsmJsParser {
   struct FunctionImportInfo {
     char* function_name;
     size_t function_name_size;
-    SignatureMap cache;
-    std::vector<uint32_t> cache_index;
+    WasmModuleBuilder::SignatureMap cache;
   };
 
   struct VarInfo {
@@ -76,16 +73,13 @@ class AsmJsParser {
     bool function_defined;
 
     VarInfo();
-    void DeclareGlobalImport(AsmType* type, uint32_t index);
-    void DeclareStdlibFunc(VarKind kind, AsmType* type);
   };
 
   struct GlobalImport {
     char* import_name;
     size_t import_name_size;
-    uint32_t import_index;
-    uint32_t global_index;
-    bool needs_init;
+    ValueType value_type;
+    VarInfo* var_info;
   };
 
   enum class BlockKind { kRegular, kLoop, kOther };
@@ -103,9 +97,8 @@ class AsmJsParser {
   WasmModuleBuilder* module_builder_;
   WasmFunctionBuilder* current_function_builder_;
   AsmType* return_type_;
-  std::uintptr_t stack_limit_;
+  uintptr_t stack_limit_;
   AsmTyper::StdlibSet stdlib_uses_;
-  std::list<FunctionImportInfo> function_import_info_;
   ZoneVector<VarInfo> global_var_info_;
   ZoneVector<VarInfo> local_var_info_;
 
@@ -234,6 +227,7 @@ class AsmJsParser {
   void DeclareGlobal(VarInfo* info, bool mutable_variable, AsmType* type,
                      ValueType vtype,
                      const WasmInitExpr& init = WasmInitExpr());
+  void DeclareStdlibFunc(VarInfo* info, VarKind kind, AsmType* type);
 
   // Allocates a temporary local variable. The given {index} is absolute within
   // the function body, consider using {TemporaryVariableScope} when nesting.
