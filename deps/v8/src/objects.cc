@@ -3458,11 +3458,15 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
     }
 
     PropertyDetails details = new_map->GetLastDescriptorDetails();
+    int target_index = details.field_index() - new_map->GetInObjectProperties();
+    bool have_space = old_map->unused_property_fields() > 0 ||
+                      (details.location() == kField && target_index >= 0 &&
+                       object->properties()->length() > target_index);
     // Either new_map adds an kDescriptor property, or a kField property for
     // which there is still space, and which does not require a mutable double
     // box (an out-of-object double).
     if (details.location() == kDescriptor ||
-        (old_map->unused_property_fields() > 0 &&
+        (have_space &&
          ((FLAG_unbox_double_fields && object->properties()->length() == 0) ||
           !details.representation().IsDouble()))) {
       object->synchronized_set_map(*new_map);
@@ -3471,7 +3475,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
 
     // If there is still space in the object, we need to allocate a mutable
     // double box.
-    if (old_map->unused_property_fields() > 0) {
+    if (have_space) {
       FieldIndex index =
           FieldIndex::ForDescriptor(*new_map, new_map->LastAdded());
       DCHECK(details.representation().IsDouble());
@@ -3498,7 +3502,6 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
     }
     DCHECK_EQ(kField, details.location());
     DCHECK_EQ(kData, details.kind());
-    int target_index = details.field_index() - new_map->GetInObjectProperties();
     DCHECK(target_index >= 0);  // Must be a backing store index.
     new_storage->set(target_index, *value);
 
@@ -12624,10 +12627,10 @@ Handle<Object> CacheInitialJSArrayMaps(
   return initial_map;
 }
 
-void JSFunction::SetInstancePrototype(Handle<JSFunction> function,
-                                      Handle<JSReceiver> value) {
-  Isolate* isolate = function->GetIsolate();
+namespace {
 
+void SetInstancePrototype(Isolate* isolate, Handle<JSFunction> function,
+                          Handle<JSReceiver> value) {
   // Now some logic for the maps of the objects that are created by using this
   // function as a constructor.
   if (function->has_initial_map()) {
@@ -12678,11 +12681,13 @@ void JSFunction::SetInstancePrototype(Handle<JSFunction> function,
   isolate->heap()->ClearInstanceofCache();
 }
 
+}  // anonymous namespace
 
 void JSFunction::SetPrototype(Handle<JSFunction> function,
                               Handle<Object> value) {
   DCHECK(function->IsConstructor() ||
          IsGeneratorFunction(function->shared()->kind()));
+  Isolate* isolate = function->GetIsolate();
   Handle<JSReceiver> construct_prototype;
 
   // If the value is not a JSReceiver, store the value in the map's
@@ -12698,7 +12703,6 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
     JSObject::MigrateToMap(function, new_map);
     new_map->SetConstructor(*value);
     new_map->set_non_instance_prototype(true);
-    Isolate* isolate = new_map->GetIsolate();
 
     FunctionKind kind = function->shared()->kind();
     Handle<Context> native_context(function->context()->native_context());
@@ -12712,10 +12716,13 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
         isolate);
   } else {
     construct_prototype = Handle<JSReceiver>::cast(value);
-    function->map()->set_non_instance_prototype(false);
+    if (function->map()->has_non_instance_prototype()) {
+      function->map()->set_non_instance_prototype(false);
+      function->map()->SetConstructor(isolate->heap()->null_value());
+    }
   }
 
-  SetInstancePrototype(function, construct_prototype);
+  SetInstancePrototype(isolate, function, construct_prototype);
 }
 
 
