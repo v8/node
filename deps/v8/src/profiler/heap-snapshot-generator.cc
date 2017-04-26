@@ -18,6 +18,7 @@
 #include "src/profiler/heap-snapshot-generator-inl.h"
 #include "src/prototype.h"
 #include "src/transitions.h"
+#include "src/visitors.h"
 
 namespace v8 {
 namespace internal {
@@ -972,12 +973,12 @@ class IndexedReferencesExtractor : public ObjectVisitor {
         parent_end_(HeapObject::RawField(parent_obj_, parent_obj_->Size())),
         parent_(parent),
         next_index_(0) {}
-  void VisitCodeEntry(Address entry_address) override {
-     Code* code = Code::cast(Code::GetObjectFromEntryAddress(entry_address));
-     generator_->SetInternalReference(parent_obj_, parent_, "code", code);
-     generator_->TagCodeObject(code);
+  void VisitCodeEntry(JSFunction* host, Address entry_address) override {
+    Code* code = Code::cast(Code::GetObjectFromEntryAddress(entry_address));
+    generator_->SetInternalReference(parent_obj_, parent_, "code", code);
+    generator_->TagCodeObject(code);
   }
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++) {
       int index = static_cast<int>(p - HeapObject::RawField(parent_obj_, 0));
       ++next_index_;
@@ -1685,8 +1686,7 @@ HeapEntry* V8HeapExplorer::GetEntry(Object* obj) {
   return filler_->FindOrAddEntry(obj, this);
 }
 
-
-class RootsReferencesExtractor : public ObjectVisitor {
+class RootsReferencesExtractor : public RootVisitor {
  private:
   struct IndexTag {
     IndexTag(int index, VisitorSynchronization::SyncTag tag)
@@ -1702,7 +1702,7 @@ class RootsReferencesExtractor : public ObjectVisitor {
         heap_(heap) {
   }
 
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
     if (collecting_all_references_) {
       for (Object** p = start; p < end; p++) all_references_.Add(*p);
     } else {
@@ -2147,9 +2147,9 @@ void V8HeapExplorer::TagFixedArraySubType(const FixedArray* array,
   array_types_[array] = type;
 }
 
-class GlobalObjectsEnumerator : public ObjectVisitor {
+class GlobalObjectsEnumerator : public RootVisitor {
  public:
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++) {
       if ((*p)->IsNativeContext()) {
         Context* context = Context::cast(*p);

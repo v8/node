@@ -952,6 +952,7 @@ class ObjectHashTable;
 class ObjectVisitor;
 class PropertyCell;
 class PropertyDescriptor;
+class RootVisitor;
 class SafepointEntry;
 class SharedFunctionInfo;
 class StringStream;
@@ -5487,7 +5488,7 @@ class Script: public Struct {
   // This must only be called if the type of this script is TYPE_WASM.
   DECL_ACCESSORS(wasm_compiled_module, Object)
 
-  DECL_ACCESSORS(preparsed_scope_data, FixedTypedArrayBase)
+  DECL_ACCESSORS(preparsed_scope_data, PodArray<uint32_t>)
 
   // [compilation_type]: how the the script was compiled. Encoded in the
   // 'flags' field.
@@ -5576,7 +5577,6 @@ class Script: public Struct {
   };
 
   bool HasPreparsedScopeData() const;
-  Handle<FixedUint32Array> GetPreparsedScopeData() const;
 
   // Dispatched behavior.
   DECLARE_PRINTER(Script)
@@ -7414,8 +7414,11 @@ class JSRegExp: public JSObject {
     kSticky = 1 << 3,
     kUnicode = 1 << 4,
     kDotAll = 1 << 5,
+    // Update FlagCount when adding new flags.
   };
   typedef base::Flags<Flag> Flags;
+
+  static int FlagCount() { return FLAG_harmony_regexp_dotall ? 6 : 5; }
 
   DECL_ACCESSORS(data, Object)
   DECL_ACCESSORS(flags, Object)
@@ -8754,16 +8757,16 @@ class Relocatable BASE_EMBEDDED {
  public:
   explicit inline Relocatable(Isolate* isolate);
   inline virtual ~Relocatable();
-  virtual void IterateInstance(ObjectVisitor* v) { }
+  virtual void IterateInstance(RootVisitor* v) {}
   virtual void PostGarbageCollection() { }
 
   static void PostGarbageCollectionProcessing(Isolate* isolate);
   static int ArchiveSpacePerThread();
   static char* ArchiveState(Isolate* isolate, char* to);
   static char* RestoreState(Isolate* isolate, char* from);
-  static void Iterate(Isolate* isolate, ObjectVisitor* v);
-  static void Iterate(ObjectVisitor* v, Relocatable* top);
-  static char* Iterate(ObjectVisitor* v, char* t);
+  static void Iterate(Isolate* isolate, RootVisitor* v);
+  static void Iterate(RootVisitor* v, Relocatable* top);
+  static char* Iterate(RootVisitor* v, char* t);
 
  private:
   Isolate* isolate_;
@@ -10193,92 +10196,61 @@ class SourcePositionTableWithFrameCache : public Tuple2 {
   DISALLOW_IMPLICIT_CONSTRUCTORS(SourcePositionTableWithFrameCache);
 };
 
-#define VISITOR_SYNCHRONIZATION_TAGS_LIST(V)                               \
-  V(kStringTable, "string_table", "(Internalized strings)")                \
-  V(kExternalStringsTable, "external_strings_table", "(External strings)") \
-  V(kStrongRootList, "strong_root_list", "(Strong roots)")                 \
-  V(kSmiRootList, "smi_root_list", "(Smi roots)")                          \
-  V(kBootstrapper, "bootstrapper", "(Bootstrapper)")                       \
-  V(kTop, "top", "(Isolate)")                                              \
-  V(kRelocatable, "relocatable", "(Relocatable)")                          \
-  V(kDebug, "debug", "(Debugger)")                                         \
-  V(kCompilationCache, "compilationcache", "(Compilation cache)")          \
-  V(kHandleScope, "handlescope", "(Handle scope)")                         \
-  V(kDispatchTable, "dispatchtable", "(Dispatch table)")                   \
-  V(kBuiltins, "builtins", "(Builtins)")                                   \
-  V(kGlobalHandles, "globalhandles", "(Global handles)")                   \
-  V(kEternalHandles, "eternalhandles", "(Eternal handles)")                \
-  V(kThreadManager, "threadmanager", "(Thread manager)")                   \
-  V(kStrongRoots, "strong roots", "(Strong roots)")                        \
-  V(kExtensions, "Extensions", "(Extensions)")
-
-class VisitorSynchronization : public AllStatic {
- public:
-#define DECLARE_ENUM(enum_item, ignore1, ignore2) enum_item,
-  enum SyncTag {
-    VISITOR_SYNCHRONIZATION_TAGS_LIST(DECLARE_ENUM)
-    kNumberOfSyncTags
-  };
-#undef DECLARE_ENUM
-
-  static const char* const kTags[kNumberOfSyncTags];
-  static const char* const kTagNames[kNumberOfSyncTags];
-};
-
 // Abstract base class for visiting, and optionally modifying, the
 // pointers contained in Objects. Used in GC and serialization/deserialization.
+// TODO(ulan): move to src/visitors.h
 class ObjectVisitor BASE_EMBEDDED {
  public:
   virtual ~ObjectVisitor() {}
 
   // Visits a contiguous arrays of pointers in the half-open range
   // [start, end). Any or all of the values may be modified on return.
-  virtual void VisitPointers(Object** start, Object** end) = 0;
+  virtual void VisitPointers(HeapObject* host, Object** start,
+                             Object** end) = 0;
 
   // Handy shorthand for visiting a single pointer.
-  virtual void VisitPointer(Object** p) { VisitPointers(p, p + 1); }
+  virtual void VisitPointer(HeapObject* host, Object** p) {
+    VisitPointers(host, p, p + 1);
+  }
 
   // Visit weak next_code_link in Code object.
-  virtual void VisitNextCodeLink(Object** p) { VisitPointers(p, p + 1); }
+  virtual void VisitNextCodeLink(Code* host, Object** p) {
+    VisitPointers(host, p, p + 1);
+  }
 
   // To allow lazy clearing of inline caches the visitor has
   // a rich interface for iterating over Code objects..
 
   // Visits a code target in the instruction stream.
-  virtual void VisitCodeTarget(RelocInfo* rinfo);
+  virtual void VisitCodeTarget(Code* host, RelocInfo* rinfo);
 
   // Visits a code entry in a JS function.
-  virtual void VisitCodeEntry(Address entry_address);
+  virtual void VisitCodeEntry(JSFunction* host, Address entry_address);
 
   // Visits a global property cell reference in the instruction stream.
-  virtual void VisitCell(RelocInfo* rinfo);
+  virtual void VisitCellPointer(Code* host, RelocInfo* rinfo);
 
   // Visits a runtime entry in the instruction stream.
-  virtual void VisitRuntimeEntry(RelocInfo* rinfo) {}
+  virtual void VisitRuntimeEntry(Code* host, RelocInfo* rinfo) {}
 
   // Visits a debug call target in the instruction stream.
-  virtual void VisitDebugTarget(RelocInfo* rinfo);
+  virtual void VisitDebugTarget(Code* host, RelocInfo* rinfo);
 
   // Visits the byte sequence in a function's prologue that contains information
   // about the code's age.
-  virtual void VisitCodeAgeSequence(RelocInfo* rinfo);
+  virtual void VisitCodeAgeSequence(Code* host, RelocInfo* rinfo);
 
   // Visit pointer embedded into a code object.
-  virtual void VisitEmbeddedPointer(RelocInfo* rinfo);
+  virtual void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo);
 
   // Visits an external reference embedded into a code object.
-  virtual void VisitExternalReference(RelocInfo* rinfo);
+  virtual void VisitExternalReference(Code* host, RelocInfo* rinfo) {}
 
   // Visits an external reference.
-  virtual void VisitExternalReference(Address* p) {}
+  virtual void VisitExternalReference(Foreign* host, Address* p) {}
 
   // Visits an (encoded) internal reference.
-  virtual void VisitInternalReference(RelocInfo* rinfo) {}
-
-  // Intended for serialization/deserialization checking: insert, or
-  // check for the presence of, a tag at this position in the stream.
-  // Also used for marking up GC roots in heap snapshots.
-  virtual void Synchronize(VisitorSynchronization::SyncTag tag) {}
+  virtual void VisitInternalReference(Code* host, RelocInfo* rinfo) {}
 };
 
 

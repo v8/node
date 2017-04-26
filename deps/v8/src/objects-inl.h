@@ -5816,7 +5816,7 @@ ACCESSORS(Script, source_url, Object, kSourceUrlOffset)
 ACCESSORS(Script, source_mapping_url, Object, kSourceMappingUrlOffset)
 ACCESSORS_CHECKED(Script, wasm_compiled_module, Object, kEvalFromSharedOffset,
                   this->type() == TYPE_WASM)
-ACCESSORS(Script, preparsed_scope_data, FixedTypedArrayBase,
+ACCESSORS(Script, preparsed_scope_data, PodArray<uint32_t>,
           kPreParsedScopeDataOffset)
 
 Script::CompilationType Script::compilation_type() {
@@ -7024,8 +7024,18 @@ MaybeHandle<JSTypedArray> JSTypedArray::Validate(Isolate* isolate,
     THROW_NEW_ERROR(isolate, NewTypeError(message), JSTypedArray);
   }
 
-  // TODO(caitp): throw if array.[[ViewedArrayBuffer]] is neutered (per v8:4648)
-  return Handle<JSTypedArray>::cast(receiver);
+  Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(receiver);
+  if (V8_UNLIKELY(array->WasNeutered())) {
+    const MessageTemplate::Template message =
+        MessageTemplate::kDetachedOperation;
+    Handle<String> operation =
+        isolate->factory()->NewStringFromAsciiChecked(method_name);
+    THROW_NEW_ERROR(isolate, NewTypeError(message, operation), JSTypedArray);
+  }
+
+  // spec describes to return `buffer`, but it may disrupt current
+  // implementations, and it's much useful to return array for now.
+  return array;
 }
 
 #ifdef VERIFY_HEAP

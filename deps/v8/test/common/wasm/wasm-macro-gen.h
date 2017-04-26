@@ -144,10 +144,10 @@
 #define WASM_ZERO kExprI32Const, 0
 #define WASM_ONE kExprI32Const, 1
 
-#define I32V_MIN(length) -(1 << (6 + (7 * ((length) - 1))))
-#define I32V_MAX(length) ((1 << (6 + (7 * ((length) - 1)))) - 1)
-#define I64V_MIN(length) -(1LL << (6 + (7 * ((length) - 1))))
-#define I64V_MAX(length) ((1LL << (6 + 7 * ((length) - 1))) - 1)
+#define I32V_MIN(length) -(1 << (6 + (7 * ((length)-1))))
+#define I32V_MAX(length) ((1 << (6 + (7 * ((length)-1)))) - 1)
+#define I64V_MIN(length) -(1LL << (6 + (7 * ((length)-1))))
+#define I64V_MAX(length) ((1LL << (6 + 7 * ((length)-1))) - 1)
 
 #define I32V_IN_RANGE(value, length) \
   ((value) >= I32V_MIN(length) && (value) <= I32V_MAX(length))
@@ -170,90 +170,30 @@ inline void CheckI64v(int64_t value, int length) {
   DCHECK(length == 10 || I64V_IN_RANGE(value, length));
 }
 
-// A helper for encoding local declarations prepended to the body of a
-// function.
-// TODO(titzer): move this to an appropriate header.
-class LocalDeclEncoder {
- public:
-  explicit LocalDeclEncoder(Zone* zone, FunctionSig* s = nullptr)
-      : sig(s), local_decls(zone), total(0) {}
-
-  // Prepend local declarations by creating a new buffer and copying data
-  // over. The new buffer must be delete[]'d by the caller.
-  void Prepend(Zone* zone, const byte** start, const byte** end) const {
-    size_t size = (*end - *start);
-    byte* buffer = reinterpret_cast<byte*>(zone->New(Size() + size));
-    size_t pos = Emit(buffer);
-    memcpy(buffer + pos, *start, size);
-    pos += size;
-    *start = buffer;
-    *end = buffer + pos;
+inline WasmOpcode LoadStoreOpcodeOf(MachineType type, bool store) {
+  switch (type.representation()) {
+    case MachineRepresentation::kWord8:
+      return store ? kExprI32StoreMem8
+                   : type.IsSigned() ? kExprI32LoadMem8S : kExprI32LoadMem8U;
+    case MachineRepresentation::kWord16:
+      return store ? kExprI32StoreMem16
+                   : type.IsSigned() ? kExprI32LoadMem16S : kExprI32LoadMem16U;
+    case MachineRepresentation::kWord32:
+      return store ? kExprI32StoreMem : kExprI32LoadMem;
+    case MachineRepresentation::kWord64:
+      return store ? kExprI64StoreMem : kExprI64LoadMem;
+    case MachineRepresentation::kFloat32:
+      return store ? kExprF32StoreMem : kExprF32LoadMem;
+    case MachineRepresentation::kFloat64:
+      return store ? kExprF64StoreMem : kExprF64LoadMem;
+    case MachineRepresentation::kSimd128:
+      return store ? kExprS128StoreMem : kExprS128LoadMem;
+    default:
+      UNREACHABLE();
+      return kExprNop;
   }
+}
 
-  size_t Emit(byte* buffer) const {
-    size_t pos = 0;
-    pos = WriteUint32v(buffer, pos, static_cast<uint32_t>(local_decls.size()));
-    for (size_t i = 0; i < local_decls.size(); ++i) {
-      pos = WriteUint32v(buffer, pos, local_decls[i].first);
-      buffer[pos++] = WasmOpcodes::ValueTypeCodeFor(local_decls[i].second);
-    }
-    DCHECK_EQ(Size(), pos);
-    return pos;
-  }
-
-  // Add locals declarations to this helper. Return the index of the newly added
-  // local(s), with an optional adjustment for the parameters.
-  uint32_t AddLocals(uint32_t count, ValueType type) {
-    uint32_t result =
-        static_cast<uint32_t>(total + (sig ? sig->parameter_count() : 0));
-    total += count;
-    if (local_decls.size() > 0 && local_decls.back().second == type) {
-      count += local_decls.back().first;
-      local_decls.pop_back();
-    }
-    local_decls.push_back(std::pair<uint32_t, ValueType>(count, type));
-    return result;
-  }
-
-  size_t Size() const {
-    size_t size = SizeofUint32v(static_cast<uint32_t>(local_decls.size()));
-    for (auto p : local_decls) size += 1 + SizeofUint32v(p.first);
-    return size;
-  }
-
-  bool has_sig() const { return sig != nullptr; }
-  FunctionSig* get_sig() const { return sig; }
-  void set_sig(FunctionSig* s) { sig = s; }
-
- private:
-  FunctionSig* sig;
-  ZoneVector<std::pair<uint32_t, ValueType>> local_decls;
-  size_t total;
-
-  size_t SizeofUint32v(uint32_t val) const {
-    size_t size = 1;
-    while (true) {
-      byte b = val & MASK_7;
-      if (b == val) return size;
-      size++;
-      val = val >> 7;
-    }
-  }
-
-  // TODO(titzer): lift encoding of u32v to a common place.
-  size_t WriteUint32v(byte* buffer, size_t pos, uint32_t val) const {
-    while (true) {
-      byte b = val & MASK_7;
-      if (b == val) {
-        buffer[pos++] = b;
-        break;
-      }
-      buffer[pos++] = 0x80 | b;
-      val = val >> 7;
-    }
-    return pos;
-  }
-};
 }  // namespace wasm
 }  // namespace internal
 }  // namespace v8
@@ -389,32 +329,29 @@ class LocalDeclEncoder {
 #define WASM_GET_GLOBAL(index) kExprGetGlobal, static_cast<byte>(index)
 #define WASM_SET_GLOBAL(index, val) \
   val, kExprSetGlobal, static_cast<byte>(index)
-#define WASM_LOAD_MEM(type, index)                                             \
-  index, static_cast<byte>(                                                    \
-             v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, false)), \
+#define WASM_LOAD_MEM(type, index)                                           \
+  index,                                                                     \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, false)), \
       ZERO_ALIGNMENT, ZERO_OFFSET
-#define WASM_STORE_MEM(type, index, val)                                   \
-  index, val,                                                              \
-      static_cast<byte>(                                                   \
-          v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, true)), \
+#define WASM_STORE_MEM(type, index, val)                                    \
+  index, val,                                                               \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, true)), \
       ZERO_ALIGNMENT, ZERO_OFFSET
-#define WASM_LOAD_MEM_OFFSET(type, offset, index)                              \
-  index, static_cast<byte>(                                                    \
-             v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, false)), \
+#define WASM_LOAD_MEM_OFFSET(type, offset, index)                            \
+  index,                                                                     \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, false)), \
       ZERO_ALIGNMENT, static_cast<byte>(offset)
-#define WASM_STORE_MEM_OFFSET(type, offset, index, val)                    \
-  index, val,                                                              \
-      static_cast<byte>(                                                   \
-          v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, true)), \
+#define WASM_STORE_MEM_OFFSET(type, offset, index, val)                     \
+  index, val,                                                               \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, true)), \
       ZERO_ALIGNMENT, static_cast<byte>(offset)
-#define WASM_LOAD_MEM_ALIGNMENT(type, index, alignment)                        \
-  index, static_cast<byte>(                                                    \
-             v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, false)), \
+#define WASM_LOAD_MEM_ALIGNMENT(type, index, alignment)                      \
+  index,                                                                     \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, false)), \
       alignment, ZERO_OFFSET
-#define WASM_STORE_MEM_ALIGNMENT(type, index, alignment, val)              \
-  index, val,                                                              \
-      static_cast<byte>(                                                   \
-          v8::internal::wasm::WasmOpcodes::LoadStoreOpcodeOf(type, true)), \
+#define WASM_STORE_MEM_ALIGNMENT(type, index, alignment, val)               \
+  index, val,                                                               \
+      static_cast<byte>(v8::internal::wasm::LoadStoreOpcodeOf(type, true)), \
       alignment, ZERO_OFFSET
 
 #define WASM_CALL_FUNCTION0(index) kExprCallFunction, static_cast<byte>(index)

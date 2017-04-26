@@ -18,7 +18,7 @@ class Handle;
 class Isolate;
 
 // Forward declarations.
-class ObjectVisitor;
+class RootVisitor;
 enum class InterpreterPushArgsMode : unsigned;
 namespace compiler {
 class CodeAssemblerState;
@@ -31,7 +31,7 @@ class Builtins {
   void TearDown();
 
   // Garbage collection support.
-  void IterateBuiltins(ObjectVisitor* v);
+  void IterateBuiltins(RootVisitor* v);
 
   // Disassembler support.
   const char* Lookup(byte* pc);
@@ -90,12 +90,6 @@ class Builtins {
 
   bool is_initialized() const { return initialized_; }
 
-  // Used by SetupIsolateDelegate and Deserializer.
-  void MarkInitialized() {
-    DCHECK(!initialized_);
-    initialized_ = true;
-  }
-
   MUST_USE_RESULT static MaybeHandle<Object> InvokeApiFunction(
       Isolate* isolate, bool is_construct, Handle<HeapObject> function,
       Handle<Object> receiver, int argc, Handle<Object> args[],
@@ -111,6 +105,11 @@ class Builtins {
 
  private:
   Builtins();
+  // Used by SetupIsolateDelegate.
+  void MarkInitialized() {
+    DCHECK(!initialized_);
+    initialized_ = true;
+  }
 
   static void Generate_CallFunction(MacroAssembler* masm,
                                     ConvertReceiverMode mode,

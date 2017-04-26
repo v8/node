@@ -92,8 +92,6 @@ void Deserializer::Deserialize(Isolate* isolate) {
   DCHECK(isolate_->handle_scope_implementer()->blocks()->is_empty());
   // Partial snapshot cache is not yet populated.
   DCHECK(isolate_->partial_snapshot_cache()->is_empty());
-  // Builtins are not yet created.
-  DCHECK(!isolate_->builtins()->is_initialized());
 
   {
     DisallowHeapAllocation no_gc;
@@ -123,8 +121,6 @@ void Deserializer::Deserialize(Isolate* isolate) {
   LOG_CODE_EVENT(isolate_, LogCodeObjects());
   LOG_CODE_EVENT(isolate_, LogBytecodeHandlers());
   LOG_CODE_EVENT(isolate_, LogCompiledFunctions());
-
-  isolate_->builtins()->MarkInitialized();
 }
 
 MaybeHandle<Object> Deserializer::DeserializePartial(
@@ -144,7 +140,7 @@ MaybeHandle<Object> Deserializer::DeserializePartial(
   OldSpace* code_space = isolate_->heap()->code_space();
   Address start_address = code_space->top();
   Object* root;
-  VisitPointer(&root);
+  VisitRootPointer(Root::kPartialSnapshotCache, &root);
   DeserializeDeferredObjects();
   DeserializeEmbedderFields(embedder_fields_deserializer);
 
@@ -168,7 +164,7 @@ MaybeHandle<HeapObject> Deserializer::DeserializeObject(Isolate* isolate) {
     {
       DisallowHeapAllocation no_gc;
       Object* root;
-      VisitPointer(&root);
+      VisitRootPointer(Root::kPartialSnapshotCache, &root);
       DeserializeDeferredObjects();
       FlushICacheForNewCodeObjectsAndRecordEmbeddedObjects();
       result = Handle<HeapObject>(HeapObject::cast(root));
@@ -196,7 +192,7 @@ Deserializer::~Deserializer() {
 
 // This is called on the roots.  It is the driver of the deserialization
 // process.  It is also called on the body of each function.
-void Deserializer::VisitPointers(Object** start, Object** end) {
+void Deserializer::VisitRootPointers(Root root, Object** start, Object** end) {
   // The space must be new space.  Any other space would cause ReadChunk to try
   // to update the remembered using NULL as the address.
   ReadData(start, end, NEW_SPACE, NULL);

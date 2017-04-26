@@ -1137,7 +1137,7 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
 // Helper class for verifying the string table.
 class StringTableVerifier : public ObjectVisitor {
  public:
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     // Visit all HeapObject pointers in [start, end).
     for (Object** p = start; p < end; p++) {
       if ((*p)->IsHeapObject()) {
@@ -1715,7 +1715,7 @@ void Heap::Scavenge() {
   Address new_space_front = new_space_->ToSpaceStart();
   promotion_queue_.Initialize();
 
-  ScavengeVisitor scavenge_visitor(this);
+  RootScavengeVisitor root_scavenge_visitor(this);
 
   isolate()->global_handles()->IdentifyWeakUnmodifiedObjects(
       &IsUnmodifiedHeapObject);
@@ -1723,7 +1723,7 @@ void Heap::Scavenge() {
   {
     // Copy roots.
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_ROOTS);
-    IterateRoots(&scavenge_visitor, VISIT_ALL_IN_SCAVENGE);
+    IterateRoots(&root_scavenge_visitor, VISIT_ALL_IN_SCAVENGE);
   }
 
   {
@@ -1750,8 +1750,7 @@ void Heap::Scavenge() {
 
   {
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_WEAK);
-    // Copy objects reachable from the encountered weak collections list.
-    scavenge_visitor.VisitPointer(&encountered_weak_collections_);
+    IterateEncounteredWeakCollections(&root_scavenge_visitor);
   }
 
   {
@@ -1759,13 +1758,15 @@ void Heap::Scavenge() {
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_CODE_FLUSH_CANDIDATES);
     MarkCompactCollector* collector = mark_compact_collector();
     if (collector->is_code_flushing_enabled()) {
-      collector->code_flusher()->IteratePointersToFromSpace(&scavenge_visitor);
+      collector->code_flusher()->VisitListHeads(&root_scavenge_visitor);
+      collector->code_flusher()
+          ->IteratePointersToFromSpace<StaticScavengeVisitor>();
     }
   }
 
   {
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_SEMISPACE);
-    new_space_front = DoScavenge(&scavenge_visitor, new_space_front);
+    new_space_front = DoScavenge(new_space_front);
   }
 
   isolate()->global_handles()->MarkNewSpaceWeakUnmodifiedObjectsPending(
@@ -1774,8 +1775,9 @@ void Heap::Scavenge() {
   isolate()
       ->global_handles()
       ->IterateNewSpaceWeakUnmodifiedRoots<
-          GlobalHandles::HANDLE_PHANTOM_NODES_VISIT_OTHERS>(&scavenge_visitor);
-  new_space_front = DoScavenge(&scavenge_visitor, new_space_front);
+          GlobalHandles::HANDLE_PHANTOM_NODES_VISIT_OTHERS>(
+          &root_scavenge_visitor);
+  new_space_front = DoScavenge(new_space_front);
 
   UpdateNewSpaceReferencesInExternalStringTable(
       &UpdateNewSpaceReferenceInExternalStringTableEntry);
@@ -1963,12 +1965,12 @@ void Heap::VisitExternalResources(v8::ExternalResourceVisitor* visitor) {
   DisallowHeapAllocation no_allocation;
   // All external strings are listed in the external string table.
 
-  class ExternalStringTableVisitorAdapter : public ObjectVisitor {
+  class ExternalStringTableVisitorAdapter : public RootVisitor {
    public:
     explicit ExternalStringTableVisitorAdapter(
         v8::ExternalResourceVisitor* visitor)
         : visitor_(visitor) {}
-    virtual void VisitPointers(Object** start, Object** end) {
+    virtual void VisitRootPointers(Root root, Object** start, Object** end) {
       for (Object** p = start; p < end; p++) {
         DCHECK((*p)->IsExternalString());
         visitor_->VisitExternalString(
@@ -1983,8 +1985,7 @@ void Heap::VisitExternalResources(v8::ExternalResourceVisitor* visitor) {
   external_string_table_.IterateAll(&external_string_table_visitor);
 }
 
-Address Heap::DoScavenge(ObjectVisitor* scavenge_visitor,
-                         Address new_space_front) {
+Address Heap::DoScavenge(Address new_space_front) {
   do {
     SemiSpace::AssertValidRange(new_space_front, new_space_->top());
     // The addresses new_space_front and new_space_.top() define a
@@ -4767,7 +4768,6 @@ bool Heap::RootIsImmortalImmovable(int root_index) {
   }
 }
 
-
 #ifdef VERIFY_HEAP
 void Heap::Verify() {
   CHECK(HasBeenSetUp());
@@ -4817,7 +4817,9 @@ class IterateAndScavengePromotedObjectsVisitor final : public ObjectVisitor {
                                            bool record_slots)
       : heap_(heap), target_(target), record_slots_(record_slots) {}
 
-  inline void VisitPointers(Object** start, Object** end) override {
+  inline void VisitPointers(HeapObject* host, Object** start,
+                            Object** end) override {
+    DCHECK_EQ(host, target_);
     Address slot_address = reinterpret_cast<Address>(start);
     Page* page = Page::FromAddress(slot_address);
 
@@ -4848,7 +4850,8 @@ class IterateAndScavengePromotedObjectsVisitor final : public ObjectVisitor {
     }
   }
 
-  inline void VisitCodeEntry(Address code_entry_slot) override {
+  inline void VisitCodeEntry(JSFunction* host,
+                             Address code_entry_slot) override {
     // Black allocation requires us to process objects referenced by
     // promoted objects.
     if (heap_->incremental_marking()->black_allocation()) {
@@ -4877,6 +4880,8 @@ void Heap::IterateAndScavengePromotedObject(HeapObject* target, int size,
         ObjectMarking::IsBlack(target, MarkingState::Internal(target));
   }
 
+  // TODO(ulan): remove the target, the visitor now gets the host object
+  // in each visit method.
   IterateAndScavengePromotedObjectsVisitor visitor(this, target, record_slots);
   if (target->IsJSFunction()) {
     // JSFunctions reachable through kNextFunctionLinkOffset are weak. Slots for
@@ -4899,15 +4904,14 @@ void Heap::IterateAndScavengePromotedObject(HeapObject* target, int size,
   }
 }
 
-
-void Heap::IterateRoots(ObjectVisitor* v, VisitMode mode) {
+void Heap::IterateRoots(RootVisitor* v, VisitMode mode) {
   IterateStrongRoots(v, mode);
   IterateWeakRoots(v, mode);
 }
 
-
-void Heap::IterateWeakRoots(ObjectVisitor* v, VisitMode mode) {
-  v->VisitPointer(reinterpret_cast<Object**>(&roots_[kStringTableRootIndex]));
+void Heap::IterateWeakRoots(RootVisitor* v, VisitMode mode) {
+  v->VisitRootPointer(Root::kStringTable, reinterpret_cast<Object**>(
+                                              &roots_[kStringTableRootIndex]));
   v->Synchronize(VisitorSynchronization::kStringTable);
   if (mode != VISIT_ALL_IN_SCAVENGE && mode != VISIT_ALL_IN_SWEEP_NEWSPACE) {
     // Scavenge collections have special processing for this.
@@ -4916,27 +4920,32 @@ void Heap::IterateWeakRoots(ObjectVisitor* v, VisitMode mode) {
   v->Synchronize(VisitorSynchronization::kExternalStringsTable);
 }
 
-
-void Heap::IterateSmiRoots(ObjectVisitor* v) {
+void Heap::IterateSmiRoots(RootVisitor* v) {
   // Acquire execution access since we are going to read stack limit values.
   ExecutionAccess access(isolate());
-  v->VisitPointers(&roots_[kSmiRootsStart], &roots_[kRootListLength]);
+  v->VisitRootPointers(Root::kSmiRootList, &roots_[kSmiRootsStart],
+                       &roots_[kRootListLength]);
   v->Synchronize(VisitorSynchronization::kSmiRootList);
+}
+
+void Heap::IterateEncounteredWeakCollections(RootVisitor* visitor) {
+  visitor->VisitRootPointer(Root::kWeakCollections,
+                            &encountered_weak_collections_);
 }
 
 // We cannot avoid stale handles to left-trimmed objects, but can only make
 // sure all handles still needed are updated. Filter out a stale pointer
 // and clear the slot to allow post processing of handles (needed because
 // the sweeper might actually free the underlying page).
-class FixStaleLeftTrimmedHandlesVisitor : public ObjectVisitor {
+class FixStaleLeftTrimmedHandlesVisitor : public RootVisitor {
  public:
   explicit FixStaleLeftTrimmedHandlesVisitor(Heap* heap) : heap_(heap) {
     USE(heap_);
   }
 
-  void VisitPointer(Object** p) override { FixHandle(p); }
+  void VisitRootPointer(Root root, Object** p) override { FixHandle(p); }
 
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++) FixHandle(p);
   }
 
@@ -4968,8 +4977,9 @@ class FixStaleLeftTrimmedHandlesVisitor : public ObjectVisitor {
   Heap* heap_;
 };
 
-void Heap::IterateStrongRoots(ObjectVisitor* v, VisitMode mode) {
-  v->VisitPointers(&roots_[0], &roots_[kStrongRootListLength]);
+void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
+  v->VisitRootPointers(Root::kStrongRootList, &roots_[0],
+                       &roots_[kStrongRootListLength]);
   v->Synchronize(VisitorSynchronization::kStrongRootList);
   // The serializer/deserializer iterates the root list twice, first to pick
   // off immortal immovable roots to make sure they end up on the first page,
@@ -5039,7 +5049,7 @@ void Heap::IterateStrongRoots(ObjectVisitor* v, VisitMode mode) {
 
   // Iterate over other strong roots (currently only identity maps).
   for (StrongRootsList* list = strong_roots_list_; list; list = list->next) {
-    v->VisitPointers(list->start, list->end);
+    v->VisitRootPointers(Root::kStrongRoots, list->start, list->end);
   }
   v->Synchronize(VisitorSynchronization::kStrongRoots);
 
@@ -5662,6 +5672,10 @@ void Heap::TracePossibleWrapper(JSObject* js_object) {
 
 void Heap::RegisterExternallyReferencedObject(Object** object) {
   HeapObject* heap_object = HeapObject::cast(*object);
+  if (heap_object == nullptr) {
+    // We might encounter non-empty handles that point to nullptr.
+    return;
+  }
   DCHECK(Contains(heap_object));
   if (FLAG_incremental_marking_wrappers && incremental_marking()->IsMarking()) {
     IncrementalMarking::MarkGrey(this, heap_object);
@@ -5932,9 +5946,9 @@ void Heap::FatalProcessOutOfMemory(const char* location, bool is_heap_oom) {
 
 #ifdef DEBUG
 
-class PrintHandleVisitor : public ObjectVisitor {
+class PrintHandleVisitor : public RootVisitor {
  public:
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++)
       PrintF("  handle %p to %p\n", reinterpret_cast<void*>(p),
              reinterpret_cast<void*>(*p));
@@ -5950,13 +5964,13 @@ void Heap::PrintHandles() {
 
 #endif
 
-class CheckHandleCountVisitor : public ObjectVisitor {
+class CheckHandleCountVisitor : public RootVisitor {
  public:
   CheckHandleCountVisitor() : handle_count_(0) {}
   ~CheckHandleCountVisitor() override {
     CHECK(handle_count_ < HandleScope::kCheckHandleThreshold);
   }
-  void VisitPointers(Object** start, Object** end) override {
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
     handle_count_ += end - start;
   }
 
@@ -6112,11 +6126,28 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
   }
 
  private:
-  class MarkingVisitor : public ObjectVisitor {
+  class MarkingVisitor : public ObjectVisitor, public RootVisitor {
    public:
     MarkingVisitor() : marking_stack_(10) {}
 
-    void VisitPointers(Object** start, Object** end) override {
+    void VisitPointers(HeapObject* host, Object** start,
+                       Object** end) override {
+      MarkPointers(start, end);
+    }
+
+    void VisitRootPointers(Root root, Object** start, Object** end) override {
+      MarkPointers(start, end);
+    }
+
+    void TransitiveClosure() {
+      while (!marking_stack_.is_empty()) {
+        HeapObject* obj = marking_stack_.RemoveLast();
+        obj->Iterate(this);
+      }
+    }
+
+   private:
+    void MarkPointers(Object** start, Object** end) {
       for (Object** p = start; p < end; p++) {
         if (!(*p)->IsHeapObject()) continue;
         HeapObject* obj = HeapObject::cast(*p);
@@ -6130,15 +6161,6 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
         }
       }
     }
-
-    void TransitiveClosure() {
-      while (!marking_stack_.is_empty()) {
-        HeapObject* obj = marking_stack_.RemoveLast();
-        obj->Iterate(this);
-      }
-    }
-
-   private:
     List<HeapObject*> marking_stack_;
   };
 

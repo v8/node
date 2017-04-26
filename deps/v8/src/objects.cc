@@ -10665,20 +10665,17 @@ char* Relocatable::RestoreState(Isolate* isolate, char* from) {
   return from + ArchiveSpacePerThread();
 }
 
-
-char* Relocatable::Iterate(ObjectVisitor* v, char* thread_storage) {
+char* Relocatable::Iterate(RootVisitor* v, char* thread_storage) {
   Relocatable* top = *reinterpret_cast<Relocatable**>(thread_storage);
   Iterate(v, top);
   return thread_storage + ArchiveSpacePerThread();
 }
 
-
-void Relocatable::Iterate(Isolate* isolate, ObjectVisitor* v) {
+void Relocatable::Iterate(Isolate* isolate, RootVisitor* v) {
   Iterate(v, isolate->relocatable_top());
 }
 
-
-void Relocatable::Iterate(ObjectVisitor* v, Relocatable* top) {
+void Relocatable::Iterate(RootVisitor* v, Relocatable* top) {
   Relocatable* current = top;
   while (current != NULL) {
     current->IterateInstance(v);
@@ -13402,11 +13399,6 @@ bool Script::HasPreparsedScopeData() const {
   return preparsed_scope_data()->length() > 0;
 }
 
-Handle<FixedUint32Array> Script::GetPreparsedScopeData() const {
-  return Handle<FixedUint32Array>::cast(
-      Handle<FixedTypedArrayBase>(preparsed_scope_data()));
-}
-
 SharedFunctionInfo::ScriptIterator::ScriptIterator(Handle<Script> script)
     : ScriptIterator(script->GetIsolate(),
                      handle(script->shared_function_infos())) {}
@@ -13889,85 +13881,55 @@ Code* SharedFunctionInfo::SearchOptimizedCodeMap(Context* native_context,
   return result;
 }
 
-
-#define DECLARE_TAG(ignore1, name, ignore2) name,
-const char* const VisitorSynchronization::kTags[
-    VisitorSynchronization::kNumberOfSyncTags] = {
-  VISITOR_SYNCHRONIZATION_TAGS_LIST(DECLARE_TAG)
-};
-#undef DECLARE_TAG
-
-
-#define DECLARE_TAG(ignore1, ignore2, name) name,
-const char* const VisitorSynchronization::kTagNames[
-    VisitorSynchronization::kNumberOfSyncTags] = {
-  VISITOR_SYNCHRONIZATION_TAGS_LIST(DECLARE_TAG)
-};
-#undef DECLARE_TAG
-
-
-void ObjectVisitor::VisitCodeTarget(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCodeTarget(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsCodeTarget(rinfo->rmode()));
   Object* old_pointer = Code::GetCodeFromTargetAddress(rinfo->target_address());
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitCodeAgeSequence(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCodeAgeSequence(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsCodeAgeSequence(rinfo->rmode()));
   Object* old_pointer = rinfo->code_age_stub();
   Object* new_pointer = old_pointer;
   if (old_pointer != nullptr) {
-    VisitPointer(&new_pointer);
+    VisitPointer(host, &new_pointer);
     DCHECK_EQ(old_pointer, new_pointer);
   }
 }
 
-
-void ObjectVisitor::VisitCodeEntry(Address entry_address) {
+void ObjectVisitor::VisitCodeEntry(JSFunction* host, Address entry_address) {
   Object* old_pointer = Code::GetObjectFromEntryAddress(entry_address);
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitCell(RelocInfo* rinfo) {
+void ObjectVisitor::VisitCellPointer(Code* host, RelocInfo* rinfo) {
   DCHECK(rinfo->rmode() == RelocInfo::CELL);
   Object* old_pointer = rinfo->target_cell();
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitDebugTarget(RelocInfo* rinfo) {
+void ObjectVisitor::VisitDebugTarget(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsDebugBreakSlot(rinfo->rmode()) &&
          rinfo->IsPatchedDebugBreakSlotSequence());
   Object* old_pointer =
       Code::GetCodeFromTargetAddress(rinfo->debug_call_address());
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
-
-void ObjectVisitor::VisitEmbeddedPointer(RelocInfo* rinfo) {
+void ObjectVisitor::VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) {
   DCHECK(rinfo->rmode() == RelocInfo::EMBEDDED_OBJECT);
   Object* old_pointer = rinfo->target_object();
   Object* new_pointer = old_pointer;
-  VisitPointer(&new_pointer);
+  VisitPointer(host, &new_pointer);
   DCHECK_EQ(old_pointer, new_pointer);
-}
-
-
-void ObjectVisitor::VisitExternalReference(RelocInfo* rinfo) {
-  Address old_reference = rinfo->target_external_reference();
-  Address new_reference = old_reference;
-  VisitExternalReference(&new_reference);
-  DCHECK_EQ(old_reference, new_reference);
 }
 
 
@@ -16232,7 +16194,7 @@ JSRegExp::Flags RegExpFlagsFromString(Handle<String> flags, bool* success) {
   JSRegExp::Flags value = JSRegExp::kNone;
   int length = flags->length();
   // A longer flags string cannot be valid.
-  if (length > 5) return JSRegExp::Flags(0);
+  if (length > JSRegExp::FlagCount()) return JSRegExp::Flags(0);
   for (int i = 0; i < length; i++) {
     JSRegExp::Flag flag = JSRegExp::kNone;
     switch (flags->Get(i)) {

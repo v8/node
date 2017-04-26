@@ -277,7 +277,10 @@ class CodeFlusher {
     ProcessJSFunctionCandidates();
   }
 
-  void IteratePointersToFromSpace(ObjectVisitor* v);
+  inline void VisitListHeads(RootVisitor* v);
+
+  template <typename StaticVisitor>
+  inline void IteratePointersToFromSpace();
 
  private:
   void ProcessJSFunctionCandidates();
@@ -415,6 +418,12 @@ enum PageEvacuationMode { NEW_TO_NEW, NEW_TO_OLD };
 class MarkCompactCollectorBase {
  public:
   virtual ~MarkCompactCollectorBase() {}
+
+  // Note: Make sure to refer to the instances by their concrete collector
+  // type to avoid vtable lookups marking state methods when used in hot paths.
+  virtual MarkingState marking_state(HeapObject* object) const = 0;
+  virtual MarkingState marking_state(MemoryChunk* chunk) const = 0;
+
   virtual void SetUp() = 0;
   virtual void TearDown() = 0;
   virtual void CollectGarbage() = 0;
@@ -438,6 +447,14 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
  public:
   explicit MinorMarkCompactCollector(Heap* heap)
       : MarkCompactCollectorBase(heap), marking_deque_(heap) {}
+
+  MarkingState marking_state(HeapObject* object) const override {
+    return MarkingState::External(object);
+  }
+
+  MarkingState marking_state(MemoryChunk* chunk) const override {
+    return MarkingState::External(chunk);
+  }
 
   void SetUp() override;
   void TearDown() override;
@@ -548,6 +565,14 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   };
 
   static void Initialize();
+
+  MarkingState marking_state(HeapObject* object) const override {
+    return MarkingState::Internal(object);
+  }
+
+  MarkingState marking_state(MemoryChunk* chunk) const override {
+    return MarkingState::Internal(chunk);
+  }
 
   void SetUp() override;
   void TearDown() override;
@@ -687,13 +712,12 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   //    - Processing of objects reachable through Harmony WeakMaps.
   //    - Objects reachable due to host application logic like object groups,
   //      implicit references' groups, or embedder heap tracing.
-  void ProcessEphemeralMarking(ObjectVisitor* visitor,
-                               bool only_process_harmony_weak_collections);
+  void ProcessEphemeralMarking(bool only_process_harmony_weak_collections);
 
   // If the call-site of the top optimized code was not prepared for
   // deoptimization, then treat the maps in the code as strong pointers,
   // otherwise a map can die and deoptimize the code.
-  void ProcessTopOptimizedFrame(ObjectVisitor* visitor);
+  void ProcessTopOptimizedFrame(RootMarkingVisitor* visitor);
 
   // Collects a list of dependent code from maps embedded in optimize code.
   DependentCode* DependentCodeListFromNonLiveMaps();
