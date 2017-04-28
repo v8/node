@@ -2214,6 +2214,9 @@ void Builtins::Generate_CallForwardVarargs(MacroAssembler* masm,
   {
     // Load the length from the ArgumentsAdaptorFrame.
     __ LoadP(r2, MemOperand(r5, ArgumentsAdaptorFrameConstants::kLengthOffset));
+#if V8_TARGET_ARCH_S390X
+    __ SmiUntag(r2);
+#endif
   }
   __ bind(&arguments_done);
 

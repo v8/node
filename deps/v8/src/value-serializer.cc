@@ -6,6 +6,7 @@
 
 #include <type_traits>
 
+#include "include/v8-value-serializer-version.h"
 #include "src/base/logging.h"
 #include "src/conversions.h"
 #include "src/factory.h"
@@ -29,7 +30,17 @@ namespace internal {
 // Version 12: regexp and string objects share normal string encoding
 // Version 13: host objects have an explicit tag (rather than handling all
 //             unknown tags)
+//
+// WARNING: Increasing this value is a change which cannot safely be rolled
+// back without breaking compatibility with data stored on disk. It is
+// strongly recommended that you do not make such changes near a release
+// milestone branch point.
+//
+// Recent changes are routinely reverted in preparation for branch, and this
+// has been the cause of at least one bug in the past.
 static const uint32_t kLatestVersion = 13;
+static_assert(kLatestVersion == v8::CurrentValueSerializerFormatVersion(),
+              "Exported format version must match latest version.");
 
 static const int kPretenureThreshold = 100 * KB;
 
@@ -153,11 +164,6 @@ enum class WasmEncodingTag : uint8_t {
 };
 
 }  // namespace
-
-// static
-uint32_t ValueSerializer::GetCurrentDataFormatVersion() {
-  return kLatestVersion;
-}
 
 ValueSerializer::ValueSerializer(Isolate* isolate,
                                  v8::ValueSerializer::Delegate* delegate)

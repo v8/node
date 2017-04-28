@@ -570,6 +570,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* AllocateNameDictionary(int capacity);
   Node* AllocateNameDictionary(Node* capacity);
+  Node* CopyNameDictionary(Node* dictionary, Label* large_object_fallback);
 
   Node* AllocateJSObjectFromMap(Node* map, Node* properties = nullptr,
                                 Node* elements = nullptr,
@@ -1325,7 +1326,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* Equal(Node* lhs, Node* rhs, Node* context);
 
-  Node* StrictEqual(Node* lhs, Node* rhs);
+  Node* StrictEqual(Node* lhs, Node* rhs, Variable* var_type_feedback = NULL);
 
   // ECMA#sec-samevalue
   // Similar to StrictEqual except that NaNs are treated as equal and minus zero
