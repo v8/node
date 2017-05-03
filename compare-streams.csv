@@ -1,0 +1,11 @@
+"binary", "filename", "configuration", "rate", "time"
+"old", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 9404770.707627287, 1.063290144
+"new", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 7374937.948378343, 1.355943612
+"old", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 10482735.06533331, 0.953949512
+"new", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 7733350.809881274, 1.293100526
+"old", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 9931656.428564014, 1.006881387
+"new", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 7623687.1191234505, 1.31170126
+"old", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 10374026.586152824, 0.963945862
+"new", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 7488270.820011715, 1.335421787
+"old", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 9561307.03040334, 1.045882113
+"new", "url/legacy-vs-whatwg-url-get-prop.js", "n=10000000 method=""whatwg"" type=""ws""", 7493503.82533254, 1.33448921

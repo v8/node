@@ -1206,9 +1206,15 @@ BUILTIN(ArrayConcat) {
   HandleScope scope(isolate);
 
   Handle<Object> receiver = args.receiver();
+  // TODO(bmeurer): Do we really care about the exact exception message here?
+  if (receiver->IsNullOrUndefined(isolate)) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewTypeError(MessageTemplate::kCalledOnNullOrUndefined,
+                              isolate->factory()->NewStringFromAsciiChecked(
+                                  "Array.prototype.concat")));
+  }
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
-      isolate, receiver,
-      Object::ToObject(isolate, args.receiver(), "Array.prototype.concat"));
+      isolate, receiver, Object::ToObject(isolate, args.receiver()));
   args[0] = *receiver;
 
   Handle<JSArray> result_array;

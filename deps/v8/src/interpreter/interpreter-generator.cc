@@ -2158,6 +2158,7 @@ class InterpreterCompareOpAssembler : public InterpreterAssembler {
             result = SelectBooleanConstant(SmiLessThanOrEqual(rhs, lhs));
             break;
           case Token::EQ:
+          case Token::EQ_STRICT:
             result = SelectBooleanConstant(WordEqual(lhs, rhs));
             break;
           default:
@@ -2254,7 +2255,8 @@ class InterpreterCompareOpAssembler : public InterpreterAssembler {
           result = SelectBooleanConstant(
               Float64GreaterThanOrEqual(lhs_float, rhs_float));
           break;
-        case Token::EQ: {
+        case Token::EQ:
+        case Token::EQ_STRICT: {
           Label check_nan(this);
           var_result.Bind(BooleanConstant(false));
           Branch(Float64Equal(lhs_float, rhs_float), &check_nan,
@@ -2443,18 +2445,7 @@ IGNITION_HANDLER(TestEqual, InterpreterCompareOpAssembler) {
 //
 // Test if the value in the <src> register is strictly equal to the accumulator.
 IGNITION_HANDLER(TestEqualStrict, InterpreterCompareOpAssembler) {
-  Node* reg_index = BytecodeOperandReg(0);
-  Node* lhs = LoadRegister(reg_index);
-  Node* rhs = GetAccumulator();
-
-  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* result = StrictEqual(lhs, rhs, &var_type_feedback);
-
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+  CompareOpWithFeedback(Token::Value::EQ_STRICT);
 }
 
 // TestLessThan <src>

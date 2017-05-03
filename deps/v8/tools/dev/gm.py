@@ -176,7 +176,7 @@ class Config(object):
 
   def GetTargetCpu(self):
     cpu = "x86"
-    if "64" in self.arch or self.arch == "s390x":
+    if self.arch.endswith("64") or self.arch == "s390x":
       cpu = "x64"
     return "target_cpu = \"%s\"" % cpu
 

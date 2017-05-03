@@ -28,8 +28,6 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
   V(BooleanMap, BooleanMap)                           \
   V(CodeMap, CodeMap)                                 \
   V(empty_string, EmptyString)                        \
-  V(length_string, LengthString)                      \
-  V(prototype_string, PrototypeString)                \
   V(EmptyFixedArray, EmptyFixedArray)                 \
   V(FalseValue, False)                                \
   V(FixedArrayMap, FixedArrayMap)                     \
@@ -467,9 +465,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* LoadJSArrayElementsMap(ElementsKind kind, Node* native_context);
 
-  // Load the "prototype" property of a JSFunction.
-  Node* LoadJSFunctionPrototype(Node* function, Label* if_bailout);
-
   // Store the floating point value of a HeapNumber.
   Node* StoreHeapNumberValue(Node* object, Node* value);
   // Store a field to an object on the heap.
@@ -574,7 +569,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* AllocateNameDictionary(int capacity);
   Node* AllocateNameDictionary(Node* capacity);
-  Node* CopyNameDictionary(Node* dictionary, Label* large_object_fallback);
 
   Node* AllocateJSObjectFromMap(Node* map, Node* properties = nullptr,
                                 Node* elements = nullptr,
@@ -749,18 +743,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsCallable(Node* object);
   Node* IsBoolean(Node* object);
   Node* IsPropertyCell(Node* object);
-  Node* IsAccessorInfo(Node* object);
   Node* IsAccessorPair(Node* object);
   Node* IsHeapNumber(Node* object);
   Node* IsName(Node* object);
   Node* IsSymbol(Node* object);
   Node* IsPrivateSymbol(Node* object);
-  Node* IsJSValueInstanceType(Node* instance_type);
   Node* IsJSValue(Node* object);
-  Node* IsJSValueMap(Node* map);
-  Node* IsJSArrayInstanceType(Node* instance_type);
   Node* IsJSArray(Node* object);
-  Node* IsJSArrayMap(Node* object);
   Node* IsNativeContext(Node* object);
   Node* IsWeakCell(Node* object);
   Node* IsFixedDoubleArray(Node* object);
@@ -768,9 +757,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsDictionary(Node* object);
   Node* IsUnseededNumberDictionary(Node* object);
   Node* IsConstructorMap(Node* map);
-  Node* IsJSFunctionInstanceType(Node* instance_type);
   Node* IsJSFunction(Node* object);
-  Node* IsJSFunctionMap(Node* object);
   Node* IsJSTypedArray(Node* object);
   Node* IsJSArrayBuffer(Node* object);
   Node* IsFixedTypedArray(Node* object);
@@ -1336,7 +1323,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* Equal(Node* lhs, Node* rhs, Node* context);
 
-  Node* StrictEqual(Node* lhs, Node* rhs, Variable* var_type_feedback = NULL);
+  Node* StrictEqual(Node* lhs, Node* rhs);
 
   // ECMA#sec-samevalue
   // Similar to StrictEqual except that NaNs are treated as equal and minus zero

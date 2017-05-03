@@ -36,7 +36,7 @@ class ScavengingVisitor : public StaticVisitorBase {
     table_.Register(kVisitByteArray, &EvacuateByteArray);
     table_.Register(kVisitFixedArray, &EvacuateFixedArray);
     table_.Register(kVisitFixedDoubleArray, &EvacuateFixedDoubleArray);
-    table_.Register(kVisitFixedTypedArrayBase, &EvacuateFixedTypedArray);
+    table_.Register(kVisitFixedTypedArray, &EvacuateFixedTypedArray);
     table_.Register(kVisitFixedFloat64Array, &EvacuateFixedFloat64Array);
     table_.Register(kVisitJSArrayBuffer,
                     &ObjectEvacuationStrategy<POINTER_OBJECT>::Visit);
@@ -446,10 +446,11 @@ void Scavenger::SelectScavengingVisitorsTable() {
       // can't be evacuated into evacuation candidate but
       // short-circuiting violates this assumption.
       scavenging_visitors_table_.Register(
-          kVisitShortcutCandidate,
-          scavenging_visitors_table_.GetVisitorById(kVisitConsString));
+          StaticVisitorBase::kVisitShortcutCandidate,
+          scavenging_visitors_table_.GetVisitorById(
+              StaticVisitorBase::kVisitConsString));
       scavenging_visitors_table_.Register(
-          kVisitThinString,
+          StaticVisitorBase::kVisitThinString,
           &ScavengingVisitor<TRANSFER_MARKS, LOGGING_AND_PROFILING_DISABLED>::
               EvacuateThinStringNoShortcut);
     }

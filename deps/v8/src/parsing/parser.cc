@@ -4242,7 +4242,7 @@ void Parser::SetFunctionNameFromPropertyName(ObjectLiteralProperty* property,
 
   // Ignore "__proto__" as a name when it's being used to set the [[Prototype]]
   // of an object literal.
-  if (property->IsPrototype()) return;
+  if (property->kind() == ObjectLiteralProperty::PROTOTYPE) return;
 
   Expression* value = property->value();
 

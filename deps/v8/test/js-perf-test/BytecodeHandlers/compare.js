@@ -109,35 +109,35 @@ function MixedStrictEquals() {
 }
 
 function SmiEqualsFalse() {
- equals(10, 20);
+ strictEquals(10, 20);
 }
 
 function SmiEqualsTrue() {
- equals(10, 10);
+ strictEquals(10, 10);
 }
 
 function NumberEqualsFalse() {
- equals(0.3333, 0.3334);
+ strictEquals(0.3333, 0.3334);
 }
 
 function NumberEqualsTrue() {
- equals(0.3333, 0.3333);
+ strictEquals(0.3333, 0.3333);
 }
 
 function StringEqualsFalse() {
- equals("abc", "def");
+ strictEquals("abc", "def");
 }
 
 function StringEqualsTrue() {
- equals("abc", "abc");
+ strictEquals("abc", "abc");
 }
 
 function MixedEquals() {
- equals(10, "10");
+ strictEquals(10, "10");
 }
 
 function ObjectEqualsNull(null_object) {
- equals(null_object, null);
+ strictEquals(null_object, null);
 }
 
 function SmiRelationalCompare() {

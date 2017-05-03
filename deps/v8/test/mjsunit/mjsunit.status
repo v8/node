@@ -372,10 +372,6 @@
 
   # Exception thrown during bootstrapping on ASAN builds, see issue 4236.
   'regress/regress-1132': [SKIP],
-
-  # Flaky on ASAN builds: https://bugs.chromium.org/p/v8/issues/detail?id=6305
-  'regress/regress-430201': [SKIP],
-  'regress/regress-430201b': [SKIP],
 }],  # 'asan == True'
 
 ##############################################################################
@@ -651,13 +647,6 @@
   # Slow tests.
   'regress/regress-2185-2': [SKIP],
 }],  # variant == nooptimization
-
-##############################################################################
-['variant == noturbofan and no_snap', {
-  # Too slow for old pipeline and nosnap.
-  'regress/regress-2249': [SKIP],
-  'harmony/futex': [SKIP],
-}],  # variant == noturbofan and no_snap
 
 ##############################################################################
 ['variant == turbofan_opt', {

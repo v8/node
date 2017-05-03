@@ -66,6 +66,7 @@
   V(Call)                   \
   V(Parameter)              \
   V(OsrValue)               \
+  V(OsrGuard)               \
   V(LoopExit)               \
   V(LoopExitValue)          \
   V(LoopExitEffect)         \

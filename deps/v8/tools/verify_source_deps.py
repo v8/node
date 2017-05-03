@@ -56,7 +56,6 @@ ALL_GYP_PREFIXES = [
 GYP_UNSUPPORTED_FEATURES = [
   'gcmole',
   'setup-isolate-deserialize.cc',
-  'v8-version.h'
 ]
 
 GN_FILES = [
@@ -81,7 +80,6 @@ GN_UNSUPPORTED_FEATURES = [
   'qnx',
   'solaris',
   'vtune',
-  'v8-version.h',
   'x87',
 ]
 

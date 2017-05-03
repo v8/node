@@ -3,8 +3,7 @@
 // found in the LICENSE file.
 
 var pattern = {
-  [Symbol.replace]: (string, newValue) => string + newValue,
-  toString: () => "c"
+  [Symbol.replace]: (string, newValue) => string + newValue
 };
 // Check object coercible fails.
 assertThrows(() => String.prototype.replace.call(null, pattern, "x"),
@@ -14,8 +13,5 @@ assertEquals("abcdex", "abcde".replace(pattern, "x"));
 // Non-callable override.
 pattern[Symbol.replace] = "dumdidum";
 assertThrows(() => "abcde".replace(pattern, "x"), TypeError);
-// Null override.
-pattern[Symbol.replace] = null;
-assertEquals("abXde", "abcde".replace(pattern, "X"));
 
 assertEquals("[Symbol.replace]", RegExp.prototype[Symbol.replace].name);

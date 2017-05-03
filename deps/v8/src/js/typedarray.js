@@ -255,7 +255,9 @@ function TypedArraySetFromArrayLike(target, source, sourceLength, offset) {
     }
   }
   else {
-    %TypedArrayCopyElements(target, source, sourceLength);
+    for (var i = 0; i < sourceLength; i++) {
+      target[i] = source[i];
+    }
   }
 }
 
@@ -336,7 +338,7 @@ function TypedArraySet(obj, offset) {
         if (IS_NUMBER(obj)) {
             // For number as a first argument, throw TypeError
             // instead of silently ignoring the call, so that
-            // users know they did something wrong.
+            // the user knows (s)he did something wrong.
             // (Consistent with Firefox and Blink/WebKit)
             throw %make_type_error(kInvalidArgument);
         }

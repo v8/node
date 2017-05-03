@@ -533,7 +533,7 @@ Handle<WasmDebugInfo> WasmInstanceObject::GetOrCreateDebugInfo(
     Handle<WasmInstanceObject> instance) {
   if (instance->has_debug_info()) return handle(instance->debug_info());
   Handle<WasmDebugInfo> new_info = WasmDebugInfo::New(instance);
-  DCHECK(instance->has_debug_info());
+  instance->set_debug_info(*new_info);
   return new_info;
 }
 

@@ -601,15 +601,56 @@ inline int32_t ExecuteGrowMemory(uint32_t delta_pages,
   DCHECK_EQ(0, instance->mem_size % WasmModule::kPageSize);
   uint32_t old_pages = instance->mem_size / WasmModule::kPageSize;
 
-  Isolate* isolate = instance_obj.ToHandleChecked()->GetIsolate();
-  int32_t ret = WasmInstanceObject::GrowMemory(
-      isolate, instance_obj.ToHandleChecked(), delta_pages);
-  // Some sanity checks.
-  DCHECK_EQ(ret == -1 ? old_pages : old_pages + delta_pages,
-            instance->mem_size / WasmModule::kPageSize);
-  DCHECK(ret == -1 || static_cast<uint32_t>(ret) == old_pages);
-  USE(old_pages);
-  return ret;
+  // If an instance is set, execute GrowMemory on the instance. This will also
+  // update the WasmInstance struct used here.
+  if (!instance_obj.is_null()) {
+    Isolate* isolate = instance_obj.ToHandleChecked()->GetIsolate();
+    int32_t ret = WasmInstanceObject::GrowMemory(
+        isolate, instance_obj.ToHandleChecked(), delta_pages);
+    // Some sanity checks.
+    DCHECK_EQ(ret == -1 ? old_pages : old_pages + delta_pages,
+              instance->mem_size / WasmModule::kPageSize);
+    DCHECK(ret == -1 || static_cast<uint32_t>(ret) == old_pages);
+    return ret;
+  }
+
+  // TODO(ahaas): Move memory allocation to wasm-module.cc for better
+  // encapsulation.
+  if (delta_pages > FLAG_wasm_max_mem_pages ||
+      delta_pages > instance->module->max_mem_pages) {
+    return -1;
+  }
+
+  uint32_t new_pages = old_pages + delta_pages;
+  if (new_pages > FLAG_wasm_max_mem_pages ||
+      new_pages > instance->module->max_mem_pages) {
+    return -1;
+  }
+
+  byte* new_mem_start;
+  if (instance->mem_size == 0) {
+    // TODO(gdeepti): Fix bounds check to take into account size of memtype.
+    new_mem_start = static_cast<byte*>(
+        calloc(new_pages * WasmModule::kPageSize, sizeof(byte)));
+    if (!new_mem_start) return -1;
+  } else {
+    DCHECK_NOT_NULL(instance->mem_start);
+    if (EnableGuardRegions()) {
+      v8::base::OS::Unprotect(instance->mem_start,
+                              new_pages * WasmModule::kPageSize);
+      new_mem_start = instance->mem_start;
+    } else {
+      new_mem_start = static_cast<byte*>(
+          realloc(instance->mem_start, new_pages * WasmModule::kPageSize));
+      if (!new_mem_start) return -1;
+    }
+    // Zero initializing uninitialized memory from realloc
+    memset(new_mem_start + old_pages * WasmModule::kPageSize, 0,
+           delta_pages * WasmModule::kPageSize);
+  }
+  instance->mem_start = new_mem_start;
+  instance->mem_size = new_pages * WasmModule::kPageSize;
+  return static_cast<int32_t>(old_pages);
 }
 
 enum InternalOpcode {
@@ -653,7 +694,7 @@ Handle<HeapObject> UnwrapWasmToJSWrapper(Isolate* isolate,
   return Handle<HeapObject>::null();
 }
 
-class SideTable;
+class ControlTransfers;
 
 // Code and metadata needed to execute a function.
 struct InterpreterCode {
@@ -663,7 +704,7 @@ struct InterpreterCode {
   const byte* orig_end;          // end of original code
   byte* start;                   // start of (maybe altered) code
   byte* end;                     // end of (maybe altered) code
-  SideTable* side_table;         // precomputed side table for control flow.
+  ControlTransfers* targets;     // helper for control flow.
 
   const byte* at(pc_t pc) { return start + pc; }
 };
@@ -671,13 +712,12 @@ struct InterpreterCode {
 // A helper class to compute the control transfers for each bytecode offset.
 // Control transfers allow Br, BrIf, BrTable, If, Else, and End bytecodes to
 // be directly executed without the need to dynamically track blocks.
-class SideTable : public ZoneObject {
+class ControlTransfers : public ZoneObject {
  public:
   ControlTransferMap map_;
-  uint32_t max_stack_height_;
 
-  SideTable(Zone* zone, const WasmModule* module, InterpreterCode* code)
-      : map_(zone), max_stack_height_(0) {
+  ControlTransfers(Zone* zone, const WasmModule* module, InterpreterCode* code)
+      : map_(zone) {
     // Create a zone for all temporary objects.
     Zone control_transfer_zone(zone->allocator(), ZONE_NAME);
 
@@ -768,25 +808,18 @@ class SideTable : public ZoneObject {
             WasmOpcodes::OpcodeName(opcode), stack_height, stack_effect.first,
             stack_effect.second);
       DCHECK_GE(stack_height, stack_effect.first);
-      DCHECK_GE(kMaxUInt32, static_cast<uint64_t>(stack_height) -
-                                stack_effect.first + stack_effect.second);
       stack_height = stack_height - stack_effect.first + stack_effect.second;
-      if (stack_height > max_stack_height_) max_stack_height_ = stack_height;
       switch (opcode) {
-        case kExprBlock: {
+        case kExprBlock:
+        case kExprLoop: {
+          bool loop = opcode == kExprLoop;
           BlockTypeOperand<false> operand(&i, i.pc());
-          TRACE("control @%u: Block, arity %d\n", i.pc_offset(), operand.arity);
+          TRACE("control @%u: %s, arity %d\n", i.pc_offset(),
+                loop ? "Loop" : "Block", operand.arity);
           CLabel* label =
               CLabel::New(&control_transfer_zone, stack_height, operand.arity);
           control_stack.push_back({i.pc(), label, nullptr});
-          break;
-        }
-        case kExprLoop: {
-          TRACE("control @%u: Loop\n", i.pc_offset());
-          // Arity is always 0 for loop labels.
-          CLabel* label = CLabel::New(&control_transfer_zone, stack_height, 0);
-          control_stack.push_back({i.pc(), label, nullptr});
-          label->Bind(i.pc());
+          if (loop) label->Bind(i.pc());
           break;
         }
         case kExprIf: {
@@ -989,9 +1022,9 @@ class CodeMap {
 
   InterpreterCode* Preprocess(InterpreterCode* code) {
     DCHECK_EQ(code->function->imported, code->start == nullptr);
-    if (!code->side_table && code->start) {
+    if (code->targets == nullptr && code->start != nullptr) {
       // Compute the control targets map and the local declarations.
-      code->side_table = new (zone_) SideTable(zone_, module_, code);
+      code->targets = new (zone_) ControlTransfers(zone_, module_, code);
     }
     return code;
   }
@@ -1012,11 +1045,11 @@ class CodeMap {
     DCHECK_LT(function->func_index, interpreter_code_.size());
     InterpreterCode* code = &interpreter_code_[function->func_index];
     DCHECK_EQ(function, code->function);
+    code->targets = nullptr;
     code->orig_start = start;
     code->orig_end = end;
     code->start = const_cast<byte*>(start);
     code->end = const_cast<byte*>(end);
-    code->side_table = nullptr;
     Preprocess(code);
   }
 
@@ -1120,15 +1153,15 @@ WasmVal ToWebAssemblyValue(Isolate* isolate, Handle<Object> value,
 class ThreadImpl {
   struct Activation {
     uint32_t fp;
-    sp_t sp;
-    Activation(uint32_t fp, sp_t sp) : fp(fp), sp(sp) {}
+    uint32_t sp;
+    Activation(uint32_t fp, uint32_t sp) : fp(fp), sp(sp) {}
   };
 
  public:
   ThreadImpl(Zone* zone, CodeMap* codemap, WasmInstance* instance)
       : codemap_(codemap),
         instance_(instance),
-        zone_(zone),
+        stack_(zone),
         frames_(zone),
         activations_(zone) {}
 
@@ -1141,9 +1174,9 @@ class ThreadImpl {
   void InitFrame(const WasmFunction* function, WasmVal* args) {
     DCHECK_EQ(current_activation().fp, frames_.size());
     InterpreterCode* code = codemap()->GetCode(function);
-    size_t num_params = function->sig->parameter_count();
-    EnsureStackSpace(num_params);
-    Push(args, num_params);
+    for (size_t i = 0; i < function->sig->parameter_count(); ++i) {
+      stack_.push_back(args[i]);
+    }
     PushFrame(code);
   }
 
@@ -1170,7 +1203,7 @@ class ThreadImpl {
 
   void Reset() {
     TRACE("----- RESET -----\n");
-    sp_ = stack_start_;
+    stack_.clear();
     frames_.clear();
     state_ = WasmInterpreter::STOPPED;
     trap_reason_ = kTrapCount;
@@ -1188,17 +1221,13 @@ class ThreadImpl {
     Activation act = current_activation();
     // Current activation must be finished.
     DCHECK_EQ(act.fp, frames_.size());
-    return GetStackValue(act.sp + index);
+    DCHECK_GT(stack_.size(), act.sp + index);
+    return stack_[act.sp + index];
   }
 
-  WasmVal GetStackValue(sp_t index) {
-    DCHECK_GT(StackHeight(), index);
-    return stack_start_[index];
-  }
-
-  void SetStackValue(sp_t index, WasmVal value) {
-    DCHECK_GT(StackHeight(), index);
-    stack_start_[index] = value;
+  WasmVal GetStackValue(uint32_t index) {
+    DCHECK_GT(stack_.size(), index);
+    return stack_[index];
   }
 
   TrapReason GetTrapReason() { return trap_reason_; }
@@ -1221,10 +1250,10 @@ class ThreadImpl {
     TRACE("----- START ACTIVATION %zu -----\n", activations_.size());
     // If you use activations, use them consistently:
     DCHECK_IMPLIES(activations_.empty(), frames_.empty());
-    DCHECK_IMPLIES(activations_.empty(), StackHeight() == 0);
+    DCHECK_IMPLIES(activations_.empty(), stack_.empty());
     uint32_t activation_id = static_cast<uint32_t>(activations_.size());
     activations_.emplace_back(static_cast<uint32_t>(frames_.size()),
-                              StackHeight());
+                              static_cast<uint32_t>(stack_.size()));
     state_ = WasmInterpreter::STOPPED;
     return activation_id;
   }
@@ -1236,8 +1265,8 @@ class ThreadImpl {
     // Stack height must match the start of this activation (otherwise unwind
     // first).
     DCHECK_EQ(activations_.back().fp, frames_.size());
-    DCHECK_LE(activations_.back().sp, StackHeight());
-    sp_ = stack_start_ + activations_.back().sp;
+    DCHECK_LE(activations_.back().sp, stack_.size());
+    stack_.resize(activations_.back().sp);
     activations_.pop_back();
   }
 
@@ -1258,8 +1287,8 @@ class ThreadImpl {
     Activation& act = activations_.back();
     DCHECK_LE(act.fp, frames_.size());
     frames_.resize(act.fp);
-    DCHECK_LE(act.sp, StackHeight());
-    sp_ = stack_start_ + act.sp;
+    DCHECK_LE(act.sp, stack_.size());
+    stack_.resize(act.sp);
     state_ = WasmInterpreter::STOPPED;
     return WasmInterpreter::Thread::UNWOUND;
   }
@@ -1288,10 +1317,7 @@ class ThreadImpl {
 
   CodeMap* codemap_;
   WasmInstance* instance_;
-  Zone* zone_;
-  WasmVal* stack_start_ = nullptr;  // Start of allocated stack space.
-  WasmVal* stack_limit_ = nullptr;  // End of allocated stack space.
-  WasmVal* sp_ = nullptr;           // Current stack pointer.
+  ZoneVector<WasmVal> stack_;
   ZoneVector<Frame> frames_;
   WasmInterpreter::State state_ = WasmInterpreter::STOPPED;
   pc_t break_pc_ = kInvalidPc;
@@ -1316,15 +1342,11 @@ class ThreadImpl {
   // Push a frame with arguments already on the stack.
   void PushFrame(InterpreterCode* code) {
     DCHECK_NOT_NULL(code);
-    DCHECK_NOT_NULL(code->side_table);
-    EnsureStackSpace(code->side_table->max_stack_height_ +
-                     code->locals.type_list.size());
-
     ++num_interpreted_calls_;
     size_t arity = code->function->sig->parameter_count();
     // The parameters will overlap the arguments already on the stack.
-    DCHECK_GE(StackHeight(), arity);
-    frames_.push_back({code, 0, StackHeight() - arity});
+    DCHECK_GE(stack_.size(), arity);
+    frames_.push_back({code, 0, stack_.size() - arity});
     frames_.back().pc = InitLocals(code);
     TRACE("  => PushFrame #%zu (#%u @%zu)\n", frames_.size() - 1,
           code->function->func_index, frames_.back().pc);
@@ -1344,7 +1366,7 @@ class ThreadImpl {
           UNREACHABLE();
           break;
       }
-      Push(val);
+      stack_.push_back(val);
     }
     return code->locals.encoded_size;
   }
@@ -1364,12 +1386,12 @@ class ThreadImpl {
   }
 
   int LookupTargetDelta(InterpreterCode* code, pc_t pc) {
-    return static_cast<int>(code->side_table->Lookup(pc).pc_diff);
+    return static_cast<int>(code->targets->Lookup(pc).pc_diff);
   }
 
   int DoBreak(InterpreterCode* code, pc_t pc, size_t depth) {
-    ControlTransferEntry& control_transfer_entry = code->side_table->Lookup(pc);
-    DoStackTransfer(sp_ - control_transfer_entry.sp_diff,
+    ControlTransferEntry& control_transfer_entry = code->targets->Lookup(pc);
+    DoStackTransfer(stack_.size() - control_transfer_entry.sp_diff,
                     control_transfer_entry.target_arity);
     return control_transfer_entry.pc_diff;
   }
@@ -1393,12 +1415,12 @@ class ThreadImpl {
   bool DoReturn(Decoder* decoder, InterpreterCode** code, pc_t* pc, pc_t* limit,
                 size_t arity) {
     DCHECK_GT(frames_.size(), 0);
-    WasmVal* sp_dest = stack_start_ + frames_.back().sp;
+    sp_t dest = frames_.back().sp;
     frames_.pop_back();
     if (frames_.size() == current_activation().fp) {
       // A return from the last frame terminates the execution.
       state_ = WasmInterpreter::FINISHED;
-      DoStackTransfer(sp_dest, arity);
+      DoStackTransfer(dest, arity);
       TRACE("  => finish\n");
       return false;
     } else {
@@ -1410,7 +1432,7 @@ class ThreadImpl {
       *limit = top->code->end - top->code->start;
       TRACE("  => Return to #%zu (#%u @%zu)\n", frames_.size() - 1,
             (*code)->function->func_index, *pc);
-      DoStackTransfer(sp_dest, arity);
+      DoStackTransfer(dest, arity);
       return true;
     }
   }
@@ -1430,16 +1452,19 @@ class ThreadImpl {
 
   // Copies {arity} values on the top of the stack down the stack to {dest},
   // dropping the values in-between.
-  void DoStackTransfer(WasmVal* dest, size_t arity) {
+  void DoStackTransfer(sp_t dest, size_t arity) {
     // before: |---------------| pop_count | arity |
-    //         ^ 0             ^ dest              ^ sp_
+    //         ^ 0             ^ dest              ^ stack_.size()
     //
     // after:  |---------------| arity |
-    //         ^ 0                     ^ sp_
-    DCHECK_LE(dest, sp_);
-    DCHECK_LE(dest + arity, sp_);
-    if (arity) memcpy(dest, sp_ - arity, arity * sizeof(*sp_));
-    sp_ = dest + arity;
+    //         ^ 0                     ^ stack_.size()
+    DCHECK_LE(dest, stack_.size());
+    DCHECK_LE(dest + arity, stack_.size());
+    size_t pop_count = stack_.size() - dest - arity;
+    for (size_t i = 0; i < arity; i++) {
+      stack_[dest + i] = stack_[dest + pop_count + i];
+    }
+    stack_.resize(stack_.size() - pop_count);
   }
 
   template <typename mtype>
@@ -1459,7 +1484,7 @@ class ThreadImpl {
     byte* addr = instance()->mem_start + operand.offset + index;
     WasmVal result(static_cast<ctype>(ReadLittleEndianValue<mtype>(addr)));
 
-    Push(result);
+    Push(pc, result);
     len = 1 + operand.length;
     return true;
   }
@@ -1512,15 +1537,6 @@ class ThreadImpl {
   }
 
   void Execute(InterpreterCode* code, pc_t pc, int max) {
-    DCHECK_NOT_NULL(code->side_table);
-    DCHECK(!frames_.empty());
-    // There must be enough space on the stack to hold the arguments, locals,
-    // and the value stack.
-    DCHECK_LE(code->function->sig->parameter_count() +
-                  code->locals.type_list.size() +
-                  code->side_table->max_stack_height_,
-              stack_limit_ - stack_start_ - frames_.back().sp);
-
     Decoder decoder(code->start, code->end);
     pc_t limit = code->end - code->start;
     bool hit_break = false;
@@ -1571,8 +1587,9 @@ class ThreadImpl {
       std::pair<uint32_t, uint32_t> stack_effect = wasm::StackEffect(
           codemap_->module(), frames_.back().code->function->sig,
           code->orig_start + pc, code->orig_end);
-      sp_t expected_new_stack_height =
-          StackHeight() - stack_effect.first + stack_effect.second;
+      uint32_t expected_new_stack_height =
+          static_cast<uint32_t>(stack_.size()) - stack_effect.first +
+          stack_effect.second;
 #endif
 
       switch (orig) {
@@ -1611,7 +1628,7 @@ class ThreadImpl {
           WasmVal cond = Pop();
           WasmVal fval = Pop();
           WasmVal tval = Pop();
-          Push(cond.to<int32_t>() != 0 ? tval : fval);
+          Push(pc, cond.to<int32_t>() != 0 ? tval : fval);
           break;
         }
         case kExprBr: {
@@ -1661,46 +1678,46 @@ class ThreadImpl {
         }
         case kExprI32Const: {
           ImmI32Operand<false> operand(&decoder, code->at(pc));
-          Push(WasmVal(operand.value));
+          Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprI64Const: {
           ImmI64Operand<false> operand(&decoder, code->at(pc));
-          Push(WasmVal(operand.value));
+          Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprF32Const: {
           ImmF32Operand<false> operand(&decoder, code->at(pc));
-          Push(WasmVal(operand.value));
+          Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprF64Const: {
           ImmF64Operand<false> operand(&decoder, code->at(pc));
-          Push(WasmVal(operand.value));
+          Push(pc, WasmVal(operand.value));
           len = 1 + operand.length;
           break;
         }
         case kExprGetLocal: {
           LocalIndexOperand<false> operand(&decoder, code->at(pc));
-          Push(GetStackValue(frames_.back().sp + operand.index));
+          Push(pc, stack_[frames_.back().sp + operand.index]);
           len = 1 + operand.length;
           break;
         }
         case kExprSetLocal: {
           LocalIndexOperand<false> operand(&decoder, code->at(pc));
           WasmVal val = Pop();
-          SetStackValue(frames_.back().sp + operand.index, val);
+          stack_[frames_.back().sp + operand.index] = val;
           len = 1 + operand.length;
           break;
         }
         case kExprTeeLocal: {
           LocalIndexOperand<false> operand(&decoder, code->at(pc));
           WasmVal val = Pop();
-          SetStackValue(frames_.back().sp + operand.index, val);
-          Push(val);
+          stack_[frames_.back().sp + operand.index] = val;
+          Push(pc, val);
           len = 1 + operand.length;
           break;
         }
@@ -1782,7 +1799,7 @@ class ThreadImpl {
             default:
               UNREACHABLE();
           }
-          Push(val);
+          Push(pc, val);
           len = 1 + operand.length;
           break;
         }
@@ -1855,7 +1872,7 @@ class ThreadImpl {
       /* TODO(titzer): alignment for asmjs load mem? */             \
       result = static_cast<ctype>(*reinterpret_cast<mtype*>(addr)); \
     }                                                               \
-    Push(WasmVal(result));                                          \
+    Push(pc, WasmVal(result));                                      \
     break;                                                          \
   }
           ASMJS_LOAD_CASE(I32AsmjsLoadMem8S, int32_t, int8_t, 0);
@@ -1878,7 +1895,7 @@ class ThreadImpl {
       /* TODO(titzer): alignment for asmjs store mem? */                       \
       *(reinterpret_cast<mtype*>(addr)) = static_cast<mtype>(val.to<ctype>()); \
     }                                                                          \
-    Push(val);                                                                 \
+    Push(pc, val);                                                             \
     break;                                                                     \
   }
 
@@ -1891,15 +1908,15 @@ class ThreadImpl {
         case kExprGrowMemory: {
           MemoryIndexOperand<false> operand(&decoder, code->at(pc));
           uint32_t delta_pages = Pop().to<uint32_t>();
-          Push(WasmVal(ExecuteGrowMemory(
-              delta_pages, codemap_->maybe_instance(), instance())));
+          Push(pc, WasmVal(ExecuteGrowMemory(
+                       delta_pages, codemap_->maybe_instance(), instance())));
           len = 1 + operand.length;
           break;
         }
         case kExprMemorySize: {
           MemoryIndexOperand<false> operand(&decoder, code->at(pc));
-          Push(WasmVal(static_cast<uint32_t>(instance()->mem_size /
-                                             WasmModule::kPageSize)));
+          Push(pc, WasmVal(static_cast<uint32_t>(instance()->mem_size /
+                                                 WasmModule::kPageSize)));
           len = 1 + operand.length;
           break;
         }
@@ -1908,13 +1925,15 @@ class ThreadImpl {
         // ia32 by the reinterpret casts.
         case kExprI32ReinterpretF32: {
           WasmVal val = Pop();
-          Push(WasmVal(ExecuteI32ReinterpretF32(val)));
+          WasmVal result(ExecuteI32ReinterpretF32(val));
+          Push(pc, result);
           possible_nondeterminism_ |= std::isnan(val.to<float>());
           break;
         }
         case kExprI64ReinterpretF64: {
           WasmVal val = Pop();
-          Push(WasmVal(ExecuteI64ReinterpretF64(val)));
+          WasmVal result(ExecuteI64ReinterpretF64(val));
+          Push(pc, result);
           possible_nondeterminism_ |= std::isnan(val.to<double>());
           break;
         }
@@ -1923,7 +1942,7 @@ class ThreadImpl {
     WasmVal rval = Pop();                                 \
     WasmVal lval = Pop();                                 \
     WasmVal result(lval.to<ctype>() op rval.to<ctype>()); \
-    Push(result);                                         \
+    Push(pc, result);                                     \
     break;                                                \
   }
           FOREACH_SIMPLE_BINOP(EXECUTE_SIMPLE_BINOP)
@@ -1936,7 +1955,7 @@ class ThreadImpl {
     volatile ctype lval = Pop().to<ctype>();          \
     WasmVal result(Execute##name(lval, rval, &trap)); \
     if (trap != kTrapCount) return DoTrap(trap, pc);  \
-    Push(result);                                     \
+    Push(pc, result);                                 \
     break;                                            \
   }
           FOREACH_OTHER_BINOP(EXECUTE_OTHER_BINOP)
@@ -1949,7 +1968,7 @@ class ThreadImpl {
           volatile float rval = Pop().to<float>();
           volatile float lval = Pop().to<float>();
           WasmVal result(ExecuteF32CopySign(lval, rval, &trap));
-          Push(result);
+          Push(pc, result);
           possible_nondeterminism_ |= std::isnan(rval);
           break;
         }
@@ -1960,7 +1979,7 @@ class ThreadImpl {
           volatile double rval = Pop().to<double>();
           volatile double lval = Pop().to<double>();
           WasmVal result(ExecuteF64CopySign(lval, rval, &trap));
-          Push(result);
+          Push(pc, result);
           possible_nondeterminism_ |= std::isnan(rval);
           break;
         }
@@ -1970,7 +1989,7 @@ class ThreadImpl {
     volatile ctype val = Pop().to<ctype>();          \
     WasmVal result(Execute##name(val, &trap));       \
     if (trap != kTrapCount) return DoTrap(trap, pc); \
-    Push(result);                                    \
+    Push(pc, result);                                \
     break;                                           \
   }
           FOREACH_OTHER_UNOP(EXECUTE_OTHER_UNOP)
@@ -1984,7 +2003,7 @@ class ThreadImpl {
 
 #ifdef DEBUG
       if (!WasmOpcodes::IsControlOpcode(static_cast<WasmOpcode>(opcode))) {
-        DCHECK_EQ(expected_new_stack_height, StackHeight());
+        DCHECK_EQ(expected_new_stack_height, stack_.size());
       }
 #endif
 
@@ -2005,17 +2024,20 @@ class ThreadImpl {
   }
 
   WasmVal Pop() {
+    DCHECK_GT(stack_.size(), 0);
     DCHECK_GT(frames_.size(), 0);
-    DCHECK_GT(StackHeight(), frames_.back().llimit());  // can't pop into locals
-    return *--sp_;
+    DCHECK_GT(stack_.size(), frames_.back().llimit());  // can't pop into locals
+    WasmVal val = stack_.back();
+    stack_.pop_back();
+    return val;
   }
 
   void PopN(int n) {
-    DCHECK_GE(StackHeight(), n);
+    DCHECK_GE(stack_.size(), n);
     DCHECK_GT(frames_.size(), 0);
-    // Check that we don't pop into locals.
-    DCHECK_GE(StackHeight() - n, frames_.back().llimit());
-    sp_ -= n;
+    size_t nsize = stack_.size() - n;
+    DCHECK_GE(nsize, frames_.back().llimit());  // can't pop into locals
+    stack_.resize(nsize);
   }
 
   WasmVal PopArity(size_t arity) {
@@ -2024,35 +2046,11 @@ class ThreadImpl {
     return Pop();
   }
 
-  void Push(WasmVal val) {
+  void Push(pc_t pc, WasmVal val) {
+    // TODO(titzer): store PC as well?
     DCHECK_NE(kWasmStmt, val.type);
-    DCHECK_LE(1, stack_limit_ - sp_);
-    *sp_++ = val;
+    stack_.push_back(val);
   }
-
-  void Push(WasmVal* vals, size_t arity) {
-    DCHECK_LE(arity, stack_limit_ - sp_);
-    for (WasmVal *val = vals, *end = vals + arity; val != end; ++val) {
-      DCHECK_NE(kWasmStmt, val->type);
-    }
-    memcpy(sp_, vals, arity * sizeof(*sp_));
-    sp_ += arity;
-  }
-
-  void EnsureStackSpace(size_t size) {
-    if (V8_LIKELY(static_cast<size_t>(stack_limit_ - sp_) >= size)) return;
-    size_t old_size = stack_limit_ - stack_start_;
-    size_t requested_size =
-        base::bits::RoundUpToPowerOfTwo64((sp_ - stack_start_) + size);
-    size_t new_size = Max(size_t{8}, Max(2 * old_size, requested_size));
-    WasmVal* new_stack = zone_->NewArray<WasmVal>(new_size);
-    memcpy(new_stack, stack_start_, old_size * sizeof(*sp_));
-    sp_ = new_stack + (sp_ - stack_start_);
-    stack_start_ = new_stack;
-    stack_limit_ = new_stack + new_size;
-  }
-
-  sp_t StackHeight() { return sp_ - stack_start_; }
 
   void TraceStack(const char* phase, pc_t pc) {
     if (FLAG_trace_wasm_interpreter) {
@@ -2064,38 +2062,39 @@ class ThreadImpl {
 
   void TraceValueStack() {
 #ifdef DEBUG
-    if (!FLAG_trace_wasm_interpreter) return;
     Frame* top = frames_.size() > 0 ? &frames_.back() : nullptr;
     sp_t sp = top ? top->sp : 0;
     sp_t plimit = top ? top->plimit() : 0;
     sp_t llimit = top ? top->llimit() : 0;
-    for (size_t i = sp; i < StackHeight(); ++i) {
-      if (i < plimit)
-        PrintF(" p%zu:", i);
-      else if (i < llimit)
-        PrintF(" l%zu:", i);
-      else
-        PrintF(" s%zu:", i);
-      WasmVal val = GetStackValue(i);
-      switch (val.type) {
-        case kWasmI32:
-          PrintF("i32:%d", val.to<int32_t>());
-          break;
-        case kWasmI64:
-          PrintF("i64:%" PRId64 "", val.to<int64_t>());
-          break;
-        case kWasmF32:
-          PrintF("f32:%f", val.to<float>());
-          break;
-        case kWasmF64:
-          PrintF("f64:%lf", val.to<double>());
-          break;
-        case kWasmStmt:
-          PrintF("void");
-          break;
-        default:
-          UNREACHABLE();
-          break;
+    if (FLAG_trace_wasm_interpreter) {
+      for (size_t i = sp; i < stack_.size(); ++i) {
+        if (i < plimit)
+          PrintF(" p%zu:", i);
+        else if (i < llimit)
+          PrintF(" l%zu:", i);
+        else
+          PrintF(" s%zu:", i);
+        WasmVal val = stack_[i];
+        switch (val.type) {
+          case kWasmI32:
+            PrintF("i32:%d", val.to<int32_t>());
+            break;
+          case kWasmI64:
+            PrintF("i64:%" PRId64 "", val.to<int64_t>());
+            break;
+          case kWasmF32:
+            PrintF("f32:%f", val.to<float>());
+            break;
+          case kWasmF64:
+            PrintF("f64:%lf", val.to<double>());
+            break;
+          case kWasmStmt:
+            PrintF("void");
+            break;
+          default:
+            UNREACHABLE();
+            break;
+        }
       }
     }
 #endif  // DEBUG
@@ -2148,7 +2147,7 @@ class ThreadImpl {
     // Get all arguments as JS values.
     std::vector<Handle<Object>> args;
     args.reserve(num_args);
-    WasmVal* wasm_args = sp_ - num_args;
+    WasmVal* wasm_args = stack_.data() + (stack_.size() - num_args);
     for (int i = 0; i < num_args; ++i) {
       args.push_back(WasmValToNumber(isolate->factory(), wasm_args[i],
                                      signature->GetParam(i)));
@@ -2168,11 +2167,12 @@ class ThreadImpl {
 
     Handle<Object> retval = maybe_retval.ToHandleChecked();
     // Pop arguments off the stack.
-    sp_ -= num_args;
+    stack_.resize(stack_.size() - num_args);
     if (signature->return_count() > 0) {
       // TODO(wasm): Handle multiple returns.
       DCHECK_EQ(1, signature->return_count());
-      Push(ToWebAssemblyValue(isolate, retval, signature->GetReturn()));
+      stack_.push_back(
+          ToWebAssemblyValue(isolate, retval, signature->GetReturn()));
     }
     return {ExternalCallResult::EXTERNAL_RETURNED};
   }
@@ -2192,8 +2192,7 @@ class ThreadImpl {
   ExternalCallResult CallIndirectFunction(uint32_t table_index,
                                           uint32_t entry_index,
                                           uint32_t sig_index) {
-    if (!codemap()->has_instance() ||
-        !codemap()->instance()->compiled_module()->has_function_tables()) {
+    if (!codemap()->has_instance()) {
       // No instance. Rely on the information stored in the WasmModule.
       // TODO(wasm): This is only needed for testing. Refactor testing to use
       // the same paths as production.
@@ -2301,7 +2300,7 @@ class InterpretedFrameImpl {
     bool is_top_frame =
         static_cast<size_t>(index_) + 1 == thread_->frames_.size();
     size_t stack_limit =
-        is_top_frame ? thread_->StackHeight() : thread_->frames_[index_ + 1].sp;
+        is_top_frame ? thread_->stack_.size() : thread_->frames_[index_ + 1].sp;
     DCHECK_LE(frame()->sp, stack_limit);
     size_t frame_size = stack_limit - frame()->sp;
     DCHECK_LE(GetLocalCount(), frame_size);
@@ -2517,11 +2516,6 @@ void WasmInterpreter::WriteMemory(size_t offset, WasmVal val) {
   UNIMPLEMENTED();
 }
 
-void WasmInterpreter::UpdateMemory(byte* mem_start, uint32_t mem_size) {
-  internals_->instance_->mem_start = mem_start;
-  internals_->instance_->mem_size = mem_size;
-}
-
 void WasmInterpreter::AddFunctionForTesting(const WasmFunction* function) {
   internals_->codemap_.AddFunction(function, nullptr, nullptr);
 }
@@ -2542,8 +2536,8 @@ ControlTransferMap WasmInterpreter::ComputeControlTransfersForTesting(
       &function, BodyLocalDecls(zone), start, end, nullptr, nullptr, nullptr};
 
   // Now compute and return the control transfers.
-  SideTable side_table(zone, module, &code);
-  return side_table.map_;
+  ControlTransfers targets(zone, module, &code);
+  return targets.map_;
 }
 
 //============================================================================

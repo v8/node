@@ -13,18 +13,18 @@ namespace internal {
 class CompilationInfo;
 class JSArrayBuffer;
 
-// Interface to compile and instantiate for asm.js modules.
+// Interface to compile and instantiate for asmjs.
 class AsmJs {
  public:
   static MaybeHandle<FixedArray> CompileAsmViaWasm(CompilationInfo* info);
+  static bool IsStdlibValid(Isolate* isolate, Handle<FixedArray> wasm_data,
+                            Handle<JSReceiver> stdlib);
   static MaybeHandle<Object> InstantiateAsmWasm(Isolate* isolate,
                                                 Handle<FixedArray> wasm_data,
-                                                Handle<JSReceiver> stdlib,
-                                                Handle<JSReceiver> foreign,
-                                                Handle<JSArrayBuffer> memory);
+                                                Handle<JSArrayBuffer> memory,
+                                                Handle<JSReceiver> foreign);
 };
 
 }  // namespace internal
 }  // namespace v8
-
-#endif  // V8_ASMJS_ASM_JS_H_
+#endif
