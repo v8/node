@@ -396,14 +396,14 @@ Handle<JSFunction> SimpleCreateFunction(Isolate* isolate, Handle<String> name,
 
 Handle<JSFunction> InstallArrayBuiltinFunction(Handle<JSObject> base,
                                                const char* name,
-                                               Builtins::Name call,
-                                               int argument_count) {
+                                               Builtins::Name call) {
   Isolate* isolate = base->GetIsolate();
   Handle<String> str_name = isolate->factory()->InternalizeUtf8String(name);
   Handle<JSFunction> fun =
       CreateFunction(isolate, str_name, JS_OBJECT_TYPE, JSObject::kHeaderSize,
                      MaybeHandle<JSObject>(), call, true);
-  fun->shared()->set_internal_formal_parameter_count(argument_count);
+  fun->shared()->set_internal_formal_parameter_count(
+      Builtins::GetBuiltinParameterCount(call));
 
   // Set the length to 1 to satisfy ECMA-262.
   fun->shared()->set_length(1);
@@ -569,6 +569,20 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
 
     native_context()->set_initial_object_prototype(*object_function_prototype);
     JSFunction::SetPrototype(object_fun, object_function_prototype);
+
+    {
+      // Set up slow map for Object.create(null) instances without in-object
+      // properties.
+      Handle<Map> map(object_fun->initial_map(), isolate);
+      map = Map::CopyInitialMapNormalized(map);
+      Map::SetPrototype(map, isolate->factory()->null_value());
+      native_context()->set_slow_object_with_null_prototype_map(*map);
+
+      // Set up slow map for literals with too many properties.
+      map = Map::Copy(map, "slow_object_with_object_prototype_map");
+      Map::SetPrototype(map, object_function_prototype);
+      native_context()->set_slow_object_with_object_prototype_map(*map);
+    }
   }
 
   // Allocate the empty function as the prototype for function - ES6 19.2.3
@@ -1580,6 +1594,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     number_fun->shared()->SetConstructStub(
         *isolate->builtins()->NumberConstructor_ConstructStub());
     number_fun->shared()->set_length(1);
+    // https://tc39.github.io/ecma262/#sec-built-in-function-objects says
+    // that "Built-in functions that are ECMAScript function objects must
+    // be strict functions".
+    number_fun->shared()->set_language_mode(STRICT);
     InstallWithIntrinsicDefaultProto(isolate, number_fun,
                                      Context::NUMBER_FUNCTION_INDEX);
 
@@ -1725,6 +1743,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         *isolate->builtins()->StringConstructor_ConstructStub());
     string_fun->shared()->DontAdaptArguments();
     string_fun->shared()->set_length(1);
+    // https://tc39.github.io/ecma262/#sec-built-in-function-objects says
+    // that "Built-in functions that are ECMAScript function objects must
+    // be strict functions".
+    string_fun->shared()->set_language_mode(STRICT);
     InstallWithIntrinsicDefaultProto(isolate, string_fun,
                                      Context::STRING_FUNCTION_INDEX);
 
@@ -2627,7 +2649,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         factory->Object_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
     Handle<JSFunction> date_time_format_constructor = InstallFunction(
-        intl, "DateTimeFormat", JS_OBJECT_TYPE, JSIntlDateTimeFormat::kSize,
+        intl, "DateTimeFormat", JS_OBJECT_TYPE, DateFormat::kSize,
         date_time_format_prototype, Builtins::kIllegal);
     JSObject::AddProperty(date_time_format_prototype,
                           factory->constructor_string(),
@@ -2644,7 +2666,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         factory->Object_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
     Handle<JSFunction> number_format_constructor = InstallFunction(
-        intl, "NumberFormat", JS_OBJECT_TYPE, JSIntlNumberFormat::kSize,
+        intl, "NumberFormat", JS_OBJECT_TYPE, NumberFormat::kSize,
         number_format_prototype, Builtins::kIllegal);
     JSObject::AddProperty(number_format_prototype,
                           factory->constructor_string(),
@@ -2661,7 +2683,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         factory->Object_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
     Handle<JSFunction> collator_constructor =
-        InstallFunction(intl, "Collator", JS_OBJECT_TYPE, JSIntlCollator::kSize,
+        InstallFunction(intl, "Collator", JS_OBJECT_TYPE, Collator::kSize,
                         collator_prototype, Builtins::kIllegal);
     JSObject::AddProperty(collator_prototype, factory->constructor_string(),
                           collator_constructor, DONT_ENUM);
@@ -2676,7 +2698,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         factory->Object_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
     Handle<JSFunction> v8_break_iterator_constructor = InstallFunction(
-        intl, "v8BreakIterator", JS_OBJECT_TYPE, JSIntlV8BreakIterator::kSize,
+        intl, "v8BreakIterator", JS_OBJECT_TYPE, V8BreakIterator::kSize,
         v8_break_iterator_prototype, Builtins::kIllegal);
     JSObject::AddProperty(v8_break_iterator_prototype,
                           factory->constructor_string(),
@@ -3855,8 +3877,10 @@ void Genesis::InstallOneBuiltinFunction(Handle<Object> prototype,
   Handle<Object> function = Object::GetProperty(&it).ToHandleChecked();
   Handle<JSFunction>::cast(function)->set_code(
       isolate()->builtins()->builtin(builtin_name));
-  Handle<JSFunction>::cast(function)->shared()->set_code(
-      isolate()->builtins()->builtin(builtin_name));
+  SharedFunctionInfo* info = Handle<JSFunction>::cast(function)->shared();
+  info->set_code(isolate()->builtins()->builtin(builtin_name));
+  info->set_internal_formal_parameter_count(
+      Builtins::GetBuiltinParameterCount(builtin_name));
 }
 
 void Genesis::InitializeGlobal_experimental_fast_array_builtins() {
@@ -4247,20 +4271,13 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
 
   // Store the map for the %ObjectPrototype% after the natives has been compiled
   // and the Object function has been set up.
-  Handle<JSFunction> object_function(native_context()->object_function());
-  DCHECK(JSObject::cast(object_function->initial_map()->prototype())
-             ->HasFastProperties());
-  native_context()->set_object_function_prototype_map(
-      HeapObject::cast(object_function->initial_map()->prototype())->map());
-
-  // Set up the map for Object.create(null) instances.
-  Handle<Map> slow_object_with_null_prototype_map =
-      Map::CopyInitialMap(handle(object_function->initial_map(), isolate()));
-  slow_object_with_null_prototype_map->set_dictionary_map(true);
-  Map::SetPrototype(slow_object_with_null_prototype_map,
-                    isolate()->factory()->null_value());
-  native_context()->set_slow_object_with_null_prototype_map(
-      *slow_object_with_null_prototype_map);
+  {
+    Handle<JSFunction> object_function(native_context()->object_function());
+    DCHECK(JSObject::cast(object_function->initial_map()->prototype())
+               ->HasFastProperties());
+    native_context()->set_object_function_prototype_map(
+        HeapObject::cast(object_function->initial_map()->prototype())->map());
+  }
 
   // Store the map for the %StringPrototype% after the natives has been compiled
   // and the String function has been set up.
@@ -4344,29 +4361,29 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     concat->shared()->set_length(1);
 
     // Install Array.prototype.forEach
-    Handle<JSFunction> forEach = InstallArrayBuiltinFunction(
-        proto, "forEach", Builtins::kArrayForEach, 2);
+    Handle<JSFunction> forEach =
+        InstallArrayBuiltinFunction(proto, "forEach", Builtins::kArrayForEach);
     // Add forEach to the context.
     native_context()->set_array_for_each_iterator(*forEach);
 
     // Install Array.prototype.filter
-    InstallArrayBuiltinFunction(proto, "filter", Builtins::kArrayFilter, 2);
+    InstallArrayBuiltinFunction(proto, "filter", Builtins::kArrayFilter);
 
     // Install Array.prototype.map
-    InstallArrayBuiltinFunction(proto, "map", Builtins::kArrayMap, 2);
+    InstallArrayBuiltinFunction(proto, "map", Builtins::kArrayMap);
 
     // Install Array.prototype.every
-    InstallArrayBuiltinFunction(proto, "every", Builtins::kArrayEvery, 2);
+    InstallArrayBuiltinFunction(proto, "every", Builtins::kArrayEvery);
 
     // Install Array.prototype.some
-    InstallArrayBuiltinFunction(proto, "some", Builtins::kArraySome, 2);
+    InstallArrayBuiltinFunction(proto, "some", Builtins::kArraySome);
 
     // Install Array.prototype.reduce
-    InstallArrayBuiltinFunction(proto, "reduce", Builtins::kArrayReduce, 2);
+    InstallArrayBuiltinFunction(proto, "reduce", Builtins::kArrayReduce);
 
     // Install Array.prototype.reduceRight
     InstallArrayBuiltinFunction(proto, "reduceRight",
-                                Builtins::kArrayReduceRight, 2);
+                                Builtins::kArrayReduceRight);
   }
 
   // Install InternalArray.prototype.concat

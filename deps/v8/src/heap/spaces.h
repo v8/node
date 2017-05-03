@@ -820,6 +820,7 @@ class Page : public MemoryChunk {
   size_t ShrinkToHighWaterMark();
 
   V8_EXPORT_PRIVATE void CreateBlackArea(Address start, Address end);
+  void DestroyBlackArea(Address start, Address end);
 
 #ifdef DEBUG
   void Print();
@@ -1273,8 +1274,7 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
   // Initializes its internal bookkeeping structures.
   // Max capacity of the total space and executable memory limit.
-  bool SetUp(size_t max_capacity, size_t capacity_executable,
-             size_t code_range_size);
+  bool SetUp(size_t max_capacity, size_t code_range_size);
 
   void TearDown();
 
@@ -1303,13 +1303,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   size_t Available() {
     const size_t size = Size();
     return capacity_ < size ? 0 : capacity_ - size;
-  }
-
-  // Returns the maximum available executable bytes of heaps.
-  size_t AvailableExecutable() {
-    const size_t executable_size = SizeExecutable();
-    if (capacity_executable_ < executable_size) return 0;
-    return capacity_executable_ - executable_size;
   }
 
   // Returns maximum available bytes that the old space can have.
@@ -1410,8 +1403,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
   // Maximum space size in bytes.
   size_t capacity_;
-  // Maximum subset of capacity_ that can be executable
-  size_t capacity_executable_;
 
   // Allocated space size in bytes.
   base::AtomicNumber<size_t> size_;
@@ -2086,6 +2077,7 @@ class V8_EXPORT_PRIVATE PagedSpace : NON_EXPORTED_BASE(public Space) {
   void EmptyAllocationInfo();
 
   void MarkAllocationInfoBlack();
+  void UnmarkAllocationInfo();
 
   void AccountAllocatedBytes(size_t bytes) {
     accounting_stats_.AllocateBytes(bytes);

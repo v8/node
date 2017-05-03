@@ -244,6 +244,17 @@
 }],  # 'system == windows'
 
 ##############################################################################
+['system == windows and arch == x64 and mode == debug', {
+  # BUG(v8:6328).
+  'test-serialize/PartialSerializerCustomContext': [SKIP],
+  'test-serialize/PartialSerializerObject': [SKIP],
+  'test-serialize/StartupSerializerOnce': [SKIP],
+  'test-serialize/StartupSerializerOnceRunScript': [SKIP],
+  'test-serialize/StartupSerializerTwiceRunScript': [SKIP],
+  'test-serialize/StartupSerializerTwice': [SKIP],
+}],  # 'system == windows and arch == x64 and mode == debug'
+
+##############################################################################
 ['system == macos', {
   # BUG(v8:5193) Flaky failures.
   'test-cpu-profiler/JsNativeJsSample': [SKIP],
@@ -404,6 +415,13 @@
   # BUG(4751). Flaky with Ignition.
   'test-cpu-profiler/JsNativeJsSample': [SKIP],
 }],  # variant == turbofan
+
+##############################################################################
+['variant == noturbofan and no_snap', {
+  # Too slow for old pipeline and nosnap.
+  'test-lockers/SeparateIsolatesLocksNonexclusive': [SKIP],
+  'test-lockers/ExtensionsRegistration': [SKIP],
+}],  # variant == noturbofan and no_snap
 
 ##############################################################################
 ['variant == wasm_traps', {

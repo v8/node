@@ -220,7 +220,7 @@ TEST(VectorCallICStates) {
   CHECK_EQ(GENERIC, nexus.StateFromFeedback());
 
   // After a collection, state should remain GENERIC.
-  CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
+  CcTest::CollectAllGarbage();
   CHECK_EQ(GENERIC, nexus.StateFromFeedback());
 }
 
@@ -245,7 +245,7 @@ TEST(VectorCallFeedbackForArray) {
   CHECK_EQ(MONOMORPHIC, nexus.StateFromFeedback());
   CHECK(nexus.GetFeedback()->IsAllocationSite());
 
-  CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
+  CcTest::CollectAllGarbage();
   // It should stay monomorphic even after a GC.
   CHECK_EQ(MONOMORPHIC, nexus.StateFromFeedback());
 }
@@ -350,7 +350,7 @@ TEST(VectorLoadICStates) {
   CompileRun("f({ blarg: 3, torino: 10, foo: 2 })");
   CHECK_EQ(POLYMORPHIC, nexus.StateFromFeedback());
   MapHandleList maps;
-  nexus.FindAllMaps(&maps);
+  nexus.ExtractMaps(&maps);
   CHECK_EQ(4, maps.length());
 
   // Finally driven megamorphic.
@@ -359,7 +359,7 @@ TEST(VectorLoadICStates) {
   CHECK(!nexus.FindFirstMap());
 
   // After a collection, state should not be reset to PREMONOMORPHIC.
-  CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
+  CcTest::CollectAllGarbage();
   CHECK_EQ(MEGAMORPHIC, nexus.StateFromFeedback());
 }
 
@@ -429,7 +429,7 @@ TEST(VectorLoadICOnSmi) {
   CHECK_EQ(POLYMORPHIC, nexus.StateFromFeedback());
 
   MapHandleList maps;
-  nexus.FindAllMaps(&maps);
+  nexus.ExtractMaps(&maps);
   CHECK_EQ(2, maps.length());
 
   // One of the maps should be the o map.
@@ -452,7 +452,7 @@ TEST(VectorLoadICOnSmi) {
   CompileRun("f(100)");
   CHECK_EQ(POLYMORPHIC, nexus.StateFromFeedback());
   MapHandleList maps2;
-  nexus.FindAllMaps(&maps2);
+  nexus.ExtractMaps(&maps2);
   CHECK_EQ(2, maps2.length());
 }
 

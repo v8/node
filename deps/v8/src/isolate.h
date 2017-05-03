@@ -672,7 +672,7 @@ class Isolate {
   // exceptions.  If an exception was thrown and not handled by an external
   // handler the exception is scheduled to be rethrown when we return to running
   // JavaScript code.  If an exception is scheduled true is returned.
-  bool OptionalRescheduleException(bool is_bottom_call);
+  V8_EXPORT_PRIVATE bool OptionalRescheduleException(bool is_bottom_call);
 
   // Push and pop a promise and the current try-catch handler.
   void PushPromise(Handle<JSObject> promise);
@@ -1250,6 +1250,9 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex* simulator_i_cache_mutex() { return &simulator_i_cache_mutex_; }
+  base::Mutex* simulator_redirection_mutex() {
+    return &simulator_redirection_mutex_;
+  }
 #endif
 
   void set_allow_atomics_wait(bool set) { allow_atomics_wait_ = set; }
@@ -1570,6 +1573,7 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex simulator_i_cache_mutex_;
+  base::Mutex simulator_redirection_mutex_;
 #endif
 
   bool allow_atomics_wait_;

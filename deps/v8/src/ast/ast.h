@@ -977,11 +977,11 @@ class CaseClause final : public Expression {
   CaseClause(Expression* label, ZoneList<Statement*>* statements, int pos);
   int local_id(int n) const { return base_id() + parent_num_ids() + n; }
 
+  FeedbackSlot feedback_slot_;
   Expression* label_;
   Label body_target_;
   ZoneList<Statement*>* statements_;
   AstType* compare_type_;
-  FeedbackSlot feedback_slot_;
 };
 
 
@@ -1238,9 +1238,9 @@ class Literal final : public Expression {
 // Base class for literals that need space in the type feedback vector.
 class MaterializedLiteral : public Expression {
  public:
+  bool is_initialized() const { return 0 < depth_; }
   int depth() const {
-    // only callable after initialization.
-    DCHECK(depth_ >= 1);
+    DCHECK(is_initialized());
     return depth_;
   }
 
@@ -1270,10 +1270,11 @@ class MaterializedLiteral : public Expression {
   void set_is_simple(bool is_simple) {
     bit_field_ = IsSimpleField::update(bit_field_, is_simple);
   }
+
   friend class CompileTimeValue;
 
   void set_depth(int depth) {
-    DCHECK_LE(1, depth);
+    DCHECK(!is_initialized());
     depth_ = depth;
   }
 
@@ -1359,6 +1360,11 @@ class ObjectLiteralProperty final : public LiteralProperty {
 
   void set_receiver_type(Handle<Map> map) { receiver_type_ = map; }
 
+  bool IsNullPrototype() const {
+    return IsPrototype() && value()->IsNullLiteral();
+  }
+  bool IsPrototype() const { return kind() == PROTOTYPE; }
+
  private:
   friend class AstNodeFactory;
 
@@ -1396,9 +1402,9 @@ class ObjectLiteral final : public MaterializedLiteral {
   bool has_rest_property() const {
     return HasRestPropertyField::decode(bit_field_);
   }
-
-  // Decide if a property should be in the object boilerplate.
-  static bool IsBoilerplateProperty(Property* property);
+  bool has_null_prototype() const {
+    return HasNullPrototypeField::decode(bit_field_);
+  }
 
   // Populate the depth field and flags.
   void InitDepthAndFlags();
@@ -1426,12 +1432,16 @@ class ObjectLiteral final : public MaterializedLiteral {
   // Assemble bitfield of flags for the CreateObjectLiteral helper.
   int ComputeFlags(bool disable_mementos = false) const {
     int flags = fast_elements() ? kFastElements : kNoFlags;
-    if (has_shallow_properties()) {
-      flags |= kShallowProperties;
-    }
-    if (disable_mementos) {
-      flags |= kDisableMementos;
-    }
+    if (has_shallow_properties()) flags |= kShallowProperties;
+    if (disable_mementos) flags |= kDisableMementos;
+    if (has_null_prototype()) flags |= kHasNullPrototype;
+    return flags;
+  }
+
+  int EncodeLiteralType() {
+    int flags = fast_elements() ? kFastElements : kNoFlags;
+    if (has_shallow_properties()) flags |= kShallowProperties;
+    if (has_null_prototype()) flags |= kHasNullPrototype;
     return flags;
   }
 
@@ -1440,7 +1450,7 @@ class ObjectLiteral final : public MaterializedLiteral {
     kFastElements = 1,
     kShallowProperties = 1 << 1,
     kDisableMementos = 1 << 2,
-    kHasRestProperty = 1 << 3,
+    kHasNullPrototype = 1 << 3,
   };
 
   struct Accessors: public ZoneObject {
@@ -1476,11 +1486,24 @@ class ObjectLiteral final : public MaterializedLiteral {
     bit_field_ |= FastElementsField::encode(false) |
                   HasElementsField::encode(false) |
                   MayStoreDoublesField::encode(false) |
-                  HasRestPropertyField::encode(has_rest_property);
+                  HasRestPropertyField::encode(has_rest_property) |
+                  HasNullPrototypeField::encode(false);
   }
 
   static int parent_num_ids() { return MaterializedLiteral::num_ids(); }
   int local_id(int n) const { return base_id() + parent_num_ids() + n; }
+
+  void InitFlagsForPendingNullPrototype(int i);
+
+  void set_fast_elements(bool fast_elements) {
+    bit_field_ = FastElementsField::update(bit_field_, fast_elements);
+  }
+  void set_has_elements(bool has_elements) {
+    bit_field_ = HasElementsField::update(bit_field_, has_elements);
+  }
+  void set_has_null_protoype(bool has_null_prototype) {
+    bit_field_ = HasNullPrototypeField::update(bit_field_, has_null_prototype);
+  }
 
   uint32_t boilerplate_properties_;
   Handle<BoilerplateDescription> constant_properties_;
@@ -1494,6 +1517,8 @@ class ObjectLiteral final : public MaterializedLiteral {
       : public BitField<bool, HasElementsField::kNext, 1> {};
   class HasRestPropertyField
       : public BitField<bool, MayStoreDoublesField::kNext, 1> {};
+  class HasNullPrototypeField
+      : public BitField<bool, HasRestPropertyField::kNext, 1> {};
 };
 
 
@@ -1582,9 +1607,7 @@ class ArrayLiteral final : public MaterializedLiteral {
   // Assemble bitfield of flags for the CreateArrayLiteral helper.
   int ComputeFlags(bool disable_mementos = false) const {
     int flags = depth() == 1 ? kShallowElements : kNoFlags;
-    if (disable_mementos) {
-      flags |= kDisableMementos;
-    }
+    if (disable_mementos) flags |= kDisableMementos;
     return flags;
   }
 
@@ -2160,10 +2183,10 @@ class BinaryOperation final : public Expression {
 
   BinaryOperation(Token::Value op, Expression* left, Expression* right, int pos)
       : Expression(pos, kBinaryOperation),
-        has_fixed_right_arg_(false),
-        fixed_right_arg_value_(0),
         left_(left),
-        right_(right) {
+        right_(right),
+        has_fixed_right_arg_(false),
+        fixed_right_arg_value_(0) {
     bit_field_ |= OperatorField::encode(op);
     DCHECK(Token::IsBinaryOp(op));
   }
@@ -2171,14 +2194,14 @@ class BinaryOperation final : public Expression {
   static int parent_num_ids() { return Expression::num_ids(); }
   int local_id(int n) const { return base_id() + parent_num_ids() + n; }
 
+  FeedbackSlot feedback_slot_;
+  Expression* left_;
+  Expression* right_;
+  Handle<AllocationSite> allocation_site_;
   // TODO(rossberg): the fixed arg should probably be represented as a Constant
   // type for the RHS. Currenty it's actually a Maybe<int>
   bool has_fixed_right_arg_;
   int fixed_right_arg_value_;
-  Expression* left_;
-  Expression* right_;
-  Handle<AllocationSite> allocation_site_;
-  FeedbackSlot feedback_slot_;
 
   class OperatorField
       : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
@@ -2306,11 +2329,11 @@ class CompareOperation final : public Expression {
   static int parent_num_ids() { return Expression::num_ids(); }
   int local_id(int n) const { return base_id() + parent_num_ids() + n; }
 
+  FeedbackSlot feedback_slot_;
   Expression* left_;
   Expression* right_;
-
   AstType* combined_type_;
-  FeedbackSlot feedback_slot_;
+
   class OperatorField
       : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
 };
@@ -2742,6 +2765,8 @@ class FunctionLiteral final : public Expression {
     function_literal_id_ = function_literal_id;
   }
 
+  void ReplaceBodyAndScope(FunctionLiteral* other);
+
  private:
   friend class AstNodeFactory;
 
@@ -2909,9 +2934,9 @@ class NativeFunctionLiteral final : public Expression {
         name_(name),
         extension_(extension) {}
 
+  FeedbackSlot literal_feedback_slot_;
   const AstRawString* name_;
   v8::Extension* extension_;
-  FeedbackSlot literal_feedback_slot_;
 };
 
 

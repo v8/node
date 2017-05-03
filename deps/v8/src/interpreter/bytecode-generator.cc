@@ -1756,6 +1756,8 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
         break;
       }
       case ObjectLiteral::Property::PROTOTYPE: {
+        // __proto__:null is handled by CreateObjectLiteral.
+        if (property->IsNullPrototype()) break;
         DCHECK(property->emit_store());
         RegisterList args = register_allocator()->NewRegisterList(2);
         builder()->MoveRegister(literal, args[0]);
@@ -1805,7 +1807,9 @@ void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
     ObjectLiteral::Property* property = expr->properties()->at(property_index);
     RegisterAllocationScope inner_register_scope(this);
 
-    if (property->kind() == ObjectLiteral::Property::PROTOTYPE) {
+    if (property->IsPrototype()) {
+      // __proto__:null is handled by CreateObjectLiteral.
+      if (property->IsNullPrototype()) continue;
       DCHECK(property->emit_store());
       RegisterList args = register_allocator()->NewRegisterList(2);
       builder()->MoveRegister(literal, args[0]);
@@ -2104,8 +2108,6 @@ void BytecodeGenerator::BuildThrowReferenceError(const AstRawString* name) {
 }
 
 void BytecodeGenerator::BuildThrowIfHole(Variable* variable) {
-  // TODO(interpreter): Can the parser reduce the number of checks
-  // performed? Or should there be a ThrowIfHole bytecode.
   BytecodeLabel no_reference_error;
   builder()->JumpIfNotHole(&no_reference_error);
 

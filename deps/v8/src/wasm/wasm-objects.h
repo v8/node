@@ -16,6 +16,8 @@ namespace internal {
 namespace wasm {
 class InterpretedFrame;
 struct WasmModule;
+struct WasmInstance;
+class WasmInterpreter;
 }
 
 class WasmCompiledModule;
@@ -71,17 +73,16 @@ class WasmTableObject : public JSObject {
 
   DECLARE_CASTS(WasmTableObject);
   DECLARE_ACCESSORS(functions, FixedArray);
+  DECLARE_GETTER(dispatch_tables, FixedArray);
 
-  FixedArray* dispatch_tables();
   uint32_t current_length();
   bool has_maximum_length();
   int64_t maximum_length();  // Returns < 0 if no maximum.
+  void grow(Isolate* isolate, uint32_t count);
 
   static Handle<WasmTableObject> New(Isolate* isolate, uint32_t initial,
                                      int64_t maximum,
                                      Handle<FixedArray>* js_functions);
-  static void Grow(Isolate* isolate, Handle<WasmTableObject> table,
-                   uint32_t count);
   static Handle<FixedArray> AddDispatchTable(
       Isolate* isolate, Handle<WasmTableObject> table,
       Handle<WasmInstanceObject> instance, int table_index,
@@ -549,6 +550,13 @@ class WasmDebugInfo : public FixedArray {
 
   static Handle<WasmDebugInfo> New(Handle<WasmInstanceObject>);
 
+  // Setup a WasmDebugInfo with an existing WasmInstance struct.
+  // Returns a pointer to the interpreter instantiated inside this
+  // WasmDebugInfo.
+  // Use for testing only.
+  static wasm::WasmInterpreter* SetupForTesting(Handle<WasmInstanceObject>,
+                                                wasm::WasmInstance*);
+
   static bool IsDebugInfo(Object*);
   static WasmDebugInfo* cast(Object*);
 
@@ -660,8 +668,11 @@ class WasmInstanceWrapper : public FixedArray {
   };
 };
 
+#undef DECLARE_CASTS
+#undef DECLARE_GETTER
 #undef DECLARE_ACCESSORS
 #undef DECLARE_OPTIONAL_ACCESSORS
+#undef DECLARE_OPTIONAL_GETTER
 
 }  // namespace internal
 }  // namespace v8

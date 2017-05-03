@@ -412,9 +412,9 @@ FieldAccess AccessBuilder::ForFixedTypedArrayBaseExternalPointer() {
 }
 
 // static
-FieldAccess AccessBuilder::ForDescriptorArrayEnumCache() {
+FieldAccess AccessBuilder::ForDescriptorArrayEnumCacheBridge() {
   FieldAccess access = {
-      kTaggedBase,           DescriptorArray::kEnumCacheOffset,
+      kTaggedBase,           DescriptorArray::kEnumCacheBridgeOffset,
       Handle<Name>(),        MaybeHandle<Map>(),
       Type::OtherInternal(), MachineType::TaggedPointer(),
       kPointerWriteBarrier};
@@ -737,9 +737,9 @@ FieldAccess AccessBuilder::ForArgumentsCallee() {
 FieldAccess AccessBuilder::ForFixedArraySlot(
     size_t index, WriteBarrierKind write_barrier_kind) {
   int offset = FixedArray::OffsetOfElementAt(static_cast<int>(index));
-  FieldAccess access = {kTaggedBase,         offset,
-                        Handle<Name>(),      MaybeHandle<Map>(),
-                        Type::NonInternal(), MachineType::AnyTagged(),
+  FieldAccess access = {kTaggedBase,       offset,
+                        Handle<Name>(),    MaybeHandle<Map>(),
+                        Type::Any(),       MachineType::AnyTagged(),
                         write_barrier_kind};
   return access;
 }

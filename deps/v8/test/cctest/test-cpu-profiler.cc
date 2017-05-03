@@ -1033,7 +1033,7 @@ TEST(BoundFunctionCall) {
 
 // This tests checks distribution of the samples through the source lines.
 static void TickLines(bool optimize) {
-  if (!optimize) i::FLAG_crankshaft = false;
+  if (!optimize) i::FLAG_opt = false;
   CcTest::InitializeVM();
   LocalContext env;
   i::FLAG_allow_natives_syntax = true;
@@ -1179,7 +1179,7 @@ TEST(FunctionCallSample) {
 
   // Collect garbage that might have be generated while installing
   // extensions.
-  CcTest::CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask);
+  CcTest::CollectAllGarbage();
 
   CompileRun(call_function_test_source);
   v8::Local<v8::Function> function = GetFunction(env.local(), "start");

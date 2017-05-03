@@ -2970,3 +2970,83 @@ WASM_EXEC_TEST(Int32RemS_dead) {
   CHECK_TRAP(r.Call(-1001, 0));
   CHECK_TRAP(r.Call(kMin, 0));
 }
+
+WASM_EXEC_TEST(BrToLoopWithValue) {
+  WasmRunner<int32_t, int32_t, int32_t> r(execution_mode);
+  // Subtracts <1> times 3 from <0> and returns the result.
+  BUILD(r,
+        // loop i32
+        kExprLoop, kLocalI32,
+        // decrement <0> by 3.
+        WASM_SET_LOCAL(0, WASM_I32_SUB(WASM_GET_LOCAL(0), WASM_I32V_1(3))),
+        // decrement <1> by 1.
+        WASM_SET_LOCAL(1, WASM_I32_SUB(WASM_GET_LOCAL(1), WASM_ONE)),
+        // load return value <0>, br_if will drop if if the branch is taken.
+        WASM_GET_LOCAL(0),
+        // continue loop if <1> is != 0.
+        WASM_BR_IF(0, WASM_GET_LOCAL(1)),
+        // end of loop, value loaded above is the return value.
+        kExprEnd);
+  CHECK_EQ(12, r.Call(27, 5));
+}
+
+WASM_EXEC_TEST(BrToLoopWithoutValue) {
+  // This was broken in the interpreter, see http://crbug.com/715454
+  WasmRunner<int32_t, int32_t> r(execution_mode);
+  BUILD(
+      r, kExprLoop, kLocalI32,                                       // loop i32
+      WASM_SET_LOCAL(0, WASM_I32_SUB(WASM_GET_LOCAL(0), WASM_ONE)),  // dec <0>
+      WASM_BR_IF(0, WASM_GET_LOCAL(0)),  // br_if <0> != 0
+      kExprUnreachable,                  // unreachable
+      kExprEnd);                         // end
+  CHECK_TRAP32(r.Call(2));
+}
+
+WASM_EXEC_TEST(LoopsWithValues) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r, WASM_LOOP_I(WASM_LOOP_I(WASM_ONE), WASM_ONE, kExprI32Add));
+  CHECK_EQ(2, r.Call());
+}
+
+WASM_EXEC_TEST(InvalidStackAfterUnreachable) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r, kExprUnreachable, kExprI32Add);
+  CHECK_TRAP32(r.Call());
+}
+
+WASM_EXEC_TEST(InvalidStackAfterBr) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r, WASM_BRV(0, WASM_I32V_1(27)), kExprI32Add);
+  CHECK_EQ(27, r.Call());
+}
+
+WASM_EXEC_TEST(InvalidStackAfterReturn) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r, WASM_RETURN1(WASM_I32V_1(17)), kExprI32Add);
+  CHECK_EQ(17, r.Call());
+}
+
+WASM_EXEC_TEST(BranchOverUnreachableCode) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r,
+        // Start a block which breaks in the middle (hence unreachable code
+        // afterwards) and continue execution after this block.
+        WASM_BLOCK_I(WASM_BRV(0, WASM_I32V_1(17)), kExprI32Add),
+        // Add one to the 17 returned from the block.
+        WASM_ONE, kExprI32Add);
+  CHECK_EQ(18, r.Call());
+}
+
+WASM_EXEC_TEST(BlockInsideUnreachable) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(r, WASM_RETURN1(WASM_I32V_1(17)), WASM_BLOCK(WASM_BR(0)));
+  CHECK_EQ(17, r.Call());
+}
+
+WASM_EXEC_TEST(IfInsideUnreachable) {
+  WasmRunner<int32_t> r(execution_mode);
+  BUILD(
+      r, WASM_RETURN1(WASM_I32V_1(17)),
+      WASM_IF_ELSE_I(WASM_ONE, WASM_BRV(0, WASM_ONE), WASM_RETURN1(WASM_ONE)));
+  CHECK_EQ(17, r.Call());
+}

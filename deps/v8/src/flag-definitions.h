@@ -203,20 +203,20 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_async_iteration, "harmony async iteration")                 \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
   V(harmony_promise_finally, "harmony Promise.prototype.finally")       \
-  V(harmony_strict_legacy_accessor_builtins,                            \
-    "treat __defineGetter__ and related functions as strict")           \
   V(harmony_restrict_constructor_return,                                \
     "harmony disallow non undefined primitive return value from class " \
     "constructor")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
-#define HARMONY_STAGED(V)                                                \
-  V(harmony_function_tostring, "harmony Function.prototype.toString")    \
-  V(harmony_regexp_dotall, "harmony regexp dotall flag")                 \
-  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")              \
-  V(harmony_regexp_named_captures, "harmony regexp named captures")      \
-  V(harmony_regexp_property, "harmony unicode regexp property classes")  \
-  V(harmony_template_escapes,                                            \
+#define HARMONY_STAGED(V)                                               \
+  V(harmony_function_tostring, "harmony Function.prototype.toString")   \
+  V(harmony_regexp_dotall, "harmony regexp dotall flag")                \
+  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")             \
+  V(harmony_regexp_named_captures, "harmony regexp named captures")     \
+  V(harmony_regexp_property, "harmony unicode regexp property classes") \
+  V(harmony_strict_legacy_accessor_builtins,                            \
+    "treat __defineGetter__ and related functions as strict")           \
+  V(harmony_template_escapes,                                           \
     "harmony invalid escapes in tagged template literals")
 
 // Features that are shipping (turned on by default, but internal flag remains).
@@ -361,10 +361,9 @@ DEFINE_INT(max_inlined_nodes, 200,
            "maximum number of AST nodes considered for a single inlining")
 DEFINE_INT(max_inlined_nodes_cumulative, 400,
            "maximum cumulative number of AST nodes considered for inlining")
+DEFINE_FLOAT(min_inlining_frequency, 0.15, "minimum frequency for inlining")
 DEFINE_BOOL(loop_invariant_code_motion, true, "loop invariant code motion")
 DEFINE_BOOL(fast_math, true, "faster (but maybe less accurate) math functions")
-DEFINE_BOOL(collect_megamorphic_maps_from_stub_cache, false,
-            "crankshaft harvests type feedback from stub cache")
 DEFINE_BOOL(hydrogen_stats, false, "print statistics for hydrogen")
 DEFINE_BOOL(trace_check_elimination, false, "trace check elimination phase")
 DEFINE_BOOL(trace_environment_liveness, false,
@@ -604,6 +603,9 @@ DEFINE_BOOL(asm_wasm_lazy_compilation, false,
 DEFINE_IMPLICATION(validate_asm, asm_wasm_lazy_compilation)
 DEFINE_BOOL(wasm_lazy_compilation, false,
             "enable lazy compilation for all wasm modules")
+// wasm-interpret-all resets {asm-,}wasm-lazy-compilation.
+DEFINE_NEG_IMPLICATION(wasm_interpret_all, asm_wasm_lazy_compilation)
+DEFINE_NEG_IMPLICATION(wasm_interpret_all, wasm_lazy_compilation)
 
 // Profiler flags.
 DEFINE_INT(frame_count, 1, "number of stack frames inspected by the profiler")
@@ -912,7 +914,8 @@ DEFINE_BOOL(use_idle_notification, true,
             "Use idle notification to reduce memory footprint.")
 // ic.cc
 DEFINE_BOOL(use_ic, true, "use inline caching")
-DEFINE_BOOL(trace_ic, false, "trace inline cache state transitions")
+DEFINE_BOOL(trace_ic, false,
+            "trace inline cache state transitions for tools/ic-processor")
 DEFINE_IMPLICATION(trace_ic, log_code)
 DEFINE_INT(ic_stats, 0, "inline cache state transitions statistics")
 DEFINE_VALUE_IMPLICATION(trace_ic, ic_stats, 1)

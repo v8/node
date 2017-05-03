@@ -161,13 +161,6 @@ int Compare(const T& a, const T& b) {
     return 1;
 }
 
-
-template <typename T>
-int PointerValueCompare(const T* a, const T* b) {
-  return Compare<T>(*a, *b);
-}
-
-
 // Compare function to compare the object pointer value of two
 // handlified objects. The handles are passed as pointers to the
 // handles.
@@ -986,7 +979,7 @@ void PRINTF_FORMAT(2, 3) PrintIsolate(void* isolate, const char* format, ...);
 // Safe formatting print. Ensures that str is always null-terminated.
 // Returns the number of chars written, or -1 if output was truncated.
 int PRINTF_FORMAT(2, 3) SNPrintF(Vector<char> str, const char* format, ...);
-int PRINTF_FORMAT(2, 0)
+V8_EXPORT_PRIVATE int PRINTF_FORMAT(2, 0)
     VSNPrintF(Vector<char> str, const char* format, va_list args);
 
 void StrNCpy(Vector<char> dest, const char* src, size_t n);

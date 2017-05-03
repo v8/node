@@ -6,7 +6,7 @@
 #define V8_HEAP_HEAP_H_
 
 #include <cmath>
-#include <map>
+#include <vector>
 
 // Clients of this interface shouldn't depend on lots of heap internals.
 // Do not include anything from src/heap here!
@@ -434,9 +434,8 @@ class PromotionQueue {
   inline void SetNewLimit(Address limit);
   inline bool IsBelowPromotionQueue(Address to_space_top);
 
-  inline void insert(HeapObject* target, int32_t size, bool was_marked_black);
-  inline void remove(HeapObject** target, int32_t* size,
-                     bool* was_marked_black);
+  inline void insert(HeapObject* target, int32_t size);
+  inline void remove(HeapObject** target, int32_t* size);
 
   bool is_empty() {
     return (front_ == rear_) &&
@@ -445,12 +444,10 @@ class PromotionQueue {
 
  private:
   struct Entry {
-    Entry(HeapObject* obj, int32_t size, bool was_marked_black)
-        : obj_(obj), size_(size), was_marked_black_(was_marked_black) {}
+    Entry(HeapObject* obj, int32_t size) : obj_(obj), size_(size) {}
 
     HeapObject* obj_;
-    int32_t size_ : 31;
-    bool was_marked_black_ : 1;
+    int32_t size_;
   };
 
   inline Page* GetHeadPage();
@@ -614,7 +611,7 @@ class Heap {
     Address start;
     Address end;
   };
-  typedef List<Chunk> Reservation;
+  typedef std::vector<Chunk> Reservation;
 
   static const int kInitalOldGenerationLimitFactor = 2;
 
@@ -1016,7 +1013,7 @@ class Heap {
   // Configure heap size in MB before setup. Return false if the heap has been
   // set up already.
   bool ConfigureHeap(size_t max_semi_space_size, size_t max_old_space_size,
-                     size_t max_executable_size, size_t code_range_size);
+                     size_t code_range_size);
   bool ConfigureHeapDefault();
 
   // Prepares the heap, setting up memory areas that are needed in the isolate
@@ -1215,8 +1212,7 @@ class Heap {
   void IterateWeakRoots(RootVisitor* v, VisitMode mode);
 
   // Iterate pointers of promoted objects.
-  void IterateAndScavengePromotedObject(HeapObject* target, int size,
-                                        bool was_marked_black);
+  void IterateAndScavengePromotedObject(HeapObject* target, int size);
 
   // ===========================================================================
   // Store buffer API. =========================================================
@@ -1256,9 +1252,6 @@ class Heap {
       GCCallbackFlags gc_callback_flags = GCCallbackFlags::kNoGCCallbackFlags);
 
   void FinalizeIncrementalMarkingIfComplete(GarbageCollectionReason gc_reason);
-
-  bool TryFinalizeIdleIncrementalMarking(double idle_time_in_ms,
-                                         GarbageCollectionReason gc_reason);
 
   void RegisterReservationsForBlackAllocation(Reservation* reservations);
 
@@ -1370,7 +1363,6 @@ class Heap {
   size_t MaxSemiSpaceSize() { return max_semi_space_size_; }
   size_t InitialSemiSpaceSize() { return initial_semispace_size_; }
   size_t MaxOldGenerationSize() { return max_old_generation_size_; }
-  size_t MaxExecutableSize() { return max_executable_size_; }
 
   // Returns the capacity of the heap in bytes w/o growing. Heap grows when
   // more spaces are needed until it reaches the limit.
@@ -2189,7 +2181,6 @@ class Heap {
   size_t initial_max_old_generation_size_;
   size_t initial_old_generation_size_;
   bool old_generation_size_configured_;
-  size_t max_executable_size_;
   size_t maximum_committed_;
 
   // For keeping track of how much data has survived

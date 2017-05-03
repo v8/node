@@ -1189,7 +1189,7 @@ class Object {
   inline double Number() const;
   INLINE(bool IsNaN() const);
   INLINE(bool IsMinusZero() const);
-  bool ToInt32(int32_t* value);
+  V8_EXPORT_PRIVATE bool ToInt32(int32_t* value);
   inline bool ToUint32(uint32_t* value);
 
   inline Representation OptimalRepresentation();
@@ -1234,12 +1234,19 @@ class Object {
   // ES6 section 7.2.13 Strict Equality Comparison
   bool StrictEquals(Object* that);
 
+  // ES6 section 7.1.13 ToObject
   // Convert to a JSObject if needed.
   // native_context is used when creating wrapper object.
+  //
+  // Passing a non-null method_name allows us to give a more informative
+  // error message for those cases where ToObject is being called on
+  // the receiver of a built-in method.
   MUST_USE_RESULT static inline MaybeHandle<JSReceiver> ToObject(
-      Isolate* isolate, Handle<Object> object);
+      Isolate* isolate, Handle<Object> object,
+      const char* method_name = nullptr);
   MUST_USE_RESULT static MaybeHandle<JSReceiver> ToObject(
-      Isolate* isolate, Handle<Object> object, Handle<Context> context);
+      Isolate* isolate, Handle<Object> object, Handle<Context> native_context,
+      const char* method_name = nullptr);
 
   // ES6 section 9.2.1.2, OrdinaryCallBindThis for sloppy callee.
   MUST_USE_RESULT static MaybeHandle<JSReceiver> ConvertReceiver(
@@ -2827,6 +2834,10 @@ class FixedArray: public FixedArrayBase {
   static const int kMaxSize = 128 * MB * kPointerSize;
   // Maximally allowed length of a FixedArray.
   static const int kMaxLength = (kMaxSize - kHeaderSize) / kPointerSize;
+  // Maximally allowed length for regular (non large object space) object.
+  STATIC_ASSERT(kMaxRegularHeapObjectSize < kMaxSize);
+  static const int kMaxRegularLength =
+      (kMaxRegularHeapObjectSize - kHeaderSize) / kPointerSize;
 
   // Dispatched behavior.
   DECLARE_PRINTER(FixedArray)
@@ -2892,6 +2903,8 @@ class FixedDoubleArray: public FixedArrayBase {
   // Dispatched behavior.
   DECLARE_PRINTER(FixedDoubleArray)
   DECLARE_VERIFIER(FixedDoubleArray)
+
+  class BodyDescriptor;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(FixedDoubleArray);
@@ -3231,6 +3244,8 @@ class ByteArray: public FixedArrayBase {
   // Maximal length of a single ByteArray.
   static const int kMaxLength = kMaxSize - kHeaderSize;
 
+  class BodyDescriptor;
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(ByteArray);
 };
@@ -3465,7 +3480,6 @@ class FixedTypedArrayBase: public FixedArrayBase {
 
   static inline int TypedArraySize(InstanceType type, int length);
   inline int TypedArraySize(InstanceType type);
-  static inline int ElementSize(InstanceType type);
 
   // Use with care: returns raw pointer into heap.
   inline void* DataPtr();
@@ -3473,6 +3487,8 @@ class FixedTypedArrayBase: public FixedArrayBase {
   inline int DataSize();
 
  private:
+  static inline int ElementSize(InstanceType type);
+
   inline int DataSize(InstanceType type);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(FixedTypedArrayBase);
@@ -4828,6 +4844,9 @@ class Map: public HeapObject {
   static Handle<Map> CopyInitialMap(Handle<Map> map, int instance_size,
                                     int in_object_properties,
                                     int unused_property_fields);
+  static Handle<Map> CopyInitialMapNormalized(
+      Handle<Map> map,
+      PropertyNormalizationMode mode = CLEAR_INOBJECT_PROPERTIES);
   static Handle<Map> CopyDropDescriptors(Handle<Map> map);
   static Handle<Map> CopyInsertDescriptor(Handle<Map> map,
                                           Descriptor* descriptor,
@@ -7758,78 +7777,6 @@ class AliasedArgumentsEntry: public Struct {
 enum AllowNullsFlag {ALLOW_NULLS, DISALLOW_NULLS};
 enum RobustnessFlag {ROBUST_STRING_TRAVERSAL, FAST_STRING_TRAVERSAL};
 
-class V8_EXPORT_PRIVATE StringHasher {
- public:
-  explicit inline StringHasher(int length, uint32_t seed);
-
-  template <typename schar>
-  static inline uint32_t HashSequentialString(const schar* chars,
-                                              int length,
-                                              uint32_t seed);
-
-  // Reads all the data, even for long strings and computes the utf16 length.
-  static uint32_t ComputeUtf8Hash(Vector<const char> chars,
-                                  uint32_t seed,
-                                  int* utf16_length_out);
-
-  // Calculated hash value for a string consisting of 1 to
-  // String::kMaxArrayIndexSize digits with no leading zeros (except "0").
-  // value is represented decimal value.
-  static uint32_t MakeArrayIndexHash(uint32_t value, int length);
-
-  // No string is allowed to have a hash of zero.  That value is reserved
-  // for internal properties.  If the hash calculation yields zero then we
-  // use 27 instead.
-  static const int kZeroHash = 27;
-
-  // Reusable parts of the hashing algorithm.
-  INLINE(static uint32_t AddCharacterCore(uint32_t running_hash, uint16_t c));
-  INLINE(static uint32_t GetHashCore(uint32_t running_hash));
-  INLINE(static uint32_t ComputeRunningHash(uint32_t running_hash,
-                                            const uc16* chars, int length));
-  INLINE(static uint32_t ComputeRunningHashOneByte(uint32_t running_hash,
-                                                   const char* chars,
-                                                   int length));
-
- protected:
-  // Returns the value to store in the hash field of a string with
-  // the given length and contents.
-  uint32_t GetHashField();
-  // Returns true if the hash of this string can be computed without
-  // looking at the contents.
-  inline bool has_trivial_hash();
-  // Adds a block of characters to the hash.
-  template<typename Char>
-  inline void AddCharacters(const Char* chars, int len);
-
- private:
-  // Add a character to the hash.
-  inline void AddCharacter(uint16_t c);
-  // Update index. Returns true if string is still an index.
-  inline bool UpdateIndex(uint16_t c);
-
-  int length_;
-  uint32_t raw_running_hash_;
-  uint32_t array_index_;
-  bool is_array_index_;
-  bool is_first_char_;
-  DISALLOW_COPY_AND_ASSIGN(StringHasher);
-};
-
-
-class IteratingStringHasher : public StringHasher {
- public:
-  static inline uint32_t Hash(String* string, uint32_t seed);
-  inline void VisitOneByteString(const uint8_t* chars, int length);
-  inline void VisitTwoByteString(const uint16_t* chars, int length);
-
- private:
-  inline IteratingStringHasher(int len, uint32_t seed);
-  void VisitConsString(ConsString* cons_string);
-  DISALLOW_COPY_AND_ASSIGN(IteratingStringHasher);
-};
-
-
 // The characteristics of a string are stored in its map.  Retrieving these
 // few bits of information is moderately expensive, involving two memory
 // loads where the second is dependent on the first.  To improve efficiency
@@ -8487,6 +8434,8 @@ class SeqOneByteString: public SeqString {
   static const int kMaxSize = 512 * MB - 1;
   STATIC_ASSERT((kMaxSize - kHeaderSize) >= String::kMaxLength);
 
+  class BodyDescriptor;
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqOneByteString);
 };
@@ -8526,6 +8475,8 @@ class SeqTwoByteString: public SeqString {
   static const int kMaxSize = 512 * MB - 1;
   STATIC_ASSERT(static_cast<int>((kMaxSize - kHeaderSize)/sizeof(uint16_t)) >=
                String::kMaxLength);
+
+  class BodyDescriptor;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqTwoByteString);
@@ -9915,6 +9866,11 @@ class TemplateInfo: public Struct {
   static const int kHeaderSize = kPropertyAccessorsOffset + kPointerSize;
 
   static const int kFastTemplateInstantiationsCacheSize = 1 * KB;
+
+  // While we could grow the slow cache until we run out of memory, we put
+  // a limit on it anyway to not crash for embedders that re-create templates
+  // instead of caching them.
+  static const int kSlowTemplateInstantiationsCacheSize = 1 * MB;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(TemplateInfo);

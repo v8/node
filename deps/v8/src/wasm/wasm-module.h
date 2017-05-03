@@ -443,13 +443,10 @@ void DetachWebAssemblyMemoryBuffer(Isolate* isolate,
 void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
                           int index, Handle<JSFunction> js_function);
 
-void GrowDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
-                        uint32_t old_size, uint32_t count);
-
 //============================================================================
 //== Compilation and instantiation ===========================================
 //============================================================================
-V8_EXPORT_PRIVATE bool SyncValidate(Isolate* isolate, ErrorThrower* thrower,
+V8_EXPORT_PRIVATE bool SyncValidate(Isolate* isolate,
                                     const ModuleWireBytes& bytes);
 
 V8_EXPORT_PRIVATE MaybeHandle<WasmModuleObject> SyncCompileTranslatedAsmJs(

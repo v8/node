@@ -270,6 +270,7 @@ HeapEntry* HeapSnapshot::AddEntry(HeapEntry::Type type,
                                   size_t size,
                                   unsigned trace_node_id) {
   HeapEntry entry(this, type, name, id, size, trace_node_id);
+  DCHECK(sorted_entries_.is_empty());
   entries_.Add(entry);
   return &entries_.last();
 }
@@ -291,26 +292,15 @@ void HeapSnapshot::FillChildren() {
   }
 }
 
-
-class FindEntryById {
- public:
-  explicit FindEntryById(SnapshotObjectId id) : id_(id) { }
-  int operator()(HeapEntry* const* entry) {
-    if ((*entry)->id() == id_) return 0;
-    return (*entry)->id() < id_ ? -1 : 1;
-  }
- private:
-  SnapshotObjectId id_;
-};
-
-
 HeapEntry* HeapSnapshot::GetEntryById(SnapshotObjectId id) {
   List<HeapEntry*>* entries_by_id = GetSortedEntriesList();
-  // Perform a binary search by id.
-  int index = SortedListBSearch(*entries_by_id, FindEntryById(id));
-  if (index == -1)
-    return NULL;
-  return entries_by_id->at(index);
+
+  auto it = std::lower_bound(
+      entries_by_id->begin(), entries_by_id->end(), id,
+      [](HeapEntry* first, SnapshotObjectId val) { return first->id() < val; });
+
+  if (it == entries_by_id->end() || (*it)->id() != id) return NULL;
+  return *it;
 }
 
 

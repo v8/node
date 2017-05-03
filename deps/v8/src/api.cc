@@ -874,7 +874,7 @@ void SetResourceConstraints(i::Isolate* isolate,
   if (semi_space_size != 0 || old_space_size != 0 ||
       max_executable_size != 0 || code_range_size != 0) {
     isolate->heap()->ConfigureHeap(semi_space_size, old_space_size,
-                                   max_executable_size, code_range_size);
+                                   code_range_size);
   }
   isolate->allocator()->ConfigureSegmentPool(max_pool_size);
 
@@ -2470,6 +2470,7 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
     source->parser->ReportErrors(isolate, script);
   }
   source->parser->UpdateStatistics(isolate, script);
+  source->info->UpdateStatisticsAfterBackgroundParse(isolate);
 
   i::DeferredHandleScope deferred_handle_scope(isolate);
   {
@@ -2708,6 +2709,10 @@ void v8::TryCatch::ResetInternal() {
 
 void v8::TryCatch::SetVerbose(bool value) {
   is_verbose_ = value;
+}
+
+bool v8::TryCatch::IsVerbose() const {
+  return is_verbose_;
 }
 
 
@@ -3214,11 +3219,6 @@ struct ValueSerializer::PrivateData {
   i::Isolate* isolate;
   i::ValueSerializer serializer;
 };
-
-// static
-uint32_t ValueSerializer::GetCurrentDataFormatVersion() {
-  return i::ValueSerializer::GetCurrentDataFormatVersion();
-}
 
 ValueSerializer::ValueSerializer(Isolate* isolate)
     : ValueSerializer(isolate, nullptr) {}
@@ -6331,11 +6331,11 @@ template <>
 struct InvokeBootstrapper<i::Context> {
   i::Handle<i::Context> Invoke(
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
-      v8::Local<v8::ObjectTemplate> global_object_template,
+      v8::Local<v8::ObjectTemplate> global_proxy_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
       v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     return isolate->bootstrapper()->CreateEnvironment(
-        maybe_global_proxy, global_object_template, extensions,
+        maybe_global_proxy, global_proxy_template, extensions,
         context_snapshot_index, embedder_fields_deserializer);
   }
 };
@@ -6344,13 +6344,13 @@ template <>
 struct InvokeBootstrapper<i::JSGlobalProxy> {
   i::Handle<i::JSGlobalProxy> Invoke(
       i::Isolate* isolate, i::MaybeHandle<i::JSGlobalProxy> maybe_global_proxy,
-      v8::Local<v8::ObjectTemplate> global_object_template,
+      v8::Local<v8::ObjectTemplate> global_proxy_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
       v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
     USE(extensions);
     USE(context_snapshot_index);
     return isolate->bootstrapper()->NewRemoteContext(maybe_global_proxy,
-                                                     global_object_template);
+                                                     global_proxy_template);
   }
 };
 

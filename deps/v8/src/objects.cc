@@ -108,10 +108,10 @@ Handle<FieldType> Object::OptimalType(Isolate* isolate,
   return FieldType::Any(isolate);
 }
 
-
 MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
                                          Handle<Object> object,
-                                         Handle<Context> native_context) {
+                                         Handle<Context> native_context,
+                                         const char* method_name) {
   if (object->IsJSReceiver()) return Handle<JSReceiver>::cast(object);
   Handle<JSFunction> constructor;
   if (object->IsSmi()) {
@@ -120,6 +120,14 @@ MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
     int constructor_function_index =
         Handle<HeapObject>::cast(object)->map()->GetConstructorFunctionIndex();
     if (constructor_function_index == Map::kNoConstructorFunctionIndex) {
+      if (method_name != nullptr) {
+        THROW_NEW_ERROR(
+            isolate,
+            NewTypeError(
+                MessageTemplate::kCalledOnNullOrUndefined,
+                isolate->factory()->NewStringFromAsciiChecked(method_name)),
+            JSReceiver);
+      }
       THROW_NEW_ERROR(isolate,
                       NewTypeError(MessageTemplate::kUndefinedOrNullToObject),
                       JSReceiver);
@@ -8699,9 +8707,8 @@ Handle<Map> Map::TransitionToImmutableProto(Handle<Map> map) {
   return new_map;
 }
 
-Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
-                                int in_object_properties,
-                                int unused_property_fields) {
+namespace {
+void EnsureInitialMap(Handle<Map> map) {
 #ifdef DEBUG
   Isolate* isolate = map->GetIsolate();
   // Strict function maps have Function as a constructor but the
@@ -8719,7 +8726,21 @@ Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
   DCHECK(map->owns_descriptors());
   DCHECK_EQ(map->NumberOfOwnDescriptors(),
             map->instance_descriptors()->number_of_descriptors());
+}
+}  // namespace
 
+// static
+Handle<Map> Map::CopyInitialMapNormalized(Handle<Map> map,
+                                          PropertyNormalizationMode mode) {
+  EnsureInitialMap(map);
+  return CopyNormalized(map, mode);
+}
+
+// static
+Handle<Map> Map::CopyInitialMap(Handle<Map> map, int instance_size,
+                                int in_object_properties,
+                                int unused_property_fields) {
+  EnsureInitialMap(map);
   Handle<Map> result = RawCopy(map, instance_size);
 
   // Please note instance_type and instance_size are set when allocated.
@@ -10154,11 +10175,13 @@ Handle<DescriptorArray> DescriptorArray::Allocate(Isolate* isolate,
       factory->NewFixedArray(LengthFor(size), pretenure);
 
   result->set(kDescriptorLengthIndex, Smi::FromInt(number_of_descriptors));
-  result->set(kEnumCacheIndex, Smi::kZero);
+  result->set(kEnumCacheBridgeIndex, Smi::kZero);
   return Handle<DescriptorArray>::cast(result);
 }
 
-void DescriptorArray::ClearEnumCache() { set(kEnumCacheIndex, Smi::kZero); }
+void DescriptorArray::ClearEnumCache() {
+  set(kEnumCacheBridgeIndex, Smi::kZero);
+}
 
 void DescriptorArray::Replace(int index, Descriptor* descriptor) {
   descriptor->SetSortedKeyIndex(GetSortedKeyIndex(index));
@@ -10178,14 +10201,14 @@ void DescriptorArray::SetEnumCache(Handle<DescriptorArray> descriptors,
     bridge_storage = *isolate->factory()->NewFixedArray(
         DescriptorArray::kEnumCacheBridgeLength);
   } else {
-    bridge_storage = FixedArray::cast(descriptors->get(kEnumCacheIndex));
+    bridge_storage = FixedArray::cast(descriptors->get(kEnumCacheBridgeIndex));
   }
   bridge_storage->set(kEnumCacheBridgeCacheIndex, *new_cache);
   bridge_storage->set(
       kEnumCacheBridgeIndicesCacheIndex,
       new_index_cache.is_null() ? Object::cast(Smi::kZero) : *new_index_cache);
   if (needs_new_enum_cache) {
-    descriptors->set(kEnumCacheIndex, bridge_storage);
+    descriptors->set(kEnumCacheBridgeIndex, bridge_storage);
   }
 }
 
@@ -12713,10 +12736,7 @@ void JSFunction::SetPrototype(Handle<JSFunction> function,
         isolate);
   } else {
     construct_prototype = Handle<JSReceiver>::cast(value);
-    if (function->map()->has_non_instance_prototype()) {
-      function->map()->set_non_instance_prototype(false);
-      function->map()->SetConstructor(isolate->heap()->null_value());
-    }
+    function->map()->set_non_instance_prototype(false);
   }
 
   SetInstancePrototype(isolate, function, construct_prototype);
@@ -16798,9 +16818,11 @@ template class Dictionary<NameDictionary, NameDictionaryShape, Handle<Name> >;
 template class Dictionary<GlobalDictionary, GlobalDictionaryShape,
                           Handle<Name> >;
 
-template class Dictionary<SeededNumberDictionary,
-                          SeededNumberDictionaryShape,
-                          uint32_t>;
+template class EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
+    HashTable<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
+
+template class EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
+    Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>;
 
 template class Dictionary<UnseededNumberDictionary,
                           UnseededNumberDictionaryShape,
@@ -16878,10 +16900,6 @@ template Handle<NameDictionary>
 HashTable<NameDictionary, NameDictionaryShape, Handle<Name> >::
     Shrink(Handle<NameDictionary>, Handle<Name>);
 
-template Handle<SeededNumberDictionary>
-HashTable<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>::
-    Shrink(Handle<SeededNumberDictionary>, uint32_t);
-
 template Handle<UnseededNumberDictionary>
     HashTable<UnseededNumberDictionary, UnseededNumberDictionaryShape,
               uint32_t>::Shrink(Handle<UnseededNumberDictionary>, uint32_t);
@@ -16920,9 +16938,6 @@ template void Dictionary<NameDictionary, NameDictionaryShape,
 template Handle<NameDictionary>
 Dictionary<NameDictionary, NameDictionaryShape, Handle<Name> >::
     EnsureCapacity(Handle<NameDictionary>, int, Handle<Name>);
-
-template int HashTable<SeededNumberDictionary, SeededNumberDictionaryShape,
-                       uint32_t>::FindEntry(uint32_t);
 
 template int NameDictionaryBase<NameDictionary, NameDictionaryShape>::FindEntry(
     Handle<Name>);
@@ -16970,6 +16985,16 @@ Dictionary<NameDictionary, NameDictionaryShape, Handle<Name>>::CollectKeysTo(
     Handle<Dictionary<NameDictionary, NameDictionaryShape, Handle<Name>>>
         dictionary,
     KeyAccumulator* keys);
+
+template int
+Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,
+           uint32_t>::AddEntry(Handle<SeededNumberDictionary> dictionary,
+                               uint32_t key, Handle<Object> value,
+                               PropertyDetails details, uint32_t hash);
+
+template int
+Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape,
+           uint32_t>::NumberOfElementsFilterAttributes(PropertyFilter filter);
 
 Handle<Object> JSObject::PrepareSlowElementsForSort(
     Handle<JSObject> object, uint32_t limit) {

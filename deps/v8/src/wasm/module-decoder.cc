@@ -264,7 +264,10 @@ class ModuleDecoder : public Decoder {
              result.ok() ? "ok" : "failed");
     std::string name(buf);
     if (FILE* wasm_file = base::OS::FOpen((path + name).c_str(), "wb")) {
-      fwrite(start_, end_ - start_, 1, wasm_file);
+      if (fwrite(start_, end_ - start_, 1, wasm_file) != 1) {
+        OFStream os(stderr);
+        os << "Error while dumping wasm file" << std::endl;
+      }
       fclose(wasm_file);
     }
   }
@@ -876,7 +879,7 @@ class ModuleDecoder : public Decoder {
     if (result.failed()) {
       // Wrap the error message from the function decoder.
       std::ostringstream str;
-      str << "in function " << func_name << ": " << result.error_msg;
+      str << "in function " << func_name << ": " << result.error_msg();
 
       // Set error code and location, if this is the first error.
       if (intermediate_result_.ok()) {

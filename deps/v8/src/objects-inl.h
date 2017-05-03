@@ -37,6 +37,7 @@
 #include "src/objects/scope-info.h"
 #include "src/property.h"
 #include "src/prototype.h"
+#include "src/string-hasher-inl.h"
 #include "src/transitions-inl.h"
 #include "src/v8memory.h"
 
@@ -1121,9 +1122,10 @@ bool Object::ToUint32(uint32_t* value) {
 
 // static
 MaybeHandle<JSReceiver> Object::ToObject(Isolate* isolate,
-                                         Handle<Object> object) {
+                                         Handle<Object> object,
+                                         const char* method_name) {
   if (object->IsJSReceiver()) return Handle<JSReceiver>::cast(object);
-  return ToObject(isolate, object, isolate->native_context());
+  return ToObject(isolate, object, isolate->native_context(), method_name);
 }
 
 
@@ -1284,6 +1286,15 @@ bool JSObject::PrototypeHasNoElements(Isolate* isolate, JSObject* object) {
   return true;
 }
 
+#define FIELD_ADDR(p, offset) \
+  (reinterpret_cast<byte*>(p) + offset - kHeapObjectTag)
+
+#define FIELD_ADDR_CONST(p, offset) \
+  (reinterpret_cast<const byte*>(p) + offset - kHeapObjectTag)
+
+#define READ_FIELD(p, offset) \
+  (*reinterpret_cast<Object* const*>(FIELD_ADDR_CONST(p, offset)))
+
 #define ACQUIRE_READ_FIELD(p, offset)           \
   reinterpret_cast<Object*>(base::Acquire_Load( \
       reinterpret_cast<const base::AtomicWord*>(FIELD_ADDR_CONST(p, offset))))
@@ -1291,6 +1302,9 @@ bool JSObject::PrototypeHasNoElements(Isolate* isolate, JSObject* object) {
 #define NOBARRIER_READ_FIELD(p, offset)           \
   reinterpret_cast<Object*>(base::NoBarrier_Load( \
       reinterpret_cast<const base::AtomicWord*>(FIELD_ADDR_CONST(p, offset))))
+
+#define WRITE_FIELD(p, offset, value) \
+  (*reinterpret_cast<Object**>(FIELD_ADDR(p, offset)) = value)
 
 #define RELEASE_WRITE_FIELD(p, offset, value)                     \
   base::Release_Store(                                            \
@@ -2737,25 +2751,25 @@ inline int DescriptorArray::number_of_entries() {
 
 
 bool DescriptorArray::HasEnumCache() {
-  return !IsEmpty() && !get(kEnumCacheIndex)->IsSmi();
+  return !IsEmpty() && !get(kEnumCacheBridgeIndex)->IsSmi();
 }
 
 
 void DescriptorArray::CopyEnumCacheFrom(DescriptorArray* array) {
-  set(kEnumCacheIndex, array->get(kEnumCacheIndex));
+  set(kEnumCacheBridgeIndex, array->get(kEnumCacheBridgeIndex));
 }
 
 
 FixedArray* DescriptorArray::GetEnumCache() {
   DCHECK(HasEnumCache());
-  FixedArray* bridge = FixedArray::cast(get(kEnumCacheIndex));
+  FixedArray* bridge = FixedArray::cast(get(kEnumCacheBridgeIndex));
   return FixedArray::cast(bridge->get(kEnumCacheBridgeCacheIndex));
 }
 
 
 bool DescriptorArray::HasEnumIndicesCache() {
   if (IsEmpty()) return false;
-  Object* object = get(kEnumCacheIndex);
+  Object* object = get(kEnumCacheBridgeIndex);
   if (object->IsSmi()) return false;
   FixedArray* bridge = FixedArray::cast(object);
   return !bridge->get(kEnumCacheBridgeIndicesCacheIndex)->IsSmi();
@@ -2764,16 +2778,10 @@ bool DescriptorArray::HasEnumIndicesCache() {
 
 FixedArray* DescriptorArray::GetEnumIndicesCache() {
   DCHECK(HasEnumIndicesCache());
-  FixedArray* bridge = FixedArray::cast(get(kEnumCacheIndex));
+  FixedArray* bridge = FixedArray::cast(get(kEnumCacheBridgeIndex));
   return FixedArray::cast(bridge->get(kEnumCacheBridgeIndicesCacheIndex));
 }
 
-
-Object** DescriptorArray::GetEnumCacheSlot() {
-  DCHECK(HasEnumCache());
-  return HeapObject::RawField(reinterpret_cast<HeapObject*>(this),
-                              kEnumCacheOffset);
-}
 
 // Perform a binary search in a fixed array.
 template <SearchMode search_mode, typename T>
@@ -7286,152 +7294,6 @@ bool Name::IsPrivate() {
   return this->IsSymbol() && Symbol::cast(this)->is_private();
 }
 
-
-StringHasher::StringHasher(int length, uint32_t seed)
-  : length_(length),
-    raw_running_hash_(seed),
-    array_index_(0),
-    is_array_index_(0 < length_ && length_ <= String::kMaxArrayIndexSize),
-    is_first_char_(true) {
-  DCHECK(FLAG_randomize_hashes || raw_running_hash_ == 0);
-}
-
-
-bool StringHasher::has_trivial_hash() {
-  return length_ > String::kMaxHashCalcLength;
-}
-
-
-uint32_t StringHasher::AddCharacterCore(uint32_t running_hash, uint16_t c) {
-  running_hash += c;
-  running_hash += (running_hash << 10);
-  running_hash ^= (running_hash >> 6);
-  return running_hash;
-}
-
-
-uint32_t StringHasher::GetHashCore(uint32_t running_hash) {
-  running_hash += (running_hash << 3);
-  running_hash ^= (running_hash >> 11);
-  running_hash += (running_hash << 15);
-  if ((running_hash & String::kHashBitMask) == 0) {
-    return kZeroHash;
-  }
-  return running_hash;
-}
-
-
-uint32_t StringHasher::ComputeRunningHash(uint32_t running_hash,
-                                          const uc16* chars, int length) {
-  DCHECK_NOT_NULL(chars);
-  DCHECK(length >= 0);
-  for (int i = 0; i < length; ++i) {
-    running_hash = AddCharacterCore(running_hash, *chars++);
-  }
-  return running_hash;
-}
-
-
-uint32_t StringHasher::ComputeRunningHashOneByte(uint32_t running_hash,
-                                                 const char* chars,
-                                                 int length) {
-  DCHECK_NOT_NULL(chars);
-  DCHECK(length >= 0);
-  for (int i = 0; i < length; ++i) {
-    uint16_t c = static_cast<uint16_t>(*chars++);
-    running_hash = AddCharacterCore(running_hash, c);
-  }
-  return running_hash;
-}
-
-
-void StringHasher::AddCharacter(uint16_t c) {
-  // Use the Jenkins one-at-a-time hash function to update the hash
-  // for the given character.
-  raw_running_hash_ = AddCharacterCore(raw_running_hash_, c);
-}
-
-
-bool StringHasher::UpdateIndex(uint16_t c) {
-  DCHECK(is_array_index_);
-  if (c < '0' || c > '9') {
-    is_array_index_ = false;
-    return false;
-  }
-  int d = c - '0';
-  if (is_first_char_) {
-    is_first_char_ = false;
-    if (c == '0' && length_ > 1) {
-      is_array_index_ = false;
-      return false;
-    }
-  }
-  if (array_index_ > 429496729U - ((d + 3) >> 3)) {
-    is_array_index_ = false;
-    return false;
-  }
-  array_index_ = array_index_ * 10 + d;
-  return true;
-}
-
-
-template<typename Char>
-inline void StringHasher::AddCharacters(const Char* chars, int length) {
-  DCHECK(sizeof(Char) == 1 || sizeof(Char) == 2);
-  int i = 0;
-  if (is_array_index_) {
-    for (; i < length; i++) {
-      AddCharacter(chars[i]);
-      if (!UpdateIndex(chars[i])) {
-        i++;
-        break;
-      }
-    }
-  }
-  for (; i < length; i++) {
-    DCHECK(!is_array_index_);
-    AddCharacter(chars[i]);
-  }
-}
-
-
-template <typename schar>
-uint32_t StringHasher::HashSequentialString(const schar* chars,
-                                            int length,
-                                            uint32_t seed) {
-  StringHasher hasher(length, seed);
-  if (!hasher.has_trivial_hash()) hasher.AddCharacters(chars, length);
-  return hasher.GetHashField();
-}
-
-
-IteratingStringHasher::IteratingStringHasher(int len, uint32_t seed)
-    : StringHasher(len, seed) {}
-
-
-uint32_t IteratingStringHasher::Hash(String* string, uint32_t seed) {
-  IteratingStringHasher hasher(string->length(), seed);
-  // Nothing to do.
-  if (hasher.has_trivial_hash()) return hasher.GetHashField();
-  ConsString* cons_string = String::VisitFlat(&hasher, string);
-  if (cons_string == nullptr) return hasher.GetHashField();
-  hasher.VisitConsString(cons_string);
-  return hasher.GetHashField();
-}
-
-
-void IteratingStringHasher::VisitOneByteString(const uint8_t* chars,
-                                               int length) {
-  AddCharacters(chars, length);
-}
-
-
-void IteratingStringHasher::VisitTwoByteString(const uint16_t* chars,
-                                               int length) {
-  AddCharacters(chars, length);
-}
-
-
 bool Name::AsArrayIndex(uint32_t* index) {
   return IsString() && String::cast(this)->AsArrayIndex(index);
 }
@@ -8341,7 +8203,11 @@ SMI_ACCESSORS(JSStringIterator, index, kNextIndexOffset)
 #undef NOBARRIER_SMI_ACCESSORS
 #undef BOOL_GETTER
 #undef BOOL_ACCESSORS
+#undef FIELD_ADDR
+#undef FIELD_ADDR_CONST
+#undef READ_FIELD
 #undef NOBARRIER_READ_FIELD
+#undef WRITE_FIELD
 #undef NOBARRIER_WRITE_FIELD
 #undef WRITE_BARRIER
 #undef CONDITIONAL_WRITE_BARRIER
