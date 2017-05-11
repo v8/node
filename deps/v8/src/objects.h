@@ -1669,6 +1669,9 @@ class HeapObject: public Object {
   // information.
   inline Map* map() const;
   inline void set_map(Map* value);
+
+  inline HeapObject** map_slot();
+
   // The no-write-barrier version.  This is OK if the object is white and in
   // new space, or if the value is an immortal immutable object, like the maps
   // of primitive (non-JS) objects like strings, heap numbers etc.
@@ -4439,6 +4442,7 @@ class DependentCode: public FixedArray {
 
 class PrototypeInfo;
 
+typedef std::vector<Handle<Map>> MapHandles;
 
 // All heap objects have a Map that describes their structure.
 //  A Map contains information about:
@@ -4961,7 +4965,7 @@ class Map: public HeapObject {
   // Returns the transitioned map for this map with the most generic
   // elements_kind that's found in |candidates|, or |nullptr| if no match is
   // found at all.
-  Map* FindElementsKindTransitionedMap(MapHandleList* candidates);
+  Map* FindElementsKindTransitionedMap(MapHandles const& candidates);
 
   inline bool CanTransition();
 
@@ -5852,34 +5856,6 @@ class SharedFunctionInfo: public HeapObject {
   inline void ReplaceCode(Code* code);
   inline bool HasBaselineCode() const;
 
-  // [optimized_code_map]: Map from native context to optimized code
-  // and a shared literals array.
-  DECL_ACCESSORS(optimized_code_map, FixedArray)
-
-  // Returns entry from optimized code map for specified context and OSR entry.
-  Code* SearchOptimizedCodeMap(Context* native_context, BailoutId osr_ast_id);
-
-  // Clear optimized code map.
-  void ClearOptimizedCodeMap();
-
-  // Like ClearOptimizedCodeMap, but preserves literals.
-  void ClearCodeFromOptimizedCodeMap();
-
-  // We have a special root FixedArray with the right shape and values
-  // to represent the cleared optimized code map. This predicate checks
-  // if that root is installed.
-  inline bool OptimizedCodeMapIsCleared() const;
-
-  // Removes a specific optimized code object from the optimized code map.
-  // In case of non-OSR the code reference is cleared from the cache entry but
-  // the entry itself is left in the map in order to proceed sharing literals.
-  void EvictFromOptimizedCodeMap(Code* optimized_code, const char* reason);
-
-  // Add or update entry in the optimized code map for context-dependent code.
-  static void AddToOptimizedCodeMap(Handle<SharedFunctionInfo> shared,
-                                    Handle<Context> native_context,
-                                    Handle<Code> code, BailoutId osr_ast_id);
-
   // Set up the link between shared function info and the script. The shared
   // function info is added to the list on the script.
   V8_EXPORT_PRIVATE static void SetScript(Handle<SharedFunctionInfo> shared,
@@ -6279,8 +6255,7 @@ class SharedFunctionInfo: public HeapObject {
   // Pointer fields.
   static const int kCodeOffset = HeapObject::kHeaderSize;
   static const int kNameOffset = kCodeOffset + kPointerSize;
-  static const int kOptimizedCodeMapOffset = kNameOffset + kPointerSize;
-  static const int kScopeInfoOffset = kOptimizedCodeMapOffset + kPointerSize;
+  static const int kScopeInfoOffset = kNameOffset + kPointerSize;
   static const int kOuterScopeInfoOffset = kScopeInfoOffset + kPointerSize;
   static const int kConstructStubOffset = kOuterScopeInfoOffset + kPointerSize;
   static const int kInstanceClassNameOffset =
@@ -6522,6 +6497,10 @@ class SharedFunctionInfo: public HeapObject {
       FunctionKind::kClassConstructor << kCompilerHintsSmiTagSize;
   STATIC_ASSERT(kClassConstructorBitsWithinByte < (1 << kBitsPerByte));
 
+  static const int kDerivedConstructorBitsWithinByte =
+      FunctionKind::kDerivedConstructor << kCompilerHintsSmiTagSize;
+  STATIC_ASSERT(kDerivedConstructorBitsWithinByte < (1 << kBitsPerByte));
+
   static const int kMarkedForTierUpBitWithinByte =
       kMarkedForTierUpBit % kBitsPerByte;
 
@@ -6545,11 +6524,6 @@ class SharedFunctionInfo: public HeapObject {
 #undef BYTE_OFFSET
 
  private:
-  // Returns entry from optimized code map for specified context.
-  // The result is either kNotFound, or a start index of the context-dependent
-  // entry.
-  int SearchOptimizedCodeMapEntry(Context* native_context);
-
   DISALLOW_IMPLICIT_CONSTRUCTORS(SharedFunctionInfo);
 };
 
@@ -6751,6 +6725,7 @@ class Module : public Struct {
   // Implementation of spec operation ModuleEvaluation.
   static MUST_USE_RESULT MaybeHandle<Object> Evaluate(Handle<Module> module);
 
+  Cell* GetCell(int cell_index);
   static Handle<Object> LoadVariable(Handle<Module> module, int cell_index);
   static void StoreVariable(Handle<Module> module, int cell_index,
                             Handle<Object> value);
@@ -6915,6 +6890,9 @@ class JSFunction: public JSObject {
 
   // Tells whether or not the function is on the concurrent recompilation queue.
   inline bool IsInOptimizationQueue();
+
+  // Clears the optimized code slot in the function's feedback vector.
+  inline void ClearOptimizedCodeSlot(const char* reason);
 
   // Completes inobject slack tracking on initial map if it is active.
   inline void CompleteInobjectSlackTrackingIfActive();
@@ -9352,6 +9330,11 @@ class JSArrayBuffer: public JSObject {
   inline bool has_guard_region();
   inline void set_has_guard_region(bool value);
 
+  // TODO(gdeepti): This flag is introduced to disable asm.js optimizations in
+  // js-typer-lowering.cc, remove when the asm.js case is fixed.
+  inline bool is_wasm_buffer();
+  inline void set_is_wasm_buffer(bool value);
+
   DECLARE_CAST(JSArrayBuffer)
 
   void Neuter();
@@ -9394,6 +9377,7 @@ class JSArrayBuffer: public JSObject {
   class WasNeutered : public BitField<bool, 3, 1> {};
   class IsShared : public BitField<bool, 4, 1> {};
   class HasGuardRegion : public BitField<bool, 5, 1> {};
+  class IsWasmBuffer : public BitField<bool, 6, 1> {};
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArrayBuffer);
@@ -9587,6 +9571,9 @@ class JSArray: public JSObject {
   // Layout description.
   static const int kLengthOffset = JSObject::kHeaderSize;
   static const int kSize = kLengthOffset + kPointerSize;
+
+  // Max. number of elements being copied in Array builtins.
+  static const int kMaxCopyElements = 16;
 
   static const int kInitialMaxFastElementArray =
       (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - kSize -

@@ -716,6 +716,9 @@ class RuntimeCallTimer final {
   V(FunctionCallback)                               \
   V(GC)                                             \
   V(GC_AllAvailableGarbage)                         \
+  V(GC_IncrementalMarkingJob)                       \
+  V(GC_IncrementalMarkingObserver)                  \
+  V(GC_SlowAllocateRaw)                             \
   V(GCEpilogueCallback)                             \
   V(GCPrologueCallback)                             \
   V(GenericNamedPropertyDefinerCallback)            \
@@ -785,6 +788,7 @@ class RuntimeCallTimer final {
   V(LoadIC_LoadConstantFromPrototypeDH)          \
   V(LoadIC_LoadFieldDH)                          \
   V(LoadIC_LoadFieldFromPrototypeDH)             \
+  V(LoadIC_LoadGlobalDH)                         \
   V(LoadIC_LoadGlobalFromPrototypeDH)            \
   V(LoadIC_LoadIntegerIndexedExoticDH)           \
   V(LoadIC_LoadInterceptorDH)                    \
@@ -935,7 +939,8 @@ class RuntimeCallTimerScope {
      51)                                                                      \
   HR(wasm_functions_per_wasm_module, V8.WasmFunctionsPerModule.wasm, 1,       \
      100000, 51)                                                              \
-  HR(array_buffer_big_allocations, V8.ArrayBufferBigAllocations, 0, 4096, 13) \
+  HR(array_buffer_big_allocations, V8.ArrayBufferLargeAllocations, 0, 4096,   \
+     13)                                                                      \
   HR(array_buffer_new_size_failures, V8.ArrayBufferNewSizeFailures, 0, 4096, 13)
 
 #define HISTOGRAM_TIMER_LIST(HT)                                               \

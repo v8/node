@@ -2062,11 +2062,10 @@ MUST_USE_RESULT Maybe<bool> FastAssign(
 
     if (use_set) {
       LookupIterator it(target, next_key, target);
-      bool call_to_js = it.IsFound() && it.state() != LookupIterator::DATA;
       Maybe<bool> result = Object::SetProperty(
           &it, prop_value, STRICT, Object::CERTAINLY_NOT_STORE_FROM_KEYED);
       if (result.IsNothing()) return result;
-      if (stable && call_to_js) stable = from->map() == *map;
+      if (stable) stable = from->map() == *map;
     } else {
       if (excluded_properties != nullptr &&
           HasExcludedProperty(excluded_properties, next_key)) {
@@ -3474,9 +3473,8 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
     // which there is still space, and which does not require a mutable double
     // box (an out-of-object double).
     if (details.location() == kDescriptor ||
-        (have_space &&
-         ((FLAG_unbox_double_fields && object->properties()->length() == 0) ||
-          !details.representation().IsDouble()))) {
+        (have_space && ((FLAG_unbox_double_fields && target_index < 0) ||
+                        !details.representation().IsDouble()))) {
       object->synchronized_set_map(*new_map);
       return;
     }
@@ -4834,16 +4832,15 @@ int AccessorInfo::AppendUnique(Handle<Object> descriptors,
                                                    valid_descriptors);
 }
 
-
-static bool ContainsMap(MapHandleList* maps, Map* map) {
+static bool ContainsMap(MapHandles const& maps, Map* map) {
   DCHECK_NOT_NULL(map);
-  for (int i = 0; i < maps->length(); ++i) {
-    if (!maps->at(i).is_null() && *maps->at(i) == map) return true;
+  for (Handle<Map> current : maps) {
+    if (!current.is_null() && *current == map) return true;
   }
   return false;
 }
 
-Map* Map::FindElementsKindTransitionedMap(MapHandleList* candidates) {
+Map* Map::FindElementsKindTransitionedMap(MapHandles const& candidates) {
   DisallowHeapAllocation no_allocation;
   DisallowDeoptimization no_deoptimization(GetIsolate());
 
@@ -12124,125 +12121,6 @@ void JSFunction::AttemptConcurrentOptimization() {
 }
 
 // static
-void SharedFunctionInfo::AddToOptimizedCodeMap(
-    Handle<SharedFunctionInfo> shared, Handle<Context> native_context,
-    Handle<Code> code, BailoutId osr_ast_id) {
-  Isolate* isolate = shared->GetIsolate();
-  if (isolate->serializer_enabled()) return;
-  DCHECK(code->kind() == Code::OPTIMIZED_FUNCTION);
-  DCHECK(native_context->IsNativeContext());
-  STATIC_ASSERT(kEntryLength == 2);
-  Handle<FixedArray> new_code_map;
-  int entry;
-
-  if (!osr_ast_id.IsNone()) {
-    Context::AddToOptimizedCodeMap(native_context, shared, code, osr_ast_id);
-    return;
-  }
-
-  DCHECK(osr_ast_id.IsNone());
-  if (shared->OptimizedCodeMapIsCleared()) {
-    new_code_map = isolate->factory()->NewFixedArray(kInitialLength, TENURED);
-    entry = kEntriesStart;
-  } else {
-    Handle<FixedArray> old_code_map(shared->optimized_code_map(), isolate);
-    entry = shared->SearchOptimizedCodeMapEntry(*native_context);
-    if (entry >= kEntriesStart) {
-      // Just set the code of the entry.
-      Handle<WeakCell> code_cell = isolate->factory()->NewWeakCell(code);
-      old_code_map->set(entry + kCachedCodeOffset, *code_cell);
-      return;
-    }
-
-    // Can we reuse an entry?
-    DCHECK(entry < kEntriesStart);
-    int length = old_code_map->length();
-    for (int i = kEntriesStart; i < length; i += kEntryLength) {
-      if (WeakCell::cast(old_code_map->get(i + kContextOffset))->cleared()) {
-        new_code_map = old_code_map;
-        entry = i;
-        break;
-      }
-    }
-
-    if (entry < kEntriesStart) {
-      // Copy old optimized code map and append one new entry.
-      new_code_map = isolate->factory()->CopyFixedArrayAndGrow(
-          old_code_map, kEntryLength, TENURED);
-      // TODO(mstarzinger): Temporary workaround. The allocation above might
-      // have flushed the optimized code map and the copy we created is full of
-      // holes. For now we just give up on adding the entry and pretend it got
-      // flushed.
-      if (shared->OptimizedCodeMapIsCleared()) return;
-      entry = old_code_map->length();
-    }
-  }
-
-  Handle<WeakCell> code_cell = isolate->factory()->NewWeakCell(code);
-  WeakCell* context_cell = native_context->self_weak_cell();
-
-  new_code_map->set(entry + kContextOffset, context_cell);
-  new_code_map->set(entry + kCachedCodeOffset, *code_cell);
-
-#ifdef DEBUG
-  for (int i = kEntriesStart; i < new_code_map->length(); i += kEntryLength) {
-    WeakCell* cell = WeakCell::cast(new_code_map->get(i + kContextOffset));
-    DCHECK(cell->cleared() || cell->value()->IsNativeContext());
-    cell = WeakCell::cast(new_code_map->get(i + kCachedCodeOffset));
-    DCHECK(cell->cleared() ||
-           (cell->value()->IsCode() &&
-            Code::cast(cell->value())->kind() == Code::OPTIMIZED_FUNCTION));
-  }
-#endif
-
-  FixedArray* old_code_map = shared->optimized_code_map();
-  if (old_code_map != *new_code_map) {
-    shared->set_optimized_code_map(*new_code_map);
-  }
-}
-
-
-void SharedFunctionInfo::ClearOptimizedCodeMap() {
-  FixedArray* empty_fixed_array = GetHeap()->empty_fixed_array();
-  set_optimized_code_map(empty_fixed_array, SKIP_WRITE_BARRIER);
-}
-
-
-void SharedFunctionInfo::EvictFromOptimizedCodeMap(Code* optimized_code,
-                                                   const char* reason) {
-  DisallowHeapAllocation no_gc;
-  Isolate* isolate = GetIsolate();
-  bool found = false;
-
-  if (!OptimizedCodeMapIsCleared()) {
-    Heap* heap = isolate->heap();
-    FixedArray* code_map = optimized_code_map();
-    int length = code_map->length();
-    for (int src = kEntriesStart; src < length; src += kEntryLength) {
-      DCHECK(WeakCell::cast(code_map->get(src))->cleared() ||
-             WeakCell::cast(code_map->get(src))->value()->IsNativeContext());
-      found = WeakCell::cast(code_map->get(src + kCachedCodeOffset))->value() ==
-              optimized_code;
-      if (found) {
-        if (FLAG_trace_opt) {
-          PrintF("[evicting entry from optimizing code map (%s) for ", reason);
-          ShortPrint();
-          PrintF("]\n");
-        }
-        // Just clear the code.
-        code_map->set(src + kCachedCodeOffset, heap->empty_weak_cell(),
-                      SKIP_WRITE_BARRIER);
-      }
-    }
-  }
-
-  if (!found) {
-    // We didn't find the code in here. It must be osr'd code.
-    isolate->EvictOSROptimizedCode(optimized_code, reason);
-  }
-}
-
-// static
 void JSFunction::EnsureLiterals(Handle<JSFunction> function) {
   Handle<SharedFunctionInfo> shared(function->shared());
   Isolate* isolate = shared->GetIsolate();
@@ -13855,52 +13733,6 @@ void SharedFunctionInfo::ResetForNewContext(int new_ic_age) {
   }
 }
 
-int SharedFunctionInfo::SearchOptimizedCodeMapEntry(Context* native_context) {
-  DisallowHeapAllocation no_gc;
-  DCHECK(native_context->IsNativeContext());
-  if (!OptimizedCodeMapIsCleared()) {
-    FixedArray* optimized_code_map = this->optimized_code_map();
-    int length = optimized_code_map->length();
-    for (int i = kEntriesStart; i < length; i += kEntryLength) {
-      if (WeakCell::cast(optimized_code_map->get(i + kContextOffset))
-              ->value() == native_context) {
-        return i;
-      }
-    }
-  }
-  return -1;
-}
-
-void SharedFunctionInfo::ClearCodeFromOptimizedCodeMap() {
-  if (!OptimizedCodeMapIsCleared()) {
-    FixedArray* optimized_code_map = this->optimized_code_map();
-    int length = optimized_code_map->length();
-    WeakCell* empty_weak_cell = GetHeap()->empty_weak_cell();
-    for (int i = kEntriesStart; i < length; i += kEntryLength) {
-      optimized_code_map->set(i + kCachedCodeOffset, empty_weak_cell,
-                              SKIP_WRITE_BARRIER);
-    }
-  }
-}
-
-Code* SharedFunctionInfo::SearchOptimizedCodeMap(Context* native_context,
-                                                 BailoutId osr_ast_id) {
-  Code* result = nullptr;
-  if (!osr_ast_id.IsNone()) {
-    return native_context->SearchOptimizedCodeMap(this, osr_ast_id);
-  }
-
-  DCHECK(osr_ast_id.IsNone());
-  int entry = SearchOptimizedCodeMapEntry(native_context);
-  if (entry != kNotFound) {
-    FixedArray* code_map = optimized_code_map();
-    DCHECK_LE(entry + kEntryLength, code_map->length());
-    WeakCell* cell = WeakCell::cast(code_map->get(entry + kCachedCodeOffset));
-    result = cell->cleared() ? nullptr : Code::cast(cell->value());
-  }
-  return result;
-}
-
 void ObjectVisitor::VisitCodeTarget(Code* host, RelocInfo* rinfo) {
   DCHECK(RelocInfo::IsCodeTarget(rinfo->rmode()));
   Object* old_pointer = Code::GetCodeFromTargetAddress(rinfo->target_address());
@@ -14958,14 +14790,16 @@ void BytecodeArray::Disassemble(std::ostream& os) {
     iterator.Advance();
   }
 
+  os << "Constant pool (size = " << constant_pool()->length() << ")\n";
+#ifdef OBJECT_PRINT
   if (constant_pool()->length() > 0) {
-    os << "Constant pool (size = " << constant_pool()->length() << ")\n";
     constant_pool()->Print();
   }
+#endif
 
+  os << "Handler Table (size = " << handler_table()->Size() << ")\n";
 #ifdef ENABLE_DISASSEMBLER
   if (handler_table()->length() > 0) {
-    os << "Handler Table (size = " << handler_table()->Size() << ")\n";
     HandlerTable::cast(handler_table())->HandlerTableRangePrint(os);
   }
 #endif
@@ -19727,8 +19561,9 @@ bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
   // Prevent creating array buffers when serializing.
   DCHECK(!isolate->serializer_enabled());
   if (allocated_length != 0) {
-    isolate->counters()->array_buffer_big_allocations()->AddSample(
-        ConvertToMb(allocated_length));
+    if (allocated_length >= MB)
+      isolate->counters()->array_buffer_big_allocations()->AddSample(
+          ConvertToMb(allocated_length));
     if (initialize) {
       data = isolate->array_buffer_allocator()->Allocate(allocated_length);
     } else {
@@ -20141,33 +19976,34 @@ void Module::CreateExport(Handle<Module> module, int cell_index,
   module->set_exports(*exports);
 }
 
-Handle<Object> Module::LoadVariable(Handle<Module> module, int cell_index) {
-  Isolate* isolate = module->GetIsolate();
-  Handle<Object> object;
+Cell* Module::GetCell(int cell_index) {
+  DisallowHeapAllocation no_gc;
+  Object* cell;
   switch (ModuleDescriptor::GetCellIndexKind(cell_index)) {
     case ModuleDescriptor::kImport:
-      object = handle(module->regular_imports()->get(ImportIndex(cell_index)),
-                      isolate);
+      cell = regular_imports()->get(ImportIndex(cell_index));
       break;
     case ModuleDescriptor::kExport:
-      object = handle(module->regular_exports()->get(ExportIndex(cell_index)),
-                      isolate);
+      cell = regular_exports()->get(ExportIndex(cell_index));
       break;
     case ModuleDescriptor::kInvalid:
       UNREACHABLE();
+      cell = nullptr;
       break;
   }
-  return handle(Handle<Cell>::cast(object)->value(), isolate);
+  return Cell::cast(cell);
+}
+
+Handle<Object> Module::LoadVariable(Handle<Module> module, int cell_index) {
+  Isolate* isolate = module->GetIsolate();
+  return handle(module->GetCell(cell_index)->value(), isolate);
 }
 
 void Module::StoreVariable(Handle<Module> module, int cell_index,
                            Handle<Object> value) {
-  Isolate* isolate = module->GetIsolate();
   DCHECK_EQ(ModuleDescriptor::GetCellIndexKind(cell_index),
             ModuleDescriptor::kExport);
-  Handle<Object> object(module->regular_exports()->get(ExportIndex(cell_index)),
-                        isolate);
-  Handle<Cell>::cast(object)->set_value(*value);
+  module->GetCell(cell_index)->set_value(*value);
 }
 
 MaybeHandle<Cell> Module::ResolveImport(Handle<Module> module,

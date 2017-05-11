@@ -52,14 +52,14 @@ RUNTIME_FUNCTION(Runtime_SpecialArrayFunctions) {
   Handle<JSObject> holder =
       isolate->factory()->NewJSObject(isolate->object_function());
 
-  InstallBuiltin(isolate, holder, "pop", Builtins::kArrayPop);
+  InstallBuiltin(isolate, holder, "pop", Builtins::kFastArrayPop);
   InstallBuiltin(isolate, holder, "push", Builtins::kFastArrayPush);
   InstallBuiltin(isolate, holder, "shift", Builtins::kArrayShift);
   InstallBuiltin(isolate, holder, "unshift", Builtins::kArrayUnshift);
   InstallBuiltin(isolate, holder, "slice", Builtins::kArraySlice);
   InstallBuiltin(isolate, holder, "splice", Builtins::kArraySplice);
-  InstallBuiltin(isolate, holder, "includes", Builtins::kArrayIncludes, 2);
-  InstallBuiltin(isolate, holder, "indexOf", Builtins::kArrayIndexOf, 2);
+  InstallBuiltin(isolate, holder, "includes", Builtins::kArrayIncludes);
+  InstallBuiltin(isolate, holder, "indexOf", Builtins::kArrayIndexOf);
   InstallBuiltin(isolate, holder, "keys", Builtins::kArrayPrototypeKeys, 0,
                  kArrayKeys);
   InstallBuiltin(isolate, holder, "values", Builtins::kArrayPrototypeValues, 0,
@@ -568,7 +568,13 @@ RUNTIME_FUNCTION(Runtime_ArrayIndexOf) {
                                        Object::ToInteger(isolate, from_index));
     double fp = from_index->Number();
     if (fp > len) return Smi::FromInt(-1);
-    start_from = static_cast<int64_t>(fp);
+    if (V8_LIKELY(fp >=
+                  static_cast<double>(std::numeric_limits<int64_t>::min()))) {
+      DCHECK(fp < std::numeric_limits<int64_t>::max());
+      start_from = static_cast<int64_t>(fp);
+    } else {
+      start_from = std::numeric_limits<int64_t>::min();
+    }
   }
 
   int64_t index;

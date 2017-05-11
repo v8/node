@@ -590,19 +590,9 @@ class Heap {
 
   enum UpdateAllocationSiteMode { kGlobal, kCached };
 
-  // Taking this lock prevents the GC from entering a phase that relocates
+  // Taking this mutex prevents the GC from entering a phase that relocates
   // object references.
-  class RelocationLock {
-   public:
-    explicit RelocationLock(Heap* heap) : heap_(heap) {
-      heap_->relocation_mutex_.Lock();
-    }
-
-    ~RelocationLock() { heap_->relocation_mutex_.Unlock(); }
-
-   private:
-    Heap* heap_;
-  };
+  base::Mutex* relocation_mutex() { return &relocation_mutex_; }
 
   // Support for partial snapshots.  After calling this we have a linear
   // space to write objects in each space.
@@ -1239,7 +1229,9 @@ class Heap {
 
   // Start incremental marking and ensure that idle time handler can perform
   // incremental steps.
-  void StartIdleIncrementalMarking(GarbageCollectionReason gc_reason);
+  void StartIdleIncrementalMarking(
+      GarbageCollectionReason gc_reason,
+      GCCallbackFlags gc_callback_flags = GCCallbackFlags::kNoGCCallbackFlags);
 
   // Starts incremental marking assuming incremental marking is currently
   // stopped.
@@ -1253,7 +1245,8 @@ class Heap {
 
   void FinalizeIncrementalMarkingIfComplete(GarbageCollectionReason gc_reason);
 
-  void RegisterReservationsForBlackAllocation(Reservation* reservations);
+  void RegisterDeserializedObjectsForBlackAllocation(
+      Reservation* reservations, List<HeapObject*>* large_objects);
 
   IncrementalMarking* incremental_marking() { return incremental_marking_; }
 
@@ -1533,6 +1526,7 @@ class Heap {
 #ifdef VERIFY_HEAP
   // Verify the heap is in its normal state before or after a GC.
   void Verify();
+  void VerifyRememberedSetFor(HeapObject* object);
 #endif
 
 #ifdef DEBUG
@@ -2407,6 +2401,7 @@ class Heap {
   friend class IncrementalMarkingJob;
   friend class LargeObjectSpace;
   friend class MarkCompactCollector;
+  friend class MarkCompactCollectorBase;
   friend class MinorMarkCompactCollector;
   friend class MarkCompactMarkingVisitor;
   friend class NewSpace;

@@ -631,7 +631,7 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
 
   {
     std::unique_ptr<Utf16CharacterStream> stream(ScannerStream::For(source));
-    scanner_.Initialize(stream.get());
+    scanner_.Initialize(stream.get(), info->is_module());
     result = DoParseProgram(info);
   }
   if (result != NULL) {
@@ -805,7 +805,7 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info) {
     std::unique_ptr<Utf16CharacterStream> stream(ScannerStream::For(
         source, shared_info->start_position(), shared_info->end_position()));
     Handle<String> name(String::cast(shared_info->name()));
-    scanner_.Initialize(stream.get());
+    scanner_.Initialize(stream.get(), info->is_module());
     info->set_function_name(ast_value_factory()->GetString(name));
     result = DoParseFunction(info);
     if (result != nullptr) {
@@ -2677,6 +2677,33 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
   bool has_duplicate_parameters = false;
   int function_literal_id = GetNextFunctionLiteralId();
 
+  Expect(Token::LPAREN, CHECK_OK);
+
+  if (should_use_parse_task) {
+    int start_pos = scanner()->location().beg_pos;
+    if (function_name_location.IsValid()) {
+      start_pos = function_name_location.beg_pos;
+    }
+    // Warning!
+    // Only sets fields in compiler_hints that are currently used.
+    int compiler_hints = SharedFunctionInfo::FunctionKindBits::encode(kind);
+    if (function_type == FunctionLiteral::kDeclaration) {
+      compiler_hints |= 1 << SharedFunctionInfo::kIsDeclaration;
+    }
+    should_use_parse_task = compiler_dispatcher_->Enqueue(
+        source_, start_pos, source_->length(), language_mode,
+        function_literal_id, allow_natives(), parsing_module_,
+        function_type == FunctionLiteral::kNamedExpression, compiler_hints,
+        main_parse_info_, nullptr);
+    if (V8_UNLIKELY(FLAG_trace_parse_tasks)) {
+      PrintF("Spining off task for function at %d: %s\n", start_pos,
+             should_use_parse_task ? "SUCCESS" : "FAILED");
+    }
+    if (!should_use_parse_task) {
+      should_preparse = false;
+    }
+  }
+
   Zone* outer_zone = zone();
   DeclarationScope* scope;
 
@@ -2702,8 +2729,6 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     scope->SetScopeName(function_name);
     if (should_preparse) scope->set_needs_migration();
 #endif
-
-    Expect(Token::LPAREN, CHECK_OK);
     scope->set_start_position(scanner()->location().beg_pos);
 
     // Eager or lazy parse? If is_lazy_top_level_function, we'll parse
@@ -2721,8 +2746,8 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
           SkipFunction(kind, scope, &num_parameters, is_lazy_inner_function,
                        is_lazy_top_level_function, CHECK_OK);
 
-      // TODO(wiktorg) revisit preparsing aborted in case of parse tasks
       if (result == kLazyParsingAborted) {
+        DCHECK(is_lazy_top_level_function);
         bookmark.Apply();
         // This is probably an initialization function. Inform the compiler it
         // should also eager-compile this function, and that we expect it to be
@@ -2734,36 +2759,6 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
         // Trigger eager (re-)parsing, just below this block.
         should_preparse = false;
         should_use_parse_task = false;
-      }
-      if (should_use_parse_task) {
-        int start_pos = scope->start_position();
-        if (function_name_location.IsValid()) {
-          start_pos = function_name_location.beg_pos;
-        }
-        // Warning!
-        // Only sets fields in compiler_hints that are currently used.
-        int compiler_hints = SharedFunctionInfo::FunctionKindBits::encode(kind);
-        if (function_type == FunctionLiteral::kDeclaration) {
-          compiler_hints |= 1 << SharedFunctionInfo::kIsDeclaration;
-        }
-        // TODO(wiktorg) enqueue parse tasks before preparsing
-        should_use_parse_task = compiler_dispatcher_->Enqueue(
-            source_, start_pos, scope->end_position(), language_mode,
-            function_literal_id, allow_natives(), parsing_module_,
-            function_type == FunctionLiteral::kNamedExpression, compiler_hints,
-            main_parse_info_, nullptr);
-        if (FLAG_trace_parse_tasks) {
-          PrintF("Spining off task for function at %d: %s\n",
-                 scope->start_position(),
-                 should_use_parse_task ? "SUCCESS" : "FAILED");
-        }
-        if (!should_use_parse_task) {
-          // Fallback to eager parsing below if we failed to enqueue parse tasks
-          bookmark.Apply();
-          scope->ResetAfterPreparsing(ast_value_factory(), true);
-          zone_scope.Reset();
-          should_preparse = false;
-        }
       }
     }
 
@@ -3145,15 +3140,15 @@ Block* Parser::BuildRejectPromiseOnException(Block* inner_block) {
 }
 
 Assignment* Parser::BuildCreateJSGeneratorObject(int pos, FunctionKind kind) {
-  // .generator = %CreateJSGeneratorObject(...);
+  // .generator = %_CreateJSGeneratorObject(...);
   DCHECK_NOT_NULL(function_state_->generator_object_variable());
   ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(2, zone());
   args->Add(factory()->NewThisFunction(pos), zone());
   args->Add(IsArrowFunction(kind) ? GetLiteralUndefined(pos)
                                   : ThisExpression(kNoSourcePosition),
             zone());
-  Expression* allocation =
-      factory()->NewCallRuntime(Runtime::kCreateJSGeneratorObject, args, pos);
+  Expression* allocation = factory()->NewCallRuntime(
+      Runtime::kInlineCreateJSGeneratorObject, args, pos);
   VariableProxy* proxy =
       factory()->NewVariableProxy(function_state_->generator_object_variable());
   return factory()->NewAssignment(Token::INIT, proxy, allocation,
@@ -3333,7 +3328,7 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
   class_info->properties->Add(property, zone());
 }
 
-// This method rewrites a class literal into a do-expression.
+// This method generates a ClassLiteral AST node.
 // It uses the following fields of class_info:
 //   - constructor (if missing, it updates it with a default constructor)
 //   - proxy
@@ -3341,13 +3336,14 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
 //   - properties
 //   - has_name_static_property
 //   - has_static_computed_names
-Expression* Parser::RewriteClassLiteral(const AstRawString* name,
+Expression* Parser::RewriteClassLiteral(Scope* block_scope,
+                                        const AstRawString* name,
                                         ClassInfo* class_info, int pos,
                                         bool* ok) {
+  DCHECK_NOT_NULL(block_scope);
+  DCHECK_EQ(block_scope->scope_type(), BLOCK_SCOPE);
+  DCHECK_EQ(block_scope->language_mode(), STRICT);
   int end_pos = scanner()->location().end_pos;
-  Block* do_block = factory()->NewBlock(nullptr, 1, false, pos);
-  Variable* result_var = NewTemporary(ast_value_factory()->empty_string());
-  DoExpression* do_expr = factory()->NewDoExpression(do_block, result_var, pos);
 
   bool has_extends = class_info->extends != nullptr;
   bool has_default_constructor = class_info->constructor == nullptr;
@@ -3356,7 +3352,7 @@ Expression* Parser::RewriteClassLiteral(const AstRawString* name,
         DefaultConstructor(name, has_extends, pos, end_pos);
   }
 
-  scope()->set_end_position(end_pos);
+  block_scope->set_end_position(end_pos);
 
   if (name != nullptr) {
     DCHECK_NOT_NULL(class_info->proxy);
@@ -3364,23 +3360,14 @@ Expression* Parser::RewriteClassLiteral(const AstRawString* name,
   }
 
   ClassLiteral* class_literal = factory()->NewClassLiteral(
-      class_info->proxy, class_info->extends, class_info->constructor,
-      class_info->properties, pos, end_pos,
+      block_scope, class_info->proxy, class_info->extends,
+      class_info->constructor, class_info->properties, pos, end_pos,
       class_info->has_name_static_property,
-      class_info->has_static_computed_names);
+      class_info->has_static_computed_names, class_info->is_anonymous);
 
-  do_block->statements()->Add(
-      factory()->NewExpressionStatement(
-          factory()->NewAssignment(Token::ASSIGN,
-                                   factory()->NewVariableProxy(result_var),
-                                   class_literal, kNoSourcePosition),
-          pos),
-      zone());
-  do_block->set_scope(scope()->FinalizeBlockScope());
-  do_expr->set_represented_function(class_info->constructor);
   AddFunctionForNameInference(class_info->constructor);
 
-  return do_expr;
+  return class_literal;
 }
 
 Literal* Parser::GetLiteralUndefined(int position) {
@@ -3548,7 +3535,7 @@ void Parser::ParseOnBackground(ParseInfo* info) {
                                     runtime_call_stats_));
     stream_ptr = stream.get();
   }
-  scanner_.Initialize(stream_ptr);
+  scanner_.Initialize(stream_ptr, info->is_module());
   DCHECK(info->maybe_outer_scope_info().is_null());
 
   DCHECK(original_scope_);
@@ -4270,12 +4257,11 @@ void Parser::SetFunctionName(Expression* value, const AstRawString* name) {
   DCHECK_NOT_NULL(name);
   if (!value->IsAnonymousFunctionDefinition()) return;
   auto function = value->AsFunctionLiteral();
+  if (value->IsClassLiteral()) {
+    function = value->AsClassLiteral()->constructor();
+  }
   if (function != nullptr) {
     function->set_raw_name(ast_value_factory()->NewConsString(name));
-  } else {
-    DCHECK(value->IsDoExpression());
-    value->AsDoExpression()->represented_function()->set_raw_name(
-        ast_value_factory()->NewConsString(name));
   }
 }
 
@@ -5228,6 +5214,12 @@ void Parser::StitchAst(ParseInfo* top_level_parse_info, Isolate* isolate) {
       }
     }
     FunctionLiteral* literal = *it;
+    // FIXME(wiktorg) better handling of default params for arrow functions
+    Scope* outer_scope = literal->scope()->outer_scope();
+    if (outer_scope->is_declaration_scope() &&
+        outer_scope->AsDeclarationScope()->was_lazily_parsed()) {
+      continue;
+    }
     // TODO(wiktorg) in the future internalize somewhere else (stitching may be
     // done on streamer thread)
     result->ast_value_factory()->Internalize(isolate);

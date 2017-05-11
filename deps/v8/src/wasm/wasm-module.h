@@ -438,7 +438,8 @@ Handle<JSArrayBuffer> SetupArrayBuffer(Isolate*, void* backing_store,
                                        bool enable_guard_regions);
 
 void DetachWebAssemblyMemoryBuffer(Isolate* isolate,
-                                   Handle<JSArrayBuffer> buffer);
+                                   Handle<JSArrayBuffer> buffer,
+                                   bool free_memory);
 
 void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
                           int index, Handle<JSFunction> js_function);
@@ -501,13 +502,12 @@ Handle<Code> CompileLazy(Isolate* isolate);
 // logic to actually orchestrate parallel execution of wasm compilation jobs.
 // TODO(clemensh): Implement concurrent lazy compilation.
 class LazyCompilationOrchestrator {
-  bool CompileFunction(Isolate*, Handle<WasmInstanceObject>,
-                       int func_index) WARN_UNUSED_RESULT;
+  void CompileFunction(Isolate*, Handle<WasmInstanceObject>, int func_index);
 
  public:
-  MaybeHandle<Code> CompileLazy(Isolate*, Handle<WasmInstanceObject>,
-                                Handle<Code> caller, int call_offset,
-                                int exported_func_index, bool patch_caller);
+  Handle<Code> CompileLazy(Isolate*, Handle<WasmInstanceObject>,
+                           Handle<Code> caller, int call_offset,
+                           int exported_func_index, bool patch_caller);
 };
 
 namespace testing {

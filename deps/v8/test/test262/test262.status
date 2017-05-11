@@ -369,9 +369,6 @@
   'language/statements/async-function/early-errors-declaration-formals-body-duplicate': [FAIL],
 
   # Module-related tests
-  # v8:5485
-  'language/module-code/comment-multi-line-html*': [FAIL],
-  'language/module-code/comment-single-line-html*': [FAIL],
   # v8:5487
   'language/module-code/namespace/internals/get-own-property-str-found-uninit': [FAIL],
   # https://github.com/tc39/ecma262/pull/858
@@ -527,10 +524,6 @@
   'intl402/NumberFormat/11.2.3_b': [FAIL],
   'intl402/NumberFormat/prototype/11.3_a': [FAIL],
   'intl402/String/prototype/localeCompare/13.1.1_7': [PASS, FAIL],
-
-  # BUG(v8:6252).
-  'intl402/DateTimeFormat/6.4_a': [FAIL],
-  'intl402/DateTimeFormat/6.4_c': [FAIL],
 
   ##################### DELIBERATE INCOMPATIBILITIES #####################
 

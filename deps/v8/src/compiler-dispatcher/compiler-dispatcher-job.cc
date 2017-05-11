@@ -90,7 +90,7 @@ CompilerDispatcherJob::CompilerDispatcherJob(
   parse_info_->set_language_mode(language_mode);
   parse_info_->set_function_literal_id(function_literal_id);
   parse_info_->set_ast_string_constants(ast_string_constants);
-  if (V8_UNLIKELY(FLAG_runtime_call_stats)) {
+  if (V8_UNLIKELY(FLAG_runtime_stats)) {
     parse_info_->set_runtime_call_stats(new (parse_info_->zone())
                                             RuntimeCallStats());
   }
@@ -270,7 +270,7 @@ void CompilerDispatcherJob::PrepareToParseOnMainThread() {
   parse_info_->set_unicode_cache(unicode_cache_.get());
   parse_info_->set_language_mode(shared_->language_mode());
   parse_info_->set_function_literal_id(shared_->function_literal_id());
-  if (V8_UNLIKELY(FLAG_runtime_call_stats)) {
+  if (V8_UNLIKELY(FLAG_runtime_stats)) {
     parse_info_->set_runtime_call_stats(new (parse_info_->zone())
                                             RuntimeCallStats());
   }

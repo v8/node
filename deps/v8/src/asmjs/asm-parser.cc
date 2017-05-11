@@ -9,10 +9,12 @@
 
 #include <algorithm>
 
+#include "src/asmjs/asm-js.h"
 #include "src/asmjs/asm-types.h"
 #include "src/objects-inl.h"
 #include "src/objects.h"
 #include "src/parsing/scanner-character-streams.h"
+#include "src/parsing/scanner.h"
 #include "src/wasm/wasm-opcodes.h"
 
 namespace v8 {
@@ -39,7 +41,6 @@ namespace wasm {
 
 #define FAIL(msg) FAIL_AND_RETURN(, msg)
 #define FAILn(msg) FAIL_AND_RETURN(nullptr, msg)
-#define FAILf(msg) FAIL_AND_RETURN(false, msg)
 
 #define EXPECT_TOKEN_OR_RETURN(ret, token)      \
   do {                                          \
@@ -51,7 +52,6 @@ namespace wasm {
 
 #define EXPECT_TOKEN(token) EXPECT_TOKEN_OR_RETURN(, token)
 #define EXPECT_TOKENn(token) EXPECT_TOKEN_OR_RETURN(nullptr, token)
-#define EXPECT_TOKENf(token) EXPECT_TOKEN_OR_RETURN(false, token)
 
 #define RECURSE_OR_RETURN(ret, call)                                       \
   do {                                                                     \
@@ -65,7 +65,6 @@ namespace wasm {
 
 #define RECURSE(call) RECURSE_OR_RETURN(, call)
 #define RECURSEn(call) RECURSE_OR_RETURN(nullptr, call)
-#define RECURSEf(call) RECURSE_OR_RETURN(false, call)
 
 #define TOK(name) AsmJsScanner::kToken_##name
 
@@ -366,8 +365,7 @@ void AsmJsParser::ValidateModule() {
   module_builder_->MarkStartFunction(start);
   for (auto& global_import : global_imports_) {
     uint32_t import_index = module_builder_->AddGlobalImport(
-        global_import.import_name.start(), global_import.import_name.length(),
-        global_import.value_type);
+        global_import.import_name, global_import.value_type);
     start->EmitWithI32V(kExprGetGlobal, import_index);
     start->EmitWithI32V(kExprSetGlobal, VarIndex(global_import.var_info));
   }
@@ -467,8 +465,8 @@ void AsmJsParser::ValidateModuleVar(bool mutable_variable) {
   } else if (Check(stdlib_name_)) {
     EXPECT_TOKEN('.');
     RECURSE(ValidateModuleVarStdlib(info));
-  } else if (ValidateModuleVarImport(info, mutable_variable)) {
-    // Handled inside.
+  } else if (Peek(foreign_name_) || Peek('+')) {
+    RECURSE(ValidateModuleVarImport(info, mutable_variable));
   } else if (scanner_.IsGlobal()) {
     RECURSE(ValidateModuleVarFromGlobal(info, mutable_variable));
   } else {
@@ -525,32 +523,31 @@ void AsmJsParser::ValidateModuleVarFromGlobal(VarInfo* info,
 }
 
 // 6.1 ValidateModule - foreign imports
-bool AsmJsParser::ValidateModuleVarImport(VarInfo* info,
+void AsmJsParser::ValidateModuleVarImport(VarInfo* info,
                                           bool mutable_variable) {
   if (Check('+')) {
-    EXPECT_TOKENf(foreign_name_);
-    EXPECT_TOKENf('.');
+    EXPECT_TOKEN(foreign_name_);
+    EXPECT_TOKEN('.');
     Vector<const char> name = CopyCurrentIdentifierString();
     AddGlobalImport(name, AsmType::Double(), kWasmF64, mutable_variable, info);
     scanner_.Next();
-    return true;
-  } else if (Check(foreign_name_)) {
-    EXPECT_TOKENf('.');
+  } else {
+    EXPECT_TOKEN(foreign_name_);
+    EXPECT_TOKEN('.');
     Vector<const char> name = CopyCurrentIdentifierString();
     scanner_.Next();
     if (Check('|')) {
       if (!CheckForZero()) {
-        FAILf("Expected |0 type annotation for foreign integer import");
+        FAIL("Expected |0 type annotation for foreign integer import");
       }
       AddGlobalImport(name, AsmType::Int(), kWasmI32, mutable_variable, info);
-      return true;
+    } else {
+      info->kind = VarKind::kImportedFunction;
+      info->import = new (zone()->New(sizeof(FunctionImportInfo)))
+          FunctionImportInfo({name, WasmModuleBuilder::SignatureMap(zone())});
+      info->mutable_variable = false;
     }
-    info->kind = VarKind::kImportedFunction;
-    info->import = new (zone()->New(sizeof(FunctionImportInfo)))
-        FunctionImportInfo({name, WasmModuleBuilder::SignatureMap(zone())});
-    return true;
   }
-  return false;
 }
 
 // 6.1 ValidateModule - one variable
@@ -562,7 +559,7 @@ void AsmJsParser::ValidateModuleVarNewStdlib(VarInfo* info) {
 #define V(name, _junk1, _junk2, _junk3)                          \
   case TOK(name):                                                \
     DeclareStdlibFunc(info, VarKind::kSpecial, AsmType::name()); \
-    stdlib_uses_.insert(AsmTyper::k##name);                      \
+    stdlib_uses_.insert(StandardMember::k##name);                \
     break;
     STDLIB_ARRAY_TYPE_LIST(V)
 #undef V
@@ -585,14 +582,14 @@ void AsmJsParser::ValidateModuleVarStdlib(VarInfo* info) {
   case TOK(name):                                           \
     DeclareGlobal(info, false, AsmType::Double(), kWasmF64, \
                   WasmInitExpr(const_value));               \
-    stdlib_uses_.insert(AsmTyper::kMath##name);             \
+    stdlib_uses_.insert(StandardMember::kMath##name);       \
     break;
       STDLIB_MATH_VALUE_LIST(V)
 #undef V
 #define V(name, Name, op, sig)                                      \
   case TOK(name):                                                   \
     DeclareStdlibFunc(info, VarKind::kMath##Name, stdlib_##sig##_); \
-    stdlib_uses_.insert(AsmTyper::kMath##Name);                     \
+    stdlib_uses_.insert(StandardMember::kMath##Name);               \
     break;
       STDLIB_MATH_FUNCTION_LIST(V)
 #undef V
@@ -602,11 +599,11 @@ void AsmJsParser::ValidateModuleVarStdlib(VarInfo* info) {
   } else if (Check(TOK(Infinity))) {
     DeclareGlobal(info, false, AsmType::Double(), kWasmF64,
                   WasmInitExpr(std::numeric_limits<double>::infinity()));
-    stdlib_uses_.insert(AsmTyper::kInfinity);
+    stdlib_uses_.insert(StandardMember::kInfinity);
   } else if (Check(TOK(NaN))) {
     DeclareGlobal(info, false, AsmType::Double(), kWasmF64,
                   WasmInitExpr(std::numeric_limits<double>::quiet_NaN()));
-    stdlib_uses_.insert(AsmTyper::kNaN);
+    stdlib_uses_.insert(StandardMember::kNaN);
   } else {
     FAIL("Invalid member of stdlib");
   }
@@ -616,7 +613,7 @@ void AsmJsParser::ValidateModuleVarStdlib(VarInfo* info) {
 void AsmJsParser::ValidateExport() {
   // clang-format off
   EXPECT_TOKEN(TOK(return));
-  // clang format on
+  // clang-format on
   if (Check('{')) {
     for (;;) {
       Vector<const char> name = CopyCurrentIdentifierString();
@@ -649,8 +646,7 @@ void AsmJsParser::ValidateExport() {
     if (info->kind != VarKind::kFunction) {
       FAIL("Single function export must be a function");
     }
-    const char* single_function_name = "__single_function__";
-    info->function_builder->ExportAs(CStrVector(single_function_name));
+    info->function_builder->ExportAs(CStrVector(AsmJs::kSingleFunctionName));
   }
 }
 
@@ -748,14 +744,23 @@ void AsmJsParser::ValidateFunction() {
   function_temp_locals_used_ = 0;
   function_temp_locals_depth_ = 0;
 
+  bool last_statement_is_return = false;
   while (!failed_ && !Peek('}')) {
+    // clang-format off
+    last_statement_is_return = Peek(TOK(return));
+    // clang-format on
     RECURSE(ValidateStatement());
   }
   EXPECT_TOKEN('}');
 
-  if (return_type_ == nullptr) {
-    return_type_ = AsmType::Void();
+  if (!last_statement_is_return) {
+    if (return_type_ == nullptr) {
+      return_type_ = AsmType::Void();
+    } else if (!return_type_->IsA(AsmType::Void())) {
+      FAIL("Expected return at end of non-void function");
+    }
   }
+  DCHECK_NOT_NULL(return_type_);
 
   // TODO(bradnelson): WasmModuleBuilder can't take this in the right order.
   //                   We should fix that so we can use it instead.
@@ -837,7 +842,8 @@ void AsmJsParser::ValidateFunctionParams(std::vector<AsmType*>* params) {
       info->index = static_cast<uint32_t>(params->size());
       params->push_back(AsmType::Double());
     } else {
-      if (!GetVarInfo(Consume())->type->IsA(stdlib_fround_)) {
+      if (!scanner_.IsGlobal() ||
+          !GetVarInfo(Consume())->type->IsA(stdlib_fround_)) {
         FAIL("Expected fround");
       }
       EXPECT_TOKEN('(');
@@ -1069,7 +1075,7 @@ void AsmJsParser::IfStatement() {
 // 6.5.5 ReturnStatement
 void AsmJsParser::ReturnStatement() {
   // clang-format off
-  EXPECT_TOKEN(TOK(return ));
+  EXPECT_TOKEN(TOK(return));
   // clang-format on
   if (!Peek(';') && !Peek('}')) {
     // TODO(bradnelson): See if this can be factored out.
@@ -1084,8 +1090,10 @@ void AsmJsParser::ReturnStatement() {
     } else {
       FAIL("Invalid return type");
     }
-  } else {
+  } else if (return_type_ == nullptr) {
     return_type_ = AsmType::Void();
+  } else if (!return_type_->IsA(AsmType::Void())) {
+    FAIL("Invalid void return type");
   }
   current_function_builder_->Emit(kExprReturn);
   SkipSemicolon();
@@ -1487,6 +1495,9 @@ AsmType* AsmJsParser::AssignmentExpression() {
       if (info->kind == VarKind::kUnused) {
         FAILn("Undeclared assignment target");
       }
+      if (!info->mutable_variable) {
+        FAILn("Expected mutable variable in assignment");
+      }
       DCHECK(is_local ? info->kind == VarKind::kLocal
                       : info->kind == VarKind::kGlobal);
       AsmType* value;
@@ -1497,9 +1508,6 @@ AsmType* AsmJsParser::AssignmentExpression() {
       if (info->kind == VarKind::kLocal) {
         current_function_builder_->EmitTeeLocal(info->index);
       } else if (info->kind == VarKind::kGlobal) {
-        if (!info->mutable_variable) {
-          FAILn("Expected mutable variable in assignment");
-        }
         current_function_builder_->EmitWithU32V(kExprSetGlobal, VarIndex(info));
         current_function_builder_->EmitWithU32V(kExprGetGlobal, VarIndex(info));
       } else {
@@ -2152,9 +2160,8 @@ AsmType* AsmJsParser::ValidateCall() {
     if (it != function_info->import->cache.end()) {
       index = it->second;
     } else {
-      index = module_builder_->AddImport(
-          function_info->import->function_name.start(),
-          function_info->import->function_name.length(), sig);
+      index =
+          module_builder_->AddImport(function_info->import->function_name, sig);
       function_info->import->cache[sig] = index;
     }
     current_function_builder_->AddAsmWasmOffset(call_pos, to_number_pos);

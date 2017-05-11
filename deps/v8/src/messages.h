@@ -590,6 +590,7 @@ class ErrorUtils : public AllStatic {
   T(MalformedRegExp, "Invalid regular expression: /%/: %")                     \
   T(MalformedRegExpFlags, "Invalid regular expression flags")                  \
   T(ModuleExportUndefined, "Export '%' is not defined in module")              \
+  T(HtmlCommentInModule, "HTML comments are not allowed in modules")           \
   T(MultipleDefaultsInSwitch,                                                  \
     "More than one default clause in switch statement")                        \
   T(NewlineAfterThrow, "Illegal newline after throw")                          \
@@ -607,6 +608,8 @@ class ErrorUtils : public AllStatic {
   T(ArgStringTerminatesParametersEarly,                                        \
     "Arg string terminates parameters early")                                  \
   T(UnexpectedEndOfArgString, "Unexpected end of arg string")                  \
+  T(RestDefaultInitializer,                                                    \
+    "Rest parameter may not have a default initializer")                       \
   T(RuntimeWrongNumArgs, "Runtime function given wrong number of arguments")   \
   T(SuperNotCalled,                                                            \
     "Must call super constructor in derived class before accessing 'this' or " \

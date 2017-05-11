@@ -6186,6 +6186,8 @@ enum GCType {
  *   - kGCCallbackFlagCollectAllAvailableGarbage: The GC callback is called
  *     in a phase where V8 is trying to collect all available garbage
  *     (e.g., handling a low memory notification).
+ *   - kGCCallbackScheduleIdleGarbageCollection: The GC callback is called to
+ *     trigger an idle garbage collection.
  */
 enum GCCallbackFlags {
   kNoGCCallbackFlags = 0,
@@ -6194,6 +6196,7 @@ enum GCCallbackFlags {
   kGCCallbackFlagSynchronousPhantomCallbackProcessing = 1 << 3,
   kGCCallbackFlagCollectAllAvailableGarbage = 1 << 4,
   kGCCallbackFlagCollectAllExternalMemory = 1 << 5,
+  kGCCallbackScheduleIdleGarbageCollection = 1 << 6,
 };
 
 typedef void (*GCCallback)(GCType type, GCCallbackFlags flags);
@@ -6220,9 +6223,8 @@ class V8_EXPORT HeapStatistics {
   size_t peak_malloced_memory() { return peak_malloced_memory_; }
 
   /**
-   * Returns a 0/1 boolean, which signifies whether the |--zap_code_space|
-   * option is enabled or not, which makes V8 overwrite heap garbage with a bit
-   * pattern.
+   * Returns a 0/1 boolean, which signifies whether the V8 overwrite heap
+   * garbage with a bit pattern.
    */
   size_t does_zap_garbage() { return does_zap_garbage_; }
 

@@ -86,9 +86,10 @@ RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
     memory = args.at<JSArrayBuffer>(3);
   }
   if (function->shared()->HasAsmWasmData()) {
-    Handle<FixedArray> data(function->shared()->asm_wasm_data());
-    MaybeHandle<Object> result =
-        AsmJs::InstantiateAsmWasm(isolate, data, stdlib, foreign, memory);
+    Handle<SharedFunctionInfo> shared(function->shared());
+    Handle<FixedArray> data(shared->asm_wasm_data());
+    MaybeHandle<Object> result = AsmJs::InstantiateAsmWasm(
+        isolate, shared, data, stdlib, foreign, memory);
     if (!result.is_null()) {
       return *result.ToHandleChecked();
     }
@@ -203,8 +204,15 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
 
     // Evict optimized code for this function from the cache so that it
     // doesn't get used for new closures.
-    function->shared()->EvictFromOptimizedCodeMap(*optimized_code,
-                                                  "notify deoptimized");
+    if (function->feedback_vector()->optimized_code() == *optimized_code) {
+      function->ClearOptimizedCodeSlot("notify deoptimized");
+    }
+    // Remove the code from the osr optimized code cache.
+    DeoptimizationInputData* deopt_data =
+        DeoptimizationInputData::cast(optimized_code->deoptimization_data());
+    if (deopt_data->OsrAstId()->value() == BailoutId::None().ToInt()) {
+      isolate->EvictOSROptimizedCode(*optimized_code, "notify deoptimized");
+    }
   } else {
     // TODO(titzer): we should probably do DeoptimizeCodeList(code)
     // unconditionally if the code is not already marked for deoptimization.

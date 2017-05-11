@@ -896,7 +896,8 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
   if (gc_reason == GarbageCollectionReason::kLastResort) {
     InvokeOutOfMemoryCallback();
   }
-  RuntimeCallTimerScope(isolate(), &RuntimeCallStats::GC_AllAvailableGarbage);
+  RuntimeCallTimerScope runtime_timer(
+      isolate(), &RuntimeCallStats::GC_AllAvailableGarbage);
   if (isolate()->concurrent_recompilation_enabled()) {
     // The optimizing compiler may be unnecessarily holding on to memory.
     DisallowHeapAllocation no_recursive_gc;
@@ -978,8 +979,8 @@ bool Heap::CollectGarbage(GarbageCollector collector,
                           const char* collector_reason,
                           const v8::GCCallbackFlags gc_callback_flags) {
   // The VM is in the GC state until exiting this function.
-  VMState<GC> state(isolate_);
-  RuntimeCallTimerScope(isolate(), &RuntimeCallStats::GC);
+  VMState<GC> state(isolate());
+  RuntimeCallTimerScope runtime_timer(isolate(), &RuntimeCallStats::GC);
 
 #ifdef DEBUG
   // Reset the allocation timeout to the GC interval, but make sure to
@@ -1114,10 +1115,12 @@ void Heap::StartIncrementalMarkingIfAllocationLimitIsReached(
   }
 }
 
-void Heap::StartIdleIncrementalMarking(GarbageCollectionReason gc_reason) {
+void Heap::StartIdleIncrementalMarking(
+    GarbageCollectionReason gc_reason,
+    const GCCallbackFlags gc_callback_flags) {
   gc_idle_time_handler_->ResetNoProgressCounter();
   StartIncrementalMarking(kReduceMemoryFootprintMask, gc_reason,
-                          kNoGCCallbackFlags);
+                          gc_callback_flags);
 }
 
 
@@ -1353,8 +1356,7 @@ bool Heap::PerformGarbageCollection(
         break;
       case SCAVENGER:
         if ((fast_promotion_mode_ &&
-             CanExpandOldGeneration(new_space()->Size())) ||
-            concurrent_marking_->IsTaskPending()) {
+             CanExpandOldGeneration(new_space()->Size()))) {
           tracer()->NotifyYoungGenerationHandling(
               YoungGenerationHandling::kFastPromotionDuringScavenge);
           EvacuateYoungGeneration();
@@ -1430,7 +1432,8 @@ bool Heap::PerformGarbageCollection(
 
 
 void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags) {
-  RuntimeCallTimerScope(isolate(), &RuntimeCallStats::GCPrologueCallback);
+  RuntimeCallTimerScope runtime_timer(isolate(),
+                                      &RuntimeCallStats::GCPrologueCallback);
   for (int i = 0; i < gc_prologue_callbacks_.length(); ++i) {
     if (gc_type & gc_prologue_callbacks_[i].gc_type) {
       if (!gc_prologue_callbacks_[i].pass_isolate) {
@@ -1448,7 +1451,8 @@ void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags) {
 
 void Heap::CallGCEpilogueCallbacks(GCType gc_type,
                                    GCCallbackFlags gc_callback_flags) {
-  RuntimeCallTimerScope(isolate(), &RuntimeCallStats::GCEpilogueCallback);
+  RuntimeCallTimerScope runtime_timer(isolate(),
+                                      &RuntimeCallStats::GCEpilogueCallback);
   for (int i = 0; i < gc_epilogue_callbacks_.length(); ++i) {
     if (gc_type & gc_epilogue_callbacks_[i].gc_type) {
       if (!gc_epilogue_callbacks_[i].pass_isolate) {
@@ -1628,6 +1632,7 @@ class ScavengeWeakObjectRetainer : public WeakObjectRetainer {
 
 void Heap::EvacuateYoungGeneration() {
   TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_EVACUATE);
+  base::LockGuard<base::Mutex> guard(relocation_mutex());
   if (!FLAG_concurrent_marking) {
     DCHECK(fast_promotion_mode_);
     DCHECK(CanExpandOldGeneration(new_space()->Size()));
@@ -1669,7 +1674,7 @@ void Heap::EvacuateYoungGeneration() {
 
 void Heap::Scavenge() {
   TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_SCAVENGE);
-  RelocationLock relocation_lock(this);
+  base::LockGuard<base::Mutex> guard(relocation_mutex());
   // There are soft limits in the allocation code, designed to trigger a mark
   // sweep collection by failing allocations. There is no sense in trying to
   // trigger one during scavenge: scavenges allocation should always succeed.
@@ -4229,42 +4234,50 @@ void Heap::FinalizeIncrementalMarkingIfComplete(
              (mark_compact_collector()->marking_deque()->IsEmpty() &&
               local_embedder_heap_tracer()
                   ->ShouldFinalizeIncrementalMarking())) {
-    CollectAllGarbage(current_gc_flags_, gc_reason);
+    CollectAllGarbage(current_gc_flags_, gc_reason, current_gc_callback_flags_);
   }
 }
 
-void Heap::RegisterReservationsForBlackAllocation(Reservation* reservations) {
+void Heap::RegisterDeserializedObjectsForBlackAllocation(
+    Reservation* reservations, List<HeapObject*>* large_objects) {
   // TODO(hpayer): We do not have to iterate reservations on black objects
   // for marking. We just have to execute the special visiting side effect
   // code that adds objects to global data structures, e.g. for array buffers.
 
-  if (incremental_marking()->black_allocation()) {
-    // Iterate black objects in old space, code space, map space, and large
-    // object space for side effects.
-    for (int i = OLD_SPACE; i < Serializer::kNumberOfSpaces; i++) {
-      const Heap::Reservation& res = reservations[i];
-      for (auto& chunk : res) {
-        Address addr = chunk.start;
-        while (addr < chunk.end) {
-          HeapObject* obj = HeapObject::FromAddress(addr);
-          // There might be grey objects due to black to grey transitions in
-          // incremental marking. E.g. see VisitNativeContextIncremental.
-          DCHECK(
-              ObjectMarking::IsBlackOrGrey(obj, MarkingState::Internal(obj)));
-          if (ObjectMarking::IsBlack(obj, MarkingState::Internal(obj))) {
-            incremental_marking()->IterateBlackObject(obj);
-          }
-          addr += obj->Size();
+  if (!incremental_marking()->black_allocation()) return;
+
+  // Iterate black objects in old space, code space, map space, and large
+  // object space for side effects.
+  for (int i = OLD_SPACE; i < Serializer::kNumberOfSpaces; i++) {
+    const Heap::Reservation& res = reservations[i];
+    for (auto& chunk : res) {
+      Address addr = chunk.start;
+      while (addr < chunk.end) {
+        HeapObject* obj = HeapObject::FromAddress(addr);
+        // There might be grey objects due to black to grey transitions in
+        // incremental marking. E.g. see VisitNativeContextIncremental.
+        DCHECK(ObjectMarking::IsBlackOrGrey(obj, MarkingState::Internal(obj)));
+        if (ObjectMarking::IsBlack(obj, MarkingState::Internal(obj))) {
+          incremental_marking()->IterateBlackObject(obj);
         }
+        addr += obj->Size();
       }
     }
+  }
+  // We potentially deserialized wrappers which require registering with the
+  // embedder as the marker will not find them.
+  local_embedder_heap_tracer()->RegisterWrappersWithRemoteTracer();
+
+  // Large object space doesn't use reservations, so it needs custom handling.
+  for (HeapObject* object : *large_objects) {
+    incremental_marking()->IterateBlackObject(object);
   }
 }
 
 void Heap::NotifyObjectLayoutChange(HeapObject* object,
                                     const DisallowHeapAllocation&) {
   if (FLAG_incremental_marking && incremental_marking()->IsMarking()) {
-    incremental_marking()->MarkGrey(object);
+    incremental_marking()->WhiteToGreyAndPush(object);
   }
 #ifdef VERIFY_HEAP
   DCHECK(pending_layout_change_object_ == nullptr);
@@ -4771,6 +4784,137 @@ void Heap::Verify() {
     mark_compact_collector()->VerifyOmittedMapChecks();
   }
 }
+
+class SlotVerifyingVisitor : public ObjectVisitor {
+ public:
+  SlotVerifyingVisitor(std::set<Address>* untyped,
+                       std::set<std::pair<SlotType, Address> >* typed)
+      : untyped_(untyped), typed_(typed) {}
+
+  virtual bool ShouldHaveBeenRecorded(HeapObject* host, Object* target) = 0;
+
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
+    for (Object** slot = start; slot < end; slot++) {
+      if (ShouldHaveBeenRecorded(host, *slot)) {
+        CHECK_GT(untyped_->count(reinterpret_cast<Address>(slot)), 0);
+      }
+    }
+  }
+
+  void VisitCodeTarget(Code* host, RelocInfo* rinfo) override {
+    Object* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(
+          InTypedSet(CODE_TARGET_SLOT, rinfo->pc()) ||
+          (rinfo->IsInConstantPool() &&
+           InTypedSet(CODE_ENTRY_SLOT, rinfo->constant_pool_entry_address())));
+    }
+  }
+
+  void VisitCodeAgeSequence(Code* host, RelocInfo* rinfo) override {
+    Object* target = rinfo->code_age_stub();
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(
+          InTypedSet(CODE_TARGET_SLOT, rinfo->pc()) ||
+          (rinfo->IsInConstantPool() &&
+           InTypedSet(CODE_ENTRY_SLOT, rinfo->constant_pool_entry_address())));
+    }
+  }
+
+  void VisitCodeEntry(JSFunction* host, Address entry_address) override {
+    Object* target = Code::GetObjectFromEntryAddress(entry_address);
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(InTypedSet(CODE_ENTRY_SLOT, entry_address));
+    }
+  }
+
+  void VisitCellPointer(Code* host, RelocInfo* rinfo) override {
+    Object* target = rinfo->target_cell();
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(InTypedSet(CELL_TARGET_SLOT, rinfo->pc()) ||
+            (rinfo->IsInConstantPool() &&
+             InTypedSet(OBJECT_SLOT, rinfo->constant_pool_entry_address())));
+    }
+  }
+
+  void VisitDebugTarget(Code* host, RelocInfo* rinfo) override {
+    Object* target =
+        Code::GetCodeFromTargetAddress(rinfo->debug_call_address());
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(
+          InTypedSet(DEBUG_TARGET_SLOT, rinfo->pc()) ||
+          (rinfo->IsInConstantPool() &&
+           InTypedSet(CODE_ENTRY_SLOT, rinfo->constant_pool_entry_address())));
+    }
+  }
+
+  void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) override {
+    Object* target = rinfo->target_object();
+    if (ShouldHaveBeenRecorded(host, target)) {
+      CHECK(InTypedSet(EMBEDDED_OBJECT_SLOT, rinfo->pc()) ||
+            (rinfo->IsInConstantPool() &&
+             InTypedSet(OBJECT_SLOT, rinfo->constant_pool_entry_address())));
+    }
+  }
+
+ private:
+  bool InTypedSet(SlotType type, Address slot) {
+    return typed_->count(std::make_pair(type, slot)) > 0;
+  }
+  std::set<Address>* untyped_;
+  std::set<std::pair<SlotType, Address> >* typed_;
+};
+
+class OldToNewSlotVerifyingVisitor : public SlotVerifyingVisitor {
+ public:
+  OldToNewSlotVerifyingVisitor(Heap* heap, std::set<Address>* untyped,
+                               std::set<std::pair<SlotType, Address> >* typed)
+      : SlotVerifyingVisitor(untyped, typed), heap_(heap) {}
+
+  bool ShouldHaveBeenRecorded(HeapObject* host, Object* target) override {
+    return target->IsHeapObject() && heap_->InNewSpace(target) &&
+           !heap_->InNewSpace(host);
+  }
+
+ private:
+  Heap* heap_;
+};
+
+template <RememberedSetType direction>
+void CollectSlots(MemoryChunk* chunk, Address start, Address end,
+                  std::set<Address>* untyped,
+                  std::set<std::pair<SlotType, Address> >* typed) {
+  RememberedSet<direction>::Iterate(chunk, [start, end, untyped](Address slot) {
+    if (start <= slot && slot < end) {
+      untyped->insert(slot);
+    }
+    return KEEP_SLOT;
+  });
+  RememberedSet<direction>::IterateTyped(
+      chunk, [start, end, typed](SlotType type, Address host, Address slot) {
+        if (start <= slot && slot < end) {
+          typed->insert(std::make_pair(type, slot));
+        }
+        return KEEP_SLOT;
+      });
+}
+
+void Heap::VerifyRememberedSetFor(HeapObject* object) {
+  MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
+  base::LockGuard<base::RecursiveMutex> lock_guard(chunk->mutex());
+  Address start = object->address();
+  Address end = start + object->Size();
+  std::set<Address> old_to_new;
+  std::set<std::pair<SlotType, Address> > typed_old_to_new;
+  if (!InNewSpace(object)) {
+    store_buffer()->MoveAllEntriesToRememberedSet();
+    CollectSlots<OLD_TO_NEW>(chunk, start, end, &old_to_new, &typed_old_to_new);
+    OldToNewSlotVerifyingVisitor visitor(this, &old_to_new, &typed_old_to_new);
+    object->IterateBody(&visitor);
+  }
+  // TODO(ulan): Add old to old slot set verification once all weak objects
+  // have their own instance types and slots are recorded for all weal fields.
+}
 #endif
 
 
@@ -4828,7 +4972,7 @@ class IterateAndScavengePromotedObjectsVisitor final : public ObjectVisitor {
     // promoted objects.
     if (heap_->incremental_marking()->black_allocation()) {
       Code* code = Code::cast(Code::GetObjectFromEntryAddress(code_entry_slot));
-      heap_->incremental_marking()->MarkGrey(code);
+      heap_->incremental_marking()->WhiteToGreyAndPush(code);
     }
   }
 
@@ -4964,7 +5108,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
   // Iterate over the builtin code objects and code stubs in the
   // heap. Note that it is not necessary to iterate over code objects
   // on scavenge collections.
-  if (mode != VISIT_ALL_IN_SCAVENGE) {
+  if (mode != VISIT_ALL_IN_SCAVENGE && mode != VISIT_ALL_IN_MINOR_MC_UPDATE) {
     isolate_->builtins()->IterateBuiltins(v);
     v->Synchronize(VisitorSynchronization::kBuiltins);
     isolate_->interpreter()->IterateDispatchTable(v);
@@ -4984,6 +5128,9 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
     case VISIT_ALL_IN_SCAVENGE:
       isolate_->global_handles()->IterateNewSpaceStrongAndDependentRoots(v);
       break;
+    case VISIT_ALL_IN_MINOR_MC_UPDATE:
+      isolate_->global_handles()->IterateAllNewSpaceRoots(v);
+      break;
     case VISIT_ALL_IN_SWEEP_NEWSPACE:
     case VISIT_ALL:
       isolate_->global_handles()->IterateAllRoots(v);
@@ -4992,7 +5139,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
   v->Synchronize(VisitorSynchronization::kGlobalHandles);
 
   // Iterate over eternal handles.
-  if (mode == VISIT_ALL_IN_SCAVENGE) {
+  if (mode == VISIT_ALL_IN_SCAVENGE || mode == VISIT_ALL_IN_MINOR_MC_UPDATE) {
     isolate_->eternal_handles()->IterateNewSpaceRoots(v);
   } else {
     isolate_->eternal_handles()->IterateAllRoots(v);
@@ -5369,7 +5516,9 @@ bool Heap::ShouldExpandOldGenerationOnSlowAllocation() {
 // The kSoftLimit means that incremental marking should be started soon.
 // The kHardLimit means that incremental marking should be started immediately.
 Heap::IncrementalMarkingLimit Heap::IncrementalMarkingLimitReached() {
-  if (!incremental_marking()->CanBeActivated() ||
+  // Code using an AlwaysAllocateScope assumes that the GC state does not
+  // change; that implies that no marking steps must be performed.
+  if (!incremental_marking()->CanBeActivated() || always_allocate() ||
       PromotedSpaceSizeOfObjects() <=
           IncrementalMarking::kActivationThreshold) {
     // Incremental marking is disabled or it is too early to start.
@@ -5505,10 +5654,13 @@ bool Heap::SetUp() {
   mark_compact_collector_ = new MarkCompactCollector(this);
   incremental_marking_->set_marking_deque(
       mark_compact_collector_->marking_deque());
+#if V8_CONCURRENT_MARKING
   concurrent_marking_ =
       new ConcurrentMarking(this, mark_compact_collector_->marking_deque());
-  if (FLAG_minor_mc)
-    minor_mark_compact_collector_ = new MinorMarkCompactCollector(this);
+#else
+  concurrent_marking_ = new ConcurrentMarking(this, nullptr);
+#endif
+  minor_mark_compact_collector_ = new MinorMarkCompactCollector(this);
   gc_idle_time_handler_ = new GCIdleTimeHandler();
   memory_reducer_ = new MemoryReducer(this);
   if (V8_UNLIKELY(FLAG_gc_stats)) {
@@ -5618,7 +5770,7 @@ void Heap::RegisterExternallyReferencedObject(Object** object) {
   HeapObject* heap_object = HeapObject::cast(*object);
   DCHECK(Contains(heap_object));
   if (FLAG_incremental_marking_wrappers && incremental_marking()->IsMarking()) {
-    incremental_marking()->MarkGrey(heap_object);
+    incremental_marking()->WhiteToGreyAndPush(heap_object);
   } else {
     DCHECK(mark_compact_collector()->in_use());
     mark_compact_collector()->MarkObject(heap_object);

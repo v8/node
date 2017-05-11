@@ -30,10 +30,17 @@ class ConcurrentMarkingVisitor final
   explicit ConcurrentMarkingVisitor(ConcurrentMarkingDeque* deque)
       : deque_(deque) {}
 
+  bool ShouldVisit(HeapObject* object) override {
+    return ObjectMarking::GreyToBlack<MarkBit::AccessMode::ATOMIC>(
+        object, marking_state(object));
+  }
+
   void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     for (Object** p = start; p < end; p++) {
-      if (!(*p)->IsHeapObject()) continue;
-      MarkObject(HeapObject::cast(*p));
+      Object* object = reinterpret_cast<Object*>(
+          base::NoBarrier_Load(reinterpret_cast<const base::AtomicWord*>(p)));
+      if (!object->IsHeapObject()) continue;
+      MarkObject(HeapObject::cast(object));
     }
   }
 
@@ -68,7 +75,7 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitCode(Map* map, Code* object) override {
-    // TODO(ulan): push the object to the bail-out deque.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
@@ -77,58 +84,65 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitBytecodeArray(Map* map, BytecodeArray* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitJSFunction(Map* map, JSFunction* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitMap(Map* map, Map* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitNativeContext(Map* map, Context* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitSharedFunctionInfo(Map* map, SharedFunctionInfo* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitTransitionArray(Map* map, TransitionArray* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitWeakCell(Map* map, WeakCell* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
   int VisitJSWeakCollection(Map* map, JSWeakCollection* object) override {
-    // TODO(ulan): implement iteration of strong fields and push the object to
-    // the bailout deque.
+    // TODO(ulan): implement iteration of strong fields.
+    deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
     return 0;
   }
 
-  void MarkObject(HeapObject* obj) {
-    deque_->Push(obj, MarkingThread::kConcurrent, TargetDeque::kShared);
+  void MarkObject(HeapObject* object) {
+    if (ObjectMarking::WhiteToGrey<MarkBit::AccessMode::ATOMIC>(
+            object, marking_state(object))) {
+      deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kShared);
+    }
   }
 
  private:
+  MarkingState marking_state(HeapObject* object) const {
+    return MarkingState::Internal(object);
+  }
+
   ConcurrentMarkingDeque* deque_;
 };
 
@@ -171,11 +185,13 @@ ConcurrentMarking::~ConcurrentMarking() { delete visitor_; }
 void ConcurrentMarking::Run() {
   double time_ms = heap_->MonotonicallyIncreasingTimeInMs();
   size_t bytes_marked = 0;
+  base::Mutex* relocation_mutex = heap_->relocation_mutex();
   {
     TimedScope scope(&time_ms);
     HeapObject* object;
     while ((object = deque_->Pop(MarkingThread::kConcurrent)) != nullptr) {
-      bytes_marked += visitor_->IterateBody(object);
+      base::LockGuard<base::Mutex> guard(relocation_mutex);
+      bytes_marked += visitor_->Visit(object);
     }
   }
   if (FLAG_trace_concurrent_marking) {

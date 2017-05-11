@@ -1303,8 +1303,15 @@ bool JSObject::PrototypeHasNoElements(Isolate* isolate, JSObject* object) {
   reinterpret_cast<Object*>(base::NoBarrier_Load( \
       reinterpret_cast<const base::AtomicWord*>(FIELD_ADDR_CONST(p, offset))))
 
+#if V8_CONCURRENT_MARKING
+#define WRITE_FIELD(p, offset, value)                             \
+  base::NoBarrier_Store(                                          \
+      reinterpret_cast<base::AtomicWord*>(FIELD_ADDR(p, offset)), \
+      reinterpret_cast<base::AtomicWord>(value));
+#else
 #define WRITE_FIELD(p, offset, value) \
   (*reinterpret_cast<Object**>(FIELD_ADDR(p, offset)) = value)
+#endif
 
 #define RELEASE_WRITE_FIELD(p, offset, value)                     \
   base::Release_Store(                                            \
@@ -1525,6 +1532,9 @@ void HeapObject::set_map_no_write_barrier(Map* value) {
   set_map_word(MapWord::FromMap(value));
 }
 
+HeapObject** HeapObject::map_slot() {
+  return reinterpret_cast<HeapObject**>(FIELD_ADDR(this, kMapOffset));
+}
 
 MapWord HeapObject::map_word() const {
   return MapWord(
@@ -5907,8 +5917,6 @@ ACCESSORS(SourcePositionTableWithFrameCache, stack_frame_cache,
           UnseededNumberDictionary, kStackFrameCacheIndex)
 
 ACCESSORS(SharedFunctionInfo, name, Object, kNameOffset)
-ACCESSORS(SharedFunctionInfo, optimized_code_map, FixedArray,
-          kOptimizedCodeMapOffset)
 ACCESSORS(SharedFunctionInfo, construct_stub, Code, kConstructStubOffset)
 ACCESSORS(SharedFunctionInfo, feedback_metadata, FeedbackMetadata,
           kFeedbackMetadataOffset)
@@ -6426,10 +6434,6 @@ bool SharedFunctionInfo::IsSubjectToDebugging() {
   return IsUserJavaScript() && !HasAsmWasmData();
 }
 
-bool SharedFunctionInfo::OptimizedCodeMapIsCleared() const {
-  return optimized_code_map() == GetHeap()->empty_fixed_array();
-}
-
 FeedbackVector* JSFunction::feedback_vector() const {
   DCHECK(feedback_vector_cell()->value()->IsFeedbackVector());
   return FeedbackVector::cast(feedback_vector_cell()->value());
@@ -6513,14 +6517,24 @@ void JSFunction::set_code_no_write_barrier(Code* value) {
   WRITE_INTPTR_FIELD(this, kCodeEntryOffset, reinterpret_cast<intptr_t>(entry));
 }
 
+void JSFunction::ClearOptimizedCodeSlot(const char* reason) {
+  if (has_feedback_vector() && feedback_vector()->has_optimized_code()) {
+    if (FLAG_trace_opt) {
+      PrintF("[evicting entry from optimizing code feedback slot (%s) for ",
+             reason);
+      shared()->ShortPrint();
+      PrintF("]\n");
+    }
+    feedback_vector()->ClearOptimizedCode();
+  }
+}
 
 void JSFunction::ReplaceCode(Code* code) {
   bool was_optimized = IsOptimized();
   bool is_optimized = code->kind() == Code::OPTIMIZED_FUNCTION;
 
   if (was_optimized && is_optimized) {
-    shared()->EvictFromOptimizedCodeMap(this->code(),
-        "Replacing with another optimized code");
+    ClearOptimizedCodeSlot("Replacing with another optimized code");
   }
 
   set_code(code);
@@ -6966,6 +6980,14 @@ bool JSArrayBuffer::has_guard_region() {
 
 void JSArrayBuffer::set_has_guard_region(bool value) {
   set_bit_field(HasGuardRegion::update(bit_field(), value));
+}
+
+bool JSArrayBuffer::is_wasm_buffer() {
+  return IsWasmBuffer::decode(bit_field());
+}
+
+void JSArrayBuffer::set_is_wasm_buffer(bool value) {
+  set_bit_field(IsWasmBuffer::update(bit_field(), value));
 }
 
 Object* JSArrayBufferView::byte_offset() const {

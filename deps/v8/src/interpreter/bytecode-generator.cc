@@ -39,9 +39,15 @@ class BytecodeGenerator::ContextScope BASE_EMBEDDED {
     if (outer_) {
       depth_ = outer_->depth_ + 1;
 
+      int outer_reg_index =
+          builder()->first_context_register().index() + outer_->depth_;
+
+      // TODO(ignition): ensure overwriting of non-context registers with
+      // a Context can never occurs, and re-enable DCHECK.
+      // DCHECK_LE(outer_reg_index, builder()->last_context_register().index());
+
       // Push the outer context into a new context register.
-      Register outer_context_reg(builder()->first_context_register().index() +
-                                 outer_->depth_);
+      Register outer_context_reg(outer_reg_index);
       outer_->set_register(outer_context_reg);
       generator_->builder()->PushContext(outer_context_reg);
     }
@@ -1497,7 +1503,8 @@ void BytecodeGenerator::VisitFunctionLiteral(FunctionLiteral* expr) {
   function_literals_.push_back(std::make_pair(expr, entry));
 }
 
-void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
+void BytecodeGenerator::BuildClassLiteral(ClassLiteral* expr) {
+  VisitDeclarations(expr->scope()->declarations());
   Register constructor = VisitForRegisterValue(expr->constructor());
   {
     RegisterAllocationScope register_scope(this);
@@ -1531,6 +1538,18 @@ void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
         expr->NeedsProxySlot() ? expr->ProxySlot() : FeedbackSlot::Invalid();
     BuildVariableAssignment(proxy->var(), Token::INIT, slot,
                             HoleCheckMode::kElided);
+  }
+}
+
+void BytecodeGenerator::VisitClassLiteral(ClassLiteral* expr) {
+  CurrentScope current_scope(this, expr->scope());
+  DCHECK_NOT_NULL(expr->scope());
+  if (expr->scope()->NeedsContext()) {
+    BuildNewLocalBlockContext(expr->scope());
+    ContextScope scope(this, expr->scope());
+    BuildClassLiteral(expr);
+  } else {
+    BuildClassLiteral(expr);
   }
 }
 
@@ -2445,7 +2464,6 @@ void BytecodeGenerator::VisitSuspend(Suspend* expr) {
     // Now dispatch on resume mode.
 
     BytecodeLabel resume_with_next;
-    BytecodeLabel resume_with_return;
     BytecodeLabel resume_with_throw;
 
     builder()
@@ -2454,24 +2472,21 @@ void BytecodeGenerator::VisitSuspend(Suspend* expr) {
         .JumpIfTrue(ToBooleanMode::kAlreadyBoolean, &resume_with_next)
         .LoadLiteral(Smi::FromInt(JSGeneratorObject::kThrow))
         .CompareOperation(Token::EQ_STRICT, resume_mode)
-        .JumpIfTrue(ToBooleanMode::kAlreadyBoolean, &resume_with_throw)
-        .Jump(&resume_with_return);
+        .JumpIfTrue(ToBooleanMode::kAlreadyBoolean, &resume_with_throw);
+    // Fall through for resuming with return.
 
-    builder()->Bind(&resume_with_return);
-    {
-      if (expr->is_async_generator()) {
-        // Async generator methods will produce the iter result object.
-        builder()->LoadAccumulatorWithRegister(input);
-        execution_control()->AsyncReturnAccumulator();
-      } else {
-        RegisterList args = register_allocator()->NewRegisterList(2);
-        builder()
-            ->MoveRegister(input, args[0])
-            .LoadTrue()
-            .StoreAccumulatorInRegister(args[1])
-            .CallRuntime(Runtime::kInlineCreateIterResultObject, args);
-        execution_control()->ReturnAccumulator();
-      }
+    if (expr->is_async_generator()) {
+      // Async generator methods will produce the iter result object.
+      builder()->LoadAccumulatorWithRegister(input);
+      execution_control()->AsyncReturnAccumulator();
+    } else {
+      RegisterList args = register_allocator()->NewRegisterList(2);
+      builder()
+          ->MoveRegister(input, args[0])
+          .LoadTrue()
+          .StoreAccumulatorInRegister(args[1])
+          .CallRuntime(Runtime::kInlineCreateIterResultObject, args);
+      execution_control()->ReturnAccumulator();
     }
 
     builder()->Bind(&resume_with_throw);

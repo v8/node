@@ -146,18 +146,18 @@ var AVAILABLE_LOCALES = {
  */
 var DEFAULT_ICU_LOCALE = UNDEFINED;
 
-function GetDefaultICULocaleJS() {
+function GetDefaultICULocaleJS(service) {
   if (IS_UNDEFINED(DEFAULT_ICU_LOCALE)) {
     DEFAULT_ICU_LOCALE = %GetDefaultICULocale();
-    // Check that this is a valid default, otherwise fall back to "und"
-    for (let service in AVAILABLE_LOCALES) {
-      if (IS_UNDEFINED(getAvailableLocalesOf(service)[DEFAULT_ICU_LOCALE])) {
-        DEFAULT_ICU_LOCALE = "und";
-        break;
-      }
-    }
   }
-  return DEFAULT_ICU_LOCALE;
+  // Check that this is a valid default for this service,
+  // otherwise fall back to "und"
+  // TODO(littledan,jshin): AvailableLocalesOf sometimes excludes locales
+  // which don't require tailoring, but work fine with root data. Look into
+  // exposing this fact in ICU or the way Chrome bundles data.
+  return (IS_UNDEFINED(service) ||
+          HAS_OWN_PROPERTY(getAvailableLocalesOf(service), DEFAULT_ICU_LOCALE))
+         ? DEFAULT_ICU_LOCALE : "und";
 }
 
 /**
@@ -449,7 +449,7 @@ function lookupMatcher(service, requestedLocales) {
         var extensionMatch = %regexp_internal_match(
             GetUnicodeExtensionRE(), requestedLocales[i]);
         var extension = IS_NULL(extensionMatch) ? '' : extensionMatch[0];
-        return {'locale': locale, 'extension': extension, 'position': i};
+        return {locale: locale, extension: extension, position: i};
       }
       // Truncate locale if possible.
       var pos = %StringLastIndexOf(locale, '-');
@@ -461,7 +461,11 @@ function lookupMatcher(service, requestedLocales) {
   }
 
   // Didn't find a match, return default.
-  return {'locale': GetDefaultICULocaleJS(), 'extension': '', 'position': -1};
+  return {
+    locale: GetDefaultICULocaleJS(service),
+    extension: '',
+    position: -1
+  };
 }
 
 
@@ -620,33 +624,6 @@ function makeArray(input) {
   %MoveArrayContents(input, array);
   return array;
 }
-
-/**
- * It's sometimes desireable to leave user requested locale instead of ICU
- * supported one (zh-TW is equivalent to zh-Hant-TW, so we should keep shorter
- * one, if that was what user requested).
- * This function returns user specified tag if its maximized form matches ICU
- * resolved locale. If not we return ICU result.
- */
-function getOptimalLanguageTag(original, resolved) {
-  // Returns Array<Object>, where each object has maximized and base properties.
-  // Maximized: zh -> zh-Hans-CN
-  // Base: zh-CN-u-ca-gregory -> zh-CN
-  // Take care of grandfathered or simple cases.
-  if (original === resolved) {
-    return original;
-  }
-
-  var locales = %GetLanguageTagVariants([original, resolved]);
-  if (locales[0].maximized !== locales[1].maximized) {
-    return resolved;
-  }
-
-  // Preserve extensions of resolved locale, but swap base tags with original.
-  var resolvedBase = new GlobalRegExp('^' + locales[1].base, 'g');
-  return %RegExpInternalReplace(resolvedBase, resolved, locales[0].base);
-}
-
 
 /**
  * Returns an Object that contains all of supported locales for a given
@@ -1061,11 +1038,8 @@ function CollatorConstructor() {
 InstallFunction(GlobalIntlCollator.prototype, 'resolvedOptions', function() {
     var coll = Unwrap(this, 'collator', GlobalIntlCollator, 'resolvedOptions',
                       false);
-    var locale = getOptimalLanguageTag(coll[resolvedSymbol].requestedLocale,
-                                       coll[resolvedSymbol].locale);
-
     return {
-      locale: locale,
+      locale: coll[resolvedSymbol].locale,
       usage: coll[resolvedSymbol].usage,
       sensitivity: coll[resolvedSymbol].sensitivity,
       ignorePunctuation: coll[resolvedSymbol].ignorePunctuation,
@@ -1284,11 +1258,8 @@ InstallFunction(GlobalIntlNumberFormat.prototype, 'resolvedOptions',
   function() {
     var format = Unwrap(this, 'numberformat', GlobalIntlNumberFormat,
                         'resolvedOptions', true);
-    var locale = getOptimalLanguageTag(format[resolvedSymbol].requestedLocale,
-                                       format[resolvedSymbol].locale);
-
     var result = {
-      locale: locale,
+      locale: format[resolvedSymbol].locale,
       numberingSystem: format[resolvedSymbol].numberingSystem,
       style: format[resolvedSymbol].style,
       useGrouping: format[resolvedSymbol].useGrouping,
@@ -1666,11 +1637,8 @@ InstallFunction(GlobalIntlDateTimeFormat.prototype, 'resolvedOptions',
       userCalendar = format[resolvedSymbol].calendar;
     }
 
-    var locale = getOptimalLanguageTag(format[resolvedSymbol].requestedLocale,
-                                       format[resolvedSymbol].locale);
-
     var result = {
-      locale: locale,
+      locale: format[resolvedSymbol].locale,
       numberingSystem: format[resolvedSymbol].numberingSystem,
       calendar: userCalendar,
       timeZone: format[resolvedSymbol].timeZone
@@ -1851,12 +1819,8 @@ InstallFunction(GlobalIntlv8BreakIterator.prototype, 'resolvedOptions',
     var segmenter = Unwrap(this, 'breakiterator', GlobalIntlv8BreakIterator,
                            'resolvedOptions', false);
 
-    var locale =
-        getOptimalLanguageTag(segmenter[resolvedSymbol].requestedLocale,
-                              segmenter[resolvedSymbol].locale);
-
     return {
-      locale: locale,
+      locale: segmenter[resolvedSymbol].locale,
       type: segmenter[resolvedSymbol].type
     };
   }

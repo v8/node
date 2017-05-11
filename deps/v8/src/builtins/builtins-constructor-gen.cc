@@ -153,6 +153,29 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
 
     BIND(&cell_done);
   }
+  {
+    // If the feedback vector has optimized code, check whether it is marked
+    // for deopt and, if so, clear it.
+    Label optimized_code_ok(this);
+    Node* literals = LoadObjectField(literals_cell, Cell::kValueOffset);
+    GotoIfNot(IsFeedbackVector(literals), &optimized_code_ok);
+    Node* optimized_code_cell =
+        LoadFixedArrayElement(literals, FeedbackVector::kOptimizedCodeIndex);
+    Node* optimized_code =
+        LoadWeakCellValue(optimized_code_cell, &optimized_code_ok);
+    Node* code_flags = LoadObjectField(
+        optimized_code, Code::kKindSpecificFlags1Offset, MachineType::Uint32());
+    Node* marked_for_deopt =
+        DecodeWord32<Code::MarkedForDeoptimizationField>(code_flags);
+    GotoIf(Word32Equal(marked_for_deopt, Int32Constant(0)), &optimized_code_ok);
+
+    // Code is marked for deopt, clear the optimized code slot.
+    StoreFixedArrayElement(literals, FeedbackVector::kOptimizedCodeIndex,
+                           EmptyWeakCellConstant(), SKIP_WRITE_BARRIER);
+    Goto(&optimized_code_ok);
+
+    BIND(&optimized_code_ok);
+  }
   StoreObjectFieldNoWriteBarrier(result, JSFunction::kFeedbackVectorOffset,
                                  literals_cell);
   StoreObjectFieldNoWriteBarrier(
@@ -259,76 +282,8 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewObject(Node* context,
 
   Node* object = AllocateJSObjectFromMap(initial_map, properties.value());
 
-  Node* instance_size_words = ChangeUint32ToWord(LoadObjectField(
-      initial_map, Map::kInstanceSizeOffset, MachineType::Uint8()));
-  Node* instance_size =
-      WordShl(instance_size_words, IntPtrConstant(kPointerSizeLog2));
-
   // Perform in-object slack tracking if requested.
-  Node* bit_field3 = LoadMapBitField3(initial_map);
-  Label slack_tracking(this), finalize(this, Label::kDeferred), done(this);
-  GotoIf(IsSetWord32<Map::ConstructionCounter>(bit_field3), &slack_tracking);
-
-  // Initialize remaining fields.
-  {
-    Comment("no slack tracking");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             instance_size, Heap::kUndefinedValueRootIndex);
-    Goto(&end);
-  }
-
-  {
-    BIND(&slack_tracking);
-
-    // Decrease generous allocation count.
-    STATIC_ASSERT(Map::ConstructionCounter::kNext == 32);
-    Comment("update allocation count");
-    Node* new_bit_field3 = Int32Sub(
-        bit_field3, Int32Constant(1 << Map::ConstructionCounter::kShift));
-    StoreObjectFieldNoWriteBarrier(initial_map, Map::kBitField3Offset,
-                                   new_bit_field3,
-                                   MachineRepresentation::kWord32);
-    GotoIf(IsClearWord32<Map::ConstructionCounter>(new_bit_field3), &finalize);
-
-    Node* unused_fields = LoadObjectField(
-        initial_map, Map::kUnusedPropertyFieldsOffset, MachineType::Uint8());
-    Node* used_size =
-        IntPtrSub(instance_size, WordShl(ChangeUint32ToWord(unused_fields),
-                                         IntPtrConstant(kPointerSizeLog2)));
-
-    Comment("initialize filler fields (no finalize)");
-    InitializeFieldsWithRoot(object, used_size, instance_size,
-                             Heap::kOnePointerFillerMapRootIndex);
-
-    Comment("initialize undefined fields (no finalize)");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             used_size, Heap::kUndefinedValueRootIndex);
-    Goto(&end);
-  }
-
-  {
-    // Finalize the instance size.
-    BIND(&finalize);
-
-    Node* unused_fields = LoadObjectField(
-        initial_map, Map::kUnusedPropertyFieldsOffset, MachineType::Uint8());
-    Node* used_size =
-        IntPtrSub(instance_size, WordShl(ChangeUint32ToWord(unused_fields),
-                                         IntPtrConstant(kPointerSizeLog2)));
-
-    Comment("initialize filler fields (finalize)");
-    InitializeFieldsWithRoot(object, used_size, instance_size,
-                             Heap::kOnePointerFillerMapRootIndex);
-
-    Comment("initialize undefined fields (finalize)");
-    InitializeFieldsWithRoot(object, IntPtrConstant(JSObject::kHeaderSize),
-                             used_size, Heap::kUndefinedValueRootIndex);
-
-    CallRuntime(Runtime::kFinalizeInstanceSize, context, initial_map);
-    Goto(&end);
-  }
-
-  BIND(&end);
+  HandleSlackTracking(context, object, initial_map, JSObject::kHeaderSize);
   return object;
 }
 

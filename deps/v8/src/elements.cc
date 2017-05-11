@@ -2150,7 +2150,8 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
                            int hole_end) {
     Heap* heap = isolate->heap();
     Handle<BackingStore> dst_elms = Handle<BackingStore>::cast(backing_store);
-    if (heap->CanMoveObjectStart(*dst_elms) && dst_index == 0) {
+    if (heap->CanMoveObjectStart(*dst_elms) && dst_index == 0 &&
+        len > JSArray::kMaxCopyElements) {
       // Update all the copies of this backing_store handle.
       *dst_elms.location() =
           BackingStore::cast(heap->LeftTrimFixedArray(*dst_elms, src_index));
@@ -3149,8 +3150,8 @@ class TypedElementsAccessor
     // TypedArrays.
     uint8_t* source_data = static_cast<uint8_t*>(source_elements->DataPtr());
     uint8_t* dest_data = static_cast<uint8_t*>(destination_elements->DataPtr());
-    size_t source_byte_length = NumberToSize(source->byte_offset());
-    size_t dest_byte_length = NumberToSize(destination->byte_offset());
+    size_t source_byte_length = NumberToSize(source->byte_length());
+    size_t dest_byte_length = NumberToSize(destination->byte_length());
     CHECK(dest_data + dest_byte_length <= source_data ||
           source_data + source_byte_length <= dest_data);
 
