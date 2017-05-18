@@ -587,8 +587,8 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
     // -----------------------------------
 
     // Restore constructor function and argument count.
-    __ ldr(a1, MemOperand(fp, ConstructFrameConstants::kConstructorOffset));
-    __ ldr(a0, MemOperand(fp, ConstructFrameConstants::kLengthOffset));
+    __ Ld(a1, MemOperand(fp, ConstructFrameConstants::kConstructorOffset));
+    __ Ld(a0, MemOperand(fp, ConstructFrameConstants::kLengthOffset));
     __ SmiUntag(a0);
 
     // Set up pointer to last argument.
@@ -957,6 +957,38 @@ void Builtins::Generate_JSConstructEntryTrampoline(MacroAssembler* masm) {
   Generate_JSEntryTrampolineHelper(masm, true);
 }
 
+static void ReplaceClosureEntryWithOptimizedCode(
+    MacroAssembler* masm, Register optimized_code_entry, Register closure,
+    Register scratch1, Register scratch2, Register scratch3) {
+  Register native_context = scratch1;
+
+  // Store code entry in the closure.
+  __ Daddu(optimized_code_entry, optimized_code_entry,
+           Operand(Code::kHeaderSize - kHeapObjectTag));
+  __ Sd(optimized_code_entry,
+        FieldMemOperand(closure, JSFunction::kCodeEntryOffset));
+  __ RecordWriteCodeEntryField(closure, optimized_code_entry, scratch2);
+
+  // Link the closure into the optimized function list.
+  __ Ld(native_context, NativeContextMemOperand());
+  __ Ld(scratch2,
+        ContextMemOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
+  __ Sd(scratch2,
+        FieldMemOperand(closure, JSFunction::kNextFunctionLinkOffset));
+  __ RecordWriteField(closure, JSFunction::kNextFunctionLinkOffset, scratch2,
+                      scratch3, kRAHasNotBeenSaved, kDontSaveFPRegs,
+                      EMIT_REMEMBERED_SET, OMIT_SMI_CHECK);
+  const int function_list_offset =
+      Context::SlotOffset(Context::OPTIMIZED_FUNCTIONS_LIST);
+  __ Sd(closure,
+        ContextMemOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
+  // Save closure before the write barrier.
+  __ mov(scratch2, closure);
+  __ RecordWriteContextSlot(native_context, function_list_offset, closure,
+                            scratch3, kRAHasNotBeenSaved, kDontSaveFPRegs);
+  __ mov(closure, scratch2);
+}
+
 static void LeaveInterpreterFrame(MacroAssembler* masm, Register scratch) {
   Register args_count = scratch;
 
@@ -995,6 +1027,19 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   // the frame (that is done below).
   FrameScope frame_scope(masm, StackFrame::MANUAL);
   __ PushStandardFrame(a1);
+
+  // First check if there is optimized code in the feedback vector which we
+  // could call instead.
+  Label switch_to_optimized_code;
+  Register optimized_code_entry = a4;
+  __ Ld(a0, FieldMemOperand(a1, JSFunction::kFeedbackVectorOffset));
+  __ Ld(a0, FieldMemOperand(a0, Cell::kValueOffset));
+  __ Ld(optimized_code_entry,
+        FieldMemOperand(a0, FeedbackVector::kOptimizedCodeIndex * kPointerSize +
+                                FeedbackVector::kHeaderSize));
+  __ Ld(optimized_code_entry,
+        FieldMemOperand(optimized_code_entry, WeakCell::kValueOffset));
+  __ JumpIfNotSmi(optimized_code_entry, &switch_to_optimized_code);
 
   // Get the bytecode array from the function object (or from the DebugInfo if
   // it is present) and load it into kInterpreterBytecodeArrayRegister.
@@ -1114,6 +1159,29 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ Sd(a4, FieldMemOperand(a1, JSFunction::kCodeEntryOffset));
   __ RecordWriteCodeEntryField(a1, a4, a5);
   __ Jump(a4);
+
+  // If there is optimized code on the type feedback vector, check if it is good
+  // to run, and if so, self heal the closure and call the optimized code.
+  __ bind(&switch_to_optimized_code);
+  __ LeaveFrame(StackFrame::JAVA_SCRIPT);
+  Label gotta_call_runtime;
+
+  // Check if the optimized code is marked for deopt.
+  __ Lw(a5,
+        FieldMemOperand(optimized_code_entry, Code::kKindSpecificFlags1Offset));
+  __ And(a5, a5, Operand(1 << Code::kMarkedForDeoptimizationBit));
+  __ Branch(&gotta_call_runtime, ne, a5, Operand(zero_reg));
+
+  // Optimized code is good, get it into the closure and link the closure into
+  // the optimized functions list, then tail call the optimized code.
+  ReplaceClosureEntryWithOptimizedCode(masm, optimized_code_entry, a1, t3, a5,
+                                       t0);
+  __ Jump(optimized_code_entry);
+
+  // Optimized code is marked for deopt, bailout to the CompileLazy runtime
+  // function which will clear the feedback vector's optimized code slot.
+  __ bind(&gotta_call_runtime);
+  GenerateTailCallToReturnedCode(masm, Runtime::kEvictOptimizedCodeSlot);
 }
 
 static void Generate_StackOverflowCheck(MacroAssembler* masm, Register num_args,
@@ -1377,34 +1445,11 @@ void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
   // Found code, check if it is marked for deopt, if so call into runtime to
   // clear the optimized code slot.
   __ Lw(a5, FieldMemOperand(entry, Code::kKindSpecificFlags1Offset));
-  __ DecodeField<Code::MarkedForDeoptimizationField>(a5);
+  __ And(a5, a5, Operand(1 << Code::kMarkedForDeoptimizationBit));
   __ Branch(&gotta_call_runtime, ne, a5, Operand(zero_reg));
 
   // Code is good, get it into the closure and tail call.
-  __ Daddu(entry, entry, Operand(Code::kHeaderSize - kHeapObjectTag));
-  __ Sd(entry, FieldMemOperand(closure, JSFunction::kCodeEntryOffset));
-  __ RecordWriteCodeEntryField(closure, entry, a5);
-
-  // Load native context into t3.
-  Register native_context = t3;
-  __ Ld(native_context, NativeContextMemOperand());
-
-  // Link the closure into the optimized function list.
-  __ Ld(a5,
-        ContextMemOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
-  __ Sd(a5, FieldMemOperand(closure, JSFunction::kNextFunctionLinkOffset));
-  __ RecordWriteField(closure, JSFunction::kNextFunctionLinkOffset, a5, t0,
-                      kRAHasNotBeenSaved, kDontSaveFPRegs, EMIT_REMEMBERED_SET,
-                      OMIT_SMI_CHECK);
-  const int function_list_offset =
-      Context::SlotOffset(Context::OPTIMIZED_FUNCTIONS_LIST);
-  __ Sd(closure,
-        ContextMemOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
-  // Save closure before the write barrier.
-  __ mov(a5, closure);
-  __ RecordWriteContextSlot(native_context, function_list_offset, closure, t0,
-                            kRAHasNotBeenSaved, kDontSaveFPRegs);
-  __ mov(closure, a5);
+  ReplaceClosureEntryWithOptimizedCode(masm, entry, closure, t3, a5, t0);
   __ Jump(entry);
 
   // We found no optimized code.
@@ -2164,68 +2209,64 @@ void Builtins::Generate_Apply(MacroAssembler* masm) {
 }
 
 // static
-void Builtins::Generate_CallForwardVarargs(MacroAssembler* masm,
-                                           Handle<Code> code) {
+void Builtins::Generate_ForwardVarargs(MacroAssembler* masm,
+                                       Handle<Code> code) {
   // ----------- S t a t e -------------
-  //  -- a1    : the target to call (can be any Object)
-  //  -- a2    : start index (to support rest parameters)
-  //  -- ra    : return address.
-  //  -- sp[0] : thisArgument
+  //  -- a0 : the number of arguments (not including the receiver)
+  //  -- a3 : the new.target (for [[Construct]] calls)
+  //  -- a1 : the target to call (can be any Object)
+  //  -- a2 : start index (to support rest parameters)
   // -----------------------------------
 
   // Check if we have an arguments adaptor frame below the function frame.
   Label arguments_adaptor, arguments_done;
-  __ Ld(a3, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
-  __ Ld(a0, MemOperand(a3, CommonFrameConstants::kContextOrFrameTypeOffset));
-  __ Branch(&arguments_adaptor, eq, a0,
+  __ Ld(a6, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
+  __ Ld(a7, MemOperand(a6, CommonFrameConstants::kContextOrFrameTypeOffset));
+  __ Branch(&arguments_adaptor, eq, a7,
             Operand(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
   {
-    __ Ld(a0, MemOperand(fp, JavaScriptFrameConstants::kFunctionOffset));
-    __ Ld(a0, FieldMemOperand(a0, JSFunction::kSharedFunctionInfoOffset));
-    __ Lw(a0,
-          FieldMemOperand(a0, SharedFunctionInfo::kFormalParameterCountOffset));
-    __ mov(a3, fp);
+    __ Ld(a7, MemOperand(fp, JavaScriptFrameConstants::kFunctionOffset));
+    __ Ld(a7, FieldMemOperand(a7, JSFunction::kSharedFunctionInfoOffset));
+    __ Lw(a7,
+          FieldMemOperand(a7, SharedFunctionInfo::kFormalParameterCountOffset));
+    __ mov(a6, fp);
   }
   __ Branch(&arguments_done);
   __ bind(&arguments_adaptor);
   {
     // Just get the length from the ArgumentsAdaptorFrame.
-    __ Lw(a0, UntagSmiMemOperand(
-                  a3, ArgumentsAdaptorFrameConstants::kLengthOffset));
+    __ Lw(a7, UntagSmiMemOperand(
+                  a6, ArgumentsAdaptorFrameConstants::kLengthOffset));
   }
   __ bind(&arguments_done);
 
-  Label stack_empty, stack_done, stack_overflow;
-  __ Subu(a0, a0, a2);
-  __ Branch(&stack_empty, le, a0, Operand(zero_reg));
+  Label stack_done, stack_overflow;
+  __ Subu(a7, a7, a2);
+  __ Branch(&stack_done, le, a7, Operand(zero_reg));
   {
     // Check for stack overflow.
-    Generate_StackOverflowCheck(masm, a0, a4, a5, &stack_overflow);
+    Generate_StackOverflowCheck(masm, a7, a4, a5, &stack_overflow);
 
     // Forward the arguments from the caller frame.
     {
       Label loop;
-      __ mov(a2, a0);
+      __ Daddu(a0, a0, a7);
       __ bind(&loop);
       {
-        __ Dlsa(at, a3, a2, kPointerSizeLog2);
+        __ Dlsa(at, a6, a7, kPointerSizeLog2);
         __ Ld(at, MemOperand(at, 1 * kPointerSize));
         __ push(at);
-        __ Subu(a2, a2, Operand(1));
-        __ Branch(&loop, ne, a2, Operand(zero_reg));
+        __ Subu(a7, a7, Operand(1));
+        __ Branch(&loop, ne, a7, Operand(zero_reg));
       }
     }
   }
   __ Branch(&stack_done);
   __ bind(&stack_overflow);
   __ TailCallRuntime(Runtime::kThrowStackOverflow);
-  __ bind(&stack_empty);
-  {
-    // We just pass the receiver, which is already on the stack.
-    __ mov(a0, zero_reg);
-  }
   __ bind(&stack_done);
 
+  // Tail-call to the {code} handler.
   __ Jump(code, RelocInfo::CODE_TARGET);
 }
 

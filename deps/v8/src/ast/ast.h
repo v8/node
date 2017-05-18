@@ -252,29 +252,15 @@ class SmallMapList final {
   bool is_empty() const { return list_.is_empty(); }
   int length() const { return list_.length(); }
 
-  void AddMapIfMissing(Handle<Map> map, Zone* zone) {
-    if (!Map::TryUpdate(map).ToHandle(&map)) return;
-    for (int i = 0; i < length(); ++i) {
-      if (at(i).is_identical_to(map)) return;
-    }
-    Add(map, zone);
-  }
+  void AddMapIfMissing(Handle<Map> map, Zone* zone);
 
-  void FilterForPossibleTransitions(Map* root_map) {
-    for (int i = list_.length() - 1; i >= 0; i--) {
-      if (at(i)->FindRootMap() != root_map) {
-        list_.RemoveElement(list_.at(i));
-      }
-    }
-  }
+  void FilterForPossibleTransitions(Map* root_map);
 
   void Add(Handle<Map> handle, Zone* zone) {
     list_.Add(handle.location(), zone);
   }
 
-  Handle<Map> at(int i) const {
-    return Handle<Map>(list_.at(i));
-  }
+  Handle<Map> at(int i) const;
 
   Handle<Map> first() const { return at(0); }
   Handle<Map> last() const { return at(length() - 1); }
@@ -2663,6 +2649,14 @@ class FunctionLiteral final : public Expression {
 
   bool AllowsLazyCompilation();
 
+  bool CanSuspend() {
+    if (suspend_count() > 0) {
+      DCHECK(IsResumableFunction(kind()));
+      return true;
+    }
+    return false;
+  }
+
   Handle<String> debug_name() const {
     if (raw_name_ != NULL && !raw_name_->IsEmpty()) {
       return raw_name_->string();
@@ -3245,17 +3239,12 @@ class AstVisitor BASE_EMBEDDED {
 
 class AstNodeFactory final BASE_EMBEDDED {
  public:
-  explicit AstNodeFactory(AstValueFactory* ast_value_factory)
-      : zone_(nullptr), ast_value_factory_(ast_value_factory) {
-    if (ast_value_factory != nullptr) {
-      zone_ = ast_value_factory->zone();
-    }
-  }
+  AstNodeFactory(AstValueFactory* ast_value_factory, Zone* zone)
+      : zone_(zone), ast_value_factory_(ast_value_factory) {}
 
   AstValueFactory* ast_value_factory() const { return ast_value_factory_; }
   void set_ast_value_factory(AstValueFactory* ast_value_factory) {
     ast_value_factory_ = ast_value_factory;
-    zone_ = ast_value_factory->zone();
   }
 
   VariableDeclaration* NewVariableDeclaration(VariableProxy* proxy,
@@ -3404,9 +3393,8 @@ class AstNodeFactory final BASE_EMBEDDED {
     return new (zone_) Literal(ast_value_factory_->NewSymbol(symbol), pos);
   }
 
-  Literal* NewNumberLiteral(double number, int pos, bool with_dot = false) {
-    return new (zone_)
-        Literal(ast_value_factory_->NewNumber(number, with_dot), pos);
+  Literal* NewNumberLiteral(double number, int pos) {
+    return new (zone_) Literal(ast_value_factory_->NewNumber(number), pos);
   }
 
   Literal* NewSmiLiteral(uint32_t number, int pos) {
@@ -3682,24 +3670,6 @@ class AstNodeFactory final BASE_EMBEDDED {
 
   Zone* zone() const { return zone_; }
   void set_zone(Zone* zone) { zone_ = zone; }
-
-  // Handles use of temporary zones when parsing inner function bodies.
-  class BodyScope {
-   public:
-    BodyScope(AstNodeFactory* factory, Zone* temp_zone, bool use_temp_zone)
-        : factory_(factory), prev_zone_(factory->zone_) {
-      if (use_temp_zone) {
-        factory->zone_ = temp_zone;
-      }
-    }
-
-    void Reset() { factory_->zone_ = prev_zone_; }
-    ~BodyScope() { Reset(); }
-
-   private:
-    AstNodeFactory* factory_;
-    Zone* prev_zone_;
-  };
 
  private:
   // This zone may be deallocated upon returning from parsing a function body

@@ -696,6 +696,37 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   __ jmp(&stepping_prepared);
 }
 
+static void ReplaceClosureEntryWithOptimizedCode(
+    MacroAssembler* masm, Register optimized_code_entry, Register closure,
+    Register scratch1, Register scratch2, Register scratch3) {
+  Register native_context = scratch1;
+
+  // Store the optimized code in the closure.
+  __ leap(optimized_code_entry,
+          FieldOperand(optimized_code_entry, Code::kHeaderSize));
+  __ movp(FieldOperand(closure, JSFunction::kCodeEntryOffset),
+          optimized_code_entry);
+  __ RecordWriteCodeEntryField(closure, optimized_code_entry, scratch2);
+
+  // Link the closure into the optimized function list.
+  __ movp(native_context, NativeContextOperand());
+  __ movp(scratch3,
+          ContextOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
+  __ movp(FieldOperand(closure, JSFunction::kNextFunctionLinkOffset), scratch3);
+  __ RecordWriteField(closure, JSFunction::kNextFunctionLinkOffset, scratch3,
+                      scratch2, kDontSaveFPRegs, EMIT_REMEMBERED_SET,
+                      OMIT_SMI_CHECK);
+  const int function_list_offset =
+      Context::SlotOffset(Context::OPTIMIZED_FUNCTIONS_LIST);
+  __ movp(ContextOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST),
+          closure);
+  // Save closure before the write barrier.
+  __ movp(scratch3, closure);
+  __ RecordWriteContextSlot(native_context, function_list_offset, closure,
+                            scratch2, kDontSaveFPRegs);
+  __ movp(closure, scratch3);
+}
+
 static void LeaveInterpreterFrame(MacroAssembler* masm, Register scratch1,
                                   Register scratch2) {
   Register args_count = scratch1;
@@ -742,6 +773,18 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ Push(rsi);  // Callee's context.
   __ Push(rdi);  // Callee's JS function.
   __ Push(rdx);  // Callee's new target.
+
+  // First check if there is optimized code in the feedback vector which we
+  // could call instead.
+  Label switch_to_optimized_code;
+  Register optimized_code_entry = rcx;
+  __ movp(rbx, FieldOperand(rdi, JSFunction::kFeedbackVectorOffset));
+  __ movp(rbx, FieldOperand(rbx, Cell::kValueOffset));
+  __ movp(rbx,
+          FieldOperand(rbx, FeedbackVector::kOptimizedCodeIndex * kPointerSize +
+                                FeedbackVector::kHeaderSize));
+  __ movp(optimized_code_entry, FieldOperand(rbx, WeakCell::kValueOffset));
+  __ JumpIfNotSmi(optimized_code_entry, &switch_to_optimized_code);
 
   // Get the bytecode array from the function object (or from the DebugInfo if
   // it is present) and load it into kInterpreterBytecodeArrayRegister.
@@ -857,6 +900,28 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ movp(FieldOperand(rdi, JSFunction::kCodeEntryOffset), rcx);
   __ RecordWriteCodeEntryField(rdi, rcx, r15);
   __ jmp(rcx);
+
+  // If there is optimized code on the type feedback vector, check if it is good
+  // to run, and if so, self heal the closure and call the optimized code.
+  __ bind(&switch_to_optimized_code);
+  __ leave();
+  Label gotta_call_runtime;
+
+  // Check if the optimized code is marked for deopt.
+  __ testl(FieldOperand(optimized_code_entry, Code::kKindSpecificFlags1Offset),
+           Immediate(1 << Code::kMarkedForDeoptimizationBit));
+  __ j(not_zero, &gotta_call_runtime);
+
+  // Optimized code is good, get it into the closure and link the closure into
+  // the optimized functions list, then tail call the optimized code.
+  ReplaceClosureEntryWithOptimizedCode(masm, optimized_code_entry, rdi, r14,
+                                       r15, rbx);
+  __ jmp(optimized_code_entry);
+
+  // Optimized code is marked for deopt, bailout to the CompileLazy runtime
+  // function which will clear the feedback vector's optimized code slot.
+  __ bind(&gotta_call_runtime);
+  GenerateTailCallToReturnedCode(masm, Runtime::kEvictOptimizedCodeSlot);
 }
 
 static void Generate_StackOverflowCheck(
@@ -1155,34 +1220,12 @@ void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
 
   // Found code, check if it is marked for deopt, if so call into runtime to
   // clear the optimized code slot.
-  __ movl(rbx, FieldOperand(entry, Code::kKindSpecificFlags1Offset));
-  __ DecodeField<Code::MarkedForDeoptimizationField>(rbx);
+  __ testl(FieldOperand(entry, Code::kKindSpecificFlags1Offset),
+           Immediate(1 << Code::kMarkedForDeoptimizationBit));
   __ j(not_zero, &gotta_call_runtime);
 
   // Code is good, get it into the closure and tail call.
-  __ leap(entry, FieldOperand(entry, Code::kHeaderSize));
-  __ movp(FieldOperand(closure, JSFunction::kCodeEntryOffset), entry);
-  __ RecordWriteCodeEntryField(closure, entry, r15);
-
-  // Load native context into r14.
-  Register native_context = r14;
-  __ movp(native_context, NativeContextOperand());
-
-  // Link the closure into the optimized function list.
-  __ movp(rbx,
-          ContextOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST));
-  __ movp(FieldOperand(closure, JSFunction::kNextFunctionLinkOffset), rbx);
-  __ RecordWriteField(closure, JSFunction::kNextFunctionLinkOffset, rbx, r15,
-                      kDontSaveFPRegs, EMIT_REMEMBERED_SET, OMIT_SMI_CHECK);
-  const int function_list_offset =
-      Context::SlotOffset(Context::OPTIMIZED_FUNCTIONS_LIST);
-  __ movp(ContextOperand(native_context, Context::OPTIMIZED_FUNCTIONS_LIST),
-          closure);
-  // Save closure before the write barrier.
-  __ movp(rbx, closure);
-  __ RecordWriteContextSlot(native_context, function_list_offset, closure, r15,
-                            kDontSaveFPRegs);
-  __ movp(closure, rbx);
+  ReplaceClosureEntryWithOptimizedCode(masm, entry, closure, r14, r15, rbx);
   __ jmp(entry);
 
   // We found no optimized code.
@@ -2373,13 +2416,13 @@ void Builtins::Generate_Apply(MacroAssembler* masm) {
 }
 
 // static
-void Builtins::Generate_CallForwardVarargs(MacroAssembler* masm,
-                                           Handle<Code> code) {
+void Builtins::Generate_ForwardVarargs(MacroAssembler* masm,
+                                       Handle<Code> code) {
   // ----------- S t a t e -------------
-  //  -- rdi    : the target to call (can be any Object)
-  //  -- rcx    : start index (to support rest parameters)
-  //  -- rsp[0] : return address.
-  //  -- rsp[8] : thisArgument
+  //  -- rax : the number of arguments (not including the receiver)
+  //  -- rdx : the new target (for [[Construct]] calls)
+  //  -- rdi : the target to call (can be any Object)
+  //  -- rcx : start index (to support rest parameters)
   // -----------------------------------
 
   // Check if we have an arguments adaptor frame below the function frame.
@@ -2389,52 +2432,48 @@ void Builtins::Generate_CallForwardVarargs(MacroAssembler* masm,
           Immediate(StackFrame::TypeToMarker(StackFrame::ARGUMENTS_ADAPTOR)));
   __ j(equal, &arguments_adaptor, Label::kNear);
   {
-    __ movp(rax, Operand(rbp, JavaScriptFrameConstants::kFunctionOffset));
-    __ movp(rax, FieldOperand(rax, JSFunction::kSharedFunctionInfoOffset));
+    __ movp(r8, Operand(rbp, JavaScriptFrameConstants::kFunctionOffset));
+    __ movp(r8, FieldOperand(r8, JSFunction::kSharedFunctionInfoOffset));
     __ LoadSharedFunctionInfoSpecialField(
-        rax, rax, SharedFunctionInfo::kFormalParameterCountOffset);
+        r8, r8, SharedFunctionInfo::kFormalParameterCountOffset);
     __ movp(rbx, rbp);
   }
   __ jmp(&arguments_done, Label::kNear);
   __ bind(&arguments_adaptor);
   {
     __ SmiToInteger32(
-        rax, Operand(rbx, ArgumentsAdaptorFrameConstants::kLengthOffset));
+        r8, Operand(rbx, ArgumentsAdaptorFrameConstants::kLengthOffset));
   }
   __ bind(&arguments_done);
 
-  Label stack_empty, stack_done, stack_overflow;
-  __ subl(rax, rcx);
-  __ j(less_equal, &stack_empty);
+  Label stack_done, stack_overflow;
+  __ subl(r8, rcx);
+  __ j(less_equal, &stack_done);
   {
     // Check for stack overflow.
-    Generate_StackOverflowCheck(masm, rax, rcx, &stack_overflow, Label::kNear);
+    Generate_StackOverflowCheck(masm, r8, rcx, &stack_overflow, Label::kNear);
 
     // Forward the arguments from the caller frame.
     {
       Label loop;
-      __ movl(rcx, rax);
-      __ Pop(r8);
+      __ addl(rax, r8);
+      __ PopReturnAddressTo(rcx);
       __ bind(&loop);
       {
-        StackArgumentsAccessor args(rbx, rcx, ARGUMENTS_DONT_CONTAIN_RECEIVER);
+        StackArgumentsAccessor args(rbx, r8, ARGUMENTS_DONT_CONTAIN_RECEIVER);
         __ Push(args.GetArgumentOperand(0));
-        __ decl(rcx);
+        __ decl(r8);
         __ j(not_zero, &loop);
       }
-      __ Push(r8);
+      __ PushReturnAddressFrom(rcx);
     }
   }
   __ jmp(&stack_done, Label::kNear);
   __ bind(&stack_overflow);
   __ TailCallRuntime(Runtime::kThrowStackOverflow);
-  __ bind(&stack_empty);
-  {
-    // We just pass the receiver, which is already on the stack.
-    __ Set(rax, 0);
-  }
   __ bind(&stack_done);
 
+  // Tail-call to the {code} handler.
   __ Jump(code, RelocInfo::CODE_TARGET);
 }
 

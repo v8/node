@@ -144,8 +144,8 @@ Handle<Script> CreateWasmScript(Isolate* isolate,
   script->set_type(Script::TYPE_WASM);
 
   int hash = StringHasher::HashSequentialString(
-      reinterpret_cast<const char*>(wire_bytes.start()), wire_bytes.length(),
-      kZeroHashSeed);
+      reinterpret_cast<const char*>(wire_bytes.start()),
+      static_cast<int>(wire_bytes.length()), kZeroHashSeed);
 
   const int kBufferSize = 32;
   char buffer[kBufferSize];
@@ -960,8 +960,8 @@ WasmInstanceObject* wasm::GetOwningWasmInstance(Code* code) {
   return WasmInstanceObject::cast(cell->value());
 }
 
-WasmModule::WasmModule(Zone* owned)
-    : owned_zone(owned), pending_tasks(new base::Semaphore(0)) {}
+WasmModule::WasmModule(std::unique_ptr<Zone> owned)
+    : signature_zone(std::move(owned)), pending_tasks(new base::Semaphore(0)) {}
 
 namespace {
 
@@ -1419,7 +1419,7 @@ class InstantiationHelper {
     WasmSharedModuleData::SetBreakpointsOnNewInstance(
         compiled_module_->shared(), instance);
 
-    if (FLAG_wasm_interpret_all) {
+    if (FLAG_wasm_interpret_all && module_->is_wasm()) {
       Handle<WasmDebugInfo> debug_info =
           WasmInstanceObject::GetOrCreateDebugInfo(instance);
       std::vector<int> func_indexes;
@@ -2619,7 +2619,7 @@ class AsyncCompileJob {
   // finished.
  public:
   explicit AsyncCompileJob(Isolate* isolate, std::unique_ptr<byte[]> bytes_copy,
-                           int length, Handle<Context> context,
+                           size_t length, Handle<Context> context,
                            Handle<JSPromise> promise)
       : isolate_(isolate),
         bytes_copy_(std::move(bytes_copy)),

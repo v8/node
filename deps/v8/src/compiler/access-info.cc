@@ -145,9 +145,12 @@ bool PropertyAccessInfo::Merge(PropertyAccessInfo const* that,
 
     case kDataField:
     case kDataConstantField: {
-      // Check if we actually access the same field.
-      if (this->kind_ == that->kind_ &&
-          this->field_index_ == that->field_index_) {
+      // Check if we actually access the same field (we use the
+      // GetFieldAccessStubKey method here just like the ICs do
+      // since that way we only compare the relevant bits of the
+      // field indices).
+      if (this->field_index_.GetFieldAccessStubKey() ==
+          that->field_index_.GetFieldAccessStubKey()) {
         switch (access_mode) {
           case AccessMode::kLoad: {
             if (this->field_representation_ != that->field_representation_) {
@@ -267,12 +270,14 @@ bool AccessInfoFactory::ComputeElementAccessInfos(
   MapTransitionList transitions(maps.size());
   for (Handle<Map> map : maps) {
     if (Map::TryUpdate(map).ToHandle(&map)) {
-      Map* transition_target =
-          map->FindElementsKindTransitionedMap(possible_transition_targets);
+      // Don't generate elements kind transitions from stable maps.
+      Map* transition_target = map->is_stable()
+                                   ? nullptr
+                                   : map->FindElementsKindTransitionedMap(
+                                         possible_transition_targets);
       if (transition_target == nullptr) {
         receiver_maps.push_back(map);
       } else {
-        DCHECK(!map->is_stable());
         transitions.push_back(std::make_pair(map, handle(transition_target)));
       }
     }

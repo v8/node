@@ -1500,7 +1500,7 @@ void Heap::MinorMarkCompact() {
   SetGCState(MINOR_MARK_COMPACT);
   LOG(isolate_, ResourceEvent("MinorMarkCompact", "begin"));
 
-  TRACE_GC(tracer(), GCTracer::Scope::MC_MINOR_MC);
+  TRACE_GC(tracer(), GCTracer::Scope::MINOR_MC);
   AlwaysAllocateScope always_allocate(isolate());
   PauseAllocationObserversScope pause_observers(this);
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
@@ -1781,11 +1781,8 @@ void Heap::Scavenge() {
   isolate()->global_handles()->MarkNewSpaceWeakUnmodifiedObjectsPending(
       &IsUnscavengedHeapObject);
 
-  isolate()
-      ->global_handles()
-      ->IterateNewSpaceWeakUnmodifiedRoots<
-          GlobalHandles::HANDLE_PHANTOM_NODES_VISIT_OTHERS>(
-          &root_scavenge_visitor);
+  isolate()->global_handles()->IterateNewSpaceWeakUnmodifiedRoots(
+      &root_scavenge_visitor);
   new_space_front = DoScavenge(new_space_front);
 
   UpdateNewSpaceReferencesInExternalStringTable(
@@ -4277,7 +4274,7 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
 void Heap::NotifyObjectLayoutChange(HeapObject* object,
                                     const DisallowHeapAllocation&) {
   if (FLAG_incremental_marking && incremental_marking()->IsMarking()) {
-    incremental_marking()->WhiteToGreyAndPush(object);
+    incremental_marking()->MarkBlackAndPush(object);
   }
 #ifdef VERIFY_HEAP
   DCHECK(pending_layout_change_object_ == nullptr);
@@ -5654,7 +5651,7 @@ bool Heap::SetUp() {
   mark_compact_collector_ = new MarkCompactCollector(this);
   incremental_marking_->set_marking_deque(
       mark_compact_collector_->marking_deque());
-#if V8_CONCURRENT_MARKING
+#ifdef V8_CONCURRENT_MARKING
   concurrent_marking_ =
       new ConcurrentMarking(this, mark_compact_collector_->marking_deque());
 #else

@@ -284,6 +284,10 @@ namespace interpreter {
   V(JumpIfJSReceiver, AccumulatorUse::kRead, OperandType::kUImm)               \
   V(JumpIfNotHole, AccumulatorUse::kRead, OperandType::kUImm)                  \
                                                                                \
+  /* Smi-table lookup for switch statements */                                 \
+  V(SwitchOnSmiNoFeedback, AccumulatorUse::kRead, OperandType::kIdx,           \
+    OperandType::kUImm, OperandType::kImm)                                     \
+                                                                               \
   /* Complex flow control For..in */                                           \
   V(ForInPrepare, AccumulatorUse::kNone, OperandType::kReg,                    \
     OperandType::kRegOutTriple)                                                \
@@ -611,13 +615,18 @@ class V8_EXPORT_PRIVATE Bytecodes final {
     return IsJump(bytecode) && !IsJumpIfToBoolean(bytecode);
   }
 
+  // Returns true if the bytecode is a switch.
+  static constexpr bool IsSwitch(Bytecode bytecode) {
+    return bytecode == Bytecode::kSwitchOnSmiNoFeedback;
+  }
+
   // Returns true if |bytecode| has no effects. These bytecodes only manipulate
   // interpreter frame state and will never throw.
   static constexpr bool IsWithoutExternalSideEffects(Bytecode bytecode) {
     return (IsAccumulatorLoadWithoutEffects(bytecode) ||
             IsRegisterLoadWithoutEffects(bytecode) ||
             IsCompareWithoutEffects(bytecode) || bytecode == Bytecode::kNop ||
-            IsJumpWithoutEffects(bytecode));
+            IsJumpWithoutEffects(bytecode) || IsSwitch(bytecode));
   }
 
   // Returns true if the bytecode is Ldar or Star.

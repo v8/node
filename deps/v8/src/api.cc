@@ -1010,10 +1010,7 @@ HandleScope::~HandleScope() {
   i::HandleScope::CloseScope(isolate_, prev_next_, prev_limit_);
 }
 
-V8_NORETURN void* HandleScope::operator new(size_t) {
-  base::OS::Abort();
-  abort();
-}
+void* HandleScope::operator new(size_t) { base::OS::Abort(); }
 
 void HandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
 
@@ -1054,10 +1051,7 @@ i::Object** EscapableHandleScope::Escape(i::Object** escape_value) {
   return escape_slot_;
 }
 
-V8_NORETURN void* EscapableHandleScope::operator new(size_t) {
-  base::OS::Abort();
-  abort();
-}
+void* EscapableHandleScope::operator new(size_t) { base::OS::Abort(); }
 
 void EscapableHandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
 
@@ -1079,10 +1073,7 @@ SealHandleScope::~SealHandleScope() {
   current->sealed_level = prev_sealed_level_;
 }
 
-V8_NORETURN void* SealHandleScope::operator new(size_t) {
-  base::OS::Abort();
-  abort();
-}
+void* SealHandleScope::operator new(size_t) { base::OS::Abort(); }
 
 void SealHandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
 
@@ -2616,10 +2607,7 @@ v8::TryCatch::~TryCatch() {
   }
 }
 
-V8_NORETURN void* v8::TryCatch::operator new(size_t) {
-  base::OS::Abort();
-  abort();
-}
+void* v8::TryCatch::operator new(size_t) { base::OS::Abort(); }
 
 void v8::TryCatch::operator delete(void*, size_t) { base::OS::Abort(); }
 
@@ -7667,8 +7655,7 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Deserialize(
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   i::MaybeHandle<i::FixedArray> maybe_compiled_part =
       i::WasmCompiledModuleSerializer::DeserializeWasmModule(
-          i_isolate, &sc,
-          {wire_bytes.first, static_cast<int>(wire_bytes.second)});
+          i_isolate, &sc, {wire_bytes.first, wire_bytes.second});
   i::Handle<i::FixedArray> compiled_part;
   if (!maybe_compiled_part.ToHandle(&compiled_part)) {
     return MaybeLocal<WasmCompiledModule>();

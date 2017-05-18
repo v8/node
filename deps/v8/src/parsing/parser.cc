@@ -111,8 +111,7 @@ int ParseData::FunctionsSize() {
 class DiscardableZoneScope {
  public:
   DiscardableZoneScope(Parser* parser, Zone* temp_zone, bool use_temp_zone)
-      : ast_node_factory_scope_(parser->factory(), temp_zone, use_temp_zone),
-        fni_(parser->ast_value_factory_, temp_zone),
+      : fni_(parser->ast_value_factory_, temp_zone),
         parser_(parser),
         prev_fni_(parser->fni_),
         prev_zone_(parser->zone_),
@@ -124,6 +123,7 @@ class DiscardableZoneScope {
       parser_->temp_zoned_ = true;
       parser_->fni_ = &fni_;
       parser_->zone_ = temp_zone;
+      parser_->factory()->set_zone(temp_zone);
       if (parser_->reusable_preparser_ != nullptr) {
         parser_->reusable_preparser_->zone_ = temp_zone;
         parser_->reusable_preparser_->factory()->set_zone(temp_zone);
@@ -133,18 +133,17 @@ class DiscardableZoneScope {
   void Reset() {
     parser_->fni_ = prev_fni_;
     parser_->zone_ = prev_zone_;
+    parser_->factory()->set_zone(prev_zone_);
     parser_->allow_lazy_ = prev_allow_lazy_;
     parser_->temp_zoned_ = prev_temp_zoned_;
     if (parser_->reusable_preparser_ != nullptr) {
       parser_->reusable_preparser_->zone_ = prev_zone_;
       parser_->reusable_preparser_->factory()->set_zone(prev_zone_);
     }
-    ast_node_factory_scope_.Reset();
   }
   ~DiscardableZoneScope() { Reset(); }
 
  private:
-  AstNodeFactory::BodyScope ast_node_factory_scope_;
   FuncNameInferrer fni_;
   Parser* parser_;
   FuncNameInferrer* prev_fni_;
@@ -252,60 +251,56 @@ bool Parser::ShortcutNumericLiteralBinaryExpression(Expression** x,
       y->AsLiteral() && y->AsLiteral()->raw_value()->IsNumber()) {
     double x_val = (*x)->AsLiteral()->raw_value()->AsNumber();
     double y_val = y->AsLiteral()->raw_value()->AsNumber();
-    bool x_has_dot = (*x)->AsLiteral()->raw_value()->ContainsDot();
-    bool y_has_dot = y->AsLiteral()->raw_value()->ContainsDot();
-    bool has_dot = x_has_dot || y_has_dot;
     switch (op) {
       case Token::ADD:
-        *x = factory()->NewNumberLiteral(x_val + y_val, pos, has_dot);
+        *x = factory()->NewNumberLiteral(x_val + y_val, pos);
         return true;
       case Token::SUB:
-        *x = factory()->NewNumberLiteral(x_val - y_val, pos, has_dot);
+        *x = factory()->NewNumberLiteral(x_val - y_val, pos);
         return true;
       case Token::MUL:
-        *x = factory()->NewNumberLiteral(x_val * y_val, pos, has_dot);
+        *x = factory()->NewNumberLiteral(x_val * y_val, pos);
         return true;
       case Token::DIV:
-        *x = factory()->NewNumberLiteral(x_val / y_val, pos, has_dot);
+        *x = factory()->NewNumberLiteral(x_val / y_val, pos);
         return true;
       case Token::BIT_OR: {
         int value = DoubleToInt32(x_val) | DoubleToInt32(y_val);
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::BIT_AND: {
         int value = DoubleToInt32(x_val) & DoubleToInt32(y_val);
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::BIT_XOR: {
         int value = DoubleToInt32(x_val) ^ DoubleToInt32(y_val);
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::SHL: {
         int value = DoubleToInt32(x_val) << (DoubleToInt32(y_val) & 0x1f);
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::SHR: {
         uint32_t shift = DoubleToInt32(y_val) & 0x1f;
         uint32_t value = DoubleToUint32(x_val) >> shift;
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::SAR: {
         uint32_t shift = DoubleToInt32(y_val) & 0x1f;
         int value = ArithmeticShiftRight(DoubleToInt32(x_val), shift);
-        *x = factory()->NewNumberLiteral(value, pos, has_dot);
+        *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::EXP: {
         double value = Pow(x_val, y_val);
         int int_value = static_cast<int>(value);
         *x = factory()->NewNumberLiteral(
-            int_value == value && value != -0.0 ? int_value : value, pos,
-            has_dot);
+            int_value == value && value != -0.0 ? int_value : value, pos);
         return true;
       }
       default:
@@ -327,15 +322,13 @@ Expression* Parser::BuildUnaryExpression(Expression* expression,
     } else if (literal->IsNumber()) {
       // Compute some expressions involving only number literals.
       double value = literal->AsNumber();
-      bool has_dot = literal->ContainsDot();
       switch (op) {
         case Token::ADD:
           return expression;
         case Token::SUB:
-          return factory()->NewNumberLiteral(-value, pos, has_dot);
+          return factory()->NewNumberLiteral(-value, pos);
         case Token::BIT_NOT:
-          return factory()->NewNumberLiteral(~DoubleToInt32(value), pos,
-                                             has_dot);
+          return factory()->NewNumberLiteral(~DoubleToInt32(value), pos);
         default:
           break;
       }
@@ -344,7 +337,7 @@ Expression* Parser::BuildUnaryExpression(Expression* expression,
   // Desugar '+foo' => 'foo*1'
   if (op == Token::ADD) {
     return factory()->NewBinaryOperation(
-        Token::MUL, expression, factory()->NewNumberLiteral(1, pos, true), pos);
+        Token::MUL, expression, factory()->NewNumberLiteral(1, pos), pos);
   }
   // The same idea for '-foo' => 'foo*(-1)'.
   if (op == Token::SUB) {
@@ -433,9 +426,8 @@ Literal* Parser::ExpressionFromLiteral(Token::Value token, int pos) {
       return factory()->NewSmiLiteral(value, pos);
     }
     case Token::NUMBER: {
-      bool has_dot = scanner()->ContainsDot();
       double value = scanner()->DoubleValue();
-      return factory()->NewNumberLiteral(value, pos, has_dot);
+      return factory()->NewNumberLiteral(value, pos);
     }
     default:
       DCHECK(false);
@@ -2710,8 +2702,7 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
   {
     // Temporary zones can nest. When we migrate free variables (see below), we
     // need to recreate them in the previous Zone.
-    AstNodeFactory previous_zone_ast_node_factory(ast_value_factory());
-    previous_zone_ast_node_factory.set_zone(zone());
+    AstNodeFactory previous_zone_ast_node_factory(ast_value_factory(), zone());
 
     // Open a new zone scope, which sets our AstNodeFactory to allocate in the
     // new temporary zone if the preconditions are satisfied, and ensures that
@@ -3139,22 +3130,6 @@ Block* Parser::BuildRejectPromiseOnException(Block* inner_block) {
   return result;
 }
 
-Assignment* Parser::BuildCreateJSGeneratorObject(int pos, FunctionKind kind) {
-  // .generator = %_CreateJSGeneratorObject(...);
-  DCHECK_NOT_NULL(function_state_->generator_object_variable());
-  ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(2, zone());
-  args->Add(factory()->NewThisFunction(pos), zone());
-  args->Add(IsArrowFunction(kind) ? GetLiteralUndefined(pos)
-                                  : ThisExpression(kNoSourcePosition),
-            zone());
-  Expression* allocation = factory()->NewCallRuntime(
-      Runtime::kInlineCreateJSGeneratorObject, args, pos);
-  VariableProxy* proxy =
-      factory()->NewVariableProxy(function_state_->generator_object_variable());
-  return factory()->NewAssignment(Token::INIT, proxy, allocation,
-                                  kNoSourcePosition);
-}
-
 Expression* Parser::BuildResolvePromise(Expression* value, int pos) {
   // %ResolvePromise(.promise, value), .promise
   ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(2, zone());
@@ -3204,13 +3179,17 @@ Variable* Parser::AsyncGeneratorAwaitVariable() {
 }
 
 Expression* Parser::BuildInitialYield(int pos, FunctionKind kind) {
-  Assignment* assignment = BuildCreateJSGeneratorObject(pos, kind);
-  VariableProxy* generator =
+  // We access the generator object twice: once for the {generator}
+  // member of the Suspend AST node, and once for the result of
+  // the initial yield.
+  Expression* yield_result =
+      factory()->NewVariableProxy(function_state_->generator_object_variable());
+  Expression* generator_object =
       factory()->NewVariableProxy(function_state_->generator_object_variable());
   // The position of the yield is important for reporting the exception
   // caused by calling the .throw method on a generator suspended at the
   // initial yield (i.e. right after generator instantiation).
-  return BuildSuspend(generator, assignment, scope()->start_position(),
+  return BuildSuspend(generator_object, yield_result, scope()->start_position(),
                       Suspend::kOnExceptionThrow, SuspendFlags::kYield);
 }
 
@@ -3339,11 +3318,10 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
 Expression* Parser::RewriteClassLiteral(Scope* block_scope,
                                         const AstRawString* name,
                                         ClassInfo* class_info, int pos,
-                                        bool* ok) {
+                                        int end_pos, bool* ok) {
   DCHECK_NOT_NULL(block_scope);
   DCHECK_EQ(block_scope->scope_type(), BLOCK_SCOPE);
   DCHECK_EQ(block_scope->language_mode(), STRICT);
-  int end_pos = scanner()->location().end_pos;
 
   bool has_extends = class_info->extends != nullptr;
   bool has_default_constructor = class_info->constructor == nullptr;
@@ -3351,8 +3329,6 @@ Expression* Parser::RewriteClassLiteral(Scope* block_scope,
     class_info->constructor =
         DefaultConstructor(name, has_extends, pos, end_pos);
   }
-
-  block_scope->set_end_position(end_pos);
 
   if (name != nullptr) {
     DCHECK_NOT_NULL(class_info->proxy);
@@ -3874,9 +3850,6 @@ void Parser::PrepareAsyncFunctionBody(ZoneList<Statement*>* body,
   if (function_state_->generator_object_variable() == nullptr) {
     PrepareGeneratorVariables();
   }
-  body->Add(factory()->NewExpressionStatement(
-                BuildCreateJSGeneratorObject(pos, kind), kNoSourcePosition),
-            zone());
 }
 
 // This method completes the desugaring of the body of async_function.

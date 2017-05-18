@@ -108,43 +108,94 @@ bool IsStdlibMemberValid(Isolate* isolate, Handle<JSReceiver> stdlib,
   return false;
 }
 
+void Report(Handle<Script> script, int position, Vector<const char> text,
+            MessageTemplate::Template message_template,
+            v8::Isolate::MessageErrorLevel level) {
+  Isolate* isolate = script->GetIsolate();
+  MessageLocation location(script, position, position);
+  Handle<String> text_object = isolate->factory()->InternalizeUtf8String(text);
+  Handle<JSMessageObject> message = MessageHandler::MakeMessageObject(
+      isolate, message_template, &location, text_object,
+      Handle<FixedArray>::null());
+  message->set_error_level(level);
+  MessageHandler::ReportMessage(isolate, &location, message);
+}
+
+// Hook to report successful execution of {AsmJs::CompileAsmViaWasm} phase.
+void ReportCompilationSuccess(Handle<Script> script, int position,
+                              double translate_time, double compile_time,
+                              size_t module_size) {
+  if (FLAG_suppress_asm_messages || !FLAG_trace_asm_time) return;
+  EmbeddedVector<char, 100> text;
+  int length = SNPrintF(
+      text, "success, asm->wasm: %0.3f ms, compile: %0.3f ms, %" PRIuS " bytes",
+      translate_time, compile_time, module_size);
+  CHECK_NE(-1, length);
+  text.Truncate(length);
+  Report(script, position, text, MessageTemplate::kAsmJsCompiled,
+         v8::Isolate::kMessageInfo);
+}
+
+// Hook to report failed execution of {AsmJs::CompileAsmViaWasm} phase.
+void ReportCompilationFailure(Handle<Script> script, int position,
+                              const char* reason) {
+  if (FLAG_suppress_asm_messages) return;
+  Vector<const char> text = CStrVector(reason);
+  Report(script, position, text, MessageTemplate::kAsmJsInvalid,
+         v8::Isolate::kMessageWarning);
+}
+
+// Hook to report successful execution of {AsmJs::InstantiateAsmWasm} phase.
+void ReportInstantiationSuccess(Handle<Script> script, int position,
+                                double instantiate_time) {
+  if (FLAG_suppress_asm_messages || !FLAG_trace_asm_time) return;
+  EmbeddedVector<char, 50> text;
+  int length = SNPrintF(text, "success, %0.3f ms", instantiate_time);
+  CHECK_NE(-1, length);
+  text.Truncate(length);
+  Report(script, position, text, MessageTemplate::kAsmJsInstantiated,
+         v8::Isolate::kMessageInfo);
+}
+
 }  // namespace
 
 MaybeHandle<FixedArray> AsmJs::CompileAsmViaWasm(CompilationInfo* info) {
   wasm::ZoneBuffer* module = nullptr;
   wasm::ZoneBuffer* asm_offsets = nullptr;
   Handle<FixedArray> uses_array;
-  base::ElapsedTimer asm_wasm_timer;
-  asm_wasm_timer.Start();
-  size_t asm_wasm_zone_start = info->zone()->allocation_size();
+  Handle<WasmModuleObject> compiled;
+
+  // The compilation of asm.js modules is split into two distinct steps:
+  //  [1] The asm.js module source is parsed, validated, and translated to a
+  //      valid WebAssembly module. The result are two vectors representing the
+  //      encoded module as well as encoded source position information.
+  //  [2] The module is handed to WebAssembly which decodes it into an internal
+  //      representation and eventually compiles it to machine code.
+  double translate_time;  // Time (milliseconds) taken to execute step [1].
+  double compile_time;    // Time (milliseconds) taken to execute step [2].
+
+  // Step 1: Translate asm.js module to WebAssembly module.
   {
-    wasm::AsmJsParser parser(info->isolate(), info->zone(), info->script(),
+    HistogramTimerScope translate_time_scope(
+        info->isolate()->counters()->asm_wasm_translation_time());
+    size_t compile_zone_start = info->zone()->allocation_size();
+    base::ElapsedTimer translate_timer;
+    translate_timer.Start();
+
+    Zone* compile_zone = info->zone();
+    Zone translate_zone(info->isolate()->allocator(), ZONE_NAME);
+    wasm::AsmJsParser parser(info->isolate(), &translate_zone, info->script(),
                              info->literal()->start_position(),
                              info->literal()->end_position());
     if (!parser.Run()) {
       DCHECK(!info->isolate()->has_pending_exception());
-      if (!FLAG_suppress_asm_messages) {
-        MessageLocation location(info->script(), parser.failure_location(),
-                                 parser.failure_location());
-        Handle<String> message =
-            info->isolate()
-                ->factory()
-                ->NewStringFromUtf8(CStrVector(parser.failure_message()))
-                .ToHandleChecked();
-        Handle<JSMessageObject> error_message =
-            MessageHandler::MakeMessageObject(
-                info->isolate(), MessageTemplate::kAsmJsInvalid, &location,
-                message, Handle<FixedArray>::null());
-        error_message->set_error_level(v8::Isolate::kMessageWarning);
-        MessageHandler::ReportMessage(info->isolate(), &location,
-                                      error_message);
-      }
+      ReportCompilationFailure(info->script(), parser.failure_location(),
+                               parser.failure_message());
       return MaybeHandle<FixedArray>();
     }
-    Zone* zone = info->zone();
-    module = new (zone) wasm::ZoneBuffer(zone);
+    module = new (compile_zone) wasm::ZoneBuffer(compile_zone);
     parser.module_builder()->WriteTo(*module);
-    asm_offsets = new (zone) wasm::ZoneBuffer(zone);
+    asm_offsets = new (compile_zone) wasm::ZoneBuffer(compile_zone);
     parser.module_builder()->WriteAsmJsOffsetTable(*asm_offsets);
     uses_array = info->isolate()->factory()->NewFixedArray(
         static_cast<int>(parser.stdlib_uses()->size()));
@@ -152,60 +203,44 @@ MaybeHandle<FixedArray> AsmJs::CompileAsmViaWasm(CompilationInfo* info) {
     for (auto i : *parser.stdlib_uses()) {
       uses_array->set(count++, Smi::FromInt(i));
     }
+    size_t compile_zone_size =
+        info->zone()->allocation_size() - compile_zone_start;
+    size_t translate_zone_size = translate_zone.allocation_size();
+    info->isolate()
+        ->counters()
+        ->asm_wasm_translation_peak_memory_bytes()
+        ->AddSample(static_cast<int>(translate_zone_size));
+    translate_time = translate_timer.Elapsed().InMillisecondsF();
+    if (FLAG_trace_asm_parser) {
+      PrintF(
+          "[asm.js translation successful: time=%0.3fms, "
+          "translate_zone=%" PRIuS "KB, compile_zone+=%" PRIuS "KB]\n",
+          translate_time, translate_zone_size / KB, compile_zone_size / KB);
+    }
   }
 
-  double asm_wasm_time = asm_wasm_timer.Elapsed().InMillisecondsF();
-  size_t asm_wasm_zone = info->zone()->allocation_size() - asm_wasm_zone_start;
-  if (FLAG_trace_asm_parser) {
-    PrintF("[asm.js translation successful: time=%0.3fms, zone=%" PRIuS "KB]\n",
-           asm_wasm_time, asm_wasm_zone / KB);
+  // Step 2: Compile and decode the WebAssembly module.
+  {
+    base::ElapsedTimer compile_timer;
+    compile_timer.Start();
+    wasm::ErrorThrower thrower(info->isolate(), "AsmJs::Compile");
+    MaybeHandle<WasmModuleObject> maybe_compiled = SyncCompileTranslatedAsmJs(
+        info->isolate(), &thrower,
+        wasm::ModuleWireBytes(module->begin(), module->end()), info->script(),
+        Vector<const byte>(asm_offsets->begin(), asm_offsets->size()));
+    DCHECK(!maybe_compiled.is_null());
+    DCHECK(!thrower.error());
+    compile_time = compile_timer.Elapsed().InMillisecondsF();
+    compiled = maybe_compiled.ToHandleChecked();
   }
 
-  Vector<const byte> asm_offsets_vec(asm_offsets->begin(),
-                                     static_cast<int>(asm_offsets->size()));
-
-  base::ElapsedTimer compile_timer;
-  compile_timer.Start();
-  wasm::ErrorThrower thrower(info->isolate(),
-                             "Asm.js -> WebAssembly conversion");
-  MaybeHandle<JSObject> compiled = SyncCompileTranslatedAsmJs(
-      info->isolate(), &thrower,
-      wasm::ModuleWireBytes(module->begin(), module->end()), info->script(),
-      asm_offsets_vec);
-  DCHECK(!compiled.is_null());
-  DCHECK(!thrower.error());
-  double compile_time = compile_timer.Elapsed().InMillisecondsF();
-  DCHECK_GE(module->end(), module->begin());
-  uintptr_t wasm_size = module->end() - module->begin();
-
+  // The result is a compiled module and serialized standard library uses.
   Handle<FixedArray> result =
       info->isolate()->factory()->NewFixedArray(kWasmDataEntryCount);
-  result->set(kWasmDataCompiledModule, *compiled.ToHandleChecked());
+  result->set(kWasmDataCompiledModule, *compiled);
   result->set(kWasmDataUsesArray, *uses_array);
-
-  MessageLocation location(info->script(), info->literal()->position(),
-                           info->literal()->position());
-  char text[100];
-  int length;
-  if (FLAG_predictable) {
-    length = base::OS::SNPrintF(text, arraysize(text), "success");
-  } else {
-    length = base::OS::SNPrintF(
-        text, arraysize(text),
-        "success, asm->wasm: %0.3f ms, compile: %0.3f ms, %" PRIuPTR " bytes",
-        asm_wasm_time, compile_time, wasm_size);
-  }
-  DCHECK_NE(-1, length);
-  USE(length);
-  Handle<String> stext(info->isolate()->factory()->InternalizeUtf8String(text));
-  Handle<JSMessageObject> message = MessageHandler::MakeMessageObject(
-      info->isolate(), MessageTemplate::kAsmJsCompiled, &location, stext,
-      Handle<FixedArray>::null());
-  message->set_error_level(v8::Isolate::kMessageInfo);
-  if (!FLAG_suppress_asm_messages && FLAG_trace_asm_time) {
-    MessageHandler::ReportMessage(info->isolate(), &location, message);
-  }
-
+  ReportCompilationSuccess(info->script(), info->literal()->position(),
+                           translate_time, compile_time, module->size());
   return result;
 }
 
@@ -256,7 +291,7 @@ MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
     }
   }
 
-  wasm::ErrorThrower thrower(isolate, "Asm.js -> WebAssembly instantiation");
+  wasm::ErrorThrower thrower(isolate, "AsmJs::Instantiate");
   MaybeHandle<Object> maybe_module_object =
       wasm::SyncInstantiate(isolate, &thrower, module, ffi_object, memory);
   if (maybe_module_object.is_null()) {
@@ -266,6 +301,11 @@ MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
   DCHECK(!thrower.error());
   Handle<Object> module_object = maybe_module_object.ToHandleChecked();
 
+  Handle<Script> script(Script::cast(shared->script()));
+  int position = shared->start_position();
+  ReportInstantiationSuccess(script, position,
+                             instantiate_timer.Elapsed().InMillisecondsF());
+
   Handle<Name> single_function_name(
       isolate->factory()->InternalizeUtf8String(AsmJs::kSingleFunctionName));
   MaybeHandle<Object> single_function =
@@ -273,28 +313,6 @@ MaybeHandle<Object> AsmJs::InstantiateAsmWasm(Isolate* isolate,
   if (!single_function.is_null() &&
       !single_function.ToHandleChecked()->IsUndefined(isolate)) {
     return single_function;
-  }
-
-  int position = shared->start_position();
-  Handle<Script> script(Script::cast(shared->script()));
-  MessageLocation location(script, position, position);
-  char text[50];
-  int length;
-  if (FLAG_predictable) {
-    length = base::OS::SNPrintF(text, arraysize(text), "success");
-  } else {
-    length = base::OS::SNPrintF(text, arraysize(text), "success, %0.3f ms",
-                                instantiate_timer.Elapsed().InMillisecondsF());
-  }
-  DCHECK_NE(-1, length);
-  USE(length);
-  Handle<String> stext(isolate->factory()->InternalizeUtf8String(text));
-  Handle<JSMessageObject> message = MessageHandler::MakeMessageObject(
-      isolate, MessageTemplate::kAsmJsInstantiated, &location, stext,
-      Handle<FixedArray>::null());
-  message->set_error_level(v8::Isolate::kMessageInfo);
-  if (!FLAG_suppress_asm_messages && FLAG_trace_asm_time) {
-    MessageHandler::ReportMessage(isolate, &location, message);
   }
 
   Handle<String> exports_name =

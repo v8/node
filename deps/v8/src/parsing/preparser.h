@@ -544,11 +544,15 @@ class PreParserStatement {
 
 class PreParserFactory {
  public:
-  explicit PreParserFactory(AstValueFactory* ast_value_factory)
-      : ast_value_factory_(ast_value_factory),
-        zone_(ast_value_factory->zone()) {}
+  explicit PreParserFactory(AstValueFactory* ast_value_factory, Zone* zone)
+      : ast_node_factory_(ast_value_factory, zone), zone_(zone) {}
 
-  void set_zone(Zone* zone) { zone_ = zone; }
+  void set_zone(Zone* zone) {
+    ast_node_factory_.set_zone(zone);
+    zone_ = zone;
+  }
+
+  AstNodeFactory* ast_node_factory() { return &ast_node_factory_; }
 
   PreParserExpression NewStringLiteral(PreParserIdentifier identifier,
                                        int pos) {
@@ -557,10 +561,8 @@ class PreParserFactory {
     PreParserExpression expression = PreParserExpression::Default();
     if (identifier.string_ != nullptr) {
       DCHECK(FLAG_lazy_inner_functions);
-      AstNodeFactory factory(ast_value_factory_);
-      factory.set_zone(zone_);
-      VariableProxy* variable =
-          factory.NewVariableProxy(identifier.string_, NORMAL_VARIABLE);
+      VariableProxy* variable = ast_node_factory_.NewVariableProxy(
+          identifier.string_, NORMAL_VARIABLE);
       expression.AddVariable(variable, zone_);
     }
     return expression;
@@ -795,7 +797,9 @@ class PreParserFactory {
   }
 
  private:
-  AstValueFactory* ast_value_factory_;
+  // For creating VariableProxy objects (if
+  // PreParser::track_unresolved_variables_ is used).
+  AstNodeFactory ast_node_factory_;
   Zone* zone_;
 };
 
@@ -1127,7 +1131,12 @@ class PreParser : public ParserBase<PreParser> {
   }
   V8_INLINE void DeclareClassVariable(PreParserIdentifier name,
                                       ClassInfo* class_info,
-                                      int class_token_pos, bool* ok) {}
+                                      int class_token_pos, bool* ok) {
+    if (name.string_ != nullptr) {
+      DCHECK(track_unresolved_variables_);
+      scope()->DeclareVariableName(name.string_, CONST);
+    }
+  }
   V8_INLINE void DeclareClassProperty(PreParserIdentifier class_name,
                                       PreParserExpression property,
                                       ClassLiteralProperty::Kind kind,
@@ -1137,7 +1146,8 @@ class PreParser : public ParserBase<PreParser> {
   V8_INLINE PreParserExpression RewriteClassLiteral(Scope* scope,
                                                     PreParserIdentifier name,
                                                     ClassInfo* class_info,
-                                                    int pos, bool* ok) {
+                                                    int pos, int end_pos,
+                                                    bool* ok) {
     bool has_default_constructor = !class_info->has_seen_constructor;
     // Account for the default constructor.
     if (has_default_constructor) GetNextFunctionLiteralId();
@@ -1500,12 +1510,9 @@ class PreParser : public ParserBase<PreParser> {
   V8_INLINE PreParserExpression ThisExpression(int pos = kNoSourcePosition) {
     ZoneList<VariableProxy*>* variables = nullptr;
     if (track_unresolved_variables_) {
-      AstNodeFactory factory(ast_value_factory());
-      // Setting the Zone is necessary because zone_ might be the temp Zone, and
-      // AstValueFactory doesn't know about it.
-      factory.set_zone(zone());
       VariableProxy* proxy = scope()->NewUnresolved(
-          &factory, ast_value_factory()->this_string(), pos, THIS_VARIABLE);
+          factory()->ast_node_factory(), ast_value_factory()->this_string(),
+          pos, THIS_VARIABLE);
 
       variables = new (zone()) ZoneList<VariableProxy*>(1, zone());
       variables->Add(proxy, zone());
@@ -1514,10 +1521,29 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   V8_INLINE PreParserExpression NewSuperPropertyReference(int pos) {
+    if (track_unresolved_variables_) {
+      scope()->NewUnresolved(factory()->ast_node_factory(),
+                             ast_value_factory()->this_function_string(), pos,
+                             NORMAL_VARIABLE);
+      scope()->NewUnresolved(factory()->ast_node_factory(),
+                             ast_value_factory()->this_string(), pos,
+                             THIS_VARIABLE);
+    }
     return PreParserExpression::Default();
   }
 
   V8_INLINE PreParserExpression NewSuperCallReference(int pos) {
+    if (track_unresolved_variables_) {
+      scope()->NewUnresolved(factory()->ast_node_factory(),
+                             ast_value_factory()->this_function_string(), pos,
+                             NORMAL_VARIABLE);
+      scope()->NewUnresolved(factory()->ast_node_factory(),
+                             ast_value_factory()->new_target_string(), pos,
+                             NORMAL_VARIABLE);
+      scope()->NewUnresolved(factory()->ast_node_factory(),
+                             ast_value_factory()->this_string(), pos,
+                             THIS_VARIABLE);
+    }
     return PreParserExpression::SuperCallReference();
   }
 

@@ -362,8 +362,12 @@ class WasmDecoder : public Decoder {
 
   bool Validate(const byte* pc, BranchTableOperand<true>& operand,
                 size_t block_depth) {
-    // TODO(titzer): add extra redundant validation for br_table here?
-    return true;
+    if (operand.table_count >= kV8MaxWasmFunctionSize) {
+      errorf(pc + 1, "invalid table count (> max function size): %u",
+             operand.table_count);
+      return false;
+    }
+    return checkAvailable(operand.table_count);
   }
 
   inline bool Validate(const byte* pc, WasmOpcode opcode,
@@ -670,8 +674,8 @@ class WasmFullDecoder : public WasmDecoder {
   }
 
   bool TraceFailed() {
-    TRACE("wasm-error module+%-6d func+%d: %s\n\n", baserel(error_pc_),
-          startrel(error_pc_), error_msg_.c_str());
+    TRACE("wasm-error module+%-6d func+%d: %s\n\n",
+          baserel(start_ + error_offset_), error_offset_, error_msg_.c_str());
     return false;
   }
 

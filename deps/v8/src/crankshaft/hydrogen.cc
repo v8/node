@@ -42,6 +42,7 @@
 // GetRootConstructor
 #include "src/ic/ic-inl.h"
 #include "src/isolate-inl.h"
+#include "src/objects/map.h"
 #include "src/runtime/runtime.h"
 
 #if V8_TARGET_ARCH_IA32
@@ -117,7 +118,7 @@ class HOptimizedGraphBuilderWithPositions : public HOptimizedGraphBuilder {
 };
 
 HCompilationJob::Status HCompilationJob::PrepareJobImpl() {
-  if (!isolate()->use_crankshaft() ||
+  if (!isolate()->use_optimizer() ||
       info()->shared_info()->must_use_ignition_turbo()) {
     // Crankshaft is entirely disabled.
     return FAILED;
@@ -6939,10 +6940,12 @@ HValue* HOptimizedGraphBuilder::HandlePolymorphicElementAccess(
   // Get transition target for each map (NULL == no transition).
   for (int i = 0; i < maps->length(); ++i) {
     Handle<Map> map = maps->at(i);
+    // Don't generate elements kind transitions from stable maps.
     Map* transitioned_map =
-        map->FindElementsKindTransitionedMap(possible_transitioned_maps);
+        map->is_stable()
+            ? nullptr
+            : map->FindElementsKindTransitionedMap(possible_transitioned_maps);
     if (transitioned_map != nullptr) {
-      DCHECK(!map->is_stable());
       transition_target.push_back(handle(transitioned_map));
     } else {
       transition_target.push_back(Handle<Map>());

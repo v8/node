@@ -769,9 +769,15 @@ class ElementsAccessorBase : public ElementsAccessor {
           backing_store = handle(array->elements(), isolate);
         }
       }
-      if (2 * length <= capacity) {
+      if (2 * length + JSObject::kMinAddedElementsCapacity <= capacity) {
         // If more than half the elements won't be used, trim the array.
-        isolate->heap()->RightTrimFixedArray(*backing_store, capacity - length);
+        // Do not trim from short arrays to prevent frequent trimming on
+        // repeated pop operations.
+        // Leave some space to allow for subsequent push operations.
+        int elements_to_trim = length + 1 == old_length
+                                   ? (capacity - length) / 2
+                                   : capacity - length;
+        isolate->heap()->RightTrimFixedArray(*backing_store, elements_to_trim);
       } else {
         // Otherwise, fill the unused tail with holes.
         BackingStore::cast(*backing_store)->FillWithHoles(length, old_length);
@@ -1880,8 +1886,6 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
     // TODO(verwaest): Move this out of elements.cc.
     // If an old space backing store is larger than a certain size and
     // has too few used values, normalize it.
-    // To avoid doing the check on every delete we require at least
-    // one adjacent hole to the value being deleted.
     const int kMinLengthForSparsenessCheck = 64;
     if (backing_store->length() < kMinLengthForSparsenessCheck) return;
     if (backing_store->GetHeap()->InNewSpace(*backing_store)) return;
@@ -1891,34 +1895,48 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
     } else {
       length = static_cast<uint32_t>(store->length());
     }
-    if ((entry > 0 && backing_store->is_the_hole(isolate, entry - 1)) ||
-        (entry + 1 < length &&
-         backing_store->is_the_hole(isolate, entry + 1))) {
-      if (!obj->IsJSArray()) {
-        uint32_t i;
-        for (i = entry + 1; i < length; i++) {
-          if (!backing_store->is_the_hole(isolate, i)) break;
-        }
-        if (i == length) {
-          DeleteAtEnd(obj, backing_store, entry);
+
+    // To avoid doing the check on every delete, use a counter-based heuristic.
+    const int kLengthFraction = 16;
+    // The above constant must be large enough to ensure that we check for
+    // normalization frequently enough. At a minimum, it should be large
+    // enough to reliably hit the "window" of remaining elements count where
+    // normalization would be beneficial.
+    STATIC_ASSERT(kLengthFraction >=
+                  SeededNumberDictionary::kEntrySize *
+                      SeededNumberDictionary::kPreferFastElementsSizeFactor);
+    size_t current_counter = isolate->elements_deletion_counter();
+    if (current_counter < length / kLengthFraction) {
+      isolate->set_elements_deletion_counter(current_counter + 1);
+      return;
+    }
+    // Reset the counter whenever the full check is performed.
+    isolate->set_elements_deletion_counter(0);
+
+    if (!obj->IsJSArray()) {
+      uint32_t i;
+      for (i = entry + 1; i < length; i++) {
+        if (!backing_store->is_the_hole(isolate, i)) break;
+      }
+      if (i == length) {
+        DeleteAtEnd(obj, backing_store, entry);
+        return;
+      }
+    }
+    int num_used = 0;
+    for (int i = 0; i < backing_store->length(); ++i) {
+      if (!backing_store->is_the_hole(isolate, i)) {
+        ++num_used;
+        // Bail out if a number dictionary wouldn't be able to save much space.
+        if (SeededNumberDictionary::kPreferFastElementsSizeFactor *
+                SeededNumberDictionary::ComputeCapacity(num_used) *
+                SeededNumberDictionary::kEntrySize >
+            static_cast<uint32_t>(backing_store->length())) {
           return;
         }
       }
-      int num_used = 0;
-      for (int i = 0; i < backing_store->length(); ++i) {
-        if (!backing_store->is_the_hole(isolate, i)) {
-          ++num_used;
-          // Bail out if a number dictionary wouldn't be able to save at least
-          // 75% space.
-          if (4 * SeededNumberDictionary::ComputeCapacity(num_used) *
-                  SeededNumberDictionary::kEntrySize >
-              backing_store->length()) {
-            return;
-          }
-        }
-      }
-      JSObject::NormalizeElements(obj);
     }
+    JSObject::NormalizeElements(obj);
   }
 
   static void ReconfigureImpl(Handle<JSObject> object,
@@ -2150,8 +2168,8 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
                            int hole_end) {
     Heap* heap = isolate->heap();
     Handle<BackingStore> dst_elms = Handle<BackingStore>::cast(backing_store);
-    if (heap->CanMoveObjectStart(*dst_elms) && dst_index == 0 &&
-        len > JSArray::kMaxCopyElements) {
+    if (len > JSArray::kMaxCopyElements && dst_index == 0 &&
+        heap->CanMoveObjectStart(*dst_elms)) {
       // Update all the copies of this backing_store handle.
       *dst_elms.location() =
           BackingStore::cast(heap->LeftTrimFixedArray(*dst_elms, src_index));
@@ -3496,6 +3514,8 @@ class SloppyArgumentsElementsAccessor
     uint32_t entry = ArgumentsAccessor::GetEntryForIndexImpl(
         isolate, holder, arguments, index, filter);
     if (entry == kMaxUInt32) return kMaxUInt32;
+    // Arguments entries could overlap with the dictionary entries, hence offset
+    // them by the number of context mapped entries.
     return elements->parameter_map_length() + entry;
   }
 
@@ -3519,17 +3539,26 @@ class SloppyArgumentsElementsAccessor
   }
 
   static void DeleteImpl(Handle<JSObject> obj, uint32_t entry) {
-    SloppyArgumentsElements* elements =
-        SloppyArgumentsElements::cast(obj->elements());
+    Handle<SloppyArgumentsElements> elements(
+        SloppyArgumentsElements::cast(obj->elements()));
     uint32_t length = elements->parameter_map_length();
+    uint32_t delete_or_entry = entry;
     if (entry < length) {
-      // TODO(kmillikin): We could check if this was the last aliased
-      // parameter, and revert to normal elements in that case.  That
-      // would enable GC of the context.
-      elements->set_mapped_entry(entry, obj->GetHeap()->the_hole_value());
-    } else {
-      Subclass::DeleteFromArguments(obj, entry - length);
+      delete_or_entry = kMaxUInt32;
     }
+    Subclass::SloppyDeleteImpl(obj, elements, delete_or_entry);
+    // SloppyDeleteImpl allocates a new dictionary elements store. For making
+    // heap verification happy we postpone clearing out the mapped entry.
+    if (entry < length) {
+      elements->set_mapped_entry(entry, obj->GetHeap()->the_hole_value());
+    }
+  }
+
+  static void SloppyDeleteImpl(Handle<JSObject> obj,
+                               Handle<SloppyArgumentsElements> elements,
+                               uint32_t entry) {
+    // Implemented in subclasses.
+    UNREACHABLE();
   }
 
   static void CollectElementIndicesImpl(Handle<JSObject> object,
@@ -3682,17 +3711,21 @@ class SlowSloppyArgumentsElementsAccessor
     }
     return result;
   }
-  static void DeleteFromArguments(Handle<JSObject> obj, uint32_t entry) {
+  static void SloppyDeleteImpl(Handle<JSObject> obj,
+                               Handle<SloppyArgumentsElements> elements,
+                               uint32_t entry) {
+    // No need to delete a context mapped entry from the arguments elements.
+    if (entry == kMaxUInt32) return;
     Isolate* isolate = obj->GetIsolate();
-    Handle<SloppyArgumentsElements> elements(
-        SloppyArgumentsElements::cast(obj->elements()), isolate);
     Handle<SeededNumberDictionary> dict(
         SeededNumberDictionary::cast(elements->arguments()), isolate);
     // TODO(verwaest): Remove reliance on index in Shrink.
     uint32_t index = GetIndexForEntryImpl(*dict, entry);
-    Handle<Object> result = SeededNumberDictionary::DeleteProperty(dict, entry);
+    int length = elements->parameter_map_length();
+    Handle<Object> result =
+        SeededNumberDictionary::DeleteProperty(dict, entry - length);
     USE(result);
-    DCHECK(result->IsTrue(dict->GetIsolate()));
+    DCHECK(result->IsTrue(isolate));
     Handle<FixedArray> new_elements =
         SeededNumberDictionary::Shrink(dict, index);
     elements->set_arguments(*new_elements);
@@ -3816,10 +3849,28 @@ class FastSloppyArgumentsElementsAccessor
     return FastHoleyObjectElementsAccessor::NormalizeImpl(object, arguments);
   }
 
-  static void DeleteFromArguments(Handle<JSObject> obj, uint32_t entry) {
-    Handle<FixedArray> arguments =
-        GetArguments(obj->GetIsolate(), obj->elements());
-    FastHoleyObjectElementsAccessor::DeleteCommon(obj, entry, arguments);
+  static Handle<SeededNumberDictionary> NormalizeArgumentsElements(
+      Handle<JSObject> object, Handle<SloppyArgumentsElements> elements,
+      uint32_t* entry) {
+    Handle<SeededNumberDictionary> dictionary =
+        JSObject::NormalizeElements(object);
+    elements->set_arguments(*dictionary);
+    // kMaxUInt32 indicates that a context mapped element got deleted. In this
+    // case we only normalize the elements (aka. migrate to SLOW_SLOPPY).
+    if (*entry == kMaxUInt32) return dictionary;
+    uint32_t length = elements->parameter_map_length();
+    if (*entry >= length) {
+      *entry = dictionary->FindEntry(*entry - length) + length;
+    }
+    return dictionary;
+  }
+
+  static void SloppyDeleteImpl(Handle<JSObject> obj,
+                               Handle<SloppyArgumentsElements> elements,
+                               uint32_t entry) {
+    // Always normalize element on deleting an entry.
+    NormalizeArgumentsElements(obj, elements, &entry);
+    SlowSloppyArgumentsElementsAccessor::SloppyDeleteImpl(obj, elements, entry);
   }
 
   static void AddImpl(Handle<JSObject> object, uint32_t index,
@@ -3847,14 +3898,10 @@ class FastSloppyArgumentsElementsAccessor
                               Handle<FixedArrayBase> store, uint32_t entry,
                               Handle<Object> value,
                               PropertyAttributes attributes) {
-    Handle<SeededNumberDictionary> dictionary =
-        JSObject::NormalizeElements(object);
-    SloppyArgumentsElements* elements = SloppyArgumentsElements::cast(*store);
-    elements->set_arguments(*dictionary);
-    uint32_t length = elements->parameter_map_length();
-    if (entry >= length) {
-      entry = dictionary->FindEntry(entry - length) + length;
-    }
+    DCHECK_EQ(object->elements(), *store);
+    Handle<SloppyArgumentsElements> elements(
+        SloppyArgumentsElements::cast(*store));
+    NormalizeArgumentsElements(object, elements, &entry);
     SlowSloppyArgumentsElementsAccessor::ReconfigureImpl(object, store, entry,
                                                          value, attributes);
   }

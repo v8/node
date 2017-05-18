@@ -867,8 +867,7 @@ TEST(ScopeUsesArgumentsSuperThis) {
   }
 }
 
-
-static void CheckParsesToNumber(const char* source, bool with_dot) {
+static void CheckParsesToNumber(const char* source) {
   v8::V8::Initialize();
   HandleAndZoneScope handles;
 
@@ -899,40 +898,27 @@ static void CheckParsesToNumber(const char* source, bool with_dot) {
   CHECK(fun->body()->at(0)->IsReturnStatement());
   i::ReturnStatement* ret = fun->body()->at(0)->AsReturnStatement();
   i::Literal* lit = ret->expression()->AsLiteral();
-  if (lit != NULL) {
-    const i::AstValue* val = lit->raw_value();
-    CHECK(with_dot == val->ContainsDot());
-  } else if (with_dot) {
-    i::BinaryOperation* bin = ret->expression()->AsBinaryOperation();
-    CHECK(bin != NULL);
-    CHECK_EQ(i::Token::MUL, bin->op());
-    i::Literal* rlit = bin->right()->AsLiteral();
-    const i::AstValue* val = rlit->raw_value();
-    CHECK(with_dot == val->ContainsDot());
-    CHECK_EQ(1.0, val->AsNumber());
-  }
+  CHECK(lit->IsNumberLiteral());
 }
 
 
 TEST(ParseNumbers) {
-  CheckParsesToNumber("1.", true);
-  CheckParsesToNumber("1.34", true);
-  CheckParsesToNumber("134", false);
-  CheckParsesToNumber("134e44", false);
-  CheckParsesToNumber("134.e44", true);
-  CheckParsesToNumber("134.44e44", true);
-  CheckParsesToNumber(".44", true);
+  CheckParsesToNumber("1.");
+  CheckParsesToNumber("1.34");
+  CheckParsesToNumber("134");
+  CheckParsesToNumber("134e44");
+  CheckParsesToNumber("134.e44");
+  CheckParsesToNumber("134.44e44");
+  CheckParsesToNumber(".44");
 
-  CheckParsesToNumber("-1.", true);
-  CheckParsesToNumber("-1.0", true);
-  CheckParsesToNumber("-1.34", true);
-  CheckParsesToNumber("-134", false);
-  CheckParsesToNumber("-134e44", false);
-  CheckParsesToNumber("-134.e44", true);
-  CheckParsesToNumber("-134.44e44", true);
-  CheckParsesToNumber("-.44", true);
-
-  CheckParsesToNumber("+x", true);
+  CheckParsesToNumber("-1.");
+  CheckParsesToNumber("-1.0");
+  CheckParsesToNumber("-1.34");
+  CheckParsesToNumber("-134");
+  CheckParsesToNumber("-134e44");
+  CheckParsesToNumber("-134.e44");
+  CheckParsesToNumber("-134.44e44");
+  CheckParsesToNumber("-.44");
 }
 
 
@@ -3543,14 +3529,7 @@ static void TestMaybeAssigned(Input input, const char* variable, bool module,
   i::Variable* var;
   {
     // Find the variable.
-    for (auto it = input.location.begin(); it != input.location.end(); ++it) {
-      unsigned n = *it;
-      scope = scope->inner_scope();
-      while (n-- > 0) {
-        scope = scope->sibling();
-      }
-    }
-    CHECK_NOT_NULL(scope);
+    scope = i::ScopeTestHelper::FindScope(scope, input.location);
     const i::AstRawString* var_name =
         info->ast_value_factory()->GetOneByteString(variable);
     var = scope->Lookup(var_name);

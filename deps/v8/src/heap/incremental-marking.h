@@ -182,7 +182,7 @@ class V8_EXPORT_PRIVATE IncrementalMarking {
   static const intptr_t kActivationThreshold = 0;
 #endif
 
-#if V8_CONCURRENT_MARKING
+#ifdef V8_CONCURRENT_MARKING
   static const MarkBit::AccessMode kAtomicity = MarkBit::AccessMode::ATOMIC;
 #else
   static const MarkBit::AccessMode kAtomicity = MarkBit::AccessMode::NON_ATOMIC;
@@ -222,6 +222,11 @@ class V8_EXPORT_PRIVATE IncrementalMarking {
   // Returns true if the function succeeds in transitioning the object
   // from white to grey.
   bool WhiteToGreyAndPush(HeapObject* obj);
+
+  // This function is used to color the object black before it undergoes an
+  // unsafe layout change. This is a part of synchronization protocol with
+  // the concurrent marker.
+  void MarkBlackAndPush(HeapObject* obj);
 
   inline void SetOldSpacePageFlags(MemoryChunk* chunk) {
     SetOldSpacePageFlags(chunk, IsMarking(), IsCompacting());

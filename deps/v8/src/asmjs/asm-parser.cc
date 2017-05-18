@@ -156,7 +156,7 @@ FunctionSig* AsmJsParser::ConvertSignature(
     } else if (param->IsA(AsmType::Int())) {
       sig_builder.AddParam(kWasmI32);
     } else {
-      return nullptr;
+      UNREACHABLE();
     }
   }
   if (!return_type->IsA(AsmType::Void())) {
@@ -167,7 +167,7 @@ FunctionSig* AsmJsParser::ConvertSignature(
     } else if (return_type->IsA(AsmType::Signed())) {
       sig_builder.AddReturn(kWasmI32);
     } else {
-      return 0;
+      UNREACHABLE();
     }
   }
   return sig_builder.Build();
@@ -629,7 +629,7 @@ void AsmJsParser::ValidateExport() {
       if (info->kind != VarKind::kFunction) {
         FAIL("Expected function");
       }
-      info->function_builder->ExportAs(name);
+      module_builder_->AddExport(name, info->function_builder);
       if (Check(',')) {
         if (!Peek('}')) {
           continue;
@@ -646,7 +646,8 @@ void AsmJsParser::ValidateExport() {
     if (info->kind != VarKind::kFunction) {
       FAIL("Single function export must be a function");
     }
-    info->function_builder->ExportAs(CStrVector(AsmJs::kSingleFunctionName));
+    module_builder_->AddExport(CStrVector(AsmJs::kSingleFunctionName),
+                               info->function_builder);
   }
 }
 
@@ -719,6 +720,7 @@ void AsmJsParser::ValidateFunction() {
     function_info->kind = VarKind::kFunction;
     function_info->function_builder = module_builder_->AddFunction();
     function_info->index = function_info->function_builder->func_index();
+    function_info->mutable_variable = false;
   } else if (function_info->kind != VarKind::kFunction) {
     FAIL("Function name collides with variable");
   } else if (function_info->function_defined) {
@@ -765,9 +767,6 @@ void AsmJsParser::ValidateFunction() {
   // TODO(bradnelson): WasmModuleBuilder can't take this in the right order.
   //                   We should fix that so we can use it instead.
   FunctionSig* sig = ConvertSignature(return_type_, params);
-  if (sig == nullptr) {
-    FAIL("Invalid function signature in declaration");
-  }
   current_function_builder_->SetSignature(sig);
   for (auto local : locals) {
     current_function_builder_->AddLocal(local);
@@ -989,7 +988,7 @@ void AsmJsParser::ValidateFunctionLocals(
   }
 }
 
-// ValidateStatement
+// 6.5 ValidateStatement
 void AsmJsParser::ValidateStatement() {
   call_coercion_ = nullptr;
   if (Peek('{')) {
@@ -1173,7 +1172,11 @@ void AsmJsParser::ForStatement() {
   EXPECT_TOKEN(TOK(for));
   EXPECT_TOKEN('(');
   if (!Peek(';')) {
-    Expression(nullptr);
+    AsmType* ret;
+    RECURSE(ret = Expression(nullptr));
+    if (!ret->IsA(AsmType::Void())) {
+      current_function_builder_->Emit(kExprDrop);
+    }
   }
   EXPECT_TOKEN(';');
   // a: block {
@@ -1199,6 +1202,7 @@ void AsmJsParser::ForStatement() {
   scanner_.Seek(increment_position);
   if (!Peek(')')) {
     RECURSE(Expression(nullptr));
+    // NOTE: No explicit drop because below break is an implicit drop.
   }
   current_function_builder_->EmitWithU8(kExprBr, 0);
   scanner_.Seek(end_position);
@@ -2047,6 +2051,7 @@ AsmType* AsmJsParser::ValidateCall() {
       function_info->mask = static_cast<int32_t>(mask);
       function_info->index = module_builder_->AllocateIndirectFunctions(
           static_cast<uint32_t>(mask + 1));
+      function_info->mutable_variable = false;
     } else {
       if (function_info->kind != VarKind::kTable) {
         FAILn("Expected call table");
@@ -2068,6 +2073,7 @@ AsmType* AsmJsParser::ValidateCall() {
       function_info->kind = VarKind::kFunction;
       function_info->function_builder = module_builder_->AddFunction();
       function_info->index = function_info->function_builder->func_index();
+      function_info->mutable_variable = false;
     } else {
       if (function_info->kind != VarKind::kFunction &&
           function_info->kind < VarKind::kImportedFunction) {
@@ -2136,9 +2142,6 @@ AsmType* AsmJsParser::ValidateCall() {
     function_type->AsFunctionType()->AddArgument(t);
   }
   FunctionSig* sig = ConvertSignature(return_type, param_types);
-  if (sig == nullptr) {
-    FAILn("Invalid function signature");
-  }
   uint32_t signature_index = module_builder_->AddSignature(sig);
 
   // Emit actual function invocation depending on the kind. At this point we

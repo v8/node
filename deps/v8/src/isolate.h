@@ -997,7 +997,7 @@ class Isolate {
   bool IsDead() { return has_fatal_error_; }
   void SignalFatalError() { has_fatal_error_ = true; }
 
-  bool use_crankshaft();
+  bool use_optimizer();
 
   bool initialized_from_snapshot() { return initialized_from_snapshot_; }
 
@@ -1167,7 +1167,7 @@ class Isolate {
 
   std::string GetTurboCfgFileName();
 
-#if TRACE_MAPS
+#if V8_SFI_HAS_UNIQUE_ID
   int GetNextUniqueSharedFunctionInfoId() { return next_unique_sfi_id_++; }
 #endif
 
@@ -1290,6 +1290,11 @@ class Isolate {
   // deletion to the caller. Pass by pointer, because *finalizer_ptr gets
   // reset to nullptr.
   void UnregisterFromReleaseAtTeardown(ManagedObjectFinalizer** finalizer_ptr);
+
+  size_t elements_deletion_counter() { return elements_deletion_counter_; }
+  void set_elements_deletion_counter(size_t value) {
+    elements_deletion_counter_ = value;
+  }
 
  protected:
   explicit Isolate(bool enable_serializer);
@@ -1536,7 +1541,7 @@ class Isolate {
 
   int next_optimization_id_;
 
-#if TRACE_MAPS
+#if V8_SFI_HAS_UNIQUE_ID
   int next_unique_sfi_id_;
 #endif
 
@@ -1576,6 +1581,8 @@ class Isolate {
   ManagedObjectFinalizer managed_object_finalizers_list_;
 
   size_t total_regexp_code_generated_;
+
+  size_t elements_deletion_counter_ = 0;
 
   friend class ExecutionAccess;
   friend class HandleScopeImplementer;

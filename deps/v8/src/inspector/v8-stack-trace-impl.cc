@@ -126,6 +126,12 @@ std::unique_ptr<protocol::Runtime::CallFrame> StackFrame::buildInspectorObject()
       .build();
 }
 
+bool StackFrame::isEqual(StackFrame* frame) const {
+  return m_scriptId == frame->m_scriptId &&
+         m_lineNumber == frame->m_lineNumber &&
+         m_columnNumber == frame->m_columnNumber;
+}
+
 // static
 void V8StackTraceImpl::setCaptureStackTraceForUncaughtExceptions(
     v8::Isolate* isolate, bool capture) {
@@ -241,6 +247,49 @@ std::unique_ptr<StringBuffer> V8StackTraceImpl::toString() const {
   return StringBufferImpl::adopt(string);
 }
 
+bool V8StackTraceImpl::isEqualIgnoringTopFrame(
+    V8StackTraceImpl* stackTrace) const {
+  StackFrameIterator current(this);
+  StackFrameIterator target(stackTrace);
+
+  current.next();
+  target.next();
+  while (!current.done() && !target.done()) {
+    if (!current.frame()->isEqual(target.frame())) {
+      return false;
+    }
+    current.next();
+    target.next();
+  }
+  return current.done() == target.done();
+}
+
+V8StackTraceImpl::StackFrameIterator::StackFrameIterator(
+    const V8StackTraceImpl* stackTrace)
+    : m_currentIt(stackTrace->m_frames.begin()),
+      m_currentEnd(stackTrace->m_frames.end()),
+      m_parent(stackTrace->m_asyncParent.lock().get()) {}
+
+void V8StackTraceImpl::StackFrameIterator::next() {
+  if (m_currentIt == m_currentEnd) return;
+  ++m_currentIt;
+  while (m_currentIt == m_currentEnd && m_parent) {
+    const std::vector<std::shared_ptr<StackFrame>>& frames = m_parent->frames();
+    m_currentIt = frames.begin();
+    if (m_parent->description() == "async function") ++m_currentIt;
+    m_currentEnd = frames.end();
+    m_parent = m_parent->parent().lock().get();
+  }
+}
+
+bool V8StackTraceImpl::StackFrameIterator::done() {
+  return m_currentIt == m_currentEnd;
+}
+
+StackFrame* V8StackTraceImpl::StackFrameIterator::frame() {
+  return m_currentIt->get();
+}
+
 // static
 std::shared_ptr<AsyncStackTrace> AsyncStackTrace::capture(
     V8Debugger* debugger, int contextGroupId, const String16& description,
@@ -298,14 +347,9 @@ AsyncStackTrace::AsyncStackTrace(
 std::unique_ptr<protocol::Runtime::StackTrace>
 AsyncStackTrace::buildInspectorObject(AsyncStackTrace* asyncCreation,
                                       int maxAsyncDepth) const {
-  std::unique_ptr<protocol::Runtime::StackTrace> stackTrace =
-      buildInspectorObjectCommon(m_frames, m_description, m_asyncParent.lock(),
-                                 m_asyncCreation.lock(), maxAsyncDepth);
-  if (asyncCreation && !asyncCreation->isEmpty()) {
-    stackTrace->setPromiseCreationFrame(
-        asyncCreation->m_frames[0]->buildInspectorObject());
-  }
-  return stackTrace;
+  return buildInspectorObjectCommon(m_frames, m_description,
+                                    m_asyncParent.lock(),
+                                    m_asyncCreation.lock(), maxAsyncDepth);
 }
 
 int AsyncStackTrace::contextGroupId() const { return m_contextGroupId; }

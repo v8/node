@@ -194,6 +194,7 @@ void V8Debugger::disable() {
   if (--m_enableCount) return;
   DCHECK(enabled());
   clearBreakpoints();
+  clearContinueToLocation();
   m_debuggerScript.Reset();
   m_debuggerContext.Reset();
   allAsyncTasksCanceled();
@@ -411,6 +412,58 @@ void V8Debugger::scheduleStepIntoAsync(
   m_stepIntoAsyncCallback = std::move(callback);
 }
 
+Response V8Debugger::continueToLocation(
+    int targetContextGroupId,
+    std::unique_ptr<protocol::Debugger::Location> location,
+    const String16& targetCallFrames) {
+  DCHECK(isPaused());
+  DCHECK(!m_executionState.IsEmpty());
+  DCHECK(targetContextGroupId);
+  m_targetContextGroupId = targetContextGroupId;
+  ScriptBreakpoint breakpoint(location->getScriptId(),
+                              location->getLineNumber(),
+                              location->getColumnNumber(0), String16());
+  int lineNumber = 0;
+  int columnNumber = 0;
+  m_continueToLocationBreakpointId =
+      setBreakpoint(breakpoint, &lineNumber, &columnNumber);
+  if (!m_continueToLocationBreakpointId.isEmpty()) {
+    m_continueToLocationTargetCallFrames = targetCallFrames;
+    if (m_continueToLocationTargetCallFrames !=
+        protocol::Debugger::ContinueToLocation::TargetCallFramesEnum::Any) {
+      m_continueToLocationStack = captureStackTrace(true);
+      DCHECK(m_continueToLocationStack);
+    }
+    continueProgram(targetContextGroupId);
+    // TODO(kozyatinskiy): Return actual line and column number.
+    return Response::OK();
+  } else {
+    return Response::Error("Cannot continue to specified location");
+  }
+}
+
+bool V8Debugger::shouldContinueToCurrentLocation() {
+  if (m_continueToLocationTargetCallFrames ==
+      protocol::Debugger::ContinueToLocation::TargetCallFramesEnum::Any) {
+    return true;
+  }
+  std::unique_ptr<V8StackTraceImpl> currentStack = captureStackTrace(true);
+  if (m_continueToLocationTargetCallFrames ==
+      protocol::Debugger::ContinueToLocation::TargetCallFramesEnum::Current) {
+    return m_continueToLocationStack->isEqualIgnoringTopFrame(
+        currentStack.get());
+  }
+  return true;
+}
+
+void V8Debugger::clearContinueToLocation() {
+  if (m_continueToLocationBreakpointId.isEmpty()) return;
+  removeBreakpoint(m_continueToLocationBreakpointId);
+  m_continueToLocationBreakpointId = String16();
+  m_continueToLocationTargetCallFrames = String16();
+  m_continueToLocationStack.reset();
+}
+
 Response V8Debugger::setScriptSource(
     const String16& sourceID, v8::Local<v8::String> newSource, bool dryRun,
     Maybe<protocol::Runtime::ExceptionDetails>* exceptionDetails,
@@ -566,7 +619,13 @@ void V8Debugger::handleProgramBreak(v8::Local<v8::Context> pausedContext,
       breakpointIds.push_back(String16::fromInteger(
           hitBreakpointNumber->Int32Value(debuggerContext()).FromJust()));
     }
+    if (breakpointIds.size() == 1 &&
+        breakpointIds[0] == m_continueToLocationBreakpointId) {
+      v8::Context::Scope contextScope(pausedContext);
+      if (!shouldContinueToCurrentLocation()) return;
+    }
   }
+  clearContinueToLocation();
 
   m_pausedContext = pausedContext;
   m_executionState = executionState;
@@ -683,12 +742,15 @@ void V8Debugger::PromiseEventOccurred(v8::debug::PromiseDebugActionType type,
 }
 
 std::shared_ptr<AsyncStackTrace> V8Debugger::currentAsyncParent() {
+  // TODO(kozyatinskiy): implement creation chain as parent without hack.
+  if (!m_currentAsyncCreation.empty() && m_currentAsyncCreation.back()) {
+    return m_currentAsyncCreation.back();
+  }
   return m_currentAsyncParent.empty() ? nullptr : m_currentAsyncParent.back();
 }
 
 std::shared_ptr<AsyncStackTrace> V8Debugger::currentAsyncCreation() {
-  return m_currentAsyncCreation.empty() ? nullptr
-                                        : m_currentAsyncCreation.back();
+  return nullptr;
 }
 
 void V8Debugger::compileDebuggerScript() {
@@ -856,7 +918,8 @@ void V8Debugger::asyncTaskCreatedForStack(void* task, void* parentTask) {
   if (parentTask) m_parentTask[task] = parentTask;
   v8::HandleScope scope(m_isolate);
   std::shared_ptr<AsyncStackTrace> asyncCreation =
-      AsyncStackTrace::capture(this, currentContextGroupId(), String16(), 1);
+      AsyncStackTrace::capture(this, currentContextGroupId(), String16(),
+                               V8StackTraceImpl::maxCallStackSizeToCapture);
   // Passing one as maxStackSize forces no async chain for the new stack.
   if (asyncCreation && !asyncCreation->isEmpty()) {
     m_asyncTaskCreationStacks[task] = asyncCreation;
@@ -932,6 +995,12 @@ void V8Debugger::asyncTaskStartedForStack(void* task) {
   auto itCreation = m_asyncTaskCreationStacks.find(task);
   if (itCreation != m_asyncTaskCreationStacks.end()) {
     m_currentAsyncCreation.push_back(itCreation->second.lock());
+    // TODO(kozyatinskiy): implement it without hack.
+    if (m_currentAsyncParent.back()) {
+      m_currentAsyncCreation.back()->setDescription(
+          m_currentAsyncParent.back()->description());
+      m_currentAsyncParent.back().reset();
+    }
   } else {
     m_currentAsyncCreation.emplace_back();
   }

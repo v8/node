@@ -1311,7 +1311,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     native_context()->set_object_is_sealed(*object_is_sealed);
 
     Handle<JSFunction> object_keys = SimpleInstallFunction(
-        object_function, "keys", Builtins::kObjectKeys, 1, false);
+        object_function, "keys", Builtins::kObjectKeys, 1, true);
     native_context()->set_object_keys(*object_keys);
     SimpleInstallFunction(object_function, factory->entries_string(),
                           Builtins::kObjectEntries, 1, false);
@@ -1810,6 +1810,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 #endif  // V8_INTL_SUPPORT
     SimpleInstallFunction(prototype, "replace",
                           Builtins::kStringPrototypeReplace, 2, true);
+    SimpleInstallFunction(prototype, "slice", Builtins::kStringPrototypeSlice,
+                          2, false);
     SimpleInstallFunction(prototype, "split", Builtins::kStringPrototypeSplit,
                           2, true);
     SimpleInstallFunction(prototype, "substr", Builtins::kStringPrototypeSubstr,
@@ -3897,6 +3899,8 @@ void Genesis::InitializeGlobal_experimental_fast_array_builtins() {
                               Builtins::kTypedArrayPrototypeReduce);
     InstallOneBuiltinFunction(typed_array_prototype, "reduceRight",
                               Builtins::kTypedArrayPrototypeReduceRight);
+    InstallOneBuiltinFunction(typed_array_prototype, "map",
+                              Builtins::kTypedArrayPrototypeMap);
   }
 }
 
@@ -5115,7 +5119,7 @@ Genesis::Genesis(
     AddToWeakNativeContextList(*native_context());
     isolate->set_context(*native_context());
     isolate->counters()->contexts_created_by_snapshot()->Increment();
-#if TRACE_MAPS
+#if V8_TRACE_MAPS
     if (FLAG_trace_maps) {
       Handle<JSFunction> object_fun = isolate->object_function();
       PrintF("[TraceMap: InitialMap map= %p SFI= %d_Object ]\n",

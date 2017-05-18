@@ -2346,7 +2346,7 @@ Isolate::Isolate(bool enable_serializer)
       optimizing_compile_dispatcher_(NULL),
       stress_deopt_count_(0),
       next_optimization_id_(0),
-#if TRACE_MAPS
+#if V8_SFI_HAS_UNIQUE_ID
       next_unique_sfi_id_(0),
 #endif
       is_running_microtasks_(false),
@@ -3011,8 +3011,8 @@ Map* Isolate::get_initial_js_array_map(ElementsKind kind) {
   return nullptr;
 }
 
-bool Isolate::use_crankshaft() {
-  return FLAG_opt && FLAG_crankshaft && !serializer_enabled_ &&
+bool Isolate::use_optimizer() {
+  return FLAG_opt && !serializer_enabled_ &&
          CpuFeatures::SupportsCrankshaft() && !is_precise_count_code_coverage();
 }
 

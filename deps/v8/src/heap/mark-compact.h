@@ -31,8 +31,9 @@ template <typename JobTraits>
 class PageParallelJob;
 class RecordMigratedSlotVisitor;
 class ThreadLocalTop;
+class YoungGenerationMarkingVisitor;
 
-#if V8_CONCURRENT_MARKING
+#ifdef V8_CONCURRENT_MARKING
 using MarkingDeque = ConcurrentMarkingDeque;
 #else
 using MarkingDeque = SequentialMarkingDeque;
@@ -321,8 +322,7 @@ class MarkCompactCollectorBase {
   void CreateAndExecuteEvacuationTasks(
       Collector* collector, PageParallelJob<EvacuationJobTraits>* job,
       RecordMigratedSlotVisitor* record_visitor,
-      MigrationObserver* migration_observer, const intptr_t live_bytes,
-      const int& abandoned_pages);
+      MigrationObserver* migration_observer, const intptr_t live_bytes);
 
   // Returns whether this page should be moved according to heuristics.
   bool ShouldMovePage(Page* p, intptr_t live_bytes);
@@ -340,10 +340,8 @@ class MarkCompactCollectorBase {
 // Collector for young-generation only.
 class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
  public:
-  explicit MinorMarkCompactCollector(Heap* heap)
-      : MarkCompactCollectorBase(heap),
-        marking_deque_(heap),
-        page_parallel_job_semaphore_(0) {}
+  explicit MinorMarkCompactCollector(Heap* heap);
+  ~MinorMarkCompactCollector();
 
   MarkingState marking_state(HeapObject* object) const override {
     return MarkingState::External(object);
@@ -362,17 +360,29 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void CleanupSweepToIteratePages();
 
  private:
+  class RootMarkingVisitorSeedOnly;
   class RootMarkingVisitor;
 
-  inline MarkingDeque* marking_deque() { return &marking_deque_; }
+  static const int kNumMarkers = 4;
+  static const int kMainMarker = 0;
 
-  V8_INLINE void MarkObject(HeapObject* obj);
-  V8_INLINE void PushBlack(HeapObject* obj);
+  inline MarkingDeque* marking_deque(int index) {
+    DCHECK_LT(index, kNumMarkers);
+    return marking_deque_[index];
+  }
+
+  inline YoungGenerationMarkingVisitor* marking_visitor(int index) {
+    DCHECK_LT(index, kNumMarkers);
+    return marking_visitor_[index];
+  }
 
   SlotCallbackResult CheckAndMarkObject(Heap* heap, Address slot_address);
   void MarkLiveObjects() override;
+  void MarkRootSetInParallel();
   void ProcessMarkingDeque() override;
   void EmptyMarkingDeque() override;
+  void EmptySpecificMarkingDeque(MarkingDeque* marking_deque,
+                                 YoungGenerationMarkingVisitor* visitor);
   void ClearNonLiveReferences() override;
 
   void EvacuatePrologue() override;
@@ -381,12 +391,17 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void EvacuatePagesInParallel() override;
   void UpdatePointersAfterEvacuation() override;
 
-  MarkingDeque marking_deque_;
+  int NumberOfMarkingTasks();
+
+  MarkingDeque* marking_deque_[kNumMarkers];
+  YoungGenerationMarkingVisitor* marking_visitor_[kNumMarkers];
   base::Semaphore page_parallel_job_semaphore_;
   List<Page*> new_space_evacuation_pages_;
   std::vector<Page*> sweep_to_iterate_pages_;
 
-  friend class StaticYoungGenerationMarkingVisitor;
+  friend class MarkYoungGenerationJobTraits;
+  friend class YoungGenerationMarkingTask;
+  friend class YoungGenerationMarkingVisitor;
 };
 
 // Collector for young and old generation.
@@ -698,6 +713,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void UpdatePointersAfterEvacuation() override;
 
   void ReleaseEvacuationCandidates();
+  void PostProcessEvacuationCandidates();
 
   base::Semaphore page_parallel_job_semaphore_;
 
@@ -747,7 +763,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   friend class MarkingVisitor;
   friend class RecordMigratedSlotVisitor;
   friend class SharedFunctionInfoMarkingVisitor;
-  friend class StaticYoungGenerationMarkingVisitor;
   friend class StoreBuffer;
 };
 

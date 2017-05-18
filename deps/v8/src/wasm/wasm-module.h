@@ -152,7 +152,7 @@ struct V8_EXPORT_PRIVATE WasmModule {
   static const uint32_t kPageSize = 0x10000;    // Page size, 64kb.
   static const uint32_t kMinMemPages = 1;       // Minimum memory size = 64kb
 
-  Zone* owned_zone;
+  std::unique_ptr<Zone> signature_zone;
   uint32_t min_mem_pages = 0;  // minimum size of the memory in 64k pages
   uint32_t max_mem_pages = 0;  // maximum size of the memory in 64k pages
   bool has_max_mem = false;    // try if a maximum memory size exists
@@ -185,10 +185,7 @@ struct V8_EXPORT_PRIVATE WasmModule {
   std::unique_ptr<base::Semaphore> pending_tasks;
 
   WasmModule() : WasmModule(nullptr) {}
-  WasmModule(Zone* owned_zone);
-  ~WasmModule() {
-    if (owned_zone) delete owned_zone;
-  }
+  WasmModule(std::unique_ptr<Zone> owned);
 
   ModuleOrigin get_origin() const { return origin_; }
   void set_origin(ModuleOrigin new_value) { origin_ = new_value; }
@@ -294,7 +291,7 @@ struct V8_EXPORT_PRIVATE ModuleWireBytes {
 
   const byte* start() const { return module_bytes_.start(); }
   const byte* end() const { return module_bytes_.end(); }
-  int length() const { return module_bytes_.length(); }
+  size_t length() const { return module_bytes_.length(); }
 
  private:
   const Vector<const byte> module_bytes_;

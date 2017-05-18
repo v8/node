@@ -51,7 +51,7 @@ v8::Local<v8::String> ToV8String(v8::Isolate* isolate, const char* str) {
       .ToLocalChecked();
 }
 
-class UtilsExtension : public TaskRunner::SetupGlobalTask {
+class UtilsExtension : public IsolateData::SetupGlobalTask {
  public:
   ~UtilsExtension() override = default;
   void Run(v8::Isolate* isolate,
@@ -190,9 +190,9 @@ class UtilsExtension : public TaskRunner::SetupGlobalTask {
     v8::internal::Vector<const char> chars;
     v8::Isolate* isolate = args.GetIsolate();
     if (ReadFile(isolate, args[0], &chars)) {
-      ExecuteStringTask task(chars);
-      v8::Global<v8::Context> context(isolate, isolate->GetCurrentContext());
-      task.Run(isolate, context);
+      ExecuteStringTask(chars).RunOnTaskRunner(
+          IsolateData::FromContext(isolate->GetCurrentContext())
+              ->task_runner());
     }
   }
 
@@ -302,24 +302,23 @@ class SetTimeoutTask : public AsyncTask {
 
   bool is_inspector_task() final { return false; }
 
-  void AsyncRun(v8::Isolate* isolate,
-                const v8::Global<v8::Context>& global_context) override {
-    v8::MicrotasksScope microtasks_scope(isolate,
+ private:
+  void AsyncRun() override {
+    v8::MicrotasksScope microtasks_scope(isolate(),
                                          v8::MicrotasksScope::kRunMicrotasks);
-    v8::HandleScope handle_scope(isolate);
-    v8::Local<v8::Context> context = global_context.Get(isolate);
+    v8::HandleScope handle_scope(isolate());
+    v8::Local<v8::Context> context = default_context();
     v8::Context::Scope context_scope(context);
 
-    v8::Local<v8::Function> function = function_.Get(isolate);
+    v8::Local<v8::Function> function = function_.Get(isolate());
     v8::MaybeLocal<v8::Value> result;
     result = function->Call(context, context->Global(), 0, nullptr);
   }
 
- private:
   v8::Global<v8::Function> function_;
 };
 
-class SetTimeoutExtension : public TaskRunner::SetupGlobalTask {
+class SetTimeoutExtension : public IsolateData::SetupGlobalTask {
  public:
   void Run(v8::Isolate* isolate,
            v8::Local<v8::ObjectTemplate> global) override {
@@ -352,7 +351,7 @@ class SetTimeoutExtension : public TaskRunner::SetupGlobalTask {
           v8::Integer::New(isolate, 0), v8::Integer::New(isolate, 0),
           v8::Boolean::New(isolate, false), "setTimeout", inspector));
     }
-    TaskRunner::FromContext(context)->Append(task.release());
+    IsolateData::FromContext(context)->task_runner()->Append(task.release());
   }
 };
 
@@ -363,7 +362,7 @@ bool StrictAccessCheck(v8::Local<v8::Context> accessing_context,
   return accessing_context.IsEmpty();
 }
 
-class InspectorExtension : public TaskRunner::SetupGlobalTask {
+class InspectorExtension : public IsolateData::SetupGlobalTask {
  public:
   ~InspectorExtension() override = default;
   void Run(v8::Isolate* isolate,
@@ -533,7 +532,7 @@ void UtilsExtension::CreateContextGroup(
   }
   v8::base::Semaphore ready_semaphore(0);
   int context_group_id = 0;
-  TaskRunner::SetupGlobalTasks setup_global;
+  IsolateData::SetupGlobalTasks setup_global;
   setup_global.emplace_back(new SetTimeoutExtension());
   setup_global.emplace_back(new InspectorExtension());
   inspector_client_->scheduleCreateContextGroup(
@@ -611,7 +610,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  TaskRunner::SetupGlobalTasks backend_extensions;
+  IsolateData::SetupGlobalTasks backend_extensions;
   backend_extensions.emplace_back(new SetTimeoutExtension());
   backend_extensions.emplace_back(new InspectorExtension());
   TaskRunner backend_runner(std::move(backend_extensions), false,
@@ -621,7 +620,7 @@ int main(int argc, char* argv[]) {
   SendMessageToBackendExtension::set_backend_task_runner(&backend_runner);
   UtilsExtension::set_backend_task_runner(&backend_runner);
 
-  TaskRunner::SetupGlobalTasks frontend_extensions;
+  IsolateData::SetupGlobalTasks frontend_extensions;
   frontend_extensions.emplace_back(new UtilsExtension());
   frontend_extensions.emplace_back(new SendMessageToBackendExtension());
   TaskRunner frontend_runner(std::move(frontend_extensions), true,

@@ -5,6 +5,7 @@
 import("//build/config/android/config.gni")
 import("//build/config/arm.gni")
 import("//build/config/dcheck_always_on.gni")
+import("//build/config/host_byteorder.gni")
 import("//build/config/mips.gni")
 import("//build/config/sanitizers/sanitizers.gni")
 
@@ -66,14 +67,17 @@ declare_args() {
   # Sets -dOBJECT_PRINT.
   v8_enable_object_print = ""
 
-  # Sets -dTRACE_MAPS.
+  # Sets -dV8_TRACE_MAPS.
   v8_enable_trace_maps = ""
 
   # Sets -dV8_ENABLE_CHECKS.
   v8_enable_v8_checks = ""
 
-  # Builds the snapshot with --trace-ignition
-  v8_trace_ignition = false
+  # Sets -dV8_TRACE_IGNITION.
+  v8_enable_trace_ignition = false
+
+  # Sets -dV8_CONCURRENT_MARKING
+  v8_enable_concurrent_marking = false
 
   # With post mortem support enabled, metadata is embedded into libv8 that
   # describes various parameters of the VM for use by debuggers. See
@@ -107,19 +111,6 @@ declare_args() {
   v8_enable_gdbjit = ((v8_current_cpu == "x86" || v8_current_cpu == "x64" ||
                        v8_current_cpu == "x87") && (is_linux || is_mac)) ||
                      (v8_current_cpu == "ppc64" && is_linux)
-
-  # Set v8_host_byteorder
-  v8_host_byteorder = "little"
-
-  # ppc64 can be either BE or LE
-  if (host_cpu == "ppc64") {
-    v8_host_byteorder =
-        exec_script("//tools/get_byteorder.py", [], "trim string")
-  }
-  if (host_cpu == "ppc" || host_cpu == "s390" || host_cpu == "s390x" ||
-      host_cpu == "mips" || host_cpu == "mips64") {
-    v8_host_byteorder = "big"
-  }
 }
 
 # Derived defaults.
@@ -240,7 +231,10 @@ config("features") {
     defines += [ "VERIFY_PREDICTABLE" ]
   }
   if (v8_enable_trace_maps) {
-    defines += [ "TRACE_MAPS" ]
+    defines += [ "V8_TRACE_MAPS" ]
+  }
+  if (v8_enable_trace_ignition) {
+    defines += [ "V8_TRACE_IGNITION" ]
   }
   if (v8_enable_v8_checks) {
     defines += [ "V8_ENABLE_CHECKS" ]
@@ -265,6 +259,9 @@ config("features") {
   }
   if (v8_use_external_startup_data) {
     defines += [ "V8_USE_EXTERNAL_STARTUP_DATA" ]
+  }
+  if (v8_enable_concurrent_marking) {
+    defines += [ "V8_CONCURRENT_MARKING" ]
   }
 }
 
@@ -379,7 +376,7 @@ config("toolchain") {
     if (v8_current_cpu == "s390x") {
       defines += [ "V8_TARGET_ARCH_S390X" ]
     }
-    if (v8_host_byteorder == "little") {
+    if (host_byteorder == "little") {
       defines += [ "V8_TARGET_ARCH_S390_LE_SIM" ]
     } else {
       cflags += [ "-march=z196" ]
@@ -390,9 +387,9 @@ config("toolchain") {
     if (v8_current_cpu == "ppc64") {
       defines += [ "V8_TARGET_ARCH_PPC64" ]
     }
-    if (v8_host_byteorder == "little") {
+    if (host_byteorder == "little") {
       defines += [ "V8_TARGET_ARCH_PPC_LE" ]
-    } else if (v8_host_byteorder == "big") {
+    } else if (host_byteorder == "big") {
       defines += [ "V8_TARGET_ARCH_PPC_BE" ]
       if (current_os == "aix") {
         cflags += [
@@ -406,6 +403,7 @@ config("toolchain") {
       }
     }
   }
+
   if (v8_current_cpu == "x86") {
     defines += [ "V8_TARGET_ARCH_IA32" ]
     if (is_win) {
@@ -696,6 +694,8 @@ action("postmortem-metadata") {
   sources = [
     "src/objects.h",
     "src/objects-inl.h",
+    "src/objects/map.h",
+    "src/objects/map-inl.h",
   ]
 
   outputs = [
@@ -741,10 +741,6 @@ action("run_mksnapshot") {
       "--v8_os_page_size",
       v8_os_page_size,
     ]
-  }
-
-  if (v8_trace_ignition) {
-    args += [ "--trace-ignition" ]
   }
 
   if (v8_use_external_startup_data) {
@@ -929,6 +925,7 @@ v8_source_set("v8_builtins_generators") {
     "src/builtins/builtins-regexp-gen.h",
     "src/builtins/builtins-sharedarraybuffer-gen.cc",
     "src/builtins/builtins-string-gen.cc",
+    "src/builtins/builtins-string-gen.h",
     "src/builtins/builtins-symbol-gen.cc",
     "src/builtins/builtins-typedarray-gen.cc",
     "src/builtins/builtins-utils-gen.h",
@@ -1594,6 +1591,7 @@ v8_source_set("v8_base") {
     "src/heap/incremental-marking-job.h",
     "src/heap/incremental-marking.cc",
     "src/heap/incremental-marking.h",
+    "src/heap/item-parallel-job.h",
     "src/heap/mark-compact-inl.h",
     "src/heap/mark-compact.cc",
     "src/heap/mark-compact.h",
@@ -1660,6 +1658,7 @@ v8_source_set("v8_base") {
     "src/interpreter/bytecode-flags.h",
     "src/interpreter/bytecode-generator.cc",
     "src/interpreter/bytecode-generator.h",
+    "src/interpreter/bytecode-jump-table.h",
     "src/interpreter/bytecode-label.cc",
     "src/interpreter/bytecode-label.h",
     "src/interpreter/bytecode-node.cc",
@@ -1746,6 +1745,8 @@ v8_source_set("v8_base") {
     "src/objects/intl-objects.h",
     "src/objects/literal-objects.cc",
     "src/objects/literal-objects.h",
+    "src/objects/map-inl.h",
+    "src/objects/map.h",
     "src/objects/module-info.h",
     "src/objects/object-macros-undef.h",
     "src/objects/object-macros.h",
@@ -1977,6 +1978,8 @@ v8_source_set("v8_base") {
     "src/wasm/module-decoder.h",
     "src/wasm/signature-map.cc",
     "src/wasm/signature-map.h",
+    "src/wasm/streaming-decoder.cc",
+    "src/wasm/streaming-decoder.h",
     "src/wasm/wasm-code-specialization.cc",
     "src/wasm/wasm-code-specialization.h",
     "src/wasm/wasm-debug.cc",
@@ -2504,6 +2507,16 @@ v8_component("v8_libbase") {
     sources += [
       "src/base/debug/stack_trace_posix.cc",
       "src/base/platform/platform-linux.cc",
+    ]
+
+    libs = [
+      "dl",
+      "rt",
+    ]
+  } else if (current_os == "aix") {
+    sources += [
+      "src/base/debug/stack_trace_posix.cc",
+      "src/base/platform/platform-aix.cc",
     ]
 
     libs = [
