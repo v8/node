@@ -167,7 +167,7 @@ Reduction JSInliningHeuristic::Reduce(Node* node) {
   }
 
   // Forcibly inline small functions here.
-  if (small_inline) {
+  if (small_inline && cumulative_count_ <= FLAG_max_inlined_nodes_absolute) {
     TRACE("Inlining small function(s) at call site #%d:%s\n", node->id(),
           node->op()->mnemonic());
     return InlineCandidate(candidate);
@@ -306,6 +306,12 @@ Reduction JSInliningHeuristic::InlineCandidate(Candidate const& candidate) {
 bool JSInliningHeuristic::CandidateCompare::operator()(
     const Candidate& left, const Candidate& right) const {
   if (right.frequency.IsUnknown()) {
+    if (left.frequency.IsUnknown()) {
+      // If left and right are both unknown then the ordering is indeterminate,
+      // which breaks strict weak ordering requirements, so we fall back to the
+      // node id as a tie breaker.
+      return left.node->id() > right.node->id();
+    }
     return true;
   } else if (left.frequency.IsUnknown()) {
     return false;

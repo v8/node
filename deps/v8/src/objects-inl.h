@@ -1466,21 +1466,22 @@ Isolate* HeapObject::GetIsolate() const {
   return GetHeap()->isolate();
 }
 
-
 Map* HeapObject::map() const {
   return map_word().ToMap();
 }
 
 
 void HeapObject::set_map(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
     // TODO(1600) We are passing NULL as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
-#ifdef VERIFY_HEAP
-    value->GetHeap()->VerifyObjectLayoutChange(this, value);
-#endif
   }
 }
 
@@ -1491,26 +1492,38 @@ Map* HeapObject::synchronized_map() {
 
 
 void HeapObject::synchronized_set_map(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   synchronized_set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
     // TODO(1600) We are passing NULL as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
-#ifdef VERIFY_HEAP
-    value->GetHeap()->VerifyObjectLayoutChange(this, value);
-#endif
   }
-}
-
-
-void HeapObject::synchronized_set_map_no_write_barrier(Map* value) {
-  synchronized_set_map_word(MapWord::FromMap(value));
 }
 
 
 // Unsafe accessor omitting write barrier.
 void HeapObject::set_map_no_write_barrier(Map* value) {
+  if (value != nullptr) {
+#ifdef VERIFY_HEAP
+    value->GetHeap()->VerifyObjectLayoutChange(this, value);
+#endif
+  }
   set_map_word(MapWord::FromMap(value));
+}
+
+void HeapObject::set_map_after_allocation(Map* value, WriteBarrierMode mode) {
+  set_map_word(MapWord::FromMap(value));
+  if (mode != SKIP_WRITE_BARRIER) {
+    DCHECK(value != nullptr);
+    // TODO(1600) We are passing NULL as a slot because maps can never be on
+    // evacuation candidate.
+    value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
+  }
 }
 
 HeapObject** HeapObject::map_slot() {
@@ -6891,6 +6904,25 @@ void JSArrayBuffer::set_backing_store(void* value, WriteBarrierMode mode) {
 
 ACCESSORS(JSArrayBuffer, byte_length, Object, kByteLengthOffset)
 
+void* JSArrayBuffer::allocation_base() const {
+  intptr_t ptr = READ_INTPTR_FIELD(this, kAllocationBaseOffset);
+  return reinterpret_cast<void*>(ptr);
+}
+
+void JSArrayBuffer::set_allocation_base(void* value, WriteBarrierMode mode) {
+  intptr_t ptr = reinterpret_cast<intptr_t>(value);
+  WRITE_INTPTR_FIELD(this, kAllocationBaseOffset, ptr);
+}
+
+size_t JSArrayBuffer::allocation_length() const {
+  return *reinterpret_cast<const size_t*>(
+      FIELD_ADDR_CONST(this, kAllocationLengthOffset));
+}
+
+void JSArrayBuffer::set_allocation_length(size_t value) {
+  (*reinterpret_cast<size_t*>(FIELD_ADDR(this, kAllocationLengthOffset))) =
+      value;
+}
 
 void JSArrayBuffer::set_bit_field(uint32_t bits) {
   if (kInt32Size != kPointerSize) {
