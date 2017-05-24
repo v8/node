@@ -145,6 +145,7 @@
 //       - DebugInfo
 //       - BreakPointInfo
 //       - StackFrameInfo
+//       - SourcePositionTableWithFrameCache
 //       - CodeCache
 //       - PrototypeInfo
 //       - Module
@@ -712,8 +713,8 @@ enum InstanceType {
   WEAK_CELL_TYPE,
   PROPERTY_CELL_TYPE,
 
-  // All the following types are subtypes of JSReceiver, which corresponds to
-  // objects in the JS sense. The first and the last type in this range are
+  // TODO(yangguo): these padding types are for ABI stability. Remove after
+  // version 6.0 branch, or replace them when there is demand for new types.
   PADDING_TYPE_1,
   PADDING_TYPE_2,
   PADDING_TYPE_3,
@@ -2113,6 +2114,8 @@ class JSReceiver: public HeapObject {
 // caching.
 class JSObject: public JSReceiver {
  public:
+  static bool IsUnmodifiedApiObject(Object** o);
+
   static MUST_USE_RESULT MaybeHandle<JSObject> New(
       Handle<JSFunction> constructor, Handle<JSReceiver> new_target,
       Handle<AllocationSite> site = Handle<AllocationSite>::null());
@@ -2941,7 +2944,6 @@ class FixedDoubleArray: public FixedArrayBase {
 // JSArgumentsObject:
 // - FAST_SLOPPY_ARGUMENTS_ELEMENTS: FAST_HOLEY_ELEMENTS
 // - SLOW_SLOPPY_ARGUMENTS_ELEMENTS: DICTIONARY_ELEMENTS
-// - SLOW_SLOPPY_ARGUMENTS_ELEMENTS: DICTIONARY_ELEMENTS
 class SloppyArgumentsElements : public FixedArray {
  public:
   static const int kContextIndex = 0;
@@ -3311,7 +3313,7 @@ class BytecodeArray : public FixedArrayBase {
   DECL_ACCESSORS(handler_table, FixedArray)
 
   // Accessors for source position table containing mappings between byte code
-  // offset and source position.
+  // offset and source position or SourcePositionTableWithFrameCache.
   DECL_ACCESSORS(source_position_table, Object)
 
   inline ByteArray* SourcePositionTable();
@@ -3726,7 +3728,7 @@ class Code: public HeapObject {
   // [deoptimization_data]: Array containing data for deopt.
   DECL_ACCESSORS(deoptimization_data, FixedArray)
 
-  // [source_position_table]: ByteArray for the source positions table.
+  // [source_position_table]: ByteArray for the source positions table or
   // SourcePositionTableWithFrameCache.
   DECL_ACCESSORS(source_position_table, Object)
 
@@ -3750,11 +3752,6 @@ class Code: public HeapObject {
   // [next_code_link]: Link for lists of optimized or deoptimized code.
   // Note that storage for this field is overlapped with typefeedback_info.
   DECL_ACCESSORS(next_code_link, Object)
-
-  // [gc_metadata]: Field used to hold GC related metadata. The contents of this
-  // field does not have to be traced during garbage collection since
-  // it is only used by the garbage collector itself.
-  DECL_ACCESSORS(gc_metadata, Object)
 
   // [ic_age]: Inline caching age: the value of the Heap::global_ic_age
   // at the moment when this object was created.
@@ -3890,19 +3887,21 @@ class Code: public HeapObject {
   inline bool marked_for_deoptimization();
   inline void set_marked_for_deoptimization(bool flag);
 
-  // [is_promise_rejection]: For kind BUILTIN tells whether the exception
-  // thrown by the code will lead to promise rejection.
+  // [deopt_already_counted]: For kind OPTIMIZED_FUNCTION tells whether
+  // the code was already deoptimized.
   inline bool deopt_already_counted();
   inline void set_deopt_already_counted(bool flag);
 
-  // [is_promise_rejection]: For kind BUILTIN tells whether the exception
-  // thrown by the code will lead to promise rejection.
-  inline bool is_promise_rejection();
+  // [is_promise_rejection]: For kind BUILTIN tells whether the
+  // exception thrown by the code will lead to promise rejection or
+  // uncaught if both this and is_exception_caught is set.
+  // Use GetBuiltinCatchPrediction to access this.
   inline void set_is_promise_rejection(bool flag);
 
-  // [is_exception_caught]: For kind BUILTIN tells whether the exception
-  // thrown by the code will be caught internally.
-  inline bool is_exception_caught();
+  // [is_exception_caught]: For kind BUILTIN tells whether the
+  // exception thrown by the code will be caught internally or
+  // uncaught if both this and is_promise_rejection is set.
+  // Use GetBuiltinCatchPrediction to access this.
   inline void set_is_exception_caught(bool flag);
 
   // [constant_pool]: The constant pool for this function.
@@ -4065,9 +4064,8 @@ class Code: public HeapObject {
 #undef DECLARE_CODE_AGE_ENUM
 
   // Code aging.  Indicates how many full GCs this code has survived without
-  // being entered through the prologue.  Used to determine when it is
-  // relatively safe to flush this code object and replace it with the lazy
-  // compilation stub.
+  // being entered through the prologue.  Used to determine when to flush code
+  // held in the compilation cache.
   static void MakeCodeAgeSequenceYoung(byte* sequence, Isolate* isolate);
   static void MarkCodeAsExecuted(byte* sequence, Isolate* isolate);
   void MakeYoung(Isolate* isolate);
@@ -4084,6 +4082,7 @@ class Code: public HeapObject {
   void PrintDeoptLocation(FILE* out, Address pc);
   bool CanDeoptAt(Address pc);
 
+  inline HandlerTable::CatchPrediction GetBuiltinCatchPrediction();
 #ifdef VERIFY_HEAP
   void VerifyEmbeddedObjectsDependency();
 #endif
@@ -4117,8 +4116,7 @@ class Code: public HeapObject {
   static const int kTypeFeedbackInfoOffset =
       kSourcePositionTableOffset + kPointerSize;
   static const int kNextCodeLinkOffset = kTypeFeedbackInfoOffset + kPointerSize;
-  static const int kGCMetadataOffset = kNextCodeLinkOffset + kPointerSize;
-  static const int kInstructionSizeOffset = kGCMetadataOffset + kPointerSize;
+  static const int kInstructionSizeOffset = kNextCodeLinkOffset + kPointerSize;
   static const int kICAgeOffset = kInstructionSizeOffset + kIntSize;
   static const int kFlagsOffset = kICAgeOffset + kIntSize;
   static const int kKindSpecificFlags1Offset = kFlagsOffset + kIntSize;
@@ -4235,6 +4233,9 @@ class Code: public HeapObject {
 
   // Code aging -- platform-specific
   static void PatchPlatformCodeAge(Isolate* isolate, byte* sequence, Age age);
+
+  bool is_promise_rejection();
+  bool is_exception_caught();
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(Code);
 };
@@ -5094,7 +5095,7 @@ class SharedFunctionInfo: public HeapObject {
   inline bool is_compiled() const;
 
   // [length]: The function length - usually the number of declared parameters.
-  // Use up to 2^30 parameters.
+  // Use up to 2^30 parameters. The value is only reliable when the function has
   // been compiled.
   inline int GetLength() const;
   inline bool HasLength() const;
@@ -5186,7 +5187,7 @@ class SharedFunctionInfo: public HeapObject {
 
   // The function is subject to debugging if a debug info is attached.
   inline bool HasDebugInfo() const;
-  inline DebugInfo* GetDebugInfo() const;
+  DebugInfo* GetDebugInfo() const;
 
   // A function has debug code if the compiled code has debug break slots.
   inline bool HasDebugCode() const;
@@ -5197,8 +5198,8 @@ class SharedFunctionInfo: public HeapObject {
   // Bit field containing various information collected for debugging.
   // This field is either stored on the kDebugInfo slot or inside the
   // debug info struct.
-  inline int debugger_hints() const;
-  inline void set_debugger_hints(int value);
+  int debugger_hints() const;
+  void set_debugger_hints(int value);
 
   // Indicates that the function was created by the Function function.
   // Though it's anonymous, toString should treat it as if it had the name
@@ -5273,8 +5274,6 @@ class SharedFunctionInfo: public HeapObject {
   inline void set_ic_age(int age);
 
   // Indicates if this function can be lazy compiled.
-  // This is used to determine if we can safely flush code from a function
-  // when doing GC if we expect that the function will no longer be used.
   DECL_BOOLEAN_ACCESSORS(allows_lazy_compilation)
 
   // Indicates whether optimizations have been disabled for this
@@ -5311,9 +5310,6 @@ class SharedFunctionInfo: public HeapObject {
   // Ignition / TurboFan pipeline, and is unsupported by
   // FullCodegen / Crankshaft.
   DECL_BOOLEAN_ACCESSORS(must_use_ignition_turbo)
-
-  // Indicates that code for this function cannot be flushed.
-  DECL_BOOLEAN_ACCESSORS(dont_flush)
 
   // Indicates that this function is an asm function.
   DECL_BOOLEAN_ACCESSORS(asm_function)
@@ -5608,12 +5604,12 @@ class SharedFunctionInfo: public HeapObject {
     kForceInline,
     kIsAsmFunction,
     kMustUseIgnitionTurbo,
-    kDontFlush,
     kIsDeclaration,
     kIsAsmWasmBroken,
     kHasConcurrentOptimizationJob,
 
     kUnused1,  // Unused fields.
+    kUnused2,
 
     // byte 2
     kFunctionKind,
@@ -6146,8 +6142,7 @@ class JSFunction: public JSObject {
   inline bool is_compiled();
 
   // [next_function_link]: Links functions into various lists, e.g. the list
-  // of optimized functions hanging off the native_context. The CodeFlusher
-  // uses this link to chain together flushing candidates. Treated weakly
+  // of optimized functions hanging off the native_context. Treated weakly
   // by the garbage collector.
   DECL_ACCESSORS(next_function_link, Object)
 
@@ -6570,6 +6565,8 @@ class JSPromise : public JSObject {
       kFulfillReactionsOffset + kPointerSize;
   static const int kFlagsOffset = kRejectReactionsOffset + kPointerSize;
   static const int kSize = kFlagsOffset + kPointerSize;
+  static const int kSizeWithEmbedderFields =
+      kSize + v8::Promise::kEmbedderFieldCount * kPointerSize;
 
   // Flags layout.
   static const int kHasHandlerBit = 0;
@@ -6587,9 +6584,9 @@ class JSPromise : public JSObject {
 // - a reference to a literal string to search for
 // If it is an irregexp regexp:
 // - a reference to code for Latin1 inputs (bytecode or compiled), or a smi
-// used for tracking the last usage (used for code flushing).
+// used for tracking the last usage (used for regexp code flushing).
 // - a reference to code for UC16 inputs (bytecode or compiled), or a smi
-// used for tracking the last usage (used for code flushing)..
+// used for tracking the last usage (used for regexp code flushing).
 // - max number of registers used by irregexp implementations.
 // - number of capture registers (output values) of the regexp.
 class JSRegExp: public JSObject {
@@ -8533,7 +8530,7 @@ class JSArrayBuffer: public JSObject {
   inline bool is_shared();
   inline void set_is_shared(bool value);
 
-  inline bool has_guard_region();
+  inline bool has_guard_region() const;
   inline void set_has_guard_region(bool value);
 
   // TODO(gdeepti): This flag is introduced to disable asm.js optimizations in
@@ -8544,6 +8541,8 @@ class JSArrayBuffer: public JSObject {
   DECLARE_CAST(JSArrayBuffer)
 
   void Neuter();
+
+  inline ArrayBuffer::Allocator::AllocationMode allocation_mode() const;
 
   void FreeBackingStore();
 
@@ -9211,102 +9210,6 @@ class ObjectTemplateInfo: public TemplateInfo {
   class IsImmutablePrototype : public BitField<bool, 0, 1> {};
   class EmbedderFieldCount
       : public BitField<int, IsImmutablePrototype::kNext, 29> {};
-};
-
-
-// The DebugInfo class holds additional information for a function being
-// debugged.
-class DebugInfo: public Struct {
- public:
-  // The shared function info for the source being debugged.
-  DECL_ACCESSORS(shared, SharedFunctionInfo)
-
-  // Bit field containing various information collected for debugging.
-  DECL_INT_ACCESSORS(debugger_hints)
-
-  DECL_ACCESSORS(debug_bytecode_array, Object)
-  // Fixed array holding status information for each active break point.
-  DECL_ACCESSORS(break_points, FixedArray)
-
-  // Check if there is a break point at a source position.
-  bool HasBreakPoint(int source_position);
-  // Attempt to clear a break point. Return true if successful.
-  static bool ClearBreakPoint(Handle<DebugInfo> debug_info,
-                              Handle<Object> break_point_object);
-  // Set a break point.
-  static void SetBreakPoint(Handle<DebugInfo> debug_info, int source_position,
-                            Handle<Object> break_point_object);
-  // Get the break point objects for a source position.
-  Handle<Object> GetBreakPointObjects(int source_position);
-  // Find the break point info holding this break point object.
-  static Handle<Object> FindBreakPointInfo(Handle<DebugInfo> debug_info,
-                                           Handle<Object> break_point_object);
-  // Get the number of break points for this function.
-  int GetBreakPointCount();
-
-  inline bool HasDebugBytecodeArray();
-  inline bool HasDebugCode();
-
-  inline BytecodeArray* OriginalBytecodeArray();
-  inline BytecodeArray* DebugBytecodeArray();
-  inline Code* DebugCode();
-
-  DECLARE_CAST(DebugInfo)
-
-  // Dispatched behavior.
-  DECLARE_PRINTER(DebugInfo)
-  DECLARE_VERIFIER(DebugInfo)
-
-  static const int kSharedFunctionInfoIndex = Struct::kHeaderSize;
-  static const int kDebuggerHintsIndex =
-      kSharedFunctionInfoIndex + kPointerSize;
-  static const int kDebugBytecodeArrayIndex =
-      kDebuggerHintsIndex + kPointerSize;
-  static const int kBreakPointsStateIndex =
-      kDebugBytecodeArrayIndex + kPointerSize;
-  static const int kSize = kBreakPointsStateIndex + kPointerSize;
-
-  static const int kEstimatedNofBreakPointsInFunction = 4;
-
- private:
-  // Get the break point info object for a source position.
-  Object* GetBreakPointInfo(int source_position);
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(DebugInfo);
-};
-
-
-// The BreakPointInfo class holds information for break points set in a
-// function. The DebugInfo object holds a BreakPointInfo object for each code
-// position with one or more break points.
-class BreakPointInfo : public Tuple2 {
- public:
-  // The position in the source for the break position.
-  DECL_INT_ACCESSORS(source_position)
-  // List of related JavaScript break points.
-  DECL_ACCESSORS(break_point_objects, Object)
-
-  // Removes a break point.
-  static void ClearBreakPoint(Handle<BreakPointInfo> info,
-                              Handle<Object> break_point_object);
-  // Set a break point.
-  static void SetBreakPoint(Handle<BreakPointInfo> info,
-                            Handle<Object> break_point_object);
-  // Check if break point info has this break point object.
-  static bool HasBreakPointObject(Handle<BreakPointInfo> info,
-                                  Handle<Object> break_point_object);
-  // Get the number of break points for this code offset.
-  int GetBreakPointCount();
-
-  int GetStatementPosition(Handle<DebugInfo> debug_info);
-
-  DECLARE_CAST(BreakPointInfo)
-
-  static const int kSourcePositionIndex = kValue1Offset;
-  static const int kBreakPointObjectsIndex = kValue2Offset;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(BreakPointInfo);
 };
 
 class StackFrameInfo : public Struct {

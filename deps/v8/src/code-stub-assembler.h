@@ -77,7 +77,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   typedef base::Flags<AllocationFlag> AllocationFlags;
 
   enum ParameterMode { SMI_PARAMETERS, INTPTR_PARAMETERS };
-
   // On 32-bit platforms, there is a slight performance advantage to doing all
   // of the array offset/index arithmetic with SMIs, since it's possible
   // to save a few tag/untag operations without paying an extra expense when
@@ -302,6 +301,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* WordIsWordAligned(Node* word);
   Node* WordIsPowerOfTwo(Node* value);
 
+#if DEBUG
+  void Bind(Label* label, AssemblerDebugInfo debug_info);
+#else
+  void Bind(Label* label);
+#endif  // DEBUG
+
   void BranchIfSmiEqual(Node* a, Node* b, Label* if_true, Label* if_false) {
     Branch(SmiEqual(a, b), if_true, if_false);
   }
@@ -429,6 +434,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Load value field of a WeakCell object.
   Node* LoadWeakCellValueUnchecked(Node* weak_cell);
   Node* LoadWeakCellValue(Node* weak_cell, Label* if_cleared = nullptr);
+
+  // Get the offset of an element in a fixed array.
+  Node* GetFixedArrayElementOffset(
+      Node* index_node, int additional_offset = 0,
+      ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
   // Load an array element from a FixedArray.
   Node* LoadFixedArrayElement(Node* object, Node* index,
@@ -719,6 +729,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* ChangeNumberToFloat64(Node* value);
   Node* ChangeNumberToIntPtr(Node* value);
 
+  Node* TimesPointerSize(Node* value);
+
   // Type conversions.
   // Throws a TypeError for {method_name} if {value} is not coercible to Object,
   // or returns the {value} converted to a String otherwise.
@@ -765,6 +777,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsAccessorPair(Node* object);
   Node* IsHeapNumber(Node* object);
   Node* IsName(Node* object);
+  Node* IsSymbolInstanceType(Node* instance_type);
   Node* IsSymbol(Node* object);
   Node* IsPrivateSymbol(Node* object);
   Node* IsJSValueInstanceType(Node* instance_type);
@@ -833,6 +846,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* TryDerefExternalString(Node* const string, Node* const instance_type,
                                Label* if_bailout);
 
+  // Check if |string| is an indirect (thin or flat cons) string type that can
+  // be dereferenced by DerefIndirectString.
+  void BranchIfCanDerefIndirectString(Node* string, Node* instance_type,
+                                      Label* can_deref, Label* cannot_deref);
+  // Unpack an indirect (thin or flat cons) string type.
+  void DerefIndirectString(Variable* var_string, Node* instance_type);
   // Check if |var_string| has an indirect (thin or flat cons) string type,
   // and unpack it if so.
   void MaybeDerefIndirectString(Variable* var_string, Node* instance_type,
@@ -1496,6 +1515,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Implements DescriptorArray::GetKey.
   Node* DescriptorArrayGetKey(Node* descriptors, Node* descriptor_number);
 
+  Node* CollectFeedbackForString(Node* instance_type);
+  void GenerateEqual_Same(Node* value, Label* if_equal, Label* if_notequal,
+                          Variable* var_type_feedback = nullptr);
+  Node* AllocAndCopyStringCharacters(Node* context, Node* from,
+                                     Node* from_instance_type, Node* from_index,
+                                     Node* character_count);
+
   static const int kElementLoopUnrollThreshold = 8;
 };
 
@@ -1620,13 +1646,16 @@ class ToDirectStringAssembler : public CodeStubAssembler {
 #define CSA_ASSERT_JS_ARGC_EQ(csa, expected) \
   CSA_ASSERT_JS_ARGC_OP(csa, Word32Equal, ==, expected)
 
-#define BIND(label) Bind(label, {#label, __FILE__, __LINE__})
+#define CSA_DEBUG_INFO(name) \
+  , { #name, __FILE__, __LINE__ }
+#define BIND(label) Bind(label CSA_DEBUG_INFO(label))
 #define VARIABLE(name, ...) \
-  Variable name(this, {#name, __FILE__, __LINE__}, __VA_ARGS__);
+  Variable name(this CSA_DEBUG_INFO(name), __VA_ARGS__);
 
 #else  // DEBUG
 #define CSA_ASSERT(csa, x) ((void)0)
 #define CSA_ASSERT_JS_ARGC_EQ(csa, expected) ((void)0)
+#define CSA_DEBUG_INFO(name)
 #define BIND(label) Bind(label);
 #define VARIABLE(name, ...) Variable name(this, __VA_ARGS__);
 #endif  // DEBUG

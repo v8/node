@@ -10,6 +10,7 @@
 #include "src/compiler/wasm-compiler.h"
 #include "src/debug/debug-interface.h"
 #include "src/objects-inl.h"
+#include "src/objects/debug-objects-inl.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-code-specialization.h"
 #include "src/wasm/wasm-module.h"
@@ -346,15 +347,14 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   Address old_mem_start = nullptr;
   uint32_t old_size = 0;
   if (!old_buffer.is_null()) {
-    DCHECK(old_buffer->byte_length()->IsNumber());
     old_mem_start = static_cast<Address>(old_buffer->backing_store());
-    old_size = old_buffer->byte_length()->Number();
+    CHECK(old_buffer->byte_length()->ToUint32(&old_size));
   }
+  DCHECK_EQ(0, old_size % WasmModule::kPageSize);
+  uint32_t old_pages = old_size / WasmModule::kPageSize;
   DCHECK_GE(std::numeric_limits<uint32_t>::max(),
             old_size + pages * WasmModule::kPageSize);
-  uint32_t new_size = old_size + pages * WasmModule::kPageSize;
-  if (new_size <= old_size || max_pages * WasmModule::kPageSize < new_size ||
-      FLAG_wasm_max_mem_pages * WasmModule::kPageSize < new_size) {
+  if (old_pages > max_pages || pages > max_pages - old_pages) {
     return Handle<JSArrayBuffer>::null();
   }
 
@@ -363,6 +363,8 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   const bool enable_guard_regions =
       (old_buffer.is_null() && EnableGuardRegions()) ||
       (!old_buffer.is_null() && old_buffer->has_guard_region());
+  size_t new_size =
+      static_cast<size_t>(old_pages + pages) * WasmModule::kPageSize;
   Handle<JSArrayBuffer> new_buffer =
       NewArrayBuffer(isolate, new_size, enable_guard_regions);
   if (new_buffer.is_null()) return new_buffer;
@@ -479,9 +481,10 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
     // Even for pages == 0, we need to attach a new JSArrayBuffer with the same
     // backing store and neuter the old one to be spec compliant.
     if (!old_buffer.is_null() && old_size != 0) {
-      new_buffer = SetupArrayBuffer(isolate, old_buffer->backing_store(),
-                                    old_size, old_buffer->is_external(),
-                                    old_buffer->has_guard_region());
+      new_buffer = SetupArrayBuffer(
+          isolate, old_buffer->allocation_base(),
+          old_buffer->allocation_length(), old_buffer->backing_store(),
+          old_size, old_buffer->is_external(), old_buffer->has_guard_region());
       memory_object->set_buffer(*new_buffer);
     }
     DCHECK_EQ(0, old_size % WasmModule::kPageSize);
@@ -1135,7 +1138,7 @@ MaybeHandle<String> WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
   DCHECK_GE(module_bytes->length(), offset);
   DCHECK_GE(module_bytes->length() - offset, size);
   // UTF8 validation happens at decode time.
-  DCHECK(unibrow::Utf8::Validate(
+  DCHECK(unibrow::Utf8::ValidateEncoding(
       reinterpret_cast<const byte*>(module_bytes->GetCharsAddress() + offset),
       size));
   DCHECK_GE(kMaxInt, offset);

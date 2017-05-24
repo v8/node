@@ -644,7 +644,7 @@ class PreParserFactory {
   }
   PreParserExpression NewSuspend(PreParserExpression generator_object,
                                  PreParserExpression expression, int pos,
-                                 Suspend::OnException on_exception,
+                                 Suspend::OnAbruptResume on_abrupt_resume,
                                  SuspendFlags flags) {
     return PreParserExpression::Default();
   }
@@ -954,7 +954,6 @@ class PreParser : public ParserBase<PreParser> {
                                            bool is_inner_function,
                                            bool may_abort, bool* ok) {
     UNREACHABLE();
-    return kLazyParsingComplete;
   }
   Expression ParseFunctionLiteral(
       Identifier name, Scanner::Location function_name_location,
@@ -1308,10 +1307,9 @@ class PreParser : public ParserBase<PreParser> {
     return PreParserStatement::Default();
   }
 
-  V8_INLINE PreParserStatement
-  InitializeForEachStatement(PreParserStatement stmt, PreParserExpression each,
-                             PreParserExpression subject,
-                             PreParserStatement body, int each_keyword_pos) {
+  V8_INLINE PreParserStatement InitializeForEachStatement(
+      PreParserStatement stmt, PreParserExpression each,
+      PreParserExpression subject, PreParserStatement body) {
     MarkExpressionAsAssigned(each);
     return stmt;
   }

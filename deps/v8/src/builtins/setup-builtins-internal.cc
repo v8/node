@@ -41,6 +41,9 @@ Code* BuildWithMacroAssembler(Isolate* isolate,
                               MacroAssemblerGenerator generator,
                               Code::Flags flags, const char* s_name) {
   HandleScope scope(isolate);
+  // Canonicalize handles, so that we can share constant pool entries pointing
+  // to code targets without dereferencing their handles.
+  CanonicalHandleScope canonical(isolate);
   const size_t buffer_size = 32 * KB;
   byte buffer[buffer_size];  // NOLINT(runtime/arrays)
   MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
@@ -58,6 +61,9 @@ Code* BuildAdaptor(Isolate* isolate, Address builtin_address,
                    Builtins::ExitFrameType exit_frame_type, Code::Flags flags,
                    const char* name) {
   HandleScope scope(isolate);
+  // Canonicalize handles, so that we can share constant pool entries pointing
+  // to code targets without dereferencing their handles.
+  CanonicalHandleScope canonical(isolate);
   const size_t buffer_size = 32 * KB;
   byte buffer[buffer_size];  // NOLINT(runtime/arrays)
   MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
@@ -76,6 +82,9 @@ Code* BuildWithCodeStubAssemblerJS(Isolate* isolate,
                                    CodeAssemblerGenerator generator, int argc,
                                    Code::Flags flags, const char* name) {
   HandleScope scope(isolate);
+  // Canonicalize handles, so that we can share constant pool entries pointing
+  // to code targets without dereferencing their handles.
+  CanonicalHandleScope canonical(isolate);
   Zone zone(isolate->allocator(), ZONE_NAME);
   const int argc_with_recv =
       (argc == SharedFunctionInfo::kDontAdaptArgumentsSentinel) ? 0 : argc + 1;
@@ -94,6 +103,9 @@ Code* BuildWithCodeStubAssemblerCS(Isolate* isolate,
                                    Code::Flags flags, const char* name,
                                    int result_size) {
   HandleScope scope(isolate);
+  // Canonicalize handles, so that we can share constant pool entries pointing
+  // to code targets without dereferencing their handles.
+  CanonicalHandleScope canonical(isolate);
   Zone zone(isolate->allocator(), ZONE_NAME);
   // The interface descriptor with given key must be initialized at this point
   // and this construction just queries the details from the descriptors table.
@@ -179,6 +191,7 @@ void SetupIsolateDelegate::SetupBuiltinsInternal(Isolate* isolate) {
       ->set_is_promise_rejection(true);
 
   BUILTIN_PROMISE_REJECTION_PREDICTION_LIST(SET_PROMISE_REJECTION_PREDICTION)
+  BUILTIN_EXCEPTION_UNCAUGHT_PREDICTION_LIST(SET_PROMISE_REJECTION_PREDICTION)
 #undef SET_PROMISE_REJECTION_PREDICTION
 
 #define SET_EXCEPTION_CAUGHT_PREDICTION(Name)        \
@@ -186,6 +199,7 @@ void SetupIsolateDelegate::SetupBuiltinsInternal(Isolate* isolate) {
       ->set_is_exception_caught(true);
 
   BUILTIN_EXCEPTION_CAUGHT_PREDICTION_LIST(SET_EXCEPTION_CAUGHT_PREDICTION)
+  BUILTIN_EXCEPTION_UNCAUGHT_PREDICTION_LIST(SET_EXCEPTION_CAUGHT_PREDICTION)
 #undef SET_EXCEPTION_CAUGHT_PREDICTION
 
 #define SET_CODE_NON_TAGGED_PARAMS(Name)             \

@@ -1374,7 +1374,7 @@ class ObjectLiteral final : public MaterializedLiteral {
   }
   bool has_elements() const { return HasElementsField::decode(bit_field_); }
   bool has_shallow_properties() const {
-    return depth() == 1 && !has_elements() && !may_store_doubles();
+    return depth() == 1 && !may_store_doubles();
   }
   bool has_rest_property() const {
     return HasRestPropertyField::decode(bit_field_);
@@ -2518,15 +2518,18 @@ class RewritableExpression final : public Expression {
 // desired, must be done beforehand (see the parser).
 class Suspend final : public Expression {
  public:
-  enum OnException { kOnExceptionThrow, kOnExceptionRethrow };
+  // With {kNoControl}, the {Suspend} behaves like yield, except that it never
+  // throws and never causes the current generator to return. This is used to
+  // desugar yield*.
+  enum OnAbruptResume { kOnExceptionThrow, kOnExceptionRethrow, kNoControl };
 
   Expression* generator_object() const { return generator_object_; }
   Expression* expression() const { return expression_; }
-  OnException on_exception() const {
-    return OnExceptionField::decode(bit_field_);
+  OnAbruptResume on_abrupt_resume() const {
+    return OnAbruptResumeField::decode(bit_field_);
   }
   bool rethrow_on_exception() const {
-    return on_exception() == kOnExceptionRethrow;
+    return on_abrupt_resume() == kOnExceptionRethrow;
   }
 
   int suspend_id() const { return suspend_id_; }
@@ -2563,23 +2566,23 @@ class Suspend final : public Expression {
   friend class AstNodeFactory;
 
   Suspend(Expression* generator_object, Expression* expression, int pos,
-          OnException on_exception, SuspendFlags flags)
+          OnAbruptResume on_abrupt_resume, SuspendFlags flags)
       : Expression(pos, kSuspend),
         suspend_id_(-1),
         generator_object_(generator_object),
         expression_(expression) {
-    bit_field_ |=
-        OnExceptionField::encode(on_exception) | FlagsField::encode(flags);
+    bit_field_ |= OnAbruptResumeField::encode(on_abrupt_resume) |
+                  FlagsField::encode(flags);
   }
 
   int suspend_id_;
   Expression* generator_object_;
   Expression* expression_;
 
-  class OnExceptionField
-      : public BitField<OnException, Expression::kNextBitFieldIndex, 1> {};
+  class OnAbruptResumeField
+      : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 2> {};
   class FlagsField
-      : public BitField<SuspendFlags, OnExceptionField::kNext,
+      : public BitField<SuspendFlags, OnAbruptResumeField::kNext,
                         static_cast<int>(SuspendFlags::kBitWidth)> {};
 };
 
@@ -2676,7 +2679,6 @@ class FunctionLiteral final : public Expression {
       return raw_inferred_name_->string();
     }
     UNREACHABLE();
-    return Handle<String>();
   }
 
   // Only one of {set_inferred_name, set_raw_inferred_name} should be called.
@@ -3289,7 +3291,6 @@ class AstNodeFactory final BASE_EMBEDDED {
       }
     }
     UNREACHABLE();
-    return NULL;
   }
 
   ForOfStatement* NewForOfStatement(ZoneList<const AstRawString*>* labels,
@@ -3566,11 +3567,11 @@ class AstNodeFactory final BASE_EMBEDDED {
   }
 
   Suspend* NewSuspend(Expression* generator_object, Expression* expression,
-                      int pos, Suspend::OnException on_exception,
+                      int pos, Suspend::OnAbruptResume on_abrupt_resume,
                       SuspendFlags flags) {
     if (!expression) expression = NewUndefinedLiteral(pos);
     return new (zone_)
-        Suspend(generator_object, expression, pos, on_exception, flags);
+        Suspend(generator_object, expression, pos, on_abrupt_resume, flags);
   }
 
   Throw* NewThrow(Expression* exception, int pos) {

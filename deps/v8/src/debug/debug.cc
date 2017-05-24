@@ -28,6 +28,7 @@
 #include "src/list.h"
 #include "src/log.h"
 #include "src/messages.h"
+#include "src/objects/debug-objects-inl.h"
 #include "src/snapshot/natives.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects.h"
@@ -246,6 +247,11 @@ void CodeBreakIterator::SkipToPosition(int position,
                                        BreakPositionAlignment alignment) {
   CodeBreakIterator it(debug_info_);
   SkipTo(it.BreakIndexFromPosition(position, alignment));
+}
+
+int CodeBreakIterator::code_offset() {
+  return static_cast<int>(rinfo()->pc() -
+                          debug_info_->DebugCode()->instruction_start());
 }
 
 void CodeBreakIterator::SetDebugBreak() {
@@ -1234,7 +1240,6 @@ static Address ComputeNewPcForRedirect(Code* new_code, Code* old_code,
   }
 
   UNREACHABLE();
-  return NULL;
 }
 
 
@@ -1440,7 +1445,6 @@ bool Debug::GetPossibleBreakpoints(Handle<Script> script, int start_position,
     return true;
   }
   UNREACHABLE();
-  return false;
 }
 
 void Debug::RecordGenerator(Handle<JSGeneratorObject> generator_object) {

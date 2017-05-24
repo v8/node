@@ -4,6 +4,9 @@
 
 #include "src/heap/heap.h"
 
+#include <unordered_map>
+#include <unordered_set>
+
 #include "src/accessors.h"
 #include "src/api.h"
 #include "src/assembler-inl.h"
@@ -1727,7 +1730,7 @@ void Heap::Scavenge() {
   RootScavengeVisitor root_scavenge_visitor(this);
 
   isolate()->global_handles()->IdentifyWeakUnmodifiedObjects(
-      &IsUnmodifiedHeapObject);
+      &JSObject::IsUnmodifiedApiObject);
 
   {
     // Copy roots.
@@ -1760,17 +1763,6 @@ void Heap::Scavenge() {
   {
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_WEAK);
     IterateEncounteredWeakCollections(&root_scavenge_visitor);
-  }
-
-  {
-    // Copy objects reachable from the code flushing candidates list.
-    TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_CODE_FLUSH_CANDIDATES);
-    MarkCompactCollector* collector = mark_compact_collector();
-    if (collector->is_code_flushing_enabled()) {
-      collector->code_flusher()->VisitListHeads(&root_scavenge_visitor);
-      collector->code_flusher()
-          ->IteratePointersToFromSpace<StaticScavengeVisitor>();
-    }
   }
 
   {
@@ -2624,6 +2616,9 @@ void Heap::CreateFixedStubs() {
   // The eliminates the need for doing dictionary lookup in the
   // stub cache for these stubs.
   HandleScope scope(isolate());
+  // Canonicalize handles, so that we can share constant pool entries pointing
+  // to code targets without dereferencing their handles.
+  CanonicalHandleScope canonical(isolate());
 
   // Create stubs that should be there, so we don't unexpectedly have to
   // create them if we need them during the creation of another stub.
@@ -2860,6 +2855,10 @@ void Heap::CreateInitialObjects() {
       handle(Smi::FromInt(Isolate::kProtectorValid), isolate()));
   set_species_protector(*species_cell);
 
+  Handle<Cell> string_bounds_check_cell = factory->NewCell(
+      handle(Smi::FromInt(Isolate::kProtectorValid), isolate()));
+  set_string_bounds_check_protector(*string_bounds_check_cell);
+
   cell = factory->NewPropertyCell();
   cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
   set_string_length_protector(*cell);
@@ -2965,21 +2964,6 @@ bool Heap::RootCanBeTreatedAsConstant(RootListIndex root_index) {
          !InNewSpace(root(root_index));
 }
 
-bool Heap::IsUnmodifiedHeapObject(Object** p) {
-  Object* object = *p;
-  if (object->IsSmi()) return false;
-  HeapObject* heap_object = HeapObject::cast(object);
-  if (!object->IsJSObject()) return false;
-  JSObject* js_object = JSObject::cast(object);
-  if (!js_object->WasConstructedFromApiFunction()) return false;
-  Object* maybe_constructor = js_object->map()->GetConstructor();
-  if (!maybe_constructor->IsJSFunction()) return false;
-  JSFunction* constructor = JSFunction::cast(maybe_constructor);
-  if (js_object->elements()->length() != 0) return false;
-
-  return constructor->initial_map() == heap_object->map();
-}
-
 int Heap::FullSizeNumberStringCacheLength() {
   // Compute the size of the number string cache based on the max newspace size.
   // The number string cache has a minimum size based on twice the initial cache
@@ -3020,7 +3004,6 @@ Heap::RootListIndex Heap::RootIndexForFixedTypedArray(
 
     default:
       UNREACHABLE();
-      return kUndefinedValueRootIndex;
   }
 }
 
@@ -3036,7 +3019,6 @@ Heap::RootListIndex Heap::RootIndexForEmptyFixedTypedArray(
 #undef ELEMENT_KIND_TO_ROOT_INDEX
     default:
       UNREACHABLE();
-      return kUndefinedValueRootIndex;
   }
 }
 
@@ -3423,7 +3405,6 @@ AllocationResult Heap::AllocateCode(int object_size, bool immovable) {
   DCHECK(!memory_allocator()->code_range()->valid() ||
          memory_allocator()->code_range()->contains(code->address()) ||
          object_size <= code_space()->AreaSize());
-  code->set_gc_metadata(Smi::kZero);
   code->set_ic_age(global_ic_age_);
   return code;
 }
@@ -4094,7 +4075,6 @@ AllocationResult Heap::AllocateStruct(InstanceType type) {
 #undef MAKE_CASE
     default:
       UNREACHABLE();
-      return exception();
   }
   int size = map->instance_size();
   Struct* result = nullptr;
@@ -4293,14 +4273,47 @@ void Heap::NotifyObjectLayoutChange(HeapObject* object,
 }
 
 #ifdef VERIFY_HEAP
+// Helper class for collecting slot addresses.
+class SlotCollectingVisitor final : public ObjectVisitor {
+ public:
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
+    for (Object** p = start; p < end; p++) {
+      slots_.push_back(p);
+    }
+  }
+
+  int number_of_slots() { return static_cast<int>(slots_.size()); }
+
+  Object** slot(int i) { return slots_[i]; }
+
+ private:
+  std::vector<Object**> slots_;
+};
+
 void Heap::VerifyObjectLayoutChange(HeapObject* object, Map* new_map) {
   // Check that Heap::NotifyObjectLayout was called for object transitions
   // that are not safe for concurrent marking.
   // If you see this check triggering for a freshly allocated object,
   // use object->set_map_after_allocation() to initialize its map.
   if (pending_layout_change_object_ == nullptr) {
-    DCHECK(!object->IsJSObject() ||
-           !object->map()->TransitionRequiresSynchronizationWithGC(new_map));
+    if (object->IsJSObject()) {
+      DCHECK(!object->map()->TransitionRequiresSynchronizationWithGC(new_map));
+    } else {
+      // Check that the set of slots before and after the transition match.
+      SlotCollectingVisitor old_visitor;
+      object->IterateFast(&old_visitor);
+      MapWord old_map_word = object->map_word();
+      // Temporarily set the new map to iterate new slots.
+      object->set_map_word(MapWord::FromMap(new_map));
+      SlotCollectingVisitor new_visitor;
+      object->IterateFast(&new_visitor);
+      // Restore the old map.
+      object->set_map_word(old_map_word);
+      DCHECK_EQ(new_visitor.number_of_slots(), old_visitor.number_of_slots());
+      for (int i = 0; i < new_visitor.number_of_slots(); i++) {
+        DCHECK_EQ(new_visitor.slot(i), old_visitor.slot(i));
+      }
+    }
   } else {
     DCHECK_EQ(pending_layout_change_object_, object);
     pending_layout_change_object_ = nullptr;
@@ -4667,7 +4680,6 @@ const char* Heap::GarbageCollectionReasonToString(
       return "unknown";
   }
   UNREACHABLE();
-  return "";
 }
 
 bool Heap::Contains(HeapObject* value) {
@@ -4709,7 +4721,6 @@ bool Heap::InSpace(HeapObject* value, AllocationSpace space) {
       return lo_space_->Contains(value);
   }
   UNREACHABLE();
-  return false;
 }
 
 bool Heap::InSpaceSlow(Address addr, AllocationSpace space) {
@@ -4731,7 +4742,6 @@ bool Heap::InSpaceSlow(Address addr, AllocationSpace space) {
       return lo_space_->ContainsSlow(addr);
   }
   UNREACHABLE();
-  return false;
 }
 
 
@@ -5021,10 +5031,13 @@ void Heap::IterateRoots(RootVisitor* v, VisitMode mode) {
 }
 
 void Heap::IterateWeakRoots(RootVisitor* v, VisitMode mode) {
+  const bool isMinorGC = mode == VISIT_ALL_IN_SCAVENGE ||
+                         mode == VISIT_ALL_IN_MINOR_MC_MARK ||
+                         mode == VISIT_ALL_IN_MINOR_MC_UPDATE;
   v->VisitRootPointer(Root::kStringTable, reinterpret_cast<Object**>(
                                               &roots_[kStringTableRootIndex]));
   v->Synchronize(VisitorSynchronization::kStringTable);
-  if (mode != VISIT_ALL_IN_SCAVENGE && mode != VISIT_ALL_IN_SWEEP_NEWSPACE) {
+  if (!isMinorGC && mode != VISIT_ALL_IN_SWEEP_NEWSPACE) {
     // Scavenge collections have special processing for this.
     external_string_table_.IterateAll(v);
   }
@@ -5089,6 +5102,9 @@ class FixStaleLeftTrimmedHandlesVisitor : public RootVisitor {
 };
 
 void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
+  const bool isMinorGC = mode == VISIT_ALL_IN_SCAVENGE ||
+                         mode == VISIT_ALL_IN_MINOR_MC_MARK ||
+                         mode == VISIT_ALL_IN_MINOR_MC_UPDATE;
   v->VisitRootPointers(Root::kStrongRootList, &roots_[0],
                        &roots_[kStrongRootListLength]);
   v->Synchronize(VisitorSynchronization::kStrongRootList);
@@ -5119,7 +5135,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
   // Iterate over the builtin code objects and code stubs in the
   // heap. Note that it is not necessary to iterate over code objects
   // on scavenge collections.
-  if (mode != VISIT_ALL_IN_SCAVENGE && mode != VISIT_ALL_IN_MINOR_MC_UPDATE) {
+  if (!isMinorGC) {
     isolate_->builtins()->IterateBuiltins(v);
     v->Synchronize(VisitorSynchronization::kBuiltins);
     isolate_->interpreter()->IterateDispatchTable(v);
@@ -5139,6 +5155,9 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
     case VISIT_ALL_IN_SCAVENGE:
       isolate_->global_handles()->IterateNewSpaceStrongAndDependentRoots(v);
       break;
+    case VISIT_ALL_IN_MINOR_MC_MARK:
+      // Global handles are processed manually be the minor MC.
+      break;
     case VISIT_ALL_IN_MINOR_MC_UPDATE:
       isolate_->global_handles()->IterateAllNewSpaceRoots(v);
       break;
@@ -5150,7 +5169,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
   v->Synchronize(VisitorSynchronization::kGlobalHandles);
 
   // Iterate over eternal handles.
-  if (mode == VISIT_ALL_IN_SCAVENGE || mode == VISIT_ALL_IN_MINOR_MC_UPDATE) {
+  if (isMinorGC) {
     isolate_->eternal_handles()->IterateNewSpaceRoots(v);
   } else {
     isolate_->eternal_handles()->IterateAllRoots(v);
@@ -5734,7 +5753,7 @@ void Heap::ClearStackLimits() {
   roots_[kRealStackLimitRootIndex] = Smi::kZero;
 }
 
-void Heap::PrintAlloctionsHash() {
+void Heap::PrintAllocationsHash() {
   uint32_t hash = StringHasher::GetHashCore(raw_allocations_hash_);
   PrintF("\n### Allocations = %u, hash = 0x%08x\n", allocations_count(), hash);
 }
@@ -5798,7 +5817,7 @@ void Heap::TearDown() {
   UpdateMaximumCommitted();
 
   if (FLAG_verify_predictable) {
-    PrintAlloctionsHash();
+    PrintAllocationsHash();
   }
 
   new_space()->RemoveAllocationObserver(idle_scavenge_observer_);
@@ -6220,18 +6239,34 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
   }
 
   ~UnreachableObjectsFilter() {
-    heap_->mark_compact_collector()->ClearMarkbits();
+    for (auto it : reachable_) {
+      delete it.second;
+      it.second = nullptr;
+    }
   }
 
   bool SkipObject(HeapObject* object) {
     if (object->IsFiller()) return true;
-    return ObjectMarking::IsWhite(object, MarkingState::Internal(object));
+    MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
+    if (reachable_.count(chunk) == 0) return true;
+    return reachable_[chunk]->count(object) == 0;
   }
 
  private:
+  bool MarkAsReachable(HeapObject* object) {
+    MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
+    if (reachable_.count(chunk) == 0) {
+      reachable_[chunk] = new std::unordered_set<HeapObject*>();
+    }
+    if (reachable_[chunk]->count(object)) return false;
+    reachable_[chunk]->insert(object);
+    return true;
+  }
+
   class MarkingVisitor : public ObjectVisitor, public RootVisitor {
    public:
-    MarkingVisitor() : marking_stack_(10) {}
+    explicit MarkingVisitor(UnreachableObjectsFilter* filter)
+        : filter_(filter), marking_stack_(10) {}
 
     void VisitPointers(HeapObject* host, Object** start,
                        Object** end) override {
@@ -6254,27 +6289,26 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
       for (Object** p = start; p < end; p++) {
         if (!(*p)->IsHeapObject()) continue;
         HeapObject* obj = HeapObject::cast(*p);
-        // Use Marking instead of ObjectMarking to avoid adjusting live bytes
-        // counter.
-        MarkBit mark_bit =
-            ObjectMarking::MarkBitFrom(obj, MarkingState::Internal(obj));
-        if (Marking::IsWhite(mark_bit)) {
-          Marking::WhiteToBlack(mark_bit);
+        if (filter_->MarkAsReachable(obj)) {
           marking_stack_.Add(obj);
         }
       }
     }
+    UnreachableObjectsFilter* filter_;
     List<HeapObject*> marking_stack_;
   };
 
+  friend class MarkingVisitor;
+
   void MarkReachableObjects() {
-    MarkingVisitor visitor;
+    MarkingVisitor visitor(this);
     heap_->IterateRoots(&visitor, VISIT_ALL);
     visitor.TransitiveClosure();
   }
 
   Heap* heap_;
   DisallowHeapAllocation no_allocation_;
+  std::unordered_map<MemoryChunk*, std::unordered_set<HeapObject*>*> reachable_;
 };
 
 HeapIterator::HeapIterator(Heap* heap,

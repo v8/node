@@ -1062,7 +1062,6 @@ SmallMapList* Expression::GetReceiverTypes() {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return nullptr;
   }
 }
 
@@ -1075,7 +1074,6 @@ KeyedAccessStoreMode Expression::GetStoreMode() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return STANDARD_STORE;
   }
 }
 
@@ -1088,7 +1086,6 @@ IcCheckType Expression::GetKeyType() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return PROPERTY;
   }
 }
 
@@ -1102,7 +1099,6 @@ bool Expression::IsMonomorphic() const {
 #undef GENERATE_CASE
     default:
       UNREACHABLE();
-      return false;
   }
 }
 

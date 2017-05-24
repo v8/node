@@ -952,6 +952,12 @@ void Verifier::Visitor::Check(Node* node) {
       CheckValueInputIs(node, 1, Type::Unsigned32());
       CheckTypeIs(node, Type::UnsignedSmall());
       break;
+    case IrOpcode::kSeqStringCharCodeAt:
+      // (SeqString, Unsigned32) -> UnsignedSmall
+      CheckValueInputIs(node, 0, Type::SeqString());
+      CheckValueInputIs(node, 1, Type::Unsigned32());
+      CheckTypeIs(node, Type::UnsignedSmall());
+      break;
     case IrOpcode::kStringFromCharCode:
       // Number -> String
       CheckValueInputIs(node, 0, Type::Number());
@@ -1177,6 +1183,10 @@ void Verifier::Visitor::Check(Node* node) {
     case IrOpcode::kCheckString:
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::String());
+      break;
+    case IrOpcode::kCheckSymbol:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Symbol());
       break;
 
     case IrOpcode::kCheckedInt32Add:

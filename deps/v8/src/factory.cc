@@ -13,6 +13,7 @@
 #include "src/conversions.h"
 #include "src/isolate-inl.h"
 #include "src/macro-assembler.h"
+#include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/module-info.h"
 #include "src/objects/scope-info.h"
@@ -927,6 +928,9 @@ Handle<JSPromise> Factory::NewJSPromise() {
   Handle<JSPromise> promise = Handle<JSPromise>::cast(promise_obj);
   promise->set_status(v8::Promise::kPending);
   promise->set_flags(0);
+  for (int i = 0; i < v8::Promise::kEmbedderFieldCount; i++) {
+    promise->SetEmbedderField(i, Smi::kZero);
+  }
 
   isolate()->RunPromiseHook(PromiseHookType::kInit, promise, undefined_value());
   return promise;
@@ -1710,7 +1714,6 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc,
   // The code object has not been fully initialized yet.  We rely on the
   // fact that no allocation will happen from this point on.
   DisallowHeapAllocation no_gc;
-  code->set_gc_metadata(Smi::kZero);
   code->set_ic_age(isolate()->heap()->global_ic_age());
   code->set_instruction_size(desc.instr_size);
   code->set_relocation_info(*reloc_info);
@@ -2084,7 +2087,6 @@ ExternalArrayType Factory::GetArrayTypeFromElementsKind(ElementsKind kind) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return kExternalInt8Array;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2097,7 +2099,6 @@ size_t Factory::GetExternalArrayElementSize(ExternalArrayType type) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return 0;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2112,7 +2113,6 @@ ElementsKind GetExternalArrayElementsKind(ExternalArrayType type) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
   }
   UNREACHABLE();
-  return FIRST_FIXED_TYPED_ARRAY_ELEMENTS_KIND;
 #undef TYPED_ARRAY_CASE
 }
 
@@ -2124,7 +2124,6 @@ size_t GetFixedTypedArraysElementSize(ElementsKind kind) {
     TYPED_ARRAYS(TYPED_ARRAY_CASE)
     default:
       UNREACHABLE();
-      return 0;
   }
 #undef TYPED_ARRAY_CASE
 }
@@ -2142,7 +2141,6 @@ JSFunction* GetTypedArrayFun(ExternalArrayType type, Isolate* isolate) {
 
     default:
       UNREACHABLE();
-      return NULL;
   }
 }
 
@@ -2159,7 +2157,6 @@ JSFunction* GetTypedArrayFun(ElementsKind elements_kind, Isolate* isolate) {
 
     default:
       UNREACHABLE();
-      return NULL;
   }
 }
 
@@ -2802,7 +2799,6 @@ Handle<String> Factory::ToPrimitiveHintString(ToPrimitiveHint hint) {
       return string_string();
   }
   UNREACHABLE();
-  return Handle<String>::null();
 }
 
 Handle<Map> Factory::CreateSloppyFunctionMap(FunctionMode function_mode) {

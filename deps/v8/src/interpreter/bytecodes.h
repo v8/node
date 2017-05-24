@@ -224,6 +224,12 @@ namespace interpreter {
   V(ToNumber, AccumulatorUse::kRead, OperandType::kRegOut, OperandType::kIdx)  \
   V(ToObject, AccumulatorUse::kRead, OperandType::kRegOut)                     \
                                                                                \
+  /* String concatenation */                                                   \
+  V(ToPrimitiveToString, AccumulatorUse::kRead, OperandType::kRegOut,          \
+    OperandType::kIdx)                                                         \
+  V(StringConcat, AccumulatorUse::kWrite, OperandType::kRegList,               \
+    OperandType::kRegCount)                                                    \
+                                                                               \
   /* Literals */                                                               \
   V(CreateRegExpLiteral, AccumulatorUse::kWrite, OperandType::kIdx,            \
     OperandType::kIdx, OperandType::kFlag8)                                    \
@@ -470,7 +476,6 @@ class V8_EXPORT_PRIVATE Bytecodes final {
         return Bytecode::kWide;
       default:
         UNREACHABLE();
-        return Bytecode::kIllegal;
     }
   }
 
@@ -491,7 +496,6 @@ class V8_EXPORT_PRIVATE Bytecodes final {
         return OperandScale::kDouble;
       default:
         UNREACHABLE();
-        return OperandScale::kSingle;
     }
   }
 
@@ -783,7 +787,6 @@ class V8_EXPORT_PRIVATE Bytecodes final {
         return ConvertReceiverMode::kAny;
       default:
         UNREACHABLE();
-        return ConvertReceiverMode::kAny;
     }
   }
 
@@ -819,12 +822,10 @@ class V8_EXPORT_PRIVATE Bytecodes final {
         return 3;
       case OperandType::kRegList:
         UNREACHABLE();
-        return 0;
       default:
         return 0;
     }
     UNREACHABLE();
-    return 0;
   }
 
   // Returns the size of |operand| for |operand_scale|.

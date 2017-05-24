@@ -835,16 +835,15 @@ void IncrementalMarking::UpdateMarkingDequeAfterScavenge() {
       // The object may be on a page that was moved in new space.
       DCHECK(
           Page::FromAddress(obj->address())->IsFlagSet(Page::SWEEP_TO_ITERATE));
-      return ObjectMarking::IsBlack<kAtomicity>(obj,
-                                                MarkingState::External(obj))
+      return ObjectMarking::IsGrey<kAtomicity>(obj, MarkingState::External(obj))
                  ? obj
                  : nullptr;
     } else {
       // The object may be on a page that was moved from new to old space.
       if (Page::FromAddress(obj->address())
               ->IsFlagSet(Page::SWEEP_TO_ITERATE)) {
-        return ObjectMarking::IsBlack<kAtomicity>(obj,
-                                                  MarkingState::External(obj))
+        return ObjectMarking::IsGrey<kAtomicity>(obj,
+                                                 MarkingState::External(obj))
                    ? obj
                    : nullptr;
       }
@@ -873,8 +872,11 @@ void IncrementalMarking::VisitObject(Map* map, HeapObject* obj, int size) {
   // 1. The object is a fixed array with the progress bar.
   // 2. The object is a JSObject that was colored black before
   //    unsafe layout change.
+  // 3. The object is a string that was colored black before
+  //    unsafe layout change.
   if (!ObjectMarking::GreyToBlack<kAtomicity>(obj, marking_state(obj))) {
-    DCHECK(IsFixedArrayWithProgressBar(obj) || obj->IsJSObject());
+    DCHECK(IsFixedArrayWithProgressBar(obj) || obj->IsJSObject() ||
+           obj->IsString());
   }
   DCHECK(ObjectMarking::IsBlack<kAtomicity>(obj, marking_state(obj)));
   WhiteToGreyAndPush(map);

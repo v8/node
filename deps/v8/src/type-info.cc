@@ -191,13 +191,14 @@ AstType* CompareOpHintToType(CompareOperationHint hint) {
       return AstType::InternalizedString();
     case CompareOperationHint::kString:
       return AstType::String();
+    case CompareOperationHint::kSymbol:
+      UNREACHABLE();
     case CompareOperationHint::kReceiver:
       return AstType::Receiver();
     case CompareOperationHint::kAny:
       return AstType::Any();
   }
   UNREACHABLE();
-  return AstType::None();
 }
 
 AstType* BinaryOpFeedbackToType(int hint) {
@@ -217,7 +218,6 @@ AstType* BinaryOpFeedbackToType(int hint) {
       return AstType::Any();
   }
   UNREACHABLE();
-  return AstType::None();
 }
 
 }  // end anonymous namespace

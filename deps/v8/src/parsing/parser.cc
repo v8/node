@@ -706,6 +706,7 @@ FunctionLiteral* Parser::DoParseProgram(ParseInfo* info) {
       var->AllocateTo(VariableLocation::PARAMETER, 0);
 
       PrepareGeneratorVariables();
+      scope->ForceContextAllocation();
       Expression* initial_yield =
           BuildInitialYield(kNoSourcePosition, kGeneratorFunction);
       body->Add(
@@ -1899,7 +1900,7 @@ Expression* Parser::BuildIteratorNextResult(Expression* iterator,
   ZoneList<Expression*>* next_arguments =
       new (zone()) ZoneList<Expression*>(0, zone());
   Expression* next_call =
-      factory()->NewCall(next_property, next_arguments, pos);
+      factory()->NewCall(next_property, next_arguments, kNoSourcePosition);
   if (type == IteratorType::kAsync) {
     next_call = RewriteAwaitExpression(next_call, pos);
   }
@@ -1931,13 +1932,12 @@ Expression* Parser::BuildIteratorNextResult(Expression* iterator,
 Statement* Parser::InitializeForEachStatement(ForEachStatement* stmt,
                                               Expression* each,
                                               Expression* subject,
-                                              Statement* body,
-                                              int each_keyword_pos) {
+                                              Statement* body) {
   ForOfStatement* for_of = stmt->AsForOfStatement();
   if (for_of != NULL) {
     const bool finalize = true;
     return InitializeForOfStatement(for_of, each, subject, body, finalize,
-                                    IteratorType::kNormal, each_keyword_pos);
+                                    IteratorType::kNormal, each->position());
   } else {
     if (each->IsArrayLiteral() || each->IsObjectLiteral()) {
       Variable* temp = NewTemporary(ast_value_factory()->empty_string());
@@ -2532,11 +2532,9 @@ void Parser::DeclareArrowFunctionFormalParameters(
 }
 
 void Parser::PrepareGeneratorVariables() {
-  // For generators, allocating variables in contexts is currently a win because
-  // it minimizes the work needed to suspend and resume an activation.  The
-  // code produced for generators relies on this forced context allocation (it
-  // does not restore the frame's parameters upon resume).
-  function_state_->scope()->ForceContextAllocation();
+  // The code produced for generators relies on forced context allocation of
+  // parameters (it does not restore the frame's parameters upon resume).
+  function_state_->scope()->ForceContextAllocationForParameters();
 
   // Calling a generator returns a generator object.  That object is stored
   // in a temporary variable, a definition that is used by "yield"
@@ -3532,7 +3530,7 @@ void Parser::ParseOnBackground(ParseInfo* info) {
   info->set_literal(result);
 
   // We cannot internalize on a background thread; a foreground task will take
-  // care of calling Parser::Internalize just before compilation.
+  // care of calling AstValueFactory::Internalize just before compilation.
 
   if (produce_cached_parse_data()) {
     if (result != NULL) *info->cached_data() = logger.GetScriptData();
@@ -4090,7 +4088,6 @@ Expression* Parser::RewriteAssignExponentiation(Expression* left,
         pos);
   }
   UNREACHABLE();
-  return nullptr;
 }
 
 Expression* Parser::RewriteSpreads(ArrayLiteral* lit) {
@@ -4238,7 +4235,6 @@ void Parser::SetFunctionName(Expression* value, const AstRawString* name) {
   }
 }
 
-
 // Desugaring of yield*
 // ====================
 //
@@ -4283,17 +4279,9 @@ void Parser::SetFunctionName(Expression* value, const AstRawString* name) {
 //
 //       // From the generator to its user:
 //       // Forward output, receive new input, and determine resume mode.
-//       mode = kReturn;
-//       try {
-//         try {
-//           RawYield(output);  // See explanation above.
-//           mode = kNext;
-//         } catch (error) {
-//           mode = kThrow;
-//         }
-//       } finally {
-//         input = function.sent;
-//         continue;
+//       RawYield(output);  // See explanation above.
+//       mode = %GeneratorGetResumeMode();
+//       input = function.sent;
 //       }
 //     }
 //
@@ -4510,48 +4498,31 @@ Expression* Parser::RewriteYieldStar(Expression* generator,
         property, break_loop, factory()->NewEmptyStatement(nopos), nopos);
   }
 
-
-  // mode = kReturn;
-  Statement* set_mode_return;
-  {
-    Expression* mode_proxy = factory()->NewVariableProxy(var_mode);
-    Expression* kreturn =
-        factory()->NewSmiLiteral(JSGeneratorObject::kReturn, nopos);
-    Expression* assignment =
-        factory()->NewAssignment(Token::ASSIGN, mode_proxy, kreturn, nopos);
-    set_mode_return = factory()->NewExpressionStatement(assignment, nopos);
-  }
-
   // Yield(output);
   Statement* yield_output;
   {
     Expression* output_proxy = factory()->NewVariableProxy(var_output);
     Suspend* yield =
-        BuildSuspend(generator, output_proxy, nopos, Suspend::kOnExceptionThrow,
+        BuildSuspend(generator, output_proxy, nopos, Suspend::kNoControl,
                      SuspendFlags::kYieldStar);
     yield_output = factory()->NewExpressionStatement(yield, nopos);
   }
 
-  // mode = kNext;
-  Statement* set_mode_next;
+  // mode = %GeneratorGetResumeMode();
+  Statement* get_mode;
   {
     Expression* mode_proxy = factory()->NewVariableProxy(var_mode);
-    Expression* knext =
-        factory()->NewSmiLiteral(JSGeneratorObject::kNext, nopos);
-    Expression* assignment =
-        factory()->NewAssignment(Token::ASSIGN, mode_proxy, knext, nopos);
-    set_mode_next = factory()->NewExpressionStatement(assignment, nopos);
-  }
 
-  // mode = kThrow;
-  Statement* set_mode_throw;
-  {
-    Expression* mode_proxy = factory()->NewVariableProxy(var_mode);
-    Expression* kthrow =
-        factory()->NewSmiLiteral(JSGeneratorObject::kThrow, nopos);
+    ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(1, zone());
+    VariableProxy* generator = factory()->NewVariableProxy(
+        function_state_->generator_object_variable());
+    args->Add(generator, zone());
+    Expression* mode = factory()->NewCallRuntime(
+        Runtime::kInlineGeneratorGetResumeMode, args, pos);
+
     Expression* assignment =
-        factory()->NewAssignment(Token::ASSIGN, mode_proxy, kthrow, nopos);
-    set_mode_throw = factory()->NewExpressionStatement(assignment, nopos);
+        factory()->NewAssignment(Token::ASSIGN, mode_proxy, mode, nopos);
+    get_mode = factory()->NewExpressionStatement(assignment, nopos);
   }
 
   // input = function.sent;
@@ -4597,36 +4568,6 @@ Expression* Parser::RewriteYieldStar(Expression* generator,
 
   // Now put things together.
 
-  // try { ... } catch(e) { ... }
-  Statement* try_catch;
-  {
-    Block* try_block = factory()->NewBlock(nullptr, 2, false, nopos);
-    try_block->statements()->Add(yield_output, zone());
-    try_block->statements()->Add(set_mode_next, zone());
-
-    Block* catch_block = factory()->NewBlock(nullptr, 1, false, nopos);
-    catch_block->statements()->Add(set_mode_throw, zone());
-
-    Scope* catch_scope = NewHiddenCatchScopeWithParent(scope());
-
-    try_catch = factory()->NewTryCatchStatementForDesugaring(
-        try_block, catch_scope, catch_block, nopos);
-  }
-
-  // try { ... } finally { ... }
-  Statement* try_finally;
-  {
-    Block* try_block = factory()->NewBlock(nullptr, 1, false, nopos);
-    try_block->statements()->Add(try_catch, zone());
-
-    Block* finally = factory()->NewBlock(nullptr, 2, false, nopos);
-    finally->statements()->Add(get_input, zone());
-    finally->statements()->Add(factory()->NewContinueStatement(loop, nopos),
-                               zone());
-
-    try_finally = factory()->NewTryFinallyStatement(try_block, finally, nopos);
-  }
-
   // switch (mode) { ... }
   SwitchStatement* switch_mode = factory()->NewSwitchStatement(nullptr, nopos);
   {
@@ -4666,7 +4607,6 @@ Expression* Parser::RewriteYieldStar(Expression* generator,
     Block* loop_body = factory()->NewBlock(nullptr, 5, false, nopos);
     loop_body->statements()->Add(switch_mode, zone());
     loop_body->statements()->Add(if_done, zone());
-    loop_body->statements()->Add(set_mode_return, zone());
 
     if (is_async_generator()) {
       // AsyncGeneratorYield does not yield the original iterator result,
@@ -4683,7 +4623,9 @@ Expression* Parser::RewriteYieldStar(Expression* generator,
           factory()->NewExpressionStatement(assign, nopos), zone());
     }
 
-    loop_body->statements()->Add(try_finally, zone());
+    loop_body->statements()->Add(yield_output, zone());
+    loop_body->statements()->Add(get_input, zone());
+    loop_body->statements()->Add(get_mode, zone());
 
     loop->Initialize(factory()->NewBooleanLiteral(true, nopos), loop_body);
   }

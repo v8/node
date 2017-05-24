@@ -16,6 +16,7 @@
 #include "src/global-handles.h"
 #include "src/interpreter/interpreter.h"
 #include "src/macro-assembler.h"
+#include "src/objects/debug-objects-inl.h"
 #include "src/tracing/trace-event.h"
 #include "src/v8.h"
 
@@ -467,7 +468,6 @@ CodeEventListener::DeoptKind DeoptKindOfBailoutType(
       return CodeEventListener::kLazy;
   }
   UNREACHABLE();
-  return CodeEventListener::kEager;
 }
 
 }  // namespace
@@ -2337,6 +2337,12 @@ void Deoptimizer::EnsureCodeForDeoptimizationEntry(Isolate* isolate,
   data->deopt_entry_code_entries_[type] = entry_count;
 }
 
+void Deoptimizer::EnsureCodeForMaxDeoptimizationEntries(Isolate* isolate) {
+  EnsureCodeForDeoptimizationEntry(isolate, EAGER, kMaxNumberOfEntries - 1);
+  EnsureCodeForDeoptimizationEntry(isolate, LAZY, kMaxNumberOfEntries - 1);
+  EnsureCodeForDeoptimizationEntry(isolate, SOFT, kMaxNumberOfEntries - 1);
+}
+
 FrameDescription::FrameDescription(uint32_t frame_size, int parameter_count)
     : frame_size_(frame_size),
       parameter_count_(parameter_count),
@@ -2620,7 +2626,6 @@ const char* Translation::StringFor(Opcode opcode) {
   }
 #undef TRANSLATION_OPCODE_CASE
   UNREACHABLE();
-  return "";
 }
 
 #endif
@@ -3246,7 +3251,6 @@ int TranslatedFrame::GetValueCount() {
       break;
   }
   UNREACHABLE();
-  return -1;
 }
 
 
@@ -4223,7 +4227,6 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       break;
   }
   UNREACHABLE();
-  return Handle<Object>::null();
 }
 
 Handle<Object> TranslatedState::MaterializeAt(int frame_index,

@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <functional>
 #include <memory>
 
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
 #include "src/base/atomic-utils.h"
+#include "src/base/utils/random-number-generator.h"
 #include "src/code-stubs.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/debug/interface-types.h"
@@ -54,24 +56,6 @@ byte* raw_buffer_ptr(MaybeHandle<JSArrayBuffer> buffer, int offset) {
   return static_cast<byte*>(buffer.ToHandleChecked()->backing_store()) + offset;
 }
 
-static void MemoryFinalizer(const v8::WeakCallbackInfo<void>& data) {
-  DisallowHeapAllocation no_gc;
-  JSArrayBuffer** p = reinterpret_cast<JSArrayBuffer**>(data.GetParameter());
-  JSArrayBuffer* buffer = *p;
-
-  if (!buffer->was_neutered()) {
-    void* memory = buffer->backing_store();
-    DCHECK(memory != nullptr);
-    base::OS::Free(memory,
-                   RoundUp(kWasmMaxHeapOffset, base::OS::CommitPageSize()));
-
-    data.GetIsolate()->AdjustAmountOfExternalAllocatedMemory(
-        -buffer->byte_length()->Number());
-  }
-
-  GlobalHandles::Destroy(reinterpret_cast<Object**>(p));
-}
-
 static void RecordStats(Isolate* isolate, Code* code, bool is_sync) {
   if (is_sync) {
     // TODO(karlschimpf): Make this work when asynchronous.
@@ -92,8 +76,8 @@ static void RecordStats(Isolate* isolate, Handle<FixedArray> functions,
 }
 
 void* TryAllocateBackingStore(Isolate* isolate, size_t size,
-                              bool enable_guard_regions, bool& is_external) {
-  is_external = false;
+                              bool enable_guard_regions, void*& allocation_base,
+                              size_t& allocation_length) {
   // TODO(eholk): Right now enable_guard_regions has no effect on 32-bit
   // systems. It may be safer to fail instead, given that other code might do
   // things that would be unsafe if they expected guard pages where there
@@ -104,26 +88,30 @@ void* TryAllocateBackingStore(Isolate* isolate, size_t size,
 
     // We always allocate the largest possible offset into the heap, so the
     // addressable memory after the guard page can be made inaccessible.
-    const size_t alloc_size =
-        RoundUp(kWasmMaxHeapOffset, base::OS::CommitPageSize());
+    allocation_length = RoundUp(kWasmMaxHeapOffset, base::OS::CommitPageSize());
     DCHECK_EQ(0, size % base::OS::CommitPageSize());
 
     // AllocateGuarded makes the whole region inaccessible by default.
-    void* memory = base::OS::AllocateGuarded(alloc_size);
-    if (memory == nullptr) {
+    allocation_base =
+        isolate->array_buffer_allocator()->Reserve(allocation_length);
+    if (allocation_base == nullptr) {
       return nullptr;
     }
 
+    void* memory = allocation_base;
+
     // Make the part we care about accessible.
-    base::OS::Unprotect(memory, size);
+    isolate->array_buffer_allocator()->SetProtection(
+        memory, size, v8::ArrayBuffer::Allocator::Protection::kReadWrite);
 
     reinterpret_cast<v8::Isolate*>(isolate)
         ->AdjustAmountOfExternalAllocatedMemory(size);
 
-    is_external = true;
     return memory;
   } else {
     void* memory = isolate->array_buffer_allocator()->Allocate(size);
+    allocation_base = memory;
+    allocation_length = size;
     return memory;
   }
 }
@@ -303,6 +291,42 @@ bool compile_lazy(const WasmModule* module) {
          (FLAG_asm_wasm_lazy_compilation && module->is_asm_js());
 }
 
+class CodeGenerationSchedule {
+ public:
+  explicit CodeGenerationSchedule(
+      base::RandomNumberGenerator* random_number_generator)
+      : random_number_generator_(random_number_generator) {
+    DCHECK_NOT_NULL(random_number_generator_);
+  }
+
+  void Schedule(std::unique_ptr<compiler::WasmCompilationUnit>&& item) {
+    schedule_.push_back(std::move(item));
+  }
+
+  bool IsEmpty() const { return schedule_.empty(); }
+
+  std::unique_ptr<compiler::WasmCompilationUnit> GetNext() {
+    DCHECK(!IsEmpty());
+    size_t index = GetRandomIndexInSchedule();
+    auto ret = std::move(schedule_[index]);
+    std::swap(schedule_[schedule_.size() - 1], schedule_[index]);
+    schedule_.pop_back();
+    return ret;
+  }
+
+ private:
+  size_t GetRandomIndexInSchedule() {
+    double factor = random_number_generator_->NextDouble();
+    size_t index = (size_t)(factor * schedule_.size());
+    DCHECK_GE(index, 0);
+    DCHECK_LT(index, schedule_.size());
+    return index;
+  }
+
+  base::RandomNumberGenerator* random_number_generator_ = nullptr;
+  std::vector<std::unique_ptr<compiler::WasmCompilationUnit>> schedule_;
+};
+
 // A helper for compiling an entire module.
 class CompilationHelper {
  public:
@@ -312,7 +336,10 @@ class CompilationHelper {
   // reclaimed by explicitely releasing the {module_} field.
   CompilationHelper(Isolate* isolate, std::unique_ptr<WasmModule> module,
                     bool is_sync)
-      : isolate_(isolate), module_(std::move(module)), is_sync_(is_sync) {}
+      : isolate_(isolate),
+        module_(std::move(module)),
+        is_sync_(is_sync),
+        executed_units_(isolate->random_number_generator()) {}
 
   // The actual runnable task that performs compilations in the background.
   class CompilationTask : public CancelableTask {
@@ -333,13 +360,19 @@ class CompilationHelper {
   bool is_sync_;
   std::vector<std::unique_ptr<compiler::WasmCompilationUnit>>
       compilation_units_;
-  std::queue<std::unique_ptr<compiler::WasmCompilationUnit>> executed_units_;
+  CodeGenerationSchedule executed_units_;
   base::Mutex result_mutex_;
   base::AtomicNumber<size_t> next_unit_;
   size_t num_background_tasks_ = 0;
+  // This flag should only be set while holding result_mutex_.
+  bool finisher_is_running_ = false;
 
-  // Run by each compilation task and by the main thread.
-  bool FetchAndExecuteCompilationUnit() {
+  // Run by each compilation task and by the main thread. The
+  // no_finisher_callback is called within the result_mutex_ lock when no
+  // finishing task is running, i.e. when the finisher_is_running_ flag is not
+  // set.
+  bool FetchAndExecuteCompilationUnit(
+      std::function<void()> no_finisher_callback = [] {}) {
     DisallowHeapAllocation no_allocation;
     DisallowHandleAllocation no_handles;
     DisallowHandleDereference no_deref;
@@ -354,8 +387,15 @@ class CompilationHelper {
     std::unique_ptr<compiler::WasmCompilationUnit> unit =
         std::move(compilation_units_.at(index));
     unit->ExecuteCompilation();
-    base::LockGuard<base::Mutex> guard(&result_mutex_);
-    executed_units_.push(std::move(unit));
+    {
+      base::LockGuard<base::Mutex> guard(&result_mutex_);
+      executed_units_.Schedule(std::move(unit));
+      if (!finisher_is_running_) {
+        no_finisher_callback();
+        // We set the flag here so that not more than one finisher is started.
+        finisher_is_running_ = true;
+      }
+    }
     return true;
   }
 
@@ -410,21 +450,27 @@ class CompilationHelper {
 
   void FinishCompilationUnits(std::vector<Handle<Code>>& results,
                               ErrorThrower* thrower) {
+    SetFinisherIsRunning(true);
     while (true) {
       int func_index = -1;
       Handle<Code> result = FinishCompilationUnit(thrower, &func_index);
       if (func_index < 0) break;
       results[func_index] = result;
     }
+    SetFinisherIsRunning(false);
+  }
+
+  void SetFinisherIsRunning(bool value) {
+    base::LockGuard<base::Mutex> guard(&result_mutex_);
+    finisher_is_running_ = value;
   }
 
   Handle<Code> FinishCompilationUnit(ErrorThrower* thrower, int* func_index) {
     std::unique_ptr<compiler::WasmCompilationUnit> unit;
     {
       base::LockGuard<base::Mutex> guard(&result_mutex_);
-      if (executed_units_.empty()) return Handle<Code>::null();
-      unit = std::move(executed_units_.front());
-      executed_units_.pop();
+      if (executed_units_.IsEmpty()) return Handle<Code>::null();
+      unit = executed_units_.GetNext();
     }
     *func_index = unit->func_index();
     Handle<Code> result = unit->FinishCompilation(thrower);
@@ -510,6 +556,29 @@ class CompilationHelper {
         break;
       }
       results[i] = code;
+    }
+  }
+
+  void ValidateSequentially(ModuleBytesEnv* module_env, ErrorThrower* thrower) {
+    DCHECK(!thrower->error());
+
+    const WasmModule* module = module_env->module_env.module;
+    for (uint32_t i = 0; i < module->functions.size(); ++i) {
+      const WasmFunction& func = module->functions[i];
+      if (func.imported) continue;
+
+      const byte* base = module_env->wire_bytes.start();
+      FunctionBody body{func.sig, base, base + func.code_start_offset,
+                        base + func.code_end_offset};
+      DecodeResult result = VerifyWasmCode(isolate_->allocator(),
+                                           module_env->module_env.module, body);
+      if (result.failed()) {
+        WasmName str = module_env->wire_bytes.GetName(&func);
+        thrower->CompileError(
+            "Compiling function #%d:%.*s failed: %s @+%u", i, str.length(),
+            str.start(), result.error_msg().c_str(), result.error_offset());
+        break;
+      }
     }
   }
 
@@ -605,8 +674,16 @@ class CompilationHelper {
       } else {
         CompileSequentially(&module_env, temp_instance->function_code, thrower);
       }
-      if (thrower->error()) return {};
+    } else if (module_->is_wasm()) {
+      // Validate wasm modules for lazy compilation. Don't validate asm.js
+      // modules, they are valid by construction (otherwise a CHECK will fail
+      // during lazy compilation).
+      // TODO(clemensh): According to the spec, we can actually skip validation
+      // at module creation time, and return a function that always traps at
+      // (lazy) compilation time.
+      ValidateSequentially(&module_env, thrower);
     }
+    if (thrower->error()) return {};
 
     // At this point, compilation has completed. Update the code table.
     for (size_t i = FLAG_skip_compiling_wasm_funcs;
@@ -845,41 +922,39 @@ void RecordLazyCodeStats(Isolate* isolate, Code* code) {
 }  // namespace
 
 Handle<JSArrayBuffer> wasm::SetupArrayBuffer(Isolate* isolate,
+                                             void* allocation_base,
+                                             size_t allocation_length,
                                              void* backing_store, size_t size,
                                              bool is_external,
                                              bool enable_guard_regions) {
   Handle<JSArrayBuffer> buffer = isolate->factory()->NewJSArrayBuffer();
-  JSArrayBuffer::Setup(buffer, isolate, is_external, backing_store,
+  DCHECK_GE(kMaxInt, size);
+  JSArrayBuffer::Setup(buffer, isolate, is_external, allocation_base,
+                       allocation_length, backing_store,
                        static_cast<int>(size));
   buffer->set_is_neuterable(false);
   buffer->set_is_wasm_buffer(true);
   buffer->set_has_guard_region(enable_guard_regions);
-
-  if (enable_guard_regions) {
-    // We mark the buffer as external if we allocated it here with guard
-    // pages. That means we need to arrange for it to be freed.
-
-    // TODO(eholk): Finalizers may not run when the main thread is shutting
-    // down, which means we may leak memory here.
-    Handle<Object> global_handle = isolate->global_handles()->Create(*buffer);
-    GlobalHandles::MakeWeak(global_handle.location(), global_handle.location(),
-                            &MemoryFinalizer, v8::WeakCallbackType::kFinalizer);
-  }
   return buffer;
 }
 
 Handle<JSArrayBuffer> wasm::NewArrayBuffer(Isolate* isolate, size_t size,
                                            bool enable_guard_regions) {
-  if (size > (FLAG_wasm_max_mem_pages * WasmModule::kPageSize)) {
+  // Check against kMaxInt, since the byte length is stored as int in the
+  // JSArrayBuffer. Note that wasm_max_mem_pages can be raised from the command
+  // line, and we don't want to fail a CHECK then.
+  if (size > FLAG_wasm_max_mem_pages * WasmModule::kPageSize ||
+      size > kMaxInt) {
     // TODO(titzer): lift restriction on maximum memory allocated here.
     return Handle<JSArrayBuffer>::null();
   }
 
   enable_guard_regions = enable_guard_regions && kGuardRegionsSupported;
 
-  bool is_external;  // Set by TryAllocateBackingStore
-  void* memory =
-      TryAllocateBackingStore(isolate, size, enable_guard_regions, is_external);
+  void* allocation_base = nullptr;  // Set by TryAllocateBackingStore
+  size_t allocation_length = 0;     // Set by TryAllocateBackingStore
+  void* memory = TryAllocateBackingStore(isolate, size, enable_guard_regions,
+                                         allocation_base, allocation_length);
 
   if (memory == nullptr) {
     return Handle<JSArrayBuffer>::null();
@@ -893,8 +968,9 @@ Handle<JSArrayBuffer> wasm::NewArrayBuffer(Isolate* isolate, size_t size,
   }
 #endif
 
-  return SetupArrayBuffer(isolate, memory, size, is_external,
-                          enable_guard_regions);
+  const bool is_external = false;
+  return SetupArrayBuffer(isolate, allocation_base, allocation_length, memory,
+                          size, is_external, enable_guard_regions);
 }
 
 void wasm::UnpackAndRegisterProtectedInstructions(
@@ -1002,7 +1078,6 @@ static Handle<Code> UnwrapImportWrapper(Handle<Object> import_wrapper) {
     return handle(target);
   }
   UNREACHABLE();
-  return Handle<Code>::null();
 }
 
 Handle<Code> CompileImportWrapper(Isolate* isolate, int index, FunctionSig* sig,
@@ -1302,8 +1377,8 @@ class InstantiationHelper {
     //--------------------------------------------------------------------------
     if (!memory_.is_null()) {
       Address mem_start = static_cast<Address>(memory_->backing_store());
-      uint32_t mem_size =
-          static_cast<uint32_t>(memory_->byte_length()->Number());
+      uint32_t mem_size;
+      CHECK(memory_->byte_length()->ToUint32(&mem_size));
       LoadDataSegments(mem_start, mem_size);
 
       uint32_t old_mem_size = compiled_module_->mem_size();
@@ -1545,6 +1620,44 @@ class InstantiationHelper {
     return result;
   }
 
+  // Look up an import value in the {ffi_} object specifically for linking an
+  // asm.js module. This only performs non-observable lookups, which allows
+  // falling back to JavaScript proper (and hence re-executing all lookups) if
+  // module instantiation fails.
+  MaybeHandle<Object> LookupImportAsm(uint32_t index,
+                                      Handle<String> import_name) {
+    // Check that a foreign function interface object was provided.
+    if (ffi_.is_null()) {
+      return ReportLinkError("missing imports object", index, import_name);
+    }
+
+    // Perform lookup of the given {import_name} without causing any observable
+    // side-effect. We only accept accesses that resolve to data properties,
+    // which is indicated by the asm.js spec in section 7 ("Linking") as well.
+    Handle<Object> result;
+    LookupIterator it =
+        LookupIterator::PropertyOrElement(isolate_, ffi_, import_name);
+    switch (it.state()) {
+      case LookupIterator::ACCESS_CHECK:
+      case LookupIterator::INTEGER_INDEXED_EXOTIC:
+      case LookupIterator::INTERCEPTOR:
+      case LookupIterator::JSPROXY:
+      case LookupIterator::ACCESSOR:
+      case LookupIterator::TRANSITION:
+        return ReportLinkError("not a data property", index, import_name);
+      case LookupIterator::NOT_FOUND:
+        // Accepting missing properties as undefined does not cause any
+        // observable difference from JavaScript semantics, we are lenient.
+        result = isolate_->factory()->undefined_value();
+        break;
+      case LookupIterator::DATA:
+        result = it.GetDataValue();
+        break;
+    }
+
+    return result;
+  }
+
   uint32_t EvalUint32InitExpr(const WasmInitExpr& expr) {
     switch (expr.kind) {
       case WasmInitExpr::kI32Const:
@@ -1555,7 +1668,6 @@ class InstantiationHelper {
       }
       default:
         UNREACHABLE();
-        return 0;
     }
   }
 
@@ -1630,7 +1742,8 @@ class InstantiationHelper {
       if (!maybe_import_name.ToHandle(&import_name)) return -1;
 
       MaybeHandle<Object> result =
-          LookupImport(index, module_name, import_name);
+          module_->is_asm_js() ? LookupImportAsm(index, import_name)
+                               : LookupImport(index, module_name, import_name);
       if (thrower_->error()) return -1;
       Handle<Object> value = result.ToHandleChecked();
 
@@ -2238,27 +2351,22 @@ void wasm::DetachWebAssemblyMemoryBuffer(Isolate* isolate,
           ? static_cast<uint32_t>(buffer->byte_length()->Number())
           : 0;
   if (buffer.is_null() || byte_length == 0) return;
-  const bool has_guard_regions = buffer->has_guard_region();
   const bool is_external = buffer->is_external();
-  void* backing_store = buffer->backing_store();
   DCHECK(!buffer->is_neuterable());
-  if (!has_guard_regions && !is_external) {
+  if (!is_external) {
     buffer->set_is_external(true);
     isolate->heap()->UnregisterArrayBuffer(*buffer);
   }
+  if (free_memory) {
+    // We need to free the memory before neutering the buffer because
+    // FreeBackingStore reads buffer->allocation_base(), which is nulled out by
+    // Neuter. This means there is a dangling pointer until we neuter the
+    // buffer. Since there is no way for the user to directly call
+    // FreeBackingStore, we can ensure this is safe.
+    buffer->FreeBackingStore();
+  }
   buffer->set_is_neuterable(true);
   buffer->Neuter();
-  // Neuter but do not free, as when pages == 0, the backing store is being used
-  // by the new buffer.
-  if (!free_memory) return;
-  if (has_guard_regions) {
-    base::OS::Free(backing_store, RoundUp(i::wasm::kWasmMaxHeapOffset,
-                                          base::OS::CommitPageSize()));
-    reinterpret_cast<v8::Isolate*>(isolate)
-        ->AdjustAmountOfExternalAllocatedMemory(-byte_length);
-  } else if (!has_guard_regions && !is_external) {
-    isolate->array_buffer_allocator()->Free(backing_store, byte_length);
-  }
 }
 
 void testing::ValidateInstancesChain(Isolate* isolate,
@@ -2471,14 +2579,19 @@ Handle<JSArray> wasm::GetCustomSections(Isolate* isolate,
     if (!name->Equals(*section_name.ToHandleChecked())) continue;
 
     // Make a copy of the payload data in the section.
-    bool is_external;  // Set by TryAllocateBackingStore
+    void* allocation_base = nullptr;  // Set by TryAllocateBackingStore
+    size_t allocation_length = 0;     // Set by TryAllocateBackingStore
+    const bool enable_guard_regions = false;
     void* memory = TryAllocateBackingStore(isolate, section.payload_length,
-                                           false, is_external);
+                                           enable_guard_regions,
+                                           allocation_base, allocation_length);
 
     Handle<Object> section_data = factory->undefined_value();
     if (memory) {
       Handle<JSArrayBuffer> buffer = isolate->factory()->NewJSArrayBuffer();
-      JSArrayBuffer::Setup(buffer, isolate, is_external, memory,
+      const bool is_external = false;
+      JSArrayBuffer::Setup(buffer, isolate, is_external, allocation_base,
+                           allocation_length, memory,
                            static_cast<int>(section.payload_length));
       DisallowHeapAllocation no_gc;  // for raw access to string bytes.
       Handle<SeqOneByteString> module_bytes(compiled_module->module_bytes(),
@@ -2584,6 +2697,11 @@ void ResolvePromise(Isolate* isolate, Handle<Context> context,
   auto maybe = resolver->Resolve(v8::Utils::ToLocal(context),
                                  v8::Utils::ToLocal(result));
   CHECK_IMPLIES(!maybe.FromMaybe(false), isolate->has_scheduled_exception());
+}
+
+double MonotonicallyIncreasingTimeInMs() {
+  return V8::GetCurrentPlatform()->MonotonicallyIncreasingTime() *
+         base::Time::kMillisecondsPerSecond;
 }
 
 }  // namespace
@@ -2872,18 +2990,18 @@ class AsyncCompileJob {
   //==========================================================================
   class ExecuteCompilationUnits : public CompileTask<ASYNC> {
     void Run() override {
+      std::function<void()> StartFinishCompilationUnit = [this]() {
+        job_->DoSync<FinishCompilationUnits>();
+      };
+
       TRACE_COMPILE("(3) Compiling...\n");
       for (;;) {
-        {
-          DisallowHandleAllocation no_handle;
-          DisallowHeapAllocation no_allocation;
-          if (!job_->helper_->FetchAndExecuteCompilationUnit()) break;
+        DisallowHandleAllocation no_handle;
+        DisallowHeapAllocation no_allocation;
+        if (!job_->helper_->FetchAndExecuteCompilationUnit(
+                StartFinishCompilationUnit)) {
+          break;
         }
-        // TODO(ahaas): Create one FinishCompilationUnit job for all compilation
-        // units.
-        job_->DoSync<FinishCompilationUnit>();
-        // TODO(ahaas): Limit the number of outstanding compilation units to be
-        // finished to reduce memory overhead.
       }
       // Special handling for predictable mode, see above.
       if (!FLAG_verify_predictable)
@@ -2892,25 +3010,56 @@ class AsyncCompileJob {
   };
 
   //==========================================================================
-  // Step 4 (sync x each function): Finish a single compilation unit.
+  // Step 4 (sync): Finish compilation units.
   //==========================================================================
-  class FinishCompilationUnit : public SyncCompileTask {
+  class FinishCompilationUnits : public SyncCompileTask {
     void RunImpl() override {
-      TRACE_COMPILE("(4a) Finishing compilation unit...\n");
-      HandleScope scope(job_->isolate_);
-      if (job_->failed_) return;  // already failed
-
-      int func_index = -1;
-      ErrorThrower thrower(job_->isolate_, "AsyncCompile");
-      Handle<Code> result =
-          job_->helper_->FinishCompilationUnit(&thrower, &func_index);
-      if (thrower.error()) {
-        job_->failed_ = true;
-      } else {
-        DCHECK(func_index >= 0);
-        job_->code_table_->set(func_index, *(result));
+      TRACE_COMPILE("(4a) Finishing compilation units...\n");
+      if (job_->failed_) {
+        // The job failed already, no need to do more work.
+        job_->helper_->SetFinisherIsRunning(false);
+        return;
       }
-      if (thrower.error() || --job_->outstanding_units_ == 0) {
+      HandleScope scope(job_->isolate_);
+      ErrorThrower thrower(job_->isolate_, "AsyncCompile");
+
+      // We execute for 1 ms and then reschedule the task, same as the GC.
+      double deadline = MonotonicallyIncreasingTimeInMs() + 1.0;
+
+      while (true) {
+        int func_index = -1;
+
+        Handle<Code> result =
+            job_->helper_->FinishCompilationUnit(&thrower, &func_index);
+
+        if (thrower.error()) {
+          // An error was detected, we stop compiling and wait for the
+          // background tasks to finish.
+          job_->failed_ = true;
+          break;
+        } else if (result.is_null()) {
+          // The working queue was empty, we break the loop. If new work units
+          // are enqueued, the background task will start this
+          // FinishCompilationUnits task again.
+          break;
+        } else {
+          DCHECK(func_index >= 0);
+          job_->code_table_->set(func_index, *result);
+          --job_->outstanding_units_;
+        }
+
+        if (deadline < MonotonicallyIncreasingTimeInMs()) {
+          // We reached the deadline. We reschedule this task and return
+          // immediately. Since we rescheduled this task already, we do not set
+          // the FinisherIsRunning flat to false.
+          job_->DoSync<FinishCompilationUnits>();
+          return;
+        }
+      }
+      // This task finishes without being rescheduled. Therefore we set the
+      // FinisherIsRunning flag to false.
+      job_->helper_->SetFinisherIsRunning(false);
+      if (thrower.error() || job_->outstanding_units_ == 0) {
         // All compilation units are done. We still need to wait for the
         // background tasks to shut down and only then is it safe to finish the
         // compile and delete this job. We can wait for that to happen also
@@ -3232,6 +3381,8 @@ void LazyCompilationOrchestrator::CompileFunction(
   // If there is a pending error, something really went wrong. The module was
   // verified before starting execution with lazy compilation.
   // This might be OOM, but then we cannot continue execution anyway.
+  // TODO(clemensh): According to the spec, we can actually skip validation at
+  // module creation time, and return a function that always traps here.
   CHECK(!thrower.error());
 
   Handle<FixedArray> deopt_data = isolate->factory()->NewFixedArray(2, TENURED);

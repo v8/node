@@ -592,7 +592,6 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 
       default:
         UNREACHABLE();
-        return static_cast<ElementsKind>(-1);
     }
   }
 
@@ -885,7 +884,7 @@ TF_BUILTIN(FastArrayPop, CodeStubAssembler) {
     }
     args.PopAndReturn(AllocateHeapNumberWithValue(value));
 
-    Bind(&fast_elements);
+    BIND(&fast_elements);
     {
       Node* value = LoadFixedArrayElement(elements, new_length);
       StoreFixedArrayElement(elements, new_length, TheHoleConstant());
@@ -1136,7 +1135,7 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
     }
     args.PopAndReturn(AllocateHeapNumberWithValue(value));
 
-    Bind(&fast_elements_tagged);
+    BIND(&fast_elements_tagged);
     {
       Node* value = LoadFixedArrayElement(elements, 0);
       BuildFastLoop(IntPtrConstant(0), new_length,
@@ -1153,7 +1152,7 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
       args.PopAndReturn(value);
     }
 
-    Bind(&fast_elements_untagged);
+    BIND(&fast_elements_untagged);
     {
       Node* value = LoadFixedArrayElement(elements, 0);
       Node* memmove =
@@ -1224,6 +1223,26 @@ TF_BUILTIN(ArrayForEach, ArrayBuiltinCodeStubAssembler) {
       &ArrayBuiltinCodeStubAssembler::NullPostLoopAction,
       Builtins::CallableFor(isolate(),
                             Builtins::kArrayForEachLoopContinuation));
+}
+
+TF_BUILTIN(TypedArrayPrototypeForEach, ArrayBuiltinCodeStubAssembler) {
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+  Node* new_target = Parameter(BuiltinDescriptor::kNewTarget);
+  Node* receiver = args.GetReceiver();
+  Node* callbackfn = args.GetOptionalArgumentValue(0, UndefinedConstant());
+  Node* this_arg = args.GetOptionalArgumentValue(1, UndefinedConstant());
+
+  InitIteratingArrayBuiltinBody(context, receiver, callbackfn, this_arg,
+                                new_target, argc);
+
+  GenerateIteratingTypedArrayBuiltinBody(
+      "%TypedArray%.prototype.forEach",
+      &ArrayBuiltinCodeStubAssembler::ForEachResultGenerator,
+      &ArrayBuiltinCodeStubAssembler::ForEachProcessor,
+      &ArrayBuiltinCodeStubAssembler::NullPostLoopAction);
 }
 
 TF_BUILTIN(ArraySomeLoopContinuation, ArrayBuiltinCodeStubAssembler) {

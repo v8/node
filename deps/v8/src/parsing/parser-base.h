@@ -1397,17 +1397,16 @@ class ParserBase {
     return factory()->NewReturnStatement(expr, pos);
   }
 
-  inline SuspendExpressionT BuildSuspend(ExpressionT generator,
-                                         ExpressionT expr, int pos,
-                                         Suspend::OnException on_exception,
-                                         SuspendFlags suspend_type) {
+  inline SuspendExpressionT BuildSuspend(
+      ExpressionT generator, ExpressionT expr, int pos,
+      Suspend::OnAbruptResume on_abrupt_resume, SuspendFlags suspend_type) {
     DCHECK_EQ(0,
               static_cast<int>(suspend_type & ~SuspendFlags::kSuspendTypeMask));
     if (V8_UNLIKELY(is_async_generator())) {
       suspend_type = static_cast<SuspendFlags>(suspend_type |
                                                SuspendFlags::kAsyncGenerator);
     }
-    return factory()->NewSuspend(generator, expr, pos, on_exception,
+    return factory()->NewSuspend(generator, expr, pos, on_abrupt_resume,
                                  suspend_type);
   }
 
@@ -2402,7 +2401,6 @@ ParserBase<Impl>::ParseClassPropertyDefinition(
       return impl()->EmptyClassLiteralProperty();
   }
   UNREACHABLE();
-  return impl()->EmptyClassLiteralProperty();
 }
 
 template <typename Impl>
@@ -2628,7 +2626,6 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       return impl()->EmptyObjectLiteralProperty();
   }
   UNREACHABLE();
-  return impl()->EmptyObjectLiteralProperty();
 }
 
 template <typename Impl>
@@ -4980,7 +4977,6 @@ ParserBase<Impl>::ParseStatementAsUnlabelled(
       return ParseTryStatement(ok);
     default:
       UNREACHABLE();
-      return impl()->NullStatement();
   }
 }
 
@@ -5639,8 +5635,6 @@ ParserBase<Impl>::ParseForEachStatementWithDeclarations(
   auto loop = factory()->NewForEachStatement(for_info->mode, labels, stmt_pos);
   typename Types::Target target(this, loop);
 
-  int each_keyword_pos = scanner()->location().beg_pos;
-
   ExpressionT enumerable = impl()->EmptyExpression();
   if (for_info->mode == ForEachStatement::ITERATE) {
     ExpressionClassifier classifier(this);
@@ -5666,8 +5660,8 @@ ParserBase<Impl>::ParseForEachStatementWithDeclarations(
     impl()->DesugarBindingInForEachStatement(for_info, &body_block,
                                              &each_variable, CHECK_OK);
     body_block->statements()->Add(body, zone());
-    final_loop = impl()->InitializeForEachStatement(
-        loop, each_variable, enumerable, body_block, each_keyword_pos);
+    final_loop = impl()->InitializeForEachStatement(loop, each_variable,
+                                                    enumerable, body_block);
 
     scope()->set_end_position(scanner()->location().end_pos);
     body_block->set_scope(scope()->FinalizeBlockScope());
@@ -5704,8 +5698,6 @@ ParserBase<Impl>::ParseForEachStatementWithoutDeclarations(
   auto loop = factory()->NewForEachStatement(for_info->mode, labels, stmt_pos);
   typename Types::Target target(this, loop);
 
-  int each_keyword_pos = scanner()->location().beg_pos;
-
   ExpressionT enumerable = impl()->EmptyExpression();
   if (for_info->mode == ForEachStatement::ITERATE) {
     ExpressionClassifier classifier(this);
@@ -5726,8 +5718,8 @@ ParserBase<Impl>::ParseForEachStatementWithoutDeclarations(
 
     StatementT body = ParseStatement(nullptr, CHECK_OK);
     scope()->set_end_position(scanner()->location().end_pos);
-    StatementT final_loop = impl()->InitializeForEachStatement(
-        loop, expression, enumerable, body, each_keyword_pos);
+    StatementT final_loop =
+        impl()->InitializeForEachStatement(loop, expression, enumerable, body);
 
     for_scope = for_scope->FinalizeBlockScope();
     USE(for_scope);
