@@ -2,4 +2,4 @@
 *test*message*throw_null.js:5
 throw null;
 ^
-null
+undefined
