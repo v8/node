@@ -114,6 +114,8 @@ TEST(ArrayBuffer_ScavengeAndMC) {
 }
 
 TEST(ArrayBuffer_Compaction) {
+  FLAG_concurrent_marking = false;
+  FLAG_stress_incremental_marking = false;
   FLAG_manual_evacuation_candidates_selection = true;
   CcTest::InitializeVM();
   LocalContext env;

@@ -276,6 +276,7 @@ void FixedTypedArray<Traits>::FixedTypedArrayPrint(
 bool JSObject::PrintProperties(std::ostream& os) {  // NOLINT
   if (HasFastProperties()) {
     DescriptorArray* descs = map()->instance_descriptors();
+    int nof_inobject_properties = map()->GetInObjectProperties();
     int i = 0;
     for (; i < map()->NumberOfOwnDescriptors(); i++) {
       os << "\n    ";
@@ -298,6 +299,12 @@ bool JSObject::PrintProperties(std::ostream& os) {  // NOLINT
       }
       os << " ";
       details.PrintAsFastTo(os, PropertyDetails::kForProperties);
+      if (details.location() != kField) continue;
+      int field_index = details.field_index();
+      if (nof_inobject_properties <= field_index) {
+        field_index -= nof_inobject_properties;
+        os << " properties[" << field_index << "]";
+      }
     }
     return i > 0;
   } else if (IsJSGlobalObject()) {
@@ -386,14 +393,21 @@ void PrintFixedArrayElements(std::ostream& os, FixedArray* array) {
 
 void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
                                  SloppyArgumentsElements* elements) {
+  Isolate* isolate = elements->GetIsolate();
   FixedArray* arguments_store = elements->arguments();
   os << "\n    0: context= " << Brief(elements->context())
      << "\n    1: arguments_store= " << Brief(arguments_store)
      << "\n    parameter to context slot map:";
   for (uint32_t i = 0; i < elements->parameter_map_length(); i++) {
     uint32_t raw_index = i + SloppyArgumentsElements::kParameterMapStart;
+    Object* mapped_entry = elements->get_mapped_entry(i);
     os << "\n    " << raw_index << ": param(" << i
-       << ")= " << Brief(elements->get_mapped_entry(i));
+       << ")= " << Brief(mapped_entry);
+    if (mapped_entry->IsTheHole(isolate)) {
+      os << " in the arguements_store[" << i << "]";
+    } else {
+      os << " in the context";
+    }
   }
   if (arguments_store->length() == 0) return;
   os << "\n }"

@@ -710,6 +710,10 @@ action("postmortem-metadata") {
     "src/objects-inl.h",
     "src/objects/map.h",
     "src/objects/map-inl.h",
+    "src/objects/script.h",
+    "src/objects/script-inl.h",
+    "src/objects/shared-function-info.h",
+    "src/objects/shared-function-info-inl.h",
   ]
 
   outputs = [
@@ -1778,6 +1782,10 @@ v8_source_set("v8_base") {
     "src/objects/regexp-match-info.h",
     "src/objects/scope-info.cc",
     "src/objects/scope-info.h",
+    "src/objects/script-inl.h",
+    "src/objects/script.h",
+    "src/objects/shared-function-info-inl.h",
+    "src/objects/shared-function-info.h",
     "src/objects/string-table.h",
     "src/ostreams.cc",
     "src/ostreams.h",
@@ -2506,6 +2514,7 @@ v8_component("v8_libbase") {
     "src/base/safe_math_impl.h",
     "src/base/sys-info.cc",
     "src/base/sys-info.h",
+    "src/base/template-utils.h",
     "src/base/timezone-cache.h",
     "src/base/utils/random-number-generator.cc",
     "src/base/utils/random-number-generator.h",

@@ -35,6 +35,7 @@
 /_*
 /build
 /buildtools
+/gypfiles/.gold_plugin
 /gypfiles/win_toolchain.json
 /hydrogen.cfg
 /obj

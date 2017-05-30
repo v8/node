@@ -1705,11 +1705,6 @@ Node* WasmGraphBuilder::BuildFloatToIntConversionInstruction(
 }
 
 Node* WasmGraphBuilder::GrowMemory(Node* input) {
-  // GrowMemory will not be called from asm.js, hence we cannot be in
-  // lazy-compilation mode, hence the instance will be set.
-  DCHECK_NOT_NULL(module_);
-  DCHECK_NOT_NULL(module_->instance);
-
   Diamond check_input_range(
       graph(), jsgraph()->common(),
       graph()->NewNode(jsgraph()->machine()->Uint32LessThanOrEqual(), input,
@@ -2901,11 +2896,8 @@ Node* WasmGraphBuilder::MemBuffer(uint32_t offset) {
 }
 
 Node* WasmGraphBuilder::CurrentMemoryPages() {
-  // CurrentMemoryPages will not be called from asm.js, hence we cannot be in
-  // lazy-compilation mode, hence the instance will be set.
+  // CurrentMemoryPages can not be called from asm.js.
   DCHECK_EQ(wasm::kWasmOrigin, module_->module->get_origin());
-  DCHECK_NOT_NULL(module_);
-  DCHECK_NOT_NULL(module_->instance);
   Node* call = BuildCallToRuntime(Runtime::kWasmMemorySize, jsgraph(), nullptr,
                                   0, effect_, control_);
   Node* result = BuildChangeSmiToInt32(call);

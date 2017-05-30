@@ -826,12 +826,14 @@ void Shell::DoHostImportModuleDynamically(void* import_data) {
     root_module = module_it->second.Get(isolate);
   } else if (!FetchModuleTree(realm, absolute_path).ToLocal(&root_module)) {
     CHECK(try_catch.HasCaught());
-    CHECK(result->FinishDynamicImportFailure(realm, try_catch.Exception()));
+    CHECK(result->FinishDynamicImportFailure(realm, try_catch.Exception())
+              .FromJust());
     return;
   }
 
   MaybeLocal<Value> maybe_result;
-  if (root_module->Instantiate(realm, ResolveModuleCallback)) {
+  if (root_module->InstantiateModule(realm, ResolveModuleCallback)
+          .FromMaybe(false)) {
     maybe_result = root_module->Evaluate(realm);
     EmptyMessageQueues(isolate);
   }
@@ -839,12 +841,13 @@ void Shell::DoHostImportModuleDynamically(void* import_data) {
   Local<Value> module;
   if (!maybe_result.ToLocal(&module)) {
     DCHECK(try_catch.HasCaught());
-    CHECK(result->FinishDynamicImportFailure(realm, try_catch.Exception()));
+    CHECK(result->FinishDynamicImportFailure(realm, try_catch.Exception())
+              .FromJust());
     return;
   }
 
   DCHECK(!try_catch.HasCaught());
-  CHECK(result->FinishDynamicImportSuccess(realm, root_module));
+  CHECK(result->FinishDynamicImportSuccess(realm, root_module).FromJust());
 }
 
 bool Shell::ExecuteModule(Isolate* isolate, const char* file_name) {
@@ -869,7 +872,8 @@ bool Shell::ExecuteModule(Isolate* isolate, const char* file_name) {
   }
 
   MaybeLocal<Value> maybe_result;
-  if (root_module->Instantiate(realm, ResolveModuleCallback)) {
+  if (root_module->InstantiateModule(realm, ResolveModuleCallback)
+          .FromMaybe(false)) {
     maybe_result = root_module->Evaluate(realm);
     EmptyMessageQueues(isolate);
   }
@@ -2434,7 +2438,7 @@ std::unique_ptr<SerializationData> Worker::GetMessage() {
   while (!out_queue_.Dequeue(&result)) {
     // If the worker is no longer running, and there are no messages in the
     // queue, don't expect any more messages from it.
-    if (!base::NoBarrier_Load(&running_)) break;
+    if (!base::Relaxed_Load(&running_)) break;
     out_semaphore_.Wait();
   }
   return result;
@@ -2442,7 +2446,7 @@ std::unique_ptr<SerializationData> Worker::GetMessage() {
 
 
 void Worker::Terminate() {
-  base::NoBarrier_Store(&running_, false);
+  base::Relaxed_Store(&running_, false);
   // Post NULL to wake the Worker thread message loop, and tell it to stop
   // running.
   PostMessage(NULL);

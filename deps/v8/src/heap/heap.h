@@ -91,6 +91,7 @@ using v8::MemoryPressureLevel;
   V(Map, ordered_hash_table_map, OrderedHashTableMap)                          \
   V(Map, unseeded_number_dictionary_map, UnseededNumberDictionaryMap)          \
   V(Map, sloppy_arguments_elements_map, SloppyArgumentsElementsMap)            \
+  V(Map, small_ordered_hash_set_map, SmallOrderedHashSetMap)                   \
   V(Map, message_object_map, JSMessageObjectMap)                               \
   V(Map, external_map, ExternalMap)                                            \
   V(Map, bytecode_array_map, BytecodeArrayMap)                                 \
@@ -315,6 +316,7 @@ using v8::MemoryPressureLevel;
   V(OnePointerFillerMap)                \
   V(OptimizedOut)                       \
   V(OrderedHashTableMap)                \
+  V(SmallOrderedHashSetMap)             \
   V(ScopeInfoMap)                       \
   V(ScriptContextMap)                   \
   V(SharedFunctionInfoMap)              \
@@ -895,9 +897,7 @@ class Heap {
   // disposal. We use it to flush inline caches.
   int global_ic_age() { return global_ic_age_; }
 
-  void AgeInlineCaches() {
-    global_ic_age_ = (global_ic_age_ + 1) & SharedFunctionInfo::ICAgeBits::kMax;
-  }
+  void AgeInlineCaches();
 
   int64_t external_memory_hard_limit() { return MaxOldGenerationSize() / 2; }
 
@@ -1174,6 +1174,14 @@ class Heap {
   // Reports and external memory pressure event, either performs a major GC or
   // completes incremental marking in order to free external resources.
   void ReportExternalMemoryPressure();
+
+  typedef v8::Isolate::GetExternallyAllocatedMemoryInBytesCallback
+      GetExternallyAllocatedMemoryInBytesCallback;
+
+  void SetGetExternallyAllocatedMemoryInBytesCallback(
+      GetExternallyAllocatedMemoryInBytesCallback callback) {
+    external_memory_callback_ = callback;
+  }
 
   // Invoked when GC was requested via the stack guard.
   void HandleGCRequest();
@@ -1664,6 +1672,10 @@ class Heap {
     return (pretenure == TENURED) ? OLD_SPACE : NEW_SPACE;
   }
 
+  static size_t DefaultGetExternallyAllocatedMemoryInBytesCallback() {
+    return 0;
+  }
+
 #define ROOT_ACCESSOR(type, name, camel_name) \
   inline void set_##name(type* value);
   ROOT_LIST(ROOT_ACCESSOR)
@@ -2011,6 +2023,9 @@ class Heap {
   MUST_USE_RESULT AllocationResult
   AllocateFixedArray(int length, PretenureFlag pretenure = NOT_TENURED);
 
+  MUST_USE_RESULT AllocationResult AllocateSmallOrderedHashSet(
+      int length, PretenureFlag pretenure = NOT_TENURED);
+
   // Allocate an uninitialized object.  The memory is non-executable if the
   // hardware and OS allow.  This is the single choke-point for allocations
   // performed by the runtime and should not be bypassed (to extend this to
@@ -2278,6 +2293,8 @@ class Heap {
 
   List<GCCallbackPair> gc_epilogue_callbacks_;
   List<GCCallbackPair> gc_prologue_callbacks_;
+
+  GetExternallyAllocatedMemoryInBytesCallback external_memory_callback_;
 
   int deferred_counters_[v8::Isolate::kUseCounterFeatureCount];
 

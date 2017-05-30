@@ -62,7 +62,7 @@ namespace internal {
 base::Atomic32 ThreadId::highest_thread_id_ = 0;
 
 int ThreadId::AllocateThreadId() {
-  int new_id = base::NoBarrier_AtomicIncrement(&highest_thread_id_, 1);
+  int new_id = base::Relaxed_AtomicIncrement(&highest_thread_id_, 1);
   return new_id;
 }
 
@@ -189,7 +189,7 @@ void Isolate::InitializeOncePerProcess() {
   CHECK(thread_data_table_ == NULL);
   isolate_key_ = base::Thread::CreateThreadLocalKey();
 #if DEBUG
-  base::NoBarrier_Store(&isolate_key_created_, 1);
+  base::Relaxed_Store(&isolate_key_created_, 1);
 #endif
   thread_id_key_ = base::Thread::CreateThreadLocalKey();
   per_isolate_thread_data_key_ = base::Thread::CreateThreadLocalKey();
@@ -2344,7 +2344,7 @@ Isolate::Isolate(bool enable_serializer)
     base::LockGuard<base::Mutex> lock_guard(thread_data_table_mutex_.Pointer());
     CHECK(thread_data_table_);
   }
-  id_ = base::NoBarrier_AtomicIncrement(&isolate_counter_, 1);
+  id_ = base::Relaxed_AtomicIncrement(&isolate_counter_, 1);
   TRACE_ISOLATE(constructor);
 
   memset(isolate_addresses_, 0,
@@ -2390,7 +2390,7 @@ void Isolate::TearDown() {
   // direct pointer. We don't use Enter/Exit here to avoid
   // initializing the thread data.
   PerIsolateThreadData* saved_data = CurrentPerIsolateThreadData();
-  DCHECK(base::NoBarrier_Load(&isolate_key_created_) == 1);
+  DCHECK(base::Relaxed_Load(&isolate_key_created_) == 1);
   Isolate* saved_isolate =
       reinterpret_cast<Isolate*>(base::Thread::GetThreadLocal(isolate_key_));
   SetIsolateThreadLocals(this, NULL);
@@ -2540,7 +2540,6 @@ Isolate::~Isolate() {
   store_stub_cache_ = NULL;
   delete code_aging_helper_;
   code_aging_helper_ = NULL;
-  delete stats_table_;
   stats_table_ = NULL;
 
   delete materialized_object_store_;
@@ -2652,6 +2651,16 @@ void Isolate::InitializeLoggingAndCounters() {
   InitializeCounters();
 }
 
+namespace {
+void PrintBuiltinSizes(Isolate* isolate) {
+  Builtins* builtins = isolate->builtins();
+  for (int i = 0; i < Builtins::builtin_count; i++) {
+    const char* name = builtins->name(i);
+    Code* code = builtins->builtin(static_cast<Builtins::Name>(i));
+    PrintF(stdout, "%s: %d\n", name, code->instruction_size());
+  }
+}
+}  // namespace
 
 bool Isolate::Init(Deserializer* des) {
   TRACE_ISOLATE(init);
@@ -2791,6 +2800,8 @@ bool Isolate::Init(Deserializer* des) {
   delete setup_delegate_;
   setup_delegate_ = nullptr;
 
+  if (FLAG_print_builtin_size) PrintBuiltinSizes(this);
+
   // Finish initialization of ThreadLocal after deserialization is done.
   clear_pending_exception();
   clear_pending_message();
@@ -2844,10 +2855,9 @@ bool Isolate::Init(Deserializer* des) {
 // Initialized lazily to allow early
 // v8::V8::SetAddHistogramSampleFunction calls.
 StatsTable* Isolate::stats_table() {
-  if (stats_table_ == NULL) {
-    stats_table_ = new StatsTable;
-  }
-  return stats_table_;
+  if (stats_table_ != nullptr) return stats_table_;
+  InitializeCounters();
+  return stats_table_ = counters_->stats_table();
 }
 
 
@@ -3353,9 +3363,11 @@ void Isolate::RunHostImportModuleDynamicallyCallback(
   if (host_import_module_dynamically_callback_ == nullptr) {
     Handle<Object> exception =
         factory()->NewError(error_function(), MessageTemplate::kUnsupported);
-    CHECK(result->FinishDynamicImportFailure(
-        v8::Utils::ToLocal(handle(context(), this)),
-        v8::Utils::ToLocal(exception)));
+    CHECK(result
+              ->FinishDynamicImportFailure(
+                  v8::Utils::ToLocal(handle(context(), this)),
+                  v8::Utils::ToLocal(exception))
+              .FromJust());
     return;
   }
 

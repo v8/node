@@ -91,6 +91,22 @@ struct PassType : public std::conditional<
                       std::is_scalar<typename std::decay<T>::type>::value,
                       typename std::decay<T>::type, T const&> {};
 
+template <typename Op>
+void PrintCheckOperand(std::ostream& os, Op op) {
+  os << op;
+}
+
+void PrettyPrintChar(std::ostream& os, int ch);
+
+#define DEFINE_PRINT_CHECK_OPERAND_CHAR(type) \
+  template <>                                 \
+  V8_BASE_EXPORT void PrintCheckOperand<type>(std::ostream & os, type ch);
+
+DEFINE_PRINT_CHECK_OPERAND_CHAR(char)
+DEFINE_PRINT_CHECK_OPERAND_CHAR(signed char)
+DEFINE_PRINT_CHECK_OPERAND_CHAR(unsigned char)
+#undef DEFINE_PRINT_CHECK_OPERAND_CHAR
+
 // Build the error message string.  This is separate from the "Impl"
 // function template because it is not performance critical and so can
 // be out of line, while the "Impl" code should be inline. Caller
@@ -100,7 +116,11 @@ std::string* MakeCheckOpString(typename PassType<Lhs>::type lhs,
                                typename PassType<Rhs>::type rhs,
                                char const* msg) {
   std::ostringstream ss;
-  ss << msg << " (" << lhs << " vs. " << rhs << ")";
+  ss << msg << " (";
+  PrintCheckOperand(ss, lhs);
+  ss << " vs. ";
+  PrintCheckOperand(ss, rhs);
+  ss << ")";
   return new std::string(ss.str());
 }
 
@@ -108,7 +128,9 @@ std::string* MakeCheckOpString(typename PassType<Lhs>::type lhs,
 // in logging.cc.
 #define DEFINE_MAKE_CHECK_OP_STRING(type)                                    \
   extern template V8_BASE_EXPORT std::string* MakeCheckOpString<type, type>( \
-      type, type, char const*);
+      type, type, char const*);                                              \
+  extern template V8_BASE_EXPORT void PrintCheckOperand<type>(std::ostream&, \
+                                                              type);
 DEFINE_MAKE_CHECK_OP_STRING(int)
 DEFINE_MAKE_CHECK_OP_STRING(long)       // NOLINT(runtime/int)
 DEFINE_MAKE_CHECK_OP_STRING(long long)  // NOLINT(runtime/int)
@@ -119,16 +141,30 @@ DEFINE_MAKE_CHECK_OP_STRING(char const*)
 DEFINE_MAKE_CHECK_OP_STRING(void const*)
 #undef DEFINE_MAKE_CHECK_OP_STRING
 
+// comparison_underlying_type provides the underlying integral type of an enum,
+// or std::decay<T>::type if T is not an enum.
+template <typename T>
+struct comparison_underlying_type {
+  // std::underlying_type must only be used with enum types, thus use this
+  // {Dummy} type if the given type is not an enum.
+  enum Dummy {};
+  using decay = typename std::decay<T>::type;
+  static constexpr bool is_enum = std::is_enum<decay>::value;
+  using underlying = typename std::underlying_type<
+      typename std::conditional<is_enum, decay, Dummy>::type>::type;
+  using type = typename std::conditional<is_enum, underlying, decay>::type;
+};
+
 // is_signed_vs_unsigned::value is true if both types are integral, Lhs is
 // signed, and Rhs is unsigned. False in all other cases.
 template <typename Lhs, typename Rhs>
 struct is_signed_vs_unsigned {
-  enum : bool {
-    value = std::is_integral<typename std::decay<Lhs>::type>::value &&
-            std::is_integral<typename std::decay<Rhs>::type>::value &&
-            std::is_signed<typename std::decay<Lhs>::type>::value &&
-            std::is_unsigned<typename std::decay<Rhs>::type>::value
-  };
+  using lhs_underlying = typename comparison_underlying_type<Lhs>::type;
+  using rhs_underlying = typename comparison_underlying_type<Rhs>::type;
+  static constexpr bool value = std::is_integral<lhs_underlying>::value &&
+                                std::is_integral<rhs_underlying>::value &&
+                                std::is_signed<lhs_underlying>::value &&
+                                std::is_unsigned<rhs_underlying>::value;
 };
 // Same thing, other way around: Lhs is unsigned, Rhs signed.
 template <typename Lhs, typename Rhs>
@@ -137,14 +173,13 @@ struct is_unsigned_vs_signed : public is_signed_vs_unsigned<Rhs, Lhs> {};
 // Specialize the compare functions for signed vs. unsigned comparisons.
 // std::enable_if ensures that this template is only instantiable if both Lhs
 // and Rhs are integral types, and their signedness does not match.
-#define MAKE_UNSIGNED(Type, value)                                         \
-  static_cast<                                                             \
-      typename std::make_unsigned<typename std::decay<Type>::type>::type>( \
-      value)
+#define MAKE_UNSIGNED(Type, value)         \
+  static_cast<typename std::make_unsigned< \
+      typename comparison_underlying_type<Type>::type>::type>(value)
 #define DEFINE_SIGNED_MISMATCH_COMP(CHECK, NAME, IMPL)                  \
   template <typename Lhs, typename Rhs>                                 \
   V8_INLINE typename std::enable_if<CHECK<Lhs, Rhs>::value, bool>::type \
-      Cmp##NAME##Impl(Lhs const& lhs, Rhs const& rhs) {                 \
+      Cmp##NAME##Impl(Lhs lhs, Rhs rhs) {                               \
     return IMPL;                                                        \
   }
 DEFINE_SIGNED_MISMATCH_COMP(is_signed_vs_unsigned, EQ,

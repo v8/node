@@ -185,10 +185,13 @@ HCompilationJob::Status HCompilationJob::PrepareJobImpl() {
           : new (info()->zone()) HOptimizedGraphBuilder(info(), false);
 
   // Type-check the function.
-  AstTyper(info()->isolate(), info()->zone(), info()->closure(),
-           info()->scope(), info()->osr_ast_id(), info()->literal(),
-           graph_builder->bounds())
-      .Run();
+  AstTyper ast_typer(info()->isolate(), info()->zone(), info()->closure(),
+                     info()->scope(), info()->osr_ast_id(), info()->literal(),
+                     graph_builder->bounds());
+  ast_typer.Run();
+  if (ast_typer.HasStackOverflow()) {
+    return FAILED;
+  }
 
   graph_ = graph_builder->CreateGraph();
 
@@ -7949,12 +7952,6 @@ bool HOptimizedGraphBuilder::TryInline(Handle<JSFunction> target,
     return false;
   }
 
-  // Remember that we inlined this function. This needs to be called right
-  // after the EnsureDeoptimizationSupport call so that the code flusher
-  // does not remove the code with the deoptimization support.
-  int inlining_id = top_info()->AddInlinedFunction(target_info.shared_info(),
-                                                   source_position());
-
   // ----------------------------------------------------------------
   // After this point, we've made a decision to inline this function (so
   // TryInline should always return true).
@@ -7964,10 +7961,18 @@ bool HOptimizedGraphBuilder::TryInline(Handle<JSFunction> target,
 
   // Type-check the inlined function.
   DCHECK(target_shared->has_deoptimization_support());
-  AstTyper(target_info.isolate(), target_info.zone(), target_info.closure(),
-           target_info.scope(), target_info.osr_ast_id(), target_info.literal(),
-           &bounds_)
-      .Run();
+  AstTyper ast_typer(target_info.isolate(), target_info.zone(),
+                     target_info.closure(), target_info.scope(),
+                     target_info.osr_ast_id(), target_info.literal(), &bounds_);
+  ast_typer.Run();
+  if (ast_typer.HasStackOverflow()) {
+    TraceInline(target, caller, "stack overflow");
+    return false;
+  }
+
+  // Remember that we inlined this function.
+  int inlining_id = top_info()->AddInlinedFunction(target_info.shared_info(),
+                                                   source_position());
 
   // Save the pending call context. Set up new one for the inlined function.
   // The function state is new-allocated because we need to delete it

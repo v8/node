@@ -80,6 +80,26 @@
 
 namespace v8 {
 
+/*
+ * Most API methods should use one of the three macros:
+ *
+ * ENTER_V8, ENTER_V8_NO_SCRIPT, ENTER_V8_NO_SCRIPT_NO_EXCEPTION.
+ *
+ * The latter two assume that no script is executed, and no exceptions are
+ * scheduled in addition (respectively). Creating a pending exception and
+ * removing it before returning is ok.
+ *
+ * Exceptions should be handled either by invoking one of the
+ * RETURN_ON_FAILED_EXECUTION* macros.
+ *
+ * Don't use macros with DO_NOT_USE in their name.
+ *
+ * TODO(jochen): Document debugger specific macros.
+ * TODO(jochen): Document LOG_API and other RuntimeCallStats macros.
+ * TODO(jochen): All API methods should invoke one of the ENTER_V8* macros.
+ * TODO(jochen): Remove calls form API methods to DO_NOT_USE macros.
+ */
+
 #define LOG_API(isolate, class_name, function_name)                       \
   i::RuntimeCallTimerScope _runtime_timer(                                \
       isolate, &i::RuntimeCallStats::API_##class_name##_##function_name); \
@@ -87,16 +107,16 @@ namespace v8 {
 
 #define ENTER_V8_DO_NOT_USE(isolate) i::VMState<v8::OTHER> __state__((isolate))
 
-#define PREPARE_FOR_EXECUTION_GENERIC(isolate, context, class_name,  \
-                                      function_name, bailout_value,  \
-                                      HandleScopeClass, do_callback) \
-  if (IsExecutionTerminatingCheck(isolate)) {                        \
-    return bailout_value;                                            \
-  }                                                                  \
-  HandleScopeClass handle_scope(isolate);                            \
-  CallDepthScope<do_callback> call_depth_scope(isolate, context);    \
-  LOG_API(isolate, class_name, function_name);                       \
-  ENTER_V8_DO_NOT_USE(isolate);                                      \
+#define ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name,  \
+                                   function_name, bailout_value,  \
+                                   HandleScopeClass, do_callback) \
+  if (IsExecutionTerminatingCheck(isolate)) {                     \
+    return bailout_value;                                         \
+  }                                                               \
+  HandleScopeClass handle_scope(isolate);                         \
+  CallDepthScope<do_callback> call_depth_scope(isolate, context); \
+  LOG_API(isolate, class_name, function_name);                    \
+  i::VMState<v8::OTHER> __state__((isolate));                     \
   bool has_pending_exception = false
 
 #define PREPARE_FOR_DEBUG_INTERFACE_EXECUTION_WITH_ISOLATE(isolate, T)       \
@@ -105,7 +125,7 @@ namespace v8 {
   }                                                                          \
   InternalEscapableScope handle_scope(isolate);                              \
   CallDepthScope<false> call_depth_scope(isolate, v8::Local<v8::Context>()); \
-  ENTER_V8_DO_NOT_USE(isolate);                                              \
+  i::VMState<v8::OTHER> __state__((isolate));                                \
   bool has_pending_exception = false
 
 #define PREPARE_FOR_EXECUTION_WITH_CONTEXT(context, class_name, function_name, \
@@ -114,8 +134,8 @@ namespace v8 {
   auto isolate = context.IsEmpty()                                             \
                      ? i::Isolate::Current()                                   \
                      : reinterpret_cast<i::Isolate*>(context->GetIsolate());   \
-  PREPARE_FOR_EXECUTION_GENERIC(isolate, context, class_name, function_name,   \
-                                bailout_value, HandleScopeClass, do_callback);
+  ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name, function_name,      \
+                             bailout_value, HandleScopeClass, do_callback);
 
 #define PREPARE_FOR_EXECUTION_WITH_CONTEXT_IN_RUNTIME_CALL_STATS_SCOPE(      \
     category, name, context, class_name, function_name, bailout_value,       \
@@ -124,14 +144,8 @@ namespace v8 {
                      ? i::Isolate::Current()                                 \
                      : reinterpret_cast<i::Isolate*>(context->GetIsolate()); \
   TRACE_EVENT_CALL_STATS_SCOPED(isolate, category, name);                    \
-  PREPARE_FOR_EXECUTION_GENERIC(isolate, context, class_name, function_name, \
-                                bailout_value, HandleScopeClass, do_callback);
-
-#define PREPARE_FOR_EXECUTION_WITH_ISOLATE(isolate, class_name, function_name, \
-                                           T)                                  \
-  PREPARE_FOR_EXECUTION_GENERIC(isolate, Local<Context>(), class_name,         \
-                                function_name, MaybeLocal<T>(),                \
-                                InternalEscapableScope, false);
+  ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name, function_name,    \
+                             bailout_value, HandleScopeClass, do_callback);
 
 #define PREPARE_FOR_EXECUTION(context, class_name, function_name, T)          \
   PREPARE_FOR_EXECUTION_WITH_CONTEXT(context, class_name, function_name,      \
@@ -148,11 +162,18 @@ namespace v8 {
   PREPARE_FOR_EXECUTION_WITH_CONTEXT(context, class_name, function_name,       \
                                      Nothing<T>(), i::HandleScope, false)
 
-#define PREPARE_FOR_EXECUTION_BOOL(context, class_name, function_name)   \
-  PREPARE_FOR_EXECUTION_WITH_CONTEXT(context, class_name, function_name, \
-                                     false, i::HandleScope, false)
+#define ENTER_V8(isolate, context, class_name, function_name, bailout_value, \
+                 HandleScopeClass)                                           \
+  ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name, function_name,    \
+                             bailout_value, HandleScopeClass, true)
 
 #ifdef DEBUG
+#define ENTER_V8_NO_SCRIPT(isolate, context, class_name, function_name,   \
+                           bailout_value, HandleScopeClass)               \
+  ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name, function_name, \
+                             bailout_value, HandleScopeClass, false);     \
+  i::DisallowJavascriptExecutionDebugOnly __no_script__((isolate))
+
 #define ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate)                    \
   i::VMState<v8::OTHER> __state__((isolate));                       \
   i::DisallowJavascriptExecutionDebugOnly __no_script__((isolate)); \
@@ -162,6 +183,11 @@ namespace v8 {
   i::VMState<v8::OTHER> __state__((isolate)); \
   i::DisallowExceptions __no_exceptions__((isolate))
 #else
+#define ENTER_V8_NO_SCRIPT(isolate, context, class_name, function_name,   \
+                           bailout_value, HandleScopeClass)               \
+  ENTER_V8_HELPER_DO_NOT_USE(isolate, context, class_name, function_name, \
+                             bailout_value, HandleScopeClass, false)
+
 #define ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate) \
   i::VMState<v8::OTHER> __state__((isolate));
 
@@ -169,24 +195,19 @@ namespace v8 {
   i::VMState<v8::OTHER> __state__((isolate));
 #endif  // DEBUG
 
-#define EXCEPTION_BAILOUT_CHECK_SCOPED(isolate, value) \
-  do {                                                 \
-    if (has_pending_exception) {                       \
-      call_depth_scope.Escape();                       \
-      return value;                                    \
-    }                                                  \
+#define EXCEPTION_BAILOUT_CHECK_SCOPED_DO_NOT_USE(isolate, value) \
+  do {                                                            \
+    if (has_pending_exception) {                                  \
+      call_depth_scope.Escape();                                  \
+      return value;                                               \
+    }                                                             \
   } while (false)
 
-
 #define RETURN_ON_FAILED_EXECUTION(T) \
-  EXCEPTION_BAILOUT_CHECK_SCOPED(isolate, MaybeLocal<T>())
-
+  EXCEPTION_BAILOUT_CHECK_SCOPED_DO_NOT_USE(isolate, MaybeLocal<T>())
 
 #define RETURN_ON_FAILED_EXECUTION_PRIMITIVE(T) \
-  EXCEPTION_BAILOUT_CHECK_SCOPED(isolate, Nothing<T>())
-
-#define RETURN_ON_FAILED_EXECUTION_BOOL() \
-  EXCEPTION_BAILOUT_CHECK_SCOPED(isolate, false)
+  EXCEPTION_BAILOUT_CHECK_SCOPED_DO_NOT_USE(isolate, Nothing<T>())
 
 #define RETURN_TO_LOCAL_UNCHECKED(maybe_local, T) \
   return maybe_local.FromMaybe(Local<T>());
@@ -1031,8 +1052,9 @@ HandleScope::~HandleScope() {
 }
 
 void* HandleScope::operator new(size_t) { base::OS::Abort(); }
-
+void* HandleScope::operator new[](size_t) { base::OS::Abort(); }
 void HandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
+void HandleScope::operator delete[](void*, size_t) { base::OS::Abort(); }
 
 int HandleScope::NumberOfHandles(Isolate* isolate) {
   return i::HandleScope::NumberOfHandles(
@@ -1072,8 +1094,11 @@ i::Object** EscapableHandleScope::Escape(i::Object** escape_value) {
 }
 
 void* EscapableHandleScope::operator new(size_t) { base::OS::Abort(); }
-
+void* EscapableHandleScope::operator new[](size_t) { base::OS::Abort(); }
 void EscapableHandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
+void EscapableHandleScope::operator delete[](void*, size_t) {
+  base::OS::Abort();
+}
 
 SealHandleScope::SealHandleScope(Isolate* isolate)
     : isolate_(reinterpret_cast<i::Isolate*>(isolate)) {
@@ -1094,8 +1119,9 @@ SealHandleScope::~SealHandleScope() {
 }
 
 void* SealHandleScope::operator new(size_t) { base::OS::Abort(); }
-
+void* SealHandleScope::operator new[](size_t) { base::OS::Abort(); }
 void SealHandleScope::operator delete(void*, size_t) { base::OS::Abort(); }
+void SealHandleScope::operator delete[](void*, size_t) { base::OS::Abort(); }
 
 void Context::Enter() {
   i::Handle<i::Context> env = Utils::OpenHandle(this);
@@ -2059,9 +2085,10 @@ Local<UnboundScript> Script::GetUnboundScript() {
       i::Handle<i::SharedFunctionInfo>(i::JSFunction::cast(*obj)->shared()));
 }
 
-bool DynamicImportResult::FinishDynamicImportSuccess(Local<Context> context,
-                                                     Local<Module> module) {
-  PREPARE_FOR_EXECUTION_BOOL(context, Module, FinishDynamicImportSuccess);
+Maybe<bool> DynamicImportResult::FinishDynamicImportSuccess(
+    Local<Context> context, Local<Module> module) {
+  PREPARE_FOR_EXECUTION_PRIMITIVE(context, Module, FinishDynamicImportSuccess,
+                                  bool);
   auto promise = Utils::OpenHandle(this);
   i::Handle<i::Module> module_obj = Utils::OpenHandle(*module);
   i::Handle<i::JSModuleNamespace> module_namespace =
@@ -2072,13 +2099,14 @@ bool DynamicImportResult::FinishDynamicImportSuccess(Local<Context> context,
                          isolate->factory()->undefined_value(), arraysize(argv),
                          argv)
           .is_null();
-  RETURN_ON_FAILED_EXECUTION_BOOL();
-  return true;
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return Just(true);
 }
 
-bool DynamicImportResult::FinishDynamicImportFailure(Local<Context> context,
-                                                     Local<Value> exception) {
-  PREPARE_FOR_EXECUTION_BOOL(context, Module, FinishDynamicImportFailure);
+Maybe<bool> DynamicImportResult::FinishDynamicImportFailure(
+    Local<Context> context, Local<Value> exception) {
+  PREPARE_FOR_EXECUTION_PRIMITIVE(context, Module, FinishDynamicImportFailure,
+                                  bool);
   auto promise = Utils::OpenHandle(this);
   // We pass true to trigger the debugger's on exception handler.
   i::Handle<i::Object> argv[] = {promise, Utils::OpenHandle(*exception),
@@ -2088,8 +2116,8 @@ bool DynamicImportResult::FinishDynamicImportFailure(Local<Context> context,
                          isolate->factory()->undefined_value(), arraysize(argv),
                          argv)
           .is_null();
-  RETURN_ON_FAILED_EXECUTION_BOOL();
-  return true;
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return Just(true);
 }
 
 int Module::GetModuleRequestsLength() const {
@@ -2111,11 +2139,16 @@ int Module::GetIdentityHash() const { return Utils::OpenHandle(this)->hash(); }
 
 bool Module::Instantiate(Local<Context> context,
                          Module::ResolveCallback callback) {
-  PREPARE_FOR_EXECUTION_BOOL(context, Module, Instantiate);
+  return InstantiateModule(context, callback).FromMaybe(false);
+}
+
+Maybe<bool> Module::InstantiateModule(Local<Context> context,
+                                      Module::ResolveCallback callback) {
+  PREPARE_FOR_EXECUTION_PRIMITIVE(context, Module, InstantiateModule, bool);
   has_pending_exception =
       !i::Module::Instantiate(Utils::OpenHandle(this), context, callback);
-  RETURN_ON_FAILED_EXECUTION_BOOL();
-  return true;
+  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
+  return Just(true);
 }
 
 MaybeLocal<Value> Module::Evaluate(Local<Context> context) {
@@ -2138,10 +2171,10 @@ MaybeLocal<Value> Module::Evaluate(Local<Context> context) {
 
 MaybeLocal<UnboundScript> ScriptCompiler::CompileUnboundInternal(
     Isolate* v8_isolate, Source* source, CompileOptions options) {
-  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
-  PREPARE_FOR_EXECUTION_WITH_ISOLATE(isolate, ScriptCompiler, CompileUnbound,
-                                     UnboundScript);
-  TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.ScriptCompiler");
+  PREPARE_FOR_EXECUTION_WITH_CONTEXT_IN_RUNTIME_CALL_STATS_SCOPE(
+      "v8", "V8.ScriptCompiler", v8_isolate->GetCurrentContext(),
+      ScriptCompiler, CompileUnbound, MaybeLocal<UnboundScript>(),
+      InternalEscapableScope, false);
 
   // Don't try to produce any kind of cache when the debugger is loaded.
   if (isolate->debug()->is_loaded() &&
@@ -2628,8 +2661,9 @@ v8::TryCatch::~TryCatch() {
 }
 
 void* v8::TryCatch::operator new(size_t) { base::OS::Abort(); }
-
+void* v8::TryCatch::operator new[](size_t) { base::OS::Abort(); }
 void v8::TryCatch::operator delete(void*, size_t) { base::OS::Abort(); }
+void v8::TryCatch::operator delete[](void*, size_t) { base::OS::Abort(); }
 
 bool v8::TryCatch::HasCaught() const {
   return !reinterpret_cast<i::Object*>(exception_)->IsTheHole(isolate_);
@@ -3131,8 +3165,7 @@ bool NativeWeakMap::Delete(Local<Value> v8_key) {
 // --- J S O N ---
 
 MaybeLocal<Value> JSON::Parse(Isolate* v8_isolate, Local<String> json_string) {
-  auto isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
-  PREPARE_FOR_EXECUTION_WITH_ISOLATE(isolate, JSON, Parse, Value);
+  PREPARE_FOR_EXECUTION(v8_isolate->GetCurrentContext(), JSON, Parse, Value);
   i::Handle<i::String> string = Utils::OpenHandle(*json_string);
   i::Handle<i::String> source = i::String::Flatten(string);
   i::Handle<i::Object> undefined = isolate->factory()->undefined_value();
@@ -4428,24 +4461,6 @@ Maybe<bool> v8::Object::ForceSet(v8::Local<v8::Context> context,
           .is_null();
   RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
   return Just(true);
-}
-
-
-bool v8::Object::ForceSet(v8::Local<Value> key, v8::Local<Value> value,
-                          v8::PropertyAttribute attribs) {
-  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
-  PREPARE_FOR_EXECUTION_GENERIC(isolate, Local<Context>(), Object, ForceSet,
-                                false, i::HandleScope, false);
-  i::Handle<i::JSObject> self =
-      i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
-  i::Handle<i::Object> key_obj = Utils::OpenHandle(*key);
-  i::Handle<i::Object> value_obj = Utils::OpenHandle(*value);
-  has_pending_exception =
-      DefineObjectProperty(self, key_obj, value_obj,
-                           static_cast<i::PropertyAttributes>(attribs))
-          .is_null();
-  EXCEPTION_BAILOUT_CHECK_SCOPED(isolate, false);
-  return true;
 }
 
 
@@ -8245,6 +8260,12 @@ void Isolate::SetEmbedderHeapTracer(EmbedderHeapTracer* tracer) {
   isolate->heap()->SetEmbedderHeapTracer(tracer);
 }
 
+void Isolate::SetGetExternallyAllocatedMemoryInBytesCallback(
+    GetExternallyAllocatedMemoryInBytesCallback callback) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->heap()->SetGetExternallyAllocatedMemoryInBytesCallback(callback);
+}
+
 void Isolate::TerminateExecution() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->stack_guard()->RequestTerminateExecution();
@@ -8690,7 +8711,7 @@ void Isolate::SetUseCounterCallback(UseCounterCallback callback) {
 
 void Isolate::SetCounterFunction(CounterLookupCallback callback) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->stats_table()->SetCounterFunction(callback, isolate);
+  isolate->stats_table()->SetCounterFunction(callback);
 }
 
 

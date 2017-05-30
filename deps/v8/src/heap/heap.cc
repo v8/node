@@ -41,6 +41,7 @@
 #include "src/heap/scavenger-inl.h"
 #include "src/heap/store-buffer.h"
 #include "src/interpreter/interpreter.h"
+#include "src/objects/shared-function-info.h"
 #include "src/regexp/jsregexp.h"
 #include "src/runtime-profiler.h"
 #include "src/snapshot/natives.h"
@@ -380,6 +381,8 @@ void Heap::PrintShortHeapStatistics() {
                this->CommittedMemory() / KB);
   PrintIsolate(isolate_, "External memory reported: %6" PRId64 " KB\n",
                external_memory_ / KB);
+  PrintIsolate(isolate_, "External memory global %zu KB\n",
+               external_memory_callback_() / KB);
   PrintIsolate(isolate_, "Total time spent in GC  : %.1f ms\n",
                total_gc_time_ms_);
 }
@@ -962,7 +965,6 @@ void Heap::ReportExternalMemoryPressure() {
         IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
   }
 }
-
 
 void Heap::EnsureFillerObjectAtTop() {
   // There may be an allocation memento behind objects in new space. Upon
@@ -2391,6 +2393,7 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_VARSIZE_MAP(BYTE_ARRAY_TYPE, byte_array)
     ALLOCATE_VARSIZE_MAP(BYTECODE_ARRAY_TYPE, bytecode_array)
     ALLOCATE_VARSIZE_MAP(FREE_SPACE_TYPE, free_space)
+    ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_SET_TYPE, small_ordered_hash_set)
 
 #define ALLOCATE_FIXED_TYPED_ARRAY_MAP(Type, type, TYPE, ctype, size) \
   ALLOCATE_VARSIZE_MAP(FIXED_##TYPE##_ARRAY_TYPE, fixed_##type##_array)
@@ -3037,6 +3040,25 @@ AllocationResult Heap::AllocateForeign(Address address,
   return result;
 }
 
+AllocationResult Heap::AllocateSmallOrderedHashSet(int capacity,
+                                                   PretenureFlag pretenure) {
+  DCHECK_EQ(0, capacity % SmallOrderedHashSet::kLoadFactor);
+  CHECK_GE(SmallOrderedHashSet::kMaxCapacity, capacity);
+
+  int size = SmallOrderedHashSet::Size(capacity);
+  AllocationSpace space = SelectSpace(pretenure);
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRaw(size, space);
+    if (!allocation.To(&result)) return allocation;
+  }
+
+  result->set_map_after_allocation(small_ordered_hash_set_map(),
+                                   SKIP_WRITE_BARRIER);
+  Handle<SmallOrderedHashSet> table(SmallOrderedHashSet::cast(result));
+  table->Initialize(isolate(), capacity);
+  return result;
+}
 
 AllocationResult Heap::AllocateByteArray(int length, PretenureFlag pretenure) {
   if (length < 0 || length > ByteArray::kMaxLength) {
@@ -3107,7 +3129,7 @@ HeapObject* Heap::CreateFillerObjectAt(Address addr, int size,
     filler->set_map_after_allocation(
         reinterpret_cast<Map*>(root(kFreeSpaceMapRootIndex)),
         SKIP_WRITE_BARRIER);
-    FreeSpace::cast(filler)->nobarrier_set_size(size);
+    FreeSpace::cast(filler)->relaxed_write_size(size);
   }
   if (mode == ClearRecordedSlots::kYes) {
     ClearRecordedSlotRange(addr, addr + size);
@@ -3151,7 +3173,11 @@ void Heap::AdjustLiveBytes(HeapObject* object, int by) {
              !mark_compact_collector()->sweeping_in_progress() &&
              ObjectMarking::IsBlack(object, MarkingState::Internal(object))) {
     DCHECK(MemoryChunk::FromAddress(object->address())->SweepingDone());
+#ifdef V8_CONCURRENT_MARKING
+    MarkingState::Internal(object).IncrementLiveBytes<MarkBit::ATOMIC>(by);
+#else
     MarkingState::Internal(object).IncrementLiveBytes(by);
+#endif
   }
 }
 
@@ -3481,8 +3507,10 @@ AllocationResult Heap::Allocate(Map* map, AllocationSpace space,
   HeapObject* result = nullptr;
   AllocationResult allocation = AllocateRaw(size, space);
   if (!allocation.To(&result)) return allocation;
-  // No need for write barrier since object is white and map is in old space.
-  result->set_map_after_allocation(map, SKIP_WRITE_BARRIER);
+  // New space objects are allocated white.
+  WriteBarrierMode write_barrier_mode =
+      space == NEW_SPACE ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
+  result->set_map_after_allocation(map, write_barrier_mode);
   if (allocation_site != NULL) {
     AllocationMemento* alloc_memento = reinterpret_cast<AllocationMemento*>(
         reinterpret_cast<Address>(result) + map->instance_size());
@@ -5544,9 +5572,15 @@ bool Heap::ShouldExpandOldGenerationOnSlowAllocation() {
 Heap::IncrementalMarkingLimit Heap::IncrementalMarkingLimitReached() {
   // Code using an AlwaysAllocateScope assumes that the GC state does not
   // change; that implies that no marking steps must be performed.
-  if (!incremental_marking()->CanBeActivated() || always_allocate() ||
-      PromotedSpaceSizeOfObjects() <=
-          IncrementalMarking::kActivationThreshold) {
+  if (!incremental_marking()->CanBeActivated() || always_allocate()) {
+    // Incremental marking is disabled or it is too early to start.
+    return IncrementalMarkingLimit::kNoLimit;
+  }
+  if (FLAG_stress_incremental_marking) {
+    return IncrementalMarkingLimit::kHardLimit;
+  }
+  if (PromotedSpaceSizeOfObjects() <=
+      IncrementalMarking::kActivationThreshold) {
     // Incremental marking is disabled or it is too early to start.
     return IncrementalMarkingLimit::kNoLimit;
   }
@@ -5709,6 +5743,9 @@ bool Heap::SetUp() {
   idle_scavenge_observer_ = new IdleScavengeObserver(
       *this, ScavengeJob::kBytesAllocatedBeforeNextIdleTask);
   new_space()->AddAllocationObserver(idle_scavenge_observer_);
+
+  SetGetExternallyAllocatedMemoryInBytesCallback(
+      DefaultGetExternallyAllocatedMemoryInBytesCallback);
 
   return true;
 }
@@ -6466,6 +6503,9 @@ void Heap::RememberUnmappedPage(Address page, bool compacted) {
   remembered_unmapped_pages_index_ %= kRememberedUnmappedPages;
 }
 
+void Heap::AgeInlineCaches() {
+  global_ic_age_ = (global_ic_age_ + 1) & SharedFunctionInfo::ICAgeBits::kMax;
+}
 
 void Heap::RegisterStrongRoots(Object** start, Object** end) {
   StrongRootsList* list = new StrongRootsList();

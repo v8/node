@@ -739,6 +739,8 @@ DEFINE_BOOL(force_marking_deque_overflows, false,
 DEFINE_BOOL(stress_compaction, false,
             "stress the GC compactor to flush out bugs (implies "
             "--force_marking_deque_overflows)")
+DEFINE_BOOL(stress_incremental_marking, V8_CONCURRENT_MARKING_BOOL,
+            "force incremental marking for small heaps and run it more often")
 DEFINE_BOOL(manual_evacuation_candidates_selection, false,
             "Test mode only flag. It allows an unit test to select evacuation "
             "candidates pages (requires --stress_compaction).")
@@ -1266,6 +1268,7 @@ DEFINE_BOOL(print_unopt_code, false,
             "printing optimized code based on it")
 DEFINE_BOOL(print_code_verbose, false, "print more information for code")
 DEFINE_BOOL(print_builtin_code, false, "print generated code for builtins")
+DEFINE_BOOL(print_builtin_size, false, "print code size for builtins")
 
 #ifdef ENABLE_DISASSEMBLER
 DEFINE_BOOL(sodium, false,
