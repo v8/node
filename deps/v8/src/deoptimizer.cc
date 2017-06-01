@@ -1263,7 +1263,7 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
 
   // Set the bytecode array pointer.
   output_offset -= kPointerSize;
-  Object* bytecode_array = shared->HasDebugInfo()
+  Object* bytecode_array = shared->HasBreakInfo()
                                ? shared->GetDebugInfo()->DebugBytecodeArray()
                                : shared->bytecode_array();
   WriteValueToOutput(bytecode_array, 0, frame_index, output_offset,
@@ -2320,7 +2320,7 @@ void Deoptimizer::EnsureCodeForDeoptimizationEntry(Isolate* isolate,
   masm.set_emit_debug_code(false);
   GenerateDeoptimizationEntries(&masm, entry_count, type);
   CodeDesc desc;
-  masm.GetCode(&desc);
+  masm.GetCode(isolate, &desc);
   DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
 
   MemoryChunk* chunk = data->deopt_entry_code_[type];

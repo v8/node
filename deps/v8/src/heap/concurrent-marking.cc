@@ -98,8 +98,12 @@ class ConcurrentMarkingVisitor final
   // ===========================================================================
 
   int VisitFixedArray(Map* map, FixedArray* object) override {
-    // TODO(ulan): implement iteration with prefetched length.
-    return BaseClass::VisitFixedArray(map, object);
+    int length = object->length();
+    int size = FixedArray::SizeFor(length);
+    if (!ShouldVisit(object)) return 0;
+    VisitMapPointer(object, object->map_slot());
+    FixedArray::BodyDescriptor::IterateBody(object, size, this);
+    return size;
   }
 
   // ===========================================================================
@@ -255,7 +259,14 @@ void ConcurrentMarking::Run() {
     HeapObject* object;
     while ((object = deque_->Pop(MarkingThread::kConcurrent)) != nullptr) {
       base::LockGuard<base::Mutex> guard(relocation_mutex);
-      bytes_marked += visitor_->Visit(object);
+      Address new_space_top = heap_->new_space()->original_top();
+      Address new_space_limit = heap_->new_space()->original_limit();
+      Address addr = object->address();
+      if (new_space_top <= addr && addr < new_space_limit) {
+        deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
+      } else {
+        bytes_marked += visitor_->Visit(object);
+      }
     }
   }
   if (FLAG_trace_concurrent_marking) {

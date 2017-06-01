@@ -12128,14 +12128,15 @@ static void GetMinInobjectSlack(Map* map, void* data) {
 
 
 static void ShrinkInstanceSize(Map* map, void* data) {
+#ifdef DEBUG
+  int old_visitor_id = Heap::GetStaticVisitorIdForMap(map);
+#endif
   int slack = *reinterpret_cast<int*>(data);
   map->SetInObjectProperties(map->GetInObjectProperties() - slack);
   map->set_unused_property_fields(map->unused_property_fields() - slack);
   map->set_instance_size(map->instance_size() - slack * kPointerSize);
   map->set_construction_counter(Map::kNoSlackTracking);
-
-  // Visitor id might depend on the instance size, recalculate it.
-  map->set_visitor_id(Heap::GetStaticVisitorIdForMap(map));
+  DCHECK_EQ(old_visitor_id, Heap::GetStaticVisitorIdForMap(map));
 }
 
 static void StopSlackTracking(Map* map, void* data) {
@@ -13375,6 +13376,14 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
 
   // Finally set new script.
   shared->set_script(*script_object);
+}
+
+bool SharedFunctionInfo::HasBreakInfo() const {
+  if (!HasDebugInfo()) return false;
+  DebugInfo* info = DebugInfo::cast(debug_info());
+  bool has_break_info = info->HasBreakInfo();
+  DCHECK_IMPLIES(has_break_info, HasDebugCode());
+  return has_break_info;
 }
 
 DebugInfo* SharedFunctionInfo::GetDebugInfo() const {
@@ -19625,9 +19634,10 @@ Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
   // registration method below handles the case of registering a buffer that has
   // already been promoted.
   buffer->set_backing_store(backing_store);
-  isolate->heap()->RegisterNewArrayBuffer(*buffer);
   buffer->set_allocation_base(backing_store);
   buffer->set_allocation_length(NumberToSize(buffer->byte_length()));
+  // RegisterNewArrayBuffer expects a valid length for adjusting counters.
+  isolate->heap()->RegisterNewArrayBuffer(*buffer);
   memcpy(buffer->backing_store(),
          fixed_typed_array->DataPtr(),
          fixed_typed_array->DataSize());

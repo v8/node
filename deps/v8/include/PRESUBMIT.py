@@ -8,7 +8,7 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools.
 """
 
-import re
+import os
 
 
 def PostUploadHook(cl, change, output_api):
@@ -17,6 +17,10 @@ def PostUploadHook(cl, change, output_api):
   This hook adds extra try bots to the CL description in order to run layout
   tests in addition to CQ try bots.
   """
+  def header_filter(f):
+    return '.h' in os.path.split(f.LocalPath())[1]
+  if not change.AffectedFiles(file_filter=header_filter):
+    return []
   return output_api.EnsureCQIncludeTrybotsAreAdded(
     cl,
     [

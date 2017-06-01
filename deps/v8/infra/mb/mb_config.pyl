@@ -92,10 +92,7 @@
       'V8 Linux64 gcc 4.8 - debug': 'gn_debug_x64_gcc',
       # FYI.
       'V8 Linux - swarming staging': 'gn_release_x64',
-      # TODO(machenbach): Figure out if symbolized is still needed. The
-      # original config also specified -O1, which we dropped because chromium
-      # doesn't have it (anymore).
-      'V8 Linux64 - cfi': 'gyp_release_x64_cfi_symbolized',
+      'V8 Linux64 - cfi': 'gyp_release_x64_cfi',
       'V8 Linux - vtunejit': 'gn_debug_x86_vtunejit',
       'V8 Linux64 - gcov coverage': 'gyp_release_x64_gcc_coverage',
       'V8 Linux - predictable': 'gn_release_x86_predictable',
@@ -115,6 +112,10 @@
           'gn_debug_simulate_arm_asan_edge',
       'V8 Linux ASAN mipsel - debug builder':
           'gn_debug_simulate_mipsel_asan_edge',
+      'V8 Linux MSAN no origins':
+          'gn_release_simulate_arm64_msan_no_origins_edge',
+      'V8 Linux MSAN chained origins':
+          'gn_release_simulate_arm64_msan_edge',
     },
     'client.v8.ports': {
       # Arm.
@@ -322,6 +323,10 @@
     'gn_release_simulate_arm64_msan_minimal_symbols': [
       'gn', 'release_bot', 'simulate_arm64', 'msan', 'minimal_symbols',
       'swarming'],
+    'gn_release_simulate_arm64_msan_edge': [
+      'gn', 'release_bot', 'simulate_arm64', 'edge', 'msan'],
+    'gn_release_simulate_arm64_msan_no_origins_edge': [
+      'gn', 'release_bot', 'simulate_arm64', 'edge', 'msan_no_origins'],
     'gn_release_simulate_arm64_trybot': [
       'gn', 'release_trybot', 'simulate_arm64', 'swarming'],
     'gn_release_simulate_mipsel': [
@@ -482,8 +487,8 @@
     'gyp_release_x64_asan_minimal_symbols_coverage': [
       'gyp', 'release_bot', 'x64', 'asan', 'bb', 'coverage', 'lsan',
       'minimal_symbols', 'swarming'],
-    'gyp_release_x64_cfi_symbolized': [
-      'gyp', 'release_bot', 'x64', 'cfi', 'swarming', 'symbolized'],
+    'gyp_release_x64_cfi': [
+      'gyp', 'release_bot', 'x64', 'cfi', 'swarming'],
     'gyp_release_x64_gcc_coverage': [
       'gyp', 'release_bot', 'x64', 'coverage', 'gcc'],
 
@@ -612,8 +617,11 @@
     'msan': {
       'gn_args': ('is_msan=true msan_track_origins=2 '
                   'use_prebuilt_instrumented_libraries=true'),
-      'gyp_defines': ('clang=1 msan=1 msan_track_origins=2 '
-                      'use_prebuilt_instrumented_libraries=1'),
+    },
+
+    'msan_no_origins': {
+      'gn_args': ('is_msan=true msan_track_origins=0 '
+                  'use_prebuilt_instrumented_libraries=true'),
     },
 
     'release': {

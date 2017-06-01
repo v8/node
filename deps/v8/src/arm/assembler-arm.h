@@ -524,6 +524,8 @@ class Operand BASE_EMBEDDED {
   // rm <shift_op> rs
   explicit Operand(Register rm, ShiftOp shift_op, Register rs);
 
+  static Operand EmbeddedNumber(double value);  // Smi or HeapNumber
+
   // Return true if this is a register operand.
   INLINE(bool is_reg() const) {
     return rm_.is_valid() &&
@@ -548,19 +550,35 @@ class Operand BASE_EMBEDDED {
 
   inline int32_t immediate() const {
     DCHECK(!rm_.is_valid());
-    return imm32_;
+    DCHECK(!is_heap_number());
+    return value_.immediate;
+  }
+
+  double heap_number() const {
+    DCHECK(is_heap_number());
+    return value_.heap_number;
   }
 
   Register rm() const { return rm_; }
   Register rs() const { return rs_; }
   ShiftOp shift_op() const { return shift_op_; }
+  bool is_heap_number() const {
+    DCHECK_IMPLIES(is_heap_number_, !rm_.is_valid());
+    DCHECK_IMPLIES(is_heap_number_, rmode_ == RelocInfo::EMBEDDED_OBJECT);
+    return is_heap_number_;
+  }
+
 
  private:
   Register rm_;
   Register rs_;
   ShiftOp shift_op_;
-  int shift_imm_;  // valid if rm_ != no_reg && rs_ == no_reg
-  int32_t imm32_;  // valid if rm_ == no_reg
+  int shift_imm_;                // valid if rm_ != no_reg && rs_ == no_reg
+  union {
+    double heap_number;          // if is_heap_number_
+    int32_t immediate;           // otherwise
+  } value_;                      // valid if rm_ == no_reg
+  bool is_heap_number_ = false;
   RelocInfo::Mode rmode_;
 
   friend class Assembler;
@@ -703,7 +721,7 @@ class Assembler : public AssemblerBase {
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
   // Assembler functions are invoked in between GetCode() calls.
-  void GetCode(CodeDesc* desc);
+  void GetCode(Isolate* isolate, CodeDesc* desc);
 
   // Label operations & relative jumps (PPUM Appendix D)
   //
@@ -1491,6 +1509,36 @@ class Assembler : public AssemblerBase {
     DISALLOW_IMPLICIT_CONSTRUCTORS(BlockConstPoolScope);
   };
 
+  // Class for blocking sharing of code targets in constant pool.
+  class BlockCodeTargetSharingScope {
+   public:
+    explicit BlockCodeTargetSharingScope(Assembler* assem) : assem_(nullptr) {
+      Open(assem);
+    }
+    // This constructor does not initialize the scope. The user needs to
+    // explicitly call Open() before using it.
+    BlockCodeTargetSharingScope() : assem_(nullptr) {}
+    ~BlockCodeTargetSharingScope() {
+      Close();
+    }
+    void Open(Assembler* assem) {
+      DCHECK_NULL(assem_);
+      DCHECK_NOT_NULL(assem);
+      assem_ = assem;
+      assem_->StartBlockCodeTargetSharing();
+    }
+
+   private:
+    void Close() {
+      if (assem_ != nullptr) {
+        assem_->EndBlockCodeTargetSharing();
+      }
+    }
+    Assembler* assem_;
+
+    DISALLOW_COPY_AND_ASSIGN(BlockCodeTargetSharingScope);
+  };
+
   // Debugging
 
   // Mark address of a debug break slot.
@@ -1537,6 +1585,14 @@ class Assembler : public AssemblerBase {
   // The parameter indicates the size of the constant pool (in bytes), including
   // the marker and branch over the data.
   void RecordConstPool(int size);
+
+  // Patch the dummy heap number that we emitted during code assembly in the
+  // constant pool entry referenced by {pc}. Replace it with the actual heap
+  // object (handle).
+  static void set_heap_number(Handle<HeapObject> number, Address pc) {
+    Memory::Address_at(constant_pool_entry_address(pc, 0 /* unused */)) =
+        reinterpret_cast<Address>(number.location());
+  }
 
   // Writes a single byte or word of data in the code stream.  Used
   // for inline tables, e.g., jump-tables. CheckConstantPool() should be
@@ -1649,8 +1705,22 @@ class Assembler : public AssemblerBase {
   // Patch branch instruction at pos to branch to given branch target pos
   void target_at_put(int pos, int target_pos);
 
+  // Prevent sharing of code target constant pool entries until
+  // EndBlockCodeTargetSharing is called. Calls to this function can be nested
+  // but must be followed by an equal number of call to
+  // EndBlockCodeTargetSharing.
+  void StartBlockCodeTargetSharing() {
+    ++code_target_sharing_blocked_nesting_;
+  }
+
+  // Resume sharing of constant pool code target entries. Needs to be called
+  // as many times as StartBlockCodeTargetSharing to have an effect.
+  void EndBlockCodeTargetSharing() {
+    --code_target_sharing_blocked_nesting_;
+  }
+
   // Prevent contant pool emission until EndBlockConstPool is called.
-  // Call to this function can be nested but must be followed by an equal
+  // Calls to this function can be nested but must be followed by an equal
   // number of call to EndBlockConstpool.
   void StartBlockConstPool() {
     if (const_pool_blocked_nesting_++ == 0) {
@@ -1660,7 +1730,7 @@ class Assembler : public AssemblerBase {
     }
   }
 
-  // Resume constant pool emission. Need to be called as many time as
+  // Resume constant pool emission. Needs to be called as many times as
   // StartBlockConstPool to have an effect.
   void EndBlockConstPool() {
     if (--const_pool_blocked_nesting_ == 0) {
@@ -1752,6 +1822,11 @@ class Assembler : public AssemblerBase {
   static constexpr int kCheckPoolIntervalInst = 32;
   static constexpr int kCheckPoolInterval = kCheckPoolIntervalInst * kInstrSize;
 
+  // Sharing of code target entries may be blocked in some code sequences.
+  int code_target_sharing_blocked_nesting_;
+  bool IsCodeTargetSharingAllowed() const {
+    return code_target_sharing_blocked_nesting_ == 0;
+  }
 
   // Emission of the constant pool may be blocked in some code sequences.
   int const_pool_blocked_nesting_;  // Block emission if this is not zero.
@@ -1794,6 +1869,7 @@ class Assembler : public AssemblerBase {
   friend class RelocInfo;
   friend class CodePatcher;
   friend class BlockConstPoolScope;
+  friend class BlockCodeTargetSharingScope;
   friend class EnsureSpace;
 };
 

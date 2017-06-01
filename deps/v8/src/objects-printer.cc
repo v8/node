@@ -1470,6 +1470,8 @@ void Script::ScriptPrint(std::ostream& os) {  // NOLINT
 
 void DebugInfo::DebugInfoPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "DebugInfo");
+  os << "\n - flags: " << flags();
+  os << "\n - debugger_hints: " << debugger_hints();
   os << "\n - shared: " << Brief(shared());
   os << "\n - debug bytecode array: " << Brief(debug_bytecode_array());
   os << "\n - break_points: ";
@@ -1526,10 +1528,10 @@ void LayoutDescriptor::Print(std::ostream& os) {  // NOLINT
     os << "<uninitialized>";
   } else {
     os << "slow";
-    int len = length();
-    for (int i = 0; i < len; i++) {
+    int num_words = number_of_layout_words();
+    for (int i = 0; i < num_words; i++) {
       if (i > 0) os << " |";
-      PrintBitMask(os, get_scalar(i));
+      PrintBitMask(os, get_layout_word(i));
     }
   }
   os << "\n";

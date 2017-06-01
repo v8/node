@@ -576,13 +576,13 @@ DEFINE_STRING(dump_wasm_module_path, NULL, "directory to dump wasm modules to")
 DEFINE_INT(typed_array_max_size_in_heap, 64,
            "threshold for in-heap typed array")
 
-DEFINE_BOOL(wasm_simd_prototype, false,
+DEFINE_BOOL(experimental_wasm_simd, false,
             "enable prototype simd opcodes for wasm")
-DEFINE_BOOL(wasm_eh_prototype, false,
+DEFINE_BOOL(experimental_wasm_eh, false,
             "enable prototype exception handling opcodes for wasm")
-DEFINE_BOOL(wasm_mv_prototype, false,
+DEFINE_BOOL(experimental_wasm_mv, false,
             "enable prototype multi-value support for wasm")
-DEFINE_BOOL(wasm_atomics_prototype, false,
+DEFINE_BOOL(experimental_wasm_atomics, false,
             "enable prototype atomic opcodes for wasm")
 
 DEFINE_BOOL(wasm_opt, true, "enable wasm optimization")
@@ -965,7 +965,8 @@ DEFINE_BOOL(aggressive_lazy_inner_functions, false,
 DEFINE_IMPLICATION(aggressive_lazy_inner_functions, lazy_inner_functions)
 DEFINE_BOOL(experimental_preparser_scope_analysis, false,
             "perform scope analysis for preparsed inner functions")
-DEFINE_IMPLICATION(experimental_preparser_scope_analysis, lazy_inner_functions)
+DEFINE_IMPLICATION(experimental_preparser_scope_analysis,
+                   aggressive_lazy_inner_functions)
 
 // simulator-arm.cc, simulator-arm64.cc and simulator-mips.cc
 DEFINE_BOOL(trace_sim, false, "Trace simulator execution")
