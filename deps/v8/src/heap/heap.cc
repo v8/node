@@ -4516,10 +4516,12 @@ void Heap::CheckMemoryPressure() {
                               GarbageCollectionReason::kMemoryPressure);
     }
   }
-  MemoryReducer::Event event;
-  event.type = MemoryReducer::kPossibleGarbage;
-  event.time_ms = MonotonicallyIncreasingTimeInMs();
-  memory_reducer_->NotifyPossibleGarbage(event);
+  if (memory_reducer_) {
+    MemoryReducer::Event event;
+    event.type = MemoryReducer::kPossibleGarbage;
+    event.time_ms = MonotonicallyIncreasingTimeInMs();
+    memory_reducer_->NotifyPossibleGarbage(event);
+  }
 }
 
 void Heap::CollectGarbageOnMemoryPressure() {
@@ -5178,7 +5180,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
       // Global handles are processed manually be the minor MC.
       break;
     case VISIT_ALL_IN_MINOR_MC_UPDATE:
-      isolate_->global_handles()->IterateAllNewSpaceRoots(v);
+      // Global handles are processed manually be the minor MC.
       break;
     case VISIT_ALL_IN_SWEEP_NEWSPACE:
     case VISIT_ALL:
