@@ -2987,29 +2987,6 @@ IGNITION_HANDLER(JumpIfJSReceiverConstant, InterpreterAssembler) {
   Dispatch();
 }
 
-// JumpIfNotHole <imm>
-//
-// Jump by the number of bytes represented by an immediate operand if the object
-// referenced by the accumulator is the hole.
-IGNITION_HANDLER(JumpIfNotHole, InterpreterAssembler) {
-  Node* accumulator = GetAccumulator();
-  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
-  Node* relative_jump = BytecodeOperandUImmWord(0);
-  JumpIfWordNotEqual(accumulator, the_hole_value, relative_jump);
-}
-
-// JumpIfNotHoleConstant <idx>
-//
-// Jump by the number of bytes in the Smi in the |idx| entry in the constant
-// pool if the object referenced by the accumulator is the hole constant.
-IGNITION_HANDLER(JumpIfNotHoleConstant, InterpreterAssembler) {
-  Node* accumulator = GetAccumulator();
-  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
-  Node* index = BytecodeOperandIdx(0);
-  Node* relative_jump = LoadAndUntagConstantPoolEntry(index);
-  JumpIfWordNotEqual(accumulator, the_hole_value, relative_jump);
-}
-
 // JumpLoop <imm> <loop_depth>
 //
 // Jump by the number of bytes represented by the immediate operand |imm|. Also
@@ -3414,6 +3391,65 @@ IGNITION_HANDLER(Return, InterpreterAssembler) {
   Return(accumulator);
 }
 
+// ThrowReferenceErrorIfHole <variable_name>
+//
+// Throws an exception if the value in the accumulator is TheHole.
+IGNITION_HANDLER(ThrowReferenceErrorIfHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    Node* name = LoadConstantPoolEntry(BytecodeOperandIdx(0));
+    CallRuntime(Runtime::kThrowReferenceErrorOnHole, GetContext(), name);
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
+}
+
+// ThrowSuperNotCalledIfHole
+//
+// Throws an exception if the value in the accumulator is TheHole.
+IGNITION_HANDLER(ThrowSuperNotCalledIfHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    CallRuntime(Runtime::kThrowSuperNotCalled, GetContext());
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
+}
+
+// ThrowSuperAlreadyCalledIfNotHole
+//
+// Throws SuperAleradyCalled exception if the value in the accumulator is not
+// TheHole.
+IGNITION_HANDLER(ThrowSuperAlreadyCalledIfNotHole, InterpreterAssembler) {
+  Node* value = GetAccumulator();
+  Node* the_hole_value = HeapConstant(isolate()->factory()->the_hole_value());
+
+  Label throw_error(this, Label::kDeferred);
+  GotoIf(WordNotEqual(value, the_hole_value), &throw_error);
+  Dispatch();
+
+  BIND(&throw_error);
+  {
+    CallRuntime(Runtime::kThrowSuperAlreadyCalledError, GetContext());
+    // We shouldn't ever return from a throw.
+    Abort(kUnexpectedReturnFromThrow);
+  }
+}
+
 // Debugger
 //
 // Call runtime to handle debugger statement.
@@ -3437,6 +3473,20 @@ IGNITION_HANDLER(Debugger, InterpreterAssembler) {
   }
 DEBUG_BREAK_BYTECODE_LIST(DEBUG_BREAK);
 #undef DEBUG_BREAK
+
+// IncBlockCounter <slot>
+//
+// Increment the execution count for the given slot. Used for block code
+// coverage.
+IGNITION_HANDLER(IncBlockCounter, InterpreterAssembler) {
+  Node* closure = LoadRegister(Register::function_closure());
+  Node* coverage_array_slot = BytecodeOperandIdxSmi(0);
+  Node* context = GetContext();
+
+  CallRuntime(Runtime::kIncBlockCounter, context, closure, coverage_array_slot);
+
+  Dispatch();
+}
 
 class InterpreterForInPrepareAssembler : public InterpreterAssembler {
  public:
@@ -3612,14 +3662,15 @@ IGNITION_HANDLER(Illegal, InterpreterAssembler) { Abort(kInvalidBytecode); }
 // No operation.
 IGNITION_HANDLER(Nop, InterpreterAssembler) { Dispatch(); }
 
-// SuspendGenerator <generator>
+// SuspendGenerator <generator> <first input register> <register count> <flags>
 //
 // Exports the register file and stores it into the generator.  Also stores the
 // current context, the state given in the accumulator, and the current bytecode
 // offset (for debugging purposes) into the generator.
 IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   Node* generator_reg = BytecodeOperandReg(0);
-  Node* flags = BytecodeOperandFlag(1);
+  Node* flags = BytecodeOperandFlag(3);
+
   Node* generator = LoadRegister(generator_reg);
 
   Label if_stepping(this, Label::kDeferred), ok(this);
@@ -3637,7 +3688,13 @@ IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   Node* context = GetContext();
   Node* state = GetAccumulator();
 
-  ExportRegisterFile(array);
+  // Bytecode operand 1 should be always 0 (we are always store registers
+  // from the beginning).
+  CSA_ASSERT(this, WordEqual(BytecodeOperandReg(1),
+                             IntPtrConstant(Register(0).ToOperand())));
+  // Bytecode operand 2 is the number of registers to store to the generator.
+  Node* register_count = ChangeUint32ToWord(BytecodeOperandCount(2));
+  ExportRegisterFile(array, register_count);
   StoreObjectField(generator, JSGeneratorObject::kContextOffset, context);
   StoreObjectField(generator, JSGeneratorObject::kContinuationOffset, state);
 
@@ -3686,17 +3743,13 @@ IGNITION_HANDLER(SuspendGenerator, InterpreterAssembler) {
   }
 }
 
-// ResumeGenerator <generator>
+// RestoreGeneratorState <generator>
 //
-// Imports the register file stored in the generator. Also loads the
-// generator's state and stores it in the accumulator, before overwriting it
-// with kGeneratorExecuting.
-IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
+// Loads the generator's state and stores it in the accumulator,
+// before overwriting it with kGeneratorExecuting.
+IGNITION_HANDLER(RestoreGeneratorState, InterpreterAssembler) {
   Node* generator_reg = BytecodeOperandReg(0);
   Node* generator = LoadRegister(generator_reg);
-
-  ImportRegisterFile(
-      LoadObjectField(generator, JSGeneratorObject::kRegisterFileOffset));
 
   Node* old_state =
       LoadObjectField(generator, JSGeneratorObject::kContinuationOffset);
@@ -3704,6 +3757,28 @@ IGNITION_HANDLER(ResumeGenerator, InterpreterAssembler) {
   StoreObjectField(generator, JSGeneratorObject::kContinuationOffset,
                    SmiTag(new_state));
   SetAccumulator(old_state);
+
+  Dispatch();
+}
+
+// RestoreGeneratorRegisters <generator> <first output register> <register
+// count>
+//
+// Imports the register file stored in the generator.
+IGNITION_HANDLER(RestoreGeneratorRegisters, InterpreterAssembler) {
+  Node* generator_reg = BytecodeOperandReg(0);
+  // Bytecode operand 1 is the start register. It should always be 0, so let's
+  // ignore it.
+  CSA_ASSERT(this, WordEqual(BytecodeOperandReg(1),
+                             IntPtrConstant(Register(0).ToOperand())));
+  // Bytecode operand 2 is the number of registers to store to the generator.
+  Node* register_count = ChangeUint32ToWord(BytecodeOperandCount(2));
+
+  Node* generator = LoadRegister(generator_reg);
+
+  ImportRegisterFile(
+      LoadObjectField(generator, JSGeneratorObject::kRegisterFileOffset),
+      register_count);
 
   Dispatch();
 }

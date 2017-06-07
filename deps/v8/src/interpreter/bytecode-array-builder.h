@@ -386,9 +386,15 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   BytecodeArrayBuilder& Throw();
   BytecodeArrayBuilder& ReThrow();
   BytecodeArrayBuilder& Return();
+  BytecodeArrayBuilder& ThrowReferenceErrorIfHole(const AstRawString* name);
+  BytecodeArrayBuilder& ThrowSuperNotCalledIfHole();
+  BytecodeArrayBuilder& ThrowSuperAlreadyCalledIfNotHole();
 
   // Debugger.
   BytecodeArrayBuilder& Debugger();
+
+  // Increment the block counter at the given slot (block code coverage).
+  BytecodeArrayBuilder& IncBlockCounter(int slot);
 
   // Complex flow control.
   BytecodeArrayBuilder& ForInPrepare(Register receiver,
@@ -401,8 +407,11 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
 
   // Generators.
   BytecodeArrayBuilder& SuspendGenerator(Register generator,
+                                         RegisterList registers,
                                          SuspendFlags flags);
-  BytecodeArrayBuilder& ResumeGenerator(Register generator);
+  BytecodeArrayBuilder& RestoreGeneratorState(Register generator);
+  BytecodeArrayBuilder& RestoreGeneratorRegisters(Register generator,
+                                                  RegisterList registers);
 
   // Exception handling.
   BytecodeArrayBuilder& MarkHandler(int handler_id,

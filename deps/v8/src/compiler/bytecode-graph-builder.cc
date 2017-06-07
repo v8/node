@@ -6,6 +6,7 @@
 
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
+#include "src/compilation-dependencies.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/compiler-source-position-table.h"
 #include "src/compiler/linkage.h"
@@ -440,6 +441,7 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
     Zone* local_zone, Handle<SharedFunctionInfo> shared_info,
     Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
     JSGraph* jsgraph, CallFrequency invocation_frequency,
+    CompilationDependencies* dependencies,
     SourcePositionTable* source_positions, int inlining_id,
     JSTypeHintLowering::Flags flags)
     : local_zone_(local_zone),
@@ -458,6 +460,7 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
       bytecode_analysis_(nullptr),
       environment_(nullptr),
       osr_ast_id_(osr_ast_id),
+      dependencies_(dependencies),
       merge_environments_(local_zone),
       exception_handlers_(local_zone),
       current_exception_handler_(0),
@@ -1676,6 +1679,87 @@ void BytecodeGraphBuilder::VisitReThrow() {
   MergeControlToLeaveFunction(control);
 }
 
+Node* BytecodeGraphBuilder::TryBuildHoleCheckWithDeopt(
+    const Operator* hole_check_operator) {
+  // TODO(6451): Make the hole protector per function.
+  if (!jsgraph()->isolate()->IsHoleCheckProtectorIntact()) {
+    return nullptr;
+  }
+  dependencies()->AssumePropertyCell(
+      jsgraph()->isolate()->factory()->hole_check_protector());
+  PrepareEagerCheckpoint();
+  Node* accumulator = environment()->LookupAccumulator();
+  Node* node = NewNode(hole_check_operator, accumulator);
+  environment()->BindAccumulator(accumulator);
+  return node;
+}
+
+void BytecodeGraphBuilder::BuildHoleCheckAndThrow(
+    Node* condition, Runtime::FunctionId runtime_id, Node* name) {
+  Node* accumulator = environment()->LookupAccumulator();
+  NewBranch(condition, BranchHint::kFalse);
+  {
+    SubEnvironment sub_environment(this);
+
+    NewIfTrue();
+    Node* node;
+    const Operator* op = javascript()->CallRuntime(runtime_id);
+    if (runtime_id == Runtime::kThrowReferenceErrorOnHole) {
+      DCHECK(name != nullptr);
+      node = NewNode(op, name);
+    } else {
+      DCHECK(runtime_id == Runtime::kThrowSuperAlreadyCalledError ||
+             runtime_id == Runtime::kThrowSuperNotCalled);
+      node = NewNode(op);
+    }
+    environment()->RecordAfterState(node, Environment::kAttachFrameState);
+    Node* control = NewNode(common()->Throw());
+    MergeControlToLeaveFunction(control);
+  }
+  NewIfFalse();
+  environment()->BindAccumulator(accumulator);
+}
+
+void BytecodeGraphBuilder::VisitThrowReferenceErrorIfHole() {
+  // To avoid deopt loops, we generate regular control flow, if we ever saw
+  // a throw because of the hole check.
+  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckNotTaggedHole())) {
+    // Generate the control flow to avoid deopt loop.
+    Node* accumulator = environment()->LookupAccumulator();
+    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                   jsgraph()->TheHoleConstant());
+    Node* name =
+        jsgraph()->Constant(bytecode_iterator().GetConstantForIndexOperand(0));
+    BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowReferenceErrorOnHole,
+                           name);
+  }
+}
+
+void BytecodeGraphBuilder::VisitThrowSuperNotCalledIfHole() {
+  // To avoid deopt loops, we generate regular control flow, if we ever saw
+  // a throw because of the hole check.
+  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckNotTaggedHole())) {
+    Node* accumulator = environment()->LookupAccumulator();
+    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                   jsgraph()->TheHoleConstant());
+    BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowSuperNotCalled);
+  }
+}
+
+void BytecodeGraphBuilder::VisitThrowSuperAlreadyCalledIfNotHole() {
+  // To avoid deopt loops, we generate regular control flow, if we ever saw
+  // a throw because of the hole check.
+  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckTaggedHole())) {
+    Node* accumulator = environment()->LookupAccumulator();
+    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                   jsgraph()->TheHoleConstant());
+    Node* check_for_not_hole =
+        NewNode(simplified()->BooleanNot(), check_for_hole);
+    BuildHoleCheckAndThrow(check_for_not_hole,
+                           Runtime::kThrowSuperAlreadyCalledError);
+  }
+}
+
 void BytecodeGraphBuilder::BuildBinaryOp(const Operator* op) {
   PrepareEagerCheckpoint();
   Node* left =
@@ -2125,12 +2209,6 @@ void BytecodeGraphBuilder::VisitJumpIfToBooleanFalseConstant() {
   BuildJumpIfToBooleanFalse();
 }
 
-void BytecodeGraphBuilder::VisitJumpIfNotHole() { BuildJumpIfNotHole(); }
-
-void BytecodeGraphBuilder::VisitJumpIfNotHoleConstant() {
-  BuildJumpIfNotHole();
-}
-
 void BytecodeGraphBuilder::VisitJumpIfJSReceiver() { BuildJumpIfJSReceiver(); }
 
 void BytecodeGraphBuilder::VisitJumpIfJSReceiverConstant() {
@@ -2224,6 +2302,18 @@ void BytecodeGraphBuilder::VisitDebugger() {
 DEBUG_BREAK_BYTECODE_LIST(DEBUG_BREAK);
 #undef DEBUG_BREAK
 
+void BytecodeGraphBuilder::VisitIncBlockCounter() {
+  DCHECK(FLAG_block_coverage);
+
+  Node* closure = GetFunctionClosure();
+  Node* coverage_array_slot =
+      jsgraph()->Constant(bytecode_iterator().GetIndexOperand(0));
+
+  const Operator* op = javascript()->CallRuntime(Runtime::kIncBlockCounter);
+
+  NewNode(op, closure, coverage_array_slot);
+}
+
 void BytecodeGraphBuilder::VisitForInPrepare() {
   PrepareEagerCheckpoint();
   Node* receiver =
@@ -2277,15 +2367,20 @@ void BytecodeGraphBuilder::VisitSuspendGenerator() {
   Node* state = environment()->LookupAccumulator();
   Node* generator = environment()->LookupRegister(
       bytecode_iterator().GetRegisterOperand(0));
+  interpreter::Register first_reg = bytecode_iterator().GetRegisterOperand(1);
+  // We assume we are storing a range starting from index 0.
+  CHECK_EQ(0, first_reg.index());
+  int register_count =
+      static_cast<int>(bytecode_iterator().GetRegisterCountOperand(2));
   SuspendFlags flags = interpreter::SuspendGeneratorBytecodeFlags::Decode(
-      bytecode_iterator().GetFlagOperand(1));
+      bytecode_iterator().GetFlagOperand(3));
+
   // The offsets used by the bytecode iterator are relative to a different base
   // than what is used in the interpreter, hence the addition.
   Node* offset =
       jsgraph()->Constant(bytecode_iterator().current_offset() +
                           (BytecodeArray::kHeaderSize - kHeapObjectTag));
 
-  int register_count = environment()->register_count();
   int value_input_count = 3 + register_count;
 
   Node** value_inputs = local_zone()->NewArray<Node*>(value_input_count);
@@ -2301,21 +2396,31 @@ void BytecodeGraphBuilder::VisitSuspendGenerator() {
            value_input_count, value_inputs, false);
 }
 
-void BytecodeGraphBuilder::VisitResumeGenerator() {
+void BytecodeGraphBuilder::VisitRestoreGeneratorState() {
   Node* generator = environment()->LookupRegister(
       bytecode_iterator().GetRegisterOperand(0));
-
-  // Bijection between registers and array indices must match that used in
-  // InterpreterAssembler::ExportRegisterFile.
-  for (int i = 0; i < environment()->register_count(); ++i) {
-    Node* value = NewNode(javascript()->GeneratorRestoreRegister(i), generator);
-    environment()->BindRegister(interpreter::Register(i), value);
-  }
 
   Node* state =
       NewNode(javascript()->GeneratorRestoreContinuation(), generator);
 
-  environment()->BindAccumulator(state);
+  environment()->BindAccumulator(state, Environment::kAttachFrameState);
+}
+
+void BytecodeGraphBuilder::VisitRestoreGeneratorRegisters() {
+  Node* generator =
+      environment()->LookupRegister(bytecode_iterator().GetRegisterOperand(0));
+  interpreter::Register first_reg = bytecode_iterator().GetRegisterOperand(1);
+  // We assume we are restoring registers starting fromm index 0.
+  CHECK_EQ(0, first_reg.index());
+  int register_count =
+      static_cast<int>(bytecode_iterator().GetRegisterCountOperand(2));
+
+  // Bijection between registers and array indices must match that used in
+  // InterpreterAssembler::ExportRegisterFile.
+  for (int i = 0; i < register_count; ++i) {
+    Node* value = NewNode(javascript()->GeneratorRestoreRegister(i), generator);
+    environment()->BindRegister(interpreter::Register(i), value);
+  }
 }
 
 void BytecodeGraphBuilder::VisitWide() {

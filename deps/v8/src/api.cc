@@ -219,8 +219,8 @@ class InternalEscapableScope : public v8::EscapableHandleScope {
       : v8::EscapableHandleScope(reinterpret_cast<v8::Isolate*>(isolate)) {}
 };
 
-
-#ifdef DEBUG
+// TODO(jochen): This should be #ifdef DEBUG
+#ifdef V8_CHECK_MICROTASKS_SCOPES_CONSISTENCY
 void CheckMicrotasksScopesConsistency(i::Isolate* isolate) {
   auto handle_scope_implementer = isolate->handle_scope_implementer();
   if (handle_scope_implementer->microtasks_policy() ==
@@ -259,7 +259,8 @@ class CallDepthScope {
     }
     if (!escaped_) isolate_->handle_scope_implementer()->DecrementCallDepth();
     if (do_callback) isolate_->FireCallCompletedCallback();
-#ifdef DEBUG
+// TODO(jochen): This should be #ifdef DEBUG
+#ifdef V8_CHECK_MICROTASKS_SCOPES_CONSISTENCY
     if (do_callback) CheckMicrotasksScopesConsistency(isolate_);
 #endif
   }
@@ -5268,7 +5269,7 @@ void Function::SetName(v8::Local<v8::String> name) {
   auto self = Utils::OpenHandle(this);
   if (!self->IsJSFunction()) return;
   auto func = i::Handle<i::JSFunction>::cast(self);
-  func->shared()->set_name(*Utils::OpenHandle(*name));
+  func->shared()->set_raw_name(*Utils::OpenHandle(*name));
 }
 
 
@@ -6478,6 +6479,11 @@ Local<Context> NewContext(
     v8::MaybeLocal<Value> global_object, size_t context_snapshot_index,
     v8::DeserializeInternalFieldsCallback embedder_fields_deserializer) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(external_isolate);
+  // TODO(jkummerow): This is for crbug.com/713699. Remove it if it doesn't
+  // fail.
+  // Sanity-check that the isolate is initialized and usable.
+  CHECK(isolate->builtins()->Illegal()->IsCode());
+
   TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.NewContext");
   LOG_API(isolate, Context, New);
   i::HandleScope scope(isolate);
@@ -8144,6 +8150,7 @@ void Isolate::ReportExternalAllocationLimitReached() {
 
 void Isolate::CheckMemoryPressure() {
   i::Heap* heap = reinterpret_cast<i::Isolate*>(this)->heap();
+  if (heap->gc_state() != i::Heap::NOT_IN_GC) return;
   heap->CheckMemoryPressure();
 }
 
@@ -8871,10 +8878,10 @@ void Isolate::SetAllowCodeGenerationFromStringsCallback(
   }
 
 CALLBACK_SETTER(WasmModuleCallback, ExtensionCallback, wasm_module_callback)
-CALLBACK_SETTER(WasmCompileCallback, ExtensionCallback, wasm_compile_callback)
 CALLBACK_SETTER(WasmInstanceCallback, ExtensionCallback, wasm_instance_callback)
-CALLBACK_SETTER(WasmInstantiateCallback, ExtensionCallback,
-                wasm_instantiate_callback)
+
+CALLBACK_SETTER(WasmCompileStreamingCallback, ApiImplementationCallback,
+                wasm_compile_streaming_callback)
 
 bool Isolate::IsDead() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
@@ -9797,6 +9804,10 @@ Local<String> CpuProfileNode::GetFunctionName() const {
   }
 }
 
+int debug::Coverage::BlockData::StartOffset() const { return block_->start; }
+int debug::Coverage::BlockData::EndOffset() const { return block_->end; }
+uint32_t debug::Coverage::BlockData::Count() const { return block_->count; }
+
 int debug::Coverage::FunctionData::StartOffset() const {
   return function_->start;
 }
@@ -9807,6 +9818,15 @@ uint32_t debug::Coverage::FunctionData::Count() const {
 
 MaybeLocal<String> debug::Coverage::FunctionData::Name() const {
   return ToApiHandle<String>(function_->name);
+}
+
+size_t debug::Coverage::FunctionData::BlockCount() const {
+  return function_->blocks.size();
+}
+
+debug::Coverage::BlockData debug::Coverage::FunctionData::GetBlockData(
+    size_t i) const {
+  return BlockData(&function_->blocks.at(i));
 }
 
 Local<debug::Script> debug::Coverage::ScriptData::GetScript() const {

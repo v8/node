@@ -399,11 +399,7 @@ class OrderedHashTable : public FixedArray {
   static Handle<Derived> Clear(Handle<Derived> table);
 
   // Returns a true if the OrderedHashTable contains the key
-  static bool HasKey(Handle<Derived> table, Handle<Object> key);
-
-  // Returns a value if the OrderedHashTable contains the key,
-  // otherwise returns undefined.
-  static Object* Get(Isolate* isolate, Derived* table, Object* key);
+  static Object* HasKey(Isolate* isolate, Derived* table, Object* key);
 
   int NumberOfElements() {
     return Smi::cast(get(kNumberOfElementsIndex))->value();
@@ -458,11 +454,6 @@ class OrderedHashTable : public FixedArray {
   Object* KeyAt(int entry) {
     DCHECK_LT(entry, this->UsedCapacity());
     return get(EntryToIndex(entry));
-  }
-
-  Object* ValueAt(int entry) {
-    DCHECK_LT(entry, this->UsedCapacity());
-    return get(EntryToIndex(entry) + Derived::kValueOffset);
   }
 
   bool IsObsolete() { return !get(kNextTableIndex)->IsSmi(); }
@@ -545,12 +536,16 @@ class OrderedHashSet : public OrderedHashTable<OrderedHashSet, 1> {
                                     Handle<Object> value);
   static Handle<FixedArray> ConvertToKeysArray(Handle<OrderedHashSet> table,
                                                GetKeysConversion convert);
-  static const int kValueOffset = 0;
 };
 
 class OrderedHashMap : public OrderedHashTable<OrderedHashMap, 2> {
  public:
   DECLARE_CAST(OrderedHashMap)
+
+  // Returns a value if the OrderedHashMap contains the key, otherwise
+  // returns undefined.
+  static Object* Get(Isolate* isolate, OrderedHashMap* table, Object* key);
+  Object* ValueAt(int entry);
 
   static const int kValueOffset = 1;
 };

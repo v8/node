@@ -6212,6 +6212,10 @@ typedef bool (*AllowCodeGenerationFromStringsCallback)(Local<Context> context);
 // --- WASM compilation callbacks ---
 typedef bool (*ExtensionCallback)(const FunctionCallbackInfo<Value>&);
 
+// --- Callback for APIs defined on v8-supported objects, but implemented
+// by the embedder. Example: WebAssembly.{compile|instantiate}Streaming ---
+typedef void (*ApiImplementationCallback)(const FunctionCallbackInfo<Value>&);
+
 // --- Garbage Collection Callbacks ---
 
 /**
@@ -7475,12 +7479,13 @@ class V8_EXPORT Isolate {
       AllowCodeGenerationFromStringsCallback callback);
 
   /**
-   * Embedder over{ride|load} injection points for wasm APIs.
+   * Embedder over{ride|load} injection points for wasm APIs. The expectation
+   * is that the embedder sets them at most once.
    */
   void SetWasmModuleCallback(ExtensionCallback callback);
-  void SetWasmCompileCallback(ExtensionCallback callback);
   void SetWasmInstanceCallback(ExtensionCallback callback);
-  void SetWasmInstantiateCallback(ExtensionCallback callback);
+
+  void SetWasmCompileStreamingCallback(ApiImplementationCallback callback);
 
   /**
   * Check if V8 is dead and therefore unusable.  This is the case after
@@ -10040,7 +10045,7 @@ int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
   typedef internal::Internals I;
   int64_t* external_memory = reinterpret_cast<int64_t*>(
       reinterpret_cast<uint8_t*>(this) + I::kExternalMemoryOffset);
-  const int64_t external_memory_limit = *reinterpret_cast<int64_t*>(
+  int64_t* external_memory_limit = reinterpret_cast<int64_t*>(
       reinterpret_cast<uint8_t*>(this) + I::kExternalMemoryLimitOffset);
   int64_t* external_memory_at_last_mc =
       reinterpret_cast<int64_t*>(reinterpret_cast<uint8_t*>(this) +
@@ -10058,7 +10063,11 @@ int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
     CheckMemoryPressure();
   }
 
-  if (change_in_bytes > 0 && amount > external_memory_limit) {
+  if (change_in_bytes < 0) {
+    *external_memory_limit += change_in_bytes;
+  }
+
+  if (change_in_bytes > 0 && amount > *external_memory_limit) {
     ReportExternalAllocationLimitReached();
   }
   return *external_memory;

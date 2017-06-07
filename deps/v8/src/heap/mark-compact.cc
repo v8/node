@@ -655,8 +655,10 @@ void MarkCompactCollector::SweepAndRefill(CompactionSpace* space) {
 Page* MarkCompactCollector::Sweeper::GetSweptPageSafe(PagedSpace* space) {
   base::LockGuard<base::Mutex> guard(&mutex_);
   SweptList& list = swept_list_[space->identity()];
-  if (list.length() > 0) {
-    return list.RemoveLast();
+  if (!list.empty()) {
+    auto last_page = list.back();
+    list.pop_back();
+    return last_page;
   }
   return nullptr;
 }
@@ -678,7 +680,7 @@ void MarkCompactCollector::Sweeper::EnsureCompleted() {
 
   ForAllSweepingSpaces([this](AllocationSpace space) {
     if (space == NEW_SPACE) {
-      swept_list_[NEW_SPACE].Clear();
+      swept_list_[NEW_SPACE].clear();
     }
     DCHECK(sweeping_list_[space].empty());
   });
@@ -1532,6 +1534,8 @@ class RecordMigratedSlotVisitor : public ObjectVisitor {
     if (value->IsHeapObject()) {
       Page* p = Page::FromAddress(reinterpret_cast<Address>(value));
       if (p->InNewSpace()) {
+        DCHECK_IMPLIES(p->InToSpace(),
+                       p->IsFlagSet(Page::PAGE_NEW_NEW_PROMOTION));
         RememberedSet<OLD_TO_NEW>::Insert(Page::FromAddress(slot), slot);
       } else if (p->IsEvacuationCandidate()) {
         RememberedSet<OLD_TO_OLD>::Insert(Page::FromAddress(slot), slot);
@@ -1630,6 +1634,8 @@ class YoungGenerationRecordMigratedSlotVisitor final
     if (value->IsHeapObject()) {
       Page* p = Page::FromAddress(reinterpret_cast<Address>(value));
       if (p->InNewSpace()) {
+        DCHECK_IMPLIES(p->InToSpace(),
+                       p->IsFlagSet(Page::PAGE_NEW_NEW_PROMOTION));
         RememberedSet<OLD_TO_NEW>::Insert(Page::FromAddress(slot), slot);
       } else if (p->IsEvacuationCandidate() && IsLive(host)) {
         RememberedSet<OLD_TO_OLD>::Insert(Page::FromAddress(slot), slot);
@@ -1918,6 +1924,7 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
       case NEW_TO_OLD: {
         page->Unlink();
         Page* new_page = Page::ConvertNewToOld(page);
+        DCHECK(!new_page->InNewSpace());
         new_page->SetFlag(Page::PAGE_NEW_OLD_PROMOTION);
         break;
       }
@@ -2767,11 +2774,11 @@ void MinorMarkCompactCollector::MakeIterable(
     if (free_end != free_start) {
       CHECK_GT(free_end, free_start);
       size_t size = static_cast<size_t>(free_end - free_start);
+      full_collector->marking_state(p).bitmap()->ClearRange(
+          p->AddressToMarkbitIndex(free_start),
+          p->AddressToMarkbitIndex(free_end));
       if (free_space_mode == ZAP_FREE_SPACE) {
         memset(free_start, 0xcc, size);
-        full_collector->marking_state(p).bitmap()->ClearRange(
-            p->AddressToMarkbitIndex(free_start),
-            p->AddressToMarkbitIndex(free_end));
       }
       p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
                                       ClearRecordedSlots::kNo);
@@ -2784,11 +2791,11 @@ void MinorMarkCompactCollector::MakeIterable(
   if (free_start != p->area_end()) {
     CHECK_GT(p->area_end(), free_start);
     size_t size = static_cast<size_t>(p->area_end() - free_start);
+    full_collector->marking_state(p).bitmap()->ClearRange(
+        p->AddressToMarkbitIndex(free_start),
+        p->AddressToMarkbitIndex(p->area_end()));
     if (free_space_mode == ZAP_FREE_SPACE) {
       memset(free_start, 0xcc, size);
-      full_collector->marking_state(p).bitmap()->ClearRange(
-          p->AddressToMarkbitIndex(free_start),
-          p->AddressToMarkbitIndex(p->area_end()));
     }
     p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
                                     ClearRecordedSlots::kNo);
@@ -3754,9 +3761,16 @@ bool YoungGenerationEvacuator::RawEvacuatePage(Page* page,
       // TODO(mlippautz): If cleaning array buffers is too slow here we can
       // delay it until the next GC.
       ArrayBufferTracker::FreeDead(page, state);
-      if (heap()->ShouldZapGarbage())
+      if (heap()->ShouldZapGarbage()) {
         collector_->MakeIterable(page, MarkingTreatmentMode::KEEP,
                                  ZAP_FREE_SPACE);
+      } else if (heap()->incremental_marking()->IsMarking()) {
+        // When incremental marking is on, we need to clear the mark bits of
+        // the full collector. We cannot yet discard the young generation mark
+        // bits as they are still relevant for pointers updating.
+        collector_->MakeIterable(page, MarkingTreatmentMode::KEEP,
+                                 IGNORE_FREE_SPACE);
+      }
       break;
     case kPageNewToNew:
       success = object_visitor.VisitGreyObjectsNoFail(
@@ -3767,9 +3781,16 @@ bool YoungGenerationEvacuator::RawEvacuatePage(Page* page,
       // TODO(mlippautz): If cleaning array buffers is too slow here we can
       // delay it until the next GC.
       ArrayBufferTracker::FreeDead(page, state);
-      if (heap()->ShouldZapGarbage())
+      if (heap()->ShouldZapGarbage()) {
         collector_->MakeIterable(page, MarkingTreatmentMode::KEEP,
                                  ZAP_FREE_SPACE);
+      } else if (heap()->incremental_marking()->IsMarking()) {
+        // When incremental marking is on, we need to clear the mark bits of
+        // the full collector. We cannot yet discard the young generation mark
+        // bits as they are still relevant for pointers updating.
+        collector_->MakeIterable(page, MarkingTreatmentMode::KEEP,
+                                 IGNORE_FREE_SPACE);
+      }
       break;
     case kObjectsOldToOld:
       UNREACHABLE();
@@ -4167,7 +4188,7 @@ void LiveObjectVisitor::RecomputeLiveBytes(MemoryChunk* chunk,
 void MarkCompactCollector::Sweeper::AddSweptPageSafe(PagedSpace* space,
                                                      Page* page) {
   base::LockGuard<base::Mutex> guard(&mutex_);
-  swept_list_[space->identity()].Add(page);
+  swept_list_[space->identity()].push_back(page);
 }
 
 void MarkCompactCollector::Evacuate() {
@@ -4631,7 +4652,7 @@ int MarkCompactCollector::Sweeper::ParallelSweepPage(Page* page,
 
   {
     base::LockGuard<base::Mutex> guard(&mutex_);
-    swept_list_[identity].Add(page);
+    swept_list_[identity].push_back(page);
   }
   return max_freed;
 }

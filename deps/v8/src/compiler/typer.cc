@@ -1513,6 +1513,8 @@ Type* Typer::Visitor::JSCallTyper(Type* fun, Typer* t) {
           return Type::String();
 
         // Function functions.
+        case kFunctionBind:
+          return Type::BoundFunction();
         case kFunctionHasInstance:
           return Type::Boolean();
 
@@ -1850,12 +1852,6 @@ Type* Typer::Visitor::TypeCheckSymbol(Node* node) {
 
 Type* Typer::Visitor::TypeCheckFloat64Hole(Node* node) {
   return typer_->operation_typer_.CheckFloat64Hole(Operand(node, 0));
-}
-
-Type* Typer::Visitor::TypeCheckTaggedHole(Node* node) {
-  Type* type = Operand(node, 0);
-  type = Type::Intersect(type, Type::NonInternal(), zone());
-  return type;
 }
 
 Type* Typer::Visitor::TypeConvertTaggedHoleToUndefined(Node* node) {

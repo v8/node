@@ -642,8 +642,7 @@ class PreParserFactory {
     // default value inside an arrow function parameter list.
     return PreParserExpression::Assignment(left.variables_);
   }
-  PreParserExpression NewSuspend(PreParserExpression generator_object,
-                                 PreParserExpression expression, int pos,
+  PreParserExpression NewSuspend(PreParserExpression expression, int pos,
                                  Suspend::OnAbruptResume on_abrupt_resume,
                                  SuspendFlags flags) {
     return PreParserExpression::Default();
@@ -721,8 +720,9 @@ class PreParserFactory {
 
   PreParserStatement NewIfStatement(PreParserExpression condition,
                                     PreParserStatement then_statement,
-                                    PreParserStatement else_statement,
-                                    int pos) {
+                                    PreParserStatement else_statement, int pos,
+                                    SourceRange then_range = {},
+                                    SourceRange else_range = {}) {
     // This must return a jump statement iff both clauses are jump statements.
     return else_statement.IsJumpStatement() ? then_statement : else_statement;
   }
@@ -1014,8 +1014,7 @@ class PreParser : public ParserBase<PreParser> {
                                           PreParserStatement block,
                                           PreParserExpression return_value,
                                           bool* ok) {}
-  V8_INLINE PreParserExpression RewriteYieldStar(PreParserExpression generator,
-                                                 PreParserExpression expression,
+  V8_INLINE PreParserExpression RewriteYieldStar(PreParserExpression expression,
                                                  int pos) {
     return PreParserExpression::Default();
   }
@@ -1075,6 +1074,10 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   V8_INLINE void ParseAndRewriteGeneratorFunctionBody(
+      int pos, FunctionKind kind, PreParserStatementList body, bool* ok) {
+    ParseStatementList(body, Token::RBRACE, ok);
+  }
+  V8_INLINE void ParseAndRewriteAsyncGeneratorFunctionBody(
       int pos, FunctionKind kind, PreParserStatementList body, bool* ok) {
     ParseStatementList(body, Token::RBRACE, ok);
   }
@@ -1288,11 +1291,6 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE PreParserExpression BuildUnaryExpression(
       PreParserExpression expression, Token::Value op, int pos) {
-    return PreParserExpression::Default();
-  }
-
-  V8_INLINE PreParserExpression BuildIteratorResult(PreParserExpression value,
-                                                    bool done) {
     return PreParserExpression::Default();
   }
 

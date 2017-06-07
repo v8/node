@@ -783,7 +783,8 @@ struct GraphBuilderPhase {
           temp_zone, data->info()->shared_info(),
           handle(data->info()->closure()->feedback_vector()),
           data->info()->osr_ast_id(), data->jsgraph(), CallFrequency(1.0f),
-          data->source_positions(), SourcePosition::kNotInlined, flags);
+          data->info()->dependencies(), data->source_positions(),
+          SourcePosition::kNotInlined, flags);
       graph_builder.CreateGraph();
     } else {
       AstGraphBuilderWithPositions graph_builder(
@@ -2043,7 +2044,7 @@ void PipelineImpl::AllocateRegisters(const RegisterConfiguration* config,
   // we understand the cause of the bug. We keep just the
   // check at the end of the allocation.
   if (verifier != nullptr) {
-    verifier->VerifyAssignment();
+    verifier->VerifyAssignment("Immediately after CommitAssignmentPhase.");
   }
 
   Run<PopulateReferenceMapsPhase>();
@@ -2064,7 +2065,7 @@ void PipelineImpl::AllocateRegisters(const RegisterConfiguration* config,
   }
 
   if (verifier != nullptr) {
-    verifier->VerifyAssignment();
+    verifier->VerifyAssignment("End of regalloc pipeline.");
     verifier->VerifyGapMoves();
   }
 

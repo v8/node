@@ -179,18 +179,6 @@ function SetAdd(key) {
 }
 
 
-function SetHas(key) {
-  if (!IS_SET(this)) {
-    throw %make_type_error(kIncompatibleMethodReceiver, 'Set.prototype.has', this);
-  }
-  var table = %_JSCollectionGetTable(this);
-  var numBuckets = ORDERED_HASH_TABLE_BUCKET_COUNT(table);
-  var hash = GetExistingHash(key);
-  if (IS_UNDEFINED(hash)) return false;
-  return SetFindEntry(table, numBuckets, key, hash) !== NOT_FOUND;
-}
-
-
 function SetDelete(key) {
   if (!IS_SET(this)) {
     throw %make_type_error(kIncompatibleMethodReceiver,
@@ -254,7 +242,6 @@ function SetForEach(f, receiver) {
 
 %SetCode(GlobalSet, SetConstructor);
 %FunctionSetLength(GlobalSet, 0);
-%FunctionSetPrototype(GlobalSet, new GlobalObject());
 %AddNamedProperty(GlobalSet.prototype, "constructor", GlobalSet, DONT_ENUM);
 %AddNamedProperty(GlobalSet.prototype, toStringTagSymbol, "Set",
                   DONT_ENUM | READ_ONLY);
@@ -265,7 +252,6 @@ function SetForEach(f, receiver) {
 utils.InstallGetter(GlobalSet.prototype, "size", SetGetSize);
 utils.InstallFunctions(GlobalSet.prototype, DONT_ENUM, [
   "add", SetAdd,
-  "has", SetHas,
   "delete", SetDelete,
   "clear", SetClearJS,
   "forEach", SetForEach
@@ -321,18 +307,6 @@ function MapSet(key, value) {
   FIXED_ARRAY_SET(table, index + 1, value);
   FIXED_ARRAY_SET(table, index + 2, chainEntry);
   return this;
-}
-
-
-function MapHas(key) {
-  if (!IS_MAP(this)) {
-    throw %make_type_error(kIncompatibleMethodReceiver,
-                        'Map.prototype.has', this);
-  }
-  var table = %_JSCollectionGetTable(this);
-  var numBuckets = ORDERED_HASH_TABLE_BUCKET_COUNT(table);
-  var hash = GetHash(key);
-  return MapFindEntry(table, numBuckets, key, hash) !== NOT_FOUND;
 }
 
 
@@ -401,7 +375,6 @@ function MapForEach(f, receiver) {
 utils.InstallGetter(GlobalMap.prototype, "size", MapGetSize);
 utils.InstallFunctions(GlobalMap.prototype, DONT_ENUM, [
   "set", MapSet,
-  "has", MapHas,
   "delete", MapDelete,
   "clear", MapClearJS,
   "forEach", MapForEach
@@ -412,10 +385,8 @@ utils.InstallFunctions(GlobalMap.prototype, DONT_ENUM, [
 
 %InstallToContext([
   "map_set", MapSet,
-  "map_has", MapHas,
   "map_delete", MapDelete,
   "set_add", SetAdd,
-  "set_has", SetHas,
   "set_delete", SetDelete,
 ]);
 

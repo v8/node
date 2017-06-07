@@ -83,6 +83,41 @@ struct FormalParametersBase {
   int arity = 0;
 };
 
+// Stack-allocated scope to collect source ranges from the parser.
+class SourceRangeScope final {
+ public:
+  enum PositionKind {
+    POSITION,
+    PEEK_POS,
+  };
+
+  SourceRangeScope(Scanner* scanner, SourceRange* range,
+                   PositionKind pre_kind = PEEK_POS,
+                   PositionKind post_kind = POSITION)
+      : scanner_(scanner), range_(range), post_kind_(post_kind) {
+    range_->start = GetPosition(pre_kind);
+  }
+
+  ~SourceRangeScope() { range_->end = GetPosition(post_kind_); }
+
+ private:
+  int32_t GetPosition(PositionKind kind) {
+    switch (post_kind_) {
+      case POSITION:
+        return scanner_->location().beg_pos;
+      case PEEK_POS:
+        return scanner_->peek_location().beg_pos;
+      default:
+        UNREACHABLE();
+    }
+  }
+
+  Scanner* scanner_;
+  SourceRange* range_;
+  PositionKind post_kind_;
+
+  DISALLOW_IMPLICIT_CONSTRUCTORS(SourceRangeScope);
+};
 
 // ----------------------------------------------------------------------------
 // The CHECK_OK macro is a convenient macro to enforce error
@@ -875,6 +910,7 @@ class ParserBase {
   void CheckFunctionName(LanguageMode language_mode, IdentifierT function_name,
                          FunctionNameValidity function_name_validity,
                          const Scanner::Location& function_name_loc, bool* ok) {
+    if (impl()->IsEmptyIdentifier(function_name)) return;
     if (function_name_validity == kSkipFunctionNameCheck) return;
     // The function name needs to be checked in strict mode.
     if (is_sloppy(language_mode)) return;
@@ -1388,10 +1424,6 @@ class ParserBase {
   // Convenience method which determines the type of return statement to emit
   // depending on the current function type.
   inline StatementT BuildReturnStatement(ExpressionT expr, int pos) {
-    if (is_generator() && !is_async_generator()) {
-      expr = impl()->BuildIteratorResult(expr, true);
-    }
-
     if (is_async_function()) {
       return factory()->NewAsyncReturnStatement(expr, pos);
     }
@@ -1399,16 +1431,15 @@ class ParserBase {
   }
 
   inline SuspendExpressionT BuildSuspend(
-      ExpressionT generator, ExpressionT expr, int pos,
-      Suspend::OnAbruptResume on_abrupt_resume, SuspendFlags suspend_type) {
+      ExpressionT expr, int pos, Suspend::OnAbruptResume on_abrupt_resume,
+      SuspendFlags suspend_type) {
     DCHECK_EQ(0,
               static_cast<int>(suspend_type & ~SuspendFlags::kSuspendTypeMask));
     if (V8_UNLIKELY(is_async_generator())) {
       suspend_type = static_cast<SuspendFlags>(suspend_type |
                                                SuspendFlags::kAsyncGenerator);
     }
-    return factory()->NewSuspend(generator, expr, pos, on_abrupt_resume,
-                                 suspend_type);
+    return factory()->NewSuspend(expr, pos, on_abrupt_resume, suspend_type);
   }
 
   // Validation per ES6 object literals.
@@ -2487,7 +2518,10 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       ObjectLiteralPropertyT result = factory()->NewObjectLiteralProperty(
           name_expression, value, *is_computed_name);
 
-      if (!*is_computed_name) {
+      if (*is_computed_name) {
+        impl()->SetFunctionNameFromPropertyName(result,
+                                                impl()->EmptyIdentifier());
+      } else {
         impl()->SetFunctionNameFromPropertyName(result, name);
       }
 
@@ -2970,8 +3004,6 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseYieldExpression(
   classifier()->RecordFormalParameterInitializerError(
       scanner()->peek_location(), MessageTemplate::kYieldInParameter);
   Expect(Token::YIELD, CHECK_OK);
-  ExpressionT generator_object =
-      factory()->NewVariableProxy(function_state_->generator_object_variable());
   // The following initialization is necessary.
   ExpressionT expression = impl()->EmptyExpression();
   bool delegating = false;  // yield*
@@ -2999,20 +3031,13 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseYieldExpression(
   }
 
   if (delegating) {
-    return impl()->RewriteYieldStar(generator_object, expression, pos);
-  }
-
-  if (!is_async_generator()) {
-    // Async generator yield is rewritten in Ignition, and doesn't require
-    // producing an Iterator Result.
-    expression = impl()->BuildIteratorResult(expression, false);
+    return impl()->RewriteYieldStar(expression, pos);
   }
 
   // Hackily disambiguate o from o.next and o [Symbol.iterator]().
   // TODO(verwaest): Come up with a better solution.
-  ExpressionT yield =
-      BuildSuspend(generator_object, expression, pos,
-                   Suspend::kOnExceptionThrow, SuspendFlags::kYield);
+  ExpressionT yield = BuildSuspend(expression, pos, Suspend::kOnExceptionThrow,
+                                   SuspendFlags::kYield);
   return yield;
 }
 
@@ -4095,7 +4120,9 @@ void ParserBase<Impl>::ParseFunctionBody(
   {
     BlockState block_state(&scope_, inner_scope);
 
-    if (IsGeneratorFunction(kind)) {
+    if (IsAsyncGeneratorFunction(kind)) {
+      impl()->ParseAndRewriteAsyncGeneratorFunctionBody(pos, kind, body, ok);
+    } else if (IsGeneratorFunction(kind)) {
       impl()->ParseAndRewriteGeneratorFunctionBody(pos, kind, body, ok);
     } else if (IsAsyncFunction(kind)) {
       const bool accept_IN = true;
@@ -5145,15 +5172,23 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseIfStatement(
   Expect(Token::LPAREN, CHECK_OK);
   ExpressionT condition = ParseExpression(true, CHECK_OK);
   Expect(Token::RPAREN, CHECK_OK);
-  StatementT then_statement = ParseScopedStatement(labels, CHECK_OK);
+
+  SourceRange then_range, else_range;
+  StatementT then_statement = impl()->NullStatement();
+  {
+    SourceRangeScope range_scope(scanner(), &then_range);
+    then_statement = ParseScopedStatement(labels, CHECK_OK);
+  }
+
   StatementT else_statement = impl()->NullStatement();
   if (Check(Token::ELSE)) {
+    SourceRangeScope range_scope(scanner(), &else_range);
     else_statement = ParseScopedStatement(labels, CHECK_OK);
   } else {
     else_statement = factory()->NewEmptyStatement(kNoSourcePosition);
   }
   return factory()->NewIfStatement(condition, then_statement, else_statement,
-                                   pos);
+                                   pos, then_range, else_range);
 }
 
 template <typename Impl>

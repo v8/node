@@ -161,7 +161,6 @@ V8Debugger::V8Debugger(v8::Isolate* isolate, V8InspectorImpl* inspector)
     : m_isolate(isolate),
       m_inspector(inspector),
       m_enableCount(0),
-      m_breakpointsActivated(true),
       m_ignoreScriptParsedEventsCounter(0),
       m_maxAsyncCallStacks(kMaxAsyncTaskStacks),
       m_maxAsyncCallStackDepth(0),
@@ -196,6 +195,10 @@ void V8Debugger::disable() {
   v8::debug::SetDebugDelegate(m_isolate, nullptr);
   v8::debug::SetOutOfMemoryCallback(m_isolate, nullptr, nullptr);
   m_isolate->RestoreOriginalHeapLimit();
+}
+
+bool V8Debugger::isPausedInContextGroup(int contextGroupId) const {
+  return isPaused() && m_pausedContextGroupId == contextGroupId;
 }
 
 bool V8Debugger::enabled() const { return !m_debuggerScript.IsEmpty(); }
@@ -305,13 +308,13 @@ void V8Debugger::clearBreakpoints() {
   v8::debug::Call(debuggerContext(), clearBreakpoints).ToLocalChecked();
 }
 
-void V8Debugger::setBreakpointsActivated(bool activated) {
+void V8Debugger::setBreakpointsActive(bool active) {
   if (!enabled()) {
     UNREACHABLE();
     return;
   }
-  v8::debug::SetBreakPointsActive(m_isolate, activated);
-  m_breakpointsActivated = activated;
+  m_breakpointsActiveCount += active ? 1 : -1;
+  v8::debug::SetBreakPointsActive(m_isolate, m_breakpointsActiveCount);
 }
 
 v8::debug::ExceptionBreakState V8Debugger::getPauseOnExceptionsState() {
@@ -343,14 +346,13 @@ void V8Debugger::setPauseOnNextStatement(bool pause, int targetContextGroupId) {
 }
 
 bool V8Debugger::canBreakProgram() {
-  if (!m_breakpointsActivated) return false;
   return !v8::debug::AllFramesOnStackAreBlackboxed(m_isolate);
 }
 
 void V8Debugger::breakProgram(int targetContextGroupId) {
+  DCHECK(canBreakProgram());
   // Don't allow nested breaks.
   if (isPaused()) return;
-  if (!canBreakProgram()) return;
   DCHECK(targetContextGroupId);
   m_targetContextGroupId = targetContextGroupId;
   v8::debug::BreakRightNow(m_isolate);
@@ -361,6 +363,18 @@ void V8Debugger::continueProgram(int targetContextGroupId) {
   if (isPaused()) m_inspector->client()->quitMessageLoopOnPause();
   m_pausedContext.Clear();
   m_executionState.Clear();
+}
+
+void V8Debugger::breakProgramOnAssert(int targetContextGroupId) {
+  if (!enabled()) return;
+  if (m_pauseOnExceptionsState == v8::debug::NoBreakOnException) return;
+  // Don't allow nested breaks.
+  if (isPaused()) return;
+  if (!canBreakProgram()) return;
+  DCHECK(targetContextGroupId);
+  m_targetContextGroupId = targetContextGroupId;
+  m_scheduledAssertBreak = true;
+  v8::debug::BreakRightNow(m_isolate);
 }
 
 void V8Debugger::stepIntoStatement(int targetContextGroupId) {
@@ -599,15 +613,13 @@ void V8Debugger::handleProgramBreak(v8::Local<v8::Context> pausedContext,
   m_breakRequested = false;
 
   bool scheduledOOMBreak = m_scheduledOOMBreak;
-  auto agentCheck = [&scheduledOOMBreak](V8DebuggerAgentImpl* agent) {
-    return agent->enabled() && (scheduledOOMBreak || !agent->skipAllPauses());
-  };
-
+  bool scheduledAssertBreak = m_scheduledAssertBreak;
   bool hasAgents = false;
   m_inspector->forEachSession(
       contextGroupId,
-      [&agentCheck, &hasAgents](V8InspectorSessionImpl* session) {
-        if (agentCheck(session->debuggerAgent())) hasAgents = true;
+      [&scheduledOOMBreak, &hasAgents](V8InspectorSessionImpl* session) {
+        if (session->debuggerAgent()->acceptsPause(scheduledOOMBreak))
+          hasAgents = true;
       });
   if (!hasAgents) return;
 
@@ -635,13 +647,14 @@ void V8Debugger::handleProgramBreak(v8::Local<v8::Context> pausedContext,
   m_pausedContextGroupId = contextGroupId;
 
   m_inspector->forEachSession(
-      contextGroupId, [&agentCheck, &pausedContext, &exception, &breakpointIds,
-                       &isPromiseRejection, &isUncaught,
-                       &scheduledOOMBreak](V8InspectorSessionImpl* session) {
-        if (agentCheck(session->debuggerAgent())) {
+      contextGroupId, [&pausedContext, &exception, &breakpointIds,
+                       &isPromiseRejection, &isUncaught, &scheduledOOMBreak,
+                       &scheduledAssertBreak](V8InspectorSessionImpl* session) {
+        if (session->debuggerAgent()->acceptsPause(scheduledOOMBreak)) {
           session->debuggerAgent()->didPause(
               InspectedContext::contextId(pausedContext), exception,
-              breakpointIds, isPromiseRejection, isUncaught, scheduledOOMBreak);
+              breakpointIds, isPromiseRejection, isUncaught, scheduledOOMBreak,
+              scheduledAssertBreak);
         }
       });
   {
@@ -660,6 +673,7 @@ void V8Debugger::handleProgramBreak(v8::Local<v8::Context> pausedContext,
 
   if (m_scheduledOOMBreak) m_isolate->RestoreOriginalHeapLimit();
   m_scheduledOOMBreak = false;
+  m_scheduledAssertBreak = false;
   m_pausedContext.Clear();
   m_executionState.Clear();
 }
@@ -945,6 +959,7 @@ void V8Debugger::setAsyncCallStackDepth(V8DebuggerAgentImpl* agent, int depth) {
   }
 
   if (m_maxAsyncCallStackDepth == maxAsyncCallStackDepth) return;
+  // TODO(dgozman): ideally, this should be per context group.
   m_maxAsyncCallStackDepth = maxAsyncCallStackDepth;
   if (!maxAsyncCallStackDepth) allAsyncTasksCanceled();
 }

@@ -541,6 +541,7 @@ namespace internal {
   /* Map */                                                                    \
   TFJ(MapConstructor, 1, kIterable)                                            \
   TFJ(MapGet, 1, kKey)                                                         \
+  TFJ(MapHas, 1, kKey)                                                         \
                                                                                \
   /* Math */                                                                   \
   /* ES6 #sec-math.abs */                                                      \
@@ -814,6 +815,9 @@ namespace internal {
   /* ES #sec-regexp.prototype-@@split */                                       \
   TFJ(RegExpPrototypeSplit, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
                                                                                \
+  /* Set */                                                                    \
+  TFJ(SetHas, 1, kKey)                                                         \
+                                                                               \
   /* SharedArrayBuffer */                                                      \
   CPP(SharedArrayBufferPrototypeGetByteLength)                                 \
   CPP(SharedArrayBufferPrototypeSlice)                                         \
@@ -1045,7 +1049,11 @@ namespace internal {
 
 #define BUILTIN_EXCEPTION_CAUGHT_PREDICTION_LIST(V) V(PromiseHandleReject)
 
-#define BUILTIN_EXCEPTION_UNCAUGHT_PREDICTION_LIST(V) V(MapConstructor)
+#define BUILTIN_EXCEPTION_UNCAUGHT_PREDICTION_LIST(V) \
+  V(MapConstructor)                                   \
+  V(GeneratorPrototypeNext)                           \
+  V(GeneratorPrototypeReturn)                         \
+  V(GeneratorPrototypeThrow)
 
 #define IGNORE_BUILTIN(...)
 

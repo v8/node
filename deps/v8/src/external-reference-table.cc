@@ -271,12 +271,14 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
   Add(ExternalReference::search_string_raw<const uc16, const uc16>(isolate)
           .address(),
       "search_string_raw<1-byte, 2-byte>");
-  Add(ExternalReference::orderedhashtable_get_raw<OrderedHashMap, 2>(isolate)
+  Add(ExternalReference::orderedhashmap_get_raw(isolate).address(),
+      "orderedhashmap_get_raw");
+  Add(ExternalReference::orderedhashtable_has_raw<OrderedHashMap, 2>(isolate)
           .address(),
-      "orderedhashtable_get_raw<OrderedHashMap, 2>");
-  Add(ExternalReference::orderedhashtable_get_raw<OrderedHashSet, 1>(isolate)
+      "orderedhashtable_has_raw<OrderedHashMap, 2>");
+  Add(ExternalReference::orderedhashtable_has_raw<OrderedHashSet, 1>(isolate)
           .address(),
-      "orderedhashtable_get_raw<OrderedHashSet, 1>");
+      "orderedhashtable_has_raw<OrderedHashSet, 1>");
   Add(ExternalReference::log_enter_external_function(isolate).address(),
       "Logger::EnterExternal");
   Add(ExternalReference::log_leave_external_function(isolate).address(),

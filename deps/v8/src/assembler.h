@@ -1024,8 +1024,10 @@ class ExternalReference BASE_EMBEDDED {
   template <typename SubjectChar, typename PatternChar>
   static ExternalReference search_string_raw(Isolate* isolate);
 
+  static ExternalReference orderedhashmap_get_raw(Isolate* isolate);
+
   template <typename CollectionType, int entrysize>
-  static ExternalReference orderedhashtable_get_raw(Isolate* isolate);
+  static ExternalReference orderedhashtable_has_raw(Isolate* isolate);
 
   static ExternalReference page_flags(Page* page);
 

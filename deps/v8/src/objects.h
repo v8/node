@@ -1002,6 +1002,7 @@ template <class C> inline bool Is(Object* obj);
   V(ConstantElementsPair)              \
   V(Constructor)                       \
   V(Context)                           \
+  V(CoverageInfo)                      \
   V(DeoptimizationInputData)           \
   V(DeoptimizationOutputData)          \
   V(DependentCode)                     \
@@ -4683,6 +4684,7 @@ class ContextExtension : public Struct {
   V(Date.prototype, getSeconds, DateGetSeconds)             \
   V(Date.prototype, getTime, DateGetTime)                   \
   V(Function.prototype, apply, FunctionApply)               \
+  V(Function.prototype, bind, FunctionBind)                 \
   V(Function.prototype, call, FunctionCall)                 \
   V(Object, assign, ObjectAssign)                           \
   V(Object, create, ObjectCreate)                           \
