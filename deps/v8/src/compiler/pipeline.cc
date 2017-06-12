@@ -112,7 +112,7 @@ class PipelineData {
     is_asm_ = info->shared_info()->asm_function();
   }
 
-  // For WASM compile entry point.
+  // For WebAssembly compile entry point.
   PipelineData(ZoneStats* zone_stats, CompilationInfo* info, JSGraph* jsgraph,
                PipelineStatistics* pipeline_statistics,
                SourcePositionTable* source_positions,
@@ -706,7 +706,7 @@ PipelineWasmCompilationJob::ExecuteJobImpl() {
   pipeline_.RunPrintAndVerify("Machine", true);
   if (FLAG_wasm_opt) {
     PipelineData* data = &data_;
-    PipelineRunScope scope(data, "WASM optimization");
+    PipelineRunScope scope(data, "Wasm optimization");
     JSGraphReducer graph_reducer(data->jsgraph(), scope.zone());
     DeadCodeElimination dead_code_elimination(&graph_reducer, data->graph(),
                                               data->common());
@@ -783,8 +783,7 @@ struct GraphBuilderPhase {
           temp_zone, data->info()->shared_info(),
           handle(data->info()->closure()->feedback_vector()),
           data->info()->osr_ast_id(), data->jsgraph(), CallFrequency(1.0f),
-          data->info()->dependencies(), data->source_positions(),
-          SourcePosition::kNotInlined, flags);
+          data->source_positions(), SourcePosition::kNotInlined, flags);
       graph_builder.CreateGraph();
     } else {
       AstGraphBuilderWithPositions graph_builder(

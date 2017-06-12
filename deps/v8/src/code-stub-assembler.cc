@@ -1214,26 +1214,6 @@ Node* CodeStubAssembler::LoadMapConstructor(Node* map) {
   return result.value();
 }
 
-Node* CodeStubAssembler::LoadSharedFunctionInfoSpecialField(
-    Node* shared, int offset, ParameterMode mode) {
-  CSA_SLOW_ASSERT(this, HasInstanceType(shared, SHARED_FUNCTION_INFO_TYPE));
-  if (Is64()) {
-    Node* result = LoadObjectField(shared, offset, MachineType::Int32());
-    if (mode == SMI_PARAMETERS) {
-      result = SmiTag(result);
-    } else {
-      result = ChangeUint32ToWord(result);
-    }
-    return result;
-  } else {
-    Node* result = LoadObjectField(shared, offset);
-    if (mode != SMI_PARAMETERS) {
-      result = SmiUntag(result);
-    }
-    return result;
-  }
-}
-
 Node* CodeStubAssembler::LoadNameHashField(Node* name) {
   CSA_ASSERT(this, IsName(name));
   return LoadObjectField(name, Name::kHashFieldOffset, MachineType::Uint32());
@@ -6026,23 +6006,6 @@ Node* CodeStubAssembler::OrdinaryHasInstance(Node* context, Node* callable,
   // Load map of {object}.
   Node* object_map = LoadMap(object);
 
-  // Lookup the {callable} and {object} map in the global instanceof cache.
-  // Note: This is safe because we clear the global instanceof cache whenever
-  // we change the prototype of any object.
-  Node* instanceof_cache_function =
-      LoadRoot(Heap::kInstanceofCacheFunctionRootIndex);
-  Node* instanceof_cache_map = LoadRoot(Heap::kInstanceofCacheMapRootIndex);
-  {
-    Label instanceof_cache_miss(this);
-    GotoIfNot(WordEqual(instanceof_cache_function, callable),
-              &instanceof_cache_miss);
-    GotoIfNot(WordEqual(instanceof_cache_map, object_map),
-              &instanceof_cache_miss);
-    var_result.Bind(LoadRoot(Heap::kInstanceofCacheAnswerRootIndex));
-    Goto(&return_result);
-    BIND(&instanceof_cache_miss);
-  }
-
   // Goto runtime if {callable} is a Smi.
   GotoIf(TaggedIsSmi(callable), &return_runtime);
 
@@ -6089,11 +6052,6 @@ Node* CodeStubAssembler::OrdinaryHasInstance(Node* context, Node* callable,
     callable_prototype = var_callable_prototype.value();
   }
 
-  // Update the global instanceof cache with the current {object} map and
-  // {callable}.  The cached answer will be set when it is known below.
-  StoreRoot(Heap::kInstanceofCacheFunctionRootIndex, callable);
-  StoreRoot(Heap::kInstanceofCacheMapRootIndex, object_map);
-
   // Loop through the prototype chain looking for the {callable} prototype.
   VARIABLE(var_object_map, MachineRepresentation::kTagged, object_map);
   Label loop(this, &var_object_map);
@@ -6126,19 +6084,15 @@ Node* CodeStubAssembler::OrdinaryHasInstance(Node* context, Node* callable,
   }
 
   BIND(&return_true);
-  StoreRoot(Heap::kInstanceofCacheAnswerRootIndex, BooleanConstant(true));
   var_result.Bind(BooleanConstant(true));
   Goto(&return_result);
 
   BIND(&return_false);
-  StoreRoot(Heap::kInstanceofCacheAnswerRootIndex, BooleanConstant(false));
   var_result.Bind(BooleanConstant(false));
   Goto(&return_result);
 
   BIND(&return_runtime);
   {
-    // Invalidate the global instanceof cache.
-    StoreRoot(Heap::kInstanceofCacheFunctionRootIndex, SmiConstant(0));
     // Fallback to the runtime implementation.
     var_result.Bind(
         CallRuntime(Runtime::kOrdinaryHasInstance, context, callable, object));
@@ -9175,21 +9129,23 @@ Node* CodeStubAssembler::IsDetachedBuffer(Node* buffer) {
   return IsSetWord32<JSArrayBuffer::WasNeutered>(buffer_bit_field);
 }
 
-CodeStubArguments::CodeStubArguments(CodeStubAssembler* assembler, Node* argc,
-                                     Node* fp,
-                                     CodeStubAssembler::ParameterMode mode)
+CodeStubArguments::CodeStubArguments(
+    CodeStubAssembler* assembler, Node* argc, Node* fp,
+    CodeStubAssembler::ParameterMode param_mode, ReceiverMode receiver_mode)
     : assembler_(assembler),
-      argc_mode_(mode),
+      argc_mode_(param_mode),
+      receiver_mode_(receiver_mode),
       argc_(argc),
       arguments_(nullptr),
       fp_(fp != nullptr ? fp : assembler_->LoadFramePointer()) {
   Node* offset = assembler_->ElementOffsetFromIndex(
-      argc_, FAST_ELEMENTS, mode,
+      argc_, FAST_ELEMENTS, param_mode,
       (StandardFrameConstants::kFixedSlotCountAboveFp - 1) * kPointerSize);
   arguments_ = assembler_->IntPtrAdd(fp_, offset);
 }
 
 Node* CodeStubArguments::GetReceiver() const {
+  DCHECK_EQ(receiver_mode_, ReceiverMode::kHasReceiver);
   return assembler_->Load(MachineType::AnyTagged(), arguments_,
                           assembler_->IntPtrConstant(kPointerSize));
 }
@@ -9267,8 +9223,14 @@ void CodeStubArguments::ForEach(
 }
 
 void CodeStubArguments::PopAndReturn(Node* value) {
-  assembler_->PopAndReturn(
-      assembler_->IntPtrAdd(argc_, assembler_->IntPtrConstant(1)), value);
+  Node* pop_count;
+  if (receiver_mode_ == ReceiverMode::kHasReceiver) {
+    pop_count = assembler_->IntPtrOrSmiAdd(
+        argc_, assembler_->IntPtrOrSmiConstant(1, argc_mode_), argc_mode_);
+  } else {
+    pop_count = argc_;
+  }
+  assembler_->PopAndReturn(pop_count, value);
 }
 
 Node* CodeStubAssembler::IsFastElementsKind(Node* elements_kind) {

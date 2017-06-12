@@ -47,6 +47,8 @@ const Register StoreTransitionDescriptor::MapRegister() { return r8; }
 const Register StringCompareDescriptor::LeftRegister() { return r4; }
 const Register StringCompareDescriptor::RightRegister() { return r3; }
 
+const Register StringConcatDescriptor::ArgumentsCountRegister() { return r3; }
+
 const Register ApiGetterDescriptor::HolderRegister() { return r3; }
 const Register ApiGetterDescriptor::CallbackRegister() { return r6; }
 
@@ -153,12 +155,41 @@ void CallTrampolineDescriptor::InitializePlatformSpecific(
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
+void CallVarargsDescriptor::InitializePlatformSpecific(
+    CallInterfaceDescriptorData* data) {
+  // r3 : number of arguments (on the stack, not including receiver)
+  // r4 : the target to call
+  // r5 : arguments list (FixedArray)
+  // r7 : arguments list length (untagged)
+  Register registers[] = {r4, r3, r5, r7};
+  data->InitializePlatformSpecific(arraysize(registers), registers);
+}
+
 void CallForwardVarargsDescriptor::InitializePlatformSpecific(
     CallInterfaceDescriptorData* data) {
   // r3 : number of arguments
   // r5 : start index (to support rest parameters)
   // r4 : the target to call
   Register registers[] = {r4, r3, r5};
+  data->InitializePlatformSpecific(arraysize(registers), registers);
+}
+
+void CallWithArrayLikeDescriptor::InitializePlatformSpecific(
+    CallInterfaceDescriptorData* data) {
+  // r4 : the target to call
+  // r5 : the arguments list
+  Register registers[] = {r4, r5};
+  data->InitializePlatformSpecific(arraysize(registers), registers);
+}
+
+void ConstructVarargsDescriptor::InitializePlatformSpecific(
+    CallInterfaceDescriptorData* data) {
+  // r3 : number of arguments (on the stack, not including receiver)
+  // r4 : the target to call
+  // r6 : the new target
+  // r5 : arguments list (FixedArray)
+  // r7 : arguments list length (untagged)
+  Register registers[] = {r4, r6, r3, r5, r7};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 
@@ -169,6 +200,15 @@ void ConstructForwardVarargsDescriptor::InitializePlatformSpecific(
   // r5 : start index (to support rest parameters)
   // r4 : the target to call
   Register registers[] = {r4, r6, r3, r5};
+  data->InitializePlatformSpecific(arraysize(registers), registers);
+}
+
+void ConstructWithArrayLikeDescriptor::InitializePlatformSpecific(
+    CallInterfaceDescriptorData* data) {
+  // r4 : the target to call
+  // r6 : the new target
+  // r5 : the arguments list
+  Register registers[] = {r4, r6, r5};
   data->InitializePlatformSpecific(arraysize(registers), registers);
 }
 

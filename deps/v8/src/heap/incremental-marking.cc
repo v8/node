@@ -595,7 +595,6 @@ void IncrementalMarking::StartMarking() {
   }
 #endif
 
-  heap_->CompletelyClearInstanceofCache();
   heap_->isolate()->compilation_cache()->MarkCompactPrologue();
 
   if (FLAG_concurrent_marking && !black_allocation_) {
@@ -905,10 +904,9 @@ void IncrementalMarking::VisitObject(Map* map, HeapObject* obj, int size) {
 intptr_t IncrementalMarking::ProcessMarkingDeque(
     intptr_t bytes_to_process, ForceCompletionAction completion) {
   intptr_t bytes_processed = 0;
-  while (!marking_deque()->IsEmpty() && (bytes_processed < bytes_to_process ||
-                                         completion == FORCE_COMPLETION)) {
+  while (bytes_processed < bytes_to_process || completion == FORCE_COMPLETION) {
     HeapObject* obj = marking_deque()->Pop();
-
+    if (obj == nullptr) break;
     // Left trimming may result in white, grey, or black filler objects on the
     // marking deque. Ignore these objects.
     if (obj->IsFiller()) {

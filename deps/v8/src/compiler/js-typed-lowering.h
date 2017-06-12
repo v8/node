@@ -67,6 +67,7 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   Reduction ReduceJSToNumber(Node* node);
   Reduction ReduceJSToStringInput(Node* input);
   Reduction ReduceJSToString(Node* node);
+  Reduction ReduceJSToPrimitiveToString(Node* node);
   Reduction ReduceJSToObject(Node* node);
   Reduction ReduceJSConvertReceiver(Node* node);
   Reduction ReduceJSConstructForwardVarargs(Node* node);
@@ -105,7 +106,6 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   CompilationDependencies* dependencies_;
   Flags flags_;
   JSGraph* jsgraph_;
-  Type* empty_string_type_;
   Type* shifted_int32_ranges_[4];
   Type* pointer_comparable_type_;
   TypeCache const& type_cache_;

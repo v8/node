@@ -1805,9 +1805,6 @@ JSNativeContextSpecialization::BuildPropertyAccess(
         case MachineRepresentation::kWord64:
         case MachineRepresentation::kFloat32:
         case MachineRepresentation::kSimd128:
-        case MachineRepresentation::kSimd1x4:
-        case MachineRepresentation::kSimd1x8:
-        case MachineRepresentation::kSimd1x16:
           UNREACHABLE();
           break;
       }
@@ -2183,8 +2180,8 @@ JSNativeContextSpecialization::BuildElementAccess(
                                    value);
         } else {
           // Bailout if we see the hole.
-          effect = graph()->NewNode(simplified()->CheckNotTaggedHole(), value,
-                                    effect, control);
+          value = effect = graph()->NewNode(simplified()->CheckNotTaggedHole(),
+                                            value, effect, control);
         }
       } else if (elements_kind == FAST_HOLEY_DOUBLE_ELEMENTS) {
         // Perform the hole check on the result.

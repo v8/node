@@ -136,9 +136,6 @@ UseInfo TruncatingUseInfoFromRepresentation(MachineRepresentation rep) {
     case MachineRepresentation::kBit:
       return UseInfo::Bool();
     case MachineRepresentation::kSimd128:
-    case MachineRepresentation::kSimd1x4:
-    case MachineRepresentation::kSimd1x8:
-    case MachineRepresentation::kSimd1x16:
     case MachineRepresentation::kNone:
       break;
   }
@@ -2446,22 +2443,18 @@ class RepresentationSelector {
         VisitCheck(node, Type::String(), lowering);
         return;
       }
+      case IrOpcode::kCheckSeqString: {
+        VisitCheck(node, Type::SeqString(), lowering);
+        return;
+      }
+      case IrOpcode::kCheckNonEmptyString: {
+        VisitCheck(node, Type::NonEmptyString(), lowering);
+        return;
+      }
       case IrOpcode::kCheckSymbol: {
         VisitCheck(node, Type::Symbol(), lowering);
         return;
       }
-      case IrOpcode::kCheckSeqString: {
-        if (InputIs(node, Type::SeqString())) {
-          VisitUnop(node, UseInfo::AnyTagged(),
-                    MachineRepresentation::kTaggedPointer);
-          if (lower()) DeferReplacement(node, node->InputAt(0));
-        } else {
-          VisitUnop(node, UseInfo::CheckedHeapObjectAsTaggedPointer(),
-                    MachineRepresentation::kTaggedPointer);
-        }
-        return;
-      }
-
       case IrOpcode::kAllocate: {
         ProcessInput(node, 0, UseInfo::TruncatingWord32());
         ProcessRemainingInputs(node, 1);
@@ -2783,10 +2776,6 @@ class RepresentationSelector {
         }
         return;
       }
-      case IrOpcode::kCheckTaggedHole: {
-        VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
-        return;
-      }
       case IrOpcode::kCheckNotTaggedHole: {
         VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kTagged);
         return;
@@ -2908,6 +2897,7 @@ class RepresentationSelector {
       case IrOpcode::kJSToName:
       case IrOpcode::kJSToObject:
       case IrOpcode::kJSToString:
+      case IrOpcode::kJSToPrimitiveToString:
         VisitInputs(node);
         // Assume the output is tagged.
         return SetOutput(node, MachineRepresentation::kTagged);

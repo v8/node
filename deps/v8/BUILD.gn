@@ -933,12 +933,14 @@ v8_source_set("v8_builtins_generators") {
     "src/builtins/builtins-async-iterator-gen.cc",
     "src/builtins/builtins-boolean-gen.cc",
     "src/builtins/builtins-call-gen.cc",
+    "src/builtins/builtins-call-gen.h",
     "src/builtins/builtins-collections-gen.cc",
     "src/builtins/builtins-console-gen.cc",
     "src/builtins/builtins-constructor-gen.cc",
     "src/builtins/builtins-constructor-gen.h",
     "src/builtins/builtins-constructor.h",
     "src/builtins/builtins-conversion-gen.cc",
+    "src/builtins/builtins-conversion-gen.h",
     "src/builtins/builtins-date-gen.cc",
     "src/builtins/builtins-debug-gen.cc",
     "src/builtins/builtins-forin-gen.cc",
@@ -2018,6 +2020,8 @@ v8_source_set("v8_base") {
     "src/wasm/leb-helper.h",
     "src/wasm/local-decl-encoder.cc",
     "src/wasm/local-decl-encoder.h",
+    "src/wasm/module-compiler.cc",
+    "src/wasm/module-compiler.h",
     "src/wasm/module-decoder.cc",
     "src/wasm/module-decoder.h",
     "src/wasm/signature-map.cc",
@@ -2509,6 +2513,7 @@ v8_component("v8_libbase") {
     "src/base/macros.h",
     "src/base/once.cc",
     "src/base/once.h",
+    "src/base/optional.h",
     "src/base/platform/condition-variable.cc",
     "src/base/platform/condition-variable.h",
     "src/base/platform/elapsed-timer.h",
@@ -2592,6 +2597,11 @@ v8_component("v8_libbase") {
         "src/base/platform/platform-linux.cc",
       ]
     }
+  } else if (is_fuchsia) {
+    sources += [
+      "src/base/debug/stack_trace_fuchsia.cc",
+      "src/base/platform/platform-fuchsia.cc",
+    ]
   } else if (is_mac) {
     sources += [
       "src/base/debug/stack_trace_posix.cc",

@@ -522,9 +522,11 @@ class PreParserStatement {
 
   PreParserStatementList statements() { return PreParserStatementList(); }
   void set_scope(Scope* scope) {}
-  void Initialize(PreParserExpression cond, PreParserStatement body) {}
+  void Initialize(PreParserExpression cond, PreParserStatement body,
+                  const SourceRange& body_range = {}) {}
   void Initialize(PreParserStatement init, PreParserExpression cond,
-                  PreParserStatement next, PreParserStatement body) {}
+                  PreParserStatement next, PreParserStatement body,
+                  const SourceRange& body_range = {}) {}
 
  private:
   enum Type {
@@ -1359,8 +1361,8 @@ class PreParser : public ParserBase<PreParser> {
   V8_INLINE StatementT DesugarLexicalBindingsInForStatement(
       PreParserStatement loop, PreParserStatement init,
       PreParserExpression cond, PreParserStatement next,
-      PreParserStatement body, Scope* inner_scope, const ForInfo& for_info,
-      bool* ok) {
+      PreParserStatement body, const SourceRange& body_range,
+      Scope* inner_scope, const ForInfo& for_info, bool* ok) {
     // See Parser::DesugarLexicalBindingsInForStatement.
     if (track_unresolved_variables_) {
       for (auto name : for_info.bound_names) {
@@ -1617,8 +1619,8 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE void DeclareFormalParameters(
       DeclarationScope* scope,
-      const ThreadedList<PreParserFormalParameters::Parameter>& parameters) {
-    bool is_simple = classifier()->is_simple_parameter_list();
+      const ThreadedList<PreParserFormalParameters::Parameter>& parameters,
+      bool is_simple) {
     if (!is_simple) scope->SetHasNonSimpleParameters();
     if (track_unresolved_variables_) {
       DCHECK(FLAG_lazy_inner_functions);

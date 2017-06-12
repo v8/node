@@ -821,6 +821,16 @@ void MacroAssembler::AssertSmi(Register object) {
   }
 }
 
+void MacroAssembler::AssertFixedArray(Register object) {
+  if (emit_debug_code()) {
+    test(object, Immediate(kSmiTagMask));
+    Check(not_equal, kOperandIsASmiAndNotAFixedArray);
+    Push(object);
+    CmpObjectType(object, FIXED_ARRAY_TYPE, object);
+    Pop(object);
+    Check(equal, kOperandIsNotAFixedArray);
+  }
+}
 
 void MacroAssembler::AssertFunction(Register object) {
   if (emit_debug_code()) {
@@ -1878,7 +1888,6 @@ void MacroAssembler::InvokeFunction(Register fun,
   mov(ebx, FieldOperand(edi, JSFunction::kSharedFunctionInfoOffset));
   mov(esi, FieldOperand(edi, JSFunction::kContextOffset));
   mov(ebx, FieldOperand(ebx, SharedFunctionInfo::kFormalParameterCountOffset));
-  SmiUntag(ebx);
 
   ParameterCount expected(ebx);
   InvokeFunctionCode(edi, new_target, expected, actual, flag, call_wrapper);
@@ -2127,10 +2136,24 @@ void MacroAssembler::Move(XMMRegister dst, uint64_t src) {
   }
 }
 
+void MacroAssembler::Pshufd(XMMRegister dst, const Operand& src,
+                            uint8_t shuffle) {
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vpshufd(dst, src, shuffle);
+  } else {
+    pshufd(dst, src, shuffle);
+  }
+}
 
 void MacroAssembler::Pextrd(Register dst, XMMRegister src, int8_t imm8) {
   if (imm8 == 0) {
-    movd(dst, src);
+    Movd(dst, src);
+    return;
+  }
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vpextrd(dst, src, imm8);
     return;
   }
   if (CpuFeatures::IsSupported(SSE4_1)) {

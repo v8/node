@@ -883,7 +883,6 @@ class Isolate {
   }
   StackGuard* stack_guard() { return &stack_guard_; }
   Heap* heap() { return &heap_; }
-  StatsTable* stats_table();
   StubCache* load_stub_cache() { return load_stub_cache_; }
   StubCache* store_stub_cache() { return store_stub_cache_; }
   CodeAgingHelper* code_aging_helper() { return code_aging_helper_; }
@@ -1048,7 +1047,6 @@ class Isolate {
   bool IsIsConcatSpreadableLookupChainIntact(JSReceiver* receiver);
   inline bool IsStringLengthOverflowIntact();
   inline bool IsArrayIteratorLookupChainIntact();
-  inline bool IsHoleCheckProtectorIntact();
 
   // Avoid deopt loops if fast Array Iterators migrate to slow Array Iterators.
   inline bool IsFastArrayIterationIntact();
@@ -1075,7 +1073,6 @@ class Isolate {
   void InvalidateStringLengthOverflowProtector();
   void InvalidateArrayIteratorProtector();
   void InvalidateArrayBufferNeuteringProtector();
-  void InvalidateHoleCheckProtector();
 
   // Returns true if array is the initial array prototype in any native context.
   bool IsAnyInitialArrayPrototype(Handle<JSArray> array);
@@ -1438,7 +1435,6 @@ class Isolate {
   base::RecursiveMutex break_access_;
   Logger* logger_;
   StackGuard stack_guard_;
-  StatsTable* stats_table_;
   StubCache* load_stub_cache_;
   StubCache* store_stub_cache_;
   CodeAgingHelper* code_aging_helper_;

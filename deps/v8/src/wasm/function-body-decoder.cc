@@ -228,15 +228,6 @@ class WasmDecoder : public Decoder {
         case kLocalS128:
           type = kWasmS128;
           break;
-        case kLocalS1x4:
-          type = kWasmS1x4;
-          break;
-        case kLocalS1x8:
-          type = kWasmS1x8;
-          break;
-        case kLocalS1x16:
-          type = kWasmS1x16;
-          break;
         default:
           decoder->error(decoder->pc() - 1, "invalid local type");
           return false;
@@ -610,7 +601,7 @@ class WasmDecoder : public Decoder {
 
 static const int32_t kNullCatch = -1;
 
-// The full WASM decoder for bytecode. Verifies bytecode and, optionally,
+// The full wasm decoder for bytecode. Verifies bytecode and, optionally,
 // generates a TurboFan IR graph.
 class WasmFullDecoder : public WasmDecoder {
  public:
@@ -761,12 +752,6 @@ class WasmFullDecoder : public WasmDecoder {
         return builder_->Float64Constant(0);
       case kWasmS128:
         return builder_->S128Zero();
-      case kWasmS1x4:
-        return builder_->S1x4Zero();
-      case kWasmS1x8:
-        return builder_->S1x8Zero();
-      case kWasmS1x16:
-        return builder_->S1x16Zero();
       default:
         UNREACHABLE();
     }

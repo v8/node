@@ -270,7 +270,7 @@ class SharedFunctionInfo : public HeapObject {
 
   // Inline cache age is used to infer whether the function survived a context
   // disposal or not. In the former case we reset the opt_count.
-  inline int ic_age();
+  inline int ic_age() const;
   inline void set_ic_age(int age);
 
   // Indicates if this function can be lazy compiled.
@@ -331,7 +331,7 @@ class SharedFunctionInfo : public HeapObject {
 
   // Indicates whether or not the code in the shared function support
   // deoptimization.
-  inline bool has_deoptimization_support();
+  inline bool has_deoptimization_support() const;
 
   // Enable deoptimization support through recompiled code.
   void EnableDeoptimizationSupport(Code* recompiled);
@@ -339,8 +339,6 @@ class SharedFunctionInfo : public HeapObject {
   // Disable (further) attempted optimization of all functions sharing this
   // shared function info.
   void DisableOptimization(BailoutReason reason);
-
-  inline BailoutReason disable_optimization_reason();
 
   // Lookup the bailout ID and DCHECK that it exists in the non-optimized
   // code, returns whether it asserted (i.e., always true if assertions are
@@ -353,18 +351,18 @@ class SharedFunctionInfo : public HeapObject {
   Handle<Object> GetSourceCodeHarmony();
 
   // Number of times the function was optimized.
-  inline int opt_count();
+  inline int opt_count() const;
   inline void set_opt_count(int opt_count);
 
   // Number of times the function was deoptimized.
   inline void set_deopt_count(int value);
-  inline int deopt_count();
+  inline int deopt_count() const;
   inline void increment_deopt_count();
 
   // Number of time we tried to re-enable optimization after it
   // was disabled due to high number of deoptimizations.
   inline void set_opt_reenable_tries(int value);
-  inline int opt_reenable_tries();
+  inline int opt_reenable_tries() const;
 
   inline void TryReenableOptimization();
 
@@ -376,6 +374,7 @@ class SharedFunctionInfo : public HeapObject {
   inline void set_opt_count_and_bailout_reason(int value);
   inline int opt_count_and_bailout_reason() const;
 
+  inline BailoutReason disable_optimization_reason() const;
   inline void set_disable_optimization_reason(BailoutReason reason);
 
   // Tells whether this function should be subject to debugging.
@@ -471,96 +470,26 @@ class SharedFunctionInfo : public HeapObject {
   static const int kLastPointerFieldOffset = kFunctionLiteralIdOffset;
 #endif
 
-#if V8_HOST_ARCH_32_BIT
-  // Smi fields.
-  static const int kLengthOffset = kLastPointerFieldOffset + kPointerSize;
-  static const int kFormalParameterCountOffset = kLengthOffset + kPointerSize;
-  static const int kExpectedNofPropertiesOffset =
-      kFormalParameterCountOffset + kPointerSize;
-  static const int kNumLiteralsOffset =
-      kExpectedNofPropertiesOffset + kPointerSize;
-  static const int kStartPositionAndTypeOffset =
-      kNumLiteralsOffset + kPointerSize;
-  static const int kEndPositionOffset =
-      kStartPositionAndTypeOffset + kPointerSize;
-  static const int kFunctionTokenPositionOffset =
-      kEndPositionOffset + kPointerSize;
-  static const int kCompilerHintsOffset =
-      kFunctionTokenPositionOffset + kPointerSize;
-  static const int kOptCountAndBailoutReasonOffset =
-      kCompilerHintsOffset + kPointerSize;
-  static const int kCountersOffset =
-      kOptCountAndBailoutReasonOffset + kPointerSize;
-  static const int kAstNodeCountOffset = kCountersOffset + kPointerSize;
-  static const int kProfilerTicksOffset = kAstNodeCountOffset + kPointerSize;
-
-  // Total size.
-  static const int kSize = kProfilerTicksOffset + kPointerSize;
-#else
-// The only reason to use smi fields instead of int fields is to allow
-// iteration without maps decoding during garbage collections.
-// To avoid wasting space on 64-bit architectures we use the following trick:
-// we group integer fields into pairs
-// The least significant integer in each pair is shifted left by 1.  By doing
-// this we guarantee that LSB of each kPointerSize aligned word is not set and
-// thus this word cannot be treated as pointer to HeapObject during old space
-// traversal.
-#if V8_TARGET_LITTLE_ENDIAN
+  // Raw data fields.
   static const int kLengthOffset = kLastPointerFieldOffset + kPointerSize;
   static const int kFormalParameterCountOffset = kLengthOffset + kIntSize;
-
   static const int kExpectedNofPropertiesOffset =
       kFormalParameterCountOffset + kIntSize;
+  // TODO(ishell): Drop this unused field.
   static const int kNumLiteralsOffset = kExpectedNofPropertiesOffset + kIntSize;
-
-  static const int kEndPositionOffset = kNumLiteralsOffset + kIntSize;
-  static const int kStartPositionAndTypeOffset = kEndPositionOffset + kIntSize;
-
-  static const int kFunctionTokenPositionOffset =
-      kStartPositionAndTypeOffset + kIntSize;
+  static const int kStartPositionAndTypeOffset = kNumLiteralsOffset + kIntSize;
+  static const int kEndPositionOffset = kStartPositionAndTypeOffset + kIntSize;
+  static const int kFunctionTokenPositionOffset = kEndPositionOffset + kIntSize;
   static const int kCompilerHintsOffset =
       kFunctionTokenPositionOffset + kIntSize;
-
   static const int kOptCountAndBailoutReasonOffset =
       kCompilerHintsOffset + kIntSize;
   static const int kCountersOffset = kOptCountAndBailoutReasonOffset + kIntSize;
-
   static const int kAstNodeCountOffset = kCountersOffset + kIntSize;
   static const int kProfilerTicksOffset = kAstNodeCountOffset + kIntSize;
 
   // Total size.
   static const int kSize = kProfilerTicksOffset + kIntSize;
-
-#elif V8_TARGET_BIG_ENDIAN
-  static const int kFormalParameterCountOffset =
-      kLastPointerFieldOffset + kPointerSize;
-  static const int kLengthOffset = kFormalParameterCountOffset + kIntSize;
-
-  static const int kNumLiteralsOffset = kLengthOffset + kIntSize;
-  static const int kExpectedNofPropertiesOffset = kNumLiteralsOffset + kIntSize;
-
-  static const int kStartPositionAndTypeOffset =
-      kExpectedNofPropertiesOffset + kIntSize;
-  static const int kEndPositionOffset = kStartPositionAndTypeOffset + kIntSize;
-
-  static const int kCompilerHintsOffset = kEndPositionOffset + kIntSize;
-  static const int kFunctionTokenPositionOffset =
-      kCompilerHintsOffset + kIntSize;
-
-  static const int kCountersOffset = kFunctionTokenPositionOffset + kIntSize;
-  static const int kOptCountAndBailoutReasonOffset = kCountersOffset + kIntSize;
-
-  static const int kProfilerTicksOffset =
-      kOptCountAndBailoutReasonOffset + kIntSize;
-  static const int kAstNodeCountOffset = kProfilerTicksOffset + kIntSize;
-
-  // Total size.
-  static const int kSize = kAstNodeCountOffset + kIntSize;
-
-#else
-#error Unknown byte ordering
-#endif  // Big endian
-#endif  // 64-bit
 
   static const int kAlignedSize = POINTER_SIZE_ALIGN(kSize);
 
@@ -571,44 +500,44 @@ class SharedFunctionInfo : public HeapObject {
                               kLastPointerFieldOffset + kPointerSize, kSize>
       BodyDescriptorWeakCode;
 
-  // Bit positions in start_position_and_type.
-  // The source code start position is in the 30 most significant bits of
-  // the start_position_and_type field.
-  static const int kIsNamedExpressionBit = 0;
-  static const int kIsTopLevelBit = 1;
-  static const int kStartPositionShift = 2;
-  static const int kStartPositionMask = ~((1 << kStartPositionShift) - 1);
+// Bit fields in |start_position_and_type|.
+#define START_POSITION_AND_TYPE_BIT_FIELDS(V, _) \
+  V(IsNamedExpressionBit, bool, 1, _)            \
+  V(IsTopLevelBit, bool, 1, _)                   \
+  V(StartPositionBits, int, 30, _)
 
-  // Bit positions in compiler_hints.
-  enum CompilerHints {
-    // byte 0
-    kAllowLazyCompilation,
-    kMarkedForTierUp,
-    kOptimizationDisabled,
-    kHasDuplicateParameters,
-    kNative,
-    kStrictModeFunction,
-    kUsesArguments,
-    kNeedsHomeObject,
-    // byte 1
-    kForceInline,
-    kIsAsmFunction,
-    kMustUseIgnitionTurbo,
-    kIsDeclaration,
-    kIsAsmWasmBroken,
-    kHasConcurrentOptimizationJob,
+  DEFINE_BIT_FIELDS(START_POSITION_AND_TYPE_BIT_FIELDS)
 
-    kUnused1,  // Unused fields.
-    kUnused2,
+// Bit positions in |compiler_hints|.
+#define COMPILER_HINTS_BIT_FIELDS(V, _)          \
+  /* byte 0 */                                   \
+  V(AllowLazyCompilationBit, bool, 1, _)         \
+  V(MarkedForTierUpBit, bool, 1, _)              \
+  V(OptimizationDisabledBit, bool, 1, _)         \
+  V(HasDuplicateParametersBit, bool, 1, _)       \
+  V(IsNativeBit, bool, 1, _)                     \
+  V(IsStrictBit, bool, 1, _)                     \
+  V(UsesArgumentsBit, bool, 1, _)                \
+  V(NeedsHomeObjectBit, bool, 1, _)              \
+  /* byte 1 */                                   \
+  V(ForceInlineBit, bool, 1, _)                  \
+  V(IsAsmFunctionBit, bool, 1, _)                \
+  V(MustUseIgnitionTurboBit, bool, 1, _)         \
+  V(IsDeclarationBit, bool, 1, _)                \
+  V(IsAsmWasmBrokenBit, bool, 1, _)              \
+  V(HasConcurrentOptimizationJobBit, bool, 1, _) \
+  /* Bits 14-15 are unused. */                   \
+  V(UnusedBits1, int, 2, _)                      \
+  /* byte 2 */                                   \
+  V(FunctionKindBits, FunctionKind, 10, _)       \
+  /* Bits 27-31 are unused. */
 
-    // byte 2
-    kFunctionKind,
-    // rest of byte 2 and first two bits of byte 3 are used by FunctionKind
-    // byte 3
-    kCompilerHintsCount = kFunctionKind + 10,  // Pseudo entry
-  };
+  DEFINE_BIT_FIELDS(COMPILER_HINTS_BIT_FIELDS)
 
-  // Bit positions in debugger_hints.
+  STATIC_ASSERT(ForceInlineBit::kShift == kBitsPerByte);
+  STATIC_ASSERT(FunctionKindBits::kShift == kBitsPerByte * 2);
+
+  // Bit positions in |debugger_hints|.
   enum DebuggerHints {
     kIsAnonymousExpression,
     kNameShouldPrintAsAnonymous,
@@ -620,53 +549,35 @@ class SharedFunctionInfo : public HeapObject {
     kHasReportedBinaryCoverage
   };
 
-  // kFunctionKind has to be byte-aligned
-  STATIC_ASSERT((kFunctionKind % kBitsPerByte) == 0);
+  // Bit fields in |counters|.
+  typedef BitField<int, 0, 4> DeoptCountBits;
+  typedef BitField<int, DeoptCountBits::kNext, 18> OptReenableTriesBits;
+  typedef BitField<int, OptReenableTriesBits::kNext, 8> ICAgeBits;
 
-  class FunctionKindBits : public BitField<FunctionKind, kFunctionKind, 10> {};
-
-  class DeoptCountBits : public BitField<int, 0, 4> {};
-  class OptReenableTriesBits : public BitField<int, 4, 18> {};
-  class ICAgeBits : public BitField<int, 22, 8> {};
-
-  class OptCountBits : public BitField<int, 0, 22> {};
-  class DisabledOptimizationReasonBits : public BitField<int, 22, 8> {};
+  // Bit fields in |opt_count_and_bailout_reason|.
+  typedef BitField<int, 0, 22> OptCountBits;
+  typedef BitField<BailoutReason, OptCountBits::kNext, 8>
+      DisabledOptimizationReasonBits;
 
  private:
   FRIEND_TEST(PreParserTest, LazyFunctionLength);
 
   inline int length() const;
 
-#if V8_HOST_ARCH_32_BIT
-  // On 32 bit platforms, compiler hints is a smi.
-  static const int kCompilerHintsSmiTagSize = kSmiTagSize;
-  static const int kCompilerHintsSize = kPointerSize;
-#else
-  // On 64 bit platforms, compiler hints is not a smi, see comment above.
-  static const int kCompilerHintsSmiTagSize = 0;
   static const int kCompilerHintsSize = kIntSize;
-#endif
-
-  STATIC_ASSERT(SharedFunctionInfo::kCompilerHintsCount +
-                    SharedFunctionInfo::kCompilerHintsSmiTagSize <=
-                SharedFunctionInfo::kCompilerHintsSize * kBitsPerByte);
 
  public:
   // Constants for optimizing codegen for strict mode function and
   // native tests when using integer-width instructions.
-  static const int kStrictModeBit =
-      kStrictModeFunction + kCompilerHintsSmiTagSize;
-  static const int kNativeBit = kNative + kCompilerHintsSmiTagSize;
+  // TODO(ishell): use respective bit field definition directly.
+  static const int kStrictModeBit = IsStrictBit::kShift;
+  static const int kNativeBit = IsNativeBit::kShift;
   static const int kHasDuplicateParametersBit =
-      kHasDuplicateParameters + kCompilerHintsSmiTagSize;
+      HasDuplicateParametersBit::kShift;
 
-  static const int kFunctionKindShift =
-      kFunctionKind + kCompilerHintsSmiTagSize;
-  static const int kAllFunctionKindBitsMask = FunctionKindBits::kMask
-                                              << kCompilerHintsSmiTagSize;
+  static const int kFunctionKindShift = FunctionKindBits::kShift;
 
-  static const int kMarkedForTierUpBit =
-      kMarkedForTierUp + kCompilerHintsSmiTagSize;
+  static const int kMarkedForTierUpBit = MarkedForTierUpBit::kShift;
 
   // Constants for optimizing codegen for strict mode function and
   // native tests.
@@ -677,11 +588,11 @@ class SharedFunctionInfo : public HeapObject {
       kHasDuplicateParametersBit % kBitsPerByte;
 
   static const int kClassConstructorBitsWithinByte =
-      FunctionKind::kClassConstructor << kCompilerHintsSmiTagSize;
+      FunctionKind::kClassConstructor;
   STATIC_ASSERT(kClassConstructorBitsWithinByte < (1 << kBitsPerByte));
 
   static const int kDerivedConstructorBitsWithinByte =
-      FunctionKind::kDerivedConstructor << kCompilerHintsSmiTagSize;
+      FunctionKind::kDerivedConstructor;
   STATIC_ASSERT(kDerivedConstructorBitsWithinByte < (1 << kBitsPerByte));
 
   static const int kMarkedForTierUpBitWithinByte =
@@ -689,21 +600,24 @@ class SharedFunctionInfo : public HeapObject {
 
 #if defined(V8_TARGET_LITTLE_ENDIAN)
 #define BYTE_OFFSET(compiler_hint) \
-  kCompilerHintsOffset +           \
-      (compiler_hint + kCompilerHintsSmiTagSize) / kBitsPerByte
+  kCompilerHintsOffset + (compiler_hint) / kBitsPerByte
 #elif defined(V8_TARGET_BIG_ENDIAN)
 #define BYTE_OFFSET(compiler_hint)                  \
   kCompilerHintsOffset + (kCompilerHintsSize - 1) - \
-      ((compiler_hint + kCompilerHintsSmiTagSize) / kBitsPerByte)
+      ((compiler_hint) / kBitsPerByte)
 #else
 #error Unknown byte ordering
 #endif
-  static const int kStrictModeByteOffset = BYTE_OFFSET(kStrictModeFunction);
-  static const int kNativeByteOffset = BYTE_OFFSET(kNative);
-  static const int kFunctionKindByteOffset = BYTE_OFFSET(kFunctionKind);
+  static const int kStrictModeByteOffset = BYTE_OFFSET(IsStrictBit::kShift);
+  static const int kNativeByteOffset = BYTE_OFFSET(IsNativeBit::kShift);
+  // FunctionKind bit field has to be byte-aligned
+  STATIC_ASSERT((FunctionKindBits::kShift % kBitsPerByte) == 0);
+  static const int kFunctionKindByteOffset =
+      BYTE_OFFSET(FunctionKindBits::kShift);
   static const int kHasDuplicateParametersByteOffset =
-      BYTE_OFFSET(kHasDuplicateParameters);
-  static const int kMarkedForTierUpByteOffset = BYTE_OFFSET(kMarkedForTierUp);
+      BYTE_OFFSET(kHasDuplicateParametersBit);
+  static const int kMarkedForTierUpByteOffset =
+      BYTE_OFFSET(MarkedForTierUpBit::kShift);
 #undef BYTE_OFFSET
 
  private:

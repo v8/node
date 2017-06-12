@@ -227,14 +227,6 @@ enum PropertyNormalizationMode {
 };
 
 
-// Indicates how aggressively the prototype should be optimized. FAST_PROTOTYPE
-// will give the fastest result by tailoring the map to the prototype, but that
-// will cause polymorphism with other objects. REGULAR_PROTOTYPE is to be used
-// (at least for now) when dynamically modifying the prototype chain of an
-// object using __proto__ or Object.setPrototypeOf.
-enum PrototypeOptimizationMode { REGULAR_PROTOTYPE, FAST_PROTOTYPE };
-
-
 // Indicates whether transitions can be added to a source map or not.
 enum TransitionFlag {
   INSERT_TRANSITION,
@@ -1182,8 +1174,8 @@ class Object {
   STRUCT_LIST(DECLARE_STRUCT_PREDICATE)
 #undef DECLARE_STRUCT_PREDICATE
 
-  // ES6, section 7.2.2 IsArray.  NOT to be confused with %_IsArray.
-  MUST_USE_RESULT static Maybe<bool> IsArray(Handle<Object> object);
+  // ES6, #sec-isarray.  NOT to be confused with %_IsArray.
+  INLINE(MUST_USE_RESULT static Maybe<bool> IsArray(Handle<Object> object));
 
   INLINE(bool IsNameDictionary() const);
   INLINE(bool IsGlobalDictionary() const);
@@ -2283,8 +2275,7 @@ class JSObject: public JSReceiver {
                                             Handle<Object> value,
                                             PropertyAttributes attributes);
 
-  static void OptimizeAsPrototype(Handle<JSObject> object,
-                                  PrototypeOptimizationMode mode);
+  static void OptimizeAsPrototype(Handle<JSObject> object);
   static void ReoptimizeIfPrototype(Handle<JSObject> object);
   static void MakePrototypesFast(Handle<Object> receiver,
                                  WhereToStart where_to_start, Isolate* isolate);
@@ -3099,9 +3090,10 @@ template <SearchMode search_mode, typename T>
 inline int Search(T* array, Name* name, int valid_entries = 0,
                   int* out_insertion_index = NULL);
 
-// The cache for maps used by normalized (dictionary mode) objects.
-// Such maps do not have property descriptors, so a typical program
-// needs very limited number of distinct normalized maps.
+// HandlerTable is a fixed array containing entries for exception handlers in
+// the code object it is associated with. The tables comes in two flavors:
+// 1) Based on ranges: Used for unoptimized code. Contains one entry per
+//    exception handler and a range representing the try-block covered by that
 //    handler. Layout looks as follows:
 //      [ range-start , range-end , handler-offset , handler-data ]
 // 2) Based on return addresses: Used for turbofanned code. Contains one entry
@@ -7320,6 +7312,9 @@ class JSProxy: public JSReceiver {
   // ES6 9.5.3
   MUST_USE_RESULT static Maybe<bool> IsExtensible(Handle<JSProxy> proxy);
 
+  // ES6, #sec-isarray.  NOT to be confused with %_IsArray.
+  MUST_USE_RESULT static Maybe<bool> IsArray(Handle<JSProxy> proxy);
+
   // ES6 9.5.4 (when passed DONT_THROW)
   MUST_USE_RESULT static Maybe<bool> PreventExtensions(
       Handle<JSProxy> proxy, ShouldThrow should_throw);
@@ -7366,6 +7361,8 @@ class JSProxy: public JSReceiver {
   // Dispatched behavior.
   DECLARE_PRINTER(JSProxy)
   DECLARE_VERIFIER(JSProxy)
+
+  static const int kMaxIterationLimit = 100 * 1024;
 
   // Layout description.
   static const int kTargetOffset = JSReceiver::kHeaderSize;

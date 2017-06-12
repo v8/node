@@ -1078,7 +1078,7 @@ void Debug::PrepareStep(StepAction step_action) {
       // and deoptimize every frame along the way.
       bool in_current_frame = true;
       for (; !frames_it.done(); frames_it.Advance()) {
-        // TODO(clemensh): Implement stepping out from JS to WASM.
+        // TODO(clemensh): Implement stepping out from JS to wasm.
         if (frames_it.frame()->is_wasm()) continue;
         JavaScriptFrame* frame = JavaScriptFrame::cast(frames_it.frame());
         if (last_step_action() == StepIn) {
@@ -1107,7 +1107,7 @@ void Debug::PrepareStep(StepAction step_action) {
       thread_local_.target_frame_count_ = current_frame_count;
     // Fall through.
     case StepIn:
-      // TODO(clemensh): Implement stepping from JS into WASM.
+      // TODO(clemensh): Implement stepping from JS into wasm.
       FloodWithOneShot(shared);
       break;
   }
@@ -1363,10 +1363,10 @@ namespace {
 template <typename Iterator>
 void GetBreakablePositions(Iterator* it, int start_position, int end_position,
                            std::vector<BreakLocation>* locations) {
-  it->SkipToPosition(start_position, BREAK_POSITION_ALIGNED);
-  while (!it->Done() && it->position() < end_position &&
-         it->position() >= start_position) {
-    locations->push_back(it->GetBreakLocation());
+  while (!it->Done()) {
+    if (it->position() >= start_position && it->position() < end_position) {
+      locations->push_back(it->GetBreakLocation());
+    }
     it->Next();
   }
 }

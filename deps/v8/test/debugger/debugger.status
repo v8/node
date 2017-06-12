@@ -31,14 +31,14 @@
 }],  # ALWAYS
 
 ##############################################################################
-['variant == stress or variant == noturbofan_stress', {
+['variant == stress', {
   # TODO(jarin/mstarzinger): Functions with eval or debugger now get optimized
   # with Turbofan, which has issues with the debugger issues.
   'debug/debug-evaluate-locals': [FAIL],
 
   # Very slow in stress mode.
   'regress/regress-2318': [SKIP],
-}],  # variant == stress or variant == noturbofan_stress
+}],  # variant == stress
 
 ##############################################################################
 ['gc_stress == True', {
@@ -63,12 +63,6 @@
 }],  # 'gc_stress == True'
 
 ##############################################################################
-['variant == turbofan_opt', {
-  # TODO(jarin/mstarzinger): Investigate debugger issues with TurboFan.
-  'debug/debug-evaluate-locals': [FAIL],
-}],  # variant == turbofan_opt
-
-##############################################################################
 ['variant == wasm_traps', {
   '*': [SKIP],
 }],  # variant == wasm_traps
@@ -78,12 +72,6 @@
   # Too slow on chromebooks.
   'debug/ignition/debug-step-prefix-bytecodes': [SKIP],
 }],  # 'arch == arm and not simulator_run'
-
-##############################################################################
-['variant in [noturbofan, noturbofan_stress] and system == macos and asan', {
-  # Too slow for old pipeline and mac asan.
-  'debug/*': [SKIP],
-}],  # variant in [noturbofan, noturbofan_stress] and system == macos and asan
 
 ##############################################################################
 ['arch == s390 or arch == s390x', {

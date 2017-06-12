@@ -59,6 +59,7 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerCheckReceiver(Node* node, Node* frame_state);
   Node* LowerCheckString(Node* node, Node* frame_state);
   Node* LowerCheckSeqString(Node* node, Node* frame_state);
+  Node* LowerCheckNonEmptyString(Node* node, Node* frame_state);
   Node* LowerCheckSymbol(Node* node, Node* frame_state);
   Node* LowerCheckIf(Node* node, Node* frame_state);
   Node* LowerCheckedInt32Add(Node* node, Node* frame_state);
@@ -106,7 +107,6 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerStringLessThan(Node* node);
   Node* LowerStringLessThanOrEqual(Node* node);
   Node* LowerCheckFloat64Hole(Node* node, Node* frame_state);
-  Node* LowerCheckTaggedHole(Node* node, Node* frame_state);
   Node* LowerCheckNotTaggedHole(Node* node, Node* frame_state);
   Node* LowerConvertTaggedHoleToUndefined(Node* node);
   Node* LowerPlainPrimitiveToNumber(Node* node);

@@ -543,6 +543,16 @@ void Verifier::Visitor::Check(Node* node) {
       // Type is 32 bit integral.
       CheckTypeIs(node, Type::Integral32());
       break;
+
+    case IrOpcode::kJSStringConcat:
+      // Type is string and all inputs are strings.
+      CheckTypeIs(node, Type::String());
+      for (int i = 0; i < StringConcatParameterOf(node->op()).operand_count();
+           i++) {
+        CheckValueInputIs(node, i, Type::String());
+      }
+      break;
+
     case IrOpcode::kJSAdd:
       // Type is Number or String.
       CheckTypeIs(node, Type::NumberOrString());
@@ -575,6 +585,7 @@ void Verifier::Visitor::Check(Node* node) {
       CheckTypeIs(node, Type::Number());
       break;
     case IrOpcode::kJSToString:
+    case IrOpcode::kJSToPrimitiveToString:
       // Type is String.
       CheckTypeIs(node, Type::String());
       break;
@@ -1188,6 +1199,10 @@ void Verifier::Visitor::Check(Node* node) {
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::SeqString());
       break;
+    case IrOpcode::kCheckNonEmptyString:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::NonEmptyString());
+      break;
     case IrOpcode::kCheckSymbol:
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::Symbol());
@@ -1215,11 +1230,9 @@ void Verifier::Visitor::Check(Node* node) {
       CheckValueInputIs(node, 0, Type::NumberOrHole());
       CheckTypeIs(node, Type::NumberOrUndefined());
       break;
-    case IrOpcode::kCheckTaggedHole:
-      CheckValueInputIs(node, 0, Type::Any());
-      break;
     case IrOpcode::kCheckNotTaggedHole:
       CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::NonInternal());
       break;
     case IrOpcode::kConvertTaggedHoleToUndefined:
       CheckValueInputIs(node, 0, Type::Any());

@@ -44,11 +44,15 @@ class PlatformInterfaceDescriptor;
   V(CallFunction)                          \
   V(CallIC)                                \
   V(CallICTrampoline)                      \
+  V(CallVarargs)                           \
   V(CallForwardVarargs)                    \
+  V(CallWithArrayLike)                     \
   V(CallConstruct)                         \
   V(CallTrampoline)                        \
   V(ConstructStub)                         \
+  V(ConstructVarargs)                      \
   V(ConstructForwardVarargs)               \
+  V(ConstructWithArrayLike)                \
   V(ConstructTrampoline)                   \
   V(TransitionElementsKind)                \
   V(AllocateHeapNumber)                    \
@@ -67,6 +71,7 @@ class PlatformInterfaceDescriptor;
   V(StringCharAt)                          \
   V(StringCharCodeAt)                      \
   V(StringCompare)                         \
+  V(StringConcat)                          \
   V(SubString)                             \
   V(ForInPrepare)                          \
   V(GetProperty)                           \
@@ -573,10 +578,33 @@ class CallTrampolineDescriptor : public CallInterfaceDescriptor {
                                                CallInterfaceDescriptor)
 };
 
+class CallVarargsDescriptor : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kTarget, kActualArgumentsCount, kArgumentsList,
+                    kArgumentsLength)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CallVarargsDescriptor,
+                                               CallInterfaceDescriptor)
+};
+
 class CallForwardVarargsDescriptor : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS(kTarget, kActualArgumentsCount, kStartIndex)
   DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CallForwardVarargsDescriptor,
+                                               CallInterfaceDescriptor)
+};
+
+class CallWithArrayLikeDescriptor : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kTarget, kArgumentsList)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CallWithArrayLikeDescriptor,
+                                               CallInterfaceDescriptor)
+};
+
+class ConstructVarargsDescriptor : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kTarget, kNewTarget, kActualArgumentsCount, kArgumentsList,
+                    kArgumentsLength)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(ConstructVarargsDescriptor,
                                                CallInterfaceDescriptor)
 };
 
@@ -585,6 +613,13 @@ class ConstructForwardVarargsDescriptor : public CallInterfaceDescriptor {
   DEFINE_PARAMETERS(kTarget, kNewTarget, kActualArgumentsCount, kStartIndex)
   DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(
       ConstructForwardVarargsDescriptor, CallInterfaceDescriptor)
+};
+
+class ConstructWithArrayLikeDescriptor : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kTarget, kNewTarget, kArgumentsList)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(ConstructWithArrayLikeDescriptor,
+                                               CallInterfaceDescriptor)
 };
 
 class ConstructStubDescriptor : public CallInterfaceDescriptor {
@@ -689,7 +724,6 @@ class ArrayNArgumentsConstructorDescriptor : public CallInterfaceDescriptor {
       ArrayNArgumentsConstructorDescriptor, CallInterfaceDescriptor)
 };
 
-
 class CompareDescriptor : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS(kLeft, kRight)
@@ -750,6 +784,15 @@ class StringCompareDescriptor : public CallInterfaceDescriptor {
 
   static const Register LeftRegister();
   static const Register RightRegister();
+};
+
+class StringConcatDescriptor : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kArgumentsCount)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(StringConcatDescriptor,
+                                               CallInterfaceDescriptor)
+
+  static const Register ArgumentsCountRegister();
 };
 
 class SubStringDescriptor : public CallInterfaceDescriptor {

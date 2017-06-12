@@ -682,7 +682,7 @@ FunctionLiteral* Parser::DoParseProgram(ParseInfo* info) {
     if (parsing_module_) {
       // Declare the special module parameter.
       auto name = ast_value_factory()->empty_string();
-      bool is_duplicate;
+      bool is_duplicate = false;
       bool is_rest = false;
       bool is_optional = false;
       auto var =
@@ -901,7 +901,10 @@ FunctionLiteral* Parser::DoParseFunction(ParseInfo* info) {
         } else {
           // BindingIdentifier
           ParseFormalParameter(&formals, &ok);
-          if (ok) DeclareFormalParameters(formals.scope, formals.params);
+          if (ok) {
+            DeclareFormalParameters(formals.scope, formals.params,
+                                    formals.is_simple);
+          }
         }
       }
 
@@ -2202,7 +2205,8 @@ Statement* Parser::InitializeForOfStatement(
 
 Statement* Parser::DesugarLexicalBindingsInForStatement(
     ForStatement* loop, Statement* init, Expression* cond, Statement* next,
-    Statement* body, Scope* inner_scope, const ForInfo& for_info, bool* ok) {
+    Statement* body, const SourceRange& body_range, Scope* inner_scope,
+    const ForInfo& for_info, bool* ok) {
   // ES6 13.7.4.8 specifies that on each loop iteration the let variables are
   // copied into a new environment.  Moreover, the "next" statement must be
   // evaluated not in the environment of the just completed iteration but in
@@ -2432,7 +2436,7 @@ Statement* Parser::DesugarLexicalBindingsInForStatement(
     inner_block->set_scope(inner_scope);
   }
 
-  outer_loop->Initialize(NULL, NULL, NULL, inner_block);
+  outer_loop->Initialize(NULL, NULL, NULL, inner_block, body_range);
   return outer_block;
 }
 
@@ -2505,15 +2509,11 @@ void Parser::DeclareArrowFunctionFormalParameters(
     return;
   }
 
-  ExpressionClassifier classifier(this);
-  if (!parameters->is_simple) {
-    this->classifier()->RecordNonSimpleParameter();
-  }
-  DeclareFormalParameters(parameters->scope, parameters->params);
-  if (!this->classifier()
-           ->is_valid_formal_parameter_list_without_duplicates()) {
-    *duplicate_loc =
-        this->classifier()->duplicate_formal_parameter_error().location;
+  bool has_duplicate = false;
+  DeclareFormalParameters(parameters->scope, parameters->params,
+                          parameters->is_simple, &has_duplicate);
+  if (has_duplicate) {
+    *duplicate_loc = scanner()->location();
   }
   DCHECK_EQ(parameters->is_simple, parameters->scope->has_simple_parameters());
 }
@@ -2660,7 +2660,7 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     // Only sets fields in compiler_hints that are currently used.
     int compiler_hints = SharedFunctionInfo::FunctionKindBits::encode(kind);
     if (function_type == FunctionLiteral::kDeclaration) {
-      compiler_hints |= 1 << SharedFunctionInfo::kIsDeclaration;
+      compiler_hints |= SharedFunctionInfo::IsDeclarationBit::encode(true);
     }
     should_use_parse_task = compiler_dispatcher_->Enqueue(
         source_, start_pos, source_->length(), language_mode,

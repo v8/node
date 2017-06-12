@@ -1298,7 +1298,7 @@ Reduction JSBuiltinReducer::ReduceFunctionBind(Node* node) {
                           ? isolate()->bound_function_with_constructor_map()
                           : isolate()->bound_function_without_constructor_map();
     if (map->prototype() != *prototype) {
-      map = Map::TransitionToPrototype(map, prototype, REGULAR_PROTOTYPE);
+      map = Map::TransitionToPrototype(map, prototype);
     }
     DCHECK_EQ(target_function->IsConstructor(), map->is_constructor());
 
@@ -2009,7 +2009,8 @@ Node* GetStringWitness(Node* node) {
   for (Node* dominator = effect;;) {
     if ((dominator->opcode() == IrOpcode::kCheckString ||
          dominator->opcode() == IrOpcode::kCheckInternalizedString ||
-         dominator->opcode() == IrOpcode::kCheckSeqString) &&
+         dominator->opcode() == IrOpcode::kCheckSeqString ||
+         dominator->opcode() == IrOpcode::kCheckNonEmptyString) &&
         NodeProperties::IsSame(dominator->InputAt(0), receiver)) {
       return dominator;
     }

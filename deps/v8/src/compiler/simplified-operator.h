@@ -416,6 +416,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckSmi();
   const Operator* CheckString();
   const Operator* CheckSeqString();
+  const Operator* CheckNonEmptyString();
   const Operator* CheckSymbol();
   const Operator* CheckReceiver();
 
@@ -438,7 +439,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckedTruncateTaggedToWord32(CheckTaggedInputMode);
 
   const Operator* CheckFloat64Hole(CheckFloat64HoleMode);
-  const Operator* CheckTaggedHole();
   const Operator* CheckNotTaggedHole();
   const Operator* ConvertTaggedHoleToUndefined();
 

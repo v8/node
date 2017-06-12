@@ -108,6 +108,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return value;
   }
 
+  Node* Word32ToParameter(Node* value, ParameterMode mode) {
+    return WordToParameter(ChangeUint32ToWord(value), mode);
+  }
+
   Node* ParameterToTagged(Node* value, ParameterMode mode) {
     if (mode != SMI_PARAMETERS) value = SmiTag(value);
     return value;
@@ -411,13 +415,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Load the constructor of a Map (equivalent to
   // Map::GetConstructor()).
   Node* LoadMapConstructor(Node* map);
-  // Loads a value from the specially encoded integer fields in the
-  // SharedFunctionInfo object.
-  // TODO(danno): This currently only works for the integer fields that are
-  // mapped to the upper part of 64-bit words. We should customize
-  // SFI::BodyDescriptor and store int32 values directly.
-  Node* LoadSharedFunctionInfoSpecialField(Node* shared, int offset,
-                                           ParameterMode param_mode);
 
   // Check if the map is set for slow properties.
   Node* IsDictionaryMap(Node* map);
@@ -1527,15 +1524,21 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 class CodeStubArguments {
  public:
   typedef compiler::Node Node;
+  enum ReceiverMode { kHasReceiver, kNoReceiver };
 
   // |argc| is an intptr value which specifies the number of arguments passed
-  // to the builtin excluding the receiver.
-  CodeStubArguments(CodeStubAssembler* assembler, Node* argc)
+  // to the builtin excluding the receiver. The arguments will include a
+  // receiver iff |receiver_mode| is kHasReceiver.
+  CodeStubArguments(CodeStubAssembler* assembler, Node* argc,
+                    ReceiverMode receiver_mode = ReceiverMode::kHasReceiver)
       : CodeStubArguments(assembler, argc, nullptr,
-                          CodeStubAssembler::INTPTR_PARAMETERS) {}
-  // |argc| is either a smi or intptr depending on |param_mode|
+                          CodeStubAssembler::INTPTR_PARAMETERS, receiver_mode) {
+  }
+  // |argc| is either a smi or intptr depending on |param_mode|. The arguments
+  // include a receiver iff |receiver_mode| is kHasReceiver.
   CodeStubArguments(CodeStubAssembler* assembler, Node* argc, Node* fp,
-                    CodeStubAssembler::ParameterMode param_mode);
+                    CodeStubAssembler::ParameterMode param_mode,
+                    ReceiverMode receiver_mode = ReceiverMode::kHasReceiver);
 
   Node* GetReceiver() const;
 
@@ -1575,6 +1578,7 @@ class CodeStubArguments {
 
   CodeStubAssembler* assembler_;
   CodeStubAssembler::ParameterMode argc_mode_;
+  ReceiverMode receiver_mode_;
   Node* argc_;
   Node* arguments_;
   Node* fp_;

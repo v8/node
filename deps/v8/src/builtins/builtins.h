@@ -18,6 +18,7 @@ class Handle;
 class Isolate;
 
 // Forward declarations.
+class BailoutId;
 class RootVisitor;
 enum class InterpreterPushArgsMode : unsigned;
 namespace compiler {
@@ -42,6 +43,9 @@ class Builtins {
 #undef DEF_ENUM
         builtin_count
   };
+
+  static BailoutId GetContinuationBailoutId(Name name);
+  static Name GetBuiltinFromBailoutId(BailoutId);
 
 #define DECLARE_BUILTIN_ACCESSOR(Name, ...) \
   V8_EXPORT_PRIVATE Handle<Code> Name();
@@ -81,6 +85,8 @@ class Builtins {
   static int GetBuiltinParameterCount(Name name);
 
   V8_EXPORT_PRIVATE static Callable CallableFor(Isolate* isolate, Name name);
+
+  static int GetStackParameterCount(Isolate* isolate, Name name);
 
   static const char* name(int index);
 
@@ -126,7 +132,10 @@ class Builtins {
   static void Generate_Call(MacroAssembler* masm, ConvertReceiverMode mode,
                             TailCallMode tail_call_mode);
 
-  static void Generate_ForwardVarargs(MacroAssembler* masm, Handle<Code> code);
+  static void Generate_CallOrConstructVarargs(MacroAssembler* masm,
+                                              Handle<Code> code);
+  static void Generate_CallOrConstructForwardVarargs(MacroAssembler* masm,
+                                                     Handle<Code> code);
 
   static void Generate_InterpreterPushArgsThenCallImpl(
       MacroAssembler* masm, ConvertReceiverMode receiver_mode,

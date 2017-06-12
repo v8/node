@@ -621,42 +621,10 @@
 }],  # variant == stress
 
 ##############################################################################
-['variant == noturbofan_stress', {
-  # Slow tests.
-  'ignition/regress-599001-verifyheap': [SKIP],
-  'regress/regress-2185-2': [SKIP],
-
-  # Crankshaft bug, wrong elements kind: crbug.com/v8/6342
-  'regress/regress-2671': [SKIP],
-  'regress/regress-2671-1': [SKIP],
-}],  # variant == noturbofan_stress
-
-##############################################################################
 ['variant == nooptimization', {
   # Slow tests.
   'regress/regress-2185-2': [SKIP],
 }],  # variant == nooptimization
-
-##############################################################################
-['variant == noturbofan and no_snap', {
-  # Too slow for old pipeline and nosnap.
-  'regress/regress-2249': [SKIP],
-  'harmony/futex': [SKIP],
-}],  # variant == noturbofan and no_snap
-
-##############################################################################
-['variant == turbofan_opt', {
-  'es6/array-iterator-turbo': [SKIP],
-
-  # TODO(jgruber): Fails in --turbo --always-opt mode.
-  'regress/regress-105': [FAIL],
-
-  # Too slow.
-  'big-object-literal': [SKIP],
-  'ignition/regress-599001-verifyheap': [SKIP],
-  'unicode-test': [SKIP],
-
-}],  # variant == turbofan_opt
 
 ##############################################################################
 ['gcov_coverage', {

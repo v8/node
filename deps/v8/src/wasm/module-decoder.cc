@@ -3,18 +3,18 @@
 // found in the LICENSE file.
 
 #include "src/wasm/module-decoder.h"
-#include "src/wasm/function-body-decoder-impl.h"
 
 #include "src/base/functional.h"
 #include "src/base/platform/platform.h"
+#include "src/base/template-utils.h"
 #include "src/counters.h"
 #include "src/flags.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
 #include "src/ostreams.h"
 #include "src/v8.h"
-
 #include "src/wasm/decoder.h"
+#include "src/wasm/function-body-decoder-impl.h"
 #include "src/wasm/wasm-limits.h"
 
 namespace v8 {
@@ -107,7 +107,7 @@ uint32_t consume_string(Decoder& decoder, uint32_t* length, bool validate_utf8,
   return offset;
 }
 
-// An iterator over the sections in a WASM binary module.
+// An iterator over the sections in a wasm binary module.
 // Automatically skips all unknown sections.
 class WasmSectionIterator {
  public:
@@ -273,7 +273,7 @@ class ModuleDecoder : public Decoder {
   void StartDecoding(Isolate* isolate) {
     CHECK_NULL(module_);
     module_.reset(new WasmModule(
-        std::unique_ptr<Zone>(new Zone(isolate->allocator(), "signatures"))));
+        base::make_unique<Zone>(isolate->allocator(), "signatures")));
     module_->min_mem_pages = 0;
     module_->max_mem_pages = 0;
     module_->mem_export = false;
@@ -950,7 +950,7 @@ class ModuleDecoder : public Decoder {
                                menv->wire_bytes.GetNameOrNull(function));
     if (FLAG_trace_wasm_decoder || FLAG_trace_wasm_decode_time) {
       OFStream os(stdout);
-      os << "Verifying WASM function " << func_name << std::endl;
+      os << "Verifying wasm function " << func_name << std::endl;
     }
     FunctionBody body = {
         function->sig, start_,
@@ -1168,12 +1168,6 @@ class ModuleDecoder : public Decoder {
           switch (t) {
             case kLocalS128:
               return kWasmS128;
-            case kLocalS1x4:
-              return kWasmS1x4;
-            case kLocalS1x8:
-              return kWasmS1x8;
-            case kLocalS1x16:
-              return kWasmS1x16;
             default:
               break;
           }
@@ -1308,8 +1302,8 @@ FunctionResult DecodeWasmFunctionInternal(Isolate* isolate, Zone* zone,
         ->AddSample(static_cast<int>(size));
   }
   ModuleDecoder decoder(function_start, function_end, kWasmOrigin);
-  return decoder.DecodeSingleFunction(
-      zone, module_env, std::unique_ptr<WasmFunction>(new WasmFunction()));
+  return decoder.DecodeSingleFunction(zone, module_env,
+                                      base::make_unique<WasmFunction>());
 }
 
 }  // namespace

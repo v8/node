@@ -6,7 +6,6 @@
 
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
-#include "src/compilation-dependencies.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/compiler-source-position-table.h"
 #include "src/compiler/linkage.h"
@@ -441,7 +440,6 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
     Zone* local_zone, Handle<SharedFunctionInfo> shared_info,
     Handle<FeedbackVector> feedback_vector, BailoutId osr_ast_id,
     JSGraph* jsgraph, CallFrequency invocation_frequency,
-    CompilationDependencies* dependencies,
     SourcePositionTable* source_positions, int inlining_id,
     JSTypeHintLowering::Flags flags)
     : local_zone_(local_zone),
@@ -460,7 +458,6 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
       bytecode_analysis_(nullptr),
       environment_(nullptr),
       osr_ast_id_(osr_ast_id),
-      dependencies_(dependencies),
       merge_environments_(local_zone),
       exception_handlers_(local_zone),
       current_exception_handler_(0),
@@ -1679,21 +1676,6 @@ void BytecodeGraphBuilder::VisitReThrow() {
   MergeControlToLeaveFunction(control);
 }
 
-Node* BytecodeGraphBuilder::TryBuildHoleCheckWithDeopt(
-    const Operator* hole_check_operator) {
-  // TODO(6451): Make the hole protector per function.
-  if (!jsgraph()->isolate()->IsHoleCheckProtectorIntact()) {
-    return nullptr;
-  }
-  dependencies()->AssumePropertyCell(
-      jsgraph()->isolate()->factory()->hole_check_protector());
-  PrepareEagerCheckpoint();
-  Node* accumulator = environment()->LookupAccumulator();
-  Node* node = NewNode(hole_check_operator, accumulator);
-  environment()->BindAccumulator(accumulator);
-  return node;
-}
-
 void BytecodeGraphBuilder::BuildHoleCheckAndThrow(
     Node* condition, Runtime::FunctionId runtime_id, Node* name) {
   Node* accumulator = environment()->LookupAccumulator();
@@ -1704,7 +1686,7 @@ void BytecodeGraphBuilder::BuildHoleCheckAndThrow(
     NewIfTrue();
     Node* node;
     const Operator* op = javascript()->CallRuntime(runtime_id);
-    if (runtime_id == Runtime::kThrowReferenceErrorOnHole) {
+    if (runtime_id == Runtime::kThrowReferenceError) {
       DCHECK(name != nullptr);
       node = NewNode(op, name);
     } else {
@@ -1721,43 +1703,29 @@ void BytecodeGraphBuilder::BuildHoleCheckAndThrow(
 }
 
 void BytecodeGraphBuilder::VisitThrowReferenceErrorIfHole() {
-  // To avoid deopt loops, we generate regular control flow, if we ever saw
-  // a throw because of the hole check.
-  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckNotTaggedHole())) {
-    // Generate the control flow to avoid deopt loop.
-    Node* accumulator = environment()->LookupAccumulator();
-    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
-                                   jsgraph()->TheHoleConstant());
-    Node* name =
-        jsgraph()->Constant(bytecode_iterator().GetConstantForIndexOperand(0));
-    BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowReferenceErrorOnHole,
-                           name);
-  }
+  Node* accumulator = environment()->LookupAccumulator();
+  Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                 jsgraph()->TheHoleConstant());
+  Node* name =
+      jsgraph()->Constant(bytecode_iterator().GetConstantForIndexOperand(0));
+  BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowReferenceError, name);
 }
 
 void BytecodeGraphBuilder::VisitThrowSuperNotCalledIfHole() {
-  // To avoid deopt loops, we generate regular control flow, if we ever saw
-  // a throw because of the hole check.
-  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckNotTaggedHole())) {
-    Node* accumulator = environment()->LookupAccumulator();
-    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
-                                   jsgraph()->TheHoleConstant());
-    BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowSuperNotCalled);
-  }
+  Node* accumulator = environment()->LookupAccumulator();
+  Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                 jsgraph()->TheHoleConstant());
+  BuildHoleCheckAndThrow(check_for_hole, Runtime::kThrowSuperNotCalled);
 }
 
 void BytecodeGraphBuilder::VisitThrowSuperAlreadyCalledIfNotHole() {
-  // To avoid deopt loops, we generate regular control flow, if we ever saw
-  // a throw because of the hole check.
-  if (!TryBuildHoleCheckWithDeopt(simplified()->CheckTaggedHole())) {
-    Node* accumulator = environment()->LookupAccumulator();
-    Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
-                                   jsgraph()->TheHoleConstant());
-    Node* check_for_not_hole =
-        NewNode(simplified()->BooleanNot(), check_for_hole);
-    BuildHoleCheckAndThrow(check_for_not_hole,
-                           Runtime::kThrowSuperAlreadyCalledError);
-  }
+  Node* accumulator = environment()->LookupAccumulator();
+  Node* check_for_hole = NewNode(simplified()->ReferenceEqual(), accumulator,
+                                 jsgraph()->TheHoleConstant());
+  Node* check_for_not_hole =
+      NewNode(simplified()->BooleanNot(), check_for_hole);
+  BuildHoleCheckAndThrow(check_for_not_hole,
+                         Runtime::kThrowSuperAlreadyCalledError);
 }
 
 void BytecodeGraphBuilder::BuildBinaryOp(const Operator* op) {
@@ -2174,11 +2142,37 @@ void BytecodeGraphBuilder::VisitToNumber() {
 }
 
 void BytecodeGraphBuilder::VisitToPrimitiveToString() {
-  UNREACHABLE();  // TODO(rmcilroy): Implement this.
+  PrepareEagerCheckpoint();
+  Node* object = environment()->LookupAccumulator();
+
+  Node* node = nullptr;
+  FeedbackSlot slot =
+      feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(1));
+  if (Node* simplified = TryBuildSimplifiedToPrimitiveToString(object, slot)) {
+    node = simplified;
+  } else {
+    node = NewNode(javascript()->ToPrimitiveToString(), object);
+  }
+
+  environment()->BindRegister(bytecode_iterator().GetRegisterOperand(0), node,
+                              Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitStringConcat() {
-  UNREACHABLE();  // TODO(rmcilroy): Implement this.
+  interpreter::Register first_reg = bytecode_iterator().GetRegisterOperand(0);
+  int operand_count =
+      static_cast<int>(bytecode_iterator().GetRegisterCountOperand(1));
+  Node** operands =
+      local_zone()->NewArray<Node*>(static_cast<size_t>(operand_count));
+  int operand_base = first_reg.index();
+  for (int i = 0; i < operand_count; ++i) {
+    operands[i] =
+        environment()->LookupRegister(interpreter::Register(operand_base + i));
+  }
+
+  Node* node = MakeNode(javascript()->StringConcat(operand_count),
+                        operand_count, operands, false);
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitJump() { BuildJump(); }
@@ -2643,6 +2637,20 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedToNumber(Node* value,
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceToNumberOperation(
       value, effect, control, slot);
+  if (early_reduction.Changed()) {
+    ApplyEarlyReduction(early_reduction);
+    return early_reduction.replacement();
+  }
+  return nullptr;
+}
+
+Node* BytecodeGraphBuilder::TryBuildSimplifiedToPrimitiveToString(
+    Node* value, FeedbackSlot slot) {
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  Reduction early_reduction =
+      type_hint_lowering().ReduceToPrimitiveToStringOperation(value, effect,
+                                                              control, slot);
   if (early_reduction.Changed()) {
     ApplyEarlyReduction(early_reduction);
     return early_reduction.replacement();

@@ -229,7 +229,6 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_INTERPRETER(F)      \
   FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F)      \
   F(InterpreterNewClosure, 4, 1)               \
-  F(InterpreterStringConcat, -1 /* >= 2 */, 1) \
   F(InterpreterAdvanceBytecodeOffset, 2, 1)
 
 #define FOR_EACH_INTRINSIC_FUNCTION(F)     \
@@ -341,7 +340,6 @@ namespace internal {
   F(ThrowNotConstructor, 1, 1)                     \
   F(ThrowRangeError, -1 /* >= 1 */, 1)             \
   F(ThrowReferenceError, 1, 1)                     \
-  F(ThrowReferenceErrorOnHole, 1, 1)               \
   F(ThrowStackOverflow, 0, 1)                      \
   F(ThrowSymbolAsyncIteratorInvalid, 0, 1)         \
   F(ThrowTypeError, -1 /* >= 1 */, 1)              \
@@ -542,6 +540,7 @@ namespace internal {
   F(StringLastIndexOf, 2, 1)              \
   F(SubString, 3, 1)                      \
   F(StringAdd, 2, 1)                      \
+  F(StringConcat, -1 /* >= 2 */, 1)       \
   F(InternalizeString, 1, 1)              \
   F(StringCharCodeAtRT, 2, 1)             \
   F(StringCompare, 2, 1)                  \

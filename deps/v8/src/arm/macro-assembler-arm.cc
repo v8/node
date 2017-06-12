@@ -1778,7 +1778,6 @@ void MacroAssembler::InvokeFunction(Register fun,
   ldr(expected_reg,
       FieldMemOperand(temp_reg,
                       SharedFunctionInfo::kFormalParameterCountOffset));
-  SmiUntag(expected_reg);
 
   ParameterCount expected(expected_reg);
   InvokeFunctionCode(fun, new_target, expected, actual, flag, call_wrapper);
@@ -2795,6 +2794,17 @@ void MacroAssembler::AssertSmi(Register object) {
   }
 }
 
+void MacroAssembler::AssertFixedArray(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    tst(object, Operand(kSmiTagMask));
+    Check(ne, kOperandIsASmiAndNotAFixedArray);
+    push(object);
+    CompareObjectType(object, object, object, FIXED_ARRAY_TYPE);
+    pop(object);
+    Check(eq, kOperandIsNotAFixedArray);
+  }
+}
 
 void MacroAssembler::AssertFunction(Register object) {
   if (emit_debug_code()) {

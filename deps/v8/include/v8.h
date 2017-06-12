@@ -4262,12 +4262,26 @@ class V8_EXPORT ArrayBuffer : public Object {
    */
   class V8_EXPORT Contents { // NOLINT
    public:
-    Contents() : data_(NULL), byte_length_(0) {}
+    Contents()
+        : allocation_base_(nullptr),
+          allocation_length_(0),
+          allocation_mode_(Allocator::AllocationMode::kNormal),
+          data_(nullptr),
+          byte_length_(0) {}
+
+    void* AllocationBase() const { return allocation_base_; }
+    size_t AllocationLength() const { return allocation_length_; }
+    Allocator::AllocationMode AllocationMode() const {
+      return allocation_mode_;
+    }
 
     void* Data() const { return data_; }
     size_t ByteLength() const { return byte_length_; }
 
    private:
+    void* allocation_base_;
+    size_t allocation_length_;
+    Allocator::AllocationMode allocation_mode_;
     void* data_;
     size_t byte_length_;
 
@@ -4618,12 +4632,26 @@ class V8_EXPORT SharedArrayBuffer : public Object {
    */
   class V8_EXPORT Contents {  // NOLINT
    public:
-    Contents() : data_(NULL), byte_length_(0) {}
+    Contents()
+        : allocation_base_(nullptr),
+          allocation_length_(0),
+          allocation_mode_(ArrayBuffer::Allocator::AllocationMode::kNormal),
+          data_(nullptr),
+          byte_length_(0) {}
+
+    void* AllocationBase() const { return allocation_base_; }
+    size_t AllocationLength() const { return allocation_length_; }
+    ArrayBuffer::Allocator::AllocationMode AllocationMode() const {
+      return allocation_mode_;
+    }
 
     void* Data() const { return data_; }
     size_t ByteLength() const { return byte_length_; }
 
    private:
+    void* allocation_base_;
+    size_t allocation_length_;
+    ArrayBuffer::Allocator::Allocator::AllocationMode allocation_mode_;
     void* data_;
     size_t byte_length_;
 
@@ -6209,7 +6237,7 @@ typedef void (*FailedAccessCheckCallback)(Local<Object> target,
  */
 typedef bool (*AllowCodeGenerationFromStringsCallback)(Local<Context> context);
 
-// --- WASM compilation callbacks ---
+// --- WebAssembly compilation callbacks ---
 typedef bool (*ExtensionCallback)(const FunctionCallbackInfo<Value>&);
 
 // --- Callback for APIs defined on v8-supported objects, but implemented
@@ -10041,8 +10069,8 @@ uint32_t Isolate::GetNumberOfDataSlots() {
 
 int64_t Isolate::AdjustAmountOfExternalAllocatedMemory(
     int64_t change_in_bytes) {
-  const int64_t kMemoryReducerActivationLimit = 1024 * 1024;
   typedef internal::Internals I;
+  const int64_t kMemoryReducerActivationLimit = 32 * 1024 * 1024;
   int64_t* external_memory = reinterpret_cast<int64_t*>(
       reinterpret_cast<uint8_t*>(this) + I::kExternalMemoryOffset);
   int64_t* external_memory_limit = reinterpret_cast<int64_t*>(

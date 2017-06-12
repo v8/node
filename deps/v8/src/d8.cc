@@ -1196,6 +1196,13 @@ void Shell::Read(const v8::FunctionCallbackInfo<v8::Value>& args) {
     Throw(args.GetIsolate(), "Error loading file");
     return;
   }
+  if (args.Length() == 2) {
+    String::Utf8Value format(args[1]);
+    if (*format && std::strcmp(*format, "binary") == 0) {
+      ReadBuffer(args);
+      return;
+    }
+  }
   Local<String> source = ReadFile(args.GetIsolate(), *file);
   if (source.IsEmpty()) {
     Throw(args.GetIsolate(), "Error loading file");
@@ -1415,10 +1422,11 @@ void Shell::ReportException(Isolate* isolate, v8::TryCatch* try_catch) {
     // print the exception.
     printf("%s\n", exception_string);
   } else if (message->GetScriptOrigin().Options().IsWasm()) {
-    // Print <WASM>[(function index)]((function name))+(offset): (message).
+    // Print wasm-function[(function index)]:(offset): (message).
     int function_index = message->GetLineNumber(context).FromJust() - 1;
     int offset = message->GetStartColumn(context).FromJust();
-    printf("<WASM>[%d]+%d: %s\n", function_index, offset, exception_string);
+    printf("wasm-function[%d]:%d: %s\n", function_index, offset,
+           exception_string);
   } else {
     // Print (filename):(line number): (message).
     v8::String::Utf8Value filename(message->GetScriptOrigin().ResourceName());

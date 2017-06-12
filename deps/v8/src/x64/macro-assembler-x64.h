@@ -817,10 +817,6 @@ class MacroAssembler: public Assembler {
   // Move if the registers are not identical.
   void Move(Register target, Register source);
 
-  void LoadSharedFunctionInfoSpecialField(Register dst,
-                                          Register base,
-                                          int offset);
-
   // Handle support
   void Move(Register dst, Handle<Object> source);
   void Move(const Operand& dst, Handle<Object> source);
@@ -1148,6 +1144,9 @@ class MacroAssembler: public Assembler {
   // Abort execution if argument is not a smi, enabled via --debug-code.
   void AssertSmi(Register object);
   void AssertSmi(const Operand& object);
+
+  // Abort execution if argument is not a FixedArray, enabled via --debug-code.
+  void AssertFixedArray(Register object);
 
   // Abort execution if a 64 bit register containing a 32 bit payload does not
   // have zeros in the top 32 bits, enabled via --debug-code.

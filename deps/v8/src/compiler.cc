@@ -12,6 +12,7 @@
 #include "src/ast/ast-numbering.h"
 #include "src/ast/prettyprinter.h"
 #include "src/ast/scopes.h"
+#include "src/base/optional.h"
 #include "src/bootstrapper.h"
 #include "src/codegen.h"
 #include "src/compilation-cache.h"
@@ -623,9 +624,9 @@ bool CompileUnoptimizedCode(CompilationInfo* info,
 
   Compiler::EagerInnerFunctionLiterals inner_literals;
   {
-    std::unique_ptr<CompilationHandleScope> compilation_handle_scope;
+    base::Optional<CompilationHandleScope> compilation_handle_scope;
     if (inner_function_mode == Compiler::CONCURRENT) {
-      compilation_handle_scope.reset(new CompilationHandleScope(info));
+      compilation_handle_scope.emplace(info);
     }
     if (!Compiler::Analyze(info, &inner_literals)) {
       if (!isolate->has_pending_exception()) isolate->StackOverflow();
@@ -899,26 +900,24 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
   VMState<COMPILER> state(isolate);
   DCHECK(!isolate->has_pending_exception());
   PostponeInterruptsScope postpone(isolate);
-  bool use_turbofan = UseTurboFan(shared) || ignition_osr;
   bool has_script = shared->script()->IsScript();
   // BUG(5946): This DCHECK is necessary to make certain that we won't tolerate
   // the lack of a script without bytecode.
   DCHECK_IMPLIES(!has_script, ShouldUseIgnition(shared, false));
   std::unique_ptr<CompilationJob> job(
-      use_turbofan ? compiler::Pipeline::NewCompilationJob(function, has_script)
-                   : new HCompilationJob(function));
+      compiler::Pipeline::NewCompilationJob(function, has_script));
   CompilationInfo* info = job->info();
   ParseInfo* parse_info = info->parse_info();
 
   info->SetOptimizingForOsr(osr_ast_id, osr_frame);
 
-  // Do not use Crankshaft/TurboFan if we need to be able to set break points.
+  // Do not use TurboFan if we need to be able to set break points.
   if (info->shared_info()->HasBreakInfo()) {
     info->AbortOptimization(kFunctionBeingDebugged);
     return MaybeHandle<Code>();
   }
 
-  // Do not use Crankshaft/TurboFan when %NeverOptimizeFunction was applied.
+  // Do not use TurboFan when %NeverOptimizeFunction was applied.
   if (shared->optimization_disabled() &&
       shared->disable_optimization_reason() == kOptimizationDisabledForTest) {
     info->AbortOptimization(kOptimizationDisabledForTest);
@@ -933,12 +932,18 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
     return MaybeHandle<Code>();
   }
 
+  // Do not use TurboFan if activation criteria are not met.
+  if (!UseTurboFan(shared) && !ignition_osr) {
+    info->AbortOptimization(kOptimizationDisabled);
+    return MaybeHandle<Code>();
+  }
+
   TimerEventScope<TimerEventOptimizeCode> optimize_code_timer(isolate);
   RuntimeCallTimerScope runtimeTimer(isolate, &RuntimeCallStats::OptimizeCode);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.OptimizeCode");
 
   // TurboFan can optimize directly from existing bytecode.
-  if (use_turbofan && ShouldUseIgnition(info)) {
+  if (ShouldUseIgnition(info)) {
     DCHECK(shared->HasBytecodeArray());
     info->MarkAsOptimizeFromBytecode();
   }
@@ -956,14 +961,13 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
   // In case of concurrent recompilation, all handles below this point will be
   // allocated in a deferred handle scope that is detached and handed off to
   // the background thread when we return.
-  std::unique_ptr<CompilationHandleScope> compilation;
+  base::Optional<CompilationHandleScope> compilation;
   if (mode == Compiler::CONCURRENT) {
-    compilation.reset(new CompilationHandleScope(info));
+    compilation.emplace(info);
   }
 
-  // In case of TurboFan, all handles below will be canonicalized.
-  std::unique_ptr<CanonicalHandleScope> canonical;
-  if (use_turbofan) canonical.reset(new CanonicalHandleScope(info->isolate()));
+  // All handles below will be canonicalized.
+  CanonicalHandleScope canonical(info->isolate());
 
   // Reopen handles in the new CompilationHandleScope.
   info->ReopenHandlesInNewHandleScope();

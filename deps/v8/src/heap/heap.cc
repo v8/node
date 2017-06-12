@@ -1542,8 +1542,6 @@ void Heap::MarkCompactPrologue() {
 
   isolate_->compilation_cache()->MarkCompactPrologue();
 
-  CompletelyClearInstanceofCache();
-
   FlushNumberStringCache();
   ClearNormalizedMapCaches();
 }
@@ -2729,10 +2727,6 @@ void Heap::CreateInitialObjects() {
   // expanding the dictionary during bootstrapping.
   set_code_stubs(*UnseededNumberDictionary::New(isolate(), 128));
 
-  set_instanceof_cache_function(Smi::kZero);
-  set_instanceof_cache_map(Smi::kZero);
-  set_instanceof_cache_answer(Smi::kZero);
-
   {
     HandleScope scope(isolate());
 #define SYMBOL_INIT(name)                                              \
@@ -2871,10 +2865,6 @@ void Heap::CreateInitialObjects() {
   cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
   set_array_buffer_neutering_protector(*cell);
 
-  cell = factory->NewPropertyCell();
-  cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
-  set_hole_check_protector(*cell);
-
   set_serialized_templates(empty_fixed_array());
   set_serialized_global_proxy_sizes(empty_fixed_array());
 
@@ -2931,9 +2921,6 @@ void Heap::CreateInitialObjects() {
 bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
   switch (root_index) {
     case kNumberStringCacheRootIndex:
-    case kInstanceofCacheFunctionRootIndex:
-    case kInstanceofCacheMapRootIndex:
-    case kInstanceofCacheAnswerRootIndex:
     case kCodeStubsRootIndex:
     case kScriptListRootIndex:
     case kMaterializedObjectsRootIndex:

@@ -1414,9 +1414,6 @@ void MacroAssembler::InvokeFunction(Register fun, Register new_target,
   LoadW(expected_reg,
         FieldMemOperand(temp_reg,
                         SharedFunctionInfo::kFormalParameterCountOffset));
-#if !defined(V8_TARGET_ARCH_S390X)
-  SmiUntag(expected_reg);
-#endif
 
   ParameterCount expected(expected_reg);
   InvokeFunctionCode(fun, new_target, expected, actual, flag, call_wrapper);
@@ -2374,6 +2371,18 @@ void MacroAssembler::AssertSmi(Register object) {
     STATIC_ASSERT(kSmiTag == 0);
     TestIfSmi(object);
     Check(eq, kOperandIsNotSmi, cr0);
+  }
+}
+
+void MacroAssembler::AssertFixedArray(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    TestIfSmi(object);
+    Check(ne, kOperandIsASmiAndNotAFixedArray, cr0);
+    push(object);
+    CompareObjectType(object, object, object, FIXED_ARRAY_TYPE);
+    pop(object);
+    Check(eq, kOperandIsNotAFixedArray);
   }
 }
 

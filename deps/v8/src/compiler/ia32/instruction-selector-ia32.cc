@@ -247,9 +247,6 @@ void InstructionSelector::VisitLoad(Node* node) {
       break;
     case MachineRepresentation::kWord64:   // Fall through.
     case MachineRepresentation::kSimd128:  // Fall through.
-    case MachineRepresentation::kSimd1x4:  // Fall through.
-    case MachineRepresentation::kSimd1x8:  // Fall through.
-    case MachineRepresentation::kSimd1x16:  // Fall through.
     case MachineRepresentation::kNone:
       UNREACHABLE();
       return;
@@ -340,9 +337,6 @@ void InstructionSelector::VisitStore(Node* node) {
         break;
       case MachineRepresentation::kWord64:   // Fall through.
       case MachineRepresentation::kSimd128:  // Fall through.
-      case MachineRepresentation::kSimd1x4:  // Fall through.
-      case MachineRepresentation::kSimd1x8:  // Fall through.
-      case MachineRepresentation::kSimd1x16:  // Fall through.
       case MachineRepresentation::kNone:
         UNREACHABLE();
         return;
@@ -410,9 +404,6 @@ void InstructionSelector::VisitCheckedLoad(Node* node) {
     case MachineRepresentation::kTagged:         // Fall through.
     case MachineRepresentation::kWord64:         // Fall through.
     case MachineRepresentation::kSimd128:        // Fall through.
-    case MachineRepresentation::kSimd1x4:        // Fall through.
-    case MachineRepresentation::kSimd1x8:        // Fall through.
-    case MachineRepresentation::kSimd1x16:       // Fall through.
     case MachineRepresentation::kNone:
       UNREACHABLE();
       return;
@@ -486,9 +477,6 @@ void InstructionSelector::VisitCheckedStore(Node* node) {
     case MachineRepresentation::kTagged:         // Fall through.
     case MachineRepresentation::kWord64:         // Fall through.
     case MachineRepresentation::kSimd128:        // Fall through.
-    case MachineRepresentation::kSimd1x4:        // Fall through.
-    case MachineRepresentation::kSimd1x8:        // Fall through.
-    case MachineRepresentation::kSimd1x16:       // Fall through.
     case MachineRepresentation::kNone:
       UNREACHABLE();
       return;
@@ -1918,10 +1906,16 @@ void InstructionSelector::VisitI32x4ExtractLane(Node* node) {
 
 void InstructionSelector::VisitI32x4ReplaceLane(Node* node) {
   IA32OperandGenerator g(this);
-  int32_t lane = OpParameter<int32_t>(node);
-  Emit(kIA32I32x4ReplaceLane, g.DefineSameAsFirst(node),
-       g.UseRegister(node->InputAt(0)), g.UseImmediate(lane),
-       g.Use(node->InputAt(1)));
+  InstructionOperand operand0 = g.UseRegister(node->InputAt(0));
+  InstructionOperand operand1 = g.UseImmediate(OpParameter<int32_t>(node));
+  InstructionOperand operand2 = g.Use(node->InputAt(1));
+  if (IsSupported(AVX)) {
+    Emit(kAVXI32x4ReplaceLane, g.DefineAsRegister(node), operand0, operand1,
+         operand2);
+  } else {
+    Emit(kSSEI32x4ReplaceLane, g.DefineSameAsFirst(node), operand0, operand1,
+         operand2);
+  }
 }
 
 void InstructionSelector::VisitInt32AbsWithOverflow(Node* node) {
