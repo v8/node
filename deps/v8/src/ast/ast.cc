@@ -694,10 +694,6 @@ bool ObjectLiteral::IsFastCloningSupported() const {
              ConstructorBuiltins::kMaximumClonedShallowObjectProperties;
 }
 
-ElementsKind ArrayLiteral::constant_elements_kind() const {
-  return static_cast<ElementsKind>(constant_elements()->elements_kind());
-}
-
 void ArrayLiteral::InitDepthAndFlags() {
   DCHECK_LT(first_spread_index_, 0);
 
@@ -1140,7 +1136,7 @@ void CaseClause::AssignFeedbackSlots(FeedbackVectorSpec* spec,
 
 uint32_t Literal::Hash() {
   return raw_value()->IsString()
-             ? raw_value()->AsString()->hash()
+             ? raw_value()->AsString()->Hash()
              : ComputeLongHash(double_to_uint64(raw_value()->AsNumber()));
 }
 

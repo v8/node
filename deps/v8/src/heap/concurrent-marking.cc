@@ -52,7 +52,7 @@ class ConcurrentMarkingVisitor final
       : deque_(deque) {}
 
   bool ShouldVisit(HeapObject* object) override {
-    return ObjectMarking::GreyToBlack<MarkBit::AccessMode::ATOMIC>(
+    return ObjectMarking::GreyToBlack<AccessMode::ATOMIC>(
         object, marking_state(object));
   }
 
@@ -168,8 +168,15 @@ class ConcurrentMarkingVisitor final
   }
 
   void MarkObject(HeapObject* object) {
-    if (ObjectMarking::WhiteToGrey<MarkBit::AccessMode::ATOMIC>(
-            object, marking_state(object))) {
+#ifdef THREAD_SANITIZER
+    // Perform a dummy acquire load to tell TSAN that there is no data race
+    // in mark-bit initialization. See MemoryChunk::Initialize for the
+    // corresponding release store.
+    MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
+    CHECK_NOT_NULL(chunk->synchronized_heap());
+#endif
+    if (ObjectMarking::WhiteToGrey<AccessMode::ATOMIC>(object,
+                                                       marking_state(object))) {
       deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kShared);
     }
   }
@@ -266,7 +273,8 @@ void ConcurrentMarking::Run() {
       if (new_space_top <= addr && addr < new_space_limit) {
         deque_->Push(object, MarkingThread::kConcurrent, TargetDeque::kBailout);
       } else {
-        bytes_marked += visitor_->Visit(object);
+        Map* map = object->synchronized_map();
+        bytes_marked += visitor_->Visit(map, object);
       }
     }
   }

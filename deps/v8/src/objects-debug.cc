@@ -484,7 +484,6 @@ void JSArgumentsObject::JSArgumentsObjectVerify() {
 
 void JSSloppyArgumentsObject::JSSloppyArgumentsObjectVerify() {
   Isolate* isolate = GetIsolate();
-  if (!map()->is_dictionary_map()) VerifyObjectField(kCalleeOffset);
   if (isolate->IsInAnyContext(map(), Context::SLOPPY_ARGUMENTS_MAP_INDEX) ||
       isolate->IsInAnyContext(map(),
                               Context::SLOW_ALIASED_ARGUMENTS_MAP_INDEX) ||
@@ -688,11 +687,14 @@ void JSBoundFunction::JSBoundFunctionVerify() {
   VerifyObjectField(kBoundThisOffset);
   VerifyObjectField(kBoundTargetFunctionOffset);
   VerifyObjectField(kBoundArgumentsOffset);
-  CHECK(bound_target_function()->IsCallable());
   CHECK(IsCallable());
-  CHECK_EQ(IsConstructor(), bound_target_function()->IsConstructor());
-}
 
+  Isolate* const isolate = GetIsolate();
+  if (!raw_bound_target_function()->IsUndefined(isolate)) {
+    CHECK(bound_target_function()->IsCallable());
+    CHECK_EQ(IsConstructor(), bound_target_function()->IsConstructor());
+  }
+}
 
 void JSFunction::JSFunctionVerify() {
   CHECK(IsJSFunction());
@@ -728,6 +730,9 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
 
   CHECK(function_identifier()->IsUndefined(isolate) || HasBuiltinFunctionId() ||
         HasInferredName());
+
+  int expected_map_index = Context::FunctionMapIndex(language_mode(), kind());
+  CHECK_EQ(expected_map_index, function_map_index());
 
   if (scope_info()->length() > 0) {
     CHECK(kind() == scope_info()->function_kind());

@@ -627,8 +627,7 @@ Node* InterpreterAssembler::CallJSWithFeedback(
     GotoIf(is_megamorphic, &call);
 
     Comment("check if it is an allocation site");
-    GotoIfNot(IsAllocationSiteMap(LoadMap(feedback_element)),
-              &check_initialized);
+    GotoIfNot(IsAllocationSite(feedback_element), &check_initialized);
 
     if (receiver_mode == ConvertReceiverMode::kNullOrUndefined) {
       // For undefined receivers (mostly global calls), do an additional check
@@ -1254,8 +1253,8 @@ Node* InterpreterAssembler::TruncateTaggedToWord32WithFeedback(
         BIND(&if_valueisnotoddball);
         {
           // Convert the {value} to a Number first.
-          Callable callable = CodeFactory::NonNumberToNumber(isolate());
-          var_value.Bind(CallStub(callable, context, value));
+          var_value.Bind(
+              CallBuiltin(Builtins::kNonNumberToNumber, context, value));
           var_type_feedback->Bind(SmiConstant(BinaryOperationFeedback::kAny));
           Goto(&loop);
         }

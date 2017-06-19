@@ -55,34 +55,34 @@ class ObjectMarking : public AllStatic {
     return Marking::Color(ObjectMarking::MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool IsImpossible(HeapObject* obj,
                                      const MarkingState& state) {
     return Marking::IsImpossible<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool IsBlack(HeapObject* obj, const MarkingState& state) {
     return Marking::IsBlack<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool IsWhite(HeapObject* obj, const MarkingState& state) {
     return Marking::IsWhite<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool IsGrey(HeapObject* obj, const MarkingState& state) {
     return Marking::IsGrey<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool IsBlackOrGrey(HeapObject* obj,
                                       const MarkingState& state) {
     return Marking::IsBlackOrGrey<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool BlackToGrey(HeapObject* obj,
                                     const MarkingState& state) {
     MarkBit markbit = MarkBitFrom(obj, state);
@@ -91,20 +91,20 @@ class ObjectMarking : public AllStatic {
     return true;
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool WhiteToGrey(HeapObject* obj,
                                     const MarkingState& state) {
     return Marking::WhiteToGrey<access_mode>(MarkBitFrom(obj, state));
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool WhiteToBlack(HeapObject* obj,
                                      const MarkingState& state) {
     return ObjectMarking::WhiteToGrey<access_mode>(obj, state) &&
            ObjectMarking::GreyToBlack<access_mode>(obj, state);
   }
 
-  template <MarkBit::AccessMode access_mode = MarkBit::NON_ATOMIC>
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   V8_INLINE static bool GreyToBlack(HeapObject* obj,
                                     const MarkingState& state) {
     MarkBit markbit = MarkBitFrom(obj, state);
@@ -192,17 +192,21 @@ class LiveObjectIterator BASE_EMBEDDED {
       : chunk_(chunk),
         it_(chunk_, state),
         cell_base_(it_.CurrentCellBase()),
-        current_cell_(*it_.CurrentCell()) {}
+        current_cell_(*it_.CurrentCell()),
+        one_word_filler_map_(chunk->heap()->one_pointer_filler_map()),
+        two_word_filler_map_(chunk->heap()->two_pointer_filler_map()),
+        free_space_map_(chunk->heap()->free_space_map()) {}
 
-  HeapObject* Next();
+  V8_INLINE HeapObject* Next();
 
  private:
-  inline Heap* heap() { return chunk_->heap(); }
-
-  MemoryChunk* chunk_;
+  MemoryChunk* const chunk_;
   MarkBitCellIterator it_;
   Address cell_base_;
   MarkBit::CellType current_cell_;
+  Map* const one_word_filler_map_;
+  Map* const two_word_filler_map_;
+  Map* const free_space_map_;
 };
 
 class LiveObjectVisitor BASE_EMBEDDED {
@@ -414,7 +418,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     }
 
     Page* GetSweepingPageSafe(AllocationSpace space);
-    void AddSweepingPageSafe(AllocationSpace space, Page* page);
 
     void PrepareToBeSweptPage(AllocationSpace space, Page* page);
 

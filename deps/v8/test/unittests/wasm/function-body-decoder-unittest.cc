@@ -210,10 +210,8 @@ class TestModuleEnv : public ModuleEnv {
     mod.functions.push_back({sig,      // sig
                              0,        // func_index
                              0,        // sig_index
-                             0,        // name_offset
-                             0,        // name_length
-                             0,        // code_start_offset
-                             0,        // code_end_offset
+                             {0, 0},   // name
+                             {0, 0},   // code
                              false,    // import
                              false});  // export
     CHECK(mod.functions.size() <= 127);
@@ -2627,8 +2625,6 @@ TEST_F(WasmOpcodeLengthTest, SimdExpressions) {
   EXPECT_LENGTH_N(3, kSimdPrefix, static_cast<byte>(kExpr##name & 0xff));
   FOREACH_SIMD_1_OPERAND_OPCODE(TEST_SIMD)
 #undef TEST_SIMD
-  EXPECT_LENGTH_N(6, kSimdPrefix, static_cast<byte>(kExprS32x4Shuffle & 0xff));
-  EXPECT_LENGTH_N(10, kSimdPrefix, static_cast<byte>(kExprS16x8Shuffle & 0xff));
   EXPECT_LENGTH_N(18, kSimdPrefix, static_cast<byte>(kExprS8x16Shuffle & 0xff));
 #undef TEST_SIMD
   // test for bad simd opcode

@@ -4,10 +4,13 @@
 
 #include <src/wasm/module-compiler.h>
 
-#include <src/counters.h>
+#include <atomic>
+
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
+#include "src/counters.h"
 #include "src/property-descriptor.h"
+#include "src/wasm/compilation-manager.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-module.h"
@@ -133,12 +136,6 @@ size_t ModuleCompiler::InitializeParallelCompilation(
   return funcs_to_compile;
 }
 
-void ModuleCompiler::InitializeHandles() {
-  for (auto& unit : compilation_units_) {
-    unit->InitializeHandles();
-  }
-}
-
 uint32_t* ModuleCompiler::StartCompilationTasks() {
   num_background_tasks_ =
       Min(static_cast<size_t>(FLAG_wasm_num_compilation_tasks),
@@ -223,7 +220,6 @@ void ModuleCompiler::CompileInParallel(ModuleBytesEnv* module_env,
   // 1) The main thread allocates a compilation unit for each wasm function
   //    and stores them in the vector {compilation_units}.
   InitializeParallelCompilation(module->functions, *module_env);
-  InitializeHandles();
 
   // Objects for the synchronization with the background threads.
   base::AtomicNumber<size_t> next_unit(
@@ -285,8 +281,8 @@ void ModuleCompiler::ValidateSequentially(ModuleBytesEnv* module_env,
     if (func.imported) continue;
 
     const byte* base = module_env->wire_bytes.start();
-    FunctionBody body{func.sig, base, base + func.code_start_offset,
-                      base + func.code_end_offset};
+    FunctionBody body{func.sig, base, base + func.code.offset(),
+                      base + func.code.end_offset()};
     DecodeResult result = VerifyWasmCode(isolate_->allocator(),
                                          module_env->module_env.module, body);
     if (result.failed()) {
@@ -398,7 +394,6 @@ Handle<Script> CreateWasmScript(Isolate* isolate,
   return script;
 }
 
-// Ensure that the code object in <code_table> at offset <func_index> has
 // Ensure that the code object in <code_table> at offset <func_index> has
 // deoptimization data attached. This is needed for lazy compile stubs which are
 // called from JS_TO_WASM functions or via exported function tables. The deopt
@@ -931,7 +926,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
         memory_.is_null()
             ? 0
             : static_cast<uint32_t>(memory_->byte_length()->Number());
-    if (!in_bounds(base, seg.source_size, mem_size)) {
+    if (!in_bounds(base, seg.source.length(), mem_size)) {
       thrower_->LinkError("data segment is out of bounds");
       return {};
     }
@@ -1204,7 +1199,7 @@ void InstanceBuilder::LoadDataSegments(Address mem_addr, size_t mem_size) {
   Handle<SeqOneByteString> module_bytes(compiled_module_->module_bytes(),
                                         isolate_);
   for (const WasmDataSegment& segment : module_->data_segments) {
-    uint32_t source_size = segment.source_size;
+    uint32_t source_size = segment.source.length();
     // Segments of size == 0 are just nops.
     if (source_size == 0) continue;
     uint32_t dest_offset = EvalUint32InitExpr(segment.dest_addr);
@@ -1212,7 +1207,7 @@ void InstanceBuilder::LoadDataSegments(Address mem_addr, size_t mem_size) {
         in_bounds(dest_offset, source_size, static_cast<uint32_t>(mem_size)));
     byte* dest = mem_addr + dest_offset;
     const byte* src = reinterpret_cast<const byte*>(
-        module_bytes->GetCharsAddress() + segment.source_offset);
+        module_bytes->GetCharsAddress() + segment.source.offset());
     memcpy(dest, src, source_size);
   }
 }
@@ -1255,15 +1250,13 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
     Handle<String> module_name;
     MaybeHandle<String> maybe_module_name =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate_, compiled_module_, import.module_name_offset,
-            import.module_name_length);
+            isolate_, compiled_module_, import.module_name);
     if (!maybe_module_name.ToHandle(&module_name)) return -1;
 
     Handle<String> import_name;
     MaybeHandle<String> maybe_import_name =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate_, compiled_module_, import.field_name_offset,
-            import.field_name_length);
+            isolate_, compiled_module_, import.field_name);
     if (!maybe_import_name.ToHandle(&import_name)) return -1;
 
     MaybeHandle<Object> result =
@@ -1554,10 +1547,9 @@ void InstanceBuilder::ProcessExports(
   // Process each export in the export table.
   int export_index = 0;  // Index into {weak_exported_functions}.
   for (WasmExport& exp : module_->export_table) {
-    Handle<String> name =
-        WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate_, compiled_module_, exp.name_offset, exp.name_length)
-            .ToHandleChecked();
+    Handle<String> name = WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
+                              isolate_, compiled_module_, exp.name)
+                              .ToHandleChecked();
     Handle<JSObject> export_to;
     if (module_->is_asm_js() && exp.kind == kExternalFunction &&
         String::Equals(name, single_function_name)) {
@@ -1581,8 +1573,7 @@ void InstanceBuilder::ProcessExports(
           if (module_->is_asm_js()) {
             // For modules arising from asm.js, honor the names section.
             func_name = WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-                            isolate_, compiled_module_, function.name_offset,
-                            function.name_length)
+                            isolate_, compiled_module_, function.name)
                             .ToHandleChecked();
           }
           js_function = WasmExportedFunction::New(
@@ -1804,8 +1795,7 @@ void InstanceBuilder::LoadTableSegments(Handle<FixedArray> code_table,
             if (module_->is_asm_js()) {
               // For modules arising from asm.js, honor the names section.
               func_name = WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-                              isolate_, compiled_module_, function->name_offset,
-                              function->name_length)
+                              isolate_, compiled_module_, function->name)
                               .ToHandleChecked();
             }
             Handle<WasmExportedFunction> js_function =
@@ -1865,6 +1855,7 @@ void AsyncCompileJob::Start() {
 }
 
 AsyncCompileJob::~AsyncCompileJob() {
+  background_task_manager_.CancelAndWait();
   for (auto d : deferred_handles_) delete d;
 }
 
@@ -1874,72 +1865,95 @@ void AsyncCompileJob::ReopenHandlesInDeferredScope() {
   signature_tables_ = handle(*signature_tables_, isolate_);
   code_table_ = handle(*code_table_, isolate_);
   temp_instance_->ReopenHandles(isolate_);
-  compiler_->InitializeHandles();
   deferred_handles_.push_back(deferred.Detach());
 }
 
 void AsyncCompileJob::AsyncCompileFailed(ErrorThrower& thrower) {
   RejectPromise(isolate_, context_, thrower, module_promise_);
-  // The AsyncCompileJob is finished, we resolved the promise, we do not need
-  // the data anymore. We can delete the AsyncCompileJob object.
-  delete this;
+  isolate_->wasm_compilation_manager()->RemoveJob(this);
 }
 
 void AsyncCompileJob::AsyncCompileSucceeded(Handle<Object> result) {
   ResolvePromise(isolate_, context_, module_promise_, result);
-  // The AsyncCompileJob is finished, we resolved the promise, we do not need
-  // the data anymore. We can delete the AsyncCompileJob object.
-  delete this;
+  isolate_->wasm_compilation_manager()->RemoveJob(this);
 }
 
 // A closure to run a compilation step (either as foreground or background
 // task) and schedule the next step(s), if any.
-class AsyncCompileJob::CompileTask : NON_EXPORTED_BASE(public v8::Task) {
+class AsyncCompileJob::CompileState {
  public:
-  AsyncCompileJob* job_ = nullptr;
-  CompileTask() {}
-  void Run() override = 0;  // Force sub-classes to override Run().
-};
+  virtual ~CompileState() {}
 
-class AsyncCompileJob::AsyncCompileTask : public AsyncCompileJob::CompileTask {
-};
-
-class AsyncCompileJob::SyncCompileTask : public AsyncCompileJob::CompileTask {
- public:
-  void Run() final {
-    SaveContext saved_context(job_->isolate_);
-    job_->isolate_->set_context(*job_->context_);
-    RunImpl();
+  void Run(bool on_foreground) {
+    if (on_foreground) {
+      DCHECK_EQ(1, job_->num_pending_foreground_tasks_--);
+      SaveContext saved_context(job_->isolate_);
+      job_->isolate_->set_context(*job_->context_);
+      RunInForeground();
+    } else {
+      RunInBackground();
+    }
   }
 
- protected:
-  virtual void RunImpl() = 0;
+  virtual void RunInForeground() { UNREACHABLE(); }
+  virtual void RunInBackground() { UNREACHABLE(); }
+
+  virtual size_t NumberOfBackgroundTasks() { return 0; }
+
+  AsyncCompileJob* job_ = nullptr;
 };
 
-template <typename Task, typename... Args>
-void AsyncCompileJob::DoSync(Args&&... args) {
-  static_assert(std::is_base_of<SyncCompileTask, Task>::value,
-                "Scheduled type must be sync");
-  Task* task = new Task(std::forward<Args>(args)...);
-  task->job_ = this;
+class AsyncCompileJob::CompileTask : public CancelableTask {
+ public:
+  CompileTask(AsyncCompileJob* job, bool on_foreground)
+      // We only manage the background tasks with the {CancelableTaskManager} of
+      // the {AsyncCompileJob}. Foreground tasks are managed by the system's
+      // {CancelableTaskManager}. Background tasks cannot spawn tasks managed by
+      // their own task manager.
+      : CancelableTask(on_foreground ? job->isolate_->cancelable_task_manager()
+                                     : &job->background_task_manager_),
+        job_(job),
+        on_foreground_(on_foreground) {}
+
+  void RunInternal() override { job_->state_->Run(on_foreground_); }
+
+ private:
+  AsyncCompileJob* job_;
+  bool on_foreground_;
+};
+
+void AsyncCompileJob::StartForegroundTask() {
+  DCHECK_EQ(0, num_pending_foreground_tasks_++);
+
   V8::GetCurrentPlatform()->CallOnForegroundThread(
-      reinterpret_cast<v8::Isolate*>(isolate_), task);
+      reinterpret_cast<v8::Isolate*>(isolate_), new CompileTask(this, true));
 }
 
-template <typename Task, typename... Args>
-void AsyncCompileJob::DoAsync(Args&&... args) {
-  static_assert(std::is_base_of<AsyncCompileTask, Task>::value,
-                "Scheduled type must be async");
-  Task* task = new Task(std::forward<Args>(args)...);
-  task->job_ = this;
-  V8::GetCurrentPlatform()->CallOnBackgroundThread(
-      task, v8::Platform::kShortRunningTask);
+template <typename State, typename... Args>
+void AsyncCompileJob::DoSync(Args&&... args) {
+  state_.reset(new State(std::forward<Args>(args)...));
+  state_->job_ = this;
+  StartForegroundTask();
 }
+
+template <typename State, typename... Args>
+void AsyncCompileJob::DoAsync(Args&&... args) {
+  state_.reset(new State(std::forward<Args>(args)...));
+  state_->job_ = this;
+  size_t end = state_->NumberOfBackgroundTasks();
+  for (size_t i = 0; i < end; ++i) {
+    V8::GetCurrentPlatform()->CallOnBackgroundThread(
+        new CompileTask(this, false), v8::Platform::kShortRunningTask);
+  }
+}
+
 //==========================================================================
 // Step 1: (async) Decode the module.
 //==========================================================================
-class AsyncCompileJob::DecodeModule : public AsyncCompileJob::AsyncCompileTask {
-  void Run() override {
+class AsyncCompileJob::DecodeModule : public AsyncCompileJob::CompileState {
+  size_t NumberOfBackgroundTasks() override { return 1; }
+
+  void RunInBackground() override {
     ModuleResult result;
     {
       DisallowHandleAllocation no_handle;
@@ -1964,13 +1978,13 @@ class AsyncCompileJob::DecodeModule : public AsyncCompileJob::AsyncCompileTask {
 //==========================================================================
 // Step 1b: (sync) Fail decoding the module.
 //==========================================================================
-class AsyncCompileJob::DecodeFail : public SyncCompileTask {
+class AsyncCompileJob::DecodeFail : public CompileState {
  public:
   explicit DecodeFail(ModuleResult result) : result_(std::move(result)) {}
 
  private:
   ModuleResult result_;
-  void RunImpl() override {
+  void RunInForeground() override {
     TRACE_COMPILE("(1b) Decoding failed.\n");
     HandleScope scope(job_->isolate_);
     ErrorThrower thrower(job_->isolate_, "AsyncCompile");
@@ -1983,14 +1997,14 @@ class AsyncCompileJob::DecodeFail : public SyncCompileTask {
 //==========================================================================
 // Step 2 (sync): Create heap-allocated data and start compile.
 //==========================================================================
-class AsyncCompileJob::PrepareAndStartCompile : public SyncCompileTask {
+class AsyncCompileJob::PrepareAndStartCompile : public CompileState {
  public:
   explicit PrepareAndStartCompile(std::unique_ptr<WasmModule> module)
       : module_(std::move(module)) {}
 
  private:
   std::unique_ptr<WasmModule> module_;
-  void RunImpl() override {
+  void RunInForeground() override {
     TRACE_COMPILE("(2) Prepare and start compile...\n");
     HandleScope scope(job_->isolate_);
 
@@ -2056,7 +2070,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public SyncCompileTask {
     }
 
     // Start asynchronous compilation tasks.
-    job_->num_background_tasks_ =
+    size_t num_background_tasks =
         Max(static_cast<size_t>(1),
             Min(num_functions,
                 Min(static_cast<size_t>(FLAG_wasm_num_compilation_tasks),
@@ -2069,23 +2083,28 @@ class AsyncCompileJob::PrepareAndStartCompile : public SyncCompileTask {
 
     // Reopen all handles which should survive in the DeferredHandleScope.
     job_->ReopenHandlesInDeferredScope();
-    for (size_t i = 0; i < job_->num_background_tasks_; ++i) {
-      job_->DoAsync<ExecuteCompilationUnits>();
-    }
+    job_->DoAsync<ExecuteAndFinishCompilationUnits>(num_background_tasks);
   }
 };
 
 //==========================================================================
 // Step 3 (async x K tasks): Execute compilation units.
 //==========================================================================
-class AsyncCompileJob::ExecuteCompilationUnits : public AsyncCompileTask {
-  void Run() override {
+class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileState {
+ public:
+  explicit ExecuteAndFinishCompilationUnits(size_t num_compile_tasks)
+      : num_compile_tasks_(num_compile_tasks) {}
+
+  size_t NumberOfBackgroundTasks() override { return num_compile_tasks_; }
+
+  void RunInBackground() override {
     std::function<void()> StartFinishCompilationUnit = [this]() {
-      job_->DoSync<FinishCompilationUnits>();
+      if (!failed_) job_->StartForegroundTask();
     };
 
     TRACE_COMPILE("(3) Compiling...\n");
     for (;;) {
+      if (failed_) break;
       DisallowHandleAllocation no_handle;
       DisallowHeapAllocation no_allocation;
       if (!job_->compiler_->FetchAndExecuteCompilationUnit(
@@ -2093,17 +2112,11 @@ class AsyncCompileJob::ExecuteCompilationUnits : public AsyncCompileTask {
         break;
       }
     }
-    job_->compiler_->module_->pending_tasks.get()->Signal();
   }
-};
 
-//==========================================================================
-// Step 4 (sync): Finish compilation units.
-//==========================================================================
-class AsyncCompileJob::FinishCompilationUnits : public SyncCompileTask {
-  void RunImpl() override {
+  void RunInForeground() override {
     TRACE_COMPILE("(4a) Finishing compilation units...\n");
-    if (job_->failed_) {
+    if (failed_) {
       // The job failed already, no need to do more work.
       job_->compiler_->SetFinisherIsRunning(false);
       return;
@@ -2123,7 +2136,7 @@ class AsyncCompileJob::FinishCompilationUnits : public SyncCompileTask {
       if (thrower.error()) {
         // An error was detected, we stop compiling and wait for the
         // background tasks to finish.
-        job_->failed_ = true;
+        failed_ = true;
         break;
       } else if (result.is_null()) {
         // The working queue was empty, we break the loop. If new work units
@@ -2140,74 +2153,35 @@ class AsyncCompileJob::FinishCompilationUnits : public SyncCompileTask {
         // We reached the deadline. We reschedule this task and return
         // immediately. Since we rescheduled this task already, we do not set
         // the FinisherIsRunning flat to false.
-        job_->DoSync<FinishCompilationUnits>();
+        job_->StartForegroundTask();
         return;
       }
     }
     // This task finishes without being rescheduled. Therefore we set the
     // FinisherIsRunning flag to false.
     job_->compiler_->SetFinisherIsRunning(false);
-    if (thrower.error() || job_->outstanding_units_ == 0) {
-      // All compilation units are done. We still need to wait for the
-      // background tasks to shut down and only then is it safe to finish the
-      // compile and delete this job. We can wait for that to happen also
-      // in a background task.
-      job_->DoAsync<WaitForBackgroundTasks>(std::move(thrower));
+    if (thrower.error()) {
+      // Make sure all compilation tasks stopped running.
+      job_->background_task_manager_.CancelAndWait();
+      return job_->AsyncCompileFailed(thrower);
     }
-  }
-};
-
-//==========================================================================
-// Step 4b (async): Wait for all background tasks to finish.
-//==========================================================================
-class AsyncCompileJob::WaitForBackgroundTasks
-    : public AsyncCompileJob::AsyncCompileTask {
- public:
-  explicit WaitForBackgroundTasks(ErrorThrower thrower)
-      : thrower_(std::move(thrower)) {}
-
- private:
-  ErrorThrower thrower_;
-
-  void Run() override {
-    TRACE_COMPILE("(4b) Waiting for background tasks...\n");
-    // Bump next_unit_, such that background tasks stop processing the queue.
-    job_->compiler_->next_unit_.SetValue(
-        job_->compiler_->compilation_units_.size());
-    for (size_t i = 0; i < job_->num_background_tasks_; ++i) {
-      // We wait for it to finish.
-      job_->compiler_->module_->pending_tasks.get()->Wait();
-    }
-    if (thrower_.error()) {
-      job_->DoSync<FailCompile>(std::move(thrower_));
-    } else {
+    if (job_->outstanding_units_ == 0) {
+      // Make sure all compilation tasks stopped running.
+      job_->background_task_manager_.CancelAndWait();
       job_->DoSync<FinishCompile>();
     }
   }
-};
-
-//==========================================================================
-// Step 5a (sync): Fail compilation (reject promise).
-//==========================================================================
-class AsyncCompileJob::FailCompile : public SyncCompileTask {
- public:
-  explicit FailCompile(ErrorThrower thrower) : thrower_(std::move(thrower)) {}
 
  private:
-  ErrorThrower thrower_;
-
-  void RunImpl() override {
-    TRACE_COMPILE("(5a) Fail compilation...\n");
-    HandleScope scope(job_->isolate_);
-    return job_->AsyncCompileFailed(thrower_);
-  }
+  size_t num_compile_tasks_;
+  std::atomic<bool> failed_{false};
 };
 
 //==========================================================================
-// Step 5b (sync): Finish heap-allocated data structures.
+// Step 5 (sync): Finish heap-allocated data structures.
 //==========================================================================
-class AsyncCompileJob::FinishCompile : public SyncCompileTask {
-  void RunImpl() override {
+class AsyncCompileJob::FinishCompile : public CompileState {
+  void RunInForeground() override {
     TRACE_COMPILE("(5b) Finish compile...\n");
     HandleScope scope(job_->isolate_);
     // At this point, compilation has completed. Update the code table.
@@ -2272,8 +2246,8 @@ class AsyncCompileJob::FinishCompile : public SyncCompileTask {
 //==========================================================================
 // Step 6 (sync): Compile JS->wasm wrappers.
 //==========================================================================
-class AsyncCompileJob::CompileWrappers : public SyncCompileTask {
-  void RunImpl() override {
+class AsyncCompileJob::CompileWrappers : public CompileState {
+  void RunInForeground() override {
     TRACE_COMPILE("(6) Compile wrappers...\n");
     // Compile JS->wasm wrappers for exported functions.
     HandleScope scope(job_->isolate_);
@@ -2301,8 +2275,8 @@ class AsyncCompileJob::CompileWrappers : public SyncCompileTask {
 //==========================================================================
 // Step 7 (sync): Finish the module and resolve the promise.
 //==========================================================================
-class AsyncCompileJob::FinishModule : public SyncCompileTask {
-  void RunImpl() override {
+class AsyncCompileJob::FinishModule : public CompileState {
+  void RunInForeground() override {
     TRACE_COMPILE("(7) Finish module...\n");
     HandleScope scope(job_->isolate_);
     Handle<WasmModuleObject> result =

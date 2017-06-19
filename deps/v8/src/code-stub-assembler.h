@@ -152,7 +152,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   HEAP_CONSTANT_LIST(HEAP_CONSTANT_ACCESSOR)
 #undef HEAP_CONSTANT_ACCESSOR
 
-#define HEAP_CONSTANT_TEST(rootName, name) Node* Is##name(Node* value);
+#define HEAP_CONSTANT_TEST(rootName, name) \
+  Node* Is##name(Node* value);             \
+  Node* IsNot##name(Node* value);
   HEAP_CONSTANT_LIST(HEAP_CONSTANT_TEST)
 #undef HEAP_CONSTANT_TEST
 
@@ -547,6 +549,17 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void StoreFieldsNoWriteBarrier(Node* start_address, Node* end_address,
                                  Node* value);
 
+  Node* AllocateCellWithValue(Node* value,
+                              WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+  Node* AllocateSmiCell(int value = 0) {
+    return AllocateCellWithValue(SmiConstant(value), SKIP_WRITE_BARRIER);
+  }
+
+  Node* LoadCellValue(Node* cell);
+
+  Node* StoreCellValue(Node* cell, Node* value,
+                       WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+
   // Allocate a HeapNumber without initializing its value.
   Node* AllocateHeapNumber(MutableMode mode = IMMUTABLE);
   // Allocate a HeapNumber with a specific value.
@@ -752,61 +765,63 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Check whether the map is for an object with special properties, such as a
   // JSProxy or an object with interceptors.
   Node* InstanceTypeEqual(Node* instance_type, int type);
-  Node* IsSpecialReceiverMap(Node* map);
-  Node* IsSpecialReceiverInstanceType(Node* instance_type);
-  Node* IsStringInstanceType(Node* instance_type);
-  Node* IsOneByteStringInstanceType(Node* instance_type);
-  Node* IsExternalStringInstanceType(Node* instance_type);
-  Node* IsShortExternalStringInstanceType(Node* instance_type);
-  Node* IsSequentialStringInstanceType(Node* instance_type);
-  Node* IsConsStringInstanceType(Node* instance_type);
-  Node* IsIndirectStringInstanceType(Node* instance_type);
-  Node* IsString(Node* object);
-  Node* IsJSObjectMap(Node* map);
-  Node* IsJSObject(Node* object);
-  Node* IsJSGlobalProxy(Node* object);
-  Node* IsJSReceiverInstanceType(Node* instance_type);
-  Node* IsJSReceiver(Node* object);
-  Node* IsJSReceiverMap(Node* map);
-  Node* IsMap(Node* object);
-  Node* IsCallableMap(Node* map);
-  Node* IsDeprecatedMap(Node* map);
-  Node* IsCallable(Node* object);
-  Node* IsBoolean(Node* object);
-  Node* IsPropertyCell(Node* object);
   Node* IsAccessorInfo(Node* object);
   Node* IsAccessorPair(Node* object);
+  Node* IsAllocationSite(Node* object);
   Node* IsAnyHeapNumber(Node* object);
+  Node* IsBoolean(Node* object);
+  Node* IsCallableMap(Node* map);
+  Node* IsCallable(Node* object);
+  Node* IsConsStringInstanceType(Node* instance_type);
+  Node* IsConstructorMap(Node* map);
+  Node* IsDeprecatedMap(Node* map);
+  Node* IsDictionary(Node* object);
+  Node* IsExternalStringInstanceType(Node* instance_type);
+  Node* IsFeedbackVector(Node* object);
+  Node* IsFixedArray(Node* object);
+  Node* IsFixedArrayWithKind(Node* object, ElementsKind kind);
+  Node* IsFixedArrayWithKindOrEmpty(Node* object, ElementsKind kind);
+  Node* IsFixedDoubleArray(Node* object);
+  Node* IsFixedTypedArray(Node* object);
+  Node* IsHashTable(Node* object);
   Node* IsHeapNumber(Node* object);
+  Node* IsIndirectStringInstanceType(Node* instance_type);
+  Node* IsJSArrayBuffer(Node* object);
+  Node* IsJSArrayInstanceType(Node* instance_type);
+  Node* IsJSArrayMap(Node* object);
+  Node* IsJSArray(Node* object);
+  Node* IsJSFunctionInstanceType(Node* instance_type);
+  Node* IsJSFunctionMap(Node* object);
+  Node* IsJSFunction(Node* object);
+  Node* IsJSGlobalProxy(Node* object);
+  Node* IsJSObjectMap(Node* map);
+  Node* IsJSObject(Node* object);
+  Node* IsJSReceiverInstanceType(Node* instance_type);
+  Node* IsJSReceiverMap(Node* map);
+  Node* IsJSReceiver(Node* object);
+  Node* IsJSRegExp(Node* object);
+  Node* IsJSTypedArray(Node* object);
+  Node* IsJSValueInstanceType(Node* instance_type);
+  Node* IsJSValueMap(Node* map);
+  Node* IsJSValue(Node* object);
+  Node* IsMap(Node* object);
   Node* IsMutableHeapNumber(Node* object);
   Node* IsName(Node* object);
+  Node* IsNativeContext(Node* object);
+  Node* IsOneByteStringInstanceType(Node* instance_type);
+  Node* IsPrivateSymbol(Node* object);
+  Node* IsPropertyCell(Node* object);
+  Node* IsSequentialStringInstanceType(Node* instance_type);
+  Node* IsShortExternalStringInstanceType(Node* instance_type);
+  Node* IsSpecialReceiverInstanceType(Node* instance_type);
+  Node* IsSpecialReceiverMap(Node* map);
+  Node* IsStringInstanceType(Node* instance_type);
+  Node* IsString(Node* object);
   Node* IsSymbolInstanceType(Node* instance_type);
   Node* IsSymbol(Node* object);
-  Node* IsPrivateSymbol(Node* object);
-  Node* IsJSValueInstanceType(Node* instance_type);
-  Node* IsJSValue(Node* object);
-  Node* IsJSValueMap(Node* map);
-  Node* IsJSArrayInstanceType(Node* instance_type);
-  Node* IsJSArray(Node* object);
-  Node* IsJSArrayMap(Node* object);
-  Node* IsFixedArray(Node* object);
-  Node* IsFixedArrayWithKindOrEmpty(Node* object, ElementsKind kind);
-  Node* IsFixedArrayWithKind(Node* object, ElementsKind kind);
-  Node* IsNativeContext(Node* object);
-  Node* IsWeakCell(Node* object);
-  Node* IsFixedDoubleArray(Node* object);
-  Node* IsHashTable(Node* object);
-  Node* IsDictionary(Node* object);
   Node* IsUnseededNumberDictionary(Node* object);
-  Node* IsConstructorMap(Node* map);
-  Node* IsJSFunctionInstanceType(Node* instance_type);
-  Node* IsJSFunction(Node* object);
-  Node* IsJSFunctionMap(Node* object);
-  Node* IsJSTypedArray(Node* object);
-  Node* IsJSArrayBuffer(Node* object);
-  Node* IsFixedTypedArray(Node* object);
-  Node* IsJSRegExp(Node* object);
-  Node* IsFeedbackVector(Node* object);
+  Node* IsWeakCell(Node* object);
+  Node* IsUndetectableMap(Node* map);
 
   // True iff |object| is a Smi or a HeapNumber.
   Node* IsNumber(Node* object);
@@ -1233,6 +1248,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                Label* if_end, Label* if_bailout);
 
   // Instanceof helpers.
+  // Returns true if {object} has {prototype} somewhere in it's prototype
+  // chain, otherwise false is returned. Might cause arbitrary side effects
+  // due to [[GetPrototypeOf]] invocations.
+  Node* HasInPrototypeChain(Node* context, Node* object, Node* prototype);
   // ES6 section 7.3.19 OrdinaryHasInstance (C, O)
   Node* OrdinaryHasInstance(Node* context, Node* callable, Node* object);
 
@@ -1240,7 +1259,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadFeedbackVectorForStub();
 
   // Update the type feedback vector.
-  void UpdateFeedback(Node* feedback, Node* feedback_vector, Node* slot_id);
+  void UpdateFeedback(Node* feedback, Node* feedback_vector, Node* slot_id,
+                      Node* function);
 
   // Combine the new feedback with the existing_feedback.
   void CombineFeedback(Variable* existing_feedback, Node* feedback);
@@ -1448,6 +1468,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                   UndefinedConstant(), SmiConstant(message), args...);
   }
 
+  void Abort(BailoutReason reason) {
+    CallRuntime(Runtime::kAbort, NoContextConstant(), SmiConstant(reason));
+    Unreachable();
+  }
+
  protected:
   void DescriptorLookup(Node* unique_name, Node* descriptors, Node* bitfield3,
                         Label* if_found, Variable* var_name_index,
@@ -1551,6 +1576,9 @@ class CodeStubArguments {
 
   Node* AtIndex(int index) const;
 
+  Node* GetOptionalArgumentValue(int index) {
+    return GetOptionalArgumentValue(index, assembler_->UndefinedConstant());
+  }
   Node* GetOptionalArgumentValue(int index, Node* default_value);
 
   Node* GetLength() const { return argc_; }

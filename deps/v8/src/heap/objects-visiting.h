@@ -11,6 +11,7 @@
 #include "src/heap/spaces.h"
 #include "src/layout-descriptor.h"
 #include "src/objects-body-descriptors.h"
+#include "src/objects/string.h"
 
 // This file provides base classes and auxiliary methods for defining
 // static object visitors used during GC.
@@ -173,12 +174,9 @@ class StaticNewSpaceVisitor : public StaticVisitorBase {
     }
   }
 
-  // Although we are using the JSFunction body descriptor which does not
-  // visit the code entry, compiler wants it to be accessible.
-  // See JSFunction::BodyDescriptorImpl.
   inline static void VisitCodeEntry(Heap* heap, HeapObject* object,
                                     Address entry_address) {
-    UNREACHABLE();
+    // Code is not in new space.
   }
 
  private:
@@ -386,6 +384,7 @@ template <typename ResultType, typename ConcreteVisitor>
 class HeapVisitor : public ObjectVisitor {
  public:
   ResultType Visit(HeapObject* object);
+  ResultType Visit(Map* map, HeapObject* object);
 
  protected:
   // A guard predicate for visiting the object.

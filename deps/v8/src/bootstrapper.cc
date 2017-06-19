@@ -179,11 +179,10 @@ class Genesis BASE_EMBEDDED {
   void InstallOneBuiltinFunction(Handle<Object> prototype, const char* method,
                                  Builtins::Name name);
 
-  Handle<JSFunction> InstallArrayBuffer(Handle<JSObject> target,
-                                        const char* name,
-                                        Builtins::Name call_byteLength,
-                                        BuiltinFunctionId byteLength_id,
-                                        Builtins::Name call_slice);
+  Handle<JSFunction> CreateArrayBuffer(Handle<String> name,
+                                       Builtins::Name call_byteLength,
+                                       BuiltinFunctionId byteLength_id,
+                                       Builtins::Name call_slice);
   Handle<JSFunction> InstallInternalArray(Handle<JSObject> target,
                                           const char* name,
                                           ElementsKind elements_kind);
@@ -1331,6 +1330,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallFunction(isolate->initial_object_prototype(),
                           "__lookupSetter__", Builtins::kObjectLookupSetter, 1,
                           true);
+    SimpleInstallFunction(isolate->initial_object_prototype(), "isPrototypeOf",
+                          Builtins::kObjectPrototypeIsPrototypeOf, 1, true);
     SimpleInstallFunction(
         isolate->initial_object_prototype(), "propertyIsEnumerable",
         Builtins::kObjectPrototypePropertyIsEnumerable, 1, false);
@@ -1812,11 +1813,11 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallFunction(prototype, "slice", Builtins::kStringPrototypeSlice,
                           2, false);
     SimpleInstallFunction(prototype, "split", Builtins::kStringPrototypeSplit,
-                          2, true);
+                          2, false);
     SimpleInstallFunction(prototype, "substr", Builtins::kStringPrototypeSubstr,
-                          2, true);
+                          2, false);
     SimpleInstallFunction(prototype, "substring",
-                          Builtins::kStringPrototypeSubstring, 2, true);
+                          Builtins::kStringPrototypeSubstring, 2, false);
     SimpleInstallFunction(prototype, "startsWith",
                           Builtins::kStringPrototypeStartsWith, 1, false);
     SimpleInstallFunction(prototype, "toString",
@@ -2139,6 +2140,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     InstallSpeciesGetter(promise_fun);
 
+    SimpleInstallFunction(promise_fun, "all", Builtins::kPromiseAll, 1, true,
+                          DONT_ENUM);
+
     SimpleInstallFunction(promise_fun, "resolve", Builtins::kPromiseResolve, 1,
                           true, DONT_ENUM);
 
@@ -2220,6 +2224,16 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       info->set_internal_formal_parameter_count(1);
       info->set_length(1);
       native_context()->set_promise_reject_shared_fun(*info);
+    }
+
+    {
+      Handle<Code> code =
+          isolate->builtins()->PromiseAllResolveElementClosure();
+      Handle<SharedFunctionInfo> info =
+          factory->NewSharedFunctionInfo(factory->empty_string(), code, false);
+      info->set_internal_formal_parameter_count(1);
+      info->set_length(1);
+      native_context()->set_promise_all_resolve_element_shared_fun(*info);
     }
   }
 
@@ -2490,10 +2504,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
   {  // -- J S O N
     Handle<String> name = factory->InternalizeUtf8String("JSON");
-    Handle<JSFunction> cons = factory->NewFunction(name);
-    JSFunction::SetPrototype(cons, isolate->initial_object_prototype());
-    Handle<JSObject> json_object = factory->NewJSObject(cons, TENURED);
-    DCHECK(json_object->IsJSObject());
+    Handle<JSObject> json_object =
+        factory->NewJSObject(isolate->object_function(), TENURED);
     JSObject::AddProperty(global, name, json_object, DONT_ENUM);
     SimpleInstallFunction(json_object, "parse", Builtins::kJsonParse, 2, false);
     SimpleInstallFunction(json_object, "stringify", Builtins::kJsonStringify, 3,
@@ -2506,10 +2518,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
   {  // -- M a t h
     Handle<String> name = factory->InternalizeUtf8String("Math");
-    Handle<JSFunction> cons = factory->NewFunction(name);
-    JSFunction::SetPrototype(cons, isolate->initial_object_prototype());
-    Handle<JSObject> math = factory->NewJSObject(cons, TENURED);
-    DCHECK(math->IsJSObject());
+    Handle<JSObject> math =
+        factory->NewJSObject(isolate->object_function(), TENURED);
     JSObject::AddProperty(global, name, math, DONT_ENUM);
     SimpleInstallFunction(math, "abs", Builtins::kMathAbs, 1, true);
     SimpleInstallFunction(math, "acos", Builtins::kMathAcos, 1, true);
@@ -2627,6 +2637,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           false, NONE);
     SimpleInstallFunction(console, "timeStamp", Builtins::kConsoleTimeStamp, 1,
                           false, NONE);
+    SimpleInstallFunction(console, "context", Builtins::kConsoleContext, 1,
+                          true, NONE);
     JSObject::AddProperty(
         console, factory->to_string_tag_symbol(),
         factory->NewStringFromAsciiChecked("Object"),
@@ -2636,10 +2648,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 #ifdef V8_INTL_SUPPORT
   {  // -- I n t l
     Handle<String> name = factory->InternalizeUtf8String("Intl");
-    Handle<JSFunction> cons = factory->NewFunction(name);
-    JSFunction::SetPrototype(cons, isolate->initial_object_prototype());
-    Handle<JSObject> intl = factory->NewJSObject(cons, TENURED);
-    DCHECK(intl->IsJSObject());
+    Handle<JSObject> intl =
+        factory->NewJSObject(isolate->object_function(), TENURED);
     JSObject::AddProperty(global, name, intl, DONT_ENUM);
 
     Handle<JSObject> date_time_format_prototype =
@@ -2711,10 +2721,12 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 #endif  // V8_INTL_SUPPORT
 
   {  // -- A r r a y B u f f e r
-    Handle<JSFunction> array_buffer_fun = InstallArrayBuffer(
-        global, "ArrayBuffer", Builtins::kArrayBufferPrototypeGetByteLength,
-        BuiltinFunctionId::kArrayBufferByteLength,
-        Builtins::kArrayBufferPrototypeSlice);
+    Handle<String> name = factory->InternalizeUtf8String("ArrayBuffer");
+    Handle<JSFunction> array_buffer_fun =
+        CreateArrayBuffer(name, Builtins::kArrayBufferPrototypeGetByteLength,
+                          BuiltinFunctionId::kArrayBufferByteLength,
+                          Builtins::kArrayBufferPrototypeSlice);
+    JSObject::AddProperty(global, name, array_buffer_fun, DONT_ENUM);
     InstallWithIntrinsicDefaultProto(isolate, array_buffer_fun,
                                      Context::ARRAY_BUFFER_FUN_INDEX);
     InstallSpeciesGetter(array_buffer_fun);
@@ -2725,6 +2737,47 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
             "arrayBufferConstructor_DoNotInitialize"),
         Builtins::kArrayBufferConstructor_DoNotInitialize, 1, false);
     native_context()->set_array_buffer_noinit_fun(*array_buffer_noinit_fun);
+  }
+
+  {  // -- S h a r e d A r r a y B u f f e r
+    Handle<String> name = factory->InternalizeUtf8String("SharedArrayBuffer");
+    Handle<JSFunction> shared_array_buffer_fun = CreateArrayBuffer(
+        name, Builtins::kSharedArrayBufferPrototypeGetByteLength,
+        BuiltinFunctionId::kSharedArrayBufferByteLength,
+        Builtins::kSharedArrayBufferPrototypeSlice);
+    InstallWithIntrinsicDefaultProto(isolate, shared_array_buffer_fun,
+                                     Context::SHARED_ARRAY_BUFFER_FUN_INDEX);
+    InstallSpeciesGetter(shared_array_buffer_fun);
+  }
+
+  {  // -- A t o m i c s
+    Handle<JSObject> atomics_object =
+        factory->NewJSObject(isolate->object_function(), TENURED);
+    native_context()->set_atomics_object(*atomics_object);
+
+    SimpleInstallFunction(atomics_object, "load", Builtins::kAtomicsLoad, 2,
+                          true);
+    SimpleInstallFunction(atomics_object, "store", Builtins::kAtomicsStore, 3,
+                          true);
+    SimpleInstallFunction(atomics_object, "add", Builtins::kAtomicsAdd, 3,
+                          true);
+    SimpleInstallFunction(atomics_object, "sub", Builtins::kAtomicsSub, 3,
+                          true);
+    SimpleInstallFunction(atomics_object, "and", Builtins::kAtomicsAnd, 3,
+                          true);
+    SimpleInstallFunction(atomics_object, "or", Builtins::kAtomicsOr, 3, true);
+    SimpleInstallFunction(atomics_object, "xor", Builtins::kAtomicsXor, 3,
+                          true);
+    SimpleInstallFunction(atomics_object, "exchange",
+                          Builtins::kAtomicsExchange, 3, true);
+    SimpleInstallFunction(atomics_object, "compareExchange",
+                          Builtins::kAtomicsCompareExchange, 4, true);
+    SimpleInstallFunction(atomics_object, "isLockFree",
+                          Builtins::kAtomicsIsLockFree, 1, true);
+    SimpleInstallFunction(atomics_object, "wait", Builtins::kAtomicsWait, 4,
+                          true);
+    SimpleInstallFunction(atomics_object, "wake", Builtins::kAtomicsWake, 3,
+                          true);
   }
 
   {  // -- T y p e d A r r a y
@@ -2955,6 +3008,11 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     InstallWithIntrinsicDefaultProto(isolate, map_has,
                                      Context::MAP_HAS_METHOD_INDEX);
 
+    SimpleInstallFunction(prototype, "clear", Builtins::kMapClear, 0, true);
+    SimpleInstallFunction(prototype, "forEach", Builtins::kMapForEach, 1,
+                          false);
+    SimpleInstallGetter(prototype, factory->InternalizeUtf8String("size"),
+                        Builtins::kMapGetSize, false);
     InstallSpeciesGetter(js_map_fun);
   }
 
@@ -2986,6 +3044,11 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         SimpleInstallFunction(prototype, "has", Builtins::kSetHas, 1, true);
     InstallWithIntrinsicDefaultProto(isolate, set_has,
                                      Context::SET_HAS_METHOD_INDEX);
+    SimpleInstallFunction(prototype, "clear", Builtins::kSetClear, 0, true);
+    SimpleInstallFunction(prototype, "forEach", Builtins::kSetForEach, 1,
+                          false);
+    SimpleInstallGetter(prototype, factory->InternalizeUtf8String("size"),
+                        Builtins::kSetGetSize, false);
     InstallSpeciesGetter(js_set_fun);
   }
 
@@ -3920,7 +3983,6 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_property)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_function_sent)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_tailcalls)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrictive_generators)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_trailing_commas)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_function_tostring)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_class_fields)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_object_rest_spread)
@@ -3964,51 +4026,19 @@ void Genesis::InitializeGlobal_harmony_sharedarraybuffer() {
   Isolate* isolate = global->GetIsolate();
   Factory* factory = isolate->factory();
 
-  Handle<JSFunction> shared_array_buffer_fun =
-      InstallArrayBuffer(global, "SharedArrayBuffer",
-                         Builtins::kSharedArrayBufferPrototypeGetByteLength,
-                         BuiltinFunctionId::kSharedArrayBufferByteLength,
-                         Builtins::kSharedArrayBufferPrototypeSlice);
-  InstallWithIntrinsicDefaultProto(isolate, shared_array_buffer_fun,
-                                   Context::SHARED_ARRAY_BUFFER_FUN_INDEX);
-  InstallSpeciesGetter(shared_array_buffer_fun);
+  {
+    Handle<String> name = factory->InternalizeUtf8String("SharedArrayBuffer");
+    JSObject::AddProperty(global, name, isolate->shared_array_buffer_fun(),
+                          DONT_ENUM);
+  }
 
-  Handle<String> name = factory->InternalizeUtf8String("Atomics");
-  Handle<JSFunction> cons = factory->NewFunction(name);
-  JSFunction::SetPrototype(cons, isolate->initial_object_prototype());
-  Handle<JSObject> atomics_object = factory->NewJSObject(cons, TENURED);
-  DCHECK(atomics_object->IsJSObject());
-  JSObject::AddProperty(global, name, atomics_object, DONT_ENUM);
-  JSObject::AddProperty(atomics_object, factory->to_string_tag_symbol(), name,
-                        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("load"),
-                        Builtins::kAtomicsLoad, 2, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("store"),
-                        Builtins::kAtomicsStore, 3, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("add"),
-                        Builtins::kAtomicsAdd, 3, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("sub"),
-                        Builtins::kAtomicsSub, 3, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("and"),
-                        Builtins::kAtomicsAnd, 3, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("or"),
-                        Builtins::kAtomicsOr, 3, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("xor"),
-                        Builtins::kAtomicsXor, 3, true);
-  SimpleInstallFunction(atomics_object,
-                        factory->InternalizeUtf8String("exchange"),
-                        Builtins::kAtomicsExchange, 3, true);
-  SimpleInstallFunction(atomics_object,
-                        factory->InternalizeUtf8String("compareExchange"),
-                        Builtins::kAtomicsCompareExchange, 4, true);
-  SimpleInstallFunction(atomics_object,
-                        factory->InternalizeUtf8String("isLockFree"),
-                        Builtins::kAtomicsIsLockFree, 1, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("wait"),
-                        Builtins::kAtomicsWait, 4, true);
-  SimpleInstallFunction(atomics_object, factory->InternalizeUtf8String("wake"),
-                        Builtins::kAtomicsWake, 3, true);
+  {
+    Handle<String> name = factory->InternalizeUtf8String("Atomics");
+    JSObject::AddProperty(global, name, isolate->atomics_object(), DONT_ENUM);
+    JSObject::AddProperty(
+        isolate->atomics_object(), factory->to_string_tag_symbol(), name,
+        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+  }
 }
 
 void Genesis::InitializeGlobal_harmony_array_prototype_values() {
@@ -4171,28 +4201,27 @@ void Genesis::InitializeGlobal_icu_case_mapping() {
 }
 #endif
 
-Handle<JSFunction> Genesis::InstallArrayBuffer(Handle<JSObject> target,
-                                               const char* name,
-                                               Builtins::Name call_byteLength,
-                                               BuiltinFunctionId byteLength_id,
-                                               Builtins::Name call_slice) {
+Handle<JSFunction> Genesis::CreateArrayBuffer(Handle<String> name,
+                                              Builtins::Name call_byteLength,
+                                              BuiltinFunctionId byteLength_id,
+                                              Builtins::Name call_slice) {
   // Create the %ArrayBufferPrototype%
   // Setup the {prototype} with the given {name} for @@toStringTag.
   Handle<JSObject> prototype =
       factory()->NewJSObject(isolate()->object_function(), TENURED);
-  JSObject::AddProperty(prototype, factory()->to_string_tag_symbol(),
-                        factory()->NewStringFromAsciiChecked(name),
+  JSObject::AddProperty(prototype, factory()->to_string_tag_symbol(), name,
                         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
 
   // Allocate the constructor with the given {prototype}.
   Handle<JSFunction> array_buffer_fun =
-      InstallFunction(target, name, JS_ARRAY_BUFFER_TYPE,
-                      JSArrayBuffer::kSizeWithEmbedderFields, prototype,
-                      Builtins::kArrayBufferConstructor);
+      CreateFunction(isolate(), name, JS_ARRAY_BUFFER_TYPE,
+                     JSArrayBuffer::kSizeWithEmbedderFields, prototype,
+                     Builtins::kArrayBufferConstructor);
   array_buffer_fun->shared()->SetConstructStub(
       *isolate()->builtins()->ArrayBufferConstructor_ConstructStub());
   array_buffer_fun->shared()->DontAdaptArguments();
   array_buffer_fun->shared()->set_length(1);
+  array_buffer_fun->shared()->set_instance_class_name(*name);
 
   // Install the "constructor" property on the {prototype}.
   JSObject::AddProperty(prototype, factory()->constructor_string(),

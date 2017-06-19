@@ -39,7 +39,7 @@ enum SectionCode : int8_t {
   kFirstSectionInModule = kTypeSectionCode,
 };
 
-enum NameSectionType : uint8_t { kFunction = 1, kLocal = 2 };
+enum NameSectionType : uint8_t { kModule = 0, kFunction = 1, kLocal = 2 };
 
 inline bool IsValidSectionCode(uint8_t byte) {
   return kTypeSectionCode <= byte && byte <= kDataSectionCode;
@@ -80,12 +80,9 @@ V8_EXPORT_PRIVATE WasmInitExpr DecodeWasmInitExprForTesting(const byte* start,
                                                             const byte* end);
 
 struct CustomSectionOffset {
-  uint32_t section_start;
-  uint32_t name_offset;
-  uint32_t name_length;
-  uint32_t payload_offset;
-  uint32_t payload_length;
-  uint32_t section_length;
+  WireBytesRef section;
+  WireBytesRef name;
+  WireBytesRef payload;
 };
 
 V8_EXPORT_PRIVATE std::vector<CustomSectionOffset> DecodeCustomSections(

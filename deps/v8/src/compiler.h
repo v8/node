@@ -79,8 +79,8 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
   // Convenience function
   static bool Analyze(CompilationInfo* info,
                       EagerInnerFunctionLiterals* eager_literals = nullptr);
-  // Adds deoptimization support, requires ParseAndAnalyze.
-  static bool EnsureDeoptimizationSupport(CompilationInfo* info);
+  // Ensure that baseline code is generated, requires ParseAndAnalyze.
+  static bool EnsureBaselineCode(CompilationInfo* info);
   // Ensures that bytecode is generated, calls ParseAndAnalyze internally.
   static bool EnsureBytecode(CompilationInfo* info);
 
@@ -101,6 +101,12 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
       int eval_scope_position, int eval_position, int line_offset = 0,
       int column_offset = 0, Handle<Object> script_name = Handle<Object>(),
       ScriptOriginOptions options = ScriptOriginOptions());
+
+  // Returns true if the embedder permits compiling the given source string in
+  // the given context.
+  static bool CodeGenerationFromStringsAllowed(Isolate* isolate,
+                                               Handle<Context> context,
+                                               Handle<String> source);
 
   // Create a (bound) function for a String source within a context for eval.
   MUST_USE_RESULT static MaybeHandle<JSFunction> GetFunctionFromString(

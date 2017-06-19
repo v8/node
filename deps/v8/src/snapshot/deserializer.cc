@@ -281,34 +281,33 @@ void Deserializer::PrintDisassembledCodeObjects() {
 }
 
 // Used to insert a deserialized internalized string into the string table.
-class StringTableInsertionKey : public HashTableKey {
+class StringTableInsertionKey : public StringTableKey {
  public:
   explicit StringTableInsertionKey(String* string)
-      : string_(string), hash_(HashForObject(string)) {
+      : StringTableKey(ComputeHashField(string)), string_(string) {
     DCHECK(string->IsInternalizedString());
   }
 
   bool IsMatch(Object* string) override {
     // We know that all entries in a hash table had their hash keys created.
     // Use that knowledge to have fast failure.
-    if (hash_ != HashForObject(string)) return false;
+    if (Hash() != String::cast(string)->Hash()) return false;
     // We want to compare the content of two internalized strings here.
     return string_->SlowEquals(String::cast(string));
   }
 
-  uint32_t Hash() override { return hash_; }
-
-  uint32_t HashForObject(Object* key) override {
-    return String::cast(key)->Hash();
-  }
-
-  MUST_USE_RESULT Handle<Object> AsHandle(Isolate* isolate) override {
+  MUST_USE_RESULT Handle<String> AsHandle(Isolate* isolate) override {
     return handle(string_, isolate);
   }
 
  private:
+  uint32_t ComputeHashField(String* string) {
+    // Make sure hash_field() is computed.
+    string->Hash();
+    return string->hash_field();
+  }
+
   String* string_;
-  uint32_t hash_;
   DisallowHeapAllocation no_gc;
 };
 
@@ -338,7 +337,6 @@ HeapObject* Deserializer::PostProcessNewObject(HeapObject* obj, int space) {
     }
   }
   if (obj->IsAllocationSite()) {
-    DCHECK(obj->IsAllocationSite());
     // Allocation sites are present in the snapshot, and must be linked into
     // a list at deserialization time.
     AllocationSite* site = AllocationSite::cast(obj);

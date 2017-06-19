@@ -169,13 +169,6 @@ Heap::Heap()
       force_oom_(false),
       delay_sweeper_tasks_for_testing_(false),
       pending_layout_change_object_(nullptr) {
-// Allow build-time customization of the max semispace size. Building
-// V8 with snapshots and a non-default max semispace size is much
-// easier if you can define it as part of the build environment.
-#if defined(V8_MAX_SEMISPACE_SIZE)
-  max_semi_space_size_ = reserved_semispace_size_ = V8_MAX_SEMISPACE_SIZE;
-#endif
-
   // Ensure old_generation_size_ is a multiple of kPageSize.
   DCHECK((max_old_generation_size_ & (Page::kPageSize - 1)) == 0);
 
@@ -917,7 +910,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
   const int kMaxNumberOfAttempts = 7;
   const int kMinNumberOfAttempts = 2;
   for (int attempt = 0; attempt < kMaxNumberOfAttempts; attempt++) {
-    if (!CollectGarbage(MARK_COMPACTOR, gc_reason, NULL,
+    if (!CollectGarbage(OLD_SPACE, gc_reason,
                         v8::kGCCallbackFlagCollectAllAvailableGarbage) &&
         attempt + 1 >= kMinNumberOfAttempts) {
       break;
@@ -952,15 +945,13 @@ void Heap::ReportExternalMemoryPressure() {
     }
   } else {
     // Incremental marking is turned on an has already been started.
-    const double pressure =
-        static_cast<double>(external_memory_ -
-                            external_memory_at_last_mark_compact_ -
-                            kExternalAllocationSoftLimit) /
-        external_memory_hard_limit();
-    DCHECK_GE(1, pressure);
-    const double kMaxStepSizeOnExternalLimit = 25;
-    const double deadline = MonotonicallyIncreasingTimeInMs() +
-                            pressure * kMaxStepSizeOnExternalLimit;
+    const double kMinStepSize = 5;
+    const double kMaxStepSize = 10;
+    const double ms_step =
+        Min(kMaxStepSize,
+            Max(kMinStepSize, static_cast<double>(external_memory_) /
+                                  external_memory_limit_ * kMinStepSize));
+    const double deadline = MonotonicallyIncreasingTimeInMs() + ms_step;
     incremental_marking()->AdvanceIncrementalMarking(
         deadline, IncrementalMarking::GC_VIA_STACK_GUARD,
         IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
@@ -980,13 +971,15 @@ void Heap::EnsureFillerObjectAtTop() {
   }
 }
 
-bool Heap::CollectGarbage(GarbageCollector collector,
+bool Heap::CollectGarbage(AllocationSpace space,
                           GarbageCollectionReason gc_reason,
-                          const char* collector_reason,
                           const v8::GCCallbackFlags gc_callback_flags) {
   // The VM is in the GC state until exiting this function.
   VMState<GC> state(isolate());
   RuntimeCallTimerScope runtime_timer(isolate(), &RuntimeCallStats::GC);
+
+  const char* collector_reason = NULL;
+  GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
 
 #ifdef DEBUG
   // Reset the allocation timeout to the GC interval, but make sure to
@@ -1070,8 +1063,8 @@ bool Heap::CollectGarbage(GarbageCollector collector,
   // causes another mark-compact.
   if (IsYoungGenerationCollector(collector) &&
       !ShouldAbortIncrementalMarking()) {
-    StartIncrementalMarkingIfAllocationLimitIsReached(kNoGCFlags,
-                                                      kNoGCCallbackFlags);
+    StartIncrementalMarkingIfAllocationLimitIsReached(
+        kNoGCFlags, kGCCallbackScheduleIdleGarbageCollection);
   }
 
   return next_gc_likely_to_collect_more;
@@ -3166,7 +3159,7 @@ void Heap::AdjustLiveBytes(HeapObject* object, int by) {
              ObjectMarking::IsBlack(object, MarkingState::Internal(object))) {
     DCHECK(MemoryChunk::FromAddress(object->address())->SweepingDone());
 #ifdef V8_CONCURRENT_MARKING
-    MarkingState::Internal(object).IncrementLiveBytes<MarkBit::ATOMIC>(by);
+    MarkingState::Internal(object).IncrementLiveBytes<AccessMode::ATOMIC>(by);
 #else
     MarkingState::Internal(object).IncrementLiveBytes(by);
 #endif
@@ -4184,7 +4177,7 @@ bool Heap::HasHighFragmentation(size_t used, size_t committed) {
 
 bool Heap::ShouldOptimizeForMemoryUsage() {
   return FLAG_optimize_for_size || isolate()->IsIsolateInBackground() ||
-         HighMemoryPressure() || IsLowMemoryDevice();
+         HighMemoryPressure();
 }
 
 void Heap::ActivateMemoryReducerIfNeeded() {
@@ -5031,7 +5024,7 @@ void Heap::IterateAndScavengePromotedObject(HeapObject* target, int size) {
   if (target->IsJSFunction()) {
     // JSFunctions reachable through kNextFunctionLinkOffset are weak. Slots for
     // this links are recorded during processing of weak lists.
-    JSFunction::BodyDescriptorWeakCode::IterateBody(target, size, &visitor);
+    JSFunction::BodyDescriptorWeak::IterateBody(target, size, &visitor);
   } else {
     target->IterateBody(target->map()->instance_type(), size, &visitor);
   }
@@ -5424,8 +5417,11 @@ const double Heap::kTargetMutatorUtilization = 0.97;
 //   F * (1 - MU / (R * (1 - MU))) = 1
 //   F * (R * (1 - MU) - MU) / (R * (1 - MU)) = 1
 //   F = R * (1 - MU) / (R * (1 - MU) - MU)
-double Heap::HeapGrowingFactor(double gc_speed, double mutator_speed) {
-  if (gc_speed == 0 || mutator_speed == 0) return kMaxHeapGrowingFactor;
+double Heap::HeapGrowingFactor(double gc_speed, double mutator_speed,
+                               double max_factor) {
+  DCHECK(max_factor >= kMinHeapGrowingFactor);
+  DCHECK(max_factor <= kMaxHeapGrowingFactor);
+  if (gc_speed == 0 || mutator_speed == 0) return max_factor;
 
   const double speed_ratio = gc_speed / mutator_speed;
   const double mu = kTargetMutatorUtilization;
@@ -5434,10 +5430,36 @@ double Heap::HeapGrowingFactor(double gc_speed, double mutator_speed) {
   const double b = speed_ratio * (1 - mu) - mu;
 
   // The factor is a / b, but we need to check for small b first.
-  double factor =
-      (a < b * kMaxHeapGrowingFactor) ? a / b : kMaxHeapGrowingFactor;
-  factor = Min(factor, kMaxHeapGrowingFactor);
+  double factor = (a < b * max_factor) ? a / b : max_factor;
+  factor = Min(factor, max_factor);
   factor = Max(factor, kMinHeapGrowingFactor);
+  return factor;
+}
+
+double Heap::MaxHeapGrowingFactor(size_t max_old_generation_size) {
+  const double min_small_factor = 1.3;
+  const double max_small_factor = 2.0;
+  const double high_factor = 4.0;
+
+  size_t max_old_generation_size_in_mb = max_old_generation_size / MB;
+  max_old_generation_size_in_mb =
+      Max(max_old_generation_size_in_mb,
+          static_cast<size_t>(kMinOldGenerationSize));
+
+  // If we are on a device with lots of memory, we allow a high heap
+  // growing factor.
+  if (max_old_generation_size_in_mb >= kMaxOldGenerationSize) {
+    return high_factor;
+  }
+
+  DCHECK_GE(max_old_generation_size_in_mb, kMinOldGenerationSize);
+  DCHECK_LT(max_old_generation_size_in_mb, kMaxOldGenerationSize);
+
+  // On smaller devices we linearly scale the factor: (X-A)/(B-A)*(D-C)+C
+  double factor = (max_old_generation_size_in_mb - kMinOldGenerationSize) *
+                      (max_small_factor - min_small_factor) /
+                      (kMaxOldGenerationSize - kMinOldGenerationSize) +
+                  min_small_factor;
   return factor;
 }
 
@@ -5465,7 +5487,8 @@ size_t Heap::MinimumAllocationLimitGrowingStep() {
 
 void Heap::SetOldGenerationAllocationLimit(size_t old_gen_size, double gc_speed,
                                            double mutator_speed) {
-  double factor = HeapGrowingFactor(gc_speed, mutator_speed);
+  double max_factor = MaxHeapGrowingFactor(max_old_generation_size_);
+  double factor = HeapGrowingFactor(gc_speed, mutator_speed, max_factor);
 
   if (FLAG_trace_gc_verbose) {
     isolate_->PrintWithTimestamp(
@@ -5473,10 +5496,6 @@ void Heap::SetOldGenerationAllocationLimit(size_t old_gen_size, double gc_speed,
         "(gc=%.f, mutator=%.f)\n",
         factor, kTargetMutatorUtilization, gc_speed / mutator_speed, gc_speed,
         mutator_speed);
-  }
-
-  if (IsMemoryConstrainedDevice()) {
-    factor = Min(factor, kMaxHeapGrowingFactorMemoryConstrained);
   }
 
   if (memory_reducer_->ShouldGrowHeapSlowly() ||
@@ -5505,7 +5524,8 @@ void Heap::SetOldGenerationAllocationLimit(size_t old_gen_size, double gc_speed,
 void Heap::DampenOldGenerationAllocationLimit(size_t old_gen_size,
                                               double gc_speed,
                                               double mutator_speed) {
-  double factor = HeapGrowingFactor(gc_speed, mutator_speed);
+  double max_factor = MaxHeapGrowingFactor(max_old_generation_size_);
+  double factor = HeapGrowingFactor(gc_speed, mutator_speed, max_factor);
   size_t limit = CalculateOldGenerationAllocationLimit(factor, old_gen_size);
   if (limit < old_generation_allocation_limit_) {
     if (FLAG_trace_gc_verbose) {

@@ -392,8 +392,8 @@ Expression* Parser::NewTargetExpression(int pos) {
 Expression* Parser::FunctionSentExpression(int pos) {
   // We desugar function.sent into %_GeneratorGetInputOrDebugPos(generator).
   ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(1, zone());
-  VariableProxy* generator =
-      factory()->NewVariableProxy(function_state_->generator_object_variable());
+  VariableProxy* generator = factory()->NewVariableProxy(
+      function_state_->scope()->generator_object_var());
   args->Add(generator, zone());
   return factory()->NewCallRuntime(Runtime::kInlineGeneratorGetInputOrDebugPos,
                                    args, pos);
@@ -525,7 +525,6 @@ Parser::Parser(ParseInfo* info)
   set_allow_harmony_do_expressions(FLAG_harmony_do_expressions);
   set_allow_harmony_function_sent(FLAG_harmony_function_sent);
   set_allow_harmony_restrictive_generators(FLAG_harmony_restrictive_generators);
-  set_allow_harmony_trailing_commas(FLAG_harmony_trailing_commas);
   set_allow_harmony_class_fields(FLAG_harmony_class_fields);
   set_allow_harmony_object_rest_spread(FLAG_harmony_object_rest_spread);
   set_allow_harmony_dynamic_import(FLAG_harmony_dynamic_import);
@@ -1817,9 +1816,9 @@ void Parser::ParseAndRewriteAsyncGeneratorFunctionBody(
 
   ZoneList<Expression*>* reject_args =
       new (zone()) ZoneList<Expression*>(2, zone());
-  reject_args->Add(
-      factory()->NewVariableProxy(function_state_->generator_object_variable()),
-      zone());
+  reject_args->Add(factory()->NewVariableProxy(
+                       function_state_->scope()->generator_object_var()),
+                   zone());
   reject_args->Add(factory()->NewVariableProxy(catch_scope->catch_variable()),
                    zone());
 
@@ -1838,8 +1837,8 @@ void Parser::ParseAndRewriteAsyncGeneratorFunctionBody(
       factory()->NewBlock(nullptr, 1, false, kNoSourcePosition);
   ZoneList<Expression*>* close_args =
       new (zone()) ZoneList<Expression*>(1, zone());
-  VariableProxy* call_proxy =
-      factory()->NewVariableProxy(function_state_->generator_object_variable());
+  VariableProxy* call_proxy = factory()->NewVariableProxy(
+      function_state_->scope()->generator_object_var());
   close_args->Add(call_proxy, zone());
   Expression* close_call = factory()->NewCallRuntime(
       Runtime::kInlineGeneratorClose, close_args, kNoSourcePosition);
@@ -2909,10 +2908,22 @@ Parser::LazyParsingResult Parser::SkipFunction(FunctionKind kind,
   return kLazyParsingComplete;
 }
 
-
-Statement* Parser::BuildAssertIsCoercible(Variable* var) {
+Statement* Parser::BuildAssertIsCoercible(Variable* var,
+                                          ObjectLiteral* pattern) {
   // if (var === null || var === undefined)
   //     throw /* type error kNonCoercible) */;
+  auto source_position = pattern->position();
+  const AstRawString* property = ast_value_factory()->empty_string();
+  MessageTemplate::Template msg = MessageTemplate::kNonCoercible;
+  for (ObjectLiteralProperty* literal_property : *pattern->properties()) {
+    Expression* key = literal_property->key();
+    if (key->IsPropertyName()) {
+      property = key->AsLiteral()->AsRawPropertyName();
+      msg = MessageTemplate::kNonCoercibleWithProperty;
+      source_position = key->position();
+      break;
+    }
+  }
 
   Expression* condition = factory()->NewBinaryOperation(
       Token::OR,
@@ -2924,15 +2935,13 @@ Statement* Parser::BuildAssertIsCoercible(Variable* var) {
           factory()->NewNullLiteral(kNoSourcePosition), kNoSourcePosition),
       kNoSourcePosition);
   Expression* throw_type_error =
-      NewThrowTypeError(MessageTemplate::kNonCoercible,
-                        ast_value_factory()->empty_string(), kNoSourcePosition);
+      NewThrowTypeError(msg, property, source_position);
   IfStatement* if_statement = factory()->NewIfStatement(
       condition,
       factory()->NewExpressionStatement(throw_type_error, kNoSourcePosition),
       factory()->NewEmptyStatement(kNoSourcePosition), kNoSourcePosition);
   return if_statement;
 }
-
 
 class InitializerRewriter final
     : public AstTraversalVisitor<InitializerRewriter> {
@@ -3141,8 +3150,8 @@ Variable* Parser::PromiseVariable() {
   // Based on the various compilation paths, there are many different code
   // paths which may be the first to access the Promise temporary. Whichever
   // comes first should create it and stash it in the FunctionState.
-  Variable* promise = function_state_->promise_variable();
-  if (function_state_->promise_variable() == nullptr) {
+  Variable* promise = function_state_->scope()->promise_var();
+  if (promise == nullptr) {
     promise = function_state_->scope()->DeclarePromiseVar(
         ast_value_factory()->empty_string());
   }
@@ -3159,8 +3168,8 @@ Variable* Parser::AsyncGeneratorAwaitVariable() {
 }
 
 Expression* Parser::BuildInitialYield(int pos, FunctionKind kind) {
-  Expression* yield_result =
-      factory()->NewVariableProxy(function_state_->generator_object_variable());
+  Expression* yield_result = factory()->NewVariableProxy(
+      function_state_->scope()->generator_object_var());
   // The position of the yield is important for reporting the exception
   // caused by calling the .throw method on a generator suspended at the
   // initial yield (i.e. right after generator instantiation).
@@ -3822,7 +3831,7 @@ void Parser::PrepareAsyncFunctionBody(ZoneList<Statement*>* body,
                                       FunctionKind kind, int pos) {
   // When parsing an async arrow function, we get here without having called
   // PrepareGeneratorVariables yet, so do it now.
-  if (function_state_->generator_object_variable() == nullptr) {
+  if (function_state_->scope()->generator_object_var() == nullptr) {
     PrepareGeneratorVariables();
   }
 }
@@ -3874,7 +3883,7 @@ Expression* Parser::RewriteAwaitExpression(Expression* value, int await_pos) {
   // for anything, but exists because of the current requirement that
   // Do Expressions have a result variable.
   Variable* generator_object_variable =
-      function_state_->generator_object_variable();
+      function_state_->scope()->generator_object_var();
   DCHECK_NOT_NULL(generator_object_variable);
 
   const int nopos = kNoSourcePosition;
@@ -4471,7 +4480,7 @@ Expression* Parser::RewriteYieldStar(Expression* iterable, int pos) {
 
     ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(1, zone());
     VariableProxy* generator = factory()->NewVariableProxy(
-        function_state_->generator_object_variable());
+        function_state_->scope()->generator_object_var());
     args->Add(generator, zone());
     Expression* mode = factory()->NewCallRuntime(
         Runtime::kInlineGeneratorGetResumeMode, args, pos);

@@ -127,8 +127,8 @@ TF_BUILTIN(AsyncIteratorValueUnwrap, AsyncBuiltinsAssembler) {
   Node* const done = LoadContextElement(context, ValueUnwrapContext::kDoneSlot);
   CSA_ASSERT(this, IsBoolean(done));
 
-  Node* const unwrapped_value = CallStub(
-      CodeFactory::CreateIterResultObject(isolate()), context, value, done);
+  Node* const unwrapped_value =
+      CallBuiltin(Builtins::kCreateIterResultObject, context, value, done);
 
   Return(unwrapped_value);
 }

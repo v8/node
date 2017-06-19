@@ -9,7 +9,6 @@
 #include "src/builtins/builtins-constructor.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
-#include "src/crankshaft/hydrogen-osr.h"
 #include "src/crankshaft/s390/lithium-gap-resolver-s390.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
@@ -230,19 +229,7 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
   Comment(";;; Prologue end");
 }
 
-void LCodeGen::GenerateOsrPrologue() {
-  // Generate the OSR entry prologue at the first unknown OSR value, or if there
-  // are none, at the OSR entrypoint instruction.
-  if (osr_pc_offset_ >= 0) return;
-
-  osr_pc_offset_ = masm()->pc_offset();
-
-  // Adjust the frame size, subsuming the unoptimized frame into the
-  // optimized frame.
-  int slots = GetStackSlotCount() - graph()->osr()->UnoptimizedFrameSlots();
-  DCHECK(slots >= 0);
-  __ lay(sp, MemOperand(sp, -slots * kPointerSize));
-}
+void LCodeGen::GenerateOsrPrologue() { UNREACHABLE(); }
 
 void LCodeGen::GenerateBodyInstructionPre(LInstruction* instr) {
   if (instr->IsCall()) {
@@ -3146,8 +3133,9 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
              FieldMemOperand(function, JSFunction::kSharedFunctionInfoOffset));
     __ LoadlW(scratch, FieldMemOperand(
                            scratch, SharedFunctionInfo::kCompilerHintsOffset));
-    __ AndP(r0, scratch, Operand((1 << SharedFunctionInfo::kStrictModeBit) |
-                                 (1 << SharedFunctionInfo::kNativeBit)));
+    __ AndP(r0, scratch,
+            Operand(SharedFunctionInfo::IsStrictBit::kMask |
+                    SharedFunctionInfo::IsNativeBit::kMask));
     __ bne(&result_in_receiver, Label::kNear);
   }
 

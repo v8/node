@@ -11,13 +11,12 @@
 #include "src/objects/script.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/wasm-limits.h"
+#include "src/wasm/wasm-module.h"
 
 namespace v8 {
 namespace internal {
 namespace wasm {
 class InterpretedFrame;
-struct WasmModule;
-struct WasmInstance;
 class WasmInterpreter;
 }
 
@@ -146,7 +145,7 @@ class WasmInstanceObject : public JSObject {
   DECLARE_OPTIONAL_ACCESSORS(instance_wrapper, WasmInstanceWrapper);
 
   WasmModuleObject* module_object();
-  wasm::WasmModule* module();
+  V8_EXPORT_PRIVATE wasm::WasmModule* module();
 
   // Get the debug info associated with the given wasm object.
   // If no debug info exists yet, it is created automatically.
@@ -442,6 +441,10 @@ class WasmCompiledModule : public FixedArray {
   static void ReinitializeAfterDeserialization(Isolate*,
                                                Handle<WasmCompiledModule>);
 
+  // Get the module name, if set. Returns an empty handle otherwise.
+  static MaybeHandle<String> GetModuleNameOrNull(
+      Isolate* isolate, Handle<WasmCompiledModule> compiled_module);
+
   // Get the function name of the function identified by the given index.
   // Returns a null handle if the function is unnamed or the name is not a valid
   // UTF-8 string.
@@ -495,7 +498,7 @@ class WasmCompiledModule : public FixedArray {
   // string.
   static MaybeHandle<String> ExtractUtf8StringFromModuleBytes(
       Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
-      uint32_t offset, uint32_t size);
+      wasm::WireBytesRef ref);
 
   // Get a list of all possible breakpoints within a given range of this module.
   bool GetPossibleBreakpoints(const debug::Location& start,
@@ -553,8 +556,8 @@ class WasmDebugInfo : public FixedArray {
   // Returns a pointer to the interpreter instantiated inside this
   // WasmDebugInfo.
   // Use for testing only.
-  static wasm::WasmInterpreter* SetupForTesting(Handle<WasmInstanceObject>,
-                                                wasm::WasmInstance*);
+  V8_EXPORT_PRIVATE static wasm::WasmInterpreter* SetupForTesting(
+      Handle<WasmInstanceObject>, wasm::WasmInstance*);
 
   static bool IsDebugInfo(Object*);
   static WasmDebugInfo* cast(Object*);

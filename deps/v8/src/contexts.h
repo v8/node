@@ -219,6 +219,7 @@ enum ContextLookupFlags {
     async_generator_await_reject_shared_fun)                                   \
   V(ASYNC_GENERATOR_AWAIT_RESOLVE_SHARED_FUN, SharedFunctionInfo,              \
     async_generator_await_resolve_shared_fun)                                  \
+  V(ATOMICS_OBJECT, JSObject, atomics_object)                                  \
   V(BOOLEAN_FUNCTION_INDEX, JSFunction, boolean_function)                      \
   V(BOUND_FUNCTION_WITH_CONSTRUCTOR_MAP_INDEX, Map,                            \
     bound_function_with_constructor_map)                                       \
@@ -320,6 +321,8 @@ enum ContextLookupFlags {
     promise_value_thunk_finally_shared_fun)                                    \
   V(PROMISE_THROWER_FINALLY_SHARED_FUN, SharedFunctionInfo,                    \
     promise_thrower_finally_shared_fun)                                        \
+  V(PROMISE_ALL_RESOLVE_ELEMENT_SHARED_FUN, SharedFunctionInfo,                \
+    promise_all_resolve_element_shared_fun)                                    \
   V(PROMISE_PROTOTYPE_MAP_INDEX, Map, promise_prototype_map)                   \
   V(REGEXP_EXEC_FUNCTION_INDEX, JSFunction, regexp_exec_function)              \
   V(REGEXP_FUNCTION_INDEX, JSFunction, regexp_function)                        \
@@ -335,19 +338,21 @@ enum ContextLookupFlags {
   V(SET_ITERATOR_MAP_INDEX, Map, set_iterator_map)                             \
   V(SHARED_ARRAY_BUFFER_FUN_INDEX, JSFunction, shared_array_buffer_fun)        \
   V(SLOPPY_ARGUMENTS_MAP_INDEX, Map, sloppy_arguments_map)                     \
-  V(SLOPPY_FUNCTION_MAP_INDEX, Map, sloppy_function_map)                       \
-  V(SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX, Map,                          \
-    sloppy_function_without_prototype_map)                                     \
-  V(SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX, Map,                    \
-    sloppy_function_with_readonly_prototype_map)                               \
   V(SLOW_ALIASED_ARGUMENTS_MAP_INDEX, Map, slow_aliased_arguments_map)         \
+  V(STRICT_ARGUMENTS_MAP_INDEX, Map, strict_arguments_map)                     \
   V(SLOW_OBJECT_WITH_NULL_PROTOTYPE_MAP, Map,                                  \
     slow_object_with_null_prototype_map)                                       \
   V(SLOW_OBJECT_WITH_OBJECT_PROTOTYPE_MAP, Map,                                \
     slow_object_with_object_prototype_map)                                     \
   V(SLOW_TEMPLATE_INSTANTIATIONS_CACHE_INDEX, UnseededNumberDictionary,        \
     slow_template_instantiations_cache)                                        \
-  V(STRICT_ARGUMENTS_MAP_INDEX, Map, strict_arguments_map)                     \
+  /* All *_FUNCTION_MAP_INDEX definitions used by Context::FunctionMapIndex */ \
+  /* must remain together. */                                                  \
+  V(SLOPPY_FUNCTION_MAP_INDEX, Map, sloppy_function_map)                       \
+  V(SLOPPY_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX, Map,                          \
+    sloppy_function_without_prototype_map)                                     \
+  V(SLOPPY_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX, Map,                    \
+    sloppy_function_with_readonly_prototype_map)                               \
   V(ASYNC_FUNCTION_MAP_INDEX, Map, async_function_map)                         \
   V(STRICT_FUNCTION_MAP_INDEX, Map, strict_function_map)                       \
   V(STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX, Map,                          \
@@ -528,6 +533,11 @@ class Context: public FixedArray {
     WHITE_LIST_INDEX = MIN_CONTEXT_SLOTS + 1
   };
 
+  // A region of native context entries containing maps for functions created
+  // by Builtins::kFastNewClosure.
+  static const int FIRST_FUNCTION_MAP_INDEX = SLOPPY_FUNCTION_MAP_INDEX;
+  static const int LAST_FUNCTION_MAP_INDEX = CLASS_FUNCTION_MAP_INDEX;
+
   void ResetErrorsThrown();
   void IncrementErrorsThrown();
   int GetErrorsThrown();
@@ -651,7 +661,11 @@ class Context: public FixedArray {
   //    of with, or as a property of the global object.  *index is -1 and
   //    *attributes is not ABSENT.
   //
-  // 3) result.is_null():
+  // 3) result->IsModule():
+  //    The binding was found in module imports or exports.
+  //     *attributes is never ABSENT. imports are READ_ONLY.
+  //
+  // 4) result.is_null():
   //    There was no binding found, *index is always -1 and *attributes is
   //    always ABSENT.
   Handle<Object> Lookup(Handle<String> name, ContextLookupFlags flags,

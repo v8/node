@@ -52,6 +52,7 @@
 #include "src/version.h"
 #include "src/visitors.h"
 #include "src/vm-state-inl.h"
+#include "src/wasm/compilation-manager.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects.h"
 #include "src/zone/accounting-allocator.h"
@@ -517,18 +518,18 @@ Handle<Object> Isolate::CaptureSimpleStackTrace(Handle<JSReceiver> error_object,
           Handle<AbstractCode> abstract_code = summ.abstract_code();
           const int offset = frames[i].code_offset();
 
-          bool force_constructor = false;
+          bool is_constructor = frames[i].is_constructor();
           if (frame->type() == StackFrame::BUILTIN) {
             // Help CallSite::IsConstructor correctly detect hand-written
             // construct stubs.
             if (Code::cast(*abstract_code)->is_construct_stub()) {
-              force_constructor = true;
+              is_constructor = true;
             }
           }
 
           int flags = 0;
           if (helper.IsStrictFrame(*fun)) flags |= FrameArray::kIsStrict;
-          if (force_constructor) flags |= FrameArray::kForceConstructor;
+          if (is_constructor) flags |= FrameArray::kIsConstructor;
 
           elements = FrameArray::AppendJSFrame(
               elements, TheHoleToUndefined(this, recv), fun, abstract_code,
@@ -550,7 +551,7 @@ Handle<Object> Isolate::CaptureSimpleStackTrace(Handle<JSReceiver> error_object,
 
         int flags = 0;
         if (helper.IsStrictFrame(*fun)) flags |= FrameArray::kIsStrict;
-        if (exit_frame->IsConstructor()) flags |= FrameArray::kForceConstructor;
+        if (exit_frame->IsConstructor()) flags |= FrameArray::kIsConstructor;
 
         elements = FrameArray::AppendJSFrame(elements, recv, fun,
                                              Handle<AbstractCode>::cast(code),
@@ -2341,6 +2342,7 @@ Isolate::Isolate(bool enable_serializer)
       use_counter_callback_(NULL),
       basic_block_profiler_(NULL),
       cancelable_task_manager_(new CancelableTaskManager()),
+      wasm_compilation_manager_(new wasm::CompilationManager()),
       abort_on_uncaught_exception_callback_(NULL),
       total_regexp_code_generated_(0) {
   {
@@ -2431,16 +2433,13 @@ void Isolate::Deinit() {
 
   debug()->Unload();
 
-  FreeThreadResources();
-  // Release managed objects before shutting down the heap. The finalizer might
-  // need to access heap objects.
-  ReleaseManagedObjects();
-
   if (concurrent_recompilation_enabled()) {
     optimizing_compile_dispatcher_->Stop();
     delete optimizing_compile_dispatcher_;
     optimizing_compile_dispatcher_ = NULL;
   }
+
+  wasm_compilation_manager_->TearDown();
 
   heap_.mark_compact_collector()->EnsureSweepingCompleted();
 
@@ -2457,6 +2456,11 @@ void Isolate::Deinit() {
   // We must stop the logger before we tear down other components.
   sampler::Sampler* sampler = logger_->sampler();
   if (sampler && sampler->IsActive()) sampler->Stop();
+
+  FreeThreadResources();
+  // Release managed objects before shutting down the heap. The finalizer might
+  // need to access heap objects.
+  ReleaseManagedObjects();
 
   delete deoptimizer_data_;
   deoptimizer_data_ = NULL;

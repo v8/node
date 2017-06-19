@@ -453,7 +453,10 @@ void V8::SetSnapshotDataBlob(StartupData* snapshot_blob) {
   i::V8::SetSnapshotBlob(snapshot_blob);
 }
 
-void* v8::ArrayBuffer::Allocator::Reserve(size_t length) { UNIMPLEMENTED(); }
+void* v8::ArrayBuffer::Allocator::Reserve(size_t length) {
+  UNIMPLEMENTED();
+  return nullptr;
+}
 
 void v8::ArrayBuffer::Allocator::Free(void* data, size_t length,
                                       AllocationMode mode) {
@@ -8879,6 +8882,13 @@ void Isolate::SetAllowCodeGenerationFromStringsCallback(
   isolate->set_allow_code_gen_callback(callback);
 }
 
+void Isolate::SetAllowCodeGenerationFromStringsCallback(
+    DeprecatedAllowCodeGenerationFromStringsCallback callback) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->set_allow_code_gen_callback(
+      reinterpret_cast<AllowCodeGenerationFromStringsCallback>(callback));
+}
+
 #define CALLBACK_SETTER(ExternalName, Type, InternalName)      \
   void Isolate::Set##ExternalName(Type callback) {             \
     i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this); \
@@ -9559,10 +9569,10 @@ std::pair<int, int> debug::WasmScript::GetFunctionRange(
   DCHECK_GT(compiled_module->module()->functions.size(), function_index);
   i::wasm::WasmFunction& func =
       compiled_module->module()->functions[function_index];
-  DCHECK_GE(i::kMaxInt, func.code_start_offset);
-  DCHECK_GE(i::kMaxInt, func.code_end_offset);
-  return std::make_pair(static_cast<int>(func.code_start_offset),
-                        static_cast<int>(func.code_end_offset));
+  DCHECK_GE(i::kMaxInt, func.code.offset());
+  DCHECK_GE(i::kMaxInt, func.code.end_offset());
+  return std::make_pair(static_cast<int>(func.code.offset()),
+                        static_cast<int>(func.code.end_offset()));
 }
 
 debug::WasmDisassembly debug::WasmScript::DisassembleFunction(
@@ -9604,7 +9614,7 @@ void debug::GetLoadedScripts(v8::Isolate* v8_isolate,
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   // TODO(kozyatinskiy): remove this GC once tests are dealt with.
-  isolate->heap()->CollectAllGarbage(i::Heap::kFinalizeIncrementalMarkingMask,
+  isolate->heap()->CollectAllGarbage(i::Heap::kMakeHeapIterableMask,
                                      i::GarbageCollectionReason::kDebugger);
   {
     i::DisallowHeapAllocation no_gc;

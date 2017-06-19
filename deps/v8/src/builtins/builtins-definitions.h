@@ -405,6 +405,7 @@ namespace internal {
   CPP(ConsoleTime)                                                             \
   CPP(ConsoleTimeEnd)                                                          \
   CPP(ConsoleTimeStamp)                                                        \
+  CPP(ConsoleContext)                                                          \
                                                                                \
   /* DataView */                                                               \
   CPP(DataViewConstructor)                                                     \
@@ -578,6 +579,9 @@ namespace internal {
   TFJ(MapConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
   TFJ(MapGet, 1, kKey)                                                         \
   TFJ(MapHas, 1, kKey)                                                         \
+  CPP(MapGetSize)                                                              \
+  CPP(MapClear)                                                                \
+  CPP(MapForEach)                                                              \
                                                                                \
   /* Math */                                                                   \
   /* ES6 #sec-math.abs */                                                      \
@@ -692,11 +696,6 @@ namespace internal {
   TFC(GreaterThanOrEqual, Compare, 1)                                          \
   TFC(Equal, Compare, 1)                                                       \
   TFC(StrictEqual, Compare, 1)                                                 \
-  TFC(AddWithFeedback, BinaryOpWithVector, 1)                                  \
-  TFC(SubtractWithFeedback, BinaryOpWithVector, 1)                             \
-  TFC(MultiplyWithFeedback, BinaryOpWithVector, 1)                             \
-  TFC(DivideWithFeedback, BinaryOpWithVector, 1)                               \
-  TFC(ModulusWithFeedback, BinaryOpWithVector, 1)                              \
                                                                                \
   /* Object */                                                                 \
   CPP(ObjectAssign)                                                            \
@@ -728,6 +727,7 @@ namespace internal {
   TFJ(ObjectProtoToString, 0)                                                  \
   /* ES6 #sec-object.prototype.valueof */                                      \
   TFJ(ObjectPrototypeValueOf, 0)                                               \
+  TFJ(ObjectPrototypeIsPrototypeOf, 1, kValue)                                 \
   CPP(ObjectPrototypePropertyIsEnumerable)                                     \
   CPP(ObjectPrototypeGetProto)                                                 \
   CPP(ObjectPrototypeSetProto)                                                 \
@@ -756,6 +756,7 @@ namespace internal {
   TFJ(PromiseResolveClosure, 1, kValue)                                        \
   /* ES #sec-promise-reject-functions */                                       \
   TFJ(PromiseRejectClosure, 1, kValue)                                         \
+  TFJ(PromiseAllResolveElementClosure, 1, kValue)                              \
   /* ES #sec-promise.prototype.then */                                         \
   TFJ(PromiseThen, 2, kOnFullfilled, kOnRejected)                              \
   /* ES #sec-promise.prototype.catch */                                        \
@@ -775,6 +776,8 @@ namespace internal {
   TFJ(PromiseCatchFinally, 1, kReason)                                         \
   TFJ(PromiseValueThunkFinally, 0)                                             \
   TFJ(PromiseThrowerFinally, 0)                                                \
+  /* ES #sec-promise.all */                                                    \
+  TFJ(PromiseAll, 1, kIterable)                                                \
                                                                                \
   /* Proxy */                                                                  \
   CPP(ProxyConstructor)                                                        \
@@ -796,7 +799,9 @@ namespace internal {
   CPP(ReflectSetPrototypeOf)                                                   \
                                                                                \
   /* RegExp */                                                                 \
+  TFS(RegExpExecAtom, kRegExp, kString, kLastIndex, kMatchInfo)                \
   TFS(RegExpPrototypeExecSlow, kReceiver, kString)                             \
+                                                                               \
   CPP(RegExpCapture1Getter)                                                    \
   CPP(RegExpCapture2Getter)                                                    \
   CPP(RegExpCapture3Getter)                                                    \
@@ -854,6 +859,9 @@ namespace internal {
   /* Set */                                                                    \
   TFJ(SetConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
   TFJ(SetHas, 1, kKey)                                                         \
+  CPP(SetGetSize)                                                              \
+  CPP(SetClear)                                                                \
+  CPP(SetForEach)                                                              \
                                                                                \
   /* SharedArrayBuffer */                                                      \
   CPP(SharedArrayBufferPrototypeGetByteLength)                                 \
@@ -898,11 +906,12 @@ namespace internal {
   /* ES6 #sec-string.prototype.slice */                                        \
   TFJ(StringPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
   /* ES6 #sec-string.prototype.split */                                        \
-  TFJ(StringPrototypeSplit, 2, kSeparator, kLimit)                             \
+  TFJ(StringPrototypeSplit, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
   /* ES6 #sec-string.prototype.substr */                                       \
-  TFJ(StringPrototypeSubstr, 2, kStart, kLength)                               \
+  TFJ(StringPrototypeSubstr, SharedFunctionInfo::kDontAdaptArgumentsSentinel)  \
   /* ES6 #sec-string.prototype.substring */                                    \
-  TFJ(StringPrototypeSubstring, 2, kStart, kEnd)                               \
+  TFJ(StringPrototypeSubstring,                                                \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
   /* ES6 #sec-string.prototype.startswith */                                   \
   CPP(StringPrototypeStartsWith)                                               \
   /* ES6 #sec-string.prototype.tostring */                                     \
@@ -1078,6 +1087,7 @@ namespace internal {
   V(AsyncGeneratorAwaitCaught)                       \
   V(AsyncGeneratorAwaitUncaught)                     \
   V(PerformNativePromiseThen)                        \
+  V(PromiseAll)                                      \
   V(PromiseConstructor)                              \
   V(PromiseHandle)                                   \
   V(PromiseResolve)                                  \

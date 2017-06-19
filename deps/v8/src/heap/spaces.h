@@ -440,6 +440,8 @@ class MemoryChunk {
 
   inline Heap* heap() const { return heap_; }
 
+  Heap* synchronized_heap();
+
   inline SkipList* skip_list() { return skip_list_; }
 
   inline void set_skip_list(SkipList* skip_list) { skip_list_ = skip_list; }
@@ -682,7 +684,7 @@ class MarkingState {
   MarkingState(Bitmap* bitmap, intptr_t* live_bytes)
       : bitmap_(bitmap), live_bytes_(live_bytes) {}
 
-  template <MarkBit::AccessMode mode = MarkBit::NON_ATOMIC>
+  template <AccessMode mode = AccessMode::NON_ATOMIC>
   inline void IncrementLiveBytes(intptr_t by) const;
 
   void SetLiveBytes(intptr_t value) const {
@@ -696,7 +698,7 @@ class MarkingState {
 
   Bitmap* bitmap() const { return bitmap_; }
 
-  template <MarkBit::AccessMode mode = MarkBit::NON_ATOMIC>
+  template <AccessMode mode = AccessMode::NON_ATOMIC>
   inline intptr_t live_bytes() const;
 
  private:
@@ -705,24 +707,24 @@ class MarkingState {
 };
 
 template <>
-inline void MarkingState::IncrementLiveBytes<MarkBit::NON_ATOMIC>(
+inline void MarkingState::IncrementLiveBytes<AccessMode::NON_ATOMIC>(
     intptr_t by) const {
   *live_bytes_ += by;
 }
 
 template <>
-inline void MarkingState::IncrementLiveBytes<MarkBit::ATOMIC>(
+inline void MarkingState::IncrementLiveBytes<AccessMode::ATOMIC>(
     intptr_t by) const {
   reinterpret_cast<base::AtomicNumber<intptr_t>*>(live_bytes_)->Increment(by);
 }
 
 template <>
-inline intptr_t MarkingState::live_bytes<MarkBit::NON_ATOMIC>() const {
+inline intptr_t MarkingState::live_bytes<AccessMode::NON_ATOMIC>() const {
   return *live_bytes_;
 }
 
 template <>
-inline intptr_t MarkingState::live_bytes<MarkBit::ATOMIC>() const {
+inline intptr_t MarkingState::live_bytes<AccessMode::ATOMIC>() const {
   return reinterpret_cast<base::AtomicNumber<intptr_t>*>(live_bytes_)->Value();
 }
 
@@ -740,8 +742,6 @@ class Page : public MemoryChunk {
   static const intptr_t kCopyOnFlipFlagsMask =
       static_cast<intptr_t>(MemoryChunk::POINTERS_TO_HERE_ARE_INTERESTING) |
       static_cast<intptr_t>(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING);
-
-  static inline Page* ConvertNewToOld(Page* old_page);
 
   // Returns the page containing a given address. The address ranges
   // from [page_addr .. page_addr + kPageSize[. This only works if the object
@@ -772,6 +772,8 @@ class Page : public MemoryChunk {
     return (reinterpret_cast<intptr_t>(addr) & kPageAlignmentMask) ==
            kObjectStartOffset;
   }
+
+  static Page* ConvertNewToOld(Page* old_page);
 
   inline static Page* FromAnyPointerAddress(Heap* heap, Address addr);
 
@@ -854,10 +856,10 @@ class Page : public MemoryChunk {
   enum InitializationMode { kFreeMemory, kDoNotFreeMemory };
 
   template <InitializationMode mode = kFreeMemory>
-  static inline Page* Initialize(Heap* heap, MemoryChunk* chunk,
-                                 Executability executable, PagedSpace* owner);
-  static inline Page* Initialize(Heap* heap, MemoryChunk* chunk,
-                                 Executability executable, SemiSpace* owner);
+  static Page* Initialize(Heap* heap, MemoryChunk* chunk,
+                          Executability executable, PagedSpace* owner);
+  static Page* Initialize(Heap* heap, MemoryChunk* chunk,
+                          Executability executable, SemiSpace* owner);
 
   inline void InitializeFreeListCategories();
 
@@ -889,8 +891,8 @@ class LargePage : public MemoryChunk {
   static const int kMaxCodePageSize = 512 * MB;
 
  private:
-  static inline LargePage* Initialize(Heap* heap, MemoryChunk* chunk,
-                                      Executability executable, Space* owner);
+  static LargePage* Initialize(Heap* heap, MemoryChunk* chunk,
+                               Executability executable, Space* owner);
 
   friend class MemoryAllocator;
 };
@@ -1347,8 +1349,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   MemoryChunk* AllocateChunk(size_t reserve_area_size, size_t commit_area_size,
                              Executability executable, Space* space);
 
-  void ShrinkChunk(MemoryChunk* chunk, size_t bytes_to_shrink);
-
   Address ReserveAlignedMemory(size_t requested, size_t alignment,
                                base::VirtualMemory* controller);
   Address AllocateAlignedMemory(size_t reserve_size, size_t commit_size,
@@ -1360,8 +1360,12 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   void FreeMemory(base::VirtualMemory* reservation, Executability executable);
   void FreeMemory(Address addr, size_t size, Executability executable);
 
-  // Returns the size of the freed memory in bytes.
-  size_t PartialFreeMemory(MemoryChunk* chunk, Address start_free);
+  // Partially release |bytes_to_free| bytes starting at |start_free|. Note that
+  // internally memory is freed from |start_free| to the end of the reservation.
+  // Additional memory beyond the page is not accounted though, so
+  // |bytes_to_free| is computed by the caller.
+  void PartialFreeMemory(MemoryChunk* chunk, Address start_free,
+                         size_t bytes_to_free, Address new_area_end);
 
   // Commit a contiguous block of memory from the initial chunk.  Assumes that
   // the address is not NULL, the size is greater than zero, and that the

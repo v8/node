@@ -156,8 +156,6 @@ struct ParserTypes<Parser> {
   typedef ParserBase<Parser> Base;
   typedef Parser Impl;
 
-  typedef v8::internal::Variable Variable;
-
   // Return types for traversing functions.
   typedef const AstRawString* Identifier;
   typedef v8::internal::Expression* Expression;
@@ -296,7 +294,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
       SET_ALLOW(tailcalls);
       SET_ALLOW(harmony_do_expressions);
       SET_ALLOW(harmony_function_sent);
-      SET_ALLOW(harmony_trailing_commas);
       SET_ALLOW(harmony_class_fields);
       SET_ALLOW(harmony_object_rest_spread);
       SET_ALLOW(harmony_dynamic_import);
@@ -548,7 +545,7 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   BreakableStatement* LookupBreakTarget(const AstRawString* label, bool* ok);
   IterationStatement* LookupContinueTarget(const AstRawString* label, bool* ok);
 
-  Statement* BuildAssertIsCoercible(Variable* var);
+  Statement* BuildAssertIsCoercible(Variable* var, ObjectLiteral* pattern);
 
   // Factory methods.
   FunctionLiteral* DefaultConstructor(const AstRawString* name, bool call_super,

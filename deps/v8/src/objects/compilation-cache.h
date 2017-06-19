@@ -21,11 +21,14 @@ class CompilationCacheShape : public BaseShape<HashTableKey*> {
 
   static inline uint32_t Hash(HashTableKey* key) { return key->Hash(); }
 
-  static inline uint32_t HashForObject(HashTableKey* key, Object* object) {
-    return key->HashForObject(object);
-  }
+  static inline uint32_t RegExpHash(String* string, Smi* flags);
 
-  static inline Handle<Object> AsHandle(Isolate* isolate, HashTableKey* key);
+  static inline uint32_t StringSharedHash(String* source,
+                                          SharedFunctionInfo* shared,
+                                          LanguageMode language_mode,
+                                          int position);
+
+  static inline uint32_t HashForObject(Object* object);
 
   static const int kPrefixSize = 0;
   static const int kEntrySize = 3;

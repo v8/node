@@ -302,7 +302,7 @@ void JSStackFrame::FromFrameArray(Isolate* isolate, Handle<FrameArray> array,
   offset_ = array->Offset(frame_ix)->value();
 
   const int flags = array->Flags(frame_ix)->value();
-  force_constructor_ = (flags & FrameArray::kForceConstructor) != 0;
+  is_constructor_ = (flags & FrameArray::kIsConstructor) != 0;
   is_strict_ = (flags & FrameArray::kIsStrict) != 0;
 }
 
@@ -316,7 +316,7 @@ JSStackFrame::JSStackFrame(Isolate* isolate, Handle<Object> receiver,
       function_(function),
       code_(code),
       offset_(offset),
-      force_constructor_(false),
+      is_constructor_(false),
       is_strict_(false) {}
 
 Handle<Object> JSStackFrame::GetFunction() const {
@@ -456,15 +456,6 @@ bool JSStackFrame::IsNative() {
 
 bool JSStackFrame::IsToplevel() {
   return receiver_->IsJSGlobalProxy() || receiver_->IsNullOrUndefined(isolate_);
-}
-
-bool JSStackFrame::IsConstructor() {
-  if (force_constructor_) return true;
-  if (!receiver_->IsJSObject()) return false;
-  Handle<Object> constructor =
-      JSReceiver::GetDataProperty(Handle<JSObject>::cast(receiver_),
-                                  isolate_->factory()->constructor_string());
-  return constructor.is_identical_to(function_);
 }
 
 namespace {
@@ -653,16 +644,16 @@ void WasmStackFrame::FromFrameArray(Isolate* isolate, Handle<FrameArray> array,
   offset_ = array->Offset(frame_ix)->value();
 }
 
+Handle<Object> WasmStackFrame::GetReceiver() const { return wasm_instance_; }
+
 Handle<Object> WasmStackFrame::GetFunction() const {
-  Handle<Object> obj(Smi::FromInt(wasm_func_index_), isolate_);
-  return obj;
+  return handle(Smi::FromInt(wasm_func_index_), isolate_);
 }
 
 Handle<Object> WasmStackFrame::GetFunctionName() {
   Handle<Object> name;
-  Handle<WasmCompiledModule> compiled_module(
-      Handle<WasmInstanceObject>::cast(wasm_instance_)->compiled_module(),
-      isolate_);
+  Handle<WasmCompiledModule> compiled_module(wasm_instance_->compiled_module(),
+                                             isolate_);
   if (!WasmCompiledModule::GetFunctionNameOrNull(isolate_, compiled_module,
                                                  wasm_func_index_)
            .ToHandle(&name)) {
@@ -674,9 +665,23 @@ Handle<Object> WasmStackFrame::GetFunctionName() {
 MaybeHandle<String> WasmStackFrame::ToString() {
   IncrementalStringBuilder builder(isolate_);
 
-  Handle<Object> name = GetFunctionName();
-  if (!name->IsNull(isolate_)) {
-    builder.AppendString(Handle<String>::cast(name));
+  Handle<WasmCompiledModule> compiled_module(wasm_instance_->compiled_module(),
+                                             isolate_);
+  MaybeHandle<String> module_name =
+      WasmCompiledModule::GetModuleNameOrNull(isolate_, compiled_module);
+  MaybeHandle<String> function_name = WasmCompiledModule::GetFunctionNameOrNull(
+      isolate_, compiled_module, wasm_func_index_);
+  bool has_name = !module_name.is_null() || !function_name.is_null();
+  if (has_name) {
+    if (module_name.is_null()) {
+      builder.AppendString(function_name.ToHandleChecked());
+    } else {
+      builder.AppendString(module_name.ToHandleChecked());
+      if (!function_name.is_null()) {
+        builder.AppendCString(".");
+        builder.AppendString(function_name.ToHandleChecked());
+      }
+    }
     builder.AppendCString(" (");
   }
 
@@ -689,7 +694,7 @@ MaybeHandle<String> WasmStackFrame::ToString() {
   SNPrintF(ArrayVector(buffer), ":%d", GetPosition());
   builder.AppendCString(buffer);
 
-  if (!name->IsNull(isolate_)) builder.AppendCString(")");
+  if (has_name) builder.AppendCString(")");
 
   return builder.Finish();
 }

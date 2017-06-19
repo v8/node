@@ -219,8 +219,6 @@ DEFINE_IMPLICATION(es_staging, harmony)
 #define HARMONY_SHIPPING_BASE(V)                           \
   V(harmony_restrictive_generators,                        \
     "harmony restrictions on generator declarations")      \
-  V(harmony_trailing_commas,                               \
-    "harmony trailing commas in function parameter lists") \
   V(harmony_object_rest_spread, "harmony object rest spread properties")
 
 #ifdef V8_INTL_SUPPORT
@@ -448,13 +446,7 @@ DEFINE_BOOL(omit_map_checks_for_leaf_maps, true,
             "deoptimize the optimized code if the layout of the maps changes.")
 
 // Flags for TurboFan.
-#ifdef V8_DISABLE_TURBO
-// Allow to disable turbofan with a build flag after it's turned on by default.
-#define TURBO_BOOL false
-#else
-#define TURBO_BOOL true
-#endif
-DEFINE_BOOL(turbo, TURBO_BOOL, "enable TurboFan compiler")
+DEFINE_BOOL(turbo, true, "enable TurboFan compiler")
 DEFINE_BOOL(turbo_sp_frame_access, false,
             "use stack pointer-relative access to frame wherever possible")
 DEFINE_BOOL(turbo_preprocess_ranges, true,

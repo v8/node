@@ -106,6 +106,7 @@
   JS_COMPARE_BINOP_LIST(V)      \
   JS_BITWISE_BINOP_LIST(V)      \
   JS_ARITH_BINOP_LIST(V)        \
+  V(JSHasInPrototypeChain)      \
   V(JSInstanceOf)               \
   V(JSOrdinaryHasInstance)
 
@@ -700,8 +701,6 @@
   V(S128Or)                     \
   V(S128Xor)                    \
   V(S128Select)                 \
-  V(S32x4Shuffle)               \
-  V(S16x8Shuffle)               \
   V(S8x16Shuffle)               \
   V(S1x4AnyTrue)                \
   V(S1x4AllTrue)                \

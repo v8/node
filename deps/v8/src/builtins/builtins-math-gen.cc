@@ -93,8 +93,7 @@ TF_BUILTIN(MathAbs, CodeStubAssembler) {
     {
       // Check if {x} is a HeapNumber.
       Label if_xisheapnumber(this), if_xisnotheapnumber(this, Label::kDeferred);
-      Branch(IsHeapNumberMap(LoadMap(x)), &if_xisheapnumber,
-             &if_xisnotheapnumber);
+      Branch(IsHeapNumber(x), &if_xisheapnumber, &if_xisnotheapnumber);
 
       BIND(&if_xisheapnumber);
       {
@@ -107,8 +106,7 @@ TF_BUILTIN(MathAbs, CodeStubAssembler) {
       BIND(&if_xisnotheapnumber);
       {
         // Need to convert {x} to a Number first.
-        Callable callable = CodeFactory::NonNumberToNumber(isolate());
-        var_x.Bind(CallStub(callable, context, x));
+        var_x.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, x));
         Goto(&loop);
       }
     }
@@ -140,8 +138,7 @@ void MathBuiltinsAssembler::MathRoundingOperation(
     {
       // Check if {x} is a HeapNumber.
       Label if_xisheapnumber(this), if_xisnotheapnumber(this, Label::kDeferred);
-      Branch(IsHeapNumberMap(LoadMap(x)), &if_xisheapnumber,
-             &if_xisnotheapnumber);
+      Branch(IsHeapNumber(x), &if_xisheapnumber, &if_xisnotheapnumber);
 
       BIND(&if_xisheapnumber);
       {
@@ -154,8 +151,7 @@ void MathBuiltinsAssembler::MathRoundingOperation(
       BIND(&if_xisnotheapnumber);
       {
         // Need to convert {x} to a Number first.
-        Callable callable = CodeFactory::NonNumberToNumber(isolate());
-        var_x.Bind(CallStub(callable, context, x));
+        var_x.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, x));
         Goto(&loop);
       }
     }
@@ -289,8 +285,7 @@ TF_BUILTIN(MathClz32, CodeStubAssembler) {
     {
       // Check if {x} is a HeapNumber.
       Label if_xisheapnumber(this), if_xisnotheapnumber(this, Label::kDeferred);
-      Branch(IsHeapNumberMap(LoadMap(x)), &if_xisheapnumber,
-             &if_xisnotheapnumber);
+      Branch(IsHeapNumber(x), &if_xisheapnumber, &if_xisnotheapnumber);
 
       BIND(&if_xisheapnumber);
       {
@@ -301,8 +296,7 @@ TF_BUILTIN(MathClz32, CodeStubAssembler) {
       BIND(&if_xisnotheapnumber);
       {
         // Need to convert {x} to a Number first.
-        Callable callable = CodeFactory::NonNumberToNumber(isolate());
-        var_x.Bind(CallStub(callable, context, x));
+        var_x.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, x));
         Goto(&loop);
       }
     }

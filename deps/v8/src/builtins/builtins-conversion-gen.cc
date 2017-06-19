@@ -285,8 +285,7 @@ TF_BUILTIN(ToLength, CodeStubAssembler) {
     // Check if {len} is a HeapNumber.
     Label if_lenisheapnumber(this),
         if_lenisnotheapnumber(this, Label::kDeferred);
-    Branch(IsHeapNumberMap(LoadMap(len)), &if_lenisheapnumber,
-           &if_lenisnotheapnumber);
+    Branch(IsHeapNumber(len), &if_lenisheapnumber, &if_lenisnotheapnumber);
 
     BIND(&if_lenisheapnumber);
     {
@@ -311,8 +310,7 @@ TF_BUILTIN(ToLength, CodeStubAssembler) {
     BIND(&if_lenisnotheapnumber);
     {
       // Need to convert {len} to a Number first.
-      Callable callable = CodeFactory::NonNumberToNumber(isolate());
-      var_len.Bind(CallStub(callable, context, len));
+      var_len.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, len));
       Goto(&loop);
     }
 

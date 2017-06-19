@@ -227,7 +227,7 @@ void Builtins::Generate_NumberConstructor_ConstructStub(MacroAssembler* masm) {
     __ SmiTag(x6);
     __ EnterBuiltinFrame(cp, x1, x6);
     __ Push(x2);  // first argument
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ Pop(x2);
     __ LeaveBuiltinFrame(cp, x1, x6);
@@ -379,7 +379,7 @@ void Builtins::Generate_StringConstructor_ConstructStub(MacroAssembler* masm) {
     __ SmiTag(x6);
     __ EnterBuiltinFrame(cp, x1, x6);
     __ Push(x2);  // first argument
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ Pop(x2);
     __ LeaveBuiltinFrame(cp, x1, x6);
@@ -555,15 +555,14 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
     // -----------------------------------
 
     __ Ldr(x4, FieldMemOperand(x1, JSFunction::kSharedFunctionInfoOffset));
-    __ Ldrb(x4,
-            FieldMemOperand(x4, SharedFunctionInfo::kFunctionKindByteOffset));
-    __ tst(x4, Operand(SharedFunctionInfo::kDerivedConstructorBitsWithinByte));
+    __ Ldr(w4, FieldMemOperand(x4, SharedFunctionInfo::kCompilerHintsOffset));
+    __ tst(w4, Operand(SharedFunctionInfo::kDerivedConstructorMask));
     __ B(ne, &not_create_implicit_receiver);
 
     // If not derived class constructor: Allocate the new receiver object.
     __ IncrementCounter(masm->isolate()->counters()->constructed_objects(), 1,
                         x4, x5);
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ B(&post_instantiation_deopt_entry);
 
@@ -683,9 +682,8 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
       // Throw if constructor function is a class constructor
       __ Ldr(x4, MemOperand(fp, ConstructFrameConstants::kConstructorOffset));
       __ Ldr(x4, FieldMemOperand(x4, JSFunction::kSharedFunctionInfoOffset));
-      __ Ldrb(x4,
-              FieldMemOperand(x4, SharedFunctionInfo::kFunctionKindByteOffset));
-      __ tst(x4, Operand(SharedFunctionInfo::kClassConstructorBitsWithinByte));
+      __ Ldr(w4, FieldMemOperand(x4, SharedFunctionInfo::kCompilerHintsOffset));
+      __ tst(w4, Operand(SharedFunctionInfo::kClassConstructorMask));
       __ B(eq, &use_receiver);
 
     } else {
@@ -1492,11 +1490,11 @@ void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
   __ Ldr(entry,
          FieldMemOperand(closure, JSFunction::kSharedFunctionInfoOffset));
   // Is the shared function marked for tier up?
-  __ Ldrb(temp, FieldMemOperand(
-                    entry, SharedFunctionInfo::kMarkedForTierUpByteOffset));
-  __ TestAndBranchIfAnySet(
-      temp, 1 << SharedFunctionInfo::kMarkedForTierUpBitWithinByte,
-      &gotta_call_runtime);
+  __ Ldr(temp.W(),
+         FieldMemOperand(entry, SharedFunctionInfo::kCompilerHintsOffset));
+  __ TestAndBranchIfAnySet(temp.W(),
+                           SharedFunctionInfo::MarkedForTierUpBit::kMask,
+                           &gotta_call_runtime);
 
   // If SFI points to anything other than CompileLazy, install that.
   __ Ldr(entry, FieldMemOperand(entry, SharedFunctionInfo::kCodeOffset));
@@ -2407,8 +2405,7 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   Label class_constructor;
   __ Ldr(x2, FieldMemOperand(x1, JSFunction::kSharedFunctionInfoOffset));
   __ Ldr(w3, FieldMemOperand(x2, SharedFunctionInfo::kCompilerHintsOffset));
-  __ TestAndBranchIfAnySet(w3, FunctionKind::kClassConstructor
-                                   << SharedFunctionInfo::kFunctionKindShift,
+  __ TestAndBranchIfAnySet(w3, SharedFunctionInfo::kClassConstructorMask,
                            &class_constructor);
 
   // Enter the context of the function; ToObject has to run in the function
@@ -2418,8 +2415,8 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   // We need to convert the receiver for non-native sloppy mode functions.
   Label done_convert;
   __ TestAndBranchIfAnySet(w3,
-                           (1 << SharedFunctionInfo::kNativeBit) |
-                               (1 << SharedFunctionInfo::kStrictModeBit),
+                           SharedFunctionInfo::IsNativeBit::kMask |
+                               SharedFunctionInfo::IsStrictBit::kMask,
                            &done_convert);
   {
     // ----------- S t a t e -------------

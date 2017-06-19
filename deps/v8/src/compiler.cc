@@ -891,11 +891,7 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
 
   // Reset profiler ticks, function is no longer considered hot.
   DCHECK(shared->is_compiled());
-  if (shared->HasBaselineCode()) {
-    shared->code()->set_profiler_ticks(0);
-  } else if (shared->HasBytecodeArray()) {
-    shared->set_profiler_ticks(0);
-  }
+  shared->set_profiler_ticks(0);
 
   VMState<COMPILER> state(isolate);
   DCHECK(!isolate->has_pending_exception());
@@ -1006,11 +1002,7 @@ CompilationJob::Status FinalizeOptimizedCompilationJob(CompilationJob* job) {
   Handle<SharedFunctionInfo> shared = info->shared_info();
 
   // Reset profiler ticks, function is no longer considered hot.
-  if (shared->HasBaselineCode()) {
-    shared->code()->set_profiler_ticks(0);
-  } else if (shared->HasBytecodeArray()) {
-    shared->set_profiler_ticks(0);
-  }
+  shared->set_profiler_ticks(0);
 
   shared->set_has_concurrent_optimization_job(false);
 
@@ -1393,7 +1385,7 @@ bool Compiler::EnsureBytecode(CompilationInfo* info) {
 
 // TODO(turbofan): In the future, unoptimized code with deopt support could
 // be generated lazily once deopt is triggered.
-bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
+bool Compiler::EnsureBaselineCode(CompilationInfo* info) {
   DCHECK_NOT_NULL(info->literal());
   DCHECK_NOT_NULL(info->scope());
   Handle<SharedFunctionInfo> shared = info->shared_info();
@@ -1403,7 +1395,7 @@ bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
     if (!dispatcher->FinishNow(shared)) return false;
   }
 
-  if (!shared->has_deoptimization_support()) {
+  if (!shared->HasBaselineCode()) {
     // Don't generate full-codegen code for functions which should use Ignition.
     if (ShouldUseIgnition(info)) return false;
 
@@ -1413,7 +1405,6 @@ bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
     Zone compile_zone(info->isolate()->allocator(), ZONE_NAME);
     CompilationInfo unoptimized(&compile_zone, info->parse_info(),
                                 info->isolate(), info->closure());
-    unoptimized.EnableDeoptimizationSupport();
 
     // When we call PrepareForSerializing below, we will change the shared
     // ParseInfo. Make sure to reset it.
@@ -1439,7 +1430,7 @@ bool Compiler::EnsureDeoptimizationSupport(CompilationInfo* info) {
     }
 
     // Install compilation result on the shared function info
-    shared->EnableDeoptimizationSupport(*unoptimized.code());
+    shared->ReplaceCode(*unoptimized.code());
 
     // The existing unoptimized code was replaced with the new one.
     RecordFunctionCompilation(CodeEventListener::LAZY_COMPILE_TAG,
@@ -1560,22 +1551,6 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
 
 namespace {
 
-bool CodeGenerationFromStringsAllowed(Isolate* isolate,
-                                      Handle<Context> context) {
-  DCHECK(context->allow_code_gen_from_strings()->IsFalse(isolate));
-  // Check with callback if set.
-  AllowCodeGenerationFromStringsCallback callback =
-      isolate->allow_code_gen_callback();
-  if (callback == NULL) {
-    // No callback set and code generation disallowed.
-    return false;
-  } else {
-    // Callback set. Let it decide if code generation is allowed.
-    VMState<EXTERNAL> state(isolate);
-    return callback(v8::Utils::ToLocal(context));
-  }
-}
-
 bool ContainsAsmModule(Handle<Script> script) {
   DisallowHeapAllocation no_gc;
   SharedFunctionInfo::ScriptIterator iter(script);
@@ -1587,6 +1562,23 @@ bool ContainsAsmModule(Handle<Script> script) {
 
 }  // namespace
 
+bool Compiler::CodeGenerationFromStringsAllowed(Isolate* isolate,
+                                                Handle<Context> context,
+                                                Handle<String> source) {
+  DCHECK(context->allow_code_gen_from_strings()->IsFalse(isolate));
+  // Check with callback if set.
+  AllowCodeGenerationFromStringsCallback callback =
+      isolate->allow_code_gen_callback();
+  if (callback == NULL) {
+    // No callback set and code generation disallowed.
+    return false;
+  } else {
+    // Callback set. Let it decide if code generation is allowed.
+    VMState<EXTERNAL> state(isolate);
+    return callback(v8::Utils::ToLocal(context), v8::Utils::ToLocal(source));
+  }
+}
+
 MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
     Handle<Context> context, Handle<String> source,
     ParseRestriction restriction, int parameters_end_pos) {
@@ -1596,7 +1588,7 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromString(
   // Check if native context allows code generation from
   // strings. Throw an exception if it doesn't.
   if (native_context->allow_code_gen_from_strings()->IsFalse(isolate) &&
-      !CodeGenerationFromStringsAllowed(isolate, native_context)) {
+      !CodeGenerationFromStringsAllowed(isolate, native_context, source)) {
     Handle<Object> error_message =
         native_context->ErrorMessageForCodeGenerationFromStrings();
     THROW_NEW_ERROR(isolate, NewEvalError(MessageTemplate::kCodeGenFromStrings,

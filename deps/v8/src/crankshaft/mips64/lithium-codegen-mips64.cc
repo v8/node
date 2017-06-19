@@ -7,7 +7,6 @@
 #include "src/builtins/builtins-constructor.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
-#include "src/crankshaft/hydrogen-osr.h"
 #include "src/crankshaft/mips64/lithium-gap-resolver-mips64.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
@@ -231,21 +230,7 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
   Comment(";;; Prologue end");
 }
 
-
-void LCodeGen::GenerateOsrPrologue() {
-  // Generate the OSR entry prologue at the first unknown OSR value, or if there
-  // are none, at the OSR entrypoint instruction.
-  if (osr_pc_offset_ >= 0) return;
-
-  osr_pc_offset_ = masm()->pc_offset();
-
-  // Adjust the frame size, subsuming the unoptimized frame into the
-  // optimized frame.
-  int slots = GetStackSlotCount() - graph()->osr()->UnoptimizedFrameSlots();
-  DCHECK(slots >= 0);
-  __ Dsubu(sp, sp, Operand(slots * kPointerSize));
-}
-
+void LCodeGen::GenerateOsrPrologue() { UNREACHABLE(); }
 
 void LCodeGen::GenerateBodyInstructionPre(LInstruction* instr) {
   if (instr->IsCall()) {
@@ -3083,21 +3068,15 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
   Label global_object, result_in_receiver;
 
   if (!instr->hydrogen()->known_function()) {
-    // Do not transform the receiver to object for strict mode functions.
+    // Do not transform the receiver to object for strict mode functions or
+    // builtins.
     __ Ld(scratch,
           FieldMemOperand(function, JSFunction::kSharedFunctionInfoOffset));
-
-    // Do not transform the receiver to object for builtins.
-    int32_t strict_mode_function_mask =
-        1 <<  SharedFunctionInfo::kStrictModeBitWithinByte;
-    int32_t native_mask = 1 << SharedFunctionInfo::kNativeBitWithinByte;
-
-    __ Lbu(at,
-           FieldMemOperand(scratch, SharedFunctionInfo::kStrictModeByteOffset));
-    __ And(at, at, Operand(strict_mode_function_mask));
-    __ Branch(&result_in_receiver, ne, at, Operand(zero_reg));
-    __ Lbu(at, FieldMemOperand(scratch, SharedFunctionInfo::kNativeByteOffset));
-    __ And(at, at, Operand(native_mask));
+    __ Lwu(at,
+           FieldMemOperand(scratch, SharedFunctionInfo::kCompilerHintsOffset));
+    __ And(at, at,
+           Operand(SharedFunctionInfo::IsStrictBit::kMask |
+                   SharedFunctionInfo::IsNativeBit::kMask));
     __ Branch(&result_in_receiver, ne, at, Operand(zero_reg));
   }
 

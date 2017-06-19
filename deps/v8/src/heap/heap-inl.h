@@ -24,6 +24,7 @@
 #include "src/objects-inl.h"
 #include "src/objects/scope-info.h"
 #include "src/objects/script-inl.h"
+#include "src/profiler/heap-profiler.h"
 #include "src/string-hasher.h"
 
 namespace v8 {
@@ -671,15 +672,6 @@ void Heap::RemoveAllocationSitePretenuringFeedback(AllocationSite* site) {
   global_pretenuring_feedback_->Remove(
       site, static_cast<uint32_t>(bit_cast<uintptr_t>(site)));
 }
-
-bool Heap::CollectGarbage(AllocationSpace space,
-                          GarbageCollectionReason gc_reason,
-                          const v8::GCCallbackFlags callbackFlags) {
-  const char* collector_reason = NULL;
-  GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
-  return CollectGarbage(collector, gc_reason, collector_reason, callbackFlags);
-}
-
 
 Isolate* Heap::isolate() {
   return reinterpret_cast<Isolate*>(

@@ -520,6 +520,8 @@ const int kSpaceTagMask = (1 << kSpaceTagSize) - 1;
 
 enum AllocationAlignment { kWordAligned, kDoubleAligned, kDoubleUnaligned };
 
+enum class AccessMode { ATOMIC, NON_ATOMIC };
+
 // Possible outcomes for decisions.
 enum class Decision : uint8_t { kUnknown, kTrue, kFalse };
 
@@ -741,7 +743,11 @@ struct AccessorDescriptor {
 // Testers for test.
 
 #define HAS_SMI_TAG(value) \
-  ((reinterpret_cast<intptr_t>(value) & kSmiTagMask) == kSmiTag)
+  ((reinterpret_cast<intptr_t>(value) & ::i::kSmiTagMask) == ::i::kSmiTag)
+
+#define HAS_HEAP_OBJECT_TAG(value)                                   \
+  (((reinterpret_cast<intptr_t>(value) & ::i::kHeapObjectTagMask) == \
+    ::i::kHeapObjectTag))
 
 // OBJECT_POINTER_ALIGN returns the value aligned as a HeapObject pointer
 #define OBJECT_POINTER_ALIGN(value)                             \

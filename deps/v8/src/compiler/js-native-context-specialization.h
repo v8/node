@@ -56,6 +56,7 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   Reduction ReduceJSAdd(Node* node);
   Reduction ReduceJSGetSuperConstructor(Node* node);
   Reduction ReduceJSInstanceOf(Node* node);
+  Reduction ReduceJSHasInPrototypeChain(Node* node);
   Reduction ReduceJSOrdinaryHasInstance(Node* node);
   Reduction ReduceJSLoadContext(Node* node);
   Reduction ReduceJSLoadGlobal(Node* node);
@@ -96,6 +97,8 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   // A triple of nodes that represents a continuation.
   class ValueEffectControl final {
    public:
+    ValueEffectControl()
+        : value_(nullptr), effect_(nullptr), control_(nullptr) {}
     ValueEffectControl(Node* value, Node* effect, Node* control)
         : value_(value), effect_(effect), control_(control) {}
 
@@ -104,9 +107,9 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
     Node* control() const { return control_; }
 
    private:
-    Node* const value_;
-    Node* const effect_;
-    Node* const control_;
+    Node* value_;
+    Node* effect_;
+    Node* control_;
   };
 
   // Construct the appropriate subgraph for property access.
@@ -115,6 +118,34 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
       Node* effect, Node* control, Handle<Name> name,
       ZoneVector<Node*>* if_exceptions, PropertyAccessInfo const& access_info,
       AccessMode access_mode, LanguageMode language_mode);
+  ValueEffectControl BuildPropertyLoad(Node* receiver, Node* context,
+                                       Node* frame_state, Node* effect,
+                                       Node* control, Handle<Name> name,
+                                       ZoneVector<Node*>* if_exceptions,
+                                       PropertyAccessInfo const& access_info,
+                                       LanguageMode language_mode);
+
+  ValueEffectControl BuildPropertyStore(
+      Node* receiver, Node* value, Node* context, Node* frame_state,
+      Node* effect, Node* control, Handle<Name> name,
+      ZoneVector<Node*>* if_exceptions, PropertyAccessInfo const& access_info,
+      AccessMode access_mode, LanguageMode language_mode);
+
+  // Helpers for accessor inlining.
+  Node* InlinePropertyGetterCall(Node* receiver, Node* context,
+                                 Node* frame_state, Node** effect,
+                                 Node** control,
+                                 ZoneVector<Node*>* if_exceptions,
+                                 PropertyAccessInfo const& access_info);
+  Node* InlinePropertySetterCall(Node* receiver, Node* value, Node* context,
+                                 Node* frame_state, Node** effect,
+                                 Node** control,
+                                 ZoneVector<Node*>* if_exceptions,
+                                 PropertyAccessInfo const& access_info);
+  Node* InlineApiCall(Node* receiver, Node* context, Node* target,
+                      Node* frame_state, Node* value, Node** effect,
+                      Node** control, Handle<SharedFunctionInfo> shared_info,
+                      Handle<FunctionTemplateInfo> function_template_info);
 
   // Construct the appropriate subgraph for element access.
   ValueEffectControl BuildElementAccess(Node* receiver, Node* index,
@@ -124,37 +155,14 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
                                         AccessMode access_mode,
                                         KeyedAccessStoreMode store_mode);
 
-  // Construct an appropriate heap object check.
-  Node* BuildCheckHeapObject(Node* receiver, Node** effect, Node* control);
-
-  // Construct an appropriate map check.
-  Node* BuildCheckMaps(Node* receiver, Node* effect, Node* control,
-                       MapHandles const& maps);
-
   // Construct appropriate subgraph to extend properties backing store.
   Node* BuildExtendPropertiesBackingStore(Handle<Map> map, Node* properties,
                                           Node* effect, Node* control);
-
-  // Adds stability dependencies on all prototypes of every class in
-  // {receiver_type} up to (and including) the {holder}.
-  void AssumePrototypesStable(MapHandles const& receiver_maps,
-                              Handle<JSObject> holder);
 
   // Checks if we can turn the hole into undefined when loading an element
   // from an object with one of the {receiver_maps}; sets up appropriate
   // code dependencies and might use the array protector cell.
   bool CanTreatHoleAsUndefined(MapHandles const& receiver_maps);
-
-  // Checks if we know at compile time that the {receiver} either definitely
-  // has the {prototype} in it's prototype chain, or the {receiver} definitely
-  // doesn't have the {prototype} in it's prototype chain.
-  enum InferHasInPrototypeChainResult {
-    kIsInPrototypeChain,
-    kIsNotInPrototypeChain,
-    kMayBeInPrototypeChain
-  };
-  InferHasInPrototypeChainResult InferHasInPrototypeChain(
-      Node* receiver, Node* effect, Handle<JSReceiver> prototype);
 
   // Extract receiver maps from {nexus} and filter based on {receiver} if
   // possible.
@@ -172,11 +180,16 @@ class JSNativeContextSpecialization final : public AdvancedReducer {
   // program location.
   MaybeHandle<Map> InferReceiverRootMap(Node* receiver);
 
-  ValueEffectControl InlineApiCall(
-      Node* receiver, Node* context, Node* target, Node* frame_state,
-      Node* parameter, Node* effect, Node* control,
-      Handle<SharedFunctionInfo> shared_info,
-      Handle<FunctionTemplateInfo> function_template_info);
+  // Checks if we know at compile time that the {receiver} either definitely
+  // has the {prototype} in it's prototype chain, or the {receiver} definitely
+  // doesn't have the {prototype} in it's prototype chain.
+  enum InferHasInPrototypeChainResult {
+    kIsInPrototypeChain,
+    kIsNotInPrototypeChain,
+    kMayBeInPrototypeChain
+  };
+  InferHasInPrototypeChainResult InferHasInPrototypeChain(
+      Node* receiver, Node* effect, Handle<HeapObject> prototype);
 
   // Script context lookup logic.
   struct ScriptContextTableLookupResult;

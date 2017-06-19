@@ -41,6 +41,10 @@ void StaticNewSpaceVisitor<StaticVisitor>::Initialize() {
                                     int>::Visit);
 
   table_.Register(
+      kVisitCell,
+      &FixedBodyVisitor<StaticVisitor, Cell::BodyDescriptor, int>::Visit);
+
+  table_.Register(
       kVisitSymbol,
       &FixedBodyVisitor<StaticVisitor, Symbol::BodyDescriptor, int>::Visit);
 
@@ -78,7 +82,7 @@ void StaticNewSpaceVisitor<StaticVisitor>::Initialize() {
   // Don't visit code entry. We are using this visitor only during scavenges.
   table_.Register(
       kVisitJSFunction,
-      &FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorWeakCode,
+      &FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorWeak,
                            int>::Visit);
 
   table_.Register(
@@ -154,7 +158,7 @@ void StaticMarkingVisitor<StaticVisitor>::Initialize() {
 
   table_.Register(
       kVisitAllocationSite,
-      &FixedBodyVisitor<StaticVisitor, AllocationSite::MarkingBodyDescriptor,
+      &FixedBodyVisitor<StaticVisitor, AllocationSite::BodyDescriptorWeak,
                         void>::Visit);
 
   table_.Register(kVisitByteArray, &DataObjectVisitor::Visit);
@@ -291,8 +295,8 @@ void StaticMarkingVisitor<StaticVisitor>::VisitCodeAgeSequence(
 template <typename StaticVisitor>
 void StaticMarkingVisitor<StaticVisitor>::VisitBytecodeArray(
     Map* map, HeapObject* object) {
-  FixedBodyVisitor<StaticVisitor, BytecodeArray::MarkingBodyDescriptor,
-                   void>::Visit(map, object);
+  FlexibleBodyVisitor<StaticVisitor, BytecodeArray::BodyDescriptor,
+                      void>::Visit(map, object);
   BytecodeArray::cast(object)->MakeOlder();
 }
 
@@ -440,7 +444,7 @@ void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfo(
 template <typename StaticVisitor>
 void StaticMarkingVisitor<StaticVisitor>::VisitJSFunction(Map* map,
                                                           HeapObject* object) {
-  FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorStrongCode,
+  FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorWeak,
                       void>::Visit(map, object);
 }
 
@@ -487,7 +491,12 @@ inline static bool HasSourceCode(Heap* heap, SharedFunctionInfo* info) {
 
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit(HeapObject* object) {
-  Map* map = object->map();
+  return Visit(object->map(), object);
+}
+
+template <typename ResultType, typename ConcreteVisitor>
+ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit(Map* map,
+                                                           HeapObject* object) {
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   switch (static_cast<VisitorId>(map->visitor_id())) {
 #define CASE(type)   \

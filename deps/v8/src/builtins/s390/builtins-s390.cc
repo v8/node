@@ -226,7 +226,7 @@ void Builtins::Generate_NumberConstructor_ConstructStub(MacroAssembler* masm) {
     __ SmiTag(r8);
     __ EnterBuiltinFrame(cp, r3, r8);
     __ Push(r4);  // first argument
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ Pop(r4);
     __ LeaveBuiltinFrame(cp, r3, r8);
@@ -376,7 +376,7 @@ void Builtins::Generate_StringConstructor_ConstructStub(MacroAssembler* masm) {
     __ SmiTag(r8);
     __ EnterBuiltinFrame(cp, r3, r8);
     __ Push(r4);  // first argument
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ Pop(r4);
     __ LeaveBuiltinFrame(cp, r3, r8);
@@ -543,16 +543,13 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
     __ LoadP(r6, FieldMemOperand(r3, JSFunction::kSharedFunctionInfoOffset));
     __ LoadlW(r6,
               FieldMemOperand(r6, SharedFunctionInfo::kCompilerHintsOffset));
-    __ TestBitMask(r6,
-                   FunctionKind::kDerivedConstructor
-                       << SharedFunctionInfo::kFunctionKindShift,
-                   r0);
+    __ TestBitMask(r6, SharedFunctionInfo::kDerivedConstructorMask, r0);
     __ bne(&not_create_implicit_receiver);
 
     // If not derived class constructor: Allocate the new receiver object.
     __ IncrementCounter(masm->isolate()->counters()->constructed_objects(), 1,
                         r6, r7);
-    __ Call(CodeFactory::FastNewObject(masm->isolate()).code(),
+    __ Call(masm->isolate()->builtins()->FastNewObject(),
             RelocInfo::CODE_TARGET);
     __ b(&post_instantiation_deopt_entry);
 
@@ -669,10 +666,7 @@ void Generate_JSConstructStubGeneric(MacroAssembler* masm,
       __ LoadP(r6, FieldMemOperand(r6, JSFunction::kSharedFunctionInfoOffset));
       __ LoadlW(r6,
                 FieldMemOperand(r6, SharedFunctionInfo::kCompilerHintsOffset));
-      __ TestBitMask(r6,
-                     FunctionKind::kClassConstructor
-                         << SharedFunctionInfo::kFunctionKindShift,
-                     r0);
+      __ TestBitMask(r6, SharedFunctionInfo::kClassConstructorMask, r0);
       __ beq(&use_receiver);
     } else {
       __ b(&use_receiver);
@@ -1501,9 +1495,9 @@ void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
   __ LoadP(entry,
            FieldMemOperand(closure, JSFunction::kSharedFunctionInfoOffset));
   // Is the shared function marked for tier up?
-  __ LoadlB(r7, FieldMemOperand(
-                    entry, SharedFunctionInfo::kMarkedForTierUpByteOffset));
-  __ TestBit(r7, SharedFunctionInfo::kMarkedForTierUpBitWithinByte, r0);
+  __ LoadlW(r7,
+            FieldMemOperand(entry, SharedFunctionInfo::kCompilerHintsOffset));
+  __ TestBit(r7, SharedFunctionInfo::MarkedForTierUpBit::kShift, r0);
   __ bne(&gotta_call_runtime);
 
   // If SFI points to anything other than CompileLazy, install that.
@@ -2395,9 +2389,7 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   Label class_constructor;
   __ LoadP(r4, FieldMemOperand(r3, JSFunction::kSharedFunctionInfoOffset));
   __ LoadlW(r5, FieldMemOperand(r4, SharedFunctionInfo::kCompilerHintsOffset));
-  __ TestBitMask(r5, FunctionKind::kClassConstructor
-                         << SharedFunctionInfo::kFunctionKindShift,
-                 r0);
+  __ TestBitMask(r5, SharedFunctionInfo::kClassConstructorMask, r0);
   __ bne(&class_constructor);
 
   // Enter the context of the function; ToObject has to run in the function
@@ -2406,8 +2398,9 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   __ LoadP(cp, FieldMemOperand(r3, JSFunction::kContextOffset));
   // We need to convert the receiver for non-native sloppy mode functions.
   Label done_convert;
-  __ AndP(r0, r5, Operand((1 << SharedFunctionInfo::kStrictModeBit) |
-                          (1 << SharedFunctionInfo::kNativeBit)));
+  __ AndP(r0, r5,
+          Operand(SharedFunctionInfo::IsStrictBit::kMask |
+                  SharedFunctionInfo::IsNativeBit::kMask));
   __ bne(&done_convert);
   {
     // ----------- S t a t e -------------

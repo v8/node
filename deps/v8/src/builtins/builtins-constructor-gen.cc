@@ -87,99 +87,25 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
   // Create a new closure from the given function info in new space
   Node* result = Allocate(JSFunction::kSize);
 
-  // Calculate the index of the map we should install on the function based on
-  // the FunctionKind and LanguageMode of the function.
-  // Note: Must be kept in sync with Context::FunctionMapIndex
   Node* compiler_hints =
       LoadObjectField(shared_info, SharedFunctionInfo::kCompilerHintsOffset,
                       MachineType::Uint32());
-  Node* is_strict = Word32And(
-      compiler_hints, Int32Constant(1 << SharedFunctionInfo::kStrictModeBit));
 
-  Label if_normal(this), if_generator(this), if_async(this),
-      if_class_constructor(this), if_function_without_prototype(this),
-      load_map(this);
-  VARIABLE(map_index, MachineType::PointerRepresentation());
-
-  STATIC_ASSERT(FunctionKind::kNormalFunction == 0);
-  Node* is_not_normal =
-      DecodeWord32<SharedFunctionInfo::FunctionKindBits>(compiler_hints);
-  GotoIfNot(is_not_normal, &if_normal);
-
-  Node* is_generator = Word32And(
-      compiler_hints, Int32Constant(FunctionKind::kGeneratorFunction
-                                    << SharedFunctionInfo::kFunctionKindShift));
-  GotoIf(is_generator, &if_generator);
-
-  Node* is_async = Word32And(
-      compiler_hints, Int32Constant(FunctionKind::kAsyncFunction
-                                    << SharedFunctionInfo::kFunctionKindShift));
-  GotoIf(is_async, &if_async);
-
-  Node* is_class_constructor = Word32And(
-      compiler_hints, Int32Constant(FunctionKind::kClassConstructor
-                                    << SharedFunctionInfo::kFunctionKindShift));
-  GotoIf(is_class_constructor, &if_class_constructor);
-
-  if (FLAG_debug_code) {
-    // Function must be a function without a prototype.
-    CSA_ASSERT(
-        this,
-        Word32And(compiler_hints,
-                  Int32Constant((FunctionKind::kAccessorFunction |
-                                 FunctionKind::kArrowFunction |
-                                 FunctionKind::kConciseMethod)
-                                << SharedFunctionInfo::kFunctionKindShift)));
-  }
-  Goto(&if_function_without_prototype);
-
-  BIND(&if_normal);
-  {
-    map_index.Bind(SelectIntPtrConstant(is_strict,
-                                        Context::STRICT_FUNCTION_MAP_INDEX,
-                                        Context::SLOPPY_FUNCTION_MAP_INDEX));
-    Goto(&load_map);
-  }
-
-  BIND(&if_generator);
-  {
-    Node* is_async =
-        Word32And(compiler_hints,
-                  Int32Constant(FunctionKind::kAsyncFunction
-                                << SharedFunctionInfo::kFunctionKindShift));
-    map_index.Bind(SelectIntPtrConstant(
-        is_async, Context::ASYNC_GENERATOR_FUNCTION_MAP_INDEX,
-        Context::GENERATOR_FUNCTION_MAP_INDEX));
-    Goto(&load_map);
-  }
-
-  BIND(&if_async);
-  {
-    map_index.Bind(IntPtrConstant(Context::ASYNC_FUNCTION_MAP_INDEX));
-    Goto(&load_map);
-  }
-
-  BIND(&if_class_constructor);
-  {
-    map_index.Bind(IntPtrConstant(Context::CLASS_FUNCTION_MAP_INDEX));
-    Goto(&load_map);
-  }
-
-  BIND(&if_function_without_prototype);
-  {
-    map_index.Bind(
-        IntPtrConstant(Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX));
-    Goto(&load_map);
-  }
-
-  BIND(&load_map);
+  // The calculation of |function_map_index| must be in sync with
+  // SharedFunctionInfo::function_map_index().
+  Node* function_map_index =
+      IntPtrAdd(DecodeWordFromWord32<SharedFunctionInfo::FunctionMapIndexBits>(
+                    compiler_hints),
+                IntPtrConstant(Context::FIRST_FUNCTION_MAP_INDEX));
+  CSA_ASSERT(this, UintPtrLessThanOrEqual(
+                       function_map_index,
+                       IntPtrConstant(Context::LAST_FUNCTION_MAP_INDEX)));
 
   // Get the function map in the current native context and set that
   // as the map of the allocated object.
   Node* native_context = LoadNativeContext(context);
-  Node* map_slot_value =
-      LoadFixedArrayElement(native_context, map_index.value());
-  StoreMapNoWriteBarrier(result, map_slot_value);
+  Node* function_map = LoadContextElement(native_context, function_map_index);
+  StoreMapNoWriteBarrier(result, function_map);
 
   // Initialize the rest of the function.
   Node* empty_fixed_array = HeapConstant(factory->empty_fixed_array());
@@ -252,6 +178,23 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
                                  UndefinedConstant());
 
   return result;
+}
+
+Node* ConstructorBuiltinsAssembler::LoadFeedbackVectorSlot(
+    Node* closure, Node* literal_index) {
+  Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
+  Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
+  return LoadFixedArrayElement(feedback_vector, literal_index, 0,
+                               CodeStubAssembler::SMI_PARAMETERS);
+}
+
+Node* ConstructorBuiltinsAssembler::NotHasBoilerplate(Node* literal_site) {
+  return TaggedIsSmi(literal_site);
+}
+
+Node* ConstructorBuiltinsAssembler::LoadAllocationSiteBoilerplate(Node* site) {
+  CSA_ASSERT(this, IsAllocationSite(site));
+  return LoadObjectField(site, AllocationSite::kTransitionInfoOffset);
 }
 
 TF_BUILTIN(FastNewClosure, ConstructorBuiltinsAssembler) {
@@ -421,14 +364,11 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneRegExp(Node* closure,
   Label call_runtime(this, Label::kDeferred), end(this);
 
   VARIABLE(result, MachineRepresentation::kTagged);
-
-  Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
-  Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
-  Node* boilerplate = LoadFixedArrayElement(feedback_vector, literal_index, 0,
-                                            CodeStubAssembler::SMI_PARAMETERS);
-  GotoIf(IsUndefined(boilerplate), &call_runtime);
-
+  Node* literal_site = LoadFeedbackVectorSlot(closure, literal_index);
+  GotoIf(NotHasBoilerplate(literal_site), &call_runtime);
   {
+    Node* boilerplate = literal_site;
+    CSA_ASSERT(this, IsJSRegExp(boilerplate));
     int size = JSRegExp::kSize + JSRegExp::kInObjectFieldCount * kPointerSize;
     Node* copy = Allocate(size);
     for (int offset = 0; offset < size; offset += kPointerSize) {
@@ -499,18 +439,12 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowArray(
       return_result(this);
   VARIABLE(result, MachineRepresentation::kTagged);
 
-  Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
-  Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
-  Node* allocation_site = LoadFixedArrayElement(
-      feedback_vector, literal_index, 0, CodeStubAssembler::SMI_PARAMETERS);
+  Node* allocation_site = LoadFeedbackVectorSlot(closure, literal_index);
+  GotoIf(NotHasBoilerplate(allocation_site), call_runtime);
 
-  GotoIf(IsUndefined(allocation_site), call_runtime);
-  allocation_site = LoadFixedArrayElement(feedback_vector, literal_index, 0,
-                                          CodeStubAssembler::SMI_PARAMETERS);
-
-  Node* boilerplate =
-      LoadObjectField(allocation_site, AllocationSite::kTransitionInfoOffset);
+  Node* boilerplate = LoadAllocationSiteBoilerplate(allocation_site);
   Node* boilerplate_map = LoadMap(boilerplate);
+  CSA_ASSERT(this, IsJSArrayMap(boilerplate_map));
   Node* boilerplate_elements = LoadElements(boilerplate);
   Node* capacity = LoadFixedArrayBaseLength(boilerplate_elements);
   allocation_site =
@@ -613,25 +547,21 @@ TF_BUILTIN(FastCloneShallowArrayDontTrack, ConstructorBuiltinsAssembler) {
 
 Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
     Label* call_runtime, Node* closure, Node* literals_index) {
-  Node* allocation_site;
-  {
-    // Load the alloation site.
-    Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
-    Node* feedback_vector = LoadObjectField(cell, Cell::kValueOffset);
-    allocation_site = LoadFixedArrayElement(feedback_vector, literals_index, 0,
-                                            CodeStubAssembler::SMI_PARAMETERS);
-    GotoIf(IsUndefined(allocation_site), call_runtime);
-  }
+  Node* allocation_site = LoadFeedbackVectorSlot(closure, literals_index);
+  GotoIf(NotHasBoilerplate(allocation_site), call_runtime);
 
-  Node* boilerplate =
-      LoadObjectField(allocation_site, AllocationSite::kTransitionInfoOffset);
+  Node* boilerplate = LoadAllocationSiteBoilerplate(allocation_site);
   Node* boilerplate_map = LoadMap(boilerplate);
+  CSA_ASSERT(this, IsJSObjectMap(boilerplate_map));
 
   VARIABLE(var_properties, MachineRepresentation::kTagged);
   {
+    Node* bit_field_3 = LoadMapBitField3(boilerplate_map);
+    GotoIf(IsSetWord32<Map::Deprecated>(bit_field_3), call_runtime);
     // Directly copy over the property store for dict-mode boilerplates.
     Label if_dictionary(this), if_fast(this), done(this);
-    Branch(IsDictionaryMap(boilerplate_map), &if_dictionary, &if_fast);
+    Branch(IsSetWord32<Map::DictionaryMap>(bit_field_3), &if_dictionary,
+           &if_fast);
     BIND(&if_dictionary);
     {
       Comment("Copy dictionary properties");

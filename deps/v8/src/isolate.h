@@ -107,6 +107,10 @@ namespace interpreter {
 class Interpreter;
 }
 
+namespace wasm {
+class CompilationManager;
+}
+
 #define RETURN_FAILURE_IF_SCHEDULED_EXCEPTION(isolate)    \
   do {                                                    \
     Isolate* __isolate__ = (isolate);                     \
@@ -435,6 +439,7 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   /* Current code coverage mode */                                            \
   V(debug::Coverage::Mode, code_coverage_mode, debug::Coverage::kBestEffort)  \
   V(int, last_stack_frame_info_id, 0)                                         \
+  V(int, last_console_context_id, 0)                                          \
   ISOLATE_INIT_SIMULATOR_LIST(V)
 
 #define THREAD_LOCAL_TOP_ACCESSOR(type, name)                        \
@@ -1212,6 +1217,10 @@ class Isolate {
     return cancelable_task_manager_;
   }
 
+  wasm::CompilationManager* wasm_compilation_manager() {
+    return wasm_compilation_manager_.get();
+  }
+
   const AstStringConstants* ast_string_constants() const {
     return ast_string_constants_;
   }
@@ -1568,6 +1577,8 @@ class Isolate {
   FutexWaitListNode futex_wait_list_node_;
 
   CancelableTaskManager* cancelable_task_manager_;
+
+  std::unique_ptr<wasm::CompilationManager> wasm_compilation_manager_;
 
   debug::ConsoleDelegate* console_delegate_ = nullptr;
 

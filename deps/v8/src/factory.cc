@@ -307,7 +307,6 @@ Handle<String> Factory::InternalizeStringWithKey(StringTableKey* key) {
   return StringTable::LookupKey(isolate(), key);
 }
 
-
 MaybeHandle<String> Factory::NewStringFromOneByte(Vector<const uint8_t> string,
                                                   PretenureFlag pretenure) {
   int length = string.length();
@@ -827,7 +826,6 @@ Handle<String> Factory::NewProperSubString(Handle<String> str,
   slice->set_offset(offset);
   return slice;
 }
-
 
 MaybeHandle<String> Factory::NewExternalStringFromOneByte(
     const ExternalOneByteString::Resource* resource) {
@@ -1589,10 +1587,8 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<SharedFunctionInfo> info,
     Handle<Context> context,
     PretenureFlag pretenure) {
-  int map_index =
-      Context::FunctionMapIndex(info->language_mode(), info->kind());
-  Handle<Map> initial_map(Map::cast(context->native_context()->get(map_index)));
-
+  Handle<Map> initial_map(
+      Map::cast(context->native_context()->get(info->function_map_index())));
   return NewFunctionFromSharedFunctionInfo(initial_map, info, context,
                                            pretenure);
 }
@@ -1600,10 +1596,8 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<SharedFunctionInfo> info, Handle<Context> context,
     Handle<Cell> vector, PretenureFlag pretenure) {
-  int map_index =
-      Context::FunctionMapIndex(info->language_mode(), info->kind());
-  Handle<Map> initial_map(Map::cast(context->native_context()->get(map_index)));
-
+  Handle<Map> initial_map(
+      Map::cast(context->native_context()->get(info->function_map_index())));
   return NewFunctionFromSharedFunctionInfo(initial_map, info, context, vector,
                                            pretenure);
 }
@@ -1860,8 +1854,8 @@ Handle<JSGlobalObject> Factory::NewJSGlobalObject(
   new_map->set_dictionary_map(true);
 
   // Set up the global object as a normalized object.
-  global->set_map(*new_map);
   global->set_properties(*dictionary);
+  global->synchronized_set_map(*new_map);
 
   // Make sure result is a global object with properties in dictionary.
   DCHECK(global->IsJSGlobalObject() && !global->HasFastProperties());
@@ -2594,7 +2588,6 @@ Handle<String> Factory::NumberToString(Handle<Object> number,
   SetNumberStringCache(number, js_string);
   return js_string;
 }
-
 
 Handle<DebugInfo> Factory::NewDebugInfo(Handle<SharedFunctionInfo> shared) {
   DCHECK(!shared->HasDebugInfo());

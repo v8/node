@@ -344,7 +344,7 @@ class BitField64 : public BitFieldBase<T, shift, size, uint64_t> { };
 #define DEFINE_BIT_FIELD_RANGE_TYPE(Name, Type, Size, _) \
   k##Name##Start, k##Name##End = k##Name##Start + Size - 1,
 
-#define DEFINE_BIT_RANGESS(LIST_MACRO)                   \
+#define DEFINE_BIT_RANGES(LIST_MACRO)                    \
   struct LIST_MACRO##_Ranges {                           \
     enum { LIST_MACRO(DEFINE_BIT_FIELD_RANGE_TYPE, _) }; \
   };
@@ -356,11 +356,11 @@ class BitField64 : public BitFieldBase<T, shift, size, uint64_t> { };
   typedef BitField64<Type, RangesName::k##Name##Start, Size> Name;
 
 #define DEFINE_BIT_FIELDS(LIST_MACRO) \
-  DEFINE_BIT_RANGESS(LIST_MACRO)      \
+  DEFINE_BIT_RANGES(LIST_MACRO)       \
   LIST_MACRO(DEFINE_BIT_FIELD_TYPE, LIST_MACRO##_Ranges)
 
 #define DEFINE_BIT_FIELDS_64(LIST_MACRO) \
-  DEFINE_BIT_RANGESS(LIST_MACRO)         \
+  DEFINE_BIT_RANGES(LIST_MACRO)          \
   LIST_MACRO(DEFINE_BIT_FIELD_64_TYPE, LIST_MACRO##_Ranges)
 
 // ----------------------------------------------------------------------------
@@ -402,6 +402,26 @@ class BitSetComputer {
   static int shift(int item) { return (item % kItemsPerWord) * kBitsPerItem; }
 };
 
+// Helper macros for defining a contiguous sequence of field offset constants.
+// Example: (backslashes at the ends of respective lines of this multi-line
+// macro definition are omitted here to please the compiler)
+//
+// #define MAP_FIELDS(V)
+//   V(kField1Offset, kPointerSize)
+//   V(kField2Offset, kIntSize)
+//   V(kField3Offset, kIntSize)
+//   V(kField4Offset, kPointerSize)
+//   V(kSize, 0)
+//
+// DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, MAP_FIELDS)
+//
+#define DEFINE_ONE_FIELD_OFFSET(Name, Size) Name, Name##End = Name + Size - 1,
+
+#define DEFINE_FIELD_OFFSET_CONSTANTS(StartOffset, LIST_MACRO) \
+  enum {                                                       \
+    LIST_MACRO##_StartOffset = StartOffset - 1,                \
+    LIST_MACRO(DEFINE_ONE_FIELD_OFFSET)                        \
+  };
 
 // ----------------------------------------------------------------------------
 // Hash function.
@@ -1511,32 +1531,7 @@ class StringBuilder : public SimpleStringBuilder {
 bool DoubleToBoolean(double d);
 
 template <typename Stream>
-bool StringToArrayIndex(Stream* stream, uint32_t* index) {
-  uint16_t ch = stream->GetNext();
-
-  // If the string begins with a '0' character, it must only consist
-  // of it to be a legal array index.
-  if (ch == '0') {
-    *index = 0;
-    return !stream->HasMore();
-  }
-
-  // Convert string to uint32 array index; character by character.
-  int d = ch - '0';
-  if (d < 0 || d > 9) return false;
-  uint32_t result = d;
-  while (stream->HasMore()) {
-    d = stream->GetNext() - '0';
-    if (d < 0 || d > 9) return false;
-    // Check that the new result is below the 32 bit limit.
-    if (result > 429496729U - ((d + 3) >> 3)) return false;
-    result = (result * 10) + d;
-  }
-
-  *index = result;
-  return true;
-}
-
+bool StringToArrayIndex(Stream* stream, uint32_t* index);
 
 // Returns current value of top of the stack. Works correctly with ASAN.
 DISABLE_ASAN

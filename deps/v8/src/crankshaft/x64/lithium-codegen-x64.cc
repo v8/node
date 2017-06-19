@@ -10,7 +10,6 @@
 #include "src/builtins/builtins-constructor.h"
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
-#include "src/crankshaft/hydrogen-osr.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/objects-inl.h"
@@ -232,21 +231,7 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
   Comment(";;; Prologue end");
 }
 
-
-void LCodeGen::GenerateOsrPrologue() {
-  // Generate the OSR entry prologue at the first unknown OSR value, or if there
-  // are none, at the OSR entrypoint instruction.
-  if (osr_pc_offset_ >= 0) return;
-
-  osr_pc_offset_ = masm()->pc_offset();
-
-  // Adjust the frame size, subsuming the unoptimized frame into the
-  // optimized frame.
-  int slots = GetStackSlotCount() - graph()->osr()->UnoptimizedFrameSlots();
-  DCHECK(slots >= 0);
-  __ subp(rsp, Immediate(slots * kPointerSize));
-}
-
+void LCodeGen::GenerateOsrPrologue() { UNREACHABLE(); }
 
 void LCodeGen::GenerateBodyInstructionPre(LInstruction* instr) {
   if (instr->IsCall()) {
@@ -2933,19 +2918,14 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
   Label::Distance dist = DeoptEveryNTimes() ? Label::kFar : Label::kNear;
 
   if (!instr->hydrogen()->known_function()) {
-    // Do not transform the receiver to object for strict mode
-    // functions.
+    // Do not transform the receiver to object for strict mode functions or
+    // builtins.
     __ movp(kScratchRegister,
             FieldOperand(function, JSFunction::kSharedFunctionInfoOffset));
-    __ testb(FieldOperand(kScratchRegister,
-                          SharedFunctionInfo::kStrictModeByteOffset),
-             Immediate(1 << SharedFunctionInfo::kStrictModeBitWithinByte));
-    __ j(not_equal, &receiver_ok, dist);
-
-    // Do not transform the receiver to object for builtins.
-    __ testb(FieldOperand(kScratchRegister,
-                          SharedFunctionInfo::kNativeByteOffset),
-             Immediate(1 << SharedFunctionInfo::kNativeBitWithinByte));
+    __ testl(FieldOperand(kScratchRegister,
+                          SharedFunctionInfo::kCompilerHintsOffset),
+             Immediate(SharedFunctionInfo::IsStrictBit::kMask |
+                       SharedFunctionInfo::IsNativeBit::kMask));
     __ j(not_equal, &receiver_ok, dist);
   }
 

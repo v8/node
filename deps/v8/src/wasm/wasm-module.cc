@@ -14,6 +14,7 @@
 #include "src/snapshot/snapshot.h"
 #include "src/v8.h"
 
+#include "src/wasm/compilation-manager.h"
 #include "src/wasm/module-compiler.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-code-specialization.h"
@@ -330,7 +331,7 @@ void wasm::UnpackAndRegisterProtectedInstructions(
 
 std::ostream& wasm::operator<<(std::ostream& os, const WasmFunctionName& name) {
   os << "#" << name.function_->func_index;
-  if (name.function_->name_offset > 0) {
+  if (name.function_->name.is_set()) {
     if (name.name_.start()) {
       os << ":";
       os.write(name.name_.start(), name.name_.length());
@@ -461,8 +462,14 @@ Handle<Script> wasm::GetScript(Handle<JSObject> instance) {
 }
 
 bool wasm::IsWasmCodegenAllowed(Isolate* isolate, Handle<Context> context) {
+  // TODO(wasm): Once wasm has its own CSP policy, we should introduce a
+  // separate callback that includes information about the module about to be
+  // compiled. For the time being, pass an empty string as placeholder for the
+  // sources.
   return isolate->allow_code_gen_callback() == nullptr ||
-         isolate->allow_code_gen_callback()(v8::Utils::ToLocal(context));
+         isolate->allow_code_gen_callback()(
+             v8::Utils::ToLocal(context),
+             v8::Utils::ToLocal(isolate->factory()->empty_string()));
 }
 
 void wasm::DetachWebAssemblyMemoryBuffer(Isolate* isolate,
@@ -478,14 +485,14 @@ void wasm::DetachWebAssemblyMemoryBuffer(Isolate* isolate,
   if (!is_external) {
     buffer->set_is_external(true);
     isolate->heap()->UnregisterArrayBuffer(*buffer);
-  }
-  if (free_memory) {
-    // We need to free the memory before neutering the buffer because
-    // FreeBackingStore reads buffer->allocation_base(), which is nulled out by
-    // Neuter. This means there is a dangling pointer until we neuter the
-    // buffer. Since there is no way for the user to directly call
-    // FreeBackingStore, we can ensure this is safe.
-    buffer->FreeBackingStore();
+    if (free_memory) {
+      // We need to free the memory before neutering the buffer because
+      // FreeBackingStore reads buffer->allocation_base(), which is nulled out
+      // by Neuter. This means there is a dangling pointer until we neuter the
+      // buffer. Since there is no way for the user to directly call
+      // FreeBackingStore, we can ensure this is safe.
+      buffer->FreeBackingStore();
+    }
   }
   buffer->set_is_neuterable(true);
   buffer->Neuter();
@@ -588,13 +595,11 @@ Handle<JSArray> wasm::GetImports(Isolate* isolate,
 
     MaybeHandle<String> import_module =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate, compiled_module, import.module_name_offset,
-            import.module_name_length);
+            isolate, compiled_module, import.module_name);
 
     MaybeHandle<String> import_name =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate, compiled_module, import.field_name_offset,
-            import.field_name_length);
+            isolate, compiled_module, import.field_name);
 
     JSObject::AddProperty(entry, module_string, import_module.ToHandleChecked(),
                           NONE);
@@ -659,7 +664,7 @@ Handle<JSArray> wasm::GetExports(Isolate* isolate,
 
     MaybeHandle<String> export_name =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate, compiled_module, exp.name_offset, exp.name_length);
+            isolate, compiled_module, exp.name);
 
     JSObject::AddProperty(entry, name_string, export_name.ToHandleChecked(),
                           NONE);
@@ -693,10 +698,10 @@ Handle<JSArray> wasm::GetCustomSections(Isolate* isolate,
   std::vector<Handle<Object>> matching_sections;
 
   // Gather matching sections.
-  for (auto section : custom_sections) {
+  for (auto& section : custom_sections) {
     MaybeHandle<String> section_name =
         WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-            isolate, compiled_module, section.name_offset, section.name_length);
+            isolate, compiled_module, section.name);
 
     if (!name->Equals(*section_name.ToHandleChecked())) continue;
 
@@ -704,7 +709,7 @@ Handle<JSArray> wasm::GetCustomSections(Isolate* isolate,
     void* allocation_base = nullptr;  // Set by TryAllocateBackingStore
     size_t allocation_length = 0;     // Set by TryAllocateBackingStore
     const bool enable_guard_regions = false;
-    void* memory = TryAllocateBackingStore(isolate, section.payload_length,
+    void* memory = TryAllocateBackingStore(isolate, section.payload.length(),
                                            enable_guard_regions,
                                            allocation_base, allocation_length);
 
@@ -714,13 +719,14 @@ Handle<JSArray> wasm::GetCustomSections(Isolate* isolate,
       const bool is_external = false;
       JSArrayBuffer::Setup(buffer, isolate, is_external, allocation_base,
                            allocation_length, memory,
-                           static_cast<int>(section.payload_length));
+                           static_cast<int>(section.payload.length()));
       DisallowHeapAllocation no_gc;  // for raw access to string bytes.
       Handle<SeqOneByteString> module_bytes(compiled_module->module_bytes(),
                                             isolate);
       const byte* start =
           reinterpret_cast<const byte*>(module_bytes->GetCharsAddress());
-      memcpy(memory, start + section.payload_offset, section.payload_length);
+      memcpy(memory, start + section.payload.offset(),
+             section.payload.length());
       section_data = buffer;
     } else {
       thrower->RangeError("out of memory allocating custom section data");
@@ -802,6 +808,21 @@ MaybeHandle<WasmInstanceObject> wasm::SyncInstantiate(
   return builder.Build();
 }
 
+MaybeHandle<WasmInstanceObject> wasm::SyncCompileAndInstantiate(
+    Isolate* isolate, ErrorThrower* thrower, const ModuleWireBytes& bytes,
+    MaybeHandle<JSReceiver> imports, MaybeHandle<JSArrayBuffer> memory) {
+  MaybeHandle<WasmModuleObject> module =
+      wasm::SyncCompile(isolate, thrower, bytes);
+  DCHECK_EQ(thrower->error(), module.is_null());
+  if (module.is_null()) return {};
+
+  MaybeHandle<WasmInstanceObject> instance = wasm::SyncInstantiate(
+      isolate, thrower, module.ToHandleChecked(), Handle<JSReceiver>::null(),
+      Handle<JSArrayBuffer>::null());
+  DCHECK_EQ(thrower->error(), instance.is_null());
+  return instance;
+}
+
 namespace {
 
 void RejectPromise(Isolate* isolate, Handle<Context> context,
@@ -858,9 +879,9 @@ void wasm::AsyncCompile(Isolate* isolate, Handle<JSPromise> promise,
   // during asynchronous compilation.
   std::unique_ptr<byte[]> copy(new byte[bytes.length()]);
   memcpy(copy.get(), bytes.start(), bytes.length());
-  auto job = new AsyncCompileJob(isolate, std::move(copy), bytes.length(),
-                                 handle(isolate->context()), promise);
-  job->Start();
+  isolate->wasm_compilation_manager()->StartAsyncCompileJob(
+      isolate, std::move(copy), bytes.length(), handle(isolate->context()),
+      promise);
 }
 
 Handle<Code> wasm::CompileLazy(Isolate* isolate) {
@@ -966,8 +987,8 @@ void LazyCompilationOrchestrator::CompileFunction(
   uint8_t* module_start = compiled_module->module_bytes()->GetChars();
   const WasmFunction* func = &module_env.module->functions[func_index];
   wasm::FunctionBody body{func->sig, module_start,
-                          module_start + func->code_start_offset,
-                          module_start + func->code_end_offset};
+                          module_start + func->code.offset(),
+                          module_start + func->code.end_offset()};
   // TODO(wasm): Refactor this to only get the name if it is really needed for
   // tracing / debugging.
   std::string func_name;
@@ -981,7 +1002,6 @@ void LazyCompilationOrchestrator::CompileFunction(
   ErrorThrower thrower(isolate, "WasmLazyCompile");
   compiler::WasmCompilationUnit unit(isolate, &module_env, body,
                                      CStrVector(func_name.c_str()), func_index);
-  unit.InitializeHandles();
   unit.ExecuteCompilation();
   Handle<Code> code = unit.FinishCompilation(&thrower);
 
@@ -1055,9 +1075,8 @@ Handle<Code> LazyCompilationOrchestrator::CompileLazy(
     int caller_func_index =
         Smi::cast(caller->deoptimization_data()->get(1))->value();
     const byte* func_bytes =
-        module_bytes->GetChars() + compiled_module->module()
-                                       ->functions[caller_func_index]
-                                       .code_start_offset;
+        module_bytes->GetChars() +
+        compiled_module->module()->functions[caller_func_index].code.offset();
     for (RelocIterator it(*caller, RelocInfo::kCodeTargetMask); !it.done();
          it.next()) {
       Code* callee =

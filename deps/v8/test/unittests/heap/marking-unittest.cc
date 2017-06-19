@@ -22,7 +22,7 @@ TEST(Marking, TransitionWhiteBlackWhite) {
     MarkBit mark_bit = bitmap->MarkBitFromIndex(position[i]);
     CHECK(Marking::IsWhite(mark_bit));
     CHECK(!Marking::IsImpossible(mark_bit));
-    Marking::WhiteToBlack<MarkBit::NON_ATOMIC>(mark_bit);
+    Marking::WhiteToBlack<AccessMode::NON_ATOMIC>(mark_bit);
     CHECK(Marking::IsBlack(mark_bit));
     CHECK(!Marking::IsImpossible(mark_bit));
     Marking::MarkWhite(mark_bit);
@@ -43,11 +43,11 @@ TEST(Marking, TransitionWhiteGreyBlackGrey) {
     CHECK(Marking::IsWhite(mark_bit));
     CHECK(!Marking::IsBlackOrGrey(mark_bit));
     CHECK(!Marking::IsImpossible(mark_bit));
-    Marking::WhiteToGrey<MarkBit::NON_ATOMIC>(mark_bit);
+    Marking::WhiteToGrey<AccessMode::NON_ATOMIC>(mark_bit);
     CHECK(Marking::IsGrey(mark_bit));
     CHECK(Marking::IsBlackOrGrey(mark_bit));
     CHECK(!Marking::IsImpossible(mark_bit));
-    Marking::GreyToBlack<MarkBit::NON_ATOMIC>(mark_bit);
+    Marking::GreyToBlack<AccessMode::NON_ATOMIC>(mark_bit);
     CHECK(Marking::IsBlack(mark_bit));
     CHECK(Marking::IsBlackOrGrey(mark_bit));
     CHECK(!Marking::IsImpossible(mark_bit));
@@ -70,20 +70,6 @@ TEST(Marking, SetAndClearRange) {
     CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[0], 0xffffffffu << i);
     CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[1], (1u << i) - 1);
     bitmap->ClearRange(i, Bitmap::kBitsPerCell + i);
-    CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[0], 0x0u);
-    CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[1], 0x0u);
-  }
-  free(bitmap);
-}
-
-TEST(Marking, SetAndClearRangeAtomic) {
-  Bitmap* bitmap = reinterpret_cast<Bitmap*>(
-      calloc(Bitmap::kSize / kPointerSize, kPointerSize));
-  for (int i = 0; i < 3; i++) {
-    bitmap->SetRange<MarkBit::ATOMIC>(i, Bitmap::kBitsPerCell + i);
-    CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[0], 0xffffffffu << i);
-    CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[1], (1u << i) - 1);
-    bitmap->ClearRange<MarkBit::ATOMIC>(i, Bitmap::kBitsPerCell + i);
     CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[0], 0x0u);
     CHECK_EQ(reinterpret_cast<uint32_t*>(bitmap)[1], 0x0u);
   }

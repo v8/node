@@ -25,6 +25,7 @@ class JSMessageObject;
 class LookupIterator;
 class SharedFunctionInfo;
 class SourceInfo;
+class WasmInstanceObject;
 
 class MessageLocation {
  public:
@@ -105,7 +106,7 @@ class JSStackFrame : public StackFrameBase {
 
   bool IsNative() override;
   bool IsToplevel() override;
-  bool IsConstructor() override;
+  bool IsConstructor() override { return is_constructor_; }
   bool IsStrict() const override { return is_strict_; }
 
   MaybeHandle<String> ToString() override;
@@ -122,7 +123,7 @@ class JSStackFrame : public StackFrameBase {
   Handle<AbstractCode> code_;
   int offset_;
 
-  bool force_constructor_;
+  bool is_constructor_;
   bool is_strict_;
 
   friend class FrameArrayIterator;
@@ -132,7 +133,7 @@ class WasmStackFrame : public StackFrameBase {
  public:
   virtual ~WasmStackFrame() {}
 
-  Handle<Object> GetReceiver() const override { return wasm_instance_; }
+  Handle<Object> GetReceiver() const override;
   Handle<Object> GetFunction() const override;
 
   Handle<Object> GetFileName() override { return Null(); }
@@ -159,8 +160,7 @@ class WasmStackFrame : public StackFrameBase {
   bool HasScript() const override;
   Handle<Script> GetScript() const override;
 
-  // TODO(wasm): Use proper typing.
-  Handle<Object> wasm_instance_;
+  Handle<WasmInstanceObject> wasm_instance_;
   uint32_t wasm_func_index_;
   Handle<AbstractCode> code_;  // null handle for interpreted frames.
   int offset_;
@@ -330,7 +330,9 @@ class ErrorUtils : public AllStatic {
   T(NoAccess, "no access")                                                     \
   T(NonCallableInInstanceOfCheck,                                              \
     "Right-hand side of 'instanceof' is not callable")                         \
-  T(NonCoercible, "Cannot match against 'undefined' or 'null'.")               \
+  T(NonCoercible, "Cannot destructure 'undefined' or 'null'.")                 \
+  T(NonCoercibleWithProperty,                                                  \
+    "Cannot destructure property `%` of 'undefined' or 'null'.")               \
   T(NonExtensibleProto, "% is not extensible")                                 \
   T(NonObjectInInstanceOfCheck,                                                \
     "Right-hand side of 'instanceof' is not an object")                        \

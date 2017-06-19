@@ -43,8 +43,8 @@ void TestModule(Zone* zone, WasmModuleBuilder* builder,
   Isolate* isolate = CcTest::InitIsolateOnce();
   HandleScope scope(isolate);
   testing::SetupIsolateForWasmModule(isolate);
-  int32_t result = testing::CompileAndRunWasmModule(
-      isolate, buffer.begin(), buffer.end(), ModuleOrigin::kWasmOrigin);
+  int32_t result =
+      testing::CompileAndRunWasmModule(isolate, buffer.begin(), buffer.end());
   CHECK_EQ(expected_result, result);
 }
 
@@ -56,8 +56,7 @@ void TestModuleException(Zone* zone, WasmModuleBuilder* builder) {
   HandleScope scope(isolate);
   testing::SetupIsolateForWasmModule(isolate);
   v8::TryCatch try_catch(reinterpret_cast<v8::Isolate*>(isolate));
-  testing::CompileAndRunWasmModule(isolate, buffer.begin(), buffer.end(),
-                                   ModuleOrigin::kWasmOrigin);
+  testing::CompileAndRunWasmModule(isolate, buffer.begin(), buffer.end());
   CHECK(try_catch.HasCaught());
   isolate->clear_pending_exception();
 }
@@ -500,7 +499,9 @@ TEST(FailingModuleBuilder) {
   }
 }
 
-bool False(v8::Local<v8::Context> context) { return false; }
+bool False(v8::Local<v8::Context> context, v8::Local<v8::String> source) {
+  return false;
+}
 
 TEST(BlockWasmCodeGen) {
   v8::internal::AccountingAllocator allocator;
@@ -515,7 +516,6 @@ TEST(BlockWasmCodeGen) {
   ErrorThrower thrower(isolate, "block codegen");
   MaybeHandle<WasmModuleObject> ret = wasm::SyncCompile(
       isolate, &thrower, ModuleWireBytes(buffer.begin(), buffer.end()));
-  CcTest::isolate()->SetAllowCodeGenerationFromStringsCallback(nullptr);
   CHECK(ret.is_null());
   CHECK(thrower.error());
 }
@@ -697,10 +697,10 @@ TEST(TestInterruptLoop) {
     testing::SetupIsolateForWasmModule(isolate);
     ErrorThrower thrower(isolate, "Test");
     const Handle<WasmInstanceObject> instance =
-        testing::CompileInstantiateWasmModuleForTesting(
-            isolate, &thrower, buffer.begin(), buffer.end(),
-            ModuleOrigin::kWasmOrigin);
-    CHECK(!instance.is_null());
+        SyncCompileAndInstantiate(isolate, &thrower,
+                                  ModuleWireBytes(buffer.begin(), buffer.end()),
+                                  {}, {})
+            .ToHandleChecked();
 
     Handle<JSArrayBuffer> memory(instance->memory_buffer(), isolate);
     int32_t* memory_array = reinterpret_cast<int32_t*>(memory->backing_store());
@@ -779,10 +779,11 @@ TEST(Run_WasmModule_GrowMemOobFixedIndex) {
     testing::SetupIsolateForWasmModule(isolate);
 
     ErrorThrower thrower(isolate, "Test");
-    Handle<JSObject> instance = testing::CompileInstantiateWasmModuleForTesting(
-        isolate, &thrower, buffer.begin(), buffer.end(),
-        ModuleOrigin::kWasmOrigin);
-    CHECK(!instance.is_null());
+    Handle<WasmInstanceObject> instance =
+        SyncCompileAndInstantiate(isolate, &thrower,
+                                  ModuleWireBytes(buffer.begin(), buffer.end()),
+                                  {}, {})
+            .ToHandleChecked();
 
     // Initial memory size is 16 pages, should trap till index > MemSize on
     // consecutive GrowMem calls
@@ -827,11 +828,11 @@ TEST(Run_WasmModule_GrowMemOobVariableIndex) {
     testing::SetupIsolateForWasmModule(isolate);
 
     ErrorThrower thrower(isolate, "Test");
-    Handle<JSObject> instance = testing::CompileInstantiateWasmModuleForTesting(
-        isolate, &thrower, buffer.begin(), buffer.end(),
-        ModuleOrigin::kWasmOrigin);
-
-    CHECK(!instance.is_null());
+    Handle<WasmInstanceObject> instance =
+        SyncCompileAndInstantiate(isolate, &thrower,
+                                  ModuleWireBytes(buffer.begin(), buffer.end()),
+                                  {}, {})
+            .ToHandleChecked();
 
     // Initial memory size is 16 pages, should trap till index > MemSize on
     // consecutive GrowMem calls
@@ -959,9 +960,9 @@ TEST(InitDataAtTheUpperLimit) {
         'c'         // data bytes
     };
 
-    testing::CompileInstantiateWasmModuleForTesting(isolate, &thrower, data,
-                                                    data + arraysize(data),
-                                                    ModuleOrigin::kWasmOrigin);
+    SyncCompileAndInstantiate(isolate, &thrower,
+                              ModuleWireBytes(data, data + arraysize(data)), {},
+                              {});
     if (thrower.error()) {
       thrower.Reify()->Print();
       CHECK(false);
@@ -996,9 +997,9 @@ TEST(EmptyMemoryNonEmptyDataSegment) {
         'c'         // data bytes
     };
 
-    testing::CompileInstantiateWasmModuleForTesting(isolate, &thrower, data,
-                                                    data + arraysize(data),
-                                                    ModuleOrigin::kWasmOrigin);
+    SyncCompileAndInstantiate(isolate, &thrower,
+                              ModuleWireBytes(data, data + arraysize(data)), {},
+                              {});
     // It should not be possible to instantiate this module.
     CHECK(thrower.error());
   }
@@ -1030,9 +1031,9 @@ TEST(EmptyMemoryEmptyDataSegment) {
         U32V_1(0),  // source size
     };
 
-    testing::CompileInstantiateWasmModuleForTesting(isolate, &thrower, data,
-                                                    data + arraysize(data),
-                                                    ModuleOrigin::kWasmOrigin);
+    SyncCompileAndInstantiate(isolate, &thrower,
+                              ModuleWireBytes(data, data + arraysize(data)), {},
+                              {});
     // It should be possible to instantiate this module.
     CHECK(!thrower.error());
   }
@@ -1064,9 +1065,9 @@ TEST(MemoryWithOOBEmptyDataSegment) {
         U32V_1(0),  // source size
     };
 
-    testing::CompileInstantiateWasmModuleForTesting(isolate, &thrower, data,
-                                                    data + arraysize(data),
-                                                    ModuleOrigin::kWasmOrigin);
+    SyncCompileAndInstantiate(isolate, &thrower,
+                              ModuleWireBytes(data, data + arraysize(data)), {},
+                              {});
     // It should not be possible to instantiate this module.
     CHECK(thrower.error());
   }
@@ -1095,11 +1096,13 @@ TEST(Run_WasmModule_Buffer_Externalized_GrowMem) {
     testing::SetupIsolateForWasmModule(isolate);
     ErrorThrower thrower(isolate, "Test");
     const Handle<WasmInstanceObject> instance =
-        testing::CompileInstantiateWasmModuleForTesting(
-            isolate, &thrower, buffer.begin(), buffer.end(),
-            ModuleOrigin::kWasmOrigin);
-    CHECK(!instance.is_null());
+        SyncCompileAndInstantiate(isolate, &thrower,
+                                  ModuleWireBytes(buffer.begin(), buffer.end()),
+                                  {}, {})
+            .ToHandleChecked();
     Handle<JSArrayBuffer> memory(instance->memory_buffer(), isolate);
+    void* const old_allocation_base = memory->allocation_base();
+    size_t const old_allocation_length = memory->allocation_length();
 
     // Fake the Embedder flow by creating a memory object, externalize and grow.
     Handle<WasmMemoryObject> mem_obj =
@@ -1122,9 +1125,12 @@ TEST(Run_WasmModule_Buffer_Externalized_GrowMem) {
     // Free the buffer as the tracker does not know about it.
     const v8::ArrayBuffer::Allocator::AllocationMode allocation_mode =
         memory->allocation_mode();
+    CHECK_NOT_NULL(memory->allocation_base());
     isolate->array_buffer_allocator()->Free(memory->allocation_base(),
                                             memory->allocation_length(),
                                             allocation_mode);
+    isolate->array_buffer_allocator()->Free(
+        old_allocation_base, old_allocation_length, allocation_mode);
     memory->set_allocation_base(nullptr);
     memory->set_allocation_length(0);
   }
@@ -1147,6 +1153,25 @@ TEST(Run_WasmModule_Buffer_Externalized_GrowMemMemSize) {
     wasm::DetachWebAssemblyMemoryBuffer(isolate, buffer, false);
     CHECK_EQ(16, result);
 
+    isolate->array_buffer_allocator()->Free(backing_store,
+                                            16 * WasmModule::kPageSize);
+  }
+  Cleanup();
+}
+
+TEST(Run_WasmModule_Buffer_Externalized_Detach) {
+  {
+    // Regression test for
+    // https://bugs.chromium.org/p/chromium/issues/detail?id=731046
+    Isolate* isolate = CcTest::InitIsolateOnce();
+    HandleScope scope(isolate);
+    void* backing_store =
+        isolate->array_buffer_allocator()->Allocate(16 * WasmModule::kPageSize);
+    Handle<JSArrayBuffer> buffer = wasm::SetupArrayBuffer(
+        isolate, backing_store, 16 * WasmModule::kPageSize, backing_store,
+        16 * WasmModule::kPageSize, false, false);
+    v8::Utils::ToLocal(buffer)->Externalize();
+    wasm::DetachWebAssemblyMemoryBuffer(isolate, buffer, true);
     isolate->array_buffer_allocator()->Free(backing_store,
                                             16 * WasmModule::kPageSize);
   }

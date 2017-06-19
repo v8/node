@@ -36,7 +36,8 @@ class CodeGenerator::JumpTable final : public ZoneObject {
 };
 
 CodeGenerator::CodeGenerator(Frame* frame, Linkage* linkage,
-                             InstructionSequence* code, CompilationInfo* info)
+                             InstructionSequence* code, CompilationInfo* info,
+                             base::Optional<OsrHelper> osr_helper)
     : frame_access_state_(nullptr),
       linkage_(linkage),
       code_(code),
@@ -57,6 +58,7 @@ CodeGenerator::CodeGenerator(Frame* frame, Linkage* linkage,
       last_lazy_deopt_pc_(0),
       jump_tables_(nullptr),
       ools_(nullptr),
+      osr_helper_(osr_helper),
       osr_pc_offset_(-1),
       optimized_out_literal_id_(-1),
       source_position_table_builder_(code->zone(),
@@ -66,6 +68,7 @@ CodeGenerator::CodeGenerator(Frame* frame, Linkage* linkage,
     new (&labels_[i]) Label;
   }
   CreateFrameAccessState(frame);
+  CHECK_EQ(info->is_osr(), osr_helper_.has_value());
 }
 
 Isolate* CodeGenerator::isolate() const { return info_->isolate(); }
@@ -788,12 +791,6 @@ void CodeGenerator::BuildTranslationForFrameStateDescriptor(
       DefineDeoptimizationLiteral(DeoptimizationLiteral(shared_info));
 
   switch (descriptor->type()) {
-    case FrameStateType::kJavaScriptFunction:
-      translation->BeginJSFrame(
-          descriptor->bailout_id(), shared_info_id,
-          static_cast<unsigned int>(descriptor->GetSize(state_combine) -
-                                    (1 + descriptor->parameters_count())));
-      break;
     case FrameStateType::kInterpretedFunction:
       translation->BeginInterpretedFrame(
           descriptor->bailout_id(), shared_info_id,

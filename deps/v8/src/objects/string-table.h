@@ -13,19 +13,34 @@
 namespace v8 {
 namespace internal {
 
-class StringTableShape : public BaseShape<HashTableKey*> {
+class StringTableKey : public HashTableKey {
  public:
-  static inline bool IsMatch(HashTableKey* key, Object* value) {
+  explicit inline StringTableKey(uint32_t hash_field);
+
+  virtual Handle<String> AsHandle(Isolate* isolate) = 0;
+  uint32_t HashField() const {
+    DCHECK_NE(0, hash_field_);
+    return hash_field_;
+  }
+
+ protected:
+  inline void set_hash_field(uint32_t hash_field);
+
+ private:
+  uint32_t hash_field_ = 0;
+};
+
+class StringTableShape : public BaseShape<StringTableKey*> {
+ public:
+  static inline bool IsMatch(Key key, Object* value) {
     return key->IsMatch(value);
   }
 
-  static inline uint32_t Hash(HashTableKey* key) { return key->Hash(); }
+  static inline uint32_t Hash(Key key) { return key->Hash(); }
 
-  static inline uint32_t HashForObject(HashTableKey* key, Object* object) {
-    return key->HashForObject(object);
-  }
+  static inline uint32_t HashForObject(Object* object);
 
-  static inline Handle<Object> AsHandle(Isolate* isolate, HashTableKey* key);
+  static inline Handle<Object> AsHandle(Isolate* isolate, Key key);
 
   static const int kPrefixSize = 0;
   static const int kEntrySize = 1;
@@ -43,18 +58,11 @@ class StringTable : public HashTable<StringTable, StringTableShape> {
   // added. The return value is the string found.
   V8_EXPORT_PRIVATE static Handle<String> LookupString(Isolate* isolate,
                                                        Handle<String> key);
-  static Handle<String> LookupKey(Isolate* isolate, HashTableKey* key);
-  static String* LookupKeyIfExists(Isolate* isolate, HashTableKey* key);
-
-  // Tries to internalize given string and returns string handle on success
-  // or an empty handle otherwise.
-  MUST_USE_RESULT static MaybeHandle<String> InternalizeStringIfExists(
-      Isolate* isolate, Handle<String> string);
+  static Handle<String> LookupKey(Isolate* isolate, StringTableKey* key);
+  static String* LookupKeyIfExists(Isolate* isolate, StringTableKey* key);
 
   // Looks up a string that is equal to the given string and returns
   // string handle if it is found, or an empty handle otherwise.
-  MUST_USE_RESULT static MaybeHandle<String> LookupStringIfExists(
-      Isolate* isolate, Handle<String> str);
   MUST_USE_RESULT static MaybeHandle<String> LookupTwoCharsStringIfExists(
       Isolate* isolate, uint16_t c1, uint16_t c2);
   static Object* LookupStringIfExists_NoAllocate(String* string);
@@ -74,7 +82,7 @@ class StringSetShape : public BaseShape<String*> {
  public:
   static inline bool IsMatch(String* key, Object* value);
   static inline uint32_t Hash(String* key);
-  static inline uint32_t HashForObject(String* key, Object* object);
+  static inline uint32_t HashForObject(Object* object);
 
   static const int kPrefixSize = 0;
   static const int kEntrySize = 1;

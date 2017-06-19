@@ -277,6 +277,11 @@ class WasmModuleBuilder {
     return this;
   }
 
+  setName(name) {
+    this.name = name;
+    return this;
+  }
+
   toArray(debug = false) {
     let binary = new Binary;
     let wasm = this;
@@ -458,9 +463,9 @@ class WasmModuleBuilder {
       binary.emit_section(kElementSectionCode, section => {
         var inits = wasm.function_table_inits;
         section.emit_u32v(inits.length);
-        section.emit_u8(0); // table index
 
         for (let init of inits) {
+          section.emit_u8(0); // table index
           if (init.is_global) {
             section.emit_u8(kExprGetGlobal);
           } else {
@@ -545,19 +550,26 @@ class WasmModuleBuilder {
       binary.emit_bytes(exp);
     }
 
-    // Add function names.
-    if (num_function_names > 0) {
+    // Add names.
+    if (num_function_names > 0 || wasm.name !== undefined) {
       if (debug) print('emitting names @ ' + binary.length);
       binary.emit_section(kUnknownSectionCode, section => {
         section.emit_string('name');
-        section.emit_section(kFunctionNamesCode, name_section => {
-          name_section.emit_u32v(num_function_names);
-          for (let func of wasm.functions) {
-            if (func.name === undefined) continue;
-            name_section.emit_u32v(func.index);
-            name_section.emit_string(func.name);
-          }
-        });
+        if (wasm.name !== undefined) {
+          section.emit_section(kModuleNameCode, name_section => {
+            name_section.emit_string(wasm.name);
+          });
+        }
+        if (num_function_names > 0) {
+          section.emit_section(kFunctionNamesCode, name_section => {
+            name_section.emit_u32v(num_function_names);
+            for (let func of wasm.functions) {
+              if (func.name === undefined) continue;
+              name_section.emit_u32v(func.index);
+              name_section.emit_string(func.name);
+            }
+          });
+        }
       });
     }
 

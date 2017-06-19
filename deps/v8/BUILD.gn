@@ -24,9 +24,6 @@ declare_args() {
   # Sets -DV8_ENABLE_FUTURE.
   v8_enable_future = false
 
-  # Sets -DV8_DISABLE_TURBO.
-  v8_disable_turbo = false
-
   # Sets -DVERIFY_HEAP.
   v8_enable_verify_heap = ""
 
@@ -229,9 +226,6 @@ config("features") {
   }
   if (v8_enable_future) {
     defines += [ "V8_ENABLE_FUTURE" ]
-  }
-  if (v8_disable_turbo) {
-    defines += [ "V8_DISABLE_TURBO" ]
   }
   if (v8_enable_gdbjit) {
     defines += [ "ENABLE_GDB_JIT_INTERFACE" ]
@@ -725,6 +719,8 @@ action("postmortem-metadata") {
     "src/objects/script-inl.h",
     "src/objects/shared-function-info.h",
     "src/objects/shared-function-info-inl.h",
+    "src/objects/string.h",
+    "src/objects/string-inl.h",
   ]
 
   outputs = [
@@ -1085,6 +1081,9 @@ v8_header_set("v8_headers") {
 v8_source_set("v8_base") {
   visibility = [ ":*" ]  # Only targets in this file can depend on this.
 
+  # Split static libraries on windows into two.
+  split_count = 2
+
   sources = [
     "//base/trace_event/common/trace_event_common.h",
 
@@ -1177,6 +1176,7 @@ v8_source_set("v8_base") {
     "src/builtins/builtins-boolean.cc",
     "src/builtins/builtins-call.cc",
     "src/builtins/builtins-callsite.cc",
+    "src/builtins/builtins-collections.cc",
     "src/builtins/builtins-console.cc",
     "src/builtins/builtins-constructor.h",
     "src/builtins/builtins-dataview.cc",
@@ -1355,8 +1355,6 @@ v8_source_set("v8_base") {
     "src/compiler/linkage.h",
     "src/compiler/live-range-separator.cc",
     "src/compiler/live-range-separator.h",
-    "src/compiler/liveness-analyzer.cc",
-    "src/compiler/liveness-analyzer.h",
     "src/compiler/load-elimination.cc",
     "src/compiler/load-elimination.h",
     "src/compiler/loop-analysis.cc",
@@ -1400,6 +1398,8 @@ v8_source_set("v8_base") {
     "src/compiler/pipeline-statistics.h",
     "src/compiler/pipeline.cc",
     "src/compiler/pipeline.h",
+    "src/compiler/property-access-builder.cc",
+    "src/compiler/property-access-builder.h",
     "src/compiler/raw-machine-assembler.cc",
     "src/compiler/raw-machine-assembler.h",
     "src/compiler/redundancy-elimination.cc",
@@ -1487,8 +1487,6 @@ v8_source_set("v8_base") {
     "src/crankshaft/hydrogen-load-elimination.h",
     "src/crankshaft/hydrogen-mark-unreachable.cc",
     "src/crankshaft/hydrogen-mark-unreachable.h",
-    "src/crankshaft/hydrogen-osr.cc",
-    "src/crankshaft/hydrogen-osr.h",
     "src/crankshaft/hydrogen-range-analysis.cc",
     "src/crankshaft/hydrogen-range-analysis.h",
     "src/crankshaft/hydrogen-redundant-phi.cc",
@@ -1633,6 +1631,7 @@ v8_source_set("v8_base") {
     "src/heap/mark-compact-inl.h",
     "src/heap/mark-compact.cc",
     "src/heap/mark-compact.h",
+    "src/heap/marking.cc",
     "src/heap/marking.h",
     "src/heap/memory-reducer.cc",
     "src/heap/memory-reducer.h",
@@ -1771,6 +1770,8 @@ v8_source_set("v8_base") {
     "src/objects-printer.cc",
     "src/objects.cc",
     "src/objects.h",
+    "src/objects/arguments-inl.h",
+    "src/objects/arguments.h",
     "src/objects/code-cache-inl.h",
     "src/objects/code-cache.h",
     "src/objects/compilation-cache-inl.h",
@@ -1790,6 +1791,8 @@ v8_source_set("v8_base") {
     "src/objects/map-inl.h",
     "src/objects/map.h",
     "src/objects/module-info.h",
+    "src/objects/name-inl.h",
+    "src/objects/name.h",
     "src/objects/object-macros-undef.h",
     "src/objects/object-macros.h",
     "src/objects/regexp-match-info.h",
@@ -1799,7 +1802,9 @@ v8_source_set("v8_base") {
     "src/objects/script.h",
     "src/objects/shared-function-info-inl.h",
     "src/objects/shared-function-info.h",
+    "src/objects/string-inl.h",
     "src/objects/string-table.h",
+    "src/objects/string.h",
     "src/ostreams.cc",
     "src/ostreams.h",
     "src/parsing/duplicate-finder.h",
@@ -2013,6 +2018,8 @@ v8_source_set("v8_base") {
     "src/visitors.h",
     "src/vm-state-inl.h",
     "src/vm-state.h",
+    "src/wasm/compilation-manager.cc",
+    "src/wasm/compilation-manager.h",
     "src/wasm/decoder.h",
     "src/wasm/function-body-decoder-impl.h",
     "src/wasm/function-body-decoder.cc",
@@ -2461,6 +2468,7 @@ v8_source_set("v8_base") {
   } else {
     sources -= [
       "src/builtins/builtins-intl.cc",
+      "src/char-predicates.cc",
       "src/intl.cc",
       "src/intl.h",
       "src/objects/intl-objects.cc",
@@ -2777,6 +2785,7 @@ group("v8_fuzzers") {
     ":v8_simple_parser_fuzzer",
     ":v8_simple_regexp_fuzzer",
     ":v8_simple_wasm_asmjs_fuzzer",
+    ":v8_simple_wasm_async_fuzzer",
     ":v8_simple_wasm_call_fuzzer",
     ":v8_simple_wasm_code_fuzzer",
     ":v8_simple_wasm_compile_fuzzer",
@@ -3126,6 +3135,26 @@ v8_source_set("wasm_asmjs_fuzzer") {
 }
 
 v8_fuzzer("wasm_asmjs_fuzzer") {
+}
+
+v8_source_set("wasm_async_fuzzer") {
+  sources = [
+    "test/fuzzer/wasm-async.cc",
+  ]
+
+  deps = [
+    ":fuzzer_support",
+    ":lib_wasm_fuzzer_common",
+    ":wasm_module_runner",
+  ]
+
+  configs = [
+    ":external_config",
+    ":internal_config_base",
+  ]
+}
+
+v8_fuzzer("wasm_async_fuzzer") {
 }
 
 v8_source_set("wasm_code_fuzzer") {

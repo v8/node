@@ -11,7 +11,6 @@
 #include "src/code-factory.h"
 #include "src/code-stubs.h"
 #include "src/crankshaft/arm64/lithium-gap-resolver-arm64.h"
-#include "src/crankshaft/hydrogen-osr.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/objects-inl.h"
@@ -675,21 +674,7 @@ void LCodeGen::DoPrologue(LPrologue* instr) {
   Comment(";;; Prologue end");
 }
 
-
-void LCodeGen::GenerateOsrPrologue() {
-  // Generate the OSR entry prologue at the first unknown OSR value, or if there
-  // are none, at the OSR entrypoint instruction.
-  if (osr_pc_offset_ >= 0) return;
-
-  osr_pc_offset_ = masm()->pc_offset();
-
-  // Adjust the frame size, subsuming the unoptimized frame into the
-  // optimized frame.
-  int slots = GetStackSlotCount() - graph()->osr()->UnoptimizedFrameSlots();
-  DCHECK(slots >= 0);
-  __ Claim(slots);
-}
-
+void LCodeGen::GenerateOsrPrologue() { UNREACHABLE(); }
 
 void LCodeGen::GenerateBodyInstructionPre(LInstruction* instr) {
   if (instr->IsCall()) {
@@ -5482,10 +5467,10 @@ void LCodeGen::DoWrapReceiver(LWrapReceiver* instr) {
            FieldMemOperand(result, SharedFunctionInfo::kCompilerHintsOffset));
 
     // Do not transform the receiver to object for strict mode functions.
-    __ Tbnz(result, SharedFunctionInfo::kStrictModeBit, &copy_receiver);
+    __ Tbnz(result, SharedFunctionInfo::IsStrictBit::kShift, &copy_receiver);
 
     // Do not transform the receiver to object for builtins.
-    __ Tbnz(result, SharedFunctionInfo::kNativeBit, &copy_receiver);
+    __ Tbnz(result, SharedFunctionInfo::IsNativeBit::kShift, &copy_receiver);
   }
 
   // Normal function. Replace undefined or null with global receiver.
