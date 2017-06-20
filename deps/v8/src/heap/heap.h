@@ -618,9 +618,11 @@ class Heap {
   static const int kPointerMultiplier = i::kPointerSize / 4;
 #endif
 
-  // The new space size has to be a power of 2. Sizes are in MB.
-  static const int kMinSemiSpaceSize = 1 * kPointerMultiplier;
-  static const int kMaxSemiSpaceSize = 8 * kPointerMultiplier;
+  // Semi-space size needs to be a multiple of page size.
+  static const int kMinSemiSpaceSizeInKB =
+      1 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
+  static const int kMaxSemiSpaceSizeInKB =
+      16 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
 
   // The old space size has to be a multiple of Page::kPageSize.
   // Sizes are in MB.
@@ -811,7 +813,7 @@ class Heap {
 
   // Checks whether the given object is allowed to be migrated from it's
   // current space into the given destination space. Used for debugging.
-  inline bool AllowedToBeMigrated(HeapObject* object, AllocationSpace dest);
+  bool AllowedToBeMigrated(HeapObject* object, AllocationSpace dest);
 
   void CheckHandleCount();
 
@@ -974,10 +976,14 @@ class Heap {
   // Initialization. ===========================================================
   // ===========================================================================
 
-  // Configure heap size in MB before setup. Return false if the heap has been
-  // set up already.
-  bool ConfigureHeap(size_t max_semi_space_size, size_t max_old_space_size,
-                     size_t code_range_size);
+  // Configure heap sizes
+  // max_semi_space_size_in_kb: maximum semi-space size in KB
+  // max_old_generation_size_in_mb: maximum old generation size in MB
+  // code_range_size_in_mb: code range size in MB
+  // Return false if the heap has been set up already.
+  bool ConfigureHeap(size_t max_semi_space_size_in_kb,
+                     size_t max_old_generation_size_in_mb,
+                     size_t code_range_size_in_mb);
   bool ConfigureHeapDefault();
 
   // Prepares the heap, setting up memory areas that are needed in the isolate
@@ -1353,10 +1359,12 @@ class Heap {
     uint64_t capped_physical_memory =
         Max(Min(physical_memory, max_physical_memory), min_physical_memory);
     // linearly scale max semi-space size: (X-A)/(B-A)*(D-C)+C
-    return static_cast<int>(((capped_physical_memory - min_physical_memory) *
-                             (kMaxSemiSpaceSize - kMinSemiSpaceSize)) /
-                                (max_physical_memory - min_physical_memory) +
-                            kMinSemiSpaceSize);
+    int semi_space_size_in_kb =
+        static_cast<int>(((capped_physical_memory - min_physical_memory) *
+                          (kMaxSemiSpaceSizeInKB - kMinSemiSpaceSizeInKB)) /
+                             (max_physical_memory - min_physical_memory) +
+                         kMinSemiSpaceSizeInKB);
+    return RoundUp(semi_space_size_in_kb, (1 << kPageSizeBits) / KB);
   }
 
   // Returns the capacity of the heap in bytes w/o growing. Heap grows when
@@ -2478,21 +2486,18 @@ class AlwaysAllocateScope {
 // objects in a heap space but above the allocation pointer.
 class VerifyPointersVisitor : public ObjectVisitor, public RootVisitor {
  public:
-  inline void VisitPointers(HeapObject* host, Object** start,
-                            Object** end) override;
-  inline void VisitRootPointers(Root root, Object** start,
-                                Object** end) override;
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override;
+  void VisitRootPointers(Root root, Object** start, Object** end) override;
 
  private:
-  inline void VerifyPointers(Object** start, Object** end);
+  void VerifyPointers(Object** start, Object** end);
 };
 
 
 // Verify that all objects are Smis.
 class VerifySmisVisitor : public RootVisitor {
  public:
-  inline void VisitRootPointers(Root root, Object** start,
-                                Object** end) override;
+  void VisitRootPointers(Root root, Object** start, Object** end) override;
 };
 
 

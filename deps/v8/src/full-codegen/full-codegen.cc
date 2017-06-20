@@ -173,9 +173,9 @@ void FullCodeGenerator::Initialize(uintptr_t stack_limit) {
   masm_->set_predictable_code_size(true);
 }
 
-void FullCodeGenerator::CallIC(Handle<Code> code, TypeFeedbackId ast_id) {
+void FullCodeGenerator::CallIC(Handle<Code> code) {
   ic_total_count_++;
-  __ Call(code, RelocInfo::CODE_TARGET, ast_id);
+  __ Call(code, RelocInfo::CODE_TARGET);
 }
 
 void FullCodeGenerator::CallLoadIC(FeedbackSlot slot, Handle<Object> name) {
@@ -829,8 +829,7 @@ void FullCodeGenerator::VisitBlock(Block* stmt) {
   NestedBlock nested_block(this, stmt);
 
   {
-    EnterBlockScopeIfNeeded block_scope_state(
-        this, stmt->scope(), stmt->EntryId(), stmt->DeclsId(), stmt->ExitId());
+    EnterBlockScopeIfNeeded block_scope_state(this, stmt->scope());
     VisitStatements(stmt->statements());
     __ bind(nested_block.break_label());
   }
@@ -1456,11 +1455,9 @@ bool BackEdgeTable::Verify(Isolate* isolate, Code* unoptimized) {
 }
 #endif  // DEBUG
 
-
 FullCodeGenerator::EnterBlockScopeIfNeeded::EnterBlockScopeIfNeeded(
-    FullCodeGenerator* codegen, Scope* scope, BailoutId entry_id,
-    BailoutId declarations_id, BailoutId exit_id)
-    : codegen_(codegen), exit_id_(exit_id) {
+    FullCodeGenerator* codegen, Scope* scope)
+    : codegen_(codegen) {
   saved_scope_ = codegen_->scope();
 
   if (scope == NULL) {

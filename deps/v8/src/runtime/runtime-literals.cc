@@ -208,6 +208,12 @@ MaybeHandle<JSObject> CreateLiteral(Isolate* isolate,
     boilerplate = Boilerplate::Create(isolate, vector, description, flags);
     if (IsUninitializedLiteralSite(literal_site)) {
       PreInitializeLiteralSite(vector, literals_slot);
+      if (copy_hints == JSObject::kNoHints) {
+        DeprecationUpdateContext update_context(isolate);
+        RETURN_ON_EXCEPTION(isolate,
+                            JSObject::DeepWalk(boilerplate, &update_context),
+                            JSObject);
+      }
       return boilerplate;
     }
     // Install AllocationSite objects.
@@ -256,18 +262,6 @@ RUNTIME_FUNCTION(Runtime_CreateArrayLiteral) {
   RETURN_RESULT_OR_FAILURE(
       isolate, CreateLiteral<ArrayBoilerplate>(isolate, closure, literals_index,
                                                elements, flags));
-}
-
-RUNTIME_FUNCTION(Runtime_CreateArrayLiteralStubBailout) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(3, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(JSFunction, closure, 0);
-  CONVERT_SMI_ARG_CHECKED(literals_index, 1);
-  CONVERT_ARG_HANDLE_CHECKED(ConstantElementsPair, elements, 2);
-  RETURN_RESULT_OR_FAILURE(
-      isolate, CreateLiteral<ArrayBoilerplate>(isolate, closure, literals_index,
-                                               elements,
-                                               ArrayLiteral::kShallowElements));
 }
 
 RUNTIME_FUNCTION(Runtime_CreateRegExpLiteral) {

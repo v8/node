@@ -23,7 +23,6 @@
 #include "src/property-details.h"
 #include "src/property.h"
 #include "src/string-stream.h"
-#include "src/type-info.h"
 
 namespace v8 {
 namespace internal {
@@ -150,6 +149,14 @@ bool Expression::IsAnonymousFunctionDefinition() const {
           AsFunctionLiteral()->IsAnonymousFunctionDefinition()) ||
          (IsClassLiteral() &&
           AsClassLiteral()->IsAnonymousFunctionDefinition());
+}
+
+bool Expression::IsConciseMethodDefinition() const {
+  return IsFunctionLiteral() && IsConciseMethod(AsFunctionLiteral()->kind());
+}
+
+bool Expression::IsAccessorFunctionDefinition() const {
+  return IsFunctionLiteral() && IsAccessorFunction(AsFunctionLiteral()->kind());
 }
 
 void Expression::MarkTail() {
@@ -396,10 +403,9 @@ void LiteralProperty::SetStoreDataPropertySlot(FeedbackSlot slot) {
 }
 
 bool LiteralProperty::NeedsSetFunctionName() const {
-  return is_computed_name_ &&
-         (value_->IsAnonymousFunctionDefinition() ||
-          (value_->IsFunctionLiteral() &&
-           IsConciseMethod(value_->AsFunctionLiteral()->kind())));
+  return is_computed_name_ && (value_->IsAnonymousFunctionDefinition() ||
+                               value_->IsConciseMethodDefinition() ||
+                               value_->IsAccessorFunctionDefinition());
 }
 
 ClassLiteralProperty::ClassLiteralProperty(Expression* key, Expression* value,
@@ -851,26 +857,6 @@ void MaterializedLiteral::BuildConstants(Isolate* isolate) {
   DCHECK(IsRegExpLiteral());
 }
 
-
-void UnaryOperation::RecordToBooleanTypeFeedback(TypeFeedbackOracle* oracle) {
-  // TODO(olivf) If this Operation is used in a test context, then the
-  // expression has a ToBoolean stub and we want to collect the type
-  // information. However the GraphBuilder expects it to be on the instruction
-  // corresponding to the TestContext, therefore we have to store it here and
-  // not on the operand.
-  set_to_boolean_types(oracle->ToBooleanTypes(expression()->test_id()));
-}
-
-
-void BinaryOperation::RecordToBooleanTypeFeedback(TypeFeedbackOracle* oracle) {
-  // TODO(olivf) If this Operation is used in a test context, then the right
-  // hand side has a ToBoolean stub and we want to collect the type information.
-  // However the GraphBuilder expects it to be on the instruction corresponding
-  // to the TestContext, therefore we have to store it here and not on the
-  // right hand operand.
-  set_to_boolean_types(oracle->ToBooleanTypes(right()->test_id()));
-}
-
 void BinaryOperation::AssignFeedbackSlots(FeedbackVectorSpec* spec,
                                           LanguageMode language_mode,
                                           FeedbackSlotCache* cache) {
@@ -1004,19 +990,6 @@ bool CompareOperation::IsLiteralCompareNull(Expression** expr) {
 // ----------------------------------------------------------------------------
 // Recording of type feedback
 
-// TODO(rossberg): all RecordTypeFeedback functions should disappear
-// once we use the common type field in the AST consistently.
-
-void Expression::RecordToBooleanTypeFeedback(TypeFeedbackOracle* oracle) {
-  if (IsUnaryOperation()) {
-    AsUnaryOperation()->RecordToBooleanTypeFeedback(oracle);
-  } else if (IsBinaryOperation()) {
-    AsBinaryOperation()->RecordToBooleanTypeFeedback(oracle);
-  } else {
-    set_to_boolean_types(oracle->ToBooleanTypes(test_id()));
-  }
-}
-
 void SmallMapList::AddMapIfMissing(Handle<Map> map, Zone* zone) {
   if (!Map::TryUpdate(map).ToHandle(&map)) return;
   for (int i = 0; i < length(); ++i) {
@@ -1123,10 +1096,7 @@ Call::CallType Call::GetCallType() const {
 
 CaseClause::CaseClause(Expression* label, ZoneList<Statement*>* statements,
                        int pos)
-    : Expression(pos, kCaseClause),
-      label_(label),
-      statements_(statements),
-      compare_type_(AstType::None()) {}
+    : Expression(pos, kCaseClause), label_(label), statements_(statements) {}
 
 void CaseClause::AssignFeedbackSlots(FeedbackVectorSpec* spec,
                                      LanguageMode language_mode,

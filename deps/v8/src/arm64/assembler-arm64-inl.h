@@ -16,7 +16,7 @@ namespace internal {
 
 bool CpuFeatures::SupportsCrankshaft() { return true; }
 
-bool CpuFeatures::SupportsWasmSimd128() { return false; }
+bool CpuFeatures::SupportsWasmSimd128() { return true; }
 
 void RelocInfo::apply(intptr_t delta) {
   // On arm64 only internal references need extra work.
@@ -1272,18 +1272,6 @@ inline void Assembler::CheckBuffer() {
     CheckConstPool(false, true);
   }
 }
-
-
-TypeFeedbackId Assembler::RecordedAstId() {
-  DCHECK(!recorded_ast_id_.IsNone());
-  return recorded_ast_id_;
-}
-
-
-void Assembler::ClearRecordedAstId() {
-  recorded_ast_id_ = TypeFeedbackId::None();
-}
-
 
 }  // namespace internal
 }  // namespace v8

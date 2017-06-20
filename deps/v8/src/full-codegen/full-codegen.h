@@ -483,8 +483,7 @@ class FullCodeGenerator final : public AstVisitor<FullCodeGenerator> {
   // Platform-specific code for pushing a slot to the stack.
   void EmitPushSlot(FeedbackSlot slot);
 
-  void CallIC(Handle<Code> code,
-              TypeFeedbackId id = TypeFeedbackId::None());
+  void CallIC(Handle<Code> code);
 
   void CallLoadIC(FeedbackSlot slot, Handle<Object> name);
   enum StoreICKind { kStoreNamed, kStoreOwn, kStoreGlobal };
@@ -757,9 +756,7 @@ class FullCodeGenerator final : public AstVisitor<FullCodeGenerator> {
 
   class EnterBlockScopeIfNeeded {
    public:
-    EnterBlockScopeIfNeeded(FullCodeGenerator* codegen, Scope* scope,
-                            BailoutId entry_id, BailoutId declarations_id,
-                            BailoutId exit_id);
+    EnterBlockScopeIfNeeded(FullCodeGenerator* codegen, Scope* scope);
     ~EnterBlockScopeIfNeeded();
 
    private:
@@ -767,7 +764,6 @@ class FullCodeGenerator final : public AstVisitor<FullCodeGenerator> {
 
     FullCodeGenerator* codegen_;
     Scope* saved_scope_;
-    BailoutId exit_id_;
     bool needs_block_context_;
   };
 

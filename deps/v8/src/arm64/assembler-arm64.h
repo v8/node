@@ -417,9 +417,13 @@ ALIAS_REGISTER(Register, wzr, w31);
 
 // Keeps the 0 double value.
 ALIAS_REGISTER(VRegister, fp_zero, d15);
+// MacroAssembler fixed V Registers.
+ALIAS_REGISTER(VRegister, fp_fixed1, d27);
+ALIAS_REGISTER(VRegister, fp_fixed2, d28);
+ALIAS_REGISTER(VRegister, fp_fixed3, d29);  // same as Crankshaft scratch.
 // Crankshaft double scratch register.
 ALIAS_REGISTER(VRegister, crankshaft_fp_scratch, d29);
-// MacroAssembler double scratch registers.
+// MacroAssembler scratch V registers.
 ALIAS_REGISTER(VRegister, fp_scratch, d30);
 ALIAS_REGISTER(VRegister, fp_scratch1, d30);
 ALIAS_REGISTER(VRegister, fp_scratch2, d31);
@@ -3469,22 +3473,7 @@ class Assembler : public AssemblerBase {
   // The pending constant pool.
   ConstPool constpool_;
 
-  // Relocation for a type-recording IC has the AST id added to it.  This
-  // member variable is a way to pass the information from the call site to
-  // the relocation info.
-  TypeFeedbackId recorded_ast_id_;
-
-  inline TypeFeedbackId RecordedAstId();
-  inline void ClearRecordedAstId();
-
  protected:
-  // Record the AST id of the CallIC being compiled, so that it can be placed
-  // in the relocation information.
-  void SetRecordedAstId(TypeFeedbackId ast_id) {
-    DCHECK(recorded_ast_id_.IsNone());
-    recorded_ast_id_ = ast_id;
-  }
-
   // Code generation
   // The relocation writer's position is at least kGap bytes below the end of
   // the generated instructions. This is so that multi-instruction sequences do

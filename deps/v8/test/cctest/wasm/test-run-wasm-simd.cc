@@ -31,8 +31,8 @@ typedef int8_t (*Int8BinOp)(int8_t, int8_t);
 typedef int (*Int8CompareOp)(int8_t, int8_t);
 typedef int8_t (*Int8ShiftOp)(int8_t, int);
 
-#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_X64 && !V8_TARGET_ARCH_IA32 && \
-    !V8_TARGET_ARCH_MIPS && !V8_TARGET_ARCH_MIPS64
+#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_X64 && \
+    !V8_TARGET_ARCH_IA32 && !V8_TARGET_ARCH_MIPS && !V8_TARGET_ARCH_MIPS64
 #define SIMD_LOWERING_TARGET 1
 #else
 #define SIMD_LOWERING_TARGET 0
@@ -83,8 +83,8 @@ T Maximum(T a, T b) {
 }
 
 // For float operands, Min and Max must return NaN if either operand is NaN.
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 template <>
 float Minimum(float a, float b) {
   if (std::isnan(a) || std::isnan(b))
@@ -98,8 +98,8 @@ float Maximum(float a, float b) {
     return std::numeric_limits<float>::quiet_NaN();
   return a >= b ? a : b;
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
 template <typename T>
 T UnsignedMinimum(T a, T b) {
@@ -406,6 +406,11 @@ T RecipSqrt(T a) {
       TO_BYTE(m[11]), TO_BYTE(m[12]), TO_BYTE(m[13]), TO_BYTE(m[14]),      \
       TO_BYTE(m[15])
 
+#define WASM_SIMD_LOAD_MEM(index) \
+  index, WASM_SIMD_OP(kExprS128LoadMem), ZERO_ALIGNMENT, ZERO_OFFSET
+#define WASM_SIMD_STORE_MEM(index, val) \
+  index, val, WASM_SIMD_OP(kExprS128StoreMem), ZERO_ALIGNMENT, ZERO_OFFSET
+
 // Skip FP tests involving extremely large or extremely small values, which
 // may fail due to non-IEEE-754 SIMD arithmetic on some platforms.
 bool SkipFPValue(float x) {
@@ -420,8 +425,8 @@ bool SkipFPValue(float x) {
 // doesn't handle NaNs. Also skip extreme values.
 bool SkipFPExpectedValue(float x) { return std::isnan(x) || SkipFPValue(x); }
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(F32x4Splat) {
   WasmRunner<int32_t, float> r(kExecuteCompiled);
   byte lane_val = 0;
@@ -485,11 +490,11 @@ WASM_SIMD_TEST(F32x4ConvertI32x4) {
                        static_cast<float>(static_cast<uint32_t>(*i))));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunF32x4UnOpTest(WasmOpcode simd_op, FloatUnOp expected_op,
                       float error = 0.0f) {
   WasmRunner<int32_t, float, float, float> r(kExecuteCompiled);
@@ -513,10 +518,11 @@ void RunF32x4UnOpTest(WasmOpcode simd_op, FloatUnOp expected_op,
 
 WASM_SIMD_TEST(F32x4Abs) { RunF32x4UnOpTest(kExprF32x4Abs, std::abs); }
 WASM_SIMD_TEST(F32x4Neg) { RunF32x4UnOpTest(kExprF32x4Neg, Negate); }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
+    V8_TARGET_ARCH_MIPS64
 static const float kApproxError = 0.01f;
 
 WASM_SIMD_TEST(F32x4RecipApprox) {
@@ -526,10 +532,11 @@ WASM_SIMD_TEST(F32x4RecipApprox) {
 WASM_SIMD_TEST(F32x4RecipSqrtApprox) {
   RunF32x4UnOpTest(kExprF32x4RecipSqrtApprox, RecipSqrt, kApproxError);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
+        // V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunF32x4BinOpTest(WasmOpcode simd_op, FloatBinOp expected_op) {
   WasmRunner<int32_t, float, float, float> r(kExecuteCompiled);
   byte a = 0;
@@ -559,11 +566,11 @@ WASM_SIMD_TEST(F32x4Sub) { RunF32x4BinOpTest(kExprF32x4Sub, Sub); }
 WASM_SIMD_TEST(F32x4Mul) { RunF32x4BinOpTest(kExprF32x4Mul, Mul); }
 WASM_SIMD_TEST(F32x4_Min) { RunF32x4BinOpTest(kExprF32x4Min, Minimum); }
 WASM_SIMD_TEST(F32x4_Max) { RunF32x4BinOpTest(kExprF32x4Max, Maximum); }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunF32x4CompareOpTest(WasmOpcode simd_op, FloatCompareOp expected_op) {
   WasmRunner<int32_t, float, float, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -601,8 +608,8 @@ WASM_SIMD_TEST(F32x4Ge) { RunF32x4CompareOpTest(kExprF32x4Ge, GreaterEqual); }
 WASM_SIMD_TEST(F32x4Lt) { RunF32x4CompareOpTest(kExprF32x4Lt, Less); }
 
 WASM_SIMD_TEST(F32x4Le) { RunF32x4CompareOpTest(kExprF32x4Le, LessEqual); }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
 WASM_SIMD_TEST(I32x4Splat) {
   // Store SIMD value in a local variable, use extract lane to check lane values
@@ -651,8 +658,8 @@ WASM_SIMD_TEST(I32x4ReplaceLane) {
   CHECK_EQ(1, r.Call(1, 2));
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I16x8Splat) {
   WasmRunner<int32_t, int32_t> r(kExecuteCompiled);
   byte lane_val = 0;
@@ -712,11 +719,11 @@ WASM_SIMD_TEST(I16x8ReplaceLane) {
 
   CHECK_EQ(1, r.Call(1, 2));
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 WASM_SIMD_TEST(I8x16Splat) {
   WasmRunner<int32_t, int32_t> r(kExecuteCompiled);
   byte lane_val = 0;
@@ -831,11 +838,11 @@ WASM_SIMD_TEST(I8x16ReplaceLane) {
 
   CHECK_EQ(1, r.Call(1, 2));
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 // Determines if conversion from float to int will be valid.
 bool CanRoundToZeroAndConvert(double val, bool unsigned_integer) {
   const double max_uint = static_cast<double>(0xffffffffu);
@@ -900,10 +907,10 @@ WASM_SIMD_TEST(I32x4ConvertF32x4) {
     CHECK_EQ(1, r.Call(*i, signed_value, unsigned_value));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 // Tests both signed and unsigned conversion from I16x8 (unpacking).
 WASM_SIMD_TEST(I32x4ConvertI16x8) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -922,15 +929,16 @@ WASM_SIMD_TEST(I32x4ConvertI16x8) {
         WASM_SIMD_CHECK_SPLAT4(I32x4, simd2, I32, unpacked_unsigned), WASM_ONE);
 
   FOR_INT16_INPUTS(i) {
-    int32_t unpacked_signed = Widen<int16_t>(*i);
-    int32_t unpacked_unsigned = UnsignedWiden<int16_t>(*i);
+    int32_t unpacked_signed = static_cast<int32_t>(Widen<int16_t>(*i));
+    int32_t unpacked_unsigned =
+        static_cast<int32_t>(UnsignedWiden<int16_t>(*i));
     CHECK_EQ(1, r.Call(*i, unpacked_signed, unpacked_unsigned));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI32x4UnOpTest(WasmOpcode simd_op, Int32UnOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -944,12 +952,12 @@ void RunI32x4UnOpTest(WasmOpcode simd_op, Int32UnOp expected_op) {
 }
 
 WASM_SIMD_TEST(I32x4Neg) { RunI32x4UnOpTest(kExprI32x4Neg, Negate); }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET
 WASM_SIMD_TEST(S128Not) { RunI32x4UnOpTest(kExprS128Not, Not); }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET
 
 void RunI32x4BinOpTest(WasmOpcode simd_op, Int32BinOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -973,8 +981,8 @@ WASM_SIMD_TEST(I32x4Add) { RunI32x4BinOpTest(kExprI32x4Add, Add); }
 
 WASM_SIMD_TEST(I32x4Sub) { RunI32x4BinOpTest(kExprI32x4Sub, Sub); }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I32x4Mul) { RunI32x4BinOpTest(kExprI32x4Mul, Mul); }
 
 WASM_SIMD_TEST(S128And) { RunI32x4BinOpTest(kExprS128And, And); }
@@ -1018,11 +1026,11 @@ void RunI32x4CompareOpTest(WasmOpcode simd_op, Int32CompareOp expected_op) {
 WASM_SIMD_TEST(I32x4Eq) { RunI32x4CompareOpTest(kExprI32x4Eq, Equal); }
 
 WASM_SIMD_TEST(I32x4Ne) { RunI32x4CompareOpTest(kExprI32x4Ne, NotEqual); }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I32x4LtS) { RunI32x4CompareOpTest(kExprI32x4LtS, Less); }
 
 WASM_SIMD_TEST(I32x4LeS) { RunI32x4CompareOpTest(kExprI32x4LeS, LessEqual); }
@@ -1044,11 +1052,11 @@ WASM_SIMD_TEST(I32x4GtU) {
 WASM_SIMD_TEST(I32x4GeU) {
   RunI32x4CompareOpTest(kExprI32x4GeU, UnsignedGreaterEqual);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET ||  V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI32x4ShiftOpTest(WasmOpcode simd_op, Int32ShiftOp expected_op,
                          int shift) {
   WasmRunner<int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -1074,10 +1082,10 @@ WASM_SIMD_TEST(I32x4ShrS) {
 WASM_SIMD_TEST(I32x4ShrU) {
   RunI32x4ShiftOpTest(kExprI32x4ShrU, LogicalShiftRight, 1);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 // Tests both signed and unsigned conversion from I8x16 (unpacking).
 WASM_SIMD_TEST(I16x8ConvertI8x16) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -1096,15 +1104,15 @@ WASM_SIMD_TEST(I16x8ConvertI8x16) {
         WASM_SIMD_CHECK_SPLAT8(I16x8, simd2, I32, unpacked_unsigned), WASM_ONE);
 
   FOR_INT8_INPUTS(i) {
-    int32_t unpacked_signed = Widen<int8_t>(*i);
-    int32_t unpacked_unsigned = UnsignedWiden<int8_t>(*i);
+    int32_t unpacked_signed = static_cast<int32_t>(Widen<int8_t>(*i));
+    int32_t unpacked_unsigned = static_cast<int32_t>(UnsignedWiden<int8_t>(*i));
     CHECK_EQ(1, r.Call(*i, unpacked_signed, unpacked_unsigned));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 
-#if SIMD_LOWERING_TARGET || V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if SIMD_LOWERING_TARGET || V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI16x8UnOpTest(WasmOpcode simd_op, Int16UnOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -1118,10 +1126,11 @@ void RunI16x8UnOpTest(WasmOpcode simd_op, Int16UnOp expected_op) {
 }
 
 WASM_SIMD_TEST(I16x8Neg) { RunI16x8UnOpTest(kExprI16x8Neg, Negate); }
-#endif  // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS ||
+#endif  // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 ||
+        // V8_TARGET_ARCH_MIPS ||
         // V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 // Tests both signed and unsigned conversion from I32x4 (packing).
 WASM_SIMD_TEST(I16x8ConvertI32x4) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -1149,10 +1158,10 @@ WASM_SIMD_TEST(I16x8ConvertI32x4) {
     CHECK_EQ(1, r.Call(*i, packed_signed, packed_unsigned));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI16x8BinOpTest(WasmOpcode simd_op, Int16BinOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -1182,11 +1191,11 @@ WASM_SIMD_TEST(I16x8Sub) { RunI16x8BinOpTest(kExprI16x8Sub, Sub); }
 WASM_SIMD_TEST(I16x8SubSaturateS) {
   RunI16x8BinOpTest(kExprI16x8SubSaturateS, SubSaturate);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I16x8Mul) { RunI16x8BinOpTest(kExprI16x8Mul, Mul); }
 
 WASM_SIMD_TEST(I16x8MinS) { RunI16x8BinOpTest(kExprI16x8MinS, Minimum); }
@@ -1232,11 +1241,11 @@ void RunI16x8CompareOpTest(WasmOpcode simd_op, Int16CompareOp expected_op) {
 WASM_SIMD_TEST(I16x8Eq) { RunI16x8CompareOpTest(kExprI16x8Eq, Equal); }
 
 WASM_SIMD_TEST(I16x8Ne) { RunI16x8CompareOpTest(kExprI16x8Ne, NotEqual); }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I16x8LtS) { RunI16x8CompareOpTest(kExprI16x8LtS, Less); }
 
 WASM_SIMD_TEST(I16x8LeS) { RunI16x8CompareOpTest(kExprI16x8LeS, LessEqual); }
@@ -1258,11 +1267,11 @@ WASM_SIMD_TEST(I16x8LtU) { RunI16x8CompareOpTest(kExprI16x8LtU, UnsignedLess); }
 WASM_SIMD_TEST(I16x8LeU) {
   RunI16x8CompareOpTest(kExprI16x8LeU, UnsignedLessEqual);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI16x8ShiftOpTest(WasmOpcode simd_op, Int16ShiftOp expected_op,
                          int shift) {
   WasmRunner<int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -1288,11 +1297,11 @@ WASM_SIMD_TEST(I16x8ShrS) {
 WASM_SIMD_TEST(I16x8ShrU) {
   RunI16x8ShiftOpTest(kExprI16x8ShrU, LogicalShiftRight, 1);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 || \
-    SIMD_LOWERING_TARGET
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
+    V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 void RunI8x16UnOpTest(WasmOpcode simd_op, Int8UnOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -1306,10 +1315,10 @@ void RunI8x16UnOpTest(WasmOpcode simd_op, Int8UnOp expected_op) {
 }
 
 WASM_SIMD_TEST(I8x16Neg) { RunI8x16UnOpTest(kExprI8x16Neg, Negate); }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 ||
-        // SIMD_LOWERING_TARGET
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
+        // V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 
-#if V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 // Tests both signed and unsigned conversion from I16x8 (packing).
 WASM_SIMD_TEST(I8x16ConvertI16x8) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
@@ -1337,10 +1346,10 @@ WASM_SIMD_TEST(I8x16ConvertI16x8) {
     CHECK_EQ(1, r.Call(*i, packed_signed, packed_unsigned));
   }
 }
-#endif  // V8_TARGET_ARCH_ARM
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 void RunI8x16BinOpTest(WasmOpcode simd_op, Int8BinOp expected_op) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteCompiled);
   byte a = 0;
@@ -1414,17 +1423,16 @@ void RunI8x16CompareOpTest(WasmOpcode simd_op, Int8CompareOp expected_op) {
 WASM_SIMD_TEST(I8x16Eq) { RunI8x16CompareOpTest(kExprI8x16Eq, Equal); }
 
 WASM_SIMD_TEST(I8x16Ne) { RunI8x16CompareOpTest(kExprI8x16Ne, NotEqual); }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || SIMD_LOWERING_TARGET ||
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+WASM_SIMD_TEST(I8x16Mul) { RunI8x16BinOpTest(kExprI8x16Mul, Mul); }
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
         // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
-WASM_SIMD_TEST(I8x16Mul) { RunI8x16BinOpTest(kExprI8x16Mul, Mul); }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
-
-// TODO(gdeepti): Remove special case for ARM64 after v8:6421 is fixed
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET && !V8_TARGET_ARCH_ARM64 || \
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
     V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I8x16GtS) { RunI8x16CompareOpTest(kExprI8x16GtS, Greater); }
 
@@ -1447,7 +1455,7 @@ WASM_SIMD_TEST(I8x16LtU) { RunI8x16CompareOpTest(kExprI8x16LtU, UnsignedLess); }
 WASM_SIMD_TEST(I8x16LeU) {
   RunI8x16CompareOpTest(kExprI8x16LeU, UnsignedLessEqual);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET && !V8_TARGET_ARCH_ARM64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET
         // || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
 void RunI8x16ShiftOpTest(WasmOpcode simd_op, Int8ShiftOp expected_op,
@@ -1464,8 +1472,8 @@ void RunI8x16ShiftOpTest(WasmOpcode simd_op, Int8ShiftOp expected_op,
   FOR_INT8_INPUTS(i) { CHECK_EQ(1, r.Call(*i, expected_op(*i, shift))); }
 }
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 || \
-    SIMD_LOWERING_TARGET
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
+    V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 WASM_SIMD_TEST(I8x16Shl) {
   RunI8x16ShiftOpTest(kExprI8x16Shl, LogicalShiftLeft, 1);
 }
@@ -1473,19 +1481,19 @@ WASM_SIMD_TEST(I8x16Shl) {
 WASM_SIMD_TEST(I8x16ShrS) {
   RunI8x16ShiftOpTest(kExprI8x16ShrS, ArithmeticShiftRight, 1);
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64 ||
-        // SIMD_LOWERING_TARGET
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
+        // V8_TARGET_ARCH_MIPS64 || SIMD_LOWERING_TARGET
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(I8x16ShrU) {
   RunI8x16ShiftOpTest(kExprI8x16ShrU, LogicalShiftRight, 1);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 // Test Select by making a mask where the 0th and 3rd lanes are true and the
 // rest false, and comparing for non-equality with zero to materialize a boolean
 // vector.
@@ -1563,10 +1571,10 @@ WASM_SIMD_SELECT_TEST(8x16)
 WASM_SIMD_NON_CANONICAL_SELECT_TEST(32x4)
 WASM_SIMD_NON_CANONICAL_SELECT_TEST(16x8)
 WASM_SIMD_NON_CANONICAL_SELECT_TEST(8x16)
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64 ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64
 // Test binary ops with two lane test patterns, all lanes distinct.
 template <typename T>
 void RunBinaryLaneOpTest(
@@ -1608,9 +1616,9 @@ WASM_SIMD_TEST(I16x8AddHoriz) {
   RunBinaryLaneOpTest<int16_t>(kExprI16x8AddHoriz,
                                {{1, 5, 9, 13, 17, 21, 25, 29}});
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_X64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_X64
 
-#if V8_TARGET_ARCH_ARM
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 WASM_SIMD_TEST(F32x4AddHoriz) {
   RunBinaryLaneOpTest<float>(kExprF32x4AddHoriz, {{1.0f, 5.0f, 9.0f, 13.0f}});
 }
@@ -1843,9 +1851,10 @@ WASM_SIMD_TEST(S8x16Concat) {
     RunBinaryLaneOpTest(kExprS8x16Shuffle, expected);
   }
 }
-#endif  // V8_TARGET_ARCH_ARM
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
+    V8_TARGET_ARCH_MIPS64
 // Boolean unary operations are 'AllTrue' and 'AnyTrue', which return an integer
 // result. Use relational ops on numeric vectors to create the boolean vector
 // test inputs. Test inputs with all true, all false, one true, and one false.
@@ -1923,10 +1932,11 @@ WASM_SIMD_BOOL_REDUCTION_TEST(32x4, 4)
 WASM_SIMD_BOOL_REDUCTION_TEST(16x8, 8)
 WASM_SIMD_BOOL_REDUCTION_TEST(8x16, 16)
 
-#endif  // !V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // !V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
+        // V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(SimdI32x4ExtractWithF32x4) {
   WasmRunner<int32_t> r(kExecuteCompiled);
   BUILD(r, WASM_IF_ELSE_I(
@@ -1980,11 +1990,11 @@ WASM_SIMD_TEST(SimdI32x4AddWithF32x4) {
             WASM_I32V(1), WASM_I32V(0)));
   CHECK_EQ(1, r.Call());
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(SimdI32x4Local) {
   WasmRunner<int32_t> r(kExecuteCompiled);
   r.AllocateLocal(kWasmS128);
@@ -2038,11 +2048,11 @@ WASM_SIMD_TEST(SimdI32x4For) {
         WASM_GET_LOCAL(0));
   CHECK_EQ(1, r.Call());
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(SimdF32x4For) {
   WasmRunner<int32_t> r(kExecuteCompiled);
   r.AllocateLocal(kWasmI32);
@@ -2066,11 +2076,11 @@ WASM_SIMD_TEST(SimdF32x4For) {
         WASM_GET_LOCAL(0));
   CHECK_EQ(1, r.Call());
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
 template <typename T, int numLanes = 4>
 void SetVectorByLanes(T* v, const std::array<T, numLanes>& arr) {
@@ -2137,11 +2147,11 @@ WASM_SIMD_TEST(SimdI32x4SetGlobal) {
   CHECK_EQ(GetScalar(global, 2), 45);
   CHECK_EQ(GetScalar(global, 3), 56);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(SimdF32x4GetGlobal) {
   WasmRunner<int32_t, int32_t> r(kExecuteCompiled);
   float* global = r.module().AddGlobal<float>(kWasmS128);
@@ -2182,20 +2192,17 @@ WASM_SIMD_TEST(SimdF32x4SetGlobal) {
   CHECK_EQ(GetScalar(global, 2), 32.25f);
   CHECK_EQ(GetScalar(global, 3), 65.0f);
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 
-#if V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 || \
-    V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET || \
+    V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
 WASM_SIMD_TEST(SimdLoadStoreLoad) {
   WasmRunner<int32_t> r(kExecuteCompiled);
   int32_t* memory = r.module().AddMemoryElems<int32_t>(4);
 
-  BUILD(r,
-        WASM_STORE_MEM(MachineType::Simd128(), WASM_ZERO,
-                       WASM_LOAD_MEM(MachineType::Simd128(), WASM_ZERO)),
-        WASM_SIMD_I32x4_EXTRACT_LANE(
-            0, WASM_LOAD_MEM(MachineType::Simd128(), WASM_ZERO)));
+  BUILD(r, WASM_SIMD_STORE_MEM(WASM_ZERO, WASM_SIMD_LOAD_MEM(WASM_ZERO)),
+        WASM_SIMD_I32x4_EXTRACT_LANE(0, WASM_SIMD_LOAD_MEM(WASM_ZERO)));
 
   FOR_INT32_INPUTS(i) {
     int32_t expected = *i;
@@ -2203,5 +2210,5 @@ WASM_SIMD_TEST(SimdLoadStoreLoad) {
     CHECK_EQ(expected, r.Call());
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || SIMD_LOWERING_TARGET || V8_TARGET_ARCH_X64 ||
-        // V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
+#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || SIMD_LOWERING_TARGET ||
+        // V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_MIPS || V8_TARGET_ARCH_MIPS64
