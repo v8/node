@@ -1342,6 +1342,10 @@ Type* Typer::Visitor::TypeJSConstructForwardVarargs(Node* node) {
 
 Type* Typer::Visitor::TypeJSConstruct(Node* node) { return Type::Receiver(); }
 
+Type* Typer::Visitor::TypeJSConstructWithArrayLike(Node* node) {
+  return Type::Receiver();
+}
+
 Type* Typer::Visitor::TypeJSConstructWithSpread(Node* node) {
   return Type::Receiver();
 }
@@ -1607,6 +1611,10 @@ Type* Typer::Visitor::TypeJSCallForwardVarargs(Node* node) {
 Type* Typer::Visitor::TypeJSCall(Node* node) {
   // TODO(bmeurer): We could infer better types if we wouldn't ignore the
   // argument types for the JSCallTyper above.
+  return TypeUnaryOp(node, JSCallTyper);
+}
+
+Type* Typer::Visitor::TypeJSCallWithArrayLike(Node* node) {
   return TypeUnaryOp(node, JSCallTyper);
 }
 

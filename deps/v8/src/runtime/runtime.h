@@ -36,27 +36,26 @@ namespace internal {
 // A variable number of arguments is specified by a -1, additional restrictions
 // are specified by inline comments
 
-#define FOR_EACH_INTRINSIC_ARRAY(F)  \
-  F(SpecialArrayFunctions, 0, 1)     \
-  F(TransitionElementsKind, 2, 1)    \
-  F(RemoveArrayHoles, 2, 1)          \
-  F(MoveArrayContents, 2, 1)         \
-  F(EstimateNumberOfElements, 1, 1)  \
-  F(GetArrayKeys, 2, 1)              \
-  F(NewArray, -1 /* >= 3 */, 1)      \
-  F(FunctionBind, -1, 1)             \
-  F(NormalizeElements, 1, 1)         \
-  F(GrowArrayElements, 2, 1)         \
-  F(HasComplexElements, 1, 1)        \
-  F(IsArray, 1, 1)                   \
-  F(ArrayIsArray, 1, 1)              \
-  F(FixedArrayGet, 2, 1)             \
-  F(FixedArraySet, 3, 1)             \
-  F(ArraySpeciesConstructor, 1, 1)   \
-  F(ArrayIncludes_Slow, 3, 1)        \
-  F(ArrayIndexOf, 3, 1)              \
-  F(SpreadIterablePrepare, 1, 1)     \
-  F(SpreadIterableFixed, 1, 1)
+#define FOR_EACH_INTRINSIC_ARRAY(F) \
+  F(SpecialArrayFunctions, 0, 1)    \
+  F(TransitionElementsKind, 2, 1)   \
+  F(RemoveArrayHoles, 2, 1)         \
+  F(MoveArrayContents, 2, 1)        \
+  F(EstimateNumberOfElements, 1, 1) \
+  F(GetArrayKeys, 2, 1)             \
+  F(NewArray, -1 /* >= 3 */, 1)     \
+  F(FunctionBind, -1, 1)            \
+  F(NormalizeElements, 1, 1)        \
+  F(GrowArrayElements, 2, 1)        \
+  F(HasComplexElements, 1, 1)       \
+  F(IsArray, 1, 1)                  \
+  F(ArrayIsArray, 1, 1)             \
+  F(FixedArrayGet, 2, 1)            \
+  F(FixedArraySet, 3, 1)            \
+  F(ArraySpeciesConstructor, 1, 1)  \
+  F(ArrayIncludes_Slow, 3, 1)       \
+  F(ArrayIndexOf, 3, 1)             \
+  F(SpreadIterablePrepare, 1, 1)
 
 #define FOR_EACH_INTRINSIC_ATOMICS(F)           \
   F(ThrowNotIntegerSharedTypedArrayError, 1, 1) \
@@ -167,9 +166,9 @@ namespace internal {
   F(SetScopeVariableValue, 6, 1)                \
   F(DebugPrintScopes, 0, 1)                     \
   F(SetBreakPointsActive, 1, 1)                 \
-  F(GetBreakLocations, 2, 1)                    \
+  F(GetBreakLocations, 1, 1)                    \
   F(SetFunctionBreakPoint, 3, 1)                \
-  F(SetScriptBreakPoint, 4, 1)                  \
+  F(SetScriptBreakPoint, 3, 1)                  \
   F(ClearBreakPoint, 1, 1)                      \
   F(ChangeBreakOnException, 2, 1)               \
   F(IsBreakOnException, 1, 1)                   \
@@ -691,7 +690,6 @@ namespace internal {
   F(StoreCallbackProperty, 6, 1)             \
   F(StoreIC_Miss, 5, 1)                      \
   F(StorePropertyWithInterceptor, 5, 1)      \
-  F(ToBooleanIC_Miss, 1, 1)                  \
   F(Unreachable, 0, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_OBJECT(F) \

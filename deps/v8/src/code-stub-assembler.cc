@@ -3204,6 +3204,10 @@ Node* CodeStubAssembler::IsConstructorMap(Node* map) {
   return IsSetWord32(LoadMapBitField(map), 1 << Map::kIsConstructor);
 }
 
+Node* CodeStubAssembler::IsConstructor(Node* object) {
+  return IsConstructorMap(LoadMap(object));
+}
+
 Node* CodeStubAssembler::IsSpecialReceiverInstanceType(Node* instance_type) {
   STATIC_ASSERT(JS_GLOBAL_OBJECT_TYPE <= LAST_SPECIAL_RECEIVER_TYPE);
   return Int32LessThanOrEqual(instance_type,
@@ -6671,7 +6675,7 @@ void CodeStubAssembler::TransitionElementsKind(Node* object, Node* map,
                                                Label* bailout) {
   DCHECK(!IsFastHoleyElementsKind(from_kind) ||
          IsFastHoleyElementsKind(to_kind));
-  if (AllocationSite::GetMode(from_kind, to_kind) == TRACK_ALLOCATION_SITE) {
+  if (AllocationSite::ShouldTrack(from_kind, to_kind)) {
     TrapAllocationMemento(object, bailout);
   }
 

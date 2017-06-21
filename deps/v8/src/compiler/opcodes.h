@@ -163,9 +163,11 @@
 #define JS_OTHER_OP_LIST(V)         \
   V(JSConstructForwardVarargs)      \
   V(JSConstruct)                    \
+  V(JSConstructWithArrayLike)       \
   V(JSConstructWithSpread)          \
   V(JSCallForwardVarargs)           \
   V(JSCall)                         \
+  V(JSCallWithArrayLike)            \
   V(JSCallWithSpread)               \
   V(JSCallRuntime)                  \
   V(JSConvertReceiver)              \

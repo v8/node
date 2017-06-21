@@ -287,9 +287,15 @@ Callable CodeFactory::Call(Isolate* isolate, ConvertReceiverMode mode,
 }
 
 // static
+Callable CodeFactory::CallWithArrayLike(Isolate* isolate) {
+  return Callable(isolate->builtins()->CallWithArrayLike(),
+                  CallWithArrayLikeDescriptor(isolate));
+}
+
+// static
 Callable CodeFactory::CallWithSpread(Isolate* isolate) {
   return Callable(isolate->builtins()->CallWithSpread(),
-                  CallTrampolineDescriptor(isolate));
+                  CallWithSpreadDescriptor(isolate));
 }
 
 // static
@@ -326,7 +332,7 @@ Callable CodeFactory::Construct(Isolate* isolate) {
 // static
 Callable CodeFactory::ConstructWithSpread(Isolate* isolate) {
   return Callable(isolate->builtins()->ConstructWithSpread(),
-                  ConstructTrampolineDescriptor(isolate));
+                  ConstructWithSpreadDescriptor(isolate));
 }
 
 // static

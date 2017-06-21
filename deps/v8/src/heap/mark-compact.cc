@@ -1435,11 +1435,10 @@ void MarkCompactCollector::DiscoverGreyObjectsWithIterator(T* it) {
 
 void MarkCompactCollector::DiscoverGreyObjectsOnPage(MemoryChunk* p) {
   DCHECK(!marking_deque()->IsFull());
-  LiveObjectIterator<kGreyObjects> it(p, MarkingState::Internal(p));
-  HeapObject* object = NULL;
-  while ((object = it.Next()) != NULL) {
-    bool success =
-        ObjectMarking::GreyToBlack(object, MarkingState::Internal(object));
+  for (auto object_and_size :
+       LiveObjectRange<kGreyObjects>(p, marking_state(p))) {
+    HeapObject* const object = object_and_size.first;
+    bool success = ObjectMarking::GreyToBlack(object, marking_state(object));
     DCHECK(success);
     USE(success);
     PushBlack(object);
@@ -1585,7 +1584,7 @@ class YoungGenerationMigrationObserver final : public MigrationObserver {
     // Migrate color to old generation marking in case the object survived young
     // generation garbage collection.
     if (heap_->incremental_marking()->IsMarking()) {
-      DCHECK(ObjectMarking::IsWhite(
+      DCHECK(ObjectMarking::IsWhite<AccessMode::ATOMIC>(
           dst, mark_compact_collector_->marking_state(dst)));
       heap_->incremental_marking()->TransferColor<AccessMode::ATOMIC>(src, dst);
     }
@@ -1650,7 +1649,7 @@ class YoungGenerationRecordMigratedSlotVisitor final
 class HeapObjectVisitor {
  public:
   virtual ~HeapObjectVisitor() {}
-  virtual bool Visit(HeapObject* object) = 0;
+  virtual bool Visit(HeapObject* object, int size) = 0;
 };
 
 class EvacuateVisitorBase : public HeapObjectVisitor {
@@ -1711,11 +1710,10 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
   }
 
   inline bool TryEvacuateObject(PagedSpace* target_space, HeapObject* object,
-                                HeapObject** target_object) {
+                                int size, HeapObject** target_object) {
 #ifdef VERIFY_HEAP
     if (AbortCompactionForTesting(object)) return false;
 #endif  // VERIFY_HEAP
-    int size = object->Size();
     AllocationAlignment alignment = object->RequiredAlignment();
     AllocationResult allocation = target_space->AllocateRaw(size, alignment);
     if (allocation.To(target_object)) {
@@ -1780,19 +1778,18 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
         semispace_copied_size_(0),
         local_pretenuring_feedback_(local_pretenuring_feedback) {}
 
-  inline bool Visit(HeapObject* object) override {
-    heap_->UpdateAllocationSite<Heap::kCached>(object,
-                                               local_pretenuring_feedback_);
-    int size = object->Size();
+  inline bool Visit(HeapObject* object, int size) override {
     HeapObject* target_object = nullptr;
-    if (heap_->ShouldBePromoted(object->address(), size) &&
-        TryEvacuateObject(compaction_spaces_->Get(OLD_SPACE), object,
+    if (heap_->ShouldBePromoted(object->address()) &&
+        TryEvacuateObject(compaction_spaces_->Get(OLD_SPACE), object, size,
                           &target_object)) {
       promoted_size_ += size;
       return true;
     }
+    heap_->UpdateAllocationSite<Heap::kCached>(object,
+                                               local_pretenuring_feedback_);
     HeapObject* target = nullptr;
-    AllocationSpace space = AllocateTargetObject(object, &target);
+    AllocationSpace space = AllocateTargetObject(object, size, &target);
     MigrateObject(HeapObject::cast(target), object, size, space);
     semispace_copied_size_ += size;
     return true;
@@ -1808,9 +1805,8 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
     kStickyBailoutOldSpace,
   };
 
-  inline AllocationSpace AllocateTargetObject(HeapObject* old_object,
+  inline AllocationSpace AllocateTargetObject(HeapObject* old_object, int size,
                                               HeapObject** target_object) {
-    const int size = old_object->Size();
     AllocationAlignment alignment = old_object->RequiredAlignment();
     AllocationResult allocation;
     AllocationSpace space_allocated_in = space_to_allocate_;
@@ -1934,10 +1930,11 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
     }
   }
 
-  inline bool Visit(HeapObject* object) {
-    heap_->UpdateAllocationSite<Heap::kCached>(object,
-                                               local_pretenuring_feedback_);
-    if (mode == NEW_TO_OLD) {
+  inline bool Visit(HeapObject* object, int size) {
+    if (mode == NEW_TO_NEW) {
+      heap_->UpdateAllocationSite<Heap::kCached>(object,
+                                                 local_pretenuring_feedback_);
+    } else if (mode == NEW_TO_OLD) {
       object->IterateBodyFast(record_visitor_);
     }
     return true;
@@ -1960,11 +1957,11 @@ class EvacuateOldSpaceVisitor final : public EvacuateVisitorBase {
                           RecordMigratedSlotVisitor* record_visitor)
       : EvacuateVisitorBase(heap, compaction_spaces, record_visitor) {}
 
-  inline bool Visit(HeapObject* object) override {
+  inline bool Visit(HeapObject* object, int size) override {
     CompactionSpace* target_space = compaction_spaces_->Get(
         Page::FromAddress(object->address())->owner()->identity());
     HeapObject* target_object = nullptr;
-    if (TryEvacuateObject(target_space, object, &target_object)) {
+    if (TryEvacuateObject(target_space, object, size, &target_object)) {
       DCHECK(object->map_word().IsForwardingAddress());
       return true;
     }
@@ -1976,7 +1973,7 @@ class EvacuateRecordOnlyVisitor final : public HeapObjectVisitor {
  public:
   explicit EvacuateRecordOnlyVisitor(Heap* heap) : heap_(heap) {}
 
-  inline bool Visit(HeapObject* object) {
+  inline bool Visit(HeapObject* object, int size) {
     RecordMigratedSlotVisitor visitor(heap_->mark_compact_collector());
     object->IterateBody(&visitor);
     return true;
@@ -2155,7 +2152,7 @@ class ObjectStatsVisitor : public HeapObjectVisitor {
     live_collector_.CollectGlobalStatistics();
   }
 
-  bool Visit(HeapObject* obj) override {
+  bool Visit(HeapObject* obj, int size) override {
     if (ObjectMarking::IsBlack(obj, MarkingState::Internal(obj))) {
       live_collector_.CollectStatistics(obj);
     } else {
@@ -2177,7 +2174,7 @@ void MarkCompactCollector::VisitAllObjects(HeapObjectVisitor* visitor) {
     std::unique_ptr<ObjectIterator> it(space_it.next()->GetObjectIterator());
     ObjectIterator* obj_it = it.get();
     while ((obj = obj_it->Next()) != nullptr) {
-      visitor->Visit(obj);
+      visitor->Visit(obj, obj->Size());
     }
   }
 }
@@ -2772,10 +2769,10 @@ void MinorMarkCompactCollector::MakeIterable(
   MarkCompactCollector* full_collector = heap()->mark_compact_collector();
   Address free_start = p->area_start();
   DCHECK(reinterpret_cast<intptr_t>(free_start) % (32 * kPointerSize) == 0);
-  LiveObjectIterator<kGreyObjects> it(p, marking_state(p));
-  HeapObject* object = nullptr;
 
-  while ((object = it.Next()) != nullptr) {
+  for (auto object_and_size :
+       LiveObjectRange<kGreyObjects>(p, marking_state(p))) {
+    HeapObject* const object = object_and_size.first;
     DCHECK(ObjectMarking::IsGrey(object, marking_state(object)));
     Address free_end = object->address();
     if (free_end != free_start) {
@@ -3433,10 +3430,9 @@ void MarkCompactCollector::RecordRelocSlot(Code* host, RelocInfo* rinfo,
   }
 }
 
+template <AccessMode access_mode>
 static inline SlotCallbackResult UpdateSlot(Object** slot) {
-  Object* obj = reinterpret_cast<Object*>(
-      base::Relaxed_Load(reinterpret_cast<base::AtomicWord*>(slot)));
-
+  Object* obj = *slot;
   if (obj->IsHeapObject()) {
     HeapObject* heap_obj = HeapObject::cast(obj);
     MapWord map_word = heap_obj->map_word();
@@ -3446,13 +3442,16 @@ static inline SlotCallbackResult UpdateSlot(Object** slot) {
              Page::FromAddress(heap_obj->address())
                  ->IsFlagSet(Page::COMPACTION_WAS_ABORTED));
       HeapObject* target = map_word.ToForwardingAddress();
-      base::Relaxed_CompareAndSwap(reinterpret_cast<base::AtomicWord*>(slot),
-                                   reinterpret_cast<base::AtomicWord>(obj),
-                                   reinterpret_cast<base::AtomicWord>(target));
+      if (access_mode == AccessMode::NON_ATOMIC) {
+        *slot = target;
+      } else {
+        base::AsAtomicWord::Release_CompareAndSwap(slot, obj, target);
+      }
       DCHECK(!heap_obj->GetHeap()->InFromSpace(target));
       DCHECK(!MarkCompactCollector::IsOnEvacuationCandidate(target));
     }
   }
+  // OLD_TO_OLD slots are always removed after updating.
   return REMOVE_SLOT;
 }
 
@@ -3462,36 +3461,45 @@ static inline SlotCallbackResult UpdateSlot(Object** slot) {
 // nevers visits code objects.
 class PointersUpdatingVisitor : public ObjectVisitor, public RootVisitor {
  public:
-  void VisitPointer(HeapObject* host, Object** p) override { UpdateSlot(p); }
-
-  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
-    for (Object** p = start; p < end; p++) UpdateSlot(p);
+  void VisitPointer(HeapObject* host, Object** p) override {
+    UpdateSlotInternal(p);
   }
 
-  void VisitRootPointer(Root root, Object** p) override { UpdateSlot(p); }
+  void VisitPointers(HeapObject* host, Object** start, Object** end) override {
+    for (Object** p = start; p < end; p++) UpdateSlotInternal(p);
+  }
+
+  void VisitRootPointer(Root root, Object** p) override {
+    UpdateSlotInternal(p);
+  }
 
   void VisitRootPointers(Root root, Object** start, Object** end) override {
-    for (Object** p = start; p < end; p++) UpdateSlot(p);
+    for (Object** p = start; p < end; p++) UpdateSlotInternal(p);
   }
 
   void VisitCellPointer(Code* host, RelocInfo* rinfo) override {
-    UpdateTypedSlotHelper::UpdateCell(rinfo, UpdateSlot);
+    UpdateTypedSlotHelper::UpdateCell(rinfo, UpdateSlotInternal);
   }
 
   void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) override {
-    UpdateTypedSlotHelper::UpdateEmbeddedPointer(rinfo, UpdateSlot);
+    UpdateTypedSlotHelper::UpdateEmbeddedPointer(rinfo, UpdateSlotInternal);
   }
 
   void VisitCodeTarget(Code* host, RelocInfo* rinfo) override {
-    UpdateTypedSlotHelper::UpdateCodeTarget(rinfo, UpdateSlot);
+    UpdateTypedSlotHelper::UpdateCodeTarget(rinfo, UpdateSlotInternal);
   }
 
   void VisitCodeEntry(JSFunction* host, Address entry_address) override {
-    UpdateTypedSlotHelper::UpdateCodeEntry(entry_address, UpdateSlot);
+    UpdateTypedSlotHelper::UpdateCodeEntry(entry_address, UpdateSlotInternal);
   }
 
   void VisitDebugTarget(Code* host, RelocInfo* rinfo) override {
-    UpdateTypedSlotHelper::UpdateDebugTarget(rinfo, UpdateSlot);
+    UpdateTypedSlotHelper::UpdateDebugTarget(rinfo, UpdateSlotInternal);
+  }
+
+ private:
+  static inline SlotCallbackResult UpdateSlotInternal(Object** slot) {
+    return UpdateSlot<AccessMode::NON_ATOMIC>(slot);
   }
 };
 
@@ -4009,10 +4017,8 @@ int MarkCompactCollector::Sweeper::RawSweep(
   intptr_t max_freed_bytes = 0;
   int curr_region = -1;
 
-  LiveObjectIterator<kBlackObjects> it(p, state);
-  HeapObject* object = NULL;
-
-  while ((object = it.Next()) != NULL) {
+  for (auto object_and_size : LiveObjectRange<kBlackObjects>(p, state)) {
+    HeapObject* const object = object_and_size.first;
     DCHECK(ObjectMarking::IsBlack(object, state));
     Address free_end = object->address();
     if (free_end != free_start) {
@@ -4133,21 +4139,16 @@ bool LiveObjectVisitor::VisitBlackObjects(MemoryChunk* chunk,
                                           const MarkingState& state,
                                           Visitor* visitor,
                                           IterationMode iteration_mode) {
-  LiveObjectIterator<kBlackObjects> it(chunk, state);
-  HeapObject* object = nullptr;
-  while ((object = it.Next()) != nullptr) {
-    DCHECK(ObjectMarking::IsBlack(object, state));
-    if (!visitor->Visit(object)) {
+  for (auto object_and_size : LiveObjectRange<kBlackObjects>(chunk, state)) {
+    HeapObject* const object = object_and_size.first;
+    if (!visitor->Visit(object, object_and_size.second)) {
       if (iteration_mode == kClearMarkbits) {
         state.bitmap()->ClearRange(
             chunk->AddressToMarkbitIndex(chunk->area_start()),
             chunk->AddressToMarkbitIndex(object->address()));
-        SlotSet* slot_set = chunk->slot_set<OLD_TO_NEW>();
-        if (slot_set != nullptr) {
-          slot_set->RemoveRange(
-              0, static_cast<int>(object->address() - chunk->address()),
-              SlotSet::PREFREE_EMPTY_BUCKETS);
-        }
+        RememberedSet<OLD_TO_NEW>::RemoveRange(chunk, chunk->address(),
+                                               object->address(),
+                                               SlotSet::PREFREE_EMPTY_BUCKETS);
         RememberedSet<OLD_TO_NEW>::RemoveRangeTyped(chunk, chunk->address(),
                                                     object->address());
         RecomputeLiveBytes(chunk, state);
@@ -4166,11 +4167,10 @@ bool LiveObjectVisitor::VisitGreyObjectsNoFail(MemoryChunk* chunk,
                                                const MarkingState& state,
                                                Visitor* visitor,
                                                IterationMode iteration_mode) {
-  LiveObjectIterator<kGreyObjects> it(chunk, state);
-  HeapObject* object = nullptr;
-  while ((object = it.Next()) != nullptr) {
+  for (auto object_and_size : LiveObjectRange<kGreyObjects>(chunk, state)) {
+    HeapObject* const object = object_and_size.first;
     DCHECK(ObjectMarking::IsGrey(object, state));
-    if (!visitor->Visit(object)) {
+    if (!visitor->Visit(object, object_and_size.second)) {
       UNREACHABLE();
     }
   }
@@ -4182,11 +4182,9 @@ bool LiveObjectVisitor::VisitGreyObjectsNoFail(MemoryChunk* chunk,
 
 void LiveObjectVisitor::RecomputeLiveBytes(MemoryChunk* chunk,
                                            const MarkingState& state) {
-  LiveObjectIterator<kAllLiveObjects> it(chunk, state);
   int new_live_size = 0;
-  HeapObject* object = nullptr;
-  while ((object = it.Next()) != nullptr) {
-    new_live_size += object->Size();
+  for (auto object_and_size : LiveObjectRange<kAllLiveObjects>(chunk, state)) {
+    new_live_size += object_and_size.second;
   }
   state.SetLiveBytes(new_live_size);
 }
@@ -4325,10 +4323,9 @@ class ToSpaceUpdatingItem : public UpdatingItem {
     // For young generation evacuations we want to visit grey objects, for
     // full MC, we need to visit black objects.
     PointersUpdatingVisitor visitor;
-    LiveObjectIterator<kAllLiveObjects> it(chunk_, marking_state_);
-    HeapObject* object = nullptr;
-    while ((object = it.Next()) != nullptr) {
-      object->IterateBodyFast(&visitor);
+    for (auto object_and_size :
+         LiveObjectRange<kAllLiveObjects>(chunk_, marking_state_)) {
+      object_and_size.first->IterateBodyFast(&visitor);
     }
   }
 
@@ -4357,22 +4354,21 @@ class RememberedSetUpdatingItem : public UpdatingItem {
   }
 
  private:
+  template <AccessMode access_mode>
   inline SlotCallbackResult CheckAndUpdateOldToNewSlot(Address slot_address) {
     Object** slot = reinterpret_cast<Object**>(slot_address);
     if (heap_->InFromSpace(*slot)) {
       HeapObject* heap_object = reinterpret_cast<HeapObject*>(*slot);
       DCHECK(heap_object->IsHeapObject());
       MapWord map_word = heap_object->map_word();
-      // There could still be stale pointers in large object space, map space,
-      // and old space for pages that have been promoted.
       if (map_word.IsForwardingAddress()) {
-        // The write is guarded by the page lock, but still needs to be atomic
-        // as the slot could be required for actually iterating objects, e.g.,
-        // if it is part of a Map and thus be read concurrently by some other
-        // task.
-        base::Relaxed_Store(
-            reinterpret_cast<base::AtomicWord*>(slot_address),
-            reinterpret_cast<base::AtomicWord>(map_word.ToForwardingAddress()));
+        if (access_mode == AccessMode::ATOMIC) {
+          HeapObject** heap_obj_slot = reinterpret_cast<HeapObject**>(slot);
+          base::AsAtomicWord::Relaxed_Store(heap_obj_slot,
+                                            map_word.ToForwardingAddress());
+        } else {
+          *slot = map_word.ToForwardingAddress();
+        }
       }
       // If the object was in from space before and is after executing the
       // callback in to space, the object is still live.
@@ -4407,16 +4403,33 @@ class RememberedSetUpdatingItem : public UpdatingItem {
   }
 
   void UpdateUntypedPointers() {
+    // A map slot might point to new space and be required for iterating
+    // an object concurrently by another task. Hence, we need to update
+    // those slots using atomics.
     if (chunk_->slot_set<OLD_TO_NEW, AccessMode::NON_ATOMIC>() != nullptr) {
-      RememberedSet<OLD_TO_NEW>::Iterate(chunk_, [this](Address slot) {
-        return CheckAndUpdateOldToNewSlot(slot);
-      });
+      if (chunk_->owner() == heap_->map_space()) {
+        RememberedSet<OLD_TO_NEW>::Iterate(chunk_, [this](Address slot) {
+          return CheckAndUpdateOldToNewSlot<AccessMode::ATOMIC>(slot);
+        });
+      } else {
+        RememberedSet<OLD_TO_NEW>::Iterate(chunk_, [this](Address slot) {
+          return CheckAndUpdateOldToNewSlot<AccessMode::NON_ATOMIC>(slot);
+        });
+      }
     }
     if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
         (chunk_->slot_set<OLD_TO_OLD, AccessMode::NON_ATOMIC>() != nullptr)) {
-      RememberedSet<OLD_TO_OLD>::Iterate(chunk_, [](Address slot) {
-        return UpdateSlot(reinterpret_cast<Object**>(slot));
-      });
+      if (chunk_->owner() == heap_->map_space()) {
+        RememberedSet<OLD_TO_OLD>::Iterate(chunk_, [](Address slot) {
+          return UpdateSlot<AccessMode::ATOMIC>(
+              reinterpret_cast<Object**>(slot));
+        });
+      } else {
+        RememberedSet<OLD_TO_OLD>::Iterate(chunk_, [](Address slot) {
+          return UpdateSlot<AccessMode::NON_ATOMIC>(
+              reinterpret_cast<Object**>(slot));
+        });
+      }
     }
   }
 
@@ -4424,12 +4437,13 @@ class RememberedSetUpdatingItem : public UpdatingItem {
     Isolate* isolate = heap_->isolate();
     if (chunk_->typed_slot_set<OLD_TO_NEW, AccessMode::NON_ATOMIC>() !=
         nullptr) {
+      CHECK_NE(chunk_->owner(), heap_->map_space());
       RememberedSet<OLD_TO_NEW>::IterateTyped(
           chunk_,
           [isolate, this](SlotType slot_type, Address host_addr, Address slot) {
             return UpdateTypedSlotHelper::UpdateTypedSlot(
                 isolate, slot_type, slot, [this](Object** slot) {
-                  return CheckAndUpdateOldToNewSlot(
+                  return CheckAndUpdateOldToNewSlot<AccessMode::NON_ATOMIC>(
                       reinterpret_cast<Address>(slot));
                 });
           });
@@ -4437,11 +4451,12 @@ class RememberedSetUpdatingItem : public UpdatingItem {
     if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
         (chunk_->typed_slot_set<OLD_TO_OLD, AccessMode::NON_ATOMIC>() !=
          nullptr)) {
+      CHECK_NE(chunk_->owner(), heap_->map_space());
       RememberedSet<OLD_TO_OLD>::IterateTyped(
           chunk_,
           [isolate](SlotType slot_type, Address host_addr, Address slot) {
-            return UpdateTypedSlotHelper::UpdateTypedSlot(isolate, slot_type,
-                                                          slot, UpdateSlot);
+            return UpdateTypedSlotHelper::UpdateTypedSlot(
+                isolate, slot_type, slot, UpdateSlot<AccessMode::NON_ATOMIC>);
           });
     }
   }

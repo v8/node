@@ -208,16 +208,13 @@ class V8_EXPORT_PRIVATE CompilationJob {
   State state() const { return state_; }
   CompilationInfo* info() const { return info_; }
   Isolate* isolate() const;
+  virtual size_t AllocatedMemory() const { return 0; }
 
  protected:
   // Overridden by the actual implementation.
   virtual Status PrepareJobImpl() = 0;
   virtual Status ExecuteJobImpl() = 0;
   virtual Status FinalizeJobImpl() = 0;
-
-  // Registers weak object to optimized code dependencies.
-  // TODO(turbofan): Move this to pipeline.cc once Crankshaft dies.
-  void RegisterWeakObjectsInOptimizedCode(Handle<Code> code);
 
  private:
   CompilationInfo* info_;

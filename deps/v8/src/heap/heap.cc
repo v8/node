@@ -1127,8 +1127,16 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
   if (len == 0) return;
 
   DCHECK(array->map() != fixed_cow_array_map());
-  Object** dst_objects = array->data_start() + dst_index;
-  MemMove(dst_objects, array->data_start() + src_index, len * kPointerSize);
+  Object** dst = array->data_start() + dst_index;
+  Object** src = array->data_start() + src_index;
+  if (FLAG_concurrent_marking && concurrent_marking()->IsTaskPending()) {
+    for (int i = 0; i < len; i++) {
+      base::AsAtomicWord::Relaxed_Store(
+          dst + i, base::AsAtomicWord::Relaxed_Load(src + i));
+    }
+  } else {
+    MemMove(dst, src, len * kPointerSize);
+  }
   FIXED_ARRAY_ELEMENTS_WRITE_BARRIER(this, array, dst_index, len);
 }
 
@@ -2384,6 +2392,7 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_VARSIZE_MAP(BYTE_ARRAY_TYPE, byte_array)
     ALLOCATE_VARSIZE_MAP(BYTECODE_ARRAY_TYPE, bytecode_array)
     ALLOCATE_VARSIZE_MAP(FREE_SPACE_TYPE, free_space)
+    ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_MAP_TYPE, small_ordered_hash_map)
     ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_SET_TYPE, small_ordered_hash_set)
 
 #define ALLOCATE_FIXED_TYPED_ARRAY_MAP(Type, type, TYPE, ctype, size) \
@@ -3044,6 +3053,26 @@ AllocationResult Heap::AllocateSmallOrderedHashSet(int capacity,
   return result;
 }
 
+AllocationResult Heap::AllocateSmallOrderedHashMap(int capacity,
+                                                   PretenureFlag pretenure) {
+  DCHECK_EQ(0, capacity % SmallOrderedHashMap::kLoadFactor);
+  CHECK_GE(SmallOrderedHashMap::kMaxCapacity, capacity);
+
+  int size = SmallOrderedHashMap::Size(capacity);
+  AllocationSpace space = SelectSpace(pretenure);
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRaw(size, space);
+    if (!allocation.To(&result)) return allocation;
+  }
+
+  result->set_map_after_allocation(small_ordered_hash_map_map(),
+                                   SKIP_WRITE_BARRIER);
+  Handle<SmallOrderedHashMap> table(SmallOrderedHashMap::cast(result));
+  table->Initialize(isolate(), capacity);
+  return result;
+}
+
 AllocationResult Heap::AllocateByteArray(int length, PretenureFlag pretenure) {
   if (length < 0 || length > ByteArray::kMaxLength) {
     v8::internal::Heap::FatalProcessOutOfMemory("invalid array length", true);
@@ -3155,7 +3184,8 @@ void Heap::AdjustLiveBytes(HeapObject* object, int by) {
     lo_space()->AdjustLiveBytes(by);
   } else if (!in_heap_iterator() &&
              !mark_compact_collector()->sweeping_in_progress() &&
-             ObjectMarking::IsBlack(object, MarkingState::Internal(object))) {
+             ObjectMarking::IsBlack<IncrementalMarking::kAtomicity>(
+                 object, MarkingState::Internal(object))) {
     DCHECK(MemoryChunk::FromAddress(object->address())->SweepingDone());
 #ifdef V8_CONCURRENT_MARKING
     MarkingState::Internal(object).IncrementLiveBytes<AccessMode::ATOMIC>(by);
@@ -3433,7 +3463,7 @@ AllocationResult Heap::CopyCode(Code* code) {
   new_code->Relocate(new_addr - old_addr);
   // We have to iterate over the object and process its pointers when black
   // allocation is on.
-  incremental_marking()->IterateBlackObject(new_code);
+  incremental_marking()->ProcessBlackAllocatedObject(new_code);
   // Record all references to embedded objects in the new code object.
   RecordWritesIntoCode(new_code);
   return new_code;
@@ -4245,9 +4275,11 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
         HeapObject* obj = HeapObject::FromAddress(addr);
         // There might be grey objects due to black to grey transitions in
         // incremental marking. E.g. see VisitNativeContextIncremental.
-        DCHECK(ObjectMarking::IsBlackOrGrey(obj, MarkingState::Internal(obj)));
-        if (ObjectMarking::IsBlack(obj, MarkingState::Internal(obj))) {
-          incremental_marking()->IterateBlackObject(obj);
+        DCHECK(ObjectMarking::IsBlackOrGrey<IncrementalMarking::kAtomicity>(
+            obj, MarkingState::Internal(obj)));
+        if (ObjectMarking::IsBlack<IncrementalMarking::kAtomicity>(
+                obj, MarkingState::Internal(obj))) {
+          incremental_marking()->ProcessBlackAllocatedObject(obj);
         }
         addr += obj->Size();
       }
@@ -4259,7 +4291,7 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
 
   // Large object space doesn't use reservations, so it needs custom handling.
   for (HeapObject* object : *large_objects) {
-    incremental_marking()->IterateBlackObject(object);
+    incremental_marking()->ProcessBlackAllocatedObject(object);
   }
 }
 

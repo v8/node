@@ -336,7 +336,7 @@ HValue* CodeStubGraphBuilder<TransitionElementsKindStub>::BuildCodeStub() {
   DCHECK_IMPLIES(IsFastHoleyElementsKind(from_kind),
                  IsFastHoleyElementsKind(to_kind));
 
-  if (AllocationSite::GetMode(from_kind, to_kind) == TRACK_ALLOCATION_SITE) {
+  if (AllocationSite::ShouldTrack(from_kind, to_kind)) {
     Add<HTrapAllocationMemento>(object);
   }
 
@@ -483,21 +483,6 @@ HValue* CodeStubGraphBuilder<BinaryOpWithAllocationSiteStub>::BuildCodeStub() {
 Handle<Code> BinaryOpWithAllocationSiteStub::GenerateCode() {
   return DoGenerateCode(this);
 }
-
-
-template <>
-HValue* CodeStubGraphBuilder<ToBooleanICStub>::BuildCodeInitializedStub() {
-  ToBooleanICStub* stub = casted_stub();
-  IfBuilder if_true(this);
-  if_true.If<HBranch>(GetParameter(Descriptor::kArgument), stub->hints());
-  if_true.Then();
-  if_true.Return(graph()->GetConstantTrue());
-  if_true.Else();
-  if_true.End();
-  return graph()->GetConstantFalse();
-}
-
-Handle<Code> ToBooleanICStub::GenerateCode() { return DoGenerateCode(this); }
 
 }  // namespace internal
 }  // namespace v8

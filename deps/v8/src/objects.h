@@ -128,6 +128,9 @@
 //     - Map
 //     - Oddball
 //     - Foreign
+//     - SmallOrderedHashTable
+//       - SmallOrderedHashMap
+//       - SmallOrderedHashSet
 //     - SharedFunctionInfo
 //     - Struct
 //       - AccessorInfo
@@ -150,7 +153,6 @@
 //       - Module
 //       - ModuleInfoEntry
 //     - WeakCell
-//     - SmallOrderedHashSet
 //
 // Formats of Object*:
 //  Smi:        [31 bit signed int] 0
@@ -362,6 +364,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(CELL_TYPE)                                                                 \
   V(WEAK_CELL_TYPE)                                                            \
   V(PROPERTY_CELL_TYPE)                                                        \
+  V(SMALL_ORDERED_HASH_MAP_TYPE)                                               \
   V(SMALL_ORDERED_HASH_SET_TYPE)                                               \
   /* TODO(yangguo): these padding types are for ABI stability. Remove after*/  \
   /* version 6.0 branch, or replace them when there is demand for new types.*/ \
@@ -705,6 +708,7 @@ enum InstanceType {
   CELL_TYPE,
   WEAK_CELL_TYPE,
   PROPERTY_CELL_TYPE,
+  SMALL_ORDERED_HASH_MAP_TYPE,
   SMALL_ORDERED_HASH_SET_TYPE,
 
   // TODO(yangguo): these padding types are for ABI stability. Remove after
@@ -1084,6 +1088,7 @@ template <class C> inline bool Is(Object* obj);
   V(SharedFunctionInfo)                \
   V(SlicedString)                      \
   V(SloppyArgumentsElements)           \
+  V(SmallOrderedHashMap)               \
   V(SmallOrderedHashSet)               \
   V(SourcePositionTableWithFrameCache) \
   V(String)                            \
@@ -1181,6 +1186,7 @@ class Object {
   INLINE(bool IsSeededNumberDictionary() const);
   INLINE(bool IsOrderedHashSet() const);
   INLINE(bool IsOrderedHashMap() const);
+  INLINE(bool IsSmallOrderedHashTable() const);
 
   // Extract the number.
   inline double Number() const;
@@ -2493,19 +2499,6 @@ class JSObject: public JSReceiver {
 
   static bool IsExtensible(Handle<JSObject> object);
 
-  // Copy object.
-  enum DeepCopyHints { kNoHints = 0, kObjectIsShallow = 1 };
-
-  MUST_USE_RESULT static MaybeHandle<JSObject> DeepCopy(
-      Handle<JSObject> object,
-      AllocationSiteUsageContext* site_context,
-      DeepCopyHints hints = kNoHints);
-  MUST_USE_RESULT static MaybeHandle<JSObject> DeepWalk(
-      Handle<JSObject> object,
-      AllocationSiteCreationContext* site_context);
-  MUST_USE_RESULT static MaybeHandle<JSObject> DeepWalk(
-      Handle<JSObject> object, DeprecationUpdateContext* site_context);
-
   DECLARE_CAST(JSObject)
 
   // Dispatched behavior.
@@ -3581,8 +3574,7 @@ class Code: public HeapObject {
   V(STORE_GLOBAL_IC)    \
   V(KEYED_STORE_IC)     \
   V(BINARY_OP_IC)       \
-  V(COMPARE_IC)         \
-  V(TO_BOOLEAN_IC)
+  V(COMPARE_IC)
 
 #define CODE_KIND_LIST(V) \
   NON_IC_KIND_LIST(V)     \
@@ -3685,7 +3677,6 @@ class Code: public HeapObject {
   inline bool is_stub();
   inline bool is_binary_op_stub();
   inline bool is_compare_ic_stub();
-  inline bool is_to_boolean_ic_stub();
   inline bool is_optimized_code();
   inline bool is_wasm_code();
 
@@ -5849,9 +5840,8 @@ class AllocationSite: public Struct {
   DECLARE_VERIFIER(AllocationSite)
 
   DECLARE_CAST(AllocationSite)
-  static inline AllocationSiteMode GetMode(
-      ElementsKind boilerplate_elements_kind);
-  static AllocationSiteMode GetMode(ElementsKind from, ElementsKind to);
+  static inline bool ShouldTrack(ElementsKind boilerplate_elements_kind);
+  static bool ShouldTrack(ElementsKind from, ElementsKind to);
   static inline bool CanTrack(InstanceType type);
 
   static const int kTransitionInfoOffset = HeapObject::kHeaderSize;

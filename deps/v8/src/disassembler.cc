@@ -118,8 +118,7 @@ static void PrintRelocInfo(StringBuilder* out, Isolate* isolate,
     Code::Kind kind = code->kind();
     if (code->is_inline_cache_stub()) {
       out->AddFormatted(" %s", Code::Kind2String(kind));
-      if (kind == Code::BINARY_OP_IC || kind == Code::TO_BOOLEAN_IC ||
-          kind == Code::COMPARE_IC) {
+      if (kind == Code::BINARY_OP_IC || kind == Code::COMPARE_IC) {
         InlineCacheState ic_state = IC::StateFromCode(code);
         out->AddFormatted(" %s", Code::ICState2String(ic_state));
       }
@@ -134,9 +133,6 @@ static void PrintRelocInfo(StringBuilder* out, Isolate* isolate,
       out->AddFormatted("minor: %d", minor_key);
     } else {
       out->AddFormatted(" %s", Code::Kind2String(kind));
-    }
-    if (rmode == RelocInfo::CODE_TARGET_WITH_ID) {
-      out->AddFormatted(" (id = %d)", static_cast<int>(relocinfo->data()));
     }
   } else if (RelocInfo::IsRuntimeEntry(rmode) &&
              isolate->deoptimizer_data() != nullptr) {

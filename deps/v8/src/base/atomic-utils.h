@@ -318,6 +318,10 @@ class AsAtomic32 {
   static base::Atomic32* to_storage_addr(T* value) {
     return reinterpret_cast<base::Atomic32*>(value);
   }
+  template <typename T>
+  static const base::Atomic32* to_storage_addr(const T* value) {
+    return reinterpret_cast<const base::Atomic32*>(value);
+  }
 };
 
 class AsAtomicWord {
@@ -344,7 +348,7 @@ class AsAtomicWord {
   template <typename T>
   static void Relaxed_Store(T* addr,
                             typename std::remove_reference<T>::type new_value) {
-    STATIC_ASSERT(sizeof(T) <= sizeof(base::Atomic32));
+    STATIC_ASSERT(sizeof(T) <= sizeof(base::AtomicWord));
     base::Relaxed_Store(to_storage_addr(addr), to_storage_type(new_value));
   }
 
@@ -370,6 +374,10 @@ class AsAtomicWord {
   template <typename T>
   static base::AtomicWord* to_storage_addr(T* value) {
     return reinterpret_cast<base::AtomicWord*>(value);
+  }
+  template <typename T>
+  static const base::AtomicWord* to_storage_addr(const T* value) {
+    return reinterpret_cast<const base::AtomicWord*>(value);
   }
 };
 

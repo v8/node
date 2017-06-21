@@ -9,6 +9,9 @@
   # Bots are ordered by appearance on waterfall.
   'masters': {
     'developer_default': {
+      'android.arm.debug': 'default_debug_android_arm',
+      'android.arm.optdebug': 'default_optdebug_android_arm',
+      'android.arm.release': 'default_release_android_arm',
       'arm.debug': 'default_debug_arm',
       'arm.optdebug': 'default_optdebug_arm',
       'arm.release': 'default_release_arm',
@@ -92,7 +95,7 @@
       'V8 Linux64 gcc 4.8 - debug': 'gn_debug_x64_gcc',
       # FYI.
       'V8 Linux - swarming staging': 'gn_release_x64',
-      'V8 Linux64 - cfi': 'gyp_release_x64_cfi',
+      'V8 Linux64 - cfi': 'gn_release_x64_cfi',
       'V8 Linux - vtunejit': 'gn_debug_x86_vtunejit',
       'V8 Linux64 - gcov coverage': 'gyp_release_x64_gcc_coverage',
       'V8 Linux - predictable': 'gn_release_x86_predictable',
@@ -233,6 +236,14 @@
       'gn', 'debug', 'simulate_arm', 'v8_enable_slow_dchecks'],
     'default_release_arm': [
       'gn', 'release', 'simulate_arm'],
+    'default_debug_android_arm': [
+      'gn', 'debug', 'arm', 'android', 'crosscompile',
+      'v8_enable_slow_dchecks', 'v8_full_debug'],
+    'default_optdebug_android_arm': [
+      'gn', 'debug', 'arm', 'android', 'crosscompile',
+      'v8_enable_slow_dchecks' ],
+    'default_release_android_arm': [
+      'gn', 'release', 'arm', 'android', 'crosscompile'],
     'default_debug_arm64': [
       'gn', 'debug', 'simulate_arm64', 'v8_enable_slow_dchecks',
       'v8_full_debug'],
@@ -361,6 +372,8 @@
     'gn_release_x64_asan_symbolized_edge_verify_heap': [
       'gn', 'release_bot', 'x64', 'asan', 'edge', 'lsan', 'symbolized',
       'v8_verify_heap'],
+    'gn_release_x64_cfi': [
+      'gn', 'release_bot', 'x64', 'cfi', 'swarming'],
     'gn_release_x64_clang': [
       'gn', 'release_bot', 'x64', 'clang', 'swarming'],
     'gn_release_x64_correctness_fuzzer' : [
@@ -487,8 +500,6 @@
     'gyp_release_x64_asan_minimal_symbols_coverage': [
       'gyp', 'release_bot', 'x64', 'asan', 'bb', 'coverage', 'lsan',
       'minimal_symbols', 'swarming'],
-    'gyp_release_x64_cfi': [
-      'gyp', 'release_bot', 'x64', 'cfi', 'swarming'],
     'gyp_release_x64_gcc_coverage': [
       'gyp', 'release_bot', 'x64', 'coverage', 'gcc'],
 

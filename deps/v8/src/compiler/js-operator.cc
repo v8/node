@@ -22,6 +22,12 @@ std::ostream& operator<<(std::ostream& os, CallFrequency f) {
   return os << f.value();
 }
 
+CallFrequency CallFrequencyOf(Operator const* op) {
+  DCHECK(op->opcode() == IrOpcode::kJSCallWithArrayLike ||
+         op->opcode() == IrOpcode::kJSConstructWithArrayLike);
+  return OpParameter<CallFrequency>(op);
+}
+
 VectorSlotPair::VectorSlotPair() {}
 
 
@@ -821,6 +827,14 @@ const Operator* JSOperatorBuilder::Call(size_t arity, CallFrequency frequency,
       parameters);                                 // parameter
 }
 
+const Operator* JSOperatorBuilder::CallWithArrayLike(CallFrequency frequency) {
+  return new (zone()) Operator1<CallFrequency>(                 // --
+      IrOpcode::kJSCallWithArrayLike, Operator::kNoProperties,  // opcode
+      "JSCallWithArrayLike",                                    // name
+      3, 1, 1, 1, 1, 2,                                         // counts
+      frequency);                                               // parameter
+}
+
 const Operator* JSOperatorBuilder::CallWithSpread(uint32_t arity) {
   SpreadWithArityParameter parameters(arity);
   return new (zone()) Operator1<SpreadWithArityParameter>(   // --
@@ -873,6 +887,16 @@ const Operator* JSOperatorBuilder::Construct(uint32_t arity,
       "JSConstruct",                                    // name
       parameters.arity(), 1, 1, 1, 1, 2,                // counts
       parameters);                                      // parameter
+}
+
+const Operator* JSOperatorBuilder::ConstructWithArrayLike(
+    CallFrequency frequency) {
+  return new (zone()) Operator1<CallFrequency>(  // --
+      IrOpcode::kJSConstructWithArrayLike,       // opcode
+      Operator::kNoProperties,                   // properties
+      "JSConstructWithArrayLike",                // name
+      3, 1, 1, 1, 1, 2,                          // counts
+      frequency);                                // parameter
 }
 
 const Operator* JSOperatorBuilder::ConstructWithSpread(uint32_t arity) {

@@ -32,6 +32,7 @@
 #include "src/lookup.h"
 #include "src/objects.h"
 #include "src/objects/arguments-inl.h"
+#include "src/objects/hash-table-inl.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/literal-objects.h"
 #include "src/objects/module-info.h"
@@ -115,6 +116,7 @@ TYPE_CHECKER(TypeFeedbackInfo, TUPLE3_TYPE)
 TYPE_CHECKER(WeakCell, WEAK_CELL_TYPE)
 TYPE_CHECKER(WeakFixedArray, FIXED_ARRAY_TYPE)
 TYPE_CHECKER(SmallOrderedHashSet, SMALL_ORDERED_HASH_SET_TYPE)
+TYPE_CHECKER(SmallOrderedHashMap, SMALL_ORDERED_HASH_MAP_TYPE)
 
 #define TYPED_ARRAY_TYPE_CHECKER(Type, type, TYPE, ctype, size) \
   TYPE_CHECKER(Fixed##Type##Array, FIXED_##TYPE##_ARRAY_TYPE)
@@ -448,6 +450,10 @@ bool Object::IsOrderedHashSet() const { return IsOrderedHashTable(); }
 
 bool Object::IsOrderedHashMap() const { return IsOrderedHashTable(); }
 
+bool Object::IsSmallOrderedHashTable() const {
+  return IsSmallOrderedHashSet() || IsSmallOrderedHashMap();
+}
+
 bool Object::IsPrimitive() const {
   return IsSmi() || HeapObject::cast(this)->map()->IsPrimitiveMap();
 }
@@ -612,6 +618,7 @@ CAST_ACCESSOR(Tuple3)
 CAST_ACCESSOR(TypeFeedbackInfo)
 CAST_ACCESSOR(UnseededNumberDictionary)
 CAST_ACCESSOR(WeakCell)
+CAST_ACCESSOR(SmallOrderedHashMap)
 CAST_ACCESSOR(SmallOrderedHashSet)
 CAST_ACCESSOR(WeakFixedArray)
 CAST_ACCESSOR(WeakHashTable)
@@ -1163,25 +1170,15 @@ bool AllocationSite::SitePointsToLiteral() {
 
 // Heuristic: We only need to create allocation site info if the boilerplate
 // elements kind is the initial elements kind.
-AllocationSiteMode AllocationSite::GetMode(
-    ElementsKind boilerplate_elements_kind) {
-  if (IsFastSmiElementsKind(boilerplate_elements_kind)) {
-    return TRACK_ALLOCATION_SITE;
-  }
-
-  return DONT_TRACK_ALLOCATION_SITE;
+bool AllocationSite::ShouldTrack(ElementsKind boilerplate_elements_kind) {
+  return IsFastSmiElementsKind(boilerplate_elements_kind);
 }
 
 inline bool AllocationSite::CanTrack(InstanceType type) {
-  if (FLAG_turbo) {
+  if (FLAG_allocation_site_pretenuring) {
     // TurboFan doesn't care at all about String pretenuring feedback,
     // so don't bother even trying to track that.
     return type == JS_ARRAY_TYPE || type == JS_OBJECT_TYPE;
-  }
-  if (FLAG_allocation_site_pretenuring) {
-    return type == JS_ARRAY_TYPE ||
-        type == JS_OBJECT_TYPE ||
-        type < FIRST_NONSTRING_TYPE;
   }
   return type == JS_ARRAY_TYPE;
 }
@@ -1517,7 +1514,8 @@ void WeakCell::initialize(HeapObject* val) {
   // mark through a weak cell and collect evacuation candidates when we process
   // all weak cells.
   WriteBarrierMode mode =
-      ObjectMarking::IsBlack(this, MarkingState::Internal(this))
+      ObjectMarking::IsBlack<IncrementalMarking::kAtomicity>(
+          this, MarkingState::Internal(this))
           ? UPDATE_WRITE_BARRIER
           : UPDATE_WEAK_WRITE_BARRIER;
   CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kValueOffset, val, mode);
@@ -3381,6 +3379,9 @@ int HeapObject::SizeFromMap(Map* map) {
   if (instance_type == SMALL_ORDERED_HASH_SET_TYPE) {
     return reinterpret_cast<SmallOrderedHashSet*>(this)->Size();
   }
+  if (instance_type == SMALL_ORDERED_HASH_MAP_TYPE) {
+    return reinterpret_cast<SmallOrderedHashMap*>(this)->Size();
+  }
   DCHECK(instance_type == CODE_TYPE);
   return reinterpret_cast<Code*>(this)->CodeSize();
 }
@@ -3838,8 +3839,7 @@ bool Code::IsCodeStubOrIC() {
 }
 
 ExtraICState Code::extra_ic_state() {
-  DCHECK(is_binary_op_stub() || is_compare_ic_stub() ||
-         is_to_boolean_ic_stub() || is_debug_stub());
+  DCHECK(is_binary_op_stub() || is_compare_ic_stub() || is_debug_stub());
   return ExtractExtraICStateFromFlags(flags());
 }
 
@@ -4160,7 +4160,6 @@ bool Code::is_handler() { return kind() == HANDLER; }
 bool Code::is_stub() { return kind() == STUB; }
 bool Code::is_binary_op_stub() { return kind() == BINARY_OP_IC; }
 bool Code::is_compare_ic_stub() { return kind() == COMPARE_IC; }
-bool Code::is_to_boolean_ic_stub() { return kind() == TO_BOOLEAN_IC; }
 bool Code::is_optimized_code() { return kind() == OPTIMIZED_FUNCTION; }
 bool Code::is_wasm_code() { return kind() == WASM_FUNCTION; }
 
@@ -5063,10 +5062,11 @@ void Foreign::set_foreign_address(Address value) {
 }
 
 template <class Derived>
-void SmallOrderedHashTable<Derived>::SetDataEntry(int entry, Object* value) {
-  int offset = GetDataEntryOffset(entry);
-  RELAXED_WRITE_FIELD(this, offset, value);
-  WRITE_BARRIER(GetHeap(), this, offset, value);
+void SmallOrderedHashTable<Derived>::SetDataEntry(int entry, int relative_index,
+                                                  Object* value) {
+  int entry_offset = GetDataEntryOffset(entry, relative_index);
+  RELAXED_WRITE_FIELD(this, entry_offset, value);
+  WRITE_BARRIER(GetHeap(), this, entry_offset, value);
 }
 
 ACCESSORS(JSGeneratorObject, function, JSFunction, kFunctionOffset)
