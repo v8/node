@@ -120,7 +120,9 @@ Handle<Code> CodeStub::GetCodeCopy(const FindAndReplacePattern& pattern) {
 void CodeStub::DeleteStubFromCacheForTesting() {
   Heap* heap = isolate_->heap();
   Handle<UnseededNumberDictionary> dict(heap->code_stubs());
-  dict = UnseededNumberDictionary::DeleteKey(dict, GetKey());
+  int entry = dict->FindEntry(GetKey());
+  DCHECK_NE(UnseededNumberDictionary::kNotFound, entry);
+  dict = UnseededNumberDictionary::DeleteEntry(dict, entry);
   heap->SetRootCodeStubs(*dict);
 }
 
@@ -278,56 +280,6 @@ MaybeHandle<Code> CodeStub::GetCode(Isolate* isolate, uint32_t key) {
   return scope.CloseAndEscape(code);
 }
 
-
-// static
-void BinaryOpICStub::GenerateAheadOfTime(Isolate* isolate) {
-  if (FLAG_minimal) return;
-  // Generate the uninitialized versions of the stub.
-  for (int op = Token::BIT_OR; op <= Token::MOD; ++op) {
-    BinaryOpICStub stub(isolate, static_cast<Token::Value>(op));
-    stub.GetCode();
-  }
-
-  // Generate special versions of the stub.
-  BinaryOpICState::GenerateAheadOfTime(isolate, &GenerateAheadOfTime);
-}
-
-
-void BinaryOpICStub::PrintState(std::ostream& os) const {  // NOLINT
-  os << state();
-}
-
-
-// static
-void BinaryOpICStub::GenerateAheadOfTime(Isolate* isolate,
-                                         const BinaryOpICState& state) {
-  if (FLAG_minimal) return;
-  BinaryOpICStub stub(isolate, state);
-  stub.GetCode();
-}
-
-
-// static
-void BinaryOpICWithAllocationSiteStub::GenerateAheadOfTime(Isolate* isolate) {
-  // Generate special versions of the stub.
-  BinaryOpICState::GenerateAheadOfTime(isolate, &GenerateAheadOfTime);
-}
-
-
-void BinaryOpICWithAllocationSiteStub::PrintState(
-    std::ostream& os) const {  // NOLINT
-  os << state();
-}
-
-
-// static
-void BinaryOpICWithAllocationSiteStub::GenerateAheadOfTime(
-    Isolate* isolate, const BinaryOpICState& state) {
-  if (state.CouldCreateAllocationMementos()) {
-    BinaryOpICWithAllocationSiteStub stub(isolate, state);
-    stub.GetCode();
-  }
-}
 
 void StringAddStub::PrintBaseName(std::ostream& os) const {  // NOLINT
   os << "StringAddStub_" << flags() << "_" << pretenure_flag();
@@ -800,18 +752,6 @@ void AllocateHeapNumberStub::InitializeDescriptor(
       Runtime::FunctionForId(Runtime::kAllocateHeapNumber)->entry);
 }
 
-
-void BinaryOpICStub::InitializeDescriptor(CodeStubDescriptor* descriptor) {
-  descriptor->Initialize(FUNCTION_ADDR(Runtime_BinaryOpIC_Miss));
-  descriptor->SetMissHandler(Runtime::kBinaryOpIC_Miss);
-}
-
-
-void BinaryOpWithAllocationSiteStub::InitializeDescriptor(
-    CodeStubDescriptor* descriptor) {
-  descriptor->Initialize(
-      FUNCTION_ADDR(Runtime_BinaryOpIC_MissWithAllocationSite));
-}
 
 // TODO(ishell): move to builtins.
 TF_STUB(GetPropertyStub, CodeStubAssembler) {

@@ -334,13 +334,8 @@ void UncacheTemplateInstantiation(Isolate* isolate, int serial_number,
         isolate->slow_template_instantiations_cache();
     int entry = cache->FindEntry(serial_number);
     DCHECK_NE(UnseededNumberDictionary::kNotFound, entry);
-    Handle<Object> result =
-        UnseededNumberDictionary::DeleteProperty(cache, entry);
-    USE(result);
-    DCHECK(result->IsTrue(isolate));
-    auto new_cache = UnseededNumberDictionary::Shrink(cache);
-    isolate->native_context()->set_slow_template_instantiations_cache(
-        *new_cache);
+    cache = UnseededNumberDictionary::DeleteEntry(cache, entry);
+    isolate->native_context()->set_slow_template_instantiations_cache(*cache);
   }
 }
 
@@ -575,7 +570,7 @@ MaybeHandle<JSObject> ApiNatives::InstantiateRemoteObject(
 void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  Handle<Name> name, Handle<Object> value,
                                  PropertyAttributes attributes) {
-  PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, details_handle, value};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);
@@ -587,7 +582,7 @@ void ApiNatives::AddDataProperty(Isolate* isolate, Handle<TemplateInfo> info,
                                  PropertyAttributes attributes) {
   auto value = handle(Smi::FromInt(intrinsic), isolate);
   auto intrinsic_marker = isolate->factory()->true_value();
-  PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, intrinsic_marker, details_handle, value};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);
@@ -600,7 +595,7 @@ void ApiNatives::AddAccessorProperty(Isolate* isolate,
                                      Handle<FunctionTemplateInfo> getter,
                                      Handle<FunctionTemplateInfo> setter,
                                      PropertyAttributes attributes) {
-  PropertyDetails details(kAccessor, attributes, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kAccessor, attributes, PropertyCellType::kNoCell);
   auto details_handle = handle(details.AsSmi(), isolate);
   Handle<Object> data[] = {name, details_handle, getter, setter};
   AddPropertyToPropertyList(isolate, info, arraysize(data), data);

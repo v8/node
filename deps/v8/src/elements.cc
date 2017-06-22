@@ -451,7 +451,10 @@ static void SortIndices(
     Handle<FixedArray> indices, uint32_t sort_size,
     WriteBarrierMode write_barrier_mode = UPDATE_WRITE_BARRIER) {
   struct {
-    bool operator()(Object* a, Object* b) {
+    bool operator()(const base::AtomicElement<Object*>& elementA,
+                    const base::AtomicElement<Object*>& elementB) {
+      const Object* a = elementA.value();
+      const Object* b = elementB.value();
       if (a->IsSmi() || !a->IsUndefined(HeapObject::cast(a)->GetIsolate())) {
         if (!b->IsSmi() && b->IsUndefined(HeapObject::cast(b)->GetIsolate())) {
           return true;
@@ -461,8 +464,11 @@ static void SortIndices(
       return !b->IsSmi() && b->IsUndefined(HeapObject::cast(b)->GetIsolate());
     }
   } cmp;
-  Object** start =
-      reinterpret_cast<Object**>(indices->GetFirstElementAddress());
+  // Use AtomicElement wrapper to ensure that std::sort uses atomic load and
+  // store operations that are safe for concurrent marking.
+  base::AtomicElement<Object*>* start =
+      reinterpret_cast<base::AtomicElement<Object*>*>(
+          indices->GetFirstElementAddress());
   std::sort(start, start + sort_size, cmp);
   if (write_barrier_mode != SKIP_WRITE_BARRIER) {
     FIXED_ARRAY_ELEMENTS_WRITE_BARRIER(indices->GetIsolate()->heap(), *indices,
@@ -1297,11 +1303,11 @@ class ElementsAccessorBase : public ElementsAccessor {
 
   static PropertyDetails GetDetailsImpl(FixedArrayBase* backing_store,
                                         uint32_t entry) {
-    return PropertyDetails(kData, NONE, 0, PropertyCellType::kNoCell);
+    return PropertyDetails(kData, NONE, PropertyCellType::kNoCell);
   }
 
   static PropertyDetails GetDetailsImpl(JSObject* holder, uint32_t entry) {
-    return PropertyDetails(kData, NONE, 0, PropertyCellType::kNoCell);
+    return PropertyDetails(kData, NONE, PropertyCellType::kNoCell);
   }
 
   PropertyDetails GetDetails(JSObject* holder, uint32_t entry) final {
@@ -1412,11 +1418,8 @@ class DictionaryElementsAccessor
     // TODO(verwaest): Remove reliance on index in Shrink.
     Handle<SeededNumberDictionary> dict(
         SeededNumberDictionary::cast(obj->elements()));
-    Handle<Object> result = SeededNumberDictionary::DeleteProperty(dict, entry);
-    USE(result);
-    DCHECK(result->IsTrue(dict->GetIsolate()));
-    Handle<FixedArray> new_elements = SeededNumberDictionary::Shrink(dict);
-    obj->set_elements(*new_elements);
+    dict = SeededNumberDictionary::DeleteEntry(dict, entry);
+    obj->set_elements(*dict);
   }
 
   static bool HasAccessorsImpl(JSObject* holder,
@@ -1464,22 +1467,23 @@ class DictionaryElementsAccessor
     if (attributes != NONE) object->RequireSlowElements(dictionary);
     dictionary->ValueAtPut(entry, *value);
     PropertyDetails details = dictionary->DetailsAt(entry);
-    details = PropertyDetails(kData, attributes, details.dictionary_index(),
-                              PropertyCellType::kNoCell);
+    details = PropertyDetails(kData, attributes, PropertyCellType::kNoCell,
+                              details.dictionary_index());
+
     dictionary->DetailsAtPut(entry, details);
   }
 
   static void AddImpl(Handle<JSObject> object, uint32_t index,
                       Handle<Object> value, PropertyAttributes attributes,
                       uint32_t new_capacity) {
-    PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
+    PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
     Handle<SeededNumberDictionary> dictionary =
         object->HasFastElements() || object->HasFastStringWrapperElements()
             ? JSObject::NormalizeElements(object)
             : handle(SeededNumberDictionary::cast(object->elements()));
     Handle<SeededNumberDictionary> new_dictionary =
-        SeededNumberDictionary::AddNumberEntry(dictionary, index, value,
-                                               details, object);
+        SeededNumberDictionary::Add(dictionary, index, value, details);
+    new_dictionary->UpdateMaxNumberKey(index, object);
     if (attributes != NONE) object->RequireSlowElements(*new_dictionary);
     if (dictionary.is_identical_to(new_dictionary)) return;
     object->set_elements(*new_dictionary);
@@ -1820,14 +1824,20 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
 
     PropertyDetails details = PropertyDetails::Empty();
     int j = 0;
+    int max_number_key = -1;
     for (int i = 0; j < capacity; i++) {
       if (IsHoleyElementsKind(kind)) {
         if (BackingStore::cast(*store)->is_the_hole(isolate, i)) continue;
       }
+      max_number_key = i;
       Handle<Object> value = Subclass::GetImpl(isolate, *store, i);
-      dictionary = SeededNumberDictionary::AddNumberEntry(dictionary, i, value,
-                                                          details, object);
+      dictionary = SeededNumberDictionary::Add(dictionary, i, value, details);
       j++;
+    }
+
+    if (max_number_key > 0) {
+      dictionary->UpdateMaxNumberKey(static_cast<uint32_t>(max_number_key),
+                                     object);
     }
     return dictionary;
   }
@@ -2781,12 +2791,12 @@ class TypedElementsAccessor
   }
 
   static PropertyDetails GetDetailsImpl(JSObject* holder, uint32_t entry) {
-    return PropertyDetails(kData, DONT_DELETE, 0, PropertyCellType::kNoCell);
+    return PropertyDetails(kData, DONT_DELETE, PropertyCellType::kNoCell);
   }
 
   static PropertyDetails GetDetailsImpl(FixedArrayBase* backing_store,
                                         uint32_t entry) {
-    return PropertyDetails(kData, DONT_DELETE, 0, PropertyCellType::kNoCell);
+    return PropertyDetails(kData, DONT_DELETE, PropertyCellType::kNoCell);
   }
 
   static bool HasElementImpl(Isolate* isolate, JSObject* holder, uint32_t index,
@@ -3510,7 +3520,7 @@ class SloppyArgumentsElementsAccessor
         SloppyArgumentsElements::cast(holder->elements());
     uint32_t length = elements->parameter_map_length();
     if (entry < length) {
-      return PropertyDetails(kData, NONE, 0, PropertyCellType::kNoCell);
+      return PropertyDetails(kData, NONE, PropertyCellType::kNoCell);
     }
     FixedArray* arguments = elements->arguments();
     return ArgumentsAccessor::GetDetailsImpl(arguments, entry - length);
@@ -3706,14 +3716,9 @@ class SlowSloppyArgumentsElementsAccessor
     Handle<SeededNumberDictionary> dict(
         SeededNumberDictionary::cast(elements->arguments()), isolate);
     int length = elements->parameter_map_length();
-    Handle<Object> result =
-        SeededNumberDictionary::DeleteProperty(dict, entry - length);
-    USE(result);
-    DCHECK(result->IsTrue(isolate));
-    Handle<FixedArray> new_elements = SeededNumberDictionary::Shrink(dict);
-    elements->set_arguments(*new_elements);
+    dict = SeededNumberDictionary::DeleteEntry(dict, entry - length);
+    elements->set_arguments(*dict);
   }
-
   static void AddImpl(Handle<JSObject> object, uint32_t index,
                       Handle<Object> value, PropertyAttributes attributes,
                       uint32_t new_capacity) {
@@ -3726,10 +3731,9 @@ class SlowSloppyArgumentsElementsAccessor
         old_arguments->IsSeededNumberDictionary()
             ? Handle<SeededNumberDictionary>::cast(old_arguments)
             : JSObject::NormalizeElements(object);
-    PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
+    PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
     Handle<SeededNumberDictionary> new_dictionary =
-        SeededNumberDictionary::AddNumberEntry(dictionary, index, value,
-                                               details, object);
+        SeededNumberDictionary::Add(dictionary, index, value, details);
     if (attributes != NONE) object->RequireSlowElements(*new_dictionary);
     if (*dictionary != *new_dictionary) {
       elements->set_arguments(*new_dictionary);
@@ -3759,11 +3763,10 @@ class SlowSloppyArgumentsElementsAccessor
         value = isolate->factory()->NewAliasedArgumentsEntry(context_entry);
       }
 
-      PropertyDetails details(kData, attributes, 0, PropertyCellType::kNoCell);
+      PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
       Handle<SeededNumberDictionary> arguments(
           SeededNumberDictionary::cast(elements->arguments()), isolate);
-      arguments = SeededNumberDictionary::AddNumberEntry(
-          arguments, entry, value, details, object);
+      arguments = SeededNumberDictionary::Add(arguments, entry, value, details);
       // If the attributes were NONE, we would have called set rather than
       // reconfigure.
       DCHECK_NE(NONE, attributes);
@@ -3962,7 +3965,7 @@ class StringWrapperElementsAccessor
     if (entry < length) {
       PropertyAttributes attributes =
           static_cast<PropertyAttributes>(READ_ONLY | DONT_DELETE);
-      return PropertyDetails(kData, attributes, 0, PropertyCellType::kNoCell);
+      return PropertyDetails(kData, attributes, PropertyCellType::kNoCell);
     }
     return BackingStoreAccessor::GetDetailsImpl(holder, entry - length);
   }

@@ -1148,9 +1148,10 @@ void Parser::ParseImportDeclaration(bool* ok) {
 
   // 'import' ModuleSpecifier ';'
   if (tok == Token::STRING) {
+    Scanner::Location specifier_loc = scanner()->peek_location();
     const AstRawString* module_specifier = ParseModuleSpecifier(CHECK_OK_VOID);
     ExpectSemicolon(CHECK_OK_VOID);
-    module()->AddEmptyImport(module_specifier);
+    module()->AddEmptyImport(module_specifier, specifier_loc);
     return;
   }
 
@@ -1194,6 +1195,7 @@ void Parser::ParseImportDeclaration(bool* ok) {
   }
 
   ExpectContextualKeyword(Token::FROM, CHECK_OK_VOID);
+  Scanner::Location specifier_loc = scanner()->peek_location();
   const AstRawString* module_specifier = ParseModuleSpecifier(CHECK_OK_VOID);
   ExpectSemicolon(CHECK_OK_VOID);
 
@@ -1207,23 +1209,25 @@ void Parser::ParseImportDeclaration(bool* ok) {
 
   if (module_namespace_binding != nullptr) {
     module()->AddStarImport(module_namespace_binding, module_specifier,
-                            module_namespace_binding_loc, zone());
+                            module_namespace_binding_loc, specifier_loc,
+                            zone());
   }
 
   if (import_default_binding != nullptr) {
     module()->AddImport(ast_value_factory()->default_string(),
                         import_default_binding, module_specifier,
-                        import_default_binding_loc, zone());
+                        import_default_binding_loc, specifier_loc, zone());
   }
 
   if (named_imports != nullptr) {
     if (named_imports->length() == 0) {
-      module()->AddEmptyImport(module_specifier);
+      module()->AddEmptyImport(module_specifier, specifier_loc);
     } else {
       for (int i = 0; i < named_imports->length(); ++i) {
         const NamedImport* import = named_imports->at(i);
         module()->AddImport(import->import_name, import->local_name,
-                            module_specifier, import->location, zone());
+                            module_specifier, import->location, specifier_loc,
+                            zone());
       }
     }
   }
@@ -1317,9 +1321,10 @@ Statement* Parser::ParseExportDeclaration(bool* ok) {
       Consume(Token::MUL);
       loc = scanner()->location();
       ExpectContextualKeyword(Token::FROM, CHECK_OK);
+      Scanner::Location specifier_loc = scanner()->peek_location();
       const AstRawString* module_specifier = ParseModuleSpecifier(CHECK_OK);
       ExpectSemicolon(CHECK_OK);
-      module()->AddStarExport(module_specifier, loc, zone());
+      module()->AddStarExport(module_specifier, loc, specifier_loc, zone());
       return factory()->NewEmptyStatement(pos);
     }
 
@@ -1342,7 +1347,9 @@ Statement* Parser::ParseExportDeclaration(bool* ok) {
       ParseExportClause(&export_names, &export_locations, &original_names,
                         &reserved_loc, CHECK_OK);
       const AstRawString* module_specifier = nullptr;
+      Scanner::Location specifier_loc;
       if (CheckContextualKeyword(Token::FROM)) {
+        specifier_loc = scanner()->peek_location();
         module_specifier = ParseModuleSpecifier(CHECK_OK);
       } else if (reserved_loc.IsValid()) {
         // No FromClause, so reserved words are invalid in ExportClause.
@@ -1360,11 +1367,12 @@ Statement* Parser::ParseExportDeclaration(bool* ok) {
                               export_locations[i], zone());
         }
       } else if (length == 0) {
-        module()->AddEmptyImport(module_specifier);
+        module()->AddEmptyImport(module_specifier, specifier_loc);
       } else {
         for (int i = 0; i < length; ++i) {
           module()->AddExport(original_names[i], export_names[i],
-                              module_specifier, export_locations[i], zone());
+                              module_specifier, export_locations[i],
+                              specifier_loc, zone());
         }
       }
       return factory()->NewEmptyStatement(pos);
@@ -2718,9 +2726,9 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
              should_use_parse_task);
       Scanner::BookmarkScope bookmark(scanner());
       bookmark.Set();
-      LazyParsingResult result =
-          SkipFunction(kind, scope, &num_parameters, is_lazy_inner_function,
-                       is_lazy_top_level_function, CHECK_OK);
+      LazyParsingResult result = SkipFunction(
+          function_name, kind, function_type, scope, &num_parameters,
+          is_lazy_inner_function, is_lazy_top_level_function, CHECK_OK);
 
       if (result == kLazyParsingAborted) {
         DCHECK(is_lazy_top_level_function);
@@ -2810,11 +2818,11 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
   return function_literal;
 }
 
-Parser::LazyParsingResult Parser::SkipFunction(FunctionKind kind,
-                                               DeclarationScope* function_scope,
-                                               int* num_parameters,
-                                               bool is_inner_function,
-                                               bool may_abort, bool* ok) {
+Parser::LazyParsingResult Parser::SkipFunction(
+    const AstRawString* function_name, FunctionKind kind,
+    FunctionLiteral::FunctionType function_type,
+    DeclarationScope* function_scope, int* num_parameters,
+    bool is_inner_function, bool may_abort, bool* ok) {
   FunctionState function_state(&function_state_, &scope_, function_scope);
 
   DCHECK_NE(kNoSourcePosition, function_scope->start_position());
@@ -2882,8 +2890,8 @@ Parser::LazyParsingResult Parser::SkipFunction(FunctionKind kind,
   DCHECK(!is_inner_function || !may_abort);
 
   PreParser::PreParseResult result = reusable_preparser()->PreParseFunction(
-      kind, function_scope, parsing_module_, is_inner_function, may_abort,
-      use_counts_);
+      function_name, kind, function_type, function_scope, parsing_module_,
+      is_inner_function, may_abort, use_counts_);
 
   // Return immediately if pre-parser decided to abort parsing.
   if (result == PreParser::kPreParseAbort) return kLazyParsingAborted;

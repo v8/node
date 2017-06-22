@@ -20,8 +20,6 @@ enum ContextLookupFlags {
 
   DONT_FOLLOW_CHAINS = 0,
   FOLLOW_CHAINS = FOLLOW_CONTEXT_CHAIN | FOLLOW_PROTOTYPE_CHAIN,
-  LEXICAL_TEST =
-      FOLLOW_CONTEXT_CHAIN | STOP_AT_DECLARATION_SCOPE | SKIP_WITH_CONTEXT,
 };
 
 
@@ -714,13 +712,11 @@ class Context: public FixedArray {
   static const int kNotFound = -1;
 
   // GC support.
-  typedef FixedBodyDescriptor<
-      kHeaderSize, kSize, kSize> ScavengeBodyDescriptor;
+  typedef FixedBodyDescriptor<kHeaderSize, kSize, kSize> BodyDescriptor;
 
   typedef FixedBodyDescriptor<
-      kHeaderSize,
-      kHeaderSize + FIRST_WEAK_SLOT * kPointerSize,
-      kSize> MarkCompactBodyDescriptor;
+      kHeaderSize, kHeaderSize + FIRST_WEAK_SLOT * kPointerSize, kSize>
+      BodyDescriptorWeak;
 
  private:
 #ifdef DEBUG

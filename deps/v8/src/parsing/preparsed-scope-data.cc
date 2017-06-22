@@ -81,11 +81,15 @@ void PreParsedScopeData::SaveData(Scope* scope) {
   size_t data_end_index = backing_store_.size();
   backing_store_.push_back(0);
 
-  if (!scope->is_hidden()) {
-    for (Variable* var : *scope->locals()) {
-      if (IsDeclaredVariableMode(var->mode())) {
-        SaveDataForVariable(var);
-      }
+  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE) {
+    Variable* function = scope->AsDeclarationScope()->function_var();
+    if (function != nullptr) {
+      SaveDataForVariable(function);
+    }
+  }
+  for (Variable* var : *scope->locals()) {
+    if (IsDeclaredVariableMode(var->mode())) {
+      SaveDataForVariable(var);
     }
   }
 
@@ -129,6 +133,16 @@ void PreParsedScopeData::RestoreData(Scope* scope, uint32_t* index_ptr) const {
 
   uint32_t& index = *index_ptr;
 
+  if (IsSkippedFunctionScope(scope)) {
+    // This scope is a function scope representing a function we want to
+    // skip. So just skip over its data.
+    DCHECK(!scope->must_use_preparsed_scope_data());
+    // Check that we're moving forward (not backward) in the data.
+    DCHECK_GT(backing_store_[index + 2], index);
+    index = backing_store_[index + 2];
+    return;
+  }
+
 #ifdef DEBUG
   // Data integrity check.
   if (scope->scope_type() == ScopeType::FUNCTION_SCOPE &&
@@ -147,16 +161,6 @@ void PreParsedScopeData::RestoreData(Scope* scope, uint32_t* index_ptr) const {
   }
 #endif
 
-  if (IsSkippedFunctionScope(scope)) {
-    // This scope is a function scope representing a function we want to
-    // skip. So just skip over its data.
-    DCHECK(!scope->must_use_preparsed_scope_data());
-    // Check that we're moving forward (not backward) in the data.
-    DCHECK_GT(backing_store_[index + 2], index);
-    index = backing_store_[index + 2];
-    return;
-  }
-
   DCHECK_GE(backing_store_.size(), index + 3);
   DCHECK_EQ(backing_store_[index++], scope->scope_type());
 
@@ -166,11 +170,15 @@ void PreParsedScopeData::RestoreData(Scope* scope, uint32_t* index_ptr) const {
   uint32_t data_end_index = backing_store_[index++];
   USE(data_end_index);
 
-  if (!scope->is_hidden()) {
-    for (Variable* var : *scope->locals()) {
-      if (var->mode() == VAR || var->mode() == LET || var->mode() == CONST) {
-        RestoreDataForVariable(var, index_ptr);
-      }
+  if (scope->scope_type() == ScopeType::FUNCTION_SCOPE) {
+    Variable* function = scope->AsDeclarationScope()->function_var();
+    if (function != nullptr) {
+      RestoreDataForVariable(function, index_ptr);
+    }
+  }
+  for (Variable* var : *scope->locals()) {
+    if (var->mode() == VAR || var->mode() == LET || var->mode() == CONST) {
+      RestoreDataForVariable(var, index_ptr);
     }
   }
 

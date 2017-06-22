@@ -1101,7 +1101,6 @@ v8_source_set("v8_base") {
     "src/accessors.h",
     "src/address-map.cc",
     "src/address-map.h",
-    "src/allocation-site-scopes.cc",
     "src/allocation-site-scopes.h",
     "src/allocation.cc",
     "src/allocation.h",
@@ -1545,7 +1544,6 @@ v8_source_set("v8_base") {
     "src/double.h",
     "src/dtoa.cc",
     "src/dtoa.h",
-    "src/effects.h",
     "src/eh-frame.cc",
     "src/eh-frame.h",
     "src/elements-kind.cc",
@@ -1653,7 +1651,7 @@ v8_source_set("v8_base") {
     "src/heap/spaces.h",
     "src/heap/store-buffer.cc",
     "src/heap/store-buffer.h",
-    "src/heap/workstealing-marking-deque.h",
+    "src/heap/workstealing-bag.h",
     "src/ic/access-compiler-data.h",
     "src/ic/access-compiler.cc",
     "src/ic/access-compiler.h",
@@ -2774,6 +2772,15 @@ group("v8_clusterfuzz") {
       ":d8(//build/toolchain/linux:clang_x86_v8_arm)",
     ]
   }
+}
+
+group("v8_archive") {
+  deps = [
+    ":d8",
+    ":v8_hello_world",
+    ":v8_parser_shell",
+    ":v8_sample_process",
+  ]
 }
 
 group("v8_fuzzers") {

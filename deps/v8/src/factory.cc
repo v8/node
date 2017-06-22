@@ -1845,7 +1845,7 @@ Handle<JSGlobalObject> Factory::NewJSGlobalObject(
     PropertyDetails details = descs->GetDetails(i);
     // Only accessors are expected.
     DCHECK_EQ(kAccessor, details.kind());
-    PropertyDetails d(kAccessor, details.attributes(), i + 1,
+    PropertyDetails d(kAccessor, details.attributes(),
                       PropertyCellType::kMutable);
     Handle<Name> name(descs->GetKey(i));
     Handle<PropertyCell> cell = NewPropertyCell();
@@ -2013,6 +2013,7 @@ Handle<Module> Factory::NewModule(Handle<SharedFunctionInfo> code) {
   module->set_hash(isolate()->GenerateIdentityHash(Smi::kMaxValue));
   module->set_module_namespace(isolate()->heap()->undefined_value());
   module->set_requested_modules(*requested_modules);
+  module->set_script(Script::cast(code->script()));
   module->set_status(Module::kUnprepared);
   DCHECK(!module->instantiated());
   DCHECK(!module->evaluated());

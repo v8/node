@@ -581,9 +581,10 @@ void DeclarationScope::HoistSloppyBlockFunctions(AstNodeFactory* factory) {
 
       if (factory) {
         DCHECK(!is_being_lazily_parsed_);
-        Expression* assignment = factory->NewAssignment(
+        Assignment* assignment = factory->NewAssignment(
             Token::ASSIGN, NewUnresolved(factory, name),
             delegate->scope()->NewUnresolved(factory, name), kNoSourcePosition);
+        assignment->set_lookup_hoisting_mode(LookupHoistingMode::kLegacySloppy);
         Statement* statement =
             factory->NewExpressionStatement(assignment, kNoSourcePosition);
         delegate->set_statement(statement);
@@ -1551,6 +1552,11 @@ void DeclarationScope::AnalyzePartially(
     if (arguments_ != nullptr &&
         !(MustAllocate(arguments_) && !has_arguments_parameter_)) {
       arguments_ = nullptr;
+    }
+
+    // Migrate function_ to the right Zone.
+    if (function_ != nullptr) {
+      function_ = ast_node_factory->CopyVariable(function_);
     }
 
     if (need_preparsed_scope_data) {

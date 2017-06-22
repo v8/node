@@ -3839,7 +3839,7 @@ bool Code::IsCodeStubOrIC() {
 }
 
 ExtraICState Code::extra_ic_state() {
-  DCHECK(is_binary_op_stub() || is_compare_ic_stub() || is_debug_stub());
+  DCHECK(is_compare_ic_stub() || is_debug_stub());
   return ExtractExtraICStateFromFlags(flags());
 }
 
@@ -4158,7 +4158,6 @@ bool Code::is_debug_stub() {
 }
 bool Code::is_handler() { return kind() == HANDLER; }
 bool Code::is_stub() { return kind() == STUB; }
-bool Code::is_binary_op_stub() { return kind() == BINARY_OP_IC; }
 bool Code::is_compare_ic_stub() { return kind() == COMPARE_IC; }
 bool Code::is_optimized_code() { return kind() == OPTIMIZED_FUNCTION; }
 bool Code::is_wasm_code() { return kind() == WASM_FUNCTION; }
@@ -4206,10 +4205,12 @@ Code* Code::GetCodeFromTargetAddress(Address address) {
   return result;
 }
 
+Object* Code::GetObjectFromCodeEntry(Address code_entry) {
+  return HeapObject::FromAddress(code_entry - Code::kHeaderSize);
+}
 
 Object* Code::GetObjectFromEntryAddress(Address location_of_address) {
-  return HeapObject::
-      FromAddress(Memory::Address_at(location_of_address) - Code::kHeaderSize);
+  return GetObjectFromCodeEntry(Memory::Address_at(location_of_address));
 }
 
 
@@ -4629,6 +4630,7 @@ ACCESSORS(Module, regular_exports, FixedArray, kRegularExportsOffset)
 ACCESSORS(Module, regular_imports, FixedArray, kRegularImportsOffset)
 ACCESSORS(Module, module_namespace, HeapObject, kModuleNamespaceOffset)
 ACCESSORS(Module, requested_modules, FixedArray, kRequestedModulesOffset)
+ACCESSORS(Module, script, Script, kScriptOffset)
 SMI_ACCESSORS(Module, status, kStatusOffset)
 SMI_ACCESSORS(Module, hash, kHashOffset)
 
@@ -4878,7 +4880,8 @@ Code* JSFunction::code() {
 void JSFunction::set_code(Code* value) {
   DCHECK(!GetHeap()->InNewSpace(value));
   Address entry = value->entry();
-  WRITE_INTPTR_FIELD(this, kCodeEntryOffset, reinterpret_cast<intptr_t>(entry));
+  RELAXED_WRITE_INTPTR_FIELD(this, kCodeEntryOffset,
+                             reinterpret_cast<intptr_t>(entry));
   GetHeap()->incremental_marking()->RecordWriteOfCodeEntry(
       this,
       HeapObject::RawField(this, kCodeEntryOffset),
@@ -4889,7 +4892,8 @@ void JSFunction::set_code(Code* value) {
 void JSFunction::set_code_no_write_barrier(Code* value) {
   DCHECK(!GetHeap()->InNewSpace(value));
   Address entry = value->entry();
-  WRITE_INTPTR_FIELD(this, kCodeEntryOffset, reinterpret_cast<intptr_t>(entry));
+  RELAXED_WRITE_INTPTR_FIELD(this, kCodeEntryOffset,
+                             reinterpret_cast<intptr_t>(entry));
 }
 
 void JSFunction::ClearOptimizedCodeSlot(const char* reason) {

@@ -152,8 +152,8 @@ class HashTable : public HashTableBase {
   // Returns a new HashTable object.
   MUST_USE_RESULT static Handle<Derived> New(
       Isolate* isolate, int at_least_space_for,
-      MinimumCapacity capacity_option = USE_DEFAULT_MINIMUM_CAPACITY,
-      PretenureFlag pretenure = NOT_TENURED);
+      PretenureFlag pretenure = NOT_TENURED,
+      MinimumCapacity capacity_option = USE_DEFAULT_MINIMUM_CAPACITY);
 
   DECLARE_CAST(HashTable)
 
@@ -194,11 +194,19 @@ class HashTable : public HashTableBase {
     return (entry * kEntrySize) + kElementsStartIndex;
   }
 
+  // Ensure enough space for n additional elements.
+  MUST_USE_RESULT static Handle<Derived> EnsureCapacity(
+      Handle<Derived> table, int n, PretenureFlag pretenure = NOT_TENURED);
+
+  // Returns true if this table has sufficient capacity for adding n elements.
+  bool HasSufficientCapacityToAdd(int number_of_additional_elements);
+
  protected:
   friend class ObjectHashTable;
 
-  MUST_USE_RESULT static Handle<Derived> New(Isolate* isolate, int capacity,
-                                             PretenureFlag pretenure);
+  MUST_USE_RESULT static Handle<Derived> NewInternal(Isolate* isolate,
+                                                     int capacity,
+                                                     PretenureFlag pretenure);
 
   // Find the entry at which to insert element with the given key that
   // has the given hash value.
@@ -206,13 +214,6 @@ class HashTable : public HashTableBase {
 
   // Attempt to shrink hash table after removal of key.
   MUST_USE_RESULT static Handle<Derived> Shrink(Handle<Derived> table);
-
-  // Ensure enough space for n additional elements.
-  MUST_USE_RESULT static Handle<Derived> EnsureCapacity(
-      Handle<Derived> table, int n, PretenureFlag pretenure = NOT_TENURED);
-
-  // Returns true if this table has sufficient capacity for adding n elements.
-  bool HasSufficientCapacityToAdd(int number_of_additional_elements);
 
  private:
   // Ensure that kMaxRegularCapacity yields a non-large object dictionary.

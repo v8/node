@@ -365,9 +365,6 @@ class BreakableStatement : public Statement {
   // if it is != NULL, guaranteed to contain at least one entry.
   ZoneList<const AstRawString*>* labels() const { return labels_; }
 
-  // Code generation
-  Label* break_target() { return &break_target_; }
-
   // Testers.
   bool is_target_for_anonymous() const {
     return BreakableTypeField::decode(bit_field_) == TARGET_FOR_ANONYMOUS;
@@ -378,7 +375,6 @@ class BreakableStatement : public Statement {
     return BreakableTypeField::decode(bit_field_);
   }
 
-  Label break_target_;
   ZoneList<const AstRawString*>* labels_;
 
   class BreakableTypeField
@@ -524,9 +520,6 @@ class IterationStatement : public BreakableStatement {
     return osr_id_;
   }
 
-  // Code generation
-  Label* continue_target()  { return &continue_target_; }
-
  protected:
   IterationStatement(ZoneList<const AstRawString*>* labels, int pos,
                      NodeType type)
@@ -547,7 +540,6 @@ class IterationStatement : public BreakableStatement {
   BailoutId osr_id_;
   Statement* body_;
   SourceRange body_range_;
-  Label continue_target_;
   int suspend_count_;
   int first_suspend_id_;
 };
@@ -1734,16 +1726,11 @@ class Call final : public Expression {
 
   Handle<JSFunction> target() { return target_; }
 
-  Handle<AllocationSite> allocation_site() { return allocation_site_; }
-
   void SetKnownGlobalTarget(Handle<JSFunction> target) {
     target_ = target;
     set_is_uninitialized(false);
   }
   void set_target(Handle<JSFunction> target) { target_ = target; }
-  void set_allocation_site(Handle<AllocationSite> site) {
-    allocation_site_ = site;
-  }
 
   bool is_uninitialized() const {
     return IsUninitializedField::decode(bit_field_);
@@ -1811,7 +1798,6 @@ class Call final : public Expression {
   Expression* expression_;
   ZoneList<Expression*>* arguments_;
   Handle<JSFunction> target_;
-  Handle<AllocationSite> allocation_site_;
 };
 
 
@@ -1837,13 +1823,7 @@ class CallNew final : public Expression {
 
   bool IsMonomorphic() const { return IsMonomorphicField::decode(bit_field_); }
   Handle<JSFunction> target() const { return target_; }
-  Handle<AllocationSite> allocation_site() const {
-    return allocation_site_;
-  }
 
-  void set_allocation_site(Handle<AllocationSite> site) {
-    allocation_site_ = site;
-  }
   void set_is_monomorphic(bool monomorphic) {
     bit_field_ = IsMonomorphicField::update(bit_field_, monomorphic);
   }
@@ -1871,7 +1851,6 @@ class CallNew final : public Expression {
   Expression* expression_;
   ZoneList<Expression*>* arguments_;
   Handle<JSFunction> target_;
-  Handle<AllocationSite> allocation_site_;
 
   class IsMonomorphicField
       : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
@@ -1951,10 +1930,6 @@ class BinaryOperation final : public Expression {
   void set_left(Expression* e) { left_ = e; }
   Expression* right() const { return right_; }
   void set_right(Expression* e) { right_ = e; }
-  Handle<AllocationSite> allocation_site() const { return allocation_site_; }
-  void set_allocation_site(Handle<AllocationSite> allocation_site) {
-    allocation_site_ = allocation_site;
-  }
 
   void MarkTail() {
     switch (op()) {
@@ -1976,23 +1951,11 @@ class BinaryOperation final : public Expression {
   // sub-expression in |subexpr| and the literal Smi in |literal|.
   bool IsSmiLiteralOperation(Expression** subexpr, Smi** literal);
 
-  Maybe<int> fixed_right_arg() const {
-    return has_fixed_right_arg_ ? Just(fixed_right_arg_value_) : Nothing<int>();
-  }
-  void set_fixed_right_arg(Maybe<int> arg) {
-    has_fixed_right_arg_ = arg.IsJust();
-    if (arg.IsJust()) fixed_right_arg_value_ = arg.FromJust();
-  }
-
  private:
   friend class AstNodeFactory;
 
   BinaryOperation(Token::Value op, Expression* left, Expression* right, int pos)
-      : Expression(pos, kBinaryOperation),
-        left_(left),
-        right_(right),
-        has_fixed_right_arg_(false),
-        fixed_right_arg_value_(0) {
+      : Expression(pos, kBinaryOperation), left_(left), right_(right) {
     bit_field_ |= OperatorField::encode(op);
     DCHECK(Token::IsBinaryOp(op));
   }
@@ -2000,11 +1963,6 @@ class BinaryOperation final : public Expression {
   FeedbackSlot feedback_slot_;
   Expression* left_;
   Expression* right_;
-  Handle<AllocationSite> allocation_site_;
-  // TODO(rossberg): the fixed arg should probably be represented as a Constant
-  // type for the RHS. Currenty it's actually a Maybe<int>
-  bool has_fixed_right_arg_;
-  int fixed_right_arg_value_;
 
   class OperatorField
       : public BitField<Token::Value, Expression::kNextBitFieldIndex, 7> {};
@@ -2200,6 +2158,18 @@ class Assignment final : public Expression {
     bit_field_ = StoreModeField::update(bit_field_, mode);
   }
 
+  // The assignment was generated as part of block-scoped sloppy-mode
+  // function hoisting, see
+  // ES#sec-block-level-function-declarations-web-legacy-compatibility-semantics
+  LookupHoistingMode lookup_hoisting_mode() const {
+    return static_cast<LookupHoistingMode>(
+        LookupHoistingModeField::decode(bit_field_));
+  }
+  void set_lookup_hoisting_mode(LookupHoistingMode mode) {
+    bit_field_ =
+        LookupHoistingModeField::update(bit_field_, static_cast<bool>(mode));
+  }
+
   void AssignFeedbackSlots(FeedbackVectorSpec* spec, LanguageMode language_mode,
                            FeedbackSlotCache* cache);
   FeedbackSlot AssignmentSlot() const { return slot_; }
@@ -2216,6 +2186,8 @@ class Assignment final : public Expression {
   class StoreModeField
       : public BitField<KeyedAccessStoreMode, KeyTypeField::kNext, 3> {};
   class TokenField : public BitField<Token::Value, StoreModeField::kNext, 7> {};
+  class LookupHoistingModeField : public BitField<bool, TokenField::kNext, 1> {
+  };
 
   FeedbackSlot slot_;
   Expression* target_;
@@ -3238,6 +3210,10 @@ class AstNodeFactory final BASE_EMBEDDED {
   // Recreates the VariableProxy in this Zone.
   VariableProxy* CopyVariableProxy(VariableProxy* proxy) {
     return new (zone_) VariableProxy(proxy);
+  }
+
+  Variable* CopyVariable(Variable* variable) {
+    return new (zone_) Variable(variable);
   }
 
   Property* NewProperty(Expression* obj, Expression* key, int pos) {

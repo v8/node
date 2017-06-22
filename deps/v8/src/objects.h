@@ -930,11 +930,8 @@ enum class ComparisonResult {
 class AbstractCode;
 class AccessorPair;
 class AllocationSite;
-class AllocationSiteCreationContext;
-class AllocationSiteUsageContext;
 class Cell;
 class ConsString;
-class DeprecationUpdateContext;
 class ElementsAccessor;
 class FindAndReplacePattern;
 class FixedArrayBase;
@@ -1928,8 +1925,7 @@ class JSReceiver: public HeapObject {
   inline NameDictionary* property_dictionary();
 
   // Deletes an existing named property in a normalized object.
-  static void DeleteNormalizedProperty(Handle<JSReceiver> object,
-                                       Handle<Name> name, int entry);
+  static void DeleteNormalizedProperty(Handle<JSReceiver> object, int entry);
 
   DECLARE_CAST(JSReceiver)
 
@@ -2493,6 +2489,9 @@ class JSObject: public JSReceiver {
 
   // Check whether this object references another object
   bool ReferencesObject(Object* obj);
+
+  MUST_USE_RESULT static Maybe<bool> TestIntegrityLevel(Handle<JSObject> object,
+                                                        IntegrityLevel lvl);
 
   MUST_USE_RESULT static Maybe<bool> PreventExtensions(
       Handle<JSObject> object, ShouldThrow should_throw);
@@ -3573,7 +3572,6 @@ class Code: public HeapObject {
   V(STORE_IC)           \
   V(STORE_GLOBAL_IC)    \
   V(KEYED_STORE_IC)     \
-  V(BINARY_OP_IC)       \
   V(COMPARE_IC)
 
 #define CODE_KIND_LIST(V) \
@@ -3675,7 +3673,6 @@ class Code: public HeapObject {
   inline bool is_debug_stub();
   inline bool is_handler();
   inline bool is_stub();
-  inline bool is_binary_op_stub();
   inline bool is_compare_ic_stub();
   inline bool is_optimized_code();
   inline bool is_wasm_code();
@@ -3832,6 +3829,9 @@ class Code: public HeapObject {
 
   // Convert an entry address into an object.
   static inline Object* GetObjectFromEntryAddress(Address location_of_address);
+
+  // Convert a code entry into an object.
+  static inline Object* GetObjectFromCodeEntry(Address code_entry);
 
   // Returns the address of the first instruction.
   inline byte* instruction_start();
@@ -4868,6 +4868,9 @@ class Module : public Struct {
   // ModuleInfo::module_requests.
   DECL_ACCESSORS(requested_modules, FixedArray)
 
+  // [script]: Script from which the module originates.
+  DECL_ACCESSORS(script, Script)
+
   // Get the ModuleInfo associated with the code.
   inline ModuleInfo* info() const;
 
@@ -4908,7 +4911,8 @@ class Module : public Struct {
   static const int kRequestedModulesOffset =
       kModuleNamespaceOffset + kPointerSize;
   static const int kStatusOffset = kRequestedModulesOffset + kPointerSize;
-  static const int kSize = kStatusOffset + kPointerSize;
+  static const int kScriptOffset = kStatusOffset + kPointerSize;
+  static const int kSize = kScriptOffset + kPointerSize;
 
  private:
   static void CreateExport(Handle<Module> module, int cell_index,

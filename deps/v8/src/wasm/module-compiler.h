@@ -53,6 +53,8 @@ class ModuleCompiler {
 
     bool CanAcceptWork() const;
 
+    bool ShouldIncreaseWorkload() const;
+
     void EnableThrottling() { throttle_ = true; }
 
    private:
@@ -90,6 +92,14 @@ class ModuleCompiler {
   void CompileAndSchedule(size_t index);
   bool GetNextUncompiledFunctionId(size_t* index);
   void OnBackgroundTaskStopped();
+
+  void EnableThrottling() { executed_units_.EnableThrottling(); }
+
+  bool CanAcceptWork() const { return executed_units_.CanAcceptWork(); }
+
+  bool ShouldIncreaseWorkload() const {
+    return executed_units_.ShouldIncreaseWorkload();
+  }
 
   size_t InitializeParallelCompilation(
       const std::vector<WasmFunction>& functions, ModuleBytesEnv& module_env);
@@ -272,7 +282,7 @@ class AsyncCompileJob {
 
  private:
   class CompileTask;
-  class CompileState;
+  class CompileStep;
 
   // States of the AsyncCompileJob.
   class DecodeModule;
@@ -303,7 +313,7 @@ class AsyncCompileJob {
   Handle<FixedArray> code_table_;
   std::unique_ptr<WasmInstance> temp_instance_ = nullptr;
   size_t outstanding_units_ = 0;
-  std::unique_ptr<CompileState> state_;
+  std::unique_ptr<CompileStep> step_;
   CancelableTaskManager background_task_manager_;
 #if DEBUG
   // Counts the number of pending foreground tasks.
@@ -320,6 +330,8 @@ class AsyncCompileJob {
   void DoSync(Args&&... args);
 
   void StartForegroundTask();
+
+  void StartBackgroundTask();
 
   template <typename Task, typename... Args>
   void DoAsync(Args&&... args);

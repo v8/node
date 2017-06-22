@@ -3735,7 +3735,7 @@ void MigrateFastToSlow(Handle<JSObject> object, Handle<Map> new_map,
       value = handle(descs->GetValue(i), isolate);
     }
     DCHECK(!value.is_null());
-    PropertyDetails d(details.kind(), details.attributes(), i + 1,
+    PropertyDetails d(details.kind(), details.attributes(),
                       PropertyCellType::kNoCell);
     dictionary = NameDictionary::Add(dictionary, key, value, d);
   }
@@ -3825,17 +3825,10 @@ void JSObject::MigrateToMap(Handle<JSObject> object, Handle<Map> new_map,
   } else if (!new_map->is_dictionary_map()) {
     MigrateFastToFast(object, new_map);
     if (old_map->is_prototype_map()) {
-      DCHECK(!old_map->is_stable());
-      DCHECK(new_map->is_stable());
-      // Clear out the old descriptor array to avoid problems to sharing
-      // the descriptor array without using an explicit.
-      old_map->InitializeDescriptors(
-          old_map->GetHeap()->empty_descriptor_array(),
-          LayoutDescriptor::FastPointerLayout());
-      // Ensure that no transition was inserted for prototype migrations.
-      DCHECK_EQ(
-          0, TransitionArray::NumberOfTransitions(old_map->raw_transitions()));
-      DCHECK(new_map->GetBackPointer()->IsUndefined(new_map->GetIsolate()));
+      DCHECK_IMPLIES(
+          old_map->instance_descriptors() !=
+              old_map->GetHeap()->empty_descriptor_array(),
+          old_map->instance_descriptors() != new_map->instance_descriptors());
     }
   } else {
     MigrateFastToSlow(object, new_map, expected_additional_properties);
@@ -6026,9 +6019,8 @@ Maybe<bool> JSObject::DeletePropertyWithInterceptor(LookupIterator* it,
   return Just(result->IsTrue(isolate));
 }
 
-
 void JSReceiver::DeleteNormalizedProperty(Handle<JSReceiver> object,
-                                          Handle<Name> name, int entry) {
+                                          int entry) {
   DCHECK(!object->HasFastProperties());
   Isolate* isolate = object->GetIsolate();
 
@@ -6046,9 +6038,8 @@ void JSReceiver::DeleteNormalizedProperty(Handle<JSReceiver> object,
     Handle<NameDictionary> dictionary(object->property_dictionary());
     DCHECK_NE(NameDictionary::kNotFound, entry);
 
-    NameDictionary::DeleteProperty(dictionary, entry);
-    Handle<NameDictionary> new_properties = NameDictionary::Shrink(dictionary);
-    object->set_properties(*new_properties);
+    dictionary = NameDictionary::DeleteEntry(dictionary, entry);
+    object->set_properties(*dictionary);
   }
 }
 
@@ -7016,7 +7007,7 @@ Maybe<bool> JSProxy::SetPrivateProperty(Isolate* isolate, Handle<JSProxy> proxy,
   }
 
   Handle<NameDictionary> dict(proxy->property_dictionary());
-  PropertyDetails details(kData, DONT_ENUM, 0, PropertyCellType::kNoCell);
+  PropertyDetails details(kData, DONT_ENUM, PropertyCellType::kNoCell);
   Handle<NameDictionary> result =
       NameDictionary::Add(dict, private_name, value, details);
   if (!dict.is_identical_to(result)) proxy->set_properties(*result);
@@ -7425,7 +7416,13 @@ Maybe<bool> JSReceiver::SetIntegrityLevel(Handle<JSReceiver> receiver,
 
   if (receiver->IsJSObject()) {
     Handle<JSObject> object = Handle<JSObject>::cast(receiver);
+
     if (!object->HasSloppyArgumentsElements()) {  // Fast path.
+      // prevent memory leaks by not adding unnecessary transitions
+      Maybe<bool> test = JSObject::TestIntegrityLevel(object, level);
+      MAYBE_RETURN(test, Nothing<bool>());
+      if (test.FromJust()) return test;
+
       if (level == SEALED) {
         return JSObject::PreventExtensionsWithTransition<SEALED>(object,
                                                                  should_throw);
@@ -7481,25 +7478,101 @@ Maybe<bool> JSReceiver::SetIntegrityLevel(Handle<JSReceiver> receiver,
   return Just(true);
 }
 
+namespace {
 
-Maybe<bool> JSReceiver::TestIntegrityLevel(Handle<JSReceiver> object,
-                                           IntegrityLevel level) {
+template <typename Dictionary>
+bool TestDictionaryPropertiesIntegrityLevel(Dictionary dict, Isolate* isolate,
+                                            PropertyAttributes level) {
   DCHECK(level == SEALED || level == FROZEN);
-  Isolate* isolate = object->GetIsolate();
 
-  Maybe<bool> extensible = JSReceiver::IsExtensible(object);
+  uint32_t capacity = dict->Capacity();
+  for (uint32_t i = 0; i < capacity; i++) {
+    Object* key = dict->KeyAt(i);
+    if (!dict->IsKey(isolate, key) || key->FilterKey(ALL_PROPERTIES) ||
+        dict->IsDeleted(i))
+      continue;
+    PropertyDetails details = dict->DetailsAt(i);
+    if (details.IsConfigurable()) return false;
+    if (level == FROZEN && details.kind() == kData && !details.IsReadOnly()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TestFastPropertiesIntegrityLevel(Map* map, PropertyAttributes level) {
+  DCHECK(level == SEALED || level == FROZEN);
+  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, map->instance_type());
+  DCHECK(!map->is_dictionary_map());
+
+  DescriptorArray* descriptors = map->instance_descriptors();
+  int number_of_own_descriptors = map->NumberOfOwnDescriptors();
+  for (int i = 0; i < number_of_own_descriptors; i++) {
+    if (descriptors->GetKey(i)->IsPrivate()) continue;
+    PropertyDetails details = descriptors->GetDetails(i);
+    if (details.IsConfigurable()) return false;
+    if (level == FROZEN && details.kind() == kData && !details.IsReadOnly()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TestPropertiesIntegrityLevel(JSObject* object, PropertyAttributes level) {
+  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, object->map()->instance_type());
+
+  if (object->HasFastProperties()) {
+    return TestFastPropertiesIntegrityLevel(object->map(), level);
+  }
+
+  return TestDictionaryPropertiesIntegrityLevel(object->property_dictionary(),
+                                                object->GetIsolate(), level);
+}
+
+bool TestElementsIntegrityLevel(JSObject* object, PropertyAttributes level) {
+  DCHECK(!object->HasSloppyArgumentsElements());
+
+  ElementsKind kind = object->GetElementsKind();
+
+  if (IsDictionaryElementsKind(kind)) {
+    return TestDictionaryPropertiesIntegrityLevel(
+        SeededNumberDictionary::cast(object->elements()), object->GetIsolate(),
+        level);
+  }
+
+  ElementsAccessor* accessor = ElementsAccessor::ForKind(kind);
+  // Only DICTIONARY_ELEMENTS and SLOW_SLOPPY_ARGUMENTS_ELEMENTS have
+  // PropertyAttributes so just test if empty
+  return accessor->NumberOfElements(object) == 0;
+}
+
+bool FastTestIntegrityLevel(JSObject* object, PropertyAttributes level) {
+  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, object->map()->instance_type());
+
+  return !object->map()->is_extensible() &&
+         TestElementsIntegrityLevel(object, level) &&
+         TestPropertiesIntegrityLevel(object, level);
+}
+
+Maybe<bool> GenericTestIntegrityLevel(Handle<JSReceiver> receiver,
+                                      PropertyAttributes level) {
+  DCHECK(level == SEALED || level == FROZEN);
+
+  Maybe<bool> extensible = JSReceiver::IsExtensible(receiver);
   MAYBE_RETURN(extensible, Nothing<bool>());
   if (extensible.FromJust()) return Just(false);
 
+  Isolate* isolate = receiver->GetIsolate();
+
   Handle<FixedArray> keys;
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
-      isolate, keys, JSReceiver::OwnPropertyKeys(object), Nothing<bool>());
+      isolate, keys, JSReceiver::OwnPropertyKeys(receiver), Nothing<bool>());
 
   for (int i = 0; i < keys->length(); ++i) {
     Handle<Object> key(keys->get(i), isolate);
     PropertyDescriptor current_desc;
     Maybe<bool> owned = JSReceiver::GetOwnPropertyDescriptor(
-        isolate, object, key, &current_desc);
+        isolate, receiver, key, &current_desc);
     MAYBE_RETURN(owned, Nothing<bool>());
     if (owned.FromJust()) {
       if (current_desc.configurable()) return Just(false);
@@ -7513,6 +7586,25 @@ Maybe<bool> JSReceiver::TestIntegrityLevel(Handle<JSReceiver> object,
   return Just(true);
 }
 
+}  // namespace
+
+Maybe<bool> JSReceiver::TestIntegrityLevel(Handle<JSReceiver> receiver,
+                                           IntegrityLevel level) {
+  if (receiver->map()->instance_type() > LAST_CUSTOM_ELEMENTS_RECEIVER) {
+    return JSObject::TestIntegrityLevel(Handle<JSObject>::cast(receiver),
+                                        level);
+  }
+  return GenericTestIntegrityLevel(receiver, level);
+}
+
+Maybe<bool> JSObject::TestIntegrityLevel(Handle<JSObject> object,
+                                         IntegrityLevel level) {
+  if (object->map()->instance_type() > LAST_CUSTOM_ELEMENTS_RECEIVER &&
+      !object->HasSloppyArgumentsElements()) {
+    return Just(FastTestIntegrityLevel(*object, level));
+  }
+  return GenericTestIntegrityLevel(Handle<JSReceiver>::cast(object), level);
+}
 
 Maybe<bool> JSReceiver::PreventExtensions(Handle<JSReceiver> object,
                                           ShouldThrow should_throw) {
@@ -8623,17 +8715,11 @@ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
     DCHECK_EQ(parent->NumberOfOwnDescriptors(),
               parent->instance_descriptors()->number_of_descriptors());
   }
-  if (parent->is_prototype_map()) {
-    DCHECK(child->is_prototype_map());
+  DCHECK(!parent->is_prototype_map());
+  TransitionArray::Insert(parent, name, child, flag);
 #if V8_TRACE_MAPS
-    Map::TraceTransition("NoTransition", *parent, *child, *name);
+  Map::TraceTransition("Transition", *parent, *child, *name);
 #endif
-  } else {
-    TransitionArray::Insert(parent, name, child, flag);
-#if V8_TRACE_MAPS
-    Map::TraceTransition("Transition", *parent, *child, *name);
-#endif
-  }
 }
 
 
@@ -9218,7 +9304,8 @@ Handle<Map> Map::CopyAddDescriptor(Handle<Map> map,
   // Share descriptors only if map owns descriptors and it not an initial map.
   if (flag == INSERT_TRANSITION && map->owns_descriptors() &&
       !map->GetBackPointer()->IsUndefined(map->GetIsolate()) &&
-      TransitionArray::CanHaveMoreTransitions(map)) {
+      TransitionArray::CanHaveMoreTransitions(map) &&
+      !map->is_prototype_map()) {
     return ShareDescriptor(map, descriptors, descriptor);
   }
 
@@ -14218,7 +14305,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
     os << "major_key = " << (n == NULL ? "null" : n) << "\n";
   }
   if (is_inline_cache_stub()) {
-    if (is_compare_ic_stub() || is_binary_op_stub()) {
+    if (is_compare_ic_stub()) {
       InlineCacheState ic_state = IC::StateFromCode(this);
       os << "ic_state = " << ICState2String(ic_state) << "\n";
       PrintExtraICState(os, kind(), extra_ic_state());
@@ -15928,10 +16015,9 @@ void HashTable<Derived, Shape>::IterateElements(ObjectVisitor* v) {
 }
 
 template <typename Derived, typename Shape>
-Handle<Derived> HashTable<Derived, Shape>::New(Isolate* isolate,
-                                               int at_least_space_for,
-                                               MinimumCapacity capacity_option,
-                                               PretenureFlag pretenure) {
+Handle<Derived> HashTable<Derived, Shape>::New(
+    Isolate* isolate, int at_least_space_for, PretenureFlag pretenure,
+    MinimumCapacity capacity_option) {
   DCHECK(0 <= at_least_space_for);
   DCHECK_IMPLIES(capacity_option == USE_CUSTOM_MINIMUM_CAPACITY,
                  base::bits::IsPowerOfTwo32(at_least_space_for));
@@ -15942,12 +16028,12 @@ Handle<Derived> HashTable<Derived, Shape>::New(Isolate* isolate,
   if (capacity > HashTable::kMaxCapacity) {
     v8::internal::Heap::FatalProcessOutOfMemory("invalid table size", true);
   }
-  return New(isolate, capacity, pretenure);
+  return NewInternal(isolate, capacity, pretenure);
 }
 
 template <typename Derived, typename Shape>
-Handle<Derived> HashTable<Derived, Shape>::New(Isolate* isolate, int capacity,
-                                               PretenureFlag pretenure) {
+Handle<Derived> HashTable<Derived, Shape>::NewInternal(
+    Isolate* isolate, int capacity, PretenureFlag pretenure) {
   Factory* factory = isolate->factory();
   int length = EntryToIndex(capacity);
   Handle<FixedArray> array = factory->NewFixedArray(length, pretenure);
@@ -16078,13 +16164,15 @@ Handle<Derived> HashTable<Derived, Shape>::EnsureCapacity(
   bool should_pretenure = pretenure == TENURED ||
       ((capacity > kMinCapacityForPretenure) &&
           !isolate->heap()->InNewSpace(*table));
-  Handle<Derived> new_table =
-      HashTable::New(isolate, new_nof, USE_DEFAULT_MINIMUM_CAPACITY,
-                     should_pretenure ? TENURED : NOT_TENURED);
+  Handle<Derived> new_table = HashTable::New(
+      isolate, new_nof, should_pretenure ? TENURED : NOT_TENURED);
 
   table->Rehash(*new_table);
   return new_table;
 }
+
+template bool
+HashTable<NameDictionary, NameDictionaryShape>::HasSufficientCapacityToAdd(int);
 
 template <typename Derived, typename Shape>
 bool HashTable<Derived, Shape>::HasSufficientCapacityToAdd(
@@ -16125,7 +16213,6 @@ Handle<Derived> HashTable<Derived, Shape>::Shrink(Handle<Derived> table) {
   Handle<Derived> new_table = HashTable::New(
       isolate,
       at_least_room_for,
-      USE_DEFAULT_MINIMUM_CAPACITY,
       pretenure ? TENURED : NOT_TENURED);
 
   table->Rehash(*new_table);
@@ -16172,34 +16259,12 @@ template class EXPORT_TEMPLATE_DEFINE(V8_EXPORT_PRIVATE)
 template class Dictionary<UnseededNumberDictionary,
                           UnseededNumberDictionaryShape>;
 
-template Handle<SeededNumberDictionary>
-Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::New(
-    Isolate*, int at_least_space_for, PretenureFlag pretenure,
-    MinimumCapacity capacity_option);
-
-template Handle<SeededNumberDictionary>
-Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::NewEmpty(
-    Isolate*, PretenureFlag pretenure);
-
-template Handle<UnseededNumberDictionary>
-Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape>::NewEmpty(
-    Isolate*, PretenureFlag pretenure);
-
-template Handle<UnseededNumberDictionary>
-Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape>::New(
-    Isolate*, int at_least_space_for, PretenureFlag pretenure,
-    MinimumCapacity capacity_option);
-
 template Handle<NameDictionary>
-Dictionary<NameDictionary, NameDictionaryShape>::New(
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::New(
     Isolate*, int n, PretenureFlag pretenure, MinimumCapacity capacity_option);
 
-template Handle<NameDictionary>
-Dictionary<NameDictionary, NameDictionaryShape>::NewEmpty(
-    Isolate*, PretenureFlag pretenure);
-
 template Handle<GlobalDictionary>
-Dictionary<GlobalDictionary, GlobalDictionaryShape>::New(
+BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::New(
     Isolate*, int n, PretenureFlag pretenure, MinimumCapacity capacity_option);
 
 template Handle<SeededNumberDictionary>
@@ -16219,27 +16284,31 @@ Dictionary<SeededNumberDictionary,
 template Object* Dictionary<
     NameDictionary, NameDictionaryShape>::SlowReverseLookup(Object* value);
 
-template Handle<Object>
-Dictionary<NameDictionary, NameDictionaryShape>::DeleteProperty(
+template Handle<NameDictionary>
+Dictionary<NameDictionary, NameDictionaryShape>::DeleteEntry(
     Handle<NameDictionary>, int);
 
-template Handle<Object>
-Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::DeleteProperty(
+template Handle<SeededNumberDictionary>
+Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::DeleteEntry(
     Handle<SeededNumberDictionary>, int);
 
-template Handle<Object>
+template Handle<UnseededNumberDictionary>
 Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape>::
-    DeleteProperty(Handle<UnseededNumberDictionary>, int);
+    DeleteEntry(Handle<UnseededNumberDictionary>, int);
+
+template Handle<UnseededNumberDictionary>
+HashTable<UnseededNumberDictionary, UnseededNumberDictionaryShape>::New(
+    Isolate*, int, PretenureFlag, MinimumCapacity);
 
 template Handle<NameDictionary>
 HashTable<NameDictionary, NameDictionaryShape>::New(Isolate*, int,
-                                                    MinimumCapacity,
-                                                    PretenureFlag);
+                                                    PretenureFlag,
+                                                    MinimumCapacity);
 
 template Handle<ObjectHashSet>
 HashTable<ObjectHashSet, ObjectHashSetShape>::New(Isolate*, int n,
-                                                  MinimumCapacity,
-                                                  PretenureFlag);
+                                                  PretenureFlag,
+                                                  MinimumCapacity);
 
 template Handle<NameDictionary> HashTable<
     NameDictionary, NameDictionaryShape>::Shrink(Handle<NameDictionary>);
@@ -16249,13 +16318,12 @@ template Handle<UnseededNumberDictionary>
         Handle<UnseededNumberDictionary>);
 
 template Handle<NameDictionary>
-Dictionary<NameDictionary, NameDictionaryShape>::Add(Handle<NameDictionary>,
-                                                     Handle<Name>,
-                                                     Handle<Object>,
-                                                     PropertyDetails, int*);
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::Add(
+    Handle<NameDictionary>, Handle<Name>, Handle<Object>, PropertyDetails,
+    int*);
 
 template Handle<GlobalDictionary>
-Dictionary<GlobalDictionary, GlobalDictionaryShape>::Add(
+BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::Add(
     Handle<GlobalDictionary>, Handle<Name>, Handle<Object>, PropertyDetails,
     int*);
 
@@ -16269,19 +16337,8 @@ Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape>::Add(
     Handle<UnseededNumberDictionary>, uint32_t, Handle<Object>, PropertyDetails,
     int*);
 
-template Handle<SeededNumberDictionary>
-Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::EnsureCapacity(
-    Handle<SeededNumberDictionary>, int);
-
-template Handle<UnseededNumberDictionary>
-Dictionary<UnseededNumberDictionary, UnseededNumberDictionaryShape>::
-    EnsureCapacity(Handle<UnseededNumberDictionary>, int);
-
-template void Dictionary<
-    NameDictionary, NameDictionaryShape>::SetRequiresCopyOnCapacityChange();
-
 template Handle<NameDictionary>
-Dictionary<NameDictionary, NameDictionaryShape>::EnsureCapacity(
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::EnsureCapacity(
     Handle<NameDictionary>, int);
 
 template int Dictionary<GlobalDictionary,
@@ -16291,30 +16348,28 @@ template int
 Dictionary<NameDictionary, NameDictionaryShape>::NumberOfEnumerableProperties();
 
 template void
-Dictionary<GlobalDictionary, GlobalDictionaryShape>::CopyEnumKeysTo(
-    Handle<Dictionary<GlobalDictionary, GlobalDictionaryShape>> dictionary,
-    Handle<FixedArray> storage, KeyCollectionMode mode,
-    KeyAccumulator* accumulator);
+BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::CopyEnumKeysTo(
+    Handle<GlobalDictionary> dictionary, Handle<FixedArray> storage,
+    KeyCollectionMode mode, KeyAccumulator* accumulator);
 
-template void Dictionary<NameDictionary, NameDictionaryShape>::CopyEnumKeysTo(
-    Handle<Dictionary<NameDictionary, NameDictionaryShape>> dictionary,
-    Handle<FixedArray> storage, KeyCollectionMode mode,
-    KeyAccumulator* accumulator);
-
-template Handle<FixedArray>
-Dictionary<GlobalDictionary, GlobalDictionaryShape>::IterationIndices(
-    Handle<Dictionary<GlobalDictionary, GlobalDictionaryShape>> dictionary);
 template void
-Dictionary<GlobalDictionary, GlobalDictionaryShape>::CollectKeysTo(
-    Handle<Dictionary<GlobalDictionary, GlobalDictionaryShape>> dictionary,
-    KeyAccumulator* keys);
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::CopyEnumKeysTo(
+    Handle<NameDictionary> dictionary, Handle<FixedArray> storage,
+    KeyCollectionMode mode, KeyAccumulator* accumulator);
 
 template Handle<FixedArray>
-Dictionary<NameDictionary, NameDictionaryShape>::IterationIndices(
-    Handle<Dictionary<NameDictionary, NameDictionaryShape>> dictionary);
-template void Dictionary<NameDictionary, NameDictionaryShape>::CollectKeysTo(
-    Handle<Dictionary<NameDictionary, NameDictionaryShape>> dictionary,
-    KeyAccumulator* keys);
+BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::IterationIndices(
+    Handle<GlobalDictionary> dictionary);
+template void
+BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::CollectKeysTo(
+    Handle<GlobalDictionary> dictionary, KeyAccumulator* keys);
+
+template Handle<FixedArray>
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::IterationIndices(
+    Handle<NameDictionary> dictionary);
+template void
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::CollectKeysTo(
+    Handle<NameDictionary> dictionary, KeyAccumulator* keys);
 
 template int
 Dictionary<SeededNumberDictionary,
@@ -16365,8 +16420,8 @@ Handle<Object> JSObject::PrepareSlowElementsForSort(
         // allocation. Bailout.
         return bailout;
       } else {
-        Handle<Object> result = SeededNumberDictionary::AddNumberEntry(
-            new_dict, pos, value, details, object);
+        Handle<Object> result =
+            SeededNumberDictionary::Add(new_dict, pos, value, details);
         DCHECK(result.is_identical_to(new_dict));
         USE(result);
         pos++;
@@ -16376,8 +16431,8 @@ Handle<Object> JSObject::PrepareSlowElementsForSort(
       // allocation. Bailout.
       return bailout;
     } else {
-      Handle<Object> result = SeededNumberDictionary::AddNumberEntry(
-          new_dict, key, value, details, object);
+      Handle<Object> result =
+          SeededNumberDictionary::Add(new_dict, key, value, details);
       DCHECK(result.is_identical_to(new_dict));
       USE(result);
     }
@@ -16392,9 +16447,8 @@ Handle<Object> JSObject::PrepareSlowElementsForSort(
       return bailout;
     }
     HandleScope scope(isolate);
-    Handle<Object> result = SeededNumberDictionary::AddNumberEntry(
-        new_dict, pos, isolate->factory()->undefined_value(), no_details,
-        object);
+    Handle<Object> result = SeededNumberDictionary::Add(
+        new_dict, pos, isolate->factory()->undefined_value(), no_details);
     DCHECK(result.is_identical_to(new_dict));
     USE(result);
     pos++;
@@ -16402,6 +16456,7 @@ Handle<Object> JSObject::PrepareSlowElementsForSort(
   }
 
   object->set_elements(*new_dict);
+  new_dict->UpdateMaxNumberKey(pos - 1, object);
 
   AllowHeapAllocation allocate_return_value;
   return isolate->factory()->NewNumberFromUint(result);
@@ -16760,12 +16815,12 @@ Handle<PropertyCell> JSGlobalObject::EnsureEmptyPropertyCell(
     if (original_cell_type == PropertyCellType::kInvalidated) {
       cell = PropertyCell::InvalidateEntry(dictionary, entry);
     }
-    PropertyDetails details(kData, NONE, 0, cell_type);
+    PropertyDetails details(kData, NONE, cell_type);
     cell->set_property_details(details);
     return cell;
   }
   cell = isolate->factory()->NewPropertyCell();
-  PropertyDetails details(kData, NONE, 0, cell_type);
+  PropertyDetails details(kData, NONE, cell_type);
   dictionary =
       GlobalDictionary::Add(dictionary, name, cell, details, entry_out);
   // {*entry_out} is initialized inside GlobalDictionary::Add().
@@ -17472,44 +17527,21 @@ void CompilationCacheTable::Remove(Object* value) {
 }
 
 template <typename Derived, typename Shape>
-Handle<Derived> Dictionary<Derived, Shape>::New(
+Handle<Derived> BaseNameDictionary<Derived, Shape>::New(
     Isolate* isolate, int at_least_space_for, PretenureFlag pretenure,
     MinimumCapacity capacity_option) {
-  DCHECK(0 <= at_least_space_for);
-  Handle<Derived> dict = DerivedHashTable::New(isolate, at_least_space_for,
-                                               capacity_option, pretenure);
-
-  // Initialize the next enumeration index.
+  DCHECK_LE(0, at_least_space_for);
+  Handle<Derived> dict = Dictionary<Derived, Shape>::New(
+      isolate, at_least_space_for, pretenure, capacity_option);
   dict->SetNextEnumerationIndex(PropertyDetails::kInitialIndex);
   return dict;
 }
 
 template <typename Derived, typename Shape>
-Handle<Derived> Dictionary<Derived, Shape>::NewEmpty(Isolate* isolate,
-                                                     PretenureFlag pretenure) {
-  Handle<Derived> dict = DerivedHashTable::New(isolate, 1, pretenure);
-  // Attempt to add one element to the empty dictionary must cause reallocation.
-  DCHECK(!dict->HasSufficientCapacityToAdd(1));
-  // Initialize the next enumeration index.
-  dict->SetNextEnumerationIndex(PropertyDetails::kInitialIndex);
-  return dict;
-}
-
-template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::SetRequiresCopyOnCapacityChange() {
-  DCHECK_EQ(0, DerivedHashTable::NumberOfElements());
-  DCHECK_EQ(0, DerivedHashTable::NumberOfDeletedElements());
-  // Make sure that HashTable::EnsureCapacity will create a copy.
-  DerivedHashTable::SetNumberOfDeletedElements(DerivedHashTable::Capacity());
-  DCHECK(!DerivedHashTable::HasSufficientCapacityToAdd(1));
-}
-
-template <typename Derived, typename Shape>
-Handle<Derived> Dictionary<Derived, Shape>::EnsureCapacity(
+Handle<Derived> BaseNameDictionary<Derived, Shape>::EnsureCapacity(
     Handle<Derived> dictionary, int n) {
   // Check whether there are enough enumeration indices to add n elements.
-  if (Shape::kIsEnumerable &&
-      !PropertyDetails::IsValidIndex(dictionary->NextEnumerationIndex() + n)) {
+  if (!PropertyDetails::IsValidIndex(dictionary->NextEnumerationIndex() + n)) {
     // If not, we generate new indices for the properties.
     int length = dictionary->NumberOfElements();
 
@@ -17534,20 +17566,19 @@ Handle<Derived> Dictionary<Derived, Shape>::EnsureCapacity(
     dictionary->SetNextEnumerationIndex(PropertyDetails::kInitialIndex +
                                         length);
   }
-  return DerivedHashTable::EnsureCapacity(dictionary, n);
+  return HashTable<Derived, Shape>::EnsureCapacity(dictionary, n);
 }
 
 template <typename Derived, typename Shape>
-Handle<Object> Dictionary<Derived, Shape>::DeleteProperty(
+Handle<Derived> Dictionary<Derived, Shape>::DeleteEntry(
     Handle<Derived> dictionary, int entry) {
   Factory* factory = dictionary->GetIsolate()->factory();
-  PropertyDetails details = dictionary->DetailsAt(entry);
-  if (!details.IsConfigurable()) return factory->false_value();
-
+  DCHECK(Shape::kEntrySize != 3 ||
+         dictionary->DetailsAt(entry).IsConfigurable());
   dictionary->SetEntry(
       entry, factory->the_hole_value(), factory->the_hole_value());
   dictionary->ElementRemoved();
-  return factory->true_value();
+  return Shrink(dictionary);
 }
 
 template <typename Derived, typename Shape>
@@ -17558,14 +17589,28 @@ Handle<Derived> Dictionary<Derived, Shape>::AtPut(Handle<Derived> dictionary,
 
   // If the entry is present set the value;
   if (entry == Dictionary::kNotFound) {
-    return Add(dictionary, key, value, details);
+    return Derived::Add(dictionary, key, value, details);
   }
 
   // We don't need to copy over the enumeration index.
-  DCHECK(!Shape::kIsEnumerable);
   dictionary->ValueAtPut(entry, *value);
   if (Shape::kEntrySize == 3) dictionary->DetailsAtPut(entry, details);
   return dictionary;
+}
+
+template <typename Derived, typename Shape>
+Handle<Derived> BaseNameDictionary<Derived, Shape>::Add(
+    Handle<Derived> dictionary, Key key, Handle<Object> value,
+    PropertyDetails details, int* entry_out) {
+  // Insert element at empty or deleted entry
+  DCHECK_EQ(0, details.dictionary_index());
+  // Assign an enumeration index to the property and update
+  // SetNextEnumerationIndex.
+  int index = dictionary->NextEnumerationIndex();
+  details = details.set_index(index);
+  dictionary->SetNextEnumerationIndex(index + 1);
+  return Dictionary<Derived, Shape>::Add(dictionary, key, value, details,
+                                         entry_out);
 }
 
 template <typename Derived, typename Shape>
@@ -17578,20 +17623,12 @@ Handle<Derived> Dictionary<Derived, Shape>::Add(Handle<Derived> dictionary,
   // Valdate key is absent.
   SLOW_DCHECK((dictionary->FindEntry(key) == Dictionary::kNotFound));
   // Check whether the dictionary should be extended.
-  dictionary = EnsureCapacity(dictionary, 1);
+  dictionary = Derived::EnsureCapacity(dictionary, 1);
 
   // Compute the key object.
   Handle<Object> k = Shape::AsHandle(isolate, key);
 
   uint32_t entry = dictionary->FindInsertionEntry(hash);
-  // Insert element at empty or deleted entry
-  if (details.dictionary_index() == 0 && Shape::kIsEnumerable) {
-    // Assign an enumeration index to the property and update
-    // SetNextEnumerationIndex.
-    int index = dictionary->NextEnumerationIndex();
-    details = details.set_index(index);
-    dictionary->SetNextEnumerationIndex(index + 1);
-  }
   dictionary->SetEntry(entry, k, value, details);
   DCHECK(dictionary->KeyAt(entry)->IsNumber() ||
          dictionary->KeyAt(entry)->IsUniqueName());
@@ -17637,36 +17674,6 @@ void SeededNumberDictionary::UpdateMaxNumberKey(
     FixedArray::set(kMaxNumberKeyIndex,
                     Smi::FromInt(key << kRequiresSlowElementsTagSize));
   }
-}
-
-Handle<SeededNumberDictionary> SeededNumberDictionary::AddNumberEntry(
-    Handle<SeededNumberDictionary> dictionary, uint32_t key,
-    Handle<Object> value, PropertyDetails details,
-    Handle<JSObject> dictionary_holder) {
-  dictionary->UpdateMaxNumberKey(key, dictionary_holder);
-  SLOW_DCHECK(dictionary->FindEntry(key) == kNotFound);
-  return Add(dictionary, key, value, details);
-}
-
-
-Handle<UnseededNumberDictionary> UnseededNumberDictionary::AddNumberEntry(
-    Handle<UnseededNumberDictionary> dictionary,
-    uint32_t key,
-    Handle<Object> value) {
-  SLOW_DCHECK(dictionary->FindEntry(key) == kNotFound);
-  return Add(dictionary, key, value, PropertyDetails::Empty());
-}
-
-Handle<UnseededNumberDictionary> UnseededNumberDictionary::DeleteKey(
-    Handle<UnseededNumberDictionary> dictionary, uint32_t key) {
-  int entry = dictionary->FindEntry(key);
-  if (entry == kNotFound) return dictionary;
-
-  Factory* factory = dictionary->GetIsolate()->factory();
-  dictionary->SetEntry(entry, factory->the_hole_value(),
-                       factory->the_hole_value());
-  dictionary->ElementRemoved();
-  return dictionary->Shrink(dictionary);
 }
 
 Handle<SeededNumberDictionary> SeededNumberDictionary::Set(
@@ -17720,17 +17727,18 @@ int Dictionary<Derived, Shape>::NumberOfEnumerableProperties() {
 template <typename Dictionary>
 struct EnumIndexComparator {
   explicit EnumIndexComparator(Dictionary* dict) : dict(dict) {}
-  bool operator() (Smi* a, Smi* b) {
-    PropertyDetails da(dict->DetailsAt(a->value()));
-    PropertyDetails db(dict->DetailsAt(b->value()));
+  bool operator()(const base::AtomicElement<Smi*>& a,
+                  const base::AtomicElement<Smi*>& b) {
+    PropertyDetails da(dict->DetailsAt(a.value()->value()));
+    PropertyDetails db(dict->DetailsAt(b.value()->value()));
     return da.dictionary_index() < db.dictionary_index();
   }
   Dictionary* dict;
 };
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::CopyEnumKeysTo(
-    Handle<Dictionary<Derived, Shape>> dictionary, Handle<FixedArray> storage,
+void BaseNameDictionary<Derived, Shape>::CopyEnumKeysTo(
+    Handle<Derived> dictionary, Handle<FixedArray> storage,
     KeyCollectionMode mode, KeyAccumulator* accumulator) {
   DCHECK_IMPLIES(mode != KeyCollectionMode::kOwnOnly, accumulator != nullptr);
   Isolate* isolate = dictionary->GetIsolate();
@@ -17763,10 +17771,14 @@ void Dictionary<Derived, Shape>::CopyEnumKeysTo(
 
   CHECK_EQ(length, properties);
   DisallowHeapAllocation no_gc;
-  Dictionary<Derived, Shape>* raw_dictionary = *dictionary;
+  Derived* raw_dictionary = *dictionary;
   FixedArray* raw_storage = *storage;
-  EnumIndexComparator<Derived> cmp(static_cast<Derived*>(*dictionary));
-  Smi** start = reinterpret_cast<Smi**>(storage->GetFirstElementAddress());
+  EnumIndexComparator<Derived> cmp(raw_dictionary);
+  // Use AtomicElement wrapper to ensure that std::sort uses atomic load and
+  // store operations that are safe for concurrent marking.
+  base::AtomicElement<Smi*>* start =
+      reinterpret_cast<base::AtomicElement<Smi*>*>(
+          storage->GetFirstElementAddress());
   std::sort(start, start + length, cmp);
   for (int i = 0; i < length; i++) {
     int index = Smi::cast(raw_storage->get(i))->value();
@@ -17775,8 +17787,8 @@ void Dictionary<Derived, Shape>::CopyEnumKeysTo(
 }
 
 template <typename Derived, typename Shape>
-Handle<FixedArray> Dictionary<Derived, Shape>::IterationIndices(
-    Handle<Dictionary<Derived, Shape>> dictionary) {
+Handle<FixedArray> BaseNameDictionary<Derived, Shape>::IterationIndices(
+    Handle<Derived> dictionary) {
   Isolate* isolate = dictionary->GetIsolate();
   int capacity = dictionary->Capacity();
   int length = dictionary->NumberOfElements();
@@ -17784,18 +17796,22 @@ Handle<FixedArray> Dictionary<Derived, Shape>::IterationIndices(
   int array_size = 0;
   {
     DisallowHeapAllocation no_gc;
-    Dictionary<Derived, Shape>* raw_dict = *dictionary;
+    Derived* raw_dictionary = *dictionary;
     for (int i = 0; i < capacity; i++) {
-      Object* k = raw_dict->KeyAt(i);
-      if (!raw_dict->IsKey(isolate, k)) continue;
-      if (raw_dict->IsDeleted(i)) continue;
+      Object* k = raw_dictionary->KeyAt(i);
+      if (!raw_dictionary->IsKey(isolate, k)) continue;
+      if (raw_dictionary->IsDeleted(i)) continue;
       array->set(array_size++, Smi::FromInt(i));
     }
 
     DCHECK_EQ(array_size, length);
 
-    EnumIndexComparator<Derived> cmp(static_cast<Derived*>(raw_dict));
-    Smi** start = reinterpret_cast<Smi**>(array->GetFirstElementAddress());
+    EnumIndexComparator<Derived> cmp(raw_dictionary);
+    // Use AtomicElement wrapper to ensure that std::sort uses atomic load and
+    // store operations that are safe for concurrent marking.
+    base::AtomicElement<Smi*>* start =
+        reinterpret_cast<base::AtomicElement<Smi*>*>(
+            array->GetFirstElementAddress());
     std::sort(start, start + array_size, cmp);
   }
   array->Shrink(array_size);
@@ -17803,8 +17819,8 @@ Handle<FixedArray> Dictionary<Derived, Shape>::IterationIndices(
 }
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::CollectKeysTo(
-    Handle<Dictionary<Derived, Shape>> dictionary, KeyAccumulator* keys) {
+void BaseNameDictionary<Derived, Shape>::CollectKeysTo(
+    Handle<Derived> dictionary, KeyAccumulator* keys) {
   Isolate* isolate = keys->isolate();
   int capacity = dictionary->Capacity();
   Handle<FixedArray> array =
@@ -17813,19 +17829,19 @@ void Dictionary<Derived, Shape>::CollectKeysTo(
   PropertyFilter filter = keys->filter();
   {
     DisallowHeapAllocation no_gc;
-    Dictionary<Derived, Shape>* raw_dict = *dictionary;
+    Derived* raw_dictionary = *dictionary;
     for (int i = 0; i < capacity; i++) {
-      Object* k = raw_dict->KeyAt(i);
-      if (!raw_dict->IsKey(isolate, k) || k->FilterKey(filter)) continue;
-      if (raw_dict->IsDeleted(i)) continue;
-      PropertyDetails details = raw_dict->DetailsAt(i);
+      Object* k = raw_dictionary->KeyAt(i);
+      if (!raw_dictionary->IsKey(isolate, k) || k->FilterKey(filter)) continue;
+      if (raw_dictionary->IsDeleted(i)) continue;
+      PropertyDetails details = raw_dictionary->DetailsAt(i);
       if ((details.attributes() & filter) != 0) {
         keys->AddShadowingKey(k);
         continue;
       }
       if (filter & ONLY_ALL_CAN_READ) {
         if (details.kind() != kAccessor) continue;
-        Object* accessors = raw_dict->ValueAt(i);
+        Object* accessors = raw_dictionary->ValueAt(i);
         if (accessors->IsPropertyCell()) {
           accessors = PropertyCell::cast(accessors)->value();
         }
@@ -17835,8 +17851,12 @@ void Dictionary<Derived, Shape>::CollectKeysTo(
       array->set(array_size++, Smi::FromInt(i));
     }
 
-    EnumIndexComparator<Derived> cmp(static_cast<Derived*>(raw_dict));
-    Smi** start = reinterpret_cast<Smi**>(array->GetFirstElementAddress());
+    EnumIndexComparator<Derived> cmp(raw_dictionary);
+    // Use AtomicElement wrapper to ensure that std::sort uses atomic load and
+    // store operations that are safe for concurrent marking.
+    base::AtomicElement<Smi*>* start =
+        reinterpret_cast<base::AtomicElement<Smi*>*>(
+            array->GetFirstElementAddress());
     std::sort(start, start + array_size, cmp);
   }
 
@@ -19267,7 +19287,7 @@ Handle<PropertyCell> PropertyCell::PrepareForValue(
     index = dictionary->NextEnumerationIndex();
     dictionary->SetNextEnumerationIndex(index + 1);
   }
-  DCHECK(index > 0);
+  DCHECK_LT(0, index);
   details = details.set_index(index);
 
   PropertyCellType new_type = UpdatedType(cell, value, original_details);
