@@ -157,8 +157,6 @@ namespace internal {
   ASM(NotifyDeoptimized)                                                       \
   ASM(NotifySoftDeoptimized)                                                   \
   ASM(NotifyLazyDeoptimized)                                                   \
-  ASM(NotifyStubFailure)                                                       \
-  ASM(NotifyStubFailureSaveDoubles)                                            \
   ASM(NotifyBuiltinContinuation)                                               \
                                                                                \
   /* Trampolines called when returning from a deoptimization that expects   */ \
@@ -227,6 +225,9 @@ namespace internal {
   TFC(ClassOf, Typeof, 1)                                                      \
   TFC(Typeof, Typeof, 1)                                                       \
   TFC(GetSuperConstructor, Typeof, 1)                                          \
+                                                                               \
+  /* Type conversions continuations */                                         \
+  TFC(ToBooleanLazyDeoptContinuation, TypeConversionStackParameter, 1)         \
                                                                                \
   /* Handlers */                                                               \
   TFH(LoadICProtoArray, BUILTIN, kNoExtraICState, LoadICProtoArray)            \
@@ -700,7 +701,7 @@ namespace internal {
   /* Object */                                                                 \
   CPP(ObjectAssign)                                                            \
   /* ES #sec-object.create */                                                  \
-  TFJ(ObjectCreate, 2, kPrototype, kProperties)                                \
+  TFJ(ObjectCreate, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   CPP(ObjectDefineGetter)                                                      \
   CPP(ObjectDefineProperties)                                                  \
   CPP(ObjectDefineProperty)                                                    \
@@ -1064,6 +1065,7 @@ namespace internal {
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG) \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
                                                              \
+  TFS(StringToLowerCaseIntl, kString)                        \
   /* ES #sec-string.prototype.tolowercase */                 \
   TFJ(StringPrototypeToLowerCaseIntl, 0)                     \
   /* ES #sec-string.prototype.touppercase */                 \

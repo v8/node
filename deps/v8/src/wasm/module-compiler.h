@@ -87,10 +87,8 @@ class ModuleCompiler {
   // finishing task is running, i.e. when the finisher_is_running_ flag is not
   // set.
   bool FetchAndExecuteCompilationUnit(
-      std::function<void()> no_finisher_callback = [] {});
+      std::function<void()> no_finisher_callback = nullptr);
 
-  void CompileAndSchedule(size_t index);
-  bool GetNextUncompiledFunctionId(size_t* index);
   void OnBackgroundTaskStopped();
 
   void EnableThrottling() { executed_units_.EnableThrottling(); }
@@ -195,17 +193,15 @@ class InstanceBuilder {
 #define ERROR_THROWER_WITH_MESSAGE(TYPE)                                      \
   void Report##TYPE(const char* error, uint32_t index,                        \
                     Handle<String> module_name, Handle<String> import_name) { \
-    thrower_->TYPE("Import #%d module=\"%.*s\" function=\"%.*s\" error: %s",  \
-                   index, module_name->length(),                              \
-                   module_name->ToCString().get(), import_name->length(),     \
+    thrower_->TYPE("Import #%d module=\"%s\" function=\"%s\" error: %s",      \
+                   index, module_name->ToCString().get(),                     \
                    import_name->ToCString().get(), error);                    \
   }                                                                           \
                                                                               \
   MaybeHandle<Object> Report##TYPE(const char* error, uint32_t index,         \
                                    Handle<String> module_name) {              \
-    thrower_->TYPE("Import #%d module=\"%.*s\" error: %s", index,             \
-                   module_name->length(), module_name->ToCString().get(),     \
-                   error);                                                    \
+    thrower_->TYPE("Import #%d module=\"%s\" error: %s", index,               \
+                   module_name->ToCString().get(), error);                    \
     return MaybeHandle<Object>();                                             \
   }
 

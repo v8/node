@@ -1953,7 +1953,7 @@ void JSObject::SetNormalizedProperty(Handle<JSObject> object,
       int enumeration_index = original_details.dictionary_index();
       DCHECK(enumeration_index > 0);
       details = details.set_index(enumeration_index);
-      dictionary->SetEntry(entry, name, value, details);
+      dictionary->SetEntry(entry, *name, *value, details);
     }
   }
 }
@@ -5834,20 +5834,6 @@ void JSObject::MigrateSlowToFast(Handle<JSObject> object,
   // Check that it really works.
   DCHECK(object->HasFastProperties());
 }
-
-
-void JSObject::ResetElements(Handle<JSObject> object) {
-  Isolate* isolate = object->GetIsolate();
-  CHECK(object->map() != isolate->heap()->sloppy_arguments_elements_map());
-  if (object->map()->has_dictionary_elements()) {
-    Handle<SeededNumberDictionary> new_elements =
-        SeededNumberDictionary::New(isolate, 0);
-    object->set_elements(*new_elements);
-  } else {
-    object->set_elements(object->map()->GetInitialElements());
-  }
-}
-
 
 void JSObject::RequireSlowElements(SeededNumberDictionary* dictionary) {
   if (dictionary->requires_slow_elements()) return;
@@ -14126,12 +14112,6 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(
           break;
         }
 
-        case Translation::COMPILED_STUB_FRAME: {
-          Code::Kind stub_kind = static_cast<Code::Kind>(iterator.Next());
-          os << "{kind=" << stub_kind << "}";
-          break;
-        }
-
         case Translation::ARGUMENTS_ADAPTOR_FRAME: {
           int shared_info_id = iterator.Next();
           Object* shared_info = LiteralArray()->get(shared_info_id);
@@ -14256,7 +14236,6 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(
           break;
         }
 
-        case Translation::ARGUMENTS_OBJECT:
         case Translation::CAPTURED_OBJECT: {
           int args_length = iterator.Next();
           os << "{length=" << args_length << "}";
@@ -16060,14 +16039,12 @@ void HashTable<Derived, Shape>::Rehash(Derived* new_table) {
 
   // Rehash the elements.
   int capacity = this->Capacity();
-  Heap* heap = new_table->GetHeap();
-  Object* the_hole = heap->the_hole_value();
-  Object* undefined = heap->undefined_value();
+  Isolate* isolate = new_table->GetIsolate();
   for (int i = 0; i < capacity; i++) {
     uint32_t from_index = EntryToIndex(i);
     Object* k = this->get(from_index);
-    if (k != the_hole && k != undefined) {
-      uint32_t hash = this->HashForObject(k);
+    if (IsKey(isolate, k)) {
+      uint32_t hash = Shape::HashForObject(isolate, k);
       uint32_t insertion_index =
           EntryToIndex(new_table->FindInsertionEntry(hash));
       for (int j = 0; j < Shape::kEntrySize; j++) {
@@ -16082,7 +16059,7 @@ void HashTable<Derived, Shape>::Rehash(Derived* new_table) {
 template <typename Derived, typename Shape>
 uint32_t HashTable<Derived, Shape>::EntryForProbe(Object* k, int probe,
                                                   uint32_t expected) {
-  uint32_t hash = this->HashForObject(k);
+  uint32_t hash = Shape::HashForObject(GetIsolate(), k);
   uint32_t capacity = this->Capacity();
   uint32_t entry = FirstProbe(hash, capacity);
   for (int i = 1; i < probe; i++) {
@@ -17198,7 +17175,7 @@ Handle<StringSet> StringSet::Add(Handle<StringSet> stringset,
                                  Handle<String> name) {
   if (!stringset->Has(name)) {
     stringset = EnsureCapacity(stringset, 1);
-    uint32_t hash = StringSetShape::Hash(*name);
+    uint32_t hash = ShapeT::Hash(name->GetIsolate(), *name);
     int entry = stringset->FindInsertionEntry(hash);
     stringset->set(EntryToIndex(entry), *name);
     stringset->ElementAdded();
@@ -17572,11 +17549,9 @@ Handle<Derived> BaseNameDictionary<Derived, Shape>::EnsureCapacity(
 template <typename Derived, typename Shape>
 Handle<Derived> Dictionary<Derived, Shape>::DeleteEntry(
     Handle<Derived> dictionary, int entry) {
-  Factory* factory = dictionary->GetIsolate()->factory();
   DCHECK(Shape::kEntrySize != 3 ||
          dictionary->DetailsAt(entry).IsConfigurable());
-  dictionary->SetEntry(
-      entry, factory->the_hole_value(), factory->the_hole_value());
+  dictionary->ClearEntry(entry);
   dictionary->ElementRemoved();
   return Shrink(dictionary);
 }
@@ -17619,7 +17594,7 @@ Handle<Derived> Dictionary<Derived, Shape>::Add(Handle<Derived> dictionary,
                                                 PropertyDetails details,
                                                 int* entry_out) {
   Isolate* isolate = dictionary->GetIsolate();
-  uint32_t hash = dictionary->Hash(key);
+  uint32_t hash = Shape::Hash(isolate, key);
   // Valdate key is absent.
   SLOW_DCHECK((dictionary->FindEntry(key) == Dictionary::kNotFound));
   // Check whether the dictionary should be extended.
@@ -17629,7 +17604,7 @@ Handle<Derived> Dictionary<Derived, Shape>::Add(Handle<Derived> dictionary,
   Handle<Object> k = Shape::AsHandle(isolate, key);
 
   uint32_t entry = dictionary->FindInsertionEntry(hash);
-  dictionary->SetEntry(entry, k, value, details);
+  dictionary->SetEntry(entry, *k, *value, details);
   DCHECK(dictionary->KeyAt(entry)->IsNumber() ||
          dictionary->KeyAt(entry)->IsUniqueName());
   dictionary->ElementAdded();
@@ -18066,7 +18041,8 @@ Handle<WeakHashTable> WeakHashTable::Put(Handle<WeakHashTable> table,
   // Check whether the hash table should be extended.
   table = EnsureCapacity(table, 1, TENURED);
 
-  table->AddEntry(table->FindInsertionEntry(table->Hash(key)), key_cell, value);
+  uint32_t hash = ShapeT::Hash(isolate, key);
+  table->AddEntry(table->FindInsertionEntry(hash), key_cell, value);
   return table;
 }
 

@@ -2370,7 +2370,7 @@ TEST(IdleNotificationFinishMarking) {
                   IncrementalMarking::DO_NOT_FORCE_COMPLETION, StepOrigin::kV8);
     CHECK(!marking->IsIdleMarkingDelayCounterLimitReached());
   } while (
-      !CcTest::heap()->mark_compact_collector()->marking_deque()->IsEmpty());
+      !CcTest::heap()->mark_compact_collector()->marking_worklist()->IsEmpty());
 
   // The next invocations of incremental marking are not going to complete
   // marking
@@ -4149,7 +4149,7 @@ TEST(ObjectsInOptimizedCodeAreWeak) {
 }
 
 TEST(NewSpaceObjectsInOptimizedCode) {
-  if (FLAG_always_opt || !FLAG_opt || FLAG_turbo) return;
+  if (FLAG_always_opt || !FLAG_opt || FLAG_ignition) return;
   FLAG_allow_natives_syntax = true;
   CcTest::InitializeVM();
   Isolate* isolate = CcTest::i_isolate();

@@ -74,8 +74,8 @@ class Dictionary : public HashTable<Derived, Shape> {
   Object* SlowReverseLookup(Object* value);
 
   // Sets the entry to (key, value) pair.
-  inline void SetEntry(int entry, Handle<Object> key, Handle<Object> value);
-  inline void SetEntry(int entry, Handle<Object> key, Handle<Object> value,
+  inline void ClearEntry(int entry);
+  inline void SetEntry(int entry, Object* key, Object* value,
                        PropertyDetails details);
 
   MUST_USE_RESULT static Handle<Derived> Add(Handle<Derived> dictionary,
@@ -93,6 +93,7 @@ class Dictionary : public HashTable<Derived, Shape> {
 template <typename Key>
 class BaseDictionaryShape : public BaseShape<Key> {
  public:
+  static const bool kHasDetails = true;
   template <typename Dictionary>
   static inline PropertyDetails DetailsAt(Dictionary* dict, int entry) {
     STATIC_ASSERT(Dictionary::kEntrySize == 3);
@@ -113,22 +114,17 @@ class BaseDictionaryShape : public BaseShape<Key> {
   static bool IsDeleted(Dictionary* dict, int entry) {
     return false;
   }
-
-  template <typename Dictionary>
-  static inline void SetEntry(Dictionary* dict, int entry, Handle<Object> key,
-                              Handle<Object> value, PropertyDetails details);
 };
 
 class NameDictionaryShape : public BaseDictionaryShape<Handle<Name>> {
  public:
   static inline bool IsMatch(Handle<Name> key, Object* other);
-  static inline uint32_t Hash(Handle<Name> key);
-  static inline uint32_t HashForObject(Object* object);
+  static inline uint32_t Hash(Isolate* isolate, Handle<Name> key);
+  static inline uint32_t HashForObject(Isolate* isolate, Object* object);
   static inline Handle<Object> AsHandle(Isolate* isolate, Handle<Name> key);
   static const int kPrefixSize = 1;
   static const int kEntrySize = 3;
   static const int kEntryValueIndex = 1;
-  static const int kEntryDetailsIndex = 2;
   static const bool kNeedsHoleCheck = false;
 };
 
@@ -200,18 +196,12 @@ class GlobalDictionaryShape : public NameDictionaryShape {
 
   template <typename Dictionary>
   static bool IsDeleted(Dictionary* dict, int entry);
-
-  template <typename Dictionary>
-  static inline void SetEntry(Dictionary* dict, int entry, Handle<Object> key,
-                              Handle<Object> value, PropertyDetails details);
 };
 
 class GlobalDictionary
     : public BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape> {
  public:
   DECLARE_CAST(GlobalDictionary)
-
-  static const int kEntryValueIndex = 1;
 };
 
 class NumberDictionaryShape : public BaseDictionaryShape<uint32_t> {
@@ -222,21 +212,21 @@ class NumberDictionaryShape : public BaseDictionaryShape<uint32_t> {
 
 class SeededNumberDictionaryShape : public NumberDictionaryShape {
  public:
-  static const bool UsesSeed = true;
   static const int kPrefixSize = 1;
   static const int kEntrySize = 3;
 
-  static inline uint32_t SeededHash(uint32_t key, uint32_t seed);
-  static inline uint32_t SeededHashForObject(uint32_t seed, Object* object);
+  static inline uint32_t Hash(Isolate* isolate, uint32_t key);
+  static inline uint32_t HashForObject(Isolate* isolate, Object* object);
 };
 
 class UnseededNumberDictionaryShape : public NumberDictionaryShape {
  public:
+  static const bool kHasDetails = false;
   static const int kPrefixSize = 0;
   static const int kEntrySize = 2;
 
-  static inline uint32_t Hash(uint32_t key);
-  static inline uint32_t HashForObject(Object* object);
+  static inline uint32_t Hash(Isolate* isolate, uint32_t key);
+  static inline uint32_t HashForObject(Isolate* isolate, Object* object);
 
   template <typename Dictionary>
   static inline PropertyDetails DetailsAt(Dictionary* dict, int entry) {
@@ -317,7 +307,6 @@ class UnseededNumberDictionary
       Handle<Object> value);
 
   static const int kEntryValueIndex = 1;
-  static const int kEntryDetailsIndex = 2;
 };
 
 }  // namespace internal

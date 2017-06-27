@@ -86,11 +86,11 @@ class StaticVisitorBase : public AllStatic {
 
   // Determine which specialized visitor should be used for given instance type
   // and instance type.
-  static VisitorId GetVisitorId(int instance_type, int instance_size,
-                                bool has_unboxed_fields);
+  static inline VisitorId GetVisitorId(int instance_type, int instance_size,
+                                       bool has_unboxed_fields);
 
   // Determine which specialized visitor should be used for given map.
-  static VisitorId GetVisitorId(Map* map);
+  static inline VisitorId GetVisitorId(Map* map);
 };
 
 
@@ -141,105 +141,6 @@ class FixedBodyVisitor : public AllStatic {
     return static_cast<ReturnType>(BodyDescriptor::kSize);
   }
 };
-
-
-// Base class for visitors used for a linear new space iteration.
-// IterateBody returns size of visited object.
-// Certain types of objects (i.e. Code objects) are not handled
-// by dispatch table of this visitor because they cannot appear
-// in the new space.
-//
-// This class is intended to be used in the following way:
-//
-//   class SomeVisitor : public StaticNewSpaceVisitor<SomeVisitor> {
-//     ...
-//   }
-//
-// This is an example of Curiously recurring template pattern
-// (see http://en.wikipedia.org/wiki/Curiously_recurring_template_pattern).
-// We use CRTP to guarantee aggressive compile time optimizations (i.e.
-// inlining and specialization of StaticVisitor::VisitPointers methods).
-template <typename StaticVisitor>
-class StaticNewSpaceVisitor : public StaticVisitorBase {
- public:
-  static void Initialize();
-
-  INLINE(static int IterateBody(Map* map, HeapObject* obj)) {
-    return table_.GetVisitor(map)(map, obj);
-  }
-
-  INLINE(static void VisitPointers(Heap* heap, HeapObject* object,
-                                   Object** start, Object** end)) {
-    for (Object** p = start; p < end; p++) {
-      StaticVisitor::VisitPointer(heap, object, p);
-    }
-  }
-
-  inline static void VisitCodeEntry(Heap* heap, HeapObject* object,
-                                    Address entry_address) {
-    // Code is not in new space.
-  }
-
- private:
-  inline static int UnreachableVisitor(Map* map, HeapObject* object) {
-    UNREACHABLE();
-  }
-
-  INLINE(static int VisitByteArray(Map* map, HeapObject* object)) {
-    return reinterpret_cast<ByteArray*>(object)->ByteArraySize();
-  }
-
-  INLINE(static int VisitFixedDoubleArray(Map* map, HeapObject* object)) {
-    int length = reinterpret_cast<FixedDoubleArray*>(object)->length();
-    return FixedDoubleArray::SizeFor(length);
-  }
-
-  INLINE(static int VisitSeqOneByteString(Map* map, HeapObject* object)) {
-    return SeqOneByteString::cast(object)
-        ->SeqOneByteStringSize(map->instance_type());
-  }
-
-  INLINE(static int VisitSeqTwoByteString(Map* map, HeapObject* object)) {
-    return SeqTwoByteString::cast(object)
-        ->SeqTwoByteStringSize(map->instance_type());
-  }
-
-  INLINE(static int VisitFreeSpace(Map* map, HeapObject* object)) {
-    return FreeSpace::cast(object)->size();
-  }
-
-  class DataObjectVisitor {
-   public:
-    template <int object_size>
-    static inline int VisitSpecialized(Map* map, HeapObject* object) {
-      return object_size;
-    }
-
-    INLINE(static int Visit(Map* map, HeapObject* object)) {
-      return map->instance_size();
-    }
-  };
-
-  typedef FlexibleBodyVisitor<StaticVisitor, StructBodyDescriptor, int>
-      StructVisitor;
-
-  typedef FlexibleBodyVisitor<StaticVisitor, JSObject::BodyDescriptor, int>
-      JSObjectVisitor;
-
-  // Visitor for JSObjects without unboxed double fields.
-  typedef FlexibleBodyVisitor<StaticVisitor, JSObject::FastBodyDescriptor, int>
-      JSObjectFastVisitor;
-
-  typedef int (*Callback)(Map* map, HeapObject* object);
-
-  static VisitorDispatchTable<Callback> table_;
-};
-
-
-template <typename StaticVisitor>
-VisitorDispatchTable<typename StaticNewSpaceVisitor<StaticVisitor>::Callback>
-    StaticNewSpaceVisitor<StaticVisitor>::table_;
-
 
 // Base class for visitors used to transitively mark the entire heap.
 // IterateBody returns nothing.
@@ -366,11 +267,10 @@ VisitorDispatchTable<typename StaticMarkingVisitor<StaticVisitor>::Callback>
   V(TransitionArray)             \
   V(WeakCell)
 
-// The base class for visitors that need to dispatch on object type.
-// It is similar to StaticVisitor except it uses virtual dispatch
-// instead of static dispatch table. The default behavour of all
-// visit functions is to iterate body of the given object using
-// the BodyDescriptor of the object.
+// The base class for visitors that need to dispatch on object type. It is
+// similar to StaticVisitor except it uses virtual dispatch instead of static
+// dispatch table. The default behavior of all visit functions is to iterate
+// body of the given object using the BodyDescriptor of the object.
 //
 // The visit functions return the size of the object cast to ResultType.
 //
@@ -380,7 +280,6 @@ VisitorDispatchTable<typename StaticMarkingVisitor<StaticVisitor>::Callback>
 //     ...
 //   }
 //
-// This is an example of Curiously recurring template pattern.
 // TODO(ulan): replace static visitors with the HeapVisitor.
 template <typename ResultType, typename ConcreteVisitor>
 class HeapVisitor : public ObjectVisitor {
@@ -392,20 +291,47 @@ class HeapVisitor : public ObjectVisitor {
   // A guard predicate for visiting the object.
   // If it returns false then the default implementations of the Visit*
   // functions bailout from iterating the object pointers.
-  virtual bool ShouldVisit(HeapObject* object);
+  V8_INLINE bool ShouldVisit(HeapObject* object);
+  // Guard predicate for visiting the objects map pointer separately.
+  V8_INLINE bool ShouldVisitMapPointer();
   // A callback for visiting the map pointer in the object header.
-  virtual void VisitMapPointer(HeapObject* host, HeapObject** map);
+  V8_INLINE void VisitMapPointer(HeapObject* host, HeapObject** map);
 
-#define VISIT(type) virtual ResultType Visit##type(Map* map, type* object);
+#define VISIT(type) V8_INLINE ResultType Visit##type(Map* map, type* object);
   TYPED_VISITOR_ID_LIST(VISIT)
 #undef VISIT
-  virtual ResultType VisitShortcutCandidate(Map* map, ConsString* object);
-  virtual ResultType VisitNativeContext(Map* map, Context* object);
-  virtual ResultType VisitDataObject(Map* map, HeapObject* object);
-  virtual ResultType VisitJSObjectFast(Map* map, JSObject* object);
-  virtual ResultType VisitJSApiObject(Map* map, JSObject* object);
-  virtual ResultType VisitStruct(Map* map, HeapObject* object);
-  virtual ResultType VisitFreeSpace(Map* map, FreeSpace* object);
+  V8_INLINE ResultType VisitShortcutCandidate(Map* map, ConsString* object);
+  V8_INLINE ResultType VisitNativeContext(Map* map, Context* object);
+  V8_INLINE ResultType VisitDataObject(Map* map, HeapObject* object);
+  V8_INLINE ResultType VisitJSObjectFast(Map* map, JSObject* object);
+  V8_INLINE ResultType VisitJSApiObject(Map* map, JSObject* object);
+  V8_INLINE ResultType VisitStruct(Map* map, HeapObject* object);
+  V8_INLINE ResultType VisitFreeSpace(Map* map, FreeSpace* object);
+};
+
+class NewSpaceVisitor : public HeapVisitor<int, NewSpaceVisitor> {
+ public:
+  V8_INLINE bool ShouldVisitMapPointer() { return false; }
+
+  void VisitCodeEntry(JSFunction* host, Address code_entry) final {
+    // Code is not in new space.
+  }
+
+  // Special cases for young generation.
+
+  V8_INLINE int VisitJSFunction(Map* map, JSFunction* object);
+  V8_INLINE int VisitNativeContext(Map* map, Context* object);
+  V8_INLINE int VisitJSApiObject(Map* map, JSObject* object);
+
+  int VisitBytecodeArray(Map* map, BytecodeArray* object) {
+    UNREACHABLE();
+    return 0;
+  }
+
+  int VisitSharedFunctionInfo(Map* map, SharedFunctionInfo* object) {
+    UNREACHABLE();
+    return 0;
+  }
 };
 
 class WeakObjectRetainer;

@@ -37,6 +37,15 @@ void Scavenger::ScavengeObject(HeapObject** p, HeapObject* object) {
   return ScavengeObjectSlow(p, object);
 }
 
+void Scavenger::ScavengeObjectSlow(HeapObject** p, HeapObject* object) {
+  SLOW_DCHECK(object->GetIsolate()->heap()->InFromSpace(object));
+  MapWord first_word = object->map_word();
+  SLOW_DCHECK(!first_word.IsForwardingAddress());
+  Map* map = first_word.ToMap();
+  Scavenger* scavenger = map->GetHeap()->scavenge_collector_;
+  scavenger->scavenging_visitors_table_.GetVisitor(map)(map, p, object);
+}
+
 SlotCallbackResult Scavenger::CheckAndScavengeObject(Heap* heap,
                                                      Address slot_address) {
   Object** slot = reinterpret_cast<Object**>(slot_address);
@@ -61,13 +70,14 @@ SlotCallbackResult Scavenger::CheckAndScavengeObject(Heap* heap,
   return REMOVE_SLOT;
 }
 
-// static
-void StaticScavengeVisitor::VisitPointer(Heap* heap, HeapObject* obj,
-                                         Object** p) {
-  Object* object = *p;
-  if (!heap->InNewSpace(object)) return;
-  Scavenger::ScavengeObject(reinterpret_cast<HeapObject**>(p),
-                            reinterpret_cast<HeapObject*>(object));
+void ScavengeVisitor::VisitPointers(HeapObject* host, Object** start,
+                                    Object** end) {
+  for (Object** p = start; p < end; p++) {
+    Object* object = *p;
+    if (!heap_->InNewSpace(object)) continue;
+    Scavenger::ScavengeObject(reinterpret_cast<HeapObject**>(p),
+                              reinterpret_cast<HeapObject*>(object));
+  }
 }
 
 }  // namespace internal

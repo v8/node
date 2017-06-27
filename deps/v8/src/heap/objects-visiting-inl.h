@@ -15,115 +15,208 @@
 namespace v8 {
 namespace internal {
 
+VisitorId StaticVisitorBase::GetVisitorId(Map* map) {
+  return GetVisitorId(map->instance_type(), map->instance_size(),
+                      FLAG_unbox_double_fields && !map->HasFastPointerLayout());
+}
+
+VisitorId StaticVisitorBase::GetVisitorId(int instance_type, int instance_size,
+                                          bool has_unboxed_fields) {
+  if (instance_type < FIRST_NONSTRING_TYPE) {
+    switch (instance_type & kStringRepresentationMask) {
+      case kSeqStringTag:
+        if ((instance_type & kStringEncodingMask) == kOneByteStringTag) {
+          return kVisitSeqOneByteString;
+        } else {
+          return kVisitSeqTwoByteString;
+        }
+
+      case kConsStringTag:
+        if (IsShortcutCandidate(instance_type)) {
+          return kVisitShortcutCandidate;
+        } else {
+          return kVisitConsString;
+        }
+
+      case kSlicedStringTag:
+        return kVisitSlicedString;
+
+      case kExternalStringTag:
+        return kVisitDataObject;
+
+      case kThinStringTag:
+        return kVisitThinString;
+    }
+    UNREACHABLE();
+  }
+
+  switch (instance_type) {
+    case BYTE_ARRAY_TYPE:
+      return kVisitByteArray;
+
+    case BYTECODE_ARRAY_TYPE:
+      return kVisitBytecodeArray;
+
+    case FREE_SPACE_TYPE:
+      return kVisitFreeSpace;
+
+    case FIXED_ARRAY_TYPE:
+      return kVisitFixedArray;
+
+    case FIXED_DOUBLE_ARRAY_TYPE:
+      return kVisitFixedDoubleArray;
+
+    case ODDBALL_TYPE:
+      return kVisitOddball;
+
+    case MAP_TYPE:
+      return kVisitMap;
+
+    case CODE_TYPE:
+      return kVisitCode;
+
+    case CELL_TYPE:
+      return kVisitCell;
+
+    case PROPERTY_CELL_TYPE:
+      return kVisitPropertyCell;
+
+    case WEAK_CELL_TYPE:
+      return kVisitWeakCell;
+
+    case TRANSITION_ARRAY_TYPE:
+      return kVisitTransitionArray;
+
+    case JS_WEAK_MAP_TYPE:
+    case JS_WEAK_SET_TYPE:
+      return kVisitJSWeakCollection;
+
+    case JS_REGEXP_TYPE:
+      return kVisitJSRegExp;
+
+    case SHARED_FUNCTION_INFO_TYPE:
+      return kVisitSharedFunctionInfo;
+
+    case JS_PROXY_TYPE:
+      return kVisitStruct;
+
+    case SYMBOL_TYPE:
+      return kVisitSymbol;
+
+    case JS_ARRAY_BUFFER_TYPE:
+      return kVisitJSArrayBuffer;
+
+    case SMALL_ORDERED_HASH_MAP_TYPE:
+      return kVisitSmallOrderedHashMap;
+
+    case SMALL_ORDERED_HASH_SET_TYPE:
+      return kVisitSmallOrderedHashSet;
+
+    case JS_OBJECT_TYPE:
+    case JS_ERROR_TYPE:
+    case JS_ARGUMENTS_TYPE:
+    case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE:
+    case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
+    case JS_GENERATOR_OBJECT_TYPE:
+    case JS_ASYNC_GENERATOR_OBJECT_TYPE:
+    case JS_MODULE_NAMESPACE_TYPE:
+    case JS_VALUE_TYPE:
+    case JS_DATE_TYPE:
+    case JS_ARRAY_TYPE:
+    case JS_GLOBAL_PROXY_TYPE:
+    case JS_GLOBAL_OBJECT_TYPE:
+    case JS_MESSAGE_OBJECT_TYPE:
+    case JS_TYPED_ARRAY_TYPE:
+    case JS_DATA_VIEW_TYPE:
+    case JS_SET_TYPE:
+    case JS_MAP_TYPE:
+    case JS_SET_ITERATOR_TYPE:
+    case JS_MAP_ITERATOR_TYPE:
+    case JS_STRING_ITERATOR_TYPE:
+
+    case JS_TYPED_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE:
+    case JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_INT8_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_INT16_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_INT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE:
+    case JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE:
+
+    case JS_PROMISE_CAPABILITY_TYPE:
+    case JS_PROMISE_TYPE:
+    case JS_BOUND_FUNCTION_TYPE:
+      return has_unboxed_fields ? kVisitJSObject : kVisitJSObjectFast;
+    case JS_API_OBJECT_TYPE:
+    case JS_SPECIAL_API_OBJECT_TYPE:
+      return kVisitJSApiObject;
+
+    case JS_FUNCTION_TYPE:
+      return kVisitJSFunction;
+
+    case FILLER_TYPE:
+    case FOREIGN_TYPE:
+    case HEAP_NUMBER_TYPE:
+    case MUTABLE_HEAP_NUMBER_TYPE:
+      return kVisitDataObject;
+
+    case FIXED_UINT8_ARRAY_TYPE:
+    case FIXED_INT8_ARRAY_TYPE:
+    case FIXED_UINT16_ARRAY_TYPE:
+    case FIXED_INT16_ARRAY_TYPE:
+    case FIXED_UINT32_ARRAY_TYPE:
+    case FIXED_INT32_ARRAY_TYPE:
+    case FIXED_FLOAT32_ARRAY_TYPE:
+    case FIXED_UINT8_CLAMPED_ARRAY_TYPE:
+      return kVisitFixedTypedArrayBase;
+
+    case FIXED_FLOAT64_ARRAY_TYPE:
+      return kVisitFixedFloat64Array;
+
+#define MAKE_STRUCT_CASE(NAME, Name, name) case NAME##_TYPE:
+      STRUCT_LIST(MAKE_STRUCT_CASE)
+#undef MAKE_STRUCT_CASE
+      if (instance_type == ALLOCATION_SITE_TYPE) {
+        return kVisitAllocationSite;
+      }
+
+      return kVisitStruct;
+
+    default:
+      UNREACHABLE();
+  }
+}
 
 template <typename Callback>
 Callback VisitorDispatchTable<Callback>::GetVisitor(Map* map) {
   return reinterpret_cast<Callback>(callbacks_[map->visitor_id()]);
-}
-
-
-template <typename StaticVisitor>
-void StaticNewSpaceVisitor<StaticVisitor>::Initialize() {
-  table_.Register(
-      kVisitShortcutCandidate,
-      &FixedBodyVisitor<StaticVisitor, ConsString::BodyDescriptor, int>::Visit);
-
-  table_.Register(
-      kVisitConsString,
-      &FixedBodyVisitor<StaticVisitor, ConsString::BodyDescriptor, int>::Visit);
-
-  table_.Register(
-      kVisitThinString,
-      &FixedBodyVisitor<StaticVisitor, ThinString::BodyDescriptor, int>::Visit);
-
-  table_.Register(kVisitSlicedString,
-                  &FixedBodyVisitor<StaticVisitor, SlicedString::BodyDescriptor,
-                                    int>::Visit);
-
-  table_.Register(
-      kVisitCell,
-      &FixedBodyVisitor<StaticVisitor, Cell::BodyDescriptor, int>::Visit);
-
-  table_.Register(
-      kVisitSymbol,
-      &FixedBodyVisitor<StaticVisitor, Symbol::BodyDescriptor, int>::Visit);
-
-  table_.Register(kVisitFixedArray,
-                  &FlexibleBodyVisitor<StaticVisitor,
-                                       FixedArray::BodyDescriptor, int>::Visit);
-
-  table_.Register(kVisitFixedDoubleArray, &VisitFixedDoubleArray);
-  table_.Register(
-      kVisitFixedTypedArrayBase,
-      &FlexibleBodyVisitor<StaticVisitor, FixedTypedArrayBase::BodyDescriptor,
-                           int>::Visit);
-
-  table_.Register(
-      kVisitFixedFloat64Array,
-      &FlexibleBodyVisitor<StaticVisitor, FixedTypedArrayBase::BodyDescriptor,
-                           int>::Visit);
-
-  table_.Register(
-      kVisitNativeContext,
-      &FixedBodyVisitor<StaticVisitor, Context::BodyDescriptor, int>::Visit);
-
-  table_.Register(kVisitByteArray, &VisitByteArray);
-
-  table_.Register(
-      kVisitSharedFunctionInfo,
-      &FixedBodyVisitor<StaticVisitor, SharedFunctionInfo::BodyDescriptor,
-                        int>::Visit);
-
-  table_.Register(kVisitSeqOneByteString, &VisitSeqOneByteString);
-
-  table_.Register(kVisitSeqTwoByteString, &VisitSeqTwoByteString);
-
-  // Don't visit code entry. We are using this visitor only during scavenges.
-  table_.Register(
-      kVisitJSFunction,
-      &FlexibleBodyVisitor<StaticVisitor, JSFunction::BodyDescriptorWeak,
-                           int>::Visit);
-
-  table_.Register(
-      kVisitJSArrayBuffer,
-      &FlexibleBodyVisitor<StaticVisitor, JSArrayBuffer::BodyDescriptor,
-                           int>::Visit);
-
-  table_.Register(kVisitFreeSpace, &VisitFreeSpace);
-
-  table_.Register(
-      kVisitJSWeakCollection,
-      &FlexibleBodyVisitor<StaticVisitor, JSWeakCollection::BodyDescriptor,
-                           int>::Visit);
-
-  table_.Register(
-      kVisitSmallOrderedHashMap,
-      &FlexibleBodyVisitor<
-          StaticVisitor,
-          SmallOrderedHashTable<SmallOrderedHashMap>::BodyDescriptor,
-          int>::Visit);
-
-  table_.Register(
-      kVisitSmallOrderedHashSet,
-      &FlexibleBodyVisitor<
-          StaticVisitor,
-          SmallOrderedHashTable<SmallOrderedHashSet>::BodyDescriptor,
-          int>::Visit);
-
-  table_.Register(kVisitJSRegExp, &JSObjectVisitor::Visit);
-
-  table_.Register(kVisitDataObject, &DataObjectVisitor::Visit);
-
-  table_.Register(kVisitJSObjectFast, &JSObjectFastVisitor::Visit);
-  table_.Register(kVisitJSObject, &JSObjectVisitor::Visit);
-
-  // Not using specialized Api object visitor for newspace.
-  table_.Register(kVisitJSApiObject, &JSObjectVisitor::Visit);
-
-  table_.Register(kVisitStruct, &StructVisitor::Visit);
-
-  table_.Register(kVisitBytecodeArray, &UnreachableVisitor);
-  table_.Register(kVisitSharedFunctionInfo, &UnreachableVisitor);
 }
 
 template <typename StaticVisitor>
@@ -545,6 +638,11 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit(Map* map,
 }
 
 template <typename ResultType, typename ConcreteVisitor>
+bool HeapVisitor<ResultType, ConcreteVisitor>::ShouldVisitMapPointer() {
+  return true;
+}
+
+template <typename ResultType, typename ConcreteVisitor>
 void HeapVisitor<ResultType, ConcreteVisitor>::VisitMapPointer(
     HeapObject* host, HeapObject** map) {
   static_cast<ConcreteVisitor*>(this)->VisitPointer(
@@ -563,7 +661,8 @@ bool HeapVisitor<ResultType, ConcreteVisitor>::ShouldVisit(HeapObject* object) {
     ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this); \
     if (!visitor->ShouldVisit(object)) return ResultType();         \
     int size = type::BodyDescriptor::SizeOf(map, object);           \
-    visitor->VisitMapPointer(object, object->map_slot());           \
+    if (visitor->ShouldVisitMapPointer())                           \
+      visitor->VisitMapPointer(object, object->map_slot());         \
     type::BodyDescriptor::IterateBody(object, size, visitor);       \
     return static_cast<ResultType>(size);                           \
   }
@@ -576,7 +675,8 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitShortcutCandidate(
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = ConsString::BodyDescriptor::SizeOf(map, object);
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   ConsString::BodyDescriptor::IterateBody(object, size,
                                           static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -588,7 +688,8 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitNativeContext(
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = Context::BodyDescriptor::SizeOf(map, object);
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   Context::BodyDescriptor::IterateBody(object, size,
                                        static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
@@ -600,7 +701,8 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitDataObject(
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = map->instance_size();
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   return static_cast<ResultType>(size);
 }
 
@@ -610,40 +712,65 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSObjectFast(
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = JSObject::FastBodyDescriptor::SizeOf(map, object);
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   JSObject::FastBodyDescriptor::IterateBody(
       object, size, static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
 }
+
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSApiObject(
     Map* map, JSObject* object) {
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = JSObject::BodyDescriptor::SizeOf(map, object);
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   JSObject::BodyDescriptor::IterateBody(object, size,
                                         static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
 }
+
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitStruct(
     Map* map, HeapObject* object) {
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
   int size = map->instance_size();
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   StructBodyDescriptor::IterateBody(object, size,
                                     static_cast<ConcreteVisitor*>(this));
   return static_cast<ResultType>(size);
 }
+
 template <typename ResultType, typename ConcreteVisitor>
 ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitFreeSpace(
     Map* map, FreeSpace* object) {
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   if (!visitor->ShouldVisit(object)) return ResultType();
-  visitor->VisitMapPointer(object, object->map_slot());
+  if (visitor->ShouldVisitMapPointer())
+    visitor->VisitMapPointer(object, object->map_slot());
   return static_cast<ResultType>(FreeSpace::cast(object)->size());
+}
+
+int NewSpaceVisitor::VisitJSFunction(Map* map, JSFunction* object) {
+  int size = JSFunction::BodyDescriptorWeak::SizeOf(map, object);
+  VisitMapPointer(object, object->map_slot());
+  JSFunction::BodyDescriptorWeak::IterateBody(object, size, this);
+  return size;
+}
+
+int NewSpaceVisitor::VisitNativeContext(Map* map, Context* object) {
+  int size = Context::BodyDescriptor::SizeOf(map, object);
+  VisitMapPointer(object, object->map_slot());
+  Context::BodyDescriptor::IterateBody(object, size, this);
+  return size;
+}
+
+int NewSpaceVisitor::VisitJSApiObject(Map* map, JSObject* object) {
+  return VisitJSObject(map, object);
 }
 
 }  // namespace internal

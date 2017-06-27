@@ -200,17 +200,6 @@ VariableProxy::VariableProxy(Variable* var, int start_position)
   BindTo(var);
 }
 
-VariableProxy::VariableProxy(const AstRawString* name,
-                             VariableKind variable_kind, int start_position)
-    : Expression(start_position, kVariableProxy),
-      raw_name_(name),
-      next_unresolved_(nullptr) {
-  bit_field_ |= IsThisField::encode(variable_kind == THIS_VARIABLE) |
-                IsAssignedField::encode(false) |
-                IsResolvedField::encode(false) |
-                HoleCheckModeField::encode(HoleCheckMode::kElided);
-}
-
 VariableProxy::VariableProxy(const VariableProxy* copy_from)
     : Expression(copy_from->position(), kVariableProxy),
       next_unresolved_(nullptr) {
@@ -989,22 +978,6 @@ bool CompareOperation::IsLiteralCompareNull(Expression** expr) {
 
 // ----------------------------------------------------------------------------
 // Recording of type feedback
-
-void SmallMapList::AddMapIfMissing(Handle<Map> map, Zone* zone) {
-  if (!Map::TryUpdate(map).ToHandle(&map)) return;
-  for (int i = 0; i < length(); ++i) {
-    if (at(i).is_identical_to(map)) return;
-  }
-  Add(map, zone);
-}
-
-void SmallMapList::FilterForPossibleTransitions(Map* root_map) {
-  for (int i = list_.length() - 1; i >= 0; i--) {
-    if (at(i)->FindRootMap() != root_map) {
-      list_.RemoveElement(list_.at(i));
-    }
-  }
-}
 
 Handle<Map> SmallMapList::at(int i) const { return Handle<Map>(list_.at(i)); }
 

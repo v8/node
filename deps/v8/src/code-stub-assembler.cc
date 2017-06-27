@@ -1759,11 +1759,25 @@ Node* CodeStubAssembler::AllocateSeqOneByteString(int length,
   return result;
 }
 
+Node* CodeStubAssembler::IsZeroOrFixedArray(Node* object) {
+  Label out(this);
+  VARIABLE(var_result, MachineRepresentation::kWord32, Int32Constant(1));
+
+  GotoIf(WordEqual(object, SmiConstant(Smi::kZero)), &out);
+  GotoIf(IsFixedArray(object), &out);
+
+  var_result.Bind(Int32Constant(0));
+  Goto(&out);
+
+  BIND(&out);
+  return var_result.value();
+}
+
 Node* CodeStubAssembler::AllocateSeqOneByteString(Node* context, Node* length,
                                                   ParameterMode mode,
                                                   AllocationFlags flags) {
   Comment("AllocateSeqOneByteString");
-  CSA_SLOW_ASSERT(this, IsFixedArray(context));
+  CSA_SLOW_ASSERT(this, IsZeroOrFixedArray(context));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(length, mode));
   VARIABLE(var_result, MachineRepresentation::kTagged);
 
@@ -5057,12 +5071,9 @@ void CodeStubAssembler::NumberDictionaryLookup(Node* dictionary,
   Node* capacity = SmiUntag(GetCapacity<Dictionary>(dictionary));
   Node* mask = IntPtrSub(capacity, IntPtrConstant(1));
 
-  Node* int32_seed;
-  if (Dictionary::ShapeT::UsesSeed) {
-    int32_seed = HashSeed();
-  } else {
-    int32_seed = Int32Constant(kZeroHashSeed);
-  }
+  Node* int32_seed = std::is_same<Dictionary, SeededNumberDictionary>::value
+                         ? HashSeed()
+                         : Int32Constant(kZeroHashSeed);
   Node* hash = ChangeUint32ToWord(ComputeIntegerHash(intptr_index, int32_seed));
   Node* key_as_float64 = RoundIntPtrToFloat64(intptr_index);
 

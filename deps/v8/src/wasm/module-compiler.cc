@@ -100,24 +100,16 @@ ModuleCompiler::ModuleCompiler(Isolate* isolate,
   counters_ = counters_shared_.get();
 }
 
-bool ModuleCompiler::GetNextUncompiledFunctionId(size_t* index) {
-  DCHECK_NOT_NULL(index);
-  // - 1 because AtomicIncrement returns the value after the atomic increment.
-  *index = next_unit_.Increment(1) - 1;
-  return *index < compilation_units_.size();
-}
-
 // The actual runnable task that performs compilations in the background.
 ModuleCompiler::CompilationTask::CompilationTask(ModuleCompiler* compiler)
     : CancelableTask(&compiler->background_task_manager_),
       compiler_(compiler) {}
 
 void ModuleCompiler::CompilationTask::RunInternal() {
-  size_t index = 0;
   while (compiler_->executed_units_.CanAcceptWork() &&
-         compiler_->GetNextUncompiledFunctionId(&index)) {
-    compiler_->CompileAndSchedule(index);
+         compiler_->FetchAndExecuteCompilationUnit()) {
   }
+
   compiler_->OnBackgroundTaskStopped();
 }
 
@@ -125,22 +117,6 @@ void ModuleCompiler::OnBackgroundTaskStopped() {
   base::LockGuard<base::Mutex> guard(&tasks_mutex_);
   ++stopped_compilation_tasks_;
   DCHECK_LE(stopped_compilation_tasks_, num_background_tasks_);
-}
-
-void ModuleCompiler::CompileAndSchedule(size_t index) {
-  DisallowHeapAllocation no_allocation;
-  DisallowHandleAllocation no_handles;
-  DisallowHandleDereference no_deref;
-  DisallowCodeDependencyChange no_dependency_change;
-  DCHECK_LT(index, compilation_units_.size());
-
-  std::unique_ptr<compiler::WasmCompilationUnit> unit =
-      std::move(compilation_units_.at(index));
-  unit->ExecuteCompilation();
-  {
-    base::LockGuard<base::Mutex> guard(&result_mutex_);
-    executed_units_.Schedule(std::move(unit));
-  }
 }
 
 // Run by each compilation task The no_finisher_callback is called
@@ -166,7 +142,7 @@ bool ModuleCompiler::FetchAndExecuteCompilationUnit(
   {
     base::LockGuard<base::Mutex> guard(&result_mutex_);
     executed_units_.Schedule(std::move(unit));
-    if (!finisher_is_running_) {
+    if (no_finisher_callback != nullptr && !finisher_is_running_) {
       no_finisher_callback();
       // We set the flag here so that not more than one finisher is started.
       finisher_is_running_ = true;
@@ -277,10 +253,7 @@ void ModuleCompiler::CompileInParallel(ModuleBytesEnv* module_env,
     //      result is enqueued in {executed_units}.
     //      The foreground task bypasses waiting on memory threshold, because
     //      its results will immediately be converted to code (below).
-    size_t index = 0;
-    if (GetNextUncompiledFunctionId(&index)) {
-      CompileAndSchedule(index);
-    }
+    FetchAndExecuteCompilationUnit();
 
     // 3.b) If {executed_units} contains a compilation unit, the main thread
     //      dequeues it and finishes the compilation unit. Compilation units
@@ -328,7 +301,7 @@ void ModuleCompiler::ValidateSequentially(ModuleBytesEnv* module_env,
     if (func.imported) continue;
 
     const byte* base = module_env->wire_bytes.start();
-    FunctionBody body{func.sig, base, base + func.code.offset(),
+    FunctionBody body{func.sig, func.code.offset(), base + func.code.offset(),
                       base + func.code.end_offset()};
     DecodeResult result = VerifyWasmCode(isolate_->allocator(),
                                          module_env->module_env.module, body);
@@ -975,10 +948,8 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   //--------------------------------------------------------------------------
   for (WasmDataSegment& seg : module_->data_segments) {
     uint32_t base = EvalUint32InitExpr(seg.dest_addr);
-    uint32_t mem_size =
-        memory_.is_null()
-            ? 0
-            : static_cast<uint32_t>(memory_->byte_length()->Number());
+    uint32_t mem_size = 0;
+    if (!memory_.is_null()) CHECK(memory_->byte_length()->ToUint32(&mem_size));
     if (!in_bounds(base, seg.source.length(), mem_size)) {
       thrower_->LinkError("data segment is out of bounds");
       return {};

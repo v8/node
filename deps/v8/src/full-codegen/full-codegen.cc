@@ -83,7 +83,7 @@ bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
 bool FullCodeGenerator::MakeCode(CompilationInfo* info, uintptr_t stack_limit) {
   Isolate* isolate = info->isolate();
 
-  DCHECK(!info->shared_info()->must_use_ignition_turbo());
+  DCHECK(!info->shared_info()->must_use_ignition());
   DCHECK(!FLAG_minimal);
   RuntimeCallTimerScope runtimeTimer(isolate,
                                      &RuntimeCallStats::CompileFullCode);
@@ -1357,6 +1357,10 @@ void FullCodeGenerator::VisitRewritableExpression(RewritableExpression* expr) {
   Visit(expr->expression());
 }
 
+void FullCodeGenerator::VisitYieldStar(YieldStar* expr) {
+  // Resumable functions are not supported.
+  UNREACHABLE();
+}
 
 bool FullCodeGenerator::TryLiteralCompare(CompareOperation* expr) {
   Expression* sub_expr;

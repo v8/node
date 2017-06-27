@@ -10,11 +10,11 @@
 #include "src/base/bits.h"
 #include "src/base/platform/condition-variable.h"
 #include "src/cancelable-task.h"
-#include "src/heap/concurrent-marking-deque.h"
 #include "src/heap/marking.h"
 #include "src/heap/sequential-marking-deque.h"
 #include "src/heap/spaces.h"
 #include "src/heap/store-buffer.h"
+#include "src/heap/worklist.h"
 
 namespace v8 {
 namespace internal {
@@ -23,23 +23,15 @@ namespace internal {
 class EvacuationJobTraits;
 class HeapObjectVisitor;
 class ItemParallelJob;
-class LocalWorkStealingBag;
+class WorklistView;
 class MarkCompactCollector;
 class MinorMarkCompactCollector;
 class MarkingVisitor;
 class MigrationObserver;
-template <typename JobTraits>
-class PageParallelJob;
 class RecordMigratedSlotVisitor;
 class ThreadLocalTop;
-class WorkStealingBag;
+class Worklist;
 class YoungGenerationMarkingVisitor;
-
-#ifdef V8_CONCURRENT_MARKING
-using MarkingDeque = ConcurrentMarkingDeque;
-#else
-using MarkingDeque = SequentialMarkingDeque;
-#endif
 
 class ObjectMarking : public AllStatic {
  public:
@@ -292,8 +284,8 @@ class MarkCompactCollectorBase {
   virtual void MarkLiveObjects() = 0;
   // Mark objects reachable (transitively) from objects in the marking
   // stack.
-  virtual void EmptyMarkingDeque() = 0;
-  virtual void ProcessMarkingDeque() = 0;
+  virtual void EmptyMarkingWorklist() = 0;
+  virtual void ProcessMarkingWorklist() = 0;
   // Clear non-live references held in side data structures.
   virtual void ClearNonLiveReferences() = 0;
   virtual void EvacuatePrologue() = 0;
@@ -304,7 +296,7 @@ class MarkCompactCollectorBase {
 
   template <class Evacuator, class Collector>
   void CreateAndExecuteEvacuationTasks(
-      Collector* collector, PageParallelJob<EvacuationJobTraits>* job,
+      Collector* collector, ItemParallelJob* job,
       RecordMigratedSlotVisitor* record_visitor,
       MigrationObserver* migration_observer, const intptr_t live_bytes);
 
@@ -348,13 +340,14 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void CleanupSweepToIteratePages();
 
  private:
+  using MarkingWorklist = WorklistView;
   class RootMarkingVisitorSeedOnly;
   class RootMarkingVisitor;
 
   static const int kNumMarkers = 8;
   static const int kMainMarker = 0;
 
-  inline WorkStealingBag* marking_deque() { return marking_deque_; }
+  inline Worklist* worklist() { return worklist_; }
 
   inline YoungGenerationMarkingVisitor* main_marking_visitor() {
     return main_marking_visitor_;
@@ -362,8 +355,8 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
 
   void MarkLiveObjects() override;
   void MarkRootSetInParallel();
-  void ProcessMarkingDeque() override;
-  void EmptyMarkingDeque() override;
+  void ProcessMarkingWorklist() override;
+  void EmptyMarkingWorklist() override;
   void ClearNonLiveReferences() override;
 
   void EvacuatePrologue() override;
@@ -374,7 +367,7 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
 
   int NumberOfParallelMarkingTasks(int pages);
 
-  WorkStealingBag* marking_deque_;
+  Worklist* worklist_;
   YoungGenerationMarkingVisitor* main_marking_visitor_;
   base::Semaphore page_parallel_job_semaphore_;
   List<Page*> new_space_evacuation_pages_;
@@ -388,6 +381,76 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
 // Collector for young and old generation.
 class MarkCompactCollector final : public MarkCompactCollectorBase {
  public:
+#ifdef V8_CONCURRENT_MARKING
+  // Wrapper for the shared and bailout worklists.
+  class MarkingWorklist {
+   public:
+    static const int kMainThread = 0;
+    // The heap parameter is not used but needed to match the sequential case.
+    explicit MarkingWorklist(Heap* heap) {}
+
+    bool Push(HeapObject* object) { return shared_.Push(kMainThread, object); }
+
+    bool PushBailout(HeapObject* object) {
+      return bailout_.Push(kMainThread, object);
+    }
+
+    HeapObject* Pop() {
+      HeapObject* result;
+      if (bailout_.Pop(kMainThread, &result)) return result;
+      if (shared_.Pop(kMainThread, &result)) return result;
+      return nullptr;
+    }
+
+    void Clear() {
+      bailout_.Clear();
+      shared_.Clear();
+    }
+
+    bool IsFull() { return false; }
+
+    bool IsEmpty() {
+      return bailout_.IsLocalEmpty(kMainThread) &&
+             shared_.IsLocalEmpty(kMainThread) &&
+             bailout_.IsGlobalPoolEmpty() && shared_.IsGlobalPoolEmpty();
+    }
+
+    int Size() {
+      return static_cast<int>(bailout_.LocalSize(kMainThread) +
+                              shared_.LocalSize(kMainThread));
+    }
+
+    // Calls the specified callback on each element of the deques and replaces
+    // the element with the result of the callback. If the callback returns
+    // nullptr then the element is removed from the deque.
+    // The callback must accept HeapObject* and return HeapObject*.
+    template <typename Callback>
+    void Update(Callback callback) {
+      bailout_.Update(callback);
+      shared_.Update(callback);
+    }
+
+    Worklist* shared() { return &shared_; }
+    Worklist* bailout() { return &bailout_; }
+
+    // These empty functions are needed to match the interface
+    // of the sequential marking deque.
+    void SetUp() {}
+    void TearDown() { Clear(); }
+    void StartUsing() {}
+    void StopUsing() {}
+    void ClearOverflowed() {}
+    void SetOverflowed() {}
+    bool overflowed() const { return false; }
+
+   private:
+    Worklist shared_;
+    Worklist bailout_;
+  };
+#else
+  using MarkingWorklist = SequentialMarkingDeque;
+#endif
+
   class RootMarkingVisitor;
 
   class Sweeper {
@@ -541,7 +604,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   bool evacuation() const { return evacuation_; }
 
-  MarkingDeque* marking_deque() { return &marking_deque_; }
+  MarkingWorklist* marking_worklist() { return &marking_worklist_; }
 
   Sweeper& sweeper() { return sweeper_; }
 
@@ -582,10 +645,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   // Note that this assumes live bytes have not yet been counted.
   V8_INLINE void PushBlack(HeapObject* obj);
 
-  // Unshifts a black object into the marking stack and accounts for live bytes.
-  // Note that this assumes lives bytes have already been counted.
-  V8_INLINE void UnshiftBlack(HeapObject* obj);
-
   // Marks the object black and pushes it on the marking stack.
   // This is for non-incremental marking only.
   V8_INLINE void MarkObject(HeapObject* obj);
@@ -597,7 +656,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   // the string table are weak.
   void MarkStringTable(RootMarkingVisitor* visitor);
 
-  void ProcessMarkingDeque() override;
+  void ProcessMarkingWorklist() override;
 
   // Mark objects reachable (transitively) from objects in the marking stack
   // or overflowed in the heap.  This respects references only considered in
@@ -617,15 +676,15 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   // This function empties the marking stack, but may leave overflowed objects
   // in the heap, in which case the marking stack's overflow flag will be set.
-  void EmptyMarkingDeque() override;
+  void EmptyMarkingWorklist() override;
 
   // Refill the marking stack with overflowed objects from the heap.  This
   // function either leaves the marking stack full or clears the overflow
   // flag on the marking stack.
-  void RefillMarkingDeque();
+  void RefillMarkingWorklist();
 
   // Helper methods for refilling the marking stack by discovering grey objects
-  // on various pages of the heap. Used by {RefillMarkingDeque} only.
+  // on various pages of the heap. Used by {RefillMarkingWorklist} only.
   template <class T>
   void DiscoverGreyObjectsWithIterator(T* it);
   void DiscoverGreyObjectsOnPage(MemoryChunk* p);
@@ -715,7 +774,7 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   bool have_code_to_deoptimize_;
 
-  MarkingDeque marking_deque_;
+  MarkingWorklist marking_worklist_;
 
   // Candidates for pages that should be evacuated.
   List<Page*> evacuation_candidates_;

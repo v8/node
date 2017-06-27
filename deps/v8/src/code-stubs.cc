@@ -739,12 +739,6 @@ void JSEntryStub::FinishCode(Handle<Code> code) {
   code->set_handler_table(*handler_table);
 }
 
-void TransitionElementsKindStub::InitializeDescriptor(
-    CodeStubDescriptor* descriptor) {
-  descriptor->Initialize(
-      Runtime::FunctionForId(Runtime::kTransitionElementsKind)->entry);
-}
-
 
 void AllocateHeapNumberStub::InitializeDescriptor(
     CodeStubDescriptor* descriptor) {
@@ -870,14 +864,6 @@ void StoreFastElementStub::GenerateAheadOfTime(Isolate* isolate) {
     StoreFastElementStub(isolate, true, kind, STORE_AND_GROW_NO_TRANSITION)
         .GetCode();
   }
-}
-
-
-void StubFailureTrampolineStub::GenerateAheadOfTime(Isolate* isolate) {
-  StubFailureTrampolineStub stub1(isolate, NOT_JS_FUNCTION_STUB_MODE);
-  StubFailureTrampolineStub stub2(isolate, JS_FUNCTION_STUB_MODE);
-  stub1.GetCode();
-  stub2.GetCode();
 }
 
 

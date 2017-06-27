@@ -2402,6 +2402,8 @@ FixedArrayBase* Map::GetInitialElements() {
     result = GetHeap()->empty_sloppy_arguments_elements();
   } else if (has_fixed_typed_array_elements()) {
     result = GetHeap()->EmptyFixedTypedArrayForMap(this);
+  } else if (has_dictionary_elements()) {
+    result = GetHeap()->empty_slow_element_dictionary();
   } else {
     UNREACHABLE();
   }
@@ -2603,7 +2605,7 @@ int HashTable<Derived, Shape>::FindEntry(Key key) {
 
 template <typename Derived, typename Shape>
 int HashTable<Derived, Shape>::FindEntry(Isolate* isolate, Key key) {
-  return FindEntry(isolate, key, HashTable::Hash(key));
+  return FindEntry(isolate, key, Shape::Hash(isolate, key));
 }
 
 // Find entry for key otherwise return kNotFound.
@@ -2630,16 +2632,6 @@ int HashTable<Derived, Shape>::FindEntry(Isolate* isolate, Key key,
   return kNotFound;
 }
 
-template <typename Derived, typename Shape>
-bool HashTable<Derived, Shape>::Has(Key key) {
-  return FindEntry(key) != kNotFound;
-}
-
-template <typename Derived, typename Shape>
-bool HashTable<Derived, Shape>::Has(Isolate* isolate, Key key) {
-  return FindEntry(isolate, key) != kNotFound;
-}
-
 bool ObjectHashSet::Has(Isolate* isolate, Handle<Object> key, int32_t hash) {
   return FindEntry(isolate, key, hash) != kNotFound;
 }
@@ -2655,9 +2647,11 @@ bool StringSetShape::IsMatch(String* key, Object* value) {
   return key->Equals(String::cast(value));
 }
 
-uint32_t StringSetShape::Hash(String* key) { return key->Hash(); }
+uint32_t StringSetShape::Hash(Isolate* isolate, String* key) {
+  return key->Hash();
+}
 
-uint32_t StringSetShape::HashForObject(Object* object) {
+uint32_t StringSetShape::HashForObject(Isolate* isolate, Object* object) {
   return String::cast(object)->Hash();
 }
 
@@ -2674,7 +2668,7 @@ Handle<Object> StringTableShape::AsHandle(Isolate* isolate,
   return key->AsHandle(isolate);
 }
 
-uint32_t StringTableShape::HashForObject(Object* object) {
+uint32_t StringTableShape::HashForObject(Isolate* isolate, Object* object) {
   return String::cast(object)->Hash();
 }
 
@@ -6041,51 +6035,22 @@ bool AccessorPair::IsJSAccessor(Object* obj) {
 }
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::SetEntry(int entry, Handle<Object> key,
-                                          Handle<Object> value) {
-  this->SetEntry(entry, key, value, PropertyDetails(Smi::kZero));
+void Dictionary<Derived, Shape>::ClearEntry(int entry) {
+  Object* the_hole = this->GetHeap()->the_hole_value();
+  SetEntry(entry, the_hole, the_hole, PropertyDetails::Empty());
 }
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::SetEntry(int entry, Handle<Object> key,
-                                          Handle<Object> value,
+void Dictionary<Derived, Shape>::SetEntry(int entry, Object* key, Object* value,
                                           PropertyDetails details) {
-  Shape::SetEntry(static_cast<Derived*>(this), entry, key, value, details);
-}
-
-
-template <typename Key>
-template <typename Dictionary>
-void BaseDictionaryShape<Key>::SetEntry(Dictionary* dict, int entry,
-                                        Handle<Object> key,
-                                        Handle<Object> value,
-                                        PropertyDetails details) {
   STATIC_ASSERT(Dictionary::kEntrySize == 2 || Dictionary::kEntrySize == 3);
   DCHECK(!key->IsName() || details.dictionary_index() > 0);
-  int index = dict->EntryToIndex(entry);
+  int index = DerivedHashTable::EntryToIndex(entry);
   DisallowHeapAllocation no_gc;
-  WriteBarrierMode mode = dict->GetWriteBarrierMode(no_gc);
-  dict->set(index + Dictionary::kEntryKeyIndex, *key, mode);
-  dict->set(index + Dictionary::kEntryValueIndex, *value, mode);
-  if (Dictionary::kEntrySize == 3) {
-    dict->set(index + Dictionary::kEntryDetailsIndex, details.AsSmi());
-  }
-}
-
-
-template <typename Dictionary>
-void GlobalDictionaryShape::SetEntry(Dictionary* dict, int entry,
-                                     Handle<Object> key, Handle<Object> value,
-                                     PropertyDetails details) {
-  STATIC_ASSERT(Dictionary::kEntrySize == 2);
-  DCHECK(!key->IsName() || details.dictionary_index() > 0);
-  DCHECK(value->IsPropertyCell());
-  int index = dict->EntryToIndex(entry);
-  DisallowHeapAllocation no_gc;
-  WriteBarrierMode mode = dict->GetWriteBarrierMode(no_gc);
-  dict->set(index + Dictionary::kEntryKeyIndex, *key, mode);
-  dict->set(index + Dictionary::kEntryValueIndex, *value, mode);
-  PropertyCell::cast(*value)->set_property_details(details);
+  WriteBarrierMode mode = this->GetWriteBarrierMode(no_gc);
+  this->set(index + Derived::kEntryKeyIndex, key, mode);
+  this->set(index + Derived::kEntryValueIndex, value, mode);
+  if (Shape::kHasDetails) DetailsAtPut(entry, details);
 }
 
 
@@ -6094,12 +6059,12 @@ bool NumberDictionaryShape::IsMatch(uint32_t key, Object* other) {
   return key == static_cast<uint32_t>(other->Number());
 }
 
-
-uint32_t UnseededNumberDictionaryShape::Hash(uint32_t key) {
+uint32_t UnseededNumberDictionaryShape::Hash(Isolate* isolate, uint32_t key) {
   return ComputeIntegerHash(key, 0);
 }
 
-uint32_t UnseededNumberDictionaryShape::HashForObject(Object* other) {
+uint32_t UnseededNumberDictionaryShape::HashForObject(Isolate* isolate,
+                                                      Object* other) {
   DCHECK(other->IsNumber());
   return ComputeIntegerHash(static_cast<uint32_t>(other->Number()), 0);
 }
@@ -6108,14 +6073,15 @@ Map* UnseededNumberDictionaryShape::GetMap(Isolate* isolate) {
   return isolate->heap()->unseeded_number_dictionary_map();
 }
 
-uint32_t SeededNumberDictionaryShape::SeededHash(uint32_t key, uint32_t seed) {
-  return ComputeIntegerHash(key, seed);
+uint32_t SeededNumberDictionaryShape::Hash(Isolate* isolate, uint32_t key) {
+  return ComputeIntegerHash(key, isolate->heap()->HashSeed());
 }
 
-uint32_t SeededNumberDictionaryShape::SeededHashForObject(uint32_t seed,
-                                                          Object* other) {
+uint32_t SeededNumberDictionaryShape::HashForObject(Isolate* isolate,
+                                                    Object* other) {
   DCHECK(other->IsNumber());
-  return ComputeIntegerHash(static_cast<uint32_t>(other->Number()), seed);
+  return ComputeIntegerHash(static_cast<uint32_t>(other->Number()),
+                            isolate->heap()->HashSeed());
 }
 
 
@@ -6131,12 +6097,11 @@ bool NameDictionaryShape::IsMatch(Handle<Name> key, Object* other) {
   return *key == other;
 }
 
-
-uint32_t NameDictionaryShape::Hash(Handle<Name> key) {
+uint32_t NameDictionaryShape::Hash(Isolate* isolate, Handle<Name> key) {
   return key->Hash();
 }
 
-uint32_t NameDictionaryShape::HashForObject(Object* other) {
+uint32_t NameDictionaryShape::HashForObject(Isolate* isolate, Object* other) {
   return Name::cast(other)->Hash();
 }
 
@@ -6150,7 +6115,7 @@ Handle<Object> NameDictionaryShape::AsHandle(Isolate* isolate,
 
 template <typename Dictionary>
 PropertyDetails GlobalDictionaryShape::DetailsAt(Dictionary* dict, int entry) {
-  DCHECK(entry >= 0);  // Not found is -1, which is not caught by get().
+  DCHECK_LE(0, entry);  // Not found is -1, which is not caught by get().
   Object* raw_value = dict->ValueAt(entry);
   DCHECK(raw_value->IsPropertyCell());
   PropertyCell* cell = PropertyCell::cast(raw_value);
@@ -6161,17 +6126,14 @@ PropertyDetails GlobalDictionaryShape::DetailsAt(Dictionary* dict, int entry) {
 template <typename Dictionary>
 void GlobalDictionaryShape::DetailsAtPut(Dictionary* dict, int entry,
                                          PropertyDetails value) {
-  DCHECK(entry >= 0);  // Not found is -1, which is not caught by get().
-  Object* raw_value = dict->ValueAt(entry);
-  DCHECK(raw_value->IsPropertyCell());
-  PropertyCell* cell = PropertyCell::cast(raw_value);
+  DCHECK_LE(0, entry);  // Not found is -1, which is not caught by get().
+  PropertyCell* cell = PropertyCell::cast(dict->ValueAt(entry));
   if (cell->property_details().IsReadOnly() != value.IsReadOnly()) {
     cell->dependent_code()->DeoptimizeDependentCodeGroup(
         cell->GetIsolate(), DependentCode::kPropertyCellChangedGroup);
   }
   cell->set_property_details(value);
 }
-
 
 template <typename Dictionary>
 bool GlobalDictionaryShape::IsDeleted(Dictionary* dict, int entry) {
@@ -6185,12 +6147,11 @@ bool ObjectHashTableShape::IsMatch(Handle<Object> key, Object* other) {
   return key->SameValue(other);
 }
 
-
-uint32_t ObjectHashTableShape::Hash(Handle<Object> key) {
+uint32_t ObjectHashTableShape::Hash(Isolate* isolate, Handle<Object> key) {
   return Smi::cast(key->GetHash())->value();
 }
 
-uint32_t ObjectHashTableShape::HashForObject(Object* other) {
+uint32_t ObjectHashTableShape::HashForObject(Isolate* isolate, Object* other) {
   return Smi::cast(other->GetHash())->value();
 }
 
@@ -6211,9 +6172,9 @@ bool WeakHashTableShape<entrysize>::IsMatch(Handle<Object> key, Object* other) {
                            : *key == other;
 }
 
-
 template <int entrysize>
-uint32_t WeakHashTableShape<entrysize>::Hash(Handle<Object> key) {
+uint32_t WeakHashTableShape<entrysize>::Hash(Isolate* isolate,
+                                             Handle<Object> key) {
   intptr_t hash =
       key->IsWeakCell()
           ? reinterpret_cast<intptr_t>(WeakCell::cast(*key)->value())
@@ -6222,7 +6183,8 @@ uint32_t WeakHashTableShape<entrysize>::Hash(Handle<Object> key) {
 }
 
 template <int entrysize>
-uint32_t WeakHashTableShape<entrysize>::HashForObject(Object* other) {
+uint32_t WeakHashTableShape<entrysize>::HashForObject(Isolate* isolate,
+                                                      Object* other) {
   if (other->IsWeakCell()) other = WeakCell::cast(other)->value();
   intptr_t hash = reinterpret_cast<intptr_t>(other);
   return (uint32_t)(hash & 0xFFFFFFFF);

@@ -48,19 +48,11 @@ class Node;
   V(StoreSlowElement)                         \
   V(SubString)                                \
   V(NameDictionaryLookup)                     \
-  /* This can be removed once there are no */ \
-  /* more deopting Hydrogen stubs. */         \
-  V(StubFailureTrampoline)                    \
   /* These are only called from FCG */        \
   /* They can be removed when only the TF  */ \
   /* version of the corresponding stub is  */ \
   /* used universally */                      \
   V(CallICTrampoline)                         \
-  /* --- HydrogenCodeStubs --- */             \
-  /* These should never be ported to TF */    \
-  /* because they are either used only by */  \
-  /* FCG/Crankshaft or are deprecated */      \
-  V(TransitionElementsKind)                   \
   /* --- TurboFanCodeStubs --- */             \
   V(AllocateHeapNumber)                       \
   V(ArrayNoArgumentConstructor)               \
@@ -322,12 +314,6 @@ class CodeStub BASE_EMBEDDED {
   DEFINE_CODE_STUB(NAME, SUPER)
 
 
-#define DEFINE_HYDROGEN_CODE_STUB(NAME, SUPER)                        \
- public:                                                              \
-  void InitializeDescriptor(CodeStubDescriptor* descriptor) override; \
-  Handle<Code> GenerateCode() override;                               \
-  DEFINE_CODE_STUB(NAME, SUPER)
-
 #define DEFINE_TURBOFAN_CODE_STUB(NAME, SUPER)                               \
  public:                                                                     \
   void GenerateAssembly(compiler::CodeAssemblerState* state) const override; \
@@ -465,56 +451,6 @@ class CodeStubDescriptor {
   ExternalReference miss_handler_;
   Runtime::FunctionId miss_handler_id_;
   bool has_miss_handler_;
-};
-
-
-class HydrogenCodeStub : public CodeStub {
- public:
-  enum InitializationState {
-    UNINITIALIZED,
-    INITIALIZED
-  };
-
-  template<class SubClass>
-  static Handle<Code> GetUninitialized(Isolate* isolate) {
-    SubClass::GenerateAheadOfTime(isolate);
-    return SubClass().GetCode(isolate);
-  }
-
-  // Retrieve the code for the stub. Generate the code if needed.
-  Handle<Code> GenerateCode() override = 0;
-
-  bool IsUninitialized() const { return IsMissBits::decode(minor_key_); }
-
-  Handle<Code> GenerateLightweightMissCode(ExternalReference miss);
-
-  Handle<Code> GenerateRuntimeTailCall(CodeStubDescriptor* descriptor);
-
-  template<class StateType>
-  void TraceTransition(StateType from, StateType to);
-
- protected:
-  explicit HydrogenCodeStub(Isolate* isolate,
-                            InitializationState state = INITIALIZED)
-      : CodeStub(isolate) {
-    minor_key_ = IsMissBits::encode(state == UNINITIALIZED);
-  }
-
-  void set_sub_minor_key(uint32_t key) {
-    minor_key_ = SubMinorKeyBits::update(minor_key_, key);
-  }
-
-  uint32_t sub_minor_key() const { return SubMinorKeyBits::decode(minor_key_); }
-
-  static const int kSubMinorKeyBits = kStubMinorKeyBits - 1;
-
- private:
-  class IsMissBits : public BitField<bool, kSubMinorKeyBits, 1> {};
-  class SubMinorKeyBits : public BitField<int, 0, kSubMinorKeyBits> {};
-
-  void GenerateLightweightMiss(MacroAssembler* masm, ExternalReference miss);
-
-  DEFINE_CODE_STUB_BASE(HydrogenCodeStub, CodeStub);
 };
 
 
@@ -1266,29 +1202,6 @@ class StoreFastElementStub : public TurboFanCodeStub {
 };
 
 
-class TransitionElementsKindStub : public HydrogenCodeStub {
- public:
-  TransitionElementsKindStub(Isolate* isolate, ElementsKind from_kind,
-                             ElementsKind to_kind)
-      : HydrogenCodeStub(isolate) {
-    set_sub_minor_key(FromKindBits::encode(from_kind) |
-                      ToKindBits::encode(to_kind));
-  }
-
-  ElementsKind from_kind() const {
-    return FromKindBits::decode(sub_minor_key());
-  }
-
-  ElementsKind to_kind() const { return ToKindBits::decode(sub_minor_key()); }
-
- private:
-  class FromKindBits: public BitField<ElementsKind, 8, 8> {};
-  class ToKindBits: public BitField<ElementsKind, 0, 8> {};
-
-  DEFINE_CALL_INTERFACE_DESCRIPTOR(TransitionElementsKind);
-  DEFINE_HYDROGEN_CODE_STUB(TransitionElementsKind, HydrogenCodeStub);
-};
-
 class AllocateHeapNumberStub : public TurboFanCodeStub {
  public:
   explicit AllocateHeapNumberStub(Isolate* isolate)
@@ -1468,27 +1381,6 @@ class ElementsTransitionAndStoreStub : public TurboFanCodeStub {
 };
 
 
-class StubFailureTrampolineStub : public PlatformCodeStub {
- public:
-  StubFailureTrampolineStub(Isolate* isolate, StubFunctionMode function_mode)
-      : PlatformCodeStub(isolate) {
-    minor_key_ = FunctionModeField::encode(function_mode);
-  }
-
-  static void GenerateAheadOfTime(Isolate* isolate);
-
- private:
-  StubFunctionMode function_mode() const {
-    return FunctionModeField::decode(minor_key_);
-  }
-
-  class FunctionModeField : public BitField<StubFunctionMode, 0, 1> {};
-
-  DEFINE_NULL_CALL_INTERFACE_DESCRIPTOR();
-  DEFINE_PLATFORM_CODE_STUB(StubFailureTrampoline, PlatformCodeStub);
-};
-
-
 class ProfileEntryHookStub : public PlatformCodeStub {
  public:
   explicit ProfileEntryHookStub(Isolate* isolate) : PlatformCodeStub(isolate) {}
@@ -1542,7 +1434,6 @@ class SubStringStub : public TurboFanCodeStub {
 #undef DEFINE_CALL_INTERFACE_DESCRIPTOR
 #undef DEFINE_PLATFORM_CODE_STUB
 #undef DEFINE_HANDLER_CODE_STUB
-#undef DEFINE_HYDROGEN_CODE_STUB
 #undef DEFINE_CODE_STUB
 #undef DEFINE_CODE_STUB_BASE
 

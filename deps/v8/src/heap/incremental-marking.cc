@@ -33,7 +33,7 @@ void IncrementalMarking::Observer::Step(int bytes_allocated, Address, size_t) {
 
 IncrementalMarking::IncrementalMarking(Heap* heap)
     : heap_(heap),
-      marking_deque_(nullptr),
+      marking_worklist_(nullptr),
       initial_old_generation_size_(0),
       bytes_marked_ahead_of_schedule_(0),
       unscanned_bytes_of_large_object_(0),
@@ -132,7 +132,7 @@ void IncrementalMarking::RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo,
 
 bool IncrementalMarking::WhiteToGreyAndPush(HeapObject* obj) {
   if (ObjectMarking::WhiteToGrey<kAtomicity>(obj, marking_state(obj))) {
-    marking_deque()->Push(obj);
+    marking_worklist()->Push(obj);
     return true;
   }
   return false;
@@ -143,9 +143,9 @@ void IncrementalMarking::MarkBlackAndPush(HeapObject* obj) {
   ObjectMarking::WhiteToGrey<kAtomicity>(obj, marking_state(obj));
   if (ObjectMarking::GreyToBlack<kAtomicity>(obj, marking_state(obj))) {
 #ifdef V8_CONCURRENT_MARKING
-    marking_deque()->Push(obj, MarkingThread::kMain, TargetDeque::kBailout);
+    marking_worklist()->PushBailout(obj);
 #else
-    if (!marking_deque()->Push(obj)) {
+    if (!marking_worklist()->Push(obj)) {
       ObjectMarking::BlackToGrey<kAtomicity>(obj, marking_state(obj));
     }
 #endif
@@ -208,7 +208,7 @@ void IncrementalMarking::NotifyLeftTrimming(HeapObject* from, HeapObject* to) {
       DCHECK(success);
       USE(success);
     }
-    marking_deque()->Push(to);
+    marking_worklist()->Push(to);
     RestartIfNotMarking();
   }
 }
@@ -237,29 +237,33 @@ class IncrementalMarkingMarkingVisitor
       int object_size = FixedArray::BodyDescriptor::SizeOf(map, object);
       int start_offset =
           Max(FixedArray::BodyDescriptor::kStartOffset, chunk->progress_bar());
-      int end_offset =
-          Min(object_size, start_offset + kProgressBarScanningChunk);
-      int already_scanned_offset = start_offset;
-      bool scan_until_end = false;
-      do {
-        VisitPointers(heap, object, HeapObject::RawField(object, start_offset),
-                      HeapObject::RawField(object, end_offset));
-        start_offset = end_offset;
-        end_offset = Min(object_size, end_offset + kProgressBarScanningChunk);
-        scan_until_end = heap->incremental_marking()->marking_deque()->IsFull();
-      } while (scan_until_end && start_offset < object_size);
-      chunk->set_progress_bar(start_offset);
       if (start_offset < object_size) {
         if (ObjectMarking::IsGrey<IncrementalMarking::kAtomicity>(
                 object, heap->incremental_marking()->marking_state(object))) {
-          heap->incremental_marking()->marking_deque()->Unshift(object);
+          heap->incremental_marking()->marking_worklist()->Push(object);
         } else {
           DCHECK(ObjectMarking::IsBlack<IncrementalMarking::kAtomicity>(
               object, heap->incremental_marking()->marking_state(object)));
-          heap->mark_compact_collector()->UnshiftBlack(object);
+          heap->mark_compact_collector()->PushBlack(object);
         }
-        heap->incremental_marking()->NotifyIncompleteScanOfObject(
-            object_size - (start_offset - already_scanned_offset));
+        int end_offset =
+            Min(object_size, start_offset + kProgressBarScanningChunk);
+        int already_scanned_offset = start_offset;
+        bool scan_until_end = false;
+        do {
+          VisitPointers(heap, object,
+                        HeapObject::RawField(object, start_offset),
+                        HeapObject::RawField(object, end_offset));
+          start_offset = end_offset;
+          end_offset = Min(object_size, end_offset + kProgressBarScanningChunk);
+          scan_until_end =
+              heap->incremental_marking()->marking_worklist()->IsFull();
+        } while (scan_until_end && start_offset < object_size);
+        chunk->set_progress_bar(start_offset);
+        if (start_offset < object_size) {
+          heap->incremental_marking()->NotifyIncompleteScanOfObject(
+              object_size - (start_offset - already_scanned_offset));
+        }
       }
     } else {
       FixedArrayVisitor::Visit(map, object);
@@ -571,7 +575,7 @@ void IncrementalMarking::StartMarking() {
 
   PatchIncrementalMarkingRecordWriteStubs(heap_, mode);
 
-  marking_deque()->StartUsing();
+  marking_worklist()->StartUsing();
 
   ActivateIncrementalWriteBarrier();
 
@@ -782,7 +786,7 @@ void IncrementalMarking::FinalizeIncrementally() {
   ProcessWeakCells();
 
   int marking_progress =
-      heap_->mark_compact_collector()->marking_deque()->Size() +
+      heap_->mark_compact_collector()->marking_worklist()->Size() +
       static_cast<int>(
           heap_->local_embedder_heap_tracer()->NumberOfCachedWrappersToTrace());
 
@@ -812,13 +816,13 @@ void IncrementalMarking::FinalizeIncrementally() {
   }
 }
 
-
-void IncrementalMarking::UpdateMarkingDequeAfterScavenge() {
+void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
   if (!IsMarking()) return;
 
   Map* filler_map = heap_->one_pointer_filler_map();
 
-  marking_deque()->Update([this, filler_map](HeapObject* obj) -> HeapObject* {
+  marking_worklist()->Update([this,
+                              filler_map](HeapObject* obj) -> HeapObject* {
     DCHECK(obj->IsHeapObject());
     // Only pointers to from space have to be updated.
     if (heap_->InFromSpace(obj)) {
@@ -908,11 +912,11 @@ void IncrementalMarking::RevisitObject(HeapObject* obj) {
   IncrementalMarkingMarkingVisitor::IterateBody(map, obj);
 }
 
-intptr_t IncrementalMarking::ProcessMarkingDeque(
+intptr_t IncrementalMarking::ProcessMarkingWorklist(
     intptr_t bytes_to_process, ForceCompletionAction completion) {
   intptr_t bytes_processed = 0;
   while (bytes_processed < bytes_to_process || completion == FORCE_COMPLETION) {
-    HeapObject* obj = marking_deque()->Pop();
+    HeapObject* obj = marking_worklist()->Pop();
     if (obj == nullptr) break;
     // Left trimming may result in white, grey, or black filler objects on the
     // marking deque. Ignore these objects.
@@ -942,7 +946,7 @@ void IncrementalMarking::Hurry() {
   // forced e.g. in tests. It should not happen when COMPLETE was set when
   // incremental marking finished and a regular GC was triggered after that
   // because should_hurry_ will force a full GC.
-  if (!marking_deque()->IsEmpty()) {
+  if (!marking_worklist()->IsEmpty()) {
     double start = 0.0;
     if (FLAG_trace_incremental_marking) {
       start = heap_->MonotonicallyIncreasingTimeInMs();
@@ -952,7 +956,7 @@ void IncrementalMarking::Hurry() {
     }
     // TODO(gc) hurry can mark objects it encounters black as mutator
     // was stopped.
-    ProcessMarkingDeque(0, FORCE_COMPLETION);
+    ProcessMarkingWorklist(0, FORCE_COMPLETION);
     state_ = COMPLETE;
     if (FLAG_trace_incremental_marking) {
       double end = heap_->MonotonicallyIncreasingTimeInMs();
@@ -1104,7 +1108,7 @@ double IncrementalMarking::AdvanceIncrementalMarking(
     remaining_time_in_ms =
         deadline_in_ms - heap()->MonotonicallyIncreasingTimeInMs();
   } while (remaining_time_in_ms >= kStepSizeInMs && !IsComplete() &&
-           !marking_deque()->IsEmpty());
+           !marking_worklist()->IsEmpty());
   return remaining_time_in_ms;
 }
 
@@ -1201,12 +1205,12 @@ size_t IncrementalMarking::Step(size_t bytes_to_process,
 
   size_t bytes_processed = 0;
   if (state_ == MARKING) {
-    bytes_processed = ProcessMarkingDeque(bytes_to_process);
+    bytes_processed = ProcessMarkingWorklist(bytes_to_process);
     if (step_origin == StepOrigin::kTask) {
       bytes_marked_ahead_of_schedule_ += bytes_processed;
     }
 
-    if (marking_deque()->IsEmpty()) {
+    if (marking_worklist()->IsEmpty()) {
       if (heap_->local_embedder_heap_tracer()
               ->ShouldFinalizeIncrementalMarking()) {
         if (completion == FORCE_COMPLETION ||
@@ -1220,7 +1224,7 @@ size_t IncrementalMarking::Step(size_t bytes_to_process,
           IncrementIdleMarkingDelayCounter();
         }
       } else {
-        heap_->local_embedder_heap_tracer()->NotifyV8MarkingDequeWasEmpty();
+        heap_->local_embedder_heap_tracer()->NotifyV8MarkingWorklistWasEmpty();
       }
     }
   }

@@ -1536,7 +1536,7 @@ void Heap::MarkCompactEpilogue() {
   PreprocessStackTraces();
   DCHECK(incremental_marking()->IsStopped());
 
-  mark_compact_collector()->marking_deque()->StopUsing();
+  mark_compact_collector()->marking_worklist()->StopUsing();
 }
 
 
@@ -1790,7 +1790,7 @@ void Heap::Scavenge() {
 
   promotion_queue_.Destroy();
 
-  incremental_marking()->UpdateMarkingDequeAfterScavenge();
+  incremental_marking()->UpdateMarkingWorklistAfterScavenge();
 
   ScavengeWeakObjectRetainer weak_object_retainer(this);
   ProcessYoungWeakReferences(&weak_object_retainer);
@@ -1992,6 +1992,7 @@ void Heap::VisitExternalResources(v8::ExternalResourceVisitor* visitor) {
 }
 
 Address Heap::DoScavenge(Address new_space_front) {
+  ScavengeVisitor scavenge_visitor(this);
   do {
     SemiSpace::AssertValidRange(new_space_front, new_space_->top());
     // The addresses new_space_front and new_space_.top() define a
@@ -2000,8 +2001,7 @@ Address Heap::DoScavenge(Address new_space_front) {
     while (new_space_front != new_space_->top()) {
       if (!Page::IsAlignedToPageSize(new_space_front)) {
         HeapObject* object = HeapObject::FromAddress(new_space_front);
-        new_space_front +=
-            StaticScavengeVisitor::IterateBody(object->map(), object);
+        new_space_front += scavenge_visitor.Visit(object);
       } else {
         new_space_front = Page::FromAllocationAreaAddress(new_space_front)
                               ->next_page()
@@ -4028,11 +4028,6 @@ AllocationResult Heap::AllocateFixedArrayWithFiller(int length,
 }
 
 
-AllocationResult Heap::AllocateFixedArray(int length, PretenureFlag pretenure) {
-  return AllocateFixedArrayWithFiller(length, pretenure, undefined_value());
-}
-
-
 AllocationResult Heap::AllocateUninitializedFixedArray(int length) {
   if (length == 0) return empty_fixed_array();
 
@@ -4254,11 +4249,11 @@ void Heap::FinalizeIncrementalMarkingIfComplete(
   if (incremental_marking()->IsMarking() &&
       (incremental_marking()->IsReadyToOverApproximateWeakClosure() ||
        (!incremental_marking()->finalize_marking_completed() &&
-        mark_compact_collector()->marking_deque()->IsEmpty() &&
+        mark_compact_collector()->marking_worklist()->IsEmpty() &&
         local_embedder_heap_tracer()->ShouldFinalizeIncrementalMarking()))) {
     FinalizeIncrementalMarking(gc_reason);
   } else if (incremental_marking()->IsComplete() ||
-             (mark_compact_collector()->marking_deque()->IsEmpty() &&
+             (mark_compact_collector()->marking_worklist()->IsEmpty() &&
               local_embedder_heap_tracer()
                   ->ShouldFinalizeIncrementalMarking())) {
     CollectAllGarbage(current_gc_flags_, gc_reason, current_gc_callback_flags_);
@@ -5684,7 +5679,6 @@ V8_DECLARE_ONCE(initialize_gc_once);
 
 static void InitializeGCOnce() {
   Scavenger::Initialize();
-  StaticScavengeVisitor::Initialize();
   MarkCompactCollector::Initialize();
 }
 
@@ -5761,13 +5755,15 @@ bool Heap::SetUp() {
   tracer_ = new GCTracer(this);
   scavenge_collector_ = new Scavenger(this);
   mark_compact_collector_ = new MarkCompactCollector(this);
-  incremental_marking_->set_marking_deque(
-      mark_compact_collector_->marking_deque());
+  incremental_marking_->set_marking_worklist(
+      mark_compact_collector_->marking_worklist());
 #ifdef V8_CONCURRENT_MARKING
-  concurrent_marking_ =
-      new ConcurrentMarking(this, mark_compact_collector_->marking_deque());
+  MarkCompactCollector::MarkingWorklist* marking_worklist =
+      mark_compact_collector_->marking_worklist();
+  concurrent_marking_ = new ConcurrentMarking(this, marking_worklist->shared(),
+                                              marking_worklist->bailout());
 #else
-  concurrent_marking_ = new ConcurrentMarking(this, nullptr);
+  concurrent_marking_ = new ConcurrentMarking(this, nullptr, nullptr);
 #endif
   minor_mark_compact_collector_ = new MinorMarkCompactCollector(this);
   gc_idle_time_handler_ = new GCIdleTimeHandler();
