@@ -36,7 +36,7 @@
     ],
     'xcode_settings': {
       'GCC_SYMBOLS_PRIVATE_EXTERN': 'YES',  # -fvisibility=hidden
-      'WARNING_CFLAGS': [ '-Wall', '-Wextra', '-Wno-unused-parameter', '-Wstrict-prototypes' ],
+      'WARNING_CFLAGS': [ '-Wall', '-Wextra', '-Wno-unused-parameter' ],
       'OTHER_CFLAGS': [ '-g', '--std=gnu89', '-pedantic' ],
     }
   },
@@ -210,7 +210,6 @@
             '-Wall',
             '-Wextra',
             '-Wno-unused-parameter',
-            '-Wstrict-prototypes',
           ],
         }],
         [ 'OS in "mac ios"', {
@@ -237,9 +236,6 @@
             'src/unix/linux-inotify.c',
             'src/unix/linux-syscalls.c',
             'src/unix/linux-syscalls.h',
-            'src/unix/procfs-exepath.c',
-            'src/unix/sysinfo-loadavg.c',
-            'src/unix/sysinfo-memory.c',
           ],
           'link_settings': {
             'libraries': [ '-ldl', '-lrt' ],
@@ -254,19 +250,13 @@
             'src/unix/pthread-fixes.c',
             'src/unix/android-ifaddrs.c',
             'src/unix/pthread-barrier.c'
-            'src/unix/procfs-exepath.c',
-            'src/unix/sysinfo-loadavg.c',
-            'src/unix/sysinfo-memory.c',
           ],
           'link_settings': {
             'libraries': [ '-ldl' ],
           },
         }],
         [ 'OS=="solaris"', {
-          'sources': [
-            'src/unix/no-proctitle.c',
-            'src/unix/sunos.c',
-          ],
+          'sources': [ 'src/unix/sunos.c' ],
           'defines': [
             '__EXTENSIONS__',
             '_XOPEN_SOURCE=500',
@@ -308,13 +298,9 @@
           'link_settings': {
             'libraries': [ '-lkvm' ],
           },
-          'sources': [ 'src/unix/posix-hrtime.c' ],
         }],
         [ 'OS in "ios mac freebsd dragonflybsd openbsd netbsd".split()', {
-          'sources': [
-            'src/unix/bsd-ifaddrs.c',
-            'src/unix/kqueue.c',
-          ],
+          'sources': [ 'src/unix/kqueue.c' ],
         }],
         ['uv_library=="shared_library"', {
           'defines': [ 'BUILDING_UV_SHARED=1' ]
@@ -323,7 +309,6 @@
           'sources': [
             'src/unix/pthread-fixes.c',
             'src/unix/pthread-barrier.c',
-            'src/unix/no-fsevents.c',
             'src/unix/os390.c',
             'src/unix/os390-syscalls.c'
           ]
@@ -358,16 +343,13 @@
         'test/test-error.c',
         'test/test-embed.c',
         'test/test-emfile.c',
-        'test/test-env-vars.c',
         'test/test-fail-always.c',
-        'test/test-fork.c',
         'test/test-fs.c',
         'test/test-fs-event.c',
         'test/test-get-currentexe.c',
         'test/test-get-memory.c',
         'test/test-get-passwd.c',
         'test/test-getaddrinfo.c',
-        'test/test-gethostname.c',
         'test/test-getnameinfo.c',
         'test/test-getsockname.c',
         'test/test-handle-fileno.c',
@@ -463,7 +445,6 @@
         'test/test-udp-open.c',
         'test/test-udp-options.c',
         'test/test-udp-send-and-recv.c',
-        'test/test-udp-send-hang-loop.c',
         'test/test-udp-send-immediate.c',
         'test/test-udp-send-unreachable.c',
         'test/test-udp-multicast-join.c',

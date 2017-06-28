@@ -4,7 +4,7 @@ const common = require('../common');
 const assert = require('assert');
 const repl = require('repl');
 
-common.ArrayStream.prototype.write = common.noop;
+common.ArrayStream.prototype.write = function(msg) {};
 
 const putIn = new common.ArrayStream();
 const testMe = repl.start('', putIn);

@@ -6,12 +6,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -73,19 +67,28 @@ module.exports = {
          * @private
          */
         function checkSpacing(node) {
-            const lastToken = sourceCode.getLastToken(node);
             const lastCalleeToken = sourceCode.getLastToken(node.callee);
-            const parenToken = sourceCode.getFirstTokenBetween(lastCalleeToken, lastToken, astUtils.isOpeningParenToken);
-            const prevToken = parenToken && sourceCode.getTokenBefore(parenToken);
+            let prevToken = lastCalleeToken;
+            let parenToken = sourceCode.getTokenAfter(lastCalleeToken);
+
+            // advances to an open parenthesis.
+            while (
+                parenToken &&
+                parenToken.range[1] < node.range[1] &&
+                parenToken.value !== "("
+            ) {
+                prevToken = parenToken;
+                parenToken = sourceCode.getTokenAfter(parenToken);
+            }
 
             // Parens in NewExpression are optional
             if (!(parenToken && parenToken.range[1] < node.range[1])) {
                 return;
             }
 
-            const textBetweenTokens = text.slice(prevToken.range[1], parenToken.range[0]).replace(/\/\*.*?\*\//g, "");
-            const hasWhitespace = /\s/.test(textBetweenTokens);
-            const hasNewline = hasWhitespace && astUtils.LINEBREAK_MATCHER.test(textBetweenTokens);
+            const hasWhitespace = sourceCode.isSpaceBetweenTokens(prevToken, parenToken);
+            const hasNewline = hasWhitespace &&
+                /\n/.test(text.slice(prevToken.range[1], parenToken.range[0]).replace(/\/\*.*?\*\//g, ""));
 
             /*
              * never allowNewlines hasWhitespace hasNewline message

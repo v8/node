@@ -574,9 +574,6 @@ static void start_poll_test(void) {
 
 
 TEST_IMPL(poll_duplex) {
-#if defined(NO_SELF_CONNECT)
-  RETURN_SKIP(NO_SELF_CONNECT);
-#endif
   test_mode = DUPLEX;
   start_poll_test();
   return 0;
@@ -584,9 +581,6 @@ TEST_IMPL(poll_duplex) {
 
 
 TEST_IMPL(poll_unidirectional) {
-#if defined(NO_SELF_CONNECT)
-  RETURN_SKIP(NO_SELF_CONNECT);
-#endif
   test_mode = UNIDIRECTIONAL;
   start_poll_test();
   return 0;
@@ -600,8 +594,7 @@ TEST_IMPL(poll_unidirectional) {
  */
 TEST_IMPL(poll_bad_fdtype) {
 #if !defined(__DragonFly__) && !defined(__FreeBSD__) && !defined(__sun) && \
-    !defined(_AIX) && !defined(__MVS__) && !defined(__FreeBSD_kernel__) && \
-    !defined(__OpenBSD__) && !defined(__CYGWIN__) && !defined(__MSYS__)
+    !defined(_AIX) && !defined(__MVS__) && !defined(__FreeBSD_kernel__)
   uv_poll_t poll_handle;
   int fd;
 

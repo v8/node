@@ -69,11 +69,13 @@ test('clean', function (t) {
 })
 
 function bootstrap (t) {
-  process.chdir(osenv.tmpdir())
-  rimraf.sync(pkg)
   mkdirp.sync(pkg)
   process.chdir(pkg)
   fs.writeFileSync('package.json', pjParent)
+  t.tearDown(function () {
+    process.chdir(osenv.tmpdir())
+    rimraf.sync(pkg)
+  })
 }
 
 function setup (cb) {
@@ -140,5 +142,4 @@ function setup (cb) {
 function cleanup () {
   process.chdir(osenv.tmpdir())
   rimraf.sync(repos)
-  rimraf.sync(pkg)
 }

@@ -22,7 +22,8 @@ class ConnectionWrap : public StreamWrap {
  protected:
   ConnectionWrap(Environment* env,
                  v8::Local<v8::Object> object,
-                 ProviderType provider);
+                 ProviderType provider,
+                 AsyncWrap* parent);
   ~ConnectionWrap() {
   }
 

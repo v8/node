@@ -1,6 +1,5 @@
 'use strict'
 var test = require('tap').test
-var Bluebird = require('bluebird')
 var Tacks = require('tacks')
 var File = Tacks.File
 var Dir = Tacks.Dir
@@ -9,16 +8,16 @@ var path = require('path')
 var common = require('../common-tap.js')
 
 var testdir = path.resolve(__dirname, path.basename(__filename, '.js'))
-var modAtgz = path.resolve(testdir, 'modA') + '-1.0.0.tgz'
-var modB1tgz = path.resolve(testdir, 'modB') + '-1.0.0.tgz'
-var modB2tgz = path.resolve(testdir, 'modB') + '-2.0.0.tgz'
-var modCtgz = path.resolve(testdir, 'modC') + '-1.0.0.tgz'
+var modAdir = path.resolve(testdir, 'modA')
+var modB1dir = path.resolve(testdir, 'modB@1')
+var modB2dir = path.resolve(testdir, 'modB@2')
+var modCdir = path.resolve(testdir, 'modC')
 
 var fixture = new Tacks(Dir({
   'package.json': File({
     dependencies: {
-      modA: 'file://' + modAtgz,
-      modC: 'file://' + modCtgz
+      modA: 'file://' + modAdir,
+      modC: 'file://' + modCdir
     }
   }),
   'npm-shrinkwrap.json': File({
@@ -26,12 +25,12 @@ var fixture = new Tacks(Dir({
       modA: {
         version: '1.0.0',
         from: 'modA',
-        resolved: 'file://' + modAtgz
+        resolved: 'file://' + modAdir
       },
       modB: {
         version: '1.0.0',
         from: 'modB@1',
-        resolved: 'file://' + modB1tgz
+        resolved: 'file://' + modB1dir
       }
     }
   }),
@@ -40,7 +39,7 @@ var fixture = new Tacks(Dir({
       name: 'modA',
       version: '1.0.0',
       dependencies: {
-        'modB': 'file://' + modB1tgz
+        'modB': 'file://' + modB1dir
       }
     })
   }),
@@ -63,7 +62,7 @@ var fixture = new Tacks(Dir({
       name: 'modC',
       version: '1.0.0',
       dependencies: {
-        'modB': 'file://' + modB2tgz
+        'modB': 'file://' + modB2dir
       }
     })
   })
@@ -75,22 +74,22 @@ var newShrinkwrap = new Tacks(Dir({
       modA: {
         version: '1.0.0',
         from: 'modA',
-        resolved: 'file://' + modAtgz
+        resolved: 'file://' + modAdir
       },
       modB: {
         version: '1.0.0',
         from: 'modB@1',
-        resolved: 'file://' + modB1tgz
+        resolved: 'file://' + modB1dir
       },
       modC: {
         version: '1.0.0',
         from: 'modC',
-        resolved: 'file://' + modCtgz,
+        resolved: 'file://' + modCdir,
         dependencies: {
           modB: {
             version: '1.0.0',
             from: 'modB@1',
-            resolved: 'file://' + modB1tgz
+            resolved: 'file://' + modB1dir
           }
         }
       }
@@ -101,10 +100,10 @@ var newShrinkwrap = new Tacks(Dir({
       'package.json': File({
         _requested: {
           name: 'modB',
-          raw: 'modB@file:' + modB1tgz,
-          rawSpec: 'file:' + modB1tgz,
+          raw: 'modB@file:' + modB1dir,
+          rawSpec: 'file:' + modB1dir,
           scope: null,
-          spec: modB1tgz,
+          spec: modB1dir,
           type: 'directory'
         },
         dependencies: { },
@@ -129,26 +128,9 @@ function cleanup () {
 test('setup', function (t) {
   cleanup()
   setup()
-  return Bluebird.try(() => {
-    return Bluebird.join(
-      common.npm(['pack', 'file:modB@1'], {cwd: testdir, stdio: [0, 2, 2]}),
-      common.npm(['pack', 'file:modB@2'], {cwd: testdir, stdio: [0, 2, 2]}),
-      function (b1, b2) {
-        t.is(b1[0], 0, 'pack modB@1')
-        t.is(b2[0], 0, 'pack modB@2')
-      })
-  }).then(() => {
-    return Bluebird.join(
-      common.npm(['pack', 'file:modA'], {cwd: testdir, stdio: [0, 2, 2]}),
-      common.npm(['pack', 'file:modC'], {cwd: testdir, stdio: [0, 2, 2]}),
-      function (a, c) {
-        t.is(a[0], 0, 'pack modA')
-        t.is(c[0], 0, 'pack modC')
-      })
-  }).then(() => {
-    return common.npm(['install'], {cwd: testdir, stdio: [0, 2, 2]})
-  }).spread((code) => {
-    t.is(code, 0, 'top level install')
+  common.npm(['install'], {cwd: testdir, stdio: [0, 2, 2]}, function (err, code) {
+    if (err) throw err
+    t.is(code, 0)
     t.end()
   })
 })

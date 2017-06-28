@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -48,7 +48,6 @@
 #include "unicode/simpletz.h"
 #include "unicode/rbtz.h"
 #include "unicode/tzfmt.h"
-#include "unicode/ucasemap.h"
 #include "unicode/utf16.h"
 #include "unicode/vtzone.h"
 #include "unicode/udisplaycontext.h"
@@ -65,7 +64,6 @@
 #include <float.h>
 #include "smpdtfst.h"
 #include "sharednumberformat.h"
-#include "ucasemap_imp.h"
 #include "ustr_imp.h"
 #include "charstr.h"
 #include "uvector.h"

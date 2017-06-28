@@ -30,9 +30,6 @@ const OPTION_VALUE = {
                 minProperties: {
                     type: "integer",
                     minimum: 0
-                },
-                consistent: {
-                    type: "boolean"
                 }
             },
             additionalProperties: false,
@@ -45,12 +42,11 @@ const OPTION_VALUE = {
  * Normalizes a given option value.
  *
  * @param {string|Object|undefined} value - An option value to parse.
- * @returns {{multiline: boolean, minProperties: number, consistent: boolean}} Normalized option object.
+ * @returns {{multiline: boolean, minProperties: number}} Normalized option object.
  */
 function normalizeOptionValue(value) {
     let multiline = false;
     let minProperties = Number.POSITIVE_INFINITY;
-    let consistent = false;
 
     if (value) {
         if (value === "always") {
@@ -60,13 +56,12 @@ function normalizeOptionValue(value) {
         } else {
             multiline = Boolean(value.multiline);
             minProperties = value.minProperties || Number.POSITIVE_INFINITY;
-            consistent = Boolean(value.consistent);
         }
     } else {
         multiline = true;
     }
 
-    return { multiline, minProperties, consistent };
+    return { multiline, minProperties };
 }
 
 /**
@@ -133,8 +128,8 @@ module.exports = {
             const options = normalizedOptions[node.type];
             const openBrace = sourceCode.getFirstToken(node);
             const closeBrace = sourceCode.getLastToken(node);
-            let first = sourceCode.getTokenAfter(openBrace, { includeComments: true });
-            let last = sourceCode.getTokenBefore(closeBrace, { includeComments: true });
+            let first = sourceCode.getTokenOrCommentAfter(openBrace);
+            let last = sourceCode.getTokenOrCommentBefore(closeBrace);
             const needsLinebreaks = (
                 node.properties.length >= options.minProperties ||
                 (
@@ -177,14 +172,7 @@ module.exports = {
                     });
                 }
             } else {
-                const consistent = options.consistent;
-                const hasLineBreakBetweenOpenBraceAndFirst = !astUtils.isTokenOnSameLine(openBrace, first);
-                const hasLineBreakBetweenCloseBraceAndLast = !astUtils.isTokenOnSameLine(last, closeBrace);
-
-                if (
-                    (!consistent && hasLineBreakBetweenOpenBraceAndFirst) ||
-                    (consistent && hasLineBreakBetweenOpenBraceAndFirst && !hasLineBreakBetweenCloseBraceAndLast)
-                ) {
+                if (!astUtils.isTokenOnSameLine(openBrace, first)) {
                     context.report({
                         message: "Unexpected line break after this opening brace.",
                         node,
@@ -197,10 +185,7 @@ module.exports = {
                         }
                     });
                 }
-                if (
-                    (!consistent && hasLineBreakBetweenCloseBraceAndLast) ||
-                    (consistent && !hasLineBreakBetweenOpenBraceAndFirst && hasLineBreakBetweenCloseBraceAndLast)
-                ) {
+                if (!astUtils.isTokenOnSameLine(last, closeBrace)) {
                     context.report({
                         message: "Unexpected line break before this closing brace.",
                         node,

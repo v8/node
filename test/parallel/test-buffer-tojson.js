@@ -2,6 +2,7 @@
 
 require('../common');
 const assert = require('assert');
+const Buffer = require('buffer').Buffer;
 
 {
   assert.strictEqual(JSON.stringify(Buffer.alloc(0)),

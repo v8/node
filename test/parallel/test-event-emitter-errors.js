@@ -5,10 +5,6 @@ const assert = require('assert');
 
 const EE = new EventEmitter();
 
-assert.throws(() => {
+assert.throws(function() {
   EE.emit('error', 'Accepts a string');
-}, /^Error: Unhandled "error" event\. \(Accepts a string\)$/);
-
-assert.throws(() => {
-  EE.emit('error', {message: 'Error!'});
-}, /^Error: Unhandled "error" event\. \(\[object Object\]\)$/);
+}, /Accepts a string/);

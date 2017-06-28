@@ -90,7 +90,7 @@ module.exports = {
 
             token = comment;
             do {
-                token = sourceCode.getTokenBefore(token, { includeComments: true });
+                token = sourceCode.getTokenOrCommentBefore(token);
             } while (isCommentNodeType(token));
 
             if (token && astUtils.isTokenOnSameLine(token, comment)) {
@@ -99,7 +99,7 @@ module.exports = {
 
             token = comment;
             do {
-                token = sourceCode.getTokenAfter(token, { includeComments: true });
+                token = sourceCode.getTokenOrCommentAfter(token);
             } while (isCommentNodeType(token));
 
             if (token && astUtils.isTokenOnSameLine(comment, token)) {
@@ -134,7 +134,7 @@ module.exports = {
                         message: "File must be at most {{max}} lines long. It's {{actual}} lines long.",
                         data: {
                             max,
-                            actual: lines.length
+                            actual: lines.length,
                         }
                     });
                 }

@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #ifndef SRC_NODE_CRYPTO_H_
 #define SRC_NODE_CRYPTO_H_
 
@@ -84,7 +63,12 @@ enum CheckResult {
 
 extern int VerifyCallback(int preverify_ok, X509_STORE_CTX* ctx);
 
+extern X509_STORE* root_cert_store;
+
 extern void UseExtraCaCerts(const std::string& file);
+
+// Forward declaration
+class Connection;
 
 class SecureContext : public BaseObject {
  public:
@@ -397,13 +381,12 @@ class Connection : public AsyncWrap, public SSLWrap<Connection> {
              v8::Local<v8::Object> wrap,
              SecureContext* sc,
              SSLWrap<Connection>::Kind kind)
-      : AsyncWrap(env, wrap, AsyncWrap::PROVIDER_SSLCONNECTION),
+      : AsyncWrap(env, wrap, AsyncWrap::PROVIDER_CRYPTO),
         SSLWrap<Connection>(env, sc, kind),
         bio_read_(nullptr),
         bio_write_(nullptr),
         hello_offset_(0) {
     MakeWeak<Connection>(this);
-    Wrap(wrap, this);
     hello_parser_.Start(SSLWrap<Connection>::OnClientHello,
                         OnClientHelloParseEnd,
                         this);
@@ -588,9 +571,7 @@ class Sign : public SignBase {
                   int key_pem_len,
                   const char* passphrase,
                   unsigned char** sig,
-                  unsigned int *sig_len,
-                  int padding,
-                  int saltlen);
+                  unsigned int *sig_len);
 
  protected:
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -613,8 +594,6 @@ class Verify : public SignBase {
                     int key_pem_len,
                     const char* sig,
                     int siglen,
-                    int padding,
-                    int saltlen,
                     bool* verify_result);
 
  protected:

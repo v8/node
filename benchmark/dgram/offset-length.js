@@ -37,11 +37,9 @@ function server() {
   var socket = dgram.createSocket('udp4');
 
   function onsend() {
-    if (sent++ % num === 0) {
-      for (var i = 0; i < num; i++) {
+    if (sent++ % num === 0)
+      for (var i = 0; i < num; i++)
         socket.send(chunk, 0, chunk.length, PORT, '127.0.0.1', onsend);
-      }
-    }
   }
 
   socket.on('listening', function() {

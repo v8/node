@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 ******************************************************************************
@@ -218,10 +218,9 @@ UnicodeString::UnicodeString(const UChar *text,
 }
 
 UnicodeString::UnicodeString(UBool isTerminated,
-                             ConstChar16Ptr textPtr,
+                             const UChar *text,
                              int32_t textLength) {
   fUnion.fFields.fLengthAndFlags = kReadonlyAlias;
-  const UChar *text = textPtr;
   if(text == NULL) {
     // treat as an empty string, do not alias
     setToEmpty();
@@ -235,8 +234,7 @@ UnicodeString::UnicodeString(UBool isTerminated,
       // text is terminated, or else it would have failed the above test
       textLength = u_strlen(text);
     }
-    setArray(const_cast<UChar *>(text), textLength,
-             isTerminated ? textLength + 1 : textLength);
+    setArray((UChar *)text, textLength, isTerminated ? textLength + 1 : textLength);
   }
 }
 
@@ -875,7 +873,7 @@ UnicodeString::doExtract(int32_t start,
 }
 
 int32_t
-UnicodeString::extract(Char16Ptr dest, int32_t destCapacity,
+UnicodeString::extract(UChar *dest, int32_t destCapacity,
                        UErrorCode &errorCode) const {
   int32_t len = length();
   if(U_SUCCESS(errorCode)) {
@@ -1217,10 +1215,10 @@ UnicodeString::unBogus() {
   }
 }
 
-const char16_t *
+const UChar *
 UnicodeString::getTerminatedBuffer() {
   if(!isWritable()) {
-    return nullptr;
+    return 0;
   }
   UChar *array = getArrayStart();
   int32_t len = length();
@@ -1251,14 +1249,14 @@ UnicodeString::getTerminatedBuffer() {
     array[len] = 0;
     return array;
   } else {
-    return nullptr;
+    return NULL;
   }
 }
 
 // setTo() analogous to the readonly-aliasing constructor with the same signature
 UnicodeString &
 UnicodeString::setTo(UBool isTerminated,
-                     ConstChar16Ptr textPtr,
+                     const UChar *text,
                      int32_t textLength)
 {
   if(fUnion.fFields.fLengthAndFlags & kOpenGetBuffer) {
@@ -1266,7 +1264,6 @@ UnicodeString::setTo(UBool isTerminated,
     return *this;
   }
 
-  const UChar *text = textPtr;
   if(text == NULL) {
     // treat as an empty string, do not alias
     releaseArray();
@@ -1716,14 +1713,14 @@ UnicodeString::doHashCode() const
 // External Buffer
 //========================================
 
-char16_t *
+UChar *
 UnicodeString::getBuffer(int32_t minCapacity) {
   if(minCapacity>=-1 && cloneArrayIfNeeded(minCapacity)) {
     fUnion.fFields.fLengthAndFlags|=kOpenGetBuffer;
     setZeroLength();
     return getArrayStart();
   } else {
-    return nullptr;
+    return 0;
   }
 }
 

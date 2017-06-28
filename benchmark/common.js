@@ -38,30 +38,26 @@ function Benchmark(fn, configs, options) {
 }
 
 Benchmark.prototype._parseArgs = function(argv, configs) {
-  const cliOptions = {};
+  const cliOptions = Object.assign({}, configs);
   const extraOptions = {};
-  const validArgRE = /^(.+?)=([\s\S]*)$/;
   // Parse configuration arguments
   for (const arg of argv) {
-    const match = arg.match(validArgRE);
-    if (!match) {
-      console.error(`bad argument: ${arg}`);
+    const match = arg.match(/^(.+?)=([\s\S]*)$/);
+    if (!match || !match[1]) {
+      console.error('bad argument: ' + arg);
       process.exit(1);
     }
-    const config = match[1];
 
-    if (configs[config]) {
+    if (configs[match[1]]) {
       // Infer the type from the config object and parse accordingly
-      const isNumber = typeof configs[config][0] === 'number';
+      const isNumber = typeof configs[match[1]][0] === 'number';
       const value = isNumber ? +match[2] : match[2];
-      if (!cliOptions[config])
-        cliOptions[config] = [];
-      cliOptions[config].push(value);
+      cliOptions[match[1]] = [value];
     } else {
-      extraOptions[config] = match[2];
+      extraOptions[match[1]] = match[2];
     }
   }
-  return { cli: Object.assign({}, configs, cliOptions), extra: extraOptions };
+  return { cli: cliOptions, extra: extraOptions };
 };
 
 Benchmark.prototype._queue = function(options) {
@@ -194,15 +190,6 @@ Benchmark.prototype.end = function(operations) {
   if (typeof operations !== 'number') {
     throw new Error('called end() without specifying operation count');
   }
-  if (!process.env.NODEJS_BENCHMARK_ZERO_ALLOWED && operations <= 0) {
-    throw new Error('called end() with operation count <= 0');
-  }
-  if (elapsed[0] === 0 && elapsed[1] === 0) {
-    if (!process.env.NODEJS_BENCHMARK_ZERO_ALLOWED)
-      throw new Error('insufficient clock precision for short benchmark');
-    // avoid dividing by zero
-    elapsed[1] = 1;
-  }
 
   const time = elapsed[0] + elapsed[1] / 1e9;
   const rate = operations / time;
@@ -213,11 +200,11 @@ function formatResult(data) {
   // Construct configuration string, " A=a, B=b, ..."
   let conf = '';
   for (const key of Object.keys(data.conf)) {
-    conf += ` ${key}=${JSON.stringify(data.conf[key])}`;
+    conf += ' ' + key + '=' + JSON.stringify(data.conf[key]);
   }
 
   var rate = data.rate.toString().split('.');
-  rate[0] = rate[0].replace(/(\d)(?=(?:\d\d\d)+(?!\d))/g, '$1,');
+  rate[0] = rate[0].replace(/(\d)(?=(\d\d\d)+(?!\d))/g, '$1,');
   rate = (rate[1] ? rate.join('.') : rate[0]);
   return `${data.name}${conf}: ${rate}`;
 }

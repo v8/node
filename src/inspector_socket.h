@@ -48,7 +48,6 @@ struct ws_state_s {
   bool received_close;
 };
 
-// HTTP Wrapper around a uv_tcp_t
 class InspectorSocket {
  public:
   InspectorSocket() : data(nullptr), http_parsing_state(nullptr),
@@ -59,11 +58,10 @@ class InspectorSocket {
   struct http_parsing_state_s* http_parsing_state;
   struct ws_state_s* ws_state;
   std::vector<char> buffer;
-  uv_tcp_t tcp;
+  uv_tcp_t client;
   bool ws_mode;
   bool shutting_down;
   bool connection_eof;
-
  private:
   DISALLOW_COPY_AND_ASSIGN(InspectorSocket);
 };
@@ -84,7 +82,7 @@ void inspector_write(InspectorSocket* inspector,
 bool inspector_is_active(const InspectorSocket* inspector);
 
 inline InspectorSocket* inspector_from_stream(uv_tcp_t* stream) {
-  return node::ContainerOf(&InspectorSocket::tcp, stream);
+  return node::ContainerOf(&InspectorSocket::client, stream);
 }
 
 inline InspectorSocket* inspector_from_stream(uv_stream_t* stream) {

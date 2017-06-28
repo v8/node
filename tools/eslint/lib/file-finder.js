@@ -25,7 +25,6 @@ const fs = require("fs"),
  */
 function getDirectoryEntries(directory) {
     try {
-
         return fs.readdirSync(directory);
     } catch (ex) {
         return [];
@@ -80,9 +79,9 @@ class FileFinder {
      * Searches for all the file names in this.fileNames.
      * Is currently used by lib/config.js to find .eslintrc and package.json files.
      * @param  {string} directory The directory to start the search from.
-     * @returns {GeneratorFunction} to iterate the file paths found
+     * @returns {string[]} The file paths found.
      */
-    *findAllInDirectoryAndParents(directory) {
+    findAllInDirectoryAndParents(directory) {
         const cache = this.cache;
 
         if (directory) {
@@ -92,8 +91,7 @@ class FileFinder {
         }
 
         if (cache.hasOwnProperty(directory)) {
-            yield* cache[directory];
-            return; // to avoid doing the normal loop afterwards
+            return cache[directory];
         }
 
         const dirs = [];
@@ -116,21 +114,19 @@ class FileFinder {
                         for (let j = 0; j < searched; j++) {
                             cache[dirs[j]].push(filePath);
                         }
-                        yield filePath;
+
                         break;
                     }
                 }
             }
-
             const child = directory;
 
             // Assign parent directory to directory.
             directory = path.dirname(directory);
 
             if (directory === child) {
-                return;
+                return cache[dirs[0]];
             }
-
         } while (!cache.hasOwnProperty(directory));
 
         // Add what has been cached previously to the cache of each directory searched.
@@ -138,7 +134,7 @@ class FileFinder {
             dirs.push.apply(cache[dirs[i]], cache[directory]);
         }
 
-        yield* cache[dirs[0]];
+        return cache[dirs[0]];
     }
 }
 

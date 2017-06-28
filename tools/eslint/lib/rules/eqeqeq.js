@@ -6,12 +6,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -63,9 +57,9 @@ module.exports = {
         const options = context.options[1] || {};
         const sourceCode = context.getSourceCode();
 
-        const nullOption = (config === "always")
-            ? options.null || "always"
-            : "ignore";
+        const nullOption = (config === "always") ?
+            options.null || "always" :
+            "ignore";
         const enforceRuleForNull = (nullOption === "always");
         const enforceInverseRuleForNull = (nullOption === "never");
 
@@ -106,7 +100,8 @@ module.exports = {
          * @private
          */
         function isNullCheck(node) {
-            return astUtils.isNullLiteral(node.right) || astUtils.isNullLiteral(node.left);
+            return (node.right.type === "Literal" && node.right.value === null) ||
+                    (node.left.type === "Literal" && node.left.value === null);
         }
 
         /**
@@ -139,11 +134,7 @@ module.exports = {
 
                     // If the comparison is a `typeof` comparison or both sides are literals with the same type, then it's safe to fix.
                     if (isTypeOfBinary(node) || areLiteralsAndSameType(node)) {
-                        const operatorToken = sourceCode.getFirstTokenBetween(
-                            node.left,
-                            node.right,
-                            token => token.value === node.operator
-                        );
+                        const operatorToken = sourceCode.getTokensBetween(node.left, node.right).find(token => token.value === node.operator);
 
                         return fixer.replaceText(operatorToken, expectedOperator);
                     }

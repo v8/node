@@ -208,7 +208,7 @@ inherits(Conf, CC)
 function Conf (base) {
   if (!(this instanceof Conf)) return new Conf(base)
 
-  CC.call(this)
+  CC.apply(this)
 
   if (base) {
     if (base instanceof Conf) {

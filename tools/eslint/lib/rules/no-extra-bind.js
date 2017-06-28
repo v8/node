@@ -8,7 +8,7 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const astUtils = require("../ast-utils");
+const getPropertyName = require("../ast-utils").getStaticPropertyName;
 
 //------------------------------------------------------------------------------
 // Rule Definition
@@ -44,7 +44,8 @@ module.exports = {
                 loc: node.parent.property.loc.start,
                 fix(fixer) {
                     const firstTokenToRemove = context.getSourceCode()
-                        .getFirstTokenBetween(node.parent.object, node.parent.property, astUtils.isNotClosingParenToken);
+                        .getTokensBetween(node.parent.object, node.parent.property)
+                        .find(token => token.value !== ")");
 
                     return fixer.removeRange([firstTokenToRemove.range[0], node.parent.parent.range[1]]);
                 }
@@ -72,7 +73,7 @@ module.exports = {
                 grandparent.arguments.length === 1 &&
                 parent.type === "MemberExpression" &&
                 parent.object === node &&
-                astUtils.getStaticPropertyName(parent) === "bind"
+                getPropertyName(parent) === "bind"
             );
         }
 

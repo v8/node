@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /********************************************************************
  * COPYRIGHT:
@@ -95,11 +95,6 @@
  *   <tr>
  *     <td>Codepage Conversion</td>
  *     <td>ucnv.h, ucnvsel.hb</td>
- *     <td>C API</td>
- *   </tr>
- *   <tr>
- *     <td>Codepage Detection</td>
- *     <td>ucsdet.h</td>
  *     <td>C API</td>
  *   </tr>
  *   <tr>

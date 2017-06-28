@@ -210,7 +210,8 @@ int uv_shutdown(uv_shutdown_t* req, uv_stream_t* handle, uv_shutdown_cb cb) {
     return UV_EPIPE;
   }
 
-  UV_REQ_INIT(req, UV_SHUTDOWN);
+  uv_req_init(loop, (uv_req_t*) req);
+  req->type = UV_SHUTDOWN;
   req->handle = handle;
   req->cb = cb;
 

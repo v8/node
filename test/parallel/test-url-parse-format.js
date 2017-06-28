@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 'use strict';
 require('../common');
 const assert = require('assert');
@@ -271,7 +272,8 @@ const parseTests = {
   },
 
   'http://user:pass@mt0.google.com/vt/lyrs=m@114???&hl=en&src=api&x=2&y=2&z=3&s=': {
-    href: 'http://user:pass@mt0.google.com/vt/lyrs=m@114???&hl=en&src=api&x=2&y=2&z=3&s=',
+    href: 'http://user:pass@mt0.google.com/vt/lyrs=m@114???' +
+          '&hl=en&src=api&x=2&y=2&z=3&s=',
     protocol: 'http:',
     slashes: true,
     host: 'mt0.google.com',
@@ -840,7 +842,7 @@ const parseTests = {
     hostname: 'a.b',
     hash: null,
     pathname: '/%09bc%0Adr%0Def%20g%22hq%27j%3Ckl%3E',
-    path: '/%09bc%0Adr%0Def%20g%22hq%27j%3Ckl%3E?mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz', // eslint-disable-line max-len
+    path: '/%09bc%0Adr%0Def%20g%22hq%27j%3Ckl%3E?mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz',
     search: '?mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz',
     query: 'mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz',
     href: 'http://a.b/%09bc%0Adr%0Def%20g%22hq%27j%3Ckl%3E?mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz'
@@ -919,5 +921,5 @@ for (const u in parseTests) {
   actual = url.format(parseTests[u]);
 
   assert.strictEqual(actual, expected,
-                     `format(${u}) == ${u}\nactual:${actual}`);
+                     'format(' + u + ') == ' + u + '\nactual:' + actual);
 }

@@ -5,15 +5,13 @@
 
 "use strict";
 
-//------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
 const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
+
+const LINEBREAK_REGEX = /\r\n|\r|\n|\u2028|\u2029/g;
 
 module.exports = {
     meta: {
@@ -87,7 +85,7 @@ module.exports = {
                 if (hasLinebreakBefore !== hasLinebreakAfter && desiredStyle !== "none") {
 
                     // If there is a comment before and after the operator, don't do a fix.
-                    if (sourceCode.getTokenBefore(operatorToken, { includeComments: true }) !== tokenBefore && sourceCode.getTokenAfter(operatorToken, { includeComments: true }) !== tokenAfter) {
+                    if (sourceCode.getTokenOrCommentBefore(operatorToken) !== tokenBefore && sourceCode.getTokenOrCommentAfter(operatorToken) !== tokenAfter) {
                         return null;
                     }
 
@@ -102,7 +100,6 @@ module.exports = {
                     newTextBefore = textAfter;
                     newTextAfter = textBefore;
                 } else {
-                    const LINEBREAK_REGEX = astUtils.createGlobalLinebreakMatcher();
 
                     // Otherwise, if no linebreak is desired and no comments interfere, replace the linebreaks with empty strings.
                     newTextBefore = desiredStyle === "before" || textBefore.trim() ? textBefore : textBefore.replace(LINEBREAK_REGEX, "");
@@ -132,14 +129,19 @@ module.exports = {
          * @returns {void}
          */
         function validateNode(node, leftSide) {
+            let leftToken = sourceCode.getLastToken(leftSide);
+            let operatorToken = sourceCode.getTokenAfter(leftToken);
 
             // When the left part of a binary expression is a single expression wrapped in
             // parentheses (ex: `(a) + b`), leftToken will be the last token of the expression
             // and operatorToken will be the closing parenthesis.
             // The leftToken should be the last closing parenthesis, and the operatorToken
             // should be the token right after that.
-            const operatorToken = sourceCode.getTokenAfter(leftSide, astUtils.isNotClosingParenToken);
-            const leftToken = sourceCode.getTokenBefore(operatorToken);
+            while (operatorToken.value === ")") {
+                leftToken = operatorToken;
+                operatorToken = sourceCode.getTokenAfter(operatorToken);
+            }
+
             const rightToken = sourceCode.getTokenAfter(operatorToken);
             const operator = operatorToken.value;
             const operatorStyleOverride = styleOverrides[operator];

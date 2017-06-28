@@ -1,16 +1,9 @@
 /**
  * @fileoverview Rule to check empty newline after "var" statement
  * @author Gopal Venkatesan
- * @deprecated
  */
 
 "use strict";
-
-//------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
 // Rule Definition
@@ -21,8 +14,7 @@ module.exports = {
         docs: {
             description: "require or disallow an empty line after variable declarations",
             category: "Stylistic Issues",
-            recommended: false,
-            replacedBy: ["padding-line-between-statements"]
+            recommended: false
         },
 
         schema: [
@@ -31,9 +23,7 @@ module.exports = {
             }
         ],
 
-        fixable: "whitespace",
-
-        deprecated: true
+        fixable: "whitespace"
     },
 
     create(context) {
@@ -211,7 +201,8 @@ module.exports = {
                     message: NEVER_MESSAGE,
                     data: { identifier: node.name },
                     fix(fixer) {
-                        const linesBetween = sourceCode.getText().slice(lastToken.range[1], nextToken.range[0]).split(astUtils.LINEBREAK_MATCHER);
+                        const NEWLINE_REGEX = /\r\n|\r|\n|\u2028|\u2029/;
+                        const linesBetween = sourceCode.getText().slice(lastToken.range[1], nextToken.range[0]).split(NEWLINE_REGEX);
 
                         return fixer.replaceTextRange([lastToken.range[1], nextToken.range[0]], `${linesBetween.slice(0, -1).join("")}\n${linesBetween[linesBetween.length - 1]}`);
                     }

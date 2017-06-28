@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #ifndef SRC_NODE_WATCHDOG_H_
 #define SRC_NODE_WATCHDOG_H_
 
@@ -37,13 +16,16 @@ namespace node {
 
 class Watchdog {
  public:
-  explicit Watchdog(v8::Isolate* isolate,
-                    uint64_t ms,
-                    bool* timed_out = nullptr);
+  explicit Watchdog(v8::Isolate* isolate, uint64_t ms);
   ~Watchdog();
-  v8::Isolate* isolate() { return isolate_; }
 
+  void Dispose();
+
+  v8::Isolate* isolate() { return isolate_; }
+  bool HasTimedOut() { return timed_out_; }
  private:
+  void Destroy();
+
   static void Run(void* arg);
   static void Async(uv_async_t* async);
   static void Timer(uv_timer_t* timer);
@@ -53,20 +35,27 @@ class Watchdog {
   uv_loop_t* loop_;
   uv_async_t async_;
   uv_timer_t timer_;
-  bool* timed_out_;
+  bool timed_out_;
+  bool destroyed_;
 };
 
 class SigintWatchdog {
  public:
-  explicit SigintWatchdog(v8::Isolate* isolate,
-                          bool* received_signal = nullptr);
+  explicit SigintWatchdog(v8::Isolate* isolate);
   ~SigintWatchdog();
+
+  void Dispose();
+
   v8::Isolate* isolate() { return isolate_; }
+  bool HasReceivedSignal() { return received_signal_; }
   void HandleSigint();
 
  private:
+  void Destroy();
+
   v8::Isolate* isolate_;
-  bool* received_signal_;
+  bool received_signal_;
+  bool destroyed_;
 };
 
 class SigintWatchdogHelper {

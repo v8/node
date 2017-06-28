@@ -1,5 +1,3 @@
-'use strict'
-
 var fs = require('fs')
 var resolve = require('path').resolve
 var url = require('url')
@@ -34,13 +32,16 @@ test('setup', function (t) {
 
 test('cache from repo', function (t) {
   process.chdir(pkg)
-  return npm.commands.cache.add(cloneURL).then((data) => {
+  var addRemoteGit = require('../../lib/cache/add-remote-git.js')
+  addRemoteGit(cloneURL, function (er, data) {
+    t.ifError(er, 'cached via git')
     t.equal(
-      url.parse(data.manifest._resolved).protocol,
+      url.parse(data._resolved).protocol,
       'git+file:',
       'npm didn\'t go crazy adding git+git+git+git'
     )
-    t.equal(data.manifest._spec.type, 'git', 'cached git')
+
+    t.end()
   })
 })
 

@@ -1,3 +1,4 @@
+'use strict';
 const { exports: moduleScoped } = module;
 
 function topFn(a, b = false) {

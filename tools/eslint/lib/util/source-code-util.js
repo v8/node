@@ -10,8 +10,9 @@
 //------------------------------------------------------------------------------
 
 const CLIEngine = require("../cli-engine"),
+    eslint = require("../eslint"),
     globUtil = require("./glob-util"),
-    baseDefaultOptions = require("../../conf/default-cli-options");
+    baseDefaultOptions = require("../../conf/cli-options");
 
 const debug = require("debug")("eslint:source-code-util");
 
@@ -37,7 +38,7 @@ function getSourceCodeOfFile(filename, options) {
 
         throw new Error(`(${filename}:${msg.line}:${msg.column}) ${msg.message}`);
     }
-    const sourceCode = cli.linter.getSourceCode();
+    const sourceCode = eslint.getSourceCode();
 
     return sourceCode;
 }

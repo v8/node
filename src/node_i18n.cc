@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 /*
  * notes: by srl295
  *  - When in NODE_HAVE_SMALL_ICU mode, ICU is linked against "stub" (null) data
@@ -55,7 +34,6 @@
 #include <unicode/utypes.h>
 #include <unicode/putil.h>
 #include <unicode/uchar.h>
-#include <unicode/uclean.h>
 #include <unicode/udata.h>
 #include <unicode/uidna.h>
 #include <unicode/ucnv.h>
@@ -65,7 +43,6 @@
 #include <unicode/ulocdata.h>
 #include <unicode/uvernum.h>
 #include <unicode/uversion.h>
-#include <unicode/ustring.h>
 
 #ifdef NODE_HAVE_SMALL_ICU
 /* if this is defined, we have a 'secondary' entry point.
@@ -94,7 +71,6 @@ using v8::String;
 using v8::Value;
 
 namespace i18n {
-namespace {
 
 template <typename T>
 MaybeLocal<Object> ToBufferEndian(Environment* env, MaybeStackBuffer<T>* buf) {
@@ -326,7 +302,7 @@ void Transcode(const FunctionCallbackInfo<Value>&args) {
             tfn = &TranscodeUtf8FromUcs2;
             break;
           default:
-            tfn = &TranscodeFromUcs2;
+            tfn = TranscodeFromUcs2;
         }
         break;
       default:
@@ -346,7 +322,7 @@ void Transcode(const FunctionCallbackInfo<Value>&args) {
   return args.GetReturnValue().Set(result.ToLocalChecked());
 }
 
-void ICUErrorName(const FunctionCallbackInfo<Value>& args) {
+static void ICUErrorName(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   UErrorCode status = static_cast<UErrorCode>(args[0]->Int32Value());
   args.GetReturnValue().Set(
@@ -368,9 +344,9 @@ void ICUErrorName(const FunctionCallbackInfo<Value>& args) {
  * @param status ICU error status. If failure, assume result is undefined.
  * @return version number, or NULL. May or may not be buf.
  */
-const char* GetVersion(const char* type,
-                       char buf[U_MAX_VERSION_STRING_LENGTH],
-                       UErrorCode* status) {
+static const char* GetVersion(const char* type,
+                              char buf[U_MAX_VERSION_STRING_LENGTH],
+                              UErrorCode* status) {
   if (!strcmp(type, TYPE_ICU)) {
     return U_ICU_VERSION;
   } else if (!strcmp(type, TYPE_UNICODE)) {
@@ -389,7 +365,7 @@ const char* GetVersion(const char* type,
   return nullptr;
 }
 
-void GetVersion(const FunctionCallbackInfo<Value>& args) {
+static void GetVersion(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   if ( args.Length() == 0 ) {
     // With no args - return a comma-separated list of allowed values
@@ -416,29 +392,29 @@ void GetVersion(const FunctionCallbackInfo<Value>& args) {
   }
 }
 
-}  // anonymous namespace
-
 bool InitializeICUDirectory(const std::string& path) {
-  UErrorCode status = U_ZERO_ERROR;
   if (path.empty()) {
+    UErrorCode status = U_ZERO_ERROR;
 #ifdef NODE_HAVE_SMALL_ICU
     // install the 'small' data.
     udata_setCommonData(&SMALL_ICUDATA_ENTRY_POINT, &status);
 #else  // !NODE_HAVE_SMALL_ICU
     // no small data, so nothing to do.
 #endif  // !NODE_HAVE_SMALL_ICU
+    return (status == U_ZERO_ERROR);
   } else {
     u_setDataDirectory(path.c_str());
-    u_init(&status);
+    return true;  // No error.
   }
-  return status == U_ZERO_ERROR;
 }
 
 int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                   const char* input,
-                  size_t length) {
+                  size_t length,
+                  bool lenient) {
   UErrorCode status = U_ZERO_ERROR;
-  uint32_t options = UIDNA_NONTRANSITIONAL_TO_UNICODE;
+  uint32_t options = UIDNA_DEFAULT;
+  options |= UIDNA_NONTRANSITIONAL_TO_UNICODE;
   UIDNA* uidna = uidna_openUTS46(options, &status);
   if (U_FAILURE(status))
     return -1;
@@ -450,9 +426,6 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                                         &info,
                                         &status);
 
-  // Do not check info.errors like we do with ToASCII since ToUnicode always
-  // returns a string, despite any possible errors that may have occurred.
-
   if (status == U_BUFFER_OVERFLOW_ERROR) {
     status = U_ZERO_ERROR;
     buf->AllocateSufficientStorage(len);
@@ -463,10 +436,7 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                                   &status);
   }
 
-  // info.errors is ignored as UTS #46 ToUnicode always produces a Unicode
-  // string, regardless of whether an error occurred.
-
-  if (U_FAILURE(status)) {
+  if (U_FAILURE(status) || (!lenient && info.errors != 0)) {
     len = -1;
     buf->SetLength(0);
   } else {
@@ -480,18 +450,10 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
 int32_t ToASCII(MaybeStackBuffer<char>* buf,
                 const char* input,
                 size_t length,
-                enum idna_mode mode) {
+                bool lenient) {
   UErrorCode status = U_ZERO_ERROR;
-  uint32_t options =                  // CheckHyphens = false; handled later
-    UIDNA_CHECK_BIDI |                // CheckBidi = true
-    UIDNA_CHECK_CONTEXTJ |            // CheckJoiners = true
-    UIDNA_NONTRANSITIONAL_TO_ASCII;   // Nontransitional_Processing
-  if (mode == IDNA_STRICT) {
-    options |= UIDNA_USE_STD3_RULES;  // UseSTD3ASCIIRules = beStrict
-                                      // VerifyDnsLength = beStrict;
-                                      //   handled later
-  }
-
+  uint32_t options = UIDNA_DEFAULT;
+  options |= UIDNA_NONTRANSITIONAL_TO_ASCII;
   UIDNA* uidna = uidna_openUTS46(options, &status);
   if (U_FAILURE(status))
     return -1;
@@ -513,35 +475,7 @@ int32_t ToASCII(MaybeStackBuffer<char>* buf,
                                  &status);
   }
 
-  // In UTS #46 which specifies ToASCII, certain error conditions are
-  // configurable through options, and the WHATWG URL Standard promptly elects
-  // to disable some of them to accommodate for real-world use cases.
-  // Unfortunately, ICU4C's IDNA module does not support disabling some of
-  // these options through `options` above, and thus continues throwing
-  // unnecessary errors. To counter this situation, we just filter out the
-  // errors that may have happened afterwards, before deciding whether to
-  // return an error from this function.
-
-  // CheckHyphens = false
-  // (Specified in the current UTS #46 draft rev. 18.)
-  // Refs:
-  // - https://github.com/whatwg/url/issues/53
-  // - https://github.com/whatwg/url/pull/309
-  // - http://www.unicode.org/review/pri317/
-  // - http://www.unicode.org/reports/tr46/tr46-18.html
-  // - https://www.icann.org/news/announcement-2000-01-07-en
-  info.errors &= ~UIDNA_ERROR_HYPHEN_3_4;
-  info.errors &= ~UIDNA_ERROR_LEADING_HYPHEN;
-  info.errors &= ~UIDNA_ERROR_TRAILING_HYPHEN;
-
-  if (mode != IDNA_STRICT) {
-    // VerifyDnsLength = beStrict
-    info.errors &= ~UIDNA_ERROR_EMPTY_LABEL;
-    info.errors &= ~UIDNA_ERROR_LABEL_TOO_LONG;
-    info.errors &= ~UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
-  }
-
-  if (U_FAILURE(status) || (mode != IDNA_LENIENT && info.errors != 0)) {
+  if (U_FAILURE(status) || (!lenient && info.errors != 0)) {
     len = -1;
     buf->SetLength(0);
   } else {
@@ -557,9 +491,11 @@ static void ToUnicode(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);
   CHECK(args[0]->IsString());
   Utf8Value val(env->isolate(), args[0]);
+  // optional arg
+  bool lenient = args[1]->BooleanValue(env->context()).FromJust();
 
   MaybeStackBuffer<char> buf;
-  int32_t len = ToUnicode(&buf, *val, val.length());
+  int32_t len = ToUnicode(&buf, *val, val.length(), lenient);
 
   if (len < 0) {
     return env->ThrowError("Cannot convert name to Unicode");
@@ -579,10 +515,9 @@ static void ToASCII(const FunctionCallbackInfo<Value>& args) {
   Utf8Value val(env->isolate(), args[0]);
   // optional arg
   bool lenient = args[1]->BooleanValue(env->context()).FromJust();
-  enum idna_mode mode = lenient ? IDNA_LENIENT : IDNA_DEFAULT;
 
   MaybeStackBuffer<char> buf;
-  int32_t len = ToASCII(&buf, *val, val.length(), mode);
+  int32_t len = ToASCII(&buf, *val, val.length(), lenient);
 
   if (len < 0) {
     return env->ThrowError("Cannot convert name to ASCII");

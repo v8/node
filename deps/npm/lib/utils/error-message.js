@@ -33,8 +33,17 @@ function errorMessage (er) {
         '',
         [
           '',
-          'Failed at the ' + er.pkgid + ' ' + er.stage + ' script.',
-          'This is probably not a problem with npm. There is likely additional logging output above.'
+          'Failed at the ' + er.pkgid + ' ' + er.stage + " script '" + er.script + "'.",
+          'Make sure you have the latest version of node.js and npm installed.',
+          'If you do, this is most likely a problem with the ' + er.pkgname + ' package,',
+          'not with npm itself.',
+          'Tell the author that this fails on your system:',
+          '    ' + er.script,
+          'You can get information on how to open an issue for this project with:',
+          '    npm bugs ' + er.pkgname,
+          'Or if that isn\'t available, you can get their info via:',
+          '    npm owner ls ' + er.pkgname,
+          'There is likely additional logging output above.'
         ].join('\n')]
       )
       break
@@ -46,6 +55,7 @@ function errorMessage (er) {
         [
           '',
           'Failed using git.',
+          'This is most likely not a problem with npm itself.',
           'Please check if you have git installed and in your PATH.'
         ].join('\n')
       ])
@@ -60,6 +70,7 @@ function errorMessage (er) {
           'Failed to parse package.json data.',
           'package.json must be actual JSON, not just JavaScript.',
           '',
+          'This is not a bug in npm.',
           'Tell the package author to fix their package.json file.'
         ].join('\n'),
         'JSON.parse'
@@ -176,7 +187,8 @@ function errorMessage (er) {
       detail.push([
         'network',
         [
-          'This is a problem related to network connectivity.',
+          'This is most likely not a problem with npm itself',
+          'and is related to network connectivity.',
           'In most cases you are behind a proxy or have bad network settings.',
           '\nIf you are behind a proxy, please make sure that the',
           "'proxy' config is set properly.  See: 'npm help config'"
@@ -189,6 +201,7 @@ function errorMessage (er) {
       detail.push([
         'package.json',
         [
+          'This is most likely not a problem with npm itself.',
           "npm can't find a package.json file in your current directory."
         ].join('\n')
       ])
@@ -197,6 +210,7 @@ function errorMessage (er) {
     case 'ETARGET':
       short.push(['notarget', er.message])
       msg = [
+        'This is most likely not a problem with npm itself.',
         'In most cases you or one of your dependencies are requesting',
         "a package version that doesn't exist."
       ]
@@ -230,8 +244,8 @@ function errorMessage (er) {
       detail.push([
         'nospc',
         [
-          'There appears to be insufficient space on your system to finish.',
-          'Clear up some disk space and try again.'
+          'This is most likely not a problem with npm itself',
+          'and is related to insufficient space on your system.'
         ].join('\n')
       ])
       break
@@ -241,7 +255,9 @@ function errorMessage (er) {
       detail.push([
         'rofs',
         [
-          'Often virtualized file systems, or other file systems',
+          'This is most likely not a problem with npm itself',
+          'and is related to the file system being read-only.',
+          '\nOften virtualized file systems, or other file systems',
           "that don't support symlinks, give this error."
         ].join('\n')
       ])
@@ -252,7 +268,9 @@ function errorMessage (er) {
       detail.push([
         'enoent',
         [
-          'This is related to npm not being able to find a file.',
+          er.message,
+          'This is most likely not a problem with npm itself',
+          'and is related to npm not being able to find a file.',
           er.file ? "\nCheck if the file '" + er.file + "' is present." : ''
         ].join('\n')
       ])
@@ -272,8 +290,28 @@ function errorMessage (er) {
       ])
       break
 
+    case 'EISDIR':
+      short.push(['eisdir', er.message])
+      detail.push([
+        'eisdir',
+        [
+          'This is most likely not a problem with npm itself',
+          'and is related to npm not being able to find a package.json in',
+          'a package you are trying to install.'
+        ].join('\n')
+      ])
+      break
+
     default:
       short.push(['', er.message || er])
+      detail.push([
+        '',
+        [
+          '',
+          'If you need help, you may report this error at:',
+          '    <https://github.com/npm/npm/issues>'
+        ].join('\n')
+      ])
       break
   }
   if (er.optional) {

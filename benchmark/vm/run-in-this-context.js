@@ -21,6 +21,7 @@ function main(conf) {
 
   var i = 0;
 
+  common.v8ForceOptimization(vm.runInThisContext, '0', options);
   bench.start();
   for (; i < n; i++)
     vm.runInThisContext('0', options);

@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *****************************************************************************
@@ -230,7 +230,6 @@ typedef enum UDateDirection {
 
 U_NAMESPACE_BEGIN
 
-class BreakIterator;
 class RelativeDateTimeCacheData;
 class SharedNumberFormat;
 class SharedPluralRules;
@@ -415,6 +414,7 @@ public:
             UnicodeString& appendTo,
             UErrorCode& status) const;
 
+#ifndef U_HIDE_DRAFT_API
     /**
      * Format a combination of URelativeDateTimeUnit and numeric offset
      * using a numeric style, e.g. "1 week ago", "in 1 week",
@@ -430,7 +430,7 @@ public:
      *                  appended.
      * @param status    ICU error code returned here.
      * @return          appendTo
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UnicodeString& formatNumeric(
             double offset,
@@ -453,13 +453,14 @@ public:
      *                  appended.
      * @param status    ICU error code returned here.
      * @return          appendTo
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UnicodeString& format(
             double offset,
             URelativeDateTimeUnit unit,
             UnicodeString& appendTo,
             UErrorCode& status) const;
+#endif  /* U_HIDE_DRAFT_API */
 
     /**
      * Combines a relative date string and a time string in this object's

@@ -1,4 +1,4 @@
-.TH "PACKAGE\.JSON" "5" "June 2017" "" ""
+.TH "PACKAGE\.JSON" "5" "January 2017" "" ""
 .SH "NAME"
 \fBpackage.json\fR \- Specifics of npm's package\.json handling
 .SH DESCRIPTION
@@ -142,7 +142,7 @@ array of license objects:
 // Not valid metadata
 { "license" :
   { "type" : "ISC"
-  , "url" : "https://opensource\.org/licenses/ISC"
+  , "url" : "http://opensource\.org/licenses/ISC"
   }
 }
 
@@ -150,10 +150,10 @@ array of license objects:
 { "licenses" :
   [
     { "type": "MIT"
-    , "url": "https://www\.opensource\.org/licenses/mit\-license\.php"
+    , "url": "http://www\.opensource\.org/licenses/mit\-license\.php"
     }
   , { "type": "Apache\-2\.0"
-    , "url": "https://opensource\.org/licenses/apache2\.0\.php"
+    , "url": "http://opensource\.org/licenses/apache2\.0\.php"
     }
   ]
 }
@@ -175,7 +175,7 @@ unpublished package under any terms:
 .P
 .RS 2
 .nf
-{ "license": "UNLICENSED" }
+{ "license": "UNLICENSED"}
 .fi
 .RE
 .P
@@ -265,8 +265,6 @@ Conversely, some files are always ignored:
 \fBconfig\.gypi\fP
 .IP \(bu 2
 \fB*\.orig\fP
-.IP \(bu 2
-\fBpackage\-lock\.json\fP (use shrinkwrap instead)
 
 .RE
 .SH main

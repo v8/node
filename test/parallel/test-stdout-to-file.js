@@ -13,8 +13,13 @@ const tmpFile = path.join(common.tmpDir, 'stdout.txt');
 common.refreshTmpDir();
 
 function test(size, useBuffer, cb) {
-  const cmd = `"${process.argv[0]}" "${
-              useBuffer ? scriptBuffer : scriptString}" ${size} > "${tmpFile}"`;
+  const cmd = '"' + process.argv[0] + '"' +
+              ' ' +
+              '"' + (useBuffer ? scriptBuffer : scriptString) + '"' +
+              ' ' +
+              size +
+              ' > ' +
+              '"' + tmpFile + '"';
 
   try {
     fs.unlinkSync(tmpFile);

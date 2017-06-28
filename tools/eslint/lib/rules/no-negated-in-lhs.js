@@ -15,7 +15,7 @@ module.exports = {
         docs: {
             description: "disallow negating the left operand in `in` expressions",
             category: "Possible Errors",
-            recommended: false,
+            recommended: true,
             replacedBy: ["no-unsafe-negation"]
         },
         deprecated: true,

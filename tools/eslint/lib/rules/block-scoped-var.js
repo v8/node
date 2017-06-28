@@ -41,7 +41,7 @@ module.exports = {
 
         /**
          * Reports a given reference.
-         * @param {eslint-scope.Reference} reference - A reference to report.
+         * @param {escope.Reference} reference - A reference to report.
          * @returns {void}
          */
         function report(reference) {

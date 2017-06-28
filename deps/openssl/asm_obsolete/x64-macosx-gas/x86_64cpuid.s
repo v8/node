@@ -108,6 +108,14 @@ L$intel:
 	shrl	$14,%r10d
 	andl	$0xfff,%r10d
 
+	cmpl	$7,%r11d
+	jb	L$nocacheinfo
+
+	movl	$7,%eax
+	xorl	%ecx,%ecx
+	cpuid
+	movl	%ebx,8(%rdi)
+
 L$nocacheinfo:
 	movl	$1,%eax
 	cpuid
@@ -137,15 +145,6 @@ L$generic:
 	orl	%ecx,%r9d
 
 	movl	%edx,%r10d
-
-	cmpl	$7,%r11d
-	jb	L$no_extended_info
-	movl	$7,%eax
-	xorl	%ecx,%ecx
-	cpuid
-	movl	%ebx,8(%rdi)
-L$no_extended_info:
-
 	btl	$27,%r9d
 	jnc	L$clear_avx
 	xorl	%ecx,%ecx

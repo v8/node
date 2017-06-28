@@ -60,8 +60,6 @@
       defined(__OpenBSD__)         || \
       defined(__NetBSD__)
 # include "uv-bsd.h"
-#elif defined(__CYGWIN__) || defined(__MSYS__)
-# include "uv-posix.h"
 #endif
 
 #ifndef PTHREAD_BARRIER_SERIAL_THREAD
@@ -81,6 +79,7 @@
 #endif
 
 struct uv__io_s;
+struct uv__async;
 struct uv_loop_s;
 
 typedef void (*uv__io_cb)(struct uv_loop_s* loop,
@@ -96,6 +95,16 @@ struct uv__io_s {
   unsigned int events;  /* Current event mask. */
   int fd;
   UV_IO_PRIVATE_PLATFORM_FIELDS
+};
+
+typedef void (*uv__async_cb)(struct uv_loop_s* loop,
+                             struct uv__async* w,
+                             unsigned int nevents);
+
+struct uv__async {
+  uv__async_cb cb;
+  uv__io_t io_watcher;
+  int wfd;
 };
 
 #ifndef UV_PLATFORM_SEM_T
@@ -207,9 +216,7 @@ typedef struct {
   void* check_handles[2];                                                     \
   void* idle_handles[2];                                                      \
   void* async_handles[2];                                                     \
-  void (*async_unused)(void);  /* TODO(bnoordhuis) Remove in libuv v2. */     \
-  uv__io_t async_io_watcher;                                                  \
-  int async_wfd;                                                              \
+  struct uv__async async_watcher;                                             \
   struct {                                                                    \
     void* min;                                                                \
     unsigned int nelts;                                                       \

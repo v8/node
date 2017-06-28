@@ -11,11 +11,11 @@ const srcPath = path.join(common.tmpDir, 'hardlink-target.txt');
 const dstPath = path.join(common.tmpDir, 'link1.js');
 fs.writeFileSync(srcPath, 'hello world');
 
-function callback(err) {
+const callback = function(err) {
   assert.ifError(err);
   const dstContent = fs.readFileSync(dstPath, 'utf8');
   assert.strictEqual('hello world', dstContent);
-}
+};
 
 fs.link(srcPath, dstPath, common.mustCall(callback));
 

@@ -6,14 +6,28 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Helpers
 //------------------------------------------------------------------------------
+
+/**
+ * Checks whether the given token is an opening parenthesis or not.
+ *
+ * @param {Token} token - The token to check.
+ * @returns {boolean} `true` if the token is an opening parenthesis.
+ */
+function isOpeningParen(token) {
+    return token.type === "Punctuator" && token.value === "(";
+}
+
+/**
+ * Checks whether the given token is an closing parenthesis or not.
+ *
+ * @param {Token} token - The token to check.
+ * @returns {boolean} `true` if the token is an closing parenthesis.
+ */
+function isClosingParen(token) {
+    return token.type === "Punctuator" && token.value === ")";
+}
 
 //------------------------------------------------------------------------------
 // Rule Definition
@@ -38,12 +52,12 @@ module.exports = {
         return {
             NewExpression(node) {
                 if (node.arguments.length !== 0) {
-                    return; // shortcut: if there are arguments, there have to be parens
+                    return;  // shortcut: if there are arguments, there have to be parens
                 }
 
                 const lastToken = sourceCode.getLastToken(node);
-                const hasLastParen = lastToken && astUtils.isClosingParenToken(lastToken);
-                const hasParens = hasLastParen && astUtils.isOpeningParenToken(sourceCode.getTokenBefore(lastToken));
+                const hasLastParen = lastToken && isClosingParen(lastToken);
+                const hasParens = hasLastParen && isOpeningParen(sourceCode.getTokenBefore(lastToken));
 
                 if (!hasParens) {
                     context.report({

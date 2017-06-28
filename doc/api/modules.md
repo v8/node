@@ -20,29 +20,31 @@ directory as `foo.js`.
 Here are the contents of `circle.js`:
 
 ```js
-const { PI } = Math;
+const PI = Math.PI;
 
-exports.area = (r) => PI * r ** 2;
+exports.area = (r) => PI * r * r;
 
 exports.circumference = (r) => 2 * PI * r;
 ```
 
 The module `circle.js` has exported the functions `area()` and
-`circumference()`. Functions and objects are added to the root of a module
-by specifying additional properties on the special `exports` object.
+`circumference()`.  To add functions and objects to the root of your module,
+you can add them to the special `exports` object.
 
 Variables local to the module will be private, because the module is wrapped
 in a function by Node.js (see [module wrapper](#modules_the_module_wrapper)).
 In this example, the variable `PI` is private to `circle.js`.
 
-The `module.exports` property can be assigned a new value (such as a function
-or object).
+If you want the root of your module's export to be a function (such as a
+constructor) or if you want to export a complete object in one assignment
+instead of building it one property at a time, assign it to `module.exports`
+instead of `exports`.
 
 Below, `bar.js` makes use of the `square` module, which exports a constructor:
 
 ```js
 const square = require('./square.js');
-const mySquare = square(2);
+var mySquare = square(2);
 console.log(`The area of my square is ${mySquare.area()}`);
 ```
 
@@ -52,20 +54,24 @@ The `square` module is defined in `square.js`:
 // assigning to exports will not modify module, must use module.exports
 module.exports = (width) => {
   return {
-    area: () => width ** 2
+    area: () => width * width
   };
-};
+}
 ```
 
-The module system is implemented in the `require('module')` module.
+The module system is implemented in the `require("module")` module.
 
 ## Accessing the main module
 
 <!-- type=misc -->
 
 When a file is run directly from Node.js, `require.main` is set to its
-`module`. That means that it is possible to determine whether a file has been
-run directly by testing `require.main === module`.
+`module`. That means that you can determine whether a file has been run
+directly by testing
+
+```js
+require.main === module
+```
 
 For a file `foo.js`, this will be `true` if run via `node foo.js`, but
 `false` if run by `require('./foo')`.
@@ -89,10 +95,10 @@ Let's say that we wanted to have the folder at
 `/usr/lib/node/<some-package>/<some-version>` hold the contents of a
 specific version of a package.
 
-Packages can depend on one another. In order to install package `foo`, it
-may be necessary to install a specific version of package `bar`. The `bar`
-package may itself have dependencies, and in some cases, these may even collide
-or form cyclic dependencies.
+Packages can depend on one another. In order to install package `foo`, you
+may have to install a specific version of package `bar`.  The `bar` package
+may itself have dependencies, and in some cases, these dependencies may even
+collide or form cycles.
 
 Since Node.js looks up the `realpath` of any modules it loads (that is,
 resolves symlinks), and then looks for their dependencies in the `node_modules`
@@ -136,20 +142,18 @@ To get the exact filename that will be loaded when `require()` is called, use
 the `require.resolve()` function.
 
 Putting together all of the above, here is the high-level algorithm
-in pseudocode of what `require.resolve()` does:
+in pseudocode of what require.resolve does:
 
 ```txt
 require(X) from module at path Y
 1. If X is a core module,
    a. return the core module
    b. STOP
-2. If X begins with '/'
-   a. set Y to be the filesystem root
-3. If X begins with './' or '/' or '../'
+2. If X begins with './' or '/' or '../'
    a. LOAD_AS_FILE(Y + X)
    b. LOAD_AS_DIRECTORY(Y + X)
-4. LOAD_NODE_MODULES(X, dirname(Y))
-5. THROW "not found"
+3. LOAD_NODE_MODULES(X, dirname(Y))
+4. THROW "not found"
 
 LOAD_AS_FILE(X)
 1. If X is a file, load X as JavaScript text.  STOP
@@ -157,18 +161,14 @@ LOAD_AS_FILE(X)
 3. If X.json is a file, parse X.json to a JavaScript Object.  STOP
 4. If X.node is a file, load X.node as binary addon.  STOP
 
-LOAD_INDEX(X)
-1. If X/index.js is a file, load X/index.js as JavaScript text.  STOP
-2. If X/index.json is a file, parse X/index.json to a JavaScript object. STOP
-3. If X/index.node is a file, load X/index.node as binary addon.  STOP
-
 LOAD_AS_DIRECTORY(X)
 1. If X/package.json is a file,
    a. Parse X/package.json, and look for "main" field.
    b. let M = X + (json main field)
    c. LOAD_AS_FILE(M)
-   d. LOAD_INDEX(M)
-2. LOAD_INDEX(X)
+2. If X/index.js is a file, load X/index.js as JavaScript text.  STOP
+3. If X/index.json is a file, parse X/index.json to a JavaScript object. STOP
+4. If X/index.node is a file, load X/index.node as binary addon.  STOP
 
 LOAD_NODE_MODULES(X, START)
 1. let DIRS=NODE_MODULES_PATHS(START)
@@ -201,8 +201,8 @@ executed multiple times.  This is an important feature.  With it,
 "partially done" objects can be returned, thus allowing transitive
 dependencies to be loaded even when they would cause cycles.
 
-To have a module execute code multiple times, export a function, and call
-that function.
+If you want to have a module execute code multiple times, then export a
+function, and call that function.
 
 ### Module Caching Caveats
 
@@ -295,8 +295,8 @@ a done
 in main, a.done=true, b.done=true
 ```
 
-Careful planning is required to allow cyclic module dependencies to work
-correctly within an application.
+If you have cyclic module dependencies in your program, make sure to
+plan accordingly.
 
 ## File Modules
 
@@ -348,9 +348,9 @@ If this was in a folder at `./some-library`, then
 
 This is the extent of Node.js's awareness of package.json files.
 
-*Note*: If the file specified by the `"main"` entry of `package.json` is
-missing and can not be resolved, Node.js will report the entire module as
-missing with the default error:
+Note: If the file specified by the `"main"` entry of `package.json` is missing
+and can not be resolved, Node.js will report the entire module as missing with
+the default error:
 
 ```txt
 Error: Cannot find module 'some-library'
@@ -389,8 +389,8 @@ this order:
 This allows programs to localize their dependencies, so that they do not
 clash.
 
-It is possible to require specific files or sub modules distributed with a
-module by including a path suffix after the module name. For instance
+You can require specific files or sub modules distributed with a module by
+including a path suffix after the module name. For instance
 `require('example-module/path/to/file')` would resolve `path/to/file`
 relative to where `example-module` is located. The suffixed path follows the
 same module resolution semantics.
@@ -401,9 +401,8 @@ same module resolution semantics.
 
 If the `NODE_PATH` environment variable is set to a colon-delimited list
 of absolute paths, then Node.js will search those paths for modules if they
-are not found elsewhere.
-
-*Note*: On Windows, `NODE_PATH` is delimited by semicolons instead of colons.
+are not found elsewhere.  (Note: On Windows, `NODE_PATH` is delimited by
+semicolons instead of colons.)
 
 `NODE_PATH` was originally created to support loading modules from
 varying paths before the current [module resolution][] algorithm was frozen.
@@ -424,10 +423,9 @@ Additionally, Node.js will search in the following locations:
 Where `$HOME` is the user's home directory, and `$PREFIX` is Node.js's
 configured `node_prefix`.
 
-These are mostly for historic reasons.
-
-*Note*: It is strongly encouraged to place dependencies in the local
-`node_modules` folder. These will be loaded faster, and more reliably.
+These are mostly for historic reasons.  **You are highly encouraged
+to place your dependencies locally in `node_modules` folders.**  They
+will be loaded faster, and more reliably.
 
 ## The module wrapper
 
@@ -437,8 +435,8 @@ Before a module's code is executed, Node.js will wrap it with a function
 wrapper that looks like the following:
 
 ```js
-(function(exports, require, module, __filename, __dirname) {
-// Module code actually lives in here
+(function (exports, require, module, __filename, __dirname) {
+// Your module code actually lives in here
 });
 ```
 
@@ -488,7 +486,7 @@ The `module.exports` object is created by the Module system. Sometimes this is
 not acceptable; many want their module to be an instance of some class. To do
 this, assign the desired export object to `module.exports`. Note that assigning
 the desired object to `exports` will simply rebind the local `exports` variable,
-which is probably not what is desired.
+which is probably not what you want to do.
 
 For example suppose we were making a module called `a.js`
 
@@ -552,27 +550,25 @@ exports = { hello: false };  // Not exported, only available in the module
 When the `module.exports` property is being completely replaced by a new
 object, it is common to also reassign `exports`, for example:
 
-<!-- eslint-disable func-name-matching -->
 ```js
 module.exports = exports = function Constructor() {
-  // ... etc.
-};
+    // ... etc.
 ```
 
 To illustrate the behavior, imagine this hypothetical implementation of
 `require()`, which is quite similar to what is actually done by `require()`:
 
 ```js
-function require(/* ... */) {
-  const module = { exports: {} };
+function require(...) {
+  var module = { exports: {} };
   ((module, exports) => {
-    // Module code here. In this example, define a function.
-    function someFunc() {}
-    exports = someFunc;
+    // Your module code here. In this example, define a function.
+    function some_func() {};
+    exports = some_func;
     // At this point, exports is no longer a shortcut to module.exports, and
     // this module will still export an empty default object.
-    module.exports = someFunc;
-    // At this point, the module will now export someFunc, instead of the
+    module.exports = some_func;
+    // At this point, the module will now export some_func, instead of the
     // default object.
   })(module, module.exports);
   return module.exports;
@@ -584,7 +580,7 @@ function require(/* ... */) {
 added: v0.1.16
 -->
 
-* {string}
+* {String}
 
 The fully resolved filename to the module.
 
@@ -593,7 +589,7 @@ The fully resolved filename to the module.
 added: v0.1.16
 -->
 
-* {string}
+* {String}
 
 The identifier for the module.  Typically this is the fully resolved
 filename.
@@ -603,7 +599,7 @@ filename.
 added: v0.1.16
 -->
 
-* {boolean}
+* {Boolean}
 
 Whether or not the module is done loading, or is in the process of
 loading.
@@ -628,10 +624,10 @@ added: v0.5.1
 The `module.require` method provides a way to load a module as if
 `require()` was called from the original module.
 
-*Note*: In order to do this, it is necessary to get a reference to the
-`module` object.  Since `require()` returns the `module.exports`, and the
-`module` is typically *only* available within a specific module's code, it must
-be explicitly exported in order to be used.
+Note that in order to do this, you must get a reference to the `module`
+object.  Since `require()` returns the `module.exports`, and the `module` is
+typically *only* available within a specific module's code, it must be
+explicitly exported in order to be used.
 
 [`Error`]: errors.html#errors_class_error
 [module resolution]: #modules_all_together

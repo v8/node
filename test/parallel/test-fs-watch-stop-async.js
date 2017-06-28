@@ -1,10 +1,9 @@
 'use strict';
 const common = require('../common');
-
 const assert = require('assert');
 const fs = require('fs');
 
-const watch = fs.watchFile(__filename, common.mustNotCall());
+const watch = fs.watchFile(__filename, () => {});
 let triggered;
 const listener = common.mustCall(() => {
   triggered = true;

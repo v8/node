@@ -2,35 +2,43 @@
 
 ## Code of Conduct
 
-Please read the
-[Code of Conduct](https://github.com/nodejs/TSC/blob/master/CODE_OF_CONDUCT.md)
-which explains the minimum behavior expectations for Node.js contributors.
+The Code of Conduct explains the *bare minimum* behavior
+expectations the Node Foundation requires of its contributors.
+[Please read it before participating.](./CODE_OF_CONDUCT.md)
 
 ## Issue Contributions
 
-When opening issues or commenting on existing issues, please make sure
-discussions are related to concrete technical issues with Node.js.
+When opening new issues or commenting on existing issues on this repository
+please make sure discussions are related to concrete technical issues with the
+Node.js software.
 
-* For general help using Node.js, please file an issue at the
+For general help using Node.js, please file an issue at the
 [Node.js help repository](https://github.com/nodejs/help/issues).
 
-* Discussion of non-technical topics (such as intellectual property and
-trademark) should use the
-[Technical Steering Committee (TSC) repository](https://github.com/nodejs/TSC/issues).
+Discussion of non-technical topics including subjects like intellectual
+property, trademark, and high level project questions should move to the
+[Technical Steering Committee (TSC)](https://github.com/nodejs/TSC/issues)
+instead.
 
 ## Code Contributions
 
-This section will guide you through the contribution process.
+The Node.js project has an open governance model and welcomes new contributors.
+Individuals making significant and valuable contributions are made
+_Collaborators_ and given commit-access to the project. See the
+[GOVERNANCE.md](./GOVERNANCE.md) document for more information about how this
+works.
+
+This document will guide you through the contribution process.
 
 ### Step 1: Fork
 
-Fork the project [on GitHub](https://github.com/nodejs/node) and clone your fork
-locally.
+Fork the project [on GitHub](https://github.com/nodejs/node) and check out your
+copy locally.
 
 ```text
 $ git clone git@github.com:username/node.git
 $ cd node
-$ git remote add upstream https://github.com/nodejs/node.git
+$ git remote add upstream git://github.com/nodejs/node.git
 ```
 
 #### Which branch?
@@ -41,18 +49,24 @@ and built upon.
 #### Dependencies
 
 Node.js has several bundled dependencies in the *deps/* and the *tools/*
-directories that are not part of the project proper. Changes to files in those
-directories should be sent to their respective projects. Do not send a patch to
-Node.js. We cannot accept such patches.
+directories that are not part of the project proper. Any changes to files
+in those directories or its subdirectories should be sent to their respective
+projects. Do not send a patch to Node.js. We cannot accept such patches.
 
 In case of doubt, open an issue in the
 [issue tracker](https://github.com/nodejs/node/issues/) or contact one of the
 [project Collaborators](https://github.com/nodejs/node/#current-project-team-members).
-Node.js has two IRC channels:
+Especially do so if you plan to work on something big. Nothing is more
+frustrating than seeing your hard work go to waste because your vision
+does not align with the project team. (Node.js has two IRC channels:
 [#Node.js](http://webchat.freenode.net/?channels=node.js) for general help and
 questions, and
 [#Node-dev](http://webchat.freenode.net/?channels=node-dev) for development of
 Node.js core specifically.
+
+For instructions on updating the version of V8 included in the *deps/*
+directory, please refer to [the Maintaining V8 in Node.js guide](https://github.com/nodejs/node/blob/master/doc/guides/maintaining-V8.md).
+
 
 ### Step 2: Branch
 
@@ -81,37 +95,20 @@ $ git add my/changed/files
 $ git commit
 ```
 
-### Commit message guidelines
+Writing good commit logs is important. A commit log should describe what
+changed and why. Follow these guidelines when writing one:
 
-The commit message should describe what changed and why.
-
-1. The first line should:
-   - contain a short description of the change
-   - be 50 characters or less
-   - be entirely in lowercase with the exception of proper nouns, acronyms, and
-   the words that refer to code, like function/variable names
-   - be prefixed with the name of the changed subsystem and start with an
-   imperative verb. Check the output of `git log --oneline files/you/changed` to
-   find out what subsystems your changes touch.
-
-   Examples:
-   - `net: add localAddress and localPort to Socket`
-   - `src: fix typos in node_lttng_provider.h`
-
-
+1. The first line should be 50 characters or less and contain a short
+   description of the change. All words in the description should be in
+   lowercase with the exception of proper nouns, acronyms, and the ones that
+   refer to code, like function/variable names. The description should
+   be prefixed with the name of the changed subsystem and start with an
+   imperative verb. Example: "net: add localAddress and localPort
+   to Socket"
 2. Keep the second line blank.
 3. Wrap all other lines at 72 columns.
 
-4. If your patch fixes an open issue, you can add a reference to it at the end
-of the log. Use the `Fixes:` prefix and the full issue URL. For other references
-use `Refs:`.
-
-   Examples:
-   - `Fixes: https://github.com/nodejs/node/issues/1337`
-   - `Refs: http://eslint.org/docs/rules/space-in-parens.html`
-   - `Refs: https://github.com/nodejs/node/pull/3615`
-
-Sample complete commit message:
+A good commit log can look something like this:
 
 ```txt
 subsystem: explain the commit in one line
@@ -124,15 +121,27 @@ The body of the commit message can be several paragraphs, and
 please do proper word-wrap and keep columns shorter than about
 72 characters or so. That way, `git log` will show things
 nicely even when it is indented.
+```
 
+The header line should be meaningful; it is what other people see when they
+run `git shortlog` or `git log --oneline`.
+
+Check the output of `git log --oneline files_that_you_changed` to find out
+what subsystem (or subsystems) your changes touch.
+
+If your patch fixes an open issue, you can add a reference to it at the end
+of the log. Use the `Fixes:` prefix and the full issue URL. For other references
+use `Refs:`. For example:
+
+```txt
 Fixes: https://github.com/nodejs/node/issues/1337
 Refs: http://eslint.org/docs/rules/space-in-parens.html
+Refs: https://github.com/nodejs/node/pull/3615
 ```
 
 ### Step 4: Rebase
 
-Use `git rebase` (not `git merge`) to synchronize your work with the main
-repository.
+Use `git rebase` (not `git merge`) to sync your work from time to time.
 
 ```text
 $ git fetch upstream
@@ -141,12 +150,12 @@ $ git rebase upstream/master
 
 ### Step 5: Test
 
-Bug fixes and features should come with tests. Read the
-[guide for writing tests in Node.js](./doc/guides/writing-tests.md). Looking at
-other tests to see how they should be structured can also help. Add your
-tests in the `test/parallel/` directory if you are unsure where to put them.
+Bug fixes and features **should come with tests**. Add your tests in the
+`test/parallel/` directory. For guidance on how to write a test for the Node.js
+project, see this [guide](./doc/guides/writing-tests.md). Looking at other tests
+to see how they should be structured can also help.
 
-To run the tests (including code linting) on Unix / macOS:
+To run the tests on Unix / OS X:
 
 ```text
 $ ./configure && make -j4 test
@@ -163,31 +172,29 @@ Windows:
 Make sure the linter does not report any issues and that all tests pass. Please
 do not submit patches that fail either check.
 
+Running `make test`/`vcbuild test` will run the linter as well unless one or
+more tests fail.
+
 If you want to run the linter without running tests, use
-`make lint`/`vcbuild lint`. It will run both JavaScript linting and
+`make lint`/`vcbuild jslint`. At this time, only JavaScript linting is
+available on Windows. `make lint` on POSIX will run both JavaScript linting and
 C++ linting.
 
-If you are updating tests and just want to run a single test to check it:
+If you are updating tests and just want to run a single test to check it, you
+can use this syntax to run it exactly as the test harness would:
 
 ```text
-$ python tools/test.py -J --mode=release parallel/test-stream2-transform
+$ python tools/test.py -v --mode=release parallel/test-stream2-transform
 ```
 
-If you want to check the other options, please refer to the help by using
-the `--help` option
-
-```text
-$ python tools/test.py --help
-```
-
-You can usually run tests directly with node:
+You can run tests directly with node:
 
 ```text
 $ ./node ./test/parallel/test-stream2-transform.js
 ```
 
-Remember to recompile with `make -j4` in between test runs if you change code in
-the `lib` or `src` directories.
+Remember to recompile with `make -j4` in between test runs if you change
+core modules.
 
 ### Step 6: Push
 
@@ -195,12 +202,15 @@ the `lib` or `src` directories.
 $ git push origin my-branch
 ```
 
+Go to https://github.com/yourusername/node and select your branch.
+Click the 'Pull Request' button and fill out the form.
+
 Pull requests are usually reviewed within a few days.
 
 ### Step 7: Discuss and update
 
 You will probably get feedback or requests for changes to your Pull Request.
-This is a big part of the submission process so don't be discouraged!
+This is a big part of the submission process so don't be disheartened!
 
 To make changes to an existing Pull Request, make the changes to your branch.
 When you push that branch to your fork, GitHub will automatically update the

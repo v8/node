@@ -91,11 +91,9 @@ const testData = [
   },
 ];
 
-const spaces = /\s/g;
-
 testData.forEach((item) => {
   // Normalize expected data by stripping whitespace
-  const expected = item.html.replace(spaces, '');
+  const expected = item.html.replace(/\s/g, '');
   const includeAnalytics = typeof item.analyticsId !== 'undefined';
 
   fs.readFile(item.file, 'utf8', common.mustCall((err, input) => {
@@ -107,14 +105,14 @@ testData.forEach((item) => {
         {
           input: preprocessed,
           filename: 'foo',
-          template: path.resolve(__dirname, '../../doc/template.html'),
+          template: 'doc/template.html',
           nodeVersion: process.version,
           analytics: item.analyticsId,
         },
         common.mustCall((err, output) => {
           assert.ifError(err);
 
-          const actual = output.replace(spaces, '');
+          const actual = output.replace(/\s/g, '');
           // Assert that the input stripped of all whitespace contains the
           // expected list
           assert.notStrictEqual(actual.indexOf(expected), -1);

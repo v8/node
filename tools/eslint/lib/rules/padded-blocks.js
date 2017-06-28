@@ -51,11 +51,7 @@ module.exports = {
         const config = context.options[0] || "always";
 
         if (typeof config === "string") {
-            const shouldHavePadding = config === "always";
-
-            options.blocks = shouldHavePadding;
-            options.switches = shouldHavePadding;
-            options.classes = shouldHavePadding;
+            options.blocks = config === "always";
         } else {
             if (config.hasOwnProperty("blocks")) {
                 options.blocks = config.blocks === "always";
@@ -95,31 +91,22 @@ module.exports = {
         }
 
         /**
-         * Checks if there is padding between two tokens
-         * @param {Token} first The first token
-         * @param {Token} second The second token
-         * @returns {boolean} True if there is at least a line between the tokens
-         */
-        function isPaddingBetweenTokens(first, second) {
-            return second.loc.start.line - first.loc.end.line >= 2;
-        }
-
-
-        /**
          * Checks if the given token has a blank line after it.
          * @param {Token} token The token to check.
          * @returns {boolean} Whether or not the token is followed by a blank line.
          */
-        function getFirstBlockToken(token) {
-            let prev = token,
-                first = token;
+        function isTokenTopPadded(token) {
+            const tokenStartLine = token.loc.start.line,
+                expectedFirstLine = tokenStartLine + 2;
+            let first = token;
 
             do {
-                prev = first;
-                first = sourceCode.getTokenAfter(first, { includeComments: true });
-            } while (isComment(first) && first.loc.start.line === prev.loc.end.line);
+                first = sourceCode.getTokenOrCommentAfter(first);
+            } while (isComment(first) && first.loc.start.line === tokenStartLine);
 
-            return first;
+            const firstLine = first.loc.start.line;
+
+            return expectedFirstLine <= firstLine;
         }
 
         /**
@@ -127,16 +114,18 @@ module.exports = {
          * @param {Token} token The token to check
          * @returns {boolean} Whether or not the token is preceeded by a blank line
          */
-        function getLastBlockToken(token) {
-            let last = token,
-                next = token;
+        function isTokenBottomPadded(token) {
+            const blockEnd = token.loc.end.line,
+                expectedLastLine = blockEnd - 2;
+            let last = token;
 
             do {
-                next = last;
-                last = sourceCode.getTokenBefore(last, { includeComments: true });
-            } while (isComment(last) && last.loc.end.line === next.loc.start.line);
+                last = sourceCode.getTokenOrCommentBefore(last);
+            } while (isComment(last) && last.loc.end.line === blockEnd);
 
-            return last;
+            const lastLine = last.loc.end.line;
+
+            return lastLine <= expectedLastLine;
         }
 
         /**
@@ -166,21 +155,17 @@ module.exports = {
          */
         function checkPadding(node) {
             const openBrace = getOpenBrace(node),
-                firstBlockToken = getFirstBlockToken(openBrace),
-                tokenBeforeFirst = sourceCode.getTokenBefore(firstBlockToken, { includeComments: true }),
                 closeBrace = sourceCode.getLastToken(node),
-                lastBlockToken = getLastBlockToken(closeBrace),
-                tokenAfterLast = sourceCode.getTokenAfter(lastBlockToken, { includeComments: true }),
-                blockHasTopPadding = isPaddingBetweenTokens(tokenBeforeFirst, firstBlockToken),
-                blockHasBottomPadding = isPaddingBetweenTokens(lastBlockToken, tokenAfterLast);
+                blockHasTopPadding = isTokenTopPadded(openBrace),
+                blockHasBottomPadding = isTokenBottomPadded(closeBrace);
 
             if (requirePaddingFor(node)) {
                 if (!blockHasTopPadding) {
                     context.report({
                         node,
-                        loc: { line: tokenBeforeFirst.loc.start.line, column: tokenBeforeFirst.loc.start.column },
+                        loc: { line: openBrace.loc.start.line, column: openBrace.loc.start.column },
                         fix(fixer) {
-                            return fixer.insertTextAfter(tokenBeforeFirst, "\n");
+                            return fixer.insertTextAfter(openBrace, "\n");
                         },
                         message: ALWAYS_MESSAGE
                     });
@@ -188,34 +173,36 @@ module.exports = {
                 if (!blockHasBottomPadding) {
                     context.report({
                         node,
-                        loc: { line: tokenAfterLast.loc.end.line, column: tokenAfterLast.loc.end.column - 1 },
+                        loc: { line: closeBrace.loc.end.line, column: closeBrace.loc.end.column - 1 },
                         fix(fixer) {
-                            return fixer.insertTextBefore(tokenAfterLast, "\n");
+                            return fixer.insertTextBefore(closeBrace, "\n");
                         },
                         message: ALWAYS_MESSAGE
                     });
                 }
             } else {
                 if (blockHasTopPadding) {
+                    const nextToken = sourceCode.getTokenOrCommentAfter(openBrace);
 
                     context.report({
                         node,
-                        loc: { line: tokenBeforeFirst.loc.start.line, column: tokenBeforeFirst.loc.start.column },
+                        loc: { line: openBrace.loc.start.line, column: openBrace.loc.start.column },
                         fix(fixer) {
-                            return fixer.replaceTextRange([tokenBeforeFirst.end, firstBlockToken.start - firstBlockToken.loc.start.column], "\n");
+                            return fixer.replaceTextRange([openBrace.end, nextToken.start - nextToken.loc.start.column], "\n");
                         },
                         message: NEVER_MESSAGE
                     });
                 }
 
                 if (blockHasBottomPadding) {
+                    const previousToken = sourceCode.getTokenOrCommentBefore(closeBrace);
 
                     context.report({
                         node,
-                        loc: { line: tokenAfterLast.loc.end.line, column: tokenAfterLast.loc.end.column - 1 },
+                        loc: { line: closeBrace.loc.end.line, column: closeBrace.loc.end.column - 1 },
                         message: NEVER_MESSAGE,
                         fix(fixer) {
-                            return fixer.replaceTextRange([lastBlockToken.end, tokenAfterLast.start - tokenAfterLast.loc.start.column], "\n");
+                            return fixer.replaceTextRange([previousToken.end, closeBrace.start - closeBrace.loc.start.column], "\n");
                         }
                     });
                 }

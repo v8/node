@@ -1,13 +1,14 @@
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const fs = require('fs');
 
 const options = 'test';
+const noop = () => {};
 const unknownEncodingMessage = /^Error: Unknown encoding: test$/;
 
 assert.throws(() => {
-  fs.readFile('path', options, common.mustNotCall());
+  fs.readFile('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -15,7 +16,7 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.readdir('path', options, common.mustNotCall());
+  fs.readdir('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -23,7 +24,7 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.readlink('path', options, common.mustNotCall());
+  fs.readlink('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -31,7 +32,7 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.writeFile('path', 'data', options, common.mustNotCall());
+  fs.writeFile('path', 'data', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -39,7 +40,7 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.appendFile('path', 'data', options, common.mustNotCall());
+  fs.appendFile('path', 'data', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -47,11 +48,11 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.watch('path', options, common.mustNotCall());
+  fs.watch('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.realpath('path', options, common.mustNotCall());
+  fs.realpath('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {
@@ -59,7 +60,7 @@ assert.throws(() => {
 }, unknownEncodingMessage);
 
 assert.throws(() => {
-  fs.mkdtemp('path', options, common.mustNotCall());
+  fs.mkdtemp('path', options, noop);
 }, unknownEncodingMessage);
 
 assert.throws(() => {

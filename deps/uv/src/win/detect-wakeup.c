@@ -2,9 +2,9 @@
 #include "internal.h"
 #include "winapi.h"
 
-static void uv__register_system_resume_callback(void);
+static void uv__register_system_resume_callback();
 
-void uv__init_detect_system_wakeup(void) {
+void uv__init_detect_system_wakeup() {
   /* Try registering system power event callback. This is the cleanest
    * method, but it will only work on Win8 and above.
    */
@@ -20,7 +20,7 @@ static ULONG CALLBACK uv__system_resume_callback(PVOID Context,
   return 0;
 }
 
-static void uv__register_system_resume_callback(void) {
+static void uv__register_system_resume_callback() {
   _DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS recipient;
   _HPOWERNOTIFY registration_handle;
 

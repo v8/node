@@ -54,6 +54,16 @@ module.exports = {
         const commaTokensToIgnore = [];
 
         /**
+         * Determines if a given token is a comma operator.
+         * @param {ASTNode} token The token to check.
+         * @returns {boolean} True if the token is a comma, false if not.
+         * @private
+         */
+        function isComma(token) {
+            return !!token && (token.type === "Punctuator") && (token.value === ",");
+        }
+
+        /**
          * Reports a spacing error with an appropriate message.
          * @param {ASTNode} node The binary expression node to report.
          * @param {string} dir Is the error "before" or "after" the comma?
@@ -68,27 +78,27 @@ module.exports = {
                     if (options[dir]) {
                         if (dir === "before") {
                             return fixer.insertTextBefore(node, " ");
+                        } else {
+                            return fixer.insertTextAfter(node, " ");
                         }
-                        return fixer.insertTextAfter(node, " ");
-
-                    }
-                    let start, end;
-                    const newText = "";
-
-                    if (dir === "before") {
-                        start = otherNode.range[1];
-                        end = node.range[0];
                     } else {
-                        start = node.range[1];
-                        end = otherNode.range[0];
+                        let start, end;
+                        const newText = "";
+
+                        if (dir === "before") {
+                            start = otherNode.range[1];
+                            end = node.range[0];
+                        } else {
+                            start = node.range[1];
+                            end = otherNode.range[0];
+                        }
+
+                        return fixer.replaceTextRange([start, end], newText);
                     }
-
-                    return fixer.replaceTextRange([start, end], newText);
-
                 },
-                message: options[dir]
-                    ? "A space is required {{dir}} ','."
-                    : "There should be no space {{dir}} ','.",
+                message: options[dir] ?
+                  "A space is required {{dir}} ','." :
+                  "There should be no space {{dir}} ','.",
                 data: {
                     dir
                 }
@@ -137,7 +147,7 @@ module.exports = {
                 if (element === null) {
                     token = sourceCode.getTokenAfter(previousToken);
 
-                    if (astUtils.isCommaToken(token)) {
+                    if (isComma(token)) {
                         commaTokensToIgnore.push(token);
                     }
                 } else {
@@ -156,7 +166,7 @@ module.exports = {
             "Program:exit"() {
                 tokensAndComments.forEach((token, i) => {
 
-                    if (!astUtils.isCommaToken(token)) {
+                    if (!isComma(token)) {
                         return;
                     }
 
@@ -169,8 +179,8 @@ module.exports = {
 
                     validateCommaItemSpacing({
                         comma: token,
-                        left: astUtils.isCommaToken(previousToken) || commaTokensToIgnore.indexOf(token) > -1 ? null : previousToken,
-                        right: astUtils.isCommaToken(nextToken) ? null : nextToken
+                        left: isComma(previousToken) || commaTokensToIgnore.indexOf(token) > -1 ? null : previousToken,
+                        right: isComma(nextToken) ? null : nextToken
                     }, token);
                 });
             },

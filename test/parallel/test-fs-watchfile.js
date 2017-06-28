@@ -1,22 +1,22 @@
 'use strict';
-const common = require('../common');
 
-const assert = require('assert');
+const common = require('../common');
 const fs = require('fs');
 const path = require('path');
+const assert = require('assert');
 
 // Basic usage tests.
 assert.throws(function() {
   fs.watchFile('./some-file');
-}, /^Error: "watchFile\(\)" requires a listener function$/);
+}, /"watchFile\(\)" requires a listener function/);
 
 assert.throws(function() {
   fs.watchFile('./another-file', {}, 'bad listener');
-}, /^Error: "watchFile\(\)" requires a listener function$/);
+}, /"watchFile\(\)" requires a listener function/);
 
 assert.throws(function() {
-  fs.watchFile(new Object(), common.mustNotCall());
-}, common.expectsError({code: 'ERR_INVALID_ARG_TYPE', type: TypeError}));
+  fs.watchFile(new Object(), function() {});
+}, /Path must be a string/);
 
 const enoentFile = path.join(common.tmpDir, 'non-existent-file');
 const expectedStatObject = new fs.Stats(
@@ -63,25 +63,3 @@ fs.watchFile(enoentFile, {interval: 0}, common.mustCall(function(curr, prev) {
     fs.unwatchFile(enoentFile);
   }
 }, 2));
-
-// Watch events should callback with a filename on supported systems.
-// Omitting AIX. It works but not reliably.
-if (common.isLinux || common.isOSX || common.isWindows) {
-  const dir = common.tmpDir + '/watch';
-
-  fs.mkdir(dir, common.mustCall(function(err) {
-    if (err) assert.fail(err);
-
-    fs.watch(dir, common.mustCall(function(eventType, filename) {
-      clearInterval(interval);
-      this._handle.close();
-      assert.strictEqual(filename, 'foo.txt');
-    }));
-
-    const interval = setInterval(() => {
-      fs.writeFile(`${dir}/foo.txt`, 'foo', common.mustCall(function(err) {
-        if (err) assert.fail(err);
-      }));
-    }, 1);
-  }));
-}

@@ -8,8 +8,7 @@ var benchmarkDirectory = path.join(tmpDirectory, 'nodejs-benchmark-module');
 
 var bench = common.createBenchmark(main, {
   thousands: [50],
-  fullPath: ['true', 'false'],
-  useCache: ['true', 'false']
+  fullPath: ['true', 'false']
 });
 
 function main(conf) {
@@ -20,49 +19,35 @@ function main(conf) {
   try { fs.mkdirSync(benchmarkDirectory); } catch (e) {}
 
   for (var i = 0; i <= n; i++) {
-    fs.mkdirSync(`${benchmarkDirectory}${i}`);
+    fs.mkdirSync(benchmarkDirectory + i);
     fs.writeFileSync(
-      `${benchmarkDirectory}${i}/package.json`,
+      benchmarkDirectory + i + '/package.json',
       '{"main": "index.js"}'
     );
     fs.writeFileSync(
-      `${benchmarkDirectory}${i}/index.js`,
+      benchmarkDirectory + i + '/index.js',
       'module.exports = "";'
     );
   }
 
   if (conf.fullPath === 'true')
-    measureFull(n, conf.useCache === 'true');
+    measureFull(n);
   else
-    measureDir(n, conf.useCache === 'true');
-
-  rmrf(tmpDirectory);
+    measureDir(n);
 }
 
-function measureFull(n, useCache) {
-  var i;
-  if (useCache) {
-    for (i = 0; i <= n; i++) {
-      require(`${benchmarkDirectory}${i}/index.js`);
-    }
-  }
+function measureFull(n) {
   bench.start();
-  for (i = 0; i <= n; i++) {
-    require(`${benchmarkDirectory}${i}/index.js`);
+  for (var i = 0; i <= n; i++) {
+    require(benchmarkDirectory + i + '/index.js');
   }
   bench.end(n / 1e3);
 }
 
-function measureDir(n, useCache) {
-  var i;
-  if (useCache) {
-    for (i = 0; i <= n; i++) {
-      require(`${benchmarkDirectory}${i}`);
-    }
-  }
+function measureDir(n) {
   bench.start();
-  for (i = 0; i <= n; i++) {
-    require(`${benchmarkDirectory}${i}`);
+  for (var i = 0; i <= n; i++) {
+    require(benchmarkDirectory + i);
   }
   bench.end(n / 1e3);
 }

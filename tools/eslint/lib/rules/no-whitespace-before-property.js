@@ -4,10 +4,6 @@
  */
 "use strict";
 
-//------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
 const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
@@ -32,6 +28,21 @@ module.exports = {
         //--------------------------------------------------------------------------
         // Helpers
         //--------------------------------------------------------------------------
+
+        /**
+         * Finds opening bracket token of node's computed property
+         * @param {ASTNode} node - the node to check
+         * @returns {Token} opening bracket token of node's computed property
+         * @private
+         */
+        function findOpeningBracket(node) {
+            let token = sourceCode.getTokenBefore(node.property);
+
+            while (token.value !== "[") {
+                token = sourceCode.getTokenBefore(token);
+            }
+            return token;
+        }
 
         /**
          * Reports whitespace before property token
@@ -76,7 +87,7 @@ module.exports = {
                 }
 
                 if (node.computed) {
-                    rightToken = sourceCode.getTokenBefore(node.property, astUtils.isOpeningBracketToken);
+                    rightToken = findOpeningBracket(node);
                     leftToken = sourceCode.getTokenBefore(rightToken);
                 } else {
                     rightToken = sourceCode.getFirstToken(node.property);

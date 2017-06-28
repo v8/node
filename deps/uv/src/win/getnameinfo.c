@@ -127,11 +127,12 @@ int uv_getnameinfo(uv_loop_t* loop,
     return UV_EINVAL;
   }
 
-  UV_REQ_INIT(req, UV_GETNAMEINFO);
+  uv_req_init(loop, (uv_req_t*)req);
   uv__req_register(loop, req);
 
   req->getnameinfo_cb = getnameinfo_cb;
   req->flags = flags;
+  req->type = UV_GETNAMEINFO;
   req->loop = loop;
   req->retcode = 0;
 

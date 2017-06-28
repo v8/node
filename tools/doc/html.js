@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 'use strict';
 
 const common = require('./common.js');
@@ -183,35 +162,13 @@ function analyticsScript(analytics) {
   `;
 }
 
-// replace placeholders in text tokens
-function replaceInText(text) {
-  return linkJsTypeDocs(linkManPages(text));
-}
-
 // handle general body-text replacements
 // for example, link man page references to the actual page
 function parseText(lexed) {
   lexed.forEach(function(tok) {
-    if (tok.type === 'table') {
-      if (tok.cells) {
-        tok.cells.forEach((row, x) => {
-          row.forEach((_, y) => {
-            if (tok.cells[x] && tok.cells[x][y]) {
-              tok.cells[x][y] = replaceInText(tok.cells[x][y]);
-            }
-          });
-        });
-      }
-
-      if (tok.header) {
-        tok.header.forEach((_, i) => {
-          if (tok.header[i]) {
-            tok.header[i] = replaceInText(tok.header[i]);
-          }
-        });
-      }
-    } else if (tok.text && tok.type !== 'code') {
-      tok.text = replaceInText(tok.text);
+    if (tok.text && tok.type !== 'code') {
+      tok.text = linkManPages(tok.text);
+      tok.text = linkJsTypeDocs(tok.text);
     }
   });
 }
@@ -395,12 +352,9 @@ function linkJsTypeDocs(text) {
 }
 
 function parseAPIHeader(text) {
-  const classNames = 'api_stability api_stability_$2';
-  const docsUrl = 'documentation.html#documentation_stability_index';
-
   text = text.replace(
     STABILITY_TEXT_REG_EXP,
-    `<pre class="${classNames}"><a href="${docsUrl}">$1 $2</a>$3</pre>`
+    '<pre class="api_stability api_stability_$2">$1 $2$3</pre>'
   );
   return text;
 }

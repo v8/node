@@ -11,7 +11,7 @@ test('stepping through breakpoints', (t) => {
     throw error;
   }
 
-  return cli.waitForInitialBreak()
+  return cli.waitFor(/break/)
     .then(() => cli.waitForPrompt())
     .then(() => cli.command('watch("x")'))
     .then(() => cli.command('watch("\\"Hello\\"")'))

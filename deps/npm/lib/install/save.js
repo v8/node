@@ -1,27 +1,26 @@
 'use strict'
-
-const BB = require('bluebird')
-
-const createShrinkwrap = require('../shrinkwrap.js').createShrinkwrap
-const deepSortObject = require('../utils/deep-sort-object.js')
-const detectIndent = require('detect-indent')
-const fs = BB.promisifyAll(require('graceful-fs'))
-const iferr = require('iferr')
-const log = require('npmlog')
-const moduleName = require('../utils/module-name.js')
-const npm = require('../npm.js')
-const parseJSON = require('../utils/parse-json.js')
-const path = require('path')
-const validate = require('aproba')
-const without = require('lodash.without')
-const writeFileAtomic = require('write-file-atomic')
+var fs = require('graceful-fs')
+var path = require('path')
+var url = require('url')
+var writeFileAtomic = require('write-file-atomic')
+var log = require('npmlog')
+var semver = require('semver')
+var iferr = require('iferr')
+var validate = require('aproba')
+var without = require('lodash.without')
+var npm = require('../npm.js')
+var deepSortObject = require('../utils/deep-sort-object.js')
+var parseJSON = require('../utils/parse-json.js')
+var moduleName = require('../utils/module-name.js')
+var isDevDep = require('./is-dev-dep.js')
+var createShrinkwrap = require('../shrinkwrap.js').createShrinkwrap
 
 // if the -S|--save option is specified, then write installed packages
 // as dependencies to a package.json file.
 
-exports.saveRequested = function (tree, andReturn) {
-  validate('OF', arguments)
-  savePackageJson(tree, andWarnErrors(andSaveShrinkwrap(tree, andReturn)))
+exports.saveRequested = function (args, tree, andReturn) {
+  validate('AOF', arguments)
+  savePackageJson(args, tree, andWarnErrors(andSaveShrinkwrap(tree, andReturn)))
 }
 
 function andSaveShrinkwrap (tree, andReturn) {
@@ -43,14 +42,30 @@ function andWarnErrors (cb) {
 
 function saveShrinkwrap (tree, next) {
   validate('OF', arguments)
-  if (!npm.config.get('shrinkwrap') || !npm.config.get('package-lock')) {
-    next()
-  }
-  createShrinkwrap(tree, {silent: false}, next)
+  var saveTarget = path.resolve(tree.path, 'npm-shrinkwrap.json')
+  fs.stat(saveTarget, function (er, stat) {
+    if (er) return next()
+    var save = npm.config.get('save')
+    var saveDev = npm.config.get('save-dev')
+    var saveOptional = npm.config.get('save-optional')
+
+    var shrinkwrap = tree.package._shrinkwrap || {dependencies: {}}
+    var shrinkwrapHasAnyDevOnlyDeps = tree.requires.some(function (dep) {
+      var name = moduleName(dep)
+      return isDevDep(tree, name) &&
+             shrinkwrap.dependencies[name] != null
+    })
+
+    if (!saveOptional && saveDev && !shrinkwrapHasAnyDevOnlyDeps) return next()
+    if (saveOptional || !(save || saveDev)) return next()
+
+    var silent = false
+    createShrinkwrap(tree.path, tree.package, shrinkwrapHasAnyDevOnlyDeps, silent, next)
+  })
 }
 
-function savePackageJson (tree, next) {
-  validate('OF', arguments)
+function savePackageJson (args, tree, next) {
+  validate('AOF', arguments)
   var saveBundle = npm.config.get('save-bundle')
 
   // each item in the tree is a top-level thing that should be saved
@@ -59,49 +74,33 @@ function savePackageJson (tree, next) {
   var saveTarget = path.resolve(tree.path, 'package.json')
   // don't use readJson, because we don't want to do all the other
   // tricky npm-specific stuff that's in there.
-  fs.readFile(saveTarget, 'utf8', iferr(next, function (packagejson) {
-    const indent = detectIndent(packagejson).indent || '  '
+  fs.readFile(saveTarget, iferr(next, function (packagejson) {
     try {
-      tree.package = parseJSON(packagejson)
+      packagejson = parseJSON(packagejson)
     } catch (ex) {
       return next(ex)
     }
 
     // If we're saving bundled deps, normalize the key before we start
     if (saveBundle) {
-      var bundle = tree.package.bundleDependencies || tree.package.bundledDependencies
-      delete tree.package.bundledDependencies
+      var bundle = packagejson.bundleDependencies || packagejson.bundledDependencies
+      delete packagejson.bundledDependencies
       if (!Array.isArray(bundle)) bundle = []
     }
 
     var toSave = getThingsToSave(tree)
-    var toRemove = getThingsToRemove(tree)
+    var toRemove = getThingsToRemove(args, tree)
     var savingTo = {}
     toSave.forEach(function (pkg) { savingTo[pkg.save] = true })
     toRemove.forEach(function (pkg) { savingTo[pkg.save] = true })
 
     Object.keys(savingTo).forEach(function (save) {
-      if (!tree.package[save]) tree.package[save] = {}
+      if (!packagejson[save]) packagejson[save] = {}
     })
 
     log.verbose('saving', toSave)
-    const types = ['dependencies', 'devDependencies', 'optionalDependencies']
     toSave.forEach(function (pkg) {
-      tree.package[pkg.save][pkg.name] = pkg.spec
-      const movedFrom = []
-      for (let saveType of types) {
-        if (
-          pkg.save !== saveType &&
-          tree.package[saveType] &&
-          tree.package[saveType][pkg.name]
-        ) {
-          movedFrom.push(saveType)
-          delete tree.package[saveType][pkg.name]
-        }
-      }
-      if (movedFrom.length) {
-        log.notice('save', `${pkg.name} is being moved from ${movedFrom.join(' and ')} to ${pkg.save}`)
-      }
+      packagejson[pkg.save][pkg.name] = pkg.spec
       if (saveBundle) {
         var ii = bundle.indexOf(pkg.name)
         if (ii === -1) bundle.push(pkg.name)
@@ -109,49 +108,71 @@ function savePackageJson (tree, next) {
     })
 
     toRemove.forEach(function (pkg) {
-      delete tree.package[pkg.save][pkg.name]
+      delete packagejson[pkg.save][pkg.name]
       if (saveBundle) {
         bundle = without(bundle, pkg.name)
       }
     })
 
     Object.keys(savingTo).forEach(function (key) {
-      tree.package[key] = deepSortObject(tree.package[key])
+      packagejson[key] = deepSortObject(packagejson[key])
     })
     if (saveBundle) {
-      tree.package.bundleDependencies = deepSortObject(bundle)
+      packagejson.bundledDependencies = deepSortObject(bundle)
     }
 
-    var json = JSON.stringify(tree.package, null, indent) + '\n'
+    var json = JSON.stringify(packagejson, null, 2) + '\n'
     writeFileAtomic(saveTarget, json, next)
   }))
 }
 
-exports.getSaveType = function (tree, arg) {
-  if (arguments.length) validate('OO', arguments)
+var getSaveType = exports.getSaveType = function (args) {
+  validate('A', arguments)
+  var nothingToSave = !args.length
   var globalInstall = npm.config.get('global')
   var noSaveFlags = !npm.config.get('save') &&
                     !npm.config.get('save-dev') &&
-                    !npm.config.get('save-prod') &&
                     !npm.config.get('save-optional')
-  if (globalInstall || noSaveFlags) return null
+  if (nothingToSave || globalInstall || noSaveFlags) return null
 
-  if (npm.config.get('save-optional')) {
-    return 'optionalDependencies'
-  } else if (npm.config.get('save-dev')) {
-    return 'devDependencies'
-  } else if (npm.config.get('save-prod')) {
-    return 'dependencies'
-  } else {
-    if (arg) {
-      var name = moduleName(arg)
-      if (tree.package.optionalDependencies[name]) {
-        return 'optionalDependencies'
-      } else if (tree.package.devDependencies[name]) {
-        return 'devDependencies'
-      }
+  if (npm.config.get('save-optional')) return 'optionalDependencies'
+  else if (npm.config.get('save-dev')) return 'devDependencies'
+  else return 'dependencies'
+}
+
+function computeVersionSpec (child) {
+  validate('O', arguments)
+  var requested = child.package._requested
+  if (!requested || requested.type === 'tag') {
+    requested = {
+      type: 'version',
+      spec: child.package.version
     }
-    return 'dependencies'
+  }
+  if (requested.type === 'version' || requested.type === 'range') {
+    var version = child.package.version
+    var rangeDescriptor = ''
+    if (semver.valid(version, true) &&
+        semver.gte(version, '0.1.0', true) &&
+        !npm.config.get('save-exact')) {
+      rangeDescriptor = npm.config.get('save-prefix')
+    }
+    return rangeDescriptor + version
+  } else if (requested.type === 'directory' || requested.type === 'local') {
+    var relativePath = path.relative(child.parent.path, requested.spec)
+    if (/^[.][.]/.test(relativePath)) {
+      return url.format({
+        protocol: 'file',
+        slashes: true,
+        pathname: requested.spec
+      })
+    } else {
+      return 'file:' + relativePath
+    }
+  } else if (requested.type === 'hosted') {
+    return requested.spec
+  } else {
+    return requested.rawSpec
   }
 }
 
@@ -162,21 +183,28 @@ function getThingsToSave (tree) {
   }).map(function (child) {
     return {
       name: moduleName(child),
-      spec: child.saveSpec,
+      spec: computeVersionSpec(child),
       save: child.save
     }
   })
   return toSave
 }
 
-function getThingsToRemove (tree) {
-  validate('O', arguments)
-  if (!tree.removedChildren) return []
-  var toRemove = tree.removedChildren.map(function (child) {
+function getThingsToRemove (args, tree) {
+  validate('AO', arguments)
+  if (!tree.removed) return []
+  var toRemove = tree.removed.map(function (child) {
     return {
       name: moduleName(child),
       save: child.save
     }
+  })
+  var saveType = getSaveType(args)
+  args.forEach(function (arg) {
+    toRemove.push({
+      name: arg,
+      save: saveType
+    })
   })
   return toRemove
 }

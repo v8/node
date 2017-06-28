@@ -19,10 +19,10 @@ function runTest() {
   https.createServer({ ciphers }, common.mustCall(function(req, res) {
     this.close();
     res.end();
-  })).listen(0, '::1', common.mustCall(function() {
+  })).listen(common.PORT, '::1', common.mustCall(function() {
     const options = {
       host: 'localhost',
-      port: this.address().port,
+      port: common.PORT,
       family: 6,
       ciphers: ciphers,
       rejectUnauthorized: false,

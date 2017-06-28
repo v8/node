@@ -1,6 +1,6 @@
 'use strict';
 
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const URLSearchParams = require('url').URLSearchParams;
 
@@ -29,15 +29,7 @@ assert.deepStrictEqual(values.next(), {
 
 assert.throws(() => {
   values.next.call(undefined);
-}, common.expectsError({
-  code: 'ERR_INVALID_THIS',
-  type: TypeError,
-  message: 'Value of "this" must be of type URLSearchParamsIterator'
-}));
+}, /^TypeError: Value of `this` is not a URLSearchParamsIterator$/);
 assert.throws(() => {
   params.values.call(undefined);
-}, common.expectsError({
-  code: 'ERR_INVALID_THIS',
-  type: TypeError,
-  message: 'Value of "this" must be of type URLSearchParams'
-}));
+}, /^TypeError: Value of `this` is not a URLSearchParams$/);

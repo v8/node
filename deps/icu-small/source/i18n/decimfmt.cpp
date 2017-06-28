@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -49,7 +49,6 @@
 #include "unicode/utf16.h"
 #include "unicode/numsys.h"
 #include "unicode/localpointer.h"
-#include "unicode/ustring.h"
 #include "uresimp.h"
 #include "ucurrimp.h"
 #include "charstr.h"

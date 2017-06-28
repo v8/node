@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 **********************************************************************
@@ -1030,8 +1030,7 @@ collectCurrencyNames(const char* locale,
                 const UnicodeString *symbol;
                 while ((symbol = iter.next()) != NULL) {
                     (*currencySymbols)[*total_currency_symbol_count].IsoCode = iso;
-                    (*currencySymbols)[*total_currency_symbol_count].currencyName =
-                        const_cast<UChar*>(symbol->getBuffer());
+                    (*currencySymbols)[*total_currency_symbol_count].currencyName = (UChar*) symbol->getBuffer();
                     (*currencySymbols)[*total_currency_symbol_count].flag = 0;
                     (*currencySymbols)[(*total_currency_symbol_count)++].currencyNameLen = symbol->length();
                 }

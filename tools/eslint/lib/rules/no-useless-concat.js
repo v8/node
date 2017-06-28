@@ -24,15 +24,6 @@ function isConcatenation(node) {
 }
 
 /**
- * Checks if the given token is a `+` token or not.
- * @param {Token} token - The token to check.
- * @returns {boolean} `true` if the token is a `+` token.
- */
-function isConcatOperatorToken(token) {
-    return token.value === "+" && token.type === "Punctuator";
-}
-
-/**
  * Get's the right most node on the left side of a BinaryExpression with + operator.
  * @param {ASTNode} node - A BinaryExpression node to check.
  * @returns {ASTNode} node
@@ -94,7 +85,13 @@ module.exports = {
                     astUtils.isStringLiteral(right) &&
                     astUtils.isTokenOnSameLine(left, right)
                 ) {
-                    const operatorToken = sourceCode.getFirstTokenBetween(left, right, isConcatOperatorToken);
+
+                    // move warning location to operator
+                    let operatorToken = sourceCode.getTokenAfter(left);
+
+                    while (operatorToken.value !== "+") {
+                        operatorToken = sourceCode.getTokenAfter(operatorToken);
+                    }
 
                     context.report({
                         node,

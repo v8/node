@@ -7,11 +7,11 @@ if (cluster.isMaster) {
   function forkWorker(action) {
     const worker = cluster.fork({ action });
     worker.on('disconnect', common.mustCall(() => {
-      assert.strictEqual(worker.exitedAfterDisconnect, true);
+      assert.strictEqual(worker.suicide, true);
     }));
 
     worker.on('exit', common.mustCall(() => {
-      assert.strictEqual(worker.exitedAfterDisconnect, true);
+      assert.strictEqual(worker.suicide, true);
     }));
   }
 

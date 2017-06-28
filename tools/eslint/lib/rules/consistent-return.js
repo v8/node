@@ -8,8 +8,6 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const lodash = require("lodash");
-
 const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
@@ -83,7 +81,7 @@ module.exports = {
          * @returns {void}
          */
         function checkLastSegment(node) {
-            let loc, name;
+            let loc, type;
 
             /*
              * Skip if it expected no return value or unreachable.
@@ -102,11 +100,12 @@ module.exports = {
 
                 // The head of program.
                 loc = { line: 1, column: 0 };
-                name = "program";
+                type = "program";
             } else if (node.type === "ArrowFunctionExpression") {
 
                 // `=>` token
-                loc = context.getSourceCode().getTokenBefore(node.body, astUtils.isArrowToken).loc.start;
+                loc = context.getSourceCode().getTokenBefore(node.body).loc.start;
+                type = "function";
             } else if (
                 node.parent.type === "MethodDefinition" ||
                 (node.parent.type === "Property" && node.parent.method)
@@ -114,36 +113,33 @@ module.exports = {
 
                 // Method name.
                 loc = node.parent.key.loc.start;
+                type = "method";
             } else {
 
                 // Function name or `function` keyword.
                 loc = (node.id || node).loc.start;
-            }
-
-            if (!name) {
-                name = astUtils.getFunctionNameWithKind(node);
+                type = "function";
             }
 
             // Reports.
             context.report({
                 node,
                 loc,
-                message: "Expected to return a value at the end of {{name}}.",
-                data: { name }
+                message: "Expected to return a value at the end of this {{type}}.",
+                data: { type }
             });
         }
 
         return {
 
             // Initializes/Disposes state of each code path.
-            onCodePathStart(codePath, node) {
+            onCodePathStart(codePath) {
                 funcInfo = {
                     upper: funcInfo,
                     codePath,
                     hasReturn: false,
                     hasReturnValue: false,
-                    message: "",
-                    node
+                    message: ""
                 };
             },
             onCodePathEnd() {
@@ -162,11 +158,8 @@ module.exports = {
                 if (!funcInfo.hasReturn) {
                     funcInfo.hasReturn = true;
                     funcInfo.hasReturnValue = hasReturnValue;
-                    funcInfo.message = "{{name}} expected {{which}} return value.";
+                    funcInfo.message = "Expected {{which}} return value.";
                     funcInfo.data = {
-                        name: funcInfo.node.type === "Program"
-                            ? "Program"
-                            : lodash.upperFirst(astUtils.getFunctionNameWithKind(funcInfo.node)),
                         which: hasReturnValue ? "a" : "no"
                     };
                 } else if (funcInfo.hasReturnValue !== hasReturnValue) {

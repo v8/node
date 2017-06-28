@@ -307,7 +307,7 @@ int uv__udp_bind(uv_udp_t* handle,
   if (flags & UV_UDP_REUSEADDR) {
     err = uv__set_reuse(fd);
     if (err)
-      return err;
+      goto out;
   }
 
   if (flags & UV_UDP_IPV6ONLY) {
@@ -315,11 +315,11 @@ int uv__udp_bind(uv_udp_t* handle,
     yes = 1;
     if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, sizeof yes) == -1) {
       err = -errno;
-      return err;
+      goto out;
     }
 #else
     err = -ENOTSUP;
-    return err;
+    goto out;
 #endif
   }
 
@@ -329,25 +329,27 @@ int uv__udp_bind(uv_udp_t* handle,
       /* OSX, other BSDs and SunoS fail with EAFNOSUPPORT when binding a
        * socket created with AF_INET to an AF_INET6 address or vice versa. */
       err = -EINVAL;
-    return err;
+    goto out;
   }
 
   if (addr->sa_family == AF_INET6)
     handle->flags |= UV_HANDLE_IPV6;
 
   handle->flags |= UV_HANDLE_BOUND;
+
   return 0;
+
+out:
+  uv__close(handle->io_watcher.fd);
+  handle->io_watcher.fd = -1;
+  return err;
 }
 
 
 static int uv__udp_maybe_deferred_bind(uv_udp_t* handle,
                                        int domain,
                                        unsigned int flags) {
-  union {
-    struct sockaddr_in6 in6;
-    struct sockaddr_in in;
-    struct sockaddr addr;
-  } taddr;
+  unsigned char taddr[sizeof(struct sockaddr_in6)];
   socklen_t addrlen;
 
   if (handle->io_watcher.fd != -1)
@@ -356,7 +358,7 @@ static int uv__udp_maybe_deferred_bind(uv_udp_t* handle,
   switch (domain) {
   case AF_INET:
   {
-    struct sockaddr_in* addr = &taddr.in;
+    struct sockaddr_in* addr = (void*)&taddr;
     memset(addr, 0, sizeof *addr);
     addr->sin_family = AF_INET;
     addr->sin_addr.s_addr = INADDR_ANY;
@@ -365,7 +367,7 @@ static int uv__udp_maybe_deferred_bind(uv_udp_t* handle,
   }
   case AF_INET6:
   {
-    struct sockaddr_in6* addr = &taddr.in6;
+    struct sockaddr_in6* addr = (void*)&taddr;
     memset(addr, 0, sizeof *addr);
     addr->sin6_family = AF_INET6;
     addr->sin6_addr = in6addr_any;
@@ -377,7 +379,7 @@ static int uv__udp_maybe_deferred_bind(uv_udp_t* handle,
     abort();
   }
 
-  return uv__udp_bind(handle, &taddr.addr, addrlen, flags);
+  return uv__udp_bind(handle, (const struct sockaddr*) &taddr, addrlen, flags);
 }
 
 
@@ -427,13 +429,6 @@ int uv__udp_send(uv_udp_send_t* req,
 
   if (empty_queue && !(handle->flags & UV_UDP_PROCESSING)) {
     uv__udp_sendmsg(handle);
-
-    /* `uv__udp_sendmsg` may not be able to do non-blocking write straight
-     * away. In such cases the `io_watcher` has to be queued for asynchronous
-     * write.
-     */
-    if (!QUEUE_EMPTY(&handle->write_queue))
-      uv__io_start(handle->loop, &handle->io_watcher, POLLOUT);
   } else {
     uv__io_start(handle->loop, &handle->io_watcher, POLLOUT);
   }

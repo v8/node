@@ -1,5 +1,6 @@
 'use strict'
 var path = require('path')
+var validate = require('aproba')
 
 module.exports = moduleName
 module.exports.test = {}
@@ -21,6 +22,7 @@ function isNotEmpty (str) {
 
 var unknown = 0
 function moduleName (tree) {
+  validate('O', arguments)
   var pkg = tree.package || tree
   if (isNotEmpty(pkg.name)) return pkg.name
   var pkgName = pathToPackageName(tree.path)

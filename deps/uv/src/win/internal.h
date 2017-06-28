@@ -206,7 +206,7 @@ void uv_pipe_endgame(uv_loop_t* loop, uv_pipe_t* handle);
 /*
  * TTY
  */
-void uv_console_init(void);
+void uv_console_init();
 
 int uv_tty_read_start(uv_tty_t* handle, uv_alloc_cb alloc_cb,
     uv_read_cb read_cb);
@@ -259,7 +259,7 @@ void uv_prepare_invoke(uv_loop_t* loop);
 void uv_check_invoke(uv_loop_t* loop);
 void uv_idle_invoke(uv_loop_t* loop);
 
-void uv__once_init(void);
+void uv__once_init();
 
 
 /*
@@ -275,7 +275,7 @@ void uv_process_async_wakeup_req(uv_loop_t* loop, uv_async_t* handle,
 /*
  * Signal watcher
  */
-void uv_signals_init(void);
+void uv_signals_init();
 int uv__signal_dispatch(int signum);
 
 void uv_signal_close(uv_loop_t* loop, uv_signal_t* handle);
@@ -302,7 +302,7 @@ int uv_translate_sys_error(int sys_errno);
 /*
  * FS
  */
-void uv_fs_init(void);
+void uv_fs_init();
 
 
 /*
@@ -323,15 +323,14 @@ void uv__fs_poll_endgame(uv_loop_t* loop, uv_fs_poll_t* handle);
 /*
  * Utilities.
  */
-void uv__util_init(void);
+void uv__util_init();
 
 uint64_t uv__hrtime(double scale);
-int uv_parent_pid(void);
-int uv_current_pid(void);
+int uv_parent_pid();
+int uv_current_pid();
 __declspec(noreturn) void uv_fatal_error(const int errorno, const char* syscall);
 int uv__getpwuid_r(uv_passwd_t* pwd);
 int uv__convert_utf16_to_utf8(const WCHAR* utf16, int utf16len, char** utf8);
-int uv__convert_utf8_to_utf16(const char* utf8, int utf8len, WCHAR** utf16);
 
 
 /*
@@ -350,13 +349,13 @@ HANDLE uv__stdio_handle(BYTE* buffer, int fd);
 /*
  * Winapi and ntapi utility functions
  */
-void uv_winapi_init(void);
+void uv_winapi_init();
 
 
 /*
  * Winsock utility functions
  */
-void uv_winsock_init(void);
+void uv_winsock_init();
 
 int uv_ntstatus_to_winsock_error(NTSTATUS status);
 
@@ -385,11 +384,11 @@ extern struct sockaddr_in6 uv_addr_ip6_any_;
 /*
  * Wake all loops with fake message
  */
-void uv__wake_all_loops(void);
+void uv__wake_all_loops();
 
 /*
  * Init system wake-up detection
  */
-void uv__init_detect_system_wakeup(void);
+void uv__init_detect_system_wakeup();
 
 #endif /* UV_WIN_INTERNAL_H_ */

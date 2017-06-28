@@ -124,3 +124,16 @@ def CheckChangeOnCommit(input_api, output_api):
   finally:
     sys.path = old_sys_path
   return report
+
+
+TRYBOTS = [
+    'linux_try',
+    'mac_try',
+    'win_try',
+]
+
+
+def GetPreferredTryMasters(_, change):
+  return {
+      'client.gyp': { t: set(['defaulttests']) for t in TRYBOTS },
+  }

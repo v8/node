@@ -3,7 +3,9 @@ const common = require('../common');
 const assert = require('assert');
 const vm = require('vm');
 
-const SlowBuffer = require('buffer').SlowBuffer;
+const buffer = require('buffer');
+const Buffer = buffer.Buffer;
+const SlowBuffer = buffer.SlowBuffer;
 
 
 const b = Buffer.allocUnsafe(1024);
@@ -462,14 +464,6 @@ assert.strictEqual(
 // Regression test for https://github.com/nodejs/node/issues/3496.
 assert.strictEqual(Buffer.from('=bad'.repeat(1e4), 'base64').length, 0);
 
-// Regression test for https://github.com/nodejs/node/issues/11987.
-assert.deepStrictEqual(Buffer.from('w0  ', 'base64'),
-                       Buffer.from('w0', 'base64'));
-
-// Regression test for https://github.com/nodejs/node/issues/13657.
-assert.deepStrictEqual(Buffer.from(' YWJvcnVtLg', 'base64'),
-                       Buffer.from('YWJvcnVtLg', 'base64'));
-
 {
   // Creating buffers larger than pool size.
   const l = Buffer.poolSize + 5;
@@ -516,13 +510,11 @@ assert.deepStrictEqual(Buffer.from(' YWJvcnVtLg', 'base64'),
   }
 }
 
-// Test single hex character is discarded.
-assert.strictEqual(Buffer.from('A', 'hex').length, 0);
+// Test single hex character throws TypeError
+// - https://github.com/nodejs/node/issues/6770
+assert.throws(() => Buffer.from('A', 'hex'), TypeError);
 
-// Test that if a trailing character is discarded, rest of string is processed.
-assert.deepStrictEqual(Buffer.from('Abx', 'hex'), Buffer.from('Ab', 'hex'));
-
-// Test single base64 char encodes as 0.
+// Test single base64 char encodes as 0
 assert.strictEqual(Buffer.from('A', 'base64').length, 0);
 
 
@@ -887,8 +879,7 @@ assert.throws(() => Buffer.allocUnsafe(8).writeFloatLE(0.0, -1), RangeError);
 }
 
 // Regression test for #5482: should throw but not assert in C++ land.
-assert.throws(() => Buffer.from('', 'buffer'),
-              /^TypeError: "encoding" must be a valid string encoding$/);
+assert.throws(() => Buffer.from('', 'buffer'), TypeError);
 
 // Regression test for #6111. Constructing a buffer from another buffer
 // should a) work, and b) not corrupt the source buffer.
@@ -929,8 +920,8 @@ Buffer.poolSize = ps;
 assert.throws(() => Buffer.allocUnsafe(10).copy(),
               /TypeError: argument should be a Buffer/);
 
-const regErrorMsg =
-  /First argument must be a string, Buffer, ArrayBuffer, Array, or array-like object\./;
+const regErrorMsg = new RegExp('First argument must be a string, Buffer, ' +
+                               'ArrayBuffer, Array, or array-like object.');
 
 assert.throws(() => Buffer.from(), regErrorMsg);
 assert.throws(() => Buffer.from(null), regErrorMsg);
@@ -965,8 +956,7 @@ assert.throws(() => {
   const a = Buffer.alloc(1);
   const b = Buffer.alloc(1);
   a.copy(b, 0, 0x100000000, 0x100000001);
-}, common.expectsError(
-  {code: undefined, type: RangeError, message: 'Index out of range'}));
+}, /out of range index/);
 
 // Unpooled buffer (replaces SlowBuffer)
 {

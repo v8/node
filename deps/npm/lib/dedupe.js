@@ -13,13 +13,13 @@ var earliestInstallable = require('./install/deps.js').earliestInstallable
 var checkPermissions = require('./install/check-permissions.js')
 var decomposeActions = require('./install/decompose-actions.js')
 var loadExtraneous = require('./install/deps.js').loadExtraneous
-var computeMetadata = require('./install/deps.js').computeMetadata
+var filterInvalidActions = require('./install/filter-invalid-actions.js')
+var recalculateMetadata = require('./install/deps.js').recalculateMetadata
 var sortActions = require('./install/diff-trees.js').sortActions
 var moduleName = require('./utils/module-name.js')
 var packageId = require('./utils/package-id.js')
 var childPath = require('./utils/child-path.js')
 var usage = require('./utils/usage')
-var getRequested = require('./install/get-requested.js')
 
 module.exports = dedupe
 module.exports.Deduper = Deduper
@@ -36,7 +36,6 @@ function dedupe (args, cb) {
   var dryrun = false
   if (npm.command.match(/^find/)) dryrun = true
   if (npm.config.get('dry-run')) dryrun = true
-  if (dryrun && !npm.config.get('json')) npm.config.set('parseable', true)
 
   new Deduper(where, dryrun).run(cb)
 }
@@ -65,14 +64,8 @@ Deduper.prototype.loadIdealTree = function (cb) {
     } ],
     [this, this.finishTracker, 'loadAllDepsIntoIdealTree'],
 
-    [this, andComputeMetadata(this.idealTree)]
+    [this, function (next) { recalculateMetadata(this.idealTree, log, next) }]
   ], cb)
-}
-
-function andComputeMetadata (tree) {
-  return function (next) {
-    next(null, computeMetadata(tree))
-  }
 }
 
 Deduper.prototype.generateActionsToTake = function (cb) {
@@ -88,6 +81,7 @@ Deduper.prototype.generateActionsToTake = function (cb) {
       next()
     }],
     [this, this.finishTracker, 'sort-actions'],
+    [filterInvalidActions, this.where, this.differences],
     [checkPermissions, this.differences],
     [decomposeActions, this.differences, this.todo]
   ], cb)
@@ -135,18 +129,18 @@ function hoistChildren_ (tree, diff, seen, next) {
   seen[tree.path] = true
   asyncMap(tree.children, function (child, done) {
     if (!tree.parent) return hoistChildren_(child, diff, seen, done)
-    var better = findRequirement(tree.parent, moduleName(child), getRequested(child) || npa(packageId(child)))
+    var better = findRequirement(tree.parent, moduleName(child), child.package._requested || npa(packageId(child)))
     if (better) {
       return chain([
         [remove, child, diff],
-        [andComputeMetadata(tree)]
+        [recalculateMetadata, tree, log]
       ], done)
     }
     var hoistTo = earliestInstallable(tree, tree.parent, child.package)
     if (hoistTo) {
       move(child, hoistTo, diff)
       chain([
-        [andComputeMetadata(hoistTo)],
+        [recalculateMetadata, hoistTo, log],
         [hoistChildren_, child, diff, seen],
         [ function (next) {
           moveRemainingChildren(child, diff)

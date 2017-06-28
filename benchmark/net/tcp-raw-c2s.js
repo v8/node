@@ -83,13 +83,13 @@ function client() {
       chunk = Buffer.alloc(len, 'x');
       break;
     case 'utf':
-      chunk = 'ü'.repeat(len / 2);
+      chunk = new Array(len / 2 + 1).join('ü');
       break;
     case 'asc':
-      chunk = 'x'.repeat(len);
+      chunk = new Array(len + 1).join('x');
       break;
     default:
-      throw new Error(`invalid type: ${type}`);
+      throw new Error('invalid type: ' + type);
   }
 
   var clientHandle = new TCP();

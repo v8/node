@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 * Copyright (C) 2007-2013, International Business Machines Corporation and
@@ -939,7 +939,7 @@ private:
      * @return the index of the list which matches the keyword s.
      */
     static int32_t findKeyword( const UnicodeString& s,
-                                const char16_t * const *list);
+                                const UChar * const *list);
 
     /**
      * Thin wrapper around the format(... AppendableWrapper ...) variant.

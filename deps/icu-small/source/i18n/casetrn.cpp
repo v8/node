@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -8,7 +8,7 @@
 *
 *******************************************************************************
 *   file name:  casetrn.cpp
-*   encoding:   UTF-8
+*   encoding:   US-ASCII
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -92,6 +92,7 @@ UOBJECT_DEFINE_ABSTRACT_RTTI_IMPLEMENTATION(CaseMapTransliterator)
  */
 CaseMapTransliterator::CaseMapTransliterator(const UnicodeString &id, UCaseMapFull *map) :
     Transliterator(id, 0),
+    fCsp(ucase_getSingleton()),
     fMap(map)
 {
     // TODO test incremental mode with context-sensitive text (e.g. greek sigma)
@@ -109,7 +110,7 @@ CaseMapTransliterator::~CaseMapTransliterator() {
  */
 CaseMapTransliterator::CaseMapTransliterator(const CaseMapTransliterator& o) :
     Transliterator(o),
-    fMap(o.fMap)
+    fCsp(o.fCsp), fMap(o.fMap)
 {
 }
 
@@ -118,6 +119,7 @@ CaseMapTransliterator::CaseMapTransliterator(const CaseMapTransliterator& o) :
  */
 /*CaseMapTransliterator& CaseMapTransliterator::operator=(const CaseMapTransliterator& o) {
     Transliterator::operator=(o);
+    fCsp = o.fCsp;
     fMap = o.fMap;
     return *this;
 }*/
@@ -149,14 +151,14 @@ void CaseMapTransliterator::handleTransliterate(Replaceable& text,
     UnicodeString tmp;
     const UChar *s;
     UChar32 c;
-    int32_t textPos, delta, result;
+    int32_t textPos, delta, result, locCache=0;
 
     for(textPos=offsets.start; textPos<offsets.limit;) {
         csc.cpStart=textPos;
         c=text.char32At(textPos);
         csc.cpLimit=textPos+=U16_LENGTH(c);
 
-        result=fMap(c, utrans_rep_caseContextIterator, &csc, &s, UCASE_LOC_ROOT);
+        result=fMap(fCsp, c, utrans_rep_caseContextIterator, &csc, &s, "", &locCache);
 
         if(csc.b1 && isIncremental) {
             // fMap() tried to look beyond the context limit

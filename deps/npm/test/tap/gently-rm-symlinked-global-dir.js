@@ -37,7 +37,7 @@ test('install and link', function (t) {
       '--global',
       '--prefix', lnk,
       '--loglevel', 'silent',
-      '--json',
+      '--unicode', 'false',
       'install', '../test-linked'
     ],
     EXEC_OPTS,
@@ -54,7 +54,7 @@ test('install and link', function (t) {
           '--global',
           '--prefix', lnk,
           '--loglevel', 'silent',
-          '--json',
+          '--unicode', 'false',
           'install', '../test-linked'
         ],
         EXEC_OPTS,
@@ -83,21 +83,27 @@ test('cleanup', function (t) {
   t.end()
 })
 
+function removeBlank (line) {
+  return line !== ''
+}
+
 function resolvePath () {
   return resolve.apply(null, Array.prototype.slice.call(arguments)
     .filter(function (arg) { return arg }))
 }
 
 function verify (t, stdout) {
-  var result = JSON.parse(stdout)
+  var binPath = resolvePath(lnk, !isWindows && 'bin', 'linked')
   var pkgPath = resolvePath(lnk, !isWindows && 'lib', 'node_modules', '@test', 'linked')
-  if (result.added.length) {
-    t.is(result.added.length, 1, 'added the module')
-    t.is(result.added[0].path, pkgPath, 'in the right location')
-  } else {
-    t.is(result.updated.length, 1, 'updated the module')
-    t.is(result.updated[0].path, pkgPath, 'in the right location')
-  }
+  var trgPath = resolvePath(pkgPath, 'index.js')
+  t.deepEqual(
+    stdout.split('\n').filter(removeBlank),
+    [ binPath + ' -> ' + trgPath,
+      resolvePath(lnk, !isWindows && 'lib'),
+      '`-- @test/linked@1.0.0 '
+    ],
+    'got expected install output'
+  )
 }
 
 function cleanup () {

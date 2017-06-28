@@ -1,7 +1,6 @@
 'use strict';
 
 const rulesDirs = ['tools/eslint-rules'];
-const extensions = ['.js', '.md'];
 // This is the maximum number of files to be linted per worker at any given time
 const maxWorkload = 40;
 
@@ -15,8 +14,7 @@ const glob = require('./eslint/node_modules/glob');
 
 const cwd = process.cwd();
 const cliOptions = {
-  rulePaths: rulesDirs,
-  extensions: extensions,
+  rulePaths: rulesDirs
 };
 
 // Check if we should fix errors that are fixable

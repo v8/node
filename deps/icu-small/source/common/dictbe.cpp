@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /**
  *******************************************************************************
@@ -1385,25 +1385,12 @@ CjkBreakEngine::divideUpDictionaryRange( UText *inText,
     // Now that we're done, convert positions in t_boundary[] (indices in
     // the normalized input string) back to indices in the original input UText
     // while reversing t_boundary and pushing values to foundBreaks.
-    int32_t prevCPPos = -1;
-    int32_t prevUTextPos = -1;
     for (int32_t i = numBreaks-1; i >= 0; i--) {
         int32_t cpPos = t_boundary.elementAti(i);
-        U_ASSERT(cpPos > prevCPPos);
         int32_t utextPos =  inputMap.isValid() ? inputMap->elementAti(cpPos) : cpPos + rangeStart;
-        U_ASSERT(utextPos >= prevUTextPos);
-        if (utextPos > prevUTextPos) {
-            // Boundaries are added to foundBreaks output in ascending order.
-            U_ASSERT(foundBreaks.size() == 0 || foundBreaks.peeki() < utextPos);
-            foundBreaks.push(utextPos, status);
-        } else {
-            // Normalization expanded the input text, the dictionary found a boundary
-            // within the expansion, giving two boundaries with the same index in the
-            // original text. Ignore the second. See ticket #12918.
-            --numBreaks;
-        }
-        prevCPPos = cpPos;
-        prevUTextPos = utextPos;
+        // Boundaries are added to foundBreaks output in ascending order.
+        U_ASSERT(foundBreaks.size() == 0 ||foundBreaks.peeki() < utextPos);
+        foundBreaks.push(utextPos, status);
     }
 
     // inString goes out of scope

@@ -7,7 +7,7 @@ if (process.argv[2] === 'child') {
   process.emitWarning('foo');
 } else {
   function test(env) {
-    const cmd = `"${process.execPath}" "${__filename}" child`;
+    const cmd = `${process.execPath} ${__filename} child`;
 
     cp.exec(cmd, { env }, common.mustCall((err, stdout, stderr) => {
       assert.strictEqual(err, null);
@@ -36,6 +36,6 @@ if (process.argv[2] === 'child') {
   test({ NODE_NO_WARNINGS: '01' });
   test({ NODE_NO_WARNINGS: '2' });
   // Don't test the number 1 because it will come through as a string in the
-  // child process environment.
+  // the child process environment.
   test({ NODE_NO_WARNINGS: '1' });
 }

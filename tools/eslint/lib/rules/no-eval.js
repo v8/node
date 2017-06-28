@@ -166,7 +166,7 @@ module.exports = {
         /**
          * Reports accesses of `eval` via the global object.
          *
-         * @param {eslint-scope.Scope} globalScope - The global scope.
+         * @param {escope.Scope} globalScope - The global scope.
          * @returns {void}
          */
         function reportAccessingEvalViaGlobalObject(globalScope) {
@@ -200,7 +200,7 @@ module.exports = {
         /**
          * Reports all accesses of `eval` (excludes direct calls to eval).
          *
-         * @param {eslint-scope.Scope} globalScope - The global scope.
+         * @param {escope.Scope} globalScope - The global scope.
          * @returns {void}
          */
         function reportAccessingEval(globalScope) {

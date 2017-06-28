@@ -1,13 +1,18 @@
 'use strict';
-const common = require('../common');
+require('../common');
+const assert = require('assert');
 
 const N = 3;
-
+let count = 0;
 function next() {
-  const fn = common.mustCall(() => clearImmediate(immediate));
-  const immediate = setImmediate(fn);
+  const immediate = setImmediate(function() {
+    clearImmediate(immediate);
+    ++count;
+  });
 }
-
-for (let i = 0; i < N; i++) {
+for (let i = 0; i < N; ++i)
   next();
-}
+
+process.on('exit', () => {
+  assert.strictEqual(count, N, `Expected ${N} immediate callback executions`);
+});

@@ -53,7 +53,7 @@ sGetFinalPathNameByHandleW pGetFinalPathNameByHandleW;
 sPowerRegisterSuspendResumeNotification pPowerRegisterSuspendResumeNotification;
 
 
-void uv_winapi_init(void) {
+void uv_winapi_init() {
   HMODULE ntdll_module;
   HMODULE kernel32_module;
   HMODULE powrprof_module;

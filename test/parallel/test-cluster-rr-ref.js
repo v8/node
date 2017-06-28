@@ -10,7 +10,7 @@ if (cluster.isMaster) {
   });
 } else {
   const server = net.createServer(common.mustNotCall());
-  server.listen(0, function() {
+  server.listen(common.PORT, function() {
     server.unref();
     server.ref();
     server.close(function() {

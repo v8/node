@@ -6,16 +6,9 @@ const buf = Buffer.alloc(1024, 42);
 
 const socket = dgram.createSocket('udp4');
 
-// get a random port for send
-const portGetter = dgram.createSocket('udp4')
-  .bind(0, 'localhost', common.mustCall(() => {
-    socket.send(buf, 0, buf.length,
-                portGetter.address().port,
-                portGetter.address().address);
+socket.send(buf, 0, buf.length, common.PORT, 'localhost');
 
-    // if close callback is not function, ignore the argument.
-    socket.close('bad argument');
-    portGetter.close();
+// if close callback is not function, ignore the argument.
+socket.close('bad argument');
 
-    socket.on('close', common.mustCall());
-  }));
+socket.on('close', common.mustCall(function() {}));

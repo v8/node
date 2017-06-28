@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #include "pipe_wrap.h"
 
 #include "async-wrap.h"
@@ -38,6 +17,7 @@ namespace node {
 
 using v8::Context;
 using v8::EscapableHandleScope;
+using v8::External;
 using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
@@ -46,17 +26,15 @@ using v8::Local;
 using v8::Object;
 using v8::Value;
 
-using AsyncHooks = Environment::AsyncHooks;
-
 
 Local<Object> PipeWrap::Instantiate(Environment* env, AsyncWrap* parent) {
   EscapableHandleScope handle_scope(env->isolate());
-  AsyncHooks::InitScope init_scope(env, parent->get_id());
   CHECK_EQ(false, env->pipe_constructor_template().IsEmpty());
   Local<Function> constructor = env->pipe_constructor_template()->GetFunction();
   CHECK_EQ(false, constructor.IsEmpty());
+  Local<Value> ptr = External::New(env->isolate(), parent);
   Local<Object> instance =
-      constructor->NewInstance(env->context()).ToLocalChecked();
+      constructor->NewInstance(env->context(), 1, &ptr).ToLocalChecked();
   return handle_scope.Escape(instance);
 }
 
@@ -69,8 +47,6 @@ void PipeWrap::Initialize(Local<Object> target,
   Local<FunctionTemplate> t = env->NewFunctionTemplate(New);
   t->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "Pipe"));
   t->InstanceTemplate()->SetInternalFieldCount(1);
-
-  env->SetProtoMethod(t, "getAsyncId", AsyncWrap::GetAsyncId);
 
   env->SetProtoMethod(t, "close", HandleWrap::Close);
   env->SetProtoMethod(t, "unref", HandleWrap::Unref);
@@ -98,11 +74,9 @@ void PipeWrap::Initialize(Local<Object> target,
   // Create FunctionTemplate for PipeConnectWrap.
   auto constructor = [](const FunctionCallbackInfo<Value>& args) {
     CHECK(args.IsConstructCall());
-    ClearWrap(args.This());
   };
   auto cwt = FunctionTemplate::New(env->isolate(), constructor);
   cwt->InstanceTemplate()->SetInternalFieldCount(1);
-  env->SetProtoMethod(cwt, "getAsyncId", AsyncWrap::GetAsyncId);
   cwt->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "PipeConnectWrap"));
   target->Set(FIXED_ONE_BYTE_STRING(env->isolate(), "PipeConnectWrap"),
               cwt->GetFunction());
@@ -115,16 +89,23 @@ void PipeWrap::New(const FunctionCallbackInfo<Value>& args) {
   // normal function.
   CHECK(args.IsConstructCall());
   Environment* env = Environment::GetCurrent(args);
-  new PipeWrap(env, args.This(), args[0]->IsTrue());
+  if (args[0]->IsExternal()) {
+    void* ptr = args[0].As<External>()->Value();
+    new PipeWrap(env, args.This(), false, static_cast<AsyncWrap*>(ptr));
+  } else {
+    new PipeWrap(env, args.This(), args[0]->IsTrue(), nullptr);
+  }
 }
 
 
 PipeWrap::PipeWrap(Environment* env,
                    Local<Object> object,
-                   bool ipc)
+                   bool ipc,
+                   AsyncWrap* parent)
     : ConnectionWrap(env,
                      object,
-                     AsyncWrap::PROVIDER_PIPEWRAP) {
+                     AsyncWrap::PROVIDER_PIPEWRAP,
+                     parent) {
   int r = uv_pipe_init(env->event_loop(), &handle_, ipc);
   CHECK_EQ(r, 0);  // How do we proxy this error up to javascript?
                    // Suggestion: uv_pipe_init() returns void.

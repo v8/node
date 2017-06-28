@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -16,7 +16,6 @@
 #ifndef SMPDTFST_H
 #define SMPDTFST_H
 
-#include "unicode/uobject.h"
 #include "unicode/utypes.h"
 
 #if !UCONFIG_NO_FORMATTING

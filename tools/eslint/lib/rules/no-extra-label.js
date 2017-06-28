@@ -110,7 +110,12 @@ module.exports = {
                             node: labelNode,
                             message: "This label '{{name}}' is unnecessary.",
                             data: labelNode,
-                            fix: fixer => fixer.removeRange([sourceCode.getFirstToken(node).range[1], labelNode.range[1]])
+                            fix(fixer) {
+                                return fixer.replaceTextRange(
+                                    [info.label.range[0], labelNode.range[1]],
+                                    sourceCode.text.slice(info.label.parent.body.range[0], sourceCode.getFirstToken(node).range[1])
+                                );
+                            }
                         });
                     }
                     return;

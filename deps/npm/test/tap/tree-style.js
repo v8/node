@@ -1,5 +1,4 @@
 'use strict'
-var Bluebird = require('bluebird')
 var test = require('tap').test
 var path = require('path')
 var mkdirp = require('mkdirp')
@@ -19,7 +18,7 @@ var json = {
   'name': 'test-tree-style',
   'version': '1.0.0',
   'dependencies': {
-    'modA': modA + '-1.0.0.tgz'
+    'modA': modA
   }
 }
 
@@ -27,7 +26,7 @@ var modAJson = {
   'name': 'modA',
   'version': '1.0.0',
   'dependencies': {
-    'modB': modB + '-1.0.0.tgz'
+    'modB': modB
   }
 }
 
@@ -35,7 +34,7 @@ var modBJson = {
   'name': 'modB',
   'version': '1.0.0',
   'dependencies': {
-    'modC': modC + '-1.0.0.tgz'
+    'modC': modC
   }
 }
 
@@ -72,17 +71,7 @@ function cleanup () {
 
 test('setup', function (t) {
   setup()
-  return Bluebird.try(() => {
-    return common.npm(['pack', 'file:modC'], {cwd: base})
-  }).spread((code) => {
-    t.is(code, 0, 'pack modC')
-    return common.npm(['pack', 'file:modB'], {cwd: base})
-  }).spread((code) => {
-    t.is(code, 0, 'pack modB')
-    return common.npm(['pack', 'file:modA'], {cwd: base})
-  }).spread((code) => {
-    t.is(code, 0, 'pack modA')
-  })
+  t.end()
 })
 
 function exists (t, filepath, msg) {

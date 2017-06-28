@@ -9,16 +9,15 @@ module.exports = exports = ls
 var path = require('path')
 var url = require('url')
 var readPackageTree = require('read-package-tree')
+var log = require('npmlog')
 var archy = require('archy')
 var semver = require('semver')
 var color = require('ansicolors')
 var npa = require('npm-package-arg')
 var iferr = require('iferr')
-var sortedObject = require('sorted-object')
-var extend = Object.assign || require('util')._extend
 var npm = require('./npm.js')
 var mutateIntoLogicalTree = require('./install/mutate-into-logical-tree.js')
-var computeMetadata = require('./install/deps.js').computeMetadata
+var recalculateMetadata = require('./install/deps.js').recalculateMetadata
 var packageId = require('./utils/package-id.js')
 var usage = require('./utils/usage')
 var output = require('./utils/output.js')
@@ -36,14 +35,14 @@ function ls (args, silent, cb) {
     silent = false
   }
   var dir = path.resolve(npm.dir, '..')
-  readPackageTree(dir, andComputeMetadata(iferr(cb, function (physicalTree) {
+  readPackageTree(dir, andRecalculateMetadata(iferr(cb, function (physicalTree) {
     lsFromTree(dir, physicalTree, args, silent, cb)
   })))
 }
 
-function andComputeMetadata (next) {
+function andRecalculateMetadata (next) {
   return function (er, tree) {
-    next(null, computeMetadata(tree || {}))
+    recalculateMetadata(tree || {}, log, next)
   }
 }
 
@@ -62,18 +61,14 @@ var lsFromTree = ls.fromTree = function (dir, physicalTree, args, silent, cb) {
     args = []
   } else {
     args = args.map(function (a) {
-      if (typeof a === 'object') {
-        return [a.package.name, a.package.version, a]
-      } else {
-        var p = npa(a)
-        var name = p.name
-        // When version spec is missing, we'll skip using it when filtering.
-        // Otherwise, `semver.validRange` would return '*', which won't
-        // match prerelease versions.
-        var ver = (p.rawSpec &&
-                   (semver.validRange(p.rawSpec) || ''))
-        return [ name, ver, a ]
-      }
+      var p = npa(a)
+      var name = p.name
+      // When version spec is missing, we'll skip using it when filtering.
+      // Otherwise, `semver.validRange` would return '*', which won't
+      // match prerelease versions.
+      var ver = (p.rawSpec &&
+                 (semver.validRange(p.rawSpec) || ''))
+      return [ name, ver, a ]
     })
   }
 
@@ -81,8 +76,8 @@ var lsFromTree = ls.fromTree = function (dir, physicalTree, args, silent, cb) {
 
   pruneNestedExtraneous(data)
   filterByEnv(data)
-  var unlooped = filterFound(unloop(data), args)
-  var lite = getLite(unlooped)
+  var bfs = filterFound(bfsify(data), args)
+  var lite = getLite(bfs)
 
   if (silent) return cb(null, data, lite)
 
@@ -91,7 +86,7 @@ var lsFromTree = ls.fromTree = function (dir, physicalTree, args, silent, cb) {
   var out
   if (json) {
     var seen = []
-    var d = long ? unlooped : lite
+    var d = long ? bfs : lite
     // the raw data can be circular
     out = JSON.stringify(d, function (k, o) {
       if (typeof o === 'object') {
@@ -101,9 +96,9 @@ var lsFromTree = ls.fromTree = function (dir, physicalTree, args, silent, cb) {
       return o
     }, 2)
   } else if (npm.config.get('parseable')) {
-    out = makeParseable(unlooped, long, dir)
+    out = makeParseable(bfs, long, dir)
   } else if (data) {
-    out = makeArchy(unlooped, long, dir)
+    out = makeArchy(bfs, long, dir)
   }
   output(out)
 
@@ -252,10 +247,18 @@ function getLite (data, noname, depth) {
   return lite
 }
 
-function unloop (root) {
+function bfsify (root) {
+  // walk over the data, and turn it from this:
+  // +-- a
+  // |   `-- b
+  // |       `-- a (truncated)
+  // `--b (truncated)
+  // into this:
+  // +-- a
+  // `-- b
+  // which looks nicer
   var queue = [root]
-  var seen = {}
-  seen[root.path] = true
+  var seen = [root]
 
   while (queue.length) {
     var current = queue.shift()
@@ -263,14 +266,17 @@ function unloop (root) {
     Object.keys(deps).forEach(function (d) {
       var dep = deps[d]
       if (dep.missing) return
-      if (dep.path && seen[dep.path]) {
-        dep = deps[d] = extend({}, dep)
-        dep.dependencies = {}
-        dep._deduped = path.relative(root.path, dep.path).replace(/node_modules\//g, '')
-        return
+      if (inList(seen, dep)) {
+        if (npm.config.get('parseable') || !npm.config.get('long')) {
+          delete deps[d]
+          return
+        } else {
+          dep = deps[d] = Object.create(dep)
+          dep.dependencies = {}
+        }
       }
-      seen[dep.path] = true
       queue.push(dep)
+      seen.push(dep)
     })
   }
 
@@ -279,60 +285,36 @@ function unloop (root) {
 
 function filterFound (root, args) {
   if (!args.length) return root
-  if (!root.dependencies) return root
-
-  // Mark all deps
-  var toMark = [root]
-  while (toMark.length) {
-    var markPkg = toMark.shift()
-    var markDeps = markPkg.dependencies
-    if (!markDeps) continue
-    Object.keys(markDeps).forEach(function (depName) {
-      var dep = markDeps[depName]
+  var deps = root.dependencies
+  if (deps) {
+    Object.keys(deps).forEach(function (depName) {
+      var dep = filterFound(deps[depName], args)
       if (dep.peerMissing) return
-      dep._parent = markPkg
-      for (var ii = 0; ii < args.length; ii++) {
+
+      // see if this one itself matches
+      var found = false
+      for (var ii = 0; !found && ii < args.length; ii++) {
         var argName = args[ii][0]
         var argVersion = args[ii][1]
         var argRaw = args[ii][2]
-        var found
-        if (typeof argRaw === 'object') {
-          if (dep.path === argRaw.path) {
-            found = true
-          }
-        } else if (depName === argName && argVersion) {
+        if (depName === argName && argVersion) {
           found = semver.satisfies(dep.version, argVersion, true)
         } else if (depName === argName) {
           // If version is missing from arg, just do a name match.
           found = true
-        }
-        if (found) {
-          dep._found = 'explicit'
-          var parent = dep._parent
-          while (parent && !parent._found && !parent._deduped) {
-            parent._found = 'implicit'
-            parent = parent._parent
-          }
-          break
+        } else if (dep.path === argRaw) {
+          found = true
         }
       }
-      toMark.push(dep)
+      // included explicitly
+      if (found) dep._found = true
+      // included because a child was included
+      if (dep._found && !root._found) root._found = 1
+      // not included
+      if (!dep._found) delete deps[depName]
     })
   }
-  var toTrim = [root]
-  while (toTrim.length) {
-    var trimPkg = toTrim.shift()
-    var trimDeps = trimPkg.dependencies
-    if (!trimDeps) continue
-    trimPkg.dependencies = {}
-    Object.keys(trimDeps).forEach(function (name) {
-      var dep = trimDeps[name]
-      if (!dep._found) return
-      if (dep._found === 'implicit' && dep._deduped) return
-      trimPkg.dependencies[name] = dep
-      toTrim.push(dep)
-    })
-  }
+  if (!root._found) root._found = false
   return root
 }
 
@@ -363,7 +345,7 @@ function makeArchy_ (data, long, dir, depth, parent, d) {
   var out = {}
   // the top level is a bit special.
   out.label = data._id || ''
-  if (data._found === 'explicit' && data._id) {
+  if (data._found === true && data._id) {
     if (npm.color) {
       out.label = color.bgBlack(color.yellow(out.label.trim())) + ' '
     } else {
@@ -371,14 +353,6 @@ function makeArchy_ (data, long, dir, depth, parent, d) {
     }
   }
   if (data.link) out.label += ' -> ' + data.link
-
-  if (data._deduped) {
-    if (npm.color) {
-      out.label += ' ' + color.brightBlack('deduped')
-    } else {
-      out.label += ' deduped'
-    }
-  }
 
   if (data.invalid) {
     if (data.realName !== data.name) out.label += ' (' + data.realName + ')'
@@ -395,7 +369,6 @@ function makeArchy_ (data, long, dir, depth, parent, d) {
 
   if (data.peerMissing) {
     var peerMissing = 'UNMET PEER DEPENDENCY'
-
     if (npm.color) peerMissing = color.bgBlack(color.red(peerMissing))
     out.label = peerMissing + ' ' + out.label
   }
@@ -429,7 +402,7 @@ function makeArchy_ (data, long, dir, depth, parent, d) {
 
   if (long) {
     if (dir === data.path) out.label += '\n' + dir
-    out.label += '\n' + getExtras(data)
+    out.label += '\n' + getExtras(data, dir)
   } else if (dir === data.path) {
     if (out.label) out.label += ' '
     out.label += dir
@@ -442,7 +415,7 @@ function makeArchy_ (data, long, dir, depth, parent, d) {
       .sort(alphasort).filter(function (d) {
         return !isCruft(data.dependencies[d])
       }).map(function (d) {
-        return makeArchy_(sortedObject(data.dependencies[d]), long, dir, depth + 1, data, d)
+        return makeArchy_(data.dependencies[d], long, dir, depth + 1, data, d)
       })
   }
 
@@ -471,20 +444,19 @@ function getExtras (data) {
 }
 
 function makeParseable (data, long, dir, depth, parent, d) {
-  if (data._deduped) return []
   depth = depth || 0
   if (depth > npm.config.get('depth')) return [ makeParseable_(data, long, dir, depth, parent, d) ]
   return [ makeParseable_(data, long, dir, depth, parent, d) ]
-    .concat(Object.keys(data.dependencies || {})
-      .sort(alphasort).map(function (d) {
-        return makeParseable(data.dependencies[d], long, dir, depth + 1, data, d)
-      }))
-    .filter(function (x) { return x && x.length })
-    .join('\n')
+  .concat(Object.keys(data.dependencies || {})
+    .sort(alphasort).map(function (d) {
+      return makeParseable(data.dependencies[d], long, dir, depth + 1, data, d)
+    }))
+  .filter(function (x) { return x })
+  .join('\n')
 }
 
 function makeParseable_ (data, long, dir, depth, parent, d) {
-  if (data.hasOwnProperty('_found') && data._found !== 'explicit') return ''
+  if (data.hasOwnProperty('_found') && data._found !== true) return ''
 
   if (data.missing) {
     if (depth < npm.config.get('depth')) {

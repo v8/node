@@ -1,10 +1,6 @@
 'use strict';
 
-const common = require('../common');
-if (!common.hasIntl) {
-  common.skip('missing Intl');
-  return;
-}
+require('../common');
 const strictEqual = require('assert').strictEqual;
 const url = require('url');
 
@@ -12,8 +8,7 @@ const domainToASCII = url.domainToASCII;
 const domainToUnicode = url.domainToUnicode;
 
 const domainWithASCII = [
-  ['ıíd', 'xn--d-iga7r'],
-  ['يٴ', 'xn--mhb8f'],
+  ['ıídيٴ', 'xn--d-iga7ro0q9f'],
   ['www.ϧƽəʐ.com', 'www.xn--cja62apfr6c.com'],
   ['новини.com', 'xn--b1amarcd.com'],
   ['名がドメイン.com', 'xn--v8jxj3d1dzdz08w.com'],

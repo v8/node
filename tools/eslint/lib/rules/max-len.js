@@ -108,7 +108,7 @@ module.exports = {
                     previousTabStopOffset = tabWidth ? totalOffset % tabWidth : 0,
                     spaceCount = tabWidth - previousTabStopOffset;
 
-                extraCharacterCount += spaceCount - 1; // -1 for the replaced tab
+                extraCharacterCount += spaceCount - 1;  // -1 for the replaced tab
             });
             return Array.from(line).length + extraCharacterCount;
         }
@@ -268,13 +268,13 @@ module.exports = {
                 // we iterate over comments in parallel with the lines
             let commentsIndex = 0;
 
-            const strings = getAllStrings();
+            const strings = getAllStrings(sourceCode);
             const stringsByLine = strings.reduce(groupByLineNumber, {});
 
-            const templateLiterals = getAllTemplateLiterals();
+            const templateLiterals = getAllTemplateLiterals(sourceCode);
             const templateLiteralsByLine = templateLiterals.reduce(groupByLineNumber, {});
 
-            const regExpLiterals = getAllRegExpLiterals();
+            const regExpLiterals = getAllRegExpLiterals(sourceCode);
             const regExpLiteralsByLine = regExpLiterals.reduce(groupByLineNumber, {});
 
             lines.forEach((line, i) => {
@@ -321,24 +321,21 @@ module.exports = {
                 }
 
                 const lineLength = computeLineLength(line, tabWidth);
-                const commentLengthApplies = lineIsComment && maxCommentLength;
 
                 if (lineIsComment && ignoreComments) {
                     return;
                 }
 
-                if (commentLengthApplies) {
-                    if (lineLength > maxCommentLength) {
-                        context.report({
-                            node,
-                            loc: { line: lineNumber, column: 0 },
-                            message: "Line {{lineNumber}} exceeds the maximum comment line length of {{maxCommentLength}}.",
-                            data: {
-                                lineNumber: i + 1,
-                                maxCommentLength
-                            }
-                        });
-                    }
+                if (lineIsComment && lineLength > maxCommentLength) {
+                    context.report({
+                        node,
+                        loc: { line: lineNumber, column: 0 },
+                        message: "Line {{lineNumber}} exceeds the maximum comment line length of {{maxCommentLength}}.",
+                        data: {
+                            lineNumber: i + 1,
+                            maxCommentLength
+                        }
+                    });
                 } else if (lineLength > maxLength) {
                     context.report({
                         node,

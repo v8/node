@@ -6,7 +6,7 @@ var asyncMap = require('slide').asyncMap
 var mkdirp = require('mkdirp')
 var npm = require('../../npm.js')
 var andIgnoreErrors = require('../and-ignore-errors.js')
-var move = require('../../utils/move.js')
+var rename = require('../../utils/rename.js')
 
 // This is weird because we want to remove the module but not it's node_modules folder
 // allowing for this allows us to not worry about the order of operations
@@ -26,11 +26,11 @@ function removeLink (pkg, next) {
 function removeDir (pkg, log, next) {
   var modpath = path.join(path.dirname(pkg.path), '.' + path.basename(pkg.path) + '.MODULES')
 
-  move(path.join(pkg.path, 'node_modules'), modpath, unbuildPackage)
+  rename(path.join(pkg.path, 'node_modules'), modpath, unbuildPackage)
 
-  function unbuildPackage (moveEr) {
+  function unbuildPackage (renameEr) {
     npm.commands.unbuild(pkg.path, true, function () {
-      rimraf(pkg.path, moveEr ? andRemoveEmptyParents(pkg.path) : moveModulesBack)
+      rimraf(pkg.path, renameEr ? andRemoveEmptyParents(pkg.path) : moveModulesBack)
     })
   }
 
@@ -58,7 +58,7 @@ function removeDir (pkg, log, next) {
       var to = path.join(pkg.path, 'node_modules', file)
       // we ignore errors here, because they can legitimately happen, for instance,
       // bundled modules will be in both node_modules folders
-      move(from, to, andIgnoreErrors(done))
+      rename(from, to, andIgnoreErrors(done))
     }, cleanup)
   }
 

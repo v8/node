@@ -23,10 +23,10 @@ if (cluster.isMaster) {
 } else {
   const net = require('net');
   const server = net.createServer();
-  server.listen(0, common.mustCall(() => {
+  server.listen(common.PORT, common.mustCall(() => {
     if (cluster.worker.id === 2) {
       server.close(() => {
-        server.listen(0, common.mustCall(() => {
+        server.listen(common.PORT, common.mustCall(() => {
           server.close(() => {
             process.disconnect();
           });

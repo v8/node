@@ -15,7 +15,7 @@ module.exports = {
         docs: {
             description: "disallow assignments to native objects or read-only global variables",
             category: "Best Practices",
-            recommended: false,
+            recommended: true,
             replacedBy: ["no-global-assign"]
         },
 

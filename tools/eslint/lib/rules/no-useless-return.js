@@ -8,8 +8,7 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const astUtils = require("../ast-utils"),
-    FixTracker = require("../util/fix-tracker");
+const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
 // Helpers
@@ -46,7 +45,13 @@ function remove(array, element) {
  * @returns {boolean} `true` if the node is removeable.
  */
 function isRemovable(node) {
-    return astUtils.STATEMENT_LIST_PARENTS.has(node.parent.type);
+    const parent = node.parent;
+
+    return (
+        parent.type === "Program" ||
+        parent.type === "BlockStatement" ||
+        parent.type === "SwitchCase"
+    );
 }
 
 /**
@@ -208,7 +213,7 @@ module.exports = {
                 scopeInfo = {
                     upper: scopeInfo,
                     uselessReturns: [],
-                    codePath
+                    codePath,
                 };
             },
 
@@ -220,18 +225,8 @@ module.exports = {
                         loc: node.loc,
                         message: "Unnecessary return statement.",
                         fix(fixer) {
-                            if (isRemovable(node)) {
-
-                                // Extend the replacement range to include the
-                                // entire function to avoid conflicting with
-                                // no-else-return.
-                                // https://github.com/eslint/eslint/issues/8026
-                                return new FixTracker(fixer, context.getSourceCode())
-                                    .retainEnclosingFunction(node)
-                                    .remove(node);
-                            }
-                            return null;
-                        }
+                            return isRemovable(node) ? fixer.remove(node) : null;
+                        },
                     });
                 }
 
@@ -243,7 +238,7 @@ module.exports = {
             onCodePathSegmentStart(segment) {
                 const info = {
                     uselessReturns: getUselessReturns([], segment.allPrevSegments),
-                    returned: false
+                    returned: false,
                 };
 
                 // Stores the info.
@@ -292,7 +287,7 @@ module.exports = {
             WithStatement: markReturnStatementsOnCurrentSegmentsAsUsed,
             ExportNamedDeclaration: markReturnStatementsOnCurrentSegmentsAsUsed,
             ExportDefaultDeclaration: markReturnStatementsOnCurrentSegmentsAsUsed,
-            ExportAllDeclaration: markReturnStatementsOnCurrentSegmentsAsUsed
+            ExportAllDeclaration: markReturnStatementsOnCurrentSegmentsAsUsed,
         };
     }
 };

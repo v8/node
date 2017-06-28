@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -15,7 +15,6 @@
 
 #if !UCONFIG_NO_FORMATTING
 
-#include "unicode/strenum.h"
 #include "unicode/ustring.h"
 #include "unicode/timezone.h"
 

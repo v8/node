@@ -4,15 +4,15 @@ const { test } = require('tap');
 const startCLI = require('./start-cli');
 
 test('Debugger agent direct access', (t) => {
-  const cli = startCLI(['examples/three-lines.js']);
-  const scriptPattern = /^\* (\d+): examples(?:\/|\\)three-lines.js/;
+  const cli = startCLI(['examples/empty.js']);
+  const scriptPattern = /^\* (\d+): examples(?:\/|\\)empty.js/;
 
   function onFatal(error) {
     cli.quit();
     throw error;
   }
 
-  return cli.waitForInitialBreak()
+  return cli.waitFor(/break/)
     .then(() => cli.waitForPrompt())
     .then(() => cli.command('scripts'))
     .then(() => {
@@ -24,10 +24,7 @@ test('Debugger agent direct access', (t) => {
     .then(() => {
       t.match(
         cli.output,
-        /scriptSource: '\(function \(/);
-      t.match(
-        cli.output,
-        /let x = 1;/);
+        /scriptSource: '\(function \([^)]+\) \{ \\n}\);'/);
     })
     .then(() => cli.quit())
     .then(null, onFatal);

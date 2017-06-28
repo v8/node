@@ -40,10 +40,10 @@
     before submitting your issue.
 
     - Please check if there's a solution in the troubleshooting wiki:
-      https://github.com/npm/npm/blob/latest/TROUBLESHOOTING.md
+      https://github.com/npm/npm/wiki/Troubleshooting
 
     - Also ensure that your new issue conforms to npm's contribution guidelines:
-      https://github.com/npm/npm/blob/latest/CONTRIBUTING.md
+      https://github.com/npm/npm/wiki/Contributing-Guidelines
 
     - Participation in this open source project is subject to the npm Code of Conduct:
       https://www.npmjs.com/policies/conduct

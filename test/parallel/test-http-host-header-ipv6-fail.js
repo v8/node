@@ -12,31 +12,28 @@
 const common = require('../common');
 const assert = require('assert');
 const http = require('http');
-const net = require('net');
 
-const requests = [
-  { host: 'foo:1234', headers: { expectedhost: 'foo:1234:80' } },
-  { host: '::1', headers: { expectedhost: '[::1]:80' } }
-];
+const hostname = '::1';
 
-function createLocalConnection(options) {
-  options.host = undefined;
-  options.port = this.port;
-  options.path = undefined;
-  return net.createConnection(options);
+function httpreq() {
+  const req = http.request({
+    host: hostname,
+    port: server.address().port,
+    path: '/',
+    method: 'GET'
+  });
+  req.end();
 }
 
-http.createServer(common.mustCall(function(req, res) {
-  this.requests = this.requests || 0;
-  assert.strictEqual(req.headers.host, req.headers.expectedhost);
+if (!common.hasIPv6) {
+  console.error('Skipping test, no IPv6 support');
+  return;
+}
+
+const server = http.createServer(common.mustCall(function(req, res) {
+  assert.ok(req.headers.host, `[${hostname}]`);
   res.end();
-  if (++this.requests === requests.length)
-    this.close();
-}, requests.length)).listen(0, function() {
-  const address = this.address();
-  for (let i = 0; i < requests.length; ++i) {
-    requests[i].createConnection =
-      common.mustCall(createLocalConnection.bind(address));
-    http.get(requests[i]);
-  }
-});
+  server.close(true);
+}));
+
+server.listen(0, hostname, () => httpreq());

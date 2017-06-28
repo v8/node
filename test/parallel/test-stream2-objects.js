@@ -1,30 +1,42 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 'use strict';
-
-const common = require('../common');
+require('../common');
 const Readable = require('_stream_readable');
 const Writable = require('_stream_writable');
 const assert = require('assert');
+
+// tiny node-tap lookalike.
+const tests = [];
+let count = 0;
+
+function test(name, fn) {
+  count++;
+  tests.push([name, fn]);
+}
+
+function run() {
+  const next = tests.shift();
+  if (!next)
+    return console.error('ok');
+
+  const name = next[0];
+  const fn = next[1];
+  console.log('# %s', name);
+  fn({
+    same: assert.deepStrictEqual,
+    equal: assert.strictEqual,
+    end: function() {
+      count--;
+      run();
+    }
+  });
+}
+
+// ensure all tests have run
+process.on('exit', function() {
+  assert.strictEqual(count, 0);
+});
+
+process.nextTick(run);
 
 function toArray(callback) {
   const stream = new Writable({ objectMode: true });
@@ -33,16 +45,16 @@ function toArray(callback) {
     list.push(chunk);
   };
 
-  stream.end = common.mustCall(function() {
+  stream.end = function() {
     callback(list);
-  });
+  };
 
   return stream;
 }
 
 function fromArray(list) {
   const r = new Readable({ objectMode: true });
-  r._read = common.mustNotCall();
+  r._read = noop;
   list.forEach(function(chunk) {
     r.push(chunk);
   });
@@ -51,8 +63,9 @@ function fromArray(list) {
   return r;
 }
 
-{
-  // Verify that objects can be read from the stream
+function noop() {}
+
+test('can read objects from stream', function(t) {
   const r = fromArray([{ one: '1'}, { two: '2' }]);
 
   const v1 = r.read();
@@ -62,30 +75,34 @@ function fromArray(list) {
   assert.deepStrictEqual(v1, { one: '1' });
   assert.deepStrictEqual(v2, { two: '2' });
   assert.deepStrictEqual(v3, null);
-}
 
-{
-  // Verify that objects can be piped into the stream
+  t.end();
+});
+
+test('can pipe objects into stream', function(t) {
   const r = fromArray([{ one: '1'}, { two: '2' }]);
 
-  r.pipe(toArray(common.mustCall(function(list) {
+  r.pipe(toArray(function(list) {
     assert.deepStrictEqual(list, [
       { one: '1' },
       { two: '2' }
     ]);
-  })));
-}
 
-{
-  // Verify that read(n) is ignored
+    t.end();
+  }));
+});
+
+test('read(n) is ignored', function(t) {
   const r = fromArray([{ one: '1'}, { two: '2' }]);
+
   const value = r.read(2);
 
   assert.deepStrictEqual(value, { one: '1' });
-}
 
-{
-  // Verify that objects can be synchronously read
+  t.end();
+});
+
+test('can read objects from _read (sync)', function(t) {
   const r = new Readable({ objectMode: true });
   const list = [{ one: '1'}, { two: '2' }];
   r._read = function(n) {
@@ -93,16 +110,17 @@ function fromArray(list) {
     r.push(item || null);
   };
 
-  r.pipe(toArray(common.mustCall(function(list) {
+  r.pipe(toArray(function(list) {
     assert.deepStrictEqual(list, [
       { one: '1' },
       { two: '2' }
     ]);
-  })));
-}
 
-{
-  // Verify that objects can be asynchronously read
+    t.end();
+  }));
+});
+
+test('can read objects from _read (async)', function(t) {
   const r = new Readable({ objectMode: true });
   const list = [{ one: '1'}, { two: '2' }];
   r._read = function(n) {
@@ -112,65 +130,69 @@ function fromArray(list) {
     });
   };
 
-  r.pipe(toArray(common.mustCall(function(list) {
+  r.pipe(toArray(function(list) {
     assert.deepStrictEqual(list, [
       { one: '1' },
       { two: '2' }
     ]);
-  })));
-}
 
-{
-  // Verify that strings can be read as objects
+    t.end();
+  }));
+});
+
+test('can read strings as objects', function(t) {
   const r = new Readable({
     objectMode: true
   });
-  r._read = common.mustNotCall();
+  r._read = noop;
   const list = ['one', 'two', 'three'];
   list.forEach(function(str) {
     r.push(str);
   });
   r.push(null);
 
-  r.pipe(toArray(common.mustCall(function(array) {
+  r.pipe(toArray(function(array) {
     assert.deepStrictEqual(array, list);
-  })));
-}
 
-{
-  // Verify read(0) behavior for object streams
+    t.end();
+  }));
+});
+
+test('read(0) for object streams', function(t) {
   const r = new Readable({
     objectMode: true
   });
-  r._read = common.mustNotCall();
+  r._read = noop;
 
   r.push('foobar');
   r.push(null);
 
-  r.pipe(toArray(common.mustCall(function(array) {
+  r.pipe(toArray(function(array) {
     assert.deepStrictEqual(array, ['foobar']);
-  })));
-}
 
-{
-  // Verify the behavior of pushing falsey values
+    t.end();
+  }));
+});
+
+test('falsey values', function(t) {
   const r = new Readable({
     objectMode: true
   });
-  r._read = common.mustNotCall();
+  r._read = noop;
 
   r.push(false);
   r.push(0);
   r.push('');
   r.push(null);
 
-  r.pipe(toArray(common.mustCall(function(array) {
+  r.pipe(toArray(function(array) {
     assert.deepStrictEqual(array, [false, 0, '']);
-  })));
-}
 
-{
-  // Verify high watermark _read() behavior
+    t.end();
+  }));
+});
+
+test('high watermark _read', function(t) {
   const r = new Readable({
     highWaterMark: 6,
     objectMode: true
@@ -198,23 +220,25 @@ function fromArray(list) {
   assert.strictEqual(v3, '3');
 
   assert.strictEqual(calls, 1);
-}
 
-{
-  // Verify high watermark push behavior
+  t.end();
+});
+
+test('high watermark push', function(t) {
   const r = new Readable({
     highWaterMark: 6,
     objectMode: true
   });
-  r._read = common.mustNotCall();
+  r._read = function(n) {};
   for (let i = 0; i < 6; i++) {
     const bool = r.push(i);
     assert.strictEqual(bool, i !== 5);
   }
-}
 
-{
-  // Verify that objects can be written to stream
+  t.end();
+});
+
+test('can write objects to stream', function(t) {
   const w = new Writable({ objectMode: true });
 
   w._write = function(chunk, encoding, cb) {
@@ -222,13 +246,15 @@ function fromArray(list) {
     cb();
   };
 
-  w.on('finish', common.mustCall());
+  w.on('finish', function() {
+    t.end();
+  });
+
   w.write({ foo: 'bar' });
   w.end();
-}
+});
 
-{
-  // Verify that multiple objects can be written to stream
+test('can write multiple objects to stream', function(t) {
   const w = new Writable({ objectMode: true });
   const list = [];
 
@@ -237,9 +263,11 @@ function fromArray(list) {
     cb();
   };
 
-  w.on('finish', common.mustCall(function() {
+  w.on('finish', function() {
     assert.deepStrictEqual(list, [0, 1, 2, 3, 4]);
-  }));
+
+    t.end();
+  });
 
   w.write(0);
   w.write(1);
@@ -247,10 +275,9 @@ function fromArray(list) {
   w.write(3);
   w.write(4);
   w.end();
-}
+});
 
-{
-  // Verify that strings can be written as objects
+test('can write strings as objects', function(t) {
   const w = new Writable({
     objectMode: true
   });
@@ -261,9 +288,11 @@ function fromArray(list) {
     process.nextTick(cb);
   };
 
-  w.on('finish', common.mustCall(function() {
+  w.on('finish', function() {
     assert.deepStrictEqual(list, ['0', '1', '2', '3', '4']);
-  }));
+
+    t.end();
+  });
 
   w.write('0');
   w.write('1');
@@ -271,10 +300,9 @@ function fromArray(list) {
   w.write('3');
   w.write('4');
   w.end();
-}
+});
 
-{
-  // Verify that stream buffers finish until callback is called
+test('buffers finish until cb is called', function(t) {
   const w = new Writable({
     objectMode: true
   });
@@ -289,10 +317,12 @@ function fromArray(list) {
     });
   };
 
-  w.on('finish', common.mustCall(function() {
+  w.on('finish', function() {
     assert.strictEqual(called, true);
-  }));
+
+    t.end();
+  });
 
   w.write('foo');
   w.end();
-}
+});

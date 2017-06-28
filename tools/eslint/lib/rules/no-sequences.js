@@ -6,12 +6,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -63,7 +57,12 @@ module.exports = {
          * @returns {boolean} True if the node has a paren on each side.
          */
         function isParenthesised(node) {
-            return astUtils.isParenthesised(sourceCode, node);
+            const previousToken = sourceCode.getTokenBefore(node),
+                nextToken = sourceCode.getTokenAfter(node);
+
+            return previousToken && nextToken &&
+                previousToken.value === "(" && previousToken.range[1] <= node.range[0] &&
+                nextToken.value === ")" && nextToken.range[0] >= node.range[1];
         }
 
         /**
@@ -76,8 +75,8 @@ module.exports = {
                 nextToken = sourceCode.getTokenAfter(node, 1);
 
             return isParenthesised(node) && previousToken && nextToken &&
-                astUtils.isOpeningParenToken(previousToken) && previousToken.range[1] <= node.range[0] &&
-                astUtils.isClosingParenToken(nextToken) && nextToken.range[0] >= node.range[1];
+                previousToken.value === "(" && previousToken.range[1] <= node.range[0] &&
+                nextToken.value === ")" && nextToken.range[0] >= node.range[1];
         }
 
         return {

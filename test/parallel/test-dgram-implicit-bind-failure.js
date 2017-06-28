@@ -31,7 +31,7 @@ socket.on('error', (err) => {
     return;
   }
 
-  if (err.code === 'ERR_SOCKET_CANNOT_SEND') {
+  if (/^Error: Unable to send data$/.test(err)) {
     // On error, the queue should be destroyed and this function should be
     // the only listener.
     sendFailures++;
@@ -40,7 +40,7 @@ socket.on('error', (err) => {
     return;
   }
 
-  assert.fail(`Unexpected error: ${err}`);
+  common.fail(`Unexpected error: ${err}`);
 });
 
 // Initiate a few send() operations, which will fail.

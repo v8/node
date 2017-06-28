@@ -1,5 +1,5 @@
 'use strict';
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const dgram = require('dgram');
 const invalidTypes = [
@@ -19,17 +19,12 @@ const validTypes = [
   { type: 'udp4' },
   { type: 'udp6' }
 ];
-const errMessage = /^Bad socket type specified\. Valid types are: udp4, udp6$/;
 
 // Error must be thrown with invalid types
 invalidTypes.forEach((invalidType) => {
   assert.throws(() => {
     dgram.createSocket(invalidType);
-  }, common.expectsError({
-    code: 'ERR_SOCKET_BAD_TYPE',
-    type: Error,
-    message: errMessage
-  }));
+  }, /Bad socket type specified/);
 });
 
 // Error must not be thrown with valid types

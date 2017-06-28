@@ -1,19 +1,19 @@
-'use strict'
-const BB = require('bluebird')
+// npm version <newver>
 
-const assert = require('assert')
-const chain = require('slide').chain
-const detectIndent = require('detect-indent')
-const fs = BB.promisifyAll(require('graceful-fs'))
-const git = require('./utils/git.js')
-const lifecycle = require('./utils/lifecycle.js')
-const log = require('npmlog')
-const npm = require('./npm.js')
-const output = require('./utils/output.js')
-const parseJSON = require('./utils/parse-json.js')
-const path = require('path')
-const semver = require('semver')
-const writeFileAtomic = require('write-file-atomic')
+module.exports = version
+
+var semver = require('semver')
+var path = require('path')
+var fs = require('graceful-fs')
+var writeFileAtomic = require('write-file-atomic')
+var chain = require('slide').chain
+var log = require('npmlog')
+var npm = require('./npm.js')
+var git = require('./utils/git.js')
+var assert = require('assert')
+var lifecycle = require('./utils/lifecycle.js')
+var parseJSON = require('./utils/parse-json.js')
+var output = require('./utils/output.js')
 
 version.usage = 'npm version [<newversion> | major | minor | patch | premajor | preminor | prepatch | prerelease | from-git]' +
                 '\n(run in package dir)\n' +
@@ -23,8 +23,6 @@ version.usage = 'npm version [<newversion> | major | minor | patch | premajor | 
                 'published version\n' +
                 "'npm ls' to inspect current package/dependency versions"
 
-// npm version <newver>
-module.exports = version
 function version (args, silent, cb_) {
   if (typeof cb_ !== 'function') {
     cb_ = silent
@@ -32,7 +30,7 @@ function version (args, silent, cb_) {
   }
   if (args.length > 1) return cb_(version.usage)
 
-  readPackage(function (er, data, indent) {
+  readPackage(function (er, data) {
     if (!args.length) return dump(data, cb_)
 
     if (er) {
@@ -91,9 +89,7 @@ function persistVersion (newVersion, silent, data, localData, cb_) {
     localData = {}
   }
 
-  if (!npm.config.get('allow-same-version') && data.version === newVersion) {
-    return cb_(new Error('Version not changed, might want --allow-same-version'))
-  }
+  if (data.version === newVersion) return cb_(new Error('Version not changed'))
   data.version = newVersion
   var lifecycleData = Object.create(data)
   lifecycleData._id = data.name + '@' + newVersion
@@ -111,17 +107,16 @@ function persistVersion (newVersion, silent, data, localData, cb_) {
 
 function readPackage (cb) {
   var packagePath = path.join(npm.localPrefix, 'package.json')
-  fs.readFile(packagePath, 'utf8', function (er, data) {
+  fs.readFile(packagePath, function (er, data) {
     if (er) return cb(new Error(er))
-    var indent
+    if (data) data = data.toString()
     try {
-      indent = detectIndent(data).indent || '  '
       data = JSON.parse(data)
     } catch (e) {
       er = e
       data = null
     }
-    cb(er, data, indent)
+    cb(er, data)
   })
 }
 
@@ -131,60 +126,42 @@ function updatePackage (newVersion, silent, cb_) {
     cb_(er)
   }
 
-  readPackage(function (er, data, indent) {
+  readPackage(function (er, data) {
     if (er) return cb(new Error(er))
     data.version = newVersion
-    write(data, 'package.json', indent, cb)
+    write(data, 'package.json', cb)
   })
 }
 
 function commit (localData, newVersion, cb) {
-  updateShrinkwrap(newVersion, function (er, hasShrinkwrap, hasLock) {
+  updateShrinkwrap(newVersion, function (er, hasShrinkwrap) {
     if (er || !localData.hasGit) return cb(er)
     localData.hasShrinkwrap = hasShrinkwrap
-    localData.hasPackageLock = hasLock
     _commit(newVersion, localData, cb)
   })
 }
 
-const SHRINKWRAP = 'npm-shrinkwrap.json'
-const PKGLOCK = 'package-lock.json'
-
-function readLockfile (name) {
-  return fs.readFileAsync(
-    path.join(npm.localPrefix, name), 'utf8'
-  ).catch({code: 'ENOENT'}, () => null)
-}
-
 function updateShrinkwrap (newVersion, cb) {
-  BB.join(
-    readLockfile(SHRINKWRAP),
-    readLockfile(PKGLOCK),
-    (shrinkwrap, lockfile) => {
-      if (!shrinkwrap && !lockfile) {
-        return cb(null, false, false)
-      }
-      const file = shrinkwrap ? SHRINKWRAP : PKGLOCK
-      let data
-      let indent
-      try {
-        data = parseJSON(shrinkwrap || lockfile)
-        indent = detectIndent(shrinkwrap || lockfile).indent || '  '
-      } catch (err) {
-        log.error('version', `Bad ${file} data.`)
-        return cb(err)
-      }
-      data.version = newVersion
-      write(data, file, indent, (err) => {
-        if (err) {
-          log.error('version', `Failed to update version in ${file}`)
-          return cb(err)
-        } else {
-          return cb(null, !!shrinkwrap, !!lockfile)
-        }
-      })
+  fs.readFile(path.join(npm.localPrefix, 'npm-shrinkwrap.json'), function (er, data) {
+    if (er && er.code === 'ENOENT') return cb(null, false)
+
+    try {
+      data = data.toString()
+      data = parseJSON(data)
+    } catch (er) {
+      log.error('version', 'Bad npm-shrinkwrap.json data')
+      return cb(er)
     }
-  )
+
+    data.version = newVersion
+    write(data, 'npm-shrinkwrap.json', function (er) {
+      if (er) {
+        log.error('version', 'Bad npm-shrinkwrap.json data')
+        return cb(er)
+      }
+      cb(null, true)
+    })
+  })
 }
 
 function dump (data, cb) {
@@ -287,7 +264,6 @@ function _commit (version, localData, cb) {
     [
       git.chainableExec([ 'add', packagePath ], options),
       localData.hasShrinkwrap && git.chainableExec([ 'add', path.join(npm.localPrefix, 'npm-shrinkwrap.json') ], options),
-      localData.hasPackageLock && git.chainableExec([ 'add', path.join(npm.localPrefix, 'package-lock.json') ], options),
       git.chainableExec([ 'commit', '-m', message ], options),
       !localData.existingTag && git.chainableExec([
         'tag',
@@ -300,14 +276,14 @@ function _commit (version, localData, cb) {
   )
 }
 
-function write (data, file, indent, cb) {
+function write (data, file, cb) {
   assert(data && typeof data === 'object', 'must pass data to version write')
   assert(typeof file === 'string', 'must pass filename to write to version write')
 
   log.verbose('version.write', 'data', data, 'to', file)
   writeFileAtomic(
     path.join(npm.localPrefix, file),
-    new Buffer(JSON.stringify(data, null, indent || 2) + '\n'),
+    new Buffer(JSON.stringify(data, null, 2) + '\n'),
     cb
   )
 }

@@ -7,13 +7,13 @@ var http = require('http');
 var bench = common.createBenchmark(main, {
   dur: [5],
   type: ['asc', 'utf', 'buf'],
-  len: [32, 256, 1024],
+  bytes: [32, 256, 1024],
   method: ['write', 'end']
 });
 
 function main(conf) {
   var dur = +conf.dur;
-  var len = +conf.len;
+  var len = +conf.bytes;
 
   var encoding;
   var chunk;
@@ -23,10 +23,10 @@ function main(conf) {
       break;
     case 'utf':
       encoding = 'utf8';
-      chunk = 'ü'.repeat(len / 2);
+      chunk = new Array(len / 2 + 1).join('ü');
       break;
     case 'asc':
-      chunk = 'a'.repeat(len);
+      chunk = new Array(len + 1).join('a');
       break;
   }
 

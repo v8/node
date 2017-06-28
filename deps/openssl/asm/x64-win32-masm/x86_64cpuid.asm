@@ -118,6 +118,14 @@ $L$intel::
 	shr	r10d,14
 	and	r10d,0fffh
 
+	cmp	r11d,7
+	jb	$L$nocacheinfo
+
+	mov	eax,7
+	xor	ecx,ecx
+	cpuid
+	mov	DWORD PTR[8+rdi],ebx
+
 $L$nocacheinfo::
 	mov	eax,1
 	cpuid
@@ -147,15 +155,6 @@ $L$generic::
 	or	r9d,ecx
 
 	mov	r10d,edx
-
-	cmp	r11d,7
-	jb	$L$no_extended_info
-	mov	eax,7
-	xor	ecx,ecx
-	cpuid
-	mov	DWORD PTR[8+rdi],ebx
-$L$no_extended_info::
-
 	bt	r9d,27
 	jnc	$L$clear_avx
 	xor	ecx,ecx

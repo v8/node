@@ -204,10 +204,7 @@ int ssl23_connect(SSL *s)
                 goto end;
             }
 
-            if (!ssl3_init_finished_mac(s)) {
-                ret = -1;
-                goto end;
-            }
+            ssl3_init_finished_mac(s);
 
             s->state = SSL23_ST_CW_CLNT_HELLO_A;
             s->ctx->stats.sess_connect++;

@@ -6,9 +6,9 @@ const net = require('net');
 const invalidPort = -1 >>> 0;
 const errorMessage = /"port" argument must be >= 0 and < 65536/;
 
-net.Server().listen(0, function() {
+net.Server().listen(common.PORT, function() {
   const address = this.address();
-  const key = `${address.family.slice(-1)}:${address.address}:0`;
+  const key = `${address.family.slice(-1)}:${address.address}:${common.PORT}`;
 
   assert.strictEqual(this._connectionKey, key);
   this.close();

@@ -4,22 +4,20 @@ const common = require('../common');
 const Readable = require('stream').Readable;
 
 const bench = common.createBenchmark(main, {
-  n: [200e1],
-  type: ['string', 'buffer']
+  n: [200e1]
 });
 
 function main(conf) {
   const n = +conf.n;
+  const b = new Buffer(32);
   const s = new Readable();
-  var data = 'a'.repeat(32);
-  if (conf.type === 'buffer')
-    data = Buffer.from(data);
-  s._read = function() {};
+  function noop() {}
+  s._read = noop;
 
   bench.start();
   for (var k = 0; k < n; ++k) {
     for (var i = 0; i < 1e4; ++i)
-      s.push(data);
+      s.push(b);
     while (s.read(32));
   }
   bench.end(n);

@@ -24,8 +24,12 @@ module.exports = {
     create(context) {
 
         return {
-            "ExpressionStatement > NewExpression"(node) {
-                context.report({ node: node.parent, message: "Do not use 'new' for side effects." });
+
+            ExpressionStatement(node) {
+
+                if (node.expression.type === "NewExpression") {
+                    context.report({ node, message: "Do not use 'new' for side effects." });
+                }
             }
         };
 

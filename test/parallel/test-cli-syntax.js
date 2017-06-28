@@ -13,9 +13,6 @@ const syntaxArgs = [
   ['--check']
 ];
 
-const syntaxErrorRE = /^SyntaxError: Unexpected identifier$/m;
-const notFoundRE = /^Error: Cannot find module/m;
-
 // test good syntax with and without shebang
 [
   'syntax/good_syntax.js',
@@ -34,7 +31,7 @@ const notFoundRE = /^Error: Cannot find module/m;
     // no output should be produced
     assert.strictEqual(c.stdout, '', 'stdout produced');
     assert.strictEqual(c.stderr, '', 'stderr produced');
-    assert.strictEqual(c.status, 0, `code === ${c.status}`);
+    assert.strictEqual(c.status, 0, 'code == ' + c.status);
   });
 });
 
@@ -55,13 +52,11 @@ const notFoundRE = /^Error: Cannot find module/m;
     // no stdout should be produced
     assert.strictEqual(c.stdout, '', 'stdout produced');
 
-    // stderr should include the filename
-    assert(c.stderr.startsWith(file), "stderr doesn't start with the filename");
-
     // stderr should have a syntax error message
-    assert(syntaxErrorRE.test(c.stderr), 'stderr incorrect');
+    const match = c.stderr.match(/^SyntaxError: Unexpected identifier$/m);
+    assert(match, 'stderr incorrect');
 
-    assert.strictEqual(c.status, 1, `code === ${c.status}`);
+    assert.strictEqual(c.status, 1, 'code == ' + c.status);
   });
 });
 
@@ -81,55 +76,9 @@ const notFoundRE = /^Error: Cannot find module/m;
     assert.strictEqual(c.stdout, '', 'stdout produced');
 
     // stderr should have a module not found error message
-    assert(notFoundRE.test(c.stderr), 'stderr incorrect');
+    const match = c.stderr.match(/^Error: Cannot find module/m);
+    assert(match, 'stderr incorrect');
 
-    assert.strictEqual(c.status, 1, `code === ${c.status}`);
-  });
-});
-
-// should not execute code piped from stdin with --check
-// loop each possible option, `-c` or `--check`
-syntaxArgs.forEach(function(args) {
-  const stdin = 'throw new Error("should not get run");';
-  const c = spawnSync(node, args, {encoding: 'utf8', input: stdin});
-
-  // no stdout or stderr should be produced
-  assert.strictEqual(c.stdout, '', 'stdout produced');
-  assert.strictEqual(c.stderr, '', 'stderr produced');
-
-  assert.strictEqual(c.status, 0, `code === ${c.status}`);
-});
-
-// should throw if code piped from stdin with --check has bad syntax
-// loop each possible option, `-c` or `--check`
-syntaxArgs.forEach(function(args) {
-  const stdin = 'var foo bar;';
-  const c = spawnSync(node, args, {encoding: 'utf8', input: stdin});
-
-  // stderr should include '[stdin]' as the filename
-  assert(c.stderr.startsWith('[stdin]'), "stderr doesn't start with [stdin]");
-
-  // no stdout or stderr should be produced
-  assert.strictEqual(c.stdout, '', 'stdout produced');
-
-  // stderr should have a syntax error message
-  assert(syntaxErrorRE.test(c.stderr), 'stderr incorrect');
-
-  assert.strictEqual(c.status, 1, `code === ${c.status}`);
-});
-
-// should throw if -c and -e flags are both passed
-['-c', '--check'].forEach(function(checkFlag) {
-  ['-e', '--eval'].forEach(function(evalFlag) {
-    const args = [checkFlag, evalFlag, 'foo'];
-    const c = spawnSync(node, args, {encoding: 'utf8'});
-
-    assert(
-      c.stderr.startsWith(
-        `${node}: either --check or --eval can be used, not both`
-      )
-    );
-
-    assert.strictEqual(c.status, 9, `code === ${c.status}`);
+    assert.strictEqual(c.status, 1, 'code == ' + c.status);
   });
 });

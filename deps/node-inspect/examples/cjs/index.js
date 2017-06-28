@@ -1,5 +1,5 @@
-const fourty = 40;
+'use strict';
 const { add } = require('./other');
 
-const sum = add(fourty, 2);
+const sum = add(40, 2);
 module.exports = sum;

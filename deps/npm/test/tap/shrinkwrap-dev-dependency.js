@@ -22,13 +22,13 @@ var desired = {
   dependencies: {
     request: {
       version: '0.9.0',
-      resolved: common.registry + '/request/-/request-0.9.0.tgz',
-      integrity: 'sha1-EEn1mm9GWI5tAwkh+7hMovDCcU4='
+      from: 'request@0.9.0',
+      resolved: common.registry + '/request/-/request-0.9.0.tgz'
     },
     underscore: {
       version: '1.3.1',
-      resolved: common.registry + '/underscore/-/underscore-1.3.1.tgz',
-      integrity: 'sha1-bLiq0Od+tdu/tUsivNhpcwnPlkE='
+      from: 'underscore@1.3.1',
+      resolved: common.registry + '/underscore/-/underscore-1.3.1.tgz'
     }
   }
 }
@@ -79,7 +79,7 @@ test("shrinkwrap doesn't strip out the dependency", function (t) {
         } catch (ex) {
           t.comment(ex)
         }
-        t.deepEqual(results.dependencies, desired.dependencies)
+        t.deepEqual(results, desired)
         s.close()
         t.end()
       })

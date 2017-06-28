@@ -27,18 +27,20 @@ module.exports = {
         //--------------------------------------------------------------------------
 
         /**
-         * Reports a node.
-         * @param {ASTNode} node The node to report
+         * Checks if the callee is the Function constructor, and if so, reports an issue.
+         * @param {ASTNode} node The node to check and report on
          * @returns {void}
          * @private
          */
-        function report(node) {
-            context.report({ node, message: "The Function constructor is eval." });
+        function validateCallee(node) {
+            if (node.callee.name === "Function") {
+                context.report({ node, message: "The Function constructor is eval." });
+            }
         }
 
         return {
-            "NewExpression[callee.name = 'Function']": report,
-            "CallExpression[callee.name = 'Function']": report
+            NewExpression: validateCallee,
+            CallExpression: validateCallee
         };
 
     }

@@ -55,26 +55,21 @@ module.exports = {
         const sourceCode = context.getSourceCode();
 
         /**
-         * Checks if the given token is a star token or not.
+         * Gets `*` token from a given node.
          *
-         * @param {Token} token - The token to check.
-         * @returns {boolean} `true` if the token is a star token.
-         */
-        function isStarToken(token) {
-            return token.value === "*" && token.type === "Punctuator";
-        }
-
-        /**
-         * Gets the generator star token of the given function node.
-         *
-         * @param {ASTNode} node - The function node to get.
-         * @returns {Token} Found star token.
+         * @param {ASTNode} node - A node to get `*` token. This is one of
+         *      FunctionDeclaration, FunctionExpression, Property, and
+         *      MethodDefinition.
+         * @returns {Token} `*` token.
          */
         function getStarToken(node) {
-            return sourceCode.getFirstToken(
-                (node.parent.method || node.parent.type === "MethodDefinition") ? node.parent : node,
-                isStarToken
-            );
+            let token = sourceCode.getFirstToken(node);
+
+            while (token.value !== "*") {
+                token = sourceCode.getTokenAfter(token);
+            }
+
+            return token;
         }
 
         /**
@@ -121,11 +116,17 @@ module.exports = {
          * @returns {void}
          */
         function checkFunction(node) {
+            let starToken;
+
             if (!node.generator) {
                 return;
             }
 
-            const starToken = getStarToken(node);
+            if (node.parent.method || node.parent.type === "MethodDefinition") {
+                starToken = getStarToken(node.parent);
+            } else {
+                starToken = getStarToken(node);
+            }
 
             // Only check before when preceded by `function`|`static` keyword
             const prevToken = sourceCode.getTokenBefore(starToken);

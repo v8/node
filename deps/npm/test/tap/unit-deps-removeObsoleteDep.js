@@ -7,9 +7,6 @@ var deps = requireInject('../../lib/install/deps.js', {
   '../../lib/npm.js': {
     config: {
       get: function () { return 'mock' }
-    },
-    limit: {
-      fetch: 10
     }
   }
 })

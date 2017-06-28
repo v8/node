@@ -28,4 +28,4 @@ function testShutdown(callback) {
   req.handle.shutdown(req);
 }
 
-testShutdown(common.mustCall());
+testShutdown(common.mustCall(function() {}));

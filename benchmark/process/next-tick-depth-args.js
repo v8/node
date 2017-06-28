@@ -2,7 +2,7 @@
 
 var common = require('../common.js');
 var bench = common.createBenchmark(main, {
-  millions: [12]
+  millions: [2]
 });
 
 process.maxTickDepth = Infinity;

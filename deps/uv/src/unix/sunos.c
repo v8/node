@@ -99,18 +99,6 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 }
 
 
-int uv__io_fork(uv_loop_t* loop) {
-#if defined(PORT_SOURCE_FILE)
-  if (loop->fs_fd != -1) {
-    /* stop the watcher before we blow away its fileno */
-    uv__io_stop(loop, &loop->fs_event_watcher, POLLIN);
-  }
-#endif
-  uv__platform_loop_delete(loop);
-  return uv__platform_loop_init(loop);
-}
-
-
 void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
   struct port_event* events;
   uintptr_t i;
@@ -481,10 +469,8 @@ int uv_fs_event_start(uv_fs_event_t* handle,
   memset(&handle->fo, 0, sizeof handle->fo);
   handle->fo.fo_name = handle->path;
   err = uv__fs_event_rearm(handle);
-  if (err != 0) {
-    uv_fs_event_stop(handle);
+  if (err != 0)
     return err;
-  }
 
   if (first_run) {
     uv__io_init(&handle->loop->fs_event_watcher, uv__fs_event_read, portfd);
@@ -543,6 +529,25 @@ void uv__fs_event_close(uv_fs_event_t* handle) {
 }
 
 #endif /* defined(PORT_SOURCE_FILE) */
+
+
+char** uv_setup_args(int argc, char** argv) {
+  return argv;
+}
+
+
+int uv_set_process_title(const char* title) {
+  return 0;
+}
+
+
+int uv_get_process_title(char* buffer, size_t size) {
+  if (buffer == NULL || size == 0)
+    return -EINVAL;
+
+  buffer[0] = '\0';
+  return 0;
+}
 
 
 int uv_resident_set_memory(size_t* rss) {
@@ -741,17 +746,6 @@ static int uv__set_phys_addr(uv_interface_address_t* address,
   return 0;
 }
 
-
-static int uv__ifaddr_exclude(struct ifaddrs *ent) {
-  if (!((ent->ifa_flags & IFF_UP) && (ent->ifa_flags & IFF_RUNNING)))
-    return 1;
-  if (ent->ifa_addr == NULL)
-    return 1;
-  if (ent->ifa_addr->sa_family == PF_PACKET)
-    return 1;
-  return 0;
-}
-
 int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   uv_interface_address_t* address;
   struct ifaddrs* addrs;
@@ -765,8 +759,12 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
 
   /* Count the number of interfaces */
   for (ent = addrs; ent != NULL; ent = ent->ifa_next) {
-    if (uv__ifaddr_exclude(ent))
+    if (!((ent->ifa_flags & IFF_UP) && (ent->ifa_flags & IFF_RUNNING)) ||
+        (ent->ifa_addr == NULL) ||
+        (ent->ifa_addr->sa_family == PF_PACKET)) {
       continue;
+    }
+
     (*count)++;
   }
 
@@ -779,7 +777,10 @@ int uv_interface_addresses(uv_interface_address_t** addresses, int* count) {
   address = *addresses;
 
   for (ent = addrs; ent != NULL; ent = ent->ifa_next) {
-    if (uv__ifaddr_exclude(ent))
+    if (!((ent->ifa_flags & IFF_UP) && (ent->ifa_flags & IFF_RUNNING)))
+      continue;
+
+    if (ent->ifa_addr == NULL)
       continue;
 
     address->name = uv__strdup(ent->ifa_name);

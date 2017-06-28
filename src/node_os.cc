@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #include "node.h"
 #include "v8.h"
 #include "env.h"
@@ -57,7 +36,6 @@ using v8::Function;
 using v8::FunctionCallbackInfo;
 using v8::Integer;
 using v8::Local;
-using v8::MaybeLocal;
 using v8::Null;
 using v8::Number;
 using v8::Object;
@@ -340,12 +318,7 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
 
   if (args[0]->IsObject()) {
     Local<Object> options = args[0].As<Object>();
-    MaybeLocal<Value> maybe_encoding = options->Get(env->context(),
-                                                    env->encoding_string());
-    if (maybe_encoding.IsEmpty())
-      return;
-
-    Local<Value> encoding_opt = maybe_encoding.ToLocalChecked();
+    Local<Value> encoding_opt = options->Get(env->encoding_string());
     encoding = ParseEncoding(env->isolate(), encoding_opt, UTF8);
   } else {
     encoding = UTF8;
@@ -357,43 +330,36 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
     return env->ThrowUVException(err, "uv_os_get_passwd");
   }
 
-  Local<Value> error;
-
   Local<Value> uid = Number::New(env->isolate(), pwd.uid);
   Local<Value> gid = Number::New(env->isolate(), pwd.gid);
-  MaybeLocal<Value> username = StringBytes::Encode(env->isolate(),
-                                                   pwd.username,
-                                                   encoding,
-                                                   &error);
-  MaybeLocal<Value> homedir = StringBytes::Encode(env->isolate(),
-                                                  pwd.homedir,
-                                                  encoding,
-                                                  &error);
-  MaybeLocal<Value> shell;
+  Local<Value> username = StringBytes::Encode(env->isolate(),
+                                              pwd.username,
+                                              encoding);
+  Local<Value> homedir = StringBytes::Encode(env->isolate(),
+                                             pwd.homedir,
+                                             encoding);
+  Local<Value> shell;
 
   if (pwd.shell == NULL)
     shell = Null(env->isolate());
   else
-    shell = StringBytes::Encode(env->isolate(), pwd.shell, encoding, &error);
+    shell = StringBytes::Encode(env->isolate(), pwd.shell, encoding);
 
   uv_os_free_passwd(&pwd);
 
   if (username.IsEmpty()) {
-    // TODO(addaleax): Use `error` itself here.
     return env->ThrowUVException(UV_EINVAL,
                                  "uv_os_get_passwd",
                                  "Invalid character encoding for username");
   }
 
   if (homedir.IsEmpty()) {
-    // TODO(addaleax): Use `error` itself here.
     return env->ThrowUVException(UV_EINVAL,
                                  "uv_os_get_passwd",
                                  "Invalid character encoding for homedir");
   }
 
   if (shell.IsEmpty()) {
-    // TODO(addaleax): Use `error` itself here.
     return env->ThrowUVException(UV_EINVAL,
                                  "uv_os_get_passwd",
                                  "Invalid character encoding for shell");
@@ -403,9 +369,9 @@ static void GetUserInfo(const FunctionCallbackInfo<Value>& args) {
 
   entry->Set(env->uid_string(), uid);
   entry->Set(env->gid_string(), gid);
-  entry->Set(env->username_string(), username.ToLocalChecked());
-  entry->Set(env->homedir_string(), homedir.ToLocalChecked());
-  entry->Set(env->shell_string(), shell.ToLocalChecked());
+  entry->Set(env->username_string(), username);
+  entry->Set(env->homedir_string(), homedir);
+  entry->Set(env->shell_string(), shell);
 
   args.GetReturnValue().Set(entry);
 }

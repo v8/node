@@ -1,7 +1,6 @@
 'use strict'
 var path = require('path')
 var fs = require('graceful-fs')
-var rimraf = require('rimraf')
 var test = require('tap').test
 var mr = require('npm-registry-mock')
 var Tacks = require('tacks')
@@ -24,7 +23,7 @@ var conf = {
     npm_config_tmp: tmpdir,
     npm_config_prefix: globaldir,
     npm_config_registry: common.registry,
-    npm_config_metrics_registry: null,
+    npm_config_metrics_registry: common.registry,
     npm_config_loglevel: 'warn'
   })
 }
@@ -75,10 +74,6 @@ function cleanup () {
   fixture.remove(basedir)
 }
 
-function reset () {
-  rimraf.sync(testdir + '/' + 'node_modules')
-}
-
 test('setup', function (t) {
   setup()
   mr({port: common.port, throwOnUnmatched: true}, function (err, s) {
@@ -96,51 +91,51 @@ test('setup', function (t) {
 })
 
 test('record success', function (t) {
-  common.npm(['install', '--no-save', '--no-send-metrics', 'file:success'], conf, function (err, code, stdout, stderr) {
+  common.npm(['install', '--no-send-metrics', 'success'], conf, function (err, code, stdout, stderr) {
     if (err) throw err
     t.is(code, 0, 'always succeeding install succeeded')
     t.comment(stdout.trim())
     t.comment(stderr.trim())
     var data = JSON.parse(fs.readFileSync(metricsFile))
-    t.is(data.metrics.successfulInstalls, 1, 'successes')
-    t.is(data.metrics.failedInstalls, 0, 'failures')
+    t.is(data.metrics.successfulInstalls, 1)
+    t.is(data.metrics.failedInstalls, 0)
     t.done()
   })
 })
 
 test('record failure', function (t) {
-  reset()
   server.put('/-/npm/anon-metrics/v1/:id', {
     successfulInstalls: 1,
     failedInstalls: 0
   }).reply(500, {ok: false})
-  common.npm(['install', '--no-save', '--send-metrics', 'file:failure'], conf, function (err, code, stdout, stderr) {
+  common.npm(['install', '--send-metrics', 'failure'], conf, function (err, code, stdout, stderr) {
     if (err) throw err
     t.notEqual(code, 0, 'always failing install fails')
     t.comment(stdout.trim())
     t.comment(stderr.trim())
     var data = JSON.parse(fs.readFileSync(metricsFile))
-    t.is(data.metrics.successfulInstalls, 1, 'successes')
-    t.is(data.metrics.failedInstalls, 1, 'failures')
+    t.is(data.metrics.successfulInstalls, 1)
+    t.is(data.metrics.failedInstalls, 1)
     t.done()
   })
 })
 
 test('report', function (t) {
-  reset()
+  console.log('setup')
+
   server.put('/-/npm/anon-metrics/v1/:id', {
     successfulInstalls: 1,
     failedInstalls: 1
   }).reply(200, {ok: true})
-  common.npm(['install', '--no-save', '--send-metrics', 'file:slow'], conf, function (err, code, stdout, stderr) {
+  common.npm(['install', '--send-metrics', 'slow'], conf, function (err, code, stdout, stderr) {
     if (err) throw err
     t.is(code, 0, 'command ran ok')
     t.comment(stdout.trim())
     t.comment(stderr.trim())
     // todo check mock registry for post
     var data = JSON.parse(fs.readFileSync(metricsFile))
-    t.is(data.metrics.successfulInstalls, 1, 'successes')
-    t.is(data.metrics.failedInstalls, 0, 'failures')
+    t.is(data.metrics.successfulInstalls, 1)
+    t.is(data.metrics.failedInstalls, 0)
     t.done()
   })
 })

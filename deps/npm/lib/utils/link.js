@@ -64,7 +64,7 @@ function link (from, to, gently, abs, cb) {
     [
       [ensureFromIsNotSource, absTarget, to],
       [fs, 'stat', absTarget],
-      [rm, to, gently, path.dirname(to)],
+      [rm, to, gently],
       [mkdir, path.dirname(to)],
       [fs, 'symlink', target, to, 'junction']
     ],

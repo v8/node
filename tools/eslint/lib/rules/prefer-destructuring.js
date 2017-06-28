@@ -89,7 +89,7 @@ module.exports = {
          * @returns {void}
          */
         function report(reportNode, type) {
-            context.report({ node: reportNode, message: "Use {{type}} destructuring.", data: { type } });
+            context.report({ node: reportNode, message: `Use ${type} destructuring` });
         }
 
         /**
@@ -109,10 +109,8 @@ module.exports = {
                 return;
             }
 
-            if (isArrayIndexAccess(rightNode)) {
-                if (checkArrays) {
-                    report(reportNode, "array");
-                }
+            if (checkArrays && isArrayIndexAccess(rightNode)) {
+                report(reportNode, "array");
                 return;
             }
 
@@ -160,9 +158,7 @@ module.exports = {
          * @returns {void}
          */
         function checkAssigmentExpression(node) {
-            if (node.operator === "=") {
-                performCheck(node.left, node.right, node);
-            }
+            performCheck(node.left, node.right, node);
         }
 
         //--------------------------------------------------------------------------

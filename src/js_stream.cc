@@ -12,6 +12,7 @@ namespace node {
 
 using v8::Array;
 using v8::Context;
+using v8::External;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
@@ -20,8 +21,8 @@ using v8::Object;
 using v8::Value;
 
 
-JSStream::JSStream(Environment* env, Local<Object> obj)
-    : AsyncWrap(env, obj, AsyncWrap::PROVIDER_JSSTREAM),
+JSStream::JSStream(Environment* env, Local<Object> obj, AsyncWrap* parent)
+    : AsyncWrap(env, obj, AsyncWrap::PROVIDER_JSSTREAM, parent),
       StreamBase(env) {
   node::Wrap(obj, this);
   MakeWeak<JSStream>(this);
@@ -114,7 +115,17 @@ void JSStream::New(const FunctionCallbackInfo<Value>& args) {
   // normal function.
   CHECK(args.IsConstructCall());
   Environment* env = Environment::GetCurrent(args);
-  new JSStream(env, args.This());
+  JSStream* wrap;
+
+  if (args.Length() == 0) {
+    wrap = new JSStream(env, args.This(), nullptr);
+  } else if (args[0]->IsExternal()) {
+    void* ptr = args[0].As<External>()->Value();
+    wrap = new JSStream(env, args.This(), static_cast<AsyncWrap*>(ptr));
+  } else {
+    UNREACHABLE();
+  }
+  CHECK(wrap);
 }
 
 
@@ -209,8 +220,6 @@ void JSStream::Initialize(Local<Object> target,
   Local<FunctionTemplate> t = env->NewFunctionTemplate(New);
   t->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "JSStream"));
   t->InstanceTemplate()->SetInternalFieldCount(1);
-
-  env->SetProtoMethod(t, "getAsyncId", AsyncWrap::GetAsyncId);
 
   env->SetProtoMethod(t, "doAlloc", DoAlloc);
   env->SetProtoMethod(t, "doRead", DoRead);

@@ -5,12 +5,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -57,7 +51,12 @@ module.exports = {
          * @returns {Object} Tokens of arrow and before/after arrow.
          */
         function getTokens(node) {
-            const arrow = sourceCode.getTokenBefore(node.body, astUtils.isArrowToken);
+            let arrow = sourceCode.getTokenBefore(node.body);
+
+            // skip '(' tokens.
+            while (arrow.value !== "=>") {
+                arrow = sourceCode.getTokenBefore(arrow);
+            }
 
             return {
                 before: sourceCode.getTokenBefore(arrow),

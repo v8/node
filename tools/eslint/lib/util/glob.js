@@ -15,7 +15,7 @@ const Sync = require("glob").GlobSync,
 // Private
 //------------------------------------------------------------------------------
 
-const IGNORE = Symbol("ignore");
+const IGNORE = typeof Symbol === "function" ? Symbol("ignore") : "_shouldIgnore";
 
 /**
  * Subclass of `glob.GlobSync`

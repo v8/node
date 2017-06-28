@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /********************************************************************
  * COPYRIGHT:
@@ -117,7 +117,7 @@ U_CAPI int32_t
 udbg_stoi(const UnicodeString &s)
 {
     char ch[256];
-    const UChar *u = toUCharPtr(s.getBuffer());
+    const UChar *u = s.getBuffer();
     int32_t len = s.length();
     u_UCharsToChars(u, ch, len);
     ch[len] = 0; /* include terminating \0 */
@@ -129,7 +129,7 @@ U_CAPI double
 udbg_stod(const UnicodeString &s)
 {
     char ch[256];
-    const UChar *u = toUCharPtr(s.getBuffer());
+    const UChar *u = s.getBuffer();
     int32_t len = s.length();
     u_UCharsToChars(u, ch, len);
     ch[len] = 0; /* include terminating \0 */

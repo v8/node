@@ -26,11 +26,11 @@ function main(conf) {
       chunk = Buffer.alloc(size, 'b');
       break;
     case 'asc':
-      chunk = 'a'.repeat(size);
+      chunk = new Array(size + 1).join('a');
       encoding = 'ascii';
       break;
     case 'utf':
-      chunk = 'ü'.repeat(size / 2);
+      chunk = new Array(size / 2 + 1).join('ü');
       encoding = 'utf8';
       break;
     default:
@@ -38,9 +38,9 @@ function main(conf) {
   }
 
   options = {
-    key: fs.readFileSync(`${cert_dir}/test_key.pem`),
-    cert: fs.readFileSync(`${cert_dir}/test_cert.pem`),
-    ca: [ fs.readFileSync(`${cert_dir}/test_ca.pem`) ],
+    key: fs.readFileSync(cert_dir + '/test_key.pem'),
+    cert: fs.readFileSync(cert_dir + '/test_cert.pem'),
+    ca: [ fs.readFileSync(cert_dir + '/test_ca.pem') ],
     ciphers: 'AES256-GCM-SHA384'
   };
 

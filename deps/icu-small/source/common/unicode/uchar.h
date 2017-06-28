@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 **********************************************************************
@@ -399,34 +399,36 @@ typedef enum UProperty {
     UCHAR_CHANGES_WHEN_CASEMAPPED=55,
     /** Binary property Changes_When_NFKC_Casefolded. @stable ICU 4.4 */
     UCHAR_CHANGES_WHEN_NFKC_CASEFOLDED=56,
+#ifndef U_HIDE_DRAFT_API
     /**
      * Binary property Emoji.
      * See http://www.unicode.org/reports/tr51/#Emoji_Properties
      *
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UCHAR_EMOJI=57,
     /**
      * Binary property Emoji_Presentation.
      * See http://www.unicode.org/reports/tr51/#Emoji_Properties
      *
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UCHAR_EMOJI_PRESENTATION=58,
     /**
      * Binary property Emoji_Modifier.
      * See http://www.unicode.org/reports/tr51/#Emoji_Properties
      *
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UCHAR_EMOJI_MODIFIER=59,
     /**
      * Binary property Emoji_Modifier_Base.
      * See http://www.unicode.org/reports/tr51/#Emoji_Properties
      *
-     * @stable ICU 57
+     * @draft ICU 57
      */
     UCHAR_EMOJI_MODIFIER_BASE=60,
+#endif /* U_HIDE_DRAFT_API */
 #ifndef U_HIDE_DEPRECATED_API
     /**
      * One more than the last constant for binary Unicode properties.

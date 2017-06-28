@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -29,7 +29,6 @@
 
 #if !UCONFIG_NO_COLLATION
 
-#include "unicode/chariter.h"
 #include "unicode/coleitr.h"
 #include "unicode/tblcoll.h"
 #include "unicode/ustring.h"

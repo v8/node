@@ -19,9 +19,4 @@ ConnectWrap::ConnectWrap(Environment* env,
   Wrap(req_wrap_obj, this);
 }
 
-
-ConnectWrap::~ConnectWrap() {
-  ClearWrap(object());
-}
-
 }  // namespace node

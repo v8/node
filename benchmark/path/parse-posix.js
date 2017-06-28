@@ -18,7 +18,7 @@ var bench = common.createBenchmark(main, {
 function main(conf) {
   var n = +conf.n;
   var p = path.posix;
-  var input = String(conf.path);
+  var input = '' + conf.path;
 
   for (var i = 0; i < n; i++) {
     p.parse(input);

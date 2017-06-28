@@ -1,16 +1,15 @@
 'use strict';
 const common = require('../common');
-
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 
+const path = require('path');
+const fs = require('fs');
 const fn = path.join(common.fixturesDir, 'elipses.txt');
 const rangeFile = path.join(common.fixturesDir, 'x.txt');
 
-{
-  let paused = false;
+let paused = false;
 
+{
   const file = fs.ReadStream(fn);
 
   file.on('open', common.mustCall(function(fd) {
@@ -40,7 +39,7 @@ const rangeFile = path.join(common.fixturesDir, 'x.txt');
   });
 
 
-  file.on('end', common.mustCall());
+  file.on('end', common.mustCall(function() {}));
 
 
   file.on('close', common.mustCall(function() {
@@ -49,11 +48,11 @@ const rangeFile = path.join(common.fixturesDir, 'x.txt');
 }
 
 {
-  const file = fs.createReadStream(fn, Object.create({encoding: 'utf8'}));
-  file.length = 0;
-  file.on('data', function(data) {
+  const file3 = fs.createReadStream(fn, Object.create({encoding: 'utf8'}));
+  file3.length = 0;
+  file3.on('data', function(data) {
     assert.strictEqual(typeof data, 'string');
-    file.length += data.length;
+    file3.length += data.length;
 
     for (let i = 0; i < data.length; i++) {
       // http://www.fileformat.info/info/unicode/char/2026/index.htm
@@ -61,49 +60,49 @@ const rangeFile = path.join(common.fixturesDir, 'x.txt');
     }
   });
 
-  file.on('close', common.mustCall(function() {
-    assert.strictEqual(file.length, 10000);
+  file3.on('close', common.mustCall(function() {
+    assert.strictEqual(file3.length, 10000);
   }));
 }
 
 {
   const options = Object.create({bufferSize: 1, start: 1, end: 2});
-  const file = fs.createReadStream(rangeFile, options);
-  assert.strictEqual(file.start, 1);
-  assert.strictEqual(file.end, 2);
+  const file4 = fs.createReadStream(rangeFile, options);
+  assert.strictEqual(file4.start, 1);
+  assert.strictEqual(file4.end, 2);
   let contentRead = '';
-  file.on('data', function(data) {
+  file4.on('data', function(data) {
     contentRead += data.toString('utf-8');
   });
-  file.on('end', common.mustCall(function() {
+  file4.on('end', common.mustCall(function() {
     assert.strictEqual(contentRead, 'yz');
   }));
 }
 
 {
   const options = Object.create({bufferSize: 1, start: 1});
-  const file = fs.createReadStream(rangeFile, options);
-  assert.strictEqual(file.start, 1);
-  file.data = '';
-  file.on('data', function(data) {
-    file.data += data.toString('utf-8');
+  const file5 = fs.createReadStream(rangeFile, options);
+  assert.strictEqual(file5.start, 1);
+  file5.data = '';
+  file5.on('data', function(data) {
+    file5.data += data.toString('utf-8');
   });
-  file.on('end', common.mustCall(function() {
-    assert.strictEqual(file.data, 'yz\n');
+  file5.on('end', common.mustCall(function() {
+    assert.strictEqual(file5.data, 'yz\n');
   }));
 }
 
 // https://github.com/joyent/node/issues/2320
 {
   const options = Object.create({bufferSize: 1.23, start: 1});
-  const file = fs.createReadStream(rangeFile, options);
-  assert.strictEqual(file.start, 1);
-  file.data = '';
-  file.on('data', function(data) {
-    file.data += data.toString('utf-8');
+  const file6 = fs.createReadStream(rangeFile, options);
+  assert.strictEqual(file6.start, 1);
+  file6.data = '';
+  file6.on('data', function(data) {
+    file6.data += data.toString('utf-8');
   });
-  file.on('end', common.mustCall(function() {
-    assert.strictEqual(file.data, 'yz\n');
+  file6.on('end', common.mustCall(function() {
+    assert.strictEqual(file6.data, 'yz\n');
   }));
 }
 
@@ -137,58 +136,56 @@ const rangeFile = path.join(common.fixturesDir, 'x.txt');
 }
 
 {
-  let data = '';
-  let file =
+  let file7 =
     fs.createReadStream(rangeFile, Object.create({autoClose: false }));
-  assert.strictEqual(file.autoClose, false);
-  file.on('data', (chunk) => { data += chunk; });
-  file.on('end', common.mustCall(function() {
+  assert.strictEqual(file7.autoClose, false);
+  file7.on('data', function() {});
+  file7.on('end', common.mustCall(function() {
     process.nextTick(common.mustCall(function() {
-      assert(!file.closed);
-      assert(!file.destroyed);
-      assert.strictEqual(data, 'xyz\n');
-      fileNext();
+      assert(!file7.closed);
+      assert(!file7.destroyed);
+      file7Next();
     }));
   }));
 
-  function fileNext() {
+  function file7Next() {
     // This will tell us if the fd is usable again or not.
-    file = fs.createReadStream(null, Object.create({fd: file.fd, start: 0 }));
-    file.data = '';
-    file.on('data', function(data) {
-      file.data += data;
+    file7 = fs.createReadStream(null, Object.create({fd: file7.fd, start: 0 }));
+    file7.data = '';
+    file7.on('data', function(data) {
+      file7.data += data;
     });
-    file.on('end', common.mustCall(function() {
-      assert.strictEqual(file.data, 'xyz\n');
+    file7.on('end', common.mustCall(function() {
+      assert.strictEqual(file7.data, 'xyz\n');
     }));
   }
   process.on('exit', function() {
-    assert(file.closed);
-    assert(file.destroyed);
+    assert(file7.closed);
+    assert(file7.destroyed);
   });
 }
 
 // Just to make sure autoClose won't close the stream because of error.
 {
   const options = Object.create({fd: 13337, autoClose: false});
-  const file = fs.createReadStream(null, options);
-  file.on('data', common.mustNotCall());
-  file.on('error', common.mustCall());
+  const file8 = fs.createReadStream(null, options);
+  file8.on('data', function() {});
+  file8.on('error', common.mustCall(function() {}));
   process.on('exit', function() {
-    assert(!file.closed);
-    assert(!file.destroyed);
-    assert(file.fd);
+    assert(!file8.closed);
+    assert(!file8.destroyed);
+    assert(file8.fd);
   });
 }
 
 // Make sure stream is destroyed when file does not exist.
 {
-  const file = fs.createReadStream('/path/to/file/that/does/not/exist');
-  file.on('data', common.mustNotCall());
-  file.on('error', common.mustCall());
+  const file9 = fs.createReadStream('/path/to/file/that/does/not/exist');
+  file9.on('data', function() {});
+  file9.on('error', common.mustCall(function() {}));
 
   process.on('exit', function() {
-    assert(!file.closed);
-    assert(file.destroyed);
+    assert(!file9.closed);
+    assert(file9.destroyed);
   });
 }

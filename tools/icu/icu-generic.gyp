@@ -228,7 +228,6 @@
               'actions': [
                 {
                   'action_name': 'icudata',
-                  'msvs_quote_cmd': 0,
                   'inputs': [ '<(icu_data_in)' ],
                   'outputs': [ '<(SHARED_INTERMEDIATE_DIR)/icudt<(icu_ver_major)<(icu_endianness)_dat.obj' ],
                   'action': [ '<(PRODUCT_DIR)/genccode',
@@ -248,12 +247,11 @@
                 {
                   # trim down ICU
                   'action_name': 'icutrim',
-                  'msvs_quote_cmd': 0,
                   'inputs': [ '<(icu_data_in)', 'icu_small.json' ],
                   'outputs': [ '<(SHARED_INTERMEDIATE_DIR)/icutmp/icudt<(icu_ver_major)<(icu_endianness).dat' ],
                   'action': [ 'python',
                               'icutrim.py',
-                              '-P', '<(PRODUCT_DIR)/.', # '.' suffix is a workaround against GYP assumptions :(
+                              '-P', '../../<(CONFIGURATION_NAME)',
                               '-D', '<(icu_data_in)',
                               '--delete-tmp',
                               '-T', '<(SHARED_INTERMEDIATE_DIR)/icutmp',
@@ -265,10 +263,9 @@
                 {
                   # build final .dat -> .obj
                   'action_name': 'genccode',
-                  'msvs_quote_cmd': 0,
                   'inputs': [ '<(SHARED_INTERMEDIATE_DIR)/icutmp/icudt<(icu_ver_major)<(icu_endianness).dat' ],
                   'outputs': [ '<(SHARED_INTERMEDIATE_DIR)/icudt<(icu_ver_major)<(icu_endianness)_dat.obj' ],
-                  'action': [ '<(PRODUCT_DIR)/genccode',
+                  'action': [ '../../<(CONFIGURATION_NAME)/genccode',
                               '-o',
                               '-d', '<(SHARED_INTERMEDIATE_DIR)/',
                               '-n', 'icudata',
@@ -464,7 +461,7 @@
         'conditions': [
           [ 'OS=="win"', {
             'link_settings': {
-              'libraries': [ '-lAdvAPI32.lib', '-lUser32.lib' ],
+              'libraries': [ '-lAdvAPI32.Lib', '-lUser32.lib' ],
             },
           }],
         ],
@@ -480,6 +477,7 @@
         '<@(icu_src_tools)',
         '<@(icu_src_common)',
         '<@(icu_src_i18n)',
+        '<@(icu_src_io)',
         '<@(icu_src_stubdata)',
       ],
       'sources!': [
@@ -491,6 +489,7 @@
       'include_dirs': [
         '<(icu_path)/source/common',
         '<(icu_path)/source/i18n',
+        '<(icu_path)/source/io',
         '<(icu_path)/source/tools/toolutil',
       ],
       'defines': [
@@ -510,12 +509,13 @@
         'include_dirs': [
           '<(icu_path)/source/common',
           '<(icu_path)/source/i18n',
+          '<(icu_path)/source/io',
           '<(icu_path)/source/tools/toolutil',
         ],
         'conditions': [
           [ 'OS=="win"', {
             'link_settings': {
-              'libraries': [ '-lAdvAPI32.lib', '-lUser32.lib' ],
+              'libraries': [ '-lAdvAPI32.Lib', '-lUser32.lib' ],
             },
           }],
         ],

@@ -23,6 +23,8 @@ function main(conf) {
 
   const contextifiedSandbox = vm.createContext();
 
+  common.v8ForceOptimization(vm.runInContext,
+                             '0', contextifiedSandbox, options);
   bench.start();
   for (; i < n; i++)
     vm.runInContext('0', contextifiedSandbox, options);

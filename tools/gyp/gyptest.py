@@ -10,7 +10,6 @@ gyptest.py -- test runner for GYP tests.
 
 import os
 import optparse
-import shlex
 import subprocess
 import sys
 

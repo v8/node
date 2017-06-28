@@ -40,8 +40,7 @@ module.exports = {
 
     create(context) {
 
-        const sourceCode = context.getSourceCode(),
-            configuration = context.options[0] || {},
+        const configuration = context.options[0] || {},
             warningTerms = configuration.terms || ["todo", "fixme", "xxx"],
             location = configuration.location || "start",
             selfConfigRegEx = /\bno-warning-comments\b/;
@@ -129,11 +128,8 @@ module.exports = {
         }
 
         return {
-            Program() {
-                const comments = sourceCode.getAllComments();
-
-                comments.filter(token => token.type !== "Shebang").forEach(checkComment);
-            }
+            BlockComment: checkComment,
+            LineComment: checkComment
         };
     }
 };

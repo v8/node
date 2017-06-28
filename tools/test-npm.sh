@@ -33,11 +33,11 @@ export PATH="$(../$NODE -p 'require("path").resolve("..")'):$PATH"
 unset NODE
 
 # make sure the binaries from the non-dev-deps are available
-node bin/npm-cli.js rebuild
+node cli.js rebuild
 # install npm devDependencies and run npm's tests
-node bin/npm-cli.js install --ignore-scripts --no-save
+node cli.js install --ignore-scripts
 # run the tests
-node bin/npm-cli.js run-script test-node
+node cli.js run-script test-node
 
 # clean up everything one single shot
 cd .. && rm -rf test-npm

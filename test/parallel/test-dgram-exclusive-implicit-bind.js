@@ -70,15 +70,15 @@ if (cluster.isMaster) {
   });
 
   target.on('listening', function() {
-    cluster.fork({PORT: target.address().port});
-    cluster.fork({PORT: target.address().port});
+    cluster.fork();
+    cluster.fork();
     if (!common.isWindows) {
-      cluster.fork({BOUND: 'y', PORT: target.address().port});
-      cluster.fork({BOUND: 'y', PORT: target.address().port});
+      cluster.fork({BOUND: 'y'});
+      cluster.fork({BOUND: 'y'});
     }
   });
 
-  target.bind({port: 0, exclusive: true});
+  target.bind({port: common.PORT, exclusive: true});
 
   return;
 }
@@ -98,8 +98,7 @@ if (process.env.BOUND === 'y') {
   source.unref();
 }
 
-assert(process.env.PORT);
 const buf = Buffer.from(process.pid.toString());
 const interval = setInterval(() => {
-  source.send(buf, process.env.PORT, '127.0.0.1');
+  source.send(buf, common.PORT, '127.0.0.1');
 }, 1).unref();

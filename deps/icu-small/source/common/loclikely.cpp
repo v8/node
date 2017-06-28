@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -8,7 +8,7 @@
 *
 *******************************************************************************
 *   file name:  loclikely.cpp
-*   encoding:   UTF-8
+*   encoding:   US-ASCII
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -22,7 +22,6 @@
 #include "unicode/utypes.h"
 #include "unicode/locid.h"
 #include "unicode/putil.h"
-#include "unicode/uchar.h"
 #include "unicode/uloc.h"
 #include "unicode/ures.h"
 #include "unicode/uscript.h"

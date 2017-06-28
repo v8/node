@@ -1,5 +1,5 @@
 'use strict';
-require('../common');
+const common = require('../common');
 const assert = require('assert');
 
 const net = require('net');
@@ -17,13 +17,13 @@ const connections = [];
 const received = [];
 const sent = [];
 
-function createConnection(index) {
-  console.error(`creating connection ${index}`);
+const createConnection = function(index) {
+  console.error('creating connection ' + index);
 
   return new Promise(function(resolve, reject) {
     const connection = net.createConnection(server.address().port, function() {
-      const msg = String(index);
-      console.error(`sending message: ${msg}`);
+      const msg = '' + index;
+      console.error('sending message: ' + msg);
       this.write(msg);
       sent.push(msg);
     });
@@ -34,33 +34,33 @@ function createConnection(index) {
     });
 
     connection.on('data', function(e) {
-      console.error(`connection ${index} received response`);
+      console.error('connection ' + index + ' received response');
       resolve();
     });
 
     connection.on('end', function() {
-      console.error(`ending ${index}`);
+      console.error('ending ' + index);
       resolve();
     });
 
     connections[index] = connection;
   });
-}
+};
 
-function closeConnection(index) {
-  console.error(`closing connection ${index}`);
+const closeConnection = function(index) {
+  console.error('closing connection ' + index);
   return new Promise(function(resolve, reject) {
     connections[index].on('end', function() {
       resolve();
     });
     connections[index].end();
   });
-}
+};
 
 const server = net.createServer(function(socket) {
   socket.on('data', function(data) {
-    console.error(`received message: ${data}`);
-    received.push(String(data));
+    console.error('received message: ' + data);
+    received.push('' + data);
     socket.write('acknowledged');
   });
 });
@@ -86,5 +86,5 @@ process.on('exit', function() {
 
 process.on('unhandledRejection', function() {
   console.error('promise rejected');
-  assert.fail('A promise in the chain rejected');
+  common.fail('A promise in the chain rejected');
 });

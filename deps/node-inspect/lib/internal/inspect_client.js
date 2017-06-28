@@ -334,7 +334,20 @@ class Client extends EventEmitter {
         this.emit('close');
       });
 
-      this.emit('ready');
+      Promise.all([
+        this.callMethod('Runtime.enable'),
+        this.callMethod('Debugger.enable'),
+        this.callMethod('Debugger.setPauseOnExceptions', { state: 'none' }),
+        this.callMethod('Debugger.setAsyncCallStackDepth', { maxDepth: 0 }),
+        this.callMethod('Profiler.enable'),
+        this.callMethod('Profiler.setSamplingInterval', { interval: 100 }),
+        this.callMethod('Debugger.setBlackboxPatterns', { patterns: [] }),
+        this.callMethod('Runtime.runIfWaitingForDebugger'),
+      ]).then(() => {
+        this.emit('ready');
+      }, (error) => {
+        this.emit('error', error);
+      });
     };
 
     return new Promise((resolve, reject) => {

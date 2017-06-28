@@ -142,7 +142,7 @@ test('npm version from-git with an existing version', function (t) {
   }
 
   function checkVersion (er) {
-    t.like(er.message, /Version not changed/)
+    t.equal(er.message, 'Version not changed')
     t.done()
   }
 })

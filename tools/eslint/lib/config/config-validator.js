@@ -9,8 +9,9 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const schemaValidator = require("is-my-json-valid"),
-    configSchema = require("../../conf/config-schema.js"),
+const rules = require("../rules"),
+    Environments = require("./environments"),
+    schemaValidator = require("is-my-json-valid"),
     util = require("util");
 
 const validators = {
@@ -24,11 +25,10 @@ const validators = {
 /**
  * Gets a complete options schema for a rule.
  * @param {string} id The rule's unique name.
- * @param {Rules} rulesContext Rule context
  * @returns {Object} JSON Schema for the rule's options.
  */
-function getRuleOptionsSchema(id, rulesContext) {
-    const rule = rulesContext.get(id),
+function getRuleOptionsSchema(id) {
+    const rule = rules.get(id),
         schema = rule && rule.schema || rule && rule.meta && rule.meta.schema;
 
     // Given a tuple of schemas, insert warning level at the beginning
@@ -40,13 +40,13 @@ function getRuleOptionsSchema(id, rulesContext) {
                 minItems: 0,
                 maxItems: schema.length
             };
+        } else {
+            return {
+                type: "array",
+                minItems: 0,
+                maxItems: 0
+            };
         }
-        return {
-            type: "array",
-            minItems: 0,
-            maxItems: 0
-        };
-
     }
 
     // Given a full schema, leave it alone
@@ -72,11 +72,10 @@ function validateRuleSeverity(options) {
 * Validates the non-severity options passed to a rule, based on its schema.
 * @param {string} id The rule's unique name
 * @param {array} localOptions The options for the rule, excluding severity
-* @param {Rules} rulesContext Rule context
 * @returns {void}
 */
-function validateRuleSchema(id, localOptions, rulesContext) {
-    const schema = getRuleOptionsSchema(id, rulesContext);
+function validateRuleSchema(id, localOptions) {
+    const schema = getRuleOptionsSchema(id);
 
     if (!validators.rules[id] && schema) {
         validators.rules[id] = schemaValidator(schema, { verbose: true });
@@ -96,16 +95,15 @@ function validateRuleSchema(id, localOptions, rulesContext) {
  * Validates a rule's options against its schema.
  * @param {string} id The rule's unique name.
  * @param {array|number} options The given options for the rule.
- * @param {string} source The name of the configuration source to report in any errors.
- * @param {Rules} rulesContext Rule context
+ * @param {string} source The name of the configuration source.
  * @returns {void}
  */
-function validateRuleOptions(id, options, source, rulesContext) {
+function validateRuleOptions(id, options, source) {
     try {
         const severity = validateRuleSeverity(options);
 
         if (severity !== 0 && !(typeof severity === "string" && severity.toLowerCase() === "off")) {
-            validateRuleSchema(id, Array.isArray(options) ? options.slice(1) : [], rulesContext);
+            validateRuleSchema(id, Array.isArray(options) ? options.slice(1) : []);
         }
     } catch (err) {
         throw new Error(`${source}:\n\tConfiguration for rule "${id}" is invalid:\n${err.message}`);
@@ -115,91 +113,51 @@ function validateRuleOptions(id, options, source, rulesContext) {
 /**
  * Validates an environment object
  * @param {Object} environment The environment config object to validate.
- * @param {string} source The name of the configuration source to report in any errors.
- * @param {Environments} envContext Env context
+ * @param {string} source The location to report with any errors.
  * @returns {void}
  */
-function validateEnvironment(environment, source, envContext) {
+function validateEnvironment(environment, source) {
 
     // not having an environment is ok
     if (!environment) {
         return;
     }
 
-    Object.keys(environment).forEach(env => {
-        if (!envContext.get(env)) {
-            const message = `${source}:\n\tEnvironment key "${env}" is unknown\n`;
-
-            throw new Error(message);
-        }
-    });
-}
-
-/**
- * Validates a rules config object
- * @param {Object} rulesConfig The rules config object to validate.
- * @param {string} source The name of the configuration source to report in any errors.
- * @param {Rules} rulesContext Rule context
- * @returns {void}
- */
-function validateRules(rulesConfig, source, rulesContext) {
-    if (!rulesConfig) {
-        return;
+    if (Array.isArray(environment)) {
+        throw new Error("Environment must not be an array");
     }
 
-    Object.keys(rulesConfig).forEach(id => {
-        validateRuleOptions(id, rulesConfig[id], source, rulesContext);
-    });
-}
+    if (typeof environment === "object") {
+        Object.keys(environment).forEach(env => {
+            if (!Environments.get(env)) {
+                const message = [
+                    source, ":\n",
+                    "\tEnvironment key \"", env, "\" is unknown\n"
+                ];
 
-/**
- * Formats an array of schema validation errors.
- * @param {Array} errors An array of error messages to format.
- * @returns {string} Formatted error message
- */
-function formatErrors(errors) {
-
-    return errors.map(error => {
-        if (error.message === "has additional properties") {
-            return `Unexpected top-level property "${error.value.replace(/^data\./, "")}"`;
-        }
-        if (error.message === "is the wrong type") {
-            const formattedField = error.field.replace(/^data\./, "");
-            const formattedExpectedType = typeof error.type === "string" ? error.type : error.type.join("/");
-            const formattedValue = JSON.stringify(error.value);
-
-            return `Property "${formattedField}" is the wrong type (expected ${formattedExpectedType} but got \`${formattedValue}\`)`;
-        }
-        return `"${error.field.replace(/^(data\.)/, "")}" ${error.message}. Value: ${JSON.stringify(error.value)}`;
-    }).map(message => `\t- ${message}.\n`).join("");
-}
-
-/**
- * Validates the top level properties of the config object.
- * @param {Object} config The config object to validate.
- * @param {string} source The name of the configuration source to report in any errors.
- * @returns {void}
- */
-function validateConfigSchema(config, source) {
-    const validator = schemaValidator(configSchema, { verbose: true });
-
-    if (!validator(config)) {
-        throw new Error(`${source}:\n\tESLint configuration is invalid:\n${formatErrors(validator.errors)}`);
+                throw new Error(message.join(""));
+            }
+        });
+    } else {
+        throw new Error("Environment must be an object");
     }
 }
 
 /**
  * Validates an entire config object.
  * @param {Object} config The config object to validate.
- * @param {string} source The name of the configuration source to report in any errors.
- * @param {Rules} rulesContext The rules context
- * @param {Environments} envContext The env context
+ * @param {string} source The location to report with any errors.
  * @returns {void}
  */
-function validate(config, source, rulesContext, envContext) {
-    validateConfigSchema(config, source);
-    validateRules(config.rules, source, rulesContext);
-    validateEnvironment(config.env, source, envContext);
+function validate(config, source) {
+
+    if (typeof config.rules === "object") {
+        Object.keys(config.rules).forEach(id => {
+            validateRuleOptions(id, config.rules[id], source);
+        });
+    }
+
+    validateEnvironment(config.env, source);
 }
 
 //------------------------------------------------------------------------------

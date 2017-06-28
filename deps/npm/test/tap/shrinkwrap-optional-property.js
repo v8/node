@@ -33,7 +33,7 @@ test('shrinkwrap adds optional property when optional dependency', function (t) 
         npm.commands.shrinkwrap([], true, function (err, results) {
           if (err) return fail(err)
 
-          t.deepEqual(results.dependencies, desired.dependencies)
+          t.deepEqual(results, desired)
           s.close()
           t.end()
         })
@@ -53,14 +53,14 @@ var desired = {
   dependencies: {
     'test-package': {
       version: '0.0.0',
-      resolved: common.registry + '/test-package/-/test-package-0.0.0.tgz',
-      integrity: 'sha1-sNMrbEXCWcV4uiADdisgUTG9+9E='
+      from: 'test-package@0.0.0',
+      resolved: common.registry + '/test-package/-/test-package-0.0.0.tgz'
     },
     'underscore': {
       version: '1.3.3',
+      from: 'underscore@1.3.3',
       resolved: 'http://localhost:1337/underscore/-/underscore-1.3.3.tgz',
-      optional: true,
-      integrity: 'sha1-R6xTaD2vgyv6lS4XdEF9pHgXrkI='
+      optional: true
     }
   }
 }

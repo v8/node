@@ -98,7 +98,7 @@ assert.doesNotThrow(() => {
 });
 
 assert.throws(() => {
-  crypto.pbkdf2('password', 'salt', 8, 8, common.noop);
+  crypto.pbkdf2('password', 'salt', 8, 8, function() {});
 }, /^TypeError: The "digest" argument is required and must not be undefined$/);
 
 assert.throws(() => {

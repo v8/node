@@ -342,7 +342,11 @@ module.exports = {
          */
         function checkSpacingAroundTokenBefore(node) {
             if (node) {
-                const token = sourceCode.getTokenBefore(node, astUtils.isKeywordToken);
+                let token = sourceCode.getTokenBefore(node);
+
+                while (token.type !== "Keyword") {
+                    token = sourceCode.getTokenBefore(token);
+                }
 
                 checkSpacingAround(token);
             }
@@ -359,8 +363,7 @@ module.exports = {
             const firstToken = node && sourceCode.getFirstToken(node);
 
             if (firstToken &&
-                ((firstToken.type === "Keyword" && firstToken.value === "function") ||
-                firstToken.value === "async")
+                (firstToken.type === "Keyword" || firstToken.value === "async")
             ) {
                 checkSpacingBefore(firstToken);
             }
@@ -436,7 +439,14 @@ module.exports = {
          */
         function checkSpacingForForOfStatement(node) {
             checkSpacingAroundFirstToken(node);
-            checkSpacingAround(sourceCode.getTokenBefore(node.right, astUtils.isNotOpeningParenToken));
+
+            // `of` is not a keyword token.
+            let token = sourceCode.getTokenBefore(node.right);
+
+            while (token.value !== "of") {
+                token = sourceCode.getTokenBefore(token);
+            }
+            checkSpacingAround(token);
         }
 
         /**
@@ -496,24 +506,10 @@ module.exports = {
                     node.value.async
                 )
             ) {
-                const token = sourceCode.getTokenBefore(
-                    node.key,
-                    tok => {
-                        switch (tok.value) {
-                            case "get":
-                            case "set":
-                            case "async":
-                                return true;
-                            default:
-                                return false;
-                        }
-                    }
+                const token = sourceCode.getFirstToken(
+                    node,
+                    node.static ? 1 : 0
                 );
-
-                if (!token) {
-                    throw new Error("Failed to find token get, set, or async beside method name");
-                }
-
 
                 checkSpacingAround(token);
             }

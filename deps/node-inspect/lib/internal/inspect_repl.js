@@ -67,15 +67,6 @@ repl                  Enter a debug repl that works like exec
 
 scripts               List application scripts that are currently loaded
 scripts(true)         List all scripts (including node-internals)
-
-profile               Start CPU profiling session.
-profileEnd            Stop current CPU profiling session.
-profiles              Array of completed CPU profiling sessions.
-profiles[n].save(filepath = 'node.cpuprofile')
-                      Save CPU profiling session to disk as JSON.
-
-takeHeapSnapshot(filepath = 'node.heapsnapshot')
-                      Take a heap snapshot and save to disk as JSON.
 `.trim();
 
 const FUNCTION_NAME_PATTERN = /^(?:function\*? )?([^(\s]+)\(/;
@@ -243,10 +234,10 @@ class ScopeSnapshot {
   constructor(scope, properties) {
     Object.assign(this, scope);
     this.properties = new Map(properties.map((prop) => {
+      // console.error(prop);
       const value = new RemoteObject(prop.value);
       return [prop.name, value];
     }));
-    this.completionGroup = properties.map((prop) => prop.name);
   }
 
   [util.inspect.custom](depth, opts) {
@@ -489,9 +480,7 @@ function createRepl(inspector) {
       if (!selectedFrame) {
         return Promise.reject(new Error('Requires execution to be paused'));
       }
-      return selectedFrame.loadScopes().then((scopes) => {
-        return scopes.map((scope) => scope.completionGroup);
-      });
+      return selectedFrame.loadScopes();
     }
 
     if (selectedFrame) {
@@ -757,8 +746,8 @@ function createRepl(inspector) {
       .filter(({ location }) => !!location.scriptUrl)
       .map(({ location }) =>
         setBreakpoint(location.scriptUrl, location.lineNumber + 1));
-    if (!newBreakpoints.length) return Promise.resolve();
-    return Promise.all(newBreakpoints).then((results) => {
+    if (!newBreakpoints.length) return;
+    Promise.all(newBreakpoints).then((results) => {
       print(`${results.length} breakpoints restored.`);
     });
   }
@@ -779,8 +768,7 @@ function createRepl(inspector) {
     const breakType = reason === 'other' ? 'break' : reason;
     const script = knownScripts[scriptId];
     const scriptUrl = script ? getRelativePath(script.url) : '[unknown]';
-
-    const header = `${breakType} in ${scriptUrl}:${lineNumber + 1}`;
+    print(`${breakType} in ${scriptUrl}:${lineNumber + 1}`);
 
     inspector.suspendReplWhile(() =>
       Promise.all([formatWatchers(true), selectedFrame.list(2)])
@@ -788,10 +776,8 @@ function createRepl(inspector) {
           if (watcherList) {
             return `${watcherList}\n${inspect(context)}`;
           }
-          return inspect(context);
-        }).then((breakContext) => {
-          print(`${header}\n${breakContext}`);
-        }));
+          return context;
+        }).then(print));
   });
 
   function handleResumed() {
@@ -1038,30 +1024,7 @@ function createRepl(inspector) {
     aliasProperties(context, SHORTCUTS);
   }
 
-  function initAfterStart() {
-    const setupTasks = [
-      Runtime.enable(),
-      Profiler.enable(),
-      Profiler.setSamplingInterval({ interval: 100 }),
-      Debugger.enable(),
-      Debugger.setPauseOnExceptions({ state: 'none' }),
-      Debugger.setAsyncCallStackDepth({ maxDepth: 0 }),
-      Debugger.setBlackboxPatterns({ patterns: [] }),
-      Debugger.setPauseOnExceptions({ state: pauseOnExceptionState }),
-      restoreBreakpoints(),
-      Runtime.runIfWaitingForDebugger(),
-    ];
-    return Promise.all(setupTasks);
-  }
-
   return function startRepl() {
-    inspector.client.on('close', () => {
-      resetOnStart();
-    });
-    inspector.client.on('ready', () => {
-      initAfterStart();
-    });
-
     const replOptions = {
       prompt: 'debug> ',
       input: inspector.stdin,
@@ -1070,7 +1033,6 @@ function createRepl(inspector) {
       useGlobal: false,
       ignoreUndefined: true,
     };
-
     repl = Repl.start(replOptions); // eslint-disable-line prefer-const
     initializeContext(repl.context);
     repl.on('reset', initializeContext);
@@ -1080,8 +1042,14 @@ function createRepl(inspector) {
       repl.rli.emit('SIGINT');
     });
 
-    // Init once for the initial connection
-    initAfterStart();
+    inspector.client.on('close', () => {
+      resetOnStart();
+    });
+
+    inspector.client.on('ready', () => {
+      restoreBreakpoints();
+      Debugger.setPauseOnExceptions({ state: pauseOnExceptionState });
+    });
 
     return repl;
   };

@@ -12,7 +12,7 @@ var common = require('../common.js');
 
 var bench = common.createBenchmark(main, {
   type: ['asc', 'utf', 'buf'],
-  len: [64 * 1024, 128 * 1024, 256 * 1024, 1024 * 1024],
+  kb: [64, 128, 256, 1024],
   c: [100],
   method: ['write', 'end']
 });
@@ -20,16 +20,16 @@ var bench = common.createBenchmark(main, {
 function main(conf) {
   const http = require('http');
   var chunk;
-  var len = conf.len;
+  var len = conf.kb * 1024;
   switch (conf.type) {
     case 'buf':
       chunk = Buffer.alloc(len, 'x');
       break;
     case 'utf':
-      chunk = 'ü'.repeat(len / 2);
+      chunk = new Array(len / 2 + 1).join('ü');
       break;
     case 'asc':
-      chunk = 'a'.repeat(len);
+      chunk = new Array(len + 1).join('a');
       break;
   }
 

@@ -11,7 +11,7 @@ test('examples/empty.js', (t) => {
     throw error;
   }
 
-  return cli.waitForInitialBreak()
+  return cli.waitFor(/break/)
     .then(() => cli.waitForPrompt())
     .then(() => cli.command('help'))
     .then(() => {

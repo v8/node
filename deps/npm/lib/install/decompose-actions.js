@@ -19,6 +19,7 @@ module.exports = function (differences, decomposed, next) {
         moveSteps(decomposed, pkg, done)
         break
       case 'remove':
+      case 'update-linked':
       default:
         defaultSteps(decomposed, cmd, pkg, done)
     }
@@ -26,9 +27,10 @@ module.exports = function (differences, decomposed, next) {
 }
 
 function addSteps (decomposed, pkg, done) {
-  if (!pkg.fromBundle && !pkg.isLink) {
+  if (!pkg.fromBundle) {
     decomposed.push(['fetch', pkg])
     decomposed.push(['extract', pkg])
+    decomposed.push(['test', pkg])
   }
   if (!pkg.fromBundle || npm.config.get('rebuild-bundle')) {
     decomposed.push(['preinstall', pkg])
@@ -36,10 +38,7 @@ function addSteps (decomposed, pkg, done) {
     decomposed.push(['install', pkg])
     decomposed.push(['postinstall', pkg])
   }
-  if (!pkg.fromBundle || !pkg.isLink) {
-    decomposed.push(['finalize', pkg])
-  }
-  decomposed.push(['refresh-package-json', pkg])
+  decomposed.push(['finalize', pkg])
   done()
 }
 
@@ -53,7 +52,7 @@ function moveSteps (decomposed, pkg, done) {
   decomposed.push(['build', pkg])
   decomposed.push(['install', pkg])
   decomposed.push(['postinstall', pkg])
-  decomposed.push(['refresh-package-json', pkg])
+  decomposed.push(['test', pkg])
   done()
 }
 

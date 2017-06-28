@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #include "tls_wrap.h"
 #include "async-wrap.h"
 #include "async-wrap-inl.h"
@@ -85,7 +64,6 @@ TLSWrap::TLSWrap(Environment* env,
   stream_->set_after_write_cb({ OnAfterWriteImpl, this });
   stream_->set_alloc_cb({ OnAllocImpl, this });
   stream_->set_read_cb({ OnReadImpl, this });
-  stream_->set_destruct_cb({ OnDestructImpl, this });
 
   set_alloc_cb({ OnAllocSelf, this });
   set_read_cb({ OnReadSelf, this });
@@ -447,12 +425,6 @@ void TLSWrap::ClearOut() {
       memcpy(buf.base, current, avail);
       OnRead(avail, &buf);
 
-      // Caveat emptor: OnRead() calls into JS land which can result in
-      // the SSL context object being destroyed.  We have to carefully
-      // check that ssl_ != nullptr afterwards.
-      if (ssl_ == nullptr)
-        return;
-
       read -= avail;
       current += avail;
     }
@@ -550,7 +522,7 @@ int TLSWrap::GetFD() {
 
 
 bool TLSWrap::IsAlive() {
-  return ssl_ != nullptr && stream_ != nullptr && stream_->IsAlive();
+  return ssl_ != nullptr && stream_->IsAlive();
 }
 
 
@@ -685,12 +657,6 @@ void TLSWrap::OnReadImpl(ssize_t nread,
                          void* ctx) {
   TLSWrap* wrap = static_cast<TLSWrap*>(ctx);
   wrap->DoRead(nread, buf, pending);
-}
-
-
-void TLSWrap::OnDestructImpl(void* ctx) {
-  TLSWrap* wrap = static_cast<TLSWrap*>(ctx);
-  wrap->clear_stream();
 }
 
 
@@ -933,15 +899,12 @@ void TLSWrap::Initialize(Local<Object> target,
   env->SetMethod(target, "wrap", TLSWrap::Wrap);
 
   auto constructor = [](const FunctionCallbackInfo<Value>& args) {
-    CHECK(args.IsConstructCall());
     args.This()->SetAlignedPointerInInternalField(0, nullptr);
   };
   auto t = env->NewFunctionTemplate(constructor);
   t->InstanceTemplate()->SetInternalFieldCount(1);
   t->SetClassName(FIXED_ONE_BYTE_STRING(env->isolate(), "TLSWrap"));
 
-  env->SetProtoMethod(t, "getAsyncId", AsyncWrap::GetAsyncId);
-  env->SetProtoMethod(t, "asyncReset", AsyncWrap::AsyncReset);
   env->SetProtoMethod(t, "receive", Receive);
   env->SetProtoMethod(t, "start", Start);
   env->SetProtoMethod(t, "setVerifyMode", SetVerifyMode);

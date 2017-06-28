@@ -27,14 +27,14 @@ function main(conf) {
       break;
     case 'utf':
       encoding = 'utf8';
-      chunk = 'ü'.repeat(len / 2);
+      chunk = new Array(len / 2 + 1).join('ü');
       break;
     case 'asc':
       encoding = 'ascii';
-      chunk = 'x'.repeat(len);
+      chunk = new Array(len + 1).join('x');
       break;
     default:
-      throw new Error(`invalid type: ${type}`);
+      throw new Error('invalid type: ' + type);
   }
 
   server();

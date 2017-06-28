@@ -1,29 +1,7 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 'use strict';
 const common = require('../common');
 const assert = require('assert');
 const util = require('util');
-const binding = process.binding('util');
 const context = require('vm').runInNewContext;
 
 // isArray
@@ -52,7 +30,8 @@ assert.strictEqual(false, util.isRegExp(Object.create(RegExp.prototype)));
 // isDate
 assert.strictEqual(true, util.isDate(new Date()));
 assert.strictEqual(true, util.isDate(new Date(0)));
-assert.strictEqual(true, util.isDate(new (context('Date'))()));
+// eslint-disable-next-line new-parens
+assert.strictEqual(true, util.isDate(new (context('Date'))));
 assert.strictEqual(false, util.isDate(Date()));
 assert.strictEqual(false, util.isDate({}));
 assert.strictEqual(false, util.isDate([]));
@@ -63,9 +42,11 @@ assert.strictEqual(false, util.isDate(Object.create(Date.prototype)));
 assert.strictEqual(true, util.isError(new Error()));
 assert.strictEqual(true, util.isError(new TypeError()));
 assert.strictEqual(true, util.isError(new SyntaxError()));
-assert.strictEqual(true, util.isError(new (context('Error'))()));
-assert.strictEqual(true, util.isError(new (context('TypeError'))()));
-assert.strictEqual(true, util.isError(new (context('SyntaxError'))()));
+/* eslint-disable new-parens */
+assert.strictEqual(true, util.isError(new (context('Error'))));
+assert.strictEqual(true, util.isError(new (context('TypeError'))));
+assert.strictEqual(true, util.isError(new (context('SyntaxError'))));
+/* eslint-enable */
 assert.strictEqual(false, util.isError({}));
 assert.strictEqual(false, util.isError({ name: 'Error', message: '' }));
 assert.strictEqual(false, util.isError([]));
@@ -151,20 +132,3 @@ util.print('test');
 util.puts('test');
 util.debug('test');
 util.error('test');
-
-{
-  // binding.isNativeError()
-  assert.strictEqual(binding.isNativeError(new Error()), true);
-  assert.strictEqual(binding.isNativeError(new TypeError()), true);
-  assert.strictEqual(binding.isNativeError(new SyntaxError()), true);
-  assert.strictEqual(binding.isNativeError(new (context('Error'))()), true);
-  assert.strictEqual(binding.isNativeError(new (context('TypeError'))()), true);
-  assert.strictEqual(binding.isNativeError(new (context('SyntaxError'))()),
-                     true);
-  assert.strictEqual(binding.isNativeError({}), false);
-  assert.strictEqual(binding.isNativeError({ name: 'Error', message: '' }),
-                     false);
-  assert.strictEqual(binding.isNativeError([]), false);
-  assert.strictEqual(binding.isNativeError(Object.create(Error.prototype)),
-                     false);
-}

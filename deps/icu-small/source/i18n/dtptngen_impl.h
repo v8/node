@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -15,9 +15,6 @@
 #define __DTPTNGEN_IMPL_H__
 
 #include "unicode/udatpg.h"
-
-#include "unicode/strenum.h"
-#include "unicode/unistr.h"
 #include "uvector.h"
 
 // TODO(claireho): Split off Builder class.

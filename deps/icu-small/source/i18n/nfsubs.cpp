@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 ******************************************************************************
@@ -6,7 +6,7 @@
 *   Corporation and others.  All Rights Reserved.
 ******************************************************************************
 *   file name:  nfsubs.cpp
-*   encoding:   UTF-8
+*   encoding:   US-ASCII
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -20,7 +20,6 @@
 
 #include "nfsubs.h"
 #include "digitlst.h"
-#include "fmtableimp.h"
 
 #if U_HAVE_RBNF
 
@@ -69,24 +68,27 @@ public:
 SameValueSubstitution::~SameValueSubstitution() {}
 
 class MultiplierSubstitution : public NFSubstitution {
-    int64_t divisor;
+    double divisor;
+    int64_t ldivisor;
 
 public:
     MultiplierSubstitution(int32_t _pos,
-        const NFRule *rule,
+        double _divisor,
         const NFRuleSet* _ruleSet,
         const UnicodeString& description,
         UErrorCode& status)
-        : NFSubstitution(_pos, _ruleSet, description, status), divisor(rule->getDivisor())
+        : NFSubstitution(_pos, _ruleSet, description, status), divisor(_divisor)
     {
+        ldivisor = util64_fromDouble(divisor);
         if (divisor == 0) {
             status = U_PARSE_ERROR;
         }
     }
     virtual ~MultiplierSubstitution();
 
-    virtual void setDivisor(int32_t radix, int16_t exponent, UErrorCode& status) {
-        divisor = util64_pow(radix, exponent);
+    virtual void setDivisor(int32_t radix, int32_t exponent, UErrorCode& status) {
+        divisor = uprv_pow(radix, exponent);
+        ldivisor = util64_fromDouble(divisor);
 
         if(divisor == 0) {
             status = U_PARSE_ERROR;
@@ -96,14 +98,14 @@ public:
     virtual UBool operator==(const NFSubstitution& rhs) const;
 
     virtual int64_t transformNumber(int64_t number) const {
-        return number / divisor;
+        return number / ldivisor;
     }
 
     virtual double transformNumber(double number) const {
         if (getRuleSet()) {
             return uprv_floor(number / divisor);
         } else {
-            return number / divisor;
+            return number/divisor;
         }
     }
 
@@ -123,19 +125,21 @@ public:
 MultiplierSubstitution::~MultiplierSubstitution() {}
 
 class ModulusSubstitution : public NFSubstitution {
-    int64_t  divisor;
+    double divisor;
+    int64_t  ldivisor;
     const NFRule* ruleToUse;
 public:
     ModulusSubstitution(int32_t pos,
-        const NFRule* rule,
+        double _divisor,
         const NFRule* rulePredecessor,
         const NFRuleSet* ruleSet,
         const UnicodeString& description,
         UErrorCode& status);
     virtual ~ModulusSubstitution();
 
-    virtual void setDivisor(int32_t radix, int16_t exponent, UErrorCode& status) {
-        divisor = util64_pow(radix, exponent);
+    virtual void setDivisor(int32_t radix, int32_t exponent, UErrorCode& status) {
+        divisor = uprv_pow(radix, exponent);
+        ldivisor = util64_fromDouble(divisor);
 
         if (divisor == 0) {
             status = U_PARSE_ERROR;
@@ -147,7 +151,7 @@ public:
     virtual void doSubstitution(int64_t number, UnicodeString& toInsertInto, int32_t pos, int32_t recursionCount, UErrorCode& status) const;
     virtual void doSubstitution(double number, UnicodeString& toInsertInto, int32_t pos, int32_t recursionCount, UErrorCode& status) const;
 
-    virtual int64_t transformNumber(int64_t number) const { return number % divisor; }
+    virtual int64_t transformNumber(int64_t number) const { return number % ldivisor; }
     virtual double transformNumber(double number) const { return uprv_fmod(number, divisor); }
 
     virtual UBool doParse(const UnicodeString& text,
@@ -349,7 +353,7 @@ NFSubstitution::makeSubstitution(int32_t pos,
 
         // otherwise, return a MultiplierSubstitution
         else {
-            return new MultiplierSubstitution(pos, rule, ruleSet,
+            return new MultiplierSubstitution(pos, rule->getDivisor(), ruleSet,
                 description, status);
         }
 
@@ -379,7 +383,7 @@ NFSubstitution::makeSubstitution(int32_t pos,
 
         // otherwise, return a ModulusSubstitution
         else {
-            return new ModulusSubstitution(pos, rule, predecessor,
+            return new ModulusSubstitution(pos, rule->getDivisor(), predecessor,
                 ruleSet, description, status);
         }
 
@@ -487,7 +491,7 @@ NFSubstitution::~NFSubstitution()
  * @param exponent The exponent of the divisor
  */
 void
-NFSubstitution::setDivisor(int32_t /*radix*/, int16_t /*exponent*/, UErrorCode& /*status*/) {
+NFSubstitution::setDivisor(int32_t /*radix*/, int32_t /*exponent*/, UErrorCode& /*status*/) {
   // a no-op for all substitutions except multiplier and modulus substitutions
 }
 
@@ -568,38 +572,23 @@ void
 NFSubstitution::doSubstitution(int64_t number, UnicodeString& toInsertInto, int32_t _pos, int32_t recursionCount, UErrorCode& status) const
 {
     if (ruleSet != NULL) {
-        // Perform a transformation on the number that is dependent
+        // perform a transformation on the number that is dependent
         // on the type of substitution this is, then just call its
         // rule set's format() method to format the result
         ruleSet->format(transformNumber(number), toInsertInto, _pos + this->pos, recursionCount, status);
     } else if (numberFormat != NULL) {
-        if (number <= MAX_INT64_IN_DOUBLE) {
-            // or perform the transformation on the number (preserving
-            // the result's fractional part if the formatter it set
-            // to show it), then use that formatter's format() method
-            // to format the result
-            double numberToFormat = transformNumber((double)number);
-            if (numberFormat->getMaximumFractionDigits() == 0) {
-                numberToFormat = uprv_floor(numberToFormat);
-            }
+        // or perform the transformation on the number (preserving
+        // the result's fractional part if the formatter it set
+        // to show it), then use that formatter's format() method
+        // to format the result
+        double numberToFormat = transformNumber((double)number);
+        if (numberFormat->getMaximumFractionDigits() == 0) {
+            numberToFormat = uprv_floor(numberToFormat);
+        }
 
-            UnicodeString temp;
-            numberFormat->format(numberToFormat, temp, status);
-            toInsertInto.insert(_pos + this->pos, temp);
-        }
-        else {
-            // We have gone beyond double precision. Something has to give.
-            // We're favoring accuracy of the large number over potential rules
-            // that round like a CompactDecimalFormat, which is not a common use case.
-            //
-            // Perform a transformation on the number that is dependent
-            // on the type of substitution this is, then just call its
-            // rule set's format() method to format the result
-            int64_t numberToFormat = transformNumber(number);
-            UnicodeString temp;
-            numberFormat->format(numberToFormat, temp, status);
-            toInsertInto.insert(_pos + this->pos, temp);
-        }
+        UnicodeString temp;
+        numberFormat->format(numberToFormat, temp, status);
+        toInsertInto.insert(_pos + this->pos, temp);
     }
 }
 
@@ -820,20 +809,22 @@ UBool MultiplierSubstitution::operator==(const NFSubstitution& rhs) const
  * regular rule.
  */
 ModulusSubstitution::ModulusSubstitution(int32_t _pos,
-                                         const NFRule* rule,
+                                         double _divisor,
                                          const NFRule* predecessor,
                                          const NFRuleSet* _ruleSet,
                                          const UnicodeString& description,
                                          UErrorCode& status)
  : NFSubstitution(_pos, _ruleSet, description, status)
- , divisor(rule->getDivisor())
+ , divisor(_divisor)
  , ruleToUse(NULL)
 {
+  ldivisor = util64_fromDouble(_divisor);
+
   // the owning rule's divisor controls the behavior of this
   // substitution: rather than keeping a backpointer to the rule,
   // we keep a copy of the divisor
 
-  if (divisor == 0) {
+  if (ldivisor == 0) {
       status = U_PARSE_ERROR;
   }
 

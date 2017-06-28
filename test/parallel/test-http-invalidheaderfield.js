@@ -1,6 +1,5 @@
 'use strict';
-
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 const EventEmitter = require('events');
 const http = require('http');
@@ -29,7 +28,7 @@ server.listen(0, function() {
         port: server.address().port,
         headers: {'testing 123': 123}
       };
-      http.get(options, common.noop);
+      http.get(options, function() {});
     },
     function(err) {
       ee.emit('done');

@@ -44,7 +44,8 @@ assert.strictEqual(url.searchParams, oldParams);  // [SameObject]
 // non-writable property should throw.
 // Note: this error message is subject to change in V8 updates
 assert.throws(() => url.origin = 'http://foo.bar.com:22',
-              /TypeError: Cannot set property origin of \[object URL\] which has only a getter$/);
+              new RegExp('TypeError: Cannot set property origin of' +
+                         ' \\[object URL\\] which has only a getter'));
 assert.strictEqual(url.origin, 'http://foo.bar.com:21');
 assert.strictEqual(url.toString(),
                    'http://user:pass@foo.bar.com:21/aaa/zzz?l=25#test');
@@ -119,7 +120,8 @@ assert.strictEqual(url.hash, '#abcd');
 // non-writable property should throw.
 // Note: this error message is subject to change in V8 updates
 assert.throws(() => url.searchParams = '?k=88',
-              /^TypeError: Cannot set property searchParams of \[object URL\] which has only a getter$/);
+              new RegExp('TypeError: Cannot set property searchParams of' +
+                         ' \\[object URL\\] which has only a getter'));
 assert.strictEqual(url.searchParams, oldParams);
 assert.strictEqual(url.toString(),
                    'https://user2:pass2@foo.bar.org:23/aaa/bbb?k=99#abcd');
@@ -140,19 +142,3 @@ assert.strictEqual(url.searchParams, oldParams);
   assert.strictEqual(opts.search, '?l=24');
   assert.strictEqual(opts.hash, '#test');
 }
-
-// Test special origins
-[
-  { expected: 'https://whatwg.org',
-    url: 'blob:https://whatwg.org/d0360e2f-caee-469f-9a2f-87d5b0456f6f' },
-  { expected: 'ftp://example.org', url: 'ftp://example.org/foo' },
-  { expected: 'gopher://gopher.quux.org', url: 'gopher://gopher.quux.org/1/' },
-  { expected: 'http://example.org', url: 'http://example.org/foo' },
-  { expected: 'https://example.org', url: 'https://example.org/foo' },
-  { expected: 'ws://example.org', url: 'ws://example.org/foo' },
-  { expected: 'wss://example.org', url: 'wss://example.org/foo' },
-  { expected: 'null', url: 'file:///tmp/mock/path' },
-  { expected: 'null', url: 'npm://nodejs/rules' }
-].forEach((test) => {
-  assert.strictEqual(new URL(test.url).origin, test.expected);
-});

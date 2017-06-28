@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -6,7 +6,7 @@
 *   Corporation and others.  All Rights Reserved.
 *******************************************************************************
 *   file name:  ustr_titlecase_brkiter.cpp
-*   encoding:   UTF-8
+*   encoding:   US-ASCII
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -22,17 +22,30 @@
 #if !UCONFIG_NO_BREAK_ITERATION
 
 #include "unicode/brkiter.h"
-#include "unicode/casemap.h"
-#include "unicode/localpointer.h"
 #include "unicode/ubrk.h"
 #include "unicode/ucasemap.h"
 #include "cmemory.h"
 #include "ucase.h"
-#include "ucasemap_imp.h"
-
-U_NAMESPACE_USE
+#include "ustr_imp.h"
 
 /* functions available in the common library (for unistr_case.cpp) */
+
+/*
+ * Set parameters on an empty UCaseMap, for UCaseMap-less API functions.
+ * Do this fast because it is called with every function call.
+ * Duplicate of the same function in ustrcase.cpp, to keep it inline.
+ */
+static inline void
+setTempCaseMap(UCaseMap *csm, const char *locale) {
+    if(csm->csp==NULL) {
+        csm->csp=ucase_getSingleton();
+    }
+    if(locale!=NULL && locale[0]==0) {
+        csm->locale[0]=0;
+    } else {
+        ustrcase_setTempCaseMapLocale(csm, locale);
+    }
+}
 
 /* public API functions */
 
@@ -42,73 +55,39 @@ u_strToTitle(UChar *dest, int32_t destCapacity,
              UBreakIterator *titleIter,
              const char *locale,
              UErrorCode *pErrorCode) {
-    LocalPointer<BreakIterator> ownedIter;
-    BreakIterator *iter;
+    UCaseMap csm=UCASEMAP_INITIALIZER;
+    setTempCaseMap(&csm, locale);
     if(titleIter!=NULL) {
-        iter=reinterpret_cast<BreakIterator *>(titleIter);
+        ubrk_setText(csm.iter=titleIter, src, srcLength, pErrorCode);
     } else {
-        iter=BreakIterator::createWordInstance(Locale(locale), *pErrorCode);
-        ownedIter.adoptInstead(iter);
+        csm.iter=ubrk_open(UBRK_WORD, csm.locale, src, srcLength, pErrorCode);
     }
-    if(U_FAILURE(*pErrorCode)) {
-        return 0;
-    }
-    UnicodeString s(srcLength<0, src, srcLength);
-    iter->setText(s);
-    return ustrcase_mapWithOverlap(
-        ustrcase_getCaseLocale(locale), 0, iter,
+    int32_t length=ustrcase_map(
+        &csm,
         dest, destCapacity,
         src, srcLength,
-        ustrcase_internalToTitle, *pErrorCode);
-}
-
-U_NAMESPACE_BEGIN
-
-int32_t CaseMap::toTitle(
-        const char *locale, uint32_t options, BreakIterator *iter,
-        const UChar *src, int32_t srcLength,
-        UChar *dest, int32_t destCapacity, Edits *edits,
-        UErrorCode &errorCode) {
-    LocalPointer<BreakIterator> ownedIter;
-    if(iter==NULL) {
-        iter=BreakIterator::createWordInstance(Locale(locale), errorCode);
-        ownedIter.adoptInstead(iter);
+        ustrcase_internalToTitle, pErrorCode);
+    if(titleIter==NULL && csm.iter!=NULL) {
+        ubrk_close(csm.iter);
     }
-    if(U_FAILURE(errorCode)) {
-        return 0;
-    }
-    UnicodeString s(srcLength<0, src, srcLength);
-    iter->setText(s);
-    return ustrcase_map(
-        ustrcase_getCaseLocale(locale), options, iter,
-        dest, destCapacity,
-        src, srcLength,
-        ustrcase_internalToTitle, edits, errorCode);
+    return length;
 }
-
-U_NAMESPACE_END
 
 U_CAPI int32_t U_EXPORT2
 ucasemap_toTitle(UCaseMap *csm,
                  UChar *dest, int32_t destCapacity,
                  const UChar *src, int32_t srcLength,
                  UErrorCode *pErrorCode) {
-    if (U_FAILURE(*pErrorCode)) {
-        return 0;
+    if(csm->iter!=NULL) {
+        ubrk_setText(csm->iter, src, srcLength, pErrorCode);
+    } else {
+        csm->iter=ubrk_open(UBRK_WORD, csm->locale, src, srcLength, pErrorCode);
     }
-    if (csm->iter == NULL) {
-        csm->iter = BreakIterator::createWordInstance(Locale(csm->locale), *pErrorCode);
-    }
-    if (U_FAILURE(*pErrorCode)) {
-        return 0;
-    }
-    UnicodeString s(srcLength<0, src, srcLength);
-    csm->iter->setText(s);
     return ustrcase_map(
-        csm->caseLocale, csm->options, csm->iter,
+        csm,
         dest, destCapacity,
         src, srcLength,
-        ustrcase_internalToTitle, NULL, *pErrorCode);
+        ustrcase_internalToTitle, pErrorCode);
 }
 
 #endif  // !UCONFIG_NO_BREAK_ITERATION

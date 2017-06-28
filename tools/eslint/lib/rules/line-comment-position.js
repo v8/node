@@ -4,8 +4,6 @@
  */
 "use strict";
 
-const astUtils = require("../ast-utils");
-
 //------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
@@ -35,9 +33,6 @@ module.exports = {
                             },
                             applyDefaultPatterns: {
                                 type: "boolean"
-                            },
-                            applyDefaultIgnorePatterns: {
-                                type: "boolean"
                             }
                         },
                         additionalProperties: false
@@ -48,11 +43,12 @@ module.exports = {
     },
 
     create(context) {
+        const DEFAULT_IGNORE_PATTERN = "^\\s*(?:eslint|jshint\\s+|jslint\\s+|istanbul\\s+|globals?\\s+|exported\\s+|jscs|falls?\\s?through)";
         const options = context.options[0];
 
         let above,
             ignorePattern,
-            applyDefaultIgnorePatterns = true;
+            applyDefaultPatterns = true;
 
         if (!options || typeof options === "string") {
             above = !options || options === "above";
@@ -60,16 +56,10 @@ module.exports = {
         } else {
             above = options.position === "above";
             ignorePattern = options.ignorePattern;
-
-            if (options.hasOwnProperty("applyDefaultIgnorePatterns")) {
-                applyDefaultIgnorePatterns = options.applyDefaultIgnorePatterns !== false;
-            } else {
-                applyDefaultIgnorePatterns = options.applyDefaultPatterns !== false;
-            }
+            applyDefaultPatterns = options.applyDefaultPatterns !== false;
         }
 
-        const defaultIgnoreRegExp = astUtils.COMMENTS_IGNORE_PATTERN;
-        const fallThroughRegExp = /^\s*falls?\s?through/;
+        const defaultIgnoreRegExp = new RegExp(DEFAULT_IGNORE_PATTERN);
         const customIgnoreRegExp = new RegExp(ignorePattern);
         const sourceCode = context.getSourceCode();
 
@@ -78,37 +68,33 @@ module.exports = {
         //--------------------------------------------------------------------------
 
         return {
-            Program() {
-                const comments = sourceCode.getAllComments();
+            LineComment(node) {
+                if (applyDefaultPatterns && defaultIgnoreRegExp.test(node.value)) {
+                    return;
+                }
 
-                comments.filter(token => token.type === "Line").forEach(node => {
-                    if (applyDefaultIgnorePatterns && (defaultIgnoreRegExp.test(node.value) || fallThroughRegExp.test(node.value))) {
-                        return;
+                if (ignorePattern && customIgnoreRegExp.test(node.value)) {
+                    return;
+                }
+
+                const previous = sourceCode.getTokenOrCommentBefore(node);
+                const isOnSameLine = previous && previous.loc.end.line === node.loc.start.line;
+
+                if (above) {
+                    if (isOnSameLine) {
+                        context.report({
+                            node,
+                            message: "Expected comment to be above code."
+                        });
                     }
-
-                    if (ignorePattern && customIgnoreRegExp.test(node.value)) {
-                        return;
+                } else {
+                    if (!isOnSameLine) {
+                        context.report({
+                            node,
+                            message: "Expected comment to be beside code."
+                        });
                     }
-
-                    const previous = sourceCode.getTokenBefore(node, { includeComments: true });
-                    const isOnSameLine = previous && previous.loc.end.line === node.loc.start.line;
-
-                    if (above) {
-                        if (isOnSameLine) {
-                            context.report({
-                                node,
-                                message: "Expected comment to be above code."
-                            });
-                        }
-                    } else {
-                        if (!isOnSameLine) {
-                            context.report({
-                                node,
-                                message: "Expected comment to be beside code."
-                            });
-                        }
-                    }
-                });
+                }
             }
         };
     }

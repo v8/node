@@ -109,7 +109,6 @@ module.exports = {
             if (matchedObjectProperty) {
                 const message = matchedObjectProperty.message ? ` ${matchedObjectProperty.message}` : "";
 
-                // eslint-disable-next-line eslint-plugin/report-message-format
                 context.report({ node, message: "'{{objectName}}.{{propertyName}}' is restricted from being used.{{message}}", data: {
                     objectName,
                     propertyName,
@@ -118,7 +117,6 @@ module.exports = {
             } else if (globalMatchedProperty) {
                 const message = globalMatchedProperty.message ? ` ${globalMatchedProperty.message}` : "";
 
-                // eslint-disable-next-line eslint-plugin/report-message-format
                 context.report({ node, message: "'{{propertyName}}' is restricted from being used.{{message}}", data: {
                     propertyName,
                     message

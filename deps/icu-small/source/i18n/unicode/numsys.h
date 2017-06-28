@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -193,7 +193,7 @@ private:
 
     void setAlgorithmic(UBool algorithmic);
 
-    void setDesc(const UnicodeString &desc);
+    void setDesc(UnicodeString desc);
 
     void setName(const char* name);
 

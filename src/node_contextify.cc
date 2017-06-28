@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 #include "node.h"
 #include "node_internals.h"
 #include "node_watchdog.h"
@@ -44,13 +23,11 @@ using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
 using v8::Integer;
-using v8::Just;
 using v8::Local;
 using v8::Maybe;
 using v8::MaybeLocal;
 using v8::Name;
 using v8::NamedPropertyHandlerConfiguration;
-using v8::Nothing;
 using v8::Object;
 using v8::ObjectTemplate;
 using v8::Persistent;
@@ -67,7 +44,6 @@ using v8::UnboundScript;
 using v8::Value;
 using v8::WeakCallbackInfo;
 
-namespace {
 
 class ContextifyContext {
  protected:
@@ -435,17 +411,7 @@ class ContextifyContext {
     // false for vmResult.x = 5 where vmResult = vm.runInContext();
     bool is_contextual_store = ctx->global_proxy() != args.This();
 
-    // Indicator to not return before setting (undeclared) function declarations
-    // on the sandbox in strict mode, i.e. args.ShouldThrowOnError() = true.
-    // True for 'function f() {}', 'this.f = function() {}',
-    // 'var f = function()'.
-    // In effect only for 'function f() {}' because
-    // var f = function(), is_declared = true
-    // this.f = function() {}, is_contextual_store = false.
-    bool is_function = value->IsFunction();
-
-    if (!is_declared && args.ShouldThrowOnError() && is_contextual_store &&
-    !is_function)
+    if (!is_declared && args.ShouldThrowOnError() && is_contextual_store)
       return;
 
     ctx->sandbox()->Set(property, value);
@@ -549,19 +515,16 @@ class ContextifyScript : public BaseObject {
     Local<String> code = args[0]->ToString(env->isolate());
 
     Local<Value> options = args[1];
-    MaybeLocal<String> filename = GetFilenameArg(env, options);
-    MaybeLocal<Integer> lineOffset = GetLineOffsetArg(env, options);
-    MaybeLocal<Integer> columnOffset = GetColumnOffsetArg(env, options);
-    Maybe<bool> maybe_display_errors = GetDisplayErrorsArg(env, options);
+    Local<String> filename = GetFilenameArg(env, options);
+    Local<Integer> lineOffset = GetLineOffsetArg(env, options);
+    Local<Integer> columnOffset = GetColumnOffsetArg(env, options);
+    bool display_errors = GetDisplayErrorsArg(env, options);
     MaybeLocal<Uint8Array> cached_data_buf = GetCachedData(env, options);
-    Maybe<bool> maybe_produce_cached_data = GetProduceCachedData(env, options);
+    bool produce_cached_data = GetProduceCachedData(env, options);
     if (try_catch.HasCaught()) {
       try_catch.ReThrow();
       return;
     }
-
-    bool display_errors = maybe_display_errors.ToChecked();
-    bool produce_cached_data = maybe_produce_cached_data.ToChecked();
 
     ScriptCompiler::CachedData* cached_data = nullptr;
     Local<Uint8Array> ui8;
@@ -572,8 +535,7 @@ class ContextifyScript : public BaseObject {
           ui8->ByteLength());
     }
 
-    ScriptOrigin origin(filename.ToLocalChecked(), lineOffset.ToLocalChecked(),
-                        columnOffset.ToLocalChecked());
+    ScriptOrigin origin(filename, lineOffset, columnOffset);
     ScriptCompiler::Source source(code, origin, cached_data);
     ScriptCompiler::CompileOptions compile_options =
         ScriptCompiler::kNoCompileOptions;
@@ -631,17 +593,13 @@ class ContextifyScript : public BaseObject {
 
     // Assemble arguments
     TryCatch try_catch(args.GetIsolate());
-    Maybe<int64_t> maybe_timeout = GetTimeoutArg(env, args[0]);
-    Maybe<bool> maybe_display_errors = GetDisplayErrorsArg(env, args[0]);
-    Maybe<bool> maybe_break_on_sigint = GetBreakOnSigintArg(env, args[0]);
+    uint64_t timeout = GetTimeoutArg(env, args[0]);
+    bool display_errors = GetDisplayErrorsArg(env, args[0]);
+    bool break_on_sigint = GetBreakOnSigintArg(env, args[0]);
     if (try_catch.HasCaught()) {
       try_catch.ReThrow();
       return;
     }
-
-    int64_t timeout = maybe_timeout.ToChecked();
-    bool display_errors = maybe_display_errors.ToChecked();
-    bool break_on_sigint = maybe_break_on_sigint.ToChecked();
 
     // Do the eval within this context
     EvalMachine(env, timeout, display_errors, break_on_sigint, args,
@@ -665,17 +623,13 @@ class ContextifyScript : public BaseObject {
     Local<Object> sandbox = args[0].As<Object>();
     {
       TryCatch try_catch(env->isolate());
-      Maybe<int64_t> maybe_timeout = GetTimeoutArg(env, args[1]);
-      Maybe<bool> maybe_display_errors = GetDisplayErrorsArg(env, args[1]);
-      Maybe<bool> maybe_break_on_sigint = GetBreakOnSigintArg(env, args[1]);
+      timeout = GetTimeoutArg(env, args[1]);
+      display_errors = GetDisplayErrorsArg(env, args[1]);
+      break_on_sigint = GetBreakOnSigintArg(env, args[1]);
       if (try_catch.HasCaught()) {
         try_catch.ReThrow();
         return;
       }
-
-      timeout = maybe_timeout.ToChecked();
-      display_errors = maybe_display_errors.ToChecked();
-      break_on_sigint = maybe_break_on_sigint.ToChecked();
     }
 
     // Get the context from the sandbox
@@ -736,10 +690,8 @@ class ContextifyScript : public BaseObject {
       return;
     }
 
-    Local<String> decorated_stack = String::Concat(
-        String::Concat(arrow.As<String>(),
-          FIXED_ONE_BYTE_STRING(env->isolate(), "\n")),
-        stack.As<String>());
+    Local<String> decorated_stack = String::Concat(arrow.As<String>(),
+                                                   stack.As<String>());
     err_obj->Set(env->stack_string(), decorated_stack);
     err_obj->SetPrivate(
         env->context(),
@@ -747,82 +699,61 @@ class ContextifyScript : public BaseObject {
         True(env->isolate()));
   }
 
-  static Maybe<bool> GetBreakOnSigintArg(Environment* env,
-                                         Local<Value> options) {
+  static bool GetBreakOnSigintArg(Environment* env, Local<Value> options) {
     if (options->IsUndefined() || options->IsString()) {
-      return Just(false);
+      return false;
     }
     if (!options->IsObject()) {
       env->ThrowTypeError("options must be an object");
-      return Nothing<bool>();
+      return false;
     }
 
     Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "breakOnSigint");
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), key);
-    if (maybe_value.IsEmpty())
-      return Nothing<bool>();
-
-    Local<Value> value = maybe_value.ToLocalChecked();
-    return Just(value->IsTrue());
+    Local<Value> value = options.As<Object>()->Get(key);
+    return value->IsTrue();
   }
 
-  static Maybe<int64_t> GetTimeoutArg(Environment* env, Local<Value> options) {
+  static int64_t GetTimeoutArg(Environment* env, Local<Value> options) {
     if (options->IsUndefined() || options->IsString()) {
-      return Just<int64_t>(-1);
+      return -1;
     }
     if (!options->IsObject()) {
       env->ThrowTypeError("options must be an object");
-      return Nothing<int64_t>();
+      return -1;
     }
 
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), env->timeout_string());
-    if (maybe_value.IsEmpty())
-      return Nothing<int64_t>();
-
-    Local<Value> value = maybe_value.ToLocalChecked();
+    Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "timeout");
+    Local<Value> value = options.As<Object>()->Get(key);
     if (value->IsUndefined()) {
-      return Just<int64_t>(-1);
+      return -1;
     }
+    int64_t timeout = value->IntegerValue();
 
-    Maybe<int64_t> timeout = value->IntegerValue(env->context());
-
-    if (timeout.IsJust() && timeout.ToChecked() <= 0) {
+    if (timeout <= 0) {
       env->ThrowRangeError("timeout must be a positive number");
-      return Nothing<int64_t>();
+      return -1;
     }
-
     return timeout;
   }
 
 
-  static Maybe<bool> GetDisplayErrorsArg(Environment* env,
-                                         Local<Value> options) {
+  static bool GetDisplayErrorsArg(Environment* env, Local<Value> options) {
     if (options->IsUndefined() || options->IsString()) {
-      return Just(true);
+      return true;
     }
     if (!options->IsObject()) {
       env->ThrowTypeError("options must be an object");
-      return Nothing<bool>();
+      return false;
     }
 
     Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "displayErrors");
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), key);
-    if (maybe_value.IsEmpty())
-      return Nothing<bool>();
+    Local<Value> value = options.As<Object>()->Get(key);
 
-    Local<Value> value = maybe_value.ToLocalChecked();
-    if (value->IsUndefined())
-      return Just(true);
-
-    return value->BooleanValue(env->context());
+    return value->IsUndefined() ? true : value->BooleanValue();
   }
 
 
-  static MaybeLocal<String> GetFilenameArg(Environment* env,
-                                           Local<Value> options) {
+  static Local<String> GetFilenameArg(Environment* env, Local<Value> options) {
     Local<String> defaultFilename =
         FIXED_ONE_BYTE_STRING(env->isolate(), "evalmachine.<anonymous>");
 
@@ -838,15 +769,11 @@ class ContextifyScript : public BaseObject {
     }
 
     Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "filename");
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), key);
-    if (maybe_value.IsEmpty())
-      return MaybeLocal<String>();
+    Local<Value> value = options.As<Object>()->Get(key);
 
-    Local<Value> value = maybe_value.ToLocalChecked();
     if (value->IsUndefined())
       return defaultFilename;
-    return value->ToString(env->context());
+    return value->ToString(env->isolate());
   }
 
 
@@ -855,13 +782,7 @@ class ContextifyScript : public BaseObject {
     if (!options->IsObject()) {
       return MaybeLocal<Uint8Array>();
     }
-
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), env->cached_data_string());
-    if (maybe_value.IsEmpty())
-      return MaybeLocal<Uint8Array>();
-
-    Local<Value> value = maybe_value.ToLocalChecked();
+    Local<Value> value = options.As<Object>()->Get(env->cached_data_string());
     if (value->IsUndefined()) {
       return MaybeLocal<Uint8Array>();
     }
@@ -875,25 +796,19 @@ class ContextifyScript : public BaseObject {
   }
 
 
-  static Maybe<bool> GetProduceCachedData(Environment* env,
-                                          Local<Value> options) {
+  static bool GetProduceCachedData(Environment* env, Local<Value> options) {
     if (!options->IsObject()) {
-      return Just(false);
+      return false;
     }
+    Local<Value> value =
+        options.As<Object>()->Get(env->produce_cached_data_string());
 
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(),
-                                  env->produce_cached_data_string());
-    if (maybe_value.IsEmpty())
-      return Nothing<bool>();
-
-    Local<Value> value = maybe_value.ToLocalChecked();
-    return Just(value->IsTrue());
+    return value->IsTrue();
   }
 
 
-  static MaybeLocal<Integer> GetLineOffsetArg(Environment* env,
-                                              Local<Value> options) {
+  static Local<Integer> GetLineOffsetArg(Environment* env,
+                                         Local<Value> options) {
     Local<Integer> defaultLineOffset = Integer::New(env->isolate(), 0);
 
     if (!options->IsObject()) {
@@ -901,21 +816,14 @@ class ContextifyScript : public BaseObject {
     }
 
     Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "lineOffset");
-    MaybeLocal<Value> maybe_value =
-        options.As<Object>()->Get(env->context(), key);
-    if (maybe_value.IsEmpty())
-      return MaybeLocal<Integer>();
+    Local<Value> value = options.As<Object>()->Get(key);
 
-    Local<Value> value = maybe_value.ToLocalChecked();
-    if (value->IsUndefined())
-      return defaultLineOffset;
-
-    return value->ToInteger(env->context());
+    return value->IsUndefined() ? defaultLineOffset : value->ToInteger();
   }
 
 
-  static MaybeLocal<Integer> GetColumnOffsetArg(Environment* env,
-                                                Local<Value> options) {
+  static Local<Integer> GetColumnOffsetArg(Environment* env,
+                                           Local<Value> options) {
     Local<Integer> defaultColumnOffset = Integer::New(env->isolate(), 0);
 
     if (!options->IsObject()) {
@@ -923,16 +831,9 @@ class ContextifyScript : public BaseObject {
     }
 
     Local<String> key = FIXED_ONE_BYTE_STRING(env->isolate(), "columnOffset");
-    MaybeLocal<Value> maybe_value =
-      options.As<Object>()->Get(env->context(), key);
-    if (maybe_value.IsEmpty())
-      return MaybeLocal<Integer>();
+    Local<Value> value = options.As<Object>()->Get(key);
 
-    Local<Value> value = maybe_value.ToLocalChecked();
-    if (value->IsUndefined())
-      return defaultColumnOffset;
-
-    return value->ToInteger(env->context());
+    return value->IsUndefined() ? defaultColumnOffset : value->ToInteger();
   }
 
 
@@ -958,20 +859,27 @@ class ContextifyScript : public BaseObject {
     bool timed_out = false;
     bool received_signal = false;
     if (break_on_sigint && timeout != -1) {
-      Watchdog wd(env->isolate(), timeout, &timed_out);
-      SigintWatchdog swd(env->isolate(), &received_signal);
+      Watchdog wd(env->isolate(), timeout);
+      SigintWatchdog swd(env->isolate());
       result = script->Run();
+      timed_out = wd.HasTimedOut();
+      received_signal = swd.HasReceivedSignal();
     } else if (break_on_sigint) {
-      SigintWatchdog swd(env->isolate(), &received_signal);
+      SigintWatchdog swd(env->isolate());
       result = script->Run();
+      received_signal = swd.HasReceivedSignal();
     } else if (timeout != -1) {
-      Watchdog wd(env->isolate(), timeout, &timed_out);
+      Watchdog wd(env->isolate(), timeout);
       result = script->Run();
+      timed_out = wd.HasTimedOut();
     } else {
       result = script->Run();
     }
 
-    if (timed_out || received_signal) {
+    if (try_catch->HasCaught()) {
+      if (try_catch->HasTerminated())
+        env->isolate()->CancelTerminateExecution();
+
       // It is possible that execution was terminated by another timeout in
       // which this timeout is nested, so check whether one of the watchdogs
       // from this invocation is responsible for termination.
@@ -979,14 +887,6 @@ class ContextifyScript : public BaseObject {
         env->ThrowError("Script execution timed out.");
       } else if (received_signal) {
         env->ThrowError("Script execution interrupted.");
-      }
-      env->isolate()->CancelTerminateExecution();
-    }
-
-    if (try_catch->HasCaught()) {
-      if (!timed_out && !received_signal && display_errors) {
-        // We should decorate non-termination exceptions
-        DecorateErrorStack(env, *try_catch);
       }
 
       // If there was an exception thrown during script execution, re-throw it.
@@ -996,6 +896,15 @@ class ContextifyScript : public BaseObject {
       // this invocation, this will re-throw a `null` value.
       try_catch->ReThrow();
 
+      return false;
+    }
+
+    if (result.IsEmpty()) {
+      // Error occurred during execution of the script.
+      if (display_errors) {
+        DecorateErrorStack(env, *try_catch);
+      }
+      try_catch->ReThrow();
       return false;
     }
 
@@ -1024,7 +933,6 @@ void InitContextify(Local<Object> target,
   ContextifyScript::Init(env, target);
 }
 
-}  // anonymous namespace
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_BUILTIN(contextify, node::InitContextify)
+NODE_MODULE_CONTEXT_AWARE_BUILTIN(contextify, node::InitContextify);

@@ -10,7 +10,7 @@ const message = 'Come on, Fhqwhgads.';
 const zipper = new zlib.Gzip();
 zipper.on('close', shouldNotBeCalled);
 
-const buffer = Buffer.from(message);
+const buffer = new Buffer(message);
 const zipped = zipper._processChunk(buffer, zlib.constants.Z_FINISH);
 
 const unzipper = new zlib.Gunzip();

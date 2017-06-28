@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 *******************************************************************************
@@ -8,7 +8,7 @@
 *
 *******************************************************************************
 *   file name:  ucase.cpp
-*   encoding:   UTF-8
+*   encoding:   US-ASCII
 *   tab size:   8 (not used)
 *   indentation:4
 *
@@ -46,6 +46,13 @@ struct UCaseProps {
 #define INCLUDED_FROM_UCASE_CPP
 #include "ucase_props_data.h"
 
+/* UCaseProps singleton ----------------------------------------------------- */
+
+U_CAPI const UCaseProps * U_EXPORT2
+ucase_getSingleton() {
+    return &ucase_props_singleton;
+}
+
 /* set of property starts for UnicodeSet ------------------------------------ */
 
 static UBool U_CALLCONV
@@ -57,13 +64,13 @@ _enumPropertyStartsRange(const void *context, UChar32 start, UChar32 /*end*/, ui
 }
 
 U_CFUNC void U_EXPORT2
-ucase_addPropertyStarts(const USetAdder *sa, UErrorCode *pErrorCode) {
+ucase_addPropertyStarts(const UCaseProps *csp, const USetAdder *sa, UErrorCode *pErrorCode) {
     if(U_FAILURE(*pErrorCode)) {
         return;
     }
 
     /* add the start code point of each same-value range of the trie */
-    utrie2_enum(&ucase_props_singleton.trie, NULL, _enumPropertyStartsRange, sa);
+    utrie2_enum(&csp->trie, NULL, _enumPropertyStartsRange, sa);
 
     /* add code points with hardcoded properties, plus the ones following them */
 
@@ -126,14 +133,14 @@ static const uint8_t flagsOffset[256]={
 /* simple case mappings ----------------------------------------------------- */
 
 U_CAPI UChar32 U_EXPORT2
-ucase_tolower(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_tolower(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)>=UCASE_UPPER) {
             c+=UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props);
         uint16_t excWord=*pe++;
         if(HAS_SLOT(excWord, UCASE_EXC_LOWER)) {
             GET_SLOT_VALUE(excWord, UCASE_EXC_LOWER, pe, c);
@@ -143,14 +150,14 @@ ucase_tolower(UChar32 c) {
 }
 
 U_CAPI UChar32 U_EXPORT2
-ucase_toupper(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_toupper(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)==UCASE_LOWER) {
             c+=UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props);
         uint16_t excWord=*pe++;
         if(HAS_SLOT(excWord, UCASE_EXC_UPPER)) {
             GET_SLOT_VALUE(excWord, UCASE_EXC_UPPER, pe, c);
@@ -160,14 +167,14 @@ ucase_toupper(UChar32 c) {
 }
 
 U_CAPI UChar32 U_EXPORT2
-ucase_totitle(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_totitle(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)==UCASE_LOWER) {
             c+=UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props);
         uint16_t excWord=*pe++;
         int32_t idx;
         if(HAS_SLOT(excWord, UCASE_EXC_TITLE)) {
@@ -191,7 +198,7 @@ static const UChar iDotTilde[3] = { 0x69, 0x307, 0x303 };
 
 
 U_CFUNC void U_EXPORT2
-ucase_addCaseClosure(UChar32 c, const USetAdder *sa) {
+ucase_addCaseClosure(const UCaseProps *csp, UChar32 c, const USetAdder *sa) {
     uint16_t props;
 
     /*
@@ -222,7 +229,7 @@ ucase_addCaseClosure(UChar32 c, const USetAdder *sa) {
         break;
     }
 
-    props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+    props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)!=UCASE_NONE) {
             /* add the one simple case mapping, no matter what type it is */
@@ -236,7 +243,7 @@ ucase_addCaseClosure(UChar32 c, const USetAdder *sa) {
          * c has exceptions, so there may be multiple simple and/or
          * full case mappings. Add them all.
          */
-        const uint16_t *pe0, *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe0, *pe=GET_EXCEPTIONS(csp, props);
         const UChar *closure;
         uint16_t excWord=*pe++;
         int32_t idx, closureLength, fullLength, length;
@@ -331,10 +338,10 @@ strcmpMax(const UChar *s, int32_t length, const UChar *t, int32_t max) {
 }
 
 U_CFUNC UBool U_EXPORT2
-ucase_addStringCaseClosure(const UChar *s, int32_t length, const USetAdder *sa) {
+ucase_addStringCaseClosure(const UCaseProps *csp, const UChar *s, int32_t length, const USetAdder *sa) {
     int32_t i, start, limit, result, unfoldRows, unfoldRowWidth, unfoldStringWidth;
 
-    if(ucase_props_singleton.unfold==NULL || s==NULL) {
+    if(csp->unfold==NULL || s==NULL) {
         return FALSE; /* no reverse case folding data, or no string */
     }
     if(length<=1) {
@@ -348,7 +355,7 @@ ucase_addStringCaseClosure(const UChar *s, int32_t length, const USetAdder *sa) 
         return FALSE;
     }
 
-    const uint16_t *unfold=ucase_props_singleton.unfold;
+    const uint16_t *unfold=csp->unfold;
     unfoldRows=unfold[UCASE_UNFOLD_ROWS];
     unfoldRowWidth=unfold[UCASE_UNFOLD_ROW_WIDTH];
     unfoldStringWidth=unfold[UCASE_UNFOLD_STRING_WIDTH];
@@ -374,7 +381,7 @@ ucase_addStringCaseClosure(const UChar *s, int32_t length, const USetAdder *sa) 
             for(i=unfoldStringWidth; i<unfoldRowWidth && p[i]!=0;) {
                 U16_NEXT_UNSAFE(p, i, c);
                 sa->add(sa->set, c);
-                ucase_addCaseClosure(c, sa);
+                ucase_addCaseClosure(csp, c, sa);
             }
             return TRUE;
         } else if(result<0) {
@@ -423,38 +430,38 @@ U_NAMESPACE_END
 
 /** @return UCASE_NONE, UCASE_LOWER, UCASE_UPPER, UCASE_TITLE */
 U_CAPI int32_t U_EXPORT2
-ucase_getType(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_getType(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     return UCASE_GET_TYPE(props);
 }
 
 /** @return same as ucase_getType() and set bit 2 if c is case-ignorable */
 U_CAPI int32_t U_EXPORT2
-ucase_getTypeOrIgnorable(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_getTypeOrIgnorable(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     return UCASE_GET_TYPE_AND_IGNORABLE(props);
 }
 
 /** @return UCASE_NO_DOT, UCASE_SOFT_DOTTED, UCASE_ABOVE, UCASE_OTHER_ACCENT */
 static inline int32_t
-getDotType(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+getDotType(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         return props&UCASE_DOT_MASK;
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props);
         return (*pe>>UCASE_EXC_DOT_SHIFT)&UCASE_DOT_MASK;
     }
 }
 
 U_CAPI UBool U_EXPORT2
-ucase_isSoftDotted(UChar32 c) {
-    return (UBool)(getDotType(c)==UCASE_SOFT_DOTTED);
+ucase_isSoftDotted(const UCaseProps *csp, UChar32 c) {
+    return (UBool)(getDotType(csp, c)==UCASE_SOFT_DOTTED);
 }
 
 U_CAPI UBool U_EXPORT2
-ucase_isCaseSensitive(UChar32 c) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_isCaseSensitive(const UCaseProps *csp, UChar32 c) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     return (UBool)((props&UCASE_SENSITIVE)!=0);
 }
 
@@ -538,10 +545,12 @@ ucase_isCaseSensitive(UChar32 c) {
  *     zero or more case-ignorable characters.
  */
 
+#define is_a(c) ((c)=='a' || (c)=='A')
 #define is_d(c) ((c)=='d' || (c)=='D')
 #define is_e(c) ((c)=='e' || (c)=='E')
 #define is_i(c) ((c)=='i' || (c)=='I')
 #define is_l(c) ((c)=='l' || (c)=='L')
+#define is_n(c) ((c)=='n' || (c)=='N')
 #define is_r(c) ((c)=='r' || (c)=='R')
 #define is_t(c) ((c)=='t' || (c)=='T')
 #define is_u(c) ((c)=='u' || (c)=='U')
@@ -556,7 +565,16 @@ ucase_isCaseSensitive(UChar32 c) {
  * Accepts both 2- and 3-letter codes and accepts case variants.
  */
 U_CFUNC int32_t
-ucase_getCaseLocale(const char *locale) {
+ucase_getCaseLocale(const char *locale, int32_t *locCache) {
+    int32_t result;
+    char c;
+
+    if(locCache!=NULL && (result=*locCache)!=UCASE_LOC_UNKNOWN) {
+        return result;
+    }
+
+    result=UCASE_LOC_ROOT;
+
     /*
      * This function used to use uloc_getLanguage(), but the current code
      * removes the dependency of this low-level code on uloc implementation code
@@ -566,12 +584,44 @@ ucase_getCaseLocale(const char *locale) {
      * Because this code does not want to depend on uloc, the caller must
      * pass in a non-NULL locale, i.e., may need to call uloc_getDefault().
      */
-    char c=*locale++;
-    // Fastpath for English "en" which is often used for default (=root locale) case mappings,
-    // and for Chinese "zh": Very common but no special case mapping behavior.
-    // Then check lowercase vs. uppercase to reduce the number of comparisons
-    // for other locales without special behavior.
-    if(c=='e') {
+    c=*locale++;
+    if(is_t(c)) {
+        /* tr or tur? */
+        c=*locale++;
+        if(is_u(c)) {
+            c=*locale++;
+        }
+        if(is_r(c)) {
+            c=*locale;
+            if(is_sep(c)) {
+                result=UCASE_LOC_TURKISH;
+            }
+        }
+    } else if(is_a(c)) {
+        /* az or aze? */
+        c=*locale++;
+        if(is_z(c)) {
+            c=*locale++;
+            if(is_e(c)) {
+                c=*locale;
+            }
+            if(is_sep(c)) {
+                result=UCASE_LOC_TURKISH;
+            }
+        }
+    } else if(is_l(c)) {
+        /* lt or lit? */
+        c=*locale++;
+        if(is_i(c)) {
+            c=*locale++;
+        }
+        if(is_t(c)) {
+            c=*locale;
+            if(is_sep(c)) {
+                result=UCASE_LOC_LITHUANIAN;
+            }
+        }
+    } else if(is_e(c)) {
         /* el or ell? */
         c=*locale++;
         if(is_l(c)) {
@@ -580,135 +630,27 @@ ucase_getCaseLocale(const char *locale) {
                 c=*locale;
             }
             if(is_sep(c)) {
-                return UCASE_LOC_GREEK;
+                result=UCASE_LOC_GREEK;
             }
         }
-        // en, es, ... -> root
-    } else if(c=='z') {
-        return UCASE_LOC_ROOT;
-#if U_CHARSET_FAMILY==U_ASCII_FAMILY
-    } else if(c>='a') {  // ASCII a-z = 0x61..0x7a, after A-Z
-#elif U_CHARSET_FAMILY==U_EBCDIC_FAMILY
-    } else if(c<='z') {  // EBCDIC a-z = 0x81..0xa9 with two gaps, before A-Z
-#else
-#   error Unknown charset family!
-#endif
-        // lowercase c
-        if(c=='t') {
-            /* tr or tur? */
+    } else if(is_n(c)) {
+        /* nl or nld? */
+        c=*locale++;
+        if(is_l(c)) {
             c=*locale++;
-            if(is_u(c)) {
-                c=*locale++;
-            }
-            if(is_r(c)) {
+            if(is_d(c)) {
                 c=*locale;
-                if(is_sep(c)) {
-                    return UCASE_LOC_TURKISH;
-                }
             }
-        } else if(c=='a') {
-            /* az or aze? */
-            c=*locale++;
-            if(is_z(c)) {
-                c=*locale++;
-                if(is_e(c)) {
-                    c=*locale;
-                }
-                if(is_sep(c)) {
-                    return UCASE_LOC_TURKISH;
-                }
-            }
-        } else if(c=='l') {
-            /* lt or lit? */
-            c=*locale++;
-            if(is_i(c)) {
-                c=*locale++;
-            }
-            if(is_t(c)) {
-                c=*locale;
-                if(is_sep(c)) {
-                    return UCASE_LOC_LITHUANIAN;
-                }
-            }
-        } else if(c=='n') {
-            /* nl or nld? */
-            c=*locale++;
-            if(is_l(c)) {
-                c=*locale++;
-                if(is_d(c)) {
-                    c=*locale;
-                }
-                if(is_sep(c)) {
-                    return UCASE_LOC_DUTCH;
-                }
-            }
-        }
-    } else {
-        // uppercase c
-        // Same code as for lowercase c but also check for 'E'.
-        if(c=='T') {
-            /* tr or tur? */
-            c=*locale++;
-            if(is_u(c)) {
-                c=*locale++;
-            }
-            if(is_r(c)) {
-                c=*locale;
-                if(is_sep(c)) {
-                    return UCASE_LOC_TURKISH;
-                }
-            }
-        } else if(c=='A') {
-            /* az or aze? */
-            c=*locale++;
-            if(is_z(c)) {
-                c=*locale++;
-                if(is_e(c)) {
-                    c=*locale;
-                }
-                if(is_sep(c)) {
-                    return UCASE_LOC_TURKISH;
-                }
-            }
-        } else if(c=='L') {
-            /* lt or lit? */
-            c=*locale++;
-            if(is_i(c)) {
-                c=*locale++;
-            }
-            if(is_t(c)) {
-                c=*locale;
-                if(is_sep(c)) {
-                    return UCASE_LOC_LITHUANIAN;
-                }
-            }
-        } else if(c=='E') {
-            /* el or ell? */
-            c=*locale++;
-            if(is_l(c)) {
-                c=*locale++;
-                if(is_l(c)) {
-                    c=*locale;
-                }
-                if(is_sep(c)) {
-                    return UCASE_LOC_GREEK;
-                }
-            }
-        } else if(c=='N') {
-            /* nl or nld? */
-            c=*locale++;
-            if(is_l(c)) {
-                c=*locale++;
-                if(is_d(c)) {
-                    c=*locale;
-                }
-                if(is_sep(c)) {
-                    return UCASE_LOC_DUTCH;
-                }
+            if(is_sep(c)) {
+                result=UCASE_LOC_DUTCH;
             }
         }
     }
-    return UCASE_LOC_ROOT;
+
+    if(locCache!=NULL) {
+        *locCache=result;
+    }
+    return result;
 }
 
 /*
@@ -720,7 +662,7 @@ ucase_getCaseLocale(const char *locale) {
  * it is also cased or not.
  */
 static UBool
-isFollowedByCasedLetter(UCaseContextIterator *iter, void *context, int8_t dir) {
+isFollowedByCasedLetter(const UCaseProps *csp, UCaseContextIterator *iter, void *context, int8_t dir) {
     UChar32 c;
 
     if(iter==NULL) {
@@ -728,7 +670,7 @@ isFollowedByCasedLetter(UCaseContextIterator *iter, void *context, int8_t dir) {
     }
 
     for(/* dir!=0 sets direction */; (c=iter(context, dir))>=0; dir=0) {
-        int32_t type=ucase_getTypeOrIgnorable(c);
+        int32_t type=ucase_getTypeOrIgnorable(csp, c);
         if(type&4) {
             /* case-ignorable, continue with the loop */
         } else if(type!=UCASE_NONE) {
@@ -743,7 +685,7 @@ isFollowedByCasedLetter(UCaseContextIterator *iter, void *context, int8_t dir) {
 
 /* Is preceded by Soft_Dotted character with no intervening cc=230 ? */
 static UBool
-isPrecededBySoftDotted(UCaseContextIterator *iter, void *context) {
+isPrecededBySoftDotted(const UCaseProps *csp, UCaseContextIterator *iter, void *context) {
     UChar32 c;
     int32_t dotType;
     int8_t dir;
@@ -753,7 +695,7 @@ isPrecededBySoftDotted(UCaseContextIterator *iter, void *context) {
     }
 
     for(dir=-1; (c=iter(context, dir))>=0; dir=0) {
-        dotType=getDotType(c);
+        dotType=getDotType(csp, c);
         if(dotType==UCASE_SOFT_DOTTED) {
             return TRUE; /* preceded by TYPE_i */
         } else if(dotType!=UCASE_OTHER_ACCENT) {
@@ -800,7 +742,7 @@ isPrecededBySoftDotted(UCaseContextIterator *iter, void *context) {
 
 /* Is preceded by base character 'I' with no intervening cc=230 ? */
 static UBool
-isPrecededBy_I(UCaseContextIterator *iter, void *context) {
+isPrecededBy_I(const UCaseProps *csp, UCaseContextIterator *iter, void *context) {
     UChar32 c;
     int32_t dotType;
     int8_t dir;
@@ -813,7 +755,7 @@ isPrecededBy_I(UCaseContextIterator *iter, void *context) {
         if(c==0x49) {
             return TRUE; /* preceded by I */
         }
-        dotType=getDotType(c);
+        dotType=getDotType(csp, c);
         if(dotType!=UCASE_OTHER_ACCENT) {
             return FALSE; /* preceded by different base character (not I), or intervening cc==230 */
         }
@@ -824,7 +766,7 @@ isPrecededBy_I(UCaseContextIterator *iter, void *context) {
 
 /* Is followed by one or more cc==230 ? */
 static UBool
-isFollowedByMoreAbove(UCaseContextIterator *iter, void *context) {
+isFollowedByMoreAbove(const UCaseProps *csp, UCaseContextIterator *iter, void *context) {
     UChar32 c;
     int32_t dotType;
     int8_t dir;
@@ -834,7 +776,7 @@ isFollowedByMoreAbove(UCaseContextIterator *iter, void *context) {
     }
 
     for(dir=1; (c=iter(context, dir))>=0; dir=0) {
-        dotType=getDotType(c);
+        dotType=getDotType(csp, c);
         if(dotType==UCASE_ABOVE) {
             return TRUE; /* at least one cc==230 following */
         } else if(dotType!=UCASE_OTHER_ACCENT) {
@@ -847,7 +789,7 @@ isFollowedByMoreAbove(UCaseContextIterator *iter, void *context) {
 
 /* Is followed by a dot above (without cc==230 in between) ? */
 static UBool
-isFollowedByDotAbove(UCaseContextIterator *iter, void *context) {
+isFollowedByDotAbove(const UCaseProps *csp, UCaseContextIterator *iter, void *context) {
     UChar32 c;
     int32_t dotType;
     int8_t dir;
@@ -860,7 +802,7 @@ isFollowedByDotAbove(UCaseContextIterator *iter, void *context) {
         if(c==0x307) {
             return TRUE;
         }
-        dotType=getDotType(c);
+        dotType=getDotType(csp, c);
         if(dotType!=UCASE_OTHER_ACCENT) {
             return FALSE; /* next base character or cc==230 in between */
         }
@@ -870,20 +812,20 @@ isFollowedByDotAbove(UCaseContextIterator *iter, void *context) {
 }
 
 U_CAPI int32_t U_EXPORT2
-ucase_toFullLower(UChar32 c,
+ucase_toFullLower(const UCaseProps *csp, UChar32 c,
                   UCaseContextIterator *iter, void *context,
                   const UChar **pString,
-                  int32_t loc) {
+                  const char *locale, int32_t *locCache) {
     // The sign of the result has meaning, input must be non-negative so that it can be returned as is.
     U_ASSERT(c >= 0);
     UChar32 result=c;
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)>=UCASE_UPPER) {
             result=c+UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props), *pe2;
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props), *pe2;
         uint16_t excWord=*pe++;
         int32_t full;
 
@@ -891,6 +833,7 @@ ucase_toFullLower(UChar32 c,
 
         if(excWord&UCASE_EXC_CONDITIONAL_SPECIAL) {
             /* use hardcoded conditions and mappings */
+            int32_t loc=ucase_getCaseLocale(locale, locCache);
 
             /*
              * Test for conditional mappings first
@@ -901,7 +844,7 @@ ucase_toFullLower(UChar32 c,
             if( loc==UCASE_LOC_LITHUANIAN &&
                     /* base characters, find accents above */
                     (((c==0x49 || c==0x4a || c==0x12e) &&
-                        isFollowedByMoreAbove(iter, context)) ||
+                        isFollowedByMoreAbove(csp, iter, context)) ||
                     /* precomposed with accent above, no need to find one */
                     (c==0xcc || c==0xcd || c==0x128))
             ) {
@@ -953,7 +896,7 @@ ucase_toFullLower(UChar32 c,
                     0130; 0069; 0130; 0130; az # LATIN CAPITAL LETTER I WITH DOT ABOVE
                  */
                 return 0x69;
-            } else if(loc==UCASE_LOC_TURKISH && c==0x307 && isPrecededBy_I(iter, context)) {
+            } else if(loc==UCASE_LOC_TURKISH && c==0x307 && isPrecededBy_I(csp, iter, context)) {
                 /*
                     # When lowercasing, remove dot_above in the sequence I + dot_above, which will turn into i.
                     # This matches the behavior of the canonically equivalent I-dot_above
@@ -962,7 +905,7 @@ ucase_toFullLower(UChar32 c,
                     0307; ; 0307; 0307; az After_I; # COMBINING DOT ABOVE
                  */
                 return 0; /* remove the dot (continue without output) */
-            } else if(loc==UCASE_LOC_TURKISH && c==0x49 && !isFollowedByDotAbove(iter, context)) {
+            } else if(loc==UCASE_LOC_TURKISH && c==0x49 && !isFollowedByDotAbove(csp, iter, context)) {
                 /*
                     # When lowercasing, unless an I is before a dot_above, it turns into a dotless i.
 
@@ -979,8 +922,8 @@ ucase_toFullLower(UChar32 c,
                 *pString=iDot;
                 return 2;
             } else if(  c==0x3a3 &&
-                        !isFollowedByCasedLetter(iter, context, 1) &&
-                        isFollowedByCasedLetter(iter, context, -1) /* -1=preceded */
+                        !isFollowedByCasedLetter(csp, iter, context, 1) &&
+                        isFollowedByCasedLetter(csp, iter, context, -1) /* -1=preceded */
             ) {
                 /* greek capital sigma maps depending on surrounding cased letters (see SpecialCasing.txt) */
                 /*
@@ -1014,21 +957,21 @@ ucase_toFullLower(UChar32 c,
 
 /* internal */
 static int32_t
-toUpperOrTitle(UChar32 c,
+toUpperOrTitle(const UCaseProps *csp, UChar32 c,
                UCaseContextIterator *iter, void *context,
                const UChar **pString,
-               int32_t loc,
+               const char *locale, int32_t *locCache,
                UBool upperNotTitle) {
     // The sign of the result has meaning, input must be non-negative so that it can be returned as is.
     U_ASSERT(c >= 0);
     UChar32 result=c;
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)==UCASE_LOWER) {
             result=c+UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props), *pe2;
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props), *pe2;
         uint16_t excWord=*pe++;
         int32_t full, idx;
 
@@ -1036,6 +979,8 @@ toUpperOrTitle(UChar32 c,
 
         if(excWord&UCASE_EXC_CONDITIONAL_SPECIAL) {
             /* use hardcoded conditions and mappings */
+            int32_t loc=ucase_getCaseLocale(locale, locCache);
+
             if(loc==UCASE_LOC_TURKISH && c==0x69) {
                 /*
                     # Turkish and Azeri
@@ -1049,7 +994,7 @@ toUpperOrTitle(UChar32 c,
                     0069; 0069; 0130; 0130; az; # LATIN SMALL LETTER I
                 */
                 return 0x130;
-            } else if(loc==UCASE_LOC_LITHUANIAN && c==0x307 && isPrecededBySoftDotted(iter, context)) {
+            } else if(loc==UCASE_LOC_LITHUANIAN && c==0x307 && isPrecededBySoftDotted(csp, iter, context)) {
                 /*
                     # Lithuanian
 
@@ -1107,19 +1052,19 @@ toUpperOrTitle(UChar32 c,
 }
 
 U_CAPI int32_t U_EXPORT2
-ucase_toFullUpper(UChar32 c,
+ucase_toFullUpper(const UCaseProps *csp, UChar32 c,
                   UCaseContextIterator *iter, void *context,
                   const UChar **pString,
-                  int32_t caseLocale) {
-    return toUpperOrTitle(c, iter, context, pString, caseLocale, TRUE);
+                  const char *locale, int32_t *locCache) {
+    return toUpperOrTitle(csp, c, iter, context, pString, locale, locCache, TRUE);
 }
 
 U_CAPI int32_t U_EXPORT2
-ucase_toFullTitle(UChar32 c,
+ucase_toFullTitle(const UCaseProps *csp, UChar32 c,
                   UCaseContextIterator *iter, void *context,
                   const UChar **pString,
-                  int32_t caseLocale) {
-    return toUpperOrTitle(c, iter, context, pString, caseLocale, FALSE);
+                  const char *locale, int32_t *locCache) {
+    return toUpperOrTitle(csp, c, iter, context, pString, locale, locCache, FALSE);
 }
 
 /* case folding ------------------------------------------------------------- */
@@ -1165,14 +1110,14 @@ ucase_toFullTitle(UChar32 c,
 
 /* return the simple case folding mapping for c */
 U_CAPI UChar32 U_EXPORT2
-ucase_fold(UChar32 c, uint32_t options) {
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+ucase_fold(const UCaseProps *csp, UChar32 c, uint32_t options) {
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)>=UCASE_UPPER) {
             c+=UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props);
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props);
         uint16_t excWord=*pe++;
         int32_t idx;
         if(excWord&UCASE_EXC_CONDITIONAL_FOLD) {
@@ -1225,19 +1170,19 @@ ucase_fold(UChar32 c, uint32_t options) {
  */
 
 U_CAPI int32_t U_EXPORT2
-ucase_toFullFolding(UChar32 c,
+ucase_toFullFolding(const UCaseProps *csp, UChar32 c,
                     const UChar **pString,
                     uint32_t options) {
     // The sign of the result has meaning, input must be non-negative so that it can be returned as is.
     U_ASSERT(c >= 0);
     UChar32 result=c;
-    uint16_t props=UTRIE2_GET16(&ucase_props_singleton.trie, c);
+    uint16_t props=UTRIE2_GET16(&csp->trie, c);
     if(!PROPS_HAS_EXCEPTION(props)) {
         if(UCASE_GET_TYPE(props)>=UCASE_UPPER) {
             result=c+UCASE_GET_DELTA(props);
         }
     } else {
-        const uint16_t *pe=GET_EXCEPTIONS(&ucase_props_singleton, props), *pe2;
+        const uint16_t *pe=GET_EXCEPTIONS(csp, props), *pe2;
         uint16_t excWord=*pe++;
         int32_t full, idx;
 
@@ -1299,59 +1244,66 @@ ucase_toFullFolding(UChar32 c,
 
 /* case mapping properties API ---------------------------------------------- */
 
+#define GET_CASE_PROPS() &ucase_props_singleton
+
 /* public API (see uchar.h) */
 
 U_CAPI UBool U_EXPORT2
 u_isULowercase(UChar32 c) {
-    return (UBool)(UCASE_LOWER==ucase_getType(c));
+    return (UBool)(UCASE_LOWER==ucase_getType(GET_CASE_PROPS(), c));
 }
 
 U_CAPI UBool U_EXPORT2
 u_isUUppercase(UChar32 c) {
-    return (UBool)(UCASE_UPPER==ucase_getType(c));
+    return (UBool)(UCASE_UPPER==ucase_getType(GET_CASE_PROPS(), c));
 }
 
 /* Transforms the Unicode character to its lower case equivalent.*/
 U_CAPI UChar32 U_EXPORT2
 u_tolower(UChar32 c) {
-    return ucase_tolower(c);
+    return ucase_tolower(GET_CASE_PROPS(), c);
 }
 
 /* Transforms the Unicode character to its upper case equivalent.*/
 U_CAPI UChar32 U_EXPORT2
 u_toupper(UChar32 c) {
-    return ucase_toupper(c);
+    return ucase_toupper(GET_CASE_PROPS(), c);
 }
 
 /* Transforms the Unicode character to its title case equivalent.*/
 U_CAPI UChar32 U_EXPORT2
 u_totitle(UChar32 c) {
-    return ucase_totitle(c);
+    return ucase_totitle(GET_CASE_PROPS(), c);
 }
 
 /* return the simple case folding mapping for c */
 U_CAPI UChar32 U_EXPORT2
 u_foldCase(UChar32 c, uint32_t options) {
-    return ucase_fold(c, options);
+    return ucase_fold(GET_CASE_PROPS(), c, options);
 }
 
 U_CFUNC int32_t U_EXPORT2
 ucase_hasBinaryProperty(UChar32 c, UProperty which) {
     /* case mapping properties */
     const UChar *resultString;
+    int32_t locCache;
+    const UCaseProps *csp=GET_CASE_PROPS();
+    if(csp==NULL) {
+        return FALSE;
+    }
     switch(which) {
     case UCHAR_LOWERCASE:
-        return (UBool)(UCASE_LOWER==ucase_getType(c));
+        return (UBool)(UCASE_LOWER==ucase_getType(csp, c));
     case UCHAR_UPPERCASE:
-        return (UBool)(UCASE_UPPER==ucase_getType(c));
+        return (UBool)(UCASE_UPPER==ucase_getType(csp, c));
     case UCHAR_SOFT_DOTTED:
-        return ucase_isSoftDotted(c);
+        return ucase_isSoftDotted(csp, c);
     case UCHAR_CASE_SENSITIVE:
-        return ucase_isCaseSensitive(c);
+        return ucase_isCaseSensitive(csp, c);
     case UCHAR_CASED:
-        return (UBool)(UCASE_NONE!=ucase_getType(c));
+        return (UBool)(UCASE_NONE!=ucase_getType(csp, c));
     case UCHAR_CASE_IGNORABLE:
-        return (UBool)(ucase_getTypeOrIgnorable(c)>>2);
+        return (UBool)(ucase_getTypeOrIgnorable(csp, c)>>2);
     /*
      * Note: The following Changes_When_Xyz are defined as testing whether
      * the NFD form of the input changes when Xyz-case-mapped.
@@ -1365,17 +1317,21 @@ ucase_hasBinaryProperty(UChar32 c, UProperty which) {
      * start sets for normalization and case mappings.
      */
     case UCHAR_CHANGES_WHEN_LOWERCASED:
-        return (UBool)(ucase_toFullLower(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0);
+        locCache=UCASE_LOC_ROOT;
+        return (UBool)(ucase_toFullLower(csp, c, NULL, NULL, &resultString, "", &locCache)>=0);
     case UCHAR_CHANGES_WHEN_UPPERCASED:
-        return (UBool)(ucase_toFullUpper(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0);
+        locCache=UCASE_LOC_ROOT;
+        return (UBool)(ucase_toFullUpper(csp, c, NULL, NULL, &resultString, "", &locCache)>=0);
     case UCHAR_CHANGES_WHEN_TITLECASED:
-        return (UBool)(ucase_toFullTitle(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0);
+        locCache=UCASE_LOC_ROOT;
+        return (UBool)(ucase_toFullTitle(csp, c, NULL, NULL, &resultString, "", &locCache)>=0);
     /* case UCHAR_CHANGES_WHEN_CASEFOLDED: -- in uprops.c */
     case UCHAR_CHANGES_WHEN_CASEMAPPED:
+        locCache=UCASE_LOC_ROOT;
         return (UBool)(
-            ucase_toFullLower(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0 ||
-            ucase_toFullUpper(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0 ||
-            ucase_toFullTitle(c, NULL, NULL, &resultString, UCASE_LOC_ROOT)>=0);
+            ucase_toFullLower(csp, c, NULL, NULL, &resultString, "", &locCache)>=0 ||
+            ucase_toFullUpper(csp, c, NULL, NULL, &resultString, "", &locCache)>=0 ||
+            ucase_toFullTitle(csp, c, NULL, NULL, &resultString, "", &locCache)>=0);
     default:
         return FALSE;
     }

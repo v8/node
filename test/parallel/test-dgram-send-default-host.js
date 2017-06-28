@@ -15,30 +15,23 @@ const received = [];
 
 client.on('listening', common.mustCall(() => {
   const port = client.address().port;
-
   client.send(toSend[0], 0, toSend[0].length, port);
   client.send(toSend[1], port);
   client.send([toSend[2]], port);
   client.send(toSend[3], 0, toSend[3].length, port);
-
-  client.send(new Uint8Array(toSend[0]), 0, toSend[0].length, port);
-  client.send(new Uint8Array(toSend[1]), port);
-  client.send([new Uint8Array(toSend[2])], port);
-  client.send(new Uint8Array(Buffer.from(toSend[3])),
-              0, toSend[3].length, port);
 }));
 
 client.on('message', common.mustCall((buf, info) => {
   received.push(buf.toString());
 
-  if (received.length === toSend.length * 2) {
+  if (received.length === toSend.length) {
     // The replies may arrive out of order -> sort them before checking.
     received.sort();
 
-    const expected = toSend.concat(toSend).map(String).sort();
+    const expected = toSend.map(String).sort();
     assert.deepStrictEqual(received, expected);
     client.close();
   }
-}, toSend.length * 2));
+}, toSend.length));
 
 client.bind(0);

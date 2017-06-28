@@ -26,14 +26,19 @@ module.exports = {
 
         return {
 
-            "MemberExpression[property.name=/.*Sync$/]"(node) {
-                context.report({
-                    node,
-                    message: "Unexpected sync method: '{{propertyName}}'.",
-                    data: {
-                        propertyName: node.property.name
-                    }
-                });
+            MemberExpression(node) {
+                const propertyName = node.property.name,
+                    syncRegex = /.*Sync$/;
+
+                if (syncRegex.exec(propertyName) !== null) {
+                    context.report({
+                        node,
+                        message: "Unexpected sync method: '{{propertyName}}'.",
+                        data: {
+                            propertyName
+                        }
+                    });
+                }
             }
         };
 

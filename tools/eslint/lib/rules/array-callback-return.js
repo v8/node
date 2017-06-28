@@ -9,8 +9,6 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const lodash = require("lodash");
-
 const astUtils = require("../ast-utils");
 
 //------------------------------------------------------------------------------
@@ -149,8 +147,7 @@ module.exports = {
             upper: null,
             codePath: null,
             hasReturn: false,
-            shouldCheck: false,
-            node: null
+            shouldCheck: false
         };
 
         /**
@@ -171,11 +168,8 @@ module.exports = {
                     node,
                     loc: getLocation(node, context.getSourceCode()).loc.start,
                     message: funcInfo.hasReturn
-                        ? "Expected to return a value at the end of {{name}}."
-                        : "Expected to return a value in {{name}}.",
-                    data: {
-                        name: astUtils.getFunctionNameWithKind(funcInfo.node)
-                    }
+                        ? "Expected to return a value at the end of this function."
+                        : "Expected to return a value in this function."
                 });
             }
         }
@@ -193,8 +187,7 @@ module.exports = {
                         node.body.type === "BlockStatement" &&
                         isCallbackOfArrayMethod(node) &&
                         !node.async &&
-                        !node.generator,
-                    node
+                        !node.generator
                 };
             },
 
@@ -211,10 +204,7 @@ module.exports = {
                     if (!node.argument) {
                         context.report({
                             node,
-                            message: "{{name}} expected a return value.",
-                            data: {
-                                name: lodash.upperFirst(astUtils.getFunctionNameWithKind(funcInfo.node))
-                            }
+                            message: "Expected a return value."
                         });
                     }
                 }

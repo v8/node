@@ -6,12 +6,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -97,22 +91,7 @@ module.exports = {
                     context.report({
                         node,
                         message: "Redundant Boolean call.",
-                        fix: fixer => {
-                            if (!node.arguments.length) {
-                                return fixer.replaceText(parent, "true");
-                            }
-
-                            if (node.arguments.length > 1 || node.arguments[0].type === "SpreadElement") {
-                                return null;
-                            }
-
-                            const argument = node.arguments[0];
-
-                            if (astUtils.getPrecedence(argument) < astUtils.getPrecedence(node.parent)) {
-                                return fixer.replaceText(node, `(${sourceCode.getText(argument)})`);
-                            }
-                            return fixer.replaceText(node, sourceCode.getText(argument));
-                        }
+                        fix: fixer => fixer.replaceText(node, sourceCode.getText(node.arguments[0]))
                     });
                 }
             }

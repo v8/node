@@ -46,11 +46,7 @@ test("shrinkwrap --also=development doesn't strip out prod dependencies", functi
             t.ifError(ex, 'read shrinkwrap')
           }
         }
-        t.deepEqual(
-          results.dependencies,
-          desired.dependencies,
-          'results have dev dep'
-        )
+        t.deepEqual(results, desired, 'results have dev dep')
         s.done()
         t.end()
       })
@@ -70,14 +66,14 @@ var desired = {
   dependencies: {
     request: {
       version: '0.9.0',
-      resolved: common.registry + '/request/-/request-0.9.0.tgz',
-      integrity: 'sha1-EEn1mm9GWI5tAwkh+7hMovDCcU4='
+      from: 'request@0.9.0',
+      resolved: common.registry + '/request/-/request-0.9.0.tgz'
     },
     underscore: {
       dev: true,
       version: '1.5.1',
-      resolved: common.registry + '/underscore/-/underscore-1.5.1.tgz',
-      integrity: 'sha1-0r3oF9F2/63olKtxRY5oKhS4bck='
+      from: 'underscore@1.5.1',
+      resolved: common.registry + '/underscore/-/underscore-1.5.1.tgz'
     }
   }
 }

@@ -52,7 +52,7 @@ function mapToRegistry (name, config, cb) {
   var uri
   log.silly('mapToRegistry', 'data', data)
   if (data.type === 'remote') {
-    uri = data.fetchSpec
+    uri = data.spec
   } else {
     uri = url.resolve(normalized, name)
   }

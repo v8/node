@@ -1,121 +1,74 @@
 'use strict';
 
 const child_process = require('child_process');
-const path = require('path');
-const fs = require('fs');
-
-const requirementsURL =
-  'https://github.com/nodejs/node/blob/master/doc/guides/writing-and-running-benchmarks.md#http-benchmark-requirements';
 
 // The port used by servers and wrk
 exports.PORT = process.env.PORT || 12346;
 
-class AutocannonBenchmarker {
-  constructor() {
-    this.name = 'autocannon';
-    this.executable =
-      process.platform === 'win32' ? 'autocannon.cmd' : 'autocannon';
-    const result = child_process.spawnSync(this.executable, ['-h']);
-    this.present = !(result.error && result.error.code === 'ENOENT');
-  }
-
-  create(options) {
-    const args = [
-      '-d', options.duration,
-      '-c', options.connections,
-      '-j',
-      '-n',
-      `http://127.0.0.1:${options.port}${options.path}`
-    ];
-    const child = child_process.spawn(this.executable, args);
-    return child;
-  }
-
-  processResults(output) {
-    let result;
-    try {
-      result = JSON.parse(output);
-    } catch (err) {
-      return undefined;
-    }
-    if (!result || !result.requests || !result.requests.average) {
-      return undefined;
-    } else {
-      return result.requests.average;
-    }
-  }
+function AutocannonBenchmarker() {
+  this.name = 'autocannon';
+  this.autocannon_exe = process.platform === 'win32' ?
+                        'autocannon.cmd' :
+                        'autocannon';
+  const result = child_process.spawnSync(this.autocannon_exe, ['-h']);
+  this.present = !(result.error && result.error.code === 'ENOENT');
 }
 
-class WrkBenchmarker {
-  constructor() {
-    this.name = 'wrk';
-    this.executable = 'wrk';
-    const result = child_process.spawnSync(this.executable, ['-h']);
-    this.present = !(result.error && result.error.code === 'ENOENT');
-  }
+AutocannonBenchmarker.prototype.create = function(options) {
+  const args = [
+    '-d', options.duration,
+    '-c', options.connections,
+    '-j',
+    '-n',
+    `http://127.0.0.1:${options.port}${options.path}`
+  ];
+  const child = child_process.spawn(this.autocannon_exe, args);
+  return child;
+};
 
-  create(options) {
-    const args = [
-      '-d', options.duration,
-      '-c', options.connections,
-      '-t', 8,
-      `http://127.0.0.1:${options.port}${options.path}`
-    ];
-    const child = child_process.spawn(this.executable, args);
-    return child;
+AutocannonBenchmarker.prototype.processResults = function(output) {
+  let result;
+  try {
+    result = JSON.parse(output);
+  } catch (err) {
+    // Do nothing, let next line handle this
   }
+  if (!result || !result.requests || !result.requests.average) {
+    return undefined;
+  } else {
+    return result.requests.average;
+  }
+};
 
-  processResults(output) {
-    const throughputRe = /Requests\/sec:[ \t]+([0-9.]+)/;
-    const match = output.match(throughputRe);
-    const throughput = match && +match[1];
-    if (!isFinite(throughput)) {
-      return undefined;
-    } else {
-      return throughput;
-    }
-  }
+function WrkBenchmarker() {
+  this.name = 'wrk';
+  this.regexp = /Requests\/sec:[ \t]+([0-9.]+)/;
+  const result = child_process.spawnSync('wrk', ['-h']);
+  this.present = !(result.error && result.error.code === 'ENOENT');
 }
 
-/**
- * Simple, single-threaded benchmarker for testing if the benchmark
- * works
- */
-class TestDoubleBenchmarker {
-  constructor() {
-    this.name = 'test-double';
-    this.executable = path.resolve(__dirname, '_test-double-benchmarker.js');
-    this.present = fs.existsSync(this.executable);
-  }
+WrkBenchmarker.prototype.create = function(options) {
+  const args = [
+    '-d', options.duration,
+    '-c', options.connections,
+    '-t', 8,
+    `http://127.0.0.1:${options.port}${options.path}`
+  ];
+  const child = child_process.spawn('wrk', args);
+  return child;
+};
 
-  create(options) {
-    const child = child_process.fork(this.executable, {
-      silent: true,
-      env: {
-        duration: options.duration,
-        connections: options.connections,
-        path: `http://127.0.0.1:${options.port}${options.path}`
-      }
-    });
-    return child;
+WrkBenchmarker.prototype.processResults = function(output) {
+  const match = output.match(this.regexp);
+  const result = match && +match[1];
+  if (!isFinite(result)) {
+    return undefined;
+  } else {
+    return result;
   }
+};
 
-  processResults(output) {
-    let result;
-    try {
-      result = JSON.parse(output);
-    } catch (err) {
-      return undefined;
-    }
-    return result.throughput;
-  }
-}
-
-const http_benchmarkers = [
-  new WrkBenchmarker(),
-  new AutocannonBenchmarker(),
-  new TestDoubleBenchmarker()
-];
+const http_benchmarkers = [new WrkBenchmarker(), new AutocannonBenchmarker()];
 
 const benchmarkers = {};
 
@@ -135,19 +88,20 @@ exports.run = function(options, callback) {
     benchmarker: exports.default_http_benchmarker
   }, options);
   if (!options.benchmarker) {
-    callback(new Error('Could not locate required http benchmarker. See ' +
-                       `${requirementsURL} for further instructions.`));
+    callback(new Error('Could not locate any of the required http ' +
+                       'benchmarkers. Check benchmark/README.md for further ' +
+                       'instructions.'));
     return;
   }
   const benchmarker = benchmarkers[options.benchmarker];
   if (!benchmarker) {
-    callback(new Error(`Requested benchmarker '${options.benchmarker}' ` +
-                       'is  not supported'));
+    callback(new Error(`Requested benchmarker '${options.benchmarker}' is ` +
+                       'not supported'));
     return;
   }
   if (!benchmarker.present) {
-    callback(new Error(`Requested benchmarker '${options.benchmarker}' ` +
-                       'is  not installed'));
+    callback(new Error(`Requested benchmarker '${options.benchmarker}' is ` +
+                       'not installed'));
     return;
   }
 
@@ -173,8 +127,8 @@ exports.run = function(options, callback) {
 
     const result = benchmarker.processResults(stdout);
     if (result === undefined) {
-      callback(new Error(
-        `${options.benchmarker} produced strange output: ${stdout}`), code);
+      callback(new Error(`${options.benchmarker} produced strange output: ` +
+                         stdout, code));
       return;
     }
 

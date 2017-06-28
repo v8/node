@@ -1,11 +1,4 @@
 # Domain
-<!-- YAML
-changes:
-  - version: v8.0.0
-    pr-url: https://github.com/nodejs/node/pull/12489
-    description: Handlers for `Promise`s are now invoked in the domain in which
-                 the first promise of a chain was created.
--->
 
 > Stability: 0 - Deprecated
 
@@ -27,7 +20,7 @@ exit immediately with an error code.
 
 <!-- type=misc -->
 
-Domain error handlers are not a substitute for closing down a
+Domain error handlers are not a substitute for closing down your
 process when an error occurs.
 
 By the very nature of how [`throw`][] works in JavaScript, there is almost
@@ -35,8 +28,8 @@ never any way to safely "pick up where you left off", without leaking
 references, or creating some other sort of undefined brittle state.
 
 The safest way to respond to a thrown error is to shut down the
-process. Of course, in a normal web server, there may be many
-open connections, and it is not reasonable to abruptly shut those down
+process.  Of course, in a normal web server, you might have many
+connections open, and it is not reasonable to abruptly shut those down
 because an error was triggered by someone else.
 
 The better approach is to send an error response to the request that
@@ -80,11 +73,11 @@ const cluster = require('cluster');
 const PORT = +process.env.PORT || 1337;
 
 if (cluster.isMaster) {
-  // A more realistic scenario would have more than 2 workers,
+  // In real life, you'd probably use more than just 2 workers,
   // and perhaps not put the master and worker in the same file.
   //
-  // It is also possible to get a bit fancier about logging, and
-  // implement whatever custom logic is needed to prevent DoS
+  // You can also of course get a bit fancier about logging, and
+  // implement whatever custom logic you need to prevent DoS
   // attacks and other bad behavior.
   //
   // See the options in the cluster documentation.
@@ -115,7 +108,7 @@ if (cluster.isMaster) {
     d.on('error', (er) => {
       console.error(`error ${er.stack}`);
 
-      // Note: We're in dangerous territory!
+      // Note: we're in dangerous territory!
       // By definition, something unexpected occurred,
       // which we probably didn't want.
       // Anything can happen now!  Be very careful!
@@ -161,7 +154,7 @@ if (cluster.isMaster) {
 }
 
 // This part is not important.  Just an example routing thing.
-// Put fancy application logic here.
+// You'd put your fancy application logic here.
 function handleRequest(req, res) {
   switch (req.url) {
     case '/error':
@@ -169,7 +162,7 @@ function handleRequest(req, res) {
       setTimeout(() => {
         // Whoops!
         flerb.bark();
-      }, timeout);
+      });
       break;
     default:
       res.end('ok');
@@ -202,7 +195,7 @@ the active domain at the time of their creation.
 
 Additionally, callbacks passed to lowlevel event loop requests (such as
 to fs.open, or other callback-taking methods) will automatically be
-bound to the active domain. If they throw, then the domain will catch
+bound to the active domain.  If they throw, then the domain will catch
 the error.
 
 In order to prevent excessive memory usage, Domain objects themselves
@@ -210,8 +203,8 @@ are not implicitly added as children of the active domain.  If they
 were, then it would be too easy to prevent request and response objects
 from being properly garbage collected.
 
-To nest Domain objects as children of a parent Domain they must be explicitly
-added.
+If you *want* to nest Domain objects as children of a parent Domain,
+then you must explicitly add them.
 
 Implicit binding routes thrown errors and `'error'` events to the
 Domain's `'error'` event, but does not register the EventEmitter on the
@@ -451,55 +444,12 @@ d.run(() => {
 In this example, the `d.on('error')` handler will be triggered, rather
 than crashing the program.
 
-## Domains and Promises
-
-As of Node 8.0.0, the handlers of Promises are run inside the domain in
-which the call to `.then` or `.catch` itself was made:
-
-```js
-const d1 = domain.create();
-const d2 = domain.create();
-
-let p;
-d1.run(() => {
-  p = Promise.resolve(42);
-});
-
-d2.run(() => {
-  p.then((v) => {
-    // running in d2
-  });
-});
-```
-
-A callback may be bound to a specific domain using [`domain.bind(callback)`][]:
-
-```js
-const d1 = domain.create();
-const d2 = domain.create();
-
-let p;
-d1.run(() => {
-  p = Promise.resolve(42);
-});
-
-d2.run(() => {
-  p.then(p.domain.bind((v) => {
-    // running in d1
-  }));
-});
-```
-
-Note that domains will not interfere with the error handling mechanisms for
-Promises, i.e. no `error` event will be emitted for unhandled Promise
-rejections.
-
-[`Error`]: errors.html#errors_class_error
-[`EventEmitter`]: events.html#events_class_eventemitter
 [`domain.add(emitter)`]: #domain_domain_add_emitter
 [`domain.bind(callback)`]: #domain_domain_bind_callback
 [`domain.dispose()`]: #domain_domain_dispose
 [`domain.exit()`]: #domain_domain_exit
+[`Error`]: errors.html#errors_class_error
+[`EventEmitter`]: events.html#events_class_eventemitter
 [`setInterval()`]: timers.html#timers_setinterval_callback_delay_args
 [`setTimeout()`]: timers.html#timers_settimeout_callback_delay_args
 [`throw`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/throw

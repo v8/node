@@ -7,14 +7,6 @@
 "use strict";
 
 //------------------------------------------------------------------------------
-// Requirements
-//------------------------------------------------------------------------------
-
-const lodash = require("lodash");
-
-const astUtils = require("../ast-utils");
-
-//------------------------------------------------------------------------------
 // Rule Definition
 //------------------------------------------------------------------------------
 
@@ -89,15 +81,17 @@ module.exports = {
          * @private
          */
         function endFunction(node) {
-            const name = lodash.upperFirst(astUtils.getFunctionNameWithKind(node));
             const complexity = fns.pop();
+            let name = "anonymous";
+
+            if (node.id) {
+                name = node.id.name;
+            } else if (node.parent.type === "MethodDefinition" || node.parent.type === "Property") {
+                name = node.parent.key.name;
+            }
 
             if (complexity > THRESHOLD) {
-                context.report({
-                    node,
-                    message: "{{name}} has a complexity of {{complexity}}.",
-                    data: { name, complexity }
-                });
+                context.report({ node, message: "Function '{{name}}' has a complexity of {{complexity}}.", data: { name, complexity } });
             }
         }
 
@@ -122,7 +116,7 @@ module.exports = {
 
             // Avoiding `default`
             if (node.test) {
-                increaseComplexity();
+                increaseComplexity(node);
             }
         }
 
@@ -136,7 +130,7 @@ module.exports = {
 
             // Avoiding &&
             if (node.operator === "||") {
-                increaseComplexity();
+                increaseComplexity(node);
             }
         }
 

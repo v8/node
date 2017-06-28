@@ -16,9 +16,4 @@ const context = vm.createContext(sandbox);
 const code = 'Object.getOwnPropertyDescriptor(this, "prop");';
 const result = vm.runInContext(code, context);
 
-// Ref: https://github.com/nodejs/node/issues/11803
-
-assert.deepStrictEqual(Object.keys(result), Object.keys(descriptor));
-for (const prop of Object.keys(result)) {
-  assert.strictEqual(result[prop], descriptor[prop]);
-}
+assert.strictEqual(result, descriptor);

@@ -6,17 +6,19 @@ const common = require('../common');
 const net = require('net');
 const cluster = require('cluster');
 
+const noop = () => {};
+
 cluster.schedulingPolicy = cluster.SCHED_NONE;
 
 if (cluster.isMaster) {
   const worker = cluster.fork();
 
   // This is the important part of the test: Confirm that `disconnect` fires.
-  worker.on('disconnect', common.mustCall());
+  worker.on('disconnect', common.mustCall(noop));
 
   // These are just some extra stuff we're checking for good measure...
-  worker.on('exit', common.mustCall());
-  cluster.on('exit', common.mustCall());
+  worker.on('exit', common.mustCall(noop));
+  cluster.on('exit', common.mustCall(noop));
 
   cluster.disconnect();
   return;
@@ -24,4 +26,4 @@ if (cluster.isMaster) {
 
 const server = net.createServer();
 
-server.listen(0);
+server.listen(common.PORT);

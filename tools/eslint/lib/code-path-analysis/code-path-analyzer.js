@@ -512,8 +512,13 @@ function processCodePathToExit(analyzer, node) {
             break;
     }
 
-    // Emits onCodePathSegmentStart events if updated.
-    if (!dontForward) {
+    /*
+     * Skip updating the current segment to avoid creating useless segments if
+     * the node type is the same as the parent node type.
+     */
+    if (!dontForward && (!node.parent || node.type !== node.parent.type)) {
+
+        // Emits onCodePathSegmentStart events if updated.
         forwardCurrentToHead(analyzer, node);
     }
     debug.dumpState(node, state, true);

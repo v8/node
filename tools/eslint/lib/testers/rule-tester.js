@@ -12,12 +12,12 @@
  * RuleTester.add("{ruleName}", {
  *      valid: [
  *          "{code}",
- *          { code: "{code}", options: {options}, globals: {globals}, parser: "{parser}", settings: {settings} }
+ *          { code: "{code}", options: {options}, global: {globals}, globals: {globals}, parser: "{parser}", settings: {settings} }
  *      ],
  *      invalid: [
  *          { code: "{code}", errors: {numErrors} },
  *          { code: "{code}", errors: ["{errorMessage}"] },
- *          { code: "{code}", options: {options}, globals: {globals}, parser: "{parser}", settings: {settings}, errors: [{ message: "{errorMessage}", type: "{errorNodeType}"}] }
+ *          { code: "{code}", options: {options}, global: {globals}, parser: "{parser}", settings: {settings}, errors: [{ message: "{errorMessage}", type: "{errorNodeType}"}] }
  *      ]
  *  });
  *
@@ -45,8 +45,8 @@ const lodash = require("lodash"),
     util = require("util"),
     validator = require("../config/config-validator"),
     validate = require("is-my-json-valid"),
-    Linter = require("../linter"),
-    Environments = require("../config/environments"),
+    eslint = require("../eslint"),
+    rules = require("../rules"),
     metaSchema = require("../../conf/json-schema-schema.json"),
     SourceCodeFixer = require("../util/source-code-fixer");
 
@@ -69,8 +69,8 @@ const RuleTesterParameters = [
     "code",
     "filename",
     "options",
-    "errors",
-    "output"
+    "args",
+    "errors"
 ];
 
 const validateSchema = validate(metaSchema, { verbose: true });
@@ -129,9 +129,63 @@ function freezeDeeply(x) {
 // Public Interface
 //------------------------------------------------------------------------------
 
+/**
+ * Creates a new instance of RuleTester.
+ * @param {Object} [testerConfig] Optional, extra configuration for the tester
+ * @constructor
+ */
+function RuleTester(testerConfig) {
+
+    /**
+     * The configuration to use for this tester. Combination of the tester
+     * configuration and the default configuration.
+     * @type {Object}
+     */
+    this.testerConfig = lodash.merge(
+
+        // we have to clone because merge uses the first argument for recipient
+        lodash.cloneDeep(defaultConfig),
+        testerConfig
+    );
+}
+
+/**
+ * Set the configuration to use for all future tests
+ * @param {Object} config the configuration to use.
+ * @returns {void}
+ */
+RuleTester.setDefaultConfig = function(config) {
+    if (typeof config !== "object") {
+        throw new Error("RuleTester.setDefaultConfig: config must be an object");
+    }
+    defaultConfig = config;
+
+    // Make sure the rules object exists since it is assumed to exist later
+    defaultConfig.rules = defaultConfig.rules || {};
+};
+
+/**
+ * Get the current configuration used for all tests
+ * @returns {Object} the current configuration
+ */
+RuleTester.getDefaultConfig = function() {
+    return defaultConfig;
+};
+
+/**
+ * Reset the configuration to the initial configuration of the tester removing
+ * any changes made until now.
+ * @returns {void}
+ */
+RuleTester.resetDefaultConfig = function() {
+    defaultConfig = lodash.cloneDeep(testerDefaultConfig);
+};
+
 // default separators for testing
 const DESCRIBE = Symbol("describe");
 const IT = Symbol("it");
+
+RuleTester[DESCRIBE] = RuleTester[IT] = null;
 
 /**
  * This is `it` or `describe` if those don't exist.
@@ -144,92 +198,39 @@ function defaultHandler(text, method) {
     return method.apply(this);
 }
 
-class RuleTester {
+// If people use `mocha test.js --watch` command, `describe` and `it` function
+// instances are different for each execution. So this should get fresh instance
+// always.
+Object.defineProperties(RuleTester, {
+    describe: {
+        get() {
+            return (
+                RuleTester[DESCRIBE] ||
+                (typeof describe === "function" ? describe : defaultHandler)
+            );
+        },
+        set(value) {
+            RuleTester[DESCRIBE] = value;
+        },
+        configurable: true,
+        enumerable: true,
+    },
+    it: {
+        get() {
+            return (
+                RuleTester[IT] ||
+                (typeof it === "function" ? it : defaultHandler)
+            );
+        },
+        set(value) {
+            RuleTester[IT] = value;
+        },
+        configurable: true,
+        enumerable: true,
+    },
+});
 
-    /**
-     * Creates a new instance of RuleTester.
-     * @param {Object} [testerConfig] Optional, extra configuration for the tester
-     * @constructor
-     */
-    constructor(testerConfig) {
-
-        /**
-         * The configuration to use for this tester. Combination of the tester
-         * configuration and the default configuration.
-         * @type {Object}
-         */
-        this.testerConfig = lodash.merge(
-
-            // we have to clone because merge uses the first argument for recipient
-            lodash.cloneDeep(defaultConfig),
-            testerConfig
-        );
-
-        /**
-         * Rule definitions to define before tests.
-         * @type {Object}
-         */
-        this.rules = {};
-        this.linter = new Linter();
-    }
-
-    /**
-     * Set the configuration to use for all future tests
-     * @param {Object} config the configuration to use.
-     * @returns {void}
-     */
-    static setDefaultConfig(config) {
-        if (typeof config !== "object") {
-            throw new Error("RuleTester.setDefaultConfig: config must be an object");
-        }
-        defaultConfig = config;
-
-        // Make sure the rules object exists since it is assumed to exist later
-        defaultConfig.rules = defaultConfig.rules || {};
-    }
-
-    /**
-     * Get the current configuration used for all tests
-     * @returns {Object} the current configuration
-     */
-    static getDefaultConfig() {
-        return defaultConfig;
-    }
-
-    /**
-     * Reset the configuration to the initial configuration of the tester removing
-     * any changes made until now.
-     * @returns {void}
-     */
-    static resetDefaultConfig() {
-        defaultConfig = lodash.cloneDeep(testerDefaultConfig);
-    }
-
-
-    // If people use `mocha test.js --watch` command, `describe` and `it` function
-    // instances are different for each execution. So `describe` and `it` should get fresh instance
-    // always.
-    static get describe() {
-        return (
-            this[DESCRIBE] ||
-            (typeof describe === "function" ? describe : defaultHandler)
-        );
-    }
-
-    static set describe(value) {
-        this[DESCRIBE] = value;
-    }
-
-    static get it() {
-        return (
-            this[IT] ||
-            (typeof it === "function" ? it : defaultHandler)
-        );
-    }
-
-    static set it(value) {
-        this[IT] = value;
-    }
+RuleTester.prototype = {
 
     /**
      * Define a rule for one particular run of tests.
@@ -238,8 +239,8 @@ class RuleTester {
      * @returns {void}
      */
     defineRule(name, rule) {
-        this.rules[name] = rule;
-    }
+        eslint.defineRule(name, rule);
+    },
 
     /**
      * Adds a new rule test to execute.
@@ -253,8 +254,7 @@ class RuleTester {
         const testerConfig = this.testerConfig,
             requiredScenarios = ["valid", "invalid"],
             scenarioErrors = [],
-            result = {},
-            linter = this.linter;
+            result = {};
 
         if (lodash.isNil(test) || typeof test !== "object") {
             throw new Error(`Test Scenarios for rule ${ruleName} : Could not find test scenario object`);
@@ -306,16 +306,18 @@ class RuleTester {
                 filename = item.filename;
             }
 
-            if (Object.prototype.hasOwnProperty.call(item, "options")) {
-                assert(Array.isArray(item.options), "options must be an array");
-                config.rules[ruleName] = [1].concat(item.options);
+            if (item.options) {
+                const options = item.options.concat();
+
+                options.unshift(1);
+                config.rules[ruleName] = options;
             } else {
                 config.rules[ruleName] = 1;
             }
 
-            linter.defineRule(ruleName, rule);
+            eslint.defineRule(ruleName, rule);
 
-            const schema = validator.getRuleOptionsSchema(ruleName, linter.rules);
+            const schema = validator.getRuleOptionsSchema(ruleName);
 
             if (schema) {
                 validateSchema(schema);
@@ -327,29 +329,28 @@ class RuleTester {
                 }
             }
 
-            validator.validate(config, "rule-tester", linter.rules, new Environments());
+            validator.validate(config, "rule-tester");
 
             /*
              * Setup AST getters.
              * The goal is to check whether or not AST was modified when
              * running the rule under test.
              */
-            linter.reset();
-
-            linter.on("Program", node => {
+            eslint.reset();
+            eslint.on("Program", node => {
                 beforeAST = cloneDeeplyExcludesParent(node);
-            });
 
-            linter.on("Program:exit", node => {
-                afterAST = node;
+                eslint.on("Program:exit", node => {
+                    afterAST = cloneDeeplyExcludesParent(node);
+                });
             });
 
             // Freezes rule-context properties.
-            const originalGet = linter.rules.get;
+            const originalGet = rules.get;
 
             try {
-                linter.rules.get = function(ruleId) {
-                    const rule = originalGet.call(linter.rules, ruleId);
+                rules.get = function(ruleId) {
+                    const rule = originalGet(ruleId);
 
                     if (typeof rule === "function") {
                         return function(context) {
@@ -360,28 +361,28 @@ class RuleTester {
 
                             return rule(context);
                         };
+                    } else {
+                        return {
+                            meta: rule.meta,
+                            create(context) {
+                                Object.freeze(context);
+                                freezeDeeply(context.options);
+                                freezeDeeply(context.settings);
+                                freezeDeeply(context.parserOptions);
+
+                                return rule.create(context);
+                            }
+                        };
                     }
-                    return {
-                        meta: rule.meta,
-                        create(context) {
-                            Object.freeze(context);
-                            freezeDeeply(context.options);
-                            freezeDeeply(context.settings);
-                            freezeDeeply(context.parserOptions);
-
-                            return rule.create(context);
-                        }
-                    };
-
                 };
 
                 return {
-                    messages: linter.verify(code, config, filename, true),
+                    messages: eslint.verify(code, config, filename, true),
                     beforeAST,
-                    afterAST: cloneDeeplyExcludesParent(afterAST)
+                    afterAST
                 };
             } finally {
-                linter.rules.get = originalGet;
+                rules.get = originalGet;
             }
         }
 
@@ -413,31 +414,9 @@ class RuleTester {
             const messages = result.messages;
 
             assert.equal(messages.length, 0, util.format("Should have no errors but had %d: %s",
-                messages.length, util.inspect(messages)));
+                        messages.length, util.inspect(messages)));
 
             assertASTDidntChange(result.beforeAST, result.afterAST);
-        }
-
-        /**
-         * Asserts that the message matches its expected value. If the expected
-         * value is a regular expression, it is checked against the actual
-         * value.
-         * @param {string} actual Actual value
-         * @param {string|RegExp} expected Expected value
-         * @returns {void}
-         * @private
-         */
-        function assertMessageMatches(actual, expected) {
-            if (expected instanceof RegExp) {
-
-                // assert.js doesn't have a built-in RegExp match function
-                assert.ok(
-                    expected.test(actual),
-                    `Expected '${actual}' to match ${expected}`
-                );
-            } else {
-                assert.equal(actual, expected);
-            }
         }
 
         /**
@@ -456,28 +435,23 @@ class RuleTester {
             const messages = result.messages;
 
 
+
             if (typeof item.errors === "number") {
                 assert.equal(messages.length, item.errors, util.format("Should have %d error%s but had %d: %s",
                     item.errors, item.errors === 1 ? "" : "s", messages.length, util.inspect(messages)));
             } else {
-                assert.equal(
-                    messages.length, item.errors.length,
-                    util.format(
-                        "Should have %d error%s but had %d: %s",
-                        item.errors.length, item.errors.length === 1 ? "" : "s", messages.length, util.inspect(messages)
-                    )
-                );
-
-                const hasMessageOfThisRule = messages.some(m => m.ruleId === ruleName);
+                assert.equal(messages.length, item.errors.length,
+                    util.format("Should have %d error%s but had %d: %s",
+                    item.errors.length, item.errors.length === 1 ? "" : "s", messages.length, util.inspect(messages)));
 
                 for (let i = 0, l = item.errors.length; i < l; i++) {
-                    assert(!messages[i].fatal, `A fatal parsing error occurred: ${messages[i].message}`);
-                    assert(hasMessageOfThisRule, "Error rule name should be the same as the name of the rule being tested");
+                    assert.ok(!("fatal" in messages[i]), `A fatal parsing error occurred: ${messages[i].message}`);
+                    assert.equal(messages[i].ruleId, ruleName, "Error rule name should be the same as the name of the rule being tested");
 
-                    if (typeof item.errors[i] === "string" || item.errors[i] instanceof RegExp) {
+                    if (typeof item.errors[i] === "string") {
 
                         // Just an error message.
-                        assertMessageMatches(messages[i].message, item.errors[i]);
+                        assert.equal(messages[i].message, item.errors[i]);
                     } else if (typeof item.errors[i] === "object") {
 
                         /*
@@ -486,7 +460,7 @@ class RuleTester {
                          * column.
                          */
                         if (item.errors[i].message) {
-                            assertMessageMatches(messages[i].message, item.errors[i].message);
+                            assert.equal(messages[i].message, item.errors[i].message);
                         }
 
                         if (item.errors[i].type) {
@@ -510,24 +484,17 @@ class RuleTester {
                         }
                     } else {
 
-                        // Message was an unexpected type
-                        assert.fail(messages[i], null, "Error should be a string, object, or RegExp.");
+                        // Only string or object errors are valid.
+                        assert.fail(messages[i], null, "Error should be a string or object.");
                     }
                 }
-            }
 
-            if (item.hasOwnProperty("output")) {
-                if (item.output === null) {
-                    assert.strictEqual(
-                        messages.filter(message => message.fix).length,
-                        0,
-                        "Expected no autofixes to be suggested"
-                    );
-                } else {
-                    const fixResult = SourceCodeFixer.applyFixes(linter.getSourceCode(), messages);
+                if (item.hasOwnProperty("output")) {
+                    const fixResult = SourceCodeFixer.applyFixes(eslint.getSourceCode(), messages);
 
                     assert.equal(fixResult.output, item.output, "Output is incorrect.");
                 }
+
             }
 
             assertASTDidntChange(result.beforeAST, result.afterAST);
@@ -540,8 +507,7 @@ class RuleTester {
         RuleTester.describe(ruleName, () => {
             RuleTester.describe("valid", () => {
                 test.valid.forEach(valid => {
-                    RuleTester.it(typeof valid === "object" ? valid.code : valid, () => {
-                        linter.defineRules(this.rules);
+                    RuleTester.it(valid.code || valid, () => {
                         testValidTemplate(ruleName, valid);
                     });
                 });
@@ -550,7 +516,6 @@ class RuleTester {
             RuleTester.describe("invalid", () => {
                 test.invalid.forEach(invalid => {
                     RuleTester.it(invalid.code, () => {
-                        linter.defineRules(this.rules);
                         testInvalidTemplate(ruleName, invalid);
                     });
                 });
@@ -559,8 +524,7 @@ class RuleTester {
 
         return result.suite;
     }
-}
+};
 
-RuleTester[DESCRIBE] = RuleTester[IT] = null;
 
 module.exports = RuleTester;

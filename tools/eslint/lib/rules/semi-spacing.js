@@ -105,7 +105,20 @@ module.exports = {
         function isBeforeClosingParen(token) {
             const nextToken = sourceCode.getTokenAfter(token);
 
-            return (nextToken && astUtils.isClosingBraceToken(nextToken) || astUtils.isClosingParenToken(nextToken));
+            return (
+                nextToken &&
+                nextToken.type === "Punctuator" &&
+                (nextToken.value === "}" || nextToken.value === ")")
+            );
+        }
+
+        /**
+         * Checks if the given token is a semicolon.
+         * @param {Token} token The token to check.
+         * @returns {boolean} Whether or not the given token is a semicolon.
+         */
+        function isSemicolon(token) {
+            return token.type === "Punctuator" && token.value === ";";
         }
 
         /**
@@ -115,7 +128,7 @@ module.exports = {
          * @returns {void}
          */
         function checkSemicolonSpacing(token, node) {
-            if (astUtils.isSemicolonToken(token)) {
+            if (isSemicolon(token)) {
                 const location = token.loc.start;
 
                 if (hasLeadingSpace(token)) {
@@ -193,10 +206,6 @@ module.exports = {
             DebuggerStatement: checkNode,
             ReturnStatement: checkNode,
             ThrowStatement: checkNode,
-            ImportDeclaration: checkNode,
-            ExportNamedDeclaration: checkNode,
-            ExportAllDeclaration: checkNode,
-            ExportDefaultDeclaration: checkNode,
             ForStatement(node) {
                 if (node.init) {
                     checkSemicolonSpacing(sourceCode.getTokenAfter(node.init), node);

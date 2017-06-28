@@ -128,13 +128,13 @@ module.exports = {
             }
 
             if (ALWAYS) {
-                if (astUtils.isClosingParenToken(right)) {
+                if (right.type === "Punctuator" && right.value === ")") {
                     return false;
                 }
                 return !isOpenerException(right);
+            } else {
+                return isOpenerException(right);
             }
-            return isOpenerException(right);
-
         }
 
         /**
@@ -144,7 +144,7 @@ module.exports = {
          * @returns {boolean} True if the paren should have a space
          */
         function shouldCloserHaveSpace(left, right) {
-            if (astUtils.isOpeningParenToken(left)) {
+            if (left.type === "Punctuator" && left.value === "(") {
                 return false;
             }
 
@@ -154,9 +154,9 @@ module.exports = {
 
             if (ALWAYS) {
                 return !isCloserException(left);
+            } else {
+                return isCloserException(left);
             }
-            return isCloserException(left);
-
         }
 
         /**
@@ -180,9 +180,9 @@ module.exports = {
 
             if (ALWAYS) {
                 return isOpenerException(right);
+            } else {
+                return !isOpenerException(right);
             }
-            return !isOpenerException(right);
-
         }
 
         /**
@@ -192,7 +192,7 @@ module.exports = {
          * @returns {boolean} True if the paren should reject the space
          */
         function shouldCloserRejectSpace(left, right) {
-            if (astUtils.isOpeningParenToken(left)) {
+            if (left.type === "Punctuator" && left.value === "(") {
                 return false;
             }
 
@@ -206,9 +206,9 @@ module.exports = {
 
             if (ALWAYS) {
                 return isCloserException(left);
+            } else {
+                return !isCloserException(left);
             }
-            return !isCloserException(left);
-
         }
 
         //--------------------------------------------------------------------------
@@ -224,7 +224,11 @@ module.exports = {
                     const prevToken = tokens[i - 1];
                     const nextToken = tokens[i + 1];
 
-                    if (!astUtils.isOpeningParenToken(token) && !astUtils.isClosingParenToken(token)) {
+                    if (token.type !== "Punctuator") {
+                        return;
+                    }
+
+                    if (token.value !== "(" && token.value !== ")") {
                         return;
                     }
 

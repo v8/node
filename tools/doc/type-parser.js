@@ -4,13 +4,12 @@ const jsDocPrefix = 'https://developer.mozilla.org/en-US/docs/Web/JavaScript/';
 const jsDocUrl = jsDocPrefix + 'Reference/Global_Objects/';
 const jsPrimitiveUrl = jsDocPrefix + 'Data_structures';
 const jsPrimitives = {
-  'boolean': 'Boolean',
-  'integer': 'Number', // not a primitive, used for clarification
-  'null': 'Null',
+  'integer': 'Number',  // this is for extending
   'number': 'Number',
   'string': 'String',
-  'symbol': 'Symbol',
-  'undefined': 'Undefined'
+  'boolean': 'Boolean',
+  'null': 'Null',
+  'symbol': 'Symbol'
 };
 const jsGlobalTypes = [
   'Error', 'Object', 'Function', 'Array', 'TypedArray', 'Uint8Array',

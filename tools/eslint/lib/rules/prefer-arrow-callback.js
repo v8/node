@@ -11,7 +11,7 @@
 
 /**
  * Checks whether or not a given variable is a function name.
- * @param {eslint-scope.Variable} variable - A variable to check.
+ * @param {escope.Variable} variable - A variable to check.
  * @returns {boolean} `true` if the variable is a function name.
  */
 function isFunctionName(variable) {
@@ -31,8 +31,8 @@ function checkMetaProperty(node, metaName, propertyName) {
 
 /**
  * Gets the variable object of `arguments` which is defined implicitly.
- * @param {eslint-scope.Scope} scope - A scope to get.
- * @returns {eslint-scope.Variable} The found variable object.
+ * @param {escope.Scope} scope - A scope to get.
+ * @returns {escope.Variable} The found variable object.
  */
 function getVariableOfArguments(scope) {
     const variables = scope.variables;
@@ -159,7 +159,7 @@ module.exports = {
     create(context) {
         const options = context.options[0] || {};
 
-        const allowUnboundThis = options.allowUnboundThis !== false; // default to true
+        const allowUnboundThis = options.allowUnboundThis !== false;  // default to true
         const allowNamedFunctions = options.allowNamedFunctions;
         const sourceCode = context.getSourceCode();
 
@@ -277,23 +277,15 @@ module.exports = {
                             const paramsRightParen = sourceCode.getTokenBefore(node.body);
                             const asyncKeyword = node.async ? "async " : "";
                             const paramsFullText = sourceCode.text.slice(paramsLeftParen.range[0], paramsRightParen.range[1]);
-                            const arrowFunctionText = `${asyncKeyword}${paramsFullText} => ${sourceCode.getText(node.body)}`;
 
-                            /*
-                             * If the callback function has `.bind(this)`, replace it with an arrow function and remove the binding.
-                             * Otherwise, just replace the arrow function itself.
-                             */
-                            const replacedNode = callbackInfo.isLexicalThis ? node.parent.parent : node;
+                            if (callbackInfo.isLexicalThis) {
 
-                            /*
-                             * If the replaced node is part of a BinaryExpression, LogicalExpression, or MemberExpression, then
-                             * the arrow function needs to be parenthesized, because `foo || () => {}` is invalid syntax even
-                             * though `foo || function() {}` is valid.
-                             */
-                            const needsParens = replacedNode.parent.type !== "CallExpression" && replacedNode.parent.type !== "ConditionalExpression";
-                            const replacementText = needsParens ? `(${arrowFunctionText})` : arrowFunctionText;
+                                // If the callback function has `.bind(this)`, replace it with an arrow function and remove the binding.
+                                return fixer.replaceText(node.parent.parent, `${asyncKeyword}${paramsFullText} => ${sourceCode.getText(node.body)}`);
+                            }
 
-                            return fixer.replaceText(replacedNode, replacementText);
+                            // Otherwise, only replace the `function` keyword and parameters with the arrow function parameters.
+                            return fixer.replaceTextRange([node.start, node.body.start], `${asyncKeyword}${paramsFullText} => `);
                         }
                     });
                 }

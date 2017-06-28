@@ -132,15 +132,6 @@ module.exports = {
             });
         }
 
-        /**
-         * Determines whether a given node is a string literal
-         * @param {ASTNode} node The node to check
-         * @returns {boolean} `true` if the node is a string literal
-         */
-        function isStringLiteral(node) {
-            return node.type === "Literal" && typeof node.value === "string";
-        }
-
         //--------------------------------------------------------------------------
         // Public
         //--------------------------------------------------------------------------
@@ -148,7 +139,7 @@ module.exports = {
         return {
 
             VariableDeclarator(node) {
-                if (!node.init || node.init.type !== "FunctionExpression" || node.id.type !== "Identifier") {
+                if (!node.init || node.init.type !== "FunctionExpression") {
                     return;
                 }
                 if (node.init.id && shouldWarn(node.id.name, node.init.id.name)) {
@@ -157,16 +148,14 @@ module.exports = {
             },
 
             AssignmentExpression(node) {
-                if (
-                    node.right.type !== "FunctionExpression" ||
-                    (node.left.computed && node.left.property.type !== "Literal") ||
-                    (!includeModuleExports && isModuleExports(node.left)) ||
-                    (node.left.type !== "Identifier" && node.left.type !== "MemberExpression")
-                ) {
+                if (node.right.type !== "FunctionExpression" ||
+                   (node.left.computed && node.left.property.type !== "Literal") ||
+                    (!includeModuleExports && isModuleExports(node.left))
+                   ) {
                     return;
                 }
 
-                const isProp = node.left.type === "MemberExpression";
+                const isProp = node.left.type === "MemberExpression" ? true : false;
                 const name = isProp ? astUtils.getStaticPropertyName(node.left) : node.left.name;
 
                 if (node.right.id && isIdentifier(name) && shouldWarn(name, node.right.id.name)) {
@@ -175,13 +164,13 @@ module.exports = {
             },
 
             Property(node) {
-                if (node.value.type !== "FunctionExpression" || !node.value.id || node.computed && !isStringLiteral(node.key)) {
+                if (node.value.type !== "FunctionExpression" || !node.value.id || node.computed && node.key.type !== "Literal") {
                     return;
                 }
                 if (node.key.type === "Identifier" && shouldWarn(node.key.name, node.value.id.name)) {
                     report(node, node.key.name, node.value.id.name, true);
                 } else if (
-                    isStringLiteral(node.key) &&
+                    node.key.type === "Literal" &&
                     isIdentifier(node.key.value, ecmaVersion) &&
                     shouldWarn(node.key.value, node.value.id.name)
                 ) {

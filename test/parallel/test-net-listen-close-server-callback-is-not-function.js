@@ -4,7 +4,7 @@ const net = require('net');
 
 const server = net.createServer(common.mustNotCall());
 
-server.on('close', common.mustCall());
+server.on('close', common.mustCall(function() {}));
 
 server.listen(0, common.mustNotCall());
 

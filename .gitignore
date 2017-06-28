@@ -6,7 +6,7 @@
 !tools/doc/node_modules/**/.*
 !.editorconfig
 !.eslintignore
-!.eslintrc.yaml
+!.eslintrc
 !.gitattributes
 !.github
 !.gitignore
@@ -34,7 +34,6 @@ node_g
 .benchmark_reports
 icu_config.gypi
 .eslintcache
-node_trace.*.log
 
 /out
 
@@ -60,8 +59,6 @@ ipch/
 *.VC.opendb
 .vs/
 .vscode/
-/deps/v8/src/debug/obj
-/*.exe
 
 /config.mk
 /config.gypi
@@ -110,8 +107,3 @@ icu_config.gypi
 # Xcode workspaces and project folders
 *.xcodeproj
 *.xcworkspace
-
-# libuv book and GitHub template
-deps/uv/.github/
-deps/uv/docs/code/
-deps/uv/docs/src/guide/

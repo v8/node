@@ -3,8 +3,8 @@
 module.exports = exports = search
 
 var npm = require('./npm.js')
-var allPackageSearch = require('./search/all-package-search')
-var esearch = require('./search/esearch.js')
+var allPackageMetadata = require('./search/all-package-metadata.js')
+var packageFilter = require('./search/package-filter.js')
 var formatPackageStream = require('./search/format-package-stream.js')
 var usage = require('./utils/usage')
 var output = require('./utils/output.js')
@@ -21,44 +21,33 @@ search.completion = function (opts, cb) {
 }
 
 function search (args, cb) {
-  var searchOpts = {
-    description: npm.config.get('description'),
-    exclude: prepareExcludes(npm.config.get('searchexclude')),
-    include: prepareIncludes(args, npm.config.get('searchopts')),
-    limit: npm.config.get('searchlimit'),
-    log: log,
-    staleness: npm.config.get('searchstaleness'),
-    unicode: npm.config.get('unicode')
-  }
+  var staleness = npm.config.get('searchstaleness')
 
-  if (searchOpts.include.length === 0) {
+  var include = prepareIncludes(args, npm.config.get('searchopts'))
+  if (include.length === 0) {
     return cb(new Error('search must be called with arguments'))
   }
+
+  var exclude = prepareExcludes(npm.config.get('searchexclude'))
 
   // Used later to figure out whether we had any packages go out
   var anyOutput = false
 
-  var entriesStream = ms.through.obj()
+  // Get a stream with *all* the packages. This takes care of dealing
+  // with the local cache as well, but that's an internal detail.
+  var allEntriesStream = allPackageMetadata(staleness)
 
-  var esearchWritten = false
-  esearch(searchOpts).on('data', function (pkg) {
-    entriesStream.write(pkg)
-    !esearchWritten && (esearchWritten = true)
-  }).on('error', function (e) {
-    if (esearchWritten) {
-      // If esearch errored after already starting output, we can't fall back.
-      return entriesStream.emit('error', e)
-    }
-    log.warn('search', 'fast search endpoint errored. Using old search.')
-    allPackageSearch(searchOpts).on('data', function (pkg) {
-      entriesStream.write(pkg)
-    }).on('error', function (e) {
-      entriesStream.emit('error', e)
-    }).on('end', function () {
-      entriesStream.end()
+  // Grab a stream that filters those packages according to given params.
+  var searchSection = (npm.config.get('unicode') ? '🤔 ' : '') + 'search'
+  var filterStream = streamFilter(function (pkg) {
+    log.gauge.pulse('search')
+    log.gauge.show({section: searchSection, logline: 'scanning ' + pkg.name})
+    // Simply 'true' if the package matches search parameters.
+    var match = packageFilter(pkg, include, exclude, {
+      description: npm.config.get('description')
     })
-  }).on('end', function () {
-    entriesStream.end()
+    if (match) { anyOutput = true }
+    return match
   })
 
   // Grab a configured output stream that will spit out packages in the
@@ -72,17 +61,16 @@ function search (args, cb) {
     color: npm.color
   })
   outputStream.on('data', function (chunk) {
-    if (!anyOutput) { anyOutput = true }
     output(chunk.toString('utf8'))
   })
 
   log.silly('search', 'searching packages')
-  ms.pipe(entriesStream, outputStream, function (er) {
+  ms.pipe(allEntriesStream, filterStream, outputStream, function (er) {
     if (er) return cb(er)
     if (!anyOutput && !npm.config.get('json') && !npm.config.get('parseable')) {
       output('No matches found for ' + (args.map(JSON.stringify).join(' ')))
     }
-    log.silly('search', 'search completed')
+    log.silly('search', 'index search completed')
     log.clearProgress()
     cb(null, {})
   })
@@ -104,5 +92,14 @@ function prepareExcludes (searchexclude) {
   }
   return exclude.map(function (s) {
     return s.toLowerCase()
+  })
+}
+
+function streamFilter (filter) {
+  return ms.through.obj(function (chunk, enc, cb) {
+    if (filter(chunk)) {
+      this.push(chunk)
+    }
+    cb()
   })
 }

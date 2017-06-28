@@ -14,7 +14,7 @@ const s = new net.Socket({
   },
   writable: false
 });
-assert.strictEqual(s, s.resume());
+s.resume();
 
 const events = [];
 

@@ -29,6 +29,13 @@ function gentlyRm (target, gently, base, cb) {
     gently = false
   }
 
+  log.silly(
+    'gentlyRm',
+    target,
+    'is being', gently ? 'gently removed' : 'purged',
+    base ? 'from base ' + base : ''
+  )
+
   // never rm the root, prefix, or bin dirs
   //
   // globals included because of `npm link` -- as far as the package
@@ -46,13 +53,15 @@ function gentlyRm (target, gently, base, cb) {
 
   var targetPath = normalize(resolve(npm.prefix, target))
   if (prefixes.indexOf(targetPath) !== -1) {
+    log.verbose('gentlyRm', targetPath, "is part of npm and can't be removed")
     return cb(new Error('May not delete: ' + targetPath))
   }
-  var options = { }
+  var options = { log: log.silly.bind(log, 'vacuum-fs') }
   if (npm.config.get('force') || !gently) options.purge = true
   if (base) options.base = normalize(resolve(npm.prefix, base))
 
   if (!gently) {
+    log.verbose('gentlyRm', "don't care about contents; nuking", targetPath)
     return vacuum(targetPath, options, cb)
   }
 
@@ -86,6 +95,8 @@ function gentlyRm (target, gently, base, cb) {
     function thenRemove (toRemove, removeBase) {
       if (!toRemove) return cb()
       if (removeBase) options.base = removeBase
+      log.verbose('gentlyRm', options.purge ? 'Purging' : 'Vacuuming',
+        toRemove, 'up to', options.base)
       return vacuum(toRemove, options, cb)
     }
   })
@@ -105,7 +116,7 @@ function isSafeToRm (parent, target, cb) {
   // The parent directory or something it symlinks to must eventually be in
   // a folder that npm maintains.
   if (!parent.managed) {
-    log.info('gentlyRm', parent.path,
+    log.verbose('gentlyRm', parent.path,
       'is not contained in any diretory npm is known to control or ' +
       'any place they link to')
     return cb(clobberFail(target.path, 'containing path ' + parent.path +

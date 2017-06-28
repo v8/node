@@ -17,15 +17,19 @@
 
 const fs = require("fs"),
     path = require("path"),
-    defaultOptions = require("../conf/default-cli-options"),
-    Linter = require("./linter"),
+    rules = require("./rules"),
+    eslint = require("./eslint"),
+    defaultOptions = require("../conf/cli-options"),
     IgnoredPaths = require("./ignored-paths"),
     Config = require("./config"),
+    Plugins = require("./config/plugins"),
     fileEntryCache = require("file-entry-cache"),
     globUtil = require("./util/glob-util"),
+    SourceCodeFixer = require("./util/source-code-fixer"),
     validator = require("./config/config-validator"),
     stringify = require("json-stable-stringify"),
     hash = require("./util/hash"),
+
     pkg = require("../package.json");
 
 const debug = require("debug")("eslint:cli-engine");
@@ -69,10 +73,8 @@ const debug = require("debug")("eslint:cli-engine");
  * @typedef {Object} LintResult
  * @property {string} filePath The path to the file that was linted.
  * @property {LintMessage[]} messages All of the messages for the result.
- * @property {number} errorCount Number of errors for the result.
- * @property {number} warningCount Number of warnings for the result.
- * @property {number} fixableErrorCount Number of fixable errors for the result.
- * @property {number} fixableWarningCount Number of fixable warnings for the result.
+ * @property {number} errorCount Number or errors for the result.
+ * @property {number} warningCount Number or warnings for the result.
  * @property {string=} [source] The source code of the file that was linted.
  * @property {string=} [output] The source code of the file that was linted, with as many fixes applied as possible.
  */
@@ -91,21 +93,13 @@ function calculateStatsPerFile(messages) {
     return messages.reduce((stat, message) => {
         if (message.fatal || message.severity === 2) {
             stat.errorCount++;
-            if (message.fix) {
-                stat.fixableErrorCount++;
-            }
         } else {
             stat.warningCount++;
-            if (message.fix) {
-                stat.fixableWarningCount++;
-            }
         }
         return stat;
     }, {
         errorCount: 0,
-        warningCount: 0,
-        fixableErrorCount: 0,
-        fixableWarningCount: 0
+        warningCount: 0
     });
 }
 
@@ -119,15 +113,84 @@ function calculateStatsPerRun(results) {
     return results.reduce((stat, result) => {
         stat.errorCount += result.errorCount;
         stat.warningCount += result.warningCount;
-        stat.fixableErrorCount += result.fixableErrorCount;
-        stat.fixableWarningCount += result.fixableWarningCount;
         return stat;
     }, {
         errorCount: 0,
-        warningCount: 0,
-        fixableErrorCount: 0,
-        fixableWarningCount: 0
+        warningCount: 0
     });
+}
+
+/**
+ * Performs multiple autofix passes over the text until as many fixes as possible
+ * have been applied.
+ * @param {string} text The source text to apply fixes to.
+ * @param {Object} config The ESLint config object to use.
+ * @param {Object} options The ESLint options object to use.
+ * @param {string} options.filename The filename from which the text was read.
+ * @param {boolean} options.allowInlineConfig Flag indicating if inline comments
+ *      should be allowed.
+ * @returns {Object} The result of the fix operation as returned from the
+ *      SourceCodeFixer.
+ * @private
+ */
+function multipassFix(text, config, options) {
+    const MAX_PASSES = 10;
+    let messages = [],
+        fixedResult,
+        fixed = false,
+        passNumber = 0;
+
+    /**
+     * This loop continues until one of the following is true:
+     *
+     * 1. No more fixes have been applied.
+     * 2. Ten passes have been made.
+     *
+     * That means anytime a fix is successfully applied, there will be another pass.
+     * Essentially, guaranteeing a minimum of two passes.
+     */
+    do {
+        passNumber++;
+
+        debug(`Linting code for ${options.filename} (pass ${passNumber})`);
+        messages = eslint.verify(text, config, options);
+
+        debug(`Generating fixed text for ${options.filename} (pass ${passNumber})`);
+        fixedResult = SourceCodeFixer.applyFixes(eslint.getSourceCode(), messages);
+
+        // stop if there are any syntax errors.
+        // 'fixedResult.output' is a empty string.
+        if (messages.length === 1 && messages[0].fatal) {
+            break;
+        }
+
+        // keep track if any fixes were ever applied - important for return value
+        fixed = fixed || fixedResult.fixed;
+
+        // update to use the fixed output instead of the original text
+        text = fixedResult.output;
+
+    } while (
+        fixedResult.fixed &&
+        passNumber < MAX_PASSES
+    );
+
+
+    /*
+     * If the last result had fixes, we need to lint again to be sure we have
+     * the most up-to-date information.
+     */
+    if (fixedResult.fixed) {
+        fixedResult.messages = eslint.verify(text, config, options);
+    }
+
+
+    // ensure the last result properly reflects if fixes were done
+    fixedResult.fixed = fixed;
+    fixedResult.output = text;
+
+    return fixedResult;
+
 }
 
 /**
@@ -137,14 +200,13 @@ function calculateStatsPerRun(results) {
  * @param {string} filename An optional string representing the texts filename.
  * @param {boolean} fix Indicates if fixes should be processed.
  * @param {boolean} allowInlineConfig Allow/ignore comments that change config.
- * @param {Linter} linter Linter context
  * @returns {LintResult} The results for linting on this text.
  * @private
  */
-function processText(text, configHelper, filename, fix, allowInlineConfig, linter) {
+function processText(text, configHelper, filename, fix, allowInlineConfig) {
 
     // clear all existing settings for a new file
-    linter.reset();
+    eslint.reset();
 
     let filePath,
         messages,
@@ -162,10 +224,10 @@ function processText(text, configHelper, filename, fix, allowInlineConfig, linte
     const config = configHelper.getConfig(filePath);
 
     if (config.plugins) {
-        configHelper.plugins.loadAll(config.plugins);
+        Plugins.loadAll(config.plugins);
     }
 
-    const loadedPlugins = configHelper.plugins.getAll();
+    const loadedPlugins = Plugins.getAll();
 
     for (const plugin in loadedPlugins) {
         if (loadedPlugins[plugin].processors && Object.keys(loadedPlugins[plugin].processors).indexOf(fileExtension) >= 0) {
@@ -180,7 +242,7 @@ function processText(text, configHelper, filename, fix, allowInlineConfig, linte
         const unprocessedMessages = [];
 
         parsedBlocks.forEach(block => {
-            unprocessedMessages.push(linter.verify(block, config, {
+            unprocessedMessages.push(eslint.verify(block, config, {
                 filename,
                 allowInlineConfig
             }));
@@ -193,13 +255,13 @@ function processText(text, configHelper, filename, fix, allowInlineConfig, linte
     } else {
 
         if (fix) {
-            fixedResult = linter.verifyAndFix(text, config, {
+            fixedResult = multipassFix(text, config, {
                 filename,
                 allowInlineConfig
             });
             messages = fixedResult.messages;
         } else {
-            messages = linter.verify(text, config, {
+            messages = eslint.verify(text, config, {
                 filename,
                 allowInlineConfig
             });
@@ -212,9 +274,7 @@ function processText(text, configHelper, filename, fix, allowInlineConfig, linte
         filePath: filename,
         messages,
         errorCount: stats.errorCount,
-        warningCount: stats.warningCount,
-        fixableErrorCount: stats.fixableErrorCount,
-        fixableWarningCount: stats.fixableWarningCount
+        warningCount: stats.warningCount
     };
 
     if (fixedResult && fixedResult.fixed) {
@@ -234,14 +294,13 @@ function processText(text, configHelper, filename, fix, allowInlineConfig, linte
  * @param {string} filename The filename of the file being checked.
  * @param {Object} configHelper The configuration options for ESLint.
  * @param {Object} options The CLIEngine options object.
- * @param {Linter} linter Linter context
  * @returns {LintResult} The results for linting on this file.
  * @private
  */
-function processFile(filename, configHelper, options, linter) {
+function processFile(filename, configHelper, options) {
 
     const text = fs.readFileSync(path.resolve(filename), "utf8"),
-        result = processText(text, configHelper, filename, options.fix, options.allowInlineConfig, linter);
+        result = processText(text, configHelper, filename, options.fix, options.allowInlineConfig);
 
     return result;
 
@@ -280,9 +339,7 @@ function createIgnoreResult(filePath, baseDir) {
             }
         ],
         errorCount: 0,
-        warningCount: 1,
-        fixableErrorCount: 0,
-        fixableWarningCount: 0
+        warningCount: 1
     };
 }
 
@@ -318,7 +375,7 @@ function getCacheFile(cacheFile, cwd) {
     cacheFile = path.normalize(cacheFile);
 
     const resolvedCacheFile = path.resolve(cwd, cacheFile);
-    const looksLikeADirectory = cacheFile[cacheFile.length - 1] === path.sep;
+    const looksLikeADirectory = cacheFile[cacheFile.length - 1 ] === path.sep;
 
     /**
      * return the name for the cache file in case the provided parameter is a directory
@@ -375,106 +432,141 @@ function getCacheFile(cacheFile, cwd) {
 // Public Interface
 //------------------------------------------------------------------------------
 
-class CLIEngine {
+/**
+ * Creates a new instance of the core CLI engine.
+ * @param {CLIEngineOptions} options The options for this instance.
+ * @constructor
+ */
+function CLIEngine(options) {
+
+    options = Object.assign(
+        Object.create(null),
+        defaultOptions,
+        { cwd: process.cwd() },
+        options
+    );
 
     /**
-     * Creates a new instance of the core CLI engine.
-     * @param {CLIEngineOptions} options The options for this instance.
-     * @constructor
+     * Stored options for this instance
+     * @type {Object}
      */
-    constructor(options) {
+    this.options = options;
 
-        options = Object.assign(
-            Object.create(null),
-            defaultOptions,
-            { cwd: process.cwd() },
-            options
-        );
+    const cacheFile = getCacheFile(this.options.cacheLocation || this.options.cacheFile, this.options.cwd);
 
-        /**
-         * Stored options for this instance
-         * @type {Object}
-         */
-        this.options = options;
-        this.linter = new Linter();
+    /**
+     * Cache used to avoid operating on files that haven't changed since the
+     * last successful execution (e.g., file passed linting with no errors and
+     * no warnings).
+     * @type {Object}
+     */
+    this._fileCache = fileEntryCache.create(cacheFile);
 
-        if (options.cache) {
-            const cacheFile = getCacheFile(this.options.cacheLocation || this.options.cacheFile, this.options.cwd);
+    // load in additional rules
+    if (this.options.rulePaths) {
+        const cwd = this.options.cwd;
 
-            /**
-             * Cache used to avoid operating on files that haven't changed since the
-             * last successful execution (e.g., file passed linting with no errors and
-             * no warnings).
-             * @type {Object}
-             */
-            this._fileCache = fileEntryCache.create(cacheFile);
+        this.options.rulePaths.forEach(rulesdir => {
+            debug(`Loading rules from ${rulesdir}`);
+            rules.load(rulesdir, cwd);
+        });
+    }
+
+    Object.keys(this.options.rules || {}).forEach(name => {
+        validator.validateRuleOptions(name, this.options.rules[name], "CLI");
+    });
+}
+
+/**
+ * Returns the formatter representing the given format or null if no formatter
+ * with the given name can be found.
+ * @param {string} [format] The name of the format to load or the path to a
+ *      custom formatter.
+ * @returns {Function} The formatter function or null if not found.
+ */
+CLIEngine.getFormatter = function(format) {
+
+    let formatterPath;
+
+    // default is stylish
+    format = format || "stylish";
+
+    // only strings are valid formatters
+    if (typeof format === "string") {
+
+        // replace \ with / for Windows compatibility
+        format = format.replace(/\\/g, "/");
+
+        // if there's a slash, then it's a file
+        if (format.indexOf("/") > -1) {
+            const cwd = this.options ? this.options.cwd : process.cwd();
+
+            formatterPath = path.resolve(cwd, format);
+        } else {
+            formatterPath = `./formatters/${format}`;
         }
 
-        // load in additional rules
-        if (this.options.rulePaths) {
-            const cwd = this.options.cwd;
-
-            this.options.rulePaths.forEach(rulesdir => {
-                debug(`Loading rules from ${rulesdir}`);
-                this.linter.rules.load(rulesdir, cwd);
-            });
+        try {
+            return require(formatterPath);
+        } catch (ex) {
+            ex.message = `There was a problem loading formatter: ${formatterPath}\nError: ${ex.message}`;
+            throw ex;
         }
 
-        Object.keys(this.options.rules || {}).forEach(name => {
-            validator.validateRuleOptions(name, this.options.rules[name], "CLI", this.linter.rules);
-        });
-
-        this.config = new Config(this.options, this.linter);
+    } else {
+        return null;
     }
+};
+
+/**
+ * Returns results that only contains errors.
+ * @param {LintResult[]} results The results to filter.
+ * @returns {LintResult[]} The filtered results.
+ */
+CLIEngine.getErrorResults = function(results) {
+    const filtered = [];
+
+    results.forEach(result => {
+        const filteredMessages = result.messages.filter(isErrorMessage);
+
+        if (filteredMessages.length > 0) {
+            filtered.push(
+                Object.assign(result, {
+                    messages: filteredMessages,
+                    errorCount: filteredMessages.length,
+                    warningCount: 0
+                })
+            );
+        }
+    });
+
+    return filtered;
+};
+
+/**
+ * Outputs fixes from the given results to files.
+ * @param {Object} report The report object created by CLIEngine.
+ * @returns {void}
+ */
+CLIEngine.outputFixes = function(report) {
+    report.results.filter(result => result.hasOwnProperty("output")).forEach(result => {
+        fs.writeFileSync(result.filePath, result.output);
+    });
+};
+
+CLIEngine.prototype = {
+
+    constructor: CLIEngine,
 
     /**
-     * Returns results that only contains errors.
-     * @param {LintResult[]} results The results to filter.
-     * @returns {LintResult[]} The filtered results.
-     */
-    static getErrorResults(results) {
-        const filtered = [];
-
-        results.forEach(result => {
-            const filteredMessages = result.messages.filter(isErrorMessage);
-
-            if (filteredMessages.length > 0) {
-                filtered.push(
-                    Object.assign(result, {
-                        messages: filteredMessages,
-                        errorCount: filteredMessages.length,
-                        warningCount: 0,
-                        fixableErrorCount: result.fixableErrorCount,
-                        fixableWarningCount: 0
-                    })
-                );
-            }
-        });
-
-        return filtered;
-    }
-
-    /**
-     * Outputs fixes from the given results to files.
-     * @param {Object} report The report object created by CLIEngine.
-     * @returns {void}
-     */
-    static outputFixes(report) {
-        report.results.filter(result => result.hasOwnProperty("output")).forEach(result => {
-            fs.writeFileSync(result.filePath, result.output);
-        });
-    }
-
-
-    /**
-     * Add a plugin by passing its configuration
+     * Add a plugin by passing it's configuration
      * @param {string} name Name of the plugin.
      * @param {Object} pluginobject Plugin configuration object.
      * @returns {void}
      */
     addPlugin(name, pluginobject) {
-        this.config.plugins.define(name, pluginobject);
-    }
+        Plugins.define(name, pluginobject);
+    },
 
     /**
      * Resolves the patterns passed into executeOnFiles() into glob-based patterns
@@ -484,7 +576,7 @@ class CLIEngine {
      */
     resolveFileGlobPatterns(patterns) {
         return globUtil.resolveFileGlobPatterns(patterns, this.options);
-    }
+    },
 
     /**
      * Executes the current configuration on an array of file and directory names.
@@ -495,13 +587,8 @@ class CLIEngine {
         const results = [],
             options = this.options,
             fileCache = this._fileCache,
-            configHelper = this.config;
+            configHelper = new Config(options);
         let prevConfig; // the previous configuration used
-        const cacheFile = getCacheFile(this.options.cacheLocation || this.options.cacheFile, this.options.cwd);
-
-        if (!options.cache && fs.existsSync(cacheFile)) {
-            fs.unlinkSync(cacheFile);
-        }
 
         /**
          * Calculates the hash of the config file used to validate a given file
@@ -537,10 +624,9 @@ class CLIEngine {
          * unsupported file extensions and any files that are already linted.
          * @param {string} filename The resolved filename of the file to be linted
          * @param {boolean} warnIgnored always warn when a file is ignored
-         * @param {Linter} linter Linter context
          * @returns {void}
          */
-        function executeOnFile(filename, warnIgnored, linter) {
+        function executeOnFile(filename, warnIgnored) {
             let hashOfConfig,
                 descriptor;
 
@@ -577,11 +663,13 @@ class CLIEngine {
                     // move to the next file
                     return;
                 }
+            } else {
+                fileCache.destroy();
             }
 
             debug(`Processing ${filename}`);
 
-            const res = processFile(filename, configHelper, options, linter);
+            const res = processFile(filename, configHelper, options);
 
             if (options.cache) {
 
@@ -614,11 +702,12 @@ class CLIEngine {
         const startTime = Date.now();
 
 
+
         patterns = this.resolveFileGlobPatterns(patterns);
         const fileList = globUtil.listFilesToProcess(patterns, options);
 
         fileList.forEach(fileInfo => {
-            executeOnFile(fileInfo.filename, fileInfo.ignored, this.linter);
+            executeOnFile(fileInfo.filename, fileInfo.ignored);
         });
 
         const stats = calculateStatsPerRun(results);
@@ -634,11 +723,9 @@ class CLIEngine {
         return {
             results,
             errorCount: stats.errorCount,
-            warningCount: stats.warningCount,
-            fixableErrorCount: stats.fixableErrorCount,
-            fixableWarningCount: stats.fixableWarningCount
+            warningCount: stats.warningCount
         };
-    }
+    },
 
     /**
      * Executes the current configuration on text.
@@ -651,7 +738,7 @@ class CLIEngine {
 
         const results = [],
             options = this.options,
-            configHelper = this.config,
+            configHelper = new Config(options),
             ignoredPaths = new IgnoredPaths(options);
 
         // resolve filename based on options.cwd (for reporting, ignoredPaths also resolves)
@@ -664,7 +751,7 @@ class CLIEngine {
                 results.push(createIgnoreResult(filename, options.cwd));
             }
         } else {
-            results.push(processText(text, configHelper, filename, options.fix, options.allowInlineConfig, this.linter));
+            results.push(processText(text, configHelper, filename, options.fix, options.allowInlineConfig));
         }
 
         const stats = calculateStatsPerRun(results);
@@ -672,11 +759,9 @@ class CLIEngine {
         return {
             results,
             errorCount: stats.errorCount,
-            warningCount: stats.warningCount,
-            fixableErrorCount: stats.fixableErrorCount,
-            fixableWarningCount: stats.fixableWarningCount
+            warningCount: stats.warningCount
         };
-    }
+    },
 
     /**
      * Returns a configuration object for the given file based on the CLI options.
@@ -686,10 +771,10 @@ class CLIEngine {
      * @returns {Object} A configuration object for the file.
      */
     getConfigForFile(filePath) {
-        const configHelper = this.config;
+        const configHelper = new Config(this.options);
 
         return configHelper.getConfig(filePath);
-    }
+    },
 
     /**
      * Checks if a given path is ignored by ESLint.
@@ -701,51 +786,12 @@ class CLIEngine {
         const ignoredPaths = new IgnoredPaths(this.options);
 
         return ignoredPaths.contains(resolvedPath);
-    }
+    },
 
-    /**
-     * Returns the formatter representing the given format or null if no formatter
-     * with the given name can be found.
-     * @param {string} [format] The name of the format to load or the path to a
-     *      custom formatter.
-     * @returns {Function} The formatter function or null if not found.
-     */
-    getFormatter(format) {
+    getFormatter: CLIEngine.getFormatter
 
-        let formatterPath;
-
-        // default is stylish
-        format = format || "stylish";
-
-        // only strings are valid formatters
-        if (typeof format === "string") {
-
-            // replace \ with / for Windows compatibility
-            format = format.replace(/\\/g, "/");
-
-            // if there's a slash, then it's a file
-            if (format.indexOf("/") > -1) {
-                const cwd = this.options ? this.options.cwd : process.cwd();
-
-                formatterPath = path.resolve(cwd, format);
-            } else {
-                formatterPath = `./formatters/${format}`;
-            }
-
-            try {
-                return require(formatterPath);
-            } catch (ex) {
-                ex.message = `There was a problem loading formatter: ${formatterPath}\nError: ${ex.message}`;
-                throw ex;
-            }
-
-        } else {
-            return null;
-        }
-    }
-}
+};
 
 CLIEngine.version = pkg.version;
-CLIEngine.getFormatter = CLIEngine.prototype.getFormatter;
 
 module.exports = CLIEngine;

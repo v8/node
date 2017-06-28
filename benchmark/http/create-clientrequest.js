@@ -4,15 +4,15 @@ var common = require('../common.js');
 var ClientRequest = require('http').ClientRequest;
 
 var bench = common.createBenchmark(main, {
-  len: [1, 8, 16, 32, 64, 128],
+  pathlen: [1, 8, 16, 32, 64, 128],
   n: [1e6]
 });
 
 function main(conf) {
-  var len = +conf.len;
+  var pathlen = +conf.pathlen;
   var n = +conf.n;
 
-  var path = '/'.repeat(len);
+  var path = '/'.repeat(pathlen);
   var opts = { path: path, createConnection: function() {} };
 
   bench.start();

@@ -1,10 +1,9 @@
 'use strict';
 
-const common = require('../common');
-common.skipIfInspectorDisabled();
+require('../common');
 const spawn = require('child_process').spawn;
 
-const proc = spawn(process.execPath, ['inspect', 'foo']);
+const proc = spawn(process.execPath, ['debug', 'foo']);
 proc.stdout.setEncoding('utf8');
 
 let output = '';

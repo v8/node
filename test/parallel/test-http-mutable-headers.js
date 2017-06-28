@@ -1,24 +1,3 @@
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 'use strict';
 const common = require('../common');
 const assert = require('assert');
@@ -43,9 +22,8 @@ const s = http.createServer(common.mustCall((req, res) => {
   switch (test) {
     case 'headers':
       // Check that header-related functions work before setting any headers
-      const headers = res.getHeaders();
-      const exoticObj = Object.create(null);
-      assert.deepStrictEqual(headers, exoticObj);
+      // eslint-disable-next-line no-restricted-properties
+      assert.deepEqual(res.getHeaders(), {});
       assert.deepStrictEqual(res.getHeaderNames(), []);
       assert.deepStrictEqual(res.hasHeader('Connection'), false);
       assert.deepStrictEqual(res.getHeader('Connection'), undefined);
@@ -73,14 +51,16 @@ const s = http.createServer(common.mustCall((req, res) => {
       assert.strictEqual(res.getHeader('x-test-header2'), 'testing');
 
       const headersCopy = res.getHeaders();
-      const expected = {
+      // eslint-disable-next-line no-restricted-properties
+      assert.deepEqual(headersCopy, {
         'x-test-header': 'testing',
         'x-test-header2': 'testing',
         'set-cookie': cookies,
         'x-test-array-header': arrayValues
-      };
-      Object.setPrototypeOf(expected, null);
-      assert.deepStrictEqual(headersCopy, expected);
+      });
+      // eslint-disable-next-line no-restricted-properties
+      assert.deepEqual(headersCopy['set-cookie'], cookies);
+      assert.strictEqual(headersCopy['x-test-array-header'], arrayValues);
 
       assert.deepStrictEqual(res.getHeaderNames(),
                              ['x-test-header', 'x-test-header2',
@@ -126,7 +106,7 @@ const s = http.createServer(common.mustCall((req, res) => {
       break;
 
     default:
-      assert.fail('Unknown test');
+      common.fail('Unknown test');
   }
 
   res.statusCode = 201;
@@ -173,7 +153,7 @@ function nextTest() {
         break;
 
       default:
-        assert.fail('Unknown test');
+        common.fail('Unknown test');
     }
 
     response.setEncoding('utf8');

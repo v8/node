@@ -4,6 +4,7 @@ const assert = require('assert');
 const net = require('net');
 
 const server = net.createServer(function(socket) {
+  console.log(socket.remotePort);
   assert.strictEqual(socket.remotePort, common.PORT);
   socket.end();
   socket.on('close', function() {

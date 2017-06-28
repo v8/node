@@ -171,8 +171,8 @@ module.exports = {
 
             if (astUtils.isTokenOnSameLine(penultimate, last)) {
                 const shouldCheckPenultimate = (
-                    options.arraysInObjectsException && astUtils.isClosingBracketToken(penultimate) ||
-                    options.objectsInObjectsException && astUtils.isClosingBraceToken(penultimate)
+                    options.arraysInObjectsException && penultimate.value === "]" ||
+                    options.objectsInObjectsException && penultimate.value === "}"
                 );
                 const penultimateType = shouldCheckPenultimate && sourceCode.getNodeByRangeIndex(penultimate.start).type;
 
@@ -206,8 +206,14 @@ module.exports = {
          */
         function getClosingBraceOfObject(node) {
             const lastProperty = node.properties[node.properties.length - 1];
+            let token = sourceCode.getTokenAfter(lastProperty);
 
-            return sourceCode.getTokenAfter(lastProperty, astUtils.isClosingBraceToken);
+            // skip ')' and trailing commas.
+            while (token.type !== "Punctuator" || token.value !== "}") {
+                token = sourceCode.getTokenAfter(token);
+            }
+
+            return token;
         }
 
         /**
@@ -248,9 +254,15 @@ module.exports = {
                 firstSpecifier = node.specifiers[1];
             }
 
-            const first = sourceCode.getTokenBefore(firstSpecifier),
-                last = sourceCode.getTokenAfter(lastSpecifier, astUtils.isNotCommaToken),
-                second = sourceCode.getTokenAfter(first),
+            const first = sourceCode.getTokenBefore(firstSpecifier);
+            let last = sourceCode.getTokenAfter(lastSpecifier);
+
+            // to support a trailing comma.
+            if (last.value === ",") {
+                last = sourceCode.getTokenAfter(last);
+            }
+
+            const second = sourceCode.getTokenAfter(first),
                 penultimate = sourceCode.getTokenBefore(last);
 
             validateBraceSpacing(node, first, second, penultimate, last);
@@ -268,9 +280,15 @@ module.exports = {
 
             const firstSpecifier = node.specifiers[0],
                 lastSpecifier = node.specifiers[node.specifiers.length - 1],
-                first = sourceCode.getTokenBefore(firstSpecifier),
-                last = sourceCode.getTokenAfter(lastSpecifier, astUtils.isNotCommaToken),
-                second = sourceCode.getTokenAfter(first),
+                first = sourceCode.getTokenBefore(firstSpecifier);
+            let last = sourceCode.getTokenAfter(lastSpecifier);
+
+            // to support a trailing comma.
+            if (last.value === ",") {
+                last = sourceCode.getTokenAfter(last);
+            }
+
+            const second = sourceCode.getTokenAfter(first),
                 penultimate = sourceCode.getTokenBefore(last);
 
             validateBraceSpacing(node, first, second, penultimate, last);

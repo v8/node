@@ -13,9 +13,9 @@ assert.throws(() => {
           expected.length,
           0,
           'utf-8',
-          common.mustNotCall());
-}, /^TypeError: Second argument needs to be a buffer$/);
+          () => {});
+}, /Second argument needs to be a buffer/);
 
 assert.throws(() => {
   fs.readSync(fd, expected.length, 0, 'utf-8');
-}, /^TypeError: Second argument needs to be a buffer$/);
+}, /Second argument needs to be a buffer/);

@@ -119,7 +119,7 @@ array of license objects:
     // Not valid metadata
     { "license" :
       { "type" : "ISC"
-      , "url" : "https://opensource.org/licenses/ISC"
+      , "url" : "http://opensource.org/licenses/ISC"
       }
     }
 
@@ -127,10 +127,10 @@ array of license objects:
     { "licenses" :
       [
         { "type": "MIT"
-        , "url": "https://www.opensource.org/licenses/mit-license.php"
+        , "url": "http://www.opensource.org/licenses/mit-license.php"
         }
       , { "type": "Apache-2.0"
-        , "url": "https://opensource.org/licenses/apache2.0.php"
+        , "url": "http://opensource.org/licenses/apache2.0.php"
         }
       ]
     }
@@ -144,7 +144,7 @@ Those styles are now deprecated. Instead, use SPDX expressions, like this:
 Finally, if you do not wish to grant others the right to use a private or
 unpublished package under any terms:
 
-    { "license": "UNLICENSED" }
+    { "license": "UNLICENSED"}
 
 Consider also setting `"private": true` to prevent accidental publication.
 
@@ -204,7 +204,6 @@ Conversely, some files are always ignored:
 * `node_modules`
 * `config.gypi`
 * `*.orig`
-* `package-lock.json` (use shrinkwrap instead)
 
 ## main
 

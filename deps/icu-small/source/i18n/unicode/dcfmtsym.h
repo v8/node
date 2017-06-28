@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 ********************************************************************************
@@ -35,7 +35,6 @@
 #include "unicode/uobject.h"
 #include "unicode/locid.h"
 #include "unicode/unum.h"
-#include "unicode/unistr.h"
 
 /**
  * \file
@@ -393,7 +392,7 @@ public:
      * Returns that pattern stored in currecy info. Internal API for use by NumberFormat API.
      * @internal
      */
-    inline const char16_t* getCurrencyPattern(void) const;
+    inline const UChar* getCurrencyPattern(void) const;
 #endif  /* U_HIDE_INTERNAL_API */
 
 private:
@@ -424,7 +423,7 @@ private:
 
     char actualLocale[ULOC_FULLNAME_CAPACITY];
     char validLocale[ULOC_FULLNAME_CAPACITY];
-    const char16_t* currPattern;
+    const UChar* currPattern;
 
     UnicodeString currencySpcBeforeSym[UNUM_CURRENCY_SPACING_COUNT];
     UnicodeString currencySpcAfterSym[UNUM_CURRENCY_SPACING_COUNT];
@@ -492,7 +491,7 @@ DecimalFormatSymbols::getLocale() const {
 }
 
 #ifndef U_HIDE_INTERNAL_API
-inline const char16_t*
+inline const UChar*
 DecimalFormatSymbols::getCurrencyPattern() const {
     return currPattern;
 }

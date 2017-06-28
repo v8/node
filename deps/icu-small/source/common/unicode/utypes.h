@@ -1,4 +1,4 @@
-// © 2016 and later: Unicode, Inc. and others.
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
 // License & terms of use: http://www.unicode.org/copyright.html
 /*
 **********************************************************************
@@ -178,12 +178,12 @@
 
 /**
  * \def NULL
- * Define NULL if necessary, to nullptr for C++ and to ((void *)0) for C.
+ * Define NULL if necessary, to 0 for C++ and to ((void *)0) for C.
  * @stable ICU 2.0
  */
 #ifndef NULL
 #ifdef __cplusplus
-#define NULL    nullptr
+#define NULL    0
 #else
 #define NULL    ((void *)0)
 #endif

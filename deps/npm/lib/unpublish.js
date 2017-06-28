@@ -99,20 +99,20 @@ function gotProject (project, version, publishConfig, cb_) {
   var registry = mappedConfig.client
 
   // remove from the cache first
-  // npm.commands.cache(['clean', project, version], function (er) {
-    // if (er) {
-    //   log.error('unpublish', 'Failed to clean cache')
-    //   return cb(er)
-    // }
-
-  mapToRegistry(project, config, function (er, uri, auth) {
-    if (er) return cb(er)
-
-    var params = {
-      version: version,
-      auth: auth
+  npm.commands.cache(['clean', project, version], function (er) {
+    if (er) {
+      log.error('unpublish', 'Failed to clean cache')
+      return cb(er)
     }
-    registry.unpublish(uri, params, cb)
+
+    mapToRegistry(project, config, function (er, uri, auth) {
+      if (er) return cb(er)
+
+      var params = {
+        version: version,
+        auth: auth
+      }
+      registry.unpublish(uri, params, cb)
+    })
   })
-  // })
 }

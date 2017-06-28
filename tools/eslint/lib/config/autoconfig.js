@@ -10,13 +10,12 @@
 //------------------------------------------------------------------------------
 
 const lodash = require("lodash"),
-    Linter = require("../linter"),
+    eslint = require("../eslint"),
     configRule = require("./config-rule"),
     ConfigOps = require("./config-ops"),
-    recConfig = require("../../conf/eslint-recommended");
+    recConfig = require("../../conf/eslint.json");
 
 const debug = require("debug")("eslint:autoconfig");
-const linter = new Linter();
 
 //------------------------------------------------------------------------------
 // Data
@@ -38,11 +37,11 @@ const MAX_CONFIG_COMBINATIONS = 17, // 16 combinations + 1 for severity only
  * @param   {number}     errorCount    The number of errors encountered when linting with the config
  */
 
-/**
- * This callback is used to measure execution status in a progress bar
- * @callback progressCallback
- * @param {number} The total number of times the callback will be called.
- */
+ /**
+  * This callback is used to measure execution status in a progress bar
+  * @callback progressCallback
+  * @param {number} The total number of times the callback will be called.
+  */
 
 /**
  * Create registryItems for rules
@@ -66,16 +65,17 @@ function makeRegistryItems(rulesConfig) {
 * Unless a rulesConfig is provided at construction, the registry will not contain
 * any rules, only methods.  This will be useful for building up registries manually.
 *
-* Registry class
+* @constructor
+* @class   Registry
+* @param   {rulesConfig} [rulesConfig] Hash of rule names and arrays of possible configurations
 */
-class Registry {
+function Registry(rulesConfig) {
+    this.rules = (rulesConfig) ? makeRegistryItems(rulesConfig) : {};
+}
 
-    /**
-     * @param {rulesConfig} [rulesConfig] Hash of rule names and arrays of possible configurations
-     */
-    constructor(rulesConfig) {
-        this.rules = (rulesConfig) ? makeRegistryItems(rulesConfig) : {};
-    }
+Registry.prototype = {
+
+    constructor: Registry,
 
     /**
      * Populate the registry with core rule configs.
@@ -89,7 +89,7 @@ class Registry {
         const rulesConfig = configRule.createCoreRuleConfigs();
 
         this.rules = makeRegistryItems(rulesConfig);
-    }
+    },
 
     /**
      * Creates sets of rule configurations which can be used for linting
@@ -156,7 +156,7 @@ class Registry {
         }
 
         return ruleSets;
-    }
+    },
 
     /**
      * Remove all items from the registry with a non-zero number of errors
@@ -182,7 +182,7 @@ class Registry {
         });
 
         return newRegistry;
-    }
+    },
 
     /**
      * Removes rule configurations which were not included in a ruleSet
@@ -199,7 +199,7 @@ class Registry {
         });
 
         return newRegistry;
-    }
+    },
 
     /**
      * Creates a registry of rules which had no error-free configs.
@@ -221,7 +221,7 @@ class Registry {
         });
 
         return failingRegistry;
-    }
+    },
 
     /**
      * Create an eslint config for any rules which only have one configuration
@@ -240,7 +240,7 @@ class Registry {
         });
 
         return config;
-    }
+    },
 
     /**
      * Return a cloned registry containing only configs with a desired specificity
@@ -258,7 +258,7 @@ class Registry {
         });
 
         return newRegistry;
-    }
+    },
 
     /**
      * Lint SourceCodes against all configurations in the registry, and record results
@@ -291,19 +291,14 @@ class Registry {
 
             ruleSets.forEach(ruleSet => {
                 const lintConfig = Object.assign({}, config, { rules: ruleSet });
-                const lintResults = linter.verify(sourceCodes[filename], lintConfig);
+                const lintResults = eslint.verify(sourceCodes[filename], lintConfig);
 
                 lintResults.forEach(result => {
 
                     // It is possible that the error is from a configuration comment
                     // in a linted file, in which case there may not be a config
-                    // set in this ruleSetIdx.
-                    // (https://github.com/eslint/eslint/issues/5992)
-                    // (https://github.com/eslint/eslint/issues/7860)
-                    if (
-                        lintedRegistry.rules[result.ruleId] &&
-                        lintedRegistry.rules[result.ruleId][ruleSetIdx]
-                    ) {
+                    // set in this ruleSetIdx. (https://github.com/eslint/eslint/issues/5992)
+                    if (lintedRegistry.rules[result.ruleId][ruleSetIdx]) {
                         lintedRegistry.rules[result.ruleId][ruleSetIdx].errorCount += 1;
                     }
                 });
@@ -311,7 +306,7 @@ class Registry {
                 ruleSetIdx += 1;
 
                 if (cb) {
-                    cb(totalFilesLinting); // eslint-disable-line callback-return
+                    cb(totalFilesLinting);  // eslint-disable-line callback-return
                 }
             });
 
@@ -321,7 +316,7 @@ class Registry {
 
         return lintedRegistry;
     }
-}
+};
 
 /**
  * Extract rule configuration into eslint:recommended where possible.

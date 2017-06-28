@@ -20,7 +20,7 @@ server.on('message', (msg, rinfo) => {
 });
 
 server.on('listening', () => {
-  const address = server.address();
+  var address = server.address();
   console.log(`server listening ${address.address}:${address.port}`);
 });
 
@@ -146,7 +146,7 @@ server.on('message', (msg, rinfo) => {
 });
 
 server.on('listening', () => {
-  const address = server.address();
+  var address = server.address();
   console.log(`server listening ${address.address}:${address.port}`);
 });
 
@@ -245,23 +245,20 @@ chained.
 <!-- YAML
 added: v0.1.99
 changes:
-  - version: v8.0.0
-    pr-url: https://github.com/nodejs/node/pull/11985
-    description: The `msg` parameter can be an Uint8Array now.
-  - version: v8.0.0
-    pr-url: https://github.com/nodejs/node/pull/10473
-    description: The `address` parameter is always optional now.
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5929
     description: On success, `callback` will now be called with an `error`
                  argument of `null` rather than `0`.
+  - version: REPLACEME
+    pr-url: https://github.com/nodejs/node/pull/10473
+    description: The `address` parameter is always optional now.
   - version: v5.7.0
     pr-url: https://github.com/nodejs/node/pull/4374
     description: The `msg` parameter can be an array now. Also, the `offset`
                  and `length` parameters are optional now.
 -->
 
-* `msg` {Buffer|Uint8Array|string|array} Message to be sent
+* `msg` {Buffer|string|array} Message to be sent
 * `offset` {number} Integer. Optional. Offset in the buffer where the message starts.
 * `length` {number} Integer. Optional. Number of bytes in the message.
 * `port` {number} Integer. Destination port.
@@ -272,8 +269,7 @@ Broadcasts a datagram on the socket. The destination `port` and `address` must
 be specified.
 
 The `msg` argument contains the message to be sent.
-Depending on its type, different behavior can apply. If `msg` is a `Buffer`
-or `Uint8Array`,
+Depending on its type, different behavior can apply. If `msg` is a `Buffer`,
 the `offset` and `length` specify the offset within the `Buffer` where the
 message begins and the number of bytes in the message, respectively.
 If `msg` is a `String`, then it is automatically converted to a `Buffer`
@@ -301,8 +297,9 @@ The only way to know for sure that the datagram has been sent is by using a
 passed as the first argument to the `callback`. If a `callback` is not given,
 the error is emitted as an `'error'` event on the `socket` object.
 
-Offset and length are optional but both *must* be set if either are used.
-They are supported only when the first argument is a `Buffer` or `Uint8Array`.
+Offset and length are optional, but if you specify one you would need to
+specify the other. Also, they are supported only when the first
+argument is a `Buffer`.
 
 Example of sending a UDP packet to a random port on `localhost`;
 
@@ -328,10 +325,8 @@ client.send([buf1, buf2], 41234, (err) => {
 });
 ```
 
-Sending multiple buffers might be faster or slower depending on the
-application and operating system. It is important to run benchmarks to
-determine the optimal strategy on a case-by-case basis. Generally speaking,
-however, sending multiple buffers is faster.
+Sending multiple buffers might be faster or slower depending on your
+application and operating system: benchmark it. Usually it is faster.
 
 **A Note about UDP datagram size**
 
@@ -498,13 +493,14 @@ interfaces" address on a random port (it does the right thing for both `udp4`
 and `udp6` sockets). The bound address and port can be retrieved using
 [`socket.address().address`][] and [`socket.address().port`][].
 
-[`'close'`]: #dgram_event_close
-[`Error`]: errors.html#errors_class_error
 [`EventEmitter`]: events.html
+[`Buffer`]: buffer.html
+[`'close'`]: #dgram_event_close
 [`close()`]: #dgram_socket_close_callback
 [`cluster`]: cluster.html
-[`dgram.Socket#bind()`]: #dgram_socket_bind_options_callback
 [`dgram.createSocket()`]: #dgram_dgram_createsocket_options_callback
+[`dgram.Socket#bind()`]: #dgram_socket_bind_options_callback
+[`Error`]: errors.html#errors_class_error
 [`socket.address().address`]: #dgram_socket_address
 [`socket.address().port`]: #dgram_socket_address
 [`socket.bind()`]: #dgram_socket_bind_port_address_callback

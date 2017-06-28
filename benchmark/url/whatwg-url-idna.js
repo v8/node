@@ -37,6 +37,8 @@ function main(conf) {
   const input = inputs[conf.input][to];
   const method = to === 'ascii' ? domainToASCII : domainToUnicode;
 
+  common.v8ForceOptimization(method, input);
+
   bench.start();
   for (var i = 0; i < n; i++) {
     method(input);

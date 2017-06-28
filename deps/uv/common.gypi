@@ -180,7 +180,6 @@
             '-Wendif-labels',
             '-W',
             '-Wno-unused-parameter',
-            '-Wstrict-prototypes',
           ],
         },
         'conditions': [

@@ -9,10 +9,9 @@
 // Requirements
 //------------------------------------------------------------------------------
 
-const Rules = require("../rules"),
+const rules = require("../rules"),
     loadRules = require("../load-rules");
 
-const rules = new Rules();
 
 //------------------------------------------------------------------------------
 // Helpers
@@ -169,29 +168,30 @@ function combinePropertyObjects(objArr1, objArr2) {
     return res;
 }
 
-/**
- * Creates a new instance of a rule configuration set
- *
- * A rule configuration set is an array of configurations that are valid for a
- * given rule.  For example, the configuration set for the "semi" rule could be:
- *
- * ruleConfigSet.ruleConfigs // -> [[2], [2, "always"], [2, "never"]]
- *
- * Rule configuration set class
- */
-class RuleConfigSet {
+ /**
+  * Creates a new instance of a rule configuration set
+  *
+  * A rule configuration set is an array of configurations that are valid for a
+  * given rule.  For example, the configuration set for the "semi" rule could be:
+  *
+  * ruleConfigSet.ruleConfigs // -> [[2], [2, "always"], [2, "never"]]
+  *
+  * @param {ruleConfig[]} configs Valid rule configurations
+  * @constructor
+  */
+function RuleConfigSet(configs) {
 
     /**
-     * @param {ruleConfig[]} configs Valid rule configurations
-     */
-    constructor(configs) {
+    * Stored valid rule configurations for this instance
+    * @type {array}
+    */
+    this.ruleConfigs = configs || [];
 
-        /**
-        * Stored valid rule configurations for this instance
-        * @type {array}
-        */
-        this.ruleConfigs = configs || [];
-    }
+}
+
+RuleConfigSet.prototype = {
+
+    constructor: RuleConfigSet,
 
     /**
     * Add a severity level to the front of all configs in the instance.
@@ -210,7 +210,7 @@ class RuleConfigSet {
 
         // Add a single config at the beginning consisting of only the severity
         this.ruleConfigs.unshift(severity);
-    }
+    },
 
     /**
     * Add rule configs from an array of strings (schema enums)
@@ -219,12 +219,12 @@ class RuleConfigSet {
     */
     addEnums(enums) {
         this.ruleConfigs = this.ruleConfigs.concat(combineArrays(this.ruleConfigs, enums));
-    }
+    },
 
     /**
     * Add rule configurations from a schema object
     * @param  {Object} obj Schema item with type === "object"
-    * @returns {boolean} true if at least one schema for the object could be generated, false otherwise
+    * @returns {void}
     */
     addObject(obj) {
         const objectConfigSet = {
@@ -259,12 +259,9 @@ class RuleConfigSet {
 
         if (objectConfigSet.objectConfigs.length > 0) {
             this.ruleConfigs = this.ruleConfigs.concat(combineArrays(this.ruleConfigs, objectConfigSet.objectConfigs));
-            return true;
         }
-
-        return false;
     }
-}
+};
 
 /**
 * Generate valid rule configurations based on a schema object
@@ -275,21 +272,20 @@ function generateConfigsFromSchema(schema) {
     const configSet = new RuleConfigSet();
 
     if (Array.isArray(schema)) {
-        for (const opt of schema) {
+        schema.forEach(opt => {
             if (opt.enum) {
                 configSet.addEnums(opt.enum);
-            } else if (opt.type && opt.type === "object") {
-                if (!configSet.addObject(opt)) {
-                    break;
-                }
-
-            // TODO (IanVS): support oneOf
-            } else {
-
-                // If we don't know how to fill in this option, don't fill in any of the following options.
-                break;
             }
-        }
+
+            if (opt.type && opt.type === "object") {
+                configSet.addObject(opt);
+            }
+
+            if (opt.oneOf) {
+
+                // TODO (IanVS): not yet implemented
+            }
+        });
     }
     configSet.addErrorSeverity();
     return configSet.ruleConfigs;
