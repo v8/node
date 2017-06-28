@@ -55,7 +55,7 @@ myConsole.warn(`Danger ${name}! Danger!`);
 ## Class: Console
 <!-- YAML
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/9744
     description: Errors that occur while writing to the underlying streams
                  will now be ignored.
@@ -65,11 +65,14 @@ changes:
 
 The `Console` class can be used to create a simple logger with configurable
 output streams and can be accessed using either `require('console').Console`
-or `console.Console`:
+or `console.Console` (or their destructured counterparts):
 
 ```js
-const Console = require('console').Console;
-const Console = console.Console;
+const { Console } = require('console');
+```
+
+```js
+const { Console } = console;
 ```
 
 ### new Console(stdout[, stderr])
@@ -118,8 +121,8 @@ console.assert(false, 'Whoops %s', 'didn\'t work');
 // AssertionError: Whoops didn't work
 ```
 
-*Note: the `console.assert()` method is implemented differently in Node.js
-than the `console.assert()` method [available in browsers][web-api-assert].*
+*Note*: The `console.assert()` method is implemented differently in Node.js
+than the `console.assert()` method [available in browsers][web-api-assert].
 
 Specifically, in browsers, calling `console.assert()` with a falsy
 assertion will cause the `message` to be printed to the console without
@@ -132,6 +135,7 @@ by extending Node.js' `console` and overriding the `console.assert()` method.
 In the following example, a simple module is created that extends and overrides
 the default behavior of `console` in Node.js.
 
+<!-- eslint-disable func-name-matching -->
 ```js
 'use strict';
 
@@ -169,9 +173,9 @@ added: v0.1.101
 -->
 * `obj` {any}
 * `options` {Object}
-  * `showHidden` {Boolean}
-  * `depth` {Number}
-  * `colors` {Boolean}
+  * `showHidden` {boolean}
+  * `depth` {number}
+  * `colors` {boolean}
 
 Uses [`util.inspect()`][] on `obj` and prints the resulting string to `stdout`.
 This function bypasses any custom `inspect()` function defined on `obj`. An
@@ -250,10 +254,10 @@ values are concatenated. See [`util.format()`][] for more information.
 <!-- YAML
 added: v0.1.104
 -->
-* `label` {String}
+* `label` {string}
 
 Starts a timer that can be used to compute the duration of an operation. Timers
-are identified by a unique `label`. Use the same `label` when you call
+are identified by a unique `label`. Use the same `label` when calling
 [`console.timeEnd()`][] to stop the timer and output the elapsed time in
 milliseconds to `stdout`. Timer durations are accurate to the sub-millisecond.
 
@@ -266,24 +270,22 @@ changes:
     description: This method no longer supports multiple calls that don’t map
                  to individual `console.time()` calls; see below for details.
 -->
-* `label` {String}
+* `label` {string}
 
 Stops a timer that was previously started by calling [`console.time()`][] and
 prints the result to `stdout`:
 
 ```js
 console.time('100-elements');
-for (let i = 0; i < 100; i++) {
-  ;
-}
+for (let i = 0; i < 100; i++) {}
 console.timeEnd('100-elements');
 // prints 100-elements: 225.438ms
 ```
 
-*Note: As of Node.js v6.0.0, `console.timeEnd()` deletes the timer to avoid
+*Note*: As of Node.js v6.0.0, `console.timeEnd()` deletes the timer to avoid
 leaking it. On older versions, the timer persisted. This allowed
 `console.timeEnd()` to be called multiple times for the same label. This
-functionality was unintended and is no longer supported.*
+functionality was unintended and is no longer supported.
 
 ### console.trace([message][, ...args])
 <!-- YAML

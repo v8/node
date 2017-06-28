@@ -22,10 +22,13 @@
 'use strict';
 const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
+const net = require('net');
 const util = require('util');
 
+const runAsStandalone = typeof __dirname !== 'undefined';
+
 const [ InspectClient, createRepl ] =
-  (typeof __dirname !== 'undefined') ?
+  runAsStandalone ?
   // This copy of node-inspect is on-disk, relative paths make sense.
   [
     require('./internal/inspect_client'),
@@ -39,31 +42,83 @@ const [ InspectClient, createRepl ] =
 
 const debuglog = util.debuglog('inspect');
 
-exports.port = 9229;
-
-function runScript(script, scriptArgs, inspectPort, childPrint) {
-  return new Promise((resolve) => {
-    const args = [
-      '--inspect',
-      `--debug-brk=${inspectPort}`,
-    ].concat([script], scriptArgs);
-    const child = spawn(process.execPath, args);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', childPrint);
-    child.stderr.on('data', childPrint);
-
-    let output = '';
-    function waitForListenHint(text) {
-      output += text;
-      if (/chrome-devtools:\/\//.test(output)) {
-        child.stderr.removeListener('data', waitForListenHint);
-        resolve(child);
-      }
+const DEBUG_PORT_PATTERN = /^--(?:debug|inspect)(?:-port|-brk)?=(\d{1,5})$/;
+function getDefaultPort() {
+  for (const arg of process.execArgv) {
+    const match = arg.match(DEBUG_PORT_PATTERN);
+    if (match) {
+      return +match[1];
     }
+  }
+  return 9229;
+}
 
-    child.stderr.on('data', waitForListenHint);
+function portIsFree(host, port, timeout = 2000) {
+  const retryDelay = 150;
+  let didTimeOut = false;
+
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      didTimeOut = true;
+      reject(new Error(
+        `Timeout (${timeout}) waiting for ${host}:${port} to be free`));
+    }, timeout);
+
+    function pingPort() {
+      if (didTimeOut) return;
+
+      const socket = net.connect(port, host);
+      let didRetry = false;
+      function retry() {
+        if (!didRetry && !didTimeOut) {
+          didRetry = true;
+          setTimeout(pingPort, retryDelay);
+        }
+      }
+
+      socket.on('error', (error) => {
+        if (error.code === 'ECONNREFUSED') {
+          resolve();
+        } else {
+          retry();
+        }
+      });
+      socket.on('connect', () => {
+        socket.destroy();
+        retry();
+      });
+    }
+    pingPort();
   });
+}
+
+function runScript(script, scriptArgs, inspectHost, inspectPort, childPrint) {
+  return portIsFree(inspectHost, inspectPort)
+    .then(() => {
+      return new Promise((resolve) => {
+        const needDebugBrk = process.version.match(/^v(6|7)\./);
+        const args = (needDebugBrk ?
+                          ['--inspect', `--debug-brk=${inspectPort}`] :
+                          [`--inspect-brk=${inspectPort}`])
+                         .concat([script], scriptArgs);
+        const child = spawn(process.execPath, args);
+        child.stdout.setEncoding('utf8');
+        child.stderr.setEncoding('utf8');
+        child.stdout.on('data', childPrint);
+        child.stderr.on('data', childPrint);
+
+        let output = '';
+        function waitForListenHint(text) {
+          output += text;
+          if (/Debugger listening on/.test(output)) {
+            child.stderr.removeListener('data', waitForListenHint);
+            resolve(child);
+          }
+        }
+
+        child.stderr.on('data', waitForListenHint);
+      });
+    });
 }
 
 function createAgentProxy(domain, client) {
@@ -101,6 +156,7 @@ class NodeInspector {
       this._runScript = runScript.bind(null,
                                        options.script,
                                        options.scriptArgs,
+                                       options.host,
                                        options.port,
                                        this.childPrint.bind(this));
     } else {
@@ -128,8 +184,9 @@ class NodeInspector {
     process.once('SIGHUP', process.exit.bind(process, 0));
 
     this.run()
-      .then(() => {
-        this.repl = startRepl();
+      .then(() => startRepl())
+      .then((repl) => {
+        this.repl = repl;
         this.repl.on('exit', () => {
           process.exit(0);
         });
@@ -139,15 +196,19 @@ class NodeInspector {
   }
 
   suspendReplWhile(fn) {
-    this.repl.rli.pause();
+    if (this.repl) {
+      this.repl.rli.pause();
+    }
     this.stdin.pause();
     this.paused = true;
     return new Promise((resolve) => {
       resolve(fn());
     }).then(() => {
       this.paused = false;
-      this.repl.rli.resume();
-      this.repl.displayPrompt();
+      if (this.repl) {
+        this.repl.rli.resume();
+        this.repl.displayPrompt();
+      }
       this.stdin.resume();
     }).then(null, (error) => process.nextTick(() => { throw error; }));
   }
@@ -162,6 +223,8 @@ class NodeInspector {
 
   run() {
     this.killChild();
+    const { host, port } = this.options;
+
     return this._runScript().then((child) => {
       this.child = child;
 
@@ -173,6 +236,7 @@ class NodeInspector {
         return this.client.connect()
           .then(() => {
             debuglog('connection established');
+            this.stdout.write(' ok');
           }, (error) => {
             debuglog('connect failed', error);
             // If it's failed to connect 10 times then print failed message
@@ -186,7 +250,6 @@ class NodeInspector {
           });
       };
 
-      const { host, port } = this.options;
       this.print(`connecting to ${host}:${port} ..`, true);
       return attemptConnect();
     });
@@ -225,13 +288,14 @@ class NodeInspector {
 
 function parseArgv([target, ...args]) {
   let host = '127.0.0.1';
-  let port = exports.port;
+  let port = getDefaultPort();
   let isRemote = false;
   let script = target;
   let scriptArgs = args;
 
   const hostMatch = target.match(/^([^:]+):(\d+)$/);
   const portMatch = target.match(/^--port=(\d+)$/);
+
   if (hostMatch) {
     // Connecting to remote debugger
     // `node-inspect localhost:9229`
@@ -240,16 +304,31 @@ function parseArgv([target, ...args]) {
     isRemote = true;
     script = null;
   } else if (portMatch) {
-    // Start debugger on custom port
-    // `node debug --port=8058 app.js`
+    // start debugee on custom port
+    // `node inspect --port=9230 script.js`
     port = parseInt(portMatch[1], 10);
     script = args[0];
     scriptArgs = args.slice(1);
+  } else if (args.length === 1 && /^\d+$/.test(args[0]) && target === '-p') {
+    // Start debugger against a given pid
+    const pid = parseInt(args[0], 10);
+    try {
+      process._debugProcess(pid);
+    } catch (e) {
+      if (e.code === 'ESRCH') {
+        /* eslint-disable no-console */
+        console.error(`Target process: ${pid} doesn't exist.`);
+        /* eslint-enable no-console */
+        process.exit(1);
+      }
+      throw e;
+    }
+    script = null;
+    isRemote = true;
   }
 
   return {
-    host, port,
-    isRemote, script, scriptArgs,
+    host, port, isRemote, script, scriptArgs,
   };
 }
 
@@ -258,8 +337,13 @@ function startInspect(argv = process.argv.slice(2),
                       stdout = process.stdout) {
   /* eslint-disable no-console */
   if (argv.length < 1) {
-    console.error('Usage: node-inspect script.js');
-    console.error('       node-inspect <host>:<port>');
+    const invokedAs = runAsStandalone ?
+      'node-inspect' :
+      `${process.argv0} ${process.argv[1]}`;
+
+    console.error(`Usage: ${invokedAs} script.js`);
+    console.error(`       ${invokedAs} <host>:<port>`);
+    console.error(`       ${invokedAs} -p <pid>`);
     process.exit(1);
   }
 

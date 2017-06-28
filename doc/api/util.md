@@ -10,6 +10,64 @@ module developers as well. It can be accessed using:
 const util = require('util');
 ```
 
+## util.callbackify(original)
+<!-- YAML
+added: REPLACEME
+-->
+
+* `original` {Function} An `async` function
+* Returns: {Function} a callback style function
+
+Takes an `async` function (or a function that returns a Promise) and returns a
+function following the Node.js error first callback style. In the callback, the
+first argument will be the rejection reason (or `null` if the Promise resolved),
+and the second argument will be the resolved value.
+
+For example:
+
+```js
+const util = require('util');
+
+async function fn() {
+  return await Promise.resolve('hello world');
+}
+const callbackFunction = util.callbackify(fn);
+
+callbackFunction((err, ret) => {
+  if (err) throw err;
+  console.log(ret);
+});
+```
+
+Will print:
+
+```txt
+hello world
+```
+
+*Note*:
+
+* The callback is executed asynchronously, and will have a limited stack trace.
+If the callback throws, the process will emit an [`'uncaughtException'`][]
+event, and if not handled will exit.
+
+* Since `null` has a special meaning as the first argument to a callback, if a
+wrapped function rejects a `Promise` with a falsy value as a reason, the value
+is wrapped in an `Error` with the original value stored in a field named
+`reason`.
+  ```js
+  function fn() {
+    return Promise.reject(null);
+  }
+  const callbackFunction = util.callbackify(fn);
+
+  callbackFunction((err, ret) => {
+    // When the Promise was rejected with `null` it is wrapped with an Error and
+    // the original value is stored in `reason`.
+    err && err.hasOwnProperty('reason') && err.reason === null;  // true
+  });
+  ```
+
 ## util.debuglog(section)
 <!-- YAML
 added: v0.11.3
@@ -55,11 +113,12 @@ added: v0.8.0
 The `util.deprecate()` method wraps the given `function` or class in such a way that
 it is marked as deprecated.
 
+<!-- eslint-disable prefer-rest-params -->
 ```js
 const util = require('util');
 
 exports.puts = util.deprecate(function() {
-  for (var i = 0, len = arguments.length; i < len; ++i) {
+  for (let i = 0, len = arguments.length; i < len; ++i) {
     process.stdout.write(arguments[i] + '\n');
   }
 }, 'util.puts: Use console.log instead');
@@ -103,7 +162,9 @@ Each placeholder token is replaced with the converted value from the
 corresponding argument. Supported placeholders are:
 
 * `%s` - String.
-* `%d` - Number (both integer and float).
+* `%d` - Number (integer or floating point value).
+* `%i` - Integer.
+* `%f` - Floating point value.
 * `%j` - JSON.  Replaced with the string `'[Circular]'` if the argument
 contains circular references.
 * `%%` - single percent sign (`'%'`). This does not consume an argument.
@@ -133,6 +194,13 @@ Each argument is converted to a string using `util.inspect()`.
 util.format(1, 2, 3); // '1 2 3'
 ```
 
+If only one argument is passed to `util.format()`, it is returned as it is
+without any formatting.
+
+```js
+util.format('%% %s'); // '%% %s'
+```
+
 ## util.inherits(constructor, superConstructor)
 <!-- YAML
 added: v0.3.0
@@ -142,9 +210,9 @@ changes:
     description: The `constructor` parameter can refer to an ES6 class now.
 -->
 
-_Note: usage of `util.inherits()` is discouraged. Please use the ES6 `class` and
-`extends` keywords to get language level inheritance support. Also note that
-the two styles are [semantically incompatible][]._
+*Note*: Usage of `util.inherits()` is discouraged. Please use the ES6 `class`
+and `extends` keywords to get language level inheritance support. Also note
+that the two styles are [semantically incompatible][].
 
 * `constructor` {Function}
 * `superConstructor` {Function}
@@ -187,9 +255,6 @@ ES6 example using `class` and `extends`
 const EventEmitter = require('events');
 
 class MyStream extends EventEmitter {
-  constructor() {
-    super();
-  }
   write(data) {
     this.emit('data', data);
   }
@@ -319,8 +384,9 @@ class Box {
 
     // Five space padding because that's the size of "Box< ".
     const padding = ' '.repeat(5);
-    const inner = util.inspect(this.value, newOptions).replace(/\n/g, '\n' + padding);
-    return options.stylize('Box', 'special') + '< ' + inner + ' >';
+    const inner = util.inspect(this.value, newOptions)
+                      .replace(/\n/g, `\n${padding}`);
+    return `${options.stylize('Box', 'special')}< ${inner} >`;
   }
 }
 
@@ -382,12 +448,92 @@ option properties directly is also supported.
 
 ```js
 const util = require('util');
-const arr = Array(101);
+const arr = Array(101).fill(0);
 
 console.log(arr); // logs the truncated array
 util.inspect.defaultOptions.maxArrayLength = null;
 console.log(arr); // logs the full array
 ```
+
+## util.promisify(original)
+<!-- YAML
+added: v8.0.0
+-->
+
+* `original` {Function}
+
+Takes a function following the common Node.js callback style, i.e. taking a
+`(err, value) => ...` callback as the last argument, and returns a version
+that returns promises.
+
+For example:
+
+```js
+const util = require('util');
+const fs = require('fs');
+
+const stat = util.promisify(fs.stat);
+stat('.').then((stats) => {
+  // Do something with `stats`
+}).catch((error) => {
+  // Handle the error.
+});
+```
+
+Or, equivalently using `async function`s:
+
+```js
+const util = require('util');
+const fs = require('fs');
+
+const stat = util.promisify(fs.stat);
+
+async function callStat() {
+  const stats = await stat('.');
+  console.log(`This directory is owned by ${stats.uid}`);
+}
+```
+
+If there is an `original[util.promisify.custom]` property present, `promisify`
+will return its value, see [Custom promisified functions][].
+
+`promisify()` assumes that `original` is a function taking a callback as its
+final argument in all cases, and the returned function will result in undefined
+behavior if it does not.
+
+### Custom promisified functions
+
+Using the `util.promisify.custom` symbol one can override the return value of
+[`util.promisify()`][]:
+
+```js
+const util = require('util');
+
+function doSomething(foo, callback) {
+  // ...
+}
+
+doSomething[util.promisify.custom] = function(foo) {
+  return getPromiseSomehow();
+};
+
+const promisified = util.promisify(doSomething);
+console.log(promisified === doSomething[util.promisify.custom]);
+  // prints 'true'
+```
+
+This can be useful for cases where the original function does not follow the
+standard format of taking an error-first callback as the last argument.
+
+### util.promisify.custom
+<!-- YAML
+added: v8.0.0
+-->
+
+* {symbol}
+
+A Symbol that can be used to declare custom promisified variants of functions,
+see [Custom promisified functions][].
 
 ## Deprecated APIs
 
@@ -451,7 +597,7 @@ const util = require('util');
 
 util.isArray([]);
 // Returns: true
-util.isArray(new Array);
+util.isArray(new Array());
 // Returns: true
 util.isArray({});
 // Returns: false
@@ -582,7 +728,7 @@ Returns `true` if the given `object` is a `Function`. Otherwise, returns
 const util = require('util');
 
 function Foo() {}
-const Bar = function() {};
+const Bar = () => {};
 
 util.isFunction({});
 // Returns: false
@@ -687,7 +833,7 @@ util.isObject(null);
 // Returns: false
 util.isObject({});
 // Returns: true
-util.isObject(function(){});
+util.isObject(function() {});
 // Returns: false
 ```
 
@@ -862,13 +1008,16 @@ deprecated: v0.11.3
 Deprecated predecessor of `console.log`.
 
 [`Array.isArray`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/isArray
+[`Buffer.isBuffer()`]: buffer.html#buffer_class_method_buffer_isbuffer_obj
+[`Error`]: errors.html#errors_class_error
+[`Object.assign()`]: https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Object/assign
+[`console.error()`]: console.html#console_console_error_data_args
+[`console.log()`]: console.html#console_console_log_data_args
+[`'uncaughtException'`]: process.html#process_event_uncaughtexception
+[`util.inspect()`]: #util_util_inspect_object_options
+[`util.promisify()`]: #util_util_promisify_original
+[Custom inspection functions on Objects]: #util_custom_inspection_functions_on_objects
+[Customizing `util.inspect` colors]: #util_customizing_util_inspect_colors
+[Custom promisified functions]: #util_custom_promisified_functions
 [constructor]: https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Object/constructor
 [semantically incompatible]: https://github.com/nodejs/node/issues/4179
-[`util.inspect()`]: #util_util_inspect_object_options
-[Customizing `util.inspect` colors]: #util_customizing_util_inspect_colors
-[Custom inspection functions on Objects]: #util_custom_inspection_functions_on_objects
-[`Error`]: errors.html#errors_class_error
-[`console.log()`]: console.html#console_console_log_data_args
-[`console.error()`]: console.html#console_console_error_data_args
-[`Buffer.isBuffer()`]: buffer.html#buffer_class_method_buffer_isbuffer_obj
-[`Object.assign()`]: https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Object/assign

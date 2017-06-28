@@ -55,6 +55,10 @@ function lifecycle (pkg, stage, wd, unsafe, failOk, cb) {
     log.info('lifecycle', logid(pkg, stage), 'ignored because ignore-scripts is set to true', pkg._id)
     pkg.scripts = {}
   }
+  if (stage === 'prepublish' && npm.config.get('ignore-prepublish')) {
+    log.info('lifecycle', logid(pkg, stage), 'ignored because ignore-prepublish is set to true', pkg._id)
+    delete pkg.scripts.prepublish
+  }
 
   validWd(wd || path.resolve(npm.dir, pkg.name), function (er, wd) {
     if (er) return cb(er)
@@ -277,10 +281,12 @@ function runCmd_ (cmd, pkg, env, wd, stage, unsafe, uid, gid, cb_) {
       process.kill(process.pid, signal)
     } else if (code) {
       var er = new Error('Exit status ' + code)
+      er.errno = code
     }
     procError(er)
   })
   process.once('SIGTERM', procKill)
+  process.once('SIGINT', procInterupt)
 
   function procError (er) {
     if (er) {
@@ -301,10 +307,19 @@ function runCmd_ (cmd, pkg, env, wd, stage, unsafe, uid, gid, cb_) {
       er.pkgname = pkg.name
     }
     process.removeListener('SIGTERM', procKill)
+    process.removeListener('SIGTERM', procInterupt)
+    process.removeListener('SIGINT', procKill)
     return cb(er)
   }
   function procKill () {
     proc.kill()
+  }
+  function procInterupt () {
+    proc.kill('SIGINT')
+    proc.on('exit', function () {
+      process.exit()
+    })
+    process.once('SIGINT', procKill)
   }
 }
 

@@ -4,7 +4,7 @@ const common = require('../common');
 const assert = require('assert');
 const path = require('path');
 const URL = require('url').URL;
-const { test, assert_equals } = common.WPT;
+const { test, assert_equals } = require('../common/wpt');
 const additionalTestCases = require(
     path.join(common.fixturesDir, 'url-setter-tests-additional.js'));
 
@@ -15,7 +15,7 @@ if (!common.hasIntl) {
 }
 
 const request = {
-  response: require(path.join(common.fixturesDir, 'url-setter-tests.json'))
+  response: require(path.join(common.fixturesDir, 'url-setter-tests'))
 };
 
 /* eslint-disable */
@@ -107,7 +107,10 @@ startURLSettersTests()
 
 {
   const url = new URL('http://example.com/');
-  const obj = { toString() { throw new Error('toString'); } };
+  const obj = {
+    toString() { throw new Error('toString'); },
+    valueOf() { throw new Error('valueOf'); }
+  };
   const sym = Symbol();
   const props = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(url));
   for (const [name, { set }] of Object.entries(props)) {

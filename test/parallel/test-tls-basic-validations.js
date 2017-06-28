@@ -33,7 +33,7 @@ assert.throws(() => tls.createServer({sessionTimeout: 'abcd'}),
 assert.throws(() => tls.createServer({ticketKeys: 'abcd'}),
               /TypeError: Ticket keys must be a buffer/);
 
-assert.throws(() => tls.createServer({ticketKeys: new Buffer(0)}),
+assert.throws(() => tls.createServer({ticketKeys: Buffer.alloc(0)}),
               /TypeError: Ticket keys length must be 48 bytes/);
 
 assert.throws(() => tls.createSecurePair({}),
@@ -55,4 +55,18 @@ assert.throws(() => tls.createSecurePair({}),
   out.NPNProtocols.write('efgh');
   assert(buffer.equals(Buffer.from('abcd')));
   assert(out.NPNProtocols.equals(Buffer.from('efgh')));
+}
+
+{
+  const buffer = new Uint8Array(Buffer.from('abcd'));
+  const out = {};
+  tls.convertALPNProtocols(buffer, out);
+  assert(out.ALPNProtocols.equals(Buffer.from('abcd')));
+}
+
+{
+  const buffer = new Uint8Array(Buffer.from('abcd'));
+  const out = {};
+  tls.convertNPNProtocols(buffer, out);
+  assert(out.NPNProtocols.equals(Buffer.from('abcd')));
 }

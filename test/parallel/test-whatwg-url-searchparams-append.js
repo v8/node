@@ -3,7 +3,7 @@
 const common = require('../common');
 const assert = require('assert');
 const URLSearchParams = require('url').URLSearchParams;
-const { test, assert_equals, assert_true } = common.WPT;
+const { test, assert_equals, assert_true } = require('../common/wpt');
 
 /* eslint-disable */
 /* WPT Refs:
@@ -53,12 +53,23 @@ test(function() {
   const params = new URLSearchParams();
   assert.throws(() => {
     params.append.call(undefined);
-  }, /^TypeError: Value of `this` is not a URLSearchParams$/);
+  }, common.expectsError({
+    code: 'ERR_INVALID_THIS',
+    type: TypeError,
+    message: 'Value of "this" must be of type URLSearchParams'
+  }));
   assert.throws(() => {
-    params.set('a');
-  }, /^TypeError: "name" and "value" arguments must be specified$/);
+    params.append('a');
+  }, common.expectsError({
+    code: 'ERR_MISSING_ARGS',
+    type: TypeError,
+    message: 'The "name" and "value" arguments must be specified'
+  }));
 
-  const obj = { toString() { throw new Error('toString'); } };
+  const obj = {
+    toString() { throw new Error('toString'); },
+    valueOf() { throw new Error('valueOf'); }
+  };
   const sym = Symbol();
   assert.throws(() => params.set(obj, 'b'), /^Error: toString$/);
   assert.throws(() => params.set('a', obj), /^Error: toString$/);
