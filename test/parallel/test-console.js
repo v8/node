@@ -1,3 +1,24 @@
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 'use strict';
 const common = require('../common');
 const assert = require('assert');
@@ -24,16 +45,14 @@ assert.doesNotThrow(function() {
 // an Object with a custom .inspect() function
 const custom_inspect = { foo: 'bar', inspect: () => 'inspect' };
 
-const stdout_write = global.process.stdout.write;
-const stderr_write = global.process.stderr.write;
 const strings = [];
 const errStrings = [];
-global.process.stdout.write = function(string) {
-  strings.push(string);
-};
-global.process.stderr.write = function(string) {
-  errStrings.push(string);
-};
+common.hijackStdout(function(data) {
+  strings.push(data);
+});
+common.hijackStderr(function(data) {
+  errStrings.push(data);
+});
 
 // test console.log() goes to stdout
 console.log('foo');
@@ -84,8 +103,10 @@ console.timeEnd('constructor');
 console.time('hasOwnProperty');
 console.timeEnd('hasOwnProperty');
 
-global.process.stdout.write = stdout_write;
-global.process.stderr.write = stderr_write;
+assert.strictEqual(strings.length, process.stdout.writeTimes);
+assert.strictEqual(errStrings.length, process.stderr.writeTimes);
+common.restoreStdout();
+common.restoreStderr();
 
 // verify that console.timeEnd() doesn't leave dead links
 const timesMapSize = console._times.size;
@@ -102,13 +123,13 @@ const expectedStrings = [
 ];
 
 for (const expected of expectedStrings) {
-  assert.strictEqual(expected + '\n', strings.shift());
-  assert.strictEqual(expected + '\n', errStrings.shift());
+  assert.strictEqual(`${expected}\n`, strings.shift());
+  assert.strictEqual(`${expected}\n`, errStrings.shift());
 }
 
 for (const expected of expectedStrings) {
-  assert.strictEqual(expected + '\n', strings.shift());
-  assert.strictEqual(expected + '\n', errStrings.shift());
+  assert.strictEqual(`${expected}\n`, strings.shift());
+  assert.strictEqual(`${expected}\n`, errStrings.shift());
 }
 
 assert.strictEqual("{ foo: 'bar', inspect: [Function: inspect] }\n",
@@ -125,13 +146,24 @@ assert.ok(/^hasOwnProperty: \d+\.\d{3}ms$/.test(strings.shift().trim()));
 assert.strictEqual('Trace: This is a {"formatted":"trace"} 10 foo',
                    errStrings.shift().split('\n').shift());
 
-assert.strictEqual(strings.length, 0);
-assert.strictEqual(errStrings.length, 0);
-
 assert.throws(() => {
   console.assert(false, 'should throw');
-}, /^AssertionError: should throw$/);
+}, common.expectsError({
+  code: 'ERR_ASSERTION',
+  message: /^should throw$/
+}));
 
 assert.doesNotThrow(() => {
   console.assert(true, 'this should not throw');
 });
+
+// hijack stderr to catch `process.emitWarning` which is using
+// `process.nextTick`
+common.hijackStderr(common.mustCall(function(data) {
+  common.restoreStderr();
+
+  // stderr.write will catch sync error, so use `process.nextTick` here
+  process.nextTick(function() {
+    assert.strictEqual(data.includes('no such label'), true);
+  });
+}));

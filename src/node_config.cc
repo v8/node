@@ -4,11 +4,14 @@
 #include "env-inl.h"
 #include "util.h"
 #include "util-inl.h"
+#include "node_debug_options.h"
 
 
 namespace node {
 
+using v8::Boolean;
 using v8::Context;
+using v8::Integer;
 using v8::Local;
 using v8::Object;
 using v8::ReadOnly;
@@ -27,9 +30,9 @@ using v8::Value;
                               True(env->isolate()), ReadOnly).FromJust();     \
   } while (0)
 
-void InitConfig(Local<Object> target,
-                Local<Value> unused,
-                Local<Context> context) {
+static void InitConfig(Local<Object> target,
+                       Local<Value> unused,
+                       Local<Context> context) {
   Environment* env = Environment::GetCurrent(context);
 #ifdef NODE_HAVE_I18N_SUPPORT
 
@@ -49,6 +52,9 @@ void InitConfig(Local<Object> target,
   if (config_preserve_symlinks)
     READONLY_BOOLEAN_PROPERTY("preserveSymlinks");
 
+  if (config_pending_deprecation)
+    READONLY_BOOLEAN_PROPERTY("pendingDeprecation");
+
   if (!config_warning_file.empty()) {
     Local<String> name = OneByteString(env->isolate(), "warningFile");
     Local<String> value = String::NewFromUtf8(env->isolate(),
@@ -58,6 +64,30 @@ void InitConfig(Local<Object> target,
                                                 .ToLocalChecked();
     target->DefineOwnProperty(env->context(), name, value).FromJust();
   }
+
+  Local<Object> debugOptions = Object::New(env->isolate());
+
+  target->DefineOwnProperty(env->context(),
+                            OneByteString(env->isolate(), "debugOptions"),
+                            debugOptions).FromJust();
+
+  debugOptions->DefineOwnProperty(env->context(),
+                            OneByteString(env->isolate(), "host"),
+                            String::NewFromUtf8(env->isolate(),
+                            debug_options.host_name().c_str())).FromJust();
+
+  debugOptions->DefineOwnProperty(env->context(),
+                            OneByteString(env->isolate(), "port"),
+                            Integer::New(env->isolate(),
+                            debug_options.port())).FromJust();
+
+  debugOptions->DefineOwnProperty(env->context(),
+                            OneByteString(env->isolate(), "inspectorEnabled"),
+                            Boolean::New(env->isolate(),
+                            debug_options.inspector_enabled())).FromJust();
+
+  if (config_expose_internals)
+    READONLY_BOOLEAN_PROPERTY("exposeInternals");
 }  // InitConfig
 
 }  // namespace node

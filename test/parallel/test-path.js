@@ -1,3 +1,24 @@
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 'use strict';
 const common = require('../common');
 const assert = require('assert');
@@ -6,6 +27,9 @@ const path = require('path');
 
 const f = __filename;
 const failures = [];
+
+const slashRE = /\//g;
+const backslashRE = /\\/g;
 
 // path.basename tests
 assert.strictEqual(path.basename(f), 'test-path.js');
@@ -167,19 +191,17 @@ assert.strictEqual(path.win32.dirname('foo'), '.');
     let input = test[0];
     let os;
     if (extname === path.win32.extname) {
-      input = input.replace(/\//g, '\\');
+      input = input.replace(slashRE, '\\');
       os = 'win32';
     } else {
       os = 'posix';
     }
     const actual = extname(input);
     const expected = test[1];
-    const fn = `path.${os}.extname(`;
-    const message = fn + JSON.stringify(input) + ')' +
-                    '\n  expect=' + JSON.stringify(expected) +
-                    '\n  actual=' + JSON.stringify(actual);
+    const message = `path.${os}.extname(${JSON.stringify(input)})\n  expect=${
+      JSON.stringify(expected)}\n  actual=${JSON.stringify(actual)}`;
     if (actual !== expected)
-      failures.push('\n' + message);
+      failures.push(`\n${message}`);
   });
 });
 assert.strictEqual(failures.length, 0, failures.join(''));
@@ -326,15 +348,14 @@ joinTests.forEach((test) => {
       let actualAlt;
       let os;
       if (join === path.win32.join) {
-        actualAlt = actual.replace(/\\/g, '/');
+        actualAlt = actual.replace(backslashRE, '/');
         os = 'win32';
       } else {
         os = 'posix';
       }
-      const fn = `path.${os}.join(`;
-      const message = fn + test[0].map(JSON.stringify).join(',') + ')' +
-                      '\n  expect=' + JSON.stringify(expected) +
-                      '\n  actual=' + JSON.stringify(actual);
+      const message =
+        `path.${os}.join(${test[0].map(JSON.stringify).join(',')})\n  expect=${
+          JSON.stringify(expected)}\n  actual=${JSON.stringify(actual)}`;
       if (actual !== expected && actualAlt !== expected)
         failures.push(`\n${message}`);
     });
@@ -351,7 +372,7 @@ function fail(fn) {
 
   assert.throws(() => {
     fn.apply(null, args);
-  }, TypeError);
+  }, common.expectsError({code: 'ERR_INVALID_ARG_TYPE', type: TypeError}));
 }
 
 typeErrorTests.forEach((test) => {
@@ -433,17 +454,16 @@ resolveTests.forEach((test) => {
     let actualAlt;
     const os = resolve === path.win32.resolve ? 'win32' : 'posix';
     if (resolve === path.win32.resolve && !common.isWindows)
-      actualAlt = actual.replace(/\\/g, '/');
+      actualAlt = actual.replace(backslashRE, '/');
     else if (resolve !== path.win32.resolve && common.isWindows)
-      actualAlt = actual.replace(/\//g, '\\');
+      actualAlt = actual.replace(slashRE, '\\');
 
     const expected = test[1];
-    const fn = `path.${os}.resolve(`;
-    const message = fn + test[0].map(JSON.stringify).join(',') + ')' +
-                    '\n  expect=' + JSON.stringify(expected) +
-                    '\n  actual=' + JSON.stringify(actual);
+    const message =
+      `path.${os}.resolve(${test[0].map(JSON.stringify).join(',')})\n  expect=${
+      JSON.stringify(expected)}\n  actual=${JSON.stringify(actual)}`;
     if (actual !== expected && actualAlt !== expected)
-      failures.push('\n' + message);
+      failures.push(`\n${message}`);
   });
 });
 assert.strictEqual(failures.length, 0, failures.join(''));
@@ -539,12 +559,9 @@ relativeTests.forEach((test) => {
     const actual = relative(test[0], test[1]);
     const expected = test[2];
     const os = relative === path.win32.relative ? 'win32' : 'posix';
-    const fn = `path.${os}.relative(`;
-    const message = fn +
-                    test.slice(0, 2).map(JSON.stringify).join(',') +
-                    ')' +
-                    '\n  expect=' + JSON.stringify(expected) +
-                    '\n  actual=' + JSON.stringify(actual);
+    const message = `path.${os}.relative(${
+      test.slice(0, 2).map(JSON.stringify).join(',')})\n  expect=${
+      JSON.stringify(expected)}\n  actual=${JSON.stringify(actual)}`;
     if (actual !== expected)
       failures.push(`\n${message}`);
   });

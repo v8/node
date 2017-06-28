@@ -13,15 +13,36 @@ if (!common.hasIntl) {
 
 // Tests below are not from WPT.
 const tests = require(path.join(common.fixturesDir, 'url-tests'));
+const failureTests = tests.filter((test) => test.failure).concat([
+  { input: '' },
+  { input: 'test' },
+  { input: undefined },
+  { input: 0 },
+  { input: true },
+  { input: false },
+  { input: null },
+  { input: new Date() },
+  { input: new RegExp() },
+  { input: common.noop }
+]);
 
-for (const test of tests) {
-  if (typeof test === 'string')
-    continue;
+const expectedError = common.expectsError(
+    { code: 'ERR_INVALID_URL', type: TypeError });
 
-  if (test.failure) {
-    assert.throws(() => new URL(test.input, test.base),
-                  /^TypeError: Invalid URL$/);
-  }
+for (const test of failureTests) {
+  assert.throws(
+    () => new URL(test.input, test.base),
+    (error) => {
+      if (!expectedError(error))
+        return false;
+
+      // The input could be processed, so we don't do strict matching here
+      const match = (error + '').match(/Invalid URL: (.*)$/);
+      if (!match) {
+        return false;
+      }
+      return error.input === match[1];
+    });
 }
 
 const additional_tests = require(

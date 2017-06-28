@@ -35,26 +35,25 @@
     'icu_use_data_file_flag%': 0,
 
     'conditions': [
+      ['GENERATOR=="ninja"', {
+        'OBJ_DIR': '<(PRODUCT_DIR)/obj',
+        'V8_BASE': '<(PRODUCT_DIR)/obj/deps/v8/src/libv8_base.a',
+       }, {
+         'OBJ_DIR%': '<(PRODUCT_DIR)/obj.target',
+         'V8_BASE%': '<(PRODUCT_DIR)/obj.target/deps/v8/src/libv8_base.a',
+      }],
       ['OS == "win"', {
         'os_posix': 0,
         'v8_postmortem_support%': 'false',
+        'OBJ_DIR': '<(PRODUCT_DIR)/obj',
+        'V8_BASE': '<(PRODUCT_DIR)/lib/v8_libbase.lib',
       }, {
         'os_posix': 1,
         'v8_postmortem_support%': 'true',
       }],
       ['OS== "mac"', {
-        'OBJ_DIR': '<(PRODUCT_DIR)/obj',
+        'OBJ_DIR%': '<(PRODUCT_DIR)/obj.target',
         'V8_BASE': '<(PRODUCT_DIR)/libv8_base.a',
-      }, {
-        'conditions': [
-          ['GENERATOR=="ninja"', {
-            'OBJ_DIR': '<(PRODUCT_DIR)/obj',
-            'V8_BASE': '<(PRODUCT_DIR)/obj/deps/v8/src/libv8_base.a',
-          }, {
-            'OBJ_DIR': '<(PRODUCT_DIR)/obj.target',
-            'V8_BASE': '<(PRODUCT_DIR)/obj.target/deps/v8/src/libv8_base.a',
-          }],
-        ],
       }],
       ['openssl_fips != ""', {
         'OPENSSL_PRODUCT': 'libcrypto.a',
@@ -76,7 +75,7 @@
         'variables': {
           'v8_enable_handle_zapping': 1,
         },
-        'defines': [ 'DEBUG', '_DEBUG' ],
+        'defines': [ 'DEBUG', '_DEBUG', 'V8_ENABLE_CHECKS' ],
         'cflags': [ '-g', '-O0' ],
         'conditions': [
           ['target_arch=="x64"', {
@@ -315,12 +314,12 @@
 	    'ldflags': [ '-m64' ],
 	   }],
           [ 'target_arch=="s390"', {
-            'cflags': [ '-m31' ],
-            'ldflags': [ '-m31' ],
+            'cflags': [ '-m31', '-march=z196' ],
+            'ldflags': [ '-m31', '-march=z196' ],
           }],
           [ 'target_arch=="s390x"', {
-            'cflags': [ '-m64' ],
-            'ldflags': [ '-m64' ],
+            'cflags': [ '-m64', '-march=z196' ],
+            'ldflags': [ '-m64', '-march=z196' ],
           }],
           [ 'OS=="solaris"', {
             'cflags': [ '-pthreads' ],
@@ -408,6 +407,9 @@
         'libraries': [ '-lelf' ],
       }],
       ['OS=="freebsd"', {
+        # Use this flag because on FreeBSD std::pairs copy constructor is non-trivial
+        # https://lists.freebsd.org/pipermail/freebsd-toolchain/2016-March/002094.html
+        'cflags': [ '-D_LIBCPP_TRIVIAL_PAIR_COPY_CTOR=1' ],
         'ldflags': [
           '-Wl,--export-dynamic',
         ],

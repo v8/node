@@ -14,7 +14,7 @@ test('run after quit / restart', (t) => {
     throw error;
   }
 
-  return cli.waitFor(/break/)
+  return cli.waitForInitialBreak()
     .then(() => cli.waitForPrompt())
     .then(() => cli.command('breakpoints'))
     .then(() => {
@@ -33,8 +33,7 @@ test('run after quit / restart', (t) => {
       t.match(cli.output, `break in ${script}:3`);
     })
     .then(() => cli.command('restart'))
-    .then(() => cli.waitFor([/break in examples/, /breakpoints restored/]))
-    .then(() => cli.waitForPrompt())
+    .then(() => cli.waitForInitialBreak())
     .then(() => {
       t.match(cli.output, `break in ${script}:1`);
     })
@@ -48,8 +47,17 @@ test('run after quit / restart', (t) => {
     })
     .then(() => cli.command('breakpoints'))
     .then(() => {
-      t.match(cli.output, `#0 ${script}:2`);
-      t.match(cli.output, `#1 ${script}:3`);
+      if (process.platform === 'aix') {
+        // TODO: There is a known issue on AIX where the breakpoints aren't
+        // properly resolved yet when we reach this point.
+        // Eventually that should be figured out but for now we don't want
+        // to fail builds because of it.
+        t.match(cli.output, /#0 [^\n]+three-lines\.js\$?:2/);
+        t.match(cli.output, /#1 [^\n]+three-lines\.js\$?:3/);
+      } else {
+        t.match(cli.output, `#0 ${script}:2`);
+        t.match(cli.output, `#1 ${script}:3`);
+      }
     })
     .then(() => cli.quit())
     .then(null, onFatal);

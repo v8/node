@@ -2,7 +2,8 @@
 const common = require('../common');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
-const { test, assert_equals, assert_true, assert_throws } = common.WPT;
+const { test, assert_equals, assert_true, assert_throws } =
+  require('../common/wpt');
 
 if (!common.hasIntl) {
   // A handful of the tests fail when ICU is not included.
@@ -120,12 +121,12 @@ function runURLSearchParamTests() {
     // And in the other direction, altering searchParams propagates
     // back to 'search'.
     searchParams.append('i', ' j ')
-    // assert_equals(url.search, '?e=f&g=h&i=+j+')
-    // assert_equals(url.searchParams.toString(), 'e=f&g=h&i=+j+')
+    assert_equals(url.search, '?e=f&g=h&i=+j+')
+    assert_equals(url.searchParams.toString(), 'e=f&g=h&i=+j+')
     assert_equals(searchParams.get('i'), ' j ')
 
     searchParams.set('e', 'updated')
-    // assert_equals(url.search, '?e=updated&g=h&i=+j+')
+    assert_equals(url.search, '?e=updated&g=h&i=+j+')
     assert_equals(searchParams.get('e'), 'updated')
 
     var url2 = bURL('http://example.org/file??a=b&c=d')

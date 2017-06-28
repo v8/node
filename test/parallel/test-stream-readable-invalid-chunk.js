@@ -1,12 +1,14 @@
 'use strict';
-require('../common');
+
+const common = require('../common');
 const stream = require('stream');
 const assert = require('assert');
 
 const readable = new stream.Readable({
-  read: () => {}
+  read: common.noop
 });
 
-assert.throws(() => readable.push([]), /Invalid non-string\/buffer chunk/);
-assert.throws(() => readable.push({}), /Invalid non-string\/buffer chunk/);
-assert.throws(() => readable.push(0), /Invalid non-string\/buffer chunk/);
+const errMessage = /Invalid non-string\/buffer chunk/;
+assert.throws(() => readable.push([]), errMessage);
+assert.throws(() => readable.push({}), errMessage);
+assert.throws(() => readable.push(0), errMessage);
