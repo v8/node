@@ -138,6 +138,7 @@ namespace compiler {
   V(MipsI32x4ExtractLane)          \
   V(MipsI32x4ReplaceLane)          \
   V(MipsI32x4Add)                  \
+  V(MipsI32x4AddHoriz)             \
   V(MipsI32x4Sub)                  \
   V(MipsF32x4Splat)                \
   V(MipsF32x4ExtractLane)          \
@@ -159,6 +160,7 @@ namespace compiler {
   V(MipsF32x4RecipApprox)          \
   V(MipsF32x4RecipSqrtApprox)      \
   V(MipsF32x4Add)                  \
+  V(MipsF32x4AddHoriz)             \
   V(MipsF32x4Sub)                  \
   V(MipsF32x4Mul)                  \
   V(MipsF32x4Max)                  \
@@ -183,6 +185,7 @@ namespace compiler {
   V(MipsI16x8ShrU)                 \
   V(MipsI16x8Add)                  \
   V(MipsI16x8AddSaturateS)         \
+  V(MipsI16x8AddHoriz)             \
   V(MipsI16x8Sub)                  \
   V(MipsI16x8SubSaturateS)         \
   V(MipsI16x8Mul)                  \
@@ -260,7 +263,19 @@ namespace compiler {
   V(MipsS8x4Reverse)               \
   V(MipsS8x2Reverse)               \
   V(MipsMsaLd)                     \
-  V(MipsMsaSt)
+  V(MipsMsaSt)                     \
+  V(MipsI32x4SConvertI16x8Low)     \
+  V(MipsI32x4SConvertI16x8High)    \
+  V(MipsI32x4UConvertI16x8Low)     \
+  V(MipsI32x4UConvertI16x8High)    \
+  V(MipsI16x8SConvertI8x16Low)     \
+  V(MipsI16x8SConvertI8x16High)    \
+  V(MipsI16x8SConvertI32x4)        \
+  V(MipsI16x8UConvertI32x4)        \
+  V(MipsI16x8UConvertI8x16Low)     \
+  V(MipsI16x8UConvertI8x16High)    \
+  V(MipsI8x16SConvertI16x8)        \
+  V(MipsI8x16UConvertI16x8)
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes

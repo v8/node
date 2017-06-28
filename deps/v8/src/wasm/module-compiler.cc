@@ -8,6 +8,7 @@
 
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
+#include "src/code-stubs.h"
 #include "src/counters.h"
 #include "src/property-descriptor.h"
 #include "src/wasm/compilation-manager.h"
@@ -85,7 +86,7 @@ ModuleCompiler::ModuleCompiler(Isolate* isolate,
                                std::unique_ptr<WasmModule> module, bool is_sync)
     : isolate_(isolate),
       module_(std::move(module)),
-      counters_shared_(isolate->counters_shared()),
+      async_counters_(isolate->async_counters()),
       is_sync_(is_sync),
       executed_units_(
           isolate->random_number_generator(),
@@ -96,9 +97,8 @@ ModuleCompiler::ModuleCompiler(Isolate* isolate,
       num_background_tasks_(
           Min(static_cast<size_t>(FLAG_wasm_num_compilation_tasks),
               V8::GetCurrentPlatform()->NumberOfAvailableBackgroundThreads())),
-      stopped_compilation_tasks_(num_background_tasks_) {
-  counters_ = counters_shared_.get();
-}
+      stopped_compilation_tasks_(num_background_tasks_),
+      centry_stub_(CEntryStub(isolate, 1).GetCode()) {}
 
 // The actual runnable task that performs compilations in the background.
 ModuleCompiler::CompilationTask::CompilationTask(ModuleCompiler* compiler)
@@ -163,9 +163,13 @@ size_t ModuleCompiler::InitializeParallelCompilation(
     constexpr bool is_sync = true;
     compilation_units_.push_back(std::unique_ptr<compiler::WasmCompilationUnit>(
         new compiler::WasmCompilationUnit(isolate_, &module_env, func,
-                                          !is_sync)));
+                                          centry_stub_, !is_sync)));
   }
   return funcs_to_compile;
+}
+
+void ModuleCompiler::ReopenHandlesInDeferredScope() {
+  centry_stub_ = handle(*centry_stub_, isolate_);
 }
 
 void ModuleCompiler::RestartCompilationTasks() {
@@ -342,10 +346,9 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObject(
   if (is_sync_) {
     // TODO(karlschimpf): Make this work when asynchronous.
     // https://bugs.chromium.org/p/v8/issues/detail?id=6361
-    HistogramTimerScope wasm_compile_module_time_scope(
-        module_->is_wasm()
-            ? isolate_->counters()->wasm_compile_wasm_module_time()
-            : isolate_->counters()->wasm_compile_asm_module_time());
+    TimedHistogramScope wasm_compile_module_time_scope(
+        module_->is_wasm() ? counters()->wasm_compile_wasm_module_time()
+                           : counters()->wasm_compile_asm_module_time());
     return CompileToModuleObjectInternal(
         thrower, wire_bytes, asm_js_script, asm_js_offset_table_bytes, factory,
         &temp_instance, &function_tables, &signature_tables);
@@ -588,8 +591,8 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
   if (is_sync_)
     // TODO(karlschimpf): Make this work when asynchronous.
     // https://bugs.chromium.org/p/v8/issues/detail?id=6361
-    (module_->is_wasm() ? isolate_->counters()->wasm_functions_per_wasm_module()
-                        : isolate_->counters()->wasm_functions_per_asm_module())
+    (module_->is_wasm() ? counters()->wasm_functions_per_wasm_module()
+                        : counters()->wasm_functions_per_asm_module())
         ->AddSample(static_cast<int>(module_->functions.size()));
 
   if (!lazy_compile) {
@@ -623,7 +626,7 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
        i < temp_instance->function_code.size(); ++i) {
     Code* code = *temp_instance->function_code[i];
     code_table->set(static_cast<int>(i), code);
-    RecordStats(code, counters_);
+    RecordStats(code, counters());
   }
 
   // Create heap objects for script, module bytes and asm.js offset table to
@@ -689,7 +692,7 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
         isolate_, module, wasm_code, exp.index);
     int export_index = static_cast<int>(module->functions.size() + func_index);
     code_table->set(export_index, *wrapper_code);
-    RecordStats(*wrapper_code, counters_);
+    RecordStats(*wrapper_code, counters());
     func_index++;
   }
 
@@ -735,15 +738,13 @@ InstanceBuilder::InstanceBuilder(
     WeakCallbackInfo<void>::Callback instance_finalizer_callback)
     : isolate_(isolate),
       module_(module_object->compiled_module()->module()),
-      counters_shared_(isolate->counters_shared()),
+      async_counters_(isolate->async_counters()),
       thrower_(thrower),
       module_object_(module_object),
       ffi_(ffi.is_null() ? Handle<JSReceiver>::null() : ffi.ToHandleChecked()),
       memory_(memory.is_null() ? Handle<JSArrayBuffer>::null()
                                : memory.ToHandleChecked()),
-      instance_finalizer_callback_(instance_finalizer_callback) {
-  counters_ = counters_shared_.get();
-}
+      instance_finalizer_callback_(instance_finalizer_callback) {}
 
 // Build an instance, in all of its glory.
 MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
@@ -757,9 +758,8 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
 
   // Record build time into correct bucket, then build instance.
   HistogramTimerScope wasm_instantiate_module_time_scope(
-      module_->is_wasm()
-          ? isolate_->counters()->wasm_instantiate_wasm_module_time()
-          : isolate_->counters()->wasm_instantiate_asm_module_time());
+      module_->is_wasm() ? counters()->wasm_instantiate_wasm_module_time()
+                         : counters()->wasm_instantiate_asm_module_time());
   Factory* factory = isolate_->factory();
 
   //--------------------------------------------------------------------------
@@ -833,7 +833,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
             UNREACHABLE();
         }
       }
-      RecordStats(code_table, counters_);
+      RecordStats(code_table, counters());
     } else {
       // There was no owner, so we can reuse the original.
       compiled_module_ = original;
@@ -912,8 +912,8 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   // Set up the memory for the new instance.
   //--------------------------------------------------------------------------
   uint32_t min_mem_pages = module_->min_mem_pages;
-  (module_->is_wasm() ? isolate_->counters()->wasm_wasm_min_mem_pages_count()
-                      : isolate_->counters()->wasm_asm_min_mem_pages_count())
+  (module_->is_wasm() ? counters()->wasm_wasm_min_mem_pages_count()
+                      : counters()->wasm_asm_min_mem_pages_count())
       ->AddSample(min_mem_pages);
 
   if (!memory_.is_null()) {
@@ -1113,7 +1113,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
     Handle<WasmExportedFunction> startup_fct = WasmExportedFunction::New(
         isolate_, instance, MaybeHandle<String>(), start_index,
         static_cast<int>(sig->parameter_count()), wrapper_code);
-    RecordStats(*startup_code, counters_);
+    RecordStats(*startup_code, counters());
     // Call the JS function.
     Handle<Object> undefined = factory->undefined_value();
     MaybeHandle<Object> retval =
@@ -1310,7 +1310,7 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
           return -1;
         }
         code_table->set(num_imported_functions, *import_wrapper);
-        RecordStats(*import_wrapper, counters_);
+        RecordStats(*import_wrapper, counters());
         num_imported_functions++;
         break;
       }
@@ -1887,7 +1887,7 @@ AsyncCompileJob::AsyncCompileJob(Isolate* isolate,
                                  size_t length, Handle<Context> context,
                                  Handle<JSPromise> promise)
     : isolate_(isolate),
-      counters_shared_(isolate->counters_shared()),
+      async_counters_(isolate->async_counters()),
       bytes_copy_(std::move(bytes_copy)),
       wire_bytes_(bytes_copy_.get(), bytes_copy_.get() + length) {
   // The handles for the context and promise must be deferred.
@@ -1895,7 +1895,6 @@ AsyncCompileJob::AsyncCompileJob(Isolate* isolate,
   context_ = Handle<Context>(*context);
   module_promise_ = Handle<JSPromise>(*promise);
   deferred_handles_.push_back(deferred.Detach());
-  counters_ = counters_shared_.get();
 }
 
 void AsyncCompileJob::Start() {
@@ -1913,9 +1912,7 @@ void AsyncCompileJob::ReopenHandlesInDeferredScope() {
   signature_tables_ = handle(*signature_tables_, isolate_);
   code_table_ = handle(*code_table_, isolate_);
   temp_instance_->ReopenHandles(isolate_);
-  for (auto& unit : compiler_->compilation_units_) {
-    unit->ReopenCentryStub();
-  }
+  compiler_->ReopenHandlesInDeferredScope();
   deferred_handles_.push_back(deferred.Detach());
 }
 
@@ -2020,10 +2017,9 @@ class AsyncCompileJob::DecodeModule : public AsyncCompileJob::CompileStep {
       DisallowHeapAllocation no_allocation;
       // Decode the module bytes.
       TRACE_COMPILE("(1) Decoding module...\n");
-      constexpr bool is_sync = true;
-      result = DecodeWasmModule(job_->isolate_, job_->wire_bytes_.start(),
-                                job_->wire_bytes_.end(), false, kWasmOrigin,
-                                !is_sync);
+      result = AsyncDecodeWasmModule(job_->isolate_, job_->wire_bytes_.start(),
+                                     job_->wire_bytes_.end(), false,
+                                     kWasmOrigin, job_->async_counters());
     }
     if (result.failed()) {
       // Decoding failure; reject the promise and clean up.
@@ -2109,7 +2105,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
       job_->temp_instance_->function_code[i] = illegal_builtin;
     }
 
-    job_->isolate_->counters()->wasm_functions_per_wasm_module()->AddSample(
+    job_->counters()->wasm_functions_per_wasm_module()->AddSample(
         static_cast<int>(module_->functions.size()));
 
     // Transfer ownership of the {WasmModule} to the {ModuleCompiler}, but
@@ -2120,11 +2116,13 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
         new ModuleCompiler(job_->isolate_, std::move(module_), !is_sync));
     job_->compiler_->EnableThrottling();
 
+    // Reopen all handles which should survive in the DeferredHandleScope.
+    job_->ReopenHandlesInDeferredScope();
+
     DCHECK_LE(module->num_imported_functions, module->functions.size());
     size_t num_functions =
         module->functions.size() - module->num_imported_functions;
     if (num_functions == 0) {
-      job_->ReopenHandlesInDeferredScope();
       // Degenerate case of an empty module.
       job_->DoSync<FinishCompile>();
       return;
@@ -2142,8 +2140,6 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
     job_->outstanding_units_ = job_->compiler_->InitializeParallelCompilation(
         module->functions, *job_->module_bytes_env_);
 
-    // Reopen all handles which should survive in the DeferredHandleScope.
-    job_->ReopenHandlesInDeferredScope();
     job_->DoAsync<ExecuteAndFinishCompilationUnits>(num_background_tasks);
   }
 };
@@ -2263,7 +2259,7 @@ class AsyncCompileJob::FinishCompile : public CompileStep {
     for (size_t i = FLAG_skip_compiling_wasm_funcs;
          i < job_->temp_instance_->function_code.size(); ++i) {
       Code* code = Code::cast(job_->code_table_->get(static_cast<int>(i)));
-      RecordStats(code, job_->counters_);
+      RecordStats(code, job_->counters());
     }
 
     // Create heap objects for script and module bytes to be stored in the
@@ -2286,7 +2282,7 @@ class AsyncCompileJob::FinishCompile : public CompileStep {
     // The {module_wrapper} will take ownership of the {WasmModule} object,
     // and it will be destroyed when the GC reclaims the wrapper object.
     Handle<WasmModuleWrapper> module_wrapper = WasmModuleWrapper::New(
-        job_->isolate_, job_->compiler_->module_.release());
+        job_->isolate_, job_->compiler_->ReleaseModule().release());
 
     // Create the shared module data.
     // TODO(clemensh): For the same module (same bytes / same hash), we should
@@ -2339,7 +2335,7 @@ class AsyncCompileJob::CompileWrappers : public CompileStep {
       int export_index =
           static_cast<int>(module->functions.size() + func_index);
       job_->code_table_->set(export_index, *wrapper_code);
-      RecordStats(*wrapper_code, job_->counters_);
+      RecordStats(*wrapper_code, job_->counters());
       func_index++;
     }
 

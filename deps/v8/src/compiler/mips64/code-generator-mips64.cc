@@ -2887,6 +2887,142 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ shf_b(i.OutputSimd128Register(), i.InputSimd128Register(0), 0xB1);
       break;
     }
+    case kMips64I32x4SConvertI16x8Low: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src = i.InputSimd128Register(0);
+      __ ilvr_h(kSimd128ScratchReg, src, src);
+      __ slli_w(dst, kSimd128ScratchReg, 16);
+      __ srai_w(dst, dst, 16);
+      break;
+    }
+    case kMips64I32x4SConvertI16x8High: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src = i.InputSimd128Register(0);
+      __ ilvl_h(kSimd128ScratchReg, src, src);
+      __ slli_w(dst, kSimd128ScratchReg, 16);
+      __ srai_w(dst, dst, 16);
+      break;
+    }
+    case kMips64I32x4UConvertI16x8Low: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      __ xor_v(kSimd128RegZero, kSimd128RegZero, kSimd128RegZero);
+      __ ilvr_h(i.OutputSimd128Register(), kSimd128RegZero,
+                i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64I32x4UConvertI16x8High: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      __ xor_v(kSimd128RegZero, kSimd128RegZero, kSimd128RegZero);
+      __ ilvl_h(i.OutputSimd128Register(), kSimd128RegZero,
+                i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64I16x8SConvertI8x16Low: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src = i.InputSimd128Register(0);
+      __ ilvr_b(kSimd128ScratchReg, src, src);
+      __ slli_h(dst, kSimd128ScratchReg, 8);
+      __ srai_h(dst, dst, 8);
+      break;
+    }
+    case kMips64I16x8SConvertI8x16High: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src = i.InputSimd128Register(0);
+      __ ilvl_b(kSimd128ScratchReg, src, src);
+      __ slli_h(dst, kSimd128ScratchReg, 8);
+      __ srai_h(dst, dst, 8);
+      break;
+    }
+    case kMips64I16x8SConvertI32x4: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      __ sat_s_w(kSimd128ScratchReg, src0, 15);
+      __ sat_s_w(kSimd128RegZero, src1, 15);  // kSimd128RegZero as scratch
+      __ pckev_h(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64I16x8UConvertI32x4: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      __ sat_u_w(kSimd128ScratchReg, src0, 15);
+      __ sat_u_w(kSimd128RegZero, src1, 15);  // kSimd128RegZero as scratch
+      __ pckev_h(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64I16x8UConvertI8x16Low: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      __ xor_v(kSimd128RegZero, kSimd128RegZero, kSimd128RegZero);
+      __ ilvr_b(i.OutputSimd128Register(), kSimd128RegZero,
+                i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64I16x8UConvertI8x16High: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      __ xor_v(kSimd128RegZero, kSimd128RegZero, kSimd128RegZero);
+      __ ilvl_b(i.OutputSimd128Register(), kSimd128RegZero,
+                i.InputSimd128Register(0));
+      break;
+    }
+    case kMips64I8x16SConvertI16x8: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      __ sat_s_h(kSimd128ScratchReg, src0, 7);
+      __ sat_s_h(kSimd128RegZero, src1, 7);  // kSimd128RegZero as scratch
+      __ pckev_b(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64I8x16UConvertI16x8: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register dst = i.OutputSimd128Register();
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      __ sat_u_h(kSimd128ScratchReg, src0, 7);
+      __ sat_u_h(kSimd128RegZero, src1, 7);  // kSimd128RegZero as scratch
+      __ pckev_b(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64F32x4AddHoriz: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      Simd128Register dst = i.OutputSimd128Register();
+      __ shf_w(kSimd128ScratchReg, src0, 0xB1);  // 2 3 0 1 : 10110001 : 0xB1
+      __ shf_w(kSimd128RegZero, src1, 0xB1);     // kSimd128RegZero as scratch
+      __ fadd_w(kSimd128ScratchReg, kSimd128ScratchReg, src0);
+      __ fadd_w(kSimd128RegZero, kSimd128RegZero, src1);
+      __ pckev_w(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64I32x4AddHoriz: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      Simd128Register dst = i.OutputSimd128Register();
+      __ hadd_s_d(kSimd128ScratchReg, src0, src0);
+      __ hadd_s_d(kSimd128RegZero, src1, src1);  // kSimd128RegZero as scratch
+      __ pckev_w(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
+    case kMips64I16x8AddHoriz: {
+      CpuFeatureScope msa_scope(masm(), MIPS_SIMD);
+      Simd128Register src0 = i.InputSimd128Register(0);
+      Simd128Register src1 = i.InputSimd128Register(1);
+      Simd128Register dst = i.OutputSimd128Register();
+      __ hadd_s_w(kSimd128ScratchReg, src0, src0);
+      __ hadd_s_w(kSimd128RegZero, src1, src1);  // kSimd128RegZero as scratch
+      __ pckev_h(dst, kSimd128RegZero, kSimd128ScratchReg);
+      break;
+    }
   }
   return kSuccess;
 }  // NOLINT(readability/fn_size)

@@ -21,9 +21,6 @@ declare_args() {
   # Print to stdout on Android.
   v8_android_log_stdout = false
 
-  # Set flags for tracking code coverage with gcov. Requires is_clang=false.
-  v8_code_coverage = false
-
   # Sets -DV8_ENABLE_FUTURE.
   v8_enable_future = false
 
@@ -513,23 +510,15 @@ config("toolchain") {
 
 # Configs for code coverage with gcov. Separate configs for cflags and ldflags
 # to selectively influde cflags in non-test targets only.
-config("v8_code_coverage_cflags") {
-  # Make sure we're using gcc toolchain.
-  if (v8_code_coverage) {
-    assert(!is_clang)
-    cflags = [
-      "-fprofile-arcs",
-      "-ftest-coverage",
-    ]
-  }
+config("v8_gcov_coverage_cflags") {
+  cflags = [
+    "-fprofile-arcs",
+    "-ftest-coverage",
+  ]
 }
 
-config("v8_code_coverage_ldflags") {
-  # Make sure we're using gcc toolchain.
-  if (v8_code_coverage) {
-    assert(!is_clang)
-    ldflags = [ "-fprofile-arcs" ]
-  }
+config("v8_gcov_coverage_ldflags") {
+  ldflags = [ "-fprofile-arcs" ]
 }
 
 ###############################################################################
@@ -1646,6 +1635,8 @@ v8_source_set("v8_base") {
     "src/interpreter/bytecode-array-iterator.h",
     "src/interpreter/bytecode-array-random-iterator.cc",
     "src/interpreter/bytecode-array-random-iterator.h",
+    "src/interpreter/bytecode-array-writer.cc",
+    "src/interpreter/bytecode-array-writer.h",
     "src/interpreter/bytecode-decoder.cc",
     "src/interpreter/bytecode-decoder.h",
     "src/interpreter/bytecode-flags.cc",
@@ -1655,6 +1646,8 @@ v8_source_set("v8_base") {
     "src/interpreter/bytecode-jump-table.h",
     "src/interpreter/bytecode-label.cc",
     "src/interpreter/bytecode-label.h",
+    "src/interpreter/bytecode-node.cc",
+    "src/interpreter/bytecode-node.h",
     "src/interpreter/bytecode-operands.cc",
     "src/interpreter/bytecode-operands.h",
     "src/interpreter/bytecode-register-allocator.h",

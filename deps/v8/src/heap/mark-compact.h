@@ -6,14 +6,12 @@
 #define V8_HEAP_MARK_COMPACT_H_
 
 #include <deque>
+#include <vector>
 
 #include "src/base/bits.h"
-#include "src/base/platform/condition-variable.h"
-#include "src/cancelable-task.h"
 #include "src/heap/marking.h"
 #include "src/heap/sequential-marking-deque.h"
 #include "src/heap/spaces.h"
-#include "src/heap/store-buffer.h"
 #include "src/heap/worklist.h"
 
 namespace v8 {
@@ -23,15 +21,11 @@ namespace internal {
 class EvacuationJobTraits;
 class HeapObjectVisitor;
 class ItemParallelJob;
-class WorklistView;
-class MarkCompactCollector;
-class MinorMarkCompactCollector;
-class MarkingVisitor;
 class MigrationObserver;
 class RecordMigratedSlotVisitor;
-class ThreadLocalTop;
-class Worklist;
 class YoungGenerationMarkingVisitor;
+class Worklist;
+class WorklistView;
 
 class ObjectMarking : public AllStatic {
  public:
@@ -109,7 +103,7 @@ class ObjectMarking : public AllStatic {
   DISALLOW_IMPLICIT_CONSTRUCTORS(ObjectMarking);
 };
 
-class MarkBitCellIterator BASE_EMBEDDED {
+class MarkBitCellIterator {
  public:
   MarkBitCellIterator(MemoryChunk* chunk, MarkingState state) : chunk_(chunk) {
     last_cell_index_ = Bitmap::IndexToCell(Bitmap::CellAlignIndex(
@@ -230,28 +224,38 @@ class LiveObjectRange {
   Address end_;
 };
 
-class LiveObjectVisitor BASE_EMBEDDED {
+class LiveObjectVisitor : AllStatic {
  public:
   enum IterationMode {
     kKeepMarking,
     kClearMarkbits,
   };
 
-  // Visits black objects on a MemoryChunk until the Visitor returns for an
-  // object. If IterationMode::kClearMarkbits is passed the markbits and slots
-  // for visited objects are cleared for each successfully visited object.
+  // Visits black objects on a MemoryChunk until the Visitor returns |false| for
+  // an object. If IterationMode::kClearMarkbits is passed the markbits and
+  // slots for visited objects are cleared for each successfully visited object.
   template <class Visitor>
-  bool VisitBlackObjects(MemoryChunk* chunk, const MarkingState& state,
-                         Visitor* visitor, IterationMode iteration_mode);
+  static bool VisitBlackObjects(MemoryChunk* chunk, const MarkingState& state,
+                                Visitor* visitor, IterationMode iteration_mode,
+                                HeapObject** failed_object);
 
-  // Visits grey objects on a Memorychunk. Is not allowed to fail visitation
-  // for an object.
+  // Visits black objects on a MemoryChunk. The visitor is not allowed to fail
+  // visitation for an object.
   template <class Visitor>
-  bool VisitGreyObjectsNoFail(MemoryChunk* chunk, const MarkingState& state,
-                              Visitor* visitor, IterationMode iteration_mode);
+  static void VisitBlackObjectsNoFail(MemoryChunk* chunk,
+                                      const MarkingState& state,
+                                      Visitor* visitor,
+                                      IterationMode iteration_mode);
 
- private:
-  void RecomputeLiveBytes(MemoryChunk* chunk, const MarkingState& state);
+  // Visits black objects on a MemoryChunk. The visitor is not allowed to fail
+  // visitation for an object.
+  template <class Visitor>
+  static void VisitGreyObjectsNoFail(MemoryChunk* chunk,
+                                     const MarkingState& state,
+                                     Visitor* visitor,
+                                     IterationMode iteration_mode);
+
+  static void RecomputeLiveBytes(MemoryChunk* chunk, const MarkingState& state);
 };
 
 enum PageEvacuationMode { NEW_TO_NEW, NEW_TO_OLD };
@@ -370,10 +374,9 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   Worklist* worklist_;
   YoungGenerationMarkingVisitor* main_marking_visitor_;
   base::Semaphore page_parallel_job_semaphore_;
-  List<Page*> new_space_evacuation_pages_;
+  std::vector<Page*> new_space_evacuation_pages_;
   std::vector<Page*> sweep_to_iterate_pages_;
 
-  friend class MarkYoungGenerationJobTraits;
   friend class YoungGenerationMarkingTask;
   friend class YoungGenerationMarkingVisitor;
 };
@@ -744,7 +747,9 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void ReleaseEvacuationCandidates();
   void PostProcessEvacuationCandidates();
+  void ReportAbortedEvacuationCandidate(HeapObject* failed_object, Page* page);
 
+  base::Mutex mutex_;
   base::Semaphore page_parallel_job_semaphore_;
 
 #ifdef DEBUG
@@ -777,24 +782,22 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   MarkingWorklist marking_worklist_;
 
   // Candidates for pages that should be evacuated.
-  List<Page*> evacuation_candidates_;
+  std::vector<Page*> evacuation_candidates_;
   // Pages that are actually processed during evacuation.
-  List<Page*> old_space_evacuation_pages_;
-  List<Page*> new_space_evacuation_pages_;
+  std::vector<Page*> old_space_evacuation_pages_;
+  std::vector<Page*> new_space_evacuation_pages_;
+  std::vector<std::pair<HeapObject*, Page*>> aborted_evacuation_candidates_;
 
   Sweeper sweeper_;
 
-  friend class CodeMarkingVisitor;
+  friend class FullEvacuator;
   friend class Heap;
   friend class IncrementalMarkingMarkingVisitor;
   friend class MarkCompactMarkingVisitor;
-  friend class MarkingVisitor;
   friend class RecordMigratedSlotVisitor;
-  friend class SharedFunctionInfoMarkingVisitor;
-  friend class StoreBuffer;
 };
 
-class EvacuationScope BASE_EMBEDDED {
+class EvacuationScope {
  public:
   explicit EvacuationScope(MarkCompactCollector* collector)
       : collector_(collector) {

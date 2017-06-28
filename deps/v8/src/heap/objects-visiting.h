@@ -284,16 +284,16 @@ VisitorDispatchTable<typename StaticMarkingVisitor<StaticVisitor>::Callback>
 template <typename ResultType, typename ConcreteVisitor>
 class HeapVisitor : public ObjectVisitor {
  public:
-  ResultType Visit(HeapObject* object);
-  ResultType Visit(Map* map, HeapObject* object);
+  V8_INLINE ResultType Visit(HeapObject* object);
+  V8_INLINE ResultType Visit(Map* map, HeapObject* object);
 
  protected:
   // A guard predicate for visiting the object.
   // If it returns false then the default implementations of the Visit*
   // functions bailout from iterating the object pointers.
-  V8_INLINE bool ShouldVisit(HeapObject* object);
+  V8_INLINE bool ShouldVisit(HeapObject* object) { return true; }
   // Guard predicate for visiting the objects map pointer separately.
-  V8_INLINE bool ShouldVisitMapPointer();
+  V8_INLINE bool ShouldVisitMapPointer() { return true; }
   // A callback for visiting the map pointer in the object header.
   V8_INLINE void VisitMapPointer(HeapObject* host, HeapObject** map);
 
@@ -309,7 +309,8 @@ class HeapVisitor : public ObjectVisitor {
   V8_INLINE ResultType VisitFreeSpace(Map* map, FreeSpace* object);
 };
 
-class NewSpaceVisitor : public HeapVisitor<int, NewSpaceVisitor> {
+template <typename ConcreteVisitor>
+class NewSpaceVisitor : public HeapVisitor<int, ConcreteVisitor> {
  public:
   V8_INLINE bool ShouldVisitMapPointer() { return false; }
 

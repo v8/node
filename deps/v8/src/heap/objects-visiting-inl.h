@@ -638,20 +638,10 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::Visit(Map* map,
 }
 
 template <typename ResultType, typename ConcreteVisitor>
-bool HeapVisitor<ResultType, ConcreteVisitor>::ShouldVisitMapPointer() {
-  return true;
-}
-
-template <typename ResultType, typename ConcreteVisitor>
 void HeapVisitor<ResultType, ConcreteVisitor>::VisitMapPointer(
     HeapObject* host, HeapObject** map) {
   static_cast<ConcreteVisitor*>(this)->VisitPointer(
       host, reinterpret_cast<Object**>(map));
-}
-
-template <typename ResultType, typename ConcreteVisitor>
-bool HeapVisitor<ResultType, ConcreteVisitor>::ShouldVisit(HeapObject* object) {
-  return true;
 }
 
 #define VISIT(type)                                                 \
@@ -677,8 +667,7 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitShortcutCandidate(
   int size = ConsString::BodyDescriptor::SizeOf(map, object);
   if (visitor->ShouldVisitMapPointer())
     visitor->VisitMapPointer(object, object->map_slot());
-  ConsString::BodyDescriptor::IterateBody(object, size,
-                                          static_cast<ConcreteVisitor*>(this));
+  ConsString::BodyDescriptor::IterateBody(object, size, visitor);
   return static_cast<ResultType>(size);
 }
 
@@ -690,8 +679,7 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitNativeContext(
   int size = Context::BodyDescriptor::SizeOf(map, object);
   if (visitor->ShouldVisitMapPointer())
     visitor->VisitMapPointer(object, object->map_slot());
-  Context::BodyDescriptor::IterateBody(object, size,
-                                       static_cast<ConcreteVisitor*>(this));
+  Context::BodyDescriptor::IterateBody(object, size, visitor);
   return static_cast<ResultType>(size);
 }
 
@@ -714,8 +702,7 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSObjectFast(
   int size = JSObject::FastBodyDescriptor::SizeOf(map, object);
   if (visitor->ShouldVisitMapPointer())
     visitor->VisitMapPointer(object, object->map_slot());
-  JSObject::FastBodyDescriptor::IterateBody(
-      object, size, static_cast<ConcreteVisitor*>(this));
+  JSObject::FastBodyDescriptor::IterateBody(object, size, visitor);
   return static_cast<ResultType>(size);
 }
 
@@ -727,8 +714,7 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitJSApiObject(
   int size = JSObject::BodyDescriptor::SizeOf(map, object);
   if (visitor->ShouldVisitMapPointer())
     visitor->VisitMapPointer(object, object->map_slot());
-  JSObject::BodyDescriptor::IterateBody(object, size,
-                                        static_cast<ConcreteVisitor*>(this));
+  JSObject::BodyDescriptor::IterateBody(object, size, visitor);
   return static_cast<ResultType>(size);
 }
 
@@ -740,8 +726,7 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitStruct(
   int size = map->instance_size();
   if (visitor->ShouldVisitMapPointer())
     visitor->VisitMapPointer(object, object->map_slot());
-  StructBodyDescriptor::IterateBody(object, size,
-                                    static_cast<ConcreteVisitor*>(this));
+  StructBodyDescriptor::IterateBody(object, size, visitor);
   return static_cast<ResultType>(size);
 }
 
@@ -755,22 +740,29 @@ ResultType HeapVisitor<ResultType, ConcreteVisitor>::VisitFreeSpace(
   return static_cast<ResultType>(FreeSpace::cast(object)->size());
 }
 
-int NewSpaceVisitor::VisitJSFunction(Map* map, JSFunction* object) {
+template <typename ConcreteVisitor>
+int NewSpaceVisitor<ConcreteVisitor>::VisitJSFunction(Map* map,
+                                                      JSFunction* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   int size = JSFunction::BodyDescriptorWeak::SizeOf(map, object);
-  VisitMapPointer(object, object->map_slot());
-  JSFunction::BodyDescriptorWeak::IterateBody(object, size, this);
+  JSFunction::BodyDescriptorWeak::IterateBody(object, size, visitor);
   return size;
 }
 
-int NewSpaceVisitor::VisitNativeContext(Map* map, Context* object) {
+template <typename ConcreteVisitor>
+int NewSpaceVisitor<ConcreteVisitor>::VisitNativeContext(Map* map,
+                                                         Context* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   int size = Context::BodyDescriptor::SizeOf(map, object);
-  VisitMapPointer(object, object->map_slot());
-  Context::BodyDescriptor::IterateBody(object, size, this);
+  Context::BodyDescriptor::IterateBody(object, size, visitor);
   return size;
 }
 
-int NewSpaceVisitor::VisitJSApiObject(Map* map, JSObject* object) {
-  return VisitJSObject(map, object);
+template <typename ConcreteVisitor>
+int NewSpaceVisitor<ConcreteVisitor>::VisitJSApiObject(Map* map,
+                                                       JSObject* object) {
+  ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
+  return visitor->VisitJSObject(map, object);
 }
 
 }  // namespace internal

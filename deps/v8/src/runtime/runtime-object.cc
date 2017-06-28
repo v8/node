@@ -70,8 +70,7 @@ static MaybeHandle<Object> KeyedGetObjectProperty(Isolate* isolate,
         GlobalDictionary* dictionary = receiver->global_dictionary();
         int entry = dictionary->FindEntry(key);
         if (entry != GlobalDictionary::kNotFound) {
-          DCHECK(dictionary->ValueAt(entry)->IsPropertyCell());
-          PropertyCell* cell = PropertyCell::cast(dictionary->ValueAt(entry));
+          PropertyCell* cell = dictionary->CellAt(entry);
           if (cell->property_details().kind() == kData) {
             Object* value = cell->value();
             if (!value->IsTheHole(isolate)) {
@@ -1066,26 +1065,6 @@ RUNTIME_FUNCTION(Runtime_CreateIterResultObject) {
   CONVERT_ARG_HANDLE_CHECKED(Object, done, 1);
   return *isolate->factory()->NewJSIteratorResult(value, done->BooleanValue());
 }
-
-RUNTIME_FUNCTION(Runtime_CreateKeyValueArray) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(Object, key, 0);
-  CONVERT_ARG_HANDLE_CHECKED(Object, value, 1);
-  Handle<FixedArray> elements = isolate->factory()->NewFixedArray(2);
-  elements->set(0, *key);
-  elements->set(1, *value);
-  return *isolate->factory()->NewJSArrayWithElements(elements, FAST_ELEMENTS,
-                                                     2);
-}
-
-RUNTIME_FUNCTION(Runtime_IsAccessCheckNeeded) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_CHECKED(Object, object, 0);
-  return isolate->heap()->ToBoolean(object->IsAccessCheckNeeded());
-}
-
 
 RUNTIME_FUNCTION(Runtime_CreateDataProperty) {
   HandleScope scope(isolate);

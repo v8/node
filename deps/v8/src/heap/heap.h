@@ -173,7 +173,7 @@ using v8::MemoryPressureLevel;
   /* Protectors */                                                             \
   V(PropertyCell, array_protector, ArrayProtector)                             \
   V(Cell, is_concat_spreadable_protector, IsConcatSpreadableProtector)         \
-  V(Cell, species_protector, SpeciesProtector)                                 \
+  V(PropertyCell, species_protector, SpeciesProtector)                         \
   V(PropertyCell, string_length_protector, StringLengthProtector)              \
   V(Cell, fast_array_iteration_protector, FastArrayIterationProtector)         \
   V(PropertyCell, array_iterator_protector, ArrayIteratorProtector)            \
@@ -2143,7 +2143,7 @@ class Heap {
   MUST_USE_RESULT AllocationResult AllocateCell(Object* value);
 
   // Allocate a tenured JS global property cell initialized with the hole.
-  MUST_USE_RESULT AllocationResult AllocatePropertyCell();
+  MUST_USE_RESULT AllocationResult AllocatePropertyCell(Name* name);
 
   MUST_USE_RESULT AllocationResult AllocateWeakCell(HeapObject* value);
 

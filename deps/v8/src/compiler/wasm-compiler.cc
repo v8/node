@@ -12,7 +12,6 @@
 #include "src/base/platform/platform.h"
 #include "src/builtins/builtins.h"
 #include "src/code-factory.h"
-#include "src/code-stubs.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/compiler-source-position-table.h"
@@ -63,97 +62,6 @@ void MergeControlToEnd(JSGraph* jsgraph, Node* node) {
   } else {
     g->SetEnd(g->NewNode(jsgraph->common()->End(1), node));
   }
-}
-
-Node* BuildModifyThreadInWasmFlag(bool new_value, JSGraph* jsgraph,
-                                  Node* centry_stub_node, Node** effect_ptr,
-                                  Node* control) {
-  // TODO(eholk): generate code to modify the thread-local storage directly,
-  // rather than calling the runtime.
-  if (!trap_handler::UseTrapHandler()) {
-    return control;
-  }
-
-  const Runtime::FunctionId f =
-      new_value ? Runtime::kSetThreadInWasm : Runtime::kClearThreadInWasm;
-  const Runtime::Function* fun = Runtime::FunctionForId(f);
-  DCHECK_EQ(0, fun->nargs);
-  const CallDescriptor* desc = Linkage::GetRuntimeCallDescriptor(
-      jsgraph->zone(), f, fun->nargs, Operator::kNoProperties,
-      CallDescriptor::kNoFlags);
-  // CEntryStubConstant nodes have to be created and cached in the main
-  // thread. At the moment this is only done for CEntryStubConstant(1).
-  DCHECK_EQ(1, fun->result_size);
-  Node* inputs[] = {centry_stub_node,
-                    jsgraph->ExternalConstant(
-                        ExternalReference(f, jsgraph->isolate())),  // ref
-                    jsgraph->Int32Constant(fun->nargs),             // arity
-                    jsgraph->NoContextConstant(),
-                    *effect_ptr,
-                    control};
-
-  Node* node = jsgraph->graph()->NewNode(jsgraph->common()->Call(desc),
-                                         arraysize(inputs), inputs);
-  *effect_ptr = node;
-  return node;
-}
-
-// Only call this function for code which is not reused across instantiations,
-// as we do not patch the embedded context.
-Node* BuildCallToRuntimeWithContext(Runtime::FunctionId f, JSGraph* jsgraph,
-                                    Node* centry_stub_node, Node* context,
-                                    Node** parameters, int parameter_count,
-                                    Node** effect_ptr, Node** control) {
-  // Setting and clearing the thread-in-wasm flag should not be done as a normal
-  // runtime call.
-  DCHECK_NE(f, Runtime::kSetThreadInWasm);
-  DCHECK_NE(f, Runtime::kClearThreadInWasm);
-  // We're leaving Wasm code, so clear the flag.
-  *control = BuildModifyThreadInWasmFlag(false, jsgraph, centry_stub_node,
-                                         effect_ptr, *control);
-
-  const Runtime::Function* fun = Runtime::FunctionForId(f);
-  CallDescriptor* desc = Linkage::GetRuntimeCallDescriptor(
-      jsgraph->zone(), f, fun->nargs, Operator::kNoProperties,
-      CallDescriptor::kNoFlags);
-  // CEntryStubConstant nodes have to be created and cached in the main
-  // thread. At the moment this is only done for CEntryStubConstant(1).
-  DCHECK_EQ(1, fun->result_size);
-  // At the moment we only allow 3 parameters. If more parameters are needed,
-  // increase this constant accordingly.
-  static const int kMaxParams = 3;
-  DCHECK_GE(kMaxParams, parameter_count);
-  Node* inputs[kMaxParams + 6];
-  int count = 0;
-  inputs[count++] = centry_stub_node;
-  for (int i = 0; i < parameter_count; i++) {
-    inputs[count++] = parameters[i];
-  }
-  inputs[count++] = jsgraph->ExternalConstant(
-      ExternalReference(f, jsgraph->isolate()));         // ref
-  inputs[count++] = jsgraph->Int32Constant(fun->nargs);  // arity
-  inputs[count++] = context;                             // context
-  inputs[count++] = *effect_ptr;
-  inputs[count++] = *control;
-
-  Node* node =
-      jsgraph->graph()->NewNode(jsgraph->common()->Call(desc), count, inputs);
-  *effect_ptr = node;
-
-  // Restore the thread-in-wasm flag, since we have returned to Wasm.
-  *control = BuildModifyThreadInWasmFlag(true, jsgraph, centry_stub_node,
-                                         effect_ptr, *control);
-
-  return node;
-}
-
-Node* BuildCallToRuntime(Runtime::FunctionId f, JSGraph* jsgraph,
-                         Node* centry_stub_node, Node** parameters,
-                         int parameter_count, Node** effect_ptr,
-                         Node** control) {
-  return BuildCallToRuntimeWithContext(f, jsgraph, centry_stub_node,
-                                       jsgraph->NoContextConstant(), parameters,
-                                       parameter_count, effect_ptr, control);
 }
 
 }  // namespace
@@ -1742,9 +1650,9 @@ Node* WasmGraphBuilder::GrowMemory(Node* input) {
 
   Node* parameters[] = {BuildChangeUint32ToSmi(input)};
   Node* old_effect = *effect_;
-  Node* call = BuildCallToRuntime(
-      Runtime::kWasmGrowMemory, jsgraph(), centry_stub_node_, parameters,
-      arraysize(parameters), effect_, &check_input_range.if_true);
+  *control_ = check_input_range.if_true;
+  Node* call = BuildCallToRuntime(Runtime::kWasmGrowMemory, parameters,
+                                  arraysize(parameters));
 
   Node* result = BuildChangeSmiToInt32(call);
 
@@ -1775,9 +1683,8 @@ Node* WasmGraphBuilder::Throw(Node* input) {
       graph()->NewNode(machine->Word32And(), input, Int32Constant(0xFFFFu)));
 
   Node* parameters[] = {lower, upper};  // thrown value
-  return BuildCallToRuntime(Runtime::kWasmThrow, jsgraph(), centry_stub_node_,
-                            parameters, arraysize(parameters), effect_,
-                            control_);
+  return BuildCallToRuntime(Runtime::kWasmThrow, parameters,
+                            arraysize(parameters));
 }
 
 Node* WasmGraphBuilder::Catch(Node* input, wasm::WasmCodePosition position) {
@@ -1786,8 +1693,7 @@ Node* WasmGraphBuilder::Catch(Node* input, wasm::WasmCodePosition position) {
 
   Node* parameters[] = {input};  // caught value
   Node* value = BuildCallToRuntime(Runtime::kWasmGetCaughtExceptionValue,
-                                   jsgraph(), centry_stub_node_, parameters,
-                                   arraysize(parameters), effect_, control_);
+                                   parameters, arraysize(parameters));
 
   Node* is_smi;
   Node* is_heap;
@@ -2191,8 +2097,7 @@ Node* WasmGraphBuilder::BuildWasmCall(wasm::FunctionSig* sig, Node** args,
   args[params + 1] = *effect_;
   args[params + 2] = *control_;
 
-  CallDescriptor* descriptor =
-      wasm::ModuleEnv::GetWasmCallDescriptor(jsgraph()->zone(), sig);
+  CallDescriptor* descriptor = GetWasmCallDescriptor(jsgraph()->zone(), sig);
   const Operator* op = jsgraph()->common()->Call(descriptor);
   Node* call = graph()->NewNode(op, static_cast<int>(count), args);
   SetSourcePosition(call, position);
@@ -2635,16 +2540,14 @@ void WasmGraphBuilder::BuildJSToWasmWrapper(Handle<Code> wasm_code,
       graph()->start());
 
   // Set the ThreadInWasm flag before we do the actual call.
-  BuildModifyThreadInWasmFlag(true, jsgraph(), centry_stub_node_, effect_,
-                              *control_);
+  BuildModifyThreadInWasmFlag(true);
 
   if (!wasm::IsJSCompatibleSignature(sig_)) {
     // Throw a TypeError. Use the context of the calling javascript function
     // (passed as a parameter), such that the generated code is context
     // independent.
-    BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, jsgraph(),
-                                  centry_stub_node_, context, nullptr, 0,
-                                  effect_, control_);
+    BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, context,
+                                  nullptr, 0);
 
     // Add a dummy call to the wasm function so that the generated wrapper
     // contains a reference to the wrapped wasm function. Without this reference
@@ -2656,8 +2559,8 @@ void WasmGraphBuilder::BuildJSToWasmWrapper(Handle<Code> wasm_code,
 
     // We only need a dummy call descriptor.
     wasm::FunctionSig::Builder dummy_sig_builder(jsgraph()->zone(), 0, 0);
-    CallDescriptor* desc = wasm::ModuleEnv::GetWasmCallDescriptor(
-        jsgraph()->zone(), dummy_sig_builder.Build());
+    CallDescriptor* desc =
+        GetWasmCallDescriptor(jsgraph()->zone(), dummy_sig_builder.Build());
     *effect_ = graph()->NewNode(jsgraph()->common()->Call(desc), pos, args);
     Return(jsgraph()->UndefinedConstant());
     return;
@@ -2677,15 +2580,13 @@ void WasmGraphBuilder::BuildJSToWasmWrapper(Handle<Code> wasm_code,
   args[pos++] = *control_;
 
   // Call the wasm code.
-  CallDescriptor* desc =
-      wasm::ModuleEnv::GetWasmCallDescriptor(jsgraph()->zone(), sig);
+  CallDescriptor* desc = GetWasmCallDescriptor(jsgraph()->zone(), sig);
 
   Node* call = graph()->NewNode(jsgraph()->common()->Call(desc), count, args);
   *effect_ = call;
 
   // Clear the ThreadInWasmFlag
-  BuildModifyThreadInWasmFlag(false, jsgraph(), centry_stub_node_, effect_,
-                              *control_);
+  BuildModifyThreadInWasmFlag(false);
 
   Node* retval = call;
   Node* jsval = ToJS(
@@ -2722,9 +2623,8 @@ void WasmGraphBuilder::BuildWasmToJSWrapper(Handle<JSReceiver> target,
     // regenerated at instantiation time.
     Node* context =
         jsgraph()->HeapConstant(jsgraph()->isolate()->native_context());
-    BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, jsgraph(),
-                                  centry_stub_node_, context, nullptr, 0,
-                                  effect_, control_);
+    BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, context,
+                                  nullptr, 0);
     // We don't need to return a value here, as the runtime call will not return
     // anyway (the c entry stub will trigger stack unwinding).
     ReturnVoid();
@@ -2735,8 +2635,7 @@ void WasmGraphBuilder::BuildWasmToJSWrapper(Handle<JSReceiver> target,
 
   Node* call = nullptr;
 
-  BuildModifyThreadInWasmFlag(false, jsgraph(), centry_stub_node_, effect_,
-                              *control_);
+  BuildModifyThreadInWasmFlag(false);
 
   if (target->IsJSFunction()) {
     Handle<JSFunction> function = Handle<JSFunction>::cast(target);
@@ -2801,8 +2700,7 @@ void WasmGraphBuilder::BuildWasmToJSWrapper(Handle<JSReceiver> target,
   *effect_ = call;
   SetSourcePosition(call, 0);
 
-  BuildModifyThreadInWasmFlag(true, jsgraph(), centry_stub_node_, effect_,
-                              *control_);
+  BuildModifyThreadInWasmFlag(true);
 
   // Convert the return value back.
   Node* val = sig->return_count() == 0
@@ -2885,8 +2783,8 @@ void WasmGraphBuilder::BuildWasmInterpreterEntry(
       jsgraph()->SmiConstant(function_index),  // function index
       arg_buffer,                              // argument buffer
   };
-  BuildCallToRuntime(Runtime::kWasmRunInterpreter, jsgraph(), centry_stub_node_,
-                     parameters, arraysize(parameters), effect_, control_);
+  BuildCallToRuntime(Runtime::kWasmRunInterpreter, parameters,
+                     arraysize(parameters));
 
   // Read back the return value.
   if (sig->return_count() == 0) {
@@ -2934,9 +2832,7 @@ Node* WasmGraphBuilder::CurrentMemoryPages() {
   // CurrentMemoryPages can not be called from asm.js.
   DCHECK_EQ(wasm::kWasmOrigin, module_->module->get_origin());
   SetNeedsStackCheck();
-  Node* call =
-      BuildCallToRuntime(Runtime::kWasmMemorySize, jsgraph(), centry_stub_node_,
-                         nullptr, 0, effect_, control_);
+  Node* call = BuildCallToRuntime(Runtime::kWasmMemorySize, nullptr, 0);
   Node* result = BuildChangeSmiToInt32(call);
   return result;
 }
@@ -2967,6 +2863,91 @@ void WasmGraphBuilder::EnsureFunctionTableNodes() {
         static_cast<uint32_t>(table_size),
         RelocInfo::WASM_FUNCTION_TABLE_SIZE_REFERENCE));
   }
+}
+
+Node* WasmGraphBuilder::BuildModifyThreadInWasmFlag(bool new_value) {
+  // TODO(eholk): generate code to modify the thread-local storage directly,
+  // rather than calling the runtime.
+  if (!trap_handler::UseTrapHandler()) {
+    return *control_;
+  }
+
+  const Runtime::FunctionId f =
+      new_value ? Runtime::kSetThreadInWasm : Runtime::kClearThreadInWasm;
+  const Runtime::Function* fun = Runtime::FunctionForId(f);
+  DCHECK_EQ(0, fun->nargs);
+  const CallDescriptor* desc = Linkage::GetRuntimeCallDescriptor(
+      jsgraph()->zone(), f, fun->nargs, Operator::kNoProperties,
+      CallDescriptor::kNoFlags);
+  // CEntryStubConstant nodes have to be created and cached in the main
+  // thread. At the moment this is only done for CEntryStubConstant(1).
+  DCHECK_EQ(1, fun->result_size);
+  Node* inputs[] = {centry_stub_node_,
+                    jsgraph()->ExternalConstant(
+                        ExternalReference(f, jsgraph()->isolate())),  // ref
+                    jsgraph()->Int32Constant(fun->nargs),             // arity
+                    jsgraph()->NoContextConstant(),
+                    *effect_,
+                    *control_};
+
+  Node* node = jsgraph()->graph()->NewNode(jsgraph()->common()->Call(desc),
+                                           arraysize(inputs), inputs);
+  *effect_ = node;
+  return node;
+}
+
+// Only call this function for code which is not reused across instantiations,
+// as we do not patch the embedded context.
+Node* WasmGraphBuilder::BuildCallToRuntimeWithContext(Runtime::FunctionId f,
+                                                      Node* context,
+                                                      Node** parameters,
+                                                      int parameter_count) {
+  // Setting and clearing the thread-in-wasm flag should not be done as a normal
+  // runtime call.
+  DCHECK_NE(f, Runtime::kSetThreadInWasm);
+  DCHECK_NE(f, Runtime::kClearThreadInWasm);
+  // We're leaving Wasm code, so clear the flag.
+  *control_ = BuildModifyThreadInWasmFlag(false);
+
+  const Runtime::Function* fun = Runtime::FunctionForId(f);
+  CallDescriptor* desc = Linkage::GetRuntimeCallDescriptor(
+      jsgraph()->zone(), f, fun->nargs, Operator::kNoProperties,
+      CallDescriptor::kNoFlags);
+  // CEntryStubConstant nodes have to be created and cached in the main
+  // thread. At the moment this is only done for CEntryStubConstant(1).
+  DCHECK_EQ(1, fun->result_size);
+  // At the moment we only allow 3 parameters. If more parameters are needed,
+  // increase this constant accordingly.
+  static const int kMaxParams = 3;
+  DCHECK_GE(kMaxParams, parameter_count);
+  Node* inputs[kMaxParams + 6];
+  int count = 0;
+  inputs[count++] = centry_stub_node_;
+  for (int i = 0; i < parameter_count; i++) {
+    inputs[count++] = parameters[i];
+  }
+  inputs[count++] = jsgraph()->ExternalConstant(
+      ExternalReference(f, jsgraph()->isolate()));         // ref
+  inputs[count++] = jsgraph()->Int32Constant(fun->nargs);  // arity
+  inputs[count++] = context;                               // context
+  inputs[count++] = *effect_;
+  inputs[count++] = *control_;
+
+  Node* node = jsgraph()->graph()->NewNode(jsgraph()->common()->Call(desc),
+                                           count, inputs);
+  *effect_ = node;
+
+  // Restore the thread-in-wasm flag, since we have returned to Wasm.
+  *control_ = BuildModifyThreadInWasmFlag(true);
+
+  return node;
+}
+
+Node* WasmGraphBuilder::BuildCallToRuntime(Runtime::FunctionId f,
+                                           Node** parameters,
+                                           int parameter_count) {
+  return BuildCallToRuntimeWithContext(f, jsgraph()->NoContextConstant(),
+                                       parameters, parameter_count);
 }
 
 Node* WasmGraphBuilder::GetGlobal(uint32_t index) {
@@ -3754,10 +3735,9 @@ Handle<Code> CompileWasmToJSWrapper(Isolate* isolate, Handle<JSReceiver> target,
     }
 
     // Schedule and compile to machine code.
-    CallDescriptor* incoming =
-        wasm::ModuleEnv::GetWasmCallDescriptor(&zone, sig);
+    CallDescriptor* incoming = GetWasmCallDescriptor(&zone, sig);
     if (machine.Is32()) {
-      incoming = wasm::ModuleEnv::GetI32WasmCallDescriptor(&zone, incoming);
+      incoming = GetI32WasmCallDescriptor(&zone, incoming);
     }
     Code::Flags flags = Code::ComputeFlags(Code::WASM_TO_JS_FUNCTION);
     bool debugging =
@@ -3839,10 +3819,9 @@ Handle<Code> CompileWasmInterpreterEntry(Isolate* isolate, uint32_t func_index,
     }
 
     // Schedule and compile to machine code.
-    CallDescriptor* incoming =
-        wasm::ModuleEnv::GetWasmCallDescriptor(&zone, sig);
+    CallDescriptor* incoming = GetWasmCallDescriptor(&zone, sig);
     if (machine.Is32()) {
-      incoming = wasm::ModuleEnv::GetI32WasmCallDescriptor(&zone, incoming);
+      incoming = GetI32WasmCallDescriptor(&zone, incoming);
     }
     Code::Flags flags = Code::ComputeFlags(Code::WASM_INTERPRETER_ENTRY);
     EmbeddedVector<char, 32> debug_name;
@@ -3945,7 +3924,7 @@ Vector<const char> GetDebugName(Zone* zone, wasm::WasmName name, int index) {
 WasmCompilationUnit::WasmCompilationUnit(Isolate* isolate,
                                          wasm::ModuleBytesEnv* module_env,
                                          const wasm::WasmFunction* function,
-                                         bool is_sync)
+                                         Handle<Code> centry_stub, bool is_sync)
     : WasmCompilationUnit(
           isolate, &module_env->module_env,
           wasm::FunctionBody{
@@ -3953,19 +3932,19 @@ WasmCompilationUnit::WasmCompilationUnit(Isolate* isolate,
               module_env->wire_bytes.start() + function->code.offset(),
               module_env->wire_bytes.start() + function->code.end_offset()},
           module_env->wire_bytes.GetNameOrNull(function), function->func_index,
-          is_sync) {}
+          centry_stub, is_sync) {}
 
 WasmCompilationUnit::WasmCompilationUnit(Isolate* isolate,
                                          wasm::ModuleEnv* module_env,
                                          wasm::FunctionBody body,
                                          wasm::WasmName name, int index,
-                                         bool is_sync)
+                                         Handle<Code> centry_stub, bool is_sync)
     : isolate_(isolate),
       module_env_(module_env),
       func_body_(body),
       func_name_(name),
       is_sync_(is_sync),
-      centry_stub_(CEntryStub(isolate, 1).GetCode()),
+      centry_stub_(centry_stub),
       func_index_(index) {}
 
 void WasmCompilationUnit::ExecuteCompilation() {
@@ -4016,11 +3995,11 @@ void WasmCompilationUnit::ExecuteCompilation() {
     compilation_zone_.reset(new Zone(isolate_->allocator(), ZONE_NAME));
 
     // Run the compiler pipeline to generate machine code.
-    CallDescriptor* descriptor = wasm::ModuleEnv::GetWasmCallDescriptor(
-        compilation_zone_.get(), func_body_.sig);
+    CallDescriptor* descriptor =
+        GetWasmCallDescriptor(compilation_zone_.get(), func_body_.sig);
     if (jsgraph_->machine()->Is32()) {
-      descriptor = module_env_->GetI32WasmCallDescriptor(
-          compilation_zone_.get(), descriptor);
+      descriptor =
+          GetI32WasmCallDescriptor(compilation_zone_.get(), descriptor);
     }
     info_.reset(new CompilationInfo(
         GetDebugName(compilation_zone_.get(), func_name_, func_index_),
@@ -4108,7 +4087,8 @@ Handle<Code> WasmCompilationUnit::FinishCompilation(
 Handle<Code> WasmCompilationUnit::CompileWasmFunction(
     wasm::ErrorThrower* thrower, Isolate* isolate,
     wasm::ModuleBytesEnv* module_env, const wasm::WasmFunction* function) {
-  WasmCompilationUnit unit(isolate, module_env, function);
+  WasmCompilationUnit unit(isolate, module_env, function,
+                           CEntryStub(isolate, 1).GetCode());
   unit.ExecuteCompilation();
   return unit.FinishCompilation(thrower);
 }

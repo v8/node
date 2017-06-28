@@ -1235,11 +1235,9 @@ Handle<Cell> Factory::NewManyClosuresCell(Handle<Object> value) {
   return cell;
 }
 
-Handle<PropertyCell> Factory::NewPropertyCell() {
-  CALL_HEAP_FUNCTION(
-      isolate(),
-      isolate()->heap()->AllocatePropertyCell(),
-      PropertyCell);
+Handle<PropertyCell> Factory::NewPropertyCell(Handle<Name> name) {
+  CALL_HEAP_FUNCTION(isolate(), isolate()->heap()->AllocatePropertyCell(*name),
+                     PropertyCell);
 }
 
 
@@ -1486,6 +1484,7 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
   Handle<Context> context(isolate()->native_context());
   Handle<SharedFunctionInfo> info =
       NewSharedFunctionInfo(name, code, map->is_constructor());
+  // Proper language mode in shared function info will be set outside.
   DCHECK(is_sloppy(info->language_mode()));
   DCHECK(!map->IsUndefined(isolate()));
   DCHECK(
@@ -1504,8 +1503,10 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
 
 
 Handle<JSFunction> Factory::NewFunction(Handle<String> name) {
-  return NewFunction(
-      isolate()->sloppy_function_map(), name, MaybeHandle<Code>());
+  Handle<JSFunction> result =
+      NewFunction(isolate()->sloppy_function_map(), name, MaybeHandle<Code>());
+  DCHECK(is_sloppy(result->shared()->language_mode()));
+  return result;
 }
 
 
@@ -1515,7 +1516,9 @@ Handle<JSFunction> Factory::NewFunctionWithoutPrototype(Handle<String> name,
   Handle<Map> map = is_strict
                         ? isolate()->strict_function_without_prototype_map()
                         : isolate()->sloppy_function_without_prototype_map();
-  return NewFunction(map, name, code);
+  Handle<JSFunction> result = NewFunction(map, name, code);
+  result->shared()->set_language_mode(is_strict ? STRICT : SLOPPY);
+  return result;
 }
 
 
@@ -1526,6 +1529,7 @@ Handle<JSFunction> Factory::NewFunction(Handle<String> name, Handle<Code> code,
                               : isolate()->sloppy_function_map();
   Handle<JSFunction> result = NewFunction(map, name, code);
   result->set_prototype_or_initial_map(*prototype);
+  result->shared()->set_language_mode(is_strict ? STRICT : SLOPPY);
   return result;
 }
 
@@ -1728,7 +1732,6 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc,
   // The code object has not been fully initialized yet.  We rely on the
   // fact that no allocation will happen from this point on.
   DisallowHeapAllocation no_gc;
-  code->set_ic_age(isolate()->heap()->global_ic_age());
   code->set_instruction_size(desc.instr_size);
   code->set_relocation_info(*reloc_info);
   code->set_flags(flags);
@@ -1850,7 +1853,7 @@ Handle<JSGlobalObject> Factory::NewJSGlobalObject(
     PropertyDetails d(kAccessor, details.attributes(),
                       PropertyCellType::kMutable);
     Handle<Name> name(descs->GetKey(i));
-    Handle<PropertyCell> cell = NewPropertyCell();
+    Handle<PropertyCell> cell = NewPropertyCell(name);
     cell->set_value(descs->GetValue(i));
     // |dictionary| already contains enough space for all properties.
     USE(GlobalDictionary::Add(dictionary, name, cell, d));

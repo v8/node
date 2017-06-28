@@ -45,9 +45,9 @@
     },
 
     'client.dart.fyi': {
-      'v8-linux-release': 'gyp_release_x86_disassembler',
-      'v8-win-release': 'gyp_release_x86_disassembler',
-      'v8-mac-release': 'gyp_release_x86_disassembler',
+      'v8-linux-release': 'gn_release_x86_disassembler',
+      'v8-win-release': 'gn_release_x86_disassembler',
+      'v8-mac-release': 'gn_release_x86_disassembler',
     },
     'client.dynamorio': {
       'linux-v8-dr': 'gn_release_x64',
@@ -98,7 +98,7 @@
       'V8 Linux - swarming staging': 'gn_release_x64',
       'V8 Linux64 - cfi': 'gn_release_x64_cfi',
       'V8 Linux - vtunejit': 'gn_debug_x86_vtunejit',
-      'V8 Linux64 - gcov coverage': 'gyp_release_x64_gcc_coverage',
+      'V8 Linux64 - gcov coverage': 'gn_release_x64_gcc_coverage',
       'V8 Linux - predictable': 'gn_release_x86_predictable',
       'V8 Linux - full debug': 'gn_full_debug_x86',
       'V8 Linux - interpreted regexp': 'gn_release_x86_interpreted_regexp',
@@ -195,7 +195,7 @@
       'v8_linux64_asan_rel_ng': 'gn_release_x64_asan_minimal_symbols',
       'v8_linux64_msan_rel': 'gn_release_simulate_arm64_msan_minimal_symbols',
       'v8_linux64_sanitizer_coverage_rel':
-          'gyp_release_x64_asan_minimal_symbols_coverage',
+          'gn_release_x64_asan_minimal_symbols_coverage',
       'v8_linux64_tsan_rel': 'gn_release_x64_tsan_minimal_symbols',
       'v8_linux64_tsan_concurrent_marking_rel_ng':
           'gn_release_x64_tsan_concurrent_marking_minimal_symbols',
@@ -368,6 +368,9 @@
     'gn_release_x64_asan_minimal_symbols': [
       'gn', 'release_bot', 'x64', 'asan', 'lsan', 'minimal_symbols',
       'swarming'],
+    'gn_release_x64_asan_minimal_symbols_coverage': [
+      'gn', 'release_bot', 'x64', 'asan', 'bb', 'coverage', 'lsan',
+      'minimal_symbols', 'swarming'],
     'gn_release_x64_asan_no_lsan': [
       'gn', 'release_bot', 'x64', 'asan', 'swarming'],
     'gn_release_x64_asan_symbolized_edge_verify_heap': [
@@ -381,6 +384,8 @@
       'gn', 'release_bot', 'x64', 'v8_enable_concurrent_marking', 'swarming'],
     'gn_release_x64_correctness_fuzzer' : [
       'gn', 'release_bot', 'x64', 'v8_correctness_fuzzer'],
+    'gn_release_x64_gcc_coverage': [
+      'gn', 'release_bot', 'x64', 'coverage', 'gcc'],
     'gn_release_x64_internal': [
       'gn', 'release_bot', 'x64', 'swarming', 'v8_snapshot_internal'],
     'gn_release_x64_minimal_symbols': [
@@ -443,6 +448,8 @@
     # GN release configs for x86.
     'gn_release_x86': [
       'gn', 'release_bot', 'x86', 'swarming'],
+    'gn_release_x86_disassembler': [
+      'gn', 'release_bot', 'x86', 'v8_enable_disassembler'],
     'gn_release_x86_gcc': [
       'gn', 'release_bot', 'x86', 'gcc'],
     'gn_release_x86_gcc_minimal_symbols': [
@@ -496,15 +503,6 @@
     # Gyp release configs for x64.
     'gyp_release_x64': [
       'gyp', 'release_bot', 'x64', 'swarming'],
-    'gyp_release_x64_asan_minimal_symbols_coverage': [
-      'gyp', 'release_bot', 'x64', 'asan', 'bb', 'coverage', 'lsan',
-      'minimal_symbols', 'swarming'],
-    'gyp_release_x64_gcc_coverage': [
-      'gyp', 'release_bot', 'x64', 'coverage', 'gcc'],
-
-    # Gyp release configs for x86.
-    'gyp_release_x86_disassembler': [
-      'gyp', 'release_bot', 'x86', 'v8_enable_disassembler'],
   },
 
   'mixins': {
