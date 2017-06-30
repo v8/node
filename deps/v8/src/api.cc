@@ -2085,41 +2085,33 @@ Local<UnboundScript> Script::GetUnboundScript() {
       i::Handle<i::SharedFunctionInfo>(i::JSFunction::cast(*obj)->shared()));
 }
 
-Maybe<bool> DynamicImportResult::FinishDynamicImportSuccess(
-    Local<Context> context, Local<Module> module) {
-  auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
-  ENTER_V8(isolate, context, Module, FinishDynamicImportSuccess,
-           Nothing<bool>(), i::HandleScope);
-  auto promise = Utils::OpenHandle(this);
-  i::Handle<i::Module> module_obj = Utils::OpenHandle(*module);
-  i::Handle<i::JSModuleNamespace> module_namespace =
-      i::Module::GetModuleNamespace(module_obj);
-  i::Handle<i::Object> argv[] = {promise, module_namespace};
-  has_pending_exception =
-      i::Execution::Call(isolate, isolate->promise_resolve(),
-                         isolate->factory()->undefined_value(), arraysize(argv),
-                         argv)
-          .is_null();
-  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-  return Just(true);
+
+Module::Status Module::GetStatus() const {
+  i::Handle<i::Module> self = Utils::OpenHandle(this);
+  switch (self->status()) {
+    case i::Module::kUninstantiated:
+      return kUninstantiated;
+    case i::Module::kPreInstantiating:
+    case i::Module::kInstantiating:
+      return kInstantiating;
+    case i::Module::kInstantiated:
+      return kInstantiated;
+    case i::Module::kEvaluating:
+      return kEvaluating;
+    case i::Module::kEvaluated:
+      return kEvaluated;
+    case i::Module::kErrored:
+      return kErrored;
+  }
+  UNREACHABLE();
 }
 
-Maybe<bool> DynamicImportResult::FinishDynamicImportFailure(
-    Local<Context> context, Local<Value> exception) {
-  auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
-  ENTER_V8(isolate, context, Module, FinishDynamicImportFailure,
-           Nothing<bool>(), i::HandleScope);
-  auto promise = Utils::OpenHandle(this);
-  // We pass true to trigger the debugger's on exception handler.
-  i::Handle<i::Object> argv[] = {promise, Utils::OpenHandle(*exception),
-                                 isolate->factory()->ToBoolean(true)};
-  has_pending_exception =
-      i::Execution::Call(isolate, isolate->promise_internal_reject(),
-                         isolate->factory()->undefined_value(), arraysize(argv),
-                         argv)
-          .is_null();
-  RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
-  return Just(true);
+Local<Value> Module::GetException() const {
+  Utils::ApiCheck(GetStatus() == kErrored, "v8::Module::GetException",
+                  "Module status must be kErrored");
+  i::Handle<i::Module> self = Utils::OpenHandle(this);
+  i::Isolate* isolate = self->GetIsolate();
+  return ToApiHandle<Value>(i::handle(self->GetException(), isolate));
 }
 
 int Module::GetModuleRequestsLength() const {
@@ -2152,6 +2144,18 @@ Location Module::GetModuleRequestLocation(int i) const {
   return v8::Location(info.line, info.column);
 }
 
+Local<Value> Module::GetModuleNamespace() {
+  Utils::ApiCheck(
+      GetStatus() != kErrored && GetStatus() >= kInstantiated,
+      "v8::Module::GetModuleNamespace",
+      "GetModuleNamespace should be used on a successfully instantiated"
+      "module. The current module has not been instantiated or has errored");
+  i::Handle<i::Module> self = Utils::OpenHandle(this);
+  i::Handle<i::JSModuleNamespace> module_namespace =
+      i::Module::GetModuleNamespace(self);
+  return ToApiHandle<Value>(module_namespace);
+}
+
 int Module::GetIdentityHash() const { return Utils::OpenHandle(this)->hash(); }
 
 bool Module::Instantiate(Local<Context> context,
@@ -2181,7 +2185,7 @@ MaybeLocal<Value> Module::Evaluate(Local<Context> context) {
 
   i::Handle<i::Module> self = Utils::OpenHandle(this);
   // It's an API error to call Evaluate before Instantiate.
-  CHECK(self->instantiated());
+  CHECK_GE(self->status(), i::Module::kInstantiated);
 
   Local<Value> result;
   has_pending_exception = !ToLocal(i::Module::Evaluate(self), &result);

@@ -7,6 +7,7 @@
 
 #include "src/base/flags.h"
 #include "src/compiler/graph-reducer.h"
+#include "src/deoptimize-reason.h"
 
 namespace v8 {
 namespace internal {
@@ -43,6 +44,10 @@ class JSCallReducer final : public AdvancedReducer {
 
   Reduction Reduce(Node* node) final;
 
+  // Processes the waitlist gathered while the reducer was running,
+  // and does a final attempt to reduce the nodes in the waitlist.
+  void Finalize() final;
+
  private:
   Reduction ReduceArrayConstructor(Node* node);
   Reduction ReduceBooleanConstructor(Node* node);
@@ -70,6 +75,8 @@ class JSCallReducer final : public AdvancedReducer {
   Reduction ReduceJSCallWithSpread(Node* node);
   Reduction ReduceReturnReceiver(Node* node);
 
+  Reduction ReduceSoftDeoptimize(Node* node, DeoptimizeReason reason);
+
   Graph* graph() const;
   JSGraph* jsgraph() const { return jsgraph_; }
   Isolate* isolate() const;
@@ -86,6 +93,7 @@ class JSCallReducer final : public AdvancedReducer {
   Flags const flags_;
   Handle<Context> const native_context_;
   CompilationDependencies* const dependencies_;
+  std::set<Node*> waitlist_;
 };
 
 }  // namespace compiler

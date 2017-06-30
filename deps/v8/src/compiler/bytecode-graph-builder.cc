@@ -57,7 +57,6 @@ class BytecodeGraphBuilder::Environment : public ZoneObject {
   // Preserve a checkpoint of the environment for the IR graph. Any
   // further mutation of the environment will not affect checkpoints.
   Node* Checkpoint(BailoutId bytecode_offset, OutputFrameStateCombine combine,
-                   bool owner_has_exception,
                    const BytecodeLivenessState* liveness);
 
   // Control dependency tracked by this environment.
@@ -406,7 +405,7 @@ Node* BytecodeGraphBuilder::Environment::GetStateValuesFromCache(
 
 Node* BytecodeGraphBuilder::Environment::Checkpoint(
     BailoutId bailout_id, OutputFrameStateCombine combine,
-    bool owner_has_exception, const BytecodeLivenessState* liveness) {
+    const BytecodeLivenessState* liveness) {
   if (parameter_count() == register_count()) {
     // Re-use the state-value cache if the number of local registers happens
     // to match the parameter count.
@@ -562,7 +561,7 @@ void BytecodeGraphBuilder::PrepareEagerCheckpoint() {
             bytecode_iterator().current_offset());
 
     Node* frame_state_before = environment()->Checkpoint(
-        bailout_id, OutputFrameStateCombine::Ignore(), false, liveness_before);
+        bailout_id, OutputFrameStateCombine::Ignore(), liveness_before);
     NodeProperties::ReplaceFrameStateInput(node, frame_state_before);
 #ifdef DEBUG
   } else {
@@ -590,14 +589,13 @@ void BytecodeGraphBuilder::PrepareFrameState(Node* node,
     DCHECK_EQ(IrOpcode::kDead,
               NodeProperties::GetFrameStateInput(node)->opcode());
     BailoutId bailout_id(bytecode_iterator().current_offset());
-    bool has_exception = NodeProperties::IsExceptionalCall(node);
 
     const BytecodeLivenessState* liveness_after =
         bytecode_analysis()->GetOutLivenessFor(
             bytecode_iterator().current_offset());
 
-    Node* frame_state_after = environment()->Checkpoint(
-        bailout_id, combine, has_exception, liveness_after);
+    Node* frame_state_after =
+        environment()->Checkpoint(bailout_id, combine, liveness_after);
     NodeProperties::ReplaceFrameStateInput(node, frame_state_after);
   }
 }
@@ -1583,28 +1581,63 @@ void BytecodeGraphBuilder::VisitCallRuntimeForPair() {
                                             Environment::kAttachFrameState);
 }
 
-Node* BytecodeGraphBuilder::ProcessConstructWithSpreadArguments(
-    const Operator* op, Node* callee, Node* new_target,
-    interpreter::Register receiver, size_t reg_count) {
-  int arg_count = static_cast<int>(reg_count);
+Node* const* BytecodeGraphBuilder::GetConstructArgumentsFromRegister(
+    Node* target, Node* new_target, interpreter::Register first_arg,
+    int arg_count) {
   // arity is args + callee and new target.
   int arity = arg_count + 2;
   Node** all = local_zone()->NewArray<Node*>(static_cast<size_t>(arity));
-  all[0] = callee;
-  int first_arg_index = receiver.index();
+  all[0] = target;
+  int first_arg_index = first_arg.index();
   for (int i = 0; i < arg_count; ++i) {
     all[1 + i] = environment()->LookupRegister(
         interpreter::Register(first_arg_index + i));
   }
   all[arity - 1] = new_target;
-  Node* value = MakeNode(op, arity, all, false);
-  return value;
+  return all;
+}
+
+Node* BytecodeGraphBuilder::ProcessConstructArguments(const Operator* op,
+                                                      Node* const* args,
+                                                      int arg_count) {
+  return MakeNode(op, arg_count, args, false);
+}
+
+void BytecodeGraphBuilder::VisitConstruct() {
+  PrepareEagerCheckpoint();
+  interpreter::Register callee_reg = bytecode_iterator().GetRegisterOperand(0);
+  interpreter::Register first_reg = bytecode_iterator().GetRegisterOperand(1);
+  size_t reg_count = bytecode_iterator().GetRegisterCountOperand(2);
+  // Slot index of 0 is used indicate no feedback slot is available. Assert
+  // the assumption that slot index 0 is never a valid feedback slot.
+  STATIC_ASSERT(FeedbackVector::kReservedIndexCount > 0);
+  int const slot_id = bytecode_iterator().GetIndexOperand(3);
+  VectorSlotPair feedback = CreateVectorSlotPair(slot_id);
+
+  Node* new_target = environment()->LookupAccumulator();
+  Node* callee = environment()->LookupRegister(callee_reg);
+
+  CallFrequency frequency = ComputeCallFrequency(slot_id);
+  const Operator* op = javascript()->Construct(
+      static_cast<uint32_t>(reg_count + 2), frequency, feedback);
+  int arg_count = static_cast<int>(reg_count);
+  Node* const* args = GetConstructArgumentsFromRegister(callee, new_target,
+                                                        first_reg, arg_count);
+  Node* node = nullptr;
+  if (Node* simplified = TryBuildSimplifiedConstruct(
+          op, args, static_cast<int>(arg_count), feedback.slot())) {
+    if (environment() == nullptr) return;
+    node = simplified;
+  } else {
+    node = ProcessConstructArguments(op, args, 2 + arg_count);
+  }
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitConstructWithSpread() {
   PrepareEagerCheckpoint();
   interpreter::Register callee_reg = bytecode_iterator().GetRegisterOperand(0);
-  interpreter::Register receiver = bytecode_iterator().GetRegisterOperand(1);
+  interpreter::Register first_reg = bytecode_iterator().GetRegisterOperand(1);
   size_t reg_count = bytecode_iterator().GetRegisterCountOperand(2);
 
   Node* new_target = environment()->LookupAccumulator();
@@ -1612,8 +1645,10 @@ void BytecodeGraphBuilder::VisitConstructWithSpread() {
 
   const Operator* op =
       javascript()->ConstructWithSpread(static_cast<uint32_t>(reg_count + 2));
-  Node* value = ProcessConstructWithSpreadArguments(op, callee, new_target,
-                                                    receiver, reg_count);
+  int arg_count = static_cast<int>(reg_count);
+  Node* const* args = GetConstructArgumentsFromRegister(callee, new_target,
+                                                        first_reg, arg_count);
+  Node* value = ProcessConstructArguments(op, args, 2 + arg_count);
   environment()->BindAccumulator(value, Environment::kAttachFrameState);
 }
 
@@ -1627,46 +1662,6 @@ void BytecodeGraphBuilder::VisitInvokeIntrinsic() {
   // lowering.
   const Operator* call = javascript()->CallRuntime(functionId, reg_count);
   Node* value = ProcessCallRuntimeArguments(call, receiver, reg_count);
-  environment()->BindAccumulator(value, Environment::kAttachFrameState);
-}
-
-Node* BytecodeGraphBuilder::ProcessConstructArguments(
-    const Operator* call_new_op, Node* callee, Node* new_target,
-    interpreter::Register receiver, size_t reg_count) {
-  int arg_count = static_cast<int>(reg_count);
-  // arity is args + callee and new target.
-  int arity = arg_count + 2;
-  Node** all = local_zone()->NewArray<Node*>(static_cast<size_t>(arity));
-  all[0] = callee;
-  int first_arg_index = receiver.index();
-  for (int i = 0; i < arg_count; ++i) {
-    all[1 + i] = environment()->LookupRegister(
-        interpreter::Register(first_arg_index + i));
-  }
-  all[arity - 1] = new_target;
-  Node* value = MakeNode(call_new_op, arity, all, false);
-  return value;
-}
-
-void BytecodeGraphBuilder::VisitConstruct() {
-  PrepareEagerCheckpoint();
-  interpreter::Register callee_reg = bytecode_iterator().GetRegisterOperand(0);
-  interpreter::Register receiver = bytecode_iterator().GetRegisterOperand(1);
-  size_t reg_count = bytecode_iterator().GetRegisterCountOperand(2);
-  // Slot index of 0 is used indicate no feedback slot is available. Assert
-  // the assumption that slot index 0 is never a valid feedback slot.
-  STATIC_ASSERT(FeedbackVector::kReservedIndexCount > 0);
-  int const slot_id = bytecode_iterator().GetIndexOperand(3);
-  VectorSlotPair feedback = CreateVectorSlotPair(slot_id);
-
-  Node* new_target = environment()->LookupAccumulator();
-  Node* callee = environment()->LookupRegister(callee_reg);
-
-  CallFrequency frequency = ComputeCallFrequency(slot_id);
-  const Operator* call = javascript()->Construct(
-      static_cast<uint32_t>(reg_count + 2), frequency, feedback);
-  Node* value =
-      ProcessConstructArguments(call, callee, new_target, receiver, reg_count);
   environment()->BindAccumulator(value, Environment::kAttachFrameState);
 }
 
@@ -2685,6 +2680,25 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedCall(const Operator* op,
   Node* effect = environment()->GetEffectDependency();
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceCallOperation(
+      op, args, arg_count, effect, control, slot);
+  if (early_reduction.Changed()) {
+    ApplyEarlyReduction(early_reduction);
+    return early_reduction.replacement();
+  }
+  return nullptr;
+}
+
+Node* BytecodeGraphBuilder::TryBuildSimplifiedConstruct(const Operator* op,
+                                                        Node* const* args,
+                                                        int arg_count,
+                                                        FeedbackSlot slot) {
+  // TODO(mstarzinger,6112): This is a workaround for OSR loop entries being
+  // pruned from the graph by a soft-deopt. It can happen that a CallIC that
+  // control-dominates the OSR entry is still in "uninitialized" state.
+  if (!osr_ast_id_.IsNone()) return nullptr;
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  Reduction early_reduction = type_hint_lowering().ReduceConstructOperation(
       op, args, arg_count, effect, control, slot);
   if (early_reduction.Changed()) {
     ApplyEarlyReduction(early_reduction);

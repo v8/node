@@ -439,6 +439,9 @@ config("toolchain") {
       ldflags += [ "/STACK:2097152" ]
     }
   }
+  if (v8_current_cpu == "x87") {
+    defines += [ "V8_TARGET_ARCH_X87" ]
+  }
   if (is_android && v8_android_log_stdout) {
     defines += [ "V8_ANDROID_LOG_STDOUT" ]
   }
@@ -804,6 +807,7 @@ action("v8_dump_build_config") {
   outputs = [
     "$root_out_dir/v8_build_config.json",
   ]
+  is_gcov_coverage = v8_code_coverage && !is_clang
   args = [
     rebase_path("$root_out_dir/v8_build_config.json", root_build_dir),
     "current_cpu=\"$current_cpu\"",
@@ -812,6 +816,7 @@ action("v8_dump_build_config") {
     "is_cfi=$is_cfi",
     "is_component_build=$is_component_build",
     "is_debug=$is_debug",
+    "is_gcov_coverage=$is_gcov_coverage",
     "is_msan=$is_msan",
     "is_tsan=$is_tsan",
     "target_cpu=\"$target_cpu\"",
@@ -2670,9 +2675,6 @@ group("v8_clusterfuzz") {
 group("v8_archive") {
   deps = [
     ":d8",
-    ":v8_hello_world",
-    ":v8_parser_shell",
-    ":v8_sample_process",
   ]
 }
 
@@ -2703,10 +2705,6 @@ if (is_component_build) {
       "src/v8dll-main.cc",
     ]
 
-    deps = [
-      ":v8_dump_build_config",
-    ]
-
     public_deps = [
       ":v8_base",
       ":v8_maybe_snapshot",
@@ -2724,10 +2722,6 @@ if (is_component_build) {
       "src/v8dll-main.cc",
     ]
 
-    deps = [
-      ":v8_dump_build_config",
-    ]
-
     public_deps = [
       ":v8_base",
       ":v8_maybe_snapshot",
@@ -2743,10 +2737,6 @@ if (is_component_build) {
   }
 } else {
   group("v8") {
-    deps = [
-      ":v8_dump_build_config",
-    ]
-
     public_deps = [
       ":v8_base",
       ":v8_maybe_snapshot",
@@ -2757,10 +2747,6 @@ if (is_component_build) {
 
   group("v8_for_testing") {
     testonly = true
-
-    deps = [
-      ":v8_dump_build_config",
-    ]
 
     public_deps = [
       ":v8_base",

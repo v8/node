@@ -46,6 +46,7 @@ void HeapObject::PrintHeader(std::ostream& os, const char* id) {  // NOLINT
     os << map()->instance_type();
   }
   os << "]";
+  if (GetHeap()->InOldSpace(this)) os << " in OldSpace";
 }
 
 
@@ -404,7 +405,7 @@ void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
     os << "\n    " << raw_index << ": param(" << i
        << ")= " << Brief(mapped_entry);
     if (mapped_entry->IsTheHole(isolate)) {
-      os << " in the arguements_store[" << i << "]";
+      os << " in the arguments_store[" << i << "]";
     } else {
       os << " in the context";
     }
@@ -1298,20 +1299,13 @@ void ModuleInfoEntry::ModuleInfoEntryPrint(std::ostream& os) {  // NOLINT
 
 void Module::ModulePrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "Module");
-  // TODO(neis): Simplify once modules have a script field.
-  if (!evaluated()) {
-    SharedFunctionInfo* shared = code()->IsSharedFunctionInfo()
-                                     ? SharedFunctionInfo::cast(code())
-                                     : JSFunction::cast(code())->shared();
-    Object* origin = Script::cast(shared->script())->GetNameOrSourceURL();
-    os << "\n - origin: " << Brief(origin);
-  }
+  os << "\n - origin: " << Brief(script()->GetNameOrSourceURL());
   os << "\n - code: " << Brief(code());
   os << "\n - exports: " << Brief(exports());
   os << "\n - requested_modules: " << Brief(requested_modules());
   os << "\n - script: " << Brief(script());
-  os << "\n - instantiated, evaluated: " << instantiated() << ", "
-     << evaluated();
+  os << "\n - status: " << status();
+  os << "\n - exception: " << Brief(exception());
   os << "\n";
 }
 

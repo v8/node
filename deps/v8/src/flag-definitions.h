@@ -216,18 +216,10 @@ DEFINE_IMPLICATION(es_staging, harmony)
     "constructor")
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING_BASE(V)                           \
-  V(harmony_restrictive_generators,                        \
-    "harmony restrictions on generator declarations")      \
+#define HARMONY_SHIPPING(V)                           \
+  V(harmony_restrictive_generators,                   \
+    "harmony restrictions on generator declarations") \
   V(harmony_object_rest_spread, "harmony object rest spread properties")
-
-#ifdef V8_INTL_SUPPORT
-#define HARMONY_SHIPPING(V)                                        \
-  HARMONY_SHIPPING_BASE(V)                                         \
-  V(icu_case_mapping, "case mapping with ICU rather than Unibrow")
-#else
-#define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
-#endif
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -567,7 +559,7 @@ DEFINE_BOOL(experimental_wasm_mv, false,
 DEFINE_BOOL(experimental_wasm_atomics, false,
             "enable prototype atomic opcodes for wasm")
 
-DEFINE_BOOL(wasm_opt, true, "enable wasm optimization")
+DEFINE_BOOL(wasm_opt, false, "enable wasm optimization")
 DEFINE_BOOL(wasm_no_bounds_checks, false,
             "disable bounds checks (performance testing only)")
 DEFINE_BOOL(wasm_no_stack_checks, false,

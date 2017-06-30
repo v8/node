@@ -20944,13 +20944,16 @@ void HasOwnPropertyNamedPropertyQuery2(
   }
 }
 
-
 void HasOwnPropertyAccessorGetter(
     Local<String> property,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   info.GetReturnValue().Set(v8_str("yes"));
 }
 
+void HasOwnPropertyAccessorNameGetter(
+    Local<Name> property, const v8::PropertyCallbackInfo<v8::Value>& info) {
+  info.GetReturnValue().Set(v8_str("yes"));
+}
 
 TEST(HasOwnProperty) {
   LocalContext env;
@@ -21031,6 +21034,18 @@ TEST(HasOwnProperty) {
     Local<Object> instance = templ->NewInstance(env.local()).ToLocalChecked();
     CHECK(!instance->HasOwnProperty(env.local(), v8_str("foo")).FromJust());
     CHECK(instance->HasOwnProperty(env.local(), v8_str("bar")).FromJust());
+  }
+  {  // Check that non-internalized keys are handled correctly.
+    Local<ObjectTemplate> templ = ObjectTemplate::New(isolate);
+    templ->SetHandler(v8::NamedPropertyHandlerConfiguration(
+        HasOwnPropertyAccessorNameGetter));
+    Local<Object> instance = templ->NewInstance(env.local()).ToLocalChecked();
+    env->Global()->Set(env.local(), v8_str("obj"), instance).FromJust();
+    const char* src =
+        "var dyn_string = 'this string ';"
+        "dyn_string += 'does not exist elsewhere';"
+        "({}).hasOwnProperty.call(obj, dyn_string)";
+    CHECK(CompileRun(src)->BooleanValue(env.local()).FromJust());
   }
 }
 
@@ -26801,4 +26816,41 @@ TEST(CorrectEnteredContext) {
       .FromJust();
 
   object->ToString(currentContext.local()).ToLocalChecked();
+}
+
+Local<v8::Promise> HostImportModuleDynamicallyCallbackResolve(
+    Local<Context> context, Local<String> referrer, Local<String> specifier) {
+  CHECK(!referrer.IsEmpty());
+  String::Utf8Value referrer_utf8(referrer);
+  CHECK_EQ(0, strcmp("www.google.com", *referrer_utf8));
+
+  CHECK(!specifier.IsEmpty());
+  String::Utf8Value specifier_utf8(specifier);
+  CHECK_EQ(0, strcmp("index.js", *specifier_utf8));
+
+  Local<v8::Promise::Resolver> resolver =
+      v8::Promise::Resolver::New(context).ToLocalChecked();
+  auto result = v8_str("hello world");
+  resolver->Resolve(context, result).ToChecked();
+  return resolver->GetPromise();
+}
+
+TEST(DynamicImport) {
+  i::FLAG_harmony_dynamic_import = true;
+  LocalContext context;
+  v8::Isolate* isolate = context->GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  isolate->SetHostImportModuleDynamicallyCallback(
+      HostImportModuleDynamicallyCallbackResolve);
+
+  i::Handle<i::String> url(v8::Utils::OpenHandle(*v8_str("www.google.com")));
+  i::Handle<i::Object> specifier(v8::Utils::OpenHandle(*v8_str("index.js")));
+  i::Handle<i::String> result(v8::Utils::OpenHandle(*v8_str("hello world")));
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  i::MaybeHandle<i::JSPromise> maybe_promise =
+      i_isolate->RunHostImportModuleDynamicallyCallback(url, specifier);
+  i::Handle<i::JSPromise> promise = maybe_promise.ToHandleChecked();
+  isolate->RunMicrotasks();
+  CHECK(result->Equals(i::String::cast(promise->result())));
 }

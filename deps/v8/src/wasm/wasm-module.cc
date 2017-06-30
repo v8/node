@@ -358,7 +358,7 @@ WasmInstanceObject* wasm::GetOwningWasmInstance(Code* code) {
 }
 
 WasmModule::WasmModule(std::unique_ptr<Zone> owned)
-    : signature_zone(std::move(owned)), pending_tasks(new base::Semaphore(0)) {}
+    : signature_zone(std::move(owned)) {}
 
 WasmFunction* wasm::GetWasmFunctionForImportWrapper(Isolate* isolate,
                                                     Handle<Object> target) {
@@ -808,11 +808,9 @@ MaybeHandle<WasmInstanceObject> wasm::SyncCompileAndInstantiate(
   DCHECK_EQ(thrower->error(), module.is_null());
   if (module.is_null()) return {};
 
-  MaybeHandle<WasmInstanceObject> instance = wasm::SyncInstantiate(
-      isolate, thrower, module.ToHandleChecked(), Handle<JSReceiver>::null(),
-      Handle<JSArrayBuffer>::null());
-  DCHECK_EQ(thrower->error(), instance.is_null());
-  return instance;
+  return wasm::SyncInstantiate(isolate, thrower, module.ToHandleChecked(),
+                               Handle<JSReceiver>::null(),
+                               Handle<JSArrayBuffer>::null());
 }
 
 namespace {

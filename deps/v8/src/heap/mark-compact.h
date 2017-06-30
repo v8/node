@@ -106,11 +106,15 @@ class ObjectMarking : public AllStatic {
 class MarkBitCellIterator {
  public:
   MarkBitCellIterator(MemoryChunk* chunk, MarkingState state) : chunk_(chunk) {
-    last_cell_index_ = Bitmap::IndexToCell(Bitmap::CellAlignIndex(
+    DCHECK(Bitmap::IsCellAligned(
+        chunk_->AddressToMarkbitIndex(chunk_->area_start())));
+    DCHECK(Bitmap::IsCellAligned(
         chunk_->AddressToMarkbitIndex(chunk_->area_end())));
+    last_cell_index_ =
+        Bitmap::IndexToCell(chunk_->AddressToMarkbitIndex(chunk_->area_end()));
     cell_base_ = chunk_->area_start();
-    cell_index_ = Bitmap::IndexToCell(
-        Bitmap::CellAlignIndex(chunk_->AddressToMarkbitIndex(cell_base_)));
+    cell_index_ =
+        Bitmap::IndexToCell(chunk_->AddressToMarkbitIndex(cell_base_));
     cells_ = state.bitmap()->cells();
   }
 
@@ -119,14 +123,14 @@ class MarkBitCellIterator {
   inline bool HasNext() { return cell_index_ < last_cell_index_ - 1; }
 
   inline MarkBit::CellType* CurrentCell() {
-    DCHECK(cell_index_ == Bitmap::IndexToCell(Bitmap::CellAlignIndex(
-                              chunk_->AddressToMarkbitIndex(cell_base_))));
+    DCHECK_EQ(cell_index_, Bitmap::IndexToCell(Bitmap::CellAlignIndex(
+                               chunk_->AddressToMarkbitIndex(cell_base_))));
     return &cells_[cell_index_];
   }
 
   inline Address CurrentCellBase() {
-    DCHECK(cell_index_ == Bitmap::IndexToCell(Bitmap::CellAlignIndex(
-                              chunk_->AddressToMarkbitIndex(cell_base_))));
+    DCHECK_EQ(cell_index_, Bitmap::IndexToCell(Bitmap::CellAlignIndex(
+                               chunk_->AddressToMarkbitIndex(cell_base_))));
     return cell_base_;
   }
 
@@ -369,6 +373,8 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void EvacuatePagesInParallel() override;
   void UpdatePointersAfterEvacuation() override;
 
+  void CollectNewSpaceArrayBufferTrackerItems(ItemParallelJob* job);
+
   int NumberOfParallelMarkingTasks(int pages);
 
   Worklist* worklist_;
@@ -534,8 +540,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     kKeepMarking,
     kClearMarkbits,
   };
-
-  static void Initialize();
 
   MarkingState marking_state(HeapObject* object) const override {
     return MarkingState::Internal(object);
@@ -744,6 +748,9 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   void Evacuate() override;
   void EvacuatePagesInParallel() override;
   void UpdatePointersAfterEvacuation() override;
+
+  void CollectNewSpaceArrayBufferTrackerItems(ItemParallelJob* job);
+  void CollectOldSpaceArrayBufferTrackerItems(ItemParallelJob* job);
 
   void ReleaseEvacuationCandidates();
   void PostProcessEvacuationCandidates();

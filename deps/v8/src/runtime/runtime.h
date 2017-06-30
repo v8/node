@@ -37,7 +37,6 @@ namespace internal {
 // are specified by inline comments
 
 #define FOR_EACH_INTRINSIC_ARRAY(F) \
-  F(SpecialArrayFunctions, 0, 1)    \
   F(TransitionElementsKind, 2, 1)   \
   F(RemoveArrayHoles, 2, 1)         \
   F(MoveArrayContents, 2, 1)        \
@@ -232,8 +231,6 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_FUNCTION(F)     \
   F(FunctionGetName, 1, 1)                 \
-  F(FunctionSetSharedName, 2, 1)           \
-  F(FunctionRemovePrototype, 1, 1)         \
   F(FunctionGetScript, 1, 1)               \
   F(FunctionGetScriptId, 1, 1)             \
   F(FunctionGetSourceCode, 1, 1)           \
@@ -428,6 +425,7 @@ namespace internal {
   F(CopyDataPropertiesWithExcludedProperties, -1 /* >= 1 */, 1) \
   F(DefineGetterPropertyUnchecked, 4, 1)                        \
   F(DefineSetterPropertyUnchecked, 4, 1)                        \
+  F(DefineMethodsInternal, 3, 1)                                \
   F(ToObject, 1, 1)                                             \
   F(ToPrimitive, 1, 1)                                          \
   F(ToPrimitive_Number, 1, 1)                                   \
@@ -507,7 +505,6 @@ namespace internal {
   F(ThrowConstAssignError, 0, 1)          \
   F(DeclareGlobals, 3, 1)                 \
   F(DeclareGlobalsForInterpreter, 3, 1)   \
-  F(InitializeVarGlobal, 3, 1)            \
   F(DeclareEvalFunction, 2, 1)            \
   F(DeclareEvalVar, 1, 1)                 \
   F(NewSloppyArguments_Generic, 1, 1)     \
@@ -804,12 +801,14 @@ class Runtime : public AllStatic {
 
 class RuntimeState {
  public:
+#ifndef V8_INTL_SUPPORT
   unibrow::Mapping<unibrow::ToUppercase, 128>* to_upper_mapping() {
     return &to_upper_mapping_;
   }
   unibrow::Mapping<unibrow::ToLowercase, 128>* to_lower_mapping() {
     return &to_lower_mapping_;
   }
+#endif
 
   Runtime::Function* redirected_intrinsic_functions() {
     return redirected_intrinsic_functions_.get();
@@ -822,8 +821,10 @@ class RuntimeState {
 
  private:
   RuntimeState() {}
+#ifndef V8_INTL_SUPPORT
   unibrow::Mapping<unibrow::ToUppercase, 128> to_upper_mapping_;
   unibrow::Mapping<unibrow::ToLowercase, 128> to_lower_mapping_;
+#endif
 
   std::unique_ptr<Runtime::Function[]> redirected_intrinsic_functions_;
 

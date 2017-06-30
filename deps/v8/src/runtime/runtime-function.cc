@@ -29,31 +29,6 @@ RUNTIME_FUNCTION(Runtime_FunctionGetName) {
   }
 }
 
-RUNTIME_FUNCTION(Runtime_FunctionSetSharedName) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
-
-  CONVERT_ARG_HANDLE_CHECKED(JSFunction, f, 0);
-  CONVERT_ARG_HANDLE_CHECKED(String, name, 1);
-
-  name = String::Flatten(name);
-  f->shared()->set_raw_name(*name);
-  return isolate->heap()->undefined_value();
-}
-
-
-RUNTIME_FUNCTION(Runtime_FunctionRemovePrototype) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(1, args.length());
-
-  CONVERT_ARG_CHECKED(JSFunction, f, 0);
-  CHECK(f->RemovePrototype());
-  f->shared()->SetConstructStub(
-      *isolate->builtins()->ConstructedNonConstructable());
-
-  return isolate->heap()->undefined_value();
-}
-
 // TODO(5530): Remove once uses in debug.js are gone.
 RUNTIME_FUNCTION(Runtime_FunctionGetScript) {
   HandleScope scope(isolate);
@@ -130,7 +105,6 @@ RUNTIME_FUNCTION(Runtime_FunctionSetLength) {
 
   CONVERT_ARG_CHECKED(JSFunction, fun, 0);
   CONVERT_SMI_ARG_CHECKED(length, 1);
-  CHECK((length & 0xC0000000) == 0xC0000000 || (length & 0xC0000000) == 0x0);
   fun->shared()->set_length(length);
   return isolate->heap()->undefined_value();
 }

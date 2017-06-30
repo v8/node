@@ -1251,64 +1251,6 @@ inline void AllocationSite::IncrementMementoCreateCount() {
 }
 
 
-inline bool AllocationSite::MakePretenureDecision(
-    PretenureDecision current_decision,
-    double ratio,
-    bool maximum_size_scavenge) {
-  // Here we just allow state transitions from undecided or maybe tenure
-  // to don't tenure, maybe tenure, or tenure.
-  if ((current_decision == kUndecided || current_decision == kMaybeTenure)) {
-    if (ratio >= kPretenureRatio) {
-      // We just transition into tenure state when the semi-space was at
-      // maximum capacity.
-      if (maximum_size_scavenge) {
-        set_deopt_dependent_code(true);
-        set_pretenure_decision(kTenure);
-        // Currently we just need to deopt when we make a state transition to
-        // tenure.
-        return true;
-      }
-      set_pretenure_decision(kMaybeTenure);
-    } else {
-      set_pretenure_decision(kDontTenure);
-    }
-  }
-  return false;
-}
-
-
-inline bool AllocationSite::DigestPretenuringFeedback(
-    bool maximum_size_scavenge) {
-  bool deopt = false;
-  int create_count = memento_create_count();
-  int found_count = memento_found_count();
-  bool minimum_mementos_created = create_count >= kPretenureMinimumCreated;
-  double ratio =
-      minimum_mementos_created || FLAG_trace_pretenuring_statistics ?
-          static_cast<double>(found_count) / create_count : 0.0;
-  PretenureDecision current_decision = pretenure_decision();
-
-  if (minimum_mementos_created) {
-    deopt = MakePretenureDecision(
-        current_decision, ratio, maximum_size_scavenge);
-  }
-
-  if (FLAG_trace_pretenuring_statistics) {
-    PrintIsolate(GetIsolate(),
-                 "pretenuring: AllocationSite(%p): (created, found, ratio) "
-                 "(%d, %d, %f) %s => %s\n",
-                 static_cast<void*>(this), create_count, found_count, ratio,
-                 PretenureDecisionName(current_decision),
-                 PretenureDecisionName(pretenure_decision()));
-  }
-
-  // Clear feedback calculation fields until the next gc.
-  set_memento_found_count(0);
-  set_memento_create_count(0);
-  return deopt;
-}
-
-
 bool AllocationMemento::IsValid() {
   return allocation_site()->IsAllocationSite() &&
          !AllocationSite::cast(allocation_site())->IsZombie();
@@ -3271,15 +3213,16 @@ int Map::instance_size() {
 
 
 int Map::inobject_properties_or_constructor_function_index() {
-  return READ_BYTE_FIELD(this,
-                         kInObjectPropertiesOrConstructorFunctionIndexOffset);
+  return RELAXED_READ_BYTE_FIELD(
+      this, kInObjectPropertiesOrConstructorFunctionIndexOffset);
 }
 
 
 void Map::set_inobject_properties_or_constructor_function_index(int value) {
   DCHECK(0 <= value && value < 256);
-  WRITE_BYTE_FIELD(this, kInObjectPropertiesOrConstructorFunctionIndexOffset,
-                   static_cast<byte>(value));
+  RELAXED_WRITE_BYTE_FIELD(this,
+                           kInObjectPropertiesOrConstructorFunctionIndexOffset,
+                           static_cast<byte>(value));
 }
 
 
@@ -3669,13 +3612,6 @@ void Map::mark_unstable() {
 
 bool Map::is_stable() {
   return !IsUnstable::decode(bit_field3());
-}
-
-
-bool Map::has_code_cache() {
-  // Code caches are always fixed arrays. The empty fixed array is used as a
-  // sentinel for an absent code cache.
-  return code_cache()->length() != 0;
 }
 
 
@@ -4621,23 +4557,17 @@ ACCESSORS(Module, regular_imports, FixedArray, kRegularImportsOffset)
 ACCESSORS(Module, module_namespace, HeapObject, kModuleNamespaceOffset)
 ACCESSORS(Module, requested_modules, FixedArray, kRequestedModulesOffset)
 ACCESSORS(Module, script, Script, kScriptOffset)
+ACCESSORS(Module, exception, Object, kExceptionOffset)
 SMI_ACCESSORS(Module, status, kStatusOffset)
+SMI_ACCESSORS(Module, dfs_index, kDfsIndexOffset)
+SMI_ACCESSORS(Module, dfs_ancestor_index, kDfsAncestorIndexOffset)
 SMI_ACCESSORS(Module, hash, kHashOffset)
 
-bool Module::evaluated() const { return code()->IsModuleInfo(); }
-
-void Module::set_evaluated() {
-  DCHECK(instantiated());
-  DCHECK(!evaluated());
-  return set_code(
-      JSFunction::cast(code())->shared()->scope_info()->ModuleDescriptorInfo());
-}
-
-bool Module::instantiated() const { return !code()->IsSharedFunctionInfo(); }
-
 ModuleInfo* Module::info() const {
-  if (evaluated()) return ModuleInfo::cast(code());
-  ScopeInfo* scope_info = instantiated()
+  if (status() >= kEvaluating) {
+    return ModuleInfo::cast(code());
+  }
+  ScopeInfo* scope_info = status() >= kInstantiating
                               ? JSFunction::cast(code())->shared()->scope_info()
                               : SharedFunctionInfo::cast(code())->scope_info();
   return scope_info->ModuleDescriptorInfo();
@@ -6085,13 +6015,13 @@ bool NumberDictionaryShape::IsMatch(uint32_t key, Object* other) {
 }
 
 uint32_t UnseededNumberDictionaryShape::Hash(Isolate* isolate, uint32_t key) {
-  return ComputeIntegerHash(key, 0);
+  return ComputeIntegerHash(key);
 }
 
 uint32_t UnseededNumberDictionaryShape::HashForObject(Isolate* isolate,
                                                       Object* other) {
   DCHECK(other->IsNumber());
-  return ComputeIntegerHash(static_cast<uint32_t>(other->Number()), 0);
+  return ComputeIntegerHash(static_cast<uint32_t>(other->Number()));
 }
 
 Map* UnseededNumberDictionaryShape::GetMap(Isolate* isolate) {

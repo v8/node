@@ -935,25 +935,6 @@ Handle<Symbol> Factory::NewPrivateSymbol() {
   return symbol;
 }
 
-Handle<JSPromise> Factory::NewJSPromise() {
-  Handle<JSFunction> constructor(
-      isolate()->native_context()->promise_function(), isolate());
-  DCHECK(constructor->has_initial_map());
-  Handle<Map> map(constructor->initial_map(), isolate());
-
-  DCHECK(!map->is_prototype_map());
-  Handle<JSObject> promise_obj = NewJSObjectFromMap(map);
-  Handle<JSPromise> promise = Handle<JSPromise>::cast(promise_obj);
-  promise->set_status(v8::Promise::kPending);
-  promise->set_flags(0);
-  for (int i = 0; i < v8::Promise::kEmbedderFieldCount; i++) {
-    promise->SetEmbedderField(i, Smi::kZero);
-  }
-
-  isolate()->RunPromiseHook(PromiseHookType::kInit, promise, undefined_value());
-  return promise;
-}
-
 Handle<Context> Factory::NewNativeContext() {
   Handle<FixedArray> array =
       NewFixedArray(Context::NATIVE_CONTEXT_SLOTS, TENURED);
@@ -2019,9 +2000,10 @@ Handle<Module> Factory::NewModule(Handle<SharedFunctionInfo> code) {
   module->set_module_namespace(isolate()->heap()->undefined_value());
   module->set_requested_modules(*requested_modules);
   module->set_script(Script::cast(code->script()));
-  module->set_status(Module::kUnprepared);
-  DCHECK(!module->instantiated());
-  DCHECK(!module->evaluated());
+  module->set_status(Module::kUninstantiated);
+  module->set_exception(isolate()->heap()->the_hole_value());
+  module->set_dfs_index(-1);
+  module->set_dfs_ancestor_index(-1);
   return module;
 }
 
