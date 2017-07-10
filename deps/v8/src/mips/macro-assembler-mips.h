@@ -549,15 +549,6 @@ class MacroAssembler: public Assembler {
   void Allocate(Register object_size, Register result, Register result_new,
                 Register scratch, Label* gc_required, AllocationFlags flags);
 
-  // FastAllocate is right now only used for folded allocations. It just
-  // increments the top pointer without checking against limit. This can only
-  // be done if it was proved earlier that the allocation will succeed.
-  void FastAllocate(int object_size, Register result, Register scratch1,
-                    Register scratch2, AllocationFlags flags);
-
-  void FastAllocate(Register object_size, Register result, Register result_new,
-                    Register scratch, AllocationFlags flags);
-
   // Allocates a heap number or jumps to the gc_required label if the young
   // space is full and a scavenge is needed. All registers are clobbered also
   // when control continues at the gc_required label.
@@ -702,6 +693,7 @@ class MacroAssembler: public Assembler {
   // Push a handle.
   void Push(Handle<Object> handle);
   void Push(Smi* smi) { Push(Handle<Smi>(smi, isolate())); }
+  void PushObject(Handle<Object> handle);
 
   // Push two registers. Pushes leftmost register first (to highest address).
   void Push(Register src1, Register src2) {
@@ -1437,9 +1429,6 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   // Print a message to stdout and abort execution.
   void Abort(BailoutReason msg);
 
-  // Verify restrictions about code generated in stubs.
-  void set_generating_stub(bool value) { generating_stub_ = value; }
-  bool generating_stub() { return generating_stub_; }
   void set_has_frame(bool value) { has_frame_ = value; }
   bool has_frame() { return has_frame_; }
   inline bool AllowThisStubCall(CodeStub* stub);
@@ -1737,7 +1726,6 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   MemOperand SafepointRegisterSlot(Register reg);
   MemOperand SafepointRegistersAndDoublesSlot(Register reg);
 
-  bool generating_stub_;
   bool has_frame_;
   bool has_double_zero_reg_set_;
   Isolate* isolate_;
@@ -1749,6 +1737,7 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   friend class StandardFrame;
 };
 
+using TurboAssembler = MacroAssembler;  // TODO(mips): Implement TurboAssembler.
 
 // The code patcher is used to patch (typically) small parts of code e.g. for
 // debugging and other types of instrumentation. When using the code patcher

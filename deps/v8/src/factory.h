@@ -25,6 +25,7 @@ class ConstantElementsPair;
 class CoverageInfo;
 class DebugInfo;
 struct SourceRange;
+class PreParsedScopeData;
 
 enum FunctionMode {
   // With prototype.
@@ -381,10 +382,8 @@ class V8_EXPORT_PRIVATE Factory final {
   // Allocate a tenured AllocationSite. It's payload is null.
   Handle<AllocationSite> NewAllocationSite();
 
-  Handle<Map> NewMap(
-      InstanceType type,
-      int instance_size,
-      ElementsKind elements_kind = TERMINAL_FAST_ELEMENTS_KIND);
+  Handle<Map> NewMap(InstanceType type, int instance_size,
+                     ElementsKind elements_kind = TERMINAL_FAST_ELEMENTS_KIND);
 
   Handle<HeapObject> NewFillerObject(int size,
                                      bool double_align,
@@ -573,9 +572,10 @@ class V8_EXPORT_PRIVATE Factory final {
   Handle<JSMap> NewJSMap();
   Handle<JSSet> NewJSSet();
 
-  // TODO(aandrey): Maybe these should take table, index and kind arguments.
-  Handle<JSMapIterator> NewJSMapIterator();
-  Handle<JSSetIterator> NewJSSetIterator();
+  Handle<JSMapIterator> NewJSMapIterator(Handle<OrderedHashMap> table,
+                                         int index, JSMapIterator::Kind kind);
+  Handle<JSSetIterator> NewJSSetIterator(Handle<OrderedHashSet> table,
+                                         int index, JSSetIterator::Kind kind);
 
   // Allocates a bound function.
   MaybeHandle<JSBoundFunction> NewJSBoundFunction(
@@ -601,11 +601,12 @@ class V8_EXPORT_PRIVATE Factory final {
                                  PretenureFlag pretenure = TENURED);
   Handle<JSFunction> NewFunction(Handle<String> name, Handle<Code> code,
                                  Handle<Object> prototype,
-                                 bool is_strict = false);
+                                 LanguageMode language_mode = SLOPPY,
+                                 MutableMode prototype_mutability = MUTABLE);
   Handle<JSFunction> NewFunction(Handle<String> name);
-  Handle<JSFunction> NewFunctionWithoutPrototype(Handle<String> name,
-                                                 Handle<Code> code,
-                                                 bool is_strict = false);
+  Handle<JSFunction> NewFunctionWithoutPrototype(
+      Handle<String> name, Handle<Code> code,
+      LanguageMode language_mode = SLOPPY);
 
   Handle<JSFunction> NewFunctionFromSharedFunctionInfo(
       Handle<Map> initial_map, Handle<SharedFunctionInfo> function_info,
@@ -627,7 +628,8 @@ class V8_EXPORT_PRIVATE Factory final {
   Handle<JSFunction> NewFunction(Handle<String> name, Handle<Code> code,
                                  Handle<Object> prototype, InstanceType type,
                                  int instance_size,
-                                 bool is_strict = false);
+                                 LanguageMode language_mode = SLOPPY,
+                                 MutableMode prototype_mutability = MUTABLE);
   Handle<JSFunction> NewFunction(Handle<String> name,
                                  Handle<Code> code,
                                  InstanceType type,
@@ -640,6 +642,8 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<ModuleInfoEntry> NewModuleInfoEntry();
   Handle<ModuleInfo> NewModuleInfo();
+
+  Handle<PreParsedScopeData> NewPreParsedScopeData();
 
   // Create an External object for V8's external API.
   Handle<JSObject> NewExternal(void* value);
@@ -765,7 +769,8 @@ class V8_EXPORT_PRIVATE Factory final {
             function_mode == FUNCTION_WITH_READONLY_PROTOTYPE);
   }
 
-  Handle<Map> CreateSloppyFunctionMap(FunctionMode function_mode);
+  Handle<Map> CreateSloppyFunctionMap(
+      FunctionMode function_mode, MaybeHandle<JSFunction> maybe_empty_function);
 
   Handle<Map> CreateStrictFunctionMap(FunctionMode function_mode,
                                       Handle<JSFunction> empty_function);

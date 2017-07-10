@@ -651,6 +651,7 @@
         'builtins/builtins-sharedarraybuffer.cc',
         'builtins/builtins-string.cc',
         'builtins/builtins-intl.cc',
+        'builtins/builtins-intl.h',
         'builtins/builtins-symbol.cc',
         'builtins/builtins-typedarray.cc',
         'builtins/builtins-utils.h',
@@ -705,6 +706,8 @@
         'compiler/bytecode-liveness-map.cc',
         'compiler/bytecode-liveness-map.h',
         'compiler/c-linkage.cc',
+        'compiler/check-elimination.cc',
+        'compiler/check-elimination.h',
         'compiler/checkpoint-elimination.cc',
         'compiler/checkpoint-elimination.h',
         'compiler/code-generator-impl.h',
@@ -981,6 +984,7 @@
         'flag-definitions.h',
         'flags.cc',
         'flags.h',
+        'float.h',
         'frames-inl.h',
         'frames.cc',
         'frames.h',
@@ -1803,6 +1807,13 @@
           # limit. This breaks it into multiple pieces to avoid the limit.
           # See http://crbug.com/485155.
           'msvs_shard': 4,
+          # This will prevent V8's .cc files conflicting with the inspector's
+          # .cpp files in the same shard.
+          'msvs_settings': {
+            'VCCLCompilerTool': {
+              'ObjectFile':'$(IntDir)%(Extension)\\',
+            },
+          },
         }],
         ['component=="shared_library"', {
           'defines': [
@@ -1835,6 +1846,7 @@
         }, {  # v8_enable_i18n_support==0
           'sources!': [
             'builtins/builtins-intl.cc',
+            'builtins/builtins-intl.h',
             'char-predicates.cc',
             'intl.cc',
             'intl.h',
@@ -2326,8 +2338,6 @@
           'js/typedarray.js',
           'js/collection.js',
           'js/weak-collection.js',
-          'js/collection-iterator.js',
-          'js/promise.js',
           'js/messages.js',
           'js/templates.js',
           'js/spread.js',

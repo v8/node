@@ -1374,10 +1374,13 @@ HandlerTable::CatchPrediction PredictException(JavaScriptFrame* frame) {
       // tables on the unoptimized code objects.
       List<FrameSummary> summaries;
       frame->Summarize(&summaries);
-      for (const FrameSummary& summary : summaries) {
+      for (int i = summaries.length() - 1; i >= 0; i--) {
+        const FrameSummary& summary = summaries[i];
         Handle<AbstractCode> code = summary.AsJavaScript().abstract_code();
         if (code->IsCode() && code->kind() == AbstractCode::BUILTIN) {
-          return code->GetCode()->GetBuiltinCatchPrediction();
+          prediction = code->GetCode()->GetBuiltinCatchPrediction();
+          if (prediction == HandlerTable::UNCAUGHT) continue;
+          return prediction;
         }
 
         if (code->kind() == AbstractCode::OPTIMIZED_FUNCTION) {
@@ -1454,12 +1457,13 @@ Isolate::CatchType Isolate::PredictExceptionCatcher() {
 
       case StackFrame::STUB: {
         Handle<Code> code(frame->LookupCode());
-        if (code->kind() == Code::BUILTIN && code->is_turbofanned() &&
-            code->handler_table()->length()) {
-          CatchType prediction = ToCatchType(code->GetBuiltinCatchPrediction());
-          if (prediction == NOT_CAUGHT) break;
-          return prediction;
+        if (!code->IsCode() || code->kind() != Code::BUILTIN ||
+            !code->handler_table()->length() || !code->is_turbofanned()) {
+          break;
         }
+
+        CatchType prediction = ToCatchType(code->GetBuiltinCatchPrediction());
+        if (prediction != NOT_CAUGHT) return prediction;
       } break;
 
       default:
@@ -3349,8 +3353,7 @@ MaybeHandle<JSPromise> NewRejectedPromise(Isolate* isolate,
 
 MaybeHandle<JSPromise> Isolate::RunHostImportModuleDynamicallyCallback(
     Handle<String> source_url, Handle<Object> specifier) {
-  v8::Local<v8::Context> api_context =
-      v8::Utils::ToLocal(handle(context(), this));
+  v8::Local<v8::Context> api_context = v8::Utils::ToLocal(native_context());
 
   if (host_import_module_dynamically_callback_ == nullptr) {
     Handle<Object> exception =

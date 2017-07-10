@@ -61,6 +61,34 @@ Handle<Object> WasmValToValueObject(Isolate* isolate, WasmVal value) {
   }
 }
 
+MaybeHandle<String> GetLocalName(Isolate* isolate,
+                                 Handle<WasmDebugInfo> debug_info,
+                                 int func_index, int local_index) {
+  DCHECK_LE(0, func_index);
+  DCHECK_LE(0, local_index);
+  if (!debug_info->has_locals_names()) {
+    Handle<WasmCompiledModule> compiled_module(
+        debug_info->wasm_instance()->compiled_module(), isolate);
+    Handle<FixedArray> locals_names =
+        wasm::DecodeLocalNames(isolate, compiled_module);
+    debug_info->set_locals_names(*locals_names);
+  }
+
+  Handle<FixedArray> locals_names(debug_info->locals_names(), isolate);
+  if (func_index >= locals_names->length() ||
+      locals_names->get(func_index)->IsUndefined(isolate)) {
+    return {};
+  }
+
+  Handle<FixedArray> func_locals_names(
+      FixedArray::cast(locals_names->get(func_index)), isolate);
+  if (local_index >= func_locals_names->length() ||
+      func_locals_names->get(local_index)->IsUndefined(isolate)) {
+    return {};
+  }
+  return handle(String::cast(func_locals_names->get(local_index)));
+}
+
 // Forward declaration.
 class InterpreterHandle;
 InterpreterHandle* GetInterpreterHandle(WasmDebugInfo* debug_info);
@@ -410,8 +438,10 @@ class InterpreterHandle {
   }
 
   Handle<JSArray> GetScopeDetails(Address frame_pointer, int frame_index,
-                                  Handle<WasmInstanceObject> instance) {
+                                  Handle<WasmDebugInfo> debug_info) {
     auto frame = GetInterpretedFrame(frame_pointer, frame_index);
+    Isolate* isolate = debug_info->GetIsolate();
+    Handle<WasmInstanceObject> instance(debug_info->wasm_instance(), isolate);
 
     Handle<FixedArray> global_scope =
         isolate_->factory()->NewFixedArray(ScopeIterator::kScopeDetailsSize);
@@ -434,7 +464,7 @@ class InterpreterHandle {
           kExternalUint8Array, memory_buffer, 0, byte_length);
       JSObject::SetOwnPropertyIgnoreAttributes(global_scope_object, name,
                                                uint8_array, NONE)
-          .Check();
+          .Assert();
     }
 
     Handle<FixedArray> local_scope =
@@ -450,15 +480,30 @@ class InterpreterHandle {
     int num_params = frame->GetParameterCount();
     int num_locals = frame->GetLocalCount();
     DCHECK_LE(num_params, num_locals);
-    for (int i = 0; i < num_locals; ++i) {
-      // TODO(clemensh): Use names from name section if present.
-      const char* label = i < num_params ? "param#%d" : "local#%d";
-      Handle<String> name = PrintFToOneByteString<true>(isolate_, label, i);
-      WasmVal value = frame->GetLocalValue(i);
-      Handle<Object> value_obj = WasmValToValueObject(isolate_, value);
-      JSObject::SetOwnPropertyIgnoreAttributes(local_scope_object, name,
-                                               value_obj, NONE)
-          .Check();
+    if (num_locals > 0) {
+      Handle<JSObject> locals_obj =
+          isolate_->factory()->NewJSObjectWithNullProto();
+      Handle<String> locals_name =
+          isolate_->factory()->InternalizeOneByteString(
+              STATIC_CHAR_VECTOR("locals"));
+      JSObject::SetOwnPropertyIgnoreAttributes(local_scope_object, locals_name,
+                                               locals_obj, NONE)
+          .Assert();
+      for (int i = 0; i < num_locals; ++i) {
+        MaybeHandle<String> name =
+            GetLocalName(isolate, debug_info, frame->function()->func_index, i);
+        if (name.is_null()) {
+          // Parameters should come before locals in alphabetical ordering, so
+          // we name them "args" here.
+          const char* label = i < num_params ? "arg#%d" : "local#%d";
+          name = PrintFToOneByteString<true>(isolate_, label, i);
+        }
+        WasmVal value = frame->GetLocalValue(i);
+        Handle<Object> value_obj = WasmValToValueObject(isolate_, value);
+        JSObject::SetOwnPropertyIgnoreAttributes(
+            locals_obj, name.ToHandleChecked(), value_obj, NONE)
+            .Assert();
+      }
     }
 
     // Fill stack values.
@@ -468,18 +513,18 @@ class InterpreterHandle {
     // which does not make too much sense here.
     Handle<JSObject> stack_obj =
         isolate_->factory()->NewJSObjectWithNullProto();
+    Handle<String> stack_name = isolate_->factory()->InternalizeOneByteString(
+        STATIC_CHAR_VECTOR("stack"));
+    JSObject::SetOwnPropertyIgnoreAttributes(local_scope_object, stack_name,
+                                             stack_obj, NONE)
+        .Assert();
     for (int i = 0; i < stack_count; ++i) {
       WasmVal value = frame->GetStackValue(i);
       Handle<Object> value_obj = WasmValToValueObject(isolate_, value);
       JSObject::SetOwnElementIgnoreAttributes(
           stack_obj, static_cast<uint32_t>(i), value_obj, NONE)
-          .Check();
+          .Assert();
     }
-    Handle<String> stack_name = isolate_->factory()->InternalizeOneByteString(
-        STATIC_CHAR_VECTOR("stack"));
-    JSObject::SetOwnPropertyIgnoreAttributes(local_scope_object, stack_name,
-                                             stack_obj, NONE)
-        .Check();
 
     Handle<JSArray> global_jsarr =
         isolate_->factory()->NewJSArrayWithElements(global_scope);
@@ -494,25 +539,25 @@ class InterpreterHandle {
 
 InterpreterHandle* GetOrCreateInterpreterHandle(
     Isolate* isolate, Handle<WasmDebugInfo> debug_info) {
-  Handle<Object> handle(debug_info->get(WasmDebugInfo::kInterpreterHandle),
+  Handle<Object> handle(debug_info->get(WasmDebugInfo::kInterpreterHandleIndex),
                         isolate);
   if (handle->IsUndefined(isolate)) {
     InterpreterHandle* cpp_handle = new InterpreterHandle(isolate, *debug_info);
     handle = Managed<InterpreterHandle>::New(isolate, cpp_handle);
-    debug_info->set(WasmDebugInfo::kInterpreterHandle, *handle);
+    debug_info->set(WasmDebugInfo::kInterpreterHandleIndex, *handle);
   }
 
   return Handle<Managed<InterpreterHandle>>::cast(handle)->get();
 }
 
 InterpreterHandle* GetInterpreterHandle(WasmDebugInfo* debug_info) {
-  Object* handle_obj = debug_info->get(WasmDebugInfo::kInterpreterHandle);
+  Object* handle_obj = debug_info->get(WasmDebugInfo::kInterpreterHandleIndex);
   DCHECK(!handle_obj->IsUndefined(debug_info->GetIsolate()));
   return Managed<InterpreterHandle>::cast(handle_obj)->get();
 }
 
 InterpreterHandle* GetInterpreterHandleOrNull(WasmDebugInfo* debug_info) {
-  Object* handle_obj = debug_info->get(WasmDebugInfo::kInterpreterHandle);
+  Object* handle_obj = debug_info->get(WasmDebugInfo::kInterpreterHandleIndex);
   if (handle_obj->IsUndefined(debug_info->GetIsolate())) return nullptr;
   return Managed<InterpreterHandle>::cast(handle_obj)->get();
 }
@@ -526,13 +571,13 @@ int GetNumFunctions(WasmInstanceObject* instance) {
 
 Handle<FixedArray> GetOrCreateInterpretedFunctions(
     Isolate* isolate, Handle<WasmDebugInfo> debug_info) {
-  Handle<Object> obj(debug_info->get(WasmDebugInfo::kInterpretedFunctions),
+  Handle<Object> obj(debug_info->get(WasmDebugInfo::kInterpretedFunctionsIndex),
                      isolate);
   if (!obj->IsUndefined(isolate)) return Handle<FixedArray>::cast(obj);
 
   Handle<FixedArray> new_arr = isolate->factory()->NewFixedArray(
       GetNumFunctions(debug_info->wasm_instance()));
-  debug_info->set(WasmDebugInfo::kInterpretedFunctions, *new_arr);
+  debug_info->set(WasmDebugInfo::kInterpretedFunctionsIndex, *new_arr);
   return new_arr;
 }
 
@@ -577,8 +622,7 @@ Handle<WasmDebugInfo> WasmDebugInfo::New(Handle<WasmInstanceObject> instance) {
   DCHECK(!instance->has_debug_info());
   Factory* factory = instance->GetIsolate()->factory();
   Handle<FixedArray> arr = factory->NewFixedArray(kFieldCount, TENURED);
-  arr->set(kWrapperTracerHeader, Smi::kZero);
-  arr->set(kInstance, *instance);
+  arr->set(kInstanceIndex, *instance);
   Handle<WasmDebugInfo> debug_info = Handle<WasmDebugInfo>::cast(arr);
   instance->set_debug_info(*debug_info);
   return debug_info;
@@ -591,29 +635,29 @@ WasmInterpreter* WasmDebugInfo::SetupForTesting(
   InterpreterHandle* cpp_handle =
       new InterpreterHandle(isolate, *debug_info, instance);
   Handle<Object> handle = Managed<InterpreterHandle>::New(isolate, cpp_handle);
-  debug_info->set(kInterpreterHandle, *handle);
+  debug_info->set(kInterpreterHandleIndex, *handle);
   return cpp_handle->interpreter();
 }
 
-bool WasmDebugInfo::IsDebugInfo(Object* object) {
+bool WasmDebugInfo::IsWasmDebugInfo(Object* object) {
   if (!object->IsFixedArray()) return false;
   FixedArray* arr = FixedArray::cast(object);
   if (arr->length() != kFieldCount) return false;
-  if (!IsWasmInstance(arr->get(kInstance))) return false;
+  if (!arr->get(kInstanceIndex)->IsWasmInstanceObject()) return false;
   Isolate* isolate = arr->GetIsolate();
-  if (!arr->get(kInterpreterHandle)->IsUndefined(isolate) &&
-      !arr->get(kInterpreterHandle)->IsForeign())
+  if (!arr->get(kInterpreterHandleIndex)->IsUndefined(isolate) &&
+      !arr->get(kInterpreterHandleIndex)->IsForeign())
     return false;
   return true;
 }
 
 WasmDebugInfo* WasmDebugInfo::cast(Object* object) {
-  DCHECK(IsDebugInfo(object));
+  DCHECK(IsWasmDebugInfo(object));
   return reinterpret_cast<WasmDebugInfo*>(object);
 }
 
 WasmInstanceObject* WasmDebugInfo::wasm_instance() {
-  return WasmInstanceObject::cast(get(kInstance));
+  return WasmInstanceObject::cast(get(kInstanceIndex));
 }
 
 void WasmDebugInfo::SetBreakpoint(Handle<WasmDebugInfo> debug_info,
@@ -695,6 +739,5 @@ Handle<JSArray> WasmDebugInfo::GetScopeDetails(Handle<WasmDebugInfo> debug_info,
                                                Address frame_pointer,
                                                int frame_index) {
   InterpreterHandle* interp_handle = GetInterpreterHandle(*debug_info);
-  Handle<WasmInstanceObject> instance(debug_info->wasm_instance());
-  return interp_handle->GetScopeDetails(frame_pointer, frame_index, instance);
+  return interp_handle->GetScopeDetails(frame_pointer, frame_index, debug_info);
 }

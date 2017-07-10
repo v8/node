@@ -583,6 +583,14 @@ namespace internal {
   CPP(MapGetSize)                                                              \
   CPP(MapClear)                                                                \
   CPP(MapForEach)                                                              \
+  /* ES #sec-map.prototype.entries */                                          \
+  CPP(MapPrototypeEntries)                                                     \
+  /* ES #sec-map.prototype.keys */                                             \
+  CPP(MapPrototypeKeys)                                                        \
+  /* ES #sec-map.prototype.values */                                           \
+  CPP(MapPrototypeValues)                                                      \
+  /* ES #sec-%mapiteratorprototype%.next */                                    \
+  CPP(MapIteratorPrototypeNext)                                                \
                                                                                \
   /* Math */                                                                   \
   /* ES6 #sec-math.abs */                                                      \
@@ -779,6 +787,8 @@ namespace internal {
   TFJ(PromiseThrowerFinally, 0)                                                \
   /* ES #sec-promise.all */                                                    \
   TFJ(PromiseAll, 1, kIterable)                                                \
+  /* ES #sec-promise.race */                                                   \
+  TFJ(PromiseRace, 1, kIterable)                                               \
                                                                                \
   /* Proxy */                                                                  \
   CPP(ProxyConstructor)                                                        \
@@ -863,6 +873,12 @@ namespace internal {
   CPP(SetGetSize)                                                              \
   CPP(SetClear)                                                                \
   CPP(SetForEach)                                                              \
+  /* ES #sec-set.prototype.entries */                                          \
+  CPP(SetPrototypeEntries)                                                     \
+  /* ES #sec-set.prototype.values */                                           \
+  CPP(SetPrototypeValues)                                                      \
+  /* ES #sec-%setiteratorprototype%.next */                                    \
+  CPP(SetIteratorPrototypeNext)                                                \
                                                                                \
   /* SharedArrayBuffer */                                                      \
   CPP(SharedArrayBufferPrototypeGetByteLength)                                 \
@@ -1054,16 +1070,18 @@ namespace internal {
   TFJ(AsyncIteratorValueUnwrap, 1, kValue)
 
 #ifdef V8_INTL_SUPPORT
-#define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG) \
-  BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
-                                                             \
-  TFS(StringToLowerCaseIntl, kString)                        \
-  /* ES #sec-string.prototype.tolowercase */                 \
-  TFJ(StringPrototypeToLowerCaseIntl, 0)                     \
-  /* ES #sec-string.prototype.touppercase */                 \
-  CPP(StringPrototypeToUpperCaseIntl)                        \
-  /* ES #sec-string.prototype.normalize */                   \
-  CPP(StringPrototypeNormalizeIntl)
+#define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)   \
+  BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)    \
+                                                               \
+  TFS(StringToLowerCaseIntl, kString)                          \
+  /* ES #sec-string.prototype.tolowercase */                   \
+  TFJ(StringPrototypeToLowerCaseIntl, 0)                       \
+  /* ES #sec-string.prototype.touppercase */                   \
+  CPP(StringPrototypeToUpperCaseIntl)                          \
+  /* ES #sec-string.prototype.normalize */                     \
+  CPP(StringPrototypeNormalizeIntl)                            \
+  /* ecma402 #sec-intl.numberformat.prototype.formattoparts */ \
+  CPP(NumberFormatPrototypeFormatToParts)
 #else
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG) \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM, DBG)  \
@@ -1095,25 +1113,16 @@ namespace internal {
   V(PromiseAll)                                      \
   V(PromiseConstructor)                              \
   V(PromiseHandle)                                   \
+  V(PromiseRace)                                     \
   V(PromiseResolve)                                  \
   V(PromiseResolveClosure)                           \
   V(RejectNativePromise)                             \
   V(ResolveNativePromise)                            \
   V(ResolvePromise)
 
-// The exception thrown in the following builtins are caught
-// internally and should not trigger the catch prediction heuristic.
+// The exception thrown in the following builtins are caught internally and will
+// not be propagated further or re-thrown
 #define BUILTIN_EXCEPTION_CAUGHT_PREDICTION_LIST(V) V(PromiseHandleReject)
-
-// The exception thrown in the following builtins are not caught
-// internally and should trigger the catch prediction heuristic.
-#define BUILTIN_EXCEPTION_UNCAUGHT_PREDICTION_LIST(V) \
-  V(ArrayForEachLoopLazyDeoptContinuation)            \
-  V(MapConstructor)                                   \
-  V(SetConstructor)                                   \
-  V(GeneratorPrototypeNext)                           \
-  V(GeneratorPrototypeReturn)                         \
-  V(GeneratorPrototypeThrow)
 
 #define IGNORE_BUILTIN(...)
 

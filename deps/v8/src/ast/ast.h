@@ -121,6 +121,7 @@ class BreakableStatement;
 class Expression;
 class IterationStatement;
 class MaterializedLiteral;
+class ProducedPreParsedScopeData;
 class Statement;
 
 #define DEF_FORWARD_DECLARATION(type) class type;
@@ -970,30 +971,9 @@ class TryStatement : public Statement {
   Block* try_block() const { return try_block_; }
   void set_try_block(Block* b) { try_block_ = b; }
 
-  // Prediction of whether exceptions thrown into the handler for this try block
-  // will be caught.
-  //
-  // This is set in ast-numbering and later compiled into the code's handler
-  // table.  The runtime uses this information to implement a feature that
-  // notifies the debugger when an uncaught exception is thrown, _before_ the
-  // exception propagates to the top.
-  //
-  // Since it's generally undecidable whether an exception will be caught, our
-  // prediction is only an approximation.
-  HandlerTable::CatchPrediction catch_prediction() const {
-    return catch_prediction_;
-  }
-  void set_catch_prediction(HandlerTable::CatchPrediction prediction) {
-    catch_prediction_ = prediction;
-  }
-
  protected:
   TryStatement(Block* try_block, int pos, NodeType type)
-      : Statement(pos, type),
-        catch_prediction_(HandlerTable::UNCAUGHT),
-        try_block_(try_block) {}
-
-  HandlerTable::CatchPrediction catch_prediction_;
+      : Statement(pos, type), try_block_(try_block) {}
 
  private:
   Block* try_block_;
@@ -1006,33 +986,72 @@ class TryCatchStatement final : public TryStatement {
   Block* catch_block() const { return catch_block_; }
   void set_catch_block(Block* b) { catch_block_ = b; }
 
-  // The clear_pending_message flag indicates whether or not to clear the
-  // isolate's pending exception message before executing the catch_block.  In
-  // the normal use case, this flag is always on because the message object
-  // is not needed anymore when entering the catch block and should not be kept
-  // alive.
-  // The use case where the flag is off is when the catch block is guaranteed to
-  // rethrow the caught exception (using %ReThrow), which reuses the pending
-  // message instead of generating a new one.
+  SourceRange catch_range() const { return catch_range_; }
+
+  // Prediction of whether exceptions thrown into the handler for this try block
+  // will be caught.
+  //
+  // BytecodeGenerator tracks the state of catch prediction, which can change
+  // with each TryCatchStatement encountered. The tracked catch prediction is
+  // later compiled into the code's handler table. The runtime uses this
+  // information to implement a feature that notifies the debugger when an
+  // uncaught exception is thrown, _before_ the exception propagates to the top.
+  //
+  // If this try/catch statement is meant to rethrow (HandlerTable::UNCAUGHT),
+  // the catch prediction value is set to the same value as the surrounding
+  // catch prediction.
+  //
+  // Since it's generally undecidable whether an exception will be caught, our
+  // prediction is only an approximation.
+  // ---------------------------------------------------------------------------
+  inline HandlerTable::CatchPrediction GetCatchPrediction(
+      HandlerTable::CatchPrediction outer_catch_prediction) const {
+    if (catch_prediction_ == HandlerTable::UNCAUGHT) {
+      return outer_catch_prediction;
+    }
+    return catch_prediction_;
+  }
+
+  // Indicates whether or not code should be generated to clear the pending
+  // exception. The pending exception is cleared for cases where the exception
+  // is not guaranteed to be rethrown, indicated by the value
+  // HandlerTable::UNCAUGHT. If both the current and surrounding catch handler's
+  // are predicted uncaught, the exception is not cleared.
+  //
+  // If this handler is not going to simply rethrow the exception, this method
+  // indicates that the isolate's pending exception message should be cleared
+  // before executing the catch_block.
+  // In the normal use case, this flag is always on because the message object
+  // is not needed anymore when entering the catch block and should not be
+  // kept alive.
+  // The use case where the flag is off is when the catch block is guaranteed
+  // to rethrow the caught exception (using %ReThrow), which reuses the
+  // pending message instead of generating a new one.
   // (When the catch block doesn't rethrow but is guaranteed to perform an
-  // ordinary throw, not clearing the old message is safe but not very useful.)
-  bool clear_pending_message() const {
-    return catch_prediction_ != HandlerTable::UNCAUGHT;
+  // ordinary throw, not clearing the old message is safe but not very
+  // useful.)
+  inline bool ShouldClearPendingException(
+      HandlerTable::CatchPrediction outer_catch_prediction) const {
+    return catch_prediction_ != HandlerTable::UNCAUGHT ||
+           outer_catch_prediction != HandlerTable::UNCAUGHT;
   }
 
  private:
   friend class AstNodeFactory;
 
   TryCatchStatement(Block* try_block, Scope* scope, Block* catch_block,
-                    HandlerTable::CatchPrediction catch_prediction, int pos)
+                    HandlerTable::CatchPrediction catch_prediction, int pos,
+                    const SourceRange& catch_range)
       : TryStatement(try_block, pos, kTryCatchStatement),
         scope_(scope),
-        catch_block_(catch_block) {
-    catch_prediction_ = catch_prediction;
-  }
+        catch_block_(catch_block),
+        catch_prediction_(catch_prediction),
+        catch_range_(catch_range) {}
 
   Scope* scope_;
   Block* catch_block_;
+  HandlerTable::CatchPrediction catch_prediction_;
+  SourceRange catch_range_;
 };
 
 
@@ -1041,14 +1060,19 @@ class TryFinallyStatement final : public TryStatement {
   Block* finally_block() const { return finally_block_; }
   void set_finally_block(Block* b) { finally_block_ = b; }
 
+  SourceRange finally_range() const { return finally_range_; }
+
  private:
   friend class AstNodeFactory;
 
-  TryFinallyStatement(Block* try_block, Block* finally_block, int pos)
+  TryFinallyStatement(Block* try_block, Block* finally_block, int pos,
+                      const SourceRange& finally_range)
       : TryStatement(try_block, pos, kTryFinallyStatement),
-        finally_block_(finally_block) {}
+        finally_block_(finally_block),
+        finally_range_(finally_range) {}
 
   Block* finally_block_;
+  SourceRange finally_range_;
 };
 
 
@@ -2407,14 +2431,20 @@ class Throw final : public Expression {
  public:
   Expression* exception() const { return exception_; }
   void set_exception(Expression* e) { exception_ = e; }
+  // The first source position past the end of the throw statement, used by
+  // block coverage.
+  int32_t continuation_pos() const { return continuation_pos_; }
 
  private:
   friend class AstNodeFactory;
 
-  Throw(Expression* exception, int pos)
-      : Expression(pos, kThrow), exception_(exception) {}
+  Throw(Expression* exception, int pos, int32_t continuation_pos)
+      : Expression(pos, kThrow),
+        exception_(exception),
+        continuation_pos_(continuation_pos) {}
 
   Expression* exception_;
+  int32_t continuation_pos_;
 };
 
 
@@ -2583,19 +2613,23 @@ class FunctionLiteral final : public Expression {
     function_literal_id_ = function_literal_id;
   }
 
+  ProducedPreParsedScopeData* produced_preparsed_scope_data() const {
+    return produced_preparsed_scope_data_;
+  }
+
   void ReplaceBodyAndScope(FunctionLiteral* other);
 
  private:
   friend class AstNodeFactory;
 
-  FunctionLiteral(Zone* zone, const AstRawString* name,
-                  AstValueFactory* ast_value_factory, DeclarationScope* scope,
-                  ZoneList<Statement*>* body, int expected_property_count,
-                  int parameter_count, int function_length,
-                  FunctionType function_type,
-                  ParameterFlag has_duplicate_parameters,
-                  EagerCompileHint eager_compile_hint, int position,
-                  bool has_braces, int function_literal_id)
+  FunctionLiteral(
+      Zone* zone, const AstRawString* name, AstValueFactory* ast_value_factory,
+      DeclarationScope* scope, ZoneList<Statement*>* body,
+      int expected_property_count, int parameter_count, int function_length,
+      FunctionType function_type, ParameterFlag has_duplicate_parameters,
+      EagerCompileHint eager_compile_hint, int position, bool has_braces,
+      int function_literal_id,
+      ProducedPreParsedScopeData* produced_preparsed_scope_data = nullptr)
       : Expression(position, kFunctionLiteral),
         expected_property_count_(expected_property_count),
         parameter_count_(parameter_count),
@@ -2608,7 +2642,8 @@ class FunctionLiteral final : public Expression {
         body_(body),
         raw_inferred_name_(ast_value_factory->empty_cons_string()),
         ast_properties_(zone),
-        function_literal_id_(function_literal_id) {
+        function_literal_id_(function_literal_id),
+        produced_preparsed_scope_data_(produced_preparsed_scope_data) {
     bit_field_ |= FunctionTypeBits::encode(function_type) |
                   Pretenure::encode(false) |
                   HasDuplicateParameters::encode(has_duplicate_parameters ==
@@ -2644,6 +2679,7 @@ class FunctionLiteral final : public Expression {
   AstProperties ast_properties_;
   int function_literal_id_;
   FeedbackSlot literal_feedback_slot_;
+  ProducedPreParsedScopeData* produced_preparsed_scope_data_;
 };
 
 // Property is used for passing information
@@ -2894,14 +2930,35 @@ class GetIterator final : public Expression {
     return async_iterator_call_feedback_slot_;
   }
 
+  Expression* iterable_for_call_printer() const {
+    return destructured_iterable_ != nullptr ? destructured_iterable_
+                                             : iterable_;
+  }
+
  private:
   friend class AstNodeFactory;
 
-  explicit GetIterator(Expression* iterable, IteratorType hint, int pos)
-      : Expression(pos, kGetIterator), hint_(hint), iterable_(iterable) {}
+  GetIterator(Expression* iterable, Expression* destructured_iterable,
+              IteratorType hint, int pos)
+      : Expression(pos, kGetIterator),
+        hint_(hint),
+        iterable_(iterable),
+        destructured_iterable_(destructured_iterable) {}
+
+  GetIterator(Expression* iterable, IteratorType hint, int pos)
+      : Expression(pos, kGetIterator),
+        hint_(hint),
+        iterable_(iterable),
+        destructured_iterable_(nullptr) {}
 
   IteratorType hint_;
   Expression* iterable_;
+
+  // iterable_ is the variable proxy, while destructured_iterable_ points to
+  // the raw value stored in the variable proxy. This is only used for
+  // pretty printing error messages.
+  Expression* destructured_iterable_;
+
   FeedbackSlot iterator_property_feedback_slot_;
   FeedbackSlot iterator_call_feedback_slot_;
   FeedbackSlot async_iterator_property_feedback_slot_;
@@ -3165,9 +3222,10 @@ class AstNodeFactory final BASE_EMBEDDED {
   }
 
   TryCatchStatement* NewTryCatchStatement(Block* try_block, Scope* scope,
-                                          Block* catch_block, int pos) {
-    return new (zone_) TryCatchStatement(try_block, scope, catch_block,
-                                         HandlerTable::CAUGHT, pos);
+                                          Block* catch_block, int pos,
+                                          const SourceRange catch_range = {}) {
+    return new (zone_) TryCatchStatement(
+        try_block, scope, catch_block, HandlerTable::CAUGHT, pos, catch_range);
   }
 
   TryCatchStatement* NewTryCatchStatementForReThrow(Block* try_block,
@@ -3175,7 +3233,7 @@ class AstNodeFactory final BASE_EMBEDDED {
                                                     Block* catch_block,
                                                     int pos) {
     return new (zone_) TryCatchStatement(try_block, scope, catch_block,
-                                         HandlerTable::UNCAUGHT, pos);
+                                         HandlerTable::UNCAUGHT, pos, {});
   }
 
   TryCatchStatement* NewTryCatchStatementForDesugaring(Block* try_block,
@@ -3183,7 +3241,7 @@ class AstNodeFactory final BASE_EMBEDDED {
                                                        Block* catch_block,
                                                        int pos) {
     return new (zone_) TryCatchStatement(try_block, scope, catch_block,
-                                         HandlerTable::DESUGARING, pos);
+                                         HandlerTable::DESUGARING, pos, {});
   }
 
   TryCatchStatement* NewTryCatchStatementForAsyncAwait(Block* try_block,
@@ -3191,12 +3249,14 @@ class AstNodeFactory final BASE_EMBEDDED {
                                                        Block* catch_block,
                                                        int pos) {
     return new (zone_) TryCatchStatement(try_block, scope, catch_block,
-                                         HandlerTable::ASYNC_AWAIT, pos);
+                                         HandlerTable::ASYNC_AWAIT, pos, {});
   }
 
-  TryFinallyStatement* NewTryFinallyStatement(Block* try_block,
-                                              Block* finally_block, int pos) {
-    return new (zone_) TryFinallyStatement(try_block, finally_block, pos);
+  TryFinallyStatement* NewTryFinallyStatement(
+      Block* try_block, Block* finally_block, int pos,
+      const SourceRange& finally_range = {}) {
+    return new (zone_)
+        TryFinallyStatement(try_block, finally_block, pos, finally_range);
   }
 
   DebuggerStatement* NewDebuggerStatement(int pos) {
@@ -3412,8 +3472,9 @@ class AstNodeFactory final BASE_EMBEDDED {
     return new (zone_) YieldStar(expression, pos, flags);
   }
 
-  Throw* NewThrow(Expression* exception, int pos) {
-    return new (zone_) Throw(exception, pos);
+  Throw* NewThrow(Expression* exception, int pos,
+                  int32_t continuation_pos = kNoSourcePosition) {
+    return new (zone_) Throw(exception, pos, continuation_pos);
   }
 
   FunctionLiteral* NewFunctionLiteral(
@@ -3423,12 +3484,13 @@ class AstNodeFactory final BASE_EMBEDDED {
       FunctionLiteral::ParameterFlag has_duplicate_parameters,
       FunctionLiteral::FunctionType function_type,
       FunctionLiteral::EagerCompileHint eager_compile_hint, int position,
-      bool has_braces, int function_literal_id) {
+      bool has_braces, int function_literal_id,
+      ProducedPreParsedScopeData* produced_preparsed_scope_data = nullptr) {
     return new (zone_) FunctionLiteral(
         zone_, name, ast_value_factory_, scope, body, expected_property_count,
         parameter_count, function_length, function_type,
         has_duplicate_parameters, eager_compile_hint, position, has_braces,
-        function_literal_id);
+        function_literal_id, produced_preparsed_scope_data);
   }
 
   // Creates a FunctionLiteral representing a top-level script, the
@@ -3499,6 +3561,12 @@ class AstNodeFactory final BASE_EMBEDDED {
 
   EmptyParentheses* NewEmptyParentheses(int pos) {
     return new (zone_) EmptyParentheses(pos);
+  }
+
+  GetIterator* NewGetIterator(Expression* iterable,
+                              Expression* destructured_iterable,
+                              IteratorType hint, int pos) {
+    return new (zone_) GetIterator(iterable, destructured_iterable, hint, pos);
   }
 
   GetIterator* NewGetIterator(Expression* iterable, IteratorType hint,

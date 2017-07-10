@@ -134,6 +134,7 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
   void BranchIfFastPath(Node* native_context, Node* promise_fun, Node* promise,
                         Label* if_isunmodified, Label* if_ismodified);
 
+  void InitializeFunctionContext(Node* native_context, Node* context, int len);
   Node* CreatePromiseContext(Node* native_context, int slots);
   void PromiseFulfill(Node* context, Node* promise, Node* result,
                       v8::Promise::PromiseState status);
@@ -162,6 +163,16 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
 
   Node* IncrementSmiCell(Node* cell, Label* if_overflow = nullptr);
   Node* DecrementSmiCell(Node* cell);
+
+  void SetForwardingHandlerIfTrue(Node* context, Node* condition,
+                                  const NodeGenerator& object);
+  inline void SetForwardingHandlerIfTrue(Node* context, Node* condition,
+                                         Node* object) {
+    return SetForwardingHandlerIfTrue(context, condition,
+                                      [object]() -> Node* { return object; });
+  }
+  void SetPromiseHandledByIfTrue(Node* context, Node* condition, Node* promise,
+                                 const NodeGenerator& handled_by);
 
  private:
   Node* AllocateJSPromise(Node* context);

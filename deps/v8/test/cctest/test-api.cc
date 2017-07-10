@@ -20317,7 +20317,7 @@ class InitDefaultIsolateThread : public v8::base::Thread {
     create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
     switch (testCase_) {
       case SetResourceConstraints: {
-        create_params.constraints.set_max_semi_space_size_in_kb(1024);
+        create_params.constraints.set_max_semi_space_size(1);
         create_params.constraints.set_max_old_space_size(6);
         break;
       }
@@ -22730,19 +22730,19 @@ THREADED_TEST(JSONParseArray) {
   HandleScope scope(context->GetIsolate());
 
   TestJSONParseArray(context.local(), "[0, 1, 2]", "[0,1,2]",
-                     i::FAST_SMI_ELEMENTS);
+                     i::PACKED_SMI_ELEMENTS);
   TestJSONParseArray(context.local(), "[0, 1.2, 2]", "[0,1.2,2]",
-                     i::FAST_DOUBLE_ELEMENTS);
+                     i::PACKED_DOUBLE_ELEMENTS);
   TestJSONParseArray(context.local(), "[0.2, 1, 2]", "[0.2,1,2]",
-                     i::FAST_DOUBLE_ELEMENTS);
+                     i::PACKED_DOUBLE_ELEMENTS);
   TestJSONParseArray(context.local(), "[0, \"a\", 2]", "[0,\"a\",2]",
-                     i::FAST_ELEMENTS);
+                     i::PACKED_ELEMENTS);
   TestJSONParseArray(context.local(), "[\"a\", 1, 2]", "[\"a\",1,2]",
-                     i::FAST_ELEMENTS);
+                     i::PACKED_ELEMENTS);
   TestJSONParseArray(context.local(), "[\"a\", 1.2, 2]", "[\"a\",1.2,2]",
-                     i::FAST_ELEMENTS);
+                     i::PACKED_ELEMENTS);
   TestJSONParseArray(context.local(), "[0, 1.2, \"a\"]", "[0,1.2,\"a\"]",
-                     i::FAST_ELEMENTS);
+                     i::PACKED_ELEMENTS);
 }
 
 THREADED_TEST(JSONStringifyObject) {
@@ -26212,6 +26212,76 @@ TEST(TemplateIteratorPrototypeIntrinsics) {
         "instance.__proto__.__proto__ === "
         "[][Symbol.iterator]().__proto__.__proto__");
     ExpectTrue("instance.__proto__.__proto__.__proto__ === Object.prototype");
+  }
+}
+
+TEST(TemplateErrorPrototypeIntrinsics) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  LocalContext env;
+
+  // Object templates.
+  {
+    Local<ObjectTemplate> object_template = v8::ObjectTemplate::New(isolate);
+    object_template->SetIntrinsicDataProperty(v8_str("error_proto"),
+                                              v8::kErrorPrototype);
+    Local<Object> object =
+        object_template->NewInstance(env.local()).ToLocalChecked();
+    CHECK(env->Global()->Set(env.local(), v8_str("obj"), object).FromJust());
+    ExpectTrue("obj.error_proto === Error.prototype");
+    Local<Value> error = v8::Exception::Error(v8_str("error message"));
+    CHECK(env->Global()->Set(env.local(), v8_str("err"), error).FromJust());
+    ExpectTrue("obj.error_proto === Object.getPrototypeOf(err)");
+  }
+  // Setting %ErrorPrototype% on the function object's prototype template.
+  {
+    Local<FunctionTemplate> func_template = v8::FunctionTemplate::New(isolate);
+    func_template->PrototypeTemplate()->SetIntrinsicDataProperty(
+        v8_str("error_proto"), v8::kErrorPrototype);
+    Local<Function> func1 =
+        func_template->GetFunction(env.local()).ToLocalChecked();
+    CHECK(env->Global()->Set(env.local(), v8_str("func1"), func1).FromJust());
+    Local<Function> func2 =
+        func_template->GetFunction(env.local()).ToLocalChecked();
+    CHECK(env->Global()->Set(env.local(), v8_str("func2"), func2).FromJust());
+    ExpectTrue("func1.prototype.error_proto === Error.prototype");
+    ExpectTrue("func2.prototype.error_proto === Error.prototype");
+    ExpectTrue("func1.prototype.error_proto === func2.prototype.error_proto");
+
+    Local<Object> instance1 = func1->NewInstance(env.local()).ToLocalChecked();
+    CHECK(env->Global()
+              ->Set(env.local(), v8_str("instance1"), instance1)
+              .FromJust());
+    ExpectFalse("instance1.hasOwnProperty('error_proto')");
+    ExpectTrue("'error_proto' in instance1.__proto__");
+    ExpectTrue("instance1.error_proto === Error.prototype");
+  }
+  // Put %ErrorPrototype% in a function object's inheritance chain.
+  {
+    Local<FunctionTemplate> parent_template =
+        v8::FunctionTemplate::New(isolate);
+    parent_template->RemovePrototype();  // Remove so there is no name clash.
+    parent_template->SetIntrinsicDataProperty(v8_str("prototype"),
+                                              v8::kErrorPrototype);
+    Local<FunctionTemplate> func_template = v8::FunctionTemplate::New(isolate);
+    func_template->Inherit(parent_template);
+
+    Local<Function> func =
+        func_template->GetFunction(env.local()).ToLocalChecked();
+    CHECK(env->Global()->Set(env.local(), v8_str("func"), func).FromJust());
+    ExpectTrue("func.prototype.__proto__ === Error.prototype");
+
+    Local<Object> func_instance =
+        func->NewInstance(env.local()).ToLocalChecked();
+    CHECK(env->Global()
+              ->Set(env.local(), v8_str("instance"), func_instance)
+              .FromJust());
+    ExpectTrue("instance.__proto__.__proto__.__proto__ === Object.prototype");
+    // Now let's check if %ErrorPrototype% properties are in the instance.
+    ExpectTrue("'constructor' in instance");
+    ExpectTrue("'message' in instance");
+    ExpectTrue("'name' in instance");
+    ExpectTrue("'toString' in instance");
   }
 }
 

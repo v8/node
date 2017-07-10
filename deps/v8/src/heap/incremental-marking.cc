@@ -238,7 +238,7 @@ class IncrementalMarkingMarkingVisitor final
       int start_offset =
           Max(FixedArray::BodyDescriptor::kStartOffset, chunk->progress_bar());
       if (start_offset < object_size) {
-#ifdef CONCURRENT_MARKING
+#ifdef V8_CONCURRENT_MARKING
         incremental_marking_->marking_worklist()->PushBailout(object);
 #else
         if (ObjectMarking::IsGrey<IncrementalMarking::kAtomicity>(
@@ -290,7 +290,7 @@ class IncrementalMarkingMarkingVisitor final
     return Parent::VisitNativeContext(map, context);
   }
 
-  inline void VisitPointer(HeapObject* host, Object** p) final {
+  V8_INLINE void VisitPointer(HeapObject* host, Object** p) final {
     Object* target = *p;
     if (target->IsHeapObject()) {
       collector_->RecordSlot(host, p, target);
@@ -298,8 +298,8 @@ class IncrementalMarkingMarkingVisitor final
     }
   }
 
-  inline void VisitPointers(HeapObject* host, Object** start,
-                            Object** end) final {
+  V8_INLINE void VisitPointers(HeapObject* host, Object** start,
+                               Object** end) final {
     for (Object** p = start; p < end; p++) {
       Object* target = *p;
       if (target->IsHeapObject()) {
@@ -816,8 +816,8 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
 
   Map* filler_map = heap_->one_pointer_filler_map();
 
-  marking_worklist()->Update([this,
-                              filler_map](HeapObject* obj) -> HeapObject* {
+  marking_worklist()->Update([this, filler_map](HeapObject* obj,
+                                                HeapObject** out) -> bool {
     DCHECK(obj->IsHeapObject());
     // Only pointers to from space have to be updated.
     if (heap_->InFromSpace(obj)) {
@@ -828,35 +828,44 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
         // If these object are dead at scavenging time, their marking deque
         // entries will not point to forwarding addresses. Hence, we can discard
         // them.
-        return nullptr;
+        return false;
       }
       HeapObject* dest = map_word.ToForwardingAddress();
       DCHECK_IMPLIES(
           ObjectMarking::IsWhite<kAtomicity>(obj, marking_state(obj)),
           obj->IsFiller());
-      return dest;
+      *out = dest;
+      return true;
     } else if (heap_->InToSpace(obj)) {
       // The object may be on a page that was moved in new space.
       DCHECK(
           Page::FromAddress(obj->address())->IsFlagSet(Page::SWEEP_TO_ITERATE));
-      return ObjectMarking::IsGrey<kAtomicity>(obj, MarkingState::External(obj))
-                 ? obj
-                 : nullptr;
+      if (ObjectMarking::IsGrey<kAtomicity>(obj, MarkingState::External(obj))) {
+        *out = obj;
+        return true;
+      }
+      return false;
     } else {
       // The object may be on a page that was moved from new to old space.
       if (Page::FromAddress(obj->address())
               ->IsFlagSet(Page::SWEEP_TO_ITERATE)) {
-        return ObjectMarking::IsGrey<kAtomicity>(obj,
-                                                 MarkingState::External(obj))
-                   ? obj
-                   : nullptr;
+        if (ObjectMarking::IsGrey<kAtomicity>(obj,
+                                              MarkingState::External(obj))) {
+          *out = obj;
+          return true;
+        }
+        return false;
       }
       DCHECK_IMPLIES(
           ObjectMarking::IsWhite<kAtomicity>(obj, marking_state(obj)),
           obj->IsFiller());
       // Skip one word filler objects that appear on the
       // stack when we perform in place array shift.
-      return (obj->map() == filler_map) ? nullptr : obj;
+      if (obj->map() != filler_map) {
+        *out = obj;
+        return true;
+      }
+      return false;
     }
   });
 }

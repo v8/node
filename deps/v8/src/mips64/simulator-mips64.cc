@@ -4619,28 +4619,89 @@ void Simulator::DecodeTypeMsaI8() {
   }
 }
 
-void Simulator::DecodeTypeMsaI5() {
-  DCHECK(kArchVariant == kMips64r6);
-  DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
-  uint32_t opcode = instr_.InstructionBits() & kMsaI5Mask;
+template <typename T>
+T Simulator::MsaI5InstrHelper(uint32_t opcode, T ws, int32_t i5) {
+  T res;
+  uint32_t ui5 = i5 & 0x1Fu;
+  uint64_t ws_u64 = static_cast<uint64_t>(ws);
+  uint64_t ui5_u64 = static_cast<uint64_t>(ui5);
 
   switch (opcode) {
     case ADDVI:
+      res = static_cast<T>(ws + ui5);
+      break;
     case SUBVI:
+      res = static_cast<T>(ws - ui5);
+      break;
     case MAXI_S:
-    case MAXI_U:
+      res = static_cast<T>(Max(ws, static_cast<T>(i5)));
+      break;
     case MINI_S:
+      res = static_cast<T>(Min(ws, static_cast<T>(i5)));
+      break;
+    case MAXI_U:
+      res = static_cast<T>(Max(ws_u64, ui5_u64));
+      break;
     case MINI_U:
+      res = static_cast<T>(Min(ws_u64, ui5_u64));
+      break;
     case CEQI:
+      res = static_cast<T>(!Compare(ws, static_cast<T>(i5)) ? -1ull : 0ull);
+      break;
     case CLTI_S:
+      res = static_cast<T>((Compare(ws, static_cast<T>(i5)) == -1) ? -1ull
+                                                                   : 0ull);
+      break;
     case CLTI_U:
+      res = static_cast<T>((Compare(ws_u64, ui5_u64) == -1) ? -1ull : 0ull);
+      break;
     case CLEI_S:
+      res =
+          static_cast<T>((Compare(ws, static_cast<T>(i5)) != 1) ? -1ull : 0ull);
+      break;
     case CLEI_U:
-      UNIMPLEMENTED();
+      res = static_cast<T>((Compare(ws_u64, ui5_u64) != 1) ? -1ull : 0ull);
       break;
     default:
       UNREACHABLE();
   }
+  return res;
+}
+
+void Simulator::DecodeTypeMsaI5() {
+  DCHECK(kArchVariant == kMips64r6);
+  DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
+  uint32_t opcode = instr_.InstructionBits() & kMsaI5Mask;
+  msa_reg_t ws, wd;
+
+  // sign extend 5bit value to int32_t
+  int32_t i5 = static_cast<int32_t>(instr_.MsaImm5Value() << 27) >> 27;
+
+#define MSA_I5_DF(elem, num_of_lanes)                      \
+  get_msa_register(instr_.WsValue(), ws.elem);             \
+  for (int i = 0; i < num_of_lanes; i++) {                 \
+    wd.elem[i] = MsaI5InstrHelper(opcode, ws.elem[i], i5); \
+  }                                                        \
+  set_msa_register(instr_.WdValue(), wd.elem);             \
+  TraceMSARegWr(wd.elem)
+
+  switch (DecodeMsaDataFormat()) {
+    case MSA_BYTE:
+      MSA_I5_DF(b, kMSALanesByte);
+      break;
+    case MSA_HALF:
+      MSA_I5_DF(h, kMSALanesHalf);
+      break;
+    case MSA_WORD:
+      MSA_I5_DF(w, kMSALanesWord);
+      break;
+    case MSA_DWORD:
+      MSA_I5_DF(d, kMSALanesDword);
+      break;
+    default:
+      UNREACHABLE();
+  }
+#undef MSA_I5_DF
 }
 
 void Simulator::DecodeTypeMsaI10() {
@@ -4917,26 +4978,50 @@ void Simulator::DecodeTypeMsaVec() {
   DCHECK(kArchVariant == kMips64r6);
   DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
   uint32_t opcode = instr_.InstructionBits() & kMsaVECMask;
-  switch (opcode) {
-    case AND_V:
-    case OR_V:
-    case NOR_V:
-    case XOR_V:
-    case BMNZ_V:
-    case BMZ_V:
-    case BSEL_V:
-      UNIMPLEMENTED();
-      break;
-    default:
-      UNREACHABLE();
+  msa_reg_t wd, ws, wt;
+
+  get_msa_register(instr_.WsValue(), ws.d);
+  get_msa_register(instr_.WtValue(), wt.d);
+  if (opcode == BMNZ_V || opcode == BMZ_V || opcode == BSEL_V) {
+    get_msa_register(instr_.WdValue(), wd.d);
   }
+
+  for (int i = 0; i < kMSALanesDword; i++) {
+    switch (opcode) {
+      case AND_V:
+        wd.d[i] = ws.d[i] & wt.d[i];
+        break;
+      case OR_V:
+        wd.d[i] = ws.d[i] | wt.d[i];
+        break;
+      case NOR_V:
+        wd.d[i] = ~(ws.d[i] | wt.d[i]);
+        break;
+      case XOR_V:
+        wd.d[i] = ws.d[i] ^ wt.d[i];
+        break;
+      case BMNZ_V:
+        wd.d[i] = (wt.d[i] & ws.d[i]) | (~wt.d[i] & wd.d[i]);
+        break;
+      case BMZ_V:
+        wd.d[i] = (~wt.d[i] & ws.d[i]) | (wt.d[i] & wd.d[i]);
+        break;
+      case BSEL_V:
+        wd.d[i] = (~wd.d[i] & ws.d[i]) | (wd.d[i] & wt.d[i]);
+        break;
+      default:
+        UNREACHABLE();
+    }
+  }
+  set_msa_register(instr_.WdValue(), wd.d);
+  TraceMSARegWr(wd.d);
 }
 
 void Simulator::DecodeTypeMsa2R() {
   DCHECK(kArchVariant == kMips64r6);
   DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
   uint32_t opcode = instr_.InstructionBits() & kMsa2RMask;
-  msa_reg_t wd;
+  msa_reg_t wd, ws;
   switch (opcode) {
     case FILL:
       switch (DecodeMsaDataFormat()) {
@@ -4979,9 +5064,93 @@ void Simulator::DecodeTypeMsa2R() {
       }
       break;
     case PCNT:
+#define PCNT_DF(elem, num_of_lanes)                       \
+  get_msa_register(instr_.WsValue(), ws.elem);            \
+  for (int i = 0; i < num_of_lanes; i++) {                \
+    uint64_t u64elem = static_cast<uint64_t>(ws.elem[i]); \
+    wd.elem[i] = base::bits::CountPopulation64(u64elem);  \
+  }                                                       \
+  set_msa_register(instr_.WdValue(), wd.elem);            \
+  TraceMSARegWr(wd.elem)
+
+      switch (DecodeMsaDataFormat()) {
+        case MSA_BYTE:
+          PCNT_DF(ub, kMSALanesByte);
+          break;
+        case MSA_HALF:
+          PCNT_DF(uh, kMSALanesHalf);
+          break;
+        case MSA_WORD:
+          PCNT_DF(uw, kMSALanesWord);
+          break;
+        case MSA_DWORD:
+          PCNT_DF(ud, kMSALanesDword);
+          break;
+        default:
+          UNREACHABLE();
+      }
+#undef PCNT_DF
+      break;
     case NLOC:
+#define NLOC_DF(elem, num_of_lanes)                                         \
+  get_msa_register(instr_.WsValue(), ws.elem);                              \
+  for (int i = 0; i < num_of_lanes; i++) {                                  \
+    const uint64_t mask = (num_of_lanes == kMSALanesDword)                  \
+                              ? UINT64_MAX                                  \
+                              : (1ULL << (kMSARegSize / num_of_lanes)) - 1; \
+    uint64_t u64elem = static_cast<uint64_t>(~ws.elem[i]) & mask;           \
+    wd.elem[i] = base::bits::CountLeadingZeros64(u64elem) -                 \
+                 (64 - kMSARegSize / num_of_lanes);                         \
+  }                                                                         \
+  set_msa_register(instr_.WdValue(), wd.elem);                              \
+  TraceMSARegWr(wd.elem)
+
+      switch (DecodeMsaDataFormat()) {
+        case MSA_BYTE:
+          NLOC_DF(ub, kMSALanesByte);
+          break;
+        case MSA_HALF:
+          NLOC_DF(uh, kMSALanesHalf);
+          break;
+        case MSA_WORD:
+          NLOC_DF(uw, kMSALanesWord);
+          break;
+        case MSA_DWORD:
+          NLOC_DF(ud, kMSALanesDword);
+          break;
+        default:
+          UNREACHABLE();
+      }
+#undef NLOC_DF
+      break;
     case NLZC:
-      UNIMPLEMENTED();
+#define NLZC_DF(elem, num_of_lanes)                         \
+  get_msa_register(instr_.WsValue(), ws.elem);              \
+  for (int i = 0; i < num_of_lanes; i++) {                  \
+    uint64_t u64elem = static_cast<uint64_t>(ws.elem[i]);   \
+    wd.elem[i] = base::bits::CountLeadingZeros64(u64elem) - \
+                 (64 - kMSARegSize / num_of_lanes);         \
+  }                                                         \
+  set_msa_register(instr_.WdValue(), wd.elem);              \
+  TraceMSARegWr(wd.elem)
+
+      switch (DecodeMsaDataFormat()) {
+        case MSA_BYTE:
+          NLZC_DF(ub, kMSALanesByte);
+          break;
+        case MSA_HALF:
+          NLZC_DF(uh, kMSALanesHalf);
+          break;
+        case MSA_WORD:
+          NLZC_DF(uw, kMSALanesWord);
+          break;
+        case MSA_DWORD:
+          NLZC_DF(ud, kMSALanesDword);
+          break;
+        default:
+          UNREACHABLE();
+      }
+#undef NLZC_DF
       break;
     default:
       UNREACHABLE();

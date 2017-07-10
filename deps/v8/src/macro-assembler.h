@@ -28,10 +28,6 @@ enum AllocationFlags {
   DOUBLE_ALIGNMENT = 1 << 2,
   // Directly allocate in old space
   PRETENURE = 1 << 3,
-  // Allocation folding dominator
-  ALLOCATION_FOLDING_DOMINATOR = 1 << 4,
-  // Folded allocation
-  ALLOCATION_FOLDED = 1 << 5
 };
 
 #if V8_TARGET_ARCH_IA32
@@ -70,19 +66,19 @@ static constexpr int kMaxCParameters = 9;
 
 class FrameScope {
  public:
-  explicit FrameScope(MacroAssembler* masm, StackFrame::Type type)
-      : masm_(masm), type_(type), old_has_frame_(masm->has_frame()) {
-    masm->set_has_frame(true);
+  explicit FrameScope(TurboAssembler* tasm, StackFrame::Type type)
+      : tasm_(tasm), type_(type), old_has_frame_(tasm->has_frame()) {
+    tasm->set_has_frame(true);
     if (type != StackFrame::MANUAL && type_ != StackFrame::NONE) {
-      masm->EnterFrame(type);
+      tasm->EnterFrame(type);
     }
   }
 
   ~FrameScope() {
     if (type_ != StackFrame::MANUAL && type_ != StackFrame::NONE) {
-      masm_->LeaveFrame(type_);
+      tasm_->LeaveFrame(type_);
     }
-    masm_->set_has_frame(old_has_frame_);
+    tasm_->set_has_frame(old_has_frame_);
   }
 
   // Normally we generate the leave-frame code when this object goes
@@ -92,11 +88,11 @@ class FrameScope {
   // the code will be generated again when it goes out of scope.
   void GenerateLeaveFrame() {
     DCHECK(type_ != StackFrame::MANUAL && type_ != StackFrame::NONE);
-    masm_->LeaveFrame(type_);
+    tasm_->LeaveFrame(type_);
   }
 
  private:
-  MacroAssembler* masm_;
+  TurboAssembler* tasm_;
   StackFrame::Type type_;
   bool old_has_frame_;
 };

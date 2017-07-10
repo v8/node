@@ -421,57 +421,6 @@ enum class YoungGenerationHandling {
   // Also update src/tools/metrics/histograms/histograms.xml in chromium.
 };
 
-// A queue of objects promoted during scavenge. Each object is accompanied by
-// its size to avoid dereferencing a map pointer for scanning. The last page in
-// to-space is used for the promotion queue. On conflict during scavenge, the
-// promotion queue is allocated externally and all entries are copied to the
-// external queue.
-class PromotionQueue {
- public:
-  explicit PromotionQueue(Heap* heap)
-      : front_(nullptr),
-        rear_(nullptr),
-        limit_(nullptr),
-        emergency_stack_(nullptr),
-        heap_(heap) {}
-
-  void Initialize();
-  void Destroy();
-
-  inline void SetNewLimit(Address limit);
-  inline bool IsBelowPromotionQueue(Address to_space_top);
-
-  inline void insert(HeapObject* target, int32_t size);
-  inline void remove(HeapObject** target, int32_t* size);
-
-  bool is_empty() {
-    return (front_ == rear_) &&
-           (emergency_stack_ == nullptr || emergency_stack_->length() == 0);
-  }
-
- private:
-  struct Entry {
-    Entry(HeapObject* obj, int32_t size) : obj_(obj), size_(size) {}
-
-    HeapObject* obj_;
-    int32_t size_;
-  };
-
-  inline Page* GetHeadPage();
-
-  void RelocateQueueHead();
-
-  // The front of the queue is higher in the memory page chain than the rear.
-  struct Entry* front_;
-  struct Entry* rear_;
-  struct Entry* limit_;
-
-  List<Entry>* emergency_stack_;
-  Heap* heap_;
-
-  DISALLOW_COPY_AND_ASSIGN(PromotionQueue);
-};
-
 class AllocationResult {
  public:
   static inline AllocationResult Retry(AllocationSpace space = NEW_SPACE) {
@@ -620,11 +569,9 @@ class Heap {
   static const int kPointerMultiplier = i::kPointerSize / 4;
 #endif
 
-  // Semi-space size needs to be a multiple of page size.
-  static const int kMinSemiSpaceSizeInKB =
-      1 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
-  static const int kMaxSemiSpaceSizeInKB =
-      16 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
+  // The new space size has to be a power of 2. Sizes are in MB.
+  static const int kMinSemiSpaceSize = 1 * kPointerMultiplier;
+  static const int kMaxSemiSpaceSize = 8 * kPointerMultiplier;
 
   // The old space size has to be a multiple of Page::kPageSize.
   // Sizes are in MB.
@@ -729,10 +676,6 @@ class Heap {
   // Copy block of memory from src to dst. Size of block should be aligned
   // by pointer size.
   static inline void CopyBlock(Address dst, Address src, int byte_size);
-
-  // Determines a static visitor id based on the given {map} that can then be
-  // stored on the map to facilitate fast dispatch for {StaticVisitorBase}.
-  static int GetStaticVisitorIdForMap(Map* map);
 
   // Notifies the heap that is ok to start marking or other activities that
   // should not happen during deserialization.
@@ -978,14 +921,10 @@ class Heap {
   // Initialization. ===========================================================
   // ===========================================================================
 
-  // Configure heap sizes
-  // max_semi_space_size_in_kb: maximum semi-space size in KB
-  // max_old_generation_size_in_mb: maximum old generation size in MB
-  // code_range_size_in_mb: code range size in MB
-  // Return false if the heap has been set up already.
-  bool ConfigureHeap(size_t max_semi_space_size_in_kb,
-                     size_t max_old_generation_size_in_mb,
-                     size_t code_range_size_in_mb);
+  // Configure heap size in MB before setup. Return false if the heap has been
+  // set up already.
+  bool ConfigureHeap(size_t max_semi_space_size, size_t max_old_space_size,
+                     size_t code_range_size);
   bool ConfigureHeapDefault();
 
   // Prepares the heap, setting up memory areas that are needed in the isolate
@@ -1030,8 +969,6 @@ class Heap {
   GCTracer* tracer() { return tracer_; }
 
   MemoryAllocator* memory_allocator() { return memory_allocator_; }
-
-  PromotionQueue* promotion_queue() { return &promotion_queue_; }
 
   inline Isolate* isolate();
 
@@ -1125,7 +1062,7 @@ class Heap {
   RootListIndex RootIndexForFixedTypedArray(ExternalArrayType array_type);
 
   RootListIndex RootIndexForEmptyFixedTypedArray(ElementsKind kind);
-  FixedTypedArrayBase* EmptyFixedTypedArrayForMap(Map* map);
+  FixedTypedArrayBase* EmptyFixedTypedArrayForMap(const Map* map);
 
   void RegisterStrongRoots(Object** start, Object** end);
   void UnregisterStrongRoots(Object** start);
@@ -1192,7 +1129,8 @@ class Heap {
   void IterateWeakRoots(RootVisitor* v, VisitMode mode);
 
   // Iterate pointers of promoted objects.
-  void IterateAndScavengePromotedObject(HeapObject* target, int size);
+  void IterateAndScavengePromotedObject(Scavenger* scavenger,
+                                        HeapObject* target, int size);
 
   // ===========================================================================
   // Store buffer API. =========================================================
@@ -1361,12 +1299,10 @@ class Heap {
     uint64_t capped_physical_memory =
         Max(Min(physical_memory, max_physical_memory), min_physical_memory);
     // linearly scale max semi-space size: (X-A)/(B-A)*(D-C)+C
-    int semi_space_size_in_kb =
-        static_cast<int>(((capped_physical_memory - min_physical_memory) *
-                          (kMaxSemiSpaceSizeInKB - kMinSemiSpaceSizeInKB)) /
-                             (max_physical_memory - min_physical_memory) +
-                         kMinSemiSpaceSizeInKB);
-    return RoundUp(semi_space_size_in_kb, (1 << kPageSizeBits) / KB);
+    return static_cast<int>(((capped_physical_memory - min_physical_memory) *
+                             (kMaxSemiSpaceSize - kMinSemiSpaceSize)) /
+                                (max_physical_memory - min_physical_memory) +
+                            kMinSemiSpaceSize);
   }
 
   // Returns the capacity of the heap in bytes w/o growing. Heap grows when
@@ -1847,7 +1783,7 @@ class Heap {
   void Scavenge();
   void EvacuateYoungGeneration();
 
-  Address DoScavenge(Address new_space_front);
+  void DoScavenge(Scavenger* scavenger);
 
   void UpdateNewSpaceReferencesInExternalStringTable(
       ExternalStringTableUpdaterCallback updater_func);
@@ -2313,8 +2249,6 @@ class Heap {
   // Last time a garbage collection happened.
   double last_gc_time_;
 
-  Scavenger* scavenge_collector_;
-
   MarkCompactCollector* mark_compact_collector_;
   MinorMarkCompactCollector* minor_mark_compact_collector_;
 
@@ -2349,11 +2283,6 @@ class Heap {
   // The size of objects in old generation after the last MarkCompact GC.
   size_t old_generation_size_at_last_gc_;
 
-  // If the --deopt_every_n_garbage_collections flag is set to a positive value,
-  // this variable holds the number of garbage collections since the last
-  // deoptimization triggered by garbage collection.
-  int gcs_since_last_deopt_;
-
   // The feedback storage is used to store allocation sites (keys) and how often
   // they have been visited (values) by finding a memento behind an object. The
   // storage is only alive temporary during a GC. The invariant is that all
@@ -2367,9 +2296,6 @@ class Heap {
   // from 0 to ring_buffer_end_.
   bool ring_buffer_full_;
   size_t ring_buffer_end_;
-
-  // Shared state read by the scavenge collector and set by ScavengeObject.
-  PromotionQueue promotion_queue_;
 
   // Flag is set when the heap has been configured.  The heap can be repeatedly
   // configured through the API until it is set up.

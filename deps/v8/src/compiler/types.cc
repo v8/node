@@ -267,6 +267,10 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case JS_WEAK_SET_TYPE:
     case JS_PROMISE_CAPABILITY_TYPE:
     case JS_PROMISE_TYPE:
+    case WASM_MODULE_TYPE:
+    case WASM_INSTANCE_TYPE:
+    case WASM_MEMORY_TYPE:
+    case WASM_TABLE_TYPE:
       DCHECK(!map->is_callable());
       DCHECK(!map->is_undetectable());
       return kOtherObject;
@@ -327,10 +331,10 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case TUPLE3_TYPE:
     case CONTEXT_EXTENSION_TYPE:
     case ASYNC_GENERATOR_REQUEST_TYPE:
+    case PREPARSED_SCOPE_DATA_TYPE:
     case PADDING_TYPE_1:
     case PADDING_TYPE_2:
     case PADDING_TYPE_3:
-    case PADDING_TYPE_4:
       UNREACHABLE();
   }
   UNREACHABLE();

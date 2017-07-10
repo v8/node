@@ -798,7 +798,8 @@ BytecodeGenerator::BytecodeGenerator(CompilationInfo* info)
       generator_jump_table_(nullptr),
       generator_object_(),
       generator_state_(),
-      loop_depth_(0) {
+      loop_depth_(0),
+      catch_prediction_(HandlerTable::UNCAUGHT) {
   DCHECK_EQ(closure_scope(), closure_scope()->GetClosureScope());
   if (info->is_block_coverage_enabled()) {
     DCHECK(FLAG_block_coverage);
@@ -1232,8 +1233,6 @@ void BytecodeGenerator::VisitIfStatement(IfStatement* stmt) {
 
   int then_slot = AllocateBlockCoverageSlotIfEnabled(stmt->then_range());
   int else_slot = AllocateBlockCoverageSlotIfEnabled(stmt->else_range());
-  int continuation_slot =
-      AllocateBlockCoverageSlotIfEnabled(stmt->continuation_range());
 
   if (stmt->condition()->ToBooleanIsTrue()) {
     // Generate then block unconditionally as always true.
@@ -1268,7 +1267,7 @@ void BytecodeGenerator::VisitIfStatement(IfStatement* stmt) {
     }
     builder()->Bind(&end_label);
   }
-  BuildIncrementBlockCoverageCounterIfEnabled(continuation_slot);
+  BuildIncrementBlockCoverageCounterIfEnabled(stmt->continuation_range());
 }
 
 void BytecodeGenerator::VisitSloppyBlockFunctionStatement(
@@ -1576,7 +1575,13 @@ void BytecodeGenerator::VisitForOfStatement(ForOfStatement* stmt) {
 }
 
 void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
-  TryCatchBuilder try_control_builder(builder(), stmt->catch_prediction());
+  // Update catch prediction tracking. The updated catch_prediction value lasts
+  // until the end of the try_block in the AST node, and does not apply to the
+  // catch_block.
+  HandlerTable::CatchPrediction outer_catch_prediction = catch_prediction();
+  set_catch_prediction(stmt->GetCatchPrediction(outer_catch_prediction));
+
+  TryCatchBuilder try_control_builder(builder(), catch_prediction());
 
   // Preserve the context in a dedicated register, so that it can be restored
   // when the handler is entered by the stack-unwinding machinery.
@@ -1590,6 +1595,7 @@ void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   {
     ControlScopeForTryCatch scope(this, &try_control_builder);
     Visit(stmt->try_block());
+    set_catch_prediction(outer_catch_prediction);
   }
   try_control_builder.EndTry();
 
@@ -1598,7 +1604,7 @@ void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   builder()->StoreAccumulatorInRegister(context);
 
   // If requested, clear message object as we enter the catch block.
-  if (stmt->clear_pending_message()) {
+  if (stmt->ShouldClearPendingException(outer_catch_prediction)) {
     builder()->LoadTheHole().SetPendingMessage();
   }
 
@@ -1606,12 +1612,15 @@ void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   builder()->LoadAccumulatorWithRegister(context);
 
   // Evaluate the catch-block.
+  BuildIncrementBlockCoverageCounterIfEnabled(stmt->catch_range());
   VisitInScope(stmt->catch_block(), stmt->scope());
   try_control_builder.EndCatch();
 }
 
 void BytecodeGenerator::VisitTryFinallyStatement(TryFinallyStatement* stmt) {
-  TryFinallyBuilder try_control_builder(builder(), stmt->catch_prediction());
+  // We can't know whether the finally block will override ("catch") an
+  // exception thrown in the try bblock, so we just adopt the outer prediction.
+  TryFinallyBuilder try_control_builder(builder(), catch_prediction());
 
   // We keep a record of all paths that enter the finally-block to be able to
   // dispatch to the correct continuation point after the statements in the
@@ -1662,6 +1671,7 @@ void BytecodeGenerator::VisitTryFinallyStatement(TryFinallyStatement* stmt) {
       message);
 
   // Evaluate the finally-block.
+  BuildIncrementBlockCoverageCounterIfEnabled(stmt->finally_range());
   Visit(stmt->finally_block());
   try_control_builder.EndFinally();
 
@@ -2943,6 +2953,8 @@ void BytecodeGenerator::VisitYieldStar(YieldStar* expr) {
 }
 
 void BytecodeGenerator::VisitThrow(Throw* expr) {
+  AllocateBlockCoverageSlotIfEnabled(
+      {expr->continuation_pos(), kNoSourcePosition});
   VisitForAccumulatorValue(expr->exception());
   builder()->SetExpressionPosition(expr);
   builder()->Throw();
@@ -3249,15 +3261,49 @@ void BytecodeGenerator::VisitCallNew(CallNew* expr) {
   }
 }
 
+int BytecodeGenerator::UpdateRuntimeFunctionForAsyncAwait(int context_index) {
+  // To support catch prediction within async/await:
+  //
+  // BytecodeGenerator models catch prediction (see VisitTryCatchstatement).
+  // Certain runtime calls need to be rewritten to invoke different functions,
+  // depending on the currently tracked catch prediction state. Take the
+  // following two cases of catch prediction:
+  //
+  // try { await fn(); } catch (e) { }
+  // try { await fn(); } finally { }
+  //
+  // When parsing the await that we want to mark as caught or uncaught, it's
+  // not yet known whether it will be followed by a 'finally' or a 'catch.
+  // The BytecodeGenerator has learned whether or not this Await is caught or
+  // not, and is responsible for invoking the correct function depending on
+  // those findings. It does that here.
+  if (catch_prediction() == HandlerTable::ASYNC_AWAIT) {
+    switch (context_index) {
+      case Context::ASYNC_FUNCTION_AWAIT_CAUGHT_INDEX:
+        context_index = Context::ASYNC_FUNCTION_AWAIT_UNCAUGHT_INDEX;
+        break;
+      case Context::ASYNC_GENERATOR_AWAIT_CAUGHT:
+        context_index = Context::ASYNC_GENERATOR_AWAIT_UNCAUGHT;
+        break;
+      default:
+        break;
+    }
+  }
+  return context_index;
+}
+
 void BytecodeGenerator::VisitCallRuntime(CallRuntime* expr) {
   if (expr->is_jsruntime()) {
+    int context_index =
+        UpdateRuntimeFunctionForAsyncAwait(expr->context_index());
+
     RegisterList args = register_allocator()->NewGrowableRegisterList();
     // Allocate a register for the receiver and load it with undefined.
     // TODO(leszeks): If CallJSRuntime always has an undefined receiver, use the
     // same mechanism as CallUndefinedReceiver.
     BuildPushUndefinedIntoRegisterList(&args);
     VisitArguments(expr->arguments(), &args);
-    builder()->CallJSRuntime(expr->context_index(), args);
+    builder()->CallJSRuntime(context_index, args);
   } else {
     // Evaluate all arguments to the runtime call.
     RegisterList args = register_allocator()->NewGrowableRegisterList();
@@ -4110,7 +4156,8 @@ void BytecodeGenerator::BuildLoadPropertyKey(LiteralProperty* property,
   }
 }
 
-int BytecodeGenerator::AllocateBlockCoverageSlotIfEnabled(SourceRange range) {
+int BytecodeGenerator::AllocateBlockCoverageSlotIfEnabled(
+    const SourceRange& range) {
   return (block_coverage_builder_ == nullptr)
              ? BlockCoverageBuilder::kNoCoverageArraySlot
              : block_coverage_builder_->AllocateBlockCoverageSlot(range);
@@ -4120,6 +4167,14 @@ void BytecodeGenerator::BuildIncrementBlockCoverageCounterIfEnabled(
     int coverage_array_slot) {
   if (block_coverage_builder_ != nullptr) {
     block_coverage_builder_->IncrementBlockCounter(coverage_array_slot);
+  }
+}
+
+void BytecodeGenerator::BuildIncrementBlockCoverageCounterIfEnabled(
+    const SourceRange& range) {
+  if (block_coverage_builder_ != nullptr) {
+    int slot = block_coverage_builder_->AllocateBlockCoverageSlot(range);
+    block_coverage_builder_->IncrementBlockCounter(slot);
   }
 }
 

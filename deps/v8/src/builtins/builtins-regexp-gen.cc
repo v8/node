@@ -377,10 +377,22 @@ Node* RegExpBuiltinsAssembler::RegExpExecInternal(Node* const context,
   }
 
   // Check that the irregexp code has been generated for the actual string
-  // encoding. If it has, the field contains a code object otherwise it contains
-  // smi (code flushing support).
+  // encoding. If it has, the field contains a code object; and otherwise it
+  // contains the uninitialized sentinel as a smi.
 
   Node* const code = var_code.value();
+#ifdef DEBUG
+  {
+    Label next(this);
+    GotoIfNot(TaggedIsSmi(code), &next);
+
+    CSA_ASSERT(this,
+               SmiEqual(code, SmiConstant(JSRegExp::kUninitializedValue)));
+    Goto(&next);
+
+    BIND(&next);
+  }
+#endif
   GotoIf(TaggedIsSmi(code), &runtime);
   CSA_ASSERT(this, HasInstanceType(code, CODE_TYPE));
 
@@ -500,7 +512,7 @@ Node* RegExpBuiltinsAssembler::RegExpExecInternal(Node* const context,
           register_count, INT32_ELEMENTS, SMI_PARAMETERS, 0);
 
       Node* const to_offset = ElementOffsetFromIndex(
-          IntPtrConstant(RegExpMatchInfo::kFirstCaptureIndex), FAST_ELEMENTS,
+          IntPtrConstant(RegExpMatchInfo::kFirstCaptureIndex), PACKED_ELEMENTS,
           INTPTR_PARAMETERS, RegExpMatchInfo::kHeaderSize - kHeapObjectTag);
       VARIABLE(var_to_offset, MachineType::PointerRepresentation(), to_offset);
 
@@ -1813,7 +1825,7 @@ class GrowableFixedArray {
   Node* ToJSArray(Node* const context) {
     CodeStubAssembler* a = assembler_;
 
-    const ElementsKind kind = FAST_ELEMENTS;
+    const ElementsKind kind = PACKED_ELEMENTS;
 
     Node* const native_context = a->LoadNativeContext(context);
     Node* const array_map = a->LoadJSArrayElementsMap(kind, native_context);
@@ -1850,7 +1862,7 @@ class GrowableFixedArray {
   void Initialize() {
     CodeStubAssembler* a = assembler_;
 
-    const ElementsKind kind = FAST_ELEMENTS;
+    const ElementsKind kind = PACKED_ELEMENTS;
 
     static const int kInitialArraySize = 8;
     Node* const capacity = a->IntPtrConstant(kInitialArraySize);
@@ -1886,7 +1898,7 @@ class GrowableFixedArray {
     CSA_ASSERT(a, a->IntPtrGreaterThan(new_capacity, a->IntPtrConstant(0)));
     CSA_ASSERT(a, a->IntPtrGreaterThanOrEqual(new_capacity, element_count));
 
-    const ElementsKind kind = FAST_ELEMENTS;
+    const ElementsKind kind = PACKED_ELEMENTS;
     const WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER;
     const CodeStubAssembler::ParameterMode mode =
         CodeStubAssembler::INTPTR_PARAMETERS;
@@ -2231,7 +2243,7 @@ void RegExpBuiltinsAssembler::RegExpPrototypeSplitBody(Node* const context,
   Node* const int_zero = IntPtrConstant(0);
   Node* const int_limit = SmiUntag(limit);
 
-  const ElementsKind kind = FAST_ELEMENTS;
+  const ElementsKind kind = PACKED_ELEMENTS;
   const ParameterMode mode = CodeStubAssembler::INTPTR_PARAMETERS;
 
   Node* const allocation_site = nullptr;
@@ -2590,7 +2602,7 @@ Node* RegExpBuiltinsAssembler::ReplaceGlobalCallableFastPath(
   // Allocate {result_array}.
   Node* result_array;
   {
-    ElementsKind kind = FAST_ELEMENTS;
+    ElementsKind kind = PACKED_ELEMENTS;
     Node* const array_map = LoadJSArrayElementsMap(kind, native_context);
     Node* const capacity = IntPtrConstant(16);
     Node* const length = smi_zero;

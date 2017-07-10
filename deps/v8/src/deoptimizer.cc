@@ -711,7 +711,7 @@ void Deoptimizer::DoComputeOutputFrames() {
     }
   }
 
-  BailoutId node_id = input_data->AstId(bailout_id_);
+  BailoutId node_id = input_data->BytecodeOffset(bailout_id_);
   ByteArray* translations = input_data->TranslationByteArray();
   unsigned translation_index =
       input_data->TranslationIndex(bailout_id_)->value();
@@ -3979,10 +3979,14 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case TUPLE2_TYPE:
     case TUPLE3_TYPE:
     case ASYNC_GENERATOR_REQUEST_TYPE:
+    case PREPARSED_SCOPE_DATA_TYPE:
     case PADDING_TYPE_1:
     case PADDING_TYPE_2:
     case PADDING_TYPE_3:
-    case PADDING_TYPE_4:
+    case WASM_MODULE_TYPE:
+    case WASM_INSTANCE_TYPE:
+    case WASM_MEMORY_TYPE:
+    case WASM_TABLE_TYPE:
       OFStream os(stderr);
       os << "[couldn't handle instance type " << map->instance_type() << "]"
          << std::endl;

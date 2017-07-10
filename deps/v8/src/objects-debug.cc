@@ -110,6 +110,10 @@ void HeapObject::HeapObjectVerify() {
     case JS_API_OBJECT_TYPE:
     case JS_SPECIAL_API_OBJECT_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
+    case WASM_INSTANCE_TYPE:
+    case WASM_MEMORY_TYPE:
+    case WASM_MODULE_TYPE:
+    case WASM_TABLE_TYPE:
       JSObject::cast(this)->JSObjectVerify();
       break;
     case JS_ARGUMENTS_TYPE:
@@ -395,7 +399,7 @@ void JSObject::JSObjectVerify() {
               HasFastStringWrapperElements()),
              (elements()->map() == GetHeap()->fixed_array_map() ||
               elements()->map() == GetHeap()->fixed_cow_array_map()));
-    CHECK(map()->has_fast_object_elements() == HasFastObjectElements());
+    CHECK(map()->has_fast_object_elements() == HasObjectElements());
   }
 }
 
@@ -425,7 +429,7 @@ void Map::DictionaryMapVerify() {
   CHECK(is_dictionary_map());
   CHECK(instance_descriptors()->IsEmpty());
   CHECK_EQ(0, unused_property_fields());
-  CHECK_EQ(Heap::GetStaticVisitorIdForMap(this), visitor_id());
+  CHECK_EQ(Map::GetVisitorId(this), visitor_id());
 }
 
 
@@ -522,7 +526,7 @@ void SloppyArgumentsElements::SloppyArgumentsElementsVerify(
   }
   ElementsAccessor* accessor;
   if (is_fast) {
-    accessor = ElementsAccessor::ForKind(FAST_HOLEY_ELEMENTS);
+    accessor = ElementsAccessor::ForKind(HOLEY_ELEMENTS);
   } else {
     accessor = ElementsAccessor::ForKind(DICTIONARY_ELEMENTS);
   }
@@ -739,6 +743,10 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
     CHECK(kind() == scope_info()->function_kind());
     CHECK_EQ(kind() == kModule, scope_info()->scope_type() == MODULE_SCOPE);
   }
+
+  CHECK(preparsed_scope_data()->IsNull(isolate) ||
+        preparsed_scope_data()->IsPreParsedScopeData());
+  VerifyObjectField(kPreParsedScopeDataOffset);
 }
 
 
@@ -1091,23 +1099,16 @@ void JSRegExp::JSRegExpVerify() {
 
       FixedArray* arr = FixedArray::cast(data());
       Object* one_byte_data = arr->get(JSRegExp::kIrregexpLatin1CodeIndex);
-      // Smi : Not compiled yet (-1) or code prepared for flushing.
-      // JSObject: Compilation error.
+      // Smi : Not compiled yet (-1).
       // Code/ByteArray: Compiled code.
       CHECK(
-          one_byte_data->IsSmi() ||
+          (one_byte_data->IsSmi() && Smi::cast(one_byte_data)->value() ==
+                                         JSRegExp::kUninitializedValue) ||
           (is_native ? one_byte_data->IsCode() : one_byte_data->IsByteArray()));
       Object* uc16_data = arr->get(JSRegExp::kIrregexpUC16CodeIndex);
-      CHECK(uc16_data->IsSmi() ||
-             (is_native ? uc16_data->IsCode() : uc16_data->IsByteArray()));
-
-      Object* one_byte_saved =
-          arr->get(JSRegExp::kIrregexpLatin1CodeSavedIndex);
-      CHECK(one_byte_saved->IsSmi() || one_byte_saved->IsString() ||
-            one_byte_saved->IsCode());
-      Object* uc16_saved = arr->get(JSRegExp::kIrregexpUC16CodeSavedIndex);
-      CHECK(uc16_saved->IsSmi() || uc16_saved->IsString() ||
-             uc16_saved->IsCode());
+      CHECK((uc16_data->IsSmi() &&
+             Smi::cast(uc16_data)->value() == JSRegExp::kUninitializedValue) ||
+            (is_native ? uc16_data->IsCode() : uc16_data->IsByteArray()));
 
       CHECK(arr->get(JSRegExp::kIrregexpCaptureCountIndex)->IsSmi());
       CHECK(arr->get(JSRegExp::kIrregexpMaxRegisterCountIndex)->IsSmi());
@@ -1423,6 +1424,13 @@ void StackFrameInfo::StackFrameInfoVerify() {
   VerifyPointer(script_name_or_source_url());
   VerifyPointer(function_name());
 }
+
+void PreParsedScopeData::PreParsedScopeDataVerify() {
+  CHECK(IsPreParsedScopeData());
+  CHECK(scope_data()->IsByteArray());
+  CHECK(child_data()->IsFixedArray());
+}
+
 #endif  // VERIFY_HEAP
 
 #ifdef DEBUG
@@ -1447,12 +1455,12 @@ void JSObject::IncrementSpillStatistics(SpillInformation* info) {
   }
   // Indexed properties
   switch (GetElementsKind()) {
-    case FAST_HOLEY_SMI_ELEMENTS:
-    case FAST_SMI_ELEMENTS:
-    case FAST_HOLEY_DOUBLE_ELEMENTS:
-    case FAST_DOUBLE_ELEMENTS:
-    case FAST_HOLEY_ELEMENTS:
-    case FAST_ELEMENTS:
+    case HOLEY_SMI_ELEMENTS:
+    case PACKED_SMI_ELEMENTS:
+    case HOLEY_DOUBLE_ELEMENTS:
+    case PACKED_DOUBLE_ELEMENTS:
+    case HOLEY_ELEMENTS:
+    case PACKED_ELEMENTS:
     case FAST_STRING_WRAPPER_ELEMENTS: {
       info->number_of_objects_with_fast_elements_++;
       int holes = 0;

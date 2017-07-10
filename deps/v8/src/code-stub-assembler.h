@@ -56,7 +56,8 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
   V(Tuple2Map, Tuple2Map)                             \
   V(Tuple3Map, Tuple3Map)                             \
   V(UndefinedValue, Undefined)                        \
-  V(WeakCellMap, WeakCellMap)
+  V(WeakCellMap, WeakCellMap)                         \
+  V(SharedFunctionInfoMap, SharedFunctionInfoMap)
 
 // Provides JavaScript-specific "macro-assembler" functionality on top of the
 // CodeAssembler. By factoring the JavaScript-isms out of the CodeAssembler,
@@ -814,6 +815,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsPrivateSymbol(Node* object);
   Node* IsPropertyCell(Node* object);
   Node* IsSequentialStringInstanceType(Node* instance_type);
+  inline Node* IsSharedFunctionInfo(Node* object) {
+    return IsSharedFunctionInfoMap(LoadMap(object));
+  }
   Node* IsShortExternalStringInstanceType(Node* instance_type);
   Node* IsSpecialReceiverInstanceType(Node* instance_type);
   Node* IsSpecialReceiverMap(Node* map);
@@ -868,7 +872,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Check if |var_string| has an indirect (thin or flat cons) string type,
   // and unpack it if so.
   void MaybeDerefIndirectString(Variable* var_string, Node* instance_type,
-                                Variable* var_did_something);
+                                Label* did_deref, Label* cannot_deref);
   // Check if |var_left| or |var_right| has an indirect (thin or flat cons)
   // string type, and unpack it/them if so. Fall through if nothing was done.
   void MaybeDerefIndirectStrings(Variable* var_left, Node* left_instance_type,

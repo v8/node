@@ -393,13 +393,13 @@ void ObjectStatsCollector::RecordJSObjectDetails(JSObject* object) {
       SeededNumberDictionary* dict = SeededNumberDictionary::cast(elements);
       RecordHashTableHelper(object, dict, DICTIONARY_ELEMENTS_SUB_TYPE);
     } else {
-      if (IsFastHoleyElementsKind(object->GetElementsKind())) {
+      if (IsHoleyElementsKind(object->GetElementsKind())) {
         int used = object->GetFastElementsUsage() * kPointerSize;
-        if (object->GetElementsKind() == FAST_HOLEY_DOUBLE_ELEMENTS) used *= 2;
+        if (object->GetElementsKind() == HOLEY_DOUBLE_ELEMENTS) used *= 2;
         CHECK_GE(elements->Size(), used);
         overhead = elements->Size() - used - FixedArray::kHeaderSize;
       }
-      stats_->RecordFixedArraySubTypeStats(elements, FAST_ELEMENTS_SUB_TYPE,
+      stats_->RecordFixedArraySubTypeStats(elements, PACKED_ELEMENTS_SUB_TYPE,
                                            elements->Size(), overhead);
     }
   }

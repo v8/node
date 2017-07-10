@@ -1044,12 +1044,12 @@ class MarkCompactMarkingVisitor final
       : MarkingVisitor<MarkCompactMarkingVisitor>(collector->heap(),
                                                   collector) {}
 
-  inline void VisitPointer(HeapObject* host, Object** p) final {
+  V8_INLINE void VisitPointer(HeapObject* host, Object** p) final {
     MarkObjectByPointer(host, p);
   }
 
-  inline void VisitPointers(HeapObject* host, Object** start,
-                            Object** end) final {
+  V8_INLINE void VisitPointers(HeapObject* host, Object** start,
+                               Object** end) final {
     // Mark all objects pointed to in [start, end).
     const int kMinRangeForMarkingRecursion = 64;
     if (end - start >= kMinRangeForMarkingRecursion) {
@@ -1079,24 +1079,11 @@ class MarkCompactMarkingVisitor final
     collector_->MarkObject(target_object);
   }
 
-  V8_INLINE int VisitJSRegExp(Map* map, JSRegExp* re) {
-    if (!FLAG_flush_regexp_code) {
-      return VisitJSObject(map, re);
-    }
-    // Flush code or set age on both one byte and two byte code.
-    UpdateRegExpCodeAgeAndFlush(re, true);
-    UpdateRegExpCodeAgeAndFlush(re, false);
-    // Visit the fields of the RegExp, including the updated FixedArray.
-    return VisitJSObject(map, re);
-  }
-
  protected:
-  static const int kRegExpCodeThreshold = 5;
-
   // Visit all unmarked objects pointed to by [start, end).
   // Returns false if the operation fails (lack of stack space).
-  V8_INLINE bool VisitUnmarkedObjects(HeapObject* host, Object** start,
-                                      Object** end) {
+  inline bool VisitUnmarkedObjects(HeapObject* host, Object** start,
+                                   Object** end) {
     // Return false is we are close to the stack limit.
     StackLimitCheck check(heap_->isolate());
     if (check.HasOverflowed()) return false;
@@ -1121,54 +1108,6 @@ class MarkCompactMarkingVisitor final
       // Mark the map pointer and the body.
       collector_->MarkObject(map);
       Visit(map, obj);
-    }
-  }
-
-  V8_INLINE void UpdateRegExpCodeAgeAndFlush(JSRegExp* re, bool is_one_byte) {
-    // Make sure that the fixed array is in fact initialized on the RegExp.
-    // We could potentially trigger a GC when initializing the RegExp.
-    if (HeapObject::cast(re->data())->map()->instance_type() !=
-        FIXED_ARRAY_TYPE)
-      return;
-
-    // Make sure this is a RegExp that actually contains code.
-    if (re->TypeTag() != JSRegExp::IRREGEXP) return;
-
-    Object* code = re->DataAt(JSRegExp::code_index(is_one_byte));
-    if (!code->IsSmi() &&
-        HeapObject::cast(code)->map()->instance_type() == CODE_TYPE) {
-      // Save a copy that can be reinstated if we need the code again.
-      re->SetDataAt(JSRegExp::saved_code_index(is_one_byte), code);
-
-      // Saving a copy might create a pointer into compaction candidate
-      // that was not observed by marker.  This might happen if JSRegExp data
-      // was marked through the compilation cache before marker reached JSRegExp
-      // object.
-      FixedArray* data = FixedArray::cast(re->data());
-      if (ObjectMarking::IsBlackOrGrey(data, MarkingState::Internal(data))) {
-        Object** slot =
-            data->data_start() + JSRegExp::saved_code_index(is_one_byte);
-        collector_->RecordSlot(data, slot, code);
-      }
-
-      // Set a number in the 0-255 range to guarantee no smi overflow.
-      re->SetDataAt(JSRegExp::code_index(is_one_byte),
-                    Smi::FromInt(heap_->ms_count() & 0xff));
-    } else if (code->IsSmi()) {
-      int value = Smi::cast(code)->value();
-      // The regexp has not been compiled yet or there was a compilation error.
-      if (value == JSRegExp::kUninitializedValue ||
-          value == JSRegExp::kCompilationErrorValue) {
-        return;
-      }
-
-      // Check if we should flush now.
-      if (value == ((heap_->ms_count() - kRegExpCodeThreshold) & 0xff)) {
-        re->SetDataAt(JSRegExp::code_index(is_one_byte),
-                      Smi::FromInt(JSRegExp::kUninitializedValue));
-        re->SetDataAt(JSRegExp::saved_code_index(is_one_byte),
-                      Smi::FromInt(JSRegExp::kUninitializedValue));
-      }
     }
   }
 };
@@ -2182,8 +2121,9 @@ void MarkCompactCollector::RecordObjectStats() {
 class YoungGenerationMarkingVisitor final
     : public NewSpaceVisitor<YoungGenerationMarkingVisitor> {
  public:
-  YoungGenerationMarkingVisitor(Heap* heap, Worklist* global_worklist,
-                                int task_id)
+  YoungGenerationMarkingVisitor(
+      Heap* heap, MinorMarkCompactCollector::MarkingWorklist* global_worklist,
+      int task_id)
       : heap_(heap), worklist_(global_worklist, task_id) {}
 
   V8_INLINE void VisitPointers(HeapObject* host, Object** start,
@@ -2218,7 +2158,7 @@ class YoungGenerationMarkingVisitor final
   }
 
   Heap* heap_;
-  MinorMarkCompactCollector::MarkingWorklist worklist_;
+  MinorMarkCompactCollector::MarkingWorklist::View worklist_;
 };
 
 class MinorMarkCompactCollector::RootMarkingVisitor : public RootVisitor {
@@ -2272,9 +2212,9 @@ class MarkingItem : public ItemParallelJob::Item {
 
 class YoungGenerationMarkingTask : public ItemParallelJob::Task {
  public:
-  YoungGenerationMarkingTask(Isolate* isolate,
-                             MinorMarkCompactCollector* collector,
-                             Worklist* global_worklist, int task_id)
+  YoungGenerationMarkingTask(
+      Isolate* isolate, MinorMarkCompactCollector* collector,
+      MinorMarkCompactCollector::MarkingWorklist* global_worklist, int task_id)
       : ItemParallelJob::Task(isolate),
         collector_(collector),
         marking_worklist_(global_worklist, task_id),
@@ -2347,7 +2287,7 @@ class YoungGenerationMarkingTask : public ItemParallelJob::Task {
   }
 
   MinorMarkCompactCollector* collector_;
-  MinorMarkCompactCollector::MarkingWorklist marking_worklist_;
+  MinorMarkCompactCollector::MarkingWorklist::View marking_worklist_;
   YoungGenerationMarkingVisitor visitor_;
   std::unordered_map<Page*, intptr_t, Page::Hasher> local_live_bytes_;
 };
@@ -2511,12 +2451,13 @@ class MinorMarkCompactCollector::RootMarkingVisitorSeedOnly
 
 MinorMarkCompactCollector::MinorMarkCompactCollector(Heap* heap)
     : MarkCompactCollectorBase(heap),
-      worklist_(new Worklist()),
+      worklist_(new MinorMarkCompactCollector::MarkingWorklist()),
       main_marking_visitor_(
           new YoungGenerationMarkingVisitor(heap, worklist_, kMainMarker)),
       page_parallel_job_semaphore_(0) {
-  static_assert(kNumMarkers <= Worklist::kMaxNumTasks,
-                "more marker tasks than marking deque can handle");
+  static_assert(
+      kNumMarkers <= MinorMarkCompactCollector::MarkingWorklist::kMaxNumTasks,
+      "more marker tasks than marking deque can handle");
 }
 
 MinorMarkCompactCollector::~MinorMarkCompactCollector() {
@@ -2617,7 +2558,7 @@ void MinorMarkCompactCollector::ProcessMarkingWorklist() {
 }
 
 void MinorMarkCompactCollector::EmptyMarkingWorklist() {
-  MarkingWorklist marking_worklist(worklist(), kMainMarker);
+  MarkingWorklist::View marking_worklist(worklist(), kMainMarker);
   HeapObject* object = nullptr;
   while (marking_worklist.Pop(&object)) {
     DCHECK(!object->IsFiller());

@@ -1220,7 +1220,7 @@ Node* CodeStubAssembler::LoadNameHashField(Node* name) {
 Node* CodeStubAssembler::LoadNameHash(Node* name, Label* if_hash_not_computed) {
   Node* hash_field = LoadNameHashField(name);
   if (if_hash_not_computed != nullptr) {
-    GotoIf(IsClearWord32(hash_field, Name::kHashNotComputedMask),
+    GotoIf(IsSetWord32(hash_field, Name::kHashNotComputedMask),
            if_hash_not_computed);
   }
   return Word32Shr(hash_field, Int32Constant(Name::kHashShift));
@@ -1265,7 +1265,7 @@ Node* CodeStubAssembler::LoadFixedArrayElement(Node* object, Node* index_node,
                                                ParameterMode parameter_mode) {
   int32_t header_size =
       FixedArray::kHeaderSize + additional_offset - kHeapObjectTag;
-  Node* offset = ElementOffsetFromIndex(index_node, FAST_HOLEY_ELEMENTS,
+  Node* offset = ElementOffsetFromIndex(index_node, HOLEY_ELEMENTS,
                                         parameter_mode, header_size);
   return Load(MachineType::AnyTagged(), object, offset);
 }
@@ -1345,7 +1345,7 @@ Node* CodeStubAssembler::LoadAndUntagToWord32FixedArrayElement(
     header_size += kPointerSize / 2;
   }
 #endif
-  Node* offset = ElementOffsetFromIndex(index_node, FAST_HOLEY_ELEMENTS,
+  Node* offset = ElementOffsetFromIndex(index_node, HOLEY_ELEMENTS,
                                         parameter_mode, header_size);
   if (Is64()) {
     return Load(MachineType::Int32(), object, offset);
@@ -1362,7 +1362,7 @@ Node* CodeStubAssembler::LoadFixedDoubleArrayElement(
   CSA_ASSERT(this, IsFixedDoubleArray(object));
   int32_t header_size =
       FixedDoubleArray::kHeaderSize + additional_offset - kHeapObjectTag;
-  Node* offset = ElementOffsetFromIndex(index_node, FAST_HOLEY_DOUBLE_ELEMENTS,
+  Node* offset = ElementOffsetFromIndex(index_node, HOLEY_DOUBLE_ELEMENTS,
                                         parameter_mode, header_size);
   return LoadDoubleWithHoleCheck(object, offset, if_hole, machine_type);
 }
@@ -1532,7 +1532,7 @@ Node* CodeStubAssembler::StoreFixedArrayElement(Node* object, Node* index_node,
          barrier_mode == UPDATE_WRITE_BARRIER);
   int header_size =
       FixedArray::kHeaderSize + additional_offset - kHeapObjectTag;
-  Node* offset = ElementOffsetFromIndex(index_node, FAST_HOLEY_ELEMENTS,
+  Node* offset = ElementOffsetFromIndex(index_node, HOLEY_ELEMENTS,
                                         parameter_mode, header_size);
   if (barrier_mode == SKIP_WRITE_BARRIER) {
     return StoreNoWriteBarrier(MachineRepresentation::kTagged, object, offset,
@@ -1547,7 +1547,7 @@ Node* CodeStubAssembler::StoreFixedDoubleArrayElement(
   CSA_ASSERT(this, IsFixedDoubleArray(object));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(index_node, parameter_mode));
   Node* offset =
-      ElementOffsetFromIndex(index_node, FAST_DOUBLE_ELEMENTS, parameter_mode,
+      ElementOffsetFromIndex(index_node, PACKED_DOUBLE_ELEMENTS, parameter_mode,
                              FixedArray::kHeaderSize - kHeapObjectTag);
   MachineRepresentation rep = MachineRepresentation::kFloat64;
   return StoreNoWriteBarrier(rep, object, offset, value);
@@ -1660,18 +1660,18 @@ void CodeStubAssembler::TryStoreArrayElement(ElementsKind kind,
                                              ParameterMode mode, Label* bailout,
                                              Node* elements, Node* index,
                                              Node* value) {
-  if (IsFastSmiElementsKind(kind)) {
+  if (IsSmiElementsKind(kind)) {
     GotoIf(TaggedIsNotSmi(value), bailout);
-  } else if (IsFastDoubleElementsKind(kind)) {
+  } else if (IsDoubleElementsKind(kind)) {
     GotoIfNotNumber(value, bailout);
   }
-  if (IsFastDoubleElementsKind(kind)) {
+  if (IsDoubleElementsKind(kind)) {
     Node* double_value = ChangeNumberToFloat64(value);
     StoreFixedDoubleArrayElement(elements, index,
                                  Float64SilenceNaN(double_value), mode);
   } else {
     WriteBarrierMode barrier_mode =
-        IsFastSmiElementsKind(kind) ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
+        IsSmiElementsKind(kind) ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
     StoreFixedArrayElement(elements, index, value, barrier_mode, 0, mode);
   }
 }
@@ -2073,7 +2073,7 @@ Node* CodeStubAssembler::AllocateRegExpResult(Node* context, Node* length,
 
   Node* const zero = IntPtrConstant(0);
   Node* const length_intptr = SmiUntag(length);
-  const ElementsKind elements_kind = FAST_ELEMENTS;
+  const ElementsKind elements_kind = PACKED_ELEMENTS;
 
   Node* const elements = AllocateFixedArray(elements_kind, length_intptr);
   StoreObjectField(result, JSArray::kElementsOffset, elements);
@@ -2147,7 +2147,7 @@ Node* CodeStubAssembler::CopyNameDictionary(Node* dictionary,
          large_object_fallback);
   Node* properties = AllocateNameDictionaryWithCapacity(capacity);
   Node* length = SmiUntag(LoadFixedArrayBaseLength(dictionary));
-  CopyFixedArrayElements(FAST_ELEMENTS, dictionary, properties, length,
+  CopyFixedArrayElements(PACKED_ELEMENTS, dictionary, properties, length,
                          SKIP_WRITE_BARRIER, INTPTR_PARAMETERS);
   return properties;
 }
@@ -2308,8 +2308,8 @@ Node* CodeStubAssembler::AllocateJSArray(ElementsKind kind, Node* array_map,
         kind, array_map, length, allocation_site, capacity, capacity_mode);
     // Setup elements object.
     Heap::RootListIndex elements_map_index =
-        IsFastDoubleElementsKind(kind) ? Heap::kFixedDoubleArrayMapRootIndex
-                                       : Heap::kFixedArrayMapRootIndex;
+        IsDoubleElementsKind(kind) ? Heap::kFixedDoubleArrayMapRootIndex
+                                   : Heap::kFixedArrayMapRootIndex;
     DCHECK(Heap::RootIsImmortalImmovable(elements_map_index));
     StoreMapNoWriteBarrier(elements, elements_map_index);
     StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset,
@@ -2332,10 +2332,10 @@ Node* CodeStubAssembler::AllocateFixedArray(ElementsKind kind,
                                           IntPtrOrSmiConstant(0, mode), mode));
   Node* total_size = GetFixedArrayAllocationSize(capacity_node, kind, mode);
 
-  if (IsFastDoubleElementsKind(kind)) flags |= kDoubleAlignment;
+  if (IsDoubleElementsKind(kind)) flags |= kDoubleAlignment;
   // Allocate both array and elements object, and initialize the JSArray.
   Node* array = Allocate(total_size, flags);
-  Heap::RootListIndex map_index = IsFastDoubleElementsKind(kind)
+  Heap::RootListIndex map_index = IsDoubleElementsKind(kind)
                                       ? Heap::kFixedDoubleArrayMapRootIndex
                                       : Heap::kFixedArrayMapRootIndex;
   DCHECK(Heap::RootIsImmortalImmovable(map_index));
@@ -2351,7 +2351,7 @@ void CodeStubAssembler::FillFixedArrayWithValue(
   CSA_SLOW_ASSERT(this, MatchesParameterMode(from_node, mode));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(to_node, mode));
   CSA_SLOW_ASSERT(this, IsFixedArrayWithKind(array, kind));
-  bool is_double = IsFastDoubleElementsKind(kind);
+  bool is_double = IsDoubleElementsKind(kind);
   DCHECK(value_root_index == Heap::kTheHoleValueRootIndex ||
          value_root_index == Heap::kUndefinedValueRootIndex);
   DCHECK_IMPLIES(is_double, value_root_index == Heap::kTheHoleValueRootIndex);
@@ -2407,16 +2407,15 @@ void CodeStubAssembler::CopyFixedArrayElements(
   DCHECK(!IsFixedTypedArrayElementsKind(to_kind));
 
   Label done(this);
-  bool from_double_elements = IsFastDoubleElementsKind(from_kind);
-  bool to_double_elements = IsFastDoubleElementsKind(to_kind);
-  bool element_size_matches =
-      Is64() ||
-      IsFastDoubleElementsKind(from_kind) == IsFastDoubleElementsKind(to_kind);
+  bool from_double_elements = IsDoubleElementsKind(from_kind);
+  bool to_double_elements = IsDoubleElementsKind(to_kind);
+  bool element_size_matches = Is64() || IsDoubleElementsKind(from_kind) ==
+                                            IsDoubleElementsKind(to_kind);
   bool doubles_to_objects_conversion =
-      IsFastDoubleElementsKind(from_kind) && IsFastObjectElementsKind(to_kind);
+      IsDoubleElementsKind(from_kind) && IsObjectElementsKind(to_kind);
   bool needs_write_barrier =
-      doubles_to_objects_conversion || (barrier_mode == UPDATE_WRITE_BARRIER &&
-                                        IsFastObjectElementsKind(to_kind));
+      doubles_to_objects_conversion ||
+      (barrier_mode == UPDATE_WRITE_BARRIER && IsObjectElementsKind(to_kind));
   Node* double_hole =
       Is64() ? Int64Constant(kHoleNanInt64) : Int32Constant(kHoleNanLower32);
 
@@ -2474,7 +2473,7 @@ void CodeStubAssembler::CopyFixedArrayElements(
       // The target elements array is already preinitialized with holes, so we
       // can just proceed with the next iteration.
       if_hole = &next_iter;
-    } else if (IsFastDoubleElementsKind(to_kind)) {
+    } else if (IsDoubleElementsKind(to_kind)) {
       if_hole = &store_double_hole;
     } else {
       // In all the other cases don't check for holes and copy the data as is.
@@ -2599,10 +2598,10 @@ Node* CodeStubAssembler::LoadElementAndPrepareForStore(Node* array,
                                                        ElementsKind to_kind,
                                                        Label* if_hole) {
   CSA_SLOW_ASSERT(this, IsFixedArrayWithKind(array, from_kind));
-  if (IsFastDoubleElementsKind(from_kind)) {
+  if (IsDoubleElementsKind(from_kind)) {
     Node* value =
         LoadDoubleWithHoleCheck(array, offset, if_hole, MachineType::Float64());
-    if (!IsFastDoubleElementsKind(to_kind)) {
+    if (!IsDoubleElementsKind(to_kind)) {
       value = AllocateHeapNumberWithValue(value);
     }
     return value;
@@ -2612,8 +2611,8 @@ Node* CodeStubAssembler::LoadElementAndPrepareForStore(Node* array,
     if (if_hole) {
       GotoIf(WordEqual(value, TheHoleConstant()), if_hole);
     }
-    if (IsFastDoubleElementsKind(to_kind)) {
-      if (IsFastSmiElementsKind(from_kind)) {
+    if (IsDoubleElementsKind(to_kind)) {
+      if (IsSmiElementsKind(from_kind)) {
         value = SmiToFloat64(value);
       } else {
         value = LoadHeapNumberValue(value);
@@ -3096,16 +3095,13 @@ Node* CodeStubAssembler::ToThisValue(Node* context, Node* value,
           GotoIf(WordEqual(value_map, BooleanMapConstant()), &done_loop);
           break;
         case PrimitiveType::kNumber:
-          GotoIf(
-              Word32Equal(value_instance_type, Int32Constant(HEAP_NUMBER_TYPE)),
-              &done_loop);
+          GotoIf(WordEqual(value_map, HeapNumberMapConstant()), &done_loop);
           break;
         case PrimitiveType::kString:
           GotoIf(IsStringInstanceType(value_instance_type), &done_loop);
           break;
         case PrimitiveType::kSymbol:
-          GotoIf(Word32Equal(value_instance_type, Int32Constant(SYMBOL_TYPE)),
-                 &done_loop);
+          GotoIf(WordEqual(value_map, SymbolMapConstant()), &done_loop);
           break;
       }
       Goto(&done_throw);
@@ -3337,8 +3333,8 @@ Node* CodeStubAssembler::IsFixedArray(Node* object) {
 // after Array.p.shift, it is replaced by the empty array constant. If it is
 // later filled with a double element, we try to grow it but pass in a double
 // elements kind. Usually this would cause a size mismatch (since the source
-// fixed array has FAST_HOLEY_ELEMENTS and destination has
-// FAST_HOLEY_DOUBLE_ELEMENTS), but we don't have to worry about it when the
+// fixed array has HOLEY_ELEMENTS and destination has
+// HOLEY_DOUBLE_ELEMENTS), but we don't have to worry about it when the
 // source array is empty.
 // TODO(jgruber): It might we worth creating an empty_double_array constant to
 // simplify this case.
@@ -3360,10 +3356,10 @@ Node* CodeStubAssembler::IsFixedArrayWithKindOrEmpty(Node* object,
 }
 
 Node* CodeStubAssembler::IsFixedArrayWithKind(Node* object, ElementsKind kind) {
-  if (IsFastDoubleElementsKind(kind)) {
+  if (IsDoubleElementsKind(kind)) {
     return IsFixedDoubleArray(object);
   } else {
-    DCHECK(IsFastSmiOrObjectElementsKind(kind));
+    DCHECK(IsSmiOrObjectElementsKind(kind));
     return IsFixedArray(object);
   }
 }
@@ -4033,17 +4029,17 @@ void CodeStubAssembler::DerefIndirectString(Variable* var_string,
 
 void CodeStubAssembler::MaybeDerefIndirectString(Variable* var_string,
                                                  Node* instance_type,
-                                                 Variable* var_did_something) {
-  Label deref(this), done(this, var_did_something);
+                                                 Label* did_deref,
+                                                 Label* cannot_deref) {
+  Label deref(this);
   BranchIfCanDerefIndirectString(var_string->value(), instance_type, &deref,
-                                 &done);
+                                 cannot_deref);
 
   BIND(&deref);
-  DerefIndirectString(var_string, instance_type);
-  var_did_something->Bind(IntPtrConstant(1));
-  Goto(&done);
-
-  BIND(&done);
+  {
+    DerefIndirectString(var_string, instance_type);
+    Goto(did_deref);
+  }
 }
 
 void CodeStubAssembler::MaybeDerefIndirectStrings(Variable* var_left,
@@ -4051,13 +4047,24 @@ void CodeStubAssembler::MaybeDerefIndirectStrings(Variable* var_left,
                                                   Variable* var_right,
                                                   Node* right_instance_type,
                                                   Label* did_something) {
-  VARIABLE(var_did_something, MachineType::PointerRepresentation(),
-           IntPtrConstant(0));
-  MaybeDerefIndirectString(var_left, left_instance_type, &var_did_something);
-  MaybeDerefIndirectString(var_right, right_instance_type, &var_did_something);
+  Label did_nothing_left(this), did_something_left(this),
+      didnt_do_anything(this);
+  MaybeDerefIndirectString(var_left, left_instance_type, &did_something_left,
+                           &did_nothing_left);
 
-  GotoIf(WordNotEqual(var_did_something.value(), IntPtrConstant(0)),
-         did_something);
+  BIND(&did_something_left);
+  {
+    MaybeDerefIndirectString(var_right, right_instance_type, did_something,
+                             did_something);
+  }
+
+  BIND(&did_nothing_left);
+  {
+    MaybeDerefIndirectString(var_right, right_instance_type, did_something,
+                             &didnt_do_anything);
+  }
+
+  BIND(&didnt_do_anything);
   // Fall through if neither string was an indirect string.
 }
 
@@ -5794,10 +5801,10 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
   // clang-format off
   int32_t values[] = {
       // Handled by {if_isobjectorsmi}.
-      FAST_SMI_ELEMENTS, FAST_HOLEY_SMI_ELEMENTS, FAST_ELEMENTS,
-          FAST_HOLEY_ELEMENTS,
+      PACKED_SMI_ELEMENTS, HOLEY_SMI_ELEMENTS, PACKED_ELEMENTS,
+          HOLEY_ELEMENTS,
       // Handled by {if_isdouble}.
-      FAST_DOUBLE_ELEMENTS, FAST_HOLEY_DOUBLE_ELEMENTS,
+      PACKED_DOUBLE_ELEMENTS, HOLEY_DOUBLE_ELEMENTS,
       // Handled by {if_isdictionary}.
       DICTIONARY_ELEMENTS,
       // Handled by {if_isfaststringwrapper}.
@@ -6208,11 +6215,8 @@ void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
     StoreFixedArrayElement(feedback_vector, slot_id, combined_feedback,
                            SKIP_WRITE_BARRIER);
     // Reset profiler ticks.
-    Node* shared_info =
-        LoadObjectField(function, JSFunction::kSharedFunctionInfoOffset);
-    StoreObjectFieldNoWriteBarrier(
-        shared_info, SharedFunctionInfo::kProfilerTicksOffset, Int32Constant(0),
-        MachineRepresentation::kWord32);
+    StoreFixedArrayElement(feedback_vector, FeedbackVector::kProfilerTicksIndex,
+                           SmiConstant(0), SKIP_WRITE_BARRIER);
     Goto(&end);
   }
 
@@ -6418,8 +6422,8 @@ void CodeStubAssembler::StoreElement(Node* elements, ElementsKind kind,
   }
 
   WriteBarrierMode barrier_mode =
-      IsFastSmiElementsKind(kind) ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
-  if (IsFastDoubleElementsKind(kind)) {
+      IsSmiElementsKind(kind) ? SKIP_WRITE_BARRIER : UPDATE_WRITE_BARRIER;
+  if (IsDoubleElementsKind(kind)) {
     // Make sure we do not store signalling NaNs into double arrays.
     value = Float64SilenceNaN(value);
     StoreFixedDoubleArrayElement(elements, index, value, mode);
@@ -6531,7 +6535,7 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
                                          KeyedAccessStoreMode store_mode,
                                          Label* bailout) {
   Node* elements = LoadElements(object);
-  if (IsFastSmiOrObjectElementsKind(elements_kind) &&
+  if (IsSmiOrObjectElementsKind(elements_kind) &&
       store_mode != STORE_NO_TRANSITION_HANDLE_COW) {
     // Bailout in case of COW elements.
     GotoIf(WordNotEqual(LoadMap(elements),
@@ -6585,8 +6589,8 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
     BIND(&done);
     return;
   }
-  DCHECK(IsFastSmiOrObjectElementsKind(elements_kind) ||
-         IsFastDoubleElementsKind(elements_kind));
+  DCHECK(IsSmiOrObjectElementsKind(elements_kind) ||
+         IsDoubleElementsKind(elements_kind));
 
   Node* length = is_jsarray ? LoadObjectField(object, JSArray::kLengthOffset)
                             : LoadFixedArrayBaseLength(elements);
@@ -6595,9 +6599,9 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
   // In case value is stored into a fast smi array, assure that the value is
   // a smi before manipulating the backing store. Otherwise the backing store
   // may be left in an invalid state.
-  if (IsFastSmiElementsKind(elements_kind)) {
+  if (IsSmiElementsKind(elements_kind)) {
     GotoIfNot(TaggedIsSmi(value), bailout);
-  } else if (IsFastDoubleElementsKind(elements_kind)) {
+  } else if (IsDoubleElementsKind(elements_kind)) {
     value = TryTaggedToFloat64(value, bailout);
   }
 
@@ -6608,7 +6612,7 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
     GotoIfNot(UintPtrLessThan(key, length), bailout);
 
     if ((store_mode == STORE_NO_TRANSITION_HANDLE_COW) &&
-        IsFastSmiOrObjectElementsKind(elements_kind)) {
+        IsSmiOrObjectElementsKind(elements_kind)) {
       elements = CopyElementsOnWrite(object, elements, elements_kind, length,
                                      parameter_mode, bailout);
     }
@@ -6625,7 +6629,7 @@ Node* CodeStubAssembler::CheckForCapacityGrow(Node* object, Node* elements,
   Label grow_case(this), no_grow_case(this), done(this);
 
   Node* condition;
-  if (IsHoleyElementsKind(kind)) {
+  if (IsHoleyOrDictionaryElementsKind(kind)) {
     condition = UintPtrGreaterThanOrEqual(key, length);
   } else {
     condition = WordEqual(key, length);
@@ -6698,8 +6702,7 @@ void CodeStubAssembler::TransitionElementsKind(Node* object, Node* map,
                                                ElementsKind to_kind,
                                                bool is_jsarray,
                                                Label* bailout) {
-  DCHECK(!IsFastHoleyElementsKind(from_kind) ||
-         IsFastHoleyElementsKind(to_kind));
+  DCHECK(!IsHoleyElementsKind(from_kind) || IsHoleyElementsKind(to_kind));
   if (AllocationSite::ShouldTrack(from_kind, to_kind)) {
     TrapAllocationMemento(object, bailout);
   }
@@ -7013,7 +7016,7 @@ void CodeStubAssembler::BuildFastFixedArrayForEach(
                              FixedArray::kHeaderSize - kHeapObjectTag);
   if (direction == ForEachDirection::kReverse) std::swap(start, limit);
 
-  int increment = IsFastDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
+  int increment = IsDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
   BuildFastLoop(
       vars, start, limit,
       [fixed_array, &body](Node* offset) { body(fixed_array, offset); },
@@ -9176,7 +9179,7 @@ CodeStubArguments::CodeStubArguments(
       arguments_(nullptr),
       fp_(fp != nullptr ? fp : assembler_->LoadFramePointer()) {
   Node* offset = assembler_->ElementOffsetFromIndex(
-      argc_, FAST_ELEMENTS, param_mode,
+      argc_, PACKED_ELEMENTS, param_mode,
       (StandardFrameConstants::kFixedSlotCountAboveFp - 1) * kPointerSize);
   arguments_ = assembler_->IntPtrAdd(fp_, offset);
 }
@@ -9192,8 +9195,8 @@ Node* CodeStubArguments::AtIndexPtr(
   typedef compiler::Node Node;
   Node* negated_index = assembler_->IntPtrOrSmiSub(
       assembler_->IntPtrOrSmiConstant(0, mode), index, mode);
-  Node* offset =
-      assembler_->ElementOffsetFromIndex(negated_index, FAST_ELEMENTS, mode, 0);
+  Node* offset = assembler_->ElementOffsetFromIndex(negated_index,
+                                                    PACKED_ELEMENTS, mode, 0);
   return assembler_->IntPtrAdd(arguments_, offset);
 }
 
@@ -9245,10 +9248,10 @@ void CodeStubArguments::ForEach(
   }
   Node* start = assembler_->IntPtrSub(
       arguments_,
-      assembler_->ElementOffsetFromIndex(first, FAST_ELEMENTS, mode));
+      assembler_->ElementOffsetFromIndex(first, PACKED_ELEMENTS, mode));
   Node* end = assembler_->IntPtrSub(
       arguments_,
-      assembler_->ElementOffsetFromIndex(last, FAST_ELEMENTS, mode));
+      assembler_->ElementOffsetFromIndex(last, PACKED_ELEMENTS, mode));
   assembler_->BuildFastLoop(vars, start, end,
                             [this, &body](Node* current) {
                               Node* arg = assembler_->Load(
@@ -9278,9 +9281,9 @@ Node* CodeStubAssembler::IsFastElementsKind(Node* elements_kind) {
 Node* CodeStubAssembler::IsHoleyFastElementsKind(Node* elements_kind) {
   CSA_ASSERT(this, IsFastElementsKind(elements_kind));
 
-  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == (FAST_SMI_ELEMENTS | 1));
-  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == (FAST_ELEMENTS | 1));
-  STATIC_ASSERT(FAST_HOLEY_DOUBLE_ELEMENTS == (FAST_DOUBLE_ELEMENTS | 1));
+  STATIC_ASSERT(HOLEY_SMI_ELEMENTS == (PACKED_SMI_ELEMENTS | 1));
+  STATIC_ASSERT(HOLEY_ELEMENTS == (PACKED_ELEMENTS | 1));
+  STATIC_ASSERT(HOLEY_DOUBLE_ELEMENTS == (PACKED_DOUBLE_ELEMENTS | 1));
   return IsSetWord32(elements_kind, 1);
 }
 

@@ -24,8 +24,8 @@ class ItemParallelJob;
 class MigrationObserver;
 class RecordMigratedSlotVisitor;
 class YoungGenerationMarkingVisitor;
+template <typename EntryType, int SEGMENT_SIZE>
 class Worklist;
-class WorklistView;
 
 class ObjectMarking : public AllStatic {
  public:
@@ -348,14 +348,14 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
   void CleanupSweepToIteratePages();
 
  private:
-  using MarkingWorklist = WorklistView;
+  using MarkingWorklist = Worklist<HeapObject*, 64 /* segment size */>;
   class RootMarkingVisitorSeedOnly;
   class RootMarkingVisitor;
 
   static const int kNumMarkers = 8;
   static const int kMainMarker = 0;
 
-  inline Worklist* worklist() { return worklist_; }
+  inline MarkingWorklist* worklist() { return worklist_; }
 
   inline YoungGenerationMarkingVisitor* main_marking_visitor() {
     return main_marking_visitor_;
@@ -377,7 +377,7 @@ class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
 
   int NumberOfParallelMarkingTasks(int pages);
 
-  Worklist* worklist_;
+  MarkingWorklist* worklist_;
   YoungGenerationMarkingVisitor* main_marking_visitor_;
   base::Semaphore page_parallel_job_semaphore_;
   std::vector<Page*> new_space_evacuation_pages_;
@@ -394,6 +394,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
   // Wrapper for the shared and bailout worklists.
   class MarkingWorklist {
    public:
+    using ConcurrentMarkingWorklist = Worklist<HeapObject*, 64>;
+
     static const int kMainThread = 0;
     // The heap parameter is not used but needed to match the sequential case.
     explicit MarkingWorklist(Heap* heap) {}
@@ -439,8 +441,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
       shared_.Update(callback);
     }
 
-    Worklist* shared() { return &shared_; }
-    Worklist* bailout() { return &bailout_; }
+    ConcurrentMarkingWorklist* shared() { return &shared_; }
+    ConcurrentMarkingWorklist* bailout() { return &bailout_; }
 
     // These empty functions are needed to match the interface
     // of the sequential marking deque.
@@ -453,8 +455,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     bool overflowed() const { return false; }
 
    private:
-    Worklist shared_;
-    Worklist bailout_;
+    ConcurrentMarkingWorklist shared_;
+    ConcurrentMarkingWorklist bailout_;
   };
 #else
   using MarkingWorklist = SequentialMarkingDeque;

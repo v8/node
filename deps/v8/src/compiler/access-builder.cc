@@ -298,7 +298,7 @@ FieldAccess AccessBuilder::ForJSArrayLength(ElementsKind elements_kind) {
                         type_cache.kJSArrayLengthType,
                         MachineType::TaggedSigned(),
                         kFullWriteBarrier};
-  if (IsFastDoubleElementsKind(elements_kind)) {
+  if (IsDoubleElementsKind(elements_kind)) {
     access.type = type_cache.kFixedDoubleArrayLengthType;
     access.write_barrier_kind = kNoWriteBarrier;
   } else if (IsFastElementsKind(elements_kind)) {
@@ -711,7 +711,7 @@ FieldAccess AccessBuilder::ForJSArrayIteratorIndex(InstanceType instance_type,
                         MachineType::AnyTagged(),
                         kFullWriteBarrier};
   if (instance_type == JS_ARRAY_TYPE) {
-    if (IsFastDoubleElementsKind(elements_kind)) {
+    if (IsDoubleElementsKind(elements_kind)) {
       access.type = TypeCache::Get().kFixedDoubleArrayLengthType;
       access.machine_type = MachineType::TaggedSigned();
       access.write_barrier_kind = kNoWriteBarrier;
@@ -856,25 +856,25 @@ ElementAccess AccessBuilder::ForFixedArrayElement(ElementsKind kind) {
   ElementAccess access = {kTaggedBase, FixedArray::kHeaderSize, Type::Any(),
                           MachineType::AnyTagged(), kFullWriteBarrier};
   switch (kind) {
-    case FAST_SMI_ELEMENTS:
+    case PACKED_SMI_ELEMENTS:
       access.type = Type::SignedSmall();
       access.machine_type = MachineType::TaggedSigned();
       access.write_barrier_kind = kNoWriteBarrier;
       break;
-    case FAST_HOLEY_SMI_ELEMENTS:
+    case HOLEY_SMI_ELEMENTS:
       access.type = TypeCache::Get().kHoleySmi;
       break;
-    case FAST_ELEMENTS:
+    case PACKED_ELEMENTS:
       access.type = Type::NonInternal();
       break;
-    case FAST_HOLEY_ELEMENTS:
+    case HOLEY_ELEMENTS:
       break;
-    case FAST_DOUBLE_ELEMENTS:
+    case PACKED_DOUBLE_ELEMENTS:
       access.type = Type::Number();
       access.write_barrier_kind = kNoWriteBarrier;
       access.machine_type = MachineType::Float64();
       break;
-    case FAST_HOLEY_DOUBLE_ELEMENTS:
+    case HOLEY_DOUBLE_ELEMENTS:
       access.type = Type::Number();
       access.write_barrier_kind = kNoWriteBarrier;
       access.machine_type = MachineType::Float64();

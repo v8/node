@@ -72,6 +72,8 @@ Reduction JSNativeContextSpecialization::Reduce(Node* node) {
   switch (node->opcode()) {
     case IrOpcode::kJSAdd:
       return ReduceJSAdd(node);
+    case IrOpcode::kJSStringConcat:
+      return ReduceJSStringConcat(node);
     case IrOpcode::kJSGetSuperConstructor:
       return ReduceJSGetSuperConstructor(node);
     case IrOpcode::kJSInstanceOf:
@@ -126,6 +128,59 @@ Reduction JSNativeContextSpecialization::ReduceJSAdd(Node* node) {
     }
   }
   return NoChange();
+}
+
+Reduction JSNativeContextSpecialization::ReduceJSStringConcat(Node* node) {
+  // TODO(turbofan): This has to run together with the inlining and
+  // native context specialization to be able to leverage the string
+  // constant-folding for optimizing property access, but we should
+  // nevertheless find a better home for this at some point.
+  DCHECK_EQ(IrOpcode::kJSStringConcat, node->opcode());
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  DCHECK_GE(StringConcatParameterOf(node->op()).operand_count(), 3);
+
+  // Constant-fold string concatenation.
+  HeapObjectMatcher last_operand(NodeProperties::GetValueInput(node, 0));
+  int operand_count = StringConcatParameterOf(node->op()).operand_count();
+  for (int i = 1; i < operand_count; ++i) {
+    HeapObjectMatcher current_operand(NodeProperties::GetValueInput(node, i));
+
+    if (last_operand.HasValue() && current_operand.HasValue()) {
+      Handle<String> left = Handle<String>::cast(last_operand.Value());
+      Handle<String> right = Handle<String>::cast(current_operand.Value());
+      if (left->length() + right->length() <= String::kMaxLength) {
+        Handle<String> result =
+            factory()->NewConsString(left, right).ToHandleChecked();
+        Node* value = jsgraph()->HeapConstant(result);
+        node->ReplaceInput(i - 1, value);
+        node->RemoveInput(i);
+        last_operand = HeapObjectMatcher(value);
+        i--;
+        operand_count--;
+        continue;
+      }
+    }
+    last_operand = current_operand;
+  }
+
+  if (operand_count == StringConcatParameterOf(node->op()).operand_count()) {
+    return NoChange();
+  } else if (operand_count == 1) {
+    // Replace with input if there is only one input left.
+    Node* value = NodeProperties::GetValueInput(node, 0);
+    ReplaceWithValue(node, value, effect, control);
+    return Replace(value);
+  } else if (operand_count == 2) {
+    // Replace with JSAdd if we only have two operands left.
+    NodeProperties::ChangeOp(node,
+                             javascript()->Add(BinaryOperationHint::kString));
+    return Changed(node);
+  } else {
+    // Otherwise update operand count.
+    NodeProperties::ChangeOp(node, javascript()->StringConcat(operand_count));
+    return Changed(node);
+  }
 }
 
 Reduction JSNativeContextSpecialization::ReduceJSGetSuperConstructor(
@@ -1076,7 +1131,7 @@ Reduction JSNativeContextSpecialization::ReduceElementAccess(
           // store is either holey, or we have a potentially growing store,
           // then we need to check that all prototypes have stable maps with
           // fast elements (and we need to guard against changes to that below).
-          if (IsHoleyElementsKind(receiver_map->elements_kind()) ||
+          if (IsHoleyOrDictionaryElementsKind(receiver_map->elements_kind()) ||
               IsGrowStoreMode(store_mode)) {
             // Make sure all prototypes are stable and have fast elements.
             for (Handle<Map> map = receiver_map;;) {
@@ -2070,7 +2125,7 @@ JSNativeContextSpecialization::BuildElementAccess(
 
     // Don't try to store to a copy-on-write backing store.
     if (access_mode == AccessMode::kStore &&
-        IsFastSmiOrObjectElementsKind(elements_kind) &&
+        IsSmiOrObjectElementsKind(elements_kind) &&
         store_mode != STORE_NO_TRANSITION_HANDLE_COW) {
       effect = graph()->NewNode(
           simplified()->CheckMaps(
@@ -2111,10 +2166,10 @@ JSNativeContextSpecialization::BuildElementAccess(
     // Compute the element access.
     Type* element_type = Type::NonInternal();
     MachineType element_machine_type = MachineType::AnyTagged();
-    if (IsFastDoubleElementsKind(elements_kind)) {
+    if (IsDoubleElementsKind(elements_kind)) {
       element_type = Type::Number();
       element_machine_type = MachineType::Float64();
-    } else if (IsFastSmiElementsKind(elements_kind)) {
+    } else if (IsSmiElementsKind(elements_kind)) {
       element_type = Type::SignedSmall();
       element_machine_type = MachineType::TaggedSigned();
     }
@@ -2126,12 +2181,12 @@ JSNativeContextSpecialization::BuildElementAccess(
     if (access_mode == AccessMode::kLoad) {
       // Compute the real element access type, which includes the hole in case
       // of holey backing stores.
-      if (IsHoleyElementsKind(elements_kind)) {
+      if (IsHoleyOrDictionaryElementsKind(elements_kind)) {
         element_access.type =
             Type::Union(element_type, Type::Hole(), graph()->zone());
       }
-      if (elements_kind == FAST_HOLEY_ELEMENTS ||
-          elements_kind == FAST_HOLEY_SMI_ELEMENTS) {
+      if (elements_kind == HOLEY_ELEMENTS ||
+          elements_kind == HOLEY_SMI_ELEMENTS) {
         element_access.machine_type = MachineType::AnyTagged();
       }
       // Perform the actual backing store access.
@@ -2140,8 +2195,8 @@ JSNativeContextSpecialization::BuildElementAccess(
                            index, effect, control);
       // Handle loading from holey backing stores correctly, by either mapping
       // the hole to undefined if possible, or deoptimizing otherwise.
-      if (elements_kind == FAST_HOLEY_ELEMENTS ||
-          elements_kind == FAST_HOLEY_SMI_ELEMENTS) {
+      if (elements_kind == HOLEY_ELEMENTS ||
+          elements_kind == HOLEY_SMI_ELEMENTS) {
         // Check if we are allowed to turn the hole into undefined.
         if (CanTreatHoleAsUndefined(receiver_maps)) {
           // Turn the hole into undefined.
@@ -2152,7 +2207,7 @@ JSNativeContextSpecialization::BuildElementAccess(
           value = effect = graph()->NewNode(simplified()->CheckNotTaggedHole(),
                                             value, effect, control);
         }
-      } else if (elements_kind == FAST_HOLEY_DOUBLE_ELEMENTS) {
+      } else if (elements_kind == HOLEY_DOUBLE_ELEMENTS) {
         // Perform the hole check on the result.
         CheckFloat64HoleMode mode = CheckFloat64HoleMode::kNeverReturnHole;
         // Check if we are allowed to return the hole directly.
@@ -2165,10 +2220,10 @@ JSNativeContextSpecialization::BuildElementAccess(
       }
     } else {
       DCHECK_EQ(AccessMode::kStore, access_mode);
-      if (IsFastSmiElementsKind(elements_kind)) {
+      if (IsSmiElementsKind(elements_kind)) {
         value = effect =
             graph()->NewNode(simplified()->CheckSmi(), value, effect, control);
-      } else if (IsFastDoubleElementsKind(elements_kind)) {
+      } else if (IsDoubleElementsKind(elements_kind)) {
         value = effect = graph()->NewNode(simplified()->CheckNumber(), value,
                                           effect, control);
         // Make sure we do not store signalling NaNs into double arrays.
@@ -2176,7 +2231,7 @@ JSNativeContextSpecialization::BuildElementAccess(
       }
 
       // Ensure that copy-on-write backing store is writable.
-      if (IsFastSmiOrObjectElementsKind(elements_kind) &&
+      if (IsSmiOrObjectElementsKind(elements_kind) &&
           store_mode == STORE_NO_TRANSITION_HANDLE_COW) {
         elements = effect =
             graph()->NewNode(simplified()->EnsureWritableFastElements(),
@@ -2190,10 +2245,10 @@ JSNativeContextSpecialization::BuildElementAccess(
         if (receiver_is_jsarray) {
           flags |= GrowFastElementsFlag::kArrayObject;
         }
-        if (IsHoleyElementsKind(elements_kind)) {
+        if (IsHoleyOrDictionaryElementsKind(elements_kind)) {
           flags |= GrowFastElementsFlag::kHoleyElements;
         }
-        if (IsFastDoubleElementsKind(elements_kind)) {
+        if (IsDoubleElementsKind(elements_kind)) {
           flags |= GrowFastElementsFlag::kDoubleElements;
         }
         elements = effect = graph()->NewNode(

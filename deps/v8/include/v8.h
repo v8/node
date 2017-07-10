@@ -4921,6 +4921,7 @@ class V8_EXPORT External : public Value {
   F(ArrayProto_forEach, array_for_each_iterator) \
   F(ArrayProto_keys, array_keys_iterator)        \
   F(ArrayProto_values, array_values_iterator)    \
+  F(ErrorPrototype, initial_error_prototype)     \
   F(IteratorPrototype, initial_iterator_prototype)
 
 enum Intrinsic {
@@ -5985,8 +5986,6 @@ V8_INLINE Local<Boolean> False(Isolate* isolate);
  *
  * The arguments for set_max_semi_space_size, set_max_old_space_size,
  * set_max_executable_size, set_code_range_size specify limits in MB.
- *
- * The argument for set_max_semi_space_size_in_kb is in KB.
  */
 class V8_EXPORT ResourceConstraints {
  public:
@@ -6004,28 +6003,10 @@ class V8_EXPORT ResourceConstraints {
   void ConfigureDefaults(uint64_t physical_memory,
                          uint64_t virtual_memory_limit);
 
-  // Returns the max semi-space size in MB.
-  V8_DEPRECATE_SOON("Use max_semi_space_size_in_kb()",
-                    int max_semi_space_size()) {
-    return static_cast<int>(max_semi_space_size_in_kb_ / 1024);
+  int max_semi_space_size() const { return max_semi_space_size_; }
+  void set_max_semi_space_size(int limit_in_mb) {
+    max_semi_space_size_ = limit_in_mb;
   }
-
-  // Sets the max semi-space size in MB.
-  V8_DEPRECATE_SOON("Use set_max_semi_space_size_in_kb(size_t limit_in_kb)",
-                    void set_max_semi_space_size(int limit_in_mb)) {
-    max_semi_space_size_in_kb_ = limit_in_mb * 1024;
-  }
-
-  // Returns the max semi-space size in KB.
-  size_t max_semi_space_size_in_kb() const {
-    return max_semi_space_size_in_kb_;
-  }
-
-  // Sets the max semi-space size in KB.
-  void set_max_semi_space_size_in_kb(size_t limit_in_kb) {
-    max_semi_space_size_in_kb_ = limit_in_kb;
-  }
-
   int max_old_space_size() const { return max_old_space_size_; }
   void set_max_old_space_size(int limit_in_mb) {
     max_old_space_size_ = limit_in_mb;
@@ -6051,10 +6032,7 @@ class V8_EXPORT ResourceConstraints {
   }
 
  private:
-  // max_semi_space_size_ is in KB
-  size_t max_semi_space_size_in_kb_;
-
-  // The remaining limits are in MB
+  int max_semi_space_size_;
   int max_old_space_size_;
   int max_executable_size_;
   uint32_t* stack_limit_;
@@ -6917,6 +6895,7 @@ class V8_EXPORT Isolate {
     kAssigmentExpressionLHSIsCallInSloppy = 36,
     kAssigmentExpressionLHSIsCallInStrict = 37,
     kPromiseConstructorReturnedUndefined = 38,
+    kConstructorNonUndefinedPrimitiveReturn = 39,
 
     // If you add new values here, you'll also need to update Chromium's:
     // UseCounter.h, V8PerIsolateData.cpp, histograms.xml

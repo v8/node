@@ -153,6 +153,10 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_ARGUMENTS_TYPE:
     case JS_ERROR_TYPE:
     case JS_PROMISE_CAPABILITY_TYPE:
+    case WASM_INSTANCE_TYPE:  // TODO(titzer): debug printing for wasm objects
+    case WASM_MEMORY_TYPE:
+    case WASM_MODULE_TYPE:
+    case WASM_TABLE_TYPE:
       JSObject::cast(this)->JSObjectPrint(os);
       break;
     case JS_PROMISE_TYPE:
@@ -392,6 +396,17 @@ void PrintFixedArrayElements(std::ostream& os, FixedArray* array) {
   }
 }
 
+void PrintDictionaryElements(std::ostream& os, FixedArrayBase* elements) {
+  // Print some internal fields
+  SeededNumberDictionary* dict = SeededNumberDictionary::cast(elements);
+  if (dict->requires_slow_elements()) {
+    os << "\n   - requires_slow_elements";
+  } else {
+    os << "\n   - max_number_key: " << dict->max_number_key();
+  }
+  dict->Print(os);
+}
+
 void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
                                  SloppyArgumentsElements* elements) {
   Isolate* isolate = elements->GetIsolate();
@@ -418,7 +433,7 @@ void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
     PrintFixedArrayElements(os, arguments_store);
   } else {
     DCHECK_EQ(kind, SLOW_SLOPPY_ARGUMENTS_ELEMENTS);
-    SeededNumberDictionary::cast(arguments_store)->Print(os);
+    PrintDictionaryElements(os, arguments_store);
   }
   os << "\n }";
 }
@@ -434,16 +449,16 @@ void JSObject::PrintElements(std::ostream& os) {  // NOLINT
     return;
   }
   switch (map()->elements_kind()) {
-    case FAST_HOLEY_SMI_ELEMENTS:
-    case FAST_SMI_ELEMENTS:
-    case FAST_HOLEY_ELEMENTS:
-    case FAST_ELEMENTS:
+    case HOLEY_SMI_ELEMENTS:
+    case PACKED_SMI_ELEMENTS:
+    case HOLEY_ELEMENTS:
+    case PACKED_ELEMENTS:
     case FAST_STRING_WRAPPER_ELEMENTS: {
       PrintFixedArrayElements(os, FixedArray::cast(elements()));
       break;
     }
-    case FAST_HOLEY_DOUBLE_ELEMENTS:
-    case FAST_DOUBLE_ELEMENTS: {
+    case HOLEY_DOUBLE_ELEMENTS:
+    case PACKED_DOUBLE_ELEMENTS: {
       DoPrintElements<FixedDoubleArray>(os, elements());
       break;
     }
@@ -458,7 +473,7 @@ void JSObject::PrintElements(std::ostream& os) {  // NOLINT
 
     case DICTIONARY_ELEMENTS:
     case SLOW_STRING_WRAPPER_ELEMENTS:
-      SeededNumberDictionary::cast(elements())->Print(os);
+      PrintDictionaryElements(os, elements());
       break;
     case FAST_SLOPPY_ARGUMENTS_ELEMENTS:
     case SLOW_SLOPPY_ARGUMENTS_ELEMENTS:
@@ -966,7 +981,12 @@ void JSArrayBuffer::JSArrayBufferPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSArrayBuffer");
   os << "\n - backing_store = " << backing_store();
   os << "\n - byte_length = " << Brief(byte_length());
+  if (is_external()) os << "\n - external";
+  if (is_neuterable()) os << "\n - neuterable";
   if (was_neutered()) os << "\n - neutered";
+  if (is_shared()) os << "\n - shared";
+  if (has_guard_region()) os << "\n - has_guard_region";
+  if (is_wasm_buffer()) os << "\n - wasm_buffer";
   JSObjectPrintBody(os, this, !was_neutered());
 }
 
@@ -1119,6 +1139,11 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - length = " << length();
   os << "\n - feedback_metadata = ";
   feedback_metadata()->FeedbackMetadataPrint(os);
+  if (HasPreParsedScopeData()) {
+    os << "\n - preparsed scope data = " << preparsed_scope_data();
+  } else {
+    os << "\n - no preparsed scope data";
+  }
   os << "\n";
 }
 
@@ -1539,6 +1564,12 @@ void LayoutDescriptor::Print(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+void PreParsedScopeData::PreParsedScopeDataPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PreParsedScopeData");
+  os << "\n - scope_data: " << Brief(scope_data());
+  os << "\n - child_data: " << Brief(child_data());
+  os << "\n";
+}
 
 #endif  // OBJECT_PRINT
 
@@ -1686,6 +1717,56 @@ void TransitionArray::PrintTransitions(std::ostream& os, Object* transitions,
   }
 }
 
+void TransitionArray::PrintTransitionTree(Map* map) {
+  OFStream os(stdout);
+  os << "map= " << Brief(map);
+  PrintTransitionTree(os, map);
+  os << "\n" << std::flush;
+}
+
+// static
+void TransitionArray::PrintTransitionTree(std::ostream& os, Map* map,
+                                          int level) {
+  Object* transitions = map->raw_transitions();
+  int num_transitions = NumberOfTransitions(transitions);
+  if (num_transitions == 0) return;
+  for (int i = 0; i < num_transitions; i++) {
+    Name* key = GetKey(transitions, i);
+    Map* target = GetTarget(transitions, i);
+    os << std::endl
+       << "  " << level << "/" << i << ":" << std::setw(level * 2 + 2) << " ";
+    std::stringstream ss;
+    ss << Brief(target);
+    os << std::left << std::setw(50) << ss.str() << ": ";
+
+    Heap* heap = key->GetHeap();
+    if (key == heap->nonextensible_symbol()) {
+      os << "to non-extensible";
+    } else if (key == heap->sealed_symbol()) {
+      os << "to sealed ";
+    } else if (key == heap->frozen_symbol()) {
+      os << "to frozen";
+    } else if (key == heap->elements_transition_symbol()) {
+      os << "to " << ElementsKindToString(target->elements_kind());
+    } else if (key == heap->strict_function_transition_symbol()) {
+      os << "to strict function";
+    } else {
+#ifdef OBJECT_PRINT
+      key->NamePrint(os);
+#else
+      key->ShortPrint(os);
+#endif
+      os << " ";
+      DCHECK(!IsSpecialTransition(key));
+      os << "to ";
+      int descriptor = target->LastAdded();
+      DescriptorArray* descriptors = target->instance_descriptors();
+      descriptors->PrintDescriptorDetails(os, descriptor,
+                                          PropertyDetails::kForTransitions);
+    }
+    TransitionArray::PrintTransitionTree(os, target, level + 1);
+  }
+}
 
 void JSObject::PrintTransitions(std::ostream& os) {  // NOLINT
   Object* transitions = map()->raw_transitions();
@@ -1712,7 +1793,7 @@ extern void _v8_internal_Print_Code(void* object) {
 
 extern void _v8_internal_Print_FeedbackMetadata(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a feedback metadata object\n");
+    printf("Please provide a feedback metadata object\n");
   } else {
     reinterpret_cast<i::FeedbackMetadata*>(object)->Print();
   }
@@ -1720,7 +1801,7 @@ extern void _v8_internal_Print_FeedbackMetadata(void* object) {
 
 extern void _v8_internal_Print_FeedbackVector(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a feedback vector\n");
+    printf("Please provide a feedback vector\n");
   } else {
     reinterpret_cast<i::FeedbackVector*>(object)->Print();
   }
@@ -1728,7 +1809,7 @@ extern void _v8_internal_Print_FeedbackVector(void* object) {
 
 extern void _v8_internal_Print_DescriptorArray(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a descriptor array\n");
+    printf("Please provide a descriptor array\n");
   } else {
     reinterpret_cast<i::DescriptorArray*>(object)->Print();
   }
@@ -1737,7 +1818,7 @@ extern void _v8_internal_Print_DescriptorArray(void* object) {
 extern void _v8_internal_Print_LayoutDescriptor(void* object) {
   i::Object* o = reinterpret_cast<i::Object*>(object);
   if (!o->IsLayoutDescriptor()) {
-    printf("Not a layout descriptor\n");
+    printf("Please provide a layout descriptor\n");
   } else {
     reinterpret_cast<i::LayoutDescriptor*>(object)->Print();
   }
@@ -1745,7 +1826,7 @@ extern void _v8_internal_Print_LayoutDescriptor(void* object) {
 
 extern void _v8_internal_Print_TransitionArray(void* object) {
   if (reinterpret_cast<i::Object*>(object)->IsSmi()) {
-    printf("Not a transition array\n");
+    printf("Please provide a transition array\n");
   } else {
     reinterpret_cast<i::TransitionArray*>(object)->Print();
   }
@@ -1754,4 +1835,15 @@ extern void _v8_internal_Print_TransitionArray(void* object) {
 extern void _v8_internal_Print_StackTrace() {
   i::Isolate* isolate = i::Isolate::Current();
   isolate->PrintStack(stdout);
+}
+
+extern void _v8_internal_Print_TransitionTree(void* object) {
+  i::Object* o = reinterpret_cast<i::Object*>(object);
+  if (!o->IsMap()) {
+    printf("Please provide a valid Map\n");
+  } else {
+#if defined(DEBUG) || defined(OBJECT_PRINT)
+    i::TransitionArray::PrintTransitionTree(reinterpret_cast<i::Map*>(object));
+#endif
+  }
 }

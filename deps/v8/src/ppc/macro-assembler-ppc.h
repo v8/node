@@ -276,6 +276,7 @@ class MacroAssembler : public Assembler {
   // Push a handle.
   void Push(Handle<Object> handle);
   void Push(Smi* smi) { Push(Handle<Smi>(smi, isolate())); }
+  void PushObject(Handle<Object> handle);
 
   // Push two registers.  Pushes leftmost register first (to highest address).
   void Push(Register src1, Register src2) {
@@ -699,15 +700,6 @@ class MacroAssembler : public Assembler {
   void Allocate(Register object_size, Register result, Register result_end,
                 Register scratch, Label* gc_required, AllocationFlags flags);
 
-  // FastAllocate is right now only used for folded allocations. It just
-  // increments the top pointer without checking against limit. This can only
-  // be done if it was proved earlier that the allocation will succeed.
-  void FastAllocate(int object_size, Register result, Register scratch1,
-                    Register scratch2, AllocationFlags flags);
-
-  void FastAllocate(Register object_size, Register result, Register result_end,
-                    Register scratch, AllocationFlags flags);
-
   // Allocates a heap number or jumps to the gc_required label if the young
   // space is full and a scavenge is needed. All registers are clobbered also
   // when control continues at the gc_required label.
@@ -1026,9 +1018,6 @@ class MacroAssembler : public Assembler {
   // Print a message to stdout and abort execution.
   void Abort(BailoutReason reason);
 
-  // Verify restrictions about code generated in stubs.
-  void set_generating_stub(bool value) { generating_stub_ = value; }
-  bool generating_stub() { return generating_stub_; }
   void set_has_frame(bool value) { has_frame_ = value; }
   bool has_frame() { return has_frame_; }
   inline bool AllowThisStubCall(CodeStub* stub);
@@ -1488,7 +1477,6 @@ class MacroAssembler : public Assembler {
   MemOperand SafepointRegisterSlot(Register reg);
   MemOperand SafepointRegistersAndDoublesSlot(Register reg);
 
-  bool generating_stub_;
   bool has_frame_;
   Isolate* isolate_;
   // This handle will be patched with the code object on installation.

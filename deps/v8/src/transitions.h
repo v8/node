@@ -51,7 +51,7 @@ class TransitionArray: public FixedArray {
     return MaybeHandle<Map>();
   }
 
-  static Map* SearchSpecial(Map* map, Symbol* name);
+  static Map* SearchSpecial(const Map* map, Symbol* name);
 
   static Handle<Map> FindTransitionToField(Handle<Map> map, Handle<Name> name);
 
@@ -180,6 +180,8 @@ class TransitionArray: public FixedArray {
   // Print all the transitions.
   static void PrintTransitions(std::ostream& os, Object* transitions,
                                bool print_header = true);  // NOLINT
+  static void PrintTransitionTree(Map* map);
+  static void PrintTransitionTree(std::ostream& os, Map* map, int level = 0);
 #endif
 
 #ifdef OBJECT_PRINT

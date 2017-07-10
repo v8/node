@@ -871,7 +871,7 @@ Extension::Extension(const char* name,
 }
 
 ResourceConstraints::ResourceConstraints()
-    : max_semi_space_size_in_kb_(0),
+    : max_semi_space_size_(0),
       max_old_space_size_(0),
       stack_limit_(NULL),
       code_range_size_(0),
@@ -879,8 +879,8 @@ ResourceConstraints::ResourceConstraints()
 
 void ResourceConstraints::ConfigureDefaults(uint64_t physical_memory,
                                             uint64_t virtual_memory_limit) {
-  set_max_semi_space_size_in_kb(
-      i::Heap::ComputeMaxSemiSpaceSize(physical_memory));
+  set_max_semi_space_size(
+      static_cast<int>(i::Heap::ComputeMaxSemiSpaceSize(physical_memory)));
   set_max_old_space_size(
       static_cast<int>(i::Heap::ComputeMaxOldGenerationSize(physical_memory)));
   set_max_zone_pool_size(i::AccountingAllocator::kMaxPoolSize);
@@ -896,7 +896,7 @@ void ResourceConstraints::ConfigureDefaults(uint64_t physical_memory,
 
 void SetResourceConstraints(i::Isolate* isolate,
                             const ResourceConstraints& constraints) {
-  size_t semi_space_size = constraints.max_semi_space_size_in_kb();
+  int semi_space_size = constraints.max_semi_space_size();
   int old_space_size = constraints.max_old_space_size();
   size_t code_range_size = constraints.code_range_size();
   size_t max_pool_size = constraints.max_zone_pool_size();
@@ -1354,8 +1354,9 @@ static Local<FunctionTemplate> FunctionTemplateNew(
   obj->set_undetectable(false);
   obj->set_needs_access_check(false);
   obj->set_accept_any_receiver(true);
-  if (!signature.IsEmpty())
+  if (!signature.IsEmpty()) {
     obj->set_signature(*Utils::OpenHandle(*signature));
+  }
   obj->set_cached_property_name(
       cached_property_name.IsEmpty()
           ? isolate->heap()->the_hole_value()
@@ -2375,14 +2376,9 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
                         Function);
   TRACE_EVENT0("v8", "V8.ScriptCompiler");
   i::Handle<i::String> source_string;
-  int parameters_end_pos = i::kNoSourcePosition;
   auto factory = isolate->factory();
   if (arguments_count) {
-    if (i::FLAG_harmony_function_tostring) {
-      source_string = factory->NewStringFromStaticChars("(function anonymous(");
-    } else {
-      source_string = factory->NewStringFromStaticChars("(function(");
-    }
+    source_string = factory->NewStringFromStaticChars("(function(");
     for (size_t i = 0; i < arguments_count; ++i) {
       IsIdentifierHelper helper;
       if (!helper.Check(*Utils::OpenHandle(*arguments[i]))) {
@@ -2401,25 +2397,12 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
       RETURN_ON_FAILED_EXECUTION(Function);
     }
     i::Handle<i::String> brackets;
-    if (i::FLAG_harmony_function_tostring) {
-      // Append linefeed and signal that text beyond the linefeed is not part of
-      // the formal parameters.
-      brackets = factory->NewStringFromStaticChars("\n) {\n");
-      parameters_end_pos = source_string->length() + 1;
-    } else {
-      brackets = factory->NewStringFromStaticChars("){");
-    }
+    brackets = factory->NewStringFromStaticChars("){");
     has_pending_exception = !factory->NewConsString(source_string, brackets)
                                  .ToHandle(&source_string);
     RETURN_ON_FAILED_EXECUTION(Function);
   } else {
-    if (i::FLAG_harmony_function_tostring) {
-      source_string =
-          factory->NewStringFromStaticChars("(function anonymous(\n) {\n");
-      parameters_end_pos = source_string->length() - 4;
-    } else {
-      source_string = factory->NewStringFromStaticChars("(function(){");
-    }
+    source_string = factory->NewStringFromStaticChars("(function(){");
   }
 
   int scope_position = source_string->length();
@@ -2469,7 +2452,7 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
   has_pending_exception =
       !i::Compiler::GetFunctionFromEval(
            source_string, outer_info, context, i::SLOPPY,
-           i::ONLY_SINGLE_FUNCTION_LITERAL, parameters_end_pos,
+           i::ONLY_SINGLE_FUNCTION_LITERAL, i::kNoSourcePosition,
            eval_scope_position, eval_position, line_offset,
            column_offset - scope_position, name_obj, source->resource_options)
            .ToHandle(&fun);
@@ -3016,7 +2999,7 @@ Local<Array> StackTrace::AsArray() {
     frames->set(i, *frame_obj);
   }
   return Utils::ToLocal(isolate->factory()->NewJSArrayWithElements(
-      frames, i::FAST_ELEMENTS, frame_count));
+      frames, i::PACKED_ELEMENTS, frame_count));
 }
 
 
@@ -7297,7 +7280,7 @@ MaybeLocal<Object> Array::CloneElementAt(Local<Context> context,
                                          uint32_t index) {
   PREPARE_FOR_EXECUTION(context, Array, CloneElementAt, Object);
   auto self = Utils::OpenHandle(this);
-  if (!self->HasFastObjectElements()) return Local<Object>();
+  if (!self->HasObjectElements()) return Local<Object>();
   i::FixedArray* elms = i::FixedArray::cast(self->elements());
   i::Object* paragon = elms->get(index);
   if (!paragon->IsJSObject()) return Local<Object>();
@@ -7424,7 +7407,7 @@ i::Handle<i::JSArray> MapAsArray(i::Isolate* isolate, i::Object* table_obj,
   }
   DCHECK_EQ(result_index, result->length());
   DCHECK_EQ(result_index, length);
-  return factory->NewJSArrayWithElements(result, i::FAST_ELEMENTS, length);
+  return factory->NewJSArrayWithElements(result, i::PACKED_ELEMENTS, length);
 }
 }  // namespace
 
@@ -7524,7 +7507,7 @@ i::Handle<i::JSArray> SetAsArray(i::Isolate* isolate, i::Object* table_obj,
   }
   DCHECK_EQ(result_index, result->length());
   DCHECK_EQ(result_index, length);
-  return factory->NewJSArrayWithElements(result, i::FAST_ELEMENTS, length);
+  return factory->NewJSArrayWithElements(result, i::PACKED_ELEMENTS, length);
 }
 }  // namespace
 
@@ -7720,10 +7703,10 @@ MaybeLocal<Proxy> Proxy::New(Local<Context> context, Local<Object> local_target,
 }
 
 Local<String> WasmCompiledModule::GetWasmWireBytes() {
-  i::Handle<i::JSObject> obj =
-      i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
+  i::Handle<i::WasmModuleObject> obj =
+      i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
-      i::handle(i::WasmCompiledModule::cast(obj->GetEmbedderField(0)));
+      i::handle(i::WasmCompiledModule::cast(obj->compiled_module()));
   i::Handle<i::String> wire_bytes(compiled_part->module_bytes());
   return Local<String>::Cast(Utils::ToLocal(wire_bytes));
 }
@@ -7759,10 +7742,10 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::FromTransferrableModule(
 }
 
 WasmCompiledModule::SerializedModule WasmCompiledModule::Serialize() {
-  i::Handle<i::JSObject> obj =
-      i::Handle<i::JSObject>::cast(Utils::OpenHandle(this));
+  i::Handle<i::WasmModuleObject> obj =
+      i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
-      i::handle(i::WasmCompiledModule::cast(obj->GetEmbedderField(0)));
+      i::handle(i::WasmCompiledModule::cast(obj->compiled_module()));
 
   std::unique_ptr<i::ScriptData> script_data =
       i::WasmCompiledModuleSerializer::SerializeWasmModule(obj->GetIsolate(),
@@ -9836,7 +9819,7 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
   i::Handle<i::Code> call_code(isolate->builtins()->builtin(name));
   i::Handle<i::JSFunction> fun =
       isolate->factory()->NewFunctionWithoutPrototype(
-          isolate->factory()->empty_string(), call_code, false);
+          isolate->factory()->empty_string(), call_code, i::SLOPPY);
   fun->shared()->DontAdaptArguments();
   return Utils::ToLocal(handle_scope.CloseAndEscape(fun));
 }
@@ -9859,6 +9842,18 @@ debug::ConsoleCallArguments::ConsoleCallArguments(
 
 int debug::GetStackFrameId(v8::Local<v8::StackFrame> frame) {
   return Utils::OpenHandle(*frame)->id();
+}
+
+v8::Local<v8::StackTrace> debug::GetDetailedStackTrace(
+    Isolate* v8_isolate, v8::Local<v8::Object> v8_error) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+  i::Handle<i::JSReceiver> error = Utils::OpenHandle(*v8_error);
+  if (!error->IsJSObject()) {
+    return v8::Local<v8::StackTrace>();
+  }
+  i::Handle<i::FixedArray> stack_trace =
+      isolate->GetDetailedStackTrace(i::Handle<i::JSObject>::cast(error));
+  return Utils::StackTraceToLocal(stack_trace);
 }
 
 MaybeLocal<debug::Script> debug::GeneratorObject::Script() {

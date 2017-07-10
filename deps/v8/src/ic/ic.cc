@@ -413,16 +413,19 @@ static void ComputeTypeInfoCountDelta(IC::State old_state, IC::State new_state,
 }
 
 // static
-void IC::OnFeedbackChanged(Isolate* isolate, JSFunction* host_function) {
+void IC::OnFeedbackChanged(Isolate* isolate, FeedbackVector* vector,
+                           JSFunction* host_function) {
   if (FLAG_trace_opt_verbose) {
-    if (host_function->shared()->profiler_ticks() != 0) {
+    // TODO(leszeks): The host function is only needed for this print, we could
+    // remove it as a parameter if we're of with removing this trace (or only
+    // tracing the feedback vector, not the function name).
+    if (vector->profiler_ticks() != 0) {
       PrintF("[resetting ticks for ");
       host_function->PrintName();
-      PrintF(" due from %d due to IC change]\n",
-             host_function->shared()->profiler_ticks());
+      PrintF(" due from %d due to IC change]\n", vector->profiler_ticks());
     }
   }
-  host_function->shared()->set_profiler_ticks(0);
+  vector->set_profiler_ticks(0);
   isolate->runtime_profiler()->NotifyICChanged();
   // TODO(2029): When an optimized function is patched, it would
   // be nice to propagate the corresponding type information to its
@@ -511,7 +514,7 @@ void IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
   }
 
   vector_set_ = true;
-  OnFeedbackChanged(isolate(), GetHostFunction());
+  OnFeedbackChanged(isolate(), *vector(), GetHostFunction());
 }
 
 void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
@@ -526,7 +529,7 @@ void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
   }
 
   vector_set_ = true;
-  OnFeedbackChanged(isolate(), GetHostFunction());
+  OnFeedbackChanged(isolate(), *vector(), GetHostFunction());
 }
 
 void IC::ConfigureVectorState(Handle<Name> name, MapHandles const& maps,
@@ -537,7 +540,7 @@ void IC::ConfigureVectorState(Handle<Name> name, MapHandles const& maps,
   nexus()->ConfigurePolymorphic(name, maps, handlers);
 
   vector_set_ = true;
-  OnFeedbackChanged(isolate(), GetHostFunction());
+  OnFeedbackChanged(isolate(), *vector(), GetHostFunction());
 }
 
 MaybeHandle<Object> LoadIC::Load(Handle<Object> object, Handle<Name> name) {
@@ -849,10 +852,15 @@ int GetPrototypeCheckCount(Isolate* isolate, Handle<Map> receiver_map,
                                     Handle<FixedArray>(), 0);
 }
 
+enum class HolderCellRequest {
+  kGlobalPropertyCell,
+  kHolder,
+};
+
 Handle<WeakCell> HolderCell(Isolate* isolate, Handle<JSObject> holder,
-                            Handle<Name> name, Handle<Smi> smi_handler) {
-  if (holder->IsJSGlobalObject() &&
-      *smi_handler != *LoadHandler::LoadInterceptor(isolate)) {
+                            Handle<Name> name, HolderCellRequest request) {
+  if (request == HolderCellRequest::kGlobalPropertyCell) {
+    DCHECK(holder->IsJSGlobalObject());
     Handle<JSGlobalObject> global = Handle<JSGlobalObject>::cast(holder);
     GlobalDictionary* dict = global->global_dictionary();
     int number = dict->FindEntry(name);
@@ -888,8 +896,14 @@ Handle<Object> LoadIC::LoadFromPrototype(Handle<Map> receiver_map,
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
   DCHECK(!validity_cell.is_null());
 
-  Handle<WeakCell> holder_cell =
-      HolderCell(isolate(), holder, name, smi_handler);
+  // LoadIC dispatcher expects PropertyCell as a "holder" in case of kGlobal
+  // handler kind.
+  HolderCellRequest request =
+      LoadHandler::GetHandlerKind(*smi_handler) == LoadHandler::kGlobal
+          ? HolderCellRequest::kGlobalPropertyCell
+          : HolderCellRequest::kHolder;
+
+  Handle<WeakCell> holder_cell = HolderCell(isolate(), holder, name, request);
 
   if (checks_count == 0) {
     return isolate()->factory()->NewTuple3(holder_cell, smi_handler,
@@ -1284,7 +1298,7 @@ static Handle<Object> TryConvertKey(Handle<Object> key, Isolate* isolate) {
   if (key->IsHeapNumber()) {
     double value = Handle<HeapNumber>::cast(key)->value();
     if (std::isnan(value)) {
-      key = isolate->factory()->nan_string();
+      key = isolate->factory()->NaN_string();
     } else {
       int int_value = FastD2I(value);
       if (value == int_value && Smi::IsValid(int_value)) {
@@ -1398,9 +1412,9 @@ Handle<Object> KeyedLoadIC::LoadElementHandler(Handle<Map> receiver_map) {
   }
   DCHECK(IsFastElementsKind(elements_kind) ||
          IsFixedTypedArrayElementsKind(elements_kind));
-  // TODO(jkummerow): Use IsHoleyElementsKind(elements_kind).
+  // TODO(jkummerow): Use IsHoleyOrDictionaryElementsKind(elements_kind).
   bool convert_hole_to_undefined =
-      is_js_array && elements_kind == FAST_HOLEY_ELEMENTS &&
+      is_js_array && elements_kind == HOLEY_ELEMENTS &&
       *receiver_map == isolate()->get_initial_js_array_map(elements_kind);
   TRACE_HANDLER_STATS(isolate(), KeyedLoadIC_LoadElementDH);
   return LoadHandler::LoadElement(isolate(), elements_kind,
@@ -2029,16 +2043,16 @@ Handle<Map> KeyedStoreIC::ComputeTransitionedMap(
   switch (store_mode) {
     case STORE_TRANSITION_TO_OBJECT:
     case STORE_AND_GROW_TRANSITION_TO_OBJECT: {
-      ElementsKind kind = IsFastHoleyElementsKind(map->elements_kind())
-                              ? FAST_HOLEY_ELEMENTS
-                              : FAST_ELEMENTS;
+      ElementsKind kind = IsHoleyElementsKind(map->elements_kind())
+                              ? HOLEY_ELEMENTS
+                              : PACKED_ELEMENTS;
       return Map::TransitionElementsTo(map, kind);
     }
     case STORE_TRANSITION_TO_DOUBLE:
     case STORE_AND_GROW_TRANSITION_TO_DOUBLE: {
-      ElementsKind kind = IsFastHoleyElementsKind(map->elements_kind())
-                              ? FAST_HOLEY_DOUBLE_ELEMENTS
-                              : FAST_DOUBLE_ELEMENTS;
+      ElementsKind kind = IsHoleyElementsKind(map->elements_kind())
+                              ? HOLEY_DOUBLE_ELEMENTS
+                              : PACKED_DOUBLE_ELEMENTS;
       return Map::TransitionElementsTo(map, kind);
     }
     case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
@@ -2173,14 +2187,14 @@ static KeyedAccessStoreMode GetStoreMode(Handle<JSObject> receiver,
                       !receiver->WouldConvertToSlowElements(index);
   if (allow_growth) {
     // Handle growing array in stub if necessary.
-    if (receiver->HasFastSmiElements()) {
+    if (receiver->HasSmiElements()) {
       if (value->IsHeapNumber()) {
         return STORE_AND_GROW_TRANSITION_TO_DOUBLE;
       }
       if (value->IsHeapObject()) {
         return STORE_AND_GROW_TRANSITION_TO_OBJECT;
       }
-    } else if (receiver->HasFastDoubleElements()) {
+    } else if (receiver->HasDoubleElements()) {
       if (!value->IsSmi() && !value->IsHeapNumber()) {
         return STORE_AND_GROW_TRANSITION_TO_OBJECT;
       }
@@ -2188,13 +2202,13 @@ static KeyedAccessStoreMode GetStoreMode(Handle<JSObject> receiver,
     return STORE_AND_GROW_NO_TRANSITION;
   } else {
     // Handle only in-bounds elements accesses.
-    if (receiver->HasFastSmiElements()) {
+    if (receiver->HasSmiElements()) {
       if (value->IsHeapNumber()) {
         return STORE_TRANSITION_TO_DOUBLE;
       } else if (value->IsHeapObject()) {
         return STORE_TRANSITION_TO_OBJECT;
       }
-    } else if (receiver->HasFastDoubleElements()) {
+    } else if (receiver->HasDoubleElements()) {
       if (!value->IsSmi() && !value->IsHeapNumber()) {
         return STORE_TRANSITION_TO_OBJECT;
       }

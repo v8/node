@@ -12,6 +12,7 @@
 #include "src/bootstrapper.h"
 #include "src/codegen.h"
 #include "src/counters.h"
+#include "src/double.h"
 #include "src/heap/heap-inl.h"
 #include "src/ic/handler-compiler.h"
 #include "src/ic/ic.h"
@@ -648,7 +649,7 @@ void StoreBufferOverflowStub::Generate(MacroAssembler* masm) {
   const int fp_argument_count = 0;
 
   AllowExternalCallThatCantCauseGC scope(masm);
-  __ PrepareCallCFunction(argument_count, fp_argument_count, scratch);
+  __ PrepareCallCFunction(argument_count, fp_argument_count);
   __ mov(r0, Operand(ExternalReference::isolate_address(isolate())));
   __ CallCFunction(
       ExternalReference::store_buffer_overflow_function(isolate()),
@@ -687,7 +688,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
     __ push(lr);
     {
       AllowExternalCallThatCantCauseGC scope(masm);
-      __ PrepareCallCFunction(0, 2, scratch);
+      __ PrepareCallCFunction(0, 2);
       __ MovToFloatParameters(double_base, double_exponent);
       __ CallCFunction(
           ExternalReference::power_double_double_function(isolate()), 0, 2);
@@ -708,7 +709,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
     __ mov(exponent, scratch);
   }
   __ vmov(double_scratch, double_base);  // Back up base.
-  __ vmov(double_result, 1.0, scratch2);
+  __ vmov(double_result, Double(1.0), scratch2);
 
   // Get absolute value of exponent.
   __ cmp(scratch, Operand::Zero());
@@ -723,7 +724,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
 
   __ cmp(exponent, Operand::Zero());
   __ b(ge, &done);
-  __ vmov(double_scratch, 1.0, scratch);
+  __ vmov(double_scratch, Double(1.0), scratch);
   __ vdiv(double_result, double_scratch, double_result);
   // Test whether result is zero.  Bail out to check for subnormal result.
   // Due to subnormals, x^-y == (1/x)^y does not hold in all cases.
@@ -738,7 +739,7 @@ void MathPowStub::Generate(MacroAssembler* masm) {
   __ push(lr);
   {
     AllowExternalCallThatCantCauseGC scope(masm);
-    __ PrepareCallCFunction(0, 2, scratch);
+    __ PrepareCallCFunction(0, 2);
     __ MovToFloatParameters(double_base, double_exponent);
     __ CallCFunction(ExternalReference::power_double_double_function(isolate()),
                      0, 2);
@@ -930,7 +931,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
                                  isolate());
   {
     FrameScope scope(masm, StackFrame::MANUAL);
-    __ PrepareCallCFunction(3, 0, r0);
+    __ PrepareCallCFunction(3, 0);
     __ mov(r0, Operand(0));
     __ mov(r1, Operand(0));
     __ mov(r2, Operand(ExternalReference::isolate_address(isolate())));
@@ -980,7 +981,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // Save callee-saved vfp registers.
   __ vstm(db_w, sp, kFirstCalleeSavedDoubleReg, kLastCalleeSavedDoubleReg);
   // Set up the reserved register for 0.0.
-  __ vmov(kDoubleRegZero, 0.0);
+  __ vmov(kDoubleRegZero, Double(0.0));
 
   // Get address of argv, see stm above.
   // r0: code entry
@@ -1005,9 +1006,16 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ mov(r5, Operand(ExternalReference(IsolateAddressId::kCEntryFPAddress,
                                        isolate())));
   __ ldr(r5, MemOperand(r5));
-  __ mov(ip, Operand(-1));  // Push a bad frame pointer to fail if it is used.
-  __ stm(db_w, sp, r5.bit() | r6.bit() | r7.bit() |
-                       ip.bit());
+  {
+    UseScratchRegisterScope temps(masm);
+    Register scratch = temps.Acquire();
+
+    // Push a bad frame pointer to fail if it is used.
+    __ mov(scratch, Operand(-1));
+    __ stm(db_w, sp, r5.bit() | r6.bit() | r7.bit() | scratch.bit());
+  }
+
+  Register scratch = r6;
 
   // Set up frame pointer for the frame to be pushed.
   __ add(fp, sp, Operand(-EntryFrameConstants::kCallerFPOffset));
@@ -1016,17 +1024,17 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   Label non_outermost_js;
   ExternalReference js_entry_sp(IsolateAddressId::kJSEntrySPAddress, isolate());
   __ mov(r5, Operand(ExternalReference(js_entry_sp)));
-  __ ldr(r6, MemOperand(r5));
-  __ cmp(r6, Operand::Zero());
+  __ ldr(scratch, MemOperand(r5));
+  __ cmp(scratch, Operand::Zero());
   __ b(ne, &non_outermost_js);
   __ str(fp, MemOperand(r5));
-  __ mov(ip, Operand(StackFrame::OUTERMOST_JSENTRY_FRAME));
+  __ mov(scratch, Operand(StackFrame::OUTERMOST_JSENTRY_FRAME));
   Label cont;
   __ b(&cont);
   __ bind(&non_outermost_js);
-  __ mov(ip, Operand(StackFrame::INNER_JSENTRY_FRAME));
+  __ mov(scratch, Operand(StackFrame::INNER_JSENTRY_FRAME));
   __ bind(&cont);
-  __ push(ip);
+  __ push(scratch);
 
   // Jump to a faked try block that does the invoke, with a faked catch
   // block that sets the pending exception.
@@ -1043,10 +1051,11 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
     // field in the JSEnv and return a failure sentinel.  Coming in here the
     // fp will be invalid because the PushStackHandler below sets it to 0 to
     // signal the existence of the JSEntry frame.
-    __ mov(ip, Operand(ExternalReference(
-                   IsolateAddressId::kPendingExceptionAddress, isolate())));
+    __ mov(scratch,
+           Operand(ExternalReference(IsolateAddressId::kPendingExceptionAddress,
+                                     isolate())));
   }
-  __ str(r0, MemOperand(ip));
+  __ str(r0, MemOperand(scratch));
   __ LoadRoot(r0, Heap::kExceptionRootIndex);
   __ b(&exit);
 
@@ -1072,16 +1081,16 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   if (type() == StackFrame::ENTRY_CONSTRUCT) {
     ExternalReference construct_entry(Builtins::kJSConstructEntryTrampoline,
                                       isolate());
-    __ mov(ip, Operand(construct_entry));
+    __ mov(scratch, Operand(construct_entry));
   } else {
     ExternalReference entry(Builtins::kJSEntryTrampoline, isolate());
-    __ mov(ip, Operand(entry));
+    __ mov(scratch, Operand(entry));
   }
-  __ ldr(ip, MemOperand(ip));  // deref address
-  __ add(ip, ip, Operand(Code::kHeaderSize - kHeapObjectTag));
+  __ ldr(scratch, MemOperand(scratch));  // deref address
+  __ add(scratch, scratch, Operand(Code::kHeaderSize - kHeapObjectTag));
 
   // Branch and link to JSEntryTrampoline.
-  __ Call(ip);
+  __ Call(scratch);
 
   // Unlink this frame from the handler chain.
   __ PopStackHandler();
@@ -1099,9 +1108,9 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
 
   // Restore the top frame descriptors from the stack.
   __ pop(r3);
-  __ mov(ip, Operand(ExternalReference(IsolateAddressId::kCEntryFPAddress,
-                                       isolate())));
-  __ str(r3, MemOperand(ip));
+  __ mov(scratch, Operand(ExternalReference(IsolateAddressId::kCEntryFPAddress,
+                                            isolate())));
+  __ str(r3, MemOperand(scratch));
 
   // Reset the stack to the callee saved registers.
   __ add(sp, sp, Operand(-EntryFrameConstants::kCallerFPOffset));
@@ -1202,8 +1211,8 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
   // write-barrier is needed.
   __ bind(&megamorphic);
   __ add(r5, r2, Operand::PointerOffsetFromSmiKey(r3));
-  __ LoadRoot(ip, Heap::kmegamorphic_symbolRootIndex);
-  __ str(ip, FieldMemOperand(r5, FixedArray::kHeaderSize));
+  __ LoadRoot(r4, Heap::kmegamorphic_symbolRootIndex);
+  __ str(r4, FieldMemOperand(r5, FixedArray::kHeaderSize));
   __ jmp(&done);
 
   // An uninitialized cache is patched with the function
@@ -1295,8 +1304,8 @@ void StringCharCodeAtGenerator::GenerateFast(MacroAssembler* masm) {
   __ bind(&got_smi_index_);
 
   // Check for index out of range.
-  __ ldr(ip, FieldMemOperand(object_, String::kLengthOffset));
-  __ cmp(ip, Operand(index_));
+  __ ldr(result_, FieldMemOperand(object_, String::kLengthOffset));
+  __ cmp(result_, Operand(index_));
   __ b(ls, index_out_of_range_);
 
   __ SmiUntag(index_);
@@ -1795,22 +1804,22 @@ void CompareICStub::GenerateKnownReceivers(MacroAssembler* masm) {
 
 
 void CompareICStub::GenerateMiss(MacroAssembler* masm) {
+  Register scratch = r2;
   {
     // Call the runtime system in a fresh internal frame.
     FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
     __ Push(r1, r0);
     __ Push(lr, r1, r0);
-    __ mov(ip, Operand(Smi::FromInt(op())));
-    __ push(ip);
+    __ mov(scratch, Operand(Smi::FromInt(op())));
+    __ push(scratch);
     __ CallRuntime(Runtime::kCompareIC_Miss);
     // Compute the entry point of the rewritten stub.
-    __ add(r2, r0, Operand(Code::kHeaderSize - kHeapObjectTag));
+    __ add(scratch, r0, Operand(Code::kHeaderSize - kHeapObjectTag));
     // Restore registers.
     __ pop(lr);
     __ Pop(r1, r0);
   }
-
-  __ Jump(r2);
+  __ Jump(scratch);
 }
 
 
@@ -2091,7 +2100,7 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
 void RecordWriteStub::InformIncrementalMarker(MacroAssembler* masm) {
   regs_.SaveCallerSaveRegisters(masm, save_fp_regs_mode());
   int argument_count = 3;
-  __ PrepareCallCFunction(argument_count, regs_.scratch0());
+  __ PrepareCallCFunction(argument_count);
   Register address =
       r0.is(regs_.address()) ? regs_.scratch0() : regs_.address();
   DCHECK(!address.is(regs_.object()));
@@ -2183,15 +2192,15 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
   // Fall through when we need to inform the incremental marker.
 }
 
-void ProfileEntryHookStub::MaybeCallEntryHookDelayed(MacroAssembler* masm,
+void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
                                                      Zone* zone) {
-  if (masm->isolate()->function_entry_hook() != NULL) {
-    masm->MaybeCheckConstPool();
-    PredictableCodeSizeScope predictable(masm);
-    predictable.ExpectSize(masm->CallStubSize() + 2 * Assembler::kInstrSize);
-    __ push(lr);
-    __ CallStubDelayed(new (zone) ProfileEntryHookStub(nullptr));
-    __ pop(lr);
+  if (tasm->isolate()->function_entry_hook() != NULL) {
+    tasm->MaybeCheckConstPool();
+    PredictableCodeSizeScope predictable(tasm);
+    predictable.ExpectSize(tasm->CallStubSize() + 2 * Assembler::kInstrSize);
+    tasm->push(lr);
+    tasm->CallStubDelayed(new (zone) ProfileEntryHookStub(nullptr));
+    tasm->pop(lr);
   }
 }
 
@@ -2244,22 +2253,27 @@ void ProfileEntryHookStub::Generate(MacroAssembler* masm) {
     __ and_(sp, sp, Operand(-frame_alignment));
   }
 
-#if V8_HOST_ARCH_ARM
-  int32_t entry_hook =
-      reinterpret_cast<int32_t>(isolate()->function_entry_hook());
-  __ mov(ip, Operand(entry_hook));
-#else
-  // Under the simulator we need to indirect the entry hook through a
-  // trampoline function at a known address.
-  // It additionally takes an isolate as a third parameter
-  __ mov(r2, Operand(ExternalReference::isolate_address(isolate())));
+  {
+    UseScratchRegisterScope temps(masm);
+    Register scratch = temps.Acquire();
 
-  ApiFunction dispatcher(FUNCTION_ADDR(EntryHookTrampoline));
-  __ mov(ip, Operand(ExternalReference(&dispatcher,
-                                       ExternalReference::BUILTIN_CALL,
-                                       isolate())));
+#if V8_HOST_ARCH_ARM
+    int32_t entry_hook =
+        reinterpret_cast<int32_t>(isolate()->function_entry_hook());
+    __ mov(scratch, Operand(entry_hook));
+#else
+    // Under the simulator we need to indirect the entry hook through a
+    // trampoline function at a known address.
+    // It additionally takes an isolate as a third parameter
+    __ mov(r2, Operand(ExternalReference::isolate_address(isolate())));
+
+    ApiFunction dispatcher(FUNCTION_ADDR(EntryHookTrampoline));
+    __ mov(scratch,
+           Operand(ExternalReference(
+               &dispatcher, ExternalReference::BUILTIN_CALL, isolate())));
 #endif
-  __ Call(ip);
+    __ Call(scratch);
+  }
 
   // Restore the stack pointer if needed.
   if (frame_alignment > kPointerSize) {
@@ -2278,8 +2292,8 @@ static void CreateArrayDispatch(MacroAssembler* masm,
     T stub(masm->isolate(), GetInitialFastElementsKind(), mode);
     __ TailCallStub(&stub);
   } else if (mode == DONT_OVERRIDE) {
-    int last_index = GetSequenceIndexFromFastElementsKind(
-        TERMINAL_FAST_ELEMENTS_KIND);
+    int last_index =
+        GetSequenceIndexFromFastElementsKind(TERMINAL_FAST_ELEMENTS_KIND);
     for (int i = 0; i <= last_index; ++i) {
       ElementsKind kind = GetFastElementsKindFromSequenceIndex(i);
       __ cmp(r3, Operand(kind));
@@ -2304,12 +2318,12 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
   // sp[0] - last argument
   Label normal_sequence;
   if (mode == DONT_OVERRIDE) {
-    STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-    STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-    STATIC_ASSERT(FAST_ELEMENTS == 2);
-    STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-    STATIC_ASSERT(FAST_DOUBLE_ELEMENTS == 4);
-    STATIC_ASSERT(FAST_HOLEY_DOUBLE_ELEMENTS == 5);
+    STATIC_ASSERT(PACKED_SMI_ELEMENTS == 0);
+    STATIC_ASSERT(HOLEY_SMI_ELEMENTS == 1);
+    STATIC_ASSERT(PACKED_ELEMENTS == 2);
+    STATIC_ASSERT(HOLEY_ELEMENTS == 3);
+    STATIC_ASSERT(PACKED_DOUBLE_ELEMENTS == 4);
+    STATIC_ASSERT(HOLEY_DOUBLE_ELEMENTS == 5);
 
     // is the low bit set? If so, we are holey and that is good.
     __ tst(r3, Operand(1));
@@ -2355,8 +2369,8 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
     __ str(r4, FieldMemOperand(r2, AllocationSite::kTransitionInfoOffset));
 
     __ bind(&normal_sequence);
-    int last_index = GetSequenceIndexFromFastElementsKind(
-        TERMINAL_FAST_ELEMENTS_KIND);
+    int last_index =
+        GetSequenceIndexFromFastElementsKind(TERMINAL_FAST_ELEMENTS_KIND);
     for (int i = 0; i <= last_index; ++i) {
       ElementsKind kind = GetFastElementsKindFromSequenceIndex(i);
       __ cmp(r3, Operand(kind));
@@ -2374,8 +2388,8 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
 
 template<class T>
 static void ArrayConstructorStubAheadOfTimeHelper(Isolate* isolate) {
-  int to_index = GetSequenceIndexFromFastElementsKind(
-      TERMINAL_FAST_ELEMENTS_KIND);
+  int to_index =
+      GetSequenceIndexFromFastElementsKind(TERMINAL_FAST_ELEMENTS_KIND);
   for (int i = 0; i <= to_index; ++i) {
     ElementsKind kind = GetFastElementsKindFromSequenceIndex(i);
     T stub(isolate, kind);
@@ -2394,7 +2408,7 @@ void CommonArrayConstructorStub::GenerateStubsAheadOfTime(Isolate* isolate) {
       isolate);
   ArrayNArgumentsConstructorStub stub(isolate);
   stub.GetCode();
-  ElementsKind kinds[2] = { FAST_ELEMENTS, FAST_HOLEY_ELEMENTS };
+  ElementsKind kinds[2] = {PACKED_ELEMENTS, HOLEY_ELEMENTS};
   for (int i = 0; i < 2; i++) {
     // For internal arrays we only need a few things
     InternalArrayNoArgumentConstructorStub stubh1(isolate, kinds[i]);
@@ -2536,21 +2550,21 @@ void InternalArrayConstructorStub::Generate(MacroAssembler* masm) {
 
   if (FLAG_debug_code) {
     Label done;
-    __ cmp(r3, Operand(FAST_ELEMENTS));
+    __ cmp(r3, Operand(PACKED_ELEMENTS));
     __ b(eq, &done);
-    __ cmp(r3, Operand(FAST_HOLEY_ELEMENTS));
+    __ cmp(r3, Operand(HOLEY_ELEMENTS));
     __ Assert(eq,
               kInvalidElementsKindForInternalArrayOrInternalPackedArray);
     __ bind(&done);
   }
 
   Label fast_elements_case;
-  __ cmp(r3, Operand(FAST_ELEMENTS));
+  __ cmp(r3, Operand(PACKED_ELEMENTS));
   __ b(eq, &fast_elements_case);
-  GenerateCase(masm, FAST_HOLEY_ELEMENTS);
+  GenerateCase(masm, HOLEY_ELEMENTS);
 
   __ bind(&fast_elements_case);
-  GenerateCase(masm, FAST_ELEMENTS);
+  GenerateCase(masm, PACKED_ELEMENTS);
 }
 
 static int AddressOffset(ExternalReference ref0, ExternalReference ref1) {
@@ -2606,7 +2620,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   if (FLAG_log_timer_events) {
     FrameScope frame(masm, StackFrame::MANUAL);
     __ PushSafepointRegisters();
-    __ PrepareCallCFunction(1, r0);
+    __ PrepareCallCFunction(1);
     __ mov(r0, Operand(ExternalReference::isolate_address(isolate)));
     __ CallCFunction(ExternalReference::log_enter_external_function(isolate),
                      1);
@@ -2622,7 +2636,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   if (FLAG_log_timer_events) {
     FrameScope frame(masm, StackFrame::MANUAL);
     __ PushSafepointRegisters();
-    __ PrepareCallCFunction(1, r0);
+    __ PrepareCallCFunction(1);
     __ mov(r0, Operand(ExternalReference::isolate_address(isolate)));
     __ CallCFunction(ExternalReference::log_leave_external_function(isolate),
                      1);
@@ -2647,8 +2661,8 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   }
   __ sub(r6, r6, Operand(1));
   __ str(r6, MemOperand(r9, kLevelOffset));
-  __ ldr(ip, MemOperand(r9, kLimitOffset));
-  __ cmp(r5, ip);
+  __ ldr(r6, MemOperand(r9, kLimitOffset));
+  __ cmp(r5, r6);
   __ b(ne, &delete_allocated_handles);
 
   // Leave the API exit frame.
@@ -2667,8 +2681,8 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
 
   // Check if the function scheduled an exception.
   __ LoadRoot(r4, Heap::kTheHoleValueRootIndex);
-  __ mov(ip, Operand(ExternalReference::scheduled_exception_address(isolate)));
-  __ ldr(r5, MemOperand(ip));
+  __ mov(r6, Operand(ExternalReference::scheduled_exception_address(isolate)));
+  __ ldr(r5, MemOperand(r6));
   __ cmp(r4, r5);
   __ b(ne, &promote_scheduled_exception);
 
@@ -2682,7 +2696,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   __ bind(&delete_allocated_handles);
   __ str(r5, MemOperand(r9, kLimitOffset));
   __ mov(r4, r0);
-  __ PrepareCallCFunction(1, r5);
+  __ PrepareCallCFunction(1);
   __ mov(r0, Operand(ExternalReference::isolate_address(isolate)));
   __ CallCFunction(ExternalReference::delete_handle_scope_extensions(isolate),
                    1);
@@ -2738,20 +2752,22 @@ void CallApiCallbackStub::Generate(MacroAssembler* masm) {
   // call data
   __ push(call_data);
 
-  Register scratch = call_data;
-  __ LoadRoot(scratch, Heap::kUndefinedValueRootIndex);
+  Register scratch0 = call_data;
+  Register scratch1 = r5;
+  __ LoadRoot(scratch0, Heap::kUndefinedValueRootIndex);
   // return value
-  __ push(scratch);
+  __ push(scratch0);
   // return value default
-  __ push(scratch);
+  __ push(scratch0);
   // isolate
-  __ mov(scratch, Operand(ExternalReference::isolate_address(masm->isolate())));
-  __ push(scratch);
+  __ mov(scratch1,
+         Operand(ExternalReference::isolate_address(masm->isolate())));
+  __ push(scratch1);
   // holder
   __ push(holder);
 
   // Prepare arguments.
-  __ mov(scratch, sp);
+  __ mov(scratch0, sp);
 
   // Allocate the v8::Arguments structure in the arguments' space since
   // it's not controlled by GC.
@@ -2760,18 +2776,19 @@ void CallApiCallbackStub::Generate(MacroAssembler* masm) {
   FrameScope frame_scope(masm, StackFrame::MANUAL);
   __ EnterExitFrame(false, kApiStackSpace);
 
-  DCHECK(!api_function_address.is(r0) && !scratch.is(r0));
+  DCHECK(!api_function_address.is(r0) && !scratch0.is(r0));
   // r0 = FunctionCallbackInfo&
   // Arguments is after the return address.
   __ add(r0, sp, Operand(1 * kPointerSize));
   // FunctionCallbackInfo::implicit_args_
-  __ str(scratch, MemOperand(r0, 0 * kPointerSize));
+  __ str(scratch0, MemOperand(r0, 0 * kPointerSize));
   // FunctionCallbackInfo::values_
-  __ add(ip, scratch, Operand((FCA::kArgsLength - 1 + argc()) * kPointerSize));
-  __ str(ip, MemOperand(r0, 1 * kPointerSize));
+  __ add(scratch1, scratch0,
+         Operand((FCA::kArgsLength - 1 + argc()) * kPointerSize));
+  __ str(scratch1, MemOperand(r0, 1 * kPointerSize));
   // FunctionCallbackInfo::length_ = argc
-  __ mov(ip, Operand(argc()));
-  __ str(ip, MemOperand(r0, 2 * kPointerSize));
+  __ mov(scratch0, Operand(argc()));
+  __ str(scratch0, MemOperand(r0, 2 * kPointerSize));
 
   ExternalReference thunk_ref =
       ExternalReference::invoke_function_callback(masm->isolate());

@@ -148,7 +148,7 @@ bool IsFastLiteral(Handle<JSObject> boilerplate, int max_depth,
   Handle<FixedArrayBase> elements(boilerplate->elements(), isolate);
   if (elements->length() > 0 &&
       elements->map() != isolate->heap()->fixed_cow_array_map()) {
-    if (boilerplate->HasFastSmiOrObjectElements()) {
+    if (boilerplate->HasSmiOrObjectElements()) {
       Handle<FixedArray> fast_elements = Handle<FixedArray>::cast(elements);
       int length = elements->length();
       for (int i = 0; i < length; i++) {
@@ -161,7 +161,7 @@ bool IsFastLiteral(Handle<JSObject> boilerplate, int max_depth,
           }
         }
       }
-    } else if (boilerplate->HasFastDoubleElements()) {
+    } else if (boilerplate->HasDoubleElements()) {
       if (elements->Size() > kMaxRegularHeapObjectSize) return false;
     } else {
       return false;
@@ -423,7 +423,8 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
           a.Store(AccessBuilder::ForMap(), jsarray_map);
           a.Store(AccessBuilder::ForJSObjectProperties(), properties);
           a.Store(AccessBuilder::ForJSObjectElements(), elements);
-          a.Store(AccessBuilder::ForJSArrayLength(FAST_ELEMENTS), rest_length);
+          a.Store(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS),
+                  rest_length);
           RelaxControls(node);
           a.FinishAndChange(node);
         } else {
@@ -541,7 +542,7 @@ Reduction JSCreateLowering::ReduceJSCreateArguments(Node* node) {
       a.Store(AccessBuilder::ForMap(), jsarray_map);
       a.Store(AccessBuilder::ForJSObjectProperties(), properties);
       a.Store(AccessBuilder::ForJSObjectElements(), elements);
-      a.Store(AccessBuilder::ForJSArrayLength(FAST_ELEMENTS),
+      a.Store(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS),
               jsgraph()->Constant(length));
       RelaxControls(node);
       a.FinishAndChange(node);
@@ -578,8 +579,8 @@ Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
 
     DCHECK(js_function->shared()->HasBytecodeArray());
     int size = js_function->shared()->bytecode_array()->register_count();
-    Node* elements = effect = AllocateElements(
-        effect, control, FAST_HOLEY_ELEMENTS, size, NOT_TENURED);
+    Node* elements = effect =
+        AllocateElements(effect, control, HOLEY_ELEMENTS, size, NOT_TENURED);
 
     AllocationBuilder a(jsgraph(), effect, control);
     a.Allocate(initial_map->instance_size());
@@ -682,14 +683,14 @@ Reduction JSCreateLowering::ReduceNewArray(Node* node,
   // Check {values} based on the {elements_kind}. These checks are guarded
   // by the {elements_kind} feedback on the {site}, so it's safe to just
   // deoptimize in this case.
-  if (IsFastSmiElementsKind(elements_kind)) {
+  if (IsSmiElementsKind(elements_kind)) {
     for (auto& value : values) {
       if (!NodeProperties::GetType(value)->Is(Type::SignedSmall())) {
         value = effect =
             graph()->NewNode(simplified()->CheckSmi(), value, effect, control);
       }
     }
-  } else if (IsFastDoubleElementsKind(elements_kind)) {
+  } else if (IsDoubleElementsKind(elements_kind)) {
     for (auto& value : values) {
       if (!NodeProperties::GetType(value)->Is(Type::Number())) {
         value = effect = graph()->NewNode(simplified()->CheckNumber(), value,
@@ -760,7 +761,7 @@ Reduction JSCreateLowering::ReduceNewArrayToStubCall(
         AllocationSite::ShouldTrack(elements_kind) ? DISABLE_ALLOCATION_SITES
                                                    : DONT_OVERRIDE;
 
-    if (IsHoleyElementsKind(elements_kind)) {
+    if (IsHoleyOrDictionaryElementsKind(elements_kind)) {
       ArraySingleArgumentConstructorStub stub(isolate(), elements_kind,
                                               override_mode);
       CallDescriptor* desc = Linkage::GetStubCallDescriptor(
@@ -967,9 +968,9 @@ Reduction JSCreateLowering::ReduceJSCreateKeyValueArray(Node* node) {
 
   AllocationBuilder aa(jsgraph(), effect, graph()->start());
   aa.AllocateArray(2, factory()->fixed_array_map());
-  aa.Store(AccessBuilder::ForFixedArrayElement(FAST_ELEMENTS),
+  aa.Store(AccessBuilder::ForFixedArrayElement(PACKED_ELEMENTS),
            jsgraph()->Constant(0), key);
-  aa.Store(AccessBuilder::ForFixedArrayElement(FAST_ELEMENTS),
+  aa.Store(AccessBuilder::ForFixedArrayElement(PACKED_ELEMENTS),
            jsgraph()->Constant(1), value);
   Node* elements = aa.Finish();
 
@@ -978,7 +979,7 @@ Reduction JSCreateLowering::ReduceJSCreateKeyValueArray(Node* node) {
   a.Store(AccessBuilder::ForMap(), array_map);
   a.Store(AccessBuilder::ForJSObjectProperties(), properties);
   a.Store(AccessBuilder::ForJSObjectElements(), elements);
-  a.Store(AccessBuilder::ForJSArrayLength(FAST_ELEMENTS), length);
+  a.Store(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS), length);
   STATIC_ASSERT(JSArray::kSize == 4 * kPointerSize);
   a.FinishAndChange(node);
   return Changed(node);
@@ -1270,10 +1271,10 @@ Node* JSCreateLowering::AllocateElements(Node* effect, Node* control,
   DCHECK_LE(1, capacity);
   DCHECK_LE(capacity, JSArray::kInitialMaxFastElementArray);
 
-  Handle<Map> elements_map = IsFastDoubleElementsKind(elements_kind)
+  Handle<Map> elements_map = IsDoubleElementsKind(elements_kind)
                                  ? factory()->fixed_double_array_map()
                                  : factory()->fixed_array_map();
-  ElementAccess access = IsFastDoubleElementsKind(elements_kind)
+  ElementAccess access = IsDoubleElementsKind(elements_kind)
                              ? AccessBuilder::ForFixedDoubleArrayElement()
                              : AccessBuilder::ForFixedArrayElement();
   Node* value = jsgraph()->TheHoleConstant();
@@ -1296,10 +1297,10 @@ Node* JSCreateLowering::AllocateElements(Node* effect, Node* control,
   DCHECK_LE(1, capacity);
   DCHECK_LE(capacity, JSArray::kInitialMaxFastElementArray);
 
-  Handle<Map> elements_map = IsFastDoubleElementsKind(elements_kind)
+  Handle<Map> elements_map = IsDoubleElementsKind(elements_kind)
                                  ? factory()->fixed_double_array_map()
                                  : factory()->fixed_array_map();
-  ElementAccess access = IsFastDoubleElementsKind(elements_kind)
+  ElementAccess access = IsDoubleElementsKind(elements_kind)
                              ? AccessBuilder::ForFixedDoubleArrayElement()
                              : AccessBuilder::ForFixedArrayElement();
 

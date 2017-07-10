@@ -97,20 +97,14 @@ namespace internal {
   F(SetInitialize, 1, 1)                  \
   F(SetGrow, 1, 1)                        \
   F(SetShrink, 1, 1)                      \
-  F(SetClear, 1, 1)                       \
-  F(SetIteratorInitialize, 3, 1)          \
   F(SetIteratorClone, 1, 1)               \
-  F(SetIteratorNext, 2, 1)                \
   F(SetIteratorDetails, 1, 1)             \
   F(MapInitialize, 1, 1)                  \
   F(MapShrink, 1, 1)                      \
-  F(MapClear, 1, 1)                       \
   F(MapGrow, 1, 1)                        \
-  F(MapIteratorInitialize, 3, 1)          \
   F(MapIteratorClone, 1, 1)               \
   F(MapIteratorDetails, 1, 1)             \
   F(GetWeakMapEntries, 2, 1)              \
-  F(MapIteratorNext, 2, 1)                \
   F(WeakCollectionInitialize, 1, 1)       \
   F(WeakCollectionGet, 3, 1)              \
   F(WeakCollectionHas, 3, 1)              \
@@ -236,7 +230,6 @@ namespace internal {
   F(FunctionGetSourceCode, 1, 1)           \
   F(FunctionGetScriptSourcePosition, 1, 1) \
   F(FunctionGetContextData, 1, 1)          \
-  F(FunctionSetInstanceClassName, 2, 1)    \
   F(FunctionSetLength, 2, 1)               \
   F(FunctionSetPrototype, 2, 1)            \
   F(FunctionIsAPIFunction, 1, 1)           \
@@ -294,55 +287,56 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_INTL(F)
 #endif
 
-#define FOR_EACH_INTRINSIC_INTERNAL(F)             \
-  F(AllocateInNewSpace, 1, 1)                      \
-  F(AllocateInTargetSpace, 2, 1)                   \
-  F(AllocateSeqOneByteString, 1, 1)                \
-  F(AllocateSeqTwoByteString, 1, 1)                \
-  F(CheckIsBootstrapping, 0, 1)                    \
-  F(CreateAsyncFromSyncIterator, 1, 1)             \
-  F(CreateListFromArrayLike, 1, 1)                 \
-  F(GetAndResetRuntimeCallStats, -1 /* <= 2 */, 1) \
-  F(ExportFromRuntime, 1, 1)                       \
-  F(IncrementUseCounter, 1, 1)                     \
-  F(InstallToContext, 1, 1)                        \
-  F(Interrupt, 0, 1)                               \
-  F(IS_VAR, 1, 1)                                  \
-  F(NewReferenceError, 2, 1)                       \
-  F(NewSyntaxError, 2, 1)                          \
-  F(NewTypeError, 2, 1)                            \
-  F(OrdinaryHasInstance, 2, 1)                     \
-  F(PromoteScheduledException, 0, 1)               \
-  F(ReThrow, 1, 1)                                 \
-  F(RunMicrotasks, 0, 1)                           \
-  F(StackGuard, 0, 1)                              \
-  F(Throw, 1, 1)                                   \
-  F(ThrowApplyNonFunction, 1, 1)                   \
-  F(ThrowCannotConvertToPrimitive, 0, 1)           \
-  F(ThrowCalledNonCallable, 1, 1)                  \
-  F(ThrowCalledOnNullOrUndefined, 1, 1)            \
-  F(ThrowConstructedNonConstructable, 1, 1)        \
-  F(ThrowConstructorReturnedNonObject, 0, 1)       \
-  F(ThrowGeneratorRunning, 0, 1)                   \
-  F(ThrowIllegalInvocation, 0, 1)                  \
-  F(ThrowIncompatibleMethodReceiver, 2, 1)         \
-  F(ThrowInvalidHint, 1, 1)                        \
-  F(ThrowInvalidStringLength, 0, 1)                \
-  F(ThrowInvalidTypedArrayAlignment, 2, 1)         \
-  F(ThrowIteratorResultNotAnObject, 1, 1)          \
-  F(ThrowThrowMethodMissing, 0, 1)                 \
-  F(ThrowSymbolIteratorInvalid, 0, 1)              \
-  F(ThrowNonCallableInInstanceOfCheck, 0, 1)       \
-  F(ThrowNonObjectInInstanceOfCheck, 0, 1)         \
-  F(ThrowNotConstructor, 1, 1)                     \
-  F(ThrowRangeError, -1 /* >= 1 */, 1)             \
-  F(ThrowReferenceError, 1, 1)                     \
-  F(ThrowStackOverflow, 0, 1)                      \
-  F(ThrowSymbolAsyncIteratorInvalid, 0, 1)         \
-  F(ThrowTypeError, -1 /* >= 1 */, 1)              \
-  F(ThrowUndefinedOrNullToObject, 1, 1)            \
-  F(Typeof, 1, 1)                                  \
-  F(UnwindAndFindExceptionHandler, 0, 1)           \
+#define FOR_EACH_INTRINSIC_INTERNAL(F)                               \
+  F(AllocateInNewSpace, 1, 1)                                        \
+  F(AllocateInTargetSpace, 2, 1)                                     \
+  F(AllocateSeqOneByteString, 1, 1)                                  \
+  F(AllocateSeqTwoByteString, 1, 1)                                  \
+  F(CheckIsBootstrapping, 0, 1)                                      \
+  F(CreateAsyncFromSyncIterator, 1, 1)                               \
+  F(CreateListFromArrayLike, 1, 1)                                   \
+  F(GetAndResetRuntimeCallStats, -1 /* <= 2 */, 1)                   \
+  F(ExportFromRuntime, 1, 1)                                         \
+  F(IncrementUseCounter, 1, 1)                                       \
+  F(IncrementUseCounterConstructorReturnNonUndefinedPrimitive, 0, 1) \
+  F(InstallToContext, 1, 1)                                          \
+  F(Interrupt, 0, 1)                                                 \
+  F(IS_VAR, 1, 1)                                                    \
+  F(NewReferenceError, 2, 1)                                         \
+  F(NewSyntaxError, 2, 1)                                            \
+  F(NewTypeError, 2, 1)                                              \
+  F(OrdinaryHasInstance, 2, 1)                                       \
+  F(PromoteScheduledException, 0, 1)                                 \
+  F(ReThrow, 1, 1)                                                   \
+  F(RunMicrotasks, 0, 1)                                             \
+  F(StackGuard, 0, 1)                                                \
+  F(Throw, 1, 1)                                                     \
+  F(ThrowApplyNonFunction, 1, 1)                                     \
+  F(ThrowCannotConvertToPrimitive, 0, 1)                             \
+  F(ThrowCalledNonCallable, 1, 1)                                    \
+  F(ThrowCalledOnNullOrUndefined, 1, 1)                              \
+  F(ThrowConstructedNonConstructable, 1, 1)                          \
+  F(ThrowConstructorReturnedNonObject, 0, 1)                         \
+  F(ThrowGeneratorRunning, 0, 1)                                     \
+  F(ThrowIllegalInvocation, 0, 1)                                    \
+  F(ThrowIncompatibleMethodReceiver, 2, 1)                           \
+  F(ThrowInvalidHint, 1, 1)                                          \
+  F(ThrowInvalidStringLength, 0, 1)                                  \
+  F(ThrowInvalidTypedArrayAlignment, 2, 1)                           \
+  F(ThrowIteratorResultNotAnObject, 1, 1)                            \
+  F(ThrowThrowMethodMissing, 0, 1)                                   \
+  F(ThrowSymbolIteratorInvalid, 0, 1)                                \
+  F(ThrowNonCallableInInstanceOfCheck, 0, 1)                         \
+  F(ThrowNonObjectInInstanceOfCheck, 0, 1)                           \
+  F(ThrowNotConstructor, 1, 1)                                       \
+  F(ThrowRangeError, -1 /* >= 1 */, 1)                               \
+  F(ThrowReferenceError, 1, 1)                                       \
+  F(ThrowStackOverflow, 0, 1)                                        \
+  F(ThrowSymbolAsyncIteratorInvalid, 0, 1)                           \
+  F(ThrowTypeError, -1 /* >= 1 */, 1)                                \
+  F(ThrowUndefinedOrNullToObject, 1, 1)                              \
+  F(Typeof, 1, 1)                                                    \
+  F(UnwindAndFindExceptionHandler, 0, 1)                             \
   F(AllowDynamicFunction, 1, 1)
 
 #define FOR_EACH_INTRINSIC_LITERALS(F) \
@@ -597,11 +591,11 @@ namespace internal {
   F(TraceTailCall, 0, 1)                      \
   F(HaveSameMap, 2, 1)                        \
   F(InNewSpace, 1, 1)                         \
-  F(HasFastSmiElements, 1, 1)                 \
-  F(HasFastObjectElements, 1, 1)              \
-  F(HasFastSmiOrObjectElements, 1, 1)         \
-  F(HasFastDoubleElements, 1, 1)              \
-  F(HasFastHoleyElements, 1, 1)               \
+  F(HasSmiElements, 1, 1)                     \
+  F(HasObjectElements, 1, 1)                  \
+  F(HasSmiOrObjectElements, 1, 1)             \
+  F(HasDoubleElements, 1, 1)                  \
+  F(HasHoleyElements, 1, 1)                   \
   F(HasDictionaryElements, 1, 1)              \
   F(HasSloppyArgumentsElements, 1, 1)         \
   F(HasFixedTypedArrayElements, 1, 1)         \

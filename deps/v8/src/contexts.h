@@ -254,6 +254,7 @@ enum ContextLookupFlags {
   V(INITIAL_ARRAY_ITERATOR_PROTOTYPE_MAP_INDEX, Map,                           \
     initial_array_iterator_prototype_map)                                      \
   V(INITIAL_ARRAY_PROTOTYPE_INDEX, JSObject, initial_array_prototype)          \
+  V(INITIAL_ERROR_PROTOTYPE_INDEX, JSObject, initial_error_prototype)          \
   V(INITIAL_GENERATOR_PROTOTYPE_INDEX, JSObject, initial_generator_prototype)  \
   V(INITIAL_ASYNC_GENERATOR_PROTOTYPE_INDEX, JSObject,                         \
     initial_async_generator_prototype)                                         \
@@ -271,16 +272,16 @@ enum ContextLookupFlags {
   V(INTL_COLLATOR_FUNCTION_INDEX, JSFunction, intl_collator_function)          \
   V(INTL_V8_BREAK_ITERATOR_FUNCTION_INDEX, JSFunction,                         \
     intl_v8_break_iterator_function)                                           \
-  V(JS_ARRAY_FAST_SMI_ELEMENTS_MAP_INDEX, Map,                                 \
+  V(JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX, Map,                               \
     js_array_fast_smi_elements_map_index)                                      \
-  V(JS_ARRAY_FAST_HOLEY_SMI_ELEMENTS_MAP_INDEX, Map,                           \
+  V(JS_ARRAY_HOLEY_SMI_ELEMENTS_MAP_INDEX, Map,                                \
     js_array_fast_holey_smi_elements_map_index)                                \
-  V(JS_ARRAY_FAST_ELEMENTS_MAP_INDEX, Map, js_array_fast_elements_map_index)   \
-  V(JS_ARRAY_FAST_HOLEY_ELEMENTS_MAP_INDEX, Map,                               \
+  V(JS_ARRAY_PACKED_ELEMENTS_MAP_INDEX, Map, js_array_fast_elements_map_index) \
+  V(JS_ARRAY_HOLEY_ELEMENTS_MAP_INDEX, Map,                                    \
     js_array_fast_holey_elements_map_index)                                    \
-  V(JS_ARRAY_FAST_DOUBLE_ELEMENTS_MAP_INDEX, Map,                              \
+  V(JS_ARRAY_PACKED_DOUBLE_ELEMENTS_MAP_INDEX, Map,                            \
     js_array_fast_double_elements_map_index)                                   \
-  V(JS_ARRAY_FAST_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX, Map,                        \
+  V(JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX, Map,                             \
     js_array_fast_holey_double_elements_map_index)                             \
   V(JS_MAP_FUN_INDEX, JSFunction, js_map_fun)                                  \
   V(JS_MAP_MAP_INDEX, Map, js_map_map)                                         \
@@ -303,7 +304,6 @@ enum ContextLookupFlags {
   V(PROXY_CALLABLE_MAP_INDEX, Map, proxy_callable_map)                         \
   V(PROXY_CONSTRUCTOR_MAP_INDEX, Map, proxy_constructor_map)                   \
   V(PROXY_FUNCTION_INDEX, JSFunction, proxy_function)                          \
-  V(PROXY_FUNCTION_MAP_INDEX, Map, proxy_function_map)                         \
   V(PROXY_MAP_INDEX, Map, proxy_map)                                           \
   V(PROMISE_GET_CAPABILITIES_EXECUTOR_SHARED_FUN, SharedFunctionInfo,          \
     promise_get_capabilities_executor_shared_fun)                              \
@@ -354,6 +354,8 @@ enum ContextLookupFlags {
   V(STRICT_FUNCTION_MAP_INDEX, Map, strict_function_map)                       \
   V(STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX, Map,                          \
     strict_function_without_prototype_map)                                     \
+  V(STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX, Map,                    \
+    strict_function_with_readonly_prototype_map)                               \
   V(GENERATOR_FUNCTION_MAP_INDEX, Map, generator_function_map)                 \
   V(ASYNC_GENERATOR_FUNCTION_MAP_INDEX, Map, async_generator_function_map)     \
   V(CLASS_FUNCTION_MAP_INDEX, Map, class_function_map)                         \
@@ -364,13 +366,9 @@ enum ContextLookupFlags {
   V(NATIVE_FUNCTION_MAP_INDEX, Map, native_function_map)                       \
   V(WASM_FUNCTION_MAP_INDEX, Map, wasm_function_map)                           \
   V(WASM_INSTANCE_CONSTRUCTOR_INDEX, JSFunction, wasm_instance_constructor)    \
-  V(WASM_INSTANCE_SYM_INDEX, Symbol, wasm_instance_sym)                        \
   V(WASM_MEMORY_CONSTRUCTOR_INDEX, JSFunction, wasm_memory_constructor)        \
-  V(WASM_MEMORY_SYM_INDEX, Symbol, wasm_memory_sym)                            \
   V(WASM_MODULE_CONSTRUCTOR_INDEX, JSFunction, wasm_module_constructor)        \
-  V(WASM_MODULE_SYM_INDEX, Symbol, wasm_module_sym)                            \
   V(WASM_TABLE_CONSTRUCTOR_INDEX, JSFunction, wasm_table_constructor)          \
-  V(WASM_TABLE_SYM_INDEX, Symbol, wasm_table_sym)                              \
   V(TYPED_ARRAY_FUN_INDEX, JSFunction, typed_array_function)                   \
   V(TYPED_ARRAY_PROTOTYPE_INDEX, JSObject, typed_array_prototype)              \
   V(UINT16_ARRAY_FUN_INDEX, JSFunction, uint16_array_fun)                      \
@@ -519,7 +517,7 @@ class Context: public FixedArray {
     // Total number of slots.
     NATIVE_CONTEXT_SLOTS,
     FIRST_WEAK_SLOT = OPTIMIZED_FUNCTIONS_LIST,
-    FIRST_JS_ARRAY_MAP_SLOT = JS_ARRAY_FAST_SMI_ELEMENTS_MAP_INDEX,
+    FIRST_JS_ARRAY_MAP_SLOT = JS_ARRAY_PACKED_SMI_ELEMENTS_MAP_INDEX,
 
     MIN_CONTEXT_SLOTS = GLOBAL_PROXY_INDEX,
     // This slot holds the thrown value in catch contexts.

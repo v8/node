@@ -184,7 +184,7 @@ HEAP_TEST(TestNewSpaceRefsInCopiedCode) {
   Heap* heap = isolate->heap();
   HandleScope sc(isolate);
 
-  Handle<Object> value = factory->NewNumber(1.000123);
+  Handle<HeapNumber> value = factory->NewHeapNumber(1.000123);
   CHECK(heap->InNewSpace(*value));
 
   i::byte buffer[i::Assembler::kMinimalBufferSize];
@@ -1034,7 +1034,7 @@ TEST(JSArray) {
   JSArray::SetLength(array, 0);
   CHECK_EQ(Smi::kZero, array->length());
   // Must be in fast mode.
-  CHECK(array->HasFastSmiOrObjectElements());
+  CHECK(array->HasSmiOrObjectElements());
 
   // array[length] = name.
   JSReceiver::SetElement(isolate, array, 0, name, SLOPPY).Check();
@@ -1195,8 +1195,7 @@ TEST(Iteration) {
 
   // Allocate a JS array to OLD_SPACE and NEW_SPACE
   objs[next_objs_index++] = factory->NewJSArray(10);
-  objs[next_objs_index++] =
-      factory->NewJSArray(10, FAST_HOLEY_ELEMENTS, TENURED);
+  objs[next_objs_index++] = factory->NewJSArray(10, HOLEY_ELEMENTS, TENURED);
 
   // Allocate a small string to OLD_DATA_SPACE and NEW_SPACE
   objs[next_objs_index++] = factory->NewStringFromStaticChars("abcdefghij");
@@ -2266,7 +2265,7 @@ TEST(ResetSharedFunctionInfoCountersDuringIncrementalMarking) {
 
   CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
   CHECK_EQ(0, f->shared()->opt_count());
-  CHECK_EQ(0, f->shared()->profiler_ticks());
+  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
 }
 
 
@@ -2309,7 +2308,7 @@ TEST(ResetSharedFunctionInfoCountersDuringMarkSweep) {
 
   CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
   CHECK_EQ(0, f->shared()->opt_count());
-  CHECK_EQ(0, f->shared()->profiler_ticks());
+  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
 }
 
 
@@ -3714,10 +3713,10 @@ TEST(Regress169928) {
       JSArray::kSize + AllocationMemento::kSize + kPointerSize);
 
   Handle<JSArray> array =
-      factory->NewJSArrayWithElements(array_data, FAST_SMI_ELEMENTS);
+      factory->NewJSArrayWithElements(array_data, PACKED_SMI_ELEMENTS);
 
   CHECK_EQ(Smi::FromInt(2), array->length());
-  CHECK(array->HasFastSmiOrObjectElements());
+  CHECK(array->HasSmiOrObjectElements());
 
   // We need filler the size of AllocationMemento object, plus an extra
   // fill pointer value.
@@ -4807,7 +4806,7 @@ HEAP_TEST(Regress538257) {
   FLAG_manual_evacuation_candidates_selection = true;
   v8::Isolate::CreateParams create_params;
   // Set heap limits.
-  create_params.constraints.set_max_semi_space_size_in_kb(1024);
+  create_params.constraints.set_max_semi_space_size(1);
   create_params.constraints.set_max_old_space_size(6);
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
   v8::Isolate* isolate = v8::Isolate::New(create_params);
@@ -4883,83 +4882,6 @@ TEST(Regress507979) {
     CHECK(obj->address() != nullptr);
   }
 }
-
-
-UNINITIALIZED_TEST(PromotionQueue) {
-  FLAG_expose_gc = true;
-  FLAG_max_semi_space_size = 2 * Page::kPageSize / MB;
-  FLAG_min_semi_space_size = FLAG_max_semi_space_size;
-  v8::Isolate::CreateParams create_params;
-  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
-  v8::Isolate* isolate = v8::Isolate::New(create_params);
-  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  {
-    v8::Isolate::Scope isolate_scope(isolate);
-    v8::HandleScope handle_scope(isolate);
-    v8::Context::New(isolate)->Enter();
-    Heap* heap = i_isolate->heap();
-    NewSpace* new_space = heap->new_space();
-
-    // In this test we will try to overwrite the promotion queue which is at the
-    // end of to-space. To actually make that possible, we need at least two
-    // semi-space pages and take advantage of fragmentation.
-    // (1) Use a semi-space consisting of two pages.
-    // (2) Create a few small long living objects and call the scavenger to
-    // move them to the other semi-space.
-    // (3) Create a huge object, i.e., remainder of first semi-space page and
-    // create another huge object which should be of maximum allocatable memory
-    // size of the second semi-space page.
-    // (4) Call the scavenger again.
-    // What will happen is: the scavenger will promote the objects created in
-    // (2) and will create promotion queue entries at the end of the second
-    // semi-space page during the next scavenge when it promotes the objects to
-    // the old generation. The first allocation of (3) will fill up the first
-    // semi-space page. The second allocation in (3) will not fit into the
-    // first semi-space page, but it will overwrite the promotion queue which
-    // are in the second semi-space page. If the right guards are in place, the
-    // promotion queue will be evacuated in that case.
-
-
-    CHECK(new_space->IsAtMaximumCapacity());
-    CHECK_EQ(static_cast<size_t>(FLAG_min_semi_space_size * MB),
-             new_space->TotalCapacity());
-
-    // Call the scavenger two times to get an empty new space
-    heap->CollectGarbage(NEW_SPACE, i::GarbageCollectionReason::kTesting);
-    heap->CollectGarbage(NEW_SPACE, i::GarbageCollectionReason::kTesting);
-
-    // First create a few objects which will survive a scavenge, and will get
-    // promoted to the old generation later on. These objects will create
-    // promotion queue entries at the end of the second semi-space page.
-    const int number_handles = 12;
-    Handle<FixedArray> handles[number_handles];
-    for (int i = 0; i < number_handles; i++) {
-      handles[i] = i_isolate->factory()->NewFixedArray(1, NOT_TENURED);
-    }
-
-    heap->CollectGarbage(NEW_SPACE, i::GarbageCollectionReason::kTesting);
-    CHECK_EQ(static_cast<size_t>(FLAG_min_semi_space_size * MB),
-             new_space->TotalCapacity());
-
-    // Fill-up the first semi-space page.
-    heap::FillUpOnePage(new_space);
-
-    // Create a small object to initialize the bump pointer on the second
-    // semi-space page.
-    Handle<FixedArray> small =
-        i_isolate->factory()->NewFixedArray(1, NOT_TENURED);
-    CHECK(heap->InNewSpace(*small));
-
-    // Fill-up the second semi-space page.
-    heap::FillUpOnePage(new_space);
-
-    // This scavenge will corrupt memory if the promotion queue is not
-    // evacuated.
-    heap->CollectGarbage(NEW_SPACE, i::GarbageCollectionReason::kTesting);
-  }
-  isolate->Dispose();
-}
-
 
 TEST(Regress388880) {
   if (!FLAG_incremental_marking) return;
@@ -5347,12 +5269,12 @@ TEST(Regress1878) {
       "for (var i = 0; i < 1000; i++) {"
       "  var ai = new InternalArray(10000);"
       "  if (%HaveSameMap(ai, a)) throw Error();"
-      "  if (!%HasFastObjectElements(ai)) throw Error();"
+      "  if (!%HasObjectElements(ai)) throw Error();"
       "}"
       "for (var i = 0; i < 1000; i++) {"
       "  var ai = new InternalArray(10000);"
       "  if (%HaveSameMap(ai, a)) throw Error();"
-      "  if (!%HasFastObjectElements(ai)) throw Error();"
+      "  if (!%HasObjectElements(ai)) throw Error();"
       "}");
 
   CHECK(!try_catch.HasCaught());

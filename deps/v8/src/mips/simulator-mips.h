@@ -338,9 +338,13 @@ class Simulator {
   enum MSADataFormat { MSA_VECT = 0, MSA_BYTE, MSA_HALF, MSA_WORD, MSA_DWORD };
   typedef union {
     int8_t b[kMSALanesByte];
+    uint8_t ub[kMSALanesByte];
     int16_t h[kMSALanesHalf];
+    uint16_t uh[kMSALanesHalf];
     int32_t w[kMSALanesWord];
+    uint32_t uw[kMSALanesWord];
     int64_t d[kMSALanesDword];
+    uint64_t ud[kMSALanesDword];
   } msa_reg_t;
 
   // Read and write memory.
@@ -418,6 +422,8 @@ class Simulator {
   void DecodeTypeMsaVec();
   void DecodeTypeMsa2R();
   void DecodeTypeMsa2RF();
+  template <typename T>
+  T MsaI5InstrHelper(uint32_t opcode, T ws, int32_t i5);
 
   inline int32_t rs_reg() const { return instr_.RsValue(); }
   inline int32_t rs() const { return get_register(rs_reg()); }

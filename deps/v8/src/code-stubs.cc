@@ -137,7 +137,6 @@ Handle<Code> PlatformCodeStub::GenerateCode() {
     isolate()->counters()->code_stubs()->Increment();
 
     // Generate the code for the stub.
-    masm.set_generating_stub(true);
     // TODO(yangguo): remove this once we can serialize IC stubs.
     masm.enable_serializer();
     NoCurrentFrameScope scope(&masm);
@@ -439,6 +438,23 @@ TF_STUB(StringLengthStub, CodeStubAssembler) {
   Node* string = LoadJSValueValue(value);
   Node* result = LoadStringLength(string);
   Return(result);
+}
+
+TF_STUB(TransitionElementsKindStub, CodeStubAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* object = Parameter(Descriptor::kObject);
+  Node* new_map = Parameter(Descriptor::kMap);
+
+  Label bailout(this);
+  TransitionElementsKind(object, new_map, stub->from_kind(), stub->to_kind(),
+                         stub->is_jsarray(), &bailout);
+  Return(object);
+
+  BIND(&bailout);
+  {
+    Comment("Call runtime");
+    TailCallRuntime(Runtime::kTransitionElementsKind, context, object, new_map);
+  }
 }
 
 // TODO(ishell): move to builtins.
@@ -854,10 +870,11 @@ TF_STUB(StoreFastElementStub, CodeStubAssembler) {
 // static
 void StoreFastElementStub::GenerateAheadOfTime(Isolate* isolate) {
   if (FLAG_minimal) return;
-  StoreFastElementStub(isolate, false, FAST_HOLEY_ELEMENTS, STANDARD_STORE)
+  StoreFastElementStub(isolate, false, HOLEY_ELEMENTS, STANDARD_STORE)
       .GetCode();
-  StoreFastElementStub(isolate, false, FAST_HOLEY_ELEMENTS,
-                       STORE_AND_GROW_NO_TRANSITION).GetCode();
+  StoreFastElementStub(isolate, false, HOLEY_ELEMENTS,
+                       STORE_AND_GROW_NO_TRANSITION)
+      .GetCode();
   for (int i = FIRST_FAST_ELEMENTS_KIND; i <= LAST_FAST_ELEMENTS_KIND; i++) {
     ElementsKind kind = static_cast<ElementsKind>(i);
     StoreFastElementStub(isolate, true, kind, STANDARD_STORE).GetCode();
@@ -950,7 +967,7 @@ void ArrayConstructorAssembler::GenerateConstructor(
     TailCallRuntime(Runtime::kAbort, context, reason);
   } else {
     int element_size =
-        IsFastDoubleElementsKind(elements_kind) ? kDoubleSize : kPointerSize;
+        IsDoubleElementsKind(elements_kind) ? kDoubleSize : kPointerSize;
     int max_fast_elements =
         (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - JSArray::kSize -
          AllocationMemento::kSize) /

@@ -709,8 +709,6 @@ bool GetOptimizedCodeNow(CompilationJob* job) {
     EnsureFeedbackMetadata(info);
   }
 
-  JSFunction::EnsureLiterals(info->closure());
-
   TimerEventScope<TimerEventRecompileSynchronous> timer(isolate);
   RuntimeCallTimerScope runtimeTimer(isolate,
                                      &RuntimeCallStats::RecompileSynchronous);
@@ -764,8 +762,6 @@ bool GetOptimizedCodeLater(CompilationJob* job) {
     EnsureFeedbackMetadata(info);
   }
 
-  JSFunction::EnsureLiterals(info->closure());
-
   TimerEventScope<TimerEventRecompileSynchronous> timer(info->isolate());
   RuntimeCallTimerScope runtimeTimer(info->isolate(),
                                      &RuntimeCallStats::RecompileSynchronous);
@@ -816,7 +812,7 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
 
   // Reset profiler ticks, function is no longer considered hot.
   DCHECK(shared->is_compiled());
-  shared->set_profiler_ticks(0);
+  function->feedback_vector()->set_profiler_ticks(0);
 
   VMState<COMPILER> state(isolate);
   DCHECK(!isolate->has_pending_exception());
@@ -927,7 +923,7 @@ CompilationJob::Status FinalizeOptimizedCompilationJob(CompilationJob* job) {
   Handle<SharedFunctionInfo> shared = info->shared_info();
 
   // Reset profiler ticks, function is no longer considered hot.
-  shared->set_profiler_ticks(0);
+  info->closure()->feedback_vector()->set_profiler_ticks(0);
 
   DCHECK(!shared->HasBreakInfo());
 
@@ -997,7 +993,6 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
     }
     // TODO(leszeks): Either handle optimization markers here, or DCHECK that
     // there aren't any.
-
     return Handle<Code>(function->shared()->code());
   } else {
     // Function doesn't have any baseline compiled code, compile now.
@@ -1008,10 +1003,13 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
     CompilationInfo info(&compile_zone, &parse_info, isolate, function);
     if (FLAG_experimental_preparser_scope_analysis) {
       Handle<SharedFunctionInfo> shared(function->shared());
-      Handle<Script> script(Script::cast(function->shared()->script()));
-      if (script->HasPreparsedScopeData()) {
-        parse_info.preparsed_scope_data()->Deserialize(
-            script->preparsed_scope_data());
+      if (shared->HasPreParsedScopeData()) {
+        Handle<PreParsedScopeData> data(
+            PreParsedScopeData::cast(shared->preparsed_scope_data()));
+        parse_info.consumed_preparsed_scope_data()->SetData(data);
+        // After we've compiled the function, we don't need data about its
+        // skippable functions any more.
+        shared->set_preparsed_scope_data(isolate->heap()->null_value());
       }
     }
     ConcurrencyMode inner_function_mode = FLAG_compiler_dispatcher_eager_inner
@@ -1027,6 +1025,9 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
         function->ShortPrint();
         PrintF(" because --always-opt]\n");
       }
+      // Getting optimized code assumes that we have literals.
+      JSFunction::EnsureLiterals(function);
+
       Handle<Code> opt_code;
       if (GetOptimizedCode(function, ConcurrencyMode::kNotConcurrent)
               .ToHandle(&opt_code)) {
@@ -1112,11 +1113,6 @@ Handle<SharedFunctionInfo> CompileToplevel(CompilationInfo* info) {
 
     if (!script.is_null()) {
       script->set_compilation_state(Script::COMPILATION_STATE_COMPILED);
-      if (FLAG_experimental_preparser_scope_analysis) {
-        Handle<PodArray<uint32_t>> data =
-            parse_info->preparsed_scope_data()->Serialize(isolate);
-        script->set_preparsed_scope_data(*data);
-      }
     }
   }
 
@@ -1217,7 +1213,6 @@ bool Compiler::CompileOptimized(Handle<JSFunction> function,
 
   // Install code on closure.
   function->ReplaceCode(*code);
-  JSFunction::EnsureLiterals(function);
 
   // Check postconditions on success.
   DCHECK(!isolate->has_pending_exception());
