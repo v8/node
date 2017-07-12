@@ -501,7 +501,7 @@ void TestEntryToIndex() {
        entry = entry * 1.01 + 1) {
     Handle<Object> result =
         ft.Call(handle(Smi::FromInt(entry), isolate)).ToHandleChecked();
-    CHECK_EQ(Dictionary::EntryToIndex(entry), Smi::cast(*result)->value());
+    CHECK_EQ(Dictionary::EntryToIndex(entry), Smi::ToInt(*result));
   }
 }
 
@@ -1442,10 +1442,11 @@ TEST(AllocateJSObjectFromMap) {
                                           "object")));
     JSObject::NormalizeProperties(object, KEEP_INOBJECT_PROPERTIES, 0,
                                   "Normalize");
-    Handle<JSObject> result = Handle<JSObject>::cast(
-        ft.Call(handle(object->map()), handle(object->properties()),
-                handle(object->elements()))
-            .ToHandleChecked());
+    Handle<JSObject> result =
+        Handle<JSObject>::cast(ft.Call(handle(object->map(), isolate),
+                                       handle(object->properties(), isolate),
+                                       handle(object->elements(), isolate))
+                                   .ToHandleChecked());
     VERIFY(result, object->map(), object->properties(), object->elements());
     CHECK(!result->HasFastProperties());
 #ifdef VERIFY_HEAP
@@ -1826,7 +1827,7 @@ class AppendJSArrayCodeStubAssembler : public CodeStubAssembler {
 
     CHECK_EQ(kind_, array->GetElementsKind());
     CHECK_EQ(result_size, Handle<Smi>::cast(result)->value());
-    CHECK_EQ(result_size, Smi::cast(array->length())->value());
+    CHECK_EQ(result_size, Smi::ToInt(array->length()));
     Object* obj = *JSObject::GetElement(isolate, array, 2).ToHandleChecked();
     CHECK_EQ(result_size < 3 ? isolate->heap()->undefined_value() : o1, obj);
     obj = *JSObject::GetElement(isolate, array, 3).ToHandleChecked();

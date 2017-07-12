@@ -488,13 +488,21 @@ void FullCodeGenerator::EffectContext::Plug(Handle<Object> lit) const {
 
 void FullCodeGenerator::AccumulatorValueContext::Plug(
     Handle<Object> lit) const {
-  __ li(result_register(), Operand(lit));
+  if (lit->IsHeapObject()) {
+    __ li(result_register(), Operand(Handle<HeapObject>::cast(lit)));
+  } else {
+    __ li(result_register(), Operand(Smi::cast(*lit)));
+  }
 }
 
 
 void FullCodeGenerator::StackValueContext::Plug(Handle<Object> lit) const {
   // Immediates cannot be pushed directly.
-  __ li(result_register(), Operand(lit));
+  if (lit->IsHeapObject()) {
+    __ li(result_register(), Operand(Handle<HeapObject>::cast(lit)));
+  } else {
+    __ li(result_register(), Operand(Smi::cast(*lit)));
+  }
   codegen()->PushOperand(result_register());
 }
 
@@ -512,14 +520,14 @@ void FullCodeGenerator::TestContext::Plug(Handle<Object> lit) const {
       if (true_label_ != fall_through_) __ Branch(true_label_);
     }
   } else if (lit->IsSmi()) {
-    if (Smi::cast(*lit)->value() == 0) {
+    if (Smi::ToInt(*lit) == 0) {
       if (false_label_ != fall_through_) __ Branch(false_label_);
     } else {
       if (true_label_ != fall_through_) __ Branch(true_label_);
     }
   } else {
     // For simplicity we always test the accumulator register.
-    __ li(result_register(), Operand(lit));
+    __ li(result_register(), Operand(Handle<HeapObject>::cast(lit)));
     codegen()->DoTest(this);
   }
 }

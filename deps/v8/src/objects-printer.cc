@@ -30,8 +30,8 @@ void Object::Print() {
 
 void Object::Print(std::ostream& os) {  // NOLINT
   if (IsSmi()) {
-    os << "Smi: " << std::hex << "0x" << Smi::cast(this)->value();
-    os << std::dec << " (" << Smi::cast(this)->value() << ")\n";
+    os << "Smi: " << std::hex << "0x" << Smi::ToInt(this);
+    os << std::dec << " (" << Smi::ToInt(this) << ")\n";
   } else {
     HeapObject::cast(this)->HeapObjectPrint(os);
   }
@@ -81,6 +81,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       break;
     case FIXED_ARRAY_TYPE:
       FixedArray::cast(this)->FixedArrayPrint(os);
+      break;
+    case PROPERTY_ARRAY_TYPE:
+      PropertyArray::cast(this)->PropertyArrayPrint(os);
       break;
     case BYTE_ARRAY_TYPE:
       ByteArray::cast(this)->ByteArrayPrint(os);
@@ -201,10 +204,13 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_MAP_TYPE:
       JSMap::cast(this)->JSMapPrint(os);
       break;
-    case JS_SET_ITERATOR_TYPE:
+    case JS_SET_KEY_VALUE_ITERATOR_TYPE:
+    case JS_SET_VALUE_ITERATOR_TYPE:
       JSSetIterator::cast(this)->JSSetIteratorPrint(os);
       break;
-    case JS_MAP_ITERATOR_TYPE:
+    case JS_MAP_KEY_ITERATOR_TYPE:
+    case JS_MAP_KEY_VALUE_ITERATOR_TYPE:
+    case JS_MAP_VALUE_ITERATOR_TYPE:
       JSMapIterator::cast(this)->JSMapIteratorPrint(os);
       break;
     case JS_WEAK_MAP_TYPE:
@@ -313,7 +319,7 @@ bool JSObject::PrintProperties(std::ostream& os) {  // NOLINT
     }
     return i > 0;
   } else if (IsJSGlobalObject()) {
-    global_dictionary()->Print(os);
+    JSGlobalObject::cast(this)->global_dictionary()->Print(os);
   } else {
     property_dictionary()->Print(os);
   }
@@ -643,6 +649,18 @@ void FixedArray::FixedArrayPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+// TODO(gsathya): Templatize PrintFixedArrayElements to print this as
+// well.
+void PropertyArray::PropertyArrayPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PropertyArray");
+  os << "\n - map = " << Brief(map());
+  os << "\n - length: " << length();
+  for (int i = 0; i < length(); i++) {
+    os << "\n" << i << " : " << std::setw(8) << Brief(get(i));
+  }
+
+  os << "\n";
+}
 
 void FixedDoubleArray::FixedDoubleArrayPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "FixedDoubleArray");
@@ -888,15 +906,14 @@ void JSDate::JSDatePrint(std::ostream& os) {  // NOLINT
   } else {
     // TODO(svenpanne) Add some basic formatting to our streams.
     ScopedVector<char> buf(100);
-    SNPrintF(
-        buf, "\n - time = %s %04d/%02d/%02d %02d:%02d:%02d\n",
-        weekdays[weekday()->IsSmi() ? Smi::cast(weekday())->value() + 1 : 0],
-        year()->IsSmi() ? Smi::cast(year())->value() : -1,
-        month()->IsSmi() ? Smi::cast(month())->value() : -1,
-        day()->IsSmi() ? Smi::cast(day())->value() : -1,
-        hour()->IsSmi() ? Smi::cast(hour())->value() : -1,
-        min()->IsSmi() ? Smi::cast(min())->value() : -1,
-        sec()->IsSmi() ? Smi::cast(sec())->value() : -1);
+    SNPrintF(buf, "\n - time = %s %04d/%02d/%02d %02d:%02d:%02d\n",
+             weekdays[weekday()->IsSmi() ? Smi::ToInt(weekday()) + 1 : 0],
+             year()->IsSmi() ? Smi::ToInt(year()) : -1,
+             month()->IsSmi() ? Smi::ToInt(month()) : -1,
+             day()->IsSmi() ? Smi::ToInt(day()) : -1,
+             hour()->IsSmi() ? Smi::ToInt(hour()) : -1,
+             min()->IsSmi() ? Smi::ToInt(min()) : -1,
+             sec()->IsSmi() ? Smi::ToInt(sec()) : -1);
     os << buf.start();
   }
   JSObjectPrintBody(os, this);
@@ -936,7 +953,6 @@ OrderedHashTableIterator<Derived, TableType>::OrderedHashTableIteratorPrint(
     std::ostream& os) {  // NOLINT
   os << "\n - table = " << Brief(table());
   os << "\n - index = " << Brief(index());
-  os << "\n - kind = " << Brief(kind());
   os << "\n";
 }
 
@@ -1452,13 +1468,13 @@ void AllocationSite::AllocationSitePrint(std::ostream& os) {  // NOLINT
   os << "\n - pretenure decision: "
      << Brief(Smi::FromInt(pretenure_decision()));
   os << "\n - transition_info: ";
-  if (transition_info()->IsSmi()) {
+  if (!PointsToLiteral()) {
     ElementsKind kind = GetElementsKind();
     os << "Array allocation with ElementsKind " << ElementsKindToString(kind);
-  } else if (transition_info()->IsJSArray()) {
-    os << "Array literal " << Brief(transition_info());
+  } else if (boilerplate()->IsJSArray()) {
+    os << "Array literal with boilerplate " << Brief(boilerplate());
   } else {
-    os << "unknown transition_info " << Brief(transition_info());
+    os << "Object literal with boilerplate " << Brief(boilerplate());
   }
   os << "\n";
 }
@@ -1549,7 +1565,7 @@ void LayoutDescriptor::Print(std::ostream& os) {  // NOLINT
     os << "<all tagged>";
   } else if (IsSmi()) {
     os << "fast";
-    PrintBitMask(os, static_cast<uint32_t>(Smi::cast(this)->value()));
+    PrintBitMask(os, static_cast<uint32_t>(Smi::ToInt(this)));
   } else if (IsOddball() &&
              IsUninitialized(HeapObject::cast(this)->GetIsolate())) {
     os << "<uninitialized>";

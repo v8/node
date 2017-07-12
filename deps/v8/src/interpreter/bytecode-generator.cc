@@ -104,7 +104,6 @@ class BytecodeGenerator::ControlScope BASE_EMBEDDED {
   void Continue(Statement* stmt) { PerformCommand(CMD_CONTINUE, stmt); }
   void ReturnAccumulator() { PerformCommand(CMD_RETURN, nullptr); }
   void AsyncReturnAccumulator() { PerformCommand(CMD_ASYNC_RETURN, nullptr); }
-  void ReThrowAccumulator() { PerformCommand(CMD_RETHROW, nullptr); }
 
   class DeferredCommands;
 
@@ -1276,22 +1275,19 @@ void BytecodeGenerator::VisitSloppyBlockFunctionStatement(
 }
 
 void BytecodeGenerator::VisitContinueStatement(ContinueStatement* stmt) {
-  AllocateBlockCoverageSlotIfEnabled(
-      {stmt->continuation_pos(), kNoSourcePosition});
+  AllocateBlockCoverageSlotIfEnabled(stmt->continuation_range());
   builder()->SetStatementPosition(stmt);
   execution_control()->Continue(stmt->target());
 }
 
 void BytecodeGenerator::VisitBreakStatement(BreakStatement* stmt) {
-  AllocateBlockCoverageSlotIfEnabled(
-      {stmt->continuation_pos(), kNoSourcePosition});
+  AllocateBlockCoverageSlotIfEnabled(stmt->continuation_range());
   builder()->SetStatementPosition(stmt);
   execution_control()->Break(stmt->target());
 }
 
 void BytecodeGenerator::VisitReturnStatement(ReturnStatement* stmt) {
-  AllocateBlockCoverageSlotIfEnabled(
-      {stmt->continuation_pos(), kNoSourcePosition});
+  AllocateBlockCoverageSlotIfEnabled(stmt->continuation_range());
   builder()->SetStatementPosition(stmt);
   VisitForAccumulatorValue(stmt->expression());
   if (stmt->is_async_return()) {
@@ -1352,9 +1348,11 @@ void BytecodeGenerator::VisitSwitchStatement(SwitchStatement* stmt) {
   for (int i = 0; i < clauses->length(); i++) {
     CaseClause* clause = clauses->at(i);
     switch_builder.SetCaseTarget(i);
+    BuildIncrementBlockCoverageCounterIfEnabled(clause->clause_range());
     VisitStatements(clause->statements());
   }
   switch_builder.BindBreakTarget();
+  BuildIncrementBlockCoverageCounterIfEnabled(stmt->continuation_range());
 }
 
 void BytecodeGenerator::VisitCaseClause(CaseClause* clause) {
@@ -2953,8 +2951,7 @@ void BytecodeGenerator::VisitYieldStar(YieldStar* expr) {
 }
 
 void BytecodeGenerator::VisitThrow(Throw* expr) {
-  AllocateBlockCoverageSlotIfEnabled(
-      {expr->continuation_pos(), kNoSourcePosition});
+  AllocateBlockCoverageSlotIfEnabled(expr->continuation_range());
   VisitForAccumulatorValue(expr->exception());
   builder()->SetExpressionPosition(expr);
   builder()->Throw();

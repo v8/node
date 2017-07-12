@@ -129,6 +129,7 @@
 //     - HeapNumber
 //     - Cell
 //     - PropertyCell
+//     - PropertyArray
 //     - Code
 //     - AbstractCode, a wrapper around Code or BytecodeArray
 //     - Map
@@ -367,6 +368,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(ASYNC_GENERATOR_REQUEST_TYPE)                                              \
   V(PREPARSED_SCOPE_DATA_TYPE)                                                 \
   V(FIXED_ARRAY_TYPE)                                                          \
+  V(PROPERTY_ARRAY_TYPE)                                                       \
   V(TRANSITION_ARRAY_TYPE)                                                     \
   V(SHARED_FUNCTION_INFO_TYPE)                                                 \
   V(CELL_TYPE)                                                                 \
@@ -378,7 +380,6 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   /* version 6.0 branch, or replace them when there is demand for new types.*/ \
   V(PADDING_TYPE_1)                                                            \
   V(PADDING_TYPE_2)                                                            \
-  V(PADDING_TYPE_3)                                                            \
                                                                                \
   V(JS_PROXY_TYPE)                                                             \
   V(JS_GLOBAL_OBJECT_TYPE)                                                     \
@@ -400,8 +401,11 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(JS_DATA_VIEW_TYPE)                                                         \
   V(JS_SET_TYPE)                                                               \
   V(JS_MAP_TYPE)                                                               \
-  V(JS_SET_ITERATOR_TYPE)                                                      \
-  V(JS_MAP_ITERATOR_TYPE)                                                      \
+  V(JS_SET_KEY_VALUE_ITERATOR_TYPE)                                            \
+  V(JS_SET_VALUE_ITERATOR_TYPE)                                                \
+  V(JS_MAP_KEY_ITERATOR_TYPE)                                                  \
+  V(JS_MAP_KEY_VALUE_ITERATOR_TYPE)                                            \
+  V(JS_MAP_VALUE_ITERATOR_TYPE)                                                \
   V(JS_WEAK_MAP_TYPE)                                                          \
   V(JS_WEAK_SET_TYPE)                                                          \
   V(JS_PROMISE_CAPABILITY_TYPE)                                                \
@@ -612,7 +616,7 @@ static inline bool IsShortcutCandidate(int type) {
   return ((type & kShortcutTypeMask) == kShortcutTypeTag);
 }
 
-enum InstanceType {
+enum InstanceType : uint8_t {
   // String types.
   INTERNALIZED_STRING_TYPE = kTwoByteStringTag | kSeqStringTag |
                              kInternalizedTag,  // FIRST_PRIMITIVE_TYPE
@@ -716,6 +720,7 @@ enum InstanceType {
   ASYNC_GENERATOR_REQUEST_TYPE,
   PREPARSED_SCOPE_DATA_TYPE,
   FIXED_ARRAY_TYPE,
+  PROPERTY_ARRAY_TYPE,
   TRANSITION_ARRAY_TYPE,
   SHARED_FUNCTION_INFO_TYPE,
   CELL_TYPE,
@@ -728,7 +733,6 @@ enum InstanceType {
   // version 6.0 branch, or replace them when there is demand for new types.
   PADDING_TYPE_1,
   PADDING_TYPE_2,
-  PADDING_TYPE_3,
 
   // All the following types are subtypes of JSReceiver, which corresponds to
   // objects in the JS sense. The first and the last type in this range are
@@ -757,8 +761,11 @@ enum InstanceType {
   JS_DATA_VIEW_TYPE,
   JS_SET_TYPE,
   JS_MAP_TYPE,
-  JS_SET_ITERATOR_TYPE,
-  JS_MAP_ITERATOR_TYPE,
+  JS_SET_KEY_VALUE_ITERATOR_TYPE,
+  JS_SET_VALUE_ITERATOR_TYPE,
+  JS_MAP_KEY_ITERATOR_TYPE,
+  JS_MAP_KEY_VALUE_ITERATOR_TYPE,
+  JS_MAP_VALUE_ITERATOR_TYPE,
   JS_WEAK_MAP_TYPE,
   JS_WEAK_SET_TYPE,
   JS_PROMISE_CAPABILITY_TYPE,
@@ -951,6 +958,7 @@ class ConsString;
 class ElementsAccessor;
 class FindAndReplacePattern;
 class FixedArrayBase;
+class PropertyArray;
 class FunctionLiteral;
 class JSGlobalObject;
 class KeyAccumulator;
@@ -1097,6 +1105,7 @@ template <class C> inline bool Is(Object* obj);
   V(ObjectHashTable)                   \
   V(Oddball)                           \
   V(OrderedHashTable)                  \
+  V(PropertyArray)                     \
   V(PropertyCell)                      \
   V(RegExpMatchInfo)                   \
   V(ScopeInfo)                         \
@@ -1600,6 +1609,9 @@ class Smi: public Object {
     return Smi::FromInt(static_cast<uint32_t>(value()));
   }
 
+  // Convert a Smi object to an int.
+  static inline int ToInt(const Object* object);
+
   // Convert a value to a Smi object.
   static inline Smi* FromInt(int value) {
     DCHECK(Smi::IsValid(value));
@@ -1935,14 +1947,34 @@ enum class AllocationSiteUpdateMode { kUpdate, kCheckOnly };
 // JSObject and JSProxy.
 class JSReceiver: public HeapObject {
  public:
-  // [properties]: Backing storage for properties.
-  // properties is a FixedArray in the fast case and a Dictionary in the
-  // slow case.
-  DECL_ACCESSORS(properties, FixedArray)  // Get and set fast properties.
-  inline void initialize_properties();
-  inline bool HasFastProperties();
+  // Returns true if there is no slow (ie, dictionary) backing store.
+  inline bool HasFastProperties() const;
+
+  // Returns the properties array backing store if it
+  // exists. Otherwise, returns an empty_property_array when there's a
+  // Smi (hash code) or an empty_fixed_array for a fast properties
+  // map.
+  inline PropertyArray* property_array() const;
+
   // Gets slow properties for non-global objects.
-  inline NameDictionary* property_dictionary();
+  inline NameDictionary* property_dictionary() const;
+
+  // There are four possible value for the properties offset.
+  // 1) EmptyFixedArray -- This is the standard placeholder.
+  //
+  // 2) TODO(gsathya): Smi -- This is the hash code of the object.
+  //
+  // 3) PropertyArray - This is similar to a FixedArray but stores
+  // the hash code of the object in its length field. This is a fast
+  // backing store.
+  //
+  // 4) NameDictionary - This is the dictionary-mode backing store.
+  //
+  // This is used only in the deoptimizer and heap. Please use the
+  // above typed getters and setters to access the properties.
+  DECL_ACCESSORS(properties, Object)
+
+  inline void initialize_properties();
 
   // Deletes an existing named property in a normalized object.
   static void DeleteNormalizedProperty(Handle<JSReceiver> object, int entry);
@@ -2144,9 +2176,6 @@ class JSObject: public JSReceiver {
   static MUST_USE_RESULT MaybeHandle<JSObject> New(
       Handle<JSFunction> constructor, Handle<JSReceiver> new_target,
       Handle<AllocationSite> site = Handle<AllocationSite>::null());
-
-  // Gets global object properties.
-  inline GlobalDictionary* global_dictionary();
 
   static MaybeHandle<Context> GetFunctionRealm(Handle<JSObject> object);
 
@@ -2997,7 +3026,7 @@ class ArrayList : public FixedArray {
 
   // Return a copy of the list of size Length() without the first entry. The
   // number returned by Length() is stored in the first entry.
-  Handle<FixedArray> Elements() const;
+  static Handle<FixedArray> Elements(Handle<ArrayList> array);
   bool IsFull();
   DECL_CAST(ArrayList)
 
@@ -3006,6 +3035,48 @@ class ArrayList : public FixedArray {
   static const int kLengthIndex = 0;
   static const int kFirstIndex = 1;
   DISALLOW_IMPLICIT_CONSTRUCTORS(ArrayList);
+};
+
+class PropertyArray : public HeapObject {
+ public:
+  // [length]: length of the array.
+  inline int length() const;
+  inline void set_length(int length);
+
+  // Get and set the length using acquire loads and release stores.
+  inline int synchronized_length() const;
+  inline void synchronized_set_length(int value);
+
+  inline Object* get(int index) const;
+
+  // Setter that doesn't need write barrier.
+  inline void set(int index, Object* value);
+  // Setter with explicit barrier mode.
+  inline void set(int index, Object* value, WriteBarrierMode mode);
+
+  // Gives access to raw memory which stores the array's data.
+  inline Object** data_start();
+
+  // Garbage collection support.
+  static constexpr int SizeFor(int length) {
+    return kHeaderSize + length * kPointerSize;
+  }
+
+  DECL_CAST(PropertyArray)
+  DECL_PRINTER(PropertyArray)
+  DECL_VERIFIER(PropertyArray)
+
+  // Layout description.
+  static const int kLengthOffset = HeapObject::kHeaderSize;
+  static const int kHeaderSize = kLengthOffset + kPointerSize;
+
+  // Garbage collection support.
+  typedef FlexibleBodyDescriptor<kHeaderSize> BodyDescriptor;
+  // No weak fields.
+  typedef BodyDescriptor BodyDescriptorWeak;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(PropertyArray);
 };
 
 enum SearchMode { ALL_ENTRIES, VALID_ENTRIES };
@@ -3475,7 +3546,7 @@ class DeoptimizationInputData: public FixedArray {
   // Offsets of deopt entry elements relative to the start of the entry.
   static const int kBytecodeOffsetRawOffset = 0;
   static const int kTranslationIndexOffset = 1;
-  static const int kArgumentsStackHeightOffset = 2;
+  static const int kTrampolinePcOffset = 2;
   static const int kPcOffset = 3;
   static const int kDeoptEntrySize = 4;
 
@@ -3503,7 +3574,7 @@ class DeoptimizationInputData: public FixedArray {
 
   DECL_ENTRY_ACCESSORS(BytecodeOffsetRaw, Smi)
   DECL_ENTRY_ACCESSORS(TranslationIndex, Smi)
-  DECL_ENTRY_ACCESSORS(ArgumentsStackHeight, Smi)
+  DECL_ENTRY_ACCESSORS(TrampolinePc, Smi)
   DECL_ENTRY_ACCESSORS(Pc, Smi)
 
 #undef DECL_ENTRY_ACCESSORS
@@ -4636,6 +4707,7 @@ class ContextExtension : public Struct {
   V(Map.prototype, forEach, MapForEach)                     \
   V(Map.prototype, has, MapHas)                             \
   V(Map.prototype, keys, MapKeys)                           \
+  V(Map.prototype, get, MapGet)                             \
   V(Map.prototype, set, MapSet)                             \
   V(Map.prototype, values, MapValues)                       \
   V(Set.prototype, add, SetAdd)                             \
@@ -5283,6 +5355,9 @@ class JSGlobalObject : public JSObject {
   // [global proxy]: the global proxy object of the context
   DECL_ACCESSORS(global_proxy, JSObject)
 
+  // Gets global object properties.
+  inline GlobalDictionary* global_dictionary();
+  inline void set_global_dictionary(GlobalDictionary* dictionary);
 
   static void InvalidatePropertyCell(Handle<JSGlobalObject> object,
                                      Handle<Name> name);
@@ -5773,20 +5848,32 @@ class AllocationSite: public Struct {
 
   const char* PretenureDecisionName(PretenureDecision decision);
 
-  DECL_ACCESSORS(transition_info, Object)
+  // Contains either a Smi-encoded bitfield or a boilerplate. If it's a Smi the
+  // AllocationSite is for a constructed Array.
+  DECL_ACCESSORS(transition_info_or_boilerplate, Object)
+  DECL_ACCESSORS(boilerplate, JSObject)
+  DECL_INT_ACCESSORS(transition_info)
+
   // nested_site threads a list of sites that represent nested literals
   // walked in a particular order. So [[1, 2], 1, 2] will have one
   // nested_site, but [[1, 2], 3, [4]] will have a list of two.
   DECL_ACCESSORS(nested_site, Object)
+
+  // Bitfield containing pretenuring information.
   DECL_INT_ACCESSORS(pretenure_data)
+
   DECL_INT_ACCESSORS(pretenure_create_count)
   DECL_ACCESSORS(dependent_code, DependentCode)
+
+  // heap->allocation_site_list() points to the last AllocationSite which form
+  // a linked list through the weak_next property. The GC might remove elements
+  // from the list by updateing weak_next.
   DECL_ACCESSORS(weak_next, Object)
 
   inline void Initialize();
 
   // This method is expensive, it should only be called for reporting.
-  bool IsNestedSite();
+  bool IsNested();
 
   // transition_info bitfields, for constructed array transition info.
   class ElementsKindBits:       public BitField<ElementsKind, 0,  15> {};
@@ -5805,29 +5892,29 @@ class AllocationSite: public Struct {
 
   inline void IncrementMementoCreateCount();
 
-  PretenureFlag GetPretenureMode();
+  PretenureFlag GetPretenureMode() const;
 
   void ResetPretenureDecision();
 
-  inline PretenureDecision pretenure_decision();
+  inline PretenureDecision pretenure_decision() const;
   inline void set_pretenure_decision(PretenureDecision decision);
 
-  inline bool deopt_dependent_code();
+  inline bool deopt_dependent_code() const;
   inline void set_deopt_dependent_code(bool deopt);
 
-  inline int memento_found_count();
+  inline int memento_found_count() const;
   inline void set_memento_found_count(int count);
 
-  inline int memento_create_count();
+  inline int memento_create_count() const;
   inline void set_memento_create_count(int count);
 
   // The pretenuring decision is made during gc, and the zombie state allows
   // us to recognize when an allocation site is just being kept alive because
   // a later traversal of new space may discover AllocationMementos that point
   // to this AllocationSite.
-  inline bool IsZombie();
+  inline bool IsZombie() const;
 
-  inline bool IsMaybeTenure();
+  inline bool IsMaybeTenure() const;
 
   inline void MarkZombie();
 
@@ -5837,13 +5924,13 @@ class AllocationSite: public Struct {
 
   inline bool DigestPretenuringFeedback(bool maximum_size_scavenge);
 
-  inline ElementsKind GetElementsKind();
+  inline ElementsKind GetElementsKind() const;
   inline void SetElementsKind(ElementsKind kind);
 
-  inline bool CanInlineCall();
+  inline bool CanInlineCall() const;
   inline void SetDoNotInlineCall();
 
-  inline bool SitePointsToLiteral();
+  inline bool PointsToLiteral() const;
 
   template <AllocationSiteUpdateMode update_or_check =
                 AllocationSiteUpdateMode::kUpdate>
@@ -5858,8 +5945,9 @@ class AllocationSite: public Struct {
   static bool ShouldTrack(ElementsKind from, ElementsKind to);
   static inline bool CanTrack(InstanceType type);
 
-  static const int kTransitionInfoOffset = HeapObject::kHeaderSize;
-  static const int kNestedSiteOffset = kTransitionInfoOffset + kPointerSize;
+  static const int kTransitionInfoOrBoilerplateOffset = HeapObject::kHeaderSize;
+  static const int kNestedSiteOffset =
+      kTransitionInfoOrBoilerplateOffset + kPointerSize;
   static const int kPretenureDataOffset = kNestedSiteOffset + kPointerSize;
   static const int kPretenureCreateCountOffset =
       kPretenureDataOffset + kPointerSize;
@@ -5870,7 +5958,8 @@ class AllocationSite: public Struct {
 
   // During mark compact we need to take special care for the dependent code
   // field.
-  static const int kPointerFieldsBeginOffset = kTransitionInfoOffset;
+  static const int kPointerFieldsBeginOffset =
+      kTransitionInfoOrBoilerplateOffset;
   static const int kPointerFieldsEndOffset = kWeakNextOffset;
 
   // Ignores weakness.
@@ -5883,7 +5972,7 @@ class AllocationSite: public Struct {
       BodyDescriptorWeak;
 
  private:
-  inline bool PretenuringDecisionMade();
+  inline bool PretenuringDecisionMade() const;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(AllocationSite);
 };
@@ -5896,9 +5985,9 @@ class AllocationMemento: public Struct {
 
   DECL_ACCESSORS(allocation_site, Object)
 
-  inline bool IsValid();
-  inline AllocationSite* GetAllocationSite();
-  inline Address GetAllocationSiteUnchecked();
+  inline bool IsValid() const;
+  inline AllocationSite* GetAllocationSite() const;
+  inline Address GetAllocationSiteUnchecked() const;
 
   DECL_PRINTER(AllocationMemento)
   DECL_VERIFIER(AllocationMemento)

@@ -249,7 +249,7 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
       DCHECK(isolate()->heap()->array_protector()->IsPropertyCell());
       GotoIfNot(
           WordEqual(LoadObjectField(protector_cell, PropertyCell::kValueOffset),
-                    SmiConstant(Smi::FromInt(Isolate::kProtectorValid))),
+                    SmiConstant(Isolate::kProtectorValid)),
           miss);
       exit_point->Return(UndefinedConstant());
     }
@@ -407,8 +407,7 @@ void AccessorAssembler::HandleLoadICProtoHandlerCase(
   GotoIf(WordEqual(validity_cell, IntPtrConstant(0)),
          &validity_cell_check_done);
   Node* cell_value = LoadObjectField(validity_cell, Cell::kValueOffset);
-  GotoIf(WordNotEqual(cell_value,
-                      SmiConstant(Smi::FromInt(Map::kPrototypeChainValid))),
+  GotoIf(WordNotEqual(cell_value, SmiConstant(Map::kPrototypeChainValid)),
          miss);
   Goto(&validity_cell_check_done);
 
@@ -711,8 +710,7 @@ void AccessorAssembler::HandleStoreICElementHandlerCase(
   Comment("HandleStoreICElementHandlerCase");
   Node* validity_cell = LoadObjectField(handler, Tuple2::kValue1Offset);
   Node* cell_value = LoadObjectField(validity_cell, Cell::kValueOffset);
-  GotoIf(WordNotEqual(cell_value,
-                      SmiConstant(Smi::FromInt(Map::kPrototypeChainValid))),
+  GotoIf(WordNotEqual(cell_value, SmiConstant(Map::kPrototypeChainValid)),
          miss);
 
   Node* code_handler = LoadObjectField(handler, Tuple2::kValue2Offset);
@@ -741,8 +739,7 @@ void AccessorAssembler::HandleStoreICProtoHandler(
   GotoIf(WordEqual(validity_cell, IntPtrConstant(0)),
          &validity_cell_check_done);
   Node* cell_value = LoadObjectField(validity_cell, Cell::kValueOffset);
-  GotoIf(WordNotEqual(cell_value,
-                      SmiConstant(Smi::FromInt(Map::kPrototypeChainValid))),
+  GotoIf(WordNotEqual(cell_value, SmiConstant(Map::kPrototypeChainValid)),
          miss);
   Goto(&validity_cell_check_done);
 
@@ -1069,9 +1066,8 @@ void AccessorAssembler::ExtendPropertiesBackingStore(Node* object,
   Node* new_capacity = IntPtrOrSmiAdd(length, delta, mode);
 
   // Grow properties array.
-  ElementsKind kind = PACKED_ELEMENTS;
   DCHECK(kMaxNumberOfDescriptors + JSObject::kFieldsAdded <
-         FixedArrayBase::GetMaxLengthForNewSpaceAllocation(kind));
+         FixedArrayBase::GetMaxLengthForNewSpaceAllocation(PACKED_ELEMENTS));
   // The size of a new properties backing store is guaranteed to be small
   // enough that the new backing store will be allocated in new space.
   CSA_ASSERT(this,
@@ -1081,15 +1077,14 @@ void AccessorAssembler::ExtendPropertiesBackingStore(Node* object,
                      kMaxNumberOfDescriptors + JSObject::kFieldsAdded, mode),
                  mode));
 
-  Node* new_properties = AllocateFixedArray(kind, new_capacity, mode);
+  Node* new_properties = AllocatePropertyArray(new_capacity, mode);
 
-  FillFixedArrayWithValue(kind, new_properties, length, new_capacity,
-                          Heap::kUndefinedValueRootIndex, mode);
+  FillPropertyArrayWithUndefined(new_properties, length, new_capacity, mode);
 
   // |new_properties| is guaranteed to be in new space, so we can skip
   // the write barrier.
-  CopyFixedArrayElements(kind, properties, new_properties, length,
-                         SKIP_WRITE_BARRIER, mode);
+  CopyPropertyArrayValues(properties, new_properties, length,
+                          SKIP_WRITE_BARRIER, mode);
 
   StoreObjectField(object, JSObject::kPropertiesOffset, new_properties);
   Comment("] Extend storage");

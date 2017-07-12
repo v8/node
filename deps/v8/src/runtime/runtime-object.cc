@@ -67,7 +67,8 @@ static MaybeHandle<Object> KeyedGetObjectProperty(Isolate* isolate,
       DisallowHeapAllocation no_allocation;
       if (receiver->IsJSGlobalObject()) {
         // Attempt dictionary lookup.
-        GlobalDictionary* dictionary = receiver->global_dictionary();
+        GlobalDictionary* dictionary =
+            JSGlobalObject::cast(*receiver)->global_dictionary();
         int entry = dictionary->FindEntry(key);
         if (entry != GlobalDictionary::kNotFound) {
           PropertyCell* cell = dictionary->CellAt(entry);
@@ -99,7 +100,7 @@ static MaybeHandle<Object> KeyedGetObjectProperty(Isolate* isolate,
       Handle<JSObject> js_object = Handle<JSObject>::cast(receiver_obj);
       ElementsKind elements_kind = js_object->GetElementsKind();
       if (IsDoubleElementsKind(elements_kind)) {
-        if (Smi::cast(*key_obj)->value() >= js_object->elements()->length()) {
+        if (Smi::ToInt(*key_obj) >= js_object->elements()->length()) {
           elements_kind = IsHoleyElementsKind(elements_kind) ? HOLEY_ELEMENTS
                                                              : PACKED_ELEMENTS;
           JSObject::TransitionElementsKind(js_object, elements_kind);
@@ -663,7 +664,8 @@ RUNTIME_FUNCTION(Runtime_LoadMutableDouble) {
     CHECK(field_index.property_index() <
           object->map()->GetInObjectProperties());
   } else {
-    CHECK(field_index.outobject_array_index() < object->properties()->length());
+    CHECK(field_index.outobject_array_index() <
+          object->property_dictionary()->length());
   }
   return *JSObject::FastPropertyAt(object, Representation::Double(),
                                    field_index);

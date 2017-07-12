@@ -341,6 +341,50 @@ Reduction JSCallReducer::ReduceFunctionPrototypeHasInstance(Node* node) {
   return Changed(node);
 }
 
+namespace {
+
+bool HasInstanceTypeWitness(Node* receiver, Node* effect,
+                            InstanceType instance_type) {
+  ZoneHandleSet<Map> receiver_maps;
+  NodeProperties::InferReceiverMapsResult result =
+      NodeProperties::InferReceiverMaps(receiver, effect, &receiver_maps);
+  switch (result) {
+    case NodeProperties::kNoReceiverMaps:
+      return false;
+    case NodeProperties::kReliableReceiverMaps:
+    case NodeProperties::kUnreliableReceiverMaps:
+      DCHECK_NE(0, receiver_maps.size());
+      for (size_t i = 0; i < receiver_maps.size(); ++i) {
+        if (receiver_maps[i]->instance_type() != instance_type) return false;
+      }
+      return true;
+  }
+  UNREACHABLE();
+  return false;
+}
+
+}  // namespace
+
+// ES #sec-get-map.prototype.size
+Reduction JSCallReducer::ReduceMapPrototypeGetSize(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  if (HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE)) {
+    Node* table = effect = graph()->NewNode(
+        simplified()->LoadField(AccessBuilder::ForJSCollectionTable()),
+        receiver, effect, control);
+    Node* value = effect = graph()->NewNode(
+        simplified()->LoadField(
+            AccessBuilder::ForOrderedHashMapNumberOfElements()),
+        table, effect, control);
+    ReplaceWithValue(node, value, effect, control);
+    return Replace(value);
+  }
+  return NoChange();
+}
+
 Reduction JSCallReducer::ReduceObjectGetPrototype(Node* node, Node* object) {
   Node* effect = NodeProperties::GetEffectInput(node);
 
@@ -349,17 +393,12 @@ Reduction JSCallReducer::ReduceObjectGetPrototype(Node* node, Node* object) {
   NodeProperties::InferReceiverMapsResult result =
       NodeProperties::InferReceiverMaps(object, effect, &object_maps);
   if (result != NodeProperties::kNoReceiverMaps) {
-    Handle<Map> candidate_map(
-        object_maps[0]->GetPrototypeChainRootMap(isolate()));
+    Handle<Map> candidate_map = object_maps[0];
     Handle<Object> candidate_prototype(candidate_map->prototype(), isolate());
-
-    // We cannot deal with primitives here.
-    if (candidate_map->IsPrimitiveMap()) return NoChange();
 
     // Check if we can constant-fold the {candidate_prototype}.
     for (size_t i = 0; i < object_maps.size(); ++i) {
-      Handle<Map> const object_map(
-          object_maps[i]->GetPrototypeChainRootMap(isolate()));
+      Handle<Map> object_map = object_maps[i];
       if (object_map->IsSpecialReceiverMap() ||
           object_map->has_hidden_prototype() ||
           object_map->prototype() != *candidate_prototype) {
@@ -368,6 +407,9 @@ Reduction JSCallReducer::ReduceObjectGetPrototype(Node* node, Node* object) {
         // with hidden prototypes at this point.
         return NoChange();
       }
+      // The above check also excludes maps for primitive values, which is
+      // important because we are not applying [[ToObject]] here as expected.
+      DCHECK(!object_map->IsPrimitiveMap() && object_map->IsJSReceiverMap());
       if (result == NodeProperties::kUnreliableReceiverMaps &&
           !object_map->is_stable()) {
         return NoChange();
@@ -488,6 +530,38 @@ Reduction JSCallReducer::ReduceReflectGetPrototypeOf(Node* node) {
   return ReduceObjectGetPrototype(node, target);
 }
 
+// ES #sec-get-set.prototype.size
+Reduction JSCallReducer::ReduceSetPrototypeGetSize(Node* node) {
+  DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  if (HasInstanceTypeWitness(receiver, effect, JS_SET_TYPE)) {
+    Node* table = effect = graph()->NewNode(
+        simplified()->LoadField(AccessBuilder::ForJSCollectionTable()),
+        receiver, effect, control);
+    Node* value = effect = graph()->NewNode(
+        simplified()->LoadField(
+            AccessBuilder::ForOrderedHashSetNumberOfElements()),
+        table, effect, control);
+    ReplaceWithValue(node, value, effect, control);
+    return Replace(value);
+  }
+  return NoChange();
+}
+
+bool CanInlineArrayIteratingBuiltin(Handle<Map> receiver_map) {
+  Isolate* const isolate = receiver_map->GetIsolate();
+  if (!receiver_map->prototype()->IsJSArray()) return false;
+  Handle<JSArray> receiver_prototype(JSArray::cast(receiver_map->prototype()),
+                                     isolate);
+  return receiver_map->instance_type() == JS_ARRAY_TYPE &&
+         IsFastElementsKind(receiver_map->elements_kind()) &&
+         (!receiver_map->is_prototype_map() || receiver_map->is_stable()) &&
+         isolate->IsFastArrayConstructorPrototypeChainIntact() &&
+         isolate->IsAnyInitialArrayPrototype(receiver_prototype);
+}
+
 Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
                                             Node* node) {
   if (!FLAG_turbo_inline_array_builtins) return NoChange();
@@ -515,14 +589,19 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   if (receiver_maps.size() != 1) return NoChange();
   Handle<Map> receiver_map(receiver_maps[0]);
   ElementsKind kind = receiver_map->elements_kind();
-  // TODO(danno): Handle holey Smi and Object fast elements kinds and double
-  // packed.
-  if (!IsFastPackedElementsKind(kind) || IsDoubleElementsKind(kind)) {
+  // TODO(danno): Handle double packed elements
+  if (!IsFastElementsKind(kind) || IsDoubleElementsKind(kind) ||
+      !CanInlineArrayIteratingBuiltin(receiver_map)) {
     return NoChange();
   }
 
   // TODO(danno): forEach can throw. Hook up exceptional edges.
   if (NodeProperties::IsExceptionalCall(node)) return NoChange();
+
+  // Install code dependencies on the {receiver} prototype maps and the
+  // global array protector cell.
+  dependencies()->AssumePropertyCell(factory()->array_protector());
+  dependencies()->AssumePrototypeMapsStable(receiver_map);
 
   Node* k = jsgraph()->ZeroConstant();
 
@@ -592,6 +671,23 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   Node* next_k =
       graph()->NewNode(simplified()->NumberAdd(), k, jsgraph()->Constant(1));
   checkpoint_params[3] = next_k;
+
+  Node* hole_true = nullptr;
+  Node* hole_false = nullptr;
+  Node* effect_true = effect;
+
+  if (IsHoleyElementsKind(kind)) {
+    // Holey elements kind require a hole check and skipping of the element in
+    // the case of a hole.
+    Node* check = graph()->NewNode(simplified()->ReferenceEqual(), element,
+                                   jsgraph()->TheHoleConstant());
+    Node* branch =
+        graph()->NewNode(common()->Branch(BranchHint::kFalse), check, control);
+    hole_true = graph()->NewNode(common()->IfTrue(), branch);
+    hole_false = graph()->NewNode(common()->IfFalse(), branch);
+    control = hole_false;
+  }
+
   frame_state = CreateJavaScriptBuiltinContinuationFrameState(
       jsgraph(), function, Builtins::kArrayForEachLoopLazyDeoptContinuation,
       node->InputAt(0), context, &checkpoint_params[0], stack_parameters,
@@ -600,6 +696,17 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   control = effect = graph()->NewNode(
       javascript()->Call(5, p.frequency()), fncallback, this_arg, element, k,
       receiver, context, frame_state, effect, control);
+
+  if (IsHoleyElementsKind(kind)) {
+    Node* after_call_control = control;
+    Node* after_call_effect = effect;
+    control = hole_true;
+    effect = effect_true;
+
+    control = graph()->NewNode(common()->Merge(2), control, after_call_control);
+    effect = graph()->NewNode(common()->EffectPhi(2), effect, after_call_effect,
+                              control);
+  }
 
   k = next_k;
 
@@ -950,6 +1057,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceFunctionPrototypeCall(node);
         case Builtins::kFunctionPrototypeHasInstance:
           return ReduceFunctionPrototypeHasInstance(node);
+        case Builtins::kMapPrototypeGetSize:
+          return ReduceMapPrototypeGetSize(node);
         case Builtins::kNumberConstructor:
           return ReduceNumberConstructor(node);
         case Builtins::kObjectGetPrototypeOf:
@@ -964,6 +1073,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceReflectConstruct(node);
         case Builtins::kReflectGetPrototypeOf:
           return ReduceReflectGetPrototypeOf(node);
+        case Builtins::kSetPrototypeGetSize:
+          return ReduceSetPrototypeGetSize(node);
         case Builtins::kArrayForEach:
           return ReduceArrayForEach(function, node);
         case Builtins::kReturnReceiver:

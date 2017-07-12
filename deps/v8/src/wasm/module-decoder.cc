@@ -29,6 +29,18 @@ namespace wasm {
 #else
 #define TRACE(...)
 #endif
+namespace {
+
+const char kNameString[] = "name";
+
+const char kExceptionString[] = "exception";
+
+template <size_t N>
+constexpr size_t num_chars(const char (&)[N]) {
+  return N - 1;  // remove null character at end.
+}
+
+}  // namespace
 
 const char* SectionName(SectionCode code) {
   switch (code) {
@@ -57,16 +69,15 @@ const char* SectionName(SectionCode code) {
     case kDataSectionCode:
       return "Data";
     case kNameSectionCode:
-      return "Name";
+      return kNameString;
+    case kExceptionSectionCode:
+      return kExceptionString;
     default:
       return "<unknown>";
   }
 }
 
 namespace {
-
-const char* kNameString = "name";
-const size_t kNameStringLength = 4;
 
 ValueType TypeOf(const WasmModule* module, const WasmInitExpr& expr) {
   switch (expr.kind) {
@@ -203,10 +214,15 @@ class WasmSectionIterator {
             static_cast<int>(section_name_start - decoder_.start()),
             string.length() < 20 ? string.length() : 20, section_name_start);
 
-      if (string.length() == kNameStringLength &&
+      if (string.length() == num_chars(kNameString) &&
           strncmp(reinterpret_cast<const char*>(section_name_start),
-                  kNameString, kNameStringLength) == 0) {
+                  kNameString, num_chars(kNameString)) == 0) {
         section_code = kNameSectionCode;
+      } else if (FLAG_experimental_wasm_eh &&
+                 string.length() == num_chars(kExceptionString) &&
+                 strncmp(reinterpret_cast<const char*>(section_name_start),
+                         kExceptionString, num_chars(kExceptionString)) == 0) {
+        section_code = kExceptionSectionCode;
       }
     } else if (!IsValidSectionCode(section_code)) {
       decoder_.errorf(decoder_.pc(), "unknown section code #0x%02x",
@@ -358,6 +374,9 @@ class ModuleDecoder : public Decoder {
         break;
       case kNameSectionCode:
         DecodeNameSection();
+        break;
+      case kExceptionSectionCode:
+        DecodeExceptionSection();
         break;
       default:
         errorf(pc(), "unexpected section: %s", SectionName(section_code));
@@ -606,8 +625,9 @@ class ModuleDecoder : public Decoder {
         DCHECK(!cmp_less(*it, *last));  // Vector must be sorted.
         if (!cmp_less(*last, *it)) {
           const byte* pc = start() + GetBufferRelativeOffset(it->name.offset());
-          errorf(pc, "Duplicate export name '%.*s' for functions %d and %d",
-                 it->name.length(), pc, last->index, it->index);
+          errorf(pc, "Duplicate export name '%.*s' for %s %d and %s %d",
+                 it->name.length(), pc, ExternalKindName(last->kind),
+                 last->index, ExternalKindName(it->kind), it->index);
           break;
         }
       }
@@ -645,11 +665,11 @@ class ModuleDecoder : public Decoder {
       std::vector<uint32_t> vector;
       module_->table_inits.push_back({table_index, offset, vector});
       WasmTableInit* init = &module_->table_inits.back();
-      for (uint32_t j = 0; ok() && j < num_elem; j++) {
+      for (uint32_t j = 0; j < num_elem; j++) {
         WasmFunction* func = nullptr;
         uint32_t index = consume_func_index(module_.get(), &func);
-        DCHECK_EQ(func != nullptr, ok());
-        if (!func) break;
+        DCHECK_IMPLIES(ok(), func != nullptr);
+        if (!ok()) break;
         DCHECK_EQ(index, func->func_index);
         init->entries.push_back(index);
         // Canonicalize signature indices during decoding.
@@ -749,6 +769,17 @@ class ModuleDecoder : public Decoder {
     }
     // Skip the whole names section in the outer decoder.
     consume_bytes(static_cast<uint32_t>(end_ - start_), nullptr);
+  }
+
+  void DecodeExceptionSection() {
+    uint32_t exception_count =
+        consume_count("exception count", kV8MaxWasmExceptions);
+    for (uint32_t i = 0; ok() && i < exception_count; ++i) {
+      TRACE("DecodeExceptionSignature[%d] module+%d\n", i,
+            static_cast<int>(pc_ - start_));
+      module_->exceptions.emplace_back(
+          consume_exception_sig(module_->signature_zone.get()));
+    }
   }
 
   ModuleResult FinishDecoding(bool verify_functions = true) {
@@ -1176,9 +1207,20 @@ class ModuleDecoder : public Decoder {
     }
   }
 
-  // Parses a type entry, which is currently limited to functions only.
   FunctionSig* consume_sig(Zone* zone) {
-    if (!expect_u8("type form", kWasmFunctionTypeForm)) return nullptr;
+    constexpr bool has_return_values = true;
+    return consume_sig_internal(zone, has_return_values);
+  }
+
+  WasmExceptionSig* consume_exception_sig(Zone* zone) {
+    constexpr bool has_return_values = true;
+    return consume_sig_internal(zone, !has_return_values);
+  }
+
+ private:
+  FunctionSig* consume_sig_internal(Zone* zone, bool has_return_values) {
+    if (has_return_values && !expect_u8("type form", kWasmFunctionTypeForm))
+      return nullptr;
     // parse parameter types
     uint32_t param_count =
         consume_count("param count", kV8MaxWasmFunctionParams);
@@ -1188,17 +1230,19 @@ class ModuleDecoder : public Decoder {
       ValueType param = consume_value_type();
       params.push_back(param);
     }
-
-    // parse return types
-    const size_t max_return_count = FLAG_experimental_wasm_mv
-                                        ? kV8MaxWasmFunctionMultiReturns
-                                        : kV8MaxWasmFunctionReturns;
-    uint32_t return_count = consume_count("return count", max_return_count);
-    if (failed()) return nullptr;
     std::vector<ValueType> returns;
-    for (uint32_t i = 0; ok() && i < return_count; ++i) {
-      ValueType ret = consume_value_type();
-      returns.push_back(ret);
+    uint32_t return_count = 0;
+    if (has_return_values) {
+      // parse return types
+      const size_t max_return_count = FLAG_experimental_wasm_mv
+                                          ? kV8MaxWasmFunctionMultiReturns
+                                          : kV8MaxWasmFunctionReturns;
+      return_count = consume_count("return count", max_return_count);
+      if (failed()) return nullptr;
+      for (uint32_t i = 0; ok() && i < return_count; ++i) {
+        ValueType ret = consume_value_type();
+        returns.push_back(ret);
+      }
     }
 
     if (failed()) return nullptr;
@@ -1292,9 +1336,9 @@ FunctionResult DecodeWasmFunction(Isolate* isolate, Zone* zone,
                                   bool is_sync) {
   size_t size = function_end - function_start;
   bool is_wasm = module_env->module_env.is_wasm();
-  auto size_counter = is_wasm ? counters->wasm_wasm_function_size_bytes()
-                              : counters->wasm_asm_function_size_bytes();
-  size_counter->AddSample(static_cast<int>(size));
+  auto size_histogram = is_wasm ? counters->wasm_wasm_function_size_bytes()
+                                : counters->wasm_asm_function_size_bytes();
+  size_histogram->AddSample(static_cast<int>(size));
   auto time_counter = is_wasm ? counters->wasm_decode_wasm_function_time()
                               : counters->wasm_decode_asm_function_time();
   TimedHistogramScope wasm_decode_function_time_scope(time_counter);

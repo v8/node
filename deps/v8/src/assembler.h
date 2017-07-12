@@ -997,7 +997,7 @@ class ExternalReference BASE_EMBEDDED {
   template <typename SubjectChar, typename PatternChar>
   static ExternalReference search_string_raw(Isolate* isolate);
 
-  static ExternalReference orderedhashmap_get_raw(Isolate* isolate);
+  static ExternalReference orderedhashmap_gethash_raw(Isolate* isolate);
 
   template <typename CollectionType, int entrysize>
   static ExternalReference orderedhashtable_has_raw(Isolate* isolate);
@@ -1213,9 +1213,14 @@ class ConstantPoolBuilder BASE_EMBEDDED {
   }
 
   // Add double constant to the embedded constant pool
-  ConstantPoolEntry::Access AddEntry(int position, double value) {
-    ConstantPoolEntry entry(position, Double(value));
+  ConstantPoolEntry::Access AddEntry(int position, Double value) {
+    ConstantPoolEntry entry(position, value);
     return AddEntry(entry, ConstantPoolEntry::DOUBLE);
+  }
+
+  // Add double constant to the embedded constant pool
+  ConstantPoolEntry::Access AddEntry(int position, double value) {
+    return AddEntry(position, Double(value));
   }
 
   // Previews the access type required for the next new entry to be added.

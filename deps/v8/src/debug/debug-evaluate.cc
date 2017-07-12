@@ -277,8 +277,6 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(IsJSProxy)                       \
   V(IsJSMap)                         \
   V(IsJSSet)                         \
-  V(IsJSMapIterator)                 \
-  V(IsJSSetIterator)                 \
   V(IsJSWeakMap)                     \
   V(IsJSWeakSet)                     \
   V(IsRegExp)                        \
@@ -537,8 +535,8 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     // Map builtins.
     case Builtins::kMapConstructor:
     case Builtins::kMapGet:
-    case Builtins::kMapGetSize:
     case Builtins::kMapPrototypeEntries:
+    case Builtins::kMapPrototypeGetSize:
     case Builtins::kMapPrototypeKeys:
     case Builtins::kMapPrototypeValues:
     // Math builtins.
@@ -592,8 +590,8 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kNumberPrototypeValueOf:
     // Set builtins.
     case Builtins::kSetConstructor:
-    case Builtins::kSetGetSize:
     case Builtins::kSetPrototypeEntries:
+    case Builtins::kSetPrototypeGetSize:
     case Builtins::kSetPrototypeValues:
     // String builtins. Strings are immutable.
     case Builtins::kStringFromCharCode:

@@ -60,7 +60,7 @@
 
   ##############################################################################
   # Too slow in debug mode for validation of elements.
-  'regress/regress-430201': [PASS, ['mode == debug', SKIP]],
+  'regress/regress-430201': [PASS, ['mode == debug', SKIP], ['tsan', SKIP]],
   'regress/regress-430201b': [PASS, ['mode == debug', SKIP]],
   'regress/regress-716044': [PASS, ['mode == debug', SKIP]],
 
@@ -178,6 +178,9 @@
 
   # BUG(v8:6306).
   'wasm/huge-memory': [SKIP],
+
+  # BUG(v8:6577).
+  'wasm/exceptions': [SKIP],
 }],  # ALWAYS
 
 ['novfp3 == True', {
@@ -578,9 +581,6 @@
   # Skip tests that are known to be non-deterministic.
   'd8-worker-sharedarraybuffer': [SKIP],
   'd8-os': [SKIP],
-
-  # crbug.com/v8/5803
-  'wasm/gc-frame': [SKIP],
 }],  # 'predictable == True'
 
 ##############################################################################

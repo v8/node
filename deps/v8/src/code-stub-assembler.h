@@ -643,11 +643,16 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                            ParameterMode mode = INTPTR_PARAMETERS,
                            AllocationFlags flags = kNone);
 
+  Node* AllocatePropertyArray(Node* capacity,
+                              ParameterMode mode = INTPTR_PARAMETERS,
+                              AllocationFlags flags = kNone);
   // Perform CreateArrayIterator (ES6 #sec-createarrayiterator).
   Node* CreateArrayIterator(Node* array, Node* array_map, Node* array_type,
                             Node* context, IterationKind mode);
 
   Node* AllocateJSArrayIterator(Node* array, Node* array_map, Node* map);
+  Node* AllocateJSIteratorResult(Node* context, Node* value, Node* done);
+  Node* AllocateJSIteratorResultForEntry(Node* context, Node* key, Node* value);
 
   Node* TypedArraySpeciesCreateByLength(Node* context, Node* originalArray,
                                         Node* len);
@@ -656,6 +661,15 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                Node* to_index,
                                Heap::RootListIndex value_root_index,
                                ParameterMode mode = INTPTR_PARAMETERS);
+
+  void FillPropertyArrayWithUndefined(Node* array, Node* from_index,
+                                      Node* to_index,
+                                      ParameterMode mode = INTPTR_PARAMETERS);
+
+  void CopyPropertyArrayValues(
+      Node* from_array, Node* to_array, Node* length,
+      WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER,
+      ParameterMode mode = INTPTR_PARAMETERS);
 
   // Copies all elements from |from_array| of |length| size to
   // |to_array| of the same size respecting the elements kind.
@@ -756,11 +770,19 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* ToThisValue(Node* context, Node* value, PrimitiveType primitive_type,
                     char const* method_name);
 
+  // Throws a TypeError for {method_name}. Terminates the current block.
+  void ThrowIncompatibleMethodReceiver(Node* context, char const* method_name,
+                                       Node* receiver);
+
   // Throws a TypeError for {method_name} if {value} is not of the given
   // instance type. Returns {value}'s map.
   Node* ThrowIfNotInstanceType(Node* context, Node* value,
                                InstanceType instance_type,
                                char const* method_name);
+  void ThrowTypeError(Node* context, MessageTemplate::Template message,
+                      char const* arg0 = nullptr, char const* arg1 = nullptr);
+  void ThrowTypeError(Node* context, MessageTemplate::Template message,
+                      Node* arg0, Node* arg1 = nullptr, Node* arg2 = nullptr);
 
   // Type checks.
   // Check whether the map is for an object with special properties, such as a
@@ -799,6 +821,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsJSGlobalProxy(Node* object);
   Node* IsJSObjectMap(Node* map);
   Node* IsJSObject(Node* object);
+  Node* IsJSProxy(Node* object);
   Node* IsJSReceiverInstanceType(Node* instance_type);
   Node* IsJSReceiverMap(Node* map);
   Node* IsJSReceiver(Node* object);
@@ -813,6 +836,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsNativeContext(Node* object);
   Node* IsOneByteStringInstanceType(Node* instance_type);
   Node* IsPrivateSymbol(Node* object);
+  Node* IsPropertyArray(Node* object);
   Node* IsPropertyCell(Node* object);
   Node* IsSequentialStringInstanceType(Node* instance_type);
   inline Node* IsSharedFunctionInfo(Node* object) {
@@ -1017,6 +1041,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   void Increment(Variable& variable, int value = 1,
                  ParameterMode mode = INTPTR_PARAMETERS);
+  void Decrement(Variable& variable, int value = 1,
+                 ParameterMode mode = INTPTR_PARAMETERS) {
+    Increment(variable, -value, mode);
+  }
 
   // Generates "if (false) goto label" code. Useful for marking a label as
   // "live" to avoid assertion failures during graph building. In the resulting
@@ -1387,6 +1415,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                     ParameterMode mode) {
     return GetArrayAllocationSize(element_count, kind, mode,
                                   FixedArray::kHeaderSize);
+  }
+
+  Node* GetPropertyArrayAllocationSize(Node* element_count,
+                                       ParameterMode mode) {
+    return GetArrayAllocationSize(element_count, PACKED_ELEMENTS, mode,
+                                  PropertyArray::kHeaderSize);
   }
 
   void GotoIfFixedArraySizeDoesntFitInNewSpace(Node* element_count,

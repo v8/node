@@ -248,6 +248,7 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
         shared->increment_deopt_count();
         code->set_deopt_already_counted(true);
       }
+
       function->set_code(shared->code());
 
       if (FLAG_trace_deopt) {
@@ -287,6 +288,7 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
       }
       SafepointEntry safepoint = code->GetSafepointEntry(it.frame()->pc());
       int deopt_index = safepoint.deoptimization_index();
+
       // Turbofan deopt is checked when we are patching addresses on stack.
       bool turbofanned =
           code->is_turbofanned() && function->shared()->asm_function();
@@ -421,6 +423,7 @@ void Deoptimizer::DeoptimizeFunction(JSFunction* function, Code* code) {
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
   TRACE_EVENT0("v8", "V8.DeoptimizeCode");
   if (code == nullptr) code = function->code();
+
   if (code->kind() == Code::OPTIMIZED_FUNCTION) {
     // Mark the code for deoptimization and unlink any functions that also
     // refer to that code. The code cannot be shared across native contexts,
@@ -987,13 +990,17 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
 
   // The bytecode offset was mentioned explicitly in the BEGIN_FRAME.
   output_offset -= kPointerSize;
+
   int raw_bytecode_offset =
       BytecodeArray::kHeaderSize - kHeapObjectTag + bytecode_offset;
   Smi* smi_bytecode_offset = Smi::FromInt(raw_bytecode_offset);
-  WriteValueToOutput(smi_bytecode_offset, 0, frame_index, output_offset,
-                     "bytecode offset ");
+  output_[frame_index]->SetFrameSlot(
+      output_offset, reinterpret_cast<intptr_t>(smi_bytecode_offset));
 
   if (trace_scope_ != nullptr) {
+    DebugPrintOutputSlot(reinterpret_cast<intptr_t>(smi_bytecode_offset),
+                         frame_index, output_offset, "bytecode offset @ ");
+    PrintF(trace_scope_->file(), "%d\n", bytecode_offset);
     PrintF(trace_scope_->file(), "    -------------------------\n");
   }
 
@@ -1064,10 +1071,7 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
     intptr_t context_value = reinterpret_cast<intptr_t>(Smi::kZero);
     Register context_reg = JavaScriptFrame::context_register();
     output_frame->SetRegister(context_reg.code(), context_value);
-  }
-
-  // Set the continuation for the topmost frame.
-  if (is_topmost) {
+    // Set the continuation for the topmost frame.
     Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
     if (bailout_type_ == LAZY) {
       continuation = builtins->builtin(Builtins::kNotifyLazyDeoptimized);
@@ -2035,8 +2039,8 @@ unsigned Deoptimizer::ComputeInputFrameSize() const {
   unsigned result = fixed_size_above_fp + fp_to_sp_delta_;
   if (compiled_code_->kind() == Code::OPTIMIZED_FUNCTION) {
     unsigned stack_slots = compiled_code_->stack_slots();
-    unsigned outgoing_size =
-        ComputeOutgoingArgumentSize(compiled_code_, bailout_id_);
+    unsigned outgoing_size = 0;
+    //        ComputeOutgoingArgumentSize(compiled_code_, bailout_id_);
     CHECK_EQ(fixed_size_above_fp + (stack_slots * kPointerSize) -
                  CommonFrameConstants::kFixedFrameSizeAboveFp + outgoing_size,
              result);
@@ -2064,16 +2068,6 @@ unsigned Deoptimizer::ComputeInterpretedFixedSize(SharedFunctionInfo* shared) {
 // static
 unsigned Deoptimizer::ComputeIncomingArgumentSize(SharedFunctionInfo* shared) {
   return (shared->internal_formal_parameter_count() + 1) * kPointerSize;
-}
-
-
-// static
-unsigned Deoptimizer::ComputeOutgoingArgumentSize(Code* code,
-                                                  unsigned bailout_id) {
-  DeoptimizationInputData* data =
-      DeoptimizationInputData::cast(code->deoptimization_data());
-  unsigned height = data->ArgumentsStackHeight(bailout_id)->value();
-  return height * kPointerSize;
 }
 
 void Deoptimizer::EnsureCodeForDeoptimizationEntry(Isolate* isolate,
@@ -3672,7 +3666,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       slot->value_ = object;
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       int in_object_properties = map->GetInObjectProperties();
       for (int i = 0; i < in_object_properties; ++i) {
@@ -3680,6 +3674,35 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
         FieldIndex index = FieldIndex::ForPropertyIndex(object->map(), i);
         object->FastPropertyAtPut(index, *value);
       }
+      return object;
+    }
+    case JS_SET_KEY_VALUE_ITERATOR_TYPE:
+    case JS_SET_VALUE_ITERATOR_TYPE: {
+      Handle<JSSetIterator> object = Handle<JSSetIterator>::cast(
+          isolate_->factory()->NewJSObjectFromMap(map, NOT_TENURED));
+      Handle<Object> properties = materializer.FieldAt(value_index);
+      Handle<Object> elements = materializer.FieldAt(value_index);
+      Handle<Object> table = materializer.FieldAt(value_index);
+      Handle<Object> index = materializer.FieldAt(value_index);
+      object->set_properties(FixedArray::cast(*properties));
+      object->set_elements(FixedArrayBase::cast(*elements));
+      object->set_table(*table);
+      object->set_index(*index);
+      return object;
+    }
+    case JS_MAP_KEY_ITERATOR_TYPE:
+    case JS_MAP_KEY_VALUE_ITERATOR_TYPE:
+    case JS_MAP_VALUE_ITERATOR_TYPE: {
+      Handle<JSMapIterator> object = Handle<JSMapIterator>::cast(
+          isolate_->factory()->NewJSObjectFromMap(map, NOT_TENURED));
+      Handle<Object> properties = materializer.FieldAt(value_index);
+      Handle<Object> elements = materializer.FieldAt(value_index);
+      Handle<Object> table = materializer.FieldAt(value_index);
+      Handle<Object> index = materializer.FieldAt(value_index);
+      object->set_properties(FixedArray::cast(*properties));
+      object->set_elements(FixedArrayBase::cast(*elements));
+      object->set_table(*table);
+      object->set_index(*index);
       return object;
     }
     case JS_TYPED_ARRAY_KEY_ITERATOR_TYPE:
@@ -3727,7 +3750,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> iterated_object = materializer.FieldAt(value_index);
       Handle<Object> next_index = materializer.FieldAt(value_index);
       Handle<Object> iterated_object_map = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_object(*iterated_object);
       object->set_index(*next_index);
@@ -3744,12 +3767,12 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> iterated_string = materializer.FieldAt(value_index);
       Handle<Object> next_index = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       CHECK(iterated_string->IsString());
       object->set_string(String::cast(*iterated_string));
       CHECK(next_index->IsSmi());
-      object->set_index(Smi::cast(*next_index)->value());
+      object->set_index(Smi::ToInt(*next_index));
       return object;
     }
     case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE: {
@@ -3760,7 +3783,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> sync_iterator = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_sync_iterator(JSReceiver::cast(*sync_iterator));
       return object;
@@ -3772,7 +3795,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> array_length = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_length(*array_length);
       return object;
@@ -3786,7 +3809,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> bound_target_function = materializer.FieldAt(value_index);
       Handle<Object> bound_this = materializer.FieldAt(value_index);
       Handle<Object> bound_arguments = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_bound_target_function(
           JSReceiver::cast(*bound_target_function));
@@ -3807,14 +3830,14 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> resume_mode = materializer.FieldAt(value_index);
       Handle<Object> continuation_offset = materializer.FieldAt(value_index);
       Handle<Object> register_file = materializer.FieldAt(value_index);
-      object->set_properties(FixedArray::cast(*properties));
+      object->set_properties(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_function(JSFunction::cast(*function));
       object->set_context(Context::cast(*context));
       object->set_receiver(*receiver);
       object->set_input_or_debug_pos(*input_or_debug_pos);
-      object->set_resume_mode(Smi::cast(*resume_mode)->value());
-      object->set_continuation(Smi::cast(*continuation_offset)->value());
+      object->set_resume_mode(Smi::ToInt(*resume_mode));
+      object->set_continuation(Smi::ToInt(*continuation_offset));
       object->set_register_file(FixedArray::cast(*register_file));
       int in_object_properties = map->GetInObjectProperties();
       for (int i = 0; i < in_object_properties; ++i) {
@@ -3836,7 +3859,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       Handle<Object> first = materializer.FieldAt(value_index);
       Handle<Object> second = materializer.FieldAt(value_index);
       object->set_map(*map);
-      object->set_length(Smi::cast(*string_length)->value());
+      object->set_length(Smi::ToInt(*string_length));
       object->set_first(String::cast(*first));
       object->set_second(String::cast(*second));
       CHECK(hash->IsNumber());  // The {Name::kEmptyHashField} value.
@@ -3864,6 +3887,20 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       // materializing could be a context or an arguments object,
       // in which case we must retain that information.
       object->set_map(*map);
+      slot->value_ = object;
+      for (int i = 0; i < array_length; ++i) {
+        Handle<Object> value = materializer.FieldAt(value_index);
+        object->set(i, *value);
+      }
+      return object;
+    }
+    case PROPERTY_ARRAY_TYPE: {
+      DCHECK_EQ(*map, isolate_->heap()->property_array_map());
+      Handle<Object> lengthObject = materializer.FieldAt(value_index);
+      int32_t array_length = 0;
+      CHECK(lengthObject->ToInt32(&array_length));
+      Handle<PropertyArray> object =
+          isolate_->factory()->NewPropertyArray(array_length);
       slot->value_ = object;
       for (int i = 0; i < array_length; ++i) {
         Handle<Object> value = materializer.FieldAt(value_index);
@@ -3934,8 +3971,6 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case JS_DATA_VIEW_TYPE:
     case JS_SET_TYPE:
     case JS_MAP_TYPE:
-    case JS_SET_ITERATOR_TYPE:
-    case JS_MAP_ITERATOR_TYPE:
     case JS_WEAK_MAP_TYPE:
     case JS_WEAK_SET_TYPE:
     case JS_PROMISE_CAPABILITY_TYPE:
@@ -3982,7 +4017,6 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case PREPARSED_SCOPE_DATA_TYPE:
     case PADDING_TYPE_1:
     case PADDING_TYPE_2:
-    case PADDING_TYPE_3:
     case WASM_MODULE_TYPE:
     case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:

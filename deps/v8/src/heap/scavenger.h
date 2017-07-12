@@ -73,24 +73,36 @@ class Scavenger {
       : heap_(heap),
         promotion_list_(promotion_list, task_id),
         copied_list_(copied_list, task_id),
+        local_pretenuring_feedback_(kInitialLocalPretenuringFeedbackCapacity),
+        copied_size_(0),
+        promoted_size_(0),
         is_logging_(is_logging),
         is_incremental_marking_(is_incremental_marking) {}
 
-  // Callback function passed to Heap::Iterate etc.  Copies an object if
-  // necessary, the object might be promoted to an old space.  The caller must
-  // ensure the precondition that the object is (a) a heap object and (b) in
-  // the heap's from space.
+  // Scavenges an object |object| referenced from slot |p|. |object| is required
+  // to be in from space.
   inline void ScavengeObject(HeapObject** p, HeapObject* object);
 
+  // Potentially scavenges an object referenced from |slot_address| if it is
+  // indeed a HeapObject and resides in from space.
   inline SlotCallbackResult CheckAndScavengeObject(Heap* heap,
                                                    Address slot_address);
-  inline Heap* heap() { return heap_; }
-  inline PromotionList::View* promotion_list() { return &promotion_list_; }
-  inline CopiedRangesList* copied_list() { return &copied_list_; }
+
+  // Processes remaining work (=objects) after single objects have been
+  // manually scavenged using ScavengeObject or CheckAndScavengeObject.
+  void Process();
+
+  // Finalize the Scavenger. Needs to be called from the main thread.
+  void Finalize();
 
  private:
-  V8_INLINE HeapObject* MigrateObject(HeapObject* source, HeapObject* target,
-                                      int size);
+  static const int kInitialLocalPretenuringFeedbackCapacity = 256;
+
+  inline Heap* heap() { return heap_; }
+
+  // Copies |source| to |target| and sets the forwarding pointer in |source|.
+  V8_INLINE void MigrateObject(HeapObject* source, HeapObject* target,
+                               int size);
 
   V8_INLINE bool SemiSpaceCopyObject(Map* map, HeapObject** slot,
                                      HeapObject* object, int object_size);
@@ -115,11 +127,16 @@ class Scavenger {
   inline void EvacuateShortcutCandidate(Map* map, HeapObject** slot,
                                         ConsString* object, int object_size);
 
+  void IterateAndScavengePromotedObject(HeapObject* target, int size);
+
   void RecordCopiedObject(HeapObject* obj);
 
   Heap* const heap_;
   PromotionList::View promotion_list_;
   CopiedRangesList copied_list_;
+  base::HashMap local_pretenuring_feedback_;
+  size_t copied_size_;
+  size_t promoted_size_;
   bool is_logging_;
   bool is_incremental_marking_;
 };

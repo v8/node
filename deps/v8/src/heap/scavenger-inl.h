@@ -34,11 +34,8 @@ bool ContainsOnlyData(VisitorId visitor_id) {
 
 }  // namespace
 
-// Helper function used by CopyObject to copy a source object to an
-// allocated target object and update the forwarding pointer in the source
-// object. Returns the target object.
-HeapObject* Scavenger::MigrateObject(HeapObject* source, HeapObject* target,
-                                     int size) {
+void Scavenger::MigrateObject(HeapObject* source, HeapObject* target,
+                              int size) {
   // If we migrate into to-space, then the to-space top pointer should be
   // right after the target object. Incorporate double alignment
   // over-allocation.
@@ -61,7 +58,6 @@ HeapObject* Scavenger::MigrateObject(HeapObject* source, HeapObject* target,
   if (is_incremental_marking_) {
     heap()->incremental_marking()->TransferColor(source, target);
   }
-  return target;
 }
 
 bool Scavenger::SemiSpaceCopyObject(Map* map, HeapObject** slot,
@@ -71,15 +67,15 @@ bool Scavenger::SemiSpaceCopyObject(Map* map, HeapObject** slot,
   AllocationResult allocation =
       heap()->new_space()->AllocateRaw(object_size, alignment);
 
-  HeapObject* target = NULL;  // Initialization to please compiler.
+  HeapObject* target = nullptr;
   if (allocation.To(&target)) {
+    DCHECK(ObjectMarking::IsWhite(
+        target, heap()->mark_compact_collector()->marking_state(target)));
     MigrateObject(object, target, object_size);
-
-    // Update slot to new target.
     *slot = target;
 
-    copied_list()->Insert(target, object_size);
-    heap()->IncrementSemiSpaceCopiedObjectSize(object_size);
+    copied_list_.Insert(target, object_size);
+    copied_size_ += object_size;
     return true;
   }
   return false;
@@ -91,23 +87,17 @@ bool Scavenger::PromoteObject(Map* map, HeapObject** slot, HeapObject* object,
   AllocationResult allocation =
       heap()->old_space()->AllocateRaw(object_size, alignment);
 
-  HeapObject* target = NULL;  // Initialization to please compiler.
+  HeapObject* target = nullptr;
   if (allocation.To(&target)) {
     DCHECK(ObjectMarking::IsWhite(
         target, heap()->mark_compact_collector()->marking_state(target)));
     MigrateObject(object, target, object_size);
-
-    // Update slot to new target using CAS. A concurrent sweeper thread my
-    // filter the slot concurrently.
-    HeapObject* old = *slot;
-    base::Release_CompareAndSwap(reinterpret_cast<base::AtomicWord*>(slot),
-                                 reinterpret_cast<base::AtomicWord>(old),
-                                 reinterpret_cast<base::AtomicWord>(target));
+    *slot = target;
 
     if (!ContainsOnlyData(static_cast<VisitorId>(map->visitor_id()))) {
-      promotion_list()->Push(ObjectAndSize(target, object_size));
+      promotion_list_.Push(ObjectAndSize(target, object_size));
     }
-    heap()->IncrementPromotedObjectsSize(object_size);
+    promoted_size_ += object_size;
     return true;
   }
   return false;
@@ -167,7 +157,7 @@ void Scavenger::EvacuateThinString(Map* map, HeapObject** slot,
     *slot = actual;
     // ThinStrings always refer to internalized strings, which are
     // always in old space.
-    DCHECK(!map->GetHeap()->InNewSpace(actual));
+    DCHECK(!heap()->InNewSpace(actual));
     object->set_map_word(MapWord::FromForwardingAddress(actual));
     return;
   }
@@ -228,7 +218,7 @@ void Scavenger::EvacuateObject(HeapObject** slot, Map* map,
 }
 
 void Scavenger::ScavengeObject(HeapObject** p, HeapObject* object) {
-  DCHECK(object->GetIsolate()->heap()->InFromSpace(object));
+  DCHECK(heap()->InFromSpace(object));
 
   // We use the first word (where the map pointer usually is) of a heap
   // object to record the forwarding pointer.  A forwarding pointer can
@@ -245,13 +235,14 @@ void Scavenger::ScavengeObject(HeapObject** p, HeapObject* object) {
     return;
   }
 
-  object->GetHeap()->UpdateAllocationSite<Heap::kGlobal>(
-      object, object->GetHeap()->global_pretenuring_feedback_);
+  heap()->UpdateAllocationSite<Heap::kCached>(object,
+                                              &local_pretenuring_feedback_);
 
+  Map* map = first_word.ToMap();
   // AllocationMementos are unrooted and shouldn't survive a scavenge
-  DCHECK(object->map() != object->GetHeap()->allocation_memento_map());
+  DCHECK_NE(heap()->allocation_memento_map(), map);
   // Call the slow part of scavenge object.
-  EvacuateObject(p, first_word.ToMap(), object);
+  EvacuateObject(p, map, object);
 }
 
 SlotCallbackResult Scavenger::CheckAndScavengeObject(Heap* heap,

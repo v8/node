@@ -213,17 +213,19 @@ void RecordLazyCodeStats(Code* code, Counters* counters) {
 
 }  // namespace
 
-Handle<JSArrayBuffer> wasm::SetupArrayBuffer(Isolate* isolate,
-                                             void* allocation_base,
-                                             size_t allocation_length,
-                                             void* backing_store, size_t size,
-                                             bool is_external,
-                                             bool enable_guard_regions) {
-  Handle<JSArrayBuffer> buffer = isolate->factory()->NewJSArrayBuffer();
+// static
+const WasmExceptionSig wasm::WasmException::empty_sig_(0, 0, nullptr);
+
+Handle<JSArrayBuffer> wasm::SetupArrayBuffer(
+    Isolate* isolate, void* allocation_base, size_t allocation_length,
+    void* backing_store, size_t size, bool is_external,
+    bool enable_guard_regions, SharedFlag shared) {
+  Handle<JSArrayBuffer> buffer = isolate->factory()->NewJSArrayBuffer(shared);
   DCHECK_GE(kMaxInt, size);
+  if (shared == SharedFlag::kShared) DCHECK(FLAG_experimental_wasm_threads);
   JSArrayBuffer::Setup(buffer, isolate, is_external, allocation_base,
-                       allocation_length, backing_store,
-                       static_cast<int>(size));
+                       allocation_length, backing_store, static_cast<int>(size),
+                       shared);
   buffer->set_is_neuterable(false);
   buffer->set_is_wasm_buffer(true);
   buffer->set_has_guard_region(enable_guard_regions);
@@ -231,7 +233,8 @@ Handle<JSArrayBuffer> wasm::SetupArrayBuffer(Isolate* isolate,
 }
 
 Handle<JSArrayBuffer> wasm::NewArrayBuffer(Isolate* isolate, size_t size,
-                                           bool enable_guard_regions) {
+                                           bool enable_guard_regions,
+                                           SharedFlag shared) {
   // Check against kMaxInt, since the byte length is stored as int in the
   // JSArrayBuffer. Note that wasm_max_mem_pages can be raised from the command
   // line, and we don't want to fail a CHECK then.
@@ -262,7 +265,7 @@ Handle<JSArrayBuffer> wasm::NewArrayBuffer(Isolate* isolate, size_t size,
 
   constexpr bool is_external = false;
   return SetupArrayBuffer(isolate, allocation_base, allocation_length, memory,
-                          size, is_external, enable_guard_regions);
+                          size, is_external, enable_guard_regions, shared);
 }
 
 void wasm::UnpackAndRegisterProtectedInstructions(
@@ -375,7 +378,7 @@ void wasm::UpdateDispatchTables(Isolate* isolate,
                                 WasmFunction* function, Handle<Code> code) {
   DCHECK_EQ(0, dispatch_tables->length() % 4);
   for (int i = 0; i < dispatch_tables->length(); i += 4) {
-    int table_index = Smi::cast(dispatch_tables->get(i + 1))->value();
+    int table_index = Smi::ToInt(dispatch_tables->get(i + 1));
     Handle<FixedArray> function_table(
         FixedArray::cast(dispatch_tables->get(i + 2)), isolate);
     Handle<FixedArray> signature_table(
@@ -757,8 +760,7 @@ MaybeHandle<WasmModuleObject> wasm::SyncCompileTranslatedAsmJs(
 
   // Transfer ownership to the {WasmModuleWrapper} generated in
   // {CompileToModuleObject}.
-  constexpr bool is_sync = true;
-  ModuleCompiler helper(isolate, std::move(result.val), is_sync);
+  ModuleCompiler helper(isolate, std::move(result.val));
   return helper.CompileToModuleObject(thrower, bytes, asm_js_script,
                                       asm_js_offset_table_bytes);
 }
@@ -780,8 +782,7 @@ MaybeHandle<WasmModuleObject> wasm::SyncCompile(Isolate* isolate,
 
   // Transfer ownership to the {WasmModuleWrapper} generated in
   // {CompileToModuleObject}.
-  constexpr bool is_sync = true;
-  ModuleCompiler helper(isolate, std::move(result.val), is_sync);
+  ModuleCompiler helper(isolate, std::move(result.val));
   return helper.CompileToModuleObject(thrower, bytes, Handle<Script>(),
                                       Vector<const byte>());
 }
@@ -893,7 +894,7 @@ Handle<Code> wasm::CompileLazy(Isolate* isolate) {
     exp_deopt_data = handle(lazy_compile_code->deoptimization_data(), isolate);
     auto* weak_cell = WeakCell::cast(exp_deopt_data->get(0));
     instance = handle(WasmInstanceObject::cast(weak_cell->value()), isolate);
-    func_index = Smi::cast(exp_deopt_data->get(1))->value();
+    func_index = Smi::ToInt(exp_deopt_data->get(1));
   }
   it.Advance();
   // Third frame: The calling wasm code or js-to-wasm wrapper.
@@ -928,7 +929,7 @@ Handle<Code> wasm::CompileLazy(Isolate* isolate) {
     for (int idx = 2, end = exp_deopt_data->length(); idx < end; idx += 2) {
       if (exp_deopt_data->get(idx)->IsUndefined(isolate)) break;
       FixedArray* exp_table = FixedArray::cast(exp_deopt_data->get(idx));
-      int exp_index = Smi::cast(exp_deopt_data->get(idx + 1))->value();
+      int exp_index = Smi::ToInt(exp_deopt_data->get(idx + 1));
       DCHECK(exp_table->get(exp_index) == *lazy_compile_code);
       exp_table->set(exp_index, *compiled_code);
     }
@@ -1056,8 +1057,7 @@ Handle<Code> LazyCompilationOrchestrator::CompileLazy(
     SourcePositionTableIterator source_pos_iterator(
         caller->SourcePositionTable());
     DCHECK_EQ(2, caller->deoptimization_data()->length());
-    int caller_func_index =
-        Smi::cast(caller->deoptimization_data()->get(1))->value();
+    int caller_func_index = Smi::ToInt(caller->deoptimization_data()->get(1));
     const byte* func_bytes =
         module_bytes->GetChars() +
         compiled_module->module()->functions[caller_func_index].code.offset();
@@ -1098,10 +1098,9 @@ Handle<Code> LazyCompilationOrchestrator::CompileLazy(
       DCHECK_GT(non_compiled_functions.size(), idx);
       int called_func_index = non_compiled_functions[idx].func_index;
       // Check that the callee agrees with our assumed called_func_index.
-      DCHECK_IMPLIES(
-          callee->deoptimization_data()->length() > 0,
-          Smi::cast(callee->deoptimization_data()->get(1))->value() ==
-              called_func_index);
+      DCHECK_IMPLIES(callee->deoptimization_data()->length() > 0,
+                     Smi::ToInt(callee->deoptimization_data()->get(1)) ==
+                         called_func_index);
       if (is_js_to_wasm) {
         DCHECK_EQ(func_to_return_idx, called_func_index);
       } else {
@@ -1126,4 +1125,18 @@ Handle<Code> LazyCompilationOrchestrator::CompileLazy(
       Code::cast(compiled_module->code_table()->get(func_to_return_idx));
   DCHECK_EQ(Code::WASM_FUNCTION, ret->kind());
   return handle(ret, isolate);
+}
+
+const char* wasm::ExternalKindName(WasmExternalKind kind) {
+  switch (kind) {
+    case kExternalFunction:
+      return "function";
+    case kExternalTable:
+      return "table";
+    case kExternalMemory:
+      return "memory";
+    case kExternalGlobal:
+      return "global";
+  }
+  return "unknown";
 }

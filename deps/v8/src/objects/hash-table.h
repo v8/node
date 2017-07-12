@@ -402,21 +402,17 @@ class OrderedHashTable : public FixedArray {
   // the key has been deleted. This does not shrink the table.
   static bool Delete(Isolate* isolate, Derived* table, Object* key);
 
-  int NumberOfElements() {
-    return Smi::cast(get(kNumberOfElementsIndex))->value();
-  }
+  int NumberOfElements() { return Smi::ToInt(get(kNumberOfElementsIndex)); }
 
   int NumberOfDeletedElements() {
-    return Smi::cast(get(kNumberOfDeletedElementsIndex))->value();
+    return Smi::ToInt(get(kNumberOfDeletedElementsIndex));
   }
 
   // Returns the number of contiguous entries in the data table, starting at 0,
   // that either are real entries or have been deleted.
   int UsedCapacity() { return NumberOfElements() + NumberOfDeletedElements(); }
 
-  int NumberOfBuckets() {
-    return Smi::cast(get(kNumberOfBucketsIndex))->value();
-  }
+  int NumberOfBuckets() { return Smi::ToInt(get(kNumberOfBucketsIndex)); }
 
   // Returns an index into |this| for the given entry.
   int EntryToIndex(int entry) {
@@ -428,21 +424,21 @@ class OrderedHashTable : public FixedArray {
   int HashToEntry(int hash) {
     int bucket = HashToBucket(hash);
     Object* entry = this->get(kHashTableStartIndex + bucket);
-    return Smi::cast(entry)->value();
+    return Smi::ToInt(entry);
   }
 
   int KeyToFirstEntry(Isolate* isolate, Object* key) {
     // This special cases for Smi, so that we avoid the HandleScope
     // creation below.
     if (key->IsSmi()) {
-      uint32_t hash = ComputeIntegerHash(Smi::cast(key)->value());
+      uint32_t hash = ComputeIntegerHash(Smi::ToInt(key));
       return HashToEntry(hash & Smi::kMaxValue);
     }
     HandleScope scope(isolate);
     Object* hash = key->GetHash();
     // If the object does not have an identity hash, it was never used as a key
     if (hash->IsUndefined(isolate)) return kNotFound;
-    return HashToEntry(Smi::cast(hash)->value());
+    return HashToEntry(Smi::ToInt(hash));
   }
 
   int FindEntry(Isolate* isolate, Object* key) {
@@ -459,7 +455,7 @@ class OrderedHashTable : public FixedArray {
 
   int NextChainEntry(int entry) {
     Object* next_entry = get(EntryToIndex(entry) + kChainOffset);
-    return Smi::cast(next_entry)->value();
+    return Smi::ToInt(next_entry);
   }
 
   // use KeyAt(i)->IsTheHole(isolate) to determine if this is a deleted entry.
@@ -475,7 +471,7 @@ class OrderedHashTable : public FixedArray {
 
   // When the table is obsolete we store the indexes of the removed holes.
   int RemovedIndexAt(int index) {
-    return Smi::cast(get(kRemovedHolesIndex + index))->value();
+    return Smi::ToInt(get(kRemovedHolesIndex + index));
   }
 
   static const int kNotFound = -1;
@@ -487,6 +483,7 @@ class OrderedHashTable : public FixedArray {
   static const int kNumberOfDeletedElementsIndex = kNumberOfElementsIndex + 1;
   static const int kNumberOfBucketsIndex = kNumberOfDeletedElementsIndex + 1;
   static const int kHashTableStartIndex = kNumberOfBucketsIndex + 1;
+  static const int kRemovedHolesIndex = kHashTableStartIndex;
 
   static constexpr const int kNumberOfElementsOffset =
       FixedArray::OffsetOfElementAt(kNumberOfElementsIndex);
@@ -536,8 +533,6 @@ class OrderedHashTable : public FixedArray {
   void SetRemovedIndexAt(int index, int removed_index) {
     return set(kRemovedHolesIndex + index, Smi::FromInt(removed_index));
   }
-
-  static const int kRemovedHolesIndex = kHashTableStartIndex;
 };
 
 class OrderedHashSet : public OrderedHashTable<OrderedHashSet, 1> {
@@ -556,10 +551,11 @@ class OrderedHashMap : public OrderedHashTable<OrderedHashMap, 2> {
 
   // Returns a value if the OrderedHashMap contains the key, otherwise
   // returns undefined.
-  static Object* Get(Isolate* isolate, OrderedHashMap* table, Object* key);
   static Handle<OrderedHashMap> Add(Handle<OrderedHashMap> table,
                                     Handle<Object> key, Handle<Object> value);
   Object* ValueAt(int entry);
+
+  static Object* GetHash(Isolate* isolate, Object* key);
 
   static const int kValueOffset = 1;
 };
@@ -856,26 +852,20 @@ class OrderedHashTableIterator : public JSObject {
   // [index]: The index into the data table.
   DECL_ACCESSORS(index, Object)
 
-  // [kind]: The kind of iteration this is. One of the [Kind] enum values.
-  DECL_ACCESSORS(kind, Object)
-
 #ifdef OBJECT_PRINT
   void OrderedHashTableIteratorPrint(std::ostream& os);  // NOLINT
 #endif
 
   static const int kTableOffset = JSObject::kHeaderSize;
   static const int kIndexOffset = kTableOffset + kPointerSize;
-  static const int kKindOffset = kIndexOffset + kPointerSize;
-  static const int kSize = kKindOffset + kPointerSize;
-
-  enum Kind { kKindKeys = 1, kKindValues = 2, kKindEntries = 3 };
+  static const int kSize = kIndexOffset + kPointerSize;
 
   // Whether the iterator has more elements. This needs to be called before
   // calling |CurrentKey| and/or |CurrentValue|.
   bool HasMore();
 
   // Move the index forward one.
-  void MoveNext() { set_index(Smi::FromInt(Smi::cast(index())->value() + 1)); }
+  void MoveNext() { set_index(Smi::FromInt(Smi::ToInt(index()) + 1)); }
 
   // Returns the current key of the iterator. This should only be called when
   // |HasMore| returns true.

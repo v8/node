@@ -50,7 +50,7 @@ void DateBuiltinsAssembler::Generate_DatePrototype_GetField(Node* context,
       BIND(&stamp_mismatch);
     }
 
-    Node* field_index_smi = SmiConstant(Smi::FromInt(field_index));
+    Node* field_index_smi = SmiConstant(field_index);
     Node* function =
         ExternalConstant(ExternalReference::get_date_field_function(isolate()));
     Node* result = CallCFunction2(
@@ -249,9 +249,7 @@ TF_BUILTIN(DatePrototypeToPrimitive, CodeStubAssembler) {
   BIND(&receiver_is_invalid);
   {
     CallRuntime(Runtime::kThrowIncompatibleMethodReceiver, context,
-                HeapConstant(factory()->NewStringFromAsciiChecked(
-                    "Date.prototype [ @@toPrimitive ]", TENURED)),
-                receiver);
+                StringConstant("Date.prototype [ @@toPrimitive ]"), receiver);
     Unreachable();
   }
 }

@@ -815,7 +815,7 @@ void Heap::PreprocessStackTraces() {
       // a stack trace that has already been preprocessed. Guard against this.
       if (!maybe_code->IsAbstractCode()) break;
       AbstractCode* abstract_code = AbstractCode::cast(maybe_code);
-      int offset = Smi::cast(elements->get(j + 3))->value();
+      int offset = Smi::ToInt(elements->get(j + 3));
       int pos = abstract_code->SourcePosition(offset);
       elements->set(j + 2, Smi::FromInt(pos));
     }
@@ -1176,7 +1176,7 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
   DCHECK(array->map() != fixed_cow_array_map());
   Object** dst = array->data_start() + dst_index;
   Object** src = array->data_start() + src_index;
-  if (FLAG_concurrent_marking && concurrent_marking()->IsTaskPending()) {
+  if (FLAG_concurrent_marking && concurrent_marking()->IsRunning()) {
     if (dst < src) {
       for (int i = 0; i < len; i++) {
         base::AsAtomicWord::Relaxed_Store(
@@ -1647,6 +1647,7 @@ class ScavengeWeakObjectRetainer : public WeakObjectRetainer {
 void Heap::EvacuateYoungGeneration() {
   TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_EVACUATE);
   base::LockGuard<base::Mutex> guard(relocation_mutex());
+  ConcurrentMarking::PauseScope pause_scope(concurrent_marking());
   if (!FLAG_concurrent_marking) {
     DCHECK(fast_promotion_mode_);
     DCHECK(CanExpandOldGeneration(new_space()->Size()));
@@ -1696,6 +1697,7 @@ static bool IsLogging(Isolate* isolate) {
 void Heap::Scavenge() {
   TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_SCAVENGE);
   base::LockGuard<base::Mutex> guard(relocation_mutex());
+  ConcurrentMarking::PauseScope pause_scope(concurrent_marking());
   // There are soft limits in the allocation code, designed to trigger a mark
   // sweep collection by failing allocations. There is no sense in trying to
   // trigger one during scavenge: scavenges allocation should always succeed.
@@ -1770,7 +1772,7 @@ void Heap::Scavenge() {
 
   {
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_SEMISPACE);
-    DoScavenge(&scavenger);
+    scavenger.Process();
   }
 
   isolate()->global_handles()->MarkNewSpaceWeakUnmodifiedObjectsPending(
@@ -1778,7 +1780,9 @@ void Heap::Scavenge() {
 
   isolate()->global_handles()->IterateNewSpaceWeakUnmodifiedRoots(
       &root_scavenge_visitor);
-  DoScavenge(&scavenger);
+  scavenger.Process();
+
+  scavenger.Finalize();
 
   UpdateNewSpaceReferencesInExternalStringTable(
       &UpdateNewSpaceReferenceInExternalStringTableEntry);
@@ -1981,41 +1985,6 @@ void Heap::VisitExternalResources(v8::ExternalResourceVisitor* visitor) {
 
   external_string_table_.IterateAll(&external_string_table_visitor);
 }
-
-void Heap::DoScavenge(Scavenger* scavenger) {
-  // Threshold when to switch processing the promotion list to avoid
-  // allocating too much backing store in the worklist.
-  const int kProcessPromotionListThreshold = kPromotionListSegmentSize / 2;
-  ScavengeVisitor scavenge_visitor(this, scavenger);
-  PromotionList::View* promotion_list = scavenger->promotion_list();
-  CopiedRangesList* copied_list = scavenger->copied_list();
-
-  bool done;
-  do {
-    done = true;
-    AddressRange range;
-    while ((promotion_list->LocalPushSegmentSize() <
-            kProcessPromotionListThreshold) &&
-           copied_list->Pop(&range)) {
-      for (Address current = range.first; current < range.second;) {
-        HeapObject* object = HeapObject::FromAddress(current);
-        int size = object->Size();
-        scavenge_visitor.Visit(object);
-        current += size;
-      }
-      done = false;
-    }
-    ObjectAndSize object_and_size;
-    while (promotion_list->Pop(&object_and_size)) {
-      HeapObject* target = object_and_size.first;
-      int size = object_and_size.second;
-      DCHECK(!target->IsMap());
-      IterateAndScavengePromotedObject(scavenger, target, size);
-      done = false;
-    }
-  } while (!done);
-}
-
 
 STATIC_ASSERT((FixedDoubleArray::kHeaderSize & kDoubleAlignmentMask) ==
               0);  // NOLINT
@@ -2381,6 +2350,7 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_VARSIZE_MAP(BYTE_ARRAY_TYPE, byte_array)
     ALLOCATE_VARSIZE_MAP(BYTECODE_ARRAY_TYPE, bytecode_array)
     ALLOCATE_VARSIZE_MAP(FREE_SPACE_TYPE, free_space)
+    ALLOCATE_VARSIZE_MAP(PROPERTY_ARRAY_TYPE, property_array)
     ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_MAP_TYPE, small_ordered_hash_map)
     ALLOCATE_VARSIZE_MAP(SMALL_ORDERED_HASH_SET_TYPE, small_ordered_hash_set)
 
@@ -2466,6 +2436,12 @@ bool Heap::CreateInitialMaps() {
       ByteArray* byte_array;
       if (!AllocateByteArray(0, TENURED).To(&byte_array)) return false;
       set_empty_byte_array(byte_array);
+    }
+
+    {
+      PropertyArray* property_array;
+      if (!AllocatePropertyArray(0, TENURED).To(&property_array)) return false;
+      set_empty_property_array(property_array);
     }
 
 #define ALLOCATE_EMPTY_FIXED_TYPED_ARRAY(Type, type, TYPE, ctype, size) \
@@ -2752,14 +2728,14 @@ void Heap::CreateInitialObjects() {
 #undef SYMBOL_INIT
   }
 
-  Handle<NameDictionary> empty_properties_dictionary =
+  Handle<NameDictionary> empty_property_dictionary =
       NameDictionary::New(isolate(), 1, TENURED, USE_CUSTOM_MINIMUM_CAPACITY);
-  DCHECK(!empty_properties_dictionary->HasSufficientCapacityToAdd(1));
-  set_empty_properties_dictionary(*empty_properties_dictionary);
+  DCHECK(!empty_property_dictionary->HasSufficientCapacityToAdd(1));
+  set_empty_property_dictionary(*empty_property_dictionary);
 
-  set_public_symbol_table(*empty_properties_dictionary);
-  set_api_symbol_table(*empty_properties_dictionary);
-  set_api_private_symbol_table(*empty_properties_dictionary);
+  set_public_symbol_table(*empty_property_dictionary);
+  set_api_symbol_table(*empty_property_dictionary);
+  set_api_private_symbol_table(*empty_property_dictionary);
 
   set_number_string_cache(
       *factory->NewFixedArray(kInitialNumberStringCacheSize * 2, TENURED));
@@ -2819,6 +2795,16 @@ void Heap::CreateInitialObjects() {
   // Handling of script id generation is in Heap::NextScriptId().
   set_last_script_id(Smi::FromInt(v8::UnboundScript::kNoScriptId));
   set_next_template_serial_number(Smi::kZero);
+
+  // Allocate the empty OrderedHashTable.
+  Handle<FixedArray> empty_ordered_hash_table =
+      factory->NewFixedArray(OrderedHashMap::kHashTableStartIndex, TENURED);
+  empty_ordered_hash_table->set_map_no_write_barrier(
+      *factory->ordered_hash_table_map());
+  for (int i = 0; i < empty_ordered_hash_table->length(); ++i) {
+    empty_ordered_hash_table->set(i, Smi::kZero);
+  }
+  set_empty_ordered_hash_table(*empty_ordered_hash_table);
 
   // Allocate the empty script.
   Handle<Script> script = factory->NewScript(factory->empty_string());
@@ -2929,6 +2915,7 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
     case kPublicSymbolTableRootIndex:
     case kApiSymbolTableRootIndex:
     case kApiPrivateSymbolTableRootIndex:
+    case kMessageListenersRootIndex:
 // Smi values
 #define SMI_ENTRY(type, name, Name) case k##Name##RootIndex:
       SMI_ROOT_LIST(SMI_ENTRY)
@@ -2943,8 +2930,10 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
 }
 
 bool Heap::RootCanBeTreatedAsConstant(RootListIndex root_index) {
-  return !RootCanBeWrittenAfterInitialization(root_index) &&
-         !InNewSpace(root(root_index));
+  bool can_be = !RootCanBeWrittenAfterInitialization(root_index) &&
+                !InNewSpace(root(root_index));
+  DCHECK_IMPLIES(can_be, IsImmovable(HeapObject::cast(root(root_index))));
+  return can_be;
 }
 
 int Heap::FullSizeNumberStringCacheLength() {
@@ -3517,8 +3506,7 @@ AllocationResult Heap::Allocate(Map* map, AllocationSpace space,
   return result;
 }
 
-
-void Heap::InitializeJSObjectFromMap(JSObject* obj, FixedArray* properties,
+void Heap::InitializeJSObjectFromMap(JSObject* obj, Object* properties,
                                      Map* map) {
   obj->set_properties(properties);
   obj->initialize_elements();
@@ -3646,7 +3634,6 @@ AllocationResult Heap::CopyJSObject(JSObject* source, AllocationSite* site) {
   SLOW_DCHECK(JSObject::cast(clone)->GetElementsKind() ==
               source->GetElementsKind());
   FixedArrayBase* elements = FixedArrayBase::cast(source->elements());
-  FixedArray* properties = FixedArray::cast(source->properties());
   // Update elements if necessary.
   if (elements->length() > 0) {
     FixedArrayBase* elem = nullptr;
@@ -3663,8 +3650,21 @@ AllocationResult Heap::CopyJSObject(JSObject* source, AllocationSite* site) {
     }
     JSObject::cast(clone)->set_elements(elem, SKIP_WRITE_BARRIER);
   }
+
   // Update properties if necessary.
-  if (properties->length() > 0) {
+  if (source->HasFastProperties()) {
+    if (source->property_array()->length() > 0) {
+      PropertyArray* properties = source->property_array();
+      PropertyArray* prop = nullptr;
+      {
+        // TODO(gsathya): Do not copy hash code.
+        AllocationResult allocation = CopyPropertyArray(properties);
+        if (!allocation.To(&prop)) return allocation;
+      }
+      JSObject::cast(clone)->set_properties(prop, SKIP_WRITE_BARRIER);
+    }
+  } else {
+    FixedArray* properties = FixedArray::cast(source->property_dictionary());
     FixedArray* prop = nullptr;
     {
       AllocationResult allocation = CopyFixedArray(properties);
@@ -3883,9 +3883,9 @@ AllocationResult Heap::AllocateEmptyFixedTypedArray(
   return AllocateFixedTypedArray(0, array_type, false, TENURED);
 }
 
-
-AllocationResult Heap::CopyFixedArrayAndGrow(FixedArray* src, int grow_by,
-                                             PretenureFlag pretenure) {
+template <typename T>
+AllocationResult Heap::CopyArrayAndGrow(T* src, int grow_by,
+                                        PretenureFlag pretenure) {
   int old_len = src->length();
   int new_len = old_len + grow_by;
   DCHECK(new_len >= old_len);
@@ -3895,8 +3895,8 @@ AllocationResult Heap::CopyFixedArrayAndGrow(FixedArray* src, int grow_by,
     if (!allocation.To(&obj)) return allocation;
   }
 
-  obj->set_map_after_allocation(fixed_array_map(), SKIP_WRITE_BARRIER);
-  FixedArray* result = FixedArray::cast(obj);
+  obj->set_map_after_allocation(src->map(), SKIP_WRITE_BARRIER);
+  T* result = T::cast(obj);
   result->set_length(new_len);
 
   // Copy the content.
@@ -3906,6 +3906,12 @@ AllocationResult Heap::CopyFixedArrayAndGrow(FixedArray* src, int grow_by,
   MemsetPointer(result->data_start() + old_len, undefined_value(), grow_by);
   return result;
 }
+
+template AllocationResult Heap::CopyArrayAndGrow(FixedArray* src, int grow_by,
+                                                 PretenureFlag pretenure);
+template AllocationResult Heap::CopyArrayAndGrow(PropertyArray* src,
+                                                 int grow_by,
+                                                 PretenureFlag pretenure);
 
 AllocationResult Heap::CopyFixedArrayUpTo(FixedArray* src, int new_len,
                                           PretenureFlag pretenure) {
@@ -3930,7 +3936,8 @@ AllocationResult Heap::CopyFixedArrayUpTo(FixedArray* src, int new_len,
   return result;
 }
 
-AllocationResult Heap::CopyFixedArrayWithMap(FixedArray* src, Map* map) {
+template <typename T>
+AllocationResult Heap::CopyArrayWithMap(T* src, Map* map) {
   int len = src->length();
   HeapObject* obj = nullptr;
   {
@@ -3939,14 +3946,14 @@ AllocationResult Heap::CopyFixedArrayWithMap(FixedArray* src, Map* map) {
   }
   obj->set_map_after_allocation(map, SKIP_WRITE_BARRIER);
 
-  FixedArray* result = FixedArray::cast(obj);
+  T* result = T::cast(obj);
   DisallowHeapAllocation no_gc;
   WriteBarrierMode mode = result->GetWriteBarrierMode(no_gc);
 
   // Eliminate the write barrier if possible.
   if (mode == SKIP_WRITE_BARRIER) {
     CopyBlock(obj->address() + kPointerSize, src->address() + kPointerSize,
-              FixedArray::SizeFor(len) - kPointerSize);
+              T::SizeFor(len) - kPointerSize);
     return obj;
   }
 
@@ -3956,6 +3963,16 @@ AllocationResult Heap::CopyFixedArrayWithMap(FixedArray* src, Map* map) {
   return result;
 }
 
+template AllocationResult Heap::CopyArrayWithMap(FixedArray* src, Map* map);
+template AllocationResult Heap::CopyArrayWithMap(PropertyArray* src, Map* map);
+
+AllocationResult Heap::CopyFixedArrayWithMap(FixedArray* src, Map* map) {
+  return CopyArrayWithMap(src, map);
+}
+
+AllocationResult Heap::CopyPropertyArray(PropertyArray* src) {
+  return CopyArrayWithMap(src, property_array_map());
+}
 
 AllocationResult Heap::CopyFixedDoubleArrayWithMap(FixedDoubleArray* src,
                                                    Map* map) {
@@ -4013,6 +4030,22 @@ AllocationResult Heap::AllocateFixedArrayWithFiller(int length,
   return array;
 }
 
+AllocationResult Heap::AllocatePropertyArray(int length,
+                                             PretenureFlag pretenure) {
+  DCHECK(length >= 0);
+  DCHECK(!InNewSpace(undefined_value()));
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRawFixedArray(length, pretenure);
+    if (!allocation.To(&result)) return allocation;
+  }
+
+  result->set_map_after_allocation(property_array_map(), SKIP_WRITE_BARRIER);
+  PropertyArray* array = PropertyArray::cast(result);
+  array->set_length(length);
+  MemsetPointer(array->data_start(), undefined_value(), length);
+  return result;
+}
 
 AllocationResult Heap::AllocateUninitializedFixedArray(int length) {
   if (length == 0) return empty_fixed_array();
@@ -4262,10 +4295,8 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
       Address addr = chunk.start;
       while (addr < chunk.end) {
         HeapObject* obj = HeapObject::FromAddress(addr);
-        // There might be grey objects due to black to grey transitions in
-        // incremental marking. E.g. see VisitNativeContextIncremental.
-        DCHECK(ObjectMarking::IsBlackOrGrey<IncrementalMarking::kAtomicity>(
-            obj, MarkingState::Internal(obj)));
+        // Objects can have any color because incremental marking can
+        // start in the middle of Heap::ReserveSpace().
         if (ObjectMarking::IsBlack<IncrementalMarking::kAtomicity>(
                 obj, MarkingState::Internal(obj))) {
           incremental_marking()->ProcessBlackAllocatedObject(obj);
@@ -4972,85 +5003,6 @@ void Heap::ZapFromSpace() {
          cursor < limit; cursor += kPointerSize) {
       Memory::Address_at(cursor) = kFromSpaceZapValue;
     }
-  }
-}
-
-class IterateAndScavengePromotedObjectsVisitor final : public ObjectVisitor {
- public:
-  IterateAndScavengePromotedObjectsVisitor(Heap* heap, Scavenger* scavenger,
-                                           bool record_slots)
-      : heap_(heap), scavenger_(scavenger), record_slots_(record_slots) {}
-
-  inline void VisitPointers(HeapObject* host, Object** start,
-                            Object** end) override {
-    Address slot_address = reinterpret_cast<Address>(start);
-    Page* page = Page::FromAddress(slot_address);
-
-    while (slot_address < reinterpret_cast<Address>(end)) {
-      Object** slot = reinterpret_cast<Object**>(slot_address);
-      Object* target = *slot;
-
-      if (target->IsHeapObject()) {
-        if (heap_->InFromSpace(target)) {
-          scavenger_->ScavengeObject(reinterpret_cast<HeapObject**>(slot),
-                                     HeapObject::cast(target));
-          target = *slot;
-          if (heap_->InNewSpace(target)) {
-            SLOW_DCHECK(heap_->InToSpace(target));
-            SLOW_DCHECK(target->IsHeapObject());
-            RememberedSet<OLD_TO_NEW>::Insert(page, slot_address);
-          }
-          SLOW_DCHECK(!MarkCompactCollector::IsOnEvacuationCandidate(
-              HeapObject::cast(target)));
-        } else if (record_slots_ &&
-                   MarkCompactCollector::IsOnEvacuationCandidate(
-                       HeapObject::cast(target))) {
-          heap_->mark_compact_collector()->RecordSlot(host, slot, target);
-        }
-      }
-
-      slot_address += kPointerSize;
-    }
-  }
-
-  inline void VisitCodeEntry(JSFunction* host,
-                             Address code_entry_slot) override {
-    // Black allocation requires us to process objects referenced by
-    // promoted objects.
-    if (heap_->incremental_marking()->black_allocation()) {
-      Code* code = Code::cast(Code::GetObjectFromEntryAddress(code_entry_slot));
-      heap_->incremental_marking()->WhiteToGreyAndPush(code);
-    }
-  }
-
- private:
-  Heap* const heap_;
-  Scavenger* const scavenger_;
-  bool record_slots_;
-};
-
-void Heap::IterateAndScavengePromotedObject(Scavenger* scavenger,
-                                            HeapObject* target, int size) {
-  // We are not collecting slots on new space objects during mutation
-  // thus we have to scan for pointers to evacuation candidates when we
-  // promote objects. But we should not record any slots in non-black
-  // objects. Grey object's slots would be rescanned.
-  // White object might not survive until the end of collection
-  // it would be a violation of the invariant to record it's slots.
-  bool record_slots = false;
-  if (incremental_marking()->IsCompacting()) {
-    record_slots =
-        ObjectMarking::IsBlack(target, MarkingState::Internal(target));
-  }
-
-  IterateAndScavengePromotedObjectsVisitor visitor(this, scavenger,
-                                                   record_slots);
-  if (target->IsJSFunction()) {
-    // JSFunctions reachable through kNextFunctionLinkOffset are weak. Slots for
-    // this links are recorded during processing of weak lists.
-    JSFunction::BodyDescriptorWeak::IterateBody(target, size, &visitor);
-  } else {
-    target->IterateBody(target->map()->instance_type(), size, &visitor);
   }
 }
 

@@ -112,7 +112,7 @@ void TypedArrayBuiltinsAssembler::SetupTypedArray(Node* holder, Node* length,
   StoreObjectField(holder, JSArrayBufferView::kByteLengthOffset, byte_length);
   for (int offset = JSTypedArray::kSize;
        offset < JSTypedArray::kSizeWithEmbedderFields; offset += kPointerSize) {
-    StoreObjectField(holder, offset, SmiConstant(Smi::kZero));
+    StoreObjectField(holder, offset, SmiConstant(0));
   }
 }
 
@@ -227,7 +227,7 @@ TF_BUILTIN(TypedArrayInitialize, TypedArrayBuiltinsAssembler) {
     //  - Set backing_store to null/Smi(0).
     //  - Set all embedder fields to Smi(0).
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBitFieldSlot,
-                                   SmiConstant(Smi::kZero));
+                                   SmiConstant(0));
     int32_t bitfield_value = (1 << JSArrayBuffer::IsExternal::kShift) |
                              (1 << JSArrayBuffer::IsNeuterable::kShift);
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBitFieldOffset,
@@ -237,10 +237,10 @@ TF_BUILTIN(TypedArrayInitialize, TypedArrayBuiltinsAssembler) {
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kByteLengthOffset,
                                    byte_length);
     StoreObjectFieldNoWriteBarrier(buffer, JSArrayBuffer::kBackingStoreOffset,
-                                   SmiConstant(Smi::kZero));
+                                   SmiConstant(0));
     for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
       int offset = JSArrayBuffer::kSize + i * kPointerSize;
-      StoreObjectFieldNoWriteBarrier(buffer, offset, SmiConstant(Smi::kZero));
+      StoreObjectFieldNoWriteBarrier(buffer, offset, SmiConstant(0));
     }
 
     StoreObjectField(holder, JSArrayBufferView::kBufferOffset, buffer);
@@ -488,8 +488,7 @@ TF_BUILTIN(TypedArrayConstructByArrayBuffer, TypedArrayBuiltinsAssembler) {
   BIND(&start_offset_error);
   {
     Node* holder_map = LoadMap(holder);
-    Node* problem_string = HeapConstant(
-        factory()->NewStringFromAsciiChecked("start offset", TENURED));
+    Node* problem_string = StringConstant("start offset");
     CallRuntime(Runtime::kThrowInvalidTypedArrayAlignment, context, holder_map,
                 problem_string);
 
@@ -499,8 +498,7 @@ TF_BUILTIN(TypedArrayConstructByArrayBuffer, TypedArrayBuiltinsAssembler) {
   BIND(&byte_length_error);
   {
     Node* holder_map = LoadMap(holder);
-    Node* problem_string = HeapConstant(
-        factory()->NewStringFromAsciiChecked("byte length", TENURED));
+    Node* problem_string = StringConstant("byte length");
     CallRuntime(Runtime::kThrowInvalidTypedArrayAlignment, context, holder_map,
                 problem_string);
 
@@ -639,9 +637,7 @@ void TypedArrayBuiltinsAssembler::GenerateTypedArrayPrototypeGetter(
   {
     // The {receiver} is not a valid JSTypedArray.
     CallRuntime(Runtime::kThrowIncompatibleMethodReceiver, context,
-                HeapConstant(
-                    factory()->NewStringFromAsciiChecked(method_name, TENURED)),
-                receiver);
+                StringConstant(method_name), receiver);
     Unreachable();
   }
 }
@@ -701,14 +697,12 @@ void TypedArrayBuiltinsAssembler::GenerateTypedArrayPrototypeIterationMethod(
   Goto(&throw_typeerror);
 
   BIND(&if_receiverisneutered);
-  var_message.Bind(
-      SmiConstant(Smi::FromInt(MessageTemplate::kDetachedOperation)));
+  var_message.Bind(SmiConstant(MessageTemplate::kDetachedOperation));
   Goto(&throw_typeerror);
 
   BIND(&throw_typeerror);
   {
-    Node* method_arg = HeapConstant(
-        isolate()->factory()->NewStringFromAsciiChecked(method_name, TENURED));
+    Node* method_arg = StringConstant(method_name);
     Node* result = CallRuntime(Runtime::kThrowTypeError, context,
                                var_message.value(), method_arg);
     Return(result);

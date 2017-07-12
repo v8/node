@@ -126,10 +126,9 @@ class Genesis BASE_EMBEDDED {
   void CreateRoots();
   // Creates the empty function.  Used for creating a context from scratch.
   Handle<JSFunction> CreateEmptyFunction(Isolate* isolate);
-  // Creates the ThrowTypeError function. ECMA 5th Ed. 13.2.3
-  Handle<JSFunction> GetRestrictedFunctionPropertiesThrower();
-  Handle<JSFunction> GetStrictArgumentsPoisonFunction();
-  Handle<JSFunction> GetThrowTypeErrorIntrinsic(Builtins::Name builtin_name);
+  // Returns the %ThrowTypeError% intrinsic function.
+  // See ES#sec-%throwtypeerror% for details.
+  Handle<JSFunction> GetThrowTypeErrorIntrinsic();
 
   void CreateSloppyModeFunctionMaps(Handle<JSFunction> empty);
   void CreateStrictModeFunctionMaps(Handle<JSFunction> empty);
@@ -249,8 +248,8 @@ class Genesis BASE_EMBEDDED {
   Handle<Context> native_context_;
   Handle<JSGlobalProxy> global_proxy_;
 
-  Handle<JSFunction> strict_poison_function_;
-  Handle<JSFunction> restricted_function_properties_thrower_;
+  // %ThrowTypeError%. See ES#sec-%throwtypeerror% for details.
+  Handle<JSFunction> restricted_properties_thrower_;
 
   BootstrapperActive active_;
   friend class Bootstrapper;
@@ -546,12 +545,12 @@ void Genesis::CreateSloppyModeFunctionMaps(Handle<JSFunction> empty) {
   native_context()->set_sloppy_function_map(*map);
 }
 
-// Creates the %ThrowTypeError% function.
-Handle<JSFunction> Genesis::GetThrowTypeErrorIntrinsic(
-    Builtins::Name builtin_name) {
-  Handle<String> name =
-      factory()->InternalizeOneByteString(STATIC_CHAR_VECTOR("ThrowTypeError"));
-  Handle<Code> code(isolate()->builtins()->builtin(builtin_name));
+Handle<JSFunction> Genesis::GetThrowTypeErrorIntrinsic() {
+  if (!restricted_properties_thrower_.is_null()) {
+    return restricted_properties_thrower_;
+  }
+  Handle<String> name(factory()->empty_string());
+  Handle<Code> code(builtins()->StrictPoisonPillThrower());
   Handle<JSFunction> function =
       factory()->NewFunctionWithoutPrototype(name, code, STRICT);
   function->shared()->DontAdaptArguments();
@@ -575,28 +574,9 @@ Handle<JSFunction> Genesis::GetThrowTypeErrorIntrinsic(
     DCHECK(false);
   }
 
+  restricted_properties_thrower_ = function;
   return function;
 }
-
-
-// ECMAScript 5th Edition, 13.2.3
-Handle<JSFunction> Genesis::GetRestrictedFunctionPropertiesThrower() {
-  if (restricted_function_properties_thrower_.is_null()) {
-    restricted_function_properties_thrower_ = GetThrowTypeErrorIntrinsic(
-        Builtins::kRestrictedFunctionPropertiesThrower);
-  }
-  return restricted_function_properties_thrower_;
-}
-
-
-Handle<JSFunction> Genesis::GetStrictArgumentsPoisonFunction() {
-  if (strict_poison_function_.is_null()) {
-    strict_poison_function_ = GetThrowTypeErrorIntrinsic(
-        Builtins::kRestrictedStrictArgumentsPropertiesThrower);
-  }
-  return strict_poison_function_;
-}
-
 
 void Genesis::CreateStrictModeFunctionMaps(Handle<JSFunction> empty) {
   Factory* factory = isolate_->factory();
@@ -885,19 +865,20 @@ void Genesis::CreateJSProxyMaps() {
   native_context()->set_proxy_constructor_map(*proxy_constructor_map);
 }
 
-static void ReplaceAccessors(Handle<Map> map,
-                             Handle<String> name,
-                             PropertyAttributes attributes,
-                             Handle<AccessorPair> accessor_pair) {
+namespace {
+void ReplaceAccessors(Handle<Map> map, Handle<String> name,
+                      PropertyAttributes attributes,
+                      Handle<AccessorPair> accessor_pair) {
   DescriptorArray* descriptors = map->instance_descriptors();
   int idx = descriptors->SearchWithCache(map->GetIsolate(), *name, *map);
   Descriptor d = Descriptor::AccessorConstant(name, accessor_pair, attributes);
   descriptors->Replace(idx, &d);
 }
+}  // namespace
 
 void Genesis::AddRestrictedFunctionProperties(Handle<JSFunction> empty) {
   PropertyAttributes rw_attribs = static_cast<PropertyAttributes>(DONT_ENUM);
-  Handle<JSFunction> thrower = GetRestrictedFunctionPropertiesThrower();
+  Handle<JSFunction> thrower = GetThrowTypeErrorIntrinsic();
   Handle<AccessorPair> accessors = factory()->NewAccessorPair();
   accessors->set_getter(*thrower);
   accessors->set_setter(*thrower);
@@ -2934,12 +2915,12 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         prototype, "entries", Builtins::kMapPrototypeEntries, 0, true);
     JSObject::AddProperty(prototype, factory->iterator_symbol(), entries,
                           DONT_ENUM);
-    SimpleInstallFunction(prototype, "forEach", Builtins::kMapForEach, 1,
-                          false);
+    SimpleInstallFunction(prototype, "forEach", Builtins::kMapPrototypeForEach,
+                          1, false);
     SimpleInstallFunction(prototype, "keys", Builtins::kMapPrototypeKeys, 0,
                           true);
     SimpleInstallGetter(prototype, factory->InternalizeUtf8String("size"),
-                        Builtins::kMapGetSize, false);
+                        Builtins::kMapPrototypeGetSize, true);
     SimpleInstallFunction(prototype, "values", Builtins::kMapPrototypeValues, 0,
                           true);
     InstallSpeciesGetter(js_map_fun);
@@ -2973,10 +2954,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallFunction(prototype, "clear", Builtins::kSetClear, 0, true);
     SimpleInstallFunction(prototype, "entries", Builtins::kSetPrototypeEntries,
                           0, true);
-    SimpleInstallFunction(prototype, "forEach", Builtins::kSetForEach, 1,
-                          false);
+    SimpleInstallFunction(prototype, "forEach", Builtins::kSetPrototypeForEach,
+                          1, false);
     SimpleInstallGetter(prototype, factory->InternalizeUtf8String("size"),
-                        Builtins::kSetGetSize, false);
+                        Builtins::kSetPrototypeGetSize, true);
     Handle<JSFunction> values = SimpleInstallFunction(
         prototype, "values", Builtins::kSetPrototypeValues, 0, true);
     JSObject::AddProperty(prototype, factory->keys_string(), values, DONT_ENUM);
@@ -3221,7 +3202,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // Create the ThrowTypeError function.
     Handle<AccessorPair> callee = factory->NewAccessorPair();
 
-    Handle<JSFunction> poison = GetStrictArgumentsPoisonFunction();
+    Handle<JSFunction> poison = GetThrowTypeErrorIntrinsic();
 
     // Install the ThrowTypeError function.
     callee->set_getter(*poison);
@@ -3643,10 +3624,20 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
 
     // Setup SetIterator constructor.
     Handle<JSFunction> set_iterator_function =
-        InstallFunction(container, "SetIterator", JS_SET_ITERATOR_TYPE,
+        InstallFunction(container, "SetIterator", JS_SET_VALUE_ITERATOR_TYPE,
                         JSSetIterator::kSize, prototype, Builtins::kIllegal);
+    set_iterator_function->shared()->set_native(false);
     set_iterator_function->shared()->set_instance_class_name(*name);
-    native_context->set_set_iterator_map(set_iterator_function->initial_map());
+
+    Handle<Map> set_value_iterator_map(set_iterator_function->initial_map(),
+                                       isolate);
+    native_context->set_set_value_iterator_map(*set_value_iterator_map);
+
+    Handle<Map> set_key_value_iterator_map =
+        Map::Copy(set_value_iterator_map, "JS_SET_KEY_VALUE_ITERATOR_TYPE");
+    set_key_value_iterator_map->set_instance_type(
+        JS_SET_KEY_VALUE_ITERATOR_TYPE);
+    native_context->set_set_key_value_iterator_map(*set_key_value_iterator_map);
   }
 
   {  // -- M a p I t e r a t o r
@@ -3669,10 +3660,25 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
 
     // Setup MapIterator constructor.
     Handle<JSFunction> map_iterator_function =
-        InstallFunction(container, "MapIterator", JS_MAP_ITERATOR_TYPE,
+        InstallFunction(container, "MapIterator", JS_MAP_KEY_ITERATOR_TYPE,
                         JSMapIterator::kSize, prototype, Builtins::kIllegal);
+    map_iterator_function->shared()->set_native(false);
     map_iterator_function->shared()->set_instance_class_name(*name);
-    native_context->set_map_iterator_map(map_iterator_function->initial_map());
+
+    Handle<Map> map_key_iterator_map(map_iterator_function->initial_map(),
+                                     isolate);
+    native_context->set_map_key_iterator_map(*map_key_iterator_map);
+
+    Handle<Map> map_key_value_iterator_map =
+        Map::Copy(map_key_iterator_map, "JS_MAP_KEY_VALUE_ITERATOR_TYPE");
+    map_key_value_iterator_map->set_instance_type(
+        JS_MAP_KEY_VALUE_ITERATOR_TYPE);
+    native_context->set_map_key_value_iterator_map(*map_key_value_iterator_map);
+
+    Handle<Map> map_value_iterator_map =
+        Map::Copy(map_key_iterator_map, "JS_MAP_VALUE_ITERATOR_TYPE");
+    map_value_iterator_map->set_instance_type(JS_MAP_VALUE_ITERATOR_TYPE);
+    native_context->set_map_value_iterator_map(*map_value_iterator_map);
   }
 
   {  // -- S c r i p t
@@ -4322,7 +4328,7 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     // Verification of important array prototype properties.
     Object* length = proto->length();
     CHECK(length->IsSmi());
-    CHECK(Smi::cast(length)->value() == 0);
+    CHECK(Smi::ToInt(length) == 0);
     CHECK(proto->HasSmiOrObjectElements());
     // This is necessary to enable fast checks for absence of elements
     // on Array.prototype and below.
@@ -4882,11 +4888,11 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
     }
   } else if (from->IsJSGlobalObject()) {
     // Copy all keys and values in enumeration order.
-    Handle<GlobalDictionary> properties =
-        Handle<GlobalDictionary>(from->global_dictionary());
+    Handle<GlobalDictionary> properties(
+        JSGlobalObject::cast(*from)->global_dictionary());
     Handle<FixedArray> indices = GlobalDictionary::IterationIndices(properties);
     for (int i = 0; i < indices->length(); i++) {
-      int index = Smi::cast(indices->get(i))->value();
+      int index = Smi::ToInt(indices->get(i));
       // If the property is already there we skip it.
       Handle<PropertyCell> cell(properties->CellAt(index));
       Handle<Name> key(cell->name(), isolate());
@@ -4907,7 +4913,7 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
     Handle<FixedArray> key_indices =
         NameDictionary::IterationIndices(properties);
     for (int i = 0; i < key_indices->length(); i++) {
-      int key_index = Smi::cast(key_indices->get(i))->value();
+      int key_index = Smi::ToInt(key_indices->get(i));
       Object* raw_key = properties->KeyAt(key_index);
       DCHECK(properties->IsKey(isolate(), raw_key));
       DCHECK(raw_key->IsName());
@@ -5012,7 +5018,7 @@ Genesis::Genesis(
       // proxy of the correct size.
       Object* size = isolate->heap()->serialized_global_proxy_sizes()->get(
           static_cast<int>(context_snapshot_index) - 1);
-      instance_size = Smi::cast(size)->value();
+      instance_size = Smi::ToInt(size);
     } else {
       instance_size = JSGlobalProxy::SizeWithEmbedderFields(
           global_proxy_template.IsEmpty()

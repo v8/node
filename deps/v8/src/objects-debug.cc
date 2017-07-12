@@ -87,6 +87,9 @@ void HeapObject::HeapObjectVerify() {
     case TRANSITION_ARRAY_TYPE:
       TransitionArray::cast(this)->TransitionArrayVerify();
       break;
+    case PROPERTY_ARRAY_TYPE:
+      PropertyArray::cast(this)->PropertyArrayVerify();
+      break;
     case FREE_SPACE_TYPE:
       FreeSpace::cast(this)->FreeSpaceVerify();
       break;
@@ -164,10 +167,13 @@ void HeapObject::HeapObjectVerify() {
     case JS_MAP_TYPE:
       JSMap::cast(this)->JSMapVerify();
       break;
-    case JS_SET_ITERATOR_TYPE:
+    case JS_SET_KEY_VALUE_ITERATOR_TYPE:
+    case JS_SET_VALUE_ITERATOR_TYPE:
       JSSetIterator::cast(this)->JSSetIteratorVerify();
       break;
-    case JS_MAP_ITERATOR_TYPE:
+    case JS_MAP_KEY_ITERATOR_TYPE:
+    case JS_MAP_KEY_VALUE_ITERATOR_TYPE:
+    case JS_MAP_VALUE_ITERATOR_TYPE:
       JSMapIterator::cast(this)->JSMapIteratorVerify();
       break;
 
@@ -338,13 +344,13 @@ bool JSObject::ElementsAreSafeToExamine() {
 
 
 void JSObject::JSObjectVerify() {
-  VerifyHeapPointer(properties());
+  VerifyPointer(properties());
   VerifyHeapPointer(elements());
 
   CHECK_IMPLIES(HasSloppyArgumentsElements(), IsJSArgumentsObject());
   if (HasFastProperties()) {
     int actual_unused_property_fields = map()->GetInObjectProperties() +
-                                        properties()->length() -
+                                        property_array()->length() -
                                         map()->NextFreePropertyIndex();
     if (map()->unused_property_fields() != actual_unused_property_fields) {
       // There are two reasons why this can happen:
@@ -455,6 +461,12 @@ void FixedArray::FixedArrayVerify() {
   }
 }
 
+void PropertyArray::PropertyArrayVerify() {
+  for (int i = 0; i < length(); i++) {
+    Object* e = get(i);
+    VerifyPointer(e);
+  }
+}
 
 void FixedDoubleArray::FixedDoubleArrayVerify() {
   for (int i = 0; i < length(); i++) {
@@ -544,7 +556,7 @@ void SloppyArgumentsElements::SloppyArgumentsElementsVerify(
       CHECK(accessor->HasElement(holder, i, arg_elements));
       continue;
     }
-    int mappedIndex = Smi::cast(mapped)->value();
+    int mappedIndex = Smi::ToInt(mapped);
     nofMappedParameters++;
     CHECK_LE(maxMappedIndex, mappedIndex);
     maxMappedIndex = mappedIndex;
@@ -605,32 +617,32 @@ void JSDate::JSDateVerify() {
         cache_stamp()->IsNaN());
 
   if (month()->IsSmi()) {
-    int month = Smi::cast(this->month())->value();
+    int month = Smi::ToInt(this->month());
     CHECK(0 <= month && month <= 11);
   }
   if (day()->IsSmi()) {
-    int day = Smi::cast(this->day())->value();
+    int day = Smi::ToInt(this->day());
     CHECK(1 <= day && day <= 31);
   }
   if (hour()->IsSmi()) {
-    int hour = Smi::cast(this->hour())->value();
+    int hour = Smi::ToInt(this->hour());
     CHECK(0 <= hour && hour <= 23);
   }
   if (min()->IsSmi()) {
-    int min = Smi::cast(this->min())->value();
+    int min = Smi::ToInt(this->min());
     CHECK(0 <= min && min <= 59);
   }
   if (sec()->IsSmi()) {
-    int sec = Smi::cast(this->sec())->value();
+    int sec = Smi::ToInt(this->sec());
     CHECK(0 <= sec && sec <= 59);
   }
   if (weekday()->IsSmi()) {
-    int weekday = Smi::cast(this->weekday())->value();
+    int weekday = Smi::ToInt(this->weekday());
     CHECK(0 <= weekday && weekday <= 6);
   }
   if (cache_stamp()->IsSmi()) {
-    CHECK(Smi::cast(cache_stamp())->value() <=
-          Smi::cast(isolate->date_cache()->stamp())->value());
+    CHECK(Smi::ToInt(cache_stamp()) <=
+          Smi::ToInt(isolate->date_cache()->stamp()));
   }
 }
 
@@ -755,7 +767,7 @@ void JSGlobalProxy::JSGlobalProxyVerify() {
   JSObjectVerify();
   VerifyObjectField(JSGlobalProxy::kNativeContextOffset);
   // Make sure that this object has no properties, elements.
-  CHECK_EQ(0, properties()->length());
+  CHECK_EQ(GetHeap()->empty_fixed_array(), properties());
   CHECK_EQ(0, FixedArray::cast(elements())->length());
 }
 
@@ -763,7 +775,7 @@ void JSGlobalProxy::JSGlobalProxyVerify() {
 void JSGlobalObject::JSGlobalObjectVerify() {
   CHECK(IsJSGlobalObject());
   // Do not check the dummy global object for the builtins.
-  if (GlobalDictionary::cast(properties())->NumberOfElements() == 0 &&
+  if (global_dictionary()->NumberOfElements() == 0 &&
       elements()->length() == 0) {
     return;
   }
@@ -781,7 +793,7 @@ void Oddball::OddballVerify() {
           number == heap->hole_nan_value());
   } else {
     CHECK(number->IsSmi());
-    int value = Smi::cast(number)->value();
+    int value = Smi::ToInt(number);
     // Hidden oddballs have negative smis.
     const int kLeastHiddenOddballNumber = -7;
     CHECK_LE(value, 1);
@@ -904,7 +916,7 @@ void JSArray::JSArrayVerify() {
   if (!length()->IsNumber()) return;
   // Verify that the length and the elements backing store are in sync.
   if (length()->IsSmi() && HasFastElements()) {
-    int size = Smi::cast(length())->value();
+    int size = Smi::ToInt(length());
     // Holey / Packed backing stores might have slack or might have not been
     // properly initialized yet.
     CHECK(size <= elements()->length() ||
@@ -951,10 +963,8 @@ void JSSetIterator::JSSetIteratorVerify() {
   CHECK(IsJSSetIterator());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  Isolate* isolate = GetIsolate();
-  CHECK(table()->IsOrderedHashTable() || table()->IsUndefined(isolate));
-  CHECK(index()->IsSmi() || index()->IsUndefined(isolate));
-  CHECK(kind()->IsSmi() || kind()->IsUndefined(isolate));
+  CHECK(table()->IsOrderedHashTable());
+  CHECK(index()->IsSmi());
 }
 
 
@@ -962,10 +972,8 @@ void JSMapIterator::JSMapIteratorVerify() {
   CHECK(IsJSMapIterator());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  Isolate* isolate = GetIsolate();
-  CHECK(table()->IsOrderedHashTable() || table()->IsUndefined(isolate));
-  CHECK(index()->IsSmi() || index()->IsUndefined(isolate));
-  CHECK(kind()->IsSmi() || kind()->IsUndefined(isolate));
+  CHECK(table()->IsOrderedHashTable());
+  CHECK(index()->IsSmi());
 }
 
 
@@ -1102,12 +1110,12 @@ void JSRegExp::JSRegExpVerify() {
       // Smi : Not compiled yet (-1).
       // Code/ByteArray: Compiled code.
       CHECK(
-          (one_byte_data->IsSmi() && Smi::cast(one_byte_data)->value() ==
-                                         JSRegExp::kUninitializedValue) ||
+          (one_byte_data->IsSmi() &&
+           Smi::ToInt(one_byte_data) == JSRegExp::kUninitializedValue) ||
           (is_native ? one_byte_data->IsCode() : one_byte_data->IsByteArray()));
       Object* uc16_data = arr->get(JSRegExp::kIrregexpUC16CodeIndex);
       CHECK((uc16_data->IsSmi() &&
-             Smi::cast(uc16_data)->value() == JSRegExp::kUninitializedValue) ||
+             Smi::ToInt(uc16_data) == JSRegExp::kUninitializedValue) ||
             (is_native ? uc16_data->IsCode() : uc16_data->IsByteArray()));
 
       CHECK(arr->get(JSRegExp::kIrregexpCaptureCountIndex)->IsSmi());
@@ -1443,7 +1451,7 @@ void JSObject::IncrementSpillStatistics(SpillInformation* info) {
     info->number_of_fast_used_fields_   += map()->NextFreePropertyIndex();
     info->number_of_fast_unused_fields_ += map()->unused_property_fields();
   } else if (IsJSGlobalObject()) {
-    GlobalDictionary* dict = global_dictionary();
+    GlobalDictionary* dict = JSGlobalObject::cast(this)->global_dictionary();
     info->number_of_slow_used_properties_ += dict->NumberOfElements();
     info->number_of_slow_unused_properties_ +=
         dict->Capacity() - dict->NumberOfElements();

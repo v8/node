@@ -472,7 +472,7 @@ void WebAssemblyInstantiate(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
 bool GetIntegerProperty(v8::Isolate* isolate, ErrorThrower* thrower,
                         Local<Context> context, Local<v8::Object> object,
-                        Local<String> property, int* result,
+                        Local<String> property, int64_t* result,
                         int64_t lower_bound, uint64_t upper_bound) {
   v8::MaybeLocal<v8::Value> maybe = object->Get(context, property);
   v8::Local<v8::Value> value;
@@ -525,14 +525,14 @@ void WebAssemblyTable(const v8::FunctionCallbackInfo<v8::Value>& args) {
     }
   }
   // The descriptor's 'initial'.
-  int initial = 0;
+  int64_t initial = 0;
   if (!GetIntegerProperty(isolate, &thrower, context, descriptor,
                           v8_str(isolate, "initial"), &initial, 0,
                           i::FLAG_wasm_max_table_size)) {
     return;
   }
   // The descriptor's 'maximum'.
-  int maximum = -1;
+  int64_t maximum = -1;
   Local<String> maximum_key = v8_str(isolate, "maximum");
   Maybe<bool> has_maximum = descriptor->Has(context, maximum_key);
 
@@ -545,8 +545,8 @@ void WebAssemblyTable(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
 
   i::Handle<i::FixedArray> fixed_array;
-  i::Handle<i::JSObject> table_obj =
-      i::WasmTableObject::New(i_isolate, initial, maximum, &fixed_array);
+  i::Handle<i::JSObject> table_obj = i::WasmTableObject::New(
+      i_isolate, static_cast<uint32_t>(initial), maximum, &fixed_array);
   v8::ReturnValue<v8::Value> return_value = args.GetReturnValue();
   return_value.Set(Utils::ToLocal(table_obj));
 }
@@ -563,14 +563,14 @@ void WebAssemblyMemory(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Local<Context> context = isolate->GetCurrentContext();
   Local<v8::Object> descriptor = args[0]->ToObject(context).ToLocalChecked();
   // The descriptor's 'initial'.
-  int initial = 0;
+  int64_t initial = 0;
   if (!GetIntegerProperty(isolate, &thrower, context, descriptor,
                           v8_str(isolate, "initial"), &initial, 0,
                           i::FLAG_wasm_max_mem_pages)) {
     return;
   }
   // The descriptor's 'maximum'.
-  int maximum = -1;
+  int64_t maximum = -1;
   Local<String> maximum_key = v8_str(isolate, "maximum");
   Maybe<bool> has_maximum = descriptor->Has(context, maximum_key);
 
@@ -581,16 +581,45 @@ void WebAssemblyMemory(const v8::FunctionCallbackInfo<v8::Value>& args) {
       return;
     }
   }
+
+  bool is_shared_memory = false;
+  if (i::FLAG_experimental_wasm_threads) {
+    // Shared property of descriptor
+    Local<String> shared_key = v8_str(isolate, "shared");
+    Maybe<bool> has_shared = descriptor->Has(context, shared_key);
+    if (!has_shared.IsNothing() && has_shared.FromJust()) {
+      v8::MaybeLocal<v8::Value> maybe = descriptor->Get(context, shared_key);
+      v8::Local<v8::Value> value;
+      if (maybe.ToLocal(&value)) {
+        if (!value->BooleanValue(context).To(&is_shared_memory)) return;
+      }
+    }
+    // Throw TypeError if shared is true, and the descriptor has no "maximum"
+    if (is_shared_memory && maximum == -1) {
+      thrower.TypeError(
+          "If shared is true, maximum property should be defined.");
+    }
+  }
+
   size_t size = static_cast<size_t>(i::wasm::WasmModule::kPageSize) *
                 static_cast<size_t>(initial);
-  i::Handle<i::JSArrayBuffer> buffer =
-      i::wasm::NewArrayBuffer(i_isolate, size, i::FLAG_wasm_guard_pages);
+  i::Handle<i::JSArrayBuffer> buffer = i::wasm::NewArrayBuffer(
+      i_isolate, size, i::FLAG_wasm_guard_pages,
+      is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared);
   if (buffer.is_null()) {
     thrower.RangeError("could not allocate memory");
     return;
   }
-  i::Handle<i::JSObject> memory_obj =
-      i::WasmMemoryObject::New(i_isolate, buffer, maximum);
+  if (buffer->is_shared()) {
+    Maybe<bool> result =
+        buffer->SetIntegrityLevel(buffer, i::FROZEN, i::Object::DONT_THROW);
+    if (!result.FromJust()) {
+      thrower.TypeError(
+          "Status of setting SetIntegrityLevel of buffer is false.");
+    }
+  }
+  i::Handle<i::JSObject> memory_obj = i::WasmMemoryObject::New(
+      i_isolate, buffer, static_cast<int32_t>(maximum));
   args.GetReturnValue().Set(Utils::ToLocal(memory_obj));
 }
 
@@ -638,9 +667,8 @@ void WebAssemblyTableGrow(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
   new_size64 += old_size;
 
-  int64_t max_size64 = receiver->maximum_length();
-  if (max_size64 < 0 ||
-      max_size64 > static_cast<int64_t>(i::FLAG_wasm_max_table_size)) {
+  int64_t max_size64 = receiver->maximum_length()->Number();
+  if (max_size64 < 0 || max_size64 > i::FLAG_wasm_max_table_size) {
     max_size64 = i::FLAG_wasm_max_table_size;
   }
 
@@ -757,7 +785,9 @@ void WebAssemblyMemoryGrow(const v8::FunctionCallbackInfo<v8::Value>& args) {
     return;
   }
   bool free_memory = (delta_size != 0);
-  i::wasm::DetachWebAssemblyMemoryBuffer(i_isolate, old_buffer, free_memory);
+  if (!old_buffer->is_shared()) {
+    i::wasm::DetachWebAssemblyMemoryBuffer(i_isolate, old_buffer, free_memory);
+  }
   v8::ReturnValue<v8::Value> return_value = args.GetReturnValue();
   return_value.Set(ret);
 }
@@ -771,8 +801,20 @@ void WebAssemblyMemoryGetBuffer(
   ScheduledErrorThrower thrower(i_isolate, "WebAssembly.Memory.buffer");
   EXTRACT_THIS(receiver, WasmMemoryObject);
 
-  i::Handle<i::Object> buffer(receiver->array_buffer(), i_isolate);
-  DCHECK(buffer->IsJSArrayBuffer());
+  i::Handle<i::Object> buffer_obj(receiver->array_buffer(), i_isolate);
+  DCHECK(buffer_obj->IsJSArrayBuffer());
+  i::Handle<i::JSArrayBuffer> buffer(i::JSArrayBuffer::cast(*buffer_obj));
+  if (buffer->is_shared()) {
+    // TODO(gdeepti): More needed here for when cached buffer, and current
+    // buffer are out of sync, handle that here when bounds checks, and Grow
+    // are handled correctly.
+    Maybe<bool> result =
+        buffer->SetIntegrityLevel(buffer, i::FROZEN, i::Object::DONT_THROW);
+    if (!result.FromJust()) {
+      thrower.TypeError(
+          "Status of setting SetIntegrityLevel of buffer is false.");
+    }
+  }
   v8::ReturnValue<v8::Value> return_value = args.GetReturnValue();
   return_value.Set(Utils::ToLocal(buffer));
 }
