@@ -3993,6 +3993,15 @@ THREADED_TEST(External) {
   *ptr = 10;
   CHECK_EQ(x, 10);
 
+  {
+    i::Handle<i::Object> obj = v8::Utils::OpenHandle(*ext);
+    CHECK_EQ(i::HeapObject::cast(*obj)->map(), CcTest::heap()->external_map());
+    CHECK(ext->IsExternal());
+    CHECK(!CompileRun("new Set().add(this.ext)").IsEmpty());
+    CHECK_NE(i::HeapObject::cast(*obj)->map(), CcTest::heap()->external_map());
+    CHECK(ext->IsExternal());
+  }
+
   // Make sure unaligned pointers are wrapped properly.
   char* data = i::StrDup("0123456789");
   Local<v8::Value> zero = v8::External::New(CcTest::isolate(), &data[0]);
@@ -26888,7 +26897,7 @@ TEST(CorrectEnteredContext) {
   object->ToString(currentContext.local()).ToLocalChecked();
 }
 
-Local<v8::Promise> HostImportModuleDynamicallyCallbackResolve(
+v8::MaybeLocal<v8::Promise> HostImportModuleDynamicallyCallbackResolve(
     Local<Context> context, Local<String> referrer, Local<String> specifier) {
   CHECK(!referrer.IsEmpty());
   String::Utf8Value referrer_utf8(referrer);

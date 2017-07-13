@@ -501,6 +501,14 @@ FieldAccess AccessBuilder::ForMapBitField() {
   return access;
 }
 
+// static
+FieldAccess AccessBuilder::ForMapBitField2() {
+  FieldAccess access = {
+      kTaggedBase,        Map::kBitField2Offset,   Handle<Name>(),
+      MaybeHandle<Map>(), TypeCache::Get().kUint8, MachineType::Uint8(),
+      kNoWriteBarrier};
+  return access;
+}
 
 // static
 FieldAccess AccessBuilder::ForMapBitField3() {
@@ -875,7 +883,7 @@ ElementAccess AccessBuilder::ForFixedArrayElement(ElementsKind kind) {
       access.machine_type = MachineType::Float64();
       break;
     case HOLEY_DOUBLE_ELEMENTS:
-      access.type = Type::Number();
+      access.type = Type::NumberOrHole();
       access.write_barrier_kind = kNoWriteBarrier;
       access.machine_type = MachineType::Float64();
       break;

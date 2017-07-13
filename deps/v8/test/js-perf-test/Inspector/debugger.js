@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-new BenchmarkSuite('Debugger.paused', [10000], [
-  new Benchmark('Debugger.paused', false, false, 0, DebuggerPaused, DebuggerEnable, DebuggerDisable),
-]);
+(function() {
+  new BenchmarkSuite('Debugger.paused', [10000], [
+    new Benchmark('Debugger.paused', false, false, 0, DebuggerPaused, Setup, TearDown),
+  ]);
 
-let lastId = 0;
-function DebuggerEnable() {
-  send(JSON.stringify({id: ++lastId, method: 'Debugger.enable'}));
-  // force lazy compilation of inspector related scrtips
-  send(JSON.stringify({id: ++lastId, method: 'Runtime.evaluate', params: {expression: ''}}));
-}
-
-function DebuggerDisable() {
-  send(JSON.stringify({id: ++lastId, method: 'Debugger.disable'}));
-}
-
-function DebuggerPaused() {
-  for (var i = 0; i < 10; ++i) {
-    debugger;
+  function Setup() {
+    SendMessage('Debugger.enable');
+    // Force lazy compilation of inspector related scripts.
+    SendMessage('Runtime.evaluate', {expression: ''});
   }
-}
+
+  function TearDown() {
+    SendMessage('Debugger.disable');
+  }
+
+  function DebuggerPaused() {
+    for (var i = 0; i < 10; ++i) {
+      debugger;
+    }
+  }
+})();

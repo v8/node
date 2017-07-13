@@ -541,12 +541,15 @@ void ConstructorBuiltinsAssembler::CreateFastCloneShallowArrayBuiltin(
   BIND(&call_runtime);
   {
     Comment("call runtime");
-    Node* flags = SmiConstant(ArrayLiteral::kShallowElements |
-                              (allocation_site_mode == TRACK_ALLOCATION_SITE
-                                   ? 0
-                                   : ArrayLiteral::kDisableMementos));
+    int flags = AggregateLiteral::kIsShallow;
+    if (allocation_site_mode == TRACK_ALLOCATION_SITE) {
+      // Force initial allocation sites on the initial literal setup step.
+      flags |= AggregateLiteral::kNeedsInitialAllocationSite;
+    } else {
+      flags |= AggregateLiteral::kDisableMementos;
+    }
     Return(CallRuntime(Runtime::kCreateArrayLiteral, context, closure,
-                       literal_index, constant_elements, flags));
+                       literal_index, constant_elements, SmiConstant(flags)));
   }
 }
 
@@ -619,7 +622,8 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
   STATIC_ASSERT(JSObject::kMaxInstanceSize < kMaxRegularHeapObjectSize);
   Node* instance_size = TimesPointerSize(LoadMapInstanceSize(boilerplate_map));
   Node* allocation_size = instance_size;
-  if (FLAG_allocation_site_pretenuring) {
+  bool needs_allocation_memento = FLAG_allocation_site_pretenuring;
+  if (needs_allocation_memento) {
     // Prepare for inner-allocating the AllocationMemento.
     allocation_size =
         IntPtrAdd(instance_size, IntPtrConstant(AllocationMemento::kSize));
@@ -638,18 +642,8 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
 
   // Initialize the AllocationMemento before potential GCs due to heap number
   // allocation when copying the in-object properties.
-  if (FLAG_allocation_site_pretenuring) {
-    Comment("Initialize AllocationMemento");
-    Node* memento = InnerAllocate(copy, instance_size);
-    StoreMapNoWriteBarrier(memento, Heap::kAllocationMementoMapRootIndex);
-    StoreObjectFieldNoWriteBarrier(
-        memento, AllocationMemento::kAllocationSiteOffset, allocation_site);
-    Node* memento_create_count = LoadObjectField(
-        allocation_site, AllocationSite::kPretenureCreateCountOffset);
-    memento_create_count = SmiAdd(memento_create_count, SmiConstant(1));
-    StoreObjectFieldNoWriteBarrier(allocation_site,
-                                   AllocationSite::kPretenureCreateCountOffset,
-                                   memento_create_count);
+  if (needs_allocation_memento) {
+    InitializeAllocationMemento(copy, instance_size, allocation_site);
   }
 
   {

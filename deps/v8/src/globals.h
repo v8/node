@@ -955,11 +955,11 @@ const double kMaxSafeInteger = 9007199254740991.0;  // 2^53-1
 // The order of this enum has to be kept in sync with the predicates below.
 enum VariableMode : uint8_t {
   // User declared variables:
-  VAR,  // declared via 'var', and 'function' declarations
-
   LET,  // declared via 'let' declarations (first lexical)
 
   CONST,  // declared via 'const' declarations (last lexical)
+
+  VAR,  // declared via 'var', and 'function' declarations
 
   // Variables introduced by the compiler:
   TEMPORARY,  // temporary variables (not user-visible), stack-allocated
@@ -972,12 +972,10 @@ enum VariableMode : uint8_t {
                    // variable is global unless it has been shadowed
                    // by an eval-introduced variable
 
-  DYNAMIC_LOCAL,  // requires dynamic lookup, but we know that the
-                  // variable is local and where it is unless it
-                  // has been shadowed by an eval-introduced
-                  // variable
-
-  kLastVariableMode = DYNAMIC_LOCAL
+  DYNAMIC_LOCAL  // requires dynamic lookup, but we know that the
+                 // variable is local and where it is unless it
+                 // has been shadowed by an eval-introduced
+                 // variable
 };
 
 // Printing support
@@ -1007,8 +1005,7 @@ enum VariableKind : uint8_t {
   NORMAL_VARIABLE,
   FUNCTION_VARIABLE,
   THIS_VARIABLE,
-  SLOPPY_FUNCTION_NAME_VARIABLE,
-  kLastKind = SLOPPY_FUNCTION_NAME_VARIABLE
+  SLOPPY_FUNCTION_NAME_VARIABLE
 };
 
 inline bool IsDynamicVariableMode(VariableMode mode) {
@@ -1017,13 +1014,14 @@ inline bool IsDynamicVariableMode(VariableMode mode) {
 
 
 inline bool IsDeclaredVariableMode(VariableMode mode) {
-  STATIC_ASSERT(VAR == 0);  // Implies that mode >= VAR.
-  return mode <= CONST;
+  STATIC_ASSERT(LET == 0);  // Implies that mode >= LET.
+  return mode <= VAR;
 }
 
 
 inline bool IsLexicalVariableMode(VariableMode mode) {
-  return mode >= LET && mode <= CONST;
+  STATIC_ASSERT(LET == 0);  // Implies that mode >= LET.
+  return mode <= CONST;
 }
 
 enum VariableLocation : uint8_t {
