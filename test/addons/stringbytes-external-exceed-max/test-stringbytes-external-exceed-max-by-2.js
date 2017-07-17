@@ -12,7 +12,9 @@ if (!common.enoughTestMem) {
 
 // v8 fails silently if string length > v8::String::kMaxLength
 // v8::String::kMaxLength defined in v8.h
-const kStringMaxLength = process.binding('buffer').kStringMaxLength;
+let kStringMaxLength = process.binding('buffer').kStringMaxLength;
+kStringMaxLength += kStringMaxLength % 2;
+
 
 let buf;
 try {
