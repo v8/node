@@ -28,6 +28,8 @@ const isIPv4 = net.isIPv4;
 const isIPv6 = net.isIPv6;
 const util = require('util');
 
+common.crashOnUnhandledRejection();
+
 let expected = 0;
 let completed = 0;
 let running = false;
@@ -364,7 +366,7 @@ TEST(function test_resolveTxt(done) {
     assert.ifError(err);
     assert.strictEqual(records.length, 1);
     assert.ok(util.isArray(records[0]));
-    assert.strictEqual(records[0][0].indexOf('v=spf1'), 0);
+    assert(records[0][0].startsWith('v=spf1'));
     done();
   });
 
@@ -400,19 +402,6 @@ TEST(function test_lookup_failure(done) {
 });
 
 
-TEST(function test_lookup_null(done) {
-  const req = dns.lookup(null, function(err, ip, family) {
-    assert.ifError(err);
-    assert.strictEqual(ip, null);
-    assert.strictEqual(family, 4);
-
-    done();
-  });
-
-  checkWrap(req);
-});
-
-
 TEST(function test_lookup_ip_all(done) {
   const req = dns.lookup('127.0.0.1', {all: true}, function(err, ips, family) {
     assert.ifError(err);
@@ -425,6 +414,32 @@ TEST(function test_lookup_ip_all(done) {
   });
 
   checkWrap(req);
+});
+
+
+TEST(function test_lookup_ip_all_promise(done) {
+  const req = util.promisify(dns.lookup)('127.0.0.1', {all: true})
+    .then(function(ips) {
+      assert.ok(Array.isArray(ips));
+      assert.ok(ips.length > 0);
+      assert.strictEqual(ips[0].address, '127.0.0.1');
+      assert.strictEqual(ips[0].family, 4);
+
+      done();
+    });
+
+  checkWrap(req);
+});
+
+
+TEST(function test_lookup_ip_promise(done) {
+  util.promisify(dns.lookup)('127.0.0.1')
+    .then(function({ address, family }) {
+      assert.strictEqual(address, '127.0.0.1');
+      assert.strictEqual(family, 4);
+
+      done();
+    });
 });
 
 
@@ -477,11 +492,12 @@ TEST(function test_lookupservice_invalid(done) {
 
 
 TEST(function test_reverse_failure(done) {
-  const req = dns.reverse('0.0.0.0', function(err) {
+  // 203.0.113.0/24 are addresses reserved for (RFC) documentation use only
+  const req = dns.reverse('203.0.113.0', function(err) {
     assert(err instanceof Error);
     assert.strictEqual(err.code, 'ENOTFOUND');  // Silly error code...
-    assert.strictEqual(err.hostname, '0.0.0.0');
-    assert.ok(/0\.0\.0\.0/.test(err.message));
+    assert.strictEqual(err.hostname, '203.0.113.0');
+    assert.ok(/203\.0\.113\.0/.test(err.message));
 
     done();
   });
@@ -545,8 +561,17 @@ req.oncomplete = function(err, domains) {
 };
 
 process.on('exit', function() {
-  console.log(completed + ' tests completed');
+  console.log(`${completed} tests completed`);
   assert.strictEqual(running, false);
   assert.strictEqual(expected, completed);
   assert.ok(getaddrinfoCallbackCalled);
 });
+
+
+assert.doesNotThrow(() => dns.lookup('nodejs.org', 6, common.mustCall()));
+
+assert.doesNotThrow(() => dns.lookup('nodejs.org', {}, common.mustCall()));
+
+assert.doesNotThrow(() => dns.lookupService('0.0.0.0', '0', common.mustCall()));
+
+assert.doesNotThrow(() => dns.lookupService('0.0.0.0', 0, common.mustCall()));

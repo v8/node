@@ -37,6 +37,12 @@
 # define NAPI_MODULE_EXPORT __attribute__((visibility("default")))
 #endif
 
+#ifdef __GNUC__
+#define NAPI_NO_RETURN __attribute__((noreturn))
+#else
+#define NAPI_NO_RETURN
+#endif
+
 
 typedef void (*napi_addon_register_func)(napi_env env,
                                          napi_value exports,
@@ -104,6 +110,9 @@ NAPI_EXTERN napi_status
 napi_get_last_error_info(napi_env env,
                          const napi_extended_error_info** result);
 
+NAPI_EXTERN NAPI_NO_RETURN void napi_fatal_error(const char* location,
+                                                 const char* message);
+
 // Getters for defined singletons
 NAPI_EXTERN napi_status napi_get_undefined(napi_env env, napi_value* result);
 NAPI_EXTERN napi_status napi_get_null(napi_env env, napi_value* result);
@@ -142,12 +151,15 @@ NAPI_EXTERN napi_status napi_create_function(napi_env env,
                                              void* data,
                                              napi_value* result);
 NAPI_EXTERN napi_status napi_create_error(napi_env env,
+                                          napi_value code,
                                           napi_value msg,
                                           napi_value* result);
 NAPI_EXTERN napi_status napi_create_type_error(napi_env env,
+                                               napi_value code,
                                                napi_value msg,
                                                napi_value* result);
 NAPI_EXTERN napi_status napi_create_range_error(napi_env env,
+                                                napi_value code,
                                                 napi_value msg,
                                                 napi_value* result);
 
@@ -170,11 +182,6 @@ NAPI_EXTERN napi_status napi_get_value_int64(napi_env env,
 NAPI_EXTERN napi_status napi_get_value_bool(napi_env env,
                                             napi_value value,
                                             bool* result);
-
-// Gets the number of CHARACTERS in the string.
-NAPI_EXTERN napi_status napi_get_value_string_length(napi_env env,
-                                                     napi_value value,
-                                                     size_t* result);
 
 // Copies LATIN-1 encoded bytes from a string into a buffer.
 NAPI_EXTERN napi_status napi_get_value_string_latin1(napi_env env,
@@ -231,6 +238,14 @@ NAPI_EXTERN napi_status napi_get_property(napi_env env,
                                           napi_value object,
                                           napi_value key,
                                           napi_value* result);
+NAPI_EXTERN napi_status napi_delete_property(napi_env env,
+                                             napi_value object,
+                                             napi_value key,
+                                             bool* result);
+NAPI_EXTERN napi_status napi_has_own_property(napi_env env,
+                                              napi_value object,
+                                              napi_value key,
+                                              bool* result);
 NAPI_EXTERN napi_status napi_set_named_property(napi_env env,
                                           napi_value object,
                                           const char* utf8name,
@@ -255,6 +270,10 @@ NAPI_EXTERN napi_status napi_get_element(napi_env env,
                                          napi_value object,
                                          uint32_t index,
                                          napi_value* result);
+NAPI_EXTERN napi_status napi_delete_element(napi_env env,
+                                            napi_value object,
+                                            uint32_t index,
+                                            bool* result);
 NAPI_EXTERN napi_status
 napi_define_properties(napi_env env,
                        napi_value object,
@@ -397,9 +416,15 @@ NAPI_EXTERN napi_status napi_escape_handle(napi_env env,
 
 // Methods to support error handling
 NAPI_EXTERN napi_status napi_throw(napi_env env, napi_value error);
-NAPI_EXTERN napi_status napi_throw_error(napi_env env, const char* msg);
-NAPI_EXTERN napi_status napi_throw_type_error(napi_env env, const char* msg);
-NAPI_EXTERN napi_status napi_throw_range_error(napi_env env, const char* msg);
+NAPI_EXTERN napi_status napi_throw_error(napi_env env,
+                                         const char* code,
+                                         const char* msg);
+NAPI_EXTERN napi_status napi_throw_type_error(napi_env env,
+                                         const char* code,
+                                         const char* msg);
+NAPI_EXTERN napi_status napi_throw_range_error(napi_env env,
+                                         const char* code,
+                                         const char* msg);
 NAPI_EXTERN napi_status napi_is_error(napi_env env,
                                       napi_value value,
                                       bool* result);
@@ -483,6 +508,10 @@ NAPI_EXTERN napi_status napi_queue_async_work(napi_env env,
 NAPI_EXTERN napi_status napi_cancel_async_work(napi_env env,
                                                napi_async_work work);
 
+
+// version management
+NAPI_EXTERN napi_status napi_get_version(napi_env env, uint32_t* result);
+
 EXTERN_C_END
 
-#endif  // SRC_NODE_API_H__
+#endif  // SRC_NODE_API_H_

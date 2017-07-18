@@ -1,33 +1,71 @@
 'use strict';
-require('../common');
+
+const common = require('../common');
 const assert = require('assert');
 
-// no args
+// No args
 assert.throws(
   () => { assert.fail(); },
-  /^AssertionError: undefined undefined undefined$/
+  common.expectsError({
+    code: 'ERR_ASSERTION',
+    type: assert.AssertionError,
+    message: 'Failed',
+    operator: undefined,
+    actual: undefined,
+    expected: undefined
+  })
 );
 
-// one arg = message
-assert.throws(
-  () => { assert.fail('custom message'); },
-  /^AssertionError: custom message$/
-);
+// One arg = message
+common.expectsError(() => {
+  assert.fail('custom message');
+}, {
+  code: 'ERR_ASSERTION',
+  type: assert.AssertionError,
+  message: 'custom message',
+  operator: undefined,
+  actual: undefined,
+  expected: undefined
+});
 
-// two args only, operator defaults to '!='
-assert.throws(
-  () => { assert.fail('first', 'second'); },
-  /^AssertionError: 'first' != 'second'$/
-);
+// Two args only, operator defaults to '!='
+common.expectsError(() => {
+  assert.fail('first', 'second');
+}, {
+  code: 'ERR_ASSERTION',
+  type: assert.AssertionError,
+  message: '\'first\' != \'second\'',
+  operator: '!=',
+  actual: 'first',
+  expected: 'second'
+});
 
-// three args
-assert.throws(
-  () => { assert.fail('ignored', 'ignored', 'another custom message'); },
-  /^AssertionError: another custom message$/
-);
+// Three args
+common.expectsError(() => {
+  assert.fail('ignored', 'ignored', 'another custom message');
+}, {
+  code: 'ERR_ASSERTION',
+  type: assert.AssertionError,
+  message: 'another custom message',
+  operator: undefined,
+  actual: 'ignored',
+  expected: 'ignored'
+});
 
-// no third arg (but a fourth arg)
+// No third arg (but a fourth arg)
+common.expectsError(() => {
+  assert.fail('first', 'second', undefined, 'operator');
+}, {
+  code: 'ERR_ASSERTION',
+  type: assert.AssertionError,
+  message: '\'first\' operator \'second\'',
+  operator: 'operator',
+  actual: 'first',
+  expected: 'second'
+});
+
+// The stackFrameFunction should exclude the foo frame
 assert.throws(
-  () => { assert.fail('first', 'second', undefined, 'operator'); },
-  /^AssertionError: 'first' operator 'second'$/
+  function foo() { assert.fail('first', 'second', 'message', '!==', foo); },
+  (err) => !/foo/m.test(err.stack)
 );

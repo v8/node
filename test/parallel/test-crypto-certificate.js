@@ -21,12 +21,10 @@
 
 'use strict';
 const common = require('../common');
-const assert = require('assert');
-
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
+
+const assert = require('assert');
 const crypto = require('crypto');
 
 crypto.DEFAULT_ENCODING = 'buffer';
@@ -34,9 +32,9 @@ crypto.DEFAULT_ENCODING = 'buffer';
 const fs = require('fs');
 
 // Test Certificates
-const spkacValid = fs.readFileSync(common.fixturesDir + '/spkac.valid');
-const spkacFail = fs.readFileSync(common.fixturesDir + '/spkac.fail');
-const spkacPem = fs.readFileSync(common.fixturesDir + '/spkac.pem');
+const spkacValid = fs.readFileSync(`${common.fixturesDir}/spkac.valid`);
+const spkacFail = fs.readFileSync(`${common.fixturesDir}/spkac.fail`);
+const spkacPem = fs.readFileSync(`${common.fixturesDir}/spkac.pem`);
 
 const certificate = new crypto.Certificate();
 

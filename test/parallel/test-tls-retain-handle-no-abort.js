@@ -1,12 +1,10 @@
 'use strict';
 
 const common = require('../common');
-const assert = require('assert');
-
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
+
+const assert = require('assert');
 const tls = require('tls');
 const fs = require('fs');
 const util = require('util');
@@ -14,8 +12,8 @@ const util = require('util');
 const sent = 'hello world';
 const serverOptions = {
   isServer: true,
-  key: fs.readFileSync(common.fixturesDir + '/keys/agent1-key.pem'),
-  cert: fs.readFileSync(common.fixturesDir + '/keys/agent1-cert.pem')
+  key: fs.readFileSync(`${common.fixturesDir}/keys/agent1-key.pem`),
+  cert: fs.readFileSync(`${common.fixturesDir}/keys/agent1-cert.pem`)
 };
 
 let ssl = null;

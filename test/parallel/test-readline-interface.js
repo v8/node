@@ -34,10 +34,10 @@ function FakeInput() {
   EventEmitter.call(this);
 }
 inherits(FakeInput, EventEmitter);
-FakeInput.prototype.resume = common.noop;
-FakeInput.prototype.pause = common.noop;
-FakeInput.prototype.write = common.noop;
-FakeInput.prototype.end = common.noop;
+FakeInput.prototype.resume = () => {};
+FakeInput.prototype.pause = () => {};
+FakeInput.prototype.write = () => {};
+FakeInput.prototype.end = () => {};
 
 function isWarned(emitter) {
   for (const name in emitter) {
@@ -155,7 +155,7 @@ function isWarned(emitter) {
     assert.strictEqual(line, expectedLines[callCount]);
     callCount++;
   });
-  fi.emit('data', expectedLines.join('\n') + '\n');
+  fi.emit('data', `${expectedLines.join('\n')}\n`);
   assert.strictEqual(callCount, expectedLines.length);
   rli.close();
 
@@ -216,7 +216,7 @@ function isWarned(emitter) {
     callCount++;
   });
   expectedLines.forEach(function(line) {
-    fi.emit('data', line + '\r');
+    fi.emit('data', `${line}\r`);
     fi.emit('data', '\n');
   });
   assert.strictEqual(callCount, expectedLines.length);
@@ -288,9 +288,7 @@ function isWarned(emitter) {
 
   // \t does not become part of the input when there is a completer function
   fi = new FakeInput();
-  const completer = function(line) {
-    return [[], line];
-  };
+  const completer = (line) => [[], line];
   rli = new readline.Interface({
     input: fi,
     output: fi,
@@ -317,14 +315,10 @@ function isWarned(emitter) {
       input: fi,
       completer: 'string is not valid'
     });
-  }, function(err) {
-    if (err instanceof TypeError) {
-      if (/Argument "completer" must be a function/.test(err)) {
-        return true;
-      }
-    }
-    return false;
-  });
+  }, common.expectsError({
+    type: TypeError,
+    code: 'ERR_INVALID_OPT_VALUE'
+  }));
 
   // duplicate lines are removed from history when
   // `options.removeHistoryDuplicates` is `true`
@@ -341,7 +335,7 @@ function isWarned(emitter) {
     assert.strictEqual(line, expectedLines[callCount]);
     callCount++;
   });
-  fi.emit('data', expectedLines.join('\n') + '\n');
+  fi.emit('data', `${expectedLines.join('\n')}\n`);
   assert.strictEqual(callCount, expectedLines.length);
   fi.emit('keypress', '.', { name: 'up' }); // 'bat'
   assert.strictEqual(rli.line, expectedLines[--callCount]);
@@ -371,7 +365,7 @@ function isWarned(emitter) {
     assert.strictEqual(line, expectedLines[callCount]);
     callCount++;
   });
-  fi.emit('data', expectedLines.join('\n') + '\n');
+  fi.emit('data', `${expectedLines.join('\n')}\n`);
   assert.strictEqual(callCount, expectedLines.length);
   fi.emit('keypress', '.', { name: 'up' }); // 'bat'
   assert.strictEqual(rli.line, expectedLines[--callCount]);
@@ -566,7 +560,7 @@ function isWarned(emitter) {
     });
 
     const rl = readline.createInterface({
-      input: new Readable({ read: common.noop }),
+      input: new Readable({ read: common.mustCall() }),
       output: output,
       prompt: '$ ',
       terminal: terminal

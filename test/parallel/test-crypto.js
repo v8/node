@@ -22,10 +22,8 @@
 'use strict';
 const common = require('../common');
 
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -35,10 +33,10 @@ const tls = require('tls');
 crypto.DEFAULT_ENCODING = 'buffer';
 
 // Test Certificates
-const caPem = fs.readFileSync(common.fixturesDir + '/test_ca.pem', 'ascii');
-const certPem = fs.readFileSync(common.fixturesDir + '/test_cert.pem', 'ascii');
-const certPfx = fs.readFileSync(common.fixturesDir + '/test_cert.pfx');
-const keyPem = fs.readFileSync(common.fixturesDir + '/test_key.pem', 'ascii');
+const caPem = fs.readFileSync(`${common.fixturesDir}/test_ca.pem`, 'ascii');
+const certPem = fs.readFileSync(`${common.fixturesDir}/test_cert.pem`, 'ascii');
+const certPfx = fs.readFileSync(`${common.fixturesDir}/test_cert.pfx`);
+const keyPem = fs.readFileSync(`${common.fixturesDir}/test_key.pem`, 'ascii');
 
 // 'this' safety
 // https://github.com/joyent/node/issues/6690
@@ -99,7 +97,8 @@ validateList(cryptoCiphers);
 const tlsCiphers = tls.getCiphers();
 assert(tls.getCiphers().includes('aes256-sha'));
 // There should be no capital letters in any element.
-assert(tlsCiphers.every((value) => /^[^A-Z]+$/.test(value)));
+const noCapitals = /^[^A-Z]+$/;
+assert(tlsCiphers.every((value) => noCapitals.test(value)));
 validateList(tlsCiphers);
 
 // Assert that we have sha and sha1 but not SHA and SHA1.
@@ -177,8 +176,8 @@ assert.throws(function() {
   //   $ openssl pkcs8 -topk8 -inform PEM -outform PEM -in mykey.pem \
   //     -out private_key.pem -nocrypt;
   //   Then open private_key.pem and change its header and footer.
-  const sha1_privateKey = fs.readFileSync(common.fixturesDir +
-                                        '/test_bad_rsa_privkey.pem', 'ascii');
+  const sha1_privateKey = fs.readFileSync(
+    `${common.fixturesDir}/test_bad_rsa_privkey.pem`, 'ascii');
   // this would inject errors onto OpenSSL's error stack
   crypto.createSign('sha1').sign(sha1_privateKey);
 }, /asn1 encoding routines:ASN1_CHECK_TLEN:wrong tag/);

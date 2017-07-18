@@ -21,17 +21,14 @@
 
 'use strict';
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+
 // disable strict server certificate validation by the client
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const assert = require('assert');
-
-if (!common.hasCrypto) {
-  common.skip('missing crypto');
-  return;
-}
 const https = require('https');
-
 const fs = require('fs');
 const path = require('path');
 
@@ -91,8 +88,6 @@ server2.listen(0, listening());
 server3.listen(0, listening());
 
 const responseErrors = {};
-let expectResponseCount = 0;
-let responseCount = 0;
 let pending = 0;
 
 
@@ -132,11 +127,11 @@ function makeReq(path, port, error, host, ca) {
     options.agent = agent0;
   } else {
     if (!Array.isArray(ca)) ca = [ca];
-    if (-1 !== ca.indexOf(ca1) && -1 !== ca.indexOf(ca2)) {
+    if (ca.includes(ca1) && ca.includes(ca2)) {
       options.agent = agent3;
-    } else if (-1 !== ca.indexOf(ca1)) {
+    } else if (ca.includes(ca1)) {
       options.agent = agent1;
-    } else if (-1 !== ca.indexOf(ca2)) {
+    } else if (ca.includes(ca2)) {
       options.agent = agent2;
     } else {
       options.agent = agent0;
@@ -147,17 +142,14 @@ function makeReq(path, port, error, host, ca) {
     options.headers = { host: host };
   }
   const req = https.get(options);
-  expectResponseCount++;
   const server = port === server1.address().port ? server1 :
       port === server2.address().port ? server2 :
       port === server3.address().port ? server3 :
       null;
-
-  if (!server) throw new Error('invalid port: ' + port);
+  if (!server) throw new Error(`invalid port: ${port}`);
   server.expectCount++;
 
-  req.on('response', (res) => {
-    responseCount++;
+  req.on('response', common.mustCall((res) => {
     assert.strictEqual(res.connection.authorizationError, error);
     responseErrors[path] = res.connection.authorizationError;
     pending--;
@@ -167,7 +159,7 @@ function makeReq(path, port, error, host, ca) {
       server3.close();
     }
     res.resume();
-  });
+  }));
 }
 
 function allListening() {
@@ -220,5 +212,4 @@ process.on('exit', () => {
   assert.strictEqual(server1.requests.length, server1.expectCount);
   assert.strictEqual(server2.requests.length, server2.expectCount);
   assert.strictEqual(server3.requests.length, server3.expectCount);
-  assert.strictEqual(responseCount, expectResponseCount);
 });

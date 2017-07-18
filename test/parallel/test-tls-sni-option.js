@@ -21,23 +21,19 @@
 
 'use strict';
 const common = require('../common');
-if (!process.features.tls_sni) {
-  common.skip('node compiled without OpenSSL or ' +
-              'with old OpenSSL version.');
-  return;
-}
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+
+if (!process.features.tls_sni)
+  common.skip('node compiled without OpenSSL or with old OpenSSL version.');
 
 const assert = require('assert');
 const fs = require('fs');
-
-if (!common.hasCrypto) {
-  common.skip('missing crypto');
-  return;
-}
+const path = require('path');
 const tls = require('tls');
 
 function filenamePEM(n) {
-  return require('path').join(common.fixturesDir, 'keys', n + '.pem');
+  return path.join(common.fixturesDir, 'keys', `${n}.pem`);
 }
 
 function loadPEM(n) {

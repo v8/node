@@ -31,7 +31,7 @@ if (cluster.isWorker) {
   const http = require('http');
   http.Server(() => {
 
-  }).listen(common.PORT, '127.0.0.1');
+  }).listen(0, '127.0.0.1');
 
 } else if (process.argv[2] === 'cluster') {
 
@@ -101,7 +101,7 @@ if (cluster.isWorker) {
     // Check that the cluster died accidentally (non-zero exit code)
     masterExited = !!code;
 
-    const pollWorkers = function() {
+    const pollWorkers = () => {
       // When master is dead all workers should be dead too
       let alive = false;
       workers.forEach((pid) => alive = common.isAlive(pid));

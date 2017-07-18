@@ -49,13 +49,14 @@ server.listen(0, function() {
 function request(i) {
   const req = http.get({
     port: server.address().port,
-    path: '/' + i
+    path: `/${i}`
   }, function(res) {
     const socket = req.socket;
     socket.on('close', function() {
       ++count;
       if (count < max) {
-        assert.strictEqual(http.globalAgent.sockets[name].indexOf(socket), -1);
+        assert.strictEqual(http.globalAgent.sockets[name].includes(socket),
+                           false);
       } else {
         assert(!http.globalAgent.sockets.hasOwnProperty(name));
         assert(!http.globalAgent.requests.hasOwnProperty(name));

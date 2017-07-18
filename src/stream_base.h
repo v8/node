@@ -53,8 +53,8 @@ class ShutdownWrap : public ReqWrap<uv_shutdown_t>,
     Wrap(req_wrap_obj, this);
   }
 
-  static void NewShutdownWrap(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    CHECK(args.IsConstructCall());
+  ~ShutdownWrap() {
+    ClearWrap(object());
   }
 
   static ShutdownWrap* from_req(uv_shutdown_t* req) {
@@ -83,10 +83,6 @@ class WriteWrap: public ReqWrap<uv_write_t>,
 
   size_t self_size() const override { return storage_size_; }
 
-  static void NewWriteWrap(const v8::FunctionCallbackInfo<v8::Value>& args) {
-    CHECK(args.IsConstructCall());
-  }
-
   static WriteWrap* from_req(uv_write_t* req) {
     return ContainerOf(&WriteWrap::req_, req);
   }
@@ -104,6 +100,10 @@ class WriteWrap: public ReqWrap<uv_write_t>,
         wrap_(wrap),
         storage_size_(storage_size) {
     Wrap(obj, this);
+  }
+
+  ~WriteWrap() {
+    ClearWrap(object());
   }
 
   void* operator new(size_t size) = delete;
@@ -248,7 +248,7 @@ class StreamBase : public StreamResource {
   virtual ~StreamBase() = default;
 
   // One of these must be implemented
-  virtual AsyncWrap* GetAsyncWrap();
+  virtual AsyncWrap* GetAsyncWrap() = 0;
   virtual v8::Local<v8::Object> GetObject();
 
   // Libuv callbacks

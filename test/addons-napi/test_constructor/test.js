@@ -22,14 +22,14 @@ const propertyNames = [];
 for (const name in test_object) {
   propertyNames.push(name);
 }
-assert.ok(propertyNames.indexOf('echo') >= 0);
-assert.ok(propertyNames.indexOf('readwriteValue') >= 0);
-assert.ok(propertyNames.indexOf('readonlyValue') >= 0);
-assert.ok(propertyNames.indexOf('hiddenValue') < 0);
-assert.ok(propertyNames.indexOf('readwriteAccessor1') < 0);
-assert.ok(propertyNames.indexOf('readwriteAccessor2') < 0);
-assert.ok(propertyNames.indexOf('readonlyAccessor1') < 0);
-assert.ok(propertyNames.indexOf('readonlyAccessor2') < 0);
+assert.ok(propertyNames.includes('echo'));
+assert.ok(propertyNames.includes('readwriteValue'));
+assert.ok(propertyNames.includes('readonlyValue'));
+assert.ok(!propertyNames.includes('hiddenValue'));
+assert.ok(!propertyNames.includes('readwriteAccessor1'));
+assert.ok(!propertyNames.includes('readwriteAccessor2'));
+assert.ok(!propertyNames.includes('readonlyAccessor1'));
+assert.ok(!propertyNames.includes('readonlyAccessor2'));
 
 // The napi_writable attribute should be ignored for accessors.
 test_object.readwriteAccessor1 = 1;
@@ -40,3 +40,8 @@ test_object.readwriteAccessor2 = 2;
 assert.strictEqual(test_object.readwriteAccessor2, 2);
 assert.strictEqual(test_object.readonlyAccessor2, 2);
 assert.throws(() => { test_object.readonlyAccessor2 = 3; }, TypeError);
+
+// validate that static properties are on the class as opposed
+// to the instance
+assert.strictEqual(TestConstructor.staticReadonlyAccessor1, 10);
+assert.strictEqual(test_object.staticReadonlyAccessor1, undefined);

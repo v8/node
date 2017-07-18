@@ -1,19 +1,17 @@
 'use strict';
 const common = require('../common');
-const assert = require('assert');
-
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
 
-const tls = require('tls');
+const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const tls = require('tls');
+
 let finished = 0;
 
 function filenamePEM(n) {
-  return path.join(common.fixturesDir, 'keys', n + '.pem');
+  return path.join(common.fixturesDir, 'keys', `${n}.pem`);
 }
 
 function loadPEM(n) {

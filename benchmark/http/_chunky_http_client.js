@@ -3,7 +3,6 @@
 // test HTTP throughput in fragmented header case
 var common = require('../common.js');
 var net = require('net');
-var test = require('../../test/common.js');
 
 var bench = common.createBenchmark(main, {
   len:  [1, 4, 8, 16, 32, 64, 128],
@@ -37,7 +36,7 @@ function main(conf) {
     for (var i = 0; i < extra_header_count; i++) {
       // Utilize first three powers of a small integer for an odd cycle and
       // because the fourth power of some integers overloads the server.
-      todo.push('X-Header-' + i + ': ' + headers[i % 3]);
+      todo.push(`X-Header-${i}: ${headers[i % 3]}`);
     }
     todo.push('');
     todo.push('');
@@ -56,7 +55,7 @@ function main(conf) {
   var mult = 17;
   var add = 11;
   var count = 0;
-  var PIPE = test.PIPE;
+  var PIPE = process.env.PIPE_NAME;
   var socket = net.connect(PIPE, function() {
     bench.start();
     WriteHTTPHeaders(socket, 1, len);

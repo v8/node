@@ -62,42 +62,47 @@ function writeFile(config, format) {
  * @returns {void}
  */
 function installModules(config) {
-    let modules = [];
+    const modules = {};
 
     // Create a list of modules which should be installed based on config
     if (config.plugins) {
-        modules = modules.concat(config.plugins.map(name => `eslint-plugin-${name}`));
+        for (const plugin of config.plugins) {
+            modules[`eslint-plugin-${plugin}`] = "latest";
+        }
     }
     if (config.extends && config.extends.indexOf("eslint:") === -1) {
-        modules.push(`eslint-config-${config.extends}`);
+        const moduleName = `eslint-config-${config.extends}`;
+
+        log.info(`Checking peerDependencies of ${moduleName}`);
+        modules[moduleName] = "latest";
+        Object.assign(
+            modules,
+            npmUtil.fetchPeerDependencies(`${moduleName}@latest`)
+        );
     }
 
-    // Determine which modules are already installed
-    if (modules.length === 0) {
+    // If no modules, do nothing.
+    if (Object.keys(modules).length === 0) {
         return;
     }
 
     // Add eslint to list in case user does not have it installed locally
-    modules.unshift("eslint");
+    modules.eslint = modules.eslint || "latest";
 
-    const installStatus = npmUtil.checkDevDeps(modules);
+    // Mark to show messages if it's new installation of eslint.
+    const installStatus = npmUtil.checkDevDeps(["eslint"]);
 
-    // Install packages which aren't already installed
-    const modulesToInstall = Object.keys(installStatus).filter(module => {
-        const notInstalled = installStatus[module] === false;
-
-        if (module === "eslint" && notInstalled) {
-            log.info("Local ESLint installation not found.");
-            config.installedESLint = true;
-        }
-
-        return notInstalled;
-    });
-
-    if (modulesToInstall.length > 0) {
-        log.info(`Installing ${modulesToInstall.join(", ")}`);
-        npmUtil.installSyncSaveDev(modulesToInstall);
+    if (installStatus.eslint === false) {
+        log.info("Local ESLint installation not found.");
+        config.installedESLint = true;
     }
+
+    // Install packages
+    const modulesToInstall = Object.keys(modules).map(name => `${name}@${modules[name]}`);
+
+    log.info(`Installing ${modulesToInstall.join(", ")}`);
+
+    npmUtil.installSyncSaveDev(modulesToInstall);
 }
 
 /**
@@ -265,9 +270,9 @@ function processAnswers(answers) {
 function getConfigForStyleGuide(guide) {
     const guides = {
         google: { extends: "google" },
-        airbnb: { extends: "airbnb", plugins: ["react", "jsx-a11y", "import"] },
-        "airbnb-base": { extends: "airbnb-base", plugins: ["import"] },
-        standard: { extends: "standard", plugins: ["standard", "promise"] }
+        airbnb: { extends: "airbnb" },
+        "airbnb-base": { extends: "airbnb-base" },
+        standard: { extends: "standard" }
     };
 
     if (!guides[guide]) {
@@ -282,13 +287,12 @@ function getConfigForStyleGuide(guide) {
 /* istanbul ignore next: no need to test inquirer*/
 /**
  * Ask use a few questions on command prompt
- * @param {Function} callback callback function when file has been written
- * @returns {void}
+ * @returns {Promise} The promise with the result of the prompt
  */
-function promptUser(callback) {
+function promptUser() {
     let config;
 
-    inquirer.prompt([
+    return inquirer.prompt([
         {
             type: "list",
             name: "source",
@@ -343,29 +347,26 @@ function promptUser(callback) {
                 return ((answers.source === "guide" && answers.packageJsonExists) || answers.source === "auto");
             }
         }
-    ], earlyAnswers => {
+    ]).then(earlyAnswers => {
 
         // early exit if you are using a style guide
         if (earlyAnswers.source === "guide") {
             if (!earlyAnswers.packageJsonExists) {
                 log.info("A package.json is necessary to install plugins such as style guides. Run `npm init` to create a package.json file and try again.");
-                return;
+                return void 0;
             }
             if (earlyAnswers.styleguide === "airbnb" && !earlyAnswers.airbnbReact) {
                 earlyAnswers.styleguide = "airbnb-base";
             }
-            try {
-                config = getConfigForStyleGuide(earlyAnswers.styleguide);
-                writeFile(config, earlyAnswers.format);
-            } catch (err) {
-                callback(err);
-                return;
-            }
-            return;
+
+            config = getConfigForStyleGuide(earlyAnswers.styleguide);
+            writeFile(config, earlyAnswers.format);
+
+            return void 0;
         }
 
         // continue with the questions otherwise...
-        inquirer.prompt([
+        return inquirer.prompt([
             {
                 type: "confirm",
                 name: "es6",
@@ -412,25 +413,21 @@ function promptUser(callback) {
                     return answers.jsx;
                 }
             }
-        ], secondAnswers => {
+        ]).then(secondAnswers => {
 
             // early exit if you are using automatic style generation
             if (earlyAnswers.source === "auto") {
-                try {
-                    const combinedAnswers = Object.assign({}, earlyAnswers, secondAnswers);
+                const combinedAnswers = Object.assign({}, earlyAnswers, secondAnswers);
 
-                    config = processAnswers(combinedAnswers);
-                    installModules(config);
-                    writeFile(config, earlyAnswers.format);
-                } catch (err) {
-                    callback(err);
-                    return;
-                }
-                return;
+                config = processAnswers(combinedAnswers);
+                installModules(config);
+                writeFile(config, earlyAnswers.format);
+
+                return void 0;
             }
 
             // continue with the style questions otherwise...
-            inquirer.prompt([
+            return inquirer.prompt([
                 {
                     type: "list",
                     name: "indent",
@@ -465,16 +462,12 @@ function promptUser(callback) {
                     default: "JavaScript",
                     choices: ["JavaScript", "YAML", "JSON"]
                 }
-            ], answers => {
-                try {
-                    const totalAnswers = Object.assign({}, earlyAnswers, secondAnswers, answers);
+            ]).then(answers => {
+                const totalAnswers = Object.assign({}, earlyAnswers, secondAnswers, answers);
 
-                    config = processAnswers(totalAnswers);
-                    installModules(config);
-                    writeFile(config, answers.format);
-                } catch (err) {
-                    callback(err); // eslint-disable-line callback-return
-                }
+                config = processAnswers(totalAnswers);
+                installModules(config);
+                writeFile(config, answers.format);
             });
         });
     });
@@ -487,8 +480,8 @@ function promptUser(callback) {
 const init = {
     getConfigForStyleGuide,
     processAnswers,
-    /* istanbul ignore next */initializeConfig(callback) {
-        promptUser(callback);
+    /* istanbul ignore next */initializeConfig() {
+        return promptUser();
     }
 };
 

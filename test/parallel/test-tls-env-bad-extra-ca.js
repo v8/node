@@ -3,10 +3,8 @@
 'use strict';
 const common = require('../common');
 
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
 
 const assert = require('assert');
 const tls = require('tls');
@@ -19,7 +17,7 @@ if (process.env.CHILD) {
 
 const env = {
   CHILD: 'yes',
-  NODE_EXTRA_CA_CERTS: common.fixturesDir + '/no-such-file-exists',
+  NODE_EXTRA_CA_CERTS: `${common.fixturesDir}/no-such-file-exists`,
 };
 
 const opts = {
@@ -33,10 +31,8 @@ fork(__filename, opts)
     assert.strictEqual(status, 0, 'client did not succeed in connecting');
   }))
   .on('close', common.mustCall(function() {
-    assert(stderr.match(new RegExp(
-      'Warning: Ignoring extra certs from.*no-such-file-exists' +
-      '.* load failed:.*No such file or directory'
-    )), stderr);
+    const re = /Warning: Ignoring extra certs from.*no-such-file-exists.* load failed:.*No such file or directory/;
+    assert(re.test(stderr), stderr);
   }))
   .stderr.setEncoding('utf8').on('data', function(str) {
     stderr += str;

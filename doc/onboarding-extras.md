@@ -6,6 +6,7 @@
 | --- | --- |
 | `benchmark/*` | @nodejs/benchmarking, @mscdex |
 | `bootstrap_node.js` | @fishrock123 |
+| `doc/*`, `*.md` | @nodejs/documentation |
 | `lib/assert` | @nodejs/testing |
 | `lib/buffer` | @nodejs/buffer |
 | `lib/child_process` | @bnoordhuis, @cjihrig |
@@ -14,28 +15,29 @@
 | `lib/dgram` | @cjihrig, @mcollina |
 | `lib/domains` | @misterdjules |
 | `lib/fs`, `src/{fs,file}` | @nodejs/fs |
-| `lib/internal/url`, `src/node_url` | @nodejs/url |
 | `lib/{_}http{*}` | @nodejs/http |
+| `lib/inspector.js`, `src/inspector_*` | @nodejs/v8-inspector |
+| `lib/internal/url`, `src/node_url` | @nodejs/url |
 | `lib/net` | @bnoordhuis, @indutny, @nodejs/streams |
-| `lib/{_}stream{*}` | @nodejs/streams |
 | `lib/repl` | @addaleax, @fishrock123 |
+| `lib/{_}stream{*}` | @nodejs/streams |
 | `lib/timers` | @fishrock123, @misterdjules |
 | `lib/util` | @bnoordhuis, @cjihrig, @evanlucas |
 | `lib/zlib` | @addaleax, @bnoordhuis, @indutny |
-| `src/async-wrap.*` | @trevnorris |
+| `src/async-wrap.*` | @nodejs/async_hooks |
+| `src/node_api.*` | @nodejs/n-api |
 | `src/node_crypto.*` | @nodejs/crypto |
 | `test/*` | @nodejs/testing |
 | `tools/eslint`, `.eslintrc` | @not-an-aardvark, @silverwind, @trott |
-| async_hooks | @nodejs/diagnostics |
+| async_hooks | @nodejs/async_hooks for bugs/reviews (+ @nodejs/diagnostics for API) |
 | performance | @nodejs/performance |
-| upgrading V8 | @nodejs/v8, @nodejs/post-mortem |
-| upgrading npm | @fishrock123, @MylesBorins |
+| platform specific | @nodejs/platform-{aix,arm,freebsd,macos,ppc,smartos,s390,windows} |
+| python code | @nodejs/python |
 | upgrading c-ares | @jbergstroem |
 | upgrading http-parser | @jbergstroem, @nodejs/http |
 | upgrading libuv | @saghul |
-| python code | @nodejs/python |
-| platform specific | @nodejs/platform-{aix,arm,freebsd,macos,ppc,smartos,s390,windows} |
-
+| upgrading npm | @fishrock123, @MylesBorins |
+| upgrading V8 | @nodejs/v8, @nodejs/post-mortem |
 
 When things need extra attention, are controversial, or `semver-major`: @nodejs/ctc
 
@@ -101,16 +103,6 @@ to update from nodejs/node:
 * `git checkout master`
 * `git remote update -p` OR `git fetch --all` (I prefer the former)
 * `git merge --ff-only upstream/master` (or `REMOTENAME/BRANCH`)
-
-
-## If `git am` fails
-
-* if `git am` fails – use `git am --abort`
-  * this usually means the PR needs updated
-  * prefer to make the originating user update the code, since they have it fresh in mind
-* first, reattempt with `git am -3` (3-way merge)`
-* if `-3` still fails, and you need to get it merged:
-  * `git fetch upstream pull/N/head:pr-N && git checkout pr-N && git rebase master`
 
 
 ## best practices

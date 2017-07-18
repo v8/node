@@ -7,7 +7,7 @@ a manner that is similar, but not identical, to popen(3). This capability
 is primarily provided by the [`child_process.spawn()`][] function:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const ls = spawn('ls', ['-lh', '/usr']);
 
 ls.stdout.on('data', (data) => {
@@ -87,7 +87,7 @@ spaces it needs to be quoted.
 
 ```js
 // On Windows Only ...
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const bat = spawn('cmd.exe', ['/c', 'my.bat']);
 
 bat.stdout.on('data', (data) => {
@@ -101,9 +101,11 @@ bat.stderr.on('data', (data) => {
 bat.on('exit', (code) => {
   console.log(`Child exited with code ${code}`);
 });
+```
 
+```js
 // OR...
-const exec = require('child_process').exec;
+const { exec } = require('child_process');
 exec('my.bat', (err, stdout, stderr) => {
   if (err) {
     console.error(err);
@@ -161,12 +163,12 @@ exec('echo "The \\$HOME variable is $HOME"');
 //The $HOME variable is escaped in the first instance, but not in the second
 ```
 
-**Note: Never pass unsanitised user input to this function. Any input
+*Note*: Never pass unsanitised user input to this function. Any input
 containing shell metacharacters may be used to trigger arbitrary command
-execution.**
+execution.
 
 ```js
-const exec = require('child_process').exec;
+const { exec } = require('child_process');
 exec('cat *.js bad_file | wc -l', (error, stdout, stderr) => {
   if (error) {
     console.error(`exec error: ${error}`);
@@ -195,22 +197,41 @@ The `options` argument may be passed as the second argument to customize how
 the process is spawned. The default options are:
 
 ```js
-{
+const defaults = {
   encoding: 'utf8',
   timeout: 0,
-  maxBuffer: 200*1024,
+  maxBuffer: 200 * 1024,
   killSignal: 'SIGTERM',
   cwd: null,
   env: null
-}
+};
 ```
 
 If `timeout` is greater than `0`, the parent will send the signal
 identified by the `killSignal` property (the default is `'SIGTERM'`) if the
 child runs longer than `timeout` milliseconds.
 
-*Note: Unlike the exec(3) POSIX system call, `child_process.exec()` does not
-replace the existing process and uses a shell to execute the command.*
+*Note*: Unlike the exec(3) POSIX system call, `child_process.exec()` does not
+replace the existing process and uses a shell to execute the command.
+
+If this method is invoked as its [`util.promisify()`][]ed version, it returns
+a Promise for an object with `stdout` and `stderr` properties. In case of an
+error, a rejected promise is returned, with the same `error` object given in the
+callback, but with an additional two properties `stdout` and `stderr`.
+
+For example:
+
+```js
+const util = require('util');
+const exec = util.promisify(require('child_process').exec);
+
+async function lsExample() {
+  const { stdout, stderr } = await exec('ls');
+  console.log('stdout:', stdout);
+  console.log('stderr:', stderr);
+}
+lsExample();
+```
 
 ### child_process.execFile(file[, args][, options][, callback])
 <!-- YAML
@@ -245,7 +266,7 @@ The same options as [`child_process.exec()`][] are supported. Since a shell is n
 spawned, behaviors such as I/O redirection and file globbing are not supported.
 
 ```js
-const execFile = require('child_process').execFile;
+const { execFile } = require('child_process');
 const child = execFile('node', ['--version'], (error, stdout, stderr) => {
   if (error) {
     throw error;
@@ -261,11 +282,26 @@ can be used to specify the character encoding used to decode the stdout and
 stderr output. If `encoding` is `'buffer'`, or an unrecognized character
 encoding, `Buffer` objects will be passed to the callback instead.
 
+If this method is invoked as its [`util.promisify()`][]ed version, it returns
+a Promise for an object with `stdout` and `stderr` properties. In case of an
+error, a rejected promise is returned, with the same `error` object given in the
+callback, but with an additional two properties `stdout` and `stderr`.
+
+```js
+const util = require('util');
+const execFile = util.promisify(require('child_process').execFile);
+async function getVersion() {
+  const { stdout } = await execFile('node', ['--version']);
+  console.log(stdout);
+}
+getVersion();
+```
+
 ### child_process.fork(modulePath[, args][, options])
 <!-- YAML
 added: v0.5.0
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10866
     description: The `stdio` option can now be a string.
   - version: v6.4.0
@@ -316,8 +352,8 @@ parent process using the file descriptor (fd) identified using the
 environment variable `NODE_CHANNEL_FD` on the child process. The input and
 output on this fd is expected to be line delimited JSON objects.
 
-*Note: Unlike the fork(2) POSIX system call, `child_process.fork()` does
-not clone the current process.*
+*Note*: Unlike the fork(2) POSIX system call, `child_process.fork()` does
+not clone the current process.
 
 ### child_process.spawn(command[, args][, options])
 <!-- YAML
@@ -355,17 +391,17 @@ The `child_process.spawn()` method spawns a new process using the given
 `command`, with command line arguments in `args`. If omitted, `args` defaults
 to an empty array.
 
-**Note: If the `shell` option is enabled, do not pass unsanitised user input to
+*Note*: If the `shell` option is enabled, do not pass unsanitised user input to
 this function. Any input containing shell metacharacters may be used to
-trigger arbitrary command execution.**
+trigger arbitrary command execution.
 
 A third argument may be used to specify additional options, with these defaults:
 
 ```js
-{
+const defaults = {
   cwd: undefined,
   env: process.env
-}
+};
 ```
 
 Use `cwd` to specify the working directory from which the process is spawned.
@@ -378,7 +414,7 @@ Example of running `ls -lh /usr`, capturing `stdout`, `stderr`, and the
 exit code:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const ls = spawn('ls', ['-lh', '/usr']);
 
 ls.stdout.on('data', (data) => {
@@ -398,7 +434,7 @@ ls.on('close', (code) => {
 Example: A very elaborate way to run `ps ax | grep ssh`
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const ps = spawn('ps', ['ax']);
 const grep = spawn('grep', ['ssh']);
 
@@ -433,10 +469,10 @@ grep.on('close', (code) => {
 ```
 
 
-Example of checking for failed exec:
+Example of checking for failed `spawn`:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const child = spawn('bad_command');
 
 child.on('error', (err) => {
@@ -444,13 +480,13 @@ child.on('error', (err) => {
 });
 ```
 
-*Note: Certain platforms (macOS, Linux) will use the value of `argv[0]` for the
-process title while others (Windows, SunOS) will use `command`.*
+*Note*: Certain platforms (macOS, Linux) will use the value of `argv[0]` for
+the process title while others (Windows, SunOS) will use `command`.
 
-*Note: Node.js currently overwrites `argv[0]` with `process.execPath` on
+*Note*: Node.js currently overwrites `argv[0]` with `process.execPath` on
 startup, so `process.argv[0]` in a Node.js child process will not match the
 `argv0` parameter passed to `spawn` from the parent, retrieve it with the
-`process.argv0` property instead.*
+`process.argv0` property instead.
 
 #### options.detached
 <!-- YAML
@@ -483,7 +519,7 @@ Example of a long-running process, by detaching and also ignoring its parent
 `stdio` file descriptors, in order to ignore the parent's termination:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 
 const child = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
@@ -497,7 +533,7 @@ Alternatively one can redirect the child process' output into files:
 
 ```js
 const fs = require('fs');
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const out = fs.openSync('./out.log', 'a');
 const err = fs.openSync('./out.log', 'a');
 
@@ -569,7 +605,7 @@ pipes between the parent and child. The value is one of the following:
 Example:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 
 // Child will use parent's stdios
 spawn('prg', [], { stdio: 'inherit' });
@@ -606,7 +642,7 @@ configuration at startup.
 <!-- YAML
 added: v0.11.12
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10653
     description: The `input` option can now be a `Uint8Array`.
   - version: v6.2.1, v4.5.0
@@ -641,9 +677,11 @@ The `child_process.execFileSync()` method is generally identical to
 [`child_process.execFile()`][] with the exception that the method will not return
 until the child process has fully closed. When a timeout has been encountered
 and `killSignal` is sent, the method won't return until the process has
-completely exited. *Note that if the child process intercepts and handles
-the `SIGTERM` signal and does not exit, the parent process will still wait
-until the child process has exited.*
+completely exited.
+
+*Note*: If the child process intercepts and handles the `SIGTERM` signal and
+does not exit, the parent process will still wait until the child process has
+exited.
 
 If the process times out, or has a non-zero exit code, this method ***will***
 throw.  The [`Error`][] object will contain the entire result from
@@ -653,7 +691,7 @@ throw.  The [`Error`][] object will contain the entire result from
 <!-- YAML
 added: v0.11.12
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10653
     description: The `input` option can now be a `Uint8Array`.
 -->
@@ -697,15 +735,15 @@ If the process times out, or has a non-zero exit code, this method ***will***
 throw.  The [`Error`][] object will contain the entire result from
 [`child_process.spawnSync()`][]
 
-**Note: Never pass unsanitised user input to this function. Any input
+*Note*: Never pass unsanitised user input to this function. Any input
 containing shell metacharacters may be used to trigger arbitrary command
-execution.**
+execution.
 
 ### child_process.spawnSync(command[, args][, options])
 <!-- YAML
 added: v0.11.12
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10653
     description: The `input` option can now be a `Uint8Array`.
   - version: v6.2.1, v4.5.0
@@ -757,9 +795,9 @@ completely exited. Note that if the process intercepts and handles the
 `SIGTERM` signal and doesn't exit, the parent process will wait until the child
 process has exited.
 
-**Note: If the `shell` option is enabled, do not pass unsanitised user input to
-this function. Any input containing shell metacharacters may be used to
-trigger arbitrary command execution.**
+*Note*: If the `shell` option is enabled, do not pass unsanitised user input
+to this function. Any input containing shell metacharacters may be used to
+trigger arbitrary command execution.
 
 ## Class: ChildProcess
 <!-- YAML
@@ -806,8 +844,8 @@ The `'error'` event is emitted whenever:
 2. The process could not be killed, or
 3. Sending a message to the child process failed.
 
-Note that the `'exit'` event may or may not fire after an error has occurred.
-If you are listening to both the `'exit'` and `'error'` events, it is important
+*Note*: The `'exit'` event may or may not fire after an error has occurred.
+When listening to both the `'exit'` and `'error'` events, it is important
 to guard against accidentally invoking handler functions multiple times.
 
 See also [`child.kill()`][] and [`child.send()`][].
@@ -899,7 +937,7 @@ is given, the process will be sent the `'SIGTERM'` signal. See signal(7) for
 a list of available signals.
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const grep = spawn('grep', ['ssh']);
 
 grep.on('close', (code, signal) => {
@@ -929,15 +967,19 @@ as in this example:
 
 ```js
 'use strict';
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 
-const child = spawn('sh', ['-c',
-  `node -e "setInterval(() => {
+const child = spawn(
+  'sh',
+  [
+    '-c',
+    `node -e "setInterval(() => {
       console.log(process.pid, 'is alive')
     }, 500);"`
   ], {
     stdio: ['inherit', 'inherit', 'inherit']
-  });
+  }
+);
 
 setTimeout(() => {
   child.kill(); // does not terminate the node process in the shell
@@ -956,7 +998,7 @@ Returns the process identifier (PID) of the child process.
 Example:
 
 ```js
-const spawn = require('child_process').spawn;
+const { spawn } = require('child_process');
 const grep = spawn('grep', ['ssh']);
 
 console.log(`Spawned child pid: ${grep.pid}`);
@@ -1099,8 +1141,9 @@ handle connections with "normal" or "special" priority:
 const normal = require('child_process').fork('child.js', ['normal']);
 const special = require('child_process').fork('child.js', ['special']);
 
-// Open up the server and send sockets to child
-const server = require('net').createServer();
+// Open up the server and send sockets to child. Use pauseOnConnect to prevent
+// the sockets from being read before they are sent to the child process.
+const server = require('net').createServer({ pauseOnConnect: true });
 server.on('connection', (socket) => {
 
   // If this is special priority
@@ -1120,7 +1163,12 @@ to the event callback function:
 ```js
 process.on('message', (m, socket) => {
   if (m === 'socket') {
-    socket.end(`Request handled with ${process.argv[2]} priority`);
+    if (socket) {
+      // Check that the client socket exists.
+      // It is possible for the socket to be closed between the time it is
+      // sent and the time it is received in the child process.
+      socket.end(`Request handled with ${process.argv[2]} priority`);
+    }
   }
 });
 ```
@@ -1130,8 +1178,12 @@ tracking when the socket is destroyed. To indicate this, the `.connections`
 property becomes `null`. It is recommended not to use `.maxConnections` when
 this occurs.
 
-*Note: this function uses [`JSON.stringify()`][] internally to serialize the
-`message`.*
+It is also recommended that any `'message'` handlers in the child process
+verify that `socket` exists, as the connection may have been closed during the
+time it takes to send the connection to the child.
+
+*Note*: This function uses [`JSON.stringify()`][] internally to serialize the
+`message`.
 
 ### child.stderr
 <!-- YAML
@@ -1232,7 +1284,10 @@ to `stdout` although there are only 4 characters.
 [`'error'`]: #child_process_event_error
 [`'exit'`]: #child_process_event_exit
 [`'message'`]: #child_process_event_message
-[`child.channel`]: #child_process_child_channel
+[`ChildProcess`]: #child_process_child_process
+[`Error`]: errors.html#errors_class_error
+[`EventEmitter`]: events.html#events_class_eventemitter
+[`JSON.stringify()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify
 [`child.connected`]: #child_process_child_connected
 [`child.disconnect()`]: #child_process_child_disconnect
 [`child.kill()`]: #child_process_child_kill_signal
@@ -1247,10 +1302,6 @@ to `stdout` although there are only 4 characters.
 [`child_process.fork()`]: #child_process_child_process_fork_modulepath_args_options
 [`child_process.spawn()`]: #child_process_child_process_spawn_command_args_options
 [`child_process.spawnSync()`]: #child_process_child_process_spawnsync_command_args_options
-[`ChildProcess`]: #child_process_child_process
-[`Error`]: errors.html#errors_class_error
-[`EventEmitter`]: events.html#events_class_eventemitter
-[`JSON.stringify()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify
 [`maxBuffer` and Unicode]: #child_process_maxbuffer_and_unicode
 [`net.Server`]: net.html#net_class_net_server
 [`net.Socket`]: net.html#net_class_net_socket
@@ -1262,5 +1313,5 @@ to `stdout` although there are only 4 characters.
 [`process.on('message')`]: process.html#process_event_message
 [`process.send()`]: process.html#process_process_send_message_sendhandle_options_callback
 [`stdio`]: #child_process_options_stdio
+[`util.promisify()`]: util.html#util_util_promisify_original
 [synchronous counterparts]: #child_process_synchronous_process_creation
-[`Uint8Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array

@@ -464,7 +464,7 @@
         'conditions': [
           [ 'OS=="win"', {
             'link_settings': {
-              'libraries': [ '-lAdvAPI32.Lib', '-lUser32.lib' ],
+              'libraries': [ '-lAdvAPI32.lib', '-lUser32.lib' ],
             },
           }],
         ],
@@ -480,7 +480,6 @@
         '<@(icu_src_tools)',
         '<@(icu_src_common)',
         '<@(icu_src_i18n)',
-        '<@(icu_src_io)',
         '<@(icu_src_stubdata)',
       ],
       'sources!': [
@@ -492,7 +491,6 @@
       'include_dirs': [
         '<(icu_path)/source/common',
         '<(icu_path)/source/i18n',
-        '<(icu_path)/source/io',
         '<(icu_path)/source/tools/toolutil',
       ],
       'defines': [
@@ -512,13 +510,12 @@
         'include_dirs': [
           '<(icu_path)/source/common',
           '<(icu_path)/source/i18n',
-          '<(icu_path)/source/io',
           '<(icu_path)/source/tools/toolutil',
         ],
         'conditions': [
           [ 'OS=="win"', {
             'link_settings': {
-              'libraries': [ '-lAdvAPI32.Lib', '-lUser32.lib' ],
+              'libraries': [ '-lAdvAPI32.lib', '-lUser32.lib' ],
             },
           }],
         ],

@@ -4,15 +4,17 @@ const child_process = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+const requirementsURL =
+  'https://github.com/nodejs/node/blob/master/doc/guides/writing-and-running-benchmarks.md#http-benchmark-requirements';
+
 // The port used by servers and wrk
 exports.PORT = process.env.PORT || 12346;
 
 class AutocannonBenchmarker {
   constructor() {
     this.name = 'autocannon';
-    this.executable = process.platform === 'win32' ?
-                      'autocannon.cmd' :
-                      'autocannon';
+    this.executable =
+      process.platform === 'win32' ? 'autocannon.cmd' : 'autocannon';
     const result = child_process.spawnSync(this.executable, ['-h']);
     this.present = !(result.error && result.error.code === 'ENOENT');
   }
@@ -134,19 +136,18 @@ exports.run = function(options, callback) {
   }, options);
   if (!options.benchmarker) {
     callback(new Error('Could not locate required http benchmarker. See ' +
-                       'https://github.com/nodejs/node/blob/master/doc/guides/writing-and-running-benchmarks.md##http-benchmark-requirements ' +
-                       'for further instructions.'));
+                       `${requirementsURL} for further instructions.`));
     return;
   }
   const benchmarker = benchmarkers[options.benchmarker];
   if (!benchmarker) {
-    callback(new Error(`Requested benchmarker '${options.benchmarker}' is ` +
-                       'not supported'));
+    callback(new Error(`Requested benchmarker '${options.benchmarker}' ` +
+                       'is  not supported'));
     return;
   }
   if (!benchmarker.present) {
-    callback(new Error(`Requested benchmarker '${options.benchmarker}' is ` +
-                       'not installed'));
+    callback(new Error(`Requested benchmarker '${options.benchmarker}' ` +
+                       'is  not installed'));
     return;
   }
 
@@ -172,8 +173,8 @@ exports.run = function(options, callback) {
 
     const result = benchmarker.processResults(stdout);
     if (result === undefined) {
-      callback(new Error(`${options.benchmarker} produced strange output: ` +
-                         stdout, code));
+      callback(new Error(
+        `${options.benchmarker} produced strange output: ${stdout}`), code);
       return;
     }
 

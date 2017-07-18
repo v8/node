@@ -168,15 +168,15 @@ console.log(encrypted);
 // Prints: ca981be48e90867604588e75d04feabb63cc007a8f8ad89b10616ed84d815504
 ```
 
-### cipher.final([output_encoding])
+### cipher.final([outputEncoding])
 <!-- YAML
 added: v0.1.94
 -->
-- `output_encoding` {string}
+- `outputEncoding` {string}
 
-Returns any remaining enciphered contents. If `output_encoding`
+Returns any remaining enciphered contents. If `outputEncoding`
 parameter is one of `'latin1'`, `'base64'` or `'hex'`, a string is returned.
-If an `output_encoding` is not provided, a [`Buffer`][] is returned.
+If an `outputEncoding` is not provided, a [`Buffer`][] is returned.
 
 Once the `cipher.final()` method has been called, the `Cipher` object can no
 longer be used to encrypt data. Attempts to call `cipher.final()` more than
@@ -207,18 +207,18 @@ the _authentication tag_ that has been computed from the given data.
 The `cipher.getAuthTag()` method should only be called after encryption has
 been completed using the [`cipher.final()`][] method.
 
-### cipher.setAutoPadding([auto_padding])
+### cipher.setAutoPadding([autoPadding])
 <!-- YAML
 added: v0.7.1
 -->
-- `auto_padding` {boolean} Defaults to `true`.
+- `autoPadding` {boolean} Defaults to `true`.
 - Returns the {Cipher} for method chaining.
 
 When using block encryption algorithms, the `Cipher` class will automatically
 add padding to the input data to the appropriate block size. To disable the
 default padding call `cipher.setAutoPadding(false)`.
 
-When `auto_padding` is `false`, the length of the entire input data must be a
+When `autoPadding` is `false`, the length of the entire input data must be a
 multiple of the cipher's block size or [`cipher.final()`][] will throw an Error.
 Disabling automatic padding is useful for non-standard padding, for instance
 using `0x0` instead of PKCS padding.
@@ -226,29 +226,29 @@ using `0x0` instead of PKCS padding.
 The `cipher.setAutoPadding()` method must be called before
 [`cipher.final()`][].
 
-### cipher.update(data[, input_encoding][, output_encoding])
+### cipher.update(data[, inputEncoding][, outputEncoding])
 <!-- YAML
 added: v0.1.94
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
-- `output_encoding` {string}
+- `inputEncoding` {string}
+- `outputEncoding` {string}
 
-Updates the cipher with `data`. If the `input_encoding` argument is given,
+Updates the cipher with `data`. If the `inputEncoding` argument is given,
 its value must be one of `'utf8'`, `'ascii'`, or `'latin1'` and the `data`
-argument is a string using the specified encoding. If the `input_encoding`
+argument is a string using the specified encoding. If the `inputEncoding`
 argument is not given, `data` must be a [`Buffer`][], `TypedArray`, or
 `DataView`.  If `data` is a [`Buffer`][], `TypedArray`, or `DataView`, then
-`input_encoding` is ignored.
+`inputEncoding` is ignored.
 
-The `output_encoding` specifies the output format of the enciphered
-data, and can be `'latin1'`, `'base64'` or `'hex'`. If the `output_encoding`
+The `outputEncoding` specifies the output format of the enciphered
+data, and can be `'latin1'`, `'base64'` or `'hex'`. If the `outputEncoding`
 is specified, a string using the specified encoding is returned. If no
-`output_encoding` is provided, a [`Buffer`][] is returned.
+`outputEncoding` is provided, a [`Buffer`][] is returned.
 
 The `cipher.update()` method can be called multiple times with new data until
 [`cipher.final()`][] is called. Calling `cipher.update()` after
@@ -288,7 +288,8 @@ decipher.on('end', () => {
   // Prints: some clear text data
 });
 
-const encrypted = 'ca981be48e90867604588e75d04feabb63cc007a8f8ad89b10616ed84d815504';
+const encrypted =
+    'ca981be48e90867604588e75d04feabb63cc007a8f8ad89b10616ed84d815504';
 decipher.write(encrypted, 'hex');
 decipher.end();
 ```
@@ -312,22 +313,23 @@ Example: Using the [`decipher.update()`][] and [`decipher.final()`][] methods:
 const crypto = require('crypto');
 const decipher = crypto.createDecipher('aes192', 'a password');
 
-const encrypted = 'ca981be48e90867604588e75d04feabb63cc007a8f8ad89b10616ed84d815504';
+const encrypted =
+    'ca981be48e90867604588e75d04feabb63cc007a8f8ad89b10616ed84d815504';
 let decrypted = decipher.update(encrypted, 'hex', 'utf8');
 decrypted += decipher.final('utf8');
 console.log(decrypted);
 // Prints: some clear text data
 ```
 
-### decipher.final([output_encoding])
+### decipher.final([outputEncoding])
 <!-- YAML
 added: v0.1.94
 -->
-- `output_encoding` {string}
+- `outputEncoding` {string}
 
-Returns any remaining deciphered contents. If `output_encoding`
+Returns any remaining deciphered contents. If `outputEncoding`
 parameter is one of `'latin1'`, `'ascii'` or `'utf8'`, a string is returned.
-If an `output_encoding` is not provided, a [`Buffer`][] is returned.
+If an `outputEncoding` is not provided, a [`Buffer`][] is returned.
 
 Once the `decipher.final()` method has been called, the `Decipher` object can
 no longer be used to decrypt data. Attempts to call `decipher.final()` more
@@ -370,11 +372,11 @@ cipher text should be discarded due to failed authentication.
 The `decipher.setAuthTag()` method must be called before
 [`decipher.final()`][].
 
-### decipher.setAutoPadding([auto_padding])
+### decipher.setAutoPadding([autoPadding])
 <!-- YAML
 added: v0.7.1
 -->
-- `auto_padding` {boolean} Defaults to `true`.
+- `autoPadding` {boolean} Defaults to `true`.
 - Returns the {Cipher} for method chaining.
 
 When data has been encrypted without standard block padding, calling
@@ -387,28 +389,28 @@ multiple of the ciphers block size.
 The `decipher.setAutoPadding()` method must be called before
 [`decipher.final()`][].
 
-### decipher.update(data[, input_encoding][, output_encoding])
+### decipher.update(data[, inputEncoding][, outputEncoding])
 <!-- YAML
 added: v0.1.94
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
-- `output_encoding` {string}
+- `inputEncoding` {string}
+- `outputEncoding` {string}
 
-Updates the decipher with `data`. If the `input_encoding` argument is given,
+Updates the decipher with `data`. If the `inputEncoding` argument is given,
 its value must be one of `'latin1'`, `'base64'`, or `'hex'` and the `data`
-argument is a string using the specified encoding. If the `input_encoding`
+argument is a string using the specified encoding. If the `inputEncoding`
 argument is not given, `data` must be a [`Buffer`][]. If `data` is a
-[`Buffer`][] then `input_encoding` is ignored.
+[`Buffer`][] then `inputEncoding` is ignored.
 
-The `output_encoding` specifies the output format of the enciphered
-data, and can be `'latin1'`, `'ascii'` or `'utf8'`. If the `output_encoding`
+The `outputEncoding` specifies the output format of the enciphered
+data, and can be `'latin1'`, `'ascii'` or `'utf8'`. If the `outputEncoding`
 is specified, a string using the specified encoding is returned. If no
-`output_encoding` is provided, a [`Buffer`][] is returned.
+`outputEncoding` is provided, a [`Buffer`][] is returned.
 
 The `decipher.update()` method can be called multiple times with new data until
 [`decipher.final()`][] is called. Calling `decipher.update()` after
@@ -445,23 +447,23 @@ const bobSecret = bob.computeSecret(aliceKey);
 assert.strictEqual(aliceSecret.toString('hex'), bobSecret.toString('hex'));
 ```
 
-### diffieHellman.computeSecret(other_public_key[, input_encoding][, output_encoding])
+### diffieHellman.computeSecret(otherPublicKey[, inputEncoding][, outputEncoding])
 <!-- YAML
 added: v0.5.0
 -->
-- `other_public_key` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
-- `output_encoding` {string}
+- `otherPublicKey` {string | Buffer | TypedArray | DataView}
+- `inputEncoding` {string}
+- `outputEncoding` {string}
 
-Computes the shared secret using `other_public_key` as the other
+Computes the shared secret using `otherPublicKey` as the other
 party's public key and returns the computed shared secret. The supplied
-key is interpreted using the specified `input_encoding`, and secret is
-encoded using specified `output_encoding`. Encodings can be
-`'latin1'`, `'hex'`, or `'base64'`. If the `input_encoding` is not
-provided, `other_public_key` is expected to be a [`Buffer`][],
+key is interpreted using the specified `inputEncoding`, and secret is
+encoded using specified `outputEncoding`. Encodings can be
+`'latin1'`, `'hex'`, or `'base64'`. If the `inputEncoding` is not
+provided, `otherPublicKey` is expected to be a [`Buffer`][],
 `TypedArray`, or `DataView`.
 
-If `output_encoding` is given a string is returned; otherwise, a
+If `outputEncoding` is given a string is returned; otherwise, a
 [`Buffer`][] is returned.
 
 ### diffieHellman.generateKeys([encoding])
@@ -516,28 +518,28 @@ Returns the Diffie-Hellman public key in the specified `encoding`, which
 can be `'latin1'`, `'hex'`, or `'base64'`. If `encoding` is provided a
 string is returned; otherwise a [`Buffer`][] is returned.
 
-### diffieHellman.setPrivateKey(private_key[, encoding])
+### diffieHellman.setPrivateKey(privateKey[, encoding])
 <!-- YAML
 added: v0.5.0
 -->
-- `private_key` {string | Buffer | TypedArray | DataView}
+- `privateKey` {string | Buffer | TypedArray | DataView}
 - `encoding` {string}
 
 Sets the Diffie-Hellman private key. If the `encoding` argument is provided
-and is either `'latin1'`, `'hex'`, or `'base64'`, `private_key` is expected
-to be a string. If no `encoding` is provided, `private_key` is expected
+and is either `'latin1'`, `'hex'`, or `'base64'`, `privateKey` is expected
+to be a string. If no `encoding` is provided, `privateKey` is expected
 to be a [`Buffer`][], `TypedArray`, or `DataView`.
 
-### diffieHellman.setPublicKey(public_key[, encoding])
+### diffieHellman.setPublicKey(publicKey[, encoding])
 <!-- YAML
 added: v0.5.0
 -->
-- `public_key` {string | Buffer | TypedArray | DataView}
+- `publicKey` {string | Buffer | TypedArray | DataView}
 - `encoding` {string}
 
 Sets the Diffie-Hellman public key. If the `encoding` argument is provided
-and is either `'latin1'`, `'hex'` or `'base64'`, `public_key` is expected
-to be a string. If no `encoding` is provided, `public_key` is expected
+and is either `'latin1'`, `'hex'` or `'base64'`, `publicKey` is expected
+to be a string. If no `encoding` is provided, `publicKey` is expected
 to be a [`Buffer`][], `TypedArray`, or `DataView`.
 
 ### diffieHellman.verifyError
@@ -584,30 +586,30 @@ const aliceSecret = alice.computeSecret(bobKey);
 const bobSecret = bob.computeSecret(aliceKey);
 
 assert.strictEqual(aliceSecret.toString('hex'), bobSecret.toString('hex'));
-  // OK
+// OK
 ```
 
-### ecdh.computeSecret(other_public_key[, input_encoding][, output_encoding])
+### ecdh.computeSecret(otherPublicKey[, inputEncoding][, outputEncoding])
 <!-- YAML
 added: v0.11.14
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
-- `other_public_key` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
-- `output_encoding` {string}
+- `otherPublicKey` {string | Buffer | TypedArray | DataView}
+- `inputEncoding` {string}
+- `outputEncoding` {string}
 
-Computes the shared secret using `other_public_key` as the other
+Computes the shared secret using `otherPublicKey` as the other
 party's public key and returns the computed shared secret. The supplied
-key is interpreted using specified `input_encoding`, and the returned secret
-is encoded using the specified `output_encoding`. Encodings can be
-`'latin1'`, `'hex'`, or `'base64'`. If the `input_encoding` is not
-provided, `other_public_key` is expected to be a [`Buffer`][], `TypedArray`, or
+key is interpreted using specified `inputEncoding`, and the returned secret
+is encoded using the specified `outputEncoding`. Encodings can be
+`'latin1'`, `'hex'`, or `'base64'`. If the `inputEncoding` is not
+provided, `otherPublicKey` is expected to be a [`Buffer`][], `TypedArray`, or
 `DataView`.
 
-If `output_encoding` is given a string will be returned; otherwise a
+If `outputEncoding` is given a string will be returned; otherwise a
 [`Buffer`][] is returned.
 
 ### ecdh.generateKeys([encoding[, format]])
@@ -657,23 +659,23 @@ The `encoding` argument can be `'latin1'`, `'hex'`, or `'base64'`. If
 `encoding` is specified, a string is returned; otherwise a [`Buffer`][] is
 returned.
 
-### ecdh.setPrivateKey(private_key[, encoding])
+### ecdh.setPrivateKey(privateKey[, encoding])
 <!-- YAML
 added: v0.11.14
 -->
-- `private_key` {string | Buffer | TypedArray | DataView}
+- `privateKey` {string | Buffer | TypedArray | DataView}
 - `encoding` {string}
 
 Sets the EC Diffie-Hellman private key. The `encoding` can be `'latin1'`,
-`'hex'` or `'base64'`. If `encoding` is provided, `private_key` is expected
-to be a string; otherwise `private_key` is expected to be a [`Buffer`][],
+`'hex'` or `'base64'`. If `encoding` is provided, `privateKey` is expected
+to be a string; otherwise `privateKey` is expected to be a [`Buffer`][],
 `TypedArray`, or `DataView`.
 
-If `private_key` is not valid for the curve specified when the `ECDH` object was
+If `privateKey` is not valid for the curve specified when the `ECDH` object was
 created, an error is thrown. Upon setting the private key, the associated
 public point (key) is also generated and set in the ECDH object.
 
-### ecdh.setPublicKey(public_key[, encoding])
+### ecdh.setPublicKey(publicKey[, encoding])
 <!-- YAML
 added: v0.11.14
 deprecated: v5.2.0
@@ -681,11 +683,11 @@ deprecated: v5.2.0
 
 > Stability: 0 - Deprecated
 
-- `public_key` {string | Buffer | TypedArray | DataView}
+- `publicKey` {string | Buffer | TypedArray | DataView}
 - `encoding` {string}
 
 Sets the EC Diffie-Hellman public key. Key encoding can be `'latin1'`,
-`'hex'` or `'base64'`. If `encoding` is provided `public_key` is expected to
+`'hex'` or `'base64'`. If `encoding` is provided `publicKey` is expected to
 be a string; otherwise a [`Buffer`][], `TypedArray`, or `DataView` is expected.
 
 Note that there is not normally a reason to call this method because `ECDH`
@@ -744,10 +746,11 @@ const hash = crypto.createHash('sha256');
 
 hash.on('readable', () => {
   const data = hash.read();
-  if (data)
+  if (data) {
     console.log(data.toString('hex'));
     // Prints:
     //   6a2da20943931e9834fc12cfe5bb47bbd9ae43489a30726962b576f4e3993e50
+  }
 });
 
 hash.write('some data to hash');
@@ -791,22 +794,22 @@ a [`Buffer`][] is returned.
 The `Hash` object can not be used again after `hash.digest()` method has been
 called. Multiple calls will cause an error to be thrown.
 
-### hash.update(data[, input_encoding])
+### hash.update(data[, inputEncoding])
 <!-- YAML
 added: v0.1.92
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
+- `inputEncoding` {string}
 
 Updates the hash content with the given `data`, the encoding of which
-is given in `input_encoding` and can be `'utf8'`, `'ascii'` or
+is given in `inputEncoding` and can be `'utf8'`, `'ascii'` or
 `'latin1'`. If `encoding` is not provided, and the `data` is a string, an
 encoding of `'utf8'` is enforced. If `data` is a [`Buffer`][], `TypedArray`, or
-`DataView`, then `input_encoding` is ignored.
+`DataView`, then `inputEncoding` is ignored.
 
 This can be called many times with new data as it is streamed.
 
@@ -834,10 +837,11 @@ const hmac = crypto.createHmac('sha256', 'a secret');
 
 hmac.on('readable', () => {
   const data = hmac.read();
-  if (data)
+  if (data) {
     console.log(data.toString('hex'));
     // Prints:
     //   7fd04df92f636fd450bc841c9418e5825c17f33ad9c87c518115a45971f7f77e
+  }
 });
 
 hmac.write('some data to hash');
@@ -880,22 +884,22 @@ provided a string is returned; otherwise a [`Buffer`][] is returned;
 The `Hmac` object can not be used again after `hmac.digest()` has been
 called. Multiple calls to `hmac.digest()` will result in an error being thrown.
 
-### hmac.update(data[, input_encoding])
+### hmac.update(data[, inputEncoding])
 <!-- YAML
 added: v0.1.94
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
+- `inputEncoding` {string}
 
 Updates the `Hmac` content with the given `data`, the encoding of which
-is given in `input_encoding` and can be `'utf8'`, `'ascii'` or
+is given in `inputEncoding` and can be `'utf8'`, `'ascii'` or
 `'latin1'`. If `encoding` is not provided, and the `data` is a string, an
 encoding of `'utf8'` is enforced. If `data` is a [`Buffer`][], `TypedArray`, or
-`DataView`, then `input_encoding` is ignored.
+`DataView`, then `inputEncoding` is ignored.
 
 This can be called many times with new data as it is streamed.
 
@@ -965,24 +969,24 @@ pQhByd5eyj3lgZ7m7jbchtdgyOF8Io/1ng==
 console.log(sign.sign(privateKey).toString('hex'));
 ```
 
-### sign.sign(private_key[, output_format])
+### sign.sign(privateKey[, outputFormat])
 <!-- YAML
 added: v0.1.92
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/11705
     description: Support for RSASSA-PSS and additional options was added.
 -->
-- `private_key` {string | Object}
+- `privateKey` {string | Object}
   - `key` {string}
   - `passphrase` {string}
-- `output_format` {string}
+- `outputFormat` {string}
 
 Calculates the signature on all the data passed through using either
 [`sign.update()`][] or [`sign.write()`][stream-writable-write].
 
-The `private_key` argument can be an object or a string. If `private_key` is a
-string, it is treated as a raw key with no passphrase. If `private_key` is an
+The `privateKey` argument can be an object or a string. If `privateKey` is a
+string, it is treated as a raw key with no passphrase. If `privateKey` is an
 object, it must contain one or more of the following properties:
 
 * `key`: {string} - PEM encoded private key (required)
@@ -999,29 +1003,29 @@ object, it must contain one or more of the following properties:
   size, `crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN` (default) sets it to the
   maximum permissible value.
 
-The `output_format` can specify one of `'latin1'`, `'hex'` or `'base64'`. If
-`output_format` is provided a string is returned; otherwise a [`Buffer`][] is
+The `outputFormat` can specify one of `'latin1'`, `'hex'` or `'base64'`. If
+`outputFormat` is provided a string is returned; otherwise a [`Buffer`][] is
 returned.
 
 The `Sign` object can not be again used after `sign.sign()` method has been
 called. Multiple calls to `sign.sign()` will result in an error being thrown.
 
-### sign.update(data[, input_encoding])
+### sign.update(data[, inputEncoding])
 <!-- YAML
 added: v0.1.92
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
+- `inputEncoding` {string}
 
 Updates the `Sign` content with the given `data`, the encoding of which
-is given in `input_encoding` and can be `'utf8'`, `'ascii'` or
+is given in `inputEncoding` and can be `'utf8'`, `'ascii'` or
 `'latin1'`. If `encoding` is not provided, and the `data` is a string, an
 encoding of `'utf8'` is enforced. If `data` is a [`Buffer`][], `TypedArray`, or
-`DataView`, then `input_encoding` is ignored.
+`DataView`, then `inputEncoding` is ignored.
 
 This can be called many times with new data as it is streamed.
 
@@ -1070,36 +1074,36 @@ console.log(verify.verify(publicKey, signature));
 // Prints: true or false
 ```
 
-### verifier.update(data[, input_encoding])
+### verifier.update(data[, inputEncoding])
 <!-- YAML
 added: v0.1.92
 changes:
   - version: v6.0.0
     pr-url: https://github.com/nodejs/node/pull/5522
-    description: The default `input_encoding` changed from `binary` to `utf8`.
+    description: The default `inputEncoding` changed from `binary` to `utf8`.
 -->
 - `data` {string | Buffer | TypedArray | DataView}
-- `input_encoding` {string}
+- `inputEncoding` {string}
 
 Updates the `Verify` content with the given `data`, the encoding of which
-is given in `input_encoding` and can be `'utf8'`, `'ascii'` or
+is given in `inputEncoding` and can be `'utf8'`, `'ascii'` or
 `'latin1'`. If `encoding` is not provided, and the `data` is a string, an
 encoding of `'utf8'` is enforced. If `data` is a [`Buffer`][], `TypedArray`, or
-`DataView`, then `input_encoding` is ignored.
+`DataView`, then `inputEncoding` is ignored.
 
 This can be called many times with new data as it is streamed.
 
-### verifier.verify(object, signature[, signature_format])
+### verifier.verify(object, signature[, signatureFormat])
 <!-- YAML
 added: v0.1.92
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/11705
     description: Support for RSASSA-PSS and additional options was added.
 -->
 - `object` {string | Object}
 - `signature` {string | Buffer | TypedArray | DataView}
-- `signature_format` {string}
+- `signatureFormat` {string}
 
 Verifies the provided data using the given `object` and `signature`.
 The `object` argument can be either a string containing a PEM encoded object,
@@ -1120,8 +1124,8 @@ or an object with one or more of the following properties:
   determined automatically.
 
 The `signature` argument is the previously calculated signature for the data, in
-the `signature_format` which can be `'latin1'`, `'hex'` or `'base64'`.
-If a `signature_format` is specified, the `signature` is expected to be a
+the `signatureFormat` which can be `'latin1'`, `'hex'` or `'base64'`.
+If a `signatureFormat` is specified, the `signature` is expected to be a
 string; otherwise `signature` is expected to be a [`Buffer`][],
 `TypedArray`, or `DataView`.
 
@@ -1271,14 +1275,14 @@ The `key` is the raw key used by the `algorithm` and `iv` is an
 [initialization vector][]. Both arguments must be `'utf8'` encoded strings or
 [buffers][`Buffer`].
 
-### crypto.createDiffieHellman(prime[, prime_encoding][, generator][, generator_encoding])
+### crypto.createDiffieHellman(prime[, primeEncoding][, generator][, generatorEncoding])
 <!-- YAML
 added: v0.11.12
 changes:
-  - version: REPLACEME
-    pr-url: REPLACEME
+  - version: v8.0.0
+    pr-url: https://github.com/nodejs/node/pull/12223
     description: The `prime` argument can be any `TypedArray` or `DataView` now.
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/11983
     description: The `prime` argument can be a `Uint8Array` now.
   - version: v6.0.0
@@ -1287,9 +1291,9 @@ changes:
                  from `binary` to `utf8`.
 -->
 - `prime` {string | Buffer | TypedArray | DataView}
-- `prime_encoding` {string}
+- `primeEncoding` {string}
 - `generator` {number | string | Buffer | TypedArray | DataView} Defaults to `2`.
-- `generator_encoding` {string}
+- `generatorEncoding` {string}
 
 Creates a `DiffieHellman` key exchange object using the supplied `prime` and an
 optional specific `generator`.
@@ -1297,34 +1301,34 @@ optional specific `generator`.
 The `generator` argument can be a number, string, or [`Buffer`][]. If
 `generator` is not specified, the value `2` is used.
 
-The `prime_encoding` and `generator_encoding` arguments can be `'latin1'`,
+The `primeEncoding` and `generatorEncoding` arguments can be `'latin1'`,
 `'hex'`, or `'base64'`.
 
-If `prime_encoding` is specified, `prime` is expected to be a string; otherwise
+If `primeEncoding` is specified, `prime` is expected to be a string; otherwise
 a [`Buffer`][], `TypedArray`, or `DataView` is expected.
 
-If `generator_encoding` is specified, `generator` is expected to be a string;
+If `generatorEncoding` is specified, `generator` is expected to be a string;
 otherwise a number, [`Buffer`][], `TypedArray`, or `DataView` is expected.
 
-### crypto.createDiffieHellman(prime_length[, generator])
+### crypto.createDiffieHellman(primeLength[, generator])
 <!-- YAML
 added: v0.5.0
 -->
-- `prime_length` {number}
+- `primeLength` {number}
 - `generator` {number | string | Buffer | TypedArray | DataView} Defaults to `2`.
 
 Creates a `DiffieHellman` key exchange object and generates a prime of
-`prime_length` bits using an optional specific numeric `generator`.
+`primeLength` bits using an optional specific numeric `generator`.
 If `generator` is not specified, the value `2` is used.
 
-### crypto.createECDH(curve_name)
+### crypto.createECDH(curveName)
 <!-- YAML
 added: v0.11.14
 -->
-- `curve_name` {string}
+- `curveName` {string}
 
 Creates an Elliptic Curve Diffie-Hellman (`ECDH`) key exchange object using a
-predefined curve specified by the `curve_name` string. Use
+predefined curve specified by the `curveName` string. Use
 [`crypto.getCurves()`][] to obtain a list of available curve names. On recent
 OpenSSL releases, `openssl ecparam -list_curves` will also display the name
 and description of each available elliptic curve.
@@ -1447,11 +1451,11 @@ const curves = crypto.getCurves();
 console.log(curves); // ['Oakley-EC2N-3', 'Oakley-EC2N-4', ...]
 ```
 
-### crypto.getDiffieHellman(group_name)
+### crypto.getDiffieHellman(groupName)
 <!-- YAML
 added: v0.7.5
 -->
-- `group_name` {string}
+- `groupName` {string}
 
 Creates a predefined `DiffieHellman` key exchange object. The
 supported groups are: `'modp1'`, `'modp2'`, `'modp5'` (defined in
@@ -1500,7 +1504,7 @@ console.log(hashes); // ['DSA', 'DSA-SHA', 'DSA-SHA1', ...]
 <!-- YAML
 added: v0.5.5
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/11305
     description: The `digest` parameter is always required now.
   - version: v6.0.0
@@ -1597,11 +1601,11 @@ console.log(key.toString('hex'));  // '3745e48...aa39b34'
 An array of supported digest functions can be retrieved using
 [`crypto.getHashes()`][].
 
-### crypto.privateDecrypt(private_key, buffer)
+### crypto.privateDecrypt(privateKey, buffer)
 <!-- YAML
 added: v0.11.14
 -->
-- `private_key` {Object | string}
+- `privateKey` {Object | string}
   - `key` {string} A PEM encoded private key.
   - `passphrase` {string} An optional passphrase for the private key.
   - `padding` {crypto.constants} An optional padding value defined in
@@ -1609,16 +1613,16 @@ added: v0.11.14
     `RSA_PKCS1_PADDING`, or `crypto.constants.RSA_PKCS1_OAEP_PADDING`.
 - `buffer` {Buffer | TypedArray | DataView}
 
-Decrypts `buffer` with `private_key`.
+Decrypts `buffer` with `privateKey`.
 
-`private_key` can be an object or a string. If `private_key` is a string, it is
+`privateKey` can be an object or a string. If `privateKey` is a string, it is
 treated as the key with no passphrase and will use `RSA_PKCS1_OAEP_PADDING`.
 
-### crypto.privateEncrypt(private_key, buffer)
+### crypto.privateEncrypt(privateKey, buffer)
 <!-- YAML
 added: v1.1.0
 -->
-- `private_key` {Object | string}
+- `privateKey` {Object | string}
   - `key` {string} A PEM encoded private key.
   - `passphrase` {string} An optional passphrase for the private key.
   - `padding` {crypto.constants} An optional padding value defined in
@@ -1626,36 +1630,36 @@ added: v1.1.0
     `RSA_PKCS1_PADDING`.
 - `buffer` {Buffer | TypedArray | DataView}
 
-Encrypts `buffer` with `private_key`.
+Encrypts `buffer` with `privateKey`.
 
-`private_key` can be an object or a string. If `private_key` is a string, it is
+`privateKey` can be an object or a string. If `privateKey` is a string, it is
 treated as the key with no passphrase and will use `RSA_PKCS1_PADDING`.
 
-### crypto.publicDecrypt(public_key, buffer)
+### crypto.publicDecrypt(publicKey, buffer)
 <!-- YAML
 added: v1.1.0
 -->
-- `private_key` {Object | string}
+- `publicKey` {Object | string}
   - `key` {string} A PEM encoded private key.
   - `passphrase` {string} An optional passphrase for the private key.
   - `padding` {crypto.constants} An optional padding value defined in
-    `crypto.constants`, which may be: `crypto.constants.RSA_NO_PADDING`,
-    `RSA_PKCS1_PADDING`, or `crypto.constants.RSA_PKCS1_OAEP_PADDING`.
+    `crypto.constants`, which may be: `crypto.constants.RSA_NO_PADDING` or
+    `RSA_PKCS1_PADDING`.
 - `buffer` {Buffer | TypedArray | DataView}
 
-Decrypts `buffer` with `public_key`.
+Decrypts `buffer` with `publicKey`.
 
-`public_key` can be an object or a string. If `public_key` is a string, it is
+`publicKey` can be an object or a string. If `publicKey` is a string, it is
 treated as the key with no passphrase and will use `RSA_PKCS1_PADDING`.
 
 Because RSA public keys can be derived from private keys, a private key may
 be passed instead of a public key.
 
-### crypto.publicEncrypt(public_key, buffer)
+### crypto.publicEncrypt(publicKey, buffer)
 <!-- YAML
 added: v0.11.14
 -->
-- `private_key` {Object | string}
+- `publicKey` {Object | string}
   - `key` {string} A PEM encoded private key.
   - `passphrase` {string} An optional passphrase for the private key.
   - `padding` {crypto.constants} An optional padding value defined in
@@ -1663,9 +1667,10 @@ added: v0.11.14
     `RSA_PKCS1_PADDING`, or `crypto.constants.RSA_PKCS1_OAEP_PADDING`.
 - `buffer` {Buffer | TypedArray | DataView}
 
-Encrypts `buffer` with `public_key`.
+Encrypts the content of `buffer` with `publicKey` and returns a new
+[`Buffer`][] with encrypted content.
 
-`public_key` can be an object or a string. If `public_key` is a string, it is
+`publicKey` can be an object or a string. If `publicKey` is a string, it is
 treated as the key with no passphrase and will use `RSA_PKCS1_OAEP_PADDING`.
 
 Because RSA public keys can be derived from private keys, a private key may
@@ -1713,18 +1718,18 @@ This should normally never take longer than a few milliseconds. The only time
 when generating the random bytes may conceivably block for a longer period of
 time is right after boot, when the whole system is still low on entropy.
 
-### crypto.randomFillSync(buf[, offset][, size])
+### crypto.randomFillSync(buffer[, offset][, size])
 <!-- YAML
-added: REPLACEME
+added: v7.10.0
 -->
 
-* `buf` {Buffer|Uint8Array} Must be supplied.
+* `buffer` {Buffer|Uint8Array} Must be supplied.
 * `offset` {number} Defaults to `0`.
-* `size` {number} Defaults to `buf.length - offset`.
+* `size` {number} Defaults to `buffer.length - offset`.
 
 Synchronous version of [`crypto.randomFill()`][].
 
-Returns `buf`
+Returns `buffer`
 
 ```js
 const buf = Buffer.alloc(10);
@@ -1738,14 +1743,14 @@ crypto.randomFillSync(buf, 5, 5);
 console.log(buf.toString('hex'));
 ```
 
-### crypto.randomFill(buf[, offset][, size], callback)
+### crypto.randomFill(buffer[, offset][, size], callback)
 <!-- YAML
-added: REPLACEME
+added: v7.10.0
 -->
 
-* `buf` {Buffer|Uint8Array} Must be supplied.
+* `buffer` {Buffer|Uint8Array} Must be supplied.
 * `offset` {number} Defaults to `0`.
-* `size` {number} Defaults to `buf.length - offset`.
+* `size` {number} Defaults to `buffer.length - offset`.
 * `callback` {Function} `function(err, buf) {}`.
 
 This function is similar to [`crypto.randomBytes()`][] but requires the first
@@ -1817,7 +1822,7 @@ comparing HMAC digests or secret values like authentication cookies or
 `a` and `b` must both be `Buffer`s, `TypedArray`s, or `DataView`s, and they
 must have the same length.
 
-**Note**: Use of `crypto.timingSafeEqual` does not guarantee that the
+*Note*: Use of `crypto.timingSafeEqual` does not guarantee that the
 *surrounding* code is timing-safe. Care should be taken to ensure that the
 surrounding code does not introduce timing vulnerabilities.
 
@@ -1898,7 +1903,7 @@ the `crypto`, `tls`, and `https` modules and are generally specific to OpenSSL.
   <tr>
     <td><code>SSL_OP_CIPHER_SERVER_PREFERENCE</code></td>
     <td>Attempts to use the server's preferences instead of the client's when
-    selecting a cipher. Behaviour depends on protocol version. See
+    selecting a cipher. Behavior depends on protocol version. See
     https://www.openssl.org/docs/man1.0.2/ssl/SSL_CTX_set_options.html.</td>
   </tr>
   <tr>
@@ -2197,14 +2202,15 @@ the `crypto`, `tls`, and `https` modules and are generally specific to OpenSSL.
 
 
 [`Buffer`]: buffer.html
-[`cipher.final()`]: #crypto_cipher_final_output_encoding
-[`cipher.update()`]: #crypto_cipher_update_data_input_encoding_output_encoding
+[`EVP_BytesToKey`]: https://www.openssl.org/docs/man1.0.2/crypto/EVP_BytesToKey.html
+[`cipher.final()`]: #crypto_cipher_final_outputencoding
+[`cipher.update()`]: #crypto_cipher_update_data_inputencoding_outputencoding
 [`crypto.createCipher()`]: #crypto_crypto_createcipher_algorithm_password
 [`crypto.createCipheriv()`]: #crypto_crypto_createcipheriv_algorithm_key_iv
 [`crypto.createDecipher()`]: #crypto_crypto_createdecipher_algorithm_password
 [`crypto.createDecipheriv()`]: #crypto_crypto_createdecipheriv_algorithm_key_iv
-[`crypto.createDiffieHellman()`]: #crypto_crypto_creatediffiehellman_prime_prime_encoding_generator_generator_encoding
-[`crypto.createECDH()`]: #crypto_crypto_createecdh_curve_name
+[`crypto.createDiffieHellman()`]: #crypto_crypto_creatediffiehellman_prime_primeencoding_generator_generatorencoding
+[`crypto.createECDH()`]: #crypto_crypto_createecdh_curvename
 [`crypto.createHash()`]: #crypto_crypto_createhash_algorithm
 [`crypto.createHmac()`]: #crypto_crypto_createhmac_algorithm_key
 [`crypto.createSign()`]: #crypto_crypto_createsign_algorithm
@@ -2213,34 +2219,31 @@ the `crypto`, `tls`, and `https` modules and are generally specific to OpenSSL.
 [`crypto.getHashes()`]: #crypto_crypto_gethashes
 [`crypto.pbkdf2()`]: #crypto_crypto_pbkdf2_password_salt_iterations_keylen_digest_callback
 [`crypto.randomBytes()`]: #crypto_crypto_randombytes_size_callback
-[`crypto.randomFill()`]: #crypto_crypto_randombytesbuffer_buf_size_offset_cb
-[`decipher.final()`]: #crypto_decipher_final_output_encoding
-[`decipher.update()`]: #crypto_decipher_update_data_input_encoding_output_encoding
-[`diffieHellman.setPublicKey()`]: #crypto_diffiehellman_setpublickey_public_key_encoding
+[`crypto.randomFill()`]: #crypto_crypto_randomfill_buffer_offset_size_callback
+[`decipher.final()`]: #crypto_decipher_final_outputencoding
+[`decipher.update()`]: #crypto_decipher_update_data_inputencoding_outputencoding
+[`diffieHellman.setPublicKey()`]: #crypto_diffiehellman_setpublickey_publickey_encoding
 [`ecdh.generateKeys()`]: #crypto_ecdh_generatekeys_encoding_format
-[`ecdh.setPrivateKey()`]: #crypto_ecdh_setprivatekey_private_key_encoding
-[`ecdh.setPublicKey()`]: #crypto_ecdh_setpublickey_public_key_encoding
-[`EVP_BytesToKey`]: https://www.openssl.org/docs/man1.0.2/crypto/EVP_BytesToKey.html
+[`ecdh.setPrivateKey()`]: #crypto_ecdh_setprivatekey_privatekey_encoding
+[`ecdh.setPublicKey()`]: #crypto_ecdh_setpublickey_publickey_encoding
 [`hash.digest()`]: #crypto_hash_digest_encoding
-[`hash.update()`]: #crypto_hash_update_data_input_encoding
+[`hash.update()`]: #crypto_hash_update_data_inputencoding
 [`hmac.digest()`]: #crypto_hmac_digest_encoding
-[`hmac.update()`]: #crypto_hmac_update_data_input_encoding
-[`sign.sign()`]: #crypto_sign_sign_private_key_output_format
-[`sign.update()`]: #crypto_sign_update_data_input_encoding
+[`hmac.update()`]: #crypto_hmac_update_data_inputencoding
+[`sign.sign()`]: #crypto_sign_sign_privatekey_outputformat
+[`sign.update()`]: #crypto_sign_update_data_inputencoding
 [`tls.createSecureContext()`]: tls.html#tls_tls_createsecurecontext_options
-[`verify.update()`]: #crypto_verifier_update_data_input_encoding
-[`verify.verify()`]: #crypto_verifier_verify_object_signature_signature_format
+[`verify.update()`]: #crypto_verifier_update_data_inputencoding
+[`verify.verify()`]: #crypto_verifier_verify_object_signature_signatureformat
 [Caveats]: #crypto_support_for_weak_or_compromised_algorithms
+[Crypto Constants]: #crypto_crypto_constants_1
 [HTML5's `keygen` element]: http://www.w3.org/TR/html5/forms.html#the-keygen-element
-[initialization vector]: https://en.wikipedia.org/wiki/Initialization_vector
 [NIST SP 800-131A]: http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-131Ar1.pdf
 [NIST SP 800-132]: http://csrc.nist.gov/publications/nistpubs/800-132/nist-sp800-132.pdf
-[OpenSSL cipher list format]: https://www.openssl.org/docs/man1.0.2/apps/ciphers.html#CIPHER-LIST-FORMAT
 [OpenSSL's SPKAC implementation]: https://www.openssl.org/docs/man1.0.2/apps/spkac.html
-[publicly trusted list of CAs]: https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt
 [RFC 2412]: https://www.rfc-editor.org/rfc/rfc2412.txt
 [RFC 3526]: https://www.rfc-editor.org/rfc/rfc3526.txt
 [RFC 4055]: https://www.rfc-editor.org/rfc/rfc4055.txt
-[stream]: stream.html
+[initialization vector]: https://en.wikipedia.org/wiki/Initialization_vector
 [stream-writable-write]: stream.html#stream_writable_write_chunk_encoding_callback
-[Crypto Constants]: #crypto_crypto_constants_1
+[stream]: stream.html

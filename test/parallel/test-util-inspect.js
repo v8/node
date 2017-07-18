@@ -296,7 +296,7 @@ assert.strictEqual(
 
 // Function with properties
 {
-  const value = function() {};
+  const value = () => {};
   value.aprop = 42;
   assert.strictEqual(util.inspect(value), '{ [Function: value] aprop: 42 }');
 }
@@ -514,8 +514,7 @@ assert.doesNotThrow(() => {
 
     const withoutColor = util.inspect(input, false, 0, false);
     const withColor = util.inspect(input, false, 0, true);
-    const expect = '\u001b[' + color[0] + 'm' + withoutColor +
-                   '\u001b[' + color[1] + 'm';
+    const expect = `\u001b[${color[0]}m${withoutColor}\u001b[${color[1]}m`;
     assert.strictEqual(
       withColor,
       expect,
@@ -786,9 +785,9 @@ if (typeof Symbol !== 'undefined') {
   const rejected = Promise.reject(3);
   assert.strictEqual(util.inspect(rejected), 'Promise { <rejected> 3 }');
   // squelch UnhandledPromiseRejection
-  rejected.catch(common.noop);
+  rejected.catch(() => {});
 
-  const pending = new Promise(common.noop);
+  const pending = new Promise(() => {});
   assert.strictEqual(util.inspect(pending), 'Promise { <pending> }');
 
   const promiseWithProperty = Promise.resolve('foo');
@@ -838,9 +837,10 @@ if (typeof Symbol !== 'undefined') {
 {
   function checkAlignment(container) {
     const lines = util.inspect(container).split('\n');
+    const numRE = /\d/;
     let pos;
     lines.forEach((line) => {
-      const npos = line.search(/\d/);
+      const npos = line.search(numRE);
       if (npos !== -1) {
         if (pos !== undefined) {
           assert.strictEqual(pos, npos, 'container items not aligned');
@@ -885,7 +885,7 @@ if (typeof Symbol !== 'undefined') {
                      'SetSubclass { 1, 2, 3 }');
   assert.strictEqual(util.inspect(new MapSubclass([['foo', 42]])),
                      'MapSubclass { \'foo\' => 42 }');
-  assert.strictEqual(util.inspect(new PromiseSubclass(common.noop)),
+  assert.strictEqual(util.inspect(new PromiseSubclass(() => {})),
                      'PromiseSubclass { <pending> }');
 }
 
@@ -1029,11 +1029,21 @@ if (typeof Symbol !== 'undefined') {
 
   assert.throws(() => {
     util.inspect.defaultOptions = null;
-  }, /"options" must be an object/);
+  }, common.expectsError({
+      code: 'ERR_INVALID_ARG_TYPE',
+      type: TypeError,
+      message: 'The "options" argument must be of type object'
+  })
+  );
 
   assert.throws(() => {
     util.inspect.defaultOptions = 'bad';
-  }, /"options" must be an object/);
+  }, common.expectsError({
+      code: 'ERR_INVALID_ARG_TYPE',
+      type: TypeError,
+      message: 'The "options" argument must be of type object'
+  })
+  );
 }
 
 assert.doesNotThrow(() => util.inspect(process));

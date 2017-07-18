@@ -6,7 +6,7 @@
 #ifndef V8_I18N_H_
 #define V8_I18N_H_
 
-#include "src/handles.h"
+#include "src/base/timezone-cache.h"
 #include "src/objects.h"
 #include "unicode/uversion.h"
 
@@ -15,10 +15,14 @@ class BreakIterator;
 class Collator;
 class DecimalFormat;
 class SimpleDateFormat;
+class TimeZone;
 }
 
 namespace v8 {
 namespace internal {
+
+template <typename T>
+class Handle;
 
 class DateFormat {
  public:
@@ -124,6 +128,44 @@ class V8BreakIterator {
 
  private:
   V8BreakIterator();
+};
+
+const UChar* GetUCharBufferFromFlat(const String::FlatContent& flat,
+                                    std::unique_ptr<uc16[]>* dest,
+                                    int32_t length);
+MUST_USE_RESULT Object* LocaleConvertCase(Handle<String> s, Isolate* isolate,
+                                          bool is_to_upper, const char* lang);
+MUST_USE_RESULT Object* ConvertToLower(Handle<String> s, Isolate* isolate);
+MUST_USE_RESULT Object* ConvertToUpper(Handle<String> s, Isolate* isolate);
+MUST_USE_RESULT Object* ConvertCase(Handle<String> s, bool is_upper,
+                                    Isolate* isolate);
+
+// ICUTimezoneCache calls out to ICU for TimezoneCache
+// functionality in a straightforward way.
+class ICUTimezoneCache : public base::TimezoneCache {
+ public:
+  ICUTimezoneCache();
+
+  ~ICUTimezoneCache() override;
+
+  const char* LocalTimezone(double time_ms) override;
+
+  double DaylightSavingsOffset(double time_ms) override;
+
+  double LocalTimeOffset() override;
+
+  void Clear() override;
+
+ private:
+  icu::TimeZone* GetTimeZone();
+
+  bool GetOffsets(double time_ms, int32_t* raw_offset, int32_t* dst_offset);
+
+  icu::TimeZone* timezone_;
+
+  static const int32_t kMaxTimezoneChars = 100;
+  char timezone_name_[kMaxTimezoneChars];
+  char dst_timezone_name_[kMaxTimezoneChars];
 };
 
 }  // namespace internal

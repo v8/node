@@ -25,7 +25,6 @@
 #if defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS
 
 #include "ares.h"
-#include "debug-agent.h"
 #if HAVE_INSPECTOR
 #include "inspector_agent.h"
 #endif
@@ -35,19 +34,13 @@
 #include "util.h"
 #include "uv.h"
 #include "v8.h"
+#include "node.h"
 
 #include <list>
 #include <stdint.h>
 #include <vector>
+#include <stack>
 
-// Caveat emptor: we're going slightly crazy with macros here but the end
-// hopefully justifies the means. We have a lot of per-context properties
-// and adding and maintaining their getters and setters by hand would be
-// a nightmare so let's make the preprocessor generate them for us.
-//
-// Make sure that any macros defined here are undefined again at the bottom
-// of context-inl.h. The exceptions are NODE_CONTEXT_EMBEDDER_DATA_INDEX
-// and NODE_ISOLATE_SLOT, they may have been defined externally.
 namespace node {
 
 // Pick an index that's hopefully out of the way when we're embedded inside
@@ -64,6 +57,17 @@ namespace node {
 #define NODE_PUSH_VAL_TO_ARRAY_MAX 8
 #endif
 
+// PER_ISOLATE_* macros: We have a lot of per-isolate properties
+// and adding and maintaining their getters and setters by hand would be
+// difficult so let's make the preprocessor generate them for us.
+//
+// In each macro, `V` is expected to be the name of a macro or function which
+// accepts the number of arguments provided in each tuple in the macro body,
+// typically two. The named function will be invoked against each tuple.
+//
+// Make sure that any macro V defined for use with the PER_ISOLATE_* macros is
+// undefined again after use.
+
 // Private symbols are per-isolate primitives but Environment proxies them
 // for the sake of convenience.  Strings should be ASCII-only and have a
 // "node:" prefix to avoid name clashes with third-party code.
@@ -72,6 +76,7 @@ namespace node {
   V(arrow_message_private_symbol, "node:arrowMessage")                        \
   V(contextify_context_private_symbol, "node:contextify:context")             \
   V(contextify_global_private_symbol, "node:contextify:global")               \
+  V(inspector_delegate_private_symbol, "node:inspector:delegate")             \
   V(decorated_private_symbol, "node:decorated")                               \
   V(npn_buffer_private_symbol, "node:npnBuffer")                              \
   V(processed_private_symbol, "node:processed")                               \
@@ -83,7 +88,6 @@ namespace node {
   V(address_string, "address")                                                \
   V(args_string, "args")                                                      \
   V(async, "async")                                                           \
-  V(async_queue_string, "_asyncQueue")                                        \
   V(buffer_string, "buffer")                                                  \
   V(bytes_string, "bytes")                                                    \
   V(bytes_parsed_string, "bytesParsed")                                       \
@@ -101,6 +105,16 @@ namespace node {
   V(dest_string, "dest")                                                      \
   V(detached_string, "detached")                                              \
   V(disposed_string, "_disposed")                                             \
+  V(dns_a_string, "A")                                                        \
+  V(dns_aaaa_string, "AAAA")                                                  \
+  V(dns_cname_string, "CNAME")                                                \
+  V(dns_mx_string, "MX")                                                      \
+  V(dns_naptr_string, "NAPTR")                                                \
+  V(dns_ns_string, "NS")                                                      \
+  V(dns_ptr_string, "PTR")                                                    \
+  V(dns_soa_string, "SOA")                                                    \
+  V(dns_srv_string, "SRV")                                                    \
+  V(dns_txt_string, "TXT")                                                    \
   V(domain_string, "domain")                                                  \
   V(emitting_top_level_domain_error_string, "_emittingTopLevelDomainError")   \
   V(exchange_string, "exchange")                                              \
@@ -109,6 +123,7 @@ namespace node {
   V(irq_string, "irq")                                                        \
   V(encoding_string, "encoding")                                              \
   V(enter_string, "enter")                                                    \
+  V(entries_string, "entries")                                                \
   V(env_pairs_string, "envPairs")                                             \
   V(errno_string, "errno")                                                    \
   V(error_string, "error")                                                    \
@@ -147,6 +162,7 @@ namespace node {
   V(issuer_string, "issuer")                                                  \
   V(issuercert_string, "issuerCertificate")                                   \
   V(kill_signal_string, "killSignal")                                         \
+  V(length_string, "length")                                                  \
   V(mac_string, "mac")                                                        \
   V(max_buffer_string, "maxBuffer")                                           \
   V(message_string, "message")                                                \
@@ -227,6 +243,7 @@ namespace node {
   V(timeout_string, "timeout")                                                \
   V(times_string, "times")                                                    \
   V(tls_ticket_string, "tlsTicket")                                           \
+  V(ttl_string, "ttl")                                                        \
   V(type_string, "type")                                                      \
   V(uid_string, "uid")                                                        \
   V(unknown_string, "<unknown>")                                              \
@@ -250,21 +267,23 @@ namespace node {
   V(as_external, v8::External)                                                \
   V(async_hooks_destroy_function, v8::Function)                               \
   V(async_hooks_init_function, v8::Function)                                  \
-  V(async_hooks_post_function, v8::Function)                                  \
-  V(async_hooks_pre_function, v8::Function)                                   \
+  V(async_hooks_before_function, v8::Function)                                \
+  V(async_hooks_after_function, v8::Function)                                 \
   V(binding_cache_object, v8::Object)                                         \
   V(buffer_constructor_function, v8::Function)                                \
   V(buffer_prototype_object, v8::Object)                                      \
   V(context, v8::Context)                                                     \
   V(domain_array, v8::Array)                                                  \
   V(domains_stack_array, v8::Array)                                           \
-  V(generic_internal_field_template, v8::ObjectTemplate)                      \
   V(jsstream_constructor_template, v8::FunctionTemplate)                      \
   V(module_load_list_array, v8::Array)                                        \
+  V(pbkdf2_constructor_template, v8::ObjectTemplate)                          \
   V(pipe_constructor_template, v8::FunctionTemplate)                          \
   V(process_object, v8::Object)                                               \
   V(promise_reject_function, v8::Function)                                    \
+  V(promise_wrap_template, v8::ObjectTemplate)                                \
   V(push_values_to_array_function, v8::Function)                              \
+  V(randombytes_constructor_template, v8::ObjectTemplate)                     \
   V(script_context_constructor_template, v8::FunctionTemplate)                \
   V(script_data_constructor_function, v8::Function)                           \
   V(secure_context_constructor_template, v8::FunctionTemplate)                \
@@ -284,6 +303,11 @@ struct node_ares_task {
   ares_socket_t sock;
   uv_poll_t poll_watcher;
   RB_ENTRY(node_ares_task) node;
+};
+
+struct node_async_ids {
+  double async_id;
+  double trigger_id;
 };
 
 RB_HEAD(node_ares_task_list, node_ares_task);
@@ -326,31 +350,97 @@ class Environment {
  public:
   class AsyncHooks {
    public:
+    // Reason for both UidFields and Fields are that one is stored as a double*
+    // and the other as a uint32_t*.
+    enum Fields {
+      kInit,
+      kBefore,
+      kAfter,
+      kDestroy,
+      kTotals,
+      kFieldsCount,
+    };
+
+    enum UidFields {
+      kCurrentAsyncId,
+      kCurrentTriggerId,
+      kAsyncUidCntr,
+      kInitTriggerId,
+      kUidFieldsCount,
+    };
+
+    AsyncHooks() = delete;
+
     inline uint32_t* fields();
     inline int fields_count() const;
-    inline bool callbacks_enabled();
-    inline void set_enable_callbacks(uint32_t flag);
+    inline double* uid_fields();
+    inline int uid_fields_count() const;
+    inline v8::Local<v8::String> provider_string(int idx);
+
+    inline void push_ids(double async_id, double trigger_id);
+    inline bool pop_ids(double async_id);
+    inline void clear_id_stack();  // Used in fatal exceptions.
+
+    // Used to propagate the trigger_id to the constructor of any newly created
+    // resources using RAII. Instead of needing to pass the trigger_id along
+    // with other constructor arguments.
+    class InitScope {
+     public:
+      InitScope() = delete;
+      explicit InitScope(Environment* env, double init_trigger_id);
+      ~InitScope();
+
+     private:
+      Environment* env_;
+      double* uid_fields_;
+
+      DISALLOW_COPY_AND_ASSIGN(InitScope);
+    };
+
+    // Used to manage the stack of async and trigger ids as calls are made into
+    // JS. Mainly used in MakeCallback().
+    class ExecScope {
+     public:
+      ExecScope() = delete;
+      explicit ExecScope(Environment* env, double async_id, double trigger_id);
+      ~ExecScope();
+      void Dispose();
+
+     private:
+      Environment* env_;
+      double async_id_;
+      // Manually track if the destructor has run so it isn't accidentally run
+      // twice on RAII cleanup.
+      bool disposed_;
+
+      DISALLOW_COPY_AND_ASSIGN(ExecScope);
+    };
 
    private:
     friend class Environment;  // So we can call the constructor.
-    inline AsyncHooks();
-
-    enum Fields {
-      // Set this to not zero if the init hook should be called.
-      kEnableCallbacks,
-      kFieldsCount
-    };
-
+    inline explicit AsyncHooks(v8::Isolate* isolate);
+    // Keep a list of all Persistent strings used for Provider types.
+    v8::Eternal<v8::String> providers_[AsyncWrap::PROVIDERS_LENGTH];
+    // Used by provider_string().
+    v8::Isolate* isolate_;
+    // Stores the ids of the current execution context stack.
+    std::stack<struct node_async_ids> ids_stack_;
+    // Used to communicate state between C++ and JS cheaply. Is placed in an
+    // Uint32Array() and attached to the async_wrap object.
     uint32_t fields_[kFieldsCount];
+    // Used to communicate ids between C++ and JS cheaply. Placed in a
+    // Float64Array and attached to the async_wrap object. Using a double only
+    // gives us 2^53-1 unique ids, but that should be sufficient.
+    double uid_fields_[kUidFieldsCount];
 
     DISALLOW_COPY_AND_ASSIGN(AsyncHooks);
   };
 
   class AsyncCallbackScope {
    public:
+    AsyncCallbackScope() = delete;
     explicit AsyncCallbackScope(Environment* env);
     ~AsyncCallbackScope();
-
     inline bool in_makecallback();
 
    private:
@@ -440,21 +530,21 @@ class Environment {
              const char* const* exec_argv,
              bool start_profiler_idle_notifier);
   void AssignToContext(v8::Local<v8::Context> context);
+  void CleanupHandles();
 
   void StartProfilerIdleNotifier();
   void StopProfilerIdleNotifier();
 
   inline v8::Isolate* isolate() const;
   inline uv_loop_t* event_loop() const;
-  inline bool async_wrap_callbacks_enabled() const;
   inline bool in_domain() const;
   inline uint32_t watched_providers() const;
 
   static inline Environment* from_immediate_check_handle(uv_check_t* handle);
-  static inline Environment* from_destroy_ids_idle_handle(uv_idle_t* handle);
+  static inline Environment* from_destroy_ids_timer_handle(uv_timer_t* handle);
   inline uv_check_t* immediate_check_handle();
   inline uv_idle_t* immediate_idle_handle();
-  inline uv_idle_t* destroy_ids_idle_handle();
+  inline uv_timer_t* destroy_ids_timer_handle();
 
   // Register clean-up cb to be called on environment destruction.
   inline void RegisterHandleCleanup(uv_handle_t* handle,
@@ -471,6 +561,10 @@ class Environment {
   inline uv_timer_t* cares_timer_handle();
   inline ares_channel cares_channel();
   inline ares_channel* cares_channel_ptr();
+  inline bool cares_query_last_ok();
+  inline void set_cares_query_last_ok(bool ok);
+  inline bool cares_is_servers_default();
+  inline void set_cares_is_servers_default(bool is_default);
   inline node_ares_task_list* cares_task_list();
   inline IsolateData* isolate_data() const;
 
@@ -483,10 +577,18 @@ class Environment {
   void PrintSyncTrace() const;
   inline void set_trace_sync_io(bool value);
 
-  inline int64_t get_async_wrap_uid();
+  inline bool abort_on_uncaught_exception() const;
+  inline void set_abort_on_uncaught_exception(bool value);
+
+  // The necessary API for async_hooks.
+  inline double new_async_id();
+  inline double current_async_id();
+  inline double trigger_id();
+  inline double get_init_trigger_id();
+  inline void set_init_trigger_id(const double id);
 
   // List of id's that have been destroyed and need the destroy() cb called.
-  inline std::vector<int64_t>* destroy_ids_list();
+  inline std::vector<double>* destroy_ids_list();
 
   inline double* heap_statistics_buffer() const;
   inline void set_heap_statistics_buffer(double* pointer);
@@ -529,8 +631,6 @@ class Environment {
                                 const char* name,
                                 v8::FunctionCallback callback);
 
-  inline v8::Local<v8::Object> NewInternalFieldObject();
-
   void AtExit(void (*cb)(void* arg), void* arg);
   void RunAtExitCallbacks();
 
@@ -552,10 +652,6 @@ class Environment {
   ENVIRONMENT_STRONG_PERSISTENT_PROPERTIES(V)
 #undef V
 
-  inline debugger::Agent* debugger_agent() {
-    return &debugger_agent_;
-  }
-
 #if HAVE_INSPECTOR
   inline inspector::Agent* inspector_agent() {
     return &inspector_agent_;
@@ -571,6 +667,9 @@ class Environment {
 
   static const int kContextEmbedderDataIndex = NODE_CONTEXT_EMBEDDER_DATA_INDEX;
 
+  void AddPromiseHook(promise_hook_func fn, void* arg);
+  bool RemovePromiseHook(promise_hook_func fn, void* arg);
+
  private:
   inline void ThrowError(v8::Local<v8::Value> (*fun)(v8::Local<v8::String>),
                          const char* errmsg);
@@ -579,7 +678,7 @@ class Environment {
   IsolateData* const isolate_data_;
   uv_check_t immediate_check_handle_;
   uv_idle_t immediate_idle_handle_;
-  uv_idle_t destroy_ids_idle_handle_;
+  uv_timer_t destroy_ids_timer_handle_;
   uv_prepare_t idle_prepare_handle_;
   uv_check_t idle_check_handle_;
   AsyncHooks async_hooks_;
@@ -588,14 +687,15 @@ class Environment {
   const uint64_t timer_base_;
   uv_timer_t cares_timer_handle_;
   ares_channel cares_channel_;
+  bool cares_query_last_ok_;
+  bool cares_is_servers_default_;
   node_ares_task_list cares_task_list_;
   bool using_domains_;
   bool printed_error_;
   bool trace_sync_io_;
+  bool abort_on_uncaught_exception_;
   size_t makecallback_cntr_;
-  int64_t async_wrap_uid_;
-  std::vector<int64_t> destroy_ids_list_;
-  debugger::Agent debugger_agent_;
+  std::vector<double> destroy_ids_list_;
 #if HAVE_INSPECTOR
   inspector::Agent inspector_agent_;
 #endif
@@ -618,6 +718,17 @@ class Environment {
     void* arg_;
   };
   std::list<AtExitCallback> at_exit_functions_;
+
+  struct PromiseHookCallback {
+    promise_hook_func cb_;
+    void* arg_;
+    size_t enable_count_;
+  };
+  std::vector<PromiseHookCallback> promise_hooks_;
+
+  static void EnvPromiseHook(v8::PromiseHookType type,
+                             v8::Local<v8::Promise> promise,
+                             v8::Local<v8::Value> parent);
 
 #define V(PropertyName, TypeName)                                             \
   v8::Persistent<TypeName> PropertyName ## _;

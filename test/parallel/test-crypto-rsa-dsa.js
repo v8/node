@@ -1,33 +1,29 @@
 'use strict';
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+
 const assert = require('assert');
 const fs = require('fs');
-
-if (!common.hasCrypto) {
-  common.skip('missing crypto');
-  return;
-}
-const constants = require('crypto').constants;
 const crypto = require('crypto');
 
-// Test certificates
-const certPem = fs.readFileSync(common.fixturesDir + '/test_cert.pem', 'ascii');
-const keyPem = fs.readFileSync(common.fixturesDir + '/test_key.pem', 'ascii');
-const rsaPubPem = fs.readFileSync(common.fixturesDir + '/test_rsa_pubkey.pem',
-                                  'ascii');
-const rsaKeyPem = fs.readFileSync(common.fixturesDir + '/test_rsa_privkey.pem',
-                                  'ascii');
-const rsaKeyPemEncrypted = fs.readFileSync(
-  common.fixturesDir + '/test_rsa_privkey_encrypted.pem', 'ascii');
-const dsaPubPem = fs.readFileSync(common.fixturesDir + '/test_dsa_pubkey.pem',
-                                  'ascii');
-const dsaKeyPem = fs.readFileSync(common.fixturesDir + '/test_dsa_privkey.pem',
-                                  'ascii');
-const dsaKeyPemEncrypted = fs.readFileSync(
-  common.fixturesDir + '/test_dsa_privkey_encrypted.pem', 'ascii');
+const constants = crypto.constants;
+const fixtDir = common.fixturesDir;
 
-const decryptError = new RegExp('^Error: error:06065064:digital envelope ' +
-                                'routines:EVP_DecryptFinal_ex:bad decrypt$');
+// Test certificates
+const certPem = fs.readFileSync(`${fixtDir}/test_cert.pem`, 'ascii');
+const keyPem = fs.readFileSync(`${fixtDir}/test_key.pem`, 'ascii');
+const rsaPubPem = fs.readFileSync(`${fixtDir}/test_rsa_pubkey.pem`, 'ascii');
+const rsaKeyPem = fs.readFileSync(`${fixtDir}/test_rsa_privkey.pem`, 'ascii');
+const rsaKeyPemEncrypted = fs.readFileSync(
+  `${fixtDir}/test_rsa_privkey_encrypted.pem`, 'ascii');
+const dsaPubPem = fs.readFileSync(`${fixtDir}/test_dsa_pubkey.pem`, 'ascii');
+const dsaKeyPem = fs.readFileSync(`${fixtDir}/test_dsa_privkey.pem`, 'ascii');
+const dsaKeyPemEncrypted = fs.readFileSync(
+  `${fixtDir}/test_dsa_privkey_encrypted.pem`, 'ascii');
+
+const decryptError =
+  /^Error: error:06065064:digital envelope routines:EVP_DecryptFinal_ex:bad decrypt$/;
 
 // Test RSA encryption/decryption
 {
@@ -178,11 +174,9 @@ assert.throws(() => {
 // Test RSA signing and verification
 //
 {
-  const privateKey = fs.readFileSync(
-      common.fixturesDir + '/test_rsa_privkey_2.pem');
+  const privateKey = fs.readFileSync(`${fixtDir}/test_rsa_privkey_2.pem`);
 
-  const publicKey = fs.readFileSync(
-      common.fixturesDir + '/test_rsa_pubkey_2.pem');
+  const publicKey = fs.readFileSync(`${fixtDir}/test_rsa_pubkey_2.pem`);
 
   const input = 'I AM THE WALRUS';
 

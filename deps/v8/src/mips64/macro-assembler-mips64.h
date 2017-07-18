@@ -170,6 +170,8 @@ class MacroAssembler: public Assembler {
   MacroAssembler(Isolate* isolate, void* buffer, int size,
                  CodeObjectRequired create_code_object);
 
+  Isolate* isolate() const { return isolate_; }
+
   // Arguments macros.
 #define COND_TYPED_ARGS Condition cond, Register r1, const Operand& r2
 #define COND_ARGS cond, r1, r2
@@ -1130,16 +1132,9 @@ class MacroAssembler: public Assembler {
                             Register scratch,
                             Label* fail);
 
-  void IsObjectNameType(Register object,
-                        Register scratch,
-                        Label* fail);
+  // Frame restart support.
+  void MaybeDropFrames();
 
-  // -------------------------------------------------------------------------
-  // Debugger Support.
-
-  void DebugBreak();
-
-  // -------------------------------------------------------------------------
   // Exception handling.
 
   // Push a new stack handler and link into stack handler chain.
@@ -1162,14 +1157,6 @@ class MacroAssembler: public Assembler {
   // |temp| holds |result|'s map when done, and |temp2| its instance type.
   void GetMapConstructor(Register result, Register map, Register temp,
                          Register temp2);
-
-  // Try to get function prototype of a function and puts the value in
-  // the result register. Checks that the function really is a
-  // function and jumps to the miss label if the fast checks fail. The
-  // function register will be untouched; the other registers may be
-  // clobbered.
-  void TryGetFunctionPrototype(Register function, Register result,
-                               Register scratch, Label* miss);
 
   void GetObjectType(Register function,
                      Register map,
@@ -1215,13 +1202,6 @@ class MacroAssembler: public Assembler {
                 Heap::RootListIndex index,
                 Label* fail,
                 SmiCheckType smi_check_type);
-
-  // Check if the map of an object is equal to a specified weak map and branch
-  // to a specified target if equal. Skip the smi check if not required
-  // (object is known to be a heap object)
-  void DispatchWeakMap(Register obj, Register scratch1, Register scratch2,
-                       Handle<WeakCell> cell, Handle<Code> success,
-                       SmiCheckType smi_check_type);
 
   // If the value is a NaN, canonicalize the value else, do nothing.
   void FPUCanonicalizeNaN(const DoubleRegister dst, const DoubleRegister src);
@@ -1548,7 +1528,6 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   // Calls Abort(msg) if the condition cc is not satisfied.
   // Use --debug_code to enable.
   void Assert(Condition cc, BailoutReason reason, Register rs, Operand rt);
-  void AssertFastElements(Register elements);
 
   // Like Assert(), but always enabled.
   void Check(Condition cc, BailoutReason reason, Register rs, Operand rt);
@@ -1686,18 +1665,9 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   // Jump if either of the registers contain a smi.
   void JumpIfEitherSmi(Register reg1, Register reg2, Label* on_either_smi);
 
-  // Abort execution if argument is a number, enabled via --debug-code.
-  void AssertNotNumber(Register object);
-
   // Abort execution if argument is a smi, enabled via --debug-code.
   void AssertNotSmi(Register object);
   void AssertSmi(Register object);
-
-  // Abort execution if argument is not a string, enabled via --debug-code.
-  void AssertString(Register object);
-
-  // Abort execution if argument is not a name, enabled via --debug-code.
-  void AssertName(Register object);
 
   // Abort execution if argument is not a JSFunction, enabled via --debug-code.
   void AssertFunction(Register object);
@@ -1708,10 +1678,7 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
 
   // Abort execution if argument is not a JSGeneratorObject,
   // enabled via --debug-code.
-  void AssertGeneratorObject(Register object);
-
-  // Abort execution if argument is not a JSReceiver, enabled via --debug-code.
-  void AssertReceiver(Register object);
+  void AssertGeneratorObject(Register object, Register flags);
 
   // Abort execution if argument is not undefined or an AllocationSite, enabled
   // via --debug-code.
@@ -1877,12 +1844,6 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
                       InvokeFlag flag,
                       const CallWrapper& call_wrapper);
 
-  void InitializeNewString(Register string,
-                           Register length,
-                           Heap::RootListIndex map_index,
-                           Register scratch1,
-                           Register scratch2);
-
   // Helper for implementing JumpIfNotInNewSpace and JumpIfInNewSpace.
   void InNewSpace(Register object, Register scratch,
                   Condition cond,  // ne for new space, eq otherwise.
@@ -1903,6 +1864,7 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   bool generating_stub_;
   bool has_frame_;
   bool has_double_zero_reg_set_;
+  Isolate* isolate_;
   // This handle will be patched with the code object on installation.
   Handle<Object> code_object_;
 

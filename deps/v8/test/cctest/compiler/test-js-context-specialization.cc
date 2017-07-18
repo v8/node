@@ -8,6 +8,9 @@
 #include "src/compiler/js-operator.h"
 #include "src/compiler/node-matchers.h"
 #include "src/compiler/node-properties.h"
+#include "src/factory.h"
+#include "src/objects-inl.h"
+#include "src/property.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/function-tester.h"
 #include "test/cctest/compiler/graph-builder-tester.h"
@@ -27,7 +30,7 @@ class ContextSpecializationTester : public HandleAndZoneScope {
         jsgraph_(main_isolate(), graph(), common(), &javascript_, &simplified_,
                  &machine_),
         reducer_(main_zone(), graph()),
-        spec_(&reducer_, jsgraph(), context) {}
+        spec_(&reducer_, jsgraph(), context, MaybeHandle<JSFunction>()) {}
 
   JSContextSpecialization* spec() { return &spec_; }
   Factory* factory() { return main_isolate()->factory(); }

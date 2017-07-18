@@ -27,15 +27,12 @@
 // TLS server causes the child process to exit cleanly before having sent
 // the entire buffer.
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+
 const assert = require('assert');
 const spawn = require('child_process').spawn;
-
-if (!common.hasCrypto) {
-  common.skip('missing crypto');
-  return;
-}
 const https = require('https');
-
 const fs = require('fs');
 
 const bytesExpected = 1024 * 1024 * 32;
@@ -81,8 +78,8 @@ function makeRequest() {
 
 
 const serverOptions = {
-  key: fs.readFileSync(common.fixturesDir + '/keys/agent1-key.pem'),
-  cert: fs.readFileSync(common.fixturesDir + '/keys/agent1-cert.pem')
+  key: fs.readFileSync(`${common.fixturesDir}/keys/agent1-key.pem`),
+  cert: fs.readFileSync(`${common.fixturesDir}/keys/agent1-cert.pem`)
 };
 
 let uploadCount = 0;

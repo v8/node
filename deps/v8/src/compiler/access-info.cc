@@ -80,11 +80,12 @@ PropertyAccessInfo PropertyAccessInfo::DataConstant(
 
 // static
 PropertyAccessInfo PropertyAccessInfo::DataField(
-    MapList const& receiver_maps, FieldIndex field_index,
-    MachineRepresentation field_representation, Type* field_type,
-    MaybeHandle<Map> field_map, MaybeHandle<JSObject> holder,
+    PropertyConstness constness, MapList const& receiver_maps,
+    FieldIndex field_index, MachineRepresentation field_representation,
+    Type* field_type, MaybeHandle<Map> field_map, MaybeHandle<JSObject> holder,
     MaybeHandle<Map> transition_map) {
-  return PropertyAccessInfo(holder, transition_map, field_index,
+  Kind kind = constness == kConst ? kDataConstantField : kDataField;
+  return PropertyAccessInfo(kind, holder, transition_map, field_index,
                             field_representation, field_type, field_map,
                             receiver_maps);
 }
@@ -94,12 +95,6 @@ PropertyAccessInfo PropertyAccessInfo::AccessorConstant(
     MapList const& receiver_maps, Handle<Object> constant,
     MaybeHandle<JSObject> holder) {
   return PropertyAccessInfo(kAccessorConstant, holder, constant, receiver_maps);
-}
-
-// static
-PropertyAccessInfo PropertyAccessInfo::Generic(MapList const& receiver_maps) {
-  return PropertyAccessInfo(kGeneric, MaybeHandle<JSObject>(), Handle<Object>(),
-                            receiver_maps);
 }
 
 PropertyAccessInfo::PropertyAccessInfo()
@@ -126,10 +121,10 @@ PropertyAccessInfo::PropertyAccessInfo(Kind kind, MaybeHandle<JSObject> holder,
       field_type_(Type::Any()) {}
 
 PropertyAccessInfo::PropertyAccessInfo(
-    MaybeHandle<JSObject> holder, MaybeHandle<Map> transition_map,
+    Kind kind, MaybeHandle<JSObject> holder, MaybeHandle<Map> transition_map,
     FieldIndex field_index, MachineRepresentation field_representation,
     Type* field_type, MaybeHandle<Map> field_map, MapList const& receiver_maps)
-    : kind_(kDataField),
+    : kind_(kind),
       receiver_maps_(receiver_maps),
       transition_map_(transition_map),
       holder_(holder),
@@ -146,9 +141,11 @@ bool PropertyAccessInfo::Merge(PropertyAccessInfo const* that) {
     case kInvalid:
       break;
 
-    case kDataField: {
+    case kDataField:
+    case kDataConstantField: {
       // Check if we actually access the same field.
-      if (this->transition_map_.address() == that->transition_map_.address() &&
+      if (this->kind_ == that->kind_ &&
+          this->transition_map_.address() == that->transition_map_.address() &&
           this->field_index_ == that->field_index_ &&
           this->field_map_.address() == that->field_map_.address() &&
           this->field_type_->Is(that->field_type_) &&
@@ -174,8 +171,7 @@ bool PropertyAccessInfo::Merge(PropertyAccessInfo const* that) {
       return false;
     }
 
-    case kNotFound:
-    case kGeneric: {
+    case kNotFound: {
       this->receiver_maps_.insert(this->receiver_maps_.end(),
                                   that->receiver_maps_.begin(),
                                   that->receiver_maps_.end());
@@ -233,6 +229,7 @@ bool AccessInfoFactory::ComputeElementAccessInfos(
       if (transition_target == nullptr) {
         receiver_maps.Add(map);
       } else {
+        DCHECK(!map->is_stable());
         transitions.push_back(std::make_pair(map, handle(transition_target)));
       }
     }
@@ -338,8 +335,8 @@ bool AccessInfoFactory::ComputePropertyAccessInfo(
             }
           }
           *access_info = PropertyAccessInfo::DataField(
-              MapList{receiver_map}, field_index, field_representation,
-              field_type, field_map, holder);
+              details.constness(), MapList{receiver_map}, field_index,
+              field_representation, field_type, field_map, holder);
           return true;
         } else {
           DCHECK_EQ(kAccessor, details.kind());
@@ -350,6 +347,7 @@ bool AccessInfoFactory::ComputePropertyAccessInfo(
       } else {
         DCHECK_EQ(kDescriptor, details.location());
         if (details.kind() == kData) {
+          DCHECK(!FLAG_track_constant_fields);
           *access_info = PropertyAccessInfo::DataConstant(
               MapList{receiver_map},
               handle(descriptors->GetValue(number), isolate()), holder);
@@ -368,10 +366,18 @@ bool AccessInfoFactory::ComputePropertyAccessInfo(
             if (!optimization.is_simple_api_call()) {
               return false;
             }
-            if (optimization.api_call_info()->fast_handler()->IsCode()) {
-              return false;
-            }
             if (V8_UNLIKELY(FLAG_runtime_stats)) return false;
+          }
+          if (access_mode == AccessMode::kLoad) {
+            Handle<Name> cached_property_name;
+            if (FunctionTemplateInfo::TryGetCachedPropertyName(isolate(),
+                                                               accessor)
+                    .ToHandle(&cached_property_name)) {
+              if (ComputePropertyAccessInfo(map, cached_property_name,
+                                            access_mode, access_info)) {
+                return true;
+              }
+            }
           }
           *access_info = PropertyAccessInfo::AccessorConstant(
               MapList{receiver_map}, accessor, holder);
@@ -391,7 +397,7 @@ bool AccessInfoFactory::ComputePropertyAccessInfo(
 
     // Don't search on the prototype when storing in literals
     if (access_mode == AccessMode::kStoreInLiteral) {
-      return false;
+      return LookupTransition(receiver_map, name, holder, access_info);
     }
 
     // Don't lookup private symbols on the prototype chain.
@@ -490,8 +496,9 @@ bool AccessInfoFactory::LookupSpecialFieldAccessor(
         field_type = type_cache_.kJSArrayLengthType;
       }
     }
+    // Special fields are always mutable.
     *access_info = PropertyAccessInfo::DataField(
-        MapList{map}, field_index, field_representation, field_type);
+        kMutable, MapList{map}, field_index, field_representation, field_type);
     return true;
   }
   return false;
@@ -502,10 +509,6 @@ bool AccessInfoFactory::LookupTransition(Handle<Map> map, Handle<Name> name,
                                          MaybeHandle<JSObject> holder,
                                          PropertyAccessInfo* access_info) {
   // Check if the {map} has a data transition with the given {name}.
-  if (map->unused_property_fields() == 0) {
-    *access_info = PropertyAccessInfo::Generic(MapList{map});
-    return true;
-  }
   Handle<Map> transition_map;
   if (TransitionArray::SearchTransition(map, kData, name, NONE)
           .ToHandle(&transition_map)) {
@@ -551,9 +554,10 @@ bool AccessInfoFactory::LookupTransition(Handle<Map> map, Handle<Name> name,
       }
     }
     dependencies()->AssumeMapNotDeprecated(transition_map);
+    // Transitioning stores are never stores to constant fields.
     *access_info = PropertyAccessInfo::DataField(
-        MapList{map}, field_index, field_representation, field_type, field_map,
-        holder, transition_map);
+        kMutable, MapList{map}, field_index, field_representation, field_type,
+        field_map, holder, transition_map);
     return true;
   }
   return false;

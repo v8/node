@@ -1,15 +1,14 @@
 'use strict';
 
 const common = require('../common');
-const URL = require('url').URL;
-const path = require('path');
-const assert = require('assert');
-
 if (!common.hasIntl) {
   // A handful of the tests fail when ICU is not included.
   common.skip('missing Intl');
-  return;
 }
+
+const URL = require('url').URL;
+const path = require('path');
+const assert = require('assert');
 
 // Tests below are not from WPT.
 const tests = require(path.join(common.fixturesDir, 'url-tests'));
@@ -23,15 +22,21 @@ const failureTests = tests.filter((test) => test.failure).concat([
   { input: null },
   { input: new Date() },
   { input: new RegExp() },
-  { input: common.noop }
+  { input: () => {} }
 ]);
+
+const expectedError = common.expectsError(
+    { code: 'ERR_INVALID_URL', type: TypeError }, 102);
 
 for (const test of failureTests) {
   assert.throws(
     () => new URL(test.input, test.base),
     (error) => {
+      if (!expectedError(error))
+        return false;
+
       // The input could be processed, so we don't do strict matching here
-      const match = (error + '').match(/^TypeError: Invalid URL: (.*)$/);
+      const match = (error + '').match(/Invalid URL: (.*)$/);
       if (!match) {
         return false;
       }

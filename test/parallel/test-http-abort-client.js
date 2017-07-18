@@ -23,12 +23,12 @@
 const common = require('../common');
 const http = require('http');
 
+let serverRes;
 const server = http.Server(function(req, res) {
   console.log('Server accepted request.');
+  serverRes = res;
   res.writeHead(200);
   res.write('Part of my res.');
-
-  res.destroy();
 });
 
 server.listen(0, common.mustCall(function() {
@@ -37,12 +37,13 @@ server.listen(0, common.mustCall(function() {
     headers: { connection: 'keep-alive' }
   }, common.mustCall(function(res) {
     server.close();
+    serverRes.destroy();
 
-    console.log('Got res: ' + res.statusCode);
+    console.log(`Got res: ${res.statusCode}`);
     console.dir(res.headers);
 
     res.on('data', function(chunk) {
-      console.log('Read ' + chunk.length + ' bytes');
+      console.log(`Read ${chunk.length} bytes`);
       console.log(' chunk=%j', chunk.toString());
     });
 

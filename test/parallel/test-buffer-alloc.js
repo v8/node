@@ -3,9 +3,7 @@ const common = require('../common');
 const assert = require('assert');
 const vm = require('vm');
 
-const buffer = require('buffer');
-const Buffer = buffer.Buffer;
-const SlowBuffer = buffer.SlowBuffer;
+const SlowBuffer = require('buffer').SlowBuffer;
 
 
 const b = Buffer.allocUnsafe(1024);
@@ -468,6 +466,10 @@ assert.strictEqual(Buffer.from('=bad'.repeat(1e4), 'base64').length, 0);
 assert.deepStrictEqual(Buffer.from('w0  ', 'base64'),
                        Buffer.from('w0', 'base64'));
 
+// Regression test for https://github.com/nodejs/node/issues/13657.
+assert.deepStrictEqual(Buffer.from(' YWJvcnVtLg', 'base64'),
+                       Buffer.from('YWJvcnVtLg', 'base64'));
+
 {
   // Creating buffers larger than pool size.
   const l = Buffer.poolSize + 5;
@@ -885,7 +887,12 @@ assert.throws(() => Buffer.allocUnsafe(8).writeFloatLE(0.0, -1), RangeError);
 }
 
 // Regression test for #5482: should throw but not assert in C++ land.
-assert.throws(() => Buffer.from('', 'buffer'), TypeError);
+assert.throws(() => Buffer.from('', 'buffer'),
+              common.expectsError({
+                code: 'ERR_UNKNOWN_ENCODING',
+                type: TypeError,
+                message: 'Unknown encoding: buffer'
+              }));
 
 // Regression test for #6111. Constructing a buffer from another buffer
 // should a) work, and b) not corrupt the source buffer.
@@ -914,7 +921,7 @@ if (common.hasCrypto) {
     crypto.createHash('sha1').update(b2).digest('hex')
   );
 } else {
-  common.skip('missing crypto');
+  common.printSkipMessage('missing crypto');
 }
 
 const ps = Buffer.poolSize;
@@ -926,8 +933,9 @@ Buffer.poolSize = ps;
 assert.throws(() => Buffer.allocUnsafe(10).copy(),
               /TypeError: argument should be a Buffer/);
 
-const regErrorMsg = new RegExp('First argument must be a string, Buffer, ' +
-                               'ArrayBuffer, Array, or array-like object\\.');
+const regErrorMsg =
+  new RegExp('The first argument must be one of type string, buffer, ' +
+             'arrayBuffer, array, or array-like object\\.');
 
 assert.throws(() => Buffer.from(), regErrorMsg);
 assert.throws(() => Buffer.from(null), regErrorMsg);
@@ -954,15 +962,22 @@ assert.strictEqual(SlowBuffer.prototype.offset, undefined);
 
 
 // Test that ParseArrayIndex handles full uint32
-assert.throws(() => Buffer.from(new ArrayBuffer(0), -1 >>> 0),
-              /RangeError: 'offset' is out of bounds/);
+{
+  const errMsg = common.expectsError({
+    code: 'ERR_BUFFER_OUT_OF_BOUNDS',
+    type: RangeError,
+    message: '"offset" is outside of buffer bounds'
+  });
+  assert.throws(() => Buffer.from(new ArrayBuffer(0), -1 >>> 0), errMsg);
+}
 
 // ParseArrayIndex() should reject values that don't fit in a 32 bits size_t.
 assert.throws(() => {
   const a = Buffer.alloc(1);
   const b = Buffer.alloc(1);
   a.copy(b, 0, 0x100000000, 0x100000001);
-}, /out of range index/);
+}, common.expectsError(
+  {code: undefined, type: RangeError, message: 'Index out of range'}));
 
 // Unpooled buffer (replaces SlowBuffer)
 {
@@ -981,9 +996,9 @@ assert.doesNotThrow(() => Buffer.from(arrayBuf));
 assert.doesNotThrow(() => Buffer.from({ buffer: arrayBuf }));
 
 assert.throws(() => Buffer.alloc({ valueOf: () => 1 }),
-              /"size" argument must be a number/);
+              /"size" argument must be of type number/);
 assert.throws(() => Buffer.alloc({ valueOf: () => -1 }),
-              /"size" argument must be a number/);
+              /"size" argument must be of type number/);
 
 assert.strictEqual(Buffer.prototype.toLocaleString, Buffer.prototype.toString);
 {

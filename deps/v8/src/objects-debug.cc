@@ -4,13 +4,19 @@
 
 #include "src/objects.h"
 
+#include "src/assembler-inl.h"
 #include "src/bootstrapper.h"
 #include "src/disasm.h"
 #include "src/disassembler.h"
 #include "src/field-type.h"
+#include "src/layout-descriptor.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
+#include "src/objects/literal-objects.h"
+#include "src/objects/module-info.h"
 #include "src/ostreams.h"
 #include "src/regexp/jsregexp.h"
+#include "src/transitions.h"
 
 namespace v8 {
 namespace internal {
@@ -64,9 +70,6 @@ void HeapObject::HeapObjectVerify() {
     case MUTABLE_HEAP_NUMBER_TYPE:
       HeapNumber::cast(this)->HeapNumberVerify();
       break;
-    case SIMD128_VALUE_TYPE:
-      Simd128Value::cast(this)->Simd128ValueVerify();
-      break;
     case FIXED_ARRAY_TYPE:
       FixedArray::cast(this)->FixedArrayVerify();
       break;
@@ -110,6 +113,9 @@ void HeapObject::HeapObjectVerify() {
       break;
     case JS_GENERATOR_OBJECT_TYPE:
       JSGeneratorObject::cast(this)->JSGeneratorObjectVerify();
+      break;
+    case JS_ASYNC_GENERATOR_OBJECT_TYPE:
+      JSAsyncGeneratorObject::cast(this)->JSAsyncGeneratorObjectVerify();
       break;
     case JS_VALUE_TYPE:
       JSValue::cast(this)->JSValueVerify();
@@ -197,6 +203,9 @@ void HeapObject::HeapObjectVerify() {
     case JS_STRING_ITERATOR_TYPE:
       JSStringIterator::cast(this)->JSStringIteratorVerify();
       break;
+    case JS_ASYNC_FROM_SYNC_ITERATOR_TYPE:
+      JSAsyncFromSyncIterator::cast(this)->JSAsyncFromSyncIteratorVerify();
+      break;
     case JS_WEAK_MAP_TYPE:
       JSWeakMap::cast(this)->JSWeakMapVerify();
       break;
@@ -268,10 +277,6 @@ void Symbol::SymbolVerify() {
 void HeapNumber::HeapNumberVerify() {
   CHECK(IsHeapNumber() || IsMutableHeapNumber());
 }
-
-
-void Simd128Value::Simd128ValueVerify() { CHECK(IsSimd128Value()); }
-
 
 void ByteArray::ByteArrayVerify() {
   CHECK(IsByteArray());
@@ -481,6 +486,12 @@ void JSGeneratorObject::JSGeneratorObjectVerify() {
   VerifyObjectField(kContinuationOffset);
 }
 
+void JSAsyncGeneratorObject::JSAsyncGeneratorObjectVerify() {
+  // Check inherited fields
+  JSGeneratorObjectVerify();
+  VerifyObjectField(kQueueOffset);
+  queue()->HeapObjectVerify();
+}
 
 void JSValue::JSValueVerify() {
   Object* v = value();
@@ -552,6 +563,7 @@ void JSMessageObject::JSMessageObjectVerify() {
 void String::StringVerify() {
   CHECK(IsString());
   CHECK(length() >= 0 && length() <= Smi::kMaxValue);
+  CHECK_IMPLIES(length() == 0, this == GetHeap()->empty_string());
   if (IsInternalizedString()) {
     CHECK(!GetHeap()->InNewSpace(this));
   }
@@ -559,6 +571,8 @@ void String::StringVerify() {
     ConsString::cast(this)->ConsStringVerify();
   } else if (IsSlicedString()) {
     SlicedString::cast(this)->SlicedStringVerify();
+  } else if (IsThinString()) {
+    ThinString::cast(this)->ThinStringVerify();
   }
 }
 
@@ -570,12 +584,17 @@ void ConsString::ConsStringVerify() {
   CHECK(this->length() >= ConsString::kMinLength);
   CHECK(this->length() == this->first()->length() + this->second()->length());
   if (this->IsFlat()) {
-    // A flat cons can only be created by String::SlowTryFlatten.
-    // Afterwards, the first part may be externalized.
-    CHECK(this->first()->IsSeqString() || this->first()->IsExternalString());
+    // A flat cons can only be created by String::SlowFlatten.
+    // Afterwards, the first part may be externalized or internalized.
+    CHECK(this->first()->IsSeqString() || this->first()->IsExternalString() ||
+          this->first()->IsThinString());
   }
 }
 
+void ThinString::ThinStringVerify() {
+  CHECK(this->actual()->IsInternalizedString());
+  CHECK(this->actual()->IsSeqString() || this->actual()->IsExternalString());
+}
 
 void SlicedString::SlicedStringVerify() {
   CHECK(!this->parent()->IsConsString());
@@ -684,8 +703,6 @@ void Oddball::OddballVerify() {
           this == heap->false_value());
   } else if (map() == heap->uninitialized_map()) {
     CHECK(this == heap->uninitialized_value());
-  } else if (map() == heap->no_interceptor_result_sentinel_map()) {
-    CHECK(this == heap->no_interceptor_result_sentinel());
   } else if (map() == heap->arguments_marker_map()) {
     CHECK(this == heap->arguments_marker());
   } else if (map() == heap->termination_exception_map()) {
@@ -883,6 +900,12 @@ void JSStringIterator::JSStringIteratorVerify() {
   CHECK_LE(index(), String::kMaxLength);
 }
 
+void JSAsyncFromSyncIterator::JSAsyncFromSyncIteratorVerify() {
+  CHECK(IsJSAsyncFromSyncIterator());
+  JSObjectVerify();
+  VerifyHeapPointer(sync_iterator());
+}
+
 void JSWeakSet::JSWeakSetVerify() {
   CHECK(IsJSWeakSet());
   JSObjectVerify();
@@ -914,10 +937,11 @@ void JSPromise::JSPromiseVerify() {
         deferred_on_reject()->IsCallable() ||
         deferred_on_reject()->IsFixedArray());
   CHECK(fulfill_reactions()->IsUndefined(isolate) ||
-        fulfill_reactions()->IsCallable() ||
+        fulfill_reactions()->IsCallable() || fulfill_reactions()->IsSymbol() ||
         fulfill_reactions()->IsFixedArray());
   CHECK(reject_reactions()->IsUndefined(isolate) ||
-        reject_reactions()->IsCallable() || reject_reactions()->IsFixedArray());
+        reject_reactions()->IsSymbol() || reject_reactions()->IsCallable() ||
+        reject_reactions()->IsFixedArray());
 }
 
 void JSRegExp::JSRegExpVerify() {
@@ -1025,18 +1049,12 @@ void Foreign::ForeignVerify() {
 }
 
 
-void Box::BoxVerify() {
-  CHECK(IsBox());
-  value()->ObjectVerify();
-}
-
 void PromiseResolveThenableJobInfo::PromiseResolveThenableJobInfoVerify() {
   CHECK(IsPromiseResolveThenableJobInfo());
   CHECK(thenable()->IsJSReceiver());
   CHECK(then()->IsJSReceiver());
   CHECK(resolve()->IsJSFunction());
   CHECK(reject()->IsJSFunction());
-  VerifySmiField(kDebugIdOffset);
   CHECK(context()->IsContext());
 }
 
@@ -1044,7 +1062,8 @@ void PromiseReactionJobInfo::PromiseReactionJobInfoVerify() {
   Isolate* isolate = GetIsolate();
   CHECK(IsPromiseReactionJobInfo());
   CHECK(value()->IsObject());
-  CHECK(tasks()->IsFixedArray() || tasks()->IsCallable());
+  CHECK(tasks()->IsFixedArray() || tasks()->IsCallable() ||
+        tasks()->IsSymbol());
   CHECK(deferred_promise()->IsUndefined(isolate) ||
         deferred_promise()->IsJSReceiver() ||
         deferred_promise()->IsFixedArray());
@@ -1054,8 +1073,18 @@ void PromiseReactionJobInfo::PromiseReactionJobInfoVerify() {
   CHECK(deferred_on_reject()->IsUndefined(isolate) ||
         deferred_on_reject()->IsCallable() ||
         deferred_on_reject()->IsFixedArray());
-  VerifySmiField(kDebugIdOffset);
   CHECK(context()->IsContext());
+}
+
+void AsyncGeneratorRequest::AsyncGeneratorRequestVerify() {
+  CHECK(IsAsyncGeneratorRequest());
+  VerifySmiField(kResumeModeOffset);
+  CHECK_GE(resume_mode(), JSGeneratorObject::kNext);
+  CHECK_LE(resume_mode(), JSGeneratorObject::kThrow);
+  CHECK(promise()->IsJSPromise());
+  VerifyPointer(value());
+  VerifyPointer(next());
+  next()->ObjectVerify();
 }
 
 void JSModuleNamespace::JSModuleNamespaceVerify() {
@@ -1089,6 +1118,7 @@ void Module::ModuleVerify() {
   VerifyPointer(module_namespace());
   VerifyPointer(requested_modules());
   VerifySmiField(kHashOffset);
+  VerifySmiField(kStatusOffset);
 
   CHECK((!instantiated() && code()->IsSharedFunctionInfo()) ||
         (instantiated() && !evaluated() && code()->IsJSFunction()) ||
@@ -1097,12 +1127,17 @@ void Module::ModuleVerify() {
   CHECK(module_namespace()->IsUndefined(GetIsolate()) ||
         module_namespace()->IsJSModuleNamespace());
   if (module_namespace()->IsJSModuleNamespace()) {
+    CHECK(instantiated());
     CHECK_EQ(JSModuleNamespace::cast(module_namespace())->module(), this);
   }
 
   CHECK_EQ(requested_modules()->length(), info()->module_requests()->length());
 
   CHECK_NE(hash(), 0);
+
+  CHECK_LE(kUnprepared, status());
+  CHECK_LE(status(), kPrepared);
+  CHECK_IMPLIES(instantiated(), status() == kPrepared);
 }
 
 void PrototypeInfo::PrototypeInfoVerify() {
@@ -1266,6 +1301,13 @@ void DebugInfo::DebugInfoVerify() {
 void BreakPointInfo::BreakPointInfoVerify() {
   CHECK(IsBreakPointInfo());
   VerifyPointer(break_point_objects());
+}
+
+void StackFrameInfo::StackFrameInfoVerify() {
+  CHECK(IsStackFrameInfo());
+  VerifyPointer(script_name());
+  VerifyPointer(script_name_or_source_url());
+  VerifyPointer(function_name());
 }
 #endif  // VERIFY_HEAP
 

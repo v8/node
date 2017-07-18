@@ -55,6 +55,7 @@
 #include <unicode/utypes.h>
 #include <unicode/putil.h>
 #include <unicode/uchar.h>
+#include <unicode/uclean.h>
 #include <unicode/udata.h>
 #include <unicode/uidna.h>
 #include <unicode/ucnv.h>
@@ -325,7 +326,7 @@ void Transcode(const FunctionCallbackInfo<Value>&args) {
             tfn = &TranscodeUtf8FromUcs2;
             break;
           default:
-            tfn = TranscodeFromUcs2;
+            tfn = &TranscodeFromUcs2;
         }
         break;
       default:
@@ -418,28 +419,26 @@ void GetVersion(const FunctionCallbackInfo<Value>& args) {
 }  // anonymous namespace
 
 bool InitializeICUDirectory(const std::string& path) {
+  UErrorCode status = U_ZERO_ERROR;
   if (path.empty()) {
-    UErrorCode status = U_ZERO_ERROR;
 #ifdef NODE_HAVE_SMALL_ICU
     // install the 'small' data.
     udata_setCommonData(&SMALL_ICUDATA_ENTRY_POINT, &status);
 #else  // !NODE_HAVE_SMALL_ICU
     // no small data, so nothing to do.
 #endif  // !NODE_HAVE_SMALL_ICU
-    return (status == U_ZERO_ERROR);
   } else {
     u_setDataDirectory(path.c_str());
-    return true;  // No error.
+    u_init(&status);
   }
+  return status == U_ZERO_ERROR;
 }
 
 int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                   const char* input,
-                  size_t length,
-                  bool lenient) {
+                  size_t length) {
   UErrorCode status = U_ZERO_ERROR;
-  uint32_t options = UIDNA_DEFAULT;
-  options |= UIDNA_NONTRANSITIONAL_TO_UNICODE;
+  uint32_t options = UIDNA_NONTRANSITIONAL_TO_UNICODE;
   UIDNA* uidna = uidna_openUTS46(options, &status);
   if (U_FAILURE(status))
     return -1;
@@ -451,6 +450,9 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                                         &info,
                                         &status);
 
+  // Do not check info.errors like we do with ToASCII since ToUnicode always
+  // returns a string, despite any possible errors that may have occurred.
+
   if (status == U_BUFFER_OVERFLOW_ERROR) {
     status = U_ZERO_ERROR;
     buf->AllocateSufficientStorage(len);
@@ -461,7 +463,10 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
                                   &status);
   }
 
-  if (U_FAILURE(status) || (!lenient && info.errors != 0)) {
+  // info.errors is ignored as UTS #46 ToUnicode always produces a Unicode
+  // string, regardless of whether an error occurred.
+
+  if (U_FAILURE(status)) {
     len = -1;
     buf->SetLength(0);
   } else {
@@ -475,10 +480,18 @@ int32_t ToUnicode(MaybeStackBuffer<char>* buf,
 int32_t ToASCII(MaybeStackBuffer<char>* buf,
                 const char* input,
                 size_t length,
-                bool lenient) {
+                enum idna_mode mode) {
   UErrorCode status = U_ZERO_ERROR;
-  uint32_t options = UIDNA_DEFAULT;
-  options |= UIDNA_NONTRANSITIONAL_TO_ASCII;
+  uint32_t options =                  // CheckHyphens = false; handled later
+    UIDNA_CHECK_BIDI |                // CheckBidi = true
+    UIDNA_CHECK_CONTEXTJ |            // CheckJoiners = true
+    UIDNA_NONTRANSITIONAL_TO_ASCII;   // Nontransitional_Processing
+  if (mode == IDNA_STRICT) {
+    options |= UIDNA_USE_STD3_RULES;  // UseSTD3ASCIIRules = beStrict
+                                      // VerifyDnsLength = beStrict;
+                                      //   handled later
+  }
+
   UIDNA* uidna = uidna_openUTS46(options, &status);
   if (U_FAILURE(status))
     return -1;
@@ -500,7 +513,35 @@ int32_t ToASCII(MaybeStackBuffer<char>* buf,
                                  &status);
   }
 
-  if (U_FAILURE(status) || (!lenient && info.errors != 0)) {
+  // In UTS #46 which specifies ToASCII, certain error conditions are
+  // configurable through options, and the WHATWG URL Standard promptly elects
+  // to disable some of them to accommodate for real-world use cases.
+  // Unfortunately, ICU4C's IDNA module does not support disabling some of
+  // these options through `options` above, and thus continues throwing
+  // unnecessary errors. To counter this situation, we just filter out the
+  // errors that may have happened afterwards, before deciding whether to
+  // return an error from this function.
+
+  // CheckHyphens = false
+  // (Specified in the current UTS #46 draft rev. 18.)
+  // Refs:
+  // - https://github.com/whatwg/url/issues/53
+  // - https://github.com/whatwg/url/pull/309
+  // - http://www.unicode.org/review/pri317/
+  // - http://www.unicode.org/reports/tr46/tr46-18.html
+  // - https://www.icann.org/news/announcement-2000-01-07-en
+  info.errors &= ~UIDNA_ERROR_HYPHEN_3_4;
+  info.errors &= ~UIDNA_ERROR_LEADING_HYPHEN;
+  info.errors &= ~UIDNA_ERROR_TRAILING_HYPHEN;
+
+  if (mode != IDNA_STRICT) {
+    // VerifyDnsLength = beStrict
+    info.errors &= ~UIDNA_ERROR_EMPTY_LABEL;
+    info.errors &= ~UIDNA_ERROR_LABEL_TOO_LONG;
+    info.errors &= ~UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
+  }
+
+  if (U_FAILURE(status) || (mode != IDNA_LENIENT && info.errors != 0)) {
     len = -1;
     buf->SetLength(0);
   } else {
@@ -516,11 +557,9 @@ static void ToUnicode(const FunctionCallbackInfo<Value>& args) {
   CHECK_GE(args.Length(), 1);
   CHECK(args[0]->IsString());
   Utf8Value val(env->isolate(), args[0]);
-  // optional arg
-  bool lenient = args[1]->BooleanValue(env->context()).FromJust();
 
   MaybeStackBuffer<char> buf;
-  int32_t len = ToUnicode(&buf, *val, val.length(), lenient);
+  int32_t len = ToUnicode(&buf, *val, val.length());
 
   if (len < 0) {
     return env->ThrowError("Cannot convert name to Unicode");
@@ -540,9 +579,10 @@ static void ToASCII(const FunctionCallbackInfo<Value>& args) {
   Utf8Value val(env->isolate(), args[0]);
   // optional arg
   bool lenient = args[1]->BooleanValue(env->context()).FromJust();
+  enum idna_mode mode = lenient ? IDNA_LENIENT : IDNA_DEFAULT;
 
   MaybeStackBuffer<char> buf;
-  int32_t len = ToASCII(&buf, *val, val.length(), lenient);
+  int32_t len = ToASCII(&buf, *val, val.length(), mode);
 
   if (len < 0) {
     return env->ThrowError("Cannot convert name to ASCII");
@@ -561,14 +601,33 @@ static void ToASCII(const FunctionCallbackInfo<Value>& args) {
 // newer wide characters. wcwidth, on the other hand, uses a fixed
 // algorithm that does not take things like emoji into proper
 // consideration.
+//
+// TODO(TimothyGu): Investigate Cc (C0/C1 control codes). Both VTE (used by
+// GNOME Terminal) and Konsole don't consider them to be zero-width (see refs
+// below), and when printed in VTE it is Narrow. However GNOME Terminal doesn't
+// allow it to be input. Linux's PTY terminal prints control characters as
+// Narrow rhombi.
+//
+// TODO(TimothyGu): Investigate Hangul jamo characters. Medial vowels and final
+// consonants are 0-width when combined with initial consonants; otherwise they
+// are technically Wide. But many terminals (including Konsole and
+// VTE/GLib-based) implement all medials and finals as 0-width.
+//
+// Refs: https://eev.ee/blog/2015/09/12/dark-corners-of-unicode/#combining-characters-and-character-width
+// Refs: https://github.com/GNOME/glib/blob/79e4d4c6be/glib/guniprop.c#L388-L420
+// Refs: https://github.com/KDE/konsole/blob/8c6a5d13c0/src/konsole_wcwidth.cpp#L101-L223
 static int GetColumnWidth(UChar32 codepoint,
                           bool ambiguous_as_full_width = false) {
-  if (!u_isdefined(codepoint) ||
-      u_iscntrl(codepoint) ||
-      u_getCombiningClass(codepoint) > 0 ||
-      u_hasBinaryProperty(codepoint, UCHAR_EMOJI_MODIFIER)) {
+  const auto zero_width_mask = U_GC_CC_MASK |  // C0/C1 control code
+                               U_GC_CF_MASK |  // Format control character
+                               U_GC_ME_MASK |  // Enclosing mark
+                               U_GC_MN_MASK;   // Nonspacing mark
+  if (codepoint != 0x00AD &&  // SOFT HYPHEN is Cf but not zero-width
+      ((U_MASK(u_charType(codepoint)) & zero_width_mask) ||
+       u_hasBinaryProperty(codepoint, UCHAR_EMOJI_MODIFIER))) {
     return 0;
   }
+
   // UCHAR_EAST_ASIAN_WIDTH is the Unicode property that identifies a
   // codepoint as being full width, wide, ambiguous, neutral, narrow,
   // or halfwidth.

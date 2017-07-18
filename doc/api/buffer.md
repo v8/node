@@ -42,7 +42,7 @@ const buf4 = Buffer.from([1, 2, 3]);
 const buf5 = Buffer.from('tést');
 
 // Creates a Buffer containing Latin-1 bytes [0x74, 0xe9, 0x73, 0x74].
-const buf6 = Buffer.from('tést', 'latin-1');
+const buf6 = Buffer.from('tést', 'latin1');
 ```
 
 ## `Buffer.from()`, `Buffer.alloc()`, and `Buffer.allocUnsafe()`
@@ -193,11 +193,11 @@ The character encodings currently supported by Node.js include:
 
 * `'hex'` - Encode each byte as two hexadecimal characters.
 
-_Note_: Today's browsers follow the [WHATWG spec] which aliases both 'latin1' and
-ISO-8859-1 to win-1252. This means that while doing something like `http.get()`,
-if the returned charset is one of those listed in the WHATWG spec it's possible
-that the server actually returned win-1252-encoded data, and using `'latin1'`
-encoding may incorrectly decode the characters.
+*Note*: Today's browsers follow the [WHATWG spec] which aliases both 'latin1'
+and ISO-8859-1 to win-1252. This means that while doing something like
+`http.get()`, if the returned charset is one of those listed in the WHATWG spec
+it's possible that the server actually returned win-1252-encoded data, and
+using `'latin1'` encoding may incorrectly decode the characters.
 
 ## Buffers and TypedArray
 <!-- YAML
@@ -447,8 +447,8 @@ changes:
 * `size` {integer} The desired length of the new `Buffer`
 
 Allocates a new `Buffer` of `size` bytes.  If the `size` is larger than
-[`buffer.kMaxLength`] or smaller than 0, a [`RangeError`] will be thrown.
-A zero-length `Buffer` will be created if `size` is 0.
+[`buffer.constants.MAX_LENGTH`] or smaller than 0, a [`RangeError`] will be
+thrown. A zero-length `Buffer` will be created if `size` is 0.
 
 Prior to Node.js 8.0.0, the underlying memory for `Buffer` instances
 created in this way is *not initialized*. The contents of a newly created
@@ -528,8 +528,8 @@ console.log(buf);
 ```
 
 Allocates a new `Buffer` of `size` bytes.  If the `size` is larger than
-[`buffer.kMaxLength`] or smaller than 0, a [`RangeError`] will be thrown.
-A zero-length `Buffer` will be created if `size` is 0.
+[`buffer.constants.MAX_LENGTH`] or smaller than 0, a [`RangeError`] will be
+thrown. A zero-length `Buffer` will be created if `size` is 0.
 
 If `fill` is specified, the allocated `Buffer` will be initialized by calling
 [`buf.fill(fill)`][`buf.fill()`].
@@ -573,8 +573,8 @@ changes:
 * `size` {integer} The desired length of the new `Buffer`
 
 Allocates a new `Buffer` of `size` bytes.  If the `size` is larger than
-[`buffer.kMaxLength`] or smaller than 0, a [`RangeError`] will be thrown.
-A zero-length `Buffer` will be created if `size` is 0.
+[`buffer.constants.MAX_LENGTH`] or smaller than 0, a [`RangeError`] will be
+thrown. A zero-length `Buffer` will be created if `size` is 0.
 
 The underlying memory for `Buffer` instances created in this way is *not
 initialized*. The contents of the newly created `Buffer` are unknown and
@@ -619,8 +619,8 @@ added: v5.10.0
 * `size` {integer} The desired length of the new `Buffer`
 
 Allocates a new `Buffer` of `size` bytes.  If the `size` is larger than
-[`buffer.kMaxLength`] or smaller than 0, a [`RangeError`] will be thrown.
-A zero-length `Buffer` will be created if `size` is 0.
+[`buffer.constants.MAX_LENGTH`] or smaller than 0, a [`RangeError`] will be
+thrown. A zero-length `Buffer` will be created if `size` is 0.
 
 The underlying memory for `Buffer` instances created in this way is *not
 initialized*. The contents of the newly created `Buffer` are unknown and
@@ -686,7 +686,7 @@ Returns the actual byte length of a string. This is not the same as
 [`String.prototype.length`] since that returns the number of *characters* in
 a string.
 
-*Note* that for `'base64'` and `'hex'`, this function assumes valid input. For
+*Note*: For `'base64'` and `'hex'`, this function assumes valid input. For
 strings that contain non-Base64/Hex-encoded data (e.g. whitespace), the return
 value might be greater than the length of a `Buffer` created from the string.
 
@@ -707,7 +707,7 @@ actual byte length is returned.
 <!-- YAML
 added: v0.11.13
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The arguments can now be `Uint8Array`s.
 -->
@@ -736,7 +736,7 @@ console.log(arr.sort(Buffer.compare));
 <!-- YAML
 added: v0.7.11
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The elements of `list` can now be `Uint8Array`s.
 -->
@@ -908,6 +908,44 @@ console.log(buf2.toString());
 
 A `TypeError` will be thrown if `str` is not a string.
 
+### Class Method: Buffer.from(object[, offsetOrEncoding[, length]])
+<!-- YAML
+added: REPLACEME
+-->
+
+* `object` {Object} An object supporting `Symbol.toPrimitive` or `valueOf()`
+* `offsetOrEncoding` {number|string} A byte-offset or encoding, depending on
+  the value returned either by `object.valueOf()` or
+  `object[Symbol.toPrimitive]()`.
+* `length` {number} A length, depending on the value returned either by
+  `object.valueOf()` or `object[Symbol.toPrimitive]()`.
+
+For objects whose `valueOf()` function returns a value not strictly equal to
+`object`, returns `Buffer.from(object.valueOf(), offsetOrEncoding, length)`.
+
+For example:
+
+```js
+const buf = Buffer.from(new String('this is a test'));
+// <Buffer 74 68 69 73 20 69 73 20 61 20 74 65 73 74>
+```
+
+For objects that support `Symbol.toPrimitive`, returns
+`Buffer.from(object[Symbol.toPrimitive](), offsetOrEncoding, length)`.
+
+For example:
+
+```js
+class Foo {
+  [Symbol.toPrimitive]() {
+    return 'this is a test';
+  }
+}
+
+const buf = Buffer.from(new Foo(), 'utf8');
+// <Buffer 74 68 69 73 20 69 73 20 61 20 74 65 73 74>
+```
+
 ### Class Method: Buffer.isBuffer(obj)
 <!-- YAML
 added: v0.1.101
@@ -959,7 +997,7 @@ Example: Copy an ASCII string into a `Buffer`, one byte at a time
 const str = 'Node.js';
 const buf = Buffer.allocUnsafe(str.length);
 
-for (let i = 0; i < str.length ; i++) {
+for (let i = 0; i < str.length; i++) {
   buf[i] = str.charCodeAt(i);
 }
 
@@ -984,7 +1022,7 @@ console.log(buffer.buffer === arrayBuffer);
 <!-- YAML
 added: v0.11.13
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The `target` parameter can now be a `Uint8Array`.
   - version: v5.11.0
@@ -1087,7 +1125,7 @@ byte 16 through byte 19 into `buf2`, starting at the 8th byte in `buf2`
 const buf1 = Buffer.allocUnsafe(26);
 const buf2 = Buffer.allocUnsafe(26).fill('!');
 
-for (let i = 0 ; i < 26 ; i++) {
+for (let i = 0; i < 26; i++) {
   // 97 is the decimal ASCII value for 'a'
   buf1[i] = i + 97;
 }
@@ -1104,7 +1142,7 @@ overlapping region within the same `Buffer`
 ```js
 const buf = Buffer.allocUnsafe(26);
 
-for (let i = 0 ; i < 26 ; i++) {
+for (let i = 0; i < 26; i++) {
   // 97 is the decimal ASCII value for 'a'
   buf[i] = i + 97;
 }
@@ -1146,7 +1184,7 @@ for (const pair of buf.entries()) {
 <!-- YAML
 added: v0.11.13
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The arguments can now be `Uint8Array`s.
 -->
@@ -1257,7 +1295,7 @@ console.log(buf.includes('this', 4));
 <!-- YAML
 added: v1.5.0
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The `value` can now be a `Uint8Array`.
   - version: v5.7.0, v4.4.0
@@ -1340,6 +1378,10 @@ console.log(b.indexOf('b', null));
 console.log(b.indexOf('b', []));
 ```
 
+If `value` is an empty string or empty `Buffer` and `byteOffset` is less
+than `buf.length`, `byteOffset` will be returned. If `value` is empty and
+`byteOffset` is at least `buf.length`, `buf.length` will be returned.
+
 ### buf.keys()
 <!-- YAML
 added: v1.1.0
@@ -1370,7 +1412,7 @@ for (const key of buf.keys()) {
 <!-- YAML
 added: v6.0.0
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The `value` can now be a `Uint8Array`.
 -->
@@ -1450,6 +1492,8 @@ console.log(b.lastIndexOf('b', null));
 console.log(b.lastIndexOf('b', []));
 ```
 
+If `value` is an empty string or empty `Buffer`, `byteOffset` will be returned.
+
 ### buf.length
 <!-- YAML
 added: v0.1.90
@@ -1497,7 +1541,7 @@ console.log(buf.length);
 
 ### buf.parent
 <!-- YAML
-deprecated: REPLACEME
+deprecated: v8.0.0
 -->
 
 > Stability: 0 - Deprecated: Use [`buf.buffer`] instead.
@@ -1862,8 +1906,8 @@ changes:
 Returns a new `Buffer` that references the same memory as the original, but
 offset and cropped by the `start` and `end` indices.
 
-**Note that modifying the new `Buffer` slice will modify the memory in the
-original `Buffer` because the allocated memory of the two objects overlap.**
+*Note*: Modifying the new `Buffer` slice will modify the memory in the
+original `Buffer` because the allocated memory of the two objects overlap.
 
 Example: Create a `Buffer` with the ASCII alphabet, take a slice, and then modify
 one byte from the original `Buffer`
@@ -1871,7 +1915,7 @@ one byte from the original `Buffer`
 ```js
 const buf1 = Buffer.allocUnsafe(26);
 
-for (let i = 0 ; i < 26 ; i++) {
+for (let i = 0; i < 26; i++) {
   // 97 is the decimal ASCII value for 'a'
   buf1[i] = i + 97;
 }
@@ -2021,9 +2065,9 @@ const json = JSON.stringify(buf);
 console.log(json);
 
 const copy = JSON.parse(json, (key, value) => {
-  return value && value.type === 'Buffer'
-    ? Buffer.from(value.data)
-    : value;
+  return value && value.type === 'Buffer' ?
+    Buffer.from(value.data) :
+    value;
 });
 
 // Prints: <Buffer 01 02 03 04 05>
@@ -2044,12 +2088,15 @@ added: v0.1.90
 Decodes `buf` to a string according to the specified character encoding in
 `encoding`. `start` and `end` may be passed to decode only a subset of `buf`.
 
+The maximum length of a string instance (in UTF-16 code units) is available
+as [`buffer.constants.MAX_STRING_LENGTH`][].
+
 Examples:
 
 ```js
 const buf1 = Buffer.allocUnsafe(26);
 
-for (let i = 0 ; i < 26 ; i++) {
+for (let i = 0; i < 26; i++) {
   // 97 is the decimal ASCII value for 'a'
   buf1[i] = i + 97;
 }
@@ -2501,8 +2548,7 @@ added: v3.0.0
 
 * {integer} The largest size allowed for a single `Buffer` instance
 
-On 32-bit architectures, this value is `(2^30)-1` (~1GB).
-On 64-bit architectures, this value is `(2^31)-1` (~2GB).
+An alias for [`buffer.constants.MAX_LENGTH`][]
 
 Note that this is a property on the `buffer` module returned by
 `require('buffer')`, not on the `Buffer` global or a `Buffer` instance.
@@ -2511,7 +2557,7 @@ Note that this is a property on the `buffer` module returned by
 <!-- YAML
 added: v7.1.0
 changes:
-  - version: REPLACEME
+  - version: v8.0.0
     pr-url: https://github.com/nodejs/node/pull/10236
     description: The `source` parameter can now be a `Uint8Array`.
 -->
@@ -2593,8 +2639,8 @@ deprecated: v6.0.0
 * `size` {integer} The desired length of the new `SlowBuffer`
 
 Allocates a new `Buffer` of `size` bytes.  If the `size` is larger than
-[`buffer.kMaxLength`] or smaller than 0, a [`RangeError`] will be thrown.
-A zero-length `Buffer` will be created if `size` is 0.
+[`buffer.constants.MAX_LENGTH`] or smaller than 0, a [`RangeError`] will be
+thrown. A zero-length `Buffer` will be created if `size` is 0.
 
 The underlying memory for `SlowBuffer` instances is *not initialized*. The
 contents of a newly created `SlowBuffer` are unknown and may contain
@@ -2603,7 +2649,7 @@ sensitive data. Use [`buf.fill(0)`][`buf.fill()`] to initialize a `SlowBuffer` t
 Example:
 
 ```js
-const SlowBuffer = require('buffer').SlowBuffer;
+const { SlowBuffer } = require('buffer');
 
 const buf = new SlowBuffer(5);
 
@@ -2616,16 +2662,41 @@ buf.fill(0);
 console.log(buf);
 ```
 
-[`buf.compare()`]: #buffer_buf_compare_target_targetstart_targetend_sourcestart_sourceend
-[`buf.buffer`]: #buffer_buf_buffer
-[`buf.entries()`]: #buffer_buf_entries
-[`buf.indexOf()`]: #buffer_buf_indexof_value_byteoffset_encoding
-[`buf.fill()`]: #buffer_buf_fill_value_offset_end_encoding
-[`buf.keys()`]: #buffer_buf_keys
-[`buf.length`]: #buffer_buf_length
-[`buf.slice()`]: #buffer_buf_slice_start_end
-[`buf.values()`]: #buffer_buf_values
-[`buffer.kMaxLength`]: #buffer_buffer_kmaxlength
+
+## Buffer Constants
+<!-- YAML
+added: REPLACEME
+-->
+
+Note that `buffer.constants` is a property on the `buffer` module returned by
+`require('buffer')`, not on the `Buffer` global or a `Buffer` instance.
+
+### buffer.constants.MAX_LENGTH
+<!-- YAML
+added: REPLACEME
+-->
+
+* {integer} The largest size allowed for a single `Buffer` instance
+
+On 32-bit architectures, this value is `(2^30)-1` (~1GB).
+On 64-bit architectures, this value is `(2^31)-1` (~2GB).
+
+This value is also available as [`buffer.kMaxLength`][].
+
+### buffer.constants.MAX_STRING_LENGTH
+<!-- YAML
+added: REPLACEME
+-->
+
+* {integer} The largest length allowed for a single `string` instance
+
+Represents the largest `length` that a `string` primitive can have, counted
+in UTF-16 code units.
+
+This value may depend on the JS engine that is being used.
+
+[`ArrayBuffer#slice()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/slice
+[`ArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
 [`Buffer.alloc()`]: #buffer_class_method_buffer_alloc_size_fill_encoding
 [`Buffer.allocUnsafe()`]: #buffer_class_method_buffer_allocunsafe_size
 [`Buffer.allocUnsafeSlow()`]: #buffer_class_method_buffer_allocunsafeslow_size
@@ -2634,21 +2705,30 @@ console.log(buf);
 [`Buffer.from(buffer)`]: #buffer_class_method_buffer_from_buffer
 [`Buffer.from(string)`]: #buffer_class_method_buffer_from_string_encoding
 [`Buffer.poolSize`]: #buffer_class_property_buffer_poolsize
-[`RangeError`]: errors.html#errors_class_rangeerror
-[`util.inspect()`]: util.html#util_util_inspect_object_options
-
-[`ArrayBuffer`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer
-[`ArrayBuffer#slice()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer/slice
 [`DataView`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView
-[iterator]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols
 [`JSON.stringify()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify
-[RFC1345]: https://tools.ietf.org/html/rfc1345
-[RFC4648, Section 5]: https://tools.ietf.org/html/rfc4648#section-5
-[`String.prototype.length`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/length
+[`RangeError`]: errors.html#errors_class_rangeerror
 [`String#indexOf()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/indexOf
 [`String#lastIndexOf()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/lastIndexOf
-[`TypedArray`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
+[`String.prototype.length`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/length
 [`TypedArray.from()`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/from
+[`TypedArray`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray
 [`Uint32Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint32Array
 [`Uint8Array`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array
+[`buf.buffer`]: #buffer_buf_buffer
+[`buf.compare()`]: #buffer_buf_compare_target_targetstart_targetend_sourcestart_sourceend
+[`buf.entries()`]: #buffer_buf_entries
+[`buf.fill()`]: #buffer_buf_fill_value_offset_end_encoding
+[`buf.indexOf()`]: #buffer_buf_indexof_value_byteoffset_encoding
+[`buf.keys()`]: #buffer_buf_keys
+[`buf.length`]: #buffer_buf_length
+[`buf.slice()`]: #buffer_buf_slice_start_end
+[`buf.values()`]: #buffer_buf_values
+[`buffer.kMaxLength`]: #buffer_buffer_kmaxlength
+[`buffer.constants.MAX_LENGTH`]: #buffer_buffer_constants_max_length
+[`buffer.constants.MAX_STRING_LENGTH`]: #buffer_buffer_constants_max_string_length
+[`util.inspect()`]: util.html#util_util_inspect_object_options
+[RFC1345]: https://tools.ietf.org/html/rfc1345
+[RFC4648, Section 5]: https://tools.ietf.org/html/rfc4648#section-5
 [WHATWG spec]: https://encoding.spec.whatwg.org/
+[iterator]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols

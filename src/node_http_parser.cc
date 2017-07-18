@@ -476,6 +476,8 @@ class Parser : public AsyncWrap {
     ASSIGN_OR_RETURN_UNWRAP(&parser, args.Holder());
     // Should always be called from the same context.
     CHECK_EQ(env, parser->env());
+    // The parser is being reused. Reset the uid and call init() callbacks.
+    parser->AsyncReset();
     parser->Init(type);
   }
 
@@ -494,6 +496,7 @@ class Parser : public AsyncWrap {
   static void Consume(const FunctionCallbackInfo<Value>& args) {
     Parser* parser;
     ASSIGN_OR_RETURN_UNWRAP(&parser, args.Holder());
+    CHECK(args[0]->IsExternal());
     Local<External> stream_obj = args[0].As<External>();
     StreamBase* stream = static_cast<StreamBase*>(stream_obj->Value());
     CHECK_NE(stream, nullptr);
@@ -785,6 +788,7 @@ void InitHttpParser(Local<Object> target,
 #undef V
   target->Set(FIXED_ONE_BYTE_STRING(env->isolate(), "methods"), methods);
 
+  env->SetProtoMethod(t, "getAsyncId", AsyncWrap::GetAsyncId);
   env->SetProtoMethod(t, "close", Parser::Close);
   env->SetProtoMethod(t, "execute", Parser::Execute);
   env->SetProtoMethod(t, "finish", Parser::Finish);

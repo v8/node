@@ -96,6 +96,13 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 }
 
 
+int uv__io_fork(uv_loop_t* loop) {
+  uv__platform_loop_delete(loop);
+
+  return uv__platform_loop_init(loop);
+}
+
+
 int uv__io_check_fd(uv_loop_t* loop, int fd) {
   struct poll_ctl pc;
 
@@ -848,6 +855,7 @@ int uv_fs_event_start(uv_fs_event_t* handle,
   uv__io_init(&handle->event_watcher, uv__ahafs_event, fd);
   handle->path = uv__strdup(filename);
   handle->cb = cb;
+  handle->dir_filename = NULL;
 
   uv__io_start(handle->loop, &handle->event_watcher, POLLIN);
 

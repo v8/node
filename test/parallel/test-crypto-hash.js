@@ -1,13 +1,11 @@
 'use strict';
 const common = require('../common');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-
-if (!common.hasCrypto) {
-  common.skip('missing crypto');
-  return;
-}
 const crypto = require('crypto');
 
 // Test hashing
@@ -108,10 +106,12 @@ const h3 = crypto.createHash('sha256');
 h3.digest();
 assert.throws(function() {
   h3.digest();
-},
-              /Digest already called/);
+}, /Digest already called/);
 
 assert.throws(function() {
   h3.update('foo');
-},
-              /Digest already called/);
+}, /Digest already called/);
+
+assert.throws(function() {
+  crypto.createHash('sha256').digest('ucs2');
+}, /^Error: hash\.digest\(\) does not support UTF-16$/);

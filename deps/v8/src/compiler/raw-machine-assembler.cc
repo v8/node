@@ -166,6 +166,12 @@ void RawMachineAssembler::PopAndReturn(Node* pop, Node* v1, Node* v2,
 
 void RawMachineAssembler::DebugBreak() { AddNode(machine()->DebugBreak()); }
 
+void RawMachineAssembler::Unreachable() {
+  Node* ret = MakeNode(common()->Throw(), 0, nullptr);
+  schedule()->AddThrow(CurrentBlock(), ret);
+  current_block_ = nullptr;
+}
+
 void RawMachineAssembler::Comment(const char* msg) {
   AddNode(machine()->Comment(msg));
 }
@@ -272,7 +278,17 @@ Node* RawMachineAssembler::CallCFunction8(
       Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
   return AddNode(common()->Call(descriptor), arraysize(args), args);
 }
+BasicBlock* RawMachineAssembler::Use(RawMachineLabel* label) {
+  label->used_ = true;
+  return EnsureBlock(label);
+}
 
+BasicBlock* RawMachineAssembler::EnsureBlock(RawMachineLabel* label) {
+  if (label->block_ == nullptr) {
+    label->block_ = schedule()->NewBasicBlock();
+  }
+  return label->block_;
+}
 
 void RawMachineAssembler::Bind(RawMachineLabel* label) {
   DCHECK(current_block_ == nullptr);
@@ -282,18 +298,29 @@ void RawMachineAssembler::Bind(RawMachineLabel* label) {
   current_block_->set_deferred(label->deferred_);
 }
 
-
-BasicBlock* RawMachineAssembler::Use(RawMachineLabel* label) {
-  label->used_ = true;
-  return EnsureBlock(label);
+#if DEBUG
+void RawMachineAssembler::Bind(RawMachineLabel* label,
+                               AssemblerDebugInfo info) {
+  if (current_block_ != nullptr) {
+    std::stringstream str;
+    str << "Binding label without closing previous block:"
+        << "\n#    label:          " << info
+        << "\n#    previous block: " << *current_block_;
+    FATAL(str.str().c_str());
+  }
+  Bind(label);
+  current_block_->set_debug_info(info);
 }
 
-
-BasicBlock* RawMachineAssembler::EnsureBlock(RawMachineLabel* label) {
-  if (label->block_ == nullptr) label->block_ = schedule()->NewBasicBlock();
-  return label->block_;
+void RawMachineAssembler::PrintCurrentBlock(std::ostream& os) {
+  os << CurrentBlock();
 }
 
+void RawMachineAssembler::SetInitialDebugInformation(
+    AssemblerDebugInfo debug_info) {
+  CurrentBlock()->set_debug_info(debug_info);
+}
+#endif  // DEBUG
 
 BasicBlock* RawMachineAssembler::CurrentBlock() {
   DCHECK(current_block_);
@@ -332,7 +359,11 @@ Node* RawMachineAssembler::MakeNode(const Operator* op, int input_count,
   return graph()->NewNodeUnchecked(op, input_count, inputs);
 }
 
-RawMachineLabel::~RawMachineLabel() { DCHECK(bound_ || !used_); }
+RawMachineLabel::~RawMachineLabel() {
+  // If this DCHECK fails, it means that the label has been bound but it's not
+  // used, or the opposite. This would cause the register allocator to crash.
+  DCHECK_EQ(bound_, used_);
+}
 
 }  // namespace compiler
 }  // namespace internal

@@ -23,14 +23,11 @@
 // Flags: --expose-gc
 
 const common = require('../common');
-const assert = require('assert');
-
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
-const tls = require('tls');
 
+const assert = require('assert');
+const tls = require('tls');
 const fs = require('fs');
 
 assert.strictEqual(
@@ -40,8 +37,8 @@ assert.strictEqual(
 );
 
 tls.createServer({
-  cert: fs.readFileSync(common.fixturesDir + '/test_cert.pem'),
-  key: fs.readFileSync(common.fixturesDir + '/test_key.pem')
+  cert: fs.readFileSync(`${common.fixturesDir}/test_cert.pem`),
+  key: fs.readFileSync(`${common.fixturesDir}/test_key.pem`)
 }).listen(common.PORT);
 
 {

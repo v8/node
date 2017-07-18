@@ -12,6 +12,7 @@ LOGLEVEL ?= silent
 OSTYPE := $(shell uname -s | tr '[A-Z]' '[a-z]')
 COVTESTS ?= test
 GTEST_FILTER ?= "*"
+GNUMAKEFLAGS += --no-print-directory
 
 ifdef JOBS
   PARALLEL_ARGS = -j $(JOBS)
@@ -196,7 +197,8 @@ test: all
 	$(MAKE) build-addons-napi
 	$(MAKE) cctest
 	$(PYTHON) tools/test.py --mode=release -J \
-		doctool inspector known_issues message pseudo-tty parallel sequential $(CI_NATIVE_SUITES)
+		$(CI_JS_SUITES) \
+		$(CI_NATIVE_SUITES)
 	$(MAKE) lint
 
 test-parallel: all
@@ -204,6 +206,9 @@ test-parallel: all
 
 test-valgrind: all
 	$(PYTHON) tools/test.py --mode=release --valgrind sequential parallel message
+
+test-check-deopts: all
+	$(PYTHON) tools/test.py --mode=release --check-deopts parallel sequential -J
 
 # Implicitly depends on $(NODE_EXE).  We don't depend on it explicitly because
 # it always triggers a rebuild due to it being a .PHONY rule.  See the comment
@@ -323,7 +328,7 @@ test-all-valgrind: test-build
 	$(PYTHON) tools/test.py --mode=debug,release --valgrind
 
 CI_NATIVE_SUITES := addons addons-napi
-CI_JS_SUITES := doctool inspector known_issues message parallel pseudo-tty sequential
+CI_JS_SUITES := async-hooks doctool inspector known_issues message parallel pseudo-tty sequential
 
 # Build and test addons without building anything else
 test-ci-native: LOGLEVEL := info
@@ -388,6 +393,9 @@ test-node-inspect: $(NODE_EXE)
 test-tick-processor: all
 	$(PYTHON) tools/test.py tick-processor
 
+test-hash-seed: all
+	$(NODE) test/pummel/test-hash-seed.js
+
 test-known-issues: all
 	$(PYTHON) tools/test.py known_issues
 
@@ -400,13 +408,18 @@ test-npm-publish: $(NODE_EXE)
 test-addons-napi: test-build-addons-napi
 	$(PYTHON) tools/test.py --mode=release addons-napi
 
+test-addons-napi-clean:
+	$(RM) -r test/addons-napi/*/build
+	$(RM) test/addons-napi/.buildstamp
+
 test-addons: test-build test-addons-napi
 	$(PYTHON) tools/test.py --mode=release addons
 
 test-addons-clean:
-	$(RM) -rf test/addons/??_*/
-	$(RM) -rf test/addons/*/build
+	$(RM) -r test/addons/??_*/
+	$(RM) -r test/addons/*/build
 	$(RM) test/addons/.buildstamp test/addons/.docbuildstamp
+	$(MAKE) test-addons-napi-clean
 
 test-timers:
 	$(MAKE) --directory=tools faketime
@@ -414,6 +427,9 @@ test-timers:
 
 test-timers-clean:
 	$(MAKE) --directory=tools clean
+
+test-async-hooks:
+	$(PYTHON) tools/test.py --mode=release async-hooks
 
 
 ifneq ("","$(wildcard deps/v8/tools/run-tests.py)")
@@ -424,6 +440,8 @@ test-v8: v8
         --no-presubmit \
         --shell-dir=$(PWD)/deps/v8/out/$(V8_ARCH).$(BUILDTYPE_LOWER) \
 	 $(TAP_V8)
+	@echo Testing hash seed
+	$(MAKE) test-hash-seed
 
 test-v8-intl: v8
 #	note: performs full test unless QUICKCHECK is specified
@@ -643,7 +661,7 @@ endif
 BINARYTAR=$(BINARYNAME).tar
 # OSX doesn't have xz installed by default, http://macpkg.sourceforge.net/
 XZ=$(shell which xz > /dev/null 2>&1; echo $$?)
-XZ_COMPRESSION ?= 9
+XZ_COMPRESSION ?= 9e
 PKG=$(TARNAME).pkg
 PACKAGEMAKER ?= /Developer/Applications/Utilities/PackageMaker.app/Contents/MacOS/PackageMaker
 PKGDIR=out/dist-osx
@@ -699,9 +717,9 @@ pkg: $(PKG)
 
 pkg-upload: pkg
 	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
-	chmod 664 node-$(FULLVERSION).pkg
-	scp -p node-$(FULLVERSION).pkg $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg
-	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).pkg.done"
+	chmod 664 $(TARNAME).pkg
+	scp -p $(TARNAME).pkg $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).pkg
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).pkg.done"
 
 $(TARBALL): release-only $(NODE_EXE) doc
 	git checkout-index -a -f --prefix=$(TARNAME)/
@@ -731,19 +749,19 @@ tar: $(TARBALL)
 
 tar-upload: tar
 	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
-	chmod 664 node-$(FULLVERSION).tar.gz
-	scp -p node-$(FULLVERSION).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz
-	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.gz.done"
+	chmod 664 $(TARNAME).tar.gz
+	scp -p $(TARNAME).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).tar.gz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).tar.gz.done"
 ifeq ($(XZ), 0)
-	chmod 664 node-$(FULLVERSION).tar.xz
-	scp -p node-$(FULLVERSION).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz
-	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION).tar.xz.done"
+	chmod 664 $(TARNAME).tar.xz
+	scp -p $(TARNAME).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).tar.xz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME).tar.xz.done"
 endif
 
 doc-upload: doc
-	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
+	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs/"
 	chmod -R ug=rw-x+X,o=r+X out/doc/
-	scp -pr out/doc/ $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs/
+	scp -pr out/doc/* $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs/
 	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/docs.done"
 
 $(TARBALL)-headers: release-only
@@ -801,13 +819,13 @@ binary: $(BINARYTAR)
 
 binary-upload: binary
 	ssh $(STAGINGSERVER) "mkdir -p nodejs/$(DISTTYPEDIR)/$(FULLVERSION)"
-	chmod 664 node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz
-	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz
-	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.gz.done"
+	chmod 664 $(TARNAME)-$(OSTYPE)-$(ARCH).tar.gz
+	scp -p $(TARNAME)-$(OSTYPE)-$(ARCH).tar.gz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-$(OSTYPE)-$(ARCH).tar.gz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-$(OSTYPE)-$(ARCH).tar.gz.done"
 ifeq ($(XZ), 0)
-	chmod 664 node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz
-	scp -p node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz
-	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/node-$(FULLVERSION)-$(OSTYPE)-$(ARCH).tar.xz.done"
+	chmod 664 $(TARNAME)-$(OSTYPE)-$(ARCH).tar.xz
+	scp -p $(TARNAME)-$(OSTYPE)-$(ARCH).tar.xz $(STAGINGSERVER):nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-$(OSTYPE)-$(ARCH).tar.xz
+	ssh $(STAGINGSERVER) "touch nodejs/$(DISTTYPEDIR)/$(FULLVERSION)/$(TARNAME)-$(OSTYPE)-$(ARCH).tar.xz.done"
 endif
 
 bench-net: all
@@ -855,13 +873,13 @@ bench-ci: bench
 
 jslint:
 	@echo "Running JS linter..."
-	$(NODE) tools/eslint/bin/eslint.js --cache --rulesdir=tools/eslint-rules \
-	  benchmark lib test tools
+	$(NODE) tools/eslint/bin/eslint.js --cache --rulesdir=tools/eslint-rules --ext=.js,.md \
+	  benchmark doc lib test tools
 
 jslint-ci:
 	@echo "Running JS linter..."
 	$(NODE) tools/jslint.js $(PARALLEL_ARGS) -f tap -o test-eslint.tap \
-		benchmark lib test tools
+		benchmark doc lib test tools
 
 CPPLINT_EXCLUDE ?=
 CPPLINT_EXCLUDE += src/node_root_certs.h
@@ -890,7 +908,7 @@ cpplint:
 	@$(PYTHON) tools/cpplint.py $(CPPLINT_FILES)
 	@$(PYTHON) tools/check-imports.py
 
-ifneq ("","$(wildcard tools/eslint/lib/eslint.js)")
+ifneq ("","$(wildcard tools/eslint/bin/eslint.js)")
 lint:
 	@EXIT_STATUS=0 ; \
 	$(MAKE) jslint || EXIT_STATUS=$$? ; \
@@ -911,6 +929,7 @@ lint:
 	@echo "Linting is not available through the source tarball."
 	@echo "Use the git repo instead:" \
 		"$ git clone https://github.com/nodejs/node.git"
+	exit 1
 
 lint-ci: lint
 endif
@@ -969,12 +988,14 @@ endif
   test-addons \
   test-addons-clean \
   test-addons-napi \
+  test-addons-napi-clean \
   test-all \
   test-ci \
   test-ci-js \
   test-ci-native \
   test-gc \
   test-gc-clean \
+  test-hash-seed \
   test-v8 \
   test-v8-all \
   test-v8-benchmarks \

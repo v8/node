@@ -1,8 +1,6 @@
 'use strict';
-const common = require('../common');
 const assert = require('assert');
-
-const Buffer = require('buffer').Buffer;
+const common = require('../common');
 
 const b = Buffer.from('abcdef');
 const buf_a = Buffer.from('a');
@@ -29,10 +27,10 @@ assert(b.includes('bc', -Infinity));
 assert(!b.includes('bc', Infinity));
 assert(b.includes('f'), b.length - 1);
 assert(!b.includes('z'));
-assert(!b.includes(''));
-assert(!b.includes('', 1));
-assert(!b.includes('', b.length + 1));
-assert(!b.includes('', Infinity));
+assert(b.includes(''));
+assert(b.includes('', 1));
+assert(b.includes('', b.length + 1));
+assert(b.includes('', Infinity));
 assert(b.includes(buf_a));
 assert(!b.includes(buf_a, 1));
 assert(!b.includes(buf_a, -1));
@@ -51,10 +49,10 @@ assert(b.includes(buf_bc, -Infinity));
 assert(!b.includes(buf_bc, Infinity));
 assert(b.includes(buf_f), b.length - 1);
 assert(!b.includes(buf_z));
-assert(!b.includes(buf_empty));
-assert(!b.includes(buf_empty, 1));
-assert(!b.includes(buf_empty, b.length + 1));
-assert(!b.includes(buf_empty, Infinity));
+assert(b.includes(buf_empty));
+assert(b.includes(buf_empty, 1));
+assert(b.includes(buf_empty, b.length + 1));
+assert(b.includes(buf_empty, Infinity));
 assert(b.includes(0x61));
 assert(!b.includes(0x61, 1));
 assert(!b.includes(0x61, -1));
@@ -199,7 +197,7 @@ const longBufferString = Buffer.from(longString);
 let pattern = 'ABACABADABACABA';
 for (let i = 0; i < longBufferString.length - pattern.length; i += 7) {
   const includes = longBufferString.includes(pattern, i);
-  assert(includes, 'Long ABACABA...-string at index ' + i);
+  assert(includes, `Long ABACABA...-string at index ${i}`);
 }
 assert(longBufferString.includes('AJABACA'), 'Long AJABACA, First J');
 assert(longBufferString.includes('AJABACA', 511), 'Long AJABACA, Second J');
@@ -273,10 +271,14 @@ for (let lengthIndex = 0; lengthIndex < lengths.length; lengthIndex++) {
   }
 }
 
-const expectedError =
-  /^TypeError: "val" argument must be string, number, Buffer or Uint8Array$/;
+const expectedError = common.expectsError({
+  code: 'ERR_INVALID_ARG_TYPE',
+  type: TypeError,
+  message: 'The "val" argument must be one of type ' +
+           'string, buffer, or uint8Array'
+}, 3);
 assert.throws(() => {
-  b.includes(common.noop);
+  b.includes(() => {});
 }, expectedError);
 assert.throws(() => {
   b.includes({});

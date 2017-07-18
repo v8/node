@@ -1,9 +1,7 @@
 'use strict';
 const common = require('../common');
-if (!common.hasCrypto) {
+if (!common.hasCrypto)
   common.skip('missing crypto');
-  return;
-}
 
 const assert = require('assert');
 const fs = require('fs');
@@ -12,9 +10,9 @@ const stream = require('stream');
 const net = require('net');
 
 const cert_dir = common.fixturesDir;
-const options = { key: fs.readFileSync(cert_dir + '/test_key.pem'),
-                  cert: fs.readFileSync(cert_dir + '/test_cert.pem'),
-                  ca: [ fs.readFileSync(cert_dir + '/test_ca.pem') ],
+const options = { key: fs.readFileSync(`${cert_dir}/test_key.pem`),
+                  cert: fs.readFileSync(`${cert_dir}/test_cert.pem`),
+                  ca: [ fs.readFileSync(`${cert_dir}/test_ca.pem`) ],
                   ciphers: 'AES256-GCM-SHA384' };
 const content = 'hello world';
 const recv_bufs = [];

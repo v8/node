@@ -14,7 +14,7 @@ var bench = common.createBenchmark(main, {
 
 function main(conf) {
   var api = conf.api;
-  if (api === 'stream' && process.version.match(/^v0\.[0-8]\./)) {
+  if (api === 'stream' && /^v0\.[0-8]\./.test(process.version)) {
     console.error('Crypto streams not available until v0.10');
     // use the legacy, just so that we can compare them.
     api = 'legacy';
@@ -35,7 +35,7 @@ function main(conf) {
       message = Buffer.alloc(conf.len, 'b');
       break;
     default:
-      throw new Error('unknown message type: ' + conf.type);
+      throw new Error(`unknown message type: ${conf.type}`);
   }
 
   var fn = api === 'stream' ? streamWrite : legacyWrite;

@@ -40,6 +40,10 @@
 #include "node_i18n.h"
 #endif
 
+#if HAVE_INSPECTOR
+#include "inspector_io.h"
+#endif
+
 #if defined HAVE_DTRACE || defined HAVE_ETW
 #include "node_dtrace.h"
 #endif
@@ -54,6 +58,7 @@
 #include "env.h"
 #include "env-inl.h"
 #include "handle_wrap.h"
+#include "http_parser.h"
 #include "req-wrap.h"
 #include "req-wrap-inl.h"
 #include "string_bytes.h"
@@ -72,6 +77,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>  // _O_RDWR
 #include <limits.h>  // PATH_MAX
 #include <locale.h>
 #include <signal.h>
@@ -141,6 +147,7 @@ using v8::Number;
 using v8::Object;
 using v8::ObjectTemplate;
 using v8::Promise;
+using v8::PromiseHookType;
 using v8::PromiseRejectMessage;
 using v8::PropertyCallbackInfo;
 using v8::ScriptOrigin;
@@ -150,6 +157,8 @@ using v8::TryCatch;
 using v8::Uint32Array;
 using v8::V8;
 using v8::Value;
+
+using AsyncHooks = node::Environment::AsyncHooks;
 
 static bool print_eval = false;
 static bool force_repl = false;
@@ -171,6 +180,7 @@ static node_module* modlist_linked;
 static node_module* modlist_addon;
 static bool trace_enabled = false;
 static std::string trace_enabled_categories;  // NOLINT(runtime/string)
+static bool abort_on_uncaught_exception = false;
 
 #if defined(NODE_HAVE_I18N_SUPPORT)
 // Path to ICU data (for i18n / Intl)
@@ -209,6 +219,10 @@ bool trace_warnings = false;
 // that is used by lib/module.js
 bool config_preserve_symlinks = false;
 
+// Set by ParseArgs when --pending-deprecation or NODE_PENDING_DEPRECATION
+// is used.
+bool config_pending_deprecation = false;
+
 // Set in node.cc by ParseArgs when --redirect-warnings= is used.
 std::string config_warning_file;  // NOLINT(runtime/string)
 
@@ -220,20 +234,23 @@ bool config_expose_internals = false;
 
 bool v8_initialized = false;
 
+bool linux_at_secure = false;
+
 // process-relative uptime base, initialized at start-up
 static double prog_start_time;
-static bool debugger_running;
-static uv_async_t dispatch_debug_messages_async;
 
 static Mutex node_isolate_mutex;
 static v8::Isolate* node_isolate;
 
-static node::DebugOptions debug_options;
+node::DebugOptions debug_options;
 
 static struct {
 #if NODE_USE_V8_PLATFORM
   void Initialize(int thread_pool_size) {
-    platform_ = v8::platform::CreateDefaultPlatform(thread_pool_size);
+    platform_ = v8::platform::CreateDefaultPlatform(
+        thread_pool_size,
+        v8::platform::IdleTaskSupport::kDisabled,
+        v8::platform::InProcessStackDumping::kDisabled);
     V8::InitializePlatform(platform_);
     tracing::TraceEventHelper::SetCurrentPlatform(platform_);
   }
@@ -250,7 +267,14 @@ static struct {
 #if HAVE_INSPECTOR
   bool StartInspector(Environment *env, const char* script_path,
                       const node::DebugOptions& options) {
+    // Inspector agent can't fail to start, but if it was configured to listen
+    // right away on the websocket port and fails to bind/etc, this will return
+    // false.
     return env->inspector_agent()->Start(platform_, script_path, options);
+  }
+
+  bool InspectorStarted(Environment *env) {
+    return env->inspector_agent()->IsStarted();
   }
 #endif  // HAVE_INSPECTOR
 
@@ -282,6 +306,12 @@ static struct {
   }
   void StopTracingAgent() {}
 #endif  // !NODE_USE_V8_PLATFORM
+
+#if !NODE_USE_V8_PLATFORM || !HAVE_INSPECTOR
+  bool InspectorStarted(Environment *env) {
+    return false;
+  }
+#endif  //  !NODE_USE_V8_PLATFORM || !HAVE_INSPECTOR
 } v8_platform;
 
 #ifdef __POSIX__
@@ -328,7 +358,12 @@ static void CheckImmediate(uv_check_t* handle) {
   Environment* env = Environment::from_immediate_check_handle(handle);
   HandleScope scope(env->isolate());
   Context::Scope context_scope(env->context());
-  MakeCallback(env, env->process_object(), env->immediate_callback_string());
+  MakeCallback(env->isolate(),
+               env->process_object(),
+               env->immediate_callback_string(),
+               0,
+               nullptr,
+               {0, 0}).ToLocalChecked();
 }
 
 
@@ -935,8 +970,6 @@ Local<Value> UVException(Isolate* isolate,
 
   Local<Object> e = Exception::Error(js_msg)->ToObject(isolate);
 
-  // TODO(piscisaureus) errno should probably go; the user has no way of
-  // knowing which uv errno value maps to which error.
   e->Set(env->errno_string(), Integer::New(isolate, errorno));
   e->Set(env->code_string(), js_code);
   e->Set(env->syscall_string(), js_syscall);
@@ -952,17 +985,16 @@ Local<Value> UVException(Isolate* isolate,
 // Look up environment variable unless running as setuid root.
 bool SafeGetenv(const char* key, std::string* text) {
 #ifndef _WIN32
-  // TODO(bnoordhuis) Should perhaps also check whether getauxval(AT_SECURE)
-  // is non-zero on Linux.
-  if (getuid() != geteuid() || getgid() != getegid()) {
-    text->clear();
-    return false;
-  }
+  if (linux_at_secure || getuid() != geteuid() || getgid() != getegid())
+    goto fail;
 #endif
+
   if (const char* value = getenv(key)) {
     *text = value;
     return true;
   }
+
+fail:
   text->clear();
   return false;
 }
@@ -1110,6 +1142,29 @@ bool ShouldAbortOnUncaughtException(Isolate* isolate) {
 }
 
 
+void DomainPromiseHook(PromiseHookType type,
+                       Local<Promise> promise,
+                       Local<Value> parent,
+                       void* arg) {
+  Environment* env = static_cast<Environment*>(arg);
+  Local<Context> context = env->context();
+
+  if (type == PromiseHookType::kInit && env->in_domain()) {
+    promise->Set(context,
+                 env->domain_string(),
+                 env->domain_array()->Get(context,
+                                          0).ToLocalChecked()).FromJust();
+    return;
+  }
+
+  if (type == PromiseHookType::kBefore) {
+    DomainEnter(env, promise);
+  } else if (type == PromiseHookType::kAfter) {
+    DomainExit(env, promise);
+  }
+}
+
+
 void SetupDomainUse(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
 
@@ -1149,8 +1204,11 @@ void SetupDomainUse(const FunctionCallbackInfo<Value>& args) {
   Local<ArrayBuffer> array_buffer =
       ArrayBuffer::New(env->isolate(), fields, sizeof(*fields) * fields_count);
 
+  env->AddPromiseHook(DomainPromiseHook, static_cast<void*>(env));
+
   args.GetReturnValue().Set(Uint32Array::New(array_buffer, 0, fields_count));
 }
+
 
 void RunMicrotasks(const FunctionCallbackInfo<Value>& args) {
   args.GetIsolate()->RunMicrotasks();
@@ -1229,95 +1287,65 @@ void SetupPromises(const FunctionCallbackInfo<Value>& args) {
 }  // anonymous namespace
 
 
-Local<Value> MakeCallback(Environment* env,
-                          Local<Value> recv,
-                          const Local<Function> callback,
-                          int argc,
-                          Local<Value> argv[]) {
+void AddPromiseHook(v8::Isolate* isolate, promise_hook_func fn, void* arg) {
+  Environment* env = Environment::GetCurrent(isolate);
+  env->AddPromiseHook(fn, arg);
+}
+
+
+MaybeLocal<Value> MakeCallback(Environment* env,
+                               Local<Value> recv,
+                               const Local<Function> callback,
+                               int argc,
+                               Local<Value> argv[],
+                               async_context asyncContext) {
   // If you hit this assertion, you forgot to enter the v8::Context first.
   CHECK_EQ(env->context(), env->isolate()->GetCurrentContext());
 
-  Local<Function> pre_fn = env->async_hooks_pre_function();
-  Local<Function> post_fn = env->async_hooks_post_function();
-  Local<Object> object, domain;
-  bool ran_init_callback = false;
-  bool has_domain = false;
+  Local<Object> object;
 
   Environment::AsyncCallbackScope callback_scope(env);
+  bool disposed_domain = false;
 
-  // TODO(trevnorris): Adding "_asyncQueue" to the "this" in the init callback
-  // is a horrible way to detect usage. Rethink how detection should happen.
   if (recv->IsObject()) {
     object = recv.As<Object>();
-    Local<Value> async_queue_v = object->Get(env->async_queue_string());
-    if (async_queue_v->IsObject())
-      ran_init_callback = true;
   }
 
   if (env->using_domains()) {
     CHECK(recv->IsObject());
-    Local<Value> domain_v = object->Get(env->domain_string());
-    has_domain = domain_v->IsObject();
-    if (has_domain) {
-      domain = domain_v.As<Object>();
-      if (domain->Get(env->disposed_string())->IsTrue())
-        return Undefined(env->isolate());
+    disposed_domain = DomainEnter(env, object);
+    if (disposed_domain) return Undefined(env->isolate());
+  }
+
+  MaybeLocal<Value> ret;
+
+  {
+    AsyncHooks::ExecScope exec_scope(env, asyncContext.async_id,
+                                     asyncContext.trigger_async_id);
+
+    if (asyncContext.async_id != 0) {
+      if (!AsyncWrap::EmitBefore(env, asyncContext.async_id))
+        return Local<Value>();
+    }
+
+    ret = callback->Call(env->context(), recv, argc, argv);
+
+    if (ret.IsEmpty()) {
+      // NOTE: For backwards compatibility with public API we return Undefined()
+      // if the top level call threw.
+      return callback_scope.in_makecallback() ?
+          ret : Undefined(env->isolate());
+    }
+
+    if (asyncContext.async_id != 0) {
+      if (!AsyncWrap::EmitAfter(env, asyncContext.async_id))
+        return Local<Value>();
     }
   }
 
-  if (has_domain) {
-    Local<Value> enter_v = domain->Get(env->enter_string());
-    if (enter_v->IsFunction()) {
-      if (enter_v.As<Function>()->Call(domain, 0, nullptr).IsEmpty()) {
-        FatalError("node::MakeCallback",
-                   "domain enter callback threw, please report this");
-      }
-    }
-  }
-
-  if (ran_init_callback && !pre_fn.IsEmpty()) {
-    TryCatch try_catch(env->isolate());
-    MaybeLocal<Value> ar = pre_fn->Call(env->context(), object, 0, nullptr);
-    if (ar.IsEmpty()) {
-      ClearFatalExceptionHandlers(env);
-      FatalException(env->isolate(), try_catch);
-      return Local<Value>();
-    }
-  }
-
-  Local<Value> ret = callback->Call(recv, argc, argv);
-
-  if (ran_init_callback && !post_fn.IsEmpty()) {
-    Local<Value> did_throw = Boolean::New(env->isolate(), ret.IsEmpty());
-    // Currently there's no way to retrieve an uid from node::MakeCallback().
-    // This needs to be fixed.
-    Local<Value> vals[] =
-        { Undefined(env->isolate()).As<Value>(), did_throw };
-    TryCatch try_catch(env->isolate());
-    MaybeLocal<Value> ar =
-        post_fn->Call(env->context(), object, arraysize(vals), vals);
-    if (ar.IsEmpty()) {
-      ClearFatalExceptionHandlers(env);
-      FatalException(env->isolate(), try_catch);
-      return Local<Value>();
-    }
-  }
-
-  if (ret.IsEmpty()) {
-    // NOTE: For backwards compatibility with public API we return Undefined()
-    // if the top level call threw.
-    return callback_scope.in_makecallback() ?
-        ret : Undefined(env->isolate()).As<Value>();
-  }
-
-  if (has_domain) {
-    Local<Value> exit_v = domain->Get(env->exit_string());
-    if (exit_v->IsFunction()) {
-      if (exit_v.As<Function>()->Call(domain, 0, nullptr).IsEmpty()) {
-        FatalError("node::MakeCallback",
-                   "domain exit callback threw, please report this");
-      }
-    }
+  if (env->using_domains()) {
+    disposed_domain = DomainExit(env, object);
+    if (disposed_domain) return Undefined(env->isolate());
   }
 
   if (callback_scope.in_makecallback()) {
@@ -1329,6 +1357,11 @@ Local<Value> MakeCallback(Environment* env,
   if (tick_info->length() == 0) {
     env->isolate()->RunMicrotasks();
   }
+
+  // Make sure the stack unwound properly. If there are nested MakeCallback's
+  // then it should return early and not reach this code.
+  CHECK_EQ(env->current_async_id(), asyncContext.async_id);
+  CHECK_EQ(env->trigger_id(), asyncContext.trigger_async_id);
 
   Local<Object> process = env->process_object();
 
@@ -1345,58 +1378,42 @@ Local<Value> MakeCallback(Environment* env,
 }
 
 
-Local<Value> MakeCallback(Environment* env,
-                           Local<Object> recv,
-                           Local<String> symbol,
-                           int argc,
-                           Local<Value> argv[]) {
-  Local<Value> cb_v = recv->Get(symbol);
-  CHECK(cb_v->IsFunction());
-  return MakeCallback(env, recv.As<Value>(), cb_v.As<Function>(), argc, argv);
+// Public MakeCallback()s
+
+
+MaybeLocal<Value> MakeCallback(Isolate* isolate,
+                               Local<Object> recv,
+                               const char* method,
+                               int argc,
+                               Local<Value> argv[],
+                               async_context asyncContext) {
+  Local<String> method_string =
+      String::NewFromUtf8(isolate, method, v8::NewStringType::kNormal)
+          .ToLocalChecked();
+  return MakeCallback(isolate, recv, method_string, argc, argv, asyncContext);
 }
 
 
-Local<Value> MakeCallback(Environment* env,
-                           Local<Object> recv,
-                           const char* method,
-                           int argc,
-                           Local<Value> argv[]) {
-  Local<String> method_string = OneByteString(env->isolate(), method);
-  return MakeCallback(env, recv, method_string, argc, argv);
-}
-
-
-Local<Value> MakeCallback(Isolate* isolate,
-                          Local<Object> recv,
-                          const char* method,
-                          int argc,
-                          Local<Value> argv[]) {
-  EscapableHandleScope handle_scope(isolate);
-  Local<String> method_string = OneByteString(isolate, method);
-  return handle_scope.Escape(
-      MakeCallback(isolate, recv, method_string, argc, argv));
-}
-
-
-Local<Value> MakeCallback(Isolate* isolate,
-                          Local<Object> recv,
-                          Local<String> symbol,
-                          int argc,
-                          Local<Value> argv[]) {
-  EscapableHandleScope handle_scope(isolate);
+MaybeLocal<Value> MakeCallback(Isolate* isolate,
+                               Local<Object> recv,
+                               Local<String> symbol,
+                               int argc,
+                               Local<Value> argv[],
+                               async_context asyncContext) {
   Local<Value> callback_v = recv->Get(symbol);
   if (callback_v.IsEmpty()) return Local<Value>();
   if (!callback_v->IsFunction()) return Local<Value>();
   Local<Function> callback = callback_v.As<Function>();
-  return handle_scope.Escape(MakeCallback(isolate, recv, callback, argc, argv));
+  return MakeCallback(isolate, recv, callback, argc, argv, asyncContext);
 }
 
 
-Local<Value> MakeCallback(Isolate* isolate,
-                          Local<Object> recv,
-                          Local<Function> callback,
-                          int argc,
-                          Local<Value> argv[]) {
+MaybeLocal<Value> MakeCallback(Isolate* isolate,
+                               Local<Object> recv,
+                               Local<Function> callback,
+                               int argc,
+                               Local<Value> argv[],
+                               async_context asyncContext) {
   // Observe the following two subtleties:
   //
   // 1. The environment is retrieved from the callback function's context.
@@ -1404,11 +1421,48 @@ Local<Value> MakeCallback(Isolate* isolate,
   //
   // Because of the AssignToContext() call in src/node_contextify.cc,
   // the two contexts need not be the same.
-  EscapableHandleScope handle_scope(isolate);
   Environment* env = Environment::GetCurrent(callback->CreationContext());
   Context::Scope context_scope(env->context());
+  return MakeCallback(env, recv.As<Value>(), callback, argc, argv,
+                      asyncContext);
+}
+
+
+// Legacy MakeCallback()s
+
+Local<Value> MakeCallback(Isolate* isolate,
+                          Local<Object> recv,
+                          const char* method,
+                          int argc,
+                          Local<Value>* argv) {
+  EscapableHandleScope handle_scope(isolate);
   return handle_scope.Escape(
-      MakeCallback(env, recv.As<Value>(), callback, argc, argv));
+      MakeCallback(isolate, recv, method, argc, argv, {0, 0})
+          .FromMaybe(Local<Value>()));
+}
+
+
+Local<Value> MakeCallback(Isolate* isolate,
+    Local<Object> recv,
+    Local<String> symbol,
+    int argc,
+    Local<Value>* argv) {
+  EscapableHandleScope handle_scope(isolate);
+  return handle_scope.Escape(
+      MakeCallback(isolate, recv, symbol, argc, argv, {0, 0})
+          .FromMaybe(Local<Value>()));
+}
+
+
+Local<Value> MakeCallback(Isolate* isolate,
+    Local<Object> recv,
+    Local<Function> callback,
+    int argc,
+    Local<Value>* argv) {
+  EscapableHandleScope handle_scope(isolate);
+  return handle_scope.Escape(
+      MakeCallback(isolate, recv, callback, argc, argv, {0, 0})
+          .FromMaybe(Local<Value>()));
 }
 
 
@@ -1505,11 +1559,15 @@ Local<Value> Encode(Isolate* isolate,
                     size_t len,
                     enum encoding encoding) {
   CHECK_NE(encoding, UCS2);
-  return StringBytes::Encode(isolate, buf, len, encoding);
+  Local<Value> error;
+  return StringBytes::Encode(isolate, buf, len, encoding, &error)
+      .ToLocalChecked();
 }
 
 Local<Value> Encode(Isolate* isolate, const uint16_t* buf, size_t len) {
-  return StringBytes::Encode(isolate, buf, len);
+  Local<Value> error;
+  return StringBytes::Encode(isolate, buf, len, &error)
+      .ToLocalChecked();
 }
 
 // Returns -1 if the handle was not valid for decoding
@@ -2598,9 +2656,9 @@ void FatalException(Isolate* isolate,
 
 void FatalException(Isolate* isolate, const TryCatch& try_catch) {
   HandleScope scope(isolate);
-  // TODO(bajtos) do not call FatalException if try_catch is verbose
-  // (requires V8 API to expose getter for try_catch.is_verbose_)
-  FatalException(isolate, try_catch.Exception(), try_catch.Message());
+  if (!try_catch.IsVerbose()) {
+    FatalException(isolate, try_catch.Exception(), try_catch.Message());
+  }
 }
 
 
@@ -2997,7 +3055,15 @@ static Local<Object> GetFeatures(Environment* env) {
 
 static void DebugPortGetter(Local<Name> property,
                             const PropertyCallbackInfo<Value>& info) {
-  info.GetReturnValue().Set(debug_options.port());
+  int port = debug_options.port();
+#if HAVE_INSPECTOR
+  if (port == 0) {
+    Environment* env = Environment::GetCurrent(info);
+    if (auto io = env->inspector_agent()->io())
+      port = io->port();
+  }
+#endif  // HAVE_INSPECTOR
+  info.GetReturnValue().Set(port);
 }
 
 
@@ -3337,9 +3403,23 @@ void SetupProcessObject(Environment* env,
     READONLY_PROPERTY(process, "traceDeprecation", True(env->isolate()));
   }
 
-  // --debug-brk
+  // TODO(refack): move the following 3 to `node_config`
+  // --inspect-brk
   if (debug_options.wait_for_connect()) {
-    READONLY_PROPERTY(process, "_debugWaitConnect", True(env->isolate()));
+    READONLY_DONT_ENUM_PROPERTY(process,
+                                "_breakFirstLine", True(env->isolate()));
+  }
+
+  // --inspect --debug-brk
+  if (debug_options.deprecated_invocation()) {
+    READONLY_DONT_ENUM_PROPERTY(process,
+                                "_deprecatedDebugBrk", True(env->isolate()));
+  }
+
+  // --debug or, --debug-brk without --inspect
+  if (debug_options.invalid_invocation()) {
+    READONLY_DONT_ENUM_PROPERTY(process,
+                                "_invalidDebug", True(env->isolate()));
   }
 
   // --security-revert flags
@@ -3536,7 +3616,7 @@ void LoadEnvironment(Environment* env) {
 static void PrintHelp() {
   // XXX: If you add an option here, please also add it to doc/node.1 and
   // doc/api/cli.md
-  printf("Usage: node [options] [ -e script | script.js ] [arguments]\n"
+  printf("Usage: node [options] [ -e script | script.js | - ] [arguments]\n"
          "       node inspect script.js [arguments]\n"
          "\n"
          "Options:\n"
@@ -3548,21 +3628,29 @@ static void PrintHelp() {
          "                             does not appear to be a terminal\n"
          "  -r, --require              module to preload (option can be "
          "repeated)\n"
+         "  -                          script read from stdin (default; "
+         "interactive mode if a tty)\n"
 #if HAVE_INSPECTOR
          "  --inspect[=[host:]port]    activate inspector on host:port\n"
          "                             (default: 127.0.0.1:9229)\n"
          "  --inspect-brk[=[host:]port]\n"
          "                             activate inspector on host:port\n"
          "                             and break at start of user script\n"
+         "  --inspect-port=[host:]port\n"
+         "                             set host:port for inspector\n"
 #endif
          "  --no-deprecation           silence deprecation warnings\n"
          "  --trace-deprecation        show stack traces on deprecations\n"
          "  --throw-deprecation        throw an exception on deprecations\n"
+         "  --pending-deprecation      emit pending deprecation warnings\n"
          "  --no-warnings              silence all process warnings\n"
          "  --napi-modules             load N-API modules\n"
+         "  --abort-on-uncaught-exception\n"
+         "                             aborting instead of exiting causes a\n"
+         "                             core file to be generated for analysis\n"
          "  --trace-warnings           show stack traces on process warnings\n"
-         "  --redirect-warnings=path\n"
-         "                             write warnings to path instead of\n"
+         "  --redirect-warnings=file\n"
+         "                             write warnings to file instead of\n"
          "                             stderr\n"
          "  --trace-sync-io            show stack trace when use of sync IO\n"
          "                             is detected after the first tick\n"
@@ -3622,6 +3710,9 @@ static void PrintHelp() {
 #endif
 #endif
          "NODE_NO_WARNINGS             set to 1 to silence process warnings\n"
+#if !defined(NODE_WITHOUT_NODE_OPTIONS)
+         "NODE_OPTIONS                 set CLI options in the environment\n"
+#endif
 #ifdef _WIN32
          "NODE_PATH                    ';'-separated list of directories\n"
 #else
@@ -3635,6 +3726,77 @@ static void PrintHelp() {
          "OPENSSL_CONF                 load OpenSSL configuration from file\n"
          "\n"
          "Documentation can be found at https://nodejs.org/\n");
+}
+
+
+static bool ArgIsAllowed(const char* arg, const char* allowed) {
+  for (; *arg && *allowed; arg++, allowed++) {
+    // Like normal strcmp(), except that a '_' in `allowed` matches either a '-'
+    // or '_' in `arg`.
+    if (*allowed == '_') {
+      if (!(*arg == '_' || *arg == '-'))
+        return false;
+    } else {
+      if (*arg != *allowed)
+        return false;
+    }
+  }
+
+  // "--some-arg=val" is allowed for "--some-arg"
+  if (*arg == '=')
+    return true;
+
+  // Both must be null, or one string is just a prefix of the other, not a
+  // match.
+  return !*arg && !*allowed;
+}
+
+
+static void CheckIfAllowedInEnv(const char* exe, bool is_env,
+                                const char* arg) {
+  if (!is_env)
+    return;
+
+  static const char* whitelist[] = {
+    // Node options, sorted in `node --help` order for ease of comparison.
+    "--require", "-r",
+    "--inspect",
+    "--inspect-brk",
+    "--inspect-port",
+    "--no-deprecation",
+    "--trace-deprecation",
+    "--throw-deprecation",
+    "--no-warnings",
+    "--napi-modules",
+    "--trace-warnings",
+    "--redirect-warnings",
+    "--trace-sync-io",
+    "--trace-events-enabled",
+    "--trace-events-categories",
+    "--track-heap-objects",
+    "--zero-fill-buffers",
+    "--v8-pool-size",
+    "--tls-cipher-list",
+    "--use-bundled-ca",
+    "--use-openssl-ca",
+    "--enable-fips",
+    "--force-fips",
+    "--openssl-config",
+    "--icu-data-dir",
+
+    // V8 options (define with '_', which allows '-' or '_')
+    "--abort_on_uncaught_exception",
+    "--max_old_space_size",
+  };
+
+  for (unsigned i = 0; i < arraysize(whitelist); i++) {
+    const char* allowed = whitelist[i];
+    if (ArgIsAllowed(arg, allowed))
+      return;
+  }
+
+  fprintf(stderr, "%s: %s is not allowed in NODE_OPTIONS\n", exe, arg);
+  exit(9);
 }
 
 
@@ -3654,7 +3816,8 @@ static void ParseArgs(int* argc,
                       int* exec_argc,
                       const char*** exec_argv,
                       int* v8_argc,
-                      const char*** v8_argv) {
+                      const char*** v8_argv,
+                      bool is_env) {
   const unsigned int nargs = static_cast<unsigned int>(*argc);
   const char** new_exec_argv = new const char*[nargs];
   const char** new_v8_argv = new const char*[nargs];
@@ -3662,7 +3825,7 @@ static void ParseArgs(int* argc,
 #if HAVE_OPENSSL
   bool use_bundled_ca = false;
   bool use_openssl_ca = false;
-#endif  // HAVE_INSPECTOR
+#endif  // HAVE_OPENSSL
 
   for (unsigned int i = 0; i < nargs; ++i) {
     new_exec_argv[i] = nullptr;
@@ -3683,7 +3846,9 @@ static void ParseArgs(int* argc,
     const char* const arg = argv[index];
     unsigned int args_consumed = 1;
 
-    if (debug_options.ParseOption(arg)) {
+    CheckIfAllowedInEnv(argv[0], is_env, arg);
+
+    if (debug_options.ParseOption(argv[0], arg)) {
       // Done, consumed by DebugOptions::ParseOption().
     } else if (strcmp(arg, "--version") == 0 || strcmp(arg, "-v") == 0) {
       printf("%s\n", NODE_VERSION);
@@ -3768,6 +3933,8 @@ static void ParseArgs(int* argc,
       short_circuit = true;
     } else if (strcmp(arg, "--zero-fill-buffers") == 0) {
       zero_fill_all_buffers = true;
+    } else if (strcmp(arg, "--pending-deprecation") == 0) {
+      config_pending_deprecation = true;
     } else if (strcmp(arg, "--v8-options") == 0) {
       new_v8_argv[new_v8_argc] = "--help";
       new_v8_argc += 1;
@@ -3798,9 +3965,17 @@ static void ParseArgs(int* argc,
     } else if (strcmp(arg, "--expose-internals") == 0 ||
                strcmp(arg, "--expose_internals") == 0) {
       config_expose_internals = true;
+    } else if (strcmp(arg, "-") == 0) {
+      break;
     } else if (strcmp(arg, "--") == 0) {
       index += 1;
       break;
+    } else if (strcmp(arg, "--abort-on-uncaught-exception") == 0 ||
+               strcmp(arg, "--abort_on_uncaught_exception") == 0) {
+      abort_on_uncaught_exception = true;
+      // Also a V8 option.  Pass through as-is.
+      new_v8_argv[new_v8_argc] = arg;
+      new_v8_argc += 1;
     } else {
       // V8 option.  Pass through as-is.
       new_v8_argv[new_v8_argc] = arg;
@@ -3833,6 +4008,13 @@ static void ParseArgs(int* argc,
 
   // Copy remaining arguments.
   const unsigned int args_left = nargs - index;
+
+  if (is_env && args_left) {
+    fprintf(stderr, "%s: %s is not supported in NODE_OPTIONS\n",
+            argv[0], argv[index]);
+    exit(9);
+  }
+
   memcpy(new_argv + new_argc, argv + index, args_left * sizeof(*argv));
   new_argc += args_left;
 
@@ -3848,72 +4030,12 @@ static void ParseArgs(int* argc,
 }
 
 
-// Called from V8 Debug Agent TCP thread.
-static void DispatchMessagesDebugAgentCallback(Environment* env) {
-  // TODO(indutny): move async handle to environment
-  uv_async_send(&dispatch_debug_messages_async);
-}
-
-
-static void StartDebug(Environment* env, const char* path,
-                       DebugOptions debug_options) {
-  CHECK(!debugger_running);
-  if (debug_options.debugger_enabled()) {
-    env->debugger_agent()->set_dispatch_handler(
-          DispatchMessagesDebugAgentCallback);
-    debugger_running = env->debugger_agent()->Start(debug_options);
-    if (debugger_running == false) {
-      fprintf(stderr, "Starting debugger on %s:%d failed\n",
-              debug_options.host_name().c_str(), debug_options.port());
-      fflush(stderr);
-    }
+static void StartInspector(Environment* env, const char* path,
+                           DebugOptions debug_options) {
 #if HAVE_INSPECTOR
-  } else {
-    debugger_running = v8_platform.StartInspector(env, path, debug_options);
+  CHECK(!env->inspector_agent()->IsStarted());
+  v8_platform.StartInspector(env, path, debug_options);
 #endif  // HAVE_INSPECTOR
-  }
-}
-
-
-// Called from the main thread.
-static void EnableDebug(Environment* env) {
-  CHECK(debugger_running);
-
-  // Send message to enable debug in workers
-  HandleScope handle_scope(env->isolate());
-
-  Local<Object> message = Object::New(env->isolate());
-  message->Set(FIXED_ONE_BYTE_STRING(env->isolate(), "cmd"),
-               FIXED_ONE_BYTE_STRING(env->isolate(), "NODE_DEBUG_ENABLED"));
-  Local<Value> argv[] = {
-    FIXED_ONE_BYTE_STRING(env->isolate(), "internalMessage"),
-    message
-  };
-  MakeCallback(env, env->process_object(), "emit", arraysize(argv), argv);
-
-  // Enabled debugger, possibly making it wait on a semaphore
-  env->debugger_agent()->Enable();
-}
-
-
-// Called from the main thread.
-static void DispatchDebugMessagesAsyncCallback(uv_async_t* handle) {
-  Mutex::ScopedLock scoped_lock(node_isolate_mutex);
-  if (auto isolate = node_isolate) {
-    if (debugger_running == false) {
-      fprintf(stderr, "Starting debugger agent.\n");
-
-      HandleScope scope(isolate);
-      Environment* env = Environment::GetCurrent(isolate);
-      Context::Scope context_scope(env->context());
-      debug_options.EnableDebugAgent(DebugAgentType::kDebugger);
-      StartDebug(env, nullptr, debug_options);
-      EnableDebug(env);
-    }
-
-    Isolate::Scope isolate_scope(isolate);
-    v8::Debug::ProcessDebugMessages(isolate);
-  }
 }
 
 
@@ -4057,19 +4179,12 @@ static void DebugPause(const FunctionCallbackInfo<Value>& args) {
 
 
 static void DebugEnd(const FunctionCallbackInfo<Value>& args) {
-  if (debugger_running) {
-    Environment* env = Environment::GetCurrent(args);
 #if HAVE_INSPECTOR
-    if (!debug_options.debugger_enabled()) {
-      env->inspector_agent()->Stop();
-    } else {
-#endif
-      env->debugger_agent()->Stop();
-#if HAVE_INSPECTOR
-    }
-#endif
-    debugger_running = false;
+  Environment* env = Environment::GetCurrent(args);
+  if (env->inspector_agent()->IsStarted()) {
+    env->inspector_agent()->Stop();
   }
+#endif
 }
 
 
@@ -4155,57 +4270,15 @@ inline void PlatformInit() {
 }
 
 
-void Init(int* argc,
-          const char** argv,
-          int* exec_argc,
-          const char*** exec_argv) {
-  // Initialize prog_start_time to get relative uptime.
-  prog_start_time = static_cast<double>(uv_now(uv_default_loop()));
-
-  // Make inherited handles noninheritable.
-  uv_disable_stdio_inheritance();
-
-  // init async debug messages dispatching
-  // Main thread uses uv_default_loop
-  CHECK_EQ(0, uv_async_init(uv_default_loop(),
-                            &dispatch_debug_messages_async,
-                            DispatchDebugMessagesAsyncCallback));
-  uv_unref(reinterpret_cast<uv_handle_t*>(&dispatch_debug_messages_async));
-
-#if defined(NODE_HAVE_I18N_SUPPORT)
-  // Set the ICU casing flag early
-  // so the user can disable a flag --foo at run-time by passing
-  // --no_foo from the command line.
-  const char icu_case_mapping[] = "--icu_case_mapping";
-  V8::SetFlagsFromString(icu_case_mapping, sizeof(icu_case_mapping) - 1);
-#endif
-
-#if defined(NODE_V8_OPTIONS)
-  // Should come before the call to V8::SetFlagsFromCommandLine()
-  // so the user can disable a flag --foo at run-time by passing
-  // --no_foo from the command line.
-  V8::SetFlagsFromString(NODE_V8_OPTIONS, sizeof(NODE_V8_OPTIONS) - 1);
-#endif
-
-  // Allow for environment set preserving symlinks.
-  {
-    std::string text;
-    config_preserve_symlinks =
-        SafeGetenv("NODE_PRESERVE_SYMLINKS", &text) && text[0] == '1';
-  }
-
-  if (config_warning_file.empty())
-    SafeGetenv("NODE_REDIRECT_WARNINGS", &config_warning_file);
-
-#if HAVE_OPENSSL
-  if (openssl_config.empty())
-    SafeGetenv("OPENSSL_CONF", &openssl_config);
-#endif
-
+void ProcessArgv(int* argc,
+                 const char** argv,
+                 int* exec_argc,
+                 const char*** exec_argv,
+                 bool is_env = false) {
   // Parse a few arguments which are specific to Node.
   int v8_argc;
   const char** v8_argv;
-  ParseArgs(argc, argv, exec_argc, exec_argv, &v8_argc, &v8_argv);
+  ParseArgs(argc, argv, exec_argc, exec_argv, &v8_argc, &v8_argv, is_env);
 
   // TODO(bnoordhuis) Intercept --prof arguments and start the CPU profiler
   // manually?  That would give us a little more control over its runtime
@@ -4227,17 +4300,6 @@ void Init(int* argc,
   }
 #endif
 
-#if defined(NODE_HAVE_I18N_SUPPORT)
-  // If the parameter isn't given, use the env variable.
-  if (icu_data_dir.empty())
-    SafeGetenv("NODE_ICU_DATA", &icu_data_dir);
-  // Initialize ICU.
-  // If icu_data_dir is empty here, it will load the 'minimal' data.
-  if (!i18n::InitializeICUDirectory(icu_data_dir)) {
-    FatalError(nullptr, "Could not initialize ICU "
-                     "(check NODE_ICU_DATA or --icu-data-dir parameters)");
-  }
-#endif
   // The const_cast doesn't violate conceptual const-ness.  V8 doesn't modify
   // the argv array or the elements it points to.
   if (v8_argc > 1)
@@ -4253,6 +4315,91 @@ void Init(int* argc,
   if (v8_argc > 1) {
     exit(9);
   }
+}
+
+
+void Init(int* argc,
+          const char** argv,
+          int* exec_argc,
+          const char*** exec_argv) {
+  // Initialize prog_start_time to get relative uptime.
+  prog_start_time = static_cast<double>(uv_now(uv_default_loop()));
+
+  // Make inherited handles noninheritable.
+  uv_disable_stdio_inheritance();
+
+#if defined(NODE_V8_OPTIONS)
+  // Should come before the call to V8::SetFlagsFromCommandLine()
+  // so the user can disable a flag --foo at run-time by passing
+  // --no_foo from the command line.
+  V8::SetFlagsFromString(NODE_V8_OPTIONS, sizeof(NODE_V8_OPTIONS) - 1);
+#endif
+
+  {
+    std::string text;
+    config_pending_deprecation =
+        SafeGetenv("NODE_PENDING_DEPRECATION", &text) && text[0] == '1';
+  }
+
+  // Allow for environment set preserving symlinks.
+  {
+    std::string text;
+    config_preserve_symlinks =
+        SafeGetenv("NODE_PRESERVE_SYMLINKS", &text) && text[0] == '1';
+  }
+
+  if (config_warning_file.empty())
+    SafeGetenv("NODE_REDIRECT_WARNINGS", &config_warning_file);
+
+#if HAVE_OPENSSL
+  if (openssl_config.empty())
+    SafeGetenv("OPENSSL_CONF", &openssl_config);
+#endif
+
+#if !defined(NODE_WITHOUT_NODE_OPTIONS)
+  std::string node_options;
+  if (SafeGetenv("NODE_OPTIONS", &node_options)) {
+    // Smallest tokens are 2-chars (a not space and a space), plus 2 extra
+    // pointers, for the prepended executable name, and appended NULL pointer.
+    size_t max_len = 2 + (node_options.length() + 1) / 2;
+    const char** argv_from_env = new const char*[max_len];
+    int argc_from_env = 0;
+    // [0] is expected to be the program name, fill it in from the real argv.
+    argv_from_env[argc_from_env++] = argv[0];
+
+    char* cstr = strdup(node_options.c_str());
+    char* initptr = cstr;
+    char* token;
+    while ((token = strtok(initptr, " "))) {  // NOLINT(runtime/threadsafe_fn)
+      initptr = nullptr;
+      argv_from_env[argc_from_env++] = token;
+    }
+    argv_from_env[argc_from_env] = nullptr;
+    int exec_argc_;
+    const char** exec_argv_ = nullptr;
+    ProcessArgv(&argc_from_env, argv_from_env, &exec_argc_, &exec_argv_, true);
+    delete[] exec_argv_;
+    delete[] argv_from_env;
+    free(cstr);
+  }
+#endif
+
+  ProcessArgv(argc, argv, exec_argc, exec_argv);
+
+#if defined(NODE_HAVE_I18N_SUPPORT)
+  // If the parameter isn't given, use the env variable.
+  if (icu_data_dir.empty())
+    SafeGetenv("NODE_ICU_DATA", &icu_data_dir);
+  // Initialize ICU.
+  // If icu_data_dir is empty here, it will load the 'minimal' data.
+  if (!i18n::InitializeICUDirectory(icu_data_dir)) {
+    fprintf(stderr,
+            "%s: could not initialize ICU "
+            "(check NODE_ICU_DATA or --icu-data-dir parameters)\n",
+            argv[0]);
+    exit(9);
+  }
+#endif
 
   // Unconditionally force typed arrays to allocate outside the v8 heap. This
   // is to prevent memory pointers from being moved around that are returned by
@@ -4296,7 +4443,9 @@ void EmitBeforeExit(Environment* env) {
     FIXED_ONE_BYTE_STRING(env->isolate(), "beforeExit"),
     process_object->Get(exit_code)->ToInteger(env->isolate())
   };
-  MakeCallback(env, process_object, "emit", arraysize(args), args);
+  MakeCallback(env->isolate(),
+               process_object, "emit", arraysize(args), args,
+               {0, 0}).ToLocalChecked();
 }
 
 
@@ -4315,7 +4464,9 @@ int EmitExit(Environment* env) {
     Integer::New(env->isolate(), code)
   };
 
-  MakeCallback(env, process_object, "emit", arraysize(args), args);
+  MakeCallback(env->isolate(),
+               process_object, "emit", arraysize(args), args,
+               {0, 0}).ToLocalChecked();
 
   // Reload exit code, it may be changed by `emit('exit')`
   return process_object->Get(exitCode)->Int32Value();
@@ -4364,23 +4515,20 @@ inline int Start(Isolate* isolate, IsolateData* isolate_data,
   env.Start(argc, argv, exec_argc, exec_argv, v8_is_profiling);
 
   const char* path = argc > 1 ? argv[1] : nullptr;
-  StartDebug(&env, path, debug_options);
+  StartInspector(&env, path, debug_options);
 
-  bool debugger_enabled =
-      debug_options.debugger_enabled() || debug_options.inspector_enabled();
-  if (debugger_enabled && !debugger_running)
+  if (debug_options.inspector_enabled() && !v8_platform.InspectorStarted(&env))
     return 12;  // Signal internal error.
+
+  env.set_abort_on_uncaught_exception(abort_on_uncaught_exception);
 
   {
     Environment::AsyncCallbackScope callback_scope(&env);
+    Environment::AsyncHooks::ExecScope exec_scope(&env, 1, 0);
     LoadEnvironment(&env);
   }
 
   env.set_trace_sync_io(trace_sync_io);
-
-  // Enable debugger
-  if (debug_options.debugger_enabled())
-    EnableDebug(&env);
 
   if (load_napi_modules) {
     ProcessEmitWarning(&env, "N-API is an experimental feature "
@@ -4528,3 +4676,9 @@ int Start(int argc, char** argv) {
 
 
 }  // namespace node
+
+#if !HAVE_INSPECTOR
+static void InitEmptyBindings() {}
+
+NODE_MODULE_CONTEXT_AWARE_BUILTIN(inspector, InitEmptyBindings)
+#endif  // !HAVE_INSPECTOR

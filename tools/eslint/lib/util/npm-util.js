@@ -10,8 +10,8 @@
 //------------------------------------------------------------------------------
 
 const fs = require("fs"),
+    childProcess = require("child_process"),
     path = require("path"),
-    shell = require("shelljs"),
     log = require("../logging");
 
 //------------------------------------------------------------------------------
@@ -29,13 +29,13 @@ function findPackageJson(startDir) {
     let dir = path.resolve(startDir || process.cwd());
 
     do {
-        const pkgfile = path.join(dir, "package.json");
+        const pkgFile = path.join(dir, "package.json");
 
-        if (!shell.test("-f", pkgfile)) {
+        if (!fs.existsSync(pkgFile) || !fs.statSync(pkgFile).isFile()) {
             dir = path.join(dir, "..");
             continue;
         }
-        return pkgfile;
+        return pkgFile;
     } while (dir !== path.resolve(dir, ".."));
     return null;
 }
@@ -53,7 +53,21 @@ function installSyncSaveDev(packages) {
     if (Array.isArray(packages)) {
         packages = packages.join(" ");
     }
-    shell.exec(`npm i --save-dev ${packages}`, { stdio: "inherit" });
+    childProcess.execSync(`npm i --save-dev ${packages}`, { stdio: "inherit", encoding: "utf8" });
+}
+
+/**
+ * Fetch `peerDependencies` of the given package by `npm show` command.
+ * @param {string} packageName The package name to fetch peerDependencies.
+ * @returns {string[]} Gotten peerDependencies.
+ */
+function fetchPeerDependencies(packageName) {
+    const fetchedText = childProcess.execSync(
+        `npm show --json ${packageName} peerDependencies`,
+        { encoding: "utf8" }
+    ).trim();
+
+    return JSON.parse(fetchedText || "{}");
 }
 
 /**
@@ -140,6 +154,7 @@ function checkPackageJson(startDir) {
 
 module.exports = {
     installSyncSaveDev,
+    fetchPeerDependencies,
     checkDeps,
     checkDevDeps,
     checkPackageJson

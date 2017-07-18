@@ -25,6 +25,7 @@
 #include <utmpx.h>
 #include <unistd.h>
 #include <sys/ps.h>
+#include <builtins.h>
 #if defined(__clang__)
 #include "csrsic.h"
 #else
@@ -118,9 +119,10 @@ void uv__platform_loop_delete(uv_loop_t* loop) {
 
 
 uint64_t uv__hrtime(uv_clocktype_t type) {
-  struct timeval time;
-  gettimeofday(&time, NULL);
-  return (uint64_t) time.tv_sec * 1e9 + time.tv_usec * 1e3;
+  unsigned long long timestamp;
+  __stckf(&timestamp);
+  /* Convert to nanoseconds */
+  return timestamp / 10;
 }
 
 
@@ -663,28 +665,6 @@ int uv__io_check_fd(uv_loop_t* loop, int fd) {
   return 0;
 }
 
-
-void uv__fs_event_close(uv_fs_event_t* handle) {
-  UNREACHABLE();
-}
-
-
-int uv_fs_event_init(uv_loop_t* loop, uv_fs_event_t* handle) {
-  return -ENOSYS;
-}
-
-
-int uv_fs_event_start(uv_fs_event_t* handle, uv_fs_event_cb cb,
-                      const char* filename, unsigned int flags) {
-  return -ENOSYS;
-}
-
-
-int uv_fs_event_stop(uv_fs_event_t* handle) {
-  return -ENOSYS;
-}
-
-
 void uv__io_poll(uv_loop_t* loop, int timeout) {
   static const int max_safe_timeout = 1789569;
   struct epoll_event events[1024];
@@ -862,4 +842,10 @@ update_timeout:
 
 void uv__set_process_title(const char* title) {
   /* do nothing */
+}
+
+int uv__io_fork(uv_loop_t* loop) {
+  uv__platform_loop_delete(loop);
+
+  return uv__platform_loop_init(loop);
 }

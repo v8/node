@@ -4,7 +4,7 @@
  */
 'use strict';
 
-var path = require('path');
+const path = require('path');
 
 //------------------------------------------------------------------------------
 // Rule Definition
@@ -14,7 +14,7 @@ module.exports = function(context) {
   // trim required module names
   var requiredModules = context.options;
 
-  var foundModules = [];
+  const foundModules = [];
 
   // if no modules are required we don't need to check the CallExpressions
   if (requiredModules.length === 0) {
@@ -75,15 +75,15 @@ module.exports = function(context) {
       if (foundModules.length < requiredModules.length) {
         var missingModules = requiredModules.filter(
           function(module) {
-            return foundModules.indexOf(module === -1);
+            return foundModules.indexOf(module) === -1;
           }
-          );
+        );
         missingModules.forEach(function(moduleName) {
           context.report(
             node,
             'Mandatory module "{{moduleName}}" must be loaded.',
             { moduleName: moduleName }
-            );
+          );
         });
       }
     }

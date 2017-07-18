@@ -56,7 +56,12 @@ const s = http.createServer(common.mustCall((req, res) => {
 
   assert.throws(() => {
     res.writeHead(100, {});
-  }, /^Error: Can't render headers after they are sent to the client$/);
+  }, common.expectsError({
+       code: 'ERR_HTTP_HEADERS_SENT',
+       type: Error,
+       message: 'Cannot render headers after they are sent to the client'
+  })
+  );
 
   res.end();
 }));
@@ -67,7 +72,7 @@ function runTest() {
   http.get({ port: this.address().port }, common.mustCall((response) => {
     response.on('end', common.mustCall(() => {
       assert.strictEqual(response.headers['test'], '2');
-      assert.notStrictEqual(response.rawHeaders.indexOf('Test'), -1);
+      assert(response.rawHeaders.includes('Test'));
       s.close();
     }));
     response.resume();

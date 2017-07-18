@@ -4,14 +4,15 @@
 
 * [Issues and Pull Requests](#issues-and-pull-requests)
 * [Accepting Modifications](#accepting-modifications)
- - [Internal vs. Public API](#internal-vs-public-api)
- - [Breaking Changes](#breaking-changes)
- - [Deprecations](#deprecations)
- - [Involving the CTC](#involving-the-ctc)
+   - [Useful CI Jobs](#useful-ci-jobs)
+   - [Internal vs. Public API](#internal-vs-public-api)
+   - [Breaking Changes](#breaking-changes)
+   - [Deprecations](#deprecations)
+   - [Involving the CTC](#involving-the-ctc)
 * [Landing Pull Requests](#landing-pull-requests)
- - [Technical HOWTO](#technical-howto)
- - [I Just Made a Mistake](#i-just-made-a-mistake)
- - [Long Term Support](#long-term-support)
+   - [Technical HOWTO](#technical-howto)
+   - [I Just Made a Mistake](#i-just-made-a-mistake)
+   - [Long Term Support](#long-term-support)
 
 This document contains information for Collaborators of the Node.js
 project regarding maintaining the code, documentation and issues.
@@ -86,6 +87,31 @@ test should *fail* before the change, and *pass* after the change.
 All pull requests that modify executable code should be subjected to
 continuous integration tests on the
 [project CI server](https://ci.nodejs.org/).
+
+#### Useful CI Jobs
+
+* [`node-test-pull-request`](https://ci.nodejs.org/job/node-test-pull-request/)
+is the standard CI run we do to check Pull Requests. It triggers `node-test-commit`,
+which runs the `build-ci` and `test-ci` targets on all supported platforms.
+
+* [`node-test-linter`](https://ci.nodejs.org/job/node-test-linter/)
+only runs the linter targets, which is useful for changes that only affect comments
+or documentation.
+
+* [`citgm-smoker`](https://ci.nodejs.org/job/citgm-smoker/)
+uses [`CitGM`](https://github.com/nodejs/citgm) to allow you to run `npm install && npm test`
+on a large selection of common modules. This is useful to check whether a
+change will cause breakage in the ecosystem. To test Node.JS ABI changes
+you can run [`citgm-abi-smoker`](https://ci.nodejs.org/job/citgm-abi-smoker/).
+
+* [`node-stress-single-test`](https://ci.nodejs.org/job/node-stress-single-test/)
+is designed to allow one to run a group of tests over and over on a specific
+platform to confirm that the test is reliable.
+
+* [`node-test-commit-v8-linux`](https://ci.nodejs.org/job/node-test-commit-v8-linux/)
+is designed to allow validation of changes to the copy of V8 in the Node.js
+tree by running the standard V8 tests. It should be run whenever the
+level of V8 within Node.js is updated or new patches are floated on V8.
 
 ### Internal vs. Public API
 
@@ -230,6 +256,13 @@ not can often be based on many complex factors that are not easily codified. It
 is also possible that the breaking commit can be labeled retroactively as a
 semver-major change that will not be backported to Current or LTS branches.
 
+##### Reverting commits
+
+Commits are reverted with `git revert <HASH>`, or `git revert <FROM>..<TO>` for
+multiple commits. Commit metadata and the reason for the revert should be
+appended. Commit message rules about line length and subsystem can be ignored.
+A Pull Request should be raised and approved like any other change.
+
 ### Deprecations
 
 Deprecation refers to the identification of Public APIs that should no longer
@@ -345,7 +378,7 @@ Additionally:
 
 ### Technical HOWTO
 
-_Optional:_ ensure that you are not in a borked `am`/`rebase` state
+Clear any `am`/`rebase` that may already be underway.
 
 ```text
 $ git am --abort
@@ -371,6 +404,18 @@ Apply external patches
 ```text
 $ curl -L https://github.com/nodejs/node/pull/xxx.patch | git am --whitespace=fix
 ```
+
+If the merge fails even though recent CI runs were successful, then a 3-way merge may
+be required.  In this case try:
+
+```text
+$ git am --abort
+$ curl -L https://github.com/nodejs/node/pull/xxx.patch | git am -3 --whitespace=fix
+```
+If the 3-way merge succeeds you can proceed, but make sure to check the changes
+against the original PR carefully and build/test on at least one platform
+before landing. If the 3-way merge fails, then it is most likely that a conflicting
+PR has landed since the CI run and you will have to ask the author to rebase.
 
 Check and re-review the changes
 
@@ -445,6 +490,10 @@ commit logs, ensure that they are properly formatted, and add
 * The commit message text must conform to the
 [commit message guidelines](./CONTRIBUTING.md#step-3-commit).
 
+Run tests (`make -j4 test` or `vcbuild test`). Even though there was a
+successful continuous integration run, other changes may have landed on master
+since then, so running the tests one last time locally is a good practice.
+
 Time to push it:
 
 ```text
@@ -462,11 +511,6 @@ landing your own contributions.
 your pull request shows the purple merged status then you should still
 add the "Landed in <commit hash>..<commit hash>" comment if you added
 multiple commits.
-
-* `./configure && make -j8 test`
-  * `-j8` builds node in parallel with 8 threads. Adjust to the number
-  of cores or processor-level threads your processor has (or slightly
-  more) for best results.
 
 ### I Just Made a Mistake
 

@@ -30,11 +30,29 @@
 #include "uv.h"
 #include "v8.h"
 #include "tracing/trace_event.h"
+#include "node_debug_options.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 
 #include <string>
+
+// Custom constants used by both node_constants.cc and node_zlib.cc
+#define Z_MIN_WINDOWBITS 8
+#define Z_MAX_WINDOWBITS 15
+#define Z_DEFAULT_WINDOWBITS 15
+// Fewer than 64 bytes per chunk is not recommended.
+// Technically it could work with as few as 8, but even 64 bytes
+// is low.  Usually a MB or more is best.
+#define Z_MIN_CHUNK 64
+#define Z_MAX_CHUNK std::numeric_limits<double>::infinity()
+#define Z_DEFAULT_CHUNK (16 * 1024)
+#define Z_MIN_MEMLEVEL 1
+#define Z_MAX_MEMLEVEL 9
+#define Z_DEFAULT_MEMLEVEL 8
+#define Z_MIN_LEVEL -1
+#define Z_MAX_LEVEL 9
+#define Z_DEFAULT_LEVEL Z_DEFAULT_COMPRESSION
 
 struct sockaddr;
 
@@ -76,8 +94,17 @@ extern bool config_expose_internals;
 // it to stderr.
 extern std::string config_warning_file;  // NOLINT(runtime/string)
 
+// Set in node.cc by ParseArgs when --pending-deprecation or
+// NODE_PENDING_DEPRECATION is used
+extern bool config_pending_deprecation;
+
 // Tells whether it is safe to call v8::Isolate::GetCurrent().
 extern bool v8_initialized;
+
+// Contains initial debug options.
+// Set in node.cc.
+// Used in node_config.cc.
+extern node::DebugOptions debug_options;
 
 // Forward declaration
 class Environment;
@@ -89,27 +116,6 @@ template <class TypeName>
 inline v8::Local<TypeName> PersistentToLocal(
     v8::Isolate* isolate,
     const v8::Persistent<TypeName>& persistent);
-
-// Call with valid HandleScope and while inside Context scope.
-v8::Local<v8::Value> MakeCallback(Environment* env,
-                                   v8::Local<v8::Object> recv,
-                                   const char* method,
-                                   int argc = 0,
-                                   v8::Local<v8::Value>* argv = nullptr);
-
-// Call with valid HandleScope and while inside Context scope.
-v8::Local<v8::Value> MakeCallback(Environment* env,
-                                   v8::Local<v8::Object> recv,
-                                   v8::Local<v8::String> symbol,
-                                   int argc = 0,
-                                   v8::Local<v8::Value>* argv = nullptr);
-
-// Call with valid HandleScope and while inside Context scope.
-v8::Local<v8::Value> MakeCallback(Environment* env,
-                                   v8::Local<v8::Value> recv,
-                                   v8::Local<v8::Function> callback,
-                                   int argc = 0,
-                                   v8::Local<v8::Value>* argv = nullptr);
 
 // Convert a struct sockaddr to a { address: '1.2.3.4', port: 1234 } JS object.
 // Sets address and port properties on the info object and returns it.

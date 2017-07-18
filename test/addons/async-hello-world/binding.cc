@@ -55,7 +55,6 @@ void AfterAsync(uv_work_t* r) {
 
 void Method(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Isolate* isolate = args.GetIsolate();
-  v8::HandleScope scope(isolate);
 
   async_req* req = new async_req;
   req->req.data = req;
@@ -77,4 +76,4 @@ void init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module) {
   NODE_SET_METHOD(module, "exports", Method);
 }
 
-NODE_MODULE(binding, init);
+NODE_MODULE(binding, init)
