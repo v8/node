@@ -480,7 +480,8 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
   virtual void Free(void* data, size_t) { free(data); }
 
   virtual void* Reserve(size_t length) {
-    return base::VirtualMemory::ReserveRegion(length);
+    return base::VirtualMemory::ReserveRegion(length,
+                                              base::OS::GetRandomMmapAddr());
   }
 
   virtual void Free(void* data, size_t length,
@@ -5332,7 +5333,7 @@ void Function::SetName(v8::Local<v8::String> name) {
   auto self = Utils::OpenHandle(this);
   if (!self->IsJSFunction()) return;
   auto func = i::Handle<i::JSFunction>::cast(self);
-  func->shared()->set_raw_name(*Utils::OpenHandle(*name));
+  func->shared()->set_name(*Utils::OpenHandle(*name));
 }
 
 
@@ -8469,7 +8470,13 @@ Isolate* IsolateNewImpl(internal::Isolate* isolate,
   // TODO(jochen): Once we got rid of Isolate::Current(), we can remove this.
   Isolate::Scope isolate_scope(v8_isolate);
   if (params.entry_hook || !i::Snapshot::Initialize(isolate)) {
+    base::ElapsedTimer timer;
+    if (i::FLAG_profile_deserialization) timer.Start();
     isolate->Init(NULL);
+    if (i::FLAG_profile_deserialization) {
+      double ms = timer.Elapsed().InMillisecondsF();
+      i::PrintF("[Initializing isolate from scratch took %0.3f ms]\n", ms);
+    }
   }
   return v8_isolate;
 }
@@ -9287,14 +9294,9 @@ void Debug::SetLiveEditEnabled(Isolate* isolate, bool enable) {
   debug::SetLiveEditEnabled(isolate, enable);
 }
 
-bool Debug::IsTailCallEliminationEnabled(Isolate* isolate) {
-  i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  return internal_isolate->is_tail_call_elimination_enabled();
-}
+bool Debug::IsTailCallEliminationEnabled(Isolate* isolate) { return false; }
 
 void Debug::SetTailCallEliminationEnabled(Isolate* isolate, bool enabled) {
-  i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  internal_isolate->SetTailCallEliminationEnabled(enabled);
 }
 
 MaybeLocal<Array> Debug::GetInternalProperties(Isolate* v8_isolate,
@@ -9820,6 +9822,8 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
     case kObjectGetOwnPropertySymbols:
       name = i::Builtins::kObjectGetOwnPropertySymbols;
       break;
+    default:
+      UNREACHABLE();
   }
   i::Handle<i::Code> call_code(isolate->builtins()->builtin(name));
   i::Handle<i::JSFunction> fun =

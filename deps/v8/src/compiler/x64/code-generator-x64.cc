@@ -41,7 +41,7 @@ class X64OperandConverter : public InstructionOperandConverter {
   Immediate ToImmediate(InstructionOperand* operand) {
     Constant constant = ToConstant(operand);
     if (constant.type() == Constant::kFloat64) {
-      DCHECK_EQ(0, bit_cast<int64_t>(constant.ToFloat64()));
+      DCHECK_EQ(0, constant.ToFloat64().AsUint64());
       return Immediate(0);
     }
     if (RelocInfo::IsWasmReference(constant.rmode())) {
@@ -834,7 +834,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchCallCodeObject: {
       EnsureSpaceForLazyDeopt();
       if (HasImmediateInput(instr, 0)) {
-        Handle<Code> code = Handle<Code>::cast(i.InputHeapObject(0));
+        Handle<Code> code = i.InputCode(0);
         __ Call(code, RelocInfo::CODE_TARGET);
       } else {
         Register reg = i.InputRegister(0);
@@ -853,7 +853,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          i.TempRegister(2));
       }
       if (HasImmediateInput(instr, 0)) {
-        Handle<Code> code = Handle<Code>::cast(i.InputHeapObject(0));
+        Handle<Code> code = i.InputCode(0);
         __ jmp(code, RelocInfo::CODE_TARGET);
       } else {
         Register reg = i.InputRegister(0);
@@ -2841,9 +2841,7 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
             new (gen_->zone()) ReferenceMap(gen_->zone());
         gen_->RecordSafepoint(reference_map, Safepoint::kSimple, 0,
                               Safepoint::kNoLazyDeopt);
-        if (FLAG_debug_code) {
-          __ ud2();
-        }
+        __ AssertUnreachable(kUnexpectedReturnFromWasmTrap);
       }
     }
 
@@ -3005,6 +3003,36 @@ void CodeGenerator::AssembleConstructFrame() {
 
   const RegList saves_fp = descriptor->CalleeSavedFPRegisters();
   if (shrink_slots > 0) {
+    if (info()->IsWasm() && shrink_slots > 128) {
+      // For WebAssembly functions with big frames we have to do the stack
+      // overflow check before we construct the frame. Otherwise we may not
+      // have enough space on the stack to call the runtime for the stack
+      // overflow.
+      Label done;
+
+      // If the frame is bigger than the stack, we throw the stack overflow
+      // exception unconditionally. Thereby we can avoid the integer overflow
+      // check in the condition code.
+      if (shrink_slots * kPointerSize < FLAG_stack_size * 1024) {
+        __ Move(kScratchRegister,
+                ExternalReference::address_of_real_stack_limit(__ isolate()));
+        __ movq(kScratchRegister, Operand(kScratchRegister, 0));
+        __ addq(kScratchRegister, Immediate(shrink_slots * kPointerSize));
+        __ cmpq(rsp, kScratchRegister);
+        __ j(above_equal, &done);
+      }
+      if (!frame_access_state()->has_frame()) {
+        __ set_has_frame(true);
+        __ EnterFrame(StackFrame::WASM_COMPILED);
+      }
+      __ Move(rsi, Smi::kZero);
+      __ CallRuntimeDelayed(zone(), Runtime::kThrowWasmStackOverflow);
+      ReferenceMap* reference_map = new (zone()) ReferenceMap(zone());
+      RecordSafepoint(reference_map, Safepoint::kSimple, 0,
+                      Safepoint::kNoLazyDeopt);
+      __ AssertUnreachable(kUnexpectedReturnFromWasmTrap);
+      __ bind(&done);
+    }
     __ subq(rsp, Immediate(shrink_slots * kPointerSize));
   }
 
@@ -3164,7 +3192,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
           __ MoveNumber(dst, src.ToFloat32());
           break;
         case Constant::kFloat64:
-          __ MoveNumber(dst, src.ToFloat64());
+          __ MoveNumber(dst, src.ToFloat64().value());
           break;
         case Constant::kExternalReference:
           __ Move(dst, src.ToExternalReference());
@@ -3198,7 +3226,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       }
     } else {
       DCHECK_EQ(Constant::kFloat64, src.type());
-      uint64_t src_const = bit_cast<uint64_t>(src.ToFloat64());
+      uint64_t src_const = src.ToFloat64().AsUint64();
       if (destination->IsFPRegister()) {
         __ Move(g.ToDoubleRegister(destination), src_const);
       } else {

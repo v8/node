@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --allow-natives-syntax --no-always-opt --ignition --block-coverage
+// Flags: --allow-natives-syntax --no-always-opt --ignition --block-coverage --harmony-async-iteration
+// Flags: --no-stress-fullcodegen
 
 // Test precise code coverage.
 
@@ -204,6 +205,44 @@ TestCoverage(
 );
 
 TestCoverage(
+"for-of and for-in statements",
+`
+!function() {                             // 0000
+  var i;                                  // 0050
+  for (i of [0,1,2,3]) { nop(); }         // 0100
+  for (let j of [0,1,2,3]) { nop(); }     // 0150
+  for (i in [0,1,2,3]) { nop(); }         // 0200
+  for (let j in [0,1,2,3]) { nop(); }     // 0250
+  var xs = [{a:0, b:1}, {a:1,b:0}];       // 0300
+  for (var {a: x, b: y} of xs) { nop(); } // 0350
+}();                                      // 0400
+`,
+[{"start":0,"end":449,"count":1},
+ {"start":1,"end":401,"count":1},
+ {"start":123,"end":133,"count":4},
+ {"start":177,"end":187,"count":4},
+ {"start":223,"end":233,"count":4},
+ {"start":277,"end":287,"count":4},
+ {"start":381,"end":391,"count":2}]
+);
+
+TestCoverage(
+"for-await-of statements",
+`
+!async function() {                       // 0000
+  for await (var x of [0,1,2,3]) {        // 0050
+    nop();                                // 0100
+  }                                       // 0150
+}();                                      // 0200
+%RunMicrotasks();                         // 0250
+`,
+[{"start":0,"end":299,"count":1},
+ {"start":1,"end":201,"count":6},  // TODO(jgruber): Invocation count is off.
+ {"start":83,"end":153,"count":4},
+ {"start":153,"end":201,"count":1}]
+);
+
+TestCoverage(
 "while and do-while statements",
 `
 function g() {}                           // 0000
@@ -339,6 +378,7 @@ TestCoverage(
  {"start":219,"end":232,"count":0},
  {"start":264,"end":274,"count":0},
  {"start":369,"end":380,"count":0},
+ {"start":403,"end":414,"count":0},  // TODO(jgruber): Include `catch` in range.
  {"start":513,"end":564,"count":0}]
 );
 
@@ -360,16 +400,27 @@ TestCoverage(
   }                                       // 0600
   nop();                                  // 0650
 }();                                      // 0700
+!function() {                             // 0750
+  try { throw 42; } catch (e) {           // 0800
+    return;                               // 0850
+    nop();                                // 0900
+  }                                       // 0950
+  nop();                                  // 1000
+}();                                      // 1050
 `,
-[{"start":0,"end":749,"count":1},
+[{"start":0,"end":1099,"count":1},
  {"start":1,"end":151,"count":1},
  {"start":67,"end":80,"count":0},
- {"start":89,"end":91,"count":0},  // TODO(jgruber): Missing continuation.
+ {"start":89,"end":151,"count":0},
  {"start":201,"end":351,"count":1},
- {"start":284,"end":286,"count":0},  // TODO(jgruber): Missing continuation.
+ {"start":284,"end":351,"count":0},
  {"start":401,"end":701,"count":1},
  {"start":569,"end":701,"count":0},
- {"start":561,"end":568,"count":0}]  // TODO(jgruber): Sorting.
+ {"start":561,"end":568,"count":0},  // TODO(jgruber): Sorting.
+ {"start":751,"end":1051,"count":1},
+ {"start":817,"end":830,"count":0},
+ {"start":861,"end":1051,"count":0}]
+
 );
 
 TestCoverage(
@@ -388,6 +439,103 @@ TestCoverage(
  {"start":1,"end":351,"count":1},
  {"start":154,"end":204,"count":0},
  {"start":226,"end":303,"count":0}]
+);
+
+TestCoverage(
+"labeled break statements",
+`
+!function() {                             // 0000
+  var x = 42;                             // 0050
+  l0: switch (x) {                        // 0100
+  case 41: return;                        // 0150
+  case 42:                                // 0200
+    switch (x) { case 42: break l0; }     // 0250
+    break;                                // 0300
+  }                                       // 0350
+  l1: for (;;) {                          // 0400
+    for (;;) break l1;                    // 0450
+  }                                       // 0500
+  l2: while (true) {                      // 0550
+    while (true) break l2;                // 0600
+  }                                       // 0650
+  l3: do {                                // 0700
+    do { break l3; } while (true);        // 0750
+  } while (true);                         // 0800
+  l4: { break l4; }                       // 0850
+  l5: for (;;) for (;;) break l5;         // 0900
+}();                                      // 0950
+`,
+[{"start":0,"end":999,"count":1},
+ {"start":1,"end":951,"count":1},
+ {"start":152,"end":202,"count":0},
+ {"start":285,"end":353,"count":0},
+ {"start":472,"end":503,"count":0},
+ {"start":626,"end":653,"count":0},
+ {"start":768,"end":803,"count":0},
+ {"start":867,"end":869,"count":0}]
+);
+
+TestCoverage(
+"labeled continue statements",
+`
+!function() {                             // 0000
+  l0: for (var i0 = 0; i0 < 2; i0++) {    // 0050
+    for (;;) continue l0;                 // 0100
+  }                                       // 0150
+  var i1 = 0;                             // 0200
+  l1: while (i1 < 2) {                    // 0250
+    i1++;                                 // 0300
+    while (true) continue l1;             // 0350
+  }                                       // 0400
+  var i2 = 0;                             // 0450
+  l2: do {                                // 0500
+    i2++;                                 // 0550
+    do { continue l2; } while (true);     // 0600
+  } while (i2 < 2);                       // 0650
+}();                                      // 0700
+`,
+[{"start":0,"end":749,"count":1},
+ {"start":1,"end":701,"count":1},
+ {"start":87,"end":153,"count":2},
+ {"start":125,"end":153,"count":0},
+ {"start":271,"end":403,"count":2},
+ {"start":379,"end":403,"count":0},
+ {"start":509,"end":653,"count":2},
+ {"start":621,"end":653,"count":0}]
+);
+
+TestCoverage(
+"conditional expressions",
+`
+var TRUE = true;                          // 0000
+var FALSE = false;                        // 0050
+!function() {                             // 0100
+  TRUE ? nop() : nop();                   // 0150
+  true ? nop() : nop();                   // 0200
+  false ? nop() : nop();                  // 0250
+  FALSE ? TRUE ? nop()                    // 0300
+               : nop()                    // 0350
+        : nop();                          // 0400
+  TRUE ? FALSE ? nop()                    // 0450
+               : nop()                    // 0500
+       : nop();                           // 0550
+  TRUE ? nop() : FALSE ? nop()            // 0600
+                       : nop();           // 0650
+  FALSE ? nop() : TRUE ? nop()            // 0700
+                       : nop();           // 0750
+}();                                      // 0800
+`,
+[{"start":0,"end":849,"count":1},
+ {"start":101,"end":801,"count":1},
+ {"start":167,"end":172,"count":0},
+ {"start":217,"end":222,"count":0},
+ {"start":260,"end":265,"count":0},
+ {"start":310,"end":372,"count":0},
+ {"start":467,"end":472,"count":0},
+ {"start":559,"end":564,"count":0},
+ {"start":617,"end":680,"count":0},
+ {"start":710,"end":715,"count":0},
+ {"start":775,"end":780,"count":0}]
 );
 
 %DebugToggleBlockCoverage(false);

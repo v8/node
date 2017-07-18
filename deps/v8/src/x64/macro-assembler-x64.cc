@@ -527,6 +527,10 @@ void TurboAssembler::Assert(Condition cc, BailoutReason reason) {
   if (emit_debug_code()) Check(cc, reason);
 }
 
+void TurboAssembler::AssertUnreachable(BailoutReason reason) {
+  if (emit_debug_code()) Abort(reason);
+}
+
 void TurboAssembler::Check(Condition cc, BailoutReason reason) {
   Label L;
   j(cc, &L, Label::kNear);
@@ -539,7 +543,7 @@ void TurboAssembler::CheckStackAlignment() {
   int frame_alignment = base::OS::ActivationFrameAlignment();
   int frame_alignment_mask = frame_alignment - 1;
   if (frame_alignment > kPointerSize) {
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     Label alignment_as_expected;
     testp(rsp, Immediate(frame_alignment_mask));
     j(zero, &alignment_as_expected, Label::kNear);
@@ -3616,8 +3620,7 @@ void MacroAssembler::AssertBoundFunction(Register object) {
   }
 }
 
-void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
-  // `flags` should be an untagged integer. See `SuspendFlags` in src/globals.h
+void MacroAssembler::AssertGeneratorObject(Register object) {
   if (!emit_debug_code()) return;
   testb(object, Immediate(kSmiTagMask));
   Check(not_equal, kOperandIsASmiAndNotAGeneratorObject);
@@ -3627,15 +3630,11 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
   Push(object);
   movp(map, FieldOperand(object, HeapObject::kMapOffset));
 
-  Label async, do_check;
-  testb(flags, Immediate(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  j(not_zero, &async);
-
+  Label do_check;
   // Check if JSGeneratorObject
   CmpInstanceType(map, JS_GENERATOR_OBJECT_TYPE);
-  jmp(&do_check);
+  j(equal, &do_check);
 
-  bind(&async);
   // Check if JSAsyncGeneratorObject
   CmpInstanceType(map, JS_ASYNC_GENERATOR_OBJECT_TYPE);
 
@@ -4115,7 +4114,7 @@ void MacroAssembler::EnterExitFrameEpilogue(int arg_stack_space,
   // Get the required frame alignment for the OS.
   const int kFrameAlignment = base::OS::ActivationFrameAlignment();
   if (kFrameAlignment > 0) {
-    DCHECK(base::bits::IsPowerOfTwo32(kFrameAlignment));
+    DCHECK(base::bits::IsPowerOfTwo(kFrameAlignment));
     DCHECK(is_int8(kFrameAlignment));
     andp(rsp, Immediate(-kFrameAlignment));
   }
@@ -4474,7 +4473,7 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   LoadGlobalFunctionInitialMap(constructor, scratch);
   movp(FieldOperand(result, HeapObject::kMapOffset), scratch);
   LoadRoot(scratch, Heap::kEmptyFixedArrayRootIndex);
-  movp(FieldOperand(result, JSObject::kPropertiesOffset), scratch);
+  movp(FieldOperand(result, JSObject::kPropertiesOrHashOffset), scratch);
   movp(FieldOperand(result, JSObject::kElementsOffset), scratch);
   movp(FieldOperand(result, JSValue::kValueOffset), value);
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
@@ -4604,7 +4603,7 @@ void TurboAssembler::PrepareCallCFunction(int num_arguments) {
 
   // Make stack end at alignment and allocate space for arguments and old rsp.
   movp(kScratchRegister, rsp);
-  DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+  DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
   int argument_slots_on_stack =
       ArgumentStackSlotsForCFunctionCall(num_arguments);
   subp(rsp, Immediate((argument_slots_on_stack + 1) * kRegisterSize));

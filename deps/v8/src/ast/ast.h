@@ -9,7 +9,6 @@
 #include "src/ast/modules.h"
 #include "src/ast/variables.h"
 #include "src/bailout-reason.h"
-#include "src/base/flags.h"
 #include "src/factory.h"
 #include "src/globals.h"
 #include "src/isolate.h"
@@ -90,8 +89,9 @@ namespace internal {
   V(Conditional)                \
   V(VariableProxy)              \
   V(Literal)                    \
-  V(Suspend)                    \
+  V(Yield)                      \
   V(YieldStar)                  \
+  V(Await)                      \
   V(Throw)                      \
   V(CallRuntime)                \
   V(UnaryOperation)             \
@@ -156,18 +156,8 @@ class FeedbackSlotCache {
 
 class AstProperties final BASE_EMBEDDED {
  public:
-  enum Flag {
-    kNoFlags = 0,
-    kDontSelfOptimize = 1 << 0,
-    kMustUseIgnition = 1 << 1
-  };
-
-  typedef base::Flags<Flag> Flags;
-
   explicit AstProperties(Zone* zone) : node_count_(0), spec_(zone) {}
 
-  Flags& flags() { return flags_; }
-  Flags flags() const { return flags_; }
   int node_count() { return node_count_; }
   void add_node_count(int count) { node_count_ += count; }
 
@@ -175,12 +165,10 @@ class AstProperties final BASE_EMBEDDED {
   FeedbackVectorSpec* get_spec() { return &spec_; }
 
  private:
-  Flags flags_;
   int node_count_;
   FeedbackVectorSpec spec_;
 };
 
-DEFINE_OPERATORS_FOR_FLAGS(AstProperties::Flags)
 
 class AstNode: public ZoneObject {
  public:
@@ -281,9 +269,6 @@ class Expression : public AstNode {
     // Evaluated for control flow (and side effects).
     kTest
   };
-
-  // Mark this expression as being in tail position.
-  void MarkTail();
 
   // True iff the expression is a valid reference expression.
   bool IsValidReferenceExpression() const;
@@ -789,15 +774,20 @@ class ReturnStatement final : public JumpStatement {
   Type type() const { return TypeField::decode(bit_field_); }
   bool is_async_return() const { return type() == kAsyncReturn; }
 
+  int end_position() const { return end_position_; }
+
  private:
   friend class AstNodeFactory;
 
-  ReturnStatement(Expression* expression, Type type, int pos)
-      : JumpStatement(pos, kReturnStatement), expression_(expression) {
+  ReturnStatement(Expression* expression, Type type, int pos, int end_position)
+      : JumpStatement(pos, kReturnStatement),
+        expression_(expression),
+        end_position_(end_position) {
     bit_field_ |= TypeField::encode(type);
   }
 
   Expression* expression_;
+  int end_position_;
 
   class TypeField
       : public BitField<Type, JumpStatement::kNextBitFieldIndex, 1> {};
@@ -1757,12 +1747,6 @@ class Call final : public Expression {
     return IsPossiblyEvalField::decode(bit_field_);
   }
 
-  TailCallMode tail_call_mode() const {
-    return IsTailField::decode(bit_field_) ? TailCallMode::kAllow
-                                           : TailCallMode::kDisallow;
-  }
-  void MarkTail() { bit_field_ = IsTailField::update(bit_field_, true); }
-
   bool only_last_arg_is_spread() {
     return !arguments_->is_empty() && arguments_->last()->IsSpread();
   }
@@ -1805,8 +1789,8 @@ class Call final : public Expression {
 
   class IsUninitializedField
       : public BitField<bool, Expression::kNextBitFieldIndex, 1> {};
-  class IsTailField : public BitField<bool, IsUninitializedField::kNext, 1> {};
-  class IsPossiblyEvalField : public BitField<bool, IsTailField::kNext, 1> {};
+  class IsPossiblyEvalField
+      : public BitField<bool, IsUninitializedField::kNext, 1> {};
 
   FeedbackSlot ic_slot_;
   Expression* expression_;
@@ -1944,17 +1928,6 @@ class BinaryOperation final : public Expression {
   void set_left(Expression* e) { left_ = e; }
   Expression* right() const { return right_; }
   void set_right(Expression* e) { right_ = e; }
-
-  void MarkTail() {
-    switch (op()) {
-      case Token::COMMA:
-      case Token::AND:
-      case Token::OR:
-        right_->MarkTail();
-      default:
-        break;
-    }
-  }
 
   void AssignFeedbackSlots(FeedbackVectorSpec* spec, LanguageMode language_mode,
                            FeedbackSlotCache* cache);
@@ -2109,11 +2082,6 @@ class Conditional final : public Expression {
   void set_condition(Expression* e) { condition_ = e; }
   void set_then_expression(Expression* e) { then_expression_ = e; }
   void set_else_expression(Expression* e) { else_expression_ = e; }
-
-  void MarkTail() {
-    then_expression_->MarkTail();
-    else_expression_->MarkTail();
-  }
 
  private:
   friend class AstNodeFactory;
@@ -2280,47 +2248,22 @@ class Suspend : public Expression {
   }
 
   int suspend_id() const { return suspend_id_; }
-  SuspendFlags flags() const { return FlagsField::decode(bit_field_); }
-  SuspendFlags suspend_type() const {
-    return flags() & SuspendFlags::kSuspendTypeMask;
-  }
-  SuspendFlags generator_type() const {
-    return flags() & SuspendFlags::kGeneratorTypeMask;
-  }
-  bool is_yield() const { return suspend_type() == SuspendFlags::kYield; }
-  bool is_yield_star() const {
-    return suspend_type() == SuspendFlags::kYieldStar;
-  }
-  bool is_await() const { return suspend_type() == SuspendFlags::kAwait; }
-  bool is_async_generator() const {
-    return generator_type() == SuspendFlags::kAsyncGenerator;
-  }
-  inline bool IsNonInitialAsyncGeneratorYield() const {
-    // Return true if is_async_generator() && !is_await() && yield_id() > 0
-    return suspend_id() > 0 && (flags() & SuspendFlags::kAsyncGeneratorAwait) ==
-                                   SuspendFlags::kAsyncGenerator;
-  }
-  inline bool IsNonInitialGeneratorYield() const {
-    // Return true if is_generator() && !is_await() && yield_id() > 0
-    return suspend_id() > 0 && (flags() == SuspendFlags::kGeneratorYield);
-  }
 
   void set_expression(Expression* e) { expression_ = e; }
   void set_suspend_id(int id) { suspend_id_ = id; }
-  void set_suspend_type(SuspendFlags type) {
-    DCHECK_EQ(0, static_cast<int>(type & ~SuspendFlags::kSuspendTypeMask));
-    bit_field_ = FlagsField::update(bit_field_, type);
-  }
+
+  inline bool IsInitialYield() const { return suspend_id_ == 0 && IsYield(); }
 
  private:
   friend class AstNodeFactory;
+  friend class Yield;
   friend class YieldStar;
+  friend class Await;
 
   Suspend(NodeType node_type, Expression* expression, int pos,
-          OnAbruptResume on_abrupt_resume, SuspendFlags flags)
+          OnAbruptResume on_abrupt_resume)
       : Expression(pos, node_type), suspend_id_(-1), expression_(expression) {
-    bit_field_ |= OnAbruptResumeField::encode(on_abrupt_resume) |
-                  FlagsField::encode(flags);
+    bit_field_ |= OnAbruptResumeField::encode(on_abrupt_resume);
   }
 
   int suspend_id_;
@@ -2328,9 +2271,13 @@ class Suspend : public Expression {
 
   class OnAbruptResumeField
       : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 2> {};
-  class FlagsField
-      : public BitField<SuspendFlags, OnAbruptResumeField::kNext,
-                        static_cast<int>(SuspendFlags::kBitWidth)> {};
+};
+
+class Yield final : public Suspend {
+ private:
+  friend class AstNodeFactory;
+  Yield(Expression* expression, int pos, OnAbruptResume on_abrupt_resume)
+      : Suspend(kYield, expression, pos, on_abrupt_resume) {}
 };
 
 class YieldStar final : public Suspend {
@@ -2385,9 +2332,9 @@ class YieldStar final : public Suspend {
  private:
   friend class AstNodeFactory;
 
-  YieldStar(Expression* expression, int pos, SuspendFlags flags)
+  YieldStar(Expression* expression, int pos)
       : Suspend(kYieldStar, expression, pos,
-                Suspend::OnAbruptResume::kNoControl, flags) {}
+                Suspend::OnAbruptResume::kNoControl) {}
 
   FeedbackSlot load_iterable_iterator_slot_;
   FeedbackSlot load_iterator_return_slot_;
@@ -2400,6 +2347,14 @@ class YieldStar final : public Suspend {
   FeedbackSlot call_iterator_return_slot2_;
   FeedbackSlot call_iterator_next_slot_;
   FeedbackSlot call_iterator_throw_slot_;
+};
+
+class Await final : public Suspend {
+ private:
+  friend class AstNodeFactory;
+
+  Await(Expression* expression, int pos)
+      : Suspend(kAwait, expression, pos, Suspend::kOnExceptionRethrow) {}
 };
 
 class Throw final : public Expression {
@@ -2449,7 +2404,6 @@ class FunctionLiteral final : public Expression {
   int function_token_position() const { return function_token_position_; }
   int start_position() const;
   int end_position() const;
-  int SourceSize() const { return end_position() - start_position(); }
   bool is_declaration() const { return function_type() == kDeclaration; }
   bool is_named_expression() const {
     return function_type() == kNamedExpression;
@@ -2550,14 +2504,24 @@ class FunctionLiteral final : public Expression {
   }
   FunctionKind kind() const;
 
-  int ast_node_count() { return ast_properties_.node_count(); }
-  AstProperties::Flags flags() const { return ast_properties_.flags(); }
   void set_ast_properties(AstProperties* ast_properties) {
     ast_properties_ = *ast_properties;
   }
+  int ast_node_count() { return ast_properties_.node_count(); }
   const FeedbackVectorSpec* feedback_vector_spec() const {
     return ast_properties_.get_spec();
   }
+
+  bool must_use_ignition() { return MustUseIgnitionField::decode(bit_field_); }
+  void set_must_use_ignition() {
+    bit_field_ = MustUseIgnitionField::update(bit_field_, true);
+  }
+
+  bool dont_self_optimize() { return DontSelfOptimize::decode(bit_field_); }
+  void set_dont_self_optimize() {
+    bit_field_ = DontSelfOptimize::update(bit_field_, true);
+  }
+
   bool dont_optimize() { return dont_optimize_reason() != kNoReason; }
   BailoutReason dont_optimize_reason() {
     return DontOptimizeReasonField::decode(bit_field_);
@@ -2629,9 +2593,13 @@ class FunctionLiteral final : public Expression {
   class HasDuplicateParameters : public BitField<bool, Pretenure::kNext, 1> {};
   class ShouldNotBeUsedOnceHintField
       : public BitField<bool, HasDuplicateParameters::kNext, 1> {};
+  class MustUseIgnitionField
+      : public BitField<bool, ShouldNotBeUsedOnceHintField::kNext, 1> {};
+  // TODO(6409): Remove when Full-Codegen dies.
+  class DontSelfOptimize
+      : public BitField<bool, MustUseIgnitionField::kNext, 1> {};
   class DontOptimizeReasonField
-      : public BitField<BailoutReason, ShouldNotBeUsedOnceHintField::kNext, 8> {
-  };
+      : public BitField<BailoutReason, DontSelfOptimize::kNext, 8> {};
 
   int expected_property_count_;
   int parameter_count_;
@@ -3158,14 +3126,16 @@ class AstNodeFactory final BASE_EMBEDDED {
     return new (zone_) BreakStatement(target, pos);
   }
 
-  ReturnStatement* NewReturnStatement(Expression* expression, int pos) {
-    return new (zone_)
-        ReturnStatement(expression, ReturnStatement::kNormal, pos);
+  ReturnStatement* NewReturnStatement(Expression* expression, int pos,
+                                      int end_position = kNoSourcePosition) {
+    return new (zone_) ReturnStatement(expression, ReturnStatement::kNormal,
+                                       pos, end_position);
   }
 
-  ReturnStatement* NewAsyncReturnStatement(Expression* expression, int pos) {
-    return new (zone_)
-        ReturnStatement(expression, ReturnStatement::kAsyncReturn, pos);
+  ReturnStatement* NewAsyncReturnStatement(
+      Expression* expression, int pos, int end_position = kNoSourcePosition) {
+    return new (zone_) ReturnStatement(
+        expression, ReturnStatement::kAsyncReturn, pos, end_position);
   }
 
   WithStatement* NewWithStatement(Scope* scope,
@@ -3416,17 +3386,20 @@ class AstNodeFactory final BASE_EMBEDDED {
     return assign;
   }
 
-  Suspend* NewSuspend(Expression* expression, int pos,
-                      Suspend::OnAbruptResume on_abrupt_resume,
-                      SuspendFlags flags) {
+  Suspend* NewYield(Expression* expression, int pos,
+                    Suspend::OnAbruptResume on_abrupt_resume) {
     if (!expression) expression = NewUndefinedLiteral(pos);
-    return new (zone_)
-        Suspend(AstNode::kSuspend, expression, pos, on_abrupt_resume, flags);
+    return new (zone_) Yield(expression, pos, on_abrupt_resume);
   }
 
-  YieldStar* NewYieldStar(Expression* expression, int pos, SuspendFlags flags) {
+  YieldStar* NewYieldStar(Expression* expression, int pos) {
     DCHECK_NOT_NULL(expression);
-    return new (zone_) YieldStar(expression, pos, flags);
+    return new (zone_) YieldStar(expression, pos);
+  }
+
+  Await* NewAwait(Expression* expression, int pos) {
+    if (!expression) expression = NewUndefinedLiteral(pos);
+    return new (zone_) Await(expression, pos);
   }
 
   Throw* NewThrow(Expression* exception, int pos) {
@@ -3585,7 +3558,6 @@ class AstNodeFactory final BASE_EMBEDDED {
   }
 AST_NODE_LIST(DECLARE_NODE_FUNCTIONS)
 #undef DECLARE_NODE_FUNCTIONS
-
 
 }  // namespace internal
 }  // namespace v8

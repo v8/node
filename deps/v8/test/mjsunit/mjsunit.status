@@ -89,6 +89,7 @@
   'unicode-case-overoptimization': [PASS, NO_VARIANTS, ['arch == arm or arch == arm64 or arch == android_arm or arch == android_arm64 or arch == mipsel or arch == mips64el or arch == mips64 or arch == mips', SKIP]],
   'regress/regress-3976': [PASS, NO_VARIANTS, ['arch == arm or arch == arm64 or arch == android_arm or arch == android_arm64 or arch == mipsel or arch == mips64el or arch == mips64 or arch == mips', SKIP]],
   'regress/regress-crbug-482998': [PASS, NO_VARIANTS, ['arch == arm or arch == arm64 or arch == android_arm or arch == android_arm64 or arch == mipsel or arch == mips64el or arch == mips', SKIP]],
+  'regress/regress-740784': [PASS, NO_VARIANTS, ['arch == arm or arch == arm64 or arch == android_arm or arch == android_arm64 or arch == mipsel or arch == mips64el or arch == mips', SKIP]],
 
   ##############################################################################
   # Skip long running tests that time out in debug mode.
@@ -137,7 +138,6 @@
 
   # Slow tests.
   'copy-on-write-assert': [PASS, SLOW],
-  'es6/tail-call-megatest*': [PASS, SLOW, FAST_VARIANTS, ['tsan', SKIP]],
   'es6/typedarray-construct-offset-not-smi': [PASS, SLOW],
   'harmony/regexp-property-script-extensions': [PASS, SLOW],
   'numops-fuzz-part*': [PASS, ['mode == debug', SLOW]],
@@ -564,9 +564,6 @@
 
   # Deopting uses just enough memory to make this one OOM.
   'regress/regress-3976': [SKIP],
-
-  # Too slow.
-  'es6/tail-call-megatest*': [SKIP],
 
   # Forced optimisation path tests.
   'shared-function-tier-up-turbo': [SKIP],

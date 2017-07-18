@@ -946,10 +946,7 @@ void JSMap::JSMapPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintBody(os, this);
 }
 
-
-template <class Derived, class TableType>
-void
-OrderedHashTableIterator<Derived, TableType>::OrderedHashTableIteratorPrint(
+void JSCollectionIterator::JSCollectionIteratorPrint(
     std::ostream& os) {  // NOLINT
   os << "\n - table = " << Brief(table());
   os << "\n - index = " << Brief(index());
@@ -957,25 +954,15 @@ OrderedHashTableIterator<Derived, TableType>::OrderedHashTableIteratorPrint(
 }
 
 
-template void OrderedHashTableIterator<
-    JSSetIterator,
-    OrderedHashSet>::OrderedHashTableIteratorPrint(std::ostream& os);  // NOLINT
-
-
-template void OrderedHashTableIterator<
-    JSMapIterator,
-    OrderedHashMap>::OrderedHashTableIteratorPrint(std::ostream& os);  // NOLINT
-
-
 void JSSetIterator::JSSetIteratorPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSSetIterator");
-  OrderedHashTableIteratorPrint(os);
+  JSCollectionIteratorPrint(os);
 }
 
 
 void JSMapIterator::JSMapIteratorPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSMapIterator");
-  OrderedHashTableIteratorPrint(os);
+  JSCollectionIteratorPrint(os);
 }
 
 
@@ -1115,13 +1102,14 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
     os << "<no-shared-name>";
   }
   os << "\n - kind = " << kind();
+  os << "\n - function_map_index = " << function_map_index();
   os << "\n - formal_parameter_count = " << internal_formal_parameter_count();
   os << "\n - expected_nof_properties = " << expected_nof_properties();
   os << "\n - language_mode = " << language_mode();
   os << "\n - ast_node_count = " << ast_node_count();
   os << "\n - instance class name = ";
   instance_class_name()->Print(os);
-  os << "\n - code = " << Brief(code());
+  os << " - code = " << Brief(code());
   if (HasBytecodeArray()) {
     os << "\n - bytecode_array = " << bytecode_array();
   }

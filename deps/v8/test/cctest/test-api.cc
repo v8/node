@@ -14451,7 +14451,6 @@ TEST(SetFunctionEntryHook) {
   // only gets called from experimental natives) is compiled with entry hooks.
   i::FLAG_allow_natives_syntax = true;
   i::FLAG_turbo_inlining = false;
-  i::FLAG_use_inlining = false;
 
   SetFunctionEntryHookTest test;
   test.RunTest();
@@ -22070,7 +22069,7 @@ void TestStubCache(bool primary) {
   // The test does not work with interpreter because bytecode handlers taken
   // from the snapshot already refer to ICs with disabled counters and there
   // is no way to trigger bytecode handlers recompilation.
-  if (FLAG_ignition) return;
+  if (!FLAG_stress_fullcodegen) return;
 
   FLAG_native_code_counters = true;
   if (primary) {
@@ -23025,7 +23024,7 @@ TEST(AccessCheckInIC) {
   // The test does not work with interpreter because bytecode handlers taken
   // from the snapshot already refer to ICs with disabled counters and there
   // is no way to trigger bytecode handlers recompilation.
-  if (FLAG_ignition) return;
+  if (!FLAG_stress_fullcodegen) return;
 
   FLAG_native_code_counters = true;
   FLAG_opt = false;
@@ -25357,11 +25356,11 @@ TEST(StringConcatOverflow) {
 
 
 TEST(TurboAsmDisablesNeuter) {
+  i::FLAG_opt = true;
   i::FLAG_allow_natives_syntax = true;
   v8::V8::Initialize();
   v8::HandleScope scope(CcTest::isolate());
   LocalContext context;
-  bool should_be_neuterable = !i::FLAG_turbo_asm;
   const char* load =
       "function Module(stdlib, foreign, heap) {"
       "  'use asm';"
@@ -25376,7 +25375,7 @@ TEST(TurboAsmDisablesNeuter) {
       "buffer";
 
   v8::Local<v8::ArrayBuffer> result = CompileRun(load).As<v8::ArrayBuffer>();
-  CHECK_EQ(should_be_neuterable, result->IsNeuterable());
+  CHECK(!result->IsNeuterable());
 
   const char* store =
       "function Module(stdlib, foreign, heap) {"
@@ -25392,7 +25391,7 @@ TEST(TurboAsmDisablesNeuter) {
       "buffer";
 
   result = CompileRun(store).As<v8::ArrayBuffer>();
-  CHECK_EQ(should_be_neuterable, result->IsNeuterable());
+  CHECK(!result->IsNeuterable());
 }
 
 

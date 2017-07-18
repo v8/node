@@ -62,19 +62,15 @@ namespace internal {
   ASM(CallFunction_ReceiverIsNullOrUndefined)                                  \
   ASM(CallFunction_ReceiverIsNotNullOrUndefined)                               \
   ASM(CallFunction_ReceiverIsAny)                                              \
-  ASM(TailCallFunction_ReceiverIsNullOrUndefined)                              \
-  ASM(TailCallFunction_ReceiverIsNotNullOrUndefined)                           \
-  ASM(TailCallFunction_ReceiverIsAny)                                          \
   /* ES6 section 9.4.1.1 [[Call]] ( thisArgument, argumentsList) */            \
   ASM(CallBoundFunction)                                                       \
-  ASM(TailCallBoundFunction)                                                   \
   /* ES6 section 7.3.12 Call(F, V, [argumentsList]) */                         \
   ASM(Call_ReceiverIsNullOrUndefined)                                          \
   ASM(Call_ReceiverIsNotNullOrUndefined)                                       \
   ASM(Call_ReceiverIsAny)                                                      \
-  ASM(TailCall_ReceiverIsNullOrUndefined)                                      \
-  ASM(TailCall_ReceiverIsNotNullOrUndefined)                                   \
-  ASM(TailCall_ReceiverIsAny)                                                  \
+                                                                               \
+  /* ES6 section 9.5.12[[Call]] ( thisArgument, argumentsList ) */             \
+  TFC(CallProxy, CallTrampoline, 1)                                            \
   ASM(CallVarargs)                                                             \
   TFC(CallWithSpread, CallWithSpread, 1)                                       \
   TFC(CallWithArrayLike, CallWithArrayLike, 1)                                 \
@@ -131,6 +127,9 @@ namespace internal {
   TFC(StringLessThanOrEqual, Compare, 1)                                       \
   TFC(StringConcat, StringConcat, 1)                                           \
                                                                                \
+  /* OrderedHashTable helpers */                                               \
+  TFS(OrderedHashTableHealIndex, kTable, kIndex)                               \
+                                                                               \
   /* Interpreter */                                                            \
   ASM(InterpreterEntryTrampoline)                                              \
   ASM(InterpreterPushArgsThenCall)                                             \
@@ -138,8 +137,6 @@ namespace internal {
   ASM(InterpreterPushArgsThenCallFunction)                                     \
   ASM(InterpreterPushUndefinedAndArgsThenCallFunction)                         \
   ASM(InterpreterPushArgsThenCallWithFinalSpread)                              \
-  ASM(InterpreterPushArgsThenTailCall)                                         \
-  ASM(InterpreterPushArgsThenTailCallFunction)                                 \
   ASM(InterpreterPushArgsThenConstruct)                                        \
   ASM(InterpreterPushArgsThenConstructFunction)                                \
   ASM(InterpreterPushArgsThenConstructArray)                                   \
@@ -349,8 +346,8 @@ namespace internal {
   CPP(ArrayBufferPrototypeSlice)                                               \
                                                                                \
   /* AsyncFunction */                                                          \
-  TFJ(AsyncFunctionAwaitCaught, 3, kGenerator, kAwaited, kOuterPromise)        \
-  TFJ(AsyncFunctionAwaitUncaught, 3, kGenerator, kAwaited, kOuterPromise)      \
+  TFJ(AsyncFunctionAwaitCaught, 2, kAwaited, kOuterPromise)                    \
+  TFJ(AsyncFunctionAwaitUncaught, 2, kAwaited, kOuterPromise)                  \
   TFJ(AsyncFunctionAwaitRejectClosure, 1, kSentError)                          \
   TFJ(AsyncFunctionAwaitResolveClosure, 1, kSentValue)                         \
   TFJ(AsyncFunctionPromiseCreate, 0)                                           \
@@ -766,7 +763,7 @@ namespace internal {
   /* ES6 #sec-promise-executor */                                              \
   TFJ(PromiseConstructor, 1, kExecutor)                                        \
   TFJ(PromiseInternalConstructor, 1, kParent)                                  \
-  TFJ(IsPromise, 1, kObject)                                                   \
+  CPP(IsPromise)                                                               \
   /* ES #sec-promise-resolve-functions */                                      \
   TFJ(PromiseResolveClosure, 1, kValue)                                        \
   /* ES #sec-promise-reject-functions */                                       \
@@ -1036,6 +1033,14 @@ namespace internal {
   TFC(ThrowWasmTrapFuncInvalid, WasmRuntimeCall, 1)                            \
   TFC(ThrowWasmTrapFuncSigMismatch, WasmRuntimeCall, 1)                        \
                                                                                \
+  /* WeakMap */                                                                \
+  TFS(WeakMapLookupHashIndex, kTable, kKey)                                    \
+  TFJ(WeakMapGet, 1, kKey)                                                     \
+  TFJ(WeakMapHas, 1, kKey)                                                     \
+                                                                               \
+  /* WeakSet */                                                                \
+  TFJ(WeakSetHas, 1, kKey)                                                     \
+                                                                               \
   /* AsyncGenerator */                                                         \
                                                                                \
   TFS(AsyncGeneratorResolve, kGenerator, kValue, kDone)                        \
@@ -1060,8 +1065,8 @@ namespace internal {
                                                                                \
   /* Await (proposal-async-iteration/#await), with resume behaviour */         \
   /* specific to Async Generators. Internal / Not exposed to JS code. */       \
-  TFJ(AsyncGeneratorAwaitCaught, 2, kGenerator, kAwaited)                      \
-  TFJ(AsyncGeneratorAwaitUncaught, 2, kGenerator, kAwaited)                    \
+  TFJ(AsyncGeneratorAwaitCaught, 1, kAwaited)                                  \
+  TFJ(AsyncGeneratorAwaitUncaught, 1, kAwaited)                                \
   TFJ(AsyncGeneratorAwaitResolveClosure, 1, kValue)                            \
   TFJ(AsyncGeneratorAwaitRejectClosure, 1, kValue)                             \
                                                                                \

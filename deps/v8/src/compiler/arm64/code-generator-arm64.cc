@@ -228,7 +228,7 @@ class Arm64OperandConverter final : public InstructionOperandConverter {
       case Constant::kFloat32:
         return Operand(Operand::EmbeddedNumber(constant.ToFloat32()));
       case Constant::kFloat64:
-        return Operand(Operand::EmbeddedNumber(constant.ToFloat64()));
+        return Operand(Operand::EmbeddedNumber(constant.ToFloat64().value()));
       case Constant::kExternalReference:
         return Operand(constant.ToExternalReference());
       case Constant::kHeapObject:
@@ -417,16 +417,16 @@ Condition FlagsConditionToCondition(FlagsCondition condition) {
 
 }  // namespace
 
-#define ASSEMBLE_BOUNDS_CHECK(offset, length, out_of_bounds)   \
-  do {                                                         \
-    if (length.IsImmediate() &&                                \
-        base::bits::IsPowerOfTwo64(length.ImmediateValue())) { \
-      __ Tst(offset, ~(length.ImmediateValue() - 1));          \
-      __ B(ne, out_of_bounds);                                 \
-    } else {                                                   \
-      __ Cmp(offset, length);                                  \
-      __ B(hs, out_of_bounds);                                 \
-    }                                                          \
+#define ASSEMBLE_BOUNDS_CHECK(offset, length, out_of_bounds) \
+  do {                                                       \
+    if (length.IsImmediate() &&                              \
+        base::bits::IsPowerOfTwo(length.ImmediateValue())) { \
+      __ Tst(offset, ~(length.ImmediateValue() - 1));        \
+      __ B(ne, out_of_bounds);                               \
+    } else {                                                 \
+      __ Cmp(offset, length);                                \
+      __ B(hs, out_of_bounds);                               \
+    }                                                        \
   } while (0)
 
 #define ASSEMBLE_CHECKED_LOAD_FLOAT(width)                         \
@@ -672,8 +672,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 
       EnsureSpaceForLazyDeopt();
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Call(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Call(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         Register target = i.InputRegister(0);
         __ Add(target, target, Code::kHeaderSize - kHeapObjectTag);
@@ -708,8 +707,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          i.TempRegister(2));
       }
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Jump(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Jump(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         Register target = i.InputRegister(0);
         __ Add(target, target, Code::kHeaderSize - kHeapObjectTag);
@@ -2660,15 +2658,15 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       DCHECK_EQ(Constant::kFloat64, src.type());
       if (destination->IsFPRegister()) {
         VRegister dst = g.ToDoubleRegister(destination);
-        __ Fmov(dst, src.ToFloat64());
+        __ Fmov(dst, src.ToFloat64().value());
       } else {
         DCHECK(destination->IsFPStackSlot());
-        if (bit_cast<int64_t>(src.ToFloat64()) == 0) {
+        if (src.ToFloat64().AsUint64() == 0) {
           __ Str(xzr, g.ToMemOperand(destination, tasm()));
         } else {
           UseScratchRegisterScope scope(tasm());
           VRegister temp = scope.AcquireD();
-          __ Fmov(temp, src.ToFloat64());
+          __ Fmov(temp, src.ToFloat64().value());
           __ Str(temp, g.ToMemOperand(destination, tasm()));
         }
       }

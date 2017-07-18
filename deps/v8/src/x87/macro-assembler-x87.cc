@@ -946,7 +946,7 @@ void MacroAssembler::EnterExitFrameEpilogue(int argc, bool save_doubles) {
   // Get the required frame alignment for the OS.
   const int kFrameAlignment = base::OS::ActivationFrameAlignment();
   if (kFrameAlignment > 0) {
-    DCHECK(base::bits::IsPowerOfTwo32(kFrameAlignment));
+    DCHECK(base::bits::IsPowerOfTwo(kFrameAlignment));
     and_(esp, -kFrameAlignment);
   }
 
@@ -1378,7 +1378,7 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   LoadGlobalFunctionInitialMap(constructor, scratch);
   mov(FieldOperand(result, HeapObject::kMapOffset), scratch);
   LoadRoot(scratch, Heap::kEmptyFixedArrayRootIndex);
-  mov(FieldOperand(result, JSObject::kPropertiesOffset), scratch);
+  mov(FieldOperand(result, JSObject::kPropertiesOrHashOffset), scratch);
   mov(FieldOperand(result, JSObject::kElementsOffset), scratch);
   mov(FieldOperand(result, JSValue::kValueOffset), value);
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
@@ -1402,7 +1402,7 @@ void MacroAssembler::BooleanBitTest(Register object,
                                     int field_offset,
                                     int bit_index) {
   bit_index += kSmiTagSize + kSmiShiftSize;
-  DCHECK(base::bits::IsPowerOfTwo32(kBitsPerByte));
+  DCHECK(base::bits::IsPowerOfTwo(kBitsPerByte));
   int byte_index = bit_index / kBitsPerByte;
   int byte_bit_index = bit_index & (kBitsPerByte - 1);
   test_b(FieldOperand(object, field_offset + byte_index),
@@ -2064,7 +2064,7 @@ void MacroAssembler::CheckStackAlignment() {
   int frame_alignment = base::OS::ActivationFrameAlignment();
   int frame_alignment_mask = frame_alignment - 1;
   if (frame_alignment > kPointerSize) {
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     Label alignment_as_expected;
     test(esp, Immediate(frame_alignment_mask));
     j(zero, &alignment_as_expected);
@@ -2221,7 +2221,7 @@ void MacroAssembler::PrepareCallCFunction(int num_arguments, Register scratch) {
     // and the original value of esp.
     mov(scratch, esp);
     sub(esp, Immediate((num_arguments + 1) * kPointerSize));
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     and_(esp, -frame_alignment);
     mov(Operand(esp, num_arguments * kPointerSize), scratch);
   } else {

@@ -126,9 +126,9 @@ RUNTIME_FUNCTION(Runtime_DeoptimizeFunction) {
   // If the function is not optimized, just return.
   if (!function->IsOptimized()) return isolate->heap()->undefined_value();
 
-  // TODO(turbofan): Deoptimization is not supported yet.
+  // TODO(turbofan): Deoptimization from AstGraphBuilder is not supported.
   if (function->code()->is_turbofanned() &&
-      function->shared()->asm_function()) {
+      !function->shared()->HasBytecodeArray()) {
     return isolate->heap()->undefined_value();
   }
 
@@ -152,9 +152,9 @@ RUNTIME_FUNCTION(Runtime_DeoptimizeNow) {
   // If the function is not optimized, just return.
   if (!function->IsOptimized()) return isolate->heap()->undefined_value();
 
-  // TODO(turbofan): Deoptimization is not supported yet.
+  // TODO(turbofan): Deoptimization from AstGraphBuilder is not supported.
   if (function->code()->is_turbofanned() &&
-      function->shared()->asm_function()) {
+      !function->shared()->HasBytecodeArray()) {
     return isolate->heap()->undefined_value();
   }
 
@@ -736,14 +736,6 @@ RUNTIME_FUNCTION(Runtime_TraceExit) {
   obj->ShortPrint();
   PrintF("\n");
   return obj;  // return TOS
-}
-
-RUNTIME_FUNCTION(Runtime_TraceTailCall) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(0, args.length());
-  PrintIndentation(isolate);
-  PrintF("} -> tail call ->\n");
-  return isolate->heap()->undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_GetExceptionDetails) {

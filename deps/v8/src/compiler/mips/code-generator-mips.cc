@@ -81,7 +81,7 @@ class MipsOperandConverter final : public InstructionOperandConverter {
       case Constant::kFloat32:
         return Operand::EmbeddedNumber(constant.ToFloat32());
       case Constant::kFloat64:
-        return Operand::EmbeddedNumber(constant.ToFloat64());
+        return Operand::EmbeddedNumber(constant.ToFloat64().value());
       case Constant::kInt64:
       case Constant::kExternalReference:
       case Constant::kHeapObject:
@@ -613,8 +613,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchCallCodeObject: {
       EnsureSpaceForLazyDeopt();
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Call(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Call(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         __ Call(at, i.InputRegister(0), Code::kHeaderSize - kHeapObjectTag);
       }
@@ -630,8 +629,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          i.TempRegister(2));
       }
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Jump(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Jump(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         __ Jump(at, i.InputRegister(0), Code::kHeaderSize - kHeapObjectTag);
       }
@@ -2938,7 +2936,7 @@ void CodeGenerator::AssembleArchBoolean(Instruction* instr,
   if (instr->arch_opcode() == kMipsTst) {
     cc = FlagsConditionToConditionTst(condition);
     if (instr->InputAt(1)->IsImmediate() &&
-        base::bits::IsPowerOfTwo32(i.InputOperand(1).immediate())) {
+        base::bits::IsPowerOfTwo(i.InputOperand(1).immediate())) {
       uint16_t pos =
           base::bits::CountTrailingZeros32(i.InputOperand(1).immediate());
       __ Ext(result, i.InputRegister(0), pos, 1);
@@ -3291,7 +3289,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
           UNREACHABLE();
           break;
         case Constant::kFloat64:
-          __ li(dst, Operand::EmbeddedNumber(src.ToFloat64()));
+          __ li(dst, Operand::EmbeddedNumber(src.ToFloat64().value()));
           break;
         case Constant::kExternalReference:
           __ li(dst, Operand(src.ToExternalReference()));
@@ -3330,7 +3328,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       DoubleRegister dst = destination->IsFPRegister()
                                ? g.ToDoubleRegister(destination)
                                : kScratchDoubleReg;
-      __ Move(dst, src.ToFloat64());
+      __ Move(dst, src.ToFloat64().value());
       if (destination->IsFPStackSlot()) {
         __ Sdc1(dst, g.ToMemOperand(destination));
       }

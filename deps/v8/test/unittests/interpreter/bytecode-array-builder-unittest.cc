@@ -155,7 +155,6 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .CallUndefinedReceiver(reg, empty, 1)
       .CallUndefinedReceiver(reg, single, 1)
       .CallUndefinedReceiver(reg, pair, 1)
-      .TailCall(reg, reg_list, 1)
       .CallRuntime(Runtime::kIsArray, reg)
       .CallRuntimeForPair(Runtime::kLoadLookupSlotForCall, reg_list, pair)
       .CallJSRuntime(Context::SPREAD_ITERABLE_INDEX, reg_list)
@@ -366,7 +365,7 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .StoreModuleVariable(1, 42);
 
   // Emit generator operations.
-  builder.SuspendGenerator(reg, reg_list, SuspendFlags::kYield)
+  builder.SuspendGenerator(reg, reg_list)
       .RestoreGeneratorState(reg)
       .RestoreGeneratorRegisters(reg, reg_list);
 

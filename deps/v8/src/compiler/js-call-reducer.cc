@@ -158,10 +158,6 @@ bool CanBeNullOrUndefined(Node* node) {
 Reduction JSCallReducer::ReduceFunctionPrototypeApply(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
   CallParameters const& p = CallParametersOf(node->op());
-  // Tail calls to Function.prototype.apply are not properly supported
-  // down the pipeline, so we disable this optimization completely for
-  // tail calls (for now).
-  if (p.tail_call_mode() == TailCallMode::kAllow) return NoChange();
   size_t arity = p.arity();
   DCHECK_LE(2u, arity);
   ConvertReceiverMode convert_mode = ConvertReceiverMode::kAny;
@@ -268,8 +264,7 @@ Reduction JSCallReducer::ReduceFunctionPrototypeApply(Node* node) {
   // Change {node} to the new {JSCall} operator.
   NodeProperties::ChangeOp(
       node,
-      javascript()->Call(arity, p.frequency(), VectorSlotPair(), convert_mode,
-                         p.tail_call_mode()));
+      javascript()->Call(arity, p.frequency(), VectorSlotPair(), convert_mode));
   // Try to further reduce the JSCall {node}.
   Reduction const reduction = ReduceJSCall(node);
   return reduction.Changed() ? reduction : Changed(node);
@@ -305,8 +300,7 @@ Reduction JSCallReducer::ReduceFunctionPrototypeCall(Node* node) {
   }
   NodeProperties::ChangeOp(
       node,
-      javascript()->Call(arity, p.frequency(), VectorSlotPair(), convert_mode,
-                         p.tail_call_mode()));
+      javascript()->Call(arity, p.frequency(), VectorSlotPair(), convert_mode));
   // Try to further reduce the JSCall {node}.
   Reduction const reduction = ReduceJSCall(node);
   return reduction.Changed() ? reduction : Changed(node);
@@ -339,50 +333,6 @@ Reduction JSCallReducer::ReduceFunctionPrototypeHasInstance(Node* node) {
   node->TrimInputCount(6);
   NodeProperties::ChangeOp(node, javascript()->OrdinaryHasInstance());
   return Changed(node);
-}
-
-namespace {
-
-bool HasInstanceTypeWitness(Node* receiver, Node* effect,
-                            InstanceType instance_type) {
-  ZoneHandleSet<Map> receiver_maps;
-  NodeProperties::InferReceiverMapsResult result =
-      NodeProperties::InferReceiverMaps(receiver, effect, &receiver_maps);
-  switch (result) {
-    case NodeProperties::kNoReceiverMaps:
-      return false;
-    case NodeProperties::kReliableReceiverMaps:
-    case NodeProperties::kUnreliableReceiverMaps:
-      DCHECK_NE(0, receiver_maps.size());
-      for (size_t i = 0; i < receiver_maps.size(); ++i) {
-        if (receiver_maps[i]->instance_type() != instance_type) return false;
-      }
-      return true;
-  }
-  UNREACHABLE();
-  return false;
-}
-
-}  // namespace
-
-// ES #sec-get-map.prototype.size
-Reduction JSCallReducer::ReduceMapPrototypeGetSize(Node* node) {
-  DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
-  Node* receiver = NodeProperties::GetValueInput(node, 1);
-  Node* effect = NodeProperties::GetEffectInput(node);
-  Node* control = NodeProperties::GetControlInput(node);
-  if (HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE)) {
-    Node* table = effect = graph()->NewNode(
-        simplified()->LoadField(AccessBuilder::ForJSCollectionTable()),
-        receiver, effect, control);
-    Node* value = effect = graph()->NewNode(
-        simplified()->LoadField(
-            AccessBuilder::ForOrderedHashMapNumberOfElements()),
-        table, effect, control);
-    ReplaceWithValue(node, value, effect, control);
-    return Replace(value);
-  }
-  return NoChange();
 }
 
 Reduction JSCallReducer::ReduceObjectGetPrototype(Node* node, Node* object) {
@@ -530,26 +480,6 @@ Reduction JSCallReducer::ReduceReflectGetPrototypeOf(Node* node) {
   return ReduceObjectGetPrototype(node, target);
 }
 
-// ES #sec-get-set.prototype.size
-Reduction JSCallReducer::ReduceSetPrototypeGetSize(Node* node) {
-  DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
-  Node* receiver = NodeProperties::GetValueInput(node, 1);
-  Node* effect = NodeProperties::GetEffectInput(node);
-  Node* control = NodeProperties::GetControlInput(node);
-  if (HasInstanceTypeWitness(receiver, effect, JS_SET_TYPE)) {
-    Node* table = effect = graph()->NewNode(
-        simplified()->LoadField(AccessBuilder::ForJSCollectionTable()),
-        receiver, effect, control);
-    Node* value = effect = graph()->NewNode(
-        simplified()->LoadField(
-            AccessBuilder::ForOrderedHashSetNumberOfElements()),
-        table, effect, control);
-    ReplaceWithValue(node, value, effect, control);
-    return Replace(value);
-  }
-  return NoChange();
-}
-
 bool CanInlineArrayIteratingBuiltin(Handle<Map> receiver_map) {
   Isolate* const isolate = receiver_map->GetIsolate();
   if (!receiver_map->prototype()->IsJSArray()) return false;
@@ -601,7 +531,6 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   // Install code dependencies on the {receiver} prototype maps and the
   // global array protector cell.
   dependencies()->AssumePropertyCell(factory()->array_protector());
-  dependencies()->AssumePrototypeMapsStable(receiver_map);
 
   Node* k = jsgraph()->ZeroConstant();
 
@@ -1131,8 +1060,7 @@ Reduction JSCallReducer::ReduceCallOrConstructWithArrayLikeOrSpread(
     Operator const* op =
         (node->opcode() == IrOpcode::kJSCallWithArrayLike ||
          node->opcode() == IrOpcode::kJSCallWithSpread)
-            ? javascript()->CallForwardVarargs(arity + 1, start_index,
-                                               TailCallMode::kDisallow)
+            ? javascript()->CallForwardVarargs(arity + 1, start_index)
             : javascript()->ConstructForwardVarargs(arity + 2, start_index);
     NodeProperties::ChangeOp(node, op);
     return Changed(node);
@@ -1227,8 +1155,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceFunctionPrototypeCall(node);
         case Builtins::kFunctionPrototypeHasInstance:
           return ReduceFunctionPrototypeHasInstance(node);
-        case Builtins::kMapPrototypeGetSize:
-          return ReduceMapPrototypeGetSize(node);
         case Builtins::kNumberConstructor:
           return ReduceNumberConstructor(node);
         case Builtins::kObjectGetPrototypeOf:
@@ -1243,8 +1169,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceReflectConstruct(node);
         case Builtins::kReflectGetPrototypeOf:
           return ReduceReflectGetPrototypeOf(node);
-        case Builtins::kSetPrototypeGetSize:
-          return ReduceSetPrototypeGetSize(node);
         case Builtins::kArrayForEach:
           return ReduceArrayForEach(function, node);
         case Builtins::kArrayMap:
@@ -1293,9 +1217,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
         arity++;
       }
       NodeProperties::ChangeOp(
-          node,
-          javascript()->Call(arity, p.frequency(), VectorSlotPair(),
-                             convert_mode, p.tail_call_mode()));
+          node, javascript()->Call(arity, p.frequency(), VectorSlotPair(),
+                                   convert_mode));
       // Try to further reduce the JSCall {node}.
       Reduction const reduction = ReduceJSCall(node);
       return reduction.Changed() ? reduction : Changed(node);

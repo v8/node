@@ -188,14 +188,18 @@ V8_INLINE Dest bit_cast(Source const& source) {
 #define IS_TRIVIALLY_COPYABLE(T) std::is_trivially_copyable<T>::value
 #endif
 
-// The USE(x) template is used to silence C++ compiler warnings
+// The USE(x, ...) template is used to silence C++ compiler warnings
 // issued for (yet) unused variables (typically parameters).
-template <typename T>
-inline void USE(T) { }
-
-
-#define IS_POWER_OF_TWO(x) ((x) != 0 && (((x) & ((x) - 1)) == 0))
-
+// The arguments are guaranteed to be evaluated from left to right.
+struct Use {
+  template <typename T>
+  Use(T&&) {}  // NOLINT(runtime/explicit)
+};
+#define USE(...)                                         \
+  do {                                                   \
+    ::Use unused_tmp_array_for_use_macro[]{__VA_ARGS__}; \
+    (void)unused_tmp_array_for_use_macro;                \
+  } while (false)
 
 // Define our own macros for writing 64-bit constants.  This is less fragile
 // than defining __STDC_CONSTANT_MACROS before including <stdint.h>, and it
@@ -288,7 +292,8 @@ inline T AddressFrom(intptr_t x) {
 // Return the largest multiple of m which is <= x.
 template <typename T>
 inline T RoundDown(T x, intptr_t m) {
-  DCHECK(IS_POWER_OF_TWO(m));
+  // m must be a power of two.
+  DCHECK(m != 0 && ((m & (m - 1)) == 0));
   return AddressFrom<T>(OffsetFrom(x) & -m);
 }
 

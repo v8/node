@@ -93,9 +93,6 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
   Factory* factory = isolate->factory();
   IncrementCounter(isolate->counters()->fast_new_closure_total(), 1);
 
-  // Create a new closure from the given function info in new space
-  Node* result = Allocate(JSFunction::kSize);
-
   Node* compiler_hints =
       LoadObjectField(shared_info, SharedFunctionInfo::kCompilerHintsOffset,
                       MachineType::Uint32());
@@ -114,11 +111,18 @@ Node* ConstructorBuiltinsAssembler::EmitFastNewClosure(Node* shared_info,
   // as the map of the allocated object.
   Node* native_context = LoadNativeContext(context);
   Node* function_map = LoadContextElement(native_context, function_map_index);
+
+  // Create a new closure from the given function info in new space
+  Node* instance_size_in_bytes =
+      TimesPointerSize(LoadMapInstanceSize(function_map));
+  Node* result = Allocate(instance_size_in_bytes);
   StoreMapNoWriteBarrier(result, function_map);
+  InitializeJSObjectBody(result, function_map, instance_size_in_bytes,
+                         JSFunction::kSize);
 
   // Initialize the rest of the function.
   Node* empty_fixed_array = HeapConstant(factory->empty_fixed_array());
-  StoreObjectFieldNoWriteBarrier(result, JSObject::kPropertiesOffset,
+  StoreObjectFieldNoWriteBarrier(result, JSObject::kPropertiesOrHashOffset,
                                  empty_fixed_array);
   StoreObjectFieldNoWriteBarrier(result, JSObject::kElementsOffset,
                                  empty_fixed_array);
@@ -634,7 +638,7 @@ Node* ConstructorBuiltinsAssembler::EmitFastCloneShallowObject(
     Comment("Initialize Literal Copy");
     // Initialize Object fields.
     StoreMapNoWriteBarrier(copy, boilerplate_map);
-    StoreObjectFieldNoWriteBarrier(copy, JSObject::kPropertiesOffset,
+    StoreObjectFieldNoWriteBarrier(copy, JSObject::kPropertiesOrHashOffset,
                                    var_properties.value());
     StoreObjectFieldNoWriteBarrier(copy, JSObject::kElementsOffset,
                                    var_elements.value());

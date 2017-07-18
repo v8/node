@@ -237,10 +237,9 @@ class WasmGraphBuilder {
   Node* LoadMem(wasm::ValueType type, MachineType memtype, Node* index,
                 uint32_t offset, uint32_t alignment,
                 wasm::WasmCodePosition position);
-  Node* StoreMem(MachineType type, Node* index, uint32_t offset,
-                 uint32_t alignment, Node* val,
-                 wasm::WasmCodePosition position);
-
+  Node* StoreMem(MachineType memtype, Node* index, uint32_t offset,
+                 uint32_t alignment, Node* val, wasm::WasmCodePosition position,
+                 wasm::ValueType type = wasm::kWasmStmt);
   static void PrintDebugName(Node* node);
 
   Node* Control() { return *control_; }
@@ -263,15 +262,14 @@ class WasmGraphBuilder {
   Node* S1x8Zero();
   Node* S1x16Zero();
 
-  Node* SimdOp(wasm::WasmOpcode opcode, const NodeVector& inputs);
+  Node* SimdOp(wasm::WasmOpcode opcode, Node* const* inputs);
 
-  Node* SimdLaneOp(wasm::WasmOpcode opcode, uint8_t lane,
-                   const NodeVector& inputs);
+  Node* SimdLaneOp(wasm::WasmOpcode opcode, uint8_t lane, Node* const* inputs);
 
   Node* SimdShiftOp(wasm::WasmOpcode opcode, uint8_t shift,
-                    const NodeVector& inputs);
+                    Node* const* inputs);
 
-  Node* Simd8x16ShuffleOp(uint8_t shuffle[16], const NodeVector& inputs);
+  Node* Simd8x16ShuffleOp(const uint8_t shuffle[16], Node* const* inputs);
 
   bool has_simd() const { return has_simd_; }
 
@@ -312,8 +310,10 @@ class WasmGraphBuilder {
   void BoundsCheckMem(MachineType memtype, Node* index, uint32_t offset,
                       wasm::WasmCodePosition position);
   const Operator* GetSafeStoreOperator(int offset, wasm::ValueType type);
-  Node* BuildChangeEndianness(Node* node, MachineType type,
-                              wasm::ValueType wasmtype = wasm::kWasmStmt);
+  Node* BuildChangeEndiannessStore(Node* node, MachineType type,
+                                   wasm::ValueType wasmtype = wasm::kWasmStmt);
+  Node* BuildChangeEndiannessLoad(Node* node, MachineType type,
+                                  wasm::ValueType wasmtype = wasm::kWasmStmt);
 
   Node* MaskShiftCount32(Node* node);
   Node* MaskShiftCount64(Node* node);

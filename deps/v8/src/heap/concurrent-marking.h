@@ -7,6 +7,7 @@
 
 #include "src/allocation.h"
 #include "src/cancelable-task.h"
+#include "src/heap/worklist.h"
 #include "src/utils.h"
 #include "src/v8.h"
 
@@ -15,8 +16,6 @@ namespace internal {
 
 class Heap;
 class Isolate;
-template <typename EntryType, int SEGMENT_SIZE>
-class Worklist;
 
 class ConcurrentMarking {
  public:
@@ -37,9 +36,9 @@ class ConcurrentMarking {
   ConcurrentMarking(Heap* heap, MarkingWorklist* shared_,
                     MarkingWorklist* bailout_);
 
-  void Start();
-  bool IsRunning() { return pending_task_count_ > 0; }
+  void ScheduleTasks();
   void EnsureCompleted();
+  void RescheduleTasksIfNeeded();
 
  private:
   struct TaskLock {
@@ -51,9 +50,11 @@ class ConcurrentMarking {
   Heap* heap_;
   MarkingWorklist* shared_;
   MarkingWorklist* bailout_;
-  TaskLock task_lock_[kTasks];
-  base::Semaphore pending_task_semaphore_;
+  TaskLock task_lock_[kTasks + 1];
+  base::Mutex pending_lock_;
+  base::ConditionVariable pending_condition_;
   int pending_task_count_;
+  bool is_pending_[kTasks + 1];
 };
 
 }  // namespace internal

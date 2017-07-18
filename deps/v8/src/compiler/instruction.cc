@@ -561,6 +561,12 @@ Handle<HeapObject> Constant::ToHeapObject() const {
   return value;
 }
 
+Handle<Code> Constant::ToCode() const {
+  DCHECK_EQ(kHeapObject, type());
+  Handle<Code> value(bit_cast<Code**>(static_cast<intptr_t>(value_)));
+  return value;
+}
+
 std::ostream& operator<<(std::ostream& os, const Constant& constant) {
   switch (constant.type()) {
     case Constant::kInt32:
@@ -570,7 +576,7 @@ std::ostream& operator<<(std::ostream& os, const Constant& constant) {
     case Constant::kFloat32:
       return os << constant.ToFloat32() << "f";
     case Constant::kFloat64:
-      return os << constant.ToFloat64();
+      return os << constant.ToFloat64().value();
     case Constant::kExternalReference:
       return os << static_cast<const void*>(
                        constant.ToExternalReference().address());

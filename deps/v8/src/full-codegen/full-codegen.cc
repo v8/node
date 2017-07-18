@@ -83,7 +83,7 @@ bool FullCodeGenerator::MakeCode(CompilationInfo* info) {
 bool FullCodeGenerator::MakeCode(CompilationInfo* info, uintptr_t stack_limit) {
   Isolate* isolate = info->isolate();
 
-  DCHECK(!info->shared_info()->must_use_ignition());
+  DCHECK(!info->literal()->must_use_ignition());
   DCHECK(!FLAG_minimal);
   RuntimeCallTimerScope runtimeTimer(isolate,
                                      &RuntimeCallStats::CompileFullCode);
@@ -638,16 +638,12 @@ void FullCodeGenerator::SetExpressionAsStatementPosition(Expression* expr) {
   }
 }
 
-void FullCodeGenerator::SetCallPosition(Expression* expr,
-                                        TailCallMode tail_call_mode) {
+void FullCodeGenerator::SetCallPosition(Expression* expr) {
   if (expr->position() == kNoSourcePosition) return;
   RecordPosition(expr->position());
   if (info_->is_debug()) {
-    RelocInfo::Mode mode = (tail_call_mode == TailCallMode::kAllow)
-                               ? RelocInfo::DEBUG_BREAK_SLOT_AT_TAIL_CALL
-                               : RelocInfo::DEBUG_BREAK_SLOT_AT_CALL;
     // Always emit a debug break slot before a call.
-    DebugCodegen::GenerateSlot(masm_, mode);
+    DebugCodegen::GenerateSlot(masm_, RelocInfo::DEBUG_BREAK_SLOT_AT_CALL);
   }
 }
 
@@ -1257,9 +1253,7 @@ void FullCodeGenerator::VisitThrow(Throw* expr) {
 
 
 void FullCodeGenerator::VisitCall(Call* expr) {
-  Comment cmnt(masm_, (expr->tail_call_mode() == TailCallMode::kAllow)
-                          ? "[ TailCall"
-                          : "[ Call");
+  Comment cmnt(masm_, "[ Call");
   Expression* callee = expr->expression();
   Call::CallType call_type = expr->GetCallType();
 
@@ -1357,7 +1351,17 @@ void FullCodeGenerator::VisitRewritableExpression(RewritableExpression* expr) {
   Visit(expr->expression());
 }
 
+void FullCodeGenerator::VisitYield(Yield* expr) {
+  // Resumable functions are not supported.
+  UNREACHABLE();
+}
+
 void FullCodeGenerator::VisitYieldStar(YieldStar* expr) {
+  // Resumable functions are not supported.
+  UNREACHABLE();
+}
+
+void FullCodeGenerator::VisitAwait(Await* expr) {
   // Resumable functions are not supported.
   UNREACHABLE();
 }

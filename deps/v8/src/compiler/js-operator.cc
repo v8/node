@@ -146,9 +146,7 @@ StringConcatParameter const& StringConcatParameterOf(Operator const* op) {
 }
 
 std::ostream& operator<<(std::ostream& os, CallParameters const& p) {
-  os << p.arity() << ", " << p.frequency() << ", " << p.convert_mode() << ", "
-     << p.tail_call_mode();
-  return os;
+  return os << p.arity() << ", " << p.frequency() << ", " << p.convert_mode();
 }
 
 const CallParameters& CallParametersOf(const Operator* op) {
@@ -158,8 +156,7 @@ const CallParameters& CallParametersOf(const Operator* op) {
 
 std::ostream& operator<<(std::ostream& os,
                          CallForwardVarargsParameters const& p) {
-  return os << p.arity() << ", " << p.start_index() << ", "
-            << p.tail_call_mode();
+  return os << p.arity() << ", " << p.start_index();
 }
 
 CallForwardVarargsParameters const& CallForwardVarargsParametersOf(
@@ -562,31 +559,6 @@ const CreateLiteralParameters& CreateLiteralParametersOf(const Operator* op) {
   return OpParameter<CreateLiteralParameters>(op);
 }
 
-bool operator==(GeneratorStoreParameters const& lhs,
-                GeneratorStoreParameters const& rhs) {
-  return lhs.register_count() == rhs.register_count() &&
-         lhs.suspend_type() == rhs.suspend_type();
-}
-bool operator!=(GeneratorStoreParameters const& lhs,
-                GeneratorStoreParameters const& rhs) {
-  return !(lhs == rhs);
-}
-
-size_t hash_value(GeneratorStoreParameters const& p) {
-  return base::hash_combine(p.register_count(),
-                            static_cast<int>(p.suspend_type()));
-}
-
-std::ostream& operator<<(std::ostream& os, GeneratorStoreParameters const& p) {
-  const char* suspend_type = SuspendTypeFor(p.suspend_type());
-  return os << p.register_count() << " (" << suspend_type << ")";
-}
-
-const GeneratorStoreParameters& GeneratorStoreParametersOf(const Operator* op) {
-  DCHECK_EQ(op->opcode(), IrOpcode::kJSGeneratorStore);
-  return OpParameter<GeneratorStoreParameters>(op);
-}
-
 BinaryOperationHint BinaryOperationHintOf(const Operator* op) {
   DCHECK_EQ(IrOpcode::kJSAdd, op->opcode());
   return OpParameter<BinaryOperationHint>(op);
@@ -804,9 +776,9 @@ const Operator* JSOperatorBuilder::ToBoolean(ToBooleanHints hints) {
       hints);                                     // parameter
 }
 
-const Operator* JSOperatorBuilder::CallForwardVarargs(
-    size_t arity, uint32_t start_index, TailCallMode tail_call_mode) {
-  CallForwardVarargsParameters parameters(arity, start_index, tail_call_mode);
+const Operator* JSOperatorBuilder::CallForwardVarargs(size_t arity,
+                                                      uint32_t start_index) {
+  CallForwardVarargsParameters parameters(arity, start_index);
   return new (zone()) Operator1<CallForwardVarargsParameters>(   // --
       IrOpcode::kJSCallForwardVarargs, Operator::kNoProperties,  // opcode
       "JSCallForwardVarargs",                                    // name
@@ -816,10 +788,8 @@ const Operator* JSOperatorBuilder::CallForwardVarargs(
 
 const Operator* JSOperatorBuilder::Call(size_t arity, CallFrequency frequency,
                                         VectorSlotPair const& feedback,
-                                        ConvertReceiverMode convert_mode,
-                                        TailCallMode tail_call_mode) {
-  CallParameters parameters(arity, frequency, feedback, tail_call_mode,
-                            convert_mode);
+                                        ConvertReceiverMode convert_mode) {
+  CallParameters parameters(arity, frequency, feedback, convert_mode);
   return new (zone()) Operator1<CallParameters>(   // --
       IrOpcode::kJSCall, Operator::kNoProperties,  // opcode
       "JSCall",                                    // name
@@ -937,14 +907,12 @@ const Operator* JSOperatorBuilder::LoadProperty(
       access);                                             // parameter
 }
 
-const Operator* JSOperatorBuilder::GeneratorStore(int register_count,
-                                                  SuspendFlags suspend_flags) {
-  GeneratorStoreParameters parameters(register_count, suspend_flags);
-  return new (zone()) Operator1<GeneratorStoreParameters>(  // --
-      IrOpcode::kJSGeneratorStore, Operator::kNoThrow,      // opcode
-      "JSGeneratorStore",                                   // name
-      3 + register_count, 1, 1, 0, 1, 0,                    // counts
-      parameters);                                          // parameter
+const Operator* JSOperatorBuilder::GeneratorStore(int register_count) {
+  return new (zone()) Operator1<int>(                   // --
+      IrOpcode::kJSGeneratorStore, Operator::kNoThrow,  // opcode
+      "JSGeneratorStore",                               // name
+      3 + register_count, 1, 1, 0, 1, 0,                // counts
+      register_count);                                  // parameter
 }
 
 const Operator* JSOperatorBuilder::GeneratorRestoreRegister(int index) {

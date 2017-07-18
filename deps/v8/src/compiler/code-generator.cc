@@ -506,12 +506,14 @@ void CodeGenerator::AssembleSourcePosition(SourcePosition source_position) {
     if (!info->parse_info()) return;
     std::ostringstream buffer;
     buffer << "-- ";
-    if (FLAG_trace_turbo) {
+    if (FLAG_trace_turbo ||
+        tasm()->isolate()->concurrent_recompilation_enabled()) {
       buffer << source_position;
     } else {
-      buffer << source_position;
-      // TODO(neis): Figure out if/how to print InliningStack(info) from a
-      // background thread.
+      AllowHeapAllocation allocation;
+      AllowHandleAllocation handles;
+      AllowHandleDereference deref;
+      buffer << source_position.InliningStack(info);
     }
     buffer << " --";
     tasm()->RecordComment(StrDup(buffer.str().c_str()));
@@ -654,16 +656,6 @@ void CodeGenerator::RecordCallPosition(Instruction* instr) {
         DeoptimizationExit(deopt_state_id, current_source_position_);
     deoptimization_exits_.push_back(exit);
 
-    // If the pre-call frame state differs from the post-call one, produce the
-    // pre-call frame state, too.
-    // TODO(jarin) We might want to avoid building the pre-call frame state
-    // because it is only used to get locals and arguments (by the debugger and
-    // f.arguments), and those are the same in the pre-call and post-call
-    // states.
-    if (!descriptor->state_combine().IsOutputIgnored()) {
-      deopt_state_id = BuildTranslation(instr, -1, frame_state_offset,
-                                        OutputFrameStateCombine::Ignore());
-    }
     safepoints()->RecordLazyDeoptimizationIndex(deopt_state_id);
   }
 }
@@ -803,9 +795,6 @@ void CodeGenerator::BuildTranslationForFrameStateDescriptor(
       translation->BeginArgumentsAdaptorFrame(
           shared_info_id,
           static_cast<unsigned int>(descriptor->parameters_count()));
-      break;
-    case FrameStateType::kTailCallerFunction:
-      translation->BeginTailCallerFrame(shared_info_id);
       break;
     case FrameStateType::kConstructStub:
       DCHECK(descriptor->bailout_id().IsValidForConstructStub());
@@ -973,7 +962,7 @@ void CodeGenerator::AddTranslationForOperand(Translation* translation,
       case Constant::kFloat64:
         DCHECK(type.representation() == MachineRepresentation::kFloat64 ||
                type.representation() == MachineRepresentation::kTagged);
-        literal = DeoptimizationLiteral(constant.ToFloat64());
+        literal = DeoptimizationLiteral(constant.ToFloat64().value());
         break;
       case Constant::kHeapObject:
         DCHECK_EQ(MachineRepresentation::kTagged, type.representation());

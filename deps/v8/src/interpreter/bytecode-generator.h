@@ -119,8 +119,8 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
       HoleCheckMode hole_check_mode,
       LookupHoistingMode lookup_hoisting_mode = LookupHoistingMode::kNormal);
   void BuildLiteralCompareNil(Token::Value compare_op, NilValue nil);
-  void BuildReturn();
-  void BuildAsyncReturn();
+  void BuildReturn(int source_position = kNoSourcePosition);
+  void BuildAsyncReturn(int source_position = kNoSourcePosition);
   void BuildAsyncGeneratorReturn();
   void BuildReThrow();
   void BuildAbort(BailoutReason bailout_reason);
@@ -218,8 +218,6 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
                                      Register* out_register));
   void VisitInSameTestExecutionScope(Expression* expr);
 
-  int UpdateRuntimeFunctionForAsyncAwait(int context_index);
-
   // Returns the runtime function id for a store to super for the function's
   // language mode.
   inline Runtime::FunctionId StoreToSuperRuntimeId();
@@ -262,6 +260,7 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
     return globals_builder_;
   }
   inline LanguageMode language_mode() const;
+  inline FunctionKind function_kind() const;
   int feedback_index(FeedbackSlot slot) const;
 
   inline HandlerTable::CatchPrediction catch_prediction() const {

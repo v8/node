@@ -1091,12 +1091,12 @@ void JSReceiver::set_properties(Object* value, WriteBarrierMode mode) {
   Heap* heap = GetHeap();
   DCHECK_NE(value, heap->empty_property_array());
 
-  WRITE_FIELD(this, kPropertiesOffset, value);
-  CONDITIONAL_WRITE_BARRIER(heap, this, kPropertiesOffset, value, mode);
+  WRITE_FIELD(this, kPropertiesOrHashOffset, value);
+  CONDITIONAL_WRITE_BARRIER(heap, this, kPropertiesOrHashOffset, value, mode);
 }
 
 Object* JSReceiver::properties() const {
-  return Object::cast(READ_FIELD(this, kPropertiesOffset));
+  return Object::cast(READ_FIELD(this, kPropertiesOrHashOffset));
 }
 
 Object** FixedArray::GetFirstElementAddress() {
@@ -4855,25 +4855,8 @@ ACCESSORS(JSProxy, hash, Object, kHashOffset)
 bool JSProxy::IsRevoked() const { return !handler()->IsJSReceiver(); }
 
 ACCESSORS(JSCollection, table, Object, kTableOffset)
-
-
-#define ORDERED_HASH_TABLE_ITERATOR_ACCESSORS(name, type, offset)    \
-  template<class Derived, class TableType>                           \
-  type* OrderedHashTableIterator<Derived, TableType>::name() const { \
-    return type::cast(READ_FIELD(this, offset));                     \
-  }                                                                  \
-  template<class Derived, class TableType>                           \
-  void OrderedHashTableIterator<Derived, TableType>::set_##name(     \
-      type* value, WriteBarrierMode mode) {                          \
-    WRITE_FIELD(this, offset, value);                                \
-    CONDITIONAL_WRITE_BARRIER(GetHeap(), this, offset, value, mode); \
-  }
-
-ORDERED_HASH_TABLE_ITERATOR_ACCESSORS(table, Object, kTableOffset)
-ORDERED_HASH_TABLE_ITERATOR_ACCESSORS(index, Object, kIndexOffset)
-
-#undef ORDERED_HASH_TABLE_ITERATOR_ACCESSORS
-
+ACCESSORS(JSCollectionIterator, table, Object, kTableOffset)
+ACCESSORS(JSCollectionIterator, index, Object, kIndexOffset)
 
 ACCESSORS(JSWeakCollection, table, Object, kTableOffset)
 ACCESSORS(JSWeakCollection, next, Object, kNextOffset)
@@ -4919,8 +4902,6 @@ bool JSGeneratorObject::is_executing() const {
 }
 
 ACCESSORS(JSAsyncGeneratorObject, queue, HeapObject, kQueueOffset)
-ACCESSORS(JSAsyncGeneratorObject, await_input_or_debug_pos, Object,
-          kAwaitInputOrDebugPosOffset)
 ACCESSORS(JSAsyncGeneratorObject, awaited_promise, HeapObject,
           kAwaitedPromiseOffset)
 
@@ -5605,10 +5586,10 @@ void JSReceiver::initialize_properties() {
   DCHECK(!GetHeap()->InNewSpace(GetHeap()->empty_fixed_array()));
   DCHECK(!GetHeap()->InNewSpace(GetHeap()->empty_property_dictionary()));
   if (map()->is_dictionary_map()) {
-    WRITE_FIELD(this, kPropertiesOffset,
+    WRITE_FIELD(this, kPropertiesOrHashOffset,
                 GetHeap()->empty_property_dictionary());
   } else {
-    WRITE_FIELD(this, kPropertiesOffset, GetHeap()->empty_fixed_array());
+    WRITE_FIELD(this, kPropertiesOrHashOffset, GetHeap()->empty_fixed_array());
   }
 }
 

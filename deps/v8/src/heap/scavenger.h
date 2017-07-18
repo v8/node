@@ -5,6 +5,7 @@
 #ifndef V8_HEAP_SCAVENGER_H_
 #define V8_HEAP_SCAVENGER_H_
 
+#include "src/heap/local-allocator.h"
 #include "src/heap/objects-visiting.h"
 #include "src/heap/slot-set.h"
 #include "src/heap/worklist.h"
@@ -76,6 +77,7 @@ class Scavenger {
         local_pretenuring_feedback_(kInitialLocalPretenuringFeedbackCapacity),
         copied_size_(0),
         promoted_size_(0),
+        allocator_(heap),
         is_logging_(is_logging),
         is_incremental_marking_(is_incremental_marking) {}
 
@@ -101,7 +103,7 @@ class Scavenger {
   inline Heap* heap() { return heap_; }
 
   // Copies |source| to |target| and sets the forwarding pointer in |source|.
-  V8_INLINE void MigrateObject(HeapObject* source, HeapObject* target,
+  V8_INLINE void MigrateObject(Map* map, HeapObject* source, HeapObject* target,
                                int size);
 
   V8_INLINE bool SemiSpaceCopyObject(Map* map, HeapObject** slot,
@@ -137,6 +139,7 @@ class Scavenger {
   base::HashMap local_pretenuring_feedback_;
   size_t copied_size_;
   size_t promoted_size_;
+  LocalAllocator allocator_;
   bool is_logging_;
   bool is_incremental_marking_;
 };

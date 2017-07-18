@@ -116,6 +116,7 @@ Heap::Heap()
       raw_allocations_hash_(0),
       ms_count_(0),
       gc_count_(0),
+      mmap_region_base_(0),
       remembered_unmapped_pages_index_(0),
 #ifdef DEBUG
       allocation_timeout_(0),
@@ -1176,7 +1177,7 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
   DCHECK(array->map() != fixed_cow_array_map());
   Object** dst = array->data_start() + dst_index;
   Object** src = array->data_start() + src_index;
-  if (FLAG_concurrent_marking && concurrent_marking()->IsRunning()) {
+  if (FLAG_concurrent_marking && incremental_marking()->IsMarking()) {
     if (dst < src) {
       for (int i = 0; i < len; i++) {
         base::AsAtomicWord::Relaxed_Store(
@@ -1737,6 +1738,10 @@ void Heap::Scavenge() {
   isolate()->global_handles()->IdentifyWeakUnmodifiedObjects(
       &JSObject::IsUnmodifiedApiObject);
 
+  std::vector<MemoryChunk*> pages;
+  RememberedSet<OLD_TO_NEW>::IterateMemoryChunks(
+      this, [&pages](MemoryChunk* chunk) { pages.push_back(chunk); });
+
   {
     // Copy roots.
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_ROOTS);
@@ -1746,23 +1751,27 @@ void Heap::Scavenge() {
   {
     // Copy objects reachable from the old generation.
     TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_OLD_TO_NEW_POINTERS);
-    RememberedSet<OLD_TO_NEW>::Iterate(
-        this, SYNCHRONIZED, [this, &scavenger](Address addr) {
-          return scavenger.CheckAndScavengeObject(this, addr);
-        });
 
-    RememberedSet<OLD_TO_NEW>::IterateTyped(
-        this, SYNCHRONIZED,
-        [this, &scavenger](SlotType type, Address host_addr, Address addr) {
-          return UpdateTypedSlotHelper::UpdateTypedSlot(
-              isolate(), type, addr, [this, &scavenger](Object** addr) {
-                // We expect that objects referenced by code are long living.
-                // If we do not force promotion, then we need to clear
-                // old_to_new slots in dead code objects after mark-compact.
-                return scavenger.CheckAndScavengeObject(
-                    this, reinterpret_cast<Address>(addr));
-              });
-        });
+    for (MemoryChunk* chunk : pages) {
+      base::LockGuard<base::RecursiveMutex> guard(chunk->mutex());
+      RememberedSet<OLD_TO_NEW>::Iterate(
+          chunk, [this, &scavenger](Address addr) {
+            return scavenger.CheckAndScavengeObject(this, addr);
+          });
+      RememberedSet<OLD_TO_NEW>::IterateTyped(
+          chunk,
+          [this, &scavenger](SlotType type, Address host_addr, Address addr) {
+            return UpdateTypedSlotHelper::UpdateTypedSlot(
+                isolate(), type, addr, [this, &scavenger](Object** addr) {
+                  // We expect that objects referenced by code are long
+                  // living. If we do not force promotion, then we need to
+                  // clear old_to_new slots in dead code objects after
+                  // mark-compact.
+                  return scavenger.CheckAndScavengeObject(
+                      this, reinterpret_cast<Address>(addr));
+                });
+          });
+    }
   }
 
   {
@@ -5630,6 +5639,10 @@ bool Heap::SetUp() {
   if (!configured_) {
     if (!ConfigureHeapDefault()) return false;
   }
+
+  mmap_region_base_ =
+      reinterpret_cast<uintptr_t>(base::OS::GetRandomMmapAddr()) &
+      ~kMmapRegionMask;
 
   // Set up memory allocator.
   memory_allocator_ = new MemoryAllocator(isolate_);

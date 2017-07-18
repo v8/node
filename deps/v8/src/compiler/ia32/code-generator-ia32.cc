@@ -75,7 +75,7 @@ class IA32OperandConverter : public InstructionOperandConverter {
       case Constant::kFloat32:
         return Immediate::EmbeddedNumber(constant.ToFloat32());
       case Constant::kFloat64:
-        return Immediate::EmbeddedNumber(constant.ToFloat64());
+        return Immediate::EmbeddedNumber(constant.ToFloat64().value());
       case Constant::kExternalReference:
         return Immediate(constant.ToExternalReference());
       case Constant::kHeapObject:
@@ -909,7 +909,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchCallCodeObject: {
       EnsureSpaceForLazyDeopt();
       if (HasImmediateInput(instr, 0)) {
-        Handle<Code> code = Handle<Code>::cast(i.InputHeapObject(0));
+        Handle<Code> code = i.InputCode(0);
         __ call(code, RelocInfo::CODE_TARGET);
       } else {
         Register reg = i.InputRegister(0);
@@ -927,7 +927,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          no_reg, no_reg, no_reg);
       }
       if (HasImmediateInput(instr, 0)) {
-        Handle<Code> code = Handle<Code>::cast(i.InputHeapObject(0));
+        Handle<Code> code = i.InputCode(0);
         __ jmp(code, RelocInfo::CODE_TARGET);
       } else {
         Register reg = i.InputRegister(0);
@@ -2240,9 +2240,7 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
             new (gen_->zone()) ReferenceMap(gen_->zone());
         gen_->RecordSafepoint(reference_map, Safepoint::kSimple, 0,
                               Safepoint::kNoLazyDeopt);
-        if (FLAG_debug_code) {
-          __ ud2();
-        }
+        __ AssertUnreachable(kUnexpectedReturnFromWasmTrap);
       }
     }
 
@@ -2522,6 +2520,40 @@ void CodeGenerator::AssembleConstructFrame() {
 
   const RegList saves = descriptor->CalleeSavedRegisters();
   if (shrink_slots > 0) {
+    if (info()->IsWasm() && shrink_slots > 128) {
+      // For WebAssembly functions with big frames we have to do the stack
+      // overflow check before we construct the frame. Otherwise we may not
+      // have enough space on the stack to call the runtime for the stack
+      // overflow.
+      Label done;
+
+      // If the frame is bigger than the stack, we throw the stack overflow
+      // exception unconditionally. Thereby we can avoid the integer overflow
+      // check in the condition code.
+      if (shrink_slots * kPointerSize < FLAG_stack_size * 1024) {
+        Register scratch = esi;
+        __ push(scratch);
+        __ mov(scratch,
+               Immediate(ExternalReference::address_of_real_stack_limit(
+                   __ isolate())));
+        __ mov(scratch, Operand(scratch, 0));
+        __ add(scratch, Immediate(shrink_slots * kPointerSize));
+        __ cmp(esp, scratch);
+        __ pop(scratch);
+        __ j(above_equal, &done);
+      }
+      if (!frame_access_state()->has_frame()) {
+        __ set_has_frame(true);
+        __ EnterFrame(StackFrame::WASM_COMPILED);
+      }
+      __ Move(esi, Smi::kZero);
+      __ CallRuntimeDelayed(zone(), Runtime::kThrowWasmStackOverflow);
+      ReferenceMap* reference_map = new (zone()) ReferenceMap(zone());
+      RecordSafepoint(reference_map, Safepoint::kSimple, 0,
+                      Safepoint::kNoLazyDeopt);
+      __ AssertUnreachable(kUnexpectedReturnFromWasmTrap);
+      __ bind(&done);
+    }
     __ sub(esp, Immediate(shrink_slots * kPointerSize));
   }
 
@@ -2639,7 +2671,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       }
     } else {
       DCHECK_EQ(Constant::kFloat64, src_constant.type());
-      uint64_t src = src_constant.ToFloat64AsInt();
+      uint64_t src = src_constant.ToFloat64().AsUint64();
       uint32_t lower = static_cast<uint32_t>(src);
       uint32_t upper = static_cast<uint32_t>(src >> 32);
       if (destination->IsFPRegister()) {

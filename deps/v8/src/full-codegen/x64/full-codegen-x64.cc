@@ -1373,11 +1373,6 @@ void FullCodeGenerator::VisitAssignment(Assignment* expr) {
   }
 }
 
-void FullCodeGenerator::VisitSuspend(Suspend* expr) {
-  // Resumable functions are not supported.
-  UNREACHABLE();
-}
-
 void FullCodeGenerator::PushOperand(MemOperand operand) {
   OperandStackDepthIncrement(1);
   __ Push(operand);
@@ -1590,18 +1585,8 @@ void FullCodeGenerator::EmitCall(Call* expr, ConvertReceiverMode mode) {
     VisitForStackValue(args->at(i));
   }
 
-  SetCallPosition(expr, expr->tail_call_mode());
-  if (expr->tail_call_mode() == TailCallMode::kAllow) {
-    if (FLAG_trace) {
-      __ CallRuntime(Runtime::kTraceTailCall);
-    }
-    // Update profiling counters before the tail call since we will
-    // not return to this function.
-    EmitProfilingCounterHandlingForReturnSequence(true);
-  }
-  Handle<Code> code =
-      CodeFactory::CallICTrampoline(isolate(), mode, expr->tail_call_mode())
-          .code();
+  SetCallPosition(expr);
+  Handle<Code> code = CodeFactory::CallICTrampoline(isolate(), mode).code();
   __ Set(rdx, IntFromSlot(expr->CallFeedbackICSlot()));
   __ movp(rdi, Operand(rsp, (arg_count + 1) * kPointerSize));
   __ Set(rax, arg_count);

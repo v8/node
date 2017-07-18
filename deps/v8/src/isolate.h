@@ -5,6 +5,7 @@
 #ifndef V8_ISOLATE_H_
 #define V8_ISOLATE_H_
 
+#include <cstddef>
 #include <memory>
 #include <queue>
 
@@ -130,6 +131,26 @@ class CompilationManager;
 
 #define RETURN_EXCEPTION_IF_SCHEDULED_EXCEPTION(isolate, T) \
   RETURN_VALUE_IF_SCHEDULED_EXCEPTION(isolate, MaybeHandle<T>())
+
+#define ASSIGN_RETURN_ON_SCHEDULED_EXCEPTION_VALUE(isolate, dst, call, value) \
+  do {                                                                        \
+    Isolate* __isolate__ = (isolate);                                         \
+    if (!(call).ToLocal(&dst)) {                                              \
+      DCHECK(__isolate__->has_scheduled_exception());                         \
+      __isolate__->PromoteScheduledException();                               \
+      return value;                                                           \
+    }                                                                         \
+  } while (false)
+
+#define RETURN_ON_SCHEDULED_EXCEPTION_VALUE(isolate, call, value) \
+  do {                                                            \
+    Isolate* __isolate__ = (isolate);                             \
+    if ((call).IsNothing()) {                                     \
+      DCHECK(__isolate__->has_scheduled_exception());             \
+      __isolate__->PromoteScheduledException();                   \
+      return value;                                               \
+    }                                                             \
+  } while (false)
 
 #define RETURN_RESULT_OR_FAILURE(isolate, call)     \
   do {                                              \
@@ -1173,15 +1194,6 @@ class Isolate {
   void RunPromiseHook(PromiseHookType type, Handle<JSPromise> promise,
                       Handle<Object> parent);
 
-  // Support for dynamically disabling tail call elimination.
-  Address is_tail_call_elimination_enabled_address() {
-    return reinterpret_cast<Address>(&is_tail_call_elimination_enabled_);
-  }
-  bool is_tail_call_elimination_enabled() const {
-    return is_tail_call_elimination_enabled_;
-  }
-  void SetTailCallEliminationEnabled(bool enabled);
-
   void AddDetachedContext(Handle<Context> context);
   void CheckDetachedContextsAfterGC();
 
@@ -1254,10 +1266,7 @@ class Isolate {
     using Deleter = void (*)(ManagedObjectFinalizer*);
 
     ManagedObjectFinalizer(void* value, Deleter deleter)
-        : value_(value), deleter_(deleter) {
-      DCHECK_EQ(reinterpret_cast<void*>(this),
-                reinterpret_cast<void*>(&value_));
-    }
+        : value_(value), deleter_(deleter) {}
 
     void Dispose() { deleter_(this); }
 
@@ -1273,6 +1282,9 @@ class Isolate {
     ManagedObjectFinalizer* prev_ = nullptr;
     ManagedObjectFinalizer* next_ = nullptr;
   };
+
+  static_assert(offsetof(ManagedObjectFinalizer, value_) == 0,
+                "value_ must be the first member");
 
   // Register a finalizer to be called at isolate teardown.
   void RegisterForReleaseAtTeardown(ManagedObjectFinalizer*);

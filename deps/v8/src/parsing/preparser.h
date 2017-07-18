@@ -646,9 +646,11 @@ class PreParserFactory {
     // default value inside an arrow function parameter list.
     return PreParserExpression::Assignment(left.variables_);
   }
-  PreParserExpression NewSuspend(PreParserExpression expression, int pos,
-                                 Suspend::OnAbruptResume on_abrupt_resume,
-                                 SuspendFlags flags) {
+  PreParserExpression NewYield(PreParserExpression expression, int pos,
+                               Suspend::OnAbruptResume on_abrupt_resume) {
+    return PreParserExpression::Default();
+  }
+  PreParserExpression NewAwait(PreParserExpression expression, int pos) {
     return PreParserExpression::Default();
   }
   PreParserExpression NewConditional(PreParserExpression condition,
@@ -1024,10 +1026,6 @@ class PreParser : public ParserBase<PreParser> {
     return left;
   }
 
-  V8_INLINE PreParserExpression
-  RewriteAwaitExpression(PreParserExpression value, int pos) {
-    return value;
-  }
   V8_INLINE void PrepareAsyncFunctionBody(PreParserStatementList body,
                                           FunctionKind kind, int pos) {}
   V8_INLINE void RewriteAsyncFunctionBody(PreParserStatementList body,
@@ -1743,8 +1741,13 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE bool ParsingDynamicFunctionDeclaration() const { return false; }
 
+  V8_INLINE void RecordBlockSourceRange(PreParserStatement node,
+                                        int32_t continuation_position) {}
   V8_INLINE void RecordCaseClauseSourceRange(PreParserStatement node,
                                              const SourceRange& body_range) {}
+  V8_INLINE void RecordConditionalSourceRange(PreParserExpression node,
+                                              const SourceRange& then_range,
+                                              const SourceRange& else_range) {}
   V8_INLINE void RecordIfStatementSourceRange(PreParserStatement node,
                                               const SourceRange& then_range,
                                               const SourceRange& else_range) {}

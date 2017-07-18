@@ -261,9 +261,11 @@ void CallPrinter::VisitAssignment(Assignment* node) {
   Find(node->value());
 }
 
-void CallPrinter::VisitSuspend(Suspend* node) { Find(node->expression()); }
+void CallPrinter::VisitYield(Yield* node) { Find(node->expression()); }
 
 void CallPrinter::VisitYieldStar(YieldStar* node) { Find(node->expression()); }
+
+void CallPrinter::VisitAwait(Await* node) { Find(node->expression()); }
 
 void CallPrinter::VisitThrow(Throw* node) { Find(node->exception()); }
 
@@ -878,6 +880,7 @@ void AstPrinter::VisitForOfStatement(ForOfStatement* node) {
 
 void AstPrinter::VisitTryCatchStatement(TryCatchStatement* node) {
   IndentedScope indent(this, "TRY CATCH", node->position());
+  PrintIndentedVisit("TRY", node->try_block());
   PrintIndented("CATCH PREDICTION");
   const char* prediction = "";
   switch (node->GetCatchPrediction(HandlerTable::UNCAUGHT)) {
@@ -906,6 +909,7 @@ void AstPrinter::VisitTryCatchStatement(TryCatchStatement* node) {
 
 void AstPrinter::VisitTryFinallyStatement(TryFinallyStatement* node) {
   IndentedScope indent(this, "TRY FINALLY", node->position());
+  PrintIndentedVisit("TRY", node->try_block());
   PrintIndentedVisit("FINALLY", node->finally_block());
 }
 
@@ -1110,9 +1114,9 @@ void AstPrinter::VisitAssignment(Assignment* node) {
   Visit(node->value());
 }
 
-void AstPrinter::VisitSuspend(Suspend* node) {
+void AstPrinter::VisitYield(Yield* node) {
   EmbeddedVector<char, 128> buf;
-  SNPrintF(buf, "SUSPEND id %d", node->suspend_id());
+  SNPrintF(buf, "YIELD id %d", node->suspend_id());
   IndentedScope indent(this, buf.start(), node->position());
   Visit(node->expression());
 }
@@ -1120,6 +1124,13 @@ void AstPrinter::VisitSuspend(Suspend* node) {
 void AstPrinter::VisitYieldStar(YieldStar* node) {
   EmbeddedVector<char, 128> buf;
   SNPrintF(buf, "YIELD_STAR id %d", node->suspend_id());
+  IndentedScope indent(this, buf.start(), node->position());
+  Visit(node->expression());
+}
+
+void AstPrinter::VisitAwait(Await* node) {
+  EmbeddedVector<char, 128> buf;
+  SNPrintF(buf, "AWAIT id %d", node->suspend_id());
   IndentedScope indent(this, buf.start(), node->position());
   Visit(node->expression());
 }
@@ -1147,9 +1158,7 @@ void AstPrinter::VisitProperty(Property* node) {
 
 void AstPrinter::VisitCall(Call* node) {
   EmbeddedVector<char, 128> buf;
-  const char* name =
-      node->tail_call_mode() == TailCallMode::kAllow ? "TAIL CALL" : "CALL";
-  FormatSlotNode(&buf, node, name, node->CallFeedbackICSlot());
+  FormatSlotNode(&buf, node, "CALL", node->CallFeedbackICSlot());
   IndentedScope indent(this, buf.start());
 
   Visit(node->expression());

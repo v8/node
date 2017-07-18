@@ -309,7 +309,7 @@ void MacroAssembler::And(Register dst, Register src1, const Operand& src2,
   } else if (!(src2.InstructionsRequired(this) == 1) &&
              !src2.MustOutputRelocInfo(this) &&
              CpuFeatures::IsSupported(ARMv7) &&
-             base::bits::IsPowerOfTwo32(src2.immediate() + 1)) {
+             base::bits::IsPowerOfTwo(src2.immediate() + 1)) {
     CpuFeatureScope scope(this, ARMv7);
     ubfx(dst, src1, 0,
         WhichPowerOf2(static_cast<uint32_t>(src2.immediate()) + 1), cond);
@@ -1448,7 +1448,7 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
   const int frame_alignment = MacroAssembler::ActivationFrameAlignment();
   sub(sp, sp, Operand((stack_space + 1) * kPointerSize));
   if (frame_alignment > 0) {
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     and_(sp, sp, Operand(-frame_alignment));
   }
 
@@ -2355,47 +2355,6 @@ void TurboAssembler::TruncateDoubleToIDelayed(Zone* zone, Register result,
   bind(&done);
 }
 
-void MacroAssembler::TruncateHeapNumberToI(Register result,
-                                           Register object) {
-  Label done;
-  LowDwVfpRegister double_scratch = kScratchDoubleReg;
-  DCHECK(!result.is(object));
-
-  vldr(double_scratch,
-       MemOperand(object, HeapNumber::kValueOffset - kHeapObjectTag));
-  TryInlineTruncateDoubleToI(result, double_scratch, &done);
-
-  // If we fell through then inline version didn't succeed - call stub instead.
-  push(lr);
-  DoubleToIStub stub(isolate(),
-                     object,
-                     result,
-                     HeapNumber::kValueOffset - kHeapObjectTag,
-                     true,
-                     true);
-  CallStub(&stub);
-  pop(lr);
-
-  bind(&done);
-}
-
-
-void MacroAssembler::TruncateNumberToI(Register object,
-                                       Register result,
-                                       Register heap_number_map,
-                                       Register scratch1,
-                                       Label* not_number) {
-  Label done;
-  DCHECK(!result.is(object));
-
-  UntagAndJumpIfSmi(result, object, &done);
-  JumpIfNotHeapNumber(object, heap_number_map, scratch1, not_number);
-  TruncateHeapNumberToI(result, object);
-
-  bind(&done);
-}
-
-
 void MacroAssembler::GetLeastBitsFromSmi(Register dst,
                                          Register src,
                                          int num_least_bits) {
@@ -2482,16 +2441,6 @@ void MacroAssembler::JumpToExternalReference(const ExternalReference& builtin,
                   builtin_exit_frame);
   Jump(stub.GetCode(), RelocInfo::CODE_TARGET);
 }
-
-void MacroAssembler::SetCounter(StatsCounter* counter, int value,
-                                Register scratch1, Register scratch2) {
-  if (FLAG_native_code_counters && counter->Enabled()) {
-    mov(scratch1, Operand(value));
-    mov(scratch2, Operand(ExternalReference(counter)));
-    str(scratch1, MemOperand(scratch2));
-  }
-}
-
 
 void MacroAssembler::IncrementCounter(StatsCounter* counter, int value,
                                       Register scratch1, Register scratch2) {
@@ -2741,8 +2690,7 @@ void MacroAssembler::AssertBoundFunction(Register object) {
   }
 }
 
-void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
-  // `flags` should be an untagged integer. See `SuspendFlags` in src/globals.h
+void MacroAssembler::AssertGeneratorObject(Register object) {
   if (!emit_debug_code()) return;
   tst(object, Operand(kSmiTagMask));
   Check(ne, kOperandIsASmiAndNotAGeneratorObject);
@@ -2752,17 +2700,14 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
   push(object);
   ldr(map, FieldMemOperand(object, HeapObject::kMapOffset));
 
-  Label async, do_check;
-  tst(flags, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  b(ne, &async);
-
   // Check if JSGeneratorObject
-  CompareInstanceType(map, object, JS_GENERATOR_OBJECT_TYPE);
-  jmp(&do_check);
+  Label do_check;
+  Register instance_type = object;
+  CompareInstanceType(map, instance_type, JS_GENERATOR_OBJECT_TYPE);
+  b(eq, &do_check);
 
-  bind(&async);
-  // Check if JSAsyncGeneratorObject
-  CompareInstanceType(map, object, JS_ASYNC_GENERATOR_OBJECT_TYPE);
+  // Check if JSAsyncGeneratorObject (See MacroAssembler::CompareInstanceType)
+  cmp(instance_type, Operand(JS_ASYNC_GENERATOR_OBJECT_TYPE));
 
   bind(&do_check);
   // Restore generator object to register and perform assertion
@@ -2895,24 +2840,11 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   LoadGlobalFunctionInitialMap(constructor, scratch1, scratch2);
   str(scratch1, FieldMemOperand(result, HeapObject::kMapOffset));
   LoadRoot(scratch1, Heap::kEmptyFixedArrayRootIndex);
-  str(scratch1, FieldMemOperand(result, JSObject::kPropertiesOffset));
+  str(scratch1, FieldMemOperand(result, JSObject::kPropertiesOrHashOffset));
   str(scratch1, FieldMemOperand(result, JSObject::kElementsOffset));
   str(value, FieldMemOperand(result, JSValue::kValueOffset));
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
 }
-
-void MacroAssembler::InitializeFieldsWithFiller(Register current_address,
-                                                Register end_address,
-                                                Register filler) {
-  Label loop, entry;
-  b(&entry);
-  bind(&loop);
-  str(filler, MemOperand(current_address, kPointerSize, PostIndex));
-  bind(&entry);
-  cmp(current_address, end_address);
-  b(lo, &loop);
-}
-
 
 void MacroAssembler::CheckFor32DRegs(Register scratch) {
   mov(scratch, Operand(ExternalReference::cpu_features()));
@@ -3116,53 +3048,6 @@ int TurboAssembler::CalculateStackPassedWords(int num_reg_arguments,
   return stack_passed_words;
 }
 
-
-void MacroAssembler::EmitSeqStringSetCharCheck(Register string,
-                                               Register index,
-                                               Register value,
-                                               uint32_t encoding_mask) {
-  Label is_object;
-  SmiTst(string);
-  Check(ne, kNonObject);
-
-  {
-    UseScratchRegisterScope temps(this);
-    Register scratch = temps.Acquire();
-
-    ldr(scratch, FieldMemOperand(string, HeapObject::kMapOffset));
-    ldrb(scratch, FieldMemOperand(scratch, Map::kInstanceTypeOffset));
-
-    and_(scratch, scratch,
-         Operand(kStringRepresentationMask | kStringEncodingMask));
-    cmp(scratch, Operand(encoding_mask));
-    Check(eq, kUnexpectedStringType);
-  }
-
-  // The index is assumed to be untagged coming in, tag it to compare with the
-  // string length without using a temp register, it is restored at the end of
-  // this function.
-  Label index_tag_ok, index_tag_bad;
-  TrySmiTag(index, index, &index_tag_bad);
-  b(&index_tag_ok);
-  bind(&index_tag_bad);
-  Abort(kIndexIsTooLarge);
-  bind(&index_tag_ok);
-
-  {
-    UseScratchRegisterScope temps(this);
-    Register scratch = temps.Acquire();
-
-    ldr(scratch, FieldMemOperand(string, String::kLengthOffset));
-    cmp(index, scratch);
-    Check(lt, kIndexIsTooLarge);
-  }
-
-  cmp(index, Operand(Smi::kZero));
-  Check(ge, kIndexIsNegative);
-
-  SmiUntag(index, index);
-}
-
 void TurboAssembler::PrepareCallCFunction(int num_reg_arguments,
                                           int num_double_arguments) {
   int frame_alignment = ActivationFrameAlignment();
@@ -3175,7 +3060,7 @@ void TurboAssembler::PrepareCallCFunction(int num_reg_arguments,
     // and the original value of sp.
     mov(scratch, sp);
     sub(sp, sp, Operand((stack_passed_arguments + 1) * kPointerSize));
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     and_(sp, sp, Operand(-frame_alignment));
     str(scratch, MemOperand(sp, stack_passed_arguments * kPointerSize));
   } else {
@@ -3242,7 +3127,7 @@ void TurboAssembler::CallCFunctionHelper(Register function,
     int frame_alignment = base::OS::ActivationFrameAlignment();
     int frame_alignment_mask = frame_alignment - 1;
     if (frame_alignment > kPointerSize) {
-      DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+      DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
       Label alignment_as_expected;
       tst(sp, Operand(frame_alignment_mask));
       b(eq, &alignment_as_expected);
@@ -3359,26 +3244,6 @@ void MacroAssembler::ClampUint8(Register output_reg, Register input_reg) {
 }
 
 
-void MacroAssembler::ClampDoubleToUint8(Register result_reg,
-                                        DwVfpRegister input_reg,
-                                        LowDwVfpRegister double_scratch) {
-  Label done;
-
-  // Handle inputs >= 255 (including +infinity).
-  Vmov(double_scratch, Double(255.0), result_reg);
-  mov(result_reg, Operand(255));
-  VFPCompareAndSetFlags(input_reg, double_scratch);
-  b(ge, &done);
-
-  // For inputs < 255 (including negative) vcvt_u32_f64 with round-to-nearest
-  // rounding mode will provide the correct result.
-  vcvt_u32_f64(double_scratch.low(), input_reg, kFPSCRRounding);
-  vmov(result_reg, double_scratch.low());
-
-  bind(&done);
-}
-
-
 void MacroAssembler::LoadInstanceDescriptors(Register map,
                                              Register descriptors) {
   ldr(descriptors, FieldMemOperand(map, Map::kDescriptorsOffset));
@@ -3471,52 +3336,6 @@ void MacroAssembler::CheckEnumCache(Label* call_runtime) {
   ldr(r2, FieldMemOperand(r1, Map::kPrototypeOffset));
   cmp(r2, null_value);
   b(ne, &next);
-}
-
-void MacroAssembler::TestJSArrayForAllocationMemento(Register receiver_reg,
-                                                     Register scratch,
-                                                     Label* no_memento_found) {
-  Label map_check;
-  Label top_check;
-  ExternalReference new_space_allocation_top_adr =
-      ExternalReference::new_space_allocation_top_address(isolate());
-  const int kMementoMapOffset = JSArray::kSize - kHeapObjectTag;
-  const int kMementoLastWordOffset =
-      kMementoMapOffset + AllocationMemento::kSize - kPointerSize;
-
-  // Bail out if the object is not in new space.
-  JumpIfNotInNewSpace(receiver_reg, scratch, no_memento_found);
-
-  UseScratchRegisterScope temps(this);
-  Register new_space_top = temps.Acquire();
-
-  mov(new_space_top, Operand(new_space_allocation_top_adr));
-  ldr(new_space_top, MemOperand(new_space_top));
-
-  // If the object is in new space, we need to check whether it is on the same
-  // page as the current top.
-  add(scratch, receiver_reg, Operand(kMementoLastWordOffset));
-  eor(scratch, scratch, Operand(new_space_top));
-  tst(scratch, Operand(~Page::kPageAlignmentMask));
-  b(eq, &top_check);
-  // The object is on a different page than allocation top. Bail out if the
-  // object sits on the page boundary as no memento can follow and we cannot
-  // touch the memory following it.
-  add(scratch, receiver_reg, Operand(kMementoLastWordOffset));
-  eor(scratch, scratch, Operand(receiver_reg));
-  tst(scratch, Operand(~Page::kPageAlignmentMask));
-  b(ne, no_memento_found);
-  // Continue with the actual map check.
-  jmp(&map_check);
-  // If top is on the same page as the current object, we need to check whether
-  // we are below top.
-  bind(&top_check);
-  cmp(scratch, new_space_top);
-  b(ge, no_memento_found);
-  // Memento map check.
-  bind(&map_check);
-  ldr(scratch, MemOperand(receiver_reg, kMementoMapOffset));
-  cmp(scratch, Operand(isolate()->factory()->allocation_memento_map()));
 }
 
 Register GetRegisterThatIsNotOneOf(Register reg1,
@@ -3614,29 +3433,6 @@ void CodePatcher::EmitCondition(Condition cond) {
   Instr instr = Assembler::instr_at(masm_.pc_);
   instr = (instr & ~kCondMask) | cond;
   masm_.emit(instr);
-}
-
-
-void MacroAssembler::TruncatingDiv(Register result,
-                                   Register dividend,
-                                   int32_t divisor) {
-  DCHECK(!dividend.is(result));
-  base::MagicNumbersForDivision<uint32_t> mag =
-      base::SignedDivisionByConstant(bit_cast<uint32_t>(divisor));
-  UseScratchRegisterScope temps(this);
-  Register scratch = temps.Acquire();
-  mov(scratch, Operand(mag.multiplier));
-  bool neg = (mag.multiplier & (1U << 31)) != 0;
-  if (divisor > 0 && neg) {
-    smmla(result, dividend, scratch, dividend);
-  } else {
-    smmul(result, dividend, scratch);
-    if (divisor < 0 && !neg && mag.multiplier > 0) {
-      sub(result, result, Operand(dividend));
-    }
-  }
-  if (mag.shift > 0) mov(result, Operand(result, ASR, mag.shift));
-  add(result, result, Operand(dividend, LSR, 31));
 }
 
 }  // namespace internal

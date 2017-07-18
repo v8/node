@@ -354,6 +354,10 @@ class TurboAssembler : public Assembler {
   // Use --debug_code to enable.
   void Assert(Condition cc, BailoutReason reason);
 
+  // Like Assert(), but without condition.
+  // Use --debug_code to enable.
+  void AssertUnreachable(BailoutReason reason);
+
   // Abort execution if a 64 bit register containing a 32 bit payload does not
   // have zeros in the top 32 bits, enabled via --debug-code.
   void AssertZeroExtended(Register reg);
@@ -1265,9 +1269,9 @@ class MacroAssembler : public TurboAssembler {
   // enabled via --debug-code.
   void AssertBoundFunction(Register object);
 
-  // Abort execution if argument is not a JSGeneratorObject,
+  // Abort execution if argument is not a JSGeneratorObject (or subclass),
   // enabled via --debug-code.
-  void AssertGeneratorObject(Register object, Register suspend_flags);
+  void AssertGeneratorObject(Register object);
 
   // Abort execution if argument is not undefined or an AllocationSite, enabled
   // via --debug-code.

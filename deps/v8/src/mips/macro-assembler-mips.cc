@@ -4234,7 +4234,7 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   LoadGlobalFunctionInitialMap(constructor, scratch1, scratch2);
   sw(scratch1, FieldMemOperand(result, HeapObject::kMapOffset));
   LoadRoot(scratch1, Heap::kEmptyFixedArrayRootIndex);
-  sw(scratch1, FieldMemOperand(result, JSObject::kPropertiesOffset));
+  sw(scratch1, FieldMemOperand(result, JSObject::kPropertiesOrHashOffset));
   sw(scratch1, FieldMemOperand(result, JSObject::kElementsOffset));
   sw(value, FieldMemOperand(result, JSValue::kValueOffset));
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
@@ -5351,7 +5351,7 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
     // The stack  must be allign to 0 modulo 8 for stores with sdc1.
     DCHECK(kDoubleSize == frame_alignment);
     if (frame_alignment > 0) {
-      DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+      DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
       And(sp, sp, Operand(-frame_alignment));  // Align stack.
     }
     int space = FPURegister::kMaxNumRegisters * kDoubleSize;
@@ -5369,7 +5369,7 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
   DCHECK(stack_space >= 0);
   Subu(sp, sp, Operand((stack_space + 2) * kPointerSize));
   if (frame_alignment > 0) {
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     And(sp, sp, Operand(-frame_alignment));  // Align stack.
   }
 
@@ -5454,7 +5454,7 @@ void MacroAssembler::AssertStackIsAligned() {
 
       if (frame_alignment > kPointerSize) {
         Label alignment_as_expected;
-        DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+        DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
         andi(at, sp, frame_alignment_mask);
         Branch(&alignment_as_expected, eq, at, Operand(zero_reg));
         // Don't use Check here, as it will call Runtime_Abort re-entering here.
@@ -5593,8 +5593,7 @@ void MacroAssembler::AssertBoundFunction(Register object) {
   }
 }
 
-void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
-  // `flags` should be an untagged integer. See `SuspendFlags` in src/globals.h
+void MacroAssembler::AssertGeneratorObject(Register object) {
   if (!emit_debug_code()) return;
   STATIC_ASSERT(kSmiTag == 0);
   SmiTst(object, t8);
@@ -5602,21 +5601,15 @@ void MacroAssembler::AssertGeneratorObject(Register object, Register flags) {
 
   GetObjectType(object, t8, t8);
 
-  Label async, abort, done;
-  And(t9, flags, Operand(static_cast<int>(SuspendFlags::kGeneratorTypeMask)));
-  Branch(&async, equal, t9,
-         Operand(static_cast<int>(SuspendFlags::kAsyncGenerator)));
+  Label done;
 
   // Check if JSGeneratorObject
   Branch(&done, eq, t8, Operand(JS_GENERATOR_OBJECT_TYPE));
-  jmp(&abort);
 
-  bind(&async);
   // Check if JSAsyncGeneratorObject
   Branch(&done, eq, t8, Operand(JS_ASYNC_GENERATOR_OBJECT_TYPE));
 
-  bind(&abort);
-  Abort(kOperandIsASmiAndNotAGeneratorObject);
+  Abort(kOperandIsNotAGeneratorObject);
 
   bind(&done);
 }
@@ -5939,7 +5932,7 @@ void TurboAssembler::PrepareCallCFunction(int num_reg_arguments,
     // and the original value of sp.
     mov(scratch, sp);
     Subu(sp, sp, Operand((stack_passed_arguments + 1) * kPointerSize));
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     And(sp, sp, Operand(-frame_alignment));
     sw(scratch, MemOperand(sp, stack_passed_arguments * kPointerSize));
   } else {
@@ -6002,7 +5995,7 @@ void TurboAssembler::CallCFunctionHelper(Register function_base,
     int frame_alignment = base::OS::ActivationFrameAlignment();
     int frame_alignment_mask = frame_alignment - 1;
     if (frame_alignment > kPointerSize) {
-      DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+      DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
       Label alignment_as_expected;
       And(at, sp, Operand(frame_alignment_mask));
       Branch(&alignment_as_expected, eq, at, Operand(zero_reg));

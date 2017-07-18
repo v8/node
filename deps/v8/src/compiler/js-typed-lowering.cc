@@ -2163,10 +2163,6 @@ Reduction JSTypedLowering::ReduceJSCallForwardVarargs(Node* node) {
   if (target_type->Is(Type::Function())) {
     // Compute flags for the call.
     CallDescriptor::Flags flags = CallDescriptor::kNeedsFrameState;
-    if (p.tail_call_mode() == TailCallMode::kAllow) {
-      flags |= CallDescriptor::kSupportsTailCalls;
-    }
-
     // Patch {node} to an indirect call via CallFunctionForwardVarargs.
     Callable callable = CodeFactory::CallFunctionForwardVarargs(isolate());
     node->InsertInput(graph()->zone(), 0,
@@ -2235,10 +2231,6 @@ Reduction JSTypedLowering::ReduceJSCall(Node* node) {
 
     // Compute flags for the call.
     CallDescriptor::Flags flags = CallDescriptor::kNeedsFrameState;
-    if (p.tail_call_mode() == TailCallMode::kAllow) {
-      flags |= CallDescriptor::kSupportsTailCalls;
-    }
-
     Node* new_target = jsgraph()->UndefinedConstant();
     Node* argument_count = jsgraph()->Constant(arity);
     if (NeedsArgumentAdaptorFrame(shared, arity)) {
@@ -2274,10 +2266,6 @@ Reduction JSTypedLowering::ReduceJSCall(Node* node) {
   if (target_type->Is(Type::Function())) {
     // Compute flags for the call.
     CallDescriptor::Flags flags = CallDescriptor::kNeedsFrameState;
-    if (p.tail_call_mode() == TailCallMode::kAllow) {
-      flags |= CallDescriptor::kSupportsTailCalls;
-    }
-
     // Patch {node} to an indirect call via the CallFunction builtin.
     Callable callable = CodeFactory::CallFunction(isolate(), convert_mode);
     node->InsertInput(graph()->zone(), 0,
@@ -2293,9 +2281,8 @@ Reduction JSTypedLowering::ReduceJSCall(Node* node) {
   // Maybe we did at least learn something about the {receiver}.
   if (p.convert_mode() != convert_mode) {
     NodeProperties::ChangeOp(
-        node,
-        javascript()->Call(p.arity(), p.frequency(), p.feedback(), convert_mode,
-                           p.tail_call_mode()));
+        node, javascript()->Call(p.arity(), p.frequency(), p.feedback(),
+                                 convert_mode));
     return Changed(node);
   }
 
@@ -2419,21 +2406,19 @@ Reduction JSTypedLowering::ReduceJSGeneratorStore(Node* node) {
   Node* context = NodeProperties::GetContextInput(node);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
-  const GeneratorStoreParameters& p = GeneratorStoreParametersOf(node->op());
+  int register_count = OpParameter<int>(node);
 
   FieldAccess array_field = AccessBuilder::ForJSGeneratorObjectRegisterFile();
   FieldAccess context_field = AccessBuilder::ForJSGeneratorObjectContext();
   FieldAccess continuation_field =
       AccessBuilder::ForJSGeneratorObjectContinuation();
   FieldAccess input_or_debug_pos_field =
-      p.suspend_flags() == SuspendFlags::kAsyncGeneratorAwait
-          ? AccessBuilder::ForJSAsyncGeneratorObjectAwaitInputOrDebugPos()
-          : AccessBuilder::ForJSGeneratorObjectInputOrDebugPos();
+      AccessBuilder::ForJSGeneratorObjectInputOrDebugPos();
 
   Node* array = effect = graph()->NewNode(simplified()->LoadField(array_field),
                                           generator, effect, control);
 
-  for (int i = 0; i < p.register_count(); ++i) {
+  for (int i = 0; i < register_count; ++i) {
     Node* value = NodeProperties::GetValueInput(node, 3 + i);
     effect = graph()->NewNode(
         simplified()->StoreField(AccessBuilder::ForFixedArraySlot(i)), array,

@@ -123,8 +123,10 @@ bool CodeRange::SetUp(size_t requested) {
   DCHECK(!kRequiresCodeRange || requested <= kMaximalCodeRangeSize);
 
   code_range_ = new base::VirtualMemory(
-      requested, Max(kCodeRangeAreaAlignment,
-                     static_cast<size_t>(base::OS::AllocateAlignment())));
+      requested,
+      Max(kCodeRangeAreaAlignment,
+          static_cast<size_t>(base::OS::AllocateAlignment())),
+      base::OS::GetRandomMmapAddr());
   CHECK(code_range_ != NULL);
   if (!code_range_->IsReserved()) {
     delete code_range_;
@@ -460,8 +462,9 @@ void MemoryAllocator::FreeMemory(Address base, size_t size,
 }
 
 Address MemoryAllocator::ReserveAlignedMemory(size_t size, size_t alignment,
+                                              void* hint,
                                               base::VirtualMemory* controller) {
-  base::VirtualMemory reservation(size, alignment);
+  base::VirtualMemory reservation(size, alignment, hint);
 
   if (!reservation.IsReserved()) return nullptr;
   const Address base =
@@ -477,10 +480,11 @@ Address MemoryAllocator::ReserveAlignedMemory(size_t size, size_t alignment,
 
 Address MemoryAllocator::AllocateAlignedMemory(
     size_t reserve_size, size_t commit_size, size_t alignment,
-    Executability executable, base::VirtualMemory* controller) {
+    Executability executable, void* hint, base::VirtualMemory* controller) {
   DCHECK(commit_size <= reserve_size);
   base::VirtualMemory reservation;
-  Address base = ReserveAlignedMemory(reserve_size, alignment, &reservation);
+  Address base =
+      ReserveAlignedMemory(reserve_size, alignment, hint, &reservation);
   if (base == NULL) return NULL;
 
   if (executable == EXECUTABLE) {
@@ -519,6 +523,18 @@ void Page::InitializeAsAnchor(Space* space) {
 Heap* MemoryChunk::synchronized_heap() {
   return reinterpret_cast<Heap*>(
       base::Acquire_Load(reinterpret_cast<base::AtomicWord*>(&heap_)));
+}
+
+void MemoryChunk::InitializationMemoryFence() {
+  base::MemoryFence();
+#ifdef THREAD_SANITIZER
+  // Since TSAN does not process memory fences, we use the following annotation
+  // to tell TSAN that there is no data race when emitting a
+  // InitializationMemoryFence. Note that the other thread still needs to
+  // perform MemoryChunk::synchronized_heap().
+  base::Release_Store(reinterpret_cast<base::AtomicWord*>(&heap_),
+                      reinterpret_cast<base::AtomicWord>(heap_));
+#endif
 }
 
 MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
@@ -565,14 +581,6 @@ MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
   if (reservation != nullptr) {
     chunk->reservation_.TakeControl(reservation);
   }
-
-#ifdef THREAD_SANITIZER
-  // The mark-bit clearing function above emits a memory fence. Since TSAN
-  // does not process memory fences, we use the following annotation to tell
-  // TSAN that there is no data race in mark-bit clearing.
-  base::Release_Store(reinterpret_cast<base::AtomicWord*>(&chunk->heap_),
-                      reinterpret_cast<base::AtomicWord>(heap));
-#endif
   return chunk;
 }
 
@@ -593,7 +601,7 @@ Page* Page::Initialize(Heap* heap, MemoryChunk* chunk, Executability executable,
   if (mode == kFreeMemory) {
     owner->Free(page->area_start(), page->area_size());
   }
-
+  page->InitializationMemoryFence();
   return page;
 }
 
@@ -612,6 +620,7 @@ Page* Page::Initialize(Heap* heap, MemoryChunk* chunk, Executability executable,
     page->AllocateYoungGenerationBitmap();
     MarkingState::External(page).ClearLiveness();
   }
+  page->InitializationMemoryFence();
   return page;
 }
 
@@ -632,8 +641,9 @@ LargePage* LargePage::Initialize(Heap* heap, MemoryChunk* chunk,
     // Clear out kPageHeaderTag.
     Memory::Address_at(addr) = 0;
   }
-
-  return static_cast<LargePage*>(chunk);
+  LargePage* page = static_cast<LargePage*>(chunk);
+  page->InitializationMemoryFence();
+  return page;
 }
 
 Page* Page::ConvertNewToOld(Page* old_page) {
@@ -736,6 +746,7 @@ MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
   base::VirtualMemory reservation;
   Address area_start = nullptr;
   Address area_end = nullptr;
+  void* address_hint = heap->GetRandomMmapAddr();
 
   //
   // MemoryChunk layout:
@@ -795,7 +806,7 @@ MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
     } else {
       base = AllocateAlignedMemory(chunk_size, commit_size,
                                    MemoryChunk::kAlignment, executable,
-                                   &reservation);
+                                   address_hint, &reservation);
       if (base == NULL) return NULL;
       // Update executable memory size.
       size_executable_.Increment(reservation.size());
@@ -816,7 +827,7 @@ MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
                 GetCommitPageSize());
     base =
         AllocateAlignedMemory(chunk_size, commit_size, MemoryChunk::kAlignment,
-                              executable, &reservation);
+                              executable, address_hint, &reservation);
 
     if (base == NULL) return NULL;
 
@@ -1157,7 +1168,7 @@ size_t MemoryAllocator::CodePageAreaEndOffset() {
 
 intptr_t MemoryAllocator::GetCommitPageSize() {
   if (FLAG_v8_os_page_size != 0) {
-    DCHECK(base::bits::IsPowerOfTwo32(FLAG_v8_os_page_size));
+    DCHECK(base::bits::IsPowerOfTwo(FLAG_v8_os_page_size));
     return FLAG_v8_os_page_size * KB;
   } else {
     return base::OS::CommitPageSize();
@@ -1401,6 +1412,8 @@ void PagedSpace::RefillFreeList() {
 }
 
 void PagedSpace::MergeCompactionSpace(CompactionSpace* other) {
+  base::LockGuard<base::Mutex> guard(mutex());
+
   DCHECK(identity() == other->identity());
   // Unmerged fields:
   //   area_size_
@@ -1688,7 +1701,7 @@ void PagedSpace::Verify(ObjectVisitor* visitor) {
 bool NewSpace::SetUp(size_t initial_semispace_capacity,
                      size_t maximum_semispace_capacity) {
   DCHECK(initial_semispace_capacity <= maximum_semispace_capacity);
-  DCHECK(base::bits::IsPowerOfTwo32(
+  DCHECK(base::bits::IsPowerOfTwo(
       static_cast<uint32_t>(maximum_semispace_capacity)));
 
   to_space_.SetUp(initial_semispace_capacity, maximum_semispace_capacity);

@@ -293,7 +293,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
                         parsing_on_main_thread_);
 #define SET_ALLOW(name) reusable_preparser_->set_allow_##name(allow_##name());
       SET_ALLOW(natives);
-      SET_ALLOW(tailcalls);
       SET_ALLOW(harmony_do_expressions);
       SET_ALLOW(harmony_function_sent);
       SET_ALLOW(harmony_class_fields);
@@ -635,9 +634,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   void SetLanguageMode(Scope* scope, LanguageMode mode);
   void SetAsmModule();
 
-  V8_INLINE void MarkCollectedTailCallExpressions();
-  V8_INLINE void MarkTailPosition(Expression* expression);
-
   // Rewrite all DestructuringAssignments in the current FunctionState.
   V8_INLINE void RewriteDestructuringAssignments();
 
@@ -687,7 +683,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
                                        IteratorType type);
   Statement* CheckCallable(Variable* var, Expression* error, int pos);
 
-  V8_INLINE Expression* RewriteAwaitExpression(Expression* value, int pos);
   V8_INLINE void PrepareAsyncFunctionBody(ZoneList<Statement*>* body,
                                           FunctionKind kind, int pos);
   V8_INLINE void RewriteAsyncFunctionBody(ZoneList<Statement*>* body,
@@ -1146,11 +1141,27 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
     return parameters_end_pos_ != kNoSourcePosition;
   }
 
+  V8_INLINE void RecordBlockSourceRange(Block* node,
+                                        int32_t continuation_position) {
+    if (source_range_map_ == nullptr) return;
+    source_range_map_->Insert(
+        node, new (zone()) BlockSourceRanges(continuation_position));
+  }
+
   V8_INLINE void RecordCaseClauseSourceRange(CaseClause* node,
                                              const SourceRange& body_range) {
     if (source_range_map_ == nullptr) return;
     source_range_map_->Insert(node,
                               new (zone()) CaseClauseSourceRanges(body_range));
+  }
+
+  V8_INLINE void RecordConditionalSourceRange(Expression* node,
+                                              const SourceRange& then_range,
+                                              const SourceRange& else_range) {
+    if (source_range_map_ == nullptr) return;
+    source_range_map_->Insert(
+        node->AsConditional(),
+        new (zone()) ConditionalSourceRanges(then_range, else_range));
   }
 
   V8_INLINE void RecordJumpStatementSourceRange(Statement* node,

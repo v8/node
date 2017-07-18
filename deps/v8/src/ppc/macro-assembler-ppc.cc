@@ -1184,7 +1184,7 @@ void MacroAssembler::EnterExitFrame(bool save_doubles, int stack_space,
   // function.
   const int frame_alignment = ActivationFrameAlignment();
   if (frame_alignment > kPointerSize) {
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     ClearRightImm(sp, sp, Operand(WhichPowerOf2(frame_alignment)));
   }
   li(r0, Operand::Zero());
@@ -2681,7 +2681,8 @@ void MacroAssembler::AllocateJSValue(Register result, Register constructor,
   LoadGlobalFunctionInitialMap(constructor, scratch1, scratch2);
   StoreP(scratch1, FieldMemOperand(result, HeapObject::kMapOffset), r0);
   LoadRoot(scratch1, Heap::kEmptyFixedArrayRootIndex);
-  StoreP(scratch1, FieldMemOperand(result, JSObject::kPropertiesOffset), r0);
+  StoreP(scratch1, FieldMemOperand(result, JSObject::kPropertiesOrHashOffset),
+         r0);
   StoreP(scratch1, FieldMemOperand(result, JSObject::kElementsOffset), r0);
   StoreP(value, FieldMemOperand(result, JSValue::kValueOffset), r0);
   STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
@@ -2797,7 +2798,7 @@ void MacroAssembler::PrepareCallCFunction(int num_reg_arguments,
     // -- preserving original value of sp.
     mr(scratch, sp);
     addi(sp, sp, Operand(-(stack_passed_arguments + 1) * kPointerSize));
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     ClearRightImm(sp, sp, Operand(WhichPowerOf2(frame_alignment)));
     StoreP(scratch, MemOperand(sp, stack_passed_arguments * kPointerSize));
   } else {

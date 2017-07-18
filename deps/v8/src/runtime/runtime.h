@@ -104,8 +104,6 @@ namespace internal {
   F(MapIteratorClone, 1, 1)               \
   F(GetWeakMapEntries, 2, 1)              \
   F(WeakCollectionInitialize, 1, 1)       \
-  F(WeakCollectionGet, 3, 1)              \
-  F(WeakCollectionHas, 3, 1)              \
   F(WeakCollectionDelete, 3, 1)           \
   F(WeakCollectionSet, 4, 1)              \
   F(GetWeakSetValues, 2, 1)               \
@@ -245,7 +243,6 @@ namespace internal {
   F(GeneratorGetReceiver, 1, 1)                  \
   F(GeneratorGetContext, 1, 1)                   \
   F(GeneratorGetInputOrDebugPos, 1, 1)           \
-  F(AsyncGeneratorGetAwaitInputOrDebugPos, 1, 1) \
   F(AsyncGeneratorResolve, 3, 1)                 \
   F(AsyncGeneratorReject, 2, 1)                  \
   F(GeneratorGetContinuation, 1, 1)              \
@@ -471,7 +468,6 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_PROXY(F)     \
   F(IsJSProxy, 1, 1)                    \
-  F(JSProxyCall, -1 /* >= 2 */, 1)      \
   F(JSProxyConstruct, -1 /* >= 3 */, 1) \
   F(JSProxyGetTarget, 1, 1)             \
   F(JSProxyGetHandler, 1, 1)            \
@@ -584,7 +580,6 @@ namespace internal {
   F(DisassembleFunction, 1, 1)                \
   F(TraceEnter, 0, 1)                         \
   F(TraceExit, 1, 1)                          \
-  F(TraceTailCall, 0, 1)                      \
   F(HaveSameMap, 2, 1)                        \
   F(InNewSpace, 1, 1)                         \
   F(HasSmiElements, 1, 1)                     \
@@ -786,6 +781,9 @@ class Runtime : public AllStatic {
 
   MUST_USE_RESULT static MaybeHandle<JSArray> GetInternalProperties(
       Isolate* isolate, Handle<Object>);
+
+  MUST_USE_RESULT static MaybeHandle<Object> ThrowIteratorError(
+      Isolate* isolate, Handle<Object> object);
 };
 
 

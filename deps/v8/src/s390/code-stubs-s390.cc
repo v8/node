@@ -1969,7 +1969,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
 
     // Restore the properties.
     __ LoadP(properties,
-             FieldMemOperand(receiver, JSObject::kPropertiesOffset));
+             FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   }
 
   const int spill_mask = (r0.bit() | r8.bit() | r7.bit() | r6.bit() | r5.bit() |
@@ -1978,7 +1978,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
   __ LoadRR(r0, r14);
   __ MultiPush(spill_mask);
 
-  __ LoadP(r2, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
+  __ LoadP(r2, FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   __ mov(r3, Operand(Handle<Name>(name)));
   NameDictionaryLookupStub stub(masm->isolate(), NEGATIVE_LOOKUP);
   __ CallStub(&stub);
@@ -2323,7 +2323,7 @@ void ProfileEntryHookStub::Generate(MacroAssembler* masm) {
   int frame_alignment = masm->ActivationFrameAlignment();
   if (frame_alignment > kPointerSize) {
     __ LoadRR(r7, sp);
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     __ ClearRightImm(sp, sp, Operand(WhichPowerOf2(frame_alignment)));
   }
 

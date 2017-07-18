@@ -91,6 +91,10 @@ class TurboAssembler : public Assembler {
   // Use --debug_code to enable.
   void Assert(Condition cc, BailoutReason reason);
 
+  // Like Assert(), but without condition.
+  // Use --debug_code to enable.
+  void AssertUnreachable(BailoutReason reason);
+
   // Like Assert(), but always enabled.
   void Check(Condition cc, BailoutReason reason);
 
@@ -123,6 +127,9 @@ class TurboAssembler : public Assembler {
 
   inline bool AllowThisStubCall(CodeStub* stub);
   void CallStubDelayed(CodeStub* stub);
+
+  void CallRuntimeDelayed(Zone* zone, Runtime::FunctionId fid,
+                          SaveFPRegsMode save_doubles = kDontSaveFPRegs);
 
   // Jump the register contains a smi.
   inline void JumpIfSmi(Register value, Label* smi_label,
@@ -680,9 +687,9 @@ class MacroAssembler : public TurboAssembler {
   // enabled via --debug-code.
   void AssertBoundFunction(Register object);
 
-  // Abort execution if argument is not a JSGeneratorObject,
+  // Abort execution if argument is not a JSGeneratorObject (or subclass),
   // enabled via --debug-code.
-  void AssertGeneratorObject(Register object, Register suspend_flags);
+  void AssertGeneratorObject(Register object);
 
   // Abort execution if argument is not undefined or an AllocationSite, enabled
   // via --debug-code.

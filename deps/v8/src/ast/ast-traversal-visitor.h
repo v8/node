@@ -360,13 +360,19 @@ void AstTraversalVisitor<Subclass>::VisitAssignment(Assignment* expr) {
 }
 
 template <class Subclass>
-void AstTraversalVisitor<Subclass>::VisitSuspend(Suspend* expr) {
+void AstTraversalVisitor<Subclass>::VisitYield(Yield* expr) {
   PROCESS_EXPRESSION(expr);
   RECURSE_EXPRESSION(Visit(expr->expression()));
 }
 
 template <class Subclass>
 void AstTraversalVisitor<Subclass>::VisitYieldStar(YieldStar* expr) {
+  PROCESS_EXPRESSION(expr);
+  RECURSE_EXPRESSION(Visit(expr->expression()));
+}
+
+template <class Subclass>
+void AstTraversalVisitor<Subclass>::VisitAwait(Await* expr) {
   PROCESS_EXPRESSION(expr);
   RECURSE_EXPRESSION(Visit(expr->expression()));
 }

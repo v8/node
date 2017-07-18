@@ -40,11 +40,9 @@ class SharedFunctionInfo : public HeapObject {
  public:
   static constexpr Object* const kNoSharedNameSentinel = Smi::kZero;
 
-  // [raw_name]: Function name string or kNoSharedNameSentinel.
-  DECL_ACCESSORS(raw_name, Object)
-
   // [name]: Returns shared name if it exists or an empty string otherwise.
   inline String* name() const;
+  inline void set_name(String* name);
 
   // [code]: Function code.
   DECL_ACCESSORS(code, Code)
@@ -282,6 +280,8 @@ class SharedFunctionInfo : public HeapObject {
 
   DECL_INT_ACCESSORS(ast_node_count)
 
+  DECL_INT_ACCESSORS(profiler_ticks)
+
   // Inline cache age is used to infer whether the function survived a context
   // disposal or not. In the former case we reset the opt_count.
   DECL_INT_ACCESSORS(ic_age)
@@ -302,11 +302,6 @@ class SharedFunctionInfo : public HeapObject {
   // False if the function definitely does not allocate an arguments object.
   DECL_BOOLEAN_ACCESSORS(uses_arguments)
 
-  // Indicates that this function uses a super property (or an eval that may
-  // use a super property).
-  // This is needed to set up the [[HomeObject]] on the function instance.
-  DECL_BOOLEAN_ACCESSORS(needs_home_object)
-
   // True if the function has any duplicated parameter names.
   DECL_BOOLEAN_ACCESSORS(has_duplicate_parameters)
 
@@ -319,10 +314,6 @@ class SharedFunctionInfo : public HeapObject {
   // Indicate that this function should always be inlined in optimized code.
   DECL_BOOLEAN_ACCESSORS(force_inline)
 
-  // Indicates that code for this function must be compiled through the
-  // Ignition / TurboFan pipeline, and is unsupported by FullCodegen.
-  DECL_BOOLEAN_ACCESSORS(must_use_ignition)
-
   // Indicates that this function is an asm function.
   DECL_BOOLEAN_ACCESSORS(asm_function)
 
@@ -333,7 +324,6 @@ class SharedFunctionInfo : public HeapObject {
   DECL_BOOLEAN_ACCESSORS(is_asm_wasm_broken)
 
   inline FunctionKind kind() const;
-  inline void set_kind(FunctionKind kind);
 
   // Defines the index in a native context of closure's map instantiated using
   // this shared function info.
@@ -476,6 +466,7 @@ class SharedFunctionInfo : public HeapObject {
   V(kOptCountAndBailoutReasonOffset, kInt32Size) \
   V(kCountersOffset, kInt32Size)                 \
   V(kAstNodeCountOffset, kInt32Size)             \
+  V(kProfilerTicksOffset, kInt32Size)            \
   /* Total size. */                              \
   V(kSize, 0)
 
@@ -510,10 +501,9 @@ class SharedFunctionInfo : public HeapObject {
   V(NeedsHomeObjectBit, bool, 1, _)        \
   V(ForceInlineBit, bool, 1, _)            \
   V(IsAsmFunctionBit, bool, 1, _)          \
-  V(MustUseIgnitionBit, bool, 1, _)        \
   V(IsDeclarationBit, bool, 1, _)          \
   V(IsAsmWasmBrokenBit, bool, 1, _)        \
-  V(FunctionMapIndexBits, int, 4, _)       \
+  V(FunctionMapIndexBits, int, 5, _)       \
   /* Bits 26-31 are unused. */
 
   DEFINE_BIT_FIELDS(COMPILER_HINTS_BIT_FIELDS)
@@ -558,6 +548,18 @@ class SharedFunctionInfo : public HeapObject {
 #undef OPT_COUNT_AND_BAILOUT_REASON_BIT_FIELDS
 
  private:
+  // [raw_name]: Function name string or kNoSharedNameSentinel.
+  DECL_ACCESSORS(raw_name, Object)
+
+  inline void set_kind(FunctionKind kind);
+
+  // Indicates that this function uses a super property (or an eval that may
+  // use a super property).
+  // This is needed to set up the [[HomeObject]] on the function instance.
+  DECL_BOOLEAN_ACCESSORS(needs_home_object)
+
+  friend class Factory;
+  friend class V8HeapExplorer;
   FRIEND_TEST(PreParserTest, LazyFunctionLength);
 
   inline int length() const;

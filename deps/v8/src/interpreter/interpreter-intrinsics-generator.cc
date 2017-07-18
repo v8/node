@@ -335,7 +335,7 @@ Node* IntrinsicsGenerator::Call(Node* args_reg, Node* arg_count,
   }
 
   Node* result = __ CallJS(function, context, receiver_arg, target_args_count,
-                           ConvertReceiverMode::kAny, TailCallMode::kDisallow);
+                           ConvertReceiverMode::kAny);
   return result;
 }
 
@@ -381,18 +381,6 @@ Node* IntrinsicsGenerator::CreateAsyncFromSyncIterator(Node* args_reg,
 
   __ BIND(&done);
   return return_value.value();
-}
-
-Node* IntrinsicsGenerator::AsyncGeneratorGetAwaitInputOrDebugPos(
-    Node* args_reg, Node* arg_count, Node* context) {
-  Node* generator = __ LoadRegister(args_reg);
-  CSA_SLOW_ASSERT(assembler_, __ HasInstanceType(
-                                  generator, JS_ASYNC_GENERATOR_OBJECT_TYPE));
-
-  Node* const value = __ LoadObjectField(
-      generator, JSAsyncGeneratorObject::kAwaitInputOrDebugPosOffset);
-
-  return value;
 }
 
 Node* IntrinsicsGenerator::CreateJSGeneratorObject(Node* input, Node* arg_count,

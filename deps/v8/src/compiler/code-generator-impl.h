@@ -87,8 +87,8 @@ class InstructionOperandConverter {
     return ToExternalReference(instr_->InputAt(index));
   }
 
-  Handle<HeapObject> InputHeapObject(size_t index) {
-    return ToHeapObject(instr_->InputAt(index));
+  Handle<Code> InputCode(size_t index) {
+    return ToCode(instr_->InputAt(index));
   }
 
   Label* InputLabel(size_t index) { return ToLabel(instr_->InputAt(index)); }
@@ -151,7 +151,9 @@ class InstructionOperandConverter {
         ConstantOperand::cast(op)->virtual_register());
   }
 
-  double ToDouble(InstructionOperand* op) { return ToConstant(op).ToFloat64(); }
+  double ToDouble(InstructionOperand* op) {
+    return ToConstant(op).ToFloat64().value();
+  }
 
   float ToFloat32(InstructionOperand* op) { return ToConstant(op).ToFloat32(); }
 
@@ -159,8 +161,8 @@ class InstructionOperandConverter {
     return ToConstant(op).ToExternalReference();
   }
 
-  Handle<HeapObject> ToHeapObject(InstructionOperand* op) {
-    return ToConstant(op).ToHeapObject();
+  Handle<Code> ToCode(InstructionOperand* op) {
+    return ToConstant(op).ToCode();
   }
 
   const Frame* frame() const { return gen_->frame(); }

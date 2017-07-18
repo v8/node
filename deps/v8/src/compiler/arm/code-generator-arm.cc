@@ -51,7 +51,7 @@ class ArmOperandConverter final : public InstructionOperandConverter {
       case Constant::kFloat32:
         return Operand::EmbeddedNumber(constant.ToFloat32());
       case Constant::kFloat64:
-        return Operand::EmbeddedNumber(constant.ToFloat64());
+        return Operand::EmbeddedNumber(constant.ToFloat64().value());
       case Constant::kInt64:
       case Constant::kExternalReference:
       case Constant::kHeapObject:
@@ -693,8 +693,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
 
       EnsureSpaceForLazyDeopt();
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Call(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Call(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         __ add(ip, i.InputRegister(0),
                Operand(Code::kHeaderSize - kHeapObjectTag));
@@ -718,8 +717,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          i.TempRegister(2));
       }
       if (instr->InputAt(0)->IsImmediate()) {
-        __ Jump(Handle<Code>::cast(i.InputHeapObject(0)),
-                RelocInfo::CODE_TARGET);
+        __ Jump(i.InputCode(0), RelocInfo::CODE_TARGET);
       } else {
         __ add(ip, i.InputRegister(0),
                Operand(Code::kHeaderSize - kHeapObjectTag));
@@ -2951,7 +2949,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
           __ mov(dst, Operand::EmbeddedNumber(src.ToFloat32()));
           break;
         case Constant::kFloat64:
-          __ mov(dst, Operand::EmbeddedNumber(src.ToFloat64()));
+          __ mov(dst, Operand::EmbeddedNumber(src.ToFloat64().value()));
           break;
         case Constant::kExternalReference:
           __ mov(dst, Operand(src.ToExternalReference()));
@@ -2985,7 +2983,7 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       DwVfpRegister dst = destination->IsFPRegister()
                               ? g.ToDoubleRegister(destination)
                               : kScratchDoubleReg;
-      __ vmov(dst, Double(src.ToFloat64AsInt()), kScratchReg);
+      __ vmov(dst, src.ToFloat64(), kScratchReg);
       if (destination->IsDoubleStackSlot()) {
         __ vstr(dst, g.ToMemOperand(destination));
       }

@@ -305,6 +305,11 @@ Running test: testPreciseCountCoverageIncremental
                             }
                             [1] : {
                                 count : 0
+                                endOffset : 156
+                                startOffset : 145
+                            }
+                            [2] : {
+                                count : 0
                                 endOffset : 175
                                 startOffset : 173
                             }
@@ -820,7 +825,7 @@ Running test: testPreciseBinaryCoverage
                 functions : [
                     [0] : {
                         functionName : 
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1
@@ -831,12 +836,27 @@ Running test: testPreciseBinaryCoverage
                     }
                     [1] : {
                         functionName : fib
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1
                                 endOffset : 73
                                 startOffset : 1
+                            }
+                            [1] : {
+                                count : 1
+                                endOffset : 41
+                                startOffset : 32
+                            }
+                            [2] : {
+                                count : 1
+                                endOffset : 71
+                                startOffset : 41
+                            }
+                            [3] : {
+                                count : 0
+                                endOffset : 73
+                                startOffset : 71
                             }
                         ]
                     }
@@ -853,12 +873,17 @@ Running test: testPreciseBinaryCoverage
                     }
                     [3] : {
                         functionName : iife
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1
                                 endOffset : 208
                                 startOffset : 177
+                            }
+                            [1] : {
+                                count : 0
+                                endOffset : 208
+                                startOffset : 206
                             }
                         ]
                     }
@@ -905,12 +930,17 @@ Running test: testPreciseBinaryCoverage
                 functions : [
                     [0] : {
                         functionName : is_optimized
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1
                                 endOffset : 175
                                 startOffset : 74
+                            }
+                            [1] : {
+                                count : 0
+                                endOffset : 175
+                                startOffset : 173
                             }
                         ]
                     }
@@ -922,7 +952,7 @@ Running test: testPreciseBinaryCoverage
                 functions : [
                     [0] : {
                         functionName : 
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1
@@ -939,7 +969,7 @@ Running test: testPreciseBinaryCoverage
                 functions : [
                     [0] : {
                         functionName : 
-                        isBlockCoverage : false
+                        isBlockCoverage : true
                         ranges : [
                             [0] : {
                                 count : 1

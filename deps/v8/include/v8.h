@@ -4284,11 +4284,11 @@ class V8_EXPORT ArrayBuffer : public Object {
   class V8_EXPORT Contents { // NOLINT
    public:
     Contents()
-        : allocation_base_(nullptr),
+        : data_(nullptr),
+          byte_length_(0),
+          allocation_base_(nullptr),
           allocation_length_(0),
-          allocation_mode_(Allocator::AllocationMode::kNormal),
-          data_(nullptr),
-          byte_length_(0) {}
+          allocation_mode_(Allocator::AllocationMode::kNormal) {}
 
     void* AllocationBase() const { return allocation_base_; }
     size_t AllocationLength() const { return allocation_length_; }
@@ -4300,11 +4300,11 @@ class V8_EXPORT ArrayBuffer : public Object {
     size_t ByteLength() const { return byte_length_; }
 
    private:
+    void* data_;
+    size_t byte_length_;
     void* allocation_base_;
     size_t allocation_length_;
     Allocator::AllocationMode allocation_mode_;
-    void* data_;
-    size_t byte_length_;
 
     friend class ArrayBuffer;
   };
@@ -4654,11 +4654,11 @@ class V8_EXPORT SharedArrayBuffer : public Object {
   class V8_EXPORT Contents {  // NOLINT
    public:
     Contents()
-        : allocation_base_(nullptr),
+        : data_(nullptr),
+          byte_length_(0),
+          allocation_base_(nullptr),
           allocation_length_(0),
-          allocation_mode_(ArrayBuffer::Allocator::AllocationMode::kNormal),
-          data_(nullptr),
-          byte_length_(0) {}
+          allocation_mode_(ArrayBuffer::Allocator::AllocationMode::kNormal) {}
 
     void* AllocationBase() const { return allocation_base_; }
     size_t AllocationLength() const { return allocation_length_; }
@@ -4670,11 +4670,11 @@ class V8_EXPORT SharedArrayBuffer : public Object {
     size_t ByteLength() const { return byte_length_; }
 
    private:
+    void* data_;
+    size_t byte_length_;
     void* allocation_base_;
     size_t allocation_length_;
     ArrayBuffer::Allocator::AllocationMode allocation_mode_;
-    void* data_;
-    size_t byte_length_;
 
     friend class SharedArrayBuffer;
   };
@@ -8930,8 +8930,8 @@ class Internals {
   static const int kNodeIsIndependentShift = 3;
   static const int kNodeIsActiveShift = 4;
 
-  static const int kJSApiObjectType = 0xbd;
-  static const int kJSObjectType = 0xbe;
+  static const int kJSApiObjectType = 0xbb;
+  static const int kJSObjectType = 0xbc;
   static const int kFirstNonstringType = 0x80;
   static const int kOddballType = 0x82;
   static const int kForeignType = 0x86;
