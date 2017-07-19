@@ -617,6 +617,8 @@ DEFINE_BOOL(age_code, true, "track un-executed functions to age code")
 DEFINE_BOOL(incremental_marking, true, "use incremental marking")
 DEFINE_BOOL(incremental_marking_wrappers, true,
             "use incremental marking for marking wrappers")
+DEFINE_BOOL(parallel_scavenge, false, "parallel scavenge")
+DEFINE_BOOL(trace_parallel_scavenge, false, "trace parallel scavenge")
 #ifdef V8_CONCURRENT_MARKING
 #define V8_CONCURRENT_MARKING_BOOL true
 #else
@@ -957,6 +959,8 @@ DEFINE_BOOL(abort_on_stack_overflow, false,
 DEFINE_BOOL(randomize_hashes, true,
             "randomize hashes to avoid predictable hash collisions "
             "(with snapshots this option cannot override the baked-in seed)")
+DEFINE_BOOL(rehash_snapshot, true,
+            "rehash strings from the snapshot to override the baked-in seed")
 DEFINE_INT(hash_seed, 0,
            "Fixed seed to use to hash property keys (0 means random)"
            "(with snapshots this option cannot override the baked-in seed)")

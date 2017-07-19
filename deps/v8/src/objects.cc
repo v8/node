@@ -1274,7 +1274,7 @@ MaybeHandle<JSObject> JSObject::New(Handle<JSFunction> constructor,
   if (initial_map->is_dictionary_map()) {
     Handle<NameDictionary> dictionary =
         NameDictionary::New(isolate, NameDictionary::kInitialCapacity);
-    result->set_properties(*dictionary);
+    result->SetProperties(*dictionary);
   }
   isolate->counters()->constructed_objects()->Increment();
   isolate->counters()->constructed_objects_runtime()->Increment();
@@ -2033,7 +2033,7 @@ void JSObject::SetNormalizedProperty(Handle<JSObject> object,
     int entry = dictionary->FindEntry(name);
     if (entry == NameDictionary::kNotFound) {
       dictionary = NameDictionary::Add(dictionary, name, value, details);
-      object->set_properties(*dictionary);
+      object->SetProperties(*dictionary);
     } else {
       PropertyDetails original_details = dictionary->DetailsAt(entry);
       int enumeration_index = original_details.dictionary_index();
@@ -3830,7 +3830,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
     DisallowHeapAllocation no_allocation;
 
     // Set the new property value and do the map transition.
-    object->set_properties(*new_storage);
+    object->SetProperties(*new_storage);
     object->synchronized_set_map(*new_map);
     return;
   }
@@ -3969,7 +3969,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
   }
 
   if (external > 0) {
-    object->set_properties(*array);
+    object->SetProperties(*array);
   }
 
   // Create filler object past the new instance size.
@@ -4070,7 +4070,7 @@ void MigrateFastToSlow(Handle<JSObject> object, Handle<Map> new_map,
   // the left-over space to avoid races with the sweeper thread.
   object->synchronized_set_map(*new_map);
 
-  object->set_properties(*dictionary);
+  object->SetProperties(*dictionary);
 
   // Ensure that in-object space of slow-mode object does not contain random
   // garbage.
@@ -4131,10 +4131,17 @@ void JSObject::MigrateToMap(Handle<JSObject> object, Handle<Map> new_map,
   } else if (!new_map->is_dictionary_map()) {
     MigrateFastToFast(object, new_map);
     if (old_map->is_prototype_map()) {
-      DCHECK_IMPLIES(
-          old_map->instance_descriptors() !=
-              old_map->GetHeap()->empty_descriptor_array(),
-          old_map->instance_descriptors() != new_map->instance_descriptors());
+      DCHECK(!old_map->is_stable());
+      DCHECK(new_map->is_stable());
+      // Clear out the old descriptor array to avoid problems to sharing
+      // the descriptor array without using an explicit.
+      old_map->InitializeDescriptors(
+          old_map->GetHeap()->empty_descriptor_array(),
+          LayoutDescriptor::FastPointerLayout());
+      // Ensure that no transition was inserted for prototype migrations.
+      DCHECK_EQ(
+          0, TransitionArray::NumberOfTransitions(old_map->raw_transitions()));
+      DCHECK(new_map->GetBackPointer()->IsUndefined(new_map->GetIsolate()));
     }
   } else {
     MigrateFastToSlow(object, new_map, expected_additional_properties);
@@ -6049,7 +6056,7 @@ void JSObject::MigrateSlowToFast(Handle<JSObject> object,
     // Transform the object.
     new_map->set_unused_property_fields(inobject_props);
     object->synchronized_set_map(*new_map);
-    object->set_properties(isolate->heap()->empty_fixed_array());
+    object->SetProperties(isolate->heap()->empty_fixed_array());
     // Check that it really works.
     DCHECK(object->HasFastProperties());
     return;
@@ -6130,7 +6137,7 @@ void JSObject::MigrateSlowToFast(Handle<JSObject> object,
   // Transform the object.
   object->synchronized_set_map(*new_map);
 
-  object->set_properties(*fields);
+  object->SetProperties(*fields);
   DCHECK(object->IsJSObject());
 
   // Check that it really works.
@@ -6326,7 +6333,7 @@ void JSReceiver::DeleteNormalizedProperty(Handle<JSReceiver> object,
     DCHECK_NE(NameDictionary::kNotFound, entry);
 
     dictionary = NameDictionary::DeleteEntry(dictionary, entry);
-    object->set_properties(*dictionary);
+    object->SetProperties(*dictionary);
   }
 }
 
@@ -7297,7 +7304,7 @@ Maybe<bool> JSProxy::SetPrivateProperty(Isolate* isolate, Handle<JSProxy> proxy,
   PropertyDetails details(kData, DONT_ENUM, PropertyCellType::kNoCell);
   Handle<NameDictionary> result =
       NameDictionary::Add(dict, private_name, value, details);
-  if (!dict.is_identical_to(result)) proxy->set_properties(*result);
+  if (!dict.is_identical_to(result)) proxy->SetProperties(*result);
   return Just(true);
 }
 
@@ -9008,11 +9015,17 @@ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
     DCHECK_EQ(parent->NumberOfOwnDescriptors(),
               parent->instance_descriptors()->number_of_descriptors());
   }
-  DCHECK(!parent->is_prototype_map());
-  TransitionArray::Insert(parent, name, child, flag);
+  if (parent->is_prototype_map()) {
+    DCHECK(child->is_prototype_map());
 #if V8_TRACE_MAPS
-  Map::TraceTransition("Transition", *parent, *child, *name);
+    Map::TraceTransition("NoTransition", *parent, *child, *name);
 #endif
+  } else {
+    TransitionArray::Insert(parent, name, child, flag);
+#if V8_TRACE_MAPS
+    Map::TraceTransition("Transition", *parent, *child, *name);
+#endif
+  }
 }
 
 
@@ -9597,8 +9610,7 @@ Handle<Map> Map::CopyAddDescriptor(Handle<Map> map,
   // Share descriptors only if map owns descriptors and it not an initial map.
   if (flag == INSERT_TRANSITION && map->owns_descriptors() &&
       !map->GetBackPointer()->IsUndefined(map->GetIsolate()) &&
-      TransitionArray::CanHaveMoreTransitions(map) &&
-      !map->is_prototype_map()) {
+      TransitionArray::CanHaveMoreTransitions(map)) {
     return ShareDescriptor(map, descriptors, descriptor);
   }
 
@@ -16612,6 +16624,8 @@ BaseNameDictionary<GlobalDictionary, GlobalDictionaryShape>::Add(
     Handle<GlobalDictionary>, Handle<Name>, Handle<Object>, PropertyDetails,
     int*);
 
+template void HashTable<GlobalDictionary, GlobalDictionaryShape>::Rehash();
+
 template Handle<SeededNumberDictionary>
 Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape>::Add(
     Handle<SeededNumberDictionary>, uint32_t, Handle<Object>, PropertyDetails,
@@ -16883,7 +16897,7 @@ Handle<PropertyCell> JSGlobalObject::EnsureEmptyPropertyCell(
   dictionary =
       GlobalDictionary::Add(dictionary, name, cell, details, entry_out);
   // {*entry_out} is initialized inside GlobalDictionary::Add().
-  global->set_properties(*dictionary);
+  global->SetProperties(*dictionary);
   return cell;
 }
 

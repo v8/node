@@ -2620,7 +2620,7 @@ TEST(OptimizedPretenuringDoubleArrayProperties) {
       v8::Utils::OpenHandle(*v8::Local<v8::Object>::Cast(res)));
 
   CHECK(CcTest::heap()->InOldSpace(*o));
-  CHECK(CcTest::heap()->InOldSpace(o->properties()));
+  CHECK(CcTest::heap()->InOldSpace(o->property_array()));
 }
 
 
@@ -4910,7 +4910,7 @@ TEST(Regress388880) {
   heap::CreatePadding(heap, static_cast<int>(padding_size), TENURED);
 
   Handle<JSObject> o = factory->NewJSObjectFromMap(map1, TENURED);
-  o->set_properties(*factory->empty_fixed_array());
+  o->set_raw_properties_or_hash(*factory->empty_fixed_array());
 
   // Ensure that the object allocated where we need it.
   Page* page = Page::FromAddress(o->address());
@@ -6100,46 +6100,56 @@ TEST(RememberedSetRemoveRange) {
     RememberedSet<OLD_TO_NEW>::Insert(chunk, x.first);
   }
 
-  RememberedSet<OLD_TO_NEW>::Iterate(chunk, [&slots](Address addr) {
-    CHECK(slots[addr]);
-    return KEEP_SLOT;
-  });
+  RememberedSet<OLD_TO_NEW>::Iterate(chunk,
+                                     [&slots](Address addr) {
+                                       CHECK(slots[addr]);
+                                       return KEEP_SLOT;
+                                     },
+                                     SlotSet::PREFREE_EMPTY_BUCKETS);
 
   RememberedSet<OLD_TO_NEW>::RemoveRange(chunk, start, start + kPointerSize,
                                          SlotSet::FREE_EMPTY_BUCKETS);
   slots[start] = false;
-  RememberedSet<OLD_TO_NEW>::Iterate(chunk, [&slots](Address addr) {
-    CHECK(slots[addr]);
-    return KEEP_SLOT;
-  });
+  RememberedSet<OLD_TO_NEW>::Iterate(chunk,
+                                     [&slots](Address addr) {
+                                       CHECK(slots[addr]);
+                                       return KEEP_SLOT;
+                                     },
+                                     SlotSet::PREFREE_EMPTY_BUCKETS);
 
   RememberedSet<OLD_TO_NEW>::RemoveRange(chunk, start + kPointerSize,
                                          start + Page::kPageSize,
                                          SlotSet::FREE_EMPTY_BUCKETS);
   slots[start + kPointerSize] = false;
   slots[start + Page::kPageSize - kPointerSize] = false;
-  RememberedSet<OLD_TO_NEW>::Iterate(chunk, [&slots](Address addr) {
-    CHECK(slots[addr]);
-    return KEEP_SLOT;
-  });
+  RememberedSet<OLD_TO_NEW>::Iterate(chunk,
+                                     [&slots](Address addr) {
+                                       CHECK(slots[addr]);
+                                       return KEEP_SLOT;
+                                     },
+                                     SlotSet::PREFREE_EMPTY_BUCKETS);
 
   RememberedSet<OLD_TO_NEW>::RemoveRange(chunk, start,
                                          start + Page::kPageSize + kPointerSize,
                                          SlotSet::FREE_EMPTY_BUCKETS);
   slots[start + Page::kPageSize] = false;
-  RememberedSet<OLD_TO_NEW>::Iterate(chunk, [&slots](Address addr) {
-    CHECK(slots[addr]);
-    return KEEP_SLOT;
-  });
+  RememberedSet<OLD_TO_NEW>::Iterate(chunk,
+                                     [&slots](Address addr) {
+                                       CHECK(slots[addr]);
+                                       return KEEP_SLOT;
+                                     },
+                                     SlotSet::PREFREE_EMPTY_BUCKETS);
 
   RememberedSet<OLD_TO_NEW>::RemoveRange(
       chunk, chunk->area_end() - kPointerSize, chunk->area_end(),
       SlotSet::FREE_EMPTY_BUCKETS);
   slots[chunk->area_end() - kPointerSize] = false;
-  RememberedSet<OLD_TO_NEW>::Iterate(chunk, [&slots](Address addr) {
-    CHECK(slots[addr]);
-    return KEEP_SLOT;
-  });
+  RememberedSet<OLD_TO_NEW>::Iterate(chunk,
+                                     [&slots](Address addr) {
+                                       CHECK(slots[addr]);
+                                       return KEEP_SLOT;
+                                     },
+                                     SlotSet::PREFREE_EMPTY_BUCKETS);
 }
 
 HEAP_TEST(Regress670675) {
@@ -6258,6 +6268,27 @@ HEAP_TEST(RegressMissingWriteBarrierInAllocate) {
     collector->EnsureSweepingCompleted();
   }
   CHECK(object->map()->IsMap());
+}
+
+UNINITIALIZED_TEST(ReinitializeStringHashSeed) {
+  // Enable rehashing and create an isolate and context.
+  i::FLAG_rehash_snapshot = true;
+  for (int i = 1; i < 3; i++) {
+    i::FLAG_hash_seed = 1337 * i;
+    v8::Isolate::CreateParams create_params;
+    create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+    v8::Isolate* isolate = v8::Isolate::New(create_params);
+    {
+      v8::Isolate::Scope isolate_scope(isolate);
+      CHECK_EQ(1337 * i,
+               reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
+      v8::HandleScope handle_scope(isolate);
+      v8::Local<v8::Context> context = v8::Context::New(isolate);
+      CHECK(!context.IsEmpty());
+      v8::Context::Scope context_scope(context);
+    }
+    isolate->Dispose();
+  }
 }
 
 }  // namespace internal
