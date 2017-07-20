@@ -190,9 +190,6 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .BinaryOperationSmiLiteral(Token::Value::SAR, Smi::FromInt(42), 2)
       .BinaryOperationSmiLiteral(Token::Value::SHR, Smi::FromInt(42), 2);
 
-  // Emit StringConcat operations.
-  builder.ToPrimitiveToString(reg, 1).StringConcat(pair);
-
   // Emit count operatior invocations
   builder.CountOperation(Token::Value::ADD, 1)
       .CountOperation(Token::Value::SUB, 1);
@@ -354,6 +351,7 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   builder
       .CreateRegExpLiteral(ast_factory.GetOneByteString("wide_literal"), 0, 0)
       .CreateArrayLiteral(0, 0, 0)
+      .CreateEmptyArrayLiteral(0)
       .CreateObjectLiteral(0, 0, 0, reg);
 
   // Emit load and store operations for module variables.

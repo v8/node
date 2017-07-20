@@ -269,6 +269,7 @@ void ByteArray::ByteArrayPrint(std::ostream& os) {  // NOLINT
 
 
 void BytecodeArray::BytecodeArrayPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "BytecodeArray");
   Disassemble(os);
 }
 
@@ -1090,7 +1091,20 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
       os << "\n - bytecode = " << shared()->bytecode_array();
     }
   }
+  shared()->PrintSourceCode(os);
   JSObjectPrintBody(os, this);
+}
+
+void SharedFunctionInfo::PrintSourceCode(std::ostream& os) {
+  if (HasSourceCode()) {
+    os << "\n - source code = ";
+    String* source = String::cast(Script::cast(script())->source());
+    int start = start_position();
+    int length = end_position() - start;
+    std::unique_ptr<char[]> source_string = source->ToCString(
+        DISALLOW_NULLS, FAST_STRING_TRAVERSAL, start, length, NULL);
+    os << source_string.get();
+  }
 }
 
 void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
@@ -1106,22 +1120,13 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - formal_parameter_count = " << internal_formal_parameter_count();
   os << "\n - expected_nof_properties = " << expected_nof_properties();
   os << "\n - language_mode = " << language_mode();
-  os << "\n - ast_node_count = " << ast_node_count();
   os << "\n - instance class name = ";
   instance_class_name()->Print(os);
   os << " - code = " << Brief(code());
   if (HasBytecodeArray()) {
     os << "\n - bytecode_array = " << bytecode_array();
   }
-  if (HasSourceCode()) {
-    os << "\n - source code = ";
-    String* source = String::cast(Script::cast(script())->source());
-    int start = start_position();
-    int length = end_position() - start;
-    std::unique_ptr<char[]> source_string = source->ToCString(
-        DISALLOW_NULLS, FAST_STRING_TRAVERSAL, start, length, NULL);
-    os << source_string.get();
-  }
+  PrintSourceCode(os);
   // Script files are often large, hard to read.
   // os << "\n - script =";
   // script()->Print(os);
@@ -1706,6 +1711,9 @@ void TransitionArray::PrintTransitions(std::ostream& os, Object* transitions,
     } else if (key == heap->elements_transition_symbol()) {
       os << "(transition to " << ElementsKindToString(target->elements_kind())
          << ")";
+    } else if (key == heap->elements_transition_shortcut_symbol()) {
+      os << "(shortcut to " << ElementsKindToString(target->elements_kind())
+         << ")";
     } else if (key == heap->strict_function_transition_symbol()) {
       os << " (transition to strict function)";
     } else {
@@ -1737,8 +1745,7 @@ void TransitionArray::PrintTransitionTree(std::ostream& os, Map* map,
   for (int i = 0; i < num_transitions; i++) {
     Name* key = GetKey(transitions, i);
     Map* target = GetTarget(transitions, i);
-    os << std::endl
-       << "  " << level << "/" << i << ":" << std::setw(level * 2 + 2) << " ";
+    os << "\n  " << level << "/" << i << ":" << std::setw(level * 2 + 2) << " ";
     std::stringstream ss;
     ss << Brief(target);
     os << std::left << std::setw(50) << ss.str() << ": ";
@@ -1752,17 +1759,21 @@ void TransitionArray::PrintTransitionTree(std::ostream& os, Map* map,
       os << "to frozen";
     } else if (key == heap->elements_transition_symbol()) {
       os << "to " << ElementsKindToString(target->elements_kind());
+    } else if (key == heap->elements_transition_shortcut_symbol()) {
+      os << "shortcut to " << ElementsKindToString(target->elements_kind());
+      // Don't print transitions "through" the transition shortcut.
+      continue;
     } else if (key == heap->strict_function_transition_symbol()) {
       os << "to strict function";
     } else {
+      DCHECK(!IsSpecialTransition(key));
+      os << "to ";
 #ifdef OBJECT_PRINT
       key->NamePrint(os);
 #else
       key->ShortPrint(os);
 #endif
       os << " ";
-      DCHECK(!IsSpecialTransition(key));
-      os << "to ";
       int descriptor = target->LastAdded();
       DescriptorArray* descriptors = target->instance_descriptors();
       descriptors->PrintDescriptorDetails(os, descriptor,

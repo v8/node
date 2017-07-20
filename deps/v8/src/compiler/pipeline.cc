@@ -18,7 +18,6 @@
 #include "src/compiler/basic-block-instrumentor.h"
 #include "src/compiler/branch-elimination.h"
 #include "src/compiler/bytecode-graph-builder.h"
-#include "src/compiler/check-elimination.h"
 #include "src/compiler/checkpoint-elimination.h"
 #include "src/compiler/code-generator.h"
 #include "src/compiler/common-operator-reducer.h"
@@ -89,7 +88,7 @@ class PipelineData {
       : isolate_(info->isolate()),
         info_(info),
         debug_name_(info_->GetDebugName()),
-        outer_zone_(info_->zone()),
+        may_have_unverifiable_graph_(false),
         zone_stats_(zone_stats),
         pipeline_statistics_(pipeline_statistics),
         graph_zone_scope_(zone_stats_, ZONE_NAME),
@@ -212,7 +211,7 @@ class PipelineData {
   CodeGenerator* code_generator() const { return code_generator_; }
 
   // RawMachineAssembler generally produces graphs which cannot be verified.
-  bool MayHaveUnverifiableGraph() const { return outer_zone_ == nullptr; }
+  bool MayHaveUnverifiableGraph() const { return may_have_unverifiable_graph_; }
 
   Zone* graph_zone() const { return graph_zone_; }
   Graph* graph() const { return graph_; }
@@ -371,7 +370,7 @@ class PipelineData {
   Isolate* const isolate_;
   CompilationInfo* const info_;
   std::unique_ptr<char[]> debug_name_;
-  Zone* outer_zone_ = nullptr;
+  bool may_have_unverifiable_graph_ = true;
   ZoneStats* const zone_stats_;
   PipelineStatistics* pipeline_statistics_ = nullptr;
   bool compilation_failed_ = false;
@@ -983,7 +982,6 @@ struct InliningPhase {
     CheckpointElimination checkpoint_elimination(&graph_reducer);
     CommonOperatorReducer common_reducer(&graph_reducer, data->graph(),
                                          data->common(), data->machine());
-    CheckElimination check_elimination(&graph_reducer, data->jsgraph());
     JSCallReducer call_reducer(&graph_reducer, data->jsgraph(),
                                data->info()->is_bailout_on_uninitialized()
                                    ? JSCallReducer::kBailoutOnUninitialized
@@ -1021,7 +1019,6 @@ struct InliningPhase {
             : JSIntrinsicLowering::kDeoptimizationDisabled);
     AddReducer(data, &graph_reducer, &dead_code_elimination);
     AddReducer(data, &graph_reducer, &checkpoint_elimination);
-    AddReducer(data, &graph_reducer, &check_elimination);
     AddReducer(data, &graph_reducer, &common_reducer);
     if (data->info()->is_frame_specializing()) {
       AddReducer(data, &graph_reducer, &frame_specialization);

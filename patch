@@ -1,0 +1,748 @@
+diff --git a/configure b/configure
+index 716964e614..3948f18bca 100755
+--- a/configure
++++ b/configure
+@@ -419,12 +419,12 @@ parser.add_option('--without-perfctr',
+ # Dummy option for backwards compatibility
+ parser.add_option('--with-snapshot',
+     action='store_true',
+-    dest='with_snapshot',
++    dest='unused_with_snapshot',
+     help=optparse.SUPPRESS_HELP)
+ 
+ parser.add_option('--without-snapshot',
+     action='store_true',
+-    dest='unused_without_snapshot',
++    dest='without_snapshot',
+     help=optparse.SUPPRESS_HELP)
+ 
+ parser.add_option('--without-ssl',
+@@ -802,7 +802,7 @@ def configure_node(o):
+   cross_compiling = (options.cross_compiling
+                      if options.cross_compiling is not None
+                      else target_arch != host_arch)
+-  want_snapshots = 1 if options.with_snapshot else 0
++  want_snapshots = not options.without_snapshot
+   o['variables']['want_separate_host_toolset'] = int(
+       cross_compiling and want_snapshots)
+ 
+@@ -946,7 +946,7 @@ def configure_v8(o):
+   o['variables']['v8_no_strict_aliasing'] = 1  # Work around compiler bugs.
+   o['variables']['v8_optimized_debug'] = 0  # Compile with -O0 in debug builds.
+   o['variables']['v8_random_seed'] = 0  # Use a random seed for hash tables.
+-  o['variables']['v8_use_snapshot'] = b(options.with_snapshot)
++  o['variables']['v8_use_snapshot'] = 'false' if options.without_snapshot else 'true'
+   o['variables']['node_use_v8_platform'] = b(not options.without_v8_platform)
+   o['variables']['node_use_bundled_v8'] = b(not options.without_bundled_v8)
+   o['variables']['force_dynamic_crt'] = 1 if options.shared else 0
+diff --git a/deps/v8/include/v8-version.h b/deps/v8/include/v8-version.h
+index 55d32cc899..e2c861431c 100644
+--- a/deps/v8/include/v8-version.h
++++ b/deps/v8/include/v8-version.h
+@@ -11,7 +11,7 @@
+ #define V8_MAJOR_VERSION 5
+ #define V8_MINOR_VERSION 1
+ #define V8_BUILD_NUMBER 281
+-#define V8_PATCH_LEVEL 103
++#define V8_PATCH_LEVEL 104
+ 
+ // Use 1 for candidates and 0 otherwise.
+ // (Boolean macro values are not supported by all preprocessors.)
+diff --git a/deps/v8/src/api.cc b/deps/v8/src/api.cc
+index d0c8317d4b..50848c780d 100644
+--- a/deps/v8/src/api.cc
++++ b/deps/v8/src/api.cc
+@@ -391,6 +391,9 @@ StartupData SerializeIsolateAndContext(
+ 
+   i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
+ 
++  // We might rehash strings and re-sort descriptors. Clear the lookup cache.
++  internal_isolate->descriptor_lookup_cache()->Clear();
++
+   // If we don't do this then we end up with a stray root pointing at the
+   // context even after we have disposed of the context.
+   internal_isolate->heap()->CollectAllAvailableGarbage("mksnapshot");
+@@ -428,6 +431,9 @@ StartupData SerializeIsolateAndContext(
+   context_ser.Serialize(&raw_context);
+   ser.SerializeWeakReferencesAndDeferred();
+ 
++  metadata.set_can_rehash(ser.can_be_rehashed() &&
++                          context_ser.can_be_rehashed());
++
+   return i::Snapshot::CreateSnapshotBlob(ser, context_ser, metadata);
+ }
+ 
+diff --git a/deps/v8/src/bootstrapper.cc b/deps/v8/src/bootstrapper.cc
+index f67065dec4..39e4b22e08 100644
+--- a/deps/v8/src/bootstrapper.cc
++++ b/deps/v8/src/bootstrapper.cc
+@@ -655,6 +655,8 @@ Handle<JSFunction> Genesis::GetThrowTypeErrorIntrinsic(
+     DCHECK(false);
+   }
+ 
++  JSObject::MigrateSlowToFast(function, 0, "Bootstrapping");
++
+   return function;
+ }
+ 
+@@ -1133,6 +1135,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
+ 
+     sloppy_function_map_writable_prototype_->SetConstructor(*function_fun);
+     strict_function_map_writable_prototype_->SetConstructor(*function_fun);
++
++    JSObject::MigrateSlowToFast(function_fun, 0, "Bootstrapping");
+   }
+ 
+   {  // --- A r r a y ---
+diff --git a/deps/v8/src/flag-definitions.h b/deps/v8/src/flag-definitions.h
+index eb3dbbb4cf..c3420702dd 100644
+--- a/deps/v8/src/flag-definitions.h
++++ b/deps/v8/src/flag-definitions.h
+@@ -830,6 +830,8 @@ DEFINE_BOOL(abort_on_uncaught_exception, false,
+ DEFINE_BOOL(randomize_hashes, true,
+             "randomize hashes to avoid predictable hash collisions "
+             "(with snapshots this option cannot override the baked-in seed)")
++DEFINE_BOOL(rehash_snapshot, true,
++            "rehash strings from the snapshot to override the baked-in seed")
+ DEFINE_INT(hash_seed, 0,
+            "Fixed seed to use to hash property keys (0 means random)"
+            "(with snapshots this option cannot override the baked-in seed)")
+diff --git a/deps/v8/src/heap/heap.cc b/deps/v8/src/heap/heap.cc
+index eae9695caf..9eda2b3b8c 100644
+--- a/deps/v8/src/heap/heap.cc
++++ b/deps/v8/src/heap/heap.cc
+@@ -5348,14 +5348,7 @@ bool Heap::SetUp() {
+ 
+   // Set up the seed that is used to randomize the string hash function.
+   DCHECK(hash_seed() == 0);
+-  if (FLAG_randomize_hashes) {
+-    if (FLAG_hash_seed == 0) {
+-      int rnd = isolate()->random_number_generator()->NextInt();
+-      set_hash_seed(Smi::FromInt(rnd & Name::kHashBitMask));
+-    } else {
+-      set_hash_seed(Smi::FromInt(FLAG_hash_seed));
+-    }
+-  }
++  if (FLAG_randomize_hashes) InitializeHashSeed();
+ 
+   for (int i = 0; i < static_cast<int>(v8::Isolate::kUseCounterFeatureCount);
+        i++) {
+@@ -5393,6 +5386,14 @@ bool Heap::SetUp() {
+   return true;
+ }
+ 
++void Heap::InitializeHashSeed() {
++  if (FLAG_hash_seed == 0) {
++    int rnd = isolate()->random_number_generator()->NextInt();
++    set_hash_seed(Smi::FromInt(rnd & Name::kHashBitMask));
++  } else {
++    set_hash_seed(Smi::FromInt(FLAG_hash_seed));
++  }
++}
+ 
+ bool Heap::CreateHeapObjects() {
+   // Create initial maps.
+diff --git a/deps/v8/src/heap/heap.h b/deps/v8/src/heap/heap.h
+index 2d2029912c..778572d5bb 100644
+--- a/deps/v8/src/heap/heap.h
++++ b/deps/v8/src/heap/heap.h
+@@ -864,6 +864,9 @@ class Heap {
+   // without actually creating any objects.
+   bool SetUp();
+ 
++  // (Re-)Initialize hash seed from flag or RNG.
++  void InitializeHashSeed();
++
+   // Bootstraps the object heap with the core set of objects required to run.
+   // Returns whether it succeeded.
+   bool CreateHeapObjects();
+diff --git a/deps/v8/src/js/array.js b/deps/v8/src/js/array.js
+index 1406df336d..e721dd94cf 100644
+--- a/deps/v8/src/js/array.js
++++ b/deps/v8/src/js/array.js
+@@ -1831,6 +1831,8 @@ var unscopables = {
+   keys: true,
+ };
+ 
++%ToFastProperties(unscopables);
++
+ %AddNamedProperty(GlobalArray.prototype, unscopablesSymbol, unscopables,
+                   DONT_ENUM | READ_ONLY);
+ 
+diff --git a/deps/v8/src/objects.cc b/deps/v8/src/objects.cc
+index 7dbc2a377c..c33b065ccd 100644
+--- a/deps/v8/src/objects.cc
++++ b/deps/v8/src/objects.cc
+@@ -9469,6 +9469,12 @@ void Map::TraceAllTransitions(Map* map) {
+ 
+ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
+                             Handle<Name> name, SimpleTransitionFlag flag) {
++  // Do not track transitions during bootstrap except for element transitions.
++  Isolate* isolate = parent->GetIsolate();
++  if (isolate->bootstrapper()->IsActive() &&
++      !name.is_identical_to(isolate->factory()->elements_transition_symbol())) {
++    return;
++  }
+   if (!parent->GetBackPointer()->IsUndefined()) {
+     parent->set_owns_descriptors(false);
+   } else {
+@@ -17520,6 +17526,12 @@ template class Dictionary<UnseededNumberDictionary,
+                           UnseededNumberDictionaryShape,
+                           uint32_t>;
+ 
++template void
++HashTable<GlobalDictionary, GlobalDictionaryShape, Handle<Name> >::Rehash(Handle<Name> key);
++
++template void
++HashTable<NameDictionary, NameDictionaryShape, Handle<Name> >::Rehash(Handle<Name> key);
++
+ template Handle<SeededNumberDictionary>
+ Dictionary<SeededNumberDictionary, SeededNumberDictionaryShape, uint32_t>::
+     New(Isolate*, int at_least_space_for, PretenureFlag pretenure);
+diff --git a/deps/v8/src/snapshot/deserializer.cc b/deps/v8/src/snapshot/deserializer.cc
+index 0a21feffa1..0a478df8af 100644
+--- a/deps/v8/src/snapshot/deserializer.cc
++++ b/deps/v8/src/snapshot/deserializer.cc
+@@ -109,6 +109,8 @@ void Deserializer::Deserialize(Isolate* isolate) {
+   LOG_CODE_EVENT(isolate_, LogCodeObjects());
+   LOG_CODE_EVENT(isolate_, LogBytecodeHandlers());
+   LOG_CODE_EVENT(isolate_, LogCompiledFunctions());
++
++  if (FLAG_rehash_snapshot && can_rehash_) Rehash();
+ }
+ 
+ MaybeHandle<Object> Deserializer::DeserializePartial(
+@@ -138,6 +140,9 @@ MaybeHandle<Object> Deserializer::DeserializePartial(
+   // changed and logging should be added to notify the profiler et al of the
+   // new code, which also has to be flushed from instruction cache.
+   CHECK_EQ(start_address, code_space->top());
++
++  if (FLAG_rehash_snapshot && can_rehash_) RehashContext(Context::cast(root));
++
+   return Handle<Object>(root, isolate);
+ }
+ 
+@@ -164,6 +169,64 @@ MaybeHandle<SharedFunctionInfo> Deserializer::DeserializeCode(
+   }
+ }
+ 
++// We only really just need HashForObject here.
++class StringRehashKey : public HashTableKey {
++ public:
++  uint32_t HashForObject(Object* other) override {
++    return String::cast(other)->Hash();
++  }
++
++  static uint32_t StringHash(Object* obj) {
++    UNREACHABLE();
++    return String::cast(obj)->Hash();
++  }
++
++  bool IsMatch(Object* string) override {
++    UNREACHABLE();
++    return false;
++  }
++
++  uint32_t Hash() override {
++    UNREACHABLE();
++    return 0;
++  }
++
++  Handle<Object> AsHandle(Isolate* isolate) override {
++    UNREACHABLE();
++    return isolate->factory()->empty_string();
++  }
++};
++
++void Deserializer::Rehash() {
++  DCHECK(can_rehash_);
++  isolate_->heap()->InitializeHashSeed();
++  if (FLAG_profile_deserialization) {
++    PrintF("Re-initializing hash seed to %x\n",
++           isolate_->heap()->hash_seed()->value());
++  }
++  StringRehashKey string_rehash_key;
++  isolate_->heap()->string_table()->Rehash(&string_rehash_key);
++  isolate_->heap()->intrinsic_function_names()->Rehash(
++      isolate_->factory()->empty_string());
++  SortMapDescriptors();
++}
++
++void Deserializer::RehashContext(Context* context) {
++  DCHECK(can_rehash_);
++  for (const auto& array : transition_arrays_) array->Sort();
++  Handle<Name> dummy = isolate_->factory()->empty_string();
++  context->global_object()->global_dictionary()->Rehash(dummy);
++  SortMapDescriptors();
++}
++
++void Deserializer::SortMapDescriptors() {
++  for (const auto& map : maps_) {
++    if (map->instance_descriptors()->number_of_descriptors() > 1) {
++      map->instance_descriptors()->Sort();
++    }
++  }
++}
++
+ Deserializer::~Deserializer() {
+   // TODO(svenpanne) Re-enable this assertion when v8 initialization is fixed.
+   // DCHECK(source_.AtEOF());
+@@ -288,6 +351,18 @@ HeapObject* Deserializer::PostProcessNewObject(HeapObject* obj, int space) {
+       new_code_objects_.Add(Code::cast(obj));
+     }
+   }
++  if (FLAG_rehash_snapshot && can_rehash_ && !deserializing_user_code()) {
++    if (obj->IsString()) {
++      // Uninitialize hash field as we are going to reinitialize the hash seed.
++      String* string = String::cast(obj);
++      string->set_hash_field(String::kEmptyHashField);
++    } else if (obj->IsTransitionArray() &&
++               TransitionArray::cast(obj)->number_of_entries() > 1) {
++      transition_arrays_.Add(TransitionArray::cast(obj));
++    } else if (obj->IsMap()) {
++      maps_.Add(Map::cast(obj));
++    }
++  }
+   // Check alignment.
+   DCHECK_EQ(0, Heap::GetFillToAlign(obj->address(), obj->RequiredAlignment()));
+   return obj;
+diff --git a/deps/v8/src/snapshot/deserializer.h b/deps/v8/src/snapshot/deserializer.h
+index 58c481cc79..ec08d4a6ca 100644
+--- a/deps/v8/src/snapshot/deserializer.h
++++ b/deps/v8/src/snapshot/deserializer.h
+@@ -37,7 +37,8 @@ class Deserializer : public SerializerDeserializer {
+         external_reference_table_(NULL),
+         deserialized_large_objects_(0),
+         deserializing_user_code_(false),
+-        next_alignment_(kWordAligned) {
++        next_alignment_(kWordAligned),
++        can_rehash_(false) {
+     DecodeReservation(data->Reservations());
+   }
+ 
+@@ -59,6 +60,8 @@ class Deserializer : public SerializerDeserializer {
+     attached_objects_ = attached_objects;
+   }
+ 
++  void SetRehashability(bool v) { can_rehash_ = v; }
++
+  private:
+   void VisitPointers(Object** start, Object** end) override;
+ 
+@@ -113,6 +116,15 @@ class Deserializer : public SerializerDeserializer {
+   Object** CopyInNativesSource(Vector<const char> source_vector,
+                                Object** current);
+ 
++  // Rehash after deserializing an isolate.
++  void Rehash();
++
++  // Rehash after deserializing a context.
++  void RehashContext(Context* context);
++
++  // Sort descriptors of deserialized maps using new string hashes.
++  void SortMapDescriptors();
++
+   // Cached current isolate.
+   Isolate* isolate_;
+ 
+@@ -136,11 +148,16 @@ class Deserializer : public SerializerDeserializer {
+   List<Code*> new_code_objects_;
+   List<Handle<String> > new_internalized_strings_;
+   List<Handle<Script> > new_scripts_;
++  List<Map*> maps_;
++  List<TransitionArray*> transition_arrays_;
+ 
+   bool deserializing_user_code_;
+ 
+   AllocationAlignment next_alignment_;
+ 
++  // TODO(6593): generalize rehashing, and remove this flag.
++  bool can_rehash_;
++
+   DISALLOW_COPY_AND_ASSIGN(Deserializer);
+ };
+ 
+diff --git a/deps/v8/src/snapshot/partial-serializer.cc b/deps/v8/src/snapshot/partial-serializer.cc
+index 0f1f133edc..e5a81e0871 100644
+--- a/deps/v8/src/snapshot/partial-serializer.cc
++++ b/deps/v8/src/snapshot/partial-serializer.cc
+@@ -15,7 +15,9 @@ PartialSerializer::PartialSerializer(Isolate* isolate,
+     : Serializer(isolate, sink),
+       startup_serializer_(startup_snapshot_serializer),
+       global_object_(NULL),
+-      next_partial_cache_index_(0) {
++      next_partial_cache_index_(0),
++      rehashable_context_(nullptr),
++      can_be_rehashed_(true) {
+   InitializeCodeAddressMap();
+ }
+ 
+@@ -24,7 +26,7 @@ PartialSerializer::~PartialSerializer() {
+ }
+ 
+ void PartialSerializer::Serialize(Object** o) {
+-  if ((*o)->IsContext()) {
++  if ((*o)->IsNativeContext()) {
+     Context* context = Context::cast(*o);
+     global_object_ = context->global_object();
+     back_reference_map()->AddGlobalProxy(context->global_proxy());
+@@ -33,11 +35,14 @@ void PartialSerializer::Serialize(Object** o) {
+     // and it's next context pointer may point to the code-stub context.  Clear
+     // it before serializing, it will get re-added to the context list
+     // explicitly when it's loaded.
+-    if (context->IsNativeContext()) {
+-      context->set(Context::NEXT_CONTEXT_LINK,
+-                   isolate_->heap()->undefined_value());
+-      DCHECK(!context->global_object()->IsUndefined());
+-    }
++    context->set(Context::NEXT_CONTEXT_LINK,
++                 isolate_->heap()->undefined_value());
++    DCHECK(!context->global_object()->IsUndefined());
++    DCHECK_NULL(rehashable_context_);
++    rehashable_context_ = context;
++  } else {
++    // We only do rehashing for native contexts.
++    can_be_rehashed_ = false;
+   }
+   VisitPointer(o);
+   SerializeDeferredObjects();
+@@ -89,6 +94,8 @@ void PartialSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
+     for (int i = 0; i < literals->length(); i++) literals->set_undefined(i);
+   }
+ 
++  if (obj->IsHashTable()) CheckRehashability(obj);
++
+   // Object has not yet been serialized.  Serialize it here.
+   ObjectSerializer serializer(this, obj, sink_, how_to_code, where_to_point);
+   serializer.Serialize();
+@@ -119,5 +126,17 @@ bool PartialSerializer::ShouldBeInThePartialSnapshotCache(HeapObject* o) {
+              startup_serializer_->isolate()->heap()->fixed_cow_array_map();
+ }
+ 
++void PartialSerializer::CheckRehashability(HeapObject* table) {
++  DCHECK(table->IsHashTable());
++  if (!can_be_rehashed_) return;
++  // We can only correctly rehash if the global dictionary is the only hash
++  // table that we deserialize.
++  if (table == rehashable_context_->global_object()->global_dictionary()) {
++    return;
++  }
++  if (table == rehashable_context_->template_instantiations_cache()) return;
++  can_be_rehashed_ = false;
++}
++
+ }  // namespace internal
+ }  // namespace v8
+diff --git a/deps/v8/src/snapshot/partial-serializer.h b/deps/v8/src/snapshot/partial-serializer.h
+index 0bf61dd055..01cfbf2dac 100644
+--- a/deps/v8/src/snapshot/partial-serializer.h
++++ b/deps/v8/src/snapshot/partial-serializer.h
+@@ -21,6 +21,8 @@ class PartialSerializer : public Serializer {
+   // Serialize the objects reachable from a single object pointer.
+   void Serialize(Object** o);
+ 
++  bool can_be_rehashed() const { return can_be_rehashed_; }
++
+  private:
+   class PartialCacheIndexMap : public AddressMapBase {
+    public:
+@@ -49,10 +51,16 @@ class PartialSerializer : public Serializer {
+   int PartialSnapshotCacheIndex(HeapObject* o);
+   bool ShouldBeInThePartialSnapshotCache(HeapObject* o);
+ 
++  void CheckRehashability(HeapObject* table);
++
+   Serializer* startup_serializer_;
+   Object* global_object_;
+   PartialCacheIndexMap partial_cache_index_map_;
+   int next_partial_cache_index_;
++  Context* rehashable_context_;
++  // Indicates whether we only serialized hash tables that we can rehash.
++  // TODO(yangguo): generalize rehashing, and remove this flag.
++  bool can_be_rehashed_;
+   DISALLOW_COPY_AND_ASSIGN(PartialSerializer);
+ };
+ 
+diff --git a/deps/v8/src/snapshot/snapshot-common.cc b/deps/v8/src/snapshot/snapshot-common.cc
+index eb3bdb5604..b53c43995d 100644
+--- a/deps/v8/src/snapshot/snapshot-common.cc
++++ b/deps/v8/src/snapshot/snapshot-common.cc
+@@ -58,6 +58,7 @@ bool Snapshot::Initialize(Isolate* isolate) {
+   Vector<const byte> startup_data = ExtractStartupData(blob);
+   SnapshotData snapshot_data(startup_data);
+   Deserializer deserializer(&snapshot_data);
++  deserializer.SetRehashability(ExtractMetadata(blob).can_rehash());
+   bool success = isolate->Init(&deserializer);
+   if (FLAG_profile_deserialization) {
+     double ms = timer.Elapsed().InMillisecondsF();
+@@ -78,6 +79,7 @@ MaybeHandle<Context> Snapshot::NewContextFromSnapshot(
+   Vector<const byte> context_data = ExtractContextData(blob);
+   SnapshotData snapshot_data(context_data);
+   Deserializer deserializer(&snapshot_data);
++  deserializer.SetRehashability(ExtractMetadata(blob).can_rehash());
+ 
+   MaybeHandle<Object> maybe_context =
+       deserializer.DeserializePartial(isolate, global_proxy);
+diff --git a/deps/v8/src/snapshot/snapshot.h b/deps/v8/src/snapshot/snapshot.h
+index c648d7595e..f076dd6488 100644
+--- a/deps/v8/src/snapshot/snapshot.h
++++ b/deps/v8/src/snapshot/snapshot.h
+@@ -26,10 +26,16 @@ class Snapshot : public AllStatic {
+       data_ = EmbedsScriptBits::update(data_, v);
+     }
+ 
++    bool can_rehash() { return RehashabilityBits::decode(data_); }
++    void set_can_rehash(bool v) {
++      data_ = RehashabilityBits::update(data_, v);
++    }
++
+     uint32_t& RawValue() { return data_; }
+ 
+    private:
+     class EmbedsScriptBits : public BitField<bool, 0, 1> {};
++    class RehashabilityBits : public BitField<bool, 1, 1> {};
+     uint32_t data_;
+   };
+ 
+diff --git a/deps/v8/src/snapshot/startup-serializer.cc b/deps/v8/src/snapshot/startup-serializer.cc
+index fab01f51f8..f7016b0aae 100644
+--- a/deps/v8/src/snapshot/startup-serializer.cc
++++ b/deps/v8/src/snapshot/startup-serializer.cc
+@@ -15,7 +15,8 @@ StartupSerializer::StartupSerializer(
+     FunctionCodeHandling function_code_handling)
+     : Serializer(isolate, sink),
+       function_code_handling_(function_code_handling),
+-      serializing_builtins_(false) {
++      serializing_builtins_(false),
++      can_be_rehashed_(true) {
+   InitializeCodeAddressMap();
+ }
+ 
+@@ -63,6 +64,8 @@ void StartupSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
+ 
+   FlushSkip(skip);
+ 
++  if (obj->IsHashTable()) CheckRehashability(obj);
++
+   // Object has not yet been serialized.  Serialize it here.
+   ObjectSerializer object_serializer(this, obj, sink_, how_to_code,
+                                      where_to_point);
+@@ -163,5 +166,20 @@ bool StartupSerializer::RootShouldBeSkipped(int root_index) {
+          serializing_immortal_immovables_roots_;
+ }
+ 
++void StartupSerializer::CheckRehashability(HeapObject* table) {
++  DCHECK(table->IsHashTable());
++  if (!can_be_rehashed_) return;
++  // We can only correctly rehash if the four hash tables below are the only
++  // ones that we deserialize.
++  if (table == isolate_->heap()->code_stubs()) return;
++  if (table == isolate_->heap()->non_monomorphic_cache()) return;
++  if (table == isolate_->heap()->empty_slow_element_dictionary()) return;
++  if (table == isolate_->heap()->empty_properties_dictionary()) return;
++  if (table == isolate_->heap()->weak_object_to_code_table()) return;
++  if (table == isolate_->heap()->intrinsic_function_names()) return;
++  if (table == isolate_->heap()->string_table()) return;
++  can_be_rehashed_ = false;
++}
++
+ }  // namespace internal
+ }  // namespace v8
+diff --git a/deps/v8/src/snapshot/startup-serializer.h b/deps/v8/src/snapshot/startup-serializer.h
+index 71b8475469..d978a76479 100644
+--- a/deps/v8/src/snapshot/startup-serializer.h
++++ b/deps/v8/src/snapshot/startup-serializer.h
+@@ -28,6 +28,8 @@ class StartupSerializer : public Serializer {
+   void SerializeStrongReferences();
+   void SerializeWeakReferencesAndDeferred();
+ 
++  bool can_be_rehashed() const { return can_be_rehashed_; }
++
+  private:
+   // The StartupSerializer has to serialize the root array, which is slightly
+   // different.
+@@ -42,10 +44,17 @@ class StartupSerializer : public Serializer {
+   // roots. In the second pass, we serialize the rest.
+   bool RootShouldBeSkipped(int root_index);
+ 
++  void CheckRehashability(HeapObject* hashtable);
++
+   FunctionCodeHandling function_code_handling_;
+   bool serializing_builtins_;
+   bool serializing_immortal_immovables_roots_;
+   std::bitset<Heap::kStrongRootListLength> root_has_been_serialized_;
++
++  // Indicates whether we only serialized hash tables that we can rehash.
++  // TODO(yangguo): generalize rehashing, and remove this flag.
++  bool can_be_rehashed_;
++
+   DISALLOW_COPY_AND_ASSIGN(StartupSerializer);
+ };
+ 
+diff --git a/deps/v8/src/transitions-inl.h b/deps/v8/src/transitions-inl.h
+index ea02d61031..f7f55bbacf 100644
+--- a/deps/v8/src/transitions-inl.h
++++ b/deps/v8/src/transitions-inl.h
+@@ -106,7 +106,6 @@ int TransitionArray::SearchName(Name* name, int* out_insertion_index) {
+ }
+ 
+ 
+-#ifdef DEBUG
+ bool TransitionArray::IsSpecialTransition(Name* name) {
+   if (!name->IsSymbol()) return false;
+   Heap* heap = name->GetHeap();
+@@ -116,7 +115,6 @@ bool TransitionArray::IsSpecialTransition(Name* name) {
+          name == heap->strict_function_transition_symbol() ||
+          name == heap->observed_symbol();
+ }
+-#endif
+ 
+ 
+ int TransitionArray::CompareKeys(Name* key1, uint32_t hash1, PropertyKind kind1,
+diff --git a/deps/v8/src/transitions.cc b/deps/v8/src/transitions.cc
+index 082ebc16b0..e0281809c5 100644
+--- a/deps/v8/src/transitions.cc
++++ b/deps/v8/src/transitions.cc
+@@ -549,5 +549,47 @@ int TransitionArray::Search(PropertyKind kind, Name* name,
+   if (transition == kNotFound) return kNotFound;
+   return SearchDetails(transition, kind, attributes, out_insertion_index);
+ }
++
++void TransitionArray::Sort() {
++  DisallowHeapAllocation no_gc;
++  // In-place insertion sort.
++  int length = number_of_transitions();
++  for (int i = 1; i < length; i++) {
++    Name* key = GetKey(i);
++    Map* target = GetTarget(i);
++    PropertyKind kind = kData;
++    PropertyAttributes attributes = NONE;
++    if (!IsSpecialTransition(key)) {
++      PropertyDetails details = GetTargetDetails(key, target);
++      kind = details.kind();
++      attributes = details.attributes();
++    }
++    int j;
++    for (j = i - 1; j >= 0; j--) {
++      Name* temp_key = GetKey(j);
++      Map* temp_target = GetTarget(j);
++      PropertyKind temp_kind = kData;
++      PropertyAttributes temp_attributes = NONE;
++      if (!IsSpecialTransition(temp_key)) {
++        PropertyDetails details = GetTargetDetails(temp_key, temp_target);
++        temp_kind = details.kind();
++        temp_attributes = details.attributes();
++      }
++      int cmp =
++          CompareKeys(temp_key, temp_key->Hash(), temp_kind, temp_attributes,
++                      key, key->Hash(), kind, attributes);
++      if (cmp > 0) {
++        SetKey(j + 1, temp_key);
++        SetTarget(j + 1, temp_target);
++      } else {
++        break;
++      }
++    }
++    SetKey(j + 1, key);
++    SetTarget(j + 1, target);
++  }
++  DCHECK(IsSortedNoDuplicates());
++}
++
+ }  // namespace internal
+ }  // namespace v8
+diff --git a/deps/v8/src/transitions.h b/deps/v8/src/transitions.h
+index 73aca7864e..28df458fd6 100644
+--- a/deps/v8/src/transitions.h
++++ b/deps/v8/src/transitions.h
+@@ -189,15 +189,17 @@ class TransitionArray: public FixedArray {
+   void TransitionArrayVerify();
+ #endif
+ 
++  void Sort();
++
+ #ifdef DEBUG
+   bool IsSortedNoDuplicates(int valid_entries = -1);
+   static bool IsSortedNoDuplicates(Map* map);
+   static bool IsConsistentWithBackPointers(Map* map);
++#endif
+ 
+   // Returns true for a non-property transitions like elements kind, observed
+   // or frozen transitions.
+   static inline bool IsSpecialTransition(Name* name);
+-#endif
+ 
+   // Constant for denoting key was not found.
+   static const int kNotFound = -1;
+diff --git a/deps/v8/test/cctest/heap/test-heap.cc b/deps/v8/test/cctest/heap/test-heap.cc
+index 424e9870d8..f552dcb2c2 100644
+--- a/deps/v8/test/cctest/heap/test-heap.cc
++++ b/deps/v8/test/cctest/heap/test-heap.cc
+@@ -6617,5 +6617,26 @@ TEST(Regress609761) {
+   CHECK_EQ(size_after, size_before + array->Size());
+ }
+ 
++UNINITIALIZED_TEST(ReinitializeStringHashSeed) {
++  // Enable rehashing and create an isolate and context.
++  i::FLAG_rehash_snapshot = true;
++  for (int i = 1; i < 3; i++) {
++    i::FLAG_hash_seed = 1337 * i;
++    v8::Isolate::CreateParams create_params;
++    create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
++    v8::Isolate* isolate = v8::Isolate::New(create_params);
++    {
++      v8::Isolate::Scope isolate_scope(isolate);
++      CHECK_EQ(1337 * i,
++               reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
++      v8::HandleScope handle_scope(isolate);
++      v8::Local<v8::Context> context = v8::Context::New(isolate);
++      CHECK(!context.IsEmpty());
++      v8::Context::Scope context_scope(context);
++    }
++    isolate->Dispose();
++  }
++}
++
+ }  // namespace internal
+ }  // namespace v8
+diff --git a/deps/v8/test/cctest/test-serialize.cc b/deps/v8/test/cctest/test-serialize.cc
+index cd349f9d73..d2a7c59791 100644
+--- a/deps/v8/test/cctest/test-serialize.cc
++++ b/deps/v8/test/cctest/test-serialize.cc
+@@ -1834,6 +1834,36 @@ TEST(Regress503552) {
+ }
+ 
+ 
++UNINITIALIZED_TEST(ReinitializeStringHashSeedNotRehashable) {
++  DisableTurbofan();
++  i::FLAG_rehash_snapshot = true;
++  i::FLAG_hash_seed = 42;
++  i::FLAG_allow_natives_syntax = true;
++
++  v8::StartupData blob = v8::V8::CreateSnapshotDataBlob("var a = {};"
++          "a.b = 1;"
++          "a.c = 2;"
++          "delete a.b;");
++
++  i::FLAG_hash_seed = 1337;
++  v8::Isolate::CreateParams create_params;
++  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
++  create_params.snapshot_blob = &blob;
++  v8::Isolate* isolate = v8::Isolate::New(create_params);
++  {
++    // Check that no rehashing has been performed.
++    CHECK_EQ(42, reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
++    v8::Isolate::Scope isolate_scope(isolate);
++    v8::HandleScope handle_scope(isolate);
++    v8::Local<v8::Context> context = v8::Context::New(isolate);
++    CHECK(!context.IsEmpty());
++    v8::Context::Scope context_scope(context);
++    ExpectInt32("a.c", 2);
++  }
++  isolate->Dispose();
++  delete[] blob.data;
++}
++
+ TEST(SerializationMemoryStats) {
+   FLAG_profile_deserialization = true;
+   FLAG_always_opt = false;

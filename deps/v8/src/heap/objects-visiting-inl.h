@@ -273,7 +273,7 @@ int MarkingVisitor<ConcreteVisitor>::VisitJSWeakCollection(
       HeapObject::RawField(weak_collection, JSWeakCollection::kTableOffset);
   HeapObject* obj = HeapObject::cast(*slot);
   collector_->RecordSlot(weak_collection, slot, obj);
-  visitor->MarkObjectWithoutPush(obj);
+  visitor->MarkObjectWithoutPush(weak_collection, obj);
   return size;
 }
 
@@ -321,7 +321,7 @@ void MarkingVisitor<ConcreteVisitor>::MarkMapContents(Map* map) {
   // just mark the entire descriptor array.
   if (!map->is_prototype_map()) {
     DescriptorArray* descriptors = map->instance_descriptors();
-    if (visitor->MarkObjectWithoutPush(descriptors) &&
+    if (visitor->MarkObjectWithoutPush(map, descriptors) &&
         descriptors->length() > 0) {
       visitor->VisitPointers(descriptors, descriptors->GetFirstElementAddress(),
                              descriptors->GetDescriptorEndSlot(0));
@@ -392,7 +392,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitCodeEntry(JSFunction* host,
   ConcreteVisitor* visitor = static_cast<ConcreteVisitor*>(this);
   Code* code = Code::cast(Code::GetObjectFromEntryAddress(entry_address));
   collector_->RecordCodeEntrySlot(host, entry_address, code);
-  visitor->MarkObject(code);
+  visitor->MarkObject(host, code);
 }
 
 template <typename ConcreteVisitor>
@@ -403,7 +403,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitEmbeddedPointer(Code* host,
   HeapObject* object = HeapObject::cast(rinfo->target_object());
   collector_->RecordRelocSlot(host, rinfo, object);
   if (!host->IsWeakObject(object)) {
-    visitor->MarkObject(object);
+    visitor->MarkObject(host, object);
   }
 }
 
@@ -415,7 +415,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitCellPointer(Code* host,
   Cell* cell = rinfo->target_cell();
   collector_->RecordRelocSlot(host, rinfo, cell);
   if (!host->IsWeakObject(cell)) {
-    visitor->MarkObject(cell);
+    visitor->MarkObject(host, cell);
   }
 }
 
@@ -427,7 +427,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitDebugTarget(Code* host,
          rinfo->IsPatchedDebugBreakSlotSequence());
   Code* target = Code::GetCodeFromTargetAddress(rinfo->debug_call_address());
   collector_->RecordRelocSlot(host, rinfo, target);
-  visitor->MarkObject(target);
+  visitor->MarkObject(host, target);
 }
 
 template <typename ConcreteVisitor>
@@ -437,7 +437,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitCodeTarget(Code* host,
   DCHECK(RelocInfo::IsCodeTarget(rinfo->rmode()));
   Code* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
   collector_->RecordRelocSlot(host, rinfo, target);
-  visitor->MarkObject(target);
+  visitor->MarkObject(host, target);
 }
 
 template <typename ConcreteVisitor>
@@ -448,7 +448,7 @@ void MarkingVisitor<ConcreteVisitor>::VisitCodeAgeSequence(Code* host,
   Code* target = rinfo->code_age_stub();
   DCHECK_NOT_NULL(target);
   collector_->RecordRelocSlot(host, rinfo, target);
-  visitor->MarkObject(target);
+  visitor->MarkObject(host, target);
 }
 
 }  // namespace internal

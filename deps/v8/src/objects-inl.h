@@ -3183,6 +3183,11 @@ Handle<Map> Map::AddMissingTransitionsForTesting(
   return AddMissingTransitions(split_map, descriptors, full_layout_descriptor);
 }
 
+void Map::InsertElementsKindTransitionShortcutForTesting(
+    Isolate* isolate, Handle<Map> map, Handle<Map> transition) {
+  Map::InsertElementsKindTransitionShortcut(isolate, map, transition);
+}
+
 int HeapObject::SizeFromMap(Map* map) const {
   int instance_size = map->instance_size();
   if (instance_size != kVariableSizeSentinel) return instance_size;
@@ -4421,6 +4426,9 @@ ACCESSORS(ContextExtension, extension, Object, kExtensionOffset)
 SMI_ACCESSORS(ConstantElementsPair, elements_kind, kElementsKindOffset)
 ACCESSORS(ConstantElementsPair, constant_values, FixedArrayBase,
           kConstantValuesOffset)
+bool ConstantElementsPair::is_empty() const {
+  return constant_values()->length() == 0;
+}
 
 ACCESSORS(JSModuleNamespace, module, Module, kModuleOffset)
 
@@ -5280,7 +5288,7 @@ BOOL_ACCESSORS(JSPromise, flags, handled_hint, kHandledHintBit)
 ACCESSORS(JSRegExp, data, Object, kDataOffset)
 ACCESSORS(JSRegExp, flags, Object, kFlagsOffset)
 ACCESSORS(JSRegExp, source, Object, kSourceOffset)
-
+ACCESSORS(JSRegExp, last_index, Object, kLastIndexOffset)
 
 JSRegExp::Type JSRegExp::TypeTag() {
   Object* data = this->data();
@@ -5335,19 +5343,6 @@ void JSRegExp::SetDataAt(int index, Object* value) {
   DCHECK(TypeTag() != NOT_COMPILED);
   DCHECK(index >= kDataIndex);  // Only implementation data can be set this way.
   FixedArray::cast(data())->set(index, value);
-}
-
-void JSRegExp::SetLastIndex(int index) {
-  static const int offset =
-      kSize + JSRegExp::kLastIndexFieldIndex * kPointerSize;
-  Smi* value = Smi::FromInt(index);
-  WRITE_FIELD(this, offset, value);
-}
-
-Object* JSRegExp::LastIndex() {
-  static const int offset =
-      kSize + JSRegExp::kLastIndexFieldIndex * kPointerSize;
-  return READ_FIELD(this, offset);
 }
 
 ElementsKind JSObject::GetElementsKind() {

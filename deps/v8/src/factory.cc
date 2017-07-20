@@ -1504,7 +1504,6 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map, Handle<String> name,
         (*map == *isolate()->sloppy_function_with_readonly_prototype_map()) ||
         (*map == *isolate()->strict_function_map()) ||
         (*map == *isolate()->strict_function_without_prototype_map()) ||
-        (*map == *isolate()->wasm_function_map()) ||
         (*map == *isolate()->native_function_map()));
   }
 #endif
@@ -2541,7 +2540,6 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
   share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
   share->set_profiler_ticks(0);
-  share->set_ast_node_count(0);
   share->set_counters(0);
 
   // Set integer fields (smi or int, depending on the architecture).

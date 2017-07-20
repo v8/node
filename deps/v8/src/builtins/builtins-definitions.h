@@ -103,6 +103,7 @@ namespace internal {
   TFC(FastCloneRegExp, FastCloneRegExp, 1)                                     \
   TFC(FastCloneShallowArrayTrack, FastCloneShallowArray, 1)                    \
   TFC(FastCloneShallowArrayDontTrack, FastCloneShallowArray, 1)                \
+  TFS(CreateEmptyArrayLiteral, kClosure, kLiteralIndex)                        \
   TFC(FastCloneShallowObject, FastCloneShallowObject, 1)                       \
   /* ES6 section 9.5.14 [[Construct]] ( argumentsList, newTarget) */           \
   TFC(ConstructProxy, ConstructTrampoline, 1)                                  \
@@ -125,7 +126,6 @@ namespace internal {
   TFS(StringIndexOf, kReceiver, kSearchString, kPosition)                      \
   TFC(StringLessThan, Compare, 1)                                              \
   TFC(StringLessThanOrEqual, Compare, 1)                                       \
-  TFC(StringConcat, StringConcat, 1)                                           \
                                                                                \
   /* OrderedHashTable helpers */                                               \
   TFS(OrderedHashTableHealIndex, kTable, kIndex)                               \
@@ -216,7 +216,6 @@ namespace internal {
   TFC(NonNumberToNumber, TypeConversion, 1)                                    \
   TFC(ToNumber, TypeConversion, 1)                                             \
   TFC(ToString, TypeConversion, 1)                                             \
-  TFC(ToPrimitiveToString, TypeConversion, 1)                                  \
   TFC(ToInteger, TypeConversion, 1)                                            \
   TFC(ToLength, TypeConversion, 1)                                             \
   TFC(ClassOf, Typeof, 1)                                                      \
@@ -912,6 +911,8 @@ namespace internal {
   TFJ(StringPrototypeCharAt, 1, kPosition)                                     \
   /* ES6 #sec-string.prototype.charcodeat */                                   \
   TFJ(StringPrototypeCharCodeAt, 1, kPosition)                                 \
+  /* ES6 #sec-string.prototype.codepointat */                                  \
+  TFJ(StringPrototypeCodePointAt, 1, kPosition)                                \
   /* ES6 #sec-string.prototype.concat */                                       \
   TFJ(StringPrototypeConcat, SharedFunctionInfo::kDontAdaptArgumentsSentinel)  \
   /* ES6 #sec-string.prototype.endswith */                                     \

@@ -220,6 +220,7 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
                                             int literal_index, int flags);
   BytecodeArrayBuilder& CreateArrayLiteral(size_t constant_elements_entry,
                                            int literal_index, int flags);
+  BytecodeArrayBuilder& CreateEmptyArrayLiteral(int literal_index);
   BytecodeArrayBuilder& CreateObjectLiteral(size_t constant_properties_entry,
                                             int literal_index, int flags,
                                             Register output);
@@ -347,13 +348,6 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
   BytecodeArrayBuilder& ToObject(Register out);
   BytecodeArrayBuilder& ToName(Register out);
   BytecodeArrayBuilder& ToNumber(Register out, int feedback_slot);
-
-  // Converts accumulator to a primitive and then to a string, and stores result
-  // in register |out|.
-  BytecodeArrayBuilder& ToPrimitiveToString(Register out, int feedback_slot);
-  // Concatenate all the string values in |operand_registers| into a string
-  // and store result in the accumulator.
-  BytecodeArrayBuilder& StringConcat(RegisterList operand_registers);
 
   // Flow Control.
   BytecodeArrayBuilder& Bind(BytecodeLabel* label);

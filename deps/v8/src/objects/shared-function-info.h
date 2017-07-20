@@ -278,8 +278,6 @@ class SharedFunctionInfo : public HeapObject {
   // drive optimization.
   DECL_INT_ACCESSORS(compiler_hints)
 
-  DECL_INT_ACCESSORS(ast_node_count)
-
   DECL_INT_ACCESSORS(profiler_ticks)
 
   // Inline cache age is used to infer whether the function survived a context
@@ -391,6 +389,9 @@ class SharedFunctionInfo : public HeapObject {
   // Dispatched behavior.
   DECL_PRINTER(SharedFunctionInfo)
   DECL_VERIFIER(SharedFunctionInfo)
+#ifdef OBJECT_PRINT
+  void PrintSourceCode(std::ostream& os);
+#endif
 
   void ResetForNewContext(int new_ic_age);
 
@@ -465,7 +466,6 @@ class SharedFunctionInfo : public HeapObject {
   V(kCompilerHintsOffset, kInt32Size)            \
   V(kOptCountAndBailoutReasonOffset, kInt32Size) \
   V(kCountersOffset, kInt32Size)                 \
-  V(kAstNodeCountOffset, kInt32Size)             \
   V(kProfilerTicksOffset, kInt32Size)            \
   /* Total size. */                              \
   V(kSize, 0)

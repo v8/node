@@ -222,17 +222,12 @@ namespace interpreter {
   V(ToNumber, AccumulatorUse::kRead, OperandType::kRegOut, OperandType::kIdx)  \
   V(ToObject, AccumulatorUse::kRead, OperandType::kRegOut)                     \
                                                                                \
-  /* String concatenation */                                                   \
-  V(ToPrimitiveToString, AccumulatorUse::kRead, OperandType::kRegOut,          \
-    OperandType::kIdx)                                                         \
-  V(StringConcat, AccumulatorUse::kWrite, OperandType::kRegList,               \
-    OperandType::kRegCount)                                                    \
-                                                                               \
   /* Literals */                                                               \
   V(CreateRegExpLiteral, AccumulatorUse::kWrite, OperandType::kIdx,            \
     OperandType::kIdx, OperandType::kFlag8)                                    \
   V(CreateArrayLiteral, AccumulatorUse::kWrite, OperandType::kIdx,             \
     OperandType::kIdx, OperandType::kFlag8)                                    \
+  V(CreateEmptyArrayLiteral, AccumulatorUse::kWrite, OperandType::kIdx)        \
   V(CreateObjectLiteral, AccumulatorUse::kNone, OperandType::kIdx,             \
     OperandType::kIdx, OperandType::kFlag8, OperandType::kRegOut)              \
                                                                                \
@@ -343,7 +338,7 @@ namespace interpreter {
   V(IncBlockCounter, AccumulatorUse::kNone, OperandType::kIdx)                 \
                                                                                \
   /* Illegal bytecode (terminates execution) */                                \
-  V(Illegal, AccumulatorUse::kNone)                                            \
+  V(Illegal, AccumulatorUse::kNone)
 
 // List of debug break bytecodes.
 #define DEBUG_BREAK_PLAIN_BYTECODE_LIST(V) \

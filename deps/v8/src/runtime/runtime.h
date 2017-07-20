@@ -212,9 +212,9 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F)
 #endif
 
-#define FOR_EACH_INTRINSIC_INTERPRETER(F)      \
-  FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F)      \
-  F(InterpreterNewClosure, 4, 1)               \
+#define FOR_EACH_INTRINSIC_INTERPRETER(F) \
+  FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F) \
+  F(InterpreterNewClosure, 4, 1)          \
   F(InterpreterAdvanceBytecodeOffset, 2, 1)
 
 #define FOR_EACH_INTRINSIC_FUNCTION(F)     \
@@ -520,7 +520,6 @@ namespace internal {
   F(StringLastIndexOf, 2, 1)              \
   F(SubString, 3, 1)                      \
   F(StringAdd, 2, 1)                      \
-  F(StringConcat, -1 /* >= 2 */, 1)       \
   F(InternalizeString, 1, 1)              \
   F(StringCharCodeAtRT, 2, 1)             \
   F(StringCompare, 2, 1)                  \
@@ -536,7 +535,6 @@ namespace internal {
   F(StringNotEqual, 2, 1)                 \
   F(FlattenString, 1, 1)                  \
   F(StringCharFromCode, 1, 1)             \
-  F(ExternalStringGetChar, 2, 1)          \
   F(StringCharCodeAt, 2, 1)
 
 #define FOR_EACH_INTRINSIC_SYMBOL(F) \
@@ -569,6 +567,7 @@ namespace internal {
   F(SetAllocationTimeout, -1 /* 2 || 3 */, 1) \
   F(DebugPrint, 1, 1)                         \
   F(DebugTrace, 0, 1)                         \
+  F(DebugTrackRetainingPath, 1, 1)            \
   F(GetExceptionDetails, 1, 1)                \
   F(GlobalPrint, 1, 1)                        \
   F(SystemBreak, 0, 1)                        \

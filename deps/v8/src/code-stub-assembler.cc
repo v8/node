@@ -1430,6 +1430,15 @@ Node* CodeStubAssembler::LoadNativeContext(Node* context) {
   return LoadContextElement(context, Context::NATIVE_CONTEXT_INDEX);
 }
 
+Node* CodeStubAssembler::LoadJSArrayElementsMap(Node* kind,
+                                                Node* native_context) {
+  CSA_ASSERT(this, IsFastElementsKind(kind));
+  CSA_ASSERT(this, IsNativeContext(native_context));
+  Node* offset = IntPtrAdd(IntPtrConstant(Context::FIRST_JS_ARRAY_MAP_SLOT),
+                           ChangeInt32ToIntPtr(kind));
+  return LoadContextElement(native_context, offset);
+}
+
 Node* CodeStubAssembler::LoadJSArrayElementsMap(ElementsKind kind,
                                                 Node* native_context) {
   CSA_ASSERT(this, IsNativeContext(native_context));
@@ -3647,57 +3656,48 @@ Node* CodeStubAssembler::StringCharCodeAt(Node* string, Node* index,
   CSA_ASSERT(this, IsString(string));
 
   // Translate the {index} into a Word.
-  Node* const int_index = ParameterToWord(index, parameter_mode);
-  CSA_ASSERT(this, IntPtrGreaterThanOrEqual(int_index, IntPtrConstant(0)));
+  index = ParameterToWord(index, parameter_mode);
+  CSA_ASSERT(this, IntPtrGreaterThanOrEqual(index, IntPtrConstant(0)));
+  CSA_ASSERT(this, IntPtrLessThan(index, SmiUntag(LoadStringLength(string))));
 
   VARIABLE(var_result, MachineRepresentation::kWord32);
 
-  Label out(this, &var_result), runtime_generic(this), runtime_external(this);
+  Label return_result(this), if_runtime(this, Label::kDeferred),
+      if_stringistwobyte(this), if_stringisonebyte(this);
 
   ToDirectStringAssembler to_direct(state(), string);
-  Node* const direct_string = to_direct.TryToDirect(&runtime_generic);
-  Node* const offset = IntPtrAdd(int_index, to_direct.offset());
+  to_direct.TryToDirect(&if_runtime);
+  Node* const offset = IntPtrAdd(index, to_direct.offset());
   Node* const instance_type = to_direct.instance_type();
 
-  Node* const string_data = to_direct.PointerToData(&runtime_external);
+  Node* const string_data = to_direct.PointerToData(&if_runtime);
 
   // Check if the {string} is a TwoByteSeqString or a OneByteSeqString.
-  Label if_stringistwobyte(this), if_stringisonebyte(this);
   Branch(IsOneByteStringInstanceType(instance_type), &if_stringisonebyte,
          &if_stringistwobyte);
 
   BIND(&if_stringisonebyte);
   {
     var_result.Bind(Load(MachineType::Uint8(), string_data, offset));
-    Goto(&out);
+    Goto(&return_result);
   }
 
   BIND(&if_stringistwobyte);
   {
     var_result.Bind(Load(MachineType::Uint16(), string_data,
                          WordShl(offset, IntPtrConstant(1))));
-    Goto(&out);
+    Goto(&return_result);
   }
 
-  BIND(&runtime_generic);
+  BIND(&if_runtime);
   {
-    Node* const smi_index = ParameterToTagged(index, parameter_mode);
-    Node* const result = CallRuntime(Runtime::kStringCharCodeAtRT,
-                                     NoContextConstant(), string, smi_index);
+    Node* result = CallRuntime(Runtime::kStringCharCodeAtRT,
+                               NoContextConstant(), string, SmiTag(index));
     var_result.Bind(SmiToWord32(result));
-    Goto(&out);
+    Goto(&return_result);
   }
 
-  BIND(&runtime_external);
-  {
-    Node* const result =
-        CallRuntime(Runtime::kExternalStringGetChar, NoContextConstant(),
-                    direct_string, SmiTag(offset));
-    var_result.Bind(SmiToWord32(result));
-    Goto(&out);
-  }
-
-  BIND(&out);
+  BIND(&return_result);
   return var_result.value();
 }
 
@@ -6316,11 +6316,30 @@ Node* CodeStubAssembler::ElementOffsetFromIndex(Node* index_node,
   return IntPtrAdd(IntPtrConstant(base_size), shifted_index);
 }
 
+Node* CodeStubAssembler::LoadFeedbackVector(Node* closure) {
+  Node* cell = LoadObjectField(closure, JSFunction::kFeedbackVectorOffset);
+  return LoadObjectField(cell, Cell::kValueOffset);
+}
+
 Node* CodeStubAssembler::LoadFeedbackVectorForStub() {
   Node* function =
       LoadFromParentFrame(JavaScriptFrameConstants::kFunctionOffset);
-  Node* cell = LoadObjectField(function, JSFunction::kFeedbackVectorOffset);
-  return LoadObjectField(cell, Cell::kValueOffset);
+  return LoadFeedbackVector(function);
+}
+
+Node* CodeStubAssembler::LoadFeedbackVectorSlot(Node* closure,
+                                                Node* smi_index) {
+  Node* feedback_vector = LoadFeedbackVector(closure);
+  return LoadFixedArrayElement(feedback_vector, smi_index, 0,
+                               CodeStubAssembler::SMI_PARAMETERS);
+}
+
+void CodeStubAssembler::StoreFeedbackVectorSlot(Node* closure, Node* smi_index,
+                                                Node* value) {
+  Node* feedback_vector = LoadFeedbackVector(closure);
+  StoreFixedArrayElement(feedback_vector, smi_index, value,
+                         UPDATE_WRITE_BARRIER, 0,
+                         CodeStubAssembler::SMI_PARAMETERS);
 }
 
 void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
@@ -9551,16 +9570,13 @@ Node* CodeStubAssembler::MarkerIsNotFrameType(Node* marker_or_function,
 }
 
 void CodeStubAssembler::Print(const char* s) {
-#ifdef DEBUG
   std::string formatted(s);
   formatted += "\n";
   CallRuntime(Runtime::kGlobalPrint, NoContextConstant(),
               StringConstant(formatted.c_str()));
-#endif
 }
 
 void CodeStubAssembler::Print(const char* prefix, Node* tagged_value) {
-#ifdef DEBUG
   if (prefix != nullptr) {
     std::string formatted(prefix);
     formatted += ": ";
@@ -9570,7 +9586,6 @@ void CodeStubAssembler::Print(const char* prefix, Node* tagged_value) {
                 HeapConstant(string));
   }
   CallRuntime(Runtime::kDebugPrint, NoContextConstant(), tagged_value);
-#endif
 }
 
 }  // namespace internal

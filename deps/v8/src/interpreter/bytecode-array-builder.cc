@@ -954,6 +954,12 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::CreateRegExpLiteral(
   return *this;
 }
 
+BytecodeArrayBuilder& BytecodeArrayBuilder::CreateEmptyArrayLiteral(
+    int literal_index) {
+  OutputCreateEmptyArrayLiteral(literal_index);
+  return *this;
+}
+
 BytecodeArrayBuilder& BytecodeArrayBuilder::CreateArrayLiteral(
     size_t constant_elements_entry, int literal_index, int flags) {
   OutputCreateArrayLiteral(constant_elements_entry, literal_index, flags);
@@ -991,18 +997,6 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::ToName(Register out) {
 BytecodeArrayBuilder& BytecodeArrayBuilder::ToNumber(Register out,
                                                      int feedback_slot) {
   OutputToNumber(out, feedback_slot);
-  return *this;
-}
-
-BytecodeArrayBuilder& BytecodeArrayBuilder::ToPrimitiveToString(
-    Register out, int feedback_slot) {
-  OutputToPrimitiveToString(out, feedback_slot);
-  return *this;
-}
-
-BytecodeArrayBuilder& BytecodeArrayBuilder::StringConcat(
-    RegisterList operand_registers) {
-  OutputStringConcat(operand_registers, operand_registers.register_count());
   return *this;
 }
 

@@ -9,9 +9,7 @@
 
 #include "src/builtins/builtins-arguments-gen.h"
 #include "src/builtins/builtins-constructor-gen.h"
-#include "src/builtins/builtins-conversion-gen.h"
 #include "src/builtins/builtins-forin-gen.h"
-#include "src/builtins/builtins-string-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
 #include "src/factory.h"
@@ -1334,53 +1332,6 @@ IGNITION_HANDLER(ToObject, InterpreterAssembler) {
   Dispatch();
 }
 
-// ToPrimitiveToString <dst>
-//
-// Convert the object referenced by the accumulator to a primitive, and then
-// convert the operand to a string, in preparation to be used by StringConcat.
-IGNITION_HANDLER(ToPrimitiveToString, InterpreterAssembler) {
-  VARIABLE(feedback, MachineRepresentation::kTagged);
-  ConversionBuiltinsAssembler conversions_assembler(state());
-  Node* result = conversions_assembler.ToPrimitiveToString(
-      GetContext(), GetAccumulator(), &feedback);
-
-  Node* function = LoadRegister(Register::function_closure());
-  UpdateFeedback(feedback.value(), LoadFeedbackVector(), BytecodeOperandIdx(1),
-                 function);
-  StoreRegister(result, BytecodeOperandReg(0));
-  Dispatch();
-}
-
-// StringConcat <first_reg> <reg_count>
-//
-// Concatenates the string values in registers <first_reg> to
-// <first_reg> + <reg_count - 1> and saves the result in the accumulator.
-IGNITION_HANDLER(StringConcat, InterpreterAssembler) {
-  Label call_runtime(this, Label::kDeferred), done(this);
-
-  Node* first_reg_ptr = RegisterLocation(BytecodeOperandReg(0));
-  Node* reg_count = BytecodeOperandCount(1);
-  Node* context = GetContext();
-
-  VARIABLE(result, MachineRepresentation::kTagged);
-  StringBuiltinsAssembler string_assembler(state());
-  result.Bind(string_assembler.ConcatenateStrings(context, first_reg_ptr,
-                                                  reg_count, &call_runtime));
-  Goto(&done);
-
-  BIND(&call_runtime);
-  {
-    Comment("Call runtime.");
-    Node* runtime_id = Int32Constant(Runtime::kStringConcat);
-    result.Bind(CallRuntimeN(runtime_id, context, first_reg_ptr, reg_count));
-    Goto(&done);
-  }
-
-  BIND(&done);
-  SetAccumulator(result.value());
-  Dispatch();
-}
-
 // Inc
 //
 // Increments value in the accumulator by one.
@@ -2695,6 +2646,20 @@ IGNITION_HANDLER(CreateArrayLiteral, InterpreterAssembler) {
     SetAccumulator(result);
     Dispatch();
   }
+}
+
+// CreateEmptyArrayLiteral <literal_idx>
+//
+// Creates an empty JSArray literal for literal index <literal_idx>.
+IGNITION_HANDLER(CreateEmptyArrayLiteral, InterpreterAssembler) {
+  Node* literal_index = BytecodeOperandIdxSmi(0);
+  Node* closure = LoadRegister(Register::function_closure());
+  Node* context = GetContext();
+  ConstructorBuiltinsAssembler constructor_assembler(state());
+  Node* result = constructor_assembler.EmitCreateEmptyArrayLiteral(
+      closure, literal_index, context);
+  SetAccumulator(result);
+  Dispatch();
 }
 
 // CreateObjectLiteral <element_idx> <literal_idx> <flags>
