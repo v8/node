@@ -1701,7 +1701,7 @@ Handle<ModuleInfo> Factory::NewModuleInfo() {
 
 Handle<PreParsedScopeData> Factory::NewPreParsedScopeData() {
   Handle<PreParsedScopeData> result =
-      Handle<PreParsedScopeData>::cast(NewStruct(PREPARSED_SCOPE_DATA_TYPE));
+      Handle<PreParsedScopeData>::cast(NewStruct(TUPLE2_TYPE));
   result->set_scope_data(PodArray<uint32_t>::cast(*empty_byte_array()));
   result->set_child_data(*empty_fixed_array());
   return result;
@@ -1923,9 +1923,9 @@ Handle<JSObject> Factory::NewSlowJSObjectFromMap(Handle<Map> map, int capacity,
 
 Handle<JSArray> Factory::NewJSArray(ElementsKind elements_kind,
                                     PretenureFlag pretenure) {
-  Map* map = isolate()->get_initial_js_array_map(elements_kind);
+  Context* native_context = isolate()->raw_native_context();
+  Map* map = native_context->GetInitialJSArrayMap(elements_kind);
   if (map == nullptr) {
-    Context* native_context = isolate()->context()->native_context();
     JSFunction* array_function = native_context->array_function();
     map = array_function->initial_map();
   }

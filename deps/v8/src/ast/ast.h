@@ -1442,12 +1442,6 @@ class ArrayLiteral final : public AggregateLiteral {
 
   ZoneList<Expression*>* values() const { return values_; }
 
-  bool is_empty() const {
-    DCHECK(is_initialized());
-    return values()->is_empty() &&
-           (constant_elements().is_null() || constant_elements()->is_empty());
-  }
-
   // Populate the depth field and flags, returns the depth.
   int InitDepthAndFlags();
 
@@ -2239,14 +2233,13 @@ class Suspend : public Expression {
   // With {kNoControl}, the {Suspend} behaves like yield, except that it never
   // throws and never causes the current generator to return. This is used to
   // desugar yield*.
-  enum OnAbruptResume { kOnExceptionThrow, kOnExceptionRethrow, kNoControl };
+  // TODO(caitp): remove once yield* desugaring for async generators is handled
+  // in BytecodeGenerator.
+  enum OnAbruptResume { kOnExceptionThrow, kNoControl };
 
   Expression* expression() const { return expression_; }
   OnAbruptResume on_abrupt_resume() const {
     return OnAbruptResumeField::decode(bit_field_);
-  }
-  bool rethrow_on_exception() const {
-    return on_abrupt_resume() == kOnExceptionRethrow;
   }
 
   int suspend_id() const { return suspend_id_; }
@@ -2272,7 +2265,7 @@ class Suspend : public Expression {
   Expression* expression_;
 
   class OnAbruptResumeField
-      : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 2> {};
+      : public BitField<OnAbruptResume, Expression::kNextBitFieldIndex, 1> {};
 };
 
 class Yield final : public Suspend {
@@ -2356,7 +2349,7 @@ class Await final : public Suspend {
   friend class AstNodeFactory;
 
   Await(Expression* expression, int pos)
-      : Suspend(kAwait, expression, pos, Suspend::kOnExceptionRethrow) {}
+      : Suspend(kAwait, expression, pos, Suspend::kOnExceptionThrow) {}
 };
 
 class Throw final : public Expression {

@@ -1184,7 +1184,8 @@ class Heap {
   void FinalizeIncrementalMarkingIfComplete(GarbageCollectionReason gc_reason);
 
   void RegisterDeserializedObjectsForBlackAllocation(
-      Reservation* reservations, List<HeapObject*>* large_objects);
+      Reservation* reservations, List<HeapObject*>* large_objects,
+      List<Address>* maps);
 
   IncrementalMarking* incremental_marking() { return incremental_marking_; }
 
@@ -1631,7 +1632,11 @@ class Heap {
 
   static const int kInitialFeedbackCapacity = 256;
 
-  static const int kMaxScavengerTasks = 1;
+#ifdef V8_TARGET_ARCH_ARM
+  static const int kMaxScavengerTasks = 2;
+#else
+  static const int kMaxScavengerTasks = 8;
+#endif
 
   Heap();
 

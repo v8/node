@@ -1416,7 +1416,8 @@ Handle<Object> KeyedLoadIC::LoadElementHandler(Handle<Map> receiver_map) {
   // TODO(jkummerow): Use IsHoleyOrDictionaryElementsKind(elements_kind).
   bool convert_hole_to_undefined =
       is_js_array && elements_kind == HOLEY_ELEMENTS &&
-      *receiver_map == isolate()->get_initial_js_array_map(elements_kind);
+      *receiver_map ==
+          isolate()->raw_native_context()->GetInitialJSArrayMap(elements_kind);
   TRACE_HANDLER_STATS(isolate(), KeyedLoadIC_LoadElementDH);
   return LoadHandler::LoadElement(isolate(), elements_kind,
                                   convert_hole_to_undefined, is_js_array);
@@ -1438,7 +1439,7 @@ void KeyedLoadIC::LoadElementPolymorphicHandlers(
     if (receiver_map->is_stable()) {
       Map* tmap = receiver_map->FindElementsKindTransitionedMap(*receiver_maps);
       if (tmap != nullptr) {
-        Map::RegisterElementsKindTransitionShortcut(receiver_map, handle(tmap));
+        receiver_map->NotifyLeafMapLayoutChange();
       }
     }
     handlers->Add(LoadElementHandler(receiver_map));
@@ -2129,9 +2130,10 @@ void KeyedStoreIC::StoreElementPolymorphicHandlers(
         Map* tmap =
             receiver_map->FindElementsKindTransitionedMap(*receiver_maps);
         if (tmap != nullptr) {
+          if (receiver_map->is_stable()) {
+            receiver_map->NotifyLeafMapLayoutChange();
+          }
           transitioned_map = handle(tmap);
-          Map::RegisterElementsKindTransitionShortcut(receiver_map,
-                                                      transitioned_map);
         }
       }
 
