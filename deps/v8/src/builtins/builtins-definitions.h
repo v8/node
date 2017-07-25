@@ -577,6 +577,8 @@ namespace internal {
   /* Map */                                                                    \
   TFS(MapLookupHashIndex, kTable, kKey)                                        \
   TFJ(MapConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
+  TFJ(MapSet, 2, kKey, kValue)                                                 \
+  TFJ(MapDelete, 1, kKey)                                                      \
   TFJ(MapGet, 1, kKey)                                                         \
   TFJ(MapHas, 1, kKey)                                                         \
   CPP(MapClear)                                                                \
@@ -872,6 +874,8 @@ namespace internal {
   /* Set */                                                                    \
   TFJ(SetConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
   TFJ(SetHas, 1, kKey)                                                         \
+  TFJ(SetAdd, 1, kKey)                                                         \
+  TFJ(SetDelete, 1, kKey)                                                      \
   CPP(SetClear)                                                                \
   /* ES #sec-set.prototype.entries */                                          \
   TFJ(SetPrototypeEntries, 0)                                                  \

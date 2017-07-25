@@ -1813,6 +1813,7 @@ class ScavengingTask final : public ItemParallelJob::Task {
   void RunInParallel() final {
     double scavenging_time = 0.0;
     {
+      barrier_->Start();
       TimedScope scope(&scavenging_time);
       ScavengingItem* item = nullptr;
       while ((item = GetItem<ScavengingItem>()) != nullptr) {
@@ -1922,7 +1923,7 @@ void Heap::Scavenge() {
   const bool is_logging = IsLogging(isolate());
   const bool is_incremental_marking = incremental_marking()->IsMarking();
   const int num_scavenge_tasks = NumberOfScavengeTasks();
-  Scavenger::Barrier barrier(num_scavenge_tasks);
+  Scavenger::Barrier barrier;
   CopiedList copied_list(num_scavenge_tasks);
   PromotionList promotion_list(num_scavenge_tasks);
   for (int i = 0; i < num_scavenge_tasks; i++) {
@@ -4084,6 +4085,19 @@ AllocationResult Heap::AllocateEmptyFixedTypedArray(
   return AllocateFixedTypedArray(0, array_type, false, TENURED);
 }
 
+namespace {
+template <typename T>
+void initialize_length(T* array, int length) {
+  array->set_length(length);
+}
+
+template <>
+void initialize_length<PropertyArray>(PropertyArray* array, int length) {
+  array->initialize_length(length);
+}
+
+}  // namespace
+
 template <typename T>
 AllocationResult Heap::CopyArrayAndGrow(T* src, int grow_by,
                                         PretenureFlag pretenure) {
@@ -4098,7 +4112,7 @@ AllocationResult Heap::CopyArrayAndGrow(T* src, int grow_by,
 
   obj->set_map_after_allocation(src->map(), SKIP_WRITE_BARRIER);
   T* result = T::cast(obj);
-  result->set_length(new_len);
+  initialize_length(result, new_len);
 
   // Copy the content.
   DisallowHeapAllocation no_gc;
@@ -4159,7 +4173,7 @@ AllocationResult Heap::CopyArrayWithMap(T* src, Map* map) {
   }
 
   // Slow case: Just copy the content one-by-one.
-  result->set_length(len);
+  initialize_length(result, len);
   for (int i = 0; i < len; i++) result->set(i, src->get(i), mode);
   return result;
 }
@@ -4243,7 +4257,7 @@ AllocationResult Heap::AllocatePropertyArray(int length,
 
   result->set_map_after_allocation(property_array_map(), SKIP_WRITE_BARRIER);
   PropertyArray* array = PropertyArray::cast(result);
-  array->set_length(length);
+  array->initialize_length(length);
   MemsetPointer(array->data_start(), undefined_value(), length);
   return result;
 }
@@ -5101,13 +5115,6 @@ class SlotVerifyingVisitor : public ObjectVisitor {
           InTypedSet(CODE_TARGET_SLOT, rinfo->pc()) ||
           (rinfo->IsInConstantPool() &&
            InTypedSet(CODE_ENTRY_SLOT, rinfo->constant_pool_entry_address())));
-    }
-  }
-
-  void VisitCodeEntry(JSFunction* host, Address entry_address) override {
-    Object* target = Code::GetObjectFromEntryAddress(entry_address);
-    if (ShouldHaveBeenRecorded(host, target)) {
-      CHECK(InTypedSet(CODE_ENTRY_SLOT, entry_address));
     }
   }
 

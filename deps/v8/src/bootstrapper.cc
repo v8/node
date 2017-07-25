@@ -3020,9 +3020,17 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         SimpleInstallFunction(prototype, "get", Builtins::kMapGet, 1, true);
     native_context()->set_map_get(*map_get);
 
+    Handle<JSFunction> map_set =
+        SimpleInstallFunction(prototype, "set", Builtins::kMapSet, 2, true);
+    native_context()->set_map_set(*map_set);
+
     Handle<JSFunction> map_has =
         SimpleInstallFunction(prototype, "has", Builtins::kMapHas, 1, true);
     native_context()->set_map_has(*map_has);
+
+    Handle<JSFunction> map_delete = SimpleInstallFunction(
+        prototype, "delete", Builtins::kMapDelete, 1, true);
+    native_context()->set_map_delete(*map_delete);
 
     SimpleInstallFunction(prototype, "clear", Builtins::kMapClear, 0, true);
     Handle<JSFunction> entries = SimpleInstallFunction(
@@ -3066,6 +3074,15 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     Handle<JSFunction> set_has =
         SimpleInstallFunction(prototype, "has", Builtins::kSetHas, 1, true);
     native_context()->set_set_has(*set_has);
+
+    Handle<JSFunction> set_add =
+        SimpleInstallFunction(prototype, "add", Builtins::kSetAdd, 1, true);
+    native_context()->set_set_add(*set_add);
+
+    Handle<JSFunction> set_delete = SimpleInstallFunction(
+        prototype, "delete", Builtins::kSetDelete, 1, true);
+    native_context()->set_set_delete(*set_delete);
+
     SimpleInstallFunction(prototype, "clear", Builtins::kSetClear, 0, true);
     SimpleInstallFunction(prototype, "entries", Builtins::kSetPrototypeEntries,
                           0, true);
@@ -4355,7 +4372,6 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     Handle<JSFunction> array_function =
         InstallInternalArray(utils, "InternalArray", HOLEY_ELEMENTS);
     native_context()->set_internal_array_function(*array_function);
-    InstallInternalArray(utils, "InternalPackedArray", PACKED_ELEMENTS);
   }
 
   // Run the rest of the native scripts.

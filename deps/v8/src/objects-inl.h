@@ -2701,8 +2701,23 @@ const HashTable<Derived, Shape>* HashTable<Derived, Shape>::cast(
 SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 SYNCHRONIZED_SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 
-SMI_ACCESSORS(PropertyArray, length, kLengthOffset)
-SYNCHRONIZED_SMI_ACCESSORS(PropertyArray, length, kLengthOffset)
+int PropertyArray::length() const {
+  Object* value = READ_FIELD(this, kLengthOffset);
+  int len = Smi::ToInt(value);
+  return len & kLengthMask;
+}
+
+void PropertyArray::initialize_length(int len) {
+  SLOW_DCHECK(len >= 0);
+  SLOW_DCHECK(len < kMaxLength);
+  WRITE_FIELD(this, kLengthOffset, Smi::FromInt(len));
+}
+
+int PropertyArray::synchronized_length() const {
+  Object* value = ACQUIRE_READ_FIELD(this, kLengthOffset);
+  int len = Smi::ToInt(value);
+  return len & kLengthMask;
+}
 
 SMI_ACCESSORS(FreeSpace, size, kSizeOffset)
 RELAXED_SMI_ACCESSORS(FreeSpace, size, kSizeOffset)
@@ -4686,29 +4701,19 @@ AbstractCode* JSFunction::abstract_code() {
   }
 }
 
-Code* JSFunction::code() {
-  return Code::cast(
-      Code::GetObjectFromEntryAddress(FIELD_ADDR(this, kCodeEntryOffset)));
-}
-
+Code* JSFunction::code() { return Code::cast(READ_FIELD(this, kCodeOffset)); }
 
 void JSFunction::set_code(Code* value) {
   DCHECK(!GetHeap()->InNewSpace(value));
-  Address entry = value->entry();
-  RELAXED_WRITE_INTPTR_FIELD(this, kCodeEntryOffset,
-                             reinterpret_cast<intptr_t>(entry));
-  GetHeap()->incremental_marking()->RecordWriteOfCodeEntry(
-      this,
-      HeapObject::RawField(this, kCodeEntryOffset),
-      value);
+  WRITE_FIELD(this, kCodeOffset, value);
+  GetHeap()->incremental_marking()->RecordWrite(
+      this, HeapObject::RawField(this, kCodeOffset), value);
 }
 
 
 void JSFunction::set_code_no_write_barrier(Code* value) {
   DCHECK(!GetHeap()->InNewSpace(value));
-  Address entry = value->entry();
-  RELAXED_WRITE_INTPTR_FIELD(this, kCodeEntryOffset,
-                             reinterpret_cast<intptr_t>(entry));
+  WRITE_FIELD(this, kCodeOffset, value);
 }
 
 void JSFunction::ClearOptimizedCodeSlot(const char* reason) {

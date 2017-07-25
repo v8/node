@@ -524,9 +524,6 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
     return NoChange();
   }
 
-  // TODO(danno): forEach can throw. Hook up exceptional edges.
-  if (NodeProperties::IsExceptionalCall(node)) return NoChange();
-
   // Install code dependencies on the {receiver} prototype maps and the
   // global array protector cell.
   dependencies()->AssumePropertyCell(factory()->array_protector());
@@ -624,6 +621,16 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   control = effect = graph()->NewNode(
       javascript()->Call(5, p.frequency()), fncallback, this_arg, element, k,
       receiver, context, frame_state, effect, control);
+
+  // Update potential {IfException} uses of {node} to point to the above
+  // JavaScript call node within the loop instead.
+  Node* on_exception = nullptr;
+  if (NodeProperties::IsExceptionalCall(node, &on_exception)) {
+    NodeProperties::ReplaceControlInput(on_exception, control);
+    NodeProperties::ReplaceEffectInput(on_exception, effect);
+    control = graph()->NewNode(common()->IfSuccess(), control);
+    Revisit(on_exception);
+  }
 
   if (IsHoleyElementsKind(kind)) {
     Node* after_call_control = control;
@@ -934,7 +941,8 @@ bool IsSafeArgumentsElements(Node* node) {
 }  // namespace
 
 Reduction JSCallReducer::ReduceCallOrConstructWithArrayLikeOrSpread(
-    Node* node, int arity, CallFrequency const& frequency) {
+    Node* node, int arity, CallFrequency const& frequency,
+    VectorSlotPair const& feedback) {
   DCHECK(node->opcode() == IrOpcode::kJSCallWithArrayLike ||
          node->opcode() == IrOpcode::kJSCallWithSpread ||
          node->opcode() == IrOpcode::kJSConstructWithArrayLike ||
@@ -989,14 +997,14 @@ Reduction JSCallReducer::ReduceCallOrConstructWithArrayLikeOrSpread(
         break;
       case IrOpcode::kJSCallWithSpread: {
         // Ignore uses as spread input to calls with spread.
-        SpreadWithArityParameter p = SpreadWithArityParameterOf(user->op());
+        CallParameters p = CallParametersOf(user->op());
         int const arity = static_cast<int>(p.arity() - 1);
         if (user->InputAt(arity) == arguments_list) continue;
         break;
       }
       case IrOpcode::kJSConstructWithSpread: {
         // Ignore uses as spread input to construct with spread.
-        SpreadWithArityParameter p = SpreadWithArityParameterOf(user->op());
+        ConstructParameters p = ConstructParametersOf(user->op());
         int const arity = static_cast<int>(p.arity() - 2);
         if (user->InputAt(arity) == arguments_list) continue;
         break;
@@ -1089,12 +1097,13 @@ Reduction JSCallReducer::ReduceCallOrConstructWithArrayLikeOrSpread(
 
   if (node->opcode() == IrOpcode::kJSCallWithArrayLike ||
       node->opcode() == IrOpcode::kJSCallWithSpread) {
-    NodeProperties::ChangeOp(node, javascript()->Call(arity + 1, frequency));
+    NodeProperties::ChangeOp(
+        node, javascript()->Call(arity + 1, frequency, feedback));
     Reduction const reduction = ReduceJSCall(node);
     return reduction.Changed() ? reduction : Changed(node);
   } else {
-    NodeProperties::ChangeOp(node,
-                             javascript()->Construct(arity + 2, frequency));
+    NodeProperties::ChangeOp(
+        node, javascript()->Construct(arity + 2, frequency, feedback));
     Reduction const reduction = ReduceJSConstruct(node);
     return reduction.Changed() ? reduction : Changed(node);
   }
@@ -1293,19 +1302,20 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
 Reduction JSCallReducer::ReduceJSCallWithArrayLike(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCallWithArrayLike, node->opcode());
   CallFrequency frequency = CallFrequencyOf(node->op());
-  return ReduceCallOrConstructWithArrayLikeOrSpread(node, 2, frequency);
+  VectorSlotPair feedback;
+  return ReduceCallOrConstructWithArrayLikeOrSpread(node, 2, frequency,
+                                                    feedback);
 }
 
 Reduction JSCallReducer::ReduceJSCallWithSpread(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCallWithSpread, node->opcode());
-  SpreadWithArityParameter const& p = SpreadWithArityParameterOf(node->op());
+  CallParameters const& p = CallParametersOf(node->op());
   DCHECK_LE(3u, p.arity());
   int arity = static_cast<int>(p.arity() - 1);
-
-  // TODO(turbofan): Collect call counts on spread call/construct and thread it
-  // through here.
-  CallFrequency frequency;
-  return ReduceCallOrConstructWithArrayLikeOrSpread(node, arity, frequency);
+  CallFrequency frequency = p.frequency();
+  VectorSlotPair feedback = p.feedback();
+  return ReduceCallOrConstructWithArrayLikeOrSpread(node, arity, frequency,
+                                                    feedback);
 }
 
 Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
@@ -1436,19 +1446,20 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
 Reduction JSCallReducer::ReduceJSConstructWithArrayLike(Node* node) {
   DCHECK_EQ(IrOpcode::kJSConstructWithArrayLike, node->opcode());
   CallFrequency frequency = CallFrequencyOf(node->op());
-  return ReduceCallOrConstructWithArrayLikeOrSpread(node, 1, frequency);
+  VectorSlotPair feedback;
+  return ReduceCallOrConstructWithArrayLikeOrSpread(node, 1, frequency,
+                                                    feedback);
 }
 
 Reduction JSCallReducer::ReduceJSConstructWithSpread(Node* node) {
   DCHECK_EQ(IrOpcode::kJSConstructWithSpread, node->opcode());
-  SpreadWithArityParameter const& p = SpreadWithArityParameterOf(node->op());
+  ConstructParameters const& p = ConstructParametersOf(node->op());
   DCHECK_LE(3u, p.arity());
   int arity = static_cast<int>(p.arity() - 2);
-
-  // TODO(turbofan): Collect call counts on spread call/construct and thread it
-  // through here.
-  CallFrequency frequency;
-  return ReduceCallOrConstructWithArrayLikeOrSpread(node, arity, frequency);
+  CallFrequency frequency = p.frequency();
+  VectorSlotPair feedback = p.feedback();
+  return ReduceCallOrConstructWithArrayLikeOrSpread(node, arity, frequency,
+                                                    feedback);
 }
 
 Reduction JSCallReducer::ReduceReturnReceiver(Node* node) {

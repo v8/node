@@ -252,7 +252,6 @@ enum SimpleTransitionFlag {
   SPECIAL_TRANSITION
 };
 
-
 // Indicates whether we are only interested in the descriptors of a particular
 // map, or in all descriptors in the descriptor array.
 enum DescriptorFlag {
@@ -3040,11 +3039,13 @@ class PropertyArray : public HeapObject {
  public:
   // [length]: length of the array.
   inline int length() const;
-  inline void set_length(int length);
 
-  // Get and set the length using acquire loads and release stores.
+  // Get the length using acquire loads.
   inline int synchronized_length() const;
-  inline void synchronized_set_length(int value);
+
+  // This is only used on a newly allocated PropertyArray which
+  // doesn't have an existing hash.
+  inline void initialize_length(int length);
 
   inline Object* get(int index) const;
 
@@ -3073,6 +3074,10 @@ class PropertyArray : public HeapObject {
   typedef FlexibleBodyDescriptor<kHeaderSize> BodyDescriptor;
   // No weak fields.
   typedef BodyDescriptor BodyDescriptorWeak;
+
+  static const int kLengthMask = 1023;
+  static const int kMaxLength = kLengthMask;
+  STATIC_ASSERT(kMaxLength > kMaxNumberOfDescriptors);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PropertyArray);
@@ -5291,10 +5296,9 @@ class JSFunction: public JSObject {
       kPrototypeOrInitialMapOffset + kPointerSize;
   static const int kContextOffset = kSharedFunctionInfoOffset + kPointerSize;
   static const int kFeedbackVectorOffset = kContextOffset + kPointerSize;
-  static const int kNonWeakFieldsEndOffset =
-      kFeedbackVectorOffset + kPointerSize;
-  static const int kCodeEntryOffset = kNonWeakFieldsEndOffset;
-  static const int kNextFunctionLinkOffset = kCodeEntryOffset + kPointerSize;
+  static const int kCodeOffset = kFeedbackVectorOffset + kPointerSize;
+  static const int kNonWeakFieldsEndOffset = kCodeOffset + kPointerSize;
+  static const int kNextFunctionLinkOffset = kNonWeakFieldsEndOffset;
   static const int kSize = kNextFunctionLinkOffset + kPointerSize;
 
  private:
@@ -7389,9 +7393,6 @@ class ObjectVisitor BASE_EMBEDDED {
 
   // Visits a code target in the instruction stream.
   virtual void VisitCodeTarget(Code* host, RelocInfo* rinfo);
-
-  // Visits a code entry in a JS function.
-  virtual void VisitCodeEntry(JSFunction* host, Address entry_address);
 
   // Visits a global property cell reference in the instruction stream.
   virtual void VisitCellPointer(Code* host, RelocInfo* rinfo);
