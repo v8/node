@@ -47,7 +47,7 @@ class AsmJsParser {
   };
   // clang-format on
 
-  typedef std::unordered_set<StandardMember, std::hash<int>> StdlibSet;
+  typedef EnumSet<StandardMember, uint64_t> StdlibSet;
 
   explicit AsmJsParser(Zone* zone, uintptr_t stack_limit,
                        std::unique_ptr<Utf16CharacterStream> stream);

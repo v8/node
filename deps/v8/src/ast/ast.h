@@ -1442,6 +1442,12 @@ class ArrayLiteral final : public AggregateLiteral {
 
   ZoneList<Expression*>* values() const { return values_; }
 
+  bool is_empty() const {
+    DCHECK(is_initialized());
+    return values()->is_empty() &&
+           (constant_elements().is_null() || constant_elements()->is_empty());
+  }
+
   // Populate the depth field and flags, returns the depth.
   int InitDepthAndFlags();
 
@@ -3058,9 +3064,6 @@ class AstNodeFactory final BASE_EMBEDDED {
       : zone_(zone), ast_value_factory_(ast_value_factory) {}
 
   AstValueFactory* ast_value_factory() const { return ast_value_factory_; }
-  void set_ast_value_factory(AstValueFactory* ast_value_factory) {
-    ast_value_factory_ = ast_value_factory;
-  }
 
   VariableDeclaration* NewVariableDeclaration(VariableProxy* proxy,
                                               Scope* scope, int pos) {

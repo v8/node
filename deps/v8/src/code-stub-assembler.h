@@ -273,10 +273,21 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   typedef std::function<Node*()> NodeGenerator;
 
-  void Assert(const NodeGenerator& condition_body, const char* string = nullptr,
-              const char* file = nullptr, int line = 0);
-  void Check(const NodeGenerator& condition_body, const char* string = nullptr,
-             const char* file = nullptr, int line = 0);
+  void Assert(const NodeGenerator& condition_body,
+              const char* message = nullptr, const char* file = nullptr,
+              int line = 0, Node* extra_node1 = nullptr,
+              const char* extra_node1_name = "", Node* extra_node2 = nullptr,
+              const char* extra_node2_name = "", Node* extra_node3 = nullptr,
+              const char* extra_node3_name = "", Node* extra_node4 = nullptr,
+              const char* extra_node4_name = "", Node* extra_node5 = nullptr,
+              const char* extra_node5_name = "");
+  void Check(const NodeGenerator& condition_body, const char* message = nullptr,
+             const char* file = nullptr, int line = 0,
+             Node* extra_node1 = nullptr, const char* extra_node1_name = "",
+             Node* extra_node2 = nullptr, const char* extra_node2_name = "",
+             Node* extra_node3 = nullptr, const char* extra_node3_name = "",
+             Node* extra_node4 = nullptr, const char* extra_node4_name = "",
+             Node* extra_node5 = nullptr, const char* extra_node5_name = "");
 
   Node* Select(Node* condition, const NodeGenerator& true_body,
                const NodeGenerator& false_body, MachineRepresentation rep);
@@ -488,6 +499,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* LoadNativeContext(Node* context);
 
   Node* LoadJSArrayElementsMap(ElementsKind kind, Node* native_context);
+  Node* LoadJSArrayElementsMap(Node* kind, Node* native_context);
 
   // Load the "prototype" property of a JSFunction.
   Node* LoadJSFunctionPrototype(Node* function, Label* if_bailout);
@@ -949,31 +961,31 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                   ToIntegerTruncationMode mode = kNoTruncation);
 
   // Returns a node that contains a decoded (unsigned!) value of a bit
-  // field |T| in |word32|. Returns result as an uint32 node.
-  template <typename T>
+  // field |BitField| in |word32|. Returns result as an uint32 node.
+  template <typename BitField>
   Node* DecodeWord32(Node* word32) {
-    return DecodeWord32(word32, T::kShift, T::kMask);
+    return DecodeWord32(word32, BitField::kShift, BitField::kMask);
   }
 
   // Returns a node that contains a decoded (unsigned!) value of a bit
-  // field |T| in |word|. Returns result as a word-size node.
-  template <typename T>
+  // field |BitField| in |word|. Returns result as a word-size node.
+  template <typename BitField>
   Node* DecodeWord(Node* word) {
-    return DecodeWord(word, T::kShift, T::kMask);
+    return DecodeWord(word, BitField::kShift, BitField::kMask);
   }
 
   // Returns a node that contains a decoded (unsigned!) value of a bit
-  // field |T| in |word32|. Returns result as a word-size node.
-  template <typename T>
+  // field |BitField| in |word32|. Returns result as a word-size node.
+  template <typename BitField>
   Node* DecodeWordFromWord32(Node* word32) {
-    return DecodeWord<T>(ChangeUint32ToWord(word32));
+    return DecodeWord<BitField>(ChangeUint32ToWord(word32));
   }
 
   // Returns a node that contains a decoded (unsigned!) value of a bit
-  // field |T| in |word|. Returns result as an uint32 node.
-  template <typename T>
+  // field |BitField| in |word|. Returns result as an uint32 node.
+  template <typename BitField>
   Node* DecodeWord32FromWord(Node* word) {
-    return TruncateWordToWord32(DecodeWord<T>(word));
+    return TruncateWordToWord32(DecodeWord<BitField>(word));
   }
 
   // Decodes an unsigned (!) value from |word32| to an uint32 node.
@@ -981,6 +993,16 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Decodes an unsigned (!) value from |word| to a word-size node.
   Node* DecodeWord(Node* word, uint32_t shift, uint32_t mask);
+
+  // Returns a node that contains the updated values of a |BitField|.
+  template <typename BitField>
+  Node* UpdateWord(Node* word, Node* value) {
+    return UpdateWord(word, value, BitField::kShift, BitField::kMask);
+  }
+
+  // Returns a node that contains the updated {value} inside {word} starting
+  // at {shift} and fitting in {mask}.
+  Node* UpdateWord(Node* word, Node* value, uint32_t shift, uint32_t mask);
 
   // Returns true if any of the |T|'s bits in given |word32| are set.
   template <typename T>
@@ -1301,6 +1323,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // Load type feedback vector from the stub caller's frame.
   Node* LoadFeedbackVectorForStub();
+
+  Node* LoadFeedbackVector(Node* closure);
+  Node* LoadFeedbackVectorSlot(Node* closure, Node* smi_index);
+  void StoreFeedbackVectorSlot(Node* closure, Node* smi_index, Node* value);
 
   // Update the type feedback vector.
   void UpdateFeedback(Node* feedback, Node* feedback_vector, Node* slot_id,
@@ -1713,16 +1739,47 @@ class ToDirectStringAssembler : public CodeStubAssembler {
   (csa)->Check([&] { return (x); }, #x, __FILE__, __LINE__)
 
 #ifdef DEBUG
-#define CSA_ASSERT(csa, x) \
-  (csa)->Assert([&] { return (x); }, #x, __FILE__, __LINE__)
-#define CSA_ASSERT_JS_ARGC_OP(csa, Op, op, expected)             \
-  (csa)->Assert(                                                 \
-      [&] {                                                      \
-        compiler::Node* const argc =                             \
-            (csa)->Parameter(Descriptor::kActualArgumentsCount); \
-        return (csa)->Op(argc, (csa)->Int32Constant(expected));  \
-      },                                                         \
-      "argc " #op " " #expected, __FILE__, __LINE__)
+// Add stringified versions to the given values, except the first. That is,
+// transform
+//   x, a, b, c, d, e, f
+// to
+//   a, "a", b, "b", c, "c", d, "d", e, "e", f, "f"
+//
+// __VA_ARGS__  is ignored to allow the caller to pass through too many
+// parameters, and the first element is ignored to support having no extra
+// values without empty __VA_ARGS__ (which cause all sorts of problems with
+// extra commas).
+#define CSA_ASSERT_STRINGIFY_EXTRA_VALUES_5(_, v1, v2, v3, v4, v5, ...) \
+  v1, #v1, v2, #v2, v3, #v3, v4, #v4, v5, #v5
+
+// Stringify the given variable number of arguments. The arguments are trimmed
+// to 5 if there are too many, and padded with nullptr if there are not enough.
+#define CSA_ASSERT_STRINGIFY_EXTRA_VALUES(...)                                \
+  CSA_ASSERT_STRINGIFY_EXTRA_VALUES_5(__VA_ARGS__, nullptr, nullptr, nullptr, \
+                                      nullptr, nullptr)
+
+#define CSA_ASSERT_GET_CONDITION(x, ...) (x)
+#define CSA_ASSERT_GET_CONDITION_STR(x, ...) #x
+
+// CSA_ASSERT(csa, <condition>, <extra values to print...>)
+
+// We have to jump through some hoops to allow <extra values to print...> to be
+// empty.
+#define CSA_ASSERT(csa, ...)                                                   \
+  (csa)->Assert([&] { return CSA_ASSERT_GET_CONDITION(__VA_ARGS__); },         \
+                CSA_ASSERT_GET_CONDITION_STR(__VA_ARGS__), __FILE__, __LINE__, \
+                CSA_ASSERT_STRINGIFY_EXTRA_VALUES(__VA_ARGS__))
+
+#define CSA_ASSERT_JS_ARGC_OP(csa, Op, op, expected)                      \
+  (csa)->Assert(                                                          \
+      [&] {                                                               \
+        compiler::Node* const argc =                                      \
+            (csa)->Parameter(Descriptor::kActualArgumentsCount);          \
+        return (csa)->Op(argc, (csa)->Int32Constant(expected));           \
+      },                                                                  \
+      "argc " #op " " #expected, __FILE__, __LINE__,                      \
+      SmiFromWord32((csa)->Parameter(Descriptor::kActualArgumentsCount)), \
+      "argc")
 
 #define CSA_ASSERT_JS_ARGC_EQ(csa, expected) \
   CSA_ASSERT_JS_ARGC_OP(csa, Word32Equal, ==, expected)
@@ -1734,7 +1791,7 @@ class ToDirectStringAssembler : public CodeStubAssembler {
   Variable name(this CSA_DEBUG_INFO(name), __VA_ARGS__);
 
 #else  // DEBUG
-#define CSA_ASSERT(csa, x) ((void)0)
+#define CSA_ASSERT(csa, ...) ((void)0)
 #define CSA_ASSERT_JS_ARGC_EQ(csa, expected) ((void)0)
 #define CSA_DEBUG_INFO(name)
 #define BIND(label) Bind(label);
@@ -1742,12 +1799,12 @@ class ToDirectStringAssembler : public CodeStubAssembler {
 #endif  // DEBUG
 
 #ifdef ENABLE_SLOW_DCHECKS
-#define CSA_SLOW_ASSERT(csa, x)   \
+#define CSA_SLOW_ASSERT(csa, ...) \
   if (FLAG_enable_slow_asserts) { \
-    CSA_ASSERT(csa, x);           \
+    CSA_ASSERT(csa, __VA_ARGS__); \
   }
 #else
-#define CSA_SLOW_ASSERT(csa, x) ((void)0)
+#define CSA_SLOW_ASSERT(csa, ...) ((void)0)
 #endif
 
 DEFINE_OPERATORS_FOR_FLAGS(CodeStubAssembler::AllocationFlags);

@@ -79,6 +79,7 @@ TEST(HeapMaps) {
   CheckMap(heap->meta_map(), MAP_TYPE, Map::kSize);
   CheckMap(heap->heap_number_map(), HEAP_NUMBER_TYPE, HeapNumber::kSize);
   CheckMap(heap->fixed_array_map(), FIXED_ARRAY_TYPE, kVariableSizeSentinel);
+  CheckMap(heap->hash_table_map(), HASH_TABLE_TYPE, kVariableSizeSentinel);
   CheckMap(heap->string_map(), STRING_TYPE, kVariableSizeSentinel);
 }
 
@@ -2222,6 +2223,52 @@ TEST(InstanceOfStubWriteBarrier) {
   CcTest::CollectGarbage(OLD_SPACE);
 }
 
+TEST(ResetSharedFunctionInfoCountersDuringIncrementalMarking) {
+  if (!FLAG_incremental_marking) return;
+  FLAG_stress_compaction = false;
+  FLAG_stress_incremental_marking = false;
+  FLAG_allow_natives_syntax = true;
+#ifdef VERIFY_HEAP
+  FLAG_verify_heap = true;
+#endif
+
+  CcTest::InitializeVM();
+  if (!CcTest::i_isolate()->use_optimizer()) return;
+  v8::HandleScope outer_scope(CcTest::isolate());
+  v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
+
+  {
+    v8::HandleScope scope(CcTest::isolate());
+    CompileRun(
+        "function f () {"
+        "  var s = 0;"
+        "  for (var i = 0; i < 100; i++)  s += i;"
+        "  return s;"
+        "}"
+        "f(); f();"
+        "%OptimizeFunctionOnNextCall(f);"
+        "f();");
+  }
+  i::Handle<JSFunction> f = i::Handle<JSFunction>::cast(
+      v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
+          CcTest::global()->Get(ctx, v8_str("f")).ToLocalChecked())));
+  CHECK(f->IsOptimized());
+
+  // Make sure incremental marking it not running.
+  CcTest::heap()->incremental_marking()->Stop();
+
+  CcTest::heap()->StartIncrementalMarking(i::Heap::kNoGCFlags,
+                                          i::GarbageCollectionReason::kTesting);
+  // The following calls will increment CcTest::heap()->global_ic_age().
+  CcTest::isolate()->ContextDisposedNotification();
+  heap::SimulateIncrementalMarking(CcTest::heap());
+  CcTest::CollectAllGarbage();
+
+  CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
+  CHECK_EQ(0, f->shared()->opt_count());
+  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
+}
+
 
 TEST(ResetSharedFunctionInfoCountersDuringMarkSweep) {
   FLAG_stress_compaction = false;
@@ -2262,7 +2309,7 @@ TEST(ResetSharedFunctionInfoCountersDuringMarkSweep) {
 
   CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
   CHECK_EQ(0, f->shared()->opt_count());
-  CHECK_EQ(0, f->shared()->profiler_ticks());
+  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
 }
 
 
@@ -3964,6 +4011,95 @@ TEST(EnsureAllocationSiteDependentCodesProcessed) {
         WeakCell::cast(site->dependent_code()->object_at(0))->cleared());
 }
 
+TEST(AllocationSiteCreation) {
+  CcTest::InitializeVM();
+  Isolate* isolate = CcTest::i_isolate();
+  Heap* heap = isolate->heap();
+  HandleScope scope(isolate);
+
+  int prev_count = 0;
+  int count = 0;
+
+  // Array literals.
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("(function f1() { return []; })()");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(1, count - prev_count);
+
+  prev_count = count;
+  CompileRun("(function f2() { return [1, 2]; })()");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(1, count - prev_count);
+
+  prev_count = count;
+  CompileRun("(function f3() { return [[1], [2]]; })()");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(3, count - prev_count);
+
+  prev_count = count;
+  CompileRun(
+      "(function f4() { "
+      "return [0, [1, 1.1, 1.2, "
+      "], 1.5, [2.1, 2.2], 3];"
+      "})()");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(3, count - prev_count);
+
+  // Object literals have lazy AllocationSites
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("function f5() { return {}; }; f5(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(0, count - prev_count);
+  // Allocation-sites + boilerplates are created on the second run only.
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("f5(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(1, count - prev_count);
+
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("function f6() { return {a:1}; }; f6(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(0, count - prev_count);
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("f6(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(1, count - prev_count);
+
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("function f7() { return {a:1, b:2}; }; f7(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(0, count - prev_count);
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("f7(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(1, count - prev_count);
+
+  prev_count = AllocationSitesCount(heap);
+  CompileRun(
+      "function f8() {"
+      "return {a:{}, b:{ a:2, c:{ d:{f:{}}} } }; "
+      "}; f8(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(0, count - prev_count);
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("f8(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(6, count - prev_count);
+
+  // We currently eagerly create allocation sites if there are sub-arrays.
+  prev_count = AllocationSitesCount(heap);
+  CompileRun(
+      "function f9() {"
+      "return {a:[1, 2, 3], b:{ a:2, c:{ d:{f:[]} } }}; "
+      "}; f9(); ");
+  count = AllocationSitesCount(heap);
+  CHECK_EQ(6, count - prev_count);
+  prev_count = AllocationSitesCount(heap);
+  CompileRun("f9(); ");
+  count = AllocationSitesCount(heap);
+  // No new AllocationSites created on the second invocation.
+  CHECK_EQ(0, count - prev_count);
+}
 
 TEST(CellsInOptimizedCodeAreWeak) {
   if (FLAG_always_opt || !FLAG_opt) return;

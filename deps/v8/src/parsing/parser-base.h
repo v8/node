@@ -487,7 +487,7 @@ class ParserBase {
   };
 
   struct DeclarationDescriptor {
-    enum Kind { NORMAL, PARAMETER };
+    enum Kind { NORMAL, PARAMETER, LEXICAL_FOR_EACH };
     Scope* scope;
     VariableMode mode;
     int declaration_pos;
@@ -698,7 +698,24 @@ class ParserBase {
         tok == Token::EOS) {
       return;
     }
-    Expect(Token::SEMICOLON, ok);
+
+    Token::Value current = scanner()->current_token();
+    Scanner::Location current_location = scanner()->location();
+    Token::Value next = Next();
+
+    if (next == Token::SEMICOLON) {
+      return;
+    }
+
+    *ok = false;
+    if (current == Token::AWAIT) {
+      DCHECK(!is_async_function());
+      ReportMessageAt(current_location,
+                      MessageTemplate::kAwaitNotInAsyncFunction, kSyntaxError);
+      return;
+    }
+
+    ReportUnexpectedToken(next);
   }
 
   // Dummy functions, just useful as arguments to CHECK_OK_CUSTOM.

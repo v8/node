@@ -351,6 +351,7 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   builder
       .CreateRegExpLiteral(ast_factory.GetOneByteString("wide_literal"), 0, 0)
       .CreateArrayLiteral(0, 0, 0)
+      .CreateEmptyArrayLiteral(0)
       .CreateObjectLiteral(0, 0, 0, reg);
 
   // Emit load and store operations for module variables.
@@ -362,7 +363,7 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .StoreModuleVariable(1, 42);
 
   // Emit generator operations.
-  builder.SuspendGenerator(reg, reg_list)
+  builder.SuspendGenerator(reg, reg_list, 0)
       .RestoreGeneratorState(reg)
       .RestoreGeneratorRegisters(reg, reg_list);
 

@@ -80,6 +80,7 @@ TYPE_CHECKER(CoverageInfo, FIXED_ARRAY_TYPE)
 TYPE_CHECKER(FixedDoubleArray, FIXED_DOUBLE_ARRAY_TYPE)
 TYPE_CHECKER(Foreign, FOREIGN_TYPE)
 TYPE_CHECKER(FreeSpace, FREE_SPACE_TYPE)
+TYPE_CHECKER(HashTable, HASH_TABLE_TYPE)
 TYPE_CHECKER(HeapNumber, HEAP_NUMBER_TYPE)
 TYPE_CHECKER(JSArrayBuffer, JS_ARRAY_BUFFER_TYPE)
 TYPE_CHECKER(JSArray, JS_ARRAY_TYPE)
@@ -135,6 +136,7 @@ bool HeapObject::IsFixedArrayBase() const {
 bool HeapObject::IsFixedArray() const {
   InstanceType instance_type = map()->instance_type();
   return instance_type == FIXED_ARRAY_TYPE ||
+         instance_type == HASH_TABLE_TYPE ||
          instance_type == TRANSITION_ARRAY_TYPE;
 }
 
@@ -417,10 +419,6 @@ bool HeapObject::IsJSArrayBufferView() const {
 template <>
 inline bool Is<JSArray>(Object* obj) {
   return obj->IsJSArray();
-}
-
-bool HeapObject::IsHashTable() const {
-  return map() == GetHeap()->hash_table_map();
 }
 
 bool HeapObject::IsWeakHashTable() const { return IsHashTable(); }
@@ -3204,7 +3202,7 @@ int HeapObject::SizeFromMap(Map* map) const {
   if (instance_size != kVariableSizeSentinel) return instance_size;
   // Only inline the most frequent cases.
   InstanceType instance_type = map->instance_type();
-  if (instance_type == FIXED_ARRAY_TYPE ||
+  if (instance_type == FIXED_ARRAY_TYPE || instance_type == HASH_TABLE_TYPE ||
       instance_type == TRANSITION_ARRAY_TYPE) {
     return FixedArray::SizeFor(
         reinterpret_cast<const FixedArray*>(this)->synchronized_length());
@@ -4437,6 +4435,9 @@ ACCESSORS(ContextExtension, extension, Object, kExtensionOffset)
 SMI_ACCESSORS(ConstantElementsPair, elements_kind, kElementsKindOffset)
 ACCESSORS(ConstantElementsPair, constant_values, FixedArrayBase,
           kConstantValuesOffset)
+bool ConstantElementsPair::is_empty() const {
+  return constant_values()->length() == 0;
+}
 
 ACCESSORS(JSModuleNamespace, module, Module, kModuleOffset)
 
@@ -5615,22 +5616,10 @@ Maybe<bool> JSReceiver::HasProperty(Handle<JSReceiver> object,
 
 
 Maybe<bool> JSReceiver::HasOwnProperty(Handle<JSReceiver> object,
-                                       Handle<Name> name) {
-  if (object->IsJSObject()) {  // Shortcut
-    LookupIterator it = LookupIterator::PropertyOrElement(
-        object->GetIsolate(), object, name, object, LookupIterator::OWN);
-    return HasProperty(&it);
-  }
-
-  Maybe<PropertyAttributes> attributes =
-      JSReceiver::GetOwnPropertyAttributes(object, name);
-  MAYBE_RETURN(attributes, Nothing<bool>());
-  return Just(attributes.FromJust() != ABSENT);
-}
-
-Maybe<bool> JSReceiver::HasOwnProperty(Handle<JSReceiver> object,
                                        uint32_t index) {
-  if (object->IsJSObject()) {  // Shortcut
+  if (object->IsJSModuleNamespace()) return Just(false);
+
+  if (object->IsJSObject()) {  // Shortcut.
     LookupIterator it(object->GetIsolate(), object, index, object,
                       LookupIterator::OWN);
     return HasProperty(&it);

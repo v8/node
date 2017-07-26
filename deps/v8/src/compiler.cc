@@ -358,7 +358,10 @@ void InstallUnoptimizedCode(CompilationInfo* info) {
   shared->ReplaceCode(*info->code());
   if (info->has_bytecode_array()) {
     DCHECK(!shared->HasBytecodeArray());  // Only compiled once.
+    DCHECK(!info->has_asm_wasm_data());
     shared->set_bytecode_array(*info->bytecode_array());
+  } else if (info->has_asm_wasm_data()) {
+    shared->set_asm_wasm_data(*info->asm_wasm_data());
   }
 
   // Install coverage info on the shared function info.
@@ -401,6 +404,10 @@ CompilationJob::Status FinalizeUnoptimizedCompilationJob(CompilationJob* job) {
   ParseInfo* parse_info = info->parse_info();
   Isolate* isolate = info->isolate();
 
+  // Allocate scope infos for the literal.
+  DeclarationScope::AllocateScopeInfos(parse_info, isolate,
+                                       AnalyzeMode::kRegular);
+
   if (parse_info->is_toplevel()) {
     // Allocate a shared function info and an array for shared function infos
     // for inner functions.
@@ -439,27 +446,20 @@ bool Renumber(ParseInfo* info,
                                 info->collect_type_profile());
 }
 
-bool GenerateUnoptimizedCode(CompilationInfo* info) {
-  if (UseAsmWasm(info->scope(), info->shared_info(), info->is_debug())) {
-    MaybeHandle<FixedArray> wasm_data;
-    wasm_data = AsmJs::CompileAsmViaWasm(info);
-    if (!wasm_data.is_null()) {
-      SetSharedFunctionFlagsFromLiteral(info->literal(), info->shared_info());
-      info->shared_info()->set_asm_wasm_data(*wasm_data.ToHandleChecked());
-      info->SetCode(info->isolate()->builtins()->InstantiateAsmJs());
-      InstallUnoptimizedCode(info);
-      return true;
-    }
-  }
-
-  std::unique_ptr<CompilationJob> job(GetUnoptimizedCompilationJob(info));
+bool RunUnoptimizedCompilationJob(CompilationJob* job) {
   if (job->PrepareJob() != CompilationJob::SUCCEEDED) return false;
   if (job->ExecuteJob() != CompilationJob::SUCCEEDED) return false;
-  if (FinalizeUnoptimizedCompilationJob(job.get()) !=
-      CompilationJob::SUCCEEDED) {
-    return false;
+  return FinalizeUnoptimizedCompilationJob(job) == CompilationJob::SUCCEEDED;
+}
+
+bool GenerateUnoptimizedCode(CompilationInfo* info) {
+  if (UseAsmWasm(info->scope(), info->shared_info(), info->is_debug())) {
+    std::unique_ptr<CompilationJob> job(AsmJs::NewCompilationJob(info));
+    if (RunUnoptimizedCompilationJob(job.get())) return true;
+    // asm.js validation failed, fall through to standard unoptimized compile.
   }
-  return true;
+  std::unique_ptr<CompilationJob> job(GetUnoptimizedCompilationJob(info));
+  return RunUnoptimizedCompilationJob(job.get());
 }
 
 bool CompileUnoptimizedInnerFunctions(
@@ -501,11 +501,9 @@ bool CompileUnoptimizedInnerFunctions(
       parse_info.set_literal(literal);
       parse_info.set_function_literal_id(shared->function_literal_id());
       parse_info.set_language_mode(literal->scope()->language_mode());
-      parse_info.set_ast_value_factory(
-          outer_info->parse_info()->ast_value_factory());
-      parse_info.set_ast_value_factory_owned(false);
       parse_info.set_source_range_map(
           outer_info->parse_info()->source_range_map());
+      parse_info.ShareAstValueFactory(outer_info->parse_info());
 
       if (will_serialize) info.PrepareForSerializing();
       if (is_debug) info.MarkAsDebug();
@@ -545,13 +543,18 @@ bool CompileUnoptimizedCode(CompilationInfo* info,
     }
   }
 
-  if (info->parse_info()->is_toplevel() &&
-      (ShouldUseFullCodegen(info->literal()) ||
-       InnerFunctionShouldUseFullCodegen(&inner_literals))) {
-    // Full-codegen needs to access SFI when compiling, so allocate the array
-    // now.
-    EnsureSharedFunctionInfosArrayOnScript(info);
+  if (ShouldUseFullCodegen(info->literal()) ||
+      InnerFunctionShouldUseFullCodegen(&inner_literals)) {
     inner_function_mode = ConcurrencyMode::kNotConcurrent;
+
+    // Full-codegen needs to access ScopeInfos when compiling, so allocate now.
+    DeclarationScope::AllocateScopeInfos(info->parse_info(), isolate,
+                                         AnalyzeMode::kRegular);
+    if (info->parse_info()->is_toplevel()) {
+      // Full-codegen needs to access SFI when compiling, so allocate the array
+      // now.
+      EnsureSharedFunctionInfosArrayOnScript(info);
+    }
   }
 
   std::shared_ptr<Zone> parse_zone;
@@ -674,10 +677,10 @@ bool GetOptimizedCodeNow(CompilationJob* job) {
   // Parsing is not required when optimizing from existing bytecode.
   if (!info->is_optimizing_from_bytecode()) {
     if (!Compiler::ParseAndAnalyze(info)) return false;
+    DeclarationScope::AllocateScopeInfos(info->parse_info(), isolate,
+                                         AnalyzeMode::kRegular);
     EnsureFeedbackMetadata(info);
   }
-
-  JSFunction::EnsureLiterals(info->closure());
 
   TimerEventScope<TimerEventRecompileSynchronous> timer(isolate);
   RuntimeCallTimerScope runtimeTimer(isolate,
@@ -729,10 +732,10 @@ bool GetOptimizedCodeLater(CompilationJob* job) {
   // Parsing is not required when optimizing from existing bytecode.
   if (!info->is_optimizing_from_bytecode()) {
     if (!Compiler::ParseAndAnalyze(info)) return false;
+    DeclarationScope::AllocateScopeInfos(info->parse_info(), isolate,
+                                         AnalyzeMode::kRegular);
     EnsureFeedbackMetadata(info);
   }
-
-  JSFunction::EnsureLiterals(info->closure());
 
   TimerEventScope<TimerEventRecompileSynchronous> timer(info->isolate());
   RuntimeCallTimerScope runtimeTimer(info->isolate(),
@@ -785,7 +788,7 @@ MaybeHandle<Code> GetOptimizedCode(Handle<JSFunction> function,
 
   // Reset profiler ticks, function is no longer considered hot.
   DCHECK(shared->is_compiled());
-  shared->set_profiler_ticks(0);
+  function->feedback_vector()->set_profiler_ticks(0);
 
   VMState<COMPILER> state(isolate);
   DCHECK(!isolate->has_pending_exception());
@@ -896,7 +899,7 @@ CompilationJob::Status FinalizeOptimizedCompilationJob(CompilationJob* job) {
   Handle<SharedFunctionInfo> shared = info->shared_info();
 
   // Reset profiler ticks, function is no longer considered hot.
-  shared->set_profiler_ticks(0);
+  info->closure()->feedback_vector()->set_profiler_ticks(0);
 
   DCHECK(!shared->HasBreakInfo());
 
@@ -966,7 +969,6 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
     }
     // TODO(leszeks): Either handle optimization markers here, or DCHECK that
     // there aren't any.
-
     return Handle<Code>(function->shared()->code());
   } else {
     // Function doesn't have any baseline compiled code, compile now.
@@ -1000,6 +1002,9 @@ MaybeHandle<Code> GetLazyCode(Handle<JSFunction> function) {
         function->ShortPrint();
         PrintF(" because --always-opt]\n");
       }
+      // Getting optimized code assumes that we have literals.
+      JSFunction::EnsureLiterals(function);
+
       Handle<Code> opt_code;
       if (GetOptimizedCode(function, ConcurrencyMode::kNotConcurrent)
               .ToHandle(&opt_code)) {
@@ -1079,7 +1084,7 @@ bool Compiler::Analyze(ParseInfo* info, Isolate* isolate,
   RuntimeCallTimerScope runtimeTimer(isolate,
                                      &RuntimeCallStats::CompileAnalyse);
   if (!Rewriter::Rewrite(info, isolate)) return false;
-  DeclarationScope::Analyze(info, isolate, AnalyzeMode::kRegular);
+  DeclarationScope::Analyze(info, isolate);
   if (!Renumber(info, eager_literals)) {
     return false;
   }
@@ -1163,7 +1168,6 @@ bool Compiler::CompileOptimized(Handle<JSFunction> function,
 
   // Install code on closure.
   function->ReplaceCode(*code);
-  JSFunction::EnsureLiterals(function);
 
   // Check postconditions on success.
   DCHECK(!isolate->has_pending_exception());

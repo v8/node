@@ -1002,6 +1002,26 @@ Maybe<bool> JSReceiver::HasProperty(LookupIterator* it) {
   return Just(false);
 }
 
+// static
+Maybe<bool> JSReceiver::HasOwnProperty(Handle<JSReceiver> object,
+                                       Handle<Name> name) {
+  if (object->IsJSModuleNamespace()) {
+    PropertyDescriptor desc;
+    return JSReceiver::GetOwnPropertyDescriptor(object->GetIsolate(), object,
+                                                name, &desc);
+  }
+
+  if (object->IsJSObject()) {  // Shortcut.
+    LookupIterator it = LookupIterator::PropertyOrElement(
+        object->GetIsolate(), object, name, object, LookupIterator::OWN);
+    return HasProperty(&it);
+  }
+
+  Maybe<PropertyAttributes> attributes =
+      JSReceiver::GetOwnPropertyAttributes(object, name);
+  MAYBE_RETURN(attributes, Nothing<bool>());
+  return Just(attributes.FromJust() != ABSENT);
+}
 
 // static
 MaybeHandle<Object> Object::GetProperty(LookupIterator* it) {
@@ -2984,6 +3004,7 @@ VisitorId Map::GetVisitorId(Map* map) {
     case FREE_SPACE_TYPE:
       return kVisitFreeSpace;
 
+    case HASH_TABLE_TYPE:
     case FIXED_ARRAY_TYPE:
       return kVisitFixedArray;
 
@@ -3273,6 +3294,9 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
     case MAP_TYPE:
       os << "<Map(" << ElementsKindToString(Map::cast(this)->elements_kind())
          << ")>";
+      break;
+    case HASH_TABLE_TYPE:
+      os << "<HashTable[" << FixedArray::cast(this)->length() << "]>";
       break;
     case FIXED_ARRAY_TYPE:
       os << "<FixedArray[" << FixedArray::cast(this)->length() << "]>";
@@ -12800,6 +12824,7 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case FIXED_DOUBLE_ARRAY_TYPE:
     case FOREIGN_TYPE:
     case FREE_SPACE_TYPE:
+    case HASH_TABLE_TYPE:
     case HEAP_NUMBER_TYPE:
     case JS_BOUND_FUNCTION_TYPE:
     case JS_GLOBAL_OBJECT_TYPE:
@@ -13825,7 +13850,6 @@ void Map::StartInobjectSlackTracking() {
 void SharedFunctionInfo::ResetForNewContext(int new_ic_age) {
   code()->ClearInlineCaches();
   set_ic_age(new_ic_age);
-  set_profiler_ticks(0);
   if (optimization_disabled() && deopt_count() >= FLAG_max_deopt_count) {
     // Re-enable optimizations if they were disabled due to deopt_count limit.
     set_optimization_disabled(false);
