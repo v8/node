@@ -351,12 +351,33 @@ TestCoverage(
 `,
 [{"start":0,"end":849,"count":1},
  {"start":1,"end":801,"count":1},
- {"start":77,"end":87,"count":0},
- {"start":219,"end":232,"count":0},
- {"start":264,"end":274,"count":0},
- {"start":369,"end":380,"count":0},
- {"start":403,"end":414,"count":0},  // TODO(jgruber): Include `catch` in range.
- {"start":513,"end":564,"count":0}]
+ {"start":67,"end":87,"count":0},
+ {"start":219,"end":222,"count":0},
+ {"start":254,"end":274,"count":0},
+ {"start":369,"end":372,"count":0},
+ {"start":390,"end":404,"count":0},
+ {"start":513,"end":554,"count":0}]
+);
+
+TestCoverage("try/catch/finally statements with early return",
+`
+!function() {                             // 0000
+  try { throw 42; } catch (e) { return; } // 0050
+  nop();                                  // 0100
+}();                                      // 0150
+!function() {                             // 0200
+  try { throw 42; } catch (e) {}          // 0250
+  finally { return; }                     // 0300
+  nop();                                  // 0350
+}();                                      // 0400
+`,
+[{"start":0,"end":449,"count":1},
+ {"start":1,"end":151,"count":1},
+ {"start":67,"end":70,"count":0},
+ {"start":89,"end":151,"count":0},
+ {"start":201,"end":401,"count":1},
+ {"start":267,"end":270,"count":0},
+ {"start":319,"end":401,"count":0}]
 );
 
 TestCoverage(
@@ -387,7 +408,7 @@ TestCoverage(
 `,
 [{"start":0,"end":1099,"count":1},
  {"start":1,"end":151,"count":1},
- {"start":67,"end":80,"count":0},
+ {"start":67,"end":70,"count":0},
  {"start":89,"end":151,"count":0},
  {"start":201,"end":351,"count":1},
  {"start":284,"end":351,"count":0},
@@ -395,9 +416,8 @@ TestCoverage(
  {"start":569,"end":701,"count":0},
  {"start":561,"end":568,"count":0},  // TODO(jgruber): Sorting.
  {"start":751,"end":1051,"count":1},
- {"start":817,"end":830,"count":0},
+ {"start":817,"end":820,"count":0},
  {"start":861,"end":1051,"count":0}]
-
 );
 
 TestCoverage(
@@ -513,6 +533,138 @@ var FALSE = false;                        // 0050
  {"start":617,"end":680,"count":0},
  {"start":710,"end":715,"count":0},
  {"start":775,"end":780,"count":0}]
+);
+
+TestCoverage(
+"yield expressions",
+`
+const it = function*() {                  // 0000
+  yield nop();                            // 0050
+  yield nop() ? nop() : nop()             // 0100
+  return nop();                           // 0150
+}();                                      // 0200
+it.next(); it.next();                     // 0250
+`,
+[{"start":0,"end":299,"count":1},
+ {"start":11,"end":201,"count":3},
+ {"start":64,"end":116,"count":1},
+ {"start":116,"end":121,"count":0},
+ {"start":124,"end":129,"count":1},
+ {"start":129,"end":201,"count":0}]
+);
+
+TestCoverage(
+"yield expressions (.return and .throw)",
+`
+const it0 = function*() {                 // 0000
+  yield 1; yield 2; yield 3;              // 0050
+}();                                      // 0100
+it0.next(); it0.return();                 // 0150
+try {                                     // 0200
+  const it1 = function*() {               // 0250
+    yield 1; yield 2; yield 3;            // 0300
+  }();                                    // 0350
+  it1.next(); it1.throw();                // 0400
+} catch (e) {}                            // 0450
+`,
+[{"start":0,"end":499,"count":1},
+ {"start":12,"end":101,"count":3},
+ {"start":60,"end":101,"count":0},
+ {"start":264,"end":353,"count":3},
+ {"start":312,"end":353,"count":0}]
+);
+
+TestCoverage("yield expressions (.return and try/catch/finally)",
+`
+const it = function*() {                  // 0000
+  try {                                   // 0050
+    yield 1; yield 2; yield 3;            // 0100
+  } catch (e) {                           // 0150
+    nop();                                // 0200
+  } finally { nop(); }                    // 0250
+  yield 4;                                // 0300
+}();                                      // 0350
+it.next(); it.return();                   // 0450
+`,
+[{"start":0,"end":449,"count":1},
+ {"start":11,"end":351,"count":3},
+ {"start":112,"end":254,"count":0},
+ {"start":254,"end":272,"count":1},
+ {"start":272,"end":351,"count":0}]
+);
+
+TestCoverage("yield expressions (.throw and try/catch/finally)",
+`
+const it = function*() {                  // 0000
+  try {                                   // 0050
+    yield 1; yield 2; yield 3;            // 0100
+  } catch (e) {                           // 0150
+    nop();                                // 0200
+  } finally { nop(); }                    // 0250
+  yield 4;                                // 0300
+}();                                      // 0350
+it.next(); it.throw(42);                  // 0550
+`,
+[{"start":0,"end":449,"count":1},
+ {"start":11,"end":351,"count":3},
+ {"start":112,"end":154,"count":0},
+ {"start":154,"end":310,"count":1},
+ {"start":310,"end":351,"count":0}]
+);
+
+TestCoverage(
+"yield* expressions",
+`
+const it = function*() {                  // 0000
+  yield* gen();                           // 0050
+  yield* nop() ? gen() : gen()            // 0100
+  return gen();                           // 0150
+}();                                      // 0200
+it.next(); it.next(); it.next();          // 0250
+it.next(); it.next(); it.next();          // 0300
+`,
+[{"start":0,"end":349,"count":1},
+ {"start":11,"end":201,"count":7},
+ {"start":65,"end":117,"count":1},
+ {"start":117,"end":122,"count":0},
+ {"start":125,"end":130,"count":1},
+ {"start":130,"end":201,"count":0}]
+);
+
+TestCoverage(
+"yield* expressions (.return and .throw)",
+`
+const it0 = function*() {                 // 0000
+  yield* gen(); yield* gen(); yield 3;    // 0050
+}();                                      // 0100
+it0.next(); it0.return();                 // 0150
+try {                                     // 0200
+  const it1 = function*() {               // 0250
+    yield* gen(); yield* gen(); yield 3;  // 0300
+  }();                                    // 0350
+  it1.next(); it1.throw();                // 0400
+} catch (e) {}                            // 0450
+`,
+[{"start":0,"end":499,"count":1},
+ {"start":12,"end":101,"count":3},
+ {"start":65,"end":101,"count":0},
+ {"start":264,"end":353,"count":3},
+ {"start":317,"end":353,"count":0}]
+);
+
+TestCoverage(
+"await expressions",
+`
+async function f() {                      // 0000
+  await 42;                               // 0050
+  await 42;                               // 0100
+};                                        // 0150
+f();                                      // 0200
+%RunMicrotasks();                         // 0250
+`,
+[{"start":0,"end":299,"count":1},
+ {"start":0,"end":151,"count":3},
+ {"start":61,"end":151,"count":1}]
 );
 
 %DebugToggleBlockCoverage(false);

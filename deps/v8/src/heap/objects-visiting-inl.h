@@ -199,9 +199,16 @@ int MarkingVisitor<ConcreteVisitor>::VisitTransitionArray(
   if (array->HasPrototypeTransitions()) {
     visitor->VisitPointer(array, array->GetPrototypeTransitionsSlot());
   }
-  int num_transitions = TransitionArray::NumberOfTransitions(array);
+  int num_transitions = array->number_of_entries();
   for (int i = 0; i < num_transitions; ++i) {
     visitor->VisitPointer(array, array->GetKeySlot(i));
+    // A TransitionArray can hold maps or (transitioning StoreIC) handlers.
+    // Maps have custom weak handling; handlers (which in turn weakly point
+    // to maps) are marked strongly for now, and will be cleared during
+    // compaction when the maps they refer to are dead.
+    if (!array->GetRawTarget(i)->IsMap()) {
+      visitor->VisitPointer(array, array->GetTargetSlot(i));
+    }
   }
   // Enqueue the array in linked list of encountered transition arrays if it is
   // not already in the list.
@@ -219,7 +226,7 @@ int MarkingVisitor<ConcreteVisitor>::VisitWeakCell(Map* map,
   // Enqueue weak cell in linked list of encountered weak collections.
   // We can ignore weak cells with cleared values because they will always
   // contain smi zero.
-  if (weak_cell->next_cleared() && !weak_cell->cleared()) {
+  if (!weak_cell->cleared()) {
     HeapObject* value = HeapObject::cast(weak_cell->value());
     if (ObjectMarking::IsBlackOrGrey<IncrementalMarking::kAtomicity>(
             value, collector_->marking_state(value))) {
@@ -231,9 +238,7 @@ int MarkingVisitor<ConcreteVisitor>::VisitWeakCell(Map* map,
       // If we do not know about liveness of values of weak cells, we have to
       // process them when we know the liveness of the whole transitive
       // closure.
-      weak_cell->set_next(heap_->encountered_weak_cells(),
-                          UPDATE_WEAK_WRITE_BARRIER);
-      heap_->set_encountered_weak_cells(weak_cell);
+      collector_->AddWeakCell(weak_cell);
     }
   }
   return WeakCell::BodyDescriptor::SizeOf(map, weak_cell);

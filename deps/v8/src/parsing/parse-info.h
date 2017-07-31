@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "include/v8.h"
-#include "src/compiler-dispatcher/compiler-dispatcher-job.h"
+#include "src/compiler-dispatcher/unoptimized-compile-job.h"
 #include "src/globals.h"
 #include "src/handles.h"
 #include "src/parsing/preparsed-scope-data.h"
@@ -26,7 +26,6 @@ class AstRawString;
 class AstStringConstants;
 class AstValueFactory;
 class DeclarationScope;
-class DeferredHandles;
 class FunctionLiteral;
 class RuntimeCallStats;
 class ScriptData;
@@ -36,7 +35,7 @@ class Utf16CharacterStream;
 class Zone;
 
 // A container for the inputs, configuration options, and outputs of parsing.
-class V8_EXPORT_PRIVATE ParseInfo : public CompileJobFinishCallback {
+class V8_EXPORT_PRIVATE ParseInfo : public UnoptimizedCompileJobFinishCallback {
  public:
   explicit ParseInfo(AccountingAllocator* zone_allocator);
   ParseInfo(Handle<Script> script);
@@ -52,18 +51,13 @@ class V8_EXPORT_PRIVATE ParseInfo : public CompileJobFinishCallback {
   // creates and returns a new factory if none exists.
   AstValueFactory* GetOrCreateAstValueFactory();
 
-  // Sets this parse info to share the same ast value factory as |other|.
-  void ShareAstValueFactory(ParseInfo* other);
-
   Zone* zone() const { return zone_.get(); }
 
-  std::shared_ptr<Zone> zone_shared() const { return zone_; }
+  // Sets this parse info to share the same zone as |other|
+  void ShareZone(ParseInfo* other);
 
-  void set_deferred_handles(std::shared_ptr<DeferredHandles> deferred_handles);
-  void set_deferred_handles(DeferredHandles* deferred_handles);
-  std::shared_ptr<DeferredHandles> deferred_handles() const {
-    return deferred_handles_;
-  }
+  // Sets this parse info to share the same ast value factory as |other|
+  void ShareAstValueFactory(ParseInfo* other);
 
 // Convenience accessor methods for flags.
 #define FLAG_ACCESSOR(flag, getter, setter)     \

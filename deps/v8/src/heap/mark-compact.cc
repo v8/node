@@ -31,6 +31,7 @@
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/tracing/tracing-category-observer.h"
+#include "src/transitions-inl.h"
 #include "src/utils-inl.h"
 #include "src/v8.h"
 #include "src/v8threads.h"
@@ -349,6 +350,55 @@ class YoungGenerationEvacuationVerifier : public EvacuationVerifier {
 // MarkCompactCollectorBase, MinorMarkCompactCollector, MarkCompactCollector
 // =============================================================================
 
+namespace {
+
+// This root visitor walks all roots and creates items bundling objects that
+// are then processed later on. Slots have to be dereferenced as they could
+// live on the native (C++) stack, which requires filtering out the indirection.
+template <class BatchedItem>
+class RootMarkingVisitorSeedOnly : public RootVisitor {
+ public:
+  explicit RootMarkingVisitorSeedOnly(ItemParallelJob* job) : job_(job) {
+    buffered_objects_.reserve(kBufferSize);
+  }
+
+  void VisitRootPointer(Root root, Object** p) override {
+    if (!(*p)->IsHeapObject()) return;
+    AddObject(*p);
+  }
+
+  void VisitRootPointers(Root root, Object** start, Object** end) override {
+    for (Object** p = start; p < end; p++) {
+      if (!(*p)->IsHeapObject()) continue;
+      AddObject(*p);
+    }
+  }
+
+  void FlushObjects() {
+    job_->AddItem(new BatchedItem(std::move(buffered_objects_)));
+    // Moving leaves the container in a valid but unspecified state. Reusing the
+    // container requires a call without precondition that resets the state.
+    buffered_objects_.clear();
+    buffered_objects_.reserve(kBufferSize);
+  }
+
+ private:
+  // Bundling several objects together in items avoids issues with allocating
+  // and deallocating items; both are operations that are performed on the main
+  // thread.
+  static const int kBufferSize = 128;
+
+  void AddObject(Object* object) {
+    buffered_objects_.push_back(object);
+    if (buffered_objects_.size() == kBufferSize) FlushObjects();
+  }
+
+  ItemParallelJob* job_;
+  std::vector<Object*> buffered_objects_;
+};
+
+}  // namespace
+
 static int NumberOfAvailableCores() {
   return Max(
       1, static_cast<int>(
@@ -422,6 +472,7 @@ void MinorMarkCompactCollector::SetUp() {}
 
 void MarkCompactCollector::TearDown() {
   AbortCompaction();
+  weak_cells_.Clear();
   marking_worklist()->TearDown();
 }
 
@@ -1071,7 +1122,8 @@ class MarkCompactMarkingVisitor final
   // Marks the object black without pushing it on the marking stack. Returns
   // true if object needed marking and false otherwise.
   V8_INLINE bool MarkObjectWithoutPush(HeapObject* host, HeapObject* object) {
-    if (ObjectMarking::WhiteToBlack(object, MarkingState::Internal(object))) {
+    if (ObjectMarking::WhiteToBlack(object,
+                                    collector_->marking_state(object))) {
       if (V8_UNLIKELY(FLAG_track_retaining_path)) {
         heap_->AddRetainer(host, object);
       }
@@ -1110,9 +1162,8 @@ class MarkCompactMarkingVisitor final
   // Visit an unmarked object.
   V8_INLINE void VisitUnmarkedObject(HeapObject* obj) {
     DCHECK(heap_->Contains(obj));
-    if (ObjectMarking::WhiteToBlack(obj, MarkingState::Internal(obj))) {
+    if (ObjectMarking::WhiteToBlack(obj, collector_->marking_state(obj))) {
       Map* map = obj->map();
-      ObjectMarking::WhiteToBlack(obj, MarkingState::Internal(obj));
       // Mark the map pointer and the body.
       collector_->MarkObject(obj, map);
       Visit(map, obj);
@@ -2326,51 +2377,6 @@ class GlobalHandlesMarkingItem : public MarkingItem {
   size_t end_;
 };
 
-// This root visitor walks all roots and creates items bundling objects that
-// are then processed later on. Slots have to be dereferenced as they could
-// live on the native (C++) stack, which requires filtering out the indirection.
-class MinorMarkCompactCollector::RootMarkingVisitorSeedOnly
-    : public RootVisitor {
- public:
-  explicit RootMarkingVisitorSeedOnly(ItemParallelJob* job) : job_(job) {
-    buffered_objects_.reserve(kBufferSize);
-  }
-
-  void VisitRootPointer(Root root, Object** p) override {
-    if (!(*p)->IsHeapObject()) return;
-    AddObject(*p);
-  }
-
-  void VisitRootPointers(Root root, Object** start, Object** end) override {
-    for (Object** p = start; p < end; p++) {
-      if (!(*p)->IsHeapObject()) continue;
-      AddObject(*p);
-    }
-  }
-
-  void FlushObjects() {
-    job_->AddItem(new BatchedRootMarkingItem(std::move(buffered_objects_)));
-    // Moving leaves the container in a valid but unspecified state. Reusing the
-    // container requires a call without precondition that resets the state.
-    buffered_objects_.clear();
-    buffered_objects_.reserve(kBufferSize);
-  }
-
- private:
-  // Bundling several objects together in items avoids issues with allocating
-  // and deallocating items; both are operations that are performed on the main
-  // thread.
-  static const int kBufferSize = 128;
-
-  void AddObject(Object* object) {
-    buffered_objects_.push_back(object);
-    if (buffered_objects_.size() == kBufferSize) FlushObjects();
-  }
-
-  ItemParallelJob* job_;
-  std::vector<Object*> buffered_objects_;
-};
-
 MinorMarkCompactCollector::MinorMarkCompactCollector(Heap* heap)
     : MarkCompactCollectorBase(heap),
       worklist_(new MinorMarkCompactCollector::MarkingWorklist()),
@@ -2418,7 +2424,8 @@ void MinorMarkCompactCollector::MarkRootSetInParallel() {
     {
       TRACE_GC(heap()->tracer(), GCTracer::Scope::MINOR_MC_MARK_SEED);
       // Create batches of roots.
-      RootMarkingVisitorSeedOnly root_seed_visitor(&job);
+      RootMarkingVisitorSeedOnly<BatchedRootMarkingItem> root_seed_visitor(
+          &job);
       heap()->IterateRoots(&root_seed_visitor, VISIT_ALL_IN_MINOR_MC_MARK);
       // Create batches of global handles.
       SeedGlobalHandles<GlobalHandlesMarkingItem>(isolate()->global_handles(),
@@ -2778,16 +2785,13 @@ void MarkCompactCollector::ClearNonLiveReferences() {
     heap()->ProcessAllWeakReferences(&mark_compact_object_retainer);
   }
 
-  DependentCode* dependent_code_list;
-  Object* non_live_map_list;
-  ClearWeakCells(&non_live_map_list, &dependent_code_list);
-
   {
     TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_CLEAR_MAPS);
-    ClearSimpleMapTransitions(non_live_map_list);
+    // ClearFullMapTransitions must be called before WeakCells are cleared.
     ClearFullMapTransitions();
   }
-
+  DependentCode* dependent_code_list;
+  ClearWeakCellsAndSimpleMapTransitions(&dependent_code_list);
   MarkDependentCodeForDeoptimization(dependent_code_list);
 
   ClearWeakCollections();
@@ -2854,40 +2858,29 @@ void MarkCompactCollector::MarkDependentCodeForDeoptimization(
   }
 }
 
-
-void MarkCompactCollector::ClearSimpleMapTransitions(
-    Object* non_live_map_list) {
-  Object* the_hole_value = heap()->the_hole_value();
-  Object* weak_cell_obj = non_live_map_list;
-  while (weak_cell_obj != Smi::kZero) {
-    WeakCell* weak_cell = WeakCell::cast(weak_cell_obj);
-    Map* map = Map::cast(weak_cell->value());
-    DCHECK(ObjectMarking::IsWhite(map, MarkingState::Internal(map)));
-    Object* potential_parent = map->constructor_or_backpointer();
-    if (potential_parent->IsMap()) {
-      Map* parent = Map::cast(potential_parent);
-      if (ObjectMarking::IsBlackOrGrey(parent,
-                                       MarkingState::Internal(parent)) &&
-          parent->raw_transitions() == weak_cell) {
-        ClearSimpleMapTransition(parent, map);
-      }
+void MarkCompactCollector::ClearSimpleMapTransition(
+    WeakCell* potential_transition, Map* dead_target) {
+  DCHECK(ObjectMarking::IsWhite(dead_target, marking_state(dead_target)));
+  Object* potential_parent = dead_target->constructor_or_backpointer();
+  if (potential_parent->IsMap()) {
+    Map* parent = Map::cast(potential_parent);
+    DisallowHeapAllocation no_gc_obviously;
+    if (ObjectMarking::IsBlackOrGrey(parent, marking_state(parent)) &&
+        TransitionsAccessor(parent, &no_gc_obviously)
+            .HasSimpleTransitionTo(potential_transition)) {
+      ClearSimpleMapTransition(parent, dead_target);
     }
-    weak_cell->clear();
-    weak_cell_obj = weak_cell->next();
-    weak_cell->clear_next(the_hole_value);
   }
 }
 
-
 void MarkCompactCollector::ClearSimpleMapTransition(Map* map,
-                                                    Map* dead_transition) {
-  // A previously existing simple transition (stored in a WeakCell) is going
-  // to be cleared. Clear the useless cell pointer, and take ownership
-  // of the descriptor array.
+                                                    Map* dead_target) {
+  // Clear the useless weak cell pointer, and take ownership of the descriptor
+  // array.
   map->set_raw_transitions(Smi::kZero);
   int number_of_own_descriptors = map->NumberOfOwnDescriptors();
   DescriptorArray* descriptors = map->instance_descriptors();
-  if (descriptors == dead_transition->instance_descriptors() &&
+  if (descriptors == dead_target->instance_descriptors() &&
       number_of_own_descriptors > 0) {
     TrimDescriptorArray(map, descriptors);
     DCHECK(descriptors->number_of_descriptors() == number_of_own_descriptors);
@@ -2895,16 +2888,15 @@ void MarkCompactCollector::ClearSimpleMapTransition(Map* map,
   }
 }
 
-
 void MarkCompactCollector::ClearFullMapTransitions() {
   HeapObject* undefined = heap()->undefined_value();
   Object* obj = heap()->encountered_transition_arrays();
   while (obj != Smi::kZero) {
     TransitionArray* array = TransitionArray::cast(obj);
     int num_transitions = array->number_of_entries();
-    DCHECK_EQ(TransitionArray::NumberOfTransitions(array), num_transitions);
     if (num_transitions > 0) {
       Map* map = array->GetTarget(0);
+      DCHECK_NOT_NULL(map);  // WeakCells aren't cleared yet.
       Map* parent = Map::cast(map->constructor_or_backpointer());
       bool parent_is_alive =
           ObjectMarking::IsBlackOrGrey(parent, MarkingState::Internal(parent));
@@ -2921,7 +2913,6 @@ void MarkCompactCollector::ClearFullMapTransitions() {
   }
   heap()->set_encountered_transition_arrays(Smi::kZero);
 }
-
 
 bool MarkCompactCollector::CompactTransitionArray(
     Map* map, TransitionArray* transitions, DescriptorArray* descriptors) {
@@ -2943,8 +2934,14 @@ bool MarkCompactCollector::CompactTransitionArray(
         transitions->SetKey(transition_index, key);
         Object** key_slot = transitions->GetKeySlot(transition_index);
         RecordSlot(transitions, key_slot, key);
-        // Target slots do not need to be recorded since maps are not compacted.
-        transitions->SetTarget(transition_index, transitions->GetTarget(i));
+        Object* raw_target = transitions->GetRawTarget(i);
+        transitions->SetTarget(transition_index, raw_target);
+        // Maps are not compacted, but for cached handlers the target slot
+        // must be recorded.
+        if (!raw_target->IsMap()) {
+          Object** target_slot = transitions->GetTargetSlot(transition_index);
+          RecordSlot(transitions, target_slot, raw_target);
+        }
       }
       transition_index++;
     }
@@ -2958,7 +2955,7 @@ bool MarkCompactCollector::CompactTransitionArray(
   // such that number_of_transitions() == 0. If this assumption changes,
   // TransitionArray::Insert() will need to deal with the case that a transition
   // array disappeared during GC.
-  int trim = TransitionArray::Capacity(transitions) - transition_index;
+  int trim = transitions->Capacity() - transition_index;
   if (trim > 0) {
     heap_->RightTrimFixedArray(transitions,
                                trim * TransitionArray::kTransitionSize);
@@ -3081,25 +3078,18 @@ void MarkCompactCollector::AbortWeakCollections() {
   heap()->set_encountered_weak_collections(Smi::kZero);
 }
 
-
-void MarkCompactCollector::ClearWeakCells(Object** non_live_map_list,
-                                          DependentCode** dependent_code_list) {
+void MarkCompactCollector::ClearWeakCellsAndSimpleMapTransitions(
+    DependentCode** dependent_code_list) {
   Heap* heap = this->heap();
   TRACE_GC(heap->tracer(), GCTracer::Scope::MC_CLEAR_WEAK_CELLS);
-  Object* weak_cell_obj = heap->encountered_weak_cells();
-  Object* the_hole_value = heap->the_hole_value();
   DependentCode* dependent_code_head =
       DependentCode::cast(heap->empty_fixed_array());
-  Object* non_live_map_head = Smi::kZero;
-  while (weak_cell_obj != Smi::kZero) {
-    WeakCell* weak_cell = reinterpret_cast<WeakCell*>(weak_cell_obj);
-    Object* next_weak_cell = weak_cell->next();
-    bool clear_value = true;
-    bool clear_next = true;
+  WeakCell* weak_cell;
+  while (weak_cells_.Pop(kMainThread, &weak_cell)) {
     // We do not insert cleared weak cells into the list, so the value
     // cannot be a Smi here.
     HeapObject* value = HeapObject::cast(weak_cell->value());
-    if (!ObjectMarking::IsBlackOrGrey(value, MarkingState::Internal(value))) {
+    if (!ObjectMarking::IsBlackOrGrey(value, marking_state(value))) {
       // Cells for new-space objects embedded in optimized code are wrapped in
       // WeakCell and put into Heap::weak_object_to_code_table.
       // Such cells do not have any strong references but we want to keep them
@@ -3117,10 +3107,10 @@ void MarkCompactCollector::ClearWeakCells(Object** non_live_map_list,
           RecordSlot(value, slot, *slot);
           slot = HeapObject::RawField(weak_cell, WeakCell::kValueOffset);
           RecordSlot(weak_cell, slot, *slot);
-          clear_value = false;
+        } else {
+          weak_cell->clear();
         }
-      }
-      if (value->IsMap()) {
+      } else if (value->IsMap()) {
         // The map is non-live.
         Map* map = Map::cast(value);
         // Add dependent code to the dependent_code_list.
@@ -3132,43 +3122,22 @@ void MarkCompactCollector::ClearWeakCells(Object** non_live_map_list,
           candidate->set_next_link(dependent_code_head);
           dependent_code_head = candidate;
         }
-        // Add the weak cell to the non_live_map list.
-        weak_cell->set_next(non_live_map_head);
-        non_live_map_head = weak_cell;
-        clear_value = false;
-        clear_next = false;
+        ClearSimpleMapTransition(weak_cell, map);
+        weak_cell->clear();
+      } else {
+        // All other objects.
+        weak_cell->clear();
       }
     } else {
       // The value of the weak cell is alive.
       Object** slot = HeapObject::RawField(weak_cell, WeakCell::kValueOffset);
       RecordSlot(weak_cell, slot, *slot);
-      clear_value = false;
     }
-    if (clear_value) {
-      weak_cell->clear();
-    }
-    if (clear_next) {
-      weak_cell->clear_next(the_hole_value);
-    }
-    weak_cell_obj = next_weak_cell;
   }
-  heap->set_encountered_weak_cells(Smi::kZero);
-  *non_live_map_list = non_live_map_head;
   *dependent_code_list = dependent_code_head;
 }
 
-
-void MarkCompactCollector::AbortWeakCells() {
-  Object* the_hole_value = heap()->the_hole_value();
-  Object* weak_cell_obj = heap()->encountered_weak_cells();
-  while (weak_cell_obj != Smi::kZero) {
-    WeakCell* weak_cell = reinterpret_cast<WeakCell*>(weak_cell_obj);
-    weak_cell_obj = weak_cell->next();
-    weak_cell->clear_next(the_hole_value);
-  }
-  heap()->set_encountered_weak_cells(Smi::kZero);
-}
-
+void MarkCompactCollector::AbortWeakCells() { weak_cells_.Clear(); }
 
 void MarkCompactCollector::AbortTransitionArrays() {
   HeapObject* undefined = heap()->undefined_value();

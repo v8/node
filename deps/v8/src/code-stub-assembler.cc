@@ -1367,6 +1367,19 @@ Node* CodeStubAssembler::LoadFixedTypedArrayElementAsTagged(
   }
 }
 
+Node* CodeStubAssembler::LoadFeedbackVectorSlot(Node* object,
+                                                Node* slot_index_node,
+                                                int additional_offset,
+                                                ParameterMode parameter_mode) {
+  CSA_SLOW_ASSERT(this, IsFeedbackVector(object));
+  CSA_SLOW_ASSERT(this, MatchesParameterMode(slot_index_node, parameter_mode));
+  int32_t header_size =
+      FeedbackVector::kFeedbackSlotsOffset + additional_offset - kHeapObjectTag;
+  Node* offset = ElementOffsetFromIndex(slot_index_node, HOLEY_ELEMENTS,
+                                        parameter_mode, header_size);
+  return Load(MachineType::AnyTagged(), object, offset);
+}
+
 Node* CodeStubAssembler::LoadAndUntagToWord32FixedArrayElement(
     Node* object, Node* index_node, int additional_offset,
     ParameterMode parameter_mode) {
@@ -1597,6 +1610,28 @@ Node* CodeStubAssembler::StoreFixedDoubleArrayElement(
                              FixedArray::kHeaderSize - kHeapObjectTag);
   MachineRepresentation rep = MachineRepresentation::kFloat64;
   return StoreNoWriteBarrier(rep, object, offset, value);
+}
+
+Node* CodeStubAssembler::StoreFeedbackVectorSlot(Node* object,
+                                                 Node* slot_index_node,
+                                                 Node* value,
+                                                 WriteBarrierMode barrier_mode,
+                                                 int additional_offset,
+                                                 ParameterMode parameter_mode) {
+  CSA_SLOW_ASSERT(this, IsFeedbackVector(object));
+  CSA_SLOW_ASSERT(this, MatchesParameterMode(slot_index_node, parameter_mode));
+  DCHECK(barrier_mode == SKIP_WRITE_BARRIER ||
+         barrier_mode == UPDATE_WRITE_BARRIER);
+  int header_size =
+      FeedbackVector::kFeedbackSlotsOffset + additional_offset - kHeapObjectTag;
+  Node* offset = ElementOffsetFromIndex(slot_index_node, HOLEY_ELEMENTS,
+                                        parameter_mode, header_size);
+  if (barrier_mode == SKIP_WRITE_BARRIER) {
+    return StoreNoWriteBarrier(MachineRepresentation::kTagged, object, offset,
+                               value);
+  } else {
+    return Store(object, offset, value);
+  }
 }
 
 void CodeStubAssembler::EnsureArrayLengthWritable(Node* map, Label* bailout) {
@@ -2304,7 +2339,15 @@ CodeStubAssembler::AllocateUninitializedJSArrayWithElements(
 
   Node* elements = InnerAllocate(array, elements_offset);
   StoreObjectFieldNoWriteBarrier(array, JSObject::kElementsOffset, elements);
-
+  // Setup elements object.
+  STATIC_ASSERT(FixedArrayBase::kHeaderSize == 2 * kPointerSize);
+  Heap::RootListIndex elements_map_index =
+      IsDoubleElementsKind(kind) ? Heap::kFixedDoubleArrayMapRootIndex
+                                 : Heap::kFixedArrayMapRootIndex;
+  DCHECK(Heap::RootIsImmortalImmovable(elements_map_index));
+  StoreMapNoWriteBarrier(elements, elements_map_index);
+  StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset,
+                                 ParameterToTagged(capacity, capacity_mode));
   return {array, elements};
 }
 
@@ -2354,14 +2397,6 @@ Node* CodeStubAssembler::AllocateJSArray(ElementsKind kind, Node* array_map,
     // Allocate both array and elements object, and initialize the JSArray.
     std::tie(array, elements) = AllocateUninitializedJSArrayWithElements(
         kind, array_map, length, allocation_site, capacity, capacity_mode);
-    // Setup elements object.
-    Heap::RootListIndex elements_map_index =
-        IsDoubleElementsKind(kind) ? Heap::kFixedDoubleArrayMapRootIndex
-                                   : Heap::kFixedArrayMapRootIndex;
-    DCHECK(Heap::RootIsImmortalImmovable(elements_map_index));
-    StoreMapNoWriteBarrier(elements, elements_map_index);
-    StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset,
-                                   ParameterToTagged(capacity, capacity_mode));
     // Fill in the elements with holes.
     FillFixedArrayWithValue(kind, elements,
                             IntPtrOrSmiConstant(0, capacity_mode), capacity,
@@ -3368,6 +3403,13 @@ Node* CodeStubAssembler::IsDeprecatedMap(Node* map) {
 Node* CodeStubAssembler::IsUndetectableMap(Node* map) {
   CSA_ASSERT(this, IsMap(map));
   return IsSetWord32(LoadMapBitField(map), 1 << Map::kIsUndetectable);
+}
+
+Node* CodeStubAssembler::IsArrayProtectorCellInvalid() {
+  Node* invalid = SmiConstant(Isolate::kProtectorInvalid);
+  Node* cell = LoadRoot(Heap::kArrayProtectorRootIndex);
+  Node* cell_value = LoadObjectField(cell, PropertyCell::kValueOffset);
+  return WordEqual(cell_value, invalid);
 }
 
 Node* CodeStubAssembler::IsCallable(Node* object) {
@@ -6398,37 +6440,22 @@ Node* CodeStubAssembler::LoadFeedbackVectorForStub() {
   return LoadFeedbackVector(function);
 }
 
-Node* CodeStubAssembler::LoadFeedbackVectorSlot(Node* closure,
-                                                Node* smi_index) {
-  Node* feedback_vector = LoadFeedbackVector(closure);
-  return LoadFixedArrayElement(feedback_vector, smi_index, 0,
-                               CodeStubAssembler::SMI_PARAMETERS);
-}
-
-void CodeStubAssembler::StoreFeedbackVectorSlot(Node* closure, Node* smi_index,
-                                                Node* value) {
-  Node* feedback_vector = LoadFeedbackVector(closure);
-  StoreFixedArrayElement(feedback_vector, smi_index, value,
-                         UPDATE_WRITE_BARRIER, 0,
-                         CodeStubAssembler::SMI_PARAMETERS);
-}
-
 void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
                                        Node* slot_id, Node* function) {
   // This method is used for binary op and compare feedback. These
   // vector nodes are initialized with a smi 0, so we can simply OR
   // our new feedback in place.
-  Node* previous_feedback = LoadFixedArrayElement(feedback_vector, slot_id);
+  Node* previous_feedback = LoadFeedbackVectorSlot(feedback_vector, slot_id);
   Node* combined_feedback = SmiOr(previous_feedback, feedback);
   Label end(this);
 
   GotoIf(SmiEqual(previous_feedback, combined_feedback), &end);
   {
-    StoreFixedArrayElement(feedback_vector, slot_id, combined_feedback,
-                           SKIP_WRITE_BARRIER);
+    StoreFeedbackVectorSlot(feedback_vector, slot_id, combined_feedback,
+                            SKIP_WRITE_BARRIER);
     // Reset profiler ticks.
-    StoreFixedArrayElement(feedback_vector, FeedbackVector::kProfilerTicksIndex,
-                           SmiConstant(0), SKIP_WRITE_BARRIER);
+    StoreObjectFieldNoWriteBarrier(
+        feedback_vector, FeedbackVector::kProfilerTicksOffset, SmiConstant(0));
     Goto(&end);
   }
 
@@ -7050,8 +7077,8 @@ Node* CodeStubAssembler::CreateAllocationSiteInFeedbackVector(
   StoreObjectField(site, AllocationSite::kWeakNextOffset, next_site);
   StoreNoWriteBarrier(MachineRepresentation::kTagged, site_list, site);
 
-  StoreFixedArrayElement(feedback_vector, slot, site, UPDATE_WRITE_BARRIER, 0,
-                         CodeStubAssembler::SMI_PARAMETERS);
+  StoreFeedbackVectorSlot(feedback_vector, slot, site, UPDATE_WRITE_BARRIER, 0,
+                          CodeStubAssembler::SMI_PARAMETERS);
   return site;
 }
 
@@ -7065,12 +7092,10 @@ Node* CodeStubAssembler::CreateWeakCellInFeedbackVector(Node* feedback_vector,
   DCHECK(Heap::RootIsImmortalImmovable(Heap::kWeakCellMapRootIndex));
   StoreMapNoWriteBarrier(cell, Heap::kWeakCellMapRootIndex);
   StoreObjectField(cell, WeakCell::kValueOffset, value);
-  StoreObjectFieldRoot(cell, WeakCell::kNextOffset,
-                       Heap::kTheHoleValueRootIndex);
 
   // Store the WeakCell in the feedback vector.
-  StoreFixedArrayElement(feedback_vector, slot, cell, UPDATE_WRITE_BARRIER, 0,
-                         CodeStubAssembler::SMI_PARAMETERS);
+  StoreFeedbackVectorSlot(feedback_vector, slot, cell, UPDATE_WRITE_BARRIER, 0,
+                          CodeStubAssembler::SMI_PARAMETERS);
   return cell;
 }
 

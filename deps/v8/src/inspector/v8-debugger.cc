@@ -25,10 +25,6 @@ namespace {
 
 static const int kMaxAsyncTaskStacks = 128 * 1024;
 
-inline v8::Local<v8::Boolean> v8Boolean(bool value, v8::Isolate* isolate) {
-  return value ? v8::True(isolate) : v8::False(isolate);
-}
-
 v8::MaybeLocal<v8::Array> collectionsEntries(v8::Local<v8::Context> context,
                                              v8::Local<v8::Value> value) {
   v8::Isolate* isolate = context->GetIsolate();
@@ -134,9 +130,32 @@ void cleanupExpiredWeakPointers(Map& map) {
   }
 }
 
-}  // namespace
+String16 scopeType(v8::debug::ScopeIterator::ScopeType type) {
+  switch (type) {
+    case v8::debug::ScopeIterator::ScopeTypeGlobal:
+      return protocol::Debugger::Scope::TypeEnum::Global;
+    case v8::debug::ScopeIterator::ScopeTypeLocal:
+      return protocol::Debugger::Scope::TypeEnum::Local;
+    case v8::debug::ScopeIterator::ScopeTypeWith:
+      return protocol::Debugger::Scope::TypeEnum::With;
+    case v8::debug::ScopeIterator::ScopeTypeClosure:
+      return protocol::Debugger::Scope::TypeEnum::Closure;
+    case v8::debug::ScopeIterator::ScopeTypeCatch:
+      return protocol::Debugger::Scope::TypeEnum::Catch;
+    case v8::debug::ScopeIterator::ScopeTypeBlock:
+      return protocol::Debugger::Scope::TypeEnum::Block;
+    case v8::debug::ScopeIterator::ScopeTypeScript:
+      return protocol::Debugger::Scope::TypeEnum::Script;
+    case v8::debug::ScopeIterator::ScopeTypeEval:
+      return protocol::Debugger::Scope::TypeEnum::Eval;
+    case v8::debug::ScopeIterator::ScopeTypeModule:
+      return protocol::Debugger::Scope::TypeEnum::Module;
+  }
+  UNREACHABLE();
+  return String16();
+}
 
-static bool inLiveEditScope = false;
+}  // namespace
 
 v8::MaybeLocal<v8::Value> V8Debugger::callDebuggerMethod(
     const char* functionName, int argc, v8::Local<v8::Value> argv[],
@@ -474,127 +493,6 @@ void V8Debugger::clearContinueToLocation() {
   m_continueToLocationStack.reset();
 }
 
-Response V8Debugger::setScriptSource(
-    const String16& sourceID, v8::Local<v8::String> newSource, bool dryRun,
-    Maybe<protocol::Runtime::ExceptionDetails>* exceptionDetails,
-    JavaScriptCallFrames* newCallFrames, Maybe<bool>* stackChanged,
-    bool* compileError) {
-  class EnableLiveEditScope {
-   public:
-    explicit EnableLiveEditScope(v8::Isolate* isolate) : m_isolate(isolate) {
-      v8::debug::SetLiveEditEnabled(m_isolate, true);
-      inLiveEditScope = true;
-    }
-    ~EnableLiveEditScope() {
-      v8::debug::SetLiveEditEnabled(m_isolate, false);
-      inLiveEditScope = false;
-    }
-
-   private:
-    v8::Isolate* m_isolate;
-  };
-
-  *compileError = false;
-  DCHECK(enabled());
-  v8::HandleScope scope(m_isolate);
-
-  std::unique_ptr<v8::Context::Scope> contextScope;
-  if (!isPaused())
-    contextScope.reset(new v8::Context::Scope(debuggerContext()));
-
-  v8::Local<v8::Value> argv[] = {toV8String(m_isolate, sourceID), newSource,
-                                 v8Boolean(dryRun, m_isolate)};
-
-  v8::Local<v8::Value> v8result;
-  {
-    EnableLiveEditScope enableLiveEditScope(m_isolate);
-    v8::TryCatch tryCatch(m_isolate);
-    tryCatch.SetVerbose(false);
-    v8::MaybeLocal<v8::Value> maybeResult =
-        callDebuggerMethod("liveEditScriptSource", 3, argv, false);
-    if (tryCatch.HasCaught()) {
-      v8::Local<v8::Message> message = tryCatch.Message();
-      if (!message.IsEmpty())
-        return Response::Error(toProtocolStringWithTypeCheck(message->Get()));
-      else
-        return Response::InternalError();
-    }
-    v8result = maybeResult.ToLocalChecked();
-  }
-  DCHECK(!v8result.IsEmpty());
-  v8::Local<v8::Context> context = m_isolate->GetCurrentContext();
-  v8::Local<v8::Object> resultTuple =
-      v8result->ToObject(context).ToLocalChecked();
-  int code = static_cast<int>(resultTuple->Get(context, 0)
-                                  .ToLocalChecked()
-                                  ->ToInteger(context)
-                                  .ToLocalChecked()
-                                  ->Value());
-  switch (code) {
-    case 0: {
-      *stackChanged = resultTuple->Get(context, 1)
-                          .ToLocalChecked()
-                          ->BooleanValue(context)
-                          .FromJust();
-      // Call stack may have changed after if the edited function was on the
-      // stack.
-      if (!dryRun && isPaused()) {
-        JavaScriptCallFrames frames = currentCallFrames();
-        newCallFrames->swap(frames);
-      }
-      return Response::OK();
-    }
-    // Compile error.
-    case 1: {
-      *exceptionDetails =
-          protocol::Runtime::ExceptionDetails::create()
-              .setExceptionId(m_inspector->nextExceptionId())
-              .setText(toProtocolStringWithTypeCheck(
-                  resultTuple->Get(context, 2).ToLocalChecked()))
-              .setLineNumber(static_cast<int>(resultTuple->Get(context, 3)
-                                                  .ToLocalChecked()
-                                                  ->ToInteger(context)
-                                                  .ToLocalChecked()
-                                                  ->Value()) -
-                             1)
-              .setColumnNumber(static_cast<int>(resultTuple->Get(context, 4)
-                                                    .ToLocalChecked()
-                                                    ->ToInteger(context)
-                                                    .ToLocalChecked()
-                                                    ->Value()) -
-                               1)
-              .build();
-      *compileError = true;
-      return Response::OK();
-    }
-  }
-  return Response::InternalError();
-}
-
-JavaScriptCallFrames V8Debugger::currentCallFrames(int limit) {
-  if (!isPaused()) return JavaScriptCallFrames();
-  v8::Local<v8::Value> currentCallFramesV8;
-  v8::Local<v8::Value> argv[] = {m_executionState,
-                                 v8::Integer::New(m_isolate, limit)};
-  if (!callDebuggerMethod("currentCallFrames", arraysize(argv), argv, true)
-           .ToLocal(&currentCallFramesV8)) {
-    return JavaScriptCallFrames();
-  }
-  if (!currentCallFramesV8->IsArray()) return JavaScriptCallFrames();
-  v8::Local<v8::Array> callFramesArray = currentCallFramesV8.As<v8::Array>();
-  JavaScriptCallFrames callFrames;
-  for (uint32_t i = 0; i < callFramesArray->Length(); ++i) {
-    v8::Local<v8::Value> callFrameValue;
-    if (!callFramesArray->Get(debuggerContext(), i).ToLocal(&callFrameValue))
-      return JavaScriptCallFrames();
-    if (!callFrameValue->IsObject()) return JavaScriptCallFrames();
-    v8::Local<v8::Object> callFrameObject = callFrameValue.As<v8::Object>();
-    callFrames.push_back(JavaScriptCallFrame::create(
-        debuggerContext(), v8::Local<v8::Object>::Cast(callFrameObject)));
-  }
-  return callFrames;
-}
-
 void V8Debugger::handleProgramBreak(v8::Local<v8::Context> pausedContext,
                                     v8::Local<v8::Object> executionState,
                                     v8::Local<v8::Value> exception,
@@ -693,7 +591,7 @@ void V8Debugger::v8OOMCallback(void* data) {
 }
 
 void V8Debugger::ScriptCompiled(v8::Local<v8::debug::Script> script,
-                                bool has_compile_error) {
+                                bool is_live_edited, bool has_compile_error) {
   int contextId;
   if (!script->ContextId().To(&contextId)) return;
   if (script->IsWasm()) {
@@ -709,11 +607,11 @@ void V8Debugger::ScriptCompiled(v8::Local<v8::debug::Script> script,
     v8::Isolate* isolate = m_isolate;
     m_inspector->forEachSession(
         m_inspector->contextGroupId(contextId),
-        [&isolate, &script,
-         &has_compile_error](V8InspectorSessionImpl* session) {
+        [&isolate, &script, &has_compile_error,
+         &is_live_edited](V8InspectorSessionImpl* session) {
           if (!session->debuggerAgent()->enabled()) return;
           session->debuggerAgent()->didParseSource(
-              V8DebuggerScript::Create(isolate, script, inLiveEditScope),
+              V8DebuggerScript::Create(isolate, script, is_live_edited),
               !has_compile_error);
         });
   }
@@ -843,34 +741,54 @@ v8::MaybeLocal<v8::Value> V8Debugger::getTargetScopes(
   if (!enabled()) {
     UNREACHABLE();
   }
-  v8::Local<v8::Value> argv[] = {value};
   v8::Local<v8::Value> scopesValue;
-
-  const char* debuggerMethod = nullptr;
+  std::unique_ptr<v8::debug::ScopeIterator> iterator;
   switch (kind) {
     case FUNCTION:
-      debuggerMethod = "getFunctionScopes";
+      iterator = v8::debug::ScopeIterator::CreateForFunction(
+          m_isolate, v8::Local<v8::Function>::Cast(value));
       break;
     case GENERATOR:
-      debuggerMethod = "getGeneratorScopes";
+      v8::Local<v8::debug::GeneratorObject> generatorObject =
+          v8::debug::GeneratorObject::Cast(value);
+      if (!generatorObject->IsSuspended()) return v8::MaybeLocal<v8::Value>();
+
+      iterator = v8::debug::ScopeIterator::CreateForGeneratorObject(
+          m_isolate, v8::Local<v8::Object>::Cast(value));
       break;
   }
 
-  if (!callDebuggerMethod(debuggerMethod, 1, argv, true).ToLocal(&scopesValue))
+  v8::Local<v8::Array> result = v8::Array::New(m_isolate);
+  if (!result->SetPrototype(context, v8::Null(m_isolate)).FromMaybe(false)) {
     return v8::MaybeLocal<v8::Value>();
-  v8::Local<v8::Value> copied;
-  if (!copyValueFromDebuggerContext(m_isolate, debuggerContext(), context,
-                                    scopesValue)
-           .ToLocal(&copied) ||
-      !copied->IsArray())
-    return v8::MaybeLocal<v8::Value>();
-  if (!markAsInternal(context, v8::Local<v8::Array>::Cast(copied),
+  }
+
+  for (; !iterator->Done(); iterator->Advance()) {
+    v8::Local<v8::Object> scope = v8::Object::New(m_isolate);
+    if (!markAsInternal(context, scope, V8InternalValueType::kScope)) {
+      return v8::MaybeLocal<v8::Value>();
+    }
+    String16 type = scopeType(iterator->GetType());
+    String16 name;
+    v8::Local<v8::Function> closure = iterator->GetFunction();
+    if (!closure.IsEmpty()) {
+      name = toProtocolStringWithTypeCheck(closure->GetDebugName());
+    }
+    v8::Local<v8::Object> object = iterator->GetObject();
+    createDataProperty(context, scope,
+                       toV8StringInternalized(m_isolate, "type"),
+                       toV8String(m_isolate, type));
+    createDataProperty(context, scope,
+                       toV8StringInternalized(m_isolate, "name"),
+                       toV8String(m_isolate, name));
+    createDataProperty(context, scope,
+                       toV8StringInternalized(m_isolate, "object"), object);
+    createDataProperty(context, result, result->Length(), scope);
+  }
+  if (!markAsInternal(context, v8::Local<v8::Array>::Cast(result),
                       V8InternalValueType::kScopeList))
     return v8::MaybeLocal<v8::Value>();
-  if (!markArrayEntriesAsInternal(context, v8::Local<v8::Array>::Cast(copied),
-                                  V8InternalValueType::kScope))
-    return v8::MaybeLocal<v8::Value>();
-  return copied;
+  return result;
 }
 
 v8::MaybeLocal<v8::Value> V8Debugger::functionScopes(

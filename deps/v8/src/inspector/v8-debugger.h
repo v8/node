@@ -10,7 +10,6 @@
 
 #include "src/base/macros.h"
 #include "src/debug/debug-interface.h"
-#include "src/inspector/java-script-call-frame.h"
 #include "src/inspector/protocol/Debugger.h"
 #include "src/inspector/protocol/Forward.h"
 #include "src/inspector/protocol/Runtime.h"
@@ -64,13 +63,6 @@ class V8Debugger : public v8::debug::DebugDelegate {
   Response continueToLocation(int targetContextGroupId,
                               std::unique_ptr<protocol::Debugger::Location>,
                               const String16& targetCallFramess);
-
-  Response setScriptSource(
-      const String16& sourceID, v8::Local<v8::String> newSource, bool dryRun,
-      protocol::Maybe<protocol::Runtime::ExceptionDetails>*,
-      JavaScriptCallFrames* newCallFrames, protocol::Maybe<bool>* stackChanged,
-      bool* compileError);
-  JavaScriptCallFrames currentCallFrames(int limit = 0);
 
   // Each script inherits debug data from v8::Context where it has been
   // compiled.
@@ -164,7 +156,7 @@ class V8Debugger : public v8::debug::DebugDelegate {
   // v8::debug::DebugEventListener implementation.
   void PromiseEventOccurred(v8::debug::PromiseDebugActionType type, int id,
                             int parentId, bool createdByUser) override;
-  void ScriptCompiled(v8::Local<v8::debug::Script> script,
+  void ScriptCompiled(v8::Local<v8::debug::Script> script, bool is_live_edited,
                       bool has_compile_error) override;
   void BreakProgramRequested(v8::Local<v8::Context> paused_context,
                              v8::Local<v8::Object> exec_state,

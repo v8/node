@@ -2098,8 +2098,8 @@ Module::Status Module::GetStatus() const {
   i::Handle<i::Module> self = Utils::OpenHandle(this);
   switch (self->status()) {
     case i::Module::kUninstantiated:
-      return kUninstantiated;
     case i::Module::kPreInstantiating:
+      return kUninstantiated;
     case i::Module::kInstantiating:
       return kInstantiating;
     case i::Module::kInstantiated:
@@ -2533,15 +2533,7 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
   }
   source->parser->UpdateStatistics(isolate, script);
   source->info->UpdateStatisticsAfterBackgroundParse(isolate);
-
-  i::DeferredHandleScope deferred_handle_scope(isolate);
-  {
-    // Internalize AST values on the main thread.
-    source->info->ReopenHandlesInNewHandleScope();
-    source->info->ast_value_factory()->Internalize(isolate);
-    source->parser->HandleSourceURLComments(isolate, script);
-  }
-  source->info->set_deferred_handles(deferred_handle_scope.Detach());
+  source->parser->HandleSourceURLComments(isolate, script);
 
   i::Handle<i::SharedFunctionInfo> result;
   if (source->info->literal() != nullptr) {
@@ -7814,9 +7806,20 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Compile(Isolate* isolate,
 }
 
 WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
-    Isolate* isolate, Local<Promise> promise)
+    Isolate* isolate)
     : isolate_(isolate) {
-  promise_.Reset(isolate, promise);
+  MaybeLocal<Promise::Resolver> maybe_promise =
+      Promise::Resolver::New(isolate->GetCurrentContext());
+  Local<Promise::Resolver> promise;
+  if (maybe_promise.ToLocal(&promise)) {
+    promise_.Reset(isolate, promise->GetPromise());
+  } else {
+    UNREACHABLE();
+  }
+}
+
+Local<Promise> WasmModuleObjectBuilderStreaming::GetPromise() {
+  return promise_.Get(isolate_);
 }
 
 void WasmModuleObjectBuilderStreaming::OnBytesReceived(const uint8_t* bytes,
@@ -7854,6 +7857,10 @@ void WasmModuleObjectBuilderStreaming::Abort(Local<Value> exception) {
   Local<Context> context = Utils::ToLocal(handle(i_isolate->context()));
   auto maybe = resolver->Reject(context, exception);
   CHECK_IMPLIES(!maybe.FromMaybe(false), i_isolate->has_scheduled_exception());
+}
+
+WasmModuleObjectBuilderStreaming::~WasmModuleObjectBuilderStreaming() {
+  promise_.Reset();
 }
 
 void WasmModuleObjectBuilder::OnBytesReceived(const uint8_t* bytes,
@@ -9654,13 +9661,17 @@ int debug::Script::GetSourceOffset(const debug::Location& location) const {
 
 v8::debug::Location debug::Script::GetSourceLocation(int offset) const {
   i::Handle<i::Script> script = Utils::OpenHandle(this);
-  if (script->type() == i::Script::TYPE_WASM) {
-    // TODO(clemensh): Return the proper thing for wasm.
-    return v8::debug::Location();
-  }
   i::Script::PositionInfo info;
   i::Script::GetPositionInfo(script, offset, &info, i::Script::WITH_OFFSET);
   return debug::Location(info.line, info.column);
+}
+
+bool debug::Script::SetScriptSource(v8::Local<v8::String> newSource,
+                                    bool preview, bool* stack_changed) const {
+  i::Handle<i::Script> script = Utils::OpenHandle(this);
+  i::Isolate* isolate = script->GetIsolate();
+  return isolate->debug()->SetScriptSource(
+      script, Utils::OpenHandle(*newSource), preview, stack_changed);
 }
 
 debug::WasmScript* debug::WasmScript::Cast(debug::Script* script) {
@@ -9736,7 +9747,8 @@ int debug::Location::GetColumnNumber() const {
 }
 
 bool debug::Location::IsEmpty() const {
-  return line_number_ == -1 && column_number_ == -1;
+  return line_number_ == v8::Function::kLineOffsetNotFound &&
+         column_number_ == v8::Function::kLineOffsetNotFound;
 }
 
 void debug::GetLoadedScripts(v8::Isolate* v8_isolate,
@@ -10444,11 +10456,6 @@ void HeapProfiler::SetGetRetainerInfosCallback(
     GetRetainerInfosCallback callback) {
   reinterpret_cast<i::HeapProfiler*>(this)->SetGetRetainerInfosCallback(
       callback);
-}
-
-size_t HeapProfiler::GetProfilerMemorySize() {
-  return reinterpret_cast<i::HeapProfiler*>(this)->
-      GetMemorySizeUsedByProfiler();
 }
 
 v8::Testing::StressType internal::Testing::stress_type_ =

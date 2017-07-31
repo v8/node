@@ -23,6 +23,7 @@ namespace internal {
   V(Code)                  \
   V(ConsString)            \
   V(DataObject)            \
+  V(FeedbackVector)        \
   V(FixedArray)            \
   V(FixedDoubleArray)      \
   V(FixedFloat64Array)     \
@@ -275,7 +276,7 @@ class Map : public HeapObject {
   // map with DICTIONARY_ELEMENTS was found in the prototype chain.
   bool DictionaryElementsInPrototypeChainOnly();
 
-  inline Map* ElementsTransitionMap() const;
+  inline Map* ElementsTransitionMap();
 
   inline FixedArrayBase* GetInitialElements() const;
 
@@ -346,9 +347,9 @@ class Map : public HeapObject {
                               Handle<FieldType> new_field_type);
   // Returns true if |descriptor|'th property is a field that may be generalized
   // by just updating current map.
-  static bool IsInplaceGeneralizableField(PropertyConstness constness,
-                                          Representation representation,
-                                          FieldType* field_type);
+  static inline bool IsInplaceGeneralizableField(PropertyConstness constness,
+                                                 Representation representation,
+                                                 FieldType* field_type);
 
   static Handle<Map> ReconfigureProperty(Handle<Map> map, int modify_index,
                                          PropertyKind new_kind,

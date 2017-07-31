@@ -9,6 +9,8 @@
 #include "src/base/format-macros.h"
 #include "src/base/logging.h"
 
+// No-op macro which is used to work around MSVC's funky VA_ARGS support.
+#define EXPAND(x) x
 
 // TODO(all) Replace all uses of this macro with C++'s offsetof. To do that, we
 // have to make sure that only standard-layout types and simple field
@@ -281,7 +283,7 @@ struct Use {
 // This allows conversion of Addresses and integral types into
 // 0-relative int offsets.
 template <typename T>
-inline intptr_t OffsetFrom(T x) {
+constexpr inline intptr_t OffsetFrom(T x) {
   return x - static_cast<T>(0);
 }
 
@@ -290,7 +292,7 @@ inline intptr_t OffsetFrom(T x) {
 // This allows conversion of 0-relative int offsets into Addresses and
 // integral types.
 template <typename T>
-inline T AddressFrom(intptr_t x) {
+constexpr inline T AddressFrom(intptr_t x) {
   return static_cast<T>(static_cast<T>(0) + x);
 }
 
@@ -302,12 +304,28 @@ inline T RoundDown(T x, intptr_t m) {
   DCHECK(m != 0 && ((m & (m - 1)) == 0));
   return AddressFrom<T>(OffsetFrom(x) & -m);
 }
-
+template <intptr_t m, typename T>
+constexpr inline T RoundDown(T x) {
+  // m must be a power of two.
+  STATIC_ASSERT(m != 0 && ((m & (m - 1)) == 0));
+  return AddressFrom<T>(OffsetFrom(x) & -m);
+}
 
 // Return the smallest multiple of m which is >= x.
 template <typename T>
 inline T RoundUp(T x, intptr_t m) {
   return RoundDown<T>(static_cast<T>(x + m - 1), m);
+}
+template <intptr_t m, typename T>
+constexpr inline T RoundUp(T x) {
+  return RoundDown<m, T>(static_cast<T>(x + m - 1));
+}
+
+inline void* AlignedAddress(void* address, size_t alignment) {
+  // The alignment must be a power of two.
+  DCHECK_EQ(alignment & (alignment - 1), 0u);
+  return reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(address) &
+                                 ~static_cast<uintptr_t>(alignment - 1));
 }
 
 #endif   // V8_BASE_MACROS_H_

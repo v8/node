@@ -87,7 +87,7 @@ Heap::Heap()
       // semispace_size_ should be a power of 2 and old_generation_size_ should
       // be a multiple of Page::kPageSize.
       max_semi_space_size_(8 * (kPointerSize / 4) * MB),
-      initial_semispace_size_(Page::kPageSize),
+      initial_semispace_size_(MB),
       max_old_generation_size_(700ul * (kPointerSize / 4) * MB),
       initial_max_old_generation_size_(max_old_generation_size_),
       initial_old_generation_size_(max_old_generation_size_ /
@@ -176,7 +176,6 @@ Heap::Heap()
   set_native_contexts_list(NULL);
   set_allocation_sites_list(Smi::kZero);
   set_encountered_weak_collections(Smi::kZero);
-  set_encountered_weak_cells(Smi::kZero);
   set_encountered_transition_arrays(Smi::kZero);
   // Put a dummy entry in the remembered pages so we can find the list the
   // minidump even if there are no real unmapped pages.
@@ -1921,14 +1920,13 @@ void Heap::Scavenge() {
   const int kMainThreadId = 0;
   Scavenger* scavengers[kMaxScavengerTasks];
   const bool is_logging = IsLogging(isolate());
-  const bool is_incremental_marking = incremental_marking()->IsMarking();
   const int num_scavenge_tasks = NumberOfScavengeTasks();
   Scavenger::Barrier barrier;
   CopiedList copied_list(num_scavenge_tasks);
   PromotionList promotion_list(num_scavenge_tasks);
   for (int i = 0; i < num_scavenge_tasks; i++) {
-    scavengers[i] = new Scavenger(this, is_logging, is_incremental_marking,
-                                  &copied_list, &promotion_list, i);
+    scavengers[i] =
+        new Scavenger(this, is_logging, &copied_list, &promotion_list, i);
     job.AddTask(new ScavengingTask(this, scavengers[i], &barrier));
   }
 
@@ -2499,7 +2497,7 @@ bool Heap::CreateInitialMaps() {
 
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, scope_info)
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, module_info)
-    ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, feedback_vector)
+    ALLOCATE_VARSIZE_MAP(FEEDBACK_VECTOR_TYPE, feedback_vector)
     ALLOCATE_PRIMITIVE_MAP(HEAP_NUMBER_TYPE, HeapNumber::kSize, heap_number,
                            Context::NUMBER_FUNCTION_INDEX)
     ALLOCATE_MAP(MUTABLE_HEAP_NUMBER_TYPE, HeapNumber::kSize,
@@ -2723,7 +2721,6 @@ AllocationResult Heap::AllocateWeakCell(HeapObject* value) {
   }
   result->set_map_after_allocation(weak_cell_map(), SKIP_WRITE_BARRIER);
   WeakCell::cast(result)->initialize(value);
-  WeakCell::cast(result)->clear_next(the_hole_value());
   return result;
 }
 
@@ -3451,10 +3448,11 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
     int new_size = ByteArray::SizeFor(len - elements_to_trim);
     bytes_to_trim = ByteArray::SizeFor(len) - new_size;
     DCHECK_GE(bytes_to_trim, 0);
+  } else if (object->IsFixedArray() || object->IsTransitionArray()) {
+    bytes_to_trim = elements_to_trim * kPointerSize;
   } else {
-    const int element_size =
-        object->IsFixedArray() ? kPointerSize : kDoubleSize;
-    bytes_to_trim = elements_to_trim * element_size;
+    DCHECK(object->IsFixedDoubleArray());
+    bytes_to_trim = elements_to_trim * kDoubleSize;
   }
 
 
@@ -4204,6 +4202,36 @@ AllocationResult Heap::CopyFixedDoubleArrayWithMap(FixedDoubleArray* src,
   return obj;
 }
 
+AllocationResult Heap::CopyFeedbackVector(FeedbackVector* src) {
+  int len = src->length();
+  HeapObject* obj = nullptr;
+  {
+    AllocationResult allocation = AllocateRawFeedbackVector(len, NOT_TENURED);
+    if (!allocation.To(&obj)) return allocation;
+  }
+  obj->set_map_after_allocation(feedback_vector_map(), SKIP_WRITE_BARRIER);
+
+  FeedbackVector* result = FeedbackVector::cast(obj);
+
+  DisallowHeapAllocation no_gc;
+  WriteBarrierMode mode = result->GetWriteBarrierMode(no_gc);
+
+  // Eliminate the write barrier if possible.
+  if (mode == SKIP_WRITE_BARRIER) {
+    CopyBlock(result->address() + kPointerSize,
+              result->address() + kPointerSize,
+              FeedbackVector::SizeFor(len) - kPointerSize);
+    return result;
+  }
+
+  // Slow case: Just copy the content one-by-one.
+  result->set_shared_function_info(src->shared_function_info());
+  result->set_invocation_count(src->invocation_count());
+  result->set_profiler_ticks(src->profiler_ticks());
+  result->set_optimized_code_cell(src->optimized_code_cell());
+  for (int i = 0; i < len; i++) result->set(i, src->get(i), mode);
+  return result;
+}
 
 AllocationResult Heap::AllocateRawFixedArray(int length,
                                              PretenureFlag pretenure) {
@@ -4309,6 +4337,44 @@ AllocationResult Heap::AllocateRawFixedDoubleArray(int length,
   return object;
 }
 
+AllocationResult Heap::AllocateRawFeedbackVector(int length,
+                                                 PretenureFlag pretenure) {
+  DCHECK(length >= 0);
+
+  int size = FeedbackVector::SizeFor(length);
+  AllocationSpace space = SelectSpace(pretenure);
+
+  HeapObject* object = nullptr;
+  {
+    AllocationResult allocation = AllocateRaw(size, space);
+    if (!allocation.To(&object)) return allocation;
+  }
+
+  return object;
+}
+
+AllocationResult Heap::AllocateFeedbackVector(SharedFunctionInfo* shared,
+                                              PretenureFlag pretenure) {
+  int length = shared->feedback_metadata()->slot_count();
+
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRawFeedbackVector(length, pretenure);
+    if (!allocation.To(&result)) return allocation;
+  }
+
+  // Initialize the object's map.
+  result->set_map_after_allocation(feedback_vector_map(), SKIP_WRITE_BARRIER);
+  FeedbackVector* vector = FeedbackVector::cast(result);
+  vector->set_shared_function_info(shared);
+  vector->set_optimized_code_cell(Smi::FromEnum(OptimizationMarker::kNone));
+  vector->set_length(length);
+  vector->set_invocation_count(0);
+  vector->set_profiler_ticks(0);
+  // TODO(leszeks): Initialize based on the feedback metadata.
+  MemsetPointer(vector->slots_start(), undefined_value(), length);
+  return vector;
+}
 
 AllocationResult Heap::AllocateSymbol() {
   // Statically ensure that it is safe to allocate symbols in paged spaces.
@@ -5904,10 +5970,11 @@ bool Heap::SetUp() {
 #ifdef V8_CONCURRENT_MARKING
   MarkCompactCollector::MarkingWorklist* marking_worklist =
       mark_compact_collector_->marking_worklist();
-  concurrent_marking_ = new ConcurrentMarking(this, marking_worklist->shared(),
-                                              marking_worklist->bailout());
+  concurrent_marking_ = new ConcurrentMarking(
+      this, marking_worklist->shared(), marking_worklist->bailout(),
+      mark_compact_collector_->weak_cells());
 #else
-  concurrent_marking_ = new ConcurrentMarking(this, nullptr, nullptr);
+  concurrent_marking_ = new ConcurrentMarking(this, nullptr, nullptr, nullptr);
 #endif
   minor_mark_compact_collector_ = new MinorMarkCompactCollector(this);
   gc_idle_time_handler_ = new GCIdleTimeHandler();

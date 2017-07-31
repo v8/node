@@ -3014,6 +3014,9 @@ VisitorId Map::GetVisitorId(Map* map) {
     case PROPERTY_ARRAY_TYPE:
       return kVisitPropertyArray;
 
+    case FEEDBACK_VECTOR_TYPE:
+      return kVisitFeedbackVector;
+
     case ODDBALL_TYPE:
       return kVisitOddball;
 
@@ -3317,6 +3320,9 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
       break;
     case PROPERTY_ARRAY_TYPE:
       os << "<PropertyArray[" << PropertyArray::cast(this)->length() << "]>";
+      break;
+    case FEEDBACK_VECTOR_TYPE:
+      os << "<FeedbackVector[" << FeedbackVector::cast(this)->length() << "]>";
       break;
     case FREE_SPACE_TYPE:
       os << "<FreeSpace[" << FreeSpace::cast(this)->size() << "]>";
@@ -4178,8 +4184,7 @@ void JSObject::MigrateToMap(Handle<JSObject> object, Handle<Map> new_map,
           old_map->GetHeap()->empty_descriptor_array(),
           LayoutDescriptor::FastPointerLayout());
       // Ensure that no transition was inserted for prototype migrations.
-      DCHECK_EQ(
-          0, TransitionArray::NumberOfTransitions(old_map->raw_transitions()));
+      DCHECK_EQ(0, TransitionsAccessor(old_map).NumberOfTransitions());
       DCHECK(new_map->GetBackPointer()->IsUndefined(new_map->GetIsolate()));
 #ifdef VERIFY_HEAP
       // When verify heap is on, NotifyObjectLayoutChange checks that
@@ -4292,10 +4297,11 @@ Handle<Map> Map::CopyGeneralizeAllFields(Handle<Map> map,
 
 void Map::DeprecateTransitionTree() {
   if (is_deprecated()) return;
-  Object* transitions = raw_transitions();
-  int num_transitions = TransitionArray::NumberOfTransitions(transitions);
+  DisallowHeapAllocation no_gc;
+  TransitionsAccessor transitions(this, &no_gc);
+  int num_transitions = transitions.NumberOfTransitions();
   for (int i = 0; i < num_transitions; ++i) {
-    TransitionArray::GetTarget(transitions, i)->DeprecateTransitionTree();
+    transitions.GetTarget(i)->DeprecateTransitionTree();
   }
   DCHECK(!constructor_or_backpointer()->IsFunctionTemplateInfo());
   deprecate();
@@ -4382,10 +4388,10 @@ void Map::UpdateFieldType(int descriptor, Handle<Name> name,
     Map* current = backlog.front();
     backlog.pop();
 
-    Object* transitions = current->raw_transitions();
-    int num_transitions = TransitionArray::NumberOfTransitions(transitions);
+    TransitionsAccessor transitions(current, &no_allocation);
+    int num_transitions = transitions.NumberOfTransitions();
     for (int i = 0; i < num_transitions; ++i) {
-      Map* target = TransitionArray::GetTarget(transitions, i);
+      Map* target = transitions.GetTarget(i);
       backlog.push(target);
     }
     DescriptorArray* descriptors = current->instance_descriptors();
@@ -4495,20 +4501,6 @@ void Map::GeneralizeField(Handle<Map> map, int modify_index,
   }
 }
 
-bool Map::IsInplaceGeneralizableField(PropertyConstness constness,
-                                      Representation representation,
-                                      FieldType* field_type) {
-  if (FLAG_track_constant_fields && FLAG_modify_map_inplace &&
-      (constness == kConst)) {
-    // kConst -> kMutable field generalization may happen in-place.
-    return true;
-  }
-  if (representation.IsHeapObject() && !field_type->IsAny()) {
-    return true;
-  }
-  return false;
-}
-
 // TODO(ishell): remove.
 // static
 Handle<Map> Map::ReconfigureProperty(Handle<Map> map, int modify_index,
@@ -4595,10 +4587,11 @@ Map* Map::TryReplayPropertyTransitions(Map* old_map) {
   Map* new_map = this;
   for (int i = root_nof; i < old_nof; ++i) {
     PropertyDetails old_details = old_descriptors->GetDetails(i);
-    Map* transition = TransitionArray::SearchTransition(
-        new_map, old_details.kind(), old_descriptors->GetKey(i),
-        old_details.attributes());
-    if (transition == NULL) return nullptr;
+    Map* transition =
+        TransitionsAccessor(new_map, &no_allocation)
+            .SearchTransition(old_descriptors->GetKey(i), old_details.kind(),
+                              old_details.attributes());
+    if (transition == nullptr) return nullptr;
     new_map = transition;
     DescriptorArray* new_descriptors = new_map->instance_descriptors();
 
@@ -8224,8 +8217,8 @@ Maybe<bool> JSObject::PreventExtensionsWithTransition(
   }
 
   Handle<Map> old_map(object->map(), isolate);
-  Map* transition =
-      TransitionArray::SearchSpecial(*old_map, *transition_marker);
+  TransitionsAccessor transitions(old_map);
+  Map* transition = transitions.SearchSpecial(*transition_marker);
   if (transition != NULL) {
     Handle<Map> transition_map(transition, isolate);
     DCHECK(transition_map->has_dictionary_elements() ||
@@ -8233,7 +8226,7 @@ Maybe<bool> JSObject::PreventExtensionsWithTransition(
            transition_map->elements_kind() == SLOW_STRING_WRAPPER_ELEMENTS);
     DCHECK(!transition_map->is_extensible());
     JSObject::MigrateToMap(object, transition_map);
-  } else if (TransitionArray::CanHaveMoreTransitions(old_map)) {
+  } else if (transitions.CanHaveMoreTransitions()) {
     // Create a new descriptor array with the appropriate property attributes
     Handle<Map> new_map = Map::CopyForPreventExtensions(
         old_map, attrs, transition_marker, "CopyForPreventExtensions");
@@ -9042,11 +9035,12 @@ void Map::TraceTransition(const char* what, Map* from, Map* to, Name* name) {
 
 // static
 void Map::TraceAllTransitions(Map* map) {
-  Object* transitions = map->raw_transitions();
-  int num_transitions = TransitionArray::NumberOfTransitions(transitions);
+  DisallowHeapAllocation no_gc;
+  TransitionsAccessor transitions(map, &no_gc);
+  int num_transitions = transitions.NumberOfTransitions();
   for (int i = -0; i < num_transitions; ++i) {
-    Map* target = TransitionArray::GetTarget(transitions, i);
-    Name* key = TransitionArray::GetKey(transitions, i);
+    Map* target = transitions.GetTarget(i);
+    Name* key = transitions.GetKey(i);
     Map::TraceTransition("Transition", map, target, key);
     Map::TraceAllTransitions(target);
   }
@@ -9077,7 +9071,7 @@ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
     Map::TraceTransition("NoTransition", *parent, *child, *name);
 #endif
   } else {
-    TransitionArray::Insert(parent, name, child, flag);
+    TransitionsAccessor(parent).Insert(name, child, flag);
 #if V8_TRACE_MAPS
     Map::TraceTransition("Transition", *parent, *child, *name);
 #endif
@@ -9096,7 +9090,7 @@ Handle<Map> Map::CopyReplaceDescriptors(
 
   if (!map->is_prototype_map()) {
     if (flag == INSERT_TRANSITION &&
-        TransitionArray::CanHaveMoreTransitions(map)) {
+        TransitionsAccessor(map).CanHaveMoreTransitions()) {
       result->InitializeDescriptors(*descriptors, *layout_descriptor);
 
       Handle<Name> name;
@@ -9115,7 +9109,7 @@ Handle<Map> Map::CopyReplaceDescriptors(
       // Mirror conditions above that did not call ConnectTransition().
       (map->is_prototype_map() ||
        !(flag == INSERT_TRANSITION &&
-         TransitionArray::CanHaveMoreTransitions(map)))) {
+         TransitionsAccessor(map).CanHaveMoreTransitions()))) {
     PrintF("[TraceMaps: ReplaceDescriptors from= %p to= %p reason= %s ]\n",
            reinterpret_cast<void*>(*map), reinterpret_cast<void*>(*result),
            reason);
@@ -9227,7 +9221,7 @@ Handle<Map> Map::CopyAsElementsKind(Handle<Map> map, ElementsKind kind,
   }
 
   bool insert_transition = flag == INSERT_TRANSITION &&
-                           TransitionArray::CanHaveMoreTransitions(map) &&
+                           TransitionsAccessor(map).CanHaveMoreTransitions() &&
                            maybe_elements_transition_map == NULL;
 
   if (insert_transition) {
@@ -9263,7 +9257,7 @@ Handle<Map> Map::AsLanguageMode(Handle<Map> initial_map,
   Handle<Symbol> transition_symbol =
       isolate->factory()->strict_function_transition_symbol();
   Map* maybe_transition =
-      TransitionArray::SearchSpecial(*initial_map, *transition_symbol);
+      TransitionsAccessor(initial_map).SearchSpecial(*transition_symbol);
   if (maybe_transition != NULL) {
     return handle(maybe_transition, isolate);
   }
@@ -9278,7 +9272,7 @@ Handle<Map> Map::AsLanguageMode(Handle<Map> initial_map,
   map->SetConstructor(initial_map->GetConstructor());
   map->set_prototype(initial_map->prototype());
 
-  if (TransitionArray::CanHaveMoreTransitions(initial_map)) {
+  if (TransitionsAccessor(initial_map).CanHaveMoreTransitions()) {
     Map::ConnectTransition(initial_map, map, transition_symbol,
                            SPECIAL_TRANSITION);
   }
@@ -9459,7 +9453,7 @@ Handle<Map> Map::TransitionToDataProperty(Handle<Map> map, Handle<Name> name,
   map = Update(map);
 
   Map* maybe_transition =
-      TransitionArray::SearchTransition(*map, kData, *name, attributes);
+      TransitionsAccessor(map).SearchTransition(*name, kData, attributes);
   if (maybe_transition != NULL) {
     Handle<Map> transition(maybe_transition);
     int descriptor = transition->LastAdded();
@@ -9581,7 +9575,7 @@ Handle<Map> Map::TransitionToAccessorProperty(Isolate* isolate, Handle<Map> map,
                                        : CLEAR_INOBJECT_PROPERTIES;
 
   Map* maybe_transition =
-      TransitionArray::SearchTransition(*map, kAccessor, *name, attributes);
+      TransitionsAccessor(map).SearchTransition(*name, kAccessor, attributes);
   if (maybe_transition != NULL) {
     Handle<Map> transition(maybe_transition, isolate);
     DescriptorArray* descriptors = transition->instance_descriptors();
@@ -9666,7 +9660,7 @@ Handle<Map> Map::CopyAddDescriptor(Handle<Map> map,
   // Share descriptors only if map owns descriptors and it not an initial map.
   if (flag == INSERT_TRANSITION && map->owns_descriptors() &&
       !map->GetBackPointer()->IsUndefined(map->GetIsolate()) &&
-      TransitionArray::CanHaveMoreTransitions(map)) {
+      TransitionsAccessor(map).CanHaveMoreTransitions()) {
     return ShareDescriptor(map, descriptors, descriptor);
   }
 
@@ -12329,12 +12323,14 @@ void Map::CompleteInobjectSlackTracking() {
   DCHECK(GetBackPointer()->IsUndefined(GetIsolate()));
 
   int slack = unused_property_fields();
-  TransitionArray::TraverseTransitionTree(this, &GetMinInobjectSlack, &slack);
+  DisallowHeapAllocation no_gc;
+  TransitionsAccessor transitions(this, &no_gc);
+  transitions.TraverseTransitionTree(&GetMinInobjectSlack, &slack);
   if (slack != 0) {
     // Resize the initial map and all maps in its transition tree.
-    TransitionArray::TraverseTransitionTree(this, &ShrinkInstanceSize, &slack);
+    transitions.TraverseTransitionTree(&ShrinkInstanceSize, &slack);
   } else {
-    TransitionArray::TraverseTransitionTree(this, &StopSlackTracking, nullptr);
+    transitions.TraverseTransitionTree(&StopSlackTracking, nullptr);
   }
 }
 
@@ -13848,12 +13844,7 @@ void Map::StartInobjectSlackTracking() {
 
 
 void SharedFunctionInfo::ResetForNewContext(int new_ic_age) {
-  code()->ClearInlineCaches();
   set_ic_age(new_ic_age);
-  if (optimization_disabled() && deopt_count() >= FLAG_max_deopt_count) {
-    // Re-enable optimizations if they were disabled due to deopt_count limit.
-    set_optimization_disabled(false);
-  }
   set_opt_count(0);
   set_deopt_count(0);
 }
@@ -15244,10 +15235,11 @@ const char* DependentCode::DependencyGroupName(DependencyGroup group) {
 
 Handle<Map> Map::TransitionToPrototype(Handle<Map> map,
                                        Handle<Object> prototype) {
-  Handle<Map> new_map = TransitionArray::GetPrototypeTransition(map, prototype);
+  Handle<Map> new_map =
+      TransitionsAccessor(map).GetPrototypeTransition(prototype);
   if (new_map.is_null()) {
     new_map = Copy(map, "TransitionToPrototype");
-    TransitionArray::PutPrototypeTransition(map, prototype, new_map);
+    TransitionsAccessor(map).PutPrototypeTransition(prototype, new_map);
     Map::SetPrototype(new_map, prototype);
   }
   return new_map;
@@ -19662,10 +19654,27 @@ void Module::StoreVariable(Handle<Module> module, int cell_index,
   module->GetCell(cell_index)->set_value(*value);
 }
 
+#ifdef DEBUG
+void Module::PrintStatusTransition(Status new_status) {
+  if (FLAG_trace_module_status) {
+    OFStream os(stdout);
+    os << "Changing module status from " << status() << " to " << new_status
+       << " for ";
+    script()->GetNameOrSourceURL()->Print(os);
+#ifndef OBJECT_PRINT
+    os << "\n";
+#endif  // OBJECT_PRINT
+  }
+}
+#endif  // DEBUG
+
 void Module::SetStatus(Status new_status) {
   DisallowHeapAllocation no_alloc;
   DCHECK_LE(status(), new_status);
   DCHECK_NE(new_status, Module::kErrored);
+#ifdef DEBUG
+  PrintStatusTransition(new_status);
+#endif  // DEBUG
   set_status(new_status);
 }
 
@@ -19692,6 +19701,9 @@ void Module::RecordError() {
   set_code(info());
 
   DCHECK(exception()->IsTheHole(isolate));
+#ifdef DEBUG
+  PrintStatusTransition(Module::kErrored);
+#endif  // DEBUG
   set_status(Module::kErrored);
   set_exception(the_exception);
 }
@@ -19715,7 +19727,11 @@ MaybeHandle<Cell> Module::ResolveImport(Handle<Module> module,
                                                    must_resolve, resolve_set);
   if (isolate->has_pending_exception()) {
     DCHECK(result.is_null());
-    module->RecordError();
+    if (must_resolve) module->RecordError();
+    // If {must_resolve} is false and there's an exception, then either that
+    // exception was already recorded where it happened, or it's the
+    // kAmbiguousExport exception (see ResolveExportUsingStarExports) and the
+    // culprit module is still to be determined.
   }
   return result;
 }

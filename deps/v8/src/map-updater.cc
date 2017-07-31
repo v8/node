@@ -123,21 +123,8 @@ Handle<Map> MapUpdater::ReconfigureToDataField(int descriptor,
     new_field_type_ = field_type;
   }
 
-  if (IsTransitionableFastElementsKind(new_elements_kind_) &&
-      Map::IsInplaceGeneralizableField(new_constness_, new_representation_,
-                                       *new_field_type_)) {
-    // We don't support propagation of field generalization through elements
-    // kind transitions because they are inserted into the transition tree
-    // before field transitions. In order to avoid complexity of handling
-    // such a case we ensure that all maps with transitionable elements kinds
-    // do not have fields that can be generalized in-place (without creation
-    // of a new map).
-    if (FLAG_track_constant_fields && FLAG_modify_map_inplace) {
-      new_constness_ = kMutable;
-    }
-    DCHECK(representation.IsHeapObject());
-    new_field_type_ = FieldType::Any(isolate_);
-  }
+  GeneralizeIfTransitionableFastElementsKind(
+      &new_constness_, &new_representation_, &new_field_type_);
 
   if (TryRecofigureToDataFieldInplace() == kEnd) return result_map_;
   if (FindRootMap() == kEnd) return result_map_;
@@ -150,6 +137,8 @@ Handle<Map> MapUpdater::ReconfigureToDataField(int descriptor,
 Handle<Map> MapUpdater::ReconfigureElementsKind(ElementsKind elements_kind) {
   DCHECK_EQ(kInitialized, state_);
   new_elements_kind_ = elements_kind;
+  is_transitionable_fast_elements_kind_ =
+      IsTransitionableFastElementsKind(new_elements_kind_);
 
   if (FindRootMap() == kEnd) return result_map_;
   if (FindTargetMap() == kEnd) return result_map_;
@@ -167,6 +156,28 @@ Handle<Map> MapUpdater::Update() {
   ConstructNewMap();
   DCHECK_EQ(kEnd, state_);
   return result_map_;
+}
+
+void MapUpdater::GeneralizeIfTransitionableFastElementsKind(
+    PropertyConstness* constness, Representation* representation,
+    Handle<FieldType>* field_type) {
+  DCHECK_EQ(is_transitionable_fast_elements_kind_,
+            IsTransitionableFastElementsKind(new_elements_kind_));
+  if (is_transitionable_fast_elements_kind_ &&
+      Map::IsInplaceGeneralizableField(*constness, *representation,
+                                       **field_type)) {
+    // We don't support propagation of field generalization through elements
+    // kind transitions because they are inserted into the transition tree
+    // before field transitions. In order to avoid complexity of handling
+    // such a case we ensure that all maps with transitionable elements kinds
+    // do not have fields that can be generalized in-place (without creation
+    // of a new map).
+    if (FLAG_track_constant_fields && FLAG_modify_map_inplace) {
+      *constness = kMutable;
+    }
+    DCHECK(representation->IsHeapObject());
+    *field_type = FieldType::Any(isolate_);
+  }
 }
 
 void MapUpdater::GeneralizeField(Handle<Map> map, int modify_index,
@@ -317,8 +328,9 @@ MapUpdater::State MapUpdater::FindTargetMap() {
   int root_nof = root_map_->NumberOfOwnDescriptors();
   for (int i = root_nof; i < old_nof_; ++i) {
     PropertyDetails old_details = GetDetails(i);
-    Map* transition = TransitionArray::SearchTransition(
-        *target_map_, old_details.kind(), GetKey(i), old_details.attributes());
+    Map* transition = TransitionsAccessor(target_map_)
+                          .SearchTransition(GetKey(i), old_details.kind(),
+                                            old_details.attributes());
     if (transition == NULL) break;
     Handle<Map> tmp_map(transition, isolate_);
 
@@ -399,8 +411,9 @@ MapUpdater::State MapUpdater::FindTargetMap() {
   // Find the last compatible target map in the transition tree.
   for (int i = target_nof; i < old_nof_; ++i) {
     PropertyDetails old_details = GetDetails(i);
-    Map* transition = TransitionArray::SearchTransition(
-        *target_map_, old_details.kind(), GetKey(i), old_details.attributes());
+    Map* transition = TransitionsAccessor(target_map_)
+                          .SearchTransition(GetKey(i), old_details.kind(),
+                                            old_details.attributes());
     if (transition == NULL) break;
     Handle<Map> tmp_map(transition, isolate_);
     Handle<DescriptorArray> tmp_descriptors(tmp_map->instance_descriptors(),
@@ -505,6 +518,9 @@ Handle<DescriptorArray> MapUpdater::BuildDescriptorArray() {
           old_details.representation(), old_field_type, next_representation,
           target_field_type, isolate_);
 
+      GeneralizeIfTransitionableFastElementsKind(
+          &next_constness, &next_representation, &next_field_type);
+
       Handle<Object> wrapped_type(Map::WrapFieldType(next_field_type));
       Descriptor d;
       if (next_kind == kData) {
@@ -548,10 +564,17 @@ Handle<DescriptorArray> MapUpdater::BuildDescriptorArray() {
 
     Descriptor d;
     if (next_location == kField) {
-      Handle<FieldType> old_field_type =
+      Handle<FieldType> next_field_type =
           GetOrComputeFieldType(i, old_details.location(), next_representation);
 
-      Handle<Object> wrapped_type(Map::WrapFieldType(old_field_type));
+      // If the |new_elements_kind_| is still transitionable then the old map's
+      // elements kind is also transitionable and therefore the old descriptors
+      // array must already have non in-place generalizable fields.
+      CHECK_IMPLIES(is_transitionable_fast_elements_kind_,
+                    !Map::IsInplaceGeneralizableField(
+                        next_constness, next_representation, *next_field_type));
+
+      Handle<Object> wrapped_type(Map::WrapFieldType(next_field_type));
       Descriptor d;
       if (next_kind == kData) {
         DCHECK_IMPLIES(!FLAG_track_constant_fields, next_constness == kMutable);
@@ -591,8 +614,9 @@ Handle<Map> MapUpdater::FindSplitMap(Handle<DescriptorArray> descriptors) {
   for (int i = root_nof; i < old_nof_; i++) {
     Name* name = descriptors->GetKey(i);
     PropertyDetails details = descriptors->GetDetails(i);
-    Map* next = TransitionArray::SearchTransition(current, details.kind(), name,
-                                                  details.attributes());
+    Map* next =
+        TransitionsAccessor(current, &no_allocation)
+            .SearchTransition(name, details.kind(), details.attributes());
     if (next == NULL) break;
     DescriptorArray* next_descriptors = next->instance_descriptors();
 
@@ -627,11 +651,11 @@ MapUpdater::State MapUpdater::ConstructNewMap() {
   DCHECK_NE(old_nof_, split_nof);
 
   PropertyDetails split_details = GetDetails(split_nof);
+  TransitionsAccessor transitions(split_map);
 
   // Invalidate a transition target at |key|.
-  Map* maybe_transition = TransitionArray::SearchTransition(
-      *split_map, split_details.kind(), GetKey(split_nof),
-      split_details.attributes());
+  Map* maybe_transition = transitions.SearchTransition(
+      GetKey(split_nof), split_details.kind(), split_details.attributes());
   if (maybe_transition != NULL) {
     maybe_transition->DeprecateTransitionTree();
   }
@@ -639,8 +663,7 @@ MapUpdater::State MapUpdater::ConstructNewMap() {
   // If |maybe_transition| is not NULL then the transition array already
   // contains entry for given descriptor. This means that the transition
   // could be inserted regardless of whether transitions array is full or not.
-  if (maybe_transition == NULL &&
-      !TransitionArray::CanHaveMoreTransitions(split_map)) {
+  if (maybe_transition == NULL && !transitions.CanHaveMoreTransitions()) {
     return CopyGeneralizeAllFields("GenAll_CantHaveMoreTransitions");
   }
 

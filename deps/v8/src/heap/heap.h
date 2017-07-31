@@ -576,7 +576,7 @@ class Heap {
 
   // Semi-space size needs to be a multiple of page size.
   static const int kMinSemiSpaceSizeInKB =
-      1 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
+      2 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
   static const int kMaxSemiSpaceSizeInKB =
       16 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
 
@@ -747,11 +747,6 @@ class Heap {
     return encountered_weak_collections_;
   }
   void IterateEncounteredWeakCollections(RootVisitor* visitor);
-
-  void set_encountered_weak_cells(Object* weak_cell) {
-    encountered_weak_cells_ = weak_cell;
-  }
-  Object* encountered_weak_cells() const { return encountered_weak_cells_; }
 
   void set_encountered_transition_arrays(Object* transition_array) {
     encountered_transition_arrays_ = transition_array;
@@ -1994,6 +1989,15 @@ class Heap {
   MUST_USE_RESULT AllocationResult
   AllocatePropertyArray(int length, PretenureFlag pretenure = NOT_TENURED);
 
+  // Allocate a feedback vector for the given shared function info. The slots
+  // are pre-filled with undefined.
+  MUST_USE_RESULT AllocationResult
+  AllocateFeedbackVector(SharedFunctionInfo* shared, PretenureFlag pretenure);
+
+  // Allocate an uninitialized feedback vector.
+  MUST_USE_RESULT AllocationResult
+  AllocateRawFeedbackVector(int length, PretenureFlag pretenure);
+
   MUST_USE_RESULT AllocationResult AllocateSmallOrderedHashSet(
       int length, PretenureFlag pretenure = NOT_TENURED);
   MUST_USE_RESULT AllocationResult AllocateSmallOrderedHashMap(
@@ -2096,6 +2100,9 @@ class Heap {
   // Make a copy of src and return it.
   MUST_USE_RESULT inline AllocationResult CopyFixedDoubleArray(
       FixedDoubleArray* src);
+
+  // Make a copy of src and return it.
+  MUST_USE_RESULT AllocationResult CopyFeedbackVector(FeedbackVector* src);
 
   // Computes a single character string where the character has code.
   // A cache is used for one-byte (Latin1) codes.
@@ -2281,8 +2288,6 @@ class Heap {
   // marking. It is initialized during marking, destroyed after marking and
   // contains Smi(0) while marking is not active.
   Object* encountered_weak_collections_;
-
-  Object* encountered_weak_cells_;
 
   Object* encountered_transition_arrays_;
 

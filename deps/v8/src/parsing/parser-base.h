@@ -643,6 +643,13 @@ class ParserBase {
     return scanner()->peek();
   }
 
+  // Returns the position past the following semicolon (if it exists), and the
+  // position past the end of the current token otherwise.
+  int PositionAfterSemicolon() {
+    return (peek() == Token::SEMICOLON) ? scanner_->peek_location().end_pos
+                                        : scanner_->location().end_pos;
+  }
+
   INLINE(Token::Value PeekAhead()) {
     if (stack_overflow_) return Token::ILLEGAL;
     return scanner()->PeekAhead();
@@ -2940,6 +2947,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseYieldExpression(
   // TODO(verwaest): Come up with a better solution.
   ExpressionT yield =
       factory()->NewYield(expression, pos, Suspend::kOnExceptionThrow);
+  impl()->RecordSuspendSourceRange(yield, PositionAfterSemicolon());
   return yield;
 }
 
@@ -3115,7 +3123,9 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseUnaryExpression(
 
     ExpressionT value = ParseUnaryExpression(CHECK_OK);
 
-    return factory()->NewAwait(value, await_pos);
+    ExpressionT expr = factory()->NewAwait(value, await_pos);
+    impl()->RecordSuspendSourceRange(expr, PositionAfterSemicolon());
+    return expr;
   } else {
     return ParsePostfixExpression(ok);
   }
@@ -5435,59 +5445,64 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseTryStatement(
   SourceRange catch_range, finally_range;
 
   BlockT catch_block = impl()->NullBlock();
-  if (Check(Token::CATCH)) {
-    Expect(Token::LPAREN, CHECK_OK);
-    catch_info.scope = NewScope(CATCH_SCOPE);
-    catch_info.scope->set_start_position(scanner()->location().beg_pos);
+  {
+    SourceRangeScope catch_range_scope(scanner(), &catch_range);
+    if (Check(Token::CATCH)) {
+      Expect(Token::LPAREN, CHECK_OK);
+      catch_info.scope = NewScope(CATCH_SCOPE);
+      catch_info.scope->set_start_position(scanner()->location().beg_pos);
 
-    {
-      BlockState catch_block_state(&scope_, catch_info.scope);
-
-      catch_block = factory()->NewBlock(nullptr, 16, false, kNoSourcePosition);
-
-      // Create a block scope to hold any lexical declarations created
-      // as part of destructuring the catch parameter.
       {
-        BlockState catch_variable_block_state(zone(), &scope_);
-        scope()->set_start_position(scanner()->location().beg_pos);
-        typename Types::Target target(this, catch_block);
+        BlockState catch_block_state(&scope_, catch_info.scope);
 
-        // This does not simply call ParsePrimaryExpression to avoid
-        // ExpressionFromIdentifier from being called in the first
-        // branch, which would introduce an unresolved symbol and mess
-        // with arrow function names.
-        if (peek_any_identifier()) {
-          catch_info.name =
-              ParseIdentifier(kDontAllowRestrictedIdentifiers, CHECK_OK);
-        } else {
-          ExpressionClassifier pattern_classifier(this);
-          catch_info.pattern = ParsePrimaryExpression(CHECK_OK);
-          ValidateBindingPattern(CHECK_OK);
+        catch_block =
+            factory()->NewBlock(nullptr, 16, false, kNoSourcePosition);
+
+        // Create a block scope to hold any lexical declarations created
+        // as part of destructuring the catch parameter.
+        {
+          BlockState catch_variable_block_state(zone(), &scope_);
+          scope()->set_start_position(scanner()->location().beg_pos);
+          typename Types::Target target(this, catch_block);
+
+          // This does not simply call ParsePrimaryExpression to avoid
+          // ExpressionFromIdentifier from being called in the first
+          // branch, which would introduce an unresolved symbol and mess
+          // with arrow function names.
+          if (peek_any_identifier()) {
+            catch_info.name =
+                ParseIdentifier(kDontAllowRestrictedIdentifiers, CHECK_OK);
+          } else {
+            ExpressionClassifier pattern_classifier(this);
+            catch_info.pattern = ParsePrimaryExpression(CHECK_OK);
+            ValidateBindingPattern(CHECK_OK);
+          }
+
+          Expect(Token::RPAREN, CHECK_OK);
+          impl()->RewriteCatchPattern(&catch_info, CHECK_OK);
+          if (!impl()->IsNullStatement(catch_info.init_block)) {
+            catch_block->statements()->Add(catch_info.init_block, zone());
+          }
+
+          catch_info.inner_block = ParseBlock(nullptr, CHECK_OK);
+          catch_block->statements()->Add(catch_info.inner_block, zone());
+          impl()->ValidateCatchBlock(catch_info, CHECK_OK);
+          scope()->set_end_position(scanner()->location().end_pos);
+          catch_block->set_scope(scope()->FinalizeBlockScope());
         }
-
-        Expect(Token::RPAREN, CHECK_OK);
-        impl()->RewriteCatchPattern(&catch_info, CHECK_OK);
-        if (!impl()->IsNullStatement(catch_info.init_block)) {
-          catch_block->statements()->Add(catch_info.init_block, zone());
-        }
-
-        SourceRangeScope range_scope(scanner(), &catch_range);
-        catch_info.inner_block = ParseBlock(nullptr, CHECK_OK);
-        catch_block->statements()->Add(catch_info.inner_block, zone());
-        impl()->ValidateCatchBlock(catch_info, CHECK_OK);
-        scope()->set_end_position(scanner()->location().end_pos);
-        catch_block->set_scope(scope()->FinalizeBlockScope());
       }
-    }
 
-    catch_info.scope->set_end_position(scanner()->location().end_pos);
+      catch_info.scope->set_end_position(scanner()->location().end_pos);
+    }
   }
 
   BlockT finally_block = impl()->NullBlock();
   DCHECK(peek() == Token::FINALLY || !impl()->IsNullStatement(catch_block));
-  if (Check(Token::FINALLY)) {
+  {
     SourceRangeScope range_scope(scanner(), &finally_range);
-    finally_block = ParseBlock(nullptr, CHECK_OK);
+    if (Check(Token::FINALLY)) {
+      finally_block = ParseBlock(nullptr, CHECK_OK);
+    }
   }
 
   return impl()->RewriteTryStatement(try_block, catch_block, catch_range,

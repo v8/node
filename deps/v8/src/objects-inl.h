@@ -135,9 +135,7 @@ bool HeapObject::IsFixedArrayBase() const {
 
 bool HeapObject::IsFixedArray() const {
   InstanceType instance_type = map()->instance_type();
-  return instance_type == FIXED_ARRAY_TYPE ||
-         instance_type == HASH_TABLE_TYPE ||
-         instance_type == TRANSITION_ARRAY_TYPE;
+  return instance_type == FIXED_ARRAY_TYPE || instance_type == HASH_TABLE_TYPE;
 }
 
 bool HeapObject::IsSloppyArgumentsElements() const { return IsFixedArray(); }
@@ -1445,24 +1443,6 @@ void WeakCell::initialize(HeapObject* val) {
 
 bool WeakCell::cleared() const { return value() == Smi::kZero; }
 
-Object* WeakCell::next() const { return READ_FIELD(this, kNextOffset); }
-
-
-void WeakCell::set_next(Object* val, WriteBarrierMode mode) {
-  WRITE_FIELD(this, kNextOffset, val);
-  if (mode == UPDATE_WRITE_BARRIER) {
-    WRITE_BARRIER(GetHeap(), this, kNextOffset, val);
-  }
-}
-
-
-void WeakCell::clear_next(Object* the_hole_value) {
-  DCHECK_EQ(GetHeap()->the_hole_value(), the_hole_value);
-  set_next(the_hole_value, SKIP_WRITE_BARRIER);
-}
-
-bool WeakCell::next_cleared() { return next()->IsTheHole(GetIsolate()); }
-
 int JSObject::GetHeaderSize() {
   // Check for the most common kind of JavaScript object before
   // falling into the generic switch. This speeds up the internal
@@ -1748,7 +1728,7 @@ void FixedArray::set(int index, Smi* value) {
 
 void FixedArray::set(int index, Object* value) {
   DCHECK_NE(GetHeap()->fixed_cow_array_map(), map());
-  DCHECK(IsFixedArray());
+  DCHECK(IsFixedArray() || IsTransitionArray());
   DCHECK_GE(index, 0);
   DCHECK_LT(index, this->length());
   int offset = kHeaderSize + index * kPointerSize;
@@ -3251,6 +3231,10 @@ int HeapObject::SizeFromMap(Map* map) const {
   if (instance_type == SMALL_ORDERED_HASH_MAP_TYPE) {
     return reinterpret_cast<const SmallOrderedHashMap*>(this)->Size();
   }
+  if (instance_type == FEEDBACK_VECTOR_TYPE) {
+    return FeedbackVector::SizeFor(
+        reinterpret_cast<const FeedbackVector*>(this)->length());
+  }
   DCHECK(instance_type == CODE_TYPE);
   return reinterpret_cast<const Code*>(this)->CodeSize();
 }
@@ -4256,9 +4240,10 @@ Object* Map::GetBackPointer() const {
   return GetIsolate()->heap()->undefined_value();
 }
 
-Map* Map::ElementsTransitionMap() const {
-  return TransitionArray::SearchSpecial(
-      this, GetHeap()->elements_transition_symbol());
+Map* Map::ElementsTransitionMap() {
+  DisallowHeapAllocation no_gc;
+  return TransitionsAccessor(this, &no_gc)
+      .SearchSpecial(GetHeap()->elements_transition_symbol());
 }
 
 

@@ -192,7 +192,6 @@ DEFINE_IMPLICATION(es_staging, harmony)
 #define HARMONY_INPROGRESS_BASE(V)                                    \
   V(harmony_array_prototype_values, "harmony Array.prototype.values") \
   V(harmony_function_sent, "harmony function.sent")                   \
-  V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")           \
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony public fields in class literals")  \
   V(harmony_async_iteration, "harmony async iteration")               \
@@ -211,10 +210,9 @@ DEFINE_IMPLICATION(es_staging, harmony)
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                               \
   V(harmony_function_tostring, "harmony Function.prototype.toString")   \
-  V(harmony_regexp_dotall, "harmony regexp dotall flag")                \
   V(harmony_regexp_lookbehind, "harmony regexp lookbehind")             \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
-  V(harmony_regexp_property, "harmony unicode regexp property classes") \
+  V(harmony_regexp_property, "harmony Unicode regexp property classes") \
   V(harmony_strict_legacy_accessor_builtins,                            \
     "treat __defineGetter__ and related functions as strict")           \
   V(harmony_template_escapes,                                           \
@@ -225,10 +223,12 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_dynamic_import, "harmony dynamic import")
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING(V)                           \
-  V(harmony_restrictive_generators,                   \
-    "harmony restrictions on generator declarations") \
-  V(harmony_object_rest_spread, "harmony object rest spread properties")
+#define HARMONY_SHIPPING(V)                                              \
+  V(harmony_restrictive_generators,                                      \
+    "harmony restrictions on generator declarations")                    \
+  V(harmony_object_rest_spread, "harmony object rest spread properties") \
+  V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
+  V(harmony_regexp_dotall, "harmony regexp dotAll flag")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -616,7 +616,7 @@ DEFINE_BOOL(age_code, true, "track un-executed functions to age code")
 DEFINE_BOOL(incremental_marking, true, "use incremental marking")
 DEFINE_BOOL(incremental_marking_wrappers, true,
             "use incremental marking for marking wrappers")
-DEFINE_BOOL(parallel_scavenge, false, "parallel scavenge")
+DEFINE_BOOL(parallel_scavenge, true, "parallel scavenge")
 DEFINE_BOOL(trace_parallel_scavenge, false, "trace parallel scavenge")
 #ifdef V8_CONCURRENT_MARKING
 #define V8_CONCURRENT_MARKING_BOOL true
@@ -796,11 +796,6 @@ DEFINE_BOOL(external_reference_stats, false,
             "print statistics on external references used during serialization")
 #endif  // DEBUG
 
-// compiler.cc
-DEFINE_INT(max_deopt_count, 10,
-           "maximum number of deoptimizations before giving up optimization of "
-           "a function.")
-
 // compilation-cache.cc
 DEFINE_BOOL(compilation_cache, true, "enable compilation cache")
 
@@ -808,8 +803,6 @@ DEFINE_BOOL(cache_prototype_transitions, true, "cache prototype transitions")
 
 // compiler-dispatcher.cc
 DEFINE_BOOL(compiler_dispatcher, false, "enable compiler dispatcher")
-DEFINE_BOOL(compiler_dispatcher_eager_inner, false,
-            "enable background compilation of eager inner functions")
 DEFINE_BOOL(trace_compiler_dispatcher, false,
             "trace compiler dispatcher activity")
 
@@ -1080,6 +1073,8 @@ DEFINE_BOOL(print_global_handles, false, "report global handles after GC")
 DEFINE_BOOL(trace_turbo_escape, false, "enable tracing in escape analysis")
 
 // objects.cc
+DEFINE_BOOL(trace_module_status, false,
+            "Trace status transitions of ECMAScript modules")
 DEFINE_BOOL(trace_normalization, false,
             "prints when objects are turned into dictionaries.")
 
@@ -1126,6 +1121,7 @@ DEFINE_BOOL(log_gc, false,
             "Log heap samples on garbage collection for the hp2ps tool.")
 DEFINE_BOOL(log_handles, false, "Log global handle events.")
 DEFINE_BOOL(log_suspect, false, "Log suspect operations.")
+DEFINE_BOOL(log_source_code, false, "Log source code.")
 DEFINE_BOOL(prof, false,
             "Log statistical profiling information (implies --log-code).")
 

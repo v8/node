@@ -230,15 +230,15 @@ void Scavenger::EvacuateObject(HeapObject** slot, Map* map,
 void Scavenger::ScavengeObject(HeapObject** p, HeapObject* object) {
   DCHECK(heap()->InFromSpace(object));
 
-  // Relaxed load here. We either load a forwarding pointer or the map.
-  MapWord first_word = object->map_word();
+  // Synchronized load that consumes the publishing CAS of MigrateObject.
+  MapWord first_word = object->synchronized_map_word();
 
   // If the first word is a forwarding address, the object has already been
   // copied.
   if (first_word.IsForwardingAddress()) {
     HeapObject* dest = first_word.ToForwardingAddress();
     DCHECK(object->GetIsolate()->heap()->InFromSpace(*p));
-    *p = dest;
+    base::AsAtomicWord::Relaxed_Store(p, dest);
     return;
   }
 

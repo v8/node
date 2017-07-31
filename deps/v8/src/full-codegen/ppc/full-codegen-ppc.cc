@@ -139,13 +139,9 @@ void FullCodeGenerator::Generate() {
     Comment cmnt(masm_, "[ Increment invocation count");
     __ LoadP(r7, FieldMemOperand(r4, JSFunction::kFeedbackVectorOffset));
     __ LoadP(r7, FieldMemOperand(r7, Cell::kValueOffset));
-    __ LoadP(r8, FieldMemOperand(
-                     r7, FeedbackVector::kInvocationCountIndex * kPointerSize +
-                             FeedbackVector::kHeaderSize));
-    __ AddSmiLiteral(r8, r8, Smi::FromInt(1), r0);
-    __ StoreP(r8, FieldMemOperand(
-                      r7, FeedbackVector::kInvocationCountIndex * kPointerSize +
-                              FeedbackVector::kHeaderSize),
+    __ LoadP(r8, FieldMemOperand(r7, FeedbackVector::kInvocationCountOffset));
+    __ addi(r8, r8, Operand(1));
+    __ StoreP(r8, FieldMemOperand(r7, FeedbackVector::kInvocationCountOffset),
               r0);
   }
 
@@ -1001,10 +997,12 @@ void FullCodeGenerator::VisitForInStatement(ForInStatement* stmt) {
 
   // We need to filter the key, record slow-path here.
   int const vector_index = SmiFromSlot(slot)->value();
-  __ EmitLoadFeedbackVector(r3);
+  __ EmitLoadFeedbackVector(r6);
   __ mov(r5, Operand(FeedbackVector::MegamorphicSentinel(isolate())));
-  __ StoreP(
-      r5, FieldMemOperand(r3, FixedArray::OffsetOfElementAt(vector_index)), r0);
+  __ StoreP(r5,
+            FieldMemOperand(r6, FeedbackVector::kFeedbackSlotsOffset +
+                                    vector_index * kPointerSize),
+            r0);
 
   // Convert the entry to a string or (smi) 0 if it isn't a property
   // any more. If the property has been removed while iterating, we
@@ -1402,11 +1400,6 @@ void FullCodeGenerator::VisitAssignment(Assignment* expr) {
   }
 }
 
-void FullCodeGenerator::VisitSuspend(Suspend* expr) {
-  // Resumable functions are not supported.
-  UNREACHABLE();
-}
-
 void FullCodeGenerator::PushOperands(Register reg1, Register reg2) {
   OperandStackDepthIncrement(2);
   __ Push(reg1, reg2);
@@ -1642,18 +1635,8 @@ void FullCodeGenerator::EmitCall(Call* expr, ConvertReceiverMode mode) {
     VisitForStackValue(args->at(i));
   }
 
-  SetCallPosition(expr, expr->tail_call_mode());
-  if (expr->tail_call_mode() == TailCallMode::kAllow) {
-    if (FLAG_trace) {
-      __ CallRuntime(Runtime::kTraceTailCall);
-    }
-    // Update profiling counters before the tail call since we will
-    // not return to this function.
-    EmitProfilingCounterHandlingForReturnSequence(true);
-  }
-  Handle<Code> code =
-      CodeFactory::CallICTrampoline(isolate(), mode, expr->tail_call_mode())
-          .code();
+  SetCallPosition(expr);
+  Handle<Code> code = CodeFactory::CallICTrampoline(isolate(), mode).code();
   __ mov(r6, Operand(IntFromSlot(expr->CallFeedbackICSlot())));
   __ LoadP(r4, MemOperand(sp, (arg_count + 1) * kPointerSize), r0);
   __ mov(r3, Operand(arg_count));
