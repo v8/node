@@ -3590,6 +3590,8 @@ class DeoptimizationInputData: public FixedArray {
 
   inline int DeoptCount();
 
+  int TrampolinePcToReturnPc(int pc_offset);
+
   static const int kNotInlinedIndex = -1;
 
   // Returns the inlined function at the given position in LiteralArray, or the
@@ -7392,9 +7394,6 @@ class ObjectVisitor BASE_EMBEDDED {
 
   // Visits a code target in the instruction stream.
   virtual void VisitCodeTarget(Code* host, RelocInfo* rinfo);
-
-  // Visits a global property cell reference in the instruction stream.
-  virtual void VisitCellPointer(Code* host, RelocInfo* rinfo);
 
   // Visits a runtime entry in the instruction stream.
   virtual void VisitRuntimeEntry(Code* host, RelocInfo* rinfo) {}

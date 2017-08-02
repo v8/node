@@ -117,14 +117,6 @@ void FullCodeGenerator::Generate() {
 
   ProfileEntryHookStub::MaybeCallEntryHook(masm_);
 
-  if (FLAG_debug_code && info->ExpectsJSReceiverAsReceiver()) {
-    int receiver_offset = info->scope()->num_parameters() * kPointerSize;
-    __ LoadP(r4, MemOperand(sp, receiver_offset), r0);
-    __ AssertNotSmi(r4);
-    __ CompareObjectType(r4, r4, no_reg, FIRST_JS_RECEIVER_TYPE);
-    __ Assert(ge, kSloppyFunctionExpectsJSReceiverReceiver);
-  }
-
   // Open a frame scope to indicate that there is a frame on the stack.  The
   // MANUAL indicates that the scope shouldn't actually generate code to set up
   // the frame (that is done below).
@@ -307,7 +299,7 @@ void FullCodeGenerator::Generate() {
     __ LoadRoot(ip, Heap::kStackLimitRootIndex);
     __ CmpLogicalP(sp, ip);
     __ bge(&ok, Label::kNear);
-    __ Call(isolate()->builtins()->StackCheck(), RelocInfo::CODE_TARGET);
+    __ Call(BUILTIN_CODE(isolate(), StackCheck), RelocInfo::CODE_TARGET);
     __ bind(&ok);
   }
 
@@ -364,7 +356,7 @@ void FullCodeGenerator::EmitBackEdgeBookkeeping(IterationStatement* stmt,
   {
     // BackEdgeTable::PatchAt manipulates this sequence.
     __ bge(&ok, Label::kNear);
-    __ Call(isolate()->builtins()->InterruptCheck(), RelocInfo::CODE_TARGET);
+    __ Call(BUILTIN_CODE(isolate(), InterruptCheck), RelocInfo::CODE_TARGET);
 
     // Record a mapping of this PC offset to the OSR id.  This is used to find
     // the AST id from the unoptimized code in order to use it as a key into
@@ -394,7 +386,7 @@ void FullCodeGenerator::EmitProfilingCounterHandlingForReturnSequence(
   if (!is_tail_call) {
     __ push(r2);
   }
-  __ Call(isolate()->builtins()->InterruptCheck(), RelocInfo::CODE_TARGET);
+  __ Call(BUILTIN_CODE(isolate(), InterruptCheck), RelocInfo::CODE_TARGET);
   if (!is_tail_call) {
     __ pop(r2);
   }
@@ -871,7 +863,7 @@ void FullCodeGenerator::VisitForInStatement(ForInStatement* stmt) {
   __ CompareRoot(r2, Heap::kUndefinedValueRootIndex);
   __ beq(&exit);
   __ bind(&convert);
-  __ Call(isolate()->builtins()->ToObject(), RelocInfo::CODE_TARGET);
+  __ Call(BUILTIN_CODE(isolate(), ToObject), RelocInfo::CODE_TARGET);
   RestoreContext();
   __ bind(&done_convert);
   __ push(r2);
@@ -1985,7 +1977,7 @@ void FullCodeGenerator::VisitUnaryOperation(UnaryOperation* expr) {
         VisitForTypeofValue(expr->expression());
       }
       __ LoadRR(r5, r2);
-      __ Call(isolate()->builtins()->Typeof(), RelocInfo::CODE_TARGET);
+      __ Call(BUILTIN_CODE(isolate(), Typeof), RelocInfo::CODE_TARGET);
       context()->Plug(r2);
       break;
     }
@@ -2041,7 +2033,7 @@ void FullCodeGenerator::VisitCountOperation(CountOperation* expr) {
   }
 
   // Convert old value into a number.
-  __ Call(isolate()->builtins()->ToNumber(), RelocInfo::CODE_TARGET);
+  __ Call(BUILTIN_CODE(isolate(), ToNumber), RelocInfo::CODE_TARGET);
   RestoreContext();
 
   // Save result for postfix expressions.
@@ -2233,7 +2225,7 @@ void FullCodeGenerator::VisitCompareOperation(CompareOperation* expr) {
       VisitForAccumulatorValue(expr->right());
       SetExpressionPosition(expr);
       PopOperand(r3);
-      __ Call(isolate()->builtins()->InstanceOf(), RelocInfo::CODE_TARGET);
+      __ Call(BUILTIN_CODE(isolate(), InstanceOf), RelocInfo::CODE_TARGET);
       RestoreContext();
       __ CompareRoot(r2, Heap::kTrueValueRootIndex);
       Split(eq, if_true, if_false, fall_through);
@@ -2398,7 +2390,7 @@ BackEdgeTable::BackEdgeState BackEdgeTable::GetBackEdgeState(
   FourByteInstr br_instr = Instruction::InstructionBits(
       reinterpret_cast<const byte*>(branch_address));
   if (kInterruptBranchInstruction == br_instr) {
-    DCHECK(interrupt_address == isolate->builtins()->InterruptCheck()->entry());
+    DCHECK(interrupt_address == BUILTIN_CODE(isolate, InterruptCheck)->entry());
     return INTERRUPT;
   }
 
@@ -2408,7 +2400,7 @@ BackEdgeTable::BackEdgeState BackEdgeTable::GetBackEdgeState(
   DCHECK(kOSRBranchInstruction == br_instr);
 
   DCHECK(interrupt_address ==
-         isolate->builtins()->OnStackReplacement()->entry());
+         BUILTIN_CODE(isolate, OnStackReplacement)->entry());
   return ON_STACK_REPLACEMENT;
 }
 }  // namespace internal

@@ -782,7 +782,7 @@ static Handle<Object> ArgumentsForInlinedFunction(
   Factory* factory = isolate->factory();
 
   TranslatedState translated_values(frame);
-  translated_values.Prepare(false, frame->fp());
+  translated_values.Prepare(frame->fp());
 
   int argument_count = 0;
   TranslatedFrame* translated_frame =
@@ -822,7 +822,6 @@ static Handle<Object> ArgumentsForInlinedFunction(
 
 static int FindFunctionInFrame(JavaScriptFrame* frame,
                                Handle<JSFunction> function) {
-  DisallowHeapAllocation no_allocation;
   List<FrameSummary> frames(2);
   frame->Summarize(&frames);
   for (int i = frames.length() - 1; i >= 0; i--) {

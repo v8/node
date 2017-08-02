@@ -25,7 +25,6 @@
 namespace v8 {
 namespace internal {
 
-
 // ----------------------------------------------------------------------------
 // HeapObjectIterator
 
@@ -119,12 +118,14 @@ bool CodeRange::SetUp(size_t requested) {
 
   DCHECK(!kRequiresCodeRange || requested <= kMaximalCodeRangeSize);
 
-  base::VirtualMemory reservation(
-      requested,
-      Max(kCodeRangeAreaAlignment,
-          static_cast<size_t>(base::OS::AllocateAlignment())),
-      base::OS::GetRandomMmapAddr());
-  if (!reservation.IsReserved()) return false;
+  base::VirtualMemory reservation;
+  if (!AlignedAllocVirtualMemory(
+          requested,
+          Max(kCodeRangeAreaAlignment,
+              static_cast<size_t>(base::OS::AllocateAlignment())),
+          base::OS::GetRandomMmapAddr(), &reservation)) {
+    return false;
+  }
 
   // We are sure that we have mapped a block of requested addresses.
   DCHECK(reservation.size() == requested);
@@ -453,9 +454,10 @@ void MemoryAllocator::FreeMemory(Address base, size_t size,
 Address MemoryAllocator::ReserveAlignedMemory(size_t size, size_t alignment,
                                               void* hint,
                                               base::VirtualMemory* controller) {
-  base::VirtualMemory reservation(size, alignment, hint);
+  base::VirtualMemory reservation;
+  if (!AlignedAllocVirtualMemory(size, alignment, hint, &reservation))
+    return nullptr;
 
-  if (!reservation.IsReserved()) return nullptr;
   const Address base =
       RoundUp(static_cast<Address>(reservation.address()), alignment);
   if (base + size != reservation.end()) {
@@ -547,6 +549,7 @@ MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
                                     nullptr);
   base::AsAtomicWord::Release_Store(&chunk->typed_slot_set_[OLD_TO_OLD],
                                     nullptr);
+  chunk->invalidated_slots_ = nullptr;
   chunk->skip_list_ = nullptr;
   chunk->progress_bar_ = 0;
   chunk->high_water_mark_.SetValue(static_cast<intptr_t>(area_start - base));
@@ -1214,6 +1217,7 @@ void MemoryChunk::ReleaseAllocatedMemory() {
   ReleaseSlotSet<OLD_TO_OLD>();
   ReleaseTypedSlotSet<OLD_TO_NEW>();
   ReleaseTypedSlotSet<OLD_TO_OLD>();
+  ReleaseInvalidatedSlots();
   if (local_tracker_ != nullptr) ReleaseLocalTracker();
   if (young_generation_bitmap_ != nullptr) ReleaseYoungGenerationBitmap();
 }
@@ -1282,6 +1286,28 @@ void MemoryChunk::ReleaseTypedSlotSet() {
     typed_slot_set_[type] = nullptr;
     delete typed_slot_set;
   }
+}
+
+InvalidatedSlots* MemoryChunk::AllocateInvalidatedSlots() {
+  DCHECK_NULL(invalidated_slots_);
+  invalidated_slots_ = new InvalidatedSlots();
+  return invalidated_slots_;
+}
+
+void MemoryChunk::ReleaseInvalidatedSlots() {
+  if (invalidated_slots_) {
+    delete invalidated_slots_;
+    invalidated_slots_ = nullptr;
+  }
+}
+
+void MemoryChunk::RegisterObjectWithInvalidatedSlots(HeapObject* object,
+                                                     int size) {
+  if (invalidated_slots() == nullptr) {
+    AllocateInvalidatedSlots();
+  }
+  int old_size = (*invalidated_slots())[object];
+  (*invalidated_slots())[object] = std::max(old_size, size);
 }
 
 void MemoryChunk::AllocateLocalTracker() {
@@ -3040,8 +3066,8 @@ HeapObject* CompactionSpace::SweepAndRetryAllocation(int size_in_bytes) {
 
 HeapObject* PagedSpace::SlowAllocateRaw(int size_in_bytes) {
   VMState<GC> state(heap()->isolate());
-  RuntimeCallTimerScope runtime_timer(heap()->isolate(),
-                                      &RuntimeCallStats::GC_SlowAllocateRaw);
+  RuntimeCallTimerScope runtime_timer(
+      heap()->isolate(), &RuntimeCallStats::GC_Custom_SlowAllocateRaw);
   return RawSlowAllocateRaw(size_in_bytes);
 }
 

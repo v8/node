@@ -951,8 +951,13 @@ int TurboAssembler::LeaveFrame(StackFrame::Type type, int stack_adjustment) {
   // Drop the execution stack down to the frame pointer and restore
   // the caller frame pointer, return address and constant pool pointer.
   LoadP(r14, MemOperand(fp, StandardFrameConstants::kCallerPCOffset));
-  lay(r1, MemOperand(
-              fp, StandardFrameConstants::kCallerSPOffset + stack_adjustment));
+  if (is_int20(StandardFrameConstants::kCallerSPOffset + stack_adjustment)) {
+    lay(r1, MemOperand(fp, StandardFrameConstants::kCallerSPOffset +
+                               stack_adjustment));
+  } else {
+    AddP(r1, fp,
+         Operand(StandardFrameConstants::kCallerSPOffset + stack_adjustment));
+  }
   LoadP(fp, MemOperand(fp, StandardFrameConstants::kCallerFPOffset));
   LoadRR(sp, r1);
   int frame_ends = pc_offset();
@@ -1238,7 +1243,7 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
   }
 
   if (!definitely_matches) {
-    Handle<Code> adaptor = isolate()->builtins()->ArgumentsAdaptorTrampoline();
+    Handle<Code> adaptor = BUILTIN_CODE(isolate(), ArgumentsAdaptorTrampoline);
     if (flag == CALL_FUNCTION) {
       Call(adaptor);
       if (!*definitely_mismatches) {
@@ -1386,7 +1391,7 @@ void MacroAssembler::MaybeDropFrames() {
   mov(r3, Operand(restart_fp));
   LoadP(r3, MemOperand(r3));
   CmpP(r3, Operand::Zero());
-  Jump(isolate()->builtins()->FrameDropperTrampoline(), RelocInfo::CODE_TARGET,
+  Jump(BUILTIN_CODE(isolate(), FrameDropperTrampoline), RelocInfo::CODE_TARGET,
        ne);
 }
 
@@ -1703,14 +1708,6 @@ void MacroAssembler::TailCallStub(CodeStub* stub, Condition cond) {
   Jump(stub->GetCode(), RelocInfo::CODE_TARGET, cond);
 }
 
-void MacroAssembler::TailCallBuiltin(Builtins::Name name) {
-  DCHECK(ExternalReferenceTable::HasBuiltin(name));
-  mov(ip, Operand(ExternalReference(Builtins::kConstructProxy, isolate())));
-  LoadP(ip, MemOperand(ip));
-  AddP(ip, ip, Operand(Code::kHeaderSize - kHeapObjectTag));
-  Jump(ip);
-}
-
 bool TurboAssembler::AllowThisStubCall(CodeStub* stub) {
   return has_frame_ || !stub->SometimesSetsUpAFrame();
 }
@@ -1925,9 +1922,9 @@ void TurboAssembler::Abort(BailoutReason reason) {
     // We don't actually want to generate a pile of code for this, so just
     // claim there is a stack frame, without generating one.
     FrameScope scope(this, StackFrame::NONE);
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   } else {
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   }
   // will not return here
 }

@@ -552,7 +552,6 @@ namespace internal {
   F(NeverOptimizeFunction, 1, 1)              \
   F(GetOptimizationStatus, -1, 1)             \
   F(UnblockConcurrentRecompilation, 0, 1)     \
-  F(GetOptimizationCount, 1, 1)               \
   F(GetDeoptCount, 1, 1)                      \
   F(GetUndetectable, 0, 1)                    \
   F(GetCallable, 0, 1)                        \
@@ -826,8 +825,6 @@ class AllocateTargetSpace : public BitField<AllocationSpace, 1, 3> {};
 
 class DeclareGlobalsEvalFlag : public BitField<bool, 0, 1> {};
 class DeclareGlobalsNativeFlag : public BitField<bool, 1, 1> {};
-STATIC_ASSERT(LANGUAGE_END == 2);
-class DeclareGlobalsLanguageMode : public BitField<LanguageMode, 2, 1> {};
 
 // A set of bits returned by Runtime_GetOptimizationStatus.
 // These bits must be in sync with bits defined in test/mjsunit/mjsunit.js
@@ -839,6 +836,11 @@ enum class OptimizationStatus {
   kOptimized = 1 << 4,
   kTurboFanned = 1 << 5,
   kInterpreted = 1 << 6,
+  kMarkedForOptimization = 1 << 7,
+  kMarkedForConcurrentOptimization = 1 << 8,
+  kOptimizingConcurrently = 1 << 9,
+  kIsExecuting = 1 << 10,
+  kTopmostFrameIsTurboFanned = 1 << 11,
 };
 
 }  // namespace internal

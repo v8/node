@@ -19,7 +19,7 @@
 #include "src/messages.h"
 #include "src/objects-inl.h"
 #include "src/parsing/duplicate-finder.h"
-#include "src/parsing/parameter-initializer-rewriter.h"
+#include "src/parsing/expression-scope-reparenter.h"
 #include "src/parsing/parse-info.h"
 #include "src/parsing/rewriter.h"
 #include "src/parsing/scanner-character-streams.h"
@@ -4526,11 +4526,14 @@ Expression* Parser::RewriteYieldStar(Expression* iterable, int pos) {
       VariableProxy* output_proxy = factory()->NewVariableProxy(var_output);
       Expression* literal = factory()->NewStringLiteral(
           ast_value_factory()->value_string(), nopos);
-      Assignment* assign = factory()->NewAssignment(
-          Token::ASSIGN, output_proxy,
+
+      Expression* value = factory()->NewAwait(
           factory()->NewProperty(factory()->NewVariableProxy(var_output),
                                  literal, nopos),
           nopos);
+
+      Assignment* assign =
+          factory()->NewAssignment(Token::ASSIGN, output_proxy, value, nopos);
       loop_body->statements()->Add(
           factory()->NewExpressionStatement(assign, nopos), zone());
     }

@@ -621,8 +621,8 @@ void CompareICStub::GenerateGeneric(MacroAssembler* masm) {
     {
       FrameScope scope(masm, StackFrame::INTERNAL);
       __ Push(rsi);
-      __ Call(strict() ? isolate()->builtins()->StrictEqual()
-                       : isolate()->builtins()->Equal(),
+      __ Call(strict() ? BUILTIN_CODE(isolate(), StrictEqual)
+                       : BUILTIN_CODE(isolate(), Equal),
               RelocInfo::CODE_TARGET);
       __ Pop(rsi);
     }
@@ -800,7 +800,7 @@ void CallConstructStub::Generate(MacroAssembler* masm) {
 
   __ bind(&non_function);
   __ movp(rdx, rdi);
-  __ Jump(isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
+  __ Jump(BUILTIN_CODE(isolate(), Construct), RelocInfo::CODE_TARGET);
 }
 
 bool CEntryStub::NeedsImmovableCode() {
@@ -1093,15 +1093,11 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // in the code, because the builtin stubs may not have been generated yet
   // at the time this code is generated.
   if (type() == StackFrame::ENTRY_CONSTRUCT) {
-    ExternalReference construct_entry(Builtins::kJSConstructEntryTrampoline,
-                                      isolate());
-    __ Load(rax, construct_entry);
+    __ Call(BUILTIN_CODE(isolate(), JSConstructEntryTrampoline),
+            RelocInfo::CODE_TARGET);
   } else {
-    ExternalReference entry(Builtins::kJSEntryTrampoline, isolate());
-    __ Load(rax, entry);
+    __ Call(BUILTIN_CODE(isolate(), JSEntryTrampoline), RelocInfo::CODE_TARGET);
   }
-  __ leap(kScratchRegister, FieldOperand(rax, Code::kHeaderSize));
-  __ call(kScratchRegister);
 
   // Unlink this frame from the handler chain.
   __ PopStackHandler();

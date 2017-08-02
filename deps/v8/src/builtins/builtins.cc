@@ -20,6 +20,46 @@ namespace internal {
   Object* Builtin_##Name(int argc, Object** args, Isolate* isolate);
 BUILTIN_LIST_C(FORWARD_DECLARE)
 
+namespace {
+
+// TODO(jgruber): Pack in CallDescriptors::Key.
+struct BuiltinMetadata {
+  const char* name;
+  Builtins::Kind kind;
+  union {
+    Address cpp_entry;       // For CPP and API builtins.
+    int8_t parameter_count;  // For TFJ builtins.
+  } kind_specific_data;
+};
+
+// clang-format off
+#define DECL_CPP(Name, ...) { #Name, Builtins::CPP, \
+                              { FUNCTION_ADDR(Builtin_##Name) }},
+#define DECL_API(Name, ...) { #Name, Builtins::API, \
+                              { FUNCTION_ADDR(Builtin_##Name) }},
+#define DECL_TFJ(Name, Count, ...) { #Name, Builtins::TFJ, \
+                                     { reinterpret_cast<Address>(Count) }},
+#define DECL_TFC(Name, ...) { #Name, Builtins::TFC, {} },
+#define DECL_TFS(Name, ...) { #Name, Builtins::TFS, {} },
+#define DECL_TFH(Name, ...) { #Name, Builtins::TFH, {} },
+#define DECL_ASM(Name, ...) { #Name, Builtins::ASM, {} },
+#define DECL_DBG(Name, ...) { #Name, Builtins::DBG, {} },
+const BuiltinMetadata builtin_metadata[] = {
+  BUILTIN_LIST(DECL_CPP, DECL_API, DECL_TFJ, DECL_TFC, DECL_TFS, DECL_TFH,
+               DECL_ASM, DECL_DBG)
+};
+#undef DECL_CPP
+#undef DECL_API
+#undef DECL_TFJ
+#undef DECL_TFC
+#undef DECL_TFS
+#undef DECL_TFH
+#undef DECL_ASM
+#undef DECL_DBG
+// clang-format on
+
+}  // namespace
+
 Builtins::Builtins() : initialized_(false) {
   memset(builtins_, 0, sizeof(builtins_[0]) * builtin_count);
 }
@@ -27,29 +67,15 @@ Builtins::Builtins() : initialized_(false) {
 Builtins::~Builtins() {}
 
 BailoutId Builtins::GetContinuationBailoutId(Name name) {
-  switch (name) {
-#define BAILOUT_ID(NAME, ...) \
-  case k##NAME:               \
-    return BailoutId(BailoutId::kFirstBuiltinContinuationId + name);
-    BUILTIN_LIST_TFJ(BAILOUT_ID);
-    BUILTIN_LIST_TFC(BAILOUT_ID);
-#undef BAILOUT_ID
-    default:
-      UNREACHABLE();
-  }
+  DCHECK(Builtins::KindOf(name) == TFJ || Builtins::KindOf(name) == TFC);
+  return BailoutId(BailoutId::kFirstBuiltinContinuationId + name);
 }
 
 Builtins::Name Builtins::GetBuiltinFromBailoutId(BailoutId id) {
-  switch (id.ToInt()) {
-#define BAILOUT_ID(NAME, ...)                            \
-  case BailoutId::kFirstBuiltinContinuationId + k##NAME: \
-    return k##NAME;
-    BUILTIN_LIST_TFJ(BAILOUT_ID)
-    BUILTIN_LIST_TFC(BAILOUT_ID)
-#undef BAILOUT_ID
-    default:
-      UNREACHABLE();
-  }
+  int builtin_index = id.ToInt() - BailoutId::kFirstBuiltinContinuationId;
+  DCHECK(Builtins::KindOf(builtin_index) == TFJ ||
+         Builtins::KindOf(builtin_index) == TFC);
+  return static_cast<Name>(builtin_index);
 }
 
 void Builtins::TearDown() { initialized_ = false; }
@@ -73,9 +99,9 @@ const char* Builtins::Lookup(byte* pc) {
 Handle<Code> Builtins::NewFunctionContext(ScopeType scope_type) {
   switch (scope_type) {
     case ScopeType::EVAL_SCOPE:
-      return FastNewFunctionContextEval();
+      return builtin_handle(kFastNewFunctionContextEval);
     case ScopeType::FUNCTION_SCOPE:
-      return FastNewFunctionContextFunction();
+      return builtin_handle(kFastNewFunctionContextFunction);
     default:
       UNREACHABLE();
   }
@@ -86,9 +112,9 @@ Handle<Code> Builtins::NewCloneShallowArray(
     AllocationSiteMode allocation_mode) {
   switch (allocation_mode) {
     case TRACK_ALLOCATION_SITE:
-      return FastCloneShallowArrayTrack();
+      return builtin_handle(kFastCloneShallowArrayTrack);
     case DONT_TRACK_ALLOCATION_SITE:
-      return FastCloneShallowArrayDontTrack();
+      return builtin_handle(kFastCloneShallowArrayDontTrack);
     default:
       UNREACHABLE();
   }
@@ -98,11 +124,11 @@ Handle<Code> Builtins::NewCloneShallowArray(
 Handle<Code> Builtins::NonPrimitiveToPrimitive(ToPrimitiveHint hint) {
   switch (hint) {
     case ToPrimitiveHint::kDefault:
-      return NonPrimitiveToPrimitive_Default();
+      return builtin_handle(kNonPrimitiveToPrimitive_Default);
     case ToPrimitiveHint::kNumber:
-      return NonPrimitiveToPrimitive_Number();
+      return builtin_handle(kNonPrimitiveToPrimitive_Number);
     case ToPrimitiveHint::kString:
-      return NonPrimitiveToPrimitive_String();
+      return builtin_handle(kNonPrimitiveToPrimitive_String);
   }
   UNREACHABLE();
 }
@@ -110,9 +136,9 @@ Handle<Code> Builtins::NonPrimitiveToPrimitive(ToPrimitiveHint hint) {
 Handle<Code> Builtins::OrdinaryToPrimitive(OrdinaryToPrimitiveHint hint) {
   switch (hint) {
     case OrdinaryToPrimitiveHint::kNumber:
-      return OrdinaryToPrimitive_Number();
+      return builtin_handle(kOrdinaryToPrimitive_Number);
     case OrdinaryToPrimitiveHint::kString:
-      return OrdinaryToPrimitive_String();
+      return builtin_handle(kOrdinaryToPrimitive_String);
   }
   UNREACHABLE();
 }
@@ -122,18 +148,9 @@ Handle<Code> Builtins::builtin_handle(Name name) {
 }
 
 // static
-int Builtins::GetBuiltinParameterCount(Name name) {
-  switch (name) {
-#define TFJ_CASE(Name, ParamCount, ...) \
-  case k##Name: {                       \
-    return ParamCount;                  \
-  }
-    BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, TFJ_CASE, IGNORE_BUILTIN,
-                 IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
-#undef TFJ_CASE
-    default:
-      UNREACHABLE();
-  }
+int Builtins::GetStackParameterCount(Name name) {
+  DCHECK(Builtins::KindOf(name) == TFJ);
+  return builtin_metadata[name].kind_specific_data.parameter_count;
 }
 
 // static
@@ -156,27 +173,27 @@ Callable Builtins::CallableFor(Isolate* isolate, Name name) {
       return Callable(code, BuiltinDescriptor(isolate));
     }
     case kArrayForEach: {
-      Handle<Code> code = isolate->builtins()->ArrayForEach();
+      Handle<Code> code = BUILTIN_CODE(isolate, ArrayForEach);
       return Callable(code, BuiltinDescriptor(isolate));
     }
     case kArrayForEachLoopEagerDeoptContinuation: {
       Handle<Code> code =
-          isolate->builtins()->ArrayForEachLoopEagerDeoptContinuation();
+          BUILTIN_CODE(isolate, ArrayForEachLoopEagerDeoptContinuation);
       return Callable(code, BuiltinDescriptor(isolate));
     }
     case kArrayForEachLoopLazyDeoptContinuation: {
       Handle<Code> code =
-          isolate->builtins()->ArrayForEachLoopLazyDeoptContinuation();
+          BUILTIN_CODE(isolate, ArrayForEachLoopLazyDeoptContinuation);
       return Callable(code, BuiltinDescriptor(isolate));
     }
     case kArrayMapLoopEagerDeoptContinuation: {
       Handle<Code> code =
-          isolate->builtins()->ArrayMapLoopEagerDeoptContinuation();
+          BUILTIN_CODE(isolate, ArrayMapLoopEagerDeoptContinuation);
       return Callable(code, BuiltinDescriptor(isolate));
     }
     case kArrayMapLoopLazyDeoptContinuation: {
       Handle<Code> code =
-          isolate->builtins()->ArrayMapLoopLazyDeoptContinuation();
+          BUILTIN_CODE(isolate, ArrayMapLoopLazyDeoptContinuation);
       return Callable(code, BuiltinDescriptor(isolate));
     }
     default:
@@ -187,115 +204,54 @@ Callable Builtins::CallableFor(Isolate* isolate, Name name) {
 }
 
 // static
-int Builtins::GetStackParameterCount(Isolate* isolate, Name name) {
-  switch (name) {
-#define CASE(Name, Count, ...) \
-  case k##Name: {              \
-    return Count;              \
-  }
-    BUILTIN_LIST_TFJ(CASE)
-#undef CASE
-    default:
-      UNREACHABLE();
-      return 0;
-  }
-}
-
-// static
 const char* Builtins::name(int index) {
-  switch (index) {
-#define CASE(Name, ...) \
-  case k##Name:         \
-    return #Name;
-    BUILTIN_LIST_ALL(CASE)
-#undef CASE
-    default:
-      UNREACHABLE();
-      break;
-  }
-  return "";
+  DCHECK(0 <= index && index < builtin_count);
+  return builtin_metadata[index].name;
 }
 
 // static
 Address Builtins::CppEntryOf(int index) {
+  DCHECK(Builtins::HasCppImplementation(index));
+  return builtin_metadata[index].kind_specific_data.cpp_entry;
+}
+
+// static
+Builtins::Kind Builtins::KindOf(int index) {
   DCHECK(0 <= index && index < builtin_count);
-  switch (index) {
-#define CASE(Name, ...) \
-  case k##Name:         \
-    return FUNCTION_ADDR(Builtin_##Name);
-    BUILTIN_LIST_C(CASE)
-#undef CASE
-    default:
-      return nullptr;
+  return builtin_metadata[index].kind;
+}
+
+// static
+const char* Builtins::KindNameOf(int index) {
+  Kind kind = Builtins::KindOf(index);
+  // clang-format off
+  switch (kind) {
+    case CPP: return "CPP";
+    case API: return "API";
+    case TFJ: return "TFJ";
+    case TFC: return "TFC";
+    case TFS: return "TFS";
+    case TFH: return "TFH";
+    case ASM: return "ASM";
+    case DBG: return "DBG";
   }
+  // clang-format on
   UNREACHABLE();
 }
 
 // static
-bool Builtins::IsCpp(int index) {
-  DCHECK(0 <= index && index < builtin_count);
-  switch (index) {
-#define CASE(Name, ...) \
-  case k##Name:         \
-    return true;
-#define BUILTIN_LIST_CPP(V)                                       \
-  BUILTIN_LIST(V, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
-    BUILTIN_LIST_CPP(CASE)
-#undef BUILTIN_LIST_CPP
-#undef CASE
-    default:
-      return false;
-  }
-  UNREACHABLE();
-}
-
-// static
-bool Builtins::IsApi(int index) {
-  DCHECK(0 <= index && index < builtin_count);
-  switch (index) {
-#define CASE(Name, ...) \
-  case k##Name:         \
-    return true;
-#define BUILTIN_LIST_API(V)                                       \
-  BUILTIN_LIST(IGNORE_BUILTIN, V, IGNORE_BUILTIN, IGNORE_BUILTIN, \
-               IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN)
-    BUILTIN_LIST_API(CASE);
-#undef BUILTIN_LIST_API
-#undef CASE
-    default:
-      return false;
-  }
-  UNREACHABLE();
-}
+bool Builtins::IsCpp(int index) { return Builtins::KindOf(index) == CPP; }
 
 // static
 bool Builtins::HasCppImplementation(int index) {
-  DCHECK(0 <= index && index < builtin_count);
-  switch (index) {
-#define CASE(Name, ...) \
-  case k##Name:         \
-    return true;
-    BUILTIN_LIST_C(CASE)
-#undef CASE
-    default:
-      return false;
-  }
-  UNREACHABLE();
+  Kind kind = Builtins::KindOf(index);
+  return (kind == CPP || kind == API);
 }
-
-#define DEFINE_BUILTIN_ACCESSOR(Name, ...)                                    \
-  Handle<Code> Builtins::Name() {                                             \
-    Code** code_address = reinterpret_cast<Code**>(builtin_address(k##Name)); \
-    return Handle<Code>(code_address);                                        \
-  }
-BUILTIN_LIST_ALL(DEFINE_BUILTIN_ACCESSOR)
-#undef DEFINE_BUILTIN_ACCESSOR
 
 Handle<Code> Builtins::JSConstructStubGeneric() {
   return FLAG_harmony_restrict_constructor_return
-             ? JSConstructStubGenericRestrictedReturn()
-             : JSConstructStubGenericUnrestrictedReturn();
+             ? builtin_handle(kJSConstructStubGenericRestrictedReturn)
+             : builtin_handle(kJSConstructStubGenericUnrestrictedReturn);
 }
 
 // static

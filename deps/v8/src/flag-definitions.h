@@ -210,7 +210,6 @@ DEFINE_IMPLICATION(es_staging, harmony)
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                               \
   V(harmony_function_tostring, "harmony Function.prototype.toString")   \
-  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")             \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
   V(harmony_regexp_property, "harmony Unicode regexp property classes") \
   V(harmony_strict_legacy_accessor_builtins,                            \
@@ -228,7 +227,8 @@ DEFINE_IMPLICATION(es_staging, harmony)
     "harmony restrictions on generator declarations")                    \
   V(harmony_object_rest_spread, "harmony object rest spread properties") \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
-  V(harmony_regexp_dotall, "harmony regexp dotAll flag")
+  V(harmony_regexp_dotall, "harmony regexp dotAll flag")                 \
+  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -289,7 +289,7 @@ DEFINE_BOOL(track_field_types, true, "track field types")
 DEFINE_IMPLICATION(track_field_types, track_fields)
 DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
 DEFINE_BOOL(type_profile, false, "collect type information")
-DEFINE_BOOL(block_coverage, false, "collect block coverage information")
+DEFINE_BOOL(block_coverage, true, "enable block code coverage")
 DEFINE_BOOL(trace_block_coverage, false,
             "trace collected block coverage information")
 DEFINE_IMPLICATION(trace_block_coverage, block_coverage)
@@ -465,6 +465,8 @@ DEFINE_BOOL(turbo_loop_variable, true, "Turbofan loop variable optimization")
 DEFINE_BOOL(turbo_cf_optimization, true, "optimize control flow in TurboFan")
 DEFINE_BOOL(turbo_frame_elision, true, "elide frames in TurboFan")
 DEFINE_BOOL(turbo_escape, true, "enable escape analysis")
+DEFINE_BOOL(turbo_new_escape, false,
+            "enable new implementation of escape analysis")
 DEFINE_BOOL(turbo_instruction_scheduling, false,
             "enable instruction scheduling in TurboFan")
 DEFINE_BOOL(turbo_stress_instruction_scheduling, false,
@@ -948,10 +950,11 @@ DEFINE_BOOL(stack_trace_on_illegal, false,
             "print stack trace when an illegal exception is thrown")
 DEFINE_BOOL(abort_on_uncaught_exception, false,
             "abort program (dump core) when an uncaught exception is thrown")
-DEFINE_BOOL(abort_on_stack_overflow, false,
-            "Abort program when stack overflow (as opposed to throwing "
-            "RangeError). This is useful for fuzzing where the spec behaviour "
-            "would introduce nondeterminism.")
+DEFINE_BOOL(abort_on_stack_or_string_length_overflow, false,
+            "Abort program when the stack overflows or a string exceeds "
+            "maximum length (as opposed to throwing RangeError). This is "
+            "useful for fuzzing where the spec behaviour would introduce "
+            "nondeterminism.")
 DEFINE_BOOL(randomize_hashes, true,
             "randomize hashes to avoid predictable hash collisions "
             "(with snapshots this option cannot override the baked-in seed)")
@@ -1174,12 +1177,8 @@ DEFINE_BOOL(redirect_code_traces, false,
 DEFINE_STRING(redirect_code_traces_to, NULL,
               "output deopt information and disassembly into the given file")
 
-DEFINE_BOOL(hydrogen_track_positions, false,
-            "track source code positions when building IR")
-
 DEFINE_BOOL(print_opt_source, false,
             "print source code of optimized and inlined functions")
-DEFINE_IMPLICATION(hydrogen_track_positions, print_opt_source)
 
 //
 // Disassembler only flags
@@ -1228,7 +1227,6 @@ DEFINE_BOOL(sodium, false,
 DEFINE_IMPLICATION(sodium, print_code_stubs)
 DEFINE_IMPLICATION(sodium, print_code)
 DEFINE_IMPLICATION(sodium, print_opt_code)
-DEFINE_IMPLICATION(sodium, hydrogen_track_positions)
 DEFINE_IMPLICATION(sodium, code_comments)
 
 DEFINE_BOOL(print_all_code, false, "enable all flags related to printing code")

@@ -1438,6 +1438,9 @@ Handle<Object> Factory::NewError(Handle<JSFunction> constructor,
 }
 
 Handle<Object> Factory::NewInvalidStringLengthError() {
+  if (FLAG_abort_on_stack_or_string_length_overflow) {
+    FATAL("Aborting on invalid string length");
+  }
   // Invalidate the "string length" protector.
   if (isolate()->IsStringLengthOverflowIntact()) {
     isolate()->InvalidateStringLengthOverflowProtector();
@@ -1649,10 +1652,6 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
   Handle<JSFunction> result =
       NewFunction(initial_map, info, context_or_undefined, pretenure);
 
-  if (info->ic_age() != isolate()->heap()->global_ic_age()) {
-    info->ResetForNewContext(isolate()->heap()->global_ic_age());
-  }
-
   if (context_or_undefined->IsContext()) {
     // Give compiler a chance to pre-initialize.
     Compiler::PostInstantiation(result, pretenure);
@@ -1686,9 +1685,6 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
             *info, "new function from shared function info");
   }
   result->set_feedback_vector_cell(*vector);
-  if (info->ic_age() != isolate()->heap()->global_ic_age()) {
-    info->ResetForNewContext(isolate()->heap()->global_ic_age());
-  }
 
   if (context_or_undefined->IsContext()) {
     // Give compiler a chance to pre-initialize.
@@ -1898,6 +1894,7 @@ Handle<JSGlobalObject> Factory::NewJSGlobalObject(
 
   // Create a new map for the global object.
   Handle<Map> new_map = Map::CopyDropDescriptors(map);
+  new_map->set_may_have_interesting_symbols(true);
   new_map->set_dictionary_map(true);
 
   // Set up the global object as a normalized object.
@@ -2419,6 +2416,7 @@ Handle<JSGlobalProxy> Factory::NewUninitializedJSGlobalProxy(int size) {
   Handle<Map> map = NewMap(JS_GLOBAL_PROXY_TYPE, size);
   // Maintain invariant expected from any JSGlobalProxy.
   map->set_is_access_check_needed(true);
+  map->set_may_have_interesting_symbols(true);
   CALL_HEAP_FUNCTION(
       isolate(), isolate()->heap()->AllocateJSObjectFromMap(*map, NOT_TENURED),
       JSGlobalProxy);
@@ -2480,7 +2478,7 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
 
 Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForLiteral(
     FunctionLiteral* literal, Handle<Script> script) {
-  Handle<Code> code = isolate()->builtins()->CompileLazy();
+  Handle<Code> code = BUILTIN_CODE(isolate(), CompileLazy);
   Handle<ScopeInfo> scope_info(ScopeInfo::Empty(isolate()));
   Handle<SharedFunctionInfo> result =
       NewSharedFunctionInfo(literal->name(), literal->kind(), code, scope_info);
@@ -2530,14 +2528,14 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
   share->set_function_data(*undefined_value(), SKIP_WRITE_BARRIER);
   Handle<Code> code;
   if (!maybe_code.ToHandle(&code)) {
-    code = isolate()->builtins()->Illegal();
+    code = BUILTIN_CODE(isolate(), Illegal);
   }
   share->set_code(*code);
   share->set_scope_info(ScopeInfo::Empty(isolate()));
   share->set_outer_scope_info(*the_hole_value());
   Handle<Code> construct_stub =
       is_constructor ? isolate()->builtins()->JSConstructStubGeneric()
-                     : isolate()->builtins()->ConstructedNonConstructable();
+                     : BUILTIN_CODE(isolate(), ConstructedNonConstructable);
   share->SetConstructStub(*construct_stub);
   share->set_instance_class_name(*Object_string());
   share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
@@ -2551,7 +2549,6 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
 #if V8_SFI_HAS_UNIQUE_ID
   share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
-  share->set_counters(0);
 
   // Set integer fields (smi or int, depending on the architecture).
   share->set_length(0);
@@ -2562,7 +2559,7 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
   share->set_function_token_position(0);
   // All compiler hints default to false or 0.
   share->set_compiler_hints(0);
-  share->set_opt_count_and_bailout_reason(0);
+  share->set_bailout_reason(0);
   share->set_kind(kind);
 
   share->set_preparsed_scope_data(*null_value());

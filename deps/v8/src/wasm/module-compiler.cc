@@ -507,8 +507,7 @@ using WasmInstanceMap =
 Handle<Code> UnwrapOrCompileImportWrapper(
     Isolate* isolate, int index, FunctionSig* sig, Handle<JSReceiver> target,
     Handle<String> module_name, MaybeHandle<String> import_name,
-    ModuleOrigin origin, WasmInstanceMap* imported_instances,
-    Handle<FixedArray> js_imports_table) {
+    ModuleOrigin origin, WasmInstanceMap* imported_instances) {
   WasmFunction* other_func = GetWasmFunctionForImportWrapper(isolate, target);
   if (other_func) {
     if (!sig->Equals(other_func->sig)) return Handle<Code>::null();
@@ -523,8 +522,7 @@ Handle<Code> UnwrapOrCompileImportWrapper(
   // No wasm function or being debugged. Compile a new wrapper for the new
   // signature.
   return compiler::CompileWasmToJSWrapper(isolate, target, sig, index,
-                                          module_name, import_name, origin,
-                                          js_imports_table);
+                                          module_name, import_name, origin);
 }
 
 double MonotonicallyIncreasingTimeInMs() {
@@ -572,8 +570,8 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
   // Otherwise: Initialize with the illegal builtin. All call sites will be
   // patched at instantiation.
   Handle<Code> init_builtin = lazy_compile
-                                  ? isolate_->builtins()->WasmCompileLazy()
-                                  : isolate_->builtins()->Illegal();
+                                  ? BUILTIN_CODE(isolate_, WasmCompileLazy)
+                                  : BUILTIN_CODE(isolate_, Illegal);
   for (int i = 0, e = static_cast<int>(module_->functions.size()); i < e; ++i) {
     code_table->set(i, *init_builtin);
     temp_instance->function_code[i] = init_builtin;
@@ -1260,13 +1258,6 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
                                     Handle<WasmInstanceObject> instance) {
   int num_imported_functions = 0;
   int num_imported_tables = 0;
-  Handle<FixedArray> func_table = isolate_->factory()->NewFixedArray(
-      static_cast<int>(module_->import_table.size()), TENURED);
-  Handle<FixedArray> js_imports_table =
-      isolate_->global_handles()->Create(*func_table);
-  Handle<Foreign> js_imports_foreign = isolate_->factory()->NewForeign(
-      reinterpret_cast<Address>(js_imports_table.location()), TENURED);
-  instance->set_js_imports_table(*js_imports_foreign);
   WasmInstanceMap imported_wasm_instances(isolate_->heap());
   for (int index = 0; index < static_cast<int>(module_->import_table.size());
        ++index) {
@@ -1302,7 +1293,7 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
         Handle<Code> import_wrapper = UnwrapOrCompileImportWrapper(
             isolate_, index, module_->functions[import.index].sig,
             Handle<JSReceiver>::cast(value), module_name, import_name,
-            module_->origin(), &imported_wasm_instances, js_imports_table);
+            module_->origin(), &imported_wasm_instances);
         if (import_wrapper.is_null()) {
           ReportLinkError("imported function does not match the expected type",
                           index, module_name, import_name);
@@ -2085,7 +2076,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
 
     // Initialize {code_table_} with the illegal builtin. All call sites
     // will be patched at instantiation.
-    Handle<Code> illegal_builtin = job_->isolate_->builtins()->Illegal();
+    Handle<Code> illegal_builtin = BUILTIN_CODE(job_->isolate_, Illegal);
     // TODO(wasm): Fix this for lazy compilation.
     for (uint32_t i = 0; i < module_->functions.size(); ++i) {
       job_->code_table_->set(static_cast<int>(i), *illegal_builtin);

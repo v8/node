@@ -190,10 +190,8 @@ StackFrame::Type CompilationInfo::GetOutputStackFrameType() const {
 }
 
 int CompilationInfo::GetDeclareGlobalsFlags() const {
-  DCHECK(DeclareGlobalsLanguageMode::is_valid(parse_info()->language_mode()));
   return DeclareGlobalsEvalFlag::encode(parse_info()->is_eval()) |
-         DeclareGlobalsNativeFlag::encode(parse_info()->is_native()) |
-         DeclareGlobalsLanguageMode::encode(parse_info()->language_mode());
+         DeclareGlobalsNativeFlag::encode(parse_info()->is_native());
 }
 
 SourcePositionTableBuilder::RecordingMode
@@ -201,10 +199,6 @@ CompilationInfo::SourcePositionRecordingMode() const {
   return parse_info() && parse_info()->is_native()
              ? SourcePositionTableBuilder::OMIT_SOURCE_POSITIONS
              : SourcePositionTableBuilder::RECORD_SOURCE_POSITIONS;
-}
-
-bool CompilationInfo::ExpectsJSReceiverAsReceiver() {
-  return is_sloppy(parse_info()->language_mode()) && !parse_info()->is_native();
 }
 
 bool CompilationInfo::has_context() const { return !closure().is_null(); }

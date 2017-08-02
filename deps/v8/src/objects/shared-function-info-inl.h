@@ -58,9 +58,8 @@ INT_ACCESSORS(SharedFunctionInfo, start_position_and_type,
 INT_ACCESSORS(SharedFunctionInfo, function_token_position,
               kFunctionTokenPositionOffset)
 INT_ACCESSORS(SharedFunctionInfo, compiler_hints, kCompilerHintsOffset)
-INT_ACCESSORS(SharedFunctionInfo, opt_count_and_bailout_reason,
-              kOptCountAndBailoutReasonOffset)
-INT_ACCESSORS(SharedFunctionInfo, counters, kCountersOffset)
+INT_ACCESSORS(SharedFunctionInfo, bailout_reason,
+              kCountersAndBailoutReasonOffset)
 
 bool SharedFunctionInfo::has_shared_name() const {
   return raw_name() != kNoSharedNameSentinel;
@@ -356,25 +355,7 @@ void SharedFunctionInfo::set_inferred_name(String* inferred_name) {
   set_function_identifier(inferred_name);
 }
 
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, counters, ic_age,
-                    SharedFunctionInfo::ICAgeBits)
-
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, counters, deopt_count,
-                    SharedFunctionInfo::DeoptCountBits)
-
-void SharedFunctionInfo::increment_deopt_count() {
-  int value = counters();
-  int deopt_count = DeoptCountBits::decode(value);
-  // Saturate the deopt count when incrementing, rather than overflowing.
-  if (deopt_count < DeoptCountBits::kMax) {
-    set_counters(DeoptCountBits::update(value, deopt_count + 1));
-  }
-}
-
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, opt_count_and_bailout_reason, opt_count,
-                    SharedFunctionInfo::OptCountBits)
-
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, opt_count_and_bailout_reason,
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, bailout_reason,
                     disable_optimization_reason,
                     SharedFunctionInfo::DisabledOptimizationReasonBits)
 

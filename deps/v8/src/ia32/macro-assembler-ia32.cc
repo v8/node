@@ -486,7 +486,7 @@ void MacroAssembler::MaybeDropFrames() {
       ExternalReference::debug_restart_fp_address(isolate());
   mov(ebx, Operand::StaticVariable(restart_fp));
   test(ebx, ebx);
-  j(not_zero, isolate()->builtins()->FrameDropperTrampoline(),
+  j(not_zero, BUILTIN_CODE(isolate(), FrameDropperTrampoline),
     RelocInfo::CODE_TARGET);
 }
 
@@ -754,7 +754,7 @@ void TurboAssembler::Prologue(bool code_pre_aging) {
       kNoCodeAgeSequenceLength);
   if (code_pre_aging) {
     // Pre-age the code.
-    call(isolate()->builtins()->MarkCodeAsExecutedOnce(),
+    call(BUILTIN_CODE(isolate(), MarkCodeAsExecutedOnce),
          RelocInfo::CODE_AGE_SEQUENCE);
     Nop(kNoCodeAgeSequenceLength - Assembler::kCallInstructionLength);
   } else {
@@ -1308,14 +1308,6 @@ void MacroAssembler::TailCallStub(CodeStub* stub) {
   jmp(stub->GetCode(), RelocInfo::CODE_TARGET);
 }
 
-void MacroAssembler::TailCallBuiltin(Builtins::Name name) {
-  DCHECK(ExternalReferenceTable::HasBuiltin(name));
-  mov(ecx, Operand::StaticVariable(
-               ExternalReference(Builtins::kConstructProxy, isolate())));
-  lea(ecx, FieldOperand(ecx, Code::kHeaderSize));
-  jmp(ecx);
-}
-
 bool TurboAssembler::AllowThisStubCall(CodeStub* stub) {
   return has_frame() || !stub->SometimesSetsUpAFrame();
 }
@@ -1523,7 +1515,7 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
   }
 
   if (!definitely_matches) {
-    Handle<Code> adaptor = isolate()->builtins()->ArgumentsAdaptorTrampoline();
+    Handle<Code> adaptor = BUILTIN_CODE(isolate(), ArgumentsAdaptorTrampoline);
     if (flag == CALL_FUNCTION) {
       call(adaptor, RelocInfo::CODE_TARGET);
       if (!*definitely_mismatches) {
@@ -2133,9 +2125,9 @@ void TurboAssembler::Abort(BailoutReason reason) {
     // We don't actually want to generate a pile of code for this, so just
     // claim there is a stack frame, without generating one.
     FrameScope scope(this, StackFrame::NONE);
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   } else {
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   }
   // will not return here
   int3();

@@ -493,8 +493,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   class Sweeper {
    public:
-    class SweeperTask;
-
     enum FreeListRebuildingMode { REBUILD_FREE_LIST, IGNORE_FREE_LIST };
     enum ClearOldToNewSlotsMode {
       DO_NOT_CLEAR,
@@ -510,8 +508,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
     explicit Sweeper(Heap* heap)
         : heap_(heap),
+          num_tasks_(0),
           pending_sweeper_tasks_semaphore_(0),
-          semaphore_counter_(0),
           sweeping_in_progress_(false),
           num_sweeping_tasks_(0) {}
 
@@ -537,9 +535,10 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
     Page* GetSweptPageSafe(PagedSpace* space);
 
    private:
-    static const int kAllocationSpaces = LAST_PAGED_SPACE + 1;
+    class SweeperTask;
 
-    static ClearOldToNewSlotsMode GetClearOldToNewSlotsMode(Page* p);
+    static const int kAllocationSpaces = LAST_PAGED_SPACE + 1;
+    static const int kMaxSweeperTasks = kAllocationSpaces;
 
     template <typename Callback>
     void ForAllSweepingSpaces(Callback callback) {
@@ -552,10 +551,10 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
     void PrepareToBeSweptPage(AllocationSpace space, Page* page);
 
-    Heap* heap_;
+    Heap* const heap_;
+    int num_tasks_;
+    uint32_t task_ids_[kMaxSweeperTasks];
     base::Semaphore pending_sweeper_tasks_semaphore_;
-    // Counter is only used for waiting on the semaphore.
-    intptr_t semaphore_counter_;
     base::Mutex mutex_;
     SweptList swept_list_[kAllocationSpaces];
     SweepingList sweeping_list_[kAllocationSpaces];
@@ -595,11 +594,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void AbortCompaction();
 
-  INLINE(static bool ShouldSkipEvacuationSlotRecording(Object* host)) {
-    return Page::FromAddress(reinterpret_cast<Address>(host))
-        ->ShouldSkipEvacuationSlotRecording();
-  }
-
   static inline bool IsOnEvacuationCandidate(HeapObject* obj) {
     return Page::FromAddress(reinterpret_cast<Address>(obj))
         ->IsEvacuationCandidate();
@@ -607,9 +601,8 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void RecordRelocSlot(Code* host, RelocInfo* rinfo, Object* target);
   void RecordCodeTargetPatch(Address pc, Code* target);
-  INLINE(void RecordSlot(HeapObject* object, Object** slot, Object* target));
-  INLINE(void ForceRecordSlot(HeapObject* object, Object** slot,
-                              Object* target));
+  V8_INLINE static void RecordSlot(HeapObject* object, Object** slot,
+                                   Object* target);
   void RecordLiveSlotsOnPage(Page* page);
 
   void UpdateSlots(SlotsBuffer* buffer);

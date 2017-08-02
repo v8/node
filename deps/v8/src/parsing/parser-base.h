@@ -1341,9 +1341,17 @@ class ParserBase {
   // depending on the current function type.
   inline StatementT BuildReturnStatement(ExpressionT expr, int pos,
                                          int end_pos = kNoSourcePosition) {
-    return is_async_function()
-               ? factory()->NewAsyncReturnStatement(expr, pos, end_pos)
-               : factory()->NewReturnStatement(expr, pos, end_pos);
+    if (impl()->IsEmptyExpression(expr)) {
+      expr = impl()->GetLiteralUndefined(kNoSourcePosition);
+    } else if (is_async_generator()) {
+      // In async generators, if there is an explicit operand to the return
+      // statement, await the operand.
+      expr = factory()->NewAwait(expr, kNoSourcePosition);
+    }
+    if (is_async_function()) {
+      return factory()->NewAsyncReturnStatement(expr, pos, end_pos);
+    }
+    return factory()->NewReturnStatement(expr, pos, end_pos);
   }
 
   // Validation per ES6 object literals.
@@ -2941,6 +2949,12 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseYieldExpression(
 
   if (delegating) {
     return impl()->RewriteYieldStar(expression, pos);
+  }
+
+  if (is_async_generator()) {
+    // Per https://github.com/tc39/proposal-async-iteration/pull/102, the yield
+    // operand must be Await-ed in async generators.
+    expression = factory()->NewAwait(expression, pos);
   }
 
   // Hackily disambiguate o from o.next and o [Symbol.iterator]().
@@ -5221,8 +5235,6 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseReturnStatement(
       tok == Token::RBRACE || tok == Token::EOS) {
     if (IsDerivedConstructor(function_state_->kind())) {
       return_value = impl()->ThisExpression(loc.beg_pos);
-    } else {
-      return_value = impl()->GetLiteralUndefined(position());
     }
   } else {
     return_value = ParseExpression(true, CHECK_OK);
@@ -5751,12 +5763,16 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseStandardForLoop(
 
   scope()->set_end_position(scanner()->location().end_pos);
   inner_scope->set_end_position(scanner()->location().end_pos);
-  if (bound_names_are_lexical && for_info->bound_names.length() > 0 &&
-      function_state_->contains_function_or_eval()) {
-    scope()->set_is_hidden();
-    return impl()->DesugarLexicalBindingsInForStatement(
-        loop, init, cond, next, body, body_range, inner_scope, *for_info,
-        CHECK_OK);
+  if (bound_names_are_lexical && for_info->bound_names.length() > 0) {
+    if (function_state_->contains_function_or_eval()) {
+      scope()->set_is_hidden();
+      return impl()->DesugarLexicalBindingsInForStatement(
+          loop, init, cond, next, body, body_range, inner_scope, *for_info,
+          CHECK_OK);
+    } else {
+      inner_scope = inner_scope->FinalizeBlockScope();
+      CHECK_NULL(inner_scope);
+    }
   }
 
   Scope* for_scope = scope()->FinalizeBlockScope();

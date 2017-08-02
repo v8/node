@@ -9,6 +9,7 @@
 #include "src/base/atomicops.h"
 #include "src/base/bits.h"
 #include "src/base/sys-info.h"
+#include "src/cancelable-task.h"
 #include "src/code-stubs.h"
 #include "src/compilation-cache.h"
 #include "src/deoptimizer.h"
@@ -20,6 +21,8 @@
 #include "src/heap/concurrent-marking.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/incremental-marking.h"
+#include "src/heap/invalidated-slots-inl.h"
+#include "src/heap/invalidated-slots.h"
 #include "src/heap/item-parallel-job.h"
 #include "src/heap/local-allocator.h"
 #include "src/heap/mark-compact-inl.h"
@@ -187,13 +190,6 @@ class FullMarkingVerifier : public MarkingVerifier {
     if (!host->IsWeakObject(rinfo->target_object())) {
       Object* p = rinfo->target_object();
       VisitPointer(host, &p);
-    }
-  }
-
-  void VisitCellPointer(Code* host, RelocInfo* rinfo) override {
-    DCHECK(rinfo->rmode() == RelocInfo::CELL);
-    if (!host->IsWeakObject(rinfo->target_cell())) {
-      ObjectVisitor::VisitCellPointer(host, rinfo);
     }
   }
 };
@@ -621,12 +617,14 @@ void MarkCompactCollector::ClearMarkbits() {
   heap_->lo_space()->ClearMarkingStateOfLiveObjects();
 }
 
-class MarkCompactCollector::Sweeper::SweeperTask : public v8::Task {
+class MarkCompactCollector::Sweeper::SweeperTask final : public CancelableTask {
  public:
-  SweeperTask(Sweeper* sweeper, base::Semaphore* pending_sweeper_tasks,
+  SweeperTask(Isolate* isolate, Sweeper* sweeper,
+              base::Semaphore* pending_sweeper_tasks,
               base::AtomicNumber<intptr_t>* num_sweeping_tasks,
               AllocationSpace space_to_start)
-      : sweeper_(sweeper),
+      : CancelableTask(isolate),
+        sweeper_(sweeper),
         pending_sweeper_tasks_(pending_sweeper_tasks),
         num_sweeping_tasks_(num_sweeping_tasks),
         space_to_start_(space_to_start) {}
@@ -634,8 +632,7 @@ class MarkCompactCollector::Sweeper::SweeperTask : public v8::Task {
   virtual ~SweeperTask() {}
 
  private:
-  // v8::Task overrides.
-  void Run() override {
+  void RunInternal() final {
     DCHECK_GE(space_to_start_, FIRST_SPACE);
     DCHECK_LE(space_to_start_, LAST_PAGED_SPACE);
     const int offset = space_to_start_ - FIRST_SPACE;
@@ -650,9 +647,9 @@ class MarkCompactCollector::Sweeper::SweeperTask : public v8::Task {
     pending_sweeper_tasks_->Signal();
   }
 
-  Sweeper* sweeper_;
-  base::Semaphore* pending_sweeper_tasks_;
-  base::AtomicNumber<intptr_t>* num_sweeping_tasks_;
+  Sweeper* const sweeper_;
+  base::Semaphore* const pending_sweeper_tasks_;
+  base::AtomicNumber<intptr_t>* const num_sweeping_tasks_;
   AllocationSpace space_to_start_;
 
   DISALLOW_COPY_AND_ASSIGN(SweeperTask);
@@ -670,15 +667,19 @@ void MarkCompactCollector::Sweeper::StartSweeping() {
 }
 
 void MarkCompactCollector::Sweeper::StartSweeperTasks() {
+  DCHECK_EQ(0, num_tasks_);
+  DCHECK_EQ(0, num_sweeping_tasks_.Value());
   if (FLAG_concurrent_sweeping && sweeping_in_progress_) {
     ForAllSweepingSpaces([this](AllocationSpace space) {
       if (space == NEW_SPACE) return;
       num_sweeping_tasks_.Increment(1);
-      semaphore_counter_++;
+      SweeperTask* task = new SweeperTask(heap_->isolate(), this,
+                                          &pending_sweeper_tasks_semaphore_,
+                                          &num_sweeping_tasks_, space);
+      DCHECK_LT(num_tasks_, kMaxSweeperTasks);
+      task_ids_[num_tasks_++] = task->id();
       V8::GetCurrentPlatform()->CallOnBackgroundThread(
-          new SweeperTask(this, &pending_sweeper_tasks_semaphore_,
-                          &num_sweeping_tasks_, space),
-          v8::Platform::kShortRunningTask);
+          task, v8::Platform::kShortRunningTask);
     });
   }
 }
@@ -723,10 +724,14 @@ void MarkCompactCollector::Sweeper::EnsureCompleted() {
       [this](AllocationSpace space) { ParallelSweepSpace(space, 0); });
 
   if (FLAG_concurrent_sweeping) {
-    while (semaphore_counter_ > 0) {
-      pending_sweeper_tasks_semaphore_.Wait();
-      semaphore_counter_--;
+    for (int i = 0; i < num_tasks_; i++) {
+      if (heap_->isolate()->cancelable_task_manager()->TryAbort(task_ids_[i]) !=
+          CancelableTaskManager::kTaskAborted) {
+        pending_sweeper_tasks_semaphore_.Wait();
+      }
     }
+    num_tasks_ = 0;
+    num_sweeping_tasks_.SetValue(0);
   }
 
   ForAllSweepingSpaces([this](AllocationSpace space) {
@@ -1248,7 +1253,6 @@ class InternalizedStringTableCleaner : public ObjectVisitor {
 
   void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     // Visit all HeapObject pointers in [start, end).
-    MarkCompactCollector* collector = heap_->mark_compact_collector();
     Object* the_hole = heap_->the_hole_value();
     for (Object** p = start; p < end; p++) {
       Object* o = *p;
@@ -1262,7 +1266,7 @@ class InternalizedStringTableCleaner : public ObjectVisitor {
         } else {
           // StringTable contains only old space strings.
           DCHECK(!heap_->InNewSpace(o));
-          collector->RecordSlot(table_, p, o);
+          MarkCompactCollector::RecordSlot(table_, p, o);
         }
       }
     }
@@ -1473,16 +1477,6 @@ class RecordMigratedSlotVisitor : public ObjectVisitor {
     collector_->RecordRelocSlot(host, rinfo, object);
   }
 
-  inline void VisitCellPointer(Code* host, RelocInfo* rinfo) override {
-    DCHECK_EQ(host, rinfo->host());
-    DCHECK(rinfo->rmode() == RelocInfo::CELL);
-    Cell* cell = rinfo->target_cell();
-    // The cell is always in old space, we don't have to record the slot in
-    // the old-to-new remembered set.
-    DCHECK(!collector_->heap()->InNewSpace(cell));
-    collector_->RecordRelocSlot(host, rinfo, cell);
-  }
-
   inline void VisitCodeAgeSequence(Code* host, RelocInfo* rinfo) override {
     DCHECK_EQ(host, rinfo->host());
     DCHECK(RelocInfo::IsCodeAgeSequence(rinfo->rmode()));
@@ -1578,7 +1572,6 @@ class YoungGenerationRecordMigratedSlotVisitor final
   void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) final {
     UNREACHABLE();
   }
-  void VisitCellPointer(Code* host, RelocInfo* rinfo) final { UNREACHABLE(); }
   void VisitCodeAgeSequence(Code* host, RelocInfo* rinfo) final {
     UNREACHABLE();
   }
@@ -3156,7 +3149,7 @@ void MarkCompactCollector::RecordRelocSlot(Code* host, RelocInfo* rinfo,
   Page* source_page = Page::FromAddress(reinterpret_cast<Address>(host));
   if (target_page->IsEvacuationCandidate() &&
       (rinfo->host() == NULL ||
-       !ShouldSkipEvacuationSlotRecording(rinfo->host()))) {
+       !source_page->ShouldSkipEvacuationSlotRecording())) {
     RelocInfo::Mode rmode = rinfo->rmode();
     Address addr = rinfo->pc();
     SlotType slot_type = SlotTypeForRelocInfoMode(rmode);
@@ -3221,10 +3214,6 @@ class PointersUpdatingVisitor : public ObjectVisitor, public RootVisitor {
     for (Object** p = start; p < end; p++) UpdateSlotInternal(p);
   }
 
-  void VisitCellPointer(Code* host, RelocInfo* rinfo) override {
-    UpdateTypedSlotHelper::UpdateCell(rinfo, UpdateSlotInternal);
-  }
-
   void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) override {
     UpdateTypedSlotHelper::UpdateEmbeddedPointer(rinfo, UpdateSlotInternal);
   }
@@ -3276,6 +3265,14 @@ void MarkCompactCollector::EvacuateEpilogue() {
   heap()->new_space()->set_age_mark(heap()->new_space()->top());
   // Old space. Deallocate evacuated candidate pages.
   ReleaseEvacuationCandidates();
+#ifdef DEBUG
+  // Old-to-old slot sets must be empty after evacuation.
+  for (Page* p : *heap()->old_space()) {
+    DCHECK_NULL((p->slot_set<OLD_TO_OLD, AccessMode::ATOMIC>()));
+    DCHECK_NULL((p->typed_slot_set<OLD_TO_OLD, AccessMode::ATOMIC>()));
+    DCHECK_NULL(p->invalidated_slots());
+  }
+#endif
 }
 
 class Evacuator : public Malloced {
@@ -3681,18 +3678,6 @@ class EvacuationWeakObjectRetainer : public WeakObjectRetainer {
   }
 };
 
-MarkCompactCollector::Sweeper::ClearOldToNewSlotsMode
-MarkCompactCollector::Sweeper::GetClearOldToNewSlotsMode(Page* p) {
-  AllocationSpace identity = p->owner()->identity();
-  if (p->slot_set<OLD_TO_NEW>() &&
-      (identity == OLD_SPACE || identity == MAP_SPACE)) {
-    return MarkCompactCollector::Sweeper::CLEAR_REGULAR_SLOTS;
-  } else if (p->typed_slot_set<OLD_TO_NEW>() && identity == CODE_SPACE) {
-    return MarkCompactCollector::Sweeper::CLEAR_TYPED_SLOTS;
-  }
-  return MarkCompactCollector::Sweeper::DO_NOT_CLEAR;
-}
-
 int MarkCompactCollector::Sweeper::RawSweep(
     Page* p, FreeListRebuildingMode free_list_mode,
     FreeSpaceTreatmentMode free_space_mode) {
@@ -3705,9 +3690,14 @@ int MarkCompactCollector::Sweeper::RawSweep(
   // Sweeper takes the marking state of the full collector.
   const MarkingState state = MarkingState::Internal(p);
 
-  // If there are old-to-new slots in that page, we have to filter out slots
-  // that are in dead memory which is freed by the sweeper.
-  ClearOldToNewSlotsMode slots_clearing_mode = GetClearOldToNewSlotsMode(p);
+  bool non_empty_untyped_slots = p->slot_set<OLD_TO_NEW>() != nullptr ||
+                                 p->slot_set<OLD_TO_OLD>() != nullptr;
+
+  // TODO(ulan): we don't have to clear type old-to-old slots in code space
+  // because the concurrent marker doesn't mark code objects. This requires
+  // the write barrier for code objects to check the color of the code object.
+  bool non_empty_typed_slots = p->typed_slot_set<OLD_TO_NEW>() != nullptr ||
+                               p->typed_slot_set<OLD_TO_OLD>() != nullptr;
 
   // The free ranges map is used for filtering typed slots.
   std::map<uint32_t, uint32_t> free_ranges;
@@ -3751,11 +3741,13 @@ int MarkCompactCollector::Sweeper::RawSweep(
         p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
                                         ClearRecordedSlots::kNo);
       }
-
-      if (slots_clearing_mode == CLEAR_REGULAR_SLOTS) {
+      if (non_empty_untyped_slots) {
         RememberedSet<OLD_TO_NEW>::RemoveRange(p, free_start, free_end,
                                                SlotSet::KEEP_EMPTY_BUCKETS);
-      } else if (slots_clearing_mode == CLEAR_TYPED_SLOTS) {
+        RememberedSet<OLD_TO_OLD>::RemoveRange(p, free_start, free_end,
+                                               SlotSet::KEEP_EMPTY_BUCKETS);
+      }
+      if (non_empty_typed_slots) {
         free_ranges.insert(std::pair<uint32_t, uint32_t>(
             static_cast<uint32_t>(free_start - p->address()),
             static_cast<uint32_t>(free_end - p->address())));
@@ -3790,10 +3782,13 @@ int MarkCompactCollector::Sweeper::RawSweep(
                                       ClearRecordedSlots::kNo);
     }
 
-    if (slots_clearing_mode == CLEAR_REGULAR_SLOTS) {
+    if (non_empty_untyped_slots) {
       RememberedSet<OLD_TO_NEW>::RemoveRange(p, free_start, p->area_end(),
                                              SlotSet::KEEP_EMPTY_BUCKETS);
-    } else if (slots_clearing_mode == CLEAR_TYPED_SLOTS) {
+      RememberedSet<OLD_TO_OLD>::RemoveRange(p, free_start, p->area_end(),
+                                             SlotSet::KEEP_EMPTY_BUCKETS);
+    }
+    if (non_empty_typed_slots) {
       free_ranges.insert(std::pair<uint32_t, uint32_t>(
           static_cast<uint32_t>(free_start - p->address()),
           static_cast<uint32_t>(p->area_end() - p->address())));
@@ -3801,10 +3796,14 @@ int MarkCompactCollector::Sweeper::RawSweep(
   }
 
   // Clear invalid typed slots after collection all free ranges.
-  if (slots_clearing_mode == CLEAR_TYPED_SLOTS) {
-    TypedSlotSet* typed_slot_set = p->typed_slot_set<OLD_TO_NEW>();
-    if (typed_slot_set != nullptr) {
-      typed_slot_set->RemoveInvaldSlots(free_ranges);
+  if (!free_ranges.empty()) {
+    TypedSlotSet* old_to_new = p->typed_slot_set<OLD_TO_NEW>();
+    if (old_to_new != nullptr) {
+      old_to_new->RemoveInvaldSlots(free_ranges);
+    }
+    TypedSlotSet* old_to_old = p->typed_slot_set<OLD_TO_OLD>();
+    if (old_to_old != nullptr) {
+      old_to_old->RemoveInvaldSlots(free_ranges);
     }
   }
 
@@ -3824,7 +3823,7 @@ void MarkCompactCollector::InvalidateCode(Code* code) {
   RememberedSet<OLD_TO_NEW>::RemoveRangeTyped(page, start, end);
 
   if (heap_->incremental_marking()->IsCompacting() &&
-      !ShouldSkipEvacuationSlotRecording(code)) {
+      !page->ShouldSkipEvacuationSlotRecording()) {
     DCHECK(compacting_);
 
     // If the object is white than no slots were recorded on it yet.
@@ -4131,45 +4130,31 @@ class RememberedSetUpdatingItem : public UpdatingItem {
   }
 
   void UpdateUntypedPointers() {
-    // A map slot might point to new space and be required for iterating
-    // an object concurrently by another task. Hence, we need to update
-    // those slots using atomics.
     if (chunk_->slot_set<OLD_TO_NEW, AccessMode::NON_ATOMIC>() != nullptr) {
-      if (chunk_->owner() == heap_->map_space()) {
-        RememberedSet<OLD_TO_NEW>::Iterate(
-            chunk_,
-            [this](Address slot) {
-              return CheckAndUpdateOldToNewSlot<AccessMode::ATOMIC>(slot);
-            },
-            SlotSet::PREFREE_EMPTY_BUCKETS);
-      } else {
         RememberedSet<OLD_TO_NEW>::Iterate(
             chunk_,
             [this](Address slot) {
               return CheckAndUpdateOldToNewSlot<AccessMode::NON_ATOMIC>(slot);
             },
             SlotSet::PREFREE_EMPTY_BUCKETS);
-      }
     }
     if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
         (chunk_->slot_set<OLD_TO_OLD, AccessMode::NON_ATOMIC>() != nullptr)) {
-      if (chunk_->owner() == heap_->map_space()) {
-        RememberedSet<OLD_TO_OLD>::Iterate(
-            chunk_,
-            [](Address slot) {
-              return UpdateSlot<AccessMode::ATOMIC>(
-                  reinterpret_cast<Object**>(slot));
-            },
-            SlotSet::PREFREE_EMPTY_BUCKETS);
-      } else {
-        RememberedSet<OLD_TO_OLD>::Iterate(
-            chunk_,
-            [](Address slot) {
-              return UpdateSlot<AccessMode::NON_ATOMIC>(
-                  reinterpret_cast<Object**>(slot));
-            },
-            SlotSet::PREFREE_EMPTY_BUCKETS);
-      }
+      InvalidatedSlotsFilter filter(chunk_);
+      RememberedSet<OLD_TO_OLD>::Iterate(
+          chunk_,
+          [&filter](Address slot) {
+            if (!filter.IsValid(slot)) return REMOVE_SLOT;
+            return UpdateSlot<AccessMode::NON_ATOMIC>(
+                reinterpret_cast<Object**>(slot));
+          },
+          SlotSet::PREFREE_EMPTY_BUCKETS);
+    }
+    if ((updating_mode_ == RememberedSetUpdatingMode::ALL) &&
+        chunk_->invalidated_slots() != nullptr) {
+      // The invalidated slots are not needed after old-to-old slots were
+      // processsed.
+      chunk_->ReleaseInvalidatedSlots();
     }
   }
 

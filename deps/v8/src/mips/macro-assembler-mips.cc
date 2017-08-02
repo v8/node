@@ -3846,7 +3846,7 @@ void MacroAssembler::MaybeDropFrames() {
       ExternalReference::debug_restart_fp_address(isolate());
   li(a1, Operand(restart_fp));
   lw(a1, MemOperand(a1));
-  Jump(isolate()->builtins()->FrameDropperTrampoline(), RelocInfo::CODE_TARGET,
+  Jump(BUILTIN_CODE(isolate(), FrameDropperTrampoline), RelocInfo::CODE_TARGET,
        ne, a1, Operand(zero_reg));
 }
 
@@ -4387,8 +4387,7 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
   }
 
   if (!definitely_matches) {
-    Handle<Code> adaptor =
-        isolate()->builtins()->ArgumentsAdaptorTrampoline();
+    Handle<Code> adaptor = BUILTIN_CODE(isolate(), ArgumentsAdaptorTrampoline);
     if (flag == CALL_FUNCTION) {
       Call(adaptor);
       if (!*definitely_mismatches) {
@@ -4581,13 +4580,6 @@ void MacroAssembler::TailCallStub(CodeStub* stub,
                                   const Operand& r2,
                                   BranchDelaySlot bd) {
   Jump(stub->GetCode(), RelocInfo::CODE_TARGET, cond, r1, r2, bd);
-}
-
-void MacroAssembler::TailCallBuiltin(Builtins::Name name) {
-  DCHECK(ExternalReferenceTable::HasBuiltin(name));
-  li(t2, Operand(ExternalReference(Builtins::kConstructProxy, isolate())));
-  lw(t2, MemOperand(t2));
-  Jump(t2, Operand(Code::kHeaderSize - kHeapObjectTag));
 }
 
 bool TurboAssembler::AllowThisStubCall(CodeStub* stub) {
@@ -5032,9 +5024,9 @@ void TurboAssembler::Abort(BailoutReason reason) {
     // We don't actually want to generate a pile of code for this, so just
     // claim there is a stack frame, without generating one.
     FrameScope scope(this, StackFrame::NONE);
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   } else {
-    Call(isolate()->builtins()->Abort(), RelocInfo::CODE_TARGET);
+    Call(BUILTIN_CODE(isolate(), Abort), RelocInfo::CODE_TARGET);
   }
   // Will not return here.
   if (is_trampoline_pool_blocked()) {

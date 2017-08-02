@@ -641,8 +641,8 @@ void CompareICStub::GenerateGeneric(MacroAssembler* masm) {
     {
       FrameScope scope(masm, StackFrame::INTERNAL);
       __ Push(cp);
-      __ Call(strict() ? isolate()->builtins()->StrictEqual()
-                       : isolate()->builtins()->Equal(),
+      __ Call(strict() ? BUILTIN_CODE(isolate(), StrictEqual)
+                       : BUILTIN_CODE(isolate(), Equal),
               RelocInfo::CODE_TARGET);
       __ Pop(cp);
     }
@@ -878,6 +878,8 @@ void CodeStub::GenerateFPStubs(Isolate* isolate) {
 void CEntryStub::GenerateAheadOfTime(Isolate* isolate) {
   CEntryStub stub(isolate, 1, kDontSaveFPRegs);
   stub.GetCode();
+  CEntryStub save_doubles(isolate, 1, kSaveFPRegs);
+  save_doubles.GetCode();
 }
 
 
@@ -1194,17 +1196,11 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // args
 
   if (type() == StackFrame::ENTRY_CONSTRUCT) {
-    ExternalReference construct_entry(Builtins::kJSConstructEntryTrampoline,
-                                      isolate);
-    __ li(a4, Operand(construct_entry));
+    __ Call(BUILTIN_CODE(isolate, JSConstructEntryTrampoline),
+            RelocInfo::CODE_TARGET);
   } else {
-    ExternalReference entry(Builtins::kJSEntryTrampoline, masm->isolate());
-    __ li(a4, Operand(entry));
+    __ Call(BUILTIN_CODE(isolate, JSEntryTrampoline), RelocInfo::CODE_TARGET);
   }
-  __ Ld(t9, MemOperand(a4));  // Deref address.
-  // Call JSEntryTrampoline.
-  __ daddiu(t9, t9, Code::kHeaderSize - kHeapObjectTag);
-  __ Call(t9);
 
   // Unlink this frame from the handler chain.
   __ PopStackHandler();
@@ -1399,7 +1395,7 @@ void CallConstructStub::Generate(MacroAssembler* masm) {
 
   __ bind(&non_function);
   __ mov(a3, a1);
-  __ Jump(isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
+  __ Jump(BUILTIN_CODE(isolate(), Construct), RelocInfo::CODE_TARGET);
 }
 
 

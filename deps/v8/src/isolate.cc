@@ -924,7 +924,7 @@ bool Isolate::MayAccess(Handle<Context> accessing_context,
 
 
 Object* Isolate::StackOverflow() {
-  if (FLAG_abort_on_stack_overflow) {
+  if (FLAG_abort_on_stack_or_string_length_overflow) {
     FATAL("Aborting on stack overflow");
   }
 
@@ -1322,7 +1322,8 @@ Object* Isolate::UnwindAndFindHandler() {
             Context::cast(js_frame->ReadInterpreterRegister(context_reg));
         js_frame->PatchBytecodeOffset(static_cast<int>(offset));
 
-        Code* code = *builtins()->InterpreterEnterBytecodeDispatch();
+        Code* code =
+            builtins()->builtin(Builtins::kInterpreterEnterBytecodeDispatch);
         return FoundHandler(context, code, 0, return_sp, frame->fp());
       }
 
@@ -2667,10 +2668,11 @@ namespace {
 void PrintBuiltinSizes(Isolate* isolate) {
   Builtins* builtins = isolate->builtins();
   for (int i = 0; i < Builtins::builtin_count; i++) {
-    if (Builtins::IsCpp(i) || Builtins::IsApi(i)) continue;
     const char* name = builtins->name(i);
+    const char* kind = Builtins::KindNameOf(i);
     Code* code = builtins->builtin(static_cast<Builtins::Name>(i));
-    PrintF(stdout, "Builtin, %s, %d\n", name, code->instruction_size());
+    PrintF(stdout, "%s Builtin, %s, %d\n", kind, name,
+           code->instruction_size());
   }
 }
 }  // namespace

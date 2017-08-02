@@ -1128,6 +1128,15 @@ Node* CodeStubAssembler::DoesntHaveInstanceType(Node* object,
   return Word32NotEqual(LoadInstanceType(object), Int32Constant(instance_type));
 }
 
+Node* CodeStubAssembler::TaggedDoesntHaveInstanceType(Node* any_tagged,
+                                                      InstanceType type) {
+  /* return Phi <TaggedIsSmi(val), DoesntHaveInstanceType(val, type)> */
+  Node* tagged_is_smi = TaggedIsSmi(any_tagged);
+  return Select(tagged_is_smi, [=]() { return tagged_is_smi; },
+                [=]() { return DoesntHaveInstanceType(any_tagged, type); },
+                MachineRepresentation::kBit);
+}
+
 Node* CodeStubAssembler::LoadProperties(Node* object) {
   return LoadObjectField(object, JSObject::kPropertiesOrHashOffset);
 }
@@ -3644,6 +3653,11 @@ Node* CodeStubAssembler::IsSymbolInstanceType(Node* instance_type) {
 
 Node* CodeStubAssembler::IsSymbol(Node* object) {
   return IsSymbolMap(LoadMap(object));
+}
+
+Node* CodeStubAssembler::IsPrimitiveInstanceType(Node* instance_type) {
+  return Int32LessThanOrEqual(instance_type,
+                              Int32Constant(LAST_PRIMITIVE_TYPE));
 }
 
 Node* CodeStubAssembler::IsPrivateSymbol(Node* object) {
@@ -9013,7 +9027,7 @@ Node* CodeStubAssembler::InstanceOf(Node* object, Node* callable,
             &if_otherhandler);
   {
     // Call to Function.prototype[@@hasInstance] directly.
-    Callable builtin(isolate()->builtins()->FunctionPrototypeHasInstance(),
+    Callable builtin(BUILTIN_CODE(isolate(), FunctionPrototypeHasInstance),
                      CallTrampolineDescriptor(isolate()));
     Node* result = CallJS(builtin, context, inst_of_handler, callable, object);
     var_result.Bind(result);

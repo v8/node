@@ -576,7 +576,7 @@ class Heap {
 
   // Semi-space size needs to be a multiple of page size.
   static const int kMinSemiSpaceSizeInKB =
-      2 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
+      1 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
   static const int kMaxSemiSpaceSizeInKB =
       16 * kPointerMultiplier * ((1 << kPageSizeBits) / KB);
 
@@ -834,12 +834,6 @@ class Heap {
 
   // For post mortem debugging.
   void RememberUnmappedPage(Address page, bool compacted);
-
-  // Global inline caching age: it is incremented on some GCs after context
-  // disposal. We use it to flush inline caches.
-  int global_ic_age() { return global_ic_age_; }
-
-  void AgeInlineCaches();
 
   int64_t external_memory_hard_limit() { return MaxOldGenerationSize() / 2; }
 
@@ -1192,7 +1186,8 @@ class Heap {
 
   // The runtime uses this function to notify potentially unsafe object layout
   // changes that require special synchronization with the concurrent marker.
-  void NotifyObjectLayoutChange(HeapObject* object,
+  // The old size is the size of the object before layout change.
+  void NotifyObjectLayoutChange(HeapObject* object, int old_size,
                                 const DisallowHeapAllocation&);
 
 #ifdef VERIFY_HEAP
@@ -2226,8 +2221,6 @@ class Heap {
   // This separates maps in the retained_maps array that were created before
   // and after context disposal.
   int number_of_disposed_maps_;
-
-  int global_ic_age_;
 
   NewSpace* new_space_;
   OldSpace* old_space_;

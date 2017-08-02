@@ -45,6 +45,7 @@
 #include "src/label.h"
 #include "src/log.h"
 #include "src/register-configuration.h"
+#include "src/reglist.h"
 #include "src/runtime/runtime.h"
 
 namespace v8 {
@@ -58,6 +59,11 @@ namespace internal {
 class Isolate;
 class SourcePosition;
 class StatsCounter;
+
+void SetUpJSCallerSavedCodeData();
+
+// Return the code of the n-th saved register available to JavaScript.
+int JSCallerSavedCode(int n);
 
 // -----------------------------------------------------------------------------
 // Platform independent assembler base class.
@@ -333,7 +339,6 @@ class RelocInfo {
     WASM_MEMORY_SIZE_REFERENCE,
     WASM_FUNCTION_TABLE_SIZE_REFERENCE,
     WASM_PROTECTED_INSTRUCTION_LANDING,
-    CELL,
 
     RUNTIME_ENTRY,
     COMMENT,
@@ -375,7 +380,7 @@ class RelocInfo {
     LAST_REAL_RELOC_MODE = VENEER_POOL,
     LAST_CODE_ENUM = CODE_TARGET,
     LAST_GCED_ENUM = EMBEDDED_OBJECT,
-    FIRST_SHAREABLE_RELOC_MODE = CELL,
+    FIRST_SHAREABLE_RELOC_MODE = RUNTIME_ENTRY,
   };
 
   STATIC_ASSERT(NUMBER_OF_MODES <= kBitsPerInt);
@@ -394,7 +399,6 @@ class RelocInfo {
   static inline bool IsEmbeddedObject(Mode mode) {
     return mode == EMBEDDED_OBJECT;
   }
-  static inline bool IsCell(Mode mode) { return mode == CELL; }
   static inline bool IsRuntimeEntry(Mode mode) {
     return mode == RUNTIME_ENTRY;
   }
@@ -818,8 +822,6 @@ class ExternalReference BASE_EMBEDDED {
   ExternalReference(Address address, Isolate* isolate);
 
   ExternalReference(ApiFunction* ptr, Type type, Isolate* isolate);
-
-  ExternalReference(Builtins::Name name, Isolate* isolate);
 
   ExternalReference(Runtime::FunctionId id, Isolate* isolate);
 

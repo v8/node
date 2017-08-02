@@ -550,8 +550,8 @@ void CompareICStub::GenerateGeneric(MacroAssembler* masm) {
     {
       FrameScope scope(masm, StackFrame::INTERNAL);
       __ Push(cp);
-      __ Call(strict() ? isolate()->builtins()->StrictEqual()
-                       : isolate()->builtins()->Equal(),
+      __ Call(strict() ? BUILTIN_CODE(isolate(), StrictEqual)
+                       : BUILTIN_CODE(isolate(), Equal),
               RelocInfo::CODE_TARGET);
       __ Pop(cp);
     }
@@ -1146,16 +1146,13 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // x2: receiver.
   // x3: argc.
   // x4: argv.
-  ExternalReference entry(type() == StackFrame::ENTRY_CONSTRUCT
-                              ? Builtins::kJSConstructEntryTrampoline
-                              : Builtins::kJSEntryTrampoline,
-                          isolate());
-  __ Mov(x10, entry);
 
-  // Call the JSEntryTrampoline.
-  __ Ldr(x11, MemOperand(x10));  // Dereference the address.
-  __ Add(x12, x11, Code::kHeaderSize - kHeapObjectTag);
-  __ Blr(x12);
+  if (type() == StackFrame::ENTRY_CONSTRUCT) {
+    __ Call(BUILTIN_CODE(isolate(), JSConstructEntryTrampoline),
+            RelocInfo::CODE_TARGET);
+  } else {
+    __ Call(BUILTIN_CODE(isolate(), JSEntryTrampoline), RelocInfo::CODE_TARGET);
+  }
 
   // Unlink this frame from the handler chain.
   __ PopStackHandler();
@@ -1371,7 +1368,7 @@ void CallConstructStub::Generate(MacroAssembler* masm) {
 
   __ Bind(&non_function);
   __ Mov(x3, function);
-  __ Jump(isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
+  __ Jump(BUILTIN_CODE(isolate(), Construct), RelocInfo::CODE_TARGET);
 }
 
 void StringCharCodeAtGenerator::GenerateFast(MacroAssembler* masm) {

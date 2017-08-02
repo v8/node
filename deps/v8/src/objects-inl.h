@@ -3500,6 +3500,14 @@ bool Map::new_target_is_base() const {
   return NewTargetIsBase::decode(bit_field3());
 }
 
+void Map::set_may_have_interesting_symbols(bool value) {
+  set_bit_field3(MayHaveInterestingSymbols::update(bit_field3(), value));
+}
+
+bool Map::may_have_interesting_symbols() const {
+  return MayHaveInterestingSymbols::decode(bit_field3());
+}
+
 void Map::set_construction_counter(int value) {
   set_bit_field3(ConstructionCounter::update(bit_field3(), value));
 }
@@ -3690,16 +3698,17 @@ inline bool Code::is_hydrogen_stub() const {
 
 inline bool Code::is_interpreter_trampoline_builtin() const {
   Builtins* builtins = GetIsolate()->builtins();
-  return this == *builtins->InterpreterEntryTrampoline() ||
-         this == *builtins->InterpreterEnterBytecodeAdvance() ||
-         this == *builtins->InterpreterEnterBytecodeDispatch();
+  return this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
+         this ==
+             builtins->builtin(Builtins::kInterpreterEnterBytecodeAdvance) ||
+         this == builtins->builtin(Builtins::kInterpreterEnterBytecodeDispatch);
 }
 
 inline bool Code::checks_optimization_marker() const {
   Builtins* builtins = GetIsolate()->builtins();
-  return this == *builtins->CompileLazy() ||
-         this == *builtins->InterpreterEntryTrampoline() ||
-         this == *builtins->CheckOptimizationMarker();
+  return this == builtins->builtin(Builtins::kCompileLazy) ||
+         this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
+         this == builtins->builtin(Builtins::kCheckOptimizationMarker);
 }
 
 inline bool Code::has_unwinding_info() const {
@@ -4223,6 +4232,11 @@ void Map::AppendDescriptor(Descriptor* desc) {
   DCHECK(descriptors->number_of_descriptors() == number_of_own_descriptors);
   descriptors->Append(desc);
   SetNumberOfOwnDescriptors(number_of_own_descriptors + 1);
+
+  // Properly mark the map if the {desc} is an "interesting symbol".
+  if (desc->GetKey()->IsInterestingSymbol()) {
+    set_may_have_interesting_symbols(true);
+  }
 
 // This function does not support appending double field descriptors and
 // it should never try to (otherwise, layout descriptor must be updated too).
@@ -4937,15 +4951,15 @@ CODE_ACCESSORS(next_code_link, Object, kNextCodeLinkOffset)
 #undef CODE_ACCESSORS
 
 void Code::WipeOutHeader() {
-  WRITE_FIELD(this, kRelocationInfoOffset, NULL);
-  WRITE_FIELD(this, kHandlerTableOffset, NULL);
-  WRITE_FIELD(this, kDeoptimizationDataOffset, NULL);
-  WRITE_FIELD(this, kSourcePositionTableOffset, NULL);
+  WRITE_FIELD(this, kRelocationInfoOffset, nullptr);
+  WRITE_FIELD(this, kHandlerTableOffset, nullptr);
+  WRITE_FIELD(this, kDeoptimizationDataOffset, nullptr);
+  WRITE_FIELD(this, kSourcePositionTableOffset, nullptr);
   // Do not wipe out major/minor keys on a code stub or IC
   if (!READ_FIELD(this, kTypeFeedbackInfoOffset)->IsSmi()) {
-    WRITE_FIELD(this, kTypeFeedbackInfoOffset, NULL);
+    WRITE_FIELD(this, kTypeFeedbackInfoOffset, nullptr);
   }
-  WRITE_FIELD(this, kNextCodeLinkOffset, NULL);
+  WRITE_FIELD(this, kNextCodeLinkOffset, nullptr);
 }
 
 Object* Code::type_feedback_info() const {

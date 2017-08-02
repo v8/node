@@ -1595,11 +1595,11 @@ TEST(TestSizeOfRegExpCode) {
   int initial_size = static_cast<int>(CcTest::heap()->SizeOfObjects());
 
   CompileRun("'foo'.match(reg_exp_source);");
-  CcTest::CollectAllGarbage();
+  CcTest::CollectAllAvailableGarbage();
   int size_with_regexp = static_cast<int>(CcTest::heap()->SizeOfObjects());
 
   CompileRun("'foo'.match(half_size_reg_exp);");
-  CcTest::CollectAllGarbage();
+  CcTest::CollectAllAvailableGarbage();
   int size_with_optimized_regexp =
       static_cast<int>(CcTest::heap()->SizeOfObjects());
 
@@ -2222,96 +2222,6 @@ TEST(InstanceOfStubWriteBarrier) {
   CcTest::heap()->incremental_marking()->set_should_hurry(true);
   CcTest::CollectGarbage(OLD_SPACE);
 }
-
-TEST(ResetSharedFunctionInfoCountersDuringIncrementalMarking) {
-  if (!FLAG_incremental_marking) return;
-  FLAG_stress_compaction = false;
-  FLAG_stress_incremental_marking = false;
-  FLAG_allow_natives_syntax = true;
-#ifdef VERIFY_HEAP
-  FLAG_verify_heap = true;
-#endif
-
-  CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_optimizer()) return;
-  v8::HandleScope outer_scope(CcTest::isolate());
-  v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
-
-  {
-    v8::HandleScope scope(CcTest::isolate());
-    CompileRun(
-        "function f () {"
-        "  var s = 0;"
-        "  for (var i = 0; i < 100; i++)  s += i;"
-        "  return s;"
-        "}"
-        "f(); f();"
-        "%OptimizeFunctionOnNextCall(f);"
-        "f();");
-  }
-  i::Handle<JSFunction> f = i::Handle<JSFunction>::cast(
-      v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
-          CcTest::global()->Get(ctx, v8_str("f")).ToLocalChecked())));
-  CHECK(f->IsOptimized());
-
-  // Make sure incremental marking it not running.
-  CcTest::heap()->incremental_marking()->Stop();
-
-  CcTest::heap()->StartIncrementalMarking(i::Heap::kNoGCFlags,
-                                          i::GarbageCollectionReason::kTesting);
-  // The following calls will increment CcTest::heap()->global_ic_age().
-  CcTest::isolate()->ContextDisposedNotification();
-  heap::SimulateIncrementalMarking(CcTest::heap());
-  CcTest::CollectAllGarbage();
-
-  CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
-  CHECK_EQ(0, f->shared()->opt_count());
-  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
-}
-
-
-TEST(ResetSharedFunctionInfoCountersDuringMarkSweep) {
-  FLAG_stress_compaction = false;
-  FLAG_stress_incremental_marking = false;
-  FLAG_allow_natives_syntax = true;
-#ifdef VERIFY_HEAP
-  FLAG_verify_heap = true;
-#endif
-
-  CcTest::InitializeVM();
-  if (!CcTest::i_isolate()->use_optimizer()) return;
-  v8::HandleScope outer_scope(CcTest::isolate());
-  v8::Local<v8::Context> ctx = CcTest::isolate()->GetCurrentContext();
-
-  {
-    v8::HandleScope scope(CcTest::isolate());
-    CompileRun(
-        "function f () {"
-        "  var s = 0;"
-        "  for (var i = 0; i < 100; i++)  s += i;"
-        "  return s;"
-        "}"
-        "f(); f();"
-        "%OptimizeFunctionOnNextCall(f);"
-        "f();");
-  }
-  i::Handle<JSFunction> f = i::Handle<JSFunction>::cast(
-      v8::Utils::OpenHandle(*v8::Local<v8::Function>::Cast(
-          CcTest::global()->Get(ctx, v8_str("f")).ToLocalChecked())));
-  CHECK(f->IsOptimized());
-
-  // Make sure incremental marking it not running.
-  CcTest::heap()->incremental_marking()->Stop();
-
-  // The following two calls will increment CcTest::heap()->global_ic_age().
-  CcTest::isolate()->ContextDisposedNotification();
-  CcTest::CollectAllGarbage();
-
-  CHECK_EQ(CcTest::heap()->global_ic_age(), f->shared()->ic_age());
-  CHECK_EQ(0, f->shared()->opt_count());
-  CHECK_EQ(0, f->feedback_vector()->profiler_ticks());
-}
-
 
 HEAP_TEST(GCFlags) {
   if (!FLAG_incremental_marking) return;
@@ -3058,88 +2968,6 @@ TEST(TransitionArraySimpleToFull) {
   CHECK_EQ(1, transitions_after);
 }
 #endif  // DEBUG
-
-
-TEST(Regress2143a) {
-  FLAG_incremental_marking = true;
-  CcTest::InitializeVM();
-  v8::HandleScope scope(CcTest::isolate());
-
-  // Prepare a map transition from the root object together with a yet
-  // untransitioned root object.
-  CompileRun("var root = new Object;"
-             "root.foo = 0;"
-             "root = new Object;");
-
-  heap::SimulateIncrementalMarking(CcTest::heap());
-
-  // Compile a StoreIC that performs the prepared map transition. This
-  // will restart incremental marking and should make sure the root is
-  // marked grey again.
-  CompileRun("function f(o) {"
-             "  o.foo = 0;"
-             "}"
-             "f(new Object);"
-             "f(root);");
-
-  // This bug only triggers with aggressive IC clearing.
-  CcTest::heap()->AgeInlineCaches();
-
-  // Explicitly request GC to perform final marking step and sweeping.
-  CcTest::CollectAllGarbage();
-
-  Handle<JSReceiver> root = v8::Utils::OpenHandle(*v8::Local<v8::Object>::Cast(
-      CcTest::global()
-          ->Get(CcTest::isolate()->GetCurrentContext(), v8_str("root"))
-          .ToLocalChecked()));
-
-  // The root object should be in a sane state.
-  CHECK(root->IsJSObject());
-  CHECK(root->map()->IsMap());
-}
-
-
-TEST(Regress2143b) {
-  FLAG_incremental_marking = true;
-  FLAG_allow_natives_syntax = true;
-  CcTest::InitializeVM();
-  v8::HandleScope scope(CcTest::isolate());
-
-  // Prepare a map transition from the root object together with a yet
-  // untransitioned root object.
-  CompileRun("var root = new Object;"
-             "root.foo = 0;"
-             "root = new Object;");
-
-  heap::SimulateIncrementalMarking(CcTest::heap());
-
-  // Compile an optimized LStoreNamedField that performs the prepared
-  // map transition. This will restart incremental marking and should
-  // make sure the root is marked grey again.
-  CompileRun("function f(o) {"
-             "  o.foo = 0;"
-             "}"
-             "f(new Object);"
-             "f(new Object);"
-             "%OptimizeFunctionOnNextCall(f);"
-             "f(root);"
-             "%DeoptimizeFunction(f);");
-
-  // This bug only triggers with aggressive IC clearing.
-  CcTest::heap()->AgeInlineCaches();
-
-  // Explicitly request GC to perform final marking step and sweeping.
-  CcTest::CollectAllGarbage();
-
-  Handle<JSReceiver> root = v8::Utils::OpenHandle(*v8::Local<v8::Object>::Cast(
-      CcTest::global()
-          ->Get(CcTest::isolate()->GetCurrentContext(), v8_str("root"))
-          .ToLocalChecked()));
-
-  // The root object should be in a sane state.
-  CHECK(root->IsJSObject());
-  CHECK(root->map()->IsMap());
-}
 
 
 TEST(ReleaseOverReservedPages) {
@@ -5509,8 +5337,8 @@ static void RemoveCodeAndGC(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Handle<Object> obj = v8::Utils::OpenHandle(*args[0]);
   Handle<JSFunction> fun = Handle<JSFunction>::cast(obj);
   fun->shared()->ClearBytecodeArray();  // Bytecode is code too.
-  fun->ReplaceCode(*isolate->builtins()->CompileLazy());
-  fun->shared()->ReplaceCode(*isolate->builtins()->CompileLazy());
+  fun->ReplaceCode(*BUILTIN_CODE(isolate, CompileLazy));
+  fun->shared()->ReplaceCode(*BUILTIN_CODE(isolate, CompileLazy));
   CcTest::CollectAllAvailableGarbage();
 }
 

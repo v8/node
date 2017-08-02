@@ -438,6 +438,18 @@ void Map::MapVerify() {
   SLOW_DCHECK(TransitionsAccessor(this, &no_gc).IsConsistentWithBackPointers());
   SLOW_DCHECK(!FLAG_unbox_double_fields ||
               layout_descriptor()->IsConsistentWithMap(this));
+  if (!may_have_interesting_symbols()) {
+    CHECK(!has_named_interceptor());
+    CHECK(!is_dictionary_map());
+    CHECK(!is_access_check_needed());
+    DescriptorArray* const descriptors = instance_descriptors();
+    for (int i = 0; i < NumberOfOwnDescriptors(); ++i) {
+      CHECK(!descriptors->GetKey(i)->IsInterestingSymbol());
+    }
+  }
+  CHECK_IMPLIES(has_named_interceptor(), may_have_interesting_symbols());
+  CHECK_IMPLIES(is_dictionary_map(), may_have_interesting_symbols());
+  CHECK_IMPLIES(is_access_check_needed(), may_have_interesting_symbols());
 }
 
 
@@ -1669,13 +1681,10 @@ bool CanLeak(Object* obj, Heap* heap, bool skip_weak_cell) {
 void Code::VerifyEmbeddedObjects(VerifyMode mode) {
   if (kind() == OPTIMIZED_FUNCTION) return;
   Heap* heap = GetIsolate()->heap();
-  int mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
-             RelocInfo::ModeMask(RelocInfo::CELL);
+  int mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
   bool skip_weak_cell = (mode == kNoContextSpecificPointers) ? false : true;
   for (RelocIterator it(this, mask); !it.done(); it.next()) {
-    Object* target = it.rinfo()->rmode() == RelocInfo::CELL
-                         ? it.rinfo()->target_cell()
-                         : it.rinfo()->target_object();
+    Object* target = it.rinfo()->target_object();
     CHECK(!CanLeak(target, heap, skip_weak_cell));
   }
 }
