@@ -1807,6 +1807,8 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc,
   // through the self_reference parameter.
   code->CopyFrom(desc);
 
+  code->clear_padding();
+
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) code->ObjectVerify();
 #endif
@@ -2559,10 +2561,11 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
   share->set_function_token_position(0);
   // All compiler hints default to false or 0.
   share->set_compiler_hints(0);
-  share->set_bailout_reason(0);
   share->set_kind(kind);
 
   share->set_preparsed_scope_data(*null_value());
+
+  share->clear_padding();
 
   // Link into the list.
   Handle<Object> new_noscript_list =
@@ -2683,6 +2686,14 @@ Handle<BreakPointInfo> Factory::NewBreakPointInfo(int source_position) {
   new_break_point_info->set_source_position(source_position);
   new_break_point_info->set_break_point_objects(*undefined_value());
   return new_break_point_info;
+}
+
+Handle<BreakPoint> Factory::NewBreakPoint(int id, Handle<String> condition) {
+  Handle<BreakPoint> new_break_point =
+      Handle<BreakPoint>::cast(NewStruct(TUPLE2_TYPE));
+  new_break_point->set_id(id);
+  new_break_point->set_condition(*condition);
+  return new_break_point;
 }
 
 Handle<StackFrameInfo> Factory::NewStackFrameInfo() {

@@ -526,7 +526,6 @@
         'v8_libsampler',
         'inspector/inspector.gyp:protocol_generated_sources#target',
         'inspector/inspector.gyp:inspector_injected_script#target',
-        'inspector/inspector.gyp:inspector_debugger_script#target',
       ],
       'objs': ['foo.o'],
       'variables': {
@@ -1027,9 +1026,6 @@
         'heap/incremental-marking-job.h',
         'heap/incremental-marking.cc',
         'heap/incremental-marking.h',
-        'heap/invalidated-slots-inl.h',
-        'heap/invalidated-slots.cc',
-        'heap/invalidated-slots.h',
         'heap/item-parallel-job.h',
         'heap/local-allocator.h',
         'heap/mark-compact-inl.h',

@@ -177,9 +177,6 @@
 
   # BUG(v8:6306).
   'wasm/huge-memory': [SKIP],
-
-  # BUG(v8:6577).
-  'wasm/exceptions': [SKIP],
 }],  # ALWAYS
 
 ['novfp3 == True', {
@@ -248,6 +245,9 @@
 
   # BUG(v8:4779): Crashes flakily with stress mode on arm64.
   'array-splice': [PASS, SLOW, ['arch == arm64', FAST_VARIANTS]],
+
+  # BUG(chromium:751825): Crashes flakily.
+  'wasm/js-api': [SKIP],
 }],  # 'gc_stress == True'
 
 ##############################################################################

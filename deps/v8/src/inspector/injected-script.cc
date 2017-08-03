@@ -41,7 +41,7 @@
 #include "src/inspector/v8-inspector-impl.h"
 #include "src/inspector/v8-inspector-session-impl.h"
 #include "src/inspector/v8-stack-trace-impl.h"
-#include "src/inspector/v8-value-copier.h"
+#include "src/inspector/v8-value-utils.h"
 
 #include "include/v8-inspector.h"
 
@@ -311,6 +311,10 @@ v8::Local<v8::Value> InjectedScript::lastEvaluationResult() const {
   if (m_lastEvaluationResult.IsEmpty())
     return v8::Undefined(m_context->isolate());
   return m_lastEvaluationResult.Get(m_context->isolate());
+}
+
+void InjectedScript::setLastEvaluationResult(v8::Local<v8::Value> result) {
+  m_lastEvaluationResult.Reset(m_context->isolate(), result);
 }
 
 Response InjectedScript::resolveCallArgument(

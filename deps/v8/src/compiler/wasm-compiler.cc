@@ -1830,12 +1830,18 @@ Node* WasmGraphBuilder::Throw(Node* input) {
                             arraysize(parameters));
 }
 
+Node* WasmGraphBuilder::Rethrow() {
+  SetNeedsStackCheck();
+  Node* result = BuildCallToRuntime(Runtime::kWasmRethrow, nullptr, 0);
+  return result;
+}
+
 Node* WasmGraphBuilder::Catch(Node* input, wasm::WasmCodePosition position) {
   SetNeedsStackCheck();
   CommonOperatorBuilder* common = jsgraph()->common();
 
   Node* parameters[] = {input};  // caught value
-  Node* value = BuildCallToRuntime(Runtime::kWasmGetCaughtExceptionValue,
+  Node* value = BuildCallToRuntime(Runtime::kWasmSetCaughtExceptionValue,
                                    parameters, arraysize(parameters));
 
   Node* is_smi;
@@ -3740,6 +3746,60 @@ Node* WasmGraphBuilder::Simd8x16ShuffleOp(const uint8_t shuffle[16],
   has_simd_ = true;
   return graph()->NewNode(jsgraph()->machine()->S8x16Shuffle(shuffle),
                           inputs[0], inputs[1]);
+}
+
+Node* WasmGraphBuilder::AtomicOp(wasm::WasmOpcode opcode,
+                                 const NodeVector& inputs,
+                                 wasm::WasmCodePosition position) {
+  Node* node;
+  switch (opcode) {
+    case wasm::kExprI32AtomicAdd: {
+      BoundsCheckMem(MachineType::Uint32(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicAdd(MachineType::Uint32()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    case wasm::kExprI32AtomicSub: {
+      BoundsCheckMem(MachineType::Uint32(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicSub(MachineType::Uint32()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    case wasm::kExprI32AtomicAdd16U: {
+      BoundsCheckMem(MachineType::Uint16(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicAdd(MachineType::Uint16()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    case wasm::kExprI32AtomicSub16U: {
+      BoundsCheckMem(MachineType::Uint16(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicSub(MachineType::Uint16()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    case wasm::kExprI32AtomicAdd8U: {
+      BoundsCheckMem(MachineType::Uint8(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicAdd(MachineType::Uint8()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    case wasm::kExprI32AtomicSub8U: {
+      BoundsCheckMem(MachineType::Uint8(), inputs[0], 0, position);
+      node = graph()->NewNode(
+          jsgraph()->machine()->AtomicSub(MachineType::Uint8()), MemBuffer(0),
+          inputs[0], inputs[1], *effect_, *control_);
+      break;
+    }
+    default:
+      FATAL_UNSUPPORTED_OPCODE(opcode);
+  }
+  *effect_ = node;
+  return node;
 }
 
 static void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag,

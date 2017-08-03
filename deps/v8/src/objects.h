@@ -151,6 +151,7 @@
 //         - ObjectTemplateInfo
 //       - Script
 //       - DebugInfo
+//       - BreakPoint
 //       - BreakPointInfo
 //       - StackFrameInfo
 //       - SourcePositionTableWithFrameCache
@@ -1004,6 +1005,7 @@ template <class C> inline bool Is(Object* obj);
   V(ArrayList)                         \
   V(BoilerplateDescription)            \
   V(Boolean)                           \
+  V(BreakPoint)                        \
   V(BreakPointInfo)                    \
   V(ByteArray)                         \
   V(BytecodeArray)                     \
@@ -3194,6 +3196,10 @@ class ByteArray: public FixedArrayBase {
   inline uint32_t get_uint32(int index) const;
   inline void set_uint32(int index, uint32_t value);
 
+  // Clear uninitialized padding space. This ensures that the snapshot content
+  // is deterministic.
+  inline void clear_padding();
+
   static int SizeFor(int length) {
     return OBJECT_POINTER_ALIGN(kHeaderSize + length);
   }
@@ -3349,6 +3355,10 @@ class BytecodeArray : public FixedArrayBase {
   // Bytecode aging
   bool IsOld() const;
   void MakeOlder();
+
+  // Clear uninitialized padding space. This ensures that the snapshot content
+  // is deterministic.
+  inline void clear_padding();
 
   // Layout description.
   static const int kConstantPoolOffset = FixedArrayBase::kHeaderSize;
@@ -3897,6 +3907,10 @@ class Code: public HeapObject {
   // which would make snapshot production non-reproducible. This method wipes
   // out the to-be-overwritten header data for reproducible snapshots.
   inline void WipeOutHeader();
+
+  // Clear uninitialized padding space. This ensures that the snapshot content
+  // is deterministic.
+  inline void clear_padding();
 
   // Flags operations.
   static inline Flags ComputeFlags(

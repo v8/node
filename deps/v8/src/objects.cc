@@ -2598,7 +2598,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
   if (has_pointers) {
-    heap->NotifyObjectLayoutChange(this, size, no_allocation);
+    heap->NotifyObjectLayoutChange(this, no_allocation);
   }
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
@@ -2674,7 +2674,7 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   bool has_pointers = StringShape(this).IsIndirect();
 
   if (has_pointers) {
-    heap->NotifyObjectLayoutChange(this, size, no_allocation);
+    heap->NotifyObjectLayoutChange(this, no_allocation);
   }
 
   // Morph the string to an external string by replacing the map and
@@ -3980,9 +3980,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
 
   Heap* heap = isolate->heap();
 
-  int old_instance_size = old_map->instance_size();
-
-  heap->NotifyObjectLayoutChange(*object, old_instance_size, no_allocation);
+  heap->NotifyObjectLayoutChange(*object, no_allocation);
 
   // Copy (real) inobject properties. If necessary, stop at number_of_fields to
   // avoid overwriting |one_pointer_filler_map|.
@@ -4016,7 +4014,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
 
   // Create filler object past the new instance size.
   int new_instance_size = new_map->instance_size();
-  int instance_size_delta = old_instance_size - new_instance_size;
+  int instance_size_delta = old_map->instance_size() - new_instance_size;
   DCHECK(instance_size_delta >= 0);
 
   if (instance_size_delta > 0) {
@@ -4098,12 +4096,11 @@ void MigrateFastToSlow(Handle<JSObject> object, Handle<Map> new_map,
   DisallowHeapAllocation no_allocation;
 
   Heap* heap = isolate->heap();
-  int old_instance_size = map->instance_size();
-  heap->NotifyObjectLayoutChange(*object, old_instance_size, no_allocation);
+  heap->NotifyObjectLayoutChange(*object, no_allocation);
 
   // Resize the object in the heap if necessary.
   int new_instance_size = new_map->instance_size();
-  int instance_size_delta = old_instance_size - new_instance_size;
+  int instance_size_delta = map->instance_size() - new_instance_size;
   DCHECK(instance_size_delta >= 0);
 
   if (instance_size_delta > 0) {
@@ -9064,6 +9061,10 @@ void Map::TraceAllTransitions(Map* map) {
 void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
                             Handle<Name> name, SimpleTransitionFlag flag) {
   Isolate* isolate = parent->GetIsolate();
+  DCHECK_IMPLIES(name->IsInterestingSymbol(),
+                 child->may_have_interesting_symbols());
+  DCHECK_IMPLIES(parent->may_have_interesting_symbols(),
+                 child->may_have_interesting_symbols());
   // Do not track transitions during bootstrap except for element transitions.
   if (isolate->bootstrapper()->IsActive() &&
       !name.is_identical_to(isolate->factory()->elements_transition_symbol())) {
@@ -9216,7 +9217,7 @@ void Map::InstallDescriptors(Handle<Map> parent, Handle<Map> child,
   }
 
   Handle<Name> name = handle(descriptors->GetKey(new_descriptor));
-  if (name->IsInterestingSymbol()) {
+  if (parent->may_have_interesting_symbols() || name->IsInterestingSymbol()) {
     child->set_may_have_interesting_symbols(true);
   }
   ConnectTransition(parent, child, name, SIMPLE_PROPERTY_TRANSITION);
@@ -12037,6 +12038,15 @@ Handle<String> SeqString::Truncate(Handle<SeqString> string, int new_length) {
   return string;
 }
 
+void SeqOneByteString::clear_padding() {
+  int data_size = SeqString::kHeaderSize + length() * kOneByteSize;
+  memset(address() + data_size, 0, SizeFor(length()) - data_size);
+}
+
+void SeqTwoByteString::clear_padding() {
+  int data_size = SeqString::kHeaderSize + length() * kUC16Size;
+  memset(address() + data_size, 0, SizeFor(length()) - data_size);
+}
 
 uint32_t StringHasher::MakeArrayIndexHash(uint32_t value, int length) {
   // For array indexes mix the length into the hash as an array index could
@@ -13760,16 +13770,10 @@ std::ostream& operator<<(std::ostream& os, const SourceCodeOf& v) {
 
 
 void SharedFunctionInfo::DisableOptimization(BailoutReason reason) {
-  // Disable optimization for the shared function info and mark the
-  // code as non-optimizable. The marker on the shared function info
-  // is there because we flush non-optimized code thereby loosing the
-  // non-optimizable information for the code. When the code is
-  // regenerated and set on the shared function info it is marked as
-  // non-optimizable if optimization is disabled for the shared
-  // function info.
   DCHECK(reason != kNoReason);
-  set_optimization_disabled(true);
-  set_disable_optimization_reason(reason);
+
+  set_compiler_hints(
+      DisabledOptimizationReasonBits::update(compiler_hints(), reason));
   // Code should be the lazy compilation stub or else unoptimized.
   DCHECK(abstract_code()->kind() == AbstractCode::FUNCTION ||
          abstract_code()->kind() == AbstractCode::INTERPRETED_FUNCTION ||
@@ -17079,11 +17083,11 @@ void MakeStringThin(String* string, String* internalized, Isolate* isolate) {
 
   if (!string->IsInternalizedString()) {
     DisallowHeapAllocation no_gc;
-    int old_size = string->Size();
-    isolate->heap()->NotifyObjectLayoutChange(string, old_size, no_gc);
+    isolate->heap()->NotifyObjectLayoutChange(string, no_gc);
     bool one_byte = internalized->IsOneByteRepresentation();
     Handle<Map> map = one_byte ? isolate->factory()->thin_one_byte_string_map()
                                : isolate->factory()->thin_string_map();
+    int old_size = string->Size();
     DCHECK(old_size >= ThinString::kSize);
     string->synchronized_set_map(*map);
     ThinString* thin = ThinString::cast(string);
@@ -20131,7 +20135,10 @@ MaybeHandle<Object> Module::Evaluate(Handle<Module> module,
                                      ZoneForwardList<Handle<Module>>* stack,
                                      unsigned* dfs_index) {
   Isolate* isolate = module->GetIsolate();
-  DCHECK_NE(module->status(), kErrored);
+  if (module->status() == kErrored) {
+    isolate->Throw(module->GetException());
+    return MaybeHandle<Object>();
+  }
   if (module->status() >= kEvaluating) {
     return isolate->factory()->undefined_value();
   }
