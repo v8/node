@@ -34,22 +34,18 @@ class PlatformInterfaceDescriptor;
   V(FastNewFunctionContext)                \
   V(FastNewObject)                         \
   V(FastNewArguments)                      \
+  V(RecordWrite)                           \
   V(TypeConversion)                        \
   V(TypeConversionStackParameter)          \
   V(Typeof)                                \
   V(FastCloneRegExp)                       \
   V(FastCloneShallowArray)                 \
   V(FastCloneShallowObject)                \
-  V(CreateAllocationSite)                  \
-  V(CreateWeakCell)                        \
   V(CallFunction)                          \
-  V(CallIC)                                \
-  V(CallICTrampoline)                      \
   V(CallVarargs)                           \
   V(CallForwardVarargs)                    \
   V(CallWithSpread)                        \
   V(CallWithArrayLike)                     \
-  V(CallConstruct)                         \
   V(CallTrampoline)                        \
   V(ConstructStub)                         \
   V(ConstructVarargs)                      \
@@ -87,7 +83,6 @@ class PlatformInterfaceDescriptor;
   V(InterpreterDispatch)                   \
   V(InterpreterPushArgsThenCall)           \
   V(InterpreterPushArgsThenConstruct)      \
-  V(InterpreterPushArgsThenConstructArray) \
   V(InterpreterCEntry)                     \
   V(ResumeGenerator)                       \
   V(FrameDropperTrampoline)                \
@@ -505,6 +500,13 @@ class FastNewArgumentsDescriptor : public CallInterfaceDescriptor {
   static const Register TargetRegister();
 };
 
+class RecordWriteDescriptor final : public CallInterfaceDescriptor {
+ public:
+  DEFINE_PARAMETERS(kObject, kSlot, kIsolate)
+  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(RecordWriteDescriptor,
+                                               CallInterfaceDescriptor)
+};
+
 class TypeConversionDescriptor final : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS(kArgument)
@@ -563,23 +565,6 @@ class FastCloneShallowObjectDescriptor : public CallInterfaceDescriptor {
   DEFINE_PARAMETERS(kClosure, kLiteralIndex, kBoilerplateDescription, kFlags)
   DECLARE_DESCRIPTOR(FastCloneShallowObjectDescriptor, CallInterfaceDescriptor)
 };
-
-
-class CreateAllocationSiteDescriptor : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kVector, kSlot)
-  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CreateAllocationSiteDescriptor,
-                                               CallInterfaceDescriptor)
-};
-
-
-class CreateWeakCellDescriptor : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kVector, kSlot, kValue)
-  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CreateWeakCellDescriptor,
-                                               CallInterfaceDescriptor)
-};
-
 
 class CallTrampolineDescriptor : public CallInterfaceDescriptor {
  public:
@@ -666,25 +651,6 @@ class ConstructTrampolineDescriptor : public CallInterfaceDescriptor {
 class CallFunctionDescriptor : public CallInterfaceDescriptor {
  public:
   DECLARE_DESCRIPTOR(CallFunctionDescriptor, CallInterfaceDescriptor)
-};
-
-class CallICDescriptor : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kTarget, kActualArgumentsCount, kSlot, kVector)
-  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CallICDescriptor,
-                                               CallInterfaceDescriptor)
-};
-
-class CallICTrampolineDescriptor : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kTarget, kActualArgumentsCount, kSlot)
-  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(CallICTrampolineDescriptor,
-                                               CallInterfaceDescriptor)
-};
-
-class CallConstructDescriptor : public CallInterfaceDescriptor {
- public:
-  DECLARE_DESCRIPTOR(CallConstructDescriptor, CallInterfaceDescriptor)
 };
 
 class TransitionElementsKindDescriptor : public CallInterfaceDescriptor {
@@ -905,15 +871,6 @@ class InterpreterPushArgsThenConstructDescriptor
                     kFeedbackElement, kFirstArgument)
   DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(
       InterpreterPushArgsThenConstructDescriptor, CallInterfaceDescriptor)
-};
-
-class InterpreterPushArgsThenConstructArrayDescriptor
-    : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kNumberOfArguments, kFunction, kFeedbackElement,
-                    kFirstArgument)
-  DECLARE_DESCRIPTOR_WITH_CUSTOM_FUNCTION_TYPE(
-      InterpreterPushArgsThenConstructArrayDescriptor, CallInterfaceDescriptor)
 };
 
 class InterpreterCEntryDescriptor : public CallInterfaceDescriptor {

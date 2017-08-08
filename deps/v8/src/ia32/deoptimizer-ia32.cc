@@ -6,8 +6,8 @@
 
 #include "src/codegen.h"
 #include "src/deoptimizer.h"
+#include "src/frame-constants.h"
 #include "src/full-codegen/full-codegen.h"
-#include "src/ia32/frames-ia32.h"
 #include "src/register-configuration.h"
 #include "src/safepoint-table.h"
 
@@ -176,7 +176,7 @@ void Deoptimizer::TableEntryGenerator::Generate() {
 
   const int kDoubleRegsSize = kDoubleSize * XMMRegister::kMaxNumRegisters;
   __ sub(esp, Immediate(kDoubleRegsSize));
-  const RegisterConfiguration* config = RegisterConfiguration::Crankshaft();
+  const RegisterConfiguration* config = RegisterConfiguration::Default();
   for (int i = 0; i < config->num_allocatable_double_registers(); ++i) {
     int code = config->GetAllocatableDoubleCode(i);
     XMMRegister xmm_reg = XMMRegister::from_code(code);

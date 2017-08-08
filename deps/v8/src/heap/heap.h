@@ -947,6 +947,8 @@ class Heap {
   // Returns whether SetUp has been called.
   bool HasBeenSetUp();
 
+  bool use_tasks() const { return use_tasks_; }
+
   // ===========================================================================
   // Getters for spaces. =======================================================
   // ===========================================================================
@@ -1136,12 +1138,19 @@ class Heap {
   // ===========================================================================
 
   // Write barrier support for object[offset] = o;
-  inline void RecordWrite(Object* object, int offset, Object* o);
+  inline void RecordWrite(Object* object, Object** slot, Object* value);
   inline void RecordWriteIntoCode(Code* host, RelocInfo* rinfo, Object* target);
   void RecordWriteIntoCodeSlow(Code* host, RelocInfo* rinfo, Object* target);
   void RecordWritesIntoCode(Code* code);
   inline void RecordFixedArrayElements(FixedArray* array, int offset,
                                        int length);
+
+  // Used for query incremental marking status in generated code.
+  Address* IsMarkingFlagAddress() {
+    return reinterpret_cast<Address*>(&is_marking_flag_);
+  }
+
+  void SetIsMarkingFlag(uint8_t flag) { is_marking_flag_ = flag; }
 
   inline Address* store_buffer_top_address();
 
@@ -1186,7 +1195,8 @@ class Heap {
 
   // The runtime uses this function to notify potentially unsafe object layout
   // changes that require special synchronization with the concurrent marker.
-  void NotifyObjectLayoutChange(HeapObject* object,
+  // The old size is the size of the object before layout change.
+  void NotifyObjectLayoutChange(HeapObject* object, int old_size,
                                 const DisallowHeapAllocation&);
 
 #ifdef VERIFY_HEAP
@@ -2360,6 +2370,10 @@ class Heap {
   base::HashMap* global_pretenuring_feedback_;
 
   char trace_ring_buffer_[kTraceRingBufferSize];
+
+  // Used as boolean.
+  uint8_t is_marking_flag_;
+
   // If it's not full then the data is from 0 to ring_buffer_end_.  If it's
   // full then the data is from ring_buffer_end_ to the end of the buffer and
   // from 0 to ring_buffer_end_.
@@ -2393,6 +2407,8 @@ class Heap {
   LocalEmbedderHeapTracer* local_embedder_heap_tracer_;
 
   bool fast_promotion_mode_;
+
+  bool use_tasks_;
 
   // Used for testing purposes.
   bool force_oom_;

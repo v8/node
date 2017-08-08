@@ -6,6 +6,7 @@
 #define V8_HEAP_SPACES_H_
 
 #include <list>
+#include <map>
 #include <memory>
 #include <unordered_set>
 
@@ -16,9 +17,11 @@
 #include "src/base/hashmap.h"
 #include "src/base/iterator.h"
 #include "src/base/platform/mutex.h"
+#include "src/cancelable-task.h"
 #include "src/flags.h"
 #include "src/globals.h"
 #include "src/heap/heap.h"
+#include "src/heap/invalidated-slots.h"
 #include "src/heap/marking.h"
 #include "src/list.h"
 #include "src/objects.h"
@@ -301,21 +304,22 @@ class MemoryChunk {
 
     // |SWEEP_TO_ITERATE|: The page requires sweeping using external markbits
     // to iterate the page.
-    SWEEP_TO_ITERATE = 1u << 18,
+    SWEEP_TO_ITERATE = 1u << 18
   };
-  typedef base::Flags<Flag, uintptr_t> Flags;
 
-  static const int kPointersToHereAreInterestingMask =
+  using Flags = uintptr_t;
+
+  static const Flags kPointersToHereAreInterestingMask =
       POINTERS_TO_HERE_ARE_INTERESTING;
 
-  static const int kPointersFromHereAreInterestingMask =
+  static const Flags kPointersFromHereAreInterestingMask =
       POINTERS_FROM_HERE_ARE_INTERESTING;
 
-  static const int kEvacuationCandidateMask = EVACUATION_CANDIDATE;
+  static const Flags kEvacuationCandidateMask = EVACUATION_CANDIDATE;
 
-  static const int kIsInNewSpaceMask = IN_FROM_SPACE | IN_TO_SPACE;
+  static const Flags kIsInNewSpaceMask = IN_FROM_SPACE | IN_TO_SPACE;
 
-  static const int kSkipEvacuationSlotsRecordingMask =
+  static const Flags kSkipEvacuationSlotsRecordingMask =
       kEvacuationCandidateMask | kIsInNewSpaceMask;
 
   // |kSweepingDone|: The page state when sweeping is complete or sweeping must
@@ -344,7 +348,7 @@ class MemoryChunk {
   static const size_t kMinHeaderSize =
       kSizeOffset         // NOLINT
       + kSizetSize        // size_t size
-      + kIntptrSize       // Flags flags_
+      + kUIntptrSize      // uintptr_t flags_
       + kPointerSize      // Address area_start_
       + kPointerSize      // Address area_end_
       + 2 * kPointerSize  // base::VirtualMemory reservation_
@@ -354,7 +358,8 @@ class MemoryChunk {
       + kIntptrSize       // intptr_t live_byte_count_
       + kPointerSize * NUMBER_OF_REMEMBERED_SET_TYPES  // SlotSet* array
       + kPointerSize * NUMBER_OF_REMEMBERED_SET_TYPES  // TypedSlotSet* array
-      + kPointerSize                                   // SkipList* skip_list_
+      + kPointerSize    // InvalidatedSlots* invalidated_slots_
+      + kPointerSize    // SkipList* skip_list_
       + kPointerSize    // AtomicValue high_water_mark_
       + kPointerSize    // base::RecursiveMutex* mutex_
       + kPointerSize    // base::AtomicWord concurrent_sweeping_
@@ -450,14 +455,14 @@ class MemoryChunk {
   template <RememberedSetType type, AccessMode access_mode = AccessMode::ATOMIC>
   SlotSet* slot_set() {
     if (access_mode == AccessMode::ATOMIC)
-      return base::AsAtomicWord::Acquire_Load(&slot_set_[type]);
+      return base::AsAtomicPointer::Acquire_Load(&slot_set_[type]);
     return slot_set_[type];
   }
 
   template <RememberedSetType type, AccessMode access_mode = AccessMode::ATOMIC>
   TypedSlotSet* typed_slot_set() {
     if (access_mode == AccessMode::ATOMIC)
-      return base::AsAtomicWord::Acquire_Load(&typed_slot_set_[type]);
+      return base::AsAtomicPointer::Acquire_Load(&typed_slot_set_[type]);
     return typed_slot_set_[type];
   }
 
@@ -471,6 +476,11 @@ class MemoryChunk {
   // Not safe to be called concurrently.
   template <RememberedSetType type>
   void ReleaseTypedSlotSet();
+
+  InvalidatedSlots* AllocateInvalidatedSlots();
+  void ReleaseInvalidatedSlots();
+  void RegisterObjectWithInvalidatedSlots(HeapObject* object, int size);
+  InvalidatedSlots* invalidated_slots() { return invalidated_slots_; }
 
   void AllocateLocalTracker();
   void ReleaseLocalTracker();
@@ -515,35 +525,57 @@ class MemoryChunk {
     return this->address() + (index << kPointerSizeLog2);
   }
 
-  void SetFlag(Flag flag) { flags_ |= flag; }
-  void ClearFlag(Flag flag) { flags_ &= ~Flags(flag); }
-  bool IsFlagSet(Flag flag) { return (flags_ & flag) != 0; }
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
+  void SetFlag(Flag flag) {
+    if (access_mode == AccessMode::NON_ATOMIC) {
+      flags_ |= flag;
+    } else {
+      base::AsAtomicWord::SetBits<uintptr_t>(&flags_, flag, flag);
+    }
+  }
 
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
+  bool IsFlagSet(Flag flag) {
+    return (GetFlags<access_mode>() & flag) != 0;
+  }
+
+  void ClearFlag(Flag flag) { flags_ &= ~flag; }
   // Set or clear multiple flags at a time. The flags in the mask are set to
   // the value in "flags", the rest retain the current value in |flags_|.
   void SetFlags(uintptr_t flags, uintptr_t mask) {
-    flags_ = (flags_ & ~Flags(mask)) | (Flags(flags) & Flags(mask));
+    flags_ = (flags_ & ~mask) | (flags & mask);
   }
 
   // Return all current flags.
-  uintptr_t GetFlags() { return flags_; }
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
+  uintptr_t GetFlags() {
+    if (access_mode == AccessMode::NON_ATOMIC) {
+      return flags_;
+    } else {
+      return base::AsAtomicWord::Relaxed_Load(&flags_);
+    }
+  }
 
   bool NeverEvacuate() { return IsFlagSet(NEVER_EVACUATE); }
 
   void MarkNeverEvacuate() { SetFlag(NEVER_EVACUATE); }
 
-  bool IsEvacuationCandidate() {
-    DCHECK(!(IsFlagSet(NEVER_EVACUATE) && IsFlagSet(EVACUATION_CANDIDATE)));
-    return IsFlagSet(EVACUATION_CANDIDATE);
-  }
-
   bool CanAllocate() {
     return !IsEvacuationCandidate() && !IsFlagSet(NEVER_ALLOCATE_ON_PAGE);
   }
 
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
+  bool IsEvacuationCandidate() {
+    DCHECK(!(IsFlagSet<access_mode>(NEVER_EVACUATE) &&
+             IsFlagSet<access_mode>(EVACUATION_CANDIDATE)));
+    return IsFlagSet<access_mode>(EVACUATION_CANDIDATE);
+  }
+
+  template <AccessMode access_mode = AccessMode::NON_ATOMIC>
   bool ShouldSkipEvacuationSlotRecording() {
-    return ((flags_ & kSkipEvacuationSlotsRecordingMask) != 0) &&
-           !IsFlagSet(COMPACTION_WAS_ABORTED);
+    uintptr_t flags = GetFlags<access_mode>();
+    return ((flags & kSkipEvacuationSlotsRecordingMask) != 0) &&
+           ((flags & COMPACTION_WAS_ABORTED) == 0);
   }
 
   Executability executable() {
@@ -603,7 +635,7 @@ class MemoryChunk {
   void InitializationMemoryFence();
 
   size_t size_;
-  Flags flags_;
+  uintptr_t flags_;
 
   // Start and end of allocatable memory on this chunk.
   Address area_start_;
@@ -631,6 +663,7 @@ class MemoryChunk {
   // is ceil(size() / kPageSize).
   SlotSet* slot_set_[NUMBER_OF_REMEMBERED_SET_TYPES];
   TypedSlotSet* typed_slot_set_[NUMBER_OF_REMEMBERED_SET_TYPES];
+  InvalidatedSlots* invalidated_slots_;
 
   SkipList* skip_list_;
 
@@ -665,8 +698,6 @@ class MemoryChunk {
   friend class MemoryAllocator;
   friend class MemoryChunkValidator;
 };
-
-DEFINE_OPERATORS_FOR_FLAGS(MemoryChunk::Flags)
 
 static_assert(kMaxRegularHeapObjectSize <= MemoryChunk::kAllocatableMemory,
               "kMaxRegularHeapObjectSize <= MemoryChunk::kAllocatableMemory");
@@ -1184,8 +1215,9 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
    public:
     class UnmapFreeMemoryTask;
 
-    explicit Unmapper(MemoryAllocator* allocator)
-        : allocator_(allocator),
+    Unmapper(Heap* heap, MemoryAllocator* allocator)
+        : heap_(heap),
+          allocator_(allocator),
           pending_unmapping_tasks_semaphore_(0),
           concurrent_unmapping_tasks_active_(0) {
       chunks_[kRegular].reserve(kReservedQueueingSlots);
@@ -1219,13 +1251,14 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     }
 
     void FreeQueuedChunks();
-    bool WaitUntilCompleted();
+    void WaitUntilCompleted();
     void TearDown();
 
     bool has_delayed_chunks() { return delayed_regular_chunks_.size() > 0; }
 
    private:
     static const int kReservedQueueingSlots = 64;
+    static const int kMaxUnmapperTasks = 24;
 
     enum ChunkQueueType {
       kRegular,     // Pages of kPageSize that do not live in a CodeRange and
@@ -1264,13 +1297,15 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     template <FreeMode mode>
     void PerformFreeMemoryOnQueuedChunks();
 
+    Heap* const heap_;
+    MemoryAllocator* const allocator_;
     base::Mutex mutex_;
-    MemoryAllocator* allocator_;
     std::vector<MemoryChunk*> chunks_[kNumberOfChunkQueues];
     // Delayed chunks cannot be processed in the current unmapping cycle because
     // of dependencies such as an active sweeper.
     // See MemoryAllocator::CanFreeMemoryChunk.
     std::list<MemoryChunk*> delayed_regular_chunks_;
+    CancelableTaskManager::Id task_ids_[kMaxUnmapperTasks];
     base::Semaphore pending_unmapping_tasks_semaphore_;
     intptr_t concurrent_unmapping_tasks_active_;
 

@@ -227,7 +227,7 @@ typedef Managed<WasmModule> WasmModuleWrapper;
 struct WasmInstance {
   MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(WasmInstance);
 
-  const WasmModule* module;  // static representation of the module.
+  WasmModule* module;  // static representation of the module.
   // -- Heap allocated --------------------------------------------------------
   std::vector<Handle<FixedArray>> function_tables;  // indirect function tables.
   std::vector<Handle<FixedArray>>
@@ -240,7 +240,7 @@ struct WasmInstance {
   // -- raw globals -----------------------------------------------------------
   byte* globals_start = nullptr;  // start of the globals area.
 
-  explicit WasmInstance(const WasmModule* m)
+  explicit WasmInstance(WasmModule* m)
       : module(m),
         function_tables(m->function_tables.size()),
         signature_tables(m->function_tables.size()),
@@ -323,12 +323,12 @@ struct V8_EXPORT_PRIVATE ModuleWireBytes {
 struct V8_EXPORT_PRIVATE ModuleEnv {
   MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(ModuleEnv);
 
-  ModuleEnv(const WasmModule* module, WasmInstance* instance)
+  ModuleEnv(WasmModule* module, WasmInstance* instance)
       : module(module),
         instance(instance),
         function_tables(instance ? &instance->function_tables : nullptr),
         signature_tables(instance ? &instance->signature_tables : nullptr) {}
-  ModuleEnv(const WasmModule* module,
+  ModuleEnv(WasmModule* module,
             std::vector<Handle<FixedArray>>* function_tables,
             std::vector<Handle<FixedArray>>* signature_tables)
       : module(module),
@@ -336,7 +336,7 @@ struct V8_EXPORT_PRIVATE ModuleEnv {
         function_tables(function_tables),
         signature_tables(signature_tables) {}
 
-  const WasmModule* module;
+  WasmModule* module;
   WasmInstance* instance;
 
   std::vector<Handle<FixedArray>>* function_tables;
@@ -383,10 +383,10 @@ struct V8_EXPORT_PRIVATE ModuleEnv {
 
 // A ModuleEnv together with ModuleWireBytes.
 struct ModuleBytesEnv {
-  ModuleBytesEnv(const WasmModule* module, WasmInstance* instance,
+  ModuleBytesEnv(WasmModule* module, WasmInstance* instance,
                  Vector<const byte> module_bytes)
       : module_env(module, instance), wire_bytes(module_bytes) {}
-  ModuleBytesEnv(const WasmModule* module, WasmInstance* instance,
+  ModuleBytesEnv(WasmModule* module, WasmInstance* instance,
                  const ModuleWireBytes& wire_bytes)
       : module_env(module, instance), wire_bytes(wire_bytes) {}
 
@@ -461,7 +461,7 @@ WasmFunction* GetWasmFunctionForImportWrapper(Isolate* isolate,
 Handle<Code> UnwrapImportWrapper(Handle<Object> import_wrapper);
 
 void TableSet(ErrorThrower* thrower, Isolate* isolate,
-              Handle<WasmTableObject> table, int32_t index,
+              Handle<WasmTableObject> table, int64_t index,
               Handle<JSFunction> function);
 
 void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
@@ -547,6 +547,42 @@ class LazyCompilationOrchestrator {
 };
 
 const char* ExternalKindName(WasmExternalKind);
+
+// TruncatedUserString makes it easy to output names up to a certain length, and
+// output a truncation followed by '...' if they exceed a limit.
+// Use like this:
+//   TruncatedUserString<> name (pc, len);
+//   printf("... %.*s ...", name.length(), name.start())
+template <int kMaxLen = 50>
+class TruncatedUserString {
+  static_assert(kMaxLen >= 4, "minimum length is 4 (length of '...' plus one)");
+
+ public:
+  template <typename T>
+  explicit TruncatedUserString(Vector<T> name)
+      : TruncatedUserString(name.start(), name.length()) {}
+
+  TruncatedUserString(const byte* start, size_t len)
+      : TruncatedUserString(reinterpret_cast<const char*>(start), len) {}
+
+  TruncatedUserString(const char* start, size_t len)
+      : start_(start), length_(std::min(kMaxLen, static_cast<int>(len))) {
+    if (len > static_cast<size_t>(kMaxLen)) {
+      memcpy(buffer_, start, kMaxLen - 3);
+      memset(buffer_ + kMaxLen - 3, '.', 3);
+      start_ = buffer_;
+    }
+  }
+
+  const char* start() const { return start_; }
+
+  int length() const { return length_; }
+
+ private:
+  const char* start_;
+  int length_;
+  char buffer_[kMaxLen];
+};
 
 namespace testing {
 void ValidateInstancesChain(Isolate* isolate,

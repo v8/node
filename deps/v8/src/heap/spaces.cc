@@ -292,7 +292,7 @@ MemoryAllocator::MemoryAllocator(Isolate* isolate)
       size_executable_(0),
       lowest_ever_allocated_(reinterpret_cast<void*>(-1)),
       highest_ever_allocated_(reinterpret_cast<void*>(0)),
-      unmapper_(this) {}
+      unmapper_(isolate->heap(), this) {}
 
 bool MemoryAllocator::SetUp(size_t capacity, size_t code_range_size) {
   capacity_ = RoundUp(capacity, Page::kPageSize);
@@ -324,40 +324,46 @@ void MemoryAllocator::TearDown() {
   code_range_ = nullptr;
 }
 
-class MemoryAllocator::Unmapper::UnmapFreeMemoryTask : public v8::Task {
+class MemoryAllocator::Unmapper::UnmapFreeMemoryTask : public CancelableTask {
  public:
-  explicit UnmapFreeMemoryTask(Unmapper* unmapper) : unmapper_(unmapper) {}
+  explicit UnmapFreeMemoryTask(Isolate* isolate, Unmapper* unmapper)
+      : CancelableTask(isolate), unmapper_(unmapper) {}
 
  private:
-  // v8::Task overrides.
-  void Run() override {
+  void RunInternal() override {
     unmapper_->PerformFreeMemoryOnQueuedChunks<FreeMode::kUncommitPooled>();
     unmapper_->pending_unmapping_tasks_semaphore_.Signal();
   }
 
-  Unmapper* unmapper_;
+  Unmapper* const unmapper_;
   DISALLOW_COPY_AND_ASSIGN(UnmapFreeMemoryTask);
 };
 
 void MemoryAllocator::Unmapper::FreeQueuedChunks() {
   ReconsiderDelayedChunks();
-  if (FLAG_concurrent_sweeping) {
+  if (heap_->use_tasks() && FLAG_concurrent_sweeping) {
+    if (concurrent_unmapping_tasks_active_ >= kMaxUnmapperTasks) {
+      // kMaxUnmapperTasks are already running. Avoid creating any more.
+      return;
+    }
+    UnmapFreeMemoryTask* task = new UnmapFreeMemoryTask(heap_->isolate(), this);
+    DCHECK_LT(concurrent_unmapping_tasks_active_, kMaxUnmapperTasks);
+    task_ids_[concurrent_unmapping_tasks_active_++] = task->id();
     V8::GetCurrentPlatform()->CallOnBackgroundThread(
-        new UnmapFreeMemoryTask(this), v8::Platform::kShortRunningTask);
-    concurrent_unmapping_tasks_active_++;
+        task, v8::Platform::kShortRunningTask);
   } else {
     PerformFreeMemoryOnQueuedChunks<FreeMode::kUncommitPooled>();
   }
 }
 
-bool MemoryAllocator::Unmapper::WaitUntilCompleted() {
-  bool waited = false;
-  while (concurrent_unmapping_tasks_active_ > 0) {
-    pending_unmapping_tasks_semaphore_.Wait();
-    concurrent_unmapping_tasks_active_--;
-    waited = true;
+void MemoryAllocator::Unmapper::WaitUntilCompleted() {
+  for (int i = 0; i < concurrent_unmapping_tasks_active_; i++) {
+    if (heap_->isolate()->cancelable_task_manager()->TryAbort(task_ids_[i]) !=
+        CancelableTaskManager::kTaskAborted) {
+      pending_unmapping_tasks_semaphore_.Wait();
+    }
+    concurrent_unmapping_tasks_active_ = 0;
   }
-  return waited;
 }
 
 template <MemoryAllocator::Unmapper::FreeMode mode>
@@ -384,7 +390,7 @@ void MemoryAllocator::Unmapper::PerformFreeMemoryOnQueuedChunks() {
 }
 
 void MemoryAllocator::Unmapper::TearDown() {
-  WaitUntilCompleted();
+  CHECK_EQ(0, concurrent_unmapping_tasks_active_);
   ReconsiderDelayedChunks();
   CHECK(delayed_regular_chunks_.empty());
   PerformFreeMemoryOnQueuedChunks<FreeMode::kReleasePooled>();
@@ -543,12 +549,13 @@ MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
   chunk->flags_ = Flags(NO_FLAGS);
   chunk->set_owner(owner);
   chunk->InitializeReservedMemory();
-  base::AsAtomicWord::Release_Store(&chunk->slot_set_[OLD_TO_NEW], nullptr);
-  base::AsAtomicWord::Release_Store(&chunk->slot_set_[OLD_TO_OLD], nullptr);
-  base::AsAtomicWord::Release_Store(&chunk->typed_slot_set_[OLD_TO_NEW],
-                                    nullptr);
-  base::AsAtomicWord::Release_Store(&chunk->typed_slot_set_[OLD_TO_OLD],
-                                    nullptr);
+  base::AsAtomicPointer::Release_Store(&chunk->slot_set_[OLD_TO_NEW], nullptr);
+  base::AsAtomicPointer::Release_Store(&chunk->slot_set_[OLD_TO_OLD], nullptr);
+  base::AsAtomicPointer::Release_Store(&chunk->typed_slot_set_[OLD_TO_NEW],
+                                       nullptr);
+  base::AsAtomicPointer::Release_Store(&chunk->typed_slot_set_[OLD_TO_OLD],
+                                       nullptr);
+  chunk->invalidated_slots_ = nullptr;
   chunk->skip_list_ = nullptr;
   chunk->progress_bar_ = 0;
   chunk->high_water_mark_.SetValue(static_cast<intptr_t>(area_start - base));
@@ -1216,6 +1223,7 @@ void MemoryChunk::ReleaseAllocatedMemory() {
   ReleaseSlotSet<OLD_TO_OLD>();
   ReleaseTypedSlotSet<OLD_TO_NEW>();
   ReleaseTypedSlotSet<OLD_TO_OLD>();
+  ReleaseInvalidatedSlots();
   if (local_tracker_ != nullptr) ReleaseLocalTracker();
   if (young_generation_bitmap_ != nullptr) ReleaseYoungGenerationBitmap();
 }
@@ -1236,7 +1244,7 @@ template SlotSet* MemoryChunk::AllocateSlotSet<OLD_TO_OLD>();
 template <RememberedSetType type>
 SlotSet* MemoryChunk::AllocateSlotSet() {
   SlotSet* slot_set = AllocateAndInitializeSlotSet(size_, address());
-  SlotSet* old_slot_set = base::AsAtomicWord::Release_CompareAndSwap(
+  SlotSet* old_slot_set = base::AsAtomicPointer::Release_CompareAndSwap(
       &slot_set_[type], nullptr, slot_set);
   if (old_slot_set != nullptr) {
     delete[] slot_set;
@@ -1264,7 +1272,7 @@ template TypedSlotSet* MemoryChunk::AllocateTypedSlotSet<OLD_TO_OLD>();
 template <RememberedSetType type>
 TypedSlotSet* MemoryChunk::AllocateTypedSlotSet() {
   TypedSlotSet* typed_slot_set = new TypedSlotSet(address());
-  TypedSlotSet* old_value = base::AsAtomicWord::Release_CompareAndSwap(
+  TypedSlotSet* old_value = base::AsAtomicPointer::Release_CompareAndSwap(
       &typed_slot_set_[type], nullptr, typed_slot_set);
   if (old_value != nullptr) {
     delete typed_slot_set;
@@ -1283,6 +1291,30 @@ void MemoryChunk::ReleaseTypedSlotSet() {
   if (typed_slot_set) {
     typed_slot_set_[type] = nullptr;
     delete typed_slot_set;
+  }
+}
+
+InvalidatedSlots* MemoryChunk::AllocateInvalidatedSlots() {
+  DCHECK_NULL(invalidated_slots_);
+  invalidated_slots_ = new InvalidatedSlots();
+  return invalidated_slots_;
+}
+
+void MemoryChunk::ReleaseInvalidatedSlots() {
+  if (invalidated_slots_) {
+    delete invalidated_slots_;
+    invalidated_slots_ = nullptr;
+  }
+}
+
+void MemoryChunk::RegisterObjectWithInvalidatedSlots(HeapObject* object,
+                                                     int size) {
+  if (!ShouldSkipEvacuationSlotRecording()) {
+    if (invalidated_slots() == nullptr) {
+      AllocateInvalidatedSlots();
+    }
+    int old_size = (*invalidated_slots())[object];
+    (*invalidated_slots())[object] = std::max(old_size, size);
   }
 }
 

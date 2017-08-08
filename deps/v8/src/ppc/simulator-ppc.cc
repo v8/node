@@ -13,7 +13,7 @@
 #include "src/codegen.h"
 #include "src/disasm.h"
 #include "src/ppc/constants-ppc.h"
-#include "src/ppc/frames-ppc.h"
+#include "src/ppc/frame-constants-ppc.h"
 #include "src/ppc/simulator-ppc.h"
 #include "src/runtime/runtime-utils.h"
 
@@ -23,7 +23,7 @@
 namespace v8 {
 namespace internal {
 
-const auto GetRegConfig = RegisterConfiguration::Crankshaft;
+const auto GetRegConfig = RegisterConfiguration::Default;
 
 // static
 base::LazyInstance<Simulator::GlobalMonitor>::type Simulator::global_monitor_ =

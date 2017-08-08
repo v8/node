@@ -153,6 +153,7 @@ Heap::Heap()
       old_generation_allocation_counter_at_last_gc_(0),
       old_generation_size_at_last_gc_(0),
       global_pretenuring_feedback_(nullptr),
+      is_marking_flag_(false),
       ring_buffer_full_(false),
       ring_buffer_end_(0),
       configured_(false),
@@ -165,6 +166,7 @@ Heap::Heap()
       heap_iterator_depth_(0),
       local_embedder_heap_tracer_(nullptr),
       fast_promotion_mode_(false),
+      use_tasks_(true),
       force_oom_(false),
       delay_sweeper_tasks_for_testing_(false),
       pending_layout_change_object_(nullptr) {
@@ -1277,13 +1279,13 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
   if (FLAG_concurrent_marking && incremental_marking()->IsMarking()) {
     if (dst < src) {
       for (int i = 0; i < len; i++) {
-        base::AsAtomicWord::Relaxed_Store(
-            dst + i, base::AsAtomicWord::Relaxed_Load(src + i));
+        base::AsAtomicPointer::Relaxed_Store(
+            dst + i, base::AsAtomicPointer::Relaxed_Load(src + i));
       }
     } else {
       for (int i = len - 1; i >= 0; i--) {
-        base::AsAtomicWord::Relaxed_Store(
-            dst + i, base::AsAtomicWord::Relaxed_Load(src + i));
+        base::AsAtomicPointer::Relaxed_Store(
+            dst + i, base::AsAtomicPointer::Relaxed_Load(src + i));
       }
     }
   } else {
@@ -2767,7 +2769,7 @@ void Heap::CreateJSEntryStub() {
 
 
 void Heap::CreateJSConstructEntryStub() {
-  JSEntryStub stub(isolate(), StackFrame::ENTRY_CONSTRUCT);
+  JSEntryStub stub(isolate(), StackFrame::CONSTRUCT_ENTRY);
   set_js_construct_entry_code(*stub.GetCode());
 }
 
@@ -4250,7 +4252,7 @@ AllocationResult Heap::AllocateRawFixedArray(int length,
       FLAG_use_marking_progress_bar) {
     MemoryChunk* chunk =
         MemoryChunk::FromAddress(result.ToObjectChecked()->address());
-    chunk->SetFlag(MemoryChunk::HAS_PROGRESS_BAR);
+    chunk->SetFlag<AccessMode::ATOMIC>(MemoryChunk::HAS_PROGRESS_BAR);
   }
   return result;
 }
@@ -4607,10 +4609,17 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
   }
 }
 
-void Heap::NotifyObjectLayoutChange(HeapObject* object,
+void Heap::NotifyObjectLayoutChange(HeapObject* object, int size,
                                     const DisallowHeapAllocation&) {
+  DCHECK(InOldSpace(object) || InNewSpace(object));
   if (FLAG_incremental_marking && incremental_marking()->IsMarking()) {
     incremental_marking()->MarkBlackAndPush(object);
+    if (InOldSpace(object) && incremental_marking()->IsCompacting()) {
+      // The concurrent marker might have recorded slots for the object.
+      // Register this object as invalidated to filter out the slots.
+      MemoryChunk* chunk = MemoryChunk::FromAddress(object->address());
+      chunk->RegisterObjectWithInvalidatedSlots(object, size);
+    }
   }
 #ifdef VERIFY_HEAP
   DCHECK(pending_layout_change_object_ == nullptr);
@@ -4722,9 +4731,6 @@ void Heap::IdleNotificationEpilogue(GCIdleTimeAction action,
 
   contexts_disposed_ = 0;
 
-  isolate()->counters()->gc_idle_time_allotted_in_ms()->AddSample(
-      static_cast<int>(idle_time_in_ms));
-
   if (deadline_in_ms - start_ms >
       GCIdleTimeHandler::kMaxFrameRenderingIdleTime) {
     int committed_memory = static_cast<int>(CommittedMemory() / KB);
@@ -4733,16 +4739,6 @@ void Heap::IdleNotificationEpilogue(GCIdleTimeAction action,
         start_ms, committed_memory);
     isolate()->counters()->aggregated_memory_heap_used()->AddSample(
         start_ms, used_memory);
-  }
-
-  if (deadline_difference >= 0) {
-    if (action.type != DONE && action.type != DO_NOTHING) {
-      isolate()->counters()->gc_idle_time_limit_undershot()->AddSample(
-          static_cast<int>(deadline_difference));
-    }
-  } else {
-    isolate()->counters()->gc_idle_time_limit_overshot()->AddSample(
-        static_cast<int>(-deadline_difference));
   }
 
   if ((FLAG_trace_idle_notification && action.type > DO_NOTHING) ||
@@ -5969,15 +5965,16 @@ bool Heap::SetUp() {
   mark_compact_collector_ = new MarkCompactCollector(this);
   incremental_marking_->set_marking_worklist(
       mark_compact_collector_->marking_worklist());
-#ifdef V8_CONCURRENT_MARKING
-  MarkCompactCollector::MarkingWorklist* marking_worklist =
-      mark_compact_collector_->marking_worklist();
-  concurrent_marking_ = new ConcurrentMarking(
-      this, marking_worklist->shared(), marking_worklist->bailout(),
-      mark_compact_collector_->weak_cells());
-#else
-  concurrent_marking_ = new ConcurrentMarking(this, nullptr, nullptr, nullptr);
-#endif
+  if (FLAG_concurrent_marking) {
+    MarkCompactCollector::MarkingWorklist* marking_worklist =
+        mark_compact_collector_->marking_worklist();
+    concurrent_marking_ = new ConcurrentMarking(
+        this, marking_worklist->shared(), marking_worklist->bailout(),
+        mark_compact_collector_->weak_cells());
+  } else {
+    concurrent_marking_ =
+        new ConcurrentMarking(this, nullptr, nullptr, nullptr);
+  }
   minor_mark_compact_collector_ = new MinorMarkCompactCollector(this);
   gc_idle_time_handler_ = new GCIdleTimeHandler();
   memory_reducer_ = new MemoryReducer(this);
@@ -6059,7 +6056,6 @@ void Heap::PrintAllocationsHash() {
 
 
 void Heap::NotifyDeserializationComplete() {
-  DCHECK_EQ(0, gc_count());
   PagedSpaces spaces(this);
   for (PagedSpace* s = spaces.next(); s != NULL; s = spaces.next()) {
     if (isolate()->snapshot_available()) s->ShrinkImmortalImmovablePages();
@@ -6107,6 +6103,7 @@ void Heap::RegisterExternallyReferencedObject(Object** object) {
 }
 
 void Heap::TearDown() {
+  use_tasks_ = false;
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
     Verify();
@@ -6408,7 +6405,6 @@ void Heap::ClearRecordedSlot(HeapObject* object, Object** slot) {
   if (!page->InNewSpace()) {
     DCHECK_EQ(page->owner()->identity(), OLD_SPACE);
     store_buffer()->DeleteEntry(slot_addr);
-    RememberedSet<OLD_TO_OLD>::Remove(page, slot_addr);
   }
 }
 
@@ -6429,8 +6425,6 @@ void Heap::ClearRecordedSlotRange(Address start, Address end) {
   if (!page->InNewSpace()) {
     DCHECK_EQ(page->owner()->identity(), OLD_SPACE);
     store_buffer()->DeleteEntry(start, end);
-    RememberedSet<OLD_TO_OLD>::RemoveRange(page, start, end,
-                                           SlotSet::FREE_EMPTY_BUCKETS);
   }
 }
 

@@ -7,6 +7,7 @@
 #include "src/compiler/all-nodes.h"
 #include "src/compiler/simplified-operator.h"
 #include "src/compiler/type-cache.h"
+#include "src/frame-constants.h"
 
 namespace v8 {
 namespace internal {
@@ -46,6 +47,17 @@ Node* NewEscapeAnalysisReducer::MaybeGuard(Node* original, Node* replacement) {
   return replacement;
 }
 
+namespace {
+
+Node* SkipTypeGuards(Node* node) {
+  while (node->opcode() == IrOpcode::kTypeGuard) {
+    node = NodeProperties::GetValueInput(node, 0);
+  }
+  return node;
+}
+
+}  // namespace
+
 Node* NewEscapeAnalysisReducer::ObjectIdNode(const VirtualObject* vobject) {
   VirtualObject::Id id = vobject->id();
   if (id >= object_id_cache_.size()) object_id_cache_.resize(id + 1);
@@ -61,7 +73,7 @@ Reduction NewEscapeAnalysisReducer::Reduce(Node* node) {
   if (Node* replacement = analysis_result().GetReplacementOf(node)) {
     DCHECK(node->opcode() != IrOpcode::kAllocate &&
            node->opcode() != IrOpcode::kFinishRegion);
-    RelaxEffectsAndControls(node);
+    DCHECK_NE(replacement, node);
     if (replacement != jsgraph()->Dead()) {
       replacement = MaybeGuard(node, replacement);
     }
@@ -156,7 +168,7 @@ Node* NewEscapeAnalysisReducer::ReduceDeoptState(Node* node, Node* effect,
     }
     return new_node.Get();
   } else if (const VirtualObject* vobject =
-                 analysis_result().GetVirtualObject(node)) {
+                 analysis_result().GetVirtualObject(SkipTypeGuards(node))) {
     if (vobject->HasEscaped()) return node;
     if (deduplicator->SeenBefore(vobject)) {
       return ObjectIdNode(vobject);

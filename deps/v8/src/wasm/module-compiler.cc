@@ -290,10 +290,9 @@ void ModuleCompiler::CompileSequentially(ModuleBytesEnv* module_env,
     MaybeHandle<Code> code = compiler::WasmCompilationUnit::CompileWasmFunction(
         thrower, isolate_, module_env, &func);
     if (code.is_null()) {
-      WasmName str = module_env->wire_bytes.GetName(&func);
-      // TODO(clemensh): Truncate the function name in the output.
-      thrower->CompileError("Compilation of #%d:%.*s failed.", i, str.length(),
-                            str.start());
+      TruncatedUserString<> name(module_env->wire_bytes.GetName(&func));
+      thrower->CompileError("Compilation of #%d:%.*s failed.", i, name.length(),
+                            name.start());
       break;
     }
     results[i] = code.ToHandleChecked();
@@ -308,16 +307,16 @@ void ModuleCompiler::ValidateSequentially(ModuleBytesEnv* module_env,
   for (uint32_t i = 0; i < module->functions.size(); ++i) {
     const WasmFunction& func = module->functions[i];
     if (func.imported) continue;
-
     const byte* base = module_env->wire_bytes.start();
     FunctionBody body{func.sig, func.code.offset(), base + func.code.offset(),
                       base + func.code.end_offset()};
-    DecodeResult result = VerifyWasmCode(isolate_->allocator(),
-                                         module_env->module_env.module, body);
+    DecodeResult result = VerifyWasmCodeWithStats(
+        isolate_->allocator(), module_env->module_env.module, body,
+        module->is_wasm(), counters());
     if (result.failed()) {
-      WasmName str = module_env->wire_bytes.GetName(&func);
+      TruncatedUserString<> name(module_env->wire_bytes.GetName(&func));
       thrower->CompileError("Compiling function #%d:%.*s failed: %s @+%u", i,
-                            str.length(), str.start(),
+                            name.length(), name.start(),
                             result.error_msg().c_str(), result.error_offset());
       break;
     }
@@ -507,7 +506,8 @@ using WasmInstanceMap =
 Handle<Code> UnwrapOrCompileImportWrapper(
     Isolate* isolate, int index, FunctionSig* sig, Handle<JSReceiver> target,
     Handle<String> module_name, MaybeHandle<String> import_name,
-    ModuleOrigin origin, WasmInstanceMap* imported_instances) {
+    ModuleOrigin origin, WasmInstanceMap* imported_instances,
+    Handle<FixedArray> js_imports_table) {
   WasmFunction* other_func = GetWasmFunctionForImportWrapper(isolate, target);
   if (other_func) {
     if (!sig->Equals(other_func->sig)) return Handle<Code>::null();
@@ -522,7 +522,8 @@ Handle<Code> UnwrapOrCompileImportWrapper(
   // No wasm function or being debugged. Compile a new wrapper for the new
   // signature.
   return compiler::CompileWasmToJSWrapper(isolate, target, sig, index,
-                                          module_name, import_name, origin);
+                                          module_name, import_name, origin,
+                                          js_imports_table);
 }
 
 double MonotonicallyIncreasingTimeInMs() {
@@ -576,10 +577,6 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
     code_table->set(i, *init_builtin);
     temp_instance->function_code[i] = init_builtin;
   }
-
-  (module_->is_wasm() ? counters()->wasm_functions_per_wasm_module()
-                      : counters()->wasm_functions_per_asm_module())
-      ->AddSample(static_cast<int>(module_->functions.size()));
 
   if (!lazy_compile) {
     size_t funcs_to_compile =
@@ -687,7 +684,7 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
 }
 
 Handle<Code> JSToWasmWrapperCache::CloneOrCompileJSToWasmWrapper(
-    Isolate* isolate, const wasm::WasmModule* module, Handle<Code> wasm_code,
+    Isolate* isolate, wasm::WasmModule* module, Handle<Code> wasm_code,
     uint32_t index) {
   const wasm::WasmFunction* func = &module->functions[index];
   int cached_idx = sig_map_.Find(func->sig);
@@ -1258,6 +1255,13 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
                                     Handle<WasmInstanceObject> instance) {
   int num_imported_functions = 0;
   int num_imported_tables = 0;
+  Handle<FixedArray> func_table = isolate_->factory()->NewFixedArray(
+      static_cast<int>(module_->import_table.size()), TENURED);
+  Handle<FixedArray> js_imports_table =
+      isolate_->global_handles()->Create(*func_table);
+  Handle<Foreign> js_imports_foreign = isolate_->factory()->NewForeign(
+      reinterpret_cast<Address>(js_imports_table.location()), TENURED);
+  instance->set_js_imports_table(*js_imports_foreign);
   WasmInstanceMap imported_wasm_instances(isolate_->heap());
   for (int index = 0; index < static_cast<int>(module_->import_table.size());
        ++index) {
@@ -1293,7 +1297,7 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
         Handle<Code> import_wrapper = UnwrapOrCompileImportWrapper(
             isolate_, index, module_->functions[import.index].sig,
             Handle<JSReceiver>::cast(value), module_name, import_name,
-            module_->origin(), &imported_wasm_instances);
+            module_->origin(), &imported_wasm_instances, js_imports_table);
         if (import_wrapper.is_null()) {
           ReportLinkError("imported function does not match the expected type",
                           index, module_name, import_name);
@@ -1336,9 +1340,9 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
           }
           if (imported_max_size > table.max_size) {
             thrower_->LinkError(
-                "table import %d has maximum larger than maximum %d, "
-                "got %" PRIx64,
-                index, table.max_size, imported_max_size);
+                "memory import %d has a larger maximum size %" PRIx64
+                " than the module's declared maximum %u",
+                index, imported_max_size, table.max_size);
             return -1;
           }
         }
@@ -1404,8 +1408,9 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
           if (static_cast<uint32_t>(imported_max_pages) >
               module_->max_mem_pages) {
             thrower_->LinkError(
-                "memory import %d has larger maximum than maximum %u, got %d",
-                index, module_->max_mem_pages, imported_max_pages);
+                "memory import %d has a larger maximum size %u than the "
+                "module's declared maximum %u",
+                index, imported_max_pages, module_->max_mem_pages);
             return -1;
           }
         }
@@ -1557,9 +1562,7 @@ void InstanceBuilder::ProcessExports(
   } else {
     UNREACHABLE();
   }
-  Handle<String> exports_name =
-      isolate_->factory()->InternalizeUtf8String("exports");
-  JSObject::AddProperty(instance, exports_name, exports_object, NONE);
+  instance->set_exports_object(*exports_object);
 
   Handle<String> single_function_name =
       isolate_->factory()->InternalizeUtf8String(AsmJs::kSingleFunctionName);
@@ -1692,8 +1695,9 @@ void InstanceBuilder::ProcessExports(
     v8::Maybe<bool> status = JSReceiver::DefineOwnProperty(
         isolate_, export_to, name, &desc, Object::THROW_ON_ERROR);
     if (!status.IsJust()) {
-      thrower_->LinkError("export of %.*s failed.", name->length(),
-                          name->ToCString().get());
+      TruncatedUserString<> trunc_name(name->GetCharVector<uint8_t>());
+      thrower_->LinkError("export of %.*s failed.", trunc_name.length(),
+                          trunc_name.start());
       return;
     }
   }
@@ -2082,9 +2086,6 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
       job_->code_table_->set(static_cast<int>(i), *illegal_builtin);
       job_->temp_instance_->function_code[i] = illegal_builtin;
     }
-
-    job_->counters()->wasm_functions_per_wasm_module()->AddSample(
-        static_cast<int>(module_->functions.size()));
 
     // Transfer ownership of the {WasmModule} to the {ModuleCompiler}, but
     // keep a pointer.

@@ -79,6 +79,9 @@ declare_args() {
   # Sets -dV8_CONCURRENT_MARKING
   v8_enable_concurrent_marking = false
 
+  # Sets -dV8_CSA_WRITE_BARRIER
+  v8_enable_csa_write_barrier = false
+
   # Build the snapshot with unwinding information for perf.
   # Sets -dV8_USE_SNAPSHOT_WITH_UNWINDING_INFO.
   v8_perf_prof_unwinding_info = false
@@ -277,6 +280,9 @@ config("features") {
   }
   if (v8_enable_concurrent_marking) {
     defines += [ "V8_CONCURRENT_MARKING" ]
+  }
+  if (v8_enable_csa_write_barrier) {
+    defines += [ "V8_CSA_WRITE_BARRIER" ]
   }
   if (v8_check_microtasks_scopes_consistency) {
     defines += [ "V8_CHECK_MICROTASKS_SCOPES_CONSISTENCY" ]
@@ -1544,6 +1550,7 @@ v8_source_set("v8_base") {
     "src/flag-definitions.h",
     "src/flags.cc",
     "src/flags.h",
+    "src/frame-constants.h",
     "src/frames-inl.h",
     "src/frames.cc",
     "src/frames.h",
@@ -1581,6 +1588,9 @@ v8_source_set("v8_base") {
     "src/heap/incremental-marking-job.h",
     "src/heap/incremental-marking.cc",
     "src/heap/incremental-marking.h",
+    "src/heap/invalidated-slots-inl.h",
+    "src/heap/invalidated-slots.cc",
+    "src/heap/invalidated-slots.h",
     "src/heap/item-parallel-job.h",
     "src/heap/local-allocator.h",
     "src/heap/mark-compact-inl.h",
@@ -1902,6 +1912,10 @@ v8_source_set("v8_base") {
     "src/snapshot/deserializer.h",
     "src/snapshot/natives-common.cc",
     "src/snapshot/natives.h",
+    "src/snapshot/object-deserializer.cc",
+    "src/snapshot/object-deserializer.h",
+    "src/snapshot/partial-deserializer.cc",
+    "src/snapshot/partial-deserializer.h",
     "src/snapshot/partial-serializer.cc",
     "src/snapshot/partial-serializer.h",
     "src/snapshot/serializer-common.cc",
@@ -1912,6 +1926,8 @@ v8_source_set("v8_base") {
     "src/snapshot/snapshot-source-sink.cc",
     "src/snapshot/snapshot-source-sink.h",
     "src/snapshot/snapshot.h",
+    "src/snapshot/startup-deserializer.cc",
+    "src/snapshot/startup-deserializer.h",
     "src/snapshot/startup-serializer.cc",
     "src/snapshot/startup-serializer.h",
     "src/source-position-table.cc",
@@ -1991,6 +2007,8 @@ v8_source_set("v8_base") {
     "src/wasm/signature-map.h",
     "src/wasm/streaming-decoder.cc",
     "src/wasm/streaming-decoder.h",
+    "src/wasm/wasm-api.cc",
+    "src/wasm/wasm-api.h",
     "src/wasm/wasm-code-specialization.cc",
     "src/wasm/wasm-code-specialization.h",
     "src/wasm/wasm-debug.cc",
@@ -2045,8 +2063,8 @@ v8_source_set("v8_base") {
       "src/ia32/cpu-ia32.cc",
       "src/ia32/deoptimizer-ia32.cc",
       "src/ia32/disasm-ia32.cc",
-      "src/ia32/frames-ia32.cc",
-      "src/ia32/frames-ia32.h",
+      "src/ia32/frame-constants-ia32.cc",
+      "src/ia32/frame-constants-ia32.h",
       "src/ia32/interface-descriptors-ia32.cc",
       "src/ia32/macro-assembler-ia32.cc",
       "src/ia32/macro-assembler-ia32.h",
@@ -2086,8 +2104,8 @@ v8_source_set("v8_base") {
       "src/x64/deoptimizer-x64.cc",
       "src/x64/disasm-x64.cc",
       "src/x64/eh-frame-x64.cc",
-      "src/x64/frames-x64.cc",
-      "src/x64/frames-x64.h",
+      "src/x64/frame-constants-x64.cc",
+      "src/x64/frame-constants-x64.h",
       "src/x64/interface-descriptors-x64.cc",
       "src/x64/macro-assembler-x64.cc",
       "src/x64/macro-assembler-x64.h",
@@ -2113,8 +2131,8 @@ v8_source_set("v8_base") {
       "src/arm/deoptimizer-arm.cc",
       "src/arm/disasm-arm.cc",
       "src/arm/eh-frame-arm.cc",
-      "src/arm/frames-arm.cc",
-      "src/arm/frames-arm.h",
+      "src/arm/frame-constants-arm.cc",
+      "src/arm/frame-constants-arm.h",
       "src/arm/interface-descriptors-arm.cc",
       "src/arm/interface-descriptors-arm.h",
       "src/arm/macro-assembler-arm.cc",
@@ -2153,8 +2171,8 @@ v8_source_set("v8_base") {
       "src/arm64/disasm-arm64.cc",
       "src/arm64/disasm-arm64.h",
       "src/arm64/eh-frame-arm64.cc",
-      "src/arm64/frames-arm64.cc",
-      "src/arm64/frames-arm64.h",
+      "src/arm64/frame-constants-arm64.cc",
+      "src/arm64/frame-constants-arm64.h",
       "src/arm64/instructions-arm64.cc",
       "src/arm64/instructions-arm64.h",
       "src/arm64/instrument-arm64.cc",
@@ -2206,8 +2224,8 @@ v8_source_set("v8_base") {
       "src/mips/cpu-mips.cc",
       "src/mips/deoptimizer-mips.cc",
       "src/mips/disasm-mips.cc",
-      "src/mips/frames-mips.cc",
-      "src/mips/frames-mips.h",
+      "src/mips/frame-constants-mips.cc",
+      "src/mips/frame-constants-mips.h",
       "src/mips/interface-descriptors-mips.cc",
       "src/mips/macro-assembler-mips.cc",
       "src/mips/macro-assembler-mips.h",
@@ -2239,8 +2257,8 @@ v8_source_set("v8_base") {
       "src/mips64/cpu-mips64.cc",
       "src/mips64/deoptimizer-mips64.cc",
       "src/mips64/disasm-mips64.cc",
-      "src/mips64/frames-mips64.cc",
-      "src/mips64/frames-mips64.h",
+      "src/mips64/frame-constants-mips64.cc",
+      "src/mips64/frame-constants-mips64.h",
       "src/mips64/interface-descriptors-mips64.cc",
       "src/mips64/macro-assembler-mips64.cc",
       "src/mips64/macro-assembler-mips64.h",
@@ -2272,8 +2290,8 @@ v8_source_set("v8_base") {
       "src/ppc/cpu-ppc.cc",
       "src/ppc/deoptimizer-ppc.cc",
       "src/ppc/disasm-ppc.cc",
-      "src/ppc/frames-ppc.cc",
-      "src/ppc/frames-ppc.h",
+      "src/ppc/frame-constants-ppc.cc",
+      "src/ppc/frame-constants-ppc.h",
       "src/ppc/interface-descriptors-ppc.cc",
       "src/ppc/macro-assembler-ppc.cc",
       "src/ppc/macro-assembler-ppc.h",
@@ -2307,8 +2325,8 @@ v8_source_set("v8_base") {
       "src/s390/cpu-s390.cc",
       "src/s390/deoptimizer-s390.cc",
       "src/s390/disasm-s390.cc",
-      "src/s390/frames-s390.cc",
-      "src/s390/frames-s390.h",
+      "src/s390/frame-constants-s390.cc",
+      "src/s390/frame-constants-s390.h",
       "src/s390/interface-descriptors-s390.cc",
       "src/s390/macro-assembler-s390.cc",
       "src/s390/macro-assembler-s390.h",

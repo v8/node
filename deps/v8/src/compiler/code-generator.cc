@@ -11,7 +11,7 @@
 #include "src/compiler/code-generator-impl.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/pipeline.h"
-#include "src/frames-inl.h"
+#include "src/frames.h"
 #include "src/macro-assembler-inl.h"
 
 namespace v8 {
@@ -527,7 +527,7 @@ void CodeGenerator::AssembleSourcePosition(SourcePosition source_position) {
                                              source_position, false);
   if (FLAG_code_comments) {
     CompilationInfo* info = this->info();
-    if (!info->parse_info()) return;
+    if (info->IsStub()) return;
     std::ostringstream buffer;
     buffer << "-- ";
     if (FLAG_trace_turbo ||

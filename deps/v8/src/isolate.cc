@@ -45,7 +45,7 @@
 #include "src/runtime-profiler.h"
 #include "src/setup-isolate.h"
 #include "src/simulator.h"
-#include "src/snapshot/deserializer.h"
+#include "src/snapshot/startup-deserializer.h"
 #include "src/tracing/tracing-category-observer.h"
 #include "src/v8.h"
 #include "src/version.h"
@@ -1205,7 +1205,7 @@ Object* Isolate::UnwindAndFindHandler() {
 
     switch (frame->type()) {
       case StackFrame::ENTRY:
-      case StackFrame::ENTRY_CONSTRUCT: {
+      case StackFrame::CONSTRUCT_ENTRY: {
         // For JSEntryStub frames we always have a handler.
         StackHandler* handler = frame->top_handler();
 
@@ -1224,8 +1224,10 @@ Object* Isolate::UnwindAndFindHandler() {
           trap_handler::ClearThreadInWasm();
         }
 
-        if (!FLAG_experimental_wasm_eh || !is_catchable_by_wasm(exception))
+        if (!FLAG_experimental_wasm_eh || !is_catchable_by_wasm(exception)) {
+          counters()->wasm_execution_time()->Stop();
           break;
+        }
         int stack_slots = 0;  // Will contain stack slot count of frame.
         WasmCompiledFrame* wasm_frame = static_cast<WasmCompiledFrame*>(frame);
         int offset = wasm_frame->LookupExceptionHandlerInTable(&stack_slots);
@@ -1436,7 +1438,7 @@ Isolate::CatchType Isolate::PredictExceptionCatcher() {
 
     switch (frame->type()) {
       case StackFrame::ENTRY:
-      case StackFrame::ENTRY_CONSTRUCT: {
+      case StackFrame::CONSTRUCT_ENTRY: {
         Address entry_handler = frame->top_handler()->next()->address();
         // The exception has been externally caught if and only if there is an
         // external handler which is on top of the top-most JS_ENTRY handler.
@@ -2458,6 +2460,7 @@ void Isolate::Deinit() {
   wasm_compilation_manager_->TearDown();
 
   heap_.mark_compact_collector()->EnsureSweepingCompleted();
+  heap_.memory_allocator()->unmapper()->WaitUntilCompleted();
 
   DumpAndResetStats();
 
@@ -2679,7 +2682,7 @@ void PrintBuiltinSizes(Isolate* isolate) {
 }
 }  // namespace
 
-bool Isolate::Init(Deserializer* des) {
+bool Isolate::Init(StartupDeserializer* des) {
   TRACE_ISOLATE(init);
 
   stress_deopt_count_ = FLAG_deopt_every_n_times;
@@ -2790,8 +2793,7 @@ bool Isolate::Init(Deserializer* des) {
     set_event_logger(Logger::DefaultEventLoggerSentinel);
   }
 
-  if (FLAG_trace_hydrogen || FLAG_trace_hydrogen_stubs || FLAG_trace_turbo ||
-      FLAG_trace_turbo_graph) {
+  if (FLAG_trace_turbo || FLAG_trace_turbo_graph) {
     PrintF("Concurrent recompilation has been disabled for tracing.\n");
   } else if (OptimizingCompileDispatcher::Enabled()) {
     optimizing_compile_dispatcher_ = new OptimizingCompileDispatcher(this);
@@ -3751,6 +3753,10 @@ SaveContext::SaveContext(Isolate* isolate)
 SaveContext::~SaveContext() {
   isolate_->set_context(context_.is_null() ? NULL : *context_);
   isolate_->set_save_context(prev_);
+}
+
+bool SaveContext::IsBelowFrame(StandardFrame* frame) {
+  return (c_entry_fp_ == 0) || (c_entry_fp_ > frame->sp());
 }
 
 #ifdef DEBUG

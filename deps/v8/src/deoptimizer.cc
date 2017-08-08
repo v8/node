@@ -315,6 +315,8 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
     Object* next = code->next_code_link();
 
     if (code->marked_for_deoptimization()) {
+      // Make sure that this object does not point to any garbage.
+      code->InvalidateEmbeddedObjects();
       if (prev != NULL) {
         // Skip this code in the optimized code list.
         prev->set_next_code_link(next);
@@ -349,9 +351,6 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
                        safe_to_deopt_topmost_optimized_code);
         // Replace the current pc on the stack with the trampoline.
         it.frame()->set_pc(code->instruction_start() + trampoline_pc);
-
-        // Make sure that this object does not point to any garbage.
-        code->InvalidateEmbeddedObjects();
       }
     }
   }
@@ -702,8 +701,7 @@ void Deoptimizer::DoComputeOutputFrames() {
            "]\n",
            input_data->OptimizationId()->value(), bailout_id_, fp_to_sp_delta_,
            caller_frame_top_);
-    if (bailout_type_ == EAGER || bailout_type_ == SOFT ||
-        (compiled_code_->is_hydrogen_stub())) {
+    if (bailout_type_ == EAGER || bailout_type_ == SOFT) {
       compiled_code_->PrintDeoptLocation(trace_scope_->file(), from_);
     }
   }
@@ -1642,7 +1640,7 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   bool is_topmost = (output_count_ - 1 == frame_index);
   bool must_handle_result = !is_topmost || bailout_type_ == LAZY;
 
-  const RegisterConfiguration* config(RegisterConfiguration::Turbofan());
+  const RegisterConfiguration* config(RegisterConfiguration::Default());
   int allocatable_register_count = config->num_allocatable_general_registers();
   int register_parameter_count =
       continuation_descriptor.GetRegisterParameterCount();
@@ -3268,9 +3266,9 @@ int TranslatedState::CreateNextTranslatedValue(
       }
       Float32 value = registers->GetFloatRegister(input_reg);
       if (trace_file != nullptr) {
-        PrintF(trace_file, "%e ; %s (float)", value.get_scalar(),
-               RegisterConfiguration::Crankshaft()->GetFloatRegisterName(
-                   input_reg));
+        PrintF(
+            trace_file, "%e ; %s (float)", value.get_scalar(),
+            RegisterConfiguration::Default()->GetFloatRegisterName(input_reg));
       }
       TranslatedValue translated_value = TranslatedValue::NewFloat(this, value);
       frame.Add(translated_value);
@@ -3286,9 +3284,9 @@ int TranslatedState::CreateNextTranslatedValue(
       }
       Float64 value = registers->GetDoubleRegister(input_reg);
       if (trace_file != nullptr) {
-        PrintF(trace_file, "%e ; %s (double)", value.get_scalar(),
-               RegisterConfiguration::Crankshaft()->GetDoubleRegisterName(
-                   input_reg));
+        PrintF(
+            trace_file, "%e ; %s (double)", value.get_scalar(),
+            RegisterConfiguration::Default()->GetDoubleRegisterName(input_reg));
       }
       TranslatedValue translated_value =
           TranslatedValue::NewDouble(this, value);

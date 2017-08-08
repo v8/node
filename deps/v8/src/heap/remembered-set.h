@@ -9,6 +9,7 @@
 #include "src/heap/heap.h"
 #include "src/heap/slot-set.h"
 #include "src/heap/spaces.h"
+#include "src/v8memory.h"
 
 namespace v8 {
 namespace internal {
@@ -120,7 +121,8 @@ class RememberedSet : public AllStatic {
     while ((chunk = it.next()) != nullptr) {
       SlotSet* slots = chunk->slot_set<type>();
       TypedSlotSet* typed_slots = chunk->typed_slot_set<type>();
-      if (slots != nullptr || typed_slots != nullptr) {
+      if (slots != nullptr || typed_slots != nullptr ||
+          chunk->invalidated_slots() != nullptr) {
         callback(chunk);
       }
     }
@@ -230,6 +232,7 @@ class RememberedSet : public AllStatic {
     while ((chunk = it.next()) != nullptr) {
       chunk->ReleaseSlotSet<OLD_TO_OLD>();
       chunk->ReleaseTypedSlotSet<OLD_TO_OLD>();
+      chunk->ReleaseInvalidatedSlots();
     }
   }
 

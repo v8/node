@@ -4,15 +4,16 @@
 
 #if V8_TARGET_ARCH_ARM
 
-#include "src/code-stubs.h"
-
 #include "src/api-arguments.h"
 #include "src/assembler-inl.h"
 #include "src/base/bits.h"
 #include "src/bootstrapper.h"
+#include "src/code-stubs.h"
 #include "src/codegen.h"
 #include "src/counters.h"
 #include "src/double.h"
+#include "src/frame-constants.h"
+#include "src/frames.h"
 #include "src/heap/heap-inl.h"
 #include "src/ic/handler-compiler.h"
 #include "src/ic/ic.h"
@@ -23,7 +24,7 @@
 #include "src/regexp/regexp-macro-assembler.h"
 #include "src/runtime/runtime.h"
 
-#include "src/arm/code-stubs-arm.h"
+#include "src/arm/code-stubs-arm.h"  // Cannot be the first include.
 
 namespace v8 {
 namespace internal {
@@ -760,8 +761,6 @@ void CodeStub::GenerateStubsAheadOfTime(Isolate* isolate) {
   CEntryStub::GenerateAheadOfTime(isolate);
   StoreBufferOverflowStub::GenerateFixedRegStubsAheadOfTime(isolate);
   CommonArrayConstructorStub::GenerateStubsAheadOfTime(isolate);
-  CreateAllocationSiteStub::GenerateAheadOfTime(isolate);
-  CreateWeakCellStub::GenerateAheadOfTime(isolate);
   StoreFastElementStub::GenerateAheadOfTime(isolate);
 }
 
@@ -1078,7 +1077,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // r2: receiver
   // r3: argc
   // r4: argv
-  if (type() == StackFrame::ENTRY_CONSTRUCT) {
+  if (type() == StackFrame::CONSTRUCT_ENTRY) {
     __ Call(BUILTIN_CODE(isolate(), JSConstructEntryTrampoline),
             RelocInfo::CODE_TARGET);
   } else {
@@ -1119,163 +1118,6 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ vldm(ia_w, sp, kFirstCalleeSavedDoubleReg, kLastCalleeSavedDoubleReg);
 
   __ ldm(ia_w, sp, kCalleeSaved | pc.bit());
-}
-
-static void CallStubInRecordCallTarget(MacroAssembler* masm, CodeStub* stub) {
-  // r0 : number of arguments to the construct function
-  // r1 : the function to call
-  // r2 : feedback vector
-  // r3 : slot in feedback vector (Smi)
-  FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-
-  // Number-of-arguments register must be smi-tagged to call out.
-  __ SmiTag(r0);
-  __ Push(r3, r2, r1, r0);
-  __ Push(cp);
-
-  __ CallStub(stub);
-
-  __ Pop(cp);
-  __ Pop(r3, r2, r1, r0);
-  __ SmiUntag(r0);
-}
-
-
-static void GenerateRecordCallTarget(MacroAssembler* masm) {
-  // Cache the called function in a feedback vector slot.  Cache states
-  // are uninitialized, monomorphic (indicated by a JSFunction), and
-  // megamorphic.
-  // r0 : number of arguments to the construct function
-  // r1 : the function to call
-  // r2 : feedback vector
-  // r3 : slot in feedback vector (Smi)
-  Label initialize, done, miss, megamorphic, not_array_function;
-
-  DCHECK_EQ(*FeedbackVector::MegamorphicSentinel(masm->isolate()),
-            masm->isolate()->heap()->megamorphic_symbol());
-  DCHECK_EQ(*FeedbackVector::UninitializedSentinel(masm->isolate()),
-            masm->isolate()->heap()->uninitialized_symbol());
-
-  // Load the cache state into r5.
-  __ add(r5, r2, Operand::PointerOffsetFromSmiKey(r3));
-  __ ldr(r5, FieldMemOperand(r5, FeedbackVector::kFeedbackSlotsOffset));
-
-  // A monomorphic cache hit or an already megamorphic state: invoke the
-  // function without changing the state.
-  // We don't know if r5 is a WeakCell or a Symbol, but it's harmless to read at
-  // this position in a symbol (see static asserts in feedback-vector.h).
-  Label check_allocation_site;
-  Register feedback_map = r6;
-  Register weak_value = r9;
-  __ ldr(weak_value, FieldMemOperand(r5, WeakCell::kValueOffset));
-  __ cmp(r1, weak_value);
-  __ b(eq, &done);
-  __ CompareRoot(r5, Heap::kmegamorphic_symbolRootIndex);
-  __ b(eq, &done);
-  __ ldr(feedback_map, FieldMemOperand(r5, HeapObject::kMapOffset));
-  __ CompareRoot(feedback_map, Heap::kWeakCellMapRootIndex);
-  __ b(ne, &check_allocation_site);
-
-  // If the weak cell is cleared, we have a new chance to become monomorphic.
-  __ JumpIfSmi(weak_value, &initialize);
-  __ jmp(&megamorphic);
-
-  __ bind(&check_allocation_site);
-  // If we came here, we need to see if we are the array function.
-  // If we didn't have a matching function, and we didn't find the megamorph
-  // sentinel, then we have in the slot either some other function or an
-  // AllocationSite.
-  __ CompareRoot(feedback_map, Heap::kAllocationSiteMapRootIndex);
-  __ b(ne, &miss);
-
-  // Make sure the function is the Array() function
-  __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r5);
-  __ cmp(r1, r5);
-  __ b(ne, &megamorphic);
-  __ jmp(&done);
-
-  __ bind(&miss);
-
-  // A monomorphic miss (i.e, here the cache is not uninitialized) goes
-  // megamorphic.
-  __ CompareRoot(r5, Heap::kuninitialized_symbolRootIndex);
-  __ b(eq, &initialize);
-  // MegamorphicSentinel is an immortal immovable object (undefined) so no
-  // write-barrier is needed.
-  __ bind(&megamorphic);
-  __ add(r5, r2, Operand::PointerOffsetFromSmiKey(r3));
-  __ LoadRoot(r4, Heap::kmegamorphic_symbolRootIndex);
-  __ str(r4, FieldMemOperand(r5, FeedbackVector::kFeedbackSlotsOffset));
-  __ jmp(&done);
-
-  // An uninitialized cache is patched with the function
-  __ bind(&initialize);
-
-  // Make sure the function is the Array() function
-  __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r5);
-  __ cmp(r1, r5);
-  __ b(ne, &not_array_function);
-
-  // The target function is the Array constructor,
-  // Create an AllocationSite if we don't already have it, store it in the
-  // slot.
-  CreateAllocationSiteStub create_stub(masm->isolate());
-  CallStubInRecordCallTarget(masm, &create_stub);
-  __ b(&done);
-
-  __ bind(&not_array_function);
-  CreateWeakCellStub weak_cell_stub(masm->isolate());
-  CallStubInRecordCallTarget(masm, &weak_cell_stub);
-
-  __ bind(&done);
-
-  // Increment the call count for all function calls.
-  __ add(r5, r2, Operand::PointerOffsetFromSmiKey(r3));
-  __ add(r5, r5, Operand(FeedbackVector::kFeedbackSlotsOffset + kPointerSize));
-  __ ldr(r4, FieldMemOperand(r5, 0));
-  __ add(r4, r4, Operand(Smi::FromInt(1)));
-  __ str(r4, FieldMemOperand(r5, 0));
-}
-
-void CallConstructStub::Generate(MacroAssembler* masm) {
-  // r0 : number of arguments
-  // r1 : the function to call
-  // r2 : feedback vector
-  // r3 : slot in feedback vector (Smi, for RecordCallTarget)
-
-  Label non_function;
-  // Check that the function is not a smi.
-  __ JumpIfSmi(r1, &non_function);
-  // Check that the function is a JSFunction.
-  __ CompareObjectType(r1, r5, r5, JS_FUNCTION_TYPE);
-  __ b(ne, &non_function);
-
-  GenerateRecordCallTarget(masm);
-
-  __ add(r5, r2, Operand::PointerOffsetFromSmiKey(r3));
-  Label feedback_register_initialized;
-  // Put the AllocationSite from the feedback vector into r2, or undefined.
-  __ ldr(r2, FieldMemOperand(r5, FeedbackVector::kFeedbackSlotsOffset));
-  __ ldr(r5, FieldMemOperand(r2, AllocationSite::kMapOffset));
-  __ CompareRoot(r5, Heap::kAllocationSiteMapRootIndex);
-  __ b(eq, &feedback_register_initialized);
-  __ LoadRoot(r2, Heap::kUndefinedValueRootIndex);
-  __ bind(&feedback_register_initialized);
-
-  __ AssertUndefinedOrAllocationSite(r2, r5);
-
-  // Pass function as new target.
-  __ mov(r3, r1);
-
-  // Tail call to the function-specific construct stub (still in the caller
-  // context at this point).
-  __ ldr(r4, FieldMemOperand(r1, JSFunction::kSharedFunctionInfoOffset));
-  __ ldr(r4, FieldMemOperand(r4, SharedFunctionInfo::kConstructStubOffset));
-  __ add(pc, r4, Operand(Code::kHeaderSize - kHeapObjectTag));
-
-  __ bind(&non_function);
-  __ mov(r3, r1);
-  __ Jump(BUILTIN_CODE(isolate(), Construct), RelocInfo::CODE_TARGET);
 }
 
 // StringCharCodeAtGenerator

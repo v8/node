@@ -24,7 +24,8 @@ namespace interpreter {
 
 class InterpreterCompilationJob final : public CompilationJob {
  public:
-  explicit InterpreterCompilationJob(CompilationInfo* info);
+  InterpreterCompilationJob(ParseInfo* parse_info, FunctionLiteral* literal,
+                            Isolate* isolate);
 
  protected:
   Status PrepareJobImpl() final;
@@ -64,6 +65,8 @@ class InterpreterCompilationJob final : public CompilationJob {
 
   BytecodeGenerator* generator() { return &generator_; }
 
+  Zone zone_;
+  CompilationInfo compilation_info_;
   BytecodeGenerator generator_;
   RuntimeCallStats* runtime_call_stats_;
   RuntimeCallCounter background_execute_counter_;
@@ -143,15 +146,20 @@ bool ShouldPrintBytecode(Handle<SharedFunctionInfo> shared) {
 
 }  // namespace
 
-InterpreterCompilationJob::InterpreterCompilationJob(CompilationInfo* info)
-    : CompilationJob(info->isolate(), info, "Ignition"),
-      generator_(info),
-      runtime_call_stats_(info->isolate()->counters()->runtime_call_stats()),
+InterpreterCompilationJob::InterpreterCompilationJob(ParseInfo* parse_info,
+                                                     FunctionLiteral* literal,
+                                                     Isolate* isolate)
+    : CompilationJob(isolate, parse_info, &compilation_info_, "Ignition"),
+      zone_(isolate->allocator(), ZONE_NAME),
+      compilation_info_(&zone_, isolate, parse_info, literal),
+      generator_(&compilation_info_),
+      runtime_call_stats_(isolate->counters()->runtime_call_stats()),
       background_execute_counter_("CompileBackgroundIgnition") {}
 
 InterpreterCompilationJob::Status InterpreterCompilationJob::PrepareJobImpl() {
   // TODO(5203): Move code out of codegen.cc once FCG goes away.
-  CodeGenerator::MakeCodePrologue(info(), "interpreter");
+  CodeGenerator::MakeCodePrologue(parse_info(), compilation_info(),
+                                  "interpreter");
   return SUCCEEDED;
 }
 
@@ -186,22 +194,25 @@ InterpreterCompilationJob::Status InterpreterCompilationJob::FinalizeJobImpl() {
     return FAILED;
   }
 
-  if (ShouldPrintBytecode(info()->shared_info())) {
+  if (ShouldPrintBytecode(compilation_info()->shared_info())) {
     OFStream os(stdout);
-    std::unique_ptr<char[]> name = info()->GetDebugName();
-    os << "[generating bytecode for function: " << info()->GetDebugName().get()
-       << "]" << std::endl;
+    std::unique_ptr<char[]> name = compilation_info()->GetDebugName();
+    os << "[generating bytecode for function: "
+       << compilation_info()->GetDebugName().get() << "]" << std::endl;
     bytecodes->Disassemble(os);
     os << std::flush;
   }
 
-  info()->SetBytecodeArray(bytecodes);
-  info()->SetCode(BUILTIN_CODE(info()->isolate(), InterpreterEntryTrampoline));
+  compilation_info()->SetBytecodeArray(bytecodes);
+  compilation_info()->SetCode(
+      BUILTIN_CODE(compilation_info()->isolate(), InterpreterEntryTrampoline));
   return SUCCEEDED;
 }
 
-CompilationJob* Interpreter::NewCompilationJob(CompilationInfo* info) {
-  return new InterpreterCompilationJob(info);
+CompilationJob* Interpreter::NewCompilationJob(ParseInfo* parse_info,
+                                               FunctionLiteral* literal,
+                                               Isolate* isolate) {
+  return new InterpreterCompilationJob(parse_info, literal, isolate);
 }
 
 bool Interpreter::IsDispatchTableInitialized() {

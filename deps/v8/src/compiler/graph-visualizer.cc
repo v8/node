@@ -46,7 +46,7 @@ std::unique_ptr<char[]> GetVisualizerLogFileName(CompilationInfo* info,
   }
   EmbeddedVector<char, 256> source_file(0);
   bool source_available = false;
-  if (FLAG_trace_file_names && info->parse_info()) {
+  if (FLAG_trace_file_names && !info->script().is_null()) {
     Object* source_name = info->script()->name();
     if (source_name->IsString()) {
       String* str = String::cast(source_name);
@@ -537,7 +537,7 @@ void GraphC1Visualizer::PrintSchedule(const char* phase,
       for (int j = instruction_block->first_instruction_index();
            j <= instruction_block->last_instruction_index(); j++) {
         PrintIndent();
-        PrintableInstruction printable = {RegisterConfiguration::Turbofan(),
+        PrintableInstruction printable = {RegisterConfiguration::Default(),
                                           instructions->InstructionAt(j)};
         os_ << j << " " << printable << " <|@\n";
       }
@@ -581,7 +581,7 @@ void GraphC1Visualizer::PrintLiveRange(const LiveRange* range, const char* type,
     os_ << vreg << ":" << range->relative_id() << " " << type;
     if (range->HasRegisterAssigned()) {
       AllocatedOperand op = AllocatedOperand::cast(range->GetAssignedOperand());
-      const auto config = RegisterConfiguration::Turbofan();
+      const auto config = RegisterConfiguration::Default();
       if (op.IsRegister()) {
         os_ << " \"" << config->GetGeneralRegisterName(op.register_code())
             << "\"";

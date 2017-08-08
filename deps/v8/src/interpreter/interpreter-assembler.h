@@ -8,7 +8,6 @@
 #include "src/allocation.h"
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
-#include "src/frames.h"
 #include "src/globals.h"
 #include "src/interpreter/bytecode-register.h"
 #include "src/interpreter/bytecodes.h"
@@ -125,21 +124,6 @@ class V8_EXPORT_PRIVATE InterpreterAssembler : public CodeStubAssembler {
   void CollectCallFeedback(compiler::Node* target, compiler::Node* context,
                            compiler::Node* slot_id,
                            compiler::Node* feedback_vector);
-
-  // Call JSFunction or Callable |function| with |arg_count| arguments (not
-  // including receiver) and the first argument located at |first_arg|. Type
-  // feedback is collected in the slot at index |slot_id|.
-  //
-  // If the |receiver_mode| is kNullOrUndefined, then the receiver is implicitly
-  // undefined and |first_arg| is the first parameter. Otherwise, |first_arg| is
-  // the receiver and it is converted according to |receiver_mode|.
-  compiler::Node* CallJSWithFeedback(compiler::Node* function,
-                                     compiler::Node* context,
-                                     compiler::Node* first_arg,
-                                     compiler::Node* arg_count,
-                                     compiler::Node* slot_id,
-                                     compiler::Node* feedback_vector,
-                                     ConvertReceiverMode receiver_mode);
 
   // Call JSFunction or Callable |function| with |arg_count| arguments (not
   // including receiver) and the first argument located at |first_arg|, possibly
@@ -364,6 +348,7 @@ class V8_EXPORT_PRIVATE InterpreterAssembler : public CodeStubAssembler {
   CodeStubAssembler::Variable bytecode_offset_;
   CodeStubAssembler::Variable interpreted_frame_pointer_;
   CodeStubAssembler::Variable bytecode_array_;
+  bool bytecode_array_valid_;
   CodeStubAssembler::Variable dispatch_table_;
   CodeStubAssembler::Variable accumulator_;
   AccumulatorUse accumulator_use_;

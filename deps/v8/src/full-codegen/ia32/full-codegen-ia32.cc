@@ -13,8 +13,9 @@
 #include "src/compilation-info.h"
 #include "src/compiler.h"
 #include "src/debug/debug.h"
+#include "src/frame-constants.h"
+#include "src/frames-inl.h"
 #include "src/full-codegen/full-codegen.h"
-#include "src/ia32/frames-ia32.h"
 #include "src/ic/ic.h"
 
 namespace v8 {
@@ -698,8 +699,8 @@ void FullCodeGenerator::VisitFunctionDeclaration(
       DCHECK(!slot.IsInvalid());
       globals_->Add(handle(Smi::FromInt(slot.ToInt()), isolate()), zone());
 
-      Handle<SharedFunctionInfo> function =
-          Compiler::GetSharedFunctionInfo(declaration->fun(), script(), info_);
+      Handle<SharedFunctionInfo> function = Compiler::GetSharedFunctionInfo(
+          declaration->fun(), script(), isolate());
       // Check for stack-overflow exception.
       if (function.is_null()) return SetStackOverflow();
       globals_->Add(function, zone());
@@ -1555,8 +1556,7 @@ void FullCodeGenerator::EmitCall(Call* expr, ConvertReceiverMode mode) {
   }
 
   SetCallPosition(expr);
-  Handle<Code> code = CodeFactory::CallICTrampoline(isolate(), mode).code();
-  __ Move(edx, Immediate(IntFromSlot(expr->CallFeedbackICSlot())));
+  Handle<Code> code = CodeFactory::Call(isolate(), mode).code();
   __ mov(edi, Operand(esp, (arg_count + 1) * kPointerSize));
   __ Move(eax, Immediate(arg_count));
   CallIC(code);
@@ -1588,17 +1588,11 @@ void FullCodeGenerator::VisitCallNew(CallNew* expr) {
   // Call the construct call builtin that handles allocation and
   // constructor invocation.
   SetConstructCallPosition(expr);
-
-  // Load function and argument count into edi and eax.
+  Handle<Code> code = CodeFactory::Construct(isolate()).code();
   __ Move(eax, Immediate(arg_count));
   __ mov(edi, Operand(esp, arg_count * kPointerSize));
-
-  // Record call targets in unoptimized code.
-  __ EmitLoadFeedbackVector(ebx);
-  __ mov(edx, Immediate(SmiFromSlot(expr->CallNewFeedbackSlot())));
-
-  CallConstructStub stub(isolate());
-  CallIC(stub.GetCode());
+  __ mov(edx, edi);
+  CallIC(code);
   OperandStackDepthDecrement(arg_count + 1);
   RestoreContext();
   context()->Plug(eax);

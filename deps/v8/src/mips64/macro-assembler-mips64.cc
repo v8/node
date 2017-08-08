@@ -11,6 +11,7 @@
 #include "src/codegen.h"
 #include "src/debug/debug.h"
 #include "src/external-reference-table.h"
+#include "src/frames-inl.h"
 #include "src/mips64/macro-assembler-mips64.h"
 #include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
@@ -1581,7 +1582,8 @@ int TurboAssembler::InstrCountForLi64Bit(int64_t value) {
                ((value >> 31) & 0x1ffff) == ((0x20000 - bit31) & 0x1ffff) &&
                kArchVariant == kMips64r6) {
       return 2;
-    } else if (base::bits::IsPowerOfTwo(value + 1)) {
+    } else if (base::bits::IsPowerOfTwo(value + 1) ||
+               value == std::numeric_limits<int64_t>::max()) {
       return 2;
     } else {
       int shift_cnt = base::bits::CountTrailingZeros64(value);
@@ -1648,6 +1650,8 @@ int TurboAssembler::InstrCountForLi64Bit(int64_t value) {
   return INT_MAX;
 }
 
+// All changes to if...else conditions here must be added to
+// InstrCountForLi64Bit as well.
 void TurboAssembler::li_optimized(Register rd, Operand j, LiFlags mode) {
   DCHECK(!j.is_reg());
   DCHECK(!MustUseReg(j.rmode()));
@@ -1703,9 +1707,10 @@ void TurboAssembler::li_optimized(Register rd, Operand j, LiFlags mode) {
       // 16 MSBs contain a signed 16-bit number.
       daddiu(rd, zero_reg, j.immediate() & kImm16Mask);
       dati(rd, ((j.immediate() >> 48) + bit31) & kImm16Mask);
-    } else if (base::bits::IsPowerOfTwo(j.immediate() + 1)) {
-      // 64-bit values which have their "n" MSBs set to one, and their
-      // "64-n" LSBs set to zero. "n" must meet the restrictions 0 < n < 64.
+    } else if (base::bits::IsPowerOfTwo(j.immediate() + 1) ||
+               j.immediate() == std::numeric_limits<int64_t>::max()) {
+      // 64-bit values which have their "n" LSBs set to one, and their
+      // "64-n" MSBs set to zero. "n" must meet the restrictions 0 < n < 64.
       int shift_cnt = 64 - base::bits::CountTrailingZeros64(j.immediate() + 1);
       daddiu(rd, zero_reg, -1);
       if (shift_cnt < 32) {
@@ -6611,7 +6616,7 @@ Register GetRegisterThatIsNotOneOf(Register reg1,
   if (reg5.is_valid()) regs |= reg5.bit();
   if (reg6.is_valid()) regs |= reg6.bit();
 
-  const RegisterConfiguration* config = RegisterConfiguration::Crankshaft();
+  const RegisterConfiguration* config = RegisterConfiguration::Default();
   for (int i = 0; i < config->num_allocatable_general_registers(); ++i) {
     int code = config->GetAllocatableGeneralCode(i);
     Register candidate = Register::from_code(code);

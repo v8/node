@@ -49,6 +49,9 @@ namespace internal {
   /* Code aging */                                                             \
   CODE_AGE_LIST_WITH_ARG(DECLARE_CODE_AGE_BUILTIN, ASM)                        \
                                                                                \
+  /* GC write barrirer */                                                      \
+  TFC(RecordWrite, RecordWrite, 1)                                             \
+                                                                               \
   /* Calls */                                                                  \
   ASM(ArgumentsAdaptorTrampoline)                                              \
   /* ES6 section 9.2.1 [[Call]] ( thisArgument, argumentsList) */              \
@@ -133,7 +136,6 @@ namespace internal {
   ASM(InterpreterPushArgsThenCallWithFinalSpread)                              \
   ASM(InterpreterPushArgsThenConstruct)                                        \
   ASM(InterpreterPushArgsThenConstructFunction)                                \
-  ASM(InterpreterPushArgsThenConstructArray)                                   \
   ASM(InterpreterPushArgsThenConstructWithFinalSpread)                         \
   ASM(InterpreterEnterBytecodeAdvance)                                         \
   ASM(InterpreterEnterBytecodeDispatch)                                        \
@@ -269,8 +271,8 @@ namespace internal {
   TFJ(ReturnReceiver, 0)                                                       \
                                                                                \
   /* Array */                                                                  \
-  ASM(ArrayCode)                                                               \
-  ASM(InternalArrayCode)                                                       \
+  ASM(ArrayConstructor)                                                        \
+  ASM(InternalArrayConstructor)                                                \
   CPP(ArrayConcat)                                                             \
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kArg)                                                   \

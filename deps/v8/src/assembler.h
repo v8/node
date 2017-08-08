@@ -925,6 +925,7 @@ class ExternalReference BASE_EMBEDDED {
 
   // Write barrier.
   static ExternalReference store_buffer_top(Isolate* isolate);
+  static ExternalReference heap_is_marking_flag_address(Isolate* isolate);
 
   // Used for fast allocation in generated code.
   static ExternalReference new_space_allocation_top_address(Isolate* isolate);
@@ -984,6 +985,8 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference libc_memset_function(Isolate* isolate);
 
   static ExternalReference try_internalize_string_function(Isolate* isolate);
+
+  static ExternalReference check_object_type(Isolate* isolate);
 
 #ifdef V8_INTL_SUPPORT
   static ExternalReference intl_convert_one_byte_to_lower(Isolate* isolate);

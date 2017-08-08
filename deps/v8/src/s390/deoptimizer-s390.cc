@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/deoptimizer.h"
 #include "src/codegen.h"
+#include "src/deoptimizer.h"
 #include "src/full-codegen/full-codegen.h"
 #include "src/register-configuration.h"
 #include "src/safepoint-table.h"
@@ -97,7 +97,7 @@ void Deoptimizer::TableEntryGenerator::Generate() {
 
   // Save all double registers before messing with them.
   __ lay(sp, MemOperand(sp, -kDoubleRegsSize));
-  const RegisterConfiguration* config = RegisterConfiguration::Crankshaft();
+  const RegisterConfiguration* config = RegisterConfiguration::Default();
   for (int i = 0; i < config->num_allocatable_double_registers(); ++i) {
     int code = config->GetAllocatableDoubleCode(i);
     const DoubleRegister dreg = DoubleRegister::from_code(code);

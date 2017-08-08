@@ -999,142 +999,148 @@ template <class C> inline bool Is(Object* obj);
   V(Primitive)              \
   V(Number)
 
-#define HEAP_OBJECT_TYPE_LIST(V)       \
-  V(AbstractCode)                      \
-  V(AccessCheckNeeded)                 \
-  V(ArrayList)                         \
-  V(BoilerplateDescription)            \
-  V(Boolean)                           \
-  V(BreakPoint)                        \
-  V(BreakPointInfo)                    \
-  V(ByteArray)                         \
-  V(BytecodeArray)                     \
-  V(Callable)                          \
-  V(CallHandlerInfo)                   \
-  V(Cell)                              \
-  V(Code)                              \
-  V(CodeCacheHashTable)                \
-  V(CompilationCacheTable)             \
-  V(ConsString)                        \
-  V(ConstantElementsPair)              \
-  V(Constructor)                       \
-  V(Context)                           \
-  V(CoverageInfo)                      \
-  V(DeoptimizationInputData)           \
-  V(DependentCode)                     \
-  V(DescriptorArray)                   \
-  V(Dictionary)                        \
-  V(External)                          \
-  V(ExternalOneByteString)             \
-  V(ExternalString)                    \
-  V(ExternalTwoByteString)             \
-  V(FeedbackMetadata)                  \
-  V(FeedbackVector)                    \
-  V(Filler)                            \
-  V(FixedArray)                        \
-  V(FixedArrayBase)                    \
-  V(FixedDoubleArray)                  \
-  V(FixedFloat32Array)                 \
-  V(FixedFloat64Array)                 \
-  V(FixedInt16Array)                   \
-  V(FixedInt32Array)                   \
-  V(FixedInt8Array)                    \
-  V(FixedTypedArrayBase)               \
-  V(FixedUint16Array)                  \
-  V(FixedUint32Array)                  \
-  V(FixedUint8Array)                   \
-  V(FixedUint8ClampedArray)            \
-  V(Foreign)                           \
-  V(FrameArray)                        \
-  V(FreeSpace)                         \
-  V(Function)                          \
-  V(HandlerTable)                      \
-  V(HashTable)                         \
-  V(HeapNumber)                        \
-  V(InternalizedString)                \
-  V(JSArgumentsObject)                 \
-  V(JSArray)                           \
-  V(JSArrayBuffer)                     \
-  V(JSArrayBufferView)                 \
-  V(JSArrayIterator)                   \
-  V(JSAsyncFromSyncIterator)           \
-  V(JSAsyncGeneratorObject)            \
-  V(JSBoundFunction)                   \
-  V(JSCollection)                      \
-  V(JSContextExtensionObject)          \
-  V(JSDataView)                        \
-  V(JSDate)                            \
-  V(JSError)                           \
-  V(JSFunction)                        \
-  V(JSGeneratorObject)                 \
-  V(JSGlobalObject)                    \
-  V(JSGlobalProxy)                     \
-  V(JSMap)                             \
-  V(JSMapIterator)                     \
-  V(JSMessageObject)                   \
-  V(JSModuleNamespace)                 \
-  V(JSObject)                          \
-  V(JSPromise)                         \
-  V(JSPromiseCapability)               \
-  V(JSProxy)                           \
-  V(JSReceiver)                        \
-  V(JSRegExp)                          \
-  V(JSSet)                             \
-  V(JSSetIterator)                     \
-  V(JSSloppyArgumentsObject)           \
-  V(JSStringIterator)                  \
-  V(JSTypedArray)                      \
-  V(JSValue)                           \
-  V(JSWeakCollection)                  \
-  V(JSWeakMap)                         \
-  V(JSWeakSet)                         \
-  V(Map)                               \
-  V(MapCache)                          \
-  V(ModuleInfo)                        \
-  V(MutableHeapNumber)                 \
-  V(Name)                              \
-  V(NativeContext)                     \
-  V(NormalizedMapCache)                \
-  V(ObjectHashSet)                     \
-  V(ObjectHashTable)                   \
-  V(Oddball)                           \
-  V(OrderedHashTable)                  \
-  V(PreParsedScopeData)                \
-  V(PropertyArray)                     \
-  V(PropertyCell)                      \
-  V(RegExpMatchInfo)                   \
-  V(ScopeInfo)                         \
-  V(ScriptContextTable)                \
-  V(SeqOneByteString)                  \
-  V(SeqString)                         \
-  V(SeqTwoByteString)                  \
-  V(SharedFunctionInfo)                \
-  V(SlicedString)                      \
-  V(SloppyArgumentsElements)           \
-  V(SmallOrderedHashMap)               \
-  V(SmallOrderedHashSet)               \
-  V(SourcePositionTableWithFrameCache) \
-  V(String)                            \
-  V(StringSet)                         \
-  V(StringTable)                       \
-  V(StringWrapper)                     \
-  V(Struct)                            \
-  V(Symbol)                            \
-  V(TemplateInfo)                      \
-  V(TemplateList)                      \
-  V(ThinString)                        \
-  V(TransitionArray)                   \
-  V(TypeFeedbackInfo)                  \
-  V(Undetectable)                      \
-  V(UniqueName)                        \
-  V(UnseededNumberDictionary)          \
-  V(WasmInstanceObject)                \
-  V(WasmMemoryObject)                  \
-  V(WasmModuleObject)                  \
-  V(WasmTableObject)                   \
-  V(WeakCell)                          \
-  V(WeakFixedArray)                    \
+#define HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
+  V(AbstractCode)                         \
+  V(AccessCheckNeeded)                    \
+  V(ArrayList)                            \
+  V(BoilerplateDescription)               \
+  V(Boolean)                              \
+  V(BreakPoint)                           \
+  V(BreakPointInfo)                       \
+  V(ByteArray)                            \
+  V(BytecodeArray)                        \
+  V(Callable)                             \
+  V(CallHandlerInfo)                      \
+  V(Cell)                                 \
+  V(Code)                                 \
+  V(CodeCacheHashTable)                   \
+  V(CompilationCacheTable)                \
+  V(ConsString)                           \
+  V(ConstantElementsPair)                 \
+  V(Constructor)                          \
+  V(Context)                              \
+  V(CoverageInfo)                         \
+  V(DeoptimizationInputData)              \
+  V(DependentCode)                        \
+  V(DescriptorArray)                      \
+  V(External)                             \
+  V(ExternalOneByteString)                \
+  V(ExternalString)                       \
+  V(ExternalTwoByteString)                \
+  V(FeedbackMetadata)                     \
+  V(FeedbackVector)                       \
+  V(Filler)                               \
+  V(FixedArray)                           \
+  V(FixedArrayBase)                       \
+  V(FixedDoubleArray)                     \
+  V(FixedFloat32Array)                    \
+  V(FixedFloat64Array)                    \
+  V(FixedInt16Array)                      \
+  V(FixedInt32Array)                      \
+  V(FixedInt8Array)                       \
+  V(FixedTypedArrayBase)                  \
+  V(FixedUint16Array)                     \
+  V(FixedUint32Array)                     \
+  V(FixedUint8Array)                      \
+  V(FixedUint8ClampedArray)               \
+  V(Foreign)                              \
+  V(FrameArray)                           \
+  V(FreeSpace)                            \
+  V(Function)                             \
+  V(HandlerTable)                         \
+  V(HeapNumber)                           \
+  V(InternalizedString)                   \
+  V(JSArgumentsObject)                    \
+  V(JSArray)                              \
+  V(JSArrayBuffer)                        \
+  V(JSArrayBufferView)                    \
+  V(JSArrayIterator)                      \
+  V(JSAsyncFromSyncIterator)              \
+  V(JSAsyncGeneratorObject)               \
+  V(JSBoundFunction)                      \
+  V(JSCollection)                         \
+  V(JSContextExtensionObject)             \
+  V(JSDataView)                           \
+  V(JSDate)                               \
+  V(JSError)                              \
+  V(JSFunction)                           \
+  V(JSGeneratorObject)                    \
+  V(JSGlobalObject)                       \
+  V(JSGlobalProxy)                        \
+  V(JSMap)                                \
+  V(JSMapIterator)                        \
+  V(JSMessageObject)                      \
+  V(JSModuleNamespace)                    \
+  V(JSObject)                             \
+  V(JSPromise)                            \
+  V(JSPromiseCapability)                  \
+  V(JSProxy)                              \
+  V(JSReceiver)                           \
+  V(JSRegExp)                             \
+  V(JSSet)                                \
+  V(JSSetIterator)                        \
+  V(JSSloppyArgumentsObject)              \
+  V(JSStringIterator)                     \
+  V(JSTypedArray)                         \
+  V(JSValue)                              \
+  V(JSWeakCollection)                     \
+  V(JSWeakMap)                            \
+  V(JSWeakSet)                            \
+  V(Map)                                  \
+  V(MapCache)                             \
+  V(ModuleInfo)                           \
+  V(MutableHeapNumber)                    \
+  V(Name)                                 \
+  V(NativeContext)                        \
+  V(NormalizedMapCache)                   \
+  V(ObjectHashSet)                        \
+  V(ObjectHashTable)                      \
+  V(Oddball)                              \
+  V(PreParsedScopeData)                   \
+  V(PropertyArray)                        \
+  V(PropertyCell)                         \
+  V(RegExpMatchInfo)                      \
+  V(ScopeInfo)                            \
+  V(ScriptContextTable)                   \
+  V(SeqOneByteString)                     \
+  V(SeqString)                            \
+  V(SeqTwoByteString)                     \
+  V(SharedFunctionInfo)                   \
+  V(SlicedString)                         \
+  V(SloppyArgumentsElements)              \
+  V(SmallOrderedHashMap)                  \
+  V(SmallOrderedHashSet)                  \
+  V(SourcePositionTableWithFrameCache)    \
+  V(String)                               \
+  V(StringSet)                            \
+  V(StringTable)                          \
+  V(StringWrapper)                        \
+  V(Struct)                               \
+  V(Symbol)                               \
+  V(TemplateInfo)                         \
+  V(TemplateList)                         \
+  V(ThinString)                           \
+  V(TransitionArray)                      \
+  V(TypeFeedbackInfo)                     \
+  V(Undetectable)                         \
+  V(UniqueName)                           \
+  V(UnseededNumberDictionary)             \
+  V(WasmInstanceObject)                   \
+  V(WasmMemoryObject)                     \
+  V(WasmModuleObject)                     \
+  V(WasmTableObject)                      \
+  V(WeakCell)                             \
+  V(WeakFixedArray)                       \
   V(WeakHashTable)
+
+#define HEAP_OBJECT_TEMPLATE_TYPE_LIST(V) \
+  V(Dictionary)                           \
+  V(HashTable)                            \
+  V(OrderedHashTable)
+
+#define HEAP_OBJECT_TYPE_LIST(V)    \
+  HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
+  HEAP_OBJECT_TEMPLATE_TYPE_LIST(V)
 
 #define ODDBALL_LIST(V)                 \
   V(Undefined, undefined_value)         \
@@ -3661,7 +3667,8 @@ class Code: public HeapObject {
   V(WASM_FUNCTION)          \
   V(WASM_TO_JS_FUNCTION)    \
   V(JS_TO_WASM_FUNCTION)    \
-  V(WASM_INTERPRETER_ENTRY)
+  V(WASM_INTERPRETER_ENTRY) \
+  V(C_WASM_ENTRY)
 
 #define IC_KIND_LIST(V) \
   V(LOAD_IC)            \
@@ -3781,13 +3788,6 @@ class Code: public HeapObject {
   // Tells whether the code checks the optimization marker in the function's
   // feedback vector.
   inline bool checks_optimization_marker() const;
-
-  // [is_crankshafted]: For kind STUB or ICs, tells whether or not a code
-  // object was generated by either the hydrogen or the TurboFan optimizing
-  // compiler (but it may not be an optimized function).
-  inline bool is_crankshafted() const;
-  inline bool is_hydrogen_stub() const;  // Crankshafted, but not a function.
-  inline void set_is_crankshafted(bool value);
 
   // [has_tagged_params]: For compiled code or builtins: Tells whether the
   // outgoing parameters of this code are tagged pointers. True for other kinds.
@@ -4171,9 +4171,7 @@ class Code: public HeapObject {
   };  // NOLINT
 
   // KindSpecificFlags2 layout (ALL)
-  static const int kIsCrankshaftedBit = 0;
-  class IsCrankshaftedField : public BitField<bool, kIsCrankshaftedBit, 1> {};
-  static const int kHasTaggedStackBit = kIsCrankshaftedBit + 1;
+  static const int kHasTaggedStackBit = 0;
   class HasTaggedStackField : public BitField<bool, kHasTaggedStackBit, 1> {};
 
   // KindSpecificFlags2 layout (STUB and OPTIMIZED_FUNCTION)
@@ -4189,10 +4187,10 @@ class Code: public HeapObject {
       kSafepointTableOffsetBitCount> {};  // NOLINT
 
   // KindSpecificFlags2 layout (FUNCTION)
-  class BackEdgeTableOffsetField: public BitField<int,
-      kIsCrankshaftedBit + 1, 27> {};  // NOLINT
-  class AllowOSRAtLoopNestingLevelField: public BitField<int,
-      kIsCrankshaftedBit + 1 + 27, 4> {};  // NOLINT
+  class BackEdgeTableOffsetField
+      : public BitField<int, kHasTaggedStackBit + 1, 27> {};  // NOLINT
+  class AllowOSRAtLoopNestingLevelField
+      : public BitField<int, kHasTaggedStackBit + 1 + 27, 4> {};  // NOLINT
 
   static const int kArgumentsBits = 16;
   static const int kMaxArguments = (1 << kArgumentsBits) - 1;
@@ -4758,7 +4756,7 @@ class ContextExtension : public Struct {
 
 enum BuiltinFunctionId {
   kInvalidBuiltinFunctionId = -1,
-  kArrayCode,
+  kArrayConstructor,
 #define DECL_FUNCTION_ID(ignored1, ignore2, name) k##name,
   FUNCTIONS_WITH_ID_LIST(DECL_FUNCTION_ID)
       ATOMIC_FUNCTIONS_WITH_ID_LIST(DECL_FUNCTION_ID)
@@ -6331,6 +6329,12 @@ class JSProxy: public JSReceiver {
   static const int kHandlerOffset = kTargetOffset + kPointerSize;
   static const int kHashOffset = kHandlerOffset + kPointerSize;
   static const int kSize = kHashOffset + kPointerSize;
+
+  // kTargetOffset aliases with the elements of JSObject. The fact that
+  // JSProxy::target is a Javascript value which cannot be confused with an
+  // elements backing store is exploited by loading from this offset from an
+  // unknown JSReceiver.
+  STATIC_ASSERT(JSObject::kElementsOffset == JSProxy::kTargetOffset);
 
   typedef FixedBodyDescriptor<JSReceiver::kPropertiesOrHashOffset, kSize, kSize>
       BodyDescriptor;

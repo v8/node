@@ -107,15 +107,18 @@ class WasmCompilationUnit final {
 };
 
 // Wraps a JS function, producing a code object that can be called from wasm.
+// The global_js_imports_table is a global handle to a fixed array of target
+// JSReceiver with the lifetime tied to the module. We store it's location (non
+// GCable) in the generated code so that it can reside outside of GCed heap.
 Handle<Code> CompileWasmToJSWrapper(Isolate* isolate, Handle<JSReceiver> target,
                                     wasm::FunctionSig* sig, uint32_t index,
                                     Handle<String> module_name,
                                     MaybeHandle<String> import_name,
-                                    wasm::ModuleOrigin origin);
+                                    wasm::ModuleOrigin origin,
+                                    Handle<FixedArray> global_js_imports_table);
 
 // Wraps a given wasm code object, producing a code object.
-Handle<Code> CompileJSToWasmWrapper(Isolate* isolate,
-                                    const wasm::WasmModule* module,
+Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
                                     Handle<Code> wasm_code, uint32_t index);
 
 // Compiles a stub that redirects a call to a wasm function to the wasm
@@ -123,6 +126,18 @@ Handle<Code> CompileJSToWasmWrapper(Isolate* isolate,
 Handle<Code> CompileWasmInterpreterEntry(Isolate* isolate, uint32_t func_index,
                                          wasm::FunctionSig* sig,
                                          Handle<WasmInstanceObject> instance);
+
+enum CWasmEntryParameters {
+  kCodeObject,
+  kArgumentsBuffer,
+  // marker:
+  kNumParameters
+};
+
+// Compiles a stub with JS linkage, taking parameters as described by
+// {CWasmEntryParameters}. It loads the wasm parameters from the argument
+// buffer and calls the wasm function given as first parameter.
+Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig);
 
 // Abstracts details of building TurboFan graph nodes for wasm to separate
 // the wasm decoder from the internal details of TurboFan.
@@ -218,10 +233,13 @@ class WasmGraphBuilder {
   Node* CallIndirect(uint32_t index, Node** args, Node*** rets,
                      wasm::WasmCodePosition position);
 
-  void BuildJSToWasmWrapper(Handle<Code> wasm_code, wasm::FunctionSig* sig);
-  void BuildWasmToJSWrapper(Handle<JSReceiver> target, wasm::FunctionSig* sig);
-  void BuildWasmInterpreterEntry(uint32_t func_index, wasm::FunctionSig* sig,
+  void BuildJSToWasmWrapper(Handle<Code> wasm_code);
+  bool BuildWasmToJSWrapper(Handle<JSReceiver> target,
+                            Handle<FixedArray> global_js_imports_table,
+                            int index);
+  void BuildWasmInterpreterEntry(uint32_t func_index,
                                  Handle<WasmInstanceObject> instance);
+  void BuildCWasmEntry();
 
   Node* ToJS(Node* node, wasm::ValueType type);
   Node* FromJS(Node* node, Node* context, wasm::ValueType type);
@@ -251,7 +269,7 @@ class WasmGraphBuilder {
 
   wasm::FunctionSig* GetFunctionSignature() { return sig_; }
 
-  void Int64LoweringForTesting();
+  void LowerInt64();
 
   void SimdScalarLoweringForTesting();
 
@@ -320,6 +338,7 @@ class WasmGraphBuilder {
   Node* MemBuffer(uint32_t offset);
   void BoundsCheckMem(MachineType memtype, Node* index, uint32_t offset,
                       wasm::WasmCodePosition position);
+  const Operator* GetSafeLoadOperator(int offset, wasm::ValueType type);
   const Operator* GetSafeStoreOperator(int offset, wasm::ValueType type);
   Node* BuildChangeEndiannessStore(Node* node, MachineType type,
                                    wasm::ValueType wasmtype = wasm::kWasmStmt);

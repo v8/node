@@ -7,8 +7,9 @@
 #include "src/code-factory.h"
 #include "src/codegen.h"
 #include "src/deoptimizer.h"
+#include "src/frame-constants.h"
+#include "src/frames.h"
 #include "src/full-codegen/full-codegen.h"
-#include "src/ia32/frames-ia32.h"
 
 namespace v8 {
 namespace internal {
@@ -1178,49 +1179,6 @@ void Builtins::Generate_InterpreterPushArgsThenConstructImpl(
   }
 }
 
-// static
-void Builtins::Generate_InterpreterPushArgsThenConstructArray(
-    MacroAssembler* masm) {
-  // ----------- S t a t e -------------
-  //  -- eax : the number of arguments (not including the receiver)
-  //  -- edx : the target to call checked to be Array function.
-  //  -- ebx : the allocation site feedback
-  //  -- ecx : the address of the first argument to be pushed. Subsequent
-  //           arguments should be consecutive above this, in the same order as
-  //           they are to be pushed onto the stack.
-  // -----------------------------------
-  Label stack_overflow;
-  // We need two scratch registers. Register edi is available, push edx onto
-  // stack.
-  __ Push(edx);
-
-  // Push arguments and move return address to the top of stack.
-  // The eax register is readonly. The ecx register will be modified. The edx
-  // and edi registers will be modified but restored to their original values.
-  Generate_InterpreterPushZeroAndArgsAndReturnAddress(masm, eax, ecx, edx, edi,
-                                                      1, &stack_overflow);
-
-  // Restore edx.
-  __ Pop(edx);
-
-  // Array constructor expects constructor in edi. It is same as edx here.
-  __ Move(edi, edx);
-
-  ArrayConstructorStub stub(masm->isolate());
-  __ TailCallStub(&stub);
-
-  __ bind(&stack_overflow);
-  {
-    // Pop the temporary registers, so that return address is on top of stack.
-    __ Pop(edx);
-
-    __ TailCallRuntime(Runtime::kThrowStackOverflow);
-
-    // This should be unreachable.
-    __ int3();
-  }
-}
-
 static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
   // Set the return address to the correct point in the interpreter entry
   // trampoline.
@@ -1518,7 +1476,7 @@ namespace {
 void Generate_ContinueToBuiltinHelper(MacroAssembler* masm,
                                       bool java_script_builtin,
                                       bool with_result) {
-  const RegisterConfiguration* config(RegisterConfiguration::Turbofan());
+  const RegisterConfiguration* config(RegisterConfiguration::Default());
   int allocatable_register_count = config->num_allocatable_general_registers();
   if (with_result) {
     // Overwrite the hole inserted by the deoptimizer with the return value from
@@ -1825,7 +1783,7 @@ void Builtins::Generate_ReflectConstruct(MacroAssembler* masm) {
           RelocInfo::CODE_TARGET);
 }
 
-void Builtins::Generate_InternalArrayCode(MacroAssembler* masm) {
+void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- eax : argc
   //  -- esp[0] : return address
@@ -1853,7 +1811,7 @@ void Builtins::Generate_InternalArrayCode(MacroAssembler* masm) {
   __ TailCallStub(&stub);
 }
 
-void Builtins::Generate_ArrayCode(MacroAssembler* masm) {
+void Builtins::Generate_ArrayConstructor(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- eax : argc
   //  -- esp[0] : return address
@@ -2280,6 +2238,7 @@ void Builtins::Generate_CallOrConstructVarargs(MacroAssembler* masm,
 
 // static
 void Builtins::Generate_CallOrConstructForwardVarargs(MacroAssembler* masm,
+                                                      CallOrConstructMode mode,
                                                       Handle<Code> code) {
   // ----------- S t a t e -------------
   //  -- eax : the number of arguments (not including the receiver)
@@ -2287,6 +2246,24 @@ void Builtins::Generate_CallOrConstructForwardVarargs(MacroAssembler* masm,
   //  -- edx : the new target (for [[Construct]] calls)
   //  -- ecx : start index (to support rest parameters)
   // -----------------------------------
+
+  // Check if new.target has a [[Construct]] internal method.
+  if (mode == CallOrConstructMode::kConstruct) {
+    Label new_target_constructor, new_target_not_constructor;
+    __ JumpIfSmi(edx, &new_target_not_constructor, Label::kNear);
+    __ mov(ebx, FieldOperand(edx, HeapObject::kMapOffset));
+    __ test_b(FieldOperand(ebx, Map::kBitFieldOffset),
+              Immediate(1 << Map::kIsConstructor));
+    __ j(not_zero, &new_target_constructor, Label::kNear);
+    __ bind(&new_target_not_constructor);
+    {
+      FrameScope scope(masm, StackFrame::MANUAL);
+      __ EnterFrame(StackFrame::INTERNAL);
+      __ Push(edx);
+      __ CallRuntime(Runtime::kThrowNotConstructor);
+    }
+    __ bind(&new_target_constructor);
+  }
 
   // Preserve new.target (in case of [[Construct]]).
   __ movd(xmm0, edx);

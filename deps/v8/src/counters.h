@@ -994,10 +994,6 @@ class RuntimeCallTimerScope {
 #define HISTOGRAM_RANGE_LIST(HR)                                              \
   /* Generic range histograms */                                              \
   HR(detached_context_age_in_gc, V8.DetachedContextAgeInGC, 0, 20, 21)        \
-  HR(gc_idle_time_allotted_in_ms, V8.GCIdleTimeAllottedInMS, 0, 10000, 101)   \
-  HR(gc_idle_time_limit_overshot, V8.GCIdleTimeLimit.Overshot, 0, 10000, 101) \
-  HR(gc_idle_time_limit_undershot, V8.GCIdleTimeLimit.Undershot, 0, 10000,    \
-     101)                                                                     \
   HR(code_cache_reject_reason, V8.CodeCacheRejectReason, 1, 6, 6)             \
   HR(errors_thrown_per_context, V8.ErrorsThrownPerContext, 0, 200, 20)        \
   HR(debug_feature_usage, V8.DebugFeatureUsage, 1, 7, 7)                      \
@@ -1066,26 +1062,30 @@ class RuntimeCallTimerScope {
   HT(asm_wasm_translation_time, V8.AsmWasmTranslationMicroSeconds, 1000000,    \
      MICROSECOND)                                                              \
   HT(wasm_lazy_compilation_time, V8.WasmLazyCompilationMicroSeconds, 1000000,  \
+     MICROSECOND)                                                              \
+  HT(wasm_execution_time, V8.WasmExecutionTimeMicroSeconds, 10000000,          \
      MICROSECOND)
 
-#define TIMED_HISTOGRAM_LIST(HT)                                              \
-  HT(wasm_decode_asm_module_time, V8.WasmDecodeModuleMicroSeconds.asm,        \
-     1000000, MICROSECOND)                                                    \
-  HT(wasm_decode_wasm_module_time, V8.WasmDecodeModuleMicroSeconds.wasm,      \
-     1000000, MICROSECOND)                                                    \
-  HT(wasm_decode_asm_function_time, V8.WasmDecodeFunctionMicroSeconds.asm,    \
-     1000000, MICROSECOND)                                                    \
-  HT(wasm_decode_wasm_function_time, V8.WasmDecodeFunctionMicroSeconds.wasm,  \
-     1000000, MICROSECOND)                                                    \
-  HT(wasm_compile_asm_module_time, V8.WasmCompileModuleMicroSeconds.asm,      \
-     10000000, MICROSECOND)                                                   \
-  HT(wasm_compile_wasm_module_time, V8.WasmCompileModuleMicroSeconds.wasm,    \
-     10000000, MICROSECOND)                                                   \
-  HT(wasm_compile_function_time, V8.WasmCompileFunctionMicroSeconds, 1000000, \
-     MICROSECOND)                                                             \
-  HT(wasm_instantiate_wasm_module_time,                                       \
-     V8.WasmInstantiateModuleMicroSeconds.wasm, 10000000, MICROSECOND)        \
-  HT(wasm_instantiate_asm_module_time,                                        \
+#define TIMED_HISTOGRAM_LIST(HT)                                               \
+  HT(wasm_decode_asm_module_time, V8.WasmDecodeModuleMicroSeconds.asm,         \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_decode_wasm_module_time, V8.WasmDecodeModuleMicroSeconds.wasm,       \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_decode_asm_function_time, V8.WasmDecodeFunctionMicroSeconds.asm,     \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_decode_wasm_function_time, V8.WasmDecodeFunctionMicroSeconds.wasm,   \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_compile_asm_module_time, V8.WasmCompileModuleMicroSeconds.asm,       \
+     10000000, MICROSECOND)                                                    \
+  HT(wasm_compile_wasm_module_time, V8.WasmCompileModuleMicroSeconds.wasm,     \
+     10000000, MICROSECOND)                                                    \
+  HT(wasm_compile_asm_function_time, V8.WasmCompileFunctionMicroSeconds.asm,   \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_compile_wasm_function_time, V8.WasmCompileFunctionMicroSeconds.wasm, \
+     1000000, MICROSECOND)                                                     \
+  HT(wasm_instantiate_wasm_module_time,                                        \
+     V8.WasmInstantiateModuleMicroSeconds.wasm, 10000000, MICROSECOND)         \
+  HT(wasm_instantiate_asm_module_time,                                         \
      V8.WasmInstantiateModuleMicroSeconds.asm, 10000000, MICROSECOND)
 
 #define AGGREGATABLE_HISTOGRAM_TIMER_LIST(AHT) \

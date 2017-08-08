@@ -98,6 +98,9 @@ ContainedInLattice AddRange(ContainedInLattice containment,
 
 // Generic RegExp methods. Dispatches to implementation specific methods.
 
+// In a 3-character pattern you can maximally step forwards 3 characters
+// at a time, which is not always enough to pay for the extra logic.
+const int kPatternTooShortForBoyerMoore = 2;
 
 MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
                                         Handle<String> pattern,
@@ -127,7 +130,8 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
   bool has_been_compiled = false;
 
   if (parse_result.simple && !(flags & JSRegExp::kIgnoreCase) &&
-      !(flags & JSRegExp::kSticky) && pattern->length() == 1) {
+      !(flags & JSRegExp::kSticky) &&
+      pattern->length() <= kPatternTooShortForBoyerMoore) {
     // Parse-tree is a single atom that is equal to the pattern.
     AtomCompile(re, pattern, flags, pattern);
     has_been_compiled = true;
@@ -135,7 +139,7 @@ MaybeHandle<Object> RegExpImpl::Compile(Handle<JSRegExp> re,
              !(flags & JSRegExp::kSticky) && parse_result.capture_count == 0) {
     RegExpAtom* atom = parse_result.tree->AsAtom();
     Vector<const uc16> atom_pattern = atom->data();
-    if (atom_pattern.length() == 1) {
+    if (atom_pattern.length() <= kPatternTooShortForBoyerMoore) {
       Handle<String> atom_string;
       ASSIGN_RETURN_ON_EXCEPTION(
           isolate, atom_string,

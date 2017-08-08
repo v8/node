@@ -10,7 +10,7 @@
 #include "src/conversions.h"
 #include "src/debug/debug.h"
 #include "src/factory.h"
-#include "src/frames-inl.h"
+#include "src/frame-constants.h"
 #include "src/objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/trap-handler/trap-handler.h"
@@ -180,11 +180,17 @@ RUNTIME_FUNCTION(Runtime_WasmSetCaughtExceptionValue) {
 
 RUNTIME_FUNCTION(Runtime_SetThreadInWasm) {
   trap_handler::SetThreadInWasm();
+  if (!isolate->counters()->wasm_execution_time()->Running()) {
+    isolate->counters()->wasm_execution_time()->Start();
+  }
   return isolate->heap()->undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_ClearThreadInWasm) {
   trap_handler::ClearThreadInWasm();
+  if (isolate->counters()->wasm_execution_time()->Running()) {
+    isolate->counters()->wasm_execution_time()->Stop();
+  }
   return isolate->heap()->undefined_value();
 }
 

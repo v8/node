@@ -2942,7 +2942,7 @@ class Serializer : public ValueSerializer::Delegate {
         if (transfer_array->Get(context, i).ToLocal(&element)) {
           if (!element->IsArrayBuffer()) {
             Throw(isolate_, "Transfer array elements must be an ArrayBuffer");
-            break;
+            return Nothing<bool>();
           }
 
           Local<ArrayBuffer> array_buffer = Local<ArrayBuffer>::Cast(element);
@@ -3145,7 +3145,6 @@ int Shell::Main(int argc, char* argv[]) {
   } else {
     v8::V8::InitializeExternalStartupData(argv[0]);
   }
-  SetFlagsFromString("--trace-hydrogen-file=hydrogen.cfg");
   SetFlagsFromString("--trace-turbo-cfg-file=turbo.cfg");
   SetFlagsFromString("--redirect-code-traces-to=code.asm");
   int result = 0;

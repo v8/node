@@ -12,6 +12,7 @@
 #include "src/counters.h"
 #include "src/debug/debug.h"
 #include "src/external-reference-table.h"
+#include "src/frames-inl.h"
 #include "src/heap/heap-inl.h"
 #include "src/objects-inl.h"
 #include "src/register-configuration.h"
@@ -591,10 +592,8 @@ static const Register saved_regs[] = {
 
 static const int kNumberOfSavedRegs = sizeof(saved_regs) / sizeof(Register);
 
-
-void MacroAssembler::PushCallerSaved(SaveFPRegsMode fp_mode,
-                                     Register exclusion1,
-                                     Register exclusion2,
+void TurboAssembler::PushCallerSaved(SaveFPRegsMode fp_mode,
+                                     Register exclusion1, Register exclusion2,
                                      Register exclusion3) {
   // We don't allow a GC during a store buffer overflow so there is no need to
   // store the registers in any particular way, but we do have to store and
@@ -615,11 +614,8 @@ void MacroAssembler::PushCallerSaved(SaveFPRegsMode fp_mode,
   }
 }
 
-
-void MacroAssembler::PopCallerSaved(SaveFPRegsMode fp_mode,
-                                    Register exclusion1,
-                                    Register exclusion2,
-                                    Register exclusion3) {
+void TurboAssembler::PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1,
+                                    Register exclusion2, Register exclusion3) {
   if (fp_mode == kSaveFPRegs) {
     for (int i = 0; i < XMMRegister::kMaxNumRegisters; i++) {
       XMMRegister reg = XMMRegister::from_code(i);
@@ -3940,7 +3936,7 @@ void MacroAssembler::EnterExitFrameEpilogue(int arg_stack_space,
                 arg_stack_space * kRegisterSize;
     subp(rsp, Immediate(space));
     int offset = -ExitFrameConstants::kFixedFrameSizeFromFp;
-    const RegisterConfiguration* config = RegisterConfiguration::Crankshaft();
+    const RegisterConfiguration* config = RegisterConfiguration::Default();
     for (int i = 0; i < config->num_allocatable_double_registers(); ++i) {
       DoubleRegister reg =
           DoubleRegister::from_code(config->GetAllocatableDoubleCode(i));
@@ -3986,7 +3982,7 @@ void MacroAssembler::LeaveExitFrame(bool save_doubles, bool pop_arguments) {
   // r15 : argv
   if (save_doubles) {
     int offset = -ExitFrameConstants::kFixedFrameSizeFromFp;
-    const RegisterConfiguration* config = RegisterConfiguration::Crankshaft();
+    const RegisterConfiguration* config = RegisterConfiguration::Default();
     for (int i = 0; i < config->num_allocatable_double_registers(); ++i) {
       DoubleRegister reg =
           DoubleRegister::from_code(config->GetAllocatableDoubleCode(i));

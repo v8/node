@@ -2598,7 +2598,7 @@ bool String::MakeExternal(v8::String::ExternalStringResource* resource) {
   bool is_internalized = this->IsInternalizedString();
   bool has_pointers = StringShape(this).IsIndirect();
   if (has_pointers) {
-    heap->NotifyObjectLayoutChange(this, no_allocation);
+    heap->NotifyObjectLayoutChange(this, size, no_allocation);
   }
   // Morph the string to an external string by replacing the map and
   // reinitializing the fields.  This won't work if the space the existing
@@ -2674,7 +2674,7 @@ bool String::MakeExternal(v8::String::ExternalOneByteStringResource* resource) {
   bool has_pointers = StringShape(this).IsIndirect();
 
   if (has_pointers) {
-    heap->NotifyObjectLayoutChange(this, no_allocation);
+    heap->NotifyObjectLayoutChange(this, size, no_allocation);
   }
 
   // Morph the string to an external string by replacing the map and
@@ -3980,7 +3980,9 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
 
   Heap* heap = isolate->heap();
 
-  heap->NotifyObjectLayoutChange(*object, no_allocation);
+  int old_instance_size = old_map->instance_size();
+
+  heap->NotifyObjectLayoutChange(*object, old_instance_size, no_allocation);
 
   // Copy (real) inobject properties. If necessary, stop at number_of_fields to
   // avoid overwriting |one_pointer_filler_map|.
@@ -4014,7 +4016,7 @@ void MigrateFastToFast(Handle<JSObject> object, Handle<Map> new_map) {
 
   // Create filler object past the new instance size.
   int new_instance_size = new_map->instance_size();
-  int instance_size_delta = old_map->instance_size() - new_instance_size;
+  int instance_size_delta = old_instance_size - new_instance_size;
   DCHECK(instance_size_delta >= 0);
 
   if (instance_size_delta > 0) {
@@ -4096,11 +4098,12 @@ void MigrateFastToSlow(Handle<JSObject> object, Handle<Map> new_map,
   DisallowHeapAllocation no_allocation;
 
   Heap* heap = isolate->heap();
-  heap->NotifyObjectLayoutChange(*object, no_allocation);
+  int old_instance_size = map->instance_size();
+  heap->NotifyObjectLayoutChange(*object, old_instance_size, no_allocation);
 
   // Resize the object in the heap if necessary.
   int new_instance_size = new_map->instance_size();
-  int instance_size_delta = map->instance_size() - new_instance_size;
+  int instance_size_delta = old_instance_size - new_instance_size;
   DCHECK(instance_size_delta >= 0);
 
   if (instance_size_delta > 0) {
@@ -14560,8 +14563,7 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(
         case Translation::FLOAT_REGISTER: {
           int reg_code = iterator.Next();
           os << "{input="
-             << RegisterConfiguration::Crankshaft()->GetFloatRegisterName(
-                    reg_code)
+             << RegisterConfiguration::Default()->GetFloatRegisterName(reg_code)
              << "}";
           break;
         }
@@ -14569,7 +14571,7 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(
         case Translation::DOUBLE_REGISTER: {
           int reg_code = iterator.Next();
           os << "{input="
-             << RegisterConfiguration::Crankshaft()->GetDoubleRegisterName(
+             << RegisterConfiguration::Default()->GetDoubleRegisterName(
                     reg_code)
              << "}";
           break;
@@ -14707,19 +14709,18 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   if (kind() == OPTIMIZED_FUNCTION) {
     os << "stack_slots = " << stack_slots() << "\n";
   }
-  os << "compiler = " << (is_turbofanned()
-                              ? "turbofan"
-                              : is_crankshafted() ? "crankshaft"
-                                                  : kind() == Code::FUNCTION
-                                                        ? "full-codegen"
-                                                        : "unknown") << "\n";
+  os << "compiler = "
+     << (is_turbofanned()
+             ? "turbofan"
+             : kind() == Code::FUNCTION ? "full-codegen" : "unknown")
+     << "\n";
 
   os << "Instructions (size = " << instruction_size() << ")\n";
   {
     Isolate* isolate = GetIsolate();
     int size = instruction_size();
     int safepoint_offset =
-        is_crankshafted() ? static_cast<int>(safepoint_table_offset()) : size;
+        is_turbofanned() ? static_cast<int>(safepoint_table_offset()) : size;
     int back_edge_offset = (kind() == Code::FUNCTION)
                                ? static_cast<int>(back_edge_table_offset())
                                : size;
@@ -14766,7 +14767,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   }
   os << "\n";
 
-  if (is_crankshafted()) {
+  if (is_turbofanned()) {
     SafepointTable table(this);
     os << "Safepoints (size = " << table.size() << ")\n";
     for (unsigned i = 0; i < table.length(); i++) {
@@ -17083,11 +17084,11 @@ void MakeStringThin(String* string, String* internalized, Isolate* isolate) {
 
   if (!string->IsInternalizedString()) {
     DisallowHeapAllocation no_gc;
-    isolate->heap()->NotifyObjectLayoutChange(string, no_gc);
+    int old_size = string->Size();
+    isolate->heap()->NotifyObjectLayoutChange(string, old_size, no_gc);
     bool one_byte = internalized->IsOneByteRepresentation();
     Handle<Map> map = one_byte ? isolate->factory()->thin_one_byte_string_map()
                                : isolate->factory()->thin_string_map();
-    int old_size = string->Size();
     DCHECK(old_size >= ThinString::kSize);
     string->synchronized_set_map(*map);
     ThinString* thin = ThinString::cast(string);

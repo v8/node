@@ -339,7 +339,6 @@ DEFINE_STRING(trace_ignition_dispatches_output_file, nullptr,
               "written (by default, the table is not written to a file)")
 
 // Flags for Crankshaft.
-DEFINE_STRING(hydrogen_filter, "*", "optimization filter")
 DEFINE_BOOL(use_allocation_folding, true, "use allocation folding")
 DEFINE_BOOL(use_local_allocation_folding, false, "only fold in basic blocks")
 DEFINE_BOOL(use_write_barrier_elimination, true,
@@ -358,11 +357,6 @@ DEFINE_FLOAT(min_inlining_frequency, 0.15, "minimum frequency for inlining")
 DEFINE_BOOL(fast_math, true, "faster (but maybe less accurate) math functions")
 DEFINE_BOOL(trace_environment_liveness, false,
             "trace liveness of local variable slots")
-DEFINE_BOOL(trace_hydrogen, false, "trace generated hydrogen to file")
-DEFINE_STRING(trace_hydrogen_filter, "*", "hydrogen tracing filter")
-DEFINE_BOOL(trace_hydrogen_stubs, false, "trace generated hydrogen for stubs")
-DEFINE_STRING(trace_hydrogen_file, NULL, "trace hydrogen to given file name")
-DEFINE_STRING(trace_phase, "HLZ", "trace generated IR for specified phases")
 DEFINE_BOOL(trace_store_elimination, false, "trace store elimination")
 DEFINE_BOOL(turbo_verify_store_elimination, false,
             "verify store elimination more rigorously")
@@ -618,7 +612,7 @@ DEFINE_BOOL(age_code, true, "track un-executed functions to age code")
 DEFINE_BOOL(incremental_marking, true, "use incremental marking")
 DEFINE_BOOL(incremental_marking_wrappers, true,
             "use incremental marking for marking wrappers")
-DEFINE_BOOL(parallel_scavenge, true, "parallel scavenge")
+DEFINE_BOOL(parallel_scavenge, false, "parallel scavenge")
 DEFINE_BOOL(trace_parallel_scavenge, false, "trace parallel scavenge")
 #ifdef V8_CONCURRENT_MARKING
 #define V8_CONCURRENT_MARKING_BOOL true
@@ -678,9 +672,6 @@ DEFINE_INT(v8_os_page_size, 0, "override OS page size (in KBytes)")
 DEFINE_BOOL(always_compact, false, "Perform compaction on every full GC")
 DEFINE_BOOL(never_compact, false,
             "Never perform compaction on full GC - testing only")
-// TODO(ulan): enable compaction for concurrent marking when it correctly
-// records slots to evacuation candidates.
-DEFINE_IMPLICATION(concurrent_marking, never_compact)
 DEFINE_BOOL(compact_code_space, true, "Compact code space on full collections")
 DEFINE_BOOL(cleanup_code_caches_at_gc, true,
             "Flush code caches in maps during mark compact cycle.")

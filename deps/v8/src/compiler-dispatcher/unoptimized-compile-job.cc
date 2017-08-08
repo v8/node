@@ -399,21 +399,12 @@ void UnoptimizedCompileJob::AnalyzeOnMainThread(Isolate* isolate) {
     PrintF("UnoptimizedCompileJob[%p]: Analyzing\n", static_cast<void*>(this));
   }
 
-  compile_zone_.reset(new Zone(isolate->allocator(), ZONE_NAME));
-  compile_info_.reset(new CompilationInfo(
-      compile_zone_.get(), parse_info_.get(), isolate,
-      Handle<SharedFunctionInfo>::null(), Handle<JSFunction>::null()));
-
-  DeferredHandleScope scope(isolate);
-  {
-    if (Compiler::Analyze(compile_info_.get())) {
-      status_ = Status::kAnalyzed;
-    } else {
-      status_ = Status::kFailed;
-      if (!isolate->has_pending_exception()) isolate->StackOverflow();
-    }
+  if (Compiler::Analyze(parse_info_.get(), isolate)) {
+    status_ = Status::kAnalyzed;
+  } else {
+    status_ = Status::kFailed;
+    if (!isolate->has_pending_exception()) isolate->StackOverflow();
   }
-  compile_info_->set_deferred_handles(scope.Detach());
 }
 
 void UnoptimizedCompileJob::PrepareToCompileOnMainThread(Isolate* isolate) {
@@ -422,15 +413,15 @@ void UnoptimizedCompileJob::PrepareToCompileOnMainThread(Isolate* isolate) {
   DCHECK(status() == Status::kAnalyzed);
   COMPILER_DISPATCHER_TRACE_SCOPE(tracer_, kPrepareToCompile);
 
-  compile_job_.reset(
-      Compiler::PrepareUnoptimizedCompilationJob(compile_info_.get()));
-  if (!compile_job_.get()) {
+  compilation_job_.reset(
+      Compiler::PrepareUnoptimizedCompilationJob(parse_info_.get(), isolate));
+  if (!compilation_job_.get()) {
     if (!isolate->has_pending_exception()) isolate->StackOverflow();
     status_ = Status::kFailed;
     return;
   }
 
-  CHECK(compile_job_->can_execute_on_background_thread());
+  CHECK(compilation_job_->can_execute_on_background_thread());
   status_ = Status::kReadyToCompile;
 }
 
@@ -445,9 +436,9 @@ void UnoptimizedCompileJob::Compile() {
   // CompilationJob::ExecuteJob.
 
   uintptr_t stack_limit = GetCurrentStackPosition() - max_stack_size_ * KB;
-  compile_job_->set_stack_limit(stack_limit);
+  compilation_job_->set_stack_limit(stack_limit);
 
-  CompilationJob::Status status = compile_job_->ExecuteJob();
+  CompilationJob::Status status = compilation_job_->ExecuteJob();
   USE(status);
 
   // Always transition to kCompiled - errors will be reported by
@@ -467,18 +458,21 @@ void UnoptimizedCompileJob::FinalizeCompilingOnMainThread(Isolate* isolate) {
 
   {
     HandleScope scope(isolate);
-    compile_info_->set_shared_info(shared_);
-    if (compile_job_->state() == CompilationJob::State::kFailed ||
-        !Compiler::FinalizeCompilationJob(compile_job_.release())) {
+    // Internalize ast values onto the heap.
+    parse_info_->ast_value_factory()->Internalize(isolate);
+    // Allocate scope infos for the literal.
+    DeclarationScope::AllocateScopeInfos(parse_info_.get(), isolate,
+                                         AnalyzeMode::kRegular);
+    compilation_job_->compilation_info()->set_shared_info(shared_);
+    if (compilation_job_->state() == CompilationJob::State::kFailed ||
+        !Compiler::FinalizeCompilationJob(compilation_job_.release())) {
       if (!isolate->has_pending_exception()) isolate->StackOverflow();
       status_ = Status::kFailed;
       return;
     }
   }
 
-  compile_job_.reset();
-  compile_info_.reset();
-  compile_zone_.reset();
+  compilation_job_.reset();
   parse_info_.reset();
 
   status_ = Status::kDone;
@@ -489,9 +483,7 @@ void UnoptimizedCompileJob::ResetOnMainThread(Isolate* isolate) {
     PrintF("UnoptimizedCompileJob[%p]: Resetting\n", static_cast<void*>(this));
   }
 
-  compile_job_.reset();
-  compile_info_.reset();
-  compile_zone_.reset();
+  compilation_job_.reset();
   parser_.reset();
   unicode_cache_.reset();
   character_stream_.reset();

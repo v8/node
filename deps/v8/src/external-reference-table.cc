@@ -158,6 +158,8 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "base::ieee754::tanh");
   Add(ExternalReference::store_buffer_top(isolate).address(),
       "store_buffer_top");
+  Add(ExternalReference::heap_is_marking_flag_address(isolate).address(),
+      "heap_is_marking_flag_address");
   Add(ExternalReference::address_of_the_hole_nan().address(), "the_hole_nan");
   Add(ExternalReference::get_date_field_function(isolate).address(),
       "JSDate::GetField");
@@ -251,6 +253,8 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "libc_memset");
   Add(ExternalReference::try_internalize_string_function(isolate).address(),
       "try_internalize_string_function");
+  Add(ExternalReference::check_object_type(isolate).address(),
+      "check_object_type");
 #ifdef V8_INTL_SUPPORT
   Add(ExternalReference::intl_convert_one_byte_to_lower(isolate).address(),
       "intl_convert_one_byte_to_lower");

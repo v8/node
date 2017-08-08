@@ -6,6 +6,7 @@
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
+#include "src/frame-constants.h"
 
 namespace v8 {
 namespace internal {
@@ -115,6 +116,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
 
       BIND(&fast);
       {
+        GotoIf(SmiNotEqual(LoadJSArrayLength(a()), to_.value()), &runtime);
         kind = EnsureArrayPushable(a(), &runtime);
         GotoIf(IsElementsKindGreaterThan(kind, HOLEY_SMI_ELEMENTS),
                &object_push_pre);
@@ -906,7 +908,7 @@ TF_BUILTIN(FastArrayPop, CodeStubAssembler) {
 }
 
 TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
-  VARIABLE(arg_index, MachineType::PointerRepresentation());
+  TVARIABLE(IntPtrT, arg_index);
   Label default_label(this, &arg_index);
   Label smi_transition(this);
   Label object_push_pre(this);
@@ -932,13 +934,13 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
 
   BIND(&fast);
   {
-    arg_index.Bind(IntPtrConstant(0));
+    arg_index = IntPtrConstant(0);
     kind = EnsureArrayPushable(receiver, &runtime);
     GotoIf(IsElementsKindGreaterThan(kind, HOLEY_SMI_ELEMENTS),
            &object_push_pre);
 
-    Node* new_length = BuildAppendJSArray(PACKED_SMI_ELEMENTS, receiver, args,
-                                          arg_index, &smi_transition);
+    Node* new_length = BuildAppendJSArray(PACKED_SMI_ELEMENTS, receiver, &args,
+                                          &arg_index, &smi_transition);
     args.PopAndReturn(new_length);
   }
 
@@ -948,14 +950,14 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
   // the most generic implementation for the rest of the array.
   BIND(&smi_transition);
   {
-    Node* arg = args.AtIndex(arg_index.value());
+    Node* arg = args.AtIndex(arg_index);
     GotoIf(TaggedIsSmi(arg), &default_label);
     Node* length = LoadJSArrayLength(receiver);
     // TODO(danno): Use the KeyedStoreGeneric stub here when possible,
     // calling into the runtime to do the elements transition is overkill.
     CallRuntime(Runtime::kSetProperty, context, receiver, length, arg,
                 SmiConstant(STRICT));
-    Increment(arg_index);
+    Increment(&arg_index);
     // The runtime SetProperty call could have converted the array to dictionary
     // mode, which must be detected to abort the fast-path.
     Node* map = LoadMap(receiver);
@@ -976,15 +978,16 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
 
   BIND(&object_push);
   {
-    Node* new_length = BuildAppendJSArray(PACKED_ELEMENTS, receiver, args,
-                                          arg_index, &default_label);
+    Node* new_length = BuildAppendJSArray(PACKED_ELEMENTS, receiver, &args,
+                                          &arg_index, &default_label);
     args.PopAndReturn(new_length);
   }
 
   BIND(&double_push);
   {
-    Node* new_length = BuildAppendJSArray(PACKED_DOUBLE_ELEMENTS, receiver,
-                                          args, arg_index, &double_transition);
+    Node* new_length =
+        BuildAppendJSArray(PACKED_DOUBLE_ELEMENTS, receiver, &args, &arg_index,
+                           &double_transition);
     args.PopAndReturn(new_length);
   }
 
@@ -994,14 +997,14 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
   // on the most generic implementation for the rest of the array.
   BIND(&double_transition);
   {
-    Node* arg = args.AtIndex(arg_index.value());
+    Node* arg = args.AtIndex(arg_index);
     GotoIfNumber(arg, &default_label);
     Node* length = LoadJSArrayLength(receiver);
     // TODO(danno): Use the KeyedStoreGeneric stub here when possible,
     // calling into the runtime to do the elements transition is overkill.
     CallRuntime(Runtime::kSetProperty, context, receiver, length, arg,
                 SmiConstant(STRICT));
-    Increment(arg_index);
+    Increment(&arg_index);
     // The runtime SetProperty call could have converted the array to dictionary
     // mode, which must be detected to abort the fast-path.
     Node* map = LoadMap(receiver);
@@ -1022,7 +1025,7 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
           CallRuntime(Runtime::kSetProperty, context, receiver, length, arg,
                       SmiConstant(STRICT));
         },
-        arg_index.value());
+        arg_index);
     args.PopAndReturn(LoadJSArrayLength(receiver));
   }
 
@@ -1064,7 +1067,7 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
                          LoadObjectField(receiver, JSArray::kLengthOffset)));
     Node* length = LoadAndUntagObjectField(receiver, JSArray::kLengthOffset);
     Label return_undefined(this), fast_elements_tagged(this),
-        fast_elements_untagged(this);
+        fast_elements_smi(this);
     GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &return_undefined);
 
     // 2) Ensure that the length is writable.
@@ -1099,41 +1102,53 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
     Node* elements_kind = LoadMapElementsKind(LoadMap(receiver));
     GotoIf(
         Int32LessThanOrEqual(elements_kind, Int32Constant(HOLEY_SMI_ELEMENTS)),
-        &fast_elements_untagged);
-    GotoIf(Int32LessThanOrEqual(elements_kind,
-                                Int32Constant(TERMINAL_FAST_ELEMENTS_KIND)),
+        &fast_elements_smi);
+    GotoIf(Int32LessThanOrEqual(elements_kind, Int32Constant(HOLEY_ELEMENTS)),
            &fast_elements_tagged);
-    Node* value = LoadFixedDoubleArrayElement(
-        elements, IntPtrConstant(0), MachineType::Float64(), 0,
-        INTPTR_PARAMETERS, &return_undefined);
 
-    int32_t header_size = FixedDoubleArray::kHeaderSize - kHeapObjectTag;
-    Node* memmove =
-        ExternalConstant(ExternalReference::libc_memmove_function(isolate()));
-    Node* start = IntPtrAdd(
-        BitcastTaggedToWord(elements),
-        ElementOffsetFromIndex(IntPtrConstant(0), HOLEY_DOUBLE_ELEMENTS,
-                               INTPTR_PARAMETERS, header_size));
-    CallCFunction3(MachineType::AnyTagged(), MachineType::Pointer(),
-                   MachineType::Pointer(), MachineType::UintPtr(), memmove,
-                   start, IntPtrAdd(start, IntPtrConstant(kDoubleSize)),
-                   IntPtrMul(new_length, IntPtrConstant(kDoubleSize)));
-    Node* offset = ElementOffsetFromIndex(new_length, HOLEY_DOUBLE_ELEMENTS,
-                                          INTPTR_PARAMETERS, header_size);
-    if (Is64()) {
-      Node* double_hole = Int64Constant(kHoleNanInt64);
-      StoreNoWriteBarrier(MachineRepresentation::kWord64, elements, offset,
-                          double_hole);
-    } else {
-      STATIC_ASSERT(kHoleNanLower32 == kHoleNanUpper32);
-      Node* double_hole = Int32Constant(kHoleNanLower32);
-      StoreNoWriteBarrier(MachineRepresentation::kWord32, elements, offset,
-                          double_hole);
-      StoreNoWriteBarrier(MachineRepresentation::kWord32, elements,
-                          IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
-                          double_hole);
+    // Fast double elements kind:
+    {
+      CSA_ASSERT(this,
+                 Int32LessThanOrEqual(elements_kind,
+                                      Int32Constant(HOLEY_DOUBLE_ELEMENTS)));
+
+      VARIABLE(result, MachineRepresentation::kTagged, UndefinedConstant());
+
+      Label move_elements(this);
+      result.Bind(AllocateHeapNumberWithValue(LoadFixedDoubleArrayElement(
+          elements, IntPtrConstant(0), MachineType::Float64(), 0,
+          INTPTR_PARAMETERS, &move_elements)));
+      Goto(&move_elements);
+      BIND(&move_elements);
+
+      int32_t header_size = FixedDoubleArray::kHeaderSize - kHeapObjectTag;
+      Node* memmove =
+          ExternalConstant(ExternalReference::libc_memmove_function(isolate()));
+      Node* start = IntPtrAdd(
+          BitcastTaggedToWord(elements),
+          ElementOffsetFromIndex(IntPtrConstant(0), HOLEY_DOUBLE_ELEMENTS,
+                                 INTPTR_PARAMETERS, header_size));
+      CallCFunction3(MachineType::AnyTagged(), MachineType::Pointer(),
+                     MachineType::Pointer(), MachineType::UintPtr(), memmove,
+                     start, IntPtrAdd(start, IntPtrConstant(kDoubleSize)),
+                     IntPtrMul(new_length, IntPtrConstant(kDoubleSize)));
+      Node* offset = ElementOffsetFromIndex(new_length, HOLEY_DOUBLE_ELEMENTS,
+                                            INTPTR_PARAMETERS, header_size);
+      if (Is64()) {
+        Node* double_hole = Int64Constant(kHoleNanInt64);
+        StoreNoWriteBarrier(MachineRepresentation::kWord64, elements, offset,
+                            double_hole);
+      } else {
+        STATIC_ASSERT(kHoleNanLower32 == kHoleNanUpper32);
+        Node* double_hole = Int32Constant(kHoleNanLower32);
+        StoreNoWriteBarrier(MachineRepresentation::kWord32, elements, offset,
+                            double_hole);
+        StoreNoWriteBarrier(MachineRepresentation::kWord32, elements,
+                            IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
+                            double_hole);
+      }
+      args.PopAndReturn(result.value());
     }
-    args.PopAndReturn(AllocateHeapNumberWithValue(value));
 
     BIND(&fast_elements_tagged);
     {
@@ -1152,9 +1167,10 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
       args.PopAndReturn(value);
     }
 
-    BIND(&fast_elements_untagged);
+    BIND(&fast_elements_smi);
     {
       Node* value = LoadFixedArrayElement(elements, 0);
+      int32_t header_size = FixedDoubleArray::kHeaderSize - kHeapObjectTag;
       Node* memmove =
           ExternalConstant(ExternalReference::libc_memmove_function(isolate()));
       Node* start = IntPtrAdd(
@@ -1668,13 +1684,13 @@ TF_BUILTIN(TypedArrayPrototypeMap, ArrayBuiltinCodeStubAssembler) {
 }
 
 TF_BUILTIN(ArrayIsArray, CodeStubAssembler) {
-  Node* object = Parameter(Descriptor::kArg);
-  Node* context = Parameter(Descriptor::kContext);
+  TNode<Object> object = CAST(Parameter(Descriptor::kArg));
+  TNode<Context> context = CAST(Parameter(Descriptor::kContext));
 
   Label call_runtime(this), return_true(this), return_false(this);
 
   GotoIf(TaggedIsSmi(object), &return_false);
-  Node* instance_type = LoadInstanceType(object);
+  TNode<Word32T> instance_type = LoadInstanceType(CAST(object));
 
   GotoIf(Word32Equal(instance_type, Int32Constant(JS_ARRAY_TYPE)),
          &return_true);
@@ -1707,12 +1723,13 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
   const int kSearchElementArg = 0;
   const int kFromIndexArg = 1;
 
-  Node* argc =
+  TNode<IntPtrT> argc =
       ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
   CodeStubArguments args(this, argc);
 
-  Node* array = args.GetReceiver();
-  Node* search_element = args.GetOptionalArgumentValue(kSearchElementArg);
+  TNode<Object> receiver = args.GetReceiver();
+  TNode<Object> search_element =
+      args.GetOptionalArgumentValue(kSearchElementArg);
   Node* context = Parameter(BuiltinDescriptor::kContext);
 
   Node* intptr_zero = IntPtrConstant(0);
@@ -1722,15 +1739,16 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
 
   // Take slow path if not a JSArray, if retrieving elements requires
   // traversing prototype, or if access checks are required.
-  BranchIfFastJSArray(array, context, FastJSArrayAccessMode::INBOUNDS_READ,
+  BranchIfFastJSArray(receiver, context, FastJSArrayAccessMode::INBOUNDS_READ,
                       &init_index, &call_runtime);
 
   BIND(&init_index);
   VARIABLE(index_var, MachineType::PointerRepresentation(), intptr_zero);
+  TNode<JSArray> array = CAST(receiver);
 
   // JSArray length is always a positive Smi for fast arrays.
   CSA_ASSERT(this, TaggedIsPositiveSmi(LoadJSArrayLength(array)));
-  Node* array_length = SmiUntag(LoadJSArrayLength(array));
+  Node* array_length = SmiUntag(LoadFastJSArrayLength(array));
 
   {
     // Initialize fromIndex.
@@ -1795,16 +1813,16 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
         not_heap_num(this);
 
     GotoIfNot(TaggedIsSmi(search_element), &not_smi);
-    search_num.Bind(SmiToFloat64(search_element));
+    search_num.Bind(SmiToFloat64(CAST(search_element)));
     Goto(&heap_num_loop);
 
     BIND(&not_smi);
     if (variant == kIncludes) {
       GotoIf(IsUndefined(search_element), &undef_loop);
     }
-    Node* map = LoadMap(search_element);
+    Node* map = LoadMap(CAST(search_element));
     GotoIfNot(IsHeapNumberMap(map), &not_heap_num);
-    search_num.Bind(LoadHeapNumberValue(search_element));
+    search_num.Bind(LoadHeapNumberValue(CAST(search_element)));
     Goto(&heap_num_loop);
 
     BIND(&not_heap_num);
@@ -1819,7 +1837,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
       Node* element_k = LoadFixedArrayElement(elements, index_var.value());
       GotoIf(WordEqual(element_k, search_element), &return_found);
 
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&ident_loop);
     }
 
@@ -1832,7 +1850,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
       GotoIf(IsUndefined(element_k), &return_found);
       GotoIf(IsTheHole(element_k), &return_found);
 
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&undef_loop);
     }
 
@@ -1859,7 +1877,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
                &return_found, &continue_loop);
 
         BIND(&continue_loop);
-        Increment(index_var);
+        Increment(&index_var);
         Goto(&not_nan_loop);
       }
 
@@ -1876,7 +1894,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
                              &continue_loop);
 
         BIND(&continue_loop);
-        Increment(index_var);
+        Increment(&index_var);
         Goto(&nan_loop);
       }
     }
@@ -1905,13 +1923,13 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
                                   search_length, element_k, element_k_type,
                                   &return_found, &continue_loop, &runtime);
       BIND(&runtime);
-      Node* result = CallRuntime(Runtime::kStringEqual, context, search_element,
-                                 element_k);
+      TNode<Object> result = CallRuntime(Runtime::kStringEqual, context,
+                                         search_element, element_k);
       Branch(WordEqual(BooleanConstant(true), result), &return_found,
              &continue_loop);
 
       BIND(&continue_loop);
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&next_iteration);
     }
   }
@@ -1923,13 +1941,13 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
     VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
-    search_num.Bind(SmiToFloat64(search_element));
+    search_num.Bind(SmiToFloat64(CAST(search_element)));
     Goto(&not_nan_loop);
 
     BIND(&search_notnan);
     GotoIfNot(IsHeapNumber(search_element), &return_not_found);
 
-    search_num.Bind(LoadHeapNumberValue(search_element));
+    search_num.Bind(LoadHeapNumberValue(CAST(search_element)));
 
     Label* nan_handling = variant == kIncludes ? &nan_loop : &return_not_found;
     BranchIfFloat64IsNaN(search_num.value(), nan_handling, &not_nan_loop);
@@ -1944,7 +1962,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
       Branch(Float64Equal(element_k, search_num.value()), &return_found,
              &continue_loop);
       BIND(&continue_loop);
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&not_nan_loop);
     }
 
@@ -1958,7 +1976,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
                                                     MachineType::Float64());
       BranchIfFloat64IsNaN(element_k, &return_found, &continue_loop);
       BIND(&continue_loop);
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&nan_loop);
     }
   }
@@ -1970,7 +1988,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
     VARIABLE(search_num, MachineRepresentation::kFloat64);
 
     GotoIfNot(TaggedIsSmi(search_element), &search_notnan);
-    search_num.Bind(SmiToFloat64(search_element));
+    search_num.Bind(SmiToFloat64(CAST(search_element)));
     Goto(&not_nan_loop);
 
     BIND(&search_notnan);
@@ -1979,7 +1997,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
     }
     GotoIfNot(IsHeapNumber(search_element), &return_not_found);
 
-    search_num.Bind(LoadHeapNumberValue(search_element));
+    search_num.Bind(LoadHeapNumberValue(CAST(search_element)));
 
     Label* nan_handling = variant == kIncludes ? &nan_loop : &return_not_found;
     BranchIfFloat64IsNaN(search_num.value(), nan_handling, &not_nan_loop);
@@ -1998,7 +2016,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
       Branch(Float64Equal(element_k, search_num.value()), &return_found,
              &continue_loop);
       BIND(&continue_loop);
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&not_nan_loop);
     }
 
@@ -2016,7 +2034,7 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
 
       BranchIfFloat64IsNaN(element_k, &return_found, &continue_loop);
       BIND(&continue_loop);
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&nan_loop);
     }
 
@@ -2031,18 +2049,24 @@ void ArrayIncludesIndexofAssembler::Generate(SearchVariant variant) {
                                   MachineType::None(), 0, INTPTR_PARAMETERS,
                                   &return_found);
 
-      Increment(index_var);
+      Increment(&index_var);
       Goto(&hole_loop);
     }
   }
 
   BIND(&return_found);
-  args.PopAndReturn(variant == kIncludes ? TrueConstant()
-                                         : SmiTag(index_var.value()));
+  if (variant == kIncludes) {
+    args.PopAndReturn(TrueConstant());
+  } else {
+    args.PopAndReturn(SmiTag(index_var.value()));
+  }
 
   BIND(&return_not_found);
-  args.PopAndReturn(variant == kIncludes ? FalseConstant()
-                                         : NumberConstant(-1));
+  if (variant == kIncludes) {
+    args.PopAndReturn(FalseConstant());
+  } else {
+    args.PopAndReturn(NumberConstant(-1));
+  }
 
   BIND(&call_runtime);
   {
@@ -2144,7 +2168,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
   // If O does not have all of the internal slots of an Array Iterator Instance
   // (22.1.5.3), throw a TypeError exception
   GotoIf(TaggedIsSmi(iterator), &throw_bad_receiver);
-  Node* instance_type = LoadInstanceType(iterator);
+  TNode<Int32T> instance_type = LoadInstanceType(iterator);
   GotoIf(
       Uint32LessThan(
           Int32Constant(LAST_ARRAY_ITERATOR_TYPE - FIRST_ARRAY_ITERATOR_TYPE),
@@ -2474,8 +2498,8 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
 
   BIND(&allocate_entry_if_needed);
   {
-    GotoIf(Int32GreaterThan(instance_type,
-                            Int32Constant(LAST_ARRAY_KEY_VALUE_ITERATOR_TYPE)),
+    GotoIf(Uint32LessThan(Int32Constant(LAST_ARRAY_KEY_VALUE_ITERATOR_TYPE),
+                          instance_type),
            &allocate_iterator_result);
 
     Node* elements = AllocateFixedArray(PACKED_ELEMENTS, IntPtrConstant(2));

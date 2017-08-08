@@ -14,6 +14,7 @@
 #include "src/compilation-info.h"
 #include "src/compiler.h"
 #include "src/debug/debug.h"
+#include "src/frames-inl.h"
 #include "src/full-codegen/full-codegen.h"
 #include "src/heap/heap-inl.h"
 #include "src/ic/ic.h"
@@ -711,8 +712,8 @@ void FullCodeGenerator::VisitFunctionDeclaration(
       DCHECK(!slot.IsInvalid());
       globals_->Add(handle(Smi::FromInt(slot.ToInt()), isolate()), zone());
 
-      Handle<SharedFunctionInfo> function =
-          Compiler::GetSharedFunctionInfo(declaration->fun(), script(), info_);
+      Handle<SharedFunctionInfo> function = Compiler::GetSharedFunctionInfo(
+          declaration->fun(), script(), isolate());
       // Check for stack-overflow exception.
       if (function.is_null()) return SetStackOverflow();
       globals_->Add(function, zone());
@@ -1576,8 +1577,7 @@ void FullCodeGenerator::EmitCall(Call* expr, ConvertReceiverMode mode) {
   }
 
   SetCallPosition(expr);
-  Handle<Code> code = CodeFactory::CallICTrampoline(isolate(), mode).code();
-  __ Set(rdx, IntFromSlot(expr->CallFeedbackICSlot()));
+  Handle<Code> code = CodeFactory::Call(isolate(), mode).code();
   __ movp(rdi, Operand(rsp, (arg_count + 1) * kPointerSize));
   __ Set(rax, arg_count);
   CallIC(code);
@@ -1610,17 +1610,11 @@ void FullCodeGenerator::VisitCallNew(CallNew* expr) {
   // Call the construct call builtin that handles allocation and
   // constructor invocation.
   SetConstructCallPosition(expr);
-
-  // Load function and argument count into rdi and rax.
+  Handle<Code> code = CodeFactory::Construct(isolate()).code();
   __ Set(rax, arg_count);
   __ movp(rdi, Operand(rsp, arg_count * kPointerSize));
-
-  // Record call targets in unoptimized code, but not in the snapshot.
-  __ EmitLoadFeedbackVector(rbx);
-  __ Move(rdx, SmiFromSlot(expr->CallNewFeedbackSlot()));
-
-  CallConstructStub stub(isolate());
-  CallIC(stub.GetCode());
+  __ movp(rdx, rdi);
+  CallIC(code);
   OperandStackDepthDecrement(arg_count + 1);
   RestoreContext();
   context()->Plug(rax);

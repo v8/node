@@ -170,7 +170,7 @@ TEST(FixedArrayAccessSmiIndex) {
   Handle<FixedArray> array = isolate->factory()->NewFixedArray(5);
   array->set(4, Smi::FromInt(733));
   m.Return(m.LoadFixedArrayElement(m.HeapConstant(array),
-                                   m.SmiTag(m.Int32Constant(4)), 0,
+                                   m.SmiTag(m.IntPtrConstant(4)), 0,
                                    CodeStubAssembler::SMI_PARAMETERS));
   FunctionTester ft(asm_tester.GenerateCode());
   MaybeHandle<Object> result = ft.Call();
@@ -393,6 +393,35 @@ TEST(TryToName) {
     Handle<Object> key(isolate->factory()->NewHeapNumber(153));
     Handle<Object> index(Smi::FromInt(153), isolate);
     ft.CheckTrue(key, expect_index, index);
+  }
+
+  {
+    // TryToName(<true>) => if_keyisunique: "true".
+    Handle<Object> key = isolate->factory()->true_value();
+    Handle<Object> unique = isolate->factory()->InternalizeUtf8String("true");
+    ft.CheckTrue(key, expect_unique, unique);
+  }
+
+  {
+    // TryToName(<false>) => if_keyisunique: "false".
+    Handle<Object> key = isolate->factory()->false_value();
+    Handle<Object> unique = isolate->factory()->InternalizeUtf8String("false");
+    ft.CheckTrue(key, expect_unique, unique);
+  }
+
+  {
+    // TryToName(<null>) => if_keyisunique: "null".
+    Handle<Object> key = isolate->factory()->null_value();
+    Handle<Object> unique = isolate->factory()->InternalizeUtf8String("null");
+    ft.CheckTrue(key, expect_unique, unique);
+  }
+
+  {
+    // TryToName(<undefined>) => if_keyisunique: "undefined".
+    Handle<Object> key = isolate->factory()->undefined_value();
+    Handle<Object> unique =
+        isolate->factory()->InternalizeUtf8String("undefined");
+    ft.CheckTrue(key, expect_unique, unique);
   }
 
   {
@@ -1746,15 +1775,15 @@ class AppendJSArrayCodeStubAssembler : public CodeStubAssembler {
                          Handle<Smi>(Smi::FromInt(2), isolate), SLOPPY)
         .Check();
     CodeStubArguments args(this, IntPtrConstant(kNumParams));
-    Variable arg_index(this, MachineType::PointerRepresentation());
+    TVariable<IntPtrT> arg_index(this);
     Label bailout(this);
-    arg_index.Bind(IntPtrConstant(0));
-    Node* length = BuildAppendJSArray(kind_, HeapConstant(array), args,
-                                      arg_index, &bailout);
+    arg_index = IntPtrConstant(0);
+    Node* length = BuildAppendJSArray(kind_, HeapConstant(array), &args,
+                                      &arg_index, &bailout);
     Return(length);
 
     BIND(&bailout);
-    Return(SmiTag(IntPtrAdd(arg_index.value(), IntPtrConstant(2))));
+    Return(SmiTag(IntPtrAdd(arg_index, IntPtrConstant(2))));
 
     FunctionTester ft(csa_tester->GenerateCode(), kNumParams);
 

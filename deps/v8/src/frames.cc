@@ -322,7 +322,7 @@ bool SafeStackFrameIterator::IsValidFrame(StackFrame* frame) const {
 
 bool SafeStackFrameIterator::IsValidCaller(StackFrame* frame) {
   StackFrame::State state;
-  if (frame->is_entry() || frame->is_entry_construct()) {
+  if (frame->is_entry() || frame->is_construct_entry()) {
     // See EntryFrame::GetCallerState. It computes the caller FP address
     // and calls ExitFrame::GetStateForFramePointer on it. We need to be
     // sure that caller FP address is valid.
@@ -390,28 +390,18 @@ void SafeStackFrameIterator::Advance() {
 
 // -------------------------------------------------------------------------
 
-
-Code* StackFrame::GetSafepointData(Isolate* isolate,
-                                   Address inner_pointer,
-                                   SafepointEntry* safepoint_entry,
-                                   unsigned* stack_slots) {
-  InnerPointerToCodeCache::InnerPointerToCodeCacheEntry* entry =
-      isolate->inner_pointer_to_code_cache()->GetCacheEntry(inner_pointer);
-  if (!entry->safepoint_entry.is_valid()) {
-    entry->safepoint_entry = entry->code->GetSafepointEntry(inner_pointer);
-    DCHECK(entry->safepoint_entry.is_valid());
-  } else {
-    DCHECK(entry->safepoint_entry.Equals(
-        entry->code->GetSafepointEntry(inner_pointer)));
-  }
-
-  // Fill in the results and return the code.
-  Code* code = entry->code;
-  *safepoint_entry = entry->safepoint_entry;
-  *stack_slots = code->stack_slots();
-  return code;
+namespace {
+Code* GetContainingCode(Isolate* isolate, Address pc) {
+  return isolate->inner_pointer_to_code_cache()->GetCacheEntry(pc)->code;
 }
+}  // namespace
 
+Code* StackFrame::LookupCode() const {
+  Code* result = GetContainingCode(isolate(), pc());
+  DCHECK_GE(pc(), result->instruction_start());
+  DCHECK_LT(pc(), result->instruction_end());
+  return result;
+}
 
 #ifdef DEBUG
 static bool GcSafeCodeContains(HeapObject* object, Address addr);
@@ -500,6 +490,8 @@ StackFrame::Type StackFrame::ComputeType(const StackFrameIteratorBase* iterator,
           return JS_TO_WASM;
         case Code::WASM_INTERPRETER_ENTRY:
           return WASM_INTERPRETER_ENTRY;
+        case Code::C_WASM_ENTRY:
+          return C_WASM_ENTRY;
         default:
           // All other types should have an explicit marker
           break;
@@ -513,7 +505,7 @@ StackFrame::Type StackFrame::ComputeType(const StackFrameIteratorBase* iterator,
   StackFrame::Type candidate = StackFrame::MarkerToType(marker);
   switch (candidate) {
     case ENTRY:
-    case ENTRY_CONSTRUCT:
+    case CONSTRUCT_ENTRY:
     case EXIT:
     case BUILTIN_CONTINUATION:
     case JAVA_SCRIPT_BUILTIN_CONTINUATION:
@@ -567,20 +559,13 @@ void EntryFrame::ComputeCallerState(State* state) const {
 }
 
 
-void EntryFrame::SetCallerFp(Address caller_fp) {
-  const int offset = EntryFrameConstants::kCallerFPOffset;
-  Memory::Address_at(this->fp() + offset) = caller_fp;
-}
-
-
 StackFrame::Type EntryFrame::GetCallerState(State* state) const {
   const int offset = EntryFrameConstants::kCallerFPOffset;
   Address fp = Memory::Address_at(this->fp() + offset);
   return ExitFrame::GetStateForFramePointer(fp, state);
 }
 
-
-Code* EntryConstructFrame::unchecked_code() const {
+Code* ConstructEntryFrame::unchecked_code() const {
   return isolate()->heap()->js_construct_entry_code();
 }
 
@@ -608,10 +593,6 @@ void ExitFrame::ComputeCallerState(State* state) const {
   }
 }
 
-
-void ExitFrame::SetCallerFp(Address caller_fp) {
-  Memory::Address_at(fp() + ExitFrameConstants::kCallerFPOffset) = caller_fp;
-}
 
 void ExitFrame::Iterate(RootVisitor* v) const {
   // The arguments are traversed as part of the expression stack of
@@ -699,6 +680,13 @@ int BuiltinExitFrame::ComputeParametersCount() const {
   return argc;
 }
 
+namespace {
+void PrintIndex(StringStream* accumulator, StackFrame::PrintMode mode,
+                int index) {
+  accumulator->Add((mode == StackFrame::OVERVIEW) ? "%5d: " : "[%d]: ", index);
+}
+}  // namespace
+
 void BuiltinExitFrame::Print(StringStream* accumulator, PrintMode mode,
                              int index) const {
   DisallowHeapAllocation no_gc;
@@ -779,11 +767,6 @@ void StandardFrame::ComputeCallerState(State* state) const {
 }
 
 
-void StandardFrame::SetCallerFp(Address caller_fp) {
-  Memory::Address_at(fp() + StandardFrameConstants::kCallerFPOffset) =
-      caller_fp;
-}
-
 bool StandardFrame::IsConstructor() const { return false; }
 
 void StandardFrame::Summarize(List<FrameSummary>* functions,
@@ -797,11 +780,21 @@ void StandardFrame::IterateCompiledFrame(RootVisitor* v) const {
   // possibly find pointers in optimized frames in that state.
   DCHECK(can_access_heap_objects());
 
-  // Compute the safepoint information.
-  unsigned stack_slots = 0;
-  SafepointEntry safepoint_entry;
-  Code* code = StackFrame::GetSafepointData(
-      isolate(), pc(), &safepoint_entry, &stack_slots);
+  // Find the code and compute the safepoint information.
+  Address inner_pointer = pc();
+  InnerPointerToCodeCache::InnerPointerToCodeCacheEntry* entry =
+      isolate()->inner_pointer_to_code_cache()->GetCacheEntry(inner_pointer);
+  if (!entry->safepoint_entry.is_valid()) {
+    entry->safepoint_entry = entry->code->GetSafepointEntry(inner_pointer);
+    DCHECK(entry->safepoint_entry.is_valid());
+  } else {
+    DCHECK(entry->safepoint_entry.Equals(
+        entry->code->GetSafepointEntry(inner_pointer)));
+  }
+
+  Code* code = entry->code;
+  SafepointEntry safepoint_entry = entry->safepoint_entry;
+  unsigned stack_slots = code->stack_slots();
   unsigned slot_space = stack_slots * kPointerSize;
 
   // Determine the fixed header and spill slot area size.
@@ -812,7 +805,7 @@ void StandardFrame::IterateCompiledFrame(RootVisitor* v) const {
     StackFrame::Type candidate = StackFrame::MarkerToType(marker);
     switch (candidate) {
       case ENTRY:
-      case ENTRY_CONSTRUCT:
+      case CONSTRUCT_ENTRY:
       case EXIT:
       case BUILTIN_CONTINUATION:
       case JAVA_SCRIPT_BUILTIN_CONTINUATION:
@@ -825,6 +818,7 @@ void StandardFrame::IterateCompiledFrame(RootVisitor* v) const {
       case WASM_TO_JS:
       case WASM_COMPILED:
       case WASM_INTERPRETER_ENTRY:
+      case C_WASM_ENTRY:
         frame_header_size = TypedFrameConstants::kFixedFrameSizeFromFp;
         break;
       case JAVA_SCRIPT:
@@ -862,9 +856,9 @@ void StandardFrame::IterateCompiledFrame(RootVisitor* v) const {
   if (safepoint_entry.has_doubles()) {
     // Number of doubles not known at snapshot time.
     DCHECK(!isolate()->serializer_enabled());
-    parameters_base += RegisterConfiguration::Crankshaft()
-                           ->num_allocatable_double_registers() *
-                       kDoubleSize / kPointerSize;
+    parameters_base +=
+        RegisterConfiguration::Default()->num_allocatable_double_registers() *
+        kDoubleSize / kPointerSize;
   }
 
   // Visit the registers that contain pointers if any.
@@ -1431,10 +1425,10 @@ void OptimizedFrame::Summarize(List<FrameSummary>* frames,
       is_constructor = false;
     } else if (it->kind() == TranslatedFrame::kConstructStub) {
       // The next encountered JS frame will be marked as a constructor call.
+      DCHECK(!is_constructor);
       is_constructor = true;
     }
   }
-  DCHECK(!is_constructor);
 }
 
 
@@ -1684,12 +1678,6 @@ Code* InternalFrame::unchecked_code() const {
   return reinterpret_cast<Code*>(code);
 }
 
-
-void StackFrame::PrintIndex(StringStream* accumulator,
-                            PrintMode mode,
-                            int index) {
-  accumulator->Add((mode == OVERVIEW) ? "%5d: " : "[%d]: ", index);
-}
 
 void WasmCompiledFrame::Print(StringStream* accumulator, PrintMode mode,
                               int index) const {

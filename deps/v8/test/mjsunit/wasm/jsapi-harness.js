@@ -8,22 +8,9 @@
 // Flags: --expose-wasm --allow-natives-syntax
 
 const known_failures = {
-  "'WebAssembly.Module.customSections' method":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=5815',
-  "'WebAssembly.Table.prototype.get' method":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=5507',
-  "'WebAssembly.Table.prototype.set' method":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=5507',
-  "'WebAssembly.Instance.prototype.exports' accessor property":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=5507',
-  "'WebAssembly.Module.prototype' object":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=6647',
-  "'WebAssembly.Instance.prototype' object":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=6647',
-  "'WebAssembly.Memory.prototype' object":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=6647',
-  "'WebAssembly.Table.prototype' object":
-    'https://bugs.chromium.org/p/v8/issues/detail?id=6647'
+  // Enter failing tests like follows:
+  // "'WebAssembly.Instance.prototype.exports' accessor property":
+  //  'https://bugs.chromium.org/p/v8/issues/detail?id=5507',
 };
 
 let failures = [];

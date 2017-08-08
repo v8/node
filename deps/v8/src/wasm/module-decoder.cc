@@ -503,6 +503,9 @@ class ModuleDecoder : public Decoder {
   void DecodeFunctionSection() {
     uint32_t functions_count =
         consume_count("functions count", kV8MaxWasmFunctions);
+    (IsWasm() ? GetCounters()->wasm_functions_per_wasm_module()
+              : GetCounters()->wasm_functions_per_asm_module())
+        ->AddSample(static_cast<int>(functions_count));
     module_->functions.reserve(functions_count);
     module_->num_declared_functions = functions_count;
     for (uint32_t i = 0; ok() && i < functions_count; ++i) {
@@ -640,8 +643,9 @@ class ModuleDecoder : public Decoder {
         DCHECK(!cmp_less(*it, *last));  // Vector must be sorted.
         if (!cmp_less(*last, *it)) {
           const byte* pc = start() + GetBufferRelativeOffset(it->name.offset());
+          TruncatedUserString<> name(pc, it->name.length());
           errorf(pc, "Duplicate export name '%.*s' for %s %d and %s %d",
-                 it->name.length(), pc, ExternalKindName(last->kind),
+                 name.length(), name.start(), ExternalKindName(last->kind),
                  last->index, ExternalKindName(it->kind), it->index);
           break;
         }
@@ -702,11 +706,6 @@ class ModuleDecoder : public Decoder {
     for (uint32_t i = 0; i < functions_count; ++i) {
       uint32_t size = consume_u32v("body size");
       uint32_t offset = pc_offset();
-      auto size_histogram = IsWasm()
-                                ? GetCounters()->wasm_wasm_function_size_bytes()
-                                : GetCounters()->wasm_asm_function_size_bytes();
-      // TODO(bradnelson): Improve histogram handling of size_t.
-      size_histogram->AddSample(static_cast<int>(size));
       consume_bytes(size, "function body");
       if (failed()) break;
       WasmFunction* function =
@@ -1004,11 +1003,6 @@ class ModuleDecoder : public Decoder {
   // Verifies the body (code) of a given function.
   void VerifyFunctionBody(AccountingAllocator* allocator, uint32_t func_num,
                           ModuleBytesEnv* menv, WasmFunction* function) {
-    auto time_counter = IsWasm()
-                            ? GetCounters()->wasm_decode_wasm_function_time()
-                            : GetCounters()->wasm_decode_asm_function_time();
-    TimedHistogramScope wasm_decode_function_time_scope(time_counter);
-
     WasmFunctionName func_name(function,
                                menv->wire_bytes.GetNameOrNull(function));
     if (FLAG_trace_wasm_decoder || FLAG_trace_wasm_decode_time) {
@@ -1019,8 +1013,9 @@ class ModuleDecoder : public Decoder {
         function->sig, function->code.offset(),
         start_ + GetBufferRelativeOffset(function->code.offset()),
         start_ + GetBufferRelativeOffset(function->code.end_offset())};
-    DecodeResult result = VerifyWasmCode(
-        allocator, menv == nullptr ? nullptr : menv->module_env.module, body);
+    DecodeResult result = VerifyWasmCodeWithStats(
+        allocator, menv == nullptr ? nullptr : menv->module_env.module, body,
+        IsWasm(), GetCounters());
     if (result.failed()) {
       // Wrap the error message from the function decoder.
       std::ostringstream wrapped;

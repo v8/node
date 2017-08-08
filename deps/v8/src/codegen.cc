@@ -84,8 +84,8 @@ Comment::~Comment() {
 
 #endif  // DEBUG
 
-
-void CodeGenerator::MakeCodePrologue(CompilationInfo* info, const char* kind) {
+void CodeGenerator::MakeCodePrologue(ParseInfo* parse_info,
+                                     CompilationInfo* info, const char* kind) {
   bool print_ast = false;
   const char* ftype;
 
@@ -103,7 +103,7 @@ void CodeGenerator::MakeCodePrologue(CompilationInfo* info, const char* kind) {
   DCHECK(ThreadId::Current().Equals(info->isolate()->thread_id()));
   AllowDeferredHandleDereference allow_deref;
   AllowHeapAllocation allow_gc;
-  info->parse_info()->ast_value_factory()->Internalize(info->isolate());
+  parse_info->ast_value_factory()->Internalize(info->isolate());
 
   if (FLAG_trace_codegen || print_ast) {
     std::unique_ptr<char[]> name = info->GetDebugName();
@@ -112,7 +112,7 @@ void CodeGenerator::MakeCodePrologue(CompilationInfo* info, const char* kind) {
   }
 
 #ifdef DEBUG
-  if (info->parse_info() && print_ast) {
+  if (!info->IsStub() && print_ast) {
     PrintF("--- AST ---\n%s\n",
            AstPrinter(info->isolate()).PrintProgram(info->literal()));
   }
@@ -128,15 +128,15 @@ Handle<Code> CodeGenerator::MakeCodeEpilogue(TurboAssembler* tasm,
   // Allocate and install the code.
   CodeDesc desc;
   Code::Flags flags = info->code_flags();
-  bool is_crankshafted =
+  bool is_turbofanned =
       Code::ExtractKindFromFlags(flags) == Code::OPTIMIZED_FUNCTION ||
       info->IsStub();
   tasm->GetCode(isolate, &desc);
   if (eh_frame_writer) eh_frame_writer->GetEhFrame(&desc);
 
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, flags, self_reference, false, is_crankshafted,
-      info->prologue_offset(), info->is_debug() && !is_crankshafted);
+      desc, flags, self_reference, false, info->prologue_offset(),
+      info->is_debug() && !is_turbofanned);
   isolate->counters()->total_compiled_code_size()->Increment(
       code->instruction_size());
   return code;
@@ -252,8 +252,7 @@ void CodeGenerator::PrintCode(Handle<Code> code, CompilationInfo* info) {
     OFStream os(tracing_scope.file());
 
     // Print the source code if available.
-    bool print_source =
-        info->parse_info() && (code->kind() == Code::OPTIMIZED_FUNCTION);
+    bool print_source = code->kind() == Code::OPTIMIZED_FUNCTION;
     if (print_source) {
       Handle<SharedFunctionInfo> shared = info->shared_info();
       Handle<Script> script = info->script();
@@ -274,7 +273,7 @@ void CodeGenerator::PrintCode(Handle<Code> code, CompilationInfo* info) {
       }
     }
     if (info->IsOptimizing()) {
-      if (FLAG_print_unopt_code && info->parse_info()) {
+      if (FLAG_print_unopt_code) {
         os << "--- Unoptimized code ---\n";
         info->closure()->shared()->code()->Disassemble(debug_name.get(), os);
       }
