@@ -5,7 +5,6 @@ prefix message
 # sample-test                       : PASS,FLAKY
 
 [true] # This section applies to all platforms
-unhandled_promise_trace_warnings : FAIL
 
 [$system==win32]
 
