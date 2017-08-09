@@ -31,14 +31,7 @@ class SourcePositionTable;
 }  // namespace compiler
 
 namespace wasm {
-// Forward declarations for some wasm data structures.
-struct ModuleBytesEnv;
-struct ModuleEnv;
-struct WasmFunction;
-struct WasmModule;
-class ErrorThrower;
 struct DecodeStruct;
-
 // Expose {Node} and {Graph} opaquely as {wasm::TFNode} and {wasm::TFGraph}.
 typedef compiler::Node TFNode;
 typedef compiler::JSGraph TFGraph;
@@ -49,19 +42,21 @@ class WasmCompilationUnit final {
  public:
   // Use the following constructors if you know you are running on the
   // foreground thread.
-  WasmCompilationUnit(Isolate* isolate, wasm::ModuleBytesEnv* module_env,
+  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes,
+                      const wasm::ModuleEnv* module_env,
                       const wasm::WasmFunction* function,
                       Handle<Code> centry_stub);
-  WasmCompilationUnit(Isolate* isolate, wasm::ModuleEnv* module_env,
+  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleEnv* module_env,
                       wasm::FunctionBody body, wasm::WasmName name, int index,
                       Handle<Code> centry_stub);
   // Use the following constructors if the compilation may run on a background
   // thread.
-  WasmCompilationUnit(Isolate* isolate, wasm::ModuleBytesEnv* module_env,
+  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes,
+                      const wasm::ModuleEnv* module_env,
                       const wasm::WasmFunction* function,
                       Handle<Code> centry_stub,
                       const std::shared_ptr<Counters>& async_counters);
-  WasmCompilationUnit(Isolate* isolate, wasm::ModuleEnv* module_env,
+  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleEnv* module_env,
                       wasm::FunctionBody body, wasm::WasmName name, int index,
                       Handle<Code> centry_stub,
                       const std::shared_ptr<Counters>& async_counters);
@@ -73,7 +68,8 @@ class WasmCompilationUnit final {
 
   static MaybeHandle<Code> CompileWasmFunction(
       wasm::ErrorThrower* thrower, Isolate* isolate,
-      wasm::ModuleBytesEnv* module_env, const wasm::WasmFunction* function);
+      const wasm::ModuleWireBytes& wire_bytes,
+      const wasm::ModuleEnv* module_env, const wasm::WasmFunction* function);
 
   void set_memory_cost(size_t memory_cost) { memory_cost_ = memory_cost; }
   size_t memory_cost() const { return memory_cost_; }
@@ -82,7 +78,7 @@ class WasmCompilationUnit final {
   SourcePositionTable* BuildGraphForWasmFunction(double* decode_ms);
 
   Isolate* isolate_;
-  wasm::ModuleEnv* module_env_;
+  const wasm::ModuleEnv* module_env_;
   wasm::FunctionBody func_body_;
   wasm::WasmName func_name_;
   Counters* counters_;
@@ -107,15 +103,11 @@ class WasmCompilationUnit final {
 };
 
 // Wraps a JS function, producing a code object that can be called from wasm.
-// The global_js_imports_table is a global handle to a fixed array of target
-// JSReceiver with the lifetime tied to the module. We store it's location (non
-// GCable) in the generated code so that it can reside outside of GCed heap.
 Handle<Code> CompileWasmToJSWrapper(Isolate* isolate, Handle<JSReceiver> target,
                                     wasm::FunctionSig* sig, uint32_t index,
                                     Handle<String> module_name,
                                     MaybeHandle<String> import_name,
-                                    wasm::ModuleOrigin origin,
-                                    Handle<FixedArray> global_js_imports_table);
+                                    wasm::ModuleOrigin origin);
 
 // Wraps a given wasm code object, producing a code object.
 Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
@@ -145,7 +137,7 @@ typedef ZoneVector<Node*> NodeVector;
 class WasmGraphBuilder {
  public:
   WasmGraphBuilder(
-      wasm::ModuleEnv* module_env, Zone* z, JSGraph* g,
+      const wasm::ModuleEnv* module_env, Zone* z, JSGraph* g,
       Handle<Code> centry_stub_, wasm::FunctionSig* sig,
       compiler::SourcePositionTable* source_position_table = nullptr);
 
@@ -234,9 +226,7 @@ class WasmGraphBuilder {
                      wasm::WasmCodePosition position);
 
   void BuildJSToWasmWrapper(Handle<Code> wasm_code);
-  bool BuildWasmToJSWrapper(Handle<JSReceiver> target,
-                            Handle<FixedArray> global_js_imports_table,
-                            int index);
+  void BuildWasmToJSWrapper(Handle<JSReceiver> target);
   void BuildWasmInterpreterEntry(uint32_t func_index,
                                  Handle<WasmInstanceObject> instance);
   void BuildCWasmEntry();
@@ -294,7 +284,7 @@ class WasmGraphBuilder {
 
   bool has_simd() const { return has_simd_; }
 
-  wasm::ModuleEnv* module_env() const { return module_; }
+  const wasm::ModuleEnv* module_env() const { return module_env_; }
 
   void SetRuntimeExceptionSupport(bool value) {
     has_runtime_exception_support_ = value;
@@ -306,7 +296,7 @@ class WasmGraphBuilder {
   Zone* zone_;
   JSGraph* jsgraph_;
   Node* centry_stub_node_;
-  wasm::ModuleEnv* module_ = nullptr;
+  const wasm::ModuleEnv* module_env_ = nullptr;
   Node* mem_buffer_ = nullptr;
   Node* mem_size_ = nullptr;
   NodeVector signature_tables_;
