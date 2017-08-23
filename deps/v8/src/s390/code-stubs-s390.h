@@ -5,12 +5,8 @@
 #ifndef V8_S390_CODE_STUBS_S390_H_
 #define V8_S390_CODE_STUBS_S390_H_
 
-#include "src/s390/frames-s390.h"
-
 namespace v8 {
 namespace internal {
-
-void ArrayNativeCode(MacroAssembler* masm, Label* call_generic_code);
 
 class StringHelper : public AllStatic {
  public:

@@ -49,10 +49,14 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
                                           Node* right,
                                           RelationalComparisonMode mode);
 
-  Node* ToSmiBetweenZeroAnd(Node* context, Node* value, Node* limit);
+  TNode<Smi> ToSmiBetweenZeroAnd(SloppyTNode<Context> context,
+                                 SloppyTNode<Object> value,
+                                 SloppyTNode<Smi> limit);
 
-  Node* LoadSurrogatePairAt(Node* string, Node* length, Node* index,
-                            UnicodeEncoding encoding);
+  TNode<Uint32T> LoadSurrogatePairAt(SloppyTNode<String> string,
+                                     SloppyTNode<Smi> length,
+                                     SloppyTNode<Smi> index,
+                                     UnicodeEncoding encoding);
 
   void StringIndexOf(Node* const subject_string,
                      Node* const subject_instance_type,
@@ -86,7 +90,8 @@ class StringBuiltinsAssembler : public CodeStubAssembler {
   void MaybeCallFunctionAtSymbol(Node* const context, Node* const object,
                                  Handle<Symbol> symbol,
                                  const NodeFunction0& regexp_call,
-                                 const NodeFunction1& generic_call);
+                                 const NodeFunction1& generic_call,
+                                 CodeStubArguments* args = nullptr);
 };
 
 }  // namespace internal

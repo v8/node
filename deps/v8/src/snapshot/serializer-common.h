@@ -6,6 +6,7 @@
 #define V8_SNAPSHOT_SERIALIZER_COMMON_H_
 
 #include "src/address-map.h"
+#include "src/base/bits.h"
 #include "src/external-reference-table.h"
 #include "src/globals.h"
 #include "src/visitors.h"
@@ -63,7 +64,7 @@ class HotObjectsList {
   static const int kSize = 8;
 
  private:
-  STATIC_ASSERT(IS_POWER_OF_TWO(kSize));
+  static_assert(base::bits::IsPowerOfTwo(kSize), "kSize must be power of two");
   static const int kSizeMask = kSize - 1;
   HeapObject* circular_queue_[kSize];
   int index_;
@@ -87,7 +88,8 @@ class SerializerDeserializer : public RootVisitor {
  protected:
   static bool CanBeDeferred(HeapObject* o);
 
-  void RestoreExternalReferenceRedirectors(List<AccessorInfo*>* accessor_infos);
+  void RestoreExternalReferenceRedirectors(
+      const std::vector<AccessorInfo*>& accessor_infos);
 
   // ---------- byte code range 0x00..0x7f ----------
   // Byte codes in this range represent Where, HowToCode and WhereToPoint.
@@ -173,6 +175,9 @@ class SerializerDeserializer : public RootVisitor {
   // Used for embedder-provided serialization data for embedder fields.
   static const int kEmbedderFieldsData = 0x1f;
 
+  // Used for embedder-allocated backing stores for TypedArrays.
+  static const int kOffHeapBackingStore = 0x35;
+
   // 8 hot (recently seen or back-referenced) objects with optional skip.
   static const int kNumberOfHotObjects = 8;
   STATIC_ASSERT(kNumberOfHotObjects == HotObjectsList::kSize);
@@ -182,7 +187,7 @@ class SerializerDeserializer : public RootVisitor {
   static const int kHotObjectWithSkip = 0x58;
   static const int kHotObjectMask = 0x07;
 
-  // 0x35..0x37, 0x55..0x57, 0x75..0x7f unused.
+  // 0x36..0x37, 0x55..0x57, 0x75..0x7f unused.
 
   // ---------- byte code range 0x80..0xff ----------
   // First 32 root array items.
@@ -271,13 +276,12 @@ class SerializedData {
 
  protected:
   void SetHeaderValue(int offset, uint32_t value) {
-    uint32_t* address = reinterpret_cast<uint32_t*>(data_ + offset);
-    memcpy(reinterpret_cast<uint32_t*>(address), &value, sizeof(value));
+    memcpy(data_ + offset, &value, sizeof(value));
   }
 
   uint32_t GetHeaderValue(int offset) const {
     uint32_t value;
-    memcpy(&value, reinterpret_cast<int*>(data_ + offset), sizeof(value));
+    memcpy(&value, data_ + offset, sizeof(value));
     return value;
   }
 

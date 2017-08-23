@@ -12,6 +12,19 @@
 #include "src/profiler/sampling-heap-profiler.h"
 
 namespace v8 {
+
+v8::MaybeLocal<v8::Function> debug::QueryObjectPredicate::GetConstructor(
+    v8::Object* v8_object) {
+  internal::Handle<internal::JSReceiver> object(Utils::OpenHandle(v8_object));
+  internal::Handle<internal::Map> map(object->map());
+  internal::Object* maybe_constructor = map->GetConstructor();
+  if (maybe_constructor->IsJSFunction()) {
+    return Utils::ToLocal(
+        internal::handle(internal::JSFunction::cast(maybe_constructor)));
+  }
+  return v8::MaybeLocal<v8::Function>();
+}
+
 namespace internal {
 
 HeapProfiler::HeapProfiler(Heap* heap)
@@ -135,12 +148,10 @@ void HeapProfiler::StartHeapObjectsTracking(bool track_allocations) {
   }
 }
 
-
 SnapshotObjectId HeapProfiler::PushHeapObjectsStats(OutputStream* stream,
                                                     int64_t* timestamp_us) {
   return ids_->PushHeapObjectsStats(stream, timestamp_us);
 }
-
 
 void HeapProfiler::StopHeapObjectsTracking() {
   ids_->StopHeapObjectsTracking();
@@ -150,35 +161,19 @@ void HeapProfiler::StopHeapObjectsTracking() {
   }
 }
 
-
-size_t HeapProfiler::GetMemorySizeUsedByProfiler() {
-  size_t size = sizeof(*this);
-  size += names_->GetUsedMemorySize();
-  size += ids_->GetUsedMemorySize();
-  size += GetMemoryUsedByList(snapshots_);
-  for (int i = 0; i < snapshots_.length(); ++i) {
-    size += snapshots_[i]->RawSnapshotSize();
-  }
-  return size;
-}
-
-
 int HeapProfiler::GetSnapshotsCount() {
   return snapshots_.length();
 }
 
-
 HeapSnapshot* HeapProfiler::GetSnapshot(int index) {
   return snapshots_.at(index);
 }
-
 
 SnapshotObjectId HeapProfiler::GetSnapshotObjectId(Handle<Object> obj) {
   if (!obj->IsHeapObject())
     return v8::HeapProfiler::kUnknownObjectId;
   return ids_->FindEntry(HeapObject::cast(*obj)->address());
 }
-
 
 void HeapProfiler::ObjectMoveEvent(Address from, Address to, int size) {
   base::LockGuard<base::Mutex> guard(&profiler_mutex_);
@@ -187,7 +182,6 @@ void HeapProfiler::ObjectMoveEvent(Address from, Address to, int size) {
     allocation_tracker_->address_to_trace()->MoveObject(from, to, size);
   }
 }
-
 
 void HeapProfiler::AllocationEvent(Address addr, int size) {
   DisallowHeapAllocation no_allocation;
@@ -226,6 +220,25 @@ void HeapProfiler::ClearHeapObjectMap() {
 
 Heap* HeapProfiler::heap() const { return ids_->heap(); }
 
+void HeapProfiler::QueryObjects(Handle<Context> context,
+                                debug::QueryObjectPredicate* predicate,
+                                PersistentValueVector<v8::Object>* objects) {
+  // We should return accurate information about live objects, so we need to
+  // collect all garbage first.
+  isolate()->heap()->CollectAllAvailableGarbage(
+      GarbageCollectionReason::kLowMemoryNotification);
+  heap()->CollectAllGarbage(Heap::kMakeHeapIterableMask,
+                            GarbageCollectionReason::kHeapProfiler);
+  HeapIterator heap_iterator(heap(), HeapIterator::kFilterUnreachable);
+  HeapObject* heap_obj;
+  while ((heap_obj = heap_iterator.next()) != nullptr) {
+    if (!heap_obj->IsJSObject() || heap_obj->IsExternal()) continue;
+    v8::Local<v8::Object> v8_obj(
+        Utils::ToLocal(handle(JSObject::cast(heap_obj))));
+    if (!predicate->Filter(v8_obj)) continue;
+    objects->Append(v8_obj);
+  }
+}
 
 }  // namespace internal
 }  // namespace v8

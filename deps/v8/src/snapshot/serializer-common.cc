@@ -24,7 +24,11 @@ ExternalReferenceEncoder::ExternalReferenceEncoder(Isolate* isolate) {
     Address addr = table->address(i);
     // Ignore duplicate API references.
     if (table->is_api_reference(i) && !map_->Get(addr).IsNothing()) continue;
+#ifndef V8_OS_WIN
+    // TODO(yangguo): On Windows memcpy and memmove can end up at the same
+    // address due to ICF. See http://crbug.com/726896.
     DCHECK(map_->Get(addr).IsNothing());
+#endif
     map_->Set(addr, i);
     DCHECK(map_->Get(addr).IsJust());
   }
@@ -84,9 +88,9 @@ bool SerializerDeserializer::CanBeDeferred(HeapObject* o) {
 }
 
 void SerializerDeserializer::RestoreExternalReferenceRedirectors(
-    List<AccessorInfo*>* accessor_infos) {
+    const std::vector<AccessorInfo*>& accessor_infos) {
   // Restore wiped accessor infos.
-  for (AccessorInfo* info : *accessor_infos) {
+  for (AccessorInfo* info : accessor_infos) {
     Foreign::cast(info->js_getter())
         ->set_foreign_address(info->redirected_getter());
   }

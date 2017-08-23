@@ -9,6 +9,7 @@
 
 #include "src/base/ieee754.h"
 #include "src/heap/heap.h"
+#include "src/heap/mark-compact.h"
 #include "src/heap/objects-visiting.h"
 #include "src/objects.h"
 
@@ -71,13 +72,14 @@ class ObjectStats {
     size_histogram_[FIRST_FIXED_ARRAY_SUB_TYPE + array_sub_type]
                    [HistogramIndexFromSize(size)]++;
     if (over_allocated > 0) {
+      InstanceType type =
+          array->IsHashTable() ? HASH_TABLE_TYPE : FIXED_ARRAY_TYPE;
       over_allocated_[FIRST_FIXED_ARRAY_SUB_TYPE + array_sub_type] +=
           over_allocated;
       over_allocated_histogram_[FIRST_FIXED_ARRAY_SUB_TYPE + array_sub_type]
                                [HistogramIndexFromSize(over_allocated)]++;
-      over_allocated_[InstanceType::FIXED_ARRAY_TYPE] += over_allocated;
-      over_allocated_histogram_[InstanceType::FIXED_ARRAY_TYPE]
-                               [HistogramIndexFromSize(over_allocated)]++;
+      over_allocated_[type] += over_allocated;
+      over_allocated_histogram_[type][HistogramIndexFromSize(over_allocated)]++;
     }
     return true;
   }
@@ -132,8 +134,7 @@ class ObjectStats {
 
 class ObjectStatsCollector {
  public:
-  ObjectStatsCollector(Heap* heap, ObjectStats* stats)
-      : heap_(heap), stats_(stats) {}
+  ObjectStatsCollector(Heap* heap, ObjectStats* stats);
 
   void CollectGlobalStatistics();
   void CollectStatistics(HeapObject* obj);
@@ -145,7 +146,6 @@ class ObjectStatsCollector {
   void RecordCodeDetails(Code* code);
   void RecordFixedArrayDetails(FixedArray* array);
   void RecordJSCollectionDetails(JSObject* obj);
-  void RecordJSFunctionDetails(JSFunction* function);
   void RecordJSObjectDetails(JSObject* object);
   void RecordJSWeakCollectionDetails(JSWeakCollection* obj);
   void RecordMapDetails(Map* map);
@@ -159,8 +159,10 @@ class ObjectStatsCollector {
                                          int subtype);
   template <class HashTable>
   void RecordHashTableHelper(HeapObject* parent, HashTable* array, int subtype);
+  bool SameLiveness(HeapObject* obj1, HeapObject* obj2);
   Heap* heap_;
   ObjectStats* stats_;
+  MarkCompactCollector::NonAtomicMarkingState* marking_state_;
 
   friend class ObjectStatsCollector::CompilationCacheTableVisitor;
 };

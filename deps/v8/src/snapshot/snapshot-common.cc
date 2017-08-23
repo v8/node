@@ -8,10 +8,10 @@
 
 #include "src/api.h"
 #include "src/base/platform/platform.h"
-#include "src/full-codegen/full-codegen.h"
 #include "src/objects-inl.h"
-#include "src/snapshot/deserializer.h"
+#include "src/snapshot/partial-deserializer.h"
 #include "src/snapshot/snapshot-source-sink.h"
+#include "src/snapshot/startup-deserializer.h"
 #include "src/version.h"
 
 namespace v8 {
@@ -40,7 +40,7 @@ bool Snapshot::Initialize(Isolate* isolate) {
   const v8::StartupData* blob = isolate->snapshot_blob();
   Vector<const byte> startup_data = ExtractStartupData(blob);
   SnapshotData snapshot_data(startup_data);
-  Deserializer deserializer(&snapshot_data);
+  StartupDeserializer deserializer(&snapshot_data);
   deserializer.SetRehashability(ExtractRehashability(blob));
   bool success = isolate->Init(&deserializer);
   if (FLAG_profile_deserialization) {
@@ -59,24 +59,25 @@ MaybeHandle<Context> Snapshot::NewContextFromSnapshot(
   if (FLAG_profile_deserialization) timer.Start();
 
   const v8::StartupData* blob = isolate->snapshot_blob();
+  bool can_rehash = ExtractRehashability(blob);
   Vector<const byte> context_data =
       ExtractContextData(blob, static_cast<int>(context_index));
   SnapshotData snapshot_data(context_data);
-  Deserializer deserializer(&snapshot_data);
-  deserializer.SetRehashability(ExtractRehashability(blob));
 
-  MaybeHandle<Object> maybe_context = deserializer.DeserializePartial(
-      isolate, global_proxy, embedder_fields_deserializer);
-  Handle<Object> result;
-  if (!maybe_context.ToHandle(&result)) return MaybeHandle<Context>();
-  CHECK(result->IsContext());
+  MaybeHandle<Context> maybe_result = PartialDeserializer::DeserializeContext(
+      isolate, &snapshot_data, can_rehash, global_proxy,
+      embedder_fields_deserializer);
+
+  Handle<Context> result;
+  if (!maybe_result.ToHandle(&result)) return MaybeHandle<Context>();
+
   if (FLAG_profile_deserialization) {
     double ms = timer.Elapsed().InMillisecondsF();
     int bytes = context_data.length();
     PrintF("[Deserializing context #%zu (%d bytes) took %0.3f ms]\n",
            context_index, bytes, ms);
   }
-  return Handle<Context>::cast(result);
+  return result;
 }
 
 void ProfileDeserialization(const SnapshotData* startup_snapshot,

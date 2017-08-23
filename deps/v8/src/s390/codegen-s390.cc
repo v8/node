@@ -35,7 +35,7 @@ UnaryMathFunctionWithIsolate CreateSqrtFunction(Isolate* isolate) {
   __ Ret();
 
   CodeDesc desc;
-  masm.GetCode(&desc);
+  masm.GetCode(isolate, &desc);
   DCHECK(ABI_USES_FUNCTION_DESCRIPTORS ||
          !RelocInfo::RequiresRelocation(isolate, desc));
 
@@ -46,21 +46,6 @@ UnaryMathFunctionWithIsolate CreateSqrtFunction(Isolate* isolate) {
 }
 
 #undef __
-
-// -------------------------------------------------------------------------
-// Platform-specific RuntimeCallHelper functions.
-
-void StubRuntimeCallHelper::BeforeCall(MacroAssembler* masm) const {
-  masm->EnterFrame(StackFrame::INTERNAL);
-  DCHECK(!masm->has_frame());
-  masm->set_has_frame(true);
-}
-
-void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
-  masm->LeaveFrame(StackFrame::INTERNAL);
-  DCHECK(masm->has_frame());
-  masm->set_has_frame(false);
-}
 
 // -------------------------------------------------------------------------
 // Code generators
@@ -218,7 +203,7 @@ void Code::PatchPlatformCodeAge(Isolate* isolate, byte* sequence,
     // We need to push lr on stack so that GenerateMakeCodeYoungAgainCommon
     // knows where to pick up the return address
     //
-    // Since we can no longer guarentee ip will hold the branch address
+    // Since we can no longer guarantee ip will hold the branch address
     // because of BRASL, use Call so that GenerateMakeCodeYoungAgainCommon
     // can calculate the branch address offset
     patcher.masm()->nop();  // marker to detect sequence (see IsOld)

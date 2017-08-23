@@ -11,7 +11,7 @@
 #include "src/log.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
-#include "src/snapshot/deserializer.h"
+#include "src/snapshot/object-deserializer.h"
 #include "src/snapshot/snapshot.h"
 #include "src/version.h"
 #include "src/visitors.h"
@@ -142,7 +142,6 @@ void CodeSerializer::SerializeGeneric(HeapObject* heap_object,
 void CodeSerializer::SerializeBuiltin(int builtin_index, HowToCode how_to_code,
                                       WhereToPoint where_to_point) {
   DCHECK((how_to_code == kPlain && where_to_point == kStartOfObject) ||
-         (how_to_code == kPlain && where_to_point == kInnerPointer) ||
          (how_to_code == kFromCode && where_to_point == kInnerPointer));
   DCHECK_LT(builtin_index, Builtins::builtin_count);
   DCHECK_LE(0, builtin_index);
@@ -195,24 +194,17 @@ MaybeHandle<SharedFunctionInfo> CodeSerializer::Deserialize(
     return MaybeHandle<SharedFunctionInfo>();
   }
 
-  Deserializer deserializer(&scd);
-  deserializer.AddAttachedObject(source);
-  Vector<const uint32_t> code_stub_keys = scd.CodeStubKeys();
-  for (int i = 0; i < code_stub_keys.length(); i++) {
-    deserializer.AddAttachedObject(
-        CodeStub::GetCode(isolate, code_stub_keys[i]).ToHandleChecked());
-  }
-
   // Deserialize.
-  Handle<HeapObject> as_heap_object;
-  if (!deserializer.DeserializeObject(isolate).ToHandle(&as_heap_object)) {
+  MaybeHandle<SharedFunctionInfo> maybe_result =
+      ObjectDeserializer::DeserializeSharedFunctionInfo(isolate, &scd, source);
+
+  Handle<SharedFunctionInfo> result;
+  if (!maybe_result.ToHandle(&result)) {
     // Deserializing may fail if the reservations cannot be fulfilled.
     if (FLAG_profile_deserialization) PrintF("[Deserializing failed]\n");
     return MaybeHandle<SharedFunctionInfo>();
   }
 
-  Handle<SharedFunctionInfo> result =
-      Handle<SharedFunctionInfo>::cast(as_heap_object);
   if (FLAG_profile_deserialization) {
     double ms = timer.Elapsed().InMillisecondsF();
     int length = cached_data->length();
@@ -266,34 +258,16 @@ MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
     return nothing;
   }
 
-  Deserializer deserializer(&scd, true);
-  deserializer.AddAttachedObject(isolate->native_context());
+  MaybeHandle<WasmCompiledModule> maybe_result =
+      ObjectDeserializer::DeserializeWasmCompiledModule(isolate, &scd,
+                                                        wire_bytes);
 
-  MaybeHandle<String> maybe_wire_bytes_as_string =
-      isolate->factory()->NewStringFromOneByte(wire_bytes, TENURED);
-  Handle<String> wire_bytes_as_string;
-  if (!maybe_wire_bytes_as_string.ToHandle(&wire_bytes_as_string)) {
-    return nothing;
-  }
-  deserializer.AddAttachedObject(
-      handle(SeqOneByteString::cast(*wire_bytes_as_string)));
+  Handle<WasmCompiledModule> result;
+  if (!maybe_result.ToHandle(&result)) return nothing;
 
-  Vector<const uint32_t> stub_keys = scd.CodeStubKeys();
-  for (int i = 0; i < stub_keys.length(); ++i) {
-    deserializer.AddAttachedObject(
-        CodeStub::GetCode(isolate, stub_keys[i]).ToHandleChecked());
-  }
-
-  MaybeHandle<HeapObject> obj = deserializer.DeserializeObject(isolate);
-  if (obj.is_null() || !obj.ToHandleChecked()->IsFixedArray()) return nothing;
-  // Cast without type checks, as the module wrapper is not there yet.
-  Handle<WasmCompiledModule> compiled_module(
-      static_cast<WasmCompiledModule*>(*obj.ToHandleChecked()), isolate);
-
-  WasmCompiledModule::ReinitializeAfterDeserialization(isolate,
-                                                       compiled_module);
-  DCHECK(WasmCompiledModule::IsWasmCompiledModule(*compiled_module));
-  return compiled_module;
+  WasmCompiledModule::ReinitializeAfterDeserialization(isolate, result);
+  DCHECK(WasmCompiledModule::IsWasmCompiledModule(*result));
+  return result;
 }
 
 void WasmCompiledModuleSerializer::SerializeCodeObject(

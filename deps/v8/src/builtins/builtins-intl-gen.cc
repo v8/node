@@ -18,12 +18,11 @@ class IntlBuiltinsAssembler : public CodeStubAssembler {
       : CodeStubAssembler(state) {}
 };
 
-TF_BUILTIN(StringPrototypeToLowerCaseIntl, IntlBuiltinsAssembler) {
-  Node* const maybe_string = Parameter(Descriptor::kReceiver);
+TF_BUILTIN(StringToLowerCaseIntl, IntlBuiltinsAssembler) {
+  Node* const string = Parameter(Descriptor::kString);
   Node* const context = Parameter(Descriptor::kContext);
 
-  Node* const string =
-      ToThisString(context, maybe_string, "String.prototype.toLowerCase");
+  CSA_ASSERT(this, IsString(string));
 
   Label call_c(this), return_string(this), runtime(this, Label::kDeferred);
 
@@ -44,7 +43,8 @@ TF_BUILTIN(StringPrototypeToLowerCaseIntl, IntlBuiltinsAssembler) {
 
   // For short strings, do the conversion in CSA through the lookup table.
 
-  Node* const dst = AllocateSeqOneByteString(context, length);
+  Node* const dst = AllocateSeqOneByteString(context, length, INTPTR_PARAMETERS,
+                                             kAllowLargeObjectAllocation);
 
   const int kMaxShortStringLength = 24;  // Determined empirically.
   GotoIf(IntPtrGreaterThan(length, IntPtrConstant(kMaxShortStringLength)),
@@ -64,21 +64,21 @@ TF_BUILTIN(StringPrototypeToLowerCaseIntl, IntlBuiltinsAssembler) {
     VARIABLE(var_did_change, MachineRepresentation::kWord32, Int32Constant(0));
 
     VariableList push_vars({&var_cursor, &var_did_change}, zone());
-    BuildFastLoop(
-        push_vars, start_address, end_address,
-        [=, &var_cursor, &var_did_change](Node* current) {
-          Node* c = Load(MachineType::Uint8(), current);
-          Node* lower = Load(MachineType::Uint8(), to_lower_table_addr,
+    BuildFastLoop(push_vars, start_address, end_address,
+                  [=, &var_cursor, &var_did_change](Node* current) {
+                    Node* c = Load(MachineType::Uint8(), current);
+                    Node* lower =
+                        Load(MachineType::Uint8(), to_lower_table_addr,
                              ChangeInt32ToIntPtr(c));
-          StoreNoWriteBarrier(MachineRepresentation::kWord8, dst_ptr,
-                              var_cursor.value(), lower);
+                    StoreNoWriteBarrier(MachineRepresentation::kWord8, dst_ptr,
+                                        var_cursor.value(), lower);
 
-          var_did_change.Bind(
-              Word32Or(Word32NotEqual(c, lower), var_did_change.value()));
+                    var_did_change.Bind(Word32Or(Word32NotEqual(c, lower),
+                                                 var_did_change.value()));
 
-          Increment(var_cursor);
-        },
-        kCharSize, INTPTR_PARAMETERS, IndexAdvanceMode::kPost);
+                    Increment(&var_cursor);
+                  },
+                  kCharSize, INTPTR_PARAMETERS, IndexAdvanceMode::kPost);
 
     // Return the original string if it remained unchanged in order to preserve
     // e.g. internalization and private symbols (such as the preserved object
@@ -114,10 +114,20 @@ TF_BUILTIN(StringPrototypeToLowerCaseIntl, IntlBuiltinsAssembler) {
 
   BIND(&runtime);
   {
-    Node* const result =
-        CallRuntime(Runtime::kStringToLowerCaseIntl, context, string);
+    Node* const result = CallRuntime(Runtime::kStringToLowerCaseIntl,
+                                     NoContextConstant(), string);
     Return(result);
   }
+}
+
+TF_BUILTIN(StringPrototypeToLowerCaseIntl, IntlBuiltinsAssembler) {
+  Node* const maybe_string = Parameter(Descriptor::kReceiver);
+  Node* const context = Parameter(Descriptor::kContext);
+
+  Node* const string =
+      ToThisString(context, maybe_string, "String.prototype.toLowerCase");
+
+  Return(CallBuiltin(Builtins::kStringToLowerCaseIntl, context, string));
 }
 
 }  // namespace internal

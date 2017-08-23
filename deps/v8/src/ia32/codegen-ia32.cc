@@ -13,24 +13,6 @@
 namespace v8 {
 namespace internal {
 
-
-// -------------------------------------------------------------------------
-// Platform-specific RuntimeCallHelper functions.
-
-void StubRuntimeCallHelper::BeforeCall(MacroAssembler* masm) const {
-  masm->EnterFrame(StackFrame::INTERNAL);
-  DCHECK(!masm->has_frame());
-  masm->set_has_frame(true);
-}
-
-
-void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
-  masm->LeaveFrame(StackFrame::INTERNAL);
-  DCHECK(masm->has_frame());
-  masm->set_has_frame(false);
-}
-
-
 #define __ masm.
 
 
@@ -55,7 +37,7 @@ UnaryMathFunctionWithIsolate CreateSqrtFunction(Isolate* isolate) {
   }
 
   CodeDesc desc;
-  masm.GetCode(&desc);
+  masm.GetCode(isolate, &desc);
   DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
 
   Assembler::FlushICache(isolate, buffer, actual_size);
@@ -468,7 +450,7 @@ MemMoveFunction CreateMemMoveFunction(Isolate* isolate) {
   MemMoveEmitPopAndReturn(&masm);
 
   CodeDesc desc;
-  masm.GetCode(&desc);
+  masm.GetCode(isolate, &desc);
   DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
   Assembler::FlushICache(isolate, buffer, actual_size);
   base::OS::ProtectCode(buffer, actual_size);

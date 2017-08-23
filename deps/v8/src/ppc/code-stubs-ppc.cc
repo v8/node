@@ -4,19 +4,23 @@
 
 #if V8_TARGET_ARCH_PPC
 
-#include "src/code-stubs.h"
 #include "src/api-arguments.h"
 #include "src/base/bits.h"
 #include "src/bootstrapper.h"
+#include "src/code-stubs.h"
 #include "src/codegen.h"
+#include "src/double.h"
+#include "src/frame-constants.h"
+#include "src/frames.h"
 #include "src/ic/handler-compiler.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/isolate.h"
-#include "src/ppc/code-stubs-ppc.h"
 #include "src/regexp/jsregexp.h"
 #include "src/regexp/regexp-macro-assembler.h"
 #include "src/runtime/runtime.h"
+
+#include "src/ppc/code-stubs-ppc.h"  // Cannot be the first include.
 
 namespace v8 {
 namespace internal {
@@ -39,29 +43,6 @@ static void EmitSmiNonsmiComparison(MacroAssembler* masm, Register lhs,
                                     Label* slow, bool strict);
 static void EmitStrictTwoHeapObjectCompare(MacroAssembler* masm, Register lhs,
                                            Register rhs);
-
-
-void HydrogenCodeStub::GenerateLightweightMiss(MacroAssembler* masm,
-                                               ExternalReference miss) {
-  // Update the static counter each time a new code stub is generated.
-  isolate()->counters()->code_stubs()->Increment();
-
-  CallInterfaceDescriptor descriptor = GetCallInterfaceDescriptor();
-  int param_count = descriptor.GetRegisterParameterCount();
-  {
-    // Call the runtime system in a fresh internal frame.
-    FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-    DCHECK(param_count == 0 ||
-           r3.is(descriptor.GetRegisterParameter(param_count - 1)));
-    // Push arguments
-    for (int i = 0; i < param_count; ++i) {
-      __ push(descriptor.GetRegisterParameter(i));
-    }
-    __ CallExternalReference(miss, param_count);
-  }
-
-  __ Ret();
-}
 
 
 void DoubleToIStub::Generate(MacroAssembler* masm) {
@@ -648,8 +629,8 @@ void CompareICStub::GenerateGeneric(MacroAssembler* masm) {
     {
       FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
       __ Push(cp);
-      __ Call(strict() ? isolate()->builtins()->StrictEqual()
-                       : isolate()->builtins()->Equal(),
+      __ Call(strict() ? BUILTIN_CODE(isolate(), StrictEqual)
+                       : BUILTIN_CODE(isolate(), Equal),
               RelocInfo::CODE_TARGET);
       __ Pop(cp);
     }
@@ -836,14 +817,9 @@ bool CEntryStub::NeedsImmovableCode() { return true; }
 void CodeStub::GenerateStubsAheadOfTime(Isolate* isolate) {
   CEntryStub::GenerateAheadOfTime(isolate);
   StoreBufferOverflowStub::GenerateFixedRegStubsAheadOfTime(isolate);
-  StubFailureTrampolineStub::GenerateAheadOfTime(isolate);
   CommonArrayConstructorStub::GenerateStubsAheadOfTime(isolate);
-  CreateAllocationSiteStub::GenerateAheadOfTime(isolate);
-  CreateWeakCellStub::GenerateAheadOfTime(isolate);
-  BinaryOpICStub::GenerateAheadOfTime(isolate);
   StoreRegistersStateStub::GenerateAheadOfTime(isolate);
   RestoreRegistersStateStub::GenerateAheadOfTime(isolate);
-  BinaryOpICWithAllocationSiteStub::GenerateAheadOfTime(isolate);
   StoreFastElementStub::GenerateAheadOfTime(isolate);
 }
 
@@ -871,6 +847,8 @@ void CodeStub::GenerateFPStubs(Isolate* isolate) {
 void CEntryStub::GenerateAheadOfTime(Isolate* isolate) {
   CEntryStub stub(isolate, 1, kDontSaveFPRegs);
   stub.GetCode();
+  CEntryStub save_doubles(isolate, 1, kSaveFPRegs);
+  save_doubles.GetCode();
 }
 
 
@@ -977,7 +955,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   if (FLAG_debug_code) {
     Label okay;
     ExternalReference pending_exception_address(
-        Isolate::kPendingExceptionAddress, isolate());
+        IsolateAddressId::kPendingExceptionAddress, isolate());
 
     __ mov(r6, Operand(pending_exception_address));
     __ LoadP(r6, MemOperand(r6));
@@ -1007,15 +985,15 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   __ bind(&exception_returned);
 
   ExternalReference pending_handler_context_address(
-      Isolate::kPendingHandlerContextAddress, isolate());
+      IsolateAddressId::kPendingHandlerContextAddress, isolate());
   ExternalReference pending_handler_code_address(
-      Isolate::kPendingHandlerCodeAddress, isolate());
+      IsolateAddressId::kPendingHandlerCodeAddress, isolate());
   ExternalReference pending_handler_offset_address(
-      Isolate::kPendingHandlerOffsetAddress, isolate());
+      IsolateAddressId::kPendingHandlerOffsetAddress, isolate());
   ExternalReference pending_handler_fp_address(
-      Isolate::kPendingHandlerFPAddress, isolate());
+      IsolateAddressId::kPendingHandlerFPAddress, isolate());
   ExternalReference pending_handler_sp_address(
-      Isolate::kPendingHandlerSPAddress, isolate());
+      IsolateAddressId::kPendingHandlerSPAddress, isolate());
 
   // Ask the runtime for help to determine the handler. This will set r3 to
   // contain the current pending exception, don't clobber it.
@@ -1086,7 +1064,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // Save callee-saved double registers.
   __ MultiPushDoubles(kCalleeSavedDoubles);
   // Set up the reserved register for 0.0.
-  __ LoadDoubleLiteral(kDoubleRegZero, 0.0, r0);
+  __ LoadDoubleLiteral(kDoubleRegZero, Double(0.0), r0);
 
   // Push a frame with special values setup to mark it as an entry frame.
   // r3: code entry
@@ -1105,7 +1083,8 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ push(r0);
   __ push(r0);
   // Save copies of the top frame descriptor on the stack.
-  __ mov(r8, Operand(ExternalReference(Isolate::kCEntryFPAddress, isolate())));
+  __ mov(r8, Operand(ExternalReference(IsolateAddressId::kCEntryFPAddress,
+                                       isolate())));
   __ LoadP(r0, MemOperand(r8));
   __ push(r0);
 
@@ -1114,7 +1093,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
 
   // If this is the outermost JS call, set js_entry_sp value.
   Label non_outermost_js;
-  ExternalReference js_entry_sp(Isolate::kJSEntrySPAddress, isolate());
+  ExternalReference js_entry_sp(IsolateAddressId::kJSEntrySPAddress, isolate());
   __ mov(r8, Operand(ExternalReference(js_entry_sp)));
   __ LoadP(r9, MemOperand(r8));
   __ cmpi(r9, Operand::Zero());
@@ -1138,8 +1117,8 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // field in the JSEnv and return a failure sentinel.  Coming in here the
   // fp will be invalid because the PushStackHandler below sets it to 0 to
   // signal the existence of the JSEntry frame.
-  __ mov(ip, Operand(ExternalReference(Isolate::kPendingExceptionAddress,
-                                       isolate())));
+  __ mov(ip, Operand(ExternalReference(
+                 IsolateAddressId::kPendingExceptionAddress, isolate())));
 
   __ StoreP(r3, MemOperand(ip));
   __ LoadRoot(r3, Heap::kExceptionRootIndex);
@@ -1164,21 +1143,12 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // r5: receiver
   // r6: argc
   // r7: argv
-  if (type() == StackFrame::ENTRY_CONSTRUCT) {
-    ExternalReference construct_entry(Builtins::kJSConstructEntryTrampoline,
-                                      isolate());
-    __ mov(ip, Operand(construct_entry));
+  if (type() == StackFrame::CONSTRUCT_ENTRY) {
+    __ Call(BUILTIN_CODE(isolate(), JSConstructEntryTrampoline),
+            RelocInfo::CODE_TARGET);
   } else {
-    ExternalReference entry(Builtins::kJSEntryTrampoline, isolate());
-    __ mov(ip, Operand(entry));
+    __ Call(BUILTIN_CODE(isolate(), JSEntryTrampoline), RelocInfo::CODE_TARGET);
   }
-  __ LoadP(ip, MemOperand(ip));  // deref address
-
-  // Branch and link to JSEntryTrampoline.
-  // the address points to the start of the code object, skip the header
-  __ addi(ip, ip, Operand(Code::kHeaderSize - kHeapObjectTag));
-  __ mtctr(ip);
-  __ bctrl();  // make the call
 
   // Unlink this frame from the handler chain.
   __ PopStackHandler();
@@ -1196,7 +1166,8 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
 
   // Restore the top frame descriptors from the stack.
   __ pop(r6);
-  __ mov(ip, Operand(ExternalReference(Isolate::kCEntryFPAddress, isolate())));
+  __ mov(ip, Operand(ExternalReference(IsolateAddressId::kCEntryFPAddress,
+                                       isolate())));
   __ StoreP(r6, MemOperand(ip));
 
   // Reset the stack to the callee saved registers.
@@ -1212,264 +1183,6 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ LoadP(r0, MemOperand(sp, kStackFrameLRSlot * kPointerSize));
   __ mtlr(r0);
   __ blr();
-}
-
-
-static void CallStubInRecordCallTarget(MacroAssembler* masm, CodeStub* stub) {
-  // r3 : number of arguments to the construct function
-  // r4 : the function to call
-  // r5 : feedback vector
-  // r6 : slot in feedback vector (Smi)
-  FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-
-  // Number-of-arguments register must be smi-tagged to call out.
-  __ SmiTag(r3);
-  __ Push(r6, r5, r4, r3);
-  __ Push(cp);
-
-  __ CallStub(stub);
-
-  __ Pop(cp);
-  __ Pop(r6, r5, r4, r3);
-  __ SmiUntag(r3);
-}
-
-
-static void GenerateRecordCallTarget(MacroAssembler* masm) {
-  // Cache the called function in a feedback vector slot.  Cache states
-  // are uninitialized, monomorphic (indicated by a JSFunction), and
-  // megamorphic.
-  // r3 : number of arguments to the construct function
-  // r4 : the function to call
-  // r5 : feedback vector
-  // r6 : slot in feedback vector (Smi)
-  Label initialize, done, miss, megamorphic, not_array_function;
-
-  DCHECK_EQ(*FeedbackVector::MegamorphicSentinel(masm->isolate()),
-            masm->isolate()->heap()->megamorphic_symbol());
-  DCHECK_EQ(*FeedbackVector::UninitializedSentinel(masm->isolate()),
-            masm->isolate()->heap()->uninitialized_symbol());
-
-  const int count_offset = FixedArray::kHeaderSize + kPointerSize;
-
-  // Load the cache state into r8.
-  __ SmiToPtrArrayOffset(r8, r6);
-  __ add(r8, r5, r8);
-  __ LoadP(r8, FieldMemOperand(r8, FixedArray::kHeaderSize));
-
-  // A monomorphic cache hit or an already megamorphic state: invoke the
-  // function without changing the state.
-  // We don't know if r8 is a WeakCell or a Symbol, but it's harmless to read at
-  // this position in a symbol (see static asserts in feedback-vector.h).
-  Label check_allocation_site;
-  Register feedback_map = r9;
-  Register weak_value = r10;
-  __ LoadP(weak_value, FieldMemOperand(r8, WeakCell::kValueOffset));
-  __ cmp(r4, weak_value);
-  __ beq(&done);
-  __ CompareRoot(r8, Heap::kmegamorphic_symbolRootIndex);
-  __ beq(&done);
-  __ LoadP(feedback_map, FieldMemOperand(r8, HeapObject::kMapOffset));
-  __ CompareRoot(feedback_map, Heap::kWeakCellMapRootIndex);
-  __ bne(&check_allocation_site);
-
-  // If the weak cell is cleared, we have a new chance to become monomorphic.
-  __ JumpIfSmi(weak_value, &initialize);
-  __ b(&megamorphic);
-
-  __ bind(&check_allocation_site);
-  // If we came here, we need to see if we are the array function.
-  // If we didn't have a matching function, and we didn't find the megamorph
-  // sentinel, then we have in the slot either some other function or an
-  // AllocationSite.
-  __ CompareRoot(feedback_map, Heap::kAllocationSiteMapRootIndex);
-  __ bne(&miss);
-
-  // Make sure the function is the Array() function
-  __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r8);
-  __ cmp(r4, r8);
-  __ bne(&megamorphic);
-  __ b(&done);
-
-  __ bind(&miss);
-
-  // A monomorphic miss (i.e, here the cache is not uninitialized) goes
-  // megamorphic.
-  __ CompareRoot(r8, Heap::kuninitialized_symbolRootIndex);
-  __ beq(&initialize);
-  // MegamorphicSentinel is an immortal immovable object (undefined) so no
-  // write-barrier is needed.
-  __ bind(&megamorphic);
-  __ SmiToPtrArrayOffset(r8, r6);
-  __ add(r8, r5, r8);
-  __ LoadRoot(ip, Heap::kmegamorphic_symbolRootIndex);
-  __ StoreP(ip, FieldMemOperand(r8, FixedArray::kHeaderSize), r0);
-  __ jmp(&done);
-
-  // An uninitialized cache is patched with the function
-  __ bind(&initialize);
-
-  // Make sure the function is the Array() function.
-  __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, r8);
-  __ cmp(r4, r8);
-  __ bne(&not_array_function);
-
-  // The target function is the Array constructor,
-  // Create an AllocationSite if we don't already have it, store it in the
-  // slot.
-  CreateAllocationSiteStub create_stub(masm->isolate());
-  CallStubInRecordCallTarget(masm, &create_stub);
-  __ b(&done);
-
-  __ bind(&not_array_function);
-
-  CreateWeakCellStub weak_cell_stub(masm->isolate());
-  CallStubInRecordCallTarget(masm, &weak_cell_stub);
-
-  __ bind(&done);
-
-  // Increment the call count for all function calls.
-  __ SmiToPtrArrayOffset(r8, r6);
-  __ add(r8, r5, r8);
-
-  __ LoadP(r7, FieldMemOperand(r8, count_offset));
-  __ AddSmiLiteral(r7, r7, Smi::FromInt(1), r0);
-  __ StoreP(r7, FieldMemOperand(r8, count_offset), r0);
-}
-
-
-void CallConstructStub::Generate(MacroAssembler* masm) {
-  // r3 : number of arguments
-  // r4 : the function to call
-  // r5 : feedback vector
-  // r6 : slot in feedback vector (Smi, for RecordCallTarget)
-
-  Label non_function;
-  // Check that the function is not a smi.
-  __ JumpIfSmi(r4, &non_function);
-  // Check that the function is a JSFunction.
-  __ CompareObjectType(r4, r8, r8, JS_FUNCTION_TYPE);
-  __ bne(&non_function);
-
-  GenerateRecordCallTarget(masm);
-
-  __ SmiToPtrArrayOffset(r8, r6);
-  __ add(r8, r5, r8);
-  // Put the AllocationSite from the feedback vector into r5, or undefined.
-  __ LoadP(r5, FieldMemOperand(r8, FixedArray::kHeaderSize));
-  __ LoadP(r8, FieldMemOperand(r5, AllocationSite::kMapOffset));
-  __ CompareRoot(r8, Heap::kAllocationSiteMapRootIndex);
-  if (CpuFeatures::IsSupported(ISELECT)) {
-    __ LoadRoot(r8, Heap::kUndefinedValueRootIndex);
-    __ isel(eq, r5, r5, r8);
-  } else {
-    Label feedback_register_initialized;
-    __ beq(&feedback_register_initialized);
-    __ LoadRoot(r5, Heap::kUndefinedValueRootIndex);
-    __ bind(&feedback_register_initialized);
-  }
-
-  __ AssertUndefinedOrAllocationSite(r5, r8);
-
-  // Pass function as new target.
-  __ mr(r6, r4);
-
-  // Tail call to the function-specific construct stub (still in the caller
-  // context at this point).
-  __ LoadP(r7, FieldMemOperand(r4, JSFunction::kSharedFunctionInfoOffset));
-  __ LoadP(r7, FieldMemOperand(r7, SharedFunctionInfo::kConstructStubOffset));
-  __ addi(ip, r7, Operand(Code::kHeaderSize - kHeapObjectTag));
-  __ JumpToJSEntry(ip);
-
-  __ bind(&non_function);
-  __ mr(r6, r4);
-  __ Jump(isolate()->builtins()->Construct(), RelocInfo::CODE_TARGET);
-}
-
-
-// StringCharCodeAtGenerator
-void StringCharCodeAtGenerator::GenerateFast(MacroAssembler* masm) {
-  // If the receiver is a smi trigger the non-string case.
-  if (check_mode_ == RECEIVER_IS_UNKNOWN) {
-    __ JumpIfSmi(object_, receiver_not_string_);
-
-    // Fetch the instance type of the receiver into result register.
-    __ LoadP(result_, FieldMemOperand(object_, HeapObject::kMapOffset));
-    __ lbz(result_, FieldMemOperand(result_, Map::kInstanceTypeOffset));
-    // If the receiver is not a string trigger the non-string case.
-    __ andi(r0, result_, Operand(kIsNotStringMask));
-    __ bne(receiver_not_string_, cr0);
-  }
-
-  // If the index is non-smi trigger the non-smi case.
-  __ JumpIfNotSmi(index_, &index_not_smi_);
-  __ bind(&got_smi_index_);
-
-  // Check for index out of range.
-  __ LoadP(ip, FieldMemOperand(object_, String::kLengthOffset));
-  __ cmpl(ip, index_);
-  __ ble(index_out_of_range_);
-
-  __ SmiUntag(index_);
-
-  StringCharLoadGenerator::Generate(masm, object_, index_, result_,
-                                    &call_runtime_);
-
-  __ SmiTag(result_);
-  __ bind(&exit_);
-}
-
-
-void StringCharCodeAtGenerator::GenerateSlow(
-    MacroAssembler* masm, EmbedMode embed_mode,
-    const RuntimeCallHelper& call_helper) {
-  __ Abort(kUnexpectedFallthroughToCharCodeAtSlowCase);
-
-  // Index is not a smi.
-  __ bind(&index_not_smi_);
-  // If index is a heap number, try converting it to an integer.
-  __ CheckMap(index_, result_, Heap::kHeapNumberMapRootIndex, index_not_number_,
-              DONT_DO_SMI_CHECK);
-  call_helper.BeforeCall(masm);
-  if (embed_mode == PART_OF_IC_HANDLER) {
-    __ Push(LoadWithVectorDescriptor::VectorRegister(),
-            LoadWithVectorDescriptor::SlotRegister(), object_, index_);
-  } else {
-    // index_ is consumed by runtime conversion function.
-    __ Push(object_, index_);
-  }
-  __ CallRuntime(Runtime::kNumberToSmi);
-  // Save the conversion result before the pop instructions below
-  // have a chance to overwrite it.
-  __ Move(index_, r3);
-  if (embed_mode == PART_OF_IC_HANDLER) {
-    __ Pop(LoadWithVectorDescriptor::VectorRegister(),
-           LoadWithVectorDescriptor::SlotRegister(), object_);
-  } else {
-    __ pop(object_);
-  }
-  // Reload the instance type.
-  __ LoadP(result_, FieldMemOperand(object_, HeapObject::kMapOffset));
-  __ lbz(result_, FieldMemOperand(result_, Map::kInstanceTypeOffset));
-  call_helper.AfterCall(masm);
-  // If index is still not a smi, it must be out of range.
-  __ JumpIfNotSmi(index_, index_out_of_range_);
-  // Otherwise, return to the fast path.
-  __ b(&got_smi_index_);
-
-  // Call runtime. We get here when the receiver is a string and the
-  // index is a number, but the code of getting the actual character
-  // is too complex (e.g., when the string needs to be flattened).
-  __ bind(&call_runtime_);
-  call_helper.BeforeCall(masm);
-  __ SmiTag(index_);
-  __ Push(object_, index_);
-  __ CallRuntime(Runtime::kStringCharCodeAtRT);
-  __ Move(result_, r3);
-  call_helper.AfterCall(masm);
-  __ b(&exit_);
-
-  __ Abort(kUnexpectedFallthroughFromCharCodeAtSlowCase);
 }
 
 void StringHelper::GenerateFlatOneByteStringEquals(MacroAssembler* masm,
@@ -1588,37 +1301,6 @@ void StringHelper::GenerateOneByteCharsCompareLoop(
   __ addi(index, index, Operand(1));
   __ cmpi(index, Operand::Zero());
   __ bne(&loop);
-}
-
-
-void BinaryOpICWithAllocationSiteStub::Generate(MacroAssembler* masm) {
-  // ----------- S t a t e -------------
-  //  -- r4    : left
-  //  -- r3    : right
-  //  -- lr    : return address
-  // -----------------------------------
-
-  // Load r5 with the allocation site.  We stick an undefined dummy value here
-  // and replace it with the real allocation site later when we instantiate this
-  // stub in BinaryOpICWithAllocationSiteStub::GetCodeCopyFromTemplate().
-  __ Move(r5, isolate()->factory()->undefined_value());
-
-  // Make sure that we actually patched the allocation site.
-  if (FLAG_debug_code) {
-    __ TestIfSmi(r5, r0);
-    __ Assert(ne, kExpectedAllocationSite, cr0);
-    __ push(r5);
-    __ LoadP(r5, FieldMemOperand(r5, HeapObject::kMapOffset));
-    __ LoadRoot(ip, Heap::kAllocationSiteMapRootIndex);
-    __ cmp(r5, ip);
-    __ pop(r5);
-    __ Assert(eq, kExpectedAllocationSite);
-  }
-
-  // Tail call into the stub that handles binary operations with allocation
-  // sites.
-  BinaryOpWithAllocationSiteStub stub(isolate(), state());
-  __ TailCallStub(&stub);
 }
 
 
@@ -2083,7 +1765,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
 
     // Restore the properties.
     __ LoadP(properties,
-             FieldMemOperand(receiver, JSObject::kPropertiesOffset));
+             FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   }
 
   const int spill_mask = (r0.bit() | r9.bit() | r8.bit() | r7.bit() | r6.bit() |
@@ -2092,7 +1774,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
   __ mflr(r0);
   __ MultiPush(spill_mask);
 
-  __ LoadP(r3, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
+  __ LoadP(r3, FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   __ mov(r4, Operand(Handle<Name>(name)));
   NameDictionaryLookupStub stub(masm->isolate(), NEGATIVE_LOOKUP);
   __ CallStub(&stub);
@@ -2302,9 +1984,10 @@ void RecordWriteStub::InformIncrementalMarker(MacroAssembler* masm) {
 void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
     MacroAssembler* masm, OnNoNeedToInformIncrementalMarker on_no_need,
     Mode mode) {
-  Label on_black;
   Label need_incremental;
   Label need_incremental_pop_scratch;
+#ifndef V8_CONCURRENT_MARKING
+  Label on_black;
 
   // Let's look at the color of the object:  If it is not black we don't have
   // to inform the incremental marker.
@@ -2319,6 +2002,7 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
   }
 
   __ bind(&on_black);
+#endif
 
   // Get the value from the slot.
   __ LoadP(regs_.scratch0(), MemOperand(regs_.address(), 0));
@@ -2365,20 +2049,21 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
   // Fall through when we need to inform the incremental marker.
 }
 
-
-void StubFailureTrampolineStub::Generate(MacroAssembler* masm) {
-  CEntryStub ces(isolate(), 1, kSaveFPRegs);
-  __ Call(ces.GetCode(), RelocInfo::CODE_TARGET);
-  int parameter_count_offset =
-      StubFailureTrampolineFrameConstants::kArgumentsLengthOffset;
-  __ LoadP(r4, MemOperand(fp, parameter_count_offset));
-  if (function_mode() == JS_FUNCTION_STUB_MODE) {
-    __ addi(r4, r4, Operand(1));
+void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
+                                                     Zone* zone) {
+  if (tasm->isolate()->function_entry_hook() != NULL) {
+    PredictableCodeSizeScope predictable(tasm,
+#if V8_TARGET_ARCH_PPC64
+                                         14 * Assembler::kInstrSize);
+#else
+                                         11 * Assembler::kInstrSize);
+#endif
+    tasm->mflr(r0);
+    tasm->Push(r0, ip);
+    tasm->CallStubDelayed(new (zone) ProfileEntryHookStub(nullptr));
+    tasm->Pop(r0, ip);
+    tasm->mtlr(r0);
   }
-  masm->LeaveFrame(StackFrame::STUB_FAILURE_TRAMPOLINE);
-  __ slwi(r4, r4, Operand(kPointerSizeLog2));
-  __ add(sp, sp, r4);
-  __ Ret();
 }
 
 void ProfileEntryHookStub::MaybeCallEntryHook(MacroAssembler* masm) {
@@ -2426,7 +2111,7 @@ void ProfileEntryHookStub::Generate(MacroAssembler* masm) {
   int frame_alignment = masm->ActivationFrameAlignment();
   if (frame_alignment > kPointerSize) {
     __ mr(r15, sp);
-    DCHECK(base::bits::IsPowerOfTwo32(frame_alignment));
+    DCHECK(base::bits::IsPowerOfTwo(frame_alignment));
     __ ClearRightImm(sp, sp, Operand(WhichPowerOf2(frame_alignment)));
   }
 
@@ -2503,24 +2188,12 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
   // r3 - number of arguments
   // r4 - constructor?
   // sp[0] - last argument
-  Label normal_sequence;
-  if (mode == DONT_OVERRIDE) {
-    STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
-    STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
-    STATIC_ASSERT(FAST_ELEMENTS == 2);
-    STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
-    STATIC_ASSERT(FAST_DOUBLE_ELEMENTS == 4);
-    STATIC_ASSERT(FAST_HOLEY_DOUBLE_ELEMENTS == 5);
-
-    // is the low bit set? If so, we are holey and that is good.
-    __ andi(r0, r6, Operand(1));
-    __ bne(&normal_sequence, cr0);
-  }
-
-  // look at the first argument
-  __ LoadP(r8, MemOperand(sp, 0));
-  __ cmpi(r8, Operand::Zero());
-  __ beq(&normal_sequence);
+  STATIC_ASSERT(PACKED_SMI_ELEMENTS == 0);
+  STATIC_ASSERT(HOLEY_SMI_ELEMENTS == 1);
+  STATIC_ASSERT(PACKED_ELEMENTS == 2);
+  STATIC_ASSERT(HOLEY_ELEMENTS == 3);
+  STATIC_ASSERT(PACKED_DOUBLE_ELEMENTS == 4);
+  STATIC_ASSERT(HOLEY_DOUBLE_ELEMENTS == 5);
 
   if (mode == DISABLE_ALLOCATION_SITES) {
     ElementsKind initial = GetInitialFastElementsKind();
@@ -2529,12 +2202,12 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
     ArraySingleArgumentConstructorStub stub_holey(
         masm->isolate(), holey_initial, DISABLE_ALLOCATION_SITES);
     __ TailCallStub(&stub_holey);
-
-    __ bind(&normal_sequence);
-    ArraySingleArgumentConstructorStub stub(masm->isolate(), initial,
-                                            DISABLE_ALLOCATION_SITES);
-    __ TailCallStub(&stub);
   } else if (mode == DONT_OVERRIDE) {
+    // is the low bit set? If so, we are holey and that is good.
+    Label normal_sequence;
+    __ andi(r0, r6, Operand(1));
+    __ bne(&normal_sequence, cr0);
+
     // We are going to create a holey array, but our kind is non-holey.
     // Fix kind and retry (only if we have an allocation site in the slot).
     __ addi(r6, r6, Operand(1));
@@ -2549,10 +2222,13 @@ static void CreateArrayDispatchOneArgument(MacroAssembler* masm,
     // in the AllocationSite::transition_info field because elements kind is
     // restricted to a portion of the field...upper bits need to be left alone.
     STATIC_ASSERT(AllocationSite::ElementsKindBits::kShift == 0);
-    __ LoadP(r7, FieldMemOperand(r5, AllocationSite::kTransitionInfoOffset));
+    __ LoadP(r7, FieldMemOperand(
+                     r5, AllocationSite::kTransitionInfoOrBoilerplateOffset));
     __ AddSmiLiteral(r7, r7, Smi::FromInt(kFastElementsKindPackedToHoley), r0);
-    __ StoreP(r7, FieldMemOperand(r5, AllocationSite::kTransitionInfoOffset),
-              r0);
+    __ StoreP(
+        r7,
+        FieldMemOperand(r5, AllocationSite::kTransitionInfoOrBoilerplateOffset),
+        r0);
 
     __ bind(&normal_sequence);
     int last_index =
@@ -2581,7 +2257,7 @@ static void ArrayConstructorStubAheadOfTimeHelper(Isolate* isolate) {
     ElementsKind kind = GetFastElementsKindFromSequenceIndex(i);
     T stub(isolate, kind);
     stub.GetCode();
-    if (AllocationSite::GetMode(kind) != DONT_TRACK_ALLOCATION_SITE) {
+    if (AllocationSite::ShouldTrack(kind)) {
       T stub1(isolate, kind, DISABLE_ALLOCATION_SITES);
       stub1.GetCode();
     }
@@ -2594,7 +2270,7 @@ void CommonArrayConstructorStub::GenerateStubsAheadOfTime(Isolate* isolate) {
       isolate);
   ArrayNArgumentsConstructorStub stub(isolate);
   stub.GetCode();
-  ElementsKind kinds[2] = {FAST_ELEMENTS, FAST_HOLEY_ELEMENTS};
+  ElementsKind kinds[2] = {PACKED_ELEMENTS, HOLEY_ELEMENTS};
   for (int i = 0; i < 2; i++) {
     // For internal arrays we only need a few things
     InternalArrayNoArgumentConstructorStub stubh1(isolate, kinds[i]);
@@ -2661,7 +2337,8 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
   __ CompareRoot(r5, Heap::kUndefinedValueRootIndex);
   __ beq(&no_info);
 
-  __ LoadP(r6, FieldMemOperand(r5, AllocationSite::kTransitionInfoOffset));
+  __ LoadP(r6, FieldMemOperand(
+                   r5, AllocationSite::kTransitionInfoOrBoilerplateOffset));
   __ SmiUntag(r6);
   STATIC_ASSERT(AllocationSite::ElementsKindBits::kShift == 0);
   __ And(r6, r6, Operand(AllocationSite::ElementsKindBits::kMask));
@@ -2735,20 +2412,20 @@ void InternalArrayConstructorStub::Generate(MacroAssembler* masm) {
 
   if (FLAG_debug_code) {
     Label done;
-    __ cmpi(r6, Operand(FAST_ELEMENTS));
+    __ cmpi(r6, Operand(PACKED_ELEMENTS));
     __ beq(&done);
-    __ cmpi(r6, Operand(FAST_HOLEY_ELEMENTS));
+    __ cmpi(r6, Operand(HOLEY_ELEMENTS));
     __ Assert(eq, kInvalidElementsKindForInternalArrayOrInternalPackedArray);
     __ bind(&done);
   }
 
   Label fast_elements_case;
-  __ cmpi(r6, Operand(FAST_ELEMENTS));
+  __ cmpi(r6, Operand(PACKED_ELEMENTS));
   __ beq(&fast_elements_case);
-  GenerateCase(masm, FAST_HOLEY_ELEMENTS);
+  GenerateCase(masm, HOLEY_ELEMENTS);
 
   __ bind(&fast_elements_case);
-  GenerateCase(masm, FAST_ELEMENTS);
+  GenerateCase(masm, PACKED_ELEMENTS);
 }
 
 static int AddressOffset(ExternalReference ref0, ExternalReference ref1) {

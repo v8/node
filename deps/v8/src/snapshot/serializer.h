@@ -5,6 +5,8 @@
 #ifndef V8_SNAPSHOT_SERIALIZER_H_
 #define V8_SNAPSHOT_SERIALIZER_H_
 
+#include <map>
+
 #include "src/isolate.h"
 #include "src/log.h"
 #include "src/objects.h"
@@ -156,6 +158,8 @@ class Serializer : public SerializerDeserializer {
   virtual void SerializeObject(HeapObject* o, HowToCode how_to_code,
                                WhereToPoint where_to_point, int skip) = 0;
 
+  virtual bool MustBeDeferred(HeapObject* object);
+
   void VisitRootPointers(Root root, Object** start, Object** end) override;
 
   void PutRoot(int index, HeapObject* object, HowToCode how, WhereToPoint where,
@@ -186,9 +190,8 @@ class Serializer : public SerializerDeserializer {
     }
   }
 
-  bool BackReferenceIsAlreadyAllocated(SerializerReference back_reference);
-
   // This will return the space for an object.
+  SerializerReference AllocateOffHeapBackingStore();
   SerializerReference AllocateLargeObject(int size);
   SerializerReference AllocateMap();
   SerializerReference Allocate(AllocationSpace space, int size);
@@ -222,6 +225,14 @@ class Serializer : public SerializerDeserializer {
 
   void OutputStatistics(const char* name);
 
+#ifdef DEBUG
+  void PushStack(HeapObject* o) { stack_.Add(o); }
+  void PopStack() { stack_.RemoveLast(); }
+  void PrintStack();
+
+  bool BackReferenceIsAlreadyAllocated(SerializerReference back_reference);
+#endif  // DEBUG
+
   Isolate* isolate_;
 
   SnapshotByteSink sink_;
@@ -253,6 +264,13 @@ class Serializer : public SerializerDeserializer {
   uint32_t large_objects_total_size_;
   uint32_t seen_large_objects_index_;
 
+  // Used to keep track of the off-heap backing stores used by TypedArrays/
+  // ArrayBuffers. Note that the index begins at 1 and not 0, because when a
+  // TypedArray has an on-heap backing store, the backing_store pointer in the
+  // corresponding ArrayBuffer will be null, which makes it indistinguishable
+  // from index 0.
+  uint32_t seen_backing_stores_index_;
+
   List<byte> code_buffer_;
 
   // To handle stack overflow.
@@ -263,6 +281,10 @@ class Serializer : public SerializerDeserializer {
   int* instance_type_count_;
   size_t* instance_type_size_;
 #endif  // OBJECT_PRINT
+
+#ifdef DEBUG
+  List<HeapObject*> stack_;
+#endif  // DEBUG
 
   DISALLOW_COPY_AND_ASSIGN(Serializer);
 };
@@ -277,8 +299,16 @@ class Serializer::ObjectSerializer : public ObjectVisitor {
         sink_(sink),
         reference_representation_(how_to_code + where_to_point),
         bytes_processed_so_far_(0),
-        code_has_been_output_(false) {}
-  ~ObjectSerializer() override {}
+        code_has_been_output_(false) {
+#ifdef DEBUG
+    serializer_->PushStack(obj);
+#endif  // DEBUG
+  }
+  ~ObjectSerializer() override {
+#ifdef DEBUG
+    serializer_->PopStack();
+#endif  // DEBUG
+  }
   void Serialize();
   void SerializeContent();
   void SerializeDeferred();
@@ -288,8 +318,6 @@ class Serializer::ObjectSerializer : public ObjectVisitor {
   void VisitExternalReference(Code* host, RelocInfo* rinfo) override;
   void VisitInternalReference(Code* host, RelocInfo* rinfo) override;
   void VisitCodeTarget(Code* host, RelocInfo* target) override;
-  void VisitCodeEntry(JSFunction* host, Address entry_address) override;
-  void VisitCellPointer(Code* host, RelocInfo* rinfo) override;
   void VisitRuntimeEntry(Code* host, RelocInfo* reloc) override;
 
  private:
@@ -304,6 +332,10 @@ class Serializer::ObjectSerializer : public ObjectVisitor {
   // bytes to skip instead of performing a skip instruction, in case the skip
   // can be merged into the next instruction.
   int OutputRawData(Address up_to, ReturnSkip return_skip = kIgnoringReturn);
+  int32_t SerializeBackingStore(void* backing_store, int32_t byte_length);
+  void FixupIfNeutered();
+  void SerializeJSArrayBuffer();
+  void SerializeFixedTypedArray();
   void SerializeExternalString();
   void SerializeExternalStringAsSequentialString();
 
@@ -312,6 +344,7 @@ class Serializer::ObjectSerializer : public ObjectVisitor {
   Serializer* serializer_;
   HeapObject* object_;
   SnapshotByteSink* sink_;
+  std::map<void*, Smi*> backing_stores;
   int reference_representation_;
   int bytes_processed_so_far_;
   bool code_has_been_output_;

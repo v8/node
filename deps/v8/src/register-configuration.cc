@@ -64,19 +64,14 @@ STATIC_ASSERT(RegisterConfiguration::kMaxFPRegisters >=
 STATIC_ASSERT(RegisterConfiguration::kMaxFPRegisters >=
               Simd128Register::kMaxNumRegisters);
 
-enum CompilerSelector { CRANKSHAFT, TURBOFAN };
-
 class ArchDefaultRegisterConfiguration : public RegisterConfiguration {
  public:
-  explicit ArchDefaultRegisterConfiguration(CompilerSelector compiler)
+  ArchDefaultRegisterConfiguration()
       : RegisterConfiguration(
             Register::kNumRegisters, DoubleRegister::kMaxNumRegisters,
 #if V8_TARGET_ARCH_IA32
             kMaxAllocatableGeneralRegisterCount,
             kMaxAllocatableDoubleRegisterCount,
-#elif V8_TARGET_ARCH_X87
-            kMaxAllocatableGeneralRegisterCount,
-            compiler == TURBOFAN ? 1 : kMaxAllocatableDoubleRegisterCount,
 #elif V8_TARGET_ARCH_X64
             kMaxAllocatableGeneralRegisterCount,
             kMaxAllocatableDoubleRegisterCount,
@@ -117,29 +112,20 @@ class ArchDefaultRegisterConfiguration : public RegisterConfiguration {
   }
 };
 
-template <CompilerSelector compiler>
 struct RegisterConfigurationInitializer {
   static void Construct(ArchDefaultRegisterConfiguration* config) {
-    new (config) ArchDefaultRegisterConfiguration(compiler);
+    new (config) ArchDefaultRegisterConfiguration();
   }
 };
 
 static base::LazyInstance<ArchDefaultRegisterConfiguration,
-                          RegisterConfigurationInitializer<CRANKSHAFT>>::type
-    kDefaultRegisterConfigurationForCrankshaft = LAZY_INSTANCE_INITIALIZER;
-
-static base::LazyInstance<ArchDefaultRegisterConfiguration,
-                          RegisterConfigurationInitializer<TURBOFAN>>::type
-    kDefaultRegisterConfigurationForTurboFan = LAZY_INSTANCE_INITIALIZER;
+                          RegisterConfigurationInitializer>::type
+    kDefaultRegisterConfiguration = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
-const RegisterConfiguration* RegisterConfiguration::Crankshaft() {
-  return &kDefaultRegisterConfigurationForCrankshaft.Get();
-}
-
-const RegisterConfiguration* RegisterConfiguration::Turbofan() {
-  return &kDefaultRegisterConfigurationForTurboFan.Get();
+const RegisterConfiguration* RegisterConfiguration::Default() {
+  return &kDefaultRegisterConfiguration.Get();
 }
 
 RegisterConfiguration::RegisterConfiguration(
@@ -268,8 +254,6 @@ bool RegisterConfiguration::AreAliases(MachineRepresentation rep, int index,
   int shift = other_rep_int - rep_int;
   return index >> shift == other_index;
 }
-
-#undef REGISTER_COUNT
 
 }  // namespace internal
 }  // namespace v8

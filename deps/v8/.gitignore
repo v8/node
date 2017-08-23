@@ -32,9 +32,11 @@
 .project
 .pydevproject
 .settings
+.vscode
 /_*
 /build
 /buildtools
+/gypfiles/.gold_plugin
 /gypfiles/win_toolchain.json
 /hydrogen.cfg
 /obj
@@ -47,8 +49,6 @@
 /test/benchmarks/data
 /test/fuzzer/wasm_corpus
 /test/fuzzer/wasm_corpus.tar.gz
-/test/fuzzer/wasm_asmjs_corpus
-/test/fuzzer/wasm_asmjs_corpus.tar.gz
 /test/mozilla/data
 /test/promises-aplus/promises-tests
 /test/promises-aplus/promises-tests.tar.gz
@@ -69,6 +69,8 @@
 /third_party/*
 !/third_party/binutils
 !/third_party/inspector_protocol
+!/third_party/jinja2
+!/third_party/markupsafe
 /tools/clang
 /tools/gcmole/gcmole-tools
 /tools/gcmole/gcmole-tools.tar.gz
@@ -104,5 +106,3 @@ turbo*.cfg
 turbo*.dot
 turbo*.json
 v8.ignition_dispatches_table.json
-!/third_party/jinja2
-!/third_party/markupsafe
