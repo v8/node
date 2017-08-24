@@ -931,9 +931,7 @@ class LayoutDescriptor;
 class LookupIterator;
 class FieldType;
 class Module;
-class ModuleDescriptor;
 class ModuleInfoEntry;
-class ModuleInfo;
 class ObjectHashTable;
 class ObjectVisitor;
 class PropertyCell;
@@ -3259,16 +3257,19 @@ class PodArray : public ByteArray {
 // BytecodeArray represents a sequence of interpreter bytecodes.
 class BytecodeArray : public FixedArrayBase {
  public:
-#define DECL_BYTECODE_AGE_ENUM(X) k##X##BytecodeAge,
   enum Age {
     kNoAgeBytecodeAge = 0,
-    CODE_AGE_LIST(DECL_BYTECODE_AGE_ENUM) kAfterLastBytecodeAge,
+    kQuadragenarianBytecodeAge,
+    kQuinquagenarianBytecodeAge,
+    kSexagenarianBytecodeAge,
+    kSeptuagenarianBytecodeAge,
+    kOctogenarianBytecodeAge,
+    kAfterLastBytecodeAge,
     kFirstBytecodeAge = kNoAgeBytecodeAge,
     kLastBytecodeAge = kAfterLastBytecodeAge - 1,
     kBytecodeAgeCount = kAfterLastBytecodeAge - kFirstBytecodeAge - 1,
     kIsOldBytecodeAge = kSexagenarianBytecodeAge
   };
-#undef DECL_BYTECODE_AGE_ENUM
 
   static int SizeFor(int length) {
     return OBJECT_POINTER_ALIGN(kHeaderSize + length);
@@ -3663,8 +3664,7 @@ class Code: public HeapObject {
   V(KEYED_LOAD_IC)      \
   V(STORE_IC)           \
   V(STORE_GLOBAL_IC)    \
-  V(KEYED_STORE_IC)     \
-  V(COMPARE_IC)
+  V(KEYED_STORE_IC)
 
 #define CODE_KIND_LIST(V) \
   NON_IC_KIND_LIST(V)     \
@@ -3753,13 +3753,11 @@ class Code: public HeapObject {
 
   // [flags]: Access to specific code flags.
   inline Kind kind() const;
-  inline ExtraICState extra_ic_state() const;  // Only valid for IC stubs.
 
   // Testers for IC stub kinds.
   inline bool is_inline_cache_stub() const;
   inline bool is_handler() const;
   inline bool is_stub() const;
-  inline bool is_compare_ic_stub() const;
   inline bool is_optimized_code() const;
   inline bool is_wasm_code() const;
 
@@ -3831,9 +3829,6 @@ class Code: public HeapObject {
   inline void set_back_edge_table_offset(unsigned offset);
 
   inline bool back_edges_patched_for_osr() const;
-
-  // [to_boolean_foo]: For kind TO_BOOLEAN_IC tells what state the stub is in.
-  inline uint16_t to_boolean_state();
 
   // [marked_for_deoptimization]: For kind OPTIMIZED_FUNCTION tells whether
   // the code is going to be deoptimized because of dead embedded maps.
@@ -4002,39 +3997,6 @@ class Code: public HeapObject {
   DECL_PRINTER(Code)
   DECL_VERIFIER(Code)
 
-  void ClearInlineCaches();
-
-#define DECL_CODE_AGE_ENUM(X) k##X##CodeAge,
-  enum Age {
-    kToBeExecutedOnceCodeAge = -3,
-    kNotExecutedCodeAge = -2,
-    kExecutedOnceCodeAge = -1,
-    kNoAgeCodeAge = 0,
-    CODE_AGE_LIST(DECL_CODE_AGE_ENUM) kAfterLastCodeAge,
-    kFirstCodeAge = kToBeExecutedOnceCodeAge,
-    kLastCodeAge = kAfterLastCodeAge - 1,
-    kCodeAgeCount = kAfterLastCodeAge - kFirstCodeAge - 1,
-    kIsOldCodeAge = kSexagenarianCodeAge,
-    kPreAgedCodeAge = kIsOldCodeAge - 1
-  };
-#undef DECL_CODE_AGE_ENUM
-
-  // Code aging.  Indicates how many full GCs this code has survived without
-  // being entered through the prologue.  Used to determine when to flush code
-  // held in the compilation cache.
-  static void MakeCodeAgeSequenceYoung(byte* sequence, Isolate* isolate);
-  static void MarkCodeAsExecuted(byte* sequence, Isolate* isolate);
-  void MakeYoung(Isolate* isolate);
-  void PreAge(Isolate* isolate);
-  void MarkToBeExecutedOnce(Isolate* isolate);
-  void MakeOlder();
-  static bool IsYoungSequence(Isolate* isolate, byte* sequence);
-  bool IsOld();
-  Age GetAge();
-  static inline Code* GetPreAgedCodeAgeStub(Isolate* isolate) {
-    return GetCodeAgeStub(isolate, kNotExecutedCodeAge);
-  }
-
   void PrintDeoptLocation(FILE* out, Address pc);
   bool CanDeoptAt(Address pc);
 
@@ -4172,16 +4134,6 @@ class Code: public HeapObject {
 
  private:
   friend class RelocIterator;
-  friend class Deoptimizer;  // For FindCodeAgeSequence.
-
-  // Code aging
-  byte* FindCodeAgeSequence();
-  static Age GetCodeAge(Isolate* isolate, byte* sequence);
-  static Age GetAgeOfCodeAgeStub(Code* code);
-  static Code* GetCodeAgeStub(Isolate* isolate, Age age);
-
-  // Code aging -- platform-specific
-  static void PatchPlatformCodeAge(Isolate* isolate, byte* sequence, Age age);
 
   bool is_promise_rejection() const;
   bool is_exception_caught() const;
@@ -4860,199 +4812,6 @@ class JSAsyncGeneratorObject : public JSGeneratorObject {
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncGeneratorObject);
-};
-
-// When importing a module namespace (import * as foo from "bar"), a
-// JSModuleNamespace object (representing module "bar") is created and bound to
-// the declared variable (foo).  A module can have at most one namespace object.
-class JSModuleNamespace : public JSObject {
- public:
-  DECL_CAST(JSModuleNamespace)
-  DECL_PRINTER(JSModuleNamespace)
-  DECL_VERIFIER(JSModuleNamespace)
-
-  // The actual module whose namespace is being represented.
-  DECL_ACCESSORS(module, Module)
-
-  // Retrieve the value exported by [module] under the given [name]. If there is
-  // no such export, return Just(undefined). If the export is uninitialized,
-  // schedule an exception and return Nothing.
-  MUST_USE_RESULT MaybeHandle<Object> GetExport(Handle<String> name);
-
-  // In-object fields.
-  enum {
-    kToStringTagFieldIndex,
-    kInObjectFieldCount,
-  };
-
-  static const int kModuleOffset = JSObject::kHeaderSize;
-  static const int kHeaderSize = kModuleOffset + kPointerSize;
-
-  static const int kSize = kHeaderSize + kPointerSize * kInObjectFieldCount;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(JSModuleNamespace);
-};
-
-// A Module object is a mapping from export names to cells
-// This is still very much in flux.
-class Module : public Struct {
- public:
-  DECL_CAST(Module)
-  DECL_VERIFIER(Module)
-  DECL_PRINTER(Module)
-
-  // The code representing this Module, or an abstraction thereof.
-  // This is either a SharedFunctionInfo or a JSFunction or a ModuleInfo
-  // depending on whether the module has been instantiated and evaluated.  See
-  // Module::ModuleVerify() for the precise invariant.
-  DECL_ACCESSORS(code, Object)
-
-  // Arrays of cells corresponding to regular exports and regular imports.
-  // A cell's position in the array is determined by the cell index of the
-  // associated module entry (which coincides with the variable index of the
-  // associated variable).
-  DECL_ACCESSORS(regular_exports, FixedArray)
-  DECL_ACCESSORS(regular_imports, FixedArray)
-
-  // The complete export table, mapping an export name to its cell.
-  // TODO(neis): We may want to remove the regular exports from the table.
-  DECL_ACCESSORS(exports, ObjectHashTable)
-
-  // Hash for this object (a random non-zero Smi).
-  DECL_INT_ACCESSORS(hash)
-
-  // Status.
-  DECL_INT_ACCESSORS(status)
-  enum Status {
-    // Order matters!
-    kUninstantiated,
-    kPreInstantiating,
-    kInstantiating,
-    kInstantiated,
-    kEvaluating,
-    kEvaluated,
-    kErrored
-  };
-
-  // The exception in the case {status} is kErrored.
-  Object* GetException();
-
-  // The namespace object (or undefined).
-  DECL_ACCESSORS(module_namespace, HeapObject)
-
-  // Modules imported or re-exported by this module.
-  // Corresponds 1-to-1 to the module specifier strings in
-  // ModuleInfo::module_requests.
-  DECL_ACCESSORS(requested_modules, FixedArray)
-
-  // [script]: Script from which the module originates.
-  DECL_ACCESSORS(script, Script)
-
-  // Get the ModuleInfo associated with the code.
-  inline ModuleInfo* info() const;
-
-  // Implementation of spec operation ModuleDeclarationInstantiation.
-  // Returns false if an exception occurred during instantiation, true
-  // otherwise. (In the case where the callback throws an exception, that
-  // exception is propagated.)
-  static MUST_USE_RESULT bool Instantiate(Handle<Module> module,
-                                          v8::Local<v8::Context> context,
-                                          v8::Module::ResolveCallback callback);
-
-  // Implementation of spec operation ModuleEvaluation.
-  static MUST_USE_RESULT MaybeHandle<Object> Evaluate(Handle<Module> module);
-
-  Cell* GetCell(int cell_index);
-  static Handle<Object> LoadVariable(Handle<Module> module, int cell_index);
-  static void StoreVariable(Handle<Module> module, int cell_index,
-                            Handle<Object> value);
-
-  // Get the namespace object for [module_request] of [module].  If it doesn't
-  // exist yet, it is created.
-  static Handle<JSModuleNamespace> GetModuleNamespace(Handle<Module> module,
-                                                      int module_request);
-
-  // Get the namespace object for [module].  If it doesn't exist yet, it is
-  // created.
-  static Handle<JSModuleNamespace> GetModuleNamespace(Handle<Module> module);
-
-  static const int kCodeOffset = HeapObject::kHeaderSize;
-  static const int kExportsOffset = kCodeOffset + kPointerSize;
-  static const int kRegularExportsOffset = kExportsOffset + kPointerSize;
-  static const int kRegularImportsOffset = kRegularExportsOffset + kPointerSize;
-  static const int kHashOffset = kRegularImportsOffset + kPointerSize;
-  static const int kModuleNamespaceOffset = kHashOffset + kPointerSize;
-  static const int kRequestedModulesOffset =
-      kModuleNamespaceOffset + kPointerSize;
-  static const int kStatusOffset = kRequestedModulesOffset + kPointerSize;
-  static const int kDfsIndexOffset = kStatusOffset + kPointerSize;
-  static const int kDfsAncestorIndexOffset = kDfsIndexOffset + kPointerSize;
-  static const int kExceptionOffset = kDfsAncestorIndexOffset + kPointerSize;
-  static const int kScriptOffset = kExceptionOffset + kPointerSize;
-  static const int kSize = kScriptOffset + kPointerSize;
-
- private:
-  friend class Factory;
-
-  DECL_ACCESSORS(exception, Object)
-
-  // TODO(neis): Don't store those in the module object?
-  DECL_INT_ACCESSORS(dfs_index)
-  DECL_INT_ACCESSORS(dfs_ancestor_index)
-
-  // Helpers for Instantiate and Evaluate.
-
-  static void CreateExport(Handle<Module> module, int cell_index,
-                           Handle<FixedArray> names);
-  static void CreateIndirectExport(Handle<Module> module, Handle<String> name,
-                                   Handle<ModuleInfoEntry> entry);
-
-  // The [must_resolve] argument indicates whether or not an exception should be
-  // thrown in case the module does not provide an export named [name]
-  // (including when a cycle is detected).  An exception is always thrown in the
-  // case of conflicting star exports.
-  //
-  // If [must_resolve] is true, a null result indicates an exception. If
-  // [must_resolve] is false, a null result may or may not indicate an
-  // exception (so check manually!).
-  class ResolveSet;
-  static MUST_USE_RESULT MaybeHandle<Cell> ResolveExport(
-      Handle<Module> module, Handle<String> name, MessageLocation loc,
-      bool must_resolve, ResolveSet* resolve_set);
-  static MUST_USE_RESULT MaybeHandle<Cell> ResolveImport(
-      Handle<Module> module, Handle<String> name, int module_request,
-      MessageLocation loc, bool must_resolve, ResolveSet* resolve_set);
-
-  // Helper for ResolveExport.
-  static MUST_USE_RESULT MaybeHandle<Cell> ResolveExportUsingStarExports(
-      Handle<Module> module, Handle<String> name, MessageLocation loc,
-      bool must_resolve, ResolveSet* resolve_set);
-
-  static MUST_USE_RESULT bool PrepareInstantiate(
-      Handle<Module> module, v8::Local<v8::Context> context,
-      v8::Module::ResolveCallback callback);
-  static MUST_USE_RESULT bool FinishInstantiate(
-      Handle<Module> module, ZoneForwardList<Handle<Module>>* stack,
-      unsigned* dfs_index, Zone* zone);
-  static MUST_USE_RESULT MaybeHandle<Object> Evaluate(
-      Handle<Module> module, ZoneForwardList<Handle<Module>>* stack,
-      unsigned* dfs_index);
-
-  static void MaybeTransitionComponent(Handle<Module> module,
-                                       ZoneForwardList<Handle<Module>>* stack,
-                                       Status new_status);
-
-  // To set status to kErrored, RecordError should be used.
-  void SetStatus(Status status);
-  void RecordError();
-
-#ifdef DEBUG
-  // For --trace-module-status.
-  void PrintStatusTransition(Status new_status);
-#endif  // DEBUG
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(Module);
 };
 
 // JSBoundFunction describes a bound function exotic object.
@@ -7404,10 +7163,6 @@ class ObjectVisitor BASE_EMBEDDED {
 
   // Visits a runtime entry in the instruction stream.
   virtual void VisitRuntimeEntry(Code* host, RelocInfo* rinfo) {}
-
-  // Visits the byte sequence in a function's prologue that contains information
-  // about the code's age.
-  virtual void VisitCodeAgeSequence(Code* host, RelocInfo* rinfo);
 
   // Visit pointer embedded into a code object.
   virtual void VisitEmbeddedPointer(Code* host, RelocInfo* rinfo);

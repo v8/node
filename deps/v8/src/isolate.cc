@@ -2306,7 +2306,6 @@ Isolate::Isolate(bool enable_serializer)
       logger_(NULL),
       load_stub_cache_(NULL),
       store_stub_cache_(NULL),
-      code_aging_helper_(NULL),
       deoptimizer_data_(NULL),
       deoptimizer_lazy_throw_(false),
       materialized_object_store_(NULL),
@@ -2559,8 +2558,6 @@ Isolate::~Isolate() {
   load_stub_cache_ = NULL;
   delete store_stub_cache_;
   store_stub_cache_ = NULL;
-  delete code_aging_helper_;
-  code_aging_helper_ = NULL;
 
   delete materialized_object_store_;
   materialized_object_store_ = NULL;
@@ -2754,8 +2751,6 @@ bool Isolate::Init(StartupDeserializer* des) {
     return false;
   }
 
-  code_aging_helper_ = new CodeAgingHelper(this);
-
 // Initialize the interface descriptors ahead of time.
 #define INTERFACE_DESCRIPTOR(Name, ...) \
   { Name##Descriptor(this); }
@@ -2772,7 +2767,7 @@ bool Isolate::Init(StartupDeserializer* des) {
 
   if (create_heap_objects) {
     // Terminate the partial snapshot cache so we can iterate.
-    partial_snapshot_cache_.Add(heap_.undefined_value());
+    partial_snapshot_cache_.push_back(heap_.undefined_value());
   }
 
   InitializeThreadLocal();

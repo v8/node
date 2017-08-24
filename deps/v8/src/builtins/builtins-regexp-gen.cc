@@ -20,6 +20,70 @@ using compiler::Node;
 // -----------------------------------------------------------------------------
 // ES6 section 21.2 RegExp Objects
 
+Node* RegExpBuiltinsAssembler::AllocateRegExpResult(Node* context, Node* length,
+                                                    Node* index, Node* input) {
+  CSA_ASSERT(this, IsFixedArray(context));
+  CSA_ASSERT(this, TaggedIsSmi(index));
+  CSA_ASSERT(this, TaggedIsSmi(length));
+  CSA_ASSERT(this, IsString(input));
+
+#ifdef DEBUG
+  Node* const max_length = SmiConstant(JSArray::kInitialMaxFastElementArray);
+  CSA_ASSERT(this, SmiLessThanOrEqual(length, max_length));
+#endif  // DEBUG
+
+  // Allocate the JSRegExpResult together with its elements fixed array.
+  // Initial preparations first.
+
+  Node* const length_intptr = SmiUntag(length);
+  const ElementsKind elements_kind = PACKED_ELEMENTS;
+
+  Node* const elements_size = GetFixedArrayAllocationSize(
+      length_intptr, elements_kind, INTPTR_PARAMETERS);
+  Node* const total_size =
+      IntPtrAdd(elements_size, IntPtrConstant(JSRegExpResult::kSize));
+
+  static const int kRegExpResultOffset = 0;
+  static const int kElementsOffset =
+      kRegExpResultOffset + JSRegExpResult::kSize;
+
+  // The folded allocation.
+
+  Node* const result = Allocate(total_size);
+  Node* const elements = InnerAllocate(result, kElementsOffset);
+
+  // Initialize the JSRegExpResult.
+
+  Node* const native_context = LoadNativeContext(context);
+  Node* const map =
+      LoadContextElement(native_context, Context::REGEXP_RESULT_MAP_INDEX);
+  StoreMapNoWriteBarrier(result, map);
+
+  Node* const empty_array = EmptyFixedArrayConstant();
+  DCHECK(Heap::RootIsImmortalImmovable(Heap::kEmptyFixedArrayRootIndex));
+  StoreObjectFieldNoWriteBarrier(result, JSArray::kPropertiesOrHashOffset,
+                                 empty_array);
+  StoreObjectFieldNoWriteBarrier(result, JSArray::kElementsOffset, elements);
+  StoreObjectFieldNoWriteBarrier(result, JSArray::kLengthOffset, length);
+
+  StoreObjectFieldNoWriteBarrier(result, JSRegExpResult::kIndexOffset, index);
+  StoreObjectField(result, JSRegExpResult::kInputOffset, input);
+
+  // Initialize the elements.
+
+  DCHECK(!IsDoubleElementsKind(elements_kind));
+  const Heap::RootListIndex map_index = Heap::kFixedArrayMapRootIndex;
+  DCHECK(Heap::RootIsImmortalImmovable(map_index));
+  StoreMapNoWriteBarrier(elements, map_index);
+  StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset, length);
+
+  Node* const zero = IntPtrConstant(0);
+  FillFixedArrayWithValue(elements_kind, elements, zero, length_intptr,
+                          Heap::kUndefinedValueRootIndex);
+
+  return result;
+}
+
 Node* RegExpBuiltinsAssembler::FastLoadLastIndex(Node* regexp) {
   // Load the in-object field.
   static const int field_offset =
@@ -156,6 +220,8 @@ Node* RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo(
     // Allocate a new object to store the named capture properties.
     // TODO(jgruber): Could be optimized by adding the object map to the heap
     // root list.
+    // TODO(jgruber): Replace CreateDataProperty runtime calls once we have
+    // equivalent functionality in CSA.
 
     Node* const native_context = LoadNativeContext(context);
     Node* const map = LoadContextElement(
@@ -1420,12 +1486,9 @@ TF_BUILTIN(RegExpPrototypeSourceGetter, RegExpBuiltinsAssembler) {
 // Fast-path implementation for flag checks on an unmodified JSRegExp instance.
 Node* RegExpBuiltinsAssembler::FastFlagGetter(Node* const regexp,
                                               JSRegExp::Flag flag) {
-  Node* const smi_zero = SmiConstant(0);
   Node* const flags = LoadObjectField(regexp, JSRegExp::kFlagsOffset);
   Node* const mask = SmiConstant(flag);
-  Node* const is_flag_set = WordNotEqual(SmiAnd(flags, mask), smi_zero);
-
-  return is_flag_set;
+  return SmiToWord32(SmiAnd(flags, mask));
 }
 
 // Load through the GetProperty stub.
@@ -2221,13 +2284,14 @@ TF_BUILTIN(RegExpPrototypeSearch, RegExpBuiltinsAssembler) {
   RegExpPrototypeSearchBodySlow(context, receiver, string);
 }
 
-// Generates the fast path for @@split. {regexp} is an unmodified JSRegExp,
-// {string} is a String, and {limit} is a Smi.
+// Generates the fast path for @@split. {regexp} is an unmodified, non-sticky
+// JSRegExp, {string} is a String, and {limit} is a Smi.
 void RegExpBuiltinsAssembler::RegExpPrototypeSplitBody(Node* const context,
                                                        Node* const regexp,
                                                        Node* const string,
                                                        Node* const limit) {
   CSA_ASSERT(this, IsFastRegExp(context, regexp));
+  CSA_ASSERT(this, Word32BinaryNot(FastFlagGetter(regexp, JSRegExp::kSticky)));
   CSA_ASSERT(this, TaggedIsSmi(limit));
   CSA_ASSERT(this, IsString(string));
 
@@ -2485,49 +2549,61 @@ TF_BUILTIN(RegExpSplit, RegExpBuiltinsAssembler) {
   // been changed.
 
   // Convert {maybe_limit} to a uint32, capping at the maximal smi value.
+
   VARIABLE(var_limit, MachineRepresentation::kTagged, maybe_limit);
-  Label if_limitissmimax(this), limit_done(this), runtime(this);
+  Label if_limitissmimax(this), runtime(this, Label::kDeferred);
 
-  GotoIf(IsUndefined(maybe_limit), &if_limitissmimax);
-  GotoIf(TaggedIsPositiveSmi(maybe_limit), &limit_done);
-
-  Node* const limit = ToUint32(context, maybe_limit);
   {
-    // ToUint32(limit) could potentially change the shape of the RegExp
-    // object. Recheck that we are still on the fast path and bail to runtime
-    // otherwise.
+    Label next(this);
+
+    GotoIf(IsUndefined(maybe_limit), &if_limitissmimax);
+    GotoIf(TaggedIsPositiveSmi(maybe_limit), &next);
+
+    Node* const limit = ToUint32(context, maybe_limit);
     {
-      Label next(this);
-      BranchIfFastRegExp(context, regexp, &next, &runtime);
-      BIND(&next);
+      // ToUint32(limit) could potentially change the shape of the RegExp
+      // object. Recheck that we are still on the fast path and bail to runtime
+      // otherwise.
+      {
+        Label next(this);
+        BranchIfFastRegExp(context, regexp, &next, &runtime);
+        BIND(&next);
+      }
+
+      GotoIfNot(TaggedIsPositiveSmi(limit), &if_limitissmimax);
+
+      var_limit.Bind(limit);
+      Goto(&next);
     }
 
-    GotoIfNot(TaggedIsSmi(limit), &if_limitissmimax);
+    BIND(&if_limitissmimax);
+    {
+      // TODO(jgruber): In this case, we can probably avoid generation of limit
+      // checks in Generate_RegExpPrototypeSplitBody.
+      var_limit.Bind(SmiConstant(Smi::kMaxValue));
+      Goto(&next);
+    }
 
-    var_limit.Bind(limit);
-    Goto(&limit_done);
+    BIND(&next);
   }
 
-  BIND(&if_limitissmimax);
-  {
-    // TODO(jgruber): In this case, we can probably avoid generation of limit
-    // checks in Generate_RegExpPrototypeSplitBody.
-    var_limit.Bind(SmiConstant(Smi::kMaxValue));
-    Goto(&limit_done);
-  }
+  // Due to specific shortcuts we take on the fast path (specifically, we don't
+  // allocate a new regexp instance as specced), we need to ensure that the
+  // given regexp is non-sticky to avoid invalid results. See crbug.com/v8/6706.
 
-  BIND(&limit_done);
-  {
-    Node* const limit = var_limit.value();
-    RegExpPrototypeSplitBody(context, regexp, string, limit);
-  }
+  GotoIf(FastFlagGetter(regexp, JSRegExp::kSticky), &runtime);
+
+  // We're good to go on the fast path, which is inlined here.
+
+  RegExpPrototypeSplitBody(context, regexp, string, var_limit.value());
 
   BIND(&runtime);
   {
     // The runtime call passes in limit to ensure the second ToUint32(limit)
     // call is not observable.
-    CSA_ASSERT(this, IsNumber(limit));
-    Return(CallRuntime(Runtime::kRegExpSplit, context, regexp, string, limit));
+    CSA_ASSERT(this, IsNumber(var_limit.value()));
+    Return(CallRuntime(Runtime::kRegExpSplit, context, regexp, string,
+                       var_limit.value()));
   }
 }
 

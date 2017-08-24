@@ -51,7 +51,6 @@ class BasicBlockProfiler;
 class Bootstrapper;
 class CallInterfaceDescriptorData;
 class CancelableTaskManager;
-class CodeAgingHelper;
 class CodeEventDispatcher;
 class CodeGenerator;
 class CodeRange;
@@ -902,7 +901,6 @@ class Isolate {
   Heap* heap() { return &heap_; }
   StubCache* load_stub_cache() { return load_stub_cache_; }
   StubCache* store_stub_cache() { return store_stub_cache_; }
-  CodeAgingHelper* code_aging_helper() { return code_aging_helper_; }
   DeoptimizerData* deoptimizer_data() { return deoptimizer_data_; }
   bool deoptimizer_lazy_throw() const { return deoptimizer_lazy_throw_; }
   void set_deoptimizer_lazy_throw(bool value) {
@@ -1209,7 +1207,9 @@ class Isolate {
   void AddDetachedContext(Handle<Context> context);
   void CheckDetachedContextsAfterGC();
 
-  List<Object*>* partial_snapshot_cache() { return &partial_snapshot_cache_; }
+  std::vector<Object*>* partial_snapshot_cache() {
+    return &partial_snapshot_cache_;
+  }
 
   void set_array_buffer_allocator(v8::ArrayBuffer::Allocator* allocator) {
     array_buffer_allocator_ = allocator;
@@ -1457,7 +1457,6 @@ class Isolate {
   StackGuard stack_guard_;
   StubCache* load_stub_cache_;
   StubCache* store_stub_cache_;
-  CodeAgingHelper* code_aging_helper_;
   DeoptimizerData* deoptimizer_data_;
   bool deoptimizer_lazy_throw_;
   MaterializedObjectStore* materialized_object_store_;
@@ -1581,7 +1580,7 @@ class Isolate {
   v8::Isolate::UseCounterCallback use_counter_callback_;
   BasicBlockProfiler* basic_block_profiler_;
 
-  List<Object*> partial_snapshot_cache_;
+  std::vector<Object*> partial_snapshot_cache_;
 
   v8::ArrayBuffer::Allocator* array_buffer_allocator_;
 

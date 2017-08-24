@@ -4245,7 +4245,6 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
   // handling in Scope::ResolveVariable needs to change.
   bool is_lazy_top_level_function =
       can_preparse && impl()->AllowsLazyParsingWithoutUnresolvedVariables();
-  bool should_be_used_once_hint = false;
   bool has_braces = true;
   ProducedPreParsedScopeData* produced_preparsed_scope_data = nullptr;
   {
@@ -4340,9 +4339,6 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
 
   function_literal->set_function_token_position(
       formal_parameters.scope->start_position());
-  if (should_be_used_once_hint) {
-    function_literal->set_should_be_used_once_hint();
-  }
 
   impl()->AddFunctionForNameInference(function_literal);
 
@@ -5815,22 +5811,12 @@ ParserBase<Impl>::ParseStandardForLoopWithLexicalDeclarations(
     //     for (; c; n) b
     //   }
     //
-    // or, desugar
-    //   for (; c; n) b
-    // into
-    //   {
-    //     for (; c; n) b
-    //   }
-    // just in case b introduces a lexical binding some other way, e.g., if b
-    // is a FunctionDeclaration.
+    DCHECK(!impl()->IsNull(init));
     BlockT block = factory()->NewBlock(nullptr, 2, false, kNoSourcePosition);
-    if (!impl()->IsNull(init)) {
-      block->statements()->Add(init, zone());
-      init = impl()->NullStatement();
-    }
+    block->statements()->Add(init, zone());
     block->statements()->Add(loop, zone());
     block->set_scope(for_scope);
-    loop->Initialize(init, cond, next, body);
+    loop->Initialize(impl()->NullStatement(), cond, next, body);
     return block;
   }
 

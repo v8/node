@@ -15,7 +15,7 @@
 #include "src/objects-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/literal-objects.h"
-#include "src/objects/module-info.h"
+#include "src/objects/module.h"
 #include "src/ostreams.h"
 #include "src/regexp/jsregexp.h"
 #include "src/transitions.h"
@@ -1239,9 +1239,10 @@ void Module::ModuleVerify() {
   VerifySmiField(kHashOffset);
   VerifySmiField(kStatusOffset);
 
-  CHECK((status() < kInstantiating && code()->IsSharedFunctionInfo()) ||
-        (status() < kEvaluating && code()->IsJSFunction()) ||
-        code()->IsModuleInfo());
+  CHECK((status() >= kEvaluating && code()->IsModuleInfo()) ||
+        (status() == kInstantiated && code()->IsJSGeneratorObject()) ||
+        (status() >= kInstantiating && code()->IsJSFunction()) ||
+        (code()->IsSharedFunctionInfo()));
 
   CHECK_EQ(status() == kErrored, !exception()->IsTheHole(GetIsolate()));
 

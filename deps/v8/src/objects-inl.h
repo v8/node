@@ -35,7 +35,7 @@
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/literal-objects.h"
-#include "src/objects/module-info.h"
+#include "src/objects/module-inl.h"
 #include "src/objects/regexp-match-info.h"
 #include "src/objects/scope-info.h"
 #include "src/property.h"
@@ -96,7 +96,6 @@ TYPE_CHECKER(JSFunction, JS_FUNCTION_TYPE)
 TYPE_CHECKER(JSGlobalObject, JS_GLOBAL_OBJECT_TYPE)
 TYPE_CHECKER(JSMap, JS_MAP_TYPE)
 TYPE_CHECKER(JSMessageObject, JS_MESSAGE_OBJECT_TYPE)
-TYPE_CHECKER(JSModuleNamespace, JS_MODULE_NAMESPACE_TYPE)
 TYPE_CHECKER(JSPromiseCapability, JS_PROMISE_CAPABILITY_TYPE)
 TYPE_CHECKER(JSPromise, JS_PROMISE_TYPE)
 TYPE_CHECKER(JSRegExp, JS_REGEXP_TYPE)
@@ -389,10 +388,6 @@ bool HeapObject::IsScopeInfo() const {
   return map() == GetHeap()->scope_info_map();
 }
 
-bool HeapObject::IsModuleInfo() const {
-  return map() == GetHeap()->module_info_map();
-}
-
 template <>
 inline bool Is<JSFunction>(Object* obj) {
   return obj->IsJSFunction();
@@ -582,7 +577,6 @@ CAST_ACCESSOR(JSGlobalProxy)
 CAST_ACCESSOR(JSMap)
 CAST_ACCESSOR(JSMapIterator)
 CAST_ACCESSOR(JSMessageObject)
-CAST_ACCESSOR(JSModuleNamespace)
 CAST_ACCESSOR(JSObject)
 CAST_ACCESSOR(JSPromise)
 CAST_ACCESSOR(JSPromiseCapability)
@@ -598,9 +592,6 @@ CAST_ACCESSOR(JSWeakCollection)
 CAST_ACCESSOR(JSWeakMap)
 CAST_ACCESSOR(JSWeakSet)
 CAST_ACCESSOR(LayoutDescriptor)
-CAST_ACCESSOR(Module)
-CAST_ACCESSOR(ModuleInfo)
-CAST_ACCESSOR(ModuleInfoEntry)
 CAST_ACCESSOR(NameDictionary)
 CAST_ACCESSOR(NormalizedMapCache)
 CAST_ACCESSOR(Object)
@@ -3725,11 +3716,6 @@ bool Code::IsCodeStubOrIC() const {
   }
 }
 
-ExtraICState Code::extra_ic_state() const {
-  DCHECK(is_compare_ic_stub());
-  return ExtractExtraICStateFromFlags(flags());
-}
-
 
 // For initialization.
 void Code::set_raw_kind_specific_flags1(int value) {
@@ -3938,8 +3924,6 @@ bool Code::back_edges_patched_for_osr() const {
 }
 
 
-uint16_t Code::to_boolean_state() { return extra_ic_state(); }
-
 bool Code::marked_for_deoptimization() const {
   DCHECK(kind() == OPTIMIZED_FUNCTION);
   return MarkedForDeoptimizationField::decode(
@@ -3981,7 +3965,6 @@ bool Code::is_inline_cache_stub() const {
 
 bool Code::is_handler() const { return kind() == HANDLER; }
 bool Code::is_stub() const { return kind() == STUB; }
-bool Code::is_compare_ic_stub() const { return kind() == COMPARE_IC; }
 bool Code::is_optimized_code() const { return kind() == OPTIMIZED_FUNCTION; }
 bool Code::is_wasm_code() const { return kind() == WASM_FUNCTION; }
 
@@ -4449,31 +4432,6 @@ ACCESSORS(ConstantElementsPair, constant_values, FixedArrayBase,
           kConstantValuesOffset)
 bool ConstantElementsPair::is_empty() const {
   return constant_values()->length() == 0;
-}
-
-ACCESSORS(JSModuleNamespace, module, Module, kModuleOffset)
-
-ACCESSORS(Module, code, Object, kCodeOffset)
-ACCESSORS(Module, exports, ObjectHashTable, kExportsOffset)
-ACCESSORS(Module, regular_exports, FixedArray, kRegularExportsOffset)
-ACCESSORS(Module, regular_imports, FixedArray, kRegularImportsOffset)
-ACCESSORS(Module, module_namespace, HeapObject, kModuleNamespaceOffset)
-ACCESSORS(Module, requested_modules, FixedArray, kRequestedModulesOffset)
-ACCESSORS(Module, script, Script, kScriptOffset)
-ACCESSORS(Module, exception, Object, kExceptionOffset)
-SMI_ACCESSORS(Module, status, kStatusOffset)
-SMI_ACCESSORS(Module, dfs_index, kDfsIndexOffset)
-SMI_ACCESSORS(Module, dfs_ancestor_index, kDfsAncestorIndexOffset)
-SMI_ACCESSORS(Module, hash, kHashOffset)
-
-ModuleInfo* Module::info() const {
-  if (status() >= kEvaluating) {
-    return ModuleInfo::cast(code());
-  }
-  ScopeInfo* scope_info = status() >= kInstantiating
-                              ? JSFunction::cast(code())->shared()->scope_info()
-                              : SharedFunctionInfo::cast(code())->scope_info();
-  return scope_info->ModuleDescriptorInfo();
 }
 
 ACCESSORS(AccessorPair, getter, Object, kGetterOffset)
@@ -6023,14 +5981,6 @@ Handle<Object> WeakHashTableShape<entrysize>::AsHandle(Isolate* isolate,
   return key;
 }
 
-
-ACCESSORS(ModuleInfoEntry, export_name, Object, kExportNameOffset)
-ACCESSORS(ModuleInfoEntry, local_name, Object, kLocalNameOffset)
-ACCESSORS(ModuleInfoEntry, import_name, Object, kImportNameOffset)
-SMI_ACCESSORS(ModuleInfoEntry, module_request, kModuleRequestOffset)
-SMI_ACCESSORS(ModuleInfoEntry, cell_index, kCellIndexOffset)
-SMI_ACCESSORS(ModuleInfoEntry, beg_pos, kBegPosOffset)
-SMI_ACCESSORS(ModuleInfoEntry, end_pos, kEndPosOffset)
 
 void Map::ClearCodeCache(Heap* heap) {
   // No write barrier is needed since empty_fixed_array is not in new space.
