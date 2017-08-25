@@ -211,8 +211,6 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_function_tostring, "harmony Function.prototype.toString")   \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
   V(harmony_regexp_property, "harmony Unicode regexp property classes") \
-  V(harmony_template_escapes,                                           \
-    "harmony invalid escapes in tagged template literals")              \
   V(harmony_restrict_constructor_return,                                \
     "harmony disallow non undefined primitive return value from class " \
     "constructor")                                                      \
@@ -228,7 +226,9 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_object_rest_spread, "harmony object rest spread properties") \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
   V(harmony_regexp_dotall, "harmony regexp dotAll flag")                 \
-  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")
+  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")              \
+  V(harmony_template_escapes,                                            \
+    "harmony invalid escapes in tagged template literals")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -449,6 +449,8 @@ DEFINE_BOOL(turbo_store_elimination, true,
 DEFINE_BOOL(trace_store_elimination, false, "trace store elimination")
 DEFINE_BOOL(turbo_experimental, false,
             "enable crashing features, for testing purposes only")
+DEFINE_BOOL(turbo_rewrite_far_jumps, true,
+            "rewrite far to near jumps (ia32,x64)")
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,

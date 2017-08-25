@@ -1484,8 +1484,8 @@ MaybeHandle<Object> Object::GetPropertyWithAccessor(LookupIterator* it) {
   DCHECK(!structure->IsForeign());
 
   // API style callbacks.
+  Handle<JSObject> holder = it->GetHolder<JSObject>();
   if (structure->IsAccessorInfo()) {
-    Handle<JSObject> holder = it->GetHolder<JSObject>();
     Handle<Name> name = it->GetName();
     Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(structure);
     if (!info->IsCompatibleReceiver(*receiver)) {
@@ -1528,6 +1528,8 @@ MaybeHandle<Object> Object::GetPropertyWithAccessor(LookupIterator* it) {
   // Regular accessor.
   Handle<Object> getter(AccessorPair::cast(*structure)->getter(), isolate);
   if (getter->IsFunctionTemplateInfo()) {
+    SaveContext save(isolate);
+    isolate->set_context(*holder->GetCreationContext());
     return Builtins::InvokeApiFunction(
         isolate, false, Handle<FunctionTemplateInfo>::cast(getter), receiver, 0,
         nullptr, isolate->factory()->undefined_value());
@@ -1581,8 +1583,8 @@ Maybe<bool> Object::SetPropertyWithAccessor(LookupIterator* it,
   DCHECK(!structure->IsForeign());
 
   // API style callbacks.
+  Handle<JSObject> holder = it->GetHolder<JSObject>();
   if (structure->IsAccessorInfo()) {
-    Handle<JSObject> holder = it->GetHolder<JSObject>();
     Handle<Name> name = it->GetName();
     Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(structure);
     if (!info->IsCompatibleReceiver(*receiver)) {
@@ -1628,6 +1630,8 @@ Maybe<bool> Object::SetPropertyWithAccessor(LookupIterator* it,
   // Regular accessor.
   Handle<Object> setter(AccessorPair::cast(*structure)->setter(), isolate);
   if (setter->IsFunctionTemplateInfo()) {
+    SaveContext save(isolate);
+    isolate->set_context(*holder->GetCreationContext());
     Handle<Object> argv[] = {value};
     RETURN_ON_EXCEPTION_VALUE(
         isolate, Builtins::InvokeApiFunction(
@@ -2337,6 +2341,11 @@ Object* Object::GetHash() {
   JSReceiver* receiver = JSReceiver::cast(this);
   Isolate* isolate = receiver->GetIsolate();
   return receiver->GetIdentityHash(isolate);
+}
+
+// static
+Smi* Object::GetOrCreateHash(Isolate* isolate, Object* key) {
+  return key->GetOrCreateHash(isolate);
 }
 
 Smi* Object::GetOrCreateHash(Isolate* isolate) {
@@ -3326,11 +3335,13 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
     case JS_MESSAGE_OBJECT_TYPE:
       os << "<JSMessageObject>";
       break;
-#define MAKE_STRUCT_CASE(NAME, Name, name) \
-  case NAME##_TYPE:                        \
-    os << "<" #Name ">";                   \
+#define MAKE_STRUCT_CASE(NAME, Name, name)   \
+  case NAME##_TYPE:                          \
+    os << "<" #Name;                         \
+    Name::cast(this)->BriefPrintDetails(os); \
+    os << ">";                               \
     break;
-  STRUCT_LIST(MAKE_STRUCT_CASE)
+      STRUCT_LIST(MAKE_STRUCT_CASE)
 #undef MAKE_STRUCT_CASE
     case CODE_TYPE: {
       Code* code = Code::cast(this);
@@ -3414,6 +3425,16 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
   }
 }
 
+void Struct::BriefPrintDetails(std::ostream& os) {}
+
+void Tuple2::BriefPrintDetails(std::ostream& os) {
+  os << " " << Brief(value1()) << ", " << Brief(value2());
+}
+
+void Tuple3::BriefPrintDetails(std::ostream& os) {
+  os << " " << Brief(value1()) << ", " << Brief(value2()) << ", "
+     << Brief(value3());
+}
 
 void HeapObject::Iterate(ObjectVisitor* v) { IterateFast<ObjectVisitor>(v); }
 
@@ -9167,6 +9188,7 @@ Handle<Map> Map::CopyReplaceDescriptors(
     }
   } else {
     result->InitializeDescriptors(*descriptors, *layout_descriptor);
+    map->deprecate();
   }
 #if V8_TRACE_MAPS
   if (FLAG_trace_maps &&

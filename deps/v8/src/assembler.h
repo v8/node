@@ -596,8 +596,6 @@ class RelocInfo {
   // reproducible.
   INLINE(void WipeOut(Isolate* isolate));
 
-  template<typename StaticVisitor> inline void Visit(Heap* heap);
-
   template <typename ObjectVisitor>
   inline void Visit(Isolate* isolate, ObjectVisitor* v);
 
@@ -990,6 +988,8 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference search_string_raw(Isolate* isolate);
 
   static ExternalReference orderedhashmap_gethash_raw(Isolate* isolate);
+
+  static ExternalReference get_or_create_hash_raw(Isolate* isolate);
 
   static ExternalReference page_flags(Page* page);
 

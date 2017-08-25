@@ -893,7 +893,7 @@ struct GraphBuilderPhase {
     BytecodeGraphBuilder graph_builder(
         temp_zone, data->info()->shared_info(),
         handle(data->info()->closure()->feedback_vector()),
-        data->info()->osr_ast_id(), data->jsgraph(), CallFrequency(1.0f),
+        data->info()->osr_offset(), data->jsgraph(), CallFrequency(1.0f),
         data->source_positions(), SourcePosition::kNotInlined, flags);
     graph_builder.CreateGraph();
   }
@@ -1974,8 +1974,17 @@ bool PipelineImpl::ScheduleAndSelectInstructions(Linkage* linkage,
   bool run_verifier = FLAG_turbo_verify_allocation;
 
   // Allocate registers.
-  AllocateRegisters(RegisterConfiguration::Default(), call_descriptor,
-                    run_verifier);
+  if (call_descriptor->HasRestrictedAllocatableRegisters()) {
+    auto registers = call_descriptor->AllocatableRegisters();
+    DCHECK(NumRegs(registers) > 0);
+    std::unique_ptr<const RegisterConfiguration> config;
+    config.reset(RegisterConfiguration::RestrictGeneralRegisters(registers));
+    AllocateRegisters(config.get(), call_descriptor, run_verifier);
+  } else {
+    AllocateRegisters(RegisterConfiguration::Default(), call_descriptor,
+                      run_verifier);
+  }
+
   Run<FrameElisionPhase>();
   if (data->compilation_failed()) {
     info()->AbortOptimization(kNotEnoughVirtualRegistersRegalloc);

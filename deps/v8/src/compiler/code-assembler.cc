@@ -154,12 +154,14 @@ Handle<Code> CodeAssembler::GenerateCode(CodeAssemblerState* state) {
 
   RawMachineAssembler* rasm = state->raw_assembler_.get();
   Schedule* schedule = rasm->Export();
+
   JumpOptimizationInfo jump_opt;
+  bool should_optimize_jumps =
+      rasm->isolate()->serializer_enabled() && FLAG_turbo_rewrite_far_jumps;
 
   Handle<Code> code = Pipeline::GenerateCodeForCodeStub(
       rasm->isolate(), rasm->call_descriptor(), rasm->graph(), schedule,
-      state->flags_, state->name_,
-      rasm->isolate()->serializer_enabled() ? &jump_opt : nullptr);
+      state->flags_, state->name_, should_optimize_jumps ? &jump_opt : nullptr);
 
   if (jump_opt.is_optimizable()) {
     jump_opt.set_optimizing();
@@ -336,6 +338,10 @@ void CodeAssembler::ReturnIf(Node* condition, Node* value) {
   Bind(&if_return);
   Return(value);
   Bind(&if_continue);
+}
+
+void CodeAssembler::DebugAbort(Node* message) {
+  raw_assembler()->DebugAbort(message);
 }
 
 void CodeAssembler::DebugBreak() { raw_assembler()->DebugBreak(); }
