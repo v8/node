@@ -2203,6 +2203,7 @@
       'direct_dependent_settings': {
         'include_dirs': [
           '../include',
+          '..',    # Hack to reuse V8's implementation of time.
         ],
       },
     },

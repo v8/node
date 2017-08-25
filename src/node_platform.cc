@@ -1,6 +1,7 @@
 #include "node_platform.h"
 
 #include "util.h"
+#include "src/base/platform/platform.h"
 
 namespace node {
 
@@ -119,6 +120,10 @@ bool NodePlatform::IdleTasksEnabled(Isolate* isolate) { return false; }
 double NodePlatform::MonotonicallyIncreasingTime() {
   // Convert nanos to seconds.
   return uv_hrtime() / 1e9;
+}
+
+double NodePlatform::CurrentClockTimeMillis() {
+  return v8::base::OS::TimeCurrentMillis();
 }
 
 TracingController* NodePlatform::GetTracingController() {
