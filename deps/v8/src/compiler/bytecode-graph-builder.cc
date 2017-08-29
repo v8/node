@@ -1540,9 +1540,8 @@ void BytecodeGraphBuilder::VisitCreateObjectLiteral() {
 }
 
 void BytecodeGraphBuilder::VisitCreateEmptyObjectLiteral() {
-  int literal_index = bytecode_iterator().GetIndexOperand(0);
-  Node* literal = NewNode(javascript()->CreateEmptyLiteralObject(literal_index),
-                          GetFunctionClosure());
+  Node* literal =
+      NewNode(javascript()->CreateEmptyLiteralObject(), GetFunctionClosure());
   environment()->BindAccumulator(literal);
 }
 
@@ -2550,18 +2549,33 @@ void BytecodeGraphBuilder::VisitForInNext() {
   Node* cache_array = environment()->LookupRegister(
       interpreter::Register(catch_reg_pair_index + 1));
 
-  Node* value = NewNode(javascript()->ForInNext(), receiver, cache_array,
-                        cache_type, index);
-  environment()->BindAccumulator(value, Environment::kAttachFrameState);
+  // We need to rename the {index} here, as in case of OSR we loose the
+  // information that the {index} is always a valid unsigned Smi value.
+  index = graph()->NewNode(common()->TypeGuard(Type::UnsignedSmall()), index,
+                           environment()->GetControlDependency());
+
+  Node* node = nullptr;
+  FeedbackSlot slot =
+      feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(3));
+  if (Node* simplified = TryBuildSimplifiedForInNext(receiver, cache_array,
+                                                     cache_type, index, slot)) {
+    if (environment() == nullptr) return;
+    node = simplified;
+  } else {
+    node = NewNode(javascript()->ForInNext(), receiver, cache_array, cache_type,
+                   index);
+  }
+
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitForInStep() {
   PrepareEagerCheckpoint();
   Node* index =
       environment()->LookupRegister(bytecode_iterator().GetRegisterOperand(0));
-  index = NewNode(
-      simplified()->SpeculativeNumberAdd(NumberOperationHint::kSignedSmall),
-      index, jsgraph()->OneConstant());
+  index = NewNode(simplified()->SpeculativeSafeIntegerAdd(
+                      NumberOperationHint::kSignedSmall),
+                  index, jsgraph()->OneConstant());
   environment()->BindAccumulator(index, Environment::kAttachFrameState);
 }
 
@@ -2821,6 +2835,22 @@ Node* BytecodeGraphBuilder::TryBuildSimplifiedBinaryOp(const Operator* op,
   Node* control = environment()->GetControlDependency();
   Reduction early_reduction = type_hint_lowering().ReduceBinaryOperation(
       op, left, right, effect, control, slot);
+  if (early_reduction.Changed()) {
+    ApplyEarlyReduction(early_reduction);
+    return early_reduction.replacement();
+  }
+  return nullptr;
+}
+
+Node* BytecodeGraphBuilder::TryBuildSimplifiedForInNext(Node* receiver,
+                                                        Node* cache_array,
+                                                        Node* cache_type,
+                                                        Node* index,
+                                                        FeedbackSlot slot) {
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  Reduction early_reduction = type_hint_lowering().ReduceForInNextOperation(
+      receiver, cache_array, cache_type, index, effect, control, slot);
   if (early_reduction.Changed()) {
     ApplyEarlyReduction(early_reduction);
     return early_reduction.replacement();

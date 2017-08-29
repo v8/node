@@ -183,6 +183,8 @@ BinaryOperationHint BinaryOperationHintFromFeedback(int type_feedback) {
       return BinaryOperationHint::kSignedSmall;
     case BinaryOperationFeedback::kSignedSmallInputs:
       return BinaryOperationHint::kSignedSmallInputs;
+    case BinaryOperationFeedback::kNumber:
+      return BinaryOperationHint::kNumber;
     case BinaryOperationFeedback::kNumberOrOddball:
       return BinaryOperationHint::kNumberOrOddball;
     case BinaryOperationFeedback::kString:
@@ -316,6 +318,10 @@ void FeedbackVector::ComputeCounts(int* with_type_info, int* generic,
 
 Handle<Symbol> FeedbackVector::UninitializedSentinel(Isolate* isolate) {
   return isolate->factory()->uninitialized_symbol();
+}
+
+Handle<Symbol> FeedbackVector::GenericSentinel(Isolate* isolate) {
+  return isolate->factory()->generic_symbol();
 }
 
 Handle<Symbol> FeedbackVector::MegamorphicSentinel(Isolate* isolate) {

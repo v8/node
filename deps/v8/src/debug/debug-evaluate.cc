@@ -320,7 +320,8 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(GenerateRandomNumbers)           \
   V(GlobalPrint)                     \
   V(AllocateInNewSpace)              \
-  V(AllocateInTargetSpace)           \
+  V(AllocateSeqOneByteString)        \
+  V(AllocateSeqTwoByteString)        \
   V(ObjectCreate)                    \
   V(ObjectHasOwnProperty)            \
   V(ArrayIndexOf)                    \
@@ -477,7 +478,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kObjectIsSealed:
     case Builtins::kObjectPrototypeValueOf:
     case Builtins::kObjectValues:
-    case Builtins::kObjectHasOwnProperty:
+    case Builtins::kObjectPrototypeHasOwnProperty:
     case Builtins::kObjectPrototypeIsPrototypeOf:
     case Builtins::kObjectPrototypePropertyIsEnumerable:
     case Builtins::kObjectPrototypeToString:

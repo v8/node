@@ -1017,9 +1017,9 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
         UNREACHABLE();
     }
 
-    Node* result_type = SelectSmiConstant(
-        TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-        BinaryOperationFeedback::kNumberOrOddball);
+    Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                          BinaryOperationFeedback::kSignedSmall,
+                                          BinaryOperationFeedback::kNumber);
 
     if (FLAG_debug_code) {
       Label ok(this);
@@ -1108,9 +1108,9 @@ IGNITION_HANDLER(BitwiseOrSmi, InterpreterAssembler) {
   Node* rhs_value = SmiToWord32(right);
   Node* value = Word32Or(lhs_value, rhs_value);
   Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1134,9 +1134,9 @@ IGNITION_HANDLER(BitwiseXorSmi, InterpreterAssembler) {
   Node* rhs_value = SmiToWord32(right);
   Node* value = Word32Xor(lhs_value, rhs_value);
   Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1160,9 +1160,9 @@ IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
   Node* rhs_value = SmiToWord32(right);
   Node* value = Word32And(lhs_value, rhs_value);
   Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1189,9 +1189,9 @@ IGNITION_HANDLER(ShiftLeftSmi, InterpreterAssembler) {
   Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
   Node* value = Word32Shl(lhs_value, shift_count);
   Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1218,9 +1218,9 @@ IGNITION_HANDLER(ShiftRightSmi, InterpreterAssembler) {
   Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
   Node* value = Word32Sar(lhs_value, shift_count);
   Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1247,9 +1247,9 @@ IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterAssembler) {
   Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
   Node* value = Word32Shr(lhs_value, shift_count);
   Node* result = ChangeUint32ToTagged(value);
-  Node* result_type = SelectSmiConstant(
-      TaggedIsSmi(result), BinaryOperationFeedback::kSignedSmall,
-      BinaryOperationFeedback::kNumberOrOddball);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
   Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
                  feedback_vector, slot_index, function);
@@ -1294,8 +1294,7 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
   BIND(&if_objectisnumber);
   {
     var_result.Bind(object);
-    var_type_feedback.Bind(
-        SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
     Goto(&if_done);
   }
 
@@ -1444,7 +1443,7 @@ IGNITION_HANDLER(Inc, InterpreterAssembler) {
     Node* finc_result = Float64Add(finc_value, one);
     var_type_feedback.Bind(
         SmiOr(var_type_feedback.value(),
-              SmiConstant(BinaryOperationFeedback::kNumberOrOddball)));
+              SmiConstant(BinaryOperationFeedback::kNumber)));
     result_var.Bind(AllocateHeapNumberWithValue(finc_result));
     Goto(&end);
   }
@@ -1569,7 +1568,7 @@ IGNITION_HANDLER(Dec, InterpreterAssembler) {
     Node* fdec_result = Float64Sub(fdec_value, one);
     var_type_feedback.Bind(
         SmiOr(var_type_feedback.value(),
-              SmiConstant(BinaryOperationFeedback::kNumberOrOddball)));
+              SmiConstant(BinaryOperationFeedback::kNumber)));
     result_var.Bind(AllocateHeapNumberWithValue(fdec_result));
     Goto(&end);
   }
@@ -1723,10 +1722,8 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     // Collect the {function} feedback.
     CollectCallFeedback(function, context, feedback_vector, slot_id);
 
-    Node* result =
-        CallJS(function, context, first_arg, args_count, receiver_mode);
-    SetAccumulator(result);
-    Dispatch();
+    // Call the function and dispatch to the next handler.
+    CallJSAndDispatch(function, context, first_arg, args_count, receiver_mode);
   }
 
   // Generates code to perform a JS call with a known number of arguments that
@@ -1736,14 +1733,9 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     const int kFirstArgumentOperandIndex = 1;
     const int kReceiverOperandCount =
         (receiver_mode == ConvertReceiverMode::kNullOrUndefined) ? 0 : 1;
+    const int kRecieverAndArgOperandCount = kReceiverOperandCount + arg_count;
     const int kSlotOperandIndex =
-        kFirstArgumentOperandIndex + kReceiverOperandCount + arg_count;
-    // Indices and counts of parameters to the call stub.
-    const int kBoilerplateParameterCount = 5;
-    const int kReceiverParameterIndex = 3;
-    const int kReceiverParameterCount = 1;
-    // Only used in a DCHECK.
-    USE(kReceiverParameterCount);
+        kFirstArgumentOperandIndex + kRecieverAndArgOperandCount;
 
     Node* function_reg = BytecodeOperandReg(0);
     Node* function = LoadRegister(function_reg);
@@ -1754,35 +1746,32 @@ class InterpreterJSCallAssembler : public InterpreterAssembler {
     // Collect the {function} feedback.
     CollectCallFeedback(function, context, feedback_vector, slot_id);
 
-    std::array<Node*, Bytecodes::kMaxOperands + kBoilerplateParameterCount>
-        temp;
-    Callable callable = CodeFactory::Call(isolate());
-    temp[0] = HeapConstant(callable.code());
-    temp[1] = function;
-    temp[2] = Int32Constant(arg_count);
-
-    int parameter_index = kReceiverParameterIndex;
-    if (receiver_mode == ConvertReceiverMode::kNullOrUndefined) {
-      // The first argument parameter (the receiver) is implied to be undefined.
-      Node* undefined_value =
-          HeapConstant(isolate()->factory()->undefined_value());
-      temp[parameter_index++] = undefined_value;
+    switch (kRecieverAndArgOperandCount) {
+      case 0:
+        CallJSAndDispatch(function, context, Int32Constant(arg_count),
+                          receiver_mode);
+        break;
+      case 1:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)));
+        break;
+      case 2:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 1)));
+        break;
+      case 3:
+        CallJSAndDispatch(
+            function, context, Int32Constant(arg_count), receiver_mode,
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 1)),
+            LoadRegister(BytecodeOperandReg(kFirstArgumentOperandIndex + 2)));
+        break;
+      default:
+        UNREACHABLE();
     }
-    // The bytecode argument operands are copied into the remaining argument
-    // parameters.
-    for (int i = 0; i < (kReceiverOperandCount + arg_count); ++i) {
-      Node* reg = BytecodeOperandReg(kFirstArgumentOperandIndex + i);
-      temp[parameter_index++] = LoadRegister(reg);
-    }
-
-    DCHECK_EQ(parameter_index,
-              kReceiverParameterIndex + kReceiverParameterCount + arg_count);
-    temp[parameter_index] = context;
-
-    Node* result = CallStubN(callable.descriptor(), 1,
-                             arg_count + kBoilerplateParameterCount, &temp[0]);
-    SetAccumulator(result);
-    Dispatch();
   }
 };
 
@@ -1902,10 +1891,8 @@ IGNITION_HANDLER(CallJSRuntime, InterpreterAssembler) {
   Node* function = LoadContextElement(native_context, context_index);
 
   // Call the function.
-  Node* result = CallJS(function, context, first_arg, args_count,
-                        ConvertReceiverMode::kAny);
-  SetAccumulator(result);
-  Dispatch();
+  CallJSAndDispatch(function, context, first_arg, args_count,
+                    ConvertReceiverMode::kAny);
 }
 
 // CallWithSpread <callable> <first_arg> <arg_count>
@@ -1927,10 +1914,8 @@ IGNITION_HANDLER(CallWithSpread, InterpreterAssembler) {
   Node* context = GetContext();
 
   // Call into Runtime function CallWithSpread which does everything.
-  Node* result = CallJSWithSpread(callable, context, receiver_arg, args_count,
-                                  slot_id, feedback_vector);
-  SetAccumulator(result);
-  Dispatch();
+  CallJSWithSpreadAndDispatch(callable, context, receiver_arg, args_count,
+                              slot_id, feedback_vector);
 }
 
 // ConstructWithSpread <first_arg> <arg_count>
@@ -2722,12 +2707,10 @@ IGNITION_HANDLER(CreateObjectLiteral, InterpreterAssembler) {
   }
 }
 
-// CreateEmptyObjectLiteral <literal_idx>
+// CreateEmptyObjectLiteral
 //
-// Creates an empty JSObject literal for literal index <literal_idx>.
+// Creates an empty JSObject literal.
 IGNITION_HANDLER(CreateEmptyObjectLiteral, InterpreterAssembler) {
-  // TODO(cbruni): remove literal_index and closure parameter once we know
-  // whether empty object literals work without pretenuring support.
   Node* context = GetContext();
   ConstructorBuiltinsAssembler constructor_assembler(state());
   Node* result = constructor_assembler.EmitCreateEmptyObjectLiteral(context);
@@ -2976,8 +2959,10 @@ IGNITION_HANDLER(ReThrow, InterpreterAssembler) {
 // Return the value in the accumulator.
 IGNITION_HANDLER(Return, InterpreterAssembler) {
   UpdateInterruptBudgetOnReturn();
+  Callable exit_trampoline = CodeFactory::InterpreterExitTrampoline(isolate());
+  Node* context = GetContext();
   Node* accumulator = GetAccumulator();
-  Return(accumulator);
+  TailCallStub(exit_trampoline, context, accumulator);
 }
 
 // ThrowReferenceErrorIfHole <variable_name>
@@ -3154,6 +3139,8 @@ IGNITION_HANDLER(ForInNext, InterpreterAssembler) {
   Node* cache_type = LoadRegister(cache_type_reg);
   Node* cache_array_reg = NextRegister(cache_type_reg);
   Node* cache_array = LoadRegister(cache_array_reg);
+  Node* vector_index = BytecodeOperandIdx(3);
+  Node* feedback_vector = LoadFeedbackVector();
 
   // Load the next key from the enumeration array.
   Node* key = LoadFixedArrayElement(cache_array, index, 0,
@@ -3165,18 +3152,33 @@ IGNITION_HANDLER(ForInNext, InterpreterAssembler) {
   Branch(WordEqual(receiver_map, cache_type), &if_fast, &if_slow);
   BIND(&if_fast);
   {
+    // Check if we need to transition to megamorphic state.
+    Node* feedback_value =
+        LoadFeedbackVectorSlot(feedback_vector, vector_index);
+    Node* uninitialized_sentinel =
+        HeapConstant(FeedbackVector::UninitializedSentinel(isolate()));
+    Label if_done(this);
+    GotoIfNot(WordEqual(feedback_value, uninitialized_sentinel), &if_done);
+    {
+      // Transition to megamorphic state.
+      Node* megamorphic_sentinel =
+          HeapConstant(FeedbackVector::MegamorphicSentinel(isolate()));
+      StoreFeedbackVectorSlot(feedback_vector, vector_index,
+                              megamorphic_sentinel, SKIP_WRITE_BARRIER);
+    }
+    Goto(&if_done);
+
     // Enum cache in use for {receiver}, the {key} is definitely valid.
+    BIND(&if_done);
     SetAccumulator(key);
     Dispatch();
   }
   BIND(&if_slow);
   {
     // Record the fact that we hit the for-in slow path.
-    Node* vector_index = BytecodeOperandIdx(3);
-    Node* feedback_vector = LoadFeedbackVector();
-    Node* megamorphic_sentinel =
-        HeapConstant(FeedbackVector::MegamorphicSentinel(isolate()));
-    StoreFeedbackVectorSlot(feedback_vector, vector_index, megamorphic_sentinel,
+    Node* generic_sentinel =
+        HeapConstant(FeedbackVector::GenericSentinel(isolate()));
+    StoreFeedbackVectorSlot(feedback_vector, vector_index, generic_sentinel,
                             SKIP_WRITE_BARRIER);
 
     // Need to filter the {key} for the {receiver}.

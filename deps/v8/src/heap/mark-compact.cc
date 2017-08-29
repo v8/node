@@ -6,43 +6,32 @@
 
 #include <unordered_map>
 
-#include "src/base/atomicops.h"
-#include "src/base/bits.h"
-#include "src/base/sys-info.h"
 #include "src/cancelable-task.h"
 #include "src/code-stubs.h"
 #include "src/compilation-cache.h"
 #include "src/deoptimizer.h"
 #include "src/execution.h"
 #include "src/frames-inl.h"
-#include "src/gdb-jit.h"
 #include "src/global-handles.h"
 #include "src/heap/array-buffer-tracker-inl.h"
-#include "src/heap/array-buffer-tracker.h"
 #include "src/heap/concurrent-marking.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/incremental-marking.h"
 #include "src/heap/invalidated-slots-inl.h"
-#include "src/heap/invalidated-slots.h"
 #include "src/heap/item-parallel-job.h"
 #include "src/heap/local-allocator.h"
 #include "src/heap/mark-compact-inl.h"
 #include "src/heap/object-stats.h"
 #include "src/heap/objects-visiting-inl.h"
-#include "src/heap/objects-visiting.h"
 #include "src/heap/spaces-inl.h"
 #include "src/heap/worklist.h"
-#include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
-#include "src/tracing/tracing-category-observer.h"
 #include "src/transitions-inl.h"
 #include "src/utils-inl.h"
 #include "src/v8.h"
-#include "src/v8threads.h"
 
 namespace v8 {
 namespace internal {
-
 
 const char* Marking::kWhiteBitPattern = "00";
 const char* Marking::kBlackBitPattern = "11";
@@ -1680,9 +1669,10 @@ class EvacuateVisitorBase : public HeapObjectVisitor {
 
 class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
  public:
-  explicit EvacuateNewSpaceVisitor(Heap* heap, LocalAllocator* local_allocator,
-                                   RecordMigratedSlotVisitor* record_visitor,
-                                   base::HashMap* local_pretenuring_feedback)
+  explicit EvacuateNewSpaceVisitor(
+      Heap* heap, LocalAllocator* local_allocator,
+      RecordMigratedSlotVisitor* record_visitor,
+      Heap::PretenuringFeedbackMap* local_pretenuring_feedback)
       : EvacuateVisitorBase(heap, local_allocator, record_visitor),
         buffer_(LocalAllocationBuffer::InvalidBuffer()),
         promoted_size_(0),
@@ -1696,8 +1686,8 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
       promoted_size_ += size;
       return true;
     }
-    heap_->UpdateAllocationSite<Heap::kCached>(object->map(), object,
-                                               local_pretenuring_feedback_);
+    heap_->UpdateAllocationSite(object->map(), object,
+                                local_pretenuring_feedback_);
     HeapObject* target = nullptr;
     AllocationSpace space = AllocateTargetObject(object, size, &target);
     MigrateObject(HeapObject::cast(target), object, size, space);
@@ -1739,7 +1729,7 @@ class EvacuateNewSpaceVisitor final : public EvacuateVisitorBase {
   LocalAllocationBuffer buffer_;
   intptr_t promoted_size_;
   intptr_t semispace_copied_size_;
-  base::HashMap* local_pretenuring_feedback_;
+  Heap::PretenuringFeedbackMap* local_pretenuring_feedback_;
 };
 
 template <PageEvacuationMode mode>
@@ -1747,7 +1737,7 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
  public:
   explicit EvacuateNewSpacePageVisitor(
       Heap* heap, RecordMigratedSlotVisitor* record_visitor,
-      base::HashMap* local_pretenuring_feedback)
+      Heap::PretenuringFeedbackMap* local_pretenuring_feedback)
       : heap_(heap),
         record_visitor_(record_visitor),
         moved_bytes_(0),
@@ -1771,8 +1761,8 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
 
   inline bool Visit(HeapObject* object, int size) {
     if (mode == NEW_TO_NEW) {
-      heap_->UpdateAllocationSite<Heap::kCached>(object->map(), object,
-                                                 local_pretenuring_feedback_);
+      heap_->UpdateAllocationSite(object->map(), object,
+                                  local_pretenuring_feedback_);
     } else if (mode == NEW_TO_OLD) {
       object->IterateBodyFast(record_visitor_);
     }
@@ -1786,7 +1776,7 @@ class EvacuateNewSpacePageVisitor final : public HeapObjectVisitor {
   Heap* heap_;
   RecordMigratedSlotVisitor* record_visitor_;
   intptr_t moved_bytes_;
-  base::HashMap* local_pretenuring_feedback_;
+  Heap::PretenuringFeedbackMap* local_pretenuring_feedback_;
 };
 
 class EvacuateOldSpaceVisitor final : public EvacuateVisitorBase {
@@ -3290,7 +3280,7 @@ class Evacuator : public Malloced {
   // Locally cached collector data.
   LocalAllocator local_allocator_;
   CompactionSpaceCollection compaction_spaces_;
-  base::HashMap local_pretenuring_feedback_;
+  Heap::PretenuringFeedbackMap local_pretenuring_feedback_;
 
   // Visitors for the corresponding spaces.
   EvacuateNewSpaceVisitor new_space_visitor_;
@@ -3774,28 +3764,6 @@ int MarkCompactCollector::Sweeper::RawSweep(
   if (free_list_mode == IGNORE_FREE_LIST) return 0;
   return static_cast<int>(FreeList::GuaranteedAllocatable(max_freed_bytes));
 }
-
-void MarkCompactCollector::InvalidateCode(Code* code) {
-  Page* page = Page::FromAddress(code->address());
-  Address start = code->instruction_start();
-  Address end = code->address() + code->Size();
-
-  RememberedSet<OLD_TO_NEW>::RemoveRangeTyped(page, start, end);
-
-  if (heap_->incremental_marking()->IsCompacting() &&
-      !page->ShouldSkipEvacuationSlotRecording()) {
-    DCHECK(compacting_);
-
-    // If the object is white than no slots were recorded on it yet.
-    if (non_atomic_marking_state()->IsWhite(code)) return;
-
-    // Ignore all slots that might have been recorded in the body of the
-    // deoptimized code object. Assumption: no slots will be recorded for
-    // this object after invalidating it.
-    RememberedSet<OLD_TO_OLD>::RemoveRangeTyped(page, start, end);
-  }
-}
-
 
 // Return true if the given code is deoptimized or will be deoptimized.
 bool MarkCompactCollector::WillBeDeoptimized(Code* code) {
@@ -4472,6 +4440,10 @@ int MarkCompactCollector::Sweeper::ParallelSweepSpace(AllocationSpace identity,
 
 int MarkCompactCollector::Sweeper::ParallelSweepPage(Page* page,
                                                      AllocationSpace identity) {
+  // Early bailout for pages that are swept outside of the regular sweeping
+  // path. This check here avoids taking the lock first, avoiding deadlocks.
+  if (page->SweepingDone()) return 0;
+
   int max_freed = 0;
   {
     base::LockGuard<base::RecursiveMutex> guard(page->mutex());

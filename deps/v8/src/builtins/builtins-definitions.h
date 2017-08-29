@@ -27,6 +27,10 @@ namespace internal {
   /* GC write barrirer */                                                      \
   TFC(RecordWrite, RecordWrite, 1)                                             \
                                                                                \
+  /* Adaptors for CPP/API builtin */                                           \
+  ASM(AdaptorWithExitFrame)                                                    \
+  ASM(AdaptorWithBuiltinExitFrame)                                             \
+                                                                               \
   /* Calls */                                                                  \
   ASM(ArgumentsAdaptorTrampoline)                                              \
   /* ES6 section 9.2.1 [[Call]] ( thisArgument, argumentsList) */              \
@@ -76,7 +80,7 @@ namespace internal {
   TFC(FastCloneShallowArrayTrack, FastCloneShallowArray, 1)                    \
   TFC(FastCloneShallowArrayDontTrack, FastCloneShallowArray, 1)                \
   TFS(CreateEmptyArrayLiteral, kClosure, kLiteralIndex)                        \
-  TFS(CreateEmptyObjectLiteral, kClosure, kLiteralIndex)                       \
+  TFS(CreateEmptyObjectLiteral, kClosure)                                      \
   TFC(FastCloneShallowObject, FastCloneShallowObject, 1)                       \
   /* ES6 section 9.5.14 [[Construct]] ( argumentsList, newTarget) */           \
   TFC(ConstructProxy, ConstructTrampoline, 1)                                  \
@@ -105,6 +109,7 @@ namespace internal {
                                                                                \
   /* Interpreter */                                                            \
   ASM(InterpreterEntryTrampoline)                                              \
+  ASM(InterpreterExitTrampoline)                                               \
   ASM(InterpreterPushArgsThenCall)                                             \
   ASM(InterpreterPushUndefinedAndArgsThenCall)                                 \
   ASM(InterpreterPushArgsThenCallFunction)                                     \
@@ -702,8 +707,6 @@ namespace internal {
   CPP(ObjectGetOwnPropertySymbols)                                             \
   CPP(ObjectGetPrototypeOf)                                                    \
   CPP(ObjectSetPrototypeOf)                                                    \
-  /* ES6 #sec-object.prototype.hasownproperty */                               \
-  TFJ(ObjectHasOwnProperty, 1, kKey)                                           \
   CPP(ObjectIs)                                                                \
   CPP(ObjectIsExtensible)                                                      \
   CPP(ObjectIsFrozen)                                                          \
@@ -716,6 +719,8 @@ namespace internal {
   TFJ(ObjectPrototypeToString, 0)                                              \
   /* ES6 #sec-object.prototype.valueof */                                      \
   TFJ(ObjectPrototypeValueOf, 0)                                               \
+  /* ES6 #sec-object.prototype.hasownproperty */                               \
+  TFJ(ObjectPrototypeHasOwnProperty, 1, kKey)                                  \
   TFJ(ObjectPrototypeIsPrototypeOf, 1, kValue)                                 \
   CPP(ObjectPrototypePropertyIsEnumerable)                                     \
   CPP(ObjectPrototypeGetProto)                                                 \

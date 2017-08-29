@@ -8,6 +8,8 @@
 #include "src/compiler/opcodes.h"
 #include "src/compiler/operator.h"
 #include "src/compiler/types.h"
+#include "src/handles-inl.h"
+#include "src/objects-inl.h"
 #include "src/objects/map.h"
 #include "src/objects/name.h"
 
@@ -213,6 +215,11 @@ CheckMapsParameters const& CheckMapsParametersOf(Operator const* op) {
   return OpParameter<CheckMapsParameters>(op);
 }
 
+ZoneHandleSet<Map> const& CompareMapsParametersOf(Operator const* op) {
+  DCHECK_EQ(IrOpcode::kCompareMaps, op->opcode());
+  return OpParameter<ZoneHandleSet<Map>>(op);
+}
+
 size_t hash_value(CheckTaggedInputMode mode) {
   return static_cast<size_t>(mode);
 }
@@ -375,7 +382,9 @@ NumberOperationHint NumberOperationHintOf(const Operator* op) {
          op->opcode() == IrOpcode::kSpeculativeNumberBitwiseXor ||
          op->opcode() == IrOpcode::kSpeculativeNumberEqual ||
          op->opcode() == IrOpcode::kSpeculativeNumberLessThan ||
-         op->opcode() == IrOpcode::kSpeculativeNumberLessThanOrEqual);
+         op->opcode() == IrOpcode::kSpeculativeNumberLessThanOrEqual ||
+         op->opcode() == IrOpcode::kSpeculativeSafeIntegerAdd ||
+         op->opcode() == IrOpcode::kSpeculativeSafeIntegerSubtract);
   return OpParameter<NumberOperationHint>(op);
 }
 
@@ -691,6 +700,16 @@ struct SimplifiedOperatorGlobalCache final {
   CheckedTruncateTaggedToWord32Operator<CheckTaggedInputMode::kNumberOrOddball>
       kCheckedTruncateTaggedToWord32NumberOrOddballOperator;
 
+  struct CheckMapValueOperator final : public Operator {
+    CheckMapValueOperator()
+        : Operator(                                     // --
+              IrOpcode::kCheckMapValue,                 // opcode
+              Operator::kNoThrow | Operator::kNoWrite,  // flags
+              "CheckMapValue",                          // name
+              2, 1, 1, 0, 1, 0) {}                      // counts
+  };
+  CheckMapValueOperator kCheckMapValue;
+
   template <CheckFloat64HoleMode kMode>
   struct CheckFloat64HoleNaNOperator final
       : public Operator1<CheckFloat64HoleMode> {
@@ -769,6 +788,7 @@ GET_FROM_CACHE(ArrayBufferWasNeutered)
 GET_FROM_CACHE(ArgumentsFrame)
 GET_FROM_CACHE(LookupHashStorageIndex)
 GET_FROM_CACHE(LoadHashMapValue)
+GET_FROM_CACHE(CheckMapValue)
 GET_FROM_CACHE(NewUnmappedArgumentsElements)
 #undef GET_FROM_CACHE
 
@@ -847,6 +867,16 @@ const Operator* SimplifiedOperatorBuilder::CheckMaps(CheckMapsFlags flags,
       "CheckMaps",                                     // name
       1, 1, 1, 0, 1, 0,                                // counts
       parameters);                                     // parameter
+}
+
+const Operator* SimplifiedOperatorBuilder::CompareMaps(
+    ZoneHandleSet<Map> maps) {
+  return new (zone()) Operator1<ZoneHandleSet<Map>>(  // --
+      IrOpcode::kCompareMaps,                         // opcode
+      Operator::kEliminatable,                        // flags
+      "CompareMaps",                                  // name
+      1, 1, 1, 1, 1, 0,                               // counts
+      maps);                                          // parameter
 }
 
 const Operator* SimplifiedOperatorBuilder::CheckFloat64Hole(

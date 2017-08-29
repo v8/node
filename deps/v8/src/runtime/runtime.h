@@ -208,8 +208,7 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_INTERPRETER(F) \
   FOR_EACH_INTRINSIC_INTERPRETER_TRACE(F) \
-  F(InterpreterNewClosure, 4, 1)          \
-  F(InterpreterAdvanceBytecodeOffset, 2, 1)
+  F(InterpreterNewClosure, 4, 1)
 
 #define FOR_EACH_INTRINSIC_FUNCTION(F)     \
   F(FunctionGetName, 1, 1)                 \
@@ -281,6 +280,8 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_INTERNAL(F)                               \
   F(AllocateInNewSpace, 1, 1)                                        \
   F(AllocateInTargetSpace, 2, 1)                                     \
+  F(AllocateSeqOneByteString, 1, 1)                                  \
+  F(AllocateSeqTwoByteString, 1, 1)                                  \
   F(CheckIsBootstrapping, 0, 1)                                      \
   F(CreateAsyncFromSyncIterator, 1, 1)                               \
   F(CreateListFromArrayLike, 1, 1)                                   \

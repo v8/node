@@ -256,6 +256,7 @@ std::unique_ptr<InjectedScript> InjectedScript::create(
     InspectedContext* inspectedContext, int sessionId) {
   v8::Isolate* isolate = inspectedContext->isolate();
   v8::HandleScope handles(isolate);
+  v8::TryCatch tryCatch(isolate);
   v8::Local<v8::Context> context = inspectedContext->context();
   v8::Context::Scope scope(context);
   v8::MicrotasksScope microtasksScope(isolate,
@@ -564,7 +565,7 @@ Response InjectedScript::resolveCallArgument(
   if (callArgument->hasValue() || callArgument->hasUnserializableValue()) {
     String16 value =
         callArgument->hasValue()
-            ? callArgument->getValue(nullptr)->serialize()
+            ? "(" + callArgument->getValue(nullptr)->serialize() + ")"
             : "Number(\"" + callArgument->getUnserializableValue("") + "\")";
     if (!m_context->inspector()
              ->compileAndRunInternalScript(

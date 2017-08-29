@@ -157,6 +157,10 @@ std::ostream& operator<<(std::ostream&, CheckMapsParameters const&);
 CheckMapsParameters const& CheckMapsParametersOf(Operator const*)
     WARN_UNUSED_RESULT;
 
+// Parameters for CompareMaps operator.
+ZoneHandleSet<Map> const& CompareMapsParametersOf(Operator const*)
+    WARN_UNUSED_RESULT;
+
 // A descriptor for growing elements backing stores.
 enum class GrowFastElementsFlag : uint8_t {
   kNone = 0u,
@@ -336,6 +340,9 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
 
   const Operator* NumberSilenceNaN();
 
+  const Operator* SpeculativeSafeIntegerAdd(NumberOperationHint hint);
+  const Operator* SpeculativeSafeIntegerSubtract(NumberOperationHint hint);
+
   const Operator* SpeculativeNumberAdd(NumberOperationHint hint);
   const Operator* SpeculativeNumberSubtract(NumberOperationHint hint);
   const Operator* SpeculativeNumberMultiply(NumberOperationHint hint);
@@ -395,6 +402,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckIf();
   const Operator* CheckBounds();
   const Operator* CheckMaps(CheckMapsFlags, ZoneHandleSet<Map>);
+  const Operator* CheckMapValue();
+  const Operator* CompareMaps(ZoneHandleSet<Map>);
 
   const Operator* CheckHeapObject();
   const Operator* CheckInternalizedString();

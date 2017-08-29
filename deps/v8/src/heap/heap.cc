@@ -53,11 +53,22 @@
 #include "src/utils-inl.h"
 #include "src/utils.h"
 #include "src/v8.h"
-#include "src/v8threads.h"
 #include "src/vm-state-inl.h"
 
 namespace v8 {
 namespace internal {
+
+bool Heap::GCCallbackPair::operator==(const Heap::GCCallbackPair& other) const {
+  return other.callback == callback;
+}
+
+Heap::GCCallbackPair& Heap::GCCallbackPair::operator=(
+    const Heap::GCCallbackPair& other) {
+  callback = other.callback;
+  gc_type = other.gc_type;
+  pass_isolate = other.pass_isolate;
+  return *this;
+}
 
 struct Heap::StrongRootsList {
   Object** start;
@@ -152,7 +163,7 @@ Heap::Heap()
       new_space_allocation_counter_(0),
       old_generation_allocation_counter_at_last_gc_(0),
       old_generation_size_at_last_gc_(0),
-      global_pretenuring_feedback_(nullptr),
+      global_pretenuring_feedback_(kInitialFeedbackCapacity),
       is_marking_flag_(false),
       ring_buffer_full_(false),
       ring_buffer_end_(0),
@@ -591,13 +602,11 @@ void Heap::RepairFreeListsAfterDeserialization() {
 }
 
 void Heap::MergeAllocationSitePretenuringFeedback(
-    const base::HashMap& local_pretenuring_feedback) {
+    const PretenuringFeedbackMap& local_pretenuring_feedback) {
   AllocationSite* site = nullptr;
-  for (base::HashMap::Entry* local_entry = local_pretenuring_feedback.Start();
-       local_entry != nullptr;
-       local_entry = local_pretenuring_feedback.Next(local_entry)) {
-    site = reinterpret_cast<AllocationSite*>(local_entry->key);
-    MapWord map_word = site->map_word();
+  for (auto& site_and_count : local_pretenuring_feedback) {
+    site = site_and_count.first;
+    MapWord map_word = site_and_count.first->map_word();
     if (map_word.IsForwardingAddress()) {
       site = AllocationSite::cast(map_word.ToForwardingAddress());
     }
@@ -607,13 +616,11 @@ void Heap::MergeAllocationSitePretenuringFeedback(
     // This is an inlined check of AllocationMemento::IsValid.
     if (!site->IsAllocationSite() || site->IsZombie()) continue;
 
-    int value =
-        static_cast<int>(reinterpret_cast<intptr_t>(local_entry->value));
-    DCHECK_GT(value, 0);
-
+    const int value = static_cast<int>(site_and_count.second);
+    DCHECK_LT(0, value);
     if (site->IncrementMementoFoundCount(value)) {
-      global_pretenuring_feedback_->LookupOrInsert(site,
-                                                   ObjectHash(site->address()));
+      // For sites in the global map the count is accessed through the site.
+      global_pretenuring_feedback_.insert(std::make_pair(site, 0));
     }
   }
 }
@@ -633,22 +640,6 @@ class Heap::SkipStoreBufferScope {
 
  private:
   StoreBuffer* store_buffer_;
-};
-
-class Heap::PretenuringScope {
- public:
-  explicit PretenuringScope(Heap* heap) : heap_(heap) {
-    heap_->global_pretenuring_feedback_ =
-        new base::HashMap(kInitialFeedbackCapacity);
-  }
-
-  ~PretenuringScope() {
-    delete heap_->global_pretenuring_feedback_;
-    heap_->global_pretenuring_feedback_ = nullptr;
-  }
-
- private:
-  Heap* heap_;
 };
 
 namespace {
@@ -724,10 +715,11 @@ void Heap::ProcessPretenuringFeedback() {
 
     // Step 1: Digest feedback for recorded allocation sites.
     bool maximum_size_scavenge = MaximumSizeScavenge();
-    for (base::HashMap::Entry* e = global_pretenuring_feedback_->Start();
-         e != nullptr; e = global_pretenuring_feedback_->Next(e)) {
+    for (auto& site_and_count : global_pretenuring_feedback_) {
       allocation_sites++;
-      site = reinterpret_cast<AllocationSite*>(e->key);
+      site = site_and_count.first;
+      // Count is always access through the site.
+      DCHECK_EQ(0, site_and_count.second);
       int found_count = site->memento_found_count();
       // An entry in the storage does not imply that the count is > 0 because
       // allocation sites might have been reset due to too many objects dying
@@ -778,6 +770,9 @@ void Heap::ProcessPretenuringFeedback() {
                    active_allocation_sites, allocation_mementos_found,
                    tenure_decisions, dont_tenure_decisions);
     }
+
+    global_pretenuring_feedback_.clear();
+    global_pretenuring_feedback_.reserve(kInitialFeedbackCapacity);
   }
 }
 
@@ -1499,7 +1494,6 @@ bool Heap::PerformGarbageCollection(
   int start_new_space_size = static_cast<int>(Heap::new_space()->Size());
 
   {
-    Heap::PretenuringScope pretenuring_scope(this);
     Heap::SkipStoreBufferScope skip_store_buffer_scope(store_buffer_);
 
     switch (collector) {
@@ -1598,15 +1592,15 @@ bool Heap::PerformGarbageCollection(
 void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags) {
   RuntimeCallTimerScope runtime_timer(isolate(),
                                       &RuntimeCallStats::GCPrologueCallback);
-  for (int i = 0; i < gc_prologue_callbacks_.length(); ++i) {
-    if (gc_type & gc_prologue_callbacks_[i].gc_type) {
-      if (!gc_prologue_callbacks_[i].pass_isolate) {
-        v8::GCCallback callback = reinterpret_cast<v8::GCCallback>(
-            gc_prologue_callbacks_[i].callback);
+  for (const GCCallbackPair& info : gc_prologue_callbacks_) {
+    if (gc_type & info.gc_type) {
+      if (!info.pass_isolate) {
+        v8::GCCallback callback =
+            reinterpret_cast<v8::GCCallback>(info.callback);
         callback(gc_type, flags);
       } else {
         v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(this->isolate());
-        gc_prologue_callbacks_[i].callback(isolate, gc_type, flags);
+        info.callback(isolate, gc_type, flags);
       }
     }
   }
@@ -1617,15 +1611,15 @@ void Heap::CallGCEpilogueCallbacks(GCType gc_type,
                                    GCCallbackFlags gc_callback_flags) {
   RuntimeCallTimerScope runtime_timer(isolate(),
                                       &RuntimeCallStats::GCEpilogueCallback);
-  for (int i = 0; i < gc_epilogue_callbacks_.length(); ++i) {
-    if (gc_type & gc_epilogue_callbacks_[i].gc_type) {
-      if (!gc_epilogue_callbacks_[i].pass_isolate) {
-        v8::GCCallback callback = reinterpret_cast<v8::GCCallback>(
-            gc_epilogue_callbacks_[i].callback);
+  for (const GCCallbackPair& info : gc_epilogue_callbacks_) {
+    if (gc_type & info.gc_type) {
+      if (!info.pass_isolate) {
+        v8::GCCallback callback =
+            reinterpret_cast<v8::GCCallback>(info.callback);
         callback(gc_type, gc_callback_flags);
       } else {
         v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(this->isolate());
-        gc_epilogue_callbacks_[i].callback(isolate, gc_type, gc_callback_flags);
+        info.callback(isolate, gc_type, gc_callback_flags);
       }
     }
   }
@@ -1850,6 +1844,7 @@ class PageScavengingItem final : public ScavengingItem {
 
   void Process(Scavenger* scavenger) final {
     base::LockGuard<base::RecursiveMutex> guard(chunk_->mutex());
+    scavenger->AnnounceLockedPage(chunk_);
     RememberedSet<OLD_TO_NEW>::Iterate(
         chunk_,
         [this, scavenger](Address addr) {
@@ -2052,47 +2047,59 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   return string->IsExternalString() ? string : nullptr;
 }
 
+void Heap::ExternalStringTable::UpdateNewSpaceReferences(
+    Heap::ExternalStringTableUpdaterCallback updater_func) {
+  if (new_space_strings_.empty()) return;
 
-void Heap::UpdateNewSpaceReferencesInExternalStringTable(
-    ExternalStringTableUpdaterCallback updater_func) {
-  if (external_string_table_.new_space_strings_.is_empty()) return;
-
-  Object** start = &external_string_table_.new_space_strings_[0];
-  Object** end = start + external_string_table_.new_space_strings_.length();
+  Object** start = new_space_strings_.data();
+  Object** end = start + new_space_strings_.size();
   Object** last = start;
 
   for (Object** p = start; p < end; ++p) {
-    String* target = updater_func(this, p);
+    String* target = updater_func(heap_, p);
 
     if (target == NULL) continue;
 
     DCHECK(target->IsExternalString());
 
-    if (InNewSpace(target)) {
+    if (heap_->InNewSpace(target)) {
       // String is still in new space.  Update the table entry.
       *last = target;
       ++last;
     } else {
       // String got promoted.  Move it to the old string list.
-      external_string_table_.AddOldString(target);
+      AddOldString(target);
     }
   }
 
-  DCHECK(last <= end);
-  external_string_table_.ShrinkNewStrings(static_cast<int>(last - start));
+  DCHECK_LE(last, end);
+  new_space_strings_.resize(static_cast<size_t>(last - start));
+#ifdef VERIFY_HEAP
+  if (FLAG_verify_heap) {
+    Verify();
+  }
+#endif
 }
 
+void Heap::UpdateNewSpaceReferencesInExternalStringTable(
+    ExternalStringTableUpdaterCallback updater_func) {
+  external_string_table_.UpdateNewSpaceReferences(updater_func);
+}
+
+void Heap::ExternalStringTable::UpdateReferences(
+    Heap::ExternalStringTableUpdaterCallback updater_func) {
+  if (old_space_strings_.size() > 0) {
+    Object** start = old_space_strings_.data();
+    Object** end = start + old_space_strings_.size();
+    for (Object** p = start; p < end; ++p) *p = updater_func(heap_, p);
+  }
+
+  UpdateNewSpaceReferences(updater_func);
+}
 
 void Heap::UpdateReferencesInExternalStringTable(
     ExternalStringTableUpdaterCallback updater_func) {
-  // Update old space string references.
-  if (external_string_table_.old_space_strings_.length() > 0) {
-    Object** start = &external_string_table_.old_space_strings_[0];
-    Object** end = start + external_string_table_.old_space_strings_.length();
-    for (Object** p = start; p < end; ++p) *p = updater_func(this, p);
-  }
-
-  UpdateNewSpaceReferencesInExternalStringTable(updater_func);
+  external_string_table_.UpdateReferences(updater_func);
 }
 
 
@@ -3027,9 +3034,9 @@ void Heap::CreateInitialObjects() {
   cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
   set_species_protector(*cell);
 
-  cell = factory->NewPropertyCell(factory->empty_string());
-  cell->set_value(Smi::FromInt(Isolate::kProtectorValid));
-  set_string_length_protector(*cell);
+  Handle<Cell> string_length_overflow_cell = factory->NewCell(
+      handle(Smi::FromInt(Isolate::kProtectorValid), isolate()));
+  set_string_length_protector(*string_length_overflow_cell);
 
   Handle<Cell> fast_array_iteration_cell = factory->NewCell(
       handle(Smi::FromInt(Isolate::kProtectorValid), isolate()));
@@ -6184,18 +6191,20 @@ void Heap::TearDown() {
 
 void Heap::AddGCPrologueCallback(v8::Isolate::GCCallback callback,
                                  GCType gc_type, bool pass_isolate) {
-  DCHECK(callback != NULL);
-  GCCallbackPair pair(callback, gc_type, pass_isolate);
-  DCHECK(!gc_prologue_callbacks_.Contains(pair));
-  return gc_prologue_callbacks_.Add(pair);
+  DCHECK_NOT_NULL(callback);
+  DCHECK(gc_prologue_callbacks_.end() ==
+         std::find(gc_prologue_callbacks_.begin(), gc_prologue_callbacks_.end(),
+                   GCCallbackPair(callback, gc_type, pass_isolate)));
+  gc_prologue_callbacks_.emplace_back(callback, gc_type, pass_isolate);
 }
 
 
 void Heap::RemoveGCPrologueCallback(v8::Isolate::GCCallback callback) {
-  DCHECK(callback != NULL);
-  for (int i = 0; i < gc_prologue_callbacks_.length(); ++i) {
+  DCHECK_NOT_NULL(callback);
+  for (size_t i = 0; i < gc_prologue_callbacks_.size(); i++) {
     if (gc_prologue_callbacks_[i].callback == callback) {
-      gc_prologue_callbacks_.Remove(i);
+      gc_prologue_callbacks_[i] = gc_prologue_callbacks_.back();
+      gc_prologue_callbacks_.pop_back();
       return;
     }
   }
@@ -6205,18 +6214,20 @@ void Heap::RemoveGCPrologueCallback(v8::Isolate::GCCallback callback) {
 
 void Heap::AddGCEpilogueCallback(v8::Isolate::GCCallback callback,
                                  GCType gc_type, bool pass_isolate) {
-  DCHECK(callback != NULL);
-  GCCallbackPair pair(callback, gc_type, pass_isolate);
-  DCHECK(!gc_epilogue_callbacks_.Contains(pair));
-  return gc_epilogue_callbacks_.Add(pair);
+  DCHECK_NOT_NULL(callback);
+  DCHECK(gc_epilogue_callbacks_.end() ==
+         std::find(gc_epilogue_callbacks_.begin(), gc_epilogue_callbacks_.end(),
+                   GCCallbackPair(callback, gc_type, pass_isolate)));
+  gc_epilogue_callbacks_.emplace_back(callback, gc_type, pass_isolate);
 }
 
 
 void Heap::RemoveGCEpilogueCallback(v8::Isolate::GCCallback callback) {
-  DCHECK(callback != NULL);
-  for (int i = 0; i < gc_epilogue_callbacks_.length(); ++i) {
+  DCHECK_NOT_NULL(callback);
+  for (size_t i = 0; i < gc_epilogue_callbacks_.size(); i++) {
     if (gc_epilogue_callbacks_[i].callback == callback) {
-      gc_epilogue_callbacks_.Remove(i);
+      gc_epilogue_callbacks_[i] = gc_epilogue_callbacks_.back();
+      gc_epilogue_callbacks_.pop_back();
       return;
     }
   }
@@ -6646,7 +6657,7 @@ void Heap::UpdateTotalGCTime(double duration) {
 void Heap::ExternalStringTable::CleanUpNewSpaceStrings() {
   int last = 0;
   Isolate* isolate = heap_->isolate();
-  for (int i = 0; i < new_space_strings_.length(); ++i) {
+  for (size_t i = 0; i < new_space_strings_.size(); ++i) {
     Object* o = new_space_strings_[i];
     if (o->IsTheHole(isolate)) {
       continue;
@@ -6659,18 +6670,17 @@ void Heap::ExternalStringTable::CleanUpNewSpaceStrings() {
     if (heap_->InNewSpace(o)) {
       new_space_strings_[last++] = o;
     } else {
-      old_space_strings_.Add(o);
+      old_space_strings_.push_back(o);
     }
   }
-  new_space_strings_.Rewind(last);
-  new_space_strings_.Trim();
+  new_space_strings_.resize(last);
 }
 
 void Heap::ExternalStringTable::CleanUpAll() {
   CleanUpNewSpaceStrings();
   int last = 0;
   Isolate* isolate = heap_->isolate();
-  for (int i = 0; i < old_space_strings_.length(); ++i) {
+  for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     Object* o = old_space_strings_[i];
     if (o->IsTheHole(isolate)) {
       continue;
@@ -6683,8 +6693,7 @@ void Heap::ExternalStringTable::CleanUpAll() {
     DCHECK(!heap_->InNewSpace(o));
     old_space_strings_[last++] = o;
   }
-  old_space_strings_.Rewind(last);
-  old_space_strings_.Trim();
+  old_space_strings_.resize(last);
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
     Verify();
@@ -6693,7 +6702,7 @@ void Heap::ExternalStringTable::CleanUpAll() {
 }
 
 void Heap::ExternalStringTable::TearDown() {
-  for (int i = 0; i < new_space_strings_.length(); ++i) {
+  for (size_t i = 0; i < new_space_strings_.size(); ++i) {
     Object* o = new_space_strings_[i];
     if (o->IsThinString()) {
       o = ThinString::cast(o)->actual();
@@ -6701,8 +6710,8 @@ void Heap::ExternalStringTable::TearDown() {
     }
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
-  new_space_strings_.Free();
-  for (int i = 0; i < old_space_strings_.length(); ++i) {
+  new_space_strings_.clear();
+  for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     Object* o = old_space_strings_[i];
     if (o->IsThinString()) {
       o = ThinString::cast(o)->actual();
@@ -6710,7 +6719,7 @@ void Heap::ExternalStringTable::TearDown() {
     }
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
-  old_space_strings_.Free();
+  old_space_strings_.clear();
 }
 
 

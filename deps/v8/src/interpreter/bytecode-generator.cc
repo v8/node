@@ -189,6 +189,13 @@ class BytecodeGenerator::ControlScope::DeferredCommands final {
     }
     builder()->LoadLiteral(Smi::FromInt(token));
     builder()->StoreAccumulatorInRegister(token_register_);
+    if (!CommandUsesAccumulator(command)) {
+      // If we're not saving the accumulator in the result register, shove a
+      // harmless value there instead so that it is still considered "killed" in
+      // the liveness analysis. Normally we would LdaUndefined first, but the
+      // Smi token value is just as good, and by reusing it we save a bytecode.
+      builder()->StoreAccumulatorInRegister(result_register_);
+    }
   }
 
   // Records the dispatch token to be used to identify the re-throw path when
@@ -204,6 +211,11 @@ class BytecodeGenerator::ControlScope::DeferredCommands final {
   void RecordFallThroughPath() {
     builder()->LoadLiteral(Smi::FromInt(-1));
     builder()->StoreAccumulatorInRegister(token_register_);
+    // Since we're not saving the accumulator in the result register, shove a
+    // harmless value there instead so that it is still considered "killed" in
+    // the liveness analysis. Normally we would LdaUndefined first, but the Smi
+    // token value is just as good, and by reusing it we save a bytecode.
+    builder()->StoreAccumulatorInRegister(result_register_);
   }
 
   // Applies all recorded control-flow commands after the finally-block again.
@@ -1892,16 +1904,15 @@ void BytecodeGenerator::VisitRegExpLiteral(RegExpLiteral* expr) {
 }
 
 void BytecodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
-  int literal_index = feedback_index(expr->literal_slot());
-
   // Fast path for the empty object literal which doesn't need an
   // AllocationSite.
   if (expr->IsEmptyObjectLiteral()) {
     DCHECK(expr->IsFastCloningSupported());
-    builder()->CreateEmptyObjectLiteral(literal_index);
+    builder()->CreateEmptyObjectLiteral();
     return;
   }
 
+  int literal_index = feedback_index(expr->literal_slot());
   // Deep-copy the literal boilerplate.
   uint8_t flags = CreateObjectLiteralFlags::Encode(
       expr->ComputeFlags(), expr->IsFastCloningSupported());

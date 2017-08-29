@@ -1862,6 +1862,12 @@ Type* Typer::Visitor::TypeCheckMaps(Node* node) {
   UNREACHABLE();
 }
 
+Type* Typer::Visitor::TypeCompareMaps(Node* node) { return Type::Boolean(); }
+
+Type* Typer::Visitor::TypeCheckMapValue(Node* node) {
+  UNREACHABLE();
+}
+
 Type* Typer::Visitor::TypeCheckNumber(Node* node) {
   return typer_->operation_typer_.CheckNumber(Operand(node, 0));
 }

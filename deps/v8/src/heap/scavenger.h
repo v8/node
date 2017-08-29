@@ -85,6 +85,10 @@ class Scavenger {
   size_t bytes_copied() const { return copied_size_; }
   size_t bytes_promoted() const { return promoted_size_; }
 
+  void AnnounceLockedPage(MemoryChunk* chunk) {
+    allocator_.AnnounceLockedPage(chunk);
+  }
+
  private:
   // Number of objects to process before interrupting for potentially waking
   // up other tasks.
@@ -129,7 +133,7 @@ class Scavenger {
   Heap* const heap_;
   PromotionList::View promotion_list_;
   CopiedList::View copied_list_;
-  base::HashMap local_pretenuring_feedback_;
+  Heap::PretenuringFeedbackMap local_pretenuring_feedback_;
   size_t copied_size_;
   size_t promoted_size_;
   LocalAllocator allocator_;

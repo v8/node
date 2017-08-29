@@ -797,6 +797,8 @@ void Verifier::Visitor::Check(Node* node) {
       CheckValueInputIs(node, 1, Type::Number());
       CheckTypeIs(node, Type::Boolean());
       break;
+    case IrOpcode::kSpeculativeSafeIntegerAdd:
+    case IrOpcode::kSpeculativeSafeIntegerSubtract:
     case IrOpcode::kSpeculativeNumberAdd:
     case IrOpcode::kSpeculativeNumberSubtract:
     case IrOpcode::kSpeculativeNumberMultiply:
@@ -1187,11 +1189,16 @@ void Verifier::Visitor::Check(Node* node) {
       CheckTypeIs(node, Type::InternalizedString());
       break;
     case IrOpcode::kCheckMaps:
-      // (Any, Internal, ..., Internal) -> Any
       CheckValueInputIs(node, 0, Type::Any());
-      for (int i = 1; i < node->op()->ValueInputCount(); ++i) {
-        CheckValueInputIs(node, i, Type::Internal());
-      }
+      CheckNotTyped(node);
+      break;
+    case IrOpcode::kCompareMaps:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kCheckMapValue:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckValueInputIs(node, 1, Type::Any());
       CheckNotTyped(node);
       break;
     case IrOpcode::kCheckNumber:

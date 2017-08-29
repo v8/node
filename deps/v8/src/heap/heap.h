@@ -6,6 +6,8 @@
 #define V8_HEAP_HEAP_H_
 
 #include <cmath>
+#include <map>
+#include <unordered_map>
 #include <vector>
 
 // Clients of this interface shouldn't depend on lots of heap internals.
@@ -14,16 +16,19 @@
 #include "src/allocation.h"
 #include "src/assert-scope.h"
 #include "src/base/atomic-utils.h"
-#include "src/debug/debug-interface.h"
 #include "src/globals.h"
 #include "src/heap-symbols.h"
-#include "src/list.h"
 #include "src/objects.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/string-table.h"
 #include "src/visitors.h"
 
 namespace v8 {
+
+namespace debug {
+typedef void (*OutOfMemoryCallback)(void* data);
+}  // namespace debug
+
 namespace internal {
 
 namespace heap {
@@ -182,7 +187,7 @@ using v8::MemoryPressureLevel;
   V(PropertyCell, array_protector, ArrayProtector)                             \
   V(Cell, is_concat_spreadable_protector, IsConcatSpreadableProtector)         \
   V(PropertyCell, species_protector, SpeciesProtector)                         \
-  V(PropertyCell, string_length_protector, StringLengthProtector)              \
+  V(Cell, string_length_protector, StringLengthProtector)                      \
   V(Cell, fast_array_iteration_protector, FastArrayIterationProtector)         \
   V(PropertyCell, array_iterator_protector, ArrayIteratorProtector)            \
   V(PropertyCell, array_buffer_neutering_protector,                            \
@@ -355,7 +360,6 @@ using v8::MemoryPressureLevel;
     heap->incremental_marking()->RecordWrites(array);                  \
   } while (false)
 
-// Forward declarations.
 class AllocationObserver;
 class ArrayBufferTracker;
 class ConcurrentMarking;
@@ -554,7 +558,7 @@ class Heap {
 
   enum HeapState { NOT_IN_GC, SCAVENGE, MARK_COMPACT, MINOR_MARK_COMPACT };
 
-  enum UpdateAllocationSiteMode { kGlobal, kCached };
+  using PretenuringFeedbackMap = std::unordered_map<AllocationSite*, size_t>;
 
   // Taking this mutex prevents the GC from entering a phase that relocates
   // object references.
@@ -1473,14 +1477,11 @@ class Heap {
   // Allocation site tracking. =================================================
   // ===========================================================================
 
-  // Updates the AllocationSite of a given {object}. If the global prenuring
-  // storage is passed as {pretenuring_feedback} the memento found count on
-  // the corresponding allocation site is immediately updated and an entry
-  // in the hash map is created. Otherwise the entry (including a the count
-  // value) is cached on the local pretenuring feedback.
-  template <UpdateAllocationSiteMode mode>
-  inline void UpdateAllocationSite(Map* map, HeapObject* object,
-                                   base::HashMap* pretenuring_feedback);
+  // Updates the AllocationSite of a given {object}. The entry (including the
+  // count) is cached on the local pretenuring feedback.
+  inline void UpdateAllocationSite(
+      Map* map, HeapObject* object,
+      PretenuringFeedbackMap* pretenuring_feedback);
 
   // Removes an entry from the global pretenuring storage.
   inline void RemoveAllocationSitePretenuringFeedback(AllocationSite* site);
@@ -1489,7 +1490,7 @@ class Heap {
   // method needs to be called after evacuation, as allocation sites may be
   // evacuated and this method resolves forward pointers accordingly.
   void MergeAllocationSitePretenuringFeedback(
-      const base::HashMap& local_pretenuring_feedback);
+      const PretenuringFeedbackMap& local_pretenuring_feedback);
 
   // ===========================================================================
   // Retaining path tracking. ==================================================
@@ -1547,11 +1548,16 @@ class Heap {
   class SkipStoreBufferScope;
   class PretenuringScope;
 
+  typedef String* (*ExternalStringTableUpdaterCallback)(Heap* heap,
+                                                        Object** pointer);
+
   // External strings table is a place where all external strings are
   // registered.  We need to keep track of such strings to properly
   // finalize them.
   class ExternalStringTable {
    public:
+    explicit ExternalStringTable(Heap* heap) : heap_(heap) {}
+
     // Registers an external string.
     inline void AddString(String* string);
 
@@ -1567,24 +1573,22 @@ class Heap {
     // Destroys all allocated memory.
     void TearDown();
 
-   private:
-    explicit ExternalStringTable(Heap* heap) : heap_(heap) {}
+    void UpdateNewSpaceReferences(
+        Heap::ExternalStringTableUpdaterCallback updater_func);
+    void UpdateReferences(
+        Heap::ExternalStringTableUpdaterCallback updater_func);
 
+   private:
     inline void Verify();
 
     inline void AddOldString(String* string);
 
-    // Notifies the table that only a prefix of the new list is valid.
-    inline void ShrinkNewStrings(int position);
+    Heap* const heap_;
 
     // To speed up scavenge collections new space string are kept
     // separate from old space strings.
-    List<Object*> new_space_strings_;
-    List<Object*> old_space_strings_;
-
-    Heap* heap_;
-
-    friend class Heap;
+    std::vector<Object*> new_space_strings_;
+    std::vector<Object*> old_space_strings_;
 
     DISALLOW_COPY_AND_ASSIGN(ExternalStringTable);
   };
@@ -1613,17 +1617,13 @@ class Heap {
                    bool pass_isolate)
         : callback(callback), gc_type(gc_type), pass_isolate(pass_isolate) {}
 
-    bool operator==(const GCCallbackPair& other) const {
-      return other.callback == callback;
-    }
+    bool operator==(const GCCallbackPair& other) const;
+    GCCallbackPair& operator=(const GCCallbackPair& other);
 
     v8::Isolate::GCCallback callback;
     GCType gc_type;
     bool pass_isolate;
   };
-
-  typedef String* (*ExternalStringTableUpdaterCallback)(Heap* heap,
-                                                        Object** pointer);
 
   static const int kInitialStringTableSize = 2048;
   static const int kInitialEvalCacheSize = 64;
@@ -2302,8 +2302,8 @@ class Heap {
   // contains Smi(0) while marking is not active.
   Object* encountered_weak_collections_;
 
-  List<GCCallbackPair> gc_epilogue_callbacks_;
-  List<GCCallbackPair> gc_prologue_callbacks_;
+  std::vector<GCCallbackPair> gc_epilogue_callbacks_;
+  std::vector<GCCallbackPair> gc_prologue_callbacks_;
 
   GetExternallyAllocatedMemoryInBytesCallback external_memory_callback_;
 
@@ -2376,7 +2376,7 @@ class Heap {
   // storage is only alive temporary during a GC. The invariant is that all
   // pointers in this map are already fixed, i.e., they do not point to
   // forwarding pointers.
-  base::HashMap* global_pretenuring_feedback_;
+  PretenuringFeedbackMap global_pretenuring_feedback_;
 
   char trace_ring_buffer_[kTraceRingBufferSize];
 

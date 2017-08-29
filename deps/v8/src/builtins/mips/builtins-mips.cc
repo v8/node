@@ -18,10 +18,26 @@ namespace internal {
 
 void Builtins::Generate_Adaptor(MacroAssembler* masm, Address address,
                                 ExitFrameType exit_frame_type) {
+  __ li(s2, Operand(ExternalReference(address, masm->isolate())));
+  if (exit_frame_type == BUILTIN_EXIT) {
+    __ Jump(BUILTIN_CODE(masm->isolate(), AdaptorWithBuiltinExitFrame),
+            RelocInfo::CODE_TARGET);
+  } else {
+    DCHECK(exit_frame_type == EXIT);
+    __ Jump(BUILTIN_CODE(masm->isolate(), AdaptorWithExitFrame),
+            RelocInfo::CODE_TARGET);
+  }
+}
+
+namespace {
+
+void AdaptorWithExitFrameType(MacroAssembler* masm,
+                              Builtins::ExitFrameType exit_frame_type) {
   // ----------- S t a t e -------------
   //  -- a0                 : number of arguments excluding receiver
   //  -- a1                 : target
   //  -- a3                 : new.target
+  //  -- s2                 : entry point
   //  -- sp[0]              : last argument
   //  -- ...
   //  -- sp[4 * (argc - 1)] : first argument
@@ -35,8 +51,8 @@ void Builtins::Generate_Adaptor(MacroAssembler* masm, Address address,
   // ordinary functions).
   __ lw(cp, FieldMemOperand(a1, JSFunction::kContextOffset));
 
-  // JumpToExternalReference expects a0 to contain the number of arguments
-  // including the receiver and the extra arguments.
+  // CEntryStub expects a0 to contain the number of arguments including the
+  // receiver and the extra arguments.
   const int num_extra_args = 3;
   __ Addu(a0, a0, num_extra_args + 1);
 
@@ -45,8 +61,23 @@ void Builtins::Generate_Adaptor(MacroAssembler* masm, Address address,
   __ Push(a0, a1, a3);
   __ SmiUntag(a0);
 
-  __ JumpToExternalReference(ExternalReference(address, masm->isolate()),
-                             PROTECT, exit_frame_type == BUILTIN_EXIT);
+  // Jump to the C entry runtime stub directly here instead of using
+  // JumpToExternalReference. We have already loaded entry point to s2
+  // in Generate_adaptor.
+  __ mov(a1, s2);
+  CEntryStub stub(masm->isolate(), 1, kDontSaveFPRegs, kArgvOnStack,
+                  exit_frame_type == Builtins::BUILTIN_EXIT);
+  __ Jump(stub.GetCode(), RelocInfo::CODE_TARGET, al, zero_reg,
+          Operand(zero_reg), PROTECT);
+}
+}  // namespace
+
+void Builtins::Generate_AdaptorWithExitFrame(MacroAssembler* masm) {
+  AdaptorWithExitFrameType(masm, EXIT);
+}
+
+void Builtins::Generate_AdaptorWithBuiltinExitFrame(MacroAssembler* masm) {
+  AdaptorWithExitFrameType(masm, BUILTIN_EXIT);
 }
 
 // Load the built-in InternalArray function from the current context.
@@ -1074,6 +1105,55 @@ static void MaybeTailCallOptimizedCodeSlot(MacroAssembler* masm,
   __ bind(&fallthrough);
 }
 
+// Advance the current bytecode offset. This simulates what all bytecode
+// handlers do upon completion of the underlying operation.
+static void AdvanceBytecodeOffset(MacroAssembler* masm, Register bytecode_array,
+                                  Register bytecode_offset, Register scratch1,
+                                  Register scratch2, Register scratch3) {
+  Register bytecode_size_table = scratch1;
+  Register bytecode = scratch2;
+  DCHECK(!AreAliased(bytecode_array, bytecode_offset, bytecode_size_table,
+                     bytecode));
+
+  __ li(
+      bytecode_size_table,
+      Operand(ExternalReference::bytecode_size_table_address(masm->isolate())));
+
+  // Load the current bytecode.
+  __ Addu(scratch3, bytecode_array, bytecode_offset);
+  __ lbu(bytecode, MemOperand(scratch3));
+
+  // Check if the bytecode is a Wide or ExtraWide prefix bytecode.
+  Label load_size, extra_wide;
+  STATIC_ASSERT(0 == static_cast<int>(interpreter::Bytecode::kWide));
+  STATIC_ASSERT(1 == static_cast<int>(interpreter::Bytecode::kExtraWide));
+  __ Branch(&load_size, hi, bytecode, Operand(1));
+  __ Branch(&extra_wide, eq, bytecode, Operand(1));
+
+  // Load the next bytecode and update table to the wide scaled table.
+  __ Addu(bytecode_offset, bytecode_offset, Operand(1));
+  __ Addu(scratch3, bytecode_array, bytecode_offset);
+  __ lbu(bytecode, MemOperand(scratch3));
+  __ Addu(bytecode_size_table, bytecode_size_table,
+          Operand(kIntSize * interpreter::Bytecodes::kBytecodeCount));
+  __ jmp(&load_size);
+
+  __ bind(&extra_wide);
+  // Load the next bytecode and update table to the extra wide scaled table.
+  __ Addu(bytecode_offset, bytecode_offset, Operand(1));
+  __ Addu(scratch3, bytecode_array, bytecode_offset);
+  __ lbu(bytecode, MemOperand(scratch3));
+  __ Addu(bytecode_size_table, bytecode_size_table,
+          Operand(2 * kIntSize * interpreter::Bytecodes::kBytecodeCount));
+  __ jmp(&load_size);
+
+  // Load the size of the current bytecode.
+  __ bind(&load_size);
+  __ Lsa(scratch3, bytecode_size_table, bytecode, 2);
+  __ lw(scratch3, MemOperand(scratch3));
+  __ Addu(bytecode_offset, bytecode_offset, scratch3);
+}
+
 // Generate code for entering a JS function with the interpreter.
 // On entry to the function the receiver and arguments have been pushed on the
 // stack left to right.  The actual argument count matches the formal parameter
@@ -1189,13 +1269,16 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ sw(a3, MemOperand(t1));
   __ bind(&no_incoming_new_target_or_generator_register);
 
-  // Load accumulator and dispatch table into registers.
+  // Load accumulator with undefined.
   __ LoadRoot(kInterpreterAccumulatorRegister, Heap::kUndefinedValueRootIndex);
+
+  // Load the dispatch table into a register and dispatch to the bytecode
+  // handler at the current bytecode offset.
+  Label do_dispatch;
+  __ bind(&do_dispatch);
   __ li(kInterpreterDispatchTableRegister,
         Operand(ExternalReference::interpreter_dispatch_table_address(
             masm->isolate())));
-
-  // Dispatch to the first bytecode handler for the function.
   __ Addu(a0, kInterpreterBytecodeArrayRegister,
           kInterpreterBytecodeOffsetRegister);
   __ lbu(a0, MemOperand(a0));
@@ -1204,9 +1287,17 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ Call(at);
   masm->isolate()->heap()->SetInterpreterEntryReturnPCOffset(masm->pc_offset());
 
-  // The return value is in v0.
-  LeaveInterpreterFrame(masm, t0);
-  __ Jump(ra);
+  // Get bytecode array and bytecode offset from the stack frame.
+  __ lw(kInterpreterBytecodeArrayRegister,
+        MemOperand(fp, InterpreterFrameConstants::kBytecodeArrayFromFp));
+  __ lw(kInterpreterBytecodeOffsetRegister,
+        MemOperand(fp, InterpreterFrameConstants::kBytecodeOffsetFromFp));
+  __ SmiUntag(kInterpreterBytecodeOffsetRegister);
+
+  // Advance to the next bytecode and dispatch.
+  AdvanceBytecodeOffset(masm, kInterpreterBytecodeArrayRegister,
+                        kInterpreterBytecodeOffsetRegister, a1, a2, a3);
+  __ jmp(&do_dispatch);
 
   // Load debug copy of the bytecode array if it exists.
   // kInterpreterBytecodeArrayRegister is already loaded with
@@ -1219,6 +1310,12 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   __ lw(kInterpreterBytecodeArrayRegister,
         FieldMemOperand(t0, DebugInfo::kDebugBytecodeArrayOffset));
   __ Branch(&bytecode_array_loaded);
+}
+
+void Builtins::Generate_InterpreterExitTrampoline(MacroAssembler* masm) {
+  // The return value is in v0.
+  LeaveInterpreterFrame(masm, t0);
+  __ Jump(ra);
 }
 
 static void Generate_StackOverflowCheck(MacroAssembler* masm, Register num_args,
@@ -1408,16 +1505,18 @@ void Builtins::Generate_InterpreterEnterBytecodeAdvance(MacroAssembler* masm) {
   // Advance the current bytecode offset stored within the given interpreter
   // stack frame. This simulates what all bytecode handlers do upon completion
   // of the underlying operation.
-  __ lw(a1, MemOperand(fp, InterpreterFrameConstants::kBytecodeArrayFromFp));
-  __ lw(a2, MemOperand(fp, InterpreterFrameConstants::kBytecodeOffsetFromFp));
-  __ lw(cp, MemOperand(fp, StandardFrameConstants::kContextOffset));
-  {
-    FrameScope scope(masm, StackFrame::INTERNAL);
-    __ Push(kInterpreterAccumulatorRegister, a1, a2);
-    __ CallRuntime(Runtime::kInterpreterAdvanceBytecodeOffset);
-    __ mov(a2, v0);  // Result is the new bytecode offset.
-    __ Pop(kInterpreterAccumulatorRegister);
-  }
+  __ lw(kInterpreterBytecodeArrayRegister,
+        MemOperand(fp, InterpreterFrameConstants::kBytecodeArrayFromFp));
+  __ lw(kInterpreterBytecodeOffsetRegister,
+        MemOperand(fp, InterpreterFrameConstants::kBytecodeOffsetFromFp));
+  __ SmiUntag(kInterpreterBytecodeOffsetRegister);
+
+  // Advance to the next bytecode.
+  AdvanceBytecodeOffset(masm, kInterpreterBytecodeArrayRegister,
+                        kInterpreterBytecodeOffsetRegister, a1, a2, a3);
+
+  // Convert new bytecode offset to a Smi and save in the stackframe.
+  __ SmiTag(a2, kInterpreterBytecodeOffsetRegister);
   __ sw(a2, MemOperand(fp, InterpreterFrameConstants::kBytecodeOffsetFromFp));
 
   Generate_InterpreterEnterBytecode(masm);
@@ -1711,7 +1810,7 @@ static void Generate_OnStackReplacementHelper(MacroAssembler* masm,
 
   // Compute the target address = code_obj + header_size + osr_offset
   // <entry_addr> = <code_obj> + #header_size + <osr_offset>
-  __ addu(v0, v0, a1);
+  __ Addu(v0, v0, a1);
   __ addiu(ra, v0, Code::kHeaderSize - kHeapObjectTag);
 
   // And "return" to the OSR entry point of the function.

@@ -273,7 +273,9 @@
   V(SpeculativeNumberBitwiseXor)                    \
   V(SpeculativeNumberShiftLeft)                     \
   V(SpeculativeNumberShiftRight)                    \
-  V(SpeculativeNumberShiftRightLogical)
+  V(SpeculativeNumberShiftRightLogical)             \
+  V(SpeculativeSafeIntegerAdd)                      \
+  V(SpeculativeSafeIntegerSubtract)
 
 #define SIMPLIFIED_NUMBER_UNOP_LIST(V) \
   V(NumberAbs)                         \
@@ -328,6 +330,7 @@
   V(CheckBounds)                    \
   V(CheckIf)                        \
   V(CheckMaps)                      \
+  V(CheckMapValue)                  \
   V(CheckNumber)                    \
   V(CheckInternalizedString)        \
   V(CheckReceiver)                  \
@@ -338,6 +341,7 @@
   V(CheckHeapObject)                \
   V(CheckFloat64Hole)               \
   V(CheckNotTaggedHole)             \
+  V(CompareMaps)                    \
   V(ConvertTaggedHoleToUndefined)   \
   V(Allocate)                       \
   V(LoadField)                      \

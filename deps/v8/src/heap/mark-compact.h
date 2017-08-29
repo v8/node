@@ -8,7 +8,6 @@
 #include <deque>
 #include <vector>
 
-#include "src/base/bits.h"
 #include "src/heap/marking.h"
 #include "src/heap/sequential-marking-deque.h"
 #include "src/heap/spaces.h"
@@ -704,8 +703,6 @@ class MarkCompactCollector final : public MarkCompactCollectorBase {
 
   void UpdateSlots(SlotsBuffer* buffer);
   void UpdateSlotsRecordedIn(SlotsBuffer* buffer);
-
-  void InvalidateCode(Code* code);
 
   void ClearMarkbits();
 

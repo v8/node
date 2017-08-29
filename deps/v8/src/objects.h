@@ -18,7 +18,6 @@
 #include "src/field-index.h"
 #include "src/flags.h"
 #include "src/interpreter/bytecode-register.h"
-#include "src/list.h"
 #include "src/messages.h"
 #include "src/property-details.h"
 #include "src/unicode-decoder.h"
@@ -5358,7 +5357,6 @@ class JSPromiseCapability : public JSObject {
 
 class JSPromise : public JSObject {
  public:
-  DECL_INT_ACCESSORS(status)
   DECL_ACCESSORS(result, Object)
 
   // There are 3 possible states for these fields --
@@ -5389,7 +5387,8 @@ class JSPromise : public JSObject {
   // block in an async function.
   DECL_BOOLEAN_ACCESSORS(handled_hint)
 
-  static const char* Status(int status);
+  static const char* Status(v8::Promise::PromiseState status);
+  v8::Promise::PromiseState status() const;
 
   DECL_CAST(JSPromise)
 
@@ -5398,8 +5397,7 @@ class JSPromise : public JSObject {
   DECL_VERIFIER(JSPromise)
 
   // Layout description.
-  static const int kStatusOffset = JSObject::kHeaderSize;
-  static const int kResultOffset = kStatusOffset + kPointerSize;
+  static const int kResultOffset = JSObject::kHeaderSize;
   static const int kDeferredPromiseOffset = kResultOffset + kPointerSize;
   static const int kDeferredOnResolveOffset =
       kDeferredPromiseOffset + kPointerSize;
@@ -5415,8 +5413,16 @@ class JSPromise : public JSObject {
       kSize + v8::Promise::kEmbedderFieldCount * kPointerSize;
 
   // Flags layout.
-  static const int kHasHandlerBit = 0;
-  static const int kHandledHintBit = 1;
+  // The first two bits store the v8::Promise::PromiseState.
+  static const int kStatusBits = 2;
+  static const int kHasHandlerBit = 2;
+  static const int kHandledHintBit = 3;
+
+  static const int kStatusShift = 0;
+  static const int kStatusMask = 0x3;
+  STATIC_ASSERT(v8::Promise::kPending == 0);
+  STATIC_ASSERT(v8::Promise::kFulfilled == 1);
+  STATIC_ASSERT(v8::Promise::kRejected == 2);
 };
 
 // Regular expressions
@@ -6743,13 +6749,12 @@ class AccessorInfo: public Struct {
   DISALLOW_IMPLICIT_CONSTRUCTORS(AccessorInfo);
 };
 
-
 // Support for JavaScript accessors: A pair of a getter and a setter. Each
 // accessor can either be
-//   * a pointer to a JavaScript function or proxy: a real accessor
+//   * a JavaScript function or proxy: a real accessor
+//   * a FunctionTemplateInfo: a real (lazy) accessor
 //   * undefined: considered an accessor by the spec, too, strangely enough
-//   * the hole: an accessor which has not been set
-//   * a pointer to a map: a transition used to ensure map sharing
+//   * null: an accessor which has not been set
 class AccessorPair: public Struct {
  public:
   DECL_ACCESSORS(getter, Object)
@@ -6762,7 +6767,7 @@ class AccessorPair: public Struct {
   inline Object* get(AccessorComponent component);
   inline void set(AccessorComponent component, Object* value);
 
-  // Note: Returns undefined instead in case of a hole.
+  // Note: Returns undefined if the component is not set.
   static Handle<Object> GetComponent(Handle<AccessorPair> accessor_pair,
                                      AccessorComponent component);
 

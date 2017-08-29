@@ -1385,7 +1385,7 @@ int JSObject::GetHeaderSize(InstanceType type) {
     case JS_MESSAGE_OBJECT_TYPE:
       return JSMessageObject::kSize;
     case JS_ARGUMENTS_TYPE:
-      return JSArgumentsObject::kHeaderSize;
+      return JSObject::kHeaderSize;
     case JS_ERROR_TYPE:
       return JSObject::kHeaderSize;
     case JS_STRING_ITERATOR_TYPE:
@@ -9188,7 +9188,6 @@ Handle<Map> Map::CopyReplaceDescriptors(
     }
   } else {
     result->InitializeDescriptors(*descriptors, *layout_descriptor);
-    map->deprecate();
   }
 #if V8_TRACE_MAPS
   if (FLAG_trace_maps &&
@@ -15919,8 +15918,14 @@ class StringSharedKey : public HashTableKey {
   int position_;
 };
 
+v8::Promise::PromiseState JSPromise::status() const {
+  int value = flags() & kStatusMask;
+  DCHECK(value == 0 || value == 1 || value == 2);
+  return static_cast<v8::Promise::PromiseState>(value);
+}
+
 // static
-const char* JSPromise::Status(int status) {
+const char* JSPromise::Status(v8::Promise::PromiseState status) {
   switch (status) {
     case v8::Promise::kFulfilled:
       return "resolved";

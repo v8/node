@@ -728,7 +728,6 @@ int FeedbackNexus::ExtractMaps(MapHandles* maps) const {
       WeakCell* cell = WeakCell::cast(array->get(i));
       if (!cell->cleared()) {
         Map* map = Map::cast(cell->value());
-        if (map->is_deprecated()) continue;
         maps->push_back(handle(map, isolate));
         found++;
       }
@@ -738,7 +737,6 @@ int FeedbackNexus::ExtractMaps(MapHandles* maps) const {
     WeakCell* cell = WeakCell::cast(feedback);
     if (!cell->cleared()) {
       Map* map = Map::cast(cell->value());
-      if (map->is_deprecated()) return 0;
       maps->push_back(handle(map, isolate));
       return 1;
     }
@@ -922,6 +920,16 @@ BinaryOperationHint BinaryOpICNexus::GetBinaryOperationFeedback() const {
 CompareOperationHint CompareICNexus::GetCompareOperationFeedback() const {
   int feedback = Smi::ToInt(GetFeedback());
   return CompareOperationHintFromFeedback(feedback);
+}
+
+InlineCacheState ForInICNexus::StateFromFeedback() const {
+  Object* feedback = GetFeedback();
+  if (feedback == *FeedbackVector::UninitializedSentinel(GetIsolate())) {
+    return UNINITIALIZED;
+  } else if (feedback == *FeedbackVector::MegamorphicSentinel(GetIsolate())) {
+    return MEGAMORPHIC;
+  }
+  return GENERIC;
 }
 
 InlineCacheState StoreDataPropertyInLiteralICNexus::StateFromFeedback() const {
