@@ -481,6 +481,11 @@ class RepresentationSelector {
         break;
       }
 
+      case IrOpcode::kConvertTaggedHoleToUndefined:
+        new_type = op_typer_.ConvertTaggedHoleToUndefined(
+            FeedbackTypeOf(node->InputAt(0)));
+        break;
+
       case IrOpcode::kTypeGuard: {
         new_type = op_typer_.TypeTypeGuard(node->op(),
                                            FeedbackTypeOf(node->InputAt(0)));
@@ -1312,11 +1317,13 @@ class RepresentationSelector {
                    Type::Signed32());
       }
       if (lower()) {
-        if (CanOverflowSigned32(node->op(), left_feedback_type,
-                                right_feedback_type, graph_zone())) {
-          ChangeToInt32OverflowOp(node);
-        } else {
+        if (truncation.IsUsedAsWord32() ||
+            !CanOverflowSigned32(node->op(), left_feedback_type,
+                                 right_feedback_type, graph_zone())) {
           ChangeToPureOp(node, Int32Op(node));
+
+        } else {
+          ChangeToInt32OverflowOp(node);
         }
       }
       return;

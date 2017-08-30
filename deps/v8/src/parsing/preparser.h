@@ -135,8 +135,7 @@ class PreParserExpression {
   }
 
   static PreParserExpression NewTargetExpression() {
-    return PreParserExpression(TypeField::encode(kExpression) |
-                               ExpressionTypeField::encode(kNewTarget));
+    return PreParserExpression::Default();
   }
 
   static PreParserExpression ObjectLiteral(
@@ -197,12 +196,6 @@ class PreParserExpression {
     return PreParserExpression(
         TypeField::encode(kExpression) |
         ExpressionTypeField::encode(kSuperCallReference));
-  }
-
-  static PreParserExpression NoTemplateTag() {
-    return PreParserExpression(
-        TypeField::encode(kExpression) |
-        ExpressionTypeField::encode(kNoTemplateTagExpression));
   }
 
   bool IsNull() const { return TypeField::decode(code_) == kNull; }
@@ -278,11 +271,6 @@ class PreParserExpression {
   bool IsFunctionLiteral() const { return false; }
   bool IsCallNew() const { return false; }
 
-  bool IsNoTemplateTag() const {
-    return TypeField::decode(code_) == kExpression &&
-           ExpressionTypeField::decode(code_) == kNoTemplateTagExpression;
-  }
-
   bool IsSpread() const {
     return TypeField::decode(code_) == kSpreadExpression;
   }
@@ -317,9 +305,7 @@ class PreParserExpression {
     kCallExpression,
     kCallEvalExpression,
     kSuperCallReference,
-    kNoTemplateTagExpression,
-    kAssignment,
-    kNewTarget
+    kAssignment
   };
 
   explicit PreParserExpression(uint32_t expression_code,
@@ -675,9 +661,8 @@ class PreParserFactory {
     return PreParserStatement::Default();
   }
 
-  PreParserStatement NewBlock(ZoneList<const AstRawString*>* labels,
-                              int capacity, bool ignore_completion_value,
-                              int pos) {
+  PreParserStatement NewBlock(int capacity, bool ignore_completion_value,
+                              ZoneList<const AstRawString*>* labels = nullptr) {
     return PreParserStatement::Default();
   }
 
@@ -762,14 +747,6 @@ class PreParserFactory {
   PreParserExpression NewImportCallExpression(const PreParserExpression& args,
                                               int pos) {
     return PreParserExpression::Default();
-  }
-
-  // Return the object itself as AstVisitor and implement the needed
-  // dummy method right in this class.
-  PreParserFactory* visitor() { return this; }
-  int* ast_properties() {
-    static int dummy = 42;
-    return &dummy;
   }
 
  private:
@@ -967,9 +944,6 @@ class PreParser : public ParserBase<PreParser> {
     scope->SetLanguageMode(mode);
   }
   V8_INLINE void SetAsmModule() {}
-
-  V8_INLINE void MarkCollectedTailCallExpressions() {}
-  V8_INLINE void MarkTailPosition(const PreParserExpression& expression) {}
 
   V8_INLINE PreParserExpression SpreadCall(const PreParserExpression& function,
                                            const PreParserExpressionList& args,
@@ -1238,11 +1212,6 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE bool IsStringLiteral(PreParserStatement statement) const {
     return statement.IsStringLiteral();
-  }
-
-  V8_INLINE static PreParserExpression GetPropertyValue(
-      const PreParserExpression& property) {
-    return PreParserExpression::Default();
   }
 
   V8_INLINE static void GetDefaultStrings(
@@ -1628,14 +1597,6 @@ class PreParser : public ParserBase<PreParser> {
         }
       }
     }
-  }
-
-  V8_INLINE PreParserExpression NoTemplateTag() {
-    return PreParserExpression::NoTemplateTag();
-  }
-
-  V8_INLINE static bool IsTaggedTemplate(const PreParserExpression& tag) {
-    return !tag.IsNoTemplateTag();
   }
 
   V8_INLINE PreParserExpression
