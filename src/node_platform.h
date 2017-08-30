@@ -51,6 +51,7 @@ class NodePlatform : public v8::Platform {
                                      double delay_in_seconds) override;
   bool IdleTasksEnabled(v8::Isolate* isolate) override;
   double MonotonicallyIncreasingTime() override;
+  double CurrentClockTimeMillis() override;
   v8::TracingController* GetTracingController() override;
 
  private:
