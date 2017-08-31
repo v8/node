@@ -1079,7 +1079,23 @@ MaybeHandle<JSFunction> Compiler::GetFunctionFromEval(
     }
     script->set_origin_options(options);
     script->set_compilation_type(Script::COMPILATION_TYPE_EVAL);
-    Script::SetEvalOrigin(script, outer_info, eval_position);
+
+    script->set_eval_from_shared(*outer_info);
+    if (eval_position == kNoSourcePosition) {
+      // If the position is missing, attempt to get the code offset by
+      // walking the stack. Do not translate the code offset into source
+      // position, but store it as negative value for lazy translation.
+      StackTraceFrameIterator it(script->GetIsolate());
+      if (!it.done() && it.is_javascript()) {
+        FrameSummary summary = FrameSummary::GetTop(it.javascript_frame());
+        script->set_eval_from_shared(
+            summary.AsJavaScript().function()->shared());
+        eval_position = -summary.code_offset();
+      } else {
+        eval_position = 0;
+      }
+    }
+    script->set_eval_from_position(eval_position);
 
     ParseInfo parse_info(script);
     parse_info.set_eval();
@@ -1192,7 +1208,8 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
     int column_offset, ScriptOriginOptions resource_options,
     Handle<Object> source_map_url, Handle<Context> context,
     v8::Extension* extension, ScriptData** cached_data,
-    ScriptCompiler::CompileOptions compile_options, NativesFlag natives) {
+    ScriptCompiler::CompileOptions compile_options, NativesFlag natives,
+    Handle<FixedArray> host_defined_options) {
   Isolate* isolate = source->GetIsolate();
   if (compile_options == ScriptCompiler::kNoCompileOptions) {
     cached_data = NULL;
@@ -1287,6 +1304,9 @@ Handle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
     script->set_origin_options(resource_options);
     if (!source_map_url.is_null()) {
       script->set_source_mapping_url(*source_map_url);
+    }
+    if (!host_defined_options.is_null()) {
+      script->set_host_defined_options(*host_defined_options);
     }
 
     // Compile the function and add it to the cache.

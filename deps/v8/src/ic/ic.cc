@@ -411,7 +411,7 @@ void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
 }
 
 void IC::ConfigureVectorState(Handle<Name> name, MapHandles const& maps,
-                              List<Handle<Object>>* handlers) {
+                              ObjectHandles* handlers) {
   DCHECK(!IsLoadGlobalIC());
   // Non-keyed ICs don't track the name explicitly.
   if (!is_keyed()) name = Handle<Name>::null();
@@ -518,7 +518,7 @@ bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
   if (is_keyed() && state() != RECOMPUTE_HANDLER) return false;
   Handle<Map> map = receiver_map();
   MapHandles maps;
-  List<Handle<Object>> handlers;
+  ObjectHandles handlers;
 
   TargetMaps(&maps);
   int number_of_maps = static_cast<int>(maps.size());
@@ -558,13 +558,13 @@ bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
     ConfigureVectorState(name, receiver_map(), handler);
   } else {
     if (handler_to_overwrite >= 0) {
-      handlers.Set(handler_to_overwrite, handler);
+      handlers[handler_to_overwrite] = handler;
       if (!map.is_identical_to(maps.at(handler_to_overwrite))) {
         maps[handler_to_overwrite] = map;
       }
     } else {
       maps.push_back(map);
-      handlers.Add(handler);
+      handlers.push_back(handler);
     }
 
     ConfigureVectorState(name, maps, &handlers);
@@ -581,7 +581,7 @@ void IC::UpdateMonomorphicIC(Handle<Object> handler, Handle<Name> name) {
 
 void IC::CopyICToMegamorphicCache(Handle<Name> name) {
   MapHandles maps;
-  List<Handle<Object>> handlers;
+  ObjectHandles handlers;
   TargetMaps(&maps);
   if (!nexus()->FindHandlers(&handlers, static_cast<int>(maps.size()))) return;
   for (int i = 0; i < static_cast<int>(maps.size()); i++) {
@@ -790,7 +790,7 @@ Handle<Object> LoadIC::LoadFromPrototype(Handle<Map> receiver_map,
 
   if (checks_count == 0) {
     return isolate()->factory()->NewTuple3(holder_cell, smi_handler,
-                                           validity_cell);
+                                           validity_cell, TENURED);
   }
   Handle<FixedArray> handler_array(isolate()->factory()->NewFixedArray(
       LoadHandler::kFirstPrototypeIndex + checks_count, TENURED));
@@ -833,7 +833,7 @@ Handle<Object> LoadIC::LoadFullChain(Handle<Map> receiver_map,
 
   Factory* factory = isolate()->factory();
   if (checks_count == 0) {
-    return factory->NewTuple3(holder, smi_handler, validity_cell);
+    return factory->NewTuple3(holder, smi_handler, validity_cell, TENURED);
   }
   Handle<FixedArray> handler_array(factory->NewFixedArray(
       LoadHandler::kFirstPrototypeIndex + checks_count, TENURED));
@@ -1276,12 +1276,12 @@ void KeyedLoadIC::UpdateLoadElement(Handle<HeapObject> receiver) {
     return;
   }
 
-  List<Handle<Object>> handlers(static_cast<int>(target_receiver_maps.size()));
+  ObjectHandles handlers;
+  handlers.reserve(target_receiver_maps.size());
   LoadElementPolymorphicHandlers(&target_receiver_maps, &handlers);
   DCHECK_LE(1, target_receiver_maps.size());
   if (target_receiver_maps.size() == 1) {
-    ConfigureVectorState(Handle<Name>(), target_receiver_maps[0],
-                         handlers.at(0));
+    ConfigureVectorState(Handle<Name>(), target_receiver_maps[0], handlers[0]);
   } else {
     ConfigureVectorState(Handle<Name>(), target_receiver_maps, &handlers);
   }
@@ -1328,8 +1328,8 @@ Handle<Object> KeyedLoadIC::LoadElementHandler(Handle<Map> receiver_map) {
                                   convert_hole_to_undefined, is_js_array);
 }
 
-void KeyedLoadIC::LoadElementPolymorphicHandlers(
-    MapHandles* receiver_maps, List<Handle<Object>>* handlers) {
+void KeyedLoadIC::LoadElementPolymorphicHandlers(MapHandles* receiver_maps,
+                                                 ObjectHandles* handlers) {
   // Filter out deprecated maps to ensure their instances get migrated.
   receiver_maps->erase(
       std::remove_if(
@@ -1347,7 +1347,7 @@ void KeyedLoadIC::LoadElementPolymorphicHandlers(
         receiver_map->NotifyLeafMapLayoutChange();
       }
     }
-    handlers->Add(LoadElementHandler(receiver_map));
+    handlers->push_back(LoadElementHandler(receiver_map));
   }
 }
 
@@ -1647,7 +1647,8 @@ Handle<Object> StoreIC::StoreTransition(Handle<Map> receiver_map,
 
   Factory* factory = isolate()->factory();
   if (checks_count == 0) {
-    return factory->NewTuple3(transition_cell, smi_handler, validity_cell);
+    return factory->NewTuple3(transition_cell, smi_handler, validity_cell,
+                              TENURED);
   }
   Handle<FixedArray> handler_array(factory->NewFixedArray(
       StoreHandler::kFirstPrototypeIndex + checks_count, TENURED));
@@ -1959,13 +1960,13 @@ void KeyedStoreIC::UpdateStoreElement(Handle<Map> receiver_map,
     }
   }
 
-  List<Handle<Object>> handlers(static_cast<int>(target_receiver_maps.size()));
+  ObjectHandles handlers;
+  handlers.reserve(target_receiver_maps.size());
   StoreElementPolymorphicHandlers(&target_receiver_maps, &handlers, store_mode);
   if (target_receiver_maps.size() == 0) {
     ConfigureVectorState(PREMONOMORPHIC, Handle<Name>());
   } else if (target_receiver_maps.size() == 1) {
-    ConfigureVectorState(Handle<Name>(), target_receiver_maps[0],
-                         handlers.at(0));
+    ConfigureVectorState(Handle<Name>(), target_receiver_maps[0], handlers[0]);
   } else {
     ConfigureVectorState(Handle<Name>(), target_receiver_maps, &handlers);
   }
@@ -2028,11 +2029,11 @@ Handle<Object> KeyedStoreIC::StoreElementHandler(
   Handle<Object> validity_cell =
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
   if (validity_cell.is_null()) return stub;
-  return isolate()->factory()->NewTuple2(validity_cell, stub);
+  return isolate()->factory()->NewTuple2(validity_cell, stub, TENURED);
 }
 
 void KeyedStoreIC::StoreElementPolymorphicHandlers(
-    MapHandles* receiver_maps, List<Handle<Object>>* handlers,
+    MapHandles* receiver_maps, ObjectHandles* handlers,
     KeyedAccessStoreMode store_mode) {
   DCHECK(store_mode == STANDARD_STORE ||
          store_mode == STORE_AND_GROW_NO_TRANSITION ||
@@ -2090,14 +2091,14 @@ void KeyedStoreIC::StoreElementPolymorphicHandlers(
           validity_cell = handle(Smi::kZero, isolate());
         }
         Handle<WeakCell> transition = Map::WeakCellForMap(transitioned_map);
-        handler =
-            isolate()->factory()->NewTuple3(transition, stub, validity_cell);
+        handler = isolate()->factory()->NewTuple3(transition, stub,
+                                                  validity_cell, TENURED);
       } else {
         handler = StoreElementHandler(receiver_map, store_mode);
       }
     }
     DCHECK(!handler.is_null());
-    handlers->Add(handler);
+    handlers->push_back(handler);
   }
 }
 

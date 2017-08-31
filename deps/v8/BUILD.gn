@@ -1038,6 +1038,10 @@ v8_source_set("v8_builtins_generators") {
       # TODO(mostynb@opera.com): don't exclude these http://crbug.com/752428
       "src/builtins/builtins-async-iterator-gen.cc",
       "src/builtins/builtins-async-generator-gen.cc",
+
+      # This source file takes an unusually large amount of time to
+      # compile.  Build it separately to avoid bottlenecks.
+      "src/builtins/builtins-regexp-gen.cc",
     ]
   }
 
@@ -1419,10 +1423,6 @@ v8_source_set("v8_base") {
     "src/compiler/memory-optimizer.h",
     "src/compiler/move-optimizer.cc",
     "src/compiler/move-optimizer.h",
-    "src/compiler/new-escape-analysis-reducer.cc",
-    "src/compiler/new-escape-analysis-reducer.h",
-    "src/compiler/new-escape-analysis.cc",
-    "src/compiler/new-escape-analysis.h",
     "src/compiler/node-aux-data.h",
     "src/compiler/node-cache.cc",
     "src/compiler/node-cache.h",
@@ -1600,6 +1600,7 @@ v8_source_set("v8_base") {
     "src/heap/array-buffer-tracker-inl.h",
     "src/heap/array-buffer-tracker.cc",
     "src/heap/array-buffer-tracker.h",
+    "src/heap/barrier.h",
     "src/heap/code-stats.cc",
     "src/heap/code-stats.h",
     "src/heap/concurrent-marking.cc",
@@ -1936,6 +1937,10 @@ v8_source_set("v8_base") {
     "src/signature.h",
     "src/simulator.h",
     "src/small-pointer-list.h",
+    "src/snapshot/builtin-deserializer.cc",
+    "src/snapshot/builtin-deserializer.h",
+    "src/snapshot/builtin-serializer.cc",
+    "src/snapshot/builtin-serializer.h",
     "src/snapshot/code-serializer.cc",
     "src/snapshot/code-serializer.h",
     "src/snapshot/deserializer.cc",
@@ -2053,6 +2058,7 @@ v8_source_set("v8_base") {
     "src/wasm/wasm-module-builder.h",
     "src/wasm/wasm-module.cc",
     "src/wasm/wasm-module.h",
+    "src/wasm/wasm-objects-inl.h",
     "src/wasm/wasm-objects.cc",
     "src/wasm/wasm-objects.h",
     "src/wasm/wasm-opcodes.cc",
@@ -2079,8 +2085,15 @@ v8_source_set("v8_base") {
     jumbo_excluded_sources = [
       # TODO(mostynb@opera.com): don't exclude these http://crbug.com/752428
       "src/profiler/heap-snapshot-generator.cc",  # Macro clash in mman-linux.h
-      "src/compiler/escape-analysis.cc",  # Symbol clashes with new-escape-analysis.cc
-      "src/compiler/escape-analysis-reducer.cc",  # Symbol clashes with new-escape-analysis-reducer.cc
+
+      # These source files take an unusually large amount of time to
+      # compile.  Build them separately to avoid bottlenecks.
+      "src/api.cc",
+      "src/code-stub-assembler.cc",
+      "src/elements.cc",
+      "src/heap/heap.cc",
+      "src/objects.cc",
+      "src/parsing/parser.cc",
     ]
   }
 

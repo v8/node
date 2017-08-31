@@ -17,7 +17,7 @@
 #include "src/visitors.h"
 #include "src/vm-state-inl.h"
 #include "src/wasm/wasm-module.h"
-#include "src/wasm/wasm-objects.h"
+#include "src/wasm/wasm-objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -1230,16 +1230,11 @@ WASM_SUMMARY_DISPATCH(int, byte_offset)
 #undef WASM_SUMMARY_DISPATCH
 
 int FrameSummary::WasmFrameSummary::SourcePosition() const {
-  int offset = byte_offset();
   Handle<WasmCompiledModule> compiled_module(wasm_instance()->compiled_module(),
                                              isolate());
-  if (compiled_module->is_asm_js()) {
-    offset = WasmCompiledModule::GetAsmJsSourcePosition(
-        compiled_module, function_index(), offset, at_to_number_conversion());
-  } else {
-    offset += compiled_module->GetFunctionOffset(function_index());
-  }
-  return offset;
+  return WasmCompiledModule::GetSourcePosition(compiled_module,
+                                               function_index(), byte_offset(),
+                                               at_to_number_conversion());
 }
 
 Handle<Script> FrameSummary::WasmFrameSummary::script() const {

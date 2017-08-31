@@ -18,7 +18,7 @@
 #include "src/snapshot/code-serializer.h"
 #include "src/transitions.h"
 #include "src/wasm/wasm-module.h"
-#include "src/wasm/wasm-objects.h"
+#include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-result.h"
 
 namespace v8 {
@@ -1754,7 +1754,7 @@ Maybe<uint32_t> ValueDeserializer::ReadJSObjectProperties(
     bool transitioning = true;
     Handle<Map> map(object->map(), isolate_);
     DCHECK(!map->is_dictionary_map());
-    DCHECK(map->instance_descriptors()->IsEmpty());
+    DCHECK_EQ(0, map->instance_descriptors()->number_of_descriptors());
     std::vector<Handle<Object>> properties;
     properties.reserve(8);
 

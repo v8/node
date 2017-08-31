@@ -24,6 +24,7 @@
 #include "src/feedback-vector.h"
 #include "src/global-handles.h"
 #include "src/heap/array-buffer-tracker-inl.h"
+#include "src/heap/barrier.h"
 #include "src/heap/code-stats.h"
 #include "src/heap/concurrent-marking.h"
 #include "src/heap/embedder-tracing.h"
@@ -1334,8 +1335,11 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
       if (space == MAP_SPACE) {
         // We allocate each map individually to avoid fragmentation.
         maps->clear();
-        DCHECK_EQ(1, reservation->size());
-        int num_maps = reservation->at(0).size / Map::kSize;
+        DCHECK_LE(reservation->size(), 2);
+        int reserved_size = 0;
+        for (const Chunk& c : *reservation) reserved_size += c.size;
+        DCHECK_EQ(0, reserved_size % Map::kSize);
+        int num_maps = reserved_size / Map::kSize;
         for (int i = 0; i < num_maps; i++) {
           // The deserializer will update the skip list.
           AllocationResult allocation = map_space()->AllocateRawUnaligned(
@@ -1355,8 +1359,10 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
         }
       } else if (space == LO_SPACE) {
         // Just check that we can allocate during deserialization.
-        DCHECK_EQ(1, reservation->size());
-        perform_gc = !CanExpandOldGeneration(reservation->at(0).size);
+        DCHECK_LE(reservation->size(), 2);
+        int reserved_size = 0;
+        for (const Chunk& c : *reservation) reserved_size += c.size;
+        perform_gc = !CanExpandOldGeneration(reserved_size);
       } else {
         for (auto& chunk : *reservation) {
           AllocationResult allocation;
@@ -1800,7 +1806,7 @@ class ScavengingItem : public ItemParallelJob::Item {
 
 class ScavengingTask final : public ItemParallelJob::Task {
  public:
-  ScavengingTask(Heap* heap, Scavenger* scavenger, Scavenger::Barrier* barrier)
+  ScavengingTask(Heap* heap, Scavenger* scavenger, OneshotBarrier* barrier)
       : ItemParallelJob::Task(heap->isolate()),
         heap_(heap),
         scavenger_(scavenger),
@@ -1816,10 +1822,9 @@ class ScavengingTask final : public ItemParallelJob::Task {
         item->Process(scavenger_);
         item->MarkFinished();
       }
-      while (!barrier_->Done()) {
+      do {
         scavenger_->Process(barrier_);
-        barrier_->Wait();
-      }
+      } while (!barrier_->Wait());
       scavenger_->Process();
     }
     if (FLAG_trace_parallel_scavenge) {
@@ -1833,7 +1838,7 @@ class ScavengingTask final : public ItemParallelJob::Task {
  private:
   Heap* const heap_;
   Scavenger* const scavenger_;
-  Scavenger::Barrier* const barrier_;
+  OneshotBarrier* const barrier_;
 };
 
 class PageScavengingItem final : public ScavengingItem {
@@ -1916,7 +1921,7 @@ void Heap::Scavenge() {
   Scavenger* scavengers[kMaxScavengerTasks];
   const bool is_logging = IsLogging(isolate());
   const int num_scavenge_tasks = NumberOfScavengeTasks();
-  Scavenger::Barrier barrier;
+  OneshotBarrier barrier;
   CopiedList copied_list(num_scavenge_tasks);
   PromotionList promotion_list(num_scavenge_tasks);
   for (int i = 0; i < num_scavenge_tasks; i++) {
@@ -2426,6 +2431,11 @@ bool Heap::CreateInitialMaps() {
 
     ALLOCATE_PARTIAL_MAP(FIXED_ARRAY_TYPE, kVariableSizeSentinel, fixed_array);
     fixed_array_map()->set_elements_kind(HOLEY_ELEMENTS);
+    ALLOCATE_PARTIAL_MAP(FIXED_ARRAY_TYPE, kVariableSizeSentinel,
+                         fixed_cow_array)
+    fixed_cow_array_map()->set_elements_kind(HOLEY_ELEMENTS);
+    DCHECK_NE(fixed_array_map(), fixed_cow_array_map());
+
     ALLOCATE_PARTIAL_MAP(ODDBALL_TYPE, Oddball::kSize, undefined);
     ALLOCATE_PARTIAL_MAP(ODDBALL_TYPE, Oddball::kSize, null);
     ALLOCATE_PARTIAL_MAP(ODDBALL_TYPE, Oddball::kSize, the_hole);
@@ -2464,21 +2474,48 @@ bool Heap::CreateInitialMaps() {
   // Set preliminary exception sentinel value before actually initializing it.
   set_exception(null_value());
 
+  // Setup the struct maps first (needed for the EnumCache).
+  for (unsigned i = 0; i < arraysize(struct_table); i++) {
+    const StructTable& entry = struct_table[i];
+    Map* map;
+    if (!AllocatePartialMap(entry.type, entry.size).To(&map)) return false;
+    roots_[entry.index] = map;
+  }
+
+  // Allocate the empty enum cache.
+  {
+    AllocationResult allocation = Allocate(tuple2_map(), OLD_SPACE);
+    if (!allocation.To(&obj)) return false;
+  }
+  set_empty_enum_cache(EnumCache::cast(obj));
+  EnumCache::cast(obj)->set_keys(empty_fixed_array());
+  EnumCache::cast(obj)->set_indices(empty_fixed_array());
+
   // Allocate the empty descriptor array.
   {
-    AllocationResult allocation = AllocateEmptyFixedArray();
+    AllocationResult allocation =
+        AllocateUninitializedFixedArray(DescriptorArray::kFirstIndex, TENURED);
     if (!allocation.To(&obj)) return false;
   }
   set_empty_descriptor_array(DescriptorArray::cast(obj));
+  DescriptorArray::cast(obj)->set(DescriptorArray::kDescriptorLengthIndex,
+                                  Smi::kZero);
+  DescriptorArray::cast(obj)->set(DescriptorArray::kEnumCacheIndex,
+                                  empty_enum_cache());
 
   // Fix the instance_descriptors for the existing maps.
   FinalizePartialMap(this, meta_map());
   FinalizePartialMap(this, fixed_array_map());
+  FinalizePartialMap(this, fixed_cow_array_map());
   FinalizePartialMap(this, undefined_map());
   undefined_map()->set_is_undetectable();
   FinalizePartialMap(this, null_map());
   null_map()->set_is_undetectable();
   FinalizePartialMap(this, the_hole_map());
+  for (unsigned i = 0; i < arraysize(struct_table); ++i) {
+    const StructTable& entry = struct_table[i];
+    FinalizePartialMap(this, Map::cast(roots_[entry.index]));
+  }
 
   {  // Map allocation
 #define ALLOCATE_MAP(instance_type, size, field_name)               \
@@ -2499,10 +2536,6 @@ bool Heap::CreateInitialMaps() {
         (constructor_function_index));                          \
   }
 
-    ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, fixed_cow_array)
-    fixed_cow_array_map()->set_elements_kind(HOLEY_ELEMENTS);
-    DCHECK_NE(fixed_array_map(), fixed_cow_array_map());
-
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, scope_info)
     ALLOCATE_VARSIZE_MAP(FIXED_ARRAY_TYPE, module_info)
     ALLOCATE_VARSIZE_MAP(FEEDBACK_VECTOR_TYPE, feedback_vector)
@@ -2522,9 +2555,6 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_MAP(ODDBALL_TYPE, Oddball::kSize, termination_exception);
     ALLOCATE_MAP(ODDBALL_TYPE, Oddball::kSize, optimized_out);
     ALLOCATE_MAP(ODDBALL_TYPE, Oddball::kSize, stale_register);
-
-    ALLOCATE_MAP(JS_PROMISE_CAPABILITY_TYPE, JSPromiseCapability::kSize,
-                 js_promise_capability);
 
     for (unsigned i = 0; i < arraysize(string_type_table); i++) {
       const StringTypeTable& entry = string_type_table[i];
@@ -2579,13 +2609,6 @@ bool Heap::CreateInitialMaps() {
     ALLOCATE_MAP(FILLER_TYPE, 2 * kPointerSize, two_pointer_filler)
 
     ALLOCATE_VARSIZE_MAP(TRANSITION_ARRAY_TYPE, transition_array)
-
-    for (unsigned i = 0; i < arraysize(struct_table); i++) {
-      const StructTable& entry = struct_table[i];
-      Map* map;
-      if (!AllocateMap(entry.type, entry.size).To(&map)) return false;
-      roots_[entry.index] = map;
-    }
 
     ALLOCATE_VARSIZE_MAP(HASH_TABLE_TYPE, hash_table)
     ALLOCATE_VARSIZE_MAP(HASH_TABLE_TYPE, ordered_hash_table)
@@ -3061,42 +3084,6 @@ void Heap::CreateInitialObjects() {
 
   // Initialize compilation cache.
   isolate_->compilation_cache()->Clear();
-
-  // Finish creating JSPromiseCapabilityMap
-  {
-    // TODO(caitp): This initialization can be removed once PromiseCapability
-    // object is no longer used by builtins implemented in javascript.
-    Handle<Map> map = factory->js_promise_capability_map();
-    map->set_inobject_properties_or_constructor_function_index(3);
-
-    Map::EnsureDescriptorSlack(map, 3);
-
-    PropertyAttributes attrs =
-        static_cast<PropertyAttributes>(READ_ONLY | DONT_DELETE);
-    {  // promise
-      Descriptor d = Descriptor::DataField(factory->promise_string(),
-                                           JSPromiseCapability::kPromiseIndex,
-                                           attrs, Representation::Tagged());
-      map->AppendDescriptor(&d);
-    }
-
-    {  // resolve
-      Descriptor d = Descriptor::DataField(factory->resolve_string(),
-                                           JSPromiseCapability::kResolveIndex,
-                                           attrs, Representation::Tagged());
-      map->AppendDescriptor(&d);
-    }
-
-    {  // reject
-      Descriptor d = Descriptor::DataField(factory->reject_string(),
-                                           JSPromiseCapability::kRejectIndex,
-                                           attrs, Representation::Tagged());
-      map->AppendDescriptor(&d);
-    }
-
-    map->set_is_extensible(false);
-    set_js_promise_capability_map(*map);
-  }
 }
 
 bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
@@ -4275,12 +4262,13 @@ AllocationResult Heap::AllocatePropertyArray(int length,
   return result;
 }
 
-AllocationResult Heap::AllocateUninitializedFixedArray(int length) {
+AllocationResult Heap::AllocateUninitializedFixedArray(
+    int length, PretenureFlag pretenure) {
   if (length == 0) return empty_fixed_array();
 
   HeapObject* obj = nullptr;
   {
-    AllocationResult allocation = AllocateRawFixedArray(length, NOT_TENURED);
+    AllocationResult allocation = AllocateRawFixedArray(length, pretenure);
     if (!allocation.To(&obj)) return allocation;
   }
 
@@ -4384,8 +4372,8 @@ AllocationResult Heap::AllocateSymbol() {
   return result;
 }
 
-
-AllocationResult Heap::AllocateStruct(InstanceType type) {
+AllocationResult Heap::AllocateStruct(InstanceType type,
+                                      PretenureFlag pretenure) {
   Map* map;
   switch (type) {
 #define MAKE_CASE(NAME, Name, name) \
@@ -4400,7 +4388,8 @@ AllocationResult Heap::AllocateStruct(InstanceType type) {
   int size = map->instance_size();
   Struct* result = nullptr;
   {
-    AllocationResult allocation = Allocate(map, OLD_SPACE);
+    AllocationSpace space = SelectSpace(pretenure);
+    AllocationResult allocation = Allocate(map, space);
     if (!allocation.To(&result)) return allocation;
   }
   result->InitializeBody(size);
@@ -6535,7 +6524,7 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
   class MarkingVisitor : public ObjectVisitor, public RootVisitor {
    public:
     explicit MarkingVisitor(UnreachableObjectsFilter* filter)
-        : filter_(filter), marking_stack_(10) {}
+        : filter_(filter) {}
 
     void VisitPointers(HeapObject* host, Object** start,
                        Object** end) override {
@@ -6547,8 +6536,9 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
     }
 
     void TransitiveClosure() {
-      while (!marking_stack_.is_empty()) {
-        HeapObject* obj = marking_stack_.RemoveLast();
+      while (!marking_stack_.empty()) {
+        HeapObject* obj = marking_stack_.back();
+        marking_stack_.pop_back();
         obj->Iterate(this);
       }
     }
@@ -6559,12 +6549,12 @@ class UnreachableObjectsFilter : public HeapObjectsFilter {
         if (!(*p)->IsHeapObject()) continue;
         HeapObject* obj = HeapObject::cast(*p);
         if (filter_->MarkAsReachable(obj)) {
-          marking_stack_.Add(obj);
+          marking_stack_.push_back(obj);
         }
       }
     }
     UnreachableObjectsFilter* filter_;
-    List<HeapObject*> marking_stack_;
+    std::vector<HeapObject*> marking_stack_;
   };
 
   friend class MarkingVisitor;
@@ -6892,6 +6882,16 @@ bool Heap::AllowedToBeMigrated(HeapObject* obj, AllocationSpace dst) {
       return false;
   }
   UNREACHABLE();
+}
+
+void Heap::CreateObjectStats() {
+  if (V8_LIKELY(FLAG_gc_stats == 0)) return;
+  if (!live_object_stats_) {
+    live_object_stats_ = new ObjectStats(this);
+  }
+  if (!dead_object_stats_) {
+    dead_object_stats_ = new ObjectStats(this);
+  }
 }
 
 }  // namespace internal

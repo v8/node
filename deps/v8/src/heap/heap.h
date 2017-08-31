@@ -162,6 +162,7 @@ using v8::MemoryPressureLevel;
   V(Map, optimized_out_map, OptimizedOutMap)                                   \
   V(Map, stale_register_map, StaleRegisterMap)                                 \
   /* Canonical empty values */                                                 \
+  V(EnumCache, empty_enum_cache, EmptyEnumCache)                               \
   V(PropertyArray, empty_property_array, EmptyPropertyArray)                   \
   V(ByteArray, empty_byte_array, EmptyByteArray)                               \
   V(FixedTypedArrayBase, empty_fixed_uint8_array, EmptyFixedUint8Array)        \
@@ -228,9 +229,6 @@ using v8::MemoryPressureLevel;
   V(FixedArray, serialized_templates, SerializedTemplates)                     \
   V(FixedArray, serialized_global_proxy_sizes, SerializedGlobalProxySizes)     \
   V(TemplateList, message_listeners, MessageListeners)                         \
-  /* per-Isolate map for JSPromiseCapability. */                               \
-  /* TODO(caitp): Make this a Struct */                                        \
-  V(Map, js_promise_capability_map, JSPromiseCapabilityMap)                    \
   /* JS Entries */                                                             \
   V(Code, js_entry_code, JsEntryCode)                                          \
   V(Code, js_construct_entry_code, JsConstructEntryCode)
@@ -938,7 +936,7 @@ class Heap {
   bool CreateHeapObjects();
 
   // Create ObjectStats if live_object_stats_ or dead_object_stats_ are nullptr.
-  V8_INLINE void CreateObjectStats();
+  void CreateObjectStats();
 
   // Destroys all memory allocated by the heap.
   void TearDown();
@@ -2082,7 +2080,8 @@ class Heap {
       T t, int chars, uint32_t hash_field);
 
   // Allocates an uninitialized fixed array. It must be filled by the caller.
-  MUST_USE_RESULT AllocationResult AllocateUninitializedFixedArray(int length);
+  MUST_USE_RESULT AllocationResult AllocateUninitializedFixedArray(
+      int length, PretenureFlag pretenure = NOT_TENURED);
 
   // Make a copy of src and return it.
   MUST_USE_RESULT inline AllocationResult CopyFixedArray(FixedArray* src);
@@ -2169,7 +2168,8 @@ class Heap {
   MUST_USE_RESULT AllocationResult AllocateTransitionArray(int capacity);
 
   // Allocates a new utility object in the old generation.
-  MUST_USE_RESULT AllocationResult AllocateStruct(InstanceType type);
+  MUST_USE_RESULT AllocationResult
+  AllocateStruct(InstanceType type, PretenureFlag pretenure = NOT_TENURED);
 
   // Allocates a new foreign object.
   MUST_USE_RESULT AllocationResult

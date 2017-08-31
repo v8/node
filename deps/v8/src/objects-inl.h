@@ -96,7 +96,6 @@ TYPE_CHECKER(JSFunction, JS_FUNCTION_TYPE)
 TYPE_CHECKER(JSGlobalObject, JS_GLOBAL_OBJECT_TYPE)
 TYPE_CHECKER(JSMap, JS_MAP_TYPE)
 TYPE_CHECKER(JSMessageObject, JS_MESSAGE_OBJECT_TYPE)
-TYPE_CHECKER(JSPromiseCapability, JS_PROMISE_CAPABILITY_TYPE)
 TYPE_CHECKER(JSPromise, JS_PROMISE_TYPE)
 TYPE_CHECKER(JSRegExp, JS_REGEXP_TYPE)
 TYPE_CHECKER(JSSet, JS_SET_TYPE)
@@ -313,6 +312,8 @@ bool HeapObject::IsJSWeakCollection() const {
 bool HeapObject::IsJSCollection() const { return IsJSMap() || IsJSSet(); }
 
 bool HeapObject::IsDescriptorArray() const { return IsFixedArray(); }
+
+bool HeapObject::IsEnumCache() const { return IsTuple2(); }
 
 bool HeapObject::IsFrameArray() const { return IsFixedArray(); }
 
@@ -551,6 +552,7 @@ CAST_ACCESSOR(ContextExtension)
 CAST_ACCESSOR(DeoptimizationInputData)
 CAST_ACCESSOR(DependentCode)
 CAST_ACCESSOR(DescriptorArray)
+CAST_ACCESSOR(EnumCache)
 CAST_ACCESSOR(FixedArray)
 CAST_ACCESSOR(FixedArrayBase)
 CAST_ACCESSOR(FixedDoubleArray)
@@ -579,7 +581,6 @@ CAST_ACCESSOR(JSMapIterator)
 CAST_ACCESSOR(JSMessageObject)
 CAST_ACCESSOR(JSObject)
 CAST_ACCESSOR(JSPromise)
-CAST_ACCESSOR(JSPromiseCapability)
 CAST_ACCESSOR(JSProxy)
 CAST_ACCESSOR(JSReceiver)
 CAST_ACCESSOR(JSRegExp)
@@ -601,6 +602,7 @@ CAST_ACCESSOR(ObjectTemplateInfo)
 CAST_ACCESSOR(Oddball)
 CAST_ACCESSOR(OrderedHashMap)
 CAST_ACCESSOR(OrderedHashSet)
+CAST_ACCESSOR(PromiseCapability)
 CAST_ACCESSOR(PromiseReactionJobInfo)
 CAST_ACCESSOR(PromiseResolveThenableJobInfo)
 CAST_ACCESSOR(PropertyArray)
@@ -2024,23 +2026,16 @@ Object** FixedArray::RawFieldOfElementAt(int index) {
   return HeapObject::RawField(this, OffsetOfElementAt(index));
 }
 
-bool DescriptorArray::IsEmpty() {
-  DCHECK(length() >= kFirstIndex ||
-         this == GetHeap()->empty_descriptor_array());
-  return length() < kFirstIndex;
-}
-
+ACCESSORS(EnumCache, keys, FixedArray, kKeysOffset)
+ACCESSORS(EnumCache, indices, FixedArray, kIndicesOffset)
 
 int DescriptorArray::number_of_descriptors() {
-  DCHECK(length() >= kFirstIndex || IsEmpty());
-  int len = length();
-  return len == 0 ? 0 : Smi::ToInt(get(kDescriptorLengthIndex));
+  return Smi::ToInt(get(kDescriptorLengthIndex));
 }
 
 
 int DescriptorArray::number_of_descriptors_storage() {
-  int len = length();
-  return len == 0 ? 0 : (len - kFirstIndex) / kEntrySize;
+  return (length() - kFirstIndex) / kEntrySize;
 }
 
 
@@ -2050,8 +2045,7 @@ int DescriptorArray::NumberOfSlackDescriptors() {
 
 
 void DescriptorArray::SetNumberOfDescriptors(int number_of_descriptors) {
-  WRITE_FIELD(
-      this, kDescriptorLengthOffset, Smi::FromInt(number_of_descriptors));
+  set(kDescriptorLengthIndex, Smi::FromInt(number_of_descriptors));
 }
 
 
@@ -2059,39 +2053,13 @@ inline int DescriptorArray::number_of_entries() {
   return number_of_descriptors();
 }
 
-
-bool DescriptorArray::HasEnumCache() {
-  return !IsEmpty() && !get(kEnumCacheBridgeIndex)->IsSmi();
-}
-
-
 void DescriptorArray::CopyEnumCacheFrom(DescriptorArray* array) {
-  set(kEnumCacheBridgeIndex, array->get(kEnumCacheBridgeIndex));
+  set(kEnumCacheIndex, array->get(kEnumCacheIndex));
 }
 
-
-FixedArray* DescriptorArray::GetEnumCache() {
-  DCHECK(HasEnumCache());
-  FixedArray* bridge = FixedArray::cast(get(kEnumCacheBridgeIndex));
-  return FixedArray::cast(bridge->get(kEnumCacheBridgeCacheIndex));
+EnumCache* DescriptorArray::GetEnumCache() {
+  return EnumCache::cast(get(kEnumCacheIndex));
 }
-
-
-bool DescriptorArray::HasEnumIndicesCache() {
-  if (IsEmpty()) return false;
-  Object* object = get(kEnumCacheBridgeIndex);
-  if (object->IsSmi()) return false;
-  FixedArray* bridge = FixedArray::cast(object);
-  return !bridge->get(kEnumCacheBridgeIndicesCacheIndex)->IsSmi();
-}
-
-
-FixedArray* DescriptorArray::GetEnumIndicesCache() {
-  DCHECK(HasEnumIndicesCache());
-  FixedArray* bridge = FixedArray::cast(get(kEnumCacheBridgeIndex));
-  return FixedArray::cast(bridge->get(kEnumCacheBridgeIndicesCacheIndex));
-}
-
 
 // Perform a binary search in a fixed array.
 template <SearchMode search_mode, typename T>
@@ -2243,7 +2211,6 @@ int Map::EnumLength() const { return EnumLengthBits::decode(bit_field3()); }
 void Map::SetEnumLength(int length) {
   if (length != kInvalidEnumCacheSentinel) {
     DCHECK(length >= 0);
-    DCHECK(length == 0 || instance_descriptors()->HasEnumCache());
     DCHECK(length <= NumberOfOwnDescriptors());
   }
   set_bit_field3(EnumLengthBits::update(bit_field3(), length));
@@ -3729,17 +3696,22 @@ void Code::set_raw_kind_specific_flags2(int value) {
 
 inline bool Code::is_interpreter_trampoline_builtin() const {
   Builtins* builtins = GetIsolate()->builtins();
-  return this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
-         this ==
-             builtins->builtin(Builtins::kInterpreterEnterBytecodeAdvance) ||
-         this == builtins->builtin(Builtins::kInterpreterEnterBytecodeDispatch);
+  bool is_interpreter_trampoline =
+      (this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
+       this == builtins->builtin(Builtins::kInterpreterEnterBytecodeAdvance) ||
+       this == builtins->builtin(Builtins::kInterpreterEnterBytecodeDispatch));
+  DCHECK_IMPLIES(is_interpreter_trampoline, !Builtins::IsLazy(builtin_index()));
+  return is_interpreter_trampoline;
 }
 
 inline bool Code::checks_optimization_marker() const {
   Builtins* builtins = GetIsolate()->builtins();
-  return this == builtins->builtin(Builtins::kCompileLazy) ||
-         this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
-         this == builtins->builtin(Builtins::kCheckOptimizationMarker);
+  bool checks_marker =
+      (this == builtins->builtin(Builtins::kCompileLazy) ||
+       this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
+       this == builtins->builtin(Builtins::kCheckOptimizationMarker));
+  DCHECK_IMPLIES(checks_marker, !Builtins::IsLazy(builtin_index()));
+  return checks_marker;
 }
 
 inline bool Code::has_unwinding_info() const {
@@ -3864,12 +3836,17 @@ void Code::set_allow_osr_at_loop_nesting_level(int level) {
 }
 
 int Code::builtin_index() const {
-  return READ_INT_FIELD(this, kBuiltinIndexOffset);
+  int index = READ_INT_FIELD(this, kBuiltinIndexOffset);
+  DCHECK(index == -1 || Builtins::IsBuiltinId(index));
+  return index;
 }
 
 void Code::set_builtin_index(int index) {
+  DCHECK(index == -1 || Builtins::IsBuiltinId(index));
   WRITE_INT_FIELD(this, kBuiltinIndexOffset, index);
 }
+
+bool Code::is_builtin() const { return builtin_index() != -1; }
 
 unsigned Code::stack_slots() const {
   DCHECK(is_turbofanned());
@@ -5246,9 +5223,9 @@ MaybeHandle<JSTypedArray> JSTypedArray::Validate(Isolate* isolate,
 ACCESSORS(JSTypedArray, raw_length, Object, kLengthOffset)
 #endif
 
-ACCESSORS(JSPromiseCapability, promise, Object, kPromiseOffset)
-ACCESSORS(JSPromiseCapability, resolve, Object, kResolveOffset)
-ACCESSORS(JSPromiseCapability, reject, Object, kRejectOffset)
+ACCESSORS(PromiseCapability, promise, Object, kPromiseOffset)
+ACCESSORS(PromiseCapability, resolve, Object, kResolveOffset)
+ACCESSORS(PromiseCapability, reject, Object, kRejectOffset)
 
 ACCESSORS(JSPromise, result, Object, kResultOffset)
 ACCESSORS(JSPromise, deferred_promise, Object, kDeferredPromiseOffset)

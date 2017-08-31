@@ -1374,8 +1374,6 @@ int JSObject::GetHeaderSize(InstanceType type) {
       return JSWeakMap::kSize;
     case JS_WEAK_SET_TYPE:
       return JSWeakSet::kSize;
-    case JS_PROMISE_CAPABILITY_TYPE:
-      return JSPromiseCapability::kSize;
     case JS_PROMISE_TYPE:
       return JSPromise::kSize;
     case JS_REGEXP_TYPE:
@@ -3110,7 +3108,6 @@ VisitorId Map::GetVisitorId(Map* map) {
       ARRAY_ITERATOR_TYPE_LIST(ARRAY_ITERATOR_CASE)
 #undef ARRAY_ITERATOR_CASE
 
-    case JS_PROMISE_CAPABILITY_TYPE:
     case JS_PROMISE_TYPE:
     case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:
@@ -5045,9 +5042,7 @@ void Map::EnsureDescriptorSlack(Handle<Map> map, int slack) {
   // on a cache always being available once it is set. If the map has more
   // enumerated descriptors than available in the original cache, the cache
   // will be lazily replaced by the extended cache when needed.
-  if (descriptors->HasEnumCache()) {
-    new_descriptors->CopyEnumCacheFrom(*descriptors);
-  }
+  new_descriptors->CopyEnumCacheFrom(*descriptors);
 
   Isolate* isolate = map->GetIsolate();
   // Replace descriptors by new_descriptors in all maps that share it. The old
@@ -10413,12 +10408,12 @@ Handle<DescriptorArray> DescriptorArray::Allocate(Isolate* isolate,
       factory->NewFixedArray(LengthFor(size), pretenure);
 
   result->set(kDescriptorLengthIndex, Smi::FromInt(number_of_descriptors));
-  result->set(kEnumCacheBridgeIndex, Smi::kZero);
+  result->set(kEnumCacheIndex, isolate->heap()->empty_enum_cache());
   return Handle<DescriptorArray>::cast(result);
 }
 
 void DescriptorArray::ClearEnumCache() {
-  set(kEnumCacheBridgeIndex, Smi::kZero);
+  set(kEnumCacheIndex, GetHeap()->empty_enum_cache());
 }
 
 void DescriptorArray::Replace(int index, Descriptor* descriptor) {
@@ -10426,27 +10421,17 @@ void DescriptorArray::Replace(int index, Descriptor* descriptor) {
   Set(index, descriptor);
 }
 
-
 // static
 void DescriptorArray::SetEnumCache(Handle<DescriptorArray> descriptors,
-                                   Isolate* isolate,
-                                   Handle<FixedArray> new_cache,
-                                   Handle<FixedArray> new_index_cache) {
-  DCHECK(!descriptors->IsEmpty());
-  FixedArray* bridge_storage;
-  bool needs_new_enum_cache = !descriptors->HasEnumCache();
-  if (needs_new_enum_cache) {
-    bridge_storage = *isolate->factory()->NewFixedArray(
-        DescriptorArray::kEnumCacheBridgeLength);
+                                   Isolate* isolate, Handle<FixedArray> keys,
+                                   Handle<FixedArray> indices) {
+  EnumCache* enum_cache = descriptors->GetEnumCache();
+  if (enum_cache == isolate->heap()->empty_enum_cache()) {
+    enum_cache = *isolate->factory()->NewEnumCache(keys, indices);
+    descriptors->set(kEnumCacheIndex, enum_cache);
   } else {
-    bridge_storage = FixedArray::cast(descriptors->get(kEnumCacheBridgeIndex));
-  }
-  bridge_storage->set(kEnumCacheBridgeCacheIndex, *new_cache);
-  bridge_storage->set(
-      kEnumCacheBridgeIndicesCacheIndex,
-      new_index_cache.is_null() ? Object::cast(Smi::kZero) : *new_index_cache);
-  if (needs_new_enum_cache) {
-    descriptors->set(kEnumCacheBridgeIndex, bridge_storage);
+    enum_cache->set_keys(*keys);
+    enum_cache->set_indices(*indices);
   }
 }
 
@@ -10595,8 +10580,6 @@ int HandlerTable::LookupReturn(int pc_offset) {
 
 #ifdef DEBUG
 bool DescriptorArray::IsEqualTo(DescriptorArray* other) {
-  if (IsEmpty()) return other->IsEmpty();
-  if (other->IsEmpty()) return false;
   if (length() != other->length()) return false;
   for (int i = 0; i < length(); ++i) {
     if (get(i) != other->get(i)) return false;
@@ -13265,26 +13248,6 @@ void Oddball::Initialize(Isolate* isolate, Handle<Oddball> oddball,
   oddball->set_to_string(*internalized_to_string);
   oddball->set_type_of(*internalized_type_of);
   oddball->set_kind(kind);
-}
-
-void Script::SetEvalOrigin(Handle<Script> script,
-                           Handle<SharedFunctionInfo> outer_info,
-                           int eval_position) {
-  if (eval_position == kNoSourcePosition) {
-    // If the position is missing, attempt to get the code offset from the
-    // current activation.  Do not translate the code offset into source
-    // position, but store it as negative value for lazy translation.
-    StackTraceFrameIterator it(script->GetIsolate());
-    if (!it.done() && it.is_javascript()) {
-      FrameSummary summary = FrameSummary::GetTop(it.javascript_frame());
-      script->set_eval_from_shared(summary.AsJavaScript().function()->shared());
-      script->set_eval_from_position(-summary.code_offset());
-      return;
-    }
-    eval_position = 0;
-  }
-  script->set_eval_from_shared(*outer_info);
-  script->set_eval_from_position(eval_position);
 }
 
 int Script::GetEvalPosition() {
@@ -18751,9 +18714,7 @@ double JSDate::CurrentTimeValue(Isolate* isolate) {
   // the number in a Date object representing a particular instant in
   // time is milliseconds. Therefore, we floor the result of getting
   // the OS time.
-  return Floor(FLAG_verify_predictable
-                   ? isolate->heap()->MonotonicallyIncreasingTimeInMs()
-                   : base::OS::TimeCurrentMillis());
+  return Floor(V8::GetCurrentPlatform()->CurrentClockTimeMillis());
 }
 
 

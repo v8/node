@@ -1623,21 +1623,14 @@ bool Isolate::ComputeLocationFromStackTrace(MessageLocation* target,
       int func_index = elements->WasmFunctionIndex(i)->value();
       int code_offset = elements->Offset(i)->value();
       // TODO(wasm): Clean this up (bug 5007).
-      int pos = code_offset < 0
-                    ? (-1 - code_offset)
-                    : elements->Code(i)->SourcePosition(code_offset);
-      if (elements->IsAsmJsWasmFrame(i)) {
-        // For asm.js frames, make an additional translation step to get the
-        // asm.js source position.
-        bool at_to_number_conversion =
-            elements->Flags(i)->value() & FrameArray::kAsmJsAtNumberConversion;
-        pos = WasmCompiledModule::GetAsmJsSourcePosition(
-            compiled_module, func_index, pos, at_to_number_conversion);
-      } else {
-        // For pure wasm, make the function-local position module-relative by
-        // adding the function offset.
-        pos += compiled_module->GetFunctionOffset(func_index);
-      }
+      int byte_offset = code_offset < 0
+                            ? (-1 - code_offset)
+                            : elements->Code(i)->SourcePosition(code_offset);
+      bool is_at_number_conversion =
+          elements->IsAsmJsWasmFrame(i) &&
+          elements->Flags(i)->value() & FrameArray::kAsmJsAtNumberConversion;
+      byte pos = WasmCompiledModule::GetSourcePosition(
+          compiled_module, func_index, byte_offset, is_at_number_conversion);
       Handle<Script> script(compiled_module->script());
 
       *target = MessageLocation(script, pos, pos + 1);
@@ -3333,7 +3326,7 @@ MaybeHandle<JSPromise> NewRejectedPromise(Isolate* isolate,
 }  // namespace
 
 MaybeHandle<JSPromise> Isolate::RunHostImportModuleDynamicallyCallback(
-    Handle<String> source_url, Handle<Object> specifier) {
+    Handle<Script> referrer, Handle<Object> specifier) {
   v8::Local<v8::Context> api_context = v8::Utils::ToLocal(native_context());
 
   if (host_import_module_dynamically_callback_ == nullptr) {
@@ -3356,7 +3349,7 @@ MaybeHandle<JSPromise> Isolate::RunHostImportModuleDynamicallyCallback(
   ASSIGN_RETURN_ON_SCHEDULED_EXCEPTION_VALUE(
       this, promise,
       host_import_module_dynamically_callback_(
-          api_context, v8::Utils::ToLocal(source_url),
+          api_context, v8::Utils::ScriptOrModuleToLocal(referrer),
           v8::Utils::ToLocal(specifier_str)),
       MaybeHandle<JSPromise>());
   return v8::Utils::OpenHandle(*promise);
