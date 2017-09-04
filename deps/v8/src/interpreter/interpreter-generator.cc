@@ -9,7 +9,6 @@
 
 #include "src/builtins/builtins-arguments-gen.h"
 #include "src/builtins/builtins-constructor-gen.h"
-#include "src/builtins/builtins-forin-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
 #include "src/factory.h"
@@ -856,9 +855,11 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
                                OperandScale operand_scale)
       : InterpreterAssembler(state, bytecode, operand_scale) {}
 
-  typedef Node* (BinaryOpAssembler::*BinaryOpGenerator)(
-      Node* context, Node* left, Node* right, Node* slot, Node* vector,
-      Node* function, bool lhs_is_smi);
+  typedef Node* (BinaryOpAssembler::*BinaryOpGenerator)(Node* context,
+                                                        Node* left, Node* right,
+                                                        Node* slot,
+                                                        Node* vector,
+                                                        bool lhs_is_smi);
 
   void BinaryOpWithFeedback(BinaryOpGenerator generator) {
     Node* reg_index = BytecodeOperandReg(0);
@@ -867,11 +868,10 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
     Node* feedback_vector = LoadFeedbackVector();
-    Node* function = LoadRegister(Register::function_closure());
 
     BinaryOpAssembler binop_asm(state());
     Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
-                                          feedback_vector, function, false);
+                                          feedback_vector, false);
     SetAccumulator(result);
     Dispatch();
   }
@@ -882,11 +882,10 @@ class InterpreterBinaryOpAssembler : public InterpreterAssembler {
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
     Node* feedback_vector = LoadFeedbackVector();
-    Node* function = LoadRegister(Register::function_closure());
 
     BinaryOpAssembler binop_asm(state());
     Node* result = (binop_asm.*generator)(context, lhs, rhs, slot_index,
-                                          feedback_vector, function, true);
+                                          feedback_vector, true);
     SetAccumulator(result);
     Dispatch();
   }
@@ -1033,9 +1032,8 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
 
     Node* input_feedback =
         SmiOr(var_lhs_type_feedback.value(), var_rhs_type_feedback.value());
-    Node* function = LoadRegister(Register::function_closure());
     UpdateFeedback(SmiOr(result_type, input_feedback), feedback_vector,
-                   slot_index, function);
+                   slot_index);
     SetAccumulator(result);
     Dispatch();
   }
@@ -1111,9 +1109,8 @@ IGNITION_HANDLER(BitwiseOrSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1137,9 +1134,8 @@ IGNITION_HANDLER(BitwiseXorSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1163,9 +1159,8 @@ IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1192,9 +1187,8 @@ IGNITION_HANDLER(ShiftLeftSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1221,9 +1215,8 @@ IGNITION_HANDLER(ShiftRightSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1250,9 +1243,8 @@ IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterAssembler) {
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  Node* function = LoadRegister(Register::function_closure());
   UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index, function);
+                 feedback_vector, slot_index);
   SetAccumulator(result);
   Dispatch();
 }
@@ -1312,9 +1304,7 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
   // Record the type feedback collected for {object}.
   Node* slot_index = BytecodeOperandIdx(1);
   Node* feedback_vector = LoadFeedbackVector();
-  Node* function = LoadRegister(Register::function_closure());
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index,
-                 function);
+  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
 
   Dispatch();
 }
@@ -1449,9 +1439,7 @@ IGNITION_HANDLER(Inc, InterpreterAssembler) {
   }
 
   BIND(&end);
-  Node* function = LoadRegister(Register::function_closure());
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index,
-                 function);
+  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
 
   SetAccumulator(result_var.value());
   Dispatch();
@@ -1574,9 +1562,7 @@ IGNITION_HANDLER(Dec, InterpreterAssembler) {
   }
 
   BIND(&end);
-  Node* function = LoadRegister(Register::function_closure());
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index,
-                 function);
+  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
 
   SetAccumulator(result_var.value());
   Dispatch();
@@ -2006,9 +1992,7 @@ class InterpreterCompareOpAssembler : public InterpreterAssembler {
 
     Node* slot_index = BytecodeOperandIdx(1);
     Node* feedback_vector = LoadFeedbackVector();
-    Node* function = LoadRegister(Register::function_closure());
-    UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index,
-                   function);
+    UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
     SetAccumulator(result);
     Dispatch();
   }
@@ -3078,51 +3062,100 @@ class InterpreterForInPrepareAssembler : public InterpreterAssembler {
   }
 };
 
-// ForInPrepare <receiver> <cache_info_triple>
+// ForInEnumerate <receiver>
 //
-// Returns state for for..in loop execution based on the object in the register
-// |receiver|. The object must not be null or undefined and must have been
-// converted to a receiver already.
+// Enumerates the enumerable keys of the |receiver| and either returns the
+// map of the |receiver| if it has a usable enum cache or a fixed array
+// with the keys to enumerate in the accumulator.
+IGNITION_HANDLER(ForInEnumerate, InterpreterAssembler) {
+  Node* receiver_register = BytecodeOperandReg(0);
+  Node* receiver = LoadRegister(receiver_register);
+  Node* context = GetContext();
+
+  Label if_empty(this), if_runtime(this, Label::kDeferred);
+  Node* receiver_map = CheckEnumCache(receiver, &if_empty, &if_runtime);
+  SetAccumulator(receiver_map);
+  Dispatch();
+
+  BIND(&if_empty);
+  {
+    Node* result = EmptyFixedArrayConstant();
+    SetAccumulator(result);
+    Dispatch();
+  }
+
+  BIND(&if_runtime);
+  {
+    Node* result = CallRuntime(Runtime::kForInEnumerate, context, receiver);
+    SetAccumulator(result);
+    Dispatch();
+  }
+}
+
+// ForInPrepare <cache_info_triple>
+//
+// Returns state for for..in loop execution based on the enumerator in
+// the accumulator register, which is the result of calling ForInEnumerate
+// on a JSReceiver object.
 // The result is output in registers |cache_info_triple| to
 // |cache_info_triple + 2|, with the registers holding cache_type, cache_array,
 // and cache_length respectively.
 IGNITION_HANDLER(ForInPrepare, InterpreterForInPrepareAssembler) {
-  Node* object_register = BytecodeOperandReg(0);
-  Node* output_register = BytecodeOperandReg(1);
-  Node* receiver = LoadRegister(object_register);
-  Node* context = GetContext();
+  Node* enumerator = GetAccumulator();
+  Node* output_register = BytecodeOperandReg(0);
+  Node* vector_index = BytecodeOperandIdx(1);
+  Node* feedback_vector = LoadFeedbackVector();
 
-  Node* cache_type;
-  Node* cache_array;
-  Node* cache_length;
-  Label call_runtime(this, Label::kDeferred),
-      nothing_to_iterate(this, Label::kDeferred);
+  // The {enumerator} is either a Map or a FixedArray.
+  CSA_ASSERT(this, TaggedIsNotSmi(enumerator));
 
-  ForInBuiltinsAssembler forin_assembler(state());
-  std::tie(cache_type, cache_array, cache_length) =
-      forin_assembler.EmitForInPrepare(receiver, context, &call_runtime,
-                                       &nothing_to_iterate);
+  // Check if we're using an enum cache.
+  Label if_fast(this), if_slow(this);
+  Branch(IsMap(enumerator), &if_fast, &if_slow);
 
-  BuildForInPrepareResult(output_register, cache_type, cache_array,
-                          cache_length);
-  Dispatch();
-
-  BIND(&call_runtime);
+  BIND(&if_fast);
   {
-    Node* result_triple =
-        CallRuntime(Runtime::kForInPrepare, context, receiver);
-    Node* cache_type = Projection(0, result_triple);
-    Node* cache_array = Projection(1, result_triple);
-    Node* cache_length = Projection(2, result_triple);
+    // Load the enumeration length and cache from the {enumerator}.
+    Node* enum_length = LoadMapEnumLength(enumerator);
+    CSA_ASSERT(this, WordNotEqual(enum_length,
+                                  IntPtrConstant(kInvalidEnumCacheSentinel)));
+    Node* descriptors = LoadMapDescriptors(enumerator);
+    Node* enum_cache =
+        LoadObjectField(descriptors, DescriptorArray::kEnumCacheOffset);
+    Node* enum_keys = LoadObjectField(enum_cache, EnumCache::kKeysOffset);
+
+    // Check if we have enum indices available.
+    Node* enum_indices = LoadObjectField(enum_cache, EnumCache::kIndicesOffset);
+    Node* enum_indices_length = LoadAndUntagFixedArrayBaseLength(enum_indices);
+    Node* feedback = SelectSmiConstant(
+        IntPtrLessThanOrEqual(enum_length, enum_indices_length),
+        ForInFeedback::kEnumCacheKeysAndIndices, ForInFeedback::kEnumCacheKeys);
+    UpdateFeedback(feedback, feedback_vector, vector_index);
+
+    // Construct the cache info triple.
+    Node* cache_type = enumerator;
+    Node* cache_array = enum_keys;
+    Node* cache_length = SmiTag(enum_length);
     BuildForInPrepareResult(output_register, cache_type, cache_array,
                             cache_length);
     Dispatch();
   }
-  BIND(&nothing_to_iterate);
+
+  BIND(&if_slow);
   {
-    // Receiver is null or undefined or descriptors are zero length.
-    Node* zero = SmiConstant(0);
-    BuildForInPrepareResult(output_register, zero, zero, zero);
+    // The {enumerator} is a FixedArray with all the keys to iterate.
+    CSA_ASSERT(this, IsFixedArray(enumerator));
+
+    // Record the fact that we hit the for-in slow-path.
+    UpdateFeedback(SmiConstant(ForInFeedback::kAny), feedback_vector,
+                   vector_index);
+
+    // Construct the cache info triple.
+    Node* cache_type = enumerator;
+    Node* cache_array = enumerator;
+    Node* cache_length = LoadFixedArrayBaseLength(enumerator);
+    BuildForInPrepareResult(output_register, cache_type, cache_array,
+                            cache_length);
     Dispatch();
   }
 }
@@ -3152,34 +3185,15 @@ IGNITION_HANDLER(ForInNext, InterpreterAssembler) {
   Branch(WordEqual(receiver_map, cache_type), &if_fast, &if_slow);
   BIND(&if_fast);
   {
-    // Check if we need to transition to megamorphic state.
-    Node* feedback_value =
-        LoadFeedbackVectorSlot(feedback_vector, vector_index);
-    Node* uninitialized_sentinel =
-        HeapConstant(FeedbackVector::UninitializedSentinel(isolate()));
-    Label if_done(this);
-    GotoIfNot(WordEqual(feedback_value, uninitialized_sentinel), &if_done);
-    {
-      // Transition to megamorphic state.
-      Node* megamorphic_sentinel =
-          HeapConstant(FeedbackVector::MegamorphicSentinel(isolate()));
-      StoreFeedbackVectorSlot(feedback_vector, vector_index,
-                              megamorphic_sentinel, SKIP_WRITE_BARRIER);
-    }
-    Goto(&if_done);
-
     // Enum cache in use for {receiver}, the {key} is definitely valid.
-    BIND(&if_done);
     SetAccumulator(key);
     Dispatch();
   }
   BIND(&if_slow);
   {
-    // Record the fact that we hit the for-in slow path.
-    Node* generic_sentinel =
-        HeapConstant(FeedbackVector::GenericSentinel(isolate()));
-    StoreFeedbackVectorSlot(feedback_vector, vector_index, generic_sentinel,
-                            SKIP_WRITE_BARRIER);
+    // Record the fact that we hit the for-in slow-path.
+    UpdateFeedback(SmiConstant(ForInFeedback::kAny), feedback_vector,
+                   vector_index);
 
     // Need to filter the {key} for the {receiver}.
     Node* context = GetContext();

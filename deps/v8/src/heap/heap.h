@@ -817,17 +817,17 @@ class Heap {
   inline uint32_t HashSeed();
 
   inline int NextScriptId();
-
-  inline void SetArgumentsAdaptorDeoptPCOffset(int pc_offset);
-  inline void SetConstructStubCreateDeoptPCOffset(int pc_offset);
-  inline void SetConstructStubInvokeDeoptPCOffset(int pc_offset);
-  inline void SetGetterStubDeoptPCOffset(int pc_offset);
-  inline void SetSetterStubDeoptPCOffset(int pc_offset);
-  inline void SetInterpreterEntryReturnPCOffset(int pc_offset);
   inline int GetNextTemplateSerialNumber();
 
-  inline void SetSerializedTemplates(FixedArray* templates);
-  inline void SetSerializedGlobalProxySizes(FixedArray* sizes);
+  void SetArgumentsAdaptorDeoptPCOffset(int pc_offset);
+  void SetConstructStubCreateDeoptPCOffset(int pc_offset);
+  void SetConstructStubInvokeDeoptPCOffset(int pc_offset);
+  void SetGetterStubDeoptPCOffset(int pc_offset);
+  void SetSetterStubDeoptPCOffset(int pc_offset);
+  void SetInterpreterEntryReturnPCOffset(int pc_offset);
+
+  void SetSerializedTemplates(FixedArray* templates);
+  void SetSerializedGlobalProxySizes(FixedArray* sizes);
 
   // For post mortem debugging.
   void RememberUnmappedPage(Address page, bool compacted);
@@ -848,7 +848,7 @@ class Heap {
 
   void DeoptMarkedAllocationSites();
 
-  inline bool DeoptMaybeTenuredAllocationSites();
+  bool DeoptMaybeTenuredAllocationSites();
 
   void AddWeakNewSpaceObjectToCodeDependency(Handle<HeapObject> obj,
                                              Handle<WeakCell> code);
@@ -1481,9 +1481,6 @@ class Heap {
       Map* map, HeapObject* object,
       PretenuringFeedbackMap* pretenuring_feedback);
 
-  // Removes an entry from the global pretenuring storage.
-  inline void RemoveAllocationSitePretenuringFeedback(AllocationSite* site);
-
   // Merges local pretenuring feedback into the global one. Note that this
   // method needs to be called after evacuation, as allocation sites may be
   // evacuated and this method resolves forward pointers accordingly.
@@ -1559,16 +1556,16 @@ class Heap {
     // Registers an external string.
     inline void AddString(String* string);
 
-    inline void IterateAll(RootVisitor* v);
-    inline void IterateNewSpaceStrings(RootVisitor* v);
-    inline void PromoteAllNewSpaceStrings();
+    void IterateAll(RootVisitor* v);
+    void IterateNewSpaceStrings(RootVisitor* v);
+    void PromoteAllNewSpaceStrings();
 
     // Restores internal invariant and gets rid of collected strings. Must be
     // called after each Iterate*() that modified the strings.
     void CleanUpAll();
     void CleanUpNewSpaceStrings();
 
-    // Destroys all allocated memory.
+    // Finalize all registered external strings and clear tables.
     void TearDown();
 
     void UpdateNewSpaceReferences(
@@ -1577,9 +1574,7 @@ class Heap {
         Heap::ExternalStringTableUpdaterCallback updater_func);
 
    private:
-    inline void Verify();
-
-    inline void AddOldString(String* string);
+    void Verify();
 
     Heap* const heap_;
 
@@ -1815,6 +1810,9 @@ class Heap {
   // evacuation. Note that between feedback collection and calling this method
   // object in old space must not move.
   void ProcessPretenuringFeedback();
+
+  // Removes an entry from the global pretenuring storage.
+  void RemoveAllocationSitePretenuringFeedback(AllocationSite* site);
 
   // ===========================================================================
   // Actual GC. ================================================================

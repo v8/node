@@ -5315,6 +5315,8 @@ class JSMessageObject: public JSObject {
   inline int end_position() const;
   inline void set_end_position(int value);
 
+  // Returns the line number for the error message (1-based), or
+  // Message::kNoLineNumberInfo if the line cannot be determined.
   int GetLineNumber() const;
 
   // Returns the offset of the given position within the containing line.
@@ -6044,10 +6046,13 @@ class JSProxy: public JSReceiver {
       Isolate* isolate, Handle<JSProxy> proxy, Handle<Name> name,
       Handle<Object> receiver, bool* was_found);
 
-  static MaybeHandle<Object> CheckGetTrapResult(Isolate* isolate,
-                                                Handle<Name> name,
-                                                Handle<JSReceiver> target,
-                                                Handle<Object> trap_result);
+  enum AccessKind { kGet, kSet };
+
+  static MaybeHandle<Object> CheckGetSetTrapResult(Isolate* isolate,
+                                                   Handle<Name> name,
+                                                   Handle<JSReceiver> target,
+                                                   Handle<Object> trap_result,
+                                                   AccessKind access_kind);
 
   // ES6 9.5.9
   MUST_USE_RESULT static Maybe<bool> SetProperty(Handle<JSProxy> proxy,

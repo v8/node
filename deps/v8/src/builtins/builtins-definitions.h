@@ -73,7 +73,6 @@ namespace internal {
   TFC(FastNewClosure, FastNewClosure, 1)                                       \
   TFC(FastNewFunctionContextEval, FastNewFunctionContext, 1)                   \
   TFC(FastNewFunctionContextFunction, FastNewFunctionContext, 1)               \
-  TFC(FastNewSloppyArguments, FastNewArguments, 1)                             \
   TFC(FastCloneRegExp, FastCloneRegExp, 1)                                     \
   TFC(FastCloneShallowArrayTrack, FastCloneShallowArray, 1)                    \
   TFC(FastCloneShallowArrayDontTrack, FastCloneShallowArray, 1)                \
@@ -123,6 +122,7 @@ namespace internal {
   /* Code life-cycle */                                                        \
   ASM(CompileLazy)                                                             \
   ASM(CheckOptimizationMarker)                                                 \
+  TFJ(DeserializeLazy, SharedFunctionInfo::kDontAdaptArgumentsSentinel)        \
   ASM(InstantiateAsmJs)                                                        \
   ASM(NotifyDeoptimized)                                                       \
   ASM(NotifySoftDeoptimized)                                                   \
@@ -169,7 +169,7 @@ namespace internal {
   TFS(CopyFastSmiOrObjectElements, kObject)                                    \
   TFC(GrowFastDoubleElements, GrowArrayElements, 1)                            \
   TFC(GrowFastSmiOrObjectElements, GrowArrayElements, 1)                       \
-  TFC(NewUnmappedArgumentsElements, NewArgumentsElements, 1)                   \
+  TFC(NewArgumentsElements, NewArgumentsElements, 1)                           \
                                                                                \
   /* Debugger */                                                               \
   ASM(FrameDropperTrampoline)                                                  \
@@ -731,9 +731,8 @@ namespace internal {
   TFC(InstanceOf, Compare, 1)                                                  \
                                                                                \
   /* for-in */                                                                 \
+  TFS(ForInEnumerate, kReceiver)                                               \
   TFS(ForInFilter, kKey, kObject)                                              \
-  TFS(ForInNext, kObject, kCacheArray, kCacheType, kIndex)                     \
-  TFC(ForInPrepare, ForInPrepare, 3)                                           \
                                                                                \
   /* Promise */                                                                \
   /* ES6 #sec-getcapabilitiesexecutor-functions */                             \
@@ -779,6 +778,7 @@ namespace internal {
       SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
   TFS(ProxyGetProperty, kProxy, kName, kReceiverValue)                         \
   TFS(ProxyHasProperty, kProxy, kName)                                         \
+  TFS(ProxySetProperty, kProxy, kName, kValue, kReceiverValue, kLanguageMode)  \
                                                                                \
   /* Reflect */                                                                \
   ASM(ReflectApply)                                                            \
@@ -987,6 +987,8 @@ namespace internal {
   CPP(TypedArrayPrototypeLastIndexOf)                                          \
   /* ES6 #sec-%typedarray%.prototype.reverse */                                \
   CPP(TypedArrayPrototypeReverse)                                              \
+  /* ES6 %TypedArray%.prototype.set */                                         \
+  CPP(TypedArrayPrototypeSet)                                                  \
   /* ES6 #sec-%typedarray%.prototype.slice */                                  \
   CPP(TypedArrayPrototypeSlice)                                                \
   /* ES6 %TypedArray%.prototype.every */                                       \

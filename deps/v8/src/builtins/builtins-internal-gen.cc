@@ -12,6 +12,82 @@ namespace v8 {
 namespace internal {
 
 // -----------------------------------------------------------------------------
+// Lazy deserialization.
+
+// DeserializeLazy is very similar to CompileLazy: it is called with the
+// arguments intended for the target function. We load the function from the
+// frame, make sure its code object is deserialized, then tail-call into it,
+// passing along all arguments unmodified.
+TF_BUILTIN(DeserializeLazy, CodeStubAssembler) {
+  Node* argc = Parameter(BuiltinDescriptor::kArgumentsCount);
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+  CodeStubArguments args(this, ChangeInt32ToIntPtr(argc));
+
+  Node* function = LoadFromFrame(StandardFrameConstants::kFunctionOffset,
+                                 MachineType::TaggedPointer());
+  CSA_ASSERT(this, IsJSFunction(function));
+
+  Node* shared =
+      LoadObjectField(function, JSFunction::kSharedFunctionInfoOffset);
+  CSA_ASSERT(this, IsSharedFunctionInfo(shared));
+
+  Node* shared_code = LoadObjectField(shared, SharedFunctionInfo::kCodeOffset);
+  CSA_ASSERT(this, IsCodeMap(LoadMap(shared_code)));
+
+  Node* shared_code_builtin_id = LoadObjectField(
+      shared_code, Code::kBuiltinIndexOffset, MachineType::Int32());
+
+  // TODO(6624): Once lazy deserialization has been implemented, add a path
+  // here that checks whether the appropriate builtin has already been
+  // deserialized into the builtin table. If so, copy it into the function &
+  // shared function info here instead of going through runtime.
+
+  // It could be that the shared function info already has a deserialized copy
+  // of the builtin. In that case, simply copy the code over to the function and
+  // tail-call into it. Otherwise, we need to call into runtime to deserialize.
+
+  Label copy_from_shared(this), deserialize_in_runtime(this), out(this);
+  Branch(Word32Equal(shared_code_builtin_id,
+                     Int32Constant(Builtins::kDeserializeLazy)),
+         &deserialize_in_runtime, &copy_from_shared);
+
+  BIND(&copy_from_shared);
+  {
+    CSA_ASSERT(this, Int32GreaterThanOrEqual(shared_code_builtin_id,
+                                             Int32Constant(0)));
+    CSA_ASSERT(this, Int32LessThan(shared_code_builtin_id,
+                                   Int32Constant(Builtins::builtin_count)));
+    StoreObjectField(function, JSFunction::kCodeOffset, shared_code);
+    Goto(&out);
+  }
+
+  BIND(&deserialize_in_runtime);
+  {
+    CallRuntime(Runtime::kDeserializeLazy, context, function);
+
+#ifdef DEBUG
+    Node* function_code = LoadObjectField(function, JSFunction::kCodeOffset);
+    CSA_ASSERT(this, IsCodeMap(LoadMap(function_code)));
+
+    Node* function_code_builtin_id = LoadObjectField(
+        function_code, Code::kBuiltinIndexOffset, MachineType::Int32());
+
+    Node* function_builtin_id =
+        LoadObjectField(shared, SharedFunctionInfo::kFunctionDataOffset);
+    CSA_ASSERT(this, TaggedIsSmi(function_builtin_id));
+
+    CSA_ASSERT(this, Word32Equal(function_code_builtin_id,
+                                 SmiToWord32(function_builtin_id)));
+#endif
+
+    Goto(&out);
+  }
+
+  BIND(&out);
+  TailCallStub(CodeFactory::Call(isolate()), context, function, argc);
+}
+
+// -----------------------------------------------------------------------------
 // Interrupt and stack checks.
 
 void Builtins::Generate_InterruptCheck(MacroAssembler* masm) {
@@ -92,9 +168,10 @@ TF_BUILTIN(GrowFastSmiOrObjectElements, CodeStubAssembler) {
   TailCallRuntime(Runtime::kGrowArrayElements, context, object, key);
 }
 
-TF_BUILTIN(NewUnmappedArgumentsElements, CodeStubAssembler) {
+TF_BUILTIN(NewArgumentsElements, CodeStubAssembler) {
   Node* frame = Parameter(Descriptor::kFrame);
   Node* length = SmiToWord(Parameter(Descriptor::kLength));
+  Node* mapped_count = SmiToWord(Parameter(Descriptor::kMappedCount));
 
   // Check if we can allocate in new space.
   ElementsKind kind = PACKED_ELEMENTS;
@@ -119,21 +196,49 @@ TF_BUILTIN(NewUnmappedArgumentsElements, CodeStubAssembler) {
       // Allocate a FixedArray in new space.
       Node* result = AllocateFixedArray(kind, length);
 
-      // Compute the effective {offset} into the {frame}.
-      Node* offset = IntPtrAdd(length, IntPtrConstant(1));
+      // The elements might be used to back mapped arguments. In that case fill
+      // the mapped elements (i.e. the first {mapped_count}) with the hole, but
+      // make sure not to overshoot the {length} if some arguments are missing.
+      Node* number_of_holes =
+          SelectConstant(IntPtrLessThan(mapped_count, length), mapped_count,
+                         length, MachineType::PointerRepresentation());
+      Node* the_hole = TheHoleConstant();
 
-      // Copy the parameters from {frame} (starting at {offset}) to {result}.
+      // Fill the first elements up to {number_of_holes} with the hole.
       VARIABLE(var_index, MachineType::PointerRepresentation());
-      Label loop(this, &var_index), done_loop(this);
+      Label loop1(this, &var_index), done_loop1(this);
       var_index.Bind(IntPtrConstant(0));
-      Goto(&loop);
-      BIND(&loop);
+      Goto(&loop1);
+      BIND(&loop1);
       {
         // Load the current {index}.
         Node* index = var_index.value();
 
         // Check if we are done.
-        GotoIf(WordEqual(index, length), &done_loop);
+        GotoIf(WordEqual(index, number_of_holes), &done_loop1);
+
+        // Store the hole into the {result}.
+        StoreFixedArrayElement(result, index, the_hole, SKIP_WRITE_BARRIER);
+
+        // Continue with next {index}.
+        var_index.Bind(IntPtrAdd(index, IntPtrConstant(1)));
+        Goto(&loop1);
+      }
+      BIND(&done_loop1);
+
+      // Compute the effective {offset} into the {frame}.
+      Node* offset = IntPtrAdd(length, IntPtrConstant(1));
+
+      // Copy the parameters from {frame} (starting at {offset}) to {result}.
+      Label loop2(this, &var_index), done_loop2(this);
+      Goto(&loop2);
+      BIND(&loop2);
+      {
+        // Load the current {index}.
+        Node* index = var_index.value();
+
+        // Check if we are done.
+        GotoIf(WordEqual(index, length), &done_loop2);
 
         // Load the parameter at the given {index}.
         Node* value = Load(MachineType::AnyTagged(), frame,
@@ -144,10 +249,10 @@ TF_BUILTIN(NewUnmappedArgumentsElements, CodeStubAssembler) {
 
         // Continue with next {index}.
         var_index.Bind(IntPtrAdd(index, IntPtrConstant(1)));
-        Goto(&loop);
+        Goto(&loop2);
       }
+      BIND(&done_loop2);
 
-      BIND(&done_loop);
       Return(result);
     }
   }
@@ -156,7 +261,8 @@ TF_BUILTIN(NewUnmappedArgumentsElements, CodeStubAssembler) {
   {
     // Allocate in old space (or large object space).
     TailCallRuntime(Runtime::kNewArgumentsElements, NoContextConstant(),
-                    BitcastWordToTagged(frame), SmiFromWord(length));
+                    BitcastWordToTagged(frame), SmiFromWord(length),
+                    SmiFromWord(mapped_count));
   }
 }
 
@@ -489,6 +595,39 @@ TF_BUILTIN(DeleteProperty, DeletePropertyBaseAssembler) {
     TailCallRuntime(Runtime::kDeleteProperty, context, receiver, key,
                     language_mode);
   }
+}
+
+TF_BUILTIN(ForInEnumerate, CodeStubAssembler) {
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* context = Parameter(Descriptor::kContext);
+
+  Label if_empty(this), if_runtime(this, Label::kDeferred);
+  Node* receiver_map = CheckEnumCache(receiver, &if_empty, &if_runtime);
+  Return(receiver_map);
+
+  BIND(&if_empty);
+  Return(EmptyFixedArrayConstant());
+
+  BIND(&if_runtime);
+  TailCallRuntime(Runtime::kForInEnumerate, context, receiver);
+}
+
+TF_BUILTIN(ForInFilter, CodeStubAssembler) {
+  Node* key = Parameter(Descriptor::kKey);
+  Node* object = Parameter(Descriptor::kObject);
+  Node* context = Parameter(Descriptor::kContext);
+
+  CSA_ASSERT(this, IsString(key));
+
+  Label if_true(this), if_false(this);
+  Node* result = HasProperty(object, key, context, kForInHasProperty);
+  Branch(IsTrue(result), &if_true, &if_false);
+
+  BIND(&if_true);
+  Return(key);
+
+  BIND(&if_false);
+  Return(UndefinedConstant());
 }
 
 }  // namespace internal

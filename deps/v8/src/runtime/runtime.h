@@ -195,7 +195,6 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_FORIN(F) \
   F(ForInEnumerate, 1, 1)           \
-  F(ForInFilter, 2, 1)              \
   F(ForInHasProperty, 2, 1)
 
 #ifdef V8_TRACE_IGNITION
@@ -285,6 +284,7 @@ namespace internal {
   F(CheckIsBootstrapping, 0, 1)                                      \
   F(CreateAsyncFromSyncIterator, 1, 1)                               \
   F(CreateListFromArrayLike, 1, 1)                                   \
+  F(DeserializeLazy, 1, 1)                                           \
   F(GetAndResetRuntimeCallStats, -1 /* <= 2 */, 1)                   \
   F(ExportFromRuntime, 1, 1)                                         \
   F(IncrementUseCounter, 1, 1)                                       \
@@ -468,8 +468,9 @@ namespace internal {
   F(JSProxyGetHandler, 1, 1)        \
   F(JSProxyRevoke, 1, 1)            \
   F(GetPropertyWithReceiver, 2, 1)  \
-  F(CheckProxyGetTrapResult, 2, 1)  \
-  F(CheckProxyHasTrap, 2, 1)
+  F(CheckProxyHasTrap, 2, 1)        \
+  F(SetPropertyWithReceiver, 5, 1)  \
+  F(CheckProxyGetSetTrapResult, 2, 1)
 
 #define FOR_EACH_INTRINSIC_REGEXP(F)                \
   F(IsRegExp, 1, 1)                                 \
@@ -495,7 +496,7 @@ namespace internal {
   F(NewStrictArguments, 1, 1)             \
   F(NewRestParameter, 1, 1)               \
   F(NewSloppyArguments, 3, 1)             \
-  F(NewArgumentsElements, 2, 1)           \
+  F(NewArgumentsElements, 3, 1)           \
   F(NewClosure, 3, 1)                     \
   F(NewClosure_Tenured, 3, 1)             \
   F(NewScriptContext, 2, 1)               \
@@ -623,7 +624,6 @@ namespace internal {
   F(ArrayBufferViewWasNeutered, 1, 1)    \
   F(TypedArrayGetLength, 1, 1)           \
   F(TypedArrayGetBuffer, 1, 1)           \
-  F(TypedArrayPrototypeSet, 3, 1)        \
   F(TypedArraySortFast, 1, 1)            \
   F(TypedArrayMaxSizeInHeap, 0, 1)       \
   F(IsTypedArray, 1, 1)                  \
@@ -651,9 +651,6 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_RETURN_PAIR(F) \
   F(LoadLookupSlotForCall, 1, 2)
-
-#define FOR_EACH_INTRINSIC_RETURN_TRIPLE(F) \
-  F(ForInPrepare, 1, 3)
 
 // Most intrinsics are implemented in the runtime/ directory, but ICs are
 // implemented in ic.cc for now.
@@ -708,7 +705,6 @@ namespace internal {
 // FOR_EACH_INTRINSIC defines the list of all intrinsics, coming in 2 flavors,
 // either returning an object or a pair.
 #define FOR_EACH_INTRINSIC(F)         \
-  FOR_EACH_INTRINSIC_RETURN_TRIPLE(F) \
   FOR_EACH_INTRINSIC_RETURN_PAIR(F)   \
   FOR_EACH_INTRINSIC_RETURN_OBJECT(F)
 

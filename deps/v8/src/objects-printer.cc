@@ -390,14 +390,14 @@ void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
                                  SloppyArgumentsElements* elements) {
   Isolate* isolate = elements->GetIsolate();
   FixedArray* arguments_store = elements->arguments();
-  os << "\n    0: context= " << Brief(elements->context())
-     << "\n    1: arguments_store= " << Brief(arguments_store)
+  os << "\n    0: context = " << Brief(elements->context())
+     << "\n    1: arguments_store = " << Brief(arguments_store)
      << "\n    parameter to context slot map:";
   for (uint32_t i = 0; i < elements->parameter_map_length(); i++) {
     uint32_t raw_index = i + SloppyArgumentsElements::kParameterMapStart;
     Object* mapped_entry = elements->get_mapped_entry(i);
     os << "\n    " << raw_index << ": param(" << i
-       << ")= " << Brief(mapped_entry);
+       << ") = " << Brief(mapped_entry);
     if (mapped_entry->IsTheHole(isolate)) {
       os << " in the arguments_store[" << i << "]";
     } else {
@@ -414,7 +414,6 @@ void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
     DCHECK_EQ(kind, SLOW_SLOPPY_ARGUMENTS_ELEMENTS);
     PrintDictionaryElements(os, arguments_store);
   }
-  os << "\n }";
 }
 
 }  // namespace
@@ -422,7 +421,7 @@ void PrintSloppyArgumentElements(std::ostream& os, ElementsKind kind,
 void JSObject::PrintElements(std::ostream& os) {  // NOLINT
   // Don't call GetElementsKind, its validation code can cause the printer to
   // fail when debugging.
-  os << " - elements= " << Brief(elements()) << " {";
+  os << " - elements = " << Brief(elements()) << " {";
   if (elements()->length() == 0) {
     os << " }\n";
     return;
@@ -787,6 +786,11 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
         os << Code::ICState2String(nexus.StateFromFeedback());
         break;
       }
+      case FeedbackSlotKind::kForIn: {
+        ForInICNexus nexus(this, slot);
+        os << Code::ICState2String(nexus.StateFromFeedback());
+        break;
+      }
       case FeedbackSlotKind::kStoreDataPropertyInLiteral: {
         StoreDataPropertyInLiteralICNexus nexus(this, slot);
         os << Code::ICState2String(nexus.StateFromFeedback());
@@ -794,7 +798,6 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
       }
       case FeedbackSlotKind::kCreateClosure:
       case FeedbackSlotKind::kLiteral:
-      case FeedbackSlotKind::kGeneral:
       case FeedbackSlotKind::kTypeProfile:
         break;
       case FeedbackSlotKind::kInvalid:

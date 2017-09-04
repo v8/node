@@ -402,7 +402,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckIf();
   const Operator* CheckBounds();
   const Operator* CheckMaps(CheckMapsFlags, ZoneHandleSet<Map>);
-  const Operator* CheckMapValue();
   const Operator* CompareMaps(ZoneHandleSet<Map>);
 
   const Operator* CheckHeapObject();
@@ -451,7 +450,10 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* ArgumentsLength(int formal_parameter_count,
                                   bool is_rest_length);
 
-  // new-unmapped-arguments-elements
+  // new-mapped-arguments-elements arguments-frame, arguments-length
+  const Operator* NewMappedArgumentsElements(int mapped_count);
+
+  // new-unmapped-arguments-elements arguments-frame, arguments-length
   const Operator* NewUnmappedArgumentsElements();
 
   // array-buffer-was-neutered buffer
@@ -468,6 +470,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
 
   const Operator* Allocate(Type* type, PretenureFlag pretenure = NOT_TENURED);
 
+  const Operator* LoadFieldByIndex();
   const Operator* LoadField(FieldAccess const&);
   const Operator* StoreField(FieldAccess const&);
 

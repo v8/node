@@ -375,31 +375,25 @@ struct Simd8x16ShuffleOperand {
 };
 
 // An entry on the value stack.
-template <typename Interface>
-struct AbstractValue {
+struct ValueBase {
   const byte* pc;
   ValueType type;
-  typename Interface::IValue interface_data;
 
   // Named constructors.
-  static AbstractValue Unreachable(const byte* pc) {
-    return {pc, kWasmVar, Interface::IValue::Unreachable()};
-  }
+  static ValueBase Unreachable(const byte* pc) { return {pc, kWasmVar}; }
 
-  static AbstractValue New(const byte* pc, ValueType type) {
-    return {pc, type, Interface::IValue::New()};
-  }
+  static ValueBase New(const byte* pc, ValueType type) { return {pc, type}; }
 };
 
-template <typename Interface>
-struct AbstractMerge {
+template <typename Value>
+struct Merge {
   uint32_t arity;
   union {
-    AbstractValue<Interface>* array;
-    AbstractValue<Interface> first;
+    Value* array;
+    Value first;
   } vals;  // Either multiple values or a single value.
 
-  AbstractValue<Interface>& operator[](size_t i) {
+  Value& operator[](uint32_t i) {
     DCHECK_GT(arity, i);
     return arity == 1 ? vals.first : vals.array[i];
   }
@@ -415,16 +409,15 @@ enum ControlKind {
 };
 
 // An entry on the control stack (i.e. if, block, loop, or try).
-template <typename Interface>
-struct AbstractControl {
+template <typename Value>
+struct ControlBase {
   const byte* pc;
   ControlKind kind;
-  size_t stack_depth;  // stack height at the beginning of the construct.
-  typename Interface::IControl interface_data;
-  bool unreachable;  // The current block has been ended.
+  uint32_t stack_depth;  // stack height at the beginning of the construct.
+  bool unreachable;    // The current block has been ended.
 
   // Values merged into the end of this control construct.
-  AbstractMerge<Interface> merge;
+  Merge<Value> merge;
 
   inline bool is_if() const { return is_onearmed_if() || is_if_else(); }
   inline bool is_onearmed_if() const { return kind == kControlIf; }
@@ -436,24 +429,57 @@ struct AbstractControl {
   inline bool is_try_catch() const { return kind == kControlTryCatch; }
 
   // Named constructors.
-  static AbstractControl Block(const byte* pc, size_t stack_depth) {
-    return {pc, kControlBlock, stack_depth, Interface::IControl::Block(), false,
-            {}};
+  static ControlBase Block(const byte* pc, size_t stack_depth) {
+    return {pc, kControlBlock, static_cast<uint32_t>(stack_depth), false, {}};
   }
 
-  static AbstractControl If(const byte* pc, size_t stack_depth) {
-    return {pc, kControlIf, stack_depth, Interface::IControl::If(), false, {}};
+  static ControlBase If(const byte* pc, size_t stack_depth) {
+    return {pc, kControlIf, static_cast<uint32_t>(stack_depth), false, {}};
   }
 
-  static AbstractControl Loop(const byte* pc, size_t stack_depth) {
-    return {pc, kControlLoop, stack_depth, Interface::IControl::Loop(), false,
-            {}};
+  static ControlBase Loop(const byte* pc, size_t stack_depth) {
+    return {pc, kControlLoop, static_cast<uint32_t>(stack_depth), false, {}};
   }
 
-  static AbstractControl Try(const byte* pc, size_t stack_depth) {
-    return {pc,    kControlTry, stack_depth, Interface::IControl::Try(),
-            false, {}};
+  static ControlBase Try(const byte* pc, size_t stack_depth) {
+    return {pc, kControlTry, static_cast<uint32_t>(stack_depth), false, {}};
   }
+};
+
+#define CONCRETE_NAMED_CONSTRUCTOR(concrete_type, abstract_type, name) \
+  template <typename... Args>                                          \
+  static concrete_type name(Args&&... args) {                          \
+    concrete_type val;                                                 \
+    static_cast<abstract_type&>(val) =                                 \
+        abstract_type::name(std::forward<Args>(args)...);              \
+    return val;                                                        \
+  }
+
+// Provide the default named constructors, which default-initialize the
+// ConcreteType and the initialize the fields of ValueBase correctly.
+// Use like this:
+// struct Value : public ValueWithNamedConstructors<Value> { int new_field; };
+template <typename ConcreteType>
+struct ValueWithNamedConstructors : public ValueBase {
+  // Named constructors.
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ValueBase, Unreachable)
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ValueBase, New)
+};
+
+// Provide the default named constructors, which default-initialize the
+// ConcreteType and the initialize the fields of ControlBase correctly.
+// Use like this:
+// struct Control : public ControlWithNamedConstructors<Control, Value> {
+//   int my_uninitialized_field;
+//   char* other_field = nullptr;
+// };
+template <typename ConcreteType, typename Value>
+struct ControlWithNamedConstructors : public ControlBase<Value> {
+  // Named constructors.
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ControlBase<Value>, Block)
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ControlBase<Value>, If)
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ControlBase<Value>, Loop)
+  CONCRETE_NAMED_CONSTRUCTOR(ConcreteType, ControlBase<Value>, Try)
 };
 
 // This is the list of callback functions that an interface for the
@@ -535,8 +561,10 @@ class WasmDecoder : public Decoder {
 
   ZoneVector<ValueType>* local_types_;
 
-  size_t total_locals() const {
-    return local_types_ == nullptr ? 0 : local_types_->size();
+  uint32_t total_locals() const {
+    return local_types_ == nullptr
+               ? 0
+               : static_cast<uint32_t>(local_types_->size());
   }
 
   static bool DecodeLocals(Decoder* decoder, const FunctionSig* sig,
@@ -591,7 +619,7 @@ class WasmDecoder : public Decoder {
   }
 
   static BitVector* AnalyzeLoopAssignment(Decoder* decoder, const byte* pc,
-                                          int locals_count, Zone* zone) {
+                                          uint32_t locals_count, Zone* zone) {
     if (pc >= decoder->end()) return nullptr;
     if (*pc != kExprLoop) return nullptr;
 
@@ -972,9 +1000,9 @@ class WasmDecoder : public Decoder {
 
 template <bool validate, typename Interface>
 class WasmFullDecoder : public WasmDecoder<validate> {
-  using Value = AbstractValue<Interface>;
-  using Control = AbstractControl<Interface>;
-  using MergeValues = AbstractMerge<Interface>;
+  using Value = typename Interface::Value;
+  using Control = typename Interface::Control;
+  using MergeValues = Merge<Value>;
 
   // All Value and Control types should be trivially copyable for
   // performance. We push and pop them, and store them in local variables.
@@ -1097,7 +1125,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
     return &stack_[stack_.size() - depth - 1];
   }
 
-  inline Value& GetMergeValueFromStack(Control* c, size_t i) {
+  inline Value& GetMergeValueFromStack(Control* c, uint32_t i) {
     DCHECK_GT(c->merge.arity, i);
     DCHECK_GE(stack_.size(), c->stack_depth + c->merge.arity);
     return stack_[stack_.size() - c->merge.arity + i];
@@ -1289,7 +1317,6 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             if (c->is_loop()) {
               // A loop just leaves the values on the stack.
               TypeCheckFallThru(c);
-              if (c->unreachable) PushEndValues(c);
               PopControl(c);
               break;
             }
@@ -1317,16 +1344,13 @@ class WasmFullDecoder : public WasmDecoder<validate> {
                 break;
               }
               last_end_found_ = true;
-              if (c->unreachable) {
-                TypeCheckFallThru(c);
-              } else {
-                // The result of the block is the return value.
-                TRACE("  @%-8d #xx:%-20s|", startrel(this->pc_),
-                      "(implicit) return");
-                DoReturn();
-                TRACE("\n");
-              }
+              // The result of the block is the return value.
+              TRACE("  @%-8d #xx:%-20s|", startrel(this->pc_),
+                    "(implicit) return");
+              DoReturn();
+              TRACE("\n");
             }
+
             PopControl(c);
             break;
           }
@@ -2000,7 +2024,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
 
   Value Pop() {
     DCHECK(!control_.empty());
-    size_t limit = control_.back().stack_depth;
+    uint32_t limit = control_.back().stack_depth;
     if (stack_.size() <= limit) {
       // Popping past the current control start in reachable code.
       if (!VALIDATE(control_.back().unreachable)) {
@@ -2027,7 +2051,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
   bool TypeCheckMergeValues(Control* c) {
     DCHECK_GE(stack_.size(), c->stack_depth + c->merge.arity);
     // Typecheck the topmost {c->merge.arity} values on the stack.
-    for (size_t i = 0; i < c->merge.arity; ++i) {
+    for (uint32_t i = 0; i < c->merge.arity; ++i) {
       auto& val = GetMergeValueFromStack(c, i);
       auto& old = c->merge[i];
       if (val.type != old.type) {
@@ -2036,7 +2060,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
         // If it is not polymorphic, this is a type error.
         if (!VALIDATE(val.type == kWasmVar)) {
           this->errorf(
-              this->pc_, "type error in merge[%zu] (expected %s, got %s)", i,
+              this->pc_, "type error in merge[%u] (expected %s, got %s)", i,
               WasmOpcodes::TypeName(old.type), WasmOpcodes::TypeName(val.type));
           return false;
         }
@@ -2050,13 +2074,15 @@ class WasmFullDecoder : public WasmDecoder<validate> {
   bool TypeCheckFallThru(Control* c) {
     DCHECK_EQ(c, &control_.back());
     if (!validate) return true;
-    size_t expected = c->merge.arity;
-    size_t actual = stack_.size() - c->stack_depth;
+    uint32_t expected = c->merge.arity;
+    DCHECK_GE(stack_.size(), c->stack_depth);
+    uint32_t actual = static_cast<uint32_t>(stack_.size()) - c->stack_depth;
     // Fallthrus must match the arity of the control exactly.
     if (!InsertUnreachablesIfNecessary(expected, actual) || actual > expected) {
-      this->errorf(this->pc_,
-                   "expected %u elements on the stack for fallthru to @%d",
-                   c->merge.arity, startrel(c->pc));
+      this->errorf(
+          this->pc_,
+          "expected %u elements on the stack for fallthru to @%d, found %u",
+          expected, startrel(c->pc), actual);
       return false;
     }
 
@@ -2070,17 +2096,21 @@ class WasmFullDecoder : public WasmDecoder<validate> {
       return true;
     }
     // Breaks must have at least the number of values expected; can have more.
-    size_t expected = c->merge.arity;
-    size_t actual = stack_.size() - control_.back().stack_depth;
+    uint32_t expected = c->merge.arity;
+    DCHECK_GE(stack_.size(), control_.back().stack_depth);
+    uint32_t actual =
+        static_cast<uint32_t>(stack_.size()) - control_.back().stack_depth;
     if (!InsertUnreachablesIfNecessary(expected, actual)) {
-      this->errorf(this->pc_, "expected %u elements on the stack for br to @%d",
-                   c->merge.arity, startrel(c->pc));
+      this->errorf(this->pc_,
+                   "expected %u elements on the stack for br to @%d, found %u",
+                   expected, startrel(c->pc), actual);
       return false;
     }
     return TypeCheckMergeValues(c);
   }
 
-  inline bool InsertUnreachablesIfNecessary(size_t expected, size_t actual) {
+  inline bool InsertUnreachablesIfNecessary(uint32_t expected,
+                                            uint32_t actual) {
     if (V8_LIKELY(actual >= expected)) {
       return true;  // enough actual values are there.
     }
@@ -2125,28 +2155,12 @@ class WasmFullDecoder : public WasmDecoder<validate> {
   }
 };
 
-template <bool decoder_validate, typename Interface>
-class InterfaceTemplate {
+class EmptyInterface {
  public:
-  constexpr static bool validate = decoder_validate;
-  using Decoder = WasmFullDecoder<validate, Interface>;
-  using Control = AbstractControl<Interface>;
-  using Value = AbstractValue<Interface>;
-  using MergeValues = AbstractMerge<Interface>;
-};
-
-class EmptyInterface : public InterfaceTemplate<true, EmptyInterface> {
- public:
-  struct IValue {
-    static IValue Unreachable() { return {}; }
-    static IValue New() { return {}; }
-  };
-  struct IControl {
-    static IControl Block() { return {}; }
-    static IControl If() { return {}; }
-    static IControl Loop() { return {}; }
-    static IControl Try() { return {}; }
-  };
+  constexpr static bool validate = true;
+  using Value = ValueBase;
+  using Control = ControlBase<Value>;
+  using Decoder = WasmFullDecoder<validate, EmptyInterface>;
 
 #define DEFINE_EMPTY_CALLBACK(name, ...) \
   void name(Decoder* decoder, ##__VA_ARGS__) {}

@@ -59,6 +59,54 @@
 namespace v8 {
 namespace internal {
 
+void Heap::SetArgumentsAdaptorDeoptPCOffset(int pc_offset) {
+  DCHECK(arguments_adaptor_deopt_pc_offset() == Smi::kZero);
+  set_arguments_adaptor_deopt_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetConstructStubCreateDeoptPCOffset(int pc_offset) {
+  // TODO(tebbi): Remove second half of DCHECK once
+  // FLAG_harmony_restrict_constructor_return is gone.
+  DCHECK(construct_stub_create_deopt_pc_offset() == Smi::kZero ||
+         construct_stub_create_deopt_pc_offset() == Smi::FromInt(pc_offset));
+  set_construct_stub_create_deopt_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetConstructStubInvokeDeoptPCOffset(int pc_offset) {
+  // TODO(tebbi): Remove second half of DCHECK once
+  // FLAG_harmony_restrict_constructor_return is gone.
+  DCHECK(construct_stub_invoke_deopt_pc_offset() == Smi::kZero ||
+         construct_stub_invoke_deopt_pc_offset() == Smi::FromInt(pc_offset));
+  set_construct_stub_invoke_deopt_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetGetterStubDeoptPCOffset(int pc_offset) {
+  DCHECK(getter_stub_deopt_pc_offset() == Smi::kZero);
+  set_getter_stub_deopt_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetSetterStubDeoptPCOffset(int pc_offset) {
+  DCHECK(setter_stub_deopt_pc_offset() == Smi::kZero);
+  set_setter_stub_deopt_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetInterpreterEntryReturnPCOffset(int pc_offset) {
+  DCHECK(interpreter_entry_return_pc_offset() == Smi::kZero);
+  set_interpreter_entry_return_pc_offset(Smi::FromInt(pc_offset));
+}
+
+void Heap::SetSerializedTemplates(FixedArray* templates) {
+  DCHECK_EQ(empty_fixed_array(), serialized_templates());
+  DCHECK(isolate()->serializer_enabled());
+  set_serialized_templates(templates);
+}
+
+void Heap::SetSerializedGlobalProxySizes(FixedArray* sizes) {
+  DCHECK_EQ(empty_fixed_array(), serialized_global_proxy_sizes());
+  DCHECK(isolate()->serializer_enabled());
+  set_serialized_global_proxy_sizes(sizes);
+}
+
 bool Heap::GCCallbackPair::operator==(const Heap::GCCallbackPair& other) const {
   return other.callback == callback;
 }
@@ -702,6 +750,14 @@ inline bool DigestPretenuringFeedback(Isolate* isolate, AllocationSite* site,
   return deopt;
 }
 }  // namespace
+
+void Heap::RemoveAllocationSitePretenuringFeedback(AllocationSite* site) {
+  global_pretenuring_feedback_.erase(site);
+}
+
+bool Heap::DeoptMaybeTenuredAllocationSites() {
+  return new_space_->IsAtMaximumCapacity() && maximum_size_scavenges_ == 0;
+}
 
 void Heap::ProcessPretenuringFeedback() {
   bool trigger_deoptimization = false;
@@ -2052,6 +2108,21 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   return string->IsExternalString() ? string : nullptr;
 }
 
+void Heap::ExternalStringTable::Verify() {
+#ifdef DEBUG
+  for (size_t i = 0; i < new_space_strings_.size(); ++i) {
+    Object* obj = Object::cast(new_space_strings_[i]);
+    DCHECK(heap_->InNewSpace(obj));
+    DCHECK(!obj->IsTheHole(heap_->isolate()));
+  }
+  for (size_t i = 0; i < old_space_strings_.size(); ++i) {
+    Object* obj = Object::cast(old_space_strings_[i]);
+    DCHECK(!heap_->InNewSpace(obj));
+    DCHECK(!obj->IsTheHole(heap_->isolate()));
+  }
+#endif
+}
+
 void Heap::ExternalStringTable::UpdateNewSpaceReferences(
     Heap::ExternalStringTableUpdaterCallback updater_func) {
   if (new_space_strings_.empty()) return;
@@ -2068,12 +2139,12 @@ void Heap::ExternalStringTable::UpdateNewSpaceReferences(
     DCHECK(target->IsExternalString());
 
     if (heap_->InNewSpace(target)) {
-      // String is still in new space.  Update the table entry.
+      // String is still in new space. Update the table entry.
       *last = target;
       ++last;
     } else {
-      // String got promoted.  Move it to the old string list.
-      AddOldString(target);
+      // String got promoted. Move it to the old string list.
+      old_space_strings_.push_back(target);
     }
   }
 
@@ -2084,6 +2155,29 @@ void Heap::ExternalStringTable::UpdateNewSpaceReferences(
     Verify();
   }
 #endif
+}
+
+void Heap::ExternalStringTable::PromoteAllNewSpaceStrings() {
+  old_space_strings_.reserve(old_space_strings_.size() +
+                             new_space_strings_.size());
+  std::move(std::begin(new_space_strings_), std::end(new_space_strings_),
+            std::back_inserter(old_space_strings_));
+  new_space_strings_.clear();
+}
+
+void Heap::ExternalStringTable::IterateNewSpaceStrings(RootVisitor* v) {
+  if (!new_space_strings_.empty()) {
+    v->VisitRootPointers(Root::kExternalStringsTable, new_space_strings_.data(),
+                         new_space_strings_.data() + new_space_strings_.size());
+  }
+}
+
+void Heap::ExternalStringTable::IterateAll(RootVisitor* v) {
+  IterateNewSpaceStrings(v);
+  if (!old_space_strings_.empty()) {
+    v->VisitRootPointers(Root::kExternalStringsTable, old_space_strings_.data(),
+                         old_space_strings_.data() + old_space_strings_.size());
+  }
 }
 
 void Heap::UpdateNewSpaceReferencesInExternalStringTable(

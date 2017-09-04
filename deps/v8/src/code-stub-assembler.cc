@@ -227,6 +227,21 @@ bool CodeStubAssembler::IsIntPtrOrSmiConstantZero(Node* test) {
   return false;
 }
 
+bool CodeStubAssembler::TryGetIntPtrOrSmiConstantValue(Node* maybe_constant,
+                                                       int* value) {
+  int32_t int32_constant;
+  if (ToInt32Constant(maybe_constant, int32_constant)) {
+    *value = int32_constant;
+    return true;
+  }
+  Smi* smi_constant;
+  if (ToSmiConstant(maybe_constant, smi_constant)) {
+    *value = Smi::ToInt(smi_constant);
+    return true;
+  }
+  return false;
+}
+
 Node* CodeStubAssembler::IntPtrRoundUpToPowerOfTwo32(Node* value) {
   Comment("IntPtrRoundUpToPowerOfTwo32");
   CSA_ASSERT(this, UintPtrLessThanOrEqual(value, IntPtrConstant(0x80000000u)));
@@ -1361,6 +1376,12 @@ TNode<Object> CodeStubAssembler::LoadMapConstructor(SloppyTNode<Map> map) {
   return result;
 }
 
+Node* CodeStubAssembler::LoadMapEnumLength(SloppyTNode<Map> map) {
+  CSA_SLOW_ASSERT(this, IsMap(map));
+  Node* bit_field3 = LoadMapBitField3(map);
+  return DecodeWordFromWord32<Map::EnumLengthBits>(bit_field3);
+}
+
 Node* CodeStubAssembler::LoadNameHashField(Node* name) {
   CSA_ASSERT(this, IsName(name));
   return LoadObjectField(name, Name::kHashFieldOffset, MachineType::Uint32());
@@ -2441,8 +2462,10 @@ CodeStubAssembler::AllocateUninitializedJSArrayWithElements(
                                  : Heap::kFixedArrayMapRootIndex;
   DCHECK(Heap::RootIsImmortalImmovable(elements_map_index));
   StoreMapNoWriteBarrier(elements, elements_map_index);
+  Node* capacity_smi = ParameterToTagged(capacity, capacity_mode);
+  CSA_ASSERT(this, SmiGreaterThan(capacity_smi, SmiConstant(0)));
   StoreObjectFieldNoWriteBarrier(elements, FixedArray::kLengthOffset,
-                                 ParameterToTagged(capacity, capacity_mode));
+                                 capacity_smi);
   return {array, elements};
 }
 
@@ -2480,6 +2503,7 @@ Node* CodeStubAssembler::AllocateJSArray(ElementsKind kind, Node* array_map,
   CSA_SLOW_ASSERT(this, TaggedIsPositiveSmi(length));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(capacity, capacity_mode));
 
+  int capacity_as_constant;
   Node *array = nullptr, *elements = nullptr;
   if (IsIntPtrOrSmiConstantZero(capacity)) {
     // Array is empty. Use the shared empty fixed array instead of allocating a
@@ -2488,7 +2512,8 @@ Node* CodeStubAssembler::AllocateJSArray(ElementsKind kind, Node* array_map,
                                                         allocation_site);
     StoreObjectFieldRoot(array, JSArray::kElementsOffset,
                          Heap::kEmptyFixedArrayRootIndex);
-  } else {
+  } else if (TryGetIntPtrOrSmiConstantValue(capacity, &capacity_as_constant) &&
+             capacity_as_constant > 0) {
     // Allocate both array and elements object, and initialize the JSArray.
     std::tie(array, elements) = AllocateUninitializedJSArrayWithElements(
         kind, array_map, length, allocation_site, capacity, capacity_mode);
@@ -2496,6 +2521,40 @@ Node* CodeStubAssembler::AllocateJSArray(ElementsKind kind, Node* array_map,
     FillFixedArrayWithValue(kind, elements,
                             IntPtrOrSmiConstant(0, capacity_mode), capacity,
                             Heap::kTheHoleValueRootIndex, capacity_mode);
+  } else {
+    Label out(this), empty(this), nonempty(this);
+    VARIABLE(var_array, MachineRepresentation::kTagged);
+
+    Branch(SmiEqual(ParameterToTagged(capacity, capacity_mode), SmiConstant(0)),
+           &empty, &nonempty);
+
+    BIND(&empty);
+    {
+      // Array is empty. Use the shared empty fixed array instead of allocating
+      // a new one.
+      var_array.Bind(AllocateUninitializedJSArrayWithoutElements(
+          kind, array_map, length, allocation_site));
+      StoreObjectFieldRoot(var_array.value(), JSArray::kElementsOffset,
+                           Heap::kEmptyFixedArrayRootIndex);
+      Goto(&out);
+    }
+
+    BIND(&nonempty);
+    {
+      // Allocate both array and elements object, and initialize the JSArray.
+      Node* array;
+      std::tie(array, elements) = AllocateUninitializedJSArrayWithElements(
+          kind, array_map, length, allocation_site, capacity, capacity_mode);
+      var_array.Bind(array);
+      // Fill in the elements with holes.
+      FillFixedArrayWithValue(kind, elements,
+                              IntPtrOrSmiConstant(0, capacity_mode), capacity,
+                              Heap::kTheHoleValueRootIndex, capacity_mode);
+      Goto(&out);
+    }
+
+    BIND(&out);
+    array = var_array.value();
   }
 
   return array;
@@ -6584,7 +6643,7 @@ Node* CodeStubAssembler::LoadFeedbackVectorForStub() {
 }
 
 void CodeStubAssembler::UpdateFeedback(Node* feedback, Node* feedback_vector,
-                                       Node* slot_id, Node* function) {
+                                       Node* slot_id) {
   // This method is used for binary op and compare feedback. These
   // vector nodes are initialized with a smi 0, so we can simply OR
   // our new feedback in place.
@@ -6916,6 +6975,7 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
                                          ElementsKind elements_kind,
                                          KeyedAccessStoreMode store_mode,
                                          Label* bailout) {
+  CSA_ASSERT(this, Word32BinaryNot(IsJSProxy(object)));
   Node* elements = LoadElements(object);
   if (IsSmiOrObjectElementsKind(elements_kind) &&
       store_mode != STORE_NO_TRANSITION_HANDLE_COW) {
@@ -7094,17 +7154,16 @@ void CodeStubAssembler::TransitionElementsKind(Node* object, Node* map,
     Comment("Non-simple map transition");
     Node* elements = LoadElements(object);
 
-    Node* empty_fixed_array =
-        HeapConstant(isolate()->factory()->empty_fixed_array());
-
     Label done(this);
-    GotoIf(WordEqual(elements, empty_fixed_array), &done);
+    GotoIf(WordEqual(elements, EmptyFixedArrayConstant()), &done);
 
     // TODO(ishell): Use OptimalParameterMode().
     ParameterMode mode = INTPTR_PARAMETERS;
     Node* elements_length = SmiUntag(LoadFixedArrayBaseLength(elements));
     Node* array_length =
         is_jsarray ? SmiUntag(LoadFastJSArrayLength(object)) : elements_length;
+
+    CSA_ASSERT(this, WordNotEqual(elements_length, IntPtrConstant(0)));
 
     GrowElementsCapacity(object, elements, from_kind, to_kind, array_length,
                          elements_length, mode, bailout);
@@ -9831,6 +9890,86 @@ Node* CodeStubAssembler::MarkerIsNotFrameType(Node* marker_or_function,
                                               StackFrame::Type frame_type) {
   return WordNotEqual(marker_or_function,
                       IntPtrConstant(StackFrame::TypeToMarker(frame_type)));
+}
+
+void CodeStubAssembler::CheckPrototypeEnumCache(Node* receiver,
+                                                Node* receiver_map,
+                                                Label* if_fast,
+                                                Label* if_slow) {
+  VARIABLE(var_object, MachineRepresentation::kTagged, receiver);
+  VARIABLE(var_object_map, MachineRepresentation::kTagged, receiver_map);
+
+  Label loop(this, {&var_object, &var_object_map}), done_loop(this);
+  Goto(&loop);
+  BIND(&loop);
+  {
+    // Check that there are no elements on the current {object}.
+    Label if_no_elements(this);
+    Node* object = var_object.value();
+    Node* object_map = var_object_map.value();
+
+    // The following relies on the elements only aliasing with JSProxy::target,
+    // which is a Javascript value and hence cannot be confused with an elements
+    // backing store.
+    STATIC_ASSERT(JSObject::kElementsOffset == JSProxy::kTargetOffset);
+    Node* object_elements = LoadObjectField(object, JSObject::kElementsOffset);
+    GotoIf(IsEmptyFixedArray(object_elements), &if_no_elements);
+    GotoIf(IsEmptySlowElementDictionary(object_elements), &if_no_elements);
+
+    // It might still be an empty JSArray.
+    GotoIfNot(IsJSArrayMap(object_map), if_slow);
+    Node* object_length = LoadObjectField(object, JSArray::kLengthOffset);
+    Branch(WordEqual(object_length, SmiConstant(Smi::kZero)), &if_no_elements,
+           if_slow);
+
+    // Continue with the {object}s prototype.
+    BIND(&if_no_elements);
+    object = LoadMapPrototype(object_map);
+    GotoIf(IsNull(object), if_fast);
+
+    // For all {object}s but the {receiver}, check that the cache is empty.
+    var_object.Bind(object);
+    object_map = LoadMap(object);
+    var_object_map.Bind(object_map);
+    Node* object_enum_length = LoadMapEnumLength(object_map);
+    Branch(WordEqual(object_enum_length, IntPtrConstant(0)), &loop, if_slow);
+  }
+}
+
+Node* CodeStubAssembler::CheckEnumCache(Node* receiver, Label* if_empty,
+                                        Label* if_runtime) {
+  Label if_fast(this), if_cache(this), if_no_cache(this, Label::kDeferred);
+  Node* receiver_map = LoadMap(receiver);
+
+  // Check if the enum length field of the {receiver} is properly initialized,
+  // indicating that there is an enum cache.
+  Node* receiver_enum_length = LoadMapEnumLength(receiver_map);
+  Branch(WordEqual(receiver_enum_length,
+                   IntPtrConstant(kInvalidEnumCacheSentinel)),
+         &if_no_cache, &if_cache);
+
+  BIND(&if_no_cache);
+  {
+    // Avoid runtime-call for empty dictionary receivers.
+    GotoIfNot(IsDictionaryMap(receiver_map), if_runtime);
+    Node* properties = LoadSlowProperties(receiver);
+    Node* length = LoadFixedArrayElement(
+        properties, NameDictionary::kNumberOfElementsIndex);
+    GotoIfNot(WordEqual(length, SmiConstant(Smi::kZero)), if_runtime);
+    // Check that there are no elements on the {receiver} and its prototype
+    // chain. Given that we do not create an EnumCache for dict-mode objects,
+    // directly jump to {if_empty} if there are no elements and no properties
+    // on the {receiver}.
+    CheckPrototypeEnumCache(receiver, receiver_map, if_empty, if_runtime);
+  }
+
+  // Check that there are no elements on the fast {receiver} and its
+  // prototype chain.
+  BIND(&if_cache);
+  CheckPrototypeEnumCache(receiver, receiver_map, &if_fast, if_runtime);
+
+  BIND(&if_fast);
+  return receiver_map;
 }
 
 void CodeStubAssembler::Print(const char* s) {
