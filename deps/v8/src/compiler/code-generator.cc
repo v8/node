@@ -60,6 +60,7 @@ CodeGenerator::CodeGenerator(Zone* codegen_zone, Frame* frame, Linkage* linkage,
       inlined_function_count_(0),
       translations_(zone()),
       last_lazy_deopt_pc_(0),
+      caller_registers_saved_(false),
       jump_tables_(nullptr),
       ools_(nullptr),
       osr_helper_(osr_helper),
@@ -130,6 +131,17 @@ void CodeGenerator::AssembleCode() {
   if (linkage()->GetIncomingDescriptor()->IsJSFunctionCall()) {
     ProfileEntryHookStub::MaybeCallEntryHookDelayed(tasm(), zone());
   }
+
+  // TODO(jupvfranco): This should be the first thing in the code,
+  // or otherwise MaybeCallEntryHookDelayed may happen twice (for
+  // optimized and deoptimized code).
+  // We want to bailout only from JS functions, which are the only ones
+  // that are optimized.
+  if (info->IsOptimizing()) {
+    DCHECK(linkage()->GetIncomingDescriptor()->IsJSFunctionCall());
+    BailoutIfDeoptimized();
+  }
+
   // Architecture-specific, linkage-specific prologue.
   info->set_prologue_offset(tasm()->pc_offset());
 
@@ -729,11 +741,11 @@ void CodeGenerator::TranslateStateValueDescriptor(
     }
   } else if (desc->IsArgumentsElements()) {
     if (translation != nullptr) {
-      translation->ArgumentsElements(desc->is_rest());
+      translation->ArgumentsElements(desc->arguments_type());
     }
   } else if (desc->IsArgumentsLength()) {
     if (translation != nullptr) {
-      translation->ArgumentsLength(desc->is_rest());
+      translation->ArgumentsLength(desc->arguments_type());
     }
   } else if (desc->IsDuplicate()) {
     if (translation != nullptr) {

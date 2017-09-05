@@ -14,30 +14,30 @@ namespace v8 {
 namespace internal {
 
 // Give alias names to registers for calling conventions.
-const Register kReturnRegister0 = {Register::kCode_rax};
-const Register kReturnRegister1 = {Register::kCode_rdx};
-const Register kReturnRegister2 = {Register::kCode_r8};
-const Register kJSFunctionRegister = {Register::kCode_rdi};
-const Register kContextRegister = {Register::kCode_rsi};
-const Register kAllocateSizeRegister = {Register::kCode_rdx};
-const Register kInterpreterAccumulatorRegister = {Register::kCode_rax};
-const Register kInterpreterBytecodeOffsetRegister = {Register::kCode_r12};
-const Register kInterpreterBytecodeArrayRegister = {Register::kCode_r14};
-const Register kInterpreterDispatchTableRegister = {Register::kCode_r15};
-const Register kJavaScriptCallArgCountRegister = {Register::kCode_rax};
-const Register kJavaScriptCallNewTargetRegister = {Register::kCode_rdx};
-const Register kRuntimeCallFunctionRegister = {Register::kCode_rbx};
-const Register kRuntimeCallArgCountRegister = {Register::kCode_rax};
+constexpr Register kReturnRegister0 = rax;
+constexpr Register kReturnRegister1 = rdx;
+constexpr Register kReturnRegister2 = r8;
+constexpr Register kJSFunctionRegister = rdi;
+constexpr Register kContextRegister = rsi;
+constexpr Register kAllocateSizeRegister = rdx;
+constexpr Register kInterpreterAccumulatorRegister = rax;
+constexpr Register kInterpreterBytecodeOffsetRegister = r12;
+constexpr Register kInterpreterBytecodeArrayRegister = r14;
+constexpr Register kInterpreterDispatchTableRegister = r15;
+constexpr Register kJavaScriptCallArgCountRegister = rax;
+constexpr Register kJavaScriptCallNewTargetRegister = rdx;
+constexpr Register kRuntimeCallFunctionRegister = rbx;
+constexpr Register kRuntimeCallArgCountRegister = rax;
 
 // Default scratch register used by MacroAssembler (and other code that needs
 // a spare register). The register isn't callee save, and not used by the
 // function calling convention.
-const Register kScratchRegister = {10};      // r10.
-const XMMRegister kScratchDoubleReg = {15};  // xmm15.
-const Register kRootRegister = {13};         // r13 (callee save).
+constexpr Register kScratchRegister = r10;
+constexpr XMMRegister kScratchDoubleReg = xmm15;
+constexpr Register kRootRegister = r13;  // callee save
 // Actual value of root register is offset from the root array's start
 // to take advantage of negitive 8-bit displacement values.
-const int kRootRegisterBias = 128;
+constexpr int kRootRegisterBias = 128;
 
 // Convenience for platform-independent signatures.
 typedef Operand MemOperand;
@@ -417,15 +417,28 @@ class TurboAssembler : public Assembler {
   void MoveNumber(Register dst, double value);
   void MoveNonSmi(Register dst, double value);
 
-  // These functions do not arrange the registers in any particular order so
-  // they are not useful for calls that can cause a GC.  The caller can
-  // exclude up to 3 registers that do not need to be saved and restored.
-  void PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
-                       Register exclusion2 = no_reg,
-                       Register exclusion3 = no_reg);
-  void PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+  // Calculate how much stack space (in bytes) are required to store caller
+  // registers excluding those specified in the arguments.
+  int RequiredStackSizeForCallerSaved(SaveFPRegsMode fp_mode,
+                                      Register exclusion1 = no_reg,
+                                      Register exclusion2 = no_reg,
+                                      Register exclusion3 = no_reg) const;
+
+  // PushCallerSaved and PopCallerSaved do not arrange the registers in any
+  // particular order so they are not useful for calls that can cause a GC.
+  // The caller can exclude up to 3 registers that do not need to be saved and
+  // restored.
+
+  // Push caller saved registers on the stack, and return the number of bytes
+  // stack pointer is adjusted.
+  int PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
                       Register exclusion2 = no_reg,
                       Register exclusion3 = no_reg);
+  // Restore caller saved registers from the stack, and return the number of
+  // bytes stack pointer is adjusted.
+  int PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+                     Register exclusion2 = no_reg,
+                     Register exclusion3 = no_reg);
 
  protected:
   static const int kSmiShift = kSmiTagSize + kSmiShiftSize;

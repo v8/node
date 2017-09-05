@@ -144,124 +144,10 @@ void Deoptimizer::GenerateDeoptimizationEntries(MacroAssembler* masm,
   generator.Generate();
 }
 
-void Deoptimizer::VisitAllOptimizedFunctionsForContext(
-    Context* context, OptimizedFunctionVisitor* visitor) {
-  DisallowHeapAllocation no_allocation;
-
-  CHECK(context->IsNativeContext());
-
-  // Visit the list of optimized functions, removing elements that
-  // no longer refer to optimized code.
-  JSFunction* prev = NULL;
-  Object* element = context->OptimizedFunctionsListHead();
-  Isolate* isolate = context->GetIsolate();
-  while (!element->IsUndefined(isolate)) {
-    JSFunction* function = JSFunction::cast(element);
-    Object* next = function->next_function_link();
-    if (function->code()->kind() != Code::OPTIMIZED_FUNCTION ||
-        (visitor->VisitFunction(function),
-         function->code()->kind() != Code::OPTIMIZED_FUNCTION)) {
-      // The function no longer refers to optimized code, or the visitor
-      // changed the code to which it refers to no longer be optimized code.
-      // Remove the function from this list.
-      if (prev != NULL) {
-        prev->set_next_function_link(next, UPDATE_WEAK_WRITE_BARRIER);
-      } else {
-        context->SetOptimizedFunctionsListHead(next);
-      }
-      // The visitor should not alter the link directly.
-      CHECK_EQ(function->next_function_link(), next);
-      // Set the next function link to undefined to indicate it is no longer
-      // in the optimized functions list.
-      function->set_next_function_link(context->GetHeap()->undefined_value(),
-                                       SKIP_WRITE_BARRIER);
-    } else {
-      // The visitor should not alter the link directly.
-      CHECK_EQ(function->next_function_link(), next);
-      // preserve this element.
-      prev = function;
-    }
-    element = next;
-  }
-}
-
-void Deoptimizer::UnlinkOptimizedCode(Code* code, Context* native_context) {
-  class CodeUnlinker : public OptimizedFunctionVisitor {
-   public:
-    explicit CodeUnlinker(Code* code) : code_(code) {}
-
-    virtual void VisitFunction(JSFunction* function) {
-      if (function->code() == code_) {
-        if (FLAG_trace_deopt) {
-          PrintF("[removing optimized code for: ");
-          function->ShortPrint();
-          PrintF("]\n");
-        }
-        function->set_code(function->shared()->code());
-      }
-    }
-
-   private:
-    Code* code_;
-  };
-  CodeUnlinker unlinker(code);
-  VisitAllOptimizedFunctionsForContext(native_context, &unlinker);
-}
-
-
-void Deoptimizer::VisitAllOptimizedFunctions(
-    Isolate* isolate,
-    OptimizedFunctionVisitor* visitor) {
-  DisallowHeapAllocation no_allocation;
-
-  // Run through the list of all native contexts.
-  Object* context = isolate->heap()->native_contexts_list();
-  while (!context->IsUndefined(isolate)) {
-    VisitAllOptimizedFunctionsForContext(Context::cast(context), visitor);
-    context = Context::cast(context)->next_context_link();
-  }
-}
-
-// Unlink functions referring to code marked for deoptimization, then move
-// marked code from the optimized code list to the deoptimized code list,
+// Move marked code from the optimized code list to the deoptimized code list,
 // and replace pc on the stack for codes marked for deoptimization.
 void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
   DisallowHeapAllocation no_allocation;
-
-  // A "closure" that unlinks optimized code that is going to be
-  // deoptimized from the functions that refer to it.
-  class SelectedCodeUnlinker: public OptimizedFunctionVisitor {
-   public:
-    virtual void VisitFunction(JSFunction* function) {
-      // The code in the function's optimized code feedback vector slot might
-      // be different from the code on the function - evict it if necessary.
-      function->feedback_vector()->EvictOptimizedCodeMarkedForDeoptimization(
-          function->shared(), "unlinking code marked for deopt");
-
-      Code* code = function->code();
-      if (!code->marked_for_deoptimization()) return;
-
-      // Unlink this function.
-      if (!code->deopt_already_counted()) {
-        function->feedback_vector()->increment_deopt_count();
-        code->set_deopt_already_counted(true);
-      }
-
-      function->set_code(function->shared()->code());
-
-      if (FLAG_trace_deopt) {
-        CodeTracer::Scope scope(code->GetHeap()->isolate()->GetCodeTracer());
-        PrintF(scope.file(), "[deoptimizer unlinked: ");
-        function->PrintName(scope.file());
-        PrintF(scope.file(),
-               " / %" V8PRIxPTR "]\n", reinterpret_cast<intptr_t>(function));
-      }
-    }
-  };
-
-  // Unlink all functions that refer to marked code.
-  SelectedCodeUnlinker unlinker;
-  VisitAllOptimizedFunctionsForContext(context, &unlinker);
 
   Isolate* isolate = context->GetHeap()->isolate();
 #ifdef DEBUG
@@ -304,6 +190,10 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
   }
 #endif
 
+  // We will use this set to mark those Code objects that are marked for
+  // deoptimization and have not been found in stack frames.
+  std::set<Code*> codes;
+
   // Move marked code from the optimized code list to the deoptimized
   // code list.
   // Walk over all optimized code objects in this native context.
@@ -317,6 +207,8 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
     if (code->marked_for_deoptimization()) {
       // Make sure that this object does not point to any garbage.
       code->InvalidateEmbeddedObjects();
+      codes.insert(code);
+
       if (prev != NULL) {
         // Skip this code in the optimized code list.
         prev->set_next_code_link(next);
@@ -335,15 +227,16 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
     element = next;
   }
 
-  // Finds the with activations of codes marked for deoptimization, search for
-  // the trampoline to the deoptimizer call respective to each code, and use it
-  // to replace the current pc on the stack.
+  // Find the frames with activations of codes marked for deoptimization, search
+  // for the trampoline to the deoptimizer call respective to each code, and use
+  // it to replace the current pc on the stack.
   for (StackFrameIterator it(isolate, isolate->thread_local_top()); !it.done();
        it.Advance()) {
     if (it.frame()->type() == StackFrame::OPTIMIZED) {
       Code* code = it.frame()->LookupCode();
       if (code->kind() == Code::OPTIMIZED_FUNCTION &&
           code->marked_for_deoptimization()) {
+        codes.erase(code);
         // Obtain the trampoline to the deoptimizer call.
         SafepointEntry safepoint = code->GetSafepointEntry(it.frame()->pc());
         int trampoline_pc = safepoint.trampoline_pc();
@@ -353,6 +246,15 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
         it.frame()->set_pc(code->instruction_start() + trampoline_pc);
       }
     }
+  }
+
+  // If there's no activation of a code in the stack then we can remove its
+  // deoptimization data. We do this to ensure that Code objects that will be
+  // unlinked won't be kept alive.
+  std::set<Code*>::iterator it;
+  for (it = codes.begin(); it != codes.end(); ++it) {
+    Code* code = *it;
+    code->set_deoptimization_data(isolate->heap()->empty_fixed_array());
   }
 }
 
@@ -397,7 +299,6 @@ void Deoptimizer::DeoptimizeMarkedCode(Isolate* isolate) {
   }
 }
 
-
 void Deoptimizer::MarkAllCodeForContext(Context* context) {
   Object* element = context->OptimizedCodeListHead();
   Isolate* isolate = context->GetIsolate();
@@ -422,6 +323,14 @@ void Deoptimizer::DeoptimizeFunction(JSFunction* function, Code* code) {
     // refer to that code. The code cannot be shared across native contexts,
     // so we only need to search one.
     code->set_marked_for_deoptimization(true);
+    // The code in the function's optimized code feedback vector slot might
+    // be different from the code on the function - evict it if necessary.
+    function->feedback_vector()->EvictOptimizedCodeMarkedForDeoptimization(
+        function->shared(), "unlinking code marked for deopt");
+    if (!code->deopt_already_counted()) {
+      function->feedback_vector()->increment_deopt_count();
+      code->set_deopt_already_counted(true);
+    }
     DeoptimizeMarkedCodeForContext(function->context()->native_context());
   }
 }
@@ -615,7 +524,9 @@ int Deoptimizer::GetDeoptimizedCodeCount(Isolate* isolate) {
     while (!element->IsUndefined(isolate)) {
       Code* code = Code::cast(element);
       DCHECK(code->kind() == Code::OPTIMIZED_FUNCTION);
-      length++;
+      if (!code->marked_for_deoptimization()) {
+        length++;
+      }
       element = code->next_code_link();
     }
     context = Context::cast(context)->next_context_link();
@@ -1837,12 +1748,7 @@ void Deoptimizer::DoComputeBuiltinContinuation(
       reinterpret_cast<intptr_t>(continuation->entry()));
 }
 
-void Deoptimizer::MaterializeHeapObjects(JavaScriptFrameIterator* it) {
-  // Walk to the last JavaScript output frame to find out if it has
-  // adapted arguments.
-  for (int frame_index = 0; frame_index < jsframe_count(); ++frame_index) {
-    if (frame_index != 0) it->Advance();
-  }
+void Deoptimizer::MaterializeHeapObjects() {
   translated_state_.Prepare(reinterpret_cast<Address>(stack_fp_));
 
   for (auto& materialization : values_to_materialize_) {
@@ -2121,15 +2027,14 @@ void Translation::BeginInterpretedFrame(BailoutId bytecode_offset,
   buffer_->Add(height);
 }
 
-
-void Translation::ArgumentsElements(bool is_rest) {
+void Translation::ArgumentsElements(CreateArgumentsType type) {
   buffer_->Add(ARGUMENTS_ELEMENTS);
-  buffer_->Add(is_rest);
+  buffer_->Add(static_cast<uint8_t>(type));
 }
 
-void Translation::ArgumentsLength(bool is_rest) {
+void Translation::ArgumentsLength(CreateArgumentsType type) {
   buffer_->Add(ARGUMENTS_LENGTH);
-  buffer_->Add(is_rest);
+  buffer_->Add(static_cast<uint8_t>(type));
 }
 
 void Translation::BeginCapturedObject(int length) {
@@ -2229,6 +2134,8 @@ int Translation::NumberOfOperandsFor(Opcode opcode) {
     case GETTER_STUB_FRAME:
     case SETTER_STUB_FRAME:
     case DUPLICATED_OBJECT:
+    case ARGUMENTS_ELEMENTS:
+    case ARGUMENTS_LENGTH:
     case CAPTURED_OBJECT:
     case REGISTER:
     case INT32_REGISTER:
@@ -2252,9 +2159,6 @@ int Translation::NumberOfOperandsFor(Opcode opcode) {
     case BUILTIN_CONTINUATION_FRAME:
     case JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME:
       return 3;
-    case ARGUMENTS_ELEMENTS:
-    case ARGUMENTS_LENGTH:
-      return 1;
   }
   FATAL("Unexpected translation type");
   return -1;
@@ -3014,7 +2918,8 @@ void TranslatedFrame::AdvanceIterator(
 }
 
 Address TranslatedState::ComputeArgumentsPosition(Address input_frame_pointer,
-                                                  bool is_rest, int* length) {
+                                                  CreateArgumentsType type,
+                                                  int* length) {
   Address parent_frame_pointer = *reinterpret_cast<Address*>(
       input_frame_pointer + StandardFrameConstants::kCallerFPOffset);
   intptr_t parent_frame_type = Memory::intptr_at(
@@ -3034,7 +2939,7 @@ Address TranslatedState::ComputeArgumentsPosition(Address input_frame_pointer,
     arguments_frame = input_frame_pointer;
   }
 
-  if (is_rest) {
+  if (type == CreateArgumentsType::kRestParameter) {
     // If the actual number of arguments is less than the number of formal
     // parameters, we have zero rest parameters.
     if (length) *length = std::max(0, *length - formal_parameter_count_);
@@ -3044,24 +2949,23 @@ Address TranslatedState::ComputeArgumentsPosition(Address input_frame_pointer,
 }
 
 // Creates translated values for an arguments backing store, or the backing
-// store for the rest parameters if {is_rest} is true. The TranslatedValue
+// store for rest parameters depending on the given {type}. The TranslatedValue
 // objects for the fields are not read from the TranslationIterator, but instead
 // created on-the-fly based on dynamic information in the optimized frame.
 void TranslatedState::CreateArgumentsElementsTranslatedValues(
-    int frame_index, Address input_frame_pointer, bool is_rest,
+    int frame_index, Address input_frame_pointer, CreateArgumentsType type,
     FILE* trace_file) {
   TranslatedFrame& frame = frames_[frame_index];
 
   int length;
   Address arguments_frame =
-      ComputeArgumentsPosition(input_frame_pointer, is_rest, &length);
+      ComputeArgumentsPosition(input_frame_pointer, type, &length);
 
   int object_index = static_cast<int>(object_positions_.size());
   int value_index = static_cast<int>(frame.values_.size());
   if (trace_file != nullptr) {
-    PrintF(trace_file,
-           "arguments elements object #%d (is_rest = %d, length = %d)",
-           object_index, is_rest, length);
+    PrintF(trace_file, "arguments elements object #%d (type = %d, length = %d)",
+           object_index, static_cast<uint8_t>(type), length);
   }
   object_positions_.push_back({frame_index, value_index});
   frame.Add(TranslatedValue::NewDeferredObject(
@@ -3071,7 +2975,17 @@ void TranslatedState::CreateArgumentsElementsTranslatedValues(
       TranslatedValue::NewTagged(this, isolate_->heap()->fixed_array_map()));
   frame.Add(TranslatedValue::NewInt32(this, length));
 
-  for (int i = length - 1; i >= 0; --i) {
+  int number_of_holes = 0;
+  if (type == CreateArgumentsType::kMappedArguments) {
+    // If the actual number of arguments is less than the number of formal
+    // parameters, we have fewer holes to fill to not overshoot the length.
+    number_of_holes = Min(formal_parameter_count_, length);
+  }
+  for (int i = 0; i < number_of_holes; ++i) {
+    frame.Add(
+        TranslatedValue::NewTagged(this, isolate_->heap()->the_hole_value()));
+  }
+  for (int i = length - number_of_holes - 1; i >= 0; --i) {
     Address argument_slot = arguments_frame +
                             CommonFrameConstants::kFixedFrameSizeAboveFp +
                             i * kPointerSize;
@@ -3124,19 +3038,21 @@ int TranslatedState::CreateNextTranslatedValue(
     }
 
     case Translation::ARGUMENTS_ELEMENTS: {
-      bool is_rest = iterator->Next();
-      CreateArgumentsElementsTranslatedValues(frame_index, fp, is_rest,
+      CreateArgumentsType arguments_type =
+          static_cast<CreateArgumentsType>(iterator->Next());
+      CreateArgumentsElementsTranslatedValues(frame_index, fp, arguments_type,
                                               trace_file);
       return 0;
     }
 
     case Translation::ARGUMENTS_LENGTH: {
-      bool is_rest = iterator->Next();
+      CreateArgumentsType arguments_type =
+          static_cast<CreateArgumentsType>(iterator->Next());
       int length;
-      ComputeArgumentsPosition(fp, is_rest, &length);
+      ComputeArgumentsPosition(fp, arguments_type, &length);
       if (trace_file != nullptr) {
-        PrintF(trace_file, "arguments length field (is_rest = %d, length = %d)",
-               is_rest, length);
+        PrintF(trace_file, "arguments length field (type = %d, length = %d)",
+               static_cast<uint8_t>(arguments_type), length);
       }
       frame.Add(TranslatedValue::NewInt32(this, length));
       return 0;

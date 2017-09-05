@@ -13,20 +13,20 @@ namespace v8 {
 namespace internal {
 
 // Give alias names to registers for calling conventions.
-constexpr Register kReturnRegister0 = {Register::kCode_v0};
-constexpr Register kReturnRegister1 = {Register::kCode_v1};
-constexpr Register kReturnRegister2 = {Register::kCode_a0};
-constexpr Register kJSFunctionRegister = {Register::kCode_a1};
-constexpr Register kContextRegister = {Register::kCpRegister};
-constexpr Register kAllocateSizeRegister = {Register::kCode_a0};
-constexpr Register kInterpreterAccumulatorRegister = {Register::kCode_v0};
-constexpr Register kInterpreterBytecodeOffsetRegister = {Register::kCode_t4};
-constexpr Register kInterpreterBytecodeArrayRegister = {Register::kCode_t5};
-constexpr Register kInterpreterDispatchTableRegister = {Register::kCode_t6};
-constexpr Register kJavaScriptCallArgCountRegister = {Register::kCode_a0};
-constexpr Register kJavaScriptCallNewTargetRegister = {Register::kCode_a3};
-constexpr Register kRuntimeCallFunctionRegister = {Register::kCode_a1};
-constexpr Register kRuntimeCallArgCountRegister = {Register::kCode_a0};
+constexpr Register kReturnRegister0 = v0;
+constexpr Register kReturnRegister1 = v1;
+constexpr Register kReturnRegister2 = a0;
+constexpr Register kJSFunctionRegister = a1;
+constexpr Register kContextRegister = s7;
+constexpr Register kAllocateSizeRegister = a0;
+constexpr Register kInterpreterAccumulatorRegister = v0;
+constexpr Register kInterpreterBytecodeOffsetRegister = t4;
+constexpr Register kInterpreterBytecodeArrayRegister = t5;
+constexpr Register kInterpreterDispatchTableRegister = t6;
+constexpr Register kJavaScriptCallArgCountRegister = a0;
+constexpr Register kJavaScriptCallNewTargetRegister = a3;
+constexpr Register kRuntimeCallFunctionRegister = a1;
+constexpr Register kRuntimeCallArgCountRegister = a0;
 
 // Forward declaration.
 class JumpTarget;
@@ -362,12 +362,23 @@ class TurboAssembler : public Assembler {
   void MultiPush(RegList regs);
   void MultiPushFPU(RegList regs);
 
-  void PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
-                       Register exclusion2 = no_reg,
-                       Register exclusion3 = no_reg);
-  void PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+  // Calculate how much stack space (in bytes) are required to store caller
+  // registers excluding those specified in the arguments.
+  int RequiredStackSizeForCallerSaved(SaveFPRegsMode fp_mode,
+                                      Register exclusion1 = no_reg,
+                                      Register exclusion2 = no_reg,
+                                      Register exclusion3 = no_reg) const;
+
+  // Push caller saved registers on the stack, and return the number of bytes
+  // stack pointer is adjusted.
+  int PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
                       Register exclusion2 = no_reg,
                       Register exclusion3 = no_reg);
+  // Restore caller saved registers from the stack, and return the number of
+  // bytes stack pointer is adjusted.
+  int PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+                     Register exclusion2 = no_reg,
+                     Register exclusion3 = no_reg);
 
   void pop(Register dst) {
     lw(dst, MemOperand(sp, 0));

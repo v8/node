@@ -13,20 +13,20 @@ namespace v8 {
 namespace internal {
 
 // Give alias names to registers for calling conventions.
-const Register kReturnRegister0 = {Register::kCode_eax};
-const Register kReturnRegister1 = {Register::kCode_edx};
-const Register kReturnRegister2 = {Register::kCode_edi};
-const Register kJSFunctionRegister = {Register::kCode_edi};
-const Register kContextRegister = {Register::kCode_esi};
-const Register kAllocateSizeRegister = {Register::kCode_edx};
-const Register kInterpreterAccumulatorRegister = {Register::kCode_eax};
-const Register kInterpreterBytecodeOffsetRegister = {Register::kCode_ecx};
-const Register kInterpreterBytecodeArrayRegister = {Register::kCode_edi};
-const Register kInterpreterDispatchTableRegister = {Register::kCode_esi};
-const Register kJavaScriptCallArgCountRegister = {Register::kCode_eax};
-const Register kJavaScriptCallNewTargetRegister = {Register::kCode_edx};
-const Register kRuntimeCallFunctionRegister = {Register::kCode_ebx};
-const Register kRuntimeCallArgCountRegister = {Register::kCode_eax};
+constexpr Register kReturnRegister0 = eax;
+constexpr Register kReturnRegister1 = edx;
+constexpr Register kReturnRegister2 = edi;
+constexpr Register kJSFunctionRegister = edi;
+constexpr Register kContextRegister = esi;
+constexpr Register kAllocateSizeRegister = edx;
+constexpr Register kInterpreterAccumulatorRegister = eax;
+constexpr Register kInterpreterBytecodeOffsetRegister = ecx;
+constexpr Register kInterpreterBytecodeArrayRegister = edi;
+constexpr Register kInterpreterDispatchTableRegister = esi;
+constexpr Register kJavaScriptCallArgCountRegister = eax;
+constexpr Register kJavaScriptCallNewTargetRegister = edx;
+constexpr Register kRuntimeCallFunctionRegister = ebx;
+constexpr Register kRuntimeCallArgCountRegister = eax;
 
 // Convenience for platform-independent signatures.  We do not normally
 // distinguish memory operands from other operands on ia32.
@@ -296,15 +296,28 @@ class TurboAssembler : public Assembler {
   void Push(Handle<HeapObject> handle) { push(Immediate(handle)); }
   void Push(Smi* smi) { Push(Immediate(smi)); }
 
-  // These functions do not arrange the registers in any particular order so
-  // they are not useful for calls that can cause a GC.  The caller can
-  // exclude up to 3 registers that do not need to be saved and restored.
-  void PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
-                       Register exclusion2 = no_reg,
-                       Register exclusion3 = no_reg);
-  void PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+  // Calculate how much stack space (in bytes) are required to store caller
+  // registers excluding those specified in the arguments.
+  int RequiredStackSizeForCallerSaved(SaveFPRegsMode fp_mode,
+                                      Register exclusion1 = no_reg,
+                                      Register exclusion2 = no_reg,
+                                      Register exclusion3 = no_reg) const;
+
+  // PushCallerSaved and PopCallerSaved do not arrange the registers in any
+  // particular order so they are not useful for calls that can cause a GC.
+  // The caller can exclude up to 3 registers that do not need to be saved and
+  // restored.
+
+  // Push caller saved registers on the stack, and return the number of bytes
+  // stack pointer is adjusted.
+  int PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
                       Register exclusion2 = no_reg,
                       Register exclusion3 = no_reg);
+  // Restore caller saved registers from the stack, and return the number of
+  // bytes stack pointer is adjusted.
+  int PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
+                     Register exclusion2 = no_reg,
+                     Register exclusion3 = no_reg);
 
  private:
   bool has_frame_ = false;
