@@ -4,21 +4,12 @@
 
 // Flags: --allow-natives-syntax
 
-var x = 1;
-x.__proto__.f = function() { return 1; }
-
-function g() {}
-g.prototype.f =  function() { return 3; };
-var y = new g();
-
-function f(obj) {
-  return obj.f();
+function f(x) {
+  var x0 = (0 != Math.min(1, 1)) && 1;
+  1.1!=(x||x0)
 }
 
-f(x);
-f(y);
-f(x);
-f(y);
+f(1.1);
+f(1.1);
 %OptimizeFunctionOnNextCall(f);
-assertEquals(1, f(x));
-assertEquals(3, f(y));
+f(1);

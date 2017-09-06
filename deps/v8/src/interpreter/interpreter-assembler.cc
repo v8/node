@@ -57,8 +57,9 @@ InterpreterAssembler::InterpreterAssembler(CodeAssemblerState* state,
                                   [this] { CallEpilogue(); });
 
   // Save the bytecode offset immediately if bytecode will make a call along the
-  // critical path.
-  if (Bytecodes::MakesCallAlongCriticalPath(bytecode)) {
+  // critical path, or it is a return bytecode.
+  if (Bytecodes::MakesCallAlongCriticalPath(bytecode) ||
+      bytecode_ == Bytecode::kReturn) {
     SaveBytecodeOffset();
   }
 }
@@ -514,6 +515,16 @@ Node* InterpreterAssembler::BytecodeOperandRuntimeId(int operand_index) {
       Bytecodes::GetOperandSize(bytecode_, operand_index, operand_scale());
   DCHECK_EQ(operand_size, OperandSize::kShort);
   return BytecodeUnsignedOperand(operand_index, operand_size);
+}
+
+Node* InterpreterAssembler::BytecodeOperandNativeContextIndex(
+    int operand_index) {
+  DCHECK(OperandType::kNativeContextIndex ==
+         Bytecodes::GetOperandType(bytecode_, operand_index));
+  OperandSize operand_size =
+      Bytecodes::GetOperandSize(bytecode_, operand_index, operand_scale());
+  return ChangeUint32ToWord(
+      BytecodeUnsignedOperand(operand_index, operand_size));
 }
 
 Node* InterpreterAssembler::BytecodeOperandIntrinsicId(int operand_index) {

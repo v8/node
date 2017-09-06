@@ -124,6 +124,9 @@ static void InstanceFinalizer(const v8::WeakCallbackInfo<void>& data) {
     WasmMemoryObject::RemoveInstance(isolate, memory, instance);
   }
 
+  // In all cases, release the global handles held to tables by this instance
+  WasmCompiledModule::DestroyGlobalHandles(isolate, compiled_module);
+
   // weak_wasm_module may have been cleared, meaning the module object
   // was GC-ed. In that case, there won't be any new instances created,
   // and we don't need to maintain the links between instances.
@@ -367,8 +370,8 @@ WasmInstanceObject* GetOwningWasmInstance(Code* code) {
 WasmModule::WasmModule(std::unique_ptr<Zone> owned)
     : signature_zone(std::move(owned)) {}
 
-WasmFunction* GetWasmFunctionForImportWrapper(Isolate* isolate,
-                                              Handle<Object> target) {
+WasmFunction* GetWasmFunctionForExport(Isolate* isolate,
+                                       Handle<Object> target) {
   if (target->IsJSFunction()) {
     Handle<JSFunction> func = Handle<JSFunction>::cast(target);
     if (func->code()->kind() == Code::JS_TO_WASM_FUNCTION) {
@@ -381,9 +384,9 @@ WasmFunction* GetWasmFunctionForImportWrapper(Isolate* isolate,
   return nullptr;
 }
 
-Handle<Code> UnwrapImportWrapper(Handle<Object> import_wrapper) {
-  Handle<JSFunction> func = Handle<JSFunction>::cast(import_wrapper);
-  Handle<Code> export_wrapper_code = handle(func->code());
+Handle<Code> UnwrapExportWrapper(Handle<JSFunction> export_wrapper) {
+  Handle<Code> export_wrapper_code = handle(export_wrapper->code());
+  DCHECK_EQ(export_wrapper_code->kind(), Code::JS_TO_WASM_FUNCTION);
   int mask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET);
   for (RelocIterator it(*export_wrapper_code, mask);; it.next()) {
     DCHECK(!it.done());
@@ -447,11 +450,14 @@ void TableSet(ErrorThrower* thrower, Isolate* isolate,
 
   WasmFunction* wasm_function = nullptr;
   Handle<Code> code = Handle<Code>::null();
-  Handle<Object> value = handle(isolate->heap()->null_value());
+  Handle<Object> value = isolate->factory()->null_value();
 
   if (!function.is_null()) {
-    wasm_function = GetWasmFunctionForImportWrapper(isolate, function);
-    code = UnwrapImportWrapper(function);
+    wasm_function = GetWasmFunctionForExport(isolate, function);
+    // The verification that {function} is an export was done
+    // by the caller.
+    DCHECK_NOT_NULL(wasm_function);
+    code = UnwrapExportWrapper(function);
     value = Handle<Object>::cast(function);
   }
 
@@ -788,12 +794,11 @@ MaybeHandle<WasmModuleObject> SyncCompileTranslatedAsmJs(
     return {};
   }
 
-  // Transfer ownership to the {WasmModuleWrapper} generated in
-  // {CompileToModuleObject}.
-  Handle<Code> centry_stub = CEntryStub(isolate, 1).GetCode();
-  ModuleCompiler compiler(isolate, std::move(result.val), centry_stub);
-  return compiler.CompileToModuleObject(thrower, bytes, asm_js_script,
-                                        asm_js_offset_table_bytes);
+  // Transfer ownership of the WasmModule to the {WasmModuleWrapper} generated
+  // in {CompileToModuleObject}.
+  return ModuleCompiler::CompileToModuleObject(
+      isolate, thrower, std::move(result.val), bytes, asm_js_script,
+      asm_js_offset_table_bytes);
 }
 
 MaybeHandle<WasmModuleObject> SyncCompile(Isolate* isolate,
@@ -816,12 +821,11 @@ MaybeHandle<WasmModuleObject> SyncCompile(Isolate* isolate,
     return {};
   }
 
-  // Transfer ownership to the {WasmModuleWrapper} generated in
-  // {CompileToModuleObject}.
-  Handle<Code> centry_stub = CEntryStub(isolate, 1).GetCode();
-  ModuleCompiler compiler(isolate, std::move(result.val), centry_stub);
-  return compiler.CompileToModuleObject(thrower, bytes_copy, Handle<Script>(),
-                                        Vector<const byte>());
+  // Transfer ownership of the WasmModule to the {WasmModuleWrapper} generated
+  // in {CompileToModuleObject}.
+  return ModuleCompiler::CompileToModuleObject(
+      isolate, thrower, std::move(result.val), bytes_copy, Handle<Script>(),
+      Vector<const byte>());
 }
 
 MaybeHandle<WasmInstanceObject> SyncInstantiate(

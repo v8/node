@@ -230,6 +230,9 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
         Builtins::CallableFor(__ isolate(), Builtins::kRecordWrite);
     RegList registers = callable.descriptor().allocatable_registers();
 
+    if (FLAG_enable_embedded_constant_pool) {
+      registers |= kConstantPoolRegister.bit();
+    }
     SaveRegisters(registers);
     __ mflr(scratch0_);
     __ Push(scratch0_);
@@ -262,8 +265,8 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
         frame()->DidAllocateDoubleRegisters() ? kSaveFPRegs : kDontSaveFPRegs;
     if (must_save_lr_) {
       // We need to save and restore lr if the frame was elided.
-      __ mflr(scratch1_);
-      __ Push(scratch1_);
+      __ mflr(scratch0_);
+      __ Push(scratch0_);
     }
     if (must_save_lr_ && FLAG_enable_embedded_constant_pool) {
       ConstantPoolUnavailableScope constant_pool_unavailable(tasm());
@@ -277,8 +280,8 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
     }
     if (must_save_lr_) {
       // We need to save and restore lr if the frame was elided.
-      __ Pop(scratch1_);
-      __ mtlr(scratch1_);
+      __ Pop(scratch0_);
+      __ mtlr(scratch0_);
     }
 #endif
   }
@@ -987,6 +990,27 @@ void CodeGenerator::AssembleTailCallAfterGap(Instruction* instr,
                                 first_unused_stack_slot);
 }
 
+// Check if the code object is marked for deoptimization. If it is, then it
+// jumps to the CompileLazyDeoptimizedCode builtin. In order to do this we need
+// to:
+//    1. load the address of the current instruction;
+//    2. read from memory the word that contains that bit, which can be found in
+//       the first set of flags ({kKindSpecificFlags1Offset});
+//    3. test kMarkedForDeoptimizationBit in those flags; and
+//    4. if it is not zero then it jumps to the builtin.
+void CodeGenerator::BailoutIfDeoptimized() {
+  Label current;
+  __ mov_label_addr(r11, &current);
+  int pc_offset = __ pc_offset();
+  __ bind(&current);
+  int offset =
+      Code::kKindSpecificFlags1Offset - (Code::kHeaderSize + pc_offset);
+  __ LoadP(r11, MemOperand(r11, offset));
+  __ TestBit(r11, Code::kMarkedForDeoptimizationBit);
+  Handle<Code> code = isolate()->builtins()->builtin_handle(
+      Builtins::kCompileLazyDeoptimizedCode);
+  __ Jump(code, RelocInfo::CODE_TARGET, ne, cr0);
+}
 
 // Assembles an instruction after register allocation, producing machine code.
 CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(

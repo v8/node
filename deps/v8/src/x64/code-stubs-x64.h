@@ -119,9 +119,6 @@ class RecordWriteStub: public PlatformCodeStub {
   static const byte kTwoByteNopInstruction = 0x3c;  // Cmpb al, #imm8.
   static const byte kTwoByteJumpInstruction = 0xeb;  // Jmp #imm8.
 
-  static const byte kFiveByteNopInstruction = 0x3d;  // Cmpl eax, #imm32.
-  static const byte kFiveByteJumpInstruction = 0xe9;  // Jmp #imm32.
-
   static Mode GetMode(Code* stub) {
     byte first_instruction = stub->instruction_start()[0];
     byte second_instruction = stub->instruction_start()[2];
@@ -132,11 +129,11 @@ class RecordWriteStub: public PlatformCodeStub {
 
     DCHECK(first_instruction == kTwoByteNopInstruction);
 
-    if (second_instruction == kFiveByteJumpInstruction) {
+    if (second_instruction == kTwoByteJumpInstruction) {
       return INCREMENTAL_COMPACTION;
     }
 
-    DCHECK(second_instruction == kFiveByteNopInstruction);
+    DCHECK(second_instruction == kTwoByteNopInstruction);
 
     return STORE_BUFFER_ONLY;
   }
@@ -147,7 +144,7 @@ class RecordWriteStub: public PlatformCodeStub {
         DCHECK(GetMode(stub) == INCREMENTAL ||
                GetMode(stub) == INCREMENTAL_COMPACTION);
         stub->instruction_start()[0] = kTwoByteNopInstruction;
-        stub->instruction_start()[2] = kFiveByteNopInstruction;
+        stub->instruction_start()[2] = kTwoByteNopInstruction;
         break;
       case INCREMENTAL:
         DCHECK(GetMode(stub) == STORE_BUFFER_ONLY);
@@ -156,7 +153,7 @@ class RecordWriteStub: public PlatformCodeStub {
       case INCREMENTAL_COMPACTION:
         DCHECK(GetMode(stub) == STORE_BUFFER_ONLY);
         stub->instruction_start()[0] = kTwoByteNopInstruction;
-        stub->instruction_start()[2] = kFiveByteJumpInstruction;
+        stub->instruction_start()[2] = kTwoByteJumpInstruction;
         break;
     }
     DCHECK(GetMode(stub) == mode);
@@ -171,15 +168,14 @@ class RecordWriteStub: public PlatformCodeStub {
   // that must be preserved and one scratch register provided by the caller.
   class RegisterAllocation {
    public:
-    RegisterAllocation(Register object,
-                       Register address,
-                       Register scratch0)
+    RegisterAllocation(Register object, Register address, Register scratch0)
         : object_orig_(object),
           address_orig_(address),
           scratch0_orig_(scratch0),
           object_(object),
           address_(address),
-          scratch0_(scratch0) {
+          scratch0_(scratch0),
+          scratch1_(no_reg) {
       DCHECK(!AreAliased(scratch0, object, address, no_reg));
       scratch1_ = GetRegThatIsNotRcxOr(object_, address_, scratch0_);
       if (scratch0.is(rcx)) {
@@ -297,11 +293,10 @@ class RecordWriteStub: public PlatformCodeStub {
   Major MajorKey() const final { return RecordWrite; }
 
   void Generate(MacroAssembler* masm) override;
-  void GenerateIncremental(MacroAssembler* masm, Mode mode);
+  void GenerateIncremental(MacroAssembler* masm, Label* second_instr);
   void CheckNeedsToInformIncrementalMarker(
-      MacroAssembler* masm,
-      OnNoNeedToInformIncrementalMarker on_no_need,
-      Mode mode);
+      MacroAssembler* masm, OnNoNeedToInformIncrementalMarker on_no_need,
+      Label* second_instr);
   void InformIncrementalMarker(MacroAssembler* masm);
 
   void Activate(Code* code) override;

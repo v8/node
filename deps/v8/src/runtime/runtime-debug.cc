@@ -46,6 +46,12 @@ RUNTIME_FUNCTION(Runtime_DebugBreakOnBytecode) {
   int bytecode_offset = interpreted_frame->GetBytecodeOffset();
   interpreter::Bytecode bytecode =
       interpreter::Bytecodes::FromByte(bytecode_array->get(bytecode_offset));
+  if (bytecode == interpreter::Bytecode::kReturn) {
+    // If we are returning, reset the bytecode array on the interpreted stack
+    // frame to the non-debug variant so that the interpreter entry trampoline
+    // sees the return bytecode rather than the DebugBreak.
+    interpreted_frame->PatchBytecodeArray(bytecode_array);
+  }
   return isolate->interpreter()->GetBytecodeHandler(
       bytecode, interpreter::OperandScale::kSingle);
 }
@@ -635,7 +641,8 @@ RUNTIME_FUNCTION(Runtime_GetFrameDetails) {
   // information (except for what is collected above) is the same.
   if ((inlined_frame_index == 0) &&
       it.javascript_frame()->has_adapted_arguments()) {
-    it.AdvanceToArgumentsFrame();
+    it.AdvanceOneFrame();
+    DCHECK(it.frame()->is_arguments_adaptor());
     frame_inspector.SetArgumentsFrame(it.frame());
   }
 
@@ -1022,12 +1029,13 @@ RUNTIME_FUNCTION(Runtime_DebugPrintScopes) {
 
 #ifdef DEBUG
   // Print the scopes for the top frame.
-  StackFrameLocator locator(isolate);
-  JavaScriptFrame* frame = locator.FindJavaScriptFrame(0);
-  FrameInspector frame_inspector(frame, 0, isolate);
-
-  for (ScopeIterator it(isolate, &frame_inspector); !it.Done(); it.Next()) {
-    it.DebugPrint();
+  JavaScriptFrameIterator it(isolate);
+  if (!it.done()) {
+    JavaScriptFrame* frame = it.frame();
+    FrameInspector frame_inspector(frame, 0, isolate);
+    for (ScopeIterator si(isolate, &frame_inspector); !si.Done(); si.Next()) {
+      si.DebugPrint();
+    }
   }
 #endif
   return isolate->heap()->undefined_value();
