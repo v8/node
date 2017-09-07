@@ -19,6 +19,7 @@ namespace internal {
 #define FORWARD_DECLARE(Name) \
   Object* Builtin_##Name(int argc, Object** args, Isolate* isolate);
 BUILTIN_LIST_C(FORWARD_DECLARE)
+#undef FORWARD_DECLARE
 
 namespace {
 
@@ -246,11 +247,14 @@ bool Builtins::IsLazy(int index) {
     case kCheckOptimizationMarker:
     case kCompileLazy:
     case kDeserializeLazy:
+    case kFunctionPrototypeHasInstance:  // https://crbug.com/v8/6786.
     case kHandleApiCall:
     case kIllegal:
     case kInterpreterEnterBytecodeAdvance:
     case kInterpreterEnterBytecodeDispatch:
     case kInterpreterEntryTrampoline:
+    case kProxyConstructor:                   // https://crbug.com/v8/6787.
+    case kProxyConstructor_ConstructStub:     // https://crbug.com/v8/6787.
     case kThrowWasmTrapDivByZero:             // Required by wasm.
     case kThrowWasmTrapDivUnrepresentable:    // Required by wasm.
     case kThrowWasmTrapFloatUnrepresentable:  // Required by wasm.
