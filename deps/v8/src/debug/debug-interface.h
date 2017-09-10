@@ -18,9 +18,12 @@ namespace internal {
 struct CoverageBlock;
 struct CoverageFunction;
 struct CoverageScript;
+struct TypeProfileEntry;
+struct TypeProfileScript;
 class Coverage;
 class Script;
-}
+class TypeProfile;
+}  // namespace internal
 
 namespace debug {
 
@@ -244,6 +247,8 @@ class GeneratorObject {
  */
 class V8_EXPORT_PRIVATE Coverage {
  public:
+  MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(Coverage);
+
   enum Mode {
     // Make use of existing information in feedback vectors on the heap.
     // Only return a yes/no result. Optimization and GC are not affected.
@@ -269,6 +274,8 @@ class V8_EXPORT_PRIVATE Coverage {
 
   class V8_EXPORT_PRIVATE BlockData {
    public:
+    MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(BlockData);
+
     int StartOffset() const;
     int EndOffset() const;
     uint32_t Count() const;
@@ -282,6 +289,8 @@ class V8_EXPORT_PRIVATE Coverage {
 
   class V8_EXPORT_PRIVATE FunctionData {
    public:
+    MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(FunctionData);
+
     int StartOffset() const;
     int EndOffset() const;
     uint32_t Count() const;
@@ -300,6 +309,8 @@ class V8_EXPORT_PRIVATE Coverage {
 
   class V8_EXPORT_PRIVATE ScriptData {
    public:
+    MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(ScriptData);
+
     Local<debug::Script> GetScript() const;
     size_t FunctionCount() const;
     FunctionData GetFunctionData(size_t i) const;
@@ -325,6 +336,62 @@ class V8_EXPORT_PRIVATE Coverage {
  private:
   explicit Coverage(i::Coverage* coverage) : coverage_(coverage) {}
   i::Coverage* coverage_;
+};
+
+/*
+ * Provide API layer between inspector and type profile.
+ */
+class V8_EXPORT_PRIVATE TypeProfile {
+ public:
+  MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(TypeProfile);
+
+  enum Mode {
+    kNone,
+    kCollect,
+  };
+  class ScriptData;  // Forward declaration.
+
+  class V8_EXPORT_PRIVATE Entry {
+   public:
+    MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(Entry);
+
+    int SourcePosition() const;
+    std::vector<MaybeLocal<String>> Types() const;
+
+   private:
+    explicit Entry(const i::TypeProfileEntry* entry) : entry_(entry) {}
+    const i::TypeProfileEntry* entry_;
+
+    friend class v8::debug::TypeProfile::ScriptData;
+  };
+
+  class V8_EXPORT_PRIVATE ScriptData {
+   public:
+    MOVE_ONLY_NO_DEFAULT_CONSTRUCTOR(ScriptData);
+
+    Local<debug::Script> GetScript() const;
+    std::vector<Entry> Entries() const;
+
+   private:
+    explicit ScriptData(i::TypeProfileScript* script) : script_(script) {}
+    i::TypeProfileScript* script_;
+
+    friend class v8::debug::TypeProfile;
+  };
+
+  static TypeProfile Collect(Isolate* isolate);
+
+  static void SelectMode(Isolate* isolate, Mode mode);
+
+  size_t ScriptCount() const;
+  ScriptData GetScriptData(size_t i) const;
+
+  ~TypeProfile();
+
+ private:
+  explicit TypeProfile(i::TypeProfile* type_profile)
+      : type_profile_(type_profile) {}
+  i::TypeProfile* type_profile_;
 };
 
 class ScopeIterator {

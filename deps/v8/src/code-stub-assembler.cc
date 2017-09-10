@@ -3963,8 +3963,8 @@ TNode<Uint32T> CodeStubAssembler::StringCharCodeAt(
 
   BIND(&if_runtime);
   {
-    Node* result = CallRuntime(Runtime::kStringCharCodeAtRT,
-                               NoContextConstant(), string, SmiTag(index));
+    Node* result = CallRuntime(Runtime::kStringCharCodeAt, NoContextConstant(),
+                               string, SmiTag(index));
     var_result.Bind(SmiToWord32(result));
     Goto(&return_result);
   }
@@ -8606,8 +8606,7 @@ Node* CodeStubAssembler::Equal(Node* lhs, Node* rhs, Node* context,
 
 Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
                                      Variable* var_type_feedback) {
-  // Here's pseudo-code for the algorithm below in case of kDontNegateResult
-  // mode; for kNegateResult mode we properly negate the result.
+  // Pseudo-code for the algorithm below:
   //
   // if (lhs == rhs) {
   //   if (lhs->IsHeapNumber()) return HeapNumber::cast(lhs)->value() != NaN;
@@ -9861,9 +9860,6 @@ Node* CodeStubAssembler::AllocateFunctionWithMapAndContext(Node* map,
                                  shared_info);
   StoreObjectFieldNoWriteBarrier(fun, JSFunction::kContextOffset, context);
   StoreObjectFieldNoWriteBarrier(fun, JSFunction::kCodeOffset, code);
-  StoreObjectFieldRoot(fun, JSFunction::kNextFunctionLinkOffset,
-                       Heap::kUndefinedValueRootIndex);
-
   return fun;
 }
 

@@ -202,8 +202,12 @@ config("libsampler_config") {
 # This config should only be applied to code using V8 and not any V8 code
 # itself.
 config("external_config") {
+  defines = []
   if (is_component_build) {
-    defines = [ "USING_V8_SHARED" ]
+    defines += [ "USING_V8_SHARED" ]
+  }
+  if (v8_enable_v8_checks) {
+    defines += [ "V8_ENABLE_CHECKS" ]  # Used in "include/v8.h".
   }
   include_dirs = [
     "include",
@@ -1559,6 +1563,7 @@ v8_source_set("v8_base") {
     "src/extensions/trigger-failure-extension.h",
     "src/external-reference-table.cc",
     "src/external-reference-table.h",
+    "src/factory-inl.h",
     "src/factory.cc",
     "src/factory.h",
     "src/fast-dtoa.cc",
@@ -1572,7 +1577,6 @@ v8_source_set("v8_base") {
     "src/field-index.h",
     "src/field-type.cc",
     "src/field-type.h",
-    "src/find-and-replace-pattern.h",
     "src/fixed-dtoa.cc",
     "src/fixed-dtoa.h",
     "src/flag-definitions.h",
@@ -2460,6 +2464,7 @@ v8_component("v8_libbase") {
     "src/base/sys-info.h",
     "src/base/template-utils.h",
     "src/base/timezone-cache.h",
+    "src/base/tsan.h",
     "src/base/utils/random-number-generator.cc",
     "src/base/utils/random-number-generator.h",
   ]

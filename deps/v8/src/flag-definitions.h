@@ -193,8 +193,7 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_array_prototype_values, "harmony Array.prototype.values") \
   V(harmony_function_sent, "harmony function.sent")                   \
   V(harmony_do_expressions, "harmony do-expressions")                 \
-  V(harmony_class_fields, "harmony public fields in class literals")  \
-  V(harmony_promise_finally, "harmony Promise.prototype.finally")
+  V(harmony_class_fields, "harmony public fields in class literals")
 
 #ifdef V8_INTL_SUPPORT
 #define HARMONY_INPROGRESS(V)                    \
@@ -216,6 +215,7 @@ DEFINE_IMPLICATION(es_staging, harmony)
     "constructor")                                                      \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
   V(harmony_async_iteration, "harmony async iteration")                 \
+  V(harmony_promise_finally, "harmony Promise.prototype.finally")
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                              \
@@ -289,7 +289,6 @@ DEFINE_IMPLICATION(track_computed_fields, track_fields)
 DEFINE_BOOL(track_field_types, true, "track field types")
 DEFINE_IMPLICATION(track_field_types, track_fields)
 DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
-DEFINE_BOOL(type_profile, false, "collect type information")
 DEFINE_BOOL(block_coverage, true, "enable block code coverage")
 DEFINE_BOOL(trace_block_coverage, false,
             "trace collected block coverage information")

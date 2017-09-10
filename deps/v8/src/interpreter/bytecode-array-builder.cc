@@ -821,7 +821,6 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StoreDataPropertyInLiteral(
 }
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::CollectTypeProfile(int position) {
-  DCHECK(FLAG_type_profile);
   OutputCollectTypeProfile(position);
   return *this;
 }
@@ -1170,6 +1169,11 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::Throw() {
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::ReThrow() {
   OutputReThrow();
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::Abort(BailoutReason reason) {
+  OutputAbort(reason);
   return *this;
 }
 

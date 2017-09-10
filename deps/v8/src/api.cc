@@ -8483,41 +8483,70 @@ v8::Local<Value> Isolate::ThrowException(v8::Local<v8::Value> value) {
   return v8::Undefined(reinterpret_cast<v8::Isolate*>(isolate));
 }
 
-void Isolate::AddGCPrologueCallback(GCCallback callback, GCType gc_type) {
+void Isolate::AddGCPrologueCallback(GCCallbackWithData callback, void* data,
+                                    GCType gc_type) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->heap()->AddGCPrologueCallback(callback, gc_type);
+  isolate->heap()->AddGCPrologueCallback(callback, gc_type, data);
 }
 
+void Isolate::RemoveGCPrologueCallback(GCCallbackWithData callback,
+                                       void* data) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->heap()->RemoveGCPrologueCallback(callback, data);
+}
+
+void Isolate::AddGCEpilogueCallback(GCCallbackWithData callback, void* data,
+                                    GCType gc_type) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->heap()->AddGCEpilogueCallback(callback, gc_type, data);
+}
+
+void Isolate::RemoveGCEpilogueCallback(GCCallbackWithData callback,
+                                       void* data) {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->heap()->RemoveGCEpilogueCallback(callback, data);
+}
+
+static void CallGCCallbackWithoutData(Isolate* isolate, GCType type,
+                                      GCCallbackFlags flags, void* data) {
+  reinterpret_cast<Isolate::GCCallback>(data)(isolate, type, flags);
+}
+
+void Isolate::AddGCPrologueCallback(GCCallback callback, GCType gc_type) {
+  void* data = reinterpret_cast<void*>(callback);
+  AddGCPrologueCallback(CallGCCallbackWithoutData, data, gc_type);
+}
 
 void Isolate::RemoveGCPrologueCallback(GCCallback callback) {
-  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->heap()->RemoveGCPrologueCallback(callback);
+  void* data = reinterpret_cast<void*>(callback);
+  RemoveGCPrologueCallback(CallGCCallbackWithoutData, data);
 }
-
 
 void Isolate::AddGCEpilogueCallback(GCCallback callback, GCType gc_type) {
-  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->heap()->AddGCEpilogueCallback(callback, gc_type);
+  void* data = reinterpret_cast<void*>(callback);
+  AddGCEpilogueCallback(CallGCCallbackWithoutData, data, gc_type);
 }
-
 
 void Isolate::RemoveGCEpilogueCallback(GCCallback callback) {
-  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->heap()->RemoveGCEpilogueCallback(callback);
+  void* data = reinterpret_cast<void*>(callback);
+  RemoveGCEpilogueCallback(CallGCCallbackWithoutData, data);
 }
 
-
-void V8::AddGCPrologueCallback(GCCallback callback, GCType gc_type) {
-  i::Isolate* isolate = i::Isolate::Current();
-  isolate->heap()->AddGCPrologueCallback(
-      reinterpret_cast<v8::Isolate::GCCallback>(callback), gc_type, false);
+static void CallGCCallbackWithoutIsolate(Isolate* isolate, GCType type,
+                                         GCCallbackFlags flags, void* data) {
+  reinterpret_cast<v8::GCCallback>(data)(type, flags);
 }
 
+void V8::AddGCPrologueCallback(v8::GCCallback callback, GCType gc_type) {
+  void* data = reinterpret_cast<void*>(callback);
+  Isolate::GetCurrent()->AddGCPrologueCallback(CallGCCallbackWithoutIsolate,
+                                               data, gc_type);
+}
 
-void V8::AddGCEpilogueCallback(GCCallback callback, GCType gc_type) {
-  i::Isolate* isolate = i::Isolate::Current();
-  isolate->heap()->AddGCEpilogueCallback(
-      reinterpret_cast<v8::Isolate::GCCallback>(callback), gc_type, false);
+void V8::AddGCEpilogueCallback(v8::GCCallback callback, GCType gc_type) {
+  void* data = reinterpret_cast<void*>(callback);
+  Isolate::GetCurrent()->AddGCEpilogueCallback(CallGCCallbackWithoutIsolate,
+                                               data, gc_type);
 }
 
 void Isolate::SetEmbedderHeapTracer(EmbedderHeapTracer* tracer) {
@@ -10011,6 +10040,9 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
   i::Handle<i::JSFunction> fun =
       isolate->factory()->NewFunctionWithoutPrototype(
           isolate->factory()->empty_string(), call_code, i::SLOPPY);
+  if (i::Builtins::IsLazy(name)) {
+    fun->shared()->set_lazy_deserialization_builtin_id(name);
+  }
   fun->shared()->DontAdaptArguments();
   return Utils::ToLocal(handle_scope.CloseAndEscape(fun));
 }
@@ -10171,6 +10203,51 @@ debug::Coverage debug::Coverage::CollectBestEffort(Isolate* isolate) {
 void debug::Coverage::SelectMode(Isolate* isolate, debug::Coverage::Mode mode) {
   i::Coverage::SelectMode(reinterpret_cast<i::Isolate*>(isolate), mode);
 }
+
+int debug::TypeProfile::Entry::SourcePosition() const {
+  return entry_->position;
+}
+
+std::vector<MaybeLocal<String>> debug::TypeProfile::Entry::Types() const {
+  std::vector<MaybeLocal<String>> result;
+  for (const internal::Handle<internal::String>& type : entry_->types) {
+    result.push_back(ToApiHandle<String>(type));
+  }
+  return result;
+}
+
+Local<debug::Script> debug::TypeProfile::ScriptData::GetScript() const {
+  return ToApiHandle<debug::Script>(script_->script);
+}
+
+std::vector<debug::TypeProfile::Entry> debug::TypeProfile::ScriptData::Entries()
+    const {
+  std::vector<debug::TypeProfile::Entry> result;
+  for (const internal::TypeProfileEntry& entry : script_->entries) {
+    result.push_back(debug::TypeProfile::Entry(&entry));
+  }
+  return result;
+}
+
+debug::TypeProfile debug::TypeProfile::Collect(Isolate* isolate) {
+  return TypeProfile(
+      i::TypeProfile::Collect(reinterpret_cast<i::Isolate*>(isolate)));
+}
+
+void debug::TypeProfile::SelectMode(Isolate* isolate,
+                                    debug::TypeProfile::Mode mode) {
+  i::TypeProfile::SelectMode(reinterpret_cast<i::Isolate*>(isolate), mode);
+}
+
+size_t debug::TypeProfile::ScriptCount() const { return type_profile_->size(); }
+
+debug::TypeProfile::ScriptData debug::TypeProfile::GetScriptData(
+    size_t i) const {
+  // TODO(franzih): ScriptData is invalid after ~TypeProfile. Same in Coverage.
+  return ScriptData(&type_profile_->at(i));
+}
+
+debug::TypeProfile::~TypeProfile() { delete type_profile_; }
 
 const char* CpuProfileNode::GetFunctionNameStr() const {
   const i::ProfileNode* node = reinterpret_cast<const i::ProfileNode*>(this);

@@ -5,7 +5,6 @@
 #include "src/assembler-inl.h"
 #include "src/base/lazy-instance.h"
 #include "src/macro-assembler.h"
-#include "src/objects-inl.h"
 #include "src/register-configuration.h"
 
 #include "src/compiler/linkage.h"
@@ -338,6 +337,11 @@ CallDescriptor* GetI32WasmCallDescriptorForSimd(Zone* zone,
                                          MachineType::Simd128(),
                                          MachineRepresentation::kWord32);
 }
+
+#undef GP_PARAM_REGISTERS
+#undef GP_RETURN_REGISTERS
+#undef FP_PARAM_REGISTERS
+#undef FP_RETURN_REGISTERS
 
 }  // namespace compiler
 }  // namespace internal

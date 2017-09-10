@@ -464,7 +464,10 @@ Reduction JSCallReducer::ReduceObjectPrototypeHasOwnProperty(Node* node) {
 
   // We can constant-fold the {node} to True in this case, and insert
   // a (potentially redundant) map check to guard the fact that the
-  // {receiver} map didn't change since the dominating JSForInNext.
+  // {receiver} map didn't change since the dominating JSForInNext. This
+  // map check is only necessary when TurboFan cannot prove that there
+  // is no observable side effect between the {JSForInNext} and the
+  // {JSCall} to Object.prototype.hasOwnProperty.
   //
   // Also note that it's safe to look through the {JSToObject}, since the
   // Object.prototype.hasOwnProperty does an implicit ToObject anyway, and
@@ -478,13 +481,17 @@ Reduction JSCallReducer::ReduceObjectPrototypeHasOwnProperty(Node* node) {
         object = NodeProperties::GetValueInput(object, 0);
       }
       if (object == receiver) {
-        Node* receiver_map = effect =
-            graph()->NewNode(simplified()->LoadField(AccessBuilder::ForMap()),
-                             receiver, effect, control);
-        Node* check = graph()->NewNode(simplified()->ReferenceEqual(),
-                                       receiver_map, cache_type);
-        effect =
-            graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+        // No need to repeat the map check if we can prove that there's no
+        // observable side effect between {effect} and {name].
+        if (!NodeProperties::NoObservableSideEffectBetween(effect, name)) {
+          Node* receiver_map = effect =
+              graph()->NewNode(simplified()->LoadField(AccessBuilder::ForMap()),
+                               receiver, effect, control);
+          Node* check = graph()->NewNode(simplified()->ReferenceEqual(),
+                                         receiver_map, cache_type);
+          effect =
+              graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+        }
         Node* value = jsgraph()->TrueConstant();
         ReplaceWithValue(node, value, effect, control);
         return Replace(value);
@@ -1212,12 +1219,9 @@ Reduction JSCallReducer::ReduceCallOrConstructWithArrayLikeOrSpread(
     // TODO(turbofan): Further relax this constraint.
     if (formal_parameter_count != 0) {
       Node* effect = NodeProperties::GetEffectInput(node);
-      while (effect != arguments_list) {
-        if (effect->op()->EffectInputCount() != 1 ||
-            !(effect->op()->properties() & Operator::kNoWrite)) {
-          return NoChange();
-        }
-        effect = NodeProperties::GetEffectInput(effect);
+      if (!NodeProperties::NoObservableSideEffectBetween(effect,
+                                                         arguments_list)) {
+        return NoChange();
       }
     }
   } else if (type == CreateArgumentsType::kRestParameter) {
@@ -1337,12 +1341,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
       // Don't inline cross native context.
       if (function->native_context() != *native_context()) return NoChange();
 
-      // TODO(turbofan): Merge this into the switch below once the
-      // Object constructor is a proper TFJ builtin.
-      if (*function == native_context()->object_function()) {
-        return ReduceObjectConstructor(node);
-      }
-
       // Check for known builtin functions.
       switch (shared->code()->builtin_index()) {
         case Builtins::kArrayConstructor:
@@ -1357,6 +1355,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceFunctionPrototypeHasInstance(node);
         case Builtins::kNumberConstructor:
           return ReduceNumberConstructor(node);
+        case Builtins::kObjectConstructor:
+          return ReduceObjectConstructor(node);
         case Builtins::kObjectGetPrototypeOf:
           return ReduceObjectGetPrototypeOf(node);
         case Builtins::kObjectPrototypeGetProto:
@@ -1592,6 +1592,27 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
         NodeProperties::ReplaceValueInput(node, new_target, 1);
         NodeProperties::ChangeOp(node, javascript()->CreateArray(arity, site));
         return Changed(node);
+      }
+
+      // Check for the ObjectConstructor.
+      if (*function == function->native_context()->object_function()) {
+        // If no value is passed, we can immediately lower to a simple
+        // JSCreate and don't need to do any massaging of the {node}.
+        if (arity == 0) {
+          NodeProperties::ChangeOp(node, javascript()->Create());
+          return Changed(node);
+        }
+
+        // Otherwise we can only lower to JSCreate if we know that
+        // the value parameter is ignored, which is only the case if
+        // the {new_target} and {target} are definitely not identical.
+        HeapObjectMatcher mnew_target(new_target);
+        if (mnew_target.HasValue() && *mnew_target.Value() != *function) {
+          // Drop the value inputs.
+          for (int i = arity; i > 0; --i) node->RemoveInput(i);
+          NodeProperties::ChangeOp(node, javascript()->Create());
+          return Changed(node);
+        }
       }
     }
 

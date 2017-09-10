@@ -304,13 +304,15 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
                                            Register arg,
                                            RegisterList return_pair);
 
-  // Call the JS runtime function with |context_index| and arguments |args|.
+  // Call the JS runtime function with |context_index| and arguments |args|,
+  // with no receiver as it is implicitly set to undefined.
   BytecodeArrayBuilder& CallJSRuntime(int context_index, RegisterList args);
 
   // Operators (register holds the lhs value, accumulator holds the rhs value).
   // Type feedback will be recorded in the |feedback_slot|
   BytecodeArrayBuilder& BinaryOperation(Token::Value binop, Register reg,
                                         int feedback_slot);
+  // Same as above, but lhs in the accumulator and rhs in |literal|.
   BytecodeArrayBuilder& BinaryOperationSmiLiteral(Token::Value binop,
                                                   Smi* literal,
                                                   int feedback_slot);
@@ -384,6 +386,7 @@ class V8_EXPORT_PRIVATE BytecodeArrayBuilder final
 
   BytecodeArrayBuilder& Throw();
   BytecodeArrayBuilder& ReThrow();
+  BytecodeArrayBuilder& Abort(BailoutReason reason);
   BytecodeArrayBuilder& Return();
   BytecodeArrayBuilder& ThrowReferenceErrorIfHole(const AstRawString* name);
   BytecodeArrayBuilder& ThrowSuperNotCalledIfHole();

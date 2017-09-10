@@ -14,6 +14,7 @@
 
 #include "src/base/atomicops.h"
 #include "src/base/bits.h"
+#include "src/base/tsan.h"
 #include "src/builtins/builtins.h"
 #include "src/contexts-inl.h"
 #include "src/conversions-inl.h"
@@ -2994,20 +2995,34 @@ double Float64ArrayTraits::defaultValue() {
   return std::numeric_limits<double>::quiet_NaN();
 }
 
-
 template <class Traits>
 typename Traits::ElementType FixedTypedArray<Traits>::get_scalar(int index) {
   DCHECK((index >= 0) && (index < this->length()));
-  ElementType* ptr = reinterpret_cast<ElementType*>(DataPtr());
-  return ptr[index];
+  // The JavaScript memory model allows for racy reads and writes to a
+  // SharedArrayBuffer's backing store, which will always be a FixedTypedArray.
+  // ThreadSanitizer will catch these racy accesses and warn about them, so we
+  // disable TSAN for these reads and writes using annotations.
+  //
+  // The access is marked as volatile so the reads/writes will not be elided or
+  // duplicated. We don't use relaxed atomics here, as it is not a requirement
+  // of the JavaScript memory model to have tear-free reads of overlapping
+  // accesses, and using relaxed atomics may introduce overhead.
+  auto* ptr = reinterpret_cast<volatile ElementType*>(DataPtr());
+  TSAN_ANNOTATE_IGNORE_READS_BEGIN;
+  auto result = ptr[index];
+  TSAN_ANNOTATE_IGNORE_READS_END;
+  return result;
 }
 
 
 template <class Traits>
 void FixedTypedArray<Traits>::set(int index, ElementType value) {
   CHECK((index >= 0) && (index < this->length()));
-  ElementType* ptr = reinterpret_cast<ElementType*>(DataPtr());
+  // See the comment in FixedTypedArray<Traits>::get_scalar.
+  auto* ptr = reinterpret_cast<volatile ElementType*>(DataPtr());
+  TSAN_ANNOTATE_IGNORE_WRITES_BEGIN;
   ptr[index] = value;
+  TSAN_ANNOTATE_IGNORE_WRITES_END;
 }
 
 template <class Traits>
@@ -3821,20 +3836,6 @@ void Code::set_has_reloc_info_for_serialization(bool value) {
   WRITE_UINT32_FIELD(this, kFullCodeFlags, flags);
 }
 
-int Code::allow_osr_at_loop_nesting_level() const {
-  DCHECK_EQ(FUNCTION, kind());
-  int fields = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  return AllowOSRAtLoopNestingLevelField::decode(fields);
-}
-
-
-void Code::set_allow_osr_at_loop_nesting_level(int level) {
-  DCHECK_EQ(FUNCTION, kind());
-  DCHECK(level >= 0 && level <= AbstractCode::kMaxLoopNestingMarker);
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  int updated = AllowOSRAtLoopNestingLevelField::update(previous, level);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags2Offset, updated);
-}
 
 int Code::builtin_index() const {
   int index = READ_INT_FIELD(this, kBuiltinIndexOffset);
@@ -3878,27 +3879,6 @@ void Code::set_safepoint_table_offset(unsigned offset) {
   int previous = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
   int updated = SafepointTableOffsetField::update(previous, offset);
   WRITE_UINT32_FIELD(this, kKindSpecificFlags2Offset, updated);
-}
-
-unsigned Code::back_edge_table_offset() const {
-  DCHECK_EQ(FUNCTION, kind());
-  return BackEdgeTableOffsetField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags2Offset)) << kPointerSizeLog2;
-}
-
-
-void Code::set_back_edge_table_offset(unsigned offset) {
-  DCHECK_EQ(FUNCTION, kind());
-  DCHECK(IsAligned(offset, static_cast<unsigned>(kPointerSize)));
-  offset = offset >> kPointerSizeLog2;
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  int updated = BackEdgeTableOffsetField::update(previous, offset);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags2Offset, updated);
-}
-
-bool Code::back_edges_patched_for_osr() const {
-  DCHECK_EQ(FUNCTION, kind());
-  return allow_osr_at_loop_nesting_level() > 0;
 }
 
 
@@ -4310,7 +4290,6 @@ ACCESSORS(JSBoundFunction, bound_arguments, FixedArray, kBoundArgumentsOffset)
 
 ACCESSORS(JSFunction, shared, SharedFunctionInfo, kSharedFunctionInfoOffset)
 ACCESSORS(JSFunction, feedback_vector_cell, Cell, kFeedbackVectorOffset)
-ACCESSORS(JSFunction, next_function_link, Object, kNextFunctionLinkOffset)
 
 ACCESSORS(JSGlobalObject, native_context, Context, kNativeContextOffset)
 ACCESSORS(JSGlobalObject, global_proxy, JSObject, kGlobalProxyOffset)
@@ -4882,7 +4861,6 @@ SMI_ACCESSORS(JSMessageObject, end_position, kEndPositionOffset)
 SMI_ACCESSORS(JSMessageObject, error_level, kErrorLevelOffset)
 
 INT_ACCESSORS(Code, instruction_size, kInstructionSizeOffset)
-INT_ACCESSORS(Code, prologue_offset, kPrologueOffset)
 INT_ACCESSORS(Code, constant_pool_offset, kConstantPoolOffset)
 #define CODE_ACCESSORS(name, type, offset)           \
   ACCESSORS_CHECKED2(Code, name, type, offset, true, \
@@ -5815,6 +5793,10 @@ void GlobalDictionary::SetEntry(int entry, Object* key, Object* value,
   DetailsAtPut(entry, details);
 }
 
+void GlobalDictionary::ValueAtPut(int entry, Object* value) {
+  set(EntryToIndex(entry), value);
+}
+
 bool NumberDictionaryShape::IsMatch(uint32_t key, Object* other) {
   DCHECK(other->IsNumber());
   return key == static_cast<uint32_t>(other->Number());
@@ -6184,6 +6166,24 @@ ACCESSORS(JSAsyncFromSyncIterator, sync_iterator, JSReceiver,
 
 ACCESSORS(JSStringIterator, string, String, kStringOffset)
 SMI_ACCESSORS(JSStringIterator, index, kNextIndexOffset)
+
+bool ScopeInfo::IsAsmModule() { return AsmModuleField::decode(Flags()); }
+
+bool ScopeInfo::HasSimpleParameters() {
+  return HasSimpleParametersField::decode(Flags());
+}
+
+#define FIELD_ACCESSORS(name)                                                 \
+  void ScopeInfo::Set##name(int value) { set(k##name, Smi::FromInt(value)); } \
+  int ScopeInfo::name() {                                                     \
+    if (length() > 0) {                                                       \
+      return Smi::ToInt(get(k##name));                                        \
+    } else {                                                                  \
+      return 0;                                                               \
+    }                                                                         \
+  }
+FOR_EACH_SCOPE_INFO_NUMERIC_FIELD(FIELD_ACCESSORS)
+#undef FIELD_ACCESSORS
 
 }  // namespace internal
 }  // namespace v8

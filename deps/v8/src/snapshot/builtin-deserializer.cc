@@ -52,7 +52,7 @@ void BuiltinDeserializer::DeserializeEagerBuiltins() {
 
   Builtins* builtins = isolate()->builtins();
   for (int i = 0; i < Builtins::builtin_count; i++) {
-    if (FLAG_lazy_deserialization && Builtins::IsLazy(i)) {
+    if (IsLazyDeserializationEnabled() && Builtins::IsLazy(i)) {
       // Do nothing. These builtins have been replaced by DeserializeLazy in
       // InitializeBuiltinsTable.
       DCHECK_EQ(builtins->builtin(Builtins::kDeserializeLazy),
@@ -77,8 +77,7 @@ Code* BuiltinDeserializer::DeserializeBuiltin(int builtin_id) {
   DeserializingBuiltinScope scope(this, builtin_id);
 
   const int initial_position = source()->position();
-  const uint32_t offset = builtin_offsets_[builtin_id];
-  source()->set_position(offset);
+  SetPositionToBuiltin(builtin_id);
 
   Object* o = ReadDataSingle();
   DCHECK(o->IsCode() && Code::cast(o)->is_builtin());
@@ -89,10 +88,9 @@ Code* BuiltinDeserializer::DeserializeBuiltin(int builtin_id) {
   return Code::cast(o);
 }
 
-uint32_t BuiltinDeserializer::ExtractBuiltinSize(int builtin_id) {
+void BuiltinDeserializer::SetPositionToBuiltin(int builtin_id) {
   DCHECK(Builtins::IsBuiltinId(builtin_id));
 
-  const int initial_position = source()->position();
   const uint32_t offset = builtin_offsets_[builtin_id];
   source()->set_position(offset);
 
@@ -107,9 +105,21 @@ uint32_t BuiltinDeserializer::ExtractBuiltinSize(int builtin_id) {
   // the entire reservations mechanism is unused for the builtins snapshot.
   if (data == kNextChunk) {
     source()->Get();  // Skip over kNextChunk's {space} parameter.
-    data = source()->Get();
+  } else {
+    source()->set_position(offset);  // Rewind.
   }
+}
 
+uint32_t BuiltinDeserializer::ExtractBuiltinSize(int builtin_id) {
+  DCHECK(Builtins::IsBuiltinId(builtin_id));
+
+  const int initial_position = source()->position();
+
+  // Grab the size of the code object.
+  SetPositionToBuiltin(builtin_id);
+  byte data = source()->Get();
+
+  USE(data);
   DCHECK_EQ(kNewObject | kPlain | kStartOfObject | CODE_SPACE, data);
   const uint32_t result = source()->GetInt() << kObjectAlignmentBits;
 
@@ -138,7 +148,7 @@ Heap::Reservation BuiltinDeserializer::CreateReservationsForEagerBuiltins() {
 
     // Skip lazy builtins. These will be replaced by the DeserializeLazy code
     // object in InitializeBuiltinsTable and thus require no reserved space.
-    if (FLAG_lazy_deserialization && Builtins::IsLazy(i)) continue;
+    if (IsLazyDeserializationEnabled() && Builtins::IsLazy(i)) continue;
 
     uint32_t builtin_size = ExtractBuiltinSize(i);
     DCHECK_LE(builtin_size, MemoryAllocator::PageAreaSize(CODE_SPACE));
@@ -179,7 +189,7 @@ void BuiltinDeserializer::InitializeBuiltinsTable(
   for (int i = 0; i < Builtins::builtin_count; i++) {
     if (i == Builtins::kDeserializeLazy) continue;
 
-    if (FLAG_lazy_deserialization && Builtins::IsLazy(i)) {
+    if (IsLazyDeserializationEnabled() && Builtins::IsLazy(i)) {
       builtins->set_builtin(i, deserialize_lazy);
     } else {
       InitializeBuiltinFromReservation(reservation[reservation_index], i);

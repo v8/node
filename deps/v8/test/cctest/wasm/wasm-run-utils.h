@@ -29,7 +29,7 @@
 #include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-module.h"
-#include "src/wasm/wasm-objects-inl.h"
+#include "src/wasm/wasm-objects.h"
 #include "src/wasm/wasm-opcodes.h"
 #include "src/zone/accounting-allocator.h"
 #include "src/zone/zone.h"
@@ -159,7 +159,8 @@ class TestingModuleBuilder {
 
   uint32_t AddFunction(FunctionSig* sig, Handle<Code> code, const char* name);
 
-  uint32_t AddJsFunction(FunctionSig* sig, const char* source);
+  uint32_t AddJsFunction(FunctionSig* sig, const char* source,
+                         Handle<FixedArray> js_imports_table);
 
   Handle<JSFunction> WrapCode(uint32_t index);
 

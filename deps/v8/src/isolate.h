@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <queue>
+#include <vector>
 
 #include "include/v8-debug.h"
 #include "src/allocation.h"
@@ -447,6 +448,7 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   V(bool, needs_side_effect_check, false)                                     \
   /* Current code coverage mode */                                            \
   V(debug::Coverage::Mode, code_coverage_mode, debug::Coverage::kBestEffort)  \
+  V(debug::TypeProfile::Mode, type_profile_mode, debug::TypeProfile::kNone)   \
   V(int, last_stack_frame_info_id, 0)                                         \
   V(int, last_console_context_id, 0)                                          \
   ISOLATE_INIT_SIMULATOR_LIST(V)
@@ -1040,6 +1042,10 @@ class Isolate {
     return is_block_count_code_coverage() || is_block_binary_code_coverage();
   }
 
+  bool is_collecting_type_profile() const {
+    return type_profile_mode() == debug::TypeProfile::kCollect;
+  }
+
   void SetCodeCoverageList(Object* value);
 
   double time_millis_since_init() {
@@ -1161,7 +1167,7 @@ class Isolate {
 
   void AddMicrotasksCompletedCallback(MicrotasksCompletedCallback callback);
   void RemoveMicrotasksCompletedCallback(MicrotasksCompletedCallback callback);
-  void FireMicrotasksCompletedCallback();
+  inline void FireMicrotasksCompletedCallback();
 
   void SetPromiseRejectCallback(PromiseRejectCallback callback);
   void ReportPromiseReject(Handle<JSObject> promise, Handle<Object> value,
@@ -1565,14 +1571,14 @@ class Isolate {
   int next_unique_sfi_id_;
 #endif
 
-  // List of callbacks before a Call starts execution.
-  List<BeforeCallEnteredCallback> before_call_entered_callbacks_;
+  // Vector of callbacks before a Call starts execution.
+  std::vector<BeforeCallEnteredCallback> before_call_entered_callbacks_;
 
-  // List of callbacks when a Call completes.
-  List<CallCompletedCallback> call_completed_callbacks_;
+  // Vector of callbacks when a Call completes.
+  std::vector<CallCompletedCallback> call_completed_callbacks_;
 
-  // List of callbacks after microtasks were run.
-  List<MicrotasksCompletedCallback> microtasks_completed_callbacks_;
+  // Vector of callbacks after microtasks were run.
+  std::vector<MicrotasksCompletedCallback> microtasks_completed_callbacks_;
   bool is_running_microtasks_;
 
   v8::Isolate::UseCounterCallback use_counter_callback_;

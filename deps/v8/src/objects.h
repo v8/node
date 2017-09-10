@@ -924,7 +924,6 @@ class Cell;
 class ConsString;
 class ElementsAccessor;
 class EnumCache;
-class FindAndReplacePattern;
 class FixedArrayBase;
 class PropertyArray;
 class FunctionLiteral;
@@ -3684,8 +3683,6 @@ class Code: public HeapObject {
 
   static const char* Kind2String(Kind kind);
 
-  static const int kPrologueOffsetNotSet = -1;
-
 #if defined(OBJECT_PRINT) || defined(ENABLE_DISASSEMBLER)
   // Printing
   static const char* ICState2String(InlineCacheState state);
@@ -3736,11 +3733,6 @@ class Code: public HeapObject {
   // [next_code_link]: Link for lists of optimized or deoptimized code.
   // Note that storage for this field is overlapped with typefeedback_info.
   DECL_ACCESSORS(next_code_link, Object)
-
-  // [prologue_offset]: Offset of the function prologue, used for aging
-  // FUNCTIONs and OPTIMIZED_FUNCTIONs.
-  inline int prologue_offset() const;
-  inline void set_prologue_offset(int offset);
 
   // [constant_pool offset]: Offset of the constant pool.
   // Valid for FLAG_enable_embedded_constant_pool only
@@ -3805,13 +3797,6 @@ class Code: public HeapObject {
   inline bool has_reloc_info_for_serialization() const;
   inline void set_has_reloc_info_for_serialization(bool value);
 
-  // [allow_osr_at_loop_nesting_level]: For FUNCTION kind, tells for
-  // how long the function has been marked for OSR and therefore which
-  // level of loop nesting we are willing to do on-stack replacement
-  // for.
-  inline void set_allow_osr_at_loop_nesting_level(int level);
-  inline int allow_osr_at_loop_nesting_level() const;
-
   // [builtin_index]: For builtins, tells which builtin index the code object
   // has. Note that builtins can have a code kind other than BUILTIN. The
   // builtin index is a non-negative integer for builtins, and -1 otherwise.
@@ -3828,13 +3813,6 @@ class Code: public HeapObject {
   // the instruction stream where the safepoint table starts.
   inline unsigned safepoint_table_offset() const;
   inline void set_safepoint_table_offset(unsigned offset);
-
-  // [back_edge_table_start]: For kind FUNCTION, the offset in the
-  // instruction stream where the back edge table starts.
-  inline unsigned back_edge_table_offset() const;
-  inline void set_back_edge_table_offset(unsigned offset);
-
-  inline bool back_edges_patched_for_osr() const;
 
   // [marked_for_deoptimization]: For kind OPTIMIZED_FUNCTION tells whether
   // the code is going to be deoptimized because of dead embedded maps.
@@ -3863,23 +3841,6 @@ class Code: public HeapObject {
 
   // Get the safepoint entry for the given pc.
   SafepointEntry GetSafepointEntry(Address pc);
-
-  // Find an object in a stub with a specified map
-  Object* FindNthObject(int n, Map* match_map);
-
-  // Find the first allocation site in an IC stub.
-  AllocationSite* FindFirstAllocationSite();
-
-  // Find the first map in an IC stub.
-  Map* FindFirstMap();
-
-  // For each (map-to-find, object-to-replace) pair in the pattern, this
-  // function replaces the corresponding placeholder in the code with the
-  // object-to-replace. The function assumes that pairs in the pattern come in
-  // the same order as the placeholders in the code.
-  // If the placeholder is a weak cell, then the value of weak cell is matched
-  // against the map-to-find.
-  void FindAndReplace(const FindAndReplacePattern& pattern);
 
   // The entire code object including its header is copied verbatim to the
   // snapshot so that it can be written in one, fast, memcpy during
@@ -4045,16 +4006,11 @@ class Code: public HeapObject {
   static const int kKindSpecificFlags1Offset = kFlagsOffset + kIntSize;
   static const int kKindSpecificFlags2Offset =
       kKindSpecificFlags1Offset + kIntSize;
-  // Note: We might be able to squeeze this into the flags above.
-  static const int kPrologueOffset = kKindSpecificFlags2Offset + kIntSize;
-  static const int kConstantPoolOffset = kPrologueOffset + kIntSize;
+  static const int kConstantPoolOffset = kKindSpecificFlags2Offset + kIntSize;
   static const int kBuiltinIndexOffset =
       kConstantPoolOffset + kConstantPoolSize;
   static const int kTrapHandlerIndex = kBuiltinIndexOffset + kIntSize;
   static const int kHeaderPaddingStart = kTrapHandlerIndex + kPointerSize;
-
-  enum TrapFields { kTrapCodeOffset, kTrapLandingOffset, kTrapDataSize };
-
 
   // Add padding to align the instruction start following right after
   // the Code object header.
@@ -4129,12 +4085,6 @@ class Code: public HeapObject {
       kSafepointTableOffsetFirstBit,
       kSafepointTableOffsetBitCount> {};  // NOLINT
 
-  // KindSpecificFlags2 layout (FUNCTION)
-  class BackEdgeTableOffsetField
-      : public BitField<int, kHasTaggedStackBit + 1, 27> {};  // NOLINT
-  class AllowOSRAtLoopNestingLevelField
-      : public BitField<int, kHasTaggedStackBit + 1 + 27, 4> {};  // NOLINT
-
   static const int kArgumentsBits = 16;
   static const int kMaxArguments = (1 << kArgumentsBits) - 1;
 
@@ -4203,8 +4153,6 @@ class AbstractCode : public HeapObject {
   // Max loop nesting marker used to postpose OSR. We don't take loop
   // nesting that is deeper than 5 levels into account.
   static const int kMaxLoopNestingMarker = 6;
-  STATIC_ASSERT(Code::AllowOSRAtLoopNestingLevelField::kMax >=
-                kMaxLoopNestingMarker);
 };
 
 // Dependent code is a singly linked list of fixed arrays. Each array contains
@@ -5019,11 +4967,6 @@ class JSFunction: public JSObject {
   // Returns if this function has been compiled to native code yet.
   inline bool is_compiled();
 
-  // [next_function_link]: Links functions into various lists, e.g. the list
-  // of optimized functions hanging off the native_context. Treated weakly
-  // by the garbage collector.
-  DECL_ACCESSORS(next_function_link, Object)
-
   // Prints the name of the function using PrintF.
   void PrintName(FILE* out = stdout);
 
@@ -5039,13 +4982,8 @@ class JSFunction: public JSObject {
                                           int requested_in_object_properties,
                                           int* instance_size,
                                           int* in_object_properties);
-  enum BodyVisitingPolicy { kIgnoreWeakness, kRespectWeakness };
-  // Iterates the function object according to the visiting policy.
-  template <BodyVisitingPolicy>
-  class BodyDescriptorImpl;
 
-  typedef BodyDescriptorImpl<kIgnoreWeakness> BodyDescriptor;
-  typedef BodyDescriptorImpl<kRespectWeakness> BodyDescriptorWeak;
+  class BodyDescriptor;
 
   // Dispatched behavior.
   DECL_PRINTER(JSFunction)
@@ -5079,9 +5017,7 @@ class JSFunction: public JSObject {
   static const int kContextOffset = kSharedFunctionInfoOffset + kPointerSize;
   static const int kFeedbackVectorOffset = kContextOffset + kPointerSize;
   static const int kCodeOffset = kFeedbackVectorOffset + kPointerSize;
-  static const int kNonWeakFieldsEndOffset = kCodeOffset + kPointerSize;
-  static const int kNextFunctionLinkOffset = kNonWeakFieldsEndOffset;
-  static const int kSize = kNextFunctionLinkOffset + kPointerSize;
+  static const int kSize = kCodeOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSFunction);

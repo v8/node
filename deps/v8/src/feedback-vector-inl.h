@@ -5,7 +5,7 @@
 #ifndef V8_FEEDBACK_VECTOR_INL_H_
 #define V8_FEEDBACK_VECTOR_INL_H_
 
-#include "src/factory.h"
+#include "src/factory-inl.h"
 #include "src/feedback-vector.h"
 #include "src/globals.h"
 #include "src/heap/heap-inl.h"
@@ -31,7 +31,6 @@ FeedbackSlot FeedbackVectorSpecBase<Derived>::AddSlot(FeedbackSlotKind kind) {
 
 template <typename Derived>
 FeedbackSlot FeedbackVectorSpecBase<Derived>::AddTypeProfileSlot() {
-  DCHECK(FLAG_type_profile);
   FeedbackSlot slot = AddSlot(FeedbackSlotKind::kTypeProfile);
   CHECK_EQ(FeedbackVectorSpec::kTypeProfileSlotIndex,
            FeedbackVector::GetIndex(slot));

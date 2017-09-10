@@ -168,7 +168,7 @@ DebugEvaluate::ContextBuilder::ContextBuilder(Isolate* isolate,
       if (it.HasContext()) {
         context_chain_element.wrapped_context = it.CurrentContext();
       }
-      context_chain_.Add(context_chain_element);
+      context_chain_.push_back(context_chain_element);
       evaluation_context_ = outer_context;
       break;
     } else if (scope_type == ScopeIterator::ScopeTypeCatch ||
@@ -179,7 +179,7 @@ DebugEvaluate::ContextBuilder::ContextBuilder(Isolate* isolate,
       if (!current_context->IsDebugEvaluateContext()) {
         context_chain_element.wrapped_context = current_context;
       }
-      context_chain_.Add(context_chain_element);
+      context_chain_.push_back(context_chain_element);
     } else if (scope_type == ScopeIterator::ScopeTypeBlock ||
                scope_type == ScopeIterator::ScopeTypeEval) {
       Handle<JSObject> materialized = factory->NewJSObjectWithNullProto();
@@ -191,28 +191,29 @@ DebugEvaluate::ContextBuilder::ContextBuilder(Isolate* isolate,
       if (it.HasContext()) {
         context_chain_element.wrapped_context = it.CurrentContext();
       }
-      context_chain_.Add(context_chain_element);
+      context_chain_.push_back(context_chain_element);
     } else {
       break;
     }
   }
 
-  for (int i = context_chain_.length() - 1; i >= 0; i--) {
+  for (auto rit = context_chain_.rbegin(); rit != context_chain_.rend();
+       rit++) {
+    ContextChainElement element = *rit;
     Handle<ScopeInfo> scope_info(ScopeInfo::CreateForWithScope(
         isolate, evaluation_context_->IsNativeContext()
                      ? Handle<ScopeInfo>::null()
                      : Handle<ScopeInfo>(evaluation_context_->scope_info())));
     scope_info->SetIsDebugEvaluateScope();
     evaluation_context_ = factory->NewDebugEvaluateContext(
-        evaluation_context_, scope_info, context_chain_[i].materialized_object,
-        context_chain_[i].wrapped_context, context_chain_[i].whitelist);
+        evaluation_context_, scope_info, element.materialized_object,
+        element.wrapped_context, element.whitelist);
   }
 }
 
 
 void DebugEvaluate::ContextBuilder::UpdateValues() {
-  for (int i = 0; i < context_chain_.length(); i++) {
-    ContextChainElement element = context_chain_[i];
+  for (ContextChainElement& element : context_chain_) {
     if (!element.materialized_object.is_null()) {
       // Write back potential changes to materialized stack locals to the stack.
       FrameInspector(frame_, inlined_jsframe_index_, isolate_)
@@ -280,7 +281,6 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(NewTypeError)                    \
   V(ThrowInvalidStringLength)        \
   /* Strings */                      \
-  V(StringCharCodeAt)                \
   V(StringIndexOf)                   \
   V(StringIncludes)                  \
   V(StringReplaceOneCharWithString)  \
@@ -296,7 +296,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   /* Called from builtins */         \
   V(StringParseFloat)                \
   V(StringParseInt)                  \
-  V(StringCharCodeAtRT)              \
+  V(StringCharCodeAt)                \
   V(StringIndexOfUnchecked)          \
   V(StringEqual)                     \
   V(SymbolDescriptiveString)         \
@@ -448,6 +448,7 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
   switch (id) {
     // Whitelist for builtins.
     // Object builtins.
+    case Builtins::kObjectConstructor:
     case Builtins::kObjectCreate:
     case Builtins::kObjectEntries:
     case Builtins::kObjectGetOwnPropertyDescriptor:
@@ -678,10 +679,16 @@ bool DebugEvaluate::FunctionHasNoSideEffect(Handle<SharedFunctionInfo> info) {
     return true;
   } else {
     // Check built-ins against whitelist.
-    int builtin_index = info->code()->builtin_index();
+    int builtin_index = info->HasLazyDeserializationBuiltinId()
+                            ? info->lazy_deserialization_builtin_id()
+                            : info->code()->builtin_index();
+    DCHECK_NE(Builtins::kDeserializeLazy, builtin_index);
     if (builtin_index >= 0 && builtin_index < Builtins::builtin_count &&
         BuiltinHasNoSideEffect(static_cast<Builtins::Name>(builtin_index))) {
 #ifdef DEBUG
+      if (info->code()->builtin_index() == Builtins::kDeserializeLazy) {
+        return true;  // Target builtin is not yet deserialized.
+      }
       // TODO(yangguo): Check builtin-to-builtin calls too.
       int mode = RelocInfo::ModeMask(RelocInfo::EXTERNAL_REFERENCE);
       bool failed = false;

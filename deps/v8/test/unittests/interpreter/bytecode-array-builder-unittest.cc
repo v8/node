@@ -375,6 +375,12 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   // Emit debugger bytecode.
   builder.Debugger();
 
+  // Emit abort bytecode.
+  {
+    BytecodeLabel after;
+    builder.Abort(kGenerator).Bind(&after);
+  }
+
   // Insert dummy ops to force longer jumps.
   for (int i = 0; i < 256; i++) {
     builder.Debugger();
@@ -421,11 +427,9 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
   // Insert entry for illegal bytecode as this is never willingly emitted.
   scorecard[Bytecodes::ToByte(Bytecode::kIllegal)] = 1;
 
-  if (!FLAG_type_profile) {
-    // Bytecode for CollectTypeProfile is only emitted when
-    // Type Information for DevTools is turned on.
-    scorecard[Bytecodes::ToByte(Bytecode::kCollectTypeProfile)] = 1;
-  }
+  // Bytecode for CollectTypeProfile is only emitted when
+  // Type Information for DevTools is turned on.
+  scorecard[Bytecodes::ToByte(Bytecode::kCollectTypeProfile)] = 1;
 
   // Check return occurs at the end and only once in the BytecodeArray.
   CHECK_EQ(final_bytecode, Bytecode::kReturn);
