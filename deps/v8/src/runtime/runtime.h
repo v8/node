@@ -68,6 +68,11 @@ namespace internal {
   F(AtomicsNumWaitersForTesting, 2, 1)          \
   F(SetAllowAtomicsWait, 1, 1)
 
+#define FOR_EACH_INTRINSIC_BIGINT(F) \
+  F(BigInt, 1, 1)                    \
+  F(BigIntEqual, 2, 1)               \
+  F(BigIntToBoolean, 1, 1)
+
 #define FOR_EACH_INTRINSIC_CLASSES(F)        \
   F(ThrowUnsupportedSuperError, 0, 1)        \
   F(ThrowConstructorNonCallableError, 1, 1)  \
@@ -639,10 +644,14 @@ namespace internal {
   F(ThrowWasmErrorFromTrapIf, 1, 1)    \
   F(ThrowWasmStackOverflow, 0, 1)      \
   F(WasmThrowTypeError, 0, 1)          \
+  F(WasmThrowCreate, 2, 1)             \
   F(WasmThrow, 1, 1)                   \
   F(WasmRethrow, 0, 1)                 \
-  F(WasmGetExceptionTag, 1, 1)         \
+  F(WasmGetExceptionRuntimeId, 1, 1)   \
+  F(WasmGetExceptionValuesArray, 1, 1) \
   F(WasmSetCaughtExceptionValue, 1, 1) \
+  F(WasmExceptionSetElement, 3, 1)     \
+  F(WasmExceptionGetElement, 2, 1)     \
   F(WasmRunInterpreter, 3, 1)          \
   F(WasmStackGuard, 0, 1)              \
   F(SetThreadInWasm, 0, 1)             \
@@ -673,6 +682,7 @@ namespace internal {
   FOR_EACH_INTRINSIC_IC(F)                  \
   FOR_EACH_INTRINSIC_ARRAY(F)               \
   FOR_EACH_INTRINSIC_ATOMICS(F)             \
+  FOR_EACH_INTRINSIC_BIGINT(F)              \
   FOR_EACH_INTRINSIC_CLASSES(F)             \
   FOR_EACH_INTRINSIC_COLLECTIONS(F)         \
   FOR_EACH_INTRINSIC_COMPILER(F)            \

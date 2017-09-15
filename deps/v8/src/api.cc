@@ -34,6 +34,7 @@
 #include "src/conversions-inl.h"
 #include "src/counters.h"
 #include "src/debug/debug-coverage.h"
+#include "src/debug/debug-type-profile.h"
 #include "src/debug/debug.h"
 #include "src/deoptimizer.h"
 #include "src/execution.h"
@@ -503,12 +504,11 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
       v8::ArrayBuffer::Allocator::Protection protection) {
     switch (protection) {
       case v8::ArrayBuffer::Allocator::Protection::kNoAccess: {
-        base::VirtualMemory::UncommitRegion(data, length);
+        base::OS::Guard(data, length);
         return;
       }
       case v8::ArrayBuffer::Allocator::Protection::kReadWrite: {
-        const bool is_executable = false;
-        base::VirtualMemory::CommitRegion(data, length, is_executable);
+        base::OS::Unprotect(data, length);
         return;
       }
     }
@@ -3275,7 +3275,7 @@ Local<Value> JSON::Parse(Local<String> json_string) {
 }
 
 MaybeLocal<String> JSON::Stringify(Local<Context> context,
-                                   Local<Object> json_object,
+                                   Local<Value> json_object,
                                    Local<String> gap) {
   PREPARE_FOR_EXECUTION(context, JSON, Stringify, String);
   i::Handle<i::Object> object = Utils::OpenHandle(*json_object);
@@ -10166,7 +10166,7 @@ bool debug::Coverage::FunctionData::HasBlockCoverage() const {
 
 debug::Coverage::BlockData debug::Coverage::FunctionData::GetBlockData(
     size_t i) const {
-  return BlockData(&function_->blocks.at(i));
+  return BlockData(&function_->blocks.at(i), coverage_);
 }
 
 Local<debug::Script> debug::Coverage::ScriptData::GetScript() const {
@@ -10179,15 +10179,17 @@ size_t debug::Coverage::ScriptData::FunctionCount() const {
 
 debug::Coverage::FunctionData debug::Coverage::ScriptData::GetFunctionData(
     size_t i) const {
-  return FunctionData(&script_->functions.at(i));
+  return FunctionData(&script_->functions.at(i), coverage_);
 }
 
-debug::Coverage::~Coverage() { delete coverage_; }
+debug::Coverage::ScriptData::ScriptData(size_t index,
+                                        std::shared_ptr<i::Coverage> coverage)
+    : script_(&coverage->at(index)), coverage_(std::move(coverage)) {}
 
 size_t debug::Coverage::ScriptCount() const { return coverage_->size(); }
 
 debug::Coverage::ScriptData debug::Coverage::GetScriptData(size_t i) const {
-  return ScriptData(&coverage_->at(i));
+  return ScriptData(i, coverage_);
 }
 
 debug::Coverage debug::Coverage::CollectPrecise(Isolate* isolate) {
@@ -10211,10 +10213,15 @@ int debug::TypeProfile::Entry::SourcePosition() const {
 std::vector<MaybeLocal<String>> debug::TypeProfile::Entry::Types() const {
   std::vector<MaybeLocal<String>> result;
   for (const internal::Handle<internal::String>& type : entry_->types) {
-    result.push_back(ToApiHandle<String>(type));
+    result.emplace_back(ToApiHandle<String>(type));
   }
   return result;
 }
+
+debug::TypeProfile::ScriptData::ScriptData(
+    size_t index, std::shared_ptr<i::TypeProfile> type_profile)
+    : script_(&type_profile->at(index)),
+      type_profile_(std::move(type_profile)) {}
 
 Local<debug::Script> debug::TypeProfile::ScriptData::GetScript() const {
   return ToApiHandle<debug::Script>(script_->script);
@@ -10224,7 +10231,7 @@ std::vector<debug::TypeProfile::Entry> debug::TypeProfile::ScriptData::Entries()
     const {
   std::vector<debug::TypeProfile::Entry> result;
   for (const internal::TypeProfileEntry& entry : script_->entries) {
-    result.push_back(debug::TypeProfile::Entry(&entry));
+    result.push_back(debug::TypeProfile::Entry(&entry, type_profile_));
   }
   return result;
 }
@@ -10243,11 +10250,8 @@ size_t debug::TypeProfile::ScriptCount() const { return type_profile_->size(); }
 
 debug::TypeProfile::ScriptData debug::TypeProfile::GetScriptData(
     size_t i) const {
-  // TODO(franzih): ScriptData is invalid after ~TypeProfile. Same in Coverage.
-  return ScriptData(&type_profile_->at(i));
+  return ScriptData(i, type_profile_);
 }
-
-debug::TypeProfile::~TypeProfile() { delete type_profile_; }
 
 const char* CpuProfileNode::GetFunctionNameStr() const {
   const i::ProfileNode* node = reinterpret_cast<const i::ProfileNode*>(this);

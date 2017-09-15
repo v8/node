@@ -14,6 +14,7 @@
 #include "src/conversions.h"
 #include "src/isolate-inl.h"
 #include "src/macro-assembler.h"
+#include "src/objects/bigint-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/module.h"
@@ -1395,6 +1396,18 @@ Handle<HeapNumber> Factory::NewHeapNumber(MutableMode mode,
                      HeapNumber);
 }
 
+Handle<BigInt> Factory::NewBigInt(int length, PretenureFlag pretenure) {
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateBigInt(length, true, pretenure),
+                     BigInt);
+}
+
+Handle<BigInt> Factory::NewBigIntRaw(int length, PretenureFlag pretenure) {
+  CALL_HEAP_FUNCTION(
+      isolate(), isolate()->heap()->AllocateBigInt(length, false, pretenure),
+      BigInt);
+}
+
 Handle<Object> Factory::NewError(Handle<JSFunction> constructor,
                                  MessageTemplate::Template template_index,
                                  Handle<Object> arg0, Handle<Object> arg1,
@@ -1807,6 +1820,10 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc, Code::Flags flags,
   return code;
 }
 
+Handle<Code> Factory::NewCodeForDeserialization(uint32_t size) {
+  const bool kNotImmovable = false;
+  return NewCodeRaw(size, kNotImmovable);
+}
 
 Handle<Code> Factory::CopyCode(Handle<Code> code) {
   CALL_HEAP_FUNCTION(isolate(),

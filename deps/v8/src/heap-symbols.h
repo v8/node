@@ -27,6 +27,7 @@
   V(object_to_string, "[object Object]")                           \
   V(regexp_to_string, "[object RegExp]")                           \
   V(string_to_string, "[object String]")                           \
+  V(bigint_string, "bigint")                                       \
   V(bind_string, "bind")                                           \
   V(boolean_string, "boolean")                                     \
   V(Boolean_string, "Boolean")                                     \
@@ -201,8 +202,7 @@
   V(will_handle_string, "willHandle")                              \
   V(writable_string, "writable")                                   \
   V(year_string, "year")                                           \
-  V(zero_string, "0")                                              \
-  V(WasmExceptionTag_string, "WasmExceptionTag")
+  V(zero_string, "0")
 
 #define PRIVATE_SYMBOL_LIST(V)              \
   V(array_iteration_kind_symbol)            \

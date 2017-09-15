@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "src/api.h"
 #include "src/arguments.h"
 #include "src/assembler-inl.h"
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
@@ -213,11 +214,10 @@ RUNTIME_FUNCTION(Runtime_OptimizeFunctionOnNextCall) {
   }
   Handle<JSFunction> function = Handle<JSFunction>::cast(function_object);
 
-  // The following condition was lifted from the DCHECK inside
+  // The following conditions were lifted (in part) from the DCHECK inside
   // JSFunction::MarkForOptimization().
-  if (!(function->shared()->allows_lazy_compilation() ||
-        (function->code()->kind() == Code::FUNCTION &&
-         !function->shared()->optimization_disabled()))) {
+
+  if (!function->shared()->allows_lazy_compilation()) {
     return isolate->heap()->undefined_value();
   }
 

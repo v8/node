@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/api.h"
 #include "src/assembler-inl.h"
 #include "src/trap-handler/trap-handler.h"
 #include "test/cctest/cctest.h"
@@ -60,12 +61,15 @@ void CheckExceptionInfos(v8::internal::Isolate* i_isolate, Handle<Object> exc,
   }
 }
 
+#undef CHECK_CSTREQ
+
 }  // namespace
 
 // Trigger a trap for executing unreachable.
 TEST(Unreachable) {
   // Create a WasmRunner with stack checks and traps enabled.
-  WasmRunner<void> r(kExecuteCompiled, "main", true);
+  WasmRunner<void> r(kExecuteCompiled, "main",
+                     compiler::kRuntimeExceptionSupport);
   TestSignatures sigs;
 
   BUILD(r, WASM_UNREACHABLE);
@@ -99,7 +103,8 @@ TEST(Unreachable) {
 
 // Trigger a trap for loading from out-of-bounds.
 TEST(IllegalLoad) {
-  WasmRunner<void> r(kExecuteCompiled, "main", true);
+  WasmRunner<void> r(kExecuteCompiled, "main",
+                     compiler::kRuntimeExceptionSupport);
   TestSignatures sigs;
 
   r.builder().AddMemory(0L);

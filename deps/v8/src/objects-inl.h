@@ -33,6 +33,7 @@
 #include "src/lookup.h"
 #include "src/objects.h"
 #include "src/objects/arguments-inl.h"
+#include "src/objects/bigint-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/literal-objects.h"
@@ -542,6 +543,7 @@ CAST_ACCESSOR(AllocationMemento)
 CAST_ACCESSOR(AllocationSite)
 CAST_ACCESSOR(ArrayList)
 CAST_ACCESSOR(AsyncGeneratorRequest)
+CAST_ACCESSOR(BigInt)
 CAST_ACCESSOR(BoilerplateDescription)
 CAST_ACCESSOR(ByteArray)
 CAST_ACCESSOR(BytecodeArray)
@@ -3003,11 +3005,10 @@ typename Traits::ElementType FixedTypedArray<Traits>::get_scalar(int index) {
   // ThreadSanitizer will catch these racy accesses and warn about them, so we
   // disable TSAN for these reads and writes using annotations.
   //
-  // The access is marked as volatile so the reads/writes will not be elided or
-  // duplicated. We don't use relaxed atomics here, as it is not a requirement
-  // of the JavaScript memory model to have tear-free reads of overlapping
-  // accesses, and using relaxed atomics may introduce overhead.
-  auto* ptr = reinterpret_cast<volatile ElementType*>(DataPtr());
+  // We don't use relaxed atomics here, as it is not a requirement of the
+  // JavaScript memory model to have tear-free reads of overlapping accesses,
+  // and using relaxed atomics may introduce overhead.
+  auto* ptr = reinterpret_cast<ElementType*>(DataPtr());
   TSAN_ANNOTATE_IGNORE_READS_BEGIN;
   auto result = ptr[index];
   TSAN_ANNOTATE_IGNORE_READS_END;
@@ -3019,7 +3020,7 @@ template <class Traits>
 void FixedTypedArray<Traits>::set(int index, ElementType value) {
   CHECK((index >= 0) && (index < this->length()));
   // See the comment in FixedTypedArray<Traits>::get_scalar.
-  auto* ptr = reinterpret_cast<volatile ElementType*>(DataPtr());
+  auto* ptr = reinterpret_cast<ElementType*>(DataPtr());
   TSAN_ANNOTATE_IGNORE_WRITES_BEGIN;
   ptr[index] = value;
   TSAN_ANNOTATE_IGNORE_WRITES_END;
@@ -3262,6 +3263,9 @@ int HeapObject::SizeFromMap(Map* map) const {
   if (instance_type == FEEDBACK_VECTOR_TYPE) {
     return FeedbackVector::SizeFor(
         reinterpret_cast<const FeedbackVector*>(this)->length());
+  }
+  if (instance_type == BIGINT_TYPE) {
+    return BigInt::SizeFor(reinterpret_cast<const BigInt*>(this)->length());
   }
   DCHECK(instance_type == CODE_TYPE);
   return reinterpret_cast<const Code*>(this)->CodeSize();
@@ -3822,21 +3826,6 @@ inline HandlerTable::CatchPrediction Code::GetBuiltinCatchPrediction() {
   return HandlerTable::UNCAUGHT;
 }
 
-bool Code::has_reloc_info_for_serialization() const {
-  DCHECK_EQ(FUNCTION, kind());
-  unsigned flags = READ_UINT32_FIELD(this, kFullCodeFlags);
-  return FullCodeFlagsHasRelocInfoForSerialization::decode(flags);
-}
-
-
-void Code::set_has_reloc_info_for_serialization(bool value) {
-  DCHECK_EQ(FUNCTION, kind());
-  unsigned flags = READ_UINT32_FIELD(this, kFullCodeFlags);
-  flags = FullCodeFlagsHasRelocInfoForSerialization::update(flags, value);
-  WRITE_UINT32_FIELD(this, kFullCodeFlags, flags);
-}
-
-
 int Code::builtin_index() const {
   int index = READ_INT_FIELD(this, kBuiltinIndexOffset);
   DCHECK(index == -1 || Builtins::IsBuiltinId(index));
@@ -4080,8 +4069,6 @@ bool AbstractCode::contains(byte* inner_pointer) {
 
 AbstractCode::Kind AbstractCode::kind() {
   if (IsCode()) {
-    STATIC_ASSERT(AbstractCode::FUNCTION ==
-                  static_cast<AbstractCode::Kind>(Code::FUNCTION));
     return static_cast<AbstractCode::Kind>(GetCode()->kind());
   } else {
     return INTERPRETED_FUNCTION;
@@ -4196,7 +4183,7 @@ void Map::AppendDescriptor(Descriptor* desc) {
 // it should never try to (otherwise, layout descriptor must be updated too).
 #ifdef DEBUG
   PropertyDetails details = desc->GetDetails();
-  CHECK(details.location() != kField || !details.representation().IsDouble());
+  DCHECK(details.location() != kField || !details.representation().IsDouble());
 #endif
 }
 
@@ -4893,19 +4880,6 @@ void Code::clear_padding() {
   memset(data_end, 0, CodeSize() - (data_end - address()));
 }
 
-Object* Code::type_feedback_info() const {
-  DCHECK(kind() == FUNCTION);
-  return raw_type_feedback_info();
-}
-
-
-void Code::set_type_feedback_info(Object* value, WriteBarrierMode mode) {
-  DCHECK(kind() == FUNCTION);
-  set_raw_type_feedback_info(value, mode);
-  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kTypeFeedbackInfoOffset,
-                            value, mode);
-}
-
 ByteArray* Code::SourcePositionTable() const {
   Object* maybe_table = source_position_table();
   if (maybe_table->IsByteArray()) return ByteArray::cast(maybe_table);
@@ -4975,9 +4949,6 @@ int Code::SizeIncludingMetadata() const {
   size += relocation_info()->Size();
   size += deoptimization_data()->Size();
   size += handler_table()->Size();
-  if (kind() == FUNCTION) {
-    size += SourcePositionTable()->Size();
-  }
   return size;
 }
 

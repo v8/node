@@ -5,6 +5,8 @@
 #include <functional>
 #include <memory>
 
+#include "src/api.h"
+#include "src/assembler-inl.h"
 #include "src/code-stubs.h"
 #include "src/debug/interface-types.h"
 #include "src/frames-inl.h"
@@ -250,7 +252,8 @@ Handle<JSArrayBuffer> SetupArrayBuffer(Isolate* isolate, void* allocation_base,
                                        bool is_external,
                                        bool enable_guard_regions,
                                        SharedFlag shared) {
-  Handle<JSArrayBuffer> buffer = isolate->factory()->NewJSArrayBuffer(shared);
+  Handle<JSArrayBuffer> buffer =
+      isolate->factory()->NewJSArrayBuffer(shared, TENURED);
   DCHECK_GE(kMaxInt, size);
   if (shared == SharedFlag::kShared) DCHECK(FLAG_experimental_wasm_threads);
   JSArrayBuffer::Setup(buffer, isolate, is_external, allocation_base,

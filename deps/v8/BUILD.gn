@@ -84,7 +84,7 @@ declare_args() {
   v8_enable_concurrent_marking = false
 
   # Sets -dV8_CSA_WRITE_BARRIER
-  v8_enable_csa_write_barrier = false
+  v8_enable_csa_write_barrier = true
 
   # Build the snapshot with unwinding information for perf.
   # Sets -dV8_USE_SNAPSHOT_WITH_UNWINDING_INFO.
@@ -1524,6 +1524,8 @@ v8_source_set("v8_base") {
     "src/debug/debug-scopes.h",
     "src/debug/debug-stack-trace-iterator.cc",
     "src/debug/debug-stack-trace-iterator.h",
+    "src/debug/debug-type-profile.cc",
+    "src/debug/debug-type-profile.h",
     "src/debug/debug.cc",
     "src/debug/debug.h",
     "src/debug/interface-types.h",
@@ -1767,6 +1769,9 @@ v8_source_set("v8_base") {
     "src/objects.h",
     "src/objects/arguments-inl.h",
     "src/objects/arguments.h",
+    "src/objects/bigint-inl.h",
+    "src/objects/bigint.cc",
+    "src/objects/bigint.h",
     "src/objects/code-cache-inl.h",
     "src/objects/code-cache.h",
     "src/objects/compilation-cache-inl.h",
@@ -1899,6 +1904,7 @@ v8_source_set("v8_base") {
     "src/runtime-profiler.h",
     "src/runtime/runtime-array.cc",
     "src/runtime/runtime-atomics.cc",
+    "src/runtime/runtime-bigint.cc",
     "src/runtime/runtime-classes.cc",
     "src/runtime/runtime-collections.cc",
     "src/runtime/runtime-compiler.cc",
@@ -2218,6 +2224,7 @@ v8_source_set("v8_base") {
       "src/arm64/eh-frame-arm64.cc",
       "src/arm64/frame-constants-arm64.cc",
       "src/arm64/frame-constants-arm64.h",
+      "src/arm64/instructions-arm64-constants.cc",
       "src/arm64/instructions-arm64.cc",
       "src/arm64/instructions-arm64.h",
       "src/arm64/instrument-arm64.cc",
@@ -2244,6 +2251,13 @@ v8_source_set("v8_base") {
       "src/regexp/arm64/regexp-macro-assembler-arm64.cc",
       "src/regexp/arm64/regexp-macro-assembler-arm64.h",
     ]
+    if (use_jumbo_build) {
+      jumbo_excluded_sources += [
+        # TODO(mostynb@opera.com): fix this code so it doesn't need
+        # to be excluded, see the comments inside.
+        "src/arm64/instructions-arm64-constants.cc",
+      ]
+    }
   } else if (v8_current_cpu == "mips" || v8_current_cpu == "mipsel") {
     sources += [  ### gcmole(arch:mipsel) ###
       "src/compiler/mips/code-generator-mips.cc",

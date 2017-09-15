@@ -7,9 +7,7 @@
 #include "src/accessors.h"
 #include "src/assembler.h"
 #include "src/counters.h"
-#include "src/deoptimizer.h"
 #include "src/ic/stub-cache.h"
-#include "src/objects-inl.h"
 
 #if defined(DEBUG) && defined(V8_OS_LINUX) && !defined(V8_OS_ANDROID)
 #define SYMBOLIZE_FUNCTION
@@ -58,6 +56,10 @@ const char* ExternalReferenceTable::ResolveSymbol(void* address) {
 #else
   return "<unresolved>";
 #endif  // SYMBOLIZE_FUNCTION
+}
+
+void ExternalReferenceTable::Add(Address address, const char* name) {
+  refs_.emplace_back(address, name);
 }
 
 void ExternalReferenceTable::AddReferences(Isolate* isolate) {

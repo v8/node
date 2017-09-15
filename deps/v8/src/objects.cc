@@ -255,6 +255,9 @@ MaybeHandle<String> Object::ConvertToString(Isolate* isolate,
       THROW_NEW_ERROR(isolate, NewTypeError(MessageTemplate::kSymbolToString),
                       String);
     }
+    if (input->IsBigInt()) {
+      return BigInt::ToString(Handle<BigInt>::cast(input), 10);
+    }
     ASSIGN_RETURN_ON_EXCEPTION(
         isolate, input, JSReceiver::ToPrimitive(Handle<JSReceiver>::cast(input),
                                                 ToPrimitiveHint::kString),
@@ -872,26 +875,40 @@ MaybeHandle<Object> Object::GetMethod(Handle<JSReceiver> receiver,
 }
 
 namespace {
+
 MaybeHandle<FixedArray> CreateListFromArrayLikeFastPath(
     Isolate* isolate, Handle<Object> object, ElementTypes element_types) {
-  if (element_types != ElementTypes::kAll || !object->IsJSArray()) {
-    return MaybeHandle<FixedArray>();
+  if (element_types == ElementTypes::kAll) {
+    if (object->IsJSArray()) {
+      Handle<JSArray> array = Handle<JSArray>::cast(object);
+      uint32_t length;
+      if (!array->HasArrayPrototype(isolate) ||
+          !array->length()->ToUint32(&length) || !array->HasFastElements() ||
+          !JSObject::PrototypeHasNoElements(isolate, *array)) {
+        return MaybeHandle<FixedArray>();
+      }
+      return array->GetElementsAccessor()->CreateListFromArrayLike(
+          isolate, array, length);
+    } else if (object->IsJSTypedArray()) {
+      Handle<JSTypedArray> array = Handle<JSTypedArray>::cast(object);
+      uint32_t length = array->length_value();
+      if (array->WasNeutered() ||
+          length > static_cast<uint32_t>(FixedArray::kMaxLength)) {
+        return MaybeHandle<FixedArray>();
+      }
+      return array->GetElementsAccessor()->CreateListFromArrayLike(
+          isolate, array, length);
+    }
   }
-  Handle<JSArray> array = Handle<JSArray>::cast(object);
-  uint32_t length;
-  if (!array->HasArrayPrototype(isolate) ||
-      !array->length()->ToUint32(&length) || !array->HasFastElements() ||
-      !JSObject::PrototypeHasNoElements(isolate, *array)) {
-    return MaybeHandle<FixedArray>();
-  }
-  return array->GetElementsAccessor()->CreateListFromArray(isolate, array);
+  return MaybeHandle<FixedArray>();
 }
+
 }  // namespace
 
 // static
 MaybeHandle<FixedArray> Object::CreateListFromArrayLike(
     Isolate* isolate, Handle<Object> object, ElementTypes element_types) {
-  // Fast-path for JS_ARRAY_TYPE.
+  // Fast-path for JSArray and JSTypedArray.
   MaybeHandle<FixedArray> fast_result =
       CreateListFromArrayLikeFastPath(isolate, object, element_types);
   if (!fast_result.is_null()) return fast_result;
@@ -2292,8 +2309,6 @@ Map* Object::GetPrototypeChainRootMap(Isolate* isolate) const {
     return native_context->number_function()->initial_map();
   }
 
-  // The object is either a number, a string, a symbol, a boolean, a real JS
-  // object, or a Harmony proxy.
   const HeapObject* heap_object = HeapObject::cast(this);
   return heap_object->map()->GetPrototypeChainRootMap(isolate);
 }
@@ -2342,8 +2357,11 @@ Object* GetSimpleHash(Object* object) {
     uint32_t hash = Oddball::cast(object)->to_string()->Hash();
     return Smi::FromInt(hash);
   }
+  if (object->IsBigInt()) {
+    uint32_t hash = BigInt::cast(object)->Hash();
+    return Smi::FromInt(hash & Smi::kMaxValue);
+  }
   DCHECK(object->IsJSReceiver());
-  // Simply return the receiver as it is guaranteed to not be a SMI.
   return object;
 }
 
@@ -2393,6 +2411,9 @@ bool Object::SameValue(Object* other) {
   }
   if (IsString() && other->IsString()) {
     return String::cast(this)->Equals(String::cast(other));
+  }
+  if (IsBigInt() && other->IsBigInt()) {
+    return BigInt::Equal(BigInt::cast(this), BigInt::cast(other));
   }
   return false;
 }
@@ -3148,6 +3169,9 @@ VisitorId Map::GetVisitorId(Map* map) {
     case HEAP_NUMBER_TYPE:
     case MUTABLE_HEAP_NUMBER_TYPE:
       return kVisitDataObject;
+
+    case BIGINT_TYPE:
+      return kVisitBigInt;
 
     case FIXED_UINT8_ARRAY_TYPE:
     case FIXED_INT8_ARRAY_TYPE:
@@ -12909,6 +12933,7 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case JS_WEAK_SET_TYPE:
       return true;
 
+    case BIGINT_TYPE:
     case BYTECODE_ARRAY_TYPE:
     case BYTE_ARRAY_TYPE:
     case CELL_TYPE:
@@ -13821,9 +13846,8 @@ void SharedFunctionInfo::DisableOptimization(BailoutReason reason) {
 
   set_compiler_hints(
       DisabledOptimizationReasonBits::update(compiler_hints(), reason));
-  // Code should be the lazy compilation stub or else unoptimized.
-  DCHECK(abstract_code()->kind() == AbstractCode::FUNCTION ||
-         abstract_code()->kind() == AbstractCode::INTERPRETED_FUNCTION ||
+  // Code should be the lazy compilation stub or else interpreted.
+  DCHECK(abstract_code()->kind() == AbstractCode::INTERPRETED_FUNCTION ||
          abstract_code()->kind() == AbstractCode::BUILTIN);
   PROFILE(GetIsolate(), CodeDisableOptEvent(abstract_code(), this));
   if (FLAG_trace_opt) {
@@ -14497,11 +14521,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   if (kind() == OPTIMIZED_FUNCTION) {
     os << "stack_slots = " << stack_slots() << "\n";
   }
-  os << "compiler = "
-     << (is_turbofanned()
-             ? "turbofan"
-             : kind() == Code::FUNCTION ? "full-codegen" : "unknown")
-     << "\n";
+  os << "compiler = " << (is_turbofanned() ? "turbofan" : "unknown") << "\n";
 
   os << "Instructions (size = " << instruction_size() << ")\n";
   {
@@ -14579,9 +14599,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
 
   if (handler_table()->length() > 0) {
     os << "Handler Table (size = " << handler_table()->Size() << ")\n";
-    if (kind() == FUNCTION) {
-      HandlerTable::cast(handler_table())->HandlerTableRangePrint(os);
-    } else if (kind() == OPTIMIZED_FUNCTION) {
+    if (kind() == OPTIMIZED_FUNCTION) {
       HandlerTable::cast(handler_table())->HandlerTableReturnPrint(os);
     }
     os << "\n";
@@ -19191,7 +19209,6 @@ void PropertyCell::SetValueWithInvalidation(Handle<PropertyCell> cell,
 int JSGeneratorObject::source_position() const {
   CHECK(is_suspended());
   DCHECK(function()->shared()->HasBytecodeArray());
-  DCHECK(!function()->shared()->HasBaselineCode());
 
   int code_offset = Smi::ToInt(input_or_debug_pos());
 

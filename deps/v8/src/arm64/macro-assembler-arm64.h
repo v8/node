@@ -184,21 +184,7 @@ enum PreShiftImmMode {
 class TurboAssembler : public Assembler {
  public:
   TurboAssembler(Isolate* isolate, void* buffer, int buffer_size,
-                 CodeObjectRequired create_code_object)
-      : Assembler(isolate, buffer, buffer_size),
-        isolate_(isolate),
-#if DEBUG
-        allow_macro_instructions_(true),
-#endif
-        tmp_list_(DefaultTmpList()),
-        fptmp_list_(DefaultFPTmpList()),
-        sp_(jssp),
-        use_real_aborts_(true) {
-    if (create_code_object == CodeObjectRequired::kYes) {
-      code_object_ =
-          Handle<HeapObject>::New(isolate->heap()->undefined_value(), isolate);
-    }
-  }
+                 CodeObjectRequired create_code_object);
 
   // The Abort method should call a V8 runtime function, but the CallRuntime
   // mechanism depends on CEntryStub. If use_real_aborts is false, Abort will
@@ -702,6 +688,14 @@ class TurboAssembler : public Assembler {
   inline void Drop(int64_t count, uint64_t unit_size = kXRegSize);
   inline void Drop(const Register& count, uint64_t unit_size = kXRegSize);
 
+  // Drop arguments from stack without actually accessing memory.
+  // This will currently drop 'count' arguments of the given size from the
+  // stack.
+  // TODO(arm64): Update this to round up the number of bytes dropped to
+  // a multiple of 16, so that we can remove jssp.
+  inline void DropArguments(const Register& count,
+                            uint64_t unit_size = kXRegSize);
+
   // Re-synchronizes the system stack pointer (csp) with the current stack
   // pointer (according to StackPointer()).
   //
@@ -786,6 +780,13 @@ class TurboAssembler : public Assembler {
   // Aliases of Push and Pop, required for V8 compatibility.
   inline void push(Register src) { Push(src); }
   inline void pop(Register dst) { Pop(dst); }
+
+  void SaveRegisters(RegList registers);
+  void RestoreRegisters(RegList registers);
+
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode);
 
   // Alternative forms of Push and Pop, taking a RegList or CPURegList that
   // specifies the registers that are to be pushed or popped. Higher-numbered
@@ -1874,16 +1875,6 @@ class MacroAssembler : public TurboAssembler {
   // Frame restart support
   void MaybeDropFrames();
 
-  // Exception handling
-
-  // Push a new stack handler and link into stack handler chain.
-  void PushStackHandler();
-
-  // Unlink the stack handler on top of the stack from the stack handler chain.
-  // Must preserve the result register.
-  void PopStackHandler();
-
-
   // ---------------------------------------------------------------------------
   // Allocation support
 
@@ -2000,9 +1991,6 @@ class MacroAssembler : public TurboAssembler {
   // Load the elements kind field from a map, and return it in the result
   // register.
   void LoadElementsKindFromMap(Register result, Register map);
-
-  // Load the value from the root list and push it onto the stack.
-  void PushRoot(Heap::RootListIndex index);
 
   // Compare the object in a register to a value from the root list.
   void CompareRoot(const Register& obj, Heap::RootListIndex index);
@@ -2291,11 +2279,6 @@ class MacroAssembler : public TurboAssembler {
                         const CPURegister& arg1 = NoCPUReg,
                         const CPURegister& arg2 = NoCPUReg,
                         const CPURegister& arg3 = NoCPUReg);
-
-  // Return true if the sequence is a young sequence geneated by
-  // EmitFrameSetupForCodeAgePatching. Otherwise, this method asserts that the
-  // sequence is a code age sequence (emitted by EmitCodeAgeSequence).
-  static bool IsYoungSequence(Isolate* isolate, byte* sequence);
 
  private:
   // Helper for implementing JumpIfNotInNewSpace and JumpIfInNewSpace.

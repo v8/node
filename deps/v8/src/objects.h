@@ -126,6 +126,7 @@
 //             - ExternalTwoByteInternalizedString
 //       - Symbol
 //     - HeapNumber
+//     - BigInt
 //     - Cell
 //     - PropertyCell
 //     - PropertyArray
@@ -324,6 +325,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
                                                                 \
   V(SYMBOL_TYPE)                                                \
   V(HEAP_NUMBER_TYPE)                                           \
+  V(BIGINT_TYPE)                                                \
   V(ODDBALL_TYPE)                                               \
                                                                 \
   V(MAP_TYPE)                                                   \
@@ -673,6 +675,7 @@ enum InstanceType : uint8_t {
 
   // Other primitives (cannot contain non-map-word pointers to heap objects).
   HEAP_NUMBER_TYPE,
+  BIGINT_TYPE,
   ODDBALL_TYPE,  // LAST_PRIMITIVE_TYPE
 
   // Objects allocated in their own spaces (never in new space).
@@ -971,6 +974,7 @@ template <class C> inline bool Is(Object* obj);
   V(AbstractCode)                         \
   V(AccessCheckNeeded)                    \
   V(ArrayList)                            \
+  V(BigInt)                               \
   V(BoilerplateDescription)               \
   V(Boolean)                              \
   V(BreakPoint)                           \
@@ -3649,7 +3653,6 @@ class Code: public HeapObject {
   typedef uint32_t Flags;
 
 #define NON_IC_KIND_LIST(V) \
-  V(FUNCTION)               \
   V(OPTIMIZED_FUNCTION)     \
   V(BYTECODE_HANDLER)       \
   V(STUB)                   \
@@ -3721,12 +3724,10 @@ class Code: public HeapObject {
 
   // [raw_type_feedback_info]: This field stores various things, depending on
   // the kind of the code object.
-  //   FUNCTION           => type feedback information.
   //   STUB and ICs       => major/minor key as Smi.
+  // TODO(mvstanton): rename raw_type_feedback_info to stub_key, since the
+  // field is no longer overloaded.
   DECL_ACCESSORS(raw_type_feedback_info, Object)
-  inline Object* type_feedback_info() const;
-  inline void set_type_feedback_info(
-      Object* value, WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
   inline uint32_t stub_key() const;
   inline void set_stub_key(uint32_t key);
 
@@ -3790,12 +3791,6 @@ class Code: public HeapObject {
   // (e.g., NumberConstructor_ConstructStub).
   inline bool is_construct_stub() const;
   inline void set_is_construct_stub(bool value);
-
-  // [has_reloc_info_for_serialization]: For FUNCTION kind, tells if its
-  // reloc info includes runtime and external references to support
-  // serialization/deserialization.
-  inline bool has_reloc_info_for_serialization() const;
-  inline void set_has_reloc_info_for_serialization(bool value);
 
   // [builtin_index]: For builtins, tells which builtin index the code object
   // has. Note that builtins can have a code kind other than BUILTIN. The
@@ -3975,7 +3970,6 @@ class Code: public HeapObject {
 #ifdef DEBUG
   enum VerifyMode { kNoContextSpecificPointers, kNoContextRetainingPointers };
   void VerifyEmbeddedObjects(VerifyMode mode = kNoContextRetainingPointers);
-  static void VerifyRecompiledCode(Code* old_code, Code* new_code);
 #endif  // DEBUG
 
   inline bool CanContainWeakObjects();
@@ -4017,6 +4011,11 @@ class Code: public HeapObject {
   static const int kHeaderSize =
       (kHeaderPaddingStart + kCodeAlignmentMask) & ~kCodeAlignmentMask;
 
+  // Data or code not directly visited by GC directly starts here.
+  // The serializer needs to copy bytes starting from here verbatim.
+  // Objects embedded into code is visited via reloc info.
+  static const int kDataStart = kInstructionSizeOffset;
+
   inline int GetUnwindingInfoSizeOffset() const;
 
   class BodyDescriptor;
@@ -4029,12 +4028,6 @@ class Code: public HeapObject {
       : public BitField<ExtraICState, KindField::kNext,
                         PlatformSmiTagging::kSmiValueSize - KindField::kNext> {
   };
-
-  // KindSpecificFlags1 layout (FUNCTION)
-  static const int kFullCodeFlags = kKindSpecificFlags1Offset;
-  static const int kFullCodeFlagsHasRelocInfoForSerialization = 0;
-  class FullCodeFlagsHasRelocInfoForSerialization
-      : public BitField<bool, kFullCodeFlagsHasRelocInfoForSerialization, 1> {};
 
   // KindSpecificFlags1 layout (STUB, BUILTIN and OPTIMIZED_FUNCTION)
   static const int kStackSlotsFirstBit = 0;

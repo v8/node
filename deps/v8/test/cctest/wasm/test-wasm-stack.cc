@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/api.h"
 #include "src/assembler-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/value-helper.h"
@@ -94,6 +95,8 @@ void CheckComputeLocation(v8::internal::Isolate* i_isolate, Handle<Object> exc,
   CHECK_EQ(topLocation.column - 1, message->GetColumnNumber());
 }
 
+#undef CHECK_CSTREQ
+
 }  // namespace
 
 // Call from JS to wasm to JS and throw an Error from JS.
@@ -152,7 +155,8 @@ TEST(CollectDetailedWasmStack_WasmError) {
     int unreachable_pos = 1 << (8 * pos_shift);
     TestSignatures sigs;
     // Create a WasmRunner with stack checks and traps enabled.
-    WasmRunner<int> r(kExecuteCompiled, "main", true);
+    WasmRunner<int> r(kExecuteCompiled, "main",
+                      compiler::kRuntimeExceptionSupport);
 
     std::vector<byte> code(unreachable_pos + 1, kExprNop);
     code[unreachable_pos] = kExprUnreachable;

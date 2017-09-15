@@ -428,13 +428,26 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::BinaryOperationSmiLiteral(
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::CountOperation(Token::Value op,
+BytecodeArrayBuilder& BytecodeArrayBuilder::UnaryOperation(Token::Value op,
                                                            int feedback_slot) {
-  if (op == Token::Value::ADD) {
-    OutputInc(feedback_slot);
-  } else {
-    DCHECK_EQ(op, Token::Value::SUB);
-    OutputDec(feedback_slot);
+  switch (op) {
+    case Token::Value::INC:
+      OutputInc(feedback_slot);
+      break;
+    case Token::Value::DEC:
+      OutputDec(feedback_slot);
+      break;
+    case Token::Value::ADD:
+      OutputToNumber(feedback_slot);
+      break;
+    case Token::Value::SUB:
+      OutputNegate(feedback_slot);
+      break;
+    case Token::Value::BIT_NOT:
+      OutputBitwiseNot(feedback_slot);
+      break;
+    default:
+      UNREACHABLE();
   }
   return *this;
 }
@@ -833,8 +846,9 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StoreNamedProperty(
   // literal is available (not a unit test case).
   if (literal_) {
     FeedbackSlot slot = FeedbackVector::ToSlot(feedback_slot);
-    CHECK_EQ(GetLanguageModeFromSlotKind(feedback_vector_spec()->GetKind(slot)),
-             language_mode);
+    DCHECK_EQ(
+        GetLanguageModeFromSlotKind(feedback_vector_spec()->GetKind(slot)),
+        language_mode);
   }
 #endif
   OutputStaNamedProperty(object, name_index, feedback_slot);
@@ -856,8 +870,8 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StoreNamedOwnProperty(
   // the function literal is available (not a unit test case).
   if (literal_) {
     FeedbackSlot slot = FeedbackVector::ToSlot(feedback_slot);
-    CHECK_EQ(FeedbackSlotKind::kStoreOwnNamed,
-             feedback_vector_spec()->GetKind(slot));
+    DCHECK_EQ(FeedbackSlotKind::kStoreOwnNamed,
+              feedback_vector_spec()->GetKind(slot));
   }
 #endif
   OutputStaNamedOwnProperty(object, name_index, feedback_slot);
@@ -872,8 +886,9 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::StoreKeyedProperty(
   // literal is available (not a unit test case).
   if (literal_) {
     FeedbackSlot slot = FeedbackVector::ToSlot(feedback_slot);
-    CHECK_EQ(GetLanguageModeFromSlotKind(feedback_vector_spec()->GetKind(slot)),
-             language_mode);
+    DCHECK_EQ(
+        GetLanguageModeFromSlotKind(feedback_vector_spec()->GetKind(slot)),
+        language_mode);
   }
 #endif
   OutputStaKeyedProperty(object, key, feedback_slot);
@@ -994,9 +1009,8 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::ToName(Register out) {
   return *this;
 }
 
-BytecodeArrayBuilder& BytecodeArrayBuilder::ToNumber(Register out,
-                                                     int feedback_slot) {
-  OutputToNumber(out, feedback_slot);
+BytecodeArrayBuilder& BytecodeArrayBuilder::ToNumber(int feedback_slot) {
+  OutputToNumber(feedback_slot);
   return *this;
 }
 

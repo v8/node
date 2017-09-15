@@ -86,13 +86,7 @@ struct SmiIndex {
 class TurboAssembler : public Assembler {
  public:
   TurboAssembler(Isolate* isolate, void* buffer, int buffer_size,
-                 CodeObjectRequired create_code_object)
-      : Assembler(isolate, buffer, buffer_size), isolate_(isolate) {
-    if (create_code_object == CodeObjectRequired::kYes) {
-      code_object_ =
-          Handle<HeapObject>::New(isolate->heap()->undefined_value(), isolate);
-    }
-  }
+                 CodeObjectRequired create_code_object);
 
   void set_has_frame(bool value) { has_frame_ = value; }
   bool has_frame() const { return has_frame_; }
@@ -413,6 +407,13 @@ class TurboAssembler : public Assembler {
     Move(kRootRegister, roots_array_start);
     addp(kRootRegister, Immediate(kRootRegisterBias));
   }
+
+  void SaveRegisters(RegList registers);
+  void RestoreRegisters(RegList registers);
+
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode);
 
   void MoveNumber(Register dst, double value);
   void MoveNonSmi(Register dst, double value);

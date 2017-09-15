@@ -78,24 +78,21 @@ struct ModuleEnv {
   const uintptr_t globals_start;
 };
 
+enum RuntimeExceptionSupport : bool {
+  kRuntimeExceptionSupport = true,
+  kNoRuntimeExceptionSupport = false
+};
+
 class WasmCompilationUnit final {
  public:
-  // Use the following constructors if you know you are running on the
-  // foreground thread.
-  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes,
-                      ModuleEnv* env, const wasm::WasmFunction* function,
-                      Handle<Code> centry_stub);
-  WasmCompilationUnit(Isolate* isolate, ModuleEnv* env, wasm::FunctionBody body,
-                      wasm::WasmName name, int index, Handle<Code> centry_stub);
-  // Use the following constructors if the compilation may run on a background
-  // thread.
-  WasmCompilationUnit(Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes,
-                      ModuleEnv* env, const wasm::WasmFunction* function,
-                      Handle<Code> centry_stub,
-                      const std::shared_ptr<Counters>& async_counters);
-  WasmCompilationUnit(Isolate* isolate, ModuleEnv* env, wasm::FunctionBody body,
-                      wasm::WasmName name, int index, Handle<Code> centry_stub,
-                      const std::shared_ptr<Counters>& async_counters);
+  // If constructing from a background thread, pass in a Counters*, and ensure
+  // that the Counters live at least as long as this compilation unit (which
+  // typically means to hold a std::shared_ptr<Counters>).
+  // If no such pointer is passed, Isolate::counters() will be called. This is
+  // only allowed to happen on the foreground thread.
+  WasmCompilationUnit(Isolate*, ModuleEnv*, wasm::FunctionBody, wasm::WasmName,
+                      int index, Handle<Code> centry_stub, Counters* = nullptr,
+                      RuntimeExceptionSupport = kRuntimeExceptionSupport);
 
   int func_index() const { return func_index_; }
 
@@ -130,6 +127,8 @@ class WasmCompilationUnit final {
   Handle<Code> centry_stub_;
   int func_index_;
   wasm::Result<wasm::DecodeStruct*> graph_construction_result_;
+  // See WasmGraphBuilder::runtime_exception_support_.
+  RuntimeExceptionSupport runtime_exception_support_;
   bool ok_ = true;
   size_t memory_cost_ = 0;
 
@@ -176,10 +175,9 @@ Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig);
 typedef ZoneVector<Node*> NodeVector;
 class WasmGraphBuilder {
  public:
-  WasmGraphBuilder(
-      ModuleEnv* env, Zone* z, JSGraph* g, Handle<Code> centry_stub_,
-      wasm::FunctionSig* sig,
-      compiler::SourcePositionTable* source_position_table = nullptr);
+  WasmGraphBuilder(ModuleEnv*, Zone*, JSGraph*, Handle<Code> centry_stub_,
+                   wasm::FunctionSig*, compiler::SourcePositionTable* = nullptr,
+                   RuntimeExceptionSupport = kRuntimeExceptionSupport);
 
   Node** Buffer(size_t count) {
     if (count > cur_bufsize_) {
@@ -214,9 +212,15 @@ class WasmGraphBuilder {
   Node* Unop(wasm::WasmOpcode opcode, Node* input,
              wasm::WasmCodePosition position = wasm::kNoCodePosition);
   Node* GrowMemory(Node* input);
-  Node* Throw(Node* input);
+  Node* Throw(uint32_t tag, const wasm::WasmException* exception,
+              const Vector<Node*> values);
   Node* Rethrow();
-  Node* Catch(Node* input, wasm::WasmCodePosition position);
+  Node* Catch(Node* input);
+  Node* ConvertExceptionTagToRuntimeId(uint32_t tag);
+  Node* GetExceptionRuntimeId(Node* exception);
+  Node** GetExceptionValues(
+      const wasm::WasmException* except_decl, Node* exception,
+      wasm::WasmCodePosition position = wasm::kNoCodePosition);
   unsigned InputCount(Node* node);
   bool IsPhiWithMerge(Node* phi, Node* merge);
   bool ThrowsException(Node* node, Node** if_success, Node** if_exception);
@@ -289,7 +293,7 @@ class WasmGraphBuilder {
                 wasm::WasmCodePosition position);
   Node* StoreMem(MachineType memtype, Node* index, uint32_t offset,
                  uint32_t alignment, Node* val, wasm::WasmCodePosition position,
-                 wasm::ValueType type = wasm::kWasmStmt);
+                 wasm::ValueType type);
   static void PrintDebugName(Node* node);
 
   Node* Control() { return *control_; }
@@ -326,10 +330,6 @@ class WasmGraphBuilder {
 
   bool has_simd() const { return has_simd_; }
 
-  void SetRuntimeExceptionSupport(bool value) {
-    has_runtime_exception_support_ = value;
-  }
-
   const wasm::WasmModule* module() { return env_ ? env_->module : nullptr; }
 
  private:
@@ -354,7 +354,7 @@ class WasmGraphBuilder {
   // If the runtime doesn't support exception propagation,
   // we won't generate stack checks, and trap handling will also
   // be generated differently.
-  bool has_runtime_exception_support_ = true;
+  RuntimeExceptionSupport runtime_exception_support_;
 
   wasm::FunctionSig* sig_;
   SetOncePointer<const Operator> allocate_heap_number_operator_;
@@ -474,6 +474,11 @@ class WasmGraphBuilder {
   Node* BuildI32AsmjsRemU(Node* left, Node* right);
   Node* BuildAsmjsLoadMem(MachineType type, Node* index);
   Node* BuildAsmjsStoreMem(MachineType type, Node* index, Node* val);
+
+  uint32_t GetExceptionEncodedSize(const wasm::WasmException* exception) const;
+  Node* BuildEncodeException32BitValue(Node* except, uint32_t* index,
+                                       Node* value);
+  Node* BuildDecodeException32BitValue(Node* const* values, uint32_t* index);
 
   Node** Realloc(Node** buffer, size_t old_count, size_t new_count) {
     Node** buf = Buffer(new_count);

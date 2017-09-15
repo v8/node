@@ -189,24 +189,15 @@ DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
 DEFINE_IMPLICATION(es_staging, harmony)
 
 // Features that are still work in progress (behind individual flags).
-#define HARMONY_INPROGRESS_BASE(V)                                    \
+#define HARMONY_INPROGRESS(V)                                         \
   V(harmony_array_prototype_values, "harmony Array.prototype.values") \
   V(harmony_function_sent, "harmony function.sent")                   \
   V(harmony_do_expressions, "harmony do-expressions")                 \
-  V(harmony_class_fields, "harmony public fields in class literals")
-
-#ifdef V8_INTL_SUPPORT
-#define HARMONY_INPROGRESS(V)                    \
-  HARMONY_INPROGRESS_BASE(V)                     \
-  V(harmony_number_format_to_parts,              \
-    "Intl.NumberFormat.prototype.formatToParts") \
-  V(harmony_plural_rules, "Intl.PluralRules")
-#else
-#define HARMONY_INPROGRESS(V) HARMONY_INPROGRESS_BASE(V)
-#endif
+  V(harmony_class_fields, "harmony public fields in class literals")  \
+  V(harmony_bigint, "harmony arbitrary precision integers")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
-#define HARMONY_STAGED(V)                                               \
+#define HARMONY_STAGED_BASE(V)                                          \
   V(harmony_function_tostring, "harmony Function.prototype.toString")   \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
   V(harmony_regexp_property, "harmony Unicode regexp property classes") \
@@ -216,6 +207,16 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_dynamic_import, "harmony dynamic import")                   \
   V(harmony_async_iteration, "harmony async iteration")                 \
   V(harmony_promise_finally, "harmony Promise.prototype.finally")
+
+#ifdef V8_INTL_SUPPORT
+#define HARMONY_STAGED(V)                        \
+  HARMONY_STAGED_BASE(V)                         \
+  V(harmony_number_format_to_parts,              \
+    "Intl.NumberFormat.prototype.formatToParts") \
+  V(harmony_plural_rules, "Intl.PluralRules")
+#else
+#define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
+#endif
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                              \
@@ -254,8 +255,7 @@ HARMONY_SHIPPING(FLAG_SHIPPING_FEATURES)
 #undef FLAG_SHIPPING_FEATURES
 
 #ifdef V8_INTL_SUPPORT
-DEFINE_BOOL(icu_timezone_data, false,
-            "get information about timezones from ICU")
+DEFINE_BOOL(icu_timezone_data, true, "get information about timezones from ICU")
 #endif
 
 #ifdef V8_ENABLE_FUTURE
@@ -268,6 +268,7 @@ DEFINE_BOOL(future, FUTURE_BOOL,
             "not-too-far future")
 
 DEFINE_IMPLICATION(future, preparser_scope_analysis)
+DEFINE_IMPLICATION(future, lazy_deserialization)
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
@@ -405,9 +406,6 @@ DEFINE_BOOL(turbo_inlining, true, "enable inlining in TurboFan")
 DEFINE_INT(max_inlining_levels, 5, "maximum number of inlining levels")
 DEFINE_INT(max_inlined_bytecode_size, 500,
            "maximum size of bytecode for a single inlining")
-DEFINE_INT(max_inlined_bytecode_size_absolute, 4000,
-           "maximum absolute size of bytecode considered for inlining "
-           "(incl. small functions)")
 DEFINE_INT(max_inlined_bytecode_size_cumulative, 1000,
            "maximum cumulative size of bytecode considered for inlining")
 DEFINE_FLOAT(reserve_inline_budget_scale_factor, 1.2,
@@ -416,6 +414,14 @@ DEFINE_INT(max_inlined_bytecode_size_small, 30,
            "maximum size of bytecode considered for small function inlining")
 DEFINE_FLOAT(min_inlining_frequency, 0.15, "minimum frequency for inlining")
 DEFINE_BOOL(polymorphic_inlining, true, "polymorphic inlining")
+DEFINE_BOOL(stress_inline, false,
+            "set high thresholds for inlining to inline as much as possible")
+DEFINE_VALUE_IMPLICATION(stress_inline, max_inlining_levels, 999999)
+DEFINE_VALUE_IMPLICATION(stress_inline, max_inlined_bytecode_size, 999999)
+DEFINE_VALUE_IMPLICATION(stress_inline, max_inlined_bytecode_size_cumulative,
+                         999999)
+DEFINE_VALUE_IMPLICATION(stress_inline, min_inlining_frequency, 0)
+DEFINE_VALUE_IMPLICATION(stress_inline, polymorphic_inlining, true)
 DEFINE_BOOL(trace_turbo_inlining, false, "trace TurboFan inlining")
 DEFINE_BOOL(inline_accessors, true, "inline JavaScript accessors")
 DEFINE_BOOL(inline_into_try, true, "inline into try blocks")

@@ -214,6 +214,19 @@ class BytecodeArray::BodyDescriptor final : public BodyDescriptorBase {
   }
 };
 
+class BigInt::BodyDescriptor final : public BodyDescriptorBase {
+ public:
+  static bool IsValidSlot(HeapObject* obj, int offset) { return false; }
+
+  template <typename ObjectVisitor>
+  static inline void IterateBody(HeapObject* obj, int object_size,
+                                 ObjectVisitor* v) {}
+
+  static inline int SizeOf(Map* map, HeapObject* obj) {
+    return BigInt::SizeFor(BigInt::cast(obj)->length());
+  }
+};
+
 class FixedDoubleArray::BodyDescriptor final : public BodyDescriptorBase {
  public:
   static bool IsValidSlot(HeapObject* obj, int offset) { return false; }
@@ -359,6 +372,9 @@ class Code::BodyDescriptor final : public BodyDescriptorBase {
     IteratePointers(obj, kRelocationInfoOffset, kNextCodeLinkOffset, v);
     v->VisitNextCodeLink(Code::cast(obj),
                          HeapObject::RawField(obj, kNextCodeLinkOffset));
+
+    // GC does not visit data/code in the header and in the body directly.
+    STATIC_ASSERT(Code::kNextCodeLinkOffset + kPointerSize == kDataStart);
 
     RelocIterator it(Code::cast(obj), mode_mask);
     Isolate* isolate = obj->GetIsolate();
@@ -522,6 +538,7 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3) {
     case FILLER_TYPE:
     case BYTE_ARRAY_TYPE:
     case FREE_SPACE_TYPE:
+    case BIGINT_TYPE:
       return ReturnType();
 
 #define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size) \

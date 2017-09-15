@@ -2468,6 +2468,23 @@ AllocationResult Heap::AllocateHeapNumber(MutableMode mode,
   return result;
 }
 
+AllocationResult Heap::AllocateBigInt(int length, bool zero_initialize,
+                                      PretenureFlag pretenure) {
+  if (length < 0 || length > BigInt::kMaxLength) {
+    v8::internal::Heap::FatalProcessOutOfMemory("invalid BigInt length", true);
+  }
+  int size = BigInt::SizeFor(length);
+  AllocationSpace space = SelectSpace(pretenure);
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = AllocateRaw(size, space);
+    if (!allocation.To(&result)) return allocation;
+  }
+  result->set_map_after_allocation(bigint_map(), SKIP_WRITE_BARRIER);
+  BigInt::cast(result)->Initialize(length, zero_initialize);
+  return result;
+}
+
 AllocationResult Heap::AllocateCell(Object* value) {
   int size = Cell::kSize;
   STATIC_ASSERT(Cell::kSize <= kMaxRegularHeapObjectSize);
@@ -5505,7 +5522,7 @@ void Heap::NotifyDeserializationComplete() {
 #ifdef DEBUG
     // All pages right after bootstrapping must be marked as never-evacuate.
     for (Page* p : *s) {
-      CHECK(p->NeverEvacuate());
+      DCHECK(p->NeverEvacuate());
     }
 #endif  // DEBUG
   }

@@ -6,6 +6,7 @@
 
 #include "src/accessors.h"
 #include "src/api-natives.h"
+#include "src/api.h"
 #include "src/base/ieee754.h"
 #include "src/code-stubs.h"
 #include "src/compiler.h"
@@ -29,6 +30,41 @@
 
 namespace v8 {
 namespace internal {
+
+void SourceCodeCache::Initialize(Isolate* isolate, bool create_heap_objects) {
+  cache_ = create_heap_objects ? isolate->heap()->empty_fixed_array() : NULL;
+}
+
+bool SourceCodeCache::Lookup(Vector<const char> name,
+                             Handle<SharedFunctionInfo>* handle) {
+  for (int i = 0; i < cache_->length(); i += 2) {
+    SeqOneByteString* str = SeqOneByteString::cast(cache_->get(i));
+    if (str->IsUtf8EqualTo(name)) {
+      *handle = Handle<SharedFunctionInfo>(
+          SharedFunctionInfo::cast(cache_->get(i + 1)));
+      return true;
+    }
+  }
+  return false;
+}
+
+void SourceCodeCache::Add(Vector<const char> name,
+                          Handle<SharedFunctionInfo> shared) {
+  Isolate* isolate = shared->GetIsolate();
+  Factory* factory = isolate->factory();
+  HandleScope scope(isolate);
+  int length = cache_->length();
+  Handle<FixedArray> new_array = factory->NewFixedArray(length + 2, TENURED);
+  cache_->CopyTo(0, *new_array, 0, cache_->length());
+  cache_ = *new_array;
+  Handle<String> str =
+      factory->NewStringFromOneByte(Vector<const uint8_t>::cast(name), TENURED)
+          .ToHandleChecked();
+  DCHECK(!str.is_null());
+  cache_->set(length, *str);
+  cache_->set(length + 1, *shared);
+  Script::cast(shared->script())->set_type(type_);
+}
 
 Bootstrapper::Bootstrapper(Isolate* isolate)
     : isolate_(isolate),
@@ -4151,6 +4187,7 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_dynamic_import)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_template_escapes)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrict_constructor_return)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_strict_legacy_accessor_builtins)
+EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_bigint)
 
 void InstallPublicSymbol(Factory* factory, Handle<Context> native_context,
                          const char* name, Handle<Symbol> value) {

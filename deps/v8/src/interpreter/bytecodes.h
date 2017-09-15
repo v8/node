@@ -144,6 +144,8 @@ namespace interpreter {
   /* Unary Operators */                                                        \
   V(Inc, AccumulatorUse::kReadWrite, OperandType::kIdx)                        \
   V(Dec, AccumulatorUse::kReadWrite, OperandType::kIdx)                        \
+  V(Negate, AccumulatorUse::kReadWrite, OperandType::kIdx)                     \
+  V(BitwiseNot, AccumulatorUse::kReadWrite, OperandType::kIdx)                 \
   V(ToBooleanLogicalNot, AccumulatorUse::kReadWrite)                           \
   V(LogicalNot, AccumulatorUse::kReadWrite)                                    \
   V(TypeOf, AccumulatorUse::kReadWrite)                                        \
@@ -215,7 +217,7 @@ namespace interpreter {
                                                                                \
   /* Cast operators */                                                         \
   V(ToName, AccumulatorUse::kRead, OperandType::kRegOut)                       \
-  V(ToNumber, AccumulatorUse::kRead, OperandType::kRegOut, OperandType::kIdx)  \
+  V(ToNumber, AccumulatorUse::kReadWrite, OperandType::kIdx)                   \
   V(ToObject, AccumulatorUse::kRead, OperandType::kRegOut)                     \
                                                                                \
   /* Literals */                                                               \

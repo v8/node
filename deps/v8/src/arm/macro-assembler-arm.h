@@ -88,13 +88,7 @@ enum TargetAddressStorageMode {
 class TurboAssembler : public Assembler {
  public:
   TurboAssembler(Isolate* isolate, void* buffer, int buffer_size,
-                 CodeObjectRequired create_code_object)
-      : Assembler(isolate, buffer, buffer_size), isolate_(isolate) {
-    if (create_code_object == CodeObjectRequired::kYes) {
-      code_object_ =
-          Handle<HeapObject>::New(isolate->heap()->undefined_value(), isolate);
-    }
-  }
+                 CodeObjectRequired create_code_object);
 
   void set_has_frame(bool value) { has_frame_ = value; }
   bool has_frame() const { return has_frame_; }
@@ -398,6 +392,13 @@ class TurboAssembler : public Assembler {
   // Check whether d16-d31 are available on the CPU. The result is given by the
   // Z condition flag: Z==0 if d16-d31 available, Z==1 otherwise.
   void CheckFor32DRegs(Register scratch);
+
+  void SaveRegisters(RegList registers);
+  void RestoreRegisters(RegList registers);
+
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode);
 
   // Does a runtime check for 16/32 FP registers. Either way, pushes 32 double
   // values to location, saving [d0..(d15|d31)].

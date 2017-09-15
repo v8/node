@@ -11,6 +11,7 @@
 #include "src/builtins/builtins-constructor-gen.h"
 #include "src/code-events.h"
 #include "src/code-factory.h"
+#include "src/debug/debug.h"
 #include "src/factory.h"
 #include "src/ic/accessor-assembler.h"
 #include "src/ic/binary-op-assembler.h"
@@ -1130,6 +1131,29 @@ IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
   Dispatch();
 }
 
+// BitwiseNot <feedback_slot>
+//
+// Perform bitwise-not on the accumulator.
+IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
+  Node* operand = GetAccumulator();
+  Node* slot_index = BytecodeOperandIdx(0);
+  Node* feedback_vector = LoadFeedbackVector();
+  Node* context = GetContext();
+
+  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
+  Node* truncated_value =
+      TruncateTaggedToWord32WithFeedback(context, operand, &var_type_feedback);
+  Node* value = Word32Not(truncated_value);
+  Node* result = ChangeInt32ToTagged(value);
+  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                        BinaryOperationFeedback::kSignedSmall,
+                                        BinaryOperationFeedback::kNumber);
+  UpdateFeedback(SmiOr(result_type, var_type_feedback.value()), feedback_vector,
+                 slot_index);
+  SetAccumulator(result);
+  Dispatch();
+}
+
 // ShiftLeftSmi <imm>
 //
 // Left shifts accumulator by the count specified in <imm>.
@@ -1214,6 +1238,80 @@ IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterAssembler) {
   Dispatch();
 }
 
+// Negate <feedback_slot>
+//
+// Perform arithmetic negation on the accumulator.
+IGNITION_HANDLER(Negate, InterpreterAssembler) {
+  Node* operand = GetAccumulator();
+
+  Label end(this);
+  VARIABLE(var_type_feedback, MachineRepresentation::kTaggedSigned);
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+
+  Label if_smi(this), if_heapnumber(this), if_notnumber(this, Label::kDeferred);
+  GotoIf(TaggedIsSmi(operand), &if_smi);
+  Branch(IsHeapNumber(operand), &if_heapnumber, &if_notnumber);
+
+  BIND(&if_smi);
+  {
+    Label if_zero(this), if_min_smi(this);
+    // Return -0 if operand is 0.
+    GotoIf(SmiEqual(operand, SmiConstant(0)), &if_zero);
+
+    // Special-case the minimum smi to avoid overflow.
+    GotoIf(SmiEqual(operand, SmiConstant(Smi::kMinValue)), &if_min_smi);
+
+    // Else simply subtract operand from 0.
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
+    var_result.Bind(SmiSub(SmiConstant(0), operand));
+    Goto(&end);
+
+    BIND(&if_zero);
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(MinusZeroConstant());
+    Goto(&end);
+
+    BIND(&if_min_smi);
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(AllocateHeapNumberWithValue(
+        Float64Constant(-static_cast<double>(Smi::kMinValue))));
+    Goto(&end);
+  }
+
+  BIND(&if_heapnumber);
+  {
+    Node* result = Float64Neg(LoadHeapNumberValue(operand));
+    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+    var_result.Bind(AllocateHeapNumberWithValue(result));
+    Goto(&end);
+  }
+
+  BIND(&if_notnumber);
+  {
+    Node* instance_type = LoadInstanceType(operand);
+    Node* is_oddball = Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE));
+
+    var_type_feedback.Bind(
+        SelectSmiConstant(is_oddball, BinaryOperationFeedback::kNumberOrOddball,
+                          BinaryOperationFeedback::kAny));
+
+    Node* context = GetContext();
+    Node* result =
+        CallBuiltin(Builtins::kMultiply, context, operand, SmiConstant(-1));
+    var_result.Bind(result);
+    Goto(&end);
+  }
+
+  BIND(&end);
+
+  Node* slot_index = BytecodeOperandIdx(0);
+  Node* feedback_vector = LoadFeedbackVector();
+  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
+
+  SetAccumulator(var_result.value());
+  Dispatch();
+}
+
 // ToName <dst>
 //
 // Convert the object referenced by the accumulator to a name.
@@ -1225,7 +1323,7 @@ IGNITION_HANDLER(ToName, InterpreterAssembler) {
   Dispatch();
 }
 
-// ToNumber <dst> <slot>
+// ToNumber <slot>
 //
 // Convert the object referenced by the accumulator to a number.
 IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
@@ -1264,13 +1362,13 @@ IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
   }
 
   BIND(&if_done);
-  StoreRegister(var_result.value(), BytecodeOperandReg(0));
 
   // Record the type feedback collected for {object}.
-  Node* slot_index = BytecodeOperandIdx(1);
+  Node* slot_index = BytecodeOperandIdx(0);
   Node* feedback_vector = LoadFeedbackVector();
   UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
 
+  SetAccumulator(var_result.value());
   Dispatch();
 }
 

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/value-helper.h"
 #include "test/cctest/wasm/wasm-run-utils.h"
@@ -59,6 +60,7 @@ void RunU32BinOp(WasmOpcode wasm_op, Uint32BinOp expected_op) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t> r(kExecuteCompiled);
   uint32_t* memory = r.builder().AddMemoryElems<uint32_t>(8);
+  r.builder().SetHasSharedMemory();
 
   BUILD(r, WASM_ATOMICS_BINOP(wasm_op, WASM_I32V_1(0), WASM_GET_LOCAL(0)));
 
@@ -83,6 +85,7 @@ WASM_EXEC_TEST(I32Exchange) { RunU32BinOp(kExprI32AtomicExchange, Exchange); }
 void RunU16BinOp(WasmOpcode wasm_op, Uint16BinOp expected_op) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t> r(kExecuteCompiled);
+  r.builder().SetHasSharedMemory();
   uint16_t* memory = r.builder().AddMemoryElems<uint16_t>(8);
 
   BUILD(r, WASM_ATOMICS_BINOP(wasm_op, WASM_I32V_1(0), WASM_GET_LOCAL(0)));
@@ -110,6 +113,7 @@ WASM_EXEC_TEST(I32Exchange16U) {
 void RunU8BinOp(WasmOpcode wasm_op, Uint8BinOp expected_op) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t> r(kExecuteCompiled);
+  r.builder().SetHasSharedMemory();
   uint8_t* memory = r.builder().AddMemoryElems<uint8_t>(8);
 
   BUILD(r, WASM_ATOMICS_BINOP(wasm_op, WASM_I32V_1(0), WASM_GET_LOCAL(0)));
@@ -137,6 +141,7 @@ WASM_EXEC_TEST(I32Exchange8U) {
 WASM_EXEC_TEST(I32CompareExchange) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t, uint32_t> r(kExecuteCompiled);
+  r.builder().SetHasSharedMemory();
   uint32_t* memory = r.builder().AddMemoryElems<uint32_t>(8);
   BUILD(r,
         WASM_ATOMICS_TERNARY_OP(kExprI32AtomicCompareExchange, WASM_I32V_1(0),
@@ -156,6 +161,7 @@ WASM_EXEC_TEST(I32CompareExchange) {
 WASM_EXEC_TEST(I32CompareExchange16U) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t, uint32_t> r(kExecuteCompiled);
+  r.builder().SetHasSharedMemory();
   uint16_t* memory = r.builder().AddMemoryElems<uint16_t>(8);
   BUILD(r, WASM_ATOMICS_TERNARY_OP(kExprI32AtomicCompareExchange16U,
                                    WASM_I32V_1(0), WASM_GET_LOCAL(0),
@@ -175,6 +181,7 @@ WASM_EXEC_TEST(I32CompareExchange16U) {
 WASM_EXEC_TEST(I32CompareExchange8U) {
   EXPERIMENTAL_FLAG_SCOPE(threads);
   WasmRunner<uint32_t, uint32_t, uint32_t> r(kExecuteCompiled);
+  r.builder().SetHasSharedMemory();
   uint8_t* memory = r.builder().AddMemoryElems<uint8_t>(8);
   BUILD(r,
         WASM_ATOMICS_TERNARY_OP(kExprI32AtomicCompareExchange8U, WASM_I32V_1(0),
@@ -190,6 +197,10 @@ WASM_EXEC_TEST(I32CompareExchange8U) {
     }
   }
 }
+
+#undef WASM_ATOMICS_OP
+#undef WASM_ATOMICS_BINOP
+#undef WASM_ATOMICS_TERNARY_OP
 
 }  // namespace wasm
 }  // namespace internal

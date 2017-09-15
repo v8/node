@@ -17,6 +17,7 @@
 #include "src/interpreter/bytecode-register-allocator.h"
 #include "src/interpreter/control-flow-builders.h"
 #include "src/objects-inl.h"
+#include "src/objects/debug-objects.h"
 #include "src/parsing/parse-info.h"
 #include "src/parsing/token.h"
 
@@ -3429,15 +3430,6 @@ void BytecodeGenerator::VisitNot(UnaryOperation* expr) {
   }
 }
 
-void BytecodeGenerator::BuildBinaryOperationForUnaryOperation(
-    UnaryOperation* expr, Token::Value binop, int rhs) {
-  VisitForAccumulatorValue(expr->expression());
-  builder()->SetExpressionPosition(expr);
-  builder()->BinaryOperationSmiLiteral(
-      binop, Smi::FromInt(rhs),
-      feedback_index(expr->UnaryOperationFeedbackSlot()));
-}
-
 void BytecodeGenerator::VisitUnaryOperation(UnaryOperation* expr) {
   switch (expr->op()) {
     case Token::Value::NOT:
@@ -3452,16 +3444,13 @@ void BytecodeGenerator::VisitUnaryOperation(UnaryOperation* expr) {
     case Token::Value::DELETE:
       VisitDelete(expr);
       break;
-    // TODO(adamk): Output specific bytecodes for ADD, SUB, and BIT_NOT
-    // instead of transforming them to binary operations.
     case Token::Value::ADD:
-      BuildBinaryOperationForUnaryOperation(expr, Token::Value::MUL, 1);
-      break;
     case Token::Value::SUB:
-      BuildBinaryOperationForUnaryOperation(expr, Token::Value::MUL, -1);
-      break;
     case Token::Value::BIT_NOT:
-      BuildBinaryOperationForUnaryOperation(expr, Token::Value::BIT_XOR, -1);
+      VisitForAccumulatorValue(expr->expression());
+      builder()->SetExpressionPosition(expr);
+      builder()->UnaryOperation(
+          expr->op(), feedback_index(expr->UnaryOperationFeedbackSlot()));
       break;
     default:
       UNREACHABLE();
@@ -3588,17 +3577,17 @@ void BytecodeGenerator::VisitCountOperation(CountOperation* expr) {
   // Save result for postfix expressions.
   FeedbackSlot count_slot = expr->CountBinaryOpFeedbackSlot();
   if (is_postfix) {
-    // Convert old value into a number before saving it.
     old_value = register_allocator()->NewRegister();
+    // Convert old value into a number before saving it.
     // TODO(ignition): Think about adding proper PostInc/PostDec bytecodes
     // instead of this ToNumber + Inc/Dec dance.
     builder()
-        ->ToNumber(old_value, feedback_index(count_slot))
-        .LoadAccumulatorWithRegister(old_value);
+        ->ToNumber(feedback_index(count_slot))
+        .StoreAccumulatorInRegister(old_value);
   }
 
   // Perform +1/-1 operation.
-  builder()->CountOperation(expr->binary_op(), feedback_index(count_slot));
+  builder()->UnaryOperation(expr->op(), feedback_index(count_slot));
 
   // Store the value.
   builder()->SetExpressionPosition(expr);

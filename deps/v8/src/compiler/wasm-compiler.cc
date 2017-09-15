@@ -55,6 +55,8 @@ namespace compiler {
 
 namespace {
 
+constexpr uint32_t kBytesPerExceptionValuesArrayElement = 2;
+
 void MergeControlToEnd(JSGraph* jsgraph, Node* node) {
   Graph* g = jsgraph->graph();
   if (g->end()) {
@@ -69,7 +71,8 @@ void MergeControlToEnd(JSGraph* jsgraph, Node* node) {
 WasmGraphBuilder::WasmGraphBuilder(
     ModuleEnv* env, Zone* zone, JSGraph* jsgraph, Handle<Code> centry_stub,
     wasm::FunctionSig* sig,
-    compiler::SourcePositionTable* source_position_table)
+    compiler::SourcePositionTable* source_position_table,
+    RuntimeExceptionSupport exception_support)
     : zone_(zone),
       jsgraph_(jsgraph),
       centry_stub_node_(jsgraph_->HeapConstant(centry_stub)),
@@ -79,6 +82,7 @@ WasmGraphBuilder::WasmGraphBuilder(
       function_table_sizes_(zone),
       cur_buffer_(def_buffer_),
       cur_bufsize_(kDefaultBufferSize),
+      runtime_exception_support_(exception_support),
       sig_(sig),
       source_position_table_(source_position_table) {
   for (size_t i = sig->parameter_count(); i > 0 && !has_simd_; --i) {
@@ -194,7 +198,7 @@ void WasmGraphBuilder::StackCheck(wasm::WasmCodePosition position,
                                   Node** effect, Node** control) {
   // TODO(mtrofin): "!env_" happens when we generate a wrapper.
   // We should factor wrappers separately from wasm codegen.
-  if (FLAG_wasm_no_stack_checks || !env_ || !has_runtime_exception_support_) {
+  if (FLAG_wasm_no_stack_checks || !env_ || !runtime_exception_support_) {
     return;
   }
   if (effect == nullptr) effect = effect_;
@@ -830,7 +834,7 @@ Node* WasmGraphBuilder::BranchExpectFalse(Node* cond, Node** true_node,
 }
 
 Builtins::Name WasmGraphBuilder::GetBuiltinIdForTrap(wasm::TrapReason reason) {
-  if (!has_runtime_exception_support_) {
+  if (runtime_exception_support_ == kNoRuntimeExceptionSupport) {
     // We use Builtins::builtin_count as a marker to tell the code generator
     // to generate a call to a testing c-function instead of a runtime
     // function. This code should only be called from a cctest.
@@ -1806,11 +1810,97 @@ Node* WasmGraphBuilder::GrowMemory(Node* input) {
   return result;
 }
 
-Node* WasmGraphBuilder::Throw(Node* input) {
+uint32_t WasmGraphBuilder::GetExceptionEncodedSize(
+    const wasm::WasmException* exception) const {
+  const wasm::WasmExceptionSig* sig = exception->sig;
+  uint32_t encoded_size = 0;
+  for (size_t i = 0; i < sig->parameter_count(); ++i) {
+    size_t byte_size = size_t(1) << ElementSizeLog2Of(sig->GetParam(i));
+    DCHECK_EQ(byte_size % kBytesPerExceptionValuesArrayElement, 0);
+    DCHECK_LE(1, byte_size / kBytesPerExceptionValuesArrayElement);
+    encoded_size += byte_size / kBytesPerExceptionValuesArrayElement;
+  }
+  return encoded_size;
+}
+
+Node* WasmGraphBuilder::Throw(uint32_t tag,
+                              const wasm::WasmException* exception,
+                              const Vector<Node*> values) {
   SetNeedsStackCheck();
-  Node* parameters[] = {BuildChangeInt32ToSmi(input)};
-  return BuildCallToRuntime(Runtime::kWasmThrow, parameters,
-                            arraysize(parameters));
+  uint32_t encoded_size = GetExceptionEncodedSize(exception);
+  Node* create_parameters[] = {
+      BuildChangeUint32ToSmi(ConvertExceptionTagToRuntimeId(tag)),
+      BuildChangeUint32ToSmi(Uint32Constant(encoded_size))};
+  Node* except =
+      BuildCallToRuntime(Runtime::kWasmThrowCreate, create_parameters,
+                         arraysize(create_parameters));
+  uint32_t index = 0;
+  const wasm::WasmExceptionSig* sig = exception->sig;
+  MachineOperatorBuilder* m = jsgraph()->machine();
+  for (size_t i = 0; i < sig->parameter_count(); ++i) {
+    Node* value = values[i];
+    switch (sig->GetParam(i)) {
+      case wasm::kWasmF32:
+        value = graph()->NewNode(m->BitcastFloat32ToInt32(), value);
+      // Intentionally fall to next case.
+      case wasm::kWasmI32:
+        except = BuildEncodeException32BitValue(except, &index, value);
+        break;
+      case wasm::kWasmF64:
+        value = graph()->NewNode(m->BitcastFloat64ToInt64(), value);
+      // Intentionally fall to next case.
+      case wasm::kWasmI64: {
+        Node* upper32 = graph()->NewNode(
+            m->TruncateInt64ToInt32(),
+            Binop(wasm::kExprI64ShrU, value, Int64Constant(32)));
+        except = BuildEncodeException32BitValue(except, &index, upper32);
+        Node* lower32 = graph()->NewNode(m->TruncateInt64ToInt32(), value);
+        except = BuildEncodeException32BitValue(except, &index, lower32);
+        break;
+      }
+      default:
+        CHECK(false);
+        break;
+    }
+  }
+  DCHECK_EQ(encoded_size, index);
+  Node* throw_parameters[] = {except};
+  return BuildCallToRuntime(Runtime::kWasmThrow, throw_parameters,
+                            arraysize(throw_parameters));
+}
+
+Node* WasmGraphBuilder::BuildEncodeException32BitValue(Node* except,
+                                                       uint32_t* index,
+                                                       Node* value) {
+  MachineOperatorBuilder* machine = jsgraph()->machine();
+  Node* upper_parameters[] = {
+      except, BuildChangeUint32ToSmi(Int32Constant(*index)),
+      BuildChangeUint32ToSmi(
+          graph()->NewNode(machine->Word32Shr(), value, Int32Constant(16))),
+  };
+  (*index)++;
+  except = BuildCallToRuntime(Runtime::kWasmExceptionSetElement,
+                              upper_parameters, arraysize(upper_parameters));
+  Node* lower_parameters[] = {
+      except, BuildChangeUint32ToSmi(Int32Constant(*index)),
+      BuildChangeUint32ToSmi(graph()->NewNode(machine->Word32And(), value,
+                                              Int32Constant(0xFFFFu))),
+  };
+  (*index)++;
+  return BuildCallToRuntime(Runtime::kWasmExceptionSetElement, lower_parameters,
+                            arraysize(lower_parameters));
+}
+
+Node* WasmGraphBuilder::BuildDecodeException32BitValue(Node* const* values,
+                                                       uint32_t* index) {
+  MachineOperatorBuilder* machine = jsgraph()->machine();
+  Node* upper = BuildChangeSmiToInt32(values[*index]);
+  (*index)++;
+  upper = graph()->NewNode(machine->Word32Shl(), upper, Int32Constant(16));
+  Node* lower = BuildChangeSmiToInt32(values[*index]);
+  (*index)++;
+  Node* value = graph()->NewNode(machine->Word32Or(), upper, lower);
+  return value;
 }
 
 Node* WasmGraphBuilder::Rethrow() {
@@ -1819,15 +1909,80 @@ Node* WasmGraphBuilder::Rethrow() {
   return result;
 }
 
-Node* WasmGraphBuilder::Catch(Node* input, wasm::WasmCodePosition position) {
+Node* WasmGraphBuilder::Catch(Node* input) {
   SetNeedsStackCheck();
-  Node* parameters[] = {input};  // caught value
-  Node* value = BuildCallToRuntime(Runtime::kWasmSetCaughtExceptionValue,
+  Node* parameters[] = {input};
+  return BuildCallToRuntime(Runtime::kWasmSetCaughtExceptionValue, parameters,
+                            arraysize(parameters));
+}
+
+Node* WasmGraphBuilder::ConvertExceptionTagToRuntimeId(uint32_t tag) {
+  // TODO(kschimpf): Handle exceptions from different modules, when they are
+  // linked at runtime.
+  return Uint32Constant(tag);
+}
+
+Node* WasmGraphBuilder::GetExceptionRuntimeId(Node* exception) {
+  SetNeedsStackCheck();
+  Node* parameters[] = {exception};
+  return BuildChangeSmiToInt32(BuildCallToRuntime(
+      Runtime::kWasmGetExceptionRuntimeId, parameters, arraysize(parameters)));
+}
+
+Node** WasmGraphBuilder::GetExceptionValues(
+    const wasm::WasmException* except_decl, Node* exception,
+    wasm::WasmCodePosition position) {
+  // TODO(kschimpf): We need to move this code to the function-body-decoder.cc
+  // in order to build landing-pad (exception) edges in case the runtime
+  // call causes an exception.
+
+  // Start by getting the encoded values from the exception.
+  Node* parameters[] = {exception};
+  Node* enc_values = BuildCallToRuntime(Runtime::kWasmGetExceptionValuesArray,
+                                        parameters, arraysize(parameters));
+  uint32_t encoded_size = GetExceptionEncodedSize(except_decl);
+  Node** values = Buffer(encoded_size);
+  for (uint32_t i = 0; i < encoded_size; ++i) {
+    Node* parameters[] = {enc_values,
+                          BuildChangeUint32ToSmi(Uint32Constant(i))};
+    values[i] = BuildCallToRuntime(Runtime::kWasmExceptionGetElement,
                                    parameters, arraysize(parameters));
-  parameters[0] = value;
-  value = BuildCallToRuntime(Runtime::kWasmGetExceptionTag, parameters,
-                             arraysize(parameters));
-  return BuildChangeSmiToInt32(value);
+  }
+
+  // Now convert the leading entries to the corresponding parameter values.
+  uint32_t index = 0;
+  const wasm::WasmExceptionSig* sig = except_decl->sig;
+  for (size_t i = 0; i < sig->parameter_count(); ++i) {
+    Node* value = BuildDecodeException32BitValue(values, &index);
+    switch (wasm::ValueType type = sig->GetParam(i)) {
+      case wasm::kWasmF32: {
+        value = Unop(wasm::kExprF32ReinterpretI32, value);
+        break;
+      }
+      case wasm::kWasmI32:
+        break;
+      case wasm::kWasmF64:
+      case wasm::kWasmI64: {
+        Node* upper = Binop(wasm::kExprI64Shl,
+                            Unop(wasm::kExprI64UConvertI32, value, position),
+                            Int64Constant(32), position);
+        Node* lower =
+            Unop(wasm::kExprI64UConvertI32,
+                 BuildDecodeException32BitValue(values, &index), position);
+        value = Binop(wasm::kExprI64Ior, upper, lower);
+        if (type == wasm::kWasmF64) {
+          value = Unop(wasm::kExprF64ReinterpretI64, value);
+        }
+        break;
+      }
+      default:
+        CHECK(false);
+        break;
+    }
+    values[i] = value;
+  }
+  DCHECK_EQ(index, encoded_size);
+  return values;
 }
 
 Node* WasmGraphBuilder::BuildI32DivS(Node* left, Node* right,
@@ -3101,7 +3256,7 @@ Node* WasmGraphBuilder::BuildCallToRuntimeWithContext(Runtime::FunctionId f,
   inputs[count++] = jsgraph()->ExternalConstant(
       ExternalReference(f, jsgraph()->isolate()));         // ref
   inputs[count++] = jsgraph()->Int32Constant(fun->nargs);  // arity
-  inputs[count++] = context;                               // context
+  inputs[count++] = context;
   inputs[count++] = *effect_;
   inputs[count++] = *control_;
 
@@ -4183,7 +4338,8 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
   SourcePositionTable* source_position_table =
       new (jsgraph_->zone()) SourcePositionTable(jsgraph_->graph());
   WasmGraphBuilder builder(env_, jsgraph_->zone(), jsgraph_, centry_stub_,
-                           func_body_.sig, source_position_table);
+                           func_body_.sig, source_position_table,
+                           runtime_exception_support_);
   graph_construction_result_ =
       wasm::BuildTFGraph(isolate_->allocator(), &builder, func_body_);
 
@@ -4233,51 +4389,17 @@ Vector<const char> GetDebugName(Zone* zone, wasm::WasmName name, int index) {
 }  // namespace
 
 WasmCompilationUnit::WasmCompilationUnit(
-    Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes, ModuleEnv* env,
-    const wasm::WasmFunction* function, Handle<Code> centry_stub)
-    : WasmCompilationUnit(
-          isolate, env,
-          wasm::FunctionBody{function->sig, function->code.offset(),
-                             wire_bytes.start() + function->code.offset(),
-                             wire_bytes.start() + function->code.end_offset()},
-          wire_bytes.GetNameOrNull(function), function->func_index,
-          centry_stub) {}
-
-WasmCompilationUnit::WasmCompilationUnit(Isolate* isolate, ModuleEnv* env,
-                                         wasm::FunctionBody body,
-                                         wasm::WasmName name, int index,
-                                         Handle<Code> centry_stub)
-    : isolate_(isolate),
-      env_(env),
-      func_body_(body),
-      func_name_(name),
-      counters_(isolate->counters()),
-      centry_stub_(centry_stub),
-      func_index_(index) {}
-
-WasmCompilationUnit::WasmCompilationUnit(
-    Isolate* isolate, const wasm::ModuleWireBytes& wire_bytes, ModuleEnv* env,
-    const wasm::WasmFunction* function, Handle<Code> centry_stub,
-    const std::shared_ptr<Counters>& async_counters)
-    : WasmCompilationUnit(
-          isolate, env,
-          wasm::FunctionBody{function->sig, function->code.offset(),
-                             wire_bytes.start() + function->code.offset(),
-                             wire_bytes.start() + function->code.end_offset()},
-          wire_bytes.GetNameOrNull(function), function->func_index, centry_stub,
-          async_counters) {}
-
-WasmCompilationUnit::WasmCompilationUnit(
     Isolate* isolate, ModuleEnv* env, wasm::FunctionBody body,
     wasm::WasmName name, int index, Handle<Code> centry_stub,
-    const std::shared_ptr<Counters>& async_counters)
+    Counters* counters, RuntimeExceptionSupport exception_support)
     : isolate_(isolate),
       env_(env),
       func_body_(body),
       func_name_(name),
-      counters_(async_counters.get()),
+      counters_(counters ? counters : isolate->counters()),
       centry_stub_(centry_stub),
-      func_index_(index) {}
+      func_index_(index),
+      runtime_exception_support_(exception_support) {}
 
 void WasmCompilationUnit::ExecuteCompilation() {
   auto timed_histogram = env_->module->is_wasm()
@@ -4412,8 +4534,13 @@ MaybeHandle<Code> WasmCompilationUnit::CompileWasmFunction(
     wasm::ErrorThrower* thrower, Isolate* isolate,
     const wasm::ModuleWireBytes& wire_bytes, ModuleEnv* env,
     const wasm::WasmFunction* function) {
-  WasmCompilationUnit unit(isolate, wire_bytes, env, function,
-                           CEntryStub(isolate, 1).GetCode());
+  wasm::FunctionBody function_body{
+      function->sig, function->code.offset(),
+      wire_bytes.start() + function->code.offset(),
+      wire_bytes.start() + function->code.end_offset()};
+  WasmCompilationUnit unit(
+      isolate, env, function_body, wire_bytes.GetNameOrNull(function),
+      function->func_index, CEntryStub(isolate, 1).GetCode());
   unit.ExecuteCompilation();
   return unit.FinishCompilation(thrower);
 }

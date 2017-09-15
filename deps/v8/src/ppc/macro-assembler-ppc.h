@@ -108,13 +108,8 @@ bool AreAliased(Register reg1, Register reg2, Register reg3 = no_reg,
 class TurboAssembler : public Assembler {
  public:
   TurboAssembler(Isolate* isolate, void* buffer, int buffer_size,
-                 CodeObjectRequired create_code_object)
-      : Assembler(isolate, buffer, buffer_size), isolate_(isolate) {
-    if (create_code_object == CodeObjectRequired::kYes) {
-      code_object_ =
-          Handle<HeapObject>::New(isolate->heap()->undefined_value(), isolate);
-    }
-  }
+                 CodeObjectRequired create_code_object);
+
   void set_has_frame(bool value) { has_frame_ = value; }
   bool has_frame() { return has_frame_; }
 
@@ -312,6 +307,14 @@ class TurboAssembler : public Assembler {
     LoadP(src1, MemOperand(sp, 4 * kPointerSize));
     addi(sp, sp, Operand(5 * kPointerSize));
   }
+
+  void SaveRegisters(RegList registers);
+  void RestoreRegisters(RegList registers);
+
+  void CallRecordWriteStub(Register object, Register address,
+                           RememberedSetAction remembered_set_action,
+                           SaveFPRegsMode fp_mode);
+
   void MultiPush(RegList regs, Register location = sp);
   void MultiPop(RegList regs, Register location = sp);
 

@@ -504,6 +504,10 @@ TNode<Smi> CodeStubAssembler::SmiTag(SloppyTNode<IntPtrT> value) {
 }
 
 TNode<IntPtrT> CodeStubAssembler::SmiUntag(SloppyTNode<Smi> value) {
+  intptr_t constant_value;
+  if (ToIntPtrConstant(value, constant_value)) {
+    return IntPtrConstant(constant_value >> (kSmiShiftSize + kSmiTagSize));
+  }
   return UncheckedCast<IntPtrT>(
       WordSar(BitcastTaggedToWord(value), SmiShiftBitsConstant()));
 }
@@ -992,22 +996,21 @@ Node* CodeStubAssembler::IsRegularHeapObjectSize(Node* size) {
 
 void CodeStubAssembler::BranchIfToBooleanIsTrue(Node* value, Label* if_true,
                                                 Label* if_false) {
-  Label if_valueissmi(this), if_valueisnotsmi(this),
-      if_valueisheapnumber(this, Label::kDeferred);
-
+  Label if_smi(this), if_notsmi(this), if_heapnumber(this, Label::kDeferred),
+      if_bigint(this, Label::kDeferred);
   // Rule out false {value}.
   GotoIf(WordEqual(value, BooleanConstant(false)), if_false);
 
   // Check if {value} is a Smi or a HeapObject.
-  Branch(TaggedIsSmi(value), &if_valueissmi, &if_valueisnotsmi);
+  Branch(TaggedIsSmi(value), &if_smi, &if_notsmi);
 
-  BIND(&if_valueissmi);
+  BIND(&if_smi);
   {
     // The {value} is a Smi, only need to check against zero.
     BranchIfSmiEqual(value, SmiConstant(0), if_false, if_true);
   }
 
-  BIND(&if_valueisnotsmi);
+  BIND(&if_notsmi);
   {
     // Check if {value} is the empty string.
     GotoIf(IsEmptyString(value), if_false);
@@ -1021,9 +1024,10 @@ void CodeStubAssembler::BranchIfToBooleanIsTrue(Node* value, Label* if_true,
 
     // We still need to handle numbers specially, but all other {value}s
     // that make it here yield true.
-    Branch(IsHeapNumberMap(value_map), &if_valueisheapnumber, if_true);
+    GotoIf(IsHeapNumberMap(value_map), &if_heapnumber);
+    Branch(IsBigInt(value), &if_bigint, if_true);
 
-    BIND(&if_valueisheapnumber);
+    BIND(&if_heapnumber);
     {
       // Load the floating point value of {value}.
       Node* value_value = LoadObjectField(value, HeapNumber::kValueOffset,
@@ -1032,6 +1036,14 @@ void CodeStubAssembler::BranchIfToBooleanIsTrue(Node* value, Label* if_true,
       // Check if the floating point {value} is neither 0.0, -0.0 nor NaN.
       Branch(Float64LessThan(Float64Constant(0.0), Float64Abs(value_value)),
              if_true, if_false);
+    }
+
+    BIND(&if_bigint);
+    {
+      Node* result =
+          CallRuntime(Runtime::kBigIntToBoolean, NoContextConstant(), value);
+      CSA_ASSERT(this, IsBoolean(result));
+      Branch(WordEqual(result, BooleanConstant(true)), if_true, if_false);
     }
   }
 }
@@ -2288,7 +2300,7 @@ Node* CodeStubAssembler::AllocateNameDictionaryWithCapacity(Node* capacity) {
   StoreFixedArrayElement(result, NameDictionary::kCapacityIndex,
                          SmiTag(capacity), SKIP_WRITE_BARRIER);
   // Initialize Dictionary fields.
-  Node* filler = LoadRoot(Heap::kUndefinedValueRootIndex);
+  Node* filler = UndefinedConstant();
   StoreFixedArrayElement(result, NameDictionary::kNextEnumerationIndexIndex,
                          SmiConstant(PropertyDetails::kInitialIndex),
                          SKIP_WRITE_BARRIER);
@@ -2338,7 +2350,7 @@ void CodeStubAssembler::InitializeStructBody(Node* object, Node* map,
                                              Node* size, int start_offset) {
   CSA_SLOW_ASSERT(this, IsMap(map));
   Comment("InitializeStructBody");
-  Node* filler = LoadRoot(Heap::kUndefinedValueRootIndex);
+  Node* filler = UndefinedConstant();
   // Calculate the untagged field addresses.
   object = BitcastTaggedToWord(object);
   Node* start_address =
@@ -2391,7 +2403,7 @@ void CodeStubAssembler::InitializeJSObjectBody(Node* object, Node* map,
   CSA_SLOW_ASSERT(this, IsMap(map));
   // TODO(cbruni): activate in-object slack tracking machinery.
   Comment("InitializeJSObjectBody");
-  Node* filler = LoadRoot(Heap::kUndefinedValueRootIndex);
+  Node* filler = UndefinedConstant();
   // Calculate the untagged field addresses.
   object = BitcastTaggedToWord(object);
   Node* start_address =
@@ -2622,8 +2634,7 @@ void CodeStubAssembler::FillPropertyArrayWithUndefined(Node* array,
   CSA_SLOW_ASSERT(this, IsPropertyArray(array));
   STATIC_ASSERT(kHoleNanLower32 == kHoleNanUpper32);
   ElementsKind kind = PACKED_ELEMENTS;
-  Node* value = LoadRoot(Heap::kUndefinedValueRootIndex);
-
+  Node* value = UndefinedConstant();
   BuildFastFixedArrayForEach(array, kind, from_node, to_node,
                              [this, value](Node* array, Node* offset) {
                                StoreNoWriteBarrier(
@@ -3798,8 +3809,7 @@ Node* CodeStubAssembler::IsName(Node* object) {
 }
 
 Node* CodeStubAssembler::IsString(Node* object) {
-  return Int32LessThan(LoadInstanceType(object),
-                       Int32Constant(FIRST_NONSTRING_TYPE));
+  return IsStringInstanceType(LoadInstanceType(object));
 }
 
 Node* CodeStubAssembler::IsSymbolInstanceType(Node* instance_type) {
@@ -3808,6 +3818,14 @@ Node* CodeStubAssembler::IsSymbolInstanceType(Node* instance_type) {
 
 Node* CodeStubAssembler::IsSymbol(Node* object) {
   return IsSymbolMap(LoadMap(object));
+}
+
+Node* CodeStubAssembler::IsBigIntInstanceType(Node* instance_type) {
+  return Word32Equal(instance_type, Int32Constant(BIGINT_TYPE));
+}
+
+Node* CodeStubAssembler::IsBigInt(Node* object) {
+  return IsBigIntInstanceType(LoadInstanceType(object));
 }
 
 Node* CodeStubAssembler::IsPrimitiveInstanceType(Node* instance_type) {
@@ -5358,12 +5376,24 @@ TNode<IntPtrT> CodeStubAssembler::HashTableComputeCapacity(
 
 TNode<IntPtrT> CodeStubAssembler::IntPtrMax(SloppyTNode<IntPtrT> left,
                                             SloppyTNode<IntPtrT> right) {
+  intptr_t left_constant;
+  intptr_t right_constant;
+  if (ToIntPtrConstant(left, left_constant) &&
+      ToIntPtrConstant(right, right_constant)) {
+    return IntPtrConstant(std::max(left_constant, right_constant));
+  }
   return SelectConstant(IntPtrGreaterThanOrEqual(left, right), left, right,
                         MachineType::PointerRepresentation());
 }
 
 TNode<IntPtrT> CodeStubAssembler::IntPtrMin(SloppyTNode<IntPtrT> left,
                                             SloppyTNode<IntPtrT> right) {
+  intptr_t left_constant;
+  intptr_t right_constant;
+  if (ToIntPtrConstant(left, left_constant) &&
+      ToIntPtrConstant(right, right_constant)) {
+    return IntPtrConstant(std::min(left_constant, right_constant));
+  }
   return SelectConstant(IntPtrLessThanOrEqual(left, right), left, right,
                         MachineType::PointerRepresentation());
 }
@@ -7311,6 +7341,7 @@ void CodeStubAssembler::HandleSlackTracking(Node* context, Node* object,
   // Perform in-object slack tracking if requested.
   Node* bit_field3 = LoadMapBitField3(initial_map);
   Label end(this), slack_tracking(this), finalize(this, Label::kDeferred);
+  STATIC_ASSERT(Map::kNoSlackTracking == 0);
   GotoIf(IsSetWord32<Map::ConstructionCounter>(bit_field3), &slack_tracking);
 
   // Initialize remaining fields.
@@ -8518,6 +8549,7 @@ Node* CodeStubAssembler::Equal(Node* lhs, Node* rhs, Node* context,
 
           BIND(&if_lhsisreceiver);
           {
+            CSA_ASSERT(this, IsJSReceiverInstanceType(lhs_instance_type));
             // Check if the {rhs} is also a JSReceiver.
             Label if_rhsisreceiver(this), if_rhsisnotreceiver(this);
             STATIC_ASSERT(LAST_TYPE == LAST_JS_RECEIVER_TYPE);
@@ -8632,6 +8664,12 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
   //         } else {
   //           return false;
   //         }
+  //       } else if (lhs->IsBigInt()) {
+  //         if (rhs->IsBigInt()) {
+  //           return %BigIntEqual(lhs, rhs);
+  //         } else {
+  //           return false;
+  //         }
   //       } else {
   //         return false;
   //       }
@@ -8668,8 +8706,8 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
 
   BIND(&if_notsame);
   {
-    // The {lhs} and {rhs} reference different objects, yet for Smi, HeapNumber
-    // and String they can still be considered equal.
+    // The {lhs} and {rhs} reference different objects, yet for Smi, HeapNumber,
+    // BigInt and String they can still be considered equal.
 
     if (var_type_feedback != nullptr) {
       var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kAny));
@@ -8787,6 +8825,38 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
           }
 
           BIND(&if_lhsisnotstring);
+
+          // Check if {lhs} is a BigInt.
+          Label if_lhsisbigint(this), if_lhsisnotbigint(this);
+          Branch(IsBigIntInstanceType(lhs_instance_type), &if_lhsisbigint,
+                 &if_lhsisnotbigint);
+
+          BIND(&if_lhsisbigint);
+          {
+            // Check if {rhs} is also a BigInt.
+            Label if_rhsisbigint(this, Label::kDeferred),
+                if_rhsisnotbigint(this);
+            Branch(IsBigIntInstanceType(rhs_instance_type), &if_rhsisbigint,
+                   &if_rhsisnotbigint);
+
+            BIND(&if_rhsisbigint);
+            {
+              if (var_type_feedback != nullptr) {
+                CSA_ASSERT(
+                    this,
+                    WordEqual(var_type_feedback->value(),
+                              SmiConstant(CompareOperationFeedback::kAny)));
+              }
+              result.Bind(CallRuntime(Runtime::kBigIntEqual,
+                                      NoContextConstant(), lhs, rhs));
+              Goto(&end);
+            }
+
+            BIND(&if_rhsisnotbigint);
+            Goto(&if_notequal);
+          }
+
+          BIND(&if_lhsisnotbigint);
           if (var_type_feedback != nullptr) {
             Label if_lhsissymbol(this), if_lhsisreceiver(this);
             GotoIf(IsJSReceiverInstanceType(lhs_instance_type),
@@ -9117,7 +9187,7 @@ Node* CodeStubAssembler::Typeof(Node* value) {
 
   Label return_number(this, Label::kDeferred), if_oddball(this),
       return_function(this), return_undefined(this), return_object(this),
-      return_string(this), return_result(this);
+      return_string(this), return_bigint(this), return_result(this);
 
   GotoIf(TaggedIsSmi(value), &return_number);
 
@@ -9143,6 +9213,8 @@ Node* CodeStubAssembler::Typeof(Node* value) {
   GotoIf(IsJSReceiverInstanceType(instance_type), &return_object);
 
   GotoIf(IsStringInstanceType(instance_type), &return_string);
+
+  GotoIf(IsBigIntInstanceType(instance_type), &return_bigint);
 
   CSA_ASSERT(this, Word32Equal(instance_type, Int32Constant(SYMBOL_TYPE)));
   result_var.Bind(HeapConstant(isolate()->factory()->symbol_string()));
@@ -9182,6 +9254,12 @@ Node* CodeStubAssembler::Typeof(Node* value) {
   BIND(&return_string);
   {
     result_var.Bind(HeapConstant(isolate()->factory()->string_string()));
+    Goto(&return_result);
+  }
+
+  BIND(&return_bigint);
+  {
+    result_var.Bind(HeapConstant(isolate()->factory()->bigint_string()));
     Goto(&return_result);
   }
 

@@ -2071,6 +2071,58 @@ CallFrequency BytecodeGraphBuilder::ComputeCallFrequency(int slot_id) const {
                        invocation_frequency_.value());
 }
 
+void BytecodeGraphBuilder::VisitNegate() {
+  PrepareEagerCheckpoint();
+
+  // TODO(adamk): Create a JSNegate operator, as this desugaring is
+  // invalid for BigInts.
+  const Operator* op = javascript()->Multiply();
+  Node* operand = environment()->LookupAccumulator();
+  Node* multiplier = jsgraph()->SmiConstant(-1);
+
+  FeedbackSlot slot = feedback_vector()->ToSlot(
+      bytecode_iterator().GetIndexOperand(kUnaryOperationHintIndex));
+  JSTypeHintLowering::LoweringResult lowering =
+      TryBuildSimplifiedBinaryOp(op, operand, multiplier, slot);
+  if (lowering.IsExit()) return;
+
+  Node* node = nullptr;
+  if (lowering.IsSideEffectFree()) {
+    node = lowering.value();
+  } else {
+    DCHECK(!lowering.Changed());
+    node = NewNode(op, operand, multiplier);
+  }
+
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
+}
+
+void BytecodeGraphBuilder::VisitBitwiseNot() {
+  PrepareEagerCheckpoint();
+
+  // TODO(adamk): Create a JSBitwiseNot operator, as this desugaring is
+  // invalid for BigInts.
+  const Operator* op = javascript()->BitwiseXor();
+  Node* operand = environment()->LookupAccumulator();
+  Node* xor_value = jsgraph()->SmiConstant(-1);
+
+  FeedbackSlot slot = feedback_vector()->ToSlot(
+      bytecode_iterator().GetIndexOperand(kUnaryOperationHintIndex));
+  JSTypeHintLowering::LoweringResult lowering =
+      TryBuildSimplifiedBinaryOp(op, operand, xor_value, slot);
+  if (lowering.IsExit()) return;
+
+  Node* node = nullptr;
+  if (lowering.IsSideEffectFree()) {
+    node = lowering.value();
+  } else {
+    DCHECK(!lowering.Changed());
+    node = NewNode(op, operand, xor_value);
+  }
+
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
+}
+
 void BytecodeGraphBuilder::VisitAdd() {
   BuildBinaryOp(
       javascript()->Add(GetBinaryOperationHint(kBinaryOperationHintIndex)));
@@ -2438,7 +2490,7 @@ void BytecodeGraphBuilder::VisitToNumber() {
   Node* object = environment()->LookupAccumulator();
 
   FeedbackSlot slot =
-      feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(1));
+      feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(0));
   JSTypeHintLowering::LoweringResult lowering =
       TryBuildSimplifiedToNumber(object, slot);
 
@@ -2450,8 +2502,7 @@ void BytecodeGraphBuilder::VisitToNumber() {
     node = NewNode(javascript()->ToNumber(), object);
   }
 
-  environment()->BindRegister(bytecode_iterator().GetRegisterOperand(0), node,
-                              Environment::kAttachFrameState);
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitJump() { BuildJump(); }

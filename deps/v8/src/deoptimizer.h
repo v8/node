@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "src/allocation.h"
+#include "src/base/macros.h"
 #include "src/boxed-float.h"
 #include "src/deoptimize-reason.h"
 #include "src/frame-constants.h"
@@ -381,8 +382,8 @@ class Deoptimizer : public Malloced {
 
   int output_count() const { return output_count_; }
 
-  Handle<JSFunction> function() const { return Handle<JSFunction>(function_); }
-  Handle<Code> compiled_code() const { return Handle<Code>(compiled_code_); }
+  Handle<JSFunction> function() const;
+  Handle<Code> compiled_code() const;
   BailoutType bailout_type() const { return bailout_type_; }
 
   // Number of created JS frames. Not all created frames are necessarily JS.
@@ -660,6 +661,7 @@ class FrameDescription {
   }
 
   uint32_t GetFrameSize() const {
+    USE(frame_content_);
     DCHECK(static_cast<uint32_t>(frame_size_) == frame_size_);
     return static_cast<uint32_t>(frame_size_);
   }
@@ -821,14 +823,11 @@ class TranslationBuffer BASE_EMBEDDED {
 
 class TranslationIterator BASE_EMBEDDED {
  public:
-  TranslationIterator(ByteArray* buffer, int index)
-      : buffer_(buffer), index_(index) {
-    DCHECK(index >= 0 && index < buffer->length());
-  }
+  TranslationIterator(ByteArray* buffer, int index);
 
   int32_t Next();
 
-  bool HasNext() const { return index_ < buffer_->length(); }
+  bool HasNext() const;
 
   void Skip(int n) {
     for (int i = 0; i < n; i++) Next();

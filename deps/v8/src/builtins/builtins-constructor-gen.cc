@@ -756,10 +756,13 @@ Node* ConstructorBuiltinsAssembler::EmitCreateEmptyObjectLiteral(
   Node* map = LoadObjectField(object_function,
                               JSFunction::kPrototypeOrInitialMapOffset);
   CSA_ASSERT(this, IsMap(map));
+  // Ensure that slack tracking is disabled for the map.
+  STATIC_ASSERT(Map::kNoSlackTracking == 0);
+  CSA_ASSERT(this,
+             IsClearWord32<Map::ConstructionCounter>(LoadMapBitField3(map)));
   Node* empty_fixed_array = EmptyFixedArrayConstant();
   Node* result =
       AllocateJSObjectFromMap(map, empty_fixed_array, empty_fixed_array);
-  HandleSlackTracking(context, result, map, JSObject::kHeaderSize);
   return result;
 }
 
@@ -812,6 +815,131 @@ TF_BUILTIN(ObjectConstructor_ConstructStub, ConstructorBuiltinsAssembler) {
 
   BIND(&return_to_object);
   args.PopAndReturn(CallBuiltin(Builtins::kToObject, context, value));
+}
+
+TF_BUILTIN(NumberConstructor, ConstructorBuiltinsAssembler) {
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Label return_zero(this);
+
+  GotoIf(IntPtrEqual(IntPtrConstant(0), argc), &return_zero);
+
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+  args.PopAndReturn(ToNumber(context, args.AtIndex(0)));
+
+  BIND(&return_zero);
+  args.PopAndReturn(SmiConstant(0));
+}
+
+TF_BUILTIN(NumberConstructor_ConstructStub, ConstructorBuiltinsAssembler) {
+  Node* target = LoadFromFrame(StandardFrameConstants::kFunctionOffset,
+                               MachineType::TaggedPointer());
+  Node* new_target = Parameter(BuiltinDescriptor::kNewTarget);
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Label return_zero(this), wrap(this);
+
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+
+  GotoIf(IntPtrEqual(IntPtrConstant(0), argc), &return_zero);
+  {
+    var_result.Bind(ToNumber(context, args.AtIndex(0)));
+    Goto(&wrap);
+  }
+
+  BIND(&return_zero);
+  {
+    var_result.Bind(SmiConstant(0));
+    Goto(&wrap);
+  }
+
+  BIND(&wrap);
+  {
+    Node* result = EmitFastNewObject(context, target, new_target);
+    StoreObjectField(result, JSValue::kValueOffset, var_result.value());
+    args.PopAndReturn(result);
+  }
+}
+
+Node* ConstructorBuiltinsAssembler::EmitConstructString(Node* argc,
+                                                        CodeStubArguments& args,
+                                                        Node* context,
+                                                        bool convert_symbol) {
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+
+  Label return_empty_string(this), to_string(this),
+      check_symbol(this, Label::kDeferred), done(this);
+
+  GotoIf(IntPtrEqual(IntPtrConstant(0), argc), &return_empty_string);
+
+  Node* argument = args.AtIndex(0);
+
+  GotoIf(TaggedIsSmi(argument), &to_string);
+
+  Node* instance_type = LoadInstanceType(argument);
+
+  Label* non_string = convert_symbol ? &check_symbol : &to_string;
+  GotoIfNot(IsStringInstanceType(instance_type), non_string);
+  {
+    var_result.Bind(argument);
+    Goto(&done);
+  }
+
+  if (convert_symbol) {
+    BIND(&check_symbol);
+    GotoIfNot(IsSymbolInstanceType(instance_type), &to_string);
+    {
+      var_result.Bind(
+          CallRuntime(Runtime::kSymbolDescriptiveString, context, argument));
+      Goto(&done);
+    }
+  }
+
+  BIND(&to_string);
+  {
+    var_result.Bind(ToString(context, argument));
+    Goto(&done);
+  }
+
+  BIND(&return_empty_string);
+  {
+    var_result.Bind(EmptyStringConstant());
+    Goto(&done);
+  }
+
+  BIND(&done);
+  return var_result.value();
+}
+
+TF_BUILTIN(StringConstructor, ConstructorBuiltinsAssembler) {
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  args.PopAndReturn(EmitConstructString(argc, args, context, true));
+}
+
+TF_BUILTIN(StringConstructor_ConstructStub, ConstructorBuiltinsAssembler) {
+  Node* target = LoadFromFrame(StandardFrameConstants::kFunctionOffset,
+                               MachineType::TaggedPointer());
+  Node* new_target = Parameter(BuiltinDescriptor::kNewTarget);
+  Node* context = Parameter(BuiltinDescriptor::kContext);
+
+  Node* argc =
+      ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
+  CodeStubArguments args(this, argc);
+
+  Node* string = EmitConstructString(argc, args, context, false);
+  Node* result = EmitFastNewObject(context, target, new_target);
+  StoreObjectField(result, JSValue::kValueOffset, string);
+  args.PopAndReturn(result);
 }
 
 }  // namespace internal

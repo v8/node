@@ -13,6 +13,7 @@
 #include "src/layout-descriptor.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/objects/bigint-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/literal-objects.h"
 #include "src/objects/module.h"
@@ -71,6 +72,9 @@ void HeapObject::HeapObjectVerify() {
     case HEAP_NUMBER_TYPE:
     case MUTABLE_HEAP_NUMBER_TYPE:
       HeapNumber::cast(this)->HeapNumberVerify();
+      break;
+    case BIGINT_TYPE:
+      BigInt::cast(this)->BigIntVerify();
       break;
     case HASH_TABLE_TYPE:
     case FIXED_ARRAY_TYPE:
@@ -1209,6 +1213,8 @@ void AsyncGeneratorRequest::AsyncGeneratorRequestVerify() {
   next()->ObjectVerify();
 }
 
+void BigInt::BigIntVerify() { CHECK(IsBigInt()); }
+
 void JSModuleNamespace::JSModuleNamespaceVerify() {
   CHECK(IsJSModuleNamespace());
   VerifyPointer(module());
@@ -1576,7 +1582,7 @@ bool TransitionArray::IsSortedNoDuplicates(int valid_entries) {
       attributes = details.attributes();
     } else {
       // Duplicate entries are not allowed for non-property transitions.
-      CHECK_NE(prev_key, key);
+      DCHECK_NE(prev_key, key);
     }
 
     int cmp = CompareKeys(prev_key, prev_hash, prev_kind, prev_attributes, key,
@@ -1648,66 +1654,9 @@ void Code::VerifyEmbeddedObjects(VerifyMode mode) {
   bool skip_weak_cell = (mode == kNoContextSpecificPointers) ? false : true;
   for (RelocIterator it(this, mask); !it.done(); it.next()) {
     Object* target = it.rinfo()->target_object();
-    CHECK(!CanLeak(target, heap, skip_weak_cell));
+    DCHECK(!CanLeak(target, heap, skip_weak_cell));
   }
 }
-
-
-// Verify that the debugger can redirect old code to the new code.
-void Code::VerifyRecompiledCode(Code* old_code, Code* new_code) {
-  if (old_code->kind() != FUNCTION) return;
-  if (new_code->kind() != FUNCTION) return;
-  Isolate* isolate = old_code->GetIsolate();
-  // Do not verify during bootstrapping. We may replace code using %SetCode.
-  if (isolate->bootstrapper()->IsActive()) return;
-
-  static const int mask = RelocInfo::kCodeTargetMask;
-  RelocIterator old_it(old_code, mask);
-  RelocIterator new_it(new_code, mask);
-  Code* stack_check = isolate->builtins()->builtin(Builtins::kStackCheck);
-
-  while (!old_it.done()) {
-    RelocInfo* rinfo = old_it.rinfo();
-    Code* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
-    CHECK(!target->is_handler() && !target->is_inline_cache_stub());
-    if (target == stack_check) break;
-    old_it.next();
-  }
-
-  while (!new_it.done()) {
-    RelocInfo* rinfo = new_it.rinfo();
-    Code* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
-    CHECK(!target->is_handler() && !target->is_inline_cache_stub());
-    if (target == stack_check) break;
-    new_it.next();
-  }
-
-  // Either both are done because there is no stack check.
-  // Or we are past the prologue for both.
-  CHECK_EQ(new_it.done(), old_it.done());
-
-  // After the prologue, each call in the old code has a corresponding call
-  // in the new code.
-  while (!old_it.done() && !new_it.done()) {
-    Code* old_target =
-        Code::GetCodeFromTargetAddress(old_it.rinfo()->target_address());
-    Code* new_target =
-        Code::GetCodeFromTargetAddress(new_it.rinfo()->target_address());
-    CHECK_EQ(old_target->kind(), new_target->kind());
-    // Check call target for equality unless it's an IC or an interrupt check.
-    // In both cases they may be patched to be something else.
-    if (!old_target->is_handler() && !old_target->is_inline_cache_stub() &&
-        new_target != isolate->builtins()->builtin(Builtins::kInterruptCheck)) {
-      CHECK_EQ(old_target, new_target);
-    }
-    old_it.next();
-    new_it.next();
-  }
-
-  // Both are done at the same time.
-  CHECK_EQ(new_it.done(), old_it.done());
-}
-
 
 #endif  // DEBUG
 

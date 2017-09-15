@@ -5,6 +5,7 @@
 #include "src/compiler/js-native-context-specialization.h"
 
 #include "src/accessors.h"
+#include "src/api.h"
 #include "src/code-factory.h"
 #include "src/compilation-dependencies.h"
 #include "src/compiler/access-builder.h"
@@ -2168,6 +2169,43 @@ JSNativeContextSpecialization::BuildElementAccess(
         simplified()->LoadField(AccessBuilder::ForJSObjectElements()), receiver,
         effect, control);
 
+    // Check if the {receiver} is a known constant with a copy-on-write
+    // backing store, and whether {index} is within the appropriate
+    // bounds. In that case we can constant-fold the access and only
+    // check that the {elements} didn't change. This is sufficient as
+    // the backing store of a copy-on-write JSArray is defensively copied
+    // whenever the length or the elements (might) change.
+    if (access_mode == AccessMode::kLoad) {
+      HeapObjectMatcher mreceiver(receiver);
+      if (mreceiver.HasValue() && mreceiver.Value()->IsJSArray()) {
+        Handle<JSArray> array = Handle<JSArray>::cast(mreceiver.Value());
+        if (std::find_if(receiver_maps.begin(), receiver_maps.end(),
+                         [array](Handle<Map> map) {
+                           return *map == array->map();
+                         }) != receiver_maps.end()) {
+          uint32_t length;
+          if (array->length()->ToUint32(&length) &&
+              array->elements()->IsCowArray()) {
+            NumberMatcher mindex(index);
+            if (mindex.IsInteger() && mindex.IsInRange(0, length - 1)) {
+              Handle<FixedArray> array_elements(
+                  FixedArray::cast(array->elements()), isolate());
+              Handle<Object> array_element(
+                  array_elements->get(static_cast<int>(mindex.Value())),
+                  isolate());
+              Node* check =
+                  graph()->NewNode(simplified()->ReferenceEqual(), elements,
+                                   jsgraph()->HeapConstant(array_elements));
+              effect = graph()->NewNode(simplified()->CheckIf(), check, effect,
+                                        control);
+              Node* value = jsgraph()->Constant(array_element);
+              return ValueEffectControl(value, effect, control);
+            }
+          }
+        }
+      }
+    }
+
     // Don't try to store to a copy-on-write backing store.
     if (access_mode == AccessMode::kStore &&
         IsSmiOrObjectElementsKind(elements_kind) &&
@@ -2195,13 +2233,8 @@ JSNativeContextSpecialization::BuildElementAccess(
 
     // Check if we might need to grow the {elements} backing store.
     if (IsGrowStoreMode(store_mode)) {
+      // For growing stores we validate the {index} below.
       DCHECK_EQ(AccessMode::kStore, access_mode);
-
-      // Check that the {index} is a valid array index; the actual checking
-      // happens below right before the element store.
-      index = effect = graph()->NewNode(simplified()->CheckBounds(), index,
-                                        jsgraph()->Constant(Smi::kMaxValue),
-                                        effect, control);
     } else {
       // Check that the {index} is in the valid range for the {receiver}.
       index = effect = graph()->NewNode(simplified()->CheckBounds(), index,
@@ -2282,23 +2315,69 @@ JSNativeContextSpecialization::BuildElementAccess(
             graph()->NewNode(simplified()->EnsureWritableFastElements(),
                              receiver, elements, effect, control);
       } else if (IsGrowStoreMode(store_mode)) {
-        // Grow {elements} backing store if necessary. Also updates the
-        // "length" property for JSArray {receiver}s, hence there must
-        // not be any other check after this operation, as the write
-        // to the "length" property is observable.
-        GrowFastElementsFlags flags = GrowFastElementsFlag::kNone;
-        if (receiver_is_jsarray) {
-          flags |= GrowFastElementsFlag::kArrayObject;
-        }
-        if (IsHoleyOrDictionaryElementsKind(elements_kind)) {
-          flags |= GrowFastElementsFlag::kHoleyElements;
-        }
-        if (IsDoubleElementsKind(elements_kind)) {
-          flags |= GrowFastElementsFlag::kDoubleElements;
-        }
+        // Determine the length of the {elements} backing store.
+        Node* elements_length = effect = graph()->NewNode(
+            simplified()->LoadField(AccessBuilder::ForFixedArrayLength()),
+            elements, effect, control);
+
+        // Validate the {index} depending on holeyness:
+        //
+        // For HOLEY_*_ELEMENTS the {index} must not exceed the {elements}
+        // backing store capacity plus the maximum allowed gap, as otherwise
+        // the (potential) backing store growth would normalize and thus
+        // the elements kind of the {receiver} would change to slow mode.
+        //
+        // For PACKED_*_ELEMENTS the {index} must be within the range
+        // [0,length+1[ to be valid. In case {index} equals {length},
+        // the {receiver} will be extended, but kept packed.
+        Node* limit =
+            IsHoleyElementsKind(elements_kind)
+                ? graph()->NewNode(simplified()->NumberAdd(), elements_length,
+                                   jsgraph()->Constant(JSObject::kMaxGap))
+                : graph()->NewNode(simplified()->NumberAdd(), length,
+                                   jsgraph()->OneConstant());
+        index = effect = graph()->NewNode(simplified()->CheckBounds(), index,
+                                          limit, effect, control);
+
+        // Grow {elements} backing store if necessary.
+        GrowFastElementsMode mode =
+            IsDoubleElementsKind(elements_kind)
+                ? GrowFastElementsMode::kDoubleElements
+                : GrowFastElementsMode::kSmiOrObjectElements;
         elements = effect = graph()->NewNode(
-            simplified()->MaybeGrowFastElements(flags), receiver, elements,
-            index, length, effect, control);
+            simplified()->MaybeGrowFastElements(mode), receiver, elements,
+            index, elements_length, effect, control);
+
+        // Also update the "length" property if {receiver} is a JSArray.
+        if (receiver_is_jsarray) {
+          Node* check =
+              graph()->NewNode(simplified()->NumberLessThan(), index, length);
+          Node* branch = graph()->NewNode(common()->Branch(), check, control);
+
+          Node* if_true = graph()->NewNode(common()->IfTrue(), branch);
+          Node* etrue = effect;
+          {
+            // We don't need to do anything, the {index} is within
+            // the valid bounds for the JSArray {receiver}.
+          }
+
+          Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
+          Node* efalse = effect;
+          {
+            // Update the JSArray::length field. Since this is observable,
+            // there must be no other check after this.
+            Node* new_length = graph()->NewNode(
+                simplified()->NumberAdd(), index, jsgraph()->OneConstant());
+            efalse = graph()->NewNode(
+                simplified()->StoreField(
+                    AccessBuilder::ForJSArrayLength(elements_kind)),
+                receiver, new_length, efalse, if_false);
+          }
+
+          control = graph()->NewNode(common()->Merge(2), if_true, if_false);
+          effect =
+              graph()->NewNode(common()->EffectPhi(2), etrue, efalse, control);
+        }
       }
 
       // Perform the actual element access.

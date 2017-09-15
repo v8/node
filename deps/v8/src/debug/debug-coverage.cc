@@ -6,6 +6,7 @@
 
 #include "src/ast/ast.h"
 #include "src/base/hashmap.h"
+#include "src/debug/debug.h"
 #include "src/deoptimizer.h"
 #include "src/frames-inl.h"
 #include "src/isolate.h"
@@ -380,9 +381,10 @@ void CollectBlockCoverage(Isolate* isolate, CoverageFunction* function,
 }
 }  // anonymous namespace
 
-Coverage* Coverage::CollectPrecise(Isolate* isolate) {
+std::unique_ptr<Coverage> Coverage::CollectPrecise(Isolate* isolate) {
   DCHECK(!isolate->is_best_effort_code_coverage());
-  Coverage* result = Collect(isolate, isolate->code_coverage_mode());
+  std::unique_ptr<Coverage> result =
+      Collect(isolate, isolate->code_coverage_mode());
   if (isolate->is_precise_binary_code_coverage() ||
       isolate->is_block_binary_code_coverage()) {
     // We do not have to hold onto feedback vectors for invocations we already
@@ -392,12 +394,12 @@ Coverage* Coverage::CollectPrecise(Isolate* isolate) {
   return result;
 }
 
-Coverage* Coverage::CollectBestEffort(Isolate* isolate) {
+std::unique_ptr<Coverage> Coverage::CollectBestEffort(Isolate* isolate) {
   return Collect(isolate, v8::debug::Coverage::kBestEffort);
 }
 
-Coverage* Coverage::Collect(Isolate* isolate,
-                            v8::debug::Coverage::Mode collectionMode) {
+std::unique_ptr<Coverage> Coverage::Collect(
+    Isolate* isolate, v8::debug::Coverage::Mode collectionMode) {
   SharedToCounterMap counter_map;
 
   const bool reset_count = collectionMode != v8::debug::Coverage::kBestEffort;
@@ -439,7 +441,7 @@ Coverage* Coverage::Collect(Isolate* isolate,
 
   // Iterate shared function infos of every script and build a mapping
   // between source ranges and invocation counts.
-  Coverage* result = new Coverage();
+  std::unique_ptr<Coverage> result(new Coverage());
   Script::Iterator scripts(isolate);
   while (Script* script = scripts.Next()) {
     if (!script->IsUserJavaScript()) continue;
@@ -562,92 +564,6 @@ void Coverage::SelectMode(Isolate* isolate, debug::Coverage::Mode mode) {
     }
   }
   isolate->set_code_coverage_mode(mode);
-}
-
-TypeProfile* TypeProfile::Collect(Isolate* isolate) {
-  TypeProfile* result = new TypeProfile();
-
-  // Collect existing feedback vectors.
-  std::vector<Handle<FeedbackVector>> feedback_vectors;
-  {
-    HeapIterator heap_iterator(isolate->heap());
-    while (HeapObject* current_obj = heap_iterator.next()) {
-      if (current_obj->IsFeedbackVector()) {
-        FeedbackVector* vector = FeedbackVector::cast(current_obj);
-        SharedFunctionInfo* shared = vector->shared_function_info();
-        if (!shared->IsSubjectToDebugging()) continue;
-        feedback_vectors.emplace_back(vector, isolate);
-      }
-    }
-  }
-
-  Script::Iterator scripts(isolate);
-
-  while (Script* script = scripts.Next()) {
-    if (!script->IsUserJavaScript()) {
-      continue;
-    }
-
-    Handle<Script> script_handle(script, isolate);
-
-    TypeProfileScript type_profile_script(script_handle);
-    std::vector<TypeProfileEntry>* entries = &type_profile_script.entries;
-
-    for (const auto& vector : feedback_vectors) {
-      SharedFunctionInfo* info = vector->shared_function_info();
-      DCHECK(info->IsSubjectToDebugging());
-
-      // Match vectors with script.
-      if (script != info->script()) {
-        continue;
-      }
-      if (info->feedback_metadata()->is_empty() ||
-          !info->feedback_metadata()->HasTypeProfileSlot()) {
-        continue;
-      }
-      FeedbackSlot slot = vector->GetTypeProfileSlot();
-      CollectTypeProfileNexus nexus(vector, slot);
-      Handle<String> name(info->DebugName(), isolate);
-      std::vector<int> source_positions = nexus.GetSourcePositions();
-      for (int position : source_positions) {
-        DCHECK_GE(position, 0);
-        entries->emplace_back(position, nexus.GetTypesForSourcePositions(
-                                            static_cast<uint32_t>(position)));
-      }
-
-      // Releases type profile data collected so far.
-      nexus.Clear();
-    }
-    if (!entries->empty()) {
-      result->emplace_back(type_profile_script);
-    }
-  }
-  return result;
-}
-
-void TypeProfile::SelectMode(Isolate* isolate, debug::TypeProfile::Mode mode) {
-  isolate->set_type_profile_mode(mode);
-  HandleScope handle_scope(isolate);
-
-  if (mode == debug::TypeProfile::Mode::kNone) {
-    // Release type profile data collected so far.
-    {
-      HeapIterator heap_iterator(isolate->heap());
-      while (HeapObject* current_obj = heap_iterator.next()) {
-        if (current_obj->IsFeedbackVector()) {
-          FeedbackVector* vector = FeedbackVector::cast(current_obj);
-          SharedFunctionInfo* info = vector->shared_function_info();
-          if (!info->IsSubjectToDebugging() ||
-              info->feedback_metadata()->is_empty() ||
-              !info->feedback_metadata()->HasTypeProfileSlot())
-            continue;
-          FeedbackSlot slot = vector->GetTypeProfileSlot();
-          CollectTypeProfileNexus nexus(vector, slot);
-          nexus.Clear();
-        }
-      }
-    }
-  }
 }
 
 }  // namespace internal

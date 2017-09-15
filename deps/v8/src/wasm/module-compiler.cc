@@ -6,6 +6,7 @@
 
 #include <atomic>
 
+#include "src/api.h"
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
 #include "src/code-stubs.h"
@@ -1466,6 +1467,14 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
             return -1;
           }
         }
+        if (module_->has_shared_memory != buffer->is_shared()) {
+          thrower_->LinkError(
+              "mismatch in shared state of memory, declared = %d, imported = "
+              "%d",
+              module_->has_shared_memory, buffer->is_shared());
+          return -1;
+        }
+
         break;
       }
       case kExternalGlobal: {
@@ -2046,8 +2055,11 @@ class AsyncCompileJob::CompileTask : public CancelableTask {
 void AsyncCompileJob::StartForegroundTask() {
   DCHECK_EQ(0, num_pending_foreground_tasks_++);
 
-  V8::GetCurrentPlatform()->CallOnForegroundThread(
-      reinterpret_cast<v8::Isolate*>(isolate_), new CompileTask(this, true));
+  v8::Platform* platform = V8::GetCurrentPlatform();
+  // TODO(ahaas): This is a CHECK to debug issue 764313.
+  CHECK(platform);
+  platform->CallOnForegroundThread(reinterpret_cast<v8::Isolate*>(isolate_),
+                                   new CompileTask(this, true));
 }
 
 template <typename State, typename... Args>

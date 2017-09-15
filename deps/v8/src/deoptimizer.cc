@@ -180,8 +180,8 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
           deopt_index != Safepoint::kNoDeoptimizationIndex ||
           is_non_deoptimizing_asm_code;
       bool is_builtin_code = code->kind() == Code::BUILTIN;
-      CHECK(topmost_optimized_code == NULL || safe_if_deopt_triggered ||
-            is_non_deoptimizing_asm_code || is_builtin_code);
+      DCHECK(topmost_optimized_code == NULL || safe_if_deopt_triggered ||
+             is_non_deoptimizing_asm_code || is_builtin_code);
       if (topmost_optimized_code == NULL) {
         topmost_optimized_code = code;
         safe_to_deopt_topmost_optimized_code = safe_if_deopt_triggered;
@@ -398,18 +398,13 @@ Deoptimizer::Deoptimizer(Isolate* isolate, JSFunction* function,
 
   DCHECK(from != nullptr);
   compiled_code_ = FindOptimizedCode();
-#if DEBUG
   DCHECK(compiled_code_ != NULL);
-  if (type == EAGER || type == SOFT || type == LAZY) {
-    DCHECK(compiled_code_->kind() != Code::FUNCTION);
-  }
-#endif
 
   DCHECK(function->IsJSFunction());
   trace_scope_ =
       FLAG_trace_deopt ? new CodeTracer::Scope(isolate->GetCodeTracer()) : NULL;
 #ifdef DEBUG
-  CHECK(AllowHeapAllocation::IsAllowed());
+  DCHECK(AllowHeapAllocation::IsAllowed());
   disallow_heap_allocation_ = new DisallowHeapAllocation();
 #endif  // DEBUG
   if (compiled_code_->kind() != Code::OPTIMIZED_FUNCTION ||
@@ -455,6 +450,12 @@ void Deoptimizer::PrintFunctionName() {
   }
 }
 
+Handle<JSFunction> Deoptimizer::function() const {
+  return Handle<JSFunction>(function_);
+}
+Handle<Code> Deoptimizer::compiled_code() const {
+  return Handle<Code>(compiled_code_);
+}
 
 Deoptimizer::~Deoptimizer() {
   DCHECK(input_ == NULL && output_ == NULL);
@@ -472,8 +473,8 @@ void Deoptimizer::DeleteFrameDescriptions() {
   input_ = NULL;
   output_ = NULL;
 #ifdef DEBUG
-  CHECK(!AllowHeapAllocation::IsAllowed());
-  CHECK(disallow_heap_allocation_ != NULL);
+  DCHECK(!AllowHeapAllocation::IsAllowed());
+  DCHECK(disallow_heap_allocation_ != NULL);
   delete disallow_heap_allocation_;
   disallow_heap_allocation_ = NULL;
 #endif  // DEBUG
@@ -1950,6 +1951,10 @@ void TranslationBuffer::Add(int32_t value) {
   } while (bits != 0);
 }
 
+TranslationIterator::TranslationIterator(ByteArray* buffer, int index)
+    : buffer_(buffer), index_(index) {
+  DCHECK(index >= 0 && index < buffer->length());
+}
 
 int32_t TranslationIterator::Next() {
   // Run through the bytes until we reach one with a least significant
@@ -1967,6 +1972,7 @@ int32_t TranslationIterator::Next() {
   return is_negative ? -result : result;
 }
 
+bool TranslationIterator::HasNext() const { return index_ < buffer_->length(); }
 
 Handle<ByteArray> TranslationBuffer::CreateByteArray(Factory* factory) {
   Handle<ByteArray> result = factory->NewByteArray(CurrentIndex(), TENURED);
@@ -3757,6 +3763,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case SCRIPT_TYPE:
     case CODE_TYPE:
     case PROPERTY_CELL_TYPE:
+    case BIGINT_TYPE:
     case MODULE_TYPE:
     case MODULE_INFO_ENTRY_TYPE:
     case FREE_SPACE_TYPE:

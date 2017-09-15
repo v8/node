@@ -40,9 +40,7 @@ struct WasmException;
   }())
 
 #define CHECK_PROTOTYPE_OPCODE(flag)                                           \
-  if (this->module_ != nullptr && this->module_->is_asm_js()) {                \
-    this->error("Opcode not supported for asmjs modules");                     \
-  }                                                                            \
+  DCHECK(!this->module_ || !this->module_->is_asm_js());                       \
   if (!FLAG_experimental_wasm_##flag) {                                        \
     this->error("Invalid opcode (enable with --experimental-wasm-" #flag ")"); \
     break;                                                                     \
@@ -541,8 +539,11 @@ struct ControlWithNamedConstructors : public ControlBase<Value> {
     const Value& input, Value* result)                                         \
   F(Simd8x16ShuffleOp, const Simd8x16ShuffleOperand<validate>& operand,        \
     const Value& input0, const Value& input1, Value* result)                   \
-  F(Throw, const ExceptionIndexOperand<validate>&)                             \
-  F(Catch, const ExceptionIndexOperand<validate>& operand, Control* block)     \
+  F(Throw, const ExceptionIndexOperand<validate>&, Control* block,             \
+    const Vector<Value>& args)                                                 \
+  F(CatchException, const ExceptionIndexOperand<validate>& operand,            \
+    Control* block)                                                            \
+  F(SetCaughtValue, Value* value, size_t index)                                \
   F(AtomicOp, WasmOpcode opcode, Vector<Value> args, Value* result)
 
 // Generic Wasm bytecode decoder with utilities for decoding operands,
@@ -606,8 +607,11 @@ class WasmDecoder : public Decoder {
           type = kWasmF64;
           break;
         case kLocalS128:
-          type = kWasmS128;
-          break;
+          if (FLAG_experimental_wasm_simd) {
+            type = kWasmS128;
+            break;
+          }
+        // else fall through to default.
         default:
           decoder->error(decoder->pc() - 1, "invalid local type");
           return false;
@@ -1151,6 +1155,14 @@ class WasmFullDecoder : public WasmDecoder<validate> {
     return true;
   }
 
+  bool CheckHasSharedMemory() {
+    if (!VALIDATE(this->module_->has_shared_memory)) {
+      this->error(this->pc_ - 1, "Atomic opcodes used without shared memory");
+      return false;
+    }
+    return true;
+  }
+
   // Decodes the body of a function.
   void DecodeFunctionBody() {
     TRACE("wasm-decode %p...%p (module+%u, %d bytes)\n",
@@ -1212,16 +1224,9 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             ExceptionIndexOperand<true> operand(this, this->pc_);
             len = 1 + operand.length;
             if (!this->Validate(this->pc_, operand)) break;
-            if (operand.exception->sig->parameter_count() > 0) {
-              // TODO(kschimpf): Fix to pull values off stack and build throw.
-              OPCODE_ERROR(opcode, "can't handle exceptions with values yet");
-              break;
-            }
-            interface_.Throw(this, operand);
-            // TODO(titzer): Throw should end control, but currently we build a
-            // (reachable) runtime call instead of connecting it directly to
-            // end.
-            //            EndControl();
+            std::vector<Value> args;
+            PopArgs(operand.exception->ToFunctionSig(), &args);
+            interface_.Throw(this, operand, &control_.back(), vec2vec(args));
             break;
           }
           case kExprTry: {
@@ -1259,8 +1264,12 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             c->kind = kControlTryCatch;
             FallThruTo(c);
             stack_.resize(c->stack_depth);
-
-            interface_.Catch(this, operand, c);
+            interface_.CatchException(this, operand, c);
+            const WasmExceptionSig* sig = operand.exception->sig;
+            for (size_t i = 0, e = sig->parameter_count(); i < e; ++i) {
+              auto* value = Push(sig->GetParam(i));
+              interface_.SetCaughtValue(this, value, i);
+            }
             break;
           }
           case kExprCatchAll: {
@@ -1654,6 +1663,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
           }
           case kAtomicPrefix: {
             CHECK_PROTOTYPE_OPCODE(threads);
+            if (!CheckHasSharedMemory()) break;
             len++;
             byte atomic_index =
                 this->template read_u8<validate>(this->pc_ + 1, "atomic index");
