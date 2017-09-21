@@ -1445,6 +1445,9 @@ Node* CodeStubAssembler::LoadWeakCellValue(Node* weak_cell, Label* if_cleared) {
 Node* CodeStubAssembler::LoadFixedArrayElement(Node* object, Node* index_node,
                                                int additional_offset,
                                                ParameterMode parameter_mode) {
+  CSA_SLOW_ASSERT(this, IntPtrGreaterThanOrEqual(
+                            ParameterToWord(index_node, parameter_mode),
+                            IntPtrConstant(0)));
   int32_t header_size =
       FixedArray::kHeaderSize + additional_offset - kHeapObjectTag;
   Node* offset = ElementOffsetFromIndex(index_node, HOLEY_ELEMENTS,
@@ -3938,6 +3941,36 @@ Node* CodeStubAssembler::IsNumberPositive(Node* number) {
                   return Float64GreaterThanOrEqual(v, float_zero);
                 },
                 MachineRepresentation::kWord32);
+}
+
+Node* CodeStubAssembler::IsNumberArrayIndex(Node* number) {
+  VARIABLE(var_result, MachineRepresentation::kWord32, Int32Constant(1));
+
+  Label check_upper_bound(this), check_is_integer(this), out(this),
+      return_false(this);
+
+  GotoIfNumberGreaterThanOrEqual(number, NumberConstant(0), &check_upper_bound);
+  Goto(&return_false);
+
+  BIND(&check_upper_bound);
+  GotoIfNumberGreaterThanOrEqual(number, NumberConstant(kMaxUInt32),
+                                 &return_false);
+  Goto(&check_is_integer);
+
+  BIND(&check_is_integer);
+  GotoIf(TaggedIsSmi(number), &out);
+  // Check that the HeapNumber is a valid uint32
+  Node* value = LoadHeapNumberValue(number);
+  Node* int_value = ChangeFloat64ToUint32(value);
+  GotoIf(Float64Equal(value, ChangeUint32ToFloat64(int_value)), &out);
+  Goto(&return_false);
+
+  BIND(&return_false);
+  var_result.Bind(Int32Constant(0));
+  Goto(&out);
+
+  BIND(&out);
+  return var_result.value();
 }
 
 TNode<Uint32T> CodeStubAssembler::StringCharCodeAt(
@@ -7631,11 +7664,12 @@ void CodeStubAssembler::BranchIfNumericRelationalComparison(
   }
 }
 
-void CodeStubAssembler::GotoUnlessNumberLessThan(Node* lhs, Node* rhs,
-                                                 Label* if_false) {
-  Label if_true(this);
-  BranchIfNumericRelationalComparison(kLessThan, lhs, rhs, &if_true, if_false);
-  BIND(&if_true);
+void CodeStubAssembler::GotoIfNumberGreaterThanOrEqual(Node* lhs, Node* rhs,
+                                                       Label* if_true) {
+  Label if_false(this);
+  BranchIfNumericRelationalComparison(kGreaterThanOrEqual, lhs, rhs, if_true,
+                                      &if_false);
+  BIND(&if_false);
 }
 
 Node* CodeStubAssembler::RelationalComparison(RelationalComparisonMode mode,
@@ -8790,9 +8824,6 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
           // Load the instance type of {lhs}.
           Node* lhs_instance_type = LoadMapInstanceType(lhs_map);
 
-          // Load the instance type of {rhs}.
-          Node* rhs_instance_type = LoadInstanceType(rhs);
-
           // Check if {lhs} is a String.
           Label if_lhsisstring(this), if_lhsisnotstring(this);
           Branch(IsStringInstanceType(lhs_instance_type), &if_lhsisstring,
@@ -8800,6 +8831,9 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
 
           BIND(&if_lhsisstring);
           {
+            // Load the instance type of {rhs}.
+            Node* rhs_instance_type = LoadInstanceType(rhs);
+
             // Check if {rhs} is also a String.
             Label if_rhsisstring(this, Label::kDeferred),
                 if_rhsisnotstring(this);
@@ -8833,6 +8867,9 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
 
           BIND(&if_lhsisbigint);
           {
+            // Load the instance type of {rhs}.
+            Node* rhs_instance_type = LoadInstanceType(rhs);
+
             // Check if {rhs} is also a BigInt.
             Label if_rhsisbigint(this, Label::kDeferred),
                 if_rhsisnotbigint(this);
@@ -8858,6 +8895,9 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
 
           BIND(&if_lhsisnotbigint);
           if (var_type_feedback != nullptr) {
+            // Load the instance type of {rhs}.
+            Node* rhs_instance_type = LoadInstanceType(rhs);
+
             Label if_lhsissymbol(this), if_lhsisreceiver(this);
             GotoIf(IsJSReceiverInstanceType(lhs_instance_type),
                    &if_lhsisreceiver);

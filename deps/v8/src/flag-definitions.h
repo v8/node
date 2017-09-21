@@ -205,21 +205,19 @@ DEFINE_IMPLICATION(es_staging, harmony)
     "harmony disallow non undefined primitive return value from class " \
     "constructor")                                                      \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
-  V(harmony_async_iteration, "harmony async iteration")                 \
-  V(harmony_promise_finally, "harmony Promise.prototype.finally")
 
 #ifdef V8_INTL_SUPPORT
-#define HARMONY_STAGED(V)                        \
-  HARMONY_STAGED_BASE(V)                         \
-  V(harmony_number_format_to_parts,              \
-    "Intl.NumberFormat.prototype.formatToParts") \
-  V(harmony_plural_rules, "Intl.PluralRules")
+#define HARMONY_STAGED(V)           \
+  HARMONY_STAGED_BASE(V)            \
+  V(harmony_number_format_to_parts, \
+    "Intl.NumberFormat.prototype."  \
+    "formatToParts")
 #else
 #define HARMONY_STAGED(V) HARMONY_STAGED_BASE(V)
 #endif
 
 // Features that are shipping (turned on by default, but internal flag remains).
-#define HARMONY_SHIPPING(V)                                              \
+#define HARMONY_SHIPPING_BASE(V)                                         \
   V(harmony_strict_legacy_accessor_builtins,                             \
     "treat __defineGetter__ and related functions as strict")            \
   V(harmony_restrictive_generators,                                      \
@@ -228,8 +226,18 @@ DEFINE_IMPLICATION(es_staging, harmony)
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")              \
   V(harmony_regexp_dotall, "harmony regexp dotAll flag")                 \
   V(harmony_regexp_lookbehind, "harmony regexp lookbehind")              \
+  V(harmony_async_iteration, "harmony async iteration")                  \
   V(harmony_template_escapes,                                            \
-    "harmony invalid escapes in tagged template literals")
+    "harmony invalid escapes in tagged template literals")               \
+  V(harmony_promise_finally, "harmony Promise.prototype.finally")
+
+#ifdef V8_INTL_SUPPORT
+#define HARMONY_SHIPPING(V) \
+  HARMONY_SHIPPING_BASE(V)  \
+  V(harmony_plural_rules, "Intl.PluralRules")
+#else
+#define HARMONY_SHIPPING(V) HARMONY_SHIPPING_BASE(V)
+#endif
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -475,6 +483,12 @@ DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
+DEFINE_BOOL(wasm_stream_compilation, false,
+            "enable streaming compilation for WebAssembly")
+DEFINE_IMPLICATION(wasm_stream_compilation, wasm_async_compilation)
+DEFINE_BOOL(wasm_test_streaming, false,
+            "use streaming compilation instead of async compilation for tests")
+DEFINE_IMPLICATION(wasm_test_streaming, wasm_stream_compilation)
 // Parallel compilation confuses turbo_stats, force single threaded.
 DEFINE_VALUE_IMPLICATION(turbo_stats, wasm_num_compilation_tasks, 0)
 DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,
@@ -485,6 +499,8 @@ DEFINE_BOOL(trace_wasm_decoder, false, "trace decoding of wasm code")
 DEFINE_BOOL(trace_wasm_decode_time, false, "trace decoding time of wasm code")
 DEFINE_BOOL(trace_wasm_compiler, false, "trace compiling of wasm code")
 DEFINE_BOOL(trace_wasm_interpreter, false, "trace interpretation of wasm code")
+DEFINE_BOOL(trace_wasm_streaming, false,
+            "trace streaming compilation of wasm code")
 DEFINE_INT(trace_wasm_ast_start, 0,
            "start function for wasm AST trace (inclusive)")
 DEFINE_INT(trace_wasm_ast_end, 0, "end function for wasm AST trace (exclusive)")
@@ -503,9 +519,6 @@ DEFINE_BOOL(stress_validate_asm, false, "try to validate everything as asm.js")
 
 DEFINE_BOOL(dump_wasm_module, false, "dump wasm module bytes")
 DEFINE_STRING(dump_wasm_module_path, NULL, "directory to dump wasm modules to")
-
-DEFINE_INT(typed_array_max_size_in_heap, 64,
-           "threshold for in-heap typed array")
 
 DEFINE_BOOL(experimental_wasm_simd, false,
             "enable prototype simd opcodes for wasm")

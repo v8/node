@@ -300,11 +300,13 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   /* Collections */                  \
   V(GenericHash)                     \
   /* Called from builtins */         \
+  V(StringAdd)                       \
   V(StringParseFloat)                \
   V(StringParseInt)                  \
   V(StringCharCodeAt)                \
   V(StringIndexOfUnchecked)          \
   V(StringEqual)                     \
+  V(RegExpInitializeAndCompile)      \
   V(SymbolDescriptiveString)         \
   V(GenerateRandomNumbers)           \
   V(GlobalPrint)                     \
@@ -321,6 +323,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(ThrowIncompatibleMethodReceiver) \
   V(ThrowInvalidHint)                \
   V(ThrowNotDateError)               \
+  V(ThrowRangeError)                 \
   /* Misc. */                        \
   V(Call)                            \
   V(MaxSmi)                          \
@@ -586,18 +589,32 @@ bool BuiltinHasNoSideEffect(Builtins::Name id) {
     case Builtins::kStringFromCharCode:
     case Builtins::kStringFromCodePoint:
     case Builtins::kStringConstructor:
+    case Builtins::kStringPrototypeAnchor:
+    case Builtins::kStringPrototypeBig:
+    case Builtins::kStringPrototypeBlink:
+    case Builtins::kStringPrototypeBold:
     case Builtins::kStringPrototypeCharAt:
     case Builtins::kStringPrototypeCharCodeAt:
     case Builtins::kStringPrototypeCodePointAt:
     case Builtins::kStringPrototypeConcat:
     case Builtins::kStringPrototypeEndsWith:
+    case Builtins::kStringPrototypeFixed:
+    case Builtins::kStringPrototypeFontcolor:
+    case Builtins::kStringPrototypeFontsize:
     case Builtins::kStringPrototypeIncludes:
     case Builtins::kStringPrototypeIndexOf:
+    case Builtins::kStringPrototypeItalics:
     case Builtins::kStringPrototypeLastIndexOf:
+    case Builtins::kStringPrototypeLink:
+    case Builtins::kStringPrototypeRepeat:
     case Builtins::kStringPrototypeSlice:
+    case Builtins::kStringPrototypeSmall:
     case Builtins::kStringPrototypeStartsWith:
+    case Builtins::kStringPrototypeStrike:
+    case Builtins::kStringPrototypeSub:
     case Builtins::kStringPrototypeSubstr:
     case Builtins::kStringPrototypeSubstring:
+    case Builtins::kStringPrototypeSup:
     case Builtins::kStringPrototypeToString:
 #ifndef V8_INTL_SUPPORT
     case Builtins::kStringPrototypeToLowerCase:

@@ -1729,8 +1729,6 @@ void Heap::MarkCompactEpilogue() {
 
   PreprocessStackTraces();
   DCHECK(incremental_marking()->IsStopped());
-
-  mark_compact_collector()->marking_worklist()->StopUsing();
 }
 
 
@@ -2043,7 +2041,11 @@ void Heap::Scavenge() {
   ArrayBufferTracker::FreeDeadInNewSpace(this);
 
   RememberedSet<OLD_TO_NEW>::IterateMemoryChunks(this, [](MemoryChunk* chunk) {
-    RememberedSet<OLD_TO_NEW>::PreFreeEmptyBuckets(chunk);
+    if (chunk->SweepingDone()) {
+      RememberedSet<OLD_TO_NEW>::FreeEmptyBuckets(chunk);
+    } else {
+      RememberedSet<OLD_TO_NEW>::PreFreeEmptyBuckets(chunk);
+    }
   });
 
   // Update how much has survived scavenge.
@@ -4059,7 +4061,7 @@ void Heap::RegisterDeserializedObjectsForBlackAllocation(
   // object space for side effects.
   IncrementalMarking::MarkingState* marking_state =
       incremental_marking()->marking_state();
-  for (int i = OLD_SPACE; i < Serializer::kNumberOfSpaces; i++) {
+  for (int i = OLD_SPACE; i < Serializer<>::kNumberOfSpaces; i++) {
     const Heap::Reservation& res = reservations[i];
     for (auto& chunk : res) {
       Address addr = chunk.start;

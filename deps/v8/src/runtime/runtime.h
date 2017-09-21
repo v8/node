@@ -69,7 +69,6 @@ namespace internal {
   F(SetAllowAtomicsWait, 1, 1)
 
 #define FOR_EACH_INTRINSIC_BIGINT(F) \
-  F(BigInt, 1, 1)                    \
   F(BigIntEqual, 2, 1)               \
   F(BigIntToBoolean, 1, 1)
 
@@ -227,7 +226,6 @@ namespace internal {
   F(SetCode, 2, 1)                         \
   F(SetNativeFlag, 1, 1)                   \
   F(IsConstructor, 1, 1)                   \
-  F(SetForceInlineFlag, 1, 1)              \
   F(Call, -1 /* >= 2 */, 1)                \
   F(ConvertReceiver, 1, 1)                 \
   F(IsFunction, 1, 1)                      \
@@ -610,6 +608,8 @@ namespace internal {
   F(DeserializeWasmModule, 2, 1)              \
   F(IsAsmWasmCode, 1, 1)                      \
   F(IsWasmCode, 1, 1)                         \
+  F(IsWasmTrapHandlerEnabled, 0, 1)           \
+  F(GetWasmRecoveredTrapCount, 0, 1)          \
   F(DisallowCodegenFromStrings, 0, 1)         \
   F(ValidateWasmInstancesChain, 2, 1)         \
   F(ValidateWasmModuleState, 1, 1)            \
@@ -630,7 +630,6 @@ namespace internal {
   F(TypedArrayGetLength, 1, 1)           \
   F(TypedArrayGetBuffer, 1, 1)           \
   F(TypedArraySortFast, 1, 1)            \
-  F(TypedArrayMaxSizeInHeap, 0, 1)       \
   F(IsTypedArray, 1, 1)                  \
   F(IsSharedTypedArray, 1, 1)            \
   F(IsSharedIntegerTypedArray, 1, 1)     \
@@ -644,14 +643,10 @@ namespace internal {
   F(ThrowWasmErrorFromTrapIf, 1, 1)    \
   F(ThrowWasmStackOverflow, 0, 1)      \
   F(WasmThrowTypeError, 0, 1)          \
-  F(WasmThrowCreate, 2, 1)             \
   F(WasmThrow, 1, 1)                   \
   F(WasmRethrow, 0, 1)                 \
-  F(WasmGetExceptionRuntimeId, 1, 1)   \
-  F(WasmGetExceptionValuesArray, 1, 1) \
+  F(WasmGetExceptionTag, 1, 1)         \
   F(WasmSetCaughtExceptionValue, 1, 1) \
-  F(WasmExceptionSetElement, 3, 1)     \
-  F(WasmExceptionGetElement, 2, 1)     \
   F(WasmRunInterpreter, 3, 1)          \
   F(WasmStackGuard, 0, 1)              \
   F(SetThreadInWasm, 0, 1)             \

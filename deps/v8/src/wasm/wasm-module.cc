@@ -334,7 +334,7 @@ void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
       const int index = RegisterHandlerData(reinterpret_cast<void*>(base), size,
                                             unpacked.size(), &unpacked[0]);
       // TODO(eholk): if index is negative, fail.
-      DCHECK(index >= 0);
+      DCHECK_LE(0, index);
       code->set_trap_handler_index(Smi::FromInt(index));
     }
   }
@@ -897,6 +897,14 @@ void AsyncCompile(Isolate* isolate, Handle<JSPromise> promise,
     return;
   }
 
+  if (FLAG_wasm_test_streaming) {
+    std::shared_ptr<StreamingDecoder> streaming_decoder =
+        isolate->wasm_compilation_manager()->StartStreamingCompilation(
+            isolate, handle(isolate->context()), promise);
+    streaming_decoder->OnBytesReceived(bytes.module_bytes());
+    streaming_decoder->Finish();
+    return;
+  }
   // Make a copy of the wire bytes in case the user program changes them
   // during asynchronous compilation.
   std::unique_ptr<byte[]> copy(new byte[bytes.length()]);

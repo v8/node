@@ -60,7 +60,7 @@ class BigInt : public HeapObject {
   }
   void Initialize(int length, bool zero_initialize);
 
-  static Handle<String> ToString(Handle<BigInt> bigint, int radix);
+  static MaybeHandle<String> ToString(Handle<BigInt> bigint, int radix);
 
   // Temporarily exposed helper, pending proper initialization.
   void set_value(int value) {
@@ -89,7 +89,23 @@ class BigInt : public HeapObject {
   static const digit_t kHalfDigitMask = (1ull << kHalfDigitBits) - 1;
 
   // Private helpers for public methods.
-  Handle<String> ToStringBasePowerOfTwo(Handle<BigInt> x, int radix);
+  static Handle<BigInt> Copy(Handle<BigInt> source);
+  void RightTrim();
+
+  static Handle<BigInt> AbsoluteAdd(Handle<BigInt> x, Handle<BigInt> y,
+                                    bool result_sign);
+  static Handle<BigInt> AbsoluteSub(Handle<BigInt> x, Handle<BigInt> y,
+                                    bool result_sign);
+  // Returns a positive value if abs(x) > abs(y), a negative value if
+  // abs(x) < abs(y), or zero if abs(x) == abs(y).
+  static int AbsoluteCompare(Handle<BigInt> x, Handle<BigInt> y);
+
+  static MaybeHandle<String> ToStringBasePowerOfTwo(Handle<BigInt> x,
+                                                    int radix);
+
+  // Digit arithmetic helpers.
+  static inline digit_t digit_add(digit_t a, digit_t b, digit_t* carry);
+  static inline digit_t digit_sub(digit_t a, digit_t b, digit_t* borrow);
 
   class LengthBits : public BitField<int, 0, kMaxLengthBits> {};
   class SignBits : public BitField<bool, LengthBits::kNext, 1> {};

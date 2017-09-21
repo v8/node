@@ -1181,6 +1181,116 @@ compiler::Node* StringBuiltinsAssembler::GetSubstitution(
   return var_result.value();
 }
 
+// ES6 #sec-string.prototype.repeat
+TF_BUILTIN(StringPrototypeRepeat, StringBuiltinsAssembler) {
+  Label invalid_count(this), invalid_string_length(this),
+      return_emptystring(this);
+
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const count = Parameter(Descriptor::kCount);
+  Node* const string =
+      ToThisString(context, receiver, "String.prototype.repeat");
+  Node* const is_stringempty =
+      SmiEqual(LoadStringLength(string), SmiConstant(0));
+
+  VARIABLE(var_count, MachineRepresentation::kTagged,
+           ToInteger(context, count, CodeStubAssembler::kTruncateMinusZero));
+
+  // Verifies a valid count and takes a fast path when the result will be an
+  // empty string.
+  {
+    Label next(this), if_count_isheapnumber(this, Label::kDeferred);
+
+    GotoIfNot(TaggedIsSmi(var_count.value()), &if_count_isheapnumber);
+
+    // If count is a SMI, throw a RangeError if less than 0 or greater than
+    // the maximum string length.
+    {
+      GotoIf(SmiLessThan(var_count.value(), SmiConstant(0)), &invalid_count);
+      GotoIf(SmiEqual(var_count.value(), SmiConstant(0)), &return_emptystring);
+      GotoIf(is_stringempty, &return_emptystring);
+      GotoIf(SmiGreaterThan(var_count.value(), SmiConstant(String::kMaxLength)),
+             &invalid_string_length);
+      Goto(&next);
+    }
+
+    // If count is a Heap Number...
+    // 1) If count is Infinity, throw a RangeError exception
+    // 2) If receiver is an empty string, return an empty string
+    // 3) Otherwise, throw RangeError exception
+    BIND(&if_count_isheapnumber);
+    {
+      CSA_ASSERT(this, IsNumberNormalized(var_count.value()));
+      Node* const number_value = LoadHeapNumberValue(var_count.value());
+      GotoIf(Float64Equal(number_value, Float64Constant(V8_INFINITY)),
+             &invalid_count);
+      GotoIf(Float64LessThan(number_value, Float64Constant(0.0)),
+             &invalid_count);
+      Branch(is_stringempty, &return_emptystring, &invalid_string_length);
+    }
+    BIND(&next);
+  }
+
+  // The receiver is repeated with the following algorithm:
+  //   let n = count;
+  //   let power_of_two_repeats = receiver;
+  //   let result = "";
+  //   while (true) {
+  //     if (n & 1) result += s;
+  //     n >>= 1;
+  //     if (n === 0) return result;
+  //     power_of_two_repeats += power_of_two_repeats;
+  //   }
+  {
+    VARIABLE(var_result, MachineRepresentation::kTagged, EmptyStringConstant());
+    VARIABLE(var_temp, MachineRepresentation::kTagged, string);
+
+    Callable stringadd_callable =
+        CodeFactory::StringAdd(isolate(), STRING_ADD_CHECK_NONE, NOT_TENURED);
+
+    Label loop(this, {&var_count, &var_result, &var_temp}), return_result(this);
+    Goto(&loop);
+    BIND(&loop);
+    {
+      {
+        Label next(this);
+        GotoIfNot(SmiToWord32(SmiAnd(var_count.value(), SmiConstant(1))),
+                  &next);
+        var_result.Bind(CallStub(stringadd_callable, context,
+                                 var_result.value(), var_temp.value()));
+        Goto(&next);
+        BIND(&next);
+      }
+
+      var_count.Bind(SmiShr(var_count.value(), 1));
+      GotoIf(SmiEqual(var_count.value(), SmiConstant(0)), &return_result);
+      var_temp.Bind(CallStub(stringadd_callable, context, var_temp.value(),
+                             var_temp.value()));
+      Goto(&loop);
+    }
+
+    BIND(&return_result);
+    Return(var_result.value());
+  }
+
+  BIND(&return_emptystring);
+  Return(EmptyStringConstant());
+
+  BIND(&invalid_count);
+  {
+    CallRuntime(Runtime::kThrowRangeError, context,
+                SmiConstant(MessageTemplate::kInvalidCountValue),
+                var_count.value());
+    Unreachable();
+  }
+  BIND(&invalid_string_length);
+  {
+    CallRuntime(Runtime::kThrowInvalidStringLength, context);
+    Unreachable();
+  }
+}
+
 // ES6 #sec-string.prototype.replace
 TF_BUILTIN(StringPrototypeReplace, StringBuiltinsAssembler) {
   Label out(this);
@@ -2042,6 +2152,167 @@ TF_BUILTIN(StringIteratorPrototypeNext, StringBuiltinsAssembler) {
                 StringConstant("String Iterator.prototype.next"), iterator);
     Unreachable();
   }
+}
+
+// -----------------------------------------------------------------------------
+// ES6 section B.2.3 Additional Properties of the String.prototype object
+
+class StringHtmlAssembler : public StringBuiltinsAssembler {
+ public:
+  explicit StringHtmlAssembler(compiler::CodeAssemblerState* state)
+      : StringBuiltinsAssembler(state) {}
+
+ protected:
+  void Generate(Node* const context, Node* const receiver,
+                const char* method_name, const char* tag_name) {
+    Node* const string = ToThisString(context, receiver, method_name);
+    std::string open_tag = "<" + std::string(tag_name) + ">";
+    std::string close_tag = "</" + std::string(tag_name) + ">";
+
+    Node* strings[] = {StringConstant(open_tag.c_str()), string,
+                       StringConstant(close_tag.c_str())};
+    Return(ConcatStrings(context, strings, arraysize(strings)));
+  }
+
+  void GenerateWithAttribute(Node* const context, Node* const receiver,
+                             const char* method_name, const char* tag_name,
+                             const char* attr, Node* const value) {
+    Node* const string = ToThisString(context, receiver, method_name);
+    Node* const value_string =
+        EscapeQuotes(context, ToString_Inline(context, value));
+    std::string open_tag_attr =
+        "<" + std::string(tag_name) + " " + std::string(attr) + "=\"";
+    std::string close_tag = "</" + std::string(tag_name) + ">";
+
+    Node* strings[] = {StringConstant(open_tag_attr.c_str()), value_string,
+                       StringConstant("\">"), string,
+                       StringConstant(close_tag.c_str())};
+    Return(ConcatStrings(context, strings, arraysize(strings)));
+  }
+
+  Node* ConcatStrings(Node* const context, Node** strings, int len) {
+    VARIABLE(var_result, MachineRepresentation::kTagged, strings[0]);
+    for (int i = 1; i < len; i++) {
+      var_result.Bind(CallStub(CodeFactory::StringAdd(isolate()), context,
+                               var_result.value(), strings[i]));
+    }
+    return var_result.value();
+  }
+
+  Node* EscapeQuotes(Node* const context, Node* const string) {
+    CSA_ASSERT(this, IsString(string));
+    Node* const regexp_function = LoadContextElement(
+        LoadNativeContext(context), Context::REGEXP_FUNCTION_INDEX);
+    Node* const initial_map = LoadObjectField(
+        regexp_function, JSFunction::kPrototypeOrInitialMapOffset);
+    // TODO(pwong): Refactor to not allocate RegExp
+    Node* const regexp =
+        CallRuntime(Runtime::kRegExpInitializeAndCompile, context,
+                    AllocateJSObjectFromMap(initial_map), StringConstant("\""),
+                    StringConstant("g"));
+
+    return CallRuntime(Runtime::kRegExpInternalReplace, context, regexp, string,
+                       StringConstant("&quot;"));
+  }
+};
+
+// ES6 #sec-string.prototype.anchor
+TF_BUILTIN(StringPrototypeAnchor, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.anchor", "a",
+                        "name", value);
+}
+
+// ES6 #sec-string.prototype.big
+TF_BUILTIN(StringPrototypeBig, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.big", "big");
+}
+
+// ES6 #sec-string.prototype.blink
+TF_BUILTIN(StringPrototypeBlink, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.blink", "blink");
+}
+
+// ES6 #sec-string.prototype.bold
+TF_BUILTIN(StringPrototypeBold, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.bold", "b");
+}
+
+// ES6 #sec-string.prototype.fontcolor
+TF_BUILTIN(StringPrototypeFontcolor, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.fontcolor", "font",
+                        "color", value);
+}
+
+// ES6 #sec-string.prototype.fontsize
+TF_BUILTIN(StringPrototypeFontsize, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.fontsize", "font",
+                        "size", value);
+}
+
+// ES6 #sec-string.prototype.fixed
+TF_BUILTIN(StringPrototypeFixed, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.fixed", "tt");
+}
+
+// ES6 #sec-string.prototype.italics
+TF_BUILTIN(StringPrototypeItalics, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.italics", "i");
+}
+
+// ES6 #sec-string.prototype.link
+TF_BUILTIN(StringPrototypeLink, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Node* const value = Parameter(Descriptor::kValue);
+  GenerateWithAttribute(context, receiver, "String.prototype.link", "a", "href",
+                        value);
+}
+
+// ES6 #sec-string.prototype.small
+TF_BUILTIN(StringPrototypeSmall, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.small", "small");
+}
+
+// ES6 #sec-string.prototype.strike
+TF_BUILTIN(StringPrototypeStrike, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.strike", "strike");
+}
+
+// ES6 #sec-string.prototype.sub
+TF_BUILTIN(StringPrototypeSub, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.sub", "sub");
+}
+
+// ES6 #sec-string.prototype.sup
+TF_BUILTIN(StringPrototypeSup, StringHtmlAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
+  Generate(context, receiver, "String.prototype.sup", "sup");
 }
 
 }  // namespace internal

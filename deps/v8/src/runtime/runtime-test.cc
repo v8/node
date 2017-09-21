@@ -297,8 +297,7 @@ RUNTIME_FUNCTION(Runtime_OptimizeOsr) {
   }
 
   // Make the profiler arm all back edges in unoptimized code.
-  if (it.frame()->type() == StackFrame::JAVA_SCRIPT ||
-      it.frame()->type() == StackFrame::INTERPRETED) {
+  if (it.frame()->type() == StackFrame::INTERPRETED) {
     isolate->runtime_profiler()->AttemptOnStackReplacement(
         it.frame(), AbstractCode::kMaxLoopNestingMarker);
   }
@@ -865,6 +864,20 @@ RUNTIME_FUNCTION(Runtime_IsWasmCode) {
   CONVERT_ARG_CHECKED(JSFunction, function, 0);
   bool is_js_to_wasm = function->code()->kind() == Code::JS_TO_WASM_FUNCTION;
   return isolate->heap()->ToBoolean(is_js_to_wasm);
+}
+
+RUNTIME_FUNCTION(Runtime_IsWasmTrapHandlerEnabled) {
+  DisallowHeapAllocation no_gc;
+  DCHECK_EQ(0, args.length());
+  bool is_enabled = trap_handler::UseTrapHandler();
+  return isolate->heap()->ToBoolean(is_enabled);
+}
+
+RUNTIME_FUNCTION(Runtime_GetWasmRecoveredTrapCount) {
+  HandleScope shs(isolate);
+  DCHECK_EQ(0, args.length());
+  size_t trap_count = trap_handler::GetRecoveredTrapCount();
+  return *isolate->factory()->NewNumberFromSize(trap_count);
 }
 
 #define ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(Name)       \
