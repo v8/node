@@ -70,12 +70,10 @@ test('utf-8', Buffer.from('E2FBCC01', 'hex'), '\ufffd\ufffd\ufffd\u0001');
 test('utf-8', Buffer.from('CCB8CDB9', 'hex'), '\u0338\u0379');
 // CESU-8 of U+1D40D
 
-// Disabled - V8 is changing the behavior related to overlong sequence / invalid
-// code point handling. See
-// https://chromium-review.googlesource.com/c/v8/v8/+/671020 for more
-// information.
-
-// test('utf-8', Buffer.from('EDA0B5EDB08D', 'hex'), '\ufffd\ufffd');
+// V8 has changed their invalid UTF-8 handling, see
+// https://chromium-review.googlesource.com/c/v8/v8/+/671020 for more info.
+test('utf-8', Buffer.from('EDA0B5EDB08D', 'hex'),
+     '\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd');
 
 // UCS-2
 test('ucs2', Buffer.from('ababc', 'ucs2'), 'ababc');
