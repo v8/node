@@ -1345,6 +1345,8 @@ void TurboAssembler::PopHelper(int count, int size, const CPURegister& dst0,
 }
 
 void TurboAssembler::PushPreamble(Operand total_size) {
+  if (total_size.IsZero()) return;
+
   if (csp.Is(StackPointer())) {
     // If the current stack pointer is csp, then it must be aligned to 16 bytes
     // on entry and the total size of the specified registers must also be a
@@ -1364,6 +1366,8 @@ void TurboAssembler::PushPreamble(Operand total_size) {
 }
 
 void TurboAssembler::PopPostamble(Operand total_size) {
+  if (total_size.IsZero()) return;
+
   if (csp.Is(StackPointer())) {
     // If the current stack pointer is csp, then it must be aligned to 16 bytes
     // on entry and the total size of the specified registers must also be a
@@ -3200,6 +3204,10 @@ void TurboAssembler::CallRecordWriteStub(
       callable.descriptor().GetRegisterParameter(RecordWriteDescriptor::kSlot));
   Register isolate_parameter(callable.descriptor().GetRegisterParameter(
       RecordWriteDescriptor::kIsolate));
+  Register remembered_set_parameter(callable.descriptor().GetRegisterParameter(
+      RecordWriteDescriptor::kRememberedSet));
+  Register fp_mode_parameter(callable.descriptor().GetRegisterParameter(
+      RecordWriteDescriptor::kFPMode));
 
   Push(object);
   Push(address);
@@ -3208,6 +3216,8 @@ void TurboAssembler::CallRecordWriteStub(
   Pop(object_parameter);
 
   Mov(isolate_parameter, ExternalReference::isolate_address(isolate()));
+  Move(remembered_set_parameter, Smi::FromEnum(remembered_set_action));
+  Move(fp_mode_parameter, Smi::FromEnum(fp_mode));
   Call(callable.code(), RelocInfo::CODE_TARGET);
 
   RestoreRegisters(registers);

@@ -889,18 +889,6 @@ void Heap::GarbageCollectionEpilogue() {
     isolate_->counters()->external_fragmentation_total()->AddSample(
         static_cast<int>(100 - (SizeOfObjects() * 100.0) / CommittedMemory()));
 
-    isolate_->counters()->heap_fraction_new_space()->AddSample(static_cast<int>(
-        (new_space()->CommittedMemory() * 100.0) / CommittedMemory()));
-    isolate_->counters()->heap_fraction_old_space()->AddSample(static_cast<int>(
-        (old_space()->CommittedMemory() * 100.0) / CommittedMemory()));
-    isolate_->counters()->heap_fraction_code_space()->AddSample(
-        static_cast<int>((code_space()->CommittedMemory() * 100.0) /
-                         CommittedMemory()));
-    isolate_->counters()->heap_fraction_map_space()->AddSample(static_cast<int>(
-        (map_space()->CommittedMemory() * 100.0) / CommittedMemory()));
-    isolate_->counters()->heap_fraction_lo_space()->AddSample(static_cast<int>(
-        (lo_space()->CommittedMemory() * 100.0) / CommittedMemory()));
-
     isolate_->counters()->heap_sample_total_committed()->AddSample(
         static_cast<int>(CommittedMemory() / KB));
     isolate_->counters()->heap_sample_total_used()->AddSample(
@@ -4808,8 +4796,8 @@ class FixStaleLeftTrimmedHandlesVisitor : public RootVisitor {
 
  private:
   inline void FixHandle(Object** p) {
+    if (!(*p)->IsHeapObject()) return;
     HeapObject* current = reinterpret_cast<HeapObject*>(*p);
-    if (!current->IsHeapObject()) return;
     const MapWord map_word = current->map_word();
     if (!map_word.IsForwardingAddress() && current->IsFiller()) {
 #ifdef DEBUG
@@ -5392,7 +5380,7 @@ bool Heap::SetUp() {
   }
 
   mmap_region_base_ =
-      reinterpret_cast<uintptr_t>(base::OS::GetRandomMmapAddr()) &
+      reinterpret_cast<uintptr_t>(v8::internal::GetRandomMmapAddr()) &
       ~kMmapRegionMask;
 
   // Set up memory allocator.

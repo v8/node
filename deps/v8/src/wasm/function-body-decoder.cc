@@ -257,21 +257,22 @@ class WasmGraphBuildingInterface {
     ssa_env_->control = merge;
   }
 
-  void BreakTo(Decoder* decoder, Control* block) {
-    if (block->is_loop()) {
-      Goto(decoder, ssa_env_, block->end_env);
+  void BreakTo(Decoder* decoder, uint32_t depth) {
+    Control* target = decoder->control_at(depth);
+    if (target->is_loop()) {
+      Goto(decoder, ssa_env_, target->end_env);
     } else {
-      MergeValuesInto(decoder, block);
+      MergeValuesInto(decoder, target);
     }
   }
 
-  void BrIf(Decoder* decoder, const Value& cond, Control* block) {
+  void BrIf(Decoder* decoder, const Value& cond, uint32_t depth) {
     SsaEnv* fenv = ssa_env_;
     SsaEnv* tenv = Split(decoder, fenv);
     fenv->SetNotMerged();
     BUILD(BranchNoHint, cond.node, &tenv->control, &fenv->control);
     ssa_env_ = tenv;
-    BreakTo(decoder, block);
+    BreakTo(decoder, depth);
     ssa_env_ = fenv;
   }
 
@@ -290,7 +291,7 @@ class WasmGraphBuildingInterface {
       ssa_env_ = Split(decoder, copy);
       ssa_env_->control = (i == operand.table_count) ? BUILD(IfDefault, sw)
                                                      : BUILD(IfValue, i, sw);
-      BreakTo(decoder, decoder->control_at(target));
+      BreakTo(decoder, target);
     }
     DCHECK(decoder->ok());
     ssa_env_ = break_env;
@@ -406,9 +407,10 @@ class WasmGraphBuildingInterface {
   }
 
   void AtomicOp(Decoder* decoder, WasmOpcode opcode, Vector<Value> args,
-                Value* result) {
+                const MemoryAccessOperand<true>& operand, Value* result) {
     TFNode** inputs = GetNodes(args);
-    TFNode* node = BUILD(AtomicOp, opcode, inputs, decoder->position());
+    TFNode* node = BUILD(AtomicOp, opcode, inputs, operand.alignment,
+                         operand.offset, decoder->position());
     if (result) result->node = node;
   }
 
@@ -776,11 +778,7 @@ DecodeResult VerifyWasmCodeWithStats(AccountingAllocator* allocator,
                                      const wasm::WasmModule* module,
                                      FunctionBody& body, bool is_wasm,
                                      Counters* counters) {
-  auto size_histogram = is_wasm ? counters->wasm_wasm_function_size_bytes()
-                                : counters->wasm_asm_function_size_bytes();
-  // TODO(bradnelson): Improve histogram handling of ptrdiff_t.
   CHECK_LE(0, body.end - body.start);
-  size_histogram->AddSample(static_cast<int>(body.end - body.start));
   auto time_counter = is_wasm ? counters->wasm_decode_wasm_function_time()
                               : counters->wasm_decode_asm_function_time();
   TimedHistogramScope wasm_decode_function_time_scope(time_counter);

@@ -81,7 +81,7 @@ declare_args() {
   v8_enable_trace_ignition = false
 
   # Sets -dV8_CONCURRENT_MARKING
-  v8_enable_concurrent_marking = false
+  v8_enable_concurrent_marking = ""
 
   # Sets -dV8_CSA_WRITE_BARRIER
   v8_enable_csa_write_barrier = true
@@ -149,6 +149,13 @@ if (v8_enable_v8_checks == "") {
 }
 if (v8_check_microtasks_scopes_consistency == "") {
   v8_check_microtasks_scopes_consistency = is_debug || dcheck_always_on
+}
+if (v8_enable_concurrent_marking == "") {
+  if (target_cpu == "x86" || target_cpu == "x64") {
+    v8_enable_concurrent_marking = true
+  } else {
+    v8_enable_concurrent_marking = false
+  }
 }
 
 # Specifies if the target build is a simulator build. Comparing target cpu
@@ -566,7 +573,6 @@ action("js2c") {
     "src/js/typedarray.js",
     "src/js/weak-collection.js",
     "src/js/messages.js",
-    "src/js/templates.js",
     "src/js/spread.js",
     "src/js/proxy.js",
     "src/debug/mirrors.js",
@@ -1812,6 +1818,8 @@ v8_source_set("v8_base") {
     "src/objects/string-inl.h",
     "src/objects/string-table.h",
     "src/objects/string.h",
+    "src/objects/template-objects.cc",
+    "src/objects/template-objects.h",
     "src/ostreams.cc",
     "src/ostreams.h",
     "src/parsing/duplicate-finder.h",

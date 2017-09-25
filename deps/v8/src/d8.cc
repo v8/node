@@ -138,7 +138,7 @@ class ShellArrayBufferAllocator : public ArrayBufferAllocatorBase {
   void Free(void* data, size_t length) override {
 #if USE_VM
     if (RoundToPageSize(&length)) {
-      base::VirtualMemory::ReleaseRegion(data, length);
+      base::OS::ReleaseRegion(data, length);
       return;
     }
 #endif
@@ -156,9 +156,9 @@ class ShellArrayBufferAllocator : public ArrayBufferAllocatorBase {
   }
 #if USE_VM
   void* VirtualMemoryAllocate(size_t length) {
-    void* data = base::VirtualMemory::ReserveRegion(length, nullptr);
-    if (data && !base::VirtualMemory::CommitRegion(data, length, false)) {
-      base::VirtualMemory::ReleaseRegion(data, length);
+    void* data = base::OS::ReserveRegion(length, nullptr);
+    if (data && !base::OS::CommitRegion(data, length, false)) {
+      base::OS::ReleaseRegion(data, length);
       return nullptr;
     }
     MSAN_MEMORY_IS_INITIALIZED(data, length);
@@ -1545,7 +1545,7 @@ Counter* CounterCollection::GetNextCounter() {
 
 void Shell::MapCounters(v8::Isolate* isolate, const char* name) {
   counters_file_ = base::OS::MemoryMappedFile::create(
-      name, sizeof(CounterCollection), &local_counters_);
+      name, nullptr, sizeof(CounterCollection), &local_counters_);
   void* memory = (counters_file_ == NULL) ?
       NULL : counters_file_->memory();
   if (memory == NULL) {

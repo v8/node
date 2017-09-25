@@ -264,6 +264,14 @@ class WasmGraphBuilder {
                      wasm::WasmCodePosition position);
 
   void BuildJSToWasmWrapper(Handle<Code> wasm_code);
+  enum ImportDataType {
+    kFunction = 1,
+    kGlobalProxy = 2,
+    kFunctionContext = 3,
+  };
+  Node* LoadImportDataAtOffset(int offset, Node* table);
+  Node* LoadNativeContext(Node* table);
+  Node* LoadImportData(int index, ImportDataType type, Node* table);
   bool BuildWasmToJSWrapper(Handle<JSReceiver> target,
                             Handle<FixedArray> global_js_imports_table,
                             int index);
@@ -320,6 +328,7 @@ class WasmGraphBuilder {
   Node* Simd8x16ShuffleOp(const uint8_t shuffle[16], Node* const* inputs);
 
   Node* AtomicOp(wasm::WasmOpcode opcode, Node* const* inputs,
+                 uint32_t alignment, uint32_t offset,
                  wasm::WasmCodePosition position);
 
   bool has_simd() const { return has_simd_; }

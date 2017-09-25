@@ -13,6 +13,7 @@
 namespace v8 {
 namespace internal {
 namespace wasm {
+namespace test_wasm_stack {
 
 using v8::Local;
 using v8::Utils;
@@ -105,7 +106,7 @@ TEST(CollectDetailedWasmStack_ExplicitThrowFromJs) {
   TestSignatures sigs;
 
   Handle<FixedArray> js_imports_table =
-      r.main_isolate()->factory()->NewFixedArray(2, TENURED);
+      r.main_isolate()->factory()->NewFixedArray(2 * 3 + 1, TENURED);
   uint32_t js_throwing_index = r.builder().AddJsFunction(
       sigs.v_v(),
       "(function js() {\n function a() {\n throw new Error(); };\n a(); })",
@@ -198,6 +199,7 @@ TEST(CollectDetailedWasmStack_WasmError) {
   }
 }
 
+}  // namespace test_wasm_stack
 }  // namespace wasm
 }  // namespace internal
 }  // namespace v8
