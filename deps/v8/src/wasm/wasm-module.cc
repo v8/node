@@ -109,7 +109,7 @@ static void InstanceFinalizer(const v8::WeakCallbackInfo<void>& data) {
       int index = code->trap_handler_index()->value();
       if (index >= 0) {
         trap_handler::ReleaseHandlerData(index);
-        code->set_trap_handler_index(Smi::FromInt(-1));
+        code->set_trap_handler_index(Smi::FromInt(trap_handler::kInvalidIndex));
       }
     }
   }
@@ -246,6 +246,12 @@ compiler::ModuleEnv CreateModuleEnvFromCompiledModule(
 // static
 const WasmExceptionSig WasmException::empty_sig_(0, 0, nullptr);
 
+// static
+constexpr const char* WasmException::kRuntimeIdStr;
+
+// static
+constexpr const char* WasmException::kRuntimeValuesStr;
+
 Handle<JSArrayBuffer> SetupArrayBuffer(Isolate* isolate, void* allocation_base,
                                        size_t allocation_length,
                                        void* backing_store, size_t size,
@@ -314,6 +320,11 @@ void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
     }
 
     if (code->kind() != Code::WASM_FUNCTION) {
+      continue;
+    }
+
+    if (code->trap_handler_index()->value() != trap_handler::kInvalidIndex) {
+      // This function has already been registered.
       continue;
     }
 
