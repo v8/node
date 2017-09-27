@@ -862,7 +862,9 @@ bool InstructionSelector::IsSourcePositionUsed(Node* node) {
           node->opcode() == IrOpcode::kCall ||
           node->opcode() == IrOpcode::kCallWithCallerSavedRegisters ||
           node->opcode() == IrOpcode::kTrapIf ||
-          node->opcode() == IrOpcode::kTrapUnless);
+          node->opcode() == IrOpcode::kTrapUnless ||
+          node->opcode() == IrOpcode::kProtectedLoad ||
+          node->opcode() == IrOpcode::kProtectedStore);
 }
 
 void InstructionSelector::VisitBlock(BasicBlock* block) {
@@ -2473,6 +2475,7 @@ void InstructionSelector::VisitOsrValue(Node* node) {
 
 void InstructionSelector::VisitPhi(Node* node) {
   const int input_count = node->op()->ValueInputCount();
+  DCHECK_EQ(input_count, current_block_->PredecessorCount());
   PhiInstruction* phi = new (instruction_zone())
       PhiInstruction(instruction_zone(), GetVirtualRegister(node),
                      static_cast<size_t>(input_count));
