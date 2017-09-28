@@ -312,12 +312,14 @@ Handle<JSArrayBuffer> NewArrayBuffer(Isolate* isolate, size_t size,
 
 void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
                                             Handle<FixedArray> code_table) {
+  DisallowHeapAllocation no_gc;
+  std::vector<trap_handler::ProtectedInstructionData> unpacked;
+
   for (int i = 0; i < code_table->length(); ++i) {
-    Handle<Code> code;
+    Object* maybe_code = code_table->get(i);
     // This is sometimes undefined when we're called from cctests.
-    if (!code_table->GetValue<Code>(isolate, i).ToHandle(&code)) {
-      continue;
-    }
+    if (maybe_code->IsUndefined(isolate)) continue;
+    Code* code = Code::cast(maybe_code);
 
     if (code->kind() != Code::WASM_FUNCTION) {
       continue;
@@ -328,26 +330,28 @@ void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
       continue;
     }
 
-    const intptr_t base = reinterpret_cast<intptr_t>(code->entry());
+    byte* base = code->entry();
 
-    Zone zone(isolate->allocator(), "Wasm Module");
-    ZoneVector<trap_handler::ProtectedInstructionData> unpacked(&zone);
     const int mode_mask =
         RelocInfo::ModeMask(RelocInfo::WASM_PROTECTED_INSTRUCTION_LANDING);
-    for (RelocIterator it(*code, mode_mask); !it.done(); it.next()) {
+    for (RelocIterator it(code, mode_mask); !it.done(); it.next()) {
       trap_handler::ProtectedInstructionData data;
-      data.instr_offset = it.rinfo()->data();
-      data.landing_offset = reinterpret_cast<intptr_t>(it.rinfo()->pc()) - base;
+      data.instr_offset = static_cast<uint32_t>(it.rinfo()->data());
+      data.landing_offset = static_cast<uint32_t>(it.rinfo()->pc() - base);
+      // Check that now over-/underflow happened.
+      DCHECK_EQ(it.rinfo()->data(), data.instr_offset);
+      DCHECK_EQ(it.rinfo()->pc() - base, data.landing_offset);
       unpacked.emplace_back(data);
     }
-    if (unpacked.size() > 0) {
-      int size = code->CodeSize();
-      const int index = RegisterHandlerData(reinterpret_cast<void*>(base), size,
-                                            unpacked.size(), &unpacked[0]);
-      // TODO(eholk): if index is negative, fail.
-      DCHECK_LE(0, index);
-      code->set_trap_handler_index(Smi::FromInt(index));
-    }
+    if (unpacked.empty()) continue;
+
+    int size = code->CodeSize();
+    const int index = RegisterHandlerData(reinterpret_cast<void*>(base), size,
+                                          unpacked.size(), &unpacked[0]);
+    unpacked.clear();
+    // TODO(eholk): if index is negative, fail.
+    DCHECK_LE(0, index);
+    code->set_trap_handler_index(Smi::FromInt(index));
   }
 }
 
@@ -362,20 +366,6 @@ std::ostream& operator<<(std::ostream& os, const WasmFunctionName& name) {
     os << "?";
   }
   return os;
-}
-
-WasmInstanceObject* GetOwningWasmInstance(Code* code) {
-  DisallowHeapAllocation no_gc;
-  DCHECK(code->kind() == Code::WASM_FUNCTION ||
-         code->kind() == Code::WASM_INTERPRETER_ENTRY);
-  FixedArray* deopt_data = code->deoptimization_data();
-  DCHECK_EQ(code->kind() == Code::WASM_INTERPRETER_ENTRY ? 1 : 2,
-            deopt_data->length());
-  Object* weak_link = deopt_data->get(0);
-  DCHECK(weak_link->IsWeakCell());
-  WeakCell* cell = WeakCell::cast(weak_link);
-  if (cell->cleared()) return nullptr;
-  return WasmInstanceObject::cast(cell->value());
 }
 
 WasmModule::WasmModule(std::unique_ptr<Zone> owned)
@@ -444,42 +434,6 @@ void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
       function_table->set(index, Smi::kZero);
     }
   }
-}
-
-void TableSet(ErrorThrower* thrower, Isolate* isolate,
-              Handle<WasmTableObject> table, int64_t index,
-              Handle<JSFunction> function) {
-  Handle<FixedArray> array(table->functions(), isolate);
-
-  if (index < 0 || index >= array->length()) {
-    thrower->RangeError("index out of bounds");
-    return;
-  }
-  int index32 = static_cast<int>(index);
-
-  Handle<FixedArray> dispatch_tables(table->dispatch_tables(), isolate);
-
-  WasmFunction* wasm_function = nullptr;
-  Handle<Code> code = Handle<Code>::null();
-  Handle<Object> value = isolate->factory()->null_value();
-
-  if (!function.is_null()) {
-    wasm_function = GetWasmFunctionForExport(isolate, function);
-    // The verification that {function} is an export was done
-    // by the caller.
-    DCHECK_NOT_NULL(wasm_function);
-    code = UnwrapExportWrapper(function);
-    value = Handle<Object>::cast(function);
-  }
-
-  UpdateDispatchTables(isolate, dispatch_tables, index32, wasm_function, code);
-  array->set(index32, *value);
-}
-
-Handle<Script> GetScript(Handle<JSObject> instance) {
-  WasmCompiledModule* compiled_module =
-      WasmInstanceObject::cast(*instance)->compiled_module();
-  return handle(compiled_module->script());
 }
 
 bool IsWasmCodegenAllowed(Isolate* isolate, Handle<Context> context) {
@@ -962,7 +916,8 @@ Handle<Code> CompileLazy(Isolate* isolate) {
     // Then this is a direct call (otherwise we would have attached the instance
     // via deopt data to the lazy compile stub). Just use the instance of the
     // caller.
-    instance = handle(GetOwningWasmInstance(*caller_code), isolate);
+    instance =
+        handle(WasmInstanceObject::GetOwningInstance(*caller_code), isolate);
   }
   int offset =
       static_cast<int>(it.frame()->pc() - caller_code->instruction_start());
