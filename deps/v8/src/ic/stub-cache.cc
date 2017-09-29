@@ -13,8 +13,7 @@
 namespace v8 {
 namespace internal {
 
-StubCache::StubCache(Isolate* isolate, Code::Kind ic_kind)
-    : isolate_(isolate), ic_kind_(ic_kind) {
+StubCache::StubCache(Isolate* isolate) : isolate_(isolate) {
   // Ensure the nullptr (aka Smi::kZero) which StubCache::Get() returns
   // when the entry is not found is not considered as a handler.
   DCHECK(!IC::IsHandler(nullptr));
@@ -66,15 +65,7 @@ bool CommonStubCacheChecks(StubCache* stub_cache, Name* name, Map* map,
   DCHECK(!name->GetHeap()->InNewSpace(handler));
   DCHECK(name->IsUniqueName());
   DCHECK(name->HasHashCode());
-  if (handler) {
-    DCHECK(IC::IsHandler(handler));
-    if (handler->IsCode()) {
-      Code::Flags code_flags = Code::cast(handler)->flags();
-      Code::Kind ic_code_kind = stub_cache->ic_kind();
-      DCHECK_EQ(ic_code_kind, Code::ExtractExtraICStateFromFlags(code_flags));
-      DCHECK_EQ(Code::HANDLER, Code::ExtractKindFromFlags(code_flags));
-    }
-  }
+  if (handler) DCHECK(IC::IsHandler(handler));
   return true;
 }
 

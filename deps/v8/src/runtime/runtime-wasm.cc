@@ -15,7 +15,7 @@
 #include "src/objects/frame-array-inl.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/v8memory.h"
-#include "src/wasm/wasm-module.h"
+#include "src/wasm/module-compiler.h"
 #include "src/wasm/wasm-objects.h"
 #include "src/wasm/wasm-opcodes.h"
 
@@ -42,14 +42,6 @@ Context* GetWasmContextOnStackTop(Isolate* isolate) {
       ->ptr_to_native_context();
 }
 }  // namespace
-
-RUNTIME_FUNCTION(Runtime_WasmMemorySize) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(0, args.length());
-
-  int32_t mem_size = GetWasmInstanceOnStackTop(isolate)->GetMemorySize();
-  return *isolate->factory()->NewNumberFromInt(mem_size);
-}
 
 RUNTIME_FUNCTION(Runtime_WasmGrowMemory) {
   HandleScope scope(isolate);

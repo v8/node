@@ -929,6 +929,7 @@
         'deoptimize-reason.h',
         'deoptimizer.cc',
         'deoptimizer.h',
+        'detachable-vector.h',
         'disasm.h',
         'disassembler.cc',
         'disassembler.h',
@@ -1126,8 +1127,6 @@
         'layout-descriptor-inl.h',
         'layout-descriptor.cc',
         'layout-descriptor.h',
-        'list-inl.h',
-        'list.h',
         'locked-queue-inl.h',
         'locked-queue.h',
         'log-inl.h',
@@ -1162,8 +1161,6 @@
         'objects/bigint-inl.h',
         'objects/bigint.cc',
         'objects/bigint.h',
-        'objects/code-cache.h',
-        'objects/code-cache-inl.h',
         'objects/compilation-cache.h',
         'objects/compilation-cache-inl.h',
         'objects/debug-objects-inl.h',
@@ -1485,6 +1482,7 @@
         'zone/zone-allocator.h',
         'zone/zone-containers.h',
         'zone/zone-handle-set.h',
+        'zone/zone-list-inl.h',
       ],
       'conditions': [
         ['want_separate_host_toolset==1', {
