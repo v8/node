@@ -187,7 +187,7 @@ TF_BUILTIN(ObjectKeys, ObjectBuiltinsAssembler) {
     Node* native_context = LoadNativeContext(context);
     Node* array_map = LoadJSArrayElementsMap(PACKED_ELEMENTS, native_context);
     Node* array = AllocateUninitializedJSArrayWithoutElements(
-        PACKED_ELEMENTS, array_map, var_length.value(), nullptr);
+        array_map, var_length.value(), nullptr);
     StoreObjectFieldNoWriteBarrier(array, JSArray::kElementsOffset,
                                    var_elements.value());
     Return(array);
@@ -596,6 +596,21 @@ TF_BUILTIN(ObjectCreate, ObjectBuiltinsAssembler) {
         CallRuntime(Runtime::kObjectCreate, context, prototype, properties);
     args.PopAndReturn(result);
   }
+}
+
+// ES #sec-object.is
+TF_BUILTIN(ObjectIs, ObjectBuiltinsAssembler) {
+  Node* const left = Parameter(Descriptor::kLeft);
+  Node* const right = Parameter(Descriptor::kRight);
+
+  Label return_true(this), return_false(this);
+  BranchIfSameValue(left, right, &return_true, &return_false);
+
+  BIND(&return_true);
+  Return(TrueConstant());
+
+  BIND(&return_false);
+  Return(FalseConstant());
 }
 
 TF_BUILTIN(CreateIterResultObject, ObjectBuiltinsAssembler) {

@@ -1743,7 +1743,7 @@ Handle<ModuleInfo> Factory::NewModuleInfo() {
 Handle<PreParsedScopeData> Factory::NewPreParsedScopeData() {
   Handle<PreParsedScopeData> result =
       Handle<PreParsedScopeData>::cast(NewStruct(TUPLE2_TYPE, TENURED));
-  result->set_scope_data(PodArray<uint32_t>::cast(*empty_byte_array()));
+  result->set_scope_data(PodArray<uint8_t>::cast(*empty_byte_array()));
   result->set_child_data(*empty_fixed_array());
   return result;
 }
@@ -1762,7 +1762,7 @@ Handle<Code> Factory::NewCodeRaw(int object_size, bool immovable) {
                      Code);
 }
 
-Handle<Code> Factory::NewCode(const CodeDesc& desc, Code::Flags flags,
+Handle<Code> Factory::NewCode(const CodeDesc& desc, Code::Kind kind,
                               Handle<Object> self_ref, bool immovable) {
   Handle<ByteArray> reloc_info = NewByteArray(desc.reloc_size, TENURED);
 
@@ -1790,7 +1790,7 @@ Handle<Code> Factory::NewCode(const CodeDesc& desc, Code::Flags flags,
   DisallowHeapAllocation no_gc;
   code->set_instruction_size(desc.instr_size);
   code->set_relocation_info(*reloc_info);
-  code->set_flags(flags);
+  code->initialize_flags(kind);
   code->set_has_unwinding_info(has_unwinding_info);
   code->set_raw_kind_specific_flags1(0);
   code->set_raw_kind_specific_flags2(0);

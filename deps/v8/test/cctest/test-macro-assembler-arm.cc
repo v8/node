@@ -36,6 +36,7 @@
 
 namespace v8 {
 namespace internal {
+namespace test_macro_assembler_arm {
 
 typedef void* (*F)(int x, int y, int p2, int p3, int p4);
 
@@ -126,8 +127,8 @@ TEST(LoadAndStoreWithRepresentation) {
 
   CodeDesc desc;
   masm->GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 
   // Call the function from C++.
   F5 f = FUNCTION_CAST<F5>(code->entry());
@@ -236,8 +237,8 @@ TEST(ExtractLane) {
 
   CodeDesc desc;
   masm->GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   OFStream os(stdout);
   code->Print(os);
@@ -371,8 +372,8 @@ TEST(ReplaceLane) {
 
   CodeDesc desc;
   masm->GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   OFStream os(stdout);
   code->Print(os);
@@ -406,5 +407,6 @@ TEST(ReplaceLane) {
 
 #undef __
 
+}  // namespace test_macro_assembler_arm
 }  // namespace internal
 }  // namespace v8

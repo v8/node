@@ -19,7 +19,7 @@ namespace internal {
 // TFC: Builtin in Turbofan, with CodeStub linkage and custom descriptor.
 //      Args: name, interface descriptor, return_size
 // TFH: Handlers in Turbofan, with CodeStub linkage.
-//      Args: name, code kind, interface descriptor
+//      Args: name, interface descriptor
 // ASM: Builtin in platform-dependent assembly.
 //      Args: name
 
@@ -124,8 +124,6 @@ namespace internal {
   ASM(DeserializeLazy)                                                         \
   ASM(InstantiateAsmJs)                                                        \
   ASM(NotifyDeoptimized)                                                       \
-  ASM(NotifySoftDeoptimized)                                                   \
-  ASM(NotifyLazyDeoptimized)                                                   \
   ASM(NotifyBuiltinContinuation)                                               \
                                                                                \
   /* Trampolines called when returning from a deoptimization that expects   */ \
@@ -197,26 +195,27 @@ namespace internal {
   TFC(ToBooleanLazyDeoptContinuation, TypeConversionStackParameter, 1)         \
                                                                                \
   /* Handlers */                                                               \
-  TFH(LoadICProtoArray, BUILTIN, LoadICProtoArray)                             \
-  TFH(LoadICProtoArrayThrowIfNonexistent, BUILTIN, LoadICProtoArray)           \
-  TFH(KeyedLoadIC_Megamorphic, BUILTIN, LoadWithVector)                        \
-  TFH(KeyedLoadIC_Miss, BUILTIN, LoadWithVector)                               \
-  TFH(KeyedLoadIC_Slow, HANDLER, LoadWithVector)                               \
-  TFH(KeyedLoadIC_IndexedString, HANDLER, LoadWithVector)                      \
-  TFH(KeyedStoreIC_Megamorphic, BUILTIN, StoreWithVector)                      \
-  TFH(KeyedStoreIC_Miss, BUILTIN, StoreWithVector)                             \
-  TFH(KeyedStoreIC_Slow, HANDLER, StoreWithVector)                             \
-  TFH(LoadGlobalIC_Miss, BUILTIN, LoadGlobalWithVector)                        \
-  TFH(LoadGlobalIC_Slow, HANDLER, LoadGlobalWithVector)                        \
-  TFH(LoadField, BUILTIN, LoadField)                                           \
-  TFH(LoadIC_FunctionPrototype, HANDLER, LoadWithVector)                       \
+  TFH(LoadICProtoArray, LoadICProtoArray)                                      \
+  TFH(LoadICProtoArrayThrowIfNonexistent, LoadICProtoArray)                    \
+  TFH(KeyedLoadIC_Megamorphic, LoadWithVector)                                 \
+  TFH(KeyedLoadIC_Miss, LoadWithVector)                                        \
+  TFH(KeyedLoadIC_Slow, LoadWithVector)                                        \
+  TFH(KeyedLoadIC_IndexedString, LoadWithVector)                               \
+  TFH(KeyedStoreIC_Megamorphic, StoreWithVector)                               \
+  TFH(KeyedStoreIC_Miss, StoreWithVector)                                      \
+  TFH(KeyedStoreIC_Slow, StoreWithVector)                                      \
+  TFH(LoadGlobalIC_Miss, LoadGlobalWithVector)                                 \
+  TFH(LoadGlobalIC_Slow, LoadGlobalWithVector)                                 \
+  TFH(LoadField, LoadField)                                                    \
+  TFH(LoadIC_FunctionPrototype, LoadWithVector)                                \
   ASM(LoadIC_Getter_ForDeopt)                                                  \
-  TFH(LoadIC_Miss, BUILTIN, LoadWithVector)                                    \
-  TFH(LoadIC_Slow, HANDLER, LoadWithVector)                                    \
-  TFH(LoadIC_Uninitialized, BUILTIN, LoadWithVector)                           \
-  TFH(StoreIC_Miss, BUILTIN, StoreWithVector)                                  \
+  TFH(LoadIC_Miss, LoadWithVector)                                             \
+  TFH(LoadIC_Slow, LoadWithVector)                                             \
+  TFH(LoadIC_StringLength, LoadWithVector)                                     \
+  TFH(LoadIC_Uninitialized, LoadWithVector)                                    \
+  TFH(StoreIC_Miss, StoreWithVector)                                           \
   ASM(StoreIC_Setter_ForDeopt)                                                 \
-  TFH(StoreIC_Uninitialized, BUILTIN, StoreWithVector)                         \
+  TFH(StoreIC_Uninitialized, StoreWithVector)                                  \
                                                                                \
   /* Promise helpers */                                                        \
   TFS(ResolveNativePromise, kPromise, kValue)                                  \
@@ -539,19 +538,19 @@ namespace internal {
   CPP(JsonStringify)                                                           \
                                                                                \
   /* ICs */                                                                    \
-  TFH(LoadIC, STUB, LoadWithVector)                                            \
-  TFH(LoadIC_Noninlined, BUILTIN, LoadWithVector)                              \
-  TFH(LoadICTrampoline, STUB, Load)                                            \
-  TFH(KeyedLoadIC, STUB, LoadWithVector)                                       \
-  TFH(KeyedLoadICTrampoline, STUB, Load)                                       \
-  TFH(StoreIC, STUB, StoreWithVector)                                          \
-  TFH(StoreICTrampoline, STUB, Store)                                          \
-  TFH(KeyedStoreIC, STUB, StoreWithVector)                                     \
-  TFH(KeyedStoreICTrampoline, STUB, Store)                                     \
-  TFH(LoadGlobalIC, STUB, LoadGlobalWithVector)                                \
-  TFH(LoadGlobalICInsideTypeof, STUB, LoadGlobalWithVector)                    \
-  TFH(LoadGlobalICTrampoline, STUB, LoadGlobal)                                \
-  TFH(LoadGlobalICInsideTypeofTrampoline, STUB, LoadGlobal)                    \
+  TFH(LoadIC, LoadWithVector)                                                  \
+  TFH(LoadIC_Noninlined, LoadWithVector)                                       \
+  TFH(LoadICTrampoline, Load)                                                  \
+  TFH(KeyedLoadIC, LoadWithVector)                                             \
+  TFH(KeyedLoadICTrampoline, Load)                                             \
+  TFH(StoreIC, StoreWithVector)                                                \
+  TFH(StoreICTrampoline, Store)                                                \
+  TFH(KeyedStoreIC, StoreWithVector)                                           \
+  TFH(KeyedStoreICTrampoline, Store)                                           \
+  TFH(LoadGlobalIC, LoadGlobalWithVector)                                      \
+  TFH(LoadGlobalICInsideTypeof, LoadGlobalWithVector)                          \
+  TFH(LoadGlobalICTrampoline, LoadGlobal)                                      \
+  TFH(LoadGlobalICInsideTypeofTrampoline, LoadGlobal)                          \
                                                                                \
   /* Map */                                                                    \
   TFS(MapLookupHashIndex, kTable, kKey)                                        \
@@ -647,6 +646,7 @@ namespace internal {
   TFJ(MathTrunc, 1, kX)                                                        \
                                                                                \
   /* Number */                                                                 \
+  TFC(AllocateHeapNumber, AllocateHeapNumber, 1)                               \
   /* ES6 section 20.1.1.1 Number ( [ value ] ) for the [[Call]] case */        \
   TFJ(NumberConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
   /* ES6 section 20.1.1.1 Number ( [ value ] ) for the [[Construct]] case */   \
@@ -709,7 +709,7 @@ namespace internal {
   CPP(ObjectGetOwnPropertySymbols)                                             \
   CPP(ObjectGetPrototypeOf)                                                    \
   CPP(ObjectSetPrototypeOf)                                                    \
-  CPP(ObjectIs)                                                                \
+  TFJ(ObjectIs, 2, kLeft, kRight)                                              \
   CPP(ObjectIsExtensible)                                                      \
   CPP(ObjectIsFrozen)                                                          \
   CPP(ObjectIsSealed)                                                          \
@@ -1027,6 +1027,8 @@ namespace internal {
   CPP(TypedArrayPrototypeSet)                                                  \
   /* ES6 #sec-%typedarray%.prototype.slice */                                  \
   CPP(TypedArrayPrototypeSlice)                                                \
+  /* ES6 #sec-get-%typedarray%.prototype-@@tostringtag */                      \
+  TFJ(TypedArrayPrototypeToStringTag, 0)                                       \
   /* ES6 %TypedArray%.prototype.every */                                       \
   TFJ(TypedArrayPrototypeEvery,                                                \
       SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \

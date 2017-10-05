@@ -16,13 +16,13 @@ namespace v8 {
 namespace internal {
 
 Handle<Code> PropertyHandlerCompiler::GetCode(Handle<Name> name) {
-  Code::Flags flags = Code::ComputeFlags(Code::HANDLER);
-
   // Create code object in the heap.
   CodeDesc desc;
   masm()->GetCode(isolate(), &desc);
-  Handle<Code> code = factory()->NewCode(desc, flags, masm()->CodeObject());
-  if (code->IsCodeStubOrIC()) code->set_stub_key(CodeStub::NoCacheKey());
+  Handle<Code> code =
+      factory()->NewCode(desc, Code::STUB, masm()->CodeObject());
+  DCHECK(code->is_stub());
+  code->set_stub_key(CodeStub::NoCacheKey());
 #ifdef ENABLE_DISASSEMBLER
   if (FLAG_print_code_stubs) {
     char* raw_name = !name.is_null() && name->IsString()

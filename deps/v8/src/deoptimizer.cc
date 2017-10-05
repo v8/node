@@ -999,13 +999,6 @@ void Deoptimizer::DoComputeInterpretedFrame(TranslatedFrame* translated_frame,
     output_frame->SetRegister(context_reg.code(), context_value);
     // Set the continuation for the topmost frame.
     Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
-    if (bailout_type_ == LAZY) {
-      continuation = builtins->builtin(Builtins::kNotifyLazyDeoptimized);
-    } else if (bailout_type_ == SOFT) {
-      continuation = builtins->builtin(Builtins::kNotifySoftDeoptimized);
-    } else {
-      CHECK_EQ(bailout_type_, EAGER);
-    }
     output_frame->SetContinuation(
         reinterpret_cast<intptr_t>(continuation->entry()));
   }
@@ -1326,7 +1319,7 @@ void Deoptimizer::DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
   if (is_topmost) {
     Builtins* builtins = isolate_->builtins();
     DCHECK_EQ(LAZY, bailout_type_);
-    Code* continuation = builtins->builtin(Builtins::kNotifyLazyDeoptimized);
+    Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
     output_frame->SetContinuation(
         reinterpret_cast<intptr_t>(continuation->entry()));
   }
@@ -1511,7 +1504,7 @@ void Deoptimizer::DoComputeAccessorStubFrame(TranslatedFrame* translated_frame,
   if (is_topmost) {
     Builtins* builtins = isolate_->builtins();
     DCHECK_EQ(LAZY, bailout_type_);
-    Code* continuation = builtins->builtin(Builtins::kNotifyLazyDeoptimized);
+    Code* continuation = builtins->builtin(Builtins::kNotifyDeoptimized);
     output_frame->SetContinuation(
         reinterpret_cast<intptr_t>(continuation->entry()));
   }
@@ -1779,6 +1772,15 @@ void Deoptimizer::DoComputeBuiltinContinuation(
       DebugPrintOutputSlot(value, frame_index, output_frame_offset,
                            str.start());
     }
+  }
+
+  // Clear the context register. The context might be a de-materialized object
+  // and will be materialized by {Runtime_NotifyStubFailure}. For additional
+  // safety we use Smi(0) instead of the potential {arguments_marker} here.
+  if (is_topmost) {
+    intptr_t context_value = reinterpret_cast<intptr_t>(Smi::kZero);
+    Register context_reg = JavaScriptFrame::context_register();
+    output_frame->SetRegister(context_reg.code(), context_value);
   }
 
   // Ensure the frame pointer register points to the callee's frame. The builtin
@@ -3954,7 +3956,8 @@ Handle<Object> TranslatedState::MaterializeObjectAt(int object_index) {
 
 TranslatedFrame* TranslatedState::GetFrameFromJSFrameIndex(int jsframe_index) {
   for (size_t i = 0; i < frames_.size(); i++) {
-    if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction) {
+    if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction ||
+        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation) {
       if (jsframe_index > 0) {
         jsframe_index--;
       } else {
@@ -3968,7 +3971,8 @@ TranslatedFrame* TranslatedState::GetFrameFromJSFrameIndex(int jsframe_index) {
 TranslatedFrame* TranslatedState::GetArgumentsInfoFromJSFrameIndex(
     int jsframe_index, int* args_count) {
   for (size_t i = 0; i < frames_.size(); i++) {
-    if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction) {
+    if (frames_[i].kind() == TranslatedFrame::kInterpretedFunction ||
+        frames_[i].kind() == TranslatedFrame::kJavaScriptBuiltinContinuation) {
       if (jsframe_index > 0) {
         jsframe_index--;
       } else {

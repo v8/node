@@ -298,10 +298,8 @@ DEFINE_IMPLICATION(track_computed_fields, track_fields)
 DEFINE_BOOL(track_field_types, true, "track field types")
 DEFINE_IMPLICATION(track_field_types, track_fields)
 DEFINE_IMPLICATION(track_field_types, track_heap_object_fields)
-DEFINE_BOOL(block_coverage, true, "enable block code coverage")
 DEFINE_BOOL(trace_block_coverage, false,
             "trace collected block coverage information")
-DEFINE_IMPLICATION(trace_block_coverage, block_coverage)
 DEFINE_BOOL(feedback_normalization, false,
             "feed back normalization to constructors")
 // TODO(jkummerow): This currently adds too much load on the stub cache.
@@ -506,6 +504,8 @@ DEFINE_INT(trace_wasm_ast_end, 0, "end function for wasm AST trace (exclusive)")
 DEFINE_UINT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
 DEFINE_BOOL(wasm_break_on_decoder_error, false,
             "debug break when wasm decoder encounters an error")
+DEFINE_BOOL(wasm_trace_memory, false,
+            "print all memory updates performed in wasm code")
 
 DEFINE_BOOL(validate_asm, true, "validate asm.js modules before compiling")
 DEFINE_BOOL(suppress_asm_messages, false,
@@ -878,7 +878,7 @@ DEFINE_BOOL(lazy_inner_functions, true, "enable lazy parsing inner functions")
 DEFINE_BOOL(aggressive_lazy_inner_functions, false,
             "even lazier inner function parsing")
 DEFINE_IMPLICATION(aggressive_lazy_inner_functions, lazy_inner_functions)
-DEFINE_BOOL(preparser_scope_analysis, false,
+DEFINE_BOOL(preparser_scope_analysis, true,
             "perform scope analysis for preparsed inner functions")
 DEFINE_IMPLICATION(preparser_scope_analysis, aggressive_lazy_inner_functions)
 

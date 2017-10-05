@@ -128,35 +128,15 @@ RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
   return Smi::kZero;
 }
 
-RUNTIME_FUNCTION(Runtime_NotifyStubFailure) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(0, args.length());
-  Deoptimizer* deoptimizer = Deoptimizer::Grab(isolate);
+namespace {
+
+void MaterializeHeapObjectsAndDeleteDeoptimizer(Isolate* isolate,
+                                                Deoptimizer* deoptimizer) {
   DCHECK(AllowHeapAllocation::IsAllowed());
-  delete deoptimizer;
-  return isolate->heap()->undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_SMI_ARG_CHECKED(type_arg, 0);
-  Deoptimizer::BailoutType type =
-      static_cast<Deoptimizer::BailoutType>(type_arg);
-  Deoptimizer* deoptimizer = Deoptimizer::Grab(isolate);
-  DCHECK(AllowHeapAllocation::IsAllowed());
-  TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
-  TRACE_EVENT0("v8", "V8.DeoptimizeCode");
-
-  Handle<JSFunction> function = deoptimizer->function();
-
-  DCHECK(deoptimizer->compiled_code()->kind() == Code::OPTIMIZED_FUNCTION);
-  DCHECK(deoptimizer->compiled_code()->is_turbofanned());
-  DCHECK(type == deoptimizer->bailout_type());
   DCHECK_NULL(isolate->context());
   // TODO(turbofan): We currently need the native context to materialize
   // the arguments object, but only to get to its map.
-  isolate->set_context(function->native_context());
+  isolate->set_context(deoptimizer->function()->native_context());
 
   // Make sure to materialize objects before causing any allocation.
   deoptimizer->MaterializeHeapObjects();
@@ -166,12 +146,41 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   JavaScriptFrameIterator top_it(isolate);
   JavaScriptFrame* top_frame = top_it.frame();
   isolate->set_context(Context::cast(top_frame->context()));
+}
 
-  if (type == Deoptimizer::LAZY) {
-    return isolate->heap()->undefined_value();
+}  // namespace
+
+RUNTIME_FUNCTION(Runtime_NotifyStubFailure) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(0, args.length());
+  Deoptimizer* deoptimizer = Deoptimizer::Grab(isolate);
+  DCHECK(deoptimizer->compiled_code()->kind() == Code::OPTIMIZED_FUNCTION);
+  DCHECK(deoptimizer->compiled_code()->is_turbofanned());
+  MaterializeHeapObjectsAndDeleteDeoptimizer(isolate, deoptimizer);
+  return isolate->heap()->undefined_value();
+}
+
+RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(0, args.length());
+  Deoptimizer* deoptimizer = Deoptimizer::Grab(isolate);
+  DCHECK(deoptimizer->compiled_code()->kind() == Code::OPTIMIZED_FUNCTION);
+  DCHECK(deoptimizer->compiled_code()->is_turbofanned());
+
+  TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
+  TRACE_EVENT0("v8", "V8.DeoptimizeCode");
+  Handle<JSFunction> function = deoptimizer->function();
+  Deoptimizer::BailoutType type = deoptimizer->bailout_type();
+
+  MaterializeHeapObjectsAndDeleteDeoptimizer(isolate, deoptimizer);
+
+  // TODO(mstarzinger): The marking of the function for deoptimization is the
+  // only difference to {Runtime_NotifyStubFailure} by now and we should also
+  // do this if the top-most frame is a builtin stub to avoid deoptimization
+  // loops. This would also unify the two runtime functions.
+  if (type != Deoptimizer::LAZY) {
+    Deoptimizer::DeoptimizeFunction(*function);
   }
-
-  Deoptimizer::DeoptimizeFunction(*function);
 
   return isolate->heap()->undefined_value();
 }

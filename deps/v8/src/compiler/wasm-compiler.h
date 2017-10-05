@@ -139,8 +139,6 @@ class WasmCompilationUnit final {
 // GCable) in the generated code so that it can reside outside of GCed heap.
 Handle<Code> CompileWasmToJSWrapper(Isolate* isolate, Handle<JSReceiver> target,
                                     wasm::FunctionSig* sig, uint32_t index,
-                                    Handle<String> module_name,
-                                    MaybeHandle<String> import_name,
                                     wasm::ModuleOrigin origin,
                                     Handle<FixedArray> global_js_imports_table);
 
@@ -153,8 +151,6 @@ Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
 // wasm instances (the WasmContext address must be changed).
 Handle<Code> CompileWasmToWasmWrapper(Isolate* isolate, Handle<Code> target,
                                       wasm::FunctionSig* sig, uint32_t index,
-                                      Handle<String> module_name,
-                                      MaybeHandle<String> import_name,
                                       Address new_wasm_context_address);
 
 // Compiles a stub that redirects a call to a wasm function to the wasm
@@ -303,6 +299,8 @@ class WasmGraphBuilder {
   Node* CurrentMemoryPages();
   Node* GetGlobal(uint32_t index);
   Node* SetGlobal(uint32_t index, Node* val);
+  Node* TraceMemoryOperation(bool is_store, MachineRepresentation, Node* index,
+                             uint32_t offset, wasm::WasmCodePosition);
   Node* LoadMem(wasm::ValueType type, MachineType memtype, Node* index,
                 uint32_t offset, uint32_t alignment,
                 wasm::WasmCodePosition position);
@@ -526,7 +524,10 @@ class WasmGraphBuilder {
 
   Node* BuildCallToRuntimeWithContext(Runtime::FunctionId f, Node* js_context,
                                       Node** parameters, int parameter_count);
-
+  Node* BuildCallToRuntimeWithContextFromJS(Runtime::FunctionId f,
+                                            Node* js_context,
+                                            Node* const* parameters,
+                                            int parameter_count);
   Node* BuildModifyThreadInWasmFlag(bool new_value);
   Builtins::Name GetBuiltinIdForTrap(wasm::TrapReason reason);
 };

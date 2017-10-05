@@ -1954,8 +1954,8 @@ void Heap::Scavenge() {
   const bool is_logging = IsLogging(isolate());
   const int num_scavenge_tasks = NumberOfScavengeTasks();
   OneshotBarrier barrier;
-  CopiedList copied_list(num_scavenge_tasks);
-  PromotionList promotion_list(num_scavenge_tasks);
+  Scavenger::CopiedList copied_list(num_scavenge_tasks);
+  Scavenger::PromotionList promotion_list(num_scavenge_tasks);
   for (int i = 0; i < num_scavenge_tasks; i++) {
     scavengers[i] =
         new Scavenger(this, is_logging, &copied_list, &promotion_list, i);
@@ -4102,8 +4102,10 @@ void Heap::NotifyObjectLayoutChange(HeapObject* object, int size,
     }
   }
 #ifdef VERIFY_HEAP
-  DCHECK_NULL(pending_layout_change_object_);
-  pending_layout_change_object_ = object;
+  if (FLAG_verify_heap) {
+    DCHECK_NULL(pending_layout_change_object_);
+    pending_layout_change_object_ = object;
+  }
 #endif
 }
 
@@ -4126,6 +4128,8 @@ class SlotCollectingVisitor final : public ObjectVisitor {
 };
 
 void Heap::VerifyObjectLayoutChange(HeapObject* object, Map* new_map) {
+  if (!FLAG_verify_heap) return;
+
   // Check that Heap::NotifyObjectLayout was called for object transitions
   // that are not safe for concurrent marking.
   // If you see this check triggering for a freshly allocated object,

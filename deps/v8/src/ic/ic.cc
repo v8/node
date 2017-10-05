@@ -501,7 +501,9 @@ static bool AddOneReceiverMapIfMissing(MapHandles* receiver_maps,
 
 bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
   DCHECK(IsHandler(*handler));
-  if (is_keyed() && state() != RECOMPUTE_HANDLER) return false;
+  if (is_keyed() && state() != RECOMPUTE_HANDLER) {
+    if (nexus()->FindFirstName() != *name) return false;
+  }
   Handle<Map> map = receiver_map();
   MapHandles maps;
   ObjectHandles handlers;
@@ -510,6 +512,7 @@ bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
   int number_of_maps = static_cast<int>(maps.size());
   int deprecated_maps = 0;
   int handler_to_overwrite = -1;
+  if (!nexus()->FindHandlers(&handlers, number_of_maps)) return false;
 
   for (int i = 0; i < number_of_maps; i++) {
     Handle<Map> current_map = maps.at(i);
@@ -517,6 +520,10 @@ bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
       // Filter out deprecated maps to ensure their instances get migrated.
       ++deprecated_maps;
     } else if (map.is_identical_to(current_map)) {
+      // If both map and handler stayed the same (and the name is also the
+      // same as checked above, for keyed accesses), we're not progressing
+      // in the lattice and need to go MEGAMORPHIC instead.
+      if (handler.is_identical_to(handlers[i])) return false;
       // If the receiver type is already in the polymorphic IC, this indicates
       // there was a prototoype chain failure. In that case, just overwrite the
       // handler.
@@ -534,15 +541,12 @@ bool IC::UpdatePolymorphicIC(Handle<Name> name, Handle<Object> handler) {
   if (number_of_maps == 0 && state() != MONOMORPHIC && state() != POLYMORPHIC) {
     return false;
   }
-  if (!nexus()->FindHandlers(&handlers, static_cast<int>(maps.size()))) {
-    return false;
-  }
 
   number_of_valid_maps++;
-  if (number_of_valid_maps > 1 && is_keyed()) return false;
   if (number_of_valid_maps == 1) {
     ConfigureVectorState(name, receiver_map(), handler);
   } else {
+    if (is_keyed() && nexus()->FindFirstName() != *name) return false;
     if (handler_to_overwrite >= 0) {
       handlers[handler_to_overwrite] = handler;
       if (!map.is_identical_to(maps.at(handler_to_overwrite))) {
@@ -609,10 +613,8 @@ void IC::PatchCache(Handle<Name> name, Handle<Object> handler) {
       }
     // Fall through.
     case POLYMORPHIC:
+      if (UpdatePolymorphicIC(name, handler)) break;
       if (!is_keyed() || state() == RECOMPUTE_HANDLER) {
-        if (UpdatePolymorphicIC(name, handler)) break;
-        // For keyed stubs, we can't know whether old handlers were for the
-        // same key.
         CopyICToMegamorphicCache(name);
       }
       ConfigureVectorState(MEGAMORPHIC, name);
@@ -719,9 +721,8 @@ Handle<Object> LoadIC::GetMapIndependentHandler(LookupIterator* lookup) {
 
   if (receiver->IsStringWrapper() &&
       *lookup->name() == isolate()->heap()->length_string()) {
-    TRACE_HANDLER_STATS(isolate(), LoadIC_StringLengthStub);
-    StringLengthStub string_length_stub(isolate());
-    return string_length_stub.GetCode();
+    TRACE_HANDLER_STATS(isolate(), LoadIC_StringLength);
+    return BUILTIN_CODE(isolate(), LoadIC_StringLength);
   }
 
   // Use specialized code for getting prototype of functions.

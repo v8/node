@@ -214,11 +214,17 @@ class IncrementalMarkingMarkingVisitor final
       int start_offset =
           Max(FixedArray::BodyDescriptor::kStartOffset, chunk->progress_bar());
       if (start_offset < object_size) {
+        // Ensure that the object is either grey or black before pushing it
+        // into marking worklist.
+        incremental_marking_->marking_state()->WhiteToGrey(object);
         if (FLAG_concurrent_marking) {
           incremental_marking_->marking_worklist()->PushBailout(object);
         } else {
           incremental_marking_->marking_worklist()->Push(object);
         }
+        DCHECK(incremental_marking_->marking_state()->IsGrey(object) ||
+               incremental_marking_->marking_state()->IsBlack(object));
+
         int end_offset =
             Min(object_size, start_offset + kProgressBarScanningChunk);
         int already_scanned_offset = start_offset;
@@ -419,7 +425,6 @@ void IncrementalMarking::ActivateGeneratedStub(Code* stub) {
   }
 }
 
-
 static void PatchIncrementalMarkingRecordWriteStubs(
     Heap* heap, RecordWriteStub::Mode mode) {
   UnseededNumberDictionary* stubs = heap->code_stubs();
@@ -439,6 +444,12 @@ static void PatchIncrementalMarkingRecordWriteStubs(
       }
     }
   }
+}
+
+void IncrementalMarking::Deactivate() {
+  DeactivateIncrementalWriteBarrier();
+  PatchIncrementalMarkingRecordWriteStubs(heap_,
+                                          RecordWriteStub::STORE_BUFFER_ONLY);
 }
 
 void IncrementalMarking::Start(GarbageCollectionReason gc_reason) {
@@ -927,11 +938,6 @@ void IncrementalMarking::Stop() {
   }
 
   IncrementalMarking::set_should_hurry(false);
-  if (IsMarking()) {
-    PatchIncrementalMarkingRecordWriteStubs(heap_,
-                                            RecordWriteStub::STORE_BUFFER_ONLY);
-    DeactivateIncrementalWriteBarrier();
-  }
   heap_->isolate()->stack_guard()->ClearGC();
   SetState(STOPPED);
   is_compacting_ = false;

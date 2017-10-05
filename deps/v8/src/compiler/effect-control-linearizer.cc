@@ -712,11 +712,17 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kCheckedTruncateTaggedToWord32:
       result = LowerCheckedTruncateTaggedToWord32(node, frame_state);
       break;
+    case IrOpcode::kObjectIsArrayBufferView:
+      result = LowerObjectIsArrayBufferView(node);
+      break;
     case IrOpcode::kObjectIsCallable:
       result = LowerObjectIsCallable(node);
       break;
     case IrOpcode::kObjectIsDetectableCallable:
       result = LowerObjectIsDetectableCallable(node);
+      break;
+    case IrOpcode::kObjectIsMinusZero:
+      result = LowerObjectIsMinusZero(node);
       break;
     case IrOpcode::kObjectIsNaN:
       result = LowerObjectIsNaN(node);
@@ -1866,6 +1872,31 @@ Node* EffectControlLinearizer::LowerCheckedTruncateTaggedToWord32(
   return done.PhiAt(0);
 }
 
+Node* EffectControlLinearizer::LowerObjectIsArrayBufferView(Node* node) {
+  Node* value = node->InputAt(0);
+
+  auto if_smi = __ MakeDeferredLabel();
+  auto done = __ MakeLabel(MachineRepresentation::kBit);
+
+  Node* check = ObjectIsSmi(value);
+  __ GotoIf(check, &if_smi);
+
+  Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
+  Node* value_instance_type =
+      __ LoadField(AccessBuilder::ForMapInstanceType(), value_map);
+  STATIC_ASSERT(JS_TYPED_ARRAY_TYPE + 1 == JS_DATA_VIEW_TYPE);
+  Node* vfalse = __ Uint32LessThan(
+      __ Int32Sub(value_instance_type, __ Int32Constant(JS_TYPED_ARRAY_TYPE)),
+      __ Int32Constant(2));
+  __ Goto(&done, vfalse);
+
+  __ Bind(&if_smi);
+  __ Goto(&done, __ Int32Constant(0));
+
+  __ Bind(&done);
+  return done.PhiAt(0);
+}
+
 Node* EffectControlLinearizer::LowerObjectIsCallable(Node* node) {
   Node* value = node->InputAt(0);
 
@@ -1911,6 +1942,31 @@ Node* EffectControlLinearizer::LowerObjectIsDetectableCallable(Node* node) {
 
   __ Bind(&if_smi);
   __ Goto(&done, __ Int32Constant(0));
+
+  __ Bind(&done);
+  return done.PhiAt(0);
+}
+
+Node* EffectControlLinearizer::LowerObjectIsMinusZero(Node* node) {
+  Node* value = node->InputAt(0);
+  Node* zero = __ Int32Constant(0);
+
+  auto done = __ MakeLabel(MachineRepresentation::kBit);
+
+  // Check if {value} is a Smi.
+  __ GotoIf(ObjectIsSmi(value), &done, zero);
+
+  // Check if {value} is a HeapNumber.
+  Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
+  __ GotoIfNot(__ WordEqual(value_map, __ HeapNumberMapConstant()), &done,
+               zero);
+
+  // Check if {value} contains -0.
+  Node* value_value = __ LoadField(AccessBuilder::ForHeapNumberValue(), value);
+  __ Goto(&done,
+          __ Float64Equal(
+              __ Float64Div(__ Float64Constant(1.0), value_value),
+              __ Float64Constant(-std::numeric_limits<double>::infinity())));
 
   __ Bind(&done);
   return done.PhiAt(0);

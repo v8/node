@@ -352,8 +352,10 @@
   V(StoreElement)                   \
   V(StoreTypedElement)              \
   V(TransitionAndStoreElement)      \
+  V(ObjectIsArrayBufferView)        \
   V(ObjectIsCallable)               \
   V(ObjectIsDetectableCallable)     \
+  V(ObjectIsMinusZero)              \
   V(ObjectIsNaN)                    \
   V(ObjectIsNonCallable)            \
   V(ObjectIsNumber)                 \

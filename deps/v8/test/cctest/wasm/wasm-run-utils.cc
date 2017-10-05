@@ -6,6 +6,7 @@
 
 #include "src/api.h"
 #include "src/assembler-inl.h"
+#include "src/wasm/wasm-memory.h"
 #include "src/wasm/wasm-objects-inl.h"
 
 namespace v8 {
@@ -97,8 +98,7 @@ uint32_t TestingModuleBuilder::AddJsFunction(
   uint32_t index = AddFunction(sig, Handle<Code>::null(), nullptr);
   js_imports_table->set(0, *isolate_->native_context());
   Handle<Code> code = compiler::CompileWasmToJSWrapper(
-      isolate_, jsfunc, sig, index, Handle<String>::null(),
-      Handle<String>::null(), test_module_.origin(), js_imports_table);
+      isolate_, jsfunc, sig, index, test_module_.origin(), js_imports_table);
   function_code_[index] = code;
   return index;
 }
@@ -370,7 +370,7 @@ Handle<Code> WasmFunctionWrapper::GetWrapperCode() {
     }
 
     CompilationInfo info(ArrayVector("testing"), isolate, graph()->zone(),
-                         Code::ComputeFlags(Code::STUB));
+                         Code::STUB);
     code_ = compiler::Pipeline::GenerateCodeForTesting(&info, descriptor,
                                                        graph(), nullptr);
     CHECK(!code_.is_null());

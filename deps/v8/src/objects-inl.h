@@ -3489,11 +3489,6 @@ bool Map::is_dictionary_map() const {
   return DictionaryMap::decode(bit_field3());
 }
 
-Code::Flags Code::flags() const {
-  return static_cast<Flags>(READ_INT_FIELD(this, kFlagsOffset));
-}
-
-
 void Map::set_owns_descriptors(bool owns_descriptors) {
   set_bit_field3(OwnsDescriptors::update(bit_field3(), owns_descriptors));
 }
@@ -3686,24 +3681,20 @@ void DependentCode::copy(int from, int to) {
   set(kCodesStartIndex + to, get(kCodesStartIndex + from));
 }
 
+Code::Kind Code::kind() const {
+  return KindField::decode(READ_UINT32_FIELD(this, kFlagsOffset));
+}
 
-void Code::set_flags(Code::Flags flags) {
+void Code::initialize_flags(Kind kind) {
+  WRITE_UINT32_FIELD(this, kFlagsOffset, KindField::encode(kind));
+}
+
+void Code::set_kind(Kind kind) {
   STATIC_ASSERT(Code::NUMBER_OF_KINDS <= KindField::kMax + 1);
-  WRITE_INT_FIELD(this, kFlagsOffset, flags);
+  uint32_t previous = READ_UINT32_FIELD(this, kFlagsOffset);
+  uint32_t updated_value = KindField::update(previous, kind);
+  WRITE_UINT32_FIELD(this, kFlagsOffset, updated_value);
 }
-
-Code::Kind Code::kind() const { return ExtractKindFromFlags(flags()); }
-
-bool Code::IsCodeStubOrIC() const {
-  switch (kind()) {
-    case STUB:
-    case HANDLER:
-      return true;
-    default:
-      return false;
-  }
-}
-
 
 // For initialization.
 void Code::set_raw_kind_specific_flags1(int value) {
@@ -3902,7 +3893,6 @@ void Code::set_deopt_already_counted(bool flag) {
   WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
 }
 
-bool Code::is_handler() const { return kind() == HANDLER; }
 bool Code::is_stub() const { return kind() == STUB; }
 bool Code::is_optimized_code() const { return kind() == OPTIMIZED_FUNCTION; }
 bool Code::is_wasm_code() const { return kind() == WASM_FUNCTION; }
@@ -3917,17 +3907,6 @@ Address Code::constant_pool() {
   }
   return constant_pool;
 }
-
-Code::Flags Code::ComputeFlags(Kind kind) {
-  // Compute the bit mask.
-  unsigned int bits = KindField::encode(kind);
-  return static_cast<Flags>(bits);
-}
-
-Code::Kind Code::ExtractKindFromFlags(Flags flags) {
-  return KindField::decode(flags);
-}
-
 
 Code* Code::GetCodeFromTargetAddress(Address address) {
   HeapObject* code = HeapObject::FromAddress(address - Code::kHeaderSize);
@@ -4869,14 +4848,14 @@ ByteArray* Code::SourcePositionTable() const {
 }
 
 uint32_t Code::stub_key() const {
-  DCHECK(IsCodeStubOrIC());
+  DCHECK(is_stub());
   Smi* smi_key = Smi::cast(raw_type_feedback_info());
   return static_cast<uint32_t>(smi_key->value());
 }
 
 
 void Code::set_stub_key(uint32_t key) {
-  DCHECK(IsCodeStubOrIC());
+  DCHECK(is_stub());
   set_raw_type_feedback_info(Smi::FromInt(key));
 }
 

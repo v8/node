@@ -2190,6 +2190,8 @@ class JSReceiver: public HeapObject {
 
   bool HasProxyInPrototype(Isolate* isolate);
 
+  bool HasComplexElements();
+
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSReceiver);
 };
@@ -3646,7 +3648,6 @@ class Code: public HeapObject {
   V(OPTIMIZED_FUNCTION)     \
   V(BYTECODE_HANDLER)       \
   V(STUB)                   \
-  V(HANDLER)                \
   V(BUILTIN)                \
   V(REGEXP)                 \
   V(WASM_FUNCTION)          \
@@ -3721,20 +3722,13 @@ class Code: public HeapObject {
 
   inline int relocation_size() const;
 
-  // [flags]: Various code flags.
-  inline Flags flags() const;
-  inline void set_flags(Flags flags);
-
-  // [flags]: Access to specific code flags.
+  // [kind]: Access to specific code kind.
   inline Kind kind() const;
+  inline void set_kind(Kind kind);
 
-  // Testers for IC stub kinds.
-  inline bool is_handler() const;
   inline bool is_stub() const;
   inline bool is_optimized_code() const;
   inline bool is_wasm_code() const;
-
-  inline bool IsCodeStubOrIC() const;
 
   inline void set_raw_kind_specific_flags1(int value);
   inline void set_raw_kind_specific_flags2(int value);
@@ -3768,8 +3762,8 @@ class Code: public HeapObject {
   inline void set_is_construct_stub(bool value);
 
   // [builtin_index]: For builtins, tells which builtin index the code object
-  // has. Note that builtins can have a code kind other than BUILTIN. The
-  // builtin index is a non-negative integer for builtins, and -1 otherwise.
+  // has. The builtin index is a non-negative integer for builtins, and -1
+  // otherwise.
   inline int builtin_index() const;
   inline void set_builtin_index(int id);
   inline bool is_builtin() const;
@@ -3824,11 +3818,9 @@ class Code: public HeapObject {
   // Clear uninitialized padding space. This ensures that the snapshot content
   // is deterministic.
   inline void clear_padding();
-
-  // Flags operations.
-  static inline Flags ComputeFlags(Kind kind);
-
-  static inline Kind ExtractKindFromFlags(Flags flags);
+  // Initialize the flags field. Similar to clear_padding above this ensure that
+  // the snapshot content is deterministic.
+  inline void initialize_flags(Kind kind);
 
   // Convert a target address into a code object.
   static inline Code* GetCodeFromTargetAddress(Address address);
@@ -3951,6 +3943,23 @@ class Code: public HeapObject {
 
   static Handle<WeakCell> WeakCellFor(Handle<Code> code);
   WeakCell* CachedWeakCell();
+
+  // Return true if the function is inlined in the code.
+  bool Inlines(SharedFunctionInfo* sfi);
+
+  class OptimizedCodeIterator {
+   public:
+    explicit OptimizedCodeIterator(Isolate* isolate);
+    Code* Next();
+
+   private:
+    Context* next_context_;
+    Code* current_code_;
+    Isolate* isolate_;
+
+    DisallowHeapAllocation no_gc;
+    DISALLOW_COPY_AND_ASSIGN(OptimizedCodeIterator)
+  };
 
   static const int kConstantPoolSize =
       FLAG_enable_embedded_constant_pool ? kIntSize : 0;
@@ -4512,6 +4521,7 @@ class ContextExtension : public Struct {
   V(Function.prototype, call, FunctionCall)                 \
   V(Object, assign, ObjectAssign)                           \
   V(Object, create, ObjectCreate)                           \
+  V(Object, is, ObjectIs)                                   \
   V(Object.prototype, hasOwnProperty, ObjectHasOwnProperty) \
   V(Object.prototype, isPrototypeOf, ObjectIsPrototypeOf)   \
   V(Object.prototype, toString, ObjectToString)             \
@@ -4629,6 +4639,7 @@ enum BuiltinFunctionId {
   kMathPowHalf,
   // These are manually assigned to special getters during bootstrapping.
   kArrayBufferByteLength,
+  kArrayBufferIsView,
   kArrayEntries,
   kArrayKeys,
   kArrayValues,
@@ -4654,6 +4665,7 @@ enum BuiltinFunctionId {
   kTypedArrayEntries,
   kTypedArrayKeys,
   kTypedArrayLength,
+  kTypedArrayToStringTag,
   kTypedArrayValues,
   kSharedArrayBufferByteLength,
   kStringIterator,
@@ -4827,9 +4839,6 @@ class JSFunction: public JSObject {
   // Get the abstract code associated with the function, which will either be
   // a Code object or a BytecodeArray.
   inline AbstractCode* abstract_code();
-
-  // Tells whether this function inlines the given shared function info.
-  bool Inlines(SharedFunctionInfo* candidate);
 
   // Tells whether or not this function is interpreted.
   //
@@ -5672,18 +5681,6 @@ class Relocatable BASE_EMBEDDED {
  private:
   Isolate* isolate_;
   Relocatable* prev_;
-};
-
-template <typename T>
-class VectorIterator {
- public:
-  VectorIterator(T* d, int l) : data_(Vector<const T>(d, l)), index_(0) { }
-  explicit VectorIterator(Vector<const T> data) : data_(data), index_(0) { }
-  T GetNext() { return data_[index_++]; }
-  bool has_more() { return index_ < data_.length(); }
- private:
-  Vector<const T> data_;
-  int index_;
 };
 
 

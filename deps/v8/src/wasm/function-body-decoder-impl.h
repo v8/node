@@ -51,18 +51,21 @@ struct WasmException;
                 (message)))
 
 #define ATOMIC_OP_LIST(V)              \
+  V(I32AtomicLoad, Uint32)             \
   V(I32AtomicAdd, Uint32)              \
   V(I32AtomicSub, Uint32)              \
   V(I32AtomicAnd, Uint32)              \
   V(I32AtomicOr, Uint32)               \
   V(I32AtomicXor, Uint32)              \
   V(I32AtomicExchange, Uint32)         \
+  V(I32AtomicLoad8U, Uint8)            \
   V(I32AtomicAdd8U, Uint8)             \
   V(I32AtomicSub8U, Uint8)             \
   V(I32AtomicAnd8U, Uint8)             \
   V(I32AtomicOr8U, Uint8)              \
   V(I32AtomicXor8U, Uint8)             \
   V(I32AtomicExchange8U, Uint8)        \
+  V(I32AtomicLoad16U, Uint16)          \
   V(I32AtomicAdd16U, Uint16)           \
   V(I32AtomicSub16U, Uint16)           \
   V(I32AtomicAnd16U, Uint16)           \
@@ -72,6 +75,11 @@ struct WasmException;
   V(I32AtomicCompareExchange, Uint32)  \
   V(I32AtomicCompareExchange8U, Uint8) \
   V(I32AtomicCompareExchange16U, Uint16)
+
+#define ATOMIC_STORE_OP_LIST(V) \
+  V(I32AtomicStore, Uint32)     \
+  V(I32AtomicStore8U, Uint8)    \
+  V(I32AtomicStore16U, Uint16)
 
 template <typename T>
 Vector<T> vec2vec(std::vector<T>& vec) {
@@ -962,6 +970,23 @@ class WasmDecoder : public Decoder {
             return 2;
         }
       }
+      case kAtomicPrefix: {
+        byte atomic_index = decoder->read_u8<validate>(pc + 1, "atomic_index");
+        WasmOpcode opcode =
+            static_cast<WasmOpcode>(kAtomicPrefix << 8 | atomic_index);
+        switch (opcode) {
+#define DECLARE_OPCODE_CASE(name, opcode, sig) case kExpr##name:
+          FOREACH_ATOMIC_OPCODE(DECLARE_OPCODE_CASE)
+#undef DECLARE_OPCODE_CASE
+          {
+            MemoryAccessOperand<validate> operand(decoder, pc + 1, UINT32_MAX);
+            return 2 + operand.length;
+          }
+          default:
+            decoder->error(pc, "invalid Atomics opcode");
+            return 2;
+        }
+      }
       default:
         return 1;
     }
@@ -1693,17 +1718,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             opcode = static_cast<WasmOpcode>(opcode << 8 | atomic_index);
             TRACE("  @%-4d #%-20s|", startrel(this->pc_),
                   WasmOpcodes::OpcodeName(opcode));
-            switch (opcode) {
-#define DECODE_ATOMIC_BINOP(Name, Type)                     \
-  case kExpr##Name: {                                       \
-    len += DecodeAtomicOpcode(opcode, MachineType::Type()); \
-    break;                                                  \
-  }
-              ATOMIC_OP_LIST(DECODE_ATOMIC_BINOP)
-#undef DECODE_ATOMIC_BINOP
-              default:
-                this->error("Invalid opcode");
-            }
+            len += DecodeAtomicOpcode(opcode);
             break;
           }
           default: {
@@ -1994,19 +2009,44 @@ class WasmFullDecoder : public WasmDecoder<validate> {
     return len;
   }
 
-  unsigned DecodeAtomicOpcode(WasmOpcode opcode, MachineType mem_type) {
+  unsigned DecodeAtomicOpcode(WasmOpcode opcode) {
     unsigned len = 0;
+    ValueType ret_type;
     FunctionSig* sig = WasmOpcodes::AtomicSignature(opcode);
     if (sig != nullptr) {
+      MachineType memtype;
+      switch (opcode) {
+#define CASE_ATOMIC_STORE_OP(Name, Type)     \
+  case kExpr##Name: {                        \
+    memtype = MachineType::Type();           \
+    ret_type = MachineRepresentation::kNone; \
+    break;                                   \
+  }
+        ATOMIC_STORE_OP_LIST(CASE_ATOMIC_STORE_OP)
+#undef CASE_ATOMIC_OP
+#define CASE_ATOMIC_OP(Name, Type) \
+  case kExpr##Name: {              \
+    memtype = MachineType::Type(); \
+    ret_type = GetReturnType(sig); \
+    break;                         \
+  }
+        ATOMIC_OP_LIST(CASE_ATOMIC_OP)
+#undef CASE_ATOMIC_OP
+        default:
+          this->error("invalid atomic opcode");
+          break;
+      }
       // TODO(clemensh): Better memory management here.
       std::vector<Value> args(sig->parameter_count());
       MemoryAccessOperand<validate> operand(
-          this, this->pc_ + 1, ElementSizeLog2Of(mem_type.representation()));
+          this, this->pc_ + 1, ElementSizeLog2Of(memtype.representation()));
       len += operand.length;
       for (int i = static_cast<int>(sig->parameter_count() - 1); i >= 0; --i) {
         args[i] = Pop(i, sig->GetParam(i));
       }
-      auto* result = Push(GetReturnType(sig));
+      auto result = ret_type == MachineRepresentation::kNone
+                        ? nullptr
+                        : Push(GetReturnType(sig));
       interface_.AtomicOp(this, opcode, vec2vec(args), operand, result);
     } else {
       this->error("invalid atomic opcode");

@@ -75,12 +75,11 @@ Handle<Code> CodeGenerator::MakeCodeEpilogue(TurboAssembler* tasm,
 
   // Allocate and install the code.
   CodeDesc desc;
-  Code::Flags flags = info->code_flags();
   tasm->GetCode(isolate, &desc);
   if (eh_frame_writer) eh_frame_writer->GetEhFrame(&desc);
 
-  Handle<Code> code =
-      isolate->factory()->NewCode(desc, flags, self_reference, false);
+  Handle<Code> code = isolate->factory()->NewCode(desc, info->code_kind(),
+                                                  self_reference, false);
   isolate->counters()->total_compiled_code_size()->Increment(
       code->instruction_size());
   return code;
@@ -199,12 +198,12 @@ void CodeGenerator::PrintCode(Handle<Code> code, CompilationInfo* info) {
     bool print_source = code->kind() == Code::OPTIMIZED_FUNCTION;
     if (print_source) {
       Handle<SharedFunctionInfo> shared = info->shared_info();
-      Handle<Script> script = info->script();
-      if (!script->IsUndefined(isolate) &&
-          !script->source()->IsUndefined(isolate)) {
+      if (shared->script()->IsScript() &&
+          !Script::cast(shared->script())->source()->IsUndefined(isolate)) {
         os << "--- Raw source ---\n";
-        StringCharacterStream stream(String::cast(script->source()),
-                                     shared->start_position());
+        StringCharacterStream stream(
+            String::cast(Script::cast(shared->script())->source()),
+            shared->start_position());
         // fun->end_position() points to the last character in the stream. We
         // need to compensate by adding one to calculate the length.
         int source_len = shared->end_position() - shared->start_position() + 1;

@@ -287,8 +287,10 @@ class Typer::Visitor : public Reducer {
   SIMPLIFIED_SPECULATIVE_NUMBER_BINOP_LIST(DECLARE_METHOD)
 #undef DECLARE_METHOD
 
+  static Type* ObjectIsArrayBufferView(Type*, Typer*);
   static Type* ObjectIsCallable(Type*, Typer*);
   static Type* ObjectIsDetectableCallable(Type*, Typer*);
+  static Type* ObjectIsMinusZero(Type*, Typer*);
   static Type* ObjectIsNaN(Type*, Typer*);
   static Type* ObjectIsNonCallable(Type*, Typer*);
   static Type* ObjectIsNumber(Type*, Typer*);
@@ -509,6 +511,12 @@ Type* Typer::Visitor::ToString(Type* type, Typer* t) {
 
 // Type checks.
 
+Type* Typer::Visitor::ObjectIsArrayBufferView(Type* type, Typer* t) {
+  // TODO(turbofan): Introduce a Type::ArrayBufferView?
+  if (!type->Maybe(Type::OtherObject())) return t->singleton_false_;
+  return Type::Boolean();
+}
+
 Type* Typer::Visitor::ObjectIsCallable(Type* type, Typer* t) {
   if (type->Is(Type::Callable())) return t->singleton_true_;
   if (!type->Maybe(Type::Callable())) return t->singleton_false_;
@@ -518,6 +526,12 @@ Type* Typer::Visitor::ObjectIsCallable(Type* type, Typer* t) {
 Type* Typer::Visitor::ObjectIsDetectableCallable(Type* type, Typer* t) {
   if (type->Is(Type::DetectableCallable())) return t->singleton_true_;
   if (!type->Maybe(Type::DetectableCallable())) return t->singleton_false_;
+  return Type::Boolean();
+}
+
+Type* Typer::Visitor::ObjectIsMinusZero(Type* type, Typer* t) {
+  if (type->Is(Type::MinusZero())) return t->singleton_true_;
+  if (!type->Maybe(Type::MinusZero())) return t->singleton_false_;
   return Type::Boolean();
 }
 
@@ -1488,6 +1502,9 @@ Type* Typer::Visitor::JSCallTyper(Type* fun, Typer* t) {
         case kMapIteratorNext:
         case kSetIteratorNext:
           return Type::OtherObject();
+        case kTypedArrayToStringTag:
+          return Type::Union(Type::InternalizedString(), Type::Undefined(),
+                             t->zone());
 
         // Array functions.
         case kArrayIsArray:
@@ -1525,11 +1542,16 @@ Type* Typer::Visitor::JSCallTyper(Type* fun, Typer* t) {
         case kArrayUnshift:
           return t->cache_.kPositiveSafeInteger;
 
+        // ArrayBuffer functions.
+        case kArrayBufferIsView:
+          return Type::Boolean();
+
         // Object functions.
         case kObjectAssign:
           return Type::Receiver();
         case kObjectCreate:
           return Type::OtherObject();
+        case kObjectIs:
         case kObjectHasOwnProperty:
         case kObjectIsPrototypeOf:
           return Type::Boolean();
@@ -1954,12 +1976,20 @@ Type* Typer::Visitor::TypeStoreTypedElement(Node* node) {
   UNREACHABLE();
 }
 
+Type* Typer::Visitor::TypeObjectIsArrayBufferView(Node* node) {
+  return TypeUnaryOp(node, ObjectIsArrayBufferView);
+}
+
 Type* Typer::Visitor::TypeObjectIsCallable(Node* node) {
   return TypeUnaryOp(node, ObjectIsCallable);
 }
 
 Type* Typer::Visitor::TypeObjectIsDetectableCallable(Node* node) {
   return TypeUnaryOp(node, ObjectIsDetectableCallable);
+}
+
+Type* Typer::Visitor::TypeObjectIsMinusZero(Node* node) {
+  return TypeUnaryOp(node, ObjectIsMinusZero);
 }
 
 Type* Typer::Visitor::TypeObjectIsNaN(Node* node) {

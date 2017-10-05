@@ -118,7 +118,7 @@ namespace internal {
   F(CompileOptimized_NotConcurrent, 1, 1) \
   F(EvictOptimizedCodeSlot, 1, 1)         \
   F(NotifyStubFailure, 0, 1)              \
-  F(NotifyDeoptimized, 1, 1)              \
+  F(NotifyDeoptimized, 0, 1)              \
   F(CompileForOnStackReplacement, 1, 1)   \
   F(TryInstallOptimizedCode, 1, 1)        \
   F(ResolvePossiblyDirectEval, 6, 1)      \
@@ -621,7 +621,8 @@ namespace internal {
   F(SetWasmInstantiateControls, 0, 1)         \
   F(HeapObjectVerify, 1, 1)                   \
   F(WasmNumInterpretedCalls, 1, 1)            \
-  F(RedirectToWasmInterpreter, 2, 1)
+  F(RedirectToWasmInterpreter, 2, 1)          \
+  F(WasmTraceMemory, 4, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F) \
   F(ArrayBufferGetByteLength, 1, 1)      \

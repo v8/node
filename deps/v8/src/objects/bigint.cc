@@ -196,6 +196,17 @@ void BigInt::Initialize(int length, bool zero_initialize) {
   }
 }
 
+void BigInt::BigIntShortPrint(std::ostream& os) {
+  if (sign()) os << "-";
+  int len = length();
+  if (len == 0) {
+    os << "0";
+    return;
+  }
+  if (len > 1) os << "...";
+  os << digit(0);
+}
+
 // Private helpers for public methods.
 
 Handle<BigInt> BigInt::AbsoluteAdd(Handle<BigInt> x, Handle<BigInt> y,
@@ -345,6 +356,13 @@ void BigInt::InternalMultiplyAdd(BigInt* source, digit_t factor,
   }
 }
 
+// Multiplies {this} with {factor} and adds {summand} to the result.
+void BigInt::InplaceMultiplyAdd(uintptr_t factor, uintptr_t summand) {
+  STATIC_ASSERT(sizeof(factor) == sizeof(digit_t));
+  STATIC_ASSERT(sizeof(summand) == sizeof(digit_t));
+  InternalMultiplyAdd(this, factor, summand, length(), this);
+}
+
 // Divides {x} by {divisor}, returning the result in {quotient} and {remainder}.
 // Mathematically, the contract is:
 // quotient = (x - remainder) / divisor, with 0 <= remainder < divisor.
@@ -439,18 +457,14 @@ void BigInt::AbsoluteDivLarge(Handle<BigInt> dividend, Handle<BigInt> divisor,
       // Decrement the quotient estimate as needed by looking at the next
       // digit, i.e. by testing whether
       // qhat * v_{n-2} > (rhat << kDigitBits) + u_{j+n-2}.
-      // x1 | x2 = qhat * v_{n-2}.
       digit_t vn2 = divisor->digit(n - 2);
-      digit_t x1;
-      digit_t x2 = digit_mul(qhat, vn2, &x1);
       digit_t ujn2 = u->digit(j + n - 2);
-      while (DoubleDigitGreaterThan(x1, x2, rhat, ujn2)) {
+      while (ProductGreaterThan(qhat, vn2, rhat, ujn2)) {
         qhat--;
         digit_t prev_rhat = rhat;
         rhat += vn1;
         // v[n-1] >= 0, so this tests for overflow.
         if (rhat < prev_rhat) break;
-        x2 = digit_mul(qhat, vn2, &x1);
       }
     }
 
@@ -478,10 +492,12 @@ void BigInt::AbsoluteDivLarge(Handle<BigInt> dividend, Handle<BigInt> divisor,
   }
 }
 
-// Returns (x_high << kDigitBits + x_low) > (y_high << kDigitBits + y_low).
-bool BigInt::DoubleDigitGreaterThan(digit_t x_high, digit_t x_low,
-                                    digit_t y_high, digit_t y_low) {
-  return x_high > y_high || (x_high == y_high && x_low > y_low);
+// Returns whether (factor1 * factor2) > (high << kDigitBits) + low.
+bool BigInt::ProductGreaterThan(digit_t factor1, digit_t factor2, digit_t high,
+                                digit_t low) {
+  digit_t result_high;
+  digit_t result_low = digit_mul(factor1, factor2, &result_high);
+  return result_high > high || (result_high == high && result_low > low);
 }
 
 // Adds {summand} onto {this}, starting with {summand}'s 0th digit
@@ -570,6 +586,57 @@ Handle<BigInt> BigInt::Copy(Handle<BigInt> source) {
   return result;
 }
 
+// Lookup table for the maximum number of bits required per character of a
+// base-N string representation of a number. To increase accuracy, the array
+// value is the actual value multiplied by 32. To generate this table:
+// for (var i = 0; i <= 36; i++) { print(Math.ceil(Math.log2(i) * 32) + ","); }
+uint8_t kMaxBitsPerChar[] = {
+    0,   0,   32,  51,  64,  75,  83,  90,  96,  // 0..8
+    102, 107, 111, 115, 119, 122, 126, 128,      // 9..16
+    131, 134, 136, 139, 141, 143, 145, 147,      // 17..24
+    149, 151, 153, 154, 156, 158, 159, 160,      // 25..32
+    162, 163, 165, 166,                          // 33..36
+};
+
+static const int kBitsPerCharTableShift = 5;
+static const size_t kBitsPerCharTableMultiplier = 1u << kBitsPerCharTableShift;
+
+MaybeHandle<BigInt> BigInt::AllocateFor(Isolate* isolate, int radix,
+                                        int charcount) {
+  DCHECK(2 <= radix && radix <= 36);
+  DCHECK(charcount >= 0);
+  size_t bits_min;
+  size_t bits_per_char = kMaxBitsPerChar[radix];
+  size_t chars = static_cast<size_t>(charcount);
+  const int roundup = kBitsPerCharTableMultiplier - 1;
+  if (chars <= 1000000) {
+    // More precise path: multiply first, then divide.
+    bits_min = bits_per_char * chars;
+    // Divide by 32 (see table), rounding up.
+    bits_min = (bits_min + roundup) >> kBitsPerCharTableShift;
+  } else {
+    // Overflow avoidance path: divide first, then multiply.
+    // The addition can't overflow because of the int -> size_t cast.
+    bits_min = ((chars + roundup) >> kBitsPerCharTableShift) * bits_per_char;
+    // Check if overflow happened.
+    if (bits_min < chars) {
+      THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                      BigInt);
+    }
+  }
+  if (bits_min > static_cast<size_t>(kMaxInt)) {
+    THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                    BigInt);
+  }
+  // Divide by kDigitsBits, rounding up.
+  int length = (static_cast<int>(bits_min) + kDigitBits - 1) / kDigitBits;
+  if (length > BigInt::kMaxLength) {
+    THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                    BigInt);
+  }
+  return isolate->factory()->NewBigInt(length);
+}
+
 void BigInt::RightTrim() {
   int old_length = length();
   int new_length = old_length;
@@ -594,42 +661,57 @@ MaybeHandle<String> BigInt::ToStringBasePowerOfTwo(Handle<BigInt> x,
   STATIC_ASSERT(base::bits::IsPowerOfTwo(kDigitBits));
   DCHECK(base::bits::IsPowerOfTwo(radix));
   DCHECK(radix >= 2 && radix <= 32);
-  Factory* factory = x->GetIsolate()->factory();
+  Isolate* isolate = x->GetIsolate();
   // TODO(jkummerow): check in caller?
-  if (x->is_zero()) return factory->NewStringFromStaticChars("0");
+  if (x->is_zero()) return isolate->factory()->NewStringFromStaticChars("0");
 
-  const int len = x->length();
+  const int length = x->length();
   const bool sign = x->sign();
   const int bits_per_char = base::bits::CountTrailingZeros32(radix);
   const int char_mask = radix - 1;
-  const int chars_per_digit = kDigitBits / bits_per_char;
-  // Compute the number of chars needed to represent the most significant
-  // bigint digit.
-  int chars_for_msd = 0;
-  for (digit_t msd = x->digit(len - 1); msd != 0; msd >>= bits_per_char) {
-    chars_for_msd++;
+  // Compute the length of the resulting string: divide the bit length of the
+  // BigInt by the number of bits representable per character (rounding up).
+  const digit_t msd = x->digit(length - 1);
+  const int msd_leading_zeros = base::bits::CountLeadingZeros(msd);
+  const size_t bit_length = length * kDigitBits - msd_leading_zeros;
+  const size_t chars_required =
+      (bit_length + bits_per_char - 1) / bits_per_char + sign;
+
+  if (chars_required > String::kMaxLength) {
+    THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
   }
-  // All other digits need chars_per_digit characters; a leading "-" needs one.
-  if ((String::kMaxLength - chars_for_msd - sign) / chars_per_digit < len - 1) {
-    CHECK(false);  // TODO(jkummerow): Throw instead of crashing.
-  }
-  const int chars = chars_for_msd + (len - 1) * chars_per_digit + sign;
 
   Handle<SeqOneByteString> result =
-      factory->NewRawOneByteString(chars).ToHandleChecked();
+      isolate->factory()
+          ->NewRawOneByteString(static_cast<int>(chars_required))
+          .ToHandleChecked();
   uint8_t* buffer = result->GetChars();
   // Print the number into the string, starting from the last position.
-  int pos = chars - 1;
-  for (int i = 0; i < len - 1; i++) {
-    digit_t digit = x->digit(i);
-    for (int j = 0; j < chars_per_digit; j++) {
+  int pos = static_cast<int>(chars_required - 1);
+  digit_t digit = 0;
+  // Keeps track of how many unprocessed bits there are in {digit}.
+  int available_bits = 0;
+  for (int i = 0; i < length - 1; i++) {
+    digit_t new_digit = x->digit(i);
+    // Take any leftover bits from the last iteration into account.
+    int current = (digit | (new_digit << available_bits)) & char_mask;
+    buffer[pos--] = kConversionChars[current];
+    int consumed_bits = bits_per_char - available_bits;
+    digit = new_digit >> consumed_bits;
+    available_bits = kDigitBits - consumed_bits;
+    while (available_bits >= bits_per_char) {
       buffer[pos--] = kConversionChars[digit & char_mask];
       digit >>= bits_per_char;
+      available_bits -= bits_per_char;
     }
   }
-  // Print the most significant digit.
-  for (digit_t msd = x->digit(len - 1); msd != 0; msd >>= bits_per_char) {
-    buffer[pos--] = kConversionChars[msd & char_mask];
+  // Take any leftover bits from the last iteration into account.
+  int current = (digit | (msd << available_bits)) & char_mask;
+  buffer[pos--] = kConversionChars[current];
+  digit = msd >> (bits_per_char - available_bits);
+  while (digit != 0) {
+    buffer[pos--] = kConversionChars[digit & char_mask];
+    digit >>= bits_per_char;
   }
   if (sign) buffer[pos--] = '-';
   DCHECK(pos == -1);
