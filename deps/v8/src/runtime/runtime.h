@@ -613,7 +613,7 @@ namespace internal {
   F(IsWasmCode, 1, 1)                         \
   F(IsWasmTrapHandlerEnabled, 0, 1)           \
   F(GetWasmRecoveredTrapCount, 0, 1)          \
-  F(DisallowCodegenFromStrings, 0, 1)         \
+  F(DisallowCodegenFromStrings, 1, 1)         \
   F(ValidateWasmInstancesChain, 2, 1)         \
   F(ValidateWasmModuleState, 1, 1)            \
   F(ValidateWasmOrphanedInstance, 1, 1)       \
@@ -653,8 +653,6 @@ namespace internal {
   F(WasmExceptionGetElement, 1, 1)   \
   F(WasmRunInterpreter, 3, 1)        \
   F(WasmStackGuard, 0, 1)            \
-  F(SetThreadInWasm, 0, 1)           \
-  F(ClearThreadInWasm, 0, 1)         \
   F(WasmCompileLazy, 0, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_PAIR(F) \

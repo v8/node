@@ -625,13 +625,26 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   if (result != NodeProperties::kReliableReceiverMaps) {
     return NoChange();
   }
-  if (receiver_maps.size() != 1) return NoChange();
-  Handle<Map> receiver_map(receiver_maps[0]);
-  ElementsKind kind = receiver_map->elements_kind();
-  // TODO(danno): Handle double packed elements
-  if (!IsFastElementsKind(kind) || IsDoubleElementsKind(kind) ||
-      !CanInlineArrayIteratingBuiltin(receiver_map)) {
-    return NoChange();
+  if (receiver_maps.size() == 0) return NoChange();
+
+  ElementsKind kind = IsDoubleElementsKind(receiver_maps[0]->elements_kind())
+                          ? PACKED_DOUBLE_ELEMENTS
+                          : PACKED_ELEMENTS;
+  for (Handle<Map> receiver_map : receiver_maps) {
+    ElementsKind next_kind = receiver_map->elements_kind();
+    if (!CanInlineArrayIteratingBuiltin(receiver_map)) {
+      return NoChange();
+    }
+    if (!IsFastElementsKind(next_kind) ||
+        (IsDoubleElementsKind(next_kind) && IsHoleyElementsKind(next_kind))) {
+      return NoChange();
+    }
+    if (IsDoubleElementsKind(kind) != IsDoubleElementsKind(next_kind)) {
+      return NoChange();
+    }
+    if (IsHoleyElementsKind(next_kind)) {
+      kind = HOLEY_ELEMENTS;
+    }
   }
 
   // Install code dependencies on the {receiver} prototype maps and the
@@ -640,7 +653,7 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
 
   Node* k = jsgraph()->ZeroConstant();
 
-  Node* original_length = graph()->NewNode(
+  Node* original_length = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS)),
       receiver, effect, control);
 
@@ -659,7 +672,8 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
       node->InputAt(0), context, &checkpoint_params[0], stack_parameters,
       outer_frame_state, ContinuationFrameStateMode::LAZY);
   Node* check_throw = check_fail = graph()->NewNode(
-      javascript()->CallRuntime(Runtime::kThrowCalledNonCallable), fncallback,
+      javascript()->CallRuntime(Runtime::kThrowTypeError, 2),
+      jsgraph()->Constant(MessageTemplate::kCalledNonCallable), fncallback,
       context, check_frame_state, effect, check_fail);
   control = graph()->NewNode(common()->IfTrue(), check_branch);
 
@@ -692,18 +706,13 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
       graph()->NewNode(common()->Checkpoint(), frame_state, effect, control);
 
   // Make sure the map hasn't changed during the iteration
-  Node* orig_map = jsgraph()->HeapConstant(receiver_map);
-  Node* array_map = effect =
-      graph()->NewNode(simplified()->LoadField(AccessBuilder::ForMap()),
-                       receiver, effect, control);
-  Node* check_map =
-      graph()->NewNode(simplified()->ReferenceEqual(), array_map, orig_map);
-  effect =
-      graph()->NewNode(simplified()->CheckIf(), check_map, effect, control);
+  effect = graph()->NewNode(
+      simplified()->CheckMaps(CheckMapsFlag::kNone, receiver_maps), receiver,
+      effect, control);
 
   // Make sure that the access is still in bounds, since the callback could have
   // changed the array's size.
-  Node* length = graph()->NewNode(
+  Node* length = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS)),
       receiver, effect, control);
   k = effect =
@@ -712,12 +721,12 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   // Reload the elements pointer before calling the callback, since the previous
   // callback might have resized the array causing the elements buffer to be
   // re-allocated.
-  Node* elements = graph()->NewNode(
+  Node* elements = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSObjectElements()), receiver,
       effect, control);
 
-  Node* element = graph()->NewNode(
-      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement()),
+  Node* element = effect = graph()->NewNode(
+      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement(kind)),
       elements, k, effect, control);
 
   Node* next_k =
@@ -738,6 +747,12 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
     hole_true = graph()->NewNode(common()->IfTrue(), branch);
     hole_false = graph()->NewNode(common()->IfFalse(), branch);
     control = hole_false;
+
+    // The contract is that we don't leak "the hole" into "user JavaScript",
+    // so we must rename the {element} here to explicitly exclude "the hole"
+    // from the type of {element}.
+    element = graph()->NewNode(common()->TypeGuard(Type::NonInternal()),
+                               element, control);
   }
 
   frame_state = CreateJavaScriptBuiltinContinuationFrameState(
@@ -791,9 +806,9 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
   control = if_false;
   effect = eloop;
 
-  // The above %ThrowCalledNonCallable runtime call is an unconditional
-  // throw, making it impossible to return a successful completion in this
-  // case. We simply connect the successful completion to the graph end.
+  // The above %ThrowTypeError runtime call is an unconditional throw, making
+  // it impossible to return a successful completion in this case. We simply
+  // connect the successful completion to the graph end.
   Node* terminate =
       graph()->NewNode(common()->Throw(), check_throw, check_fail);
   NodeProperties::MergeControlToEnd(graph(), common(), terminate);
@@ -826,46 +841,48 @@ Reduction JSCallReducer::ReduceArrayMap(Handle<JSFunction> function,
   if (result != NodeProperties::kReliableReceiverMaps) {
     return NoChange();
   }
-  if (receiver_maps.size() != 1) return NoChange();
-  Handle<Map> receiver_map(receiver_maps[0]);
-  ElementsKind kind = receiver_map->elements_kind();
+
+  // Ensure that any changes to the Array species constructor cause deopt.
+  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
+
+  if (receiver_maps.size() == 0) return NoChange();
+
+  const ElementsKind kind = receiver_maps[0]->elements_kind();
+
   // TODO(danno): Handle holey Smi and Object fast elements kinds and double
   // packed.
   if (!IsFastPackedElementsKind(kind) || IsDoubleElementsKind(kind)) {
     return NoChange();
   }
 
-  // We want the input to be a generic Array.
+  for (Handle<Map> receiver_map : receiver_maps) {
+    if (!CanInlineArrayIteratingBuiltin(receiver_map)) {
+      return NoChange();
+    }
+    // We can handle different maps, as long as their elements kind are the
+    // same.
+    if (receiver_map->elements_kind() != kind) {
+      return NoChange();
+    }
+  }
+
+  dependencies()->AssumePropertyCell(factory()->species_protector());
+
   Handle<JSFunction> handle_constructor(
       JSFunction::cast(
           native_context()->GetInitialJSArrayMap(kind)->GetConstructor()),
       isolate());
   Node* array_constructor = jsgraph()->HeapConstant(handle_constructor);
-  if (receiver_map->prototype() !=
-      native_context()->get(Context::INITIAL_ARRAY_PROTOTYPE_INDEX)) {
-    return NoChange();
-  }
 
-  // And ensure that any changes to the Array species constructor cause deopt.
-  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
-
-  dependencies()->AssumePropertyCell(factory()->species_protector());
 
   Node* k = jsgraph()->ZeroConstant();
-  Node* orig_map = jsgraph()->HeapConstant(receiver_map);
 
   // Make sure the map hasn't changed before we construct the output array.
-  {
-    Node* array_map = effect =
-        graph()->NewNode(simplified()->LoadField(AccessBuilder::ForMap()),
-                         receiver, effect, control);
-    Node* check_map =
-        graph()->NewNode(simplified()->ReferenceEqual(), array_map, orig_map);
-    effect =
-        graph()->NewNode(simplified()->CheckIf(), check_map, effect, control);
-  }
+  effect = graph()->NewNode(
+      simplified()->CheckMaps(CheckMapsFlag::kNone, receiver_maps), receiver,
+      effect, control);
 
-  Node* original_length = graph()->NewNode(
+  Node* original_length = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS)),
       receiver, effect, control);
 
@@ -892,7 +909,8 @@ Reduction JSCallReducer::ReduceArrayMap(Handle<JSFunction> function,
       node->InputAt(0), context, &checkpoint_params[0], stack_parameters,
       outer_frame_state, ContinuationFrameStateMode::LAZY);
   Node* check_throw = check_fail = graph()->NewNode(
-      javascript()->CallRuntime(Runtime::kThrowCalledNonCallable), fncallback,
+      javascript()->CallRuntime(Runtime::kThrowTypeError, 2),
+      jsgraph()->Constant(MessageTemplate::kCalledNonCallable), fncallback,
       context, check_frame_state, effect, check_fail);
   control = graph()->NewNode(common()->IfTrue(), check_branch);
 
@@ -925,31 +943,27 @@ Reduction JSCallReducer::ReduceArrayMap(Handle<JSFunction> function,
       graph()->NewNode(common()->Checkpoint(), frame_state, effect, control);
 
   // Make sure the map hasn't changed during the iteration
-  Node* array_map = effect =
-      graph()->NewNode(simplified()->LoadField(AccessBuilder::ForMap()),
-                       receiver, effect, control);
-  Node* check_map =
-      graph()->NewNode(simplified()->ReferenceEqual(), array_map, orig_map);
-  effect =
-      graph()->NewNode(simplified()->CheckIf(), check_map, effect, control);
+  effect = graph()->NewNode(
+      simplified()->CheckMaps(CheckMapsFlag::kNone, receiver_maps), receiver,
+      effect, control);
 
   // Make sure that the access is still in bounds, since the callback could have
   // changed the array's size.
-  Node* length = graph()->NewNode(
-      simplified()->LoadField(AccessBuilder::ForJSArrayLength(PACKED_ELEMENTS)),
-      receiver, effect, control);
+  Node* length = effect = graph()->NewNode(
+      simplified()->LoadField(AccessBuilder::ForJSArrayLength(kind)), receiver,
+      effect, control);
   k = effect =
       graph()->NewNode(simplified()->CheckBounds(), k, length, effect, control);
 
   // Reload the elements pointer before calling the callback, since the previous
   // callback might have resized the array causing the elements buffer to be
   // re-allocated.
-  Node* elements = graph()->NewNode(
+  Node* elements = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSObjectElements()), receiver,
       effect, control);
 
-  Node* element = graph()->NewNode(
-      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement()),
+  Node* element = effect = graph()->NewNode(
+      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement(kind)),
       elements, k, effect, control);
 
   Node* next_k =
@@ -1005,9 +1019,9 @@ Reduction JSCallReducer::ReduceArrayMap(Handle<JSFunction> function,
   control = if_false;
   effect = eloop;
 
-  // The above %ThrowCalledNonCallable runtime call is an unconditional
-  // throw, making it impossible to return a successful completion in this
-  // case. We simply connect the successful completion to the graph end.
+  // The above %ThrowTypeError runtime call is an unconditional throw, making
+  // it impossible to return a successful completion in this case. We simply
+  // connect the successful completion to the graph end.
   Node* terminate =
       graph()->NewNode(common()->Throw(), check_throw, check_fail);
   NodeProperties::MergeControlToEnd(graph(), common(), terminate);

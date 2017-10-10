@@ -31,8 +31,9 @@ class BigInt : public HeapObject {
   static MaybeHandle<BigInt> Remainder(Handle<BigInt> x, Handle<BigInt> y);
   static Handle<BigInt> Add(Handle<BigInt> x, Handle<BigInt> y);
   static Handle<BigInt> Subtract(Handle<BigInt> x, Handle<BigInt> y);
-  static Handle<BigInt> LeftShift(Handle<BigInt> x, Handle<BigInt> y);
-  static Handle<BigInt> SignedRightShift(Handle<BigInt> x, Handle<BigInt> y);
+  static MaybeHandle<BigInt> LeftShift(Handle<BigInt> x, Handle<BigInt> y);
+  static MaybeHandle<BigInt> SignedRightShift(Handle<BigInt> x,
+                                              Handle<BigInt> y);
   static MaybeHandle<BigInt> UnsignedRightShift(Handle<BigInt> x,
                                                 Handle<BigInt> y);
   static bool LessThan(Handle<BigInt> x, Handle<BigInt> y);
@@ -61,18 +62,7 @@ class BigInt : public HeapObject {
   }
   void Initialize(int length, bool zero_initialize);
 
-  static MaybeHandle<String> ToString(Handle<BigInt> bigint, int radix);
-
-  // Temporarily exposed helper, pending proper initialization.
-  void set_value(int value) {
-    DCHECK(length() == 1);
-    if (value > 0) {
-      set_digit(0, value);
-    } else {
-      set_digit(0, -value);  // This can overflow. We don't care.
-      set_sign(true);
-    }
-  }
+  static MaybeHandle<String> ToString(Handle<BigInt> bigint, int radix = 10);
 
   // The maximum length that the current implementation supports would be
   // kMaxInt / kDigitBits. However, we use a lower limit for now, because
@@ -83,6 +73,7 @@ class BigInt : public HeapObject {
   class BodyDescriptor;
 
  private:
+  friend class Factory;
   friend class BigIntParseIntHelper;
 
   typedef uintptr_t digit_t;
@@ -101,8 +92,24 @@ class BigInt : public HeapObject {
                                     bool result_sign);
   static Handle<BigInt> AbsoluteSub(Handle<BigInt> x, Handle<BigInt> y,
                                     bool result_sign);
-  // Returns a positive value if abs(x) > abs(y), a negative value if
-  // abs(x) < abs(y), or zero if abs(x) == abs(y).
+  static Handle<BigInt> AbsoluteAddOne(Handle<BigInt> x, bool sign,
+                                       BigInt* result_storage);
+  static Handle<BigInt> AbsoluteSubOne(Handle<BigInt> x, int result_length);
+
+  enum ExtraDigitsHandling { kCopy, kSkip };
+  static inline Handle<BigInt> AbsoluteBitwiseOp(
+      Handle<BigInt> x, Handle<BigInt> y, BigInt* result_storage,
+      ExtraDigitsHandling extra_digits,
+      std::function<digit_t(digit_t, digit_t)> op);
+  static Handle<BigInt> AbsoluteAnd(Handle<BigInt> x, Handle<BigInt> y,
+                                    BigInt* result_storage = nullptr);
+  static Handle<BigInt> AbsoluteAndNot(Handle<BigInt> x, Handle<BigInt> y,
+                                       BigInt* result_storage = nullptr);
+  static Handle<BigInt> AbsoluteOr(Handle<BigInt> x, Handle<BigInt> y,
+                                   BigInt* result_storage = nullptr);
+  static Handle<BigInt> AbsoluteXor(Handle<BigInt> x, Handle<BigInt> y,
+                                    BigInt* result_storage = nullptr);
+
   static int AbsoluteCompare(Handle<BigInt> x, Handle<BigInt> y);
 
   static void MultiplyAccumulate(Handle<BigInt> multiplicand,
@@ -130,8 +137,17 @@ class BigInt : public HeapObject {
   static Handle<BigInt> SpecialLeftShift(Handle<BigInt> x, int shift,
                                          SpecialLeftShiftMode mode);
 
+  // Specialized helpers for shift operations.
+  static MaybeHandle<BigInt> LeftShiftByAbsolute(Handle<BigInt> x,
+                                                 Handle<BigInt> y);
+  static Handle<BigInt> RightShiftByAbsolute(Handle<BigInt> x,
+                                             Handle<BigInt> y);
+  static Handle<BigInt> RightShiftByMaximum(Isolate* isolate, bool sign);
+  static Maybe<digit_t> ToShiftAmount(Handle<BigInt> x);
+
   static MaybeHandle<String> ToStringBasePowerOfTwo(Handle<BigInt> x,
                                                     int radix);
+  static MaybeHandle<String> ToStringGeneric(Handle<BigInt> x, int radix);
 
   // Digit arithmetic helpers.
   static inline digit_t digit_add(digit_t a, digit_t b, digit_t* carry);
@@ -139,6 +155,10 @@ class BigInt : public HeapObject {
   static inline digit_t digit_mul(digit_t a, digit_t b, digit_t* high);
   static inline digit_t digit_div(digit_t high, digit_t low, digit_t divisor,
                                   digit_t* remainder);
+  static digit_t digit_pow(digit_t base, digit_t exponent);
+  static inline bool digit_ismax(digit_t x) {
+    return static_cast<digit_t>(~x) == 0;
+  }
 
   class LengthBits : public BitField<int, 0, kMaxLengthBits> {};
   class SignBits : public BitField<bool, LengthBits::kNext, 1> {};

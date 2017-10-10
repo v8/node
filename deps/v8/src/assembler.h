@@ -759,10 +759,6 @@ class ExternalReference BASE_EMBEDDED {
     // ObjectPair f(v8::internal::Arguments).
     BUILTIN_CALL_PAIR,
 
-    // Builtin call that returns .
-    // ObjectTriple f(v8::internal::Arguments).
-    BUILTIN_CALL_TRIPLE,
-
     // Builtin that takes float arguments and returns an int.
     // int f(double, double).
     BUILTIN_COMPARE_CALL,
@@ -871,6 +867,8 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference wasm_word32_popcnt(Isolate* isolate);
   static ExternalReference wasm_word64_popcnt(Isolate* isolate);
   static ExternalReference wasm_float64_pow(Isolate* isolate);
+  static ExternalReference wasm_set_thread_in_wasm_flag(Isolate* isolate);
+  static ExternalReference wasm_clear_thread_in_wasm_flag(Isolate* isolate);
 
   static ExternalReference f64_acos_wrapper_function(Isolate* isolate);
   static ExternalReference f64_asin_wrapper_function(Isolate* isolate);

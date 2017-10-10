@@ -1005,6 +1005,9 @@ class Isolate {
   }
 
   bool serializer_enabled() const { return serializer_enabled_; }
+  void set_serializer_enabled_for_test(bool serializer_enabled) {
+    serializer_enabled_ = serializer_enabled;
+  }
   bool snapshot_available() const {
     return snapshot_blob_ != NULL && snapshot_blob_->raw_size != 0;
   }
@@ -1066,6 +1069,7 @@ class Isolate {
   static const int kProtectorValid = 1;
   static const int kProtectorInvalid = 0;
 
+  inline bool IsArrayConstructorIntact();
   bool IsFastArrayConstructorPrototypeChainIntact();
   inline bool IsArraySpeciesLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact();
@@ -1093,6 +1097,7 @@ class Isolate {
   void UpdateArrayProtectorOnNormalizeElements(Handle<JSObject> object) {
     UpdateArrayProtectorOnSetElement(object);
   }
+  void InvalidateArrayConstructorProtector();
   void InvalidateArraySpeciesProtector();
   void InvalidateIsConcatSpreadableProtector();
   void InvalidateStringLengthOverflowProtector();
@@ -1170,7 +1175,7 @@ class Isolate {
   inline void FireMicrotasksCompletedCallback();
 
   void SetPromiseRejectCallback(PromiseRejectCallback callback);
-  void ReportPromiseReject(Handle<JSObject> promise, Handle<Object> value,
+  void ReportPromiseReject(Handle<JSPromise> promise, Handle<Object> value,
                            v8::PromiseRejectEvent event);
 
   void PromiseReactionJob(Handle<PromiseReactionJobInfo> info,

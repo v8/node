@@ -275,6 +275,7 @@ class ErrorUtils : public AllStatic {
     "The comparison function must be either a function or undefined")          \
   T(BigIntMixedTypes,                                                          \
     "Cannot mix BigInt and other types, use explicit conversions")             \
+  T(BigIntShr, "BigInts have no unsigned right shift, use >> instead")         \
   T(CalledNonCallable, "% is not a function")                                  \
   T(CalledOnNonObject, "% called on non-object")                               \
   T(CalledOnNullOrUndefined, "% called on null or undefined")                  \
@@ -316,6 +317,7 @@ class ErrorUtils : public AllStatic {
   T(ImmutablePrototypeSet,                                                     \
     "Immutable prototype object '%' cannot have their prototype set")          \
   T(ImportCallNotNewExpression, "Cannot use new with import")                  \
+  T(ImportMetaOutsideModule, "Cannot use 'import.meta' outside a module")      \
   T(IncompatibleMethodReceiver, "Method % called on incompatible receiver %")  \
   T(InstanceofNonobjectProto,                                                  \
     "Function has non-object prototype '%' in instanceof check")               \

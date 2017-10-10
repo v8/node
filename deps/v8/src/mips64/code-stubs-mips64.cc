@@ -424,28 +424,9 @@ void CEntryStub::Generate(MacroAssembler* masm) {
 
   __ AssertStackIsAligned();
 
-  int frame_alignment = MacroAssembler::ActivationFrameAlignment();
-  int frame_alignment_mask = frame_alignment - 1;
-  int result_stack_size;
-  if (result_size() <= 2) {
-    // a0 = argc, a1 = argv, a2 = isolate
-    __ li(a2, Operand(ExternalReference::isolate_address(isolate())));
-    __ mov(a1, s1);
-    result_stack_size = 0;
-  } else {
-    DCHECK_EQ(3, result_size());
-    // Allocate additional space for the result.
-    result_stack_size =
-        ((result_size() * kPointerSize) + frame_alignment_mask) &
-        ~frame_alignment_mask;
-    __ Dsubu(sp, sp, Operand(result_stack_size));
-
-    // a0 = hidden result argument, a1 = argc, a2 = argv, a3 = isolate.
-    __ li(a3, Operand(ExternalReference::isolate_address(isolate())));
-    __ mov(a2, s1);
-    __ mov(a1, a0);
-    __ mov(a0, sp);
-  }
+  // a0 = argc, a1 = argv, a2 = isolate
+  __ li(a2, Operand(ExternalReference::isolate_address(isolate())));
+  __ mov(a1, s1);
 
   // To let the GC traverse the return address of the exit frames, we need to
   // know where the return address is. The CEntryStub is unmovable, so
@@ -468,7 +449,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
     __ bind(&find_ra);
 
     // This spot was reserved in EnterExitFrame.
-    __ Sd(ra, MemOperand(sp, result_stack_size));
+    __ Sd(ra, MemOperand(sp));
     // Stack space reservation moved to the branch delay slot below.
     // Stack is still aligned.
 
@@ -481,14 +462,8 @@ void CEntryStub::Generate(MacroAssembler* masm) {
     DCHECK_EQ(kNumInstructionsToJump,
               masm->InstructionsGeneratedSince(&find_ra));
   }
-  if (result_size() > 2) {
-    DCHECK_EQ(3, result_size());
-    // Read result values stored on stack.
-    __ Ld(a0, MemOperand(v0, 2 * kPointerSize));
-    __ Ld(v1, MemOperand(v0, 1 * kPointerSize));
-    __ Ld(v0, MemOperand(v0, 0 * kPointerSize));
-  }
-  // Result returned in v0, v1:v0 or a0:v1:v0 - do not destroy these registers!
+
+  // Result returned in v0 or v1:v0 - do not destroy these registers!
 
   // Check result for exception sentinel.
   Label exception_returned;
@@ -1107,11 +1082,7 @@ void RecordWriteStub::Generate(MacroAssembler* masm) {
   __ nop();
 
   if (remembered_set_action() == EMIT_REMEMBERED_SET) {
-    __ RememberedSetHelper(object(),
-                           address(),
-                           value(),
-                           save_fp_regs_mode(),
-                           MacroAssembler::kReturnAtEnd);
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
   }
   __ Ret();
 
@@ -1149,11 +1120,7 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
         masm, kUpdateRememberedSetOnNoNeedToInformIncrementalMarker, mode);
     InformIncrementalMarker(masm);
     regs_.Restore(masm);
-    __ RememberedSetHelper(object(),
-                           address(),
-                           value(),
-                           save_fp_regs_mode(),
-                           MacroAssembler::kReturnAtEnd);
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
 
     __ bind(&dont_need_remembered_set);
   }
@@ -1204,11 +1171,7 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(),
-                           address(),
-                           value(),
-                           save_fp_regs_mode(),
-                           MacroAssembler::kReturnAtEnd);
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
   } else {
     __ Ret();
   }
@@ -1249,11 +1212,7 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(),
-                           address(),
-                           value(),
-                           save_fp_regs_mode(),
-                           MacroAssembler::kReturnAtEnd);
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
   } else {
     __ Ret();
   }

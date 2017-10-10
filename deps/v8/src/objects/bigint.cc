@@ -67,7 +67,7 @@ MaybeHandle<BigInt> BigInt::Divide(Handle<BigInt> x, Handle<BigInt> y) {
   //    integral value.
   if (AbsoluteCompare(x, y) < 0) {
     // TODO(jkummerow): Consider caching a canonical zero-BigInt.
-    return x->GetIsolate()->factory()->NewBigInt(0);
+    return x->GetIsolate()->factory()->NewBigIntFromInt(0);
   }
   Handle<BigInt> quotient;
   if (y->length() == 1) {
@@ -95,7 +95,7 @@ MaybeHandle<BigInt> BigInt::Remainder(Handle<BigInt> x, Handle<BigInt> y) {
     digit_t remainder_digit;
     AbsoluteDivSmall(x, y->digit(0), nullptr, &remainder_digit);
     if (remainder_digit == 0) {
-      return x->GetIsolate()->factory()->NewBigInt(0);
+      return x->GetIsolate()->factory()->NewBigIntFromInt(0);
     }
     remainder = x->GetIsolate()->factory()->NewBigIntRaw(1);
     remainder->set_digit(0, remainder_digit);
@@ -136,17 +136,23 @@ Handle<BigInt> BigInt::Subtract(Handle<BigInt> x, Handle<BigInt> y) {
   return AbsoluteSub(y, x, !xsign);
 }
 
-Handle<BigInt> BigInt::LeftShift(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+MaybeHandle<BigInt> BigInt::LeftShift(Handle<BigInt> x, Handle<BigInt> y) {
+  if (y->is_zero() || x->is_zero()) return x;
+  if (y->sign()) return RightShiftByAbsolute(x, y);
+  return LeftShiftByAbsolute(x, y);
 }
 
-Handle<BigInt> BigInt::SignedRightShift(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+MaybeHandle<BigInt> BigInt::SignedRightShift(Handle<BigInt> x,
+                                             Handle<BigInt> y) {
+  if (y->is_zero() || x->is_zero()) return x;
+  if (y->sign()) return LeftShiftByAbsolute(x, y);
+  return RightShiftByAbsolute(x, y);
 }
 
 MaybeHandle<BigInt> BigInt::UnsignedRightShift(Handle<BigInt> x,
                                                Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+  THROW_NEW_ERROR(x->GetIsolate(), NewTypeError(MessageTemplate::kBigIntShr),
+                  BigInt);
 }
 
 bool BigInt::LessThan(Handle<BigInt> x, Handle<BigInt> y) {
@@ -163,21 +169,83 @@ bool BigInt::Equal(BigInt* x, BigInt* y) {
 }
 
 Handle<BigInt> BigInt::BitwiseAnd(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+  Handle<BigInt> result;
+  if (!x->sign() && !y->sign()) {
+    result = AbsoluteAnd(x, y);
+  } else if (x->sign() && y->sign()) {
+    int result_length = Max(x->length(), y->length()) + 1;
+    // (-x) & (-y) == ~(x-1) & ~(y-1) == ~((x-1) | (y-1))
+    // == -(((x-1) | (y-1)) + 1)
+    result = AbsoluteSubOne(x, result_length);
+    result = AbsoluteOr(result, AbsoluteSubOne(y, y->length()), *result);
+    result = AbsoluteAddOne(result, true, *result);
+  } else {
+    DCHECK(x->sign() != y->sign());
+    // Assume that x is the positive BigInt.
+    if (x->sign()) std::swap(x, y);
+    // x & (-y) == x & ~(y-1) == x &~ (y-1)
+    result = AbsoluteAndNot(x, AbsoluteSubOne(y, y->length()));
+  }
+  result->RightTrim();
+  return result;
 }
 
 Handle<BigInt> BigInt::BitwiseXor(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+  Handle<BigInt> result;
+  if (!x->sign() && !y->sign()) {
+    result = AbsoluteXor(x, y);
+  } else if (x->sign() && y->sign()) {
+    int result_length = Max(x->length(), y->length());
+    // (-x) ^ (-y) == ~(x-1) ^ ~(y-1) == (x-1) ^ (y-1)
+    result = AbsoluteSubOne(x, result_length);
+    result = AbsoluteXor(result, AbsoluteSubOne(y, y->length()), *result);
+  } else {
+    DCHECK(x->sign() != y->sign());
+    int result_length = Max(x->length(), y->length()) + 1;
+    // Assume that x is the positive BigInt.
+    if (x->sign()) std::swap(x, y);
+    // x ^ (-y) == x ^ ~(y-1) == ~(x ^ (y-1)) == -((x ^ (y-1)) + 1)
+    result = AbsoluteSubOne(y, result_length);
+    result = AbsoluteXor(result, x, *result);
+    result = AbsoluteAddOne(result, true, *result);
+  }
+  result->RightTrim();
+  return result;
 }
 
 Handle<BigInt> BigInt::BitwiseOr(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+  Handle<BigInt> result;
+  int result_length = Max(x->length(), y->length());
+  if (!x->sign() && !y->sign()) {
+    result = AbsoluteOr(x, y);
+  } else if (x->sign() && y->sign()) {
+    // (-x) | (-y) == ~(x-1) | ~(y-1) == ~((x-1) & (y-1))
+    // == -(((x-1) & (y-1)) + 1)
+    result = AbsoluteSubOne(x, result_length);
+    result = AbsoluteAnd(result, AbsoluteSubOne(y, y->length()), *result);
+    result = AbsoluteAddOne(result, true, *result);
+  } else {
+    DCHECK(x->sign() != y->sign());
+    // Assume that x is the positive BigInt.
+    if (x->sign()) std::swap(x, y);
+    // x | (-y) == x | ~(y-1) == ~((y-1) &~ x) == -(((y-1) &~ x) + 1)
+    result = AbsoluteSubOne(y, result_length);
+    result = AbsoluteAndNot(result, x, *result);
+    result = AbsoluteAddOne(result, true, *result);
+  }
+  result->RightTrim();
+  return result;
 }
 
 MaybeHandle<String> BigInt::ToString(Handle<BigInt> bigint, int radix) {
-  // TODO(jkummerow): Support non-power-of-two radixes.
-  if (!base::bits::IsPowerOfTwo(radix)) radix = 16;
-  return ToStringBasePowerOfTwo(bigint, radix);
+  Isolate* isolate = bigint->GetIsolate();
+  if (bigint->is_zero()) {
+    return isolate->factory()->NewStringFromStaticChars("0");
+  }
+  if (base::bits::IsPowerOfTwo(radix)) {
+    return ToStringBasePowerOfTwo(bigint, radix);
+  }
+  return ToStringGeneric(bigint, radix);
 }
 
 void BigInt::Initialize(int length, bool zero_initialize) {
@@ -275,6 +343,142 @@ Handle<BigInt> BigInt::AbsoluteSub(Handle<BigInt> x, Handle<BigInt> y,
   return result;
 }
 
+// Adds 1 to the absolute value of {x}, stores the result in {result_storage}
+// and sets its sign to {sign}.
+// {result_storage} and {x} may refer to the same BigInt for in-place
+// modification.
+Handle<BigInt> BigInt::AbsoluteAddOne(Handle<BigInt> x, bool sign,
+                                      BigInt* result_storage) {
+  DCHECK(result_storage != nullptr);
+  int input_length = x->length();
+  int result_length = result_storage->length();
+  Isolate* isolate = x->GetIsolate();
+  Handle<BigInt> result(result_storage, isolate);
+  digit_t carry = 1;
+  for (int i = 0; i < input_length; i++) {
+    digit_t new_carry = 0;
+    result->set_digit(i, digit_add(x->digit(i), carry, &new_carry));
+    carry = new_carry;
+  }
+  if (result_length > input_length) {
+    result->set_digit(input_length, carry);
+  } else {
+    DCHECK(carry == 0);
+  }
+  result->set_sign(sign);
+  return result;
+}
+
+// Subtracts 1 from the absolute value of {x}. {x} must not be zero.
+// Allocates a new BigInt of length {result_length} for the result;
+// {result_length} must be at least as large as {x->length()}.
+Handle<BigInt> BigInt::AbsoluteSubOne(Handle<BigInt> x, int result_length) {
+  DCHECK(!x->is_zero());
+  DCHECK(result_length >= x->length());
+  Handle<BigInt> result =
+      x->GetIsolate()->factory()->NewBigIntRaw(result_length);
+  int length = x->length();
+  digit_t borrow = 1;
+  for (int i = 0; i < length; i++) {
+    digit_t new_borrow = 0;
+    result->set_digit(i, digit_sub(x->digit(i), borrow, &new_borrow));
+    borrow = new_borrow;
+  }
+  DCHECK(borrow == 0);
+  for (int i = length; i < result_length; i++) {
+    result->set_digit(i, borrow);
+  }
+  return result;
+}
+
+// Helper for Absolute{And,AndNot,Or,Xor}.
+// Performs the given binary {op} on digit pairs of {x} and {y}; when the
+// end of the shorter of the two is reached, {extra_digits} configures how
+// remaining digits in the longer input are handled: copied to the result
+// or ignored.
+// If {result_storage} is non-nullptr, it will be used for the result and
+// any extra digits in it will be zeroed out, otherwise a new BigInt (with
+// the same length as the longer input) will be allocated.
+// {result_storage} may alias {x} or {y} for in-place modification.
+// Example:
+//              y:             [ y2 ][ y1 ][ y0 ]
+//              x:       [ x3 ][ x2 ][ x1 ][ x0 ]
+//                          |     |     |     |
+//                      (kCopy)  (op)  (op)  (op)
+//                          |     |     |     |
+//                          v     v     v     v
+// result_storage: [  0 ][ x3 ][ r2 ][ r1 ][ r0 ]
+inline Handle<BigInt> BigInt::AbsoluteBitwiseOp(
+    Handle<BigInt> x, Handle<BigInt> y, BigInt* result_storage,
+    ExtraDigitsHandling extra_digits,
+    std::function<digit_t(digit_t, digit_t)> op) {
+  int x_length = x->length();
+  int y_length = y->length();
+  if (x_length < y_length) {
+    return AbsoluteBitwiseOp(y, x, result_storage, extra_digits, op);
+  }
+  Isolate* isolate = x->GetIsolate();
+  Handle<BigInt> result(result_storage, isolate);
+  int result_length = extra_digits == kCopy ? x_length : y_length;
+  if (result_storage == nullptr) {
+    result = isolate->factory()->NewBigIntRaw(result_length);
+  } else {
+    DCHECK(result_storage->length() >= result_length);
+    result_length = result_storage->length();
+  }
+  int i = 0;
+  for (; i < y_length; i++) {
+    result->set_digit(i, op(x->digit(i), y->digit(i)));
+  }
+  if (extra_digits == kCopy) {
+    for (; i < x_length; i++) {
+      result->set_digit(i, x->digit(i));
+    }
+  }
+  for (; i < result_length; i++) {
+    result->set_digit(i, 0);
+  }
+  return result;
+}
+
+// If {result_storage} is non-nullptr, it will be used for the result,
+// otherwise a new BigInt of appropriate length will be allocated.
+// {result_storage} may alias {x} or {y} for in-place modification.
+Handle<BigInt> BigInt::AbsoluteAnd(Handle<BigInt> x, Handle<BigInt> y,
+                                   BigInt* result_storage) {
+  return AbsoluteBitwiseOp(x, y, result_storage, kSkip,
+                           [](digit_t a, digit_t b) { return a & b; });
+}
+
+// If {result_storage} is non-nullptr, it will be used for the result,
+// otherwise a new BigInt of appropriate length will be allocated.
+// {result_storage} may alias {x} or {y} for in-place modification.
+Handle<BigInt> BigInt::AbsoluteAndNot(Handle<BigInt> x, Handle<BigInt> y,
+                                      BigInt* result_storage) {
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+                           [](digit_t a, digit_t b) { return a & ~b; });
+}
+
+// If {result_storage} is non-nullptr, it will be used for the result,
+// otherwise a new BigInt of appropriate length will be allocated.
+// {result_storage} may alias {x} or {y} for in-place modification.
+Handle<BigInt> BigInt::AbsoluteOr(Handle<BigInt> x, Handle<BigInt> y,
+                                  BigInt* result_storage) {
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+                           [](digit_t a, digit_t b) { return a | b; });
+}
+
+// If {result_storage} is non-nullptr, it will be used for the result,
+// otherwise a new BigInt of appropriate length will be allocated.
+// {result_storage} may alias {x} or {y} for in-place modification.
+Handle<BigInt> BigInt::AbsoluteXor(Handle<BigInt> x, Handle<BigInt> y,
+                                   BigInt* result_storage) {
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+                           [](digit_t a, digit_t b) { return a ^ b; });
+}
+
+// Returns a positive value if abs(x) > abs(y), a negative value if
+// abs(x) < abs(y), or zero if abs(x) == abs(y).
 int BigInt::AbsoluteCompare(Handle<BigInt> x, Handle<BigInt> y) {
   int diff = x->length() - y->length();
   if (diff != 0) return diff;
@@ -577,6 +781,140 @@ Handle<BigInt> BigInt::SpecialLeftShift(Handle<BigInt> x, int shift,
   return result;
 }
 
+MaybeHandle<BigInt> BigInt::LeftShiftByAbsolute(Handle<BigInt> x,
+                                                Handle<BigInt> y) {
+  Isolate* isolate = x->GetIsolate();
+  Maybe<digit_t> maybe_shift = ToShiftAmount(y);
+  if (maybe_shift.IsNothing()) {
+    THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                    BigInt);
+  }
+  digit_t shift = maybe_shift.FromJust();
+  int digit_shift = static_cast<int>(shift / kDigitBits);
+  int bits_shift = static_cast<int>(shift % kDigitBits);
+  int length = x->length();
+  bool grow = bits_shift != 0 &&
+              (x->digit(length - 1) >> (kDigitBits - bits_shift)) != 0;
+  int result_length = length + digit_shift + grow;
+  if (result_length > kMaxLength) {
+    THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                    BigInt);
+  }
+  Handle<BigInt> result = isolate->factory()->NewBigIntRaw(result_length);
+  if (bits_shift == 0) {
+    int i = 0;
+    for (; i < digit_shift; i++) result->set_digit(i, 0ul);
+    for (; i < result_length; i++) {
+      result->set_digit(i, x->digit(i - digit_shift));
+    }
+  } else {
+    digit_t carry = 0;
+    for (int i = 0; i < digit_shift; i++) result->set_digit(i, 0ul);
+    for (int i = 0; i < length; i++) {
+      digit_t d = x->digit(i);
+      result->set_digit(i + digit_shift, (d << bits_shift) | carry);
+      carry = d >> (kDigitBits - bits_shift);
+    }
+    if (grow) {
+      result->set_digit(length + digit_shift, carry);
+    } else {
+      DCHECK(carry == 0);
+    }
+  }
+  result->set_sign(x->sign());
+  result->RightTrim();
+  return result;
+}
+
+Handle<BigInt> BigInt::RightShiftByAbsolute(Handle<BigInt> x,
+                                            Handle<BigInt> y) {
+  Isolate* isolate = x->GetIsolate();
+  int length = x->length();
+  bool sign = x->sign();
+  Maybe<digit_t> maybe_shift = ToShiftAmount(y);
+  if (maybe_shift.IsNothing()) {
+    return RightShiftByMaximum(isolate, sign);
+  }
+  digit_t shift = maybe_shift.FromJust();
+  int digit_shift = static_cast<int>(shift / kDigitBits);
+  int bits_shift = static_cast<int>(shift % kDigitBits);
+  int result_length = length - digit_shift;
+  if (result_length <= 0) {
+    return RightShiftByMaximum(isolate, sign);
+  }
+  // For negative numbers, round down if any bit was shifted out (so that e.g.
+  // -5n >> 1n == -3n and not -2n). Check now whether this will happen and
+  // whether it can cause overflow into a new digit. If we allocate the result
+  // large enough up front, it avoids having to do a second allocation later.
+  bool must_round_down = false;
+  if (sign) {
+    if ((x->digit(digit_shift) & ((1 << bits_shift) - 1)) != 0) {
+      must_round_down = true;
+    } else {
+      for (int i = 0; i < digit_shift; i++) {
+        if (x->digit(i) != 0) {
+          must_round_down = true;
+          break;
+        }
+      }
+    }
+  }
+  // If bits_shift is non-zero, it frees up bits, preventing overflow.
+  if (must_round_down && bits_shift == 0) {
+    // Overflow cannot happen if the most significant digit has unset bits.
+    digit_t msd = x->digit(length - 1);
+    bool rounding_can_overflow = digit_ismax(msd);
+    if (rounding_can_overflow) result_length++;
+  }
+
+  Handle<BigInt> result = isolate->factory()->NewBigIntRaw(result_length);
+  if (bits_shift == 0) {
+    for (int i = digit_shift; i < length; i++) {
+      result->set_digit(i - digit_shift, x->digit(i));
+    }
+  } else {
+    digit_t carry = x->digit(digit_shift) >> bits_shift;
+    int last = length - digit_shift - 1;
+    for (int i = 0; i < last; i++) {
+      digit_t d = x->digit(i + digit_shift + 1);
+      result->set_digit(i, (d << (kDigitBits - bits_shift)) | carry);
+      carry = d >> bits_shift;
+    }
+    result->set_digit(last, carry);
+  }
+
+  if (sign) {
+    result->set_sign(true);
+    if (must_round_down) {
+      // Since the result is negative, rounding down means adding one to
+      // its absolute value.
+      result = AbsoluteAddOne(result, true, *result);
+    }
+  }
+  result->RightTrim();
+  return result;
+}
+
+Handle<BigInt> BigInt::RightShiftByMaximum(Isolate* isolate, bool sign) {
+  if (sign) {
+    // TODO(jkummerow): Consider caching a canonical -1n BigInt.
+    return isolate->factory()->NewBigIntFromInt(-1);
+  } else {
+    // TODO(jkummerow): Consider caching a canonical zero BigInt.
+    return isolate->factory()->NewBigIntFromInt(0);
+  }
+}
+
+// Returns the value of {x} if it is less than the maximum bit length of
+// a BigInt, or Nothing otherwise.
+Maybe<BigInt::digit_t> BigInt::ToShiftAmount(Handle<BigInt> x) {
+  if (x->length() > 1) return Nothing<digit_t>();
+  digit_t value = x->digit(0);
+  STATIC_ASSERT(kMaxLength * kDigitBits < std::numeric_limits<digit_t>::max());
+  if (value > kMaxLength * kDigitBits) return Nothing<digit_t>();
+  return Just(value);
+}
+
 Handle<BigInt> BigInt::Copy(Handle<BigInt> source) {
   int length = source->length();
   Handle<BigInt> result = source->GetIsolate()->factory()->NewBigIntRaw(length);
@@ -590,7 +928,7 @@ Handle<BigInt> BigInt::Copy(Handle<BigInt> source) {
 // base-N string representation of a number. To increase accuracy, the array
 // value is the actual value multiplied by 32. To generate this table:
 // for (var i = 0; i <= 36; i++) { print(Math.ceil(Math.log2(i) * 32) + ","); }
-uint8_t kMaxBitsPerChar[] = {
+constexpr uint8_t kMaxBitsPerChar[] = {
     0,   0,   32,  51,  64,  75,  83,  90,  96,  // 0..8
     102, 107, 111, 115, 119, 122, 126, 128,      // 9..16
     131, 134, 136, 139, 141, 143, 145, 147,      // 17..24
@@ -605,25 +943,16 @@ MaybeHandle<BigInt> BigInt::AllocateFor(Isolate* isolate, int radix,
                                         int charcount) {
   DCHECK(2 <= radix && radix <= 36);
   DCHECK(charcount >= 0);
-  size_t bits_min;
   size_t bits_per_char = kMaxBitsPerChar[radix];
   size_t chars = static_cast<size_t>(charcount);
   const int roundup = kBitsPerCharTableMultiplier - 1;
-  if (chars <= 1000000) {
-    // More precise path: multiply first, then divide.
-    bits_min = bits_per_char * chars;
-    // Divide by 32 (see table), rounding up.
-    bits_min = (bits_min + roundup) >> kBitsPerCharTableShift;
-  } else {
-    // Overflow avoidance path: divide first, then multiply.
-    // The addition can't overflow because of the int -> size_t cast.
-    bits_min = ((chars + roundup) >> kBitsPerCharTableShift) * bits_per_char;
-    // Check if overflow happened.
-    if (bits_min < chars) {
-      THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
-                      BigInt);
-    }
+  if ((std::numeric_limits<size_t>::max() - roundup) / bits_per_char < chars) {
+    THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
+                    BigInt);
   }
+  size_t bits_min = bits_per_char * chars;
+  // Divide by 32 (see table), rounding up.
+  bits_min = (bits_min + roundup) >> kBitsPerCharTableShift;
   if (bits_min > static_cast<size_t>(kMaxInt)) {
     THROW_NEW_ERROR(isolate, NewRangeError(MessageTemplate::kBigIntTooBig),
                     BigInt);
@@ -654,16 +983,13 @@ void BigInt::RightTrim() {
 
 static const char kConversionChars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-// TODO(jkummerow): Add more tests for this when we have a way to construct
-// multi-digit BigInts.
 MaybeHandle<String> BigInt::ToStringBasePowerOfTwo(Handle<BigInt> x,
                                                    int radix) {
   STATIC_ASSERT(base::bits::IsPowerOfTwo(kDigitBits));
   DCHECK(base::bits::IsPowerOfTwo(radix));
   DCHECK(radix >= 2 && radix <= 32);
+  DCHECK(!x->is_zero());
   Isolate* isolate = x->GetIsolate();
-  // TODO(jkummerow): check in caller?
-  if (x->is_zero()) return isolate->factory()->NewStringFromStaticChars("0");
 
   const int length = x->length();
   const bool sign = x->sign();
@@ -685,6 +1011,7 @@ MaybeHandle<String> BigInt::ToStringBasePowerOfTwo(Handle<BigInt> x,
       isolate->factory()
           ->NewRawOneByteString(static_cast<int>(chars_required))
           .ToHandleChecked();
+  DisallowHeapAllocation no_gc;
   uint8_t* buffer = result->GetChars();
   // Print the number into the string, starting from the last position.
   int pos = static_cast<int>(chars_required - 1);
@@ -715,6 +1042,127 @@ MaybeHandle<String> BigInt::ToStringBasePowerOfTwo(Handle<BigInt> x,
   }
   if (sign) buffer[pos--] = '-';
   DCHECK(pos == -1);
+  return result;
+}
+
+MaybeHandle<String> BigInt::ToStringGeneric(Handle<BigInt> x, int radix) {
+  DCHECK(radix >= 2 && radix <= 36);
+  DCHECK(!x->is_zero());
+  Heap* heap = x->GetHeap();
+  Isolate* isolate = heap->isolate();
+
+  const int length = x->length();
+  const bool sign = x->sign();
+
+  // Compute (an overapproximation of) the length of the resulting string:
+  // Divide bit length of the BigInt by bits representable per character.
+  const size_t bit_length =
+      length * kDigitBits - base::bits::CountLeadingZeros(x->digit(length - 1));
+  // Maximum number of bits we can represent with one character. We'll use this
+  // to find an appropriate chunk size below.
+  const uint8_t max_bits_per_char = kMaxBitsPerChar[radix];
+  // For estimating result length, we have to be pessimistic and work with
+  // the minimum number of bits one character can represent.
+  const uint8_t min_bits_per_char = max_bits_per_char - 1;
+  // Perform the following computation with uint64_t to avoid overflows.
+  uint64_t chars_required = bit_length;
+  chars_required *= kBitsPerCharTableMultiplier;
+  chars_required += min_bits_per_char - 1;  // Round up.
+  chars_required /= min_bits_per_char;
+  chars_required += sign;
+
+  if (chars_required > String::kMaxLength) {
+    THROW_NEW_ERROR(isolate, NewInvalidStringLengthError(), String);
+  }
+  Handle<SeqOneByteString> result =
+      isolate->factory()
+          ->NewRawOneByteString(static_cast<int>(chars_required))
+          .ToHandleChecked();
+
+#if DEBUG
+  // Zap the string first.
+  {
+    DisallowHeapAllocation no_gc;
+    uint8_t* chars = result->GetChars();
+    for (int i = 0; i < static_cast<int>(chars_required); i++) chars[i] = '?';
+  }
+#endif
+
+  // We assemble the result string in reverse order, and then reverse it.
+  // TODO(jkummerow): Consider building the string from the right, and
+  // left-shifting it if the length estimate was too large.
+  int pos = 0;
+
+  digit_t last_digit;
+  if (length == 1) {
+    last_digit = x->digit(0);
+  } else {
+    int chunk_chars =
+        kDigitBits * kBitsPerCharTableMultiplier / max_bits_per_char;
+    digit_t chunk_divisor = digit_pow(radix, chunk_chars);
+    // By construction of chunk_chars, there can't have been overflow.
+    DCHECK(chunk_divisor != 0);
+    int nonzero_digit = length - 1;
+    DCHECK(x->digit(nonzero_digit) != 0);
+    // {rest} holds the part of the BigInt that we haven't looked at yet.
+    // Not to be confused with "remainder"!
+    Handle<BigInt> rest;
+    // In the first round, divide the input, allocating a new BigInt for
+    // the result == rest; from then on divide the rest in-place.
+    Handle<BigInt>* dividend = &x;
+    do {
+      digit_t chunk;
+      AbsoluteDivSmall(*dividend, chunk_divisor, &rest, &chunk);
+      DCHECK(!rest.is_null());
+      dividend = &rest;
+      DisallowHeapAllocation no_gc;
+      uint8_t* chars = result->GetChars();
+      for (int i = 0; i < chunk_chars; i++) {
+        chars[pos++] = kConversionChars[chunk % radix];
+        chunk /= radix;
+      }
+      DCHECK(chunk == 0);
+      if (rest->digit(nonzero_digit) == 0) nonzero_digit--;
+      // We can never clear more than one digit per iteration, because
+      // chunk_divisor is smaller than max digit value.
+      DCHECK(rest->digit(nonzero_digit) > 0);
+    } while (nonzero_digit > 0);
+    last_digit = rest->digit(0);
+  }
+  DisallowHeapAllocation no_gc;
+  uint8_t* chars = result->GetChars();
+  do {
+    chars[pos++] = kConversionChars[last_digit % radix];
+    last_digit /= radix;
+  } while (last_digit > 0);
+  DCHECK(pos >= 1);
+  DCHECK(pos <= static_cast<int>(chars_required));
+  // Remove leading zeroes.
+  while (pos > 1 && chars[pos - 1] == '0') pos--;
+  if (sign) chars[pos++] = '-';
+  // Trim any over-allocation (which can happen due to conservative estimates).
+  if (pos < static_cast<int>(chars_required)) {
+    result->synchronized_set_length(pos);
+    int string_size =
+        SeqOneByteString::SizeFor(static_cast<int>(chars_required));
+    int needed_size = SeqOneByteString::SizeFor(pos);
+    if (needed_size < string_size) {
+      Address new_end = result->address() + needed_size;
+      heap->CreateFillerObjectAt(new_end, (string_size - needed_size),
+                                 ClearRecordedSlots::kNo);
+    }
+  }
+  // Reverse the string.
+  for (int i = 0, j = pos - 1; i < j; i++, j--) {
+    uint8_t tmp = chars[i];
+    chars[i] = chars[j];
+    chars[j] = tmp;
+  }
+#if DEBUG
+  // Verify that all characters have been written.
+  DCHECK(result->length() == pos);
+  for (int i = 0; i < pos; i++) DCHECK(chars[i] != '?');
+#endif
   return result;
 }
 
@@ -799,14 +1247,28 @@ inline BigInt::digit_t BigInt::digit_mul(digit_t a, digit_t b, digit_t* high) {
 BigInt::digit_t BigInt::digit_div(digit_t high, digit_t low, digit_t divisor,
                                   digit_t* remainder) {
   DCHECK(high < divisor);
-// Clang on Windows defines __SIZEOF_INT128__, but does not support division
-// of __uint128_t variables. See https://bugs.llvm.org/show_bug.cgi?id=25305.
-#if HAVE_TWODIGIT_T && !(defined(_MSC_VER) && defined(__clang__))
-  twodigit_t dividend = (static_cast<twodigit_t>(high) << kDigitBits) |
-                        static_cast<twodigit_t>(low);
-  digit_t result = dividend / divisor;
-  *remainder = dividend % divisor;
-  return result;
+#if V8_TARGET_ARCH_X64 && (__GNUC__ || __clang__)
+  digit_t quotient;
+  digit_t rem;
+  __asm__("divq  %[divisor]"
+          // Outputs: {quotient} will be in rax, {rem} in rdx.
+          : "=a"(quotient), "=d"(rem)
+          // Inputs: put {high} into rdx, {low} into rax, and {divisor} into
+          // any register or stack slot.
+          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+  *remainder = rem;
+  return quotient;
+#elif V8_TARGET_ARCH_IA32 && (__GNUC__ || __clang__)
+  digit_t quotient;
+  digit_t rem;
+  __asm__("divl  %[divisor]"
+          // Outputs: {quotient} will be in eax, {rem} in edx.
+          : "=a"(quotient), "=d"(rem)
+          // Inputs: put {high} into edx, {low} into eax, and {divisor} into
+          // any register or stack slot.
+          : "d"(high), "a"(low), [divisor] "rm"(divisor));
+  *remainder = rem;
+  return quotient;
 #else
   static const digit_t kHalfDigitBase = 1ull << kHalfDigitBits;
   // Adapted from Warren, Hacker's Delight, p. 152.
@@ -815,7 +1277,12 @@ BigInt::digit_t BigInt::digit_div(digit_t high, digit_t low, digit_t divisor,
 
   digit_t vn1 = divisor >> kHalfDigitBits;
   digit_t vn0 = divisor & kHalfDigitMask;
-  digit_t un32 = (high << s) | (low >> (kDigitBits - s));
+  // {s} can be 0. "low >> kDigitBits == low" on x86, so we "&" it with
+  // {s_zero_mask} which is 0 if s == 0 and all 1-bits otherwise.
+  STATIC_ASSERT(sizeof(intptr_t) == sizeof(digit_t));
+  digit_t s_zero_mask =
+      static_cast<digit_t>(static_cast<intptr_t>(-s) >> (kDigitBits - 1));
+  digit_t un32 = (high << s) | ((low >> (kDigitBits - s)) & s_zero_mask);
   digit_t un10 = low << s;
   digit_t un1 = un10 >> kHalfDigitBits;
   digit_t un0 = un10 & kHalfDigitMask;
@@ -841,6 +1308,19 @@ BigInt::digit_t BigInt::digit_div(digit_t high, digit_t low, digit_t divisor,
   *remainder = (un21 * kHalfDigitBase + un0 - q0 * divisor) >> s;
   return q1 * kHalfDigitBase + q0;
 #endif
+}
+
+// Raises {base} to the power of {exponent}. Does not check for overflow.
+BigInt::digit_t BigInt::digit_pow(digit_t base, digit_t exponent) {
+  digit_t result = 1ull;
+  while (exponent > 0) {
+    if (exponent & 1) {
+      result *= base;
+    }
+    exponent >>= 1;
+    base *= base;
+  }
+  return result;
 }
 
 #undef HAVE_TWODIGIT_T

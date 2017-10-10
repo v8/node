@@ -1951,8 +1951,13 @@ class PropertyArray : public HeapObject {
   typedef BodyDescriptor BodyDescriptorWeak;
 
   static const int kLengthMask = 0x3ff;
+#if V8_TARGET_ARCH_64_BIT
   static const int kHashMask = 0x7ffffc00;
   STATIC_ASSERT(kLengthMask + kHashMask == 0x7fffffff);
+#else
+  static const int kHashMask = 0x3ffffc00;
+  STATIC_ASSERT(kLengthMask + kHashMask == 0x3fffffff);
+#endif
 
   static const int kMaxLength = kLengthMask;
   STATIC_ASSERT(kMaxLength > kMaxNumberOfDescriptors);
@@ -4779,6 +4784,8 @@ class JSBoundFunction : public JSObject {
 
   static MaybeHandle<String> GetName(Isolate* isolate,
                                      Handle<JSBoundFunction> function);
+  static Maybe<int> GetLength(Isolate* isolate,
+                              Handle<JSBoundFunction> function);
   static MaybeHandle<Context> GetFunctionRealm(
       Handle<JSBoundFunction> function);
 
@@ -4824,8 +4831,7 @@ class JSFunction: public JSObject {
   inline Context* native_context();
 
   static Handle<Object> GetName(Isolate* isolate, Handle<JSFunction> function);
-  static MaybeHandle<Smi> GetLength(Isolate* isolate,
-                                    Handle<JSFunction> function);
+  static Maybe<int> GetLength(Isolate* isolate, Handle<JSFunction> function);
   static Handle<Context> GetFunctionRealm(Handle<JSFunction> function);
 
   // [code]: The generated code object for this function.  Executed
@@ -6521,8 +6527,8 @@ class JSArray: public JSObject {
 
   static const int kInitialMaxFastElementArray =
       (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - kSize -
-       AllocationMemento::kSize) /
-      kPointerSize;
+       AllocationMemento::kSize) >>
+      kDoubleSizeLog2;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArray);

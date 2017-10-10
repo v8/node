@@ -151,10 +151,6 @@ inline BranchType InvertBranchType(BranchType type) {
 
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
-enum PointersToHereCheck {
-  kPointersToHereMaybeInteresting,
-  kPointersToHereAreAlwaysInteresting
-};
 enum LinkRegisterStatus { kLRHasNotBeenSaved, kLRHasBeenSaved };
 enum TargetAddressStorageMode {
   CAN_INLINE_TARGET_ADDRESS,
@@ -662,6 +658,20 @@ class TurboAssembler : public Assembler {
 
   // Emits a runtime assert that the CSP is aligned.
   void AssertCspAligned();
+
+  // Copy slot_count stack slots from the stack offset specified by src to
+  // the stack offset specified by dst. The offsets and count are expressed in
+  // slot-sized units. Offset dst must be less than src, or the gap between
+  // them must be greater than or equal to slot_count, otherwise the result is
+  // unpredictable. The function may corrupt its register arguments.
+  void CopySlots(int dst, Register src, Register slot_count);
+  void CopySlots(Register dst, Register src, Register slot_count);
+
+  // Copy count double words from the address in register src to the address
+  // in register dst. Address dst must be less than src, or the gap between
+  // them must be greater than or equal to count double words, otherwise the
+  // result is unpredictable. The function may corrupt its register arguments.
+  void CopyDoubleWords(Register dst, Register src, Register count);
 
   // Load a literal from the inline constant pool.
   inline void Ldr(const CPURegister& rt, const Operand& imm);
@@ -1805,12 +1815,6 @@ class MacroAssembler : public TurboAssembler {
 
   // ---- String Utilities ----
 
-  // Checks if both instance types are sequential one-byte strings and jumps to
-  // label if either is not.
-  void JumpIfBothInstanceTypesAreNotSequentialOneByte(
-      Register first_object_instance_type, Register second_object_instance_type,
-      Register scratch1, Register scratch2, Label* failure);
-
   void JumpIfNotUniqueNameInstanceType(Register type, Label* not_unique_name);
 
   // ---- Calling / Jumping helpers ----
@@ -1875,28 +1879,6 @@ class MacroAssembler : public TurboAssembler {
   void MaybeDropFrames();
 
   // ---------------------------------------------------------------------------
-  // Allocation support
-
-  // Allocate an object in new space or old space. The object_size is
-  // specified either in bytes or in words if the allocation flag SIZE_IN_WORDS
-  // is passed. The allocated object is returned in result.
-  //
-  // If the new space is exhausted control continues at the gc_required label.
-  // In this case, the result and scratch registers may still be clobbered.
-  void Allocate(int object_size,
-                Register result,
-                Register scratch1,
-                Register scratch2,
-                Label* gc_required,
-                AllocationFlags flags);
-
-  // Allocate and initialize a JSValue wrapper with the specified {constructor}
-  // and {value}.
-  void AllocateJSValue(Register result, Register constructor, Register value,
-                       Register scratch1, Register scratch2,
-                       Label* gc_required);
-
-  // ---------------------------------------------------------------------------
   // Support functions.
 
   // Machine code version of Map::GetConstructor().
@@ -1931,55 +1913,12 @@ class MacroAssembler : public TurboAssembler {
                         Label* if_cond_pass,
                         Condition cond = eq);
 
-  void JumpIfNotObjectType(Register object,
-                           Register map,
-                           Register type_reg,
-                           InstanceType type,
-                           Label* if_not_object);
-
   // Compare instance type in a map.  map contains a valid map object whose
   // object type should be compared with the given type.  This both
   // sets the flags and leaves the object type in the type_reg register.
   void CompareInstanceType(Register map,
                            Register type_reg,
                            InstanceType type);
-
-  // Compare an object's map with the specified map. Condition flags are set
-  // with result of map compare.
-  void CompareObjectMap(Register obj, Heap::RootListIndex index);
-
-  // Compare an object's map with the specified map. Condition flags are set
-  // with result of map compare.
-  void CompareObjectMap(Register obj, Register scratch, Handle<Map> map);
-
-  // As above, but the map of the object is already loaded into the register
-  // which is preserved by the code generated.
-  void CompareMap(Register obj_map,
-                  Handle<Map> map);
-
-  // Check if the map of an object is equal to a specified map and branch to
-  // label if not. Skip the smi check if not required (object is known to be a
-  // heap object). If mode is ALLOW_ELEMENT_TRANSITION_MAPS, then also match
-  // against maps that are ElementsKind transition maps of the specified map.
-  void CheckMap(Register obj,
-                Register scratch,
-                Handle<Map> map,
-                Label* fail,
-                SmiCheckType smi_check_type);
-
-
-  void CheckMap(Register obj,
-                Register scratch,
-                Heap::RootListIndex index,
-                Label* fail,
-                SmiCheckType smi_check_type);
-
-  // As above, but the map of the object is already loaded into obj_map, and is
-  // preserved.
-  void CheckMap(Register obj_map,
-                Handle<Map> map,
-                Label* fail,
-                SmiCheckType smi_check_type);
 
   void GetWeakValue(Register value, Handle<WeakCell> cell);
 
@@ -2072,11 +2011,6 @@ class MacroAssembler : public TurboAssembler {
                       const Register& scratch,
                       bool restore_context);
 
-  // Load the global object from the current context.
-  void LoadGlobalObject(Register dst) {
-    LoadNativeContextSlot(Context::EXTENSION_INDEX, dst);
-  }
-
   // Load the global proxy from the current context.
   void LoadGlobalProxy(Register dst) {
     LoadNativeContextSlot(Context::GLOBAL_PROXY_INDEX, dst);
@@ -2093,19 +2027,12 @@ class MacroAssembler : public TurboAssembler {
   // ---------------------------------------------------------------------------
   // Garbage collector support (GC).
 
-  enum RememberedSetFinalAction {
-    kReturnAtEnd,
-    kFallThroughAtEnd
-  };
-
   // Record in the remembered set the fact that we have a pointer to new space
   // at the address pointed to by the addr register. Only works if addr is not
   // in new space.
   void RememberedSetHelper(Register object,  // Used for debug code.
-                           Register addr,
-                           Register scratch1,
-                           SaveFPRegsMode save_fp,
-                           RememberedSetFinalAction and_then);
+                           Register addr, Register scratch1,
+                           SaveFPRegsMode save_fp);
 
   // Push and pop the registers that can hold pointers, as defined by the
   // RegList constant kSafepointSavedRegisters.
@@ -2133,61 +2060,19 @@ class MacroAssembler : public TurboAssembler {
   // The offset is the offset from the start of the object, not the offset from
   // the tagged HeapObject pointer.  For use with FieldMemOperand(reg, off).
   void RecordWriteField(
-      Register object,
-      int offset,
-      Register value,
-      Register scratch,
-      LinkRegisterStatus lr_status,
-      SaveFPRegsMode save_fp,
+      Register object, int offset, Register value, Register scratch,
+      LinkRegisterStatus lr_status, SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK,
-      PointersToHereCheck pointers_to_here_check_for_value =
-          kPointersToHereMaybeInteresting);
-
-  // As above, but the offset has the tag presubtracted. For use with
-  // MemOperand(reg, off).
-  inline void RecordWriteContextSlot(
-      Register context,
-      int offset,
-      Register value,
-      Register scratch,
-      LinkRegisterStatus lr_status,
-      SaveFPRegsMode save_fp,
-      RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK,
-      PointersToHereCheck pointers_to_here_check_for_value =
-          kPointersToHereMaybeInteresting) {
-    RecordWriteField(context,
-                     offset + kHeapObjectTag,
-                     value,
-                     scratch,
-                     lr_status,
-                     save_fp,
-                     remembered_set_action,
-                     smi_check,
-                     pointers_to_here_check_for_value);
-  }
-
-  void RecordWriteForMap(
-      Register object,
-      Register map,
-      Register dst,
-      LinkRegisterStatus lr_status,
-      SaveFPRegsMode save_fp);
+      SmiCheck smi_check = INLINE_SMI_CHECK);
 
   // For a given |object| notify the garbage collector that the slot |address|
   // has been written.  |value| is the object being stored. The value and
   // address registers are clobbered by the operation.
   void RecordWrite(
-      Register object,
-      Register address,
-      Register value,
-      LinkRegisterStatus lr_status,
-      SaveFPRegsMode save_fp,
+      Register object, Register address, Register value,
+      LinkRegisterStatus lr_status, SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK,
-      PointersToHereCheck pointers_to_here_check_for_value =
-          kPointersToHereMaybeInteresting);
+      SmiCheck smi_check = INLINE_SMI_CHECK);
 
   // Checks the color of an object.  If the object is white we jump to the
   // incremental marker.
@@ -2234,12 +2119,6 @@ class MacroAssembler : public TurboAssembler {
   void AssertHasValidColor(const Register& reg);
 
   void LoadNativeContextSlot(int index, Register dst);
-
-  // Load the initial map from the global function. The registers function and
-  // map can be the same, function is then overwritten.
-  void LoadGlobalFunctionInitialMap(Register function,
-                                    Register map,
-                                    Register scratch);
 
   // Like printf, but print at run-time from generated code.
   //
