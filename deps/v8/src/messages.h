@@ -317,6 +317,7 @@ class ErrorUtils : public AllStatic {
   T(ImmutablePrototypeSet,                                                     \
     "Immutable prototype object '%' cannot have their prototype set")          \
   T(ImportCallNotNewExpression, "Cannot use new with import")                  \
+  T(ImportMetaOutsideModule, "Cannot use 'import.meta' outside a module")      \
   T(IncompatibleMethodReceiver, "Method % called on incompatible receiver %")  \
   T(InstanceofNonobjectProto,                                                  \
     "Function has non-object prototype '%' in instanceof check")               \
@@ -469,7 +470,6 @@ class ErrorUtils : public AllStatic {
   T(ReduceNoInitial, "Reduce of empty array with no initial value")            \
   T(RegExpFlags,                                                               \
     "Cannot supply flags when constructing one RegExp from another")           \
-  T(RegExpInvalidReplaceString, "Invalid replacement string: '%'")             \
   T(RegExpNonObject, "% getter called on non-object %")                        \
   T(RegExpNonRegExp, "% getter called on non-RegExp object")                   \
   T(ResolverNotAFunction, "Promise resolver % is not a function")              \

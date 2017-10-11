@@ -1021,11 +1021,13 @@ void Verifier::Visitor::Check(Node* node) {
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::Boolean());
       break;
-    case IrOpcode::kLookupHashStorageIndex:
+    case IrOpcode::kFindOrderedHashMapEntry:
+      CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::SignedSmall());
       break;
-    case IrOpcode::kLoadHashMapValue:
-      CheckValueInputIs(node, 2, Type::SignedSmall());
+    case IrOpcode::kFindOrderedHashMapEntryForInt32Key:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckValueInputIs(node, 1, Type::Signed32());
       CheckTypeIs(node, Type::SignedSmall());
       break;
     case IrOpcode::kArgumentsLength:
@@ -1034,6 +1036,12 @@ void Verifier::Visitor::Check(Node* node) {
       break;
     case IrOpcode::kArgumentsFrame:
       CheckTypeIs(node, Type::ExternalPointer());
+      break;
+    case IrOpcode::kNewDoubleElements:
+    case IrOpcode::kNewSmiOrObjectElements:
+      CheckValueInputIs(node, 0,
+                        Type::Range(0.0, FixedArray::kMaxLength, zone));
+      CheckTypeIs(node, Type::OtherInternal());
       break;
     case IrOpcode::kNewArgumentsElements:
       CheckValueInputIs(node, 0, Type::ExternalPointer());
@@ -1291,6 +1299,10 @@ void Verifier::Visitor::Check(Node* node) {
       CheckNotTyped(node);
       break;
     case IrOpcode::kTransitionAndStoreElement:
+      CheckNotTyped(node);
+      break;
+    case IrOpcode::kStoreSignedSmallElement:
+      CheckValueInputIs(node, 1, Type::SignedSmall());
       CheckNotTyped(node);
       break;
     case IrOpcode::kStoreTypedElement:

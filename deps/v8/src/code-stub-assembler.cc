@@ -529,6 +529,44 @@ TNode<Smi> CodeStubAssembler::SmiMin(SloppyTNode<Smi> a, SloppyTNode<Smi> b) {
   return SelectTaggedConstant(SmiLessThan(a, b), a, b);
 }
 
+TNode<Object> CodeStubAssembler::NumberMax(SloppyTNode<Object> a,
+                                           SloppyTNode<Object> b) {
+  // TODO(danno): This could be optimized by specifically handling smi cases.
+  VARIABLE(result, MachineRepresentation::kTagged);
+  Label done(this), greater_than_equal_a(this), greater_than_equal_b(this);
+  GotoIfNumberGreaterThanOrEqual(a, b, &greater_than_equal_a);
+  GotoIfNumberGreaterThanOrEqual(b, a, &greater_than_equal_b);
+  result.Bind(NanConstant());
+  Goto(&done);
+  BIND(&greater_than_equal_a);
+  result.Bind(a);
+  Goto(&done);
+  BIND(&greater_than_equal_b);
+  result.Bind(b);
+  Goto(&done);
+  BIND(&done);
+  return TNode<Object>::UncheckedCast(result.value());
+}
+
+TNode<Object> CodeStubAssembler::NumberMin(SloppyTNode<Object> a,
+                                           SloppyTNode<Object> b) {
+  // TODO(danno): This could be optimized by specifically handling smi cases.
+  VARIABLE(result, MachineRepresentation::kTagged);
+  Label done(this), greater_than_equal_a(this), greater_than_equal_b(this);
+  GotoIfNumberGreaterThanOrEqual(a, b, &greater_than_equal_a);
+  GotoIfNumberGreaterThanOrEqual(b, a, &greater_than_equal_b);
+  result.Bind(NanConstant());
+  Goto(&done);
+  BIND(&greater_than_equal_a);
+  result.Bind(b);
+  Goto(&done);
+  BIND(&greater_than_equal_b);
+  result.Bind(a);
+  Goto(&done);
+  BIND(&done);
+  return TNode<Object>::UncheckedCast(result.value());
+}
+
 Node* CodeStubAssembler::SmiMod(Node* a, Node* b) {
   VARIABLE(var_result, MachineRepresentation::kTagged);
   Label return_result(this, &var_result),
@@ -788,28 +826,29 @@ void CodeStubAssembler::BranchIfJSObject(Node* object, Label* if_true,
          if_true, if_false);
 }
 
-void CodeStubAssembler::BranchIfFastJSArray(
-    Node* object, Node* context, CodeStubAssembler::FastJSArrayAccessMode mode,
-    Label* if_true, Label* if_false) {
+void CodeStubAssembler::BranchIfFastJSArray(Node* object, Node* context,
+                                            Label* if_true, Label* if_false) {
   // Bailout if receiver is a Smi.
   GotoIf(TaggedIsSmi(object), if_false);
 
   Node* map = LoadMap(object);
-
-  // Bailout if instance type is not JS_ARRAY_TYPE.
-  GotoIf(Word32NotEqual(LoadMapInstanceType(map), Int32Constant(JS_ARRAY_TYPE)),
-         if_false);
-
-  Node* elements_kind = LoadMapElementsKind(map);
+  GotoIfNot(IsJSArrayMap(map), if_false);
 
   // Bailout if receiver has slow elements.
+  Node* elements_kind = LoadMapElementsKind(map);
   GotoIfNot(IsFastElementsKind(elements_kind), if_false);
 
-  // Check prototype chain if receiver does not have packed elements.
-  if (mode == FastJSArrayAccessMode::INBOUNDS_READ) {
-    GotoIfNot(IsHoleyFastElementsKind(elements_kind), if_true);
-  }
-  BranchIfPrototypesHaveNoElements(map, if_true, if_false);
+  // Check prototype chain if receiver does not have packed elements
+  GotoIfNot(IsPrototypeInitialArrayPrototype(context, map), if_false);
+
+  Branch(IsArrayProtectorCellInvalid(), if_false, if_true);
+}
+
+void CodeStubAssembler::BranchIfFastJSArrayForCopy(Node* object, Node* context,
+                                                   Label* if_true,
+                                                   Label* if_false) {
+  GotoIf(IsSpeciesProtectorCellInvalid(), if_false);
+  BranchIfFastJSArray(object, context, if_true, if_false);
 }
 
 Node* CodeStubAssembler::AllocateRaw(Node* size_in_bytes, AllocationFlags flags,
@@ -9564,6 +9603,66 @@ Node* CodeStubAssembler::NumberDec(Node* value) {
   return var_result.value();
 }
 
+Node* CodeStubAssembler::NumberAdd(Node* a, Node* b) {
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+  VARIABLE(var_fadd_value, MachineRepresentation::kFloat64);
+  Label float_add(this, Label::kDeferred), end(this);
+  GotoIf(TaggedIsNotSmi(a), &float_add);
+  GotoIf(TaggedIsNotSmi(b), &float_add);
+
+  // Try fast Smi addition first.
+  Node* pair =
+      IntPtrAddWithOverflow(BitcastTaggedToWord(a), BitcastTaggedToWord(b));
+  Node* overflow = Projection(1, pair);
+
+  // Check if the Smi addition overflowed.
+  Label if_overflow(this), if_notoverflow(this);
+  GotoIf(overflow, &float_add);
+
+  var_result.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
+  Goto(&end);
+
+  BIND(&float_add);
+  {
+    var_result.Bind(ChangeFloat64ToTagged(
+        Float64Add(ChangeNumberToFloat64(a), ChangeNumberToFloat64(b))));
+    Goto(&end);
+  }
+
+  BIND(&end);
+  return var_result.value();
+}
+
+Node* CodeStubAssembler::NumberSub(Node* a, Node* b) {
+  VARIABLE(var_result, MachineRepresentation::kTagged);
+  VARIABLE(var_fsub_value, MachineRepresentation::kFloat64);
+  Label float_sub(this, Label::kDeferred), end(this);
+  GotoIf(TaggedIsNotSmi(a), &float_sub);
+  GotoIf(TaggedIsNotSmi(b), &float_sub);
+
+  // Try fast Smi subtraction first.
+  Node* pair =
+      IntPtrSubWithOverflow(BitcastTaggedToWord(a), BitcastTaggedToWord(b));
+  Node* overflow = Projection(1, pair);
+
+  // Check if the Smi subtraction overflowed.
+  Label if_overflow(this), if_notoverflow(this);
+  GotoIf(overflow, &float_sub);
+
+  var_result.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
+  Goto(&end);
+
+  BIND(&float_sub);
+  {
+    var_result.Bind(ChangeFloat64ToTagged(
+        Float64Sub(ChangeNumberToFloat64(a), ChangeNumberToFloat64(b))));
+    Goto(&end);
+  }
+
+  BIND(&end);
+  return var_result.value();
+}
+
 void CodeStubAssembler::GotoIfNotNumber(Node* input, Label* is_not_number) {
   Label is_number(this);
   GotoIf(TaggedIsSmi(input), &is_number);
@@ -9632,8 +9731,7 @@ Node* CodeStubAssembler::CreateArrayIterator(Node* array, Node* array_map,
     BIND(&if_isgeneric);
     {
       Label if_isfast(this), if_isslow(this);
-      BranchIfFastJSArray(array, context, FastJSArrayAccessMode::INBOUNDS_READ,
-                          &if_isfast, &if_isslow);
+      BranchIfFastJSArray(array, context, &if_isfast, &if_isslow);
 
       BIND(&if_isfast);
       {
@@ -9667,8 +9765,7 @@ Node* CodeStubAssembler::CreateArrayIterator(Node* array, Node* array_map,
     BIND(&if_isgeneric);
     {
       Label if_isfast(this), if_isslow(this);
-      BranchIfFastJSArray(array, context, FastJSArrayAccessMode::INBOUNDS_READ,
-                          &if_isfast, &if_isslow);
+      BranchIfFastJSArray(array, context, &if_isfast, &if_isslow);
 
       BIND(&if_isfast);
       {

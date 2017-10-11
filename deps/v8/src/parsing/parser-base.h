@@ -277,9 +277,9 @@ class ParserBase {
         allow_harmony_class_fields_(false),
         allow_harmony_object_rest_spread_(false),
         allow_harmony_dynamic_import_(false),
+        allow_harmony_import_meta_(false),
         allow_harmony_async_iteration_(false),
-        allow_harmony_template_escapes_(false),
-        allow_harmony_optional_catch_binding_(false) {}
+        allow_harmony_template_escapes_(false) {}
 
 #define ALLOW_ACCESSORS(name)                           \
   bool allow_##name() const { return allow_##name##_; } \
@@ -292,9 +292,9 @@ class ParserBase {
   ALLOW_ACCESSORS(harmony_class_fields);
   ALLOW_ACCESSORS(harmony_object_rest_spread);
   ALLOW_ACCESSORS(harmony_dynamic_import);
+  ALLOW_ACCESSORS(harmony_import_meta);
   ALLOW_ACCESSORS(harmony_async_iteration);
   ALLOW_ACCESSORS(harmony_template_escapes);
-  ALLOW_ACCESSORS(harmony_optional_catch_binding);
 
 #undef ALLOW_ACCESSORS
 
@@ -488,7 +488,7 @@ class ParserBase {
   };
 
   struct DeclarationDescriptor {
-    enum Kind { NORMAL, PARAMETER };
+    enum Kind { NORMAL, PARAMETER, FOR_EACH };
     Scope* scope;
     VariableMode mode;
     int declaration_pos;
@@ -1127,7 +1127,7 @@ class ParserBase {
   ExpressionT ParseTemplateLiteral(ExpressionT tag, int start, bool tagged,
                                    bool* ok);
   ExpressionT ParseSuperExpression(bool is_new, bool* ok);
-  ExpressionT ParseDynamicImportExpression(bool* ok);
+  ExpressionT ParseImportExpressions(bool* ok);
   ExpressionT ParseNewTargetExpression(bool* ok);
 
   void ParseFormalParameter(FormalParametersT* parameters, bool* ok);
@@ -1287,7 +1287,12 @@ class ParserBase {
   // assigned inside a loop due to the various rewritings that the parser
   // performs.
   //
-  static void MarkLoopVariableAsAssigned(Scope* scope, Variable* var);
+  // This also handles marking of loop variables in for-in and for-of loops,
+  // as determined by declaration_kind.
+  //
+  static void MarkLoopVariableAsAssigned(
+      Scope* scope, Variable* var,
+      typename DeclarationDescriptor::Kind declaration_kind);
 
   FunctionKind FunctionKindForImpl(bool is_method, bool is_generator,
                                    bool is_async) {
@@ -1497,9 +1502,9 @@ class ParserBase {
   bool allow_harmony_class_fields_;
   bool allow_harmony_object_rest_spread_;
   bool allow_harmony_dynamic_import_;
+  bool allow_harmony_import_meta_;
   bool allow_harmony_async_iteration_;
   bool allow_harmony_template_escapes_;
-  bool allow_harmony_optional_catch_binding_;
 
   friend class DiscardableZoneScope;
 };
@@ -3376,7 +3381,8 @@ ParserBase<Impl>::ParseMemberWithNewPrefixesExpression(bool* is_async,
     if (peek() == Token::SUPER) {
       const bool is_new = true;
       result = ParseSuperExpression(is_new, CHECK_OK);
-    } else if (allow_harmony_dynamic_import() && peek() == Token::IMPORT) {
+    } else if (allow_harmony_dynamic_import() && peek() == Token::IMPORT &&
+               (!allow_harmony_import_meta() || PeekAhead() == Token::LPAREN)) {
       impl()->ReportMessageAt(scanner()->peek_location(),
                               MessageTemplate::kImportCallNotNewExpression);
       *ok = false;
@@ -3484,7 +3490,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseMemberExpression(
     const bool is_new = false;
     result = ParseSuperExpression(is_new, CHECK_OK);
   } else if (allow_harmony_dynamic_import() && peek() == Token::IMPORT) {
-    result = ParseDynamicImportExpression(CHECK_OK);
+    result = ParseImportExpressions(CHECK_OK);
   } else {
     result = ParsePrimaryExpression(is_async, CHECK_OK);
   }
@@ -3494,11 +3500,26 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseMemberExpression(
 }
 
 template <typename Impl>
-typename ParserBase<Impl>::ExpressionT
-ParserBase<Impl>::ParseDynamicImportExpression(bool* ok) {
+typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseImportExpressions(
+    bool* ok) {
   DCHECK(allow_harmony_dynamic_import());
   Consume(Token::IMPORT);
   int pos = position();
+  if (allow_harmony_import_meta() && peek() == Token::PERIOD) {
+    classifier()->RecordPatternError(
+        Scanner::Location(pos, scanner()->location().end_pos),
+        MessageTemplate::kInvalidDestructuringTarget);
+    ArrowFormalParametersUnexpectedToken();
+    ExpectMetaProperty(Token::META, "import.meta", pos, CHECK_OK);
+    if (!parsing_module_) {
+      impl()->ReportMessageAt(scanner()->location(),
+                              MessageTemplate::kImportMetaOutsideModule);
+      *ok = false;
+      return impl()->NullExpression();
+    }
+
+    return impl()->ExpressionFromLiteral(Token::NULL_LITERAL, pos);
+  }
   Expect(Token::LPAREN, CHECK_OK);
   ExpressionT arg = ParseAssignmentExpression(true, CHECK_OK);
   Expect(Token::RPAREN, CHECK_OK);
@@ -5470,60 +5491,50 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseTryStatement(
   {
     SourceRangeScope catch_range_scope(scanner(), &catch_range);
     if (Check(Token::CATCH)) {
-      bool has_binding;
-      if (allow_harmony_optional_catch_binding()) {
-        has_binding = Check(Token::LPAREN);
-      } else {
-        has_binding = true;
-        Expect(Token::LPAREN, CHECK_OK);
-      }
+      Expect(Token::LPAREN, CHECK_OK);
+      catch_info.scope = NewScope(CATCH_SCOPE);
+      catch_info.scope->set_start_position(scanner()->location().beg_pos);
 
-      if (has_binding) {
-        catch_info.scope = NewScope(CATCH_SCOPE);
-        catch_info.scope->set_start_position(scanner()->location().beg_pos);
+      {
+        BlockState catch_block_state(&scope_, catch_info.scope);
 
+        catch_block = factory()->NewBlock(16, false);
+
+        // Create a block scope to hold any lexical declarations created
+        // as part of destructuring the catch parameter.
         {
-          BlockState catch_block_state(&scope_, catch_info.scope);
+          BlockState catch_variable_block_state(zone(), &scope_);
+          scope()->set_start_position(scanner()->location().beg_pos);
+          typename Types::Target target(this, catch_block);
 
-          catch_block = factory()->NewBlock(16, false);
-
-          // Create a block scope to hold any lexical declarations created
-          // as part of destructuring the catch parameter.
-          {
-            BlockState catch_variable_block_state(zone(), &scope_);
-            scope()->set_start_position(scanner()->location().beg_pos);
-
-            // This does not simply call ParsePrimaryExpression to avoid
-            // ExpressionFromIdentifier from being called in the first
-            // branch, which would introduce an unresolved symbol and mess
-            // with arrow function names.
-            if (peek_any_identifier()) {
-              catch_info.name =
-                  ParseIdentifier(kDontAllowRestrictedIdentifiers, CHECK_OK);
-            } else {
-              ExpressionClassifier pattern_classifier(this);
-              catch_info.pattern = ParsePrimaryExpression(CHECK_OK);
-              ValidateBindingPattern(CHECK_OK);
-            }
-
-            Expect(Token::RPAREN, CHECK_OK);
-            impl()->RewriteCatchPattern(&catch_info, CHECK_OK);
-            if (!impl()->IsNull(catch_info.init_block)) {
-              catch_block->statements()->Add(catch_info.init_block, zone());
-            }
-
-            catch_info.inner_block = ParseBlock(nullptr, CHECK_OK);
-            catch_block->statements()->Add(catch_info.inner_block, zone());
-            impl()->ValidateCatchBlock(catch_info, CHECK_OK);
-            scope()->set_end_position(scanner()->location().end_pos);
-            catch_block->set_scope(scope()->FinalizeBlockScope());
+          // This does not simply call ParsePrimaryExpression to avoid
+          // ExpressionFromIdentifier from being called in the first
+          // branch, which would introduce an unresolved symbol and mess
+          // with arrow function names.
+          if (peek_any_identifier()) {
+            catch_info.name =
+                ParseIdentifier(kDontAllowRestrictedIdentifiers, CHECK_OK);
+          } else {
+            ExpressionClassifier pattern_classifier(this);
+            catch_info.pattern = ParsePrimaryExpression(CHECK_OK);
+            ValidateBindingPattern(CHECK_OK);
           }
-        }
 
-        catch_info.scope->set_end_position(scanner()->location().end_pos);
-      } else {
-        catch_block = ParseBlock(nullptr, CHECK_OK);
+          Expect(Token::RPAREN, CHECK_OK);
+          impl()->RewriteCatchPattern(&catch_info, CHECK_OK);
+          if (!impl()->IsNull(catch_info.init_block)) {
+            catch_block->statements()->Add(catch_info.init_block, zone());
+          }
+
+          catch_info.inner_block = ParseBlock(nullptr, CHECK_OK);
+          catch_block->statements()->Add(catch_info.inner_block, zone());
+          impl()->ValidateCatchBlock(catch_info, CHECK_OK);
+          scope()->set_end_position(scanner()->location().end_pos);
+          catch_block->set_scope(scope()->FinalizeBlockScope());
+        }
       }
+
+      catch_info.scope->set_end_position(scanner()->location().end_pos);
     }
   }
 
@@ -5669,6 +5680,10 @@ ParserBase<Impl>::ParseForEachStatementWithDeclarations(
     *ok = false;
     return impl()->NullStatement();
   }
+
+  // Reset the declaration_kind to ensure proper processing during declaration.
+  for_info->parsing_result.descriptor.declaration_kind =
+      DeclarationDescriptor::FOR_EACH;
 
   BlockT init_block = impl()->RewriteForVarInLegacy(*for_info);
 
@@ -5859,8 +5874,12 @@ typename ParserBase<Impl>::ForStatementT ParserBase<Impl>::ParseStandardForLoop(
 }
 
 template <typename Impl>
-void ParserBase<Impl>::MarkLoopVariableAsAssigned(Scope* scope, Variable* var) {
-  if (!IsLexicalVariableMode(var->mode()) && !scope->is_function_scope()) {
+void ParserBase<Impl>::MarkLoopVariableAsAssigned(
+    Scope* scope, Variable* var,
+    typename DeclarationDescriptor::Kind declaration_kind) {
+  if (!IsLexicalVariableMode(var->mode()) &&
+      (!scope->is_function_scope() ||
+       declaration_kind == DeclarationDescriptor::FOR_EACH)) {
     var->set_maybe_assigned();
   }
 }

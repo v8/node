@@ -462,8 +462,8 @@ void GCTracer::PrintNVP() const {
           "scavenge=%.2f "
           "scavenge.roots=%.2f "
           "scavenge.weak=%.2f "
-          "scavenge.weak_global_handles.identify=%.2f"
-          "scavenge.weak_global_handles.process=%.2f"
+          "scavenge.weak_global_handles.identify=%.2f "
+          "scavenge.weak_global_handles.process=%.2f "
           "scavenge.parallel=%.2f "
           "incremental.steps_count=%d "
           "incremental.steps_took=%.1f "
@@ -490,6 +490,8 @@ void GCTracer::PrintNVP() const {
           "promotion_rate=%.1f%% "
           "semi_space_copy_rate=%.1f%% "
           "new_space_allocation_throughput=%.1f "
+          "unmapper_chunks=%d "
+          "unmapper_delayed_chunks=%d "
           "context_disposal_rate=%.1f\n",
           duration, spent_in_mutator, current_.TypeName(true),
           current_.reduce_memory, current_.scopes[Scope::HEAP_PROLOGUE],
@@ -520,6 +522,8 @@ void GCTracer::PrintNVP() const {
           AverageSurvivalRatio(), heap_->promotion_rate_,
           heap_->semi_space_copied_rate_,
           NewSpaceAllocationThroughputInBytesPerMillisecond(),
+          heap_->memory_allocator()->unmapper()->NumberOfChunks(),
+          heap_->memory_allocator()->unmapper()->NumberOfDelayedChunks(),
           ContextDisposalRateInMilliseconds());
       break;
     case Event::MINOR_MARK_COMPACTOR:
@@ -597,7 +601,8 @@ void GCTracer::PrintNVP() const {
           "evacuate.rebalance=%.1f "
           "evacuate.update_pointers=%.1f "
           "evacuate.update_pointers.to_new_roots=%.1f "
-          "evacuate.update_pointers.slots=%.1f "
+          "evacuate.update_pointers.slots.main=%.1f "
+          "evacuate.update_pointers.slots.map_space=%.1f "
           "evacuate.update_pointers.weak=%.1f "
           "finish=%.1f "
           "mark=%.1f "
@@ -654,6 +659,8 @@ void GCTracer::PrintNVP() const {
           "promotion_rate=%.1f%% "
           "semi_space_copy_rate=%.1f%% "
           "new_space_allocation_throughput=%.1f "
+          "unmapper_chunks=%d "
+          "unmapper_delayed_chunks=%d "
           "context_disposal_rate=%.1f "
           "compaction_speed=%.f\n",
           duration, spent_in_mutator, current_.TypeName(true),
@@ -682,7 +689,8 @@ void GCTracer::PrintNVP() const {
           current_.scopes[Scope::MC_EVACUATE_REBALANCE],
           current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS],
           current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS_TO_NEW_ROOTS],
-          current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS_SLOTS],
+          current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS_SLOTS_MAIN],
+          current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS_SLOTS_MAP_SPACE],
           current_.scopes[Scope::MC_EVACUATE_UPDATE_POINTERS_WEAK],
           current_.scopes[Scope::MC_FINISH], current_.scopes[Scope::MC_MARK],
           current_.scopes[Scope::MC_MARK_FINISH_INCREMENTAL],
@@ -731,6 +739,8 @@ void GCTracer::PrintNVP() const {
           AverageSurvivalRatio(), heap_->promotion_rate_,
           heap_->semi_space_copied_rate_,
           NewSpaceAllocationThroughputInBytesPerMillisecond(),
+          heap_->memory_allocator()->unmapper()->NumberOfChunks(),
+          heap_->memory_allocator()->unmapper()->NumberOfDelayedChunks(),
           ContextDisposalRateInMilliseconds(),
           CompactionSpeedInBytesPerMillisecond());
       break;

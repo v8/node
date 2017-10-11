@@ -1137,6 +1137,14 @@ size_t IncrementalMarking::Step(size_t bytes_to_process,
 
   size_t bytes_processed = 0;
   if (state_ == MARKING) {
+    if (FLAG_concurrent_marking) {
+      heap_->new_space()->ResetOriginalTop();
+      // It is safe to merge back all objects that were on hold to the shared
+      // work list at Step because we are at a safepoint where all objects
+      // are properly initialized.
+      marking_worklist()->shared()->MergeGlobalPool(
+          marking_worklist()->on_hold());
+    }
     if (FLAG_trace_incremental_marking && FLAG_trace_concurrent_marking &&
         FLAG_trace_gc_verbose) {
       marking_worklist()->Print();
@@ -1176,9 +1184,14 @@ size_t IncrementalMarking::Step(size_t bytes_to_process,
   heap_->tracer()->AddIncrementalMarkingStep(duration, bytes_processed);
   if (FLAG_trace_incremental_marking) {
     heap_->isolate()->PrintWithTimestamp(
-        "[IncrementalMarking] Step %s %zu bytes (%zu) in %.1f\n",
-        step_origin == StepOrigin::kV8 ? "in v8" : "in task", bytes_processed,
-        bytes_to_process, duration);
+        "[IncrementalMarking] Step %s %" PRIuS "KB (%" PRIuS "KB) in %.1f\n",
+        step_origin == StepOrigin::kV8 ? "in v8" : "in task",
+        bytes_processed / KB, bytes_to_process / KB, duration);
+  }
+  if (FLAG_trace_concurrent_marking) {
+    heap_->isolate()->PrintWithTimestamp(
+        "Concurrently marked %" PRIuS "KB\n",
+        heap_->concurrent_marking()->TotalMarkedBytes() / KB);
   }
   return bytes_processed;
 }

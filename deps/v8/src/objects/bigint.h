@@ -62,18 +62,7 @@ class BigInt : public HeapObject {
   }
   void Initialize(int length, bool zero_initialize);
 
-  static MaybeHandle<String> ToString(Handle<BigInt> bigint, int radix);
-
-  // Temporarily exposed helper, pending proper initialization.
-  void set_value(int value) {
-    DCHECK(length() == 1);
-    if (value > 0) {
-      set_digit(0, value);
-    } else {
-      set_digit(0, -value);  // This can overflow. We don't care.
-      set_sign(true);
-    }
-  }
+  static MaybeHandle<String> ToString(Handle<BigInt> bigint, int radix = 10);
 
   // The maximum length that the current implementation supports would be
   // kMaxInt / kDigitBits. However, we use a lower limit for now, because
@@ -84,6 +73,7 @@ class BigInt : public HeapObject {
   class BodyDescriptor;
 
  private:
+  friend class Factory;
   friend class BigIntParseIntHelper;
 
   typedef uintptr_t digit_t;
@@ -157,6 +147,7 @@ class BigInt : public HeapObject {
 
   static MaybeHandle<String> ToStringBasePowerOfTwo(Handle<BigInt> x,
                                                     int radix);
+  static MaybeHandle<String> ToStringGeneric(Handle<BigInt> x, int radix);
 
   // Digit arithmetic helpers.
   static inline digit_t digit_add(digit_t a, digit_t b, digit_t* carry);
@@ -164,6 +155,7 @@ class BigInt : public HeapObject {
   static inline digit_t digit_mul(digit_t a, digit_t b, digit_t* high);
   static inline digit_t digit_div(digit_t high, digit_t low, digit_t divisor,
                                   digit_t* remainder);
+  static digit_t digit_pow(digit_t base, digit_t exponent);
   static inline bool digit_ismax(digit_t x) {
     return static_cast<digit_t>(~x) == 0;
   }

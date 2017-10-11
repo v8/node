@@ -504,9 +504,9 @@ Parser::Parser(ParseInfo* info)
   set_allow_harmony_class_fields(FLAG_harmony_class_fields);
   set_allow_harmony_object_rest_spread(FLAG_harmony_object_rest_spread);
   set_allow_harmony_dynamic_import(FLAG_harmony_dynamic_import);
+  set_allow_harmony_import_meta(FLAG_harmony_import_meta);
   set_allow_harmony_async_iteration(FLAG_harmony_async_iteration);
   set_allow_harmony_template_escapes(FLAG_harmony_template_escapes);
-  set_allow_harmony_optional_catch_binding(FLAG_harmony_optional_catch_binding);
   for (int feature = 0; feature < v8::Isolate::kUseCounterFeatureCount;
        ++feature) {
     use_counts_[feature] = 0;
@@ -912,12 +912,15 @@ Statement* Parser::ParseModuleItem(bool* ok) {
     return ParseExportDeclaration(ok);
   }
 
-  // We must be careful not to parse a dynamic import expression as an import
-  // declaration.
-  if (next == Token::IMPORT &&
-      (!allow_harmony_dynamic_import() || PeekAhead() != Token::LPAREN)) {
-    ParseImportDeclaration(CHECK_OK);
-    return factory()->NewEmptyStatement(kNoSourcePosition);
+  if (next == Token::IMPORT) {
+    // We must be careful not to parse a dynamic import expression as an import
+    // declaration. Same for import.meta expressions.
+    Token::Value peek_ahead = PeekAhead();
+    if ((!allow_harmony_dynamic_import() || peek_ahead != Token::LPAREN) &&
+        (!allow_harmony_import_meta() || peek_ahead != Token::PERIOD)) {
+      ParseImportDeclaration(CHECK_OK);
+      return factory()->NewEmptyStatement(kNoSourcePosition);
+    }
   }
 
   return ParseStatementListItem(ok);
@@ -1400,11 +1403,11 @@ Variable* Parser::Declare(Declaration* declaration,
                           var_end_pos != kNoSourcePosition
                               ? var_end_pos
                               : declaration->proxy()->position() + 1);
-    if (declaration_kind == DeclarationDescriptor::NORMAL) {
+    if (declaration_kind == DeclarationDescriptor::PARAMETER) {
+      ReportMessageAt(loc, MessageTemplate::kParamDupe);
+    } else {
       ReportMessageAt(loc, MessageTemplate::kVarRedeclaration,
                       declaration->proxy()->raw_name());
-    } else {
-      ReportMessageAt(loc, MessageTemplate::kParamDupe);
     }
     return nullptr;
   }
@@ -1662,6 +1665,7 @@ Statement* Parser::RewriteTryStatement(Block* try_block, Block* catch_block,
 
   if (catch_block != nullptr && finally_block != nullptr) {
     // If we have both, create an inner try/catch.
+    DCHECK_NOT_NULL(catch_info.scope);
     TryCatchStatement* statement;
     statement = factory()->NewTryCatchStatement(try_block, catch_info.scope,
                                                 catch_block, kNoSourcePosition);
@@ -1674,6 +1678,7 @@ Statement* Parser::RewriteTryStatement(Block* try_block, Block* catch_block,
 
   if (catch_block != nullptr) {
     DCHECK_NULL(finally_block);
+    DCHECK_NOT_NULL(catch_info.scope);
     TryCatchStatement* stmt = factory()->NewTryCatchStatement(
         try_block, catch_info.scope, catch_block, pos);
     RecordTryCatchStatementSourceRange(stmt, catch_range);
@@ -4293,8 +4298,9 @@ void Parser::BuildIteratorCloseForCompletion(ZoneList<Statement*>* statements,
                                  zone());
 
     Block* catch_block = factory()->NewBlock(0, false);
-    try_call_return =
-        factory()->NewTryCatchStatement(try_block, nullptr, catch_block, nopos);
+    Scope* catch_scope = NewHiddenCatchScope();
+    try_call_return = factory()->NewTryCatchStatement(try_block, catch_scope,
+                                                      catch_block, nopos);
   }
 
   // let output = %_Call(iteratorReturn, iterator);

@@ -17,7 +17,6 @@
 #include "src/extensions/ignition-statistics-extension.h"
 #include "src/extensions/statistics-extension.h"
 #include "src/extensions/trigger-failure-extension.h"
-#include "src/ffi/ffi-compiler.h"
 #include "src/heap/heap.h"
 #include "src/isolate-inl.h"
 #include "src/snapshot/natives.h"
@@ -3137,23 +3136,24 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         prototype, factory->to_string_tag_symbol(), factory->Map_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
 
-    Handle<JSFunction> map_get =
-        SimpleInstallFunction(prototype, "get", Builtins::kMapGet, 1, true);
+    Handle<JSFunction> map_get = SimpleInstallFunction(
+        prototype, "get", Builtins::kMapPrototypeGet, 1, true);
     native_context()->set_map_get(*map_get);
 
-    Handle<JSFunction> map_set =
-        SimpleInstallFunction(prototype, "set", Builtins::kMapSet, 2, true);
+    Handle<JSFunction> map_set = SimpleInstallFunction(
+        prototype, "set", Builtins::kMapPrototypeSet, 2, true);
     native_context()->set_map_set(*map_set);
 
-    Handle<JSFunction> map_has =
-        SimpleInstallFunction(prototype, "has", Builtins::kMapHas, 1, true);
+    Handle<JSFunction> map_has = SimpleInstallFunction(
+        prototype, "has", Builtins::kMapPrototypeHas, 1, true);
     native_context()->set_map_has(*map_has);
 
     Handle<JSFunction> map_delete = SimpleInstallFunction(
-        prototype, "delete", Builtins::kMapDelete, 1, true);
+        prototype, "delete", Builtins::kMapPrototypeDelete, 1, true);
     native_context()->set_map_delete(*map_delete);
 
-    SimpleInstallFunction(prototype, "clear", Builtins::kMapClear, 0, true);
+    SimpleInstallFunction(prototype, "clear", Builtins::kMapPrototypeClear, 0,
+                          true);
     Handle<JSFunction> entries = SimpleInstallFunction(
         prototype, "entries", Builtins::kMapPrototypeEntries, 0, true);
     JSObject::AddProperty(prototype, factory->iterator_symbol(), entries,
@@ -3192,19 +3192,20 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         prototype, factory->to_string_tag_symbol(), factory->Set_string(),
         static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
 
-    Handle<JSFunction> set_has =
-        SimpleInstallFunction(prototype, "has", Builtins::kSetHas, 1, true);
+    Handle<JSFunction> set_has = SimpleInstallFunction(
+        prototype, "has", Builtins::kSetPrototypeHas, 1, true);
     native_context()->set_set_has(*set_has);
 
-    Handle<JSFunction> set_add =
-        SimpleInstallFunction(prototype, "add", Builtins::kSetAdd, 1, true);
+    Handle<JSFunction> set_add = SimpleInstallFunction(
+        prototype, "add", Builtins::kSetPrototypeAdd, 1, true);
     native_context()->set_set_add(*set_add);
 
     Handle<JSFunction> set_delete = SimpleInstallFunction(
-        prototype, "delete", Builtins::kSetDelete, 1, true);
+        prototype, "delete", Builtins::kSetPrototypeDelete, 1, true);
     native_context()->set_set_delete(*set_delete);
 
-    SimpleInstallFunction(prototype, "clear", Builtins::kSetClear, 0, true);
+    SimpleInstallFunction(prototype, "clear", Builtins::kSetPrototypeClear, 0,
+                          true);
     SimpleInstallFunction(prototype, "entries", Builtins::kSetPrototypeEntries,
                           0, true);
     SimpleInstallFunction(prototype, "forEach", Builtins::kSetPrototypeForEach,
@@ -3304,7 +3305,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     CreateJSProxyMaps();
 
     Handle<Map> proxy_function_map =
-        Map::Copy(isolate->sloppy_function_without_prototype_map(), "Proxy");
+        Map::Copy(isolate->strict_function_without_prototype_map(), "Proxy");
     proxy_function_map->set_is_constructor(true);
 
     Handle<String> name = factory->Proxy_string();
@@ -3627,12 +3628,14 @@ bool Bootstrapper::CompileNative(Isolate* isolate, Vector<const char> name,
 
   Handle<String> script_name =
       isolate->factory()->NewStringFromUtf8(name).ToHandleChecked();
-  Handle<SharedFunctionInfo> function_info =
+  MaybeHandle<SharedFunctionInfo> maybe_function_info =
       Compiler::GetSharedFunctionInfoForScript(
-          source, script_name, 0, 0, ScriptOriginOptions(), Handle<Object>(),
-          context, NULL, NULL, ScriptCompiler::kNoCompileOptions, natives_flag,
-          Handle<FixedArray>());
-  if (function_info.is_null()) return false;
+          source, script_name, 0, 0, ScriptOriginOptions(),
+          MaybeHandle<Object>(), context, NULL, NULL,
+          ScriptCompiler::kNoCompileOptions, natives_flag,
+          MaybeHandle<FixedArray>());
+  Handle<SharedFunctionInfo> function_info;
+  if (!maybe_function_info.ToHandle(&function_info)) return false;
 
   DCHECK(context->IsNativeContext());
 
@@ -3691,11 +3694,13 @@ bool Genesis::CompileExtension(Isolate* isolate, v8::Extension* extension) {
   if (!cache->Lookup(name, &function_info)) {
     Handle<String> script_name =
         factory->NewStringFromUtf8(name).ToHandleChecked();
-    function_info = Compiler::GetSharedFunctionInfoForScript(
-        source, script_name, 0, 0, ScriptOriginOptions(), Handle<Object>(),
-        context, extension, NULL, ScriptCompiler::kNoCompileOptions,
-        EXTENSION_CODE, Handle<FixedArray>());
-    if (function_info.is_null()) return false;
+    MaybeHandle<SharedFunctionInfo> maybe_function_info =
+        Compiler::GetSharedFunctionInfoForScript(
+            source, script_name, 0, 0, ScriptOriginOptions(),
+            MaybeHandle<Object>(), context, extension, NULL,
+            ScriptCompiler::kNoCompileOptions, EXTENSION_CODE,
+            MaybeHandle<FixedArray>());
+    if (!maybe_function_info.ToHandle(&function_info)) return false;
     cache->Add(name, function_info);
   }
 
@@ -4221,10 +4226,10 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_function_tostring)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_class_fields)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_object_rest_spread)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_dynamic_import)
+EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_import_meta)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_template_escapes)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrict_constructor_return)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_strict_legacy_accessor_builtins)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_optional_catch_binding)
 
 void InstallPublicSymbol(Factory* factory, Handle<Context> native_context,
                          const char* name, Handle<Symbol> value) {
@@ -4960,8 +4965,6 @@ bool Genesis::InstallSpecialObjects(Handle<Context> native_context) {
     // translated to WASM to work correctly.
     WasmJs::Install(isolate, false);
   }
-
-  InstallFFIMap(isolate);
 
   return true;
 }

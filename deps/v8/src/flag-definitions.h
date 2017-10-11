@@ -187,15 +187,17 @@ DEFINE_BOOL(es_staging, false,
 DEFINE_BOOL(harmony, false, "enable all completed harmony features")
 DEFINE_BOOL(harmony_shipping, true, "enable all shipped harmony features")
 DEFINE_IMPLICATION(es_staging, harmony)
+// Enabling import.meta requires to also enable import()
+DEFINE_IMPLICATION(harmony_import_meta, harmony_dynamic_import)
 
 // Features that are still work in progress (behind individual flags).
 #define HARMONY_INPROGRESS(V)                                         \
+  V(harmony_import_meta, "harmony import.meta property")              \
   V(harmony_array_prototype_values, "harmony Array.prototype.values") \
   V(harmony_function_sent, "harmony function.sent")                   \
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony public fields in class literals")  \
-  V(harmony_bigint, "harmony arbitrary precision integers")           \
-  V(harmony_optional_catch_binding, "allow omitting binding in catch blocks")
+  V(harmony_bigint, "harmony arbitrary precision integers")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED_BASE(V)                                          \
@@ -538,10 +540,6 @@ DEFINE_BOOL(wasm_no_stack_checks, false,
 DEFINE_BOOL(wasm_trap_handler, false,
             "use signal handlers to catch out of bounds memory access in wasm"
             " (experimental, currently Linux x86_64 only)")
-DEFINE_BOOL(wasm_guard_pages, false,
-            "add guard pages to the end of WebWassembly memory"
-            " (experimental, no effect on 32-bit)")
-DEFINE_IMPLICATION(wasm_trap_handler, wasm_guard_pages)
 DEFINE_BOOL(wasm_code_fuzzer_gen_test, false,
             "Generate a test case when running the wasm-code fuzzer")
 DEFINE_BOOL(print_wasm_code, false, "Print WebAssembly code")

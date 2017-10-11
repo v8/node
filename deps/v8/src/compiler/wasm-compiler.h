@@ -88,7 +88,8 @@ class WasmCompilationUnit final {
   // only allowed to happen on the foreground thread.
   WasmCompilationUnit(Isolate*, ModuleEnv*, wasm::FunctionBody, wasm::WasmName,
                       int index, Handle<Code> centry_stub, Counters* = nullptr,
-                      RuntimeExceptionSupport = kRuntimeExceptionSupport);
+                      RuntimeExceptionSupport = kRuntimeExceptionSupport,
+                      bool lower_simd = false);
 
   int func_index() const { return func_index_; }
 
@@ -105,6 +106,7 @@ class WasmCompilationUnit final {
 
  private:
   SourcePositionTable* BuildGraphForWasmFunction(double* decode_ms);
+  Counters* counters() { return counters_; }
 
   Isolate* isolate_;
   ModuleEnv* env_;
@@ -127,8 +129,7 @@ class WasmCompilationUnit final {
   RuntimeExceptionSupport runtime_exception_support_;
   bool ok_ = true;
   size_t memory_cost_ = 0;
-
-  Counters* counters() { return counters_; }
+  bool lower_simd_;
 
   DISALLOW_COPY_AND_ASSIGN(WasmCompilationUnit);
 };
@@ -405,9 +406,8 @@ class WasmGraphBuilder {
   Node* MaskShiftCount32(Node* node);
   Node* MaskShiftCount64(Node* node);
 
-  Node* BuildCCall(MachineSignature* sig, Node* const* args);
-  Node* BuildCCallWithBuffer(MachineSignature* sig, Node** args,
-                             size_t args_len);
+  template <typename... Args>
+  Node* BuildCCall(MachineSignature* sig, Node* function, Args... args);
   Node* BuildWasmCall(wasm::FunctionSig* sig, Node** args, Node*** rets,
                       wasm::WasmCodePosition position);
 

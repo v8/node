@@ -754,6 +754,12 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kArgumentsLength:
       result = LowerArgumentsLength(node);
       break;
+    case IrOpcode::kNewDoubleElements:
+      result = LowerNewDoubleElements(node);
+      break;
+    case IrOpcode::kNewSmiOrObjectElements:
+      result = LowerNewSmiOrObjectElements(node);
+      break;
     case IrOpcode::kNewArgumentsElements:
       result = LowerNewArgumentsElements(node);
       break;
@@ -829,11 +835,15 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kStoreTypedElement:
       LowerStoreTypedElement(node);
       break;
-    case IrOpcode::kLookupHashStorageIndex:
-      result = LowerLookupHashStorageIndex(node);
+    case IrOpcode::kStoreSignedSmallElement:
+      LowerStoreSignedSmallElement(node);
       break;
-    case IrOpcode::kLoadHashMapValue:
-      result = LowerLoadHashMapValue(node);
+    case IrOpcode::kFindOrderedHashMapEntry:
+      result = LowerFindOrderedHashMapEntry(node);
+      break;
+    case IrOpcode::kFindOrderedHashMapEntryForInt32Key:
+      result = LowerFindOrderedHashMapEntryForInt32Key(node);
+      break;
     case IrOpcode::kTransitionAndStoreElement:
       LowerTransitionAndStoreElement(node);
       break;
@@ -2215,6 +2225,97 @@ Node* EffectControlLinearizer::LowerArgumentsFrame(Node* node) {
   return done.PhiAt(0);
 }
 
+Node* EffectControlLinearizer::LowerNewDoubleElements(Node* node) {
+  PretenureFlag const pretenure = PretenureFlagOf(node->op());
+  Node* length = node->InputAt(0);
+
+  // Compute the effective size of the backing store.
+  Node* size =
+      __ Int32Add(__ Word32Shl(length, __ Int32Constant(kDoubleSizeLog2)),
+                  __ Int32Constant(FixedDoubleArray::kHeaderSize));
+
+  // Allocate the result and initialize the header.
+  Node* result = __ Allocate(pretenure, size);
+  __ StoreField(AccessBuilder::ForMap(), result,
+                __ FixedDoubleArrayMapConstant());
+  __ StoreField(AccessBuilder::ForFixedArrayLength(), result,
+                ChangeInt32ToSmi(length));
+
+  // Initialize the backing store with holes.
+  STATIC_ASSERT(HeapNumber::kValueOffset == Oddball::kToNumberRawOffset);
+  Node* limit = ChangeUint32ToUintPtr(length);
+  Node* the_hole =
+      __ LoadField(AccessBuilder::ForHeapNumberValue(), __ TheHoleConstant());
+  auto loop = __ MakeLoopLabel(MachineType::PointerRepresentation());
+  auto done_loop = __ MakeLabel();
+  __ Goto(&loop, __ IntPtrConstant(0));
+  __ Bind(&loop);
+  {
+    // Check if we've initialized everything.
+    Node* index = loop.PhiAt(0);
+    Node* check = __ UintLessThan(index, limit);
+    __ GotoIfNot(check, &done_loop);
+
+    // Storing "the_hole" doesn't need a write barrier.
+    StoreRepresentation rep(MachineRepresentation::kFloat64, kNoWriteBarrier);
+    Node* offset = __ IntAdd(
+        __ WordShl(index, __ IntPtrConstant(kDoubleSizeLog2)),
+        __ IntPtrConstant(FixedDoubleArray::kHeaderSize - kHeapObjectTag));
+    __ Store(rep, result, offset, the_hole);
+
+    // Advance the {index}.
+    index = __ IntAdd(index, __ IntPtrConstant(1));
+    __ Goto(&loop, index);
+  }
+
+  __ Bind(&done_loop);
+  return result;
+}
+
+Node* EffectControlLinearizer::LowerNewSmiOrObjectElements(Node* node) {
+  PretenureFlag const pretenure = PretenureFlagOf(node->op());
+  Node* length = node->InputAt(0);
+
+  // Compute the effective size of the backing store.
+  Node* size =
+      __ Int32Add(__ Word32Shl(length, __ Int32Constant(kPointerSizeLog2)),
+                  __ Int32Constant(FixedArray::kHeaderSize));
+
+  // Allocate the result and initialize the header.
+  Node* result = __ Allocate(pretenure, size);
+  __ StoreField(AccessBuilder::ForMap(), result, __ FixedArrayMapConstant());
+  __ StoreField(AccessBuilder::ForFixedArrayLength(), result,
+                ChangeInt32ToSmi(length));
+
+  // Initialize the backing store with holes.
+  Node* limit = ChangeUint32ToUintPtr(length);
+  Node* the_hole = __ TheHoleConstant();
+  auto loop = __ MakeLoopLabel(MachineType::PointerRepresentation());
+  auto done_loop = __ MakeLabel();
+  __ Goto(&loop, __ IntPtrConstant(0));
+  __ Bind(&loop);
+  {
+    // Check if we've initialized everything.
+    Node* index = loop.PhiAt(0);
+    Node* check = __ UintLessThan(index, limit);
+    __ GotoIfNot(check, &done_loop);
+
+    // Storing "the_hole" doesn't need a write barrier.
+    StoreRepresentation rep(MachineRepresentation::kTagged, kNoWriteBarrier);
+    Node* offset =
+        __ IntAdd(__ WordShl(index, __ IntPtrConstant(kPointerSizeLog2)),
+                  __ IntPtrConstant(FixedArray::kHeaderSize - kHeapObjectTag));
+    __ Store(rep, result, offset, the_hole);
+
+    // Advance the {index}.
+    index = __ IntAdd(index, __ IntPtrConstant(1));
+    __ Goto(&loop, index);
+  }
+
+  __ Bind(&done_loop);
+  return result;
+}
+
 Node* EffectControlLinearizer::LowerNewArgumentsElements(Node* node) {
   Node* frame = NodeProperties::GetValueInput(node, 0);
   Node* length = NodeProperties::GetValueInput(node, 1);
@@ -2608,15 +2709,31 @@ Node* EffectControlLinearizer::ChangeInt32ToSmi(Node* value) {
   return __ WordShl(value, SmiShiftBitsConstant());
 }
 
-Node* EffectControlLinearizer::ChangeUint32ToSmi(Node* value) {
+Node* EffectControlLinearizer::ChangeIntPtrToInt32(Node* value) {
+  if (machine()->Is64()) {
+    value = __ TruncateInt64ToInt32(value);
+  }
+  return value;
+}
+
+Node* EffectControlLinearizer::ChangeUint32ToUintPtr(Node* value) {
   if (machine()->Is64()) {
     value = __ ChangeUint32ToUint64(value);
   }
+  return value;
+}
+
+Node* EffectControlLinearizer::ChangeUint32ToSmi(Node* value) {
+  value = ChangeUint32ToUintPtr(value);
   return __ WordShl(value, SmiShiftBitsConstant());
 }
 
+Node* EffectControlLinearizer::ChangeSmiToIntPtr(Node* value) {
+  return __ WordSar(value, SmiShiftBitsConstant());
+}
+
 Node* EffectControlLinearizer::ChangeSmiToInt32(Node* value) {
-  value = __ WordSar(value, SmiShiftBitsConstant());
+  value = ChangeSmiToIntPtr(value);
   if (machine()->Is64()) {
     value = __ TruncateInt64ToInt32(value);
   }
@@ -3041,46 +3158,53 @@ void EffectControlLinearizer::LowerTransitionAndStoreElement(Node* node) {
   }
 
   auto do_store = __ MakeLabel(MachineRepresentation::kWord32);
-  Node* check1 = ObjectIsSmi(value);
-  __ GotoIf(check1, &do_store, kind);
+  // We can store a smi anywhere.
+  __ GotoIf(ObjectIsSmi(value), &do_store, kind);
+
+  // {value} is a HeapObject.
+  auto transition_smi_array = __ MakeDeferredLabel();
+  auto transition_double_to_fast = __ MakeDeferredLabel();
   {
-    // {value} is a HeapObject.
-    Node* check2 = IsElementsKindGreaterThan(kind, HOLEY_SMI_ELEMENTS);
-    auto if_array_not_fast_smi = __ MakeLabel();
-    __ GotoIf(check2, &if_array_not_fast_smi);
+    __ GotoIfNot(IsElementsKindGreaterThan(kind, HOLEY_SMI_ELEMENTS),
+                 &transition_smi_array);
+    __ GotoIfNot(IsElementsKindGreaterThan(kind, HOLEY_ELEMENTS), &do_store,
+                 kind);
+
+    // We have double elements kind. Only a HeapNumber can be stored
+    // without effecting a transition.
+    Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
+    Node* heap_number_map = __ HeapNumberMapConstant();
+    Node* check = __ WordEqual(value_map, heap_number_map);
+    __ GotoIfNot(check, &transition_double_to_fast);
+    __ Goto(&do_store, kind);
+  }
+
+  __ Bind(&transition_smi_array);  // deferred code.
+  {
+    // Transition {array} from HOLEY_SMI_ELEMENTS to HOLEY_DOUBLE_ELEMENTS or
+    // to HOLEY_ELEMENTS.
+    auto if_value_not_heap_number = __ MakeLabel();
+    Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
+    Node* heap_number_map = __ HeapNumberMapConstant();
+    Node* check = __ WordEqual(value_map, heap_number_map);
+    __ GotoIfNot(check, &if_value_not_heap_number);
     {
-      // Transition {array} from HOLEY_SMI_ELEMENTS to HOLEY_DOUBLE_ELEMENTS or
-      // to HOLEY_ELEMENTS.
-      Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
-      Node* heap_number_map = __ HeapNumberMapConstant();
-      Node* check3 = __ WordEqual(value_map, heap_number_map);
-      auto if_value_not_heap_number = __ MakeLabel();
-      __ GotoIfNot(check3, &if_value_not_heap_number);
-      {
-        // {value} is a HeapNumber.
-        TransitionElementsTo(node, array, HOLEY_SMI_ELEMENTS,
-                             HOLEY_DOUBLE_ELEMENTS);
-        __ Goto(&do_store, __ Int32Constant(HOLEY_DOUBLE_ELEMENTS));
-      }
-      __ Bind(&if_value_not_heap_number);
-      {
-        TransitionElementsTo(node, array, HOLEY_SMI_ELEMENTS, HOLEY_ELEMENTS);
-        __ Goto(&do_store, __ Int32Constant(HOLEY_ELEMENTS));
-      }
+      // {value} is a HeapNumber.
+      TransitionElementsTo(node, array, HOLEY_SMI_ELEMENTS,
+                           HOLEY_DOUBLE_ELEMENTS);
+      __ Goto(&do_store, __ Int32Constant(HOLEY_DOUBLE_ELEMENTS));
     }
-    __ Bind(&if_array_not_fast_smi);
+    __ Bind(&if_value_not_heap_number);
     {
-      Node* check3 = IsElementsKindGreaterThan(kind, HOLEY_ELEMENTS);
-      __ GotoIfNot(check3, &do_store, kind);
-      // We have double elements kind.
-      Node* value_map = __ LoadField(AccessBuilder::ForMap(), value);
-      Node* heap_number_map = __ HeapNumberMapConstant();
-      Node* check4 = __ WordEqual(value_map, heap_number_map);
-      __ GotoIf(check4, &do_store, kind);
-      // But the value is not a heap number, so we must transition.
-      TransitionElementsTo(node, array, HOLEY_DOUBLE_ELEMENTS, HOLEY_ELEMENTS);
+      TransitionElementsTo(node, array, HOLEY_SMI_ELEMENTS, HOLEY_ELEMENTS);
       __ Goto(&do_store, __ Int32Constant(HOLEY_ELEMENTS));
     }
+  }
+
+  __ Bind(&transition_double_to_fast);  // deferred code.
+  {
+    TransitionElementsTo(node, array, HOLEY_DOUBLE_ELEMENTS, HOLEY_ELEMENTS);
+    __ Goto(&do_store, __ Int32Constant(HOLEY_ELEMENTS));
   }
 
   // Make sure kind is up-to-date.
@@ -3088,10 +3212,10 @@ void EffectControlLinearizer::LowerTransitionAndStoreElement(Node* node) {
   kind = do_store.PhiAt(0);
 
   Node* elements = __ LoadField(AccessBuilder::ForJSObjectElements(), array);
-  Node* check2 = IsElementsKindGreaterThan(kind, HOLEY_ELEMENTS);
   auto if_kind_is_double = __ MakeLabel();
   auto done = __ MakeLabel();
-  __ GotoIf(check2, &if_kind_is_double);
+  __ GotoIf(IsElementsKindGreaterThan(kind, HOLEY_ELEMENTS),
+            &if_kind_is_double);
   {
     // Our ElementsKind is HOLEY_SMI_ELEMENTS or HOLEY_ELEMENTS.
     __ StoreElement(AccessBuilder::ForFixedArrayElement(HOLEY_ELEMENTS),
@@ -3101,9 +3225,8 @@ void EffectControlLinearizer::LowerTransitionAndStoreElement(Node* node) {
   __ Bind(&if_kind_is_double);
   {
     // Our ElementsKind is HOLEY_DOUBLE_ELEMENTS.
-    Node* check1 = ObjectIsSmi(value);
     auto do_double_store = __ MakeLabel();
-    __ GotoIfNot(check1, &do_double_store);
+    __ GotoIfNot(ObjectIsSmi(value), &do_double_store);
     {
       Node* int_value = ChangeSmiToInt32(value);
       Node* float_value = __ ChangeInt32ToFloat64(int_value);
@@ -3120,6 +3243,64 @@ void EffectControlLinearizer::LowerTransitionAndStoreElement(Node* node) {
       __ Goto(&done);
     }
   }
+
+  __ Bind(&done);
+}
+
+void EffectControlLinearizer::LowerStoreSignedSmallElement(Node* node) {
+  Node* array = node->InputAt(0);
+  Node* index = node->InputAt(1);
+  Node* value = node->InputAt(2);
+
+  // Store a signed small in an output array.
+  //
+  //   kind = ElementsKind(array)
+  //
+  //   -- STORE PHASE ----------------------
+  //   if kind == HOLEY_DOUBLE_ELEMENTS {
+  //     float_value = convert smi to float
+  //     Store array[index] = float_value
+  //   } else {
+  //     // kind is HOLEY_SMI_ELEMENTS or HOLEY_ELEMENTS
+  //     Store array[index] = value
+  //   }
+  //
+  Node* map = __ LoadField(AccessBuilder::ForMap(), array);
+  Node* kind;
+  {
+    Node* bit_field2 = __ LoadField(AccessBuilder::ForMapBitField2(), map);
+    Node* mask = __ Int32Constant(Map::ElementsKindBits::kMask);
+    Node* andit = __ Word32And(bit_field2, mask);
+    Node* shift = __ Int32Constant(Map::ElementsKindBits::kShift);
+    kind = __ Word32Shr(andit, shift);
+  }
+
+  Node* elements = __ LoadField(AccessBuilder::ForJSObjectElements(), array);
+  auto if_kind_is_double = __ MakeLabel();
+  auto done = __ MakeLabel();
+  __ GotoIf(IsElementsKindGreaterThan(kind, HOLEY_ELEMENTS),
+            &if_kind_is_double);
+  {
+    // Our ElementsKind is HOLEY_SMI_ELEMENTS or HOLEY_ELEMENTS.
+    // In this case, we know our value is a signed small, and we can optimize
+    // the ElementAccess information.
+    ElementAccess access = AccessBuilder::ForFixedArrayElement();
+    access.type = Type::SignedSmall();
+    access.machine_type = MachineType::TaggedSigned();
+    access.write_barrier_kind = kNoWriteBarrier;
+    __ StoreElement(access, elements, index, value);
+    __ Goto(&done);
+  }
+  __ Bind(&if_kind_is_double);
+  {
+    // Our ElementsKind is HOLEY_DOUBLE_ELEMENTS.
+    Node* int_value = ChangeSmiToInt32(value);
+    Node* float_value = __ ChangeInt32ToFloat64(int_value);
+    __ StoreElement(AccessBuilder::ForFixedDoubleArrayElement(), elements,
+                    index, float_value);
+    __ Goto(&done);
+  }
+
   __ Bind(&done);
 }
 
@@ -3460,13 +3641,13 @@ Maybe<Node*> EffectControlLinearizer::LowerFloat64RoundTruncate(Node* node) {
   return Just(done.PhiAt(0));
 }
 
-Node* EffectControlLinearizer::LowerLookupHashStorageIndex(Node* node) {
+Node* EffectControlLinearizer::LowerFindOrderedHashMapEntry(Node* node) {
   Node* table = NodeProperties::GetValueInput(node, 0);
   Node* key = NodeProperties::GetValueInput(node, 1);
 
   {
     Callable const callable =
-        Builtins::CallableFor(isolate(), Builtins::kMapLookupHashIndex);
+        Builtins::CallableFor(isolate(), Builtins::kFindOrderedHashMapEntry);
     Operator::Properties const properties = node->op()->properties();
     CallDescriptor::Flags const flags = CallDescriptor::kNoFlags;
     CallDescriptor* desc = Linkage::GetStubCallDescriptor(
@@ -3477,10 +3658,93 @@ Node* EffectControlLinearizer::LowerLookupHashStorageIndex(Node* node) {
   }
 }
 
-Node* EffectControlLinearizer::LowerLoadHashMapValue(Node* node) {
+Node* EffectControlLinearizer::ComputeIntegerHash(Node* value) {
+  // See v8::internal::ComputeIntegerHash()
+  value = __ Int32Add(__ Word32Xor(value, __ Int32Constant(0xffffffff)),
+                      __ Word32Shl(value, __ Int32Constant(15)));
+  value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(12)));
+  value = __ Int32Add(value, __ Word32Shl(value, __ Int32Constant(2)));
+  value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(4)));
+  value = __ Int32Mul(value, __ Int32Constant(2057));
+  value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(16)));
+  value = __ Word32And(value, __ Int32Constant(0x3fffffff));
+  return value;
+}
+
+Node* EffectControlLinearizer::LowerFindOrderedHashMapEntryForInt32Key(
+    Node* node) {
   Node* table = NodeProperties::GetValueInput(node, 0);
-  Node* index = NodeProperties::GetValueInput(node, 1);
-  return __ LoadElement(AccessBuilder::ForFixedArrayElement(), table, index);
+  Node* key = NodeProperties::GetValueInput(node, 1);
+
+  // Compute the integer hash code.
+  Node* hash = ChangeUint32ToUintPtr(ComputeIntegerHash(key));
+
+  Node* number_of_buckets = ChangeSmiToIntPtr(__ LoadField(
+      AccessBuilder::ForOrderedHashTableBaseNumberOfBuckets(), table));
+  hash = __ WordAnd(hash, __ IntSub(number_of_buckets, __ IntPtrConstant(1)));
+  Node* first_entry = ChangeSmiToIntPtr(__ Load(
+      MachineType::TaggedSigned(), table,
+      __ IntAdd(__ WordShl(hash, __ IntPtrConstant(kPointerSizeLog2)),
+                __ IntPtrConstant(OrderedHashMap::kHashTableStartOffset -
+                                  kHeapObjectTag))));
+
+  auto loop = __ MakeLoopLabel(MachineType::PointerRepresentation());
+  auto done = __ MakeLabel(MachineRepresentation::kWord32);
+  __ Goto(&loop, first_entry);
+  __ Bind(&loop);
+  {
+    Node* entry = loop.PhiAt(0);
+    Node* check =
+        __ WordEqual(entry, __ IntPtrConstant(OrderedHashMap::kNotFound));
+    __ GotoIf(check, &done, __ Int32Constant(-1));
+    entry = __ IntAdd(
+        __ IntMul(entry, __ IntPtrConstant(OrderedHashMap::kEntrySize)),
+        number_of_buckets);
+
+    Node* candidate_key = __ Load(
+        MachineType::AnyTagged(), table,
+        __ IntAdd(__ WordShl(entry, __ IntPtrConstant(kPointerSizeLog2)),
+                  __ IntPtrConstant(OrderedHashMap::kHashTableStartOffset -
+                                    kHeapObjectTag)));
+
+    auto if_match = __ MakeLabel();
+    auto if_notmatch = __ MakeLabel();
+    auto if_notsmi = __ MakeDeferredLabel();
+    __ GotoIfNot(ObjectIsSmi(candidate_key), &if_notsmi);
+    __ Branch(__ Word32Equal(ChangeSmiToInt32(candidate_key), key), &if_match,
+              &if_notmatch);
+
+    __ Bind(&if_notsmi);
+    __ GotoIfNot(
+        __ WordEqual(__ LoadField(AccessBuilder::ForMap(), candidate_key),
+                     __ HeapNumberMapConstant()),
+        &if_notmatch);
+    __ Branch(__ Float64Equal(__ LoadField(AccessBuilder::ForHeapNumberValue(),
+                                           candidate_key),
+                              __ ChangeInt32ToFloat64(key)),
+              &if_match, &if_notmatch);
+
+    __ Bind(&if_match);
+    {
+      Node* index = ChangeIntPtrToInt32(entry);
+      __ Goto(&done, index);
+    }
+
+    __ Bind(&if_notmatch);
+    {
+      Node* next_entry = ChangeSmiToIntPtr(__ Load(
+          MachineType::TaggedSigned(), table,
+          __ IntAdd(
+              __ WordShl(entry, __ IntPtrConstant(kPointerSizeLog2)),
+              __ IntPtrConstant(OrderedHashMap::kHashTableStartOffset +
+                                OrderedHashMap::kChainOffset * kPointerSize -
+                                kHeapObjectTag))));
+      __ Goto(&loop, next_entry);
+    }
+  }
+
+  __ Bind(&done);
+  return done.PhiAt(0);
 }
 
 #undef __

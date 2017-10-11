@@ -1196,6 +1196,13 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
     bool has_delayed_chunks() { return delayed_regular_chunks_.size() > 0; }
 
+    int NumberOfDelayedChunks() {
+      base::LockGuard<base::Mutex> guard(&mutex_);
+      return static_cast<int>(delayed_regular_chunks_.size());
+    }
+
+    int NumberOfChunks();
+
    private:
     static const int kReservedQueueingSlots = 64;
     static const int kMaxUnmapperTasks = 24;
@@ -2609,8 +2616,13 @@ class NewSpace : public Space {
     return allocation_info_.limit();
   }
 
-  Address original_top() { return original_top_.Value(); }
+  void ResetOriginalTop() {
+    DCHECK_GE(top(), original_top());
+    DCHECK_LE(top(), original_limit());
+    original_top_.SetValue(top());
+  }
 
+  Address original_top() { return original_top_.Value(); }
   Address original_limit() { return original_limit_.Value(); }
 
   // Return the address of the first object in the active semispace.

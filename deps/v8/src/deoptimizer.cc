@@ -1636,14 +1636,16 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   // Get the possible JSFunction for the case that
   intptr_t maybe_function =
       reinterpret_cast<intptr_t>(value_iterator->GetRawValue());
+  ++input_index;
   ++value_iterator;
 
-  std::vector<intptr_t> register_values;
+  struct RegisterValue {
+    Object* raw_value_;
+    TranslatedFrame::iterator iterator_;
+  };
+  std::vector<RegisterValue> register_values;
   int total_registers = config->num_general_registers();
-  register_values.resize(total_registers, 0);
-  for (int i = 0; i < total_registers; ++i) {
-    register_values[i] = 0;
-  }
+  register_values.resize(total_registers, {Smi::kZero, value_iterator});
 
   intptr_t value;
 
@@ -1672,9 +1674,9 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   }
 
   for (int i = 0; i < register_parameter_count; ++i) {
-    value = reinterpret_cast<intptr_t>(value_iterator->GetRawValue());
+    Object* object = value_iterator->GetRawValue();
     int code = continuation_descriptor.GetRegisterParameter(i).code();
-    register_values[code] = value;
+    register_values[code] = {object, value_iterator};
     ++input_index;
     ++value_iterator;
   }
@@ -1684,8 +1686,9 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   // sure that it's harvested from the translation and copied into the register
   // set (it was automatically added at the end of the FrameState by the
   // instruction selector).
-  value = reinterpret_cast<intptr_t>(value_iterator->GetRawValue());
-  register_values[kContextRegister.code()] = value;
+  Object* context = value_iterator->GetRawValue();
+  value = reinterpret_cast<intptr_t>(context);
+  register_values[kContextRegister.code()] = {context, value_iterator};
   output_frame->SetContext(value);
   output_frame->SetRegister(kContextRegister.code(), value);
   ++input_index;
@@ -1755,7 +1758,8 @@ void Deoptimizer::DoComputeBuiltinContinuation(
   for (int i = 0; i < allocatable_register_count; ++i) {
     output_frame_offset -= kPointerSize;
     int code = config->GetAllocatableGeneralCode(i);
-    value = register_values[code];
+    Object* object = register_values[code].raw_value_;
+    value = reinterpret_cast<intptr_t>(object);
     output_frame->SetFrameSlot(output_frame_offset, value);
     if (trace_scope_ != nullptr) {
       ScopedVector<char> str(128);
@@ -1771,6 +1775,13 @@ void Deoptimizer::DoComputeBuiltinContinuation(
       }
       DebugPrintOutputSlot(value, frame_index, output_frame_offset,
                            str.start());
+    }
+    if (object == isolate_->heap()->arguments_marker()) {
+      Address output_address =
+          reinterpret_cast<Address>(output_[frame_index]->GetTop()) +
+          output_frame_offset;
+      values_to_materialize_.push_back(
+          {output_address, register_values[code].iterator_});
     }
   }
 
@@ -3609,6 +3620,12 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       object->set_raw_properties_or_hash(*properties);
       object->set_elements(FixedArrayBase::cast(*elements));
       object->set_length(*array_length);
+      int in_object_properties = map->GetInObjectProperties();
+      for (int i = 0; i < in_object_properties; ++i) {
+        Handle<Object> value = materializer.FieldAt(value_index);
+        FieldIndex index = FieldIndex::ForPropertyIndex(object->map(), i);
+        object->FastPropertyAtPut(index, *value);
+      }
       return object;
     }
     case JS_BOUND_FUNCTION_TYPE: {
@@ -3629,10 +3646,9 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       return object;
     }
     case JS_FUNCTION_TYPE: {
-      Handle<JSFunction> object =
-          isolate_->factory()->NewFunctionFromSharedFunctionInfo(
-              handle(isolate_->object_function()->shared()),
-              handle(isolate_->context()), NOT_TENURED);
+      Handle<JSFunction> object = isolate_->factory()->NewFunction(
+          map, handle(isolate_->object_function()->shared()),
+          handle(isolate_->context()), NOT_TENURED);
       slot->value_ = object;
       // We temporarily allocated a JSFunction for the {Object} function
       // within the current context, to break cycles in the object graph.
@@ -3660,6 +3676,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       }
       return object;
     }
+    case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_GENERATOR_OBJECT_TYPE: {
       Handle<JSGeneratorObject> object = Handle<JSGeneratorObject>::cast(
           isolate_->factory()->NewJSObjectFromMap(map, NOT_TENURED));
@@ -3682,6 +3699,15 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       object->set_resume_mode(Smi::ToInt(*resume_mode));
       object->set_continuation(Smi::ToInt(*continuation_offset));
       object->set_register_file(FixedArray::cast(*register_file));
+
+      if (object->IsJSAsyncGeneratorObject()) {
+        auto generator = Handle<JSAsyncGeneratorObject>::cast(object);
+        Handle<Object> queue = materializer.FieldAt(value_index);
+        Handle<Object> awaited_promise = materializer.FieldAt(value_index);
+        generator->set_queue(HeapObject::cast(*queue));
+        generator->set_awaited_promise(HeapObject::cast(*awaited_promise));
+      }
+
       int in_object_properties = map->GetInObjectProperties();
       for (int i = 0; i < in_object_properties; ++i) {
         Handle<Object> value = materializer.FieldAt(value_index);
@@ -3824,7 +3850,6 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case JS_MESSAGE_OBJECT_TYPE:
     case JS_DATE_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
-    case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_MODULE_NAMESPACE_TYPE:
     case JS_ARRAY_BUFFER_TYPE:
     case JS_TYPED_ARRAY_TYPE:

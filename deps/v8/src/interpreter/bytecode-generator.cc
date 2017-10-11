@@ -1615,11 +1615,9 @@ void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
   }
   try_control_builder.EndTry();
 
-  if (stmt->scope()) {
-    // Create a catch scope that binds the exception.
-    BuildNewLocalCatchContext(stmt->scope());
-    builder()->StoreAccumulatorInRegister(context);
-  }
+  // Create a catch scope that binds the exception.
+  BuildNewLocalCatchContext(stmt->scope());
+  builder()->StoreAccumulatorInRegister(context);
 
   // If requested, clear message object as we enter the catch block.
   if (stmt->ShouldClearPendingException(outer_catch_prediction)) {
@@ -1631,11 +1629,7 @@ void BytecodeGenerator::VisitTryCatchStatement(TryCatchStatement* stmt) {
 
   // Evaluate the catch-block.
   BuildIncrementBlockCoverageCounterIfEnabled(stmt, SourceRangeKind::kCatch);
-  if (stmt->scope()) {
-    VisitInScope(stmt->catch_block(), stmt->scope());
-  } else {
-    VisitBlock(stmt->catch_block());
-  }
+  VisitInScope(stmt->catch_block(), stmt->scope());
   try_control_builder.EndCatch();
   BuildIncrementBlockCoverageCounterIfEnabled(stmt,
                                               SourceRangeKind::kContinuation);
@@ -3483,13 +3477,15 @@ void BytecodeGenerator::VisitDelete(UnaryOperation* expr) {
     builder()->Delete(object, language_mode());
   } else if (expr->expression()->IsVariableProxy()) {
     // Delete of an unqualified identifier is allowed in sloppy mode but is
-    // not allowed in strict mode. Deleting 'this' is allowed in both modes.
+    // not allowed in strict mode. Deleting 'this' and 'new.target' is allowed
+    // in both modes.
     VariableProxy* proxy = expr->expression()->AsVariableProxy();
-    Variable* variable = proxy->var();
-    DCHECK(is_sloppy(language_mode()) || variable->is_this());
-    if (variable->is_this()) {
+    DCHECK(is_sloppy(language_mode()) || proxy->is_this() ||
+           proxy->is_new_target());
+    if (proxy->is_this() || proxy->is_new_target()) {
       builder()->LoadTrue();
     } else {
+      Variable* variable = proxy->var();
       switch (variable->location()) {
         case VariableLocation::PARAMETER:
         case VariableLocation::LOCAL:

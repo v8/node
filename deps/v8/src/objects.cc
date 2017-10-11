@@ -255,7 +255,7 @@ MaybeHandle<String> Object::ConvertToString(Isolate* isolate,
                       String);
     }
     if (input->IsBigInt()) {
-      return BigInt::ToString(Handle<BigInt>::cast(input), 10);
+      return BigInt::ToString(Handle<BigInt>::cast(input));
     }
     ASSIGN_RETURN_ON_EXCEPTION(
         isolate, input, JSReceiver::ToPrimitive(Handle<JSReceiver>::cast(input),
@@ -6481,13 +6481,8 @@ Smi* JSObject::GetOrCreateIdentityHash(Isolate* isolate) {
     return Smi::cast(hash_obj);
   }
 
-  int masked_hash;
-  // TODO(gsathya): Remove the loop and pass kHashMask directly to
-  // GenerateIdentityHash.
-  do {
-    int hash = isolate->GenerateIdentityHash(Smi::kMaxValue);
-    masked_hash = hash & JSReceiver::kHashMask;
-  } while (masked_hash == PropertyArray::kNoHashSentinel);
+  int masked_hash = isolate->GenerateIdentityHash(JSReceiver::kHashMask);
+  DCHECK_NE(PropertyArray::kNoHashSentinel, masked_hash);
 
   SetIdentityHash(masked_hash);
   return Smi::FromInt(masked_hash);
@@ -11681,11 +11676,10 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
             String::IndexOf(isolate, replacement, bracket_string, peek_ix + 1);
 
         if (closing_bracket_ix == -1) {
-          THROW_NEW_ERROR(
-              isolate,
-              NewSyntaxError(MessageTemplate::kRegExpInvalidReplaceString,
-                             replacement),
-              String);
+          // No closing bracket was found, treat '$<' as a string literal.
+          builder.AppendCharacter('$');
+          continue_from_ix = peek_ix;
+          break;
         }
 
         Handle<String> capture_name =
@@ -11698,12 +11692,6 @@ MaybeHandle<String> String::GetSubstitution(Isolate* isolate, Match* match,
 
         switch (capture_state) {
           case CaptureState::INVALID:
-            THROW_NEW_ERROR(
-                isolate,
-                NewSyntaxError(MessageTemplate::kRegExpInvalidReplaceString,
-                               replacement),
-                String);
-            break;
           case CaptureState::UNMATCHED:
             break;
           case CaptureState::MATCHED:
