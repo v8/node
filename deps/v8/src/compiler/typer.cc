@@ -1972,8 +1972,6 @@ Type* Typer::Visitor::TypeTransitionAndStoreElement(Node* node) {
   UNREACHABLE();
 }
 
-Type* Typer::Visitor::TypeStoreSignedSmallElement(Node* node) { UNREACHABLE(); }
-
 Type* Typer::Visitor::TypeStoreTypedElement(Node* node) {
   UNREACHABLE();
 }
@@ -2036,14 +2034,6 @@ Type* Typer::Visitor::TypeArgumentsFrame(Node* node) {
   return Type::ExternalPointer();
 }
 
-Type* Typer::Visitor::TypeNewDoubleElements(Node* node) {
-  return Type::OtherInternal();
-}
-
-Type* Typer::Visitor::TypeNewSmiOrObjectElements(Node* node) {
-  return Type::OtherInternal();
-}
-
 Type* Typer::Visitor::TypeNewArgumentsElements(Node* node) {
   return Type::OtherInternal();
 }
@@ -2052,12 +2042,12 @@ Type* Typer::Visitor::TypeArrayBufferWasNeutered(Node* node) {
   return Type::Boolean();
 }
 
-Type* Typer::Visitor::TypeFindOrderedHashMapEntry(Node* node) {
-  return Type::Range(-1.0, FixedArray::kMaxLength, zone());
+Type* Typer::Visitor::TypeLookupHashStorageIndex(Node* node) {
+  return Type::SignedSmall();
 }
 
-Type* Typer::Visitor::TypeFindOrderedHashMapEntryForInt32Key(Node* node) {
-  return Type::Range(-1.0, FixedArray::kMaxLength, zone());
+Type* Typer::Visitor::TypeLoadHashMapValue(Node* node) {
+  return Type::NonInternal();
 }
 
 Type* Typer::Visitor::TypeRuntimeAbort(Node* node) { UNREACHABLE(); }

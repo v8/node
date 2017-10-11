@@ -185,9 +185,13 @@ void MacroAssembler::InNewSpace(Register object, Register scratch, Condition cc,
                 condition_met, distance);
 }
 
+
 void MacroAssembler::RememberedSetHelper(
     Register object,  // Only used for debug checks.
-    Register addr, Register scratch, SaveFPRegsMode save_fp) {
+    Register addr,
+    Register scratch,
+    SaveFPRegsMode save_fp,
+    MacroAssembler::RememberedSetFinalAction and_then) {
   Label done;
   if (emit_debug_code()) {
     Label ok;
@@ -208,13 +212,23 @@ void MacroAssembler::RememberedSetHelper(
   // Call stub on end of buffer.
   // Check for end of buffer.
   test(scratch, Immediate(StoreBuffer::kStoreBufferMask));
-  Label buffer_overflowed;
-  j(equal, &buffer_overflowed, Label::kNear);
-  ret(0);
-  bind(&buffer_overflowed);
+  if (and_then == kReturnAtEnd) {
+    Label buffer_overflowed;
+    j(equal, &buffer_overflowed, Label::kNear);
+    ret(0);
+    bind(&buffer_overflowed);
+  } else {
+    DCHECK(and_then == kFallThroughAtEnd);
+    j(not_equal, &done, Label::kNear);
+  }
   StoreBufferOverflowStub store_buffer_overflow(isolate(), save_fp);
   CallStub(&store_buffer_overflow);
-  ret(0);
+  if (and_then == kReturnAtEnd) {
+    ret(0);
+  } else {
+    DCHECK(and_then == kFallThroughAtEnd);
+    bind(&done);
+  }
 }
 
 void TurboAssembler::SlowTruncateToIDelayed(Zone* zone, Register result_reg,
@@ -260,11 +274,16 @@ void TurboAssembler::LoadUint32(XMMRegister dst, const Operand& src) {
   bind(&done);
 }
 
-void MacroAssembler::RecordWriteField(Register object, int offset,
-                                      Register value, Register dst,
-                                      SaveFPRegsMode save_fp,
-                                      RememberedSetAction remembered_set_action,
-                                      SmiCheck smi_check) {
+
+void MacroAssembler::RecordWriteField(
+    Register object,
+    int offset,
+    Register value,
+    Register dst,
+    SaveFPRegsMode save_fp,
+    RememberedSetAction remembered_set_action,
+    SmiCheck smi_check,
+    PointersToHereCheck pointers_to_here_check_for_value) {
   // First, check if a write barrier is even needed. The tests below
   // catch stores of Smis.
   Label done;
@@ -288,7 +307,7 @@ void MacroAssembler::RecordWriteField(Register object, int offset,
   }
 
   RecordWrite(object, dst, value, save_fp, remembered_set_action,
-              OMIT_SMI_CHECK);
+              OMIT_SMI_CHECK, pointers_to_here_check_for_value);
 
   bind(&done);
 
@@ -357,11 +376,76 @@ void TurboAssembler::CallRecordWriteStub(
 
   RestoreRegisters(registers);
 }
+void MacroAssembler::RecordWriteForMap(
+    Register object,
+    Handle<Map> map,
+    Register scratch1,
+    Register scratch2,
+    SaveFPRegsMode save_fp) {
+  Label done;
 
-void MacroAssembler::RecordWrite(Register object, Register address,
-                                 Register value, SaveFPRegsMode fp_mode,
-                                 RememberedSetAction remembered_set_action,
-                                 SmiCheck smi_check) {
+  Register address = scratch1;
+  Register value = scratch2;
+  if (emit_debug_code()) {
+    Label ok;
+    lea(address, FieldOperand(object, HeapObject::kMapOffset));
+    test_b(address, Immediate((1 << kPointerSizeLog2) - 1));
+    j(zero, &ok, Label::kNear);
+    int3();
+    bind(&ok);
+  }
+
+  DCHECK(object != value);
+  DCHECK(object != address);
+  DCHECK(value != address);
+  AssertNotSmi(object);
+
+  if (!FLAG_incremental_marking) {
+    return;
+  }
+
+  // Compute the address.
+  lea(address, FieldOperand(object, HeapObject::kMapOffset));
+
+  // A single check of the map's pages interesting flag suffices, since it is
+  // only set during incremental collection, and then it's also guaranteed that
+  // the from object's page's interesting flag is also set.  This optimization
+  // relies on the fact that maps can never be in new space.
+  DCHECK(!isolate()->heap()->InNewSpace(*map));
+  CheckPageFlagForMap(map,
+                      MemoryChunk::kPointersToHereAreInterestingMask,
+                      zero,
+                      &done,
+                      Label::kNear);
+
+  RecordWriteStub stub(isolate(), object, value, address, OMIT_REMEMBERED_SET,
+                       save_fp);
+  CallStub(&stub);
+
+  bind(&done);
+
+  // Count number of write barriers in generated code.
+  isolate()->counters()->write_barriers_static()->Increment();
+  IncrementCounter(isolate()->counters()->write_barriers_dynamic(), 1);
+
+  // Clobber clobbered input registers when running with the debug-code flag
+  // turned on to provoke errors.
+  if (emit_debug_code()) {
+    mov(value, Immediate(bit_cast<int32_t>(kZapValue)));
+    mov(scratch1, Immediate(bit_cast<int32_t>(kZapValue)));
+    mov(scratch2, Immediate(bit_cast<int32_t>(kZapValue)));
+  }
+}
+
+
+void MacroAssembler::RecordWrite(
+    Register object,
+    Register address,
+    Register value,
+    SaveFPRegsMode fp_mode,
+    RememberedSetAction remembered_set_action,
+    SmiCheck smi_check,
+    PointersToHereCheck pointers_to_here_check_for_value) {
   DCHECK(object != value);
   DCHECK(object != address);
   DCHECK(value != address);
@@ -389,10 +473,14 @@ void MacroAssembler::RecordWrite(Register object, Register address,
     JumpIfSmi(value, &done, Label::kNear);
   }
 
-  CheckPageFlag(value,
-                value,  // Used as scratch.
-                MemoryChunk::kPointersToHereAreInterestingMask, zero, &done,
-                Label::kNear);
+  if (pointers_to_here_check_for_value != kPointersToHereAreAlwaysInteresting) {
+    CheckPageFlag(value,
+                  value,  // Used as scratch.
+                  MemoryChunk::kPointersToHereAreInterestingMask,
+                  zero,
+                  &done,
+                  Label::kNear);
+  }
   CheckPageFlag(object,
                 value,  // Used as scratch.
                 MemoryChunk::kPointersFromHereAreInterestingMask,
@@ -531,6 +619,23 @@ void MacroAssembler::CmpObjectType(Register heap_object,
 
 void MacroAssembler::CmpInstanceType(Register map, InstanceType type) {
   cmpb(FieldOperand(map, Map::kInstanceTypeOffset), Immediate(type));
+}
+
+void MacroAssembler::CompareMap(Register obj, Handle<Map> map) {
+  cmp(FieldOperand(obj, HeapObject::kMapOffset), map);
+}
+
+
+void MacroAssembler::CheckMap(Register obj,
+                              Handle<Map> map,
+                              Label* fail,
+                              SmiCheckType smi_check_type) {
+  if (smi_check_type == DO_SMI_CHECK) {
+    JumpIfSmi(obj, fail);
+  }
+
+  CompareMap(obj, map);
+  j(not_equal, fail);
 }
 
 void MacroAssembler::AssertSmi(Register object) {
@@ -829,6 +934,143 @@ void MacroAssembler::PopStackHandler() {
   add(esp, Immediate(StackHandlerConstants::kSize - kPointerSize));
 }
 
+
+void MacroAssembler::LoadAllocationTopHelper(Register result,
+                                             Register scratch,
+                                             AllocationFlags flags) {
+  ExternalReference allocation_top =
+      AllocationUtils::GetAllocationTopReference(isolate(), flags);
+
+  // Just return if allocation top is already known.
+  if ((flags & RESULT_CONTAINS_TOP) != 0) {
+    // No use of scratch if allocation top is provided.
+    DCHECK(scratch == no_reg);
+#ifdef DEBUG
+    // Assert that result actually contains top on entry.
+    cmp(result, Operand::StaticVariable(allocation_top));
+    Check(equal, kUnexpectedAllocationTop);
+#endif
+    return;
+  }
+
+  // Move address of new object to result. Use scratch register if available.
+  if (scratch == no_reg) {
+    mov(result, Operand::StaticVariable(allocation_top));
+  } else {
+    mov(scratch, Immediate(allocation_top));
+    mov(result, Operand(scratch, 0));
+  }
+}
+
+
+void MacroAssembler::UpdateAllocationTopHelper(Register result_end,
+                                               Register scratch,
+                                               AllocationFlags flags) {
+  if (emit_debug_code()) {
+    test(result_end, Immediate(kObjectAlignmentMask));
+    Check(zero, kUnalignedAllocationInNewSpace);
+  }
+
+  ExternalReference allocation_top =
+      AllocationUtils::GetAllocationTopReference(isolate(), flags);
+
+  // Update new top. Use scratch if available.
+  if (scratch == no_reg) {
+    mov(Operand::StaticVariable(allocation_top), result_end);
+  } else {
+    mov(Operand(scratch, 0), result_end);
+  }
+}
+
+
+void MacroAssembler::Allocate(int object_size,
+                              Register result,
+                              Register result_end,
+                              Register scratch,
+                              Label* gc_required,
+                              AllocationFlags flags) {
+  DCHECK((flags & (RESULT_CONTAINS_TOP | SIZE_IN_WORDS)) == 0);
+  DCHECK(object_size <= kMaxRegularHeapObjectSize);
+  if (!FLAG_inline_new) {
+    if (emit_debug_code()) {
+      // Trash the registers to simulate an allocation failure.
+      mov(result, Immediate(0x7091));
+      if (result_end.is_valid()) {
+        mov(result_end, Immediate(0x7191));
+      }
+      if (scratch.is_valid()) {
+        mov(scratch, Immediate(0x7291));
+      }
+    }
+    jmp(gc_required);
+    return;
+  }
+  DCHECK(result != result_end);
+
+  // Load address of new object into result.
+  LoadAllocationTopHelper(result, scratch, flags);
+
+  ExternalReference allocation_limit =
+      AllocationUtils::GetAllocationLimitReference(isolate(), flags);
+
+  // Align the next allocation. Storing the filler map without checking top is
+  // safe in new-space because the limit of the heap is aligned there.
+  if ((flags & DOUBLE_ALIGNMENT) != 0) {
+    DCHECK(kPointerAlignment * 2 == kDoubleAlignment);
+    Label aligned;
+    test(result, Immediate(kDoubleAlignmentMask));
+    j(zero, &aligned, Label::kNear);
+    if ((flags & PRETENURE) != 0) {
+      cmp(result, Operand::StaticVariable(allocation_limit));
+      j(above_equal, gc_required);
+    }
+    mov(Operand(result, 0),
+        Immediate(isolate()->factory()->one_pointer_filler_map()));
+    add(result, Immediate(kDoubleSize / 2));
+    bind(&aligned);
+  }
+
+  // Calculate new top and bail out if space is exhausted.
+  Register top_reg = result_end.is_valid() ? result_end : result;
+
+  if (top_reg != result) {
+    mov(top_reg, result);
+  }
+  add(top_reg, Immediate(object_size));
+  cmp(top_reg, Operand::StaticVariable(allocation_limit));
+  j(above, gc_required);
+
+  UpdateAllocationTopHelper(top_reg, scratch, flags);
+
+  if (top_reg == result) {
+    sub(result, Immediate(object_size - kHeapObjectTag));
+  } else {
+    // Tag the result.
+    DCHECK(kHeapObjectTag == 1);
+    inc(result);
+  }
+}
+
+void MacroAssembler::AllocateJSValue(Register result, Register constructor,
+                                     Register value, Register scratch,
+                                     Label* gc_required) {
+  DCHECK(result != constructor);
+  DCHECK(result != scratch);
+  DCHECK(result != value);
+
+  // Allocate JSValue in new space.
+  Allocate(JSValue::kSize, result, scratch, no_reg, gc_required,
+           NO_ALLOCATION_FLAGS);
+
+  // Initialize the JSValue.
+  LoadGlobalFunctionInitialMap(constructor, scratch);
+  mov(FieldOperand(result, HeapObject::kMapOffset), scratch);
+  LoadRoot(scratch, Heap::kEmptyFixedArrayRootIndex);
+  mov(FieldOperand(result, JSObject::kPropertiesOrHashOffset), scratch);
+  mov(FieldOperand(result, JSObject::kElementsOffset), scratch);
+  mov(FieldOperand(result, JSValue::kValueOffset), value);
+  STATIC_ASSERT(JSValue::kSize == 4 * kPointerSize);
+}
 
 void MacroAssembler::GetMapConstructor(Register result, Register map,
                                        Register temp) {
@@ -1193,6 +1435,20 @@ void MacroAssembler::LoadGlobalFunction(int index, Register function) {
   mov(function, ContextOperand(function, index));
 }
 
+void MacroAssembler::LoadGlobalFunctionInitialMap(Register function,
+                                                  Register map) {
+  // Load the initial map.  The global functions all have initial maps.
+  mov(map, FieldOperand(function, JSFunction::kPrototypeOrInitialMapOffset));
+  if (emit_debug_code()) {
+    Label ok, fail;
+    CheckMap(map, isolate()->factory()->meta_map(), &fail, DO_SMI_CHECK);
+    jmp(&ok);
+    bind(&fail);
+    Abort(kGlobalFunctionsMustHaveInitialMap);
+    bind(&ok);
+  }
+}
+
 int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
   // The registers are pushed starting with the lowest encoding,
   // which means that lowest encodings are furthest away from
@@ -1478,6 +1734,13 @@ void TurboAssembler::Popcnt(Register dst, const Operand& src) {
 }
 
 
+void MacroAssembler::SetCounter(StatsCounter* counter, int value) {
+  if (FLAG_native_code_counters && counter->Enabled()) {
+    mov(Operand::StaticVariable(ExternalReference(counter)), Immediate(value));
+  }
+}
+
+
 void MacroAssembler::IncrementCounter(StatsCounter* counter, int value) {
   DCHECK(value > 0);
   if (FLAG_native_code_counters && counter->Enabled()) {
@@ -1503,6 +1766,35 @@ void MacroAssembler::DecrementCounter(StatsCounter* counter, int value) {
   }
 }
 
+
+void MacroAssembler::IncrementCounter(Condition cc,
+                                      StatsCounter* counter,
+                                      int value) {
+  DCHECK(value > 0);
+  if (FLAG_native_code_counters && counter->Enabled()) {
+    Label skip;
+    j(NegateCondition(cc), &skip);
+    pushfd();
+    IncrementCounter(counter, value);
+    popfd();
+    bind(&skip);
+  }
+}
+
+
+void MacroAssembler::DecrementCounter(Condition cc,
+                                      StatsCounter* counter,
+                                      int value) {
+  DCHECK(value > 0);
+  if (FLAG_native_code_counters && counter->Enabled()) {
+    Label skip;
+    j(NegateCondition(cc), &skip);
+    pushfd();
+    DecrementCounter(counter, value);
+    popfd();
+    bind(&skip);
+  }
+}
 
 void TurboAssembler::Assert(Condition cc, BailoutReason reason) {
   if (emit_debug_code()) Check(cc, reason);
@@ -1578,6 +1870,39 @@ void MacroAssembler::LoadAccessor(Register dst, Register holder,
   int offset = accessor == ACCESSOR_GETTER ? AccessorPair::kGetterOffset
                                            : AccessorPair::kSetterOffset;
   mov(dst, FieldOperand(dst, offset));
+}
+
+void MacroAssembler::JumpIfNotBothSequentialOneByteStrings(Register object1,
+                                                           Register object2,
+                                                           Register scratch1,
+                                                           Register scratch2,
+                                                           Label* failure) {
+  // Check that both objects are not smis.
+  STATIC_ASSERT(kSmiTag == 0);
+  mov(scratch1, object1);
+  and_(scratch1, object2);
+  JumpIfSmi(scratch1, failure);
+
+  // Load instance type for both strings.
+  mov(scratch1, FieldOperand(object1, HeapObject::kMapOffset));
+  mov(scratch2, FieldOperand(object2, HeapObject::kMapOffset));
+  movzx_b(scratch1, FieldOperand(scratch1, Map::kInstanceTypeOffset));
+  movzx_b(scratch2, FieldOperand(scratch2, Map::kInstanceTypeOffset));
+
+  // Check that both are flat one-byte strings.
+  const int kFlatOneByteStringMask =
+      kIsNotStringMask | kStringRepresentationMask | kStringEncodingMask;
+  const int kFlatOneByteStringTag =
+      kStringTag | kOneByteStringTag | kSeqStringTag;
+  // Interleave bits from both instance types and compare them in one check.
+  const int kShift = 8;
+  DCHECK_EQ(0, kFlatOneByteStringMask & (kFlatOneByteStringMask << kShift));
+  and_(scratch1, kFlatOneByteStringMask);
+  and_(scratch2, kFlatOneByteStringMask);
+  shl(scratch2, kShift);
+  or_(scratch1, scratch2);
+  cmp(scratch1, kFlatOneByteStringTag | (kFlatOneByteStringTag << kShift));
+  j(not_equal, failure);
 }
 
 void MacroAssembler::JumpIfNotUniqueNameInstanceType(Operand operand,
@@ -1698,6 +2023,30 @@ void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
   }
   j(cc, condition_met, condition_met_distance);
 }
+
+
+void MacroAssembler::CheckPageFlagForMap(
+    Handle<Map> map,
+    int mask,
+    Condition cc,
+    Label* condition_met,
+    Label::Distance condition_met_distance) {
+  DCHECK(cc == zero || cc == not_zero);
+  Page* page = Page::FromAddress(map->address());
+  DCHECK(!serializer_enabled());  // Serializer cannot match page_flags.
+  ExternalReference reference(ExternalReference::page_flags(page));
+  // The inlined static address check of the page's flags relies
+  // on maps never being compacted.
+  DCHECK(!isolate()->heap()->mark_compact_collector()->
+         IsOnEvacuationCandidate(*map));
+  if (mask < (1 << kBitsPerByte)) {
+    test_b(Operand::StaticVariable(reference), Immediate(mask));
+  } else {
+    test(Operand::StaticVariable(reference), Immediate(mask));
+  }
+  j(cc, condition_met, condition_met_distance);
+}
+
 
 void MacroAssembler::JumpIfBlack(Register object,
                                  Register scratch0,

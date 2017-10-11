@@ -9,7 +9,7 @@
 namespace v8 {
 namespace internal {
 
-BUILTIN(MapPrototypeClear) {
+BUILTIN(MapClear) {
   HandleScope scope(isolate);
   const char* const kMethodName = "Map.prototype.clear";
   CHECK_RECEIVER(JSMap, map, kMethodName);
@@ -17,7 +17,7 @@ BUILTIN(MapPrototypeClear) {
   return isolate->heap()->undefined_value();
 }
 
-BUILTIN(SetPrototypeClear) {
+BUILTIN(SetClear) {
   HandleScope scope(isolate);
   const char* const kMethodName = "Set.prototype.clear";
   CHECK_RECEIVER(JSSet, set, kMethodName);

@@ -37,12 +37,10 @@ namespace compiler {
   V(WordAnd)                              \
   V(Word32Or)                             \
   V(Word32And)                            \
-  V(Word32Xor)                            \
   V(Word32Shr)                            \
   V(Word32Shl)                            \
   V(IntAdd)                               \
   V(IntSub)                               \
-  V(IntMul)                               \
   V(IntLessThan)                          \
   V(UintLessThan)                         \
   V(Int32Add)                             \
@@ -80,14 +78,13 @@ namespace compiler {
   V(UndefinedConstant)                     \
   V(TheHoleConstant)                       \
   V(FixedArrayMapConstant)                 \
-  V(FixedDoubleArrayMapConstant)           \
   V(ToNumberBuiltinConstant)               \
   V(AllocateInNewSpaceStubConstant)        \
   V(AllocateInOldSpaceStubConstant)
 
 class GraphAssembler;
 
-enum class GraphAssemblerLabelType { kDeferred, kNonDeferred, kLoop };
+enum class GraphAssemblerLabelType { kDeferred, kNonDeferred };
 
 // Label with statically known count of incoming branches and phis.
 template <size_t VarCount>
@@ -96,8 +93,9 @@ class GraphAssemblerLabel {
   Node* PhiAt(size_t index);
 
   template <typename... Reps>
-  explicit GraphAssemblerLabel(GraphAssemblerLabelType type, Reps... reps)
-      : type_(type) {
+  explicit GraphAssemblerLabel(GraphAssemblerLabelType is_deferred,
+                               Reps... reps)
+      : is_deferred_(is_deferred == GraphAssemblerLabelType::kDeferred) {
     STATIC_ASSERT(VarCount == sizeof...(reps));
     MachineRepresentation reps_array[] = {MachineRepresentation::kNone,
                                           reps...};
@@ -116,13 +114,10 @@ class GraphAssemblerLabel {
     is_bound_ = true;
   }
   bool IsBound() const { return is_bound_; }
-  bool IsDeferred() const {
-    return type_ == GraphAssemblerLabelType::kDeferred;
-  }
-  bool IsLoop() const { return type_ == GraphAssemblerLabelType::kLoop; }
+  bool IsDeferred() const { return is_deferred_; }
 
   bool is_bound_ = false;
-  GraphAssemblerLabelType const type_;
+  bool is_deferred_;
   size_t merged_count_ = 0;
   Node* effect_;
   Node* control_;
@@ -139,20 +134,14 @@ class GraphAssembler {
   // Create label.
   template <typename... Reps>
   static GraphAssemblerLabel<sizeof...(Reps)> MakeLabelFor(
-      GraphAssemblerLabelType type, Reps... reps) {
-    return GraphAssemblerLabel<sizeof...(Reps)>(type, reps...);
+      GraphAssemblerLabelType is_deferred, Reps... reps) {
+    return GraphAssemblerLabel<sizeof...(Reps)>(is_deferred, reps...);
   }
 
   // Convenience wrapper for creating non-deferred labels.
   template <typename... Reps>
   static GraphAssemblerLabel<sizeof...(Reps)> MakeLabel(Reps... reps) {
     return MakeLabelFor(GraphAssemblerLabelType::kNonDeferred, reps...);
-  }
-
-  // Convenience wrapper for creating loop labels.
-  template <typename... Reps>
-  static GraphAssemblerLabel<sizeof...(Reps)> MakeLoopLabel(Reps... reps) {
-    return MakeLabelFor(GraphAssemblerLabelType::kLoop, reps...);
   }
 
   // Convenience wrapper for creating deferred labels.
@@ -275,71 +264,48 @@ Node* GraphAssemblerLabel<VarCount>::PhiAt(size_t index) {
 template <typename... Vars>
 void GraphAssembler::MergeState(GraphAssemblerLabel<sizeof...(Vars)>* label,
                                 Vars... vars) {
+  DCHECK(!label->IsBound());
+
   int merged_count = static_cast<int>(label->merged_count_);
   Node* var_array[] = {nullptr, vars...};
-  if (label->IsLoop()) {
-    if (merged_count == 0) {
-      DCHECK(!label->IsBound());
-      label->control_ = graph()->NewNode(common()->Loop(2), current_control_,
-                                         current_control_);
-      label->effect_ = graph()->NewNode(common()->EffectPhi(2), current_effect_,
-                                        current_effect_, label->control_);
-      for (size_t i = 0; i < sizeof...(vars); i++) {
-        label->bindings_[i] = graph()->NewNode(
-            common()->Phi(label->representations_[i], 2), var_array[i + 1],
-            var_array[i + 1], label->control_);
-      }
-    } else {
-      DCHECK(label->IsBound());
-      DCHECK_EQ(1, merged_count);
-      label->control_->ReplaceInput(1, current_control_);
-      label->effect_->ReplaceInput(1, current_effect_);
-      for (size_t i = 0; i < sizeof...(vars); i++) {
-        label->bindings_[i]->ReplaceInput(1, var_array[i + 1]);
-      }
+  if (merged_count == 0) {
+    // Just set the control, effect and variables directly.
+    label->control_ = current_control_;
+    label->effect_ = current_effect_;
+    for (size_t i = 0; i < sizeof...(vars); i++) {
+      label->bindings_[i] = var_array[i + 1];
+    }
+  } else if (merged_count == 1) {
+    // Create merge, effect phi and a phi for each variable.
+    label->control_ =
+        graph()->NewNode(common()->Merge(2), label->control_, current_control_);
+    label->effect_ = graph()->NewNode(common()->EffectPhi(2), label->effect_,
+                                      current_effect_, label->control_);
+    for (size_t i = 0; i < sizeof...(vars); i++) {
+      label->bindings_[i] = graph()->NewNode(
+          common()->Phi(label->representations_[i], 2), label->bindings_[i],
+          var_array[i + 1], label->control_);
     }
   } else {
-    DCHECK(!label->IsBound());
-    if (merged_count == 0) {
-      // Just set the control, effect and variables directly.
-      DCHECK(!label->IsBound());
-      label->control_ = current_control_;
-      label->effect_ = current_effect_;
-      for (size_t i = 0; i < sizeof...(vars); i++) {
-        label->bindings_[i] = var_array[i + 1];
-      }
-    } else if (merged_count == 1) {
-      // Create merge, effect phi and a phi for each variable.
-      label->control_ = graph()->NewNode(common()->Merge(2), label->control_,
-                                         current_control_);
-      label->effect_ = graph()->NewNode(common()->EffectPhi(2), label->effect_,
-                                        current_effect_, label->control_);
-      for (size_t i = 0; i < sizeof...(vars); i++) {
-        label->bindings_[i] = graph()->NewNode(
-            common()->Phi(label->representations_[i], 2), label->bindings_[i],
-            var_array[i + 1], label->control_);
-      }
-    } else {
-      // Append to the merge, effect phi and phis.
-      DCHECK_EQ(IrOpcode::kMerge, label->control_->opcode());
-      label->control_->AppendInput(graph()->zone(), current_control_);
-      NodeProperties::ChangeOp(label->control_,
-                               common()->Merge(merged_count + 1));
+    // Append to the merge, effect phi and phis.
+    DCHECK_EQ(IrOpcode::kMerge, label->control_->opcode());
+    label->control_->AppendInput(graph()->zone(), current_control_);
+    NodeProperties::ChangeOp(label->control_,
+                             common()->Merge(merged_count + 1));
 
-      DCHECK_EQ(IrOpcode::kEffectPhi, label->effect_->opcode());
-      label->effect_->ReplaceInput(merged_count, current_effect_);
-      label->effect_->AppendInput(graph()->zone(), label->control_);
-      NodeProperties::ChangeOp(label->effect_,
-                               common()->EffectPhi(merged_count + 1));
+    DCHECK_EQ(IrOpcode::kEffectPhi, label->effect_->opcode());
+    label->effect_->ReplaceInput(merged_count, current_effect_);
+    label->effect_->AppendInput(graph()->zone(), label->control_);
+    NodeProperties::ChangeOp(label->effect_,
+                             common()->EffectPhi(merged_count + 1));
 
-      for (size_t i = 0; i < sizeof...(vars); i++) {
-        DCHECK_EQ(IrOpcode::kPhi, label->bindings_[i]->opcode());
-        label->bindings_[i]->ReplaceInput(merged_count, var_array[i + 1]);
-        label->bindings_[i]->AppendInput(graph()->zone(), label->control_);
-        NodeProperties::ChangeOp(
-            label->bindings_[i],
-            common()->Phi(label->representations_[i], merged_count + 1));
-      }
+    for (size_t i = 0; i < sizeof...(vars); i++) {
+      DCHECK_EQ(IrOpcode::kPhi, label->bindings_[i]->opcode());
+      label->bindings_[i]->ReplaceInput(merged_count, var_array[i + 1]);
+      label->bindings_[i]->AppendInput(graph()->zone(), label->control_);
+      NodeProperties::ChangeOp(
+          label->bindings_[i],
+          common()->Phi(label->representations_[i], merged_count + 1));
     }
   }
   label->merged_count_++;

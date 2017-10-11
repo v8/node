@@ -935,6 +935,9 @@ void Heap::GarbageCollectionEpilogue() {
   ReportStatisticsAfterGC();
 #endif  // DEBUG
 
+  // Remember the last top pointer so that we can later find out
+  // whether we allocated in new space since the last GC.
+  new_space_top_after_last_gc_ = new_space()->top();
   last_gc_time_ = MonotonicallyIncreasingTimeInMs();
 
   {
@@ -1931,12 +1934,6 @@ void Heap::Scavenge() {
 
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
       incremental_marking());
-
-  if (mark_compact_collector()->sweeper().sweeping_in_progress() &&
-      memory_allocator_->unmapper()->NumberOfDelayedChunks() >
-          static_cast<int>(new_space_->MaximumCapacity() / Page::kPageSize)) {
-    mark_compact_collector()->EnsureSweepingCompleted();
-  }
 
   mark_compact_collector()->sweeper().EnsureNewSpaceCompleted();
 
@@ -5428,6 +5425,7 @@ bool Heap::SetUp() {
   if (!new_space_->SetUp(initial_semispace_size_, max_semi_space_size_)) {
     return false;
   }
+  new_space_top_after_last_gc_ = new_space()->top();
 
   space_[OLD_SPACE] = old_space_ =
       new OldSpace(this, OLD_SPACE, NOT_EXECUTABLE);

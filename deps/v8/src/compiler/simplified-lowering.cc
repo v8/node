@@ -2577,19 +2577,9 @@ class RepresentationSelector {
         return;
       }
       case IrOpcode::kTransitionAndStoreElement: {
-        Type* value_type = TypeOf(node->InputAt(2));
-
         ProcessInput(node, 0, UseInfo::AnyTagged());         // array
         ProcessInput(node, 1, UseInfo::TruncatingWord32());  // index
         ProcessInput(node, 2, UseInfo::AnyTagged());         // value
-
-        if (value_type->Is(Type::SignedSmall())) {
-          if (lower()) {
-            NodeProperties::ChangeOp(node,
-                                     simplified()->StoreSignedSmallElement());
-          }
-        }
-
         ProcessRemainingInputs(node, 3);
         SetOutput(node, MachineRepresentation::kNone);
         return;
@@ -2787,12 +2777,6 @@ class RepresentationSelector {
                   MachineRepresentation::kTaggedSigned);
         return;
       }
-      case IrOpcode::kNewDoubleElements:
-      case IrOpcode::kNewSmiOrObjectElements: {
-        VisitUnop(node, UseInfo::TruncatingWord32(),
-                  MachineRepresentation::kTaggedPointer);
-        return;
-      }
       case IrOpcode::kNewArgumentsElements: {
         VisitBinop(node, UseInfo::PointerInt(), UseInfo::TaggedSigned(),
                    MachineRepresentation::kTaggedPointer);
@@ -2927,22 +2911,15 @@ class RepresentationSelector {
         // Assume the output is tagged.
         return SetOutput(node, MachineRepresentation::kTagged);
 
-      case IrOpcode::kFindOrderedHashMapEntry: {
-        Type* const key_type = TypeOf(node->InputAt(1));
-        if (key_type->Is(Type::Signed32())) {
-          VisitBinop(node, UseInfo::AnyTagged(), UseInfo::TruncatingWord32(),
-                     MachineRepresentation::kWord32);
-          if (lower()) {
-            NodeProperties::ChangeOp(
-                node,
-                lowering->simplified()->FindOrderedHashMapEntryForInt32Key());
-          }
-        } else {
-          VisitBinop(node, UseInfo::AnyTagged(),
-                     MachineRepresentation::kTaggedSigned);
-        }
-        return;
-      }
+      case IrOpcode::kLookupHashStorageIndex:
+        VisitInputs(node);
+        return SetOutput(node, MachineRepresentation::kTaggedSigned);
+
+      case IrOpcode::kLoadHashMapValue:
+        ProcessInput(node, 0, UseInfo::AnyTagged());         // table
+        ProcessInput(node, 1, UseInfo::TruncatingWord32());  // index
+        ProcessRemainingInputs(node, 2);
+        return SetOutput(node, MachineRepresentation::kTagged);
 
       // Operators with all inputs tagged and no or tagged output have uniform
       // handling.

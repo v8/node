@@ -39,6 +39,7 @@
       'inspector/inspected-context.h',
       'inspector/remote-object-id.cc',
       'inspector/remote-object-id.h',
+      'inspector/script-breakpoint.h',
       'inspector/search-util.cc',
       'inspector/search-util.h',
       'inspector/string-16.cc',

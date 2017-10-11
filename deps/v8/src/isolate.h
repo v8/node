@@ -1069,7 +1069,6 @@ class Isolate {
   static const int kProtectorValid = 1;
   static const int kProtectorInvalid = 0;
 
-  inline bool IsArrayConstructorIntact();
   bool IsFastArrayConstructorPrototypeChainIntact();
   inline bool IsArraySpeciesLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact();
@@ -1097,7 +1096,6 @@ class Isolate {
   void UpdateArrayProtectorOnNormalizeElements(Handle<JSObject> object) {
     UpdateArrayProtectorOnSetElement(object);
   }
-  void InvalidateArrayConstructorProtector();
   void InvalidateArraySpeciesProtector();
   void InvalidateIsConcatSpreadableProtector();
   void InvalidateStringLengthOverflowProtector();

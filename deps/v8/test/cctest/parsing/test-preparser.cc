@@ -462,9 +462,6 @@ TEST(PreParserScopeAnalysis) {
       {"if (true) { function *f1() {} }"},
       {"if (true) { async function f1() {} }"},
 
-      // (Potentially sloppy) block function shadowing a catch variable.
-      {"try { } catch(var1) { if (true) { function var1() {} } }"},
-
       // Simple parameters.
       {"var1", ""},
       {"var1", "var1;"},

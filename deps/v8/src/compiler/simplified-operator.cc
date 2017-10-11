@@ -397,10 +397,6 @@ bool operator!=(AllocateParameters const& lhs, AllocateParameters const& rhs) {
 }
 
 PretenureFlag PretenureFlagOf(const Operator* op) {
-  if (op->opcode() == IrOpcode::kNewDoubleElements ||
-      op->opcode() == IrOpcode::kNewSmiOrObjectElements) {
-    return OpParameter<PretenureFlag>(op);
-  }
   DCHECK_EQ(IrOpcode::kAllocate, op->opcode());
   return OpParameter<AllocateParameters>(op).pretenure();
 }
@@ -589,21 +585,19 @@ struct SimplifiedOperatorGlobalCache final {
   };
   ArrayBufferWasNeuteredOperator kArrayBufferWasNeutered;
 
-  struct FindOrderedHashMapEntryOperator final : public Operator {
-    FindOrderedHashMapEntryOperator()
-        : Operator(IrOpcode::kFindOrderedHashMapEntry, Operator::kEliminatable,
-                   "FindOrderedHashMapEntry", 2, 1, 1, 1, 1, 0) {}
+  struct LookupHashStorageIndexOperator final : public Operator {
+    LookupHashStorageIndexOperator()
+        : Operator(IrOpcode::kLookupHashStorageIndex, Operator::kEliminatable,
+                   "LookupHashStorageIndex", 2, 1, 1, 1, 1, 0) {}
   };
-  FindOrderedHashMapEntryOperator kFindOrderedHashMapEntry;
+  LookupHashStorageIndexOperator kLookupHashStorageIndex;
 
-  struct FindOrderedHashMapEntryForInt32KeyOperator final : public Operator {
-    FindOrderedHashMapEntryForInt32KeyOperator()
-        : Operator(IrOpcode::kFindOrderedHashMapEntryForInt32Key,
-                   Operator::kEliminatable,
-                   "FindOrderedHashMapEntryForInt32Key", 2, 1, 1, 1, 1, 0) {}
+  struct LoadHashMapValueOperator final : public Operator {
+    LoadHashMapValueOperator()
+        : Operator(IrOpcode::kLoadHashMapValue, Operator::kEliminatable,
+                   "LoadHashMapValue", 2, 1, 1, 1, 1, 0) {}
   };
-  FindOrderedHashMapEntryForInt32KeyOperator
-      kFindOrderedHashMapEntryForInt32Key;
+  LoadHashMapValueOperator kLoadHashMapValue;
 
   struct ArgumentsFrameOperator final : public Operator {
     ArgumentsFrameOperator()
@@ -781,8 +775,8 @@ PURE_OP_LIST(GET_FROM_CACHE)
 CHECKED_OP_LIST(GET_FROM_CACHE)
 GET_FROM_CACHE(ArrayBufferWasNeutered)
 GET_FROM_CACHE(ArgumentsFrame)
-GET_FROM_CACHE(FindOrderedHashMapEntry)
-GET_FROM_CACHE(FindOrderedHashMapEntryForInt32Key)
+GET_FROM_CACHE(LookupHashStorageIndex)
+GET_FROM_CACHE(LoadHashMapValue)
 GET_FROM_CACHE(LoadFieldByIndex)
 #undef GET_FROM_CACHE
 
@@ -979,26 +973,6 @@ bool IsRestLengthOf(const Operator* op) {
   return OpParameter<ArgumentsLengthParameters>(op).is_rest_length;
 }
 
-const Operator* SimplifiedOperatorBuilder::NewDoubleElements(
-    PretenureFlag pretenure) {
-  return new (zone()) Operator1<PretenureFlag>(  // --
-      IrOpcode::kNewDoubleElements,              // opcode
-      Operator::kEliminatable,                   // flags
-      "NewDoubleElements",                       // name
-      1, 1, 1, 1, 1, 0,                          // counts
-      pretenure);                                // parameter
-}
-
-const Operator* SimplifiedOperatorBuilder::NewSmiOrObjectElements(
-    PretenureFlag pretenure) {
-  return new (zone()) Operator1<PretenureFlag>(  // --
-      IrOpcode::kNewSmiOrObjectElements,         // opcode
-      Operator::kEliminatable,                   // flags
-      "NewSmiOrObjectElements",                  // name
-      1, 1, 1, 1, 1, 0,                          // counts
-      pretenure);                                // parameter
-}
-
 const Operator* SimplifiedOperatorBuilder::NewArgumentsElements(
     int mapped_count) {
   return new (zone()) Operator1<int>(   // --
@@ -1075,12 +1049,6 @@ const Operator* SimplifiedOperatorBuilder::TransitionAndStoreElement(
       IrOpcode::kTransitionAndStoreElement,
       Operator::kNoDeopt | Operator::kNoThrow, "TransitionAndStoreElement", 3,
       1, 1, 0, 1, 0, parameters);
-}
-
-const Operator* SimplifiedOperatorBuilder::StoreSignedSmallElement() {
-  return new (zone()) Operator(IrOpcode::kStoreSignedSmallElement,
-                               Operator::kNoDeopt | Operator::kNoThrow,
-                               "StoreSignedSmallElement", 3, 1, 1, 0, 1, 0);
 }
 
 }  // namespace compiler

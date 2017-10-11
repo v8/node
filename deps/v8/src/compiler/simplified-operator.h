@@ -373,8 +373,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* StringToLowerCaseIntl();
   const Operator* StringToUpperCaseIntl();
 
-  const Operator* FindOrderedHashMapEntry();
-  const Operator* FindOrderedHashMapEntryForInt32Key();
+  const Operator* LookupHashStorageIndex();
+  const Operator* LoadHashMapValue();
 
   const Operator* SpeculativeToNumber(NumberOperationHint hint);
 
@@ -452,9 +452,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* ArgumentsLength(int formal_parameter_count,
                                   bool is_rest_length);
 
-  const Operator* NewDoubleElements(PretenureFlag);
-  const Operator* NewSmiOrObjectElements(PretenureFlag);
-
   // new-arguments-elements arguments-frame, arguments-length
   const Operator* NewArgumentsElements(int mapped_count);
 
@@ -485,8 +482,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   // store-element [base + index], value, only with fast arrays.
   const Operator* TransitionAndStoreElement(Handle<Map> double_map,
                                             Handle<Map> fast_map);
-  // store-element [base + index], smi value, only with fast arrays.
-  const Operator* StoreSignedSmallElement();
 
   // load-typed-element buffer, [base + external + index]
   const Operator* LoadTypedElement(ExternalArrayType const&);

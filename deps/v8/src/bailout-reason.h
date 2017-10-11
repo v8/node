@@ -18,6 +18,8 @@ namespace internal {
   V(kAllocationIsNotDoubleAligned, "Allocation is not double aligned")         \
   V(kAPICallReturnedInvalidObject, "API call returned invalid object")         \
   V(kBailedOutDueToDependencyChange, "Bailed out due to dependency change")    \
+  V(kBothRegistersWereSmisInSelectNonSmi,                                      \
+    "Both registers were smis in SelectNonSmi")                                \
   V(kClassConstructorFunction, "Class constructor function")                   \
   V(kClassLiteral, "Class literal")                                            \
   V(kCodeGenerationFailed, "Code generation failed")                           \
@@ -49,6 +51,8 @@ namespace internal {
     "The function_data field should be a BytecodeArray on interpreter entry")  \
   V(kGenerator, "Generator")                                                   \
   V(kGetIterator, "GetIterator")                                               \
+  V(kGlobalFunctionsMustHaveInitialMap,                                        \
+    "Global functions must have initial map")                                  \
   V(kGraphBuildingFailed, "Optimized graph construction failed")               \
   V(kHeapNumberMapRegisterClobbered, "HeapNumberMap register clobbered")       \
   V(kIndexIsNegative, "Index is negative")                                     \
@@ -113,6 +117,7 @@ namespace internal {
   V(kTryFinallyStatement, "TryFinallyStatement")                               \
   V(kUnalignedAllocationInNewSpace, "Unaligned allocation in new space")       \
   V(kUnalignedCellInWriteBarrier, "Unaligned cell in write barrier")           \
+  V(kUnexpectedAllocationTop, "Unexpected allocation top")                     \
   V(kUnexpectedColorFound, "Unexpected color bit pattern found")               \
   V(kUnexpectedElementsKindInArrayConstructor,                                 \
     "Unexpected ElementsKind in array constructor")                            \

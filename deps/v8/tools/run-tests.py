@@ -113,7 +113,6 @@ VARIANTS = ["default"]
 
 MORE_VARIANTS = [
   "stress",
-  "stress_incremental_marking",
   "nooptimization",
   "stress_asm_wasm",
   "wasm_traps",

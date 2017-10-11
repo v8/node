@@ -255,7 +255,7 @@ MaybeHandle<String> Object::ConvertToString(Isolate* isolate,
                       String);
     }
     if (input->IsBigInt()) {
-      return BigInt::ToString(Handle<BigInt>::cast(input));
+      return BigInt::ToString(Handle<BigInt>::cast(input), 10);
     }
     ASSIGN_RETURN_ON_EXCEPTION(
         isolate, input, JSReceiver::ToPrimitive(Handle<JSReceiver>::cast(input),
@@ -6481,8 +6481,13 @@ Smi* JSObject::GetOrCreateIdentityHash(Isolate* isolate) {
     return Smi::cast(hash_obj);
   }
 
-  int masked_hash = isolate->GenerateIdentityHash(JSReceiver::kHashMask);
-  DCHECK_NE(PropertyArray::kNoHashSentinel, masked_hash);
+  int masked_hash;
+  // TODO(gsathya): Remove the loop and pass kHashMask directly to
+  // GenerateIdentityHash.
+  do {
+    int hash = isolate->GenerateIdentityHash(Smi::kMaxValue);
+    masked_hash = hash & JSReceiver::kHashMask;
+  } while (masked_hash == PropertyArray::kNoHashSentinel);
 
   SetIdentityHash(masked_hash);
   return Smi::FromInt(masked_hash);

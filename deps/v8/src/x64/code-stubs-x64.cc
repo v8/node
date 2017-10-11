@@ -429,7 +429,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
     __ movp(kCCallArg1, r15);  // argv.
     __ Move(kCCallArg2, ExternalReference::isolate_address(isolate()));
   } else {
-    DCHECK_LE(result_size(), 2);
+    DCHECK_LE(result_size(), 3);
     // Pass a pointer to the result location as the first argument.
     __ leap(kCCallArg0, StackSpaceOperand(kArgExtraStackSpace));
     // Pass a pointer to the Arguments object as the second argument.
@@ -442,11 +442,14 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   if (result_size() > kMaxRegisterResultSize) {
     // Read result values stored on stack. Result is stored
     // above the the two Arguments object slots on Win64.
-    DCHECK_LE(result_size(), 2);
+    DCHECK_LE(result_size(), 3);
     __ movq(kReturnRegister0, StackSpaceOperand(kArgExtraStackSpace + 0));
     __ movq(kReturnRegister1, StackSpaceOperand(kArgExtraStackSpace + 1));
+    if (result_size() > 2) {
+      __ movq(kReturnRegister2, StackSpaceOperand(kArgExtraStackSpace + 2));
+    }
   }
-  // Result is in rax or rdx:rax - do not destroy these registers!
+  // Result is in rax, rdx:rax or r8:rdx:rax - do not destroy these registers!
 
   // Check result for exception sentinel.
   Label exception_returned;
@@ -1022,7 +1025,8 @@ void RecordWriteStub::Generate(MacroAssembler* masm) {
   __ jmp(&skip_to_incremental, Label::kNear);
 
   if (remembered_set_action() == EMIT_REMEMBERED_SET) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }
@@ -1059,7 +1063,8 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm,
         second_instr);
     InformIncrementalMarker(masm);
     regs_.Restore(masm);
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
 
     __ bind(&dont_need_remembered_set);
   }
@@ -1116,7 +1121,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }
@@ -1155,7 +1161,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }

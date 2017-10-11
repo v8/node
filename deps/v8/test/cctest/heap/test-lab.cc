@@ -5,9 +5,12 @@
 #include <vector>
 
 #include "src/globals.h"
-#include "src/heap/heap-inl.h"
+#include "src/heap/heap.h"
+#include "src/heap/spaces.h"
 #include "src/heap/spaces-inl.h"
-#include "src/objects.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/heap/incremental-marking.h -> src/objects-inl.h
+#include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {

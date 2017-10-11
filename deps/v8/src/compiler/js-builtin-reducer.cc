@@ -1827,14 +1827,14 @@ Reduction JSBuiltinReducer::ReduceMapGet(Node* node) {
 
   if (!HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE)) return NoChange();
 
-  Node* table = effect = graph()->NewNode(
+  Node* storage = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
       effect, control);
 
-  Node* entry = effect = graph()->NewNode(
-      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
+  Node* index = effect = graph()->NewNode(
+      simplified()->LookupHashStorageIndex(), storage, key, effect, control);
 
-  Node* check = graph()->NewNode(simplified()->NumberEqual(), entry,
+  Node* check = graph()->NewNode(simplified()->NumberEqual(), index,
                                  jsgraph()->MinusOneConstant());
 
   Node* branch = graph()->NewNode(common()->Branch(), check, control);
@@ -1848,8 +1848,8 @@ Reduction JSBuiltinReducer::ReduceMapGet(Node* node) {
   Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
   Node* efalse = effect;
   Node* vfalse = efalse = graph()->NewNode(
-      simplified()->LoadElement(AccessBuilder::ForOrderedHashMapEntryValue()),
-      table, entry, efalse, if_false);
+      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement()), storage,
+      index, efalse, if_false);
 
   control = graph()->NewNode(common()->Merge(2), if_true, if_false);
   Node* value = graph()->NewNode(
@@ -1870,16 +1870,28 @@ Reduction JSBuiltinReducer::ReduceMapHas(Node* node) {
 
   if (!HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE)) return NoChange();
 
-  Node* table = effect = graph()->NewNode(
+  Node* storage = effect = graph()->NewNode(
       simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
       effect, control);
 
   Node* index = effect = graph()->NewNode(
-      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
+      simplified()->LookupHashStorageIndex(), storage, key, effect, control);
 
-  Node* value = graph()->NewNode(simplified()->NumberEqual(), index,
+  Node* check = graph()->NewNode(simplified()->NumberEqual(), index,
                                  jsgraph()->MinusOneConstant());
-  value = graph()->NewNode(simplified()->BooleanNot(), value);
+  Node* branch = graph()->NewNode(common()->Branch(), check, control);
+
+  // Key not found.
+  Node* if_true = graph()->NewNode(common()->IfTrue(), branch);
+  Node* vtrue = jsgraph()->FalseConstant();
+
+  // Key found.
+  Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
+  Node* vfalse = jsgraph()->TrueConstant();
+
+  control = graph()->NewNode(common()->Merge(2), if_true, if_false);
+  Node* value = graph()->NewNode(
+      common()->Phi(MachineRepresentation::kTagged, 2), vtrue, vfalse, control);
 
   ReplaceWithValue(node, value, effect, control);
   return Replace(value);
@@ -2490,7 +2502,7 @@ Reduction JSBuiltinReducer::ReduceObjectIs(Node* node) {
   // SameValue simplified operator (and also a StrictEqual simplified
   // operator) and create unified handling in SimplifiedLowering.
   JSCallReduction r(node);
-  if (r.GetJSCallArity() == 2 && r.left() == r.right()) {
+  if (r.left() == r.right()) {
     // Object.is(x,x) => #true
     Node* value = jsgraph()->TrueConstant();
     return Replace(value);

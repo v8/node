@@ -16,6 +16,8 @@
 namespace v8_inspector {
 
 struct ScriptBreakpoint;
+class JavaScriptCallFrame;
+class PromiseTracker;
 class V8Debugger;
 class V8DebuggerScript;
 class V8InspectorImpl;
@@ -45,9 +47,8 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   Response setSkipAllPauses(bool skip) override;
   Response setBreakpointByUrl(
       int lineNumber, Maybe<String16> optionalURL,
-      Maybe<String16> optionalURLRegex, Maybe<String16> optionalScriptHash,
-      Maybe<int> optionalColumnNumber, Maybe<String16> optionalCondition,
-      String16*,
+      Maybe<String16> optionalURLRegex, Maybe<int> optionalColumnNumber,
+      Maybe<String16> optionalCondition, String16*,
       std::unique_ptr<protocol::Array<protocol::Debugger::Location>>* locations)
       override;
   Response setBreakpoint(
@@ -149,9 +150,9 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
 
   void setPauseOnExceptionsImpl(int);
 
-  std::unique_ptr<protocol::Debugger::Location> setBreakpointImpl(
-      const String16& breakpointId, const String16& scriptId,
-      const String16& condition, int lineNumber, int columnNumber);
+  std::unique_ptr<protocol::Debugger::Location> resolveBreakpoint(
+      const String16& breakpointId, const ScriptBreakpoint&, BreakpointSource,
+      const String16& hint);
   void removeBreakpointImpl(const String16& breakpointId);
   void clearBreakDetails();
 
@@ -167,8 +168,10 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
       protocol::HashMap<String16, std::unique_ptr<V8DebuggerScript>>;
   using BreakpointIdToDebuggerBreakpointIdsMap =
       protocol::HashMap<String16, std::vector<v8::debug::BreakpointId>>;
-  using DebuggerBreakpointIdToBreakpointIdMap =
-      protocol::HashMap<v8::debug::BreakpointId, String16>;
+  using DebugServerBreakpointToBreakpointIdAndSourceMap =
+      protocol::HashMap<v8::debug::BreakpointId,
+                        std::pair<String16, BreakpointSource>>;
+  using MuteBreakpoins = protocol::HashMap<String16, std::pair<String16, int>>;
 
   V8InspectorImpl* m_inspector;
   V8Debugger* m_debugger;
@@ -179,7 +182,7 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
   v8::Isolate* m_isolate;
   ScriptsMap m_scripts;
   BreakpointIdToDebuggerBreakpointIdsMap m_breakpointIdToDebuggerBreakpointIds;
-  DebuggerBreakpointIdToBreakpointIdMap m_debuggerBreakpointIdToBreakpointId;
+  DebugServerBreakpointToBreakpointIdAndSourceMap m_serverBreakpoints;
 
   using BreakReason =
       std::pair<String16, std::unique_ptr<protocol::DictionaryValue>>;

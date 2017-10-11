@@ -300,9 +300,6 @@ class V8_EXPORT_PRIVATE AccessBuilder final
   static FieldAccess ForOrderedHashTableBaseNumberOfElements();
   static FieldAccess ForOrderedHashTableBaseNumberOfDeletedElements();
 
-  // Provides access to OrderedHashMap elements.
-  static ElementAccess ForOrderedHashMapEntryValue();
-
   // Provides access to Dictionary fields.
   static FieldAccess ForDictionaryMaxNumberKey();
   static FieldAccess ForDictionaryNextEnumerationIndex();

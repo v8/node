@@ -4,11 +4,19 @@
 
 #include <set>
 
-#include "src/factory-inl.h"
+#include "src/factory.h"
 #include "src/identity-map.h"
 #include "src/isolate.h"
 #include "src/objects.h"
 #include "src/zone/zone.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/factory.h -> src/objects-inl.h
+#include "src/objects-inl.h"
+// FIXME(mstarzinger, marja): This is weird, but required because of the missing
+// (disallowed) include: src/feedback-vector.h ->
+// src/feedback-vector-inl.h
+#include "src/feedback-vector-inl.h"
+#include "src/v8.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
@@ -765,7 +773,6 @@ TEST(CanonicalHandleScope) {
 }
 
 TEST(GCShortCutting) {
-  ManualGCScope manual_gc_scope;
   IdentityMapTester t;
   Isolate* isolate = CcTest::i_isolate();
   Factory* factory = isolate->factory();

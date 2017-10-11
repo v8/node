@@ -43,7 +43,6 @@ class ConcurrentMarking {
                     MarkingWorklist* bailout, WeakObjects* weak_objects);
 
   void ScheduleTasks();
-  void WaitForTasks();
   void EnsureCompleted();
   void RescheduleTasksIfNeeded();
   // Flushes the local live bytes into the given marking state.
@@ -53,8 +52,6 @@ class ConcurrentMarking {
   void ClearLiveness(MemoryChunk* chunk);
 
   int TaskCount() { return task_count_; }
-
-  size_t TotalMarkedBytes();
 
  private:
   struct TaskState {
@@ -68,7 +65,6 @@ class ConcurrentMarking {
     // flag is cleared by the main thread.
     base::ConditionVariable interrupt_condition;
     LiveBytesMap live_bytes;
-    size_t marked_bytes;
     char cache_line_padding[64];
   };
   class Task;
@@ -78,12 +74,10 @@ class ConcurrentMarking {
   MarkingWorklist* bailout_;
   WeakObjects* weak_objects_;
   TaskState task_state_[kMaxTasks + 1];
-  base::AtomicNumber<size_t> total_marked_bytes_;
   base::Mutex pending_lock_;
   base::ConditionVariable pending_condition_;
   int pending_task_count_;
   bool is_pending_[kMaxTasks + 1];
-  CancelableTaskManager::Id cancelable_id_[kMaxTasks + 1];
   int task_count_;
 };
 

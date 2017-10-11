@@ -44,6 +44,10 @@ typedef Operand MemOperand;
 
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
+enum PointersToHereCheck {
+  kPointersToHereMaybeInteresting,
+  kPointersToHereAreAlwaysInteresting
+};
 
 enum class SmiOperationConstraint {
   kPreserveSourceRegister = 1 << 0,
@@ -504,6 +508,9 @@ class MacroAssembler : public TurboAssembler {
   // Load a root value where the index (or part of it) is variable.
   // The variable_offset register is added to the fixed_offset value
   // to get the index into the root-array.
+  void LoadRootIndexed(Register destination,
+                       Register variable_offset,
+                       int fixed_offset);
   void PushRoot(Heap::RootListIndex index);
 
   // Compare the object in a register to a value and jump if they are equal.
@@ -538,12 +545,19 @@ class MacroAssembler : public TurboAssembler {
 // GC Support
 
 
+  enum RememberedSetFinalAction {
+    kReturnAtEnd,
+    kFallThroughAtEnd
+  };
+
   // Record in the remembered set the fact that we have a pointer to new space
   // at the address pointed to by the addr register.  Only works if addr is not
   // in new space.
   void RememberedSetHelper(Register object,  // Used for debug code.
-                           Register addr, Register scratch,
-                           SaveFPRegsMode save_fp);
+                           Register addr,
+                           Register scratch,
+                           SaveFPRegsMode save_fp,
+                           RememberedSetFinalAction and_then);
 
   // Check if object is in new space.  Jumps if the object is not in new space.
   // The register scratch can be object itself, but scratch will be clobbered.
@@ -579,10 +593,43 @@ class MacroAssembler : public TurboAssembler {
   // The offset is the offset from the start of the object, not the offset from
   // the tagged HeapObject pointer.  For use with FieldOperand(reg, off).
   void RecordWriteField(
-      Register object, int offset, Register value, Register scratch,
+      Register object,
+      int offset,
+      Register value,
+      Register scratch,
       SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK);
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting);
+
+  // As above, but the offset has the tag presubtracted.  For use with
+  // Operand(reg, off).
+  void RecordWriteContextSlot(
+      Register context,
+      int offset,
+      Register value,
+      Register scratch,
+      SaveFPRegsMode save_fp,
+      RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting) {
+    RecordWriteField(context,
+                     offset + kHeapObjectTag,
+                     value,
+                     scratch,
+                     save_fp,
+                     remembered_set_action,
+                     smi_check,
+                     pointers_to_here_check_for_value);
+  }
+
+  void RecordWriteForMap(
+      Register object,
+      Register map,
+      Register dst,
+      SaveFPRegsMode save_fp);
 
   // For page containing |object| mark region covering |address|
   // dirty. |object| is the object being stored into, |value| is the
@@ -590,9 +637,14 @@ class MacroAssembler : public TurboAssembler {
   // operation.  RecordWrite filters out smis so it does not update
   // the write barrier if the value is a smi.
   void RecordWrite(
-      Register object, Register address, Register value, SaveFPRegsMode save_fp,
+      Register object,
+      Register address,
+      Register value,
+      SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK);
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting);
 
   // Frame restart support.
   void MaybeDropFrames();
@@ -687,6 +739,13 @@ class MacroAssembler : public TurboAssembler {
   // Functions performing a check on a known or potential smi. Returns
   // a condition that is satisfied if the check is successful.
 
+  // Are both values tagged smis.
+  Condition CheckBothSmi(Register first, Register second);
+
+  // Are either value a tagged smi.
+  Condition CheckEitherSmi(Register first,
+                           Register second,
+                           Register scratch = kScratchRegister);
   // Test-and-jump functions. Typically combines a check function
   // above with a conditional jump.
 
@@ -698,6 +757,12 @@ class MacroAssembler : public TurboAssembler {
   // Jump to label if the value is not a tagged smi.
   void JumpIfNotSmi(Operand src, Label* on_not_smi,
                     Label::Distance near_jump = Label::kFar);
+
+  // Jump if either or both register are not smi values.
+  void JumpIfNotBothSmi(Register src1,
+                        Register src2,
+                        Label* on_not_both_smi,
+                        Label::Distance near_jump = Label::kFar);
 
   // Operations on tagged smi values.
 
@@ -771,6 +836,14 @@ class MacroAssembler : public TurboAssembler {
 
   // Specialized operations
 
+  // Select the non-smi register of two registers where exactly one is a
+  // smi. If neither are smis, jump to the failure label.
+  void SelectNonSmi(Register dst,
+                    Register src1,
+                    Register src2,
+                    Label* on_not_smis,
+                    Label::Distance near_jump = Label::kFar);
+
   // Converts, if necessary, a smi to a combination of number and
   // multiplier to be used as a scaled index.
   // The src register contains a *positive* smi value. The shift is the
@@ -783,6 +856,16 @@ class MacroAssembler : public TurboAssembler {
 
   // ---------------------------------------------------------------------------
   // String macros.
+
+  void JumpIfNotBothSequentialOneByteStrings(
+      Register first_object, Register second_object, Register scratch1,
+      Register scratch2, Label* on_not_both_flat_one_byte,
+      Label::Distance near_jump = Label::kFar);
+
+  void JumpIfBothInstanceTypesAreNotSequentialOneByte(
+      Register first_object_instance_type, Register second_object_instance_type,
+      Register scratch1, Register scratch2, Label* on_fail,
+      Label::Distance near_jump = Label::kFar);
 
   // Checks if the given register or operand is a unique name
   void JumpIfNotUniqueNameInstanceType(Register reg, Label* not_unique_name,
@@ -905,6 +988,18 @@ class MacroAssembler : public TurboAssembler {
   // Always use unsigned comparisons: above and below, not less and greater.
   void CmpInstanceType(Register map, InstanceType type);
 
+  // Compare an object's map with the specified map.
+  void CompareMap(Register obj, Handle<Map> map);
+
+  // Check if the map of an object is equal to a specified map and branch to
+  // label if not. Skip the smi check if not required (object is known to be a
+  // heap object). If mode is ALLOW_ELEMENT_TRANSITION_MAPS, then also match
+  // against maps that are ElementsKind transition maps of the specified map.
+  void CheckMap(Register obj,
+                Handle<Map> map,
+                Label* fail,
+                SmiCheckType smi_check_type);
+
   void DoubleToI(Register result_reg, XMMRegister input_reg,
                  XMMRegister scratch, MinusZeroMode minus_zero_mode,
                  Label* lost_precision, Label* is_nan, Label* minus_zero,
@@ -959,6 +1054,31 @@ class MacroAssembler : public TurboAssembler {
   void PopStackHandler();
 
   // ---------------------------------------------------------------------------
+  // Allocation support
+
+  // Allocate an object in new space or old space. If the given space
+  // is exhausted control continues at the gc_required label. The allocated
+  // object is returned in result and end of the new object is returned in
+  // result_end. The register scratch can be passed as no_reg in which case
+  // an additional object reference will be added to the reloc info. The
+  // returned pointers in result and result_end have not yet been tagged as
+  // heap objects. If result_contains_top_on_entry is true the content of
+  // result is known to be the allocation top on entry (could be result_end
+  // from a previous call). If result_contains_top_on_entry is true scratch
+  // should be no_reg as it is never used.
+  void Allocate(int object_size,
+                Register result,
+                Register result_end,
+                Register scratch,
+                Label* gc_required,
+                AllocationFlags flags);
+
+  // Allocate and initialize a JSValue wrapper with the specified {constructor}
+  // and {value}.
+  void AllocateJSValue(Register result, Register constructor, Register value,
+                       Register scratch, Label* gc_required);
+
+  // ---------------------------------------------------------------------------
   // Support functions.
 
   // Machine code version of Map::GetConstructor().
@@ -972,6 +1092,10 @@ class MacroAssembler : public TurboAssembler {
 
   // Load the native context slot with the current index.
   void LoadNativeContextSlot(int index, Register dst);
+
+  // Load the initial map from the global function. The registers
+  // function and map can be the same.
+  void LoadGlobalFunctionInitialMap(Register function, Register map);
 
   // ---------------------------------------------------------------------------
   // Runtime calls
@@ -1011,6 +1135,8 @@ class MacroAssembler : public TurboAssembler {
 
   // ---------------------------------------------------------------------------
   // StatsCounter support
+
+  void SetCounter(StatsCounter* counter, int value);
   void IncrementCounter(StatsCounter* counter, int value);
   void DecrementCounter(StatsCounter* counter, int value);
 
@@ -1044,6 +1170,25 @@ class MacroAssembler : public TurboAssembler {
   void EnterExitFrameEpilogue(int arg_stack_space, bool save_doubles);
 
   void LeaveExitFrameEpilogue(bool restore_context);
+
+  // Allocation support helpers.
+  // Loads the top of new-space into the result register.
+  // Otherwise the address of the new-space top is loaded into scratch (if
+  // scratch is valid), and the new-space top is loaded into result.
+  void LoadAllocationTopHelper(Register result,
+                               Register scratch,
+                               AllocationFlags flags);
+
+  void MakeSureDoubleAlignedHelper(Register result,
+                                   Register scratch,
+                                   Label* gc_required,
+                                   AllocationFlags flags);
+
+  // Update allocation top with value in result_end register.
+  // If scratch is valid, it contains the address of the allocation top.
+  void UpdateAllocationTopHelper(Register result_end,
+                                 Register scratch,
+                                 AllocationFlags flags);
 
   // Helper for implementing JumpIfNotInNewSpace and JumpIfInNewSpace.
   void InNewSpace(Register object,

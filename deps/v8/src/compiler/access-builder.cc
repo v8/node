@@ -1079,16 +1079,6 @@ FieldAccess AccessBuilder::ForOrderedHashTableBaseNumberOfElements() {
 }
 
 // static
-ElementAccess AccessBuilder::ForOrderedHashMapEntryValue() {
-  ElementAccess const access = {kTaggedBase,
-                                OrderedHashMap::kHashTableStartOffset +
-                                    OrderedHashMap::kValueOffset * kPointerSize,
-                                Type::Any(), MachineType::AnyTagged(),
-                                kFullWriteBarrier};
-  return access;
-}
-
-// static
 FieldAccess AccessBuilder::ForDictionaryMaxNumberKey() {
   FieldAccess access = {
       kTaggedBase,

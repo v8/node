@@ -50,6 +50,11 @@ Local<String> v8_str(Isolate* isolate, const char* str) {
 
 i::MaybeHandle<i::WasmModuleObject> GetFirstArgumentAsModule(
     const v8::FunctionCallbackInfo<v8::Value>& args, ErrorThrower* thrower) {
+  if (args.Length() < 1) {
+    thrower->TypeError("Argument 0 must be a WebAssembly.Module");
+    return {};
+  }
+
   i::Handle<i::Object> arg0 = Utils::OpenHandle(*args[0]);
   if (!arg0->IsWasmModuleObject()) {
     thrower->TypeError("Argument 0 must be a WebAssembly.Module");
@@ -63,6 +68,11 @@ i::MaybeHandle<i::WasmModuleObject> GetFirstArgumentAsModule(
 
 i::wasm::ModuleWireBytes GetFirstArgumentAsBytes(
     const v8::FunctionCallbackInfo<v8::Value>& args, ErrorThrower* thrower) {
+  if (args.Length() < 1) {
+    thrower->TypeError("Argument 0 must be a buffer source");
+    return i::wasm::ModuleWireBytes(nullptr, nullptr);
+  }
+
   const uint8_t* start = nullptr;
   size_t length = 0;
   v8::Local<v8::Value> source = args[0];
@@ -114,22 +124,6 @@ void WebAssemblyCompileStreaming(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Isolate* isolate = args.GetIsolate();
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-
-  if (!i::wasm::IsWasmCodegenAllowed(i_isolate, i_isolate->native_context())) {
-    // Manually create a promise and reject it.
-    Local<Context> context = isolate->GetCurrentContext();
-    ASSIGN(Promise::Resolver, resolver, Promise::Resolver::New(context));
-    v8::ReturnValue<v8::Value> return_value = args.GetReturnValue();
-    return_value.Set(resolver->GetPromise());
-    i::wasm::ScheduledErrorThrower thrower(i_isolate,
-                                           "WebAssembly.compileStreaming()");
-    thrower.CompileError("Wasm code generation disallowed by embedder");
-    auto maybe = resolver->Reject(context, Utils::ToLocal(thrower.Reify()));
-    CHECK_IMPLIES(!maybe.FromMaybe(false),
-                  i_isolate->has_scheduled_exception());
-    return;
-  }
-
   MicrotasksScope runs_microtasks(isolate, MicrotasksScope::kRunMicrotasks);
   DCHECK_NOT_NULL(i_isolate->wasm_compile_streaming_callback());
   i_isolate->wasm_compile_streaming_callback()(args);
@@ -143,10 +137,6 @@ void WebAssemblyCompile(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   HandleScope scope(isolate);
   i::wasm::ScheduledErrorThrower thrower(i_isolate, "WebAssembly.compile()");
-
-  if (!i::wasm::IsWasmCodegenAllowed(i_isolate, i_isolate->native_context())) {
-    thrower.CompileError("Wasm code generation disallowed by embedder");
-  }
 
   Local<Context> context = isolate->GetCurrentContext();
   ASSIGN(Promise::Resolver, resolver, Promise::Resolver::New(context));
@@ -191,11 +181,6 @@ void WebAssemblyModule(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   HandleScope scope(isolate);
   i::wasm::ScheduledErrorThrower thrower(i_isolate, "WebAssembly.Module()");
-
-  if (!i::wasm::IsWasmCodegenAllowed(i_isolate, i_isolate->native_context())) {
-    thrower.CompileError("Wasm code generation disallowed by embedder");
-    return;
-  }
 
   auto bytes = GetFirstArgumentAsBytes(args, &thrower);
 
@@ -410,6 +395,16 @@ void WebAssemblyInstantiate(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Local<Promise> module_promise = resolver->GetPromise();
   args.GetReturnValue().Set(module_promise);
 
+  if (args.Length() < 1) {
+    thrower.TypeError(
+        "Argument 0 must be provided and must be either a buffer source or a "
+        "WebAssembly.Module object");
+    auto maybe = resolver->Reject(context, Utils::ToLocal(thrower.Reify()));
+    CHECK_IMPLIES(!maybe.FromMaybe(false),
+                  i_isolate->has_scheduled_exception());
+    return;
+  }
+
   Local<Value> first_arg_value = args[0];
   i::Handle<i::Object> first_arg = Utils::OpenHandle(*first_arg_value);
   if (!first_arg->IsJSObject()) {
@@ -477,12 +472,12 @@ void WebAssemblyTable(const v8::FunctionCallbackInfo<v8::Value>& args) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   HandleScope scope(isolate);
   i::wasm::ScheduledErrorThrower thrower(i_isolate, "WebAssembly.Module()");
-  if (!args[0]->IsObject()) {
+  if (args.Length() < 1 || !args[0]->IsObject()) {
     thrower.TypeError("Argument 0 must be a table descriptor");
     return;
   }
   Local<Context> context = isolate->GetCurrentContext();
-  Local<v8::Object> descriptor = Local<Object>::Cast(args[0]);
+  Local<v8::Object> descriptor = args[0]->ToObject(context).ToLocalChecked();
   // The descriptor's 'element'.
   {
     v8::MaybeLocal<v8::Value> maybe =
@@ -530,12 +525,12 @@ void WebAssemblyMemory(const v8::FunctionCallbackInfo<v8::Value>& args) {
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   HandleScope scope(isolate);
   i::wasm::ScheduledErrorThrower thrower(i_isolate, "WebAssembly.Memory()");
-  if (!args[0]->IsObject()) {
+  if (args.Length() < 1 || !args[0]->IsObject()) {
     thrower.TypeError("Argument 0 must be a memory descriptor");
     return;
   }
   Local<Context> context = isolate->GetCurrentContext();
-  Local<v8::Object> descriptor = Local<Object>::Cast(args[0]);
+  Local<v8::Object> descriptor = args[0]->ToObject(context).ToLocalChecked();
   // The descriptor's 'initial'.
   int64_t initial = 0;
   if (!GetIntegerProperty(isolate, &thrower, context, descriptor,
@@ -578,7 +573,7 @@ void WebAssemblyMemory(const v8::FunctionCallbackInfo<v8::Value>& args) {
   size_t size = static_cast<size_t>(i::wasm::WasmModule::kPageSize) *
                 static_cast<size_t>(initial);
   i::Handle<i::JSArrayBuffer> buffer = i::wasm::NewArrayBuffer(
-      i_isolate, size, internal::trap_handler::UseTrapHandler(),
+      i_isolate, size, i::FLAG_wasm_guard_pages,
       is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared);
   if (buffer.is_null()) {
     thrower.RangeError("could not allocate memory");
@@ -645,23 +640,26 @@ void WebAssemblyTableGrow(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Local<Context> context = isolate->GetCurrentContext();
   EXTRACT_THIS(receiver, WasmTableObject);
 
-  int64_t grow_by = 0;
-  if (!args[0]->IntegerValue(context).To(&grow_by)) return;
+  int64_t new_size64 = 0;
+  if (args.Length() > 0 && !args[0]->IntegerValue(context).To(&new_size64)) {
+    return;
+  }
   i::Handle<i::FixedArray> old_array(receiver->functions(), i_isolate);
   int old_size = old_array->length();
+  new_size64 += old_size;
 
   int64_t max_size64 = receiver->maximum_length()->Number();
   if (max_size64 < 0 || max_size64 > i::FLAG_wasm_max_table_size) {
     max_size64 = i::FLAG_wasm_max_table_size;
   }
 
-  if (grow_by < 0 || grow_by > max_size64 - old_size) {
-    thrower.RangeError(grow_by < 0 ? "trying to shrink table"
-                                   : "maximum table size exceeded");
+  if (new_size64 < old_size || new_size64 > max_size64) {
+    thrower.RangeError(new_size64 < old_size ? "trying to shrink table"
+                                             : "maximum table size exceeded");
     return;
   }
 
-  int new_size = static_cast<int>(old_size + grow_by);
+  int new_size = static_cast<int>(new_size64);
   receiver->Grow(i_isolate, static_cast<uint32_t>(new_size - old_size));
 
   if (new_size != old_size) {
@@ -688,7 +686,7 @@ void WebAssemblyTableGet(const v8::FunctionCallbackInfo<v8::Value>& args) {
   EXTRACT_THIS(receiver, WasmTableObject);
   i::Handle<i::FixedArray> array(receiver->functions(), i_isolate);
   int64_t i = 0;
-  if (!args[0]->IntegerValue(context).To(&i)) return;
+  if (args.Length() > 0 && !args[0]->IntegerValue(context).To(&i)) return;
   v8::ReturnValue<v8::Value> return_value = args.GetReturnValue();
   if (i < 0 || i >= array->length()) {
     thrower.RangeError("index out of bounds");
@@ -707,6 +705,11 @@ void WebAssemblyTableSet(const v8::FunctionCallbackInfo<v8::Value>& args) {
   i::wasm::ScheduledErrorThrower thrower(i_isolate, "WebAssembly.Table.set()");
   Local<Context> context = isolate->GetCurrentContext();
   EXTRACT_THIS(receiver, WasmTableObject);
+
+  if (args.Length() < 2) {
+    thrower.TypeError("Argument 1 must be null or a function");
+    return;
+  }
 
   // Parameter 0.
   int64_t index;
@@ -744,8 +747,10 @@ void WebAssemblyMemoryGrow(const v8::FunctionCallbackInfo<v8::Value>& args) {
   EXTRACT_THIS(receiver, WasmMemoryObject);
 
   int64_t delta_size = 0;
-  if (!args[0]->IntegerValue(context).To(&delta_size)) return;
-
+  if (args.Length() < 1 || !args[0]->IntegerValue(context).To(&delta_size)) {
+    thrower.TypeError("Argument 0 required, must be numeric value of pages");
+    return;
+  }
   int64_t max_size64 = receiver->maximum_pages();
   if (max_size64 < 0 ||
       max_size64 > static_cast<int64_t>(i::FLAG_wasm_max_mem_pages)) {

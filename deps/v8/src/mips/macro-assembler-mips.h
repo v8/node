@@ -77,6 +77,10 @@ enum LiFlags {
 
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
+enum PointersToHereCheck {
+  kPointersToHereMaybeInteresting,
+  kPointersToHereAreAlwaysInteresting
+};
 enum RAStatus { kRAHasNotBeenSaved, kRAHasBeenSaved };
 
 Register GetRegisterThatIsNotOneOf(Register reg1,
@@ -957,12 +961,15 @@ class MacroAssembler : public TurboAssembler {
   void IncrementalMarkingRecordWriteHelper(Register object, Register value,
                                            Register address);
 
+  enum RememberedSetFinalAction { kReturnAtEnd, kFallThroughAtEnd };
+
   // Record in the remembered set the fact that we have a pointer to new space
   // at the address pointed to by the addr register.  Only works if addr is not
   // in new space.
   void RememberedSetHelper(Register object,  // Used for debug code.
                            Register addr, Register scratch,
-                           SaveFPRegsMode save_fp);
+                           SaveFPRegsMode save_fp,
+                           RememberedSetFinalAction and_then);
 
   // Check if object is in new space.  Jumps if the object is not in new space.
   // The register scratch can be object itself, but it will be clobbered.
@@ -997,7 +1004,26 @@ class MacroAssembler : public TurboAssembler {
       Register object, int offset, Register value, Register scratch,
       RAStatus ra_status, SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK);
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting);
+
+  // As above, but the offset has the tag presubtracted.  For use with
+  // MemOperand(reg, off).
+  inline void RecordWriteContextSlot(
+      Register context, int offset, Register value, Register scratch,
+      RAStatus ra_status, SaveFPRegsMode save_fp,
+      RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting) {
+    RecordWriteField(context, offset + kHeapObjectTag, value, scratch,
+                     ra_status, save_fp, remembered_set_action, smi_check,
+                     pointers_to_here_check_for_value);
+  }
+
+  void RecordWriteForMap(Register object, Register map, Register dst,
+                         RAStatus ra_status, SaveFPRegsMode save_fp);
 
   // For a given |object| notify the garbage collector that the slot |address|
   // has been written.  |value| is the object being stored. The value and
@@ -1006,7 +1032,28 @@ class MacroAssembler : public TurboAssembler {
       Register object, Register address, Register value, RAStatus ra_status,
       SaveFPRegsMode save_fp,
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
-      SmiCheck smi_check = INLINE_SMI_CHECK);
+      SmiCheck smi_check = INLINE_SMI_CHECK,
+      PointersToHereCheck pointers_to_here_check_for_value =
+          kPointersToHereMaybeInteresting);
+
+  // ---------------------------------------------------------------------------
+  // Allocation support.
+
+  // Allocate an object in new space or old space. The object_size is
+  // specified either in bytes or in words if the allocation flag SIZE_IN_WORDS
+  // is passed. If the space is exhausted control continues at the gc_required
+  // label. The allocated object is returned in result. If the flag
+  // tag_allocated_object is true the result is tagged as as a heap object.
+  // All registers are clobbered also when control continues at the gc_required
+  // label.
+  void Allocate(int object_size, Register result, Register scratch1,
+                Register scratch2, Label* gc_required, AllocationFlags flags);
+
+  // Allocate and initialize a JSValue wrapper with the specified {constructor}
+  // and {value}.
+  void AllocateJSValue(Register result, Register constructor, Register value,
+                       Register scratch1, Register scratch2,
+                       Label* gc_required);
 
   void Pref(int32_t hint, const MemOperand& rs);
 
@@ -1041,12 +1088,23 @@ class MacroAssembler : public TurboAssembler {
   // Make sure the stack is aligned. Only emits code in debug mode.
   void AssertStackIsAligned();
 
+  // Load the global object from the current context.
+  void LoadGlobalObject(Register dst) {
+    LoadNativeContextSlot(Context::EXTENSION_INDEX, dst);
+  }
+
   // Load the global proxy from the current context.
   void LoadGlobalProxy(Register dst) {
     LoadNativeContextSlot(Context::GLOBAL_PROXY_INDEX, dst);
   }
 
   void LoadNativeContextSlot(int index, Register dst);
+
+  // Load the initial map from the global function. The registers
+  // function and map can be the same, function is then overwritten.
+  void LoadGlobalFunctionInitialMap(Register function,
+                                    Register map,
+                                    Register scratch);
 
   // -------------------------------------------------------------------------
   // JavaScript invokes.
@@ -1096,6 +1154,42 @@ class MacroAssembler : public TurboAssembler {
   void GetObjectType(Register function,
                      Register map,
                      Register type_reg);
+
+  // Compare an object's map with the specified map and its transitioned
+  // elements maps if mode is ALLOW_ELEMENT_TRANSITION_MAPS. Jumps to
+  // "branch_to" if the result of the comparison is "cond". If multiple map
+  // compares are required, the compare sequences branches to early_success.
+  void CompareMapAndBranch(Register obj,
+                           Register scratch,
+                           Handle<Map> map,
+                           Label* early_success,
+                           Condition cond,
+                           Label* branch_to);
+
+  // As above, but the map of the object is already loaded into the register
+  // which is preserved by the code generated.
+  void CompareMapAndBranch(Register obj_map,
+                           Handle<Map> map,
+                           Label* early_success,
+                           Condition cond,
+                           Label* branch_to);
+
+  // Check if the map of an object is equal to a specified map and branch to
+  // label if not. Skip the smi check if not required (object is known to be a
+  // heap object). If mode is ALLOW_ELEMENT_TRANSITION_MAPS, then also match
+  // against maps that are ElementsKind transition maps of the specificed map.
+  void CheckMap(Register obj,
+                Register scratch,
+                Handle<Map> map,
+                Label* fail,
+                SmiCheckType smi_check_type);
+
+
+  void CheckMap(Register obj,
+                Register scratch,
+                Heap::RootListIndex index,
+                Label* fail,
+                SmiCheckType smi_check_type);
 
   // Get value of the weak cell.
   void GetWeakValue(Register value, Handle<WeakCell> cell);
@@ -1207,7 +1301,21 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
   // -------------------------------------------------------------------------
   // String utilities.
 
+  // Checks if both instance types are sequential ASCII strings and jumps to
+  // label if either is not.
+  void JumpIfBothInstanceTypesAreNotSequentialOneByte(
+      Register first_object_instance_type, Register second_object_instance_type,
+      Register scratch1, Register scratch2, Label* failure);
+
   void JumpIfNotUniqueNameInstanceType(Register reg, Label* not_unique_name);
+
+  // Checks if both objects are sequential one-byte strings and jumps to label
+  // if either is not. Assumes that neither object is a smi.
+  void JumpIfNonSmisNotBothSequentialOneByteStrings(Register first,
+                                                    Register second,
+                                                    Register scratch1,
+                                                    Register scratch2,
+                                                    Label* failure);
 
   void LoadInstanceDescriptors(Register map, Register descriptors);
   void LoadAccessor(Register dst, Register holder, int accessor_index,

@@ -488,7 +488,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   // result size is greater than can be returned in registers, also reserve
   // space for the hidden argument for the result location, and space for the
   // result itself.
-  int arg_stack_space = 3;
+  int arg_stack_space = result_size() < 3 ? 3 : 4 + result_size();
 
   // Enter the exit frame that transitions from JavaScript to C++.
   if (argv_in_register()) {
@@ -518,13 +518,35 @@ void CEntryStub::Generate(MacroAssembler* masm) {
     __ CheckStackAlignment();
   }
   // Call C function.
-  __ mov(Operand(esp, 0 * kPointerSize), edi);  // argc.
-  __ mov(Operand(esp, 1 * kPointerSize), esi);  // argv.
-  __ mov(Operand(esp, 2 * kPointerSize),
-         Immediate(ExternalReference::isolate_address(isolate())));
+  if (result_size() <= 2) {
+    __ mov(Operand(esp, 0 * kPointerSize), edi);  // argc.
+    __ mov(Operand(esp, 1 * kPointerSize), esi);  // argv.
+    __ mov(Operand(esp, 2 * kPointerSize),
+           Immediate(ExternalReference::isolate_address(isolate())));
+  } else {
+    DCHECK_EQ(3, result_size());
+    // Pass a pointer to the result location as the first argument.
+    __ lea(eax, Operand(esp, 4 * kPointerSize));
+    __ mov(Operand(esp, 0 * kPointerSize), eax);
+    __ mov(Operand(esp, 1 * kPointerSize), edi);  // argc.
+    __ mov(Operand(esp, 2 * kPointerSize), esi);  // argv.
+    __ mov(Operand(esp, 3 * kPointerSize),
+           Immediate(ExternalReference::isolate_address(isolate())));
+  }
   __ call(ebx);
 
-  // Result is in eax or edx:eax - do not destroy these registers!
+  if (result_size() > 2) {
+    DCHECK_EQ(3, result_size());
+#ifndef _WIN32
+    // Restore the "hidden" argument on the stack which was popped by caller.
+    __ sub(esp, Immediate(kPointerSize));
+#endif
+    // Read result values stored on stack. Result is stored above the arguments.
+    __ mov(kReturnRegister0, Operand(esp, 4 * kPointerSize));
+    __ mov(kReturnRegister1, Operand(esp, 5 * kPointerSize));
+    __ mov(kReturnRegister2, Operand(esp, 6 * kPointerSize));
+  }
+  // Result is in eax, edx:eax or edi:edx:eax - do not destroy these registers!
 
   // Check result for exception sentinel.
   Label exception_returned;
@@ -1031,7 +1053,8 @@ void RecordWriteStub::Generate(MacroAssembler* masm) {
   __ jmp(&skip_to_incremental_compacting, Label::kFar);
 
   if (remembered_set_action() == EMIT_REMEMBERED_SET) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }
@@ -1071,7 +1094,8 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
         mode);
     InformIncrementalMarker(masm);
     regs_.Restore(masm);
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
 
     __ bind(&dont_need_remembered_set);
   }
@@ -1125,7 +1149,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }
@@ -1169,7 +1194,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ ret(0);
   }

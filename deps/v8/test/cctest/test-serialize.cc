@@ -203,7 +203,6 @@ UNINITIALIZED_TEST(StartupSerializerOnce) {
   DisableAlwaysOpt();
   v8::Isolate* isolate = TestIsolate::NewInitialized(true);
   StartupBlobs blobs = Serialize(isolate);
-  isolate->Dispose();
   isolate = Deserialize(blobs);
   blobs.Dispose();
   {
@@ -272,7 +271,6 @@ UNINITIALIZED_TEST(StartupSerializerTwice) {
   v8::Isolate* isolate = TestIsolate::NewInitialized(true);
   StartupBlobs blobs1 = Serialize(isolate);
   StartupBlobs blobs2 = Serialize(isolate);
-  isolate->Dispose();
   blobs1.Dispose();
   isolate = Deserialize(blobs2);
   blobs2.Dispose();
@@ -293,7 +291,6 @@ UNINITIALIZED_TEST(StartupSerializerOnceRunScript) {
   DisableAlwaysOpt();
   v8::Isolate* isolate = TestIsolate::NewInitialized(true);
   StartupBlobs blobs = Serialize(isolate);
-  isolate->Dispose();
   isolate = Deserialize(blobs);
   blobs.Dispose();
   {
@@ -320,7 +317,6 @@ UNINITIALIZED_TEST(StartupSerializerTwiceRunScript) {
   v8::Isolate* isolate = TestIsolate::NewInitialized(true);
   StartupBlobs blobs1 = Serialize(isolate);
   StartupBlobs blobs2 = Serialize(isolate);
-  isolate->Dispose();
   blobs1.Dispose();
   isolate = Deserialize(blobs2);
   blobs2.Dispose();
@@ -1204,10 +1200,9 @@ static Handle<SharedFunctionInfo> CompileScript(
     Isolate* isolate, Handle<String> source, Handle<String> name,
     ScriptData** cached_data, v8::ScriptCompiler::CompileOptions options) {
   return Compiler::GetSharedFunctionInfoForScript(
-             source, name, 0, 0, v8::ScriptOriginOptions(), Handle<Object>(),
-             Handle<Context>(isolate->native_context()), NULL, cached_data,
-             options, NOT_NATIVES_CODE, Handle<FixedArray>())
-      .ToHandleChecked();
+      source, name, 0, 0, v8::ScriptOriginOptions(), Handle<Object>(),
+      Handle<Context>(isolate->native_context()), NULL, cached_data, options,
+      NOT_NATIVES_CODE, Handle<FixedArray>());
 }
 
 TEST(CodeSerializerOnePlusOne) {
@@ -1357,10 +1352,11 @@ TEST(CodeSerializerLargeCodeObject) {
   // code. Don't even bother generating optimized code to avoid timeouts.
   FLAG_always_opt = false;
 
-  Vector<const uint8_t> source =
-      ConstructSource(STATIC_CHAR_VECTOR("var j=1; if (j == 0) {"),
-                      STATIC_CHAR_VECTOR("for (let i of Object.prototype);"),
-                      STATIC_CHAR_VECTOR("} j=7; j"), 1100);
+  Vector<const uint8_t> source = ConstructSource(
+      STATIC_CHAR_VECTOR("var j=1; if (j == 0) {"),
+      STATIC_CHAR_VECTOR(
+          "for (let i of Object.prototype) for (let k = 0; k < 0; ++k);"),
+      STATIC_CHAR_VECTOR("} j=7; j"), 1100);
   Handle<String> source_str =
       isolate->factory()->NewStringFromOneByte(source).ToHandleChecked();
 
@@ -2094,13 +2090,11 @@ TEST(Regress503552) {
   Handle<String> source = isolate->factory()->NewStringFromAsciiChecked(
       "function f() {} function g() {}");
   ScriptData* script_data = NULL;
-  Handle<SharedFunctionInfo> shared =
-      Compiler::GetSharedFunctionInfoForScript(
-          source, MaybeHandle<String>(), 0, 0, v8::ScriptOriginOptions(),
-          MaybeHandle<Object>(), Handle<Context>(isolate->native_context()),
-          NULL, &script_data, v8::ScriptCompiler::kProduceCodeCache,
-          NOT_NATIVES_CODE, MaybeHandle<FixedArray>())
-          .ToHandleChecked();
+  Handle<SharedFunctionInfo> shared = Compiler::GetSharedFunctionInfoForScript(
+      source, Handle<String>(), 0, 0, v8::ScriptOriginOptions(),
+      Handle<Object>(), Handle<Context>(isolate->native_context()), NULL,
+      &script_data, v8::ScriptCompiler::kProduceCodeCache, NOT_NATIVES_CODE,
+      Handle<FixedArray>());
   delete script_data;
 
   heap::SimulateIncrementalMarking(isolate->heap());

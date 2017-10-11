@@ -22,8 +22,7 @@ TestingModuleBuilder::TestingModuleBuilder(
       mem_start_(nullptr),
       mem_size_(0),
       interpreter_(nullptr),
-      runtime_exception_support_(exception_support),
-      lower_simd_(mode == kExecuteSimdLowered) {
+      runtime_exception_support_(exception_support) {
   WasmJs::Install(isolate_, true);
   test_module_.globals_size = kMaxGlobalsSize;
   memset(globals_data_, 0, sizeof(globals_data_));
@@ -40,8 +39,7 @@ byte* TestingModuleBuilder::AddMemory(uint32_t size) {
   DCHECK(!instance_object_->has_memory_buffer());
   DCHECK(!instance_object_->has_memory_object());
   test_module_.has_memory = true;
-  const bool enable_guard_regions =
-      trap_handler::UseTrapHandler() && test_module_.is_wasm();
+  bool enable_guard_regions = EnableGuardRegions() && test_module_.is_wasm();
   uint32_t alloc_size =
       enable_guard_regions ? RoundUp(size, base::OS::CommitPageSize()) : size;
   Handle<JSArrayBuffer> new_buffer =
@@ -431,7 +429,7 @@ void WasmFunctionCompiler::Build(const byte* start, const byte* end) {
   compiler::WasmCompilationUnit unit(
       isolate(), &module_env, func_body, func_name, function_->func_index,
       CEntryStub(isolate(), 1).GetCode(), isolate()->counters(),
-      builder_->runtime_exception_support(), builder_->lower_simd());
+      builder_->runtime_exception_support());
   unit.ExecuteCompilation();
   Handle<Code> code = unit.FinishCompilation(&thrower).ToHandleChecked();
   CHECK(!thrower.error());

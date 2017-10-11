@@ -1951,13 +1951,8 @@ class PropertyArray : public HeapObject {
   typedef BodyDescriptor BodyDescriptorWeak;
 
   static const int kLengthMask = 0x3ff;
-#if V8_TARGET_ARCH_64_BIT
   static const int kHashMask = 0x7ffffc00;
   STATIC_ASSERT(kLengthMask + kHashMask == 0x7fffffff);
-#else
-  static const int kHashMask = 0x3ffffc00;
-  STATIC_ASSERT(kLengthMask + kHashMask == 0x3fffffff);
-#endif
 
   static const int kMaxLength = kLengthMask;
   STATIC_ASSERT(kMaxLength > kMaxNumberOfDescriptors);
@@ -6527,8 +6522,8 @@ class JSArray: public JSObject {
 
   static const int kInitialMaxFastElementArray =
       (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - kSize -
-       AllocationMemento::kSize) >>
-      kDoubleSizeLog2;
+       AllocationMemento::kSize) /
+      kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArray);

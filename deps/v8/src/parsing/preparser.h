@@ -1012,7 +1012,11 @@ class PreParser : public ParserBase<PreParser> {
       if (catch_name == nullptr) {
         catch_name = ast_value_factory()->dot_catch_string();
       }
-      catch_info->scope->DeclareCatchVariableName(catch_name);
+      // Unlike in the parser, we need to declare the catch variable as LET
+      // variable, so that it won't get hoisted out of the scope. (Parser uses
+      // DeclareLocal instead of DeclareVariable to prevent hoisting.) Another
+      // solution would've been to add DeclareLocalName just for this purpose.
+      catch_info->scope->DeclareVariableName(catch_name, LET);
 
       if (catch_info->pattern.variables_ != nullptr) {
         for (auto variable : *catch_info->pattern.variables_) {

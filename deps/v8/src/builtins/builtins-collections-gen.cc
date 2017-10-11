@@ -876,7 +876,7 @@ std::tuple<Node*, Node*, Node*> CollectionsBuiltinsAssembler::NextSkipHoles(
                                          var_index.value());
 }
 
-TF_BUILTIN(MapPrototypeGet, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(MapGet, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* const key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -884,24 +884,20 @@ TF_BUILTIN(MapPrototypeGet, CollectionsBuiltinsAssembler) {
   ThrowIfNotInstanceType(context, receiver, JS_MAP_TYPE, "Map.prototype.get");
 
   Node* const table = LoadObjectField(receiver, JSMap::kTableOffset);
-  Node* index =
-      CallBuiltin(Builtins::kFindOrderedHashMapEntry, context, table, key);
+  Node* index = CallBuiltin(Builtins::kMapLookupHashIndex, context, table, key);
 
   Label if_found(this), if_not_found(this);
   Branch(SmiGreaterThanOrEqual(index, SmiConstant(0)), &if_found,
          &if_not_found);
 
   BIND(&if_found);
-  Return(LoadFixedArrayElement(
-      table, SmiUntag(index),
-      (OrderedHashMap::kHashTableStartIndex + OrderedHashMap::kValueOffset) *
-          kPointerSize));
+  Return(LoadFixedArrayElement(table, SmiUntag(index)));
 
   BIND(&if_not_found);
   Return(UndefinedConstant());
 }
 
-TF_BUILTIN(MapPrototypeHas, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(MapHas, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* const key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -909,8 +905,7 @@ TF_BUILTIN(MapPrototypeHas, CollectionsBuiltinsAssembler) {
   ThrowIfNotInstanceType(context, receiver, JS_MAP_TYPE, "Map.prototype.has");
 
   Node* const table = LoadObjectField(receiver, JSMap::kTableOffset);
-  Node* index =
-      CallBuiltin(Builtins::kFindOrderedHashMapEntry, context, table, key);
+  Node* index = CallBuiltin(Builtins::kMapLookupHashIndex, context, table, key);
 
   Label if_found(this), if_not_found(this);
   Branch(SmiGreaterThanOrEqual(index, SmiConstant(0)), &if_found,
@@ -940,7 +935,7 @@ Node* CollectionsBuiltinsAssembler::NormalizeNumberKey(Node* const key) {
   return result.value();
 }
 
-TF_BUILTIN(MapPrototypeSet, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(MapSet, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* key = Parameter(Descriptor::kKey);
   Node* const value = Parameter(Descriptor::kValue);
@@ -1052,7 +1047,7 @@ void CollectionsBuiltinsAssembler::StoreOrderedHashMapNewEntry(
                                  SmiAdd(number_of_elements, SmiConstant(1)));
 }
 
-TF_BUILTIN(MapPrototypeDelete, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(MapDelete, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1111,7 +1106,7 @@ TF_BUILTIN(MapPrototypeDelete, CollectionsBuiltinsAssembler) {
   Return(TrueConstant());
 }
 
-TF_BUILTIN(SetPrototypeAdd, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(SetAdd, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1215,7 +1210,7 @@ void CollectionsBuiltinsAssembler::StoreOrderedHashSetNewEntry(
                                  SmiAdd(number_of_elements, SmiConstant(1)));
 }
 
-TF_BUILTIN(SetPrototypeDelete, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(SetDelete, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1442,7 +1437,7 @@ TF_BUILTIN(MapIteratorPrototypeNext, CollectionsBuiltinsAssembler) {
   }
 }
 
-TF_BUILTIN(SetPrototypeHas, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(SetHas, CollectionsBuiltinsAssembler) {
   Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* const key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1693,7 +1688,7 @@ void CollectionsBuiltinsAssembler::TryLookupOrderedHashTableIndex(
   }
 }
 
-TF_BUILTIN(FindOrderedHashMapEntry, CollectionsBuiltinsAssembler) {
+TF_BUILTIN(MapLookupHashIndex, CollectionsBuiltinsAssembler) {
   Node* const table = Parameter(Descriptor::kTable);
   Node* const key = Parameter(Descriptor::kKey);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1706,7 +1701,10 @@ TF_BUILTIN(FindOrderedHashMapEntry, CollectionsBuiltinsAssembler) {
       table, key, context, &entry_start_position, &entry_found, &not_found);
 
   BIND(&entry_found);
-  Return(SmiTag(entry_start_position.value()));
+  Node* index = IntPtrAdd(entry_start_position.value(),
+                          IntPtrConstant(OrderedHashMap::kHashTableStartIndex +
+                                         OrderedHashMap::kValueOffset));
+  Return(SmiTag(index));
 
   BIND(&not_found);
   Return(SmiConstant(-1));

@@ -5,7 +5,6 @@
 let {session, contextGroup, Protocol} = InspectorTest.start('Checks that debugger agent uses source content to restore breakpoints.');
 
 Protocol.Debugger.enable();
-var finishedTests = 0;
 InspectorTest.runTestSuite([
   function testSameSource(next) {
     var source = 'function foo() {\nboo();\n}';
@@ -44,28 +43,27 @@ InspectorTest.runTestSuite([
   }
 ]);
 
+var finishedTests = 0;
 async function test(source, newSource, location, next) {
-  function dumpSourceWithBreakpoint(source, location) {
-    var lineNumber = location.lineNumber;
-    var columnNumber = location.columnNumber;
-    var lines = source.split('\n');
+  var firstBreakpoint = true;
+  Protocol.Debugger.onBreakpointResolved(message => {
+    var lineNumber = message.params.location.lineNumber;
+    var columnNumber = message.params.location.columnNumber;
+    var currentSource = firstBreakpoint ? source : newSource;
+    var lines = currentSource.split('\n');
     lines = lines.map(line => line.length > 80 ? line.substring(0, 77) + '...' : line);
     lines[lineNumber] = lines[lineNumber].slice(0, columnNumber) + '#' + lines[lineNumber].slice(columnNumber);
     InspectorTest.log(lines.join('\n'));
-  }
-
-  Protocol.Debugger.onBreakpointResolved(message => {
-    dumpSourceWithBreakpoint(newSource, message.params.location);
-  })
+    firstBreakpoint = false;
+  });
 
   var sourceURL = `test${++finishedTests}.js`;
-  await Protocol.Runtime.evaluate({ expression: `${source}\n//# sourceURL=${sourceURL}` });
-  let {result:{locations}} = await Protocol.Debugger.setBreakpointByUrl({
+  await Protocol.Debugger.setBreakpointByUrl({
     url: sourceURL,
     lineNumber: location.lineNumber,
     columnNumber: location.columnNumber
   });
-  dumpSourceWithBreakpoint(source, locations[0]);
+  await Protocol.Runtime.evaluate({ expression: `${source}\n//# sourceURL=${sourceURL}` });
   await Protocol.Runtime.evaluate({ expression: `${newSource}\n//# sourceURL=${sourceURL}` });
   next();
 }

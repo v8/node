@@ -1291,7 +1291,8 @@ enum ParserFlag {
   kAllowHarmonyDynamicImport,
   kAllowHarmonyAsyncIteration,
   kAllowHarmonyTemplateEscapes,
-  kAllowHarmonyImportMeta,
+  kAllowHarmonyDoExpressions,
+  kAllowHarmonyOptionalCatchBinding,
 };
 
 enum ParserSyncTestResult {
@@ -1309,10 +1310,12 @@ void SetGlobalFlags(i::EnumSet<ParserFlag> flags) {
   i::FLAG_harmony_object_rest_spread =
       flags.Contains(kAllowHarmonyObjectRestSpread);
   i::FLAG_harmony_dynamic_import = flags.Contains(kAllowHarmonyDynamicImport);
-  i::FLAG_harmony_import_meta = flags.Contains(kAllowHarmonyImportMeta);
   i::FLAG_harmony_async_iteration = flags.Contains(kAllowHarmonyAsyncIteration);
   i::FLAG_harmony_template_escapes =
       flags.Contains(kAllowHarmonyTemplateEscapes);
+  i::FLAG_harmony_do_expressions = flags.Contains(kAllowHarmonyDoExpressions);
+  i::FLAG_harmony_optional_catch_binding =
+      flags.Contains(kAllowHarmonyOptionalCatchBinding);
 }
 
 void SetParserFlags(i::PreParser* parser, i::EnumSet<ParserFlag> flags) {
@@ -1327,12 +1330,14 @@ void SetParserFlags(i::PreParser* parser, i::EnumSet<ParserFlag> flags) {
       flags.Contains(kAllowHarmonyObjectRestSpread));
   parser->set_allow_harmony_dynamic_import(
       flags.Contains(kAllowHarmonyDynamicImport));
-  parser->set_allow_harmony_import_meta(
-      flags.Contains(kAllowHarmonyImportMeta));
   parser->set_allow_harmony_async_iteration(
       flags.Contains(kAllowHarmonyAsyncIteration));
   parser->set_allow_harmony_template_escapes(
       flags.Contains(kAllowHarmonyTemplateEscapes));
+  parser->set_allow_harmony_do_expressions(
+      flags.Contains(kAllowHarmonyDoExpressions));
+  parser->set_allow_harmony_optional_catch_binding(
+      flags.Contains(kAllowHarmonyOptionalCatchBinding));
 }
 
 void TestParserSyncWithFlags(i::Handle<i::String> source,
@@ -2578,6 +2583,66 @@ TEST(NoErrorsTryCatchFinally) {
   RunParserSyncTest(context_data, statement_data, kSuccess);
 }
 
+TEST(OptionalCatchBinding) {
+  // clang-format off
+  const char* context_data[][2] = {
+    {"", ""},
+    {"'use strict';", ""},
+    {"try {", "} catch (e) { }"},
+    {"try {} catch (e) {", "}"},
+    {"try {", "} catch ({e}) { }"},
+    {"try {} catch ({e}) {", "}"},
+    {"function f() {", "}"},
+    { NULL, NULL }
+  };
+
+  const char* statement_data[] = {
+    "try { } catch { }",
+    "try { } catch { } finally { }",
+    "try { let e; } catch { let e; }",
+    "try { let e; } catch { let e; } finally { let e; }",
+    NULL
+  };
+  // clang-format on
+
+  // No error with flag
+  static const ParserFlag flags[] = {kAllowHarmonyOptionalCatchBinding};
+  RunParserSyncTest(context_data, statement_data, kSuccess, NULL, 0, flags,
+                    arraysize(flags));
+
+  // Still an error without flag
+  RunParserSyncTest(context_data, statement_data, kError);
+}
+
+TEST(OptionalCatchBindingInDoExpression) {
+  // This is an edge case no otherwise hit: a catch scope in a parameter
+  // expression which needs its own scope.
+  // clang-format off
+  const char* context_data[][2] = {
+    {"((x = (eval(''), do {", "}))=>{})()"},
+    { NULL, NULL }
+  };
+
+  const char* statement_data[] = {
+    "try { } catch { }",
+    "try { } catch { } finally { }",
+    "try { let e; } catch { let e; }",
+    "try { let e; } catch { let e; } finally { let e; }",
+    NULL
+  };
+  // clang-format on
+
+  // No error with flag
+  static const ParserFlag do_and_catch_flags[] = {
+      kAllowHarmonyDoExpressions, kAllowHarmonyOptionalCatchBinding};
+  RunParserSyncTest(context_data, statement_data, kSuccess, NULL, 0,
+                    do_and_catch_flags, arraysize(do_and_catch_flags));
+
+  // Still an error without flag
+  static const ParserFlag do_flag[] = {kAllowHarmonyDoExpressions};
+  RunParserSyncTest(context_data, statement_data, kError, NULL, 0, do_flag,
+                    arraysize(do_flag));
+}
 
 TEST(ErrorsRegexpLiteral) {
   const char* context_data[][2] = {
@@ -3640,81 +3705,81 @@ TEST(MaybeAssignedInsideLoop) {
       {1, "for (j of x) { [foo] = [j] }", top},
       {1, "for (j of x) { var foo = j }", top},
       {1, "for (j of x) { var [foo] = [j] }", top},
-      {0, "for (j of x) { let foo = j }", {2}},
-      {0, "for (j of x) { let [foo] = [j] }", {2}},
-      {0, "for (j of x) { const foo = j }", {2}},
-      {0, "for (j of x) { const [foo] = [j] }", {2}},
-      {0, "for (j of x) { function foo() {return j} }", {2}},
+      {0, "for (j of x) { let foo = j }", {1}},
+      {0, "for (j of x) { let [foo] = [j] }", {1}},
+      {0, "for (j of x) { const foo = j }", {1}},
+      {0, "for (j of x) { const [foo] = [j] }", {1}},
+      {0, "for (j of x) { function foo() {return j} }", {1}},
 
       {1, "for ({j} of x) { foo = j }", top},
       {1, "for ({j} of x) { [foo] = [j] }", top},
       {1, "for ({j} of x) { var foo = j }", top},
       {1, "for ({j} of x) { var [foo] = [j] }", top},
-      {0, "for ({j} of x) { let foo = j }", {2}},
-      {0, "for ({j} of x) { let [foo] = [j] }", {2}},
-      {0, "for ({j} of x) { const foo = j }", {2}},
-      {0, "for ({j} of x) { const [foo] = [j] }", {2}},
-      {0, "for ({j} of x) { function foo() {return j} }", {2}},
+      {0, "for ({j} of x) { let foo = j }", {1}},
+      {0, "for ({j} of x) { let [foo] = [j] }", {1}},
+      {0, "for ({j} of x) { const foo = j }", {1}},
+      {0, "for ({j} of x) { const [foo] = [j] }", {1}},
+      {0, "for ({j} of x) { function foo() {return j} }", {1}},
 
       {1, "for (var j of x) { foo = j }", top},
       {1, "for (var j of x) { [foo] = [j] }", top},
       {1, "for (var j of x) { var foo = j }", top},
       {1, "for (var j of x) { var [foo] = [j] }", top},
-      {0, "for (var j of x) { let foo = j }", {2}},
-      {0, "for (var j of x) { let [foo] = [j] }", {2}},
-      {0, "for (var j of x) { const foo = j }", {2}},
-      {0, "for (var j of x) { const [foo] = [j] }", {2}},
-      {0, "for (var j of x) { function foo() {return j} }", {2}},
+      {0, "for (var j of x) { let foo = j }", {1}},
+      {0, "for (var j of x) { let [foo] = [j] }", {1}},
+      {0, "for (var j of x) { const foo = j }", {1}},
+      {0, "for (var j of x) { const [foo] = [j] }", {1}},
+      {0, "for (var j of x) { function foo() {return j} }", {1}},
 
       {1, "for (var {j} of x) { foo = j }", top},
       {1, "for (var {j} of x) { [foo] = [j] }", top},
       {1, "for (var {j} of x) { var foo = j }", top},
       {1, "for (var {j} of x) { var [foo] = [j] }", top},
-      {0, "for (var {j} of x) { let foo = j }", {2}},
-      {0, "for (var {j} of x) { let [foo] = [j] }", {2}},
-      {0, "for (var {j} of x) { const foo = j }", {2}},
-      {0, "for (var {j} of x) { const [foo] = [j] }", {2}},
-      {0, "for (var {j} of x) { function foo() {return j} }", {2}},
+      {0, "for (var {j} of x) { let foo = j }", {1}},
+      {0, "for (var {j} of x) { let [foo] = [j] }", {1}},
+      {0, "for (var {j} of x) { const foo = j }", {1}},
+      {0, "for (var {j} of x) { const [foo] = [j] }", {1}},
+      {0, "for (var {j} of x) { function foo() {return j} }", {1}},
 
       {1, "for (let j of x) { foo = j }", top},
       {1, "for (let j of x) { [foo] = [j] }", top},
       {1, "for (let j of x) { var foo = j }", top},
       {1, "for (let j of x) { var [foo] = [j] }", top},
-      {0, "for (let j of x) { let foo = j }", {0, 2, 0}},
-      {0, "for (let j of x) { let [foo] = [j] }", {0, 2, 0}},
-      {0, "for (let j of x) { const foo = j }", {0, 2, 0}},
-      {0, "for (let j of x) { const [foo] = [j] }", {0, 2, 0}},
-      {0, "for (let j of x) { function foo() {return j} }", {0, 2, 0}},
+      {0, "for (let j of x) { let foo = j }", {0, 1, 0}},
+      {0, "for (let j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {0, "for (let j of x) { const foo = j }", {0, 1, 0}},
+      {0, "for (let j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {0, "for (let j of x) { function foo() {return j} }", {0, 1, 0}},
 
       {1, "for (let {j} of x) { foo = j }", top},
       {1, "for (let {j} of x) { [foo] = [j] }", top},
       {1, "for (let {j} of x) { var foo = j }", top},
       {1, "for (let {j} of x) { var [foo] = [j] }", top},
-      {0, "for (let {j} of x) { let foo = j }", {0, 2, 0}},
-      {0, "for (let {j} of x) { let [foo] = [j] }", {0, 2, 0}},
-      {0, "for (let {j} of x) { const foo = j }", {0, 2, 0}},
-      {0, "for (let {j} of x) { const [foo] = [j] }", {0, 2, 0}},
-      {0, "for (let {j} of x) { function foo() {return j} }", {0, 2, 0}},
+      {0, "for (let {j} of x) { let foo = j }", {0, 1, 0}},
+      {0, "for (let {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {0, "for (let {j} of x) { const foo = j }", {0, 1, 0}},
+      {0, "for (let {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {0, "for (let {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
       {1, "for (const j of x) { foo = j }", top},
       {1, "for (const j of x) { [foo] = [j] }", top},
       {1, "for (const j of x) { var foo = j }", top},
       {1, "for (const j of x) { var [foo] = [j] }", top},
-      {0, "for (const j of x) { let foo = j }", {0, 2, 0}},
-      {0, "for (const j of x) { let [foo] = [j] }", {0, 2, 0}},
-      {0, "for (const j of x) { const foo = j }", {0, 2, 0}},
-      {0, "for (const j of x) { const [foo] = [j] }", {0, 2, 0}},
-      {0, "for (const j of x) { function foo() {return j} }", {0, 2, 0}},
+      {0, "for (const j of x) { let foo = j }", {0, 1, 0}},
+      {0, "for (const j of x) { let [foo] = [j] }", {0, 1, 0}},
+      {0, "for (const j of x) { const foo = j }", {0, 1, 0}},
+      {0, "for (const j of x) { const [foo] = [j] }", {0, 1, 0}},
+      {0, "for (const j of x) { function foo() {return j} }", {0, 1, 0}},
 
       {1, "for (const {j} of x) { foo = j }", top},
       {1, "for (const {j} of x) { [foo] = [j] }", top},
       {1, "for (const {j} of x) { var foo = j }", top},
       {1, "for (const {j} of x) { var [foo] = [j] }", top},
-      {0, "for (const {j} of x) { let foo = j }", {0, 2, 0}},
-      {0, "for (const {j} of x) { let [foo] = [j] }", {0, 2, 0}},
-      {0, "for (const {j} of x) { const foo = j }", {0, 2, 0}},
-      {0, "for (const {j} of x) { const [foo] = [j] }", {0, 2, 0}},
-      {0, "for (const {j} of x) { function foo() {return j} }", {0, 2, 0}},
+      {0, "for (const {j} of x) { let foo = j }", {0, 1, 0}},
+      {0, "for (const {j} of x) { let [foo] = [j] }", {0, 1, 0}},
+      {0, "for (const {j} of x) { const foo = j }", {0, 1, 0}},
+      {0, "for (const {j} of x) { const [foo] = [j] }", {0, 1, 0}},
+      {0, "for (const {j} of x) { function foo() {return j} }", {0, 1, 0}},
 
       {1, "for (j in x) { foo = j }", top},
       {1, "for (j in x) { [foo] = [j] }", top},
@@ -7911,9 +7976,6 @@ TEST(DestructuringAssignmentNegativeTests) {
     "{ new.target }",
     "{ x: new.target }",
     "{ x: new.target = 1 }",
-    "{ import.meta }",
-    "{ x: import.meta }",
-    "{ x: import.meta = 1 }",
     "[x--]",
     "[--x = 1]",
     "[x()]",
@@ -7921,8 +7983,6 @@ TEST(DestructuringAssignmentNegativeTests) {
     "[this = 1]",
     "[new.target]",
     "[new.target = 1]",
-    "[import.meta]",
-    "[import.meta = 1]",
     "[super]",
     "[super = 1]",
     "[function f() {}]",
@@ -8323,106 +8383,6 @@ TEST(NewTarget) {
   RunParserSyncTest(bad_context_data, data, kError);
 }
 
-TEST(ImportMetaSuccess) {
-  // clang-format off
-  const char* context_data[][2] = {
-    {"", ""},
-    {"'use strict';", ""},
-    {"function f() {", "}"},
-    {"'use strict'; function f() {", "}"},
-    {"var f = function() {", "}"},
-    {"'use strict'; var f = function() {", "}"},
-    {"({m: function() {", "}})"},
-    {"'use strict'; ({m: function() {", "}})"},
-    {"({m() {", "}})"},
-    {"'use strict'; ({m() {", "}})"},
-    {"({get x() {", "}})"},
-    {"'use strict'; ({get x() {", "}})"},
-    {"({set x(_) {", "}})"},
-    {"'use strict'; ({set x(_) {", "}})"},
-    {"class C {m() {", "}}"},
-    {"class C {get x() {", "}}"},
-    {"class C {set x(_) {", "}}"},
-    {NULL}
-  };
-
-  const char* data[] = {
-    "import.meta",
-    "() => { import.meta }",
-    "() => import.meta",
-    "if (1) { import.meta }",
-    "if (1) {} else { import.meta }",
-    "while (0) { import.meta }",
-    "do { import.meta } while (0)",
-    "import.meta.url",
-    "import.meta[0]",
-    "import.meta.couldBeMutable = true",
-    "import.meta()",
-    "new import.meta.MagicClass",
-    "new import.meta",
-    "t = [...import.meta]",
-    "f = {...import.meta}",
-    "delete import.meta",
-    NULL
-  };
-
-  // clang-format on
-
-  // Making sure the same *wouldn't* parse without the flags
-  RunModuleParserSyncTest(context_data, data, kError, NULL, 0, NULL, 0, NULL, 0,
-                          true, true);
-
-  static const ParserFlag flags[] = {
-      kAllowHarmonyImportMeta, kAllowHarmonyDynamicImport,
-      kAllowHarmonyObjectRestSpread,
-  };
-  // 2.1.1 Static Semantics: Early Errors
-  // ImportMeta
-  // * It is an early Syntax Error if Module is not the syntactic goal symbol.
-  RunParserSyncTest(context_data, data, kError, NULL, 0, flags,
-                    arraysize(flags));
-  // Making sure the same wouldn't parse without the flags either
-  RunParserSyncTest(context_data, data, kError);
-
-  RunModuleParserSyncTest(context_data, data, kSuccess, NULL, 0, flags,
-                          arraysize(flags));
-}
-
-TEST(ImportMetaFailure) {
-  // clang-format off
-  const char* context_data[][2] = {
-    {"var ", ""},
-    {"let ", ""},
-    {"const ", ""},
-    {"var [", "] = [1]"},
-    {"([", "] = [1])"},
-    {"({", "} = {1})"},
-    {"var {", " = 1} = 1"},
-    {"for (var ", " of [1]) {}"},
-    {NULL}
-  };
-
-  const char* data[] = {
-    "import.meta",
-    NULL
-  };
-
-  // clang-format on
-
-  static const ParserFlag flags[] = {
-      kAllowHarmonyImportMeta, kAllowHarmonyDynamicImport,
-      kAllowHarmonyObjectRestSpread,
-  };
-
-  RunParserSyncTest(context_data, data, kError, NULL, 0, flags,
-                    arraysize(flags));
-  RunModuleParserSyncTest(context_data, data, kError, NULL, 0, flags,
-                          arraysize(flags));
-
-  RunModuleParserSyncTest(context_data, data, kError, NULL, 0, NULL, 0, NULL, 0,
-                          true, true);
-  RunParserSyncTest(context_data, data, kError);
-}
 
 TEST(ConstSloppy) {
   // clang-format off

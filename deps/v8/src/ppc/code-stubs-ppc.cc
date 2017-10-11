@@ -381,6 +381,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
 
   // Pass buffer for return value on stack if necessary
   bool needs_return_buffer =
+      result_size() > 2 ||
       (result_size() == 2 && !ABI_RETURNS_OBJECT_PAIRS_IN_REGS);
   if (needs_return_buffer) {
     arg_stack_space += result_size();
@@ -436,6 +437,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
 
   // If return value is on the stack, pop it to registers.
   if (needs_return_buffer) {
+    if (result_size() > 2) __ LoadP(r5, MemOperand(r3, 2 * kPointerSize));
     __ LoadP(r4, MemOperand(r3, kPointerSize));
     __ LoadP(r3, MemOperand(r3));
   }
@@ -1070,7 +1072,8 @@ void RecordWriteStub::Generate(MacroAssembler* masm) {
   __ blt(&skip_to_incremental_compacting, cr2);
 
   if (remembered_set_action() == EMIT_REMEMBERED_SET) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   }
   __ Ret();
 
@@ -1105,7 +1108,8 @@ void RecordWriteStub::GenerateIncremental(MacroAssembler* masm, Mode mode) {
         masm, kUpdateRememberedSetOnNoNeedToInformIncrementalMarker, mode);
     InformIncrementalMarker(masm);
     regs_.Restore(masm);
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
 
     __ bind(&dont_need_remembered_set);
   }
@@ -1155,7 +1159,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ Ret();
   }
@@ -1194,7 +1199,8 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
   regs_.Restore(masm);
   if (on_no_need == kUpdateRememberedSetOnNoNeedToInformIncrementalMarker) {
-    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode());
+    __ RememberedSetHelper(object(), address(), value(), save_fp_regs_mode(),
+                           MacroAssembler::kReturnAtEnd);
   } else {
     __ Ret();
   }
