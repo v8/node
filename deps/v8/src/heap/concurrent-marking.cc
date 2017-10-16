@@ -80,6 +80,11 @@ class ConcurrentMarkingVisitor final
         marking_state_(live_bytes),
         task_id_(task_id) {}
 
+  template <typename T>
+  static V8_INLINE T* Cast(HeapObject* object) {
+    return T::cast(object);
+  }
+
   bool ShouldVisit(HeapObject* object) {
     return marking_state_.GreyToBlack(object);
   }
@@ -249,15 +254,11 @@ class ConcurrentMarkingVisitor final
   }
 
   int VisitNativeContext(Map* map, Context* object) {
-    if (marking_state_.IsGrey(object)) {
-      int size = Context::BodyDescriptorWeak::SizeOf(map, object);
-      VisitMapPointer(object, object->map_slot());
-      Context::BodyDescriptorWeak::IterateBody(object, size, this);
-      // TODO(ulan): implement proper weakness for normalized map cache
-      // and remove this bailout.
-      bailout_.Push(object);
-    }
-    return 0;
+    if (!ShouldVisit(object)) return 0;
+    int size = Context::BodyDescriptorWeak::SizeOf(map, object);
+    VisitMapPointer(object, object->map_slot());
+    Context::BodyDescriptorWeak::IterateBody(object, size, this);
+    return size;
   }
 
   int VisitTransitionArray(Map* map, TransitionArray* array) {
@@ -347,6 +348,33 @@ class ConcurrentMarkingVisitor final
   int task_id_;
   SlotSnapshot slot_snapshot_;
 };
+
+// Strings can change maps due to conversion to thin string or external strings.
+// Use reinterpret cast to avoid data race in slow dchecks.
+template <>
+ConsString* ConcurrentMarkingVisitor::Cast(HeapObject* object) {
+  return reinterpret_cast<ConsString*>(object);
+}
+
+template <>
+SlicedString* ConcurrentMarkingVisitor::Cast(HeapObject* object) {
+  return reinterpret_cast<SlicedString*>(object);
+}
+
+template <>
+ThinString* ConcurrentMarkingVisitor::Cast(HeapObject* object) {
+  return reinterpret_cast<ThinString*>(object);
+}
+
+template <>
+SeqOneByteString* ConcurrentMarkingVisitor::Cast(HeapObject* object) {
+  return reinterpret_cast<SeqOneByteString*>(object);
+}
+
+template <>
+SeqTwoByteString* ConcurrentMarkingVisitor::Cast(HeapObject* object) {
+  return reinterpret_cast<SeqTwoByteString*>(object);
+}
 
 class ConcurrentMarking::Task : public CancelableTask {
  public:

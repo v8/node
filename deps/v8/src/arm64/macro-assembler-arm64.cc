@@ -1015,12 +1015,12 @@ void TurboAssembler::Abs(const Register& rd, const Register& rm,
   // If the comparison sets the v flag, the input was the smallest value
   // representable by rm, and the mathematical result of abs(rm) is not
   // representable using two's complement.
-  if ((is_not_representable != NULL) && (is_representable != NULL)) {
+  if ((is_not_representable != nullptr) && (is_representable != nullptr)) {
     B(is_not_representable, vs);
     B(is_representable);
-  } else if (is_not_representable != NULL) {
+  } else if (is_not_representable != nullptr) {
     B(is_not_representable, vs);
-  } else if (is_representable != NULL) {
+  } else if (is_representable != nullptr) {
     B(is_representable, vc);
   }
 }
@@ -1480,6 +1480,62 @@ void TurboAssembler::AssertCspAligned() {
     Register temp = scope.AcquireX();
     ldr(temp, MemOperand(csp));
   }
+}
+
+void TurboAssembler::CopySlots(int dst, Register src, Register slot_count) {
+  DCHECK(!src.IsZero());
+  UseScratchRegisterScope scope(this);
+  Register dst_reg = scope.AcquireX();
+  Add(dst_reg, StackPointer(), dst << kPointerSizeLog2);
+  Add(src, StackPointer(), Operand(src, LSL, kPointerSizeLog2));
+  CopyDoubleWords(dst_reg, src, slot_count);
+}
+
+void TurboAssembler::CopySlots(Register dst, Register src,
+                               Register slot_count) {
+  DCHECK(!dst.IsZero() && !src.IsZero());
+  Add(dst, StackPointer(), Operand(dst, LSL, kPointerSizeLog2));
+  Add(src, StackPointer(), Operand(src, LSL, kPointerSizeLog2));
+  CopyDoubleWords(dst, src, slot_count);
+}
+
+void TurboAssembler::CopyDoubleWords(Register dst, Register src,
+                                     Register count) {
+  if (emit_debug_code()) {
+    // Copy requires dst < src || (dst - src) >= count.
+    Label dst_below_src;
+    Subs(dst, dst, src);
+    B(lt, &dst_below_src);
+    Cmp(dst, count);
+    Check(ge, kOffsetOutOfRange);
+    Bind(&dst_below_src);
+    Add(dst, dst, src);
+  }
+
+  static_assert(kPointerSize == kDRegSize,
+                "pointers must be the same size as doubles");
+  UseScratchRegisterScope scope(this);
+  VRegister temp0 = scope.AcquireD();
+  VRegister temp1 = scope.AcquireD();
+
+  Label pairs, done;
+
+  Tbz(count, 0, &pairs);
+  Ldr(temp0, MemOperand(src, kPointerSize, PostIndex));
+  Sub(count, count, 1);
+  Str(temp0, MemOperand(dst, kPointerSize, PostIndex));
+
+  Bind(&pairs);
+  Cbz(count, &done);
+  Ldp(temp0, temp1, MemOperand(src, 2 * kPointerSize, PostIndex));
+  Sub(count, count, 2);
+  Stp(temp0, temp1, MemOperand(dst, 2 * kPointerSize, PostIndex));
+  B(&pairs);
+
+  // TODO(all): large copies may benefit from using temporary Q registers
+  // to copy four double words per iteration.
+
+  Bind(&done);
 }
 
 void TurboAssembler::AssertFPCRState(Register fpcr) {
@@ -2044,19 +2100,6 @@ void MacroAssembler::TryRepresentDoubleAsInt(Register as_int, VRegister value,
   if (on_failed_conversion) {
     B(on_failed_conversion, ne);
   }
-}
-
-void MacroAssembler::JumpIfNotUniqueNameInstanceType(Register type,
-                                                     Label* not_unique_name) {
-  STATIC_ASSERT((kInternalizedTag == 0) && (kStringTag == 0));
-  // if ((type is string && type is internalized) || type == SYMBOL_TYPE) {
-  //   continue
-  // } else {
-  //   goto not_unique_name
-  // }
-  Tst(type, kIsNotStringMask | kIsNotInternalizedMask);
-  Ccmp(type, SYMBOL_TYPE, ZFlag, ne);
-  B(ne, not_unique_name);
 }
 
 void TurboAssembler::PrepareForTailCall(const ParameterCount& callee_args_count,
@@ -3541,7 +3584,7 @@ void InlineSmiCheckInfo::Emit(MacroAssembler* masm, const Register& reg,
 }
 
 InlineSmiCheckInfo::InlineSmiCheckInfo(Address info)
-    : reg_(NoReg), smi_check_delta_(0), smi_check_(NULL) {
+    : reg_(NoReg), smi_check_delta_(0), smi_check_(nullptr) {
   InstructionSequence* inline_data = InstructionSequence::At(info);
   DCHECK(inline_data->IsInlineData());
   if (inline_data->IsInlineData()) {

@@ -75,10 +75,8 @@ int PropertyDetails::field_width_in_words() const {
 TYPE_CHECKER(BreakPoint, TUPLE2_TYPE)
 TYPE_CHECKER(BreakPointInfo, TUPLE2_TYPE)
 TYPE_CHECKER(ByteArray, BYTE_ARRAY_TYPE)
-TYPE_CHECKER(BytecodeArray, BYTECODE_ARRAY_TYPE)
 TYPE_CHECKER(CallHandlerInfo, TUPLE2_TYPE)
 TYPE_CHECKER(Cell, CELL_TYPE)
-TYPE_CHECKER(Code, CODE_TYPE)
 TYPE_CHECKER(ConstantElementsPair, TUPLE2_TYPE)
 TYPE_CHECKER(CoverageInfo, FIXED_ARRAY_TYPE)
 TYPE_CHECKER(FixedDoubleArray, FIXED_DOUBLE_ARRAY_TYPE)
@@ -538,7 +536,6 @@ bool Object::IsMinusZero() const {
 // ------------------------------------
 // Cast operations
 
-CAST_ACCESSOR(AbstractCode)
 CAST_ACCESSOR(AccessCheckInfo)
 CAST_ACCESSOR(AccessorInfo)
 CAST_ACCESSOR(AccessorPair)
@@ -549,14 +546,10 @@ CAST_ACCESSOR(AsyncGeneratorRequest)
 CAST_ACCESSOR(BigInt)
 CAST_ACCESSOR(BoilerplateDescription)
 CAST_ACCESSOR(ByteArray)
-CAST_ACCESSOR(BytecodeArray)
 CAST_ACCESSOR(CallHandlerInfo)
 CAST_ACCESSOR(Cell)
-CAST_ACCESSOR(Code)
 CAST_ACCESSOR(ConstantElementsPair)
 CAST_ACCESSOR(ContextExtension)
-CAST_ACCESSOR(DeoptimizationInputData)
-CAST_ACCESSOR(DependentCode)
 CAST_ACCESSOR(DescriptorArray)
 CAST_ACCESSOR(EnumCache)
 CAST_ACCESSOR(FixedArray)
@@ -566,7 +559,6 @@ CAST_ACCESSOR(FixedTypedArrayBase)
 CAST_ACCESSOR(Foreign)
 CAST_ACCESSOR(FunctionTemplateInfo)
 CAST_ACCESSOR(GlobalDictionary)
-CAST_ACCESSOR(HandlerTable)
 CAST_ACCESSOR(HeapObject)
 CAST_ACCESSOR(InterceptorInfo)
 CAST_ACCESSOR(JSArray)
@@ -778,8 +770,16 @@ MaybeHandle<Object> Object::ToPrimitive(Handle<Object> input,
 
 // static
 MaybeHandle<Object> Object::ToNumber(Handle<Object> input) {
-  if (input->IsNumber()) return input;
-  return ConvertToNumber(HeapObject::cast(*input)->GetIsolate(), input);
+  if (input->IsNumber()) return input;  // Shortcut.
+  return ConvertToNumberOrNumeric(HeapObject::cast(*input)->GetIsolate(), input,
+                                  Conversion::kToNumber);
+}
+
+// static
+MaybeHandle<Object> Object::ToNumeric(Handle<Object> input) {
+  if (input->IsNumber() || input->IsBigInt()) return input;  // Shortcut.
+  return ConvertToNumberOrNumeric(HeapObject::cast(*input)->GetIsolate(), input,
+                                  Conversion::kToNumeric);
 }
 
 // static
@@ -963,7 +963,7 @@ Heap* HeapObject::GetHeap() const {
   Heap* heap = MemoryChunk::FromAddress(
                    reinterpret_cast<Address>(const_cast<HeapObject*>(this)))
                    ->heap();
-  SLOW_DCHECK(heap != NULL);
+  SLOW_DCHECK(heap != nullptr);
   return heap;
 }
 
@@ -985,7 +985,7 @@ void HeapObject::set_map(Map* value) {
   }
   set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
-    // TODO(1600) We are passing NULL as a slot because maps can never be on
+    // TODO(1600) We are passing nullptr as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
   }
@@ -1004,7 +1004,7 @@ void HeapObject::synchronized_set_map(Map* value) {
   }
   synchronized_set_map_word(MapWord::FromMap(value));
   if (value != nullptr) {
-    // TODO(1600) We are passing NULL as a slot because maps can never be on
+    // TODO(1600) We are passing nullptr as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
   }
@@ -1025,7 +1025,7 @@ void HeapObject::set_map_after_allocation(Map* value, WriteBarrierMode mode) {
   set_map_word(MapWord::FromMap(value));
   if (mode != SKIP_WRITE_BARRIER) {
     DCHECK(value != nullptr);
-    // TODO(1600) We are passing NULL as a slot because maps can never be on
+    // TODO(1600) We are passing nullptr as a slot because maps can never be on
     // evacuation candidate.
     value->GetHeap()->incremental_marking()->RecordWrite(this, nullptr, value);
   }
@@ -1451,12 +1451,16 @@ void WeakCell::initialize(HeapObject* val) {
 
 bool WeakCell::cleared() const { return value() == Smi::kZero; }
 
-int JSObject::GetHeaderSize() {
+int JSObject::GetHeaderSize() const { return GetHeaderSize(map()); }
+
+int JSObject::GetHeaderSize(const Map* map) {
   // Check for the most common kind of JavaScript object before
   // falling into the generic switch. This speeds up the internal
   // field operations considerably on average.
-  InstanceType type = map()->instance_type();
-  return type == JS_OBJECT_TYPE ? JSObject::kHeaderSize : GetHeaderSize(type);
+  InstanceType instance_type = map->instance_type();
+  return instance_type == JS_OBJECT_TYPE
+             ? JSObject::kHeaderSize
+             : GetHeaderSize(instance_type, map->has_prototype_slot());
 }
 
 inline bool IsSpecialReceiverInstanceType(InstanceType instance_type) {
@@ -1467,8 +1471,7 @@ inline bool IsSpecialReceiverInstanceType(InstanceType instance_type) {
 int JSObject::GetEmbedderFieldCount(const Map* map) {
   int instance_size = map->instance_size();
   if (instance_size == kVariableSizeSentinel) return 0;
-  InstanceType instance_type = map->instance_type();
-  return ((instance_size - GetHeaderSize(instance_type)) >> kPointerSizeLog2) -
+  return ((instance_size - GetHeaderSize(map)) >> kPointerSizeLog2) -
          map->GetInObjectProperties();
 }
 
@@ -1859,16 +1862,16 @@ void WeakFixedArray::set_last_used_index(int index) {
 
 template <class T>
 T* WeakFixedArray::Iterator::Next() {
-  if (list_ != NULL) {
+  if (list_ != nullptr) {
     // Assert that list did not change during iteration.
     DCHECK_EQ(last_used_index_, list_->last_used_index());
     while (index_ < list_->Length()) {
       Object* item = list_->Get(index_++);
       if (item != Empty()) return T::cast(item);
     }
-    list_ = NULL;
+    list_ = nullptr;
   }
-  return NULL;
+  return nullptr;
 }
 
 int ArrayList::Length() const {
@@ -2073,7 +2076,7 @@ EnumCache* DescriptorArray::GetEnumCache() {
 template <SearchMode search_mode, typename T>
 int BinarySearch(T* array, Name* name, int valid_entries,
                  int* out_insertion_index) {
-  DCHECK(search_mode == ALL_ENTRIES || out_insertion_index == NULL);
+  DCHECK(search_mode == ALL_ENTRIES || out_insertion_index == nullptr);
   int low = 0;
   int high = array->number_of_entries() - 1;
   uint32_t hash = name->hash_field();
@@ -2175,7 +2178,8 @@ int Search(T* array, Name* name, int valid_entries, int* out_insertion_index) {
 
 int DescriptorArray::Search(Name* name, int valid_descriptors) {
   DCHECK(name->IsUniqueName());
-  return internal::Search<VALID_ENTRIES>(this, name, valid_descriptors, NULL);
+  return internal::Search<VALID_ENTRIES>(this, name, valid_descriptors,
+                                         nullptr);
 }
 
 int DescriptorArray::SearchWithCache(Isolate* isolate, Name* name, Map* map) {
@@ -2568,72 +2572,6 @@ DEFINE_DEOPT_ENTRY_ACCESSORS(BytecodeOffsetRaw, Smi)
 DEFINE_DEOPT_ENTRY_ACCESSORS(TranslationIndex, Smi)
 DEFINE_DEOPT_ENTRY_ACCESSORS(Pc, Smi)
 
-BailoutId DeoptimizationInputData::BytecodeOffset(int i) {
-  return BailoutId(BytecodeOffsetRaw(i)->value());
-}
-
-void DeoptimizationInputData::SetBytecodeOffset(int i, BailoutId value) {
-  SetBytecodeOffsetRaw(i, Smi::FromInt(value.ToInt()));
-}
-
-
-int DeoptimizationInputData::DeoptCount() {
-  return (length() - kFirstDeoptEntryIndex) / kDeoptEntrySize;
-}
-
-
-int HandlerTable::GetRangeStart(int index) const {
-  return Smi::ToInt(get(index * kRangeEntrySize + kRangeStartIndex));
-}
-
-int HandlerTable::GetRangeEnd(int index) const {
-  return Smi::ToInt(get(index * kRangeEntrySize + kRangeEndIndex));
-}
-
-int HandlerTable::GetRangeHandler(int index) const {
-  return HandlerOffsetField::decode(
-      Smi::ToInt(get(index * kRangeEntrySize + kRangeHandlerIndex)));
-}
-
-int HandlerTable::GetRangeData(int index) const {
-  return Smi::ToInt(get(index * kRangeEntrySize + kRangeDataIndex));
-}
-
-void HandlerTable::SetRangeStart(int index, int value) {
-  set(index * kRangeEntrySize + kRangeStartIndex, Smi::FromInt(value));
-}
-
-
-void HandlerTable::SetRangeEnd(int index, int value) {
-  set(index * kRangeEntrySize + kRangeEndIndex, Smi::FromInt(value));
-}
-
-
-void HandlerTable::SetRangeHandler(int index, int offset,
-                                   CatchPrediction prediction) {
-  int value = HandlerOffsetField::encode(offset) |
-              HandlerPredictionField::encode(prediction);
-  set(index * kRangeEntrySize + kRangeHandlerIndex, Smi::FromInt(value));
-}
-
-void HandlerTable::SetRangeData(int index, int value) {
-  set(index * kRangeEntrySize + kRangeDataIndex, Smi::FromInt(value));
-}
-
-
-void HandlerTable::SetReturnOffset(int index, int value) {
-  set(index * kReturnEntrySize + kReturnOffsetIndex, Smi::FromInt(value));
-}
-
-void HandlerTable::SetReturnHandler(int index, int offset) {
-  int value = HandlerOffsetField::encode(offset);
-  set(index * kReturnEntrySize + kReturnHandlerIndex, Smi::FromInt(value));
-}
-
-int HandlerTable::NumberOfRangeEntries() const {
-  return length() / kRangeEntrySize;
-}
-
 template <typename Derived, typename Shape>
 HashTable<Derived, Shape>* HashTable<Derived, Shape>::cast(Object* obj) {
   SLOW_DCHECK(obj->IsHashTable());
@@ -2654,33 +2592,31 @@ SYNCHRONIZED_SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 int PropertyArray::length() const {
   Object* value_obj = READ_FIELD(this, kLengthAndHashOffset);
   int value = Smi::ToInt(value_obj);
-  return value & kLengthMask;
+  return LengthField::decode(value);
 }
 
 void PropertyArray::initialize_length(int len) {
   SLOW_DCHECK(len >= 0);
-  SLOW_DCHECK(len < kMaxLength);
+  SLOW_DCHECK(len < LengthField::kMax);
   WRITE_FIELD(this, kLengthAndHashOffset, Smi::FromInt(len));
 }
 
 int PropertyArray::synchronized_length() const {
   Object* value_obj = ACQUIRE_READ_FIELD(this, kLengthAndHashOffset);
   int value = Smi::ToInt(value_obj);
-  return value & kLengthMask;
+  return LengthField::decode(value);
 }
 
 int PropertyArray::Hash() const {
   Object* value_obj = READ_FIELD(this, kLengthAndHashOffset);
   int value = Smi::ToInt(value_obj);
-  int hash = value & kHashMask;
-  return hash;
+  return HashField::decode(value);
 }
 
-void PropertyArray::SetHash(int masked_hash) {
-  DCHECK_EQ(masked_hash & JSReceiver::kHashMask, masked_hash);
+void PropertyArray::SetHash(int hash) {
   Object* value_obj = READ_FIELD(this, kLengthAndHashOffset);
   int value = Smi::ToInt(value_obj);
-  value = (value & kLengthMask) | masked_hash;
+  value = HashField::update(value, hash);
   WRITE_FIELD(this, kLengthAndHashOffset, Smi::FromInt(value));
 }
 
@@ -2693,7 +2629,7 @@ int FreeSpace::Size() { return size(); }
 
 FreeSpace* FreeSpace::next() {
   DCHECK(map() == GetHeap()->root(Heap::kFreeSpaceMapRootIndex) ||
-         (!GetHeap()->deserialization_complete() && map() == NULL));
+         (!GetHeap()->deserialization_complete() && map() == nullptr));
   DCHECK_LE(kNextOffset + kPointerSize, relaxed_read_size());
   return reinterpret_cast<FreeSpace*>(
       Memory::Address_at(address() + kNextOffset));
@@ -2702,7 +2638,7 @@ FreeSpace* FreeSpace::next() {
 
 void FreeSpace::set_next(FreeSpace* next) {
   DCHECK(map() == GetHeap()->root(Heap::kFreeSpaceMapRootIndex) ||
-         (!GetHeap()->deserialization_complete() && map() == NULL));
+         (!GetHeap()->deserialization_complete() && map() == nullptr));
   DCHECK_LE(kNextOffset + kPointerSize, relaxed_read_size());
   base::Relaxed_Store(
       reinterpret_cast<base::AtomicWord*>(address() + kNextOffset),
@@ -2777,132 +2713,6 @@ int ByteArray::ByteArraySize() { return SizeFor(this->length()); }
 
 Address ByteArray::GetDataStartAddress() {
   return reinterpret_cast<Address>(this) - kHeapObjectTag + kHeaderSize;
-}
-
-byte BytecodeArray::get(int index) {
-  DCHECK(index >= 0 && index < this->length());
-  return READ_BYTE_FIELD(this, kHeaderSize + index * kCharSize);
-}
-
-void BytecodeArray::set(int index, byte value) {
-  DCHECK(index >= 0 && index < this->length());
-  WRITE_BYTE_FIELD(this, kHeaderSize + index * kCharSize, value);
-}
-
-void BytecodeArray::set_frame_size(int frame_size) {
-  DCHECK_GE(frame_size, 0);
-  DCHECK(IsAligned(frame_size, static_cast<unsigned>(kPointerSize)));
-  WRITE_INT_FIELD(this, kFrameSizeOffset, frame_size);
-}
-
-int BytecodeArray::frame_size() const {
-  return READ_INT_FIELD(this, kFrameSizeOffset);
-}
-
-int BytecodeArray::register_count() const {
-  return frame_size() / kPointerSize;
-}
-
-void BytecodeArray::set_parameter_count(int number_of_parameters) {
-  DCHECK_GE(number_of_parameters, 0);
-  // Parameter count is stored as the size on stack of the parameters to allow
-  // it to be used directly by generated code.
-  WRITE_INT_FIELD(this, kParameterSizeOffset,
-                  (number_of_parameters << kPointerSizeLog2));
-}
-
-interpreter::Register BytecodeArray::incoming_new_target_or_generator_register()
-    const {
-  int register_operand =
-      READ_INT_FIELD(this, kIncomingNewTargetOrGeneratorRegisterOffset);
-  if (register_operand == 0) {
-    return interpreter::Register::invalid_value();
-  } else {
-    return interpreter::Register::FromOperand(register_operand);
-  }
-}
-
-void BytecodeArray::set_incoming_new_target_or_generator_register(
-    interpreter::Register incoming_new_target_or_generator_register) {
-  if (!incoming_new_target_or_generator_register.is_valid()) {
-    WRITE_INT_FIELD(this, kIncomingNewTargetOrGeneratorRegisterOffset, 0);
-  } else {
-    DCHECK(incoming_new_target_or_generator_register.index() <
-           register_count());
-    DCHECK_NE(0, incoming_new_target_or_generator_register.ToOperand());
-    WRITE_INT_FIELD(this, kIncomingNewTargetOrGeneratorRegisterOffset,
-                    incoming_new_target_or_generator_register.ToOperand());
-  }
-}
-
-int BytecodeArray::interrupt_budget() const {
-  return READ_INT_FIELD(this, kInterruptBudgetOffset);
-}
-
-void BytecodeArray::set_interrupt_budget(int interrupt_budget) {
-  DCHECK_GE(interrupt_budget, 0);
-  WRITE_INT_FIELD(this, kInterruptBudgetOffset, interrupt_budget);
-}
-
-int BytecodeArray::osr_loop_nesting_level() const {
-  return READ_INT8_FIELD(this, kOSRNestingLevelOffset);
-}
-
-void BytecodeArray::set_osr_loop_nesting_level(int depth) {
-  DCHECK(0 <= depth && depth <= AbstractCode::kMaxLoopNestingMarker);
-  STATIC_ASSERT(AbstractCode::kMaxLoopNestingMarker < kMaxInt8);
-  WRITE_INT8_FIELD(this, kOSRNestingLevelOffset, depth);
-}
-
-BytecodeArray::Age BytecodeArray::bytecode_age() const {
-  // Bytecode is aged by the concurrent marker.
-  return static_cast<Age>(RELAXED_READ_INT8_FIELD(this, kBytecodeAgeOffset));
-}
-
-void BytecodeArray::set_bytecode_age(BytecodeArray::Age age) {
-  DCHECK_GE(age, kFirstBytecodeAge);
-  DCHECK_LE(age, kLastBytecodeAge);
-  STATIC_ASSERT(kLastBytecodeAge <= kMaxInt8);
-  // Bytecode is aged by the concurrent marker.
-  RELAXED_WRITE_INT8_FIELD(this, kBytecodeAgeOffset, static_cast<int8_t>(age));
-}
-
-int BytecodeArray::parameter_count() const {
-  // Parameter count is stored as the size on stack of the parameters to allow
-  // it to be used directly by generated code.
-  return READ_INT_FIELD(this, kParameterSizeOffset) >> kPointerSizeLog2;
-}
-
-ACCESSORS(BytecodeArray, constant_pool, FixedArray, kConstantPoolOffset)
-ACCESSORS(BytecodeArray, handler_table, FixedArray, kHandlerTableOffset)
-ACCESSORS(BytecodeArray, source_position_table, Object,
-          kSourcePositionTableOffset)
-
-void BytecodeArray::clear_padding() {
-  int data_size = kHeaderSize + length();
-  memset(address() + data_size, 0, SizeFor(length()) - data_size);
-}
-
-Address BytecodeArray::GetFirstBytecodeAddress() {
-  return reinterpret_cast<Address>(this) - kHeapObjectTag + kHeaderSize;
-}
-
-ByteArray* BytecodeArray::SourcePositionTable() {
-  Object* maybe_table = source_position_table();
-  if (maybe_table->IsByteArray()) return ByteArray::cast(maybe_table);
-  DCHECK(maybe_table->IsSourcePositionTableWithFrameCache());
-  return SourcePositionTableWithFrameCache::cast(maybe_table)
-      ->source_position_table();
-}
-
-int BytecodeArray::BytecodeArraySize() { return SizeFor(this->length()); }
-
-int BytecodeArray::SizeIncludingMetadata() {
-  int size = BytecodeArraySize();
-  size += constant_pool()->Size();
-  size += handler_table()->Size();
-  size += SourcePositionTable()->Size();
-  return size;
 }
 
 ACCESSORS(FixedTypedArrayBase, base_pointer, Object, kBasePointerOffset)
@@ -3331,6 +3141,7 @@ void Map::set_non_instance_prototype(bool value) {
 }
 
 bool Map::has_non_instance_prototype() const {
+  if (!has_prototype_slot()) return false;
   return ((1 << kHasNonInstancePrototype) & bit_field()) != 0;
 }
 
@@ -3347,6 +3158,8 @@ void Map::set_is_constructor(bool value) {
 bool Map::is_constructor() const {
   return ((1 << kIsConstructor) & bit_field()) != 0;
 }
+
+BOOL_ACCESSORS(Map, bit_field, has_prototype_slot, kHasPrototypeSlot)
 
 void Map::set_has_hidden_prototype(bool value) {
   set_bit_field3(HasHiddenPrototype::update(bit_field3(), value));
@@ -3627,418 +3440,6 @@ bool Map::IsSpecialReceiverMap() const {
   DCHECK_IMPLIES(!result,
                  !has_named_interceptor() && !is_access_check_needed());
   return result;
-}
-
-DependentCode* DependentCode::next_link() {
-  return DependentCode::cast(get(kNextLinkIndex));
-}
-
-
-void DependentCode::set_next_link(DependentCode* next) {
-  set(kNextLinkIndex, next);
-}
-
-int DependentCode::flags() { return Smi::ToInt(get(kFlagsIndex)); }
-
-void DependentCode::set_flags(int flags) {
-  set(kFlagsIndex, Smi::FromInt(flags));
-}
-
-
-int DependentCode::count() { return CountField::decode(flags()); }
-
-void DependentCode::set_count(int value) {
-  set_flags(CountField::update(flags(), value));
-}
-
-
-DependentCode::DependencyGroup DependentCode::group() {
-  return static_cast<DependencyGroup>(GroupField::decode(flags()));
-}
-
-
-void DependentCode::set_group(DependentCode::DependencyGroup group) {
-  set_flags(GroupField::update(flags(), static_cast<int>(group)));
-}
-
-
-void DependentCode::set_object_at(int i, Object* object) {
-  set(kCodesStartIndex + i, object);
-}
-
-
-Object* DependentCode::object_at(int i) {
-  return get(kCodesStartIndex + i);
-}
-
-
-void DependentCode::clear_at(int i) {
-  set_undefined(kCodesStartIndex + i);
-}
-
-
-void DependentCode::copy(int from, int to) {
-  set(kCodesStartIndex + to, get(kCodesStartIndex + from));
-}
-
-Code::Kind Code::kind() const {
-  return KindField::decode(READ_UINT32_FIELD(this, kFlagsOffset));
-}
-
-void Code::initialize_flags(Kind kind) {
-  WRITE_UINT32_FIELD(this, kFlagsOffset, KindField::encode(kind));
-}
-
-void Code::set_kind(Kind kind) {
-  STATIC_ASSERT(Code::NUMBER_OF_KINDS <= KindField::kMax + 1);
-  uint32_t previous = READ_UINT32_FIELD(this, kFlagsOffset);
-  uint32_t updated_value = KindField::update(previous, kind);
-  WRITE_UINT32_FIELD(this, kFlagsOffset, updated_value);
-}
-
-// For initialization.
-void Code::set_raw_kind_specific_flags1(int value) {
-  WRITE_INT_FIELD(this, kKindSpecificFlags1Offset, value);
-}
-
-
-void Code::set_raw_kind_specific_flags2(int value) {
-  WRITE_INT_FIELD(this, kKindSpecificFlags2Offset, value);
-}
-
-inline bool Code::is_interpreter_trampoline_builtin() const {
-  Builtins* builtins = GetIsolate()->builtins();
-  bool is_interpreter_trampoline =
-      (this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
-       this == builtins->builtin(Builtins::kInterpreterEnterBytecodeAdvance) ||
-       this == builtins->builtin(Builtins::kInterpreterEnterBytecodeDispatch));
-  DCHECK_IMPLIES(is_interpreter_trampoline, !Builtins::IsLazy(builtin_index()));
-  return is_interpreter_trampoline;
-}
-
-inline bool Code::checks_optimization_marker() const {
-  Builtins* builtins = GetIsolate()->builtins();
-  bool checks_marker =
-      (this == builtins->builtin(Builtins::kCompileLazy) ||
-       this == builtins->builtin(Builtins::kInterpreterEntryTrampoline) ||
-       this == builtins->builtin(Builtins::kCheckOptimizationMarker));
-  DCHECK_IMPLIES(checks_marker, !Builtins::IsLazy(builtin_index()));
-  return checks_marker ||
-         (kind() == OPTIMIZED_FUNCTION && marked_for_deoptimization());
-}
-
-inline bool Code::has_unwinding_info() const {
-  return HasUnwindingInfoField::decode(READ_UINT32_FIELD(this, kFlagsOffset));
-}
-
-inline void Code::set_has_unwinding_info(bool state) {
-  uint32_t previous = READ_UINT32_FIELD(this, kFlagsOffset);
-  uint32_t updated_value = HasUnwindingInfoField::update(previous, state);
-  WRITE_UINT32_FIELD(this, kFlagsOffset, updated_value);
-}
-
-inline bool Code::has_tagged_params() const {
-  int flags = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  return HasTaggedStackField::decode(flags);
-}
-
-inline void Code::set_has_tagged_params(bool value) {
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  int updated = HasTaggedStackField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags2Offset, updated);
-}
-
-inline bool Code::is_turbofanned() const {
-  return IsTurbofannedField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-
-inline void Code::set_is_turbofanned(bool value) {
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = IsTurbofannedField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-inline bool Code::can_have_weak_objects() const {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  return CanHaveWeakObjectsField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-
-inline void Code::set_can_have_weak_objects(bool value) {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = CanHaveWeakObjectsField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-inline bool Code::is_construct_stub() const {
-  DCHECK(kind() == BUILTIN);
-  return IsConstructStubField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-inline void Code::set_is_construct_stub(bool value) {
-  DCHECK(kind() == BUILTIN);
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = IsConstructStubField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-inline bool Code::is_promise_rejection() const {
-  DCHECK(kind() == BUILTIN);
-  return IsPromiseRejectionField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-inline void Code::set_is_promise_rejection(bool value) {
-  DCHECK(kind() == BUILTIN);
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = IsPromiseRejectionField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-inline bool Code::is_exception_caught() const {
-  DCHECK(kind() == BUILTIN);
-  return IsExceptionCaughtField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-inline void Code::set_is_exception_caught(bool value) {
-  DCHECK(kind() == BUILTIN);
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = IsExceptionCaughtField::update(previous, value);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-inline HandlerTable::CatchPrediction Code::GetBuiltinCatchPrediction() {
-  if (is_promise_rejection()) return HandlerTable::PROMISE;
-  if (is_exception_caught()) return HandlerTable::CAUGHT;
-  return HandlerTable::UNCAUGHT;
-}
-
-int Code::builtin_index() const {
-  int index = READ_INT_FIELD(this, kBuiltinIndexOffset);
-  DCHECK(index == -1 || Builtins::IsBuiltinId(index));
-  return index;
-}
-
-void Code::set_builtin_index(int index) {
-  DCHECK(index == -1 || Builtins::IsBuiltinId(index));
-  WRITE_INT_FIELD(this, kBuiltinIndexOffset, index);
-}
-
-bool Code::is_builtin() const { return builtin_index() != -1; }
-
-unsigned Code::stack_slots() const {
-  DCHECK(is_turbofanned());
-  return StackSlotsField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-
-void Code::set_stack_slots(unsigned slots) {
-  CHECK(slots <= (1 << kStackSlotsBitCount));
-  DCHECK(is_turbofanned());
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = StackSlotsField::update(previous, slots);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-unsigned Code::safepoint_table_offset() const {
-  DCHECK(is_turbofanned());
-  return SafepointTableOffsetField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags2Offset));
-}
-
-
-void Code::set_safepoint_table_offset(unsigned offset) {
-  CHECK(offset <= (1 << kSafepointTableOffsetBitCount));
-  DCHECK(is_turbofanned());
-  DCHECK(IsAligned(offset, static_cast<unsigned>(kIntSize)));
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags2Offset);
-  int updated = SafepointTableOffsetField::update(previous, offset);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags2Offset, updated);
-}
-
-
-bool Code::marked_for_deoptimization() const {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  return MarkedForDeoptimizationField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-
-void Code::set_marked_for_deoptimization(bool flag) {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  DCHECK_IMPLIES(flag, AllowDeoptimization::IsAllowed(GetIsolate()));
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = MarkedForDeoptimizationField::update(previous, flag);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-bool Code::deopt_already_counted() const {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  return DeoptAlreadyCountedField::decode(
-      READ_UINT32_FIELD(this, kKindSpecificFlags1Offset));
-}
-
-void Code::set_deopt_already_counted(bool flag) {
-  DCHECK(kind() == OPTIMIZED_FUNCTION);
-  DCHECK_IMPLIES(flag, AllowDeoptimization::IsAllowed(GetIsolate()));
-  int previous = READ_UINT32_FIELD(this, kKindSpecificFlags1Offset);
-  int updated = DeoptAlreadyCountedField::update(previous, flag);
-  WRITE_UINT32_FIELD(this, kKindSpecificFlags1Offset, updated);
-}
-
-bool Code::is_stub() const { return kind() == STUB; }
-bool Code::is_optimized_code() const { return kind() == OPTIMIZED_FUNCTION; }
-bool Code::is_wasm_code() const { return kind() == WASM_FUNCTION; }
-
-Address Code::constant_pool() {
-  Address constant_pool = NULL;
-  if (FLAG_enable_embedded_constant_pool) {
-    int offset = constant_pool_offset();
-    if (offset < instruction_size()) {
-      constant_pool = FIELD_ADDR(this, kHeaderSize + offset);
-    }
-  }
-  return constant_pool;
-}
-
-Code* Code::GetCodeFromTargetAddress(Address address) {
-  HeapObject* code = HeapObject::FromAddress(address - Code::kHeaderSize);
-  // GetCodeFromTargetAddress might be called when marking objects during mark
-  // sweep. reinterpret_cast is therefore used instead of the more appropriate
-  // Code::cast. Code::cast does not work when the object's map is
-  // marked.
-  Code* result = reinterpret_cast<Code*>(code);
-  return result;
-}
-
-Object* Code::GetObjectFromCodeEntry(Address code_entry) {
-  return HeapObject::FromAddress(code_entry - Code::kHeaderSize);
-}
-
-Object* Code::GetObjectFromEntryAddress(Address location_of_address) {
-  return GetObjectFromCodeEntry(Memory::Address_at(location_of_address));
-}
-
-
-bool Code::CanContainWeakObjects() {
-  return is_optimized_code() && can_have_weak_objects();
-}
-
-
-bool Code::IsWeakObject(Object* object) {
-  return (CanContainWeakObjects() && IsWeakObjectInOptimizedCode(object));
-}
-
-
-bool Code::IsWeakObjectInOptimizedCode(Object* object) {
-  if (object->IsMap()) {
-    return Map::cast(object)->CanTransition();
-  }
-  if (object->IsCell()) {
-    object = Cell::cast(object)->value();
-  } else if (object->IsPropertyCell()) {
-    object = PropertyCell::cast(object)->value();
-  }
-  if (object->IsJSReceiver() || object->IsContext()) {
-    return true;
-  }
-  return false;
-}
-
-
-int AbstractCode::instruction_size() {
-  if (IsCode()) {
-    return GetCode()->instruction_size();
-  } else {
-    return GetBytecodeArray()->length();
-  }
-}
-
-ByteArray* AbstractCode::source_position_table() {
-  if (IsCode()) {
-    return GetCode()->SourcePositionTable();
-  } else {
-    return GetBytecodeArray()->SourcePositionTable();
-  }
-}
-
-void AbstractCode::set_source_position_table(ByteArray* source_position_table) {
-  if (IsCode()) {
-    GetCode()->set_source_position_table(source_position_table);
-  } else {
-    GetBytecodeArray()->set_source_position_table(source_position_table);
-  }
-}
-
-Object* AbstractCode::stack_frame_cache() {
-  Object* maybe_table;
-  if (IsCode()) {
-    maybe_table = GetCode()->source_position_table();
-  } else {
-    maybe_table = GetBytecodeArray()->source_position_table();
-  }
-  if (maybe_table->IsSourcePositionTableWithFrameCache()) {
-    return SourcePositionTableWithFrameCache::cast(maybe_table)
-        ->stack_frame_cache();
-  }
-  return Smi::kZero;
-}
-
-int AbstractCode::SizeIncludingMetadata() {
-  if (IsCode()) {
-    return GetCode()->SizeIncludingMetadata();
-  } else {
-    return GetBytecodeArray()->SizeIncludingMetadata();
-  }
-}
-int AbstractCode::ExecutableSize() {
-  if (IsCode()) {
-    return GetCode()->ExecutableSize();
-  } else {
-    return GetBytecodeArray()->BytecodeArraySize();
-  }
-}
-
-Address AbstractCode::instruction_start() {
-  if (IsCode()) {
-    return GetCode()->instruction_start();
-  } else {
-    return GetBytecodeArray()->GetFirstBytecodeAddress();
-  }
-}
-
-Address AbstractCode::instruction_end() {
-  if (IsCode()) {
-    return GetCode()->instruction_end();
-  } else {
-    return GetBytecodeArray()->GetFirstBytecodeAddress() +
-           GetBytecodeArray()->length();
-  }
-}
-
-bool AbstractCode::contains(byte* inner_pointer) {
-  return (address() <= inner_pointer) && (inner_pointer <= address() + Size());
-}
-
-AbstractCode::Kind AbstractCode::kind() {
-  if (IsCode()) {
-    return static_cast<AbstractCode::Kind>(GetCode()->kind());
-  } else {
-    return INTERPRETED_FUNCTION;
-  }
-}
-
-Code* AbstractCode::GetCode() { return Code::cast(this); }
-
-BytecodeArray* AbstractCode::GetBytecodeArray() {
-  return BytecodeArray::cast(this);
 }
 
 Object* Map::prototype() const {
@@ -4561,6 +3962,7 @@ bool JSFunction::IsInOptimizationQueue() {
 
 
 void JSFunction::CompleteInobjectSlackTrackingIfActive() {
+  if (!has_prototype_slot()) return;
   if (has_initial_map() && initial_map()->IsInobjectSlackTrackingInProgress()) {
     initial_map()->CompleteInobjectSlackTracking();
   }
@@ -4661,9 +4063,12 @@ void JSFunction::set_context(Object* value) {
   WRITE_BARRIER(GetHeap(), this, kContextOffset, value);
 }
 
-ACCESSORS(JSFunction, prototype_or_initial_map, Object,
-          kPrototypeOrInitialMapOffset)
+ACCESSORS_CHECKED(JSFunction, prototype_or_initial_map, Object,
+                  kPrototypeOrInitialMapOffset, map()->has_prototype_slot())
 
+bool JSFunction::has_prototype_slot() const {
+  return map()->has_prototype_slot();
+}
 
 Map* JSFunction::initial_map() {
   return Map::cast(prototype_or_initial_map());
@@ -4671,17 +4076,20 @@ Map* JSFunction::initial_map() {
 
 
 bool JSFunction::has_initial_map() {
+  DCHECK(has_prototype_slot());
   return prototype_or_initial_map()->IsMap();
 }
 
 
 bool JSFunction::has_instance_prototype() {
+  DCHECK(has_prototype_slot());
   return has_initial_map() ||
          !prototype_or_initial_map()->IsTheHole(GetIsolate());
 }
 
 
 bool JSFunction::has_prototype() {
+  DCHECK(has_prototype_slot());
   return map()->has_non_instance_prototype() || has_instance_prototype();
 }
 
@@ -4806,137 +4214,6 @@ SMI_ACCESSORS(JSMessageObject, start_position, kStartPositionOffset)
 SMI_ACCESSORS(JSMessageObject, end_position, kEndPositionOffset)
 SMI_ACCESSORS(JSMessageObject, error_level, kErrorLevelOffset)
 
-INT_ACCESSORS(Code, instruction_size, kInstructionSizeOffset)
-INT_ACCESSORS(Code, constant_pool_offset, kConstantPoolOffset)
-#define CODE_ACCESSORS(name, type, offset)           \
-  ACCESSORS_CHECKED2(Code, name, type, offset, true, \
-                     !GetHeap()->InNewSpace(value))
-CODE_ACCESSORS(relocation_info, ByteArray, kRelocationInfoOffset)
-CODE_ACCESSORS(handler_table, FixedArray, kHandlerTableOffset)
-CODE_ACCESSORS(deoptimization_data, FixedArray, kDeoptimizationDataOffset)
-CODE_ACCESSORS(source_position_table, Object, kSourcePositionTableOffset)
-CODE_ACCESSORS(trap_handler_index, Smi, kTrapHandlerIndex)
-CODE_ACCESSORS(raw_type_feedback_info, Object, kTypeFeedbackInfoOffset)
-CODE_ACCESSORS(next_code_link, Object, kNextCodeLinkOffset)
-#undef CODE_ACCESSORS
-
-void Code::WipeOutHeader() {
-  WRITE_FIELD(this, kRelocationInfoOffset, nullptr);
-  WRITE_FIELD(this, kHandlerTableOffset, nullptr);
-  WRITE_FIELD(this, kDeoptimizationDataOffset, nullptr);
-  WRITE_FIELD(this, kSourcePositionTableOffset, nullptr);
-  // Do not wipe out major/minor keys on a code stub or IC
-  if (!READ_FIELD(this, kTypeFeedbackInfoOffset)->IsSmi()) {
-    WRITE_FIELD(this, kTypeFeedbackInfoOffset, nullptr);
-  }
-  WRITE_FIELD(this, kNextCodeLinkOffset, nullptr);
-}
-
-void Code::clear_padding() {
-  memset(address() + kHeaderPaddingStart, 0, kHeaderSize - kHeaderPaddingStart);
-  Address data_end =
-      has_unwinding_info() ? unwinding_info_end() : instruction_end();
-  memset(data_end, 0, CodeSize() - (data_end - address()));
-}
-
-ByteArray* Code::SourcePositionTable() const {
-  Object* maybe_table = source_position_table();
-  if (maybe_table->IsByteArray()) return ByteArray::cast(maybe_table);
-  DCHECK(maybe_table->IsSourcePositionTableWithFrameCache());
-  return SourcePositionTableWithFrameCache::cast(maybe_table)
-      ->source_position_table();
-}
-
-uint32_t Code::stub_key() const {
-  DCHECK(is_stub());
-  Smi* smi_key = Smi::cast(raw_type_feedback_info());
-  return static_cast<uint32_t>(smi_key->value());
-}
-
-
-void Code::set_stub_key(uint32_t key) {
-  DCHECK(is_stub());
-  set_raw_type_feedback_info(Smi::FromInt(key));
-}
-
-byte* Code::instruction_start() const {
-  return const_cast<byte*>(FIELD_ADDR_CONST(this, kHeaderSize));
-}
-
-byte* Code::instruction_end() const {
-  return instruction_start() + instruction_size();
-}
-
-int Code::GetUnwindingInfoSizeOffset() const {
-  DCHECK(has_unwinding_info());
-  return RoundUp(kHeaderSize + instruction_size(), kInt64Size);
-}
-
-int Code::unwinding_info_size() const {
-  DCHECK(has_unwinding_info());
-  return static_cast<int>(
-      READ_UINT64_FIELD(this, GetUnwindingInfoSizeOffset()));
-}
-
-void Code::set_unwinding_info_size(int value) {
-  DCHECK(has_unwinding_info());
-  WRITE_UINT64_FIELD(this, GetUnwindingInfoSizeOffset(), value);
-}
-
-byte* Code::unwinding_info_start() const {
-  DCHECK(has_unwinding_info());
-  return const_cast<byte*>(
-             FIELD_ADDR_CONST(this, GetUnwindingInfoSizeOffset())) +
-         kInt64Size;
-}
-
-byte* Code::unwinding_info_end() const {
-  DCHECK(has_unwinding_info());
-  return unwinding_info_start() + unwinding_info_size();
-}
-
-int Code::body_size() const {
-  int unpadded_body_size =
-      has_unwinding_info()
-          ? static_cast<int>(unwinding_info_end() - instruction_start())
-          : instruction_size();
-  return RoundUp(unpadded_body_size, kObjectAlignment);
-}
-
-int Code::SizeIncludingMetadata() const {
-  int size = CodeSize();
-  size += relocation_info()->Size();
-  size += deoptimization_data()->Size();
-  size += handler_table()->Size();
-  return size;
-}
-
-ByteArray* Code::unchecked_relocation_info() const {
-  return reinterpret_cast<ByteArray*>(READ_FIELD(this, kRelocationInfoOffset));
-}
-
-byte* Code::relocation_start() const {
-  return unchecked_relocation_info()->GetDataStartAddress();
-}
-
-int Code::relocation_size() const {
-  return unchecked_relocation_info()->length();
-}
-
-byte* Code::entry() const { return instruction_start(); }
-
-bool Code::contains(byte* inner_pointer) {
-  return (address() <= inner_pointer) && (inner_pointer <= address() + Size());
-}
-
-int Code::ExecutableSize() const {
-  // Check that the assumptions about the layout of the code object holds.
-  DCHECK_EQ(static_cast<int>(instruction_start() - address()),
-            Code::kHeaderSize);
-  return instruction_size() + Code::kHeaderSize;
-}
-
-int Code::CodeSize() const { return SizeFor(body_size()); }
 
 ACCESSORS(JSArray, length, Object, kLengthOffset)
 
@@ -5295,7 +4572,7 @@ bool JSObject::HasFixedTypedArrayElements() {
 #define FIXED_TYPED_ELEMENTS_CHECK(Type, type, TYPE, ctype, size)      \
   bool JSObject::HasFixed##Type##Elements() {                          \
     HeapObject* array = elements();                                    \
-    DCHECK(array != NULL);                                             \
+    DCHECK(array != nullptr);                                          \
     if (!array->IsHeapObject()) return false;                          \
     return array->map()->instance_type() == FIXED_##TYPE##_ARRAY_TYPE; \
   }

@@ -6,6 +6,7 @@
 #define V8_OBJECTS_MAP_H_
 
 #include "src/objects.h"
+#include "src/objects/code.h"
 
 #include "src/globals.h"
 
@@ -302,6 +303,8 @@ class Map : public HeapObject {
   // returns true, i.e. a well-known symbol like @@toStringTag.
   inline void set_may_have_interesting_symbols(bool value);
   inline bool may_have_interesting_symbols() const;
+
+  DECL_BOOLEAN_ACCESSORS(has_prototype_slot)
 
   // Tells whether the instance with this map has a hidden prototype.
   inline void set_has_hidden_prototype(bool value);
@@ -767,7 +770,7 @@ class Map : public HeapObject {
   static const int kIsUndetectable = 4;
   static const int kIsAccessCheckNeeded = 5;
   static const int kIsConstructor = 6;
-  // Bit 7 is free.
+  static const int kHasPrototypeSlot = 7;
 
   // Bit positions for bit field 2
   static const int kIsExtensible = 0;
@@ -917,7 +920,8 @@ class NormalizedMapCache : public FixedArray {
 
   MUST_USE_RESULT MaybeHandle<Map> Get(Handle<Map> fast_map,
                                        PropertyNormalizationMode mode);
-  void Set(Handle<Map> fast_map, Handle<Map> normalized_map);
+  void Set(Handle<Map> fast_map, Handle<Map> normalized_map,
+           Handle<WeakCell> normalized_map_weak_cell);
 
   void Clear();
 

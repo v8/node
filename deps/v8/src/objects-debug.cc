@@ -705,9 +705,11 @@ void JSBoundFunction::JSBoundFunctionVerify() {
 
 void JSFunction::JSFunctionVerify() {
   CHECK(IsJSFunction());
-  VerifyObjectField(kPrototypeOrInitialMapOffset);
   CHECK(code()->IsCode());
   CHECK(map()->is_callable());
+  if (has_prototype_slot()) {
+    VerifyObjectField(kPrototypeOrInitialMapOffset);
+  }
 }
 
 
@@ -736,7 +738,7 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
         HasInferredName());
 
   int expected_map_index = Context::FunctionMapIndex(
-      language_mode(), kind(), has_shared_name(), needs_home_object());
+      language_mode(), kind(), true, has_shared_name(), needs_home_object());
   CHECK_EQ(expected_map_index, function_map_index());
 
   if (scope_info()->length() > 0) {
@@ -836,7 +838,7 @@ void Code::CodeVerify() {
   CHECK(IsAligned(reinterpret_cast<intptr_t>(instruction_start()),
                   kCodeAlignment));
   relocation_info()->ObjectVerify();
-  Address last_gc_pc = NULL;
+  Address last_gc_pc = nullptr;
   Isolate* isolate = GetIsolate();
   for (RelocIterator it(this); !it.done(); it.next()) {
     it.rinfo()->Verify(isolate);
@@ -1246,6 +1248,7 @@ void Module::ModuleVerify() {
   VerifyPointer(module_namespace());
   VerifyPointer(requested_modules());
   VerifyPointer(script());
+  VerifyPointer(import_meta());
   VerifyPointer(exception());
   VerifySmiField(kHashOffset);
   VerifySmiField(kStatusOffset);
@@ -1265,6 +1268,8 @@ void Module::ModuleVerify() {
   }
 
   CHECK_EQ(requested_modules()->length(), info()->module_requests()->length());
+
+  CHECK(import_meta()->IsTheHole(GetIsolate()) || import_meta()->IsJSObject());
 
   CHECK_NE(hash(), 0);
 }
@@ -1402,8 +1407,10 @@ void NormalizedMapCache::NormalizedMapCacheVerify() {
     Isolate* isolate = GetIsolate();
     for (int i = 0; i < length(); i++) {
       Object* e = FixedArray::get(i);
-      if (e->IsMap()) {
-        Map::cast(e)->DictionaryMapVerify();
+      if (e->IsWeakCell()) {
+        if (!WeakCell::cast(e)->cleared()) {
+          Map::cast(WeakCell::cast(e)->value())->DictionaryMapVerify();
+        }
       } else {
         CHECK(e->IsUndefined(isolate));
       }
@@ -1543,7 +1550,7 @@ void JSObject::SpillInformation::Print() {
 
 bool DescriptorArray::IsSortedNoDuplicates(int valid_entries) {
   if (valid_entries == -1) valid_entries = number_of_descriptors();
-  Name* current_key = NULL;
+  Name* current_key = nullptr;
   uint32_t current = 0;
   for (int i = 0; i < number_of_descriptors(); i++) {
     Name* key = GetSortedKey(i);
@@ -1565,7 +1572,7 @@ bool DescriptorArray::IsSortedNoDuplicates(int valid_entries) {
 
 bool TransitionArray::IsSortedNoDuplicates(int valid_entries) {
   DCHECK(valid_entries == -1);
-  Name* prev_key = NULL;
+  Name* prev_key = nullptr;
   PropertyKind prev_kind = kData;
   PropertyAttributes prev_attributes = NONE;
   uint32_t prev_hash = 0;

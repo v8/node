@@ -62,10 +62,10 @@ void AdaptorWithExitFrameType(MacroAssembler* masm,
 
   // CEntryStub expects r0 to contain the number of arguments including the
   // receiver and the extra arguments.
-  const int num_extra_args = 3;
-  __ add(r0, r0, Operand(num_extra_args + 1));
+  __ add(r0, r0, Operand(BuiltinExitFrameConstants::kNumExtraArgsWithReceiver));
 
   // Insert extra arguments.
+  __ PushRoot(Heap::kTheHoleValueRootIndex);  // Padding.
   __ SmiTag(r0);
   __ Push(r0, r1, r3);
   __ SmiUntag(r0);
@@ -1501,19 +1501,6 @@ void Builtins::Generate_InstantiateAsmJs(MacroAssembler* masm) {
   __ ldr(r4, FieldMemOperand(r1, JSFunction::kCodeOffset));
   __ add(r4, r4, Operand(Code::kHeaderSize - kHeapObjectTag));
   __ Jump(r4);
-}
-
-void Builtins::Generate_NotifyBuiltinContinuation(MacroAssembler* masm) {
-  {
-    FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
-    // Preserve possible return result from lazy deopt.
-    __ push(r0);
-    // Pass the function and deoptimization type to the runtime system.
-    __ CallRuntime(Runtime::kNotifyStubFailure, false);
-    __ pop(r0);
-  }
-
-  __ mov(pc, lr);                         // Jump to ContinueToBuiltin stub
 }
 
 namespace {

@@ -149,7 +149,7 @@ class FullMarkingVerifier : public MarkingVerifier {
     VerifyMarking(heap_->map_space());
 
     LargeObjectIterator it(heap_->lo_space());
-    for (HeapObject* obj = it.Next(); obj != NULL; obj = it.Next()) {
+    for (HeapObject* obj = it.Next(); obj != nullptr; obj = it.Next()) {
       if (marking_state_->IsBlackOrGrey(obj)) {
         obj->Iterate(this);
       }
@@ -559,7 +559,7 @@ void MarkCompactCollector::VerifyMarkbitsAreClean() {
   VerifyMarkbitsAreClean(heap_->new_space());
 
   LargeObjectIterator it(heap_->lo_space());
-  for (HeapObject* obj = it.Next(); obj != NULL; obj = it.Next()) {
+  for (HeapObject* obj = it.Next(); obj != nullptr; obj = it.Next()) {
     CHECK(non_atomic_marking_state()->IsWhite(obj));
     CHECK_EQ(0, non_atomic_marking_state()->live_bytes(
                     MemoryChunk::FromAddress(obj->address())));
@@ -568,7 +568,7 @@ void MarkCompactCollector::VerifyMarkbitsAreClean() {
 
 void MarkCompactCollector::VerifyWeakEmbeddedObjectsInCode() {
   HeapObjectIterator code_iterator(heap()->code_space());
-  for (HeapObject* obj = code_iterator.Next(); obj != NULL;
+  for (HeapObject* obj = code_iterator.Next(); obj != nullptr;
        obj = code_iterator.Next()) {
     Code* code = Code::cast(obj);
     if (!code->is_optimized_code()) continue;
@@ -1002,7 +1002,7 @@ void MarkCompactCollector::Prepare() {
   }
 
   PagedSpaces spaces(heap());
-  for (PagedSpace* space = spaces.next(); space != NULL;
+  for (PagedSpace* space = spaces.next(); space != nullptr;
        space = spaces.next()) {
     space->PrepareForMarkCompact();
   }
@@ -1073,38 +1073,7 @@ void MarkCompactCollector::Finish() {
     Deoptimizer::DeoptimizeMarkedCode(isolate());
     have_code_to_deoptimize_ = false;
   }
-
-  heap_->incremental_marking()->ClearIdleMarkingDelayCounter();
 }
-
-
-// -------------------------------------------------------------------------
-// Phase 1: tracing and marking live objects.
-//   before: all objects are in normal state.
-//   after: a live object's map pointer is marked as '00'.
-
-// Marking all live objects in the heap as part of mark-sweep or mark-compact
-// collection.  Before marking, all objects are in their normal state.  After
-// marking, live objects' map pointers are marked indicating that the object
-// has been found reachable.
-//
-// The marking algorithm is a (mostly) depth-first (because of possible stack
-// overflow) traversal of the graph of objects reachable from the roots.  It
-// uses an explicit stack of pointers rather than recursion.  The young
-// generation's inactive ('from') space is used as a marking stack.  The
-// objects in the marking stack are the ones that have been reached and marked
-// but their children have not yet been visited.
-//
-// The marking stack can overflow during traversal.  In that case, we set an
-// overflow flag.  When the overflow flag is set, we continue marking objects
-// reachable from the objects on the marking stack, but no longer push them on
-// the marking stack.  Instead, we mark them as both marked and overflowed.
-// When the stack is in the overflowed state, objects marked as overflowed
-// have been reached and marked but their children have not been visited yet.
-// After emptying the marking stack, we clear the overflow flag and traverse
-// the heap looking for objects marked as overflowed, push them on the stack,
-// and continue with marking.  This process repeats until all reachable
-// objects have been marked.
 
 class MarkCompactMarkingVisitor final
     : public MarkingVisitor<MarkCompactMarkingVisitor> {
@@ -1370,7 +1339,7 @@ class MarkCompactWeakObjectRetainer : public WeakObjectRetainer {
       marking_state_->WhiteToBlack(site);
       return object;
     } else {
-      return NULL;
+      return nullptr;
     }
   }
 
@@ -2997,7 +2966,7 @@ void MarkCompactCollector::RecordRelocSlot(Code* host, RelocInfo* rinfo,
   Page* target_page = Page::FromAddress(reinterpret_cast<Address>(target));
   Page* source_page = Page::FromAddress(reinterpret_cast<Address>(host));
   if (target_page->IsEvacuationCandidate() &&
-      (rinfo->host() == NULL ||
+      (rinfo->host() == nullptr ||
        !source_page->ShouldSkipEvacuationSlotRecording())) {
     RelocInfo::Mode rmode = rinfo->rmode();
     Address addr = rinfo->pc();
@@ -3824,7 +3793,7 @@ void MarkCompactCollector::Evacuate() {
       // because root iteration traverses the stack and might have to find
       // code objects from non-updated pc pointing into evacuation candidate.
       SkipList* list = p->skip_list();
-      if (list != NULL) list->Clear();
+      if (list != nullptr) list->Clear();
       if (p->IsFlagSet(Page::COMPACTION_WAS_ABORTED)) {
         sweeper().AddPage(p->owner()->identity(), p);
         p->ClearFlag(Page::COMPACTION_WAS_ABORTED);

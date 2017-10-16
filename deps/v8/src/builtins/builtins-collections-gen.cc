@@ -754,7 +754,7 @@ TF_BUILTIN(OrderedHashTableHealIndex, CollectionsBuiltinsAssembler) {
   Label return_index(this), return_zero(this);
 
   // Check if we need to update the {index}.
-  GotoIfNot(SmiLessThan(SmiConstant(Smi::kZero), index), &return_zero);
+  GotoIfNot(SmiLessThan(SmiConstant(0), index), &return_zero);
 
   // Check if the {table} was cleared.
   Node* number_of_deleted_elements = LoadAndUntagObjectField(
@@ -783,7 +783,7 @@ TF_BUILTIN(OrderedHashTableHealIndex, CollectionsBuiltinsAssembler) {
   Return(var_index.value());
 
   BIND(&return_zero);
-  Return(SmiConstant(Smi::kZero));
+  Return(SmiConstant(0));
 }
 
 template <typename TableType>
@@ -1796,7 +1796,7 @@ TF_BUILTIN(WeakMapHas, CollectionsBuiltinsAssembler) {
   Label return_false(this);
 
   ThrowIfNotInstanceType(context, receiver, JS_WEAK_MAP_TYPE,
-                         "WeakMap.prototype.get");
+                         "WeakMap.prototype.has");
 
   GotoIf(TaggedIsSmi(key), &return_false);
   GotoIfNot(IsJSReceiver(key), &return_false);
@@ -1822,7 +1822,7 @@ TF_BUILTIN(WeakSetHas, CollectionsBuiltinsAssembler) {
   Label return_false(this);
 
   ThrowIfNotInstanceType(context, receiver, JS_WEAK_SET_TYPE,
-                         "WeakSet.prototype.get");
+                         "WeakSet.prototype.has");
 
   GotoIf(TaggedIsSmi(key), &return_false);
   GotoIfNot(IsJSReceiver(key), &return_false);

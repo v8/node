@@ -124,7 +124,6 @@ namespace internal {
   ASM(DeserializeLazy)                                                         \
   ASM(InstantiateAsmJs)                                                        \
   ASM(NotifyDeoptimized)                                                       \
-  ASM(NotifyBuiltinContinuation)                                               \
                                                                                \
   /* Trampolines called when returning from a deoptimization that expects   */ \
   /* to continue in a JavaScript builtin to finish the functionality of a   */ \
@@ -183,6 +182,7 @@ namespace internal {
   TFC(StringToNumber, TypeConversion, 1)                                       \
   TFC(ToName, TypeConversion, 1)                                               \
   TFC(NonNumberToNumber, TypeConversion, 1)                                    \
+  TFC(NonNumberToNumeric, TypeConversion, 1)                                   \
   TFC(ToNumber, TypeConversion, 1)                                             \
   TFC(ToString, TypeConversion, 1)                                             \
   TFC(ToInteger, TypeConversion, 1)                                            \
@@ -213,6 +213,7 @@ namespace internal {
   TFH(LoadIC_Slow, LoadWithVector)                                             \
   TFH(LoadIC_StringLength, LoadWithVector)                                     \
   TFH(LoadIC_Uninitialized, LoadWithVector)                                    \
+  TFH(StoreGlobalIC_Slow, StoreWithVector)                                     \
   TFH(StoreIC_Miss, StoreWithVector)                                           \
   ASM(StoreIC_Setter_ForDeopt)                                                 \
   TFH(StoreIC_Uninitialized, StoreWithVector)                                  \
@@ -853,8 +854,10 @@ namespace internal {
   TFJ(RegExpPrototypeSplit, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
   /* RegExp helpers */                                                         \
   TFS(RegExpExecAtom, kRegExp, kString, kLastIndex, kMatchInfo)                \
+  TFS(RegExpMatchFast, kReceiver, kPattern)                                    \
   TFS(RegExpPrototypeExecSlow, kReceiver, kString)                             \
   TFS(RegExpReplace, kRegExp, kString, kReplaceValue)                          \
+  TFS(RegExpSearchFast, kReceiver, kPattern)                                   \
   TFS(RegExpSplit, kRegExp, kString, kLimit)                                   \
                                                                                \
   /* Set */                                                                    \
@@ -932,12 +935,16 @@ namespace internal {
   CPP(StringPrototypeLastIndexOf)                                              \
   /* ES6 #sec-string.prototype.link */                                         \
   TFJ(StringPrototypeLink, 1, kValue)                                          \
+  /* ES6 #sec-string.prototype.match */                                        \
+  TFJ(StringPrototypeMatch, 1, kRegexp)                                        \
   /* ES6 #sec-string.prototype.localecompare */                                \
   CPP(StringPrototypeLocaleCompare)                                            \
   /* ES6 #sec-string.prototype.repeat */                                       \
   TFJ(StringPrototypeRepeat, 1, kCount)                                        \
   /* ES6 #sec-string.prototype.replace */                                      \
   TFJ(StringPrototypeReplace, 2, kSearch, kReplace)                            \
+  /* ES6 #sec-string.prototype.search */                                       \
+  TFJ(StringPrototypeSearch, 1, kRegexp)                                       \
   /* ES6 #sec-string.prototype.slice */                                        \
   TFJ(StringPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)   \
   /* ES6 #sec-string.prototype.small */                                        \

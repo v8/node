@@ -221,11 +221,11 @@ class V8_EXPORT_PRIVATE InterpreterAssembler : public CodeStubAssembler {
   // Dispatch bytecode as wide operand variant.
   void DispatchWide(OperandScale operand_scale);
 
-  // Truncate tagged |value| to word32 and store the type feedback in
-  // |var_type_feedback|.
-  compiler::Node* TruncateTaggedToWord32WithFeedback(
+  // Truncate tagged |value| to word32, or find that it is a BigInt and jump
+  // to {bigint}, and store the type feedback in |var_type_feedback|.
+  compiler::Node* TaggedToWord32OrBigIntWithFeedback(
       compiler::Node* context, compiler::Node* value,
-      Variable* var_type_feedback);
+      Variable* var_type_feedback, Label* bigint, Variable* var_bigint_result);
 
   // Abort with the given bailout reason.
   void Abort(BailoutReason bailout_reason);
@@ -244,6 +244,8 @@ class V8_EXPORT_PRIVATE InterpreterAssembler : public CodeStubAssembler {
  protected:
   Bytecode bytecode() const { return bytecode_; }
   static bool TargetSupportsUnalignedAccess();
+
+  void ToNumberOrNumeric(Object::Conversion mode);
 
  private:
   // Returns a tagged pointer to the current function's BytecodeArray object.

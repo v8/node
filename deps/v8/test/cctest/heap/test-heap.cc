@@ -213,7 +213,7 @@ static void CheckFindCodeObject(Isolate* isolate) {
   // Test FindCodeObject
 #define __ assm.
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   __ nop();  // supported on all architectures
 
@@ -1194,7 +1194,8 @@ static int ObjectsFoundInHeap(Heap* heap, Handle<Object> objs[], int size) {
   // Count the number of objects found in the heap.
   int found_count = 0;
   HeapIterator iterator(heap);
-  for (HeapObject* obj = iterator.next(); obj != NULL; obj = iterator.next()) {
+  for (HeapObject* obj = iterator.next(); obj != nullptr;
+       obj = iterator.next()) {
     for (int i = 0; i < size; i++) {
       if (*objs[i] == obj) {
         found_count++;
@@ -1570,7 +1571,7 @@ TEST(TestAlignmentCalculations) {
   int max_double_unaligned_fill = Heap::GetMaximumFillToAlign(kDoubleUnaligned);
   CHECK_EQ(maximum_double_misalignment, max_double_unaligned_fill);
 
-  Address base = static_cast<Address>(NULL);
+  Address base = static_cast<Address>(nullptr);
   int fill = 0;
 
   // Word alignment never requires fill.
@@ -1598,7 +1599,7 @@ static HeapObject* NewSpaceAllocateAligned(int size,
   Heap* heap = CcTest::heap();
   AllocationResult allocation =
       heap->new_space()->AllocateRawAligned(size, alignment);
-  HeapObject* obj = NULL;
+  HeapObject* obj = nullptr;
   allocation.To(&obj);
   heap->CreateFillerObjectAt(obj->address(), size, ClearRecordedSlots::kNo);
   return obj;
@@ -1665,7 +1666,7 @@ static HeapObject* OldSpaceAllocateAligned(int size,
   Heap* heap = CcTest::heap();
   AllocationResult allocation =
       heap->old_space()->AllocateRawAligned(size, alignment);
-  HeapObject* obj = NULL;
+  HeapObject* obj = nullptr;
   allocation.To(&obj);
   heap->CreateFillerObjectAt(obj->address(), size, ClearRecordedSlots::kNo);
   return obj;
@@ -1743,8 +1744,7 @@ TEST(TestSizeOfObjectsVsHeapIteratorPrecision) {
   HeapIterator iterator(CcTest::heap());
   intptr_t size_of_objects_1 = CcTest::heap()->SizeOfObjects();
   intptr_t size_of_objects_2 = 0;
-  for (HeapObject* obj = iterator.next();
-       obj != NULL;
+  for (HeapObject* obj = iterator.next(); obj != nullptr;
        obj = iterator.next()) {
     if (!obj->IsFreeSpace()) {
       size_of_objects_2 += obj->Size();
@@ -1857,7 +1857,8 @@ TEST(CollectingAllAvailableGarbageShrinksNewSpace) {
 static int NumberOfGlobalObjects() {
   int count = 0;
   HeapIterator iterator(CcTest::heap());
-  for (HeapObject* obj = iterator.next(); obj != NULL; obj = iterator.next()) {
+  for (HeapObject* obj = iterator.next(); obj != nullptr;
+       obj = iterator.next()) {
     if (obj->IsJSGlobalObject()) count++;
   }
   return count;
@@ -2103,7 +2104,7 @@ TEST(InstanceOfStubWriteBarrier) {
     // Discard any pending GC requests otherwise we will get GC when we enter
     // code below.
     marking->Step(MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
   }
 
   CHECK(marking->IsMarking());
@@ -2167,27 +2168,11 @@ TEST(IdleNotificationFinishMarking) {
 
   CHECK_EQ(CcTest::heap()->gc_count(), initial_gc_count);
 
-  // TODO(hpayer): We cannot write proper unit test right now for heap.
-  // The ideal test would call kMaxIdleMarkingDelayCounter to test the
-  // marking delay counter.
-
-  // Perform a huge incremental marking step but don't complete marking.
   do {
     marking->Step(1 * MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::DO_NOT_FORCE_COMPLETION, StepOrigin::kV8);
-    CHECK(!marking->IsIdleMarkingDelayCounterLimitReached());
+                  StepOrigin::kV8);
   } while (
       !CcTest::heap()->mark_compact_collector()->marking_worklist()->IsEmpty());
-
-  // The next invocations of incremental marking are not going to complete
-  // marking
-  // since the completion threshold is not reached
-  for (size_t i = 0; i < IncrementalMarking::kMaxIdleMarkingDelayCounter - 2;
-       i++) {
-    marking->Step(1 * MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::DO_NOT_FORCE_COMPLETION, StepOrigin::kV8);
-    CHECK(!marking->IsIdleMarkingDelayCounterLimitReached());
-  }
 
   marking->SetWeakClosureWasOverApproximatedForTesting(true);
 
@@ -3164,14 +3149,14 @@ class SourceResource : public v8::String::ExternalOneByteStringResource {
 
   virtual void Dispose() {
     i::DeleteArray(data_);
-    data_ = NULL;
+    data_ = nullptr;
   }
 
   const char* data() const { return data_; }
 
   size_t length() const { return length_; }
 
-  bool IsDisposed() { return data_ == NULL; }
+  bool IsDisposed() { return data_ == nullptr; }
 
  private:
   const char* data_;
@@ -3329,7 +3314,7 @@ TEST(Regress169928) {
 
   // We need filler the size of AllocationMemento object, plus an extra
   // fill pointer value.
-  HeapObject* obj = NULL;
+  HeapObject* obj = nullptr;
   AllocationResult allocation =
       CcTest::heap()->new_space()->AllocateRawUnaligned(
           AllocationMemento::kSize + kPointerSize);
@@ -3378,8 +3363,7 @@ TEST(LargeObjectSlotRecording) {
   // Start incremental marking to active write barrier.
   heap::SimulateIncrementalMarking(heap, false);
   heap->incremental_marking()->AdvanceIncrementalMarking(
-      10000000, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-      IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+      10000000, IncrementalMarking::NO_GC_VIA_STACK_GUARD, StepOrigin::kV8);
 
   // Create references from the large object to the object on the evacuation
   // candidate.
@@ -3443,7 +3427,7 @@ TEST(IncrementalMarkingStepMakesBigProgressWithLargeObjects) {
   }
   // This big step should be sufficient to mark the whole array.
   marking->Step(100 * MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                StepOrigin::kV8);
   CHECK(marking->IsComplete() ||
         marking->IsReadyToOverApproximateWeakClosure());
 }
@@ -4338,7 +4322,7 @@ TEST(WeakCellsWithIncrementalMarking) {
                                     i::GarbageCollectionReason::kTesting);
     }
     marking->Step(128, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
     CcTest::CollectGarbage(NEW_SPACE);
     CHECK(weak_cell->value()->IsFixedArray());
     weak_cells[i] = inner_scope.CloseAndEscape(weak_cell);
@@ -4425,7 +4409,7 @@ static void InterruptCallback357137(v8::Isolate* isolate, void* data) { }
 
 
 static void RequestInterrupt(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  CcTest::isolate()->RequestInterrupt(&InterruptCallback357137, NULL);
+  CcTest::isolate()->RequestInterrupt(&InterruptCallback357137, nullptr);
 }
 
 HEAP_TEST(Regress538257) {
@@ -4472,7 +4456,7 @@ TEST(Regress357137) {
       v8::String::NewFromUtf8(isolate, "interrupt", v8::NewStringType::kNormal)
           .ToLocalChecked(),
       v8::FunctionTemplate::New(isolate, RequestInterrupt));
-  v8::Local<v8::Context> context = v8::Context::New(isolate, NULL, global);
+  v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
   CHECK(!context.IsEmpty());
   v8::Context::Scope cscope(context);
 
@@ -4504,7 +4488,7 @@ TEST(Regress507979) {
   // way the filler object shares the mark bits with the following live object.
   o1->Shrink(kFixedArrayLen - 1);
 
-  for (HeapObject* obj = it.next(); obj != NULL; obj = it.next()) {
+  for (HeapObject* obj = it.next(); obj != nullptr; obj = it.next()) {
     // Let's not optimize the loop away.
     CHECK_NOT_NULL(obj->address());
   }
@@ -4588,7 +4572,7 @@ TEST(Regress3631) {
   IncrementalMarking::MarkingState* marking_state = marking->marking_state();
   while (!marking_state->IsBlack(weak_map_table) && !marking->IsStopped()) {
     marking->Step(MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
   }
   // Stash the backing store in a handle.
   Handle<Object> save(weak_map->table(), isolate);
@@ -5001,7 +4985,7 @@ TEST(MessageObjectLeak) {
       v8::String::NewFromUtf8(isolate, "check", v8::NewStringType::kNormal)
           .ToLocalChecked(),
       v8::FunctionTemplate::New(isolate, CheckLeak));
-  v8::Local<v8::Context> context = v8::Context::New(isolate, NULL, global);
+  v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
   v8::Context::Scope cscope(context);
 
   const char* test =
@@ -5056,7 +5040,7 @@ TEST(CanonicalSharedFunctionInfo) {
                                     isolate, CheckEqualSharedFunctionInfos));
   global->Set(isolate, "remove",
               v8::FunctionTemplate::New(isolate, RemoveCodeAndGC));
-  v8::Local<v8::Context> context = v8::Context::New(isolate, NULL, global);
+  v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
   v8::Context::Scope cscope(context);
   CompileRun(
       "function f() { return function g() {}; }"
@@ -5086,7 +5070,7 @@ TEST(ScriptIterator) {
   int script_count = 0;
   {
     HeapIterator it(heap);
-    for (HeapObject* obj = it.next(); obj != NULL; obj = it.next()) {
+    for (HeapObject* obj = it.next(); obj != nullptr; obj = it.next()) {
       if (obj->IsScript()) script_count++;
     }
   }
@@ -5113,7 +5097,7 @@ TEST(SharedFunctionInfoIterator) {
   int sfi_count = 0;
   {
     HeapIterator it(heap);
-    for (HeapObject* obj = it.next(); obj != NULL; obj = it.next()) {
+    for (HeapObject* obj = it.next(); obj != nullptr; obj = it.next()) {
       if (!obj->IsSharedFunctionInfo()) continue;
       sfi_count++;
     }
@@ -5316,7 +5300,7 @@ TEST(Regress598319) {
   // only partially marked the large object.
   while (!marking->IsComplete()) {
     marking->Step(i::KB, i::IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
     if (page->IsFlagSet(Page::HAS_PROGRESS_BAR) && page->progress_bar() > 0) {
       CHECK_NE(page->progress_bar(), arr.get()->Size());
       {
@@ -5334,7 +5318,7 @@ TEST(Regress598319) {
   // Finish marking with bigger steps to speed up test.
   while (!marking->IsComplete()) {
     marking->Step(10 * i::MB, i::IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
     if (marking->IsReadyToOverApproximateWeakClosure()) {
       marking->FinalizeIncrementally();
     }
@@ -5417,7 +5401,7 @@ TEST(Regress615489) {
   }
   while (!marking->IsComplete()) {
     marking->Step(i::MB, i::IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
     if (marking->IsReadyToOverApproximateWeakClosure()) {
       marking->FinalizeIncrementally();
     }
@@ -5478,7 +5462,7 @@ TEST(Regress631969) {
   IncrementalMarking* marking = heap->incremental_marking();
   while (!marking->IsComplete()) {
     marking->Step(MB, i::IncrementalMarking::NO_GC_VIA_STACK_GUARD,
-                  IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+                  StepOrigin::kV8);
     if (marking->IsReadyToOverApproximateWeakClosure()) {
       marking->FinalizeIncrementally();
     }
@@ -5805,15 +5789,14 @@ HEAP_TEST(Regress670675) {
     if (marking->IsStopped()) break;
     double deadline = heap->MonotonicallyIncreasingTimeInMs() + 1;
     marking->AdvanceIncrementalMarking(
-        deadline, IncrementalMarking::GC_VIA_STACK_GUARD,
-        IncrementalMarking::FORCE_COMPLETION, StepOrigin::kV8);
+        deadline, IncrementalMarking::GC_VIA_STACK_GUARD, StepOrigin::kV8);
   }
   DCHECK(marking->IsStopped());
 }
 
 namespace {
 Handle<Code> GenerateDummyImmovableCode(Isolate* isolate) {
-  Assembler assm(isolate, NULL, 256);
+  Assembler assm(isolate, nullptr, 256);
 
   const int kNumberOfNops = 1 << 10;
   for (int i = 0; i < kNumberOfNops; i++) {

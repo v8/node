@@ -55,12 +55,12 @@ void AdaptorWithExitFrameType(MacroAssembler* masm,
 
   // CEntryStub expects eax to contain the number of arguments including the
   // receiver and the extra arguments.
-  const int num_extra_args = 3;
-  __ add(eax, Immediate(num_extra_args + 1));
+  __ add(eax, Immediate(BuiltinExitFrameConstants::kNumExtraArgsWithReceiver));
 
   // Insert extra arguments.
   __ PopReturnAddressTo(ecx);
   __ SmiTag(eax);
+  __ PushRoot(Heap::kTheHoleValueRootIndex);  // Padding.
   __ Push(eax);
   __ SmiUntag(eax);
   __ Push(edi);
@@ -1551,20 +1551,6 @@ void Builtins::Generate_InstantiateAsmJs(MacroAssembler* masm) {
   __ jmp(ecx);
 }
 
-void Builtins::Generate_NotifyBuiltinContinuation(MacroAssembler* masm) {
-  // Enter an internal frame.
-  {
-    FrameScope scope(masm, StackFrame::INTERNAL);
-    // Preserve possible return result from lazy deopt.
-    __ push(eax);
-    __ CallRuntime(Runtime::kNotifyStubFailure, false);
-    __ pop(eax);
-    // Tear down internal frame.
-  }
-
-  __ Ret();  // Return to ContinueToBuiltin stub still on stack.
-}
-
 namespace {
 void Generate_ContinueToBuiltinHelper(MacroAssembler* masm,
                                       bool java_script_builtin,
@@ -1857,7 +1843,7 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   if (FLAG_debug_code) {
     // Initial map for the builtin InternalArray function should be a map.
     __ mov(ebx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ test(ebx, Immediate(kSmiTagMask));
     __ Assert(not_zero, kUnexpectedInitialMapForInternalArrayFunction);
     __ CmpObjectType(ebx, MAP_TYPE, ecx);
@@ -1886,7 +1872,7 @@ void Builtins::Generate_ArrayConstructor(MacroAssembler* masm) {
   if (FLAG_debug_code) {
     // Initial map for the builtin Array function should be a map.
     __ mov(ebx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ test(ebx, Immediate(kSmiTagMask));
     __ Assert(not_zero, kUnexpectedInitialMapForArrayFunction);
     __ CmpObjectType(ebx, MAP_TYPE, ecx);

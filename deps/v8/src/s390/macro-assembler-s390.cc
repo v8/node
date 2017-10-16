@@ -980,20 +980,6 @@ int TurboAssembler::LeaveFrame(StackFrame::Type type, int stack_adjustment) {
   return frame_ends;
 }
 
-void MacroAssembler::EnterBuiltinFrame(Register context, Register target,
-                                       Register argc) {
-  CleanseP(r14);
-  Push(r14, fp, context, target);
-  la(fp, MemOperand(sp, 2 * kPointerSize));
-  Push(argc);
-}
-
-void MacroAssembler::LeaveBuiltinFrame(Register context, Register target,
-                                       Register argc) {
-  Pop(argc);
-  Pop(r14, fp, context, target);
-}
-
 // ExitFrame layout (probably wrongish.. needs updating)
 //
 //  SP -> previousSP
@@ -1462,11 +1448,6 @@ void MacroAssembler::CompareRoot(Register obj, Heap::RootListIndex index) {
   CmpP(obj, MemOperand(kRootRegister, index << kPointerSizeLog2));
 }
 
-void MacroAssembler::SmiToDouble(DoubleRegister value, Register smi) {
-  SmiUntag(ip, smi);
-  ConvertIntToDouble(value, ip);
-}
-
 void MacroAssembler::GetWeakValue(Register value, Handle<WeakCell> cell) {
   mov(value, Operand(cell));
   LoadP(value, FieldMemOperand(value, WeakCell::kValueOffset));
@@ -1655,7 +1636,7 @@ void TurboAssembler::Abort(BailoutReason reason) {
   bind(&abort_start);
 #ifdef DEBUG
   const char* msg = GetBailoutReason(reason);
-  if (msg != NULL) {
+  if (msg != nullptr) {
     RecordComment("Abort message: ");
     RecordComment(msg);
   }
@@ -1792,18 +1773,6 @@ void MacroAssembler::AssertUndefinedOrAllocationSite(Register object,
     Assert(eq, kExpectedUndefinedOrCell);
     bind(&done_checking);
   }
-}
-
-void MacroAssembler::JumpIfNotUniqueNameInstanceType(Register reg,
-                                                     Label* not_unique_name) {
-  STATIC_ASSERT(kInternalizedTag == 0 && kStringTag == 0);
-  Label succeed;
-  AndP(r0, reg, Operand(kIsNotStringMask | kIsNotInternalizedMask));
-  beq(&succeed, Label::kNear);
-  CmpP(reg, Operand(SYMBOL_TYPE));
-  bne(not_unique_name);
-
-  bind(&succeed);
 }
 
 static const int kRegisterPassedArguments = 5;
@@ -4344,29 +4313,6 @@ bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,
   return n_of_valid_regs != n_of_non_aliasing_regs;
 }
 #endif
-
-CodePatcher::CodePatcher(Isolate* isolate, byte* address, int size,
-                         FlushICache flush_cache)
-    : address_(address),
-      size_(size),
-      masm_(isolate, address, size_ + Assembler::kGap, CodeObjectRequired::kNo),
-      flush_cache_(flush_cache) {
-  // Create a new macro assembler pointing to the address of the code to patch.
-  // The size is adjusted with kGap on order for the assembler to generate size
-  // bytes of instructions without failing with buffer size constraints.
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
-
-CodePatcher::~CodePatcher() {
-  // Indicate that code has changed.
-  if (flush_cache_ == FLUSH) {
-    Assembler::FlushICache(masm_.isolate(), address_, size_);
-  }
-
-  // Check that the code was patched as expected.
-  DCHECK(masm_.pc_ == address_ + size_);
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
 
 }  // namespace internal
 }  // namespace v8

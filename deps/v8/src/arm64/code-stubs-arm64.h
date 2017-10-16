@@ -9,29 +9,6 @@ namespace v8 {
 namespace internal {
 
 
-class StringHelper : public AllStatic {
- public:
-  // Compares two flat one-byte strings and returns result in x0.
-  static void GenerateCompareFlatOneByteStrings(
-      MacroAssembler* masm, Register left, Register right, Register scratch1,
-      Register scratch2, Register scratch3, Register scratch4);
-
-  // Compare two flat one-byte strings for equality and returns result in x0.
-  static void GenerateFlatOneByteStringEquals(MacroAssembler* masm,
-                                              Register left, Register right,
-                                              Register scratch1,
-                                              Register scratch2,
-                                              Register scratch3);
-
- private:
-  static void GenerateOneByteCharsCompareLoop(
-      MacroAssembler* masm, Register left, Register right, Register length,
-      Register scratch1, Register scratch2, Label* chars_not_equal);
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(StringHelper);
-};
-
-
 class RecordWriteStub: public PlatformCodeStub {
  public:
   // Stub to record the write of 'value' at 'address' in 'object'.
@@ -215,12 +192,8 @@ class DirectCEntryStub: public PlatformCodeStub {
 
 class NameDictionaryLookupStub: public PlatformCodeStub {
  public:
-  enum LookupMode { POSITIVE_LOOKUP, NEGATIVE_LOOKUP };
-
-  NameDictionaryLookupStub(Isolate* isolate, LookupMode mode)
-      : PlatformCodeStub(isolate) {
-    minor_key_ = LookupModeBits::encode(mode);
-  }
+  explicit NameDictionaryLookupStub(Isolate* isolate)
+      : PlatformCodeStub(isolate) {}
 
   static void GenerateNegativeLookup(MacroAssembler* masm,
                                      Label* miss,
@@ -243,10 +216,6 @@ class NameDictionaryLookupStub: public PlatformCodeStub {
   static const int kElementsStartOffset =
       NameDictionary::kHeaderSize +
       NameDictionary::kElementsStartIndex * kPointerSize;
-
-  LookupMode mode() const { return LookupModeBits::decode(minor_key_); }
-
-  class LookupModeBits: public BitField<LookupMode, 0, 1> {};
 
   DEFINE_NULL_CALL_INTERFACE_DESCRIPTOR();
   DEFINE_PLATFORM_CODE_STUB(NameDictionaryLookup, PlatformCodeStub);

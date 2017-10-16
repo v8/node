@@ -31,7 +31,7 @@ namespace v8 {
 namespace internal {
 
 void SourceCodeCache::Initialize(Isolate* isolate, bool create_heap_objects) {
-  cache_ = create_heap_objects ? isolate->heap()->empty_fixed_array() : NULL;
+  cache_ = create_heap_objects ? isolate->heap()->empty_fixed_array() : nullptr;
 }
 
 bool SourceCodeCache::Lookup(Vector<const char> name,
@@ -86,17 +86,17 @@ void Bootstrapper::Initialize(bool create_heap_objects) {
 
 
 static const char* GCFunctionName() {
-  bool flag_given = FLAG_expose_gc_as != NULL && strlen(FLAG_expose_gc_as) != 0;
+  bool flag_given =
+      FLAG_expose_gc_as != nullptr && strlen(FLAG_expose_gc_as) != 0;
   return flag_given ? FLAG_expose_gc_as : "gc";
 }
 
-
-v8::Extension* Bootstrapper::free_buffer_extension_ = NULL;
-v8::Extension* Bootstrapper::gc_extension_ = NULL;
-v8::Extension* Bootstrapper::externalize_string_extension_ = NULL;
-v8::Extension* Bootstrapper::statistics_extension_ = NULL;
-v8::Extension* Bootstrapper::trigger_failure_extension_ = NULL;
-v8::Extension* Bootstrapper::ignition_statistics_extension_ = NULL;
+v8::Extension* Bootstrapper::free_buffer_extension_ = nullptr;
+v8::Extension* Bootstrapper::gc_extension_ = nullptr;
+v8::Extension* Bootstrapper::externalize_string_extension_ = nullptr;
+v8::Extension* Bootstrapper::statistics_extension_ = nullptr;
+v8::Extension* Bootstrapper::trigger_failure_extension_ = nullptr;
+v8::Extension* Bootstrapper::ignition_statistics_extension_ = nullptr;
 
 void Bootstrapper::InitializeOncePerProcess() {
   free_buffer_extension_ = new FreeBufferExtension;
@@ -116,17 +116,17 @@ void Bootstrapper::InitializeOncePerProcess() {
 
 void Bootstrapper::TearDownExtensions() {
   delete free_buffer_extension_;
-  free_buffer_extension_ = NULL;
+  free_buffer_extension_ = nullptr;
   delete gc_extension_;
-  gc_extension_ = NULL;
+  gc_extension_ = nullptr;
   delete externalize_string_extension_;
-  externalize_string_extension_ = NULL;
+  externalize_string_extension_ = nullptr;
   delete statistics_extension_;
-  statistics_extension_ = NULL;
+  statistics_extension_ = nullptr;
   delete trigger_failure_extension_;
-  trigger_failure_extension_ = NULL;
+  trigger_failure_extension_ = nullptr;
   delete ignition_statistics_extension_;
-  ignition_statistics_extension_ = NULL;
+  ignition_statistics_extension_ = nullptr;
 }
 
 void Bootstrapper::TearDown() {
@@ -789,6 +789,12 @@ Handle<Map> CreateNonConstructorMap(Handle<Map> source_map,
                                     Handle<JSObject> prototype,
                                     const char* reason) {
   Handle<Map> map = Map::Copy(source_map, reason);
+  // Ensure the resulting map has prototype slot (it is necessary for storing
+  // inital map even when the prototype property is not required).
+  if (!map->has_prototype_slot()) {
+    map->set_instance_size(map->instance_size() + kPointerSize);
+    map->set_has_prototype_slot(true);
+  }
   map->set_is_constructor(false);
   Map::SetPrototype(map, prototype);
   return map;
@@ -1357,7 +1363,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   // --- N a t i v e   C o n t e x t ---
   // Use the empty function as closure (no scope info).
   native_context()->set_closure(*empty_function);
-  native_context()->set_previous(NULL);
+  native_context()->set_previous(nullptr);
   // Set extension and global object.
   native_context()->set_extension(*global_object);
   // Security setup: Set the security token of the native context to the global
@@ -1481,9 +1487,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
   {  // --- F u n c t i o n ---
     Handle<JSFunction> prototype = empty_function;
-    Handle<JSFunction> function_fun =
-        InstallFunction(global, "Function", JS_FUNCTION_TYPE, JSFunction::kSize,
-                        prototype, Builtins::kFunctionConstructor);
+    Handle<JSFunction> function_fun = InstallFunction(
+        global, "Function", JS_FUNCTION_TYPE, JSFunction::kSizeWithPrototype,
+        prototype, Builtins::kFunctionConstructor);
     // Function instances are sloppy by default.
     function_fun->set_prototype_or_initial_map(*isolate->sloppy_function_map());
     function_fun->shared()->DontAdaptArguments();
@@ -1975,6 +1981,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           true);
     SimpleInstallFunction(prototype, "localeCompare",
                           Builtins::kStringPrototypeLocaleCompare, 1, true);
+    SimpleInstallFunction(prototype, "match", Builtins::kStringPrototypeMatch,
+                          1, true);
 #ifdef V8_INTL_SUPPORT
     SimpleInstallFunction(prototype, "normalize",
                           Builtins::kStringPrototypeNormalizeIntl, 0, false);
@@ -1986,6 +1994,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                           1, true);
     SimpleInstallFunction(prototype, "replace",
                           Builtins::kStringPrototypeReplace, 2, true);
+    SimpleInstallFunction(prototype, "search", Builtins::kStringPrototypeSearch,
+                          1, true);
     SimpleInstallFunction(prototype, "slice", Builtins::kStringPrototypeSlice,
                           2, false);
     SimpleInstallFunction(prototype, "small", Builtins::kStringPrototypeSmall,
@@ -3304,8 +3314,12 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   {  // -- P r o x y
     CreateJSProxyMaps();
 
+    // Proxy function map has prototype slot for storing initial map but does
+    // not have a prototype property.
     Handle<Map> proxy_function_map =
         Map::Copy(isolate->strict_function_without_prototype_map(), "Proxy");
+    proxy_function_map->set_instance_size(JSFunction::kSizeWithPrototype);
+    proxy_function_map->set_has_prototype_slot(true);
     proxy_function_map->set_is_constructor(true);
 
     Handle<String> name = factory->Proxy_string();
@@ -3407,13 +3421,16 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // This is done by introducing an anonymous function with
     // class_name equals 'Arguments'.
     Handle<String> arguments_string = factory->Arguments_string();
-    Handle<Code> code(BUILTIN_CODE(isolate, Illegal));
     Handle<JSFunction> function =
-        factory->NewFunctionWithoutPrototype(arguments_string, code, STRICT);
+        factory->NewFunction(arguments_string, BUILTIN_CODE(isolate, Illegal),
+                             isolate->initial_object_prototype(), STRICT);
     function->shared()->set_instance_class_name(*arguments_string);
 
     Handle<Map> map = factory->NewMap(
         JS_ARGUMENTS_TYPE, JSSloppyArgumentsObject::kSize, PACKED_ELEMENTS);
+    JSFunction::SetInitialMap(function, map,
+                              isolate->initial_object_prototype());
+
     // Create the descriptor array for the arguments object.
     Map::EnsureDescriptorSlack(map, 2);
 
@@ -3433,10 +3450,6 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
     map->SetInObjectProperties(2);
     native_context()->set_sloppy_arguments_map(*map);
-
-    DCHECK(!function->has_initial_map());
-    JSFunction::SetInitialMap(function, map,
-                              isolate->initial_object_prototype());
 
     DCHECK(!map->is_dictionary_map());
     DCHECK(IsObjectElementsKind(map->elements_kind()));
@@ -3631,7 +3644,7 @@ bool Bootstrapper::CompileNative(Isolate* isolate, Vector<const char> name,
   MaybeHandle<SharedFunctionInfo> maybe_function_info =
       Compiler::GetSharedFunctionInfoForScript(
           source, script_name, 0, 0, ScriptOriginOptions(),
-          MaybeHandle<Object>(), context, NULL, NULL,
+          MaybeHandle<Object>(), context, nullptr, nullptr,
           ScriptCompiler::kNoCompileOptions, natives_flag,
           MaybeHandle<FixedArray>());
   Handle<SharedFunctionInfo> function_info;
@@ -3697,7 +3710,7 @@ bool Genesis::CompileExtension(Isolate* isolate, v8::Extension* extension) {
     MaybeHandle<SharedFunctionInfo> maybe_function_info =
         Compiler::GetSharedFunctionInfoForScript(
             source, script_name, 0, 0, ScriptOriginOptions(),
-            MaybeHandle<Object>(), context, extension, NULL,
+            MaybeHandle<Object>(), context, extension, nullptr,
             ScriptCompiler::kNoCompileOptions, EXTENSION_CODE,
             MaybeHandle<FixedArray>());
     if (!maybe_function_info.ToHandle(&function_info)) return false;
@@ -3725,7 +3738,7 @@ static Handle<JSObject> ResolveBuiltinIdHolder(Handle<Context> native_context,
   Factory* factory = isolate->factory();
   Handle<JSGlobalObject> global(native_context->global_object());
   const char* period_pos = strchr(holder_expr, '.');
-  if (period_pos == NULL) {
+  if (period_pos == nullptr) {
     return Handle<JSObject>::cast(
         Object::GetPropertyOrElement(
             global, factory->InternalizeUtf8String(holder_expr))
@@ -3759,7 +3772,7 @@ void Genesis::ConfigureUtilsObject(GlobalContextType context_type) {
     case FULL_CONTEXT: {
       // We still need the utils object after deserialization.
       if (isolate()->serializer_enabled()) return;
-      if (FLAG_expose_natives_as == NULL) break;
+      if (FLAG_expose_natives_as == nullptr) break;
       if (strlen(FLAG_expose_natives_as) == 0) break;
       HandleScope scope(isolate());
       Handle<String> natives_key =
@@ -3813,8 +3826,9 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
         generator_function_prototype, NONE);
 
     Handle<JSFunction> generator_function_function = InstallFunction(
-        container, "GeneratorFunction", JS_FUNCTION_TYPE, JSFunction::kSize,
-        generator_function_prototype, Builtins::kGeneratorFunctionConstructor);
+        container, "GeneratorFunction", JS_FUNCTION_TYPE,
+        JSFunction::kSizeWithPrototype, generator_function_prototype,
+        Builtins::kGeneratorFunctionConstructor);
     generator_function_function->set_prototype_or_initial_map(
         native_context->generator_function_map());
     generator_function_function->shared()->DontAdaptArguments();
@@ -3841,10 +3855,10 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
     Handle<JSObject> async_generator_function_prototype(
         iter.GetCurrent<JSObject>());
 
-    Handle<JSFunction> async_generator_function_function =
-        InstallFunction(container, "AsyncGeneratorFunction", JS_FUNCTION_TYPE,
-                        JSFunction::kSize, async_generator_function_prototype,
-                        Builtins::kAsyncGeneratorFunctionConstructor);
+    Handle<JSFunction> async_generator_function_function = InstallFunction(
+        container, "AsyncGeneratorFunction", JS_FUNCTION_TYPE,
+        JSFunction::kSizeWithPrototype, async_generator_function_prototype,
+        Builtins::kAsyncGeneratorFunctionConstructor);
     async_generator_function_function->set_prototype_or_initial_map(
         native_context->async_generator_function_map());
     async_generator_function_function->shared()->DontAdaptArguments();
@@ -4078,8 +4092,9 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
     Handle<JSObject> async_function_prototype(iter.GetCurrent<JSObject>());
 
     Handle<JSFunction> async_function_constructor = InstallFunction(
-        container, "AsyncFunction", JS_FUNCTION_TYPE, JSFunction::kSize,
-        async_function_prototype, Builtins::kAsyncFunctionConstructor);
+        container, "AsyncFunction", JS_FUNCTION_TYPE,
+        JSFunction::kSizeWithPrototype, async_function_prototype,
+        Builtins::kAsyncFunctionConstructor);
     async_function_constructor->set_prototype_or_initial_map(
         native_context->async_function_map());
     async_function_constructor->shared()->DontAdaptArguments();
@@ -4979,7 +4994,7 @@ Genesis::ExtensionStates::ExtensionStates() : map_(8) {}
 Genesis::ExtensionTraversalState Genesis::ExtensionStates::get_state(
     RegisteredExtension* extension) {
   base::HashMap::Entry* entry = map_.Lookup(extension, Hash(extension));
-  if (entry == NULL) {
+  if (entry == nullptr) {
     return UNVISITED;
   }
   return static_cast<ExtensionTraversalState>(
@@ -5018,8 +5033,7 @@ bool Genesis::InstallExtensions(Handle<Context> native_context,
 bool Genesis::InstallAutoExtensions(Isolate* isolate,
                                     ExtensionStates* extension_states) {
   for (v8::RegisteredExtension* it = v8::RegisteredExtension::first_extension();
-       it != NULL;
-       it = it->next()) {
+       it != nullptr; it = it->next()) {
     if (it->extension()->auto_enable() &&
         !InstallExtension(isolate, it, extension_states)) {
       return false;
@@ -5045,8 +5059,7 @@ bool Genesis::InstallExtension(Isolate* isolate,
                                const char* name,
                                ExtensionStates* extension_states) {
   for (v8::RegisteredExtension* it = v8::RegisteredExtension::first_extension();
-       it != NULL;
-       it = it->next()) {
+       it != nullptr; it = it->next()) {
     if (strcmp(name, it->extension()->name()) == 0) {
       return InstallExtension(isolate, it, extension_states);
     }

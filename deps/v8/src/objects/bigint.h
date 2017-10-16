@@ -23,7 +23,7 @@ class BigInt : public HeapObject {
   // https://tc39.github.io/proposal-bigint/#sec-numeric-types
   // Sections 1.1.1 through 1.1.19.
   static Handle<BigInt> UnaryMinus(Handle<BigInt> x);
-  static Handle<BigInt> BitwiseNot(Handle<BigInt> x);
+  static MaybeHandle<BigInt> BitwiseNot(Handle<BigInt> x);
   static MaybeHandle<BigInt> Exponentiate(Handle<BigInt> base,
                                           Handle<BigInt> exponent);
   static Handle<BigInt> Multiply(Handle<BigInt> x, Handle<BigInt> y);
@@ -41,6 +41,9 @@ class BigInt : public HeapObject {
   static Handle<BigInt> BitwiseAnd(Handle<BigInt> x, Handle<BigInt> y);
   static Handle<BigInt> BitwiseXor(Handle<BigInt> x, Handle<BigInt> y);
   static Handle<BigInt> BitwiseOr(Handle<BigInt> x, Handle<BigInt> y);
+
+  static MaybeHandle<BigInt> Increment(Handle<BigInt> x);
+  static MaybeHandle<BigInt> Decrement(Handle<BigInt> x);
 
   // Other parts of the public interface.
   bool ToBoolean() { return !is_zero(); }
@@ -67,8 +70,8 @@ class BigInt : public HeapObject {
   // The maximum length that the current implementation supports would be
   // kMaxInt / kDigitBits. However, we use a lower limit for now, because
   // raising it later is easier than lowering it.
-  static const int kMaxLengthBits = 20;
-  static const int kMaxLength = (1 << kMaxLengthBits) - 1;
+  // Support up to 1 million bits.
+  static const int kMaxLength = 1024 * 1024 / (kPointerSize * kBitsPerByte);
 
   class BodyDescriptor;
 
@@ -81,6 +84,8 @@ class BigInt : public HeapObject {
   static const int kDigitBits = kDigitSize * kBitsPerByte;
   static const int kHalfDigitBits = kDigitBits / 2;
   static const digit_t kHalfDigitMask = (1ull << kHalfDigitBits) - 1;
+  // kMaxLength definition assumes this:
+  STATIC_ASSERT(kDigitSize == kPointerSize);
 
   // Private helpers for public methods.
   static Handle<BigInt> Copy(Handle<BigInt> source);
@@ -93,13 +98,14 @@ class BigInt : public HeapObject {
   static Handle<BigInt> AbsoluteSub(Handle<BigInt> x, Handle<BigInt> y,
                                     bool result_sign);
   static Handle<BigInt> AbsoluteAddOne(Handle<BigInt> x, bool sign,
-                                       BigInt* result_storage);
+                                       BigInt* result_storage = nullptr);
   static Handle<BigInt> AbsoluteSubOne(Handle<BigInt> x, int result_length);
 
   enum ExtraDigitsHandling { kCopy, kSkip };
+  enum SymmetricOp { kSymmetric, kNotSymmetric };
   static inline Handle<BigInt> AbsoluteBitwiseOp(
       Handle<BigInt> x, Handle<BigInt> y, BigInt* result_storage,
-      ExtraDigitsHandling extra_digits,
+      ExtraDigitsHandling extra_digits, SymmetricOp symmetric,
       std::function<digit_t(digit_t, digit_t)> op);
   static Handle<BigInt> AbsoluteAnd(Handle<BigInt> x, Handle<BigInt> y,
                                     BigInt* result_storage = nullptr);
@@ -160,6 +166,8 @@ class BigInt : public HeapObject {
     return static_cast<digit_t>(~x) == 0;
   }
 
+  static const int kMaxLengthBits = 20;
+  STATIC_ASSERT(kMaxLength <= ((1 << kMaxLengthBits) - 1));
   class LengthBits : public BitField<int, 0, kMaxLengthBits> {};
   class SignBits : public BitField<bool, LengthBits::kNext, 1> {};
 

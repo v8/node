@@ -260,6 +260,8 @@ class Scanner {
 
   double DoubleValue();
 
+  const char* CurrentLiteralAsCString(Zone* zone) const;
+
   inline bool CurrentMatches(Token::Value token) const {
     DCHECK(Token::IsKeyword(token));
     return current_.token == token;
@@ -355,6 +357,9 @@ class Scanner {
   Handle<String> SourceMappingUrl(Isolate* isolate) const;
 
   bool FoundHtmlComment() const { return found_html_comment_; }
+
+  bool allow_harmony_bigint() const { return allow_harmony_bigint_; }
+  void set_allow_harmony_bigint(bool allow) { allow_harmony_bigint_ = allow; }
 
  private:
   // Scoped helper for saving & restoring scanner error state.
@@ -494,18 +499,18 @@ class Scanner {
     // Initialize current_ to not refer to a literal.
     current_.token = Token::UNINITIALIZED;
     current_.contextual_token = Token::UNINITIALIZED;
-    current_.literal_chars = NULL;
-    current_.raw_literal_chars = NULL;
+    current_.literal_chars = nullptr;
+    current_.raw_literal_chars = nullptr;
     current_.invalid_template_escape_message = MessageTemplate::kNone;
     next_.token = Token::UNINITIALIZED;
     next_.contextual_token = Token::UNINITIALIZED;
-    next_.literal_chars = NULL;
-    next_.raw_literal_chars = NULL;
+    next_.literal_chars = nullptr;
+    next_.raw_literal_chars = nullptr;
     next_.invalid_template_escape_message = MessageTemplate::kNone;
     next_next_.token = Token::UNINITIALIZED;
     next_next_.contextual_token = Token::UNINITIALIZED;
-    next_next_.literal_chars = NULL;
-    next_next_.raw_literal_chars = NULL;
+    next_next_.literal_chars = nullptr;
+    next_next_.raw_literal_chars = nullptr;
     next_next_.invalid_template_escape_message = MessageTemplate::kNone;
     found_html_comment_ = false;
     scanner_error_ = MessageTemplate::kNone;
@@ -572,8 +577,8 @@ class Scanner {
   // Stops scanning of a literal and drop the collected characters,
   // e.g., due to an encountered error.
   inline void DropLiteral() {
-    next_.literal_chars = NULL;
-    next_.raw_literal_chars = NULL;
+    next_.literal_chars = nullptr;
+    next_.raw_literal_chars = nullptr;
   }
 
   inline void AddLiteralCharAdvance() {
@@ -800,6 +805,9 @@ class Scanner {
 
   // Whether this scanner encountered an HTML comment.
   bool found_html_comment_;
+
+  // Whether to recognize BIGINT tokens.
+  bool allow_harmony_bigint_;
 
   int* use_counts_;
 

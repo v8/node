@@ -250,12 +250,12 @@ void CpuFeatures::ProbeImpl(bool cross_compile) {
 
 
 void CpuFeatures::PrintTarget() {
-  const char* arm_arch = NULL;
+  const char* arm_arch = nullptr;
   const char* arm_target_type = "";
   const char* arm_no_probe = "";
   const char* arm_fpu = "";
   const char* arm_thumb = "";
-  const char* arm_float_abi = NULL;
+  const char* arm_float_abi = nullptr;
 
 #if !defined __arm__
   arm_target_type = " simulator";
@@ -1043,9 +1043,9 @@ bool FitsShifter(uint32_t imm32, uint32_t* rotate_imm, uint32_t* immed_8,
   }
   // If the opcode is one with a complementary version and the complementary
   // immediate fits, change the opcode.
-  if (instr != NULL) {
+  if (instr != nullptr) {
     if ((*instr & kMovMvnMask) == kMovMvnPattern) {
-      if (FitsShifter(~imm32, rotate_imm, immed_8, NULL)) {
+      if (FitsShifter(~imm32, rotate_imm, immed_8, nullptr)) {
         *instr ^= kMovMvnFlip;
         return true;
       } else if ((*instr & kMovLeaveCCMask) == kMovLeaveCCPattern) {
@@ -1059,7 +1059,7 @@ bool FitsShifter(uint32_t imm32, uint32_t* rotate_imm, uint32_t* immed_8,
         }
       }
     } else if ((*instr & kCmpCmnMask) == kCmpCmnPattern) {
-      if (FitsShifter(-static_cast<int>(imm32), rotate_imm, immed_8, NULL)) {
+      if (FitsShifter(-static_cast<int>(imm32), rotate_imm, immed_8, nullptr)) {
         *instr ^= kCmpCmnFlip;
         return true;
       }
@@ -1067,13 +1067,14 @@ bool FitsShifter(uint32_t imm32, uint32_t* rotate_imm, uint32_t* immed_8,
       Instr alu_insn = (*instr & kALUMask);
       if (alu_insn == ADD ||
           alu_insn == SUB) {
-        if (FitsShifter(-static_cast<int>(imm32), rotate_imm, immed_8, NULL)) {
+        if (FitsShifter(-static_cast<int>(imm32), rotate_imm, immed_8,
+                        nullptr)) {
           *instr ^= kAddSubFlip;
           return true;
         }
       } else if (alu_insn == AND ||
                  alu_insn == BIC) {
-        if (FitsShifter(~imm32, rotate_imm, immed_8, NULL)) {
+        if (FitsShifter(~imm32, rotate_imm, immed_8, nullptr)) {
           *instr ^= kAndBicFlip;
           return true;
         }
@@ -1089,7 +1090,7 @@ bool FitsShifter(uint32_t imm32, uint32_t* rotate_imm, uint32_t* immed_8,
 // encoded.
 bool MustOutputRelocInfo(RelocInfo::Mode rmode, const Assembler* assembler) {
   if (rmode == RelocInfo::EXTERNAL_REFERENCE) {
-    if (assembler != NULL && assembler->predictable_code_size()) return true;
+    if (assembler != nullptr && assembler->predictable_code_size()) return true;
     return assembler->serializer_enabled();
   } else if (RelocInfo::IsNone(rmode)) {
     return false;
@@ -1207,6 +1208,26 @@ void Assembler::AddrMode1(Instr instr, Register rd, Register rn,
       // pool only for a MOV instruction which does not set the flags.
       DCHECK(!rn.is_valid());
       Move32BitImmediate(rd, x, cond);
+    } else if ((opcode == ADD) && !set_flags && (rd == rn) &&
+               (scratch_register_list_ == 0)) {
+      // Split the operation into a sequence of additions if we cannot use a
+      // scratch register. In this case, we cannot re-use rn and the assembler
+      // does not have any scratch registers to spare.
+      uint32_t imm = x.immediate();
+      do {
+        // The immediate encoding format is composed of 8 bits of data and 4
+        // bits encoding a rotation. Each of the 16 possible rotations accounts
+        // for a rotation by an even number.
+        //   4 bits -> 16 rotations possible
+        //          -> 16 rotations of 2 bits each fits in a 32-bit value.
+        // This means that finding the even number of trailing zeroes of the
+        // immediate allows us to more efficiently split it:
+        int trailing_zeroes = base::bits::CountTrailingZeros(imm) & ~1u;
+        uint32_t mask = (0xff << trailing_zeroes);
+        add(rd, rd, Operand(imm & mask), LeaveCC, cond);
+        imm = imm & ~mask;
+      } while (!ImmediateFitsAddrMode1Instruction(imm));
+      add(rd, rd, Operand(imm), LeaveCC, cond);
     } else {
       // The immediate operand cannot be encoded as a shifter operand, so load
       // it first to a scratch register and change the original instruction to
@@ -2049,7 +2070,7 @@ void Assembler::msr(SRegisterFieldMask fields, const Operand& src,
     uint32_t rotate_imm;
     uint32_t immed_8;
     if (src.MustOutputRelocInfo(this) ||
-        !FitsShifter(src.immediate(), &rotate_imm, &immed_8, NULL)) {
+        !FitsShifter(src.immediate(), &rotate_imm, &immed_8, nullptr)) {
       UseScratchRegisterScope temps(this);
       Register scratch = temps.Acquire();
       // Immediate operand cannot be encoded, load it first to a scratch
@@ -4940,7 +4961,7 @@ int Assembler::DecodeShiftImm(Instr instr) {
 Instr Assembler::PatchShiftImm(Instr instr, int immed) {
   uint32_t rotate_imm = 0;
   uint32_t immed_8 = 0;
-  bool immed_fits = FitsShifter(immed, &rotate_imm, &immed_8, NULL);
+  bool immed_fits = FitsShifter(immed, &rotate_imm, &immed_8, nullptr);
   DCHECK(immed_fits);
   USE(immed_fits);
   return (instr & ~kOff12Mask) | (rotate_imm << 8) | immed_8;
@@ -4968,7 +4989,7 @@ bool Assembler::IsOrrImmed(Instr instr) {
 bool Assembler::ImmediateFitsAddrMode1Instruction(int32_t imm32) {
   uint32_t dummy1;
   uint32_t dummy2;
-  return FitsShifter(imm32, &dummy1, &dummy2, NULL);
+  return FitsShifter(imm32, &dummy1, &dummy2, nullptr);
 }
 
 
@@ -5078,7 +5099,7 @@ void Assembler::RecordRelocInfo(RelocInfo::Mode rmode, intptr_t data) {
     return;
   }
   DCHECK(buffer_space() >= kMaxRelocSize);  // too late to grow buffer here
-  RelocInfo rinfo(pc_, rmode, data, NULL);
+  RelocInfo rinfo(pc_, rmode, data, nullptr);
   reloc_info_writer.Write(&rinfo);
 }
 

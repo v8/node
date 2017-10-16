@@ -677,125 +677,6 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   __ blr();
 }
 
-void StringHelper::GenerateFlatOneByteStringEquals(MacroAssembler* masm,
-                                                   Register left,
-                                                   Register right,
-                                                   Register scratch1,
-                                                   Register scratch2) {
-  Register length = scratch1;
-
-  // Compare lengths.
-  Label strings_not_equal, check_zero_length;
-  __ LoadP(length, FieldMemOperand(left, String::kLengthOffset));
-  __ LoadP(scratch2, FieldMemOperand(right, String::kLengthOffset));
-  __ cmp(length, scratch2);
-  __ beq(&check_zero_length);
-  __ bind(&strings_not_equal);
-  __ LoadSmiLiteral(r3, Smi::FromInt(NOT_EQUAL));
-  __ Ret();
-
-  // Check if the length is zero.
-  Label compare_chars;
-  __ bind(&check_zero_length);
-  STATIC_ASSERT(kSmiTag == 0);
-  __ cmpi(length, Operand::Zero());
-  __ bne(&compare_chars);
-  __ LoadSmiLiteral(r3, Smi::FromInt(EQUAL));
-  __ Ret();
-
-  // Compare characters.
-  __ bind(&compare_chars);
-  GenerateOneByteCharsCompareLoop(masm, left, right, length, scratch2,
-                                  &strings_not_equal);
-
-  // Characters are equal.
-  __ LoadSmiLiteral(r3, Smi::FromInt(EQUAL));
-  __ Ret();
-}
-
-
-void StringHelper::GenerateCompareFlatOneByteStrings(
-    MacroAssembler* masm, Register left, Register right, Register scratch1,
-    Register scratch2, Register scratch3) {
-  Label result_not_equal, compare_lengths;
-  // Find minimum length and length difference.
-  __ LoadP(scratch1, FieldMemOperand(left, String::kLengthOffset));
-  __ LoadP(scratch2, FieldMemOperand(right, String::kLengthOffset));
-  __ sub(scratch3, scratch1, scratch2, LeaveOE, SetRC);
-  Register length_delta = scratch3;
-  if (CpuFeatures::IsSupported(ISELECT)) {
-    __ isel(gt, scratch1, scratch2, scratch1, cr0);
-  } else {
-    Label skip;
-    __ ble(&skip, cr0);
-    __ mr(scratch1, scratch2);
-    __ bind(&skip);
-  }
-  Register min_length = scratch1;
-  STATIC_ASSERT(kSmiTag == 0);
-  __ cmpi(min_length, Operand::Zero());
-  __ beq(&compare_lengths);
-
-  // Compare loop.
-  GenerateOneByteCharsCompareLoop(masm, left, right, min_length, scratch2,
-                                  &result_not_equal);
-
-  // Compare lengths - strings up to min-length are equal.
-  __ bind(&compare_lengths);
-  DCHECK(Smi::FromInt(EQUAL) == static_cast<Smi*>(0));
-  // Use length_delta as result if it's zero.
-  __ mr(r3, length_delta);
-  __ cmpi(r3, Operand::Zero());
-  __ bind(&result_not_equal);
-  // Conditionally update the result based either on length_delta or
-  // the last comparion performed in the loop above.
-  if (CpuFeatures::IsSupported(ISELECT)) {
-    __ LoadSmiLiteral(r4, Smi::FromInt(GREATER));
-    __ LoadSmiLiteral(r5, Smi::FromInt(LESS));
-    __ isel(eq, r3, r0, r4);
-    __ isel(lt, r3, r5, r3);
-    __ Ret();
-  } else {
-    Label less_equal, equal;
-    __ ble(&less_equal);
-    __ LoadSmiLiteral(r3, Smi::FromInt(GREATER));
-    __ Ret();
-    __ bind(&less_equal);
-    __ beq(&equal);
-    __ LoadSmiLiteral(r3, Smi::FromInt(LESS));
-    __ bind(&equal);
-    __ Ret();
-  }
-}
-
-
-void StringHelper::GenerateOneByteCharsCompareLoop(
-    MacroAssembler* masm, Register left, Register right, Register length,
-    Register scratch1, Label* chars_not_equal) {
-  // Change index to run from -length to -1 by adding length to string
-  // start. This means that loop ends when index reaches zero, which
-  // doesn't need an additional compare.
-  __ SmiUntag(length);
-  __ addi(scratch1, length,
-          Operand(SeqOneByteString::kHeaderSize - kHeapObjectTag));
-  __ add(left, left, scratch1);
-  __ add(right, right, scratch1);
-  __ subfic(length, length, Operand::Zero());
-  Register index = length;  // index = -length;
-
-  // Compare loop.
-  Label loop;
-  __ bind(&loop);
-  __ lbzx(scratch1, MemOperand(left, index));
-  __ lbzx(r0, MemOperand(right, index));
-  __ cmp(scratch1, r0);
-  __ bne(chars_not_equal);
-  __ addi(index, index, Operand(1));
-  __ cmpi(index, Operand::Zero());
-  __ bne(&loop);
-}
-
-
 // This stub is paired with DirectCEntryStub::GenerateCall
 void DirectCEntryStub::Generate(MacroAssembler* masm) {
   // Place the return address on the stack, making the call
@@ -870,16 +751,6 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
     __ Cmpi(entity_name, Operand(Handle<Name>(name)), r0);
     __ beq(miss);
 
-    Label good;
-    __ cmp(entity_name, tmp);
-    __ beq(&good);
-
-    // Check if the entry name is not a unique name.
-    __ LoadP(entity_name, FieldMemOperand(entity_name, HeapObject::kMapOffset));
-    __ lbz(entity_name, FieldMemOperand(entity_name, Map::kInstanceTypeOffset));
-    __ JumpIfNotUniqueNameInstanceType(entity_name, miss);
-    __ bind(&good);
-
     // Restore the properties.
     __ LoadP(properties,
              FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
@@ -893,7 +764,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(
 
   __ LoadP(r3, FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   __ mov(r4, Operand(Handle<Name>(name)));
-  NameDictionaryLookupStub stub(masm->isolate(), NEGATIVE_LOOKUP);
+  NameDictionaryLookupStub stub(masm->isolate());
   __ CallStub(&stub);
   __ cmpi(r3, Operand::Zero());
 
@@ -926,7 +797,7 @@ void NameDictionaryLookupStub::Generate(MacroAssembler* masm) {
   Register entry_key = r9;
   Register scratch = r9;
 
-  Label in_dictionary, maybe_in_dictionary, not_in_dictionary;
+  Label in_dictionary, not_in_dictionary;
 
   __ LoadP(mask, FieldMemOperand(dictionary, kCapacityOffset));
   __ SmiUntag(mask);
@@ -969,22 +840,6 @@ void NameDictionaryLookupStub::Generate(MacroAssembler* masm) {
     // Stop if found the property.
     __ cmp(entry_key, key);
     __ beq(&in_dictionary);
-
-    if (i != kTotalProbes - 1 && mode() == NEGATIVE_LOOKUP) {
-      // Check if the entry name is not a unique name.
-      __ LoadP(entry_key, FieldMemOperand(entry_key, HeapObject::kMapOffset));
-      __ lbz(entry_key, FieldMemOperand(entry_key, Map::kInstanceTypeOffset));
-      __ JumpIfNotUniqueNameInstanceType(entry_key, &maybe_in_dictionary);
-    }
-  }
-
-  __ bind(&maybe_in_dictionary);
-  // If we are doing negative lookup then probing failure should be
-  // treated as a lookup success. For positive lookup probing failure
-  // should be treated as lookup failure.
-  if (mode() == POSITIVE_LOOKUP) {
-    __ li(result, Operand::Zero());
-    __ Ret();
   }
 
   __ bind(&in_dictionary);
@@ -1209,7 +1064,7 @@ void RecordWriteStub::CheckNeedsToInformIncrementalMarker(
 
 void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
                                                      Zone* zone) {
-  if (tasm->isolate()->function_entry_hook() != NULL) {
+  if (tasm->isolate()->function_entry_hook() != nullptr) {
     PredictableCodeSizeScope predictable(tasm,
 #if V8_TARGET_ARCH_PPC64
                                          14 * Assembler::kInstrSize);
@@ -1225,7 +1080,7 @@ void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
 }
 
 void ProfileEntryHookStub::MaybeCallEntryHook(MacroAssembler* masm) {
-  if (masm->isolate()->function_entry_hook() != NULL) {
+  if (masm->isolate()->function_entry_hook() != nullptr) {
     PredictableCodeSizeScope predictable(masm,
 #if V8_TARGET_ARCH_PPC64
                                          14 * Assembler::kInstrSize);
@@ -1473,7 +1328,7 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
 
     // Initial map for the builtin Array function should be a map.
     __ LoadP(r7, FieldMemOperand(r4, JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ TestIfSmi(r7, r0);
     __ Assert(ne, kUnexpectedInitialMapForArrayFunction, cr0);
     __ CompareObjectType(r7, r7, r8, MAP_TYPE);
@@ -1554,7 +1409,7 @@ void InternalArrayConstructorStub::Generate(MacroAssembler* masm) {
 
     // Initial map for the builtin Array function should be a map.
     __ LoadP(r6, FieldMemOperand(r4, JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ TestIfSmi(r6, r0);
     __ Assert(ne, kUnexpectedInitialMapForArrayFunction, cr0);
     __ CompareObjectType(r6, r6, r7, MAP_TYPE);
@@ -1695,17 +1550,18 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
 
   // Leave the API exit frame.
   __ bind(&leave_exit_frame);
-  bool restore_context = context_restore_operand != NULL;
+  bool restore_context = context_restore_operand != nullptr;
   if (restore_context) {
     __ LoadP(cp, *context_restore_operand);
   }
   // LeaveExitFrame expects unwind space to be in a register.
-  if (stack_space_operand != NULL) {
+  if (stack_space_operand != nullptr) {
     __ lwz(r14, *stack_space_operand);
   } else {
     __ mov(r14, Operand(stack_space));
   }
-  __ LeaveExitFrame(false, r14, !restore_context, stack_space_operand != NULL);
+  __ LeaveExitFrame(false, r14, !restore_context,
+                    stack_space_operand != nullptr);
 
   // Check if the function scheduled an exception.
   __ LoadRoot(r14, Heap::kTheHoleValueRootIndex);
@@ -1962,7 +1818,8 @@ void CallApiGetterStub::Generate(MacroAssembler* masm) {
   MemOperand return_value_operand(
       fp, (PropertyCallbackArguments::kReturnValueOffset + 3) * kPointerSize);
   CallApiFunctionAndReturn(masm, api_function_address, thunk_ref,
-                           kStackUnwindSpace, NULL, return_value_operand, NULL);
+                           kStackUnwindSpace, nullptr, return_value_operand,
+                           nullptr);
 }
 
 #undef __

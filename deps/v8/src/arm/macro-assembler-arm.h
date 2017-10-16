@@ -784,10 +784,6 @@ class MacroAssembler : public TurboAssembler {
     b(ne, if_not_equal);
   }
 
-  // Load the value of a smi object into a double register.
-  // The register value must be between d0 and d15.
-  void SmiToDouble(LowDwVfpRegister value, Register smi);
-
   // Try to convert a double to a signed 32-bit integer.
   // Z flag set to one and result assigned if the conversion is exact.
   void TryDoubleToInt32Exact(Register result,
@@ -876,11 +872,6 @@ class MacroAssembler : public TurboAssembler {
   // via --debug-code.
   void AssertUndefinedOrAllocationSite(Register object, Register scratch);
 
-  // ---------------------------------------------------------------------------
-  // String utilities
-
-  void JumpIfNotUniqueNameInstanceType(Register reg, Label* not_unique_name);
-
   void LoadInstanceDescriptors(Register map, Register descriptors);
   void LoadAccessor(Register dst, Register holder, int accessor_index,
                     AccessorComponent accessor);
@@ -921,43 +912,6 @@ class MacroAssembler : public TurboAssembler {
   // traversal.
   friend class StandardFrame;
 };
-
-// The code patcher is used to patch (typically) small parts of code e.g. for
-// debugging and other types of instrumentation. When using the code patcher
-// the exact number of bytes specified must be emitted. It is not legal to emit
-// relocation information. If any of these constraints are violated it causes
-// an assertion to fail.
-class CodePatcher {
- public:
-  enum FlushICache {
-    FLUSH,
-    DONT_FLUSH
-  };
-
-  CodePatcher(Isolate* isolate, byte* address, int instructions,
-              FlushICache flush_cache = FLUSH);
-  ~CodePatcher();
-
-  // Macro assembler to emit code.
-  MacroAssembler* masm() { return &masm_; }
-
-  // Emit an instruction directly.
-  void Emit(Instr instr);
-
-  // Emit an address directly.
-  void Emit(Address addr);
-
-  // Emit the condition part of an instruction leaving the rest of the current
-  // instruction unchanged.
-  void EmitCondition(Condition cond);
-
- private:
-  byte* address_;  // The address of the code being patched.
-  int size_;  // Number of bytes of the expected patch size.
-  MacroAssembler masm_;  // Macro assembler used to generate the code.
-  FlushICache flush_cache_;  // Whether to flush the I cache after patching.
-};
-
 
 // -----------------------------------------------------------------------------
 // Static helper functions.

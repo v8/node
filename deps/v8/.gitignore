@@ -33,6 +33,7 @@
 .pydevproject
 .settings
 .vscode
+/Default/
 /_*
 /build
 /buildtools

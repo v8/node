@@ -163,7 +163,7 @@ bool MipsDebugger::GetValue(const char* desc, int64_t* value) {
 
 bool MipsDebugger::SetBreakpoint(Instruction* breakpc) {
   // Check if a breakpoint can be set. If not return without any side-effects.
-  if (sim_->break_pc_ != NULL) {
+  if (sim_->break_pc_ != nullptr) {
     return false;
   }
 
@@ -177,25 +177,25 @@ bool MipsDebugger::SetBreakpoint(Instruction* breakpc) {
 
 
 bool MipsDebugger::DeleteBreakpoint(Instruction* breakpc) {
-  if (sim_->break_pc_ != NULL) {
+  if (sim_->break_pc_ != nullptr) {
     sim_->break_pc_->SetInstructionBits(sim_->break_instr_);
   }
 
-  sim_->break_pc_ = NULL;
+  sim_->break_pc_ = nullptr;
   sim_->break_instr_ = 0;
   return true;
 }
 
 
 void MipsDebugger::UndoBreakpoints() {
-  if (sim_->break_pc_ != NULL) {
+  if (sim_->break_pc_ != nullptr) {
     sim_->break_pc_->SetInstructionBits(sim_->break_instr_);
   }
 }
 
 
 void MipsDebugger::RedoBreakpoints() {
-  if (sim_->break_pc_ != NULL) {
+  if (sim_->break_pc_ != nullptr) {
     sim_->break_pc_->SetInstructionBits(kBreakpointInstr);
   }
 }
@@ -333,11 +333,11 @@ void MipsDebugger::Debug() {
       last_pc = sim_->get_pc();
     }
     char* line = ReadLine("sim> ");
-    if (line == NULL) {
+    if (line == nullptr) {
       break;
     } else {
       char* last_input = sim_->last_debugger_input();
-      if (strcmp(line, "\n") == 0 && last_input != NULL) {
+      if (strcmp(line, "\n") == 0 && last_input != nullptr) {
         line = last_input;
       } else {
         // Ownership is transferred to sim_;
@@ -434,8 +434,8 @@ void MipsDebugger::Debug() {
           PrintF("printobject <value>\n");
         }
       } else if (strcmp(cmd, "stack") == 0 || strcmp(cmd, "mem") == 0) {
-        int64_t* cur = NULL;
-        int64_t* end = NULL;
+        int64_t* cur = nullptr;
+        int64_t* end = nullptr;
         int next_arg = 1;
 
         if (strcmp(cmd, "stack") == 0) {
@@ -488,8 +488,8 @@ void MipsDebugger::Debug() {
         // Use a reasonably large buffer.
         v8::internal::EmbeddedVector<char, 256> buffer;
 
-        byte* cur = NULL;
-        byte* end = NULL;
+        byte* cur = nullptr;
+        byte* end = nullptr;
 
         if (argc == 1) {
           cur = reinterpret_cast<byte*>(sim_->get_pc());
@@ -546,7 +546,7 @@ void MipsDebugger::Debug() {
           PrintF("break <address>\n");
         }
       } else if (strcmp(cmd, "del") == 0) {
-        if (!DeleteBreakpoint(NULL)) {
+        if (!DeleteBreakpoint(nullptr)) {
           PrintF("deleting breakpoint failed\n");
         }
       } else if (strcmp(cmd, "flags") == 0) {
@@ -622,8 +622,8 @@ void MipsDebugger::Debug() {
         // Use a reasonably large buffer.
         v8::internal::EmbeddedVector<char, 256> buffer;
 
-        byte* cur = NULL;
-        byte* end = NULL;
+        byte* cur = nullptr;
+        byte* end = nullptr;
 
         if (argc == 1) {
           cur = reinterpret_cast<byte*>(sim_->get_pc());
@@ -763,7 +763,7 @@ void Simulator::FlushICache(base::CustomMatcherHashMap* i_cache,
 CachePage* Simulator::GetCachePage(base::CustomMatcherHashMap* i_cache,
                                    void* page) {
   base::HashMap::Entry* entry = i_cache->LookupOrInsert(page, ICacheHash(page));
-  if (entry->value == NULL) {
+  if (entry->value == nullptr) {
     CachePage* new_page = new CachePage();
     entry->value = new_page;
   }
@@ -818,7 +818,7 @@ void Simulator::Initialize(Isolate* isolate) {
 
 Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   i_cache_ = isolate_->simulator_i_cache();
-  if (i_cache_ == NULL) {
+  if (i_cache_ == nullptr) {
     i_cache_ = new base::CustomMatcherHashMap(&ICacheMatch);
     isolate_->set_simulator_i_cache(i_cache_);
   }
@@ -830,7 +830,7 @@ Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   pc_modified_ = false;
   icount_ = 0;
   break_count_ = 0;
-  break_pc_ = NULL;
+  break_pc_ = nullptr;
   break_instr_ = 0;
 
   // Set up architecture state.
@@ -859,7 +859,7 @@ Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   registers_[pc] = bad_ra;
   registers_[ra] = bad_ra;
 
-  last_debugger_input_ = NULL;
+  last_debugger_input_ = nullptr;
 }
 
 
@@ -880,7 +880,7 @@ class Redirection {
       : external_function_(external_function),
         swi_instruction_(rtCallRedirInstr),
         type_(type),
-        next_(NULL) {
+        next_(nullptr) {
     next_ = isolate->simulator_redirection();
     Simulator::current(isolate)->
         FlushICache(isolate->simulator_i_cache(),
@@ -899,7 +899,7 @@ class Redirection {
   static Redirection* Get(Isolate* isolate, void* external_function,
                           ExternalReference::Type type) {
     Redirection* current = isolate->simulator_redirection();
-    for (; current != NULL; current = current->next_) {
+    for (; current != nullptr; current = current->next_) {
       if (current->external_function_ == external_function) return current;
     }
     return new Redirection(isolate, external_function, type);
@@ -962,11 +962,11 @@ void* Simulator::RedirectExternalReference(Isolate* isolate,
 Simulator* Simulator::current(Isolate* isolate) {
   v8::internal::Isolate::PerIsolateThreadData* isolate_data =
        isolate->FindOrAllocatePerThreadDataForThisThread();
-  DCHECK(isolate_data != NULL);
-  DCHECK(isolate_data != NULL);
+  DCHECK(isolate_data != nullptr);
+  DCHECK(isolate_data != nullptr);
 
   Simulator* sim = isolate_data->simulator();
-  if (sim == NULL) {
+  if (sim == nullptr) {
     // TODO(146): delete the simulator object when a thread/isolate goes away.
     sim = new Simulator(isolate);
     isolate_data->set_simulator(sim);
@@ -1971,7 +1971,7 @@ void Simulator::TraceMemWr(int64_t addr, T value) {
 // on all the ReadXX functions, I don't think re-interpret cast does it.
 int32_t Simulator::ReadW(int64_t addr, Instruction* instr, TraceType t) {
   if (addr >=0 && addr < 0x400) {
-    // This has to be a NULL-dereference, drop into debugger.
+    // This has to be a nullptr-dereference, drop into debugger.
     PrintF("Memory read from bad address: 0x%08" PRIx64 " , pc=0x%08" PRIxPTR
            " \n",
            addr, reinterpret_cast<intptr_t>(instr));
@@ -1991,7 +1991,7 @@ int32_t Simulator::ReadW(int64_t addr, Instruction* instr, TraceType t) {
 
 uint32_t Simulator::ReadWU(int64_t addr, Instruction* instr) {
   if (addr >=0 && addr < 0x400) {
-    // This has to be a NULL-dereference, drop into debugger.
+    // This has to be a nullptr-dereference, drop into debugger.
     PrintF("Memory read from bad address: 0x%08" PRIx64 " , pc=0x%08" PRIxPTR
            " \n",
            addr, reinterpret_cast<intptr_t>(instr));
@@ -2011,7 +2011,7 @@ uint32_t Simulator::ReadWU(int64_t addr, Instruction* instr) {
 
 void Simulator::WriteW(int64_t addr, int32_t value, Instruction* instr) {
   if (addr >= 0 && addr < 0x400) {
-    // This has to be a NULL-dereference, drop into debugger.
+    // This has to be a nullptr-dereference, drop into debugger.
     PrintF("Memory write to bad address: 0x%08" PRIx64 " , pc=0x%08" PRIxPTR
            " \n",
            addr, reinterpret_cast<intptr_t>(instr));
@@ -2031,7 +2031,7 @@ void Simulator::WriteW(int64_t addr, int32_t value, Instruction* instr) {
 
 int64_t Simulator::Read2W(int64_t addr, Instruction* instr) {
   if (addr >=0 && addr < 0x400) {
-    // This has to be a NULL-dereference, drop into debugger.
+    // This has to be a nullptr-dereference, drop into debugger.
     PrintF("Memory read from bad address: 0x%08" PRIx64 " , pc=0x%08" PRIxPTR
            " \n",
            addr, reinterpret_cast<intptr_t>(instr));
@@ -2051,7 +2051,7 @@ int64_t Simulator::Read2W(int64_t addr, Instruction* instr) {
 
 void Simulator::Write2W(int64_t addr, int64_t value, Instruction* instr) {
   if (addr >= 0 && addr < 0x400) {
-    // This has to be a NULL-dereference, drop into debugger.
+    // This has to be a nullptr-dereference, drop into debugger.
     PrintF("Memory write to bad address: 0x%08" PRIx64 " , pc=0x%08" PRIxPTR
            "\n",
            addr, reinterpret_cast<intptr_t>(instr));
@@ -5447,19 +5447,134 @@ void Simulator::DecodeTypeMsa3R() {
 #undef MSA_3R_DF
 }
 
-void Simulator::DecodeTypeMsa3RF() {
-  DCHECK(kArchVariant == kMips64r6);
-  DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
-  uint32_t opcode = instr_.InstructionBits() & kMsa3RFMask;
+template <typename T_int, typename T_fp, typename T_reg>
+void Msa3RFInstrHelper(uint32_t opcode, T_reg ws, T_reg wt, T_reg& wd) {
+  const T_int all_ones = static_cast<T_int>(-1);
+  const T_fp s_element = *reinterpret_cast<T_fp*>(&ws);
+  const T_fp t_element = *reinterpret_cast<T_fp*>(&wt);
   switch (opcode) {
-    case FCAF:
-    case FCUN:
-    case FCEQ:
-    case FCUEQ:
-    case FCLT:
-    case FCULT:
-    case FCLE:
-    case FCULE:
+    case FCUN: {
+      if (std::isnan(s_element) || std::isnan(t_element)) {
+        wd = all_ones;
+      } else {
+        wd = 0;
+      }
+    } break;
+    case FCEQ: {
+      if (s_element != t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = 0;
+      } else {
+        wd = all_ones;
+      }
+    } break;
+    case FCUEQ: {
+      if (s_element == t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = all_ones;
+      } else {
+        wd = 0;
+      }
+    } break;
+    case FCLT: {
+      if (s_element >= t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = 0;
+      } else {
+        wd = all_ones;
+      }
+    } break;
+    case FCULT: {
+      if (s_element < t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = all_ones;
+      } else {
+        wd = 0;
+      }
+    } break;
+    case FCLE: {
+      if (s_element > t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = 0;
+      } else {
+        wd = all_ones;
+      }
+    } break;
+    case FCULE: {
+      if (s_element <= t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = all_ones;
+      } else {
+        wd = 0;
+      }
+    } break;
+    case FCOR: {
+      if (std::isnan(s_element) || std::isnan(t_element)) {
+        wd = 0;
+      } else {
+        wd = all_ones;
+      }
+    } break;
+    case FCUNE: {
+      if (s_element != t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = all_ones;
+      } else {
+        wd = 0;
+      }
+    } break;
+    case FCNE: {
+      if (s_element == t_element || std::isnan(s_element) ||
+          std::isnan(t_element)) {
+        wd = 0;
+      } else {
+        wd = all_ones;
+      }
+    } break;
+    case FADD:
+      wd = bit_cast<T_int>(s_element + t_element);
+      break;
+    case FSUB:
+      wd = bit_cast<T_int>(s_element - t_element);
+      break;
+    case FMUL:
+      wd = bit_cast<T_int>(s_element * t_element);
+      break;
+    case FDIV: {
+      if (t_element == 0) {
+        wd = std::numeric_limits<T_fp>::quiet_NaN();
+      } else {
+        wd = bit_cast<T_int>(s_element / t_element);
+      }
+    } break;
+    case FMADD:
+      wd = bit_cast<T_int>(
+          std::fma(s_element, t_element, *reinterpret_cast<T_fp*>(&wd)));
+      break;
+    case FMSUB:
+      wd = bit_cast<T_int>(
+          std::fma(-s_element, t_element, *reinterpret_cast<T_fp*>(&wd)));
+      break;
+    case FEXP2:
+      wd = bit_cast<T_int>(std::ldexp(s_element, static_cast<int>(wt)));
+      break;
+    case FMIN:
+      wd = bit_cast<T_int>(std::min(s_element, t_element));
+      break;
+    case FMAX:
+      wd = bit_cast<T_int>(std::max(s_element, t_element));
+      break;
+    case FMIN_A: {
+      wd = bit_cast<T_int>(
+          std::fabs(s_element) < std::fabs(t_element) ? s_element : t_element);
+    } break;
+    case FMAX_A: {
+      wd = bit_cast<T_int>(
+          std::fabs(s_element) > std::fabs(t_element) ? s_element : t_element);
+    } break;
+    case FSOR:
+    case FSUNE:
+    case FSNE:
     case FSAF:
     case FSUN:
     case FSEQ:
@@ -5468,36 +5583,270 @@ void Simulator::DecodeTypeMsa3RF() {
     case FSULT:
     case FSLE:
     case FSULE:
-    case FADD:
-    case FSUB:
-    case FMUL:
-    case FDIV:
-    case FMADD:
-    case FMSUB:
-    case FEXP2:
-    case FEXDO:
-    case FTQ:
-    case FMIN:
-    case FMIN_A:
-    case FMAX:
-    case FMAX_A:
-    case FCOR:
-    case FCUNE:
-    case FCNE:
-    case MUL_Q:
-    case MADD_Q:
-    case MSUB_Q:
-    case FSOR:
-    case FSUNE:
-    case FSNE:
-    case MULR_Q:
-    case MADDR_Q:
-    case MSUBR_Q:
       UNIMPLEMENTED();
       break;
     default:
       UNREACHABLE();
   }
+}
+
+template <typename T_int, typename T_int_dbl, typename T_reg>
+void Msa3RFInstrHelper2(uint32_t opcode, T_reg ws, T_reg wt, T_reg& wd) {
+  // typedef typename std::make_unsigned<T_int>::type T_uint;
+  typedef typename std::make_unsigned<T_int_dbl>::type T_uint_dbl;
+  const T_int max_int = std::numeric_limits<T_int>::max();
+  const T_int min_int = std::numeric_limits<T_int>::min();
+  const int shift = kBitsPerByte * sizeof(T_int) - 1;
+  const T_int_dbl reg_s = ws;
+  const T_int_dbl reg_t = wt;
+  T_int_dbl product, result;
+  product = reg_s * reg_t;
+  switch (opcode) {
+    case MUL_Q: {
+      const T_int_dbl min_fix_dbl =
+          bit_cast<T_uint_dbl>(std::numeric_limits<T_int_dbl>::min()) >> 1U;
+      const T_int_dbl max_fix_dbl = std::numeric_limits<T_int_dbl>::max() >> 1U;
+      if (product == min_fix_dbl) {
+        product = max_fix_dbl;
+      }
+      wd = static_cast<T_int>(product >> shift);
+    } break;
+    case MADD_Q: {
+      result = (product + (static_cast<T_int_dbl>(wd) << shift)) >> shift;
+      wd = static_cast<T_int>(
+          result > max_int ? max_int : result < min_int ? min_int : result);
+    } break;
+    case MSUB_Q: {
+      result = (-product + (static_cast<T_int_dbl>(wd) << shift)) >> shift;
+      wd = static_cast<T_int>(
+          result > max_int ? max_int : result < min_int ? min_int : result);
+    } break;
+    case MULR_Q: {
+      const T_int_dbl min_fix_dbl =
+          bit_cast<T_uint_dbl>(std::numeric_limits<T_int_dbl>::min()) >> 1U;
+      const T_int_dbl max_fix_dbl = std::numeric_limits<T_int_dbl>::max() >> 1U;
+      if (product == min_fix_dbl) {
+        wd = static_cast<T_int>(max_fix_dbl >> shift);
+        break;
+      }
+      wd = static_cast<T_int>((product + (1 << (shift - 1))) >> shift);
+    } break;
+    case MADDR_Q: {
+      result = (product + (static_cast<T_int_dbl>(wd) << shift) +
+                (1 << (shift - 1))) >>
+               shift;
+      wd = static_cast<T_int>(
+          result > max_int ? max_int : result < min_int ? min_int : result);
+    } break;
+    case MSUBR_Q: {
+      result = (-product + (static_cast<T_int_dbl>(wd) << shift) +
+                (1 << (shift - 1))) >>
+               shift;
+      wd = static_cast<T_int>(
+          result > max_int ? max_int : result < min_int ? min_int : result);
+    } break;
+    default:
+      UNREACHABLE();
+  }
+}
+
+void Simulator::DecodeTypeMsa3RF() {
+  DCHECK(kArchVariant == kMips64r6);
+  DCHECK(CpuFeatures::IsSupported(MIPS_SIMD));
+  uint32_t opcode = instr_.InstructionBits() & kMsa3RFMask;
+  msa_reg_t wd, ws, wt;
+  if (opcode != FCAF) {
+    get_msa_register(ws_reg(), &ws);
+    get_msa_register(wt_reg(), &wt);
+  }
+  switch (opcode) {
+    case FCAF:
+      wd.d[0] = 0;
+      wd.d[1] = 0;
+      break;
+    case FEXDO:
+#define PACK_FLOAT16(sign, exp, frac) \
+  static_cast<uint16_t>(((sign) << 15) + ((exp) << 10) + (frac))
+#define FEXDO_DF(source, dst)                                        \
+  do {                                                               \
+    element = source;                                                \
+    aSign = element >> 31;                                           \
+    aExp = element >> 23 & 0xFF;                                     \
+    aFrac = element & 0x007FFFFF;                                    \
+    if (aExp == 0xFF) {                                              \
+      if (aFrac) {                                                   \
+        /* Input is a NaN */                                         \
+        dst = 0x7DFFU;                                               \
+        break;                                                       \
+      }                                                              \
+      /* Infinity */                                                 \
+      dst = PACK_FLOAT16(aSign, 0x1f, 0);                            \
+      break;                                                         \
+    } else if (aExp == 0 && aFrac == 0) {                            \
+      dst = PACK_FLOAT16(aSign, 0, 0);                               \
+      break;                                                         \
+    } else {                                                         \
+      int maxexp = 29;                                               \
+      uint32_t mask;                                                 \
+      uint32_t increment;                                            \
+      bool rounding_bumps_exp;                                       \
+      aFrac |= 0x00800000;                                           \
+      aExp -= 0x71;                                                  \
+      if (aExp < 1) {                                                \
+        /* Will be denormal in halfprec */                           \
+        mask = 0x00ffffff;                                           \
+        if (aExp >= -11) {                                           \
+          mask >>= 11 + aExp;                                        \
+        }                                                            \
+      } else {                                                       \
+        /* Normal number in halfprec */                              \
+        mask = 0x00001fff;                                           \
+      }                                                              \
+      switch (MSACSR_ & 3) {                                         \
+        case kRoundToNearest:                                        \
+          increment = (mask + 1) >> 1;                               \
+          if ((aFrac & mask) == increment) {                         \
+            increment = aFrac & (increment << 1);                    \
+          }                                                          \
+          break;                                                     \
+        case kRoundToPlusInf:                                        \
+          increment = aSign ? 0 : mask;                              \
+          break;                                                     \
+        case kRoundToMinusInf:                                       \
+          increment = aSign ? mask : 0;                              \
+          break;                                                     \
+        case kRoundToZero:                                           \
+          increment = 0;                                             \
+          break;                                                     \
+      }                                                              \
+      rounding_bumps_exp = (aFrac + increment >= 0x01000000);        \
+      if (aExp > maxexp || (aExp == maxexp && rounding_bumps_exp)) { \
+        dst = PACK_FLOAT16(aSign, 0x1f, 0);                          \
+        break;                                                       \
+      }                                                              \
+      aFrac += increment;                                            \
+      if (rounding_bumps_exp) {                                      \
+        aFrac >>= 1;                                                 \
+        aExp++;                                                      \
+      }                                                              \
+      if (aExp < -10) {                                              \
+        dst = PACK_FLOAT16(aSign, 0, 0);                             \
+        break;                                                       \
+      }                                                              \
+      if (aExp < 0) {                                                \
+        aFrac >>= -aExp;                                             \
+        aExp = 0;                                                    \
+      }                                                              \
+      dst = PACK_FLOAT16(aSign, aExp, aFrac >> 13);                  \
+    }                                                                \
+  } while (0);
+      switch (DecodeMsaDataFormat()) {
+        case MSA_HALF:
+          for (int i = 0; i < kMSALanesWord; i++) {
+            uint_fast32_t element;
+            uint_fast32_t aSign, aFrac;
+            int_fast32_t aExp;
+            FEXDO_DF(ws.uw[i], wd.uh[i + kMSALanesHalf / 2])
+            FEXDO_DF(wt.uw[i], wd.uh[i])
+          }
+          break;
+        case MSA_WORD:
+          for (int i = 0; i < kMSALanesDword; i++) {
+            wd.w[i + kMSALanesWord / 2] = bit_cast<int32_t>(
+                static_cast<float>(bit_cast<double>(ws.d[i])));
+            wd.w[i] = bit_cast<int32_t>(
+                static_cast<float>(bit_cast<double>(wt.d[i])));
+          }
+          break;
+        default:
+          UNREACHABLE();
+      }
+      break;
+#undef FEXDO_DF
+    case FTQ:
+#define FTQ_DF(source, dst, fp_type, int_type)                 \
+  element = bit_cast<fp_type>(source) *                        \
+            (1U << (sizeof(int_type) * kBitsPerByte - 1));     \
+  if (element > std::numeric_limits<int_type>::max()) {        \
+    dst = std::numeric_limits<int_type>::max();                \
+  } else if (element < std::numeric_limits<int_type>::min()) { \
+    dst = std::numeric_limits<int_type>::min();                \
+  } else if (std::isnan(element)) {                            \
+    dst = 0;                                                   \
+  } else {                                                     \
+    int_type fixed_point;                                      \
+    round_according_to_msacsr(element, element, fixed_point);  \
+    dst = fixed_point;                                         \
+  }
+
+      switch (DecodeMsaDataFormat()) {
+        case MSA_HALF:
+          for (int i = 0; i < kMSALanesWord; i++) {
+            float element;
+            FTQ_DF(ws.w[i], wd.h[i + kMSALanesHalf / 2], float, int16_t)
+            FTQ_DF(wt.w[i], wd.h[i], float, int16_t)
+          }
+          break;
+        case MSA_WORD:
+          double element;
+          for (int i = 0; i < kMSALanesDword; i++) {
+            FTQ_DF(ws.d[i], wd.w[i + kMSALanesWord / 2], double, int32_t)
+            FTQ_DF(wt.d[i], wd.w[i], double, int32_t)
+          }
+          break;
+        default:
+          UNREACHABLE();
+      }
+      break;
+#undef FTQ_DF
+#define MSA_3RF_DF(T1, T2, Lanes, ws, wt, wd)      \
+  for (int i = 0; i < Lanes; i++) {                \
+    Msa3RFInstrHelper<T1, T2>(opcode, ws, wt, wd); \
+  }
+#define MSA_3RF_DF2(T1, T2, Lanes, ws, wt, wd)      \
+  for (int i = 0; i < Lanes; i++) {                 \
+    Msa3RFInstrHelper2<T1, T2>(opcode, ws, wt, wd); \
+  }
+    case MADD_Q:
+    case MSUB_Q:
+    case MADDR_Q:
+    case MSUBR_Q:
+      get_msa_register(wd_reg(), &wd);  // fall-through
+    case MUL_Q:
+    case MULR_Q:
+      switch (DecodeMsaDataFormat()) {
+        case MSA_HALF:
+          MSA_3RF_DF2(int16_t, int32_t, kMSALanesHalf, ws.h[i], wt.h[i],
+                      wd.h[i])
+          break;
+        case MSA_WORD:
+          MSA_3RF_DF2(int32_t, int64_t, kMSALanesWord, ws.w[i], wt.w[i],
+                      wd.w[i])
+          break;
+        default:
+          UNREACHABLE();
+      }
+      break;
+    default:
+      if (opcode == FMADD || opcode == FMSUB) {
+        get_msa_register(wd_reg(), &wd);
+      }
+      switch (DecodeMsaDataFormat()) {
+        case MSA_WORD:
+          MSA_3RF_DF(int32_t, float, kMSALanesWord, ws.w[i], wt.w[i], wd.w[i])
+          break;
+        case MSA_DWORD:
+          MSA_3RF_DF(int64_t, double, kMSALanesDword, ws.d[i], wt.d[i], wd.d[i])
+          break;
+        default:
+          UNREACHABLE();
+      }
+      break;
+#undef MSA_3RF_DF
+#undef MSA_3RF_DF2
+  }
+  set_msa_register(wd_reg(), &wd);
+  TraceMSARegWr(&wd);
 }
 
 void Simulator::DecodeTypeMsaVec() {

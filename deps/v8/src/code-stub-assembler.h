@@ -880,6 +880,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsAccessorPair(Node* object);
   Node* IsAllocationSite(Node* object);
   Node* IsAnyHeapNumber(Node* object);
+  Node* IsArrayIteratorInstanceType(Node* instance_type);
   Node* IsBoolean(Node* object);
   Node* IsExtensibleMap(Node* map);
   Node* IsCallableMap(Node* map);
@@ -888,6 +889,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsConsStringInstanceType(Node* instance_type);
   Node* IsConstructorMap(Node* map);
   Node* IsConstructor(Node* object);
+  Node* IsFunctionWithPrototypeSlotMap(Node* map);
   Node* IsDeprecatedMap(Node* map);
   Node* IsDictionary(Node* object);
   Node* IsExternalStringInstanceType(Node* instance_type);
@@ -954,6 +956,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // True iff |object| is a Smi or a HeapNumber.
   Node* IsNumber(Node* object);
+  // True iff |object| is a Smi or a HeapNumber or a BigInt.
+  Node* IsNumeric(Node* object);
 
   // True iff |number| is either a Smi, or a HeapNumber whose value is not
   // within Smi range.
@@ -1016,6 +1020,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* ToName(Node* context, Node* input);
   // Convert a Non-Number object to a Number.
   Node* NonNumberToNumber(Node* context, Node* input);
+  // Convert a Non-Number object to a Numeric.
+  Node* NonNumberToNumeric(Node* context, Node* input);
   // Convert any object to a Number.
   Node* ToNumber(Node* context, Node* input);
 
@@ -1107,6 +1113,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<BoolT> IsSetWord32(SloppyTNode<Word32T> word32, uint32_t mask) {
     return Word32NotEqual(Word32And(word32, Int32Constant(mask)),
                           Int32Constant(0));
+  }
+
+  // Returns true if none of the mask's bits in given |word32| are set.
+  TNode<BoolT> IsNotSetWord32(SloppyTNode<Word32T> word32, uint32_t mask) {
+    return Word32Equal(Word32And(word32, Int32Constant(mask)),
+                       Int32Constant(0));
   }
 
   // Returns true if any of the |T|'s bits in given |word| are set.
@@ -1321,6 +1333,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Node* unique_name, Label* if_found,
                          Label* if_not_found, Label* if_bailout);
 
+  // Operating mode for TryGetOwnProperty and CallGetterIfAccessor
+  // kReturnAccessorPair is used when we're only getting the property descriptor
+  enum GetOwnPropertyMode { kCallJSGetter, kReturnAccessorPair };
   // Tries to get {object}'s own {unique_name} property value. If the property
   // is an accessor then it also calls a getter. If the property is a double
   // field it re-wraps value in an immutable heap number.
@@ -1332,7 +1347,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                          Node* instance_type, Node* unique_name,
                          Label* if_found, Variable* var_value,
                          Variable* var_details, Variable* var_raw_value,
-                         Label* if_not_found, Label* if_bailout);
+                         Label* if_not_found, Label* if_bailout,
+                         GetOwnPropertyMode mode = kCallJSGetter);
 
   Node* GetProperty(Node* context, Node* receiver, Handle<Name> name) {
     return GetProperty(context, receiver, HeapConstant(name));
@@ -1575,6 +1591,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                            Node* lhs, Node* rhs, Label* if_true,
                                            Label* if_false);
 
+  void BranchIfAccessorPair(Node* value, Label* if_accessor_pair,
+                            Label* if_not_accessor_pair) {
+    GotoIf(TaggedIsSmi(value), if_not_accessor_pair);
+    Branch(IsAccessorPair(value), if_accessor_pair, if_not_accessor_pair);
+  }
+
   void GotoIfNumberGreaterThanOrEqual(Node* lhs, Node* rhs, Label* if_false);
 
   Node* Equal(Node* lhs, Node* rhs, Node* context,
@@ -1669,7 +1691,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* DescriptorArrayGetKey(Node* descriptors, Node* descriptor_number);
 
   Node* CallGetterIfAccessor(Node* value, Node* details, Node* context,
-                             Node* receiver, Label* if_bailout);
+                             Node* receiver, Label* if_bailout,
+                             GetOwnPropertyMode mode = kCallJSGetter);
 
   Node* TryToIntptr(Node* key, Label* miss);
 
@@ -1723,6 +1746,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                      Node* character_count);
 
   static const int kElementLoopUnrollThreshold = 8;
+
+  Node* NonNumberToNumberOrNumeric(Node* context, Node* input,
+                                   Object::Conversion mode);
 };
 
 class CodeStubArguments {

@@ -936,72 +936,101 @@ class InterpreterBitwiseBinaryOpAssembler : public InterpreterAssembler {
 
   void BitwiseBinaryOpWithFeedback(Token::Value bitwise_op) {
     Node* reg_index = BytecodeOperandReg(0);
-    Node* lhs = LoadRegister(reg_index);
-    Node* rhs = GetAccumulator();
+    Node* left = LoadRegister(reg_index);
+    Node* right = GetAccumulator();
     Node* context = GetContext();
     Node* slot_index = BytecodeOperandIdx(1);
     Node* feedback_vector = LoadFeedbackVector();
 
-    Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned),
-        var_rhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-    Node* lhs_value = TruncateTaggedToWord32WithFeedback(
-        context, lhs, &var_lhs_type_feedback);
-    Node* rhs_value = TruncateTaggedToWord32WithFeedback(
-        context, rhs, &var_rhs_type_feedback);
-    Node* result = nullptr;
+    VARIABLE(var_left_feedback, MachineRepresentation::kTaggedSigned);
+    VARIABLE(var_right_feedback, MachineRepresentation::kTaggedSigned);
+    VARIABLE(var_left_bigint, MachineRepresentation::kTagged, left);
+    VARIABLE(var_right_bigint, MachineRepresentation::kTagged, right);
+    Label if_left_bigint(this), do_bigint_op(this);
 
-    switch (bitwise_op) {
-      case Token::BIT_OR: {
-        Node* value = Word32Or(lhs_value, rhs_value);
-        result = ChangeInt32ToTagged(value);
-      } break;
-      case Token::BIT_AND: {
-        Node* value = Word32And(lhs_value, rhs_value);
-        result = ChangeInt32ToTagged(value);
-      } break;
-      case Token::BIT_XOR: {
-        Node* value = Word32Xor(lhs_value, rhs_value);
-        result = ChangeInt32ToTagged(value);
-      } break;
-      case Token::SHL: {
-        Node* value =
-            Word32Shl(lhs_value, Word32And(rhs_value, Int32Constant(0x1f)));
-        result = ChangeInt32ToTagged(value);
-      } break;
-      case Token::SHR: {
-        Node* value =
-            Word32Shr(lhs_value, Word32And(rhs_value, Int32Constant(0x1f)));
-        result = ChangeUint32ToTagged(value);
-      } break;
-      case Token::SAR: {
-        Node* value =
-            Word32Sar(lhs_value, Word32And(rhs_value, Int32Constant(0x1f)));
-        result = ChangeInt32ToTagged(value);
-      } break;
-      default:
-        UNREACHABLE();
-    }
+    Node* left32 = TaggedToWord32OrBigIntWithFeedback(
+        context, left, &var_left_feedback, &if_left_bigint, &var_left_bigint);
+    Node* right32 = TaggedToWord32OrBigIntWithFeedback(
+        context, right, &var_right_feedback, &do_bigint_op, &var_right_bigint);
 
+    // Numbers case.
+    Node* result = BitwiseOp(left32, right32, bitwise_op);
     Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                           BinaryOperationFeedback::kSignedSmall,
                                           BinaryOperationFeedback::kNumber);
-
-    if (FLAG_debug_code) {
-      Label ok(this);
-      GotoIf(TaggedIsSmi(result), &ok);
-      Node* result_map = LoadMap(result);
-      AbortIfWordNotEqual(result_map, HeapNumberMapConstant(),
-                          kExpectedHeapNumber);
-      Goto(&ok);
-      BIND(&ok);
-    }
-
     Node* input_feedback =
-        SmiOr(var_lhs_type_feedback.value(), var_rhs_type_feedback.value());
+        SmiOr(var_left_feedback.value(), var_right_feedback.value());
     UpdateFeedback(SmiOr(result_type, input_feedback), feedback_vector,
                    slot_index);
     SetAccumulator(result);
     Dispatch();
+
+    // BigInt cases.
+    BIND(&if_left_bigint);
+    // TODO(jkummerow): NumberBuiltinsAssembler::BitwiseOp inlines the
+    // relevant bits of this. Find a way to unify the approaches.
+    TaggedToWord32OrBigIntWithFeedback(context, right, &var_right_feedback,
+                                       &do_bigint_op, &var_right_bigint);
+    Goto(&do_bigint_op);
+
+    BIND(&do_bigint_op);
+    SetAccumulator(
+        CallRuntime(Runtime::kBigIntBinaryOp, context, var_left_bigint.value(),
+                    var_right_bigint.value(), SmiConstant(bitwise_op)));
+    UpdateFeedback(SmiOr(var_left_feedback.value(), var_right_feedback.value()),
+                   feedback_vector, slot_index);
+    Dispatch();
+  }
+
+  void BitwiseBinaryOpWithSmi(Token::Value bitwise_op) {
+    Node* left = GetAccumulator();
+    Node* right = BytecodeOperandImmSmi(0);
+    Node* slot_index = BytecodeOperandIdx(1);
+    Node* feedback_vector = LoadFeedbackVector();
+    Node* context = GetContext();
+
+    VARIABLE(var_left_feedback, MachineRepresentation::kTaggedSigned);
+    VARIABLE(var_left_bigint, MachineRepresentation::kTagged);
+    Label if_bigint_mix(this);
+
+    Node* left32 = TaggedToWord32OrBigIntWithFeedback(
+        context, left, &var_left_feedback, &if_bigint_mix, &var_left_bigint);
+    Node* result = BitwiseOp(left32, SmiToWord32(right), bitwise_op);
+    Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
+                                          BinaryOperationFeedback::kSignedSmall,
+                                          BinaryOperationFeedback::kNumber);
+    UpdateFeedback(SmiOr(result_type, var_left_feedback.value()),
+                   feedback_vector, slot_index);
+    SetAccumulator(result);
+    Dispatch();
+
+    BIND(&if_bigint_mix);
+    UpdateFeedback(var_left_feedback.value(), feedback_vector, slot_index);
+    ThrowTypeError(context, MessageTemplate::kBigIntMixedTypes);
+  }
+
+ private:
+  Node* BitwiseOp(Node* left32, Node* right32, Token::Value bitwise_op) {
+    switch (bitwise_op) {
+      case Token::BIT_AND:
+        return ChangeInt32ToTagged(Word32And(left32, right32));
+      case Token::BIT_OR:
+        return ChangeInt32ToTagged(Word32Or(left32, right32));
+      case Token::BIT_XOR:
+        return ChangeInt32ToTagged(Word32Xor(left32, right32));
+      case Token::SHL:
+        return ChangeInt32ToTagged(
+            Word32Shl(left32, Word32And(right32, Int32Constant(0x1f))));
+      case Token::SAR:
+        return ChangeInt32ToTagged(
+            Word32Sar(left32, Word32And(right32, Int32Constant(0x1f))));
+      case Token::SHR:
+        return ChangeUint32ToTagged(
+            Word32Shr(left32, Word32And(right32, Int32Constant(0x1f))));
+      default:
+        break;
+    }
+    UNREACHABLE();
   }
 };
 
@@ -1059,76 +1088,22 @@ IGNITION_HANDLER(ShiftRightLogical, InterpreterBitwiseBinaryOpAssembler) {
 // BitwiseOrSmi <imm>
 //
 // BitwiseOrSmi accumulator with <imm>.
-IGNITION_HANDLER(BitwiseOrSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* value = Word32Or(lhs_value, rhs_value);
-  Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+IGNITION_HANDLER(BitwiseOrSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::BIT_OR);
 }
 
 // BitwiseXorSmi <imm>
 //
 // BitwiseXorSmi accumulator with <imm>.
-IGNITION_HANDLER(BitwiseXorSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* value = Word32Xor(lhs_value, rhs_value);
-  Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+IGNITION_HANDLER(BitwiseXorSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::BIT_XOR);
 }
 
 // BitwiseAndSmi <imm>
 //
 // BitwiseAndSmi accumulator with <imm>.
-IGNITION_HANDLER(BitwiseAndSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* value = Word32And(lhs_value, rhs_value);
-  Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+IGNITION_HANDLER(BitwiseAndSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::BIT_AND);
 }
 
 // BitwiseNot <feedback_slot>
@@ -1140,17 +1115,29 @@ IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
   Node* feedback_vector = LoadFeedbackVector();
   Node* context = GetContext();
 
-  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* truncated_value =
-      TruncateTaggedToWord32WithFeedback(context, operand, &var_type_feedback);
+  VARIABLE(var_feedback, MachineRepresentation::kTaggedSigned);
+  VARIABLE(var_bigint, MachineRepresentation::kTagged);
+  Label if_bigint(this);
+  Node* truncated_value = TaggedToWord32OrBigIntWithFeedback(
+      context, operand, &var_feedback, &if_bigint, &var_bigint);
+
+  // Number case.
   Node* value = Word32Not(truncated_value);
   Node* result = ChangeInt32ToTagged(value);
   Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
                                         BinaryOperationFeedback::kSignedSmall,
                                         BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_type_feedback.value()), feedback_vector,
+  UpdateFeedback(SmiOr(result_type, var_feedback.value()), feedback_vector,
                  slot_index);
   SetAccumulator(result);
+  Dispatch();
+
+  // BigInt case.
+  BIND(&if_bigint);
+  UpdateFeedback(SmiConstant(BinaryOperationFeedback::kBigInt), feedback_vector,
+                 slot_index);
+  SetAccumulator(CallRuntime(Runtime::kBigIntUnaryOp, context,
+                             var_bigint.value(), SmiConstant(Token::BIT_NOT)));
   Dispatch();
 }
 
@@ -1159,157 +1146,209 @@ IGNITION_HANDLER(BitwiseNot, InterpreterAssembler) {
 // Left shifts accumulator by the count specified in <imm>.
 // The accumulator is converted to an int32 before the operation. The 5
 // lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
-IGNITION_HANDLER(ShiftLeftSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
-  Node* value = Word32Shl(lhs_value, shift_count);
-  Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+IGNITION_HANDLER(ShiftLeftSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::SHL);
 }
 
 // ShiftRightSmi <imm>
 //
 // Right shifts accumulator by the count specified in <imm>. Result is sign
 // extended. The accumulator is converted to an int32 before the operation. The
-// 5 lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
-IGNITION_HANDLER(ShiftRightSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
-  Node* value = Word32Sar(lhs_value, shift_count);
-  Node* result = ChangeInt32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+// 5 lsb bits from <imm> are used as count i.e. <src> >> (<imm> & 0x1F).
+IGNITION_HANDLER(ShiftRightSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::SAR);
 }
 
 // ShiftRightLogicalSmi <imm>
 //
 // Right shifts accumulator by the count specified in <imm>. Result is zero
 // extended. The accumulator is converted to an int32 before the operation. The
-// 5 lsb bits from <imm> are used as count i.e. <src> << (<imm> & 0x1F).
-IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterAssembler) {
-  Node* left = GetAccumulator();
-  Node* right = BytecodeOperandImmSmi(0);
-  Node* slot_index = BytecodeOperandIdx(1);
-  Node* feedback_vector = LoadFeedbackVector();
-  Node* context = GetContext();
-
-  Variable var_lhs_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Node* lhs_value =
-      TruncateTaggedToWord32WithFeedback(context, left, &var_lhs_type_feedback);
-  Node* rhs_value = SmiToWord32(right);
-  Node* shift_count = Word32And(rhs_value, Int32Constant(0x1f));
-  Node* value = Word32Shr(lhs_value, shift_count);
-  Node* result = ChangeUint32ToTagged(value);
-  Node* result_type = SelectSmiConstant(TaggedIsSmi(result),
-                                        BinaryOperationFeedback::kSignedSmall,
-                                        BinaryOperationFeedback::kNumber);
-  UpdateFeedback(SmiOr(result_type, var_lhs_type_feedback.value()),
-                 feedback_vector, slot_index);
-  SetAccumulator(result);
-  Dispatch();
+// 5 lsb bits from <imm> are used as count i.e. <src> >>> (<imm> & 0x1F).
+IGNITION_HANDLER(ShiftRightLogicalSmi, InterpreterBitwiseBinaryOpAssembler) {
+  BitwiseBinaryOpWithSmi(Token::SHR);
 }
+
+class UnaryNumericOpAssembler : public InterpreterAssembler {
+ public:
+  UnaryNumericOpAssembler(CodeAssemblerState* state, Bytecode bytecode,
+                          OperandScale operand_scale)
+      : InterpreterAssembler(state, bytecode, operand_scale) {}
+
+  // {smi_op} signature: (Node* smi_value, Variable* var_feedback,
+  // Label* do_float_op, Variable* var_float) => Node* tagged result.
+  // {float_op} signature: (Node* float_value) => Node* float_result.
+  // {bigint_op} signature: (Node* bigint_value) => Node* tagged_result.
+  void UnaryOpWithFeedback(
+      std::function<Node*(Node*, Variable*, Label*, Variable*)> smi_op,
+      std::function<Node*(Node*)> float_op,
+      std::function<Node*(Node*)> bigint_op) {
+    VARIABLE(var_value, MachineRepresentation::kTagged, GetAccumulator());
+    Node* slot_index = BytecodeOperandIdx(0);
+    Node* feedback_vector = LoadFeedbackVector();
+
+    VARIABLE(var_result, MachineRepresentation::kTagged);
+    VARIABLE(var_float_value, MachineRepresentation::kFloat64);
+    VARIABLE(var_feedback, MachineRepresentation::kTaggedSigned,
+             SmiConstant(BinaryOperationFeedback::kNone));
+    Variable* loop_vars[] = {&var_value, &var_feedback};
+    Label start(this, arraysize(loop_vars), loop_vars), end(this);
+    Label do_float_op(this, &var_float_value);
+    Goto(&start);
+    // We might have to try again after ToNumeric conversion.
+    BIND(&start);
+    {
+      Label if_smi(this), if_heapnumber(this), if_bigint(this);
+      Label if_oddball(this), if_other(this);
+      Node* value = var_value.value();
+      GotoIf(TaggedIsSmi(value), &if_smi);
+      Node* map = LoadMap(value);
+      GotoIf(IsHeapNumberMap(map), &if_heapnumber);
+      Node* instance_type = LoadMapInstanceType(map);
+      GotoIf(IsBigIntInstanceType(instance_type), &if_bigint);
+      Branch(Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE)),
+             &if_oddball, &if_other);
+
+      BIND(&if_smi);
+      {
+        var_result.Bind(
+            smi_op(value, &var_feedback, &do_float_op, &var_float_value));
+        Goto(&end);
+      }
+
+      BIND(&if_heapnumber);
+      {
+        var_float_value.Bind(LoadHeapNumberValue(value));
+        Goto(&do_float_op);
+      }
+
+      BIND(&if_bigint);
+      {
+        var_result.Bind(bigint_op(value));
+        var_feedback.Bind(SmiOr(var_feedback.value(),
+                                SmiConstant(BinaryOperationFeedback::kBigInt)));
+        Goto(&end);
+      }
+
+      BIND(&if_oddball);
+      {
+        // We do not require an Or with earlier feedback here because once we
+        // convert the value to a number, we cannot reach this path. We can
+        // only reach this path on the first pass when the feedback is kNone.
+        CSA_ASSERT(this, SmiEqual(var_feedback.value(),
+                                  SmiConstant(BinaryOperationFeedback::kNone)));
+        var_feedback.Bind(
+            SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
+        var_value.Bind(LoadObjectField(value, Oddball::kToNumberOffset));
+        Goto(&start);
+      }
+
+      BIND(&if_other);
+      {
+        // We do not require an Or with earlier feedback here because once we
+        // convert the value to a number, we cannot reach this path. We can
+        // only reach this path on the first pass when the feedback is kNone.
+        CSA_ASSERT(this, SmiEqual(var_feedback.value(),
+                                  SmiConstant(BinaryOperationFeedback::kNone)));
+        var_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
+        // TODO(jkummerow): This should call kNonNumericToNumeric.
+        var_value.Bind(
+            CallBuiltin(Builtins::kNonNumberToNumber, GetContext(), value));
+        Goto(&start);
+      }
+    }
+
+    BIND(&do_float_op);
+    {
+      var_feedback.Bind(SmiOr(var_feedback.value(),
+                              SmiConstant(BinaryOperationFeedback::kNumber)));
+      var_result.Bind(
+          AllocateHeapNumberWithValue(float_op(var_float_value.value())));
+      Goto(&end);
+    }
+
+    BIND(&end);
+    UpdateFeedback(var_feedback.value(), feedback_vector, slot_index);
+    SetAccumulator(var_result.value());
+    Dispatch();
+  }
+
+  void IncDecWithFeedback(Token::Value op) {
+    DCHECK(op == Token::INC || op == Token::DEC);
+    UnaryOpWithFeedback(
+        [=](Node* smi_value, Variable* var_feedback, Label* do_float_op,
+            Variable* var_float) {
+          // Try fast Smi operation first.
+          Node* value = BitcastTaggedToWord(smi_value);
+          Node* one = BitcastTaggedToWord(SmiConstant(1));
+          Node* pair = op == Token::INC ? IntPtrAddWithOverflow(value, one)
+                                        : IntPtrSubWithOverflow(value, one);
+          Node* overflow = Projection(1, pair);
+
+          // Check if the Smi operation overflowed.
+          Label if_overflow(this), if_notoverflow(this);
+          Branch(overflow, &if_overflow, &if_notoverflow);
+
+          BIND(&if_overflow);
+          {
+            var_float->Bind(SmiToFloat64(smi_value));
+            Goto(do_float_op);
+          }
+
+          BIND(&if_notoverflow);
+          var_feedback->Bind(
+              SmiOr(var_feedback->value(),
+                    SmiConstant(BinaryOperationFeedback::kSignedSmall)));
+          return BitcastWordToTaggedSigned(Projection(0, pair));
+        },
+        [=](Node* float_value) {
+          return op == Token::INC
+                     ? Float64Add(float_value, Float64Constant(1.0))
+                     : Float64Sub(float_value, Float64Constant(1.0));
+        },
+        [=](Node* bigint_value) {
+          return CallRuntime(Runtime::kBigIntUnaryOp, GetContext(),
+                             bigint_value, SmiConstant(op));
+        });
+  }
+};
 
 // Negate <feedback_slot>
 //
 // Perform arithmetic negation on the accumulator.
-IGNITION_HANDLER(Negate, InterpreterAssembler) {
-  Node* operand = GetAccumulator();
+IGNITION_HANDLER(Negate, UnaryNumericOpAssembler) {
+  UnaryOpWithFeedback(
+      [=](Node* operand, Variable* var_feedback, Label* do_float_op,
+          Variable* var_float) {
+        VARIABLE(var_result, MachineRepresentation::kTagged);
+        Label if_zero(this), if_min_smi(this), end(this);
+        // Return -0 if operand is 0.
+        GotoIf(SmiEqual(operand, SmiConstant(0)), &if_zero);
 
-  Label end(this);
-  VARIABLE(var_type_feedback, MachineRepresentation::kTaggedSigned);
-  VARIABLE(var_result, MachineRepresentation::kTagged);
+        // Special-case the minimum Smi to avoid overflow.
+        GotoIf(SmiEqual(operand, SmiConstant(Smi::kMinValue)), &if_min_smi);
 
-  Label if_smi(this), if_heapnumber(this), if_notnumber(this, Label::kDeferred);
-  GotoIf(TaggedIsSmi(operand), &if_smi);
-  Branch(IsHeapNumber(operand), &if_heapnumber, &if_notnumber);
+        // Else simply subtract operand from 0.
+        var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
+        var_result.Bind(SmiSub(SmiConstant(0), operand));
+        Goto(&end);
 
-  BIND(&if_smi);
-  {
-    Label if_zero(this), if_min_smi(this);
-    // Return -0 if operand is 0.
-    GotoIf(SmiEqual(operand, SmiConstant(0)), &if_zero);
+        BIND(&if_zero);
+        var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kNumber));
+        var_result.Bind(MinusZeroConstant());
+        Goto(&end);
 
-    // Special-case the minimum smi to avoid overflow.
-    GotoIf(SmiEqual(operand, SmiConstant(Smi::kMinValue)), &if_min_smi);
+        BIND(&if_min_smi);
+        var_float->Bind(SmiToFloat64(operand));
+        Goto(do_float_op);
 
-    // Else simply subtract operand from 0.
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
-    var_result.Bind(SmiSub(SmiConstant(0), operand));
-    Goto(&end);
-
-    BIND(&if_zero);
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
-    var_result.Bind(MinusZeroConstant());
-    Goto(&end);
-
-    BIND(&if_min_smi);
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
-    var_result.Bind(AllocateHeapNumberWithValue(
-        Float64Constant(-static_cast<double>(Smi::kMinValue))));
-    Goto(&end);
-  }
-
-  BIND(&if_heapnumber);
-  {
-    Node* result = Float64Neg(LoadHeapNumberValue(operand));
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
-    var_result.Bind(AllocateHeapNumberWithValue(result));
-    Goto(&end);
-  }
-
-  BIND(&if_notnumber);
-  {
-    Node* instance_type = LoadInstanceType(operand);
-    Node* is_oddball = Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE));
-
-    var_type_feedback.Bind(
-        SelectSmiConstant(is_oddball, BinaryOperationFeedback::kNumberOrOddball,
-                          BinaryOperationFeedback::kAny));
-
-    Node* context = GetContext();
-    Node* result =
-        CallBuiltin(Builtins::kMultiply, context, operand, SmiConstant(-1));
-    var_result.Bind(result);
-    Goto(&end);
-  }
-
-  BIND(&end);
-
-  Node* slot_index = BytecodeOperandIdx(0);
-  Node* feedback_vector = LoadFeedbackVector();
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-
-  SetAccumulator(var_result.value());
-  Dispatch();
+        BIND(&end);
+        return var_result.value();
+      },
+      [=](Node* float_value) { return Float64Neg(float_value); },
+      [=](Node* bigint_value) {
+        return CallRuntime(Runtime::kBigIntUnaryOp, GetContext(), bigint_value,
+                           SmiConstant(Token::SUB));
+      });
 }
 
 // ToName <dst>
@@ -1327,49 +1366,14 @@ IGNITION_HANDLER(ToName, InterpreterAssembler) {
 //
 // Convert the object referenced by the accumulator to a number.
 IGNITION_HANDLER(ToNumber, InterpreterAssembler) {
-  Node* object = GetAccumulator();
-  Node* context = GetContext();
+  ToNumberOrNumeric(Object::Conversion::kToNumber);
+}
 
-  // Convert the {object} to a Number and collect feedback for the {object}.
-  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Variable var_result(this, MachineRepresentation::kTagged);
-  Label if_done(this), if_objectissmi(this), if_objectisnumber(this),
-      if_objectisother(this, Label::kDeferred);
-
-  GotoIf(TaggedIsSmi(object), &if_objectissmi);
-  Branch(IsHeapNumber(object), &if_objectisnumber, &if_objectisother);
-
-  BIND(&if_objectissmi);
-  {
-    var_result.Bind(object);
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
-    Goto(&if_done);
-  }
-
-  BIND(&if_objectisnumber);
-  {
-    var_result.Bind(object);
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNumber));
-    Goto(&if_done);
-  }
-
-  BIND(&if_objectisother);
-  {
-    // Convert the {object} to a Number.
-    var_result.Bind(CallBuiltin(Builtins::kNonNumberToNumber, context, object));
-    var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
-    Goto(&if_done);
-  }
-
-  BIND(&if_done);
-
-  // Record the type feedback collected for {object}.
-  Node* slot_index = BytecodeOperandIdx(0);
-  Node* feedback_vector = LoadFeedbackVector();
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-
-  SetAccumulator(var_result.value());
-  Dispatch();
+// ToNumeric <slot>
+//
+// Convert the object referenced by the accumulator to a numeric.
+IGNITION_HANDLER(ToNumeric, InterpreterAssembler) {
+  ToNumberOrNumeric(Object::Conversion::kToNumeric);
 }
 
 // ToObject <dst>
@@ -1388,247 +1392,15 @@ IGNITION_HANDLER(ToObject, InterpreterAssembler) {
 // Inc
 //
 // Increments value in the accumulator by one.
-IGNITION_HANDLER(Inc, InterpreterAssembler) {
-  Node* value = GetAccumulator();
-  Node* context = GetContext();
-  Node* slot_index = BytecodeOperandIdx(0);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // Shared entry for floating point increment.
-  Label do_finc(this), end(this);
-  Variable var_finc_value(this, MachineRepresentation::kFloat64);
-
-  // We might need to try again due to ToNumber conversion.
-  Variable value_var(this, MachineRepresentation::kTagged);
-  Variable result_var(this, MachineRepresentation::kTagged);
-  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Variable* loop_vars[] = {&value_var, &var_type_feedback};
-  Label start(this, 2, loop_vars);
-  value_var.Bind(value);
-  var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNone));
-  Goto(&start);
-  BIND(&start);
-  {
-    value = value_var.value();
-
-    Label if_issmi(this), if_isnotsmi(this);
-    Branch(TaggedIsSmi(value), &if_issmi, &if_isnotsmi);
-
-    BIND(&if_issmi);
-    {
-      // Try fast Smi addition first.
-      Node* one = SmiConstant(1);
-      Node* pair = IntPtrAddWithOverflow(BitcastTaggedToWord(value),
-                                         BitcastTaggedToWord(one));
-      Node* overflow = Projection(1, pair);
-
-      // Check if the Smi addition overflowed.
-      Label if_overflow(this), if_notoverflow(this);
-      Branch(overflow, &if_overflow, &if_notoverflow);
-
-      BIND(&if_notoverflow);
-      var_type_feedback.Bind(
-          SmiOr(var_type_feedback.value(),
-                SmiConstant(BinaryOperationFeedback::kSignedSmall)));
-      result_var.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
-      Goto(&end);
-
-      BIND(&if_overflow);
-      {
-        var_finc_value.Bind(SmiToFloat64(value));
-        Goto(&do_finc);
-      }
-    }
-
-    BIND(&if_isnotsmi);
-    {
-      // Check if the value is a HeapNumber.
-      Label if_valueisnumber(this), if_valuenotnumber(this, Label::kDeferred);
-      Node* value_map = LoadMap(value);
-      Branch(IsHeapNumberMap(value_map), &if_valueisnumber, &if_valuenotnumber);
-
-      BIND(&if_valueisnumber);
-      {
-        // Load the HeapNumber value.
-        var_finc_value.Bind(LoadHeapNumberValue(value));
-        Goto(&do_finc);
-      }
-
-      BIND(&if_valuenotnumber);
-      {
-        // We do not require an Or with earlier feedback here because once we
-        // convert the value to a number, we cannot reach this path. We can
-        // only reach this path on the first pass when the feedback is kNone.
-        CSA_ASSERT(this, SmiEqual(var_type_feedback.value(),
-                                  SmiConstant(BinaryOperationFeedback::kNone)));
-
-        Label if_valueisoddball(this), if_valuenotoddball(this);
-        Node* instance_type = LoadMapInstanceType(value_map);
-        Node* is_oddball =
-            Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE));
-        Branch(is_oddball, &if_valueisoddball, &if_valuenotoddball);
-
-        BIND(&if_valueisoddball);
-        {
-          // Convert Oddball to Number and check again.
-          value_var.Bind(LoadObjectField(value, Oddball::kToNumberOffset));
-          var_type_feedback.Bind(
-              SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
-          Goto(&start);
-        }
-
-        BIND(&if_valuenotoddball);
-        {
-          // Convert to a Number first and try again.
-          var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
-          value_var.Bind(
-              CallBuiltin(Builtins::kNonNumberToNumber, context, value));
-          Goto(&start);
-        }
-      }
-    }
-  }
-
-  BIND(&do_finc);
-  {
-    Node* finc_value = var_finc_value.value();
-    Node* one = Float64Constant(1.0);
-    Node* finc_result = Float64Add(finc_value, one);
-    var_type_feedback.Bind(
-        SmiOr(var_type_feedback.value(),
-              SmiConstant(BinaryOperationFeedback::kNumber)));
-    result_var.Bind(AllocateHeapNumberWithValue(finc_result));
-    Goto(&end);
-  }
-
-  BIND(&end);
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-
-  SetAccumulator(result_var.value());
-  Dispatch();
+IGNITION_HANDLER(Inc, UnaryNumericOpAssembler) {
+  IncDecWithFeedback(Token::INC);
 }
 
 // Dec
 //
 // Decrements value in the accumulator by one.
-IGNITION_HANDLER(Dec, InterpreterAssembler) {
-  Node* value = GetAccumulator();
-  Node* context = GetContext();
-  Node* slot_index = BytecodeOperandIdx(0);
-  Node* feedback_vector = LoadFeedbackVector();
-
-  // Shared entry for floating point decrement.
-  Label do_fdec(this), end(this);
-  Variable var_fdec_value(this, MachineRepresentation::kFloat64);
-
-  // We might need to try again due to ToNumber conversion.
-  Variable value_var(this, MachineRepresentation::kTagged);
-  Variable result_var(this, MachineRepresentation::kTagged);
-  Variable var_type_feedback(this, MachineRepresentation::kTaggedSigned);
-  Variable* loop_vars[] = {&value_var, &var_type_feedback};
-  Label start(this, 2, loop_vars);
-  var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kNone));
-  value_var.Bind(value);
-  Goto(&start);
-  BIND(&start);
-  {
-    value = value_var.value();
-
-    Label if_issmi(this), if_isnotsmi(this);
-    Branch(TaggedIsSmi(value), &if_issmi, &if_isnotsmi);
-
-    BIND(&if_issmi);
-    {
-      // Try fast Smi subtraction first.
-      Node* one = SmiConstant(1);
-      Node* pair = IntPtrSubWithOverflow(BitcastTaggedToWord(value),
-                                         BitcastTaggedToWord(one));
-      Node* overflow = Projection(1, pair);
-
-      // Check if the Smi subtraction overflowed.
-      Label if_overflow(this), if_notoverflow(this);
-      Branch(overflow, &if_overflow, &if_notoverflow);
-
-      BIND(&if_notoverflow);
-      var_type_feedback.Bind(
-          SmiOr(var_type_feedback.value(),
-                SmiConstant(BinaryOperationFeedback::kSignedSmall)));
-      result_var.Bind(BitcastWordToTaggedSigned(Projection(0, pair)));
-      Goto(&end);
-
-      BIND(&if_overflow);
-      {
-        var_fdec_value.Bind(SmiToFloat64(value));
-        Goto(&do_fdec);
-      }
-    }
-
-    BIND(&if_isnotsmi);
-    {
-      // Check if the value is a HeapNumber.
-      Label if_valueisnumber(this), if_valuenotnumber(this, Label::kDeferred);
-      Node* value_map = LoadMap(value);
-      Branch(IsHeapNumberMap(value_map), &if_valueisnumber, &if_valuenotnumber);
-
-      BIND(&if_valueisnumber);
-      {
-        // Load the HeapNumber value.
-        var_fdec_value.Bind(LoadHeapNumberValue(value));
-        Goto(&do_fdec);
-      }
-
-      BIND(&if_valuenotnumber);
-      {
-        // We do not require an Or with earlier feedback here because once we
-        // convert the value to a number, we cannot reach this path. We can
-        // only reach this path on the first pass when the feedback is kNone.
-        CSA_ASSERT(this, SmiEqual(var_type_feedback.value(),
-                                  SmiConstant(BinaryOperationFeedback::kNone)));
-
-        Label if_valueisoddball(this), if_valuenotoddball(this);
-        Node* instance_type = LoadMapInstanceType(value_map);
-        Node* is_oddball =
-            Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE));
-        Branch(is_oddball, &if_valueisoddball, &if_valuenotoddball);
-
-        BIND(&if_valueisoddball);
-        {
-          // Convert Oddball to Number and check again.
-          value_var.Bind(LoadObjectField(value, Oddball::kToNumberOffset));
-          var_type_feedback.Bind(
-              SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
-          Goto(&start);
-        }
-
-        BIND(&if_valuenotoddball);
-        {
-          // Convert to a Number first and try again.
-          var_type_feedback.Bind(SmiConstant(BinaryOperationFeedback::kAny));
-          value_var.Bind(
-              CallBuiltin(Builtins::kNonNumberToNumber, context, value));
-          Goto(&start);
-        }
-      }
-    }
-  }
-
-  BIND(&do_fdec);
-  {
-    Node* fdec_value = var_fdec_value.value();
-    Node* one = Float64Constant(1.0);
-    Node* fdec_result = Float64Sub(fdec_value, one);
-    var_type_feedback.Bind(
-        SmiOr(var_type_feedback.value(),
-              SmiConstant(BinaryOperationFeedback::kNumber)));
-    result_var.Bind(AllocateHeapNumberWithValue(fdec_result));
-    Goto(&end);
-  }
-
-  BIND(&end);
-  UpdateFeedback(var_type_feedback.value(), feedback_vector, slot_index);
-
-  SetAccumulator(result_var.value());
-  Dispatch();
+IGNITION_HANDLER(Dec, UnaryNumericOpAssembler) {
+  IncDecWithFeedback(Token::DEC);
 }
 
 // LogicalNot

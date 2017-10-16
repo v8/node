@@ -600,7 +600,7 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::LoadLiteral(
     return LoadTheHole();
   } else if (ast_value->IsString()) {
     return LoadLiteral(ast_value->AsString());
-  } else if (ast_value->IsHeapNumber()) {
+  } else if (ast_value->IsHeapNumber() || ast_value->IsBigInt()) {
     size_t entry = GetConstantPoolEntry(ast_value);
     OutputLdaConstant(entry);
     return *this;
@@ -1017,6 +1017,11 @@ BytecodeArrayBuilder& BytecodeArrayBuilder::ToName(Register out) {
 
 BytecodeArrayBuilder& BytecodeArrayBuilder::ToNumber(int feedback_slot) {
   OutputToNumber(feedback_slot);
+  return *this;
+}
+
+BytecodeArrayBuilder& BytecodeArrayBuilder::ToNumeric(int feedback_slot) {
+  OutputToNumeric(feedback_slot);
   return *this;
 }
 
@@ -1443,7 +1448,7 @@ size_t BytecodeArrayBuilder::GetConstantPoolEntry(
 }
 
 size_t BytecodeArrayBuilder::GetConstantPoolEntry(const AstValue* heap_number) {
-  DCHECK(heap_number->IsHeapNumber());
+  DCHECK(heap_number->IsHeapNumber() || heap_number->IsBigInt());
   return constant_array_builder()->Insert(heap_number);
 }
 

@@ -739,113 +739,6 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
 }
 
 
-void StringHelper::GenerateFlatOneByteStringEquals(
-    MacroAssembler* masm, Register left, Register right, Register scratch1,
-    Register scratch2, Register scratch3) {
-  DCHECK(!AreAliased(left, right, scratch1, scratch2, scratch3));
-  Register result = x0;
-  Register left_length = scratch1;
-  Register right_length = scratch2;
-
-  // Compare lengths. If lengths differ, strings can't be equal. Lengths are
-  // smis, and don't need to be untagged.
-  Label strings_not_equal, check_zero_length;
-  __ Ldr(left_length, FieldMemOperand(left, String::kLengthOffset));
-  __ Ldr(right_length, FieldMemOperand(right, String::kLengthOffset));
-  __ Cmp(left_length, right_length);
-  __ B(eq, &check_zero_length);
-
-  __ Bind(&strings_not_equal);
-  __ Mov(result, Smi::FromInt(NOT_EQUAL));
-  __ Ret();
-
-  // Check if the length is zero. If so, the strings must be equal (and empty.)
-  Label compare_chars;
-  __ Bind(&check_zero_length);
-  STATIC_ASSERT(kSmiTag == 0);
-  __ Cbnz(left_length, &compare_chars);
-  __ Mov(result, Smi::FromInt(EQUAL));
-  __ Ret();
-
-  // Compare characters. Falls through if all characters are equal.
-  __ Bind(&compare_chars);
-  GenerateOneByteCharsCompareLoop(masm, left, right, left_length, scratch2,
-                                  scratch3, &strings_not_equal);
-
-  // Characters in strings are equal.
-  __ Mov(result, Smi::FromInt(EQUAL));
-  __ Ret();
-}
-
-
-void StringHelper::GenerateCompareFlatOneByteStrings(
-    MacroAssembler* masm, Register left, Register right, Register scratch1,
-    Register scratch2, Register scratch3, Register scratch4) {
-  DCHECK(!AreAliased(left, right, scratch1, scratch2, scratch3, scratch4));
-  Label result_not_equal, compare_lengths;
-
-  // Find minimum length and length difference.
-  Register length_delta = scratch3;
-  __ Ldr(scratch1, FieldMemOperand(left, String::kLengthOffset));
-  __ Ldr(scratch2, FieldMemOperand(right, String::kLengthOffset));
-  __ Subs(length_delta, scratch1, scratch2);
-
-  Register min_length = scratch1;
-  __ Csel(min_length, scratch2, scratch1, gt);
-  __ Cbz(min_length, &compare_lengths);
-
-  // Compare loop.
-  GenerateOneByteCharsCompareLoop(masm, left, right, min_length, scratch2,
-                                  scratch4, &result_not_equal);
-
-  // Compare lengths - strings up to min-length are equal.
-  __ Bind(&compare_lengths);
-
-  DCHECK(Smi::FromInt(EQUAL) == static_cast<Smi*>(0));
-
-  // Use length_delta as result if it's zero.
-  Register result = x0;
-  __ Subs(result, length_delta, 0);
-
-  __ Bind(&result_not_equal);
-  Register greater = x10;
-  Register less = x11;
-  __ Mov(greater, Smi::FromInt(GREATER));
-  __ Mov(less, Smi::FromInt(LESS));
-  __ CmovX(result, greater, gt);
-  __ CmovX(result, less, lt);
-  __ Ret();
-}
-
-
-void StringHelper::GenerateOneByteCharsCompareLoop(
-    MacroAssembler* masm, Register left, Register right, Register length,
-    Register scratch1, Register scratch2, Label* chars_not_equal) {
-  DCHECK(!AreAliased(left, right, length, scratch1, scratch2));
-
-  // Change index to run from -length to -1 by adding length to string
-  // start. This means that loop ends when index reaches zero, which
-  // doesn't need an additional compare.
-  __ SmiUntag(length);
-  __ Add(scratch1, length, SeqOneByteString::kHeaderSize - kHeapObjectTag);
-  __ Add(left, left, scratch1);
-  __ Add(right, right, scratch1);
-
-  Register index = length;
-  __ Neg(index, length);  // index = -length;
-
-  // Compare loop
-  Label loop;
-  __ Bind(&loop);
-  __ Ldrb(scratch1, MemOperand(left, index));
-  __ Ldrb(scratch2, MemOperand(right, index));
-  __ Cmp(scratch1, scratch2);
-  __ B(ne, chars_not_equal);
-  __ Add(index, index, 1);
-  __ Cbnz(index, &loop);
-}
-
-
 RecordWriteStub::RegisterAllocation::RegisterAllocation(Register object,
                                                         Register address,
                                                         Register scratch)
@@ -1110,7 +1003,7 @@ static const unsigned int kProfileEntryHookCallSize =
 
 void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
                                                      Zone* zone) {
-  if (tasm->isolate()->function_entry_hook() != NULL) {
+  if (tasm->isolate()->function_entry_hook() != nullptr) {
     Assembler::BlockConstPoolScope no_const_pools(tasm);
     DontEmitDebugCodeScope no_debug_code(tasm);
     Label entry_hook_call_start;
@@ -1124,7 +1017,7 @@ void ProfileEntryHookStub::MaybeCallEntryHookDelayed(TurboAssembler* tasm,
 }
 
 void ProfileEntryHookStub::MaybeCallEntryHook(MacroAssembler* masm) {
-  if (masm->isolate()->function_entry_hook() != NULL) {
+  if (masm->isolate()->function_entry_hook() != nullptr) {
     ProfileEntryHookStub stub(masm->isolate());
     Assembler::BlockConstPoolScope no_const_pools(masm);
     DontEmitDebugCodeScope no_debug_code(masm);
@@ -1256,16 +1149,6 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(MacroAssembler* masm,
     // Stop if found the property.
     __ Cmp(entity_name, Operand(name));
     __ B(eq, miss);
-
-    Label good;
-    __ JumpIfRoot(entity_name, Heap::kTheHoleValueRootIndex, &good);
-
-    // Check if the entry name is not a unique name.
-    __ Ldr(entity_name, FieldMemOperand(entity_name, HeapObject::kMapOffset));
-    __ Ldrb(entity_name,
-            FieldMemOperand(entity_name, Map::kInstanceTypeOffset));
-    __ JumpIfNotUniqueNameInstanceType(entity_name, miss);
-    __ Bind(&good);
   }
 
   CPURegList spill_list(CPURegister::kRegister, kXRegSizeInBits, 0, 6);
@@ -1278,7 +1161,7 @@ void NameDictionaryLookupStub::GenerateNegativeLookup(MacroAssembler* masm,
 
   __ Ldr(x0, FieldMemOperand(receiver, JSObject::kPropertiesOrHashOffset));
   __ Mov(x1, Operand(name));
-  NameDictionaryLookupStub stub(masm->isolate(), NEGATIVE_LOOKUP);
+  NameDictionaryLookupStub stub(masm->isolate());
   __ CallStub(&stub);
   // Move stub return value to scratch0. Note that scratch0 is not included in
   // spill_list and won't be clobbered by PopCPURegList.
@@ -1310,7 +1193,7 @@ void NameDictionaryLookupStub::Generate(MacroAssembler* masm) {
   Register undefined = x5;
   Register entry_key = x6;
 
-  Label in_dictionary, maybe_in_dictionary, not_in_dictionary;
+  Label in_dictionary, not_in_dictionary;
 
   __ Ldrsw(mask, UntagSmiFieldMemOperand(dictionary, kCapacityOffset));
   __ Sub(mask, mask, 1);
@@ -1348,22 +1231,6 @@ void NameDictionaryLookupStub::Generate(MacroAssembler* masm) {
     // Stop if found the property.
     __ Cmp(entry_key, key);
     __ B(eq, &in_dictionary);
-
-    if (i != kTotalProbes - 1 && mode() == NEGATIVE_LOOKUP) {
-      // Check if the entry name is not a unique name.
-      __ Ldr(entry_key, FieldMemOperand(entry_key, HeapObject::kMapOffset));
-      __ Ldrb(entry_key, FieldMemOperand(entry_key, Map::kInstanceTypeOffset));
-      __ JumpIfNotUniqueNameInstanceType(entry_key, &maybe_in_dictionary);
-    }
-  }
-
-  __ Bind(&maybe_in_dictionary);
-  // If we are doing negative lookup then probing failure should be
-  // treated as a lookup success. For positive lookup, probing failure
-  // should be treated as lookup failure.
-  if (mode() == POSITIVE_LOOKUP) {
-    __ Mov(result, 0);
-    __ Ret();
   }
 
   __ Bind(&in_dictionary);
@@ -1562,7 +1429,7 @@ void ArrayConstructorStub::Generate(MacroAssembler* masm) {
     // Initial map for the builtin Array function should be a map.
     __ Ldr(x10, FieldMemOperand(constructor,
                                 JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ JumpIfSmi(x10, &unexpected_map);
     __ JumpIfObjectType(x10, x10, x11, MAP_TYPE, &map_ok);
     __ Bind(&unexpected_map);
@@ -1659,7 +1526,7 @@ void InternalArrayConstructorStub::Generate(MacroAssembler* masm) {
     // Initial map for the builtin Array function should be a map.
     __ Ldr(x10, FieldMemOperand(constructor,
                                 JSFunction::kPrototypeOrInitialMapOffset));
-    // Will both indicate a NULL and a Smi.
+    // Will both indicate a nullptr and a Smi.
     __ JumpIfSmi(x10, &unexpected_map);
     __ JumpIfObjectType(x10, x10, x11, MAP_TYPE, &map_ok);
     __ Bind(&unexpected_map);
@@ -1813,7 +1680,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   __ Peek(x21, (spill_offset + 2) * kXRegSize);
   __ Peek(x22, (spill_offset + 3) * kXRegSize);
 
-  bool restore_context = context_restore_operand != NULL;
+  bool restore_context = context_restore_operand != nullptr;
   if (restore_context) {
     __ Ldr(cp, *context_restore_operand);
   }
@@ -2051,7 +1918,7 @@ void CallApiGetterStub::Generate(MacroAssembler* masm) {
       fp, (PropertyCallbackArguments::kReturnValueOffset + 3) * kPointerSize);
   CallApiFunctionAndReturn(masm, api_function_address, thunk_ref,
                            kStackUnwindSpace, spill_offset,
-                           return_value_operand, NULL);
+                           return_value_operand, nullptr);
 }
 
 #undef __

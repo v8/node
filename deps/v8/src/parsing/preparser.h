@@ -192,6 +192,17 @@ class PreParserExpression {
         ExpressionTypeField::encode(kCallEvalExpression));
   }
 
+  static PreParserExpression CallTaggedTemplate() {
+    return PreParserExpression(
+        TypeField::encode(kExpression) |
+        ExpressionTypeField::encode(kCallTaggedTemplateExpression));
+  }
+
+  bool is_tagged_template() const {
+    DCHECK(IsCall());
+    return ExpressionTypeField::decode(code_) == kCallTaggedTemplateExpression;
+  }
+
   static PreParserExpression SuperCallReference() {
     return PreParserExpression(
         TypeField::encode(kExpression) |
@@ -255,7 +266,13 @@ class PreParserExpression {
   bool IsCall() const {
     return TypeField::decode(code_) == kExpression &&
            (ExpressionTypeField::decode(code_) == kCallExpression ||
-            ExpressionTypeField::decode(code_) == kCallEvalExpression);
+            ExpressionTypeField::decode(code_) == kCallEvalExpression ||
+            ExpressionTypeField::decode(code_) ==
+                kCallTaggedTemplateExpression);
+  }
+  PreParserExpression* AsCall() {
+    if (IsCall()) return this;
+    return nullptr;
   }
 
   bool IsSuperCallReference() const {
@@ -304,6 +321,7 @@ class PreParserExpression {
     kPropertyExpression,
     kCallExpression,
     kCallEvalExpression,
+    kCallTaggedTemplateExpression,
     kSuperCallReference,
     kAssignment
   };
@@ -524,6 +542,9 @@ class PreParserFactory {
   PreParserExpression NewUndefinedLiteral(int pos) {
     return PreParserExpression::Default();
   }
+  PreParserExpression NewTheHoleLiteral() {
+    return PreParserExpression::Default();
+  }
   PreParserExpression NewRegExpLiteral(const PreParserIdentifier& js_pattern,
                                        int js_flags, int pos) {
     return PreParserExpression::Default();
@@ -623,6 +644,11 @@ class PreParserFactory {
       return PreParserExpression::CallEval();
     }
     return PreParserExpression::Call();
+  }
+  PreParserExpression NewTaggedTemplate(
+      PreParserExpression expression, const PreParserExpressionList& arguments,
+      int pos) {
+    return PreParserExpression::CallTaggedTemplate();
   }
   PreParserExpression NewCallNew(const PreParserExpression& expression,
                                  const PreParserExpressionList& arguments,
@@ -1124,7 +1150,22 @@ class PreParser : public ParserBase<PreParser> {
                       ClassInfo* class_info, int pos, int end_pos, bool* ok) {
     bool has_default_constructor = !class_info->has_seen_constructor;
     // Account for the default constructor.
-    if (has_default_constructor) GetNextFunctionLiteralId();
+    if (has_default_constructor) {
+      // Creating and disposing of a FunctionState makes tracking of
+      // next_function_is_likely_called match what Parser does. TODO(marja):
+      // Make the lazy function + next_function_is_likely_called + default ctor
+      // logic less surprising. Default ctors shouldn't affect the laziness of
+      // functions.
+      bool has_extends = class_info->extends.IsNull();
+      FunctionKind kind = has_extends ? FunctionKind::kDefaultDerivedConstructor
+                                      : FunctionKind::kDefaultBaseConstructor;
+      DeclarationScope* function_scope = NewFunctionScope(kind);
+      SetLanguageMode(function_scope, STRICT);
+      function_scope->set_start_position(pos);
+      function_scope->set_end_position(pos);
+      FunctionState function_state(&function_state_, &scope_, function_scope);
+      GetNextFunctionLiteralId();
+    }
     return PreParserExpression::Default();
   }
 
@@ -1368,7 +1409,7 @@ class PreParser : public ParserBase<PreParser> {
   // Reporting errors.
   V8_INLINE void ReportMessageAt(Scanner::Location source_location,
                                  MessageTemplate::Template message,
-                                 const char* arg = NULL,
+                                 const char* arg = nullptr,
                                  ParseErrorType error_type = kSyntaxError) {
     pending_error_handler_->ReportMessageAt(source_location.beg_pos,
                                             source_location.end_pos, message,
@@ -1410,15 +1451,6 @@ class PreParser : public ParserBase<PreParser> {
 
   V8_INLINE PreParserIdentifier EmptyIdentifierString() const {
     return PreParserIdentifier::Default();
-  }
-
-  // Odd-ball literal creators.
-  V8_INLINE PreParserExpression GetLiteralTheHole(int position) {
-    return PreParserExpression::Default();
-  }
-
-  V8_INLINE PreParserExpression GetLiteralUndefined(int position) {
-    return PreParserExpression::Default();
   }
 
   // Producing data during the recursive descent.
@@ -1477,6 +1509,10 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   V8_INLINE PreParserExpression FunctionSentExpression(int pos) {
+    return PreParserExpression::Default();
+  }
+
+  V8_INLINE PreParserExpression ImportMetaExpression(int pos) {
     return PreParserExpression::Default();
   }
 

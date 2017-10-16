@@ -9,39 +9,14 @@ namespace v8 {
 namespace internal {
 
 
-class StringHelper : public AllStatic {
- public:
-  // Compares two flat one-byte strings and returns result in rax.
-  static void GenerateCompareFlatOneByteStrings(
-      MacroAssembler* masm, Register left, Register right, Register scratch1,
-      Register scratch2, Register scratch3, Register scratch4);
-
-  // Compares two flat one-byte strings for equality and returns result in rax.
-  static void GenerateFlatOneByteStringEquals(MacroAssembler* masm,
-                                              Register left, Register right,
-                                              Register scratch1,
-                                              Register scratch2);
-
- private:
-  static void GenerateOneByteCharsCompareLoop(
-      MacroAssembler* masm, Register left, Register right, Register length,
-      Register scratch, Label* chars_not_equal,
-      Label::Distance near_jump = Label::kFar);
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(StringHelper);
-};
-
-
 class NameDictionaryLookupStub: public PlatformCodeStub {
  public:
-  enum LookupMode { POSITIVE_LOOKUP, NEGATIVE_LOOKUP };
-
   NameDictionaryLookupStub(Isolate* isolate, Register dictionary,
-                           Register result, Register index, LookupMode mode)
+                           Register result, Register index)
       : PlatformCodeStub(isolate) {
     minor_key_ = DictionaryBits::encode(dictionary.code()) |
                  ResultBits::encode(result.code()) |
-                 IndexBits::encode(index.code()) | LookupModeBits::encode(mode);
+                 IndexBits::encode(index.code());
   }
 
   static void GenerateNegativeLookup(MacroAssembler* masm,
@@ -77,12 +52,9 @@ class NameDictionaryLookupStub: public PlatformCodeStub {
     return Register::from_code(IndexBits::decode(minor_key_));
   }
 
-  LookupMode mode() const { return LookupModeBits::decode(minor_key_); }
-
   class DictionaryBits: public BitField<int, 0, 4> {};
   class ResultBits: public BitField<int, 4, 4> {};
   class IndexBits: public BitField<int, 8, 4> {};
-  class LookupModeBits: public BitField<LookupMode, 12, 1> {};
 
   DEFINE_NULL_CALL_INTERFACE_DESCRIPTOR();
   DEFINE_PLATFORM_CODE_STUB(NameDictionaryLookup, PlatformCodeStub);

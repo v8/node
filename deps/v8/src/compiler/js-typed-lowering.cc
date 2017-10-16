@@ -8,6 +8,7 @@
 #include "src/builtins/builtins-utils.h"
 #include "src/code-factory.h"
 #include "src/compiler/access-builder.h"
+#include "src/compiler/allocation-builder.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/node-matchers.h"
@@ -646,32 +647,18 @@ Reduction JSTypedLowering::ReduceCreateConsString(Node* node) {
   Node* value_map = jsgraph()->HeapConstant(factory()->cons_string_map());
 
   // Allocate the resulting ConsString.
-  effect = graph()->NewNode(
-      common()->BeginRegion(RegionObservability::kNotObservable), effect);
-  Node* value = effect =
-      graph()->NewNode(simplified()->Allocate(Type::OtherString(), NOT_TENURED),
-                       jsgraph()->Constant(ConsString::kSize), effect, control);
-  effect = graph()->NewNode(simplified()->StoreField(AccessBuilder::ForMap()),
-                            value, value_map, effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForNameHashField()), value,
-      jsgraph()->Constant(Name::kEmptyHashField), effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForStringLength()), value, length,
-      effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForConsStringFirst()), value,
-      first, effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForConsStringSecond()), value,
-      second, effect, control);
+  AllocationBuilder a(jsgraph(), effect, control);
+  a.Allocate(ConsString::kSize, NOT_TENURED, Type::OtherString());
+  a.Store(AccessBuilder::ForMap(), value_map);
+  a.Store(AccessBuilder::ForNameHashField(),
+          jsgraph()->Constant(Name::kEmptyHashField));
+  a.Store(AccessBuilder::ForStringLength(), length);
+  a.Store(AccessBuilder::ForConsStringFirst(), first);
+  a.Store(AccessBuilder::ForConsStringSecond(), second);
 
   // Morph the {node} into a {FinishRegion}.
   ReplaceWithValue(node, node, node, control);
-  node->ReplaceInput(0, value);
-  node->ReplaceInput(1, effect);
-  node->TrimInputCount(2);
-  NodeProperties::ChangeOp(node, common()->FinishRegion());
+  a.FinishAndChange(node);
   return Changed(node);
 }
 
@@ -1660,6 +1647,7 @@ void ReduceBuiltin(Isolate* isolate, JSGraph* jsgraph, Node* node,
 
   static const int kStubAndReceiver = 2;
   int cursor = arity + kStubAndReceiver;
+  node->InsertInput(zone, cursor++, jsgraph->PaddingConstant());
   node->InsertInput(zone, cursor++, argc_node);
   node->InsertInput(zone, cursor++, target);
   node->InsertInput(zone, cursor++, new_target);
@@ -1892,8 +1880,7 @@ Reduction JSTypedLowering::ReduceJSCall(Node* node) {
           node, common()->Call(Linkage::GetStubCallDescriptor(
                     isolate(), graph()->zone(), callable.descriptor(),
                     1 + arity, flags)));
-    } else if (is_builtin && Builtins::HasCppImplementation(builtin_index) &&
-               ((flags & CallDescriptor::kSupportsTailCalls) == 0)) {
+    } else if (is_builtin && Builtins::HasCppImplementation(builtin_index)) {
       // Patch {node} to a direct CEntryStub call.
       ReduceBuiltin(isolate(), jsgraph(), node, builtin_index, arity, flags);
     } else {
@@ -1958,7 +1945,8 @@ Reduction JSTypedLowering::ReduceJSForInNext(Node* node) {
       Node* check = graph()->NewNode(simplified()->ReferenceEqual(),
                                      receiver_map, cache_type);
       effect =
-          graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+          graph()->NewNode(simplified()->CheckIf(DeoptimizeReason::kNoReason),
+                           check, effect, control);
 
       ReplaceWithValue(node, node, effect, control);
 

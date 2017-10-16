@@ -418,7 +418,7 @@ void TurboAssembler::CheckStackAlignment() {
 void TurboAssembler::Abort(BailoutReason reason) {
 #ifdef DEBUG
   const char* msg = GetBailoutReason(reason);
-  if (msg != NULL) {
+  if (msg != nullptr) {
     RecordComment("Abort message: ");
     RecordComment(msg);
   }
@@ -972,12 +972,6 @@ void MacroAssembler::SmiToInteger64(Register dst, const Operand& src) {
 }
 
 
-void MacroAssembler::SmiTest(Register src) {
-  AssertSmi(src);
-  testp(src, src);
-}
-
-
 void MacroAssembler::SmiCompare(Register smi1, Register smi2) {
   AssertSmi(smi1);
   AssertSmi(smi2);
@@ -1086,23 +1080,6 @@ void MacroAssembler::JumpIfNotSmi(Operand src, Label* on_not_smi,
   j(NegateCondition(smi), on_not_smi, near_jump);
 }
 
-void MacroAssembler::SmiAddConstant(Register dst, Register src, Smi* constant) {
-  if (constant->value() == 0) {
-    if (dst != src) {
-      movp(dst, src);
-    }
-    return;
-  } else if (dst == src) {
-    DCHECK(dst != kScratchRegister);
-    Register constant_reg = GetSmiConstant(constant);
-    addp(dst, constant_reg);
-  } else {
-    Move(dst, constant);
-    addp(dst, src);
-  }
-}
-
-
 void MacroAssembler::SmiAddConstant(const Operand& dst, Smi* constant) {
   if (constant->value() != 0) {
     if (SmiValuesAre32Bits()) {
@@ -1113,248 +1090,6 @@ void MacroAssembler::SmiAddConstant(const Operand& dst, Smi* constant) {
       addp(dst, Immediate(constant));
     }
   }
-}
-
-void MacroAssembler::SmiAddConstant(Register dst, Register src, Smi* constant,
-                                    SmiOperationConstraints constraints,
-                                    Label* bailout_label,
-                                    Label::Distance near_jump) {
-  if (constant->value() == 0) {
-    if (dst != src) {
-      movp(dst, src);
-    }
-  } else if (dst == src) {
-    DCHECK(dst != kScratchRegister);
-    Move(kScratchRegister, constant);
-    addp(dst, kScratchRegister);
-    if (constraints & SmiOperationConstraint::kBailoutOnNoOverflow) {
-      j(no_overflow, bailout_label, near_jump);
-      DCHECK(constraints & SmiOperationConstraint::kPreserveSourceRegister);
-      subp(dst, kScratchRegister);
-    } else if (constraints & SmiOperationConstraint::kBailoutOnOverflow) {
-      if (constraints & SmiOperationConstraint::kPreserveSourceRegister) {
-        Label done;
-        j(no_overflow, &done, Label::kNear);
-        subp(dst, kScratchRegister);
-        jmp(bailout_label, near_jump);
-        bind(&done);
-      } else {
-        // Bailout if overflow without reserving src.
-        j(overflow, bailout_label, near_jump);
-      }
-    } else {
-      UNREACHABLE();
-    }
-  } else {
-    DCHECK(constraints & SmiOperationConstraint::kPreserveSourceRegister);
-    DCHECK(constraints & SmiOperationConstraint::kBailoutOnOverflow);
-    Move(dst, constant);
-    addp(dst, src);
-    j(overflow, bailout_label, near_jump);
-  }
-}
-
-void MacroAssembler::SmiSubConstant(Register dst, Register src, Smi* constant) {
-  if (constant->value() == 0) {
-    if (dst != src) {
-      movp(dst, src);
-    }
-  } else if (dst == src) {
-    DCHECK(dst != kScratchRegister);
-    Register constant_reg = GetSmiConstant(constant);
-    subp(dst, constant_reg);
-  } else {
-    if (constant->value() == Smi::kMinValue) {
-      Move(dst, constant);
-      // Adding and subtracting the min-value gives the same result, it only
-      // differs on the overflow bit, which we don't check here.
-      addp(dst, src);
-    } else {
-      // Subtract by adding the negation.
-      Move(dst, Smi::FromInt(-constant->value()));
-      addp(dst, src);
-    }
-  }
-}
-
-void MacroAssembler::SmiSubConstant(Register dst, Register src, Smi* constant,
-                                    SmiOperationConstraints constraints,
-                                    Label* bailout_label,
-                                    Label::Distance near_jump) {
-  if (constant->value() == 0) {
-    if (dst != src) {
-      movp(dst, src);
-    }
-  } else if (dst == src) {
-    DCHECK(dst != kScratchRegister);
-    Move(kScratchRegister, constant);
-    subp(dst, kScratchRegister);
-    if (constraints & SmiOperationConstraint::kBailoutOnNoOverflow) {
-      j(no_overflow, bailout_label, near_jump);
-      DCHECK(constraints & SmiOperationConstraint::kPreserveSourceRegister);
-      addp(dst, kScratchRegister);
-    } else if (constraints & SmiOperationConstraint::kBailoutOnOverflow) {
-      if (constraints & SmiOperationConstraint::kPreserveSourceRegister) {
-        Label done;
-        j(no_overflow, &done, Label::kNear);
-        addp(dst, kScratchRegister);
-        jmp(bailout_label, near_jump);
-        bind(&done);
-      } else {
-        // Bailout if overflow without reserving src.
-        j(overflow, bailout_label, near_jump);
-      }
-    } else {
-      UNREACHABLE();
-    }
-  } else {
-    DCHECK(constraints & SmiOperationConstraint::kPreserveSourceRegister);
-    DCHECK(constraints & SmiOperationConstraint::kBailoutOnOverflow);
-    if (constant->value() == Smi::kMinValue) {
-      DCHECK(dst != kScratchRegister);
-      movp(dst, src);
-      Move(kScratchRegister, constant);
-      subp(dst, kScratchRegister);
-      j(overflow, bailout_label, near_jump);
-    } else {
-      // Subtract by adding the negation.
-      Move(dst, Smi::FromInt(-(constant->value())));
-      addp(dst, src);
-      j(overflow, bailout_label, near_jump);
-    }
-  }
-}
-
-template<class T>
-static void SmiAddHelper(MacroAssembler* masm,
-                         Register dst,
-                         Register src1,
-                         T src2,
-                         Label* on_not_smi_result,
-                         Label::Distance near_jump) {
-  if (dst == src1) {
-    Label done;
-    masm->addp(dst, src2);
-    masm->j(no_overflow, &done, Label::kNear);
-    // Restore src1.
-    masm->subp(dst, src2);
-    masm->jmp(on_not_smi_result, near_jump);
-    masm->bind(&done);
-  } else {
-    masm->movp(dst, src1);
-    masm->addp(dst, src2);
-    masm->j(overflow, on_not_smi_result, near_jump);
-  }
-}
-
-
-void MacroAssembler::SmiAdd(Register dst,
-                            Register src1,
-                            Register src2,
-                            Label* on_not_smi_result,
-                            Label::Distance near_jump) {
-  DCHECK_NOT_NULL(on_not_smi_result);
-  DCHECK(dst != src2);
-  SmiAddHelper<Register>(this, dst, src1, src2, on_not_smi_result, near_jump);
-}
-
-
-void MacroAssembler::SmiAdd(Register dst,
-                            Register src1,
-                            const Operand& src2,
-                            Label* on_not_smi_result,
-                            Label::Distance near_jump) {
-  DCHECK_NOT_NULL(on_not_smi_result);
-  DCHECK(!src2.AddressUsesRegister(dst));
-  SmiAddHelper<Operand>(this, dst, src1, src2, on_not_smi_result, near_jump);
-}
-
-void MacroAssembler::SmiAdd(Register dst,
-                            Register src1,
-                            Register src2) {
-  // No overflow checking. Use only when it's known that
-  // overflowing is impossible.
-  if (dst != src1) {
-    if (emit_debug_code()) {
-      movp(kScratchRegister, src1);
-      addp(kScratchRegister, src2);
-      Check(no_overflow, kSmiAdditionOverflow);
-    }
-    leap(dst, Operand(src1, src2, times_1, 0));
-  } else {
-    addp(dst, src2);
-    Assert(no_overflow, kSmiAdditionOverflow);
-  }
-}
-
-
-template<class T>
-static void SmiSubHelper(MacroAssembler* masm,
-                         Register dst,
-                         Register src1,
-                         T src2,
-                         Label* on_not_smi_result,
-                         Label::Distance near_jump) {
-  if (dst == src1) {
-    Label done;
-    masm->subp(dst, src2);
-    masm->j(no_overflow, &done, Label::kNear);
-    // Restore src1.
-    masm->addp(dst, src2);
-    masm->jmp(on_not_smi_result, near_jump);
-    masm->bind(&done);
-  } else {
-    masm->movp(dst, src1);
-    masm->subp(dst, src2);
-    masm->j(overflow, on_not_smi_result, near_jump);
-  }
-}
-
-void MacroAssembler::SmiSub(Register dst,
-                            Register src1,
-                            Register src2,
-                            Label* on_not_smi_result,
-                            Label::Distance near_jump) {
-  DCHECK_NOT_NULL(on_not_smi_result);
-  DCHECK(dst != src2);
-  SmiSubHelper<Register>(this, dst, src1, src2, on_not_smi_result, near_jump);
-}
-
-void MacroAssembler::SmiSub(Register dst,
-                            Register src1,
-                            const Operand& src2,
-                            Label* on_not_smi_result,
-                            Label::Distance near_jump) {
-  DCHECK_NOT_NULL(on_not_smi_result);
-  DCHECK(!src2.AddressUsesRegister(dst));
-  SmiSubHelper<Operand>(this, dst, src1, src2, on_not_smi_result, near_jump);
-}
-
-template<class T>
-static void SmiSubNoOverflowHelper(MacroAssembler* masm,
-                                   Register dst,
-                                   Register src1,
-                                   T src2) {
-  // No overflow checking. Use only when it's known that
-  // overflowing is impossible (e.g., subtracting two positive smis).
-  if (dst != src1) {
-    masm->movp(dst, src1);
-  }
-  masm->subp(dst, src2);
-  masm->Assert(no_overflow, kSmiSubtractionOverflow);
-}
-
-
-void MacroAssembler::SmiSub(Register dst, Register src1, Register src2) {
-  DCHECK(dst != src2);
-  SmiSubNoOverflowHelper<Register>(this, dst, src1, src2);
-}
-
-
-void MacroAssembler::SmiSub(Register dst,
-                            Register src1,
-                            const Operand& src2) {
-  SmiSubNoOverflowHelper<Operand>(this, dst, src1, src2);
 }
 
 SmiIndex MacroAssembler::SmiToIndex(Register dst,
@@ -1410,36 +1145,6 @@ void TurboAssembler::Push(Smi* source) {
 }
 
 // ----------------------------------------------------------------------------
-
-template<class T>
-static void JumpIfNotUniqueNameHelper(MacroAssembler* masm,
-                                      T operand_or_register,
-                                      Label* not_unique_name,
-                                      Label::Distance distance) {
-  STATIC_ASSERT(kInternalizedTag == 0 && kStringTag == 0);
-  Label succeed;
-  masm->testb(operand_or_register,
-              Immediate(kIsNotStringMask | kIsNotInternalizedMask));
-  masm->j(zero, &succeed, Label::kNear);
-  masm->cmpb(operand_or_register, Immediate(static_cast<uint8_t>(SYMBOL_TYPE)));
-  masm->j(not_equal, not_unique_name, distance);
-
-  masm->bind(&succeed);
-}
-
-
-void MacroAssembler::JumpIfNotUniqueNameInstanceType(Operand operand,
-                                                     Label* not_unique_name,
-                                                     Label::Distance distance) {
-  JumpIfNotUniqueNameHelper<Operand>(this, operand, not_unique_name, distance);
-}
-
-
-void MacroAssembler::JumpIfNotUniqueNameInstanceType(Register reg,
-                                                     Label* not_unique_name,
-                                                     Label::Distance distance) {
-  JumpIfNotUniqueNameHelper<Register>(this, reg, not_unique_name, distance);
-}
 
 void TurboAssembler::Move(Register dst, Register src) {
   if (dst != src) {
@@ -2522,8 +2227,7 @@ void MacroAssembler::MaybeDropFrames() {
 
 void TurboAssembler::PrepareForTailCall(const ParameterCount& callee_args_count,
                                         Register caller_args_count_reg,
-                                        Register scratch0, Register scratch1,
-                                        ReturnAddressState ra_state) {
+                                        Register scratch0, Register scratch1) {
 #if DEBUG
   if (callee_args_count.is_reg()) {
     DCHECK(!AreAliased(callee_args_count.reg(), caller_args_count_reg, scratch0,
@@ -2555,13 +2259,8 @@ void TurboAssembler::PrepareForTailCall(const ParameterCount& callee_args_count,
   // to avoid its trashing and let the following loop copy it to the right
   // place.
   Register tmp_reg = scratch1;
-  if (ra_state == ReturnAddressState::kOnStack) {
-    movp(tmp_reg, Operand(rbp, StandardFrameConstants::kCallerPCOffset));
-    movp(Operand(rsp, 0), tmp_reg);
-  } else {
-    DCHECK(ReturnAddressState::kNotOnStack == ra_state);
-    Push(Operand(rbp, StandardFrameConstants::kCallerPCOffset));
-  }
+  movp(tmp_reg, Operand(rbp, StandardFrameConstants::kCallerPCOffset));
+  movp(Operand(rsp, 0), tmp_reg);
 
   // Restore caller's frame pointer now as it could be overwritten by
   // the copying loop.
@@ -3051,27 +2750,6 @@ bool AreAliased(Register reg1,
   return n_of_valid_regs != n_of_non_aliasing_regs;
 }
 #endif
-
-
-CodePatcher::CodePatcher(Isolate* isolate, byte* address, int size)
-    : address_(address),
-      size_(size),
-      masm_(isolate, address, size + Assembler::kGap, CodeObjectRequired::kNo) {
-  // Create a new macro assembler pointing to the address of the code to patch.
-  // The size is adjusted with kGap on order for the assembler to generate size
-  // bytes of instructions without failing with buffer size constraints.
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
-
-
-CodePatcher::~CodePatcher() {
-  // Indicate that code has changed.
-  Assembler::FlushICache(masm_.isolate(), address_, size_);
-
-  // Check that the code was patched as expected.
-  DCHECK(masm_.pc_ == address_ + size_);
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
 
 void TurboAssembler::CheckPageFlag(Register object, Register scratch, int mask,
                                    Condition cc, Label* condition_met,

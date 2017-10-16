@@ -829,8 +829,7 @@ TF_BUILTIN(FastArrayPop, CodeStubAssembler) {
 
   BIND(&fast);
   {
-    CSA_ASSERT(this, TaggedIsPositiveSmi(
-                         LoadObjectField(receiver, JSArray::kLengthOffset)));
+    CSA_ASSERT(this, TaggedIsPositiveSmi(LoadJSArrayLength(receiver)));
     Node* length = LoadAndUntagObjectField(receiver, JSArray::kLengthOffset);
     Label return_undefined(this), fast_elements(this);
     GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &return_undefined);
@@ -1060,8 +1059,7 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
 
   BIND(&fast);
   {
-    CSA_ASSERT(this, TaggedIsPositiveSmi(
-                         LoadObjectField(receiver, JSArray::kLengthOffset)));
+    CSA_ASSERT(this, TaggedIsPositiveSmi(LoadJSArrayLength(receiver)));
     Node* length = LoadAndUntagObjectField(receiver, JSArray::kLengthOffset);
     Label return_undefined(this), fast_elements_tagged(this),
         fast_elements_smi(this);
@@ -1167,17 +1165,16 @@ TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
     BIND(&fast_elements_smi);
     {
       Node* value = LoadFixedArrayElement(elements, 0);
-      int32_t header_size = FixedDoubleArray::kHeaderSize - kHeapObjectTag;
-      Node* memmove =
-          ExternalConstant(ExternalReference::libc_memmove_function(isolate()));
-      Node* start = IntPtrAdd(
-          BitcastTaggedToWord(elements),
-          ElementOffsetFromIndex(IntPtrConstant(0), HOLEY_SMI_ELEMENTS,
-                                 INTPTR_PARAMETERS, header_size));
-      CallCFunction3(MachineType::AnyTagged(), MachineType::Pointer(),
-                     MachineType::Pointer(), MachineType::UintPtr(), memmove,
-                     start, IntPtrAdd(start, IntPtrConstant(kPointerSize)),
-                     IntPtrMul(new_length, IntPtrConstant(kPointerSize)));
+      BuildFastLoop(IntPtrConstant(0), new_length,
+                    [&](Node* index) {
+                      StoreFixedArrayElement(
+                          elements, index,
+                          LoadFixedArrayElement(
+                              elements, IntPtrAdd(index, IntPtrConstant(1))),
+                          SKIP_WRITE_BARRIER);
+                    },
+                    1, ParameterMode::INTPTR_PARAMETERS,
+                    IndexAdvanceMode::kPost);
       StoreFixedArrayElement(elements, new_length, TheHoleConstant());
       GotoIf(WordEqual(value, TheHoleConstant()), &return_undefined);
       args.PopAndReturn(value);
@@ -1689,12 +1686,11 @@ TF_BUILTIN(ArrayIsArray, CodeStubAssembler) {
   GotoIf(TaggedIsSmi(object), &return_false);
   TNode<Word32T> instance_type = LoadInstanceType(CAST(object));
 
-  GotoIf(Word32Equal(instance_type, Int32Constant(JS_ARRAY_TYPE)),
-         &return_true);
+  GotoIf(InstanceTypeEqual(instance_type, JS_ARRAY_TYPE), &return_true);
 
   // TODO(verwaest): Handle proxies in-place.
-  Branch(Word32Equal(instance_type, Int32Constant(JS_PROXY_TYPE)),
-         &call_runtime, &return_false);
+  Branch(InstanceTypeEqual(instance_type, JS_PROXY_TYPE), &call_runtime,
+         &return_false);
 
   BIND(&return_true);
   Return(BooleanConstant(true));
@@ -2178,11 +2174,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
   // (22.1.5.3), throw a TypeError exception
   GotoIf(TaggedIsSmi(iterator), &throw_bad_receiver);
   TNode<Int32T> instance_type = LoadInstanceType(iterator);
-  GotoIf(
-      Uint32LessThan(
-          Int32Constant(LAST_ARRAY_ITERATOR_TYPE - FIRST_ARRAY_ITERATOR_TYPE),
-          Int32Sub(instance_type, Int32Constant(FIRST_ARRAY_ITERATOR_TYPE))),
-      &throw_bad_receiver);
+  GotoIf(IsArrayIteratorInstanceType(instance_type), &throw_bad_receiver);
 
   // Let a be O.[[IteratedObject]].
   Node* array =
@@ -2204,7 +2196,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
     CSA_ASSERT(this, Word32Equal(LoadMapInstanceType(array_map),
                                  Int32Constant(JS_ARRAY_TYPE)));
 
-    Node* length = LoadObjectField(array, JSArray::kLengthOffset);
+    Node* length = LoadJSArrayLength(array);
 
     CSA_ASSERT(this, TaggedIsSmi(length));
     CSA_ASSERT(this, TaggedIsSmi(index));
@@ -2294,8 +2286,8 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
     GotoIf(WordEqual(array, UndefinedConstant()), &allocate_iterator_result);
 
     Node* array_type = LoadInstanceType(array);
-    Branch(Word32Equal(array_type, Int32Constant(JS_TYPED_ARRAY_TYPE)),
-           &if_istypedarray, &if_isgeneric);
+    Branch(InstanceTypeEqual(array_type, JS_TYPED_ARRAY_TYPE), &if_istypedarray,
+           &if_isgeneric);
 
     BIND(&if_isgeneric);
     {
@@ -2305,12 +2297,12 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
       {
         VARIABLE(var_length, MachineRepresentation::kTagged);
         Label if_isarray(this), if_isnotarray(this), done(this);
-        Branch(Word32Equal(array_type, Int32Constant(JS_ARRAY_TYPE)),
-               &if_isarray, &if_isnotarray);
+        Branch(InstanceTypeEqual(array_type, JS_ARRAY_TYPE), &if_isarray,
+               &if_isnotarray);
 
         BIND(&if_isarray);
         {
-          var_length.Bind(LoadObjectField(array, JSArray::kLengthOffset));
+          var_length.Bind(LoadJSArrayLength(array));
 
           // Invalidate protector cell if needed
           Branch(WordNotEqual(orig_map, UndefinedConstant()), &if_wasfastarray,

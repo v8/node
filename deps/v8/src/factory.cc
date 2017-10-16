@@ -42,7 +42,7 @@ namespace internal {
 #define CALL_HEAP_FUNCTION(ISOLATE, FUNCTION_CALL, TYPE)                      \
   do {                                                                        \
     AllocationResult __allocation__ = FUNCTION_CALL;                          \
-    Object* __object__ = NULL;                                                \
+    Object* __object__ = nullptr;                                             \
     RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                 \
     /* Two GCs before panicking.  In newspace will almost always succeed. */  \
     for (int __i__ = 0; __i__ < 2; __i__++) {                                 \
@@ -191,7 +191,7 @@ MaybeHandle<FixedArray> Factory::TryNewFixedArray(int size,
   DCHECK(0 <= size);
   AllocationResult allocation =
       isolate()->heap()->AllocateFixedArray(size, pretenure);
-  Object* array = NULL;
+  Object* array = nullptr;
   if (!allocation.To(&array)) return MaybeHandle<FixedArray>();
   return Handle<FixedArray>(FixedArray::cast(array), isolate());
 }
@@ -1297,9 +1297,8 @@ Handle<Map> Factory::NewMap(InstanceType type,
 
 
 Handle<JSObject> Factory::CopyJSObject(Handle<JSObject> object) {
-  CALL_HEAP_FUNCTION(isolate(),
-                     isolate()->heap()->CopyJSObject(*object, NULL),
-                     JSObject);
+  CALL_HEAP_FUNCTION(
+      isolate(), isolate()->heap()->CopyJSObject(*object, nullptr), JSObject);
 }
 
 
@@ -1308,8 +1307,7 @@ Handle<JSObject> Factory::CopyJSObjectWithAllocationSite(
     Handle<AllocationSite> site) {
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->CopyJSObject(
-                         *object,
-                         site.is_null() ? NULL : *site),
+                         *object, site.is_null() ? nullptr : *site),
                      JSObject);
 }
 
@@ -1530,9 +1528,15 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
   function->set_shared(*info);
   function->set_code(info->code());
   function->set_context(*context_or_undefined);
-  function->set_prototype_or_initial_map(*the_hole_value());
   function->set_feedback_vector_cell(*undefined_cell());
-  isolate()->heap()->InitializeJSObjectBody(*function, *map, JSFunction::kSize);
+  int header_size;
+  if (map->has_prototype_slot()) {
+    header_size = JSFunction::kSizeWithPrototype;
+    function->set_prototype_or_initial_map(*the_hole_value());
+  } else {
+    header_size = JSFunction::kSizeWithoutPrototype;
+  }
+  isolate()->heap()->InitializeJSObjectBody(*function, *map, header_size);
   return function;
 }
 
@@ -1956,9 +1960,8 @@ Handle<JSObject> Factory::NewJSObjectFromMap(
   CALL_HEAP_FUNCTION(
       isolate(),
       isolate()->heap()->AllocateJSObjectFromMap(
-          *map,
-          pretenure,
-          allocation_site.is_null() ? NULL : *allocation_site),
+          *map, pretenure,
+          allocation_site.is_null() ? nullptr : *allocation_site),
       JSObject);
 }
 
@@ -2093,6 +2096,7 @@ Handle<Module> Factory::NewModule(Handle<SharedFunctionInfo> code) {
   module->set_script(Script::cast(code->script()));
   module->set_status(Module::kUninstantiated);
   module->set_exception(isolate()->heap()->the_hole_value());
+  module->set_import_meta(isolate()->heap()->the_hole_value());
   module->set_dfs_index(-1);
   module->set_dfs_ancestor_index(-1);
   return module;
@@ -2363,7 +2367,7 @@ Handle<JSTypedArray> Factory::NewJSTypedArray(ElementsKind elements_kind,
 
   Handle<JSArrayBuffer> buffer =
       NewJSArrayBuffer(SharedFlag::kNotShared, pretenure);
-  JSArrayBuffer::Setup(buffer, isolate(), true, NULL, byte_length,
+  JSArrayBuffer::Setup(buffer, isolate(), true, nullptr, byte_length,
                        SharedFlag::kNotShared);
   obj->set_buffer(*buffer);
   Handle<FixedTypedArrayBase> elements = NewFixedTypedArray(
@@ -2921,27 +2925,28 @@ Handle<String> Factory::ToPrimitiveHintString(ToPrimitiveHint hint) {
 
 Handle<Map> Factory::CreateSloppyFunctionMap(
     FunctionMode function_mode, MaybeHandle<JSFunction> maybe_empty_function) {
-  Handle<Map> map = NewMap(JS_FUNCTION_TYPE, JSFunction::kSize);
-  SetSloppyFunctionInstanceDescriptor(map, function_mode);
-  map->set_is_constructor(IsFunctionModeWithPrototype(function_mode));
+  bool has_prototype = IsFunctionModeWithPrototype(function_mode);
+  int header_size = has_prototype ? JSFunction::kSizeWithPrototype
+                                  : JSFunction::kSizeWithoutPrototype;
+  int descriptors_count = has_prototype ? 5 : 4;
+  int inobject_properties_count = 0;
+  if (IsFunctionModeWithName(function_mode)) ++inobject_properties_count;
+
+  Handle<Map> map = NewMap(
+      JS_FUNCTION_TYPE, header_size + inobject_properties_count * kPointerSize);
+  map->set_has_prototype_slot(has_prototype);
+  map->set_is_constructor(has_prototype);
   map->set_is_callable();
   Handle<JSFunction> empty_function;
   if (maybe_empty_function.ToHandle(&empty_function)) {
     Map::SetPrototype(map, empty_function);
   }
-  return map;
-}
-
-void Factory::SetSloppyFunctionInstanceDescriptor(Handle<Map> map,
-                                                  FunctionMode function_mode) {
-  int size = IsFunctionModeWithPrototype(function_mode) ? 5 : 4;
-  int inobject_properties_count = 0;
-  if (IsFunctionModeWithName(function_mode)) ++inobject_properties_count;
   map->SetInObjectProperties(inobject_properties_count);
-  map->set_instance_size(JSFunction::kSize +
-                         inobject_properties_count * kPointerSize);
 
-  Map::EnsureDescriptorSlack(map, size);
+  //
+  // Setup descriptors array.
+  //
+  Map::EnsureDescriptorSlack(map, descriptors_count);
 
   PropertyAttributes ro_attribs =
       static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE | READ_ONLY);
@@ -3002,32 +3007,32 @@ void Factory::SetSloppyFunctionInstanceDescriptor(Handle<Map> map,
     map->AppendDescriptor(&d);
   }
   DCHECK_EQ(inobject_properties_count, field_index);
+  return map;
 }
 
 Handle<Map> Factory::CreateStrictFunctionMap(
     FunctionMode function_mode, Handle<JSFunction> empty_function) {
-  Handle<Map> map = NewMap(JS_FUNCTION_TYPE, JSFunction::kSize);
-  SetStrictFunctionInstanceDescriptor(map, function_mode);
-  map->set_is_constructor(IsFunctionModeWithPrototype(function_mode));
-  map->set_is_callable();
-  Map::SetPrototype(map, empty_function);
-  return map;
-}
-
-void Factory::SetStrictFunctionInstanceDescriptor(Handle<Map> map,
-                                                  FunctionMode function_mode) {
-  DCHECK_EQ(JS_FUNCTION_TYPE, map->instance_type());
+  bool has_prototype = IsFunctionModeWithPrototype(function_mode);
+  int header_size = has_prototype ? JSFunction::kSizeWithPrototype
+                                  : JSFunction::kSizeWithoutPrototype;
   int inobject_properties_count = 0;
   if (IsFunctionModeWithName(function_mode)) ++inobject_properties_count;
   if (IsFunctionModeWithHomeObject(function_mode)) ++inobject_properties_count;
+  int descriptors_count = (IsFunctionModeWithPrototype(function_mode) ? 3 : 2) +
+                          inobject_properties_count;
+
+  Handle<Map> map = NewMap(
+      JS_FUNCTION_TYPE, header_size + inobject_properties_count * kPointerSize);
+  map->set_has_prototype_slot(has_prototype);
+  map->set_is_constructor(has_prototype);
+  map->set_is_callable();
+  Map::SetPrototype(map, empty_function);
   map->SetInObjectProperties(inobject_properties_count);
-  map->set_instance_size(JSFunction::kSize +
-                         inobject_properties_count * kPointerSize);
 
-  int size = (IsFunctionModeWithPrototype(function_mode) ? 3 : 2) +
-             inobject_properties_count;
-
-  Map::EnsureDescriptorSlack(map, size);
+  //
+  // Setup descriptors array.
+  //
+  Map::EnsureDescriptorSlack(map, descriptors_count);
 
   PropertyAttributes rw_attribs =
       static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE);
@@ -3083,18 +3088,19 @@ void Factory::SetStrictFunctionInstanceDescriptor(Handle<Map> map,
     map->AppendDescriptor(&d);
   }
   DCHECK_EQ(inobject_properties_count, field_index);
-}
-
-Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
-  Handle<Map> map = NewMap(JS_FUNCTION_TYPE, JSFunction::kSize);
-  SetClassFunctionInstanceDescriptor(map);
-  map->set_is_constructor(true);
-  map->set_is_callable();
-  Map::SetPrototype(map, empty_function);
   return map;
 }
 
-void Factory::SetClassFunctionInstanceDescriptor(Handle<Map> map) {
+Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
+  Handle<Map> map = NewMap(JS_FUNCTION_TYPE, JSFunction::kSizeWithPrototype);
+  map->set_has_prototype_slot(true);
+  map->set_is_constructor(true);
+  map->set_is_callable();
+  Map::SetPrototype(map, empty_function);
+
+  //
+  // Setup descriptors array.
+  //
   Map::EnsureDescriptorSlack(map, 2);
 
   PropertyAttributes rw_attribs =
@@ -3119,6 +3125,7 @@ void Factory::SetClassFunctionInstanceDescriptor(Handle<Map> map) {
         Handle<Name>(Name::cast(prototype->name())), prototype, rw_attribs);
     map->AppendDescriptor(&d);
   }
+  return map;
 }
 
 }  // namespace internal

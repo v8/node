@@ -60,6 +60,50 @@ RUNTIME_FUNCTION(Runtime_BigIntBinaryOp) {
     case Token::MOD:
       result = BigInt::Remainder(left, right);
       break;
+    case Token::BIT_AND:
+      result = BigInt::BitwiseAnd(left, right);
+      break;
+    case Token::BIT_OR:
+      result = BigInt::BitwiseOr(left, right);
+      break;
+    case Token::BIT_XOR:
+      result = BigInt::BitwiseXor(left, right);
+      break;
+    case Token::SHL:
+      result = BigInt::LeftShift(left, right);
+      break;
+    case Token::SAR:
+      result = BigInt::SignedRightShift(left, right);
+      break;
+    case Token::SHR:
+      result = BigInt::UnsignedRightShift(left, right);
+      break;
+    default:
+      UNREACHABLE();
+  }
+  RETURN_RESULT_OR_FAILURE(isolate, result);
+}
+
+RUNTIME_FUNCTION(Runtime_BigIntUnaryOp) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(BigInt, x, 0);
+  CONVERT_SMI_ARG_CHECKED(opcode, 1);
+
+  MaybeHandle<BigInt> result;
+  switch (opcode) {
+    case Token::BIT_NOT:
+      result = BigInt::BitwiseNot(x);
+      break;
+    case Token::SUB:
+      result = BigInt::UnaryMinus(x);
+      break;
+    case Token::INC:
+      result = BigInt::Increment(x);
+      break;
+    case Token::DEC:
+      result = BigInt::Decrement(x);
+      break;
     default:
       UNREACHABLE();
   }

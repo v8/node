@@ -34,8 +34,18 @@ Handle<BigInt> BigInt::UnaryMinus(Handle<BigInt> x) {
   return result;
 }
 
-Handle<BigInt> BigInt::BitwiseNot(Handle<BigInt> x) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+MaybeHandle<BigInt> BigInt::BitwiseNot(Handle<BigInt> x) {
+  Handle<BigInt> result;
+  int length = x->length();
+  if (x->sign()) {
+    // ~(-x) == ~(~(x-1)) == x-1
+    result = AbsoluteSubOne(x, length);
+  } else {
+    // ~x == -x-1 == -(x+1)
+    result = AbsoluteAddOne(x, true);
+  }
+  result->RightTrim();
+  return result;
 }
 
 MaybeHandle<BigInt> BigInt::Exponentiate(Handle<BigInt> base,
@@ -156,7 +166,11 @@ MaybeHandle<BigInt> BigInt::UnsignedRightShift(Handle<BigInt> x,
 }
 
 bool BigInt::LessThan(Handle<BigInt> x, Handle<BigInt> y) {
-  UNIMPLEMENTED();  // TODO(jkummerow): Implement.
+  if (x->sign() == y->sign()) {
+    int result = AbsoluteCompare(x, y);
+    return x->sign() ? (result > 0) : (result < 0);
+  }
+  return x->sign();
 }
 
 bool BigInt::Equal(BigInt* x, BigInt* y) {
@@ -232,6 +246,34 @@ Handle<BigInt> BigInt::BitwiseOr(Handle<BigInt> x, Handle<BigInt> y) {
     result = AbsoluteSubOne(y, result_length);
     result = AbsoluteAndNot(result, x, *result);
     result = AbsoluteAddOne(result, true, *result);
+  }
+  result->RightTrim();
+  return result;
+}
+
+MaybeHandle<BigInt> BigInt::Increment(Handle<BigInt> x) {
+  int length = x->length();
+  Handle<BigInt> result;
+  if (x->sign()) {
+    result = AbsoluteSubOne(x, length);
+    result->set_sign(true);
+  } else {
+    result = AbsoluteAddOne(x, false);
+  }
+  result->RightTrim();
+  return result;
+}
+
+MaybeHandle<BigInt> BigInt::Decrement(Handle<BigInt> x) {
+  int length = x->length();
+  Handle<BigInt> result;
+  if (x->sign()) {
+    result = AbsoluteAddOne(x, true);
+  } else if (x->is_zero()) {
+    // TODO(jkummerow): Consider caching a canonical -1n BigInt.
+    result = x->GetIsolate()->factory()->NewBigIntFromInt(-1);
+  } else {
+    result = AbsoluteSubOne(x, length);
   }
   result->RightTrim();
   return result;
@@ -343,17 +385,31 @@ Handle<BigInt> BigInt::AbsoluteSub(Handle<BigInt> x, Handle<BigInt> y,
   return result;
 }
 
-// Adds 1 to the absolute value of {x}, stores the result in {result_storage}
-// and sets its sign to {sign}.
+// Adds 1 to the absolute value of {x} and sets the result's sign to {sign}.
+// {result_storage} is optional; if present, it will be used to store the
+// result, otherwise a new BigInt will be allocated for the result.
 // {result_storage} and {x} may refer to the same BigInt for in-place
 // modification.
 Handle<BigInt> BigInt::AbsoluteAddOne(Handle<BigInt> x, bool sign,
                                       BigInt* result_storage) {
-  DCHECK(result_storage != nullptr);
   int input_length = x->length();
-  int result_length = result_storage->length();
+  // The addition will overflow into a new digit if all existing digits are
+  // at maximum.
+  bool will_overflow = true;
+  for (int i = 0; i < input_length; i++) {
+    if (!digit_ismax(x->digit(i))) {
+      will_overflow = false;
+      break;
+    }
+  }
+  int result_length = input_length + will_overflow;
   Isolate* isolate = x->GetIsolate();
   Handle<BigInt> result(result_storage, isolate);
+  if (result_storage == nullptr) {
+    result = isolate->factory()->NewBigIntRaw(result_length);
+  } else {
+    DCHECK(result->length() == result_length);
+  }
   digit_t carry = 1;
   for (int i = 0; i < input_length; i++) {
     digit_t new_carry = 0;
@@ -394,8 +450,8 @@ Handle<BigInt> BigInt::AbsoluteSubOne(Handle<BigInt> x, int result_length) {
 // Helper for Absolute{And,AndNot,Or,Xor}.
 // Performs the given binary {op} on digit pairs of {x} and {y}; when the
 // end of the shorter of the two is reached, {extra_digits} configures how
-// remaining digits in the longer input are handled: copied to the result
-// or ignored.
+// remaining digits in the longer input (if {symmetric} == kSymmetric, in
+// {x} otherwise) are handled: copied to the result or ignored.
 // If {result_storage} is non-nullptr, it will be used for the result and
 // any extra digits in it will be zeroed out, otherwise a new BigInt (with
 // the same length as the longer input) will be allocated.
@@ -410,16 +466,22 @@ Handle<BigInt> BigInt::AbsoluteSubOne(Handle<BigInt> x, int result_length) {
 // result_storage: [  0 ][ x3 ][ r2 ][ r1 ][ r0 ]
 inline Handle<BigInt> BigInt::AbsoluteBitwiseOp(
     Handle<BigInt> x, Handle<BigInt> y, BigInt* result_storage,
-    ExtraDigitsHandling extra_digits,
+    ExtraDigitsHandling extra_digits, SymmetricOp symmetric,
     std::function<digit_t(digit_t, digit_t)> op) {
   int x_length = x->length();
   int y_length = y->length();
+  int num_pairs = y_length;
   if (x_length < y_length) {
-    return AbsoluteBitwiseOp(y, x, result_storage, extra_digits, op);
+    num_pairs = x_length;
+    if (symmetric == kSymmetric) {
+      std::swap(x, y);
+      std::swap(x_length, y_length);
+    }
   }
+  DCHECK(num_pairs == Min(x_length, y_length));
   Isolate* isolate = x->GetIsolate();
   Handle<BigInt> result(result_storage, isolate);
-  int result_length = extra_digits == kCopy ? x_length : y_length;
+  int result_length = extra_digits == kCopy ? x_length : num_pairs;
   if (result_storage == nullptr) {
     result = isolate->factory()->NewBigIntRaw(result_length);
   } else {
@@ -427,7 +489,7 @@ inline Handle<BigInt> BigInt::AbsoluteBitwiseOp(
     result_length = result_storage->length();
   }
   int i = 0;
-  for (; i < y_length; i++) {
+  for (; i < num_pairs; i++) {
     result->set_digit(i, op(x->digit(i), y->digit(i)));
   }
   if (extra_digits == kCopy) {
@@ -446,7 +508,7 @@ inline Handle<BigInt> BigInt::AbsoluteBitwiseOp(
 // {result_storage} may alias {x} or {y} for in-place modification.
 Handle<BigInt> BigInt::AbsoluteAnd(Handle<BigInt> x, Handle<BigInt> y,
                                    BigInt* result_storage) {
-  return AbsoluteBitwiseOp(x, y, result_storage, kSkip,
+  return AbsoluteBitwiseOp(x, y, result_storage, kSkip, kSymmetric,
                            [](digit_t a, digit_t b) { return a & b; });
 }
 
@@ -455,7 +517,7 @@ Handle<BigInt> BigInt::AbsoluteAnd(Handle<BigInt> x, Handle<BigInt> y,
 // {result_storage} may alias {x} or {y} for in-place modification.
 Handle<BigInt> BigInt::AbsoluteAndNot(Handle<BigInt> x, Handle<BigInt> y,
                                       BigInt* result_storage) {
-  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy, kNotSymmetric,
                            [](digit_t a, digit_t b) { return a & ~b; });
 }
 
@@ -464,7 +526,7 @@ Handle<BigInt> BigInt::AbsoluteAndNot(Handle<BigInt> x, Handle<BigInt> y,
 // {result_storage} may alias {x} or {y} for in-place modification.
 Handle<BigInt> BigInt::AbsoluteOr(Handle<BigInt> x, Handle<BigInt> y,
                                   BigInt* result_storage) {
-  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy, kSymmetric,
                            [](digit_t a, digit_t b) { return a | b; });
 }
 
@@ -473,7 +535,7 @@ Handle<BigInt> BigInt::AbsoluteOr(Handle<BigInt> x, Handle<BigInt> y,
 // {result_storage} may alias {x} or {y} for in-place modification.
 Handle<BigInt> BigInt::AbsoluteXor(Handle<BigInt> x, Handle<BigInt> y,
                                    BigInt* result_storage) {
-  return AbsoluteBitwiseOp(x, y, result_storage, kCopy,
+  return AbsoluteBitwiseOp(x, y, result_storage, kCopy, kSymmetric,
                            [](digit_t a, digit_t b) { return a ^ b; });
 }
 

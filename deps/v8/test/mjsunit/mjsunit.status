@@ -255,6 +255,9 @@
 
   # BUG(chromium:751825): Crashes flakily.
   'wasm/js-api': [SKIP],
+
+  # BUG(chromium:773631): Crashes flakily.
+  'wasm/streaming-trap-location': [SKIP]
 }],  # 'gc_stress == True'
 
 ##############################################################################
@@ -478,6 +481,9 @@
 
   # Currently always deopt on minus zero
   'math-floor-of-div-minus-zero': [SKIP],
+
+  # Requires too much memory on MIPS.
+  'regress/regress-752764': [SKIP],
 }],  # 'arch == mipsel or arch == mips'
 
 ##############################################################################
@@ -526,6 +532,9 @@
 
   # Currently always deopt on minus zero
   'math-floor-of-div-minus-zero': [SKIP],
+
+  # Requires too much memory on MIPS.
+  'regress/regress-752764': [SKIP],
 }],  # 'arch == mips64el or arch == mips64'
 
 ##############################################################################
@@ -559,6 +568,10 @@
   'regress/regress-2185-2': [SKIP],
   'readonly': [SKIP],
   'array-feedback': [SKIP],
+  'deopt-recursive-eager-once': [SKIP],
+  'deopt-recursive-lazy-once': [SKIP],
+  'deopt-recursive-soft-once': [SKIP],
+  'code-coverage-block-opt': [SKIP],
 
   # Bounds check triggers forced deopt for array constructors.
   'array-constructor-feedback': [SKIP],
@@ -614,6 +627,9 @@
 
   # Slow tests.
   'regress/regress-2185-2': [SKIP],
+
+  # BUG(v8:6924). The test uses a lot of memory.
+  'regress/wasm/regression-694433': [PASS, ['tsan', SKIP]],
 }],  # variant == stress
 
 ##############################################################################

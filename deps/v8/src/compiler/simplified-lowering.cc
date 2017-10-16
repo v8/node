@@ -2683,6 +2683,11 @@ class RepresentationSelector {
         VisitObjectIs(node, Type::Callable(), lowering);
         return;
       }
+      case IrOpcode::kObjectIsConstructor: {
+        // TODO(turbofan): Introduce a Type::Constructor?
+        VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kBit);
+        return;
+      }
       case IrOpcode::kObjectIsDetectableCallable: {
         VisitObjectIs(node, Type::DetectableCallable(), lowering);
         return;
@@ -2928,19 +2933,8 @@ class RepresentationSelector {
         return SetOutput(node, MachineRepresentation::kTagged);
 
       case IrOpcode::kFindOrderedHashMapEntry: {
-        Type* const key_type = TypeOf(node->InputAt(1));
-        if (key_type->Is(Type::Signed32())) {
-          VisitBinop(node, UseInfo::AnyTagged(), UseInfo::TruncatingWord32(),
-                     MachineRepresentation::kWord32);
-          if (lower()) {
-            NodeProperties::ChangeOp(
-                node,
-                lowering->simplified()->FindOrderedHashMapEntryForInt32Key());
-          }
-        } else {
-          VisitBinop(node, UseInfo::AnyTagged(),
-                     MachineRepresentation::kTaggedSigned);
-        }
+        VisitBinop(node, UseInfo::AnyTagged(),
+                   MachineRepresentation::kTaggedSigned);
         return;
       }
 

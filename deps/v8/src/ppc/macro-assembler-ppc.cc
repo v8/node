@@ -958,50 +958,6 @@ int TurboAssembler::LeaveFrame(StackFrame::Type type, int stack_adjustment) {
   return frame_ends;
 }
 
-void MacroAssembler::EnterBuiltinFrame(Register context, Register target,
-                                       Register argc) {
-  int fp_delta = 0;
-  mflr(r0);
-  if (FLAG_enable_embedded_constant_pool) {
-    if (target.is_valid()) {
-      Push(r0, fp, kConstantPoolRegister, context, target);
-      fp_delta = 3;
-    } else {
-      Push(r0, fp, kConstantPoolRegister, context);
-      fp_delta = 2;
-    }
-  } else {
-    if (target.is_valid()) {
-      Push(r0, fp, context, target);
-      fp_delta = 2;
-    } else {
-      Push(r0, fp, context);
-      fp_delta = 1;
-    }
-  }
-  addi(fp, sp, Operand(fp_delta * kPointerSize));
-  Push(argc);
-}
-
-void MacroAssembler::LeaveBuiltinFrame(Register context, Register target,
-                                       Register argc) {
-  Pop(argc);
-  if (FLAG_enable_embedded_constant_pool) {
-    if (target.is_valid()) {
-      Pop(r0, fp, kConstantPoolRegister, context, target);
-    } else {
-      Pop(r0, fp, kConstantPoolRegister, context);
-    }
-  } else {
-    if (target.is_valid()) {
-      Pop(r0, fp, context, target);
-    } else {
-      Pop(r0, fp, context);
-    }
-  }
-  mtlr(r0);
-}
-
 // ExitFrame layout (probably wrongish.. needs updating)
 //
 //  SP -> previousSP
@@ -1608,11 +1564,6 @@ bool TurboAssembler::AllowThisStubCall(CodeStub* stub) {
   return has_frame_ || !stub->SometimesSetsUpAFrame();
 }
 
-void MacroAssembler::SmiToDouble(DoubleRegister value, Register smi) {
-  SmiUntag(ip, smi);
-  ConvertIntToDouble(ip, value);
-}
-
 void MacroAssembler::TryDoubleToInt32Exact(Register result,
                                            DoubleRegister double_input,
                                            Register scratch,
@@ -1786,7 +1737,7 @@ void TurboAssembler::Abort(BailoutReason reason) {
   bind(&abort_start);
 #ifdef DEBUG
   const char* msg = GetBailoutReason(reason);
-  if (msg != NULL) {
+  if (msg != nullptr) {
     RecordComment("Abort message: ");
     RecordComment(msg);
   }
@@ -1925,18 +1876,6 @@ void MacroAssembler::AssertUndefinedOrAllocationSite(Register object,
   }
 }
 
-
-void MacroAssembler::JumpIfNotUniqueNameInstanceType(Register reg,
-                                                     Label* not_unique_name) {
-  STATIC_ASSERT(kInternalizedTag == 0 && kStringTag == 0);
-  Label succeed;
-  andi(r0, reg, Operand(kIsNotStringMask | kIsNotInternalizedMask));
-  beq(&succeed, cr0);
-  cmpi(reg, Operand(SYMBOL_TYPE));
-  bne(not_unique_name);
-
-  bind(&succeed);
-}
 
 static const int kRegisterPassedArguments = 8;
 
@@ -3033,49 +2972,6 @@ bool AreAliased(Register reg1, Register reg2, Register reg3, Register reg4,
 }
 #endif
 
-
-CodePatcher::CodePatcher(Isolate* isolate, byte* address, int instructions,
-                         FlushICache flush_cache)
-    : address_(address),
-      size_(instructions * Assembler::kInstrSize),
-      masm_(isolate, address, size_ + Assembler::kGap, CodeObjectRequired::kNo),
-      flush_cache_(flush_cache) {
-  // Create a new macro assembler pointing to the address of the code to patch.
-  // The size is adjusted with kGap on order for the assembler to generate size
-  // bytes of instructions without failing with buffer size constraints.
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
-
-
-CodePatcher::~CodePatcher() {
-  // Indicate that code has changed.
-  if (flush_cache_ == FLUSH) {
-    Assembler::FlushICache(masm_.isolate(), address_, size_);
-  }
-
-  // Check that the code was patched as expected.
-  DCHECK(masm_.pc_ == address_ + size_);
-  DCHECK(masm_.reloc_info_writer.pos() == address_ + size_ + Assembler::kGap);
-}
-
-
-void CodePatcher::Emit(Instr instr) { masm()->emit(instr); }
-
-
-void CodePatcher::EmitCondition(Condition cond) {
-  Instr instr = Assembler::instr_at(masm_.pc_);
-  switch (cond) {
-    case eq:
-      instr = (instr & ~kCondMask) | BT;
-      break;
-    case ne:
-      instr = (instr & ~kCondMask) | BF;
-      break;
-    default:
-      UNIMPLEMENTED();
-  }
-  masm_.emit(instr);
-}
 
 }  // namespace internal
 }  // namespace v8

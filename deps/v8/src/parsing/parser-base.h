@@ -298,6 +298,13 @@ class ParserBase {
 
 #undef ALLOW_ACCESSORS
 
+  bool allow_harmony_bigint() const {
+    return scanner()->allow_harmony_bigint();
+  }
+  void set_allow_harmony_bigint(bool allow) {
+    scanner()->set_allow_harmony_bigint(allow);
+  }
+
   uintptr_t stack_limit() const { return stack_limit_; }
 
   void set_stack_limit(uintptr_t stack_limit) { stack_limit_ = stack_limit; }
@@ -1357,7 +1364,7 @@ class ParserBase {
   inline StatementT BuildReturnStatement(ExpressionT expr, int pos,
                                          int end_pos = kNoSourcePosition) {
     if (impl()->IsNull(expr)) {
-      expr = impl()->GetLiteralUndefined(kNoSourcePosition);
+      expr = factory()->NewUndefinedLiteral(kNoSourcePosition);
     } else if (is_async_generator()) {
       // In async generators, if there is an explicit operand to the return
       // statement, await the operand.
@@ -1549,6 +1556,7 @@ void ParserBase<Impl>::GetUnexpectedTokenMessage(
       break;
     case Token::SMI:
     case Token::NUMBER:
+    case Token::BIGINT:
       *message = MessageTemplate::kUnexpectedTokenNumber;
       break;
     case Token::STRING:
@@ -1590,7 +1598,7 @@ void ParserBase<Impl>::GetUnexpectedTokenMessage(
       break;
     default:
       const char* name = Token::String(token);
-      DCHECK(name != NULL);
+      DCHECK(name != nullptr);
       *arg = name;
       break;
   }
@@ -1780,6 +1788,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParsePrimaryExpression(
     case Token::FALSE_LITERAL:
     case Token::SMI:
     case Token::NUMBER:
+    case Token::BIGINT:
       BindingPatternUnexpectedToken();
       return impl()->ExpressionFromLiteral(Next(), beg_pos);
 
@@ -1881,7 +1890,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParsePrimaryExpression(
       return ParseTemplateLiteral(impl()->NullExpression(), beg_pos, false, ok);
 
     case Token::MOD:
-      if (allow_natives() || extension_ != NULL) {
+      if (allow_natives() || extension_ != nullptr) {
         BindingPatternUnexpectedToken();
         return ParseV8Intrinsic(ok);
       }
@@ -1992,7 +2001,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseArrayLiteral(
   while (peek() != Token::RBRACK) {
     ExpressionT elem;
     if (peek() == Token::COMMA) {
-      elem = impl()->GetLiteralTheHole(peek_position());
+      elem = factory()->NewTheHoleLiteral();
     } else if (peek() == Token::ELLIPSIS) {
       int start_pos = peek_position();
       Consume(Token::ELLIPSIS);
@@ -2441,7 +2450,7 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       *is_rest_property = true;
 
       return factory()->NewObjectLiteralProperty(
-          impl()->GetLiteralTheHole(kNoSourcePosition), name_expression,
+          factory()->NewTheHoleLiteral(), name_expression,
           ObjectLiteralProperty::SPREAD, true);
 
     case PropertyKind::kValueProperty: {
@@ -2910,7 +2919,7 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
 
   impl()->CheckAssigningFunctionLiteralToProperty(expression, right);
 
-  if (fni_ != NULL) {
+  if (fni_ != nullptr) {
     // Check if the right hand side is a call to avoid inferring a
     // name if we're dealing with "a = function(){...}();"-like
     // expression.
@@ -3316,7 +3325,7 @@ ParserBase<Impl>::ParseLeftHandSideExpression(bool* ok) {
               factory()->NewAssignment(Token::INIT, this_expr, result, pos);
         }
 
-        if (fni_ != NULL) fni_->RemoveLastFunction();
+        if (fni_ != nullptr) fni_->RemoveLastFunction();
         break;
       }
 
@@ -3518,7 +3527,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseImportExpressions(
       return impl()->NullExpression();
     }
 
-    return impl()->ExpressionFromLiteral(Token::NULL_LITERAL, pos);
+    return impl()->ImportMetaExpression(pos);
   }
   Expect(Token::LPAREN, CHECK_OK);
   ExpressionT arg = ParseAssignmentExpression(true, CHECK_OK);
@@ -3857,7 +3866,7 @@ typename ParserBase<Impl>::BlockT ParserBase<Impl>::ParseVariableDeclarations(
         }
         // 'let x' initializes 'x' to undefined.
         if (parsing_result->descriptor.mode == LET) {
-          value = impl()->GetLiteralUndefined(position());
+          value = factory()->NewUndefinedLiteral(position());
         }
       }
 
@@ -4233,9 +4242,10 @@ template <typename Impl>
 bool ParserBase<Impl>::IsTrivialExpression() {
   Token::Value peek_token = peek();
   if (peek_token == Token::SMI || peek_token == Token::NUMBER ||
-      peek_token == Token::NULL_LITERAL || peek_token == Token::TRUE_LITERAL ||
-      peek_token == Token::FALSE_LITERAL || peek_token == Token::STRING ||
-      peek_token == Token::IDENTIFIER || peek_token == Token::THIS) {
+      peek_token == Token::BIGINT || peek_token == Token::NULL_LITERAL ||
+      peek_token == Token::TRUE_LITERAL || peek_token == Token::FALSE_LITERAL ||
+      peek_token == Token::STRING || peek_token == Token::IDENTIFIER ||
+      peek_token == Token::THIS) {
     // PeekAhead() is expensive & may not always be called, so we only call it
     // after checking peek().
     Token::Value peek_ahead = PeekAhead();
@@ -4656,7 +4666,7 @@ ParserBase<Impl>::CheckAndRewriteReferenceExpression(
   if (expression->IsValidReferenceExpression()) {
     return expression;
   }
-  if (expression->IsCall()) {
+  if (expression->IsCall() && !expression->AsCall()->is_tagged_template()) {
     // If it is a call, make it a runtime error for legacy web compatibility.
     // Bug: https://bugs.chromium.org/p/v8/issues/detail?id=4480
     // Rewrite `expr' to `expr[throw ReferenceError]'.
@@ -5121,7 +5131,7 @@ ParserBase<Impl>::ParseExpressionOrLabelledStatement(
   ExpectSemicolon(CHECK_OK);
   if (labels != nullptr) {
     // TODO(adamk): Also measure in the PreParser by passing something
-    // non-NULL as |labels|.
+    // non-null as |labels|.
     impl()->CountUsage(v8::Isolate::kLabeledExpressionStatement);
   }
   return factory()->NewExpressionStatement(expr, pos);

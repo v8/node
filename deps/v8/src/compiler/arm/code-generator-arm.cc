@@ -134,6 +134,20 @@ class ArmOperandConverter final : public InstructionOperandConverter {
     FrameOffset offset = frame_access_state()->GetFrameOffset(slot);
     return MemOperand(offset.from_stack_pointer() ? sp : fp, offset.offset());
   }
+
+  NeonMemOperand NeonInputOperand(size_t first_index) {
+    const size_t index = first_index;
+    switch (AddressingModeField::decode(instr_->opcode())) {
+      case kMode_Offset_RR:
+        return NeonMemOperand(InputRegister(index + 0),
+                              InputRegister(index + 1));
+      case kMode_Operand2_R:
+        return NeonMemOperand(InputRegister(index + 0));
+      default:
+        break;
+    }
+    UNREACHABLE();
+  }
 };
 
 namespace {
@@ -1536,22 +1550,22 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kArmVld1F64: {
       __ vld1(Neon8, NeonListOperand(i.OutputDoubleRegister()),
-              NeonMemOperand(i.InputRegister(0)));
+              i.NeonInputOperand(0));
       break;
     }
     case kArmVst1F64: {
       __ vst1(Neon8, NeonListOperand(i.InputDoubleRegister(0)),
-              NeonMemOperand(i.InputRegister(1)));
+              i.NeonInputOperand(1));
       break;
     }
     case kArmVld1S128: {
       __ vld1(Neon8, NeonListOperand(i.OutputSimd128Register()),
-              NeonMemOperand(i.InputRegister(0)));
+              i.NeonInputOperand(0));
       break;
     }
     case kArmVst1S128: {
       __ vst1(Neon8, NeonListOperand(i.InputSimd128Register(0)),
-              NeonMemOperand(i.InputRegister(1)));
+              i.NeonInputOperand(1));
       break;
     }
     case kArmVldrF64:
@@ -2837,14 +2851,15 @@ void CodeGenerator::AssembleConstructFrame() {
         // If the frame is bigger than the stack, we throw the stack overflow
         // exception unconditionally. Thereby we can avoid the integer overflow
         // check in the condition code.
-        if (shrink_slots * kPointerSize < FLAG_stack_size * 1024) {
-          __ Move(kScratchReg,
+        if ((shrink_slots * kPointerSize) < (FLAG_stack_size * 1024)) {
+          UseScratchRegisterScope temps(tasm());
+          Register scratch = temps.Acquire();
+          __ Move(scratch,
                   Operand(ExternalReference::address_of_real_stack_limit(
                       __ isolate())));
-          __ ldr(kScratchReg, MemOperand(kScratchReg));
-          __ add(kScratchReg, kScratchReg,
-                 Operand(shrink_slots * kPointerSize));
-          __ cmp(sp, kScratchReg);
+          __ ldr(scratch, MemOperand(scratch));
+          __ add(scratch, scratch, Operand(shrink_slots * kPointerSize));
+          __ cmp(sp, scratch);
           __ b(cs, &done);
         }
 

@@ -1097,11 +1097,6 @@ class MacroAssembler : public TurboAssembler {
     bne(if_not_equal);
   }
 
-  // Load the value of a smi object into a FP double register. The register
-  // scratch1 can be the same register as smi in which case smi will hold the
-  // untagged value afterwards.
-  void SmiToDouble(DoubleRegister value, Register smi);
-
   // Try to convert a double to a signed 32-bit integer.
   // CR_EQ in cr7 is set and result assigned if the conversion is exact.
   void TryDoubleToInt32Exact(Register result, DoubleRegister double_input,
@@ -1175,9 +1170,6 @@ class MacroAssembler : public TurboAssembler {
                       bool restore_context,
                       bool argument_count_is_length = false);
 
-  void EnterBuiltinFrame(Register context, Register target, Register argc);
-  void LeaveBuiltinFrame(Register context, Register target, Register argc);
-
   // Load the global proxy from the current context.
   void LoadGlobalProxy(Register dst) {
     LoadNativeContextSlot(Context::GLOBAL_PROXY_INDEX, dst);
@@ -1248,11 +1240,6 @@ class MacroAssembler : public TurboAssembler {
   // Abort execution if argument is not undefined or an AllocationSite, enabled
   // via --debug-code.
   void AssertUndefinedOrAllocationSite(Register object, Register scratch);
-
-  // ---------------------------------------------------------------------------
-  // String utilities
-
-  void JumpIfNotUniqueNameInstanceType(Register reg, Label* not_unique_name);
 
   void LoadInstanceDescriptors(Register map, Register descriptors);
   void LoadAccessor(Register dst, Register holder, int accessor_index,
@@ -1365,29 +1352,6 @@ class MacroAssembler : public TurboAssembler {
   // Needs access to SafepointRegisterStackIndex for compiled frame
   // traversal.
   friend class StandardFrame;
-};
-
-// The code patcher is used to patch (typically) small parts of code e.g. for
-// debugging and other types of instrumentation. When using the code patcher
-// the exact number of bytes specified must be emitted. It is not legal to emit
-// relocation information. If any of these constraints are violated it causes
-// an assertion to fail.
-class CodePatcher {
- public:
-  enum FlushICache { FLUSH, DONT_FLUSH };
-
-  CodePatcher(Isolate* isolate, byte* address, int instructions,
-              FlushICache flush_cache = FLUSH);
-  ~CodePatcher();
-
-  // Macro assembler to emit code.
-  MacroAssembler* masm() { return &masm_; }
-
- private:
-  byte* address_;            // The address of the code being patched.
-  int size_;                 // Number of bytes of the expected patch size.
-  MacroAssembler masm_;      // Macro assembler used to generate the code.
-  FlushICache flush_cache_;  // Whether to flush the I cache after patching.
 };
 
 // -----------------------------------------------------------------------------

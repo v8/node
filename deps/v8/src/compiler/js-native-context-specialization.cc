@@ -10,6 +10,7 @@
 #include "src/compilation-dependencies.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/access-info.h"
+#include "src/compiler/allocation-builder.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/js-operator.h"
 #include "src/compiler/linkage.h"
@@ -368,7 +369,8 @@ Reduction JSNativeContextSpecialization::ReduceJSOrdinaryHasInstance(
   if (m.Value()->IsJSFunction()) {
     // Check if the {function} is a constructor and has an instance "prototype".
     Handle<JSFunction> function = Handle<JSFunction>::cast(m.Value());
-    if (function->IsConstructor() && function->has_instance_prototype() &&
+    if (function->IsConstructor() && function->has_prototype_slot() &&
+        function->has_instance_prototype() &&
         function->prototype()->IsJSReceiver()) {
       // Ensure that the {function} has a valid initial map, so we can
       // depend on that for the prototype constant-folding below.
@@ -464,7 +466,9 @@ Reduction JSNativeContextSpecialization::ReduceGlobalAccess(
   if (index != nullptr) {
     Node* check = graph()->NewNode(simplified()->ReferenceEqual(), index,
                                    jsgraph()->HeapConstant(name));
-    effect = graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+    effect = graph()->NewNode(
+        simplified()->CheckIf(DeoptimizeReason::kIndexNameMismatch), check,
+        effect, control);
   }
 
   // Check if we have a {receiver} to validate. If so, we need to check that
@@ -473,7 +477,9 @@ Reduction JSNativeContextSpecialization::ReduceGlobalAccess(
   if (receiver != nullptr) {
     Node* check = graph()->NewNode(simplified()->ReferenceEqual(), receiver,
                                    jsgraph()->HeapConstant(global_proxy()));
-    effect = graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+    effect = graph()->NewNode(
+        simplified()->CheckIf(DeoptimizeReason::kReceiverNotAGlobalProxy),
+        check, effect, control);
   }
 
   if (access_mode == AccessMode::kLoad) {
@@ -544,8 +550,9 @@ Reduction JSNativeContextSpecialization::ReduceGlobalAccess(
         Node* check =
             graph()->NewNode(simplified()->ReferenceEqual(), value,
                              jsgraph()->Constant(property_cell_value));
-        effect =
-            graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+        effect = graph()->NewNode(
+            simplified()->CheckIf(DeoptimizeReason::kValueMismatch), check,
+            effect, control);
         break;
       }
       case PropertyCellType::kConstantType: {
@@ -701,7 +708,9 @@ Reduction JSNativeContextSpecialization::ReduceNamedAccess(
   if (index != nullptr) {
     Node* check = graph()->NewNode(simplified()->ReferenceEqual(), index,
                                    jsgraph()->HeapConstant(name));
-    effect = graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+    effect = graph()->NewNode(
+        simplified()->CheckIf(DeoptimizeReason::kIndexNameMismatch), check,
+        effect, control);
   }
 
   // Collect call nodes to rewire exception edges.
@@ -1299,8 +1308,10 @@ Reduction JSNativeContextSpecialization::ReduceKeyedAccess(
               Node* check =
                   graph()->NewNode(simplified()->ReferenceEqual(), elements,
                                    jsgraph()->HeapConstant(array_elements));
-              effect = graph()->NewNode(simplified()->CheckIf(), check, effect,
-                                        control);
+              effect = graph()->NewNode(
+                  simplified()->CheckIf(
+                      DeoptimizeReason::kCowArrayElementsChanged),
+                  check, effect, control);
               value = jsgraph()->Constant(it.GetDataValue());
               ReplaceWithValue(node, value, effect, control);
               return Replace(value);
@@ -1482,8 +1493,9 @@ Reduction JSNativeContextSpecialization::ReduceJSLoadProperty(Node* node) {
                                receiver, effect, control);
           Node* check = graph()->NewNode(simplified()->ReferenceEqual(),
                                          receiver_map, enumerator);
-          effect =
-              graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+          effect = graph()->NewNode(
+              simplified()->CheckIf(DeoptimizeReason::kNoReason), check, effect,
+              control);
         }
 
         // Load the enum cache indices from the {cache_type}.
@@ -1504,7 +1516,8 @@ Reduction JSNativeContextSpecialization::ReduceJSLoadProperty(Node* node) {
             graph()->NewNode(simplified()->ReferenceEqual(), enum_indices,
                              jsgraph()->EmptyFixedArrayConstant()));
         effect =
-            graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+            graph()->NewNode(simplified()->CheckIf(DeoptimizeReason::kNoReason),
+                             check, effect, control);
 
         // Determine the index from the {enum_indices}.
         index = effect = graph()->NewNode(
@@ -1780,7 +1793,9 @@ JSNativeContextSpecialization::BuildPropertyStore(
     Node* constant_value = jsgraph()->Constant(access_info.constant());
     Node* check =
         graph()->NewNode(simplified()->ReferenceEqual(), value, constant_value);
-    effect = graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+    effect =
+        graph()->NewNode(simplified()->CheckIf(DeoptimizeReason::kNoReason),
+                         check, effect, control);
     value = constant_value;
   } else if (access_info.IsAccessorConstant()) {
     value =
@@ -1820,21 +1835,12 @@ JSNativeContextSpecialization::BuildPropertyStore(
             !FLAG_unbox_double_fields) {
           if (access_info.HasTransitionMap()) {
             // Allocate a MutableHeapNumber for the new property.
-            effect = graph()->NewNode(
-                common()->BeginRegion(RegionObservability::kNotObservable),
-                effect);
-            Node* box = effect = graph()->NewNode(
-                simplified()->Allocate(Type::OtherInternal(), NOT_TENURED),
-                jsgraph()->Constant(HeapNumber::kSize), effect, control);
-            effect = graph()->NewNode(
-                simplified()->StoreField(AccessBuilder::ForMap()), box,
-                jsgraph()->HeapConstant(factory()->mutable_heap_number_map()),
-                effect, control);
-            effect = graph()->NewNode(
-                simplified()->StoreField(AccessBuilder::ForHeapNumberValue()),
-                box, value, effect, control);
-            value = effect =
-                graph()->NewNode(common()->FinishRegion(), box, effect);
+            AllocationBuilder a(jsgraph(), effect, control);
+            a.Allocate(HeapNumber::kSize, NOT_TENURED, Type::OtherInternal());
+            a.Store(AccessBuilder::ForMap(),
+                    factory()->mutable_heap_number_map());
+            a.Store(AccessBuilder::ForHeapNumberValue(), value);
+            value = effect = a.Finish();
 
             field_access.type = Type::Any();
             field_access.machine_type = MachineType::TaggedPointer();
@@ -1865,8 +1871,9 @@ JSNativeContextSpecialization::BuildPropertyStore(
 
           Node* check = graph()->NewNode(simplified()->NumberEqual(),
                                          current_value, value);
-          effect =
-              graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+          effect = graph()->NewNode(
+              simplified()->CheckIf(DeoptimizeReason::kNoReason), check, effect,
+              control);
           return ValueEffectControl(value, effect, control);
         }
         break;
@@ -1883,8 +1890,9 @@ JSNativeContextSpecialization::BuildPropertyStore(
 
           Node* check = graph()->NewNode(simplified()->ReferenceEqual(),
                                          current_value, value);
-          effect =
-              graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+          effect = graph()->NewNode(
+              simplified()->CheckIf(DeoptimizeReason::kNoReason), check, effect,
+              control);
           return ValueEffectControl(value, effect, control);
         }
 
@@ -2019,7 +2027,8 @@ Reduction JSNativeContextSpecialization::ReduceJSStoreDataPropertyInLiteral(
   Node* name = NodeProperties::GetValueInput(node, 1);
   Node* check = graph()->NewNode(simplified()->ReferenceEqual(), name,
                                  jsgraph()->HeapConstant(cached_name));
-  effect = graph()->NewNode(simplified()->CheckIf(), check, effect, control);
+  effect = graph()->NewNode(simplified()->CheckIf(DeoptimizeReason::kNoReason),
+                            check, effect, control);
 
   Node* value = NodeProperties::GetValueInput(node, 2);
   Node* context = NodeProperties::GetContextInput(node);
@@ -2427,44 +2436,39 @@ Node* JSNativeContextSpecialization::BuildExtendPropertiesBackingStore(
     values.push_back(jsgraph()->UndefinedConstant());
   }
 
-  // Allocate and initialize the new properties.
+  // Compute new length and hash.
   Node* hash;
   if (length == 0) {
-    effect = graph()->NewNode(
-        common()->BeginRegion(RegionObservability::kNotObservable), effect);
     hash = graph()->NewNode(
         common()->Select(MachineRepresentation::kTaggedSigned),
         graph()->NewNode(simplified()->ObjectIsSmi(), properties), properties,
         jsgraph()->SmiConstant(PropertyArray::kNoHashSentinel));
     hash = graph()->NewNode(common()->TypeGuard(Type::SignedSmall()), hash,
                             control);
+    hash =
+        graph()->NewNode(simplified()->NumberShiftLeft(), hash,
+                         jsgraph()->Constant(PropertyArray::HashField::kShift));
   } else {
     hash = effect = graph()->NewNode(
         simplified()->LoadField(AccessBuilder::ForPropertyArrayLengthAndHash()),
         properties, effect, control);
-    effect = graph()->NewNode(
-        common()->BeginRegion(RegionObservability::kNotObservable), effect);
-    hash = graph()->NewNode(simplified()->NumberBitwiseAnd(), hash,
-                            jsgraph()->Constant(JSReceiver::kHashMask));
+    hash =
+        graph()->NewNode(simplified()->NumberBitwiseAnd(), hash,
+                         jsgraph()->Constant(PropertyArray::HashField::kMask));
   }
-
   Node* new_length_and_hash = graph()->NewNode(
       simplified()->NumberBitwiseOr(), jsgraph()->Constant(new_length), hash);
-  Node* new_properties = effect = graph()->NewNode(
-      simplified()->Allocate(Type::OtherInternal(), NOT_TENURED),
-      jsgraph()->Constant(PropertyArray::SizeFor(new_length)), effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForMap()), new_properties,
-      jsgraph()->PropertyArrayMapConstant(), effect, control);
-  effect = graph()->NewNode(
-      simplified()->StoreField(AccessBuilder::ForPropertyArrayLengthAndHash()),
-      new_properties, new_length_and_hash, effect, control);
+
+  // Allocate and initialize the new properties.
+  AllocationBuilder a(jsgraph(), effect, control);
+  a.Allocate(PropertyArray::SizeFor(new_length), NOT_TENURED,
+             Type::OtherInternal());
+  a.Store(AccessBuilder::ForMap(), jsgraph()->PropertyArrayMapConstant());
+  a.Store(AccessBuilder::ForPropertyArrayLengthAndHash(), new_length_and_hash);
   for (int i = 0; i < new_length; ++i) {
-    effect = graph()->NewNode(
-        simplified()->StoreField(AccessBuilder::ForFixedArraySlot(i)),
-        new_properties, values[i], effect, control);
+    a.Store(AccessBuilder::ForFixedArraySlot(i), values[i]);
   }
-  return graph()->NewNode(common()->FinishRegion(), new_properties, effect);
+  return a.Finish();
 }
 
 bool JSNativeContextSpecialization::CanTreatHoleAsUndefined(
