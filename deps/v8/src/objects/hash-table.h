@@ -225,8 +225,8 @@ class HashTable : public HashTableBase {
     // To scale a computed hash code to fit within the hash table, we
     // use bit-wise AND with a mask, so the capacity must be positive
     // and non-zero.
-    DCHECK(capacity > 0);
-    DCHECK(capacity <= kMaxCapacity);
+    DCHECK_GT(capacity, 0);
+    DCHECK_LE(capacity, kMaxCapacity);
     set(kCapacityIndex, Smi::FromInt(capacity));
   }
 
@@ -596,8 +596,6 @@ class WeakHashTable : public HashTable<WeakHashTable, WeakHashTableShape<2>> {
   MUST_USE_RESULT static Handle<WeakHashTable> Put(Handle<WeakHashTable> table,
                                                    Handle<HeapObject> key,
                                                    Handle<HeapObject> value);
-
-  static Handle<FixedArray> GetValues(Handle<WeakHashTable> table);
 
  private:
   friend class MarkCompactCollector;

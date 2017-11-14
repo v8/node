@@ -170,6 +170,8 @@ namespace compiler {
                                   kHole) \
   V(NumberOrString,               kNumber | kString) \
   V(NumberOrUndefined,            kNumber | kUndefined) \
+  V(NumberOrUndefinedOrNullOrBoolean,  \
+                                  kNumber | kNullOrUndefined | kBoolean) \
   V(PlainPrimitive,               kNumberOrString | kBoolean | \
                                   kNullOrUndefined) \
   V(Primitive,                    kSymbol | kPlainPrimitive) \
@@ -244,7 +246,7 @@ class V8_EXPORT_PRIVATE BitsetType {
     return static_cast<bitset>(reinterpret_cast<uintptr_t>(this) ^ 1u);
   }
 
-  static bool IsInhabited(bitset bits) { return bits != kNone; }
+  static bool IsNone(bitset bits) { return bits == kNone; }
 
   static bool Is(bitset bits1, bitset bits2) {
     return (bits1 | bits2) == bits2;
@@ -579,7 +581,7 @@ class V8_EXPORT_PRIVATE Type {
   static Type* For(i::Handle<i::Map> map) { return For(*map); }
 
   // Predicates.
-  bool IsInhabited() { return BitsetType::IsInhabited(this->BitsetLub()); }
+  bool IsNone() { return this == None(); }
 
   bool Is(Type* that) { return this == that || this->SlowIs(that); }
   bool Maybe(Type* that);
@@ -603,12 +605,12 @@ class V8_EXPORT_PRIVATE Type {
   // Minimum and maximum of a numeric type.
   // These functions do not distinguish between -0 and +0.  If the type equals
   // kNaN, they return NaN; otherwise kNaN is ignored.  Only call these
-  // functions on subtypes of Number.
+  // functions on subtypes of Number, but not on None!
   double Min();
   double Max();
 
   // Extracts a range from the type: if the type is a range or a union
-  // containing a range, that range is returned; otherwise, NULL is returned.
+  // containing a range, that range is returned; otherwise, nullptr is returned.
   Type* GetRange();
 
   static bool IsInteger(i::Object* x);
@@ -642,7 +644,6 @@ class V8_EXPORT_PRIVATE Type {
   // Internal inspection.
   bool IsKind(TypeBase::Kind kind) { return TypeBase::IsKind(this, kind); }
 
-  bool IsNone() { return this == None(); }
   bool IsAny() { return this == Any(); }
   bool IsBitset() { return BitsetType::IsBitset(this); }
   bool IsUnion() { return IsKind(TypeBase::kUnion); }

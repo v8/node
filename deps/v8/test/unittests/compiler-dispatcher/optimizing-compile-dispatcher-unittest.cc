@@ -19,19 +19,19 @@
 namespace v8 {
 namespace internal {
 
-typedef TestWithContext OptimizingCompileDispatcherTest;
+typedef TestWithNativeContext OptimizingCompileDispatcherTest;
 
 namespace {
 
 class BlockingCompilationJob : public CompilationJob {
  public:
   BlockingCompilationJob(Isolate* isolate, Handle<JSFunction> function)
-      : CompilationJob(isolate, &parse_info_, &info_, "BlockingCompilationJob",
+      : CompilationJob(isolate->stack_guard()->real_climit(), &parse_info_,
+                       &info_, "BlockingCompilationJob",
                        State::kReadyToExecute),
         shared_(function->shared()),
         parse_info_(shared_),
-        info_(parse_info_.zone(), function->GetIsolate(), parse_info_.script(),
-              shared_, function),
+        info_(parse_info_.zone(), function->GetIsolate(), shared_, function),
         blocking_(false),
         semaphore_(0) {}
   ~BlockingCompilationJob() override = default;
@@ -72,8 +72,8 @@ TEST_F(OptimizingCompileDispatcherTest, Construct) {
 }
 
 TEST_F(OptimizingCompileDispatcherTest, NonBlockingFlush) {
-  Handle<JSFunction> fun = Handle<JSFunction>::cast(test::RunJS(
-      isolate(), "function f() { function g() {}; return g;}; f();"));
+  Handle<JSFunction> fun =
+      RunJS<JSFunction>("function f() { function g() {}; return g;}; f();");
   BlockingCompilationJob* job = new BlockingCompilationJob(i_isolate(), fun);
 
   OptimizingCompileDispatcher dispatcher(i_isolate());

@@ -9,6 +9,7 @@
 
 #include "src/allocation.h"
 #include "src/bailout-reason.h"
+#include "src/code-events.h"
 #include "src/contexts.h"
 #include "src/isolate.h"
 #include "src/zone/zone.h"
@@ -107,13 +108,15 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
       ParseRestriction restriction, int parameters_end_pos);
 
   // Create a shared function info object for a String source within a context.
-  static Handle<SharedFunctionInfo> GetSharedFunctionInfoForScript(
-      Handle<String> source, Handle<Object> script_name, int line_offset,
-      int column_offset, ScriptOriginOptions resource_options,
-      Handle<Object> source_map_url, Handle<Context> context,
+  static MaybeHandle<SharedFunctionInfo> GetSharedFunctionInfoForScript(
+      Handle<String> source, MaybeHandle<Object> maybe_script_name,
+      int line_offset, int column_offset, ScriptOriginOptions resource_options,
+      MaybeHandle<Object> maybe_source_map_url, Handle<Context> context,
       v8::Extension* extension, ScriptData** cached_data,
       ScriptCompiler::CompileOptions compile_options,
-      NativesFlag is_natives_code);
+      ScriptCompiler::NoCacheReason no_cache_reason,
+      NativesFlag is_natives_code,
+      MaybeHandle<FixedArray> maybe_host_defined_options);
 
   // Create a shared function info object for a Script that has already been
   // parsed while the script was being loaded from a streamed source.
@@ -163,9 +166,8 @@ class V8_EXPORT_PRIVATE CompilationJob {
     kSucceeded,
     kFailed,
   };
-
-  CompilationJob(Isolate* isolate, ParseInfo* parse_info, CompilationInfo* info,
-                 const char* compiler_name,
+  CompilationJob(uintptr_t stack_limit, ParseInfo* parse_info,
+                 CompilationInfo* compilation_info, const char* compiler_name,
                  State initial_state = State::kReadyToPrepare);
   virtual ~CompilationJob() {}
 
@@ -189,21 +191,14 @@ class V8_EXPORT_PRIVATE CompilationJob {
 
   void RecordOptimizedCompilationStats() const;
   void RecordUnoptimizedCompilationStats() const;
-
-  virtual bool can_execute_on_background_thread() const { return true; }
+  void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag) const;
 
   void set_stack_limit(uintptr_t stack_limit) { stack_limit_ = stack_limit; }
   uintptr_t stack_limit() const { return stack_limit_; }
 
-  bool executed_on_background_thread() const {
-    DCHECK_IMPLIES(!can_execute_on_background_thread(),
-                   !executed_on_background_thread_);
-    return executed_on_background_thread_;
-  }
   State state() const { return state_; }
   ParseInfo* parse_info() const { return parse_info_; }
   CompilationInfo* compilation_info() const { return compilation_info_; }
-  Isolate* isolate() const;
   virtual size_t AllocatedMemory() const { return 0; }
 
  protected:
@@ -216,14 +211,12 @@ class V8_EXPORT_PRIVATE CompilationJob {
   // TODO(6409): Remove parse_info once Fullcode and AstGraphBuilder are gone.
   ParseInfo* parse_info_;
   CompilationInfo* compilation_info_;
-  ThreadId isolate_thread_id_;
   base::TimeDelta time_taken_to_prepare_;
   base::TimeDelta time_taken_to_execute_;
   base::TimeDelta time_taken_to_finalize_;
   const char* compiler_name_;
   State state_;
   uintptr_t stack_limit_;
-  bool executed_on_background_thread_;
 
   MUST_USE_RESULT Status UpdateState(Status status, State next_state) {
     if (status == SUCCEEDED) {

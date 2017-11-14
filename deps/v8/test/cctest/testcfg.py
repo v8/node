@@ -47,10 +47,10 @@ class CcTestSuite(testsuite.TestSuite):
     shell = os.path.abspath(os.path.join(context.shell_dir, self.shell()))
     if utils.IsWindows():
       shell += ".exe"
-    output = commands.Execute(context.command_prefix +
-                              [shell, "--list"] +
-                              context.extra_flags)
+    cmd = context.command_prefix + [shell, "--list"] + context.extra_flags
+    output = commands.Execute(cmd)
     if output.exit_code != 0:
+      print ' '.join(cmd)
       print output.stdout
       print output.stderr
       return []
@@ -61,9 +61,8 @@ class CcTestSuite(testsuite.TestSuite):
     tests.sort(key=lambda t: t.path)
     return tests
 
-  def GetFlagsForTestCase(self, testcase, context):
-    testname = testcase.path.split(os.path.sep)[-1]
-    return (testcase.flags + [testcase.path] + context.mode_flags)
+  def GetParametersForTestCase(self, testcase, context):
+    return [testcase.path], testcase.flags + context.mode_flags
 
   def shell(self):
     return "cctest"

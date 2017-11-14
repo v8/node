@@ -131,9 +131,6 @@ class TestSuite(object):
     """
     pass
 
-  def DownloadData(self):
-    pass
-
   def ReadStatusFile(self, variables):
     with open(self.status_file()) as f:
       self.rules, self.wildcards = (
@@ -260,7 +257,8 @@ class TestSuite(object):
           break
     self.tests = filtered
 
-  def GetFlagsForTestCase(self, testcase, context):
+  def GetParametersForTestCase(self, testcase, context):
+    """Returns a tuple of (files, flags) for this test case."""
     raise NotImplementedError
 
   def GetSourceForTest(self, testcase):
@@ -321,12 +319,17 @@ class GoogleTestSuite(TestSuite):
 
     output = None
     for i in xrange(3): # Try 3 times in case of errors.
-      output = commands.Execute(context.command_prefix +
-                                [shell, "--gtest_list_tests"] +
-                                context.extra_flags)
+      cmd = (
+          context.command_prefix +
+          [shell, "--gtest_list_tests"] +
+          context.extra_flags
+      )
+      output = commands.Execute(cmd)
       if output.exit_code == 0:
         break
-      print "Test executable failed to list the tests (try %d).\n\nStdout:" % i
+      print "Test executable failed to list the tests (try %d).\n\nCmd:" % i
+      print ' '.join(cmd)
+      print "\nStdout:"
       print output.stdout
       print "\nStderr:"
       print output.stderr
@@ -346,11 +349,11 @@ class GoogleTestSuite(TestSuite):
     tests.sort(key=lambda t: t.path)
     return tests
 
-  def GetFlagsForTestCase(self, testcase, context):
-    return (testcase.flags + ["--gtest_filter=" + testcase.path] +
-            ["--gtest_random_seed=%s" % context.random_seed] +
-            ["--gtest_print_time=0"] +
-            context.mode_flags)
+  def GetParametersForTestCase(self, testcase, context):
+    return [], (testcase.flags + ["--gtest_filter=" + testcase.path] +
+                ["--gtest_random_seed=%s" % context.random_seed] +
+                ["--gtest_print_time=0"] +
+                context.mode_flags)
 
   def _VariantGeneratorFactory(self):
     return StandardVariantGenerator

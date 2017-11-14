@@ -40,32 +40,6 @@ function WeakMapConstructor(iterable) {
 }
 
 
-// Set up the non-enumerable functions on the WeakMap prototype object.
-DEFINE_METHODS(
-  GlobalWeakMap.prototype,
-  {
-    set(key, value) {
-      if (!IS_WEAKMAP(this)) {
-        throw %make_type_error(kIncompatibleMethodReceiver,
-                            'WeakMap.prototype.set', this);
-      }
-      if (!IS_RECEIVER(key)) throw %make_type_error(kInvalidWeakMapKey);
-      return %WeakCollectionSet(this, key, value, %GenericHash(key));
-    }
-
-    delete(key) {
-      if (!IS_WEAKMAP(this)) {
-        throw %make_type_error(kIncompatibleMethodReceiver,
-                            'WeakMap.prototype.delete', this);
-      }
-      if (!IS_RECEIVER(key)) return false;
-      var hash = %GetExistingHash(key);
-      if (IS_UNDEFINED(hash)) return false;
-      return %WeakCollectionDelete(this, key, hash);
-    }
-  }
-);
-
 // -------------------------------------------------------------------
 
 %SetCode(GlobalWeakMap, WeakMapConstructor);
@@ -92,32 +66,6 @@ function WeakSetConstructor(iterable) {
   }
 }
 
-
-// Set up the non-enumerable functions on the WeakSet prototype object.
-DEFINE_METHODS(
-  GlobalWeakSet.prototype,
-  {
-    add(value) {
-      if (!IS_WEAKSET(this)) {
-        throw %make_type_error(kIncompatibleMethodReceiver,
-                            'WeakSet.prototype.add', this);
-      }
-      if (!IS_RECEIVER(value)) throw %make_type_error(kInvalidWeakSetValue);
-      return %WeakCollectionSet(this, value, true, %GenericHash(value));
-    }
-
-    delete(value) {
-      if (!IS_WEAKSET(this)) {
-        throw %make_type_error(kIncompatibleMethodReceiver,
-                            'WeakSet.prototype.delete', this);
-      }
-      if (!IS_RECEIVER(value)) return false;
-      var hash = %GetExistingHash(value);
-      if (IS_UNDEFINED(hash)) return false;
-      return %WeakCollectionDelete(this, value, hash);
-    }
-  }
-);
 
 // -------------------------------------------------------------------
 

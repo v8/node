@@ -6,7 +6,6 @@
 
 #include "src/inspector/inspected-context.h"
 #include "src/inspector/protocol/Protocol.h"
-#include "src/inspector/script-breakpoint.h"
 #include "src/inspector/string-util.h"
 #include "src/inspector/v8-debugger-agent-impl.h"
 #include "src/inspector/v8-inspector-impl.h"
@@ -186,6 +185,7 @@ void V8Debugger::disable() {
   clearContinueToLocation();
   allAsyncTasksCanceled();
   m_taskWithScheduledBreak = nullptr;
+  m_pauseOnAsyncCall = false;
   m_wasmTranslation.Clear();
   v8::debug::SetDebugDelegate(m_isolate, nullptr);
   v8::debug::SetOutOfMemoryCallback(m_isolate, nullptr, nullptr);
@@ -285,10 +285,12 @@ void V8Debugger::breakProgramOnAssert(int targetContextGroupId) {
   v8::debug::BreakRightNow(m_isolate);
 }
 
-void V8Debugger::stepIntoStatement(int targetContextGroupId) {
+void V8Debugger::stepIntoStatement(int targetContextGroupId,
+                                   bool breakOnAsyncCall) {
   DCHECK(isPaused());
   DCHECK(targetContextGroupId);
   m_targetContextGroupId = targetContextGroupId;
+  m_pauseOnAsyncCall = breakOnAsyncCall;
   v8::debug::PrepareStep(m_isolate, v8::debug::StepIn);
   continueProgram(targetContextGroupId);
 }
@@ -320,6 +322,12 @@ void V8Debugger::scheduleStepIntoAsync(
   }
   m_targetContextGroupId = targetContextGroupId;
   m_stepIntoAsyncCallback = std::move(callback);
+}
+
+void V8Debugger::pauseOnAsyncTask(int targetContextGroupId, void* task) {
+  DCHECK(targetContextGroupId);
+  m_targetContextGroupId = targetContextGroupId;
+  m_taskWithScheduledBreak = task;
 }
 
 Response V8Debugger::continueToLocation(
@@ -388,6 +396,8 @@ void V8Debugger::handleProgramBreak(
     m_stepIntoAsyncCallback.reset();
   }
   m_breakRequested = false;
+  m_pauseOnAsyncCall = false;
+  m_taskWithScheduledBreak = nullptr;
 
   bool scheduledOOMBreak = m_scheduledOOMBreak;
   bool scheduledAssertBreak = m_scheduledAssertBreak;
@@ -563,9 +573,6 @@ std::shared_ptr<AsyncStackTrace> V8Debugger::currentAsyncCreation() {
 v8::MaybeLocal<v8::Value> V8Debugger::getTargetScopes(
     v8::Local<v8::Context> context, v8::Local<v8::Value> value,
     ScopeTargetKind kind) {
-  if (!enabled()) {
-    UNREACHABLE();
-  }
   v8::Local<v8::Value> scopesValue;
   std::unique_ptr<v8::debug::ScopeIterator> iterator;
   switch (kind) {
@@ -582,7 +589,7 @@ v8::MaybeLocal<v8::Value> V8Debugger::getTargetScopes(
           m_isolate, v8::Local<v8::Object>::Cast(value));
       break;
   }
-
+  if (!iterator) return v8::MaybeLocal<v8::Value>();
   v8::Local<v8::Array> result = v8::Array::New(m_isolate);
   if (!result->SetPrototype(context, v8::Null(m_isolate)).FromMaybe(false)) {
     return v8::MaybeLocal<v8::Value>();
@@ -664,7 +671,6 @@ v8::MaybeLocal<v8::Array> V8Debugger::internalProperties(
           toV8StringInternalized(m_isolate, "[[GeneratorLocation]]"));
       createDataProperty(context, properties, properties->Length(), location);
     }
-    if (!enabled()) return properties;
     v8::Local<v8::Value> scopes;
     if (generatorScopes(context, value).ToLocal(&scopes)) {
       createDataProperty(context, properties, properties->Length(),
@@ -672,7 +678,6 @@ v8::MaybeLocal<v8::Array> V8Debugger::internalProperties(
       createDataProperty(context, properties, properties->Length(), scopes);
     }
   }
-  if (!enabled()) return properties;
   if (value->IsFunction()) {
     v8::Local<v8::Function> function = value.As<v8::Function>();
     v8::Local<v8::Value> boundFunction = function->GetBoundFunction();
@@ -764,8 +769,8 @@ void V8Debugger::asyncTaskStarted(void* task) {
 }
 
 void V8Debugger::asyncTaskFinished(void* task) {
-  asyncTaskFinishedForStack(task);
   asyncTaskFinishedForStepping(task);
+  asyncTaskFinishedForStack(task);
 }
 
 void V8Debugger::asyncTaskScheduledForStack(const String16& taskName,
@@ -841,6 +846,12 @@ void V8Debugger::asyncTaskFinishedForStack(void* task) {
 }
 
 void V8Debugger::asyncTaskCandidateForStepping(void* task) {
+  if (m_pauseOnAsyncCall) {
+    m_scheduledAsyncTask = task;
+    breakProgram(m_targetContextGroupId);
+    m_scheduledAsyncTask = nullptr;
+    return;
+  }
   if (!m_stepIntoAsyncCallback) return;
   DCHECK(m_targetContextGroupId);
   if (currentContextGroupId() != m_targetContextGroupId) return;
@@ -852,6 +863,8 @@ void V8Debugger::asyncTaskCandidateForStepping(void* task) {
 
 void V8Debugger::asyncTaskStartedForStepping(void* task) {
   if (m_breakRequested) return;
+  // TODO(kozyatinskiy): we should search task in async chain to support
+  // blackboxing.
   if (task != m_taskWithScheduledBreak) return;
   v8::debug::DebugBreak(m_isolate);
 }

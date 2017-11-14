@@ -69,15 +69,25 @@ static const Register arg2 = rsi;
 
 #define __ assm.
 
+namespace {
+
+byte* AllocateExecutablePage(int* actual_size) {
+  size_t allocated = 0;
+  void* result =
+      v8::base::OS::Allocate(Assembler::kMinimalBufferSize, &allocated,
+                             v8::base::OS::MemoryPermission::kReadWriteExecute);
+  CHECK(result);
+  *actual_size = static_cast<int>(allocated);
+  return static_cast<byte*>(result);
+}
+
+}  // namespace
 
 TEST(AssemblerX64ReturnOperation) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that copies argument 2 and returns it.
   __ movq(rax, arg2);
@@ -94,12 +104,9 @@ TEST(AssemblerX64ReturnOperation) {
 
 TEST(AssemblerX64StackOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that copies argument 2 and returns it.
   // We compile without stack frame pointers, so the gdb debugger shows
@@ -126,12 +133,9 @@ TEST(AssemblerX64StackOperations) {
 
 TEST(AssemblerX64ArithmeticOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that adds arguments returning the sum.
   __ movq(rax, arg2);
@@ -148,12 +152,9 @@ TEST(AssemblerX64ArithmeticOperations) {
 
 TEST(AssemblerX64CmpbOperation) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a function that compare argument byte returing 1 if equal else 0.
   // On Windows, it compares rcx with rdx which does not require REX prefix;
@@ -178,15 +179,13 @@ TEST(AssemblerX64CmpbOperation) {
 
 TEST(Regression684407) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
+
   Address before = assm.pc();
   __ cmpl(Operand(arg1, 0),
-          Immediate(0, RelocInfo::WASM_MEMORY_SIZE_REFERENCE));
+          Immediate(0, RelocInfo::WASM_FUNCTION_TABLE_SIZE_REFERENCE));
   Address after = assm.pc();
   size_t instruction_size = static_cast<size_t>(after - before);
   // Check that the immediate is not encoded as uint8.
@@ -195,12 +194,9 @@ TEST(Regression684407) {
 
 TEST(AssemblerX64ImulOperation) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that multiplies arguments returning the high
   // word.
@@ -223,12 +219,9 @@ TEST(AssemblerX64ImulOperation) {
 TEST(AssemblerX64testbwqOperation) {
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ pushq(rbx);
   __ pushq(rdi);
@@ -390,12 +383,9 @@ TEST(AssemblerX64testbwqOperation) {
 
 TEST(AssemblerX64XchglOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(rax, Operand(arg1, 0));
   __ movq(r11, Operand(arg2, 0));
@@ -418,12 +408,9 @@ TEST(AssemblerX64XchglOperations) {
 
 TEST(AssemblerX64OrlOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(rax, Operand(arg2, 0));
   __ orl(Operand(arg1, 0), rax);
@@ -442,12 +429,9 @@ TEST(AssemblerX64OrlOperations) {
 
 TEST(AssemblerX64RollOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(rax, arg1);
   __ roll(rax, Immediate(1));
@@ -464,12 +448,9 @@ TEST(AssemblerX64RollOperations) {
 
 TEST(AssemblerX64SublOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(rax, Operand(arg2, 0));
   __ subl(Operand(arg1, 0), rax);
@@ -488,12 +469,9 @@ TEST(AssemblerX64SublOperations) {
 
 TEST(AssemblerX64TestlOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Set rax with the ZF flag of the testl instruction.
   Label done;
@@ -517,12 +495,9 @@ TEST(AssemblerX64TestlOperations) {
 TEST(AssemblerX64TestwOperations) {
   typedef uint16_t (*F)(uint16_t * x);
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Set rax with the ZF flag of the testl instruction.
   Label done;
@@ -543,12 +518,9 @@ TEST(AssemblerX64TestwOperations) {
 
 TEST(AssemblerX64XorlOperations) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(rax, Operand(arg2, 0));
   __ xorl(Operand(arg1, 0), rax);
@@ -567,12 +539,9 @@ TEST(AssemblerX64XorlOperations) {
 
 TEST(AssemblerX64MemoryOperands) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that copies argument 2 and returns it.
   __ pushq(rbp);
@@ -601,12 +570,9 @@ TEST(AssemblerX64MemoryOperands) {
 
 TEST(AssemblerX64ControlFlow) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   // Assemble a simple function that copies argument 1 and returns it.
   __ pushq(rbp);
@@ -630,12 +596,10 @@ TEST(AssemblerX64ControlFlow) {
 
 TEST(AssemblerX64LoopImmediates) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
+
   // Assemble two loops using rax as counter, and verify the ending counts.
   Label Fail;
   __ movq(rax, Immediate(-3));
@@ -725,7 +689,7 @@ TEST(AssemblerX64LabelChaining) {
   // Test chaining of label usages within instructions (issue 1644).
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
-  Assembler assm(CcTest::i_isolate(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), nullptr, 0);
 
   Label target;
   __ j(equal, &target);
@@ -789,8 +753,8 @@ TEST(AssemblerMultiByteNop) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 
   F0 f = FUNCTION_CAST<F0>(code->entry());
   int res = f();
@@ -845,8 +809,8 @@ void DoSSE2(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 
   F0 f = FUNCTION_CAST<F0>(code->entry());
   int res = f();
@@ -865,7 +829,7 @@ TEST(StackAlignmentForSSE2) {
   global_template->Set(v8_str("do_sse2"),
                        v8::FunctionTemplate::New(isolate, DoSSE2));
 
-  LocalContext env(NULL, global_template);
+  LocalContext env(nullptr, global_template);
   CompileRun(
       "function foo(vec) {"
       "  return do_sse2(vec);"
@@ -908,8 +872,8 @@ TEST(AssemblerX64Extractps) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -946,10 +910,8 @@ TEST(AssemblerX64SSE) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc,
-      Code::ComputeFlags(Code::STUB),
-      Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1174,8 +1136,8 @@ TEST(AssemblerX64FMA_sd) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1400,8 +1362,8 @@ TEST(AssemblerX64FMA_ss) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1475,8 +1437,8 @@ TEST(AssemblerX64SSE_ss) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1560,8 +1522,8 @@ TEST(AssemblerX64AVX_ss) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1799,8 +1761,8 @@ TEST(AssemblerX64AVX_sd) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1991,8 +1953,8 @@ TEST(AssemblerX64BMI1) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2051,8 +2013,8 @@ TEST(AssemblerX64LZCNT) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2111,8 +2073,8 @@ TEST(AssemblerX64POPCNT) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2374,8 +2336,8 @@ TEST(AssemblerX64BMI2) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2419,8 +2381,8 @@ TEST(AssemblerX64JumpTables1) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   code->Print(std::cout);
 #endif
@@ -2468,8 +2430,8 @@ TEST(AssemblerX64JumpTables2) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   code->Print(std::cout);
 #endif
@@ -2484,12 +2446,9 @@ TEST(AssemblerX64JumpTables2) {
 
 TEST(AssemblerX64PslldWithXmm15) {
   CcTest::InitializeVM();
-  // Allocate an executable page of memory.
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
-      Assembler::kMinimalBufferSize, &actual_size, true));
-  CHECK(buffer);
-  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  int actual_size;
+  byte* buffer = AllocateExecutablePage(&actual_size);
+  Assembler assm(CcTest::i_isolate(), buffer, actual_size);
 
   __ movq(xmm15, arg1);
   __ pslld(xmm15, 1);
@@ -2527,8 +2486,8 @@ TEST(AssemblerX64vmovups) {
 
   CodeDesc desc;
   assm.GetCode(isolate, &desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
