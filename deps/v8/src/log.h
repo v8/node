@@ -150,7 +150,7 @@ class Logger : public CodeEventListener {
   void FunctionEvent(const char* reason, Script* script, int script_id,
                      double time_delta_ms, int start_position, int end_position,
                      const char* function_name = nullptr,
-                     int function_name_length = 0);
+                     size_t function_name_length = 0);
 
   // ==== Events logged by --log-api. ====
   void ApiSecurityCheck();
@@ -340,15 +340,16 @@ class Logger : public CodeEventListener {
   friend class CpuProfiler;
 };
 
-#define TIMER_EVENTS_LIST(V)    \
-  V(RecompileSynchronous, true) \
-  V(RecompileConcurrent, true)  \
-  V(CompileIgnition, true)      \
-  V(CompileFullCode, true)      \
-  V(OptimizeCode, true)         \
-  V(CompileCode, true)          \
-  V(DeoptimizeCode, true)       \
-  V(Execute, true)              \
+#define TIMER_EVENTS_LIST(V)     \
+  V(RecompileSynchronous, true)  \
+  V(RecompileConcurrent, true)   \
+  V(CompileIgnition, true)       \
+  V(CompileFullCode, true)       \
+  V(OptimizeCode, true)          \
+  V(CompileCode, true)           \
+  V(CompileCodeBackground, true) \
+  V(DeoptimizeCode, true)        \
+  V(Execute, true)               \
   V(External, true)
 
 #define V(TimerName, expose)                          \

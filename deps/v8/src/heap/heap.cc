@@ -867,6 +867,19 @@ void Heap::ProcessPretenuringFeedback() {
   }
 }
 
+void Heap::InvalidateCodeEmbeddedObjects(Code* code) {
+  MemoryChunk* chunk = MemoryChunk::FromAddress(code->address());
+  CodePageMemoryModificationScope modification_scope(
+      chunk, CodePageMemoryModificationScope::READ_WRITE);
+  code->InvalidateEmbeddedObjects();
+}
+
+void Heap::InvalidateCodeDeoptimizationData(Code* code) {
+  MemoryChunk* chunk = MemoryChunk::FromAddress(code->address());
+  CodePageMemoryModificationScope modification_scope(
+      chunk, CodePageMemoryModificationScope::READ_WRITE);
+  code->set_deoptimization_data(empty_fixed_array());
+}
 
 void Heap::DeoptMarkedAllocationSites() {
   // TODO(hpayer): If iterating over the allocation sites list becomes a
@@ -1469,6 +1482,11 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
         }
       }
       if (perform_gc) {
+        // We cannot perfom a GC with an uninitialized isolate. This check
+        // fails for example if the max old space size is chosen unwisely,
+        // so that we cannot allocate space to deserialize the initial heap.
+        CHECK_WITH_MSG(deserialization_complete_,
+                       "insufficient memory to create an Isolate");
         if (space == NEW_SPACE) {
           CollectGarbage(NEW_SPACE, GarbageCollectionReason::kDeserializer);
         } else {
@@ -2380,7 +2398,8 @@ AllocationResult Heap::AllocatePartialMap(InstanceType instance_type,
   }
   // GetVisitorId requires a properly initialized LayoutDescriptor.
   map->set_visitor_id(Map::GetVisitorId(map));
-  map->set_inobject_properties_or_constructor_function_index(0);
+  map->set_inobject_properties_start_or_constructor_function_index(0);
+  DCHECK(!map->IsJSObjectMap());
   map->SetInObjectUnusedPropertyFields(0);
   map->set_bit_field(0);
   map->set_bit_field2(0);
@@ -2407,8 +2426,14 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
   map->set_prototype(null_value(), SKIP_WRITE_BARRIER);
   map->set_constructor_or_backpointer(null_value(), SKIP_WRITE_BARRIER);
   map->set_instance_size(instance_size);
-  map->set_inobject_properties_or_constructor_function_index(
-      inobject_properties);
+  if (map->IsJSObjectMap()) {
+    map->SetInObjectPropertiesStartInWords(instance_size / kPointerSize -
+                                           inobject_properties);
+    DCHECK_EQ(map->GetInObjectProperties(), inobject_properties);
+  } else {
+    DCHECK_EQ(inobject_properties, 0);
+    map->set_inobject_properties_start_or_constructor_function_index(0);
+  }
   map->set_dependent_code(DependentCode::cast(empty_fixed_array()),
                           SKIP_WRITE_BARRIER);
   map->set_weak_cell_cache(Smi::kZero);
@@ -2471,20 +2496,18 @@ AllocationResult Heap::AllocateHeapNumber(MutableMode mode,
   return result;
 }
 
-AllocationResult Heap::AllocateBigInt(int length, bool zero_initialize,
-                                      PretenureFlag pretenure) {
+AllocationResult Heap::AllocateBigInt(int length) {
   if (length < 0 || length > BigInt::kMaxLength) {
     v8::internal::Heap::FatalProcessOutOfMemory("invalid BigInt length", true);
   }
   int size = BigInt::SizeFor(length);
-  AllocationSpace space = SelectSpace(pretenure);
+  AllocationSpace space = SelectSpace(NOT_TENURED);
   HeapObject* result = nullptr;
   {
     AllocationResult allocation = AllocateRaw(size, space);
     if (!allocation.To(&result)) return allocation;
   }
   result->set_map_after_allocation(bigint_map(), SKIP_WRITE_BARRIER);
-  BigInt::cast(result)->Initialize(length, zero_initialize);
   return result;
 }
 
@@ -2622,6 +2645,9 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
     case kApiSymbolTableRootIndex:
     case kApiPrivateSymbolTableRootIndex:
     case kMessageListenersRootIndex:
+    case kDeserializeLazyHandlerRootIndex:
+    case kDeserializeLazyHandlerWideRootIndex:
+    case kDeserializeLazyHandlerExtraWideRootIndex:
 // Smi values
 #define SMI_ENTRY(type, name, Name) case k##Name##RootIndex:
       SMI_ROOT_LIST(SMI_ENTRY)
@@ -3058,14 +3084,13 @@ AllocationResult Heap::AllocateFixedTypedArray(int length,
   return elements;
 }
 
-
-AllocationResult Heap::AllocateCode(int object_size, bool immovable) {
+AllocationResult Heap::AllocateCode(int object_size, Movability movability) {
   DCHECK(IsAligned(static_cast<intptr_t>(object_size), kCodeAlignment));
   AllocationResult allocation = AllocateRaw(object_size, CODE_SPACE);
 
   HeapObject* result = nullptr;
   if (!allocation.To(&result)) return allocation;
-  if (immovable) {
+  if (movability == kImmovable) {
     Address address = result->address();
     MemoryChunk* chunk = MemoryChunk::FromAddress(address);
     // Code objects which should stay at a fixed address are allocated either
@@ -4852,10 +4877,6 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
   v->VisitRootPointers(Root::kStrongRootList, &roots_[0],
                        &roots_[kStrongRootListLength]);
   v->Synchronize(VisitorSynchronization::kStrongRootList);
-  // The serializer/deserializer iterates the root list twice, first to pick
-  // off immortal immovable roots to make sure they end up on the first page,
-  // and then again for the rest.
-  if (mode == VISIT_ONLY_STRONG_ROOT_LIST) return;
 
   isolate_->bootstrapper()->Iterate(v);
   v->Synchronize(VisitorSynchronization::kBootstrapper);
@@ -4888,11 +4909,7 @@ void Heap::IterateStrongRoots(RootVisitor* v, VisitMode mode) {
 
   // Iterate over global handles.
   switch (mode) {
-    case VISIT_ONLY_STRONG_ROOT_LIST:
-      UNREACHABLE();
-      break;
     case VISIT_ONLY_STRONG_FOR_SERIALIZATION:
-      break;
     case VISIT_ONLY_STRONG:
       isolate_->global_handles()->IterateStrongRoots(v);
       break;
@@ -6295,6 +6312,23 @@ void Heap::UnregisterStrongRoots(Object** start) {
   }
 }
 
+bool Heap::IsDeserializeLazyHandler(Code* code) {
+  return (code == deserialize_lazy_handler() ||
+          code == deserialize_lazy_handler_wide() ||
+          code == deserialize_lazy_handler_extra_wide());
+}
+
+void Heap::SetDeserializeLazyHandler(Code* code) {
+  set_deserialize_lazy_handler(code);
+}
+
+void Heap::SetDeserializeLazyHandlerWide(Code* code) {
+  set_deserialize_lazy_handler_wide(code);
+}
+
+void Heap::SetDeserializeLazyHandlerExtraWide(Code* code) {
+  set_deserialize_lazy_handler_extra_wide(code);
+}
 
 size_t Heap::NumberOfTrackedHeapObjectTypes() {
   return ObjectStats::OBJECT_STATS_COUNT;

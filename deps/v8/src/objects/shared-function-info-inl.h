@@ -27,15 +27,13 @@ ACCESSORS(SharedFunctionInfo, raw_name, Object, kNameOffset)
 ACCESSORS(SharedFunctionInfo, construct_stub, Code, kConstructStubOffset)
 ACCESSORS(SharedFunctionInfo, feedback_metadata, FeedbackMetadata,
           kFeedbackMetadataOffset)
-ACCESSORS(SharedFunctionInfo, instance_class_name, Object,
+ACCESSORS(SharedFunctionInfo, instance_class_name, String,
           kInstanceClassNameOffset)
 ACCESSORS(SharedFunctionInfo, function_data, Object, kFunctionDataOffset)
 ACCESSORS(SharedFunctionInfo, script, Object, kScriptOffset)
 ACCESSORS(SharedFunctionInfo, debug_info, Object, kDebugInfoOffset)
 ACCESSORS(SharedFunctionInfo, function_identifier, Object,
           kFunctionIdentifierOffset)
-ACCESSORS(SharedFunctionInfo, preparsed_scope_data, Object,
-          kPreParsedScopeDataOffset)
 
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, start_position_and_type,
                     is_named_expression,
@@ -94,6 +92,9 @@ BIT_FIELD_ACCESSORS(SharedFunctionInfo, compiler_hints, native,
                     SharedFunctionInfo::IsNativeBit)
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, compiler_hints, is_asm_wasm_broken,
                     SharedFunctionInfo::IsAsmWasmBrokenBit)
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, compiler_hints,
+                    requires_instance_fields_initializer,
+                    SharedFunctionInfo::RequiresInstanceFieldsInitializer)
 
 bool SharedFunctionInfo::optimization_disabled() const {
   return disable_optimization_reason() != BailoutReason::kNoReason;
@@ -320,6 +321,26 @@ int SharedFunctionInfo::lazy_deserialization_builtin_id() const {
   return id;
 }
 
+bool SharedFunctionInfo::HasPreParsedScopeData() const {
+  return function_data()->IsPreParsedScopeData();
+}
+
+PreParsedScopeData* SharedFunctionInfo::preparsed_scope_data() const {
+  DCHECK(HasPreParsedScopeData());
+  return PreParsedScopeData::cast(function_data());
+}
+
+void SharedFunctionInfo::set_preparsed_scope_data(
+    PreParsedScopeData* preparsed_scope_data) {
+  DCHECK(function_data()->IsUndefined(GetIsolate()));
+  set_function_data(preparsed_scope_data);
+}
+
+void SharedFunctionInfo::ClearPreParsedScopeData() {
+  DCHECK(function_data()->IsUndefined(GetIsolate()) || HasPreParsedScopeData());
+  set_function_data(GetHeap()->undefined_value());
+}
+
 bool SharedFunctionInfo::HasBuiltinFunctionId() {
   return function_identifier()->IsSmi();
 }
@@ -360,10 +381,6 @@ bool SharedFunctionInfo::IsUserJavaScript() {
 
 bool SharedFunctionInfo::IsSubjectToDebugging() {
   return IsUserJavaScript() && !HasAsmWasmData();
-}
-
-bool SharedFunctionInfo::HasPreParsedScopeData() const {
-  return preparsed_scope_data()->IsPreParsedScopeData();
 }
 
 }  // namespace internal

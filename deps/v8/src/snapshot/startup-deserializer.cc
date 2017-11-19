@@ -34,8 +34,6 @@ void StartupDeserializer::DeserializeInto(Isolate* isolate) {
 
   {
     DisallowHeapAllocation no_gc;
-
-    isolate->heap()->IterateStrongRoots(this, VISIT_ONLY_STRONG_ROOT_LIST);
     isolate->heap()->IterateSmiRoots(this);
     isolate->heap()->IterateStrongRoots(this, VISIT_ONLY_STRONG);
     isolate->heap()->RepairFreeListsAfterDeserialization();
@@ -108,8 +106,6 @@ void StartupDeserializer::PrintDisassembledCodeObjects() {
 void StartupDeserializer::RehashHeap() {
   DCHECK(FLAG_rehash_snapshot && can_rehash());
   isolate()->heap()->InitializeHashSeed();
-  isolate()->heap()->string_table()->Rehash();
-  isolate()->heap()->weak_object_to_code_table()->Rehash();
   Rehash();
 }
 

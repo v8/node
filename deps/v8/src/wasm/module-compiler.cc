@@ -615,8 +615,10 @@ Handle<Code> CompileLazy(Isolate* isolate) {
   Handle<WasmInstanceObject> instance;
   Handle<FixedArray> exp_deopt_data;
   int func_index = -1;
+  // If the lazy compile stub has deopt data, use that to determine the
+  // instance and function index. Otherwise this must be a wasm->wasm call
+  // within one instance, so extract the information from the caller.
   if (lazy_compile_code->deoptimization_data()->length() > 0) {
-    // Then it's an indirect call or via JS->wasm wrapper.
     DCHECK_LE(2, lazy_compile_code->deoptimization_data()->length());
     exp_deopt_data = handle(lazy_compile_code->deoptimization_data(), isolate);
     auto* weak_cell = WeakCell::cast(exp_deopt_data->get(0));
@@ -810,14 +812,20 @@ Handle<Code> LazyCompilationOrchestrator::CompileLazy(
     non_compiled_functions.push_back({0, exported_func_index});
   } else if (patch_caller) {
     DisallowHeapAllocation no_gc;
-    SeqOneByteString* module_bytes = compiled_module->module_bytes();
     SourcePositionTableIterator source_pos_iterator(
         caller->SourcePositionTable());
     DCHECK_EQ(2, caller->deoptimization_data()->length());
+    Handle<WeakCell> weak_caller_instance(
+        WeakCell::cast(caller->deoptimization_data()->get(0)), isolate);
+    Handle<WasmInstanceObject> caller_instance(
+        WasmInstanceObject::cast(weak_caller_instance->value()), isolate);
+    Handle<WasmCompiledModule> caller_module(caller_instance->compiled_module(),
+                                             isolate);
+    SeqOneByteString* module_bytes = caller_module->module_bytes();
     int caller_func_index = Smi::ToInt(caller->deoptimization_data()->get(1));
     const byte* func_bytes =
         module_bytes->GetChars() +
-        compiled_module->module()->functions[caller_func_index].code.offset();
+        caller_module->module()->functions[caller_func_index].code.offset();
     for (RelocIterator it(*caller, RelocInfo::kCodeTargetMask); !it.done();
          it.next()) {
       Code* callee =
@@ -1004,11 +1012,13 @@ size_t ModuleCompiler::InitializeCompilationUnits(
 }
 
 void ModuleCompiler::RestartCompilationTasks() {
+  v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate_);
+  std::shared_ptr<v8::TaskRunner> task_runner =
+      V8::GetCurrentPlatform()->GetBackgroundTaskRunner(v8_isolate);
+
   base::LockGuard<base::Mutex> guard(&tasks_mutex_);
   for (; stopped_compilation_tasks_ > 0; --stopped_compilation_tasks_) {
-    V8::GetCurrentPlatform()->CallOnBackgroundThread(
-        new CompilationTask(this),
-        v8::Platform::ExpectedRuntime::kShortRunningTask);
+    task_runner->PostTask(base::make_unique<CompilationTask>(this));
   }
 }
 
@@ -1248,9 +1258,6 @@ Handle<Code> EnsureExportedLazyDeoptData(Isolate* isolate,
     return code;
   }
 
-  // TODO(6792): No longer needed once WebAssembly code is off heap.
-  CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
-
   // deopt_data:
   //   #0: weak instance
   //   #1: func_index
@@ -1262,6 +1269,8 @@ Handle<Code> EnsureExportedLazyDeoptData(Isolate* isolate,
     code = isolate->factory()->CopyCode(code);
     code_table->set(func_index, *code);
     deopt_data = isolate->factory()->NewFixedArray(2, TENURED);
+    // TODO(6792): No longer needed once WebAssembly code is off heap.
+    CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
     code->set_deoptimization_data(*deopt_data);
     if (!instance.is_null()) {
       Handle<WeakCell> weak_instance =
@@ -2834,6 +2843,10 @@ AsyncCompileJob::AsyncCompileJob(Isolate* isolate,
       async_counters_(isolate->async_counters()),
       bytes_copy_(std::move(bytes_copy)),
       wire_bytes_(bytes_copy_.get(), bytes_copy_.get() + length) {
+  v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
+  v8::Platform* platform = V8::GetCurrentPlatform();
+  foreground_task_runner_ = platform->GetForegroundTaskRunner(v8_isolate);
+  background_task_runner_ = platform->GetBackgroundTaskRunner(v8_isolate);
   // The handles for the context and promise must be deferred.
   DeferredHandleScope deferred(isolate);
   context_ = Handle<Context>(*context);
@@ -2975,11 +2988,7 @@ void AsyncCompileJob::StartForegroundTask() {
   ++num_pending_foreground_tasks_;
   DCHECK_EQ(1, num_pending_foreground_tasks_);
 
-  v8::Platform* platform = V8::GetCurrentPlatform();
-  // TODO(ahaas): This is a CHECK to debug issue 764313.
-  CHECK(platform);
-  platform->CallOnForegroundThread(reinterpret_cast<v8::Isolate*>(isolate_),
-                                   new CompileTask(this, true));
+  foreground_task_runner_->PostTask(base::make_unique<CompileTask>(this, true));
 }
 
 template <typename Step, typename... Args>
@@ -2989,8 +2998,8 @@ void AsyncCompileJob::DoSync(Args&&... args) {
 }
 
 void AsyncCompileJob::StartBackgroundTask() {
-  V8::GetCurrentPlatform()->CallOnBackgroundThread(
-      new CompileTask(this, false), v8::Platform::kShortRunningTask);
+  background_task_runner_->PostTask(
+      base::make_unique<CompileTask>(this, false));
 }
 
 void AsyncCompileJob::RestartBackgroundTasks() {

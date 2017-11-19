@@ -191,6 +191,7 @@ enum class ObjectType {
 #undef ENUM_STRUCT_ELEMENT
 
 class AccessCheckNeeded;
+class ClassBoilerplate;
 class CompilationCacheTable;
 class Constructor;
 class Filler;
@@ -1045,6 +1046,8 @@ class V8_EXPORT_PRIVATE CodeAssembler {
       const CodeAssemblerCallback& call_epilogue);
   void UnregisterCallGenerationCallbacks();
 
+  bool Word32ShiftIsSafe() const;
+
  private:
   RawMachineAssembler* raw_assembler() const;
 
@@ -1190,11 +1193,13 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      const CallInterfaceDescriptor& descriptor, Code::Kind kind,
                      const char* name, size_t result_size = 1,
-                     uint32_t stub_key = 0);
+                     uint32_t stub_key = 0,
+                     int32_t builtin_index = Builtins::kNoBuiltinId);
 
   // Create with JSCall linkage.
   CodeAssemblerState(Isolate* isolate, Zone* zone, int parameter_count,
-                     Code::Kind kind, const char* name);
+                     Code::Kind kind, const char* name,
+                     int32_t builtin_index = Builtins::kNoBuiltinId);
 
   ~CodeAssemblerState();
 
@@ -1214,12 +1219,14 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
 
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      CallDescriptor* call_descriptor, Code::Kind kind,
-                     const char* name, uint32_t stub_key);
+                     const char* name, uint32_t stub_key,
+                     int32_t builtin_index);
 
   std::unique_ptr<RawMachineAssembler> raw_assembler_;
   Code::Kind kind_;
   const char* name_;
   uint32_t stub_key_;
+  int32_t builtin_index_;
   bool code_generated_;
   ZoneSet<CodeAssemblerVariable::Impl*> variables_;
   CodeAssemblerCallback call_prologue_;

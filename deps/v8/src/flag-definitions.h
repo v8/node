@@ -210,11 +210,7 @@ DEFINE_IMPLICATION(harmony_import_meta, harmony_dynamic_import)
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING_BASE(V)                                        \
-  V(harmony_strict_legacy_accessor_builtins,                            \
-    "treat __defineGetter__ and related functions as strict")           \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")             \
-  V(harmony_regexp_dotall, "harmony regexp dotAll flag")                \
-  V(harmony_regexp_lookbehind, "harmony regexp lookbehind")             \
   V(harmony_regexp_named_captures, "harmony regexp named captures")     \
   V(harmony_regexp_property, "harmony Unicode regexp property classes") \
   V(harmony_async_iteration, "harmony async iteration")                 \
@@ -270,6 +266,7 @@ DEFINE_BOOL(future, FUTURE_BOOL,
             "not-too-far future")
 
 DEFINE_IMPLICATION(future, preparser_scope_analysis)
+DEFINE_IMPLICATION(future, write_protect_code_memory)
 
 // Flags for experimental implementation features.
 DEFINE_BOOL(allocation_site_pretenuring, true,
@@ -479,7 +476,7 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable wasm structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
-DEFINE_BOOL(wasm_async_compilation, false,
+DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
 DEFINE_BOOL(wasm_stream_compilation, false,
             "enable streaming compilation for WebAssembly")
@@ -674,9 +671,9 @@ DEFINE_BOOL(force_marking_deque_overflows, false,
 DEFINE_BOOL(stress_compaction, false,
             "stress the GC compactor to flush out bugs (implies "
             "--force_marking_deque_overflows)")
-DEFINE_INT(stress_compaction_percentage, 0,
-           "Stress GC compaction by selecting X percent of pages as evacuation "
-           "candidates. It overrides stress_compaction.")
+DEFINE_BOOL(stress_compaction_random, false,
+            "Stress GC compaction by selecting random percent of pages as "
+            "evacuation candidates. It overrides stress_compaction.")
 DEFINE_BOOL(stress_incremental_marking, false,
             "force incremental marking for small heaps and run it more often")
 DEFINE_INT(stress_marking, 0,
@@ -889,6 +886,9 @@ DEFINE_BOOL(preparser_scope_analysis, true,
             "perform scope analysis for preparsed inner functions")
 DEFINE_IMPLICATION(preparser_scope_analysis, aggressive_lazy_inner_functions)
 
+// compiler.cc
+DEFINE_BOOL(background_compile, false, "enable background compilation")
+
 // simulator-arm.cc, simulator-arm64.cc and simulator-mips.cc
 DEFINE_BOOL(trace_sim, false, "Trace simulator execution")
 DEFINE_BOOL(debug_sim, false, "Enable debugging the simulator")
@@ -953,6 +953,10 @@ DEFINE_VALUE_IMPLICATION(runtime_call_stats, runtime_stats, 1)
 // snapshot-common.cc
 DEFINE_BOOL(lazy_deserialization, true,
             "Deserialize code lazily from the snapshot.")
+DEFINE_BOOL(lazy_handler_deserialization, false,
+            "Deserialize bytecode handlers lazily from the snapshot.")
+DEFINE_IMPLICATION(lazy_handler_deserialization, lazy_deserialization)
+DEFINE_IMPLICATION(future, lazy_handler_deserialization)
 DEFINE_BOOL(trace_lazy_deserialization, false, "Trace lazy deserialization.")
 DEFINE_BOOL(profile_deserialization, false,
             "Print the time it takes to deserialize the snapshot.")

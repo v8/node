@@ -85,14 +85,14 @@ def MakeProcessContext(context, suite_names):
 
 def GetCommand(test, context):
   d8testflag = []
-  shell = test.shell()
+  shell = test.suite.GetShellForTestCase(test)
   if shell == "d8":
     d8testflag = ["--test"]
   if utils.IsWindows():
     shell += ".exe"
   if context.random_seed:
     d8testflag += ["--random-seed=%s" % context.random_seed]
-  files, flags = test.suite.GetParametersForTestCase(test, context)
+  files, flags, env = test.suite.GetParametersForTestCase(test, context)
   cmd = (
       context.command_prefix +
       [os.path.abspath(os.path.join(context.shell_dir, shell))] +
@@ -102,11 +102,11 @@ def GetCommand(test, context):
       # Flags from test cases can overwrite extra cmd-line flags.
       flags
   )
-  return cmd
+  return cmd, env
 
 
 def _GetInstructions(test, context):
-  command = GetCommand(test, context)
+  command, env = GetCommand(test, context)
   timeout = context.timeout
   if ("--stress-opt" in test.flags or
       "--stress-opt" in context.mode_flags or
@@ -116,9 +116,10 @@ def _GetInstructions(test, context):
     timeout *= 2
   # FIXME(machenbach): Make this more OO. Don't expose default outcomes or
   # the like.
+
   if statusfile.IsSlow(test.outcomes or [statusfile.PASS]):
     timeout *= 2
-  return Instructions(command, test.id, timeout, context.verbose, test.env)
+  return Instructions(command, test.id, timeout, context.verbose, env)
 
 
 class Job(object):
@@ -161,8 +162,9 @@ class TestJob(Job):
     failures).
     """
     if context.sancov_dir and output.pid is not None:
+      shell = self.test.suite.GetShellForTestCase(self.test)
       sancov_file = os.path.join(
-          context.sancov_dir, "%s.%d.sancov" % (self.test.shell(), output.pid))
+          context.sancov_dir, "%s.%d.sancov" % (shell, output.pid))
 
       # Some tests are expected to fail and don't produce coverage data.
       if os.path.exists(sancov_file):

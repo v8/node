@@ -288,6 +288,7 @@ class Typer::Visitor : public Reducer {
 #undef DECLARE_METHOD
 
   static Type* ObjectIsArrayBufferView(Type*, Typer*);
+  static Type* ObjectIsBigInt(Type*, Typer*);
   static Type* ObjectIsCallable(Type*, Typer*);
   static Type* ObjectIsConstructor(Type*, Typer*);
   static Type* ObjectIsDetectableCallable(Type*, Typer*);
@@ -460,8 +461,8 @@ Type* Typer::Visitor::ToInteger(Type* type, Typer* t) {
 // static
 Type* Typer::Visitor::ToLength(Type* type, Typer* t) {
   // ES6 section 7.1.15 ToLength ( argument )
-  type = ToInteger(type, t);
   if (type->IsNone()) return type;
+  type = ToInteger(type, t);
   double min = type->Min();
   double max = type->Max();
   if (max <= 0.0) {
@@ -517,6 +518,12 @@ Type* Typer::Visitor::ToString(Type* type, Typer* t) {
 Type* Typer::Visitor::ObjectIsArrayBufferView(Type* type, Typer* t) {
   // TODO(turbofan): Introduce a Type::ArrayBufferView?
   if (!type->Maybe(Type::OtherObject())) return t->singleton_false_;
+  return Type::Boolean();
+}
+
+Type* Typer::Visitor::ObjectIsBigInt(Type* type, Typer* t) {
+  if (type->Is(Type::BigInt())) return t->singleton_true_;
+  if (!type->Maybe(Type::BigInt())) return t->singleton_false_;
   return Type::Boolean();
 }
 
@@ -895,6 +902,10 @@ Type* Typer::Visitor::TypeTypeGuard(Node* node) {
 }
 
 Type* Typer::Visitor::TypeDead(Node* node) { return Type::None(); }
+
+Type* Typer::Visitor::TypeDeadValue(Node* node) { return Type::None(); }
+
+Type* Typer::Visitor::TypeUnreachable(Node* node) { UNREACHABLE(); }
 
 // JS comparison operators.
 
@@ -1848,6 +1859,7 @@ Type* Typer::Visitor::TypeStringIndexOf(Node* node) { UNREACHABLE(); }
 Type* Typer::Visitor::TypeCheckBounds(Node* node) {
   Type* index = Operand(node, 0);
   Type* length = Operand(node, 1);
+  DCHECK(length->Is(Type::Unsigned31()));
   if (index->Maybe(Type::MinusZero())) {
     index = Type::Union(index, typer_->cache_.kSingletonZero, zone());
   }
@@ -1991,6 +2003,10 @@ Type* Typer::Visitor::TypeStoreTypedElement(Node* node) {
 
 Type* Typer::Visitor::TypeObjectIsArrayBufferView(Node* node) {
   return TypeUnaryOp(node, ObjectIsArrayBufferView);
+}
+
+Type* Typer::Visitor::TypeObjectIsBigInt(Node* node) {
+  return TypeUnaryOp(node, ObjectIsBigInt);
 }
 
 Type* Typer::Visitor::TypeObjectIsCallable(Node* node) {

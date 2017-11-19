@@ -1,0 +1,62 @@
+[eval]
+[eval]:1
+with(this){__filename}
+^^^^
+
+SyntaxError: Strict mode code may not include a with statement
+    at createScript (vm.js:80:10)
+    at Object.runInThisContext (vm.js:152:10)
+    at Object.<anonymous> ([eval]-wrapper:6:22)
+    at Module._compile (module.js:644:30)
+    at evalScript (bootstrap_node.js:472:27)
+    at bootstrap_node.js:168:11
+42
+42
+[eval]:1
+throw new Error("hello")
+^
+
+Error: hello
+    at [eval]:1:7
+    at ContextifyScript.Script.runInThisContext (vm.js:50:33)
+    at Object.runInThisContext (vm.js:152:38)
+    at Object.<anonymous> ([eval]-wrapper:6:22)
+    at Module._compile (module.js:644:30)
+    at evalScript (bootstrap_node.js:472:27)
+    at bootstrap_node.js:168:11
+[eval]:1
+throw new Error("hello")
+^
+
+Error: hello
+    at [eval]:1:7
+    at ContextifyScript.Script.runInThisContext (vm.js:50:33)
+    at Object.runInThisContext (vm.js:152:38)
+    at Object.<anonymous> ([eval]-wrapper:6:22)
+    at Module._compile (module.js:644:30)
+    at evalScript (bootstrap_node.js:472:27)
+    at bootstrap_node.js:168:11
+100
+[eval]:1
+var x = 100; y = x;
+               ^
+
+ReferenceError: y is not defined
+    at [eval]:1:16
+    at ContextifyScript.Script.runInThisContext (vm.js:50:33)
+    at Object.runInThisContext (vm.js:152:38)
+    at Object.<anonymous> ([eval]-wrapper:6:22)
+    at Module._compile (module.js:644:30)
+    at evalScript (bootstrap_node.js:472:27)
+    at bootstrap_node.js:168:11
+
+[eval]:1
+var ______________________________________________; throw 10
+                                                    ^
+10
+
+[eval]:1
+var ______________________________________________; throw 10
+                                                    ^
+10
+done

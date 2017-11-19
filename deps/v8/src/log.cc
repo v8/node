@@ -1283,7 +1283,7 @@ void Logger::FunctionEvent(const char* reason, Script* script, int script_id,
 void Logger::FunctionEvent(const char* reason, Script* script, int script_id,
                            double time_delta, int start_position,
                            int end_position, const char* function_name,
-                           int function_name_length) {
+                           size_t function_name_length) {
   if (!log_->IsEnabled() || !FLAG_log_function_events) return;
   Log::MessageBuilder msg(log_);
   AppendFunctionMessage(msg, reason, script, script_id, time_delta,
@@ -1598,6 +1598,7 @@ void Logger::LogBytecodeHandlers() {
       interpreter::Bytecode bytecode = interpreter::Bytecodes::FromByte(index);
       if (interpreter::Bytecodes::BytecodeHasHandler(bytecode, operand_scale)) {
         Code* code = interpreter->GetBytecodeHandler(bytecode, operand_scale);
+        if (isolate_->heap()->IsDeserializeLazyHandler(code)) continue;
         std::string bytecode_name =
             interpreter::Bytecodes::ToString(bytecode, operand_scale);
         PROFILE(isolate_, CodeCreateEvent(

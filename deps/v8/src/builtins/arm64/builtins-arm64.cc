@@ -213,30 +213,30 @@ void Generate_JSBuiltinsConstructStubHelper(MacroAssembler* masm) {
       __ Check(eq, kUnexpectedValue);
     }
 
-    // Add slots for the tagged argc and receiver, and round up to maintain
-    // alignment.
+    // Push number of arguments.
+    __ SmiTag(x11, argc);
+    __ Push(x11, padreg);
+
+    // Add a slot for the receiver, and round up to maintain alignment.
     Register slot_count = x2;
     Register slot_count_without_rounding = x12;
-    __ Add(slot_count_without_rounding, argc, 3);
+    __ Add(slot_count_without_rounding, argc, 2);
     __ Bic(slot_count, slot_count_without_rounding, 1);
     __ Claim(slot_count);
 
     // Preserve the incoming parameters on the stack.
     __ LoadRoot(x10, Heap::kTheHoleValueRootIndex);
-    __ SmiTag(x11, argc);
 
     // Compute a pointer to the slot immediately above the location on the
     // stack to which arguments will be later copied.
     __ SlotAddress(x2, argc);
 
-    // Poke the hole (receiver) and number of arguments (tagged) into the
-    // highest claimed slots, with padding between them if argc was odd.
-    __ Stp(x10, x11, MemOperand(x2));
+    // Poke the hole (receiver) in the highest slot.
+    __ Str(x10, MemOperand(x2));
     __ Tbnz(slot_count_without_rounding, 0, &already_aligned);
 
-    // Overwrite the previously written argc with padding, and store argc at the
-    // next highest slot.
-    __ Stp(padreg, x11, MemOperand(x2, 1 * kPointerSize));
+    // Store padding, if needed.
+    __ Str(padreg, MemOperand(x2, 1 * kPointerSize));
     __ Bind(&already_aligned);
 
     // Copy arguments to the expression stack.
@@ -254,13 +254,23 @@ void Generate_JSBuiltinsConstructStubHelper(MacroAssembler* masm) {
     //  --                     x0: number of arguments (untagged)
     //  --                     x1: constructor function
     //  --                     x3: new target
+    // If argc is odd:
     //  --     sp[0*kPointerSize]: argument n - 1
     //  --             ...
     //  -- sp[(n-1)*kPointerSize]: argument 0
     //  -- sp[(n+0)*kPointerSize]: the hole (receiver)
-    //  -- sp[(n+1)*kPointerSize]: optional padding, depending on argc.
-    //  -- sp[(n+1+(argc&1))*kPointerSize]: number of arguments (tagged)
-    //  -- sp[(n+2+(argc&1))*kPointerSize]: context (pushed by FrameScope)
+    //  -- sp[(n+1)*kPointerSize]: padding
+    //  -- sp[(n+2)*kPointerSize]: padding
+    //  -- sp[(n+3)*kPointerSize]: number of arguments (tagged)
+    //  -- sp[(n+4)*kPointerSize]: context (pushed by FrameScope)
+    // If argc is even:
+    //  --     sp[0*kPointerSize]: argument n - 1
+    //  --             ...
+    //  -- sp[(n-1)*kPointerSize]: argument 0
+    //  -- sp[(n+0)*kPointerSize]: the hole (receiver)
+    //  -- sp[(n+1)*kPointerSize]: padding
+    //  -- sp[(n+2)*kPointerSize]: number of arguments (tagged)
+    //  -- sp[(n+3)*kPointerSize]: context (pushed by FrameScope)
     // -----------------------------------
 
     // Call the function.
@@ -512,7 +522,6 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- x0 : the value to pass to the generator
   //  -- x1 : the JSGeneratorObject to resume
-  //  -- x2 : the resume mode (tagged)
   //  -- lr : return address
   // -----------------------------------
   __ AssertGeneratorObject(x1);
@@ -521,9 +530,6 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   __ Str(x0, FieldMemOperand(x1, JSGeneratorObject::kInputOrDebugPosOffset));
   __ RecordWriteField(x1, JSGeneratorObject::kInputOrDebugPosOffset, x0, x3,
                       kLRHasNotBeenSaved, kDontSaveFPRegs);
-
-  // Store resume mode into generator object.
-  __ Str(x2, FieldMemOperand(x1, JSGeneratorObject::kResumeModeOffset));
 
   // Load suspended function and context.
   __ Ldr(x4, FieldMemOperand(x1, JSGeneratorObject::kFunctionOffset));
@@ -568,7 +574,6 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
 
   // ----------- S t a t e -------------
   //  -- x1                       : the JSGeneratorObject to resume
-  //  -- x2                       : the resume mode (tagged)
   //  -- x4                       : generator function
   //  -- x10                      : argument count
   //  -- cp                       : generator context
@@ -619,10 +624,10 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   __ Bind(&prepare_step_in_if_stepping);
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
-    __ Push(x1, x2);
+    __ Push(x1);
     __ PushArgument(x4);
     __ CallRuntime(Runtime::kDebugOnFunctionCall);
-    __ Pop(x2, x1);
+    __ Pop(x1);
     __ Ldr(x4, FieldMemOperand(x1, JSGeneratorObject::kFunctionOffset));
   }
   __ B(&stepping_prepared);
@@ -630,9 +635,9 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   __ Bind(&prepare_step_in_suspended_generator);
   {
     FrameScope scope(masm, StackFrame::INTERNAL);
-    __ Push(x1, x2);
+    __ Push(x1);
     __ CallRuntime(Runtime::kDebugPrepareStepInSuspendedGenerator);
-    __ Pop(x2, x1);
+    __ Pop(x1);
     __ Ldr(x4, FieldMemOperand(x1, JSGeneratorObject::kFunctionOffset));
   }
   __ B(&stepping_prepared);
@@ -682,6 +687,7 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
   Register argc = x3;
   Register argv = x4;
   Register scratch = x10;
+  Register slots_to_claim = x11;
 
   ProfileEntryHookStub::MaybeCallEntryHook(masm);
 
@@ -696,12 +702,14 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
 
     __ InitializeRootRegister();
 
-    // Push the function and the receiver onto the stack.
-    __ Push(function, receiver);
+    // Claim enough space for the arguments, the receiver and the function,
+    // including an optional slot of padding.
+    __ Add(slots_to_claim, argc, 3);
+    __ Bic(slots_to_claim, slots_to_claim, 1);
 
     // Check if we have enough stack space to push all arguments.
     Label enough_stack_space, stack_overflow;
-    Generate_StackOverflowCheck(masm, argc, &stack_overflow);
+    Generate_StackOverflowCheck(masm, slots_to_claim, &stack_overflow);
     __ B(&enough_stack_space);
 
     __ Bind(&stack_overflow);
@@ -709,6 +717,15 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     __ Unreachable();
 
     __ Bind(&enough_stack_space);
+    __ Claim(slots_to_claim);
+
+    // Store padding (which might be overwritten).
+    __ SlotAddress(scratch, slots_to_claim);
+    __ Str(padreg, MemOperand(scratch, -kPointerSize));
+
+    // Store receiver and function on the stack.
+    __ SlotAddress(scratch, argc);
+    __ Stp(receiver, function, MemOperand(scratch));
 
     // Copy arguments to the stack in a loop, in reverse order.
     // x3: argc.
@@ -718,12 +735,8 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     // Skip the argument set up if we have no arguments.
     __ Cbz(argc, &done);
 
-    // Set scratch to the current position of the stack pointer, which marks
-    // the end of the argument copy.
-    __ SlotAddress(scratch, 0);
-
-    // Claim enough space for the arguments.
-    __ Claim(argc);
+    // scratch has been set to point to the location of the receiver, which
+    // marks the end of the argument copy.
 
     __ Bind(&loop);
     // Load the handle.

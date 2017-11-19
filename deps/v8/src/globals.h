@@ -148,6 +148,7 @@ const int kMinUInt16 = 0;
 const uint32_t kMaxUInt32 = 0xFFFFFFFFu;
 const int kMinUInt32 = 0;
 
+const int kUInt8Size = sizeof(uint8_t);
 const int kCharSize = sizeof(char);
 const int kShortSize = sizeof(short);  // NOLINT
 const int kIntSize = sizeof(int);
@@ -616,6 +617,8 @@ enum GarbageCollector { SCAVENGER, MARK_COMPACTOR, MINOR_MARK_COMPACTOR };
 
 enum Executability { NOT_EXECUTABLE, EXECUTABLE };
 
+enum Movability { kMovable, kImmovable };
+
 enum VisitMode {
   VISIT_ALL,
   VISIT_ALL_IN_MINOR_MC_MARK,
@@ -624,7 +627,6 @@ enum VisitMode {
   VISIT_ALL_IN_SWEEP_NEWSPACE,
   VISIT_ONLY_STRONG,
   VISIT_ONLY_STRONG_FOR_SERIALIZATION,
-  VISIT_ONLY_STRONG_ROOT_LIST,
 };
 
 // Flag indicating whether code is built into the VM (one of the natives files).

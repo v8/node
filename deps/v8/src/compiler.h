@@ -5,6 +5,7 @@
 #ifndef V8_COMPILER_H_
 #define V8_COMPILER_H_
 
+#include <forward_list>
 #include <memory>
 
 #include "src/allocation.h"
@@ -27,6 +28,8 @@ template <typename T>
 class ThreadedList;
 template <typename T>
 class ThreadedListZoneEntry;
+
+typedef std::forward_list<std::unique_ptr<CompilationJob>> CompilationJobList;
 
 // The V8 compiler API.
 //
@@ -54,12 +57,14 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
   static bool CompileOptimized(Handle<JSFunction> function, ConcurrencyMode);
   static MaybeHandle<JSArray> CompileForLiveEdit(Handle<Script> script);
 
-  // Prepare a compilation job for unoptimized code. Requires ParseAndAnalyse.
-  static CompilationJob* PrepareUnoptimizedCompilationJob(ParseInfo* parse_info,
-                                                          Isolate* isolate);
+  // Compile top level code on a background thread. Should be finalized by
+  // GetSharedFunctionInfoForBackgroundCompile.
+  static std::unique_ptr<CompilationJob> CompileTopLevelOnBackgroundThread(
+      ParseInfo* parse_info, AccountingAllocator* allocator,
+      CompilationJobList* inner_function_jobs);
 
   // Generate and install code from previously queued compilation job.
-  static bool FinalizeCompilationJob(CompilationJob* job);
+  static bool FinalizeCompilationJob(CompilationJob* job, Isolate* isolate);
 
   // Give the compiler a chance to perform low-latency initialization tasks of
   // the given {function} on its instantiation. Note that only the runtime will
@@ -128,6 +133,13 @@ class V8_EXPORT_PRIVATE Compiler : public AllStatic {
                                                           Handle<Script> script,
                                                           Isolate* isolate);
 
+  // Create a shared function info object for a Script that has already been
+  // compiled on a background thread.
+  static Handle<SharedFunctionInfo> GetSharedFunctionInfoForBackgroundCompile(
+      Handle<Script> script, ParseInfo* parse_info, int source_length,
+      CompilationJob* outer_function_job,
+      CompilationJobList* inner_function_jobs);
+
   // Create a shared function info object for a native function literal.
   static Handle<SharedFunctionInfo> GetSharedFunctionInfoForNative(
       v8::Extension* extension, Handle<String> name);
@@ -172,14 +184,14 @@ class V8_EXPORT_PRIVATE CompilationJob {
   virtual ~CompilationJob() {}
 
   // Prepare the compile job. Must be called on the main thread.
-  MUST_USE_RESULT Status PrepareJob();
+  MUST_USE_RESULT Status PrepareJob(Isolate* isolate);
 
   // Executes the compile job. Can be called on a background thread if
   // can_execute_on_background_thread() returns true.
   MUST_USE_RESULT Status ExecuteJob();
 
   // Finalizes the compile job. Must be called on the main thread.
-  MUST_USE_RESULT Status FinalizeJob();
+  MUST_USE_RESULT Status FinalizeJob(Isolate* isolate);
 
   // Report a transient failure, try again next time. Should only be called on
   // optimization compilation jobs.
@@ -190,8 +202,9 @@ class V8_EXPORT_PRIVATE CompilationJob {
   Status AbortOptimization(BailoutReason reason);
 
   void RecordOptimizedCompilationStats() const;
-  void RecordUnoptimizedCompilationStats() const;
-  void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag) const;
+  void RecordUnoptimizedCompilationStats(Isolate* isolate) const;
+  void RecordFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
+                                 Isolate* isolate) const;
 
   void set_stack_limit(uintptr_t stack_limit) { stack_limit_ = stack_limit; }
   uintptr_t stack_limit() const { return stack_limit_; }
@@ -203,9 +216,9 @@ class V8_EXPORT_PRIVATE CompilationJob {
 
  protected:
   // Overridden by the actual implementation.
-  virtual Status PrepareJobImpl() = 0;
+  virtual Status PrepareJobImpl(Isolate* isolate) = 0;
   virtual Status ExecuteJobImpl() = 0;
-  virtual Status FinalizeJobImpl() = 0;
+  virtual Status FinalizeJobImpl(Isolate* isolate) = 0;
 
  private:
   // TODO(6409): Remove parse_info once Fullcode and AstGraphBuilder are gone.

@@ -1337,7 +1337,9 @@ Handle<SharedFunctionInfo> FunctionTemplateInfo::GetOrCreateSharedFunctionInfo(
   }
 
   result->set_length(info->length());
-  if (class_name->IsString()) result->set_instance_class_name(*class_name);
+  if (class_name->IsString()) {
+    result->set_instance_class_name(String::cast(*class_name));
+  }
   result->set_api_func_data(*info);
   result->DontAdaptArguments();
   DCHECK(result->IsApiFunction());
@@ -3467,7 +3469,11 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
 #undef MAKE_STRUCT_CASE
     case CODE_TYPE: {
       Code* code = Code::cast(this);
-      os << "<Code " << Code::Kind2String(code->kind()) << ">";
+      os << "<Code " << Code::Kind2String(code->kind());
+      if (code->is_stub()) {
+        os << " " << CodeStub::MajorName(CodeStub::GetMajorKey(code));
+      }
+      os << ">";
       break;
     }
     case ODDBALL_TYPE: {
@@ -3634,7 +3640,9 @@ bool HeapObject::CanBeRehashed() const {
   DCHECK(NeedsRehashing());
   switch (map()->instance_type()) {
     case HASH_TABLE_TYPE:
-      return IsNameDictionary() || IsGlobalDictionary() || IsNumberDictionary();
+      // TODO(yangguo): actually support rehashing OrderedHash{Map,Set}.
+      return IsNameDictionary() || IsGlobalDictionary() ||
+             IsNumberDictionary() || IsStringTable() || IsWeakHashTable();
     case FIXED_ARRAY_TYPE:
       return IsDescriptorArrayTemplate();
     case TRANSITION_ARRAY_TYPE:
@@ -3658,12 +3666,11 @@ void HeapObject::RehashBasedOnMap() {
         NumberDictionary::cast(this)->Rehash();
       } else if (IsGlobalDictionary()) {
         GlobalDictionary::cast(this)->Rehash();
+      } else if (IsStringTable()) {
+        StringTable::cast(this)->Rehash();
+      } else if (IsWeakHashTable()) {
+        WeakHashTable::cast(this)->Rehash();
       } else {
-        // TODO(6593): Some hash tables cannot yet be rehashed based on the map,
-        // and are handled explicitly in StartupDeserializer::RehashHeap.
-        if (this == GetHeap()->empty_ordered_hash_table()) break;
-        if (this == GetHeap()->weak_object_to_code_table()) break;
-        if (this == GetHeap()->string_table()) break;
         UNREACHABLE();
       }
       break;
@@ -9573,7 +9580,8 @@ Handle<Map> Map::Create(Isolate* isolate, int inobject_properties) {
 
   // Adjust the map with the extra inobject properties.
   copy->set_instance_size(new_instance_size);
-  copy->SetInObjectProperties(inobject_properties);
+  copy->SetInObjectPropertiesStartInWords(JSObject::kHeaderSize / kPointerSize);
+  DCHECK_EQ(copy->GetInObjectProperties(), inobject_properties);
   copy->SetInObjectUnusedPropertyFields(inobject_properties);
   copy->set_visitor_id(Map::GetVisitorId(*copy));
   return copy;
@@ -12316,7 +12324,6 @@ static void ShrinkInstanceSize(Map* map, void* data) {
 #endif
   int slack = *reinterpret_cast<int*>(data);
   DCHECK_GE(slack, 0);
-  map->SetInObjectProperties(map->GetInObjectProperties() - slack);
   map->set_unused_property_fields(map->unused_property_fields() - slack);
   map->set_instance_size(map->instance_size() - slack * kPointerSize);
   map->set_construction_counter(Map::kNoSlackTracking);
@@ -13461,8 +13468,8 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
   if (shared->script() == *script_object) return;
   Isolate* isolate = shared->GetIsolate();
 
-  if (reset_preparsed_scope_data) {
-    shared->set_preparsed_scope_data(isolate->heap()->null_value());
+  if (reset_preparsed_scope_data && shared->HasPreParsedScopeData()) {
+    shared->ClearPreParsedScopeData();
   }
 
   // Add shared function info to new script's list. If a collection occurs,
@@ -13776,7 +13783,10 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   }
   shared_info->set_needs_home_object(lit->scope()->NeedsHomeObject());
   shared_info->set_function_literal_id(lit->function_literal_id());
-
+  DCHECK_IMPLIES(lit->instance_class_fields_initializer() != nullptr,
+                 IsClassConstructor(lit->kind()));
+  shared_info->set_requires_instance_fields_initializer(
+      lit->instance_class_fields_initializer() != nullptr);
   // For lazy parsed functions, the following flags will be inaccurate since we
   // don't have the information yet. They're set later in
   // SetSharedFunctionFlagsFromLiteral (compiler.cc), when the function is
@@ -14422,6 +14432,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   if (is_stub()) {
     const char* n = CodeStub::MajorName(CodeStub::GetMajorKey(this));
     os << "major_key = " << (n == nullptr ? "null" : n) << "\n";
+    os << "minor_key = " << CodeStub::MinorKeyFromKey(this->stub_key()) << "\n";
   }
   if ((name != nullptr) && (name[0] != '\0')) {
     os << "name = " << name << "\n";
@@ -14442,6 +14453,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
     os << "stack_slots = " << stack_slots() << "\n";
   }
   os << "compiler = " << (is_turbofanned() ? "turbofan" : "unknown") << "\n";
+  os << "address = " << static_cast<const void*>(this) << "\n";
 
   os << "Instructions (size = " << instruction_size() << ")\n";
   {
@@ -15607,7 +15619,6 @@ void Dictionary<Derived, Shape>::Print(std::ostream& os) {
   int capacity = dictionary->Capacity();
   for (int i = 0; i < capacity; i++) {
     Object* k = dictionary->KeyAt(i);
-    if (!Shape::IsLive(isolate, k)) continue;
     if (!dictionary->ToKey(isolate, i, &k)) continue;
     os << "\n   ";
     if (k->IsString()) {
@@ -15623,6 +15634,7 @@ template <typename Derived, typename Shape>
 void Dictionary<Derived, Shape>::Print() {
   OFStream os(stdout);
   Print(os);
+  os << std::endl;
 }
 #endif
 
@@ -15820,11 +15832,7 @@ JSRegExp::Flags RegExpFlagsFromString(Handle<String> flags, bool* success) {
         flag = JSRegExp::kMultiline;
         break;
       case 's':
-        if (FLAG_harmony_regexp_dotall) {
-          flag = JSRegExp::kDotAll;
-        } else {
-          return JSRegExp::Flags(0);
-        }
+        flag = JSRegExp::kDotAll;
         break;
       case 'u':
         flag = JSRegExp::kUnicode;
@@ -16315,7 +16323,7 @@ template class HashTable<CompilationCacheTable, CompilationCacheShape>;
 
 template class HashTable<ObjectHashTable, ObjectHashTableShape>;
 
-template class HashTable<WeakHashTable, WeakHashTableShape<2>>;
+template class HashTable<WeakHashTable, WeakHashTableShape>;
 
 template class HashTable<TemplateMap, TemplateMapShape>;
 
@@ -16748,6 +16756,9 @@ void MigrateExternalStringResource(Isolate* isolate, String* from, String* to) {
 }
 
 void MakeStringThin(String* string, String* internalized, Isolate* isolate) {
+  DCHECK_NE(string, internalized);
+  DCHECK(internalized->IsInternalizedString());
+
   if (string->IsExternalString()) {
     if (internalized->IsExternalOneByteString()) {
       MigrateExternalStringResource<ExternalOneByteString>(isolate, string,
@@ -16763,23 +16774,21 @@ void MakeStringThin(String* string, String* internalized, Isolate* isolate) {
     }
   }
 
-  if (!string->IsInternalizedString()) {
-    DisallowHeapAllocation no_gc;
-    int old_size = string->Size();
-    isolate->heap()->NotifyObjectLayoutChange(string, old_size, no_gc);
-    bool one_byte = internalized->IsOneByteRepresentation();
-    Handle<Map> map = one_byte ? isolate->factory()->thin_one_byte_string_map()
-                               : isolate->factory()->thin_string_map();
-    DCHECK_GE(old_size, ThinString::kSize);
-    string->synchronized_set_map(*map);
-    ThinString* thin = ThinString::cast(string);
-    thin->set_actual(internalized);
-    Address thin_end = thin->address() + ThinString::kSize;
-    int size_delta = old_size - ThinString::kSize;
-    if (size_delta != 0) {
-      Heap* heap = isolate->heap();
-      heap->CreateFillerObjectAt(thin_end, size_delta, ClearRecordedSlots::kNo);
-    }
+  DisallowHeapAllocation no_gc;
+  int old_size = string->Size();
+  isolate->heap()->NotifyObjectLayoutChange(string, old_size, no_gc);
+  bool one_byte = internalized->IsOneByteRepresentation();
+  Handle<Map> map = one_byte ? isolate->factory()->thin_one_byte_string_map()
+                             : isolate->factory()->thin_string_map();
+  DCHECK_GE(old_size, ThinString::kSize);
+  string->synchronized_set_map(*map);
+  ThinString* thin = ThinString::cast(string);
+  thin->set_actual(internalized);
+  Address thin_end = thin->address() + ThinString::kSize;
+  int size_delta = old_size - ThinString::kSize;
+  if (size_delta != 0) {
+    Heap* heap = isolate->heap();
+    heap->CreateFillerObjectAt(thin_end, size_delta, ClearRecordedSlots::kNo);
   }
 }
 
@@ -16794,7 +16803,9 @@ Handle<String> StringTable::LookupString(Isolate* isolate,
   Handle<String> result = LookupKey(isolate, &key);
 
   if (FLAG_thin_strings) {
-    MakeStringThin(*string, *result, isolate);
+    if (!string->IsInternalizedString()) {
+      MakeStringThin(*string, *result, isolate);
+    }
   } else {  // !FLAG_thin_strings
     if (string->IsConsString()) {
       Handle<ConsString> cons = Handle<ConsString>::cast(string);
@@ -16989,6 +17000,7 @@ Object* StringTable::LookupStringIfExists_NoAllocate(String* string) {
     return Smi::FromInt(ResultSentinel::kUnsupported);
   }
 
+  DCHECK(!string->IsInternalizedString());
   int entry = table->FindEntry(isolate, &key, key.Hash());
   if (entry != kNotFound) {
     String* internalized = String::cast(table->KeyAt(entry));
@@ -17002,11 +17014,16 @@ Object* StringTable::LookupStringIfExists_NoAllocate(String* string) {
   return Smi::FromInt(ResultSentinel::kNotFound);
 }
 
-String* StringTable::LookupKeyIfExists(Isolate* isolate, StringTableKey* key) {
+String* StringTable::ForwardStringIfExists(Isolate* isolate,
+                                           StringTableKey* key,
+                                           String* string) {
   Handle<StringTable> table = isolate->factory()->string_table();
   int entry = table->FindEntry(isolate, key);
-  if (entry != kNotFound) return String::cast(table->KeyAt(entry));
-  return nullptr;
+  if (entry == kNotFound) return nullptr;
+
+  String* canonical = String::cast(table->KeyAt(entry));
+  if (canonical != string) MakeStringThin(string, canonical, isolate);
+  return canonical;
 }
 
 Handle<StringSet> StringSet::New(Isolate* isolate) {
@@ -17412,6 +17429,23 @@ Handle<Derived> Dictionary<Derived, Shape>::AtPut(Handle<Derived> dictionary,
 }
 
 template <typename Derived, typename Shape>
+Handle<Derived>
+BaseNameDictionary<Derived, Shape>::AddNoUpdateNextEnumerationIndex(
+    Handle<Derived> dictionary, Key key, Handle<Object> value,
+    PropertyDetails details, int* entry_out) {
+  // Insert element at empty or deleted entry
+  return Dictionary<Derived, Shape>::Add(dictionary, key, value, details,
+                                         entry_out);
+}
+
+// GCC workaround: Explicitly instantiate template method for NameDictionary
+// to avoid "undefined reference" issues during linking.
+template Handle<NameDictionary>
+BaseNameDictionary<NameDictionary, NameDictionaryShape>::
+    AddNoUpdateNextEnumerationIndex(Handle<NameDictionary>, Handle<Name>,
+                                    Handle<Object>, PropertyDetails, int*);
+
+template <typename Derived, typename Shape>
 Handle<Derived> BaseNameDictionary<Derived, Shape>::Add(
     Handle<Derived> dictionary, Key key, Handle<Object> value,
     PropertyDetails details, int* entry_out) {
@@ -17422,7 +17456,7 @@ Handle<Derived> BaseNameDictionary<Derived, Shape>::Add(
   int index = dictionary->NextEnumerationIndex();
   details = details.set_index(index);
   dictionary->SetNextEnumerationIndex(index + 1);
-  return Dictionary<Derived, Shape>::Add(dictionary, key, value, details,
+  return AddNoUpdateNextEnumerationIndex(dictionary, key, value, details,
                                          entry_out);
 }
 
@@ -17889,8 +17923,9 @@ Handle<Derived> OrderedHashTable<Derived, entrysize>::Allocate(
   int num_buckets = capacity / kLoadFactor;
   Handle<FixedArray> backing_store = isolate->factory()->NewFixedArray(
       kHashTableStartIndex + num_buckets + (capacity * kEntrySize), pretenure);
-  backing_store->set_map_no_write_barrier(
-      isolate->heap()->ordered_hash_table_map());
+  Map* map = Map::cast(isolate->heap()->root(
+      static_cast<Heap::RootListIndex>(Derived::GetMapRootIndex())));
+  backing_store->set_map_no_write_barrier(map);
   Handle<Derived> table = Handle<Derived>::cast(backing_store);
   for (int i = 0; i < num_buckets; ++i) {
     table->set(kHashTableStartIndex + i, Smi::FromInt(kNotFound));
@@ -17946,7 +17981,8 @@ Handle<Derived> OrderedHashTable<Derived, entrysize>::Clear(
 template <class Derived, int entrysize>
 bool OrderedHashTable<Derived, entrysize>::HasKey(Isolate* isolate,
                                                   Derived* table, Object* key) {
-  DCHECK(table->IsOrderedHashTable());
+  DCHECK((entrysize == 1 && table->IsOrderedHashSet()) ||
+         (entrysize == 2 && table->IsOrderedHashMap()));
   DisallowHeapAllocation no_gc;
   int entry = table->FindEntry(isolate, key);
   return entry != kNotFound;
@@ -18004,6 +18040,22 @@ Handle<FixedArray> OrderedHashSet::ConvertToKeysArray(
   }
   result->Shrink(length);
   return result;
+}
+
+HeapObject* OrderedHashSet::GetEmpty(Isolate* isolate) {
+  return isolate->heap()->empty_ordered_hash_set();
+}
+
+HeapObject* OrderedHashMap::GetEmpty(Isolate* isolate) {
+  return isolate->heap()->empty_ordered_hash_map();
+}
+
+int OrderedHashSet::GetMapRootIndex() {
+  return Heap::kOrderedHashSetMapRootIndex;
+}
+
+int OrderedHashMap::GetMapRootIndex() {
+  return Heap::kOrderedHashMapMapRootIndex;
 }
 
 template <class Derived, int entrysize>
@@ -18424,7 +18476,7 @@ bool OrderedHashTableIterator<Derived, TableType>::HasMore() {
 
   if (index < used_capacity) return true;
 
-  set_table(isolate->heap()->empty_ordered_hash_table());
+  set_table(TableType::GetEmpty(isolate));
   return false;
 }
 

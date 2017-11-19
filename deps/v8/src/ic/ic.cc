@@ -369,12 +369,16 @@ static bool MigrateDeprecated(Handle<Object> object) {
   return true;
 }
 
-void IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
+bool IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
   if (new_state == PREMONOMORPHIC) {
     nexus()->ConfigurePremonomorphic();
   } else if (new_state == MEGAMORPHIC) {
     DCHECK_IMPLIES(!is_keyed(), key->IsName());
-    nexus()->ConfigureMegamorphic(key->IsName() ? PROPERTY : ELEMENT);
+    IcCheckType property_type = key->IsName() ? PROPERTY : ELEMENT;
+    if (!nexus()->ConfigureMegamorphic(property_type)) {
+      vector_set_ = true;
+      return false;
+    }
   } else {
     UNREACHABLE();
   }
@@ -383,6 +387,7 @@ void IC::ConfigureVectorState(IC::State new_state, Handle<Object> key) {
   OnFeedbackChanged(
       isolate(), *vector(), slot(), GetHostFunction(),
       new_state == PREMONOMORPHIC ? "Premonomorphic" : "Megamorphic");
+  return true;
 }
 
 void IC::ConfigureVectorState(Handle<Name> name, Handle<Map> map,
@@ -710,15 +715,14 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
   Handle<Object> receiver = lookup->GetReceiver();
   if (receiver->IsString() &&
       *lookup->name() == isolate()->heap()->length_string()) {
-    TRACE_HANDLER_STATS(isolate(), LoadIC_LoadFieldDH);
-    FieldIndex index = FieldIndex::ForInObjectOffset(String::kLengthOffset);
-    return LoadHandler::LoadField(isolate(), index);
+    TRACE_HANDLER_STATS(isolate(), LoadIC_StringLength);
+    return BUILTIN_CODE(isolate(), LoadIC_StringLength);
   }
 
   if (receiver->IsStringWrapper() &&
       *lookup->name() == isolate()->heap()->length_string()) {
-    TRACE_HANDLER_STATS(isolate(), LoadIC_StringLength);
-    return BUILTIN_CODE(isolate(), LoadIC_StringLength);
+    TRACE_HANDLER_STATS(isolate(), LoadIC_StringWrapperLength);
+    return BUILTIN_CODE(isolate(), LoadIC_StringWrapperLength);
   }
 
   // Use specialized code for getting prototype of functions.
@@ -768,11 +772,9 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
       // Use simple field loads for some well-known callback properties.
       // The method will only return true for absolute truths based on the
       // receiver maps.
-      int object_offset;
-      if (Accessors::IsJSObjectFieldAccessor(map, lookup->name(),
-                                             &object_offset)) {
+      FieldIndex index;
+      if (Accessors::IsJSObjectFieldAccessor(map, lookup->name(), &index)) {
         TRACE_HANDLER_STATS(isolate(), LoadIC_LoadFieldDH);
-        FieldIndex index = FieldIndex::ForInObjectOffset(object_offset, *map);
         return LoadHandler::LoadField(isolate(), index);
       }
       if (holder->IsJSModuleNamespace()) {
@@ -1395,6 +1397,7 @@ void StoreIC::UpdateCaches(LookupIterator* lookup, Handle<Object> value,
     if (created_new_transition_) {
       // The first time a transition is performed, there's a good chance that
       // it won't be taken again, so don't bother creating a handler.
+      TRACE_GENERIC_IC("new transition");
       TRACE_IC("StoreIC", lookup->name());
       return;
     }
@@ -1946,9 +1949,10 @@ MaybeHandle<Object> KeyedStoreIC::Store(Handle<Object> object,
                        JSReceiver::MAY_BE_STORE_FROM_KEYED),
         Object);
     if (vector_needs_update()) {
-      ConfigureVectorState(MEGAMORPHIC, key);
-      TRACE_GENERIC_IC("unhandled internalized string key");
-      TRACE_IC("StoreIC", key);
+      if (ConfigureVectorState(MEGAMORPHIC, key)) {
+        TRACE_GENERIC_IC("unhandled internalized string key");
+        TRACE_IC("StoreIC", key);
+      }
     }
     return store_handle;
   }

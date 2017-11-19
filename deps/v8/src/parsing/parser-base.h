@@ -14,6 +14,7 @@
 #include "src/base/hashmap.h"
 #include "src/counters.h"
 #include "src/globals.h"
+#include "src/log.h"
 #include "src/messages.h"
 #include "src/parsing/expression-classifier.h"
 #include "src/parsing/func-name-inferrer.h"
@@ -252,9 +253,9 @@ class ParserBase {
 
   ParserBase(Zone* zone, Scanner* scanner, uintptr_t stack_limit,
              v8::Extension* extension, AstValueFactory* ast_value_factory,
-             RuntimeCallStats* runtime_call_stats, bool parsing_module,
              PendingCompilationErrorHandler* pending_error_handler,
-             bool parsing_on_main_thread = true)
+             RuntimeCallStats* runtime_call_stats, Logger* logger,
+             int script_id, bool parsing_module, bool parsing_on_main_thread)
       : scope_(nullptr),
         original_scope_(nullptr),
         function_state_(nullptr),
@@ -263,6 +264,7 @@ class ParserBase {
         ast_value_factory_(ast_value_factory),
         ast_node_factory_(ast_value_factory, zone),
         runtime_call_stats_(runtime_call_stats),
+        logger_(logger),
         parsing_on_main_thread_(parsing_on_main_thread),
         parsing_module_(parsing_module),
         stack_limit_(stack_limit),
@@ -272,6 +274,7 @@ class ParserBase {
         scanner_(scanner),
         default_eager_compile_hint_(FunctionLiteral::kShouldLazyCompile),
         function_literal_id_(0),
+        script_id_(script_id),
         allow_natives_(false),
         allow_harmony_do_expressions_(false),
         allow_harmony_function_sent_(false),
@@ -371,15 +374,6 @@ class ParserBase {
     Scope* const outer_scope_;
   };
 
-  struct DestructuringAssignment {
-   public:
-    DestructuringAssignment(ExpressionT expression, Scope* scope)
-        : assignment(expression), scope(scope) {}
-
-    ExpressionT assignment;
-    Scope* scope;
-  };
-
   class FunctionState final : public BlockState {
    public:
     FunctionState(FunctionState** function_state_stack, Scope** scope_stack,
@@ -401,12 +395,12 @@ class ParserBase {
     void SetDestructuringAssignmentsScope(int pos, Scope* scope) {
       for (int i = pos; i < destructuring_assignments_to_rewrite_.length();
            ++i) {
-        destructuring_assignments_to_rewrite_[i].scope = scope;
+        destructuring_assignments_to_rewrite_[i]->set_scope(scope);
       }
     }
 
-    const ZoneList<DestructuringAssignment>&
-        destructuring_assignments_to_rewrite() const {
+    const ZoneList<RewritableExpressionT>&
+    destructuring_assignments_to_rewrite() const {
       return destructuring_assignments_to_rewrite_;
     }
 
@@ -455,8 +449,8 @@ class ParserBase {
     };
 
    private:
-    void AddDestructuringAssignment(DestructuringAssignment pair) {
-      destructuring_assignments_to_rewrite_.Add(pair, scope_->zone());
+    void AddDestructuringAssignment(RewritableExpressionT expr) {
+      destructuring_assignments_to_rewrite_.Add(expr, scope_->zone());
     }
 
     void AddNonPatternForRewriting(RewritableExpressionT expr, bool* ok) {
@@ -474,7 +468,7 @@ class ParserBase {
     FunctionState* outer_function_state_;
     DeclarationScope* scope_;
 
-    ZoneList<DestructuringAssignment> destructuring_assignments_to_rewrite_;
+    ZoneList<RewritableExpressionT> destructuring_assignments_to_rewrite_;
     ZoneList<RewritableExpressionT> non_patterns_to_rewrite_;
 
     ZoneList<typename ExpressionClassifier::Error> reported_errors_;
@@ -659,6 +653,8 @@ class ParserBase {
     return pending_error_handler()->stack_overflow();
   }
   void set_stack_overflow() { pending_error_handler()->set_stack_overflow(); }
+  int script_id() { return script_id_; }
+  void set_script_id(int id) { script_id_ = id; }
 
   INLINE(Token::Value peek()) {
     if (stack_overflow()) return Token::ILLEGAL;
@@ -1508,6 +1504,7 @@ class ParserBase {
   AstValueFactory* ast_value_factory_;  // Not owned.
   typename Types::Factory ast_node_factory_;
   RuntimeCallStats* runtime_call_stats_;
+  internal::Logger* logger_;
   bool parsing_on_main_thread_;
   const bool parsing_module_;
   uintptr_t stack_limit_;
@@ -1524,6 +1521,7 @@ class ParserBase {
   FunctionLiteral::EagerCompileHint default_eager_compile_hint_;
 
   int function_literal_id_;
+  int script_id_;
 
   bool allow_natives_;
   bool allow_harmony_do_expressions_;
@@ -2066,7 +2064,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseArrayLiteral(
   ExpressionT result =
       factory()->NewArrayLiteral(values, first_spread_index, pos);
   if (first_spread_index >= 0) {
-    auto rewritable = factory()->NewRewritableExpression(result);
+    auto rewritable = factory()->NewRewritableExpression(result, scope());
     impl()->QueueNonPatternForRewriting(rewritable, ok);
     if (!*ok) {
       // If the non-pattern rewriting mechanism is used in the future for
@@ -2973,8 +2971,9 @@ ParserBase<Impl>::ParseAssignmentExpression(bool accept_IN, bool* ok) {
   ExpressionT result = factory()->NewAssignment(op, expression, right, pos);
 
   if (is_destructuring_assignment) {
-    result = factory()->NewRewritableExpression(result);
-    impl()->QueueDestructuringAssignmentForRewriting(result);
+    auto rewritable = factory()->NewRewritableExpression(result, scope());
+    impl()->QueueDestructuringAssignmentForRewriting(rewritable);
+    result = rewritable;
   }
 
   return result;
@@ -3082,7 +3081,6 @@ template <typename Impl>
 typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseBinaryExpression(
     int prec, bool accept_IN, bool* ok) {
   DCHECK_GE(prec, 4);
-  SourceRange right_range;
   ExpressionT x = ParseUnaryExpression(CHECK_OK);
   for (int prec1 = Precedence(peek(), accept_IN); prec1 >= prec; prec1--) {
     // prec1 >= 4
@@ -3090,23 +3088,16 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseBinaryExpression(
       impl()->RewriteNonPattern(CHECK_OK);
       BindingPatternUnexpectedToken();
       ArrowFormalParametersUnexpectedToken();
-
-      SourceRangeScope right_range_scope(scanner(), &right_range);
       Token::Value op = Next();
       int pos = position();
 
       const bool is_right_associative = op == Token::EXP;
       const int next_prec = is_right_associative ? prec1 : prec1 + 1;
       ExpressionT y = ParseBinaryExpression(next_prec, accept_IN, CHECK_OK);
-      right_range_scope.Finalize();
       impl()->RewriteNonPattern(CHECK_OK);
 
       if (impl()->ShortcutNumericLiteralBinaryExpression(&x, y, op, pos)) {
         continue;
-      }
-
-      if (op == Token::OR || op == Token::AND) {
-        impl()->RecordExpressionSourceRange(y, right_range);
       }
 
       // For now we distinguish between comparisons and other binary
@@ -4317,6 +4308,8 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
   RuntimeCallTimerScope runtime_timer(
       runtime_call_stats_,
       counters[Impl::IsPreParser()][parsing_on_main_thread_]);
+  base::ElapsedTimer timer;
+  if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
 
   if (peek() == Token::ARROW && scanner_->HasAnyLineTerminatorBeforeNext()) {
     // ASI inserts `;` after arrow parameters if a line terminator is found.
@@ -4416,12 +4409,6 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
     impl()->RewriteDestructuringAssignments();
   }
 
-  if (FLAG_trace_preparse) {
-    Scope* scope = formal_parameters.scope;
-    PrintF("  [%s]: %i-%i (arrow function)\n",
-           is_lazy_top_level_function ? "Preparse no-resolution" : "Full parse",
-           scope->start_position(), scope->end_position());
-  }
   FunctionLiteralT function_literal = factory()->NewFunctionLiteral(
       impl()->EmptyIdentifierString(), formal_parameters.scope, body,
       expected_property_count, formal_parameters.num_parameters(),
@@ -4435,6 +4422,17 @@ ParserBase<Impl>::ParseArrowFunctionLiteral(
       formal_parameters.scope->start_position());
 
   impl()->AddFunctionForNameInference(function_literal);
+
+  if (V8_UNLIKELY((FLAG_log_function_events))) {
+    Scope* scope = formal_parameters.scope;
+    double ms = timer.Elapsed().InMillisecondsF();
+    const char* event_name =
+        is_lazy_top_level_function ? "preparse-no-resolution" : "parse";
+    const char* name = "arrow function";
+    logger_->FunctionEvent(event_name, nullptr, script_id(), ms,
+                           scope->start_position(), scope->end_position(), name,
+                           strlen(name));
+  }
 
   return function_literal;
 }

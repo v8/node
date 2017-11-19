@@ -116,15 +116,7 @@ Type* OperationTyper::Rangify(Type* type) {
   if (!type->Is(cache_.kInteger)) {
     return type;  // Give up on non-integer types.
   }
-  double min = type->Min();
-  double max = type->Max();
-  // Handle the degenerate case of empty bitset types (such as
-  // OtherUnsigned31 and OtherSigned32 on 64-bit architectures).
-  if (std::isnan(min)) {
-    DCHECK(std::isnan(max));
-    return type;
-  }
-  return Type::Range(min, max, zone());
+  return Type::Range(type->Min(), type->Max(), zone());
 }
 
 namespace {
@@ -619,7 +611,7 @@ Type* OperationTyper::SpeculativeSafeIntegerAdd(Type* lhs, Type* rhs) {
   // In either case the result will be in the safe integer range, so we
   // can bake in the type here. This needs to be in sync with
   // SimplifiedLowering::VisitSpeculativeAdditiveOp.
-  return Type::Intersect(result, cache_.kSafeInteger, zone());
+  return Type::Intersect(result, cache_.kSafeIntegerOrMinusZero, zone());
 }
 
 Type* OperationTyper::SpeculativeSafeIntegerSubtract(Type* lhs, Type* rhs) {
@@ -1064,6 +1056,7 @@ Type* JSType(Type* type) {
   if (type->Is(Type::Boolean())) return Type::Boolean();
   if (type->Is(Type::String())) return Type::String();
   if (type->Is(Type::Number())) return Type::Number();
+  if (type->Is(Type::BigInt())) return Type::BigInt();
   if (type->Is(Type::Undefined())) return Type::Undefined();
   if (type->Is(Type::Null())) return Type::Null();
   if (type->Is(Type::Symbol())) return Type::Symbol();

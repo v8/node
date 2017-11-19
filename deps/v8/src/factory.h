@@ -22,15 +22,15 @@ namespace internal {
 
 // Forward declarations.
 class AliasedArgumentsEntry;
-class BigInt;
 class BreakPointInfo;
 class BreakPoint;
 class BoilerplateDescription;
 class ConstantElementsPair;
 class CoverageInfo;
 class DebugInfo;
-class NewFunctionArgs;
+class FreshlyAllocatedBigInt;
 class JSModuleNamespace;
+class NewFunctionArgs;
 struct SourceRange;
 class PreParsedScopeData;
 class TemplateObjectDescription;
@@ -485,17 +485,9 @@ class V8_EXPORT_PRIVATE Factory final {
   Handle<HeapNumber> NewHeapNumber(MutableMode mode,
                                    PretenureFlag pretenure = NOT_TENURED);
 
-  // Allocates a new BigInt with {length} digits and zero-initializes them.
-  Handle<BigInt> NewBigInt(int length, PretenureFlag pretenure = NOT_TENURED);
-  // Initializes length and sign fields, but leaves digits uninitialized.
-  Handle<BigInt> NewBigIntRaw(int length,
-                              PretenureFlag pretenure = NOT_TENURED);
-  Handle<BigInt> NewBigIntFromInt(int value,
-                                  PretenureFlag pretenure = NOT_TENURED);
-  Handle<BigInt> NewBigIntFromSafeInteger(
-      double value, PretenureFlag pretenure = NOT_TENURED);
-
-  Handle<JSWeakMap> NewJSWeakMap();
+  // Allocates a new BigInt with {length} digits. Only to be used by
+  // MutableBigInt::New*.
+  Handle<FreshlyAllocatedBigInt> NewBigInt(int length);
 
   Handle<JSObject> NewArgumentsObject(Handle<JSFunction> callee, int length);
 
@@ -674,13 +666,14 @@ class V8_EXPORT_PRIVATE Factory final {
   // by containing this handle.
   Handle<Code> NewCode(const CodeDesc& desc, Code::Kind kind,
                        Handle<Object> self_reference,
+                       int32_t builtin_index = Builtins::kNoBuiltinId,
                        MaybeHandle<HandlerTable> maybe_handler_table =
                            MaybeHandle<HandlerTable>(),
                        MaybeHandle<ByteArray> maybe_source_position_table =
                            MaybeHandle<ByteArray>(),
                        MaybeHandle<DeoptimizationData> maybe_deopt_data =
                            MaybeHandle<DeoptimizationData>(),
-                       bool immovable = false, uint32_t stub_key = 0,
+                       Movability movability = kMovable, uint32_t stub_key = 0,
                        bool is_turbofanned = false, int stack_slots = 0,
                        int safepoint_table_offset = 0);
 
@@ -855,7 +848,7 @@ class V8_EXPORT_PRIVATE Factory final {
                                            PretenureFlag pretenure);
 
   // Creates a code object that is not yet fully initialized yet.
-  Handle<Code> NewCodeRaw(int object_size, bool immovable);
+  Handle<Code> NewCodeRaw(int object_size, Movability movability);
 
   // Attempt to find the number in a small cache.  If we finds it, return
   // the string representation of the number.  Otherwise return undefined.

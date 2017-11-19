@@ -1183,6 +1183,8 @@ Reduction JSBuiltinReducer::ReduceArrayShift(Node* node) {
         Node* loop = graph()->NewNode(common()->Loop(2), if_true1, if_true1);
         Node* eloop =
             graph()->NewNode(common()->EffectPhi(2), etrue1, etrue1, loop);
+        Node* terminate = graph()->NewNode(common()->Terminate(), eloop, loop);
+        NodeProperties::MergeControlToEnd(graph(), common(), terminate);
         Node* index = graph()->NewNode(
             common()->Phi(MachineRepresentation::kTagged, 2),
             jsgraph()->OneConstant(),
@@ -1366,7 +1368,7 @@ Reduction JSBuiltinReducer::ReduceCollectionSize(
 }
 
 Reduction JSBuiltinReducer::ReduceCollectionIteratorNext(
-    Node* node, int entry_size,
+    Node* node, int entry_size, Handle<HeapObject> empty_collection,
     InstanceType collection_iterator_instance_type_first,
     InstanceType collection_iterator_instance_type_last) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
@@ -1414,6 +1416,8 @@ Reduction JSBuiltinReducer::ReduceCollectionIteratorNext(
         graph()->NewNode(common()->Loop(2), control, control);
     Node* eloop = effect =
         graph()->NewNode(common()->EffectPhi(2), effect, effect, loop);
+    Node* terminate = graph()->NewNode(common()->Terminate(), eloop, loop);
+    NodeProperties::MergeControlToEnd(graph(), common(), terminate);
 
     // Check if reached the final table of the {receiver}.
     Node* table = effect = graph()->NewNode(
@@ -1502,6 +1506,8 @@ Reduction JSBuiltinReducer::ReduceCollectionIteratorNext(
     Node* loop = graph()->NewNode(common()->Loop(2), control, control);
     Node* eloop =
         graph()->NewNode(common()->EffectPhi(2), effect, effect, loop);
+    Node* terminate = graph()->NewNode(common()->Terminate(), eloop, loop);
+    NodeProperties::MergeControlToEnd(graph(), common(), terminate);
     Node* iloop = graph()->NewNode(
         common()->Phi(MachineRepresentation::kTagged, 2), index, index, loop);
     NodeProperties::SetType(iloop, type_cache_.kFixedArrayLengthType);
@@ -1518,9 +1524,8 @@ Reduction JSBuiltinReducer::ReduceCollectionIteratorNext(
         efalse0 = graph()->NewNode(
             simplified()->StoreField(
                 AccessBuilder::ForJSCollectionIteratorTable()),
-            receiver,
-            jsgraph()->HeapConstant(factory()->empty_ordered_hash_table()),
-            efalse0, if_false0);
+            receiver, jsgraph()->HeapConstant(empty_collection), efalse0,
+            if_false0);
 
         controls[0] = if_false0;
         effects[0] = efalse0;
@@ -2822,9 +2827,9 @@ Reduction JSBuiltinReducer::Reduce(Node* node) {
       return ReduceCollectionIterator(node, JS_MAP_TYPE,
                                       Context::MAP_VALUE_ITERATOR_MAP_INDEX);
     case kMapIteratorNext:
-      return ReduceCollectionIteratorNext(node, OrderedHashMap::kEntrySize,
-                                          FIRST_MAP_ITERATOR_TYPE,
-                                          LAST_MAP_ITERATOR_TYPE);
+      return ReduceCollectionIteratorNext(
+          node, OrderedHashMap::kEntrySize, factory()->empty_ordered_hash_map(),
+          FIRST_MAP_ITERATOR_TYPE, LAST_MAP_ITERATOR_TYPE);
     case kMathAbs:
       reduction = ReduceMathAbs(node);
       break;
@@ -2951,9 +2956,9 @@ Reduction JSBuiltinReducer::Reduce(Node* node) {
       return ReduceCollectionIterator(node, JS_SET_TYPE,
                                       Context::SET_VALUE_ITERATOR_MAP_INDEX);
     case kSetIteratorNext:
-      return ReduceCollectionIteratorNext(node, OrderedHashSet::kEntrySize,
-                                          FIRST_SET_ITERATOR_TYPE,
-                                          LAST_SET_ITERATOR_TYPE);
+      return ReduceCollectionIteratorNext(
+          node, OrderedHashSet::kEntrySize, factory()->empty_ordered_hash_set(),
+          FIRST_SET_ITERATOR_TYPE, LAST_SET_ITERATOR_TYPE);
     case kStringFromCharCode:
       reduction = ReduceStringFromCharCode(node);
       break;

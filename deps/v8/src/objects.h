@@ -977,6 +977,7 @@ template <class C> inline bool Is(Object* obj);
   V(Callable)                             \
   V(CallHandlerInfo)                      \
   V(Cell)                                 \
+  V(ClassBoilerplate)                     \
   V(Code)                                 \
   V(CodeDataContainer)                    \
   V(CompilationCacheTable)                \
@@ -1063,6 +1064,8 @@ template <class C> inline bool Is(Object* obj);
   V(ObjectHashSet)                        \
   V(ObjectHashTable)                      \
   V(Oddball)                              \
+  V(OrderedHashMap)                       \
+  V(OrderedHashSet)                       \
   V(PreParsedScopeData)                   \
   V(PromiseCapability)                    \
   V(PropertyArray)                        \
@@ -1106,8 +1109,7 @@ template <class C> inline bool Is(Object* obj);
 
 #define HEAP_OBJECT_TEMPLATE_TYPE_LIST(V) \
   V(Dictionary)                           \
-  V(HashTable)                            \
-  V(OrderedHashTable)
+  V(HashTable)
 
 #define HEAP_OBJECT_TYPE_LIST(V)    \
   HEAP_OBJECT_ORDINARY_TYPE_LIST(V) \
@@ -1184,8 +1186,6 @@ class Object {
   // ES6, #sec-isarray.  NOT to be confused with %_IsArray.
   INLINE(MUST_USE_RESULT static Maybe<bool> IsArray(Handle<Object> object));
 
-  INLINE(bool IsOrderedHashSet() const);
-  INLINE(bool IsOrderedHashMap() const);
   INLINE(bool IsSmallOrderedHashTable() const);
 
   // Extract the number.
@@ -3933,6 +3933,8 @@ class JSFunction: public JSObject {
 
   static const int kLengthDescriptorIndex = 0;
   static const int kNameDescriptorIndex = 1;
+  // Home object descriptor index when function has a [[HomeObject]] slot.
+  static const int kMaybeHomeObjectDescriptorIndex = 2;
 
   // [context]: The context for this function.
   inline Context* context();

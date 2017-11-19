@@ -14,7 +14,7 @@
 #include "src/conversions.h"
 #include "src/isolate-inl.h"
 #include "src/macro-assembler.h"
-#include "src/objects/bigint-inl.h"
+#include "src/objects/bigint.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/module.h"
@@ -1413,55 +1413,9 @@ Handle<HeapNumber> Factory::NewHeapNumber(MutableMode mode,
                      HeapNumber);
 }
 
-Handle<BigInt> Factory::NewBigInt(int length, PretenureFlag pretenure) {
-  CALL_HEAP_FUNCTION(isolate(),
-                     isolate()->heap()->AllocateBigInt(length, true, pretenure),
-                     BigInt);
-}
-
-Handle<BigInt> Factory::NewBigIntRaw(int length, PretenureFlag pretenure) {
-  CALL_HEAP_FUNCTION(
-      isolate(), isolate()->heap()->AllocateBigInt(length, false, pretenure),
-      BigInt);
-}
-
-Handle<BigInt> Factory::NewBigIntFromSafeInteger(double value,
-                                                 PretenureFlag pretenure) {
-  if (value == 0) return NewBigInt(0);
-
-  uint64_t absolute = std::abs(value);
-
-#if V8_TARGET_ARCH_64_BIT
-  static_assert(sizeof(BigInt::digit_t) == sizeof(uint64_t),
-                "unexpected BigInt digit size");
-  Handle<BigInt> result = NewBigIntRaw(1);
-  result->set_digit(0, absolute);
-#else
-  static_assert(sizeof(BigInt::digit_t) == sizeof(uint32_t),
-                "unexpected BigInt digit size");
-  Handle<BigInt> result = NewBigIntRaw(2);
-  result->set_digit(0, absolute);
-  result->set_digit(1, absolute >> 32);
-#endif
-
-  result->set_sign(value < 0);  // Treats -0 like 0.
-  return result;
-}
-
-Handle<BigInt> Factory::NewBigIntFromInt(int value, PretenureFlag pretenure) {
-  if (value == 0) return NewBigInt(0);
-  Handle<BigInt> result = NewBigIntRaw(1);
-  if (value > 0) {
-    result->set_digit(0, value);
-  } else if (value == kMinInt) {
-    STATIC_ASSERT(kMinInt == -kMaxInt - 1);
-    result->set_digit(0, static_cast<BigInt::digit_t>(kMaxInt) + 1);
-    result->set_sign(true);
-  } else {
-    result->set_digit(0, -value);
-    result->set_sign(true);
-  }
-  return result;
+Handle<FreshlyAllocatedBigInt> Factory::NewBigInt(int length) {
+  CALL_HEAP_FUNCTION(isolate(), isolate()->heap()->AllocateBigInt(length),
+                     FreshlyAllocatedBigInt);
 }
 
 Handle<Object> Factory::NewError(Handle<JSFunction> constructor,
@@ -1792,17 +1746,17 @@ Handle<CodeDataContainer> Factory::NewCodeDataContainer(int flags) {
   return data_container;
 }
 
-Handle<Code> Factory::NewCodeRaw(int object_size, bool immovable) {
+Handle<Code> Factory::NewCodeRaw(int object_size, Movability movability) {
   CALL_HEAP_FUNCTION(isolate(),
-                     isolate()->heap()->AllocateCode(object_size, immovable),
+                     isolate()->heap()->AllocateCode(object_size, movability),
                      Code);
 }
 
 Handle<Code> Factory::NewCode(
     const CodeDesc& desc, Code::Kind kind, Handle<Object> self_ref,
-    MaybeHandle<HandlerTable> maybe_handler_table,
+    int32_t builtin_index, MaybeHandle<HandlerTable> maybe_handler_table,
     MaybeHandle<ByteArray> maybe_source_position_table,
-    MaybeHandle<DeoptimizationData> maybe_deopt_data, bool immovable,
+    MaybeHandle<DeoptimizationData> maybe_deopt_data, Movability movability,
     uint32_t stub_key, bool is_turbofanned, int stack_slots,
     int safepoint_table_offset) {
   Handle<ByteArray> reloc_info = NewByteArray(desc.reloc_size, TENURED);
@@ -1833,7 +1787,7 @@ Handle<Code> Factory::NewCode(
   int obj_size = Code::SizeFor(RoundUp(body_size, kObjectAlignment));
 
   CodeSpaceMemoryModificationScope code_allocation(isolate()->heap());
-  Handle<Code> code = NewCodeRaw(obj_size, immovable);
+  Handle<Code> code = NewCodeRaw(obj_size, movability);
   DCHECK(!isolate()->heap()->memory_allocator()->code_range()->valid() ||
          isolate()->heap()->memory_allocator()->code_range()->contains(
              code->address()) ||
@@ -1857,7 +1811,7 @@ Handle<Code> Factory::NewCode(
   code->set_source_position_table(*source_position_table);
   code->set_protected_instructions(*empty_fixed_array(), SKIP_WRITE_BARRIER);
   code->set_constant_pool_offset(desc.instr_size - desc.constant_pool_size);
-  code->set_builtin_index(-1);
+  code->set_builtin_index(builtin_index);
   code->set_trap_handler_index(Smi::FromInt(-1));
 
   switch (code->kind()) {
@@ -1893,8 +1847,7 @@ Handle<Code> Factory::NewCode(
 }
 
 Handle<Code> Factory::NewCodeForDeserialization(uint32_t size) {
-  const bool kNotImmovable = false;
-  return NewCodeRaw(size, kNotImmovable);
+  return NewCodeRaw(size, kMovable);
 }
 
 Handle<Code> Factory::CopyCode(Handle<Code> code) {
@@ -2647,8 +2600,6 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
   share->set_compiler_hints(0);
   share->set_kind(kind);
 
-  share->set_preparsed_scope_data(*null_value());
-
   share->clear_padding();
 
   // Link into the list.
@@ -2826,15 +2777,6 @@ Handle<JSObject> Factory::NewArgumentsObject(Handle<JSFunction> callee,
         .Assert();
   }
   return result;
-}
-
-
-Handle<JSWeakMap> Factory::NewJSWeakMap() {
-  // TODO(adamk): Currently the map is only created three times per
-  // isolate. If it's created more often, the map should be moved into the
-  // strong root list.
-  Handle<Map> map = NewMap(JS_WEAK_MAP_TYPE, JSWeakMap::kSize);
-  return Handle<JSWeakMap>::cast(NewJSObjectFromMap(map));
 }
 
 Handle<Map> Factory::ObjectLiteralMapFromCache(Handle<Context> native_context,
@@ -3092,6 +3034,15 @@ Handle<Map> Factory::CreateStrictFunctionMap(
     map->AppendDescriptor(&d);
   }
 
+  STATIC_ASSERT(JSFunction::kMaybeHomeObjectDescriptorIndex == 2);
+  if (IsFunctionModeWithHomeObject(function_mode)) {
+    // Add home object field.
+    Handle<Name> name = isolate()->factory()->home_object_symbol();
+    Descriptor d = Descriptor::DataField(name, field_index++, DONT_ENUM,
+                                         Representation::Tagged());
+    map->AppendDescriptor(&d);
+  }
+
   if (IsFunctionModeWithPrototype(function_mode)) {
     // Add prototype accessor.
     PropertyAttributes attribs =
@@ -3099,14 +3050,6 @@ Handle<Map> Factory::CreateStrictFunctionMap(
                                                            : ro_attribs;
     Descriptor d = Descriptor::AccessorConstant(
         prototype_string(), function_prototype_accessor(), attribs);
-    map->AppendDescriptor(&d);
-  }
-
-  if (IsFunctionModeWithHomeObject(function_mode)) {
-    // Add home object field.
-    Handle<Name> name = isolate()->factory()->home_object_symbol();
-    Descriptor d = Descriptor::DataField(name, field_index++, DONT_ENUM,
-                                         Representation::Tagged());
     map->AppendDescriptor(&d);
   }
   DCHECK_EQ(inobject_properties_count, field_index);
@@ -3117,6 +3060,7 @@ Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
   Handle<Map> map = NewMap(JS_FUNCTION_TYPE, JSFunction::kSizeWithPrototype);
   map->set_has_prototype_slot(true);
   map->set_is_constructor(true);
+  map->set_is_prototype_map(true);
   map->set_is_callable();
   Map::SetPrototype(map, empty_function);
 
@@ -3125,8 +3069,8 @@ Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
   //
   Map::EnsureDescriptorSlack(map, 2);
 
-  PropertyAttributes rw_attribs =
-      static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE);
+  PropertyAttributes ro_attribs =
+      static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE | READ_ONLY);
   PropertyAttributes roc_attribs =
       static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY);
 
@@ -3140,7 +3084,7 @@ Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
   {
     // Add prototype accessor.
     Descriptor d = Descriptor::AccessorConstant(
-        prototype_string(), function_prototype_accessor(), rw_attribs);
+        prototype_string(), function_prototype_accessor(), ro_attribs);
     map->AppendDescriptor(&d);
   }
   return map;

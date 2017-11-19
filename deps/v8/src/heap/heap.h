@@ -104,10 +104,13 @@ using v8::MemoryPressureLevel;
   V(Map, descriptor_array_map, DescriptorArrayMap)                             \
   V(Map, fixed_double_array_map, FixedDoubleArrayMap)                          \
   V(Map, mutable_heap_number_map, MutableHeapNumberMap)                        \
-  V(Map, ordered_hash_table_map, OrderedHashTableMap)                          \
+  V(Map, ordered_hash_map_map, OrderedHashMapMap)                              \
+  V(Map, ordered_hash_set_map, OrderedHashSetMap)                              \
   V(Map, name_dictionary_map, NameDictionaryMap)                               \
   V(Map, global_dictionary_map, GlobalDictionaryMap)                           \
   V(Map, number_dictionary_map, NumberDictionaryMap)                           \
+  V(Map, string_table_map, StringTableMap)                                     \
+  V(Map, weak_hash_table_map, WeakHashTableMap)                                \
   V(Map, sloppy_arguments_elements_map, SloppyArgumentsElementsMap)            \
   V(Map, small_ordered_hash_map_map, SmallOrderedHashMapMap)                   \
   V(Map, small_ordered_hash_set_map, SmallOrderedHashSetMap)                   \
@@ -190,7 +193,8 @@ using v8::MemoryPressureLevel;
   V(FixedArray, empty_sloppy_arguments_elements, EmptySloppyArgumentsElements) \
   V(NumberDictionary, empty_slow_element_dictionary,                           \
     EmptySlowElementDictionary)                                                \
-  V(FixedArray, empty_ordered_hash_table, EmptyOrderedHashTable)               \
+  V(FixedArray, empty_ordered_hash_map, EmptyOrderedHashMap)                   \
+  V(FixedArray, empty_ordered_hash_set, EmptyOrderedHashSet)                   \
   V(PropertyCell, empty_property_cell, EmptyPropertyCell)                      \
   V(WeakCell, empty_weak_cell, EmptyWeakCell)                                  \
   V(InterceptorInfo, noop_interceptor_info, NoOpInterceptorInfo)               \
@@ -241,6 +245,11 @@ using v8::MemoryPressureLevel;
   V(FixedArray, serialized_templates, SerializedTemplates)                     \
   V(FixedArray, serialized_global_proxy_sizes, SerializedGlobalProxySizes)     \
   V(TemplateList, message_listeners, MessageListeners)                         \
+  /* DeserializeLazy handlers for lazy bytecode deserialization */             \
+  V(Object, deserialize_lazy_handler, DeserializeLazyHandler)                  \
+  V(Object, deserialize_lazy_handler_wide, DeserializeLazyHandlerWide)         \
+  V(Object, deserialize_lazy_handler_extra_wide,                               \
+    DeserializeLazyHandlerExtraWide)                                           \
   /* JS Entries */                                                             \
   V(Code, js_entry_code, JsEntryCode)                                          \
   V(Code, js_construct_entry_code, JsConstructEntryCode)
@@ -283,6 +292,7 @@ using v8::MemoryPressureLevel;
   V(CatchContextMap)                    \
   V(CellMap)                            \
   V(CodeMap)                            \
+  V(DescriptorArrayMap)                 \
   V(EmptyByteArray)                     \
   V(EmptyDescriptorArray)               \
   V(EmptyFixedArray)                    \
@@ -295,6 +305,8 @@ using v8::MemoryPressureLevel;
   V(EmptyFixedUint32Array)              \
   V(EmptyFixedUint8Array)               \
   V(EmptyFixedUint8ClampedArray)        \
+  V(EmptyOrderedHashMap)                \
+  V(EmptyOrderedHashSet)                \
   V(EmptyPropertyCell)                  \
   V(EmptyScopeInfo)                     \
   V(EmptyScript)                        \
@@ -335,14 +347,15 @@ using v8::MemoryPressureLevel;
   V(NoClosuresCellMap)                  \
   V(NullMap)                            \
   V(NullValue)                          \
+  V(NumberDictionaryMap)                \
   V(OneClosureCellMap)                  \
   V(OnePointerFillerMap)                \
   V(OptimizedOut)                       \
-  V(OrderedHashTableMap)                \
+  V(OrderedHashMapMap)                  \
+  V(OrderedHashSetMap)                  \
   V(PropertyArrayMap)                   \
   V(ScopeInfoMap)                       \
   V(ScriptContextMap)                   \
-  V(NumberDictionaryMap)                \
   V(SharedFunctionInfoMap)              \
   V(SloppyArgumentsElementsMap)         \
   V(SmallOrderedHashMapMap)             \
@@ -350,6 +363,7 @@ using v8::MemoryPressureLevel;
   V(SpeciesProtector)                   \
   V(StaleRegister)                      \
   V(StringLengthProtector)              \
+  V(StringTableMap)                     \
   V(SymbolMap)                          \
   V(TerminationException)               \
   V(TheHoleMap)                         \
@@ -363,6 +377,7 @@ using v8::MemoryPressureLevel;
   V(UninitializedMap)                   \
   V(UninitializedValue)                 \
   V(WeakCellMap)                        \
+  V(WeakHashTableMap)                   \
   V(WithContextMap)                     \
   PRIVATE_SYMBOL_LIST(V)
 
@@ -842,11 +857,6 @@ class Heap {
   inline int NextScriptId();
   inline int GetNextTemplateSerialNumber();
 
-  void SetArgumentsAdaptorDeoptPCOffset(int pc_offset);
-  void SetConstructStubCreateDeoptPCOffset(int pc_offset);
-  void SetConstructStubInvokeDeoptPCOffset(int pc_offset);
-  void SetInterpreterEntryReturnPCOffset(int pc_offset);
-
   void SetSerializedTemplates(FixedArray* templates);
   void SetSerializedGlobalProxySizes(FixedArray* sizes);
 
@@ -866,10 +876,6 @@ class Heap {
     external_memory_ -= external_memory_concurrently_freed_.Value();
     external_memory_concurrently_freed_.SetValue(0);
   }
-
-  void DeoptMarkedAllocationSites();
-
-  bool DeoptMaybeTenuredAllocationSites();
 
   void AddWeakNewSpaceObjectToCodeDependency(Handle<HeapObject> obj,
                                              Handle<WeakCell> code);
@@ -1095,6 +1101,11 @@ class Heap {
   void RegisterStrongRoots(Object** start, Object** end);
   void UnregisterStrongRoots(Object** start);
 
+  bool IsDeserializeLazyHandler(Code* code);
+  void SetDeserializeLazyHandler(Code* code);
+  void SetDeserializeLazyHandlerWide(Code* code);
+  void SetDeserializeLazyHandlerExtraWide(Code* code);
+
   // ===========================================================================
   // Inline allocation. ========================================================
   // ===========================================================================
@@ -1228,6 +1239,28 @@ class Heap {
   // - or it was communicated to GC using NotifyObjectLayoutChange.
   void VerifyObjectLayoutChange(HeapObject* object, Map* new_map);
 #endif
+
+  // ===========================================================================
+  // Deoptimization support API. ===============================================
+  // ===========================================================================
+
+  // Setters for code offsets of well-known deoptimization targets.
+  void SetArgumentsAdaptorDeoptPCOffset(int pc_offset);
+  void SetConstructStubCreateDeoptPCOffset(int pc_offset);
+  void SetConstructStubInvokeDeoptPCOffset(int pc_offset);
+  void SetInterpreterEntryReturnPCOffset(int pc_offset);
+
+  // Invalidates references in the given {code} object that are directly
+  // embedded within the instruction stream. Mutates write-protected code.
+  void InvalidateCodeEmbeddedObjects(Code* code);
+
+  // Invalidates references in the given {code} object that are referenced
+  // transitively from the deoptimization data. Mutates write-protected code.
+  void InvalidateCodeDeoptimizationData(Code* code);
+
+  void DeoptMarkedAllocationSites();
+
+  bool DeoptMaybeTenuredAllocationSites();
 
   // ===========================================================================
   // Embedder heap tracer support. =============================================
@@ -2006,9 +2039,7 @@ class Heap {
   MUST_USE_RESULT AllocationResult AllocateHeapNumber(
       MutableMode mode = IMMUTABLE, PretenureFlag pretenure = NOT_TENURED);
 
-  MUST_USE_RESULT AllocationResult AllocateBigInt(int length,
-                                                  bool zero_initialize,
-                                                  PretenureFlag pretenure);
+  MUST_USE_RESULT AllocationResult AllocateBigInt(int length);
 
   // Allocates a byte array of the specified length
   MUST_USE_RESULT AllocationResult
@@ -2206,8 +2237,8 @@ class Heap {
   MUST_USE_RESULT AllocationResult
       AllocateForeign(Address address, PretenureFlag pretenure = NOT_TENURED);
 
-  MUST_USE_RESULT AllocationResult
-      AllocateCode(int object_size, bool immovable);
+  MUST_USE_RESULT AllocationResult AllocateCode(int object_size,
+                                                Movability movability);
 
   void set_force_oom(bool value) { force_oom_ = value; }
 

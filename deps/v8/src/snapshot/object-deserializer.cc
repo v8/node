@@ -67,6 +67,9 @@ ObjectDeserializer::DeserializeWasmCompiledModule(
 
 MaybeHandle<HeapObject> ObjectDeserializer::Deserialize(Isolate* isolate) {
   Initialize(isolate);
+
+  CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
+
   if (!allocator()->ReserveSpace()) return MaybeHandle<HeapObject>();
 
   DCHECK(deserializing_user_code());
@@ -103,7 +106,7 @@ void ObjectDeserializer::CommitPostProcessedObjects() {
       isolate(), static_cast<int>(new_internalized_strings().size()));
   for (Handle<String> string : new_internalized_strings()) {
     StringTableInsertionKey key(*string);
-    DCHECK_NULL(StringTable::LookupKeyIfExists(isolate(), &key));
+    DCHECK_NULL(StringTable::ForwardStringIfExists(isolate(), &key, *string));
     StringTable::LookupKey(isolate(), &key);
   }
 

@@ -15,6 +15,7 @@
 #include "src/base/platform/platform.h"
 #include "src/char-predicates-inl.h"
 #include "src/compiler-dispatcher/compiler-dispatcher.h"
+#include "src/log.h"
 #include "src/messages.h"
 #include "src/objects-inl.h"
 #include "src/parsing/duplicate-finder.h"
@@ -211,7 +212,6 @@ FunctionLiteral* Parser::DefaultConstructor(const AstRawString* name,
       parameter_count, FunctionLiteral::kNoDuplicateParameters,
       FunctionLiteral::kAnonymousExpression, default_eager_compile_hint(), pos,
       true, GetNextFunctionLiteralId());
-
   return function_literal;
 }
 
@@ -498,8 +498,10 @@ Expression* Parser::NewV8Intrinsic(const AstRawString* name,
 Parser::Parser(ParseInfo* info)
     : ParserBase<Parser>(info->zone(), &scanner_, info->stack_limit(),
                          info->extension(), info->GetOrCreateAstValueFactory(),
-                         info->runtime_call_stats(), info->is_module(),
-                         info->pending_error_handler(), true),
+                         info->pending_error_handler(),
+                         info->runtime_call_stats(), info->logger(),
+                         info->script().is_null() ? -1 : info->script()->id(),
+                         info->is_module(), true),
       scanner_(info->unicode_cache(), use_counts_),
       reusable_preparser_(nullptr),
       mode_(PARSE_EAGERLY),  // Lazy mode must be set explicitly.
@@ -591,9 +593,7 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
                                            : &RuntimeCallStats::ParseProgram);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.ParseProgram");
   base::ElapsedTimer timer;
-  if (FLAG_trace_parse) {
-    timer.Start();
-  }
+  if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
   fni_ = new (zone()) FuncNameInferrer(ast_value_factory(), zone());
 
   // Initialize parser state.
@@ -617,23 +617,25 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
 
   HandleSourceURLComments(isolate, info->script());
 
-  if (FLAG_trace_parse && result != nullptr) {
-    double ms = timer.Elapsed().InMillisecondsF();
-    if (info->is_eval()) {
-      PrintF("[parsing eval");
-    } else if (info->script()->name()->IsString()) {
-      String* name = String::cast(info->script()->name());
-      std::unique_ptr<char[]> name_chars = name->ToCString();
-      PrintF("[parsing script: %s", name_chars.get());
-    } else {
-      PrintF("[parsing script");
-    }
-    PrintF(" - took %0.3f ms]\n", ms);
-  }
   if (produce_cached_parse_data() && result != nullptr) {
     *info->cached_data() = logger.GetScriptData();
   }
   log_ = nullptr;
+
+  if (V8_UNLIKELY(FLAG_log_function_events) && result != nullptr) {
+    double ms = timer.Elapsed().InMillisecondsF();
+    const char* event_name = "parse-eval";
+    Script* script = *info->script();
+    int start = -1;
+    int end = -1;
+    if (!info->is_eval()) {
+      event_name = "parse-script";
+      start = 0;
+      end = String::cast(script->source())->length();
+    }
+    LOG(script->GetIsolate(),
+        FunctionEvent(event_name, script, -1, ms, start, end, "", 0));
+  }
   return result;
 }
 
@@ -755,9 +757,8 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info,
                                       &RuntimeCallStats::ParseFunction);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.ParseFunction");
   base::ElapsedTimer timer;
-  if (FLAG_trace_parse) {
-    timer.Start();
-  }
+  if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
+
   DeserializeScopeChain(info, info->maybe_outer_scope_info());
   DCHECK_EQ(factory()->zone(), info->zone());
 
@@ -773,12 +774,18 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info,
     result->set_inferred_name(inferred_name);
   }
 
-  if (FLAG_trace_parse && result != nullptr) {
+  if (V8_UNLIKELY(FLAG_log_function_events) && result != nullptr) {
     double ms = timer.Elapsed().InMillisecondsF();
     // We need to make sure that the debug-name is available.
     ast_value_factory()->Internalize(isolate);
-    std::unique_ptr<char[]> name_chars = result->GetDebugName();
-    PrintF("[parsing function: %s - took %0.3f ms]\n", name_chars.get(), ms);
+    DeclarationScope* function_scope = result->scope();
+    Script* script = *info->script();
+    std::unique_ptr<char[]> function_name = result->GetDebugName();
+    LOG(script->GetIsolate(),
+        FunctionEvent("parse-function", script, -1, ms,
+                      function_scope->start_position(),
+                      function_scope->end_position(), function_name.get(),
+                      strlen(function_name.get())));
   }
   return result;
 }
@@ -916,10 +923,22 @@ FunctionLiteral* Parser::DoParseFunction(ParseInfo* info,
       DCHECK_EQ(scope(), outer);
       result = DefaultConstructor(raw_name, IsDerivedConstructor(kind),
                                   info->start_position(), info->end_position());
+      if (info->requires_instance_fields_initializer()) {
+        result->set_instance_class_fields_initializer(
+            result->scope()->NewUnresolved(
+                factory(),
+                ast_value_factory()->dot_instance_fields_initializer_string()));
+      }
     } else {
       result = ParseFunctionLiteral(
           raw_name, Scanner::Location::invalid(), kSkipFunctionNameCheck, kind,
           kNoSourcePosition, function_type, info->language_mode(), &ok);
+      if (info->requires_instance_fields_initializer()) {
+        result->set_instance_class_fields_initializer(
+            result->scope()->NewUnresolved(
+                factory(),
+                ast_value_factory()->dot_instance_fields_initializer_string()));
+      }
     }
     // Make sure the results agree.
     DCHECK(ok == (result != nullptr));
@@ -2587,6 +2606,8 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
       parsing_on_main_thread_
           ? &RuntimeCallStats::ParseFunctionLiteral
           : &RuntimeCallStats::ParseBackgroundFunctionLiteral);
+  base::ElapsedTimer timer;
+  if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
 
   // Determine whether we can still lazy parse the inner function.
   // The preconditions are:
@@ -2687,13 +2708,17 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     }
 
     DCHECK_EQ(should_preparse, temp_zoned_);
-    if (V8_UNLIKELY(FLAG_trace_preparse)) {
-      PrintF("  [%s]: %i-%i %.*s\n",
-             should_preparse ? (is_top_level ? "Preparse no-resolution"
-                                             : "Preparse resolution")
-                             : "Full parse",
-             scope->start_position(), scope->end_position(),
-             function_name->byte_length(), function_name->raw_data());
+    if (V8_UNLIKELY(FLAG_log_function_events)) {
+      double ms = timer.Elapsed().InMillisecondsF();
+      const char* event_name = should_preparse
+                                   ? (is_top_level ? "preparse-no-resolution"
+                                                   : "preparse-resolution")
+                                   : "full-parse";
+      logger_->FunctionEvent(
+          event_name, nullptr, script_id(), ms, scope->start_position(),
+          scope->end_position(),
+          reinterpret_cast<const char*>(function_name->raw_data()),
+          function_name->byte_length());
     }
     if (V8_UNLIKELY(FLAG_runtime_stats)) {
       if (should_preparse) {
@@ -2821,7 +2846,7 @@ Parser::LazyParsingResult Parser::SkipFunction(
 
   PreParser::PreParseResult result = reusable_preparser()->PreParseFunction(
       function_name, kind, function_type, function_scope, is_inner_function,
-      may_abort, use_counts_, produced_preparsed_scope_data);
+      may_abort, use_counts_, produced_preparsed_scope_data, this->script_id());
 
   // Return immediately if pre-parser decided to abort parsing.
   if (result == PreParser::kPreParseAbort) return kLazyParsingAborted;
@@ -3312,26 +3337,25 @@ Expression* Parser::RewriteClassLiteral(Scope* block_scope,
   }
 
   FunctionLiteral* instance_fields_initializer_function = nullptr;
-  Variable* instance_fields_initializer_var = nullptr;
+  VariableProxy* instance_fields_initializer_proxy = nullptr;
   if (class_info->has_instance_class_fields) {
     instance_fields_initializer_function = CreateInitializerFunction(
         class_info->instance_fields_scope, class_info->instance_fields);
 
-    instance_fields_initializer_var = CreateSyntheticContextVariable(
+    Variable* instance_fields_initializer_var = CreateSyntheticContextVariable(
         ast_value_factory()->dot_instance_fields_initializer_string(),
         CHECK_OK);
+    instance_fields_initializer_proxy =
+        factory()->NewVariableProxy(instance_fields_initializer_var);
     class_info->constructor->set_instance_class_fields_initializer(
-        instance_fields_initializer_var);
-
-    // TODO(gsathya): Add support for lazy parsing instance class fields.
-    class_info->constructor->SetShouldEagerCompile();
+        instance_fields_initializer_proxy);
   }
 
   ClassLiteral* class_literal = factory()->NewClassLiteral(
       block_scope, class_info->variable, class_info->extends,
       class_info->constructor, class_info->properties,
       static_fields_initializer, instance_fields_initializer_function,
-      instance_fields_initializer_var, pos, end_pos,
+      instance_fields_initializer_proxy, pos, end_pos,
       class_info->has_name_static_property,
       class_info->has_static_computed_names, class_info->is_anonymous);
 
@@ -3463,6 +3487,9 @@ void Parser::UpdateStatistics(Isolate* isolate, Handle<Script> script) {
 
 void Parser::ParseOnBackground(ParseInfo* info) {
   parsing_on_main_thread_ = false;
+  if (!info->script().is_null()) {
+    set_script_id(info->script()->id());
+  }
 
   DCHECK_NULL(info->literal());
   FunctionLiteral* result = nullptr;
@@ -3849,15 +3876,13 @@ void Parser::RewriteDestructuringAssignments() {
   for (int i = assignments.length() - 1; i >= 0; --i) {
     // Rewrite list in reverse, so that nested assignment patterns are rewritten
     // correctly.
-    const DestructuringAssignment& pair = assignments.at(i);
-    RewritableExpression* to_rewrite =
-        pair.assignment->AsRewritableExpression();
+    RewritableExpression* to_rewrite = assignments[i];
     DCHECK_NOT_NULL(to_rewrite);
     if (!to_rewrite->is_rewritten()) {
       // Since this function is called at the end of parsing the program,
       // pair.scope may already have been removed by FinalizeBlockScope in the
       // meantime.
-      Scope* scope = pair.scope->GetUnremovedScope();
+      Scope* scope = to_rewrite->scope()->GetUnremovedScope();
       BlockState block_state(&scope_, scope);
       RewriteDestructuringAssignment(to_rewrite);
     }
@@ -4003,10 +4028,9 @@ Expression* Parser::RewriteSpreads(ArrayLiteral* lit) {
   return factory()->NewDoExpression(do_block, result, lit->position());
 }
 
-void Parser::QueueDestructuringAssignmentForRewriting(Expression* expr) {
-  DCHECK(expr->IsRewritableExpression());
-  function_state_->AddDestructuringAssignment(
-      DestructuringAssignment(expr, scope()));
+void Parser::QueueDestructuringAssignmentForRewriting(
+    RewritableExpression* expr) {
+  function_state_->AddDestructuringAssignment(expr);
 }
 
 void Parser::QueueNonPatternForRewriting(RewritableExpression* expr, bool* ok) {

@@ -124,19 +124,13 @@ void StartupSerializer::SerializeStrongReferences() {
   CHECK(isolate->handle_scope_implementer()->blocks()->empty());
   CHECK_EQ(0, isolate->global_handles()->global_handles_count());
   CHECK_EQ(0, isolate->eternal_handles()->NumberOfHandles());
-  // First visit immortal immovables to make sure they end up in the first page.
-  serializing_immortal_immovables_roots_ = true;
-  isolate->heap()->IterateStrongRoots(this, VISIT_ONLY_STRONG_ROOT_LIST);
-  // Check that immortal immovable roots are allocated on the first page.
-  DCHECK(allocator()->HasNotExceededFirstPageOfEachSpace());
-  serializing_immortal_immovables_roots_ = false;
-  // Visit the rest of the strong roots.
+  // Visit smi roots.
   // Clear the stack limits to make the snapshot reproducible.
   // Reset it again afterwards.
   isolate->heap()->ClearStackLimits();
   isolate->heap()->IterateSmiRoots(this);
   isolate->heap()->SetStackLimits();
-
+  // First visit immortal immovables to make sure they end up in the first page.
   isolate->heap()->IterateStrongRoots(this,
                                       VISIT_ONLY_STRONG_FOR_SERIALIZATION);
 }
@@ -152,20 +146,15 @@ void StartupSerializer::VisitRootPointers(Root root, Object** start,
     int skip = 0;
     for (Object** current = start; current < end; current++) {
       int root_index = static_cast<int>(current - start);
-      if (RootShouldBeSkipped(root_index)) {
-        skip += kPointerSize;
-        continue;
+      if ((*current)->IsSmi()) {
+        FlushSkip(skip);
+        PutSmi(Smi::cast(*current));
       } else {
-        if ((*current)->IsSmi()) {
-          FlushSkip(skip);
-          PutSmi(Smi::cast(*current));
-        } else {
-          SerializeObject(HeapObject::cast(*current), kPlain, kStartOfObject,
-                          skip);
-        }
-        root_has_been_serialized_.set(root_index);
-        skip = 0;
+        SerializeObject(HeapObject::cast(*current), kPlain, kStartOfObject,
+                        skip);
       }
+      root_has_been_serialized_.set(root_index);
+      skip = 0;
     }
     FlushSkip(skip);
   } else {
@@ -173,24 +162,10 @@ void StartupSerializer::VisitRootPointers(Root root, Object** start,
   }
 }
 
-bool StartupSerializer::RootShouldBeSkipped(int root_index) {
-  if (root_index == Heap::kStackLimitRootIndex ||
-      root_index == Heap::kRealStackLimitRootIndex) {
-    return true;
-  }
-  return Heap::RootIsImmortalImmovable(root_index) !=
-         serializing_immortal_immovables_roots_;
-}
-
 void StartupSerializer::CheckRehashability(HeapObject* obj) {
   if (!can_be_rehashed_) return;
   if (!obj->NeedsRehashing()) return;
   if (obj->CanBeRehashed()) return;
-  // We can only correctly rehash if the four hash tables below are the only
-  // ones that we deserialize.
-  if (obj == isolate()->heap()->empty_ordered_hash_table()) return;
-  if (obj == isolate()->heap()->weak_object_to_code_table()) return;
-  if (obj == isolate()->heap()->string_table()) return;
   can_be_rehashed_ = false;
 }
 

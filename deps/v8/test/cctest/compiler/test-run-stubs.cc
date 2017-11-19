@@ -24,7 +24,7 @@ class StubTester {
  public:
   StubTester(Isolate* isolate, Zone* zone, CodeStub* stub)
       : zone_(zone),
-        info_(ArrayVector("test"), isolate, zone, Code::STUB),
+        info_(ArrayVector("test"), zone, Code::STUB),
         interface_descriptor_(stub->GetCallInterfaceDescriptor()),
         descriptor_(Linkage::GetStubCallDescriptor(
             isolate, zone, interface_descriptor_,
@@ -37,7 +37,7 @@ class StubTester {
 
   StubTester(Isolate* isolate, Zone* zone, Builtins::Name name)
       : zone_(zone),
-        info_(ArrayVector("test"), isolate, zone, Code::STUB),
+        info_(ArrayVector("test"), zone, Code::STUB),
         interface_descriptor_(
             Builtins::CallableFor(isolate, name).descriptor()),
         descriptor_(Linkage::GetStubCallDescriptor(
@@ -101,12 +101,12 @@ class StubTester {
   FunctionTester tester_;
 };
 
-TEST(RunStringLengthStub) {
+TEST(RunStringWrapperLengthStub) {
   HandleAndZoneScope scope;
   Isolate* isolate = scope.main_isolate();
   Zone* zone = scope.main_zone();
 
-  StubTester tester(isolate, zone, Builtins::kLoadIC_StringLength);
+  StubTester tester(isolate, zone, Builtins::kLoadIC_StringWrapperLength);
 
   // Actuall call through to the stub, verifying its result.
   const char* testString = "Und das Lamm schrie HURZ!";

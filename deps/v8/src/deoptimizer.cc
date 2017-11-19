@@ -198,14 +198,11 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
       int deopt_index = safepoint.deoptimization_index();
 
       // Turbofan deopt is checked when we are patching addresses on stack.
-      bool is_non_deoptimizing_asm_code =
-          code->is_turbofanned() && !function->shared()->HasBytecodeArray();
       bool safe_if_deopt_triggered =
-          deopt_index != Safepoint::kNoDeoptimizationIndex ||
-          is_non_deoptimizing_asm_code;
+          deopt_index != Safepoint::kNoDeoptimizationIndex;
       bool is_builtin_code = code->kind() == Code::BUILTIN;
       DCHECK(topmost_optimized_code == nullptr || safe_if_deopt_triggered ||
-             is_non_deoptimizing_asm_code || is_builtin_code);
+             is_builtin_code);
       if (topmost_optimized_code == nullptr) {
         topmost_optimized_code = code;
         safe_to_deopt_topmost_optimized_code = safe_if_deopt_triggered;
@@ -214,16 +211,11 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
   }
 #endif
 
-  // TODO(mstarzinger,6792): This code-space modification section should be
-  // moved into {Heap} eventually and a safe wrapper be provided.
-  CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
-
   // We will use this set to mark those Code objects that are marked for
   // deoptimization and have not been found in stack frames.
   std::set<Code*> codes;
 
-  // Move marked code from the optimized code list to the deoptimized
-  // code list.
+  // Move marked code from the optimized code list to the deoptimized code list.
   // Walk over all optimized code objects in this native context.
   Code* prev = nullptr;
   Object* element = context->OptimizedCodeListHead();
@@ -234,7 +226,7 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
 
     if (code->marked_for_deoptimization()) {
       // Make sure that this object does not point to any garbage.
-      code->InvalidateEmbeddedObjects();
+      isolate->heap()->InvalidateCodeEmbeddedObjects(code);
       codes.insert(code);
 
       if (prev != nullptr) {
@@ -265,12 +257,10 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
   isolate->thread_manager()->IterateArchivedThreads(&visitor);
 
   // If there's no activation of a code in any stack then we can remove its
-  // deoptimization data. We do this to ensure that Code objects that will be
-  // unlinked won't be kept alive.
-  std::set<Code*>::iterator it;
-  for (it = codes.begin(); it != codes.end(); ++it) {
-    Code* code = *it;
-    code->set_deoptimization_data(isolate->heap()->empty_fixed_array());
+  // deoptimization data. We do this to ensure that code objects that are
+  // unlinked don't transitively keep objects alive unnecessarily.
+  for (Code* code : codes) {
+    isolate->heap()->InvalidateCodeDeoptimizationData(code);
   }
 }
 
@@ -1793,8 +1783,9 @@ void Deoptimizer::EnsureCodeForDeoptimizationEntry(Isolate* isolate,
   // Allocate the code as immovable since the entry addresses will be used
   // directly and there is no support for relocating them.
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::STUB, Handle<Object>(), MaybeHandle<HandlerTable>(),
-      MaybeHandle<ByteArray>(), MaybeHandle<DeoptimizationData>(), true);
+      desc, Code::STUB, Handle<Object>(), Builtins::kNoBuiltinId,
+      MaybeHandle<HandlerTable>(), MaybeHandle<ByteArray>(),
+      MaybeHandle<DeoptimizationData>(), kImmovable);
   CHECK(Heap::IsImmovable(*code));
 
   CHECK_NULL(data->deopt_entry_code_[type]);

@@ -13,7 +13,7 @@
 #include "src/layout-descriptor.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
-#include "src/objects/bigint-inl.h"
+#include "src/objects/bigint.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/literal-objects.h"
 #include "src/objects/module.h"
@@ -740,7 +740,7 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
   Isolate* isolate = GetIsolate();
   CHECK(function_data()->IsUndefined(isolate) || IsApiFunction() ||
         HasBytecodeArray() || HasAsmWasmData() ||
-        HasLazyDeserializationBuiltinId());
+        HasLazyDeserializationBuiltinId() || HasPreParsedScopeData());
 
   CHECK(function_identifier()->IsUndefined(isolate) || HasBuiltinFunctionId() ||
         HasInferredName());
@@ -753,10 +753,6 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
     CHECK(kind() == scope_info()->function_kind());
     CHECK_EQ(kind() == kModule, scope_info()->scope_type() == MODULE_SCOPE);
   }
-
-  CHECK(preparsed_scope_data()->IsNull(isolate) ||
-        preparsed_scope_data()->IsPreParsedScopeData());
-  VerifyObjectField(kPreParsedScopeDataOffset);
 }
 
 
@@ -945,7 +941,7 @@ void JSSet::JSSetVerify() {
   CHECK(IsJSSet());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  CHECK(table()->IsOrderedHashTable() || table()->IsUndefined(GetIsolate()));
+  CHECK(table()->IsOrderedHashSet() || table()->IsUndefined(GetIsolate()));
   // TODO(arv): Verify OrderedHashTable too.
 }
 
@@ -954,7 +950,7 @@ void JSMap::JSMapVerify() {
   CHECK(IsJSMap());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  CHECK(table()->IsOrderedHashTable() || table()->IsUndefined(GetIsolate()));
+  CHECK(table()->IsOrderedHashMap() || table()->IsUndefined(GetIsolate()));
   // TODO(arv): Verify OrderedHashTable too.
 }
 
@@ -963,7 +959,7 @@ void JSSetIterator::JSSetIteratorVerify() {
   CHECK(IsJSSetIterator());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  CHECK(table()->IsOrderedHashTable());
+  CHECK(table()->IsOrderedHashSet());
   CHECK(index()->IsSmi());
 }
 
@@ -972,7 +968,7 @@ void JSMapIterator::JSMapIteratorVerify() {
   CHECK(IsJSMapIterator());
   JSObjectVerify();
   VerifyHeapPointer(table());
-  CHECK(table()->IsOrderedHashTable());
+  CHECK(table()->IsOrderedHashMap());
   CHECK(index()->IsSmi());
 }
 

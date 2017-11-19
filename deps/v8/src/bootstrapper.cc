@@ -805,6 +805,9 @@ Handle<Map> CreateNonConstructorMap(Handle<Map> source_map,
     // TODO(ulan): Do not change instance size after map creation.
     int unused_property_fields = map->UnusedPropertyFields();
     map->set_instance_size(map->instance_size() + kPointerSize);
+    // The prototype slot shifts the in-object properties area by one slot.
+    map->SetInObjectPropertiesStartInWords(
+        map->GetInObjectPropertiesStartInWords() + 1);
     map->set_has_prototype_slot(true);
     map->SetInObjectUnusedPropertyFields(unused_property_fields);
   }
@@ -2468,6 +2471,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         native_context()->set_regexp_exec_function(*fun);
       }
 
+      SimpleInstallGetter(prototype, factory->dotAll_string(),
+                          Builtins::kRegExpPrototypeDotAllGetter, true);
       SimpleInstallGetter(prototype, factory->flags_string(),
                           Builtins::kRegExpPrototypeFlagsGetter, true);
       SimpleInstallGetter(prototype, factory->global_string(),
@@ -3300,11 +3305,18 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   }
 
   {  // -- W e a k M a p
-    Handle<JSFunction> cons =
-        InstallFunction(global, "WeakMap", JS_WEAK_MAP_TYPE, JSWeakMap::kSize,
-                        0, factory->the_hole_value(), Builtins::kIllegal);
+    Handle<JSFunction> cons = InstallFunction(
+        global, "WeakMap", JS_WEAK_MAP_TYPE, JSWeakMap::kSize, 0,
+        factory->the_hole_value(), Builtins::kWeakMapConstructor);
     InstallWithIntrinsicDefaultProto(isolate, cons,
                                      Context::JS_WEAK_MAP_FUN_INDEX);
+
+    Handle<SharedFunctionInfo> shared(cons->shared(), isolate);
+    shared->SetConstructStub(*BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
+    shared->set_instance_class_name(isolate->heap()->WeakMap_string());
+    shared->DontAdaptArguments();
+    shared->set_length(0);
+
     // Setup %WeakMapPrototype%.
     Handle<JSObject> prototype(JSObject::cast(cons->instance_prototype()));
 
@@ -3322,11 +3334,18 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   }
 
   {  // -- W e a k S e t
-    Handle<JSFunction> cons =
-        InstallFunction(global, "WeakSet", JS_WEAK_SET_TYPE, JSWeakSet::kSize,
-                        0, factory->the_hole_value(), Builtins::kIllegal);
+    Handle<JSFunction> cons = InstallFunction(
+        global, "WeakSet", JS_WEAK_SET_TYPE, JSWeakSet::kSize, 0,
+        factory->the_hole_value(), Builtins::kWeakSetConstructor);
     InstallWithIntrinsicDefaultProto(isolate, cons,
                                      Context::JS_WEAK_SET_FUN_INDEX);
+
+    Handle<SharedFunctionInfo> shared(cons->shared(), isolate);
+    shared->SetConstructStub(*BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
+    shared->set_instance_class_name(isolate->heap()->WeakSet_string());
+    shared->DontAdaptArguments();
+    shared->set_length(0);
+
     // Setup %WeakSetPrototype%.
     Handle<JSObject> prototype(JSObject::cast(cons->instance_prototype()));
 
@@ -3353,6 +3372,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // TODO(ulan): Do not change instance size after map creation.
     int unused_property_fields = proxy_function_map->UnusedPropertyFields();
     proxy_function_map->set_instance_size(JSFunction::kSizeWithPrototype);
+    // The prototype slot shifts the in-object properties area by one slot.
+    proxy_function_map->SetInObjectPropertiesStartInWords(
+        proxy_function_map->GetInObjectPropertiesStartInWords() + 1);
     proxy_function_map->set_has_prototype_slot(true);
     proxy_function_map->set_is_constructor(true);
     proxy_function_map->SetInObjectUnusedPropertyFields(unused_property_fields);
@@ -3745,7 +3767,7 @@ bool Genesis::CompileExtension(Isolate* isolate, v8::Extension* extension) {
             source, script_name, 0, 0, ScriptOriginOptions(),
             MaybeHandle<Object>(), context, extension, nullptr,
             ScriptCompiler::kNoCompileOptions,
-            ScriptCompiler::kNoCacheBecauseExtension, EXTENSION_CODE,
+            ScriptCompiler::kNoCacheBecauseV8Extension, EXTENSION_CODE,
             MaybeHandle<FixedArray>());
     if (!maybe_function_info.ToHandle(&function_info)) return false;
     cache->Add(name, function_info);
@@ -4246,7 +4268,6 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
   void Genesis::InitializeGlobal_##id() {}
 
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_do_expressions)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_lookbehind)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_named_captures)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_regexp_property)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_function_sent)
@@ -4256,7 +4277,6 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_dynamic_import)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_import_meta)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_template_escapes)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrict_constructor_return)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_strict_legacy_accessor_builtins)
 
 void InstallPublicSymbol(Factory* factory, Handle<Context> native_context,
                          const char* name, Handle<Symbol> value) {
@@ -4363,22 +4383,6 @@ void Genesis::InitializeGlobal_harmony_promise_finally() {
         0);
     native_context()->set_promise_thrower_finally_shared_fun(*info);
   }
-}
-
-void Genesis::InitializeGlobal_harmony_regexp_dotall() {
-  if (!FLAG_harmony_regexp_dotall) return;
-
-  Handle<JSFunction> constructor(native_context()->regexp_function());
-  Handle<JSObject> prototype(JSObject::cast(constructor->instance_prototype()));
-
-  SimpleInstallGetter(prototype, isolate()->factory()->dotAll_string(),
-                      Builtins::kRegExpPrototypeDotAllGetter, true);
-
-  // The regexp prototype map has changed because we added a property
-  // to it, so we update the saved map.
-  Handle<Map> prototype_map(prototype->map());
-  Map::SetShouldBeFastPrototypeMap(prototype_map, true, isolate());
-  native_context()->set_regexp_prototype_map(*prototype_map);
 }
 
 void Genesis::InitializeGlobal_harmony_bigint() {

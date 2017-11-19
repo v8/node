@@ -125,13 +125,13 @@ bool CodeRange::SetUp(size_t requested) {
   }
 
   // We are sure that we have mapped a block of requested addresses.
-  DCHECK(reservation.size() == requested);
+  DCHECK_GE(reservation.size(), requested);
   Address base = reinterpret_cast<Address>(reservation.address());
 
   // On some platforms, specifically Win64, we need to reserve some pages at
   // the beginning of an executable space.
   if (reserved_area > 0) {
-    if (!reservation.Commit(base, reserved_area, true)) return false;
+    if (!reservation.Commit(base, reserved_area)) return false;
 
     base += reserved_area;
   }
@@ -414,7 +414,7 @@ bool MemoryAllocator::CanFreeMemoryChunk(MemoryChunk* chunk) {
 
 bool MemoryAllocator::CommitMemory(Address base, size_t size,
                                    Executability executable) {
-  if (!base::OS::CommitRegion(base, size, executable == EXECUTABLE)) {
+  if (!base::OS::CommitRegion(base, size)) {
     return false;
   }
   UpdateAllocatedSpaceLimits(base, base + size);
@@ -443,9 +443,7 @@ void MemoryAllocator::FreeMemory(Address base, size_t size,
     code_range()->FreeRawMemory(base, size);
   } else {
     DCHECK(executable == NOT_EXECUTABLE || !code_range()->valid());
-    bool result = base::OS::ReleaseRegion(base, size);
-    USE(result);
-    DCHECK(result);
+    CHECK(base::OS::Free(base, size));
   }
 }
 
@@ -456,15 +454,10 @@ Address MemoryAllocator::ReserveAlignedMemory(size_t size, size_t alignment,
   if (!AlignedAllocVirtualMemory(size, alignment, hint, &reservation))
     return nullptr;
 
-  const Address base =
-      ::RoundUp(static_cast<Address>(reservation.address()), alignment);
-  if (base + size != reservation.end()) {
-    const Address unused_start = ::RoundUp(base + size, GetCommitPageSize());
-    reservation.ReleasePartial(unused_start);
-  }
+  Address result = static_cast<Address>(reservation.address());
   size_.Increment(reservation.size());
   controller->TakeControl(&reservation);
-  return base;
+  return result;
 }
 
 Address MemoryAllocator::AllocateAlignedMemory(
@@ -482,7 +475,7 @@ Address MemoryAllocator::AllocateAlignedMemory(
       base = nullptr;
     }
   } else {
-    if (reservation.Commit(base, commit_size, false)) {
+    if (reservation.Commit(base, commit_size)) {
       UpdateAllocatedSpaceLimits(base, base + commit_size);
     } else {
       base = nullptr;
@@ -543,9 +536,11 @@ void MemoryChunk::SetReadAndExecutable() {
   if (write_unprotect_counter_ == 0) {
     Address protect_start =
         address() + MemoryAllocator::CodePageAreaStartOffset();
-    DCHECK(
-        IsAddressAligned(protect_start, MemoryAllocator::GetCommitPageSize()));
-    base::OS::SetReadAndExecutable(protect_start, area_size());
+    size_t page_size = MemoryAllocator::GetCommitPageSize();
+    DCHECK(IsAddressAligned(protect_start, page_size));
+    size_t protect_size = RoundUp(area_size(), page_size);
+    CHECK(base::OS::SetPermissions(protect_start, protect_size,
+                                   base::OS::MemoryPermission::kReadExecute));
   }
 }
 
@@ -560,9 +555,11 @@ void MemoryChunk::SetReadAndWritable() {
   if (write_unprotect_counter_ == 1) {
     Address unprotect_start =
         address() + MemoryAllocator::CodePageAreaStartOffset();
-    DCHECK(IsAddressAligned(unprotect_start,
-                            MemoryAllocator::GetCommitPageSize()));
-    base::OS::SetReadAndWritable(unprotect_start, area_size(), false);
+    size_t page_size = MemoryAllocator::GetCommitPageSize();
+    DCHECK(IsAddressAligned(unprotect_start, page_size));
+    size_t unprotect_size = RoundUp(area_size(), page_size);
+    CHECK(base::OS::SetPermissions(unprotect_start, unprotect_size,
+                                   base::OS::MemoryPermission::kReadWrite));
   }
 }
 
@@ -576,9 +573,12 @@ void MemoryChunk::SetReadWriteAndExecutable() {
   DCHECK_LE(write_unprotect_counter_, 3);
   Address unprotect_start =
       address() + MemoryAllocator::CodePageAreaStartOffset();
-  DCHECK(
-      IsAddressAligned(unprotect_start, MemoryAllocator::GetCommitPageSize()));
-  base::OS::SetReadWriteAndExecutable(unprotect_start, area_size());
+  size_t page_size = MemoryAllocator::GetCommitPageSize();
+  DCHECK(IsAddressAligned(unprotect_start, page_size));
+  size_t unprotect_size = RoundUp(area_size(), page_size);
+  CHECK(
+      base::OS::SetPermissions(unprotect_start, unprotect_size,
+                               base::OS::MemoryPermission::kReadWriteExecute));
 }
 
 MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
@@ -623,6 +623,16 @@ MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
 
   if (executable == EXECUTABLE) {
     chunk->SetFlag(IS_EXECUTABLE);
+    if (FLAG_write_protect_code_memory) {
+      chunk->write_unprotect_counter_ = 1;
+    } else {
+      size_t page_size = MemoryAllocator::GetCommitPageSize();
+      DCHECK(IsAddressAligned(area_start, page_size));
+      size_t area_size = RoundUp(area_end - area_start, page_size);
+      CHECK(base::OS::SetPermissions(
+          area_start, area_size,
+          base::OS::MemoryPermission::kReadWriteExecute));
+    }
   }
 
   if (reservation != nullptr) {
@@ -1137,9 +1147,7 @@ size_t MemoryAllocator::CodePageGuardStartOffset() {
   return ::RoundUp(Page::kObjectStartOffset, GetCommitPageSize());
 }
 
-size_t MemoryAllocator::CodePageGuardSize() {
-  return static_cast<int>(GetCommitPageSize());
-}
+size_t MemoryAllocator::CodePageGuardSize() { return GetCommitPageSize(); }
 
 size_t MemoryAllocator::CodePageAreaStartOffset() {
   // We are guarding code pages: the first OS page after the header
@@ -1168,13 +1176,13 @@ bool MemoryAllocator::CommitExecutableMemory(VirtualMemory* vm, Address start,
   // Commit page header (not executable).
   Address header = start;
   size_t header_size = CodePageGuardStartOffset();
-  if (vm->Commit(header, header_size, false)) {
+  if (vm->Commit(header, header_size)) {
     // Create guard page after the header.
     if (vm->Guard(start + CodePageGuardStartOffset())) {
       // Commit page body (executable).
       Address body = start + CodePageAreaStartOffset();
       size_t body_size = commit_size - CodePageGuardStartOffset();
-      if (vm->Commit(body, body_size, true)) {
+      if (vm->Commit(body, body_size)) {
         // Create guard page before the end.
         if (vm->Guard(start + reserved_size - CodePageGuardSize())) {
           UpdateAllocatedSpaceLimits(start, start + CodePageAreaStartOffset() +

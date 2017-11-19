@@ -142,34 +142,35 @@ class ShellArrayBufferAllocator : public ArrayBufferAllocatorBase {
   void Free(void* data, size_t length) override {
 #if USE_VM
     if (RoundToPageSize(&length)) {
-      base::OS::ReleaseRegion(data, length);
+      CHECK(base::OS::Free(data, length));
       return;
     }
 #endif
     free(data);
   }
-  // If {length} is at least {VM_THRESHOLD}, round up to next page size
-  // and return {true}. Otherwise return {false}.
+  // If {length} is at least {VM_THRESHOLD}, round up to next page size and
+  // return {true}. Otherwise return {false}.
   bool RoundToPageSize(size_t* length) {
-    const size_t kPageSize = base::OS::CommitPageSize();
+    size_t page_size = base::OS::AllocatePageSize();
     if (*length >= VM_THRESHOLD && *length < TWO_GB) {
-      *length = ((*length + kPageSize - 1) / kPageSize) * kPageSize;
+      *length = RoundUp(*length, page_size);
       return true;
     }
     return false;
   }
 #if USE_VM
   void* VirtualMemoryAllocate(size_t length) {
-    void* data = base::OS::ReserveRegion(length, nullptr);
-    if (data && !base::OS::CommitRegion(data, length, false)) {
-      base::OS::ReleaseRegion(data, length);
-      return nullptr;
-    }
+    size_t page_size = base::OS::AllocatePageSize();
+    size_t alloc_size = RoundUp(length, page_size);
+    void* address = base::OS::Allocate(nullptr, alloc_size, page_size,
+                                       base::OS::MemoryPermission::kReadWrite);
+    if (address != nullptr) {
 #if defined(LEAK_SANITIZER)
-    __lsan_register_root_region(data, length);
+      __lsan_register_root_region(address, alloc_size);
 #endif
-    MSAN_MEMORY_IS_INITIALIZED(data, length);
-    return data;
+      MSAN_MEMORY_IS_INITIALIZED(address, alloc_size);
+    }
+    return address;
   }
 #endif
 };
@@ -177,7 +178,7 @@ class ShellArrayBufferAllocator : public ArrayBufferAllocatorBase {
 class MockArrayBufferAllocator : public ArrayBufferAllocatorBase {
   const size_t kAllocationLimit = 10 * MB;
   size_t get_actual_length(size_t length) const {
-    return length > kAllocationLimit ? base::OS::CommitPageSize() : length;
+    return length > kAllocationLimit ? base::OS::AllocatePageSize() : length;
   }
 
  public:
@@ -206,6 +207,18 @@ class PredictablePlatform : public Platform {
   explicit PredictablePlatform(std::unique_ptr<Platform> platform)
       : platform_(std::move(platform)) {
     DCHECK_NOT_NULL(platform_);
+  }
+
+  std::shared_ptr<TaskRunner> GetForegroundTaskRunner(
+      v8::Isolate* isolate) override {
+    return platform_->GetForegroundTaskRunner(isolate);
+  }
+
+  std::shared_ptr<TaskRunner> GetBackgroundTaskRunner(
+      v8::Isolate* isolate) override {
+    // Return the foreground task runner here, so that all tasks get executed
+    // sequentially in a predictable order.
+    return platform_->GetForegroundTaskRunner(isolate);
   }
 
   void CallOnBackgroundThread(Task* task,
@@ -252,12 +265,12 @@ class PredictablePlatform : public Platform {
   DISALLOW_COPY_AND_ASSIGN(PredictablePlatform);
 };
 
-v8::Platform* g_platform = nullptr;
+std::unique_ptr<v8::Platform> g_platform;
 
 v8::Platform* GetDefaultPlatform() {
   return i::FLAG_verify_predictable
-             ? static_cast<PredictablePlatform*>(g_platform)->platform()
-             : g_platform;
+             ? static_cast<PredictablePlatform*>(g_platform.get())->platform()
+             : g_platform.get();
 }
 
 static Local<Value> Throw(Isolate* isolate, const char* message) {
@@ -282,6 +295,13 @@ Worker* GetWorkerFromInternalField(Isolate* isolate, Local<Object> object) {
   return worker;
 }
 
+base::Thread::Options GetThreadOptions(const char* name) {
+  // On some systems (OSX 10.6) the stack size default is 0.5Mb or less
+  // which is not enough to parse the big literal expressions used in tests.
+  // The stack size should be at least StackGuard::kLimitSize + some
+  // OS-specific padding for thread startup code.  2Mbytes seems to be enough.
+  return base::Thread::Options(name, 2 * MB);
+}
 
 }  // namespace
 
@@ -498,6 +518,53 @@ bool CounterMap::Match(void* key1, void* key2) {
   return strcmp(name1, name2) == 0;
 }
 
+// Dummy external source stream which returns the whole source in one go.
+class DummySourceStream : public v8::ScriptCompiler::ExternalSourceStream {
+ public:
+  explicit DummySourceStream(Local<String> source) : done_(false) {
+    source_length_ = source->Utf8Length();
+    source_buffer_.reset(new uint8_t[source_length_]);
+    source->WriteUtf8(reinterpret_cast<char*>(source_buffer_.get()),
+                      source_length_);
+  }
+
+  virtual size_t GetMoreData(const uint8_t** src) {
+    if (done_) {
+      return 0;
+    }
+    *src = source_buffer_.release();
+    done_ = true;
+
+    return source_length_;
+  }
+
+ private:
+  int source_length_;
+  std::unique_ptr<uint8_t[]> source_buffer_;
+  bool done_;
+};
+
+class BackgroundCompileThread : public base::Thread {
+ public:
+  BackgroundCompileThread(Isolate* isolate, Local<String> source)
+      : base::Thread(GetThreadOptions("BackgroundCompileThread")),
+        source_(source),
+        streamed_source_(new DummySourceStream(source),
+                         v8::ScriptCompiler::StreamedSource::UTF8),
+        task_(v8::ScriptCompiler::StartStreamingScript(isolate,
+                                                       &streamed_source_)) {}
+
+  void Run() override { task_->Run(); }
+
+  v8::ScriptCompiler::StreamedSource* streamed_source() {
+    return &streamed_source_;
+  }
+
+ private:
+  Local<String> source_;
+  v8::ScriptCompiler::StreamedSource streamed_source_;
+  std::unique_ptr<v8::ScriptCompiler::ScriptStreamingTask> task_;
+};
 
 ScriptCompiler::CachedData* CompileForCachedData(
     Local<String> source, Local<Value> name,
@@ -603,13 +670,36 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
     Local<Context> realm =
         Local<Context>::New(isolate, data->realms_[data->realm_current_]);
     Context::Scope context_scope(realm);
+    MaybeLocal<Script> maybe_script;
+    if (options.stress_background_compile) {
+      // Start a background thread compiling the script.
+      BackgroundCompileThread background_compile_thread(isolate, source);
+      background_compile_thread.Start();
+
+      // In parallel, compile on the main thread to flush out any data races.
+      {
+        TryCatch ignore_try_catch(isolate);
+        Shell::CompileString(isolate, source, name, options.compile_options);
+      }
+
+      // Join with background thread and finalize compilation.
+      background_compile_thread.Join();
+      ScriptOrigin origin(name);
+      maybe_script = v8::ScriptCompiler::Compile(
+          isolate->GetCurrentContext(),
+          background_compile_thread.streamed_source(), source, origin);
+    } else {
+      maybe_script =
+          Shell::CompileString(isolate, source, name, options.compile_options);
+    }
+
     Local<Script> script;
-    if (!Shell::CompileString(isolate, source, name, options.compile_options)
-             .ToLocal(&script)) {
+    if (!maybe_script.ToLocal(&script)) {
       // Print errors that happened during compilation.
       if (report_exceptions) ReportException(isolate, &try_catch);
       return false;
     }
+
     maybe_result = script->Run(realm);
     if (!EmptyMessageQueues(isolate)) success = false;
     data->realm_current_ = data->realm_switch_;
@@ -2191,7 +2281,6 @@ void Shell::ReadBuffer(const v8::FunctionCallbackInfo<v8::Value>& args) {
   data->handle.Reset(isolate, buffer);
   data->handle.SetWeak(data, ReadBufferWeakCallback,
                        v8::WeakCallbackType::kParameter);
-  data->handle.MarkIndependent();
   isolate->AdjustAmountOfExternalAllocatedMemory(length);
 
   args.GetReturnValue().Set(buffer);
@@ -2439,14 +2528,8 @@ Local<String> SourceGroup::ReadFile(Isolate* isolate, const char* name) {
   return Shell::ReadFile(isolate, name);
 }
 
-
-base::Thread::Options SourceGroup::GetThreadOptions() {
-  // On some systems (OSX 10.6) the stack size default is 0.5Mb or less
-  // which is not enough to parse the big literal expressions used in tests.
-  // The stack size should be at least StackGuard::kLimitSize + some
-  // OS-specific padding for thread startup code.  2Mbytes seems to be enough.
-  return base::Thread::Options("IsolateThread", 2 * MB);
-}
+SourceGroup::IsolateThread::IsolateThread(SourceGroup* group)
+    : base::Thread(GetThreadOptions("IsolateThread")), group_(group) {}
 
 void SourceGroup::ExecuteInThread() {
   Isolate::CreateParams create_params;
@@ -2716,6 +2799,13 @@ bool Shell::SetOptions(int argc, char* argv[]) {
       argv[i] = nullptr;
     } else if (strcmp(argv[i], "--stress-deopt") == 0) {
       options.stress_deopt = true;
+      argv[i] = nullptr;
+    } else if (strcmp(argv[i], "--stress-background-compile") == 0) {
+      options.stress_background_compile = true;
+      argv[i] = nullptr;
+    } else if (strcmp(argv[i], "--nostress-background-compile") == 0 ||
+               strcmp(argv[i], "--no-stress-background-compile") == 0) {
+      options.stress_background_compile = false;
       argv[i] = nullptr;
     } else if (strcmp(argv[i], "--mock-arraybuffer-allocator") == 0) {
       options.mock_arraybuffer_allocator = true;
@@ -3210,25 +3300,26 @@ int Shell::Main(int argc, char* argv[]) {
           ? v8::platform::InProcessStackDumping::kDisabled
           : v8::platform::InProcessStackDumping::kEnabled;
 
-  platform::tracing::TracingController* tracing_controller = nullptr;
+  std::unique_ptr<platform::tracing::TracingController> tracing;
   if (options.trace_enabled && !i::FLAG_verify_predictable) {
+    tracing = base::make_unique<platform::tracing::TracingController>();
     trace_file.open("v8_trace.json");
-    tracing_controller = new platform::tracing::TracingController();
     platform::tracing::TraceBuffer* trace_buffer =
         platform::tracing::TraceBuffer::CreateTraceBufferRingBuffer(
             platform::tracing::TraceBuffer::kRingBufferChunks,
             platform::tracing::TraceWriter::CreateJSONTraceWriter(trace_file));
-    tracing_controller->Initialize(trace_buffer);
+    tracing->Initialize(trace_buffer);
   }
 
-  g_platform = v8::platform::CreateDefaultPlatform(
+  platform::tracing::TracingController* tracing_controller = tracing.get();
+  g_platform = v8::platform::NewDefaultPlatform(
       0, v8::platform::IdleTaskSupport::kEnabled, in_process_stack_dumping,
-      tracing_controller);
+      std::move(tracing));
   if (i::FLAG_verify_predictable) {
-    g_platform = new PredictablePlatform(std::unique_ptr<Platform>(g_platform));
+    g_platform.reset(new PredictablePlatform(std::move(g_platform)));
   }
 
-  v8::V8::InitializePlatform(g_platform);
+  v8::V8::InitializePlatform(g_platform.get());
   v8::V8::Initialize();
   if (options.natives_blob || options.snapshot_blob) {
     v8::V8::InitializeExternalStartupData(options.natives_blob,
@@ -3343,7 +3434,6 @@ int Shell::Main(int argc, char* argv[]) {
   OnExit(isolate);
   V8::Dispose();
   V8::ShutdownPlatform();
-  delete g_platform;
 
   return result;
 }

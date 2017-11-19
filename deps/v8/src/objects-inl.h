@@ -33,7 +33,7 @@
 #include "src/lookup.h"
 #include "src/objects.h"
 #include "src/objects/arguments-inl.h"
-#include "src/objects/bigint-inl.h"
+#include "src/objects/bigint.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/js-array-inl.h"
@@ -74,6 +74,7 @@ int PropertyDetails::field_width_in_words() const {
   return representation().IsDouble() ? kDoubleSize / kPointerSize : 1;
 }
 
+TYPE_CHECKER(BigInt, BIGINT_TYPE)
 TYPE_CHECKER(BreakPoint, TUPLE2_TYPE)
 TYPE_CHECKER(BreakPointInfo, TUPLE2_TYPE)
 TYPE_CHECKER(ByteArray, BYTE_ARRAY_TYPE)
@@ -151,6 +152,8 @@ bool HeapObject::IsJSGeneratorObject() const {
 }
 
 bool HeapObject::IsBoilerplateDescription() const { return IsFixedArray(); }
+
+bool HeapObject::IsClassBoilerplate() const { return IsFixedArray(); }
 
 bool HeapObject::IsExternal() const {
   return map()->FindRootMap() == GetHeap()->external_map();
@@ -423,7 +426,9 @@ bool HeapObject::IsJSArrayBufferView() const {
   return IsJSDataView() || IsJSTypedArray();
 }
 
-bool HeapObject::IsWeakHashTable() const { return IsHashTable(); }
+bool HeapObject::IsWeakHashTable() const {
+  return map() == GetHeap()->weak_hash_table_map();
+}
 
 bool HeapObject::IsDictionary() const {
   return IsHashTable() && this != GetHeap()->string_table();
@@ -441,7 +446,9 @@ bool HeapObject::IsNumberDictionary() const {
   return map() == GetHeap()->number_dictionary_map();
 }
 
-bool HeapObject::IsStringTable() const { return IsHashTable(); }
+bool HeapObject::IsStringTable() const {
+  return map() == GetHeap()->string_table_map();
+}
 
 bool HeapObject::IsStringSet() const { return IsHashTable(); }
 
@@ -457,13 +464,13 @@ bool HeapObject::IsMapCache() const { return IsHashTable(); }
 
 bool HeapObject::IsObjectHashTable() const { return IsHashTable(); }
 
-bool HeapObject::IsOrderedHashTable() const {
-  return map() == GetHeap()->ordered_hash_table_map();
+bool HeapObject::IsOrderedHashSet() const {
+  return map() == GetHeap()->ordered_hash_set_map();
 }
 
-bool Object::IsOrderedHashSet() const { return IsOrderedHashTable(); }
-
-bool Object::IsOrderedHashMap() const { return IsOrderedHashTable(); }
+bool HeapObject::IsOrderedHashMap() const {
+  return map() == GetHeap()->ordered_hash_map_map();
+}
 
 bool Object::IsSmallOrderedHashTable() const {
   return IsSmallOrderedHashSet() || IsSmallOrderedHashMap();
@@ -1973,6 +1980,12 @@ bool HeapObject::NeedsRehashing() const {
     case TRANSITION_ARRAY_TYPE:
       return TransitionArray::cast(this)->number_of_entries() > 1;
     case HASH_TABLE_TYPE:
+      if (IsOrderedHashMap()) {
+        return OrderedHashMap::cast(this)->NumberOfElements() > 0;
+      } else if (IsOrderedHashSet()) {
+        return OrderedHashSet::cast(this)->NumberOfElements() > 0;
+      }
+      return true;
     case SMALL_ORDERED_HASH_MAP_TYPE:
     case SMALL_ORDERED_HASH_SET_TYPE:
       return true;
@@ -2506,6 +2519,10 @@ uint32_t StringTableShape::HashForObject(Isolate* isolate, Object* object) {
   return String::cast(object)->Hash();
 }
 
+Map* StringTableShape::GetMap(Isolate* isolate) {
+  return isolate->heap()->string_table_map();
+}
+
 bool NumberDictionary::requires_slow_elements() {
   Object* max_index_object = get(kMaxNumberKeyIndex);
   if (!max_index_object->IsSmi()) return false;
@@ -2968,59 +2985,78 @@ Handle<Object> Float64ArrayTraits::ToHandle(Isolate* isolate, double scalar) {
   return isolate->factory()->NewNumber(scalar);
 }
 
-int Map::visitor_id() const { return READ_BYTE_FIELD(this, kVisitorIdOffset); }
+VisitorId Map::visitor_id() const {
+  return static_cast<VisitorId>(READ_BYTE_FIELD(this, kVisitorIdOffset));
+}
 
-void Map::set_visitor_id(int id) {
+void Map::set_visitor_id(VisitorId id) {
   DCHECK_LE(0, id);
   DCHECK_LT(id, 256);
   WRITE_BYTE_FIELD(this, kVisitorIdOffset, static_cast<byte>(id));
 }
 
+int Map::instance_size_in_words() const {
+  return RELAXED_READ_BYTE_FIELD(this, kInstanceSizeInWordsOffset);
+}
+
+void Map::set_instance_size_in_words(int value) {
+  RELAXED_WRITE_BYTE_FIELD(this, kInstanceSizeInWordsOffset,
+                           static_cast<byte>(value));
+}
+
 int Map::instance_size() const {
-  return RELAXED_READ_BYTE_FIELD(this, kInstanceSizeOffset) << kPointerSizeLog2;
+  return instance_size_in_words() << kPointerSizeLog2;
 }
 
-int Map::inobject_properties_or_constructor_function_index() const {
+void Map::set_instance_size(int value) {
+  DCHECK_EQ(0, value & (kPointerSize - 1));
+  value >>= kPointerSizeLog2;
+  DCHECK(0 <= value && value < 256);
+  set_instance_size_in_words(value);
+}
+
+int Map::inobject_properties_start_or_constructor_function_index() const {
   return RELAXED_READ_BYTE_FIELD(
-      this, kInObjectPropertiesOrConstructorFunctionIndexOffset);
+      this, kInObjectPropertiesStartOrConstructorFunctionIndexOffset);
 }
 
-
-void Map::set_inobject_properties_or_constructor_function_index(int value) {
+void Map::set_inobject_properties_start_or_constructor_function_index(
+    int value) {
   DCHECK_LE(0, value);
   DCHECK_LT(value, 256);
-  RELAXED_WRITE_BYTE_FIELD(this,
-                           kInObjectPropertiesOrConstructorFunctionIndexOffset,
-                           static_cast<byte>(value));
+  RELAXED_WRITE_BYTE_FIELD(
+      this, kInObjectPropertiesStartOrConstructorFunctionIndexOffset,
+      static_cast<byte>(value));
+}
+
+int Map::GetInObjectPropertiesStartInWords() const {
+  DCHECK(IsJSObjectMap());
+  return inobject_properties_start_or_constructor_function_index();
+}
+
+void Map::SetInObjectPropertiesStartInWords(int value) {
+  DCHECK(IsJSObjectMap());
+  set_inobject_properties_start_or_constructor_function_index(value);
 }
 
 int Map::GetInObjectProperties() const {
   DCHECK(IsJSObjectMap());
-  return inobject_properties_or_constructor_function_index();
-}
-
-
-void Map::SetInObjectProperties(int value) {
-  DCHECK(IsJSObjectMap());
-  set_inobject_properties_or_constructor_function_index(value);
+  return instance_size_in_words() - GetInObjectPropertiesStartInWords();
 }
 
 int Map::GetConstructorFunctionIndex() const {
   DCHECK(IsPrimitiveMap());
-  return inobject_properties_or_constructor_function_index();
+  return inobject_properties_start_or_constructor_function_index();
 }
 
 
 void Map::SetConstructorFunctionIndex(int value) {
   DCHECK(IsPrimitiveMap());
-  set_inobject_properties_or_constructor_function_index(value);
+  set_inobject_properties_start_or_constructor_function_index(value);
 }
 
 int Map::GetInObjectPropertyOffset(int index) const {
-  // Adjust for the number of properties stored in the object.
-  index -= GetInObjectProperties();
-  DCHECK_LE(index, 0);
-  return instance_size() + (index * kPointerSize);
+  return (GetInObjectPropertiesStartInWords() + index) * kPointerSize;
 }
 
 
@@ -3094,15 +3130,6 @@ int HeapObject::SizeFromMap(Map* map) const {
   DCHECK(instance_type == CODE_TYPE);
   return reinterpret_cast<const Code*>(this)->CodeSize();
 }
-
-
-void Map::set_instance_size(int value) {
-  DCHECK_EQ(0, value & (kPointerSize - 1));
-  value >>= kPointerSizeLog2;
-  DCHECK(0 <= value && value < 256);
-  RELAXED_WRITE_BYTE_FIELD(this, kInstanceSizeOffset, static_cast<byte>(value));
-}
-
 
 InstanceType Map::instance_type() const {
   return static_cast<InstanceType>(READ_BYTE_FIELD(this, kInstanceTypeOffset));
@@ -3191,7 +3218,7 @@ void Map::AccountAddedPropertyField() {
   // Update used_instance_size_in_words.
   int value = used_instance_size_in_words();
   if (value >= JSObject::kFieldsAdded) {
-    if (value == instance_size() / kPointerSize) {
+    if (value == instance_size_in_words()) {
       AccountAddedOutOfObjectPropertyField(0);
     } else {
       // The property is added in-object, so simply increment the counter.
@@ -3221,7 +3248,7 @@ void Map::VerifyUnusedPropertyFields() const {
     int value = used_instance_size_in_words();
     int unused;
     if (value >= JSObject::kFieldsAdded) {
-      unused = instance_size() / kPointerSize - value;
+      unused = instance_size_in_words() - value;
     } else {
       // For out of object properties "used_instance_size_in_words" byte encodes
       // the slack in the property array.
@@ -3573,12 +3600,14 @@ void Map::set_prototype(Object* value, WriteBarrierMode mode) {
 }
 
 LayoutDescriptor* Map::layout_descriptor_gc_safe() const {
+  DCHECK(FLAG_unbox_double_fields);
   Object* layout_desc = RELAXED_READ_FIELD(this, kLayoutDescriptorOffset);
   return LayoutDescriptor::cast_gc_safe(layout_desc);
 }
 
 
 bool Map::HasFastPointerLayout() const {
+  DCHECK(FLAG_unbox_double_fields);
   Object* layout_desc = RELAXED_READ_FIELD(this, kLayoutDescriptorOffset);
   return LayoutDescriptor::IsFastPointerLayout(layout_desc);
 }
@@ -3595,7 +3624,7 @@ void Map::UpdateDescriptors(DescriptorArray* descriptors,
     // TODO(ishell): remove these checks from VERIFY_HEAP mode.
     if (FLAG_verify_heap) {
       CHECK(layout_descriptor()->IsConsistentWithMap(this));
-      CHECK(visitor_id() == Map::GetVisitorId(this));
+      CHECK_EQ(Map::GetVisitorId(this), visitor_id());
     }
 #else
     SLOW_DCHECK(layout_descriptor()->IsConsistentWithMap(this));
@@ -3627,7 +3656,8 @@ void Map::InitializeDescriptors(DescriptorArray* descriptors,
 
 
 ACCESSORS(Map, instance_descriptors, DescriptorArray, kDescriptorsOffset)
-ACCESSORS(Map, layout_descriptor, LayoutDescriptor, kLayoutDescriptorOffset)
+ACCESSORS_CHECKED(Map, layout_descriptor, LayoutDescriptor,
+                  kLayoutDescriptorOffset, FLAG_unbox_double_fields)
 
 void Map::set_bit_field3(uint32_t bits) {
   if (kInt32Size != kPointerSize) {
@@ -4934,16 +4964,13 @@ Handle<ObjectHashTable> ObjectHashTable::Shrink(Handle<ObjectHashTable> table) {
   return DerivedHashTable::Shrink(table);
 }
 
-template <int entrysize>
-bool WeakHashTableShape<entrysize>::IsMatch(Handle<Object> key, Object* other) {
+bool WeakHashTableShape::IsMatch(Handle<Object> key, Object* other) {
   if (other->IsWeakCell()) other = WeakCell::cast(other)->value();
   return key->IsWeakCell() ? WeakCell::cast(*key)->value() == other
                            : *key == other;
 }
 
-template <int entrysize>
-uint32_t WeakHashTableShape<entrysize>::Hash(Isolate* isolate,
-                                             Handle<Object> key) {
+uint32_t WeakHashTableShape::Hash(Isolate* isolate, Handle<Object> key) {
   intptr_t hash =
       key->IsWeakCell()
           ? reinterpret_cast<intptr_t>(WeakCell::cast(*key)->value())
@@ -4951,21 +4978,20 @@ uint32_t WeakHashTableShape<entrysize>::Hash(Isolate* isolate,
   return (uint32_t)(hash & 0xFFFFFFFF);
 }
 
-template <int entrysize>
-uint32_t WeakHashTableShape<entrysize>::HashForObject(Isolate* isolate,
-                                                      Object* other) {
+uint32_t WeakHashTableShape::HashForObject(Isolate* isolate, Object* other) {
   if (other->IsWeakCell()) other = WeakCell::cast(other)->value();
   intptr_t hash = reinterpret_cast<intptr_t>(other);
   return (uint32_t)(hash & 0xFFFFFFFF);
 }
 
-
-template <int entrysize>
-Handle<Object> WeakHashTableShape<entrysize>::AsHandle(Isolate* isolate,
-                                                       Handle<Object> key) {
+Handle<Object> WeakHashTableShape::AsHandle(Isolate* isolate,
+                                            Handle<Object> key) {
   return key;
 }
 
+Map* WeakHashTableShape::GetMap(Isolate* isolate) {
+  return isolate->heap()->weak_hash_table_map();
+}
 
 int Map::SlackForArraySize(int old_size, int size_limit) {
   const int max_slack = size_limit - old_size;

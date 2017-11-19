@@ -14,21 +14,21 @@
 namespace v8 {
 namespace internal {
 
-
 #define __ masm.
 
 #if defined(V8_HOST_ARCH_ARM)
+
 MemCopyUint8Function CreateMemCopyUint8Function(Isolate* isolate,
                                                 MemCopyUint8Function stub) {
 #if defined(USE_SIMULATOR)
   return stub;
 #else
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(base::OS::Allocate(
-      1 * KB, &actual_size, base::OS::MemoryPermission::kReadWriteExecute));
+  size_t allocated = 0;
+  byte* buffer =
+      AllocateSystemPage(isolate->heap()->GetRandomMmapAddr(), &allocated);
   if (buffer == nullptr) return stub;
 
-  MacroAssembler masm(isolate, buffer, static_cast<int>(actual_size),
+  MacroAssembler masm(isolate, buffer, static_cast<int>(allocated),
                       CodeObjectRequired::kNo);
 
   Register dest = r0;
@@ -169,8 +169,9 @@ MemCopyUint8Function CreateMemCopyUint8Function(Isolate* isolate,
   masm.GetCode(isolate, &desc);
   DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
 
-  Assembler::FlushICache(isolate, buffer, actual_size);
-  base::OS::SetReadAndExecutable(buffer, actual_size);
+  Assembler::FlushICache(isolate, buffer, allocated);
+  CHECK(base::OS::SetPermissions(buffer, allocated,
+                                 base::OS::MemoryPermission::kReadExecute));
   return FUNCTION_CAST<MemCopyUint8Function>(buffer);
 #endif
 }
@@ -182,12 +183,12 @@ MemCopyUint16Uint8Function CreateMemCopyUint16Uint8Function(
 #if defined(USE_SIMULATOR)
   return stub;
 #else
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(base::OS::Allocate(
-      1 * KB, &actual_size, base::OS::MemoryPermission::kReadWriteExecute));
+  size_t allocated = 0;
+  byte* buffer =
+      AllocateSystemPage(isolate->heap()->GetRandomMmapAddr(), &allocated);
   if (buffer == nullptr) return stub;
 
-  MacroAssembler masm(isolate, buffer, static_cast<int>(actual_size),
+  MacroAssembler masm(isolate, buffer, static_cast<int>(allocated),
                       CodeObjectRequired::kNo);
 
   Register dest = r0;
@@ -259,9 +260,9 @@ MemCopyUint16Uint8Function CreateMemCopyUint16Uint8Function(
   CodeDesc desc;
   masm.GetCode(isolate, &desc);
 
-  Assembler::FlushICache(isolate, buffer, actual_size);
-  base::OS::SetReadAndExecutable(buffer, actual_size);
-
+  Assembler::FlushICache(isolate, buffer, allocated);
+  CHECK(base::OS::SetPermissions(buffer, allocated,
+                                 base::OS::MemoryPermission::kReadExecute));
   return FUNCTION_CAST<MemCopyUint16Uint8Function>(buffer);
 #endif
 }
@@ -271,12 +272,12 @@ UnaryMathFunctionWithIsolate CreateSqrtFunction(Isolate* isolate) {
 #if defined(USE_SIMULATOR)
   return nullptr;
 #else
-  size_t actual_size;
-  byte* buffer = static_cast<byte*>(base::OS::Allocate(
-      1 * KB, &actual_size, base::OS::MemoryPermission::kReadWriteExecute));
+  size_t allocated = 0;
+  byte* buffer =
+      AllocateSystemPage(isolate->heap()->GetRandomMmapAddr(), &allocated);
   if (buffer == nullptr) return nullptr;
 
-  MacroAssembler masm(isolate, buffer, static_cast<int>(actual_size),
+  MacroAssembler masm(isolate, buffer, static_cast<int>(allocated),
                       CodeObjectRequired::kNo);
 
   __ MovFromFloatParameter(d0);
@@ -288,8 +289,9 @@ UnaryMathFunctionWithIsolate CreateSqrtFunction(Isolate* isolate) {
   masm.GetCode(isolate, &desc);
   DCHECK(!RelocInfo::RequiresRelocation(isolate, desc));
 
-  Assembler::FlushICache(isolate, buffer, actual_size);
-  base::OS::SetReadAndExecutable(buffer, actual_size);
+  Assembler::FlushICache(isolate, buffer, allocated);
+  CHECK(base::OS::SetPermissions(buffer, allocated,
+                                 base::OS::MemoryPermission::kReadExecute));
   return FUNCTION_CAST<UnaryMathFunctionWithIsolate>(buffer);
 #endif
 }

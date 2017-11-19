@@ -236,6 +236,11 @@ void Verifier::Visitor::Check(Node* node) {
     case IrOpcode::kDead:
       // Dead is never connected to the graph.
       UNREACHABLE();
+    case IrOpcode::kDeadValue:
+      CheckTypeIs(node, Type::None());
+      break;
+    case IrOpcode::kUnreachable:
+      CheckNotTyped(node);
       break;
     case IrOpcode::kBranch: {
       // Branch uses are IfTrue and IfFalse.
@@ -316,7 +321,22 @@ void Verifier::Visitor::Check(Node* node) {
       // Type is empty.
       CheckNotTyped(node);
       break;
-    case IrOpcode::kLoop:
+    case IrOpcode::kLoop: {
+      CHECK_EQ(control_count, input_count);
+      // Type is empty.
+      CheckNotTyped(node);
+      // All loops need to be connected to a {Terminate} node to ensure they
+      // stay connected to the graph end.
+      bool has_terminate = false;
+      for (const Node* use : node->uses()) {
+        if (use->opcode() == IrOpcode::kTerminate) {
+          has_terminate = true;
+          break;
+        }
+      }
+      CHECK(has_terminate);
+      break;
+    }
     case IrOpcode::kMerge:
       CHECK_EQ(control_count, input_count);
       // Type is empty.
@@ -1038,6 +1058,7 @@ void Verifier::Visitor::Check(Node* node) {
       break;
 
     case IrOpcode::kObjectIsArrayBufferView:
+    case IrOpcode::kObjectIsBigInt:
     case IrOpcode::kObjectIsCallable:
     case IrOpcode::kObjectIsConstructor:
     case IrOpcode::kObjectIsDetectableCallable:
@@ -1862,7 +1883,8 @@ void Verifier::VerifyNode(Node* node) {
     Node* input = NodeProperties::GetFrameStateInput(node);
     DCHECK(input->opcode() == IrOpcode::kFrameState ||
            input->opcode() == IrOpcode::kStart ||
-           input->opcode() == IrOpcode::kDead);
+           input->opcode() == IrOpcode::kDead ||
+           input->opcode() == IrOpcode::kDeadValue);
   }
   // Effect inputs should be effect-producing nodes (or sentinels).
   for (int i = 0; i < node->op()->EffectInputCount(); i++) {
@@ -1887,7 +1909,9 @@ void Verifier::VerifyEdgeInputReplacement(const Edge& edge,
   DCHECK(!NodeProperties::IsEffectEdge(edge) ||
          replacement->op()->EffectOutputCount() > 0);
   DCHECK(!NodeProperties::IsFrameStateEdge(edge) ||
-         replacement->opcode() == IrOpcode::kFrameState);
+         replacement->opcode() == IrOpcode::kFrameState ||
+         replacement->opcode() == IrOpcode::kDead ||
+         replacement->opcode() == IrOpcode::kDeadValue);
 }
 
 #endif  // DEBUG

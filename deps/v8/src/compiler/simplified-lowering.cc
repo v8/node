@@ -206,20 +206,10 @@ class InputUseInfos {
 
 #endif  // DEBUG
 
-// TODO(mvstanton): Remove after fixing chromium:780658.
-static void UnexpectedDeadOpcode(const char* file, int line,
-                                 const char* deadCode, Node* node) {
-  // Record the deadcode in the stack to ease minidump debugging.
-  const char* format_string = "Unexpected dead opcode %s, node #%i\n.";
-  char buffer[256];
-  snprintf(buffer, sizeof(buffer), format_string, deadCode, node->id());
-  V8_Fatal(file, line, format_string, deadCode, node->id());
-}
-
 bool CanOverflowSigned32(const Operator* op, Type* left, Type* right,
                          Zone* type_zone) {
   // We assume the inputs are checked Signed32 (or known statically
-  // to be Signed32). Technically, theinputs could also be minus zero, but
+  // to be Signed32). Technically, the inputs could also be minus zero, but
   // that cannot cause overflow.
   left = Type::Intersect(left, Type::Signed32(), type_zone);
   right = Type::Intersect(right, Type::Signed32(), type_zone);
@@ -237,6 +227,10 @@ bool CanOverflowSigned32(const Operator* op, Type* left, Type* right,
       UNREACHABLE();
   }
   return true;
+}
+
+bool IsSomePositiveOrderedNumber(Type* type) {
+  return type->Is(Type::OrderedNumber()) && !type->IsNone() && type->Min() > 0;
 }
 
 }  // namespace
@@ -1259,10 +1253,8 @@ class RepresentationSelector {
     // there is no need to return -0.
     CheckForMinusZeroMode mz_mode =
         truncation.IdentifiesZeroAndMinusZero() ||
-                (input0_type->Is(Type::OrderedNumber()) &&
-                 input0_type->Min() > 0) ||
-                (input1_type->Is(Type::OrderedNumber()) &&
-                 input1_type->Min() > 0)
+                IsSomePositiveOrderedNumber(input0_type) ||
+                IsSomePositiveOrderedNumber(input1_type)
             ? CheckForMinusZeroMode::kDontCheckForMinusZero
             : CheckForMinusZeroMode::kCheckForMinusZero;
 
@@ -1281,16 +1273,13 @@ class RepresentationSelector {
                                          SimplifiedLowering* lowering) {
     Type* left_upper = GetUpperBound(node->InputAt(0));
     Type* right_upper = GetUpperBound(node->InputAt(1));
-    // Only eliminate eliminate the node if the ToNumber conversion cannot
-    // cause any observable side-effect and if we know for sure that it
-    // is a number addition (we must exclude strings).
-    if (left_upper->Is(Type::NumberOrOddball()) &&
-        right_upper->Is(Type::NumberOrOddball())) {
-      if (truncation.IsUnused()) return VisitUnused(node);
-    }
 
     if (left_upper->Is(type_cache_.kAdditiveSafeIntegerOrMinusZero) &&
         right_upper->Is(type_cache_.kAdditiveSafeIntegerOrMinusZero)) {
+      // Only eliminate the node if its typing rule can be satisfied, namely
+      // that a safe integer is produced.
+      if (truncation.IsUnused()) return VisitUnused(node);
+
       // If we know how to interpret the result or if the users only care
       // about the low 32-bits, we can truncate to Word32 do a wrapping
       // addition.
@@ -2745,6 +2734,10 @@ class RepresentationSelector {
         VisitUnop(node, UseInfo::AnyTagged(), MachineRepresentation::kBit);
         return;
       }
+      case IrOpcode::kObjectIsBigInt: {
+        VisitObjectIs(node, Type::BigInt(), lowering);
+        return;
+      }
       case IrOpcode::kObjectIsCallable: {
         VisitObjectIs(node, Type::Callable(), lowering);
         return;
@@ -3040,6 +3033,7 @@ class RepresentationSelector {
       case IrOpcode::kOsrValue:
       case IrOpcode::kArgumentsElementsState:
       case IrOpcode::kArgumentsLengthState:
+      case IrOpcode::kUnreachable:
       case IrOpcode::kRuntimeAbort:
 // All JavaScript operators except JSToNumber have uniform handling.
 #define OPCODE_CASE(name) case IrOpcode::k##name:
@@ -3056,12 +3050,8 @@ class RepresentationSelector {
         VisitInputs(node);
         // Assume the output is tagged.
         return SetOutput(node, MachineRepresentation::kTagged);
-
-      case IrOpcode::kDead: {
-        const char* deadVersion = jsgraph_->WhichDeadNode(node);
-        UnexpectedDeadOpcode(__FILE__, __LINE__, deadVersion, node);
-        break;
-      }
+      case IrOpcode::kDeadValue:
+        return SetOutput(node, MachineRepresentation::kNone);
       default:
         V8_Fatal(
             __FILE__, __LINE__,
@@ -3107,7 +3097,7 @@ class RepresentationSelector {
       DCHECK_EQ(0, node->op()->EffectOutputCount());
     }
 
-    node->ReplaceUses(jsgraph_->Dead(JSGraph::DeadCustomer::Unspecified));
+    node->ReplaceUses(jsgraph_->Dead());
 
     node->NullAllInputs();  // The {node} is now dead.
   }

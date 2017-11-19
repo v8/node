@@ -129,6 +129,7 @@ namespace compiler {
   V(OtherInternal,            1u << 25)  \
   V(ExternalPointer,          1u << 26)  \
   V(Array,                    1u << 27)  \
+  V(BigInt,                   1u << 28)  \
   \
   V(Signed31,                     kUnsigned30 | kNegative31) \
   V(Signed32,                     kSigned31 | kOtherUnsigned31 | \
@@ -148,6 +149,7 @@ namespace compiler {
   V(OrderedNumber,                kPlainNumber | kMinusZero) \
   V(MinusZeroOrNaN,               kMinusZero | kNaN) \
   V(Number,                       kOrderedNumber | kNaN) \
+  V(Numeric,                      kNumber | kBigInt) \
   V(InternalizedString,           kInternalizedNonSeqString | \
                                   kInternalizedSeqString) \
   V(OtherString,                  kOtherNonSeqString | kOtherSeqString) \
@@ -174,7 +176,7 @@ namespace compiler {
                                   kNumber | kNullOrUndefined | kBoolean) \
   V(PlainPrimitive,               kNumberOrString | kBoolean | \
                                   kNullOrUndefined) \
-  V(Primitive,                    kSymbol | kPlainPrimitive) \
+  V(Primitive,                    kSymbol | kBigInt | kPlainPrimitive) \
   V(OtherUndetectableOrUndefined, kOtherUndetectable | kUndefined) \
   V(Proxy,                        kCallableProxy | kOtherProxy) \
   V(ArrayOrOtherObject,           kArray | kOtherObject) \
@@ -603,9 +605,9 @@ class V8_EXPORT_PRIVATE Type {
   TupleType* AsTuple() { return TupleType::cast(this); }
 
   // Minimum and maximum of a numeric type.
-  // These functions do not distinguish between -0 and +0.  If the type equals
-  // kNaN, they return NaN; otherwise kNaN is ignored.  Only call these
-  // functions on subtypes of Number, but not on None!
+  // These functions do not distinguish between -0 and +0.  NaN is ignored.
+  // Only call them on subtypes of Number whose intersection with OrderedNumber
+  // is not empty.
   double Min();
   double Max();
 
