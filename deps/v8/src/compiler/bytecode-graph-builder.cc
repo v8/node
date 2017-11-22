@@ -2083,53 +2083,46 @@ CallFrequency BytecodeGraphBuilder::ComputeCallFrequency(int slot_id) const {
                        invocation_frequency_.value());
 }
 
-void BytecodeGraphBuilder::VisitNegate() {
+void BytecodeGraphBuilder::VisitBitwiseNot() {
+  // TODO(neis): Define a BuildUnaryOp helper function.
   PrepareEagerCheckpoint();
-
-  // TODO(adamk): Create a JSNegate operator, as this desugaring is
-  // invalid for BigInts.
-  const Operator* op = javascript()->Multiply();
-  Node* operand = environment()->LookupAccumulator();
-  Node* multiplier = jsgraph()->SmiConstant(-1);
 
   FeedbackSlot slot = feedback_vector()->ToSlot(
       bytecode_iterator().GetIndexOperand(kUnaryOperationHintIndex));
-  JSTypeHintLowering::LoweringResult lowering =
-      TryBuildSimplifiedBinaryOp(op, operand, multiplier, slot);
-  if (lowering.IsExit()) return;
+  const Operator* op = javascript()->BitwiseNot();
+  Node* operand = environment()->LookupAccumulator();
 
+  JSTypeHintLowering::LoweringResult lowering =
+      TryBuildSimplifiedUnaryOp(op, operand, slot);
+  if (lowering.IsExit()) return;
   Node* node = nullptr;
   if (lowering.IsSideEffectFree()) {
     node = lowering.value();
   } else {
     DCHECK(!lowering.Changed());
-    node = NewNode(op, operand, multiplier);
+    node = NewNode(op, operand);
   }
 
   environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
-void BytecodeGraphBuilder::VisitBitwiseNot() {
+void BytecodeGraphBuilder::VisitNegate() {
   PrepareEagerCheckpoint();
-
-  // TODO(adamk): Create a JSBitwiseNot operator, as this desugaring is
-  // invalid for BigInts.
-  const Operator* op = javascript()->BitwiseXor();
-  Node* operand = environment()->LookupAccumulator();
-  Node* xor_value = jsgraph()->SmiConstant(-1);
 
   FeedbackSlot slot = feedback_vector()->ToSlot(
       bytecode_iterator().GetIndexOperand(kUnaryOperationHintIndex));
-  JSTypeHintLowering::LoweringResult lowering =
-      TryBuildSimplifiedBinaryOp(op, operand, xor_value, slot);
-  if (lowering.IsExit()) return;
+  const Operator* op = javascript()->Negate();
+  Node* operand = environment()->LookupAccumulator();
 
+  JSTypeHintLowering::LoweringResult lowering =
+      TryBuildSimplifiedUnaryOp(op, operand, slot);
+  if (lowering.IsExit()) return;
   Node* node = nullptr;
   if (lowering.IsSideEffectFree()) {
     node = lowering.value();
   } else {
     DCHECK(!lowering.Changed());
-    node = NewNode(op, operand, xor_value);
+    node = NewNode(op, operand);
   }
 
   environment()->BindAccumulator(node, Environment::kAttachFrameState);
@@ -2297,8 +2290,8 @@ void BytecodeGraphBuilder::VisitLogicalNot() {
 }
 
 void BytecodeGraphBuilder::VisitToBooleanLogicalNot() {
-  Node* value = NewNode(simplified()->ToBoolean(ToBooleanHint::kAny),
-                        environment()->LookupAccumulator());
+  Node* value =
+      NewNode(simplified()->ToBoolean(), environment()->LookupAccumulator());
   Node* node = NewNode(simplified()->BooleanNot(), value);
   environment()->BindAccumulator(node);
 }
@@ -2521,9 +2514,25 @@ void BytecodeGraphBuilder::VisitToNumber() {
 }
 
 void BytecodeGraphBuilder::VisitToNumeric() {
-  // TODO(neis): This is currently only correct in the absence of bigints.
-  DCHECK(!FLAG_harmony_bigint);
-  VisitToNumber();
+  PrepareEagerCheckpoint();
+  Node* object = environment()->LookupAccumulator();
+
+  // If we have some kind of Number feedback, we do the same lowering as for
+  // ToNumber.
+  FeedbackSlot slot =
+      feedback_vector()->ToSlot(bytecode_iterator().GetIndexOperand(0));
+  JSTypeHintLowering::LoweringResult lowering =
+      TryBuildSimplifiedToNumber(object, slot);
+
+  Node* node = nullptr;
+  if (lowering.IsSideEffectFree()) {
+    node = lowering.value();
+  } else {
+    DCHECK(!lowering.Changed());
+    node = NewNode(javascript()->ToNumeric(), object);
+  }
+
+  environment()->BindAccumulator(node, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitJump() { BuildJump(); }
@@ -2955,15 +2964,13 @@ void BytecodeGraphBuilder::BuildJumpIfTrue() {
 
 void BytecodeGraphBuilder::BuildJumpIfToBooleanTrue() {
   Node* accumulator = environment()->LookupAccumulator();
-  Node* condition =
-      NewNode(simplified()->ToBoolean(ToBooleanHint::kAny), accumulator);
+  Node* condition = NewNode(simplified()->ToBoolean(), accumulator);
   BuildJumpIf(condition);
 }
 
 void BytecodeGraphBuilder::BuildJumpIfToBooleanFalse() {
   Node* accumulator = environment()->LookupAccumulator();
-  Node* condition =
-      NewNode(simplified()->ToBoolean(ToBooleanHint::kAny), accumulator);
+  Node* condition = NewNode(simplified()->ToBoolean(), accumulator);
   BuildJumpIfNot(condition);
 }
 
@@ -2978,6 +2985,19 @@ void BytecodeGraphBuilder::BuildJumpIfJSReceiver() {
   Node* accumulator = environment()->LookupAccumulator();
   Node* condition = NewNode(simplified()->ObjectIsReceiver(), accumulator);
   BuildJumpIf(condition);
+}
+
+JSTypeHintLowering::LoweringResult
+BytecodeGraphBuilder::TryBuildSimplifiedUnaryOp(const Operator* op,
+                                                Node* operand,
+                                                FeedbackSlot slot) {
+  Node* effect = environment()->GetEffectDependency();
+  Node* control = environment()->GetControlDependency();
+  JSTypeHintLowering::LoweringResult result =
+      type_hint_lowering().ReduceUnaryOperation(op, operand, effect, control,
+                                                slot);
+  ApplyEarlyReduction(result);
+  return result;
 }
 
 JSTypeHintLowering::LoweringResult

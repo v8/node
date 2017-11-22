@@ -14,6 +14,7 @@
 #include "src/execution.h"
 #include "src/frames-inl.h"
 #include "src/global-handles.h"
+#include "src/heap/array-buffer-collector.h"
 #include "src/heap/array-buffer-tracker-inl.h"
 #include "src/heap/concurrent-marking.h"
 #include "src/heap/gc-tracer.h"
@@ -3160,7 +3161,6 @@ class Evacuator : public Malloced {
   Evacuator(Heap* heap, RecordMigratedSlotVisitor* record_visitor)
       : heap_(heap),
         local_allocator_(heap_),
-        compaction_spaces_(heap_),
         local_pretenuring_feedback_(kInitialLocalPretenuringFeedbackCapacity),
         new_space_visitor_(heap_, &local_allocator_, record_visitor,
                            &local_pretenuring_feedback_),
@@ -3203,7 +3203,6 @@ class Evacuator : public Malloced {
 
   // Locally cached collector data.
   LocalAllocator local_allocator_;
-  CompactionSpaceCollection compaction_spaces_;
   Heap::PretenuringFeedbackMap local_pretenuring_feedback_;
 
   // Visitors for the corresponding spaces.
@@ -4292,6 +4291,7 @@ void MarkCompactCollector::UpdatePointersAfterEvacuation() {
         updating_job.AddTask(new PointersUpdatingTask(isolate()));
       }
       updating_job.Run();
+      heap()->array_buffer_collector()->FreeAllocationsOnBackgroundThread();
     }
   }
 
@@ -4349,6 +4349,7 @@ void MinorMarkCompactCollector::UpdatePointersAfterEvacuation() {
     TRACE_GC(heap()->tracer(),
              GCTracer::Scope::MINOR_MC_EVACUATE_UPDATE_POINTERS_SLOTS);
     updating_job.Run();
+    heap()->array_buffer_collector()->FreeAllocationsOnBackgroundThread();
   }
 
   {
@@ -4548,7 +4549,6 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
   space->ClearStats();
 
   int will_be_swept = 0;
-  bool unused_page_present = false;
 
   // Loop needs to support deletion if live bytes == 0 for a page.
   for (auto it = space->begin(); it != space->end();) {
@@ -4558,10 +4558,7 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
     if (p->IsEvacuationCandidate()) {
       // Will be processed in Evacuate.
       DCHECK(!evacuation_candidates_.empty());
-      continue;
-    }
-
-    if (p->IsFlagSet(Page::NEVER_ALLOCATE_ON_PAGE)) {
+    } else if (p->IsFlagSet(Page::NEVER_ALLOCATE_ON_PAGE)) {
       // We need to sweep the page to get it into an iterable state again. Note
       // that this adds unusable memory into the free list that is later on
       // (in the free list) dropped again. Since we only use the flag for
@@ -4572,25 +4569,19 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
                              ? FreeSpaceTreatmentMode::ZAP_FREE_SPACE
                              : FreeSpaceTreatmentMode::IGNORE_FREE_SPACE);
       space->IncreaseAllocatedBytes(p->allocated_bytes(), p);
-      continue;
-    }
-
-    // One unused page is kept, all further are released before sweeping them.
-    if (non_atomic_marking_state()->live_bytes(p) == 0) {
-      if (unused_page_present) {
-        if (FLAG_gc_verbose) {
-          PrintIsolate(isolate(), "sweeping: released page: %p",
-                       static_cast<void*>(p));
-        }
-        ArrayBufferTracker::FreeAll(p);
-        space->ReleasePage(p);
-        continue;
+    } else if (non_atomic_marking_state()->live_bytes(p) == 0) {
+      // Release empty pages
+      if (FLAG_gc_verbose) {
+        PrintIsolate(isolate(), "sweeping: released page: %p",
+                     static_cast<void*>(p));
       }
-      unused_page_present = true;
+      ArrayBufferTracker::FreeAll(p);
+      space->ReleasePage(p);
+    } else {
+      // Add non-empty pages to the sweeper.
+      sweeper().AddPage(space->identity(), p, Sweeper::REGULAR);
+      will_be_swept++;
     }
-
-    sweeper().AddPage(space->identity(), p, Sweeper::REGULAR);
-    will_be_swept++;
   }
 
   if (FLAG_gc_verbose) {

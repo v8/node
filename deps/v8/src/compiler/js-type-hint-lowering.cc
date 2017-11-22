@@ -212,6 +212,49 @@ JSTypeHintLowering::JSTypeHintLowering(JSGraph* jsgraph,
                                        Flags flags)
     : jsgraph_(jsgraph), flags_(flags), feedback_vector_(feedback_vector) {}
 
+JSTypeHintLowering::LoweringResult JSTypeHintLowering::ReduceUnaryOperation(
+    const Operator* op, Node* operand, Node* effect, Node* control,
+    FeedbackSlot slot) const {
+  DCHECK(!slot.IsInvalid());
+  BinaryOpICNexus nexus(feedback_vector(), slot);
+  if (Node* node = TryBuildSoftDeopt(
+          nexus, effect, control,
+          DeoptimizeReason::kInsufficientTypeFeedbackForUnaryOperation)) {
+    return LoweringResult::Exit(node);
+  }
+
+  Node* node;
+  switch (op->opcode()) {
+    case IrOpcode::kJSBitwiseNot: {
+      // Lower to a speculative xor with -1 if we have some kind of Number
+      // feedback.
+      JSSpeculativeBinopBuilder b(this, jsgraph()->javascript()->BitwiseXor(),
+                                  operand, jsgraph()->SmiConstant(-1), effect,
+                                  control, slot);
+      node = b.TryBuildNumberBinop();
+      break;
+    }
+    case IrOpcode::kJSNegate: {
+      // Lower to a speculative multiplication with -1 if we have some kind of
+      // Number feedback.
+      JSSpeculativeBinopBuilder b(this, jsgraph()->javascript()->Multiply(),
+                                  operand, jsgraph()->SmiConstant(-1), effect,
+                                  control, slot);
+      node = b.TryBuildNumberBinop();
+      break;
+    }
+    default:
+      UNREACHABLE();
+      break;
+  }
+
+  if (node != nullptr) {
+    return LoweringResult::SideEffectFree(node, node, control);
+  } else {
+    return LoweringResult::NoChange();
+  }
+}
+
 JSTypeHintLowering::LoweringResult JSTypeHintLowering::ReduceBinaryOperation(
     const Operator* op, Node* left, Node* right, Node* effect, Node* control,
     FeedbackSlot slot) const {

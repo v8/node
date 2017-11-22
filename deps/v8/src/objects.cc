@@ -2636,7 +2636,7 @@ bool Object::IterationHasObservableEffects() {
   // the prototype. This could have different results if the prototype has been
   // changed.
   if (IsHoleyElementsKind(array_kind) &&
-      isolate->IsFastArrayConstructorPrototypeChainIntact()) {
+      isolate->IsNoElementsProtectorIntact()) {
     return false;
   }
   return true;
@@ -3707,8 +3707,7 @@ Handle<String> JSReceiver::GetConstructorName(Handle<JSReceiver> receiver) {
     Object* maybe_constructor = receiver->map()->GetConstructor();
     if (maybe_constructor->IsJSFunction()) {
       JSFunction* constructor = JSFunction::cast(maybe_constructor);
-      String* name = constructor->shared()->name();
-      if (name->length() == 0) name = constructor->shared()->inferred_name();
+      String* name = constructor->shared()->DebugName();
       if (name->length() != 0 &&
           !name->Equals(isolate->heap()->Object_string())) {
         return handle(name, isolate);
@@ -3735,8 +3734,7 @@ Handle<String> JSReceiver::GetConstructorName(Handle<JSReceiver> receiver) {
   Handle<String> result = isolate->factory()->Object_string();
   if (maybe_constructor->IsJSFunction()) {
     JSFunction* constructor = JSFunction::cast(*maybe_constructor);
-    String* name = constructor->shared()->name();
-    if (name->length() == 0) name = constructor->shared()->inferred_name();
+    String* name = constructor->shared()->DebugName();
     if (name->length() > 0) result = handle(name, isolate);
   }
 
@@ -12319,15 +12317,16 @@ static void GetMinInobjectSlack(Map* map, void* data) {
 
 
 static void ShrinkInstanceSize(Map* map, void* data) {
-#ifdef DEBUG
-  int old_visitor_id = Map::GetVisitorId(map);
-#endif
   int slack = *reinterpret_cast<int*>(data);
   DCHECK_GE(slack, 0);
-  map->set_unused_property_fields(map->unused_property_fields() - slack);
+#ifdef DEBUG
+  int old_visitor_id = Map::GetVisitorId(map);
+  int new_unused = map->UnusedPropertyFields() - slack;
+#endif
   map->set_instance_size(map->instance_size() - slack * kPointerSize);
   map->set_construction_counter(Map::kNoSlackTracking);
   DCHECK_EQ(old_visitor_id, Map::GetVisitorId(map));
+  DCHECK_EQ(new_unused, map->UnusedPropertyFields());
 }
 
 static void StopSlackTracking(Map* map, void* data) {
@@ -13572,9 +13571,8 @@ void SharedFunctionInfo::set_debugger_hints(int value) {
 }
 
 String* SharedFunctionInfo::DebugName() {
-  String* n = name();
-  if (String::cast(n)->length() == 0) return inferred_name();
-  return String::cast(n);
+  if (name()->length() == 0) return inferred_name();
+  return name();
 }
 
 bool SharedFunctionInfo::HasNoSideEffect() {
@@ -15132,7 +15130,7 @@ Maybe<bool> JSObject::SetPrototype(Handle<JSObject> object,
 
   // Set the new prototype of the object.
 
-  isolate->UpdateArrayProtectorOnSetPrototype(real_receiver);
+  isolate->UpdateNoElementsProtectorOnSetPrototype(real_receiver);
 
   Handle<Map> new_map = Map::TransitionToPrototype(map, value);
   DCHECK(new_map->prototype() == *value);
@@ -18858,7 +18856,7 @@ void JSArrayBuffer::FreeBackingStore() {
   using AllocationMode = ArrayBuffer::Allocator::AllocationMode;
   const size_t length = allocation_length();
   const AllocationMode mode = allocation_mode();
-  GetIsolate()->array_buffer_allocator()->Free(allocation_base(), length, mode);
+  FreeBackingStore(GetIsolate(), {allocation_base(), length, mode});
 
   // Zero out the backing store and allocation base to avoid dangling
   // pointers.
@@ -18868,6 +18866,12 @@ void JSArrayBuffer::FreeBackingStore() {
   // FreeBackingStore while it is collecting.
   set_allocation_base(nullptr);
   set_allocation_length(0);
+}
+
+// static
+void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
+  isolate->array_buffer_allocator()->Free(allocation.allocation_base,
+                                          allocation.length, allocation.mode);
 }
 
 void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,

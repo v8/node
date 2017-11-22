@@ -476,6 +476,11 @@ DEFINE_BOOL(wasm_disable_structured_cloning, false,
             "disable wasm structured cloning")
 DEFINE_INT(wasm_num_compilation_tasks, 10,
            "number of parallel compilation tasks for wasm")
+DEFINE_BOOL(wasm_trace_native_heap, false, "trace wasm native heap events")
+DEFINE_BOOL(wasm_jit_to_native, false,
+            "JIT wasm code to native (not JS GC) memory")
+DEFINE_BOOL(wasm_trace_serialization, false,
+            "trace serialization/deserialization")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
 DEFINE_BOOL(wasm_stream_compilation, false,
@@ -612,7 +617,7 @@ DEFINE_BOOL(write_protect_code_memory, false, "write protect code memory")
 #endif
 DEFINE_BOOL(concurrent_marking, V8_CONCURRENT_MARKING_BOOL,
             "use concurrent marking")
-DEFINE_BOOL(parallel_marking, false, "use parallel marking in atomic pause")
+DEFINE_BOOL(parallel_marking, true, "use parallel marking in atomic pause")
 DEFINE_IMPLICATION(parallel_marking, concurrent_marking)
 DEFINE_BOOL(trace_concurrent_marking, false, "trace concurrent marking")
 DEFINE_BOOL(minor_mc_parallel_marking, true,
@@ -635,6 +640,8 @@ DEFINE_BOOL(trace_gc_object_stats, false,
             "trace object counts and memory usage")
 DEFINE_BOOL(track_retaining_path, false,
             "enable support for tracking retaining path")
+DEFINE_BOOL(concurrent_array_buffer_freeing, true,
+            "free array buffer allocations on a background thread")
 DEFINE_INT(gc_stats, 0, "Used by tracing internally to enable gc statistics")
 DEFINE_IMPLICATION(trace_gc_object_stats, track_gc_object_stats)
 DEFINE_VALUE_IMPLICATION(track_gc_object_stats, gc_stats, 1)
@@ -953,7 +960,7 @@ DEFINE_VALUE_IMPLICATION(runtime_call_stats, runtime_stats, 1)
 // snapshot-common.cc
 DEFINE_BOOL(lazy_deserialization, true,
             "Deserialize code lazily from the snapshot.")
-DEFINE_BOOL(lazy_handler_deserialization, false,
+DEFINE_BOOL(lazy_handler_deserialization, true,
             "Deserialize bytecode handlers lazily from the snapshot.")
 DEFINE_IMPLICATION(lazy_handler_deserialization, lazy_deserialization)
 DEFINE_IMPLICATION(future, lazy_handler_deserialization)
@@ -1255,6 +1262,7 @@ DEFINE_NEG_IMPLICATION(single_threaded_gc, parallel_pointer_update)
 DEFINE_NEG_IMPLICATION(single_threaded_gc, parallel_scavenge)
 DEFINE_NEG_IMPLICATION(single_threaded_gc, concurrent_store_buffer)
 DEFINE_NEG_IMPLICATION(single_threaded_gc, minor_mc_parallel_marking)
+DEFINE_NEG_IMPLICATION(single_threaded_gc, concurrent_array_buffer_freeing)
 
 #undef FLAG
 

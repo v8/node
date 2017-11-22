@@ -63,6 +63,7 @@ bool CanBeNullOrUndefined(Node* node) {
       case IrOpcode::kJSToLength:
       case IrOpcode::kJSToName:
       case IrOpcode::kJSToNumber:
+      case IrOpcode::kJSToNumeric:
       case IrOpcode::kJSToString:
         return false;
       case IrOpcode::kHeapConstant: {
@@ -142,7 +143,7 @@ Reduction JSCallReducer::ReduceBooleanConstructor(Node* node) {
   DCHECK_LE(2u, p.arity());
   Node* value = (p.arity() == 2) ? jsgraph()->UndefinedConstant()
                                  : NodeProperties::GetValueInput(node, 2);
-  value = graph()->NewNode(simplified()->ToBoolean(ToBooleanHint::kAny), value);
+  value = graph()->NewNode(simplified()->ToBoolean(), value);
   ReplaceWithValue(node, value);
   return Replace(value);
 }
@@ -856,7 +857,7 @@ bool CanInlineArrayIteratingBuiltin(Handle<Map> receiver_map) {
   return receiver_map->instance_type() == JS_ARRAY_TYPE &&
          IsFastElementsKind(receiver_map->elements_kind()) &&
          (!receiver_map->is_prototype_map() || receiver_map->is_stable()) &&
-         isolate->IsFastArrayConstructorPrototypeChainIntact() &&
+         isolate->IsNoElementsProtectorIntact() &&
          isolate->IsAnyInitialArrayPrototype(receiver_prototype);
 }
 
@@ -908,7 +909,7 @@ Reduction JSCallReducer::ReduceArrayForEach(Handle<JSFunction> function,
 
   // Install code dependencies on the {receiver} prototype maps and the
   // global array protector cell.
-  dependencies()->AssumePropertyCell(factory()->array_protector());
+  dependencies()->AssumePropertyCell(factory()->no_elements_protector());
 
   Node* k = jsgraph()->ZeroConstant();
 
@@ -1447,8 +1448,8 @@ Node* JSCallReducer::DoFilterPostCallbackWork(ElementsKind kind, Node** control,
                                               Node** effect, Node* a, Node* to,
                                               Node* element,
                                               Node* callback_value) {
-  Node* boolean_result = graph()->NewNode(
-      simplified()->ToBoolean(ToBooleanHint::kAny), callback_value);
+  Node* boolean_result =
+      graph()->NewNode(simplified()->ToBoolean(), callback_value);
 
   Node* check_boolean_result =
       graph()->NewNode(simplified()->ReferenceEqual(), boolean_result,

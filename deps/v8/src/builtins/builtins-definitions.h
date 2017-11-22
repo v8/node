@@ -187,6 +187,7 @@ namespace internal {
   TFC(NonNumberToNumeric, TypeConversion, 1)                                   \
   TFC(ToNumber, TypeConversion, 1)                                             \
   TFC(ToNumeric, TypeConversion, 1)                                            \
+  TFC(NumberToString, TypeConversion, 1)                                       \
   TFC(ToString, TypeConversion, 1)                                             \
   TFC(ToInteger, TypeConversion, 1)                                            \
   TFC(ToLength, TypeConversion, 1)                                             \
@@ -700,6 +701,8 @@ namespace internal {
   TFC(Equal, Compare, 1)                                                       \
   TFC(SameValue, Compare, 1)                                                   \
   TFC(StrictEqual, Compare, 1)                                                 \
+  TFS(BitwiseNot, kValue)                                                      \
+  TFS(Negate, kValue)                                                          \
                                                                                \
   /* Object */                                                                 \
   TFJ(ObjectConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \

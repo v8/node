@@ -4,6 +4,7 @@
 
 #include "src/interpreter/bytecode-generator.h"
 
+#include "src/api.h"
 #include "src/ast/ast-source-ranges.h"
 #include "src/ast/compile-time-value.h"
 #include "src/ast/scopes.h"
@@ -812,10 +813,9 @@ class BytecodeGenerator::FeedbackSlotCache : public ZoneObject {
 BytecodeGenerator::BytecodeGenerator(
     CompilationInfo* info, const AstStringConstants* ast_string_constants)
     : zone_(info->zone()),
-      builder_(new (zone()) BytecodeArrayBuilder(
-          zone(), info->num_parameters_including_this(),
-          info->scope()->num_stack_slots(), info->feedback_vector_spec(),
-          info->SourcePositionRecordingMode())),
+      builder_(zone(), info->num_parameters_including_this(),
+               info->scope()->num_stack_slots(), info->feedback_vector_spec(),
+               info->SourcePositionRecordingMode()),
       info_(info),
       ast_string_constants_(ast_string_constants),
       closure_scope_(info->scope()),
@@ -894,10 +894,18 @@ void BytecodeGenerator::AllocateDeferredConstants(Isolate* isolate,
   for (std::pair<NativeFunctionLiteral*, size_t> literal :
        native_function_literals_) {
     NativeFunctionLiteral* expr = literal.first;
+    v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
+
+    // Compute the function template for the native function.
+    v8::Local<v8::FunctionTemplate> info =
+        expr->extension()->GetNativeFunctionTemplate(
+            v8_isolate, Utils::ToLocal(expr->name()));
+    DCHECK(!info.IsEmpty());
+
     Handle<SharedFunctionInfo> shared_info =
-        Compiler::GetSharedFunctionInfoForNative(expr->extension(),
-                                                 expr->name());
-    if (shared_info.is_null()) return SetStackOverflow();
+        FunctionTemplateInfo::GetOrCreateSharedFunctionInfo(
+            isolate, Utils::OpenHandle(*info), expr->name());
+    DCHECK(!shared_info.is_null());
     builder()->SetDeferredConstantPoolEntry(literal.second, shared_info);
   }
 
@@ -3719,7 +3727,7 @@ void BytecodeGenerator::VisitCountOperation(CountOperation* expr) {
     old_value = register_allocator()->NewRegister();
     // Convert old value into a number before saving it.
     // TODO(ignition): Think about adding proper PostInc/PostDec bytecodes
-    // instead of this ToNumber + Inc/Dec dance.
+    // instead of this ToNumeric + Inc/Dec dance.
     builder()
         ->ToNumeric(feedback_index(count_slot))
         .StoreAccumulatorInRegister(old_value);

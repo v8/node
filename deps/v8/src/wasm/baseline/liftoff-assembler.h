@@ -44,8 +44,14 @@ namespace wasm {
 // Forward declarations.
 struct ModuleEnv;
 
+constexpr ValueType kWasmPtrSizeInt = kPointerSize == 8 ? kWasmI64 : kWasmI32;
+
 class LiftoffAssembler : public TurboAssembler {
  public:
+  // TODO(clemensh): Remove this limitation by allocating more stack space if
+  // needed.
+  static constexpr int kMaxValueStackHeight = 8;
+
   class PinnedRegisterScope {
    public:
     PinnedRegisterScope() : pinned_regs_(0) {}
@@ -200,7 +206,7 @@ class LiftoffAssembler : public TurboAssembler {
 
   Register GetUnusedRegister(ValueType type,
                              PinnedRegisterScope pinned_regs = {}) {
-    DCHECK_EQ(kWasmI32, type);
+    DCHECK(type == kWasmI32 || type == kWasmI64);
     if (cache_state_.has_unused_register(pinned_regs)) {
       return cache_state_.unused_register(pinned_regs);
     }
@@ -230,9 +236,12 @@ class LiftoffAssembler : public TurboAssembler {
   inline void ReserveStackSpace(uint32_t);
 
   inline void LoadConstant(Register, WasmValue);
-  inline void Load(Register, Address, RelocInfo::Mode = RelocInfo::NONE32);
-  inline void Store(Address, Register, PinnedRegisterScope,
-                    RelocInfo::Mode = RelocInfo::NONE32);
+  inline void LoadFromContext(Register dst, uint32_t offset, int size);
+  inline void SpillContext(Register context);
+  inline void Load(Register dst, Register src_addr, uint32_t offset_imm,
+                   int size, PinnedRegisterScope = {});
+  inline void Store(Register dst_addr, uint32_t offset_imm, Register src,
+                    int size, PinnedRegisterScope = {});
   inline void LoadCallerFrameSlot(Register, uint32_t caller_slot_idx);
   inline void MoveStackValue(uint32_t dst_index, uint32_t src_index, ValueType);
 
@@ -260,6 +269,9 @@ class LiftoffAssembler : public TurboAssembler {
 
   uint32_t num_locals() const { return num_locals_; }
   void set_num_locals(uint32_t num_locals);
+
+  uint32_t GetTotalFrameSlotCount() const;
+  size_t GetSafepointTableOffset() const { return 0; }
 
   ValueType local_type(uint32_t index) {
     DCHECK_GT(num_locals_, index);

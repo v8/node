@@ -700,9 +700,10 @@ class MemoryChunk {
   // If Value() >= 1 => The Memory is read and writable (and maybe executable).
   // The maximum value can right now only be 3.
   // All executable MemoryChunks are allocated rw based on the assumption that
-  // they will be used immediatelly for an allocation. Hence they are
-  // initialized with 1. The caller that triggers the page allocation is
-  // responsible to make the MemoryChunk rx.
+  // they will be used immediatelly for an allocation. They are initialized
+  // with the number of open CodeSpaceMemoryModificationScopes. The caller
+  // that triggers the page allocation is responsible for decrementing the
+  // counter.
   uintptr_t write_unprotect_counter_;
 
   // Byte allocated on the page, which includes all objects on the page
@@ -1202,19 +1203,17 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
     MemoryChunk* TryGetPooledMemoryChunkSafe() {
       // Procedure:
-      // (1) Try to get a chunk that was declared as pooled and already has
-      // been uncommitted.
-      // (2) Try to steal any memory chunk of kPageSize that would've been
+      // (1) Try to steal any memory chunk of kPageSize that would've been
       // unmapped.
-      MemoryChunk* chunk = GetMemoryChunkSafe<kPooled>();
-      if (chunk == nullptr) {
-        chunk = GetMemoryChunkSafe<kRegular>();
-        if (chunk != nullptr) {
-          // For stolen chunks we need to manually free any allocated memory.
-          chunk->ReleaseAllocatedMemory();
-        }
+      // (2) Try to get a chunk that was declared as pooled and already has
+      // been uncommitted.
+      MemoryChunk* chunk = GetMemoryChunkSafe<kRegular>();
+      if (chunk != nullptr) {
+        // For stolen chunks we need to manually free any allocated memory.
+        chunk->ReleaseAllocatedMemory();
+        return chunk;
       }
-      return chunk;
+      return GetMemoryChunkSafe<kPooled>();
     }
 
     void FreeQueuedChunks();

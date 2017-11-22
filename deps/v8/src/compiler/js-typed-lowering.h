@@ -40,6 +40,8 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   friend class JSBinopReduction;
 
   Reduction ReduceJSAdd(Node* node);
+  Reduction ReduceJSBitwiseNot(Node* node);
+  Reduction ReduceJSNegate(Node* node);
   Reduction ReduceJSComparison(Node* node);
   Reduction ReduceJSLoadNamed(Node* node);
   Reduction ReduceJSHasInPrototypeChain(Node* node);
@@ -53,8 +55,8 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   Reduction ReduceJSToInteger(Node* node);
   Reduction ReduceJSToLength(Node* node);
   Reduction ReduceJSToName(Node* node);
-  Reduction ReduceJSToNumberInput(Node* input);
-  Reduction ReduceJSToNumber(Node* node);
+  Reduction ReduceJSToNumberOrNumericInput(Node* input);
+  Reduction ReduceJSToNumberOrNumeric(Node* node);
   Reduction ReduceJSToStringInput(Node* input);
   Reduction ReduceJSToString(Node* node);
   Reduction ReduceJSToObject(Node* node);

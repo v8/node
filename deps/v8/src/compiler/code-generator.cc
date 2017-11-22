@@ -69,8 +69,7 @@ CodeGenerator::CodeGenerator(
       osr_helper_(osr_helper),
       osr_pc_offset_(-1),
       optimized_out_literal_id_(-1),
-      source_position_table_builder_(zone(),
-                                     info->SourcePositionRecordingMode()),
+      source_position_table_builder_(info->SourcePositionRecordingMode()),
       protected_instructions_(protected_instructions),
       result_(kSuccess) {
   for (int i = 0; i < code->InstructionBlockCount(); ++i) {
@@ -79,6 +78,11 @@ CodeGenerator::CodeGenerator(
   CreateFrameAccessState(frame);
   CHECK_EQ(info->is_osr(), osr_helper_.has_value());
   tasm_.set_jump_optimization_info(jump_opt);
+  Code::Kind code_kind = info_->code_kind();
+  if (code_kind == Code::JS_TO_WASM_FUNCTION ||
+      code_kind == Code::WASM_FUNCTION) {
+    tasm_.enable_serializer();
+  }
 }
 
 void CodeGenerator::AddProtectedInstructionLanding(uint32_t instr_offset,

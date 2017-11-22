@@ -31,6 +31,7 @@
 #include "src/factory.h"
 #include "src/isolate-inl.h"
 #include "src/log-inl.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-module.h"
@@ -3511,7 +3512,7 @@ Node* WasmGraphBuilder::LoadMem(wasm::ValueType type, MachineType memtype,
         graph()->NewNode(jsgraph()->machine()->ChangeUint32ToUint64(), index);
   }
   // Wasm semantics throw on OOB. Introduce explicit bounds check.
-  if (!FLAG_wasm_trap_handler || !V8_TRAP_HANDLER_SUPPORTED) {
+  if (!trap_handler::UseTrapHandler()) {
     BoundsCheckMem(memtype, index, offset, position);
   }
 
@@ -3527,7 +3528,7 @@ Node* WasmGraphBuilder::LoadMem(wasm::ValueType type, MachineType memtype,
     }
   } else {
     // TODO(eholk): Support unaligned loads with trap handlers.
-    DCHECK(!FLAG_wasm_trap_handler || !V8_TRAP_HANDLER_SUPPORTED);
+    DCHECK(!trap_handler::UseTrapHandler());
     load = graph()->NewNode(jsgraph()->machine()->UnalignedLoad(memtype),
                             MemBuffer(offset), index, *effect_, *control_);
   }
@@ -3570,7 +3571,7 @@ Node* WasmGraphBuilder::StoreMem(MachineType memtype, Node* index,
         graph()->NewNode(jsgraph()->machine()->ChangeUint32ToUint64(), index);
   }
   // Wasm semantics throw on OOB. Introduce explicit bounds check.
-  if (!FLAG_wasm_trap_handler || !V8_TRAP_HANDLER_SUPPORTED) {
+  if (!trap_handler::UseTrapHandler()) {
     BoundsCheckMem(memtype, index, offset, position);
   }
 
@@ -3580,7 +3581,7 @@ Node* WasmGraphBuilder::StoreMem(MachineType memtype, Node* index,
 
   if (memtype.representation() == MachineRepresentation::kWord8 ||
       jsgraph()->machine()->UnalignedStoreSupported(memtype.representation())) {
-    if (FLAG_wasm_trap_handler && V8_TRAP_HANDLER_SUPPORTED) {
+    if (trap_handler::UseTrapHandler()) {
       store = graph()->NewNode(
           jsgraph()->machine()->ProtectedStore(memtype.representation()),
           MemBuffer(offset), index, val, *effect_, *control_);
@@ -3593,7 +3594,7 @@ Node* WasmGraphBuilder::StoreMem(MachineType memtype, Node* index,
     }
   } else {
     // TODO(eholk): Support unaligned stores with trap handlers.
-    DCHECK(!FLAG_wasm_trap_handler || !V8_TRAP_HANDLER_SUPPORTED);
+    DCHECK(!trap_handler::UseTrapHandler());
     UnalignedStoreRepresentation rep(memtype.representation());
     store =
         graph()->NewNode(jsgraph()->machine()->UnalignedStore(rep),
@@ -4277,6 +4278,8 @@ Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
   return code;
 }
 
+namespace {
+
 void ValidateImportWrapperReferencesImmovables(Handle<Code> wrapper) {
 #if !DEBUG
   return;
@@ -4313,6 +4316,36 @@ void ValidateImportWrapperReferencesImmovables(Handle<Code> wrapper) {
     }
     CHECK(is_immovable || is_allowed_stub);
   }
+}
+
+}  // namespace
+
+void AttachWasmFunctionInfo(Isolate* isolate, Handle<Code> code,
+                            MaybeHandle<WeakCell> weak_instance,
+                            int func_index) {
+  DCHECK(weak_instance.is_null() ||
+         weak_instance.ToHandleChecked()->value()->IsWasmInstanceObject());
+  Handle<FixedArray> deopt_data = isolate->factory()->NewFixedArray(2, TENURED);
+  if (!weak_instance.is_null()) {
+    // TODO(wasm): Introduce constants for the indexes in wasm deopt data.
+    deopt_data->set(0, *weak_instance.ToHandleChecked());
+  }
+  deopt_data->set(1, Smi::FromInt(func_index));
+
+  // TODO(6792): No longer needed once WebAssembly code is off heap.
+  CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
+
+  code->set_deoptimization_data(*deopt_data);
+}
+
+void AttachWasmFunctionInfo(Isolate* isolate, Handle<Code> code,
+                            MaybeHandle<WasmInstanceObject> instance,
+                            int func_index) {
+  MaybeHandle<WeakCell> weak_instance;
+  if (!instance.is_null()) {
+    weak_instance = isolate->factory()->NewWeakCell(instance.ToHandleChecked());
+  }
+  AttachWasmFunctionInfo(isolate, code, weak_instance, func_index);
 }
 
 Handle<Code> CompileWasmToJSWrapper(

@@ -885,7 +885,7 @@ void CodeStubAssembler::BranchIfFastJSArray(Node* object, Node* context,
   // Check prototype chain if receiver does not have packed elements
   GotoIfNot(IsPrototypeInitialArrayPrototype(context, map), if_false);
 
-  Branch(IsArrayProtectorCellInvalid(), if_false, if_true);
+  Branch(IsNoElementsProtectorCellInvalid(), if_false, if_true);
 }
 
 void CodeStubAssembler::BranchIfFastJSArrayForCopy(Node* object, Node* context,
@@ -2569,10 +2569,11 @@ void CodeStubAssembler::InitializeJSObjectBodyWithSlackTracking(
                                    MachineRepresentation::kWord32);
     STATIC_ASSERT(Map::kSlackTrackingCounterEnd == 1);
 
-    Node* unused_fields = LoadObjectField(map, Map::kUnusedPropertyFieldsOffset,
-                                          MachineType::Uint8());
-    Node* used_size = IntPtrSub(
-        instance_size, TimesPointerSize(ChangeUint32ToWord(unused_fields)));
+    // The object still has in-object slack therefore the |unsed_or_unused|
+    // field contain the "used" value.
+    Node* used_size = TimesPointerSize(ChangeUint32ToWord(
+        LoadObjectField(map, Map::kUsedOrUnusedInstanceSizeInWordsOffset,
+                        MachineType::Uint8())));
 
     Comment("iInitialize filler fields");
     InitializeFieldsWithRoot(object, used_size, instance_size,
@@ -3022,7 +3023,6 @@ void CodeStubAssembler::FillPropertyArrayWithUndefined(Node* array,
   CSA_SLOW_ASSERT(this, MatchesParameterMode(from_node, mode));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(to_node, mode));
   CSA_SLOW_ASSERT(this, IsPropertyArray(array));
-  STATIC_ASSERT(kHoleNanLower32 == kHoleNanUpper32);
   ElementsKind kind = PACKED_ELEMENTS;
   Node* value = UndefinedConstant();
   BuildFastFixedArrayForEach(array, kind, from_node, to_node,
@@ -3040,38 +3040,22 @@ void CodeStubAssembler::FillFixedArrayWithValue(
   CSA_SLOW_ASSERT(this, MatchesParameterMode(from_node, mode));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(to_node, mode));
   CSA_SLOW_ASSERT(this, IsFixedArrayWithKind(array, kind));
-  bool is_double = IsDoubleElementsKind(kind);
   DCHECK(value_root_index == Heap::kTheHoleValueRootIndex ||
          value_root_index == Heap::kUndefinedValueRootIndex);
-  DCHECK_IMPLIES(is_double, value_root_index == Heap::kTheHoleValueRootIndex);
-  STATIC_ASSERT(kHoleNanLower32 == kHoleNanUpper32);
-  Node* double_hole =
-      Is64() ? ReinterpretCast<UintPtrT>(Int64Constant(kHoleNanInt64))
-             : ReinterpretCast<UintPtrT>(Int32Constant(kHoleNanLower32));
+
+  // Determine the value to initialize the {array} based
+  // on the {value_root_index} and the elements {kind}.
   Node* value = LoadRoot(value_root_index);
+  if (IsDoubleElementsKind(kind)) {
+    value = LoadHeapNumberValue(value);
+  }
 
   BuildFastFixedArrayForEach(
       array, kind, from_node, to_node,
-      [this, value, is_double, double_hole](Node* array, Node* offset) {
-        if (is_double) {
-          // Don't use doubles to store the hole double, since manipulating the
-          // signaling NaN used for the hole in C++, e.g. with bit_cast, will
-          // change its value on ia32 (the x87 stack is used to return values
-          // and stores to the stack silently clear the signalling bit).
-          //
-          // TODO(danno): When we have a Float32/Float64 wrapper class that
-          // preserves double bits during manipulation, remove this code/change
-          // this to an indexed Float64 store.
-          if (Is64()) {
-            StoreNoWriteBarrier(MachineRepresentation::kWord64, array, offset,
-                                double_hole);
-          } else {
-            StoreNoWriteBarrier(MachineRepresentation::kWord32, array, offset,
-                                double_hole);
-            StoreNoWriteBarrier(MachineRepresentation::kWord32, array,
-                                IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
-                                double_hole);
-          }
+      [this, value, kind](Node* array, Node* offset) {
+        if (IsDoubleElementsKind(kind)) {
+          StoreNoWriteBarrier(MachineRepresentation::kFloat64, array, offset,
+                              value);
         } else {
           StoreNoWriteBarrier(MachineRepresentation::kTagged, array, offset,
                               value);
@@ -3797,8 +3781,7 @@ TNode<String> CodeStubAssembler::ToThisString(Node* context, Node* value,
   BIND(&if_valueissmi);
   {
     // The {value} is a Smi, convert it to a String.
-    Callable callable = CodeFactory::NumberToString(isolate());
-    var_value.Bind(CallStub(callable, context, value));
+    var_value.Bind(CallBuiltin(Builtins::kNumberToString, context, value));
     Goto(&if_valueisstring);
   }
   BIND(&if_valueisstring);
@@ -4059,9 +4042,9 @@ Node* CodeStubAssembler::IsUndetectableMap(Node* map) {
   return IsSetWord32(LoadMapBitField(map), 1 << Map::kIsUndetectable);
 }
 
-Node* CodeStubAssembler::IsArrayProtectorCellInvalid() {
+Node* CodeStubAssembler::IsNoElementsProtectorCellInvalid() {
   Node* invalid = SmiConstant(Isolate::kProtectorInvalid);
-  Node* cell = LoadRoot(Heap::kArrayProtectorRootIndex);
+  Node* cell = LoadRoot(Heap::kNoElementsProtectorRootIndex);
   Node* cell_value = LoadObjectField(cell, PropertyCell::kValueOffset);
   return WordEqual(cell_value, invalid);
 }
@@ -5313,8 +5296,7 @@ Node* CodeStubAssembler::ToName(Node* context, Node* value) {
 
   BIND(&is_number);
   {
-    Callable callable = CodeFactory::NumberToString(isolate());
-    var_result.Bind(CallStub(callable, context, value));
+    var_result.Bind(CallBuiltin(Builtins::kNumberToString, context, value));
     Goto(&end);
   }
 
@@ -10245,7 +10227,7 @@ Node* CodeStubAssembler::CreateArrayIterator(Node* array, Node* array_map,
           // its initial state (because the protector cell is only tracked for
           // initial the Array and Object prototypes). Check these conditions
           // here, and take the slow path if any fail.
-          GotoIf(IsArrayProtectorCellInvalid(), &if_isslow);
+          GotoIf(IsNoElementsProtectorCellInvalid(), &if_isslow);
 
           Node* native_context = LoadNativeContext(context);
 

@@ -358,7 +358,7 @@ Register LiftoffAssembler::PopToRegister(ValueType type,
 
 Register LiftoffAssembler::SpillRegister(ValueType type,
                                          PinnedRegisterScope pinned_regs) {
-  DCHECK_EQ(kWasmI32, type);
+  DCHECK(type == kWasmI32 || type == kWasmI64);
 
   // Spill one cached value to free a register.
   Register spill_reg = cache_state_.GetNextSpillReg(pinned_regs);
@@ -385,6 +385,10 @@ void LiftoffAssembler::set_num_locals(uint32_t num_locals) {
         reinterpret_cast<ValueType*>(malloc(num_locals * sizeof(ValueType)));
     DCHECK_NOT_NULL(more_local_types_);
   }
+}
+
+uint32_t LiftoffAssembler::GetTotalFrameSlotCount() const {
+  return kPointerSize * (num_locals() + kMaxValueStackHeight);
 }
 
 #undef __

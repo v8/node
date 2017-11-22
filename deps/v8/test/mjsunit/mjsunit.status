@@ -648,6 +648,12 @@
 }],  # 'arch == ppc64 or arch == ppc or arch == s390 or arch == s390x'
 
 ##############################################################################
+['variant == future', {
+  # BUG(v8:7106).
+  'regress/typed-array-lifetime': [SKIP],
+}],  # variant == future
+
+##############################################################################
 ['variant == stress', {
   'es6/array-iterator-turbo': [SKIP],
 
@@ -718,5 +724,12 @@
 ['arch != x64 and arch != ia32', {
   'wasm/liftoff': [SKIP],
 }], # arch != x64 and arch != ia32
+
+##############################################################################
+['variant == liftoff', {
+  # In the liftoff variant, liftoff compilation happens even though the test
+  # does not explicitly enable it.
+  'wasm/default-liftoff-setting': [SKIP],
+}], # variant == liftoff
 
 ]

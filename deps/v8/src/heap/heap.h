@@ -20,6 +20,7 @@
 #include "src/globals.h"
 #include "src/heap-symbols.h"
 #include "src/objects.h"
+#include "src/objects/code.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/string-table.h"
 #include "src/visitors.h"
@@ -39,6 +40,8 @@ class TestMemoryAllocatorScope;
 
 class BytecodeArray;
 class CodeDataContainer;
+class DeoptimizationData;
+class HandlerTable;
 class JSArrayBuffer;
 
 using v8::MemoryPressureLevel;
@@ -200,7 +203,7 @@ using v8::MemoryPressureLevel;
   V(InterceptorInfo, noop_interceptor_info, NoOpInterceptorInfo)               \
   /* Protectors */                                                             \
   V(Cell, array_constructor_protector, ArrayConstructorProtector)              \
-  V(PropertyCell, array_protector, ArrayProtector)                             \
+  V(PropertyCell, no_elements_protector, NoElementsProtector)                  \
   V(Cell, is_concat_spreadable_protector, IsConcatSpreadableProtector)         \
   V(PropertyCell, species_protector, SpeciesProtector)                         \
   V(Cell, string_length_protector, StringLengthProtector)                      \
@@ -283,7 +286,7 @@ using v8::MemoryPressureLevel;
   V(ArgumentsMarkerMap)                 \
   V(ArrayBufferNeuteringProtector)      \
   V(ArrayIteratorProtector)             \
-  V(ArrayProtector)                     \
+  V(NoElementsProtector)                \
   V(BigIntMap)                          \
   V(BlockContextMap)                    \
   V(BooleanMap)                         \
@@ -388,6 +391,7 @@ using v8::MemoryPressureLevel;
   } while (false)
 
 class AllocationObserver;
+class ArrayBufferCollector;
 class ArrayBufferTracker;
 class ConcurrentMarking;
 class GCIdleTimeAction;
@@ -807,6 +811,20 @@ class Heap {
   // Print short heap statistics.
   void PrintShortHeapStatistics();
 
+  bool write_protect_code_memory() const { return write_protect_code_memory_; }
+
+  uintptr_t code_space_memory_modification_scope_depth() {
+    return code_space_memory_modification_scope_depth_;
+  }
+
+  void increment_code_space_memory_modification_scope_depth() {
+    code_space_memory_modification_scope_depth_++;
+  }
+
+  void decrement_code_space_memory_modification_scope_depth() {
+    code_space_memory_modification_scope_depth_--;
+  }
+
   inline HeapState gc_state() { return gc_state_; }
   void SetGCState(HeapState state);
 
@@ -1007,6 +1025,10 @@ class Heap {
 
   MinorMarkCompactCollector* minor_mark_compact_collector() {
     return minor_mark_compact_collector_;
+  }
+
+  ArrayBufferCollector* array_buffer_collector() {
+    return array_buffer_collector_;
   }
 
   // ===========================================================================
@@ -1973,10 +1995,7 @@ class Heap {
 
   bool always_allocate() { return always_allocate_scope_count_.Value() != 0; }
 
-  bool CanExpandOldGeneration(size_t size) {
-    if (force_oom_) return false;
-    return (OldGenerationCapacity() + size) < MaxOldGenerationSize();
-  }
+  bool CanExpandOldGeneration(size_t size);
 
   bool IsCloseToOutOfMemory(size_t slack) {
     return OldGenerationCapacity() + slack >= MaxOldGenerationSize();
@@ -2237,8 +2256,20 @@ class Heap {
   MUST_USE_RESULT AllocationResult
       AllocateForeign(Address address, PretenureFlag pretenure = NOT_TENURED);
 
+  // Allocates a new code object (mostly uninitialized). Can only be used when
+  // code space is unprotected and requires manual initialization by the caller.
   MUST_USE_RESULT AllocationResult AllocateCode(int object_size,
                                                 Movability movability);
+
+  // Allocates a new code object (fully initialized). All header fields of the
+  // returned object are immutable and the code object is write protected.
+  MUST_USE_RESULT AllocationResult
+  AllocateCode(const CodeDesc& desc, Code::Kind kind, Handle<Object> self_ref,
+               int32_t builtin_index, ByteArray* reloc_info,
+               CodeDataContainer* data_container, HandlerTable* handler_table,
+               ByteArray* source_position_table, DeoptimizationData* deopt_data,
+               Movability movability, uint32_t stub_key, bool is_turbofanned,
+               int stack_slots, int safepoint_table_offset);
 
   void set_force_oom(bool value) { force_oom_ = value; }
 
@@ -2314,6 +2345,14 @@ class Heap {
   LargeObjectSpace* lo_space_;
   // Map from the space id to the space.
   Space* space_[LAST_SPACE + 1];
+
+  // Determines whether code space is write-protected. This is essentially a
+  // race-free copy of the {FLAG_write_protect_code_memory} flag.
+  bool write_protect_code_memory_;
+
+  // Holds the number of open CodeSpaceMemoryModificationScopes.
+  uintptr_t code_space_memory_modification_scope_depth_;
+
   HeapState gc_state_;
   int gc_post_processing_depth_;
 
@@ -2406,6 +2445,8 @@ class Heap {
 
   MarkCompactCollector* mark_compact_collector_;
   MinorMarkCompactCollector* minor_mark_compact_collector_;
+
+  ArrayBufferCollector* array_buffer_collector_;
 
   MemoryAllocator* memory_allocator_;
 

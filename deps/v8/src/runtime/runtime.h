@@ -189,7 +189,6 @@ namespace internal {
   F(DebugPushPromise, 1, 1)                     \
   F(DebugPopPromise, 0, 1)                      \
   F(DebugPromiseReject, 2, 1)                   \
-  F(DebugAsyncEventEnqueueRecurring, 2, 1)      \
   F(DebugAsyncFunctionPromiseCreated, 1, 1)     \
   F(DebugIsActive, 0, 1)                        \
   F(DebugBreakInOptimizedCode, 0, 1)            \
@@ -497,7 +496,6 @@ namespace internal {
   F(RegExpInternalReplace, 3, 1)                    \
   F(RegExpReplace, 3, 1)                            \
   F(RegExpSplit, 3, 1)                              \
-  F(StringReplaceGlobalRegExpWithString, 4, 1)      \
   F(StringReplaceNonGlobalRegExpWithFunction, 3, 1) \
   F(StringSplit, 3, 1)
 

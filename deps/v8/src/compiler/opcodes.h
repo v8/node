@@ -120,10 +120,14 @@
   V(JSToLength)                    \
   V(JSToName)                      \
   V(JSToNumber)                    \
+  V(JSToNumeric)                   \
   V(JSToObject)                    \
   V(JSToString)
 
-#define JS_SIMPLE_UNOP_LIST(V) JS_CONVERSION_UNOP_LIST(V)
+#define JS_SIMPLE_UNOP_LIST(V) \
+  JS_CONVERSION_UNOP_LIST(V)   \
+  V(JSBitwiseNot)              \
+  V(JSNegate)
 
 #define JS_OBJECT_OP_LIST(V)      \
   V(JSCreate)                     \

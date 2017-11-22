@@ -366,6 +366,8 @@ class RelocInfo {
     WASM_CONTEXT_REFERENCE,
     WASM_FUNCTION_TABLE_SIZE_REFERENCE,
     WASM_GLOBAL_HANDLE,
+    WASM_CALL,
+    JS_TO_WASM_CALL,
 
     RUNTIME_ENTRY,
     COMMENT,
@@ -421,6 +423,7 @@ class RelocInfo {
   static inline bool IsRuntimeEntry(Mode mode) {
     return mode == RUNTIME_ENTRY;
   }
+  static inline bool IsWasmCall(Mode mode) { return mode == WASM_CALL; }
   // Is the relocation mode affected by GC?
   static inline bool IsGCRelocMode(Mode mode) {
     return mode <= LAST_GCED_ENUM;
@@ -468,7 +471,8 @@ class RelocInfo {
     return IsWasmFunctionTableSizeReference(mode);
   }
   static inline bool IsWasmPtrReference(Mode mode) {
-    return mode == WASM_CONTEXT_REFERENCE || mode == WASM_GLOBAL_HANDLE;
+    return mode == WASM_CONTEXT_REFERENCE || mode == WASM_GLOBAL_HANDLE ||
+           mode == WASM_CALL || mode == JS_TO_WASM_CALL;
   }
 
   static inline int ModeMask(Mode mode) { return 1 << mode; }
@@ -498,6 +502,8 @@ class RelocInfo {
   Address wasm_context_reference() const;
   uint32_t wasm_function_table_size_reference() const;
   Address global_handle() const;
+  Address js_to_wasm_address() const;
+  Address wasm_call_address() const;
 
   void set_wasm_context_reference(
       Isolate* isolate, Address address,
@@ -512,6 +518,12 @@ class RelocInfo {
 
   void set_global_handle(
       Isolate* isolate, Address address,
+      ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
+  void set_wasm_call_address(
+      Isolate*, Address,
+      ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
+  void set_js_to_wasm_address(
+      Isolate*, Address,
       ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
 
   // this relocation applies to;

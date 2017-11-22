@@ -432,49 +432,49 @@ Condition FlagsConditionToCondition(FlagsCondition condition) {
     __ dmb(ISH);                                                      \
   } while (0)
 
-#define ASSEMBLE_ATOMIC_EXCHANGE_INTEGER(load_instr, store_instr)             \
-  do {                                                                        \
-    Label exchange;                                                           \
-    __ dmb(ISH);                                                              \
-    __ bind(&exchange);                                                       \
-    __ add(i.TempRegister(0), i.InputRegister(0), i.InputRegister(1));        \
-    __ load_instr(i.OutputRegister(0), i.TempRegister(0));                    \
-    __ store_instr(i.TempRegister(0), i.InputRegister(2), i.TempRegister(0)); \
-    __ teq(i.TempRegister(0), Operand(0));                                    \
-    __ b(ne, &exchange);                                                      \
-    __ dmb(ISH);                                                              \
+#define ASSEMBLE_ATOMIC_EXCHANGE_INTEGER(load_instr, store_instr)              \
+  do {                                                                         \
+    Label exchange;                                                            \
+    __ add(i.InputRegister(0), i.InputRegister(0), i.InputRegister(1));        \
+    __ dmb(ISH);                                                               \
+    __ bind(&exchange);                                                        \
+    __ load_instr(i.OutputRegister(0), i.InputRegister(0));                    \
+    __ store_instr(i.TempRegister(0), i.InputRegister(2), i.InputRegister(0)); \
+    __ teq(i.TempRegister(0), Operand(0));                                     \
+    __ b(ne, &exchange);                                                       \
+    __ dmb(ISH);                                                               \
   } while (0)
 
-#define ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(load_instr, store_instr)     \
-  do {                                                                        \
-    Label compareExchange;                                                    \
-    Label exit;                                                               \
-    __ dmb(ISH);                                                              \
-    __ bind(&compareExchange);                                                \
-    __ add(i.TempRegister(0), i.InputRegister(0), i.InputRegister(1));        \
-    __ load_instr(i.OutputRegister(0), i.TempRegister(0));                    \
-    __ teq(i.TempRegister(1), Operand(i.OutputRegister(0)));                  \
-    __ b(ne, &exit);                                                          \
-    __ store_instr(i.TempRegister(0), i.InputRegister(3), i.TempRegister(0)); \
-    __ teq(i.TempRegister(0), Operand(0));                                    \
-    __ b(ne, &compareExchange);                                               \
-    __ bind(&exit);                                                           \
-    __ dmb(ISH);                                                              \
+#define ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(load_instr, store_instr)      \
+  do {                                                                         \
+    Label compareExchange;                                                     \
+    Label exit;                                                                \
+    __ add(i.InputRegister(0), i.InputRegister(0), i.InputRegister(1));        \
+    __ dmb(ISH);                                                               \
+    __ bind(&compareExchange);                                                 \
+    __ load_instr(i.OutputRegister(0), i.InputRegister(0));                    \
+    __ teq(i.InputRegister(2), Operand(i.OutputRegister(0)));                  \
+    __ b(ne, &exit);                                                           \
+    __ store_instr(i.TempRegister(0), i.InputRegister(3), i.InputRegister(0)); \
+    __ teq(i.TempRegister(0), Operand(0));                                     \
+    __ b(ne, &compareExchange);                                                \
+    __ bind(&exit);                                                            \
+    __ dmb(ISH);                                                               \
   } while (0)
 
-#define ASSEMBLE_ATOMIC_BINOP(load_instr, store_instr, bin_instr)            \
-  do {                                                                       \
-    Label binop;                                                             \
-    __ add(i.TempRegister(0), i.InputRegister(0), i.InputRegister(1));       \
-    __ dmb(ISH);                                                             \
-    __ bind(&binop);                                                         \
-    __ load_instr(i.OutputRegister(0), i.TempRegister(0));                   \
-    __ bin_instr(i.TempRegister(1), i.OutputRegister(0),                     \
-                 Operand(i.InputRegister(2)));                               \
-    __ store_instr(i.TempRegister(1), i.TempRegister(1), i.TempRegister(0)); \
-    __ teq(i.TempRegister(1), Operand(0));                                   \
-    __ b(ne, &binop);                                                        \
-    __ dmb(ISH);                                                             \
+#define ASSEMBLE_ATOMIC_BINOP(load_instr, store_instr, bin_instr)             \
+  do {                                                                        \
+    Label binop;                                                              \
+    __ add(i.InputRegister(0), i.InputRegister(0), i.InputRegister(1));       \
+    __ dmb(ISH);                                                              \
+    __ bind(&binop);                                                          \
+    __ load_instr(i.OutputRegister(0), i.InputRegister(0));                   \
+    __ bin_instr(i.TempRegister(0), i.OutputRegister(0),                      \
+                 Operand(i.InputRegister(2)));                                \
+    __ store_instr(i.TempRegister(1), i.TempRegister(0), i.InputRegister(0)); \
+    __ teq(i.TempRegister(1), Operand(0));                                    \
+    __ b(ne, &binop);                                                         \
+    __ dmb(ISH);                                                              \
   } while (0)
 
 #define ASSEMBLE_IEEE754_BINOP(name)                                           \
@@ -720,6 +720,28 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       frame_access_state()->ClearSPDelta();
       break;
     }
+    case kArchCallWasmFunction: {
+      // We must not share code targets for calls to builtins for wasm code, as
+      // they might need to be patched individually.
+      internal::Assembler::BlockCodeTargetSharingScope scope;
+      RelocInfo::Mode rmode = RelocInfo::JS_TO_WASM_CALL;
+      if (info()->IsWasm()) {
+        scope.Open(tasm());
+        rmode = RelocInfo::WASM_CALL;
+      }
+
+      if (instr->InputAt(0)->IsImmediate()) {
+        Address wasm_code = reinterpret_cast<Address>(
+            i.ToConstant(instr->InputAt(0)).ToInt32());
+        __ Call(wasm_code, rmode);
+      } else {
+        __ Call(i.InputRegister(0));
+      }
+      RecordCallPosition(instr);
+      DCHECK_EQ(LeaveCC, i.OutputSBit());
+      frame_access_state()->ClearSPDelta();
+      break;
+    }
     case kArchTailCallCodeObjectFromJSFunction:
     case kArchTailCallCodeObject: {
       // We must not share code targets for calls to builtins for wasm code, as
@@ -738,6 +760,29 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ add(ip, i.InputRegister(0),
                Operand(Code::kHeaderSize - kHeapObjectTag));
         __ Jump(ip);
+      }
+      DCHECK_EQ(LeaveCC, i.OutputSBit());
+      unwinding_info_writer_.MarkBlockWillExit();
+      frame_access_state()->ClearSPDelta();
+      frame_access_state()->SetFrameAccessToDefault();
+      break;
+    }
+    case kArchTailCallWasm: {
+      // We must not share code targets for calls to builtins for wasm code, as
+      // they might need to be patched individually.
+      internal::Assembler::BlockCodeTargetSharingScope scope;
+      RelocInfo::Mode rmode = RelocInfo::JS_TO_WASM_CALL;
+      if (info()->IsWasm()) {
+        scope.Open(tasm());
+        rmode = RelocInfo::WASM_CALL;
+      }
+
+      if (instr->InputAt(0)->IsImmediate()) {
+        Address wasm_code = reinterpret_cast<Address>(
+            i.ToConstant(instr->InputAt(0)).ToInt32());
+        __ Jump(wasm_code, rmode);
+      } else {
+        __ Jump(i.InputRegister(0));
       }
       DCHECK_EQ(LeaveCC, i.OutputSBit());
       unwinding_info_writer_.MarkBlockWillExit();
@@ -2597,25 +2642,24 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ASSEMBLE_ATOMIC_EXCHANGE_INTEGER(ldrex, strex);
       break;
     case kAtomicCompareExchangeInt8:
-      __ uxtb(i.TempRegister(1), i.InputRegister(2));
+      __ uxtb(i.InputRegister(2), i.InputRegister(2));
       ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(ldrexb, strexb);
       __ sxtb(i.OutputRegister(0), i.OutputRegister(0));
       break;
     case kAtomicCompareExchangeUint8:
-      __ uxtb(i.TempRegister(1), i.InputRegister(2));
+      __ uxtb(i.InputRegister(2), i.InputRegister(2));
       ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(ldrexb, strexb);
       break;
     case kAtomicCompareExchangeInt16:
-      __ uxth(i.TempRegister(1), i.InputRegister(2));
+      __ uxth(i.InputRegister(2), i.InputRegister(2));
       ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(ldrexh, strexh);
       __ sxth(i.OutputRegister(0), i.OutputRegister(0));
       break;
     case kAtomicCompareExchangeUint16:
-      __ uxth(i.TempRegister(1), i.InputRegister(2));
+      __ uxth(i.InputRegister(2), i.InputRegister(2));
       ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(ldrexh, strexh);
       break;
     case kAtomicCompareExchangeWord32:
-      __ mov(i.TempRegister(1), i.InputRegister(2));
       ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER(ldrex, strex);
       break;
 #define ATOMIC_BINOP_CASE(op, inst)                    \
@@ -2642,6 +2686,19 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ATOMIC_BINOP_CASE(Or, orr)
       ATOMIC_BINOP_CASE(Xor, eor)
 #undef ATOMIC_BINOP_CASE
+#undef ASSEMBLE_CHECKED_LOAD_FP
+#undef ASSEMBLE_CHECKED_LOAD_INTEGER
+#undef ASSEMBLE_CHECKED_STORE_FP
+#undef ASSEMBLE_CHECKED_STORE_INTEGER
+#undef ASSEMBLE_ATOMIC_LOAD_INTEGER
+#undef ASSEMBLE_ATOMIC_STORE_INTEGER
+#undef ASSEMBLE_ATOMIC_EXCHANGE_INTEGER
+#undef ASSEMBLE_ATOMIC_COMPARE_EXCHANGE_INTEGER
+#undef ASSEMBLE_ATOMIC_BINOP
+#undef ASSEMBLE_IEEE754_BINOP
+#undef ASSEMBLE_IEEE754_UNOP
+#undef ASSEMBLE_NEON_NARROWING_OP
+#undef ASSEMBLE_NEON_PAIRWISE_OP
   }
   return kSuccess;
 }  // NOLINT(readability/fn_size)
@@ -3242,6 +3299,7 @@ void CodeGenerator::AssembleJumpTable(Label** targets, size_t target_count) {
 }
 
 #undef __
+#undef kScratchReg
 
 }  // namespace compiler
 }  // namespace internal
