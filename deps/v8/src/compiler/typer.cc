@@ -481,8 +481,8 @@ Type* Typer::Visitor::ToInteger(Type* type, Typer* t) {
 // static
 Type* Typer::Visitor::ToLength(Type* type, Typer* t) {
   // ES6 section 7.1.15 ToLength ( argument )
-  if (type->IsNone()) return type;
   type = ToInteger(type, t);
+  if (type->IsNone()) return type;
   double min = type->Min();
   double max = type->Max();
   if (max <= 0.0) {
@@ -1377,10 +1377,6 @@ Type* Typer::Visitor::TypeJSCreateWithContext(Node* node) {
 }
 
 Type* Typer::Visitor::TypeJSCreateBlockContext(Node* node) {
-  return Type::OtherInternal();
-}
-
-Type* Typer::Visitor::TypeJSCreateScriptContext(Node* node) {
   return Type::OtherInternal();
 }
 

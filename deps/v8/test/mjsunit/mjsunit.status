@@ -170,15 +170,6 @@
   'icu-date-to-string': [PASS, ['no_i18n == True', SKIP]],
   'icu-date-lord-howe': [PASS, ['no_i18n == True', SKIP]],
 
-  # Allocates a large array buffer, which TSAN sometimes cannot handle.
-  'regress/regress-599717': [PASS, ['tsan', SKIP]],
-
-  # BUG(v8:7042). Uses a lot of memory.
-  'regress/regress-678917': [PASS, ['tsan', SKIP]],
-
-  # BUG(v8:6924). The test uses a lot of memory.
-  'regress/wasm/regress-694433': [PASS, ['tsan', SKIP]],
-
   # TODO(bmeurer): Flaky timeouts (sometimes <1s, sometimes >3m).
   'unicodelctest': [PASS, NO_VARIANTS],
   'unicodelctest-no-optimization': [PASS, NO_VARIANTS],
@@ -380,6 +371,10 @@
 
   # Stack overflow on windows.
   'es8/regress/regress-624300': [PASS, ['system == windows', SKIP]],
+
+  # https://bugs.chromium.org/p/v8/issues/detail?id=7102
+  # Flaky due to huge string allocation.
+  'regress/regress-748069': [SKIP],
 }],  # 'asan == True'
 
 ##############################################################################
@@ -403,9 +398,28 @@
   'compiler/osr-two': [PASS, SLOW],
   'wasm/grow-memory': [PASS, SLOW],
 
+  # https://bugs.chromium.org/p/v8/issues/detail?id=7102
+  # Flaky due to huge string allocation.
+  'regress/regress-748069': [SKIP],
   # Slow test.
   'regress/regress-779407': [PASS, SLOW],
 }],  # 'msan == True'
+
+##############################################################################
+['tsan == True', {
+  # https://bugs.chromium.org/p/v8/issues/detail?id=7102
+  # Flaky due to huge string allocation.
+  'regress/regress-748069': [SKIP],
+
+  # Allocates a large array buffer, which TSAN sometimes cannot handle.
+  'regress/regress-599717': [SKIP],
+
+  # BUG(v8:7042). Uses a lot of memory.
+  'regress/regress-678917': [SKIP],
+
+  # BUG(v8:6924). The test uses a lot of memory.
+  'regress/wasm/regress-694433': [SKIP],
+}],  # 'tsan == True'
 
 ##############################################################################
 ['arch == arm or arch == android_arm', {
@@ -626,7 +640,6 @@
   'regress/regress-740784': [SKIP],
   'regress/regress-crbug-482998': [PASS, SLOW],
   'regress/regress-91008': [PASS, SLOW],
-  'regress/regress-1257': [PASS, SLOW],
   'harmony/regexp-property-lu-ui': [PASS, SLOW],
   'whitespaces': [PASS, SLOW],
   'wasm/grow-memory': [PASS, SLOW],
@@ -646,12 +659,6 @@
   # TODO(ppc/s390): implement atomic operations
   'wasm/atomics': [SKIP],
 }],  # 'arch == ppc64 or arch == ppc or arch == s390 or arch == s390x'
-
-##############################################################################
-['variant == future', {
-  # BUG(v8:7106).
-  'regress/typed-array-lifetime': [SKIP],
-}],  # variant == future
 
 ##############################################################################
 ['variant == stress', {

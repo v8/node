@@ -224,8 +224,16 @@ AllocationResult Heap::CopyFixedDoubleArray(FixedDoubleArray* src) {
   return CopyFixedDoubleArrayWithMap(src, src->map());
 }
 
+AllocationResult Heap::AllocateFixedArrayWithMap(RootListIndex map_root_index,
+                                                 int length,
+                                                 PretenureFlag pretenure) {
+  return AllocateFixedArrayWithFiller(map_root_index, length, pretenure,
+                                      undefined_value());
+}
+
 AllocationResult Heap::AllocateFixedArray(int length, PretenureFlag pretenure) {
-  return AllocateFixedArrayWithFiller(length, pretenure, undefined_value());
+  return AllocateFixedArrayWithFiller(Heap::kFixedArrayMapRootIndex, length,
+                                      pretenure, undefined_value());
 }
 
 AllocationResult Heap::AllocateRaw(int size_in_bytes, AllocationSpace space,
@@ -627,7 +635,7 @@ CodeSpaceMemoryModificationScope::~CodeSpaceMemoryModificationScope() {
 }
 
 CodePageMemoryModificationScope::CodePageMemoryModificationScope(
-    MemoryChunk* chunk, CodePageModificationMode mode)
+    MemoryChunk* chunk)
     : chunk_(chunk),
       scope_active_(chunk_->heap()->write_protect_code_memory() &&
                     chunk_->IsFlagSet(MemoryChunk::IS_EXECUTABLE)) {
@@ -635,11 +643,7 @@ CodePageMemoryModificationScope::CodePageMemoryModificationScope(
     DCHECK(chunk_->owner()->identity() == CODE_SPACE ||
            (chunk_->owner()->identity() == LO_SPACE &&
             chunk_->IsFlagSet(MemoryChunk::IS_EXECUTABLE)));
-    if (mode == READ_WRITE_EXECUTABLE) {
-      chunk_->SetReadWriteAndExecutable();
-    } else {
-      chunk_->SetReadAndWritable();
-    }
+    chunk_->SetReadAndWritable();
   }
 }
 

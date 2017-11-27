@@ -2457,7 +2457,7 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
     Local<Object> context_extensions[]) {
   PREPARE_FOR_EXECUTION(v8_context, ScriptCompiler, CompileFunctionInContext,
                         Function);
-  TRACE_EVENT0("v8", "V8.ScriptCompiler");
+  TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.ScriptCompiler");
   i::Handle<i::String> source_string;
   auto factory = isolate->factory();
   if (arguments_count) {
@@ -2582,7 +2582,7 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
                                            Local<String> full_source_string,
                                            const ScriptOrigin& origin) {
   PREPARE_FOR_EXECUTION(context, ScriptCompiler, Compile, Script);
-  TRACE_EVENT0("v8", "V8.ScriptCompiler");
+  TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.ScriptCompiler");
   i::StreamedSource* source = v8_source->impl();
   i::Handle<i::String> str = Utils::OpenHandle(*(full_source_string));
   i::Handle<i::Script> script = isolate->factory()->NewScript(str);
@@ -8479,23 +8479,6 @@ void Isolate::RemoveGCEpilogueCallback(GCCallback callback) {
   RemoveGCEpilogueCallback(CallGCCallbackWithoutData, data);
 }
 
-static void CallGCCallbackWithoutIsolate(Isolate* isolate, GCType type,
-                                         GCCallbackFlags flags, void* data) {
-  reinterpret_cast<v8::GCCallback>(data)(type, flags);
-}
-
-void V8::AddGCPrologueCallback(v8::GCCallback callback, GCType gc_type) {
-  void* data = reinterpret_cast<void*>(callback);
-  Isolate::GetCurrent()->AddGCPrologueCallback(CallGCCallbackWithoutIsolate,
-                                               data, gc_type);
-}
-
-void V8::AddGCEpilogueCallback(v8::GCCallback callback, GCType gc_type) {
-  void* data = reinterpret_cast<void*>(callback);
-  Isolate::GetCurrent()->AddGCEpilogueCallback(CallGCCallbackWithoutIsolate,
-                                               data, gc_type);
-}
-
 void Isolate::SetEmbedderHeapTracer(EmbedderHeapTracer* tracer) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->heap()->SetEmbedderHeapTracer(tracer);
@@ -10133,6 +10116,12 @@ int debug::GetNativeAccessorDescriptor(v8::Local<v8::Context> context,
   if (accessor_info->setter())
     result |= static_cast<int>(debug::NativeAccessorType::HasSetter);
   return result;
+}
+
+int64_t debug::GetNextRandomInt64(v8::Isolate* v8_isolate) {
+  return reinterpret_cast<i::Isolate*>(v8_isolate)
+      ->random_number_generator()
+      ->NextInt64();
 }
 
 Local<String> CpuProfileNode::GetFunctionName() const {

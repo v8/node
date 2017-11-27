@@ -307,7 +307,8 @@ bool Parser::ShortcutNumericLiteralBinaryExpression(Expression** x,
 }
 
 bool Parser::CollapseNaryExpression(Expression** x, Expression* y,
-                                    Token::Value op, int pos) {
+                                    Token::Value op, int pos,
+                                    const SourceRange& range) {
   // Filter out unsupported ops.
   if (!Token::IsBinaryOp(op) || op == Token::EXP) return false;
 
@@ -320,6 +321,7 @@ bool Parser::CollapseNaryExpression(Expression** x, Expression* y,
 
     nary = factory()->NewNaryOperation(op, binop->left(), 2);
     nary->AddSubsequent(binop->right(), binop->position());
+    ConvertBinaryToNaryOperationSourceRange(binop, nary);
     *x = nary;
   } else if ((*x)->IsNaryOperation()) {
     nary = (*x)->AsNaryOperation();
@@ -332,6 +334,8 @@ bool Parser::CollapseNaryExpression(Expression** x, Expression* y,
   // TODO(leszeks): Do some literal collapsing here if we're appending Smi or
   // String literals.
   nary->AddSubsequent(y, pos);
+  AppendNaryOperationSourceRange(nary, range);
+
   return true;
 }
 
@@ -923,22 +927,15 @@ FunctionLiteral* Parser::DoParseFunction(ParseInfo* info,
       DCHECK_EQ(scope(), outer);
       result = DefaultConstructor(raw_name, IsDerivedConstructor(kind),
                                   info->start_position(), info->end_position());
-      if (info->requires_instance_fields_initializer()) {
-        result->set_instance_class_fields_initializer(
-            result->scope()->NewUnresolved(
-                factory(),
-                ast_value_factory()->dot_instance_fields_initializer_string()));
-      }
     } else {
       result = ParseFunctionLiteral(
           raw_name, Scanner::Location::invalid(), kSkipFunctionNameCheck, kind,
           kNoSourcePosition, function_type, info->language_mode(), &ok);
-      if (info->requires_instance_fields_initializer()) {
-        result->set_instance_class_fields_initializer(
-            result->scope()->NewUnresolved(
-                factory(),
-                ast_value_factory()->dot_instance_fields_initializer_string()));
-      }
+    }
+
+    if (ok) {
+      result->set_requires_instance_fields_initializer(
+          info->requires_instance_fields_initializer());
     }
     // Make sure the results agree.
     DCHECK(ok == (result != nullptr));
@@ -3337,26 +3334,17 @@ Expression* Parser::RewriteClassLiteral(Scope* block_scope,
   }
 
   FunctionLiteral* instance_fields_initializer_function = nullptr;
-  VariableProxy* instance_fields_initializer_proxy = nullptr;
   if (class_info->has_instance_class_fields) {
     instance_fields_initializer_function = CreateInitializerFunction(
         class_info->instance_fields_scope, class_info->instance_fields);
-
-    Variable* instance_fields_initializer_var = CreateSyntheticContextVariable(
-        ast_value_factory()->dot_instance_fields_initializer_string(),
-        CHECK_OK);
-    instance_fields_initializer_proxy =
-        factory()->NewVariableProxy(instance_fields_initializer_var);
-    class_info->constructor->set_instance_class_fields_initializer(
-        instance_fields_initializer_proxy);
+    class_info->constructor->set_requires_instance_fields_initializer(true);
   }
 
   ClassLiteral* class_literal = factory()->NewClassLiteral(
       block_scope, class_info->variable, class_info->extends,
       class_info->constructor, class_info->properties,
-      static_fields_initializer, instance_fields_initializer_function,
-      instance_fields_initializer_proxy, pos, end_pos,
-      class_info->has_name_static_property,
+      static_fields_initializer, instance_fields_initializer_function, pos,
+      end_pos, class_info->has_name_static_property,
       class_info->has_static_computed_names, class_info->is_anonymous);
 
   AddFunctionForNameInference(class_info->constructor);
@@ -3486,6 +3474,8 @@ void Parser::UpdateStatistics(Isolate* isolate, Handle<Script> script) {
 }
 
 void Parser::ParseOnBackground(ParseInfo* info) {
+  RuntimeCallTimerScope runtimeTimer(runtime_call_stats_,
+                                     &RuntimeCallStats::ParseBackgroundProgram);
   parsing_on_main_thread_ = false;
   if (!info->script().is_null()) {
     set_script_id(info->script()->id());

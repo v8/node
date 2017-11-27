@@ -1330,7 +1330,7 @@ TNode<Uint32T> CodeStubAssembler::LoadMapBitField3(SloppyTNode<Map> map) {
 
 TNode<Int32T> CodeStubAssembler::LoadMapInstanceType(SloppyTNode<Map> map) {
   return UncheckedCast<Int32T>(
-      LoadObjectField(map, Map::kInstanceTypeOffset, MachineType::Uint8()));
+      LoadObjectField(map, Map::kInstanceTypeOffset, MachineType::Uint16()));
 }
 
 TNode<Int32T> CodeStubAssembler::LoadMapElementsKind(SloppyTNode<Map> map) {
@@ -1628,7 +1628,7 @@ Node* CodeStubAssembler::LoadFeedbackVectorSlot(Node* object,
 Node* CodeStubAssembler::LoadAndUntagToWord32FixedArrayElement(
     Node* object, Node* index_node, int additional_offset,
     ParameterMode parameter_mode) {
-  CSA_SLOW_ASSERT(this, Word32Or(IsFixedArray(object), IsHashTable(object)));
+  CSA_SLOW_ASSERT(this, IsFixedArraySubclass(object));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(index_node, parameter_mode));
   int32_t header_size =
       FixedArray::kHeaderSize + additional_offset - kHeapObjectTag;
@@ -3972,6 +3972,23 @@ Node* CodeStubAssembler::ThrowIfNotJSReceiver(
   return var_value_map.value();
 }
 
+void CodeStubAssembler::ThrowRangeError(Node* context,
+                                        MessageTemplate::Template message,
+                                        Node* arg0, Node* arg1, Node* arg2) {
+  Node* template_index = SmiConstant(message);
+  if (arg0 == nullptr) {
+    CallRuntime(Runtime::kThrowRangeError, context, template_index);
+  } else if (arg1 == nullptr) {
+    CallRuntime(Runtime::kThrowRangeError, context, template_index, arg0);
+  } else if (arg2 == nullptr) {
+    CallRuntime(Runtime::kThrowRangeError, context, template_index, arg0, arg1);
+  } else {
+    CallRuntime(Runtime::kThrowRangeError, context, template_index, arg0, arg1,
+                arg2);
+  }
+  Unreachable();
+}
+
 void CodeStubAssembler::ThrowTypeError(Node* context,
                                        MessageTemplate::Template message,
                                        char const* arg0, char const* arg1) {
@@ -4225,6 +4242,14 @@ Node* CodeStubAssembler::IsFixedArray(Node* object) {
   return HasInstanceType(object, FIXED_ARRAY_TYPE);
 }
 
+Node* CodeStubAssembler::IsFixedArraySubclass(Node* object) {
+  Node* instance_type = LoadInstanceType(object);
+  return Word32And(Int32GreaterThanOrEqual(
+                       instance_type, Int32Constant(FIRST_FIXED_ARRAY_TYPE)),
+                   Int32LessThanOrEqual(instance_type,
+                                        Int32Constant(LAST_FIXED_ARRAY_TYPE)));
+}
+
 Node* CodeStubAssembler::IsPropertyArray(Node* object) {
   return HasInstanceType(object, PROPERTY_ARRAY_TYPE);
 }
@@ -4260,7 +4285,7 @@ Node* CodeStubAssembler::IsFixedArrayWithKind(Node* object, ElementsKind kind) {
     return IsFixedDoubleArray(object);
   } else {
     DCHECK(IsSmiOrObjectElementsKind(kind));
-    return Word32Or(IsFixedArray(object), IsHashTable(object));
+    return IsFixedArraySubclass(object);
   }
 }
 
@@ -7978,7 +8003,7 @@ Node* CodeStubAssembler::CreateWeakCellInFeedbackVector(Node* feedback_vector,
 
   // Store the WeakCell in the feedback vector.
   StoreFeedbackVectorSlot(feedback_vector, slot, cell, UPDATE_WRITE_BARRIER, 0,
-                          CodeStubAssembler::SMI_PARAMETERS);
+                          CodeStubAssembler::INTPTR_PARAMETERS);
   return cell;
 }
 

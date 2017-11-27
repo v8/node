@@ -11,6 +11,7 @@
 #include "src/debug/debug-interface.h"
 #include "src/objects-inl.h"
 #include "src/objects/debug-objects-inl.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/wasm/module-compiler.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-code-specialization.h"
@@ -685,6 +686,7 @@ Handle<Code> WasmExportedFunction::GetWasmCode() {
   auto IsWasmFunctionCode = [](Code* code) {
     return code->kind() == Code::WASM_FUNCTION ||
            code->kind() == Code::WASM_TO_JS_FUNCTION ||
+           code->kind() == Code::WASM_TO_WASM_FUNCTION ||
            code->kind() == Code::WASM_INTERPRETER_ENTRY ||
            code->builtin_index() == Builtins::kWasmCompileLazy;
   };

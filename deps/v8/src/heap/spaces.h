@@ -400,6 +400,10 @@ class MemoryChunk {
 
   static const int kAllocatableMemory = kPageSize - kObjectStartOffset;
 
+  // Maximum number of nested code memory modification scopes.
+  // TODO(6792,mstarzinger): Drop to 3 or lower once WebAssembly is off heap.
+  static const int kMaxWriteUnprotectCounter = 4;
+
   // Only works if the pointer is in the first kPageSize of the MemoryChunk.
   static MemoryChunk* FromAddress(Address a) {
     return reinterpret_cast<MemoryChunk*>(OffsetFrom(a) & ~kAlignmentMask);
@@ -636,9 +640,6 @@ class MemoryChunk {
   void SetReadAndExecutable();
   void SetReadAndWritable();
 
-  // TODO(hpayer): Remove this method. Memory should never be rwx.
-  void SetReadWriteAndExecutable();
-
  protected:
   static MemoryChunk* Initialize(Heap* heap, Address base, size_t size,
                                  Address area_start, Address area_end,
@@ -698,7 +699,8 @@ class MemoryChunk {
   // counter is decremented when a component resets to read+executable.
   // If Value() == 0 => The memory is read and executable.
   // If Value() >= 1 => The Memory is read and writable (and maybe executable).
-  // The maximum value can right now only be 3.
+  // The maximum value is limited by {kMaxWriteUnprotectCounter} to prevent
+  // excessive nesting of scopes.
   // All executable MemoryChunks are allocated rw based on the assumption that
   // they will be used immediatelly for an allocation. They are initialized
   // with the number of open CodeSpaceMemoryModificationScopes. The caller
@@ -1032,7 +1034,7 @@ class CodeRange {
  public:
   explicit CodeRange(Isolate* isolate);
   ~CodeRange() {
-    if (virtual_memory_.IsReserved()) virtual_memory_.Release();
+    if (virtual_memory_.IsReserved()) virtual_memory_.Free();
   }
 
   // Reserves a range of virtual memory, but does not commit any of it.
@@ -1203,17 +1205,19 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
     MemoryChunk* TryGetPooledMemoryChunkSafe() {
       // Procedure:
-      // (1) Try to steal any memory chunk of kPageSize that would've been
-      // unmapped.
-      // (2) Try to get a chunk that was declared as pooled and already has
+      // (1) Try to get a chunk that was declared as pooled and already has
       // been uncommitted.
-      MemoryChunk* chunk = GetMemoryChunkSafe<kRegular>();
-      if (chunk != nullptr) {
-        // For stolen chunks we need to manually free any allocated memory.
-        chunk->ReleaseAllocatedMemory();
-        return chunk;
+      // (2) Try to steal any memory chunk of kPageSize that would've been
+      // unmapped.
+      MemoryChunk* chunk = GetMemoryChunkSafe<kPooled>();
+      if (chunk == nullptr) {
+        chunk = GetMemoryChunkSafe<kRegular>();
+        if (chunk != nullptr) {
+          // For stolen chunks we need to manually free any allocated memory.
+          chunk->ReleaseAllocatedMemory();
+        }
       }
-      return GetMemoryChunkSafe<kPooled>();
+      return chunk;
     }
 
     void FreeQueuedChunks();

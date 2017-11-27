@@ -27,6 +27,7 @@ class V8Debugger;
 class V8DebuggerAgentImpl;
 class V8InspectorImpl;
 class V8StackTraceImpl;
+struct V8StackTraceId;
 
 using protocol::Response;
 using ScheduleStepIntoAsyncCallback =
@@ -56,7 +57,8 @@ class V8Debugger : public v8::debug::DebugDelegate {
   void scheduleStepIntoAsync(
       std::unique_ptr<ScheduleStepIntoAsyncCallback> callback,
       int targetContextGroupId);
-  void pauseOnAsyncTask(int targetContextGroupId, void* task);
+  void pauseOnAsyncCall(int targetContextGroupId, uintptr_t task,
+                        const String16& debuggerId);
 
   Response continueToLocation(int targetContextGroupId,
                               V8DebuggerScript* script,
@@ -79,6 +81,7 @@ class V8Debugger : public v8::debug::DebugDelegate {
   void setAsyncCallStackDepth(V8DebuggerAgentImpl*, int);
 
   std::shared_ptr<AsyncStackTrace> currentAsyncParent();
+  V8StackTraceId currentExternalParent();
 
   std::shared_ptr<StackFrame> symbolize(v8::Local<v8::StackFrame> v8Frame);
 
@@ -98,6 +101,12 @@ class V8Debugger : public v8::debug::DebugDelegate {
   void asyncTaskFinished(void* task);
   void allAsyncTasksCanceled();
 
+  V8StackTraceId storeCurrentStackTrace(const StringView& description);
+  void externalAsyncTaskStarted(const V8StackTraceId& parent);
+  void externalAsyncTaskFinished(const V8StackTraceId& parent);
+
+  uintptr_t storeStackTrace(std::shared_ptr<AsyncStackTrace> stack);
+
   void muteScriptParsedEvents();
   void unmuteScriptParsedEvents();
 
@@ -109,6 +118,12 @@ class V8Debugger : public v8::debug::DebugDelegate {
   void dumpAsyncTaskStacksStateForTest();
 
   void* scheduledAsyncTask() { return m_scheduledAsyncTask; }
+
+  std::pair<int64_t, int64_t> debuggerIdFor(int contextGroupId);
+  std::pair<int64_t, int64_t> debuggerIdFor(
+      const String16& serializedDebuggerId);
+  std::shared_ptr<AsyncStackTrace> stackTraceFor(int contextGroupId,
+                                                 const V8StackTraceId& id);
 
  private:
   void clearContinueToLocation();
@@ -186,6 +201,7 @@ class V8Debugger : public v8::debug::DebugDelegate {
 
   std::vector<void*> m_currentTasks;
   std::vector<std::shared_ptr<AsyncStackTrace>> m_currentAsyncParent;
+  std::vector<V8StackTraceId> m_currentExternalParent;
 
   void collectOldAsyncStacksIfNeeded();
   int m_asyncStacksCount = 0;
@@ -196,6 +212,7 @@ class V8Debugger : public v8::debug::DebugDelegate {
 
   protocol::HashMap<V8DebuggerAgentImpl*, int> m_maxAsyncCallStackDepthMap;
   void* m_taskWithScheduledBreak = nullptr;
+  String16 m_taskWithScheduledBreakDebuggerId;
 
   std::unique_ptr<ScheduleStepIntoAsyncCallback> m_stepIntoAsyncCallback;
   bool m_breakRequested = false;
@@ -203,6 +220,16 @@ class V8Debugger : public v8::debug::DebugDelegate {
   v8::debug::ExceptionBreakState m_pauseOnExceptionsState;
   bool m_pauseOnAsyncCall = false;
   void* m_scheduledAsyncTask = nullptr;
+
+  using StackTraceIdToStackTrace =
+      protocol::HashMap<uintptr_t, std::weak_ptr<AsyncStackTrace>>;
+  StackTraceIdToStackTrace m_storedStackTraces;
+  uintptr_t m_lastStackTraceId = 0;
+
+  protocol::HashMap<int, std::pair<int64_t, int64_t>>
+      m_contextGroupIdToDebuggerId;
+  protocol::HashMap<String16, std::pair<int64_t, int64_t>>
+      m_serializedDebuggerIdToDebuggerId;
 
   WasmTranslation m_wasmTranslation;
 

@@ -9,12 +9,14 @@
 #include "src/api.h"
 #include "src/asmjs/asm-js.h"
 #include "src/assembler-inl.h"
+#include "src/base/optional.h"
 #include "src/base/template-utils.h"
 #include "src/base/utils/random-number-generator.h"
 #include "src/code-stubs.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/counters.h"
 #include "src/property-descriptor.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/wasm/compilation-manager.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-code-specialization.h"
@@ -245,6 +247,7 @@ class JSToWasmWrapperCache {
             Code::GetCodeFromTargetAddress(it.rinfo()->target_address());
         if (target->kind() == Code::WASM_FUNCTION ||
             target->kind() == Code::WASM_TO_JS_FUNCTION ||
+            target->kind() == Code::WASM_TO_WASM_FUNCTION ||
             target->builtin_index() == Builtins::kIllegal ||
             target->builtin_index() == Builtins::kWasmCompileLazy) {
           it.rinfo()->set_target_address(isolate,
@@ -1250,6 +1253,7 @@ Handle<Code> EnsureExportedLazyDeoptData(Isolate* isolate,
     // instantiation time).
     DCHECK(code->kind() == Code::WASM_FUNCTION ||
            code->kind() == Code::WASM_TO_JS_FUNCTION ||
+           code->kind() == Code::WASM_TO_WASM_FUNCTION ||
            code->builtin_index() == Builtins::kIllegal);
     return code;
   }
@@ -1441,6 +1445,10 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
   TimedHistogramScope wasm_compile_module_time_scope(
       module_->is_wasm() ? counters()->wasm_compile_wasm_module_time()
                          : counters()->wasm_compile_asm_module_time());
+  // TODO(6792): No longer needed once WebAssembly code is off heap. Use
+  // base::Optional to be able to close the scope before notifying the debugger.
+  base::Optional<CodeSpaceMemoryModificationScope> modification_scope(
+      base::in_place_t(), isolate_->heap());
   // The {module> parameter is passed in to transfer ownership of the WasmModule
   // to this function. The WasmModule itself existed already as an instance
   // variable of the ModuleCompiler. We check here that the parameter and the
@@ -1560,6 +1568,9 @@ MaybeHandle<WasmModuleObject> ModuleCompiler::CompileToModuleObjectInternal(
   // If we created a wasm script, finish it now and make it public to the
   // debugger.
   if (asm_js_script.is_null()) {
+    // Close the CodeSpaceMemoryModificationScope before calling into the
+    // debugger.
+    modification_scope.reset();
     script->set_wasm_compiled_module(*compiled_module);
     isolate_->debug()->OnAfterCompile(script);
   }
@@ -1587,6 +1598,11 @@ InstanceBuilder::InstanceBuilder(
 
 // Build an instance, in all of its glory.
 MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
+  // TODO(6792): No longer needed once WebAssembly code is off heap.
+  // Use base::Optional to be able to close the scope before executing the start
+  // function.
+  base::Optional<CodeSpaceMemoryModificationScope> modification_scope(
+      base::in_place_t(), isolate_->heap());
   // Check that an imports argument was provided, if the module requires it.
   // No point in continuing otherwise.
   if (!module_->import_table.empty() && ffi_.is_null()) {
@@ -1655,6 +1671,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
         Handle<Code> orig_code(Code::cast(code_table->get(i)), isolate_);
         switch (orig_code->kind()) {
           case Code::WASM_TO_JS_FUNCTION:
+          case Code::WASM_TO_WASM_FUNCTION:
             // Imports will be overwritten with newly compiled wrappers.
             break;
           case Code::BUILTIN:
@@ -1948,6 +1965,8 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
     RecordStats(*startup_code, counters());
     // Call the JS function.
     Handle<Object> undefined = factory->undefined_value();
+    // Close the CodeSpaceMemoryModificationScope to execute the start function.
+    modification_scope.reset();
     {
       // We're OK with JS execution here. The instance is fully setup.
       AllowJavascriptExecution allow_js(isolate_);
@@ -3155,6 +3174,11 @@ class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileStep {
   }
 
   void RunInForeground() override {
+    // TODO(6792): No longer needed once WebAssembly code is off heap.
+    // Use base::Optional to be able to close the scope before we resolve or
+    // reject the promise.
+    base::Optional<CodeSpaceMemoryModificationScope> modification_scope(
+        base::in_place_t(), job_->isolate_->heap());
     TRACE_COMPILE("(4a) Finishing compilation units...\n");
     if (failed_) {
       // The job failed already, no need to do more work.
@@ -3206,6 +3230,10 @@ class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileStep {
     if (thrower.error()) {
       // Make sure all compilation tasks stopped running.
       job_->background_task_manager_.CancelAndWait();
+
+      // Close the CodeSpaceMemoryModificationScope before we reject the promise
+      // in AsyncCompileFailed. Promise::Reject calls directly into JavaScript.
+      modification_scope.reset();
       return job_->AsyncCompileFailed(thrower);
     }
     if (job_->outstanding_units_ == 0) {

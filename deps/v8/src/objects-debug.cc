@@ -89,6 +89,9 @@ void HeapObject::HeapObjectVerify() {
     case BYTECODE_ARRAY_TYPE:
       BytecodeArray::cast(this)->BytecodeArrayVerify();
       break;
+    case DESCRIPTOR_ARRAY_TYPE:
+      DescriptorArray::cast(this)->DescriptorArrayVerify();
+      break;
     case TRANSITION_ARRAY_TYPE:
       TransitionArray::cast(this)->TransitionArrayVerify();
       break;
@@ -426,6 +429,9 @@ void Map::MapVerify() {
   CHECK_IMPLIES(has_named_interceptor(), may_have_interesting_symbols());
   CHECK_IMPLIES(is_dictionary_map(), may_have_interesting_symbols());
   CHECK_IMPLIES(is_access_check_needed(), may_have_interesting_symbols());
+  CHECK_IMPLIES(IsJSObjectMap() && !CanHaveFastTransitionableElementsKind(),
+                IsDictionaryElementsKind(elements_kind()) ||
+                    IsTerminalElementsKind(elements_kind()));
 }
 
 
@@ -447,13 +453,6 @@ void FixedArray::FixedArrayVerify() {
   for (int i = 0; i < length(); i++) {
     Object* e = get(i);
     VerifyPointer(e);
-  }
-  Heap* heap = GetHeap();
-  if (this == heap->empty_descriptor_array()) {
-    DescriptorArray* descriptors = DescriptorArray::cast(this);
-    CHECK_EQ(2, length());
-    CHECK_EQ(0, descriptors->number_of_descriptors());
-    CHECK_EQ(heap->empty_enum_cache(), descriptors->GetEnumCache());
   }
 }
 
@@ -485,12 +484,22 @@ void FixedDoubleArray::FixedDoubleArrayVerify() {
   }
 }
 
+void DescriptorArray::DescriptorArrayVerify() {
+  FixedArrayVerify();
+  if (number_of_descriptors_storage() == 0) {
+    Heap* heap = GetHeap();
+    CHECK_EQ(heap->empty_descriptor_array(), this);
+    CHECK_EQ(2, length());
+    CHECK_EQ(0, number_of_descriptors());
+    CHECK_EQ(heap->empty_enum_cache(), GetEnumCache());
+  } else {
+    CHECK_LT(2, length());
+    CHECK_LE(LengthFor(number_of_descriptors()), length());
+  }
+}
 
 void TransitionArray::TransitionArrayVerify() {
-  for (int i = 0; i < length(); i++) {
-    Object* e = get(i);
-    VerifyPointer(e);
-  }
+  FixedArrayVerify();
   CHECK_LE(LengthFor(number_of_transitions()), length());
 }
 

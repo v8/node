@@ -305,7 +305,7 @@ void MemoryAllocator::TearDown() {
   capacity_ = 0;
 
   if (last_chunk_.IsReserved()) {
-    last_chunk_.Release();
+    last_chunk_.Free();
   }
 
   delete code_range_;
@@ -434,7 +434,7 @@ void MemoryAllocator::FreeMemory(VirtualMemory* reservation,
   DCHECK(executable == NOT_EXECUTABLE || !code_range()->valid() ||
          reservation->size() <= Page::kPageSize);
 
-  reservation->Release();
+  reservation->Free();
 }
 
 
@@ -488,9 +488,9 @@ Address MemoryAllocator::AllocateAlignedMemory(
   }
 
   if (base == nullptr) {
-    // Failed to commit the body. Release the mapping and any partially
-    // committed regions inside it.
-    reservation.Release();
+    // Failed to commit the body. Free the mapping and any partially committed
+    // regions inside it.
+    reservation.Free();
     size_.Decrement(reserve_size);
     return nullptr;
   }
@@ -537,7 +537,7 @@ void MemoryChunk::SetReadAndExecutable() {
     return;
   }
   write_unprotect_counter_--;
-  DCHECK_LE(write_unprotect_counter_, 2);
+  DCHECK_LT(write_unprotect_counter_, kMaxWriteUnprotectCounter);
   if (write_unprotect_counter_ == 0) {
     Address protect_start =
         address() + MemoryAllocator::CodePageAreaStartOffset();
@@ -556,7 +556,7 @@ void MemoryChunk::SetReadAndWritable() {
   // protection mode has to be atomic.
   base::LockGuard<base::Mutex> guard(page_protection_change_mutex_);
   write_unprotect_counter_++;
-  DCHECK_LE(write_unprotect_counter_, 3);
+  DCHECK_LE(write_unprotect_counter_, kMaxWriteUnprotectCounter);
   if (write_unprotect_counter_ == 1) {
     Address unprotect_start =
         address() + MemoryAllocator::CodePageAreaStartOffset();
@@ -566,24 +566,6 @@ void MemoryChunk::SetReadAndWritable() {
     CHECK(base::OS::SetPermissions(unprotect_start, unprotect_size,
                                    base::OS::MemoryPermission::kReadWrite));
   }
-}
-
-void MemoryChunk::SetReadWriteAndExecutable() {
-  DCHECK(IsFlagSet(MemoryChunk::IS_EXECUTABLE));
-  DCHECK(owner()->identity() == CODE_SPACE || owner()->identity() == LO_SPACE);
-  // Incrementing the write_unprotect_counter_ and changing the page
-  // protection mode has to be atomic.
-  base::LockGuard<base::Mutex> guard(page_protection_change_mutex_);
-  write_unprotect_counter_++;
-  DCHECK_LE(write_unprotect_counter_, 3);
-  Address unprotect_start =
-      address() + MemoryAllocator::CodePageAreaStartOffset();
-  size_t page_size = MemoryAllocator::GetCommitPageSize();
-  DCHECK(IsAddressAligned(unprotect_start, page_size));
-  size_t unprotect_size = RoundUp(area_size(), page_size);
-  CHECK(
-      base::OS::SetPermissions(unprotect_start, unprotect_size,
-                               base::OS::MemoryPermission::kReadWriteExecute));
 }
 
 MemoryChunk* MemoryChunk::Initialize(Heap* heap, Address base, size_t size,
@@ -981,7 +963,7 @@ void MemoryAllocator::PartialFreeMemory(MemoryChunk* chunk, Address start_free,
   // On e.g. Windows, a reservation may be larger than a page and releasing
   // partially starting at |start_free| will also release the potentially
   // unused part behind the current page.
-  const size_t released_bytes = reservation->ReleasePartial(start_free);
+  const size_t released_bytes = reservation->Release(start_free);
   DCHECK_GE(size_.Value(), released_bytes);
   size_.Decrement(released_bytes);
   isolate_->counters()->memory_allocated()->Decrement(
@@ -1066,8 +1048,7 @@ template <MemoryAllocator::AllocationMode alloc_mode, typename SpaceType>
 Page* MemoryAllocator::AllocatePage(size_t size, SpaceType* owner,
                                     Executability executable) {
   MemoryChunk* chunk = nullptr;
-  // Code space does not support pooled allocation.
-  if (alloc_mode == kPooled && owner->identity() != CODE_SPACE) {
+  if (alloc_mode == kPooled) {
     DCHECK_EQ(size, static_cast<size_t>(MemoryChunk::kAllocatableMemory));
     DCHECK_EQ(executable, NOT_EXECUTABLE);
     chunk = AllocatePagePooled(owner);
@@ -1081,9 +1062,6 @@ Page* MemoryAllocator::AllocatePage(size_t size, SpaceType* owner,
 
 template Page*
 MemoryAllocator::AllocatePage<MemoryAllocator::kRegular, PagedSpace>(
-    size_t size, PagedSpace* owner, Executability executable);
-template Page*
-MemoryAllocator::AllocatePage<MemoryAllocator::kPooled, PagedSpace>(
     size_t size, PagedSpace* owner, Executability executable);
 template Page*
 MemoryAllocator::AllocatePage<MemoryAllocator::kRegular, SemiSpace>(
@@ -1617,8 +1595,7 @@ bool PagedSpace::Expand() {
   if (!heap()->CanExpandOldGeneration(size)) return false;
 
   Page* page =
-      heap()->memory_allocator()->AllocatePage<MemoryAllocator::kPooled>(
-          size, this, executable());
+      heap()->memory_allocator()->AllocatePage(size, this, executable());
   if (page == nullptr) return false;
   // Pages created during bootstrapping may contain immortal immovable objects.
   if (!heap()->deserialization_complete()) page->MarkNeverEvacuate();

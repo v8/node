@@ -31,6 +31,7 @@
 #include "src/transitions-inl.h"
 #include "src/utils-inl.h"
 #include "src/v8.h"
+#include "src/vm-state-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -678,6 +679,8 @@ class MarkCompactCollector::Sweeper::SweeperTask final : public CancelableTask {
     const int num_spaces = LAST_PAGED_SPACE - FIRST_SPACE + 1;
     for (int i = 0; i < num_spaces; i++) {
       const int space_id = FIRST_SPACE + ((i + offset) % num_spaces);
+      // Do not sweep code space concurrently.
+      if (static_cast<AllocationSpace>(space_id) == CODE_SPACE) continue;
       DCHECK_GE(space_id, FIRST_SPACE);
       DCHECK_LE(space_id, LAST_PAGED_SPACE);
       sweeper_->SweepSpaceFromTask(static_cast<AllocationSpace>(space_id));
@@ -692,6 +695,33 @@ class MarkCompactCollector::Sweeper::SweeperTask final : public CancelableTask {
   AllocationSpace space_to_start_;
 
   DISALLOW_COPY_AND_ASSIGN(SweeperTask);
+};
+
+class MarkCompactCollector::Sweeper::IncrementalSweeperTask final
+    : public CancelableTask {
+ public:
+  IncrementalSweeperTask(Isolate* isolate, Sweeper* sweeper)
+      : CancelableTask(isolate), isolate_(isolate), sweeper_(sweeper) {}
+
+  virtual ~IncrementalSweeperTask() {}
+
+ private:
+  void RunInternal() final {
+    VMState<GC> state(isolate_);
+    TRACE_EVENT_CALL_STATS_SCOPED(isolate_, "v8", "V8.Task");
+
+    sweeper_->incremental_sweeper_pending_ = false;
+
+    if (sweeper_->sweeping_in_progress()) {
+      if (!sweeper_->SweepSpaceIncrementallyFromTask(CODE_SPACE)) {
+        sweeper_->ScheduleIncrementalSweepingTask();
+      }
+    }
+  }
+
+  Isolate* const isolate_;
+  Sweeper* const sweeper_;
+  DISALLOW_COPY_AND_ASSIGN(IncrementalSweeperTask);
 };
 
 void MarkCompactCollector::Sweeper::StartSweeping() {
@@ -724,6 +754,7 @@ void MarkCompactCollector::Sweeper::StartSweeperTasks() {
       V8::GetCurrentPlatform()->CallOnBackgroundThread(
           task, v8::Platform::kShortRunningTask);
     });
+    ScheduleIncrementalSweepingTask();
   }
 }
 
@@ -4370,7 +4401,6 @@ void MarkCompactCollector::ReportAbortedEvacuationCandidate(
     HeapObject* failed_object, Page* page) {
   base::LockGuard<base::Mutex> guard(&mutex_);
 
-  page->SetFlag(Page::COMPACTION_WAS_ABORTED);
   aborted_evacuation_candidates_.push_back(std::make_pair(failed_object, page));
 }
 
@@ -4378,7 +4408,7 @@ void MarkCompactCollector::PostProcessEvacuationCandidates() {
   for (auto object_and_page : aborted_evacuation_candidates_) {
     HeapObject* failed_object = object_and_page.first;
     Page* page = object_and_page.second;
-    DCHECK(page->IsFlagSet(Page::COMPACTION_WAS_ABORTED));
+    page->SetFlag(Page::COMPACTION_WAS_ABORTED);
     // Aborted compaction page. We have to record slots here, since we
     // might not have recorded them in first place.
 
@@ -4440,6 +4470,14 @@ void MarkCompactCollector::Sweeper::SweepSpaceFromTask(
   }
 }
 
+bool MarkCompactCollector::Sweeper::SweepSpaceIncrementallyFromTask(
+    AllocationSpace identity) {
+  if (Page* page = GetSweepingPageSafe(identity)) {
+    ParallelSweepPage(page, identity);
+  }
+  return sweeping_list_[identity].empty();
+}
+
 int MarkCompactCollector::Sweeper::ParallelSweepSpace(AllocationSpace identity,
                                                       int required_freed_bytes,
                                                       int max_pages) {
@@ -4471,10 +4509,8 @@ int MarkCompactCollector::Sweeper::ParallelSweepPage(Page* page,
     if (page->SweepingDone()) return 0;
 
     // If the page is a code page, the CodePageMemoryModificationScope changes
-    // the page protection mode from rx -> rwx while sweeping.
-    // TODO(hpayer): Allow only rx -> rw transitions.
-    CodePageMemoryModificationScope code_page_scope(
-        page, CodePageMemoryModificationScope::READ_WRITE_EXECUTABLE);
+    // the page protection mode from rx -> rw while sweeping.
+    CodePageMemoryModificationScope code_page_scope(page);
 
     DCHECK_EQ(Page::kSweepingPending,
               page->concurrent_sweeping_state().Value());
@@ -4504,6 +4540,16 @@ int MarkCompactCollector::Sweeper::ParallelSweepPage(Page* page,
     swept_list_[identity].push_back(page);
   }
   return max_freed;
+}
+
+void MarkCompactCollector::Sweeper::ScheduleIncrementalSweepingTask() {
+  if (!incremental_sweeper_pending_) {
+    incremental_sweeper_pending_ = true;
+    IncrementalSweeperTask* task =
+        new IncrementalSweeperTask(heap_->isolate(), this);
+    v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(heap_->isolate());
+    V8::GetCurrentPlatform()->CallOnForegroundThread(isolate, task);
+  }
 }
 
 void MarkCompactCollector::Sweeper::AddPage(
@@ -4549,6 +4595,7 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
   space->ClearStats();
 
   int will_be_swept = 0;
+  bool unused_page_present = false;
 
   // Loop needs to support deletion if live bytes == 0 for a page.
   for (auto it = space->begin(); it != space->end();) {
@@ -4558,7 +4605,10 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
     if (p->IsEvacuationCandidate()) {
       // Will be processed in Evacuate.
       DCHECK(!evacuation_candidates_.empty());
-    } else if (p->IsFlagSet(Page::NEVER_ALLOCATE_ON_PAGE)) {
+      continue;
+    }
+
+    if (p->IsFlagSet(Page::NEVER_ALLOCATE_ON_PAGE)) {
       // We need to sweep the page to get it into an iterable state again. Note
       // that this adds unusable memory into the free list that is later on
       // (in the free list) dropped again. Since we only use the flag for
@@ -4569,19 +4619,25 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
                              ? FreeSpaceTreatmentMode::ZAP_FREE_SPACE
                              : FreeSpaceTreatmentMode::IGNORE_FREE_SPACE);
       space->IncreaseAllocatedBytes(p->allocated_bytes(), p);
-    } else if (non_atomic_marking_state()->live_bytes(p) == 0) {
-      // Release empty pages
-      if (FLAG_gc_verbose) {
-        PrintIsolate(isolate(), "sweeping: released page: %p",
-                     static_cast<void*>(p));
-      }
-      ArrayBufferTracker::FreeAll(p);
-      space->ReleasePage(p);
-    } else {
-      // Add non-empty pages to the sweeper.
-      sweeper().AddPage(space->identity(), p, Sweeper::REGULAR);
-      will_be_swept++;
+      continue;
     }
+
+    // One unused page is kept, all further are released before sweeping them.
+    if (non_atomic_marking_state()->live_bytes(p) == 0) {
+      if (unused_page_present) {
+        if (FLAG_gc_verbose) {
+          PrintIsolate(isolate(), "sweeping: released page: %p",
+                       static_cast<void*>(p));
+        }
+        ArrayBufferTracker::FreeAll(p);
+        space->ReleasePage(p);
+        continue;
+      }
+      unused_page_present = true;
+    }
+
+    sweeper().AddPage(space->identity(), p, Sweeper::REGULAR);
+    will_be_swept++;
   }
 
   if (FLAG_gc_verbose) {

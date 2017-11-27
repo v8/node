@@ -13,6 +13,7 @@
 #include "src/conversions.h"
 #include "src/identity-map.h"
 #include "src/objects-inl.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/utils.h"
 #include "src/wasm/decoder.h"
 #include "src/wasm/function-body-decoder-impl.h"
@@ -2403,7 +2404,8 @@ class ThreadImpl {
     DCHECK(AllowHandleAllocation::IsAllowed());
     DCHECK(AllowHeapAllocation::IsAllowed());
 
-    if (code->kind() == Code::WASM_FUNCTION) {
+    if (code->kind() == Code::WASM_FUNCTION ||
+        code->kind() == Code::WASM_TO_WASM_FUNCTION) {
       FixedArray* deopt_data = code->deoptimization_data();
       DCHECK_EQ(2, deopt_data->length());
       WasmInstanceObject* target_instance =
@@ -2503,8 +2505,7 @@ class ThreadImpl {
     // Call the code object. Use a new HandleScope to avoid leaking /
     // accumulating handles in the outer scope.
     HandleScope handle_scope(isolate);
-    FunctionSig* signature =
-        &codemap()->module()->signatures[table_index][sig_index];
+    FunctionSig* signature = module()->signatures[sig_index];
     return CallCodeObject(isolate, handle(target, isolate), signature);
   }
 

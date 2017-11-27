@@ -295,12 +295,6 @@ Operand::Operand(Register index,
 }
 
 
-bool Operand::is_reg(Register reg) const {
-  return ((buf_[0] & 0xF8) == 0xC0)  // addressing mode is register only.
-      && ((buf_[0] & 0x07) == reg.code());  // register codes match.
-}
-
-
 bool Operand::is_reg_only() const {
   return (buf_[0] & 0xF8) == 0xC0;  // Addressing mode is register only.
 }
@@ -1515,14 +1509,14 @@ void Assembler::ud2() {
 // to be generated; pos() is the position of the 32bit
 // Displacement of the last instruction using the label.
 
-
-void Assembler::print(Label* L) {
+void Assembler::print(const Label* L) {
   if (L->is_unused()) {
     PrintF("unused label\n");
   } else if (L->is_bound()) {
     PrintF("bound label to %d\n", L->pos());
   } else if (L->is_linked()) {
-    Label l = *L;
+    Label l;
+    l.link_to(L->pos());
     PrintF("unbound label");
     while (l.is_linked()) {
       Displacement disp = disp_at(&l);

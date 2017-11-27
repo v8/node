@@ -872,15 +872,13 @@ void Heap::ProcessPretenuringFeedback() {
 
 void Heap::InvalidateCodeEmbeddedObjects(Code* code) {
   MemoryChunk* chunk = MemoryChunk::FromAddress(code->address());
-  CodePageMemoryModificationScope modification_scope(
-      chunk, CodePageMemoryModificationScope::READ_WRITE);
+  CodePageMemoryModificationScope modification_scope(chunk);
   code->InvalidateEmbeddedObjects();
 }
 
 void Heap::InvalidateCodeDeoptimizationData(Code* code) {
   MemoryChunk* chunk = MemoryChunk::FromAddress(code->address());
-  CodePageMemoryModificationScope modification_scope(
-      chunk, CodePageMemoryModificationScope::READ_WRITE);
+  CodePageMemoryModificationScope modification_scope(chunk);
   code->set_deoptimization_data(empty_fixed_array());
 }
 
@@ -1488,8 +1486,10 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
         // We cannot perfom a GC with an uninitialized isolate. This check
         // fails for example if the max old space size is chosen unwisely,
         // so that we cannot allocate space to deserialize the initial heap.
-        CHECK_WITH_MSG(deserialization_complete_,
-                       "insufficient memory to create an Isolate");
+        if (!deserialization_complete_) {
+          V8::FatalProcessOutOfMemory(
+              "insufficient memory to create an Isolate");
+        }
         if (space == NEW_SPACE) {
           CollectGarbage(NEW_SPACE, GarbageCollectionReason::kDeserializer);
         } else {
@@ -2396,7 +2396,6 @@ AllocationResult Heap::AllocatePartialMap(InstanceType instance_type,
   map->set_map_after_allocation(reinterpret_cast<Map*>(root(kMetaMapRootIndex)),
                                 SKIP_WRITE_BARRIER);
   map->set_instance_type(instance_type);
-  WRITE_BYTE_FIELD(map, Map::kSoonToBeInstanceTypeTooOffset, 0);
   map->set_instance_size(instance_size);
   // Initialize to only containing tagged fields.
   if (FLAG_unbox_double_fields) {
@@ -2414,6 +2413,7 @@ AllocationResult Heap::AllocatePartialMap(InstanceType instance_type,
                    Map::ConstructionCounter::encode(Map::kNoSlackTracking);
   map->set_bit_field3(bit_field3);
   map->set_weak_cell_cache(Smi::kZero);
+  map->set_elements_kind(TERMINAL_FAST_ELEMENTS_KIND);
   return map;
 }
 
@@ -2421,6 +2421,11 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
                                    int instance_size,
                                    ElementsKind elements_kind,
                                    int inobject_properties) {
+  STATIC_ASSERT(LAST_JS_OBJECT_TYPE == LAST_TYPE);
+  DCHECK_IMPLIES(instance_type >= FIRST_JS_OBJECT_TYPE &&
+                     !Map::CanHaveFastTransitionableElementsKind(instance_type),
+                 IsDictionaryElementsKind(elements_kind) ||
+                     IsTerminalElementsKind(elements_kind));
   HeapObject* result = nullptr;
   AllocationResult allocation = AllocateRaw(Map::kSize, MAP_SPACE);
   if (!allocation.To(&result)) return allocation;
@@ -2432,7 +2437,6 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
   map->set_prototype(null_value(), SKIP_WRITE_BARRIER);
   map->set_constructor_or_backpointer(null_value(), SKIP_WRITE_BARRIER);
   map->set_instance_size(instance_size);
-  WRITE_BYTE_FIELD(map, Map::kSoonToBeInstanceTypeTooOffset, 0);
   if (map->IsJSObjectMap()) {
     map->SetInObjectPropertiesStartInWords(instance_size / kPointerSize -
                                            inobject_properties);
@@ -2965,7 +2969,7 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
     int new_size = ByteArray::SizeFor(len - elements_to_trim);
     bytes_to_trim = ByteArray::SizeFor(len) - new_size;
     DCHECK_GE(bytes_to_trim, 0);
-  } else if (object->IsFixedArray() || object->IsTransitionArray()) {
+  } else if (object->IsFixedArray()) {
     bytes_to_trim = elements_to_trim * kPointerSize;
   } else {
     DCHECK(object->IsFixedDoubleArray());
@@ -3856,22 +3860,21 @@ AllocationResult Heap::AllocateRawFixedArray(int length,
   return result;
 }
 
-
-AllocationResult Heap::AllocateFixedArrayWithFiller(int length,
-                                                    PretenureFlag pretenure,
-                                                    Object* filler) {
-  DCHECK_LE(0, length);
-  DCHECK(empty_fixed_array()->IsFixedArray());
-  if (length == 0) return empty_fixed_array();
-
+AllocationResult Heap::AllocateFixedArrayWithFiller(
+    RootListIndex map_root_index, int length, PretenureFlag pretenure,
+    Object* filler) {
+  // Zero-length case must be handled outside, where the knowledge about
+  // the map is.
+  DCHECK_LT(0, length);
   DCHECK(!InNewSpace(filler));
   HeapObject* result = nullptr;
   {
     AllocationResult allocation = AllocateRawFixedArray(length, pretenure);
     if (!allocation.To(&result)) return allocation;
   }
-
-  result->set_map_after_allocation(fixed_array_map(), SKIP_WRITE_BARRIER);
+  DCHECK(RootIsImmortalImmovable(map_root_index));
+  Map* map = Map::cast(root(map_root_index));
+  result->set_map_after_allocation(map, SKIP_WRITE_BARRIER);
   FixedArray* array = FixedArray::cast(result);
   array->set_length(length);
   MemsetPointer(array->data_start(), filler, length);

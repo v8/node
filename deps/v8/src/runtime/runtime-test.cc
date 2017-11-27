@@ -17,6 +17,7 @@
 #include "src/runtime-profiler.h"
 #include "src/snapshot/code-serializer.h"
 #include "src/snapshot/natives.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/wasm/memory-tracing.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
@@ -512,8 +513,8 @@ RUNTIME_FUNCTION(Runtime_CheckWasmWrapperElision) {
   Handle<Code> imported_fct;
   CHECK(type->value() == 0 || type->value() == 1);
 
-  Code::Kind target_kind =
-      type->value() == 0 ? Code::WASM_FUNCTION : Code::WASM_TO_JS_FUNCTION;
+  Code::Kind target_kind = type->value() == 0 ? Code::WASM_TO_WASM_FUNCTION
+                                              : Code::WASM_TO_JS_FUNCTION;
   count = 0;
   for (RelocIterator it(*intermediate_fct, mask); !it.done(); it.next()) {
     RelocInfo* rinfo = it.rinfo();

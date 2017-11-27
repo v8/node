@@ -70,6 +70,7 @@
 #include "src/string-builder.h"
 #include "src/string-search.h"
 #include "src/string-stream.h"
+#include "src/trap-handler/trap-handler.h"
 #include "src/unicode-cache-inl.h"
 #include "src/utils-inl.h"
 #include "src/wasm/wasm-objects.h"
@@ -3143,6 +3144,7 @@ VisitorId Map::GetVisitorId(Map* map) {
 
     case HASH_TABLE_TYPE:
     case FIXED_ARRAY_TYPE:
+    case DESCRIPTOR_ARRAY_TYPE:
       return kVisitFixedArray;
 
     case FIXED_DOUBLE_ARRAY_TYPE:
@@ -3424,6 +3426,10 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
     case BYTECODE_ARRAY_TYPE:
       os << "<BytecodeArray[" << BytecodeArray::cast(this)->length() << "]>";
       break;
+    case DESCRIPTOR_ARRAY_TYPE:
+      os << "<DescriptorArray[" << DescriptorArray::cast(this)->length()
+         << "]>";
+      break;
     case TRANSITION_ARRAY_TYPE:
       os << "<TransitionArray[" << TransitionArray::cast(this)->length()
          << "]>";
@@ -3643,8 +3649,8 @@ bool HeapObject::CanBeRehashed() const {
       // TODO(yangguo): actually support rehashing OrderedHash{Map,Set}.
       return IsNameDictionary() || IsGlobalDictionary() ||
              IsNumberDictionary() || IsStringTable() || IsWeakHashTable();
-    case FIXED_ARRAY_TYPE:
-      return IsDescriptorArrayTemplate();
+    case DESCRIPTOR_ARRAY_TYPE:
+      return true;
     case TRANSITION_ARRAY_TYPE:
       return true;
     case SMALL_ORDERED_HASH_MAP_TYPE:
@@ -3674,11 +3680,9 @@ void HeapObject::RehashBasedOnMap() {
         UNREACHABLE();
       }
       break;
-    case FIXED_ARRAY_TYPE:
-      if (IsDescriptorArrayTemplate()) {
-        DCHECK_LE(1, DescriptorArray::cast(this)->number_of_descriptors());
-        DescriptorArray::cast(this)->Sort();
-      }
+    case DESCRIPTOR_ARRAY_TYPE:
+      DCHECK_LE(1, DescriptorArray::cast(this)->number_of_descriptors());
+      DescriptorArray::cast(this)->Sort();
       break;
     case TRANSITION_ARRAY_TYPE:
       TransitionArray::cast(this)->Sort();
@@ -3806,10 +3810,10 @@ MaybeHandle<Map> Map::CopyWithField(Handle<Map> map, Handle<Name> name,
     constness = kMutable;
     representation = Representation::Tagged();
     type = FieldType::Any(isolate);
+  } else {
+    Map::GeneralizeIfCanHaveTransitionableFastElementsKind(
+        isolate, map->instance_type(), &constness, &representation, &type);
   }
-
-  Map::GeneralizeIfTransitionableFastElementsKind(
-      isolate, map->elements_kind(), &constness, &representation, &type);
 
   Handle<Object> wrapped_type(WrapFieldType(type));
 
@@ -9442,6 +9446,13 @@ void Map::InstallDescriptors(Handle<Map> parent, Handle<Map> child,
 
 Handle<Map> Map::CopyAsElementsKind(Handle<Map> map, ElementsKind kind,
                                     TransitionFlag flag) {
+  // Only certain objects are allowed to have non-terminal fast transitional
+  // elements kinds.
+  DCHECK(map->IsJSObjectMap());
+  DCHECK_IMPLIES(
+      !map->CanHaveFastTransitionableElementsKind(),
+      IsDictionaryElementsKind(kind) || IsTerminalElementsKind(kind));
+
   Map* maybe_elements_transition_map = nullptr;
   if (flag == INSERT_TRANSITION) {
     // Ensure we are requested to add elements kind transition "near the root".
@@ -10356,10 +10367,8 @@ Handle<DescriptorArray> DescriptorArray::Allocate(Isolate* isolate,
   int size = number_of_descriptors + slack;
   if (size == 0) return factory->empty_descriptor_array();
   // Allocate the array of keys.
-  Handle<FixedArray> result =
-      factory->NewFixedArray(LengthFor(size), pretenure);
-  // TODO(ishell): set map to |descriptor_array_map| once we can use it for all
-  // descriptor arrays.
+  Handle<FixedArray> result = factory->NewFixedArrayWithMap(
+      Heap::kDescriptorArrayMapRootIndex, LengthFor(size), pretenure);
   result->set(kDescriptorLengthIndex, Smi::FromInt(number_of_descriptors));
   result->set(kEnumCacheIndex, isolate->heap()->empty_enum_cache());
   return Handle<DescriptorArray>::cast(result);
@@ -13781,10 +13790,10 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   }
   shared_info->set_needs_home_object(lit->scope()->NeedsHomeObject());
   shared_info->set_function_literal_id(lit->function_literal_id());
-  DCHECK_IMPLIES(lit->instance_class_fields_initializer() != nullptr,
+  DCHECK_IMPLIES(lit->requires_instance_fields_initializer(),
                  IsClassConstructor(lit->kind()));
   shared_info->set_requires_instance_fields_initializer(
-      lit->instance_class_fields_initializer() != nullptr);
+      lit->requires_instance_fields_initializer());
   // For lazy parsed functions, the following flags will be inaccurate since we
   // don't have the information yet. They're set later in
   // SetSharedFunctionFlagsFromLiteral (compiler.cc), when the function is
@@ -15217,6 +15226,9 @@ bool JSObject::WouldConvertToSlowElements(uint32_t index) {
 
 
 static ElementsKind BestFittingFastElementsKind(JSObject* object) {
+  if (!object->map()->CanHaveFastTransitionableElementsKind()) {
+    return HOLEY_ELEMENTS;
+  }
   if (object->HasSloppyArgumentsElements()) {
     return FAST_SLOPPY_ARGUMENTS_ELEMENTS;
   }
@@ -16118,8 +16130,10 @@ Handle<Derived> HashTable<Derived, Shape>::NewInternal(
     Isolate* isolate, int capacity, PretenureFlag pretenure) {
   Factory* factory = isolate->factory();
   int length = EntryToIndex(capacity);
-  Handle<FixedArray> array = factory->NewFixedArray(length, pretenure);
-  array->set_map_no_write_barrier(Shape::GetMap(isolate));
+  Heap::RootListIndex map_root_index =
+      static_cast<Heap::RootListIndex>(Shape::GetMapRootIndex());
+  Handle<FixedArray> array =
+      factory->NewFixedArrayWithMap(map_root_index, length, pretenure);
   Handle<Derived> table = Handle<Derived>::cast(array);
 
   table->SetNumberOfElements(0);
@@ -17919,11 +17933,9 @@ Handle<Derived> OrderedHashTable<Derived, entrysize>::Allocate(
     v8::internal::Heap::FatalProcessOutOfMemory("invalid table size", true);
   }
   int num_buckets = capacity / kLoadFactor;
-  Handle<FixedArray> backing_store = isolate->factory()->NewFixedArray(
+  Handle<FixedArray> backing_store = isolate->factory()->NewFixedArrayWithMap(
+      static_cast<Heap::RootListIndex>(Derived::GetMapRootIndex()),
       kHashTableStartIndex + num_buckets + (capacity * kEntrySize), pretenure);
-  Map* map = Map::cast(isolate->heap()->root(
-      static_cast<Heap::RootListIndex>(Derived::GetMapRootIndex())));
-  backing_store->set_map_no_write_barrier(map);
   Handle<Derived> table = Handle<Derived>::cast(backing_store);
   for (int i = 0; i < num_buckets; ++i) {
     table->set(kHashTableStartIndex + i, Smi::FromInt(kNotFound));
@@ -18046,14 +18058,6 @@ HeapObject* OrderedHashSet::GetEmpty(Isolate* isolate) {
 
 HeapObject* OrderedHashMap::GetEmpty(Isolate* isolate) {
   return isolate->heap()->empty_ordered_hash_map();
-}
-
-int OrderedHashSet::GetMapRootIndex() {
-  return Heap::kOrderedHashSetMapRootIndex;
-}
-
-int OrderedHashMap::GetMapRootIndex() {
-  return Heap::kOrderedHashMapMapRootIndex;
 }
 
 template <class Derived, int entrysize>

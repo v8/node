@@ -185,6 +185,7 @@ void V8Debugger::disable() {
   clearContinueToLocation();
   allAsyncTasksCanceled();
   m_taskWithScheduledBreak = nullptr;
+  m_taskWithScheduledBreakDebuggerId = String16();
   m_pauseOnAsyncCall = false;
   m_wasmTranslation.Clear();
   v8::debug::SetDebugDelegate(m_isolate, nullptr);
@@ -324,10 +325,17 @@ void V8Debugger::scheduleStepIntoAsync(
   m_stepIntoAsyncCallback = std::move(callback);
 }
 
-void V8Debugger::pauseOnAsyncTask(int targetContextGroupId, void* task) {
+void V8Debugger::pauseOnAsyncCall(int targetContextGroupId, uintptr_t task,
+                                  const String16& debuggerId) {
   DCHECK(targetContextGroupId);
   m_targetContextGroupId = targetContextGroupId;
-  m_taskWithScheduledBreak = task;
+
+  m_taskWithScheduledBreak = reinterpret_cast<void*>(task);
+  String16 currentDebuggerId =
+      debuggerIdToString(debuggerIdFor(targetContextGroupId));
+  if (currentDebuggerId != debuggerId) {
+    m_taskWithScheduledBreakDebuggerId = debuggerId;
+  }
 }
 
 Response V8Debugger::continueToLocation(
@@ -398,6 +406,7 @@ void V8Debugger::handleProgramBreak(
   m_breakRequested = false;
   m_pauseOnAsyncCall = false;
   m_taskWithScheduledBreak = nullptr;
+  m_taskWithScheduledBreakDebuggerId = String16();
 
   bool scheduledOOMBreak = m_scheduledOOMBreak;
   bool scheduledAssertBreak = m_scheduledAssertBreak;
@@ -560,6 +569,11 @@ void V8Debugger::PromiseEventOccurred(v8::debug::PromiseDebugActionType type,
 
 std::shared_ptr<AsyncStackTrace> V8Debugger::currentAsyncParent() {
   return m_currentAsyncParent.empty() ? nullptr : m_currentAsyncParent.back();
+}
+
+V8StackTraceId V8Debugger::currentExternalParent() {
+  return m_currentExternalParent.empty() ? V8StackTraceId()
+                                         : m_currentExternalParent.back();
 }
 
 v8::MaybeLocal<v8::Value> V8Debugger::getTargetScopes(
@@ -726,6 +740,79 @@ void V8Debugger::setAsyncCallStackDepth(V8DebuggerAgentImpl* agent, int depth) {
   if (!maxAsyncCallStackDepth) allAsyncTasksCanceled();
 }
 
+std::shared_ptr<AsyncStackTrace> V8Debugger::stackTraceFor(
+    int contextGroupId, const V8StackTraceId& id) {
+  if (debuggerIdFor(contextGroupId) != id.debugger_id) return nullptr;
+  auto it = m_storedStackTraces.find(id.id);
+  if (it == m_storedStackTraces.end()) return nullptr;
+  return it->second.lock();
+}
+
+V8StackTraceId V8Debugger::storeCurrentStackTrace(
+    const StringView& description) {
+  if (!m_maxAsyncCallStackDepth) return V8StackTraceId();
+
+  v8::HandleScope scope(m_isolate);
+  int contextGroupId = currentContextGroupId();
+  if (!contextGroupId) return V8StackTraceId();
+
+  std::shared_ptr<AsyncStackTrace> asyncStack =
+      AsyncStackTrace::capture(this, contextGroupId, toString16(description),
+                               V8StackTraceImpl::maxCallStackSizeToCapture);
+  if (!asyncStack) return V8StackTraceId();
+
+  uintptr_t id = AsyncStackTrace::store(this, asyncStack);
+
+  m_allAsyncStacks.push_back(std::move(asyncStack));
+  ++m_asyncStacksCount;
+  collectOldAsyncStacksIfNeeded();
+
+  asyncTaskCandidateForStepping(reinterpret_cast<void*>(id));
+
+  return V8StackTraceId(id, debuggerIdFor(contextGroupId));
+}
+
+uintptr_t V8Debugger::storeStackTrace(
+    std::shared_ptr<AsyncStackTrace> asyncStack) {
+  uintptr_t id = ++m_lastStackTraceId;
+  m_storedStackTraces[id] = asyncStack;
+  return id;
+}
+
+void V8Debugger::externalAsyncTaskStarted(const V8StackTraceId& parent) {
+  if (!m_maxAsyncCallStackDepth || parent.IsInvalid()) return;
+  m_currentExternalParent.push_back(parent);
+  m_currentAsyncParent.emplace_back();
+  m_currentTasks.push_back(reinterpret_cast<void*>(parent.id));
+
+  if (m_breakRequested) return;
+  if (!m_taskWithScheduledBreakDebuggerId.isEmpty() &&
+      reinterpret_cast<uintptr_t>(m_taskWithScheduledBreak) == parent.id &&
+      m_taskWithScheduledBreakDebuggerId ==
+          debuggerIdToString(parent.debugger_id)) {
+    v8::debug::DebugBreak(m_isolate);
+  }
+}
+
+void V8Debugger::externalAsyncTaskFinished(const V8StackTraceId& parent) {
+  if (!m_maxAsyncCallStackDepth || m_currentExternalParent.empty()) return;
+  m_currentExternalParent.pop_back();
+  m_currentAsyncParent.pop_back();
+  DCHECK(m_currentTasks.back() == reinterpret_cast<void*>(parent.id));
+  m_currentTasks.pop_back();
+
+  if (m_taskWithScheduledBreakDebuggerId.isEmpty() ||
+      reinterpret_cast<uintptr_t>(m_taskWithScheduledBreak) != parent.id ||
+      m_taskWithScheduledBreakDebuggerId !=
+          debuggerIdToString(parent.debugger_id)) {
+    return;
+  }
+  m_taskWithScheduledBreak = nullptr;
+  m_taskWithScheduledBreakDebuggerId = String16();
+  if (m_breakRequested) return;
+  v8::debug::CancelDebugBreak(m_isolate);
+}
+
 void V8Debugger::asyncTaskScheduled(const StringView& taskName, void* task,
                                     bool recurring) {
   asyncTaskScheduledForStack(toString16(taskName), task, recurring);
@@ -785,6 +872,7 @@ void V8Debugger::asyncTaskStartedForStack(void* task) {
   } else {
     m_currentAsyncParent.emplace_back();
   }
+  m_currentExternalParent.emplace_back();
 }
 
 void V8Debugger::asyncTaskFinishedForStack(void* task) {
@@ -795,6 +883,7 @@ void V8Debugger::asyncTaskFinishedForStack(void* task) {
   m_currentTasks.pop_back();
 
   m_currentAsyncParent.pop_back();
+  m_currentExternalParent.pop_back();
 
   if (m_recurringTasks.find(task) == m_recurringTasks.end()) {
     asyncTaskCanceledForStack(task);
@@ -821,19 +910,26 @@ void V8Debugger::asyncTaskStartedForStepping(void* task) {
   if (m_breakRequested) return;
   // TODO(kozyatinskiy): we should search task in async chain to support
   // blackboxing.
-  if (task != m_taskWithScheduledBreak) return;
-  v8::debug::DebugBreak(m_isolate);
+  if (m_taskWithScheduledBreakDebuggerId.isEmpty() &&
+      task == m_taskWithScheduledBreak) {
+    v8::debug::DebugBreak(m_isolate);
+  }
 }
 
 void V8Debugger::asyncTaskFinishedForStepping(void* task) {
-  if (task != m_taskWithScheduledBreak) return;
+  if (!m_taskWithScheduledBreakDebuggerId.isEmpty() ||
+      task != m_taskWithScheduledBreak) {
+    return;
+  }
   m_taskWithScheduledBreak = nullptr;
   if (m_breakRequested) return;
   v8::debug::CancelDebugBreak(m_isolate);
 }
 
 void V8Debugger::asyncTaskCanceledForStepping(void* task) {
-  if (task != m_taskWithScheduledBreak) return;
+  if (!m_taskWithScheduledBreakDebuggerId.isEmpty() ||
+      task != m_taskWithScheduledBreak)
+    return;
   m_taskWithScheduledBreak = nullptr;
 }
 
@@ -841,6 +937,7 @@ void V8Debugger::allAsyncTasksCanceled() {
   m_asyncTaskStacks.clear();
   m_recurringTasks.clear();
   m_currentAsyncParent.clear();
+  m_currentExternalParent.clear();
   m_currentTasks.clear();
 
   m_framesCache.clear();
@@ -892,6 +989,7 @@ void V8Debugger::collectOldAsyncStacksIfNeeded() {
     --m_asyncStacksCount;
   }
   cleanupExpiredWeakPointers(m_asyncTaskStacks);
+  cleanupExpiredWeakPointers(m_storedStackTraces);
   for (auto it = m_recurringTasks.begin(); it != m_recurringTasks.end();) {
     if (m_asyncTaskStacks.find(*it) == m_asyncTaskStacks.end()) {
       it = m_recurringTasks.erase(it);
@@ -925,6 +1023,26 @@ void V8Debugger::setMaxAsyncTaskStacksForTest(int limit) {
   m_maxAsyncCallStacks = 0;
   collectOldAsyncStacksIfNeeded();
   m_maxAsyncCallStacks = limit;
+}
+
+std::pair<int64_t, int64_t> V8Debugger::debuggerIdFor(int contextGroupId) {
+  auto it = m_contextGroupIdToDebuggerId.find(contextGroupId);
+  if (it != m_contextGroupIdToDebuggerId.end()) return it->second;
+  std::pair<int64_t, int64_t> debuggerId(
+      v8::debug::GetNextRandomInt64(m_isolate),
+      v8::debug::GetNextRandomInt64(m_isolate));
+  m_contextGroupIdToDebuggerId.insert(
+      it, std::make_pair(contextGroupId, debuggerId));
+  m_serializedDebuggerIdToDebuggerId.insert(
+      std::make_pair(debuggerIdToString(debuggerId), debuggerId));
+  return debuggerId;
+}
+
+std::pair<int64_t, int64_t> V8Debugger::debuggerIdFor(
+    const String16& serializedDebuggerId) {
+  auto it = m_serializedDebuggerIdToDebuggerId.find(serializedDebuggerId);
+  if (it != m_serializedDebuggerIdToDebuggerId.end()) return it->second;
+  return std::make_pair(0, 0);
 }
 
 void V8Debugger::dumpAsyncTaskStacksStateForTest() {
