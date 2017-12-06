@@ -3206,23 +3206,22 @@ class TypedElementsAccessor
     }
   }
 
-  static void CopyElementsHandleFromTypedArray(Handle<JSTypedArray> source,
-                                               Handle<JSTypedArray> destination,
-                                               size_t length, uint32_t offset) {
+  static void CopyElementsFromTypedArray(JSTypedArray* source,
+                                         JSTypedArray* destination,
+                                         size_t length, uint32_t offset) {
     // The source is a typed array, so we know we don't need to do ToNumber
-    // side-effects, as the source elements will always be a number or
-    // undefined.
+    // side-effects, as the source elements will always be a number.
     DisallowHeapAllocation no_gc;
 
-    Handle<FixedTypedArrayBase> source_elements(
-        FixedTypedArrayBase::cast(source->elements()));
-    Handle<BackingStore> destination_elements(
-        BackingStore::cast(destination->elements()));
+    FixedTypedArrayBase* source_elements =
+        FixedTypedArrayBase::cast(source->elements());
+    BackingStore* destination_elements =
+        BackingStore::cast(destination->elements());
 
-    DCHECK_LE(offset + source->length(), destination->length());
-    DCHECK_GE(destination->length(), source->length());
+    DCHECK_LE(offset, destination->length_value());
+    DCHECK_LE(source->length_value(), destination->length_value() - offset);
     DCHECK(source->length()->IsSmi());
-    DCHECK_EQ(Smi::FromInt(static_cast<int>(length)), source->length());
+    DCHECK_EQ(length, source->length_value());
 
     InstanceType source_type = source_elements->map()->instance_type();
     InstanceType destination_type =
@@ -3255,10 +3254,10 @@ class TypedElementsAccessor
       // We use scalar accessors below to avoid boxing/unboxing, so there are
       // no allocations.
       switch (source->GetElementsKind()) {
-#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)           \
-  case TYPE##_ELEMENTS:                                           \
-    CopyBetweenBackingStores<Type##ArrayTraits>(                  \
-        *source_elements, *destination_elements, length, offset); \
+#define TYPED_ARRAY_CASE(Type, type, TYPE, ctype, size)         \
+  case TYPE##_ELEMENTS:                                         \
+    CopyBetweenBackingStores<Type##ArrayTraits>(                \
+        source_elements, destination_elements, length, offset); \
     break;
         TYPED_ARRAYS(TYPED_ARRAY_CASE)
         default:
@@ -3269,23 +3268,31 @@ class TypedElementsAccessor
     }
   }
 
-  static bool HoleyPrototypeLookupRequired(Isolate* isolate,
-                                           Handle<JSArray> source) {
+  static bool HoleyPrototypeLookupRequired(Isolate* isolate, Context* context,
+                                           JSArray* source) {
+    DisallowHeapAllocation no_gc;
+    DisallowJavascriptExecution no_js(isolate);
+
+#ifdef V8_ENABLE_FORCE_SLOW_PATH
+    if (isolate->force_slow_path()) return true;
+#endif
+
     Object* source_proto = source->map()->prototype();
+
     // Null prototypes are OK - we don't need to do prototype chain lookups on
     // them.
     if (source_proto->IsNull(isolate)) return false;
     if (source_proto->IsJSProxy()) return true;
-    DCHECK(source_proto->IsJSObject());
-    if (!isolate->is_initial_array_prototype(JSObject::cast(source_proto))) {
+    if (!context->is_initial_array_prototype(JSObject::cast(source_proto))) {
       return true;
     }
-    return !isolate->IsNoElementsProtectorIntact();
+
+    return !isolate->IsNoElementsProtectorIntact(context);
   }
 
-  static bool TryCopyElementsHandleFastNumber(Handle<JSArray> source,
-                                              Handle<JSTypedArray> destination,
-                                              size_t length, uint32_t offset) {
+  static bool TryCopyElementsFastNumber(Context* context, JSArray* source,
+                                        JSTypedArray* destination,
+                                        size_t length, uint32_t offset) {
     Isolate* isolate = source->GetIsolate();
     DisallowHeapAllocation no_gc;
     DisallowJavascriptExecution no_js(isolate);
@@ -3298,7 +3305,7 @@ class TypedElementsAccessor
     // When the array has the original array prototype, and that prototype has
     // not been changed in a way that would affect lookups, we can just convert
     // the hole into undefined.
-    if (HoleyPrototypeLookupRequired(isolate, source)) return false;
+    if (HoleyPrototypeLookupRequired(isolate, context, source)) return false;
 
     Object* undefined = isolate->heap()->undefined_value();
 
@@ -3400,16 +3407,15 @@ class TypedElementsAccessor
     // All conversions from TypedArrays can be done without allocation.
     if (source->IsJSTypedArray()) {
       Handle<JSTypedArray> source_ta = Handle<JSTypedArray>::cast(source);
-      CopyElementsHandleFromTypedArray(source_ta, destination_ta, length,
-                                       offset);
+      CopyElementsFromTypedArray(*source_ta, *destination_ta, length, offset);
       return *isolate->factory()->undefined_value();
     }
 
     // Fast cases for packed numbers kinds where we don't need to allocate.
     if (source->IsJSArray()) {
       Handle<JSArray> source_array = Handle<JSArray>::cast(source);
-      if (TryCopyElementsHandleFastNumber(source_array, destination_ta, length,
-                                          offset)) {
+      if (TryCopyElementsFastNumber(isolate->context(), *source_array,
+                                    *destination_ta, length, offset)) {
         return *isolate->factory()->undefined_value();
       }
     }
@@ -4357,6 +4363,43 @@ MaybeHandle<Object> ArrayConstructInitializeElements(Handle<JSArray> array,
   return array;
 }
 
+void CopyFastNumberJSArrayElementsToTypedArray(Context* context,
+                                               JSArray* source,
+                                               JSTypedArray* destination,
+                                               uintptr_t length,
+                                               uintptr_t offset) {
+  DCHECK(context->IsContext());
+  DCHECK(source->IsJSArray());
+  DCHECK(destination->IsJSTypedArray());
+
+  switch (destination->GetElementsKind()) {
+#define TYPED_ARRAYS_CASE(Type, type, TYPE, ctype, size)                       \
+  case TYPE##_ELEMENTS:                                                        \
+    CHECK(Fixed##Type##ElementsAccessor::TryCopyElementsFastNumber(            \
+        context, source, destination, length, static_cast<uint32_t>(offset))); \
+    break;
+    TYPED_ARRAYS(TYPED_ARRAYS_CASE)
+#undef TYPED_ARRAYS_CASE
+    default:
+      UNREACHABLE();
+  }
+}
+
+void CopyTypedArrayElementsToTypedArray(JSTypedArray* source,
+                                        JSTypedArray* destination,
+                                        uintptr_t length, uintptr_t offset) {
+  switch (destination->GetElementsKind()) {
+#define TYPED_ARRAYS_CASE(Type, type, TYPE, ctype, size)             \
+  case TYPE##_ELEMENTS:                                              \
+    Fixed##Type##ElementsAccessor::CopyElementsFromTypedArray(       \
+        source, destination, length, static_cast<uint32_t>(offset)); \
+    break;
+    TYPED_ARRAYS(TYPED_ARRAYS_CASE)
+#undef TYPED_ARRAYS_CASE
+    default:
+      UNREACHABLE();
+  }
+}
 
 void ElementsAccessor::InitializeOncePerProcess() {
   static ElementsAccessor* accessor_array[] = {

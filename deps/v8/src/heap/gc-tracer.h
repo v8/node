@@ -61,7 +61,7 @@ class V8_EXPORT_PRIVATE GCTracer {
    public:
     enum ScopeId {
 #define DEFINE_SCOPE(scope) scope,
-      TRACER_SCOPES(DEFINE_SCOPE)
+      TRACER_SCOPES(DEFINE_SCOPE) TRACER_BACKGROUND_SCOPES(DEFINE_SCOPE)
 #undef DEFINE_SCOPE
           NUMBER_OF_SCOPES,
 
@@ -69,7 +69,11 @@ class V8_EXPORT_PRIVATE GCTracer {
       LAST_INCREMENTAL_SCOPE = MC_INCREMENTAL_EXTERNAL_PROLOGUE,
       FIRST_SCOPE = MC_INCREMENTAL,
       NUMBER_OF_INCREMENTAL_SCOPES =
-          LAST_INCREMENTAL_SCOPE - FIRST_INCREMENTAL_SCOPE + 1
+          LAST_INCREMENTAL_SCOPE - FIRST_INCREMENTAL_SCOPE + 1,
+      FIRST_MC_BACKGROUND_SCOPE = MC_BACKGROUND_EVACUATE_COPY,
+      LAST_MC_BACKGROUND_SCOPE = MC_BACKGROUND_SWEEPING,
+      FIRST_MINOR_GC_BACKGROUND_SCOPE = MINOR_MC_BACKGROUND_EVACUATE_COPY,
+      LAST_MINOR_GC_BACKGROUND_SCOPE = SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL
     };
 
     Scope(GCTracer* tracer, ScopeId scope);
@@ -86,6 +90,30 @@ class V8_EXPORT_PRIVATE GCTracer {
     DISALLOW_COPY_AND_ASSIGN(Scope);
   };
 
+  class V8_EXPORT_PRIVATE BackgroundScope {
+   public:
+    enum ScopeId {
+#define DEFINE_SCOPE(scope) scope,
+      TRACER_BACKGROUND_SCOPES(DEFINE_SCOPE)
+#undef DEFINE_SCOPE
+          NUMBER_OF_SCOPES,
+      FIRST_MC_BACKGROUND_SCOPE = MC_BACKGROUND_EVACUATE_COPY,
+      LAST_MC_BACKGROUND_SCOPE = MC_BACKGROUND_SWEEPING,
+      FIRST_MINOR_GC_BACKGROUND_SCOPE = MINOR_MC_BACKGROUND_EVACUATE_COPY,
+      LAST_MINOR_GC_BACKGROUND_SCOPE = SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL
+    };
+    BackgroundScope(GCTracer* tracer, ScopeId scope);
+    ~BackgroundScope();
+
+   private:
+    GCTracer* tracer_;
+    ScopeId scope_;
+    double start_time_;
+    RuntimeCallTimer timer_;
+    RuntimeCallCounter counter_;
+    bool runtime_stats_enabled_;
+    DISALLOW_COPY_AND_ASSIGN(BackgroundScope);
+  };
 
   class Event {
    public:
@@ -159,9 +187,8 @@ class V8_EXPORT_PRIVATE GCTracer {
   };
 
   static const int kThroughputTimeFrameMs = 5000;
-  static const int kFirstGCIndexInRuntimeCallStats = 0;
 
-  static RuntimeCallStats::CounterId RCSCounterFromScope(Scope::ScopeId id);
+  static RuntimeCallCounterId RCSCounterFromScope(Scope::ScopeId id);
 
   explicit GCTracer(Heap* heap);
 
@@ -273,9 +300,16 @@ class V8_EXPORT_PRIVATE GCTracer {
     }
   }
 
+  void AddBackgroundScopeSample(BackgroundScope::ScopeId scope, double duration,
+                                RuntimeCallCounter* runtime_call_counter);
+
  private:
   FRIEND_TEST(GCTracer, AverageSpeed);
   FRIEND_TEST(GCTracerTest, AllocationThroughput);
+  FRIEND_TEST(GCTracerTest, BackgroundScavengerScope);
+  FRIEND_TEST(GCTracerTest, BackgroundMinorMCScope);
+  FRIEND_TEST(GCTracerTest, BackgroundMajorMCScope);
+  FRIEND_TEST(GCTracerTest, MultithreadedBackgroundScope);
   FRIEND_TEST(GCTracerTest, NewSpaceAllocationThroughput);
   FRIEND_TEST(GCTracerTest, NewSpaceAllocationThroughputWithProvidedTime);
   FRIEND_TEST(GCTracerTest, OldGenerationAllocationThroughputWithProvidedTime);
@@ -283,6 +317,11 @@ class V8_EXPORT_PRIVATE GCTracer {
   FRIEND_TEST(GCTracerTest, IncrementalMarkingDetails);
   FRIEND_TEST(GCTracerTest, IncrementalScope);
   FRIEND_TEST(GCTracerTest, IncrementalMarkingSpeed);
+
+  struct BackgroundCounter {
+    double total_duration_ms;
+    RuntimeCallCounter runtime_call_counter;
+  };
 
   // Returns the average speed of the events in the buffer.
   // If the buffer is empty, the result is 0.
@@ -314,6 +353,12 @@ class V8_EXPORT_PRIVATE GCTracer {
            current_.scopes[Scope::MC_INCREMENTAL_EXTERNAL_EPILOGUE] +
            current_.scopes[Scope::MC_INCREMENTAL_EXTERNAL_PROLOGUE];
   }
+
+  void FetchBackgroundCounters(int first_global_scope, int last_global_scope,
+                               int first_background_scope,
+                               int last_background_scope);
+  void FetchBackgroundMinorGCCounters();
+  void FetchBackgroundMarkCompactCounters();
 
   // Pointer to the heap that owns this tracer.
   Heap* heap_;
@@ -368,8 +413,12 @@ class V8_EXPORT_PRIVATE GCTracer {
   base::RingBuffer<double> recorded_context_disposal_times_;
   base::RingBuffer<double> recorded_survival_ratios_;
 
+  base::Mutex background_counter_mutex_;
+  BackgroundCounter background_counter_[BackgroundScope::NUMBER_OF_SCOPES];
+
   DISALLOW_COPY_AND_ASSIGN(GCTracer);
 };
+
 }  // namespace internal
 }  // namespace v8
 

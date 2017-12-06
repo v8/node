@@ -279,6 +279,8 @@ class JSBinopReduction final {
         return simplified()->NumberDivide();
       case IrOpcode::kJSModulus:
         return simplified()->NumberModulus();
+      case IrOpcode::kJSExponentiate:
+        return simplified()->NumberPow();
       case IrOpcode::kJSBitwiseAnd:
         return simplified()->NumberBitwiseAnd();
       case IrOpcode::kJSBitwiseOr:
@@ -437,6 +439,37 @@ Reduction JSTypedLowering::ReduceJSBitwiseNot(Node* node) {
     r.ConvertInputsToNumber();
     r.ConvertInputsToUI32(kSigned, kSigned);
     return r.ChangeToPureOperator(r.NumberOp(), Type::Signed32());
+  }
+  return NoChange();
+}
+
+Reduction JSTypedLowering::ReduceJSDecrement(Node* node) {
+  Node* input = NodeProperties::GetValueInput(node, 0);
+  Type* input_type = NodeProperties::GetType(input);
+  if (input_type->Is(Type::PlainPrimitive())) {
+    // JSDecrement(x) => NumberSubtract(ToNumber(x), 1)
+    node->InsertInput(graph()->zone(), 1, jsgraph()->OneConstant());
+    NodeProperties::ChangeOp(node, javascript()->Subtract());
+    JSBinopReduction r(this, node);
+    r.ConvertInputsToNumber();
+    DCHECK_EQ(simplified()->NumberSubtract(), r.NumberOp());
+    return r.ChangeToPureOperator(r.NumberOp(), Type::Number());
+  }
+  return NoChange();
+}
+
+Reduction JSTypedLowering::ReduceJSIncrement(Node* node) {
+  Node* input = NodeProperties::GetValueInput(node, 0);
+  Type* input_type = NodeProperties::GetType(input);
+  if (input_type->Is(Type::PlainPrimitive())) {
+    // JSIncrement(x) => NumberAdd(ToNumber(x), 1)
+    node->InsertInput(graph()->zone(), 1, jsgraph()->OneConstant());
+    BinaryOperationHint hint = BinaryOperationHint::kAny;  // Dummy.
+    NodeProperties::ChangeOp(node, javascript()->Add(hint));
+    JSBinopReduction r(this, node);
+    r.ConvertInputsToNumber();
+    DCHECK_EQ(simplified()->NumberAdd(), r.NumberOp());
+    return r.ChangeToPureOperator(r.NumberOp(), Type::Number());
   }
   return NoChange();
 }
@@ -615,8 +648,8 @@ Reduction JSTypedLowering::ReduceCreateConsString(Node* node) {
   }
 
   // Determine the {first} length.
-  Node* first_length = BuildGetStringLength(first, &effect, control);
-  Node* second_length = BuildGetStringLength(second, &effect, control);
+  Node* first_length = BuildGetStringLength(first);
+  Node* second_length = BuildGetStringLength(second);
 
   // Compute the resulting length.
   Node* length =
@@ -665,40 +698,24 @@ Reduction JSTypedLowering::ReduceCreateConsString(Node* node) {
       Revisit(graph()->end());
     }
     control = graph()->NewNode(common()->IfTrue(), branch);
+    length = graph()->NewNode(
+        common()->TypeGuard(type_cache_.kStringLengthType), length, control);
   }
 
-  // Figure out the map for the resulting ConsString.
-  // TODO(turbofan): We currently just use the cons_string_map here for
-  // the sake of simplicity; we could also try to be smarter here and
-  // use the one_byte_cons_string_map instead when the resulting ConsString
-  // contains only one byte characters.
-  Node* value_map = jsgraph()->HeapConstant(factory()->cons_string_map());
-
-  // Allocate the resulting ConsString.
-  AllocationBuilder a(jsgraph(), effect, control);
-  a.Allocate(ConsString::kSize, NOT_TENURED, Type::OtherString());
-  a.Store(AccessBuilder::ForMap(), value_map);
-  a.Store(AccessBuilder::ForNameHashField(),
-          jsgraph()->Constant(Name::kEmptyHashField));
-  a.Store(AccessBuilder::ForStringLength(), length);
-  a.Store(AccessBuilder::ForConsStringFirst(), first);
-  a.Store(AccessBuilder::ForConsStringSecond(), second);
-
-  // Morph the {node} into a {FinishRegion}.
-  ReplaceWithValue(node, node, node, control);
-  a.FinishAndChange(node);
-  return Changed(node);
+  Node* value =
+      graph()->NewNode(simplified()->NewConsString(), length, first, second);
+  ReplaceWithValue(node, value, effect, control);
+  return Replace(value);
 }
 
-Node* JSTypedLowering::BuildGetStringLength(Node* value, Node** effect,
-                                            Node* control) {
+Node* JSTypedLowering::BuildGetStringLength(Node* value) {
+  // TODO(bmeurer): Get rid of this hack and instead have a way to
+  // express the string length in the types.
   HeapObjectMatcher m(value);
   Node* length =
       (m.HasValue() && m.Value()->IsString())
           ? jsgraph()->Constant(Handle<String>::cast(m.Value())->length())
-          : (*effect) = graph()->NewNode(
-                simplified()->LoadField(AccessBuilder::ForStringLength()),
-                value, *effect, control);
+          : graph()->NewNode(simplified()->StringLength(), value);
   return length;
 }
 
@@ -833,9 +850,9 @@ Reduction JSTypedLowering::ReduceJSStrictEqual(Node* node) {
     ReplaceWithValue(node, replacement);
     return Replace(replacement);
   }
-  if (r.OneInputCannotBe(Type::NumberOrString())) {
-    // For values with canonical representation (i.e. neither String, nor
-    // Number) an empty type intersection means the values cannot be strictly
+  if (r.OneInputCannotBe(Type::NumericOrString())) {
+    // For values with canonical representation (i.e. neither String nor
+    // Numeric) an empty type intersection means the values cannot be strictly
     // equal.
     if (!r.left_type()->Maybe(r.right_type())) {
       Node* replacement = jsgraph()->FalseConstant();
@@ -1100,16 +1117,12 @@ Reduction JSTypedLowering::ReduceJSLoadNamed(Node* node) {
   DCHECK_EQ(IrOpcode::kJSLoadNamed, node->opcode());
   Node* receiver = NodeProperties::GetValueInput(node, 0);
   Type* receiver_type = NodeProperties::GetType(receiver);
-  Node* effect = NodeProperties::GetEffectInput(node);
-  Node* control = NodeProperties::GetControlInput(node);
   Handle<Name> name = NamedAccessOf(node->op()).name();
   // Optimize "length" property of strings.
   if (name.is_identical_to(factory()->length_string()) &&
       receiver_type->Is(Type::String())) {
-    Node* value = effect = graph()->NewNode(
-        simplified()->LoadField(AccessBuilder::ForStringLength()), receiver,
-        effect, control);
-    ReplaceWithValue(node, value, effect);
+    Node* value = graph()->NewNode(simplified()->StringLength(), receiver);
+    ReplaceWithValue(node, value);
     return Replace(value);
   }
   return NoChange();
@@ -1422,7 +1435,6 @@ void ReduceBuiltin(Isolate* isolate, JSGraph* jsgraph, Node* node,
   const bool is_construct = (node->opcode() == IrOpcode::kJSConstruct);
 
   DCHECK(Builtins::HasCppImplementation(builtin_index));
-  DCHECK_EQ(0, flags & CallDescriptor::kSupportsTailCalls);
 
   Node* target = NodeProperties::GetValueInput(node, 0);
   Node* new_target = is_construct
@@ -2092,9 +2104,14 @@ Reduction JSTypedLowering::Reduce(Node* node) {
     case IrOpcode::kJSMultiply:
     case IrOpcode::kJSDivide:
     case IrOpcode::kJSModulus:
+    case IrOpcode::kJSExponentiate:
       return ReduceNumberBinop(node);
     case IrOpcode::kJSBitwiseNot:
       return ReduceJSBitwiseNot(node);
+    case IrOpcode::kJSDecrement:
+      return ReduceJSDecrement(node);
+    case IrOpcode::kJSIncrement:
+      return ReduceJSIncrement(node);
     case IrOpcode::kJSNegate:
       return ReduceJSNegate(node);
     case IrOpcode::kJSHasInPrototypeChain:

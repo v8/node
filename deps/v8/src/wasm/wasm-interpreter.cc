@@ -19,6 +19,7 @@
 #include "src/wasm/function-body-decoder-impl.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/memory-tracing.h"
+#include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-external-refs.h"
 #include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-module.h"
@@ -31,14 +32,10 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
-#if DEBUG
 #define TRACE(...)                                        \
   do {                                                    \
     if (FLAG_trace_wasm_interpreter) PrintF(__VA_ARGS__); \
   } while (false)
-#else
-#define TRACE(...)
-#endif
 
 #define FOREACH_INTERNAL_OPCODE(V) V(Breakpoint, 0xFF)
 
@@ -223,15 +220,15 @@ inline uint32_t ExecuteI32RemU(uint32_t a, uint32_t b, TrapReason* trap) {
 }
 
 inline uint32_t ExecuteI32Shl(uint32_t a, uint32_t b, TrapReason* trap) {
-  return a << (b & 0x1f);
+  return a << (b & 0x1F);
 }
 
 inline uint32_t ExecuteI32ShrU(uint32_t a, uint32_t b, TrapReason* trap) {
-  return a >> (b & 0x1f);
+  return a >> (b & 0x1F);
 }
 
 inline int32_t ExecuteI32ShrS(int32_t a, int32_t b, TrapReason* trap) {
-  return a >> (b & 0x1f);
+  return a >> (b & 0x1F);
 }
 
 inline int64_t ExecuteI64DivS(int64_t a, int64_t b, TrapReason* trap) {
@@ -272,34 +269,34 @@ inline uint64_t ExecuteI64RemU(uint64_t a, uint64_t b, TrapReason* trap) {
 }
 
 inline uint64_t ExecuteI64Shl(uint64_t a, uint64_t b, TrapReason* trap) {
-  return a << (b & 0x3f);
+  return a << (b & 0x3F);
 }
 
 inline uint64_t ExecuteI64ShrU(uint64_t a, uint64_t b, TrapReason* trap) {
-  return a >> (b & 0x3f);
+  return a >> (b & 0x3F);
 }
 
 inline int64_t ExecuteI64ShrS(int64_t a, int64_t b, TrapReason* trap) {
-  return a >> (b & 0x3f);
+  return a >> (b & 0x3F);
 }
 
 inline uint32_t ExecuteI32Ror(uint32_t a, uint32_t b, TrapReason* trap) {
-  uint32_t shift = (b & 0x1f);
+  uint32_t shift = (b & 0x1F);
   return (a >> shift) | (a << (32 - shift));
 }
 
 inline uint32_t ExecuteI32Rol(uint32_t a, uint32_t b, TrapReason* trap) {
-  uint32_t shift = (b & 0x1f);
+  uint32_t shift = (b & 0x1F);
   return (a << shift) | (a >> (32 - shift));
 }
 
 inline uint64_t ExecuteI64Ror(uint64_t a, uint64_t b, TrapReason* trap) {
-  uint32_t shift = (b & 0x3f);
+  uint32_t shift = (b & 0x3F);
   return (a >> shift) | (a << (64 - shift));
 }
 
 inline uint64_t ExecuteI64Rol(uint64_t a, uint64_t b, TrapReason* trap) {
-  uint32_t shift = (b & 0x3f);
+  uint32_t shift = (b & 0x3F);
   return (a << shift) | (a >> (64 - shift));
 }
 
@@ -627,17 +624,29 @@ const char* OpcodeName(uint32_t val) {
 // Unwrap a wasm to js wrapper, return the callable heap object.
 // If the wrapper would throw a TypeError, return a null handle.
 Handle<HeapObject> UnwrapWasmToJSWrapper(Isolate* isolate,
-                                         Handle<Code> js_wrapper) {
-  DCHECK_EQ(Code::WASM_TO_JS_FUNCTION, js_wrapper->kind());
-  Handle<FixedArray> deopt_data(js_wrapper->deoptimization_data(), isolate);
-  DCHECK_EQ(2, deopt_data->length());
-  intptr_t js_imports_table_loc = static_cast<intptr_t>(
-      HeapNumber::cast(deopt_data->get(0))->value_as_bits());
-  Handle<FixedArray> js_imports_table(
-      reinterpret_cast<FixedArray**>(js_imports_table_loc));
+                                         WasmCodeWrapper wrapper) {
+  Handle<FixedArray> js_imports_table;
   int index = 0;
-  CHECK(deopt_data->get(1)->ToInt32(&index));
-  DCHECK_GT(js_imports_table->length(), index);
+  if (wrapper.IsCodeObject()) {
+    Handle<Code> js_wrapper = wrapper.GetCode();
+    DCHECK(Code::WASM_TO_JS_FUNCTION == js_wrapper->kind());
+    Handle<FixedArray> deopt_data(js_wrapper->deoptimization_data(), isolate);
+    DCHECK_EQ(2, deopt_data->length());
+    intptr_t js_imports_table_loc = static_cast<intptr_t>(
+        HeapNumber::cast(deopt_data->get(0))->value_as_bits());
+    js_imports_table = Handle<FixedArray>(
+        reinterpret_cast<FixedArray**>(js_imports_table_loc));
+    CHECK(deopt_data->get(1)->ToInt32(&index));
+    DCHECK_GT(js_imports_table->length(), index);
+  } else {
+    const wasm::WasmCode* wasm_code = wrapper.GetWasmCode();
+    DCHECK_EQ(wasm::WasmCode::kWasmToJsWrapper, wasm_code->kind());
+    js_imports_table = Handle<FixedArray>(wasm_code->owner()
+                                              ->compiled_module()
+                                              ->owning_instance()
+                                              ->js_imports_table());
+    index = 1 + 3 * static_cast<int>(wasm_code->index());
+  }
   Handle<Object> obj(js_imports_table->get(index), isolate);
   if (obj->IsCallable()) {
     return Handle<HeapObject>::cast(obj);
@@ -982,7 +991,15 @@ class CodeMap {
                           : MaybeHandle<WasmInstanceObject>();
   }
 
-  Code* GetImportedFunction(uint32_t function_index) {
+  const wasm::WasmCode* GetImportedFunction(uint32_t function_index) {
+    DCHECK(has_instance());
+    DCHECK_GT(module_->num_imported_functions, function_index);
+    const wasm::NativeModule* native_module =
+        instance()->compiled_module()->GetNativeModule();
+    return native_module->GetCode(function_index);
+  }
+
+  Code* GetImportedFunctionGC(uint32_t function_index) {
     DCHECK(has_instance());
     DCHECK_GT(module_->num_imported_functions, function_index);
     FixedArray* code_table = instance()->compiled_module()->ptr_to_code_table();
@@ -1201,7 +1218,7 @@ class ThreadImpl {
   }
 
   WasmValue GetReturnValue(uint32_t index) {
-    if (state_ == WasmInterpreter::TRAPPED) return WasmValue(0xdeadbeef);
+    if (state_ == WasmInterpreter::TRAPPED) return WasmValue(0xDEADBEEF);
     DCHECK_EQ(WasmInterpreter::FINISHED, state_);
     Activation act = current_activation();
     // Current activation must be finished.
@@ -1520,12 +1537,12 @@ class ThreadImpl {
   }
 
   template <typename type>
-  bool ExtractAtomicBinOpParams(Decoder* decoder, InterpreterCode* code,
-                                Address& address, pc_t pc, type& val,
-                                int& len) {
+  bool ExtractAtomicOpParams(Decoder* decoder, InterpreterCode* code,
+                             Address& address, pc_t pc, int& len,
+                             type* val = nullptr) {
     MemoryAccessOperand<Decoder::kNoValidate> operand(decoder, code->at(pc + 1),
                                                       sizeof(type));
-    val = Pop().to<uint32_t>();
+    if (val) *val = Pop().to<uint32_t>();
     uint32_t index = Pop().to<uint32_t>();
     if (!BoundsCheck<type>(wasm_context_->mem_size, operand.offset, index)) {
       DoTrap(kTrapMemOutOfBounds, pc);
@@ -1540,38 +1557,21 @@ class ThreadImpl {
                        InterpreterCode* code, pc_t pc, int& len) {
     WasmValue result;
     switch (opcode) {
-// TODO(gdeepti): Remove work-around when the bots are upgraded to a more
-// recent gcc version. The gcc bots (Android ARM, linux) currently use
-// gcc 4.8, in which atomics are insufficiently supported, also Bug#58016
-// (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58016)
-#if __GNUG__ && __GNUC__ < 5
-#define ATOMIC_BINOP_CASE(name, type, operation)                              \
-  case kExpr##name: {                                                         \
-    type val;                                                                 \
-    Address addr;                                                             \
-    if (!ExtractAtomicBinOpParams<type>(decoder, code, addr, pc, val, len)) { \
-      return false;                                                           \
-    }                                                                         \
-    result = WasmValue(                                                       \
-        __##operation(reinterpret_cast<type*>(addr), val, __ATOMIC_SEQ_CST)); \
-    break;                                                                    \
+#define ATOMIC_BINOP_CASE(name, type, operation)                            \
+  case kExpr##name: {                                                       \
+    type val;                                                               \
+    Address addr;                                                           \
+    if (!ExtractAtomicOpParams<type>(decoder, code, addr, pc, len, &val)) { \
+      return false;                                                         \
+    }                                                                       \
+    static_assert(sizeof(std::atomic<type>) == sizeof(type),                \
+                  "Size mismatch for types std::atomic<" #type              \
+                  ">, and " #type);                                         \
+    result = WasmValue(                                                     \
+        std::operation(reinterpret_cast<std::atomic<type>*>(addr), val));   \
+    Push(result);                                                           \
+    break;                                                                  \
   }
-#else
-#define ATOMIC_BINOP_CASE(name, type, operation)                               \
-  case kExpr##name: {                                                          \
-    type val;                                                                  \
-    Address addr;                                                              \
-    if (!ExtractAtomicBinOpParams<type>(decoder, code, addr, pc, val, len)) {  \
-      return false;                                                            \
-    }                                                                          \
-    static_assert(sizeof(std::atomic<std::type>) == sizeof(type),              \
-                  "Size mismatch for types std::atomic<std::" #type            \
-                  ">, and " #type);                                            \
-    result = WasmValue(                                                        \
-        std::operation(reinterpret_cast<std::atomic<std::type>*>(addr), val)); \
-    break;                                                                     \
-  }
-#endif
       ATOMIC_BINOP_CASE(I32AtomicAdd, uint32_t, atomic_fetch_add);
       ATOMIC_BINOP_CASE(I32AtomicAdd8U, uint8_t, atomic_fetch_add);
       ATOMIC_BINOP_CASE(I32AtomicAdd16U, uint16_t, atomic_fetch_add);
@@ -1587,20 +1587,48 @@ class ThreadImpl {
       ATOMIC_BINOP_CASE(I32AtomicXor, uint32_t, atomic_fetch_xor);
       ATOMIC_BINOP_CASE(I32AtomicXor8U, uint8_t, atomic_fetch_xor);
       ATOMIC_BINOP_CASE(I32AtomicXor16U, uint16_t, atomic_fetch_xor);
-#if __GNUG__ && __GNUC__ < 5
-      ATOMIC_BINOP_CASE(I32AtomicExchange, uint32_t, atomic_exchange_n);
-      ATOMIC_BINOP_CASE(I32AtomicExchange8U, uint8_t, atomic_exchange_n);
-      ATOMIC_BINOP_CASE(I32AtomicExchange16U, uint16_t, atomic_exchange_n);
-#else
       ATOMIC_BINOP_CASE(I32AtomicExchange, uint32_t, atomic_exchange);
       ATOMIC_BINOP_CASE(I32AtomicExchange8U, uint8_t, atomic_exchange);
       ATOMIC_BINOP_CASE(I32AtomicExchange16U, uint16_t, atomic_exchange);
-#endif
 #undef ATOMIC_BINOP_CASE
+#define ATOMIC_LOAD_CASE(name, type, operation)                                \
+  case kExpr##name: {                                                          \
+    Address addr;                                                              \
+    if (!ExtractAtomicOpParams<type>(decoder, code, addr, pc, len)) {          \
+      return false;                                                            \
+    }                                                                          \
+    static_assert(sizeof(std::atomic<type>) == sizeof(type),                   \
+                  "Size mismatch for types std::atomic<" #type                 \
+                  ">, and " #type);                                            \
+    result =                                                                   \
+        WasmValue(std::operation(reinterpret_cast<std::atomic<type>*>(addr))); \
+    Push(result);                                                              \
+    break;                                                                     \
+  }
+      ATOMIC_LOAD_CASE(I32AtomicLoad, uint32_t, atomic_load);
+      ATOMIC_LOAD_CASE(I32AtomicLoad8U, uint8_t, atomic_load);
+      ATOMIC_LOAD_CASE(I32AtomicLoad16U, uint16_t, atomic_load);
+#undef ATOMIC_LOAD_CASE
+#define ATOMIC_STORE_CASE(name, type, operation)                            \
+  case kExpr##name: {                                                       \
+    type val;                                                               \
+    Address addr;                                                           \
+    if (!ExtractAtomicOpParams<type>(decoder, code, addr, pc, len, &val)) { \
+      return false;                                                         \
+    }                                                                       \
+    static_assert(sizeof(std::atomic<type>) == sizeof(type),                \
+                  "Size mismatch for types std::atomic<" #type              \
+                  ">, and " #type);                                         \
+    std::operation(reinterpret_cast<std::atomic<type>*>(addr), val);        \
+    break;                                                                  \
+  }
+      ATOMIC_STORE_CASE(I32AtomicStore, uint32_t, atomic_store);
+      ATOMIC_STORE_CASE(I32AtomicStore8U, uint8_t, atomic_store);
+      ATOMIC_STORE_CASE(I32AtomicStore16U, uint16_t, atomic_store);
+#undef ATOMIC_STORE_CASE
       default:
         return false;
     }
-    Push(result);
     return true;
   }
 
@@ -2238,9 +2266,8 @@ class ThreadImpl {
     return {ExternalCallResult::EXTERNAL_RETURNED};
   }
 
-  // TODO(clemensh): Remove this, call JS via existing wasm-to-js wrapper, using
-  //                 CallExternalWasmFunction.
-  ExternalCallResult CallExternalJSFunction(Isolate* isolate, Handle<Code> code,
+  ExternalCallResult CallExternalJSFunction(Isolate* isolate,
+                                            WasmCodeWrapper code,
                                             FunctionSig* signature) {
     Handle<HeapObject> target = UnwrapWasmToJSWrapper(isolate, code);
 
@@ -2295,7 +2322,7 @@ class ThreadImpl {
   }
 
   ExternalCallResult CallExternalWasmFunction(Isolate* isolate,
-                                              Handle<Code> code,
+                                              WasmCodeWrapper code,
                                               FunctionSig* sig) {
     Handle<WasmDebugInfo> debug_info(codemap()->instance()->debug_info(),
                                      isolate);
@@ -2356,7 +2383,11 @@ class ThreadImpl {
     DCHECK(!arg_buffer_obj->IsHeapObject());
 
     Handle<Object> args[compiler::CWasmEntryParameters::kNumParameters];
-    args[compiler::CWasmEntryParameters::kCodeObject] = code;
+    args[compiler::CWasmEntryParameters::kCodeObject] =
+        code.IsCodeObject()
+            ? Handle<Object>::cast(code.GetCode())
+            : Handle<Object>::cast(isolate->factory()->NewForeign(
+                  code.GetWasmCode()->instructions().start(), TENURED));
     args[compiler::CWasmEntryParameters::kArgumentsBuffer] = arg_buffer_obj;
 
     Handle<Object> receiver = isolate->factory()->undefined_value();
@@ -2406,20 +2437,36 @@ class ThreadImpl {
 
     if (code->kind() == Code::WASM_FUNCTION ||
         code->kind() == Code::WASM_TO_WASM_FUNCTION) {
-      FixedArray* deopt_data = code->deoptimization_data();
-      DCHECK_EQ(2, deopt_data->length());
-      WasmInstanceObject* target_instance =
-          WasmInstanceObject::cast(WeakCell::cast(deopt_data->get(0))->value());
-      if (target_instance != codemap()->instance()) {
-        return CallExternalWasmFunction(isolate, code, signature);
+      auto func_info = GetWasmFunctionInfo(isolate, code);
+      if (*func_info.instance.ToHandleChecked() != codemap()->instance()) {
+        return CallExternalWasmFunction(isolate, WasmCodeWrapper(code),
+                                        signature);
       }
-      int target_func_idx = Smi::ToInt(deopt_data->get(1));
-      DCHECK_LE(0, target_func_idx);
+      DCHECK_LE(0, func_info.func_index);
       return {ExternalCallResult::INTERNAL,
-              codemap()->GetCode(target_func_idx)};
+              codemap()->GetCode(func_info.func_index)};
     }
 
-    return CallExternalJSFunction(isolate, code, signature);
+    return CallExternalJSFunction(isolate, WasmCodeWrapper(code), signature);
+  }
+
+  ExternalCallResult CallWasmCode(Isolate* isolate, const wasm::WasmCode* code,
+                                  FunctionSig* signature) {
+    DCHECK(AllowHandleAllocation::IsAllowed());
+    DCHECK(AllowHeapAllocation::IsAllowed());
+
+    if (code->kind() == wasm::WasmCode::kFunction) {
+      DCHECK_EQ(*code->owner()->compiled_module()->owning_instance(),
+                codemap()->instance());
+      return {ExternalCallResult::INTERNAL, codemap()->GetCode(code->index())};
+    }
+    if (code->kind() == wasm::WasmCode::kWasmToJsWrapper) {
+      return CallExternalJSFunction(isolate, WasmCodeWrapper(code), signature);
+    } else if (code->kind() == wasm::WasmCode::kWasmToWasmWrapper) {
+      return CallExternalWasmFunction(isolate, WasmCodeWrapper(code),
+                                      signature);
+    }
+    return {ExternalCallResult::INVALID_FUNC};
   }
 
   ExternalCallResult CallImportedFunction(uint32_t function_index) {
@@ -2428,17 +2475,36 @@ class ThreadImpl {
     Isolate* isolate = codemap()->instance()->GetIsolate();
     HandleScope handle_scope(isolate);
 
-    Handle<Code> target(codemap()->GetImportedFunction(function_index),
-                        isolate);
-    return CallCodeObject(isolate, target,
+    if (FLAG_wasm_jit_to_native) {
+      const wasm::WasmCode* target =
+          codemap()->GetImportedFunction(function_index);
+      return CallWasmCode(isolate, target,
                           codemap()->module()->functions[function_index].sig);
+    } else {
+      Handle<Code> target(codemap()->GetImportedFunctionGC(function_index),
+                          isolate);
+      return CallCodeObject(isolate, target,
+                            codemap()->module()->functions[function_index].sig);
+    }
   }
 
   ExternalCallResult CallIndirectFunction(uint32_t table_index,
                                           uint32_t entry_index,
                                           uint32_t sig_index) {
-    if (!codemap()->has_instance() ||
-        !codemap()->instance()->compiled_module()->has_function_tables()) {
+    bool no_func_tables = !codemap()->has_instance();
+    if (FLAG_wasm_jit_to_native) {
+      no_func_tables = no_func_tables || codemap()
+                                             ->instance()
+                                             ->compiled_module()
+                                             ->GetNativeModule()
+                                             ->function_tables()
+                                             .empty();
+    } else {
+      no_func_tables =
+          no_func_tables ||
+          !codemap()->instance()->compiled_module()->has_function_tables();
+    }
+    if (no_func_tables) {
       // No instance. Rely on the information stored in the WasmModule.
       // TODO(wasm): This is only needed for testing. Refactor testing to use
       // the same paths as production.
@@ -2463,7 +2529,8 @@ class ThreadImpl {
         codemap()->instance()->compiled_module();
     Isolate* isolate = compiled_module->GetIsolate();
 
-    Code* target;
+    const wasm::WasmCode* target = nullptr;
+    Code* target_gc = nullptr;
     {
       DisallowHeapAllocation no_gc;
       // Get function to be called directly from the live instance to see latest
@@ -2474,39 +2541,81 @@ class ThreadImpl {
       DCHECK_EQ(canonical_sig_index,
                 module()->signature_map.Find(module()->signatures[sig_index]));
 
-      // Check signature.
-      FixedArray* sig_tables = compiled_module->ptr_to_signature_tables();
-      if (table_index >= static_cast<uint32_t>(sig_tables->length())) {
-        return {ExternalCallResult::INVALID_FUNC};
-      }
-      // Reconstitute the global handle to sig_table, and, further below,
-      // to the function table, from the address stored in the
-      // respective table of tables.
-      int table_index_as_int = static_cast<int>(table_index);
-      Handle<FixedArray> sig_table(reinterpret_cast<FixedArray**>(
-          WasmCompiledModule::GetTableValue(sig_tables, table_index_as_int)));
-      if (entry_index >= static_cast<uint32_t>(sig_table->length())) {
-        return {ExternalCallResult::INVALID_FUNC};
-      }
-      int found_sig = Smi::ToInt(sig_table->get(static_cast<int>(entry_index)));
-      if (static_cast<uint32_t>(found_sig) != canonical_sig_index) {
-        return {ExternalCallResult::SIGNATURE_MISMATCH};
-      }
+      if (!FLAG_wasm_jit_to_native) {
+        // Check signature.
+        FixedArray* sig_tables = compiled_module->ptr_to_signature_tables();
+        if (table_index >= static_cast<uint32_t>(sig_tables->length())) {
+          return {ExternalCallResult::INVALID_FUNC};
+        }
+        // Reconstitute the global handle to sig_table, and, further below,
+        // to the function table, from the address stored in the
+        // respective table of tables.
+        int table_index_as_int = static_cast<int>(table_index);
+        Handle<FixedArray> sig_table(reinterpret_cast<FixedArray**>(
+            WasmCompiledModule::GetTableValue(sig_tables, table_index_as_int)));
+        if (entry_index >= static_cast<uint32_t>(sig_table->length())) {
+          return {ExternalCallResult::INVALID_FUNC};
+        }
+        int found_sig =
+            Smi::ToInt(sig_table->get(static_cast<int>(entry_index)));
+        if (static_cast<uint32_t>(found_sig) != canonical_sig_index) {
+          return {ExternalCallResult::SIGNATURE_MISMATCH};
+        }
 
-      // Get code object.
-      FixedArray* fun_tables = compiled_module->ptr_to_function_tables();
-      DCHECK_EQ(sig_tables->length(), fun_tables->length());
-      Handle<FixedArray> fun_table(reinterpret_cast<FixedArray**>(
-          WasmCompiledModule::GetTableValue(fun_tables, table_index_as_int)));
-      DCHECK_EQ(sig_table->length(), fun_table->length());
-      target = Code::cast(fun_table->get(static_cast<int>(entry_index)));
+        // Get code object.
+        FixedArray* fun_tables = compiled_module->ptr_to_function_tables();
+        DCHECK_EQ(sig_tables->length(), fun_tables->length());
+        Handle<FixedArray> fun_table(reinterpret_cast<FixedArray**>(
+            WasmCompiledModule::GetTableValue(fun_tables, table_index_as_int)));
+        DCHECK_EQ(sig_table->length(), fun_table->length());
+        target_gc = Code::cast(fun_table->get(static_cast<int>(entry_index)));
+      } else {
+        // Check signature.
+        std::vector<GlobalHandleAddress>& sig_tables =
+            compiled_module->GetNativeModule()->signature_tables();
+        if (table_index >= sig_tables.size()) {
+          return {ExternalCallResult::INVALID_FUNC};
+        }
+        // Reconstitute the global handle to sig_table, and, further below,
+        // to the function table, from the address stored in the
+        // respective table of tables.
+        int table_index_as_int = static_cast<int>(table_index);
+        Handle<FixedArray> sig_table(
+            reinterpret_cast<FixedArray**>(sig_tables[table_index_as_int]));
+        if (entry_index >= static_cast<uint32_t>(sig_table->length())) {
+          return {ExternalCallResult::INVALID_FUNC};
+        }
+        int found_sig =
+            Smi::ToInt(sig_table->get(static_cast<int>(entry_index)));
+        if (static_cast<uint32_t>(found_sig) != canonical_sig_index) {
+          return {ExternalCallResult::SIGNATURE_MISMATCH};
+        }
+
+        // Get code object.
+        std::vector<GlobalHandleAddress>& fun_tables =
+            compiled_module->GetNativeModule()->function_tables();
+        DCHECK_EQ(sig_tables.size(), fun_tables.size());
+        Handle<FixedArray> fun_table(
+            reinterpret_cast<FixedArray**>(fun_tables[table_index_as_int]));
+        DCHECK_EQ(sig_table->length(), fun_table->length());
+        Address first_instr =
+            Foreign::cast(fun_table->get(static_cast<int>(entry_index)))
+                ->foreign_address();
+        target =
+            isolate->wasm_engine()->code_manager()->GetCodeFromStartAddress(
+                first_instr);
+      }
     }
 
     // Call the code object. Use a new HandleScope to avoid leaking /
     // accumulating handles in the outer scope.
     HandleScope handle_scope(isolate);
     FunctionSig* signature = module()->signatures[sig_index];
-    return CallCodeObject(isolate, handle(target, isolate), signature);
+    if (FLAG_wasm_jit_to_native) {
+      return CallWasmCode(isolate, target, signature);
+    } else {
+      return CallCodeObject(isolate, handle(target_gc, isolate), signature);
+    }
   }
 
   inline Activation current_activation() {

@@ -13,9 +13,13 @@
 #include <memory>
 
 #include "src/handles.h"
+#include "src/wasm/wasm-code-wrapper.h"
 
 namespace v8 {
 namespace internal {
+namespace wasm {
+class WasmCode;
+}
 
 // Forward declarations.
 class AbstractCode;
@@ -161,7 +165,7 @@ class WasmStackFrame : public StackFrameBase {
 
   Handle<WasmInstanceObject> wasm_instance_;
   uint32_t wasm_func_index_;
-  Handle<AbstractCode> code_;  // null handle for interpreted frames.
+  WasmCodeWrapper code_;  // null for interpreted frames.
   int offset_;
 
  private:
@@ -298,6 +302,7 @@ class ErrorUtils : public AllStatic {
   T(CircularStructure, "Converting circular structure to JSON")                \
   T(ConstructAbstractClass, "Abstract class % not directly constructable")     \
   T(ConstAssign, "Assignment to constant variable.")                           \
+  T(ConstructorClassField, "Classes may not have a field named 'constructor'") \
   T(ConstructorNonCallable,                                                    \
     "Class constructor % cannot be invoked without 'new'")                     \
   T(ConstructorNotFunction, "Constructor % requires 'new'")                    \
@@ -486,7 +491,8 @@ class ErrorUtils : public AllStatic {
     "small")                                                                   \
   T(SharedArrayBufferSpeciesThis,                                              \
     "SharedArrayBuffer subclass returned this from species constructor")       \
-  T(StaticPrototype, "Classes may not have static property named prototype")   \
+  T(StaticPrototype,                                                           \
+    "Classes may not have a static property named 'prototype'")                \
   T(StrictDeleteProperty, "Cannot delete property '%' of %")                   \
   T(StrictPoisonPill,                                                          \
     "'caller', 'callee', and 'arguments' properties may not be accessed on "   \
@@ -514,6 +520,7 @@ class ErrorUtils : public AllStatic {
   T(UnsupportedSuper, "Unsupported reference to 'super'")                      \
   /* RangeError */                                                             \
   T(BigIntDivZero, "Division by zero")                                         \
+  T(BigIntNegativeExponent, "Exponent must be positive")                       \
   T(BigIntTooBig, "Maximum BigInt size exceeded")                              \
   T(DateRange, "Provided date is not in valid range.")                         \
   T(ExpectedTimezoneID,                                                        \

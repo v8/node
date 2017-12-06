@@ -175,7 +175,9 @@ Node* CodeStubAssembler::SelectSmiConstant(Node* condition, Smi* true_value,
                         MachineRepresentation::kTaggedSigned);
 }
 
-Node* CodeStubAssembler::NoContextConstant() { return SmiConstant(0); }
+Node* CodeStubAssembler::NoContextConstant() {
+  return SmiConstant(Context::kNoContext);
+}
 
 #define HEAP_CONSTANT_ACCESSOR(rootIndexName, rootAccessorName, name) \
   compiler::TNode<std::remove_reference<decltype(                     \
@@ -642,8 +644,9 @@ Node* CodeStubAssembler::SmiMod(Node* a, Node* b) {
   return TNode<Object>::UncheckedCast(var_result.value());
 }
 
-Node* CodeStubAssembler::SmiMul(Node* a, Node* b) {
-  VARIABLE(var_result, MachineRepresentation::kTagged);
+TNode<Number> CodeStubAssembler::SmiMul(SloppyTNode<Smi> a,
+                                        SloppyTNode<Smi> b) {
+  TVARIABLE(Number, var_result);
   VARIABLE(var_lhs_float64, MachineRepresentation::kFloat64);
   VARIABLE(var_rhs_float64, MachineRepresentation::kFloat64);
   Label return_result(this, &var_result);
@@ -668,7 +671,7 @@ Node* CodeStubAssembler::SmiMul(Node* a, Node* b) {
     Branch(Word32Equal(answer, zero), &answer_zero, &answer_not_zero);
     BIND(&answer_not_zero);
     {
-      var_result.Bind(ChangeInt32ToTagged(answer));
+      var_result = ChangeInt32ToTagged(answer);
       Goto(&return_result);
     }
     BIND(&answer_zero);
@@ -679,12 +682,12 @@ Node* CodeStubAssembler::SmiMul(Node* a, Node* b) {
              &if_should_be_zero);
       BIND(&if_should_be_negative_zero);
       {
-        var_result.Bind(MinusZeroConstant());
+        var_result = MinusZeroConstant();
         Goto(&return_result);
       }
       BIND(&if_should_be_zero);
       {
-        var_result.Bind(SmiConstant(0));
+        var_result = SmiConstant(0);
         Goto(&return_result);
       }
     }
@@ -694,13 +697,12 @@ Node* CodeStubAssembler::SmiMul(Node* a, Node* b) {
     var_lhs_float64.Bind(SmiToFloat64(a));
     var_rhs_float64.Bind(SmiToFloat64(b));
     Node* value = Float64Mul(var_lhs_float64.value(), var_rhs_float64.value());
-    Node* result = AllocateHeapNumberWithValue(value);
-    var_result.Bind(result);
+    var_result = AllocateHeapNumberWithValue(value);
     Goto(&return_result);
   }
 
   BIND(&return_result);
-  return var_result.value();
+  return var_result;
 }
 
 Node* CodeStubAssembler::TrySmiDiv(Node* dividend, Node* divisor,
@@ -872,6 +874,8 @@ TNode<BoolT> CodeStubAssembler::IsFastJSArray(SloppyTNode<Object> object,
 
 void CodeStubAssembler::BranchIfFastJSArray(Node* object, Node* context,
                                             Label* if_true, Label* if_false) {
+  GotoIfForceSlowPath(if_false);
+
   // Bailout if receiver is a Smi.
   GotoIf(TaggedIsSmi(object), if_false);
 
@@ -893,6 +897,16 @@ void CodeStubAssembler::BranchIfFastJSArrayForCopy(Node* object, Node* context,
                                                    Label* if_false) {
   GotoIf(IsSpeciesProtectorCellInvalid(), if_false);
   BranchIfFastJSArray(object, context, if_true, if_false);
+}
+
+void CodeStubAssembler::GotoIfForceSlowPath(Label* if_true) {
+#ifdef V8_ENABLE_FORCE_SLOW_PATH
+  Node* const force_slow_path_addr =
+      ExternalConstant(ExternalReference::force_slow_path(isolate()));
+  Node* const force_slow = Load(MachineType::Uint8(), force_slow_path_addr);
+
+  GotoIf(force_slow, if_true);
+#endif
 }
 
 Node* CodeStubAssembler::AllocateRaw(Node* size_in_bytes, AllocationFlags flags,
@@ -2116,7 +2130,7 @@ Node* CodeStubAssembler::AllocateSeqOneByteString(int length,
   StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kLengthOffset,
                                  SmiConstant(length),
                                  MachineRepresentation::kTagged);
-  StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kHashFieldOffset,
+  StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kHashFieldSlot,
                                  IntPtrConstant(String::kEmptyHashField),
                                  MachineType::PointerRepresentation());
   return result;
@@ -2163,7 +2177,7 @@ Node* CodeStubAssembler::AllocateSeqOneByteString(Node* context,
     StoreMapNoWriteBarrier(result, Heap::kOneByteStringMapRootIndex);
     StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kLengthOffset,
                                    length, MachineRepresentation::kTagged);
-    StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kHashFieldOffset,
+    StoreObjectFieldNoWriteBarrier(result, SeqOneByteString::kHashFieldSlot,
                                    IntPtrConstant(String::kEmptyHashField),
                                    MachineType::PointerRepresentation());
     var_result.Bind(result);
@@ -2201,7 +2215,7 @@ Node* CodeStubAssembler::AllocateSeqTwoByteString(int length,
   StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kLengthOffset,
                                  SmiConstant(Smi::FromInt(length)),
                                  MachineRepresentation::kTagged);
-  StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kHashFieldOffset,
+  StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kHashFieldSlot,
                                  IntPtrConstant(String::kEmptyHashField),
                                  MachineType::PointerRepresentation());
   return result;
@@ -2234,7 +2248,7 @@ Node* CodeStubAssembler::AllocateSeqTwoByteString(Node* context,
     StoreMapNoWriteBarrier(result, Heap::kStringMapRootIndex);
     StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kLengthOffset,
                                    length, MachineRepresentation::kTagged);
-    StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kHashFieldOffset,
+    StoreObjectFieldNoWriteBarrier(result, SeqTwoByteString::kHashFieldSlot,
                                    IntPtrConstant(String::kEmptyHashField),
                                    MachineType::PointerRepresentation());
     var_result.Bind(result);
@@ -2270,7 +2284,7 @@ Node* CodeStubAssembler::AllocateSlicedString(
   StoreMapNoWriteBarrier(result, map_root_index);
   StoreObjectFieldNoWriteBarrier(result, SlicedString::kLengthOffset, length,
                                  MachineRepresentation::kTagged);
-  StoreObjectFieldNoWriteBarrier(result, SlicedString::kHashFieldOffset,
+  StoreObjectFieldNoWriteBarrier(result, SlicedString::kHashFieldSlot,
                                  IntPtrConstant(String::kEmptyHashField),
                                  MachineType::PointerRepresentation());
   StoreObjectFieldNoWriteBarrier(result, SlicedString::kParentOffset, parent,
@@ -2305,7 +2319,7 @@ Node* CodeStubAssembler::AllocateConsString(Heap::RootListIndex map_root_index,
   StoreMapNoWriteBarrier(result, map_root_index);
   StoreObjectFieldNoWriteBarrier(result, ConsString::kLengthOffset, length,
                                  MachineRepresentation::kTagged);
-  StoreObjectFieldNoWriteBarrier(result, ConsString::kHashFieldOffset,
+  StoreObjectFieldNoWriteBarrier(result, ConsString::kHashFieldSlot,
                                  IntPtrConstant(String::kEmptyHashField),
                                  MachineType::PointerRepresentation());
   bool const new_space = !(flags & kPretenured);
@@ -3810,9 +3824,7 @@ TNode<Float64T> CodeStubAssembler::ChangeNumberToFloat64(
 }
 
 TNode<UintPtrT> CodeStubAssembler::ChangeNonnegativeNumberToUintPtr(
-    SloppyTNode<Number> value) {
-  // TODO(tebbi): Remove assert once argument is TNode instead of SloppyTNode.
-  CSA_SLOW_ASSERT(this, IsNumber(value));
+    TNode<Number> value) {
   TVARIABLE(UintPtrT, result);
   Label smi(this), done(this, &result);
   GotoIf(TaggedIsSmi(value), &smi);
@@ -6175,14 +6187,14 @@ Node* CodeStubAssembler::ComputeIntegerHash(Node* key, Node* seed) {
   // See v8::internal::ComputeIntegerHash()
   Node* hash = TruncateWordToWord32(key);
   hash = Word32Xor(hash, seed);
-  hash = Int32Add(Word32Xor(hash, Int32Constant(0xffffffff)),
+  hash = Int32Add(Word32Xor(hash, Int32Constant(0xFFFFFFFF)),
                   Word32Shl(hash, Int32Constant(15)));
   hash = Word32Xor(hash, Word32Shr(hash, Int32Constant(12)));
   hash = Int32Add(hash, Word32Shl(hash, Int32Constant(2)));
   hash = Word32Xor(hash, Word32Shr(hash, Int32Constant(4)));
   hash = Int32Mul(hash, Int32Constant(2057));
   hash = Word32Xor(hash, Word32Shr(hash, Int32Constant(16)));
-  return Word32And(hash, Int32Constant(0x3fffffff));
+  return Word32And(hash, Int32Constant(0x3FFFFFFF));
 }
 
 void CodeStubAssembler::NumberDictionaryLookup(Node* dictionary,
@@ -7555,7 +7567,7 @@ void CodeStubAssembler::StoreElement(Node* elements, ElementsKind kind,
   if (IsFixedTypedArrayElementsKind(kind)) {
     if (kind == UINT8_CLAMPED_ELEMENTS) {
       CSA_ASSERT(this,
-                 Word32Equal(value, Word32And(Int32Constant(0xff), value)));
+                 Word32Equal(value, Word32And(Int32Constant(0xFF), value)));
     }
     Node* offset = ElementOffsetFromIndex(index, kind, mode, 0);
     MachineRepresentation rep = ElementsKindToMachineRepresentation(kind);
@@ -8017,8 +8029,8 @@ Node* CodeStubAssembler::BuildFastLoop(
                                         ? MachineType::PointerRepresentation()
                                         : MachineRepresentation::kTaggedSigned;
   VARIABLE(var, index_rep, start_index);
-  VariableList vars_copy(vars, zone());
-  vars_copy.Add(&var, zone());
+  VariableList vars_copy(vars.begin(), vars.end(), zone());
+  vars_copy.push_back(&var);
   Label loop(this, vars_copy);
   Label after_loop(this);
   // Introduce an explicit second check of the termination condition before the
@@ -8279,7 +8291,7 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* lhs,
     // Initialize the type feedback to None. The current feedback is combined
     // with the previous feedback.
     var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kNone));
-    loop_variable_list.Add(var_type_feedback, zone());
+    loop_variable_list.push_back(var_type_feedback);
   }
   Label loop(this, loop_variable_list);
   Goto(&loop);
@@ -8838,7 +8850,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
     // Initialize the type feedback to None. The current feedback is combined
     // with the previous feedback.
     var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kNone));
-    loop_variable_list.Add(var_type_feedback, zone());
+    loop_variable_list.push_back(var_type_feedback);
   }
   Label loop(this, loop_variable_list);
   Goto(&loop);
@@ -10127,17 +10139,17 @@ Node* CodeStubAssembler::BitwiseOp(Node* left32, Node* right32,
       return ChangeInt32ToTagged(Signed(Word32Xor(left32, right32)));
     case Operation::kShiftLeft:
       if (!Word32ShiftIsSafe()) {
-        right32 = Word32And(right32, Int32Constant(0x1f));
+        right32 = Word32And(right32, Int32Constant(0x1F));
       }
       return ChangeInt32ToTagged(Signed(Word32Shl(left32, right32)));
     case Operation::kShiftRight:
       if (!Word32ShiftIsSafe()) {
-        right32 = Word32And(right32, Int32Constant(0x1f));
+        right32 = Word32And(right32, Int32Constant(0x1F));
       }
       return ChangeInt32ToTagged(Signed(Word32Sar(left32, right32)));
     case Operation::kShiftRightLogical:
       if (!Word32ShiftIsSafe()) {
-        right32 = Word32And(right32, Int32Constant(0x1f));
+        right32 = Word32And(right32, Int32Constant(0x1F));
       }
       return ChangeUint32ToTagged(Unsigned(Word32Shr(left32, right32)));
     default:
@@ -10574,6 +10586,7 @@ Node* CodeStubAssembler::AllocateFunctionWithMapAndContext(Node* map,
   CSA_ASSERT(this, Word32BinaryNot(IsConstructorMap(map)));
   CSA_ASSERT(this, Word32BinaryNot(IsFunctionWithPrototypeSlotMap(map)));
   Node* const fun = Allocate(JSFunction::kSizeWithoutPrototype);
+  STATIC_ASSERT(JSFunction::kSizeWithoutPrototype == 7 * kPointerSize);
   StoreMapNoWriteBarrier(fun, map);
   StoreObjectFieldRoot(fun, JSObject::kPropertiesOrHashOffset,
                        Heap::kEmptyFixedArrayRootIndex);

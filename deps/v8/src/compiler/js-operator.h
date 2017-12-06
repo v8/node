@@ -651,8 +651,11 @@ class V8_EXPORT_PRIVATE JSOperatorBuilder final
   const Operator* Multiply();
   const Operator* Divide();
   const Operator* Modulus();
+  const Operator* Exponentiate();
 
   const Operator* BitwiseNot();
+  const Operator* Decrement();
+  const Operator* Increment();
   const Operator* Negate();
 
   const Operator* ToInteger();

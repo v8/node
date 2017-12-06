@@ -274,7 +274,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Computes a % b for Smi inputs a and b; result is not necessarily a Smi.
   Node* SmiMod(Node* a, Node* b);
   // Computes a * b for Smi inputs a and b; result is not necessarily a Smi.
-  Node* SmiMul(Node* a, Node* b);
+  TNode<Number> SmiMul(SloppyTNode<Smi> a, SloppyTNode<Smi> b);
   // Tries to computes dividend / divisor for Smi inputs; branching to bailout
   // if the division needs to be performed as a floating point operation.
   Node* TrySmiDiv(Node* dividend, Node* divisor, Label* bailout);
@@ -412,6 +412,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                            Label* if_false);
   void BranchIfFastJSArrayForCopy(Node* object, Node* context, Label* if_true,
                                   Label* if_false);
+
+  // Branches to {if_true} when --force-slow-path flag has been passed.
+  // It's used for testing to ensure that slow path implementation behave
+  // equivalent to corresponding fast paths (where applicable).
+  //
+  // Works only with V8_ENABLE_FORCE_SLOW_PATH compile time flag. Nop otherwise.
+  void GotoIfForceSlowPath(Label* if_true);
 
   // Load value from current frame by given offset in bytes.
   Node* LoadFromFrame(int offset, MachineType rep = MachineType::AnyTagged());
@@ -980,7 +987,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Number> ChangeInt32ToTagged(SloppyTNode<Int32T> value);
   TNode<Number> ChangeUint32ToTagged(SloppyTNode<Uint32T> value);
   TNode<Float64T> ChangeNumberToFloat64(SloppyTNode<Number> value);
-  TNode<UintPtrT> ChangeNonnegativeNumberToUintPtr(SloppyTNode<Number> value);
+  TNode<UintPtrT> ChangeNonnegativeNumberToUintPtr(TNode<Number> value);
 
   void TaggedToNumeric(Node* context, Node* value, Label* done,
                        Variable* var_numeric);

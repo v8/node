@@ -291,11 +291,10 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
       SET_ALLOW(natives);
       SET_ALLOW(harmony_do_expressions);
       SET_ALLOW(harmony_function_sent);
-      SET_ALLOW(harmony_class_fields);
+      SET_ALLOW(harmony_public_fields);
       SET_ALLOW(harmony_dynamic_import);
       SET_ALLOW(harmony_import_meta);
       SET_ALLOW(harmony_async_iteration);
-      SET_ALLOW(harmony_template_escapes);
       SET_ALLOW(harmony_bigint);
 #undef SET_ALLOW
     }
@@ -346,10 +345,9 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   void ParseAndRewriteAsyncGeneratorFunctionBody(int pos, FunctionKind kind,
                                                  ZoneList<Statement*>* body,
                                                  bool* ok);
-  void CreateFunctionNameAssignment(const AstRawString* function_name, int pos,
-                                    FunctionLiteral::FunctionType function_type,
-                                    DeclarationScope* function_scope,
-                                    ZoneList<Statement*>* result, int index);
+  void DeclareFunctionNameVar(const AstRawString* function_name,
+                              FunctionLiteral::FunctionType function_type,
+                              DeclarationScope* function_scope);
 
   Statement* DeclareFunction(const AstRawString* variable_name,
                              FunctionLiteral* function, VariableMode mode,
@@ -370,6 +368,7 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
                                       ClassLiteralProperty* property,
                                       ClassLiteralProperty::Kind kind,
                                       bool is_static, bool is_constructor,
+                                      bool is_computed_name,
                                       ClassInfo* class_info, bool* ok);
   V8_INLINE Expression* RewriteClassLiteral(Scope* block_scope,
                                             const AstRawString* name,
@@ -528,9 +527,8 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   // "should_cook" means that the span can be "cooked": in tagged template
   // literals, both the raw and "cooked" representations are available to user
   // code ("cooked" meaning that escape sequences are converted to their
-  // interpreted values). With the --harmony-template-escapes flag, invalid
-  // escape sequences cause the cooked span to be represented by undefined,
-  // instead of being a syntax error.
+  // interpreted values). Invalid escape sequences cause the cooked span
+  // to be represented by undefined, instead of being a syntax error.
   // "tail" indicates that this span is the last in the literal.
   void AddTemplateSpan(TemplateLiteralState* state, bool should_cook,
                        bool tail);
@@ -552,11 +550,6 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
 
   // Rewrite all DestructuringAssignments in the current FunctionState.
   V8_INLINE void RewriteDestructuringAssignments();
-
-  V8_INLINE Expression* RewriteExponentiation(Expression* left,
-                                              Expression* right, int pos);
-  V8_INLINE Expression* RewriteAssignExponentiation(Expression* left,
-                                                    Expression* right, int pos);
 
   Expression* RewriteSpreads(ArrayLiteral* lit);
 
@@ -767,17 +760,11 @@ class V8_EXPORT_PRIVATE Parser : public NON_EXPORTED_BASE(ParserBase<Parser>) {
   bool CollapseNaryExpression(Expression** x, Expression* y, Token::Value op,
                               int pos, const SourceRange& range);
 
-  // Rewrites the following types of unary expressions:
-  // not <literal> -> true / false
-  // + <numeric literal> -> <numeric literal>
-  // - <numeric literal> -> <numeric literal with value negated>
+  // Returns a UnaryExpression or, in one of the following cases, a Literal.
   // ! <literal> -> true / false
-  // The following rewriting rules enable the collection of type feedback
-  // without any special stub and the multiplication is removed later in
-  // Crankshaft's canonicalization pass.
-  // + foo -> foo * 1
-  // - foo -> foo * (-1)
-  // ~ foo -> foo ^(~0)
+  // + <Number literal> -> <Number literal>
+  // - <Number literal> -> <Number literal with value negated>
+  // ~ <literal> -> true / false
   Expression* BuildUnaryExpression(Expression* expression, Token::Value op,
                                    int pos);
 

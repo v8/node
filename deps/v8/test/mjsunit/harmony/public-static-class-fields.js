@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-class-fields
+// Flags: --harmony-public-fields
 
 "use strict";
 
@@ -262,7 +262,7 @@
 
   assertEquals(1, C.a);
   assertEquals(undefined, C.b);
-  assertEquals(undefined, C.c);
+  assertEquals(undefined, C[c]);
 }
 
 {
@@ -310,7 +310,7 @@ function x() {
     assertEquals([1, 2, 3, 4, 5, 6, 7, 8, 9], log);
   }
 }
-x();
+x()();
 
 {
   class C {}
@@ -320,4 +320,16 @@ x();
 
   assertThrows(() => { class X { static [X] } });
   assertEquals(undefined, D[C]);
+}
+
+{
+  function t() {
+    return class {
+      static ['x'] = 2;
+    }
+  }
+
+  let klass = t();
+  let obj = new klass;
+  assertEquals(2, klass.x);
 }

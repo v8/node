@@ -14,6 +14,9 @@
 
 namespace v8 {
 namespace internal {
+namespace wasm {
+class WasmCode;
+}
 
 class AbstractCode;
 class Debug;
@@ -39,9 +42,6 @@ class InnerPointerToCodeCache {
   explicit InnerPointerToCodeCache(Isolate* isolate) : isolate_(isolate) {
     Flush();
   }
-
-  Code* GcSafeFindCodeForInnerPointer(Address inner_pointer);
-  Code* GcSafeCastToCode(HeapObject* object, Address inner_pointer);
 
   void Flush() {
     memset(&cache_[0], 0, sizeof(cache_));
@@ -529,15 +529,17 @@ class FrameSummary BASE_EMBEDDED {
 
   class WasmCompiledFrameSummary : public WasmFrameSummary {
    public:
-    WasmCompiledFrameSummary(Isolate*, Handle<WasmInstanceObject>, Handle<Code>,
-                             int code_offset, bool at_to_number_conversion);
+    WasmCompiledFrameSummary(Isolate*, Handle<WasmInstanceObject>,
+                             WasmCodeWrapper, int code_offset,
+                             bool at_to_number_conversion);
     uint32_t function_index() const;
-    Handle<Code> code() const { return code_; }
+    WasmCodeWrapper code() const { return code_; }
     int code_offset() const { return code_offset_; }
     int byte_offset() const;
+    static int GetWasmSourcePosition(const wasm::WasmCode* code, int offset);
 
    private:
-    Handle<Code> code_;
+    WasmCodeWrapper const code_;
     int code_offset_;
   };
 
@@ -707,7 +709,6 @@ class JavaScriptFrame : public StandardFrame {
   // actual passed arguments are available in an arguments adaptor
   // frame below it on the stack.
   inline bool has_adapted_arguments() const;
-  int GetArgumentsLength() const;
 
   // Garbage collection support.
   void Iterate(RootVisitor* v) const override;
@@ -896,8 +897,6 @@ class ArgumentsAdaptorFrame: public JavaScriptFrame {
   // Printing support.
   void Print(StringStream* accumulator, PrintMode mode,
              int index) const override;
-
-  static int GetLength(Address fp);
 
  protected:
   inline explicit ArgumentsAdaptorFrame(StackFrameIteratorBase* iterator);

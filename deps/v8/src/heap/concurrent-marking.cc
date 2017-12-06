@@ -7,6 +7,7 @@
 #include <stack>
 #include <unordered_map>
 
+#include "src/heap/gc-tracer.h"
 #include "src/heap/heap-inl.h"
 #include "src/heap/heap.h"
 #include "src/heap/mark-compact-inl.h"
@@ -413,6 +414,7 @@ ConcurrentMarking::ConcurrentMarking(Heap* heap, MarkingWorklist* shared,
       bailout_(bailout),
       on_hold_(on_hold),
       weak_objects_(weak_objects),
+      total_marked_bytes_(0),
       pending_task_count_(0),
       task_count_(0) {
 // The runtime flag should be set only if the compile time flag was set.
@@ -421,10 +423,13 @@ ConcurrentMarking::ConcurrentMarking(Heap* heap, MarkingWorklist* shared,
 #endif
   for (int i = 0; i <= kMaxTasks; i++) {
     is_pending_[i] = false;
+    task_state_[i].marked_bytes = 0;
   }
 }
 
 void ConcurrentMarking::Run(int task_id, TaskState* task_state) {
+  GCTracer::BackgroundScope scope(
+      heap_->tracer(), GCTracer::BackgroundScope::MC_BACKGROUND_MARKING);
   size_t kBytesUntilInterruptCheck = 64 * KB;
   int kObjectsUntilInterrupCheck = 1000;
   LiveBytesMap* live_bytes = nullptr;
@@ -579,6 +584,7 @@ void ConcurrentMarking::FlushLiveBytes(
       }
     }
     live_bytes.clear();
+    task_state_[i].marked_bytes = 0;
   }
   total_marked_bytes_.SetValue(0);
 }

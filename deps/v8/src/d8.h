@@ -296,11 +296,13 @@ class ShellOptions {
         num_isolates(1),
         compile_options(v8::ScriptCompiler::kNoCompileOptions),
         stress_background_compile(false),
+        cache_code_after_execute(false),
         isolate_sources(nullptr),
         icu_data_file(nullptr),
         natives_blob(nullptr),
         snapshot_blob(nullptr),
         trace_enabled(false),
+        trace_path(nullptr),
         trace_config(nullptr),
         lcov_file(nullptr),
         disable_in_process_stack_traces(false),
@@ -329,11 +331,13 @@ class ShellOptions {
   int num_isolates;
   v8::ScriptCompiler::CompileOptions compile_options;
   bool stress_background_compile;
+  bool cache_code_after_execute;
   SourceGroup* isolate_sources;
   const char* icu_data_file;
   const char* natives_blob;
   const char* snapshot_blob;
   bool trace_enabled;
+  const char* trace_path;
   const char* trace_config;
   const char* lcov_file;
   bool disable_in_process_stack_traces;
@@ -344,9 +348,6 @@ class ShellOptions {
 
 class Shell : public i::AllStatic {
  public:
-  static MaybeLocal<Script> CompileString(
-      Isolate* isolate, Local<String> source, Local<Value> name,
-      v8::ScriptCompiler::CompileOptions compile_options);
   static bool ExecuteString(Isolate* isolate, Local<String> source,
                             Local<Value> name, bool print_result,
                             bool report_exceptions);
@@ -504,10 +505,18 @@ class Shell : public i::AllStatic {
                            int index);
   static MaybeLocal<Module> FetchModuleTree(v8::Local<v8::Context> context,
                                             const std::string& file_name);
+  static ScriptCompiler::CachedData* LookupCodeCache(Isolate* isolate,
+                                                     Local<Value> name);
+  static void StoreInCodeCache(Isolate* isolate, Local<Value> name,
+                               const ScriptCompiler::CachedData* data);
   // We may have multiple isolates running concurrently, so the access to
   // the isolate_status_ needs to be concurrency-safe.
   static base::LazyMutex isolate_status_lock_;
   static std::map<Isolate*, bool> isolate_status_;
+
+  static base::LazyMutex cached_code_mutex_;
+  static std::map<std::string, std::unique_ptr<ScriptCompiler::CachedData>>
+      cached_code_map_;
 };
 
 

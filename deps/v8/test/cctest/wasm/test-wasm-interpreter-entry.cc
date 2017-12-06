@@ -47,6 +47,7 @@ class ArgPassingHelper {
     runner.Build(outer_code.data(), outer_code.data() + outer_code.size());
 
     int funcs_to_redict[] = {static_cast<int>(inner_compiler.function_index())};
+    runner.builder().Link();
     WasmDebugInfo::RedirectToInterpreter(debug_info_,
                                          ArrayVector(funcs_to_redict));
     main_fun_wrapper_ = runner.builder().WrapCode(runner.function_index());
@@ -119,7 +120,7 @@ TEST(TestArgumentPassing_double_int64) {
                                  WASM_I64V_1(32))),
        WASM_CALL_FUNCTION0(f2.function_index())},
       [](int32_t a, int32_t b) {
-        int64_t a64 = static_cast<int64_t>(a) & 0xffffffff;
+        int64_t a64 = static_cast<int64_t>(a) & 0xFFFFFFFF;
         int64_t b64 = static_cast<int64_t>(b) << 32;
         return static_cast<double>(a64 | b64);
       });
@@ -222,8 +223,8 @@ TEST(TestArgumentPassing_AllTypes) {
        WASM_GET_LOCAL(4),  // fourth arg
        WASM_CALL_FUNCTION0(f2.function_index())},
       [](int32_t a, int32_t b, int32_t c, float d, double e) {
-        return 0. + a + (static_cast<int64_t>(b) & 0xffffffff) +
-               ((static_cast<int64_t>(c) & 0xffffffff) << 32) + d + e;
+        return 0. + a + (static_cast<int64_t>(b) & 0xFFFFFFFF) +
+               ((static_cast<int64_t>(c) & 0xFFFFFFFF) << 32) + d + e;
       });
 
   auto CheckCall = [&](int32_t a, int64_t b, float c, double d) {

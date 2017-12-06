@@ -768,6 +768,9 @@ static void MaybeTailCallOptimizedCodeSlot(MacroAssembler* masm,
     __ j(equal, &fallthrough);
 
     TailCallRuntimeIfMarkerEquals(masm, optimized_code_entry,
+                                  OptimizationMarker::kLogFirstExecution,
+                                  Runtime::kFunctionFirstExecution);
+    TailCallRuntimeIfMarkerEquals(masm, optimized_code_entry,
                                   OptimizationMarker::kCompileOptimized,
                                   Runtime::kCompileOptimized_NotConcurrent);
     TailCallRuntimeIfMarkerEquals(
@@ -1863,6 +1866,8 @@ static void EnterArgumentsAdaptorFrame(MacroAssembler* masm) {
   // arguments and the receiver.
   __ Integer32ToSmi(r8, rax);
   __ Push(r8);
+
+  __ Push(Immediate(0));  // Padding.
 }
 
 static void LeaveArgumentsAdaptorFrame(MacroAssembler* masm) {

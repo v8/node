@@ -43,7 +43,7 @@ class Arm64OperandGenerator final : public OperandGenerator {
   InstructionOperand UseRegisterOrImmediateZero(Node* node) {
     if ((IsIntegerConstant(node) && (GetIntegerConstantValue(node) == 0)) ||
         (IsFloatConstant(node) &&
-         (bit_cast<int64_t>(GetFloatConstantValue(node)) == V8_INT64_C(0)))) {
+         (bit_cast<int64_t>(GetFloatConstantValue(node)) == 0))) {
       return UseImmediate(node);
     }
     return UseRegister(node);
@@ -295,12 +295,12 @@ bool TryMatchAnyExtend(Arm64OperandGenerator* g, InstructionSelector* selector,
 
   if (nm.IsWord32And()) {
     Int32BinopMatcher mright(right_node);
-    if (mright.right().Is(0xff) || mright.right().Is(0xffff)) {
+    if (mright.right().Is(0xFF) || mright.right().Is(0xFFFF)) {
       int32_t mask = mright.right().Value();
       *left_op = g->UseRegister(left_node);
       *right_op = g->UseRegister(mright.left().node());
       *opcode |= AddressingModeField::encode(
-          (mask == 0xff) ? kMode_Operand2_R_UXTB : kMode_Operand2_R_UXTH);
+          (mask == 0xFF) ? kMode_Operand2_R_UXTB : kMode_Operand2_R_UXTH);
       return true;
     }
   } else if (nm.IsWord32Sar()) {
@@ -950,7 +950,7 @@ void InstructionSelector::VisitWord32And(Node* node) {
       Int32BinopMatcher mleft(m.left().node());
       if (mleft.right().HasValue()) {
         // Any shift value can match; int32 shifts use `value % 32`.
-        uint32_t lsb = mleft.right().Value() & 0x1f;
+        uint32_t lsb = mleft.right().Value() & 0x1F;
 
         // Ubfx cannot extract bits past the register size, however since
         // shifting the original value would have introduced some zeros we can
@@ -991,7 +991,7 @@ void InstructionSelector::VisitWord64And(Node* node) {
       Int64BinopMatcher mleft(m.left().node());
       if (mleft.right().HasValue()) {
         // Any shift value can match; int64 shifts use `value % 64`.
-        uint32_t lsb = static_cast<uint32_t>(mleft.right().Value() & 0x3f);
+        uint32_t lsb = static_cast<uint32_t>(mleft.right().Value() & 0x3F);
 
         // Ubfx cannot extract bits past the register size, however since
         // shifting the original value would have introduced some zeros we can
@@ -1105,16 +1105,16 @@ bool TryEmitBitfieldExtract32(InstructionSelector* selector, Node* node) {
   Arm64OperandGenerator g(selector);
   Int32BinopMatcher m(node);
   if (selector->CanCover(node, m.left().node()) && m.left().IsWord32Shl()) {
-    // Select Ubfx or Sbfx for (x << (K & 0x1f)) OP (K & 0x1f), where
-    // OP is >>> or >> and (K & 0x1f) != 0.
+    // Select Ubfx or Sbfx for (x << (K & 0x1F)) OP (K & 0x1F), where
+    // OP is >>> or >> and (K & 0x1F) != 0.
     Int32BinopMatcher mleft(m.left().node());
     if (mleft.right().HasValue() && m.right().HasValue() &&
-        (mleft.right().Value() & 0x1f) != 0 &&
-        (mleft.right().Value() & 0x1f) == (m.right().Value() & 0x1f)) {
+        (mleft.right().Value() & 0x1F) != 0 &&
+        (mleft.right().Value() & 0x1F) == (m.right().Value() & 0x1F)) {
       DCHECK(m.IsWord32Shr() || m.IsWord32Sar());
       ArchOpcode opcode = m.IsWord32Sar() ? kArm64Sbfx32 : kArm64Ubfx32;
 
-      int right_val = m.right().Value() & 0x1f;
+      int right_val = m.right().Value() & 0x1F;
       DCHECK_NE(right_val, 0);
 
       selector->Emit(opcode, g.DefineAsRegister(node),
@@ -1132,7 +1132,7 @@ bool TryEmitBitfieldExtract32(InstructionSelector* selector, Node* node) {
 void InstructionSelector::VisitWord32Shr(Node* node) {
   Int32BinopMatcher m(node);
   if (m.left().IsWord32And() && m.right().HasValue()) {
-    uint32_t lsb = m.right().Value() & 0x1f;
+    uint32_t lsb = m.right().Value() & 0x1F;
     Int32BinopMatcher mleft(m.left().node());
     if (mleft.right().HasValue() && mleft.right().Value() != 0) {
       // Select Ubfx for Shr(And(x, mask), imm) where the result of the mask is
@@ -1160,7 +1160,7 @@ void InstructionSelector::VisitWord32Shr(Node* node) {
     // by Uint32MulHigh.
     Arm64OperandGenerator g(this);
     Node* left = m.left().node();
-    int shift = m.right().Value() & 0x1f;
+    int shift = m.right().Value() & 0x1F;
     InstructionOperand const smull_operand = g.TempRegister();
     Emit(kArm64Umull, smull_operand, g.UseRegister(left->InputAt(0)),
          g.UseRegister(left->InputAt(1)));
@@ -1176,7 +1176,7 @@ void InstructionSelector::VisitWord32Shr(Node* node) {
 void InstructionSelector::VisitWord64Shr(Node* node) {
   Int64BinopMatcher m(node);
   if (m.left().IsWord64And() && m.right().HasValue()) {
-    uint32_t lsb = m.right().Value() & 0x3f;
+    uint32_t lsb = m.right().Value() & 0x3F;
     Int64BinopMatcher mleft(m.left().node());
     if (mleft.right().HasValue() && mleft.right().Value() != 0) {
       // Select Ubfx for Shr(And(x, mask), imm) where the result of the mask is
@@ -1211,7 +1211,7 @@ void InstructionSelector::VisitWord32Sar(Node* node) {
     // by Int32MulHigh.
     Arm64OperandGenerator g(this);
     Node* left = m.left().node();
-    int shift = m.right().Value() & 0x1f;
+    int shift = m.right().Value() & 0x1F;
     InstructionOperand const smull_operand = g.TempRegister();
     Emit(kArm64Smull, smull_operand, g.UseRegister(left->InputAt(0)),
          g.UseRegister(left->InputAt(1)));
@@ -2007,19 +2007,17 @@ void EmitBranchOrDeoptimize(InstructionSelector* selector,
 }
 
 // Try to emit TBZ, TBNZ, CBZ or CBNZ for certain comparisons of {node}
-// against zero, depending on the condition.
-bool TryEmitCbzOrTbz(InstructionSelector* selector, Node* node, Node* user,
-                     FlagsCondition cond, FlagsContinuation* cont) {
-  Int32BinopMatcher m_user(user);
-  USE(m_user);
-  DCHECK(m_user.right().Is(0) || m_user.left().Is(0));
-
+// against {value}, depending on the condition.
+bool TryEmitCbzOrTbz(InstructionSelector* selector, Node* node, uint32_t value,
+                     Node* user, FlagsCondition cond, FlagsContinuation* cont) {
   // Only handle branches and deoptimisations.
   if (!cont->IsBranch() && !cont->IsDeoptimize()) return false;
 
   switch (cond) {
     case kSignedLessThan:
     case kSignedGreaterThanOrEqual: {
+      // Here we handle sign tests, aka. comparisons with zero.
+      if (value != 0) return false;
       // We don't generate TBZ/TBNZ for deoptimisations, as they have a
       // shorter range than conditional branches and generating them for
       // deoptimisations results in more veneers.
@@ -2045,9 +2043,29 @@ bool TryEmitCbzOrTbz(InstructionSelector* selector, Node* node, Node* user,
       return true;
     }
     case kEqual:
-    case kNotEqual:
+    case kNotEqual: {
+      if (node->opcode() == IrOpcode::kWord32And) {
+        // Emit a tbz/tbnz if we are comparing with a single-bit mask:
+        //   Branch(Word32Equal(Word32And(x, 1 << N), 1 << N), true, false)
+        Int32BinopMatcher m_and(node);
+        if (cont->IsBranch() && base::bits::IsPowerOfTwo(value) &&
+            m_and.right().Is(value) && selector->CanCover(user, node)) {
+          Arm64OperandGenerator g(selector);
+          // In the code generator, Equal refers to a bit being cleared. We want
+          // the opposite here so negate the condition.
+          cont->Negate();
+          selector->Emit(cont->Encode(kArm64TestAndBranch32), g.NoOutput(),
+                         g.UseRegister(m_and.left().node()),
+                         g.TempImmediate(base::bits::CountTrailingZeros(value)),
+                         g.Label(cont->true_block()),
+                         g.Label(cont->false_block()));
+          return true;
+        }
+      }
+    }  // Fall through.
     case kUnsignedLessThanOrEqual:
     case kUnsignedGreaterThan: {
+      if (value != 0) return false;
       Arm64OperandGenerator g(selector);
       cont->Overwrite(MapForCbz(cond));
       EmitBranchOrDeoptimize(selector, kArm64CompareAndBranch32,
@@ -2062,15 +2080,20 @@ bool TryEmitCbzOrTbz(InstructionSelector* selector, Node* node, Node* user,
 void VisitWord32Compare(InstructionSelector* selector, Node* node,
                         FlagsContinuation* cont) {
   Int32BinopMatcher m(node);
-  ArchOpcode opcode = kArm64Cmp32;
   FlagsCondition cond = cont->condition();
-  if (m.right().Is(0)) {
-    if (TryEmitCbzOrTbz(selector, m.left().node(), node, cond, cont)) return;
-  } else if (m.left().Is(0)) {
-    FlagsCondition commuted_cond = CommuteFlagsCondition(cond);
-    if (TryEmitCbzOrTbz(selector, m.right().node(), node, commuted_cond, cont))
+  if (m.right().HasValue()) {
+    if (TryEmitCbzOrTbz(selector, m.left().node(), m.right().Value(), node,
+                        cond, cont)) {
       return;
+    }
+  } else if (m.left().HasValue()) {
+    FlagsCondition commuted_cond = CommuteFlagsCondition(cond);
+    if (TryEmitCbzOrTbz(selector, m.right().node(), m.left().Value(), node,
+                        commuted_cond, cont)) {
+      return;
+    }
   }
+  ArchOpcode opcode = kArm64Cmp32;
   ImmediateMode immediate_mode = kArithmeticImm;
   if (m.right().Is(0) && (m.left().IsInt32Add() || m.left().IsWord32And())) {
     // Emit flag setting add/and instructions for comparisons against zero.
@@ -2141,7 +2164,7 @@ bool TryEmitTestAndBranch(InstructionSelector* selector, Node* node,
   Arm64OperandGenerator g(selector);
   Matcher m(node);
   if (cont->IsBranch() && m.right().HasValue() &&
-      (base::bits::CountPopulation(m.right().Value()) == 1)) {
+      base::bits::IsPowerOfTwo(m.right().Value())) {
     // If the mask has only one bit set, we can use tbz/tbnz.
     DCHECK((cont->condition() == kEqual) || (cont->condition() == kNotEqual));
     selector->Emit(
@@ -2648,7 +2671,7 @@ void InstructionSelector::VisitFloat64InsertLowWord32(Node* node) {
     Emit(kArm64Float64MoveU64, g.DefineAsRegister(node), g.UseRegister(right));
     return;
   }
-  Emit(kArm64Float64InsertLowWord32, g.DefineAsRegister(node),
+  Emit(kArm64Float64InsertLowWord32, g.DefineSameAsFirst(node),
        g.UseRegister(left), g.UseRegister(right));
 }
 
@@ -2665,7 +2688,7 @@ void InstructionSelector::VisitFloat64InsertHighWord32(Node* node) {
     Emit(kArm64Float64MoveU64, g.DefineAsRegister(node), g.UseRegister(left));
     return;
   }
-  Emit(kArm64Float64InsertHighWord32, g.DefineAsRegister(node),
+  Emit(kArm64Float64InsertHighWord32, g.DefineSameAsFirst(node),
        g.UseRegister(left), g.UseRegister(right));
 }
 
@@ -2755,12 +2778,12 @@ void InstructionSelector::VisitAtomicExchange(Node* node) {
   AddressingMode addressing_mode = kMode_MRR;
   InstructionOperand inputs[3];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
-  inputs[input_count++] = g.UseUniqueRegister(index);
+  inputs[input_count++] = g.UseRegister(base);
+  inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(value);
   InstructionOperand outputs[1];
-  outputs[0] = g.UseUniqueRegister(node);
-  InstructionOperand temps[] = {g.TempRegister()};
+  outputs[0] = g.DefineAsRegister(node);
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
   Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
@@ -2791,17 +2814,15 @@ void InstructionSelector::VisitAtomicCompareExchange(Node* node) {
   AddressingMode addressing_mode = kMode_MRR;
   InstructionOperand inputs[4];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
-  inputs[input_count++] = g.UseUniqueRegister(index);
+  inputs[input_count++] = g.UseRegister(base);
+  inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(old_value);
   inputs[input_count++] = g.UseUniqueRegister(new_value);
   InstructionOperand outputs[1];
-  outputs[0] = g.UseUniqueRegister(node);
-  InstructionOperand temp[2];
-  temp[0] = g.TempRegister();
-  temp[1] = g.TempRegister();
+  outputs[0] = g.DefineAsRegister(node);
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  Emit(code, 1, outputs, input_count, inputs, 2, temp);
+  Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
 
 void InstructionSelector::VisitAtomicBinaryOperation(
@@ -2831,16 +2852,15 @@ void InstructionSelector::VisitAtomicBinaryOperation(
   AddressingMode addressing_mode = kMode_MRR;
   InstructionOperand inputs[3];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
-  inputs[input_count++] = g.UseUniqueRegister(index);
+  inputs[input_count++] = g.UseRegister(base);
+  inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(value);
   InstructionOperand outputs[1];
-  outputs[0] = g.UseUniqueRegister(node);
-  InstructionOperand temps[2];
-  temps[0] = g.TempRegister();
-  temps[1] = g.TempRegister();
+  outputs[0] = g.DefineAsRegister(node);
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister(),
+                                g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  Emit(code, 1, outputs, input_count, inputs, 2, temps);
+  Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
 
 #define VISIT_ATOMIC_BINOP(op)                                              \

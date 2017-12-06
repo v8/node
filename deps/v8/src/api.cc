@@ -84,8 +84,10 @@
 #include "src/vm-state-inl.h"
 #include "src/wasm/compilation-manager.h"
 #include "src/wasm/streaming-decoder.h"
+#include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-result.h"
+#include "src/wasm/wasm-serialization.h"
 
 namespace v8 {
 
@@ -109,9 +111,9 @@ namespace v8 {
  * TODO(jochen): Remove calls form API methods to DO_NOT_USE macros.
  */
 
-#define LOG_API(isolate, class_name, function_name)                       \
-  i::RuntimeCallTimerScope _runtime_timer(                                \
-      isolate, &i::RuntimeCallStats::API_##class_name##_##function_name); \
+#define LOG_API(isolate, class_name, function_name)                           \
+  i::RuntimeCallTimerScope _runtime_timer(                                    \
+      isolate, i::RuntimeCallCounterId::kAPI_##class_name##_##function_name); \
   LOG(isolate, ApiEntryCall("v8::" #class_name "::" #function_name))
 
 #define ENTER_V8_DO_NOT_USE(isolate) i::VMState<v8::OTHER> __state__((isolate))
@@ -325,9 +327,9 @@ void i::V8::FatalProcessOutOfMemory(const char* location, bool is_heap_oom) {
   if (isolate == nullptr) {
     // On a background thread -> we cannot retrieve memory information from the
     // Isolate. Write easy-to-recognize values on the stack.
-    memset(last_few_messages, 0x0badc0de, Heap::kTraceRingBufferSize + 1);
-    memset(js_stacktrace, 0x0badc0de, Heap::kStacktraceBufferSize + 1);
-    memset(&heap_stats, 0xbadc0de, sizeof(heap_stats));
+    memset(last_few_messages, 0x0BADC0DE, Heap::kTraceRingBufferSize + 1);
+    memset(js_stacktrace, 0x0BADC0DE, Heap::kStacktraceBufferSize + 1);
+    memset(&heap_stats, 0xBADC0DE, sizeof(heap_stats));
     // Note that the embedder's oom handler won't be called in this case. We
     // just crash.
     FATAL("API fatal error handler returned after process out of memory");
@@ -1793,6 +1795,7 @@ static void ObjectTemplateSetNamedPropertyHandler(
   cons->set_named_property_handler(*obj);
 }
 
+// TODO(cbruni) deprecate.
 void ObjectTemplate::SetNamedPropertyHandler(
     NamedPropertyGetterCallback getter, NamedPropertySetterCallback setter,
     NamedPropertyQueryCallback query, NamedPropertyDeleterCallback remover,
@@ -2659,6 +2662,26 @@ uint32_t ScriptCompiler::CachedDataVersionTag() {
       static_cast<uint32_t>(internal::CpuFeatures::SupportedFeatures())));
 }
 
+ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
+    Local<UnboundScript> unbound_script, Local<String> source) {
+  i::Handle<i::SharedFunctionInfo> shared =
+      i::Handle<i::SharedFunctionInfo>::cast(
+          Utils::OpenHandle(*unbound_script));
+  DCHECK(shared->is_toplevel());
+  i::Handle<i::Script> script(i::Script::cast(shared->script()));
+  i::Isolate* isolate = shared->GetIsolate();
+  // TODO(7110): Enable serialization of Asm modules once the AsmWasmData is
+  // context independent.
+  if (script->ContainsAsmModule()) return nullptr;
+  if (isolate->debug()->is_loaded()) return nullptr;
+  i::ScriptData* script_data =
+      i::CodeSerializer::Serialize(isolate, shared, Utils::OpenHandle(*source));
+  CachedData* result = new CachedData(
+      script_data->data(), script_data->length(), CachedData::BufferOwned);
+  script_data->ReleaseDataOwnership();
+  delete script_data;
+  return result;
+}
 
 MaybeLocal<Script> Script::Compile(Local<Context> context, Local<String> source,
                                    ScriptOrigin* origin) {
@@ -7781,26 +7804,40 @@ WasmCompiledModule::SerializedModule WasmCompiledModule::Serialize() {
       i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
       i::handle(i::WasmCompiledModule::cast(obj->compiled_module()));
+  if (i::FLAG_wasm_jit_to_native) {
+    i::Isolate* isolate = obj->GetIsolate();
 
-  std::unique_ptr<i::ScriptData> script_data =
-      i::WasmCompiledModuleSerializer::SerializeWasmModule(obj->GetIsolate(),
-                                                           compiled_part);
-  script_data->ReleaseDataOwnership();
+    return i::wasm::NativeModuleSerializer::SerializeWholeModule(isolate,
+                                                                 compiled_part);
+  } else {
+    std::unique_ptr<i::ScriptData> script_data =
+        i::WasmCompiledModuleSerializer::SerializeWasmModule(obj->GetIsolate(),
+                                                             compiled_part);
+    script_data->ReleaseDataOwnership();
 
-  size_t size = static_cast<size_t>(script_data->length());
-  return {std::unique_ptr<const uint8_t[]>(script_data->data()), size};
+    size_t size = static_cast<size_t>(script_data->length());
+    return {std::unique_ptr<const uint8_t[]>(script_data->data()), size};
+  }
 }
 
 MaybeLocal<WasmCompiledModule> WasmCompiledModule::Deserialize(
     Isolate* isolate,
     const WasmCompiledModule::CallerOwnedBuffer& serialized_module,
     const WasmCompiledModule::CallerOwnedBuffer& wire_bytes) {
-  int size = static_cast<int>(serialized_module.second);
-  i::ScriptData sc(serialized_module.first, size);
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
-  i::MaybeHandle<i::FixedArray> maybe_compiled_part =
-      i::WasmCompiledModuleSerializer::DeserializeWasmModule(
-          i_isolate, &sc, {wire_bytes.first, wire_bytes.second});
+  i::MaybeHandle<i::FixedArray> maybe_compiled_part;
+  if (i::FLAG_wasm_jit_to_native) {
+    maybe_compiled_part =
+        i::wasm::NativeModuleDeserializer::DeserializeFullBuffer(
+            i_isolate, {serialized_module.first, serialized_module.second},
+            {wire_bytes.first, wire_bytes.second});
+  } else {
+    int size = static_cast<int>(serialized_module.second);
+    i::ScriptData sc(serialized_module.first, size);
+    maybe_compiled_part =
+        i::WasmCompiledModuleSerializer::DeserializeWasmModule(
+            i_isolate, &sc, {wire_bytes.first, wire_bytes.second});
+  }
   i::Handle<i::FixedArray> compiled_part;
   if (!maybe_compiled_part.ToHandle(&compiled_part)) {
     return MaybeLocal<WasmCompiledModule>();
@@ -7851,8 +7888,10 @@ WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
     i::Handle<i::JSPromise> promise = Utils::OpenHandle(*GetPromise());
     i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
     streaming_decoder_ =
-        i_isolate->wasm_compilation_manager()->StartStreamingCompilation(
-            i_isolate, handle(i_isolate->context()), promise);
+        i_isolate->wasm_engine()
+            ->compilation_manager()
+            ->StartStreamingCompilation(i_isolate, handle(i_isolate->context()),
+                                        promise);
   }
 }
 
@@ -10898,7 +10937,7 @@ void InvokeAccessorGetterCallback(
   // Leaving JavaScript.
   Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
   RuntimeCallTimerScope timer(isolate,
-                              &RuntimeCallStats::AccessorGetterCallback);
+                              RuntimeCallCounterId::kAccessorGetterCallback);
   Address getter_address = reinterpret_cast<Address>(reinterpret_cast<intptr_t>(
       getter));
   VMState<EXTERNAL> state(isolate);
@@ -10911,7 +10950,7 @@ void InvokeFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info,
                             v8::FunctionCallback callback) {
   Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
   RuntimeCallTimerScope timer(isolate,
-                              &RuntimeCallStats::InvokeFunctionCallback);
+                              RuntimeCallCounterId::kInvokeFunctionCallback);
   Address callback_address =
       reinterpret_cast<Address>(reinterpret_cast<intptr_t>(callback));
   VMState<EXTERNAL> state(isolate);
@@ -10919,6 +10958,25 @@ void InvokeFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info,
   callback(info);
 }
 
+// Undefine macros for jumbo build.
+#undef LOG_API
+#undef ENTER_V8_DO_NOT_USE
+#undef ENTER_V8_HELPER_DO_NOT_USE
+#undef PREPARE_FOR_DEBUG_INTERFACE_EXECUTION_WITH_ISOLATE
+#undef PREPARE_FOR_EXECUTION_WITH_CONTEXT
+#undef PREPARE_FOR_EXECUTION
+#undef ENTER_V8
+#undef ENTER_V8_NO_SCRIPT
+#undef ENTER_V8_NO_SCRIPT_NO_EXCEPTION
+#undef ENTER_V8_FOR_NEW_CONTEXT
+#undef EXCEPTION_BAILOUT_CHECK_SCOPED_DO_NOT_USE
+#undef RETURN_ON_FAILED_EXECUTION
+#undef RETURN_ON_FAILED_EXECUTION_PRIMITIVE
+#undef RETURN_TO_LOCAL_UNCHECKED
+#undef RETURN_ESCAPED
+#undef SET_FIELD_WRAPPED
+#undef NEW_STRING
+#undef CALLBACK_SETTER
 
 }  // namespace internal
 }  // namespace v8

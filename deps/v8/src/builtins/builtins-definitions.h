@@ -226,6 +226,8 @@ namespace internal {
   TFS(RejectNativePromise, kPromise, kValue, kDebugEvent)                      \
   TFS(PerformNativePromiseThen, kPromise, kResolveReaction, kRejectReaction,   \
       kResultPromise)                                                          \
+  TFC(RunMicrotasks, RunMicrotasks, 1)                                         \
+  TFS(PromiseResolveThenableJob, kMicrotask)                                   \
                                                                                \
   /* Object property helpers */                                                \
   TFS(HasProperty, kKey, kObject)                                              \
@@ -314,6 +316,15 @@ namespace internal {
   TFJ(ArrayReduceRight, SharedFunctionInfo::kDontAdaptArgumentsSentinel)       \
   /* ES6 #sec-array.prototype.entries */                                       \
   TFJ(ArrayPrototypeEntries, 0)                                                \
+  /* ES6 #sec-array.prototype.find */                                          \
+  TFS(ArrayFindLoopContinuation, kReceiver, kCallbackFn, kThisArg, kArray,     \
+      kObject, kInitialK, kLength, kTo)                                        \
+  TFJ(ArrayPrototypeFind, SharedFunctionInfo::kDontAdaptArgumentsSentinel)     \
+  /* ES6 #sec-array.prototype.findIndex */                                     \
+  TFS(ArrayFindIndexLoopContinuation, kReceiver, kCallbackFn, kThisArg,        \
+      kArray, kObject, kInitialK, kLength, kTo)                                \
+  TFJ(ArrayPrototypeFindIndex,                                                 \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
   /* ES6 #sec-array.prototype.keys */                                          \
   TFJ(ArrayPrototypeKeys, 0)                                                   \
   /* ES6 #sec-array.prototype.values */                                        \
@@ -688,6 +699,7 @@ namespace internal {
   TFC(Multiply, BinaryOp, 1)                                                   \
   TFC(Divide, BinaryOp, 1)                                                     \
   TFC(Modulus, BinaryOp, 1)                                                    \
+  TFC(Exponentiate, BinaryOp, 1)                                               \
   TFC(BitwiseAnd, BinaryOp, 1)                                                 \
   TFC(BitwiseOr, BinaryOp, 1)                                                  \
   TFC(BitwiseXor, BinaryOp, 1)                                                 \
@@ -702,6 +714,8 @@ namespace internal {
   TFC(SameValue, Compare, 1)                                                   \
   TFC(StrictEqual, Compare, 1)                                                 \
   TFS(BitwiseNot, kValue)                                                      \
+  TFS(Decrement, kValue)                                                       \
+  TFS(Increment, kValue)                                                       \
   TFS(Negate, kValue)                                                          \
                                                                                \
   /* Object */                                                                 \
@@ -774,7 +788,9 @@ namespace internal {
   /* ES #sec-fulfillpromise */                                                 \
   TFJ(ResolvePromise, 2, kPromise, kValue)                                     \
   TFS(PromiseHandleReject, kPromise, kOnReject, kException)                    \
-  TFJ(PromiseHandle, 5, kValue, kHandler, kDeferredPromise,                    \
+  TFS(PromiseHandle, kValue, kHandler, kDeferredPromise, kDeferredOnResolve,   \
+      kDeferredOnReject)                                                       \
+  TFJ(PromiseHandleJS, 5, kValue, kHandler, kDeferredPromise,                  \
       kDeferredOnResolve, kDeferredOnReject)                                   \
   /* ES #sec-promise.resolve */                                                \
   TFJ(PromiseResolveWrapper, 1, kValue)                                        \
@@ -1043,6 +1059,12 @@ namespace internal {
   CPP(TypedArrayPrototypeCopyWithin)                                           \
   /* ES6 #sec-%typedarray%.prototype.fill */                                   \
   CPP(TypedArrayPrototypeFill)                                                 \
+  /* ES6 %TypedArray%.prototype.find */                                        \
+  TFJ(TypedArrayPrototypeFind,                                                 \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
+  /* ES6 %TypedArray%.prototype.findIndex */                                   \
+  TFJ(TypedArrayPrototypeFindIndex,                                            \
+      SharedFunctionInfo::kDontAdaptArgumentsSentinel)                         \
   /* ES7 #sec-%typedarray%.prototype.includes */                               \
   CPP(TypedArrayPrototypeIncludes)                                             \
   /* ES6 #sec-%typedarray%.prototype.indexof */                                \

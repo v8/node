@@ -22,64 +22,6 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-namespace {
-
-bool CanBePrimitive(Node* node) {
-  switch (node->opcode()) {
-    case IrOpcode::kConvertReceiver:
-    case IrOpcode::kJSCreate:
-    case IrOpcode::kJSCreateArguments:
-    case IrOpcode::kJSCreateArray:
-    case IrOpcode::kJSCreateBoundFunction:
-    case IrOpcode::kJSCreateClosure:
-    case IrOpcode::kJSCreateEmptyLiteralArray:
-    case IrOpcode::kJSCreateEmptyLiteralObject:
-    case IrOpcode::kJSCreateIterResultObject:
-    case IrOpcode::kJSCreateKeyValueArray:
-    case IrOpcode::kJSCreateLiteralArray:
-    case IrOpcode::kJSCreateLiteralObject:
-    case IrOpcode::kJSCreateLiteralRegExp:
-    case IrOpcode::kJSConstructForwardVarargs:
-    case IrOpcode::kJSConstruct:
-    case IrOpcode::kJSConstructWithArrayLike:
-    case IrOpcode::kJSConstructWithSpread:
-    case IrOpcode::kJSGetSuperConstructor:
-    case IrOpcode::kJSToObject:
-      return false;
-    case IrOpcode::kHeapConstant: {
-      Handle<HeapObject> value = HeapObjectMatcher(node).Value();
-      return value->IsPrimitive();
-    }
-    default:
-      return true;
-  }
-}
-
-bool CanBeNullOrUndefined(Node* node) {
-  if (CanBePrimitive(node)) {
-    switch (node->opcode()) {
-      case IrOpcode::kToBoolean:
-      case IrOpcode::kJSToInteger:
-      case IrOpcode::kJSToLength:
-      case IrOpcode::kJSToName:
-      case IrOpcode::kJSToNumber:
-      case IrOpcode::kJSToNumeric:
-      case IrOpcode::kJSToString:
-        return false;
-      case IrOpcode::kHeapConstant: {
-        Handle<HeapObject> value = HeapObjectMatcher(node).Value();
-        Isolate* const isolate = value->GetIsolate();
-        return value->IsNullOrUndefined(isolate);
-      }
-      default:
-        return true;
-    }
-  }
-  return false;
-}
-
-}  // namespace
-
 Reduction JSCallReducer::Reduce(Node* node) {
   switch (node->opcode()) {
     case IrOpcode::kJSConstruct:
@@ -148,20 +90,6 @@ Reduction JSCallReducer::ReduceBooleanConstructor(Node* node) {
   return Replace(value);
 }
 
-// ES6 section 20.1.1 The Number Constructor
-Reduction JSCallReducer::ReduceNumberConstructor(Node* node) {
-  DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
-  CallParameters const& p = CallParametersOf(node->op());
-
-  // Turn the {node} into a {JSToNumber} call.
-  DCHECK_LE(2u, p.arity());
-  Node* value = (p.arity() == 2) ? jsgraph()->ZeroConstant()
-                                 : NodeProperties::GetValueInput(node, 2);
-  NodeProperties::ReplaceValueInputs(node, value);
-  NodeProperties::ChangeOp(node, javascript()->ToNumber());
-  return Changed(node);
-}
-
 // ES section #sec-object-constructor
 Reduction JSCallReducer::ReduceObjectConstructor(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
@@ -169,10 +97,11 @@ Reduction JSCallReducer::ReduceObjectConstructor(Node* node) {
   if (p.arity() < 3) return NoChange();
   Node* value = (p.arity() >= 3) ? NodeProperties::GetValueInput(node, 2)
                                  : jsgraph()->UndefinedConstant();
+  Node* effect = NodeProperties::GetEffectInput(node);
 
   // We can fold away the Object(x) call if |x| is definitely not a primitive.
-  if (CanBePrimitive(value)) {
-    if (!CanBeNullOrUndefined(value)) {
+  if (NodeProperties::CanBePrimitive(value, effect)) {
+    if (!NodeProperties::CanBeNullOrUndefined(value, effect)) {
       // Turn the {node} into a {JSToObject} call if we know that
       // the {value} cannot be null or undefined.
       NodeProperties::ReplaceValueInputs(node, value);
@@ -213,7 +142,7 @@ Reduction JSCallReducer::ReduceFunctionPrototypeApply(Node* node) {
 
     // If {arguments_list} cannot be null or undefined, we don't need
     // to expand this {node} to control-flow.
-    if (!CanBeNullOrUndefined(arguments_list)) {
+    if (!NodeProperties::CanBeNullOrUndefined(arguments_list, effect)) {
       // Massage the value inputs appropriately.
       node->ReplaceInput(0, target);
       node->ReplaceInput(1, this_argument);
@@ -1965,8 +1894,6 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
           return ReduceFunctionPrototypeCall(node);
         case Builtins::kFunctionPrototypeHasInstance:
           return ReduceFunctionPrototypeHasInstance(node);
-        case Builtins::kNumberConstructor:
-          return ReduceNumberConstructor(node);
         case Builtins::kObjectConstructor:
           return ReduceObjectConstructor(node);
         case Builtins::kObjectGetPrototypeOf:
@@ -2063,7 +1990,7 @@ Reduction JSCallReducer::ReduceJSCall(Node* node) {
 
     // Update the JSCall operator on {node}.
     ConvertReceiverMode const convert_mode =
-        CanBeNullOrUndefined(bound_this)
+        NodeProperties::CanBeNullOrUndefined(bound_this, effect)
             ? ConvertReceiverMode::kAny
             : ConvertReceiverMode::kNotNullOrUndefined;
     NodeProperties::ChangeOp(
@@ -2139,7 +2066,7 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
   DCHECK_EQ(IrOpcode::kJSConstruct, node->opcode());
   ConstructParameters const& p = ConstructParametersOf(node->op());
   DCHECK_LE(2u, p.arity());
-  int const arity = static_cast<int>(p.arity() - 2);
+  int arity = static_cast<int>(p.arity() - 2);
   Node* target = NodeProperties::GetValueInput(node, 0);
   Node* new_target = NodeProperties::GetValueInput(node, arity + 1);
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -2217,17 +2144,17 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
   // Try to specialize JSConstruct {node}s with constant {target}s.
   HeapObjectMatcher m(target);
   if (m.HasValue()) {
+    // Raise a TypeError if the {target} is not a constructor.
+    if (!m.Value()->IsConstructor()) {
+      NodeProperties::ReplaceValueInputs(node, target);
+      NodeProperties::ChangeOp(node,
+                               javascript()->CallRuntime(
+                                   Runtime::kThrowConstructedNonConstructable));
+      return Changed(node);
+    }
+
     if (m.Value()->IsJSFunction()) {
       Handle<JSFunction> function = Handle<JSFunction>::cast(m.Value());
-
-      // Raise a TypeError if the {target} is not a constructor.
-      if (!function->IsConstructor()) {
-        NodeProperties::ReplaceValueInputs(node, target);
-        NodeProperties::ChangeOp(
-            node, javascript()->CallRuntime(
-                      Runtime::kThrowConstructedNonConstructable));
-        return Changed(node);
-      }
 
       // Don't inline cross native context.
       if (function->native_context() != *native_context()) return NoChange();
@@ -2266,9 +2193,86 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
           return Changed(node);
         }
       }
+    } else if (m.Value()->IsJSBoundFunction()) {
+      Handle<JSBoundFunction> function =
+          Handle<JSBoundFunction>::cast(m.Value());
+      Handle<JSReceiver> bound_target_function(
+          function->bound_target_function(), isolate());
+      Handle<FixedArray> bound_arguments(function->bound_arguments(),
+                                         isolate());
+
+      // Patch {node} to use [[BoundTargetFunction]].
+      NodeProperties::ReplaceValueInput(
+          node, jsgraph()->Constant(bound_target_function), 0);
+
+      // Patch {node} to use [[BoundTargetFunction]]
+      // as new.target if {new_target} equals {target}.
+      NodeProperties::ReplaceValueInput(
+          node,
+          graph()->NewNode(common()->Select(MachineRepresentation::kTagged),
+                           graph()->NewNode(simplified()->ReferenceEqual(),
+                                            target, new_target),
+                           jsgraph()->Constant(bound_target_function),
+                           new_target),
+          arity + 1);
+
+      // Insert the [[BoundArguments]] for {node}.
+      for (int i = 0; i < bound_arguments->length(); ++i) {
+        node->InsertInput(
+            graph()->zone(), i + 1,
+            jsgraph()->Constant(handle(bound_arguments->get(i), isolate())));
+        arity++;
+      }
+
+      // Update the JSConstruct operator on {node}.
+      NodeProperties::ChangeOp(
+          node,
+          javascript()->Construct(arity + 2, p.frequency(), VectorSlotPair()));
+
+      // Try to further reduce the JSConstruct {node}.
+      Reduction const reduction = ReduceJSConstruct(node);
+      return reduction.Changed() ? reduction : Changed(node);
     }
 
-    // TODO(bmeurer): Also support optimizing bound functions and proxies here.
+    // TODO(bmeurer): Also support optimizing proxies here.
+  }
+
+  // If {target} is the result of a JSCreateBoundFunction operation,
+  // we can just fold the construction and construct the bound target
+  // function directly instead.
+  if (target->opcode() == IrOpcode::kJSCreateBoundFunction) {
+    Node* bound_target_function = NodeProperties::GetValueInput(target, 0);
+    int const bound_arguments_length =
+        static_cast<int>(CreateBoundFunctionParametersOf(target->op()).arity());
+
+    // Patch the {node} to use [[BoundTargetFunction]].
+    NodeProperties::ReplaceValueInput(node, bound_target_function, 0);
+
+    // Patch {node} to use [[BoundTargetFunction]]
+    // as new.target if {new_target} equals {target}.
+    NodeProperties::ReplaceValueInput(
+        node,
+        graph()->NewNode(common()->Select(MachineRepresentation::kTagged),
+                         graph()->NewNode(simplified()->ReferenceEqual(),
+                                          target, new_target),
+                         bound_target_function, new_target),
+        arity + 1);
+
+    // Insert the [[BoundArguments]] for {node}.
+    for (int i = 0; i < bound_arguments_length; ++i) {
+      Node* value = NodeProperties::GetValueInput(target, 2 + i);
+      node->InsertInput(graph()->zone(), 1 + i, value);
+      arity++;
+    }
+
+    // Update the JSConstruct operator on {node}.
+    NodeProperties::ChangeOp(
+        node,
+        javascript()->Construct(arity + 2, p.frequency(), VectorSlotPair()));
+
+    // Try to further reduce the JSConstruct {node}.
+    Reduction const reduction = ReduceJSConstruct(node);
+    return reduction.Changed() ? reduction : Changed(node);
   }
 
   return NoChange();

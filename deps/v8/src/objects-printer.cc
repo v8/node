@@ -16,6 +16,8 @@
 #include "src/ostreams.h"
 #include "src/regexp/jsregexp.h"
 #include "src/transitions-inl.h"
+#include "src/wasm/wasm-code-manager.h"
+#include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-objects-inl.h"
 
 namespace v8 {
@@ -238,6 +240,14 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     break;
   STRUCT_LIST(MAKE_STRUCT_CASE)
 #undef MAKE_STRUCT_CASE
+
+    case LOAD_HANDLER_TYPE:
+      LoadHandler::cast(this)->LoadHandlerPrint(os);
+      break;
+
+    case STORE_HANDLER_TYPE:
+      StoreHandler::cast(this)->StoreHandlerPrint(os);
+      break;
 
     default:
       os << "UNKNOWN TYPE " << map()->instance_type();
@@ -747,24 +757,31 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
     return;
   }
 
-  os << "\n SharedFunctionInfo: " << Brief(shared_function_info());
-  os << "\n Optimized Code: " << Brief(optimized_code_cell());
-  os << "\n Invocation Count: " << invocation_count();
-  os << "\n Profiler Ticks: " << profiler_ticks();
+  os << "\n - shared function info: " << Brief(shared_function_info());
+  os << "\n - optimized code/marker: ";
+  if (has_optimized_code()) {
+    os << Brief(optimized_code());
+  } else {
+    os << optimization_marker();
+  }
+  os << "\n - invocation count: " << invocation_count();
+  os << "\n - profiler ticks: " << profiler_ticks();
 
   FeedbackMetadataIterator iter(metadata());
   while (iter.HasNext()) {
     FeedbackSlot slot = iter.Next();
     FeedbackSlotKind kind = iter.kind();
 
-    os << "\n Slot " << slot << " " << kind << " ";
+    os << "\n - slot " << slot << " " << kind << " ";
     FeedbackSlotPrint(os, slot, kind);
 
     int entry_size = iter.entry_size();
+    if (entry_size > 0) os << " {";
     for (int i = 0; i < entry_size; i++) {
       int index = GetIndex(slot) + i;
-      os << "\n  [" << index << "]: " << Brief(get(index));
+      os << "\n     [" << index << "]: " << Brief(get(index));
     }
+    if (entry_size > 0) os << "\n  }";
   }
   os << "\n";
 }
@@ -1411,6 +1428,7 @@ void PrototypeInfo::PrototypeInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - registry slot: " << registry_slot();
   os << "\n - validity cell: " << Brief(validity_cell());
   os << "\n - object create map: " << Brief(object_create_map());
+  os << "\n - should_be_fast_map: " << should_be_fast_map();
   os << "\n";
 }
 
@@ -1426,6 +1444,30 @@ void Tuple3::Tuple3Print(std::ostream& os) {  // NOLINT
   os << "\n - value1: " << Brief(value1());
   os << "\n - value2: " << Brief(value2());
   os << "\n - value3: " << Brief(value3());
+  os << "\n";
+}
+
+void LoadHandler::LoadHandlerPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "LoadHandler");
+  // TODO(ishell): implement printing based on handler kind
+  os << "\n - handler: " << Brief(smi_handler());
+  os << "\n - validity_cell: " << Brief(validity_cell());
+  os << "\n - data1: " << Brief(data1());
+  if (map()->instance_size() >= kSizeWithData2) {
+    os << "\n - data2: " << Brief(data2());
+  }
+  os << "\n";
+}
+
+void StoreHandler::StoreHandlerPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "StoreHandler");
+  // TODO(ishell): implement printing based on handler kind
+  os << "\n - handler: " << Brief(smi_handler());
+  os << "\n - validity_cell: " << Brief(validity_cell());
+  os << "\n - data1: " << Brief(data1());
+  if (map()->instance_size() >= kSizeWithData2) {
+    os << "\n - data2: " << Brief(data2());
+  }
   os << "\n";
 }
 
@@ -1888,6 +1930,13 @@ extern void _v8_internal_Print_Object(void* object) {
 
 extern void _v8_internal_Print_Code(void* object) {
   i::Isolate* isolate = i::Isolate::Current();
+  i::wasm::WasmCode* wasm_code =
+      isolate->wasm_engine()->code_manager()->LookupCode(
+          reinterpret_cast<i::Address>(object));
+  if (wasm_code) {
+    wasm_code->Print(isolate);
+    return;
+  }
   isolate->FindCodeObject(reinterpret_cast<i::Address>(object))->Print();
 }
 

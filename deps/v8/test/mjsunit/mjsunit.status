@@ -78,7 +78,7 @@
 
   ##############################################################################
   # No need to waste time for this test.
-  'd8-performance-now': [PASS, NO_VARIANTS],
+  'd8/d8-performance-now': [PASS, NO_VARIANTS],
   'regress/regress-crbug-491062': [PASS, NO_VARIANTS],
 
   # Issue 488: this test sometimes times out.
@@ -109,9 +109,15 @@
   # we cannot run several variants of d8-os simultaneously, since all of them
   # get the same random seed and would generate the same directory name. Besides
   # that, it doesn't make sense to run several variants of d8-os anyways.
-  'd8-os': [PASS, NO_VARIANTS, ['isolates or arch == android_arm or arch == android_arm64 or arch == android_ia32', SKIP]],
+  'd8/d8-os': [PASS, NO_VARIANTS, ['isolates or arch == android_arm or arch == android_arm64 or arch == android_ia32', SKIP]],
   'tools/tickprocessor': [PASS, NO_VARIANTS, ['arch == android_arm or arch == android_arm64 or arch == android_ia32', SKIP]],
   'tools/dumpcpp': [PASS, NO_VARIANTS, ['arch == android_arm or arch == android_arm64 or arch == android_ia32', SKIP]],
+
+  ##############################################################################
+  # This test generates a file in the test directory, so we cannot run several
+  # variants of the test simultaneously. Additionally the test should not be
+  # affected by variants.
+  'd8/enable-tracing': [PASS, NO_VARIANTS],
 
   ##############################################################################
   # Long running test that reproduces memory leak and should be run manually.
@@ -199,7 +205,7 @@
   'array-constructor-feedback': [SKIP],
   'array-feedback': [SKIP],
   'array-literal-feedback': [SKIP],
-  'd8-performance-now': [SKIP],
+  'd8/d8-performance-now': [SKIP],
   'elements-kind': [SKIP],
   'elements-transition-hoisting': [SKIP],
   'fast-prototype': [SKIP],
@@ -419,6 +425,8 @@
 
   # BUG(v8:6924). The test uses a lot of memory.
   'regress/wasm/regress-694433': [SKIP],
+  'es6/typedarray': [PASS, NO_VARIANTS],
+  'regress/regress-752764': [PASS, NO_VARIANTS],
 }],  # 'tsan == True'
 
 ##############################################################################
@@ -628,8 +636,8 @@
 ['predictable == True', {
 
   # Skip tests that are known to be non-deterministic.
-  'd8-worker-sharedarraybuffer': [SKIP],
-  'd8-os': [SKIP],
+  'd8/d8-worker-sharedarraybuffer': [SKIP],
+  'd8/d8-os': [SKIP],
 }],  # 'predictable == True'
 
 ##############################################################################
@@ -704,6 +712,10 @@
   'math-*': [SKIP],
   'unicode-test': [SKIP],
   'whitespaces': [SKIP],
+
+  # Lazy compilation is currently broken for --wasm-jit-to-native
+  # (crbug.com/v8/7140).
+  'wasm/lazy-compilation': [SKIP],
 }],  # variant == wasm_traps
 
 ['variant == wasm_traps and gc_stress == True', {

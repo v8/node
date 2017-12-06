@@ -20,6 +20,7 @@
 #include "src/wasm/compilation-manager.h"
 #include "src/wasm/module-compiler.h"
 #include "src/wasm/module-decoder.h"
+#include "src/wasm/wasm-code-manager.h"
 #include "src/wasm/wasm-code-specialization.h"
 #include "src/wasm/wasm-js.h"
 #include "src/wasm/wasm-module.h"
@@ -30,21 +31,6 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
-#define TRACE(...)                                      \
-  do {                                                  \
-    if (FLAG_trace_wasm_instances) PrintF(__VA_ARGS__); \
-  } while (false)
-
-#define TRACE_CHAIN(instance)        \
-  do {                               \
-    instance->PrintInstancesChain(); \
-  } while (false)
-
-#define TRACE_COMPILE(...)                             \
-  do {                                                 \
-    if (FLAG_trace_wasm_compiler) PrintF(__VA_ARGS__); \
-  } while (false)
-
 // static
 const WasmExceptionSig WasmException::empty_sig_(0, 0, nullptr);
 
@@ -54,8 +40,8 @@ constexpr const char* WasmException::kRuntimeIdStr;
 // static
 constexpr const char* WasmException::kRuntimeValuesStr;
 
-void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
-                                            Handle<FixedArray> code_table) {
+void UnpackAndRegisterProtectedInstructionsGC(Isolate* isolate,
+                                              Handle<FixedArray> code_table) {
   DisallowHeapAllocation no_gc;
   std::vector<trap_handler::ProtectedInstructionData> unpacked;
 
@@ -108,6 +94,37 @@ void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
   }
 }
 
+void UnpackAndRegisterProtectedInstructions(
+    Isolate* isolate, const wasm::NativeModule* native_module) {
+  DisallowHeapAllocation no_gc;
+
+  for (uint32_t i = native_module->num_imported_functions(),
+                e = native_module->FunctionCount();
+       i < e; ++i) {
+    wasm::WasmCode* code = native_module->GetCode(i);
+
+    if (code == nullptr || code->kind() != wasm::WasmCode::kFunction) {
+      continue;
+    }
+
+    if (code->HasTrapHandlerIndex()) continue;
+
+    Address base = code->instructions().start();
+
+    size_t size = code->instructions().size();
+    const int index =
+        RegisterHandlerData(base, size, code->protected_instructions().size(),
+                            code->protected_instructions().data());
+
+    // TODO(6792): No longer needed once WebAssembly code is off heap.
+    CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
+
+    // TODO(eholk): if index is negative, fail.
+    CHECK_LE(0, index);
+    code->set_trap_handler_index(static_cast<size_t>(index));
+  }
+}
+
 std::ostream& operator<<(std::ostream& os, const WasmFunctionName& name) {
   os << "#" << name.function_->func_index;
   if (name.function_->name.is_set()) {
@@ -139,8 +156,8 @@ WasmFunction* GetWasmFunctionForExport(Isolate* isolate,
 }
 
 void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
-                          int index, WasmFunction* function,
-                          Handle<Code> code) {
+                          int index, const WasmFunction* function,
+                          Handle<Object> code_or_foreign) {
   DCHECK_EQ(0, dispatch_tables->length() % 4);
   for (int i = 0; i < dispatch_tables->length(); i += 4) {
     Handle<FixedArray> function_table(
@@ -154,7 +171,7 @@ void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
       // not found; it will simply never match any check.
       auto sig_index = instance->module()->signature_map.Find(function->sig);
       signature_table->set(index, Smi::FromInt(sig_index));
-      function_table->set(index, *code);
+      function_table->set(index, *code_or_foreign);
     } else {
       signature_table->set(index, Smi::FromInt(-1));
       function_table->set(index, Smi::kZero);
@@ -416,10 +433,6 @@ const char* ExternalKindName(WasmExternalKind kind) {
   }
   return "unknown";
 }
-
-#undef TRACE
-#undef TRACE_CHAIN
-#undef TRACE_COMPILE
 
 }  // namespace wasm
 }  // namespace internal

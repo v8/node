@@ -824,6 +824,9 @@ class ExternalReference BASE_EMBEDDED {
   // The builtins table as an external reference, used by lazy deserialization.
   static ExternalReference builtins_address(Isolate* isolate);
 
+  static ExternalReference handle_scope_implementer_address(Isolate* isolate);
+  static ExternalReference pending_microtask_count_address(Isolate* isolate);
+
   // One-of-a-kind references. These references are not part of a general
   // pattern. This means that they have to be added to the
   // ExternalReferenceTable in serialize.cc manually.
@@ -988,6 +991,11 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference get_or_create_hash_raw(Isolate* isolate);
   static ExternalReference jsreceiver_create_identity_hash(Isolate* isolate);
 
+  static ExternalReference copy_fast_number_jsarray_elements_to_typed_array(
+      Isolate* isolate);
+  static ExternalReference copy_typed_array_elements_to_typed_array(
+      Isolate* isolate);
+
   static ExternalReference page_flags(Page* page);
 
   static ExternalReference ForDeoptEntry(Address entry);
@@ -1006,6 +1014,9 @@ class ExternalReference BASE_EMBEDDED {
       Isolate* isolate);
 
   V8_EXPORT_PRIVATE static ExternalReference runtime_function_table_address(
+      Isolate* isolate);
+
+  static ExternalReference invalidate_prototype_chains_function(
       Isolate* isolate);
 
   Address address() const { return reinterpret_cast<Address>(address_); }
@@ -1042,6 +1053,8 @@ class ExternalReference BASE_EMBEDDED {
                              ExternalReferenceRedirector* redirector);
 
   static ExternalReference stress_deopt_count(Isolate* isolate);
+
+  static ExternalReference force_slow_path(Isolate* isolate);
 
   static ExternalReference fixed_typed_array_base_data_offset();
 

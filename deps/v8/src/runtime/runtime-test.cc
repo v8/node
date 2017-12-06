@@ -19,8 +19,11 @@
 #include "src/snapshot/natives.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/memory-tracing.h"
+#include "src/wasm/module-compiler.h"
+#include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
+#include "src/wasm/wasm-serialization.h"
 
 namespace {
 struct WasmCompileControls {
@@ -481,48 +484,100 @@ RUNTIME_FUNCTION(Runtime_CheckWasmWrapperElision) {
   CONVERT_ARG_HANDLE_CHECKED(Smi, type, 1);
   Handle<Code> export_code = handle(function->code());
   CHECK(export_code->kind() == Code::JS_TO_WASM_FUNCTION);
-  int const mask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET);
+  int const mask =
+      RelocInfo::ModeMask(FLAG_wasm_jit_to_native ? RelocInfo::JS_TO_WASM_CALL
+                                                  : RelocInfo::CODE_TARGET);
   // check the type of the $export_fct
-  Handle<Code> export_fct;
+  wasm::WasmCode* export_fct = nullptr;
+  Handle<Code> export_fct_handle;
+  wasm::WasmCode* intermediate_fct = nullptr;
+  Handle<Code> intermediate_fct_handle;
+
   int count = 0;
   for (RelocIterator it(*export_code, mask); !it.done(); it.next()) {
     RelocInfo* rinfo = it.rinfo();
-    Address target_address = rinfo->target_address();
-    Code* target = Code::GetCodeFromTargetAddress(target_address);
-    if (target->kind() == Code::WASM_FUNCTION) {
-      ++count;
-      export_fct = handle(target);
+    Address target_address = FLAG_wasm_jit_to_native
+                                 ? rinfo->js_to_wasm_address()
+                                 : rinfo->target_address();
+    if (FLAG_wasm_jit_to_native) {
+      wasm::WasmCode* target =
+          isolate->wasm_engine()->code_manager()->LookupCode(target_address);
+      if (target->kind() == wasm::WasmCode::kFunction) {
+        ++count;
+        export_fct = target;
+      }
+    } else {
+      Code* target = Code::GetCodeFromTargetAddress(target_address);
+      if (target->kind() == Code::WASM_FUNCTION) {
+        ++count;
+        export_fct_handle = handle(target);
+      }
     }
   }
   CHECK_EQ(count, 1);
   // check the type of the intermediate_fct
-  Handle<Code> intermediate_fct;
   count = 0;
-  for (RelocIterator it(*export_fct, mask); !it.done(); it.next()) {
-    RelocInfo* rinfo = it.rinfo();
-    Address target_address = rinfo->target_address();
-    Code* target = Code::GetCodeFromTargetAddress(target_address);
-    if (target->kind() == Code::WASM_FUNCTION) {
-      ++count;
-      intermediate_fct = handle(target);
+  if (FLAG_wasm_jit_to_native) {
+    for (RelocIterator it(export_fct->instructions(), export_fct->reloc_info(),
+                          export_fct->constant_pool(),
+                          RelocInfo::ModeMask(RelocInfo::WASM_CALL));
+         !it.done(); it.next()) {
+      RelocInfo* rinfo = it.rinfo();
+      Address target_address = rinfo->target_address();
+      wasm::WasmCode* target =
+          isolate->wasm_engine()->code_manager()->LookupCode(target_address);
+      if (target->kind() == wasm::WasmCode::kFunction) {
+        ++count;
+        intermediate_fct = target;
+      }
+    }
+  } else {
+    count = 0;
+    for (RelocIterator it(*export_fct_handle, mask); !it.done(); it.next()) {
+      RelocInfo* rinfo = it.rinfo();
+      Address target_address = rinfo->target_address();
+      Code* target = Code::GetCodeFromTargetAddress(target_address);
+      if (target->kind() == Code::WASM_FUNCTION) {
+        ++count;
+        intermediate_fct_handle = handle(target);
+      }
     }
   }
   CHECK_EQ(count, 1);
   // Check the type of the imported exported function, it should be also a wasm
   // function in our case.
-  Handle<Code> imported_fct;
   CHECK(type->value() == 0 || type->value() == 1);
 
-  Code::Kind target_kind = type->value() == 0 ? Code::WASM_TO_WASM_FUNCTION
-                                              : Code::WASM_TO_JS_FUNCTION;
   count = 0;
-  for (RelocIterator it(*intermediate_fct, mask); !it.done(); it.next()) {
-    RelocInfo* rinfo = it.rinfo();
-    Address target_address = rinfo->target_address();
-    Code* target = Code::GetCodeFromTargetAddress(target_address);
-    if (target->kind() == target_kind) {
-      ++count;
-      imported_fct = handle(target);
+  if (FLAG_wasm_jit_to_native) {
+    wasm::WasmCode::Kind target_kind = type->value() == 0
+                                           ? wasm::WasmCode::kWasmToWasmWrapper
+                                           : wasm::WasmCode::kWasmToJsWrapper;
+    for (RelocIterator it(intermediate_fct->instructions(),
+                          intermediate_fct->reloc_info(),
+                          intermediate_fct->constant_pool(),
+                          RelocInfo::ModeMask(RelocInfo::WASM_CALL));
+         !it.done(); it.next()) {
+      RelocInfo* rinfo = it.rinfo();
+      Address target_address = rinfo->target_address();
+      wasm::WasmCode* target =
+          isolate->wasm_engine()->code_manager()->LookupCode(target_address);
+      if (target->kind() == target_kind) {
+        ++count;
+      }
+    }
+  } else {
+    Code::Kind target_kind = type->value() == 0 ? Code::WASM_TO_WASM_FUNCTION
+                                                : Code::WASM_TO_JS_FUNCTION;
+    count = 0;
+    for (RelocIterator it(*intermediate_fct_handle, mask); !it.done();
+         it.next()) {
+      RelocInfo* rinfo = it.rinfo();
+      Address target_address = rinfo->target_address();
+      Code* target = Code::GetCodeFromTargetAddress(target_address);
+      if (target->kind() == target_kind) {
+        ++count;
+      }
     }
   }
   CHECK_LE(count, 1);
@@ -900,6 +955,7 @@ RUNTIME_FUNCTION(Runtime_GetWasmRecoveredTrapCount) {
     return isolate->heap()->ToBoolean(obj->Has##Name()); \
   }
 
+ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(FastElements)
 ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(SmiElements)
 ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(ObjectElements)
 ELEMENTS_KIND_CHECK_RUNTIME_FUNCTION(SmiOrObjectElements)
@@ -939,13 +995,24 @@ RUNTIME_FUNCTION(Runtime_SerializeWasmModule) {
   CONVERT_ARG_HANDLE_CHECKED(WasmModuleObject, module_obj, 0);
 
   Handle<WasmCompiledModule> orig(module_obj->compiled_module());
-  std::unique_ptr<ScriptData> data =
-      WasmCompiledModuleSerializer::SerializeWasmModule(isolate, orig);
-  void* buff = isolate->array_buffer_allocator()->Allocate(data->length());
-  Handle<JSArrayBuffer> ret = isolate->factory()->NewJSArrayBuffer();
-  JSArrayBuffer::Setup(ret, isolate, false, buff, data->length());
-  memcpy(buff, data->data(), data->length());
-  return *ret;
+  if (FLAG_wasm_jit_to_native) {
+    std::pair<std::unique_ptr<byte[]>, size_t> serialized_module =
+        wasm::NativeModuleSerializer::SerializeWholeModule(isolate, orig);
+    int data_size = static_cast<int>(serialized_module.second);
+    void* buff = isolate->array_buffer_allocator()->Allocate(data_size);
+    Handle<JSArrayBuffer> ret = isolate->factory()->NewJSArrayBuffer();
+    JSArrayBuffer::Setup(ret, isolate, false, buff, data_size);
+    memcpy(buff, serialized_module.first.get(), data_size);
+    return *ret;
+  } else {
+    std::unique_ptr<ScriptData> data =
+        WasmCompiledModuleSerializer::SerializeWasmModule(isolate, orig);
+    void* buff = isolate->array_buffer_allocator()->Allocate(data->length());
+    Handle<JSArrayBuffer> ret = isolate->factory()->NewJSArrayBuffer();
+    JSArrayBuffer::Setup(ret, isolate, false, buff, data->length());
+    memcpy(buff, data->data(), data->length());
+    return *ret;
+  }
 }
 
 // Take an array buffer and attempt to reconstruct a compiled wasm module.
@@ -957,22 +1024,31 @@ RUNTIME_FUNCTION(Runtime_DeserializeWasmModule) {
   CONVERT_ARG_HANDLE_CHECKED(JSArrayBuffer, wire_bytes, 1);
 
   Address mem_start = static_cast<Address>(buffer->backing_store());
-  int mem_size = static_cast<int>(buffer->byte_length()->Number());
+  size_t mem_size = static_cast<size_t>(buffer->byte_length()->Number());
 
   // DeserializeWasmModule will allocate. We assume JSArrayBuffer doesn't
   // get relocated.
-  ScriptData sc(mem_start, mem_size);
   bool already_external = wire_bytes->is_external();
   if (!already_external) {
     wire_bytes->set_is_external(true);
     isolate->heap()->UnregisterArrayBuffer(*wire_bytes);
   }
-  MaybeHandle<FixedArray> maybe_compiled_module =
-      WasmCompiledModuleSerializer::DeserializeWasmModule(
-          isolate, &sc,
-          Vector<const uint8_t>(
-              reinterpret_cast<uint8_t*>(wire_bytes->backing_store()),
-              static_cast<int>(wire_bytes->byte_length()->Number())));
+  MaybeHandle<FixedArray> maybe_compiled_module;
+  if (FLAG_wasm_jit_to_native) {
+    maybe_compiled_module =
+        wasm::NativeModuleDeserializer::DeserializeFullBuffer(
+            isolate, {mem_start, mem_size},
+            Vector<const uint8_t>(
+                reinterpret_cast<uint8_t*>(wire_bytes->backing_store()),
+                static_cast<int>(wire_bytes->byte_length()->Number())));
+  } else {
+    ScriptData sc(mem_start, static_cast<int>(mem_size));
+    maybe_compiled_module = WasmCompiledModuleSerializer::DeserializeWasmModule(
+        isolate, &sc,
+        Vector<const uint8_t>(
+            reinterpret_cast<uint8_t*>(wire_bytes->backing_store()),
+            static_cast<int>(wire_bytes->byte_length()->Number())));
+  }
   if (!already_external) {
     wire_bytes->set_is_external(false);
     isolate->heap()->RegisterNewArrayBuffer(*wire_bytes);
@@ -1063,7 +1139,7 @@ RUNTIME_FUNCTION(Runtime_WasmTraceMemory) {
   DCHECK(it.is_wasm());
   WasmCompiledFrame* frame = WasmCompiledFrame::cast(it.frame());
 
-  uint32_t addr = (static_cast<uint32_t>(addr_low) & 0xffff) |
+  uint32_t addr = (static_cast<uint32_t>(addr_low) & 0xFFFF) |
                   (static_cast<uint32_t>(addr_high) << 16);
   uint8_t* mem_start = reinterpret_cast<uint8_t*>(frame->wasm_instance()
                                                       ->memory_object()
@@ -1085,8 +1161,15 @@ RUNTIME_FUNCTION(Runtime_IsLiftoffFunction) {
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
   CHECK(WasmExportedFunction::IsWasmExportedFunction(*function));
-  Handle<Code> wasm_code = WasmExportedFunction::cast(*function)->GetWasmCode();
-  return isolate->heap()->ToBoolean(!wasm_code->is_turbofanned());
+  WasmCodeWrapper wrapper =
+      WasmExportedFunction::cast(*function)->GetWasmCode();
+  if (!wrapper.IsCodeObject()) {
+    const wasm::WasmCode* wasm_code = wrapper.GetWasmCode();
+    return isolate->heap()->ToBoolean(wasm_code->is_liftoff());
+  } else {
+    Handle<Code> wasm_code = wrapper.GetCode();
+    return isolate->heap()->ToBoolean(!wasm_code->is_turbofanned());
+  }
 }
 
 RUNTIME_FUNCTION(Runtime_CompleteInobjectSlackTracking) {
@@ -1096,6 +1179,20 @@ RUNTIME_FUNCTION(Runtime_CompleteInobjectSlackTracking) {
   CONVERT_ARG_HANDLE_CHECKED(JSObject, object, 0);
   object->map()->CompleteInobjectSlackTracking();
 
+  return isolate->heap()->undefined_value();
+}
+
+RUNTIME_FUNCTION(Runtime_FreezeWasmLazyCompilation) {
+  DCHECK_EQ(1, args.length());
+  DisallowHeapAllocation no_gc;
+  CONVERT_ARG_CHECKED(WasmInstanceObject, instance, 0);
+
+  WasmSharedModuleData* shared = instance->compiled_module()->ptr_to_shared();
+  CHECK(shared->has_lazy_compilation_orchestrator());
+  auto* orchestrator = Managed<wasm::LazyCompilationOrchestrator>::cast(
+                           shared->lazy_compilation_orchestrator())
+                           ->get();
+  orchestrator->FreezeLazyCompilationForTesting();
   return isolate->heap()->undefined_value();
 }
 

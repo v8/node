@@ -22,6 +22,8 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 class InterpretedFrame;
+class NativeModule;
+class WasmCode;
 class WasmInterpreter;
 struct WasmModule;
 class SignatureMap;
@@ -228,7 +230,8 @@ class WasmInstanceObject : public JSObject {
   // Assumed to be called with a code object associated to a wasm module
   // instance. Intended to be called from runtime functions. Returns nullptr on
   // failing to get owning instance.
-  static WasmInstanceObject* GetOwningInstance(Code* code);
+  static WasmInstanceObject* GetOwningInstance(const wasm::WasmCode* code);
+  static WasmInstanceObject* GetOwningInstanceGC(Code* code);
 
   static void ValidateInstancesChainForTesting(
       Isolate* isolate, Handle<WasmModuleObject> module_obj,
@@ -253,7 +256,7 @@ class WasmExportedFunction : public JSFunction {
                                           int func_index, int arity,
                                           Handle<Code> export_wrapper);
 
-  Handle<Code> GetWasmCode();
+  WasmCodeWrapper GetWasmCode();
 };
 
 // Information shared by all WasmCompiledModule objects for the same module.
@@ -305,9 +308,7 @@ class WasmSharedModuleData : public FixedArray {
       Handle<SeqOneByteString> module_bytes, Handle<Script> script,
       Handle<ByteArray> asm_js_offset_table);
 
- private:
   DECL_OPTIONAL_ACCESSORS(lazy_compilation_orchestrator, Foreign)
-  friend class WasmCompiledModule;
 };
 
 // This represents the set of wasm compiled functions, together
@@ -403,6 +404,8 @@ class WasmCompiledModule : public FixedArray {
   MACRO(CONST_OBJECT, FixedArray, empty_signature_tables)     \
   MACRO(SMALL_CONST_NUMBER, uint32_t, initial_pages)
 
+// TODO(mtrofin): this is unnecessary when we stop needing
+// FLAG_wasm_jit_to_native, because we have instance_id on NativeModule.
 #if DEBUG
 #define DEBUG_ONLY_TABLE(MACRO) MACRO(SMALL_CONST_NUMBER, uint32_t, instance_id)
 #else
@@ -426,8 +429,8 @@ class WasmCompiledModule : public FixedArray {
 
  public:
   static Handle<WasmCompiledModule> New(
-      Isolate* isolate, Handle<WasmSharedModuleData> shared,
-      Handle<FixedArray> code_table, Handle<FixedArray> export_wrappers,
+      Isolate* isolate, wasm::WasmModule* module, Handle<FixedArray> code_table,
+      Handle<FixedArray> export_wrappers,
       const std::vector<wasm::GlobalHandleAddress>& function_tables,
       const std::vector<wasm::GlobalHandleAddress>& signature_tables);
 
@@ -435,9 +438,15 @@ class WasmCompiledModule : public FixedArray {
                                           Handle<WasmCompiledModule> module);
   static void Reset(Isolate* isolate, WasmCompiledModule* module);
 
+  // TODO(mtrofin): delete this when we don't need FLAG_wasm_jit_to_native
+  static void ResetGCModel(Isolate* isolate, WasmCompiledModule* module);
+
   uint32_t default_mem_size() const;
+
+  wasm::NativeModule* GetNativeModule() const;
   void InsertInChain(WasmModuleObject*);
   void RemoveFromChain();
+  void OnWasmModuleDecodingComplete(Handle<WasmSharedModuleData>);
 
 #define DECLARATION(KIND, TYPE, NAME) WCM_##KIND(TYPE, NAME)
   WCM_PROPERTY_TABLE(DECLARATION)
@@ -539,23 +548,16 @@ class WasmCompiledModule : public FixedArray {
   // FixedArray with all hit breakpoint objects.
   MaybeHandle<FixedArray> CheckBreakPoints(int position);
 
-  // Compile lazily the function called in the given caller code object at the
-  // given offset.
-  // If the called function cannot be determined from the caller (indirect
-  // call / exported function), func_index must be set. Otherwise it can be -1.
-  // If patch_caller is set, then all direct calls to functions which were
-  // already lazily compiled are patched (at least the given call site).
-  // Returns the Code to be called at the given call site.
-  static Handle<Code> CompileLazy(Isolate*, Handle<WasmInstanceObject>,
-                                  Handle<Code> caller, int offset,
-                                  int func_index, bool patch_caller);
+  inline void ReplaceCodeTableForTesting(
+      std::vector<wasm::WasmCode*>&& testing_table);
 
-  inline void ReplaceCodeTableForTesting(Handle<FixedArray> testing_table);
-
+  // TODO(mtrofin): following 4 unnecessary after we're done with
+  // FLAG_wasm_jit_to_native
   static void SetTableValue(Isolate* isolate, Handle<FixedArray> table,
                             int index, Address value);
   static void UpdateTableValue(FixedArray* table, int index, Address value);
   static Address GetTableValue(FixedArray* table, int index);
+  inline void ReplaceCodeTableForTesting(Handle<FixedArray> testing_table);
 
  private:
   void InitId();
@@ -656,6 +658,27 @@ class WasmDebugInfo : public FixedArray {
   static Handle<JSFunction> GetCWasmEntry(Handle<WasmDebugInfo>,
                                           wasm::FunctionSig*);
 };
+
+// Attach function information in the form of deoptimization data to the given
+// code object. This information will be used for generating stack traces,
+// calling imported functions in the interpreter, knowing which function to
+// compile in a lazy compile stub, and more. The deopt data will be a newly
+// allocated FixedArray of length 2, where the first element is a WeakCell
+// containing the WasmInstanceObject, and the second element is the function
+// index.
+// If calling this method repeatedly for the same instance, pass a WeakCell
+// directly in order to avoid creating many cells pointing to the same instance.
+void AttachWasmFunctionInfo(Isolate*, Handle<Code>,
+                            MaybeHandle<WeakCell> weak_instance,
+                            int func_index);
+void AttachWasmFunctionInfo(Isolate*, Handle<Code>,
+                            MaybeHandle<WasmInstanceObject>, int func_index);
+
+struct WasmFunctionInfo {
+  MaybeHandle<WasmInstanceObject> instance;
+  int func_index;
+};
+WasmFunctionInfo GetWasmFunctionInfo(Isolate*, Handle<Code>);
 
 #undef DECL_OOL_QUERY
 #undef DECL_OOL_CAST

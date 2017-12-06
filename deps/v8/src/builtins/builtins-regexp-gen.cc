@@ -834,6 +834,11 @@ Node* RegExpBuiltinsAssembler::IsFastRegExpNoPrototype(Node* const context,
   Label out(this);
   VARIABLE(var_result, MachineRepresentation::kWord32);
 
+#ifdef V8_ENABLE_FORCE_SLOW_PATH
+  var_result.Bind(Int32Constant(0));
+  GotoIfForceSlowPath(&out);
+#endif
+
   Node* const native_context = LoadNativeContext(context);
   Node* const regexp_fun =
       LoadContextElement(native_context, Context::REGEXP_FUNCTION_INDEX);
@@ -870,6 +875,8 @@ void RegExpBuiltinsAssembler::BranchIfFastRegExp(Node* const context,
                                                  Label* const if_isunmodified,
                                                  Label* const if_ismodified) {
   CSA_ASSERT(this, WordEqual(LoadMap(object), map));
+
+  GotoIfForceSlowPath(if_ismodified);
 
   // TODO(ishell): Update this check once map changes for constant field
   // tracking are landing.
@@ -2733,7 +2740,7 @@ Node* RegExpBuiltinsAssembler::ReplaceGlobalCallableFastPath(
           TNode<IntPtrT> int_elem = SmiUntag(elem);
           TNode<IntPtrT> new_match_start =
               Signed(IntPtrAdd(WordShr(int_elem, IntPtrConstant(11)),
-                               WordAnd(int_elem, IntPtrConstant(0x7ff))));
+                               WordAnd(int_elem, IntPtrConstant(0x7FF))));
           var_match_start = SmiTag(new_match_start);
           Goto(&loop_epilogue);
         }

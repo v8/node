@@ -211,7 +211,7 @@ Handle<JSReceiver> LookupIterator::GetRootForNonJSReceiver(
   auto root =
       handle(receiver->GetPrototypeChainRootMap(isolate)->prototype(), isolate);
   if (root->IsNull(isolate)) {
-    unsigned int magic = 0xbbbbbbbb;
+    unsigned int magic = 0xBBBBBBBB;
     isolate->PushStackTraceAndDie(magic, *receiver, nullptr, magic);
   }
   return Handle<JSReceiver>::cast(root);
@@ -479,6 +479,7 @@ void LookupIterator::ApplyTransitionToDataProperty(Handle<JSObject> receiver) {
   DCHECK(receiver.is_identical_to(GetStoreTarget()));
   holder_ = receiver;
   if (receiver->IsJSGlobalObject()) {
+    JSObject::InvalidatePrototypeChains(receiver->map());
     state_ = DATA;
     return;
   }
@@ -495,6 +496,9 @@ void LookupIterator::ApplyTransitionToDataProperty(Handle<JSObject> receiver) {
     Handle<NameDictionary> dictionary(receiver->property_dictionary(),
                                       isolate_);
     int entry;
+    if (receiver->map()->is_prototype_map()) {
+      JSObject::InvalidatePrototypeChains(receiver->map());
+    }
     dictionary = NameDictionary::Add(dictionary, name(),
                                      isolate_->factory()->uninitialized_value(),
                                      property_details_, &entry);
@@ -521,8 +525,8 @@ void LookupIterator::Delete() {
     bool is_prototype_map = holder->map()->is_prototype_map();
     RuntimeCallTimerScope stats_scope(
         isolate_, is_prototype_map
-                      ? &RuntimeCallStats::PrototypeObject_DeleteProperty
-                      : &RuntimeCallStats::Object_DeleteProperty);
+                      ? RuntimeCallCounterId::kPrototypeObject_DeleteProperty
+                      : RuntimeCallCounterId::kObject_DeleteProperty);
 
     PropertyNormalizationMode mode =
         is_prototype_map ? KEEP_INOBJECT_PROPERTIES : CLEAR_INOBJECT_PROPERTIES;
@@ -638,9 +642,12 @@ void LookupIterator::TransitionToAccessorPair(Handle<Object> pair,
 
     ReloadPropertyInformation<true>();
   } else {
-    PropertyNormalizationMode mode = receiver->map()->is_prototype_map()
-                                         ? KEEP_INOBJECT_PROPERTIES
-                                         : CLEAR_INOBJECT_PROPERTIES;
+    PropertyNormalizationMode mode = CLEAR_INOBJECT_PROPERTIES;
+    if (receiver->map()->is_prototype_map()) {
+      JSObject::InvalidatePrototypeChains(receiver->map());
+      mode = KEEP_INOBJECT_PROPERTIES;
+    }
+
     // Normalize object to make this operation simple.
     JSObject::NormalizeProperties(receiver, mode, 0,
                                   "TransitionToAccessorPair");

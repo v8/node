@@ -42,6 +42,7 @@ class BytecodeArray;
 class CodeDataContainer;
 class DeoptimizationData;
 class HandlerTable;
+class IncrementalMarking;
 class JSArrayBuffer;
 
 using v8::MemoryPressureLevel;
@@ -255,7 +256,8 @@ using v8::MemoryPressureLevel;
     DeserializeLazyHandlerExtraWide)                                           \
   /* JS Entries */                                                             \
   V(Code, js_entry_code, JsEntryCode)                                          \
-  V(Code, js_construct_entry_code, JsConstructEntryCode)
+  V(Code, js_construct_entry_code, JsConstructEntryCode)                       \
+  V(Code, js_run_microtasks_entry_code, JsRunMicrotasksEntryCode)
 
 // Entries in this list are limited to Smis and are not visited during GC.
 #define SMI_ROOT_LIST(V)                                                       \
@@ -559,42 +561,48 @@ class HistogramInfo : public NumberAndSizeInfo {
 class Heap {
  public:
   // Declare all the root indices.  This defines the root list order.
+  // clang-format off
   enum RootListIndex {
-#define ROOT_INDEX_DECLARATION(type, name, camel_name) k##camel_name##RootIndex,
-    STRONG_ROOT_LIST(ROOT_INDEX_DECLARATION)
-#undef ROOT_INDEX_DECLARATION
+#define DECL(type, name, camel_name) k##camel_name##RootIndex,
+    STRONG_ROOT_LIST(DECL)
+#undef DECL
 
-#define STRING_INDEX_DECLARATION(name, str) k##name##RootIndex,
-        INTERNALIZED_STRING_LIST(STRING_INDEX_DECLARATION)
-#undef STRING_DECLARATION
+#define DECL(name, str) k##name##RootIndex,
+    INTERNALIZED_STRING_LIST(DECL)
+#undef DECL
 
-#define SYMBOL_INDEX_DECLARATION(name) k##name##RootIndex,
-            PRIVATE_SYMBOL_LIST(SYMBOL_INDEX_DECLARATION)
-#undef SYMBOL_INDEX_DECLARATION
+#define DECL(name) k##name##RootIndex,
+    PRIVATE_SYMBOL_LIST(DECL)
+#undef DECL
 
-#define SYMBOL_INDEX_DECLARATION(name, description) k##name##RootIndex,
-                PUBLIC_SYMBOL_LIST(SYMBOL_INDEX_DECLARATION)
-                    WELL_KNOWN_SYMBOL_LIST(SYMBOL_INDEX_DECLARATION)
-#undef SYMBOL_INDEX_DECLARATION
+#define DECL(name, description) k##name##RootIndex,
+    PUBLIC_SYMBOL_LIST(DECL)
+    WELL_KNOWN_SYMBOL_LIST(DECL)
+#undef DECL
 
-#define ACCESSOR_INDEX_DECLARATION(accessor_name, AccessorName) \
-  k##AccessorName##AccessorRootIndex,
-                        ACCESSOR_INFO_LIST(ACCESSOR_INDEX_DECLARATION)
-#undef ACCESSOR_INDEX_DECLARATION
+#define DECL(accessor_name, AccessorName) k##AccessorName##AccessorRootIndex,
+    ACCESSOR_INFO_LIST(DECL)
+#undef DECL
 
-// Utility type maps
-#define DECLARE_STRUCT_MAP(NAME, Name, name) k##Name##MapRootIndex,
-                            STRUCT_LIST(DECLARE_STRUCT_MAP)
-#undef DECLARE_STRUCT_MAP
-                                kStringTableRootIndex,
+#define DECL(NAME, Name, name) k##Name##MapRootIndex,
+    STRUCT_LIST(DECL)
+#undef DECL
 
-#define ROOT_INDEX_DECLARATION(type, name, camel_name) k##camel_name##RootIndex,
-    SMI_ROOT_LIST(ROOT_INDEX_DECLARATION)
-#undef ROOT_INDEX_DECLARATION
-        kRootListLength,
+#define DECL(NAME, Name, Size, name) k##Name##Size##MapRootIndex,
+    DATA_HANDLER_LIST(DECL)
+#undef DECL
+
+    kStringTableRootIndex,
+
+#define DECL(type, name, camel_name) k##camel_name##RootIndex,
+    SMI_ROOT_LIST(DECL)
+#undef DECL
+
+    kRootListLength,
     kStrongRootListLength = kStringTableRootIndex,
     kSmiRootsStart = kStringTableRootIndex + 1
   };
+  // clang-format on
 
   enum FindMementoMode { kForRuntime, kForGC };
 
@@ -1044,6 +1052,11 @@ class Heap {
 #define STRUCT_MAP_ACCESSOR(NAME, Name, name) inline Map* name##_map();
   STRUCT_LIST(STRUCT_MAP_ACCESSOR)
 #undef STRUCT_MAP_ACCESSOR
+
+#define DATA_HANDLER_MAP_ACCESSOR(NAME, Name, Size, name) \
+  inline Map* name##_map();
+  DATA_HANDLER_LIST(DATA_HANDLER_MAP_ACCESSOR)
+#undef DATA_HANDLER_MAP_ACCESSOR
 
 #define STRING_ACCESSOR(name, str) inline String* name();
   INTERNALIZED_STRING_LIST(STRING_ACCESSOR)
@@ -1571,6 +1584,19 @@ class Heap {
       const PretenuringFeedbackMap& local_pretenuring_feedback);
 
   // ===========================================================================
+  // Allocation tracking. ======================================================
+  // ===========================================================================
+
+  // Adds {new_space_observer} to new space and {observer} to any other space.
+  void AddAllocationObserversToAllSpaces(
+      AllocationObserver* observer, AllocationObserver* new_space_observer);
+
+  // Removes {new_space_observer} from new space and {observer} from any other
+  // space.
+  void RemoveAllocationObserversFromAllSpaces(
+      AllocationObserver* observer, AllocationObserver* new_space_observer);
+
+  // ===========================================================================
   // Retaining path tracking. ==================================================
   // ===========================================================================
 
@@ -1579,6 +1605,18 @@ class Heap {
   // path. This requires --track-retaining-path flag.
   void AddRetainingPathTarget(Handle<HeapObject> object,
                               RetainingPathOption option);
+
+  // ===========================================================================
+  // Stack frame support. ======================================================
+  // ===========================================================================
+
+  // Returns the Code object for a given interior pointer. Returns nullptr if
+  // {inner_pointer} is not contained within a Code object.
+  Code* GcSafeFindCodeForInnerPointer(Address inner_pointer);
+
+  // Returns true if {addr} is contained within {code} and false otherwise.
+  // Mostly useful for debugging.
+  bool GcSafeCodeContains(HeapObject* code, Address addr);
 
 // =============================================================================
 #ifdef VERIFY_HEAP
@@ -1804,6 +1842,7 @@ class Heap {
   // because of a gcc-4.4 bug that assigns wrong vtable entries.
   NO_INLINE(void CreateJSEntryStub());
   NO_INLINE(void CreateJSConstructEntryStub());
+  NO_INLINE(void CreateJSRunMicrotasksEntryStub());
 
   void CreateFixedStubs();
 
@@ -2375,6 +2414,10 @@ class Heap {
   // is reached.
   int stress_marking_percentage_;
 
+  // Observer that causes more frequent checks for reached incremental marking
+  // limit.
+  AllocationObserver* stress_marking_observer_;
+
   // How many mark-sweep collections happened.
   unsigned int ms_count_;
 
@@ -2571,6 +2614,7 @@ class Heap {
   friend class PagedSpace;
   friend class Scavenger;
   friend class StoreBuffer;
+  friend class Sweeper;
   friend class heap::TestMemoryAllocatorScope;
 
   // The allocator interface.
@@ -2645,6 +2689,10 @@ class CodePageMemoryModificationScope {
  private:
   MemoryChunk* chunk_;
   bool scope_active_;
+
+  // Disallow any GCs inside this scope, as a relocation of the underlying
+  // object would change the {MemoryChunk} that this scope targets.
+  DisallowHeapAllocation no_heap_allocation_;
 };
 
 // Visitor class to verify interior pointers in spaces that do not contain
@@ -2666,19 +2714,6 @@ class VerifyPointersVisitor : public ObjectVisitor, public RootVisitor {
 class VerifySmisVisitor : public RootVisitor {
  public:
   void VisitRootPointers(Root root, Object** start, Object** end) override;
-};
-
-
-// Space iterator for iterating over all spaces of the heap.  Returns each space
-// in turn, and null when it is done.
-class AllSpaces BASE_EMBEDDED {
- public:
-  explicit AllSpaces(Heap* heap) : heap_(heap), counter_(FIRST_SPACE) {}
-  Space* next();
-
- private:
-  Heap* heap_;
-  int counter_;
 };
 
 
@@ -2783,15 +2818,7 @@ class AllocationObserver {
   // Called each time the observed space does an allocation step. This may be
   // more frequently than the step_size we are monitoring (e.g. when there are
   // multiple observers, or when page or space boundary is encountered.)
-  void AllocationStep(int bytes_allocated, Address soon_object, size_t size) {
-    bytes_to_next_step_ -= bytes_allocated;
-    if (bytes_to_next_step_ <= 0) {
-      Step(static_cast<int>(step_size_ - bytes_to_next_step_), soon_object,
-           size);
-      step_size_ = GetNextStepSize();
-      bytes_to_next_step_ = step_size_;
-    }
-  }
+  void AllocationStep(int bytes_allocated, Address soon_object, size_t size);
 
  protected:
   intptr_t step_size() const { return step_size_; }

@@ -17,6 +17,7 @@
 #include "src/globals.h"
 #include "src/heap/heap.h"
 #include "src/machine-type.h"
+#include "src/objects/data-handler.h"
 #include "src/runtime/runtime.h"
 #include "src/zone/zone-containers.h"
 
@@ -26,6 +27,10 @@ namespace internal {
 class Callable;
 class CallInterfaceDescriptor;
 class Isolate;
+class JSCollection;
+class JSWeakCollection;
+class JSWeakMap;
+class JSWeakSet;
 class Factory;
 class Zone;
 
@@ -252,7 +257,7 @@ class Node;
 class RawMachineAssembler;
 class RawMachineLabel;
 
-typedef ZoneList<CodeAssemblerVariable*> CodeAssemblerVariableList;
+typedef ZoneVector<CodeAssemblerVariable*> CodeAssemblerVariableList;
 
 typedef std::function<void()> CodeAssemblerCallback;
 
@@ -1006,6 +1011,19 @@ class V8_EXPORT_PRIVATE CodeAssembler {
       MachineType arg2_type, Node* function, Node* arg0, Node* arg1, Node* arg2,
       SaveFPRegsMode mode);
 
+  // Call to a C function with four arguments.
+  Node* CallCFunction4(MachineType return_type, MachineType arg0_type,
+                       MachineType arg1_type, MachineType arg2_type,
+                       MachineType arg3_type, Node* function, Node* arg0,
+                       Node* arg1, Node* arg2, Node* arg3);
+
+  // Call to a C function with five arguments.
+  Node* CallCFunction5(MachineType return_type, MachineType arg0_type,
+                       MachineType arg1_type, MachineType arg2_type,
+                       MachineType arg3_type, MachineType arg4_type,
+                       Node* function, Node* arg0, Node* arg1, Node* arg2,
+                       Node* arg3, Node* arg4);
+
   // Call to a C function with six arguments.
   Node* CallCFunction6(MachineType return_type, MachineType arg0_type,
                        MachineType arg1_type, MachineType arg2_type,
@@ -1144,7 +1162,7 @@ class CodeAssemblerLabel {
       CodeAssembler* assembler,
       const CodeAssemblerVariableList& merged_variables,
       CodeAssemblerLabel::Type type = CodeAssemblerLabel::kNonDeferred)
-      : CodeAssemblerLabel(assembler, merged_variables.length(),
+      : CodeAssemblerLabel(assembler, merged_variables.size(),
                            &(merged_variables[0]), type) {}
   CodeAssemblerLabel(
       CodeAssembler* assembler, size_t count,

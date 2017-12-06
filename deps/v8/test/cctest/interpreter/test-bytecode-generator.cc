@@ -2234,29 +2234,54 @@ TEST(ClassAndSuperClass) {
 }
 
 TEST(ClassFields) {
-  bool old_flag = i::FLAG_harmony_class_fields;
-  i::FLAG_harmony_class_fields = true;
+  bool old_flag = i::FLAG_harmony_public_fields;
+  i::FLAG_harmony_public_fields = true;
   InitializedIgnitionHandleScope scope;
   BytecodeExpectationsPrinter printer(CcTest::isolate());
 
   const char* snippets[] = {
       "{\n"
+      "  class A {\n"
+      "    a;\n"
+      "    ['b'];\n"
+      "    static c;\n"
+      "    static ['d'];\n"
+      "  }\n"
+      "\n"
+      "  class B {\n"
+      "    a = 1;\n"
+      "    ['b'] = this.a;\n"
+      "    static c = 3;\n"
+      "    static ['d'] = this.c;\n"
+      "  }\n"
+      "  new A;\n"
+      "  new B;\n"
+      "}\n",
+
+      "{\n"
       "  class A extends class {} {\n"
       "    a;\n"
+      "    ['b'];\n"
       "    static c;\n"
+      "    static ['d'];\n"
       "  }\n"
       "\n"
       "  class B extends class {} {\n"
       "    a = 1;\n"
+      "    ['b'] = this.a;\n"
       "    static c = 3;\n"
+      "    static ['d'] = this.c;\n"
+      "    foo() { return 1; }\n"
       "    constructor() {\n"
       "      super();\n"
       "    }\n"
       "  }\n"
       "\n"
-      "  class C extends class {} {\n"
+      "  class C extends B {\n"
       "    a = 1;\n"
+      "    ['b'] = this.a;\n"
       "    static c = 3;\n"
+      "    static ['d'] = super.foo();\n"
       "    constructor() {\n"
       "      (() => super())();\n"
       "    }\n"
@@ -2269,7 +2294,7 @@ TEST(ClassFields) {
 
   CHECK(CompareTexts(BuildActual(printer, snippets),
                      LoadGolden("ClassFields.golden")));
-  i::FLAG_harmony_class_fields = old_flag;
+  i::FLAG_harmony_public_fields = old_flag;
 }
 
 TEST(Generators) {

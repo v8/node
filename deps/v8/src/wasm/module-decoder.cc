@@ -21,14 +21,11 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
-#if DEBUG
 #define TRACE(...)                                    \
   do {                                                \
     if (FLAG_trace_wasm_decoder) PrintF(__VA_ARGS__); \
   } while (false)
-#else
-#define TRACE(...)
-#endif
+
 namespace {
 
 constexpr char kNameString[] = "name";
@@ -299,7 +296,7 @@ class ModuleDecoderImpl : public Decoder {
 
     const byte* pos = pc_;
     uint32_t magic_word = consume_u32("wasm magic");
-#define BYTES(x) (x & 0xff), (x >> 8) & 0xff, (x >> 16) & 0xff, (x >> 24) & 0xff
+#define BYTES(x) (x & 0xFF), (x >> 8) & 0xFF, (x >> 16) & 0xFF, (x >> 24) & 0xFF
     if (magic_word != kWasmMagic) {
       errorf(pos,
              "expected magic word %02x %02x %02x %02x, "
@@ -1118,7 +1115,7 @@ class ModuleDecoderImpl : public Decoder {
 
     if (FLAG_experimental_wasm_threads) {
       bool is_memory = (strcmp(name, "memory") == 0);
-      if (flags & 0xfc || (!is_memory && (flags & 0xfe))) {
+      if (flags & 0xFC || (!is_memory && (flags & 0xFE))) {
         errorf(pos - 1, "invalid %s limits flags", name);
       }
       if (flags == 3) {
@@ -1130,7 +1127,7 @@ class ModuleDecoderImpl : public Decoder {
                name);
       }
     } else {
-      if (flags & 0xfe) {
+      if (flags & 0xFE) {
         errorf(pos - 1, "invalid %s limits flags", name);
       }
     }
@@ -1544,8 +1541,13 @@ std::vector<CustomSectionOffset> DecodeCustomSections(const byte* start,
     uint32_t name_offset = decoder.pc_offset();
     decoder.consume_bytes(name_length, "section name");
     uint32_t payload_offset = decoder.pc_offset();
+    if (section_length < (payload_offset - section_start)) {
+      decoder.error("invalid section length");
+      break;
+    }
     uint32_t payload_length = section_length - (payload_offset - section_start);
     decoder.consume_bytes(payload_length);
+    if (decoder.failed()) break;
     result.push_back({{section_start, section_length},
                       {name_offset, name_length},
                       {payload_offset, payload_length}});

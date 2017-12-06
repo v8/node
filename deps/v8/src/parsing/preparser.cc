@@ -207,7 +207,7 @@ PreParser::PreParseResult PreParser::PreParseFunction(
 
   if (!IsArrowFunction(kind) && track_unresolved_variables_ &&
       result == kLazyParsingComplete) {
-    CreateFunctionNameAssignment(function_name, function_type, function_scope);
+    DeclareFunctionNameVar(function_name, function_type, function_scope);
 
     // Declare arguments after parsing the function since lexical 'arguments'
     // masks the arguments object. Declare arguments before declaring the
@@ -269,11 +269,11 @@ PreParser::Expression PreParser::ParseFunctionLiteral(
     LanguageMode language_mode, bool* ok) {
   // Function ::
   //   '(' FormalParameterList? ')' '{' FunctionBody '}'
-  const RuntimeCallStats::CounterId counters[2][2] = {
-      {&RuntimeCallStats::PreParseBackgroundNoVariableResolution,
-       &RuntimeCallStats::PreParseNoVariableResolution},
-      {&RuntimeCallStats::PreParseBackgroundWithVariableResolution,
-       &RuntimeCallStats::PreParseWithVariableResolution}};
+  const RuntimeCallCounterId counters[2][2] = {
+      {RuntimeCallCounterId::kPreParseBackgroundNoVariableResolution,
+       RuntimeCallCounterId::kPreParseNoVariableResolution},
+      {RuntimeCallCounterId::kPreParseBackgroundWithVariableResolution,
+       RuntimeCallCounterId::kPreParseWithVariableResolution}};
   RuntimeCallTimerScope runtime_timer(
       runtime_call_stats_,
       counters[track_unresolved_variables_][parsing_on_main_thread_]);

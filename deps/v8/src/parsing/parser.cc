@@ -276,18 +276,18 @@ bool Parser::ShortcutNumericLiteralBinaryExpression(Expression** x,
         return true;
       }
       case Token::SHL: {
-        int value = DoubleToInt32(x_val) << (DoubleToInt32(y_val) & 0x1f);
+        int value = DoubleToInt32(x_val) << (DoubleToInt32(y_val) & 0x1F);
         *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::SHR: {
-        uint32_t shift = DoubleToInt32(y_val) & 0x1f;
+        uint32_t shift = DoubleToInt32(y_val) & 0x1F;
         uint32_t value = DoubleToUint32(x_val) >> shift;
         *x = factory()->NewNumberLiteral(value, pos);
         return true;
       }
       case Token::SAR: {
-        uint32_t shift = DoubleToInt32(y_val) & 0x1f;
+        uint32_t shift = DoubleToInt32(y_val) & 0x1F;
         int value = ArithmeticShiftRight(DoubleToInt32(x_val), shift);
         *x = factory()->NewNumberLiteral(value, pos);
         return true;
@@ -542,11 +542,10 @@ Parser::Parser(ParseInfo* info)
   set_allow_natives(FLAG_allow_natives_syntax || info->is_native());
   set_allow_harmony_do_expressions(FLAG_harmony_do_expressions);
   set_allow_harmony_function_sent(FLAG_harmony_function_sent);
-  set_allow_harmony_class_fields(FLAG_harmony_class_fields);
+  set_allow_harmony_public_fields(FLAG_harmony_public_fields);
   set_allow_harmony_dynamic_import(FLAG_harmony_dynamic_import);
   set_allow_harmony_import_meta(FLAG_harmony_import_meta);
   set_allow_harmony_async_iteration(FLAG_harmony_async_iteration);
-  set_allow_harmony_template_escapes(FLAG_harmony_template_escapes);
   set_allow_harmony_bigint(FLAG_harmony_bigint);
   for (int feature = 0; feature < v8::Isolate::kUseCounterFeatureCount;
        ++feature) {
@@ -593,8 +592,9 @@ FunctionLiteral* Parser::ParseProgram(Isolate* isolate, ParseInfo* info) {
   // called in the main thread.
   DCHECK(parsing_on_main_thread_);
   RuntimeCallTimerScope runtime_timer(
-      runtime_call_stats_, info->is_eval() ? &RuntimeCallStats::ParseEval
-                                           : &RuntimeCallStats::ParseProgram);
+      runtime_call_stats_, info->is_eval()
+                               ? RuntimeCallCounterId::kParseEval
+                               : RuntimeCallCounterId::kParseProgram);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.ParseProgram");
   base::ElapsedTimer timer;
   if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
@@ -758,7 +758,7 @@ FunctionLiteral* Parser::ParseFunction(Isolate* isolate, ParseInfo* info,
   // called in the main thread.
   DCHECK(parsing_on_main_thread_);
   RuntimeCallTimerScope runtime_timer(runtime_call_stats_,
-                                      &RuntimeCallStats::ParseFunction);
+                                      RuntimeCallCounterId::kParseFunction);
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.ParseFunction");
   base::ElapsedTimer timer;
   if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
@@ -1828,25 +1828,13 @@ void Parser::ParseAndRewriteAsyncGeneratorFunctionBody(
             zone());
 }
 
-void Parser::CreateFunctionNameAssignment(
-    const AstRawString* function_name, int pos,
-    FunctionLiteral::FunctionType function_type,
-    DeclarationScope* function_scope, ZoneList<Statement*>* result, int index) {
-  if (function_type == FunctionLiteral::kNamedExpression) {
-    StatementT statement = factory()->NewEmptyStatement(kNoSourcePosition);
-    if (function_scope->LookupLocal(function_name) == nullptr) {
-      // Now that we know the language mode, we can create the const assignment
-      // in the previously reserved spot.
-      DCHECK_EQ(function_scope, scope());
-      Variable* fvar = function_scope->DeclareFunctionVar(function_name);
-      VariableProxy* fproxy = factory()->NewVariableProxy(fvar);
-      statement = factory()->NewExpressionStatement(
-          factory()->NewAssignment(Token::INIT, fproxy,
-                                   factory()->NewThisFunction(pos),
-                                   kNoSourcePosition),
-          kNoSourcePosition);
-    }
-    result->Set(index, statement);
+void Parser::DeclareFunctionNameVar(const AstRawString* function_name,
+                                    FunctionLiteral::FunctionType function_type,
+                                    DeclarationScope* function_scope) {
+  if (function_type == FunctionLiteral::kNamedExpression &&
+      function_scope->LookupLocal(function_name) == nullptr) {
+    DCHECK_EQ(function_scope, scope());
+    function_scope->DeclareFunctionVar(function_name);
   }
 }
 
@@ -2590,8 +2578,7 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
 
   const bool is_lazy =
       eager_compile_hint == FunctionLiteral::kShouldLazyCompile;
-  const bool is_top_level =
-      impl()->AllowsLazyParsingWithoutUnresolvedVariables();
+  const bool is_top_level = AllowsLazyParsingWithoutUnresolvedVariables();
   const bool is_lazy_top_level_function = is_lazy && is_top_level;
   const bool is_lazy_inner_function = is_lazy && !is_top_level;
   const bool is_expression =
@@ -2601,8 +2588,8 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
   RuntimeCallTimerScope runtime_timer(
       runtime_call_stats_,
       parsing_on_main_thread_
-          ? &RuntimeCallStats::ParseFunctionLiteral
-          : &RuntimeCallStats::ParseBackgroundFunctionLiteral);
+          ? RuntimeCallCounterId::kParseFunctionLiteral
+          : RuntimeCallCounterId::kParseBackgroundFunctionLiteral);
   base::ElapsedTimer timer;
   if (V8_UNLIKELY(FLAG_log_function_events)) timer.Start();
 
@@ -2719,18 +2706,20 @@ FunctionLiteral* Parser::ParseFunctionLiteral(
     }
     if (V8_UNLIKELY(FLAG_runtime_stats)) {
       if (should_preparse) {
-        RuntimeCallStats::CounterId counter_id =
+        RuntimeCallCounterId counter_id =
             parsing_on_main_thread_
-                ? &RuntimeCallStats::PreParseWithVariableResolution
-                : &RuntimeCallStats::PreParseBackgroundWithVariableResolution;
+                ? RuntimeCallCounterId::kPreParseWithVariableResolution
+                : RuntimeCallCounterId::
+                      kPreParseBackgroundWithVariableResolution;
         if (is_top_level) {
-          counter_id =
-              parsing_on_main_thread_
-                  ? &RuntimeCallStats::PreParseNoVariableResolution
-                  : &RuntimeCallStats::PreParseBackgroundNoVariableResolution;
+          counter_id = parsing_on_main_thread_
+                           ? RuntimeCallCounterId::kPreParseNoVariableResolution
+                           : RuntimeCallCounterId::
+                                 kPreParseBackgroundNoVariableResolution;
         }
-        RuntimeCallStats::CorrectCurrentCounterId(runtime_call_stats_,
-                                                  counter_id);
+        if (runtime_call_stats_) {
+          runtime_call_stats_->CorrectCurrentCounterId(counter_id);
+        }
       }
     }
 
@@ -3215,16 +3204,6 @@ void Parser::DeclareClassVariable(const AstRawString* name,
   }
 }
 
-namespace {
-
-const AstRawString* ClassFieldVariableName(AstValueFactory* ast_value_factory,
-                                           int index) {
-  std::string name = ".class-field-" + std::to_string(index);
-  return ast_value_factory->GetOneByteString(name.c_str());
-}
-
-}  // namespace
-
 // TODO(gsathya): Ideally, this should just bypass scope analysis and
 // allocate a slot directly on the context. We should just store this
 // index in the AST, instead of storing the variable.
@@ -3247,7 +3226,8 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
                                   ClassLiteralProperty* property,
                                   ClassLiteralProperty::Kind kind,
                                   bool is_static, bool is_constructor,
-                                  ClassInfo* class_info, bool* ok) {
+                                  bool is_computed_name, ClassInfo* class_info,
+                                  bool* ok) {
   if (is_constructor) {
     DCHECK(!class_info->constructor);
     class_info->constructor = property->value()->AsFunctionLiteral();
@@ -3258,12 +3238,12 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
     return;
   }
 
-  if (property->kind() != ClassLiteralProperty::FIELD) {
+  if (kind != ClassLiteralProperty::FIELD) {
     class_info->properties->Add(property, zone());
     return;
   }
 
-  DCHECK(allow_harmony_class_fields());
+  DCHECK(allow_harmony_public_fields());
 
   if (is_static) {
     class_info->static_fields->Add(property, zone());
@@ -3271,14 +3251,13 @@ void Parser::DeclareClassProperty(const AstRawString* class_name,
     class_info->instance_fields->Add(property, zone());
   }
 
-  int index = class_info->static_fields->length() +
-              class_info->instance_fields->length();
-
-  if (property->is_computed_name()) {
+  if (is_computed_name) {
     // We create a synthetic variable name here so that scope
     // analysis doesn't dedupe the vars.
     Variable* computed_name_var = CreateSyntheticContextVariable(
-        ClassFieldVariableName(ast_value_factory(), index), CHECK_OK_VOID);
+        ClassFieldVariableName(ast_value_factory(),
+                               class_info->computed_field_count),
+        CHECK_OK_VOID);
     property->set_computed_name_var(computed_name_var);
     class_info->properties->Add(property, zone());
   }
@@ -3474,8 +3453,8 @@ void Parser::UpdateStatistics(Isolate* isolate, Handle<Script> script) {
 }
 
 void Parser::ParseOnBackground(ParseInfo* info) {
-  RuntimeCallTimerScope runtimeTimer(runtime_call_stats_,
-                                     &RuntimeCallStats::ParseBackgroundProgram);
+  RuntimeCallTimerScope runtimeTimer(
+      runtime_call_stats_, RuntimeCallCounterId::kParseBackgroundProgram);
   parsing_on_main_thread_ = false;
   if (!info->script().is_null()) {
     set_script_id(info->script()->id());
@@ -3529,7 +3508,6 @@ Parser::TemplateLiteralState Parser::OpenTemplateLiteral(int pos) {
 
 void Parser::AddTemplateSpan(TemplateLiteralState* state, bool should_cook,
                              bool tail) {
-  DCHECK(should_cook || allow_harmony_template_escapes());
   int end = scanner()->location().end_pos - (tail ? 1 : 2);
   const AstRawString* raw = scanner()->CurrentRawSymbol(ast_value_factory());
   if (should_cook) {
@@ -3606,11 +3584,11 @@ namespace {
 
 // http://burtleburtle.net/bob/hash/integer.html
 uint32_t HalfAvalance(uint32_t a) {
-  a = (a + 0x479ab41d) + (a << 8);
-  a = (a ^ 0xe4aa10ce) ^ (a >> 5);
-  a = (a + 0x9942f0a6) - (a << 14);
-  a = (a ^ 0x5aedd67d) ^ (a >> 3);
-  a = (a + 0x17bea992) + (a << 7);
+  a = (a + 0x479AB41D) + (a << 8);
+  a = (a ^ 0xE4AA10CE) ^ (a >> 5);
+  a = (a + 0x9942F0A6) - (a << 14);
+  a = (a ^ 0x5AEDD67D) ^ (a >> 3);
+  a = (a + 0x17BEA992) + (a << 7);
   return a;
 }
 
@@ -3868,58 +3846,6 @@ void Parser::RewriteDestructuringAssignments() {
       RewriteDestructuringAssignment(to_rewrite);
     }
   }
-}
-
-Expression* Parser::RewriteExponentiation(Expression* left, Expression* right,
-                                          int pos) {
-  ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(2, zone());
-  args->Add(left, zone());
-  args->Add(right, zone());
-  return factory()->NewCallRuntime(Context::MATH_POW_INDEX, args, pos);
-}
-
-Expression* Parser::RewriteAssignExponentiation(Expression* left,
-                                                Expression* right, int pos) {
-  ZoneList<Expression*>* args = new (zone()) ZoneList<Expression*>(2, zone());
-  if (left->IsVariableProxy()) {
-    VariableProxy* lhs = left->AsVariableProxy();
-
-    Expression* result;
-    DCHECK_NOT_NULL(lhs->raw_name());
-    result = ExpressionFromIdentifier(lhs->raw_name(), lhs->position());
-    args->Add(left, zone());
-    args->Add(right, zone());
-    Expression* call =
-        factory()->NewCallRuntime(Context::MATH_POW_INDEX, args, pos);
-    return factory()->NewAssignment(Token::ASSIGN, result, call, pos);
-  } else if (left->IsProperty()) {
-    Property* prop = left->AsProperty();
-    auto temp_obj = NewTemporary(ast_value_factory()->empty_string());
-    auto temp_key = NewTemporary(ast_value_factory()->empty_string());
-    Expression* assign_obj = factory()->NewAssignment(
-        Token::ASSIGN, factory()->NewVariableProxy(temp_obj), prop->obj(),
-        kNoSourcePosition);
-    Expression* assign_key = factory()->NewAssignment(
-        Token::ASSIGN, factory()->NewVariableProxy(temp_key), prop->key(),
-        kNoSourcePosition);
-    args->Add(factory()->NewProperty(factory()->NewVariableProxy(temp_obj),
-                                     factory()->NewVariableProxy(temp_key),
-                                     left->position()),
-              zone());
-    args->Add(right, zone());
-    Expression* call =
-        factory()->NewCallRuntime(Context::MATH_POW_INDEX, args, pos);
-    Expression* target = factory()->NewProperty(
-        factory()->NewVariableProxy(temp_obj),
-        factory()->NewVariableProxy(temp_key), kNoSourcePosition);
-    Expression* assign =
-        factory()->NewAssignment(Token::ASSIGN, target, call, pos);
-    return factory()->NewBinaryOperation(
-        Token::COMMA, assign_obj,
-        factory()->NewBinaryOperation(Token::COMMA, assign_key, assign, pos),
-        pos);
-  }
-  UNREACHABLE();
 }
 
 Expression* Parser::RewriteSpreads(ArrayLiteral* lit) {

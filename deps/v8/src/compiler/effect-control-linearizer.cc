@@ -320,17 +320,17 @@ Node* DummyValue(JSGraph* jsgraph, MachineRepresentation rep) {
   switch (rep) {
     case MachineRepresentation::kTagged:
     case MachineRepresentation::kTaggedSigned:
-      return jsgraph->SmiConstant(0xdead);
+      return jsgraph->SmiConstant(0xDEAD);
     case MachineRepresentation::kTaggedPointer:
       return jsgraph->TheHoleConstant();
     case MachineRepresentation::kWord64:
-      return jsgraph->Int64Constant(0xdead);
+      return jsgraph->Int64Constant(0xDEAD);
     case MachineRepresentation::kWord32:
-      return jsgraph->Int32Constant(0xdead);
+      return jsgraph->Int32Constant(0xDEAD);
     case MachineRepresentation::kFloat64:
-      return jsgraph->Float64Constant(0xdead);
+      return jsgraph->Float64Constant(0xDEAD);
     case MachineRepresentation::kFloat32:
-      return jsgraph->Float32Constant(0xdead);
+      return jsgraph->Float32Constant(0xDEAD);
     case MachineRepresentation::kBit:
       return jsgraph->Int32Constant(0);
     default:
@@ -842,6 +842,9 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kNewArgumentsElements:
       result = LowerNewArgumentsElements(node);
       break;
+    case IrOpcode::kNewConsString:
+      result = LowerNewConsString(node);
+      break;
     case IrOpcode::kArrayBufferWasNeutered:
       result = LowerArrayBufferWasNeutered(node);
       break;
@@ -856,6 +859,9 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
       break;
     case IrOpcode::kStringIndexOf:
       result = LowerStringIndexOf(node);
+      break;
+    case IrOpcode::kStringLength:
+      result = LowerStringLength(node);
       break;
     case IrOpcode::kStringToNumber:
       result = LowerStringToNumber(node);
@@ -1131,6 +1137,7 @@ void EffectControlLinearizer::TruncateTaggedPointerToBit(
   Node* value = node->InputAt(0);
 
   auto if_heapnumber = __ MakeDeferredLabel();
+  auto if_bigint = __ MakeDeferredLabel();
 
   Node* zero = __ Int32Constant(0);
   Node* fzero = __ Float64Constant(0.0);
@@ -1158,6 +1165,12 @@ void EffectControlLinearizer::TruncateTaggedPointerToBit(
   __ GotoIf(__ WordEqual(value_map, __ HeapNumberMapConstant()),
             &if_heapnumber);
 
+  // Check if {value} is a BigInt.
+  Node* value_instance_type =
+      __ LoadField(AccessBuilder::ForMapInstanceType(), value_map);
+  __ GotoIf(__ Word32Equal(value_instance_type, __ Int32Constant(BIGINT_TYPE)),
+            &if_bigint);
+
   // All other values that reach here are true.
   __ Goto(done, __ Int32Constant(1));
 
@@ -1168,6 +1181,15 @@ void EffectControlLinearizer::TruncateTaggedPointerToBit(
     Node* value_value =
         __ LoadField(AccessBuilder::ForHeapNumberValue(), value);
     __ Goto(done, __ Float64LessThan(fzero, __ Float64Abs(value_value)));
+  }
+
+  __ Bind(&if_bigint);
+  {
+    Node* bitfield = __ LoadField(AccessBuilder::ForBigIntBitfield(), value);
+    Node* length_is_zero = __ Word32Equal(
+        __ Word32And(bitfield, __ Int32Constant(BigInt::LengthBits::kMask)),
+        zero);
+    __ Goto(done, __ Word32Equal(length_is_zero, zero));
   }
 }
 
@@ -2493,6 +2515,52 @@ Node* EffectControlLinearizer::LowerNewArgumentsElements(Node* node) {
                  __ SmiConstant(mapped_count), __ NoContextConstant());
 }
 
+Node* EffectControlLinearizer::LowerNewConsString(Node* node) {
+  Node* length = node->InputAt(0);
+  Node* first = node->InputAt(1);
+  Node* second = node->InputAt(2);
+
+  // Determine the instance types of {first} and {second}.
+  Node* first_map = __ LoadField(AccessBuilder::ForMap(), first);
+  Node* first_instance_type =
+      __ LoadField(AccessBuilder::ForMapInstanceType(), first_map);
+  Node* second_map = __ LoadField(AccessBuilder::ForMap(), second);
+  Node* second_instance_type =
+      __ LoadField(AccessBuilder::ForMapInstanceType(), second_map);
+
+  // Determine the proper map for the resulting ConsString.
+  // If both {first} and {second} are one-byte strings, we
+  // create a new ConsOneByteString, otherwise we create a
+  // new ConsString instead.
+  auto if_onebyte = __ MakeLabel();
+  auto if_twobyte = __ MakeLabel();
+  auto done = __ MakeLabel(MachineRepresentation::kTaggedPointer);
+  STATIC_ASSERT(kOneByteStringTag != 0);
+  STATIC_ASSERT(kTwoByteStringTag == 0);
+  Node* instance_type = __ Word32And(first_instance_type, second_instance_type);
+  Node* encoding =
+      __ Word32And(instance_type, __ Int32Constant(kStringEncodingMask));
+  __ Branch(__ Word32Equal(encoding, __ Int32Constant(kTwoByteStringTag)),
+            &if_twobyte, &if_onebyte);
+  __ Bind(&if_onebyte);
+  __ Goto(&done,
+          jsgraph()->HeapConstant(factory()->cons_one_byte_string_map()));
+  __ Bind(&if_twobyte);
+  __ Goto(&done, jsgraph()->HeapConstant(factory()->cons_string_map()));
+  __ Bind(&done);
+  Node* result_map = done.PhiAt(0);
+
+  // Allocate the resulting ConsString.
+  Node* result = __ Allocate(NOT_TENURED, __ Int32Constant(ConsString::kSize));
+  __ StoreField(AccessBuilder::ForMap(), result, result_map);
+  __ StoreField(AccessBuilder::ForNameHashField(), result,
+                jsgraph()->Int32Constant(Name::kEmptyHashField));
+  __ StoreField(AccessBuilder::ForStringLength(), result, length);
+  __ StoreField(AccessBuilder::ForConsStringFirst(), result, first);
+  __ StoreField(AccessBuilder::ForConsStringSecond(), result, second);
+  return result;
+}
+
 Node* EffectControlLinearizer::LowerArrayBufferWasNeutered(Node* node) {
   Node* value = node->InputAt(0);
 
@@ -2816,6 +2884,12 @@ Node* EffectControlLinearizer::LowerStringIndexOf(Node* node) {
       isolate(), graph()->zone(), callable.descriptor(), 0, flags, properties);
   return __ Call(desc, __ HeapConstant(callable.code()), subject, search_string,
                  position, __ NoContextConstant());
+}
+
+Node* EffectControlLinearizer::LowerStringLength(Node* node) {
+  Node* subject = node->InputAt(0);
+
+  return __ LoadField(AccessBuilder::ForStringLength(), subject);
 }
 
 Node* EffectControlLinearizer::LowerStringComparison(Callable const& callable,
@@ -4147,14 +4221,14 @@ Node* EffectControlLinearizer::LowerFindOrderedHashMapEntry(Node* node) {
 
 Node* EffectControlLinearizer::ComputeIntegerHash(Node* value) {
   // See v8::internal::ComputeIntegerHash()
-  value = __ Int32Add(__ Word32Xor(value, __ Int32Constant(0xffffffff)),
+  value = __ Int32Add(__ Word32Xor(value, __ Int32Constant(0xFFFFFFFF)),
                       __ Word32Shl(value, __ Int32Constant(15)));
   value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(12)));
   value = __ Int32Add(value, __ Word32Shl(value, __ Int32Constant(2)));
   value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(4)));
   value = __ Int32Mul(value, __ Int32Constant(2057));
   value = __ Word32Xor(value, __ Word32Shr(value, __ Int32Constant(16)));
-  value = __ Word32And(value, __ Int32Constant(0x3fffffff));
+  value = __ Word32And(value, __ Int32Constant(0x3FFFFFFF));
   return value;
 }
 

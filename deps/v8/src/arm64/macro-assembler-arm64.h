@@ -840,20 +840,15 @@ class TurboAssembler : public Assembler {
   // Calculate how much stack space (in bytes) are required to store caller
   // registers excluding those specified in the arguments.
   int RequiredStackSizeForCallerSaved(SaveFPRegsMode fp_mode,
-                                      Register exclusion1 = no_reg,
-                                      Register exclusion2 = no_reg,
-                                      Register exclusion3 = no_reg) const;
+                                      Register exclusion) const;
 
   // Push caller saved registers on the stack, and return the number of bytes
   // stack pointer is adjusted.
-  int PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
-                      Register exclusion2 = no_reg,
-                      Register exclusion3 = no_reg);
+  int PushCallerSaved(SaveFPRegsMode fp_mode, Register exclusion = no_reg);
+
   // Restore caller saved registers from the stack, and return the number of
   // bytes stack pointer is adjusted.
-  int PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1 = no_reg,
-                     Register exclusion2 = no_reg,
-                     Register exclusion3 = no_reg);
+  int PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion = no_reg);
 
   // Move an immediate into register dst, and return an Operand object for use
   // with a subsequent instruction that accepts a shift. The value moved into
@@ -1757,10 +1752,6 @@ class MacroAssembler : public TurboAssembler {
   inline void SmiUntagToDouble(VRegister dst, Register src);
   inline void SmiUntagToFloat(VRegister dst, Register src);
 
-  // Tag and push in one step.
-  inline void SmiTagAndPush(Register src);
-  inline void SmiTagAndPush(Register src1, Register src2);
-
   inline void JumpIfNotSmi(Register value, Label* not_smi_label);
   inline void JumpIfBothSmi(Register value1, Register value2,
                             Label* both_smi_label,
@@ -1997,7 +1988,8 @@ class MacroAssembler : public TurboAssembler {
   //  * The stack pointer is reset to jssp.
   //
   // The stack pointer must be csp on entry.
-  void LeaveExitFrame(bool save_doubles, const Register& scratch);
+  void LeaveExitFrame(bool save_doubles, const Register& scratch,
+                      const Register& scratch2);
 
   // Load the global proxy from the current context.
   void LoadGlobalProxy(Register dst) {

@@ -1576,6 +1576,14 @@ class V8_EXPORT ScriptCompiler {
       Local<String> arguments[], size_t context_extension_count,
       Local<Object> context_extensions[]);
 
+  /**
+   * Creates and returns code cache for the specified unbound_script.
+   * This will return nullptr if the script cannot be serialized. The
+   * CachedData returned by this function should be owned by the caller.
+   */
+  static CachedData* CreateCodeCache(Local<UnboundScript> unbound_script,
+                                     Local<String> source);
+
  private:
   static V8_WARN_UNUSED_RESULT MaybeLocal<UnboundScript> CompileUnboundInternal(
       Isolate* isolate, Source* source, CompileOptions options,
@@ -5460,7 +5468,8 @@ typedef bool (*AccessCheckCallback)(Local<Context> accessing_context,
  *    v8::Local<v8::ObjectTemplate> instance_t = t->InstanceTemplate();
  *    instance_t->SetAccessor(String::NewFromUtf8(isolate, "instance_accessor"),
  *                            InstanceAccessorCallback);
- *    instance_t->SetNamedPropertyHandler(PropertyHandlerCallback);
+ *    instance_t->SetHandler(
+ *        NamedPropertyHandlerConfiguration(PropertyHandlerCallback));
  *    instance_t->Set(String::NewFromUtf8(isolate, "instance_property"),
  *                    Number::New(isolate, 3));
  *
@@ -5858,13 +5867,16 @@ class V8_EXPORT ObjectTemplate : public Template {
    * \param data A piece of data that will be passed to the callbacks
    *   whenever they are invoked.
    */
-  // TODO(dcarney): deprecate
-  void SetNamedPropertyHandler(NamedPropertyGetterCallback getter,
-                               NamedPropertySetterCallback setter = 0,
-                               NamedPropertyQueryCallback query = 0,
-                               NamedPropertyDeleterCallback deleter = 0,
-                               NamedPropertyEnumeratorCallback enumerator = 0,
-                               Local<Value> data = Local<Value>());
+  V8_DEPRECATE_SOON(
+      "Use SetHandler(const NamedPropertyHandlerConfiguration) "
+      "with the kOnlyInterceptStrings flag set.",
+      void SetNamedPropertyHandler(
+          NamedPropertyGetterCallback getter,
+          NamedPropertySetterCallback setter = 0,
+          NamedPropertyQueryCallback query = 0,
+          NamedPropertyDeleterCallback deleter = 0,
+          NamedPropertyEnumeratorCallback enumerator = 0,
+          Local<Value> data = Local<Value>()));
 
   /**
    * Sets a named property handler on the object template.
@@ -9072,9 +9084,9 @@ class Internals {
   static const int kFirstNonstringType = 0x80;
   static const int kOddballType = 0x83;
   static const int kForeignType = 0x87;
-  static const int kJSSpecialApiObjectType = 0xbc;
-  static const int kJSApiObjectType = 0xc0;
-  static const int kJSObjectType = 0xc1;
+  static const int kJSSpecialApiObjectType = 0xbe;
+  static const int kJSApiObjectType = 0xc2;
+  static const int kJSObjectType = 0xc3;
 
   static const int kUndefinedOddballKind = 5;
   static const int kNullOddballKind = 3;

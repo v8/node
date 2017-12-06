@@ -640,6 +640,8 @@ class MemoryChunk {
   void SetReadAndExecutable();
   void SetReadAndWritable();
 
+  inline void InitializeFreeListCategories();
+
  protected:
   static MemoryChunk* Initialize(Heap* heap, Address base, size_t size,
                                  Address area_start, Address area_end,
@@ -845,8 +847,6 @@ class Page : public MemoryChunk {
     return &categories_[type];
   }
 
-  inline void InitializeFreeListCategories();
-
   bool is_anchor() { return IsFlagSet(Page::ANCHOR); }
 
   size_t wasted_memory() { return wasted_memory_; }
@@ -933,9 +933,11 @@ class Space : public Malloced {
   // Identity used in error reporting.
   AllocationSpace identity() { return id_; }
 
-  void AddAllocationObserver(AllocationObserver* observer);
+  V8_EXPORT_PRIVATE virtual void AddAllocationObserver(
+      AllocationObserver* observer);
 
-  void RemoveAllocationObserver(AllocationObserver* observer);
+  V8_EXPORT_PRIVATE virtual void RemoveAllocationObserver(
+      AllocationObserver* observer);
 
   V8_EXPORT_PRIVATE virtual void PauseAllocationObservers();
 
@@ -1223,19 +1225,11 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     void FreeQueuedChunks();
     void WaitUntilCompleted();
     void TearDown();
-
-    bool has_delayed_chunks() { return delayed_regular_chunks_.size() > 0; }
-
-    int NumberOfDelayedChunks() {
-      base::LockGuard<base::Mutex> guard(&mutex_);
-      return static_cast<int>(delayed_regular_chunks_.size());
-    }
-
     int NumberOfChunks();
 
    private:
     static const int kReservedQueueingSlots = 64;
-    static const int kMaxUnmapperTasks = 24;
+    static const int kMaxUnmapperTasks = 4;
 
     enum ChunkQueueType {
       kRegular,     // Pages of kPageSize that do not live in a CodeRange and
@@ -1253,12 +1247,7 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     template <ChunkQueueType type>
     void AddMemoryChunkSafe(MemoryChunk* chunk) {
       base::LockGuard<base::Mutex> guard(&mutex_);
-      if (type != kRegular || allocator_->CanFreeMemoryChunk(chunk)) {
-        chunks_[type].push_back(chunk);
-      } else {
-        DCHECK_EQ(type, kRegular);
-        delayed_regular_chunks_.push_back(chunk);
-      }
+      chunks_[type].push_back(chunk);
     }
 
     template <ChunkQueueType type>
@@ -1270,7 +1259,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
       return chunk;
     }
 
-    void ReconsiderDelayedChunks();
     template <FreeMode mode>
     void PerformFreeMemoryOnQueuedChunks();
 
@@ -1278,10 +1266,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     MemoryAllocator* const allocator_;
     base::Mutex mutex_;
     std::vector<MemoryChunk*> chunks_[kNumberOfChunkQueues];
-    // Delayed chunks cannot be processed in the current unmapping cycle because
-    // of dependencies such as an active sweeper.
-    // See MemoryAllocator::CanFreeMemoryChunk.
-    std::list<MemoryChunk*> delayed_regular_chunks_;
     CancelableTaskManager::Id task_ids_[kMaxUnmapperTasks];
     base::Semaphore pending_unmapping_tasks_semaphore_;
     intptr_t concurrent_unmapping_tasks_active_;
@@ -1341,8 +1325,6 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
 
   template <MemoryAllocator::FreeMode mode = kFull>
   void Free(MemoryChunk* chunk);
-
-  bool CanFreeMemoryChunk(MemoryChunk* chunk);
 
   // Returns allocated spaces in bytes.
   size_t Size() { return size_.Value(); }
@@ -2108,8 +2090,13 @@ class V8_EXPORT_PRIVATE PagedSpace : NON_EXPORTED_BASE(public Space) {
 
   void ResetFreeList() { free_list_.Reset(); }
 
+  void AddAllocationObserver(AllocationObserver* observer) override;
+  void RemoveAllocationObserver(AllocationObserver* observer) override;
   void PauseAllocationObservers() override;
   void ResumeAllocationObservers() override;
+
+  void InlineAllocationStep(Address top, Address new_top, Address soon_object,
+                            size_t size);
 
   // Empty space allocation info, returning unused area to free list.
   void EmptyAllocationInfo();
@@ -2225,7 +2212,9 @@ class V8_EXPORT_PRIVATE PagedSpace : NON_EXPORTED_BASE(public Space) {
   }
   void DecreaseLimit(Address new_limit);
   void StartNextInlineAllocationStep() override;
-  bool SupportsInlineAllocation() { return identity() == OLD_SPACE; }
+  bool SupportsInlineAllocation() {
+    return identity() == OLD_SPACE && !is_local();
+  }
 
  protected:
   // PagedSpaces that should be included in snapshots have different, i.e.,
@@ -2757,6 +2746,8 @@ class NewSpace : public Space {
 
   SemiSpace* active_space() { return &to_space_; }
 
+  void AddAllocationObserver(AllocationObserver* observer) override;
+  void RemoveAllocationObserver(AllocationObserver* observer) override;
   void PauseAllocationObservers() override;
   void ResumeAllocationObservers() override;
 

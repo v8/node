@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-class-fields
+// Flags: --harmony-public-fields
 "use strict";
 
 {
@@ -270,7 +270,7 @@
   let c = new C;
   assertEquals(1, c.a);
   assertEquals(undefined, c.b);
-  assertEquals(undefined, c.c1);
+  assertEquals(undefined, c[c1]);
 }
 
 {
@@ -315,7 +315,7 @@ function x() {
     assertEquals([1, 2, 3, 4, 5, 6, 7, 8, 9], log);
   }
 }
-x();
+x()();
 
 {
   class C {}
@@ -598,4 +598,79 @@ x();
 
   let x = new X;
   assertEquals(1, x.c);
+}
+
+{
+  class A {
+    a() { return 1; }
+  }
+
+  class C extends A {
+    b = super.a();
+    c = () => super.a;
+    d = () => super.a();
+    e = super.a;
+    f = super.b;
+  }
+
+  let c = new C;
+  assertEquals(1, c.a());
+  assertEquals(1, c.b);
+  assertEquals(1, c.c()());
+  assertEquals(1, c.d());
+  assertEquals(1, c.e());
+  assertFalse(Object.hasOwnProperty(c, 'a'));
+  assertEquals(c.a, c.e);
+  assertEquals(undefined, c.f);
+}
+
+{
+  function t() {
+    return class {
+      ['x'] = 1;
+    }
+  }
+
+  let klass = t();
+  let obj = new klass;
+  assertEquals(1, obj.x);
+}
+
+{
+  function t() {
+    return class {
+      ['x'] = 1;
+      static ['x'] = 2;
+    }
+  }
+
+  let klass = t();
+  let obj = new klass;
+  assertEquals(1, obj.x);
+  assertEquals(2, klass.x);
+}
+
+{
+  new class {
+    t = 1;
+    constructor(t = this.t) {
+      assertEquals(1, t);
+    }
+  }
+
+  new class extends class {} {
+    t = 1;
+    constructor(t = (super(), this.t)) {
+      assertEquals(1, t);
+    }
+  }
+
+  assertThrows(() => {
+    new class extends class {} {
+      t = 1;
+      constructor(t = this.t) {
+        super();
+      }
+    }
+  }, ReferenceError);
 }

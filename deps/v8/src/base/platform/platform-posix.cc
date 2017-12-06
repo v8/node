@@ -63,6 +63,10 @@
 #define MAP_ANONYMOUS MAP_ANON
 #endif
 
+#ifndef MADV_FREE
+#define MADV_FREE MADV_DONTNEED
+#endif
+
 namespace v8 {
 namespace base {
 
@@ -104,24 +108,45 @@ int GetProtectionFromMemoryPermission(OS::MemoryPermission access) {
   UNREACHABLE();
 }
 
-void* Allocate(void* address, size_t size, OS::MemoryPermission access) {
-  const size_t actual_size = RoundUp(size, OS::AllocatePageSize());
-  int prot = GetProtectionFromMemoryPermission(access);
+int GetFlagsForMemoryPermission(OS::MemoryPermission access) {
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
   if (access == OS::MemoryPermission::kNoAccess) {
-// TODO(bbudge) Improve readability by moving platform specific code into
-// helper functions.
 #if !V8_OS_AIX && !V8_OS_FREEBSD && !V8_OS_QNX
     flags |= MAP_NORESERVE;
-#endif
+#endif  // !V8_OS_AIX && !V8_OS_FREEBSD && !V8_OS_QNX
 #if V8_OS_QNX
     flags |= MAP_LAZY;
 #endif  // V8_OS_QNX
   }
+  return flags;
+}
+
+void* Allocate(void* address, size_t size, OS::MemoryPermission access) {
+  const size_t actual_size = RoundUp(size, OS::AllocatePageSize());
+  int prot = GetProtectionFromMemoryPermission(access);
+  int flags = GetFlagsForMemoryPermission(access);
   void* result =
       mmap(address, actual_size, prot, flags, kMmapFd, kMmapFdOffset);
   if (result == MAP_FAILED) return nullptr;
   return result;
+}
+
+int ReclaimInaccessibleMemory(void* address, size_t size) {
+#if defined(OS_MACOSX)
+  // On OSX, MADV_FREE_REUSABLE has comparable behavior to MADV_FREE, but also
+  // marks the pages with the reusable bit, which allows both Activity Monitor
+  // and memory-infra to correctly track the pages.
+  int ret = madvise(address, size, MADV_FREE_REUSABLE);
+#else
+  int ret = madvise(address, size, MADV_FREE);
+#endif
+  if (ret != 0 && errno == EINVAL) {
+    // MADV_FREE only works on Linux 4.5+ . If request failed, retry with older
+    // MADV_DONTNEED . Note that MADV_FREE being defined at compile time doesn't
+    // imply runtime support.
+    ret = madvise(address, size, MADV_DONTNEED);
+  }
+  return ret;
 }
 
 #endif  // !V8_OS_FUCHSIA
@@ -173,7 +198,7 @@ void* OS::GetRandomMmapAddr() {
     defined(THREAD_SANITIZER)
   // Dynamic tools do not support custom mmap addresses.
   return nullptr;
-#endif
+#else
   uintptr_t raw_addr;
   platform_random_number_generator.Pointer()->NextBytes(&raw_addr,
                                                         sizeof(raw_addr));
@@ -181,32 +206,32 @@ void* OS::GetRandomMmapAddr() {
   // Currently available CPUs have 48 bits of virtual addressing.  Truncate
   // the hint address to 46 bits to give the kernel a fighting chance of
   // fulfilling our placement request.
-  raw_addr &= V8_UINT64_C(0x3ffffffff000);
+  raw_addr &= uint64_t{0x3FFFFFFFF000};
 #elif V8_TARGET_ARCH_PPC64
 #if V8_OS_AIX
   // AIX: 64 bits of virtual addressing, but we limit address range to:
   //   a) minimize Segment Lookaside Buffer (SLB) misses and
-  raw_addr &= V8_UINT64_C(0x3ffff000);
+  raw_addr &= uint64_t{0x3FFFF000};
   // Use extra address space to isolate the mmap regions.
-  raw_addr += V8_UINT64_C(0x400000000000);
+  raw_addr += uint64_t{0x400000000000};
 #elif V8_TARGET_BIG_ENDIAN
   // Big-endian Linux: 44 bits of virtual addressing.
-  raw_addr &= V8_UINT64_C(0x03fffffff000);
+  raw_addr &= uint64_t{0x03FFFFFFF000};
 #else
   // Little-endian Linux: 48 bits of virtual addressing.
-  raw_addr &= V8_UINT64_C(0x3ffffffff000);
+  raw_addr &= uint64_t{0x3FFFFFFFF000};
 #endif
 #elif V8_TARGET_ARCH_S390X
   // Linux on Z uses bits 22-32 for Region Indexing, which translates to 42 bits
   // of virtual addressing.  Truncate to 40 bits to allow kernel chance to
   // fulfill request.
-  raw_addr &= V8_UINT64_C(0xfffffff000);
+  raw_addr &= uint64_t{0xFFFFFFF000};
 #elif V8_TARGET_ARCH_S390
   // 31 bits of virtual addressing.  Truncate to 29 bits to allow kernel chance
   // to fulfill request.
-  raw_addr &= 0x1ffff000;
+  raw_addr &= 0x1FFFF000;
 #else
-  raw_addr &= 0x3ffff000;
+  raw_addr &= 0x3FFFF000;
 
 #ifdef __sun
   // For our Solaris/illumos mmap hint, we pick a random address in the bottom
@@ -231,6 +256,7 @@ void* OS::GetRandomMmapAddr() {
 #endif
 #endif
   return reinterpret_cast<void*>(raw_addr);
+#endif
 }
 
 // TODO(bbudge) Move Cygwin and Fuschia stuff into platform-specific files.
@@ -286,8 +312,13 @@ bool OS::Release(void* address, size_t size) {
 bool OS::SetPermissions(void* address, size_t size, MemoryPermission access) {
   DCHECK_EQ(0, reinterpret_cast<uintptr_t>(address) % CommitPageSize());
   DCHECK_EQ(0, size % CommitPageSize());
+
   int prot = GetProtectionFromMemoryPermission(access);
-  return mprotect(address, size, prot) == 0;
+  int ret = mprotect(address, size, prot);
+  if (ret == 0 && access == OS::MemoryPermission::kNoAccess) {
+    ret = ReclaimInaccessibleMemory(address, size);
+  }
+  return ret == 0;
 }
 
 // static
@@ -819,6 +850,7 @@ void Thread::SetThreadLocal(LocalStorageKey key, void* value) {
 
 #undef LOG_TAG
 #undef MAP_ANONYMOUS
+#undef MADV_FREE
 
 }  // namespace base
 }  // namespace v8

@@ -290,6 +290,25 @@ void CodeGenerator::AssembleCode() {
   result_ = kSuccess;
 }
 
+Handle<ByteArray> CodeGenerator::GetSourcePositionTable() {
+  return source_position_table_builder_.ToSourcePositionTable(isolate());
+}
+
+MaybeHandle<HandlerTable> CodeGenerator::GetHandlerTable() const {
+  if (!handlers_.empty()) {
+    Handle<HandlerTable> table =
+        Handle<HandlerTable>::cast(isolate()->factory()->NewFixedArray(
+            HandlerTable::LengthForReturn(static_cast<int>(handlers_.size())),
+            TENURED));
+    for (size_t i = 0; i < handlers_.size(); ++i) {
+      table->SetReturnOffset(static_cast<int>(i), handlers_[i].pc_offset);
+      table->SetReturnHandler(static_cast<int>(i), handlers_[i].handler->pos());
+    }
+    return table;
+  }
+  return {};
+}
+
 Handle<Code> CodeGenerator::FinalizeCode() {
   if (result_ != kSuccess) return Handle<Code>();
 
@@ -981,8 +1000,6 @@ void CodeGenerator::AddTranslationForOperand(Translation* translation,
             literal = DeoptimizationLiteral(isolate()->factory()->true_value());
           }
         } else {
-          // TODO(jarin,bmeurer): We currently pass in raw pointers to the
-          // JSFunction::entry here. We should really consider fixing this.
           DCHECK(type == MachineType::Int32() ||
                  type == MachineType::Uint32() ||
                  type.representation() == MachineRepresentation::kWord32 ||
@@ -1000,8 +1017,6 @@ void CodeGenerator::AddTranslationForOperand(Translation* translation,
       case Constant::kInt64:
         // When pointers are 8 bytes, we can use int64 constants to represent
         // Smis.
-        // TODO(jarin,bmeurer): We currently pass in raw pointers to the
-        // JSFunction::entry here. We should really consider fixing this.
         DCHECK(type.representation() == MachineRepresentation::kWord64 ||
                type.representation() == MachineRepresentation::kTagged);
         DCHECK_EQ(8, kPointerSize);

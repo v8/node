@@ -43,8 +43,10 @@
 #include "src/heap/scavenge-job.h"
 #include "src/heap/scavenger-inl.h"
 #include "src/heap/store-buffer.h"
+#include "src/heap/stress-marking-observer.h"
+#include "src/heap/sweeper.h"
 #include "src/interpreter/interpreter.h"
-#include "src/objects/object-macros.h"
+#include "src/objects/data-handler.h"
 #include "src/objects/shared-function-info.h"
 #include "src/regexp/jsregexp.h"
 #include "src/runtime-profiler.h"
@@ -58,6 +60,9 @@
 #include "src/utils.h"
 #include "src/v8.h"
 #include "src/vm-state-inl.h"
+
+// Has to be the last include (doesn't have include guards):
+#include "src/objects/object-macros.h"
 
 namespace v8 {
 namespace internal {
@@ -171,6 +176,7 @@ Heap::Heap()
       gc_post_processing_depth_(0),
       allocations_count_(0),
       raw_allocations_hash_(0),
+      stress_marking_observer_(nullptr),
       ms_count_(0),
       gc_count_(0),
       mmap_region_base_(0),
@@ -295,9 +301,9 @@ size_t Heap::Available() {
   if (!HasBeenSetUp()) return 0;
 
   size_t total = 0;
-  AllSpaces spaces(this);
-  for (Space* space = spaces.next(); space != nullptr; space = spaces.next()) {
-    total += space->Available();
+
+  for (SpaceIterator it(this); it.has_next();) {
+    total += it.next()->Available();
   }
   return total;
 }
@@ -649,9 +655,9 @@ void Heap::GarbageCollectionPrologue() {
 
 size_t Heap::SizeOfObjects() {
   size_t total = 0;
-  AllSpaces spaces(this);
-  for (Space* space = spaces.next(); space != nullptr; space = spaces.next()) {
-    total += space->SizeOfObjects();
+
+  for (SpaceIterator it(this); it.has_next();) {
+    total += it.next()->SizeOfObjects();
   }
   return total;
 }
@@ -707,6 +713,34 @@ void Heap::MergeAllocationSitePretenuringFeedback(
     if (site->IncrementMementoFoundCount(value)) {
       // For sites in the global map the count is accessed through the site.
       global_pretenuring_feedback_.insert(std::make_pair(site, 0));
+    }
+  }
+}
+
+void Heap::AddAllocationObserversToAllSpaces(
+    AllocationObserver* observer, AllocationObserver* new_space_observer) {
+  DCHECK(observer && new_space_observer);
+
+  for (SpaceIterator it(this); it.has_next();) {
+    Space* space = it.next();
+    if (space == new_space()) {
+      space->AddAllocationObserver(new_space_observer);
+    } else {
+      space->AddAllocationObserver(observer);
+    }
+  }
+}
+
+void Heap::RemoveAllocationObserversFromAllSpaces(
+    AllocationObserver* observer, AllocationObserver* new_space_observer) {
+  DCHECK(observer && new_space_observer);
+
+  for (SpaceIterator it(this); it.has_next();) {
+    Space* space = it.next();
+    if (space == new_space()) {
+      space->RemoveAllocationObserver(new_space_observer);
+    } else {
+      space->RemoveAllocationObserver(observer);
     }
   }
 }
@@ -1128,7 +1162,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
     InvokeOutOfMemoryCallback();
   }
   RuntimeCallTimerScope runtime_timer(
-      isolate(), &RuntimeCallStats::GC_Custom_AllAvailableGarbage);
+      isolate(), RuntimeCallCounterId::kGC_Custom_AllAvailableGarbage);
   if (isolate()->concurrent_recompilation_enabled()) {
     // The optimizing compiler may be unnecessarily holding on to memory.
     DisallowHeapAllocation no_recursive_gc;
@@ -1672,8 +1706,8 @@ bool Heap::PerformGarbageCollection(
 
 
 void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags) {
-  RuntimeCallTimerScope runtime_timer(isolate(),
-                                      &RuntimeCallStats::GCPrologueCallback);
+  RuntimeCallTimerScope runtime_timer(
+      isolate(), RuntimeCallCounterId::kGCPrologueCallback);
   for (const GCCallbackTuple& info : gc_prologue_callbacks_) {
     if (gc_type & info.gc_type) {
       v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(this->isolate());
@@ -1683,8 +1717,8 @@ void Heap::CallGCPrologueCallbacks(GCType gc_type, GCCallbackFlags flags) {
 }
 
 void Heap::CallGCEpilogueCallbacks(GCType gc_type, GCCallbackFlags flags) {
-  RuntimeCallTimerScope runtime_timer(isolate(),
-                                      &RuntimeCallStats::GCEpilogueCallback);
+  RuntimeCallTimerScope runtime_timer(
+      isolate(), RuntimeCallCounterId::kGCEpilogueCallback);
   for (const GCCallbackTuple& info : gc_epilogue_callbacks_) {
     if (gc_type & info.gc_type) {
       v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(this->isolate());
@@ -1733,6 +1767,7 @@ void Heap::MinorMarkCompact() {
   PauseAllocationObserversScope pause_observers(this);
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
       incremental_marking());
+  CodeSpaceMemoryModificationScope code_modifcation(this);
 
   minor_mark_compact_collector()->CollectGarbage();
 
@@ -1818,7 +1853,7 @@ void Heap::EvacuateYoungGeneration() {
     DCHECK(CanExpandOldGeneration(new_space()->Size()));
   }
 
-  mark_compact_collector()->sweeper().EnsureNewSpaceCompleted();
+  mark_compact_collector()->sweeper()->EnsureIterabilityCompleted();
 
   SetGCState(SCAVENGE);
   LOG(isolate_, ResourceEvent("scavenge", "begin"));
@@ -1879,6 +1914,9 @@ class ScavengingTask final : public ItemParallelJob::Task {
         barrier_(barrier) {}
 
   void RunInParallel() final {
+    GCTracer::BackgroundScope scope(
+        heap_->tracer(),
+        GCTracer::BackgroundScope::SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL);
     double scavenging_time = 0.0;
     {
       barrier_->Start();
@@ -1934,14 +1972,8 @@ void Heap::Scavenge() {
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
       incremental_marking());
 
-  if (mark_compact_collector()->sweeper().sweeping_in_progress() &&
-      memory_allocator_->unmapper()->NumberOfDelayedChunks() >
-          static_cast<int>(new_space_->MaximumCapacity() / Page::kPageSize)) {
-    mark_compact_collector()->EnsureSweepingCompleted();
-  }
 
-  // TODO(mlippautz): Untangle the dependency of the unmapper from the sweeper.
-  mark_compact_collector()->sweeper().EnsureNewSpaceCompleted();
+  mark_compact_collector()->sweeper()->EnsureIterabilityCompleted();
 
   SetGCState(SCAVENGE);
 
@@ -1969,17 +2001,15 @@ void Heap::Scavenge() {
   }
 
   {
-    MarkCompactCollector::Sweeper* sweeper =
-        &mark_compact_collector()->sweeper();
+    Sweeper* sweeper = mark_compact_collector()->sweeper();
     // Pause the concurrent sweeper.
-    MarkCompactCollector::Sweeper::PauseOrCompleteScope pause_scope(sweeper);
+    Sweeper::PauseOrCompleteScope pause_scope(sweeper);
     // Filter out pages from the sweeper that need to be processed for old to
     // new slots by the Scavenger. After processing, the Scavenger adds back
     // pages that are still unsweeped. This way the Scavenger has exclusive
     // access to the slots of a page and can completely avoid any locks on
     // the page itself.
-    MarkCompactCollector::Sweeper::FilterSweepingPagesScope filter_scope(
-        sweeper, pause_scope);
+    Sweeper::FilterSweepingPagesScope filter_scope(sweeper, pause_scope);
     filter_scope.FilterOldSpaceSweepingPages(
         [](Page* page) { return !page->ContainsSlots<OLD_TO_NEW>(); });
     RememberedSet<OLD_TO_NEW>::IterateMemoryChunks(
@@ -2602,6 +2632,10 @@ void Heap::CreateJSConstructEntryStub() {
   set_js_construct_entry_code(*stub.GetCode());
 }
 
+void Heap::CreateJSRunMicrotasksEntryStub() {
+  JSEntryStub stub(isolate(), JSEntryStub::SpecialTarget::kRunMicrotasks);
+  set_js_run_microtasks_entry_code(*stub.GetCode());
+}
 
 void Heap::CreateFixedStubs() {
   // Here we create roots for fixed stubs. They are needed at GC
@@ -2633,6 +2667,7 @@ void Heap::CreateFixedStubs() {
   // To workaround the problem, make separate functions without inlining.
   Heap::CreateJSEntryStub();
   Heap::CreateJSConstructEntryStub();
+  Heap::CreateJSRunMicrotasksEntryStub();
 }
 
 bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
@@ -3212,7 +3247,6 @@ AllocationResult Heap::AllocateCode(
 }
 
 AllocationResult Heap::CopyCode(Code* code, CodeDataContainer* data_container) {
-  CodeSpaceMemoryModificationScope code_modification(this);
   AllocationResult allocation;
 
   HeapObject* result = nullptr;
@@ -3979,7 +4013,9 @@ AllocationResult Heap::AllocateFeedbackVector(SharedFunctionInfo* shared,
   result->set_map_after_allocation(feedback_vector_map(), SKIP_WRITE_BARRIER);
   FeedbackVector* vector = FeedbackVector::cast(result);
   vector->set_shared_function_info(shared);
-  vector->set_optimized_code_cell(Smi::FromEnum(OptimizationMarker::kNone));
+  vector->set_optimized_code_cell(Smi::FromEnum(
+      FLAG_log_function_events ? OptimizationMarker::kLogFirstExecution
+                               : OptimizationMarker::kNone));
   vector->set_length(length);
   vector->set_invocation_count(0);
   vector->set_profiler_ticks(0);
@@ -4541,9 +4577,9 @@ void Heap::CollectCodeStatistics() {
 void Heap::Print() {
   if (!HasBeenSetUp()) return;
   isolate()->PrintStack(stdout);
-  AllSpaces spaces(this);
-  for (Space* space = spaces.next(); space != nullptr; space = spaces.next()) {
-    space->Print();
+
+  for (SpaceIterator it(this); it.has_next();) {
+    it.next()->Print();
   }
 }
 
@@ -5627,6 +5663,10 @@ bool Heap::SetUp() {
 
   if (FLAG_stress_marking > 0) {
     stress_marking_percentage_ = NextStressMarkingLimit();
+
+    stress_marking_observer_ = new StressMarkingObserver(*this);
+    AddAllocationObserversToAllSpaces(stress_marking_observer_,
+                                      stress_marking_observer_);
   }
 
   write_protect_code_memory_ = FLAG_write_protect_code_memory;
@@ -5736,6 +5776,13 @@ void Heap::TearDown() {
   new_space()->RemoveAllocationObserver(idle_scavenge_observer_);
   delete idle_scavenge_observer_;
   idle_scavenge_observer_ = nullptr;
+
+  if (FLAG_stress_marking > 0) {
+    RemoveAllocationObserversFromAllSpaces(stress_marking_observer_,
+                                           stress_marking_observer_);
+    delete stress_marking_observer_;
+    stress_marking_observer_ = nullptr;
+  }
 
   if (mark_compact_collector_ != nullptr) {
     mark_compact_collector_->TearDown();
@@ -6081,22 +6128,6 @@ void Heap::RecordWritesIntoCode(Code* code) {
   }
 }
 
-Space* AllSpaces::next() {
-  switch (counter_++) {
-    case NEW_SPACE:
-      return heap_->new_space();
-    case OLD_SPACE:
-      return heap_->old_space();
-    case CODE_SPACE:
-      return heap_->code_space();
-    case MAP_SPACE:
-      return heap_->map_space();
-    case LO_SPACE:
-      return heap_->lo_space();
-    default:
-      return nullptr;
-  }
-}
 
 PagedSpace* PagedSpaces::next() {
   switch (counter_++) {
@@ -6375,9 +6406,9 @@ void Heap::RememberUnmappedPage(Address page, bool compacted) {
   uintptr_t p = reinterpret_cast<uintptr_t>(page);
   // Tag the page pointer to make it findable in the dump file.
   if (compacted) {
-    p ^= 0xc1ead & (Page::kPageSize - 1);  // Cleared.
+    p ^= 0xC1EAD & (Page::kPageSize - 1);  // Cleared.
   } else {
-    p ^= 0x1d1ed & (Page::kPageSize - 1);  // I died.
+    p ^= 0x1D1ED & (Page::kPageSize - 1);  // I died.
   }
   remembered_unmapped_pages_[remembered_unmapped_pages_index_] =
       reinterpret_cast<Address>(p);
@@ -6566,6 +6597,82 @@ void Heap::CreateObjectStats() {
   }
   if (!dead_object_stats_) {
     dead_object_stats_ = new ObjectStats(this);
+  }
+}
+
+void AllocationObserver::AllocationStep(int bytes_allocated,
+                                        Address soon_object, size_t size) {
+  DCHECK_GE(bytes_allocated, 0);
+  bytes_to_next_step_ -= bytes_allocated;
+  if (bytes_to_next_step_ <= 0) {
+    Step(static_cast<int>(step_size_ - bytes_to_next_step_), soon_object, size);
+    step_size_ = GetNextStepSize();
+    bytes_to_next_step_ = step_size_;
+  }
+}
+
+namespace {
+
+Map* GcSafeMapOfCodeSpaceObject(HeapObject* object) {
+  MapWord map_word = object->map_word();
+  return map_word.IsForwardingAddress() ? map_word.ToForwardingAddress()->map()
+                                        : map_word.ToMap();
+}
+
+int GcSafeSizeOfCodeSpaceObject(HeapObject* object) {
+  return object->SizeFromMap(GcSafeMapOfCodeSpaceObject(object));
+}
+
+Code* GcSafeCastToCode(Heap* heap, HeapObject* object, Address inner_pointer) {
+  Code* code = reinterpret_cast<Code*>(object);
+  DCHECK_NOT_NULL(code);
+  DCHECK(heap->GcSafeCodeContains(code, inner_pointer));
+  return code;
+}
+
+}  // namespace
+
+bool Heap::GcSafeCodeContains(HeapObject* code, Address addr) {
+  Map* map = GcSafeMapOfCodeSpaceObject(code);
+  DCHECK(map == code->GetHeap()->code_map());
+  Address start = code->address();
+  Address end = code->address() + code->SizeFromMap(map);
+  return start <= addr && addr < end;
+}
+
+Code* Heap::GcSafeFindCodeForInnerPointer(Address inner_pointer) {
+  // Check if the inner pointer points into a large object chunk.
+  LargePage* large_page = lo_space()->FindPage(inner_pointer);
+  if (large_page != nullptr) {
+    return GcSafeCastToCode(this, large_page->GetObject(), inner_pointer);
+  }
+
+  if (!code_space()->Contains(inner_pointer)) {
+    return nullptr;
+  }
+
+  // Iterate through the page until we reach the end or find an object starting
+  // after the inner pointer.
+  Page* page = Page::FromAddress(inner_pointer);
+  DCHECK_EQ(page->owner(), code_space());
+  mark_compact_collector()->sweeper()->EnsurePageIsIterable(page);
+
+  Address addr = page->skip_list()->StartFor(inner_pointer);
+  Address top = code_space()->top();
+  Address limit = code_space()->limit();
+
+  while (true) {
+    if (addr == top && addr != limit) {
+      addr = limit;
+      continue;
+    }
+
+    HeapObject* obj = HeapObject::FromAddress(addr);
+    int obj_size = GcSafeSizeOfCodeSpaceObject(obj);
+    Address next_addr = addr + obj_size;
+    if (next_addr > inner_pointer)
+      return GcSafeCastToCode(this, obj, inner_pointer);
+    addr = next_addr;
   }
 }
 

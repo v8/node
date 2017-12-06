@@ -52,6 +52,7 @@
 #include "src/debug/debug.h"
 #include "src/deoptimizer.h"
 #include "src/disassembler.h"
+#include "src/elements.h"
 #include "src/execution.h"
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
@@ -130,14 +131,14 @@ static struct V8_ALIGNED(16) {
 static struct V8_ALIGNED(16) {
   uint64_t a;
   uint64_t b;
-} double_absolute_constant = {V8_UINT64_C(0x7FFFFFFFFFFFFFFF),
-                              V8_UINT64_C(0x7FFFFFFFFFFFFFFF)};
+} double_absolute_constant = {uint64_t{0x7FFFFFFFFFFFFFFF},
+                              uint64_t{0x7FFFFFFFFFFFFFFF}};
 
 static struct V8_ALIGNED(16) {
   uint64_t a;
   uint64_t b;
-} double_negate_constant = {V8_UINT64_C(0x8000000000000000),
-                            V8_UINT64_C(0x8000000000000000)};
+} double_negate_constant = {uint64_t{0x8000000000000000},
+                            uint64_t{0x8000000000000000}};
 
 const char* const RelocInfo::kFillerCommentString = "DEOPTIMIZATION PADDING";
 
@@ -800,6 +801,16 @@ ExternalReference ExternalReference::builtins_address(Isolate* isolate) {
   return ExternalReference(isolate->builtins()->builtins_table_address());
 }
 
+ExternalReference ExternalReference::handle_scope_implementer_address(
+    Isolate* isolate) {
+  return ExternalReference(isolate->handle_scope_implementer_address());
+}
+
+ExternalReference ExternalReference::pending_microtask_count_address(
+    Isolate* isolate) {
+  return ExternalReference(isolate->pending_microtask_count_address());
+}
+
 ExternalReference ExternalReference::interpreter_dispatch_table_address(
     Isolate* isolate) {
   return ExternalReference(isolate->interpreter()->dispatch_table_address());
@@ -866,6 +877,10 @@ void ExternalReference::set_redirector(
 
 ExternalReference ExternalReference::stress_deopt_count(Isolate* isolate) {
   return ExternalReference(isolate->stress_deopt_count_address());
+}
+
+ExternalReference ExternalReference::force_slow_path(Isolate* isolate) {
+  return ExternalReference(isolate->force_slow_path_address());
 }
 
 ExternalReference ExternalReference::new_deoptimizer_function(
@@ -1427,6 +1442,19 @@ ExternalReference ExternalReference::jsreceiver_create_identity_hash(
   return ExternalReference(Redirect(isolate, FUNCTION_ADDR(f)));
 }
 
+ExternalReference
+ExternalReference::copy_fast_number_jsarray_elements_to_typed_array(
+    Isolate* isolate) {
+  return ExternalReference(Redirect(
+      isolate, FUNCTION_ADDR(CopyFastNumberJSArrayElementsToTypedArray)));
+}
+
+ExternalReference ExternalReference::copy_typed_array_elements_to_typed_array(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(CopyTypedArrayElementsToTypedArray)));
+}
+
 ExternalReference ExternalReference::try_internalize_string_function(
     Isolate* isolate) {
   return ExternalReference(Redirect(
@@ -1494,6 +1522,12 @@ ExternalReference ExternalReference::runtime_function_table_address(
     Isolate* isolate) {
   return ExternalReference(
       const_cast<Runtime::Function*>(Runtime::RuntimeFunctionTable(isolate)));
+}
+
+ExternalReference ExternalReference::invalidate_prototype_chains_function(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(JSObject::InvalidatePrototypeChains)));
 }
 
 double power_helper(Isolate* isolate, double x, double y) {

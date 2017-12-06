@@ -15,6 +15,7 @@
 #include "src/heap/object-stats.h"
 #include "src/heap/objects-visiting-inl.h"
 #include "src/heap/objects-visiting.h"
+#include "src/heap/sweeper.h"
 #include "src/tracing/trace-event.h"
 #include "src/v8.h"
 #include "src/visitors.h"
@@ -33,7 +34,8 @@ void IncrementalMarking::Observer::Step(int bytes_allocated, Address addr,
   Heap* heap = incremental_marking_.heap();
   VMState<GC> state(heap->isolate());
   RuntimeCallTimerScope runtime_timer(
-      heap->isolate(), &RuntimeCallStats::GC_Custom_IncrementalMarkingObserver);
+      heap->isolate(),
+      RuntimeCallCounterId::kGC_Custom_IncrementalMarkingObserver);
   incremental_marking_.AdvanceIncrementalMarkingOnAllocation();
   if (incremental_marking_.black_allocation() && addr != nullptr) {
     // AdvanceIncrementalMarkingOnAllocation can start black allocation.
@@ -56,6 +58,7 @@ IncrementalMarking::IncrementalMarking(
       marking_worklist_(marking_worklist),
       initial_old_generation_size_(0),
       bytes_marked_ahead_of_schedule_(0),
+      bytes_marked_concurrently_(0),
       unscanned_bytes_of_large_object_(0),
       is_compacting_(false),
       should_hurry_(false),
@@ -347,6 +350,7 @@ void IncrementalMarking::Start(GarbageCollectionReason gc_reason) {
   old_generation_allocation_counter_ = heap_->OldGenerationAllocationCounter();
   bytes_allocated_ = 0;
   bytes_marked_ahead_of_schedule_ = 0;
+  bytes_marked_concurrently_ = 0;
   should_hurry_ = false;
   was_activated_ = true;
 
@@ -360,16 +364,8 @@ void IncrementalMarking::Start(GarbageCollectionReason gc_reason) {
     SetState(SWEEPING);
   }
 
-  SpaceIterator it(heap_);
-  while (it.has_next()) {
-    Space* space = it.next();
-    if (space == heap_->new_space()) {
-      space->AddAllocationObserver(&new_generation_observer_);
-    } else {
-      space->AddAllocationObserver(&old_generation_observer_);
-    }
-  }
-
+  heap_->AddAllocationObserversToAllSpaces(&old_generation_observer_,
+                                           &new_generation_observer_);
   incremental_marking_job()->Start(heap_);
 }
 
@@ -687,11 +683,17 @@ void IncrementalMarking::RevisitObject(HeapObject* obj) {
   visitor.Visit(map, obj);
 }
 
+template <WorklistToProcess worklist_to_process>
 intptr_t IncrementalMarking::ProcessMarkingWorklist(
     intptr_t bytes_to_process, ForceCompletionAction completion) {
   intptr_t bytes_processed = 0;
   while (bytes_processed < bytes_to_process || completion == FORCE_COMPLETION) {
-    HeapObject* obj = marking_worklist()->Pop();
+    HeapObject* obj;
+    if (worklist_to_process == WorklistToProcess::kBailout) {
+      obj = marking_worklist()->PopBailout();
+    } else {
+      obj = marking_worklist()->Pop();
+    }
     if (obj == nullptr) break;
     // Left trimming may result in white, grey, or black filler objects on the
     // marking deque. Ignore these objects.
@@ -867,7 +869,7 @@ void IncrementalMarking::FinalizeSweeping() {
   DCHECK(state_ == SWEEPING);
   if (heap_->mark_compact_collector()->sweeping_in_progress() &&
       (!FLAG_concurrent_sweeping ||
-       !heap_->mark_compact_collector()->sweeper().AreSweeperTasksRunning())) {
+       !heap_->mark_compact_collector()->sweeper()->AreSweeperTasksRunning())) {
     heap_->mark_compact_collector()->EnsureSweepingCompleted();
   }
   if (!heap_->mark_compact_collector()->sweeping_in_progress()) {
@@ -919,42 +921,50 @@ void IncrementalMarking::AdvanceIncrementalMarkingOnAllocation() {
       StepSizeToKeepUpWithAllocations() + StepSizeToMakeProgress();
 
   if (bytes_to_process >= IncrementalMarking::kMinStepSizeInBytes) {
+    HistogramTimerScope incremental_marking_scope(
+        heap_->isolate()->counters()->gc_incremental_marking());
+    TRACE_EVENT0("v8", "V8.GCIncrementalMarking");
+    TRACE_GC(heap_->tracer(), GCTracer::Scope::MC_INCREMENTAL);
     // The first step after Scavenge will see many allocated bytes.
     // Cap the step size to distribute the marking work more uniformly.
     size_t max_step_size = GCIdleTimeHandler::EstimateMarkingStepSize(
         kMaxStepSizeInMs,
         heap()->tracer()->IncrementalMarkingSpeedInBytesPerMillisecond());
     bytes_to_process = Min(bytes_to_process, max_step_size);
-
-    if (FLAG_concurrent_marking && marking_worklist()->IsBailoutEmpty()) {
-      // The number of background tasks + the main thread.
-      size_t tasks = heap()->concurrent_marking()->TaskCount() + 1;
-      bytes_to_process = Max(IncrementalMarking::kMinStepSizeInBytes,
-                             bytes_to_process / tasks);
-    }
-
     size_t bytes_processed = 0;
-    if (bytes_marked_ahead_of_schedule_ >= bytes_to_process) {
-      // Steps performed in tasks have put us ahead of schedule.
-      // We skip processing of marking dequeue here and thus
-      // shift marking time from inside V8 to standalone tasks.
-      bytes_marked_ahead_of_schedule_ -= bytes_to_process;
-      bytes_processed = bytes_to_process;
-    } else {
-      HistogramTimerScope incremental_marking_scope(
-          heap_->isolate()->counters()->gc_incremental_marking());
-      TRACE_EVENT0("v8", "V8.GCIncrementalMarking");
-      TRACE_GC(heap_->tracer(), GCTracer::Scope::MC_INCREMENTAL);
-      bytes_processed =
-          Step(bytes_to_process, GC_VIA_STACK_GUARD, StepOrigin::kV8);
+    if (FLAG_concurrent_marking) {
+      bytes_processed = Step(bytes_to_process, GC_VIA_STACK_GUARD,
+                             StepOrigin::kV8, WorklistToProcess::kBailout);
+      bytes_to_process = (bytes_processed >= bytes_to_process)
+                             ? 0
+                             : bytes_to_process - bytes_processed;
+      size_t current_bytes_marked_concurrently =
+          heap()->concurrent_marking()->TotalMarkedBytes();
+      // The concurrent_marking()->TotalMarkedBytes() is not monothonic for a
+      // short period of time when a concurrent marking task is finishing.
+      if (current_bytes_marked_concurrently > bytes_marked_concurrently_) {
+        bytes_marked_ahead_of_schedule_ +=
+            current_bytes_marked_concurrently - bytes_marked_concurrently_;
+        bytes_marked_concurrently_ = current_bytes_marked_concurrently;
+      }
     }
+    if (bytes_marked_ahead_of_schedule_ >= bytes_to_process) {
+      // Steps performed in tasks and concurrently have put us ahead of
+      // schedule. We skip processing of marking dequeue here and thus shift
+      // marking time from inside V8 to standalone tasks.
+      bytes_marked_ahead_of_schedule_ -= bytes_to_process;
+      bytes_processed += bytes_to_process;
+      bytes_to_process = IncrementalMarking::kMinStepSizeInBytes;
+    }
+    bytes_processed += Step(bytes_to_process, GC_VIA_STACK_GUARD,
+                            StepOrigin::kV8, WorklistToProcess::kAll);
     bytes_allocated_ -= Min(bytes_allocated_, bytes_processed);
   }
 }
 
 size_t IncrementalMarking::Step(size_t bytes_to_process,
-                                CompletionAction action,
-                                StepOrigin step_origin) {
+                                CompletionAction action, StepOrigin step_origin,
+                                WorklistToProcess worklist_to_process) {
   double start = heap_->MonotonicallyIncreasingTimeInMs();
 
   if (state_ == SWEEPING) {
@@ -972,11 +982,23 @@ size_t IncrementalMarking::Step(size_t bytes_to_process,
       marking_worklist()->shared()->MergeGlobalPool(
           marking_worklist()->on_hold());
     }
+
+// Only print marking worklist in debug mode to save ~40KB of code size.
+#ifdef DEBUG
     if (FLAG_trace_incremental_marking && FLAG_trace_concurrent_marking &&
         FLAG_trace_gc_verbose) {
       marking_worklist()->Print();
     }
-    bytes_processed = ProcessMarkingWorklist(bytes_to_process);
+#endif
+
+    if (worklist_to_process == WorklistToProcess::kBailout) {
+      bytes_processed =
+          ProcessMarkingWorklist<WorklistToProcess::kBailout>(bytes_to_process);
+    } else {
+      bytes_processed =
+          ProcessMarkingWorklist<WorklistToProcess::kAll>(bytes_to_process);
+    }
+
     if (step_origin == StepOrigin::kTask) {
       bytes_marked_ahead_of_schedule_ += bytes_processed;
     }

@@ -25,6 +25,7 @@
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/function-body-decoder.h"
 #include "src/wasm/local-decl-encoder.h"
+#include "src/wasm/wasm-code-manager.h"
 #include "src/wasm/wasm-external-refs.h"
 #include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-js.h"
@@ -60,13 +61,13 @@ using compiler::MachineTypeForC;
 using compiler::Node;
 
 // TODO(titzer): check traps more robustly in tests.
-// Currently, in tests, we just return 0xdeadbeef from the function in which
+// Currently, in tests, we just return 0xDEADBEEF from the function in which
 // the trap occurs if the runtime context is not available to throw a JavaScript
 // exception.
 #define CHECK_TRAP32(x) \
-  CHECK_EQ(0xdeadbeef, (bit_cast<uint32_t>(x)) & 0xFFFFFFFF)
+  CHECK_EQ(0xDEADBEEF, (bit_cast<uint32_t>(x)) & 0xFFFFFFFF)
 #define CHECK_TRAP64(x) \
-  CHECK_EQ(0xdeadbeefdeadbeef, (bit_cast<uint64_t>(x)) & 0xFFFFFFFFFFFFFFFF)
+  CHECK_EQ(0xDEADBEEFDEADBEEF, (bit_cast<uint64_t>(x)) & 0xFFFFFFFFFFFFFFFF)
 #define CHECK_TRAP(x) CHECK_TRAP32(x)
 
 #define WASM_WRAPPER_RETURN_VALUE 8754
@@ -77,7 +78,7 @@ using compiler::Node;
     r.Build(code, code + arraysize(code)); \
   } while (false)
 
-// A buildable ModuleEnv. Globals are pre-set, however, memory and code may be
+// A  Wasm module builder. Globals are pre-set, however, memory and code may be
 // progressively added by a test. In turn, we piecemeal update the runtime
 // objects, i.e. {WasmInstanceObject}, {WasmCompiledModule} and, if necessary,
 // the interpreter.
@@ -90,7 +91,13 @@ class TestingModuleBuilder {
 
   byte* AddMemory(uint32_t size);
 
-  size_t CodeTableLength() const { return function_code_.size(); }
+  size_t CodeTableLength() const {
+    if (FLAG_wasm_jit_to_native) {
+      return native_module_->FunctionCount();
+    } else {
+      return function_code_.size();
+    }
+  }
 
   template <typename T>
   T* AddMemoryElems(uint32_t count) {
@@ -173,7 +180,7 @@ class TestingModuleBuilder {
 
   void SetHasSharedMemory() { test_module_.has_shared_memory = true; }
 
-  uint32_t AddFunction(FunctionSig* sig, Handle<Code> code, const char* name);
+  uint32_t AddFunction(FunctionSig* sig, const char* name);
 
   uint32_t AddJsFunction(FunctionSig* sig, const char* source,
                          Handle<FixedArray> js_imports_table);
@@ -200,11 +207,25 @@ class TestingModuleBuilder {
   bool lower_simd() { return lower_simd_; }
   Isolate* isolate() { return isolate_; }
   Handle<WasmInstanceObject> instance_object() { return instance_object_; }
-  Handle<Code> GetFunctionCode(int index) { return function_code_[index]; }
+  WasmCodeWrapper GetFunctionCode(uint32_t index) {
+    if (FLAG_wasm_jit_to_native) {
+      return WasmCodeWrapper(native_module_->GetCode(index));
+    } else {
+      return WasmCodeWrapper(function_code_[index]);
+    }
+  }
   void SetFunctionCode(int index, Handle<Code> code) {
     function_code_[index] = code;
   }
   Address globals_start() { return reinterpret_cast<Address>(globals_data_); }
+  void Link() {
+    if (!FLAG_wasm_jit_to_native) return;
+    if (!linked_) {
+      native_module_->LinkAll();
+      linked_ = true;
+      native_module_->SetExecutable(true);
+    }
+  }
 
   compiler::ModuleEnv CreateModuleEnv();
 
@@ -228,6 +249,8 @@ class TestingModuleBuilder {
   WasmInterpreter* interpreter_;
   WasmExecutionMode execution_mode_;
   Handle<WasmInstanceObject> instance_object_;
+  NativeModule* native_module_;
+  bool linked_ = false;
   compiler::RuntimeExceptionSupport runtime_exception_support_;
   bool lower_simd_;
 
@@ -258,9 +281,21 @@ class WasmFunctionWrapper : private compiler::GraphAndBuilders {
     Init(descriptor, MachineTypeForC<ReturnType>(), param_vec);
   }
 
-  void SetInnerCode(Handle<Code> code_handle) {
-    compiler::NodeProperties::ChangeOp(inner_code_node_,
-                                       common()->HeapConstant(code_handle));
+  void SetInnerCode(WasmCodeWrapper code) {
+    if (FLAG_wasm_jit_to_native) {
+      intptr_t address = reinterpret_cast<intptr_t>(
+          code.GetWasmCode()->instructions().start());
+      compiler::NodeProperties::ChangeOp(
+          inner_code_node_,
+          kPointerSize == 8
+              ? common()->RelocatableInt64Constant(address,
+                                                   RelocInfo::WASM_CALL)
+              : common()->RelocatableInt32Constant(static_cast<int>(address),
+                                                   RelocInfo::WASM_CALL));
+    } else {
+      compiler::NodeProperties::ChangeOp(
+          inner_code_node_, common()->HeapConstant(code.GetCode()));
+    }
   }
 
   const compiler::Operator* IntPtrConstant(intptr_t value) {
@@ -432,7 +467,7 @@ class WasmRunner : public WasmRunnerBase {
     DCHECK(compiled_);
     if (interpret()) return CallInterpreter(p...);
 
-    ReturnType return_value = static_cast<ReturnType>(0xdeadbeefdeadbeef);
+    ReturnType return_value = static_cast<ReturnType>(0xDEADBEEFDEADBEEF);
     WasmRunnerBase::trap_happened = false;
     auto trap_callback = []() -> void {
       WasmRunnerBase::trap_happened = true;
@@ -444,6 +479,7 @@ class WasmRunner : public WasmRunnerBase {
     WasmContext* wasm_context =
         builder().instance_object()->wasm_context()->get();
     wrapper_.SetContextAddress(reinterpret_cast<uintptr_t>(wasm_context));
+    builder().Link();
     Handle<Code> wrapper_code = wrapper_.GetWrapperCode();
     compiler::CodeRunner<int32_t> runner(CcTest::InitIsolateOnce(),
                                          wrapper_code, wrapper_.signature());
@@ -451,7 +487,7 @@ class WasmRunner : public WasmRunnerBase {
                                  static_cast<void*>(&return_value));
     CHECK_EQ(WASM_WRAPPER_RETURN_VALUE, result);
     return WasmRunnerBase::trap_happened
-               ? static_cast<ReturnType>(0xdeadbeefdeadbeef)
+               ? static_cast<ReturnType>(0xDEADBEEFDEADBEEF)
                : return_value;
   }
 
@@ -468,7 +504,7 @@ class WasmRunner : public WasmRunnerBase {
       return val.to<ReturnType>();
     } else if (thread->state() == WasmInterpreter::TRAPPED) {
       // TODO(titzer): return the correct trap code
-      int64_t result = 0xdeadbeefdeadbeef;
+      int64_t result = 0xDEADBEEFDEADBEEF;
       return static_cast<ReturnType>(result);
     } else {
       // TODO(titzer): falling off end

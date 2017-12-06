@@ -7,14 +7,16 @@
 
 #include <cmath>
 
+// Clients of this interface shouldn't depend on lots of heap internals.
+// Do not include anything from src/heap other than src/heap/heap.h here!
+#include "src/heap/heap.h"
+
 #include "src/base/platform/platform.h"
 #include "src/counters-inl.h"
 #include "src/feedback-vector.h"
-#include "src/heap/heap.h"
+// TODO(mstarzinger): There are 3 more includes to remove in order to no longer
+// leak heap internals to users of this interface!
 #include "src/heap/incremental-marking-inl.h"
-#include "src/heap/mark-compact.h"
-#include "src/heap/object-stats.h"
-#include "src/heap/remembered-set.h"
 #include "src/heap/spaces-inl.h"
 #include "src/heap/store-buffer.h"
 #include "src/isolate.h"
@@ -49,6 +51,13 @@ ROOT_LIST(ROOT_ACCESSOR)
   Map* Heap::name##_map() { return Map::cast(roots_[k##Name##MapRootIndex]); }
 STRUCT_LIST(STRUCT_MAP_ACCESSOR)
 #undef STRUCT_MAP_ACCESSOR
+
+#define DATA_HANDLER_MAP_ACCESSOR(NAME, Name, Size, name)  \
+  Map* Heap::name##_map() {                                \
+    return Map::cast(roots_[k##Name##Size##MapRootIndex]); \
+  }
+DATA_HANDLER_LIST(DATA_HANDLER_MAP_ACCESSOR)
+#undef DATA_HANDLER_MAP_ACCESSOR
 
 #define STRING_ACCESSOR(name, str) \
   String* Heap::name() { return String::cast(roots_[k##name##RootIndex]); }

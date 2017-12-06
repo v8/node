@@ -221,8 +221,7 @@ static constexpr Allocator parameter_registers(kGPParamRegisters,
 }  // namespace
 
 // General code uses the above configuration data.
-CallDescriptor* GetWasmCallDescriptor(Zone* zone, wasm::FunctionSig* fsig,
-                                      bool supports_tail_calls) {
+CallDescriptor* GetWasmCallDescriptor(Zone* zone, wasm::FunctionSig* fsig) {
   // The '+ 1' here is to accomodate the wasm_context as first parameter.
   LocationSignature::Builder locations(zone, fsig->return_count(),
                                        fsig->parameter_count() + 1);
@@ -252,13 +251,17 @@ CallDescriptor* GetWasmCallDescriptor(Zone* zone, wasm::FunctionSig* fsig,
   const RegList kCalleeSaveFPRegisters = 0;
 
   // The target for wasm calls is always a code object.
-  MachineType target_type = MachineType::AnyTagged();
+  MachineType target_type = FLAG_wasm_jit_to_native ? MachineType::Pointer()
+                                                    : MachineType::AnyTagged();
   LinkageLocation target_loc = LinkageLocation::ForAnyRegister(target_type);
 
   CallDescriptor::Flags flags = CallDescriptor::kUseNativeStack;
-  if (supports_tail_calls) flags |= CallDescriptor::kSupportsTailCalls;
+  CallDescriptor::Kind kind = FLAG_wasm_jit_to_native
+                                  ? CallDescriptor::kCallWasmFunction
+                                  : CallDescriptor::kCallCodeObject;
+
   return new (zone) CallDescriptor(       // --
-      CallDescriptor::kCallCodeObject,    // kind
+      kind,                               // kind
       target_type,                        // target MachineType
       target_loc,                         // target location
       locations.Build(),                  // location_sig

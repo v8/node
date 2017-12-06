@@ -92,6 +92,10 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "LDoubleConstant::one_half");
   Add(ExternalReference::isolate_address(isolate).address(), "isolate");
   Add(ExternalReference::builtins_address(isolate).address(), "builtins");
+  Add(ExternalReference::handle_scope_implementer_address(isolate).address(),
+      "Isolate::handle_scope_implementer_address");
+  Add(ExternalReference::pending_microtask_count_address(isolate).address(),
+      "Isolate::pending_microtask_count_address()");
   Add(ExternalReference::interpreter_dispatch_table_address(isolate).address(),
       "Interpreter::dispatch_table_address");
   Add(ExternalReference::bytecode_size_table_address(isolate).address(),
@@ -270,6 +274,13 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "get_or_create_hash_raw");
   Add(ExternalReference::jsreceiver_create_identity_hash(isolate).address(),
       "jsreceiver_create_identity_hash");
+  Add(ExternalReference::copy_fast_number_jsarray_elements_to_typed_array(
+          isolate)
+          .address(),
+      "copy_fast_number_jsarray_elements_to_typed_array");
+  Add(ExternalReference::copy_typed_array_elements_to_typed_array(isolate)
+          .address(),
+      "copy_typed_array_elements_to_typed_array");
   Add(ExternalReference::log_enter_external_function(isolate).address(),
       "Logger::EnterExternal");
   Add(ExternalReference::log_leave_external_function(isolate).address(),
@@ -278,6 +289,8 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "double_constants.minus_one_half");
   Add(ExternalReference::stress_deopt_count(isolate).address(),
       "Isolate::stress_deopt_count_address()");
+  Add(ExternalReference::force_slow_path(isolate).address(),
+      "Isolate::force_slow_path_address()");
   Add(ExternalReference::runtime_function_table_address(isolate).address(),
       "Runtime::runtime_function_table_address()");
   Add(ExternalReference::address_of_float_abs_constant().address(),
@@ -332,6 +345,10 @@ void ExternalReferenceTable::AddReferences(Isolate* isolate) {
       "IncrementalMarking::RecordWrite");
   Add(ExternalReference::store_buffer_overflow_function(isolate).address(),
       "StoreBuffer::StoreBufferOverflow");
+
+  Add(ExternalReference::invalidate_prototype_chains_function(isolate)
+          .address(),
+      "JSObject::InvalidatePrototypeChains()");
 }
 
 void ExternalReferenceTable::AddBuiltins(Isolate* isolate) {

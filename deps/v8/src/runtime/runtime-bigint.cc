@@ -57,7 +57,6 @@ RUNTIME_FUNCTION(Runtime_BigIntEqualToString) {
   DCHECK_EQ(2, args.length());
   CONVERT_ARG_HANDLE_CHECKED(BigInt, lhs, 0);
   CONVERT_ARG_HANDLE_CHECKED(String, rhs, 1);
-  rhs = String::Flatten(rhs);
   bool result = BigInt::EqualToString(lhs, rhs);
   return *isolate->factory()->ToBoolean(result);
 }
@@ -106,6 +105,9 @@ RUNTIME_FUNCTION(Runtime_BigIntBinaryOp) {
       break;
     case Operation::kModulus:
       result = BigInt::Remainder(left, right);
+      break;
+    case Operation::kExponentiate:
+      result = BigInt::Exponentiate(left, right);
       break;
     case Operation::kBitwiseAnd:
       result = BigInt::BitwiseAnd(left, right);

@@ -89,6 +89,9 @@ declare_args() {
   # Sets -dV8_CONCURRENT_MARKING
   v8_enable_concurrent_marking = true
 
+  # Sets -dV8_ENABLE_FORCE_SLOW_PATH
+  v8_enable_force_slow_path = ""
+
   # Build the snapshot with unwinding information for perf.
   # Sets -dV8_USE_SNAPSHOT_WITH_UNWINDING_INFO.
   v8_perf_prof_unwinding_info = false
@@ -148,6 +151,9 @@ if (v8_enable_disassembler == "") {
 }
 if (v8_enable_trace_maps == "") {
   v8_enable_trace_maps = is_debug
+}
+if (v8_enable_force_slow_path == "") {
+  v8_enable_force_slow_path = is_debug
 }
 if (v8_enable_v8_checks == "") {
   v8_enable_v8_checks = is_debug
@@ -274,6 +280,9 @@ config("features") {
   }
   if (v8_enable_trace_feedback_updates) {
     defines += [ "V8_TRACE_FEEDBACK_UPDATES" ]
+  }
+  if (v8_enable_force_slow_path) {
+    defines += [ "V8_ENABLE_FORCE_SLOW_PATH" ]
   }
   if (v8_enable_v8_checks) {
     defines += [ "V8_ENABLE_CHECKS" ]
@@ -504,6 +513,12 @@ config("toolchain") {
       # TODO(hans): Remove once http://crbug.com/428099 is resolved.
       "-Winconsistent-missing-override",
     ]
+
+    if (v8_current_cpu != "mips" && v8_current_cpu != "mipsel") {
+      # We exclude MIPS because the IsMipsArchVariant macro causes trouble.
+      cflags += [ "-Wunreachable-code" ]
+    }
+
     if (v8_current_cpu == "x64" || v8_current_cpu == "arm64" ||
         v8_current_cpu == "mips64el") {
       cflags += [ "-Wshorten-64-to-32" ]
@@ -748,6 +763,10 @@ action("postmortem-metadata") {
     "src/objects-inl.h",
     "src/objects/code-inl.h",
     "src/objects/code.h",
+    "src/objects/data-handler.h",
+    "src/objects/data-handler-inl.h",
+    "src/objects/fixed-array-inl.h",
+    "src/objects/fixed-array.h",
     "src/objects/js-array-inl.h",
     "src/objects/js-array.h",
     "src/objects/js-regexp-inl.h",
@@ -1022,6 +1041,7 @@ v8_source_set("v8_initializers") {
     "src/builtins/builtins-iterator-gen.cc",
     "src/builtins/builtins-iterator-gen.h",
     "src/builtins/builtins-math-gen.cc",
+    "src/builtins/builtins-math-gen.h",
     "src/builtins/builtins-number-gen.cc",
     "src/builtins/builtins-object-gen.cc",
     "src/builtins/builtins-promise-gen.cc",
@@ -1672,6 +1692,10 @@ v8_source_set("v8_base") {
     "src/heap/spaces.h",
     "src/heap/store-buffer.cc",
     "src/heap/store-buffer.h",
+    "src/heap/stress-marking-observer.cc",
+    "src/heap/stress-marking-observer.h",
+    "src/heap/sweeper.cc",
+    "src/heap/sweeper.h",
     "src/heap/worklist.h",
     "src/ic/call-optimization.cc",
     "src/ic/call-optimization.h",
@@ -1793,6 +1817,8 @@ v8_source_set("v8_base") {
     "src/objects/debug-objects.h",
     "src/objects/descriptor-array.h",
     "src/objects/dictionary.h",
+    "src/objects/fixed-array-inl.h",
+    "src/objects/fixed-array.h",
     "src/objects/frame-array-inl.h",
     "src/objects/frame-array.h",
     "src/objects/hash-table-inl.h",
@@ -1801,6 +1827,8 @@ v8_source_set("v8_base") {
     "src/objects/intl-objects.h",
     "src/objects/js-array-inl.h",
     "src/objects/js-array.h",
+    "src/objects/js-collection-inl.h",
+    "src/objects/js-collection.h",
     "src/objects/js-regexp-inl.h",
     "src/objects/js-regexp.h",
     "src/objects/literal-objects-inl.h",
@@ -2063,9 +2091,11 @@ v8_source_set("v8_base") {
     "src/visitors.h",
     "src/vm-state-inl.h",
     "src/vm-state.h",
+    "src/wasm/baseline/liftoff-assembler-defs.h",
     "src/wasm/baseline/liftoff-assembler.cc",
     "src/wasm/baseline/liftoff-assembler.h",
     "src/wasm/baseline/liftoff-compiler.cc",
+    "src/wasm/baseline/liftoff-register.h",
     "src/wasm/compilation-manager.cc",
     "src/wasm/compilation-manager.h",
     "src/wasm/decoder.h",
@@ -2087,13 +2117,16 @@ v8_source_set("v8_base") {
     "src/wasm/streaming-decoder.h",
     "src/wasm/wasm-api.cc",
     "src/wasm/wasm-api.h",
+    "src/wasm/wasm-code-manager.cc",
+    "src/wasm/wasm-code-manager.h",
     "src/wasm/wasm-code-specialization.cc",
     "src/wasm/wasm-code-specialization.h",
+    "src/wasm/wasm-code-wrapper.cc",
+    "src/wasm/wasm-code-wrapper.h",
     "src/wasm/wasm-debug.cc",
+    "src/wasm/wasm-engine.h",
     "src/wasm/wasm-external-refs.cc",
     "src/wasm/wasm-external-refs.h",
-    "src/wasm/wasm-heap.cc",
-    "src/wasm/wasm-heap.h",
     "src/wasm/wasm-interpreter.cc",
     "src/wasm/wasm-interpreter.h",
     "src/wasm/wasm-js.cc",
@@ -2112,6 +2145,8 @@ v8_source_set("v8_base") {
     "src/wasm/wasm-opcodes.h",
     "src/wasm/wasm-result.cc",
     "src/wasm/wasm-result.h",
+    "src/wasm/wasm-serialization.cc",
+    "src/wasm/wasm-serialization.h",
     "src/wasm/wasm-text.cc",
     "src/wasm/wasm-text.h",
     "src/wasm/wasm-value.h",
@@ -2170,7 +2205,6 @@ v8_source_set("v8_base") {
       "src/ia32/sse-instr.h",
       "src/regexp/ia32/regexp-macro-assembler-ia32.cc",
       "src/regexp/ia32/regexp-macro-assembler-ia32.h",
-      "src/wasm/baseline/ia32/liftoff-assembler-ia32-defs.h",
       "src/wasm/baseline/ia32/liftoff-assembler-ia32.h",
     ]
   } else if (v8_current_cpu == "x64") {
@@ -2185,7 +2219,6 @@ v8_source_set("v8_base") {
       "src/regexp/x64/regexp-macro-assembler-x64.cc",
       "src/regexp/x64/regexp-macro-assembler-x64.h",
       "src/third_party/valgrind/valgrind.h",
-      "src/wasm/baseline/x64/liftoff-assembler-x64-defs.h",
       "src/wasm/baseline/x64/liftoff-assembler-x64.h",
       "src/x64/assembler-x64-inl.h",
       "src/x64/assembler-x64.cc",
@@ -2239,7 +2272,6 @@ v8_source_set("v8_base") {
       "src/debug/arm/debug-arm.cc",
       "src/regexp/arm/regexp-macro-assembler-arm.cc",
       "src/regexp/arm/regexp-macro-assembler-arm.h",
-      "src/wasm/baseline/arm/liftoff-assembler-arm-defs.h",
       "src/wasm/baseline/arm/liftoff-assembler-arm.h",
     ]
   } else if (v8_current_cpu == "arm64") {
@@ -2285,7 +2317,6 @@ v8_source_set("v8_base") {
       "src/debug/arm64/debug-arm64.cc",
       "src/regexp/arm64/regexp-macro-assembler-arm64.cc",
       "src/regexp/arm64/regexp-macro-assembler-arm64.h",
-      "src/wasm/baseline/arm64/liftoff-assembler-arm64-defs.h",
       "src/wasm/baseline/arm64/liftoff-assembler-arm64.h",
     ]
     if (use_jumbo_build) {
@@ -2322,7 +2353,6 @@ v8_source_set("v8_base") {
       "src/mips/simulator-mips.h",
       "src/regexp/mips/regexp-macro-assembler-mips.cc",
       "src/regexp/mips/regexp-macro-assembler-mips.h",
-      "src/wasm/baseline/mips/liftoff-assembler-mips-defs.h",
       "src/wasm/baseline/mips/liftoff-assembler-mips.h",
     ]
   } else if (v8_current_cpu == "mips64" || v8_current_cpu == "mips64el") {
@@ -2352,7 +2382,6 @@ v8_source_set("v8_base") {
       "src/mips64/simulator-mips64.h",
       "src/regexp/mips64/regexp-macro-assembler-mips64.cc",
       "src/regexp/mips64/regexp-macro-assembler-mips64.h",
-      "src/wasm/baseline/mips64/liftoff-assembler-mips64-defs.h",
       "src/wasm/baseline/mips64/liftoff-assembler-mips64.h",
     ]
   } else if (v8_current_cpu == "ppc" || v8_current_cpu == "ppc64") {
@@ -2382,7 +2411,6 @@ v8_source_set("v8_base") {
       "src/ppc/simulator-ppc.h",
       "src/regexp/ppc/regexp-macro-assembler-ppc.cc",
       "src/regexp/ppc/regexp-macro-assembler-ppc.h",
-      "src/wasm/baseline/ppc/liftoff-assembler-ppc-defs.h",
       "src/wasm/baseline/ppc/liftoff-assembler-ppc.h",
     ]
   } else if (v8_current_cpu == "s390" || v8_current_cpu == "s390x") {
@@ -2412,7 +2440,6 @@ v8_source_set("v8_base") {
       "src/s390/macro-assembler-s390.h",
       "src/s390/simulator-s390.cc",
       "src/s390/simulator-s390.h",
-      "src/wasm/baseline/s390/liftoff-assembler-s390-defs.h",
       "src/wasm/baseline/s390/liftoff-assembler-s390.h",
     ]
   }

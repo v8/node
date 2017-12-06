@@ -105,7 +105,8 @@
   V(JSSubtract)                \
   V(JSMultiply)                \
   V(JSDivide)                  \
-  V(JSModulus)
+  V(JSModulus)                 \
+  V(JSExponentiate)
 
 #define JS_SIMPLE_BINOP_LIST(V) \
   JS_COMPARE_BINOP_LIST(V)      \
@@ -127,21 +128,27 @@
 #define JS_SIMPLE_UNOP_LIST(V) \
   JS_CONVERSION_UNOP_LIST(V)   \
   V(JSBitwiseNot)              \
+  V(JSDecrement)               \
+  V(JSIncrement)               \
   V(JSNegate)
 
+#define JS_CREATE_OP_LIST(V)    \
+  V(JSCreate)                   \
+  V(JSCreateArguments)          \
+  V(JSCreateArray)              \
+  V(JSCreateBoundFunction)      \
+  V(JSCreateClosure)            \
+  V(JSCreateGeneratorObject)    \
+  V(JSCreateIterResultObject)   \
+  V(JSCreateKeyValueArray)      \
+  V(JSCreateLiteralArray)       \
+  V(JSCreateEmptyLiteralArray)  \
+  V(JSCreateLiteralObject)      \
+  V(JSCreateEmptyLiteralObject) \
+  V(JSCreateLiteralRegExp)
+
 #define JS_OBJECT_OP_LIST(V)      \
-  V(JSCreate)                     \
-  V(JSCreateArguments)            \
-  V(JSCreateArray)                \
-  V(JSCreateBoundFunction)        \
-  V(JSCreateClosure)              \
-  V(JSCreateIterResultObject)     \
-  V(JSCreateKeyValueArray)        \
-  V(JSCreateLiteralArray)         \
-  V(JSCreateEmptyLiteralArray)    \
-  V(JSCreateLiteralObject)        \
-  V(JSCreateEmptyLiteralObject)   \
-  V(JSCreateLiteralRegExp)        \
+  JS_CREATE_OP_LIST(V)            \
   V(JSLoadProperty)               \
   V(JSLoadNamed)                  \
   V(JSLoadGlobal)                 \
@@ -152,7 +159,6 @@
   V(JSStoreDataPropertyInLiteral) \
   V(JSDeleteProperty)             \
   V(JSHasProperty)                \
-  V(JSCreateGeneratorObject)      \
   V(JSGetSuperConstructor)
 
 #define JS_CONTEXT_OP_LIST(V) \
@@ -163,11 +169,14 @@
   V(JSCreateWithContext)      \
   V(JSCreateBlockContext)
 
+#define JS_CONSTRUCT_OP_LIST(V) \
+  V(JSConstructForwardVarargs)  \
+  V(JSConstruct)                \
+  V(JSConstructWithArrayLike)   \
+  V(JSConstructWithSpread)
+
 #define JS_OTHER_OP_LIST(V)         \
-  V(JSConstructForwardVarargs)      \
-  V(JSConstruct)                    \
-  V(JSConstructWithArrayLike)       \
-  V(JSConstructWithSpread)          \
+  JS_CONSTRUCT_OP_LIST(V)           \
   V(JSCallForwardVarargs)           \
   V(JSCall)                         \
   V(JSCallWithArrayLike)            \
@@ -326,6 +335,7 @@
   V(StringFromCharCode)                 \
   V(StringFromCodePoint)                \
   V(StringIndexOf)                      \
+  V(StringLength)                       \
   V(StringToLowerCaseIntl)              \
   V(StringToUpperCaseIntl)              \
   V(CheckBounds)                        \
@@ -381,6 +391,7 @@
   V(NewDoubleElements)                  \
   V(NewSmiOrObjectElements)             \
   V(NewArgumentsElements)               \
+  V(NewConsString)                      \
   V(ArrayBufferWasNeutered)             \
   V(EnsureWritableFastElements)         \
   V(MaybeGrowFastElements)              \

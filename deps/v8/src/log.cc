@@ -1049,27 +1049,25 @@ void Logger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
   // Make sure the script is written to the log file.
   Script* script = Script::cast(script_object);
   int script_id = script->id();
-  if (logged_source_code_.find(script_id) != logged_source_code_.end()) {
-    return;
-  }
+  if (logged_source_code_.find(script_id) == logged_source_code_.end()) {
+    // This script has not been logged yet.
+    logged_source_code_.insert(script_id);
+    Object* source_object = script->source();
+    if (source_object->IsString()) {
+      String* source_code = String::cast(source_object);
+      msg << "script" << kNext << script_id << kNext;
 
-  // This script has not been logged yet.
-  logged_source_code_.insert(script_id);
-  Object* source_object = script->source();
-  if (source_object->IsString()) {
-    String* source_code = String::cast(source_object);
-    msg << "script" << kNext << script_id << kNext;
+      // Log the script name.
+      if (script->name()->IsString()) {
+        msg << String::cast(script->name()) << kNext;
+      } else {
+        msg << "<unknown>" << kNext;
+      }
 
-    // Log the script name.
-    if (script->name()->IsString()) {
-      msg << String::cast(script->name()) << kNext;
-    } else {
-      msg << "<unknown>" << kNext;
+      // Log the source code.
+      msg << source_code;
+      msg.WriteToLogFile();
     }
-
-    // Log the source code.
-    msg << source_code;
-    msg.WriteToLogFile();
   }
 
   // We log source code information in the form:
@@ -1381,26 +1379,10 @@ void Logger::ICEvent(const char* type, bool keyed, Map* map, Object* key,
   msg.WriteToLogFile();
 }
 
-void Logger::LogAllTransitions(Map* map) {
-  DisallowHeapAllocation no_gc;
-  if (!log_->IsEnabled() || !FLAG_trace_maps) return;
-  TransitionsAccessor transitions(map, &no_gc);
-  int num_transitions = transitions.NumberOfTransitions();
-  for (int i = 0; i < num_transitions; ++i) {
-    Map* target = transitions.GetTarget(i);
-    Name* key = transitions.GetKey(i);
-    MapDetails(target);
-    MapEvent("Transition", map, target, nullptr, key);
-    LogAllTransitions(target);
-  }
-}
-
 void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
                       HeapObject* name_or_sfi) {
   DisallowHeapAllocation no_gc;
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
-  // TODO(cbruni): Remove once --trace-maps is fully migrated.
-  if (from) MapDetails(from);
   if (to) MapDetails(to);
   int line = -1;
   int column = -1;
@@ -1430,6 +1412,9 @@ void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
 
 void Logger::MapDetails(Map* map) {
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
+  // Disable logging Map details during bootstrapping since we use LogMaps() to
+  // log all creating
+  if (isolate_->bootstrapper()->IsActive()) return;
   DisallowHeapAllocation no_gc;
   Log::MessageBuilder msg(log_);
   msg << "map-details" << kNext << timer_.Elapsed().InMicroseconds() << kNext
@@ -1709,6 +1694,16 @@ void Logger::LogAccessorCallbacks() {
   }
 }
 
+void Logger::LogMaps() {
+  Heap* heap = isolate_->heap();
+  HeapIterator iterator(heap);
+  DisallowHeapAllocation no_gc;
+  for (HeapObject* obj = iterator.next(); obj != nullptr;
+       obj = iterator.next()) {
+    if (!obj->IsMap()) continue;
+    MapDetails(Map::cast(obj));
+  }
+}
 
 static void AddIsolateIdIfNeeded(std::ostream& os,  // NOLINT
                                  Isolate* isolate) {

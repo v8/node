@@ -105,6 +105,7 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerNewDoubleElements(Node* node);
   Node* LowerNewSmiOrObjectElements(Node* node);
   Node* LowerNewArgumentsElements(Node* node);
+  Node* LowerNewConsString(Node* node);
   Node* LowerArrayBufferWasNeutered(Node* node);
   Node* LowerSameValue(Node* node);
   Node* LowerStringToNumber(Node* node);
@@ -116,6 +117,7 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerStringFromCharCode(Node* node);
   Node* LowerStringFromCodePoint(Node* node);
   Node* LowerStringIndexOf(Node* node);
+  Node* LowerStringLength(Node* node);
   Node* LowerStringEqual(Node* node);
   Node* LowerStringLessThan(Node* node);
   Node* LowerStringLessThanOrEqual(Node* node);

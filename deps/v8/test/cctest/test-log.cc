@@ -34,6 +34,7 @@
 #include <cmath>
 #endif  // __linux__
 
+#include <unordered_set>
 #include "src/api.h"
 #include "src/log-utils.h"
 #include "src/log.h"
@@ -68,16 +69,16 @@ static const char* StrNStr(const char* s1, const char* s2, size_t n) {
   return strstr(s1, s2);
 }
 
+// Look for a log line which starts with {prefix} and ends with {suffix}.
 static const char* FindLogLine(const char* start, const char* end,
                                const char* prefix,
                                const char* suffix = nullptr) {
   CHECK_LT(start, end);
-  // Look for a log line which starts with {prefix} and ends with {suffix}.
   CHECK_EQ(end[0], '\0');
   size_t prefixLength = strlen(prefix);
   // Loop through the input until we find /{prefix}[^\n]+{suffix}/.
   while (start < end) {
-    const char* prefixResult = StrNStr(start, prefix, (end - start));
+    const char* prefixResult = strstr(start, prefix);
     if (!prefixResult) return NULL;
     if (suffix == nullptr) return prefixResult;
     const char* suffixResult =
@@ -138,7 +139,7 @@ class ScopedLoggerInitializer {
     printf(
         "======================================================\n"
         "Last log lines:\n...%s\n"
-        "======================================================",
+        "======================================================\n",
         current);
   }
 
@@ -202,6 +203,30 @@ class ScopedLoggerInitializer {
 
   void StringEvent(const char* name, const char* value) {
     logger_->StringEvent(name, value);
+  }
+
+  void ExtractAllAddresses(std::unordered_set<uintptr_t>* map,
+                           const char* prefix, int field_index) {
+    // Make sure that StopLogging() has been called before.
+    CHECK(log_.size());
+    const char* current = log_.start();
+    while (current != nullptr) {
+      current = FindLine(prefix, nullptr, current);
+      if (current == nullptr) return;
+      // Find token number {index}.
+      const char* previous;
+      for (int i = 0; i <= field_index; i++) {
+        previous = current;
+        current = strchr(current + 1, ',');
+        if (current == nullptr) break;
+        // Skip the comma.
+        current++;
+      }
+      if (current == nullptr) break;
+      uintptr_t address = strtoll(previous, nullptr, 16);
+      CHECK_LT(0, address);
+      map->insert(address);
+    }
   }
 
  private:
@@ -787,6 +812,45 @@ TEST(TraceMaps) {
   isolate->Dispose();
 }
 
+TEST(LogMaps) {
+  // Test that all Map details from Maps in the snapshot are logged properly.
+  SETUP_FLAGS();
+  i::FLAG_trace_maps = true;
+  v8::Isolate::CreateParams create_params;
+  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  {
+    ScopedLoggerInitializer logger(saved_log, saved_prof, isolate);
+    logger.StopLogging();
+    // Extract all the map-detail entry addresses from the log.
+    std::unordered_set<uintptr_t> map_addresses;
+    logger.ExtractAllAddresses(&map_addresses, "map-details", 2);
+    i::Heap* heap = reinterpret_cast<i::Isolate*>(isolate)->heap();
+    i::HeapIterator iterator(heap);
+    i::DisallowHeapAllocation no_gc;
+
+    // Iterate over all maps on the heap.
+    size_t i = 0;
+    for (i::HeapObject* obj = iterator.next(); obj != nullptr;
+         obj = iterator.next()) {
+      i++;
+      if (!obj->IsMap()) continue;
+      uintptr_t address = reinterpret_cast<uintptr_t>(obj);
+      if (map_addresses.find(address) != map_addresses.end()) continue;
+      logger.PrintLog(200);
+      i::Map::cast(obj)->Print();
+      V8_Fatal(__FILE__, __LINE__,
+               "Map (%p, #%zu) was not logged during startup with --trace-maps!"
+               "\n# Expected Log Line: map_details, ... %p"
+               "\n# Use logger::PrintLog() for more details.",
+               reinterpret_cast<void*>(obj), i, reinterpret_cast<void*>(obj));
+    }
+    logger.PrintLog(200);
+  }
+  i::FLAG_log_function_events = false;
+  isolate->Dispose();
+}
+
 TEST(ConsoleTimeEvents) {
   SETUP_FLAGS();
   v8::Isolate::CreateParams create_params;
@@ -821,6 +885,9 @@ TEST(ConsoleTimeEvents) {
 }
 
 TEST(LogFunctionEvents) {
+  // Always opt and stress opt will break the fine-grained log order.
+  if (i::FLAG_always_opt) return;
+
   SETUP_FLAGS();
   i::FLAG_log_function_events = true;
   v8::Isolate::CreateParams create_params;
@@ -872,14 +939,21 @@ TEST(LogFunctionEvents) {
         //         - execute eager functions.
         {"function,parse-function,", ",lazyFunction"},
         {"function,compile-lazy,", ",lazyFunction"},
+        {"function,first-execution,", ",lazyFunction"},
 
         {"function,parse-function,", ",lazyInnerFunction"},
         {"function,compile-lazy,", ",lazyInnerFunction"},
+        {"function,first-execution,", ",lazyInnerFunction"},
+
+        {"function,first-execution,", ",eagerFunction"},
 
         {"function,parse-function,", ",Foo"},
         {"function,compile-lazy,", ",Foo"},
+        {"function,first-execution,", ",Foo"},
+
         {"function,parse-function,", ",Foo.foo"},
         {"function,compile-lazy,", ",Foo.foo"},
+        {"function,first-execution,", ",Foo.foo"},
     };
     logger.FindLogLines(pairs, arraysize(pairs), start);
   }

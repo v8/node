@@ -352,8 +352,9 @@ Type* OperationTyper::NumberCbrt(Type* type) {
 Type* OperationTyper::NumberCeil(Type* type) {
   DCHECK(type->Is(Type::Number()));
   if (type->Is(cache_.kIntegerOrMinusZeroOrNaN)) return type;
-  // TODO(bmeurer): We could infer a more precise type here.
-  return cache_.kIntegerOrMinusZeroOrNaN;
+  type = Type::Intersect(type, Type::NaN(), zone());
+  type = Type::Union(type, cache_.kIntegerOrMinusZero, zone());
+  return type;
 }
 
 Type* OperationTyper::NumberClz32(Type* type) {
@@ -417,8 +418,9 @@ Type* OperationTyper::NumberLog10(Type* type) {
 Type* OperationTyper::NumberRound(Type* type) {
   DCHECK(type->Is(Type::Number()));
   if (type->Is(cache_.kIntegerOrMinusZeroOrNaN)) return type;
-  // TODO(bmeurer): We could infer a more precise type here.
-  return cache_.kIntegerOrMinusZeroOrNaN;
+  type = Type::Intersect(type, Type::NaN(), zone());
+  type = Type::Union(type, cache_.kIntegerOrMinusZero, zone());
+  return type;
 }
 
 Type* OperationTyper::NumberSign(Type* type) {
@@ -474,8 +476,9 @@ Type* OperationTyper::NumberTanh(Type* type) {
 Type* OperationTyper::NumberTrunc(Type* type) {
   DCHECK(type->Is(Type::Number()));
   if (type->Is(cache_.kIntegerOrMinusZeroOrNaN)) return type;
-  // TODO(bmeurer): We could infer a more precise type here.
-  return cache_.kIntegerOrMinusZeroOrNaN;
+  type = Type::Intersect(type, Type::NaN(), zone());
+  type = Type::Union(type, cache_.kIntegerOrMinusZero, zone());
+  return type;
 }
 
 Type* OperationTyper::NumberToBoolean(Type* type) {

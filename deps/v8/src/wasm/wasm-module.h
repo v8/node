@@ -33,6 +33,7 @@ class CallDescriptor;
 
 namespace wasm {
 class ErrorThrower;
+class NativeModule;
 
 enum WasmExternalKind {
   kExternalFunction = 0,
@@ -246,7 +247,7 @@ struct WasmFunctionName {
       : function_(function), name_(name) {}
 
   const WasmFunction* function_;
-  WasmName name_;
+  const WasmName name_;
 };
 
 std::ostream& operator<<(std::ostream& os, const WasmFunctionName& name);
@@ -284,10 +285,14 @@ Handle<FixedArray> DecodeLocalNames(Isolate*, Handle<WasmCompiledModule>);
 WasmFunction* GetWasmFunctionForExport(Isolate* isolate, Handle<Object> target);
 
 void UpdateDispatchTables(Isolate* isolate, Handle<FixedArray> dispatch_tables,
-                          int index, WasmFunction* function, Handle<Code> code);
+                          int index, const WasmFunction* function,
+                          Handle<Object> code_or_foreign);
 
-void UnpackAndRegisterProtectedInstructions(Isolate* isolate,
-                                            Handle<FixedArray> code_table);
+void UnpackAndRegisterProtectedInstructionsGC(Isolate* isolate,
+                                              Handle<FixedArray> code_table);
+
+void UnpackAndRegisterProtectedInstructions(
+    Isolate* isolate, const wasm::NativeModule* native_module);
 
 const char* ExternalKindName(WasmExternalKind);
 
@@ -323,7 +328,7 @@ class TruncatedUserString {
 
  private:
   const char* start_;
-  int length_;
+  const int length_;
   char buffer_[kMaxLen];
 };
 

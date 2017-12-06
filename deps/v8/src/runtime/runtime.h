@@ -120,6 +120,7 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_COMPILER(F)    \
   F(CompileLazy, 1, 1)                    \
   F(CompileOptimized_Concurrent, 1, 1)    \
+  F(FunctionFirstExecution, 1, 1)         \
   F(CompileOptimized_NotConcurrent, 1, 1) \
   F(EvictOptimizedCodeSlot, 1, 1)         \
   F(NotifyDeoptimized, 0, 1)              \
@@ -232,7 +233,6 @@ namespace internal {
   F(FunctionGetScriptSourcePosition, 1, 1) \
   F(FunctionGetContextData, 1, 1)          \
   F(FunctionSetLength, 2, 1)               \
-  F(FunctionSetPrototype, 2, 1)            \
   F(FunctionIsAPIFunction, 1, 1)           \
   F(SetCode, 2, 1)                         \
   F(SetNativeFlag, 1, 1)                   \
@@ -339,7 +339,8 @@ namespace internal {
   F(Typeof, 1, 1)                                                    \
   F(UnwindAndFindExceptionHandler, 0, 1)                             \
   F(AllowDynamicFunction, 1, 1)                                      \
-  F(GetTemplateObject, 1, 1)
+  F(GetTemplateObject, 1, 1)                                         \
+  F(ReportMessage, 1, 1)
 
 #define FOR_EACH_INTRINSIC_LITERALS(F) \
   F(CreateRegExpLiteral, 4, 1)         \
@@ -594,6 +595,7 @@ namespace internal {
   F(TraceExit, 1, 1)                          \
   F(HaveSameMap, 2, 1)                        \
   F(InNewSpace, 1, 1)                         \
+  F(HasFastElements, 1, 1)                    \
   F(HasSmiElements, 1, 1)                     \
   F(HasObjectElements, 1, 1)                  \
   F(HasSmiOrObjectElements, 1, 1)             \
@@ -631,7 +633,8 @@ namespace internal {
   F(RedirectToWasmInterpreter, 2, 1)          \
   F(WasmTraceMemory, 4, 1)                    \
   F(CompleteInobjectSlackTracking, 1, 1)      \
-  F(IsLiftoffFunction, 1, 1)
+  F(IsLiftoffFunction, 1, 1)                  \
+  F(FreezeWasmLazyCompilation, 1, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F) \
   F(ArrayBufferGetByteLength, 1, 1)      \

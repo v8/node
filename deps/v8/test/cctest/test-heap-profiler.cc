@@ -2816,7 +2816,7 @@ TEST(AddressToTraceMap) {
 
   // [0x100, 0x200) -> 1, [0x200, 0x300) -> 2
   map.AddRange(ToAddress(0x200), 0x100, 2U);
-  CHECK_EQ(2u, map.GetTraceNodeId(ToAddress(0x2a0)));
+  CHECK_EQ(2u, map.GetTraceNodeId(ToAddress(0x2A0)));
   CHECK_EQ(2u, map.size());
 
   // [0x100, 0x180) -> 1, [0x180, 0x280) -> 3, [0x280, 0x300) -> 2
@@ -3137,4 +3137,29 @@ TEST(SamplingHeapProfilerPretenuredInlineAllocations) {
   }
 
   CHECK_GE(count, 8000);
+}
+
+TEST(SamplingHeapProfilerLargeInterval) {
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
+  LocalContext env;
+  v8::HeapProfiler* heap_profiler = env->GetIsolate()->GetHeapProfiler();
+
+  // Suppress randomness to avoid flakiness in tests.
+  v8::internal::FLAG_sampling_heap_profiler_suppress_randomness = true;
+
+  heap_profiler->StartSamplingHeapProfiler(512 * 1024);
+
+  for (int i = 0; i < 8 * 1024; ++i) {
+    CcTest::i_isolate()->factory()->NewFixedArray(1024);
+  }
+
+  std::unique_ptr<v8::AllocationProfile> profile(
+      heap_profiler->GetAllocationProfile());
+  CHECK(profile);
+  const char* names[] = {"(EXTERNAL)"};
+  auto node = FindAllocationProfileNode(env->GetIsolate(), *profile,
+                                        ArrayVector(names));
+  CHECK(node);
+
+  heap_profiler->StopSamplingHeapProfiler();
 }

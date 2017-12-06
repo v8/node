@@ -1897,9 +1897,9 @@ VISIT_ATOMIC_BINOP(Or)
 VISIT_ATOMIC_BINOP(Xor)
 #undef VISIT_ATOMIC_BINOP
 
-#define SIMD_TYPES(V) \
-  V(I32x4)            \
-  V(I16x8)            \
+#define SIMD_INT_TYPES(V) \
+  V(I32x4)                \
+  V(I16x8)                \
   V(I8x16)
 
 #define SIMD_BINOP_LIST(V) \
@@ -1932,7 +1932,26 @@ VISIT_ATOMIC_BINOP(Xor)
   V(I16x8MinU)             \
   V(I16x8MaxU)             \
   V(I16x8GtU)              \
-  V(I16x8GeU)
+  V(I16x8GeU)              \
+  V(I8x16Add)              \
+  V(I8x16AddSaturateS)     \
+  V(I8x16Sub)              \
+  V(I8x16SubSaturateS)     \
+  V(I8x16MinS)             \
+  V(I8x16MaxS)             \
+  V(I8x16Eq)               \
+  V(I8x16Ne)               \
+  V(I8x16GtS)              \
+  V(I8x16GeS)              \
+  V(I8x16AddSaturateU)     \
+  V(I8x16SubSaturateU)     \
+  V(I8x16MinU)             \
+  V(I8x16MaxU)             \
+  V(I8x16GtU)              \
+  V(I8x16GeU)              \
+  V(S128And)               \
+  V(S128Or)                \
+  V(S128Xor)
 
 #define SIMD_UNOP_LIST(V) \
   V(I32x4Neg)             \
@@ -1947,11 +1966,43 @@ VISIT_ATOMIC_BINOP(Xor)
   V(I16x8ShrS)                \
   V(I16x8ShrU)
 
+void InstructionSelector::VisitF32x4Splat(Node* node) {
+  IA32OperandGenerator g(this);
+  InstructionOperand operand0 = g.UseRegister(node->InputAt(0));
+  if (IsSupported(AVX)) {
+    Emit(kAVXF32x4Splat, g.DefineAsRegister(node), operand0);
+  } else {
+    Emit(kSSEF32x4Splat, g.DefineSameAsFirst(node), operand0);
+  }
+}
+
+void InstructionSelector::VisitF32x4ExtractLane(Node* node) {
+  IA32OperandGenerator g(this);
+  InstructionOperand operand0 = g.UseRegister(node->InputAt(0));
+  InstructionOperand operand1 = g.UseImmediate(OpParameter<int32_t>(node));
+  if (IsSupported(AVX)) {
+    Emit(kAVXF32x4ExtractLane, g.DefineAsRegister(node), operand0, operand1);
+  } else {
+    Emit(kSSEF32x4ExtractLane, g.DefineSameAsFirst(node), operand0, operand1);
+  }
+}
+
+void InstructionSelector::VisitS128Zero(Node* node) {
+  IA32OperandGenerator g(this);
+  Emit(kIA32S128Zero, g.DefineAsRegister(node));
+}
+
+void InstructionSelector::VisitS128Not(Node* node) {
+  IA32OperandGenerator g(this);
+  InstructionCode opcode = IsSupported(AVX) ? kAVXS128Not : kSSES128Not;
+  Emit(opcode, g.DefineAsRegister(node), g.Use(node->InputAt(0)));
+}
+
 #define VISIT_SIMD_SPLAT(Type)                               \
   void InstructionSelector::Visit##Type##Splat(Node* node) { \
     VisitRO(this, node, kIA32##Type##Splat);                 \
   }
-SIMD_TYPES(VISIT_SIMD_SPLAT)
+SIMD_INT_TYPES(VISIT_SIMD_SPLAT)
 #undef VISIT_SIMD_SPLAT
 
 #define VISIT_SIMD_EXTRACT_LANE(Type)                              \
@@ -1961,7 +2012,7 @@ SIMD_TYPES(VISIT_SIMD_SPLAT)
     Emit(kIA32##Type##ExtractLane, g.DefineAsRegister(node),       \
          g.UseRegister(node->InputAt(0)), g.UseImmediate(lane));   \
   }
-SIMD_TYPES(VISIT_SIMD_EXTRACT_LANE)
+SIMD_INT_TYPES(VISIT_SIMD_EXTRACT_LANE)
 #undef VISIT_SIMD_EXTRACT_LANE
 
 #define VISIT_SIMD_REPLACE_LANE(Type)                                         \
@@ -1978,7 +2029,8 @@ SIMD_TYPES(VISIT_SIMD_EXTRACT_LANE)
            operand1, operand2);                                               \
     }                                                                         \
   }
-SIMD_TYPES(VISIT_SIMD_REPLACE_LANE)
+SIMD_INT_TYPES(VISIT_SIMD_REPLACE_LANE)
+VISIT_SIMD_REPLACE_LANE(F32x4)
 #undef VISIT_SIMD_REPLACE_LANE
 
 #define VISIT_SIMD_SHIFT(Opcode)                                              \

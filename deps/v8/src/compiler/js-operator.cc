@@ -577,7 +577,10 @@ CompareOperationHint CompareOperationHintOf(const Operator* op) {
   V(Multiply, Operator::kNoProperties, 2, 1)                    \
   V(Divide, Operator::kNoProperties, 2, 1)                      \
   V(Modulus, Operator::kNoProperties, 2, 1)                     \
+  V(Exponentiate, Operator::kNoProperties, 2, 1)                \
   V(BitwiseNot, Operator::kNoProperties, 1, 1)                  \
+  V(Decrement, Operator::kNoProperties, 1, 1)                   \
+  V(Increment, Operator::kNoProperties, 1, 1)                   \
   V(Negate, Operator::kNoProperties, 1, 1)                      \
   V(ToInteger, Operator::kNoProperties, 1, 1)                   \
   V(ToLength, Operator::kNoProperties, 1, 1)                    \

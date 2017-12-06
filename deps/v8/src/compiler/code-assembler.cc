@@ -1006,7 +1006,7 @@ TNode<Object> CodeAssembler::TailCallRuntimeImpl(Runtime::FunctionId function,
   int argc = static_cast<int>(sizeof...(args));
   CallDescriptor* desc = Linkage::GetRuntimeCallDescriptor(
       zone(), function, argc, Operator::kNoProperties,
-      CallDescriptor::kSupportsTailCalls);
+      CallDescriptor::kNoFlags);
   int return_count = static_cast<int>(desc->ReturnCount());
 
   Node* centry =
@@ -1076,7 +1076,7 @@ Node* CodeAssembler::TailCallStubImpl(const CallInterfaceDescriptor& descriptor,
   size_t result_size = 1;
   CallDescriptor* desc = Linkage::GetStubCallDescriptor(
       isolate(), zone(), descriptor, descriptor.GetStackParameterCount(),
-      CallDescriptor::kSupportsTailCalls, Operator::kNoProperties,
+      CallDescriptor::kNoFlags, Operator::kNoProperties,
       MachineType::AnyTagged(), result_size);
 
   Node* nodes[] = {target, args..., context};
@@ -1102,7 +1102,7 @@ Node* CodeAssembler::TailCallStubThenBytecodeDispatch(
   DCHECK_LE(descriptor.GetStackParameterCount(), stack_parameter_count);
   CallDescriptor* desc = Linkage::GetStubCallDescriptor(
       isolate(), zone(), descriptor, stack_parameter_count,
-      CallDescriptor::kSupportsTailCalls, Operator::kNoProperties,
+      CallDescriptor::kNoFlags, Operator::kNoProperties,
       MachineType::AnyTagged(), 0);
 
   Node* nodes[] = {target, args..., context};
@@ -1182,6 +1182,25 @@ Node* CodeAssembler::CallCFunction3WithCallerSavedRegisters(
   return raw_assembler()->CallCFunction3WithCallerSavedRegisters(
       return_type, arg0_type, arg1_type, arg2_type, function, arg0, arg1, arg2,
       mode);
+}
+
+Node* CodeAssembler::CallCFunction4(
+    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
+    MachineType arg2_type, MachineType arg3_type, Node* function, Node* arg0,
+    Node* arg1, Node* arg2, Node* arg3) {
+  return raw_assembler()->CallCFunction4(return_type, arg0_type, arg1_type,
+                                         arg2_type, arg3_type, function, arg0,
+                                         arg1, arg2, arg3);
+}
+
+Node* CodeAssembler::CallCFunction5(
+    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
+    MachineType arg2_type, MachineType arg3_type, MachineType arg4_type,
+    Node* function, Node* arg0, Node* arg1, Node* arg2, Node* arg3,
+    Node* arg4) {
+  return raw_assembler()->CallCFunction5(
+      return_type, arg0_type, arg1_type, arg2_type, arg3_type, arg4_type,
+      function, arg0, arg1, arg2, arg3, arg4);
 }
 
 Node* CodeAssembler::CallCFunction6(

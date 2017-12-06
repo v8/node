@@ -415,7 +415,7 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   __ Peek(argc, 2 * kPointerSize);
   __ Peek(target, 3 * kPointerSize);
 
-  __ LeaveExitFrame(save_doubles(), x10);
+  __ LeaveExitFrame(save_doubles(), x10, x9);
   DCHECK(jssp.Is(__ StackPointer()));
   if (!argv_in_register()) {
     // Drop the remaining stack slots and return from the stub.
@@ -462,8 +462,12 @@ void CEntryStub::Generate(MacroAssembler* masm) {
   // Retrieve the handler context, SP and FP.
   __ Mov(cp, Operand(pending_handler_context_address));
   __ Ldr(cp, MemOperand(cp));
-  __ Mov(jssp, Operand(pending_handler_sp_address));
-  __ Ldr(jssp, MemOperand(jssp));
+  {
+    UseScratchRegisterScope temps(masm);
+    Register scratch = temps.AcquireX();
+    __ Mov(scratch, Operand(pending_handler_sp_address));
+    __ Ldr(jssp, MemOperand(scratch));
+  }
   __ Mov(csp, jssp);
   __ Mov(fp, Operand(pending_handler_fp_address));
   __ Ldr(fp, MemOperand(fp));
@@ -517,6 +521,9 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // Set up the reserved register for 0.0.
   __ Fmov(fp_zero, 0.0);
 
+  // Initialize the root array register
+  __ InitializeRootRegister();
+
   // Build an entry frame (see layout below).
   StackFrame::Type marker = type();
   int64_t bad_frame_pointer = -1L;  // Bad frame pointer to fail if it is used.
@@ -553,7 +560,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // jssp[1] : C entry FP.
   // jssp[2] : stack frame marker.
   // jssp[3] : stack frame marker.
-  // jssp[4] : bad frame pointer 0xfff...ff   <- fp points here.
+  // jssp[4] : bad frame pointer 0xFFF...FF   <- fp points here.
 
   // Jump to a faked try block that does the invoke, with a faked catch
   // block that sets the pending exception.
@@ -612,13 +619,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // x2: receiver.
   // x3: argc.
   // x4: argv.
-
-  if (type() == StackFrame::CONSTRUCT_ENTRY) {
-    __ Call(BUILTIN_CODE(isolate(), JSConstructEntryTrampoline),
-            RelocInfo::CODE_TARGET);
-  } else {
-    __ Call(BUILTIN_CODE(isolate(), JSEntryTrampoline), RelocInfo::CODE_TARGET);
-  }
+  __ Call(EntryTrampoline(), RelocInfo::CODE_TARGET);
 
   // Pop the stack handler and unlink this frame from the handler chain.
   static_assert(StackHandlerConstants::kNextOffset == 0 * kPointerSize,
@@ -636,7 +637,7 @@ void JSEntryStub::Generate(MacroAssembler* masm) {
   // jssp[1] : C entry FP.
   // jssp[2] : stack frame marker.
   // jssp[3] : stack frmae marker.
-  // jssp[4] : bad frame pointer 0xfff...ff   <- fp points here.
+  // jssp[4] : bad frame pointer 0xFFF...FF   <- fp points here.
 
   // Check if the current stack frame is marked as the outermost JS frame.
   Label non_outermost_js_2;
@@ -1218,7 +1219,7 @@ static void CallApiFunctionAndReturn(MacroAssembler* masm,
   __ Peek(x21, (spill_offset + 2) * kXRegSize);
   __ Peek(x22, (spill_offset + 3) * kXRegSize);
 
-  __ LeaveExitFrame(false, x1);
+  __ LeaveExitFrame(false, x1, x5);
 
   // Check if the function scheduled an exception.
   __ Mov(x5, ExternalReference::scheduled_exception_address(isolate));

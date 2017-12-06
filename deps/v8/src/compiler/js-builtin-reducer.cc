@@ -1451,6 +1451,7 @@ Reduction JSBuiltinReducer::ReduceCollectionIteratorNext(
     index = effect = graph()->NewNode(
         common()->Call(desc), jsgraph()->HeapConstant(callable.code()), table,
         index, jsgraph()->NoContextConstant(), effect);
+    NodeProperties::SetType(index, type_cache_.kFixedArrayLengthType);
 
     // Update the {index} and {table} on the {receiver}.
     effect = graph()->NewNode(
@@ -2391,9 +2392,8 @@ Reduction JSBuiltinReducer::ReduceStringCharAt(Node* node) {
         }
 
         // Determine the {receiver} length.
-        Node* receiver_length = effect = graph()->NewNode(
-            simplified()->LoadField(AccessBuilder::ForStringLength()), receiver,
-            effect, control);
+        Node* receiver_length =
+            graph()->NewNode(simplified()->StringLength(), receiver);
 
         // Check if {index} is less than {receiver} length.
         Node* check = graph()->NewNode(simplified()->NumberLessThan(), index,
@@ -2445,9 +2445,8 @@ Reduction JSBuiltinReducer::ReduceStringCharCodeAt(Node* node) {
         }
 
         // Determine the {receiver} length.
-        Node* receiver_length = effect = graph()->NewNode(
-            simplified()->LoadField(AccessBuilder::ForStringLength()), receiver,
-            effect, control);
+        Node* receiver_length =
+            graph()->NewNode(simplified()->StringLength(), receiver);
 
         // Check if {index} is less than {receiver} length.
         Node* check = graph()->NewNode(simplified()->NumberLessThan(), index,
@@ -2577,9 +2576,7 @@ Reduction JSBuiltinReducer::ReduceStringIteratorNext(Node* node) {
     Node* index = effect = graph()->NewNode(
         simplified()->LoadField(AccessBuilder::ForJSStringIteratorIndex()),
         receiver, effect, control);
-    Node* length = effect = graph()->NewNode(
-        simplified()->LoadField(AccessBuilder::ForStringLength()), string,
-        effect, control);
+    Node* length = graph()->NewNode(simplified()->StringLength(), string);
 
     // branch0: if (index < length)
     Node* check0 =
@@ -2670,9 +2667,8 @@ Reduction JSBuiltinReducer::ReduceStringIteratorNext(Node* node) {
           simplified()->StringFromCodePoint(UnicodeEncoding::UTF16), vtrue0);
 
       // Update iterator.[[NextIndex]]
-      Node* char_length = etrue0 = graph()->NewNode(
-          simplified()->LoadField(AccessBuilder::ForStringLength()), vtrue0,
-          etrue0, if_true0);
+      Node* char_length =
+          graph()->NewNode(simplified()->StringLength(), vtrue0);
       index = graph()->NewNode(simplified()->NumberAdd(), index, char_length);
       etrue0 = graph()->NewNode(
           simplified()->StoreField(AccessBuilder::ForJSStringIteratorIndex()),
@@ -2701,6 +2697,59 @@ Reduction JSBuiltinReducer::ReduceStringIteratorNext(Node* node) {
 
     ReplaceWithValue(node, value, effect, control);
     return Replace(value);
+  }
+  return NoChange();
+}
+
+// ES section #sec-string.prototype.slice
+Reduction JSBuiltinReducer::ReduceStringSlice(Node* node) {
+  if (Node* receiver = GetStringWitness(node)) {
+    Node* start = node->op()->ValueInputCount() >= 3
+                      ? NodeProperties::GetValueInput(node, 2)
+                      : jsgraph()->UndefinedConstant();
+    Type* start_type = NodeProperties::GetType(start);
+    Node* end = node->op()->ValueInputCount() >= 4
+                    ? NodeProperties::GetValueInput(node, 3)
+                    : jsgraph()->UndefinedConstant();
+    Type* end_type = NodeProperties::GetType(end);
+    Node* effect = NodeProperties::GetEffectInput(node);
+    Node* control = NodeProperties::GetControlInput(node);
+
+    if (start_type->Is(type_cache_.kSingletonMinusOne) &&
+        end_type->Is(Type::Undefined())) {
+      Node* receiver_length =
+          graph()->NewNode(simplified()->StringLength(), receiver);
+
+      Node* check =
+          graph()->NewNode(simplified()->NumberEqual(), receiver_length,
+                           jsgraph()->ZeroConstant());
+      Node* branch = graph()->NewNode(common()->Branch(BranchHint::kFalse),
+                                      check, control);
+
+      Node* if_true = graph()->NewNode(common()->IfTrue(), branch);
+      Node* vtrue = jsgraph()->EmptyStringConstant();
+
+      Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
+      Node* vfalse;
+      {
+        // We need to convince TurboFan that {receiver_length}-1 is a valid
+        // Unsigned32 value, so we just apply NumberToUint32 to the result
+        // of the subtraction, which is a no-op and merely acts as a marker.
+        Node* index =
+            graph()->NewNode(simplified()->NumberSubtract(), receiver_length,
+                             jsgraph()->OneConstant());
+        index = graph()->NewNode(simplified()->NumberToUint32(), index);
+        vfalse = graph()->NewNode(simplified()->StringCharAt(), receiver, index,
+                                  if_false);
+      }
+
+      control = graph()->NewNode(common()->Merge(2), if_true, if_false);
+      Node* value =
+          graph()->NewNode(common()->Phi(MachineRepresentation::kTagged, 2),
+                           vtrue, vfalse, control);
+      ReplaceWithValue(node, value, effect, control);
+      return Replace(value);
+    }
   }
   return NoChange();
 }
@@ -2975,6 +3024,8 @@ Reduction JSBuiltinReducer::Reduce(Node* node) {
       return ReduceStringIterator(node);
     case kStringIteratorNext:
       return ReduceStringIteratorNext(node);
+    case kStringSlice:
+      return ReduceStringSlice(node);
     case kStringToLowerCaseIntl:
       return ReduceStringToLowerCaseIntl(node);
     case kStringToUpperCaseIntl:

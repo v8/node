@@ -267,7 +267,7 @@ void Deoptimizer::DeoptimizeMarkedCodeForContext(Context* context) {
 
 void Deoptimizer::DeoptimizeAll(Isolate* isolate) {
   RuntimeCallTimerScope runtimeTimer(isolate,
-                                     &RuntimeCallStats::DeoptimizeCode);
+                                     RuntimeCallCounterId::kDeoptimizeCode);
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
   TRACE_EVENT0("v8", "V8.DeoptimizeCode");
   if (FLAG_trace_deopt) {
@@ -288,7 +288,7 @@ void Deoptimizer::DeoptimizeAll(Isolate* isolate) {
 
 void Deoptimizer::DeoptimizeMarkedCode(Isolate* isolate) {
   RuntimeCallTimerScope runtimeTimer(isolate,
-                                     &RuntimeCallStats::DeoptimizeCode);
+                                     RuntimeCallCounterId::kDeoptimizeCode);
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
   TRACE_EVENT0("v8", "V8.DeoptimizeCode");
   if (FLAG_trace_deopt) {
@@ -319,7 +319,7 @@ void Deoptimizer::MarkAllCodeForContext(Context* context) {
 void Deoptimizer::DeoptimizeFunction(JSFunction* function, Code* code) {
   Isolate* isolate = function->GetIsolate();
   RuntimeCallTimerScope runtimeTimer(isolate,
-                                     &RuntimeCallStats::DeoptimizeCode);
+                                     RuntimeCallCounterId::kDeoptimizeCode);
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
   TRACE_EVENT0("v8", "V8.DeoptimizeCode");
   if (code == nullptr) code = function->code();
@@ -1079,6 +1079,10 @@ void Deoptimizer::DoComputeArgumentsAdaptorFrame(
   if (trace_scope_ != nullptr) {
     PrintF(trace_scope_->file(), "(%d)\n", height - 1);
   }
+
+  output_offset -= kPointerSize;
+  WriteValueToOutput(isolate()->heap()->the_hole_value(), 0, frame_index,
+                     output_offset, "padding ");
 
   DCHECK_EQ(0, output_offset);
 
@@ -3313,6 +3317,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case JS_SET_VALUE_ITERATOR_TYPE: {
       Handle<JSSetIterator> object = Handle<JSSetIterator>::cast(
           isolate_->factory()->NewJSObjectFromMap(map, NOT_TENURED));
+      slot->value_ = object;
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> table = materializer.FieldAt(value_index);
@@ -3328,6 +3333,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case JS_MAP_VALUE_ITERATOR_TYPE: {
       Handle<JSMapIterator> object = Handle<JSMapIterator>::cast(
           isolate_->factory()->NewJSObjectFromMap(map, NOT_TENURED));
+      slot->value_ = object;
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> table = materializer.FieldAt(value_index);
@@ -3433,6 +3439,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
       // We temporarily allocated a JSFunction for the {Object} function
       // within the current context, to break cycles in the object graph.
       // The correct function and context will be set below once available.
+      STATIC_ASSERT(JSFunction::kSizeWithoutPrototype == 7 * kPointerSize);
       Handle<Object> properties = materializer.FieldAt(value_index);
       Handle<Object> elements = materializer.FieldAt(value_index);
       Handle<Object> shared = materializer.FieldAt(value_index);
@@ -3500,24 +3507,6 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
         FieldIndex index = FieldIndex::ForPropertyIndex(object->map(), i);
         object->FastPropertyAtPut(index, *value);
       }
-      return object;
-    }
-    case CONS_STRING_TYPE: {
-      Handle<ConsString> object = Handle<ConsString>::cast(
-          isolate_->factory()
-              ->NewConsString(isolate_->factory()->undefined_string(),
-                              isolate_->factory()->undefined_string())
-              .ToHandleChecked());
-      slot->value_ = object;
-      Handle<Object> hash = materializer.FieldAt(value_index);
-      Handle<Object> string_length = materializer.FieldAt(value_index);
-      Handle<Object> first = materializer.FieldAt(value_index);
-      Handle<Object> second = materializer.FieldAt(value_index);
-      object->set_map(*map);
-      object->set_length(Smi::ToInt(*string_length));
-      object->set_first(String::cast(*first));
-      object->set_second(String::cast(*second));
-      CHECK(hash->IsNumber());  // The {Name::kEmptyHashField} value.
       return object;
     }
     case CONTEXT_EXTENSION_TYPE: {
@@ -3607,6 +3596,7 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     }
     case STRING_TYPE:
     case ONE_BYTE_STRING_TYPE:
+    case CONS_STRING_TYPE:
     case CONS_ONE_BYTE_STRING_TYPE:
     case SLICED_STRING_TYPE:
     case SLICED_ONE_BYTE_STRING_TYPE:
@@ -3687,6 +3677,8 @@ Handle<Object> TranslatedState::MaterializeCapturedObjectAt(
     case PROTOTYPE_INFO_TYPE:
     case TUPLE2_TYPE:
     case TUPLE3_TYPE:
+    case LOAD_HANDLER_TYPE:
+    case STORE_HANDLER_TYPE:
     case ASYNC_GENERATOR_REQUEST_TYPE:
     case WASM_MODULE_TYPE:
     case WASM_INSTANCE_TYPE:

@@ -84,11 +84,6 @@
   'language/expressions/prefix-increment/S11.4.4_A5_*': [FAIL],
   'language/statements/variable/binding-resolution': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=6216
-  'built-ins/TypedArrays/buffer-arg-byteoffset-to-number-detachbuffer': [FAIL],
-  'built-ins/TypedArrays/buffer-arg-length-to-number-detachbuffer': [FAIL],
-  'built-ins/TypedArrays/buffer-arg-detachedbuffer': [FAIL],
-
   # https://bugs.chromium.org/p/v8/issues/detail?id=4895
   'built-ins/TypedArrays/internals/DefineOwnProperty/detached-buffer': [FAIL],
   'built-ins/TypedArrays/internals/DefineOwnProperty/detached-buffer-realm': [FAIL],
@@ -109,7 +104,6 @@
   'built-ins/TypedArray/prototype/map/callbackfn-detachbuffer': [FAIL],
   'built-ins/TypedArray/prototype/reduce/callbackfn-detachbuffer': [FAIL],
   'built-ins/TypedArray/prototype/reduceRight/callbackfn-detachbuffer': [FAIL],
-  'built-ins/TypedArray/prototype/set/typedarray-arg-srcbuffer-detached-during-tointeger-offset-throws': [FAIL],
   'built-ins/TypedArray/prototype/slice/detached-buffer-custom-ctor-other-targettype': [FAIL],
   'built-ins/TypedArray/prototype/slice/detached-buffer-custom-ctor-same-targettype': [FAIL],
   'built-ins/TypedArray/prototype/slice/detached-buffer-get-ctor': [FAIL],
@@ -328,9 +322,6 @@
   'annexB/language/eval-code/direct/func-switch-case-eval-func-no-skip-try': [FAIL],
   'annexB/language/eval-code/direct/func-switch-dflt-eval-func-no-skip-try': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=5546
-  'language/expressions/tagged-template/invalid-escape-sequences': ['--harmony-template-escapes'],
-
   # https://bugs.chromium.org/p/v8/issues/detail?id=5537
   'built-ins/global/*': [SKIP],
 
@@ -522,6 +513,9 @@
   # Test against internals of harness; we plug in differently
   'harness/detachArrayBuffer': [SKIP],
   'harness/detachArrayBuffer-host-detachArrayBuffer': [SKIP],
+
+  # Bogus test. Already fixed upstream.
+  'built-ins/BigInt/prototype/toString/length': [FAIL],
 
   ############################ SKIPPED TESTS #############################
 

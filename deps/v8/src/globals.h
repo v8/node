@@ -177,11 +177,13 @@ const int kElidedFrameSlots = 0;
 #endif
 
 const int kDoubleSizeLog2 = 3;
+const size_t kMaxWasmCodeMemory = 256 * MB;
 
 #if V8_HOST_ARCH_64_BIT
 const int kPointerSizeLog2 = 3;
-const intptr_t kIntptrSignBit = V8_INT64_C(0x8000000000000000);
-const uintptr_t kUintptrAllBitsSet = V8_UINT64_C(0xFFFFFFFFFFFFFFFF);
+const intptr_t kIntptrSignBit =
+    static_cast<intptr_t>(uintptr_t{0x8000000000000000});
+const uintptr_t kUintptrAllBitsSet = uintptr_t{0xFFFFFFFFFFFFFFFF};
 const bool kRequiresCodeRange = true;
 #if V8_TARGET_ARCH_MIPS64
 // To use pseudo-relative jumps such as j/jal instructions which have 28-bit
@@ -426,15 +428,15 @@ const intptr_t kPageHeaderTagMask = (1 << kPageHeaderTagSize) - 1;
 // Should be a recognizable hex value tagged as a failure.
 #ifdef V8_HOST_ARCH_64_BIT
 const Address kZapValue =
-    reinterpret_cast<Address>(V8_UINT64_C(0xdeadbeedbeadbeef));
+    reinterpret_cast<Address>(uint64_t{0xdeadbeedbeadbeef});
 const Address kHandleZapValue =
-    reinterpret_cast<Address>(V8_UINT64_C(0x1baddead0baddeaf));
+    reinterpret_cast<Address>(uint64_t{0x1baddead0baddeaf});
 const Address kGlobalHandleZapValue =
-    reinterpret_cast<Address>(V8_UINT64_C(0x1baffed00baffedf));
+    reinterpret_cast<Address>(uint64_t{0x1baffed00baffedf});
 const Address kFromSpaceZapValue =
-    reinterpret_cast<Address>(V8_UINT64_C(0x1beefdad0beefdaf));
-const uint64_t kDebugZapValue = V8_UINT64_C(0xbadbaddbbadbaddb);
-const uint64_t kSlotsZapValue = V8_UINT64_C(0xbeefdeadbeefdeef);
+    reinterpret_cast<Address>(uint64_t{0x1beefdad0beefdaf});
+const uint64_t kDebugZapValue = uint64_t{0xbadbaddbbadbaddb};
+const uint64_t kSlotsZapValue = uint64_t{0xbeefdeadbeefdeef};
 const uint64_t kFreeListZapValue = 0xfeed1eaffeed1eaf;
 #else
 const Address kZapValue = reinterpret_cast<Address>(0xdeadbeef);
@@ -1304,6 +1306,7 @@ enum class Operation {
   kMultiply,
   kDivide,
   kModulus,
+  kExponentiate,
   kBitwiseAnd,
   kBitwiseOr,
   kBitwiseXor,
@@ -1417,6 +1420,7 @@ inline std::ostream& operator<<(std::ostream& os,
 }
 
 enum class OptimizationMarker {
+  kLogFirstExecution,
   kNone,
   kCompileOptimized,
   kCompileOptimizedConcurrent,
@@ -1426,6 +1430,8 @@ enum class OptimizationMarker {
 inline std::ostream& operator<<(std::ostream& os,
                                 const OptimizationMarker& marker) {
   switch (marker) {
+    case OptimizationMarker::kLogFirstExecution:
+      return os << "OptimizationMarker::kLogFirstExecution";
     case OptimizationMarker::kNone:
       return os << "OptimizationMarker::kNone";
     case OptimizationMarker::kCompileOptimized:
@@ -1453,7 +1459,9 @@ enum class ConcurrencyMode { kNotConcurrent, kConcurrent };
   C(PendingHandlerFP, pending_handler_fp)                      \
   C(PendingHandlerSP, pending_handler_sp)                      \
   C(ExternalCaughtException, external_caught_exception)        \
-  C(JSEntrySP, js_entry_sp)
+  C(JSEntrySP, js_entry_sp)                                    \
+  C(MicrotaskQueueBailoutIndex, microtask_queue_bailout_index) \
+  C(MicrotaskQueueBailoutCount, microtask_queue_bailout_count)
 
 enum IsolateAddressId {
 #define DECLARE_ENUM(CamelName, hacker_name) k##CamelName##Address,

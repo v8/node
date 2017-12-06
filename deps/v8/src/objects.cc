@@ -2163,11 +2163,13 @@ void JSObject::SetNormalizedProperty(Handle<JSObject> object,
   uint32_t hash = name->Hash();
 
   if (object->IsJSGlobalObject()) {
-    Handle<JSGlobalObject> global_obj(JSGlobalObject::cast(*object));
+    Handle<JSGlobalObject> global_obj = Handle<JSGlobalObject>::cast(object);
     Handle<GlobalDictionary> dictionary(global_obj->global_dictionary());
     int entry = dictionary->FindEntry(isolate, name, hash);
 
     if (entry == GlobalDictionary::kNotFound) {
+      DCHECK_IMPLIES(global_obj->map()->is_prototype_map(),
+                     Map::IsPrototypeChainInvalidated(global_obj->map()));
       auto cell = isolate->factory()->NewPropertyCell(name);
       cell->set_value(*value);
       auto cell_type = value->IsUndefined(isolate)
@@ -2187,6 +2189,8 @@ void JSObject::SetNormalizedProperty(Handle<JSObject> object,
 
     int entry = dictionary->FindEntry(name);
     if (entry == NameDictionary::kNotFound) {
+      DCHECK_IMPLIES(object->map()->is_prototype_map(),
+                     Map::IsPrototypeChainInvalidated(object->map()));
       dictionary = NameDictionary::Add(dictionary, name, value, details);
       object->SetProperties(*dictionary);
     } else {
@@ -2612,6 +2616,10 @@ bool Object::IterationHasObservableEffects() {
   if (!IsJSArray()) return true;
   JSArray* array = JSArray::cast(this);
   Isolate* isolate = array->GetIsolate();
+
+#ifdef V8_ENABLE_FORCE_SLOW_PATH
+  if (isolate->force_slow_path()) return true;
+#endif
 
   // Check that we have the original ArrayPrototype.
   if (!array->map()->prototype()->IsJSObject()) return true;
@@ -3276,7 +3284,10 @@ VisitorId Map::GetVisitorId(Map* map) {
       if (instance_type == ALLOCATION_SITE_TYPE) {
         return kVisitAllocationSite;
       }
+      return kVisitStruct;
 
+    case LOAD_HANDLER_TYPE:
+    case STORE_HANDLER_TYPE:
       return kVisitStruct;
 
     default:
@@ -4208,6 +4219,9 @@ void MigrateFastToSlow(Handle<JSObject> object, Handle<Map> new_map,
   DCHECK(!object->IsJSGlobalObject());
   // JSGlobalProxy must never be normalized
   DCHECK(!object->IsJSGlobalProxy());
+
+  DCHECK_IMPLIES(new_map->is_prototype_map(),
+                 Map::IsPrototypeChainInvalidated(*new_map));
 
   Isolate* isolate = object->GetIsolate();
   HandleScope scope(isolate);
@@ -9297,6 +9311,11 @@ void Map::ConnectTransition(Handle<Map> parent, Handle<Map> child,
   // Do not track transitions during bootstrap except for element transitions.
   if (isolate->bootstrapper()->IsActive() &&
       !name.is_identical_to(isolate->factory()->elements_transition_symbol())) {
+    if (FLAG_trace_maps) {
+      LOG(isolate,
+          MapEvent("Transition", *parent, *child,
+                   child->is_prototype_map() ? "prototype" : "", *name));
+    }
     return;
   }
   if (!parent->GetBackPointer()->IsUndefined(isolate)) {
@@ -9382,9 +9401,13 @@ Handle<Map> Map::AddMissingTransitions(
   // Number of unused properties is temporarily incorrect and the layout
   // descriptor could unnecessarily be in slow mode but we will fix after
   // all the other intermediate maps are created.
+  // Also the last map might have interesting symbols, we temporarily set
+  // the flag and clear it right before the descriptors are installed. This
+  // makes heap verification happy and ensures the flag ends up accurate.
   Handle<Map> last_map = CopyDropDescriptors(split_map);
   last_map->InitializeDescriptors(*descriptors, *full_layout_descriptor);
   last_map->SetInObjectUnusedPropertyFields(0);
+  last_map->set_may_have_interesting_symbols(true);
 
   // During creation of intermediate maps we violate descriptors sharing
   // invariant since the last map is not yet connected to the transition tree
@@ -9398,6 +9421,7 @@ Handle<Map> Map::AddMissingTransitions(
     map = new_map;
   }
   map->NotifyLeafMapLayoutChange();
+  last_map->set_may_have_interesting_symbols(false);
   InstallDescriptors(map, last_map, nof_descriptors - 1, descriptors,
                      full_layout_descriptor);
   return last_map;
@@ -9691,8 +9715,8 @@ Handle<Map> Map::TransitionToDataProperty(Handle<Map> map, Handle<Name> name,
                                           bool* created_new_map) {
   RuntimeCallTimerScope stats_scope(
       *map, map->is_prototype_map()
-                ? &RuntimeCallStats::PrototypeMap_TransitionToDataProperty
-                : &RuntimeCallStats::Map_TransitionToDataProperty);
+                ? RuntimeCallCounterId::kPrototypeMap_TransitionToDataProperty
+                : RuntimeCallCounterId::kMap_TransitionToDataProperty);
 
   DCHECK(name->IsUniqueName());
   DCHECK(!map->is_dictionary_map());
@@ -9807,8 +9831,8 @@ Handle<Map> Map::TransitionToAccessorProperty(Isolate* isolate, Handle<Map> map,
   RuntimeCallTimerScope stats_scope(
       isolate,
       map->is_prototype_map()
-          ? &RuntimeCallStats::PrototypeMap_TransitionToAccessorProperty
-          : &RuntimeCallStats::Map_TransitionToAccessorProperty);
+          ? RuntimeCallCounterId::kPrototypeMap_TransitionToAccessorProperty
+          : RuntimeCallCounterId::kMap_TransitionToAccessorProperty);
 
   // At least one of the accessors needs to be a new value.
   DCHECK(!getter->IsNull(isolate) || !setter->IsNull(isolate));
@@ -10335,14 +10359,19 @@ Handle<FrameArray> FrameArray::AppendJSFrame(Handle<FrameArray> in,
 // static
 Handle<FrameArray> FrameArray::AppendWasmFrame(
     Handle<FrameArray> in, Handle<WasmInstanceObject> wasm_instance,
-    int wasm_function_index, Handle<AbstractCode> code, int offset, int flags) {
+    int wasm_function_index, WasmCodeWrapper code, int offset, int flags) {
   const int frame_count = in->FrameCount();
   const int new_length = LengthFor(frame_count + 1);
   Handle<FrameArray> array = EnsureSpace(in, new_length);
   array->SetWasmInstance(frame_count, *wasm_instance);
   array->SetWasmFunctionIndex(frame_count, Smi::FromInt(wasm_function_index));
   // code will be a null handle for interpreted wasm frames.
-  if (!code.is_null()) array->SetCode(frame_count, *code);
+  if (!code.IsCodeObject()) {
+    array->SetIsWasmInterpreterFrame(frame_count, Smi::FromInt(code.is_null()));
+  } else {
+    if (!code.is_null())
+      array->SetCode(frame_count, AbstractCode::cast(*code.GetCode()));
+  }
   array->SetOffset(frame_count, Smi::FromInt(offset));
   array->SetFlags(frame_count, Smi::FromInt(flags));
   array->set(kFrameCountIndex, Smi::FromInt(frame_count + 1));
@@ -10673,7 +10702,7 @@ Handle<Object> String::ToNumber(Handle<String> subject) {
       // whitespace, a sign ('+' or '-'), the decimal point, a decimal digit
       // or the 'I' character ('Infinity'). All of that have codes not greater
       // than '9' except 'I' and &nbsp;.
-      if (data[start_pos] != 'I' && data[start_pos] != 0xa0) {
+      if (data[start_pos] != 'I' && data[start_pos] != 0xA0) {
         return isolate->factory()->nan_value();
       }
     } else if (len - start_pos < 10 && AreDigits(data, start_pos, len)) {
@@ -12392,9 +12421,10 @@ void JSObject::MakePrototypesFast(Handle<Object> receiver,
 }
 
 // static
-void JSObject::OptimizeAsPrototype(Handle<JSObject> object) {
+void JSObject::OptimizeAsPrototype(Handle<JSObject> object,
+                                   bool enable_setup_mode) {
   if (object->IsJSGlobalObject()) return;
-  if (PrototypeBenefitsFromNormalization(object)) {
+  if (enable_setup_mode && PrototypeBenefitsFromNormalization(object)) {
     // First normalize to ensure all JSFunctions are DATA_CONSTANT.
     JSObject::NormalizeProperties(object, KEEP_INOBJECT_PROPERTIES, 0,
                                   "NormalizeAsPrototype");
@@ -12541,9 +12571,10 @@ static void InvalidatePrototypeChainsInternal(Map* map) {
 
 
 // static
-void JSObject::InvalidatePrototypeChains(Map* map) {
+Map* JSObject::InvalidatePrototypeChains(Map* map) {
   DisallowHeapAllocation no_gc;
   InvalidatePrototypeChainsInternal(map);
+  return map;
 }
 
 
@@ -12624,6 +12655,21 @@ Handle<Cell> Map::GetOrCreatePrototypeChainValidityCell(Handle<Map> map,
 }
 
 // static
+bool Map::IsPrototypeChainInvalidated(Map* map) {
+  DCHECK(map->is_prototype_map());
+  Object* maybe_proto_info = map->prototype_info();
+  if (maybe_proto_info->IsPrototypeInfo()) {
+    PrototypeInfo* proto_info = PrototypeInfo::cast(maybe_proto_info);
+    Object* maybe_cell = proto_info->validity_cell();
+    if (maybe_cell->IsCell()) {
+      Cell* cell = Cell::cast(maybe_cell);
+      return cell->value() == Smi::FromInt(Map::kPrototypeChainInvalid);
+    }
+  }
+  return true;
+}
+
+// static
 Handle<WeakCell> Map::GetOrCreatePrototypeWeakCell(Handle<JSReceiver> prototype,
                                                    Isolate* isolate) {
   DCHECK(!prototype.is_null());
@@ -12648,13 +12694,15 @@ Handle<WeakCell> Map::GetOrCreatePrototypeWeakCell(Handle<JSReceiver> prototype,
 }
 
 // static
-void Map::SetPrototype(Handle<Map> map, Handle<Object> prototype) {
-  RuntimeCallTimerScope stats_scope(*map, &RuntimeCallStats::Map_SetPrototype);
+void Map::SetPrototype(Handle<Map> map, Handle<Object> prototype,
+                       bool enable_prototype_setup_mode) {
+  RuntimeCallTimerScope stats_scope(*map,
+                                    RuntimeCallCounterId::kMap_SetPrototype);
 
   bool is_hidden = false;
   if (prototype->IsJSObject()) {
     Handle<JSObject> prototype_jsobj = Handle<JSObject>::cast(prototype);
-    JSObject::OptimizeAsPrototype(prototype_jsobj);
+    JSObject::OptimizeAsPrototype(prototype_jsobj, enable_prototype_setup_mode);
 
     Object* maybe_constructor = prototype_jsobj->map()->GetConstructor();
     if (maybe_constructor->IsJSFunction()) {
@@ -13242,6 +13290,15 @@ bool Script::GetPositionInfo(Handle<Script> script, int position,
 
 bool Script::IsUserJavaScript() { return type() == Script::TYPE_NORMAL; }
 
+bool Script::ContainsAsmModule() {
+  DisallowHeapAllocation no_gc;
+  SharedFunctionInfo::ScriptIterator iter(Handle<Script>(this));
+  while (SharedFunctionInfo* info = iter.Next()) {
+    if (info->HasAsmWasmData()) return true;
+  }
+  return false;
+}
+
 namespace {
 bool GetPositionInfoSlow(const Script* script, int position,
                          Script::PositionInfo* info) {
@@ -13412,8 +13469,12 @@ Handle<JSObject> Script::GetWrapper(Handle<Script> script) {
 
 MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
     Isolate* isolate, const FunctionLiteral* fun) {
-  DCHECK_NE(fun->function_literal_id(), FunctionLiteral::kIdTypeInvalid);
-  DCHECK_LT(fun->function_literal_id(), shared_function_infos()->length());
+  CHECK_NE(fun->function_literal_id(), FunctionLiteral::kIdTypeInvalid);
+  // If this check fails, the problem is most probably the function id
+  // renumbering done by AstFunctionLiteralIdReindexer; in particular, that
+  // AstTraversalVisitor doesn't recurse properly in the construct which
+  // triggers the mismatch.
+  CHECK_LT(fun->function_literal_id(), shared_function_infos()->length());
   Object* shared = shared_function_infos()->get(fun->function_literal_id());
   if (shared->IsUndefined(isolate) || WeakCell::cast(shared)->cleared()) {
     return MaybeHandle<SharedFunctionInfo>();
@@ -14466,8 +14527,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   {
     Isolate* isolate = GetIsolate();
     int size = instruction_size();
-    int safepoint_offset =
-        is_turbofanned() ? static_cast<int>(safepoint_table_offset()) : size;
+    int safepoint_offset = is_turbofanned() ? safepoint_table_offset() : size;
     int constant_pool_offset = FLAG_enable_embedded_constant_pool
                                    ? this->constant_pool_offset()
                                    : size;

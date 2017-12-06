@@ -380,7 +380,7 @@
       "main": "run.js",
       "resources": [
         "filter.js", "map.js", "every.js", "join.js", "some.js",
-        "reduce.js", "reduce-right.js", "to-string.js"
+        "reduce.js", "reduce-right.js", "to-string.js", "find.js"
       ],
       "flags": [
         "--allow-natives-syntax"
@@ -422,7 +422,19 @@
         {"name": "SmiToString"},
         {"name": "StringToString"},
         {"name": "SparseSmiToString"},
-        {"name": "SparseStringToString"}
+        {"name": "SparseStringToString"},
+        {"name": "NaiveFindReplacement"},
+        {"name": "DoubleFind"},
+        {"name": "SmiFind"},
+        {"name": "FastFind"},
+        {"name": "GenericFind"},
+        {"name": "OptFastFind"},
+        {"name": "NaiveFindIndexReplacement"},
+        {"name": "DoubleFindIndex"},
+        {"name": "SmiFindIndex"},
+        {"name": "FastFindIndex"},
+        {"name": "GenericFindIndex"},
+        {"name": "OptFastFindIndex"}
       ]
     },
     {
@@ -514,6 +526,7 @@
           "resources": [ "arithmetic.js" ],
           "test_flags": [ "arithmetic" ],
           "results_regexp": "^%s\\-BytecodeHandler\\(Score\\): (.+)$",
+          "timeout": 240,
           "tests": [
             {"name": "Smi-Add"},
             {"name": "Number-Add"},

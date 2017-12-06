@@ -2555,10 +2555,10 @@ void CodeGenerator::AssembleMove(InstructionOperand* source,
       // converts it to qnan on ia32/x64
       if (src.type() == Constant::kFloat32) {
         uint32_t val = src.ToFloat32AsInt();
-        if ((val & 0x7f800000) == 0x7f800000) {
+        if ((val & 0x7F800000) == 0x7F800000) {
           uint64_t dval = static_cast<uint64_t>(val);
-          dval = ((dval & 0xc0000000) << 32) | ((dval & 0x40000000) << 31) |
-                 ((dval & 0x40000000) << 30) | ((dval & 0x7fffffff) << 29);
+          dval = ((dval & 0xC0000000) << 32) | ((dval & 0x40000000) << 31) |
+                 ((dval & 0x40000000) << 30) | ((dval & 0x7FFFFFFF) << 29);
           value = Double(dval);
         } else {
           value = Double(static_cast<double>(src.ToFloat32()));
@@ -2672,69 +2672,6 @@ void CodeGenerator::AssembleSwap(InstructionOperand* source,
   }
 
   return;
-  // Dispatch on the source and destination operand kinds.  Not all
-  // combinations are possible.
-  if (source->IsRegister()) {
-    // Register-register.
-    Register temp = kScratchReg;
-    Register src = g.ToRegister(source);
-    if (destination->IsRegister()) {
-      Register dst = g.ToRegister(destination);
-      __ mr(temp, src);
-      __ mr(src, dst);
-      __ mr(dst, temp);
-    } else {
-      DCHECK(destination->IsStackSlot());
-      MemOperand dst = g.ToMemOperand(destination);
-      __ mr(temp, src);
-      __ LoadP(src, dst);
-      __ StoreP(temp, dst);
-    }
-#if V8_TARGET_ARCH_PPC64
-  } else if (source->IsStackSlot() || source->IsFPStackSlot()) {
-#else
-  } else if (source->IsStackSlot()) {
-    DCHECK(destination->IsStackSlot());
-#endif
-    Register temp_0 = kScratchReg;
-    Register temp_1 = r0;
-    MemOperand src = g.ToMemOperand(source);
-    MemOperand dst = g.ToMemOperand(destination);
-    __ LoadP(temp_0, src);
-    __ LoadP(temp_1, dst);
-    __ StoreP(temp_0, dst);
-    __ StoreP(temp_1, src);
-  } else if (source->IsFPRegister()) {
-    DoubleRegister temp = kScratchDoubleReg;
-    DoubleRegister src = g.ToDoubleRegister(source);
-    if (destination->IsFPRegister()) {
-      DoubleRegister dst = g.ToDoubleRegister(destination);
-      __ fmr(temp, src);
-      __ fmr(src, dst);
-      __ fmr(dst, temp);
-    } else {
-      DCHECK(destination->IsFPStackSlot());
-      MemOperand dst = g.ToMemOperand(destination);
-      __ fmr(temp, src);
-      __ lfd(src, dst);
-      __ stfd(temp, dst);
-    }
-#if !V8_TARGET_ARCH_PPC64
-  } else if (source->IsFPStackSlot()) {
-    DCHECK(destination->IsFPStackSlot());
-    DoubleRegister temp_0 = kScratchDoubleReg;
-    DoubleRegister temp_1 = d0;
-    MemOperand src = g.ToMemOperand(source);
-    MemOperand dst = g.ToMemOperand(destination);
-    __ lfd(temp_0, src);
-    __ lfd(temp_1, dst);
-    __ stfd(temp_0, dst);
-    __ stfd(temp_1, src);
-#endif
-  } else {
-    // No other combinations are possible.
-    UNREACHABLE();
-  }
 }
 
 

@@ -41,6 +41,8 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
 
   Reduction ReduceJSAdd(Node* node);
   Reduction ReduceJSBitwiseNot(Node* node);
+  Reduction ReduceJSDecrement(Node* node);
+  Reduction ReduceJSIncrement(Node* node);
   Reduction ReduceJSNegate(Node* node);
   Reduction ReduceJSComparison(Node* node);
   Reduction ReduceJSLoadNamed(Node* node);
@@ -83,8 +85,8 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   // Helper for ReduceJSLoadModule and ReduceJSStoreModule.
   Node* BuildGetModuleCell(Node* node);
 
-  // Helpers for ReduceJSCreateConsString and ReduceJSStringConcat.
-  Node* BuildGetStringLength(Node* value, Node** effect, Node* control);
+  // Helpers for ReduceJSCreateConsString.
+  Node* BuildGetStringLength(Node* value);
 
   Factory* factory() const;
   Graph* graph() const;

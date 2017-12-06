@@ -89,22 +89,24 @@ class RuntimeCallStatsTest : public TestWithNativeContext {
   // Print current RuntimeCallStats table. For debugging purposes.
   void PrintStats() { stats()->Print(); }
 
-  RuntimeCallStats::CounterId counter_id() {
-    return &RuntimeCallStats::TestCounter1;
+  RuntimeCallCounterId counter_id() {
+    return RuntimeCallCounterId::kTestCounter1;
   }
 
-  RuntimeCallStats::CounterId counter_id2() {
-    return &RuntimeCallStats::TestCounter2;
+  RuntimeCallCounterId counter_id2() {
+    return RuntimeCallCounterId::kTestCounter2;
   }
 
-  RuntimeCallStats::CounterId counter_id3() {
-    return &RuntimeCallStats::TestCounter3;
+  RuntimeCallCounterId counter_id3() {
+    return RuntimeCallCounterId::kTestCounter3;
   }
 
-  RuntimeCallCounter* js_counter() { return &stats()->JS_Execution; }
-  RuntimeCallCounter* counter() { return &(stats()->*counter_id()); }
-  RuntimeCallCounter* counter2() { return &(stats()->*counter_id2()); }
-  RuntimeCallCounter* counter3() { return &(stats()->*counter_id3()); }
+  RuntimeCallCounter* js_counter() {
+    return stats()->GetCounter(RuntimeCallCounterId::kJS_Execution);
+  }
+  RuntimeCallCounter* counter() { return stats()->GetCounter(counter_id()); }
+  RuntimeCallCounter* counter2() { return stats()->GetCounter(counter_id2()); }
+  RuntimeCallCounter* counter3() { return stats()->GetCounter(counter_id3()); }
 
   void Sleep(int64_t microseconds) {
     base::TimeDelta delta = base::TimeDelta::FromMicroseconds(microseconds);
@@ -300,7 +302,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimer) {
   RuntimeCallTimer timer;
 
   Sleep(50);
-  RuntimeCallStats::Enter(stats(), &timer, counter_id());
+  stats()->Enter(&timer, counter_id());
   EXPECT_EQ(counter(), timer.counter());
   EXPECT_EQ(nullptr, timer.parent());
   EXPECT_TRUE(timer.IsStarted());
@@ -308,7 +310,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimer) {
 
   Sleep(100);
 
-  RuntimeCallStats::Leave(stats(), &timer);
+  stats()->Leave(&timer);
   Sleep(50);
   EXPECT_FALSE(timer.IsStarted());
   EXPECT_EQ(1, counter()->count());
@@ -319,7 +321,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerSubTimer) {
   RuntimeCallTimer timer;
   RuntimeCallTimer timer2;
 
-  RuntimeCallStats::Enter(stats(), &timer, counter_id());
+  stats()->Enter(&timer, counter_id());
   EXPECT_TRUE(timer.IsStarted());
   EXPECT_FALSE(timer2.IsStarted());
   EXPECT_EQ(counter(), timer.counter());
@@ -328,7 +330,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerSubTimer) {
 
   Sleep(50);
 
-  RuntimeCallStats::Enter(stats(), &timer2, counter_id2());
+  stats()->Enter(&timer2, counter_id2());
   // timer 1 is paused, while timer 2 is active.
   EXPECT_TRUE(timer2.IsStarted());
   EXPECT_EQ(counter(), timer.counter());
@@ -338,7 +340,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerSubTimer) {
   EXPECT_EQ(&timer2, stats()->current_timer());
 
   Sleep(100);
-  RuntimeCallStats::Leave(stats(), &timer2);
+  stats()->Leave(&timer2);
 
   // The subtimer subtracts its time from the parent timer.
   EXPECT_TRUE(timer.IsStarted());
@@ -351,7 +353,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerSubTimer) {
 
   Sleep(100);
 
-  RuntimeCallStats::Leave(stats(), &timer);
+  stats()->Leave(&timer);
   EXPECT_FALSE(timer.IsStarted());
   EXPECT_EQ(1, counter()->count());
   EXPECT_EQ(1, counter2()->count());
@@ -364,13 +366,13 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerRecursive) {
   RuntimeCallTimer timer;
   RuntimeCallTimer timer2;
 
-  RuntimeCallStats::Enter(stats(), &timer, counter_id());
+  stats()->Enter(&timer, counter_id());
   EXPECT_EQ(counter(), timer.counter());
   EXPECT_EQ(nullptr, timer.parent());
   EXPECT_TRUE(timer.IsStarted());
   EXPECT_EQ(&timer, stats()->current_timer());
 
-  RuntimeCallStats::Enter(stats(), &timer2, counter_id());
+  stats()->Enter(&timer2, counter_id());
   EXPECT_EQ(counter(), timer2.counter());
   EXPECT_EQ(nullptr, timer.parent());
   EXPECT_EQ(&timer, timer2.parent());
@@ -379,7 +381,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerRecursive) {
 
   Sleep(50);
 
-  RuntimeCallStats::Leave(stats(), &timer2);
+  stats()->Leave(&timer2);
   EXPECT_EQ(nullptr, timer.parent());
   EXPECT_FALSE(timer2.IsStarted());
   EXPECT_TRUE(timer.IsStarted());
@@ -388,7 +390,7 @@ TEST_F(RuntimeCallStatsTest, RuntimeCallTimerRecursive) {
 
   Sleep(100);
 
-  RuntimeCallStats::Leave(stats(), &timer);
+  stats()->Leave(&timer);
   EXPECT_FALSE(timer.IsStarted());
   EXPECT_EQ(2, counter()->count());
   EXPECT_EQ(150, counter()->time().InMicroseconds());
@@ -439,7 +441,8 @@ TEST_F(RuntimeCallStatsTest, RenameTimer) {
       RuntimeCallTimerScope scope(stats(), counter_id());
       Sleep(100);
     }
-    CHANGE_CURRENT_RUNTIME_COUNTER(stats(), TestCounter2);
+    CHANGE_CURRENT_RUNTIME_COUNTER(stats(),
+                                   RuntimeCallCounterId::kTestCounter2);
     EXPECT_EQ(1, counter()->count());
     EXPECT_EQ(0, counter2()->count());
     EXPECT_EQ(100, counter()->time().InMicroseconds());
@@ -558,7 +561,8 @@ TEST_F(RuntimeCallStatsTest, NestedScopes) {
 }
 
 TEST_F(RuntimeCallStatsTest, BasicJavaScript) {
-  RuntimeCallCounter* counter = &stats()->JS_Execution;
+  RuntimeCallCounter* counter =
+      stats()->GetCounter(RuntimeCallCounterId::kJS_Execution);
   EXPECT_EQ(0, counter->count());
   EXPECT_EQ(0, counter->time().InMicroseconds());
 
@@ -579,8 +583,10 @@ TEST_F(RuntimeCallStatsTest, BasicJavaScript) {
 }
 
 TEST_F(RuntimeCallStatsTest, FunctionLengthGetter) {
-  RuntimeCallCounter* getter_counter = &stats()->FunctionLengthGetter;
-  RuntimeCallCounter* js_counter = &stats()->JS_Execution;
+  RuntimeCallCounter* getter_counter =
+      stats()->GetCounter(RuntimeCallCounterId::kFunctionLengthGetter);
+  RuntimeCallCounter* js_counter =
+      stats()->GetCounter(RuntimeCallCounterId::kJS_Execution);
   EXPECT_EQ(0, getter_counter->count());
   EXPECT_EQ(0, js_counter->count());
   EXPECT_EQ(0, getter_counter->time().InMicroseconds());

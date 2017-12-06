@@ -868,14 +868,14 @@ void InstructionSelector::VisitWord32And(Node* node) {
         uint32_t const shift = mshr.right().Value();
 
         if (((shift == 8) || (shift == 16) || (shift == 24)) &&
-            (value == 0xff)) {
+            (value == 0xFF)) {
           // Merge SHR into AND by emitting a UXTB instruction with a
           // bytewise rotation.
           Emit(kArmUxtb, g.DefineAsRegister(m.node()),
                g.UseRegister(mshr.left().node()),
                g.TempImmediate(mshr.right().Value()));
           return;
-        } else if (((shift == 8) || (shift == 16)) && (value == 0xffff)) {
+        } else if (((shift == 8) || (shift == 16)) && (value == 0xFFFF)) {
           // Merge SHR into AND by emitting a UXTH instruction with a
           // bytewise rotation.
           Emit(kArmUxth, g.DefineAsRegister(m.node()),
@@ -897,9 +897,9 @@ void InstructionSelector::VisitWord32And(Node* node) {
           }
         }
       }
-    } else if (value == 0xffff) {
+    } else if (value == 0xFFFF) {
       // Emit UXTH for this AND. We don't bother testing for UXTB, as it's no
-      // better than AND 0xff for this operation.
+      // better than AND 0xFF for this operation.
       Emit(kArmUxth, g.DefineAsRegister(m.node()),
            g.UseRegister(m.left().node()), g.TempImmediate(0));
       return;
@@ -1230,12 +1230,12 @@ void InstructionSelector::VisitInt32Add(Node* node) {
       }
       case IrOpcode::kWord32And: {
         Int32BinopMatcher mleft(m.left().node());
-        if (mleft.right().Is(0xff)) {
+        if (mleft.right().Is(0xFF)) {
           Emit(kArmUxtab, g.DefineAsRegister(node),
                g.UseRegister(m.right().node()),
                g.UseRegister(mleft.left().node()), g.TempImmediate(0));
           return;
-        } else if (mleft.right().Is(0xffff)) {
+        } else if (mleft.right().Is(0xFFFF)) {
           Emit(kArmUxtah, g.DefineAsRegister(node),
                g.UseRegister(m.right().node()),
                g.UseRegister(mleft.left().node()), g.TempImmediate(0));
@@ -1284,12 +1284,12 @@ void InstructionSelector::VisitInt32Add(Node* node) {
       }
       case IrOpcode::kWord32And: {
         Int32BinopMatcher mright(m.right().node());
-        if (mright.right().Is(0xff)) {
+        if (mright.right().Is(0xFF)) {
           Emit(kArmUxtab, g.DefineAsRegister(node),
                g.UseRegister(m.left().node()),
                g.UseRegister(mright.left().node()), g.TempImmediate(0));
           return;
-        } else if (mright.right().Is(0xffff)) {
+        } else if (mright.right().Is(0xFFFF)) {
           Emit(kArmUxtah, g.DefineAsRegister(node),
                g.UseRegister(m.left().node()),
                g.UseRegister(mright.left().node()), g.TempImmediate(0));
@@ -2276,15 +2276,14 @@ void InstructionSelector::VisitAtomicExchange(Node* node) {
   AddressingMode addressing_mode = kMode_Offset_RR;
   InstructionOperand inputs[3];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
+  inputs[input_count++] = g.UseRegister(base);
   inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(value);
   InstructionOperand outputs[1];
   outputs[0] = g.DefineAsRegister(node);
-  InstructionOperand temp[1];
-  temp[0] = g.TempRegister();
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  Emit(code, 1, outputs, input_count, inputs, 1, temp);
+  Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
 
 void InstructionSelector::VisitAtomicCompareExchange(Node* node) {
@@ -2313,16 +2312,16 @@ void InstructionSelector::VisitAtomicCompareExchange(Node* node) {
   AddressingMode addressing_mode = kMode_Offset_RR;
   InstructionOperand inputs[4];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
+  inputs[input_count++] = g.UseRegister(base);
   inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(old_value);
   inputs[input_count++] = g.UseUniqueRegister(new_value);
   InstructionOperand outputs[1];
   outputs[0] = g.DefineAsRegister(node);
-  InstructionOperand temp[1];
-  temp[0] = g.TempRegister();
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister(),
+                                g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  Emit(code, 1, outputs, input_count, inputs, 1, temp);
+  Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
 
 void InstructionSelector::VisitAtomicBinaryOperation(
@@ -2352,17 +2351,15 @@ void InstructionSelector::VisitAtomicBinaryOperation(
   AddressingMode addressing_mode = kMode_Offset_RR;
   InstructionOperand inputs[3];
   size_t input_count = 0;
-  inputs[input_count++] = g.UseUniqueRegister(base);
+  inputs[input_count++] = g.UseRegister(base);
   inputs[input_count++] = g.UseRegister(index);
   inputs[input_count++] = g.UseUniqueRegister(value);
   InstructionOperand outputs[1];
   outputs[0] = g.DefineAsRegister(node);
-  InstructionOperand temps[2];
-  size_t temp_count = 0;
-  temps[temp_count++] = g.TempRegister();
-  temps[temp_count++] = g.TempRegister();
+  InstructionOperand temps[] = {g.TempRegister(), g.TempRegister(),
+                                g.TempRegister()};
   InstructionCode code = opcode | AddressingModeField::encode(addressing_mode);
-  Emit(code, 1, outputs, input_count, inputs, temp_count, temps);
+  Emit(code, 1, outputs, input_count, inputs, arraysize(temps), temps);
 }
 
 #define VISIT_ATOMIC_BINOP(op)                                              \

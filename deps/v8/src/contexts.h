@@ -5,7 +5,7 @@
 #ifndef V8_CONTEXTS_H_
 #define V8_CONTEXTS_H_
 
-#include "src/objects.h"
+#include "src/objects/fixed-array.h"
 
 namespace v8 {
 namespace internal {
@@ -565,6 +565,9 @@ class Context: public FixedArray {
   // by Builtins::kFastNewClosure.
   static const int FIRST_FUNCTION_MAP_INDEX = SLOPPY_FUNCTION_MAP_INDEX;
   static const int LAST_FUNCTION_MAP_INDEX = CLASS_FUNCTION_MAP_INDEX;
+
+  static const int kNoContext = 0;
+  static const int kInvalidContext = 1;
 
   void ResetErrorsThrown();
   void IncrementErrorsThrown();
