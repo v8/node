@@ -90,6 +90,7 @@ class JSSpeculativeBinopBuilder final {
       case CompareOperationHint::kNone:
       case CompareOperationHint::kString:
       case CompareOperationHint::kSymbol:
+      case CompareOperationHint::kBigInt:
       case CompareOperationHint::kReceiver:
       case CompareOperationHint::kInternalizedString:
         break;
@@ -493,7 +494,8 @@ Node* JSTypeHintLowering::TryBuildSoftDeopt(FeedbackNexus& nexus, Node* effect,
                                             DeoptimizeReason reason) const {
   if ((flags() & kBailoutOnUninitialized) && nexus.IsUninitialized()) {
     Node* deoptimize = jsgraph()->graph()->NewNode(
-        jsgraph()->common()->Deoptimize(DeoptimizeKind::kSoft, reason),
+        jsgraph()->common()->Deoptimize(DeoptimizeKind::kSoft, reason,
+                                        VectorSlotPair()),
         jsgraph()->Dead(), effect, control);
     Node* frame_state = NodeProperties::FindFrameStateBefore(deoptimize);
     deoptimize->ReplaceInput(0, frame_state);

@@ -45,6 +45,13 @@ void Object::VerifyPointer(Object* p) {
   }
 }
 
+namespace {
+void VerifyForeignPointer(HeapObject* host, Object* foreign) {
+  host->VerifyPointer(foreign);
+  CHECK(foreign->IsUndefined(host->GetIsolate()) ||
+        Foreign::IsNormalized(foreign));
+}
+}  // namespace
 
 void Smi::SmiVerify() {
   CHECK(IsSmi());
@@ -441,6 +448,10 @@ void Map::MapVerify() {
   CHECK_IMPLIES(IsJSObjectMap() && !CanHaveFastTransitionableElementsKind(),
                 IsDictionaryElementsKind(elements_kind()) ||
                     IsTerminalElementsKind(elements_kind()));
+  if (is_prototype_map()) {
+    DCHECK(prototype_info() == Smi::kZero ||
+           prototype_info()->IsPrototypeInfo());
+  }
 }
 
 
@@ -1339,8 +1350,11 @@ void DataHandler::DataHandlerVerify() {
   CHECK_IMPLIES(!smi_handler()->IsSmi(),
                 smi_handler()->IsCode() && IsStoreHandler());
   CHECK(validity_cell()->IsSmi() || validity_cell()->IsCell());
-  VerifyObjectField(kData1Offset);
-  if (map()->instance_size() >= kSizeWithData2) {
+  int data_count = data_field_count();
+  if (data_count >= 1) {
+    VerifyObjectField(kData1Offset);
+  }
+  if (data_count >= 2) {
     VerifyObjectField(kData2Offset);
   }
 }
@@ -1365,9 +1379,9 @@ void AccessorInfo::AccessorInfoVerify() {
   CHECK(IsAccessorInfo());
   VerifyPointer(name());
   VerifyPointer(expected_receiver_type());
-  VerifyPointer(getter());
-  VerifyPointer(setter());
-  VerifyPointer(js_getter());
+  VerifyForeignPointer(this, getter());
+  VerifyForeignPointer(this, setter());
+  VerifyForeignPointer(this, js_getter());
   VerifyPointer(data());
 }
 
@@ -1390,11 +1404,11 @@ void AccessCheckInfo::AccessCheckInfoVerify() {
 
 void InterceptorInfo::InterceptorInfoVerify() {
   CHECK(IsInterceptorInfo());
-  VerifyPointer(getter());
-  VerifyPointer(setter());
-  VerifyPointer(query());
-  VerifyPointer(deleter());
-  VerifyPointer(enumerator());
+  VerifyForeignPointer(this, getter());
+  VerifyForeignPointer(this, setter());
+  VerifyForeignPointer(this, query());
+  VerifyForeignPointer(this, deleter());
+  VerifyForeignPointer(this, enumerator());
   VerifyPointer(data());
   VerifySmiField(kFlagsOffset);
 }

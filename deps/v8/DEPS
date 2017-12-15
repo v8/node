@@ -9,15 +9,15 @@ vars = {
 
 deps = {
   'v8/build':
-    Var('chromium_url') + '/chromium/src/build.git' + '@' + 'b70ba2b1252c4aa262a113380778d7057171cd7a',
+    Var('chromium_url') + '/chromium/src/build.git' + '@' + '9caf5bf8b5d0b9e3531031faad3e829bcc277176',
   'v8/tools/gyp':
     Var('chromium_url') + '/external/gyp.git' + '@' + 'd61a9397e668fa9843c4aa7da9e79460fe590bfb',
   'v8/third_party/icu':
-    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + '741688ebf328da9adc52505248bf4e2ef868722c',
+    Var('chromium_url') + '/chromium/deps/icu.git' + '@' + 'e3b480d3be4446ea17011c0cdc9c4cd380a5c58f',
   'v8/third_party/instrumented_libraries':
     Var('chromium_url') + '/chromium/src/third_party/instrumented_libraries.git' + '@' + '28417458ac4dc79f68915079d0f283f682504cc0',
   'v8/buildtools':
-    Var('chromium_url') + '/chromium/buildtools.git' + '@' + '282996b8c3cf7f05bbb5209432e9fe8162c6e7ac',
+    Var('chromium_url') + '/chromium/buildtools.git' + '@' + '1be57dc4c2c68fa564ee258a3af0cf8003007edf',
   'v8/base/trace_event/common':
     Var('chromium_url') + '/chromium/src/base/trace_event/common.git' + '@' + '0e9a47d74970bee1bbfc063c47215406f8918699',
   'v8/third_party/android_tools': {
@@ -25,7 +25,7 @@ deps = {
     'condition': 'checkout_android',
   },
   'v8/third_party/catapult': {
-    'url': Var('chromium_url') + '/catapult.git' + '@' + '82cfea0e3cd5c5cbc032a0e4bf4be2d1625110f9',
+    'url': Var('chromium_url') + '/catapult.git' + '@' + '9cfb34e845c8308d019a894be8c0926ee8cd3c91',
     'condition': 'checkout_android',
   },
   'v8/third_party/colorama/src': {
@@ -47,15 +47,15 @@ deps = {
   'v8/test/mozilla/data':
     Var('chromium_url') + '/v8/deps/third_party/mozilla-tests.git' + '@' + 'f6c578a10ea707b1a8ab0b88943fe5115ce2b9be',
   'v8/test/test262/data':
-    Var('chromium_url') + '/external/github.com/tc39/test262.git' + '@' + '5d4c667b271a9b39d0de73aef5ffe6879c6f8811',
+    Var('chromium_url') + '/external/github.com/tc39/test262.git' + '@' + '8311965251953d4745aeb68c98fb71fab2eac1d0',
   'v8/test/test262/harness':
     Var('chromium_url') + '/external/github.com/test262-utils/test262-harness-py.git' + '@' + '0f2acdd882c84cff43b9d60df7574a1901e2cdcd',
   'v8/tools/clang':
-    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + '8688d267571de76a56746324dcc249bf4232b85a',
+    Var('chromium_url') + '/chromium/src/tools/clang.git' + '@' + 'ec766dcbd3c35185026dfd6dd7218c280c1f4da4',
   'v8/tools/luci-go':
     Var('chromium_url') + '/chromium/src/tools/luci-go.git' + '@' + '45a8a51fda92e123619a69e7644d9c64a320b0c1',
   'v8/test/wasm-js':
-    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + '5130369da8f8d925c339bf4ff3a35e531b72c9ad',
+    Var('chromium_url') + '/external/github.com/WebAssembly/spec.git' + '@' + 'fb7e7e1e381ffc283c923a87fdfea5ebbd213737',
 }
 
 recursedeps = [

@@ -560,6 +560,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
 #define DATA_HANDLER_LIST(V)                        \
   V(LOAD_HANDLER, LoadHandler, 1, load_handler1)    \
   V(LOAD_HANDLER, LoadHandler, 2, load_handler2)    \
+  V(STORE_HANDLER, StoreHandler, 0, store_handler0) \
   V(STORE_HANDLER, StoreHandler, 1, store_handler1) \
   V(STORE_HANDLER, StoreHandler, 2, store_handler2)
 
@@ -1939,6 +1940,7 @@ class PropertyArray : public HeapObject {
 
   static const int kLengthFieldSize = 10;
   class LengthField : public BitField<int, 0, kLengthFieldSize> {};
+  static const int kMaxLength = LengthField::kMax;
   class HashField : public BitField<int, kLengthFieldSize,
                                     kSmiValueSize - kLengthFieldSize - 1> {};
 
@@ -2354,6 +2356,7 @@ class JSObject: public JSReceiver {
                                               Isolate* isolate);
   static bool UnregisterPrototypeUser(Handle<Map> user, Isolate* isolate);
   static Map* InvalidatePrototypeChains(Map* map);
+  static void InvalidatePrototypeValidityCell(JSGlobalObject* global);
 
   // Updates prototype chain tracking information when an object changes its
   // map from |old_map| to |new_map|.
@@ -2643,6 +2646,8 @@ class JSObject: public JSReceiver {
   // its size by more than the 1 entry necessary, so sequentially adding fields
   // to the same object requires fewer allocations and copies.
   static const int kFieldsAdded = 3;
+  STATIC_ASSERT(kMaxNumberOfDescriptors + kFieldsAdded <=
+                PropertyArray::kMaxLength);
 
   // Layout description.
   static const int kElementsOffset = JSReceiver::kHeaderSize;
@@ -4453,7 +4458,8 @@ class Foreign: public HeapObject {
  public:
   // [address]: field containing the address.
   inline Address foreign_address();
-  inline void set_foreign_address(Address value);
+
+  static inline bool IsNormalized(Object* object);
 
   DECL_CAST(Foreign)
 
@@ -4473,6 +4479,12 @@ class Foreign: public HeapObject {
   typedef BodyDescriptor BodyDescriptorWeak;
 
  private:
+  friend class Heap;
+  friend class SerializerDeserializer;
+  friend class StartupSerializer;
+
+  inline void set_foreign_address(Address value);
+
   DISALLOW_IMPLICIT_CONSTRUCTORS(Foreign);
 };
 
@@ -4492,6 +4504,7 @@ class AccessorInfo: public Struct {
   DECL_ACCESSORS(expected_receiver_type, Object)
   // This directly points at a foreign C function to be used from the runtime.
   DECL_ACCESSORS(getter, Object)
+  inline bool has_getter();
   DECL_ACCESSORS(setter, Object)
   // This either points at the same as above, or a trampoline in case we are
   // running with the simulator. Use these entries from generated code.
@@ -4656,6 +4669,7 @@ class InterceptorInfo: public Struct {
   DECL_BOOLEAN_ACCESSORS(can_intercept_symbols)
   DECL_BOOLEAN_ACCESSORS(all_can_read)
   DECL_BOOLEAN_ACCESSORS(non_masking)
+  DECL_BOOLEAN_ACCESSORS(is_named)
 
   inline int flags() const;
   inline void set_flags(int flags);
@@ -4680,6 +4694,7 @@ class InterceptorInfo: public Struct {
   static const int kCanInterceptSymbolsBit = 0;
   static const int kAllCanReadBit = 1;
   static const int kNonMasking = 2;
+  static const int kNamed = 3;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);

@@ -483,11 +483,12 @@ DEFINE_DEBUG_BOOL(wasm_trace_native_heap, false,
                   "trace wasm native heap events")
 DEFINE_BOOL(wasm_jit_to_native, false,
             "JIT wasm code to native (not JS GC) memory")
+DEFINE_IMPLICATION(future, wasm_jit_to_native)
 DEFINE_BOOL(wasm_trace_serialization, false,
             "trace serialization/deserialization")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
-DEFINE_BOOL(wasm_stream_compilation, false,
+DEFINE_BOOL(wasm_stream_compilation, true,
             "enable streaming compilation for WebAssembly")
 DEFINE_IMPLICATION(wasm_stream_compilation, wasm_async_compilation)
 DEFINE_BOOL(wasm_test_streaming, false,
@@ -692,6 +693,11 @@ DEFINE_BOOL(stress_incremental_marking, false,
 DEFINE_INT(stress_marking, 0,
            "force marking at random points between 0 and X (inclusive) percent "
            "of the regular marking start limit")
+DEFINE_INT(stress_scavenge, 0,
+           "force scavenge at random points between 0 and X (inclusive) "
+           "percent of the new space capacity")
+DEFINE_BOOL(stress_scavenge_analysis, false, "enables stress-scavenge logging.")
+
 DEFINE_BOOL(manual_evacuation_candidates_selection, false,
             "Test mode only flag. It allows an unit test to select evacuation "
             "candidates pages (requires --stress_compaction).")

@@ -15,6 +15,7 @@ namespace internal {
 // Forward declarations.
 class CompilationDependencies;
 class Factory;
+class VectorSlotPair;
 
 namespace compiler {
 
@@ -24,7 +25,6 @@ class CommonOperatorBuilder;
 class JSGraph;
 class JSOperatorBuilder;
 class SimplifiedOperatorBuilder;
-class VectorSlotPair;
 
 // Performs strength reduction on {JSConstruct} and {JSCall} nodes,
 // which might allow inlining or other optimizations to be performed afterwards.
@@ -74,6 +74,7 @@ class JSCallReducer final : public AdvancedReducer {
   Reduction ReduceArrayForEach(Handle<JSFunction> function, Node* node);
   Reduction ReduceArrayMap(Handle<JSFunction> function, Node* node);
   Reduction ReduceArrayFilter(Handle<JSFunction> function, Node* node);
+  Reduction ReduceArrayFind(Handle<JSFunction> function, Node* node);
   Reduction ReduceCallOrConstructWithArrayLikeOrSpread(
       Node* node, int arity, CallFrequency const& frequency,
       VectorSlotPair const& feedback);
@@ -109,7 +110,8 @@ class JSCallReducer final : public AdvancedReducer {
   // Load receiver[k], first bounding k by receiver array length.
   // k is thusly changed, and the effect is changed as well.
   Node* SafeLoadElement(ElementsKind kind, Node* receiver, Node* control,
-                        Node** effect, Node** k);
+                        Node** effect, Node** k,
+                        const VectorSlotPair& feedback);
 
   Graph* graph() const;
   JSGraph* jsgraph() const { return jsgraph_; }

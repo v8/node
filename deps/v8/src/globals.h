@@ -1254,14 +1254,17 @@ inline uint32_t ObjectHash(Address address) {
 // Type feedback is encoded in such a way that, we can combine the feedback
 // at different points by performing an 'OR' operation. Type feedback moves
 // to a more generic type when we combine feedback.
-// kSignedSmall -> kSignedSmallInputs -> kNumber  -> kNumberOrOddball -> kAny
-//                                                   kString          -> kAny
-// kBigInt -> kAny
-// TODO(mythria): Remove kNumber type when crankshaft can handle Oddballs
-// similar to Numbers. We don't need kNumber feedback for Turbofan. Extra
-// information about Number might reduce few instructions but causes more
-// deopts. We collect Number only because crankshaft does not handle all
-// cases of oddballs.
+//
+//   kSignedSmall -> kSignedSmallInputs -> kNumber  -> kNumberOrOddball -> kAny
+//                                                     kString          -> kAny
+//                                                     kBigInt          -> kAny
+//
+// Technically we wouldn't need the separation between the kNumber and the
+// kNumberOrOddball values here, since for binary operations, we always
+// truncate oddballs to numbers. In practice though it causes TurboFan to
+// generate quite a lot of unused code though if we always handle numbers
+// and oddballs everywhere, although in 99% of the use sites they are only
+// used with numbers.
 class BinaryOperationFeedback {
  public:
   enum {
@@ -1279,11 +1282,15 @@ class BinaryOperationFeedback {
 // Type feedback is encoded in such a way that, we can combine the feedback
 // at different points by performing an 'OR' operation. Type feedback moves
 // to a more generic type when we combine feedback.
-// kSignedSmall        -> kNumber   -> kAny
-// kInternalizedString -> kString   -> kAny
-//                        kSymbol   -> kAny
-//                        kReceiver -> kAny
-// TODO(epertoso): consider unifying this with BinaryOperationFeedback.
+//
+//   kSignedSmall -> kNumber             -> kNumberOrOddball -> kAny
+//                   kInternalizedString -> kString          -> kAny
+//                                          kSymbol          -> kAny
+//                                          kBigInt          -> kAny
+//                                          kReceiver        -> kAny
+//
+// This is distinct from BinaryOperationFeedback on purpose, because the
+// feedback that matters differs greatly as well as the way it is consumed.
 class CompareOperationFeedback {
  public:
   enum {
@@ -1294,6 +1301,7 @@ class CompareOperationFeedback {
     kInternalizedString = 0x8,
     kString = 0x18,
     kSymbol = 0x20,
+    kBigInt = 0x30,
     kReceiver = 0x40,
     kAny = 0xff
   };
@@ -1440,6 +1448,20 @@ inline std::ostream& operator<<(std::ostream& os,
       return os << "OptimizationMarker::kCompileOptimizedConcurrent";
     case OptimizationMarker::kInOptimizationQueue:
       return os << "OptimizationMarker::kInOptimizationQueue";
+  }
+  UNREACHABLE();
+  return os;
+}
+
+enum class SpeculationMode { kAllowSpeculation, kDisallowSpeculation };
+
+inline std::ostream& operator<<(std::ostream& os,
+                                SpeculationMode speculation_mode) {
+  switch (speculation_mode) {
+    case SpeculationMode::kAllowSpeculation:
+      return os << "SpeculationMode::kAllowSpeculation";
+    case SpeculationMode::kDisallowSpeculation:
+      return os << "SpeculationMode::kDisallowSpeculation";
   }
   UNREACHABLE();
   return os;

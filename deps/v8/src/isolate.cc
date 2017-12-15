@@ -2770,9 +2770,8 @@ Isolate::~Isolate() {
   allocator_ = nullptr;
 
 #if USE_SIMULATOR
-  Simulator::TearDown(simulator_i_cache_, simulator_redirection_);
+  Simulator::TearDown(simulator_i_cache_);
   simulator_i_cache_ = nullptr;
-  simulator_redirection_ = nullptr;
 #endif
 }
 
@@ -2900,10 +2899,7 @@ bool Isolate::Init(StartupDeserializer* des) {
 
   // Initialize other runtime facilities
 #if defined(USE_SIMULATOR)
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_PPC || V8_TARGET_ARCH_S390
   Simulator::Initialize(this);
-#endif
 #endif
 
   { // NOLINT
@@ -3181,30 +3177,32 @@ void Isolate::SetFeedbackVectorsForProfilingTools(Object* value) {
   heap()->set_feedback_vectors_for_profiling_tools(value);
 }
 
-void Isolate::InitializeVectorListFromHeap() {
+void Isolate::MaybeInitializeVectorListFromHeap() {
+  if (!heap()->feedback_vectors_for_profiling_tools()->IsUndefined(this)) {
+    // Already initialized, return early.
+    DCHECK(heap()->feedback_vectors_for_profiling_tools()->IsArrayList());
+    return;
+  }
+
   // Collect existing feedback vectors.
   std::vector<Handle<FeedbackVector>> vectors;
+
   {
     HeapIterator heap_iterator(heap());
     while (HeapObject* current_obj = heap_iterator.next()) {
-      if (current_obj->IsSharedFunctionInfo()) {
-        SharedFunctionInfo* shared = SharedFunctionInfo::cast(current_obj);
-        shared->set_has_reported_binary_coverage(false);
-      } else if (current_obj->IsFeedbackVector()) {
-        FeedbackVector* vector = FeedbackVector::cast(current_obj);
-        SharedFunctionInfo* shared = vector->shared_function_info();
-        if (!shared->IsSubjectToDebugging()) continue;
-        vector->clear_invocation_count();
-        vectors.emplace_back(vector, this);
-      } else if (current_obj->IsJSFunction()) {
-        JSFunction* function = JSFunction::cast(current_obj);
-        function->set_code(function->shared()->code());
-      }
+      if (!current_obj->IsFeedbackVector()) continue;
+
+      FeedbackVector* vector = FeedbackVector::cast(current_obj);
+      SharedFunctionInfo* shared = vector->shared_function_info();
+
+      // No need to preserve the feedback vector for non-user-visible functions.
+      if (!shared->IsSubjectToDebugging()) continue;
+
+      vectors.emplace_back(vector, this);
     }
   }
 
-  // Add collected feedback vectors to the root list lest we lose them to
-  // GC.
+  // Add collected feedback vectors to the root list lest we lose them to GC.
   Handle<ArrayList> list =
       ArrayList::New(this, static_cast<int>(vectors.size()));
   for (const auto& vector : vectors) list = ArrayList::Add(list, vector);

@@ -8,6 +8,7 @@
 #include "src/compiler/js-graph.h"
 #include "src/compiler/node.h"
 #include "src/compiler/simplified-operator.h"
+#include "src/vector-slot-pair.h"
 
 namespace v8 {
 namespace internal {
@@ -208,12 +209,13 @@ class GraphAssembler {
   Node* Retain(Node* buffer);
   Node* UnsafePointerAdd(Node* base, Node* external);
 
-  Node* DeoptimizeIf(DeoptimizeReason reason, Node* condition,
-                     Node* frame_state);
+  Node* DeoptimizeIf(DeoptimizeReason reason, VectorSlotPair const& feedback,
+                     Node* condition, Node* frame_state);
   Node* DeoptimizeIfNot(DeoptimizeKind kind, DeoptimizeReason reason,
-                        Node* condition, Node* frame_state);
-  Node* DeoptimizeIfNot(DeoptimizeReason reason, Node* condition,
+                        VectorSlotPair const& feedback, Node* condition,
                         Node* frame_state);
+  Node* DeoptimizeIfNot(DeoptimizeReason reason, VectorSlotPair const& feedback,
+                        Node* condition, Node* frame_state);
   template <typename... Args>
   Node* Call(const CallDescriptor* desc, Args... args);
   template <typename... Args>

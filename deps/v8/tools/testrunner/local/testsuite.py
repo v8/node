@@ -33,7 +33,7 @@ import os
 from . import command
 from . import statusfile
 from . import utils
-from ..objects import testcase
+from ..objects.testcase import TestCase
 from variants import ALL_VARIANTS, ALL_VARIANT_FLAGS, FAST_VARIANT_FLAGS
 
 
@@ -48,9 +48,9 @@ class VariantGenerator(object):
     self.fast_variants = FAST_VARIANTS & variants
     self.standard_variant = STANDARD_VARIANT & variants
 
-  def FilterVariantsByTest(self, testcase):
+  def FilterVariantsByTest(self, test):
     result = self.all_variants
-    outcomes = testcase.suite.GetStatusFileOutcomes(testcase)
+    outcomes = test.suite.GetStatusFileOutcomes(test.name, test.variant)
     if outcomes:
       if statusfile.OnlyStandardVariant(outcomes):
         return self.standard_variant
@@ -58,8 +58,8 @@ class VariantGenerator(object):
         result = self.fast_variants
     return result
 
-  def GetFlagSets(self, testcase, variant):
-    outcomes = testcase.suite.GetStatusFileOutcomes(testcase)
+  def GetFlagSets(self, test, variant):
+    outcomes = test.suite.GetStatusFileOutcomes(test.name, test.variant)
     if outcomes and statusfile.OnlyFastVariants(outcomes):
       return FAST_VARIANT_FLAGS[variant]
     else:
@@ -67,18 +67,14 @@ class VariantGenerator(object):
 
 
 class TestSuite(object):
-
   @staticmethod
-  def LoadTestSuite(root, global_init=True):
+  def LoadTestSuite(root):
     name = root.split(os.path.sep)[-1]
     f = None
     try:
       (f, pathname, description) = imp.find_module("testcfg", [root])
       module = imp.load_module(name + "_testcfg", f, pathname, description)
       return module.GetSuite(name, root)
-    except ImportError:
-      # Use default if no testcfg is present.
-      return GoogleTestSuite(name, root)
     finally:
       if f:
         f.close()
@@ -90,22 +86,11 @@ class TestSuite(object):
     self.tests = None  # list of TestCase objects
     self.rules = None  # {variant: {test name: [rule]}}
     self.prefix_rules = None  # {variant: {test name prefix: [rule]}}
-    self.total_duration = None  # float, assigned on demand
 
     self._outcomes_cache = dict()
 
-  def suffix(self):
-    return ".js"
-
   def status_file(self):
     return "%s/%s.status" % (self.root, self.name)
-
-  # Used in the status file and for stdout printing.
-  def CommonTestName(self, testcase):
-    if utils.IsWindows():
-      return testcase.path.replace("\\", "/")
-    else:
-      return testcase.path
 
   def ListTests(self, context):
     raise NotImplementedError
@@ -124,14 +109,6 @@ class TestSuite(object):
     """
     return self._VariantGeneratorFactory()(self, set(variants))
 
-  def PrepareSources(self):
-    """Called once before multiprocessing for doing file-system operations.
-
-    This should not access the network. For network access use the method
-    below.
-    """
-    pass
-
   def ReadStatusFile(self, variables):
     with open(self.status_file()) as f:
       self.rules, self.prefix_rules = (
@@ -140,17 +117,6 @@ class TestSuite(object):
   def ReadTestCases(self, context):
     self.tests = self.ListTests(context)
 
-  def GetStatusfileFlags(self, test):
-    """Gets runtime flags from a status file.
-
-    Every outcome that starts with "--" is a flag. Status file has to be loaded
-    before using this function.
-    """
-    flags = []
-    for outcome in self.GetStatusFileOutcomes(test):
-      if outcome.startswith('--'):
-        flags.append(outcome)
-    return flags
 
   def FilterTestCasesByStatus(self,
                               slow_tests_mode=None,
@@ -179,7 +145,7 @@ class TestSuite(object):
         (mode == 'skip' and pass_fail))
 
     def _compliant(test):
-      outcomes = self.GetStatusFileOutcomes(test)
+      outcomes = self.GetStatusFileOutcomes(test.name, test.variant)
       if statusfile.DoSkip(outcomes):
         return False
       if _skip_slow(statusfile.IsSlow(outcomes), slow_tests_mode):
@@ -206,17 +172,16 @@ class TestSuite(object):
       variants = ['']
     used_rules = set()
 
-    for t in self.tests:
-      testname = self.CommonTestName(t)
-      variant = t.variant or ""
+    for test in self.tests:
+      variant = test.variant or ""
 
-      if testname in self.rules.get(variant, {}):
-        used_rules.add((testname, variant))
-        if statusfile.DoSkip(self.rules[variant][testname]):
+      if test.name in self.rules.get(variant, {}):
+        used_rules.add((test.name, variant))
+        if statusfile.DoSkip(self.rules[variant][test.name]):
           continue
 
       for prefix in self.prefix_rules.get(variant, {}):
-        if testname.startswith(prefix):
+        if test.name.startswith(prefix):
           used_rules.add((prefix, variant))
           if statusfile.DoSkip(self.prefix_rules[variant][prefix]):
             break
@@ -256,14 +221,14 @@ class TestSuite(object):
           break
     self.tests = filtered
 
-  def GetExpectedOutcomes(self, testcase):
+  def GetExpectedOutcomes(self, test):
     """Gets expected outcomes from status file.
 
     It differs from GetStatusFileOutcomes by selecting only outcomes that can
     be result of test execution.
     Status file has to be loaded before using this function.
     """
-    outcomes = self.GetStatusFileOutcomes(testcase)
+    outcomes = self.GetStatusFileOutcomes(test.name, test.variant)
 
     expected = []
     if (statusfile.FAIL in outcomes or
@@ -278,14 +243,14 @@ class TestSuite(object):
 
     return expected or [statusfile.PASS]
 
-  def GetStatusFileOutcomes(self, testcase):
+  def GetStatusFileOutcomes(self, testname, variant=None):
     """Gets outcomes from status file.
 
     Merges variant dependent and independent rules. Status file has to be loaded
     before using this function.
     """
-    variant = testcase.variant or ''
-    testname = self.CommonTestName(testcase)
+
+    variant = variant or ''
     cache_key = '%s$%s' % (testname, variant)
 
     if cache_key not in self._outcomes_cache:
@@ -310,150 +275,58 @@ class TestSuite(object):
 
     return self._outcomes_cache[cache_key]
 
-  def GetCommand(self, test, context):
-    shell = self.GetShellForTestCase(test)
-    shell_flags = []
-    if shell == 'd8':
-      shell_flags.append('--test')
-    if utils.IsWindows():
-      shell += '.exe'
-    if context.random_seed:
-      shell_flags.append('--random-seed=%s' % context.random_seed)
-    files, flags, env = self.GetParametersForTestCase(test, context)
-
-    return command.Command(
-      cmd_prefix=context.command_prefix,
-      shell=os.path.abspath(os.path.join(context.shell_dir, shell)),
-      args=(
-          shell_flags +
-          files +
-          context.extra_flags +
-          flags
-      ),
-      env=env,
-      timeout=self.GetTimeout(test, context),
-      verbose=context.verbose
-    )
-
-  def GetTimeout(self, testcase, context):
-    timeout = context.timeout
-    if ("--stress-opt" in testcase.flags or
-        "--stress-opt" in context.mode_flags or
-        "--stress-opt" in context.extra_flags):
-      timeout *= 4
-    if "--noenable-vfp3" in context.extra_flags:
-      timeout *= 2
-
-    # TODO(majeski): make it slow outcome dependent.
-    timeout *= 2
-    return timeout
-
-  def GetShellForTestCase(self, testcase):
-    """Returns shell to be executed for this test case."""
-    return 'd8'
-
-  def GetParametersForTestCase(self, testcase, context):
-    """Returns a tuple of (files, flags, env) for this test case."""
-    raise NotImplementedError
-
-  def GetSourceForTest(self, testcase):
-    return "(no source available)"
-
-  def IsFailureOutput(self, testcase):
-    return testcase.output.exit_code != 0
+  def IsFailureOutput(self, testcase, output):
+    return output.exit_code != 0
 
   def IsNegativeTest(self, testcase):
     return False
 
-  def HasFailed(self, testcase):
-    execution_failed = self.IsFailureOutput(testcase)
+  def HasFailed(self, testcase, output):
+    execution_failed = self.IsFailureOutput(testcase, output)
     if self.IsNegativeTest(testcase):
       return not execution_failed
     else:
       return execution_failed
 
-  def GetOutcome(self, testcase):
-    if testcase.output.HasCrashed():
+  def GetOutcome(self, testcase, output):
+    if output.HasCrashed():
       return statusfile.CRASH
-    elif testcase.output.HasTimedOut():
+    elif output.HasTimedOut():
       return statusfile.TIMEOUT
-    elif self.HasFailed(testcase):
+    elif self.HasFailed(testcase, output):
       return statusfile.FAIL
     else:
       return statusfile.PASS
 
-  def HasUnexpectedOutput(self, testcase):
-    return self.GetOutcome(testcase) not in self.GetExpectedOutcomes(testcase)
+  def HasUnexpectedOutput(self, testcase, output, ctx=None):
+    if ctx and ctx.predictable:
+      # Only check the exit code of the predictable_wrapper in
+      # verify-predictable mode. Negative tests are not supported as they
+      # usually also don't print allocation hashes. There are two versions of
+      # negative tests: one specified by the test, the other specified through
+      # the status file (e.g. known bugs).
+      return (
+          output.exit_code != 0 and
+          not self.IsNegativeTest(testcase) and
+          statusfile.FAIL not in self.GetExpectedOutcomes(testcase)
+      )
+    return (self.GetOutcome(testcase, output)
+            not in self.GetExpectedOutcomes(testcase))
 
-  def StripOutputForTransmit(self, testcase):
-    if not self.HasUnexpectedOutput(testcase):
-      testcase.output.stdout = ""
-      testcase.output.stderr = ""
+  def _create_test(self, path, **kwargs):
+    test = self._test_class()(self, path, self._path_to_name(path), **kwargs)
+    test.precompute()
+    return test
 
-  def CalculateTotalDuration(self):
-    self.total_duration = 0.0
-    for t in self.tests:
-      self.total_duration += t.duration
-    return self.total_duration
+  def _test_class(self):
+    raise NotImplementedError
+
+  def _path_to_name(self, path):
+    if utils.IsWindows():
+      return path.replace("\\", "/")
+    return path
 
 
 class StandardVariantGenerator(VariantGenerator):
   def FilterVariantsByTest(self, testcase):
     return self.standard_variant
-
-
-class GoogleTestSuite(TestSuite):
-  def __init__(self, name, root):
-    super(GoogleTestSuite, self).__init__(name, root)
-
-  def ListTests(self, context):
-    shell = os.path.abspath(
-      os.path.join(context.shell_dir, self.GetShellForTestCase(None)))
-    if utils.IsWindows():
-      shell += ".exe"
-
-    output = None
-    for i in xrange(3): # Try 3 times in case of errors.
-      cmd = command.Command(
-        cmd_prefix=context.command_prefix,
-        shell=shell,
-        args=['--gtest_list_tests'] + context.extra_flags)
-      output = cmd.execute()
-      if output.exit_code == 0:
-        break
-      print "Test executable failed to list the tests (try %d).\n\nCmd:" % i
-      print cmd
-      print "\nStdout:"
-      print output.stdout
-      print "\nStderr:"
-      print output.stderr
-      print "\nExit code: %d" % output.exit_code
-    else:
-      raise Exception("Test executable failed to list the tests.")
-
-    tests = []
-    test_case = ''
-    for line in output.stdout.splitlines():
-      test_desc = line.strip().split()[0]
-      if test_desc.endswith('.'):
-        test_case = test_desc
-      elif test_case and test_desc:
-        test = testcase.TestCase(self, test_case + test_desc)
-        tests.append(test)
-    tests.sort(key=lambda t: t.path)
-    return tests
-
-  def GetParametersForTestCase(self, testcase, context):
-    flags = (
-      testcase.flags +
-      ["--gtest_filter=" + testcase.path] +
-      ["--gtest_random_seed=%s" % context.random_seed] +
-      ["--gtest_print_time=0"] +
-      context.mode_flags)
-    return [], flags, {}
-
-  def _VariantGeneratorFactory(self):
-    return StandardVariantGenerator
-
-  def GetShellForTestCase(self, testcase):
-    return self.name

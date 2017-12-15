@@ -1976,6 +1976,18 @@ void Factory::NewJSArrayStorage(Handle<JSArray> array,
   array->set_length(Smi::FromInt(length));
 }
 
+Handle<JSWeakMap> Factory::NewJSWeakMap() {
+  Context* native_context = isolate()->raw_native_context();
+  Handle<Map> map(native_context->js_weak_map_fun()->initial_map());
+  Handle<JSWeakMap> weakmap(JSWeakMap::cast(*NewJSObjectFromMap(map)));
+  {
+    // Do not leak handles for the hash table, it would make entries strong.
+    HandleScope scope(isolate());
+    JSWeakCollection::Initialize(weakmap, isolate());
+  }
+  return weakmap;
+}
+
 Handle<JSModuleNamespace> Factory::NewJSModuleNamespace() {
   Handle<Map> map = isolate()->js_module_namespace_map();
   Handle<JSModuleNamespace> module_namespace(
@@ -2779,11 +2791,19 @@ Handle<LoadHandler> Factory::NewLoadHandler(int data_count) {
 
 Handle<StoreHandler> Factory::NewStoreHandler(int data_count) {
   Handle<Map> map;
-  if (data_count == 1) {
-    map = store_handler1_map();
-  } else {
-    DCHECK_EQ(2, data_count);
-    map = store_handler2_map();
+  switch (data_count) {
+    case 0:
+      map = store_handler0_map();
+      break;
+    case 1:
+      map = store_handler1_map();
+      break;
+    case 2:
+      map = store_handler2_map();
+      break;
+    default:
+      UNREACHABLE();
+      break;
   }
   return New<StoreHandler>(map, OLD_SPACE);
 }

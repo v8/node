@@ -56,6 +56,7 @@ enum class PrimitiveType { kBoolean, kNumber, kString, kSymbol };
   V(OneClosureCellMap, one_closure_cell_map, OneClosureCellMap)          \
   V(prototype_string, prototype_string, PrototypeString)                 \
   V(SpeciesProtector, species_protector, SpeciesProtector)               \
+  V(StoreHandler0Map, store_handler0_map, StoreHandler0Map)              \
   V(SymbolMap, symbol_map, SymbolMap)                                    \
   V(TheHoleValue, the_hole_value, TheHole)                               \
   V(TrueValue, true_value, True)                                         \
@@ -1634,8 +1635,14 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void ReportFeedbackUpdate(SloppyTNode<FeedbackVector> feedback_vector,
                             SloppyTNode<IntPtrT> slot_id, const char* reason);
 
-  // Combine the new feedback with the existing_feedback.
+  // Combine the new feedback with the existing_feedback. Do nothing if
+  // existing_feedback is nullptr.
+  void CombineFeedback(Variable* existing_feedback, int feedback);
   void CombineFeedback(Variable* existing_feedback, Node* feedback);
+
+  // Overwrite the existing feedback with new_feedback. Do nothing if
+  // existing_feedback is nullptr.
+  void OverwriteFeedback(Variable* existing_feedback, int new_feedback);
 
   // Check if a property name might require protector invalidation when it is
   // used for a property store or deletion.
@@ -1758,11 +1765,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   void InitializeFieldsWithRoot(Node* object, Node* start_offset,
                                 Node* end_offset, Heap::RootListIndex root);
 
-  Node* RelationalComparison(Operation op, Node* lhs, Node* rhs, Node* context,
+  Node* RelationalComparison(Operation op, Node* left, Node* right,
+                             Node* context,
                              Variable* var_type_feedback = nullptr);
 
-  void BranchIfNumericRelationalComparison(Operation op, Node* lhs, Node* rhs,
-                                           Label* if_true, Label* if_false);
+  void BranchIfNumberRelationalComparison(Operation op, Node* left, Node* right,
+                                          Label* if_true, Label* if_false);
 
   void BranchIfAccessorPair(Node* value, Label* if_accessor_pair,
                             Label* if_not_accessor_pair) {
@@ -1770,7 +1778,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     Branch(IsAccessorPair(value), if_accessor_pair, if_not_accessor_pair);
   }
 
-  void GotoIfNumericGreaterThanOrEqual(Node* lhs, Node* rhs, Label* if_false);
+  void GotoIfNumberGreaterThanOrEqual(Node* left, Node* right, Label* if_false);
 
   Node* Equal(Node* lhs, Node* rhs, Node* context,
               Variable* var_type_feedback = nullptr);
@@ -1931,12 +1939,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       Node* context, Node* input, Object::Conversion mode,
       BigIntHandling bigint_handling = BigIntHandling::kThrow);
 
-  enum class Feedback { kCollect, kNone };
-  template <Feedback feedback>
   void TaggedToNumeric(Node* context, Node* value, Label* done,
-                       Variable* var_numeric, Variable* var_feedback = nullptr);
+                       Variable* var_numeric, Variable* var_feedback);
 
-  template <Feedback feedback, Object::Conversion conversion>
+  template <Object::Conversion conversion>
   void TaggedToWord32OrBigIntImpl(Node* context, Node* value, Label* if_number,
                                   Variable* var_word32,
                                   Label* if_bigint = nullptr,

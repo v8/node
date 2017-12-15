@@ -668,7 +668,7 @@ struct CallBuffer {
 
   const CallDescriptor* descriptor;
   FrameStateDescriptor* frame_state_descriptor;
-  NodeVector output_nodes;
+  ZoneVector<PushParameter> output_nodes;
   InstructionOperandVector outputs;
   InstructionOperandVector instruction_args;
   ZoneVector<PushParameter> pushed_nodes;
@@ -702,17 +702,28 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
   if (buffer->descriptor->ReturnCount() > 0) {
     // Collect the projections that represent multiple outputs from this call.
     if (buffer->descriptor->ReturnCount() == 1) {
-      buffer->output_nodes.push_back(call);
+      PushParameter result = {call, buffer->descriptor->GetReturnLocation(0)};
+      buffer->output_nodes.push_back(result);
     } else {
-      buffer->output_nodes.resize(buffer->descriptor->ReturnCount(), nullptr);
+      buffer->output_nodes.resize(buffer->descriptor->ReturnCount());
+      int stack_count = 0;
       for (Edge const edge : call->use_edges()) {
         if (!NodeProperties::IsValueEdge(edge)) continue;
-        DCHECK_EQ(IrOpcode::kProjection, edge.from()->opcode());
-        size_t const index = ProjectionIndexOf(edge.from()->op());
+        Node* node = edge.from();
+        DCHECK_EQ(IrOpcode::kProjection, node->opcode());
+        size_t const index = ProjectionIndexOf(node->op());
+
         DCHECK_LT(index, buffer->output_nodes.size());
-        DCHECK(!buffer->output_nodes[index]);
-        buffer->output_nodes[index] = edge.from();
+        DCHECK(!buffer->output_nodes[index].node);
+        PushParameter result = {node,
+                                buffer->descriptor->GetReturnLocation(index)};
+        buffer->output_nodes[index] = result;
+
+        if (result.location.IsCallerFrameSlot()) {
+          stack_count += result.location.GetSizeInPointers();
+        }
       }
+      frame_->EnsureReturnSlots(stack_count);
     }
 
     // Filter out the outputs that aren't live because no projection uses them.
@@ -722,22 +733,22 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
             : buffer->frame_state_descriptor->state_combine()
                   .ConsumedOutputCount();
     for (size_t i = 0; i < buffer->output_nodes.size(); i++) {
-      bool output_is_live = buffer->output_nodes[i] != nullptr ||
+      bool output_is_live = buffer->output_nodes[i].node != nullptr ||
                             i < outputs_needed_by_framestate;
       if (output_is_live) {
-        MachineRepresentation rep =
-            buffer->descriptor->GetReturnType(static_cast<int>(i))
-                .representation();
-        LinkageLocation location =
-            buffer->descriptor->GetReturnLocation(static_cast<int>(i));
+        LinkageLocation location = buffer->output_nodes[i].location;
+        MachineRepresentation rep = location.GetType().representation();
 
-        Node* output = buffer->output_nodes[i];
+        Node* output = buffer->output_nodes[i].node;
         InstructionOperand op = output == nullptr
                                     ? g.TempLocation(location)
                                     : g.DefineAsLocation(output, location);
         MarkAsRepresentation(rep, op);
 
-        buffer->outputs.push_back(op);
+        if (!UnallocatedOperand::cast(op).HasFixedSlotPolicy()) {
+          buffer->outputs.push_back(op);
+          buffer->output_nodes[i].node = nullptr;
+        }
       }
     }
   }
@@ -803,7 +814,7 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
 
     int const state_id = sequence()->AddDeoptimizationEntry(
         buffer->frame_state_descriptor, DeoptimizeKind::kLazy,
-        DeoptimizeReason::kNoReason);
+        DeoptimizeReason::kNoReason, VectorSlotPair());
     buffer->instruction_args.push_back(g.TempImmediate(state_id));
 
     StateObjectDeduplicator deduplicator(instruction_zone());
@@ -842,8 +853,8 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
       if (static_cast<size_t>(stack_index) >= buffer->pushed_nodes.size()) {
         buffer->pushed_nodes.resize(stack_index + 1);
       }
-      PushParameter parameter(*iter, buffer->descriptor->GetInputType(index));
-      buffer->pushed_nodes[stack_index] = parameter;
+      PushParameter param = {*iter, location};
+      buffer->pushed_nodes[stack_index] = param;
       pushed_count++;
     } else {
       buffer->instruction_args.push_back(op);
@@ -890,7 +901,6 @@ void InstructionSelector::VisitBlock(BasicBlock* block) {
     SetEffectLevel(node, effect_level);
     if (node->opcode() == IrOpcode::kStore ||
         node->opcode() == IrOpcode::kUnalignedStore ||
-        node->opcode() == IrOpcode::kCheckedStore ||
         node->opcode() == IrOpcode::kCall ||
         node->opcode() == IrOpcode::kCallWithCallerSavedRegisters ||
         node->opcode() == IrOpcode::kProtectedLoad ||
@@ -1022,7 +1032,7 @@ void InstructionSelector::VisitControl(BasicBlock* block) {
     case BasicBlock::kDeoptimize: {
       DeoptimizeParameters p = DeoptimizeParametersOf(input->op());
       Node* value = input->InputAt(0);
-      return VisitDeoptimize(p.kind(), p.reason(), value);
+      return VisitDeoptimize(p.kind(), p.reason(), p.feedback(), value);
     }
     case BasicBlock::kThrow:
       DCHECK_EQ(IrOpcode::kThrow, input->opcode());
@@ -1474,8 +1484,6 @@ void InstructionSelector::VisitNode(Node* node) {
       MarkAsRepresentation(rep, node);
       return VisitCheckedLoad(node);
     }
-    case IrOpcode::kCheckedStore:
-      return VisitCheckedStore(node);
     case IrOpcode::kInt32PairAdd:
       MarkAsWord32(node);
       MarkPairProjectionsAsWord32(node);
@@ -2084,16 +2092,6 @@ void InstructionSelector::VisitWord32PairSar(Node* node) { UNIMPLEMENTED(); }
 #endif  // V8_TARGET_ARCH_64_BIT
 
 #if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
-    !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_IA32
-void InstructionSelector::VisitF32x4Splat(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4ExtractLane(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4ReplaceLane(Node* node) { UNIMPLEMENTED(); }
-#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
-        // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_IA32
-
-#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
     !V8_TARGET_ARCH_MIPS64
 void InstructionSelector::VisitF32x4SConvertI32x4(Node* node) {
   UNIMPLEMENTED();
@@ -2106,15 +2104,27 @@ void InstructionSelector::VisitF32x4UConvertI32x4(Node* node) {
 void InstructionSelector::VisitF32x4Abs(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Neg(Node* node) { UNIMPLEMENTED(); }
+#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
+        // && !V8_TARGET_ARCH_MIPS64
 
+#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
+    !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
 void InstructionSelector::VisitF32x4RecipSqrtApprox(Node* node) {
   UNIMPLEMENTED();
 }
 
 void InstructionSelector::VisitF32x4Add(Node* node) { UNIMPLEMENTED(); }
+#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
+        // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
 
+#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
+    !V8_TARGET_ARCH_MIPS64
 void InstructionSelector::VisitF32x4AddHoriz(Node* node) { UNIMPLEMENTED(); }
+#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
+        // && !V8_TARGET_ARCH_MIPS64
 
+#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
+    !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
 void InstructionSelector::VisitF32x4Sub(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Mul(Node* node) { UNIMPLEMENTED(); }
@@ -2125,19 +2135,7 @@ void InstructionSelector::VisitF32x4Min(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4RecipApprox(Node* node) { UNIMPLEMENTED(); }
 #endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
-        // && !V8_TARGET_ARCH_MIPS64
-
-#if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
-    !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_IA32
-void InstructionSelector::VisitF32x4Eq(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Ne(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Lt(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Le(Node* node) { UNIMPLEMENTED(); }
-#endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
-        // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_IA32
+        // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
 
 #if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_X64 && \
     !V8_TARGET_ARCH_MIPS && !V8_TARGET_ARCH_MIPS64
@@ -2433,6 +2431,8 @@ void InstructionSelector::VisitCall(Node* node, BasicBlock* handler) {
            &buffer.instruction_args.front());
   if (instruction_selection_failed()) return;
   call_instr->MarkAsCall();
+
+  EmitPrepareResults(&(buffer.output_nodes), descriptor, node);
 }
 
 void InstructionSelector::VisitCallWithCallerSavedRegisters(
@@ -2539,29 +2539,31 @@ void InstructionSelector::VisitReturn(Node* ret) {
 
 Instruction* InstructionSelector::EmitDeoptimize(
     InstructionCode opcode, InstructionOperand output, InstructionOperand a,
-    DeoptimizeKind kind, DeoptimizeReason reason, Node* frame_state) {
+    DeoptimizeKind kind, DeoptimizeReason reason,
+    VectorSlotPair const& feedback, Node* frame_state) {
   size_t output_count = output.IsInvalid() ? 0 : 1;
   InstructionOperand inputs[] = {a};
   size_t input_count = arraysize(inputs);
   return EmitDeoptimize(opcode, output_count, &output, input_count, inputs,
-                        kind, reason, frame_state);
+                        kind, reason, feedback, frame_state);
 }
 
 Instruction* InstructionSelector::EmitDeoptimize(
     InstructionCode opcode, InstructionOperand output, InstructionOperand a,
     InstructionOperand b, DeoptimizeKind kind, DeoptimizeReason reason,
-    Node* frame_state) {
+    VectorSlotPair const& feedback, Node* frame_state) {
   size_t output_count = output.IsInvalid() ? 0 : 1;
   InstructionOperand inputs[] = {a, b};
   size_t input_count = arraysize(inputs);
   return EmitDeoptimize(opcode, output_count, &output, input_count, inputs,
-                        kind, reason, frame_state);
+                        kind, reason, feedback, frame_state);
 }
 
 Instruction* InstructionSelector::EmitDeoptimize(
     InstructionCode opcode, size_t output_count, InstructionOperand* outputs,
     size_t input_count, InstructionOperand* inputs, DeoptimizeKind kind,
-    DeoptimizeReason reason, Node* frame_state) {
+    DeoptimizeReason reason, VectorSlotPair const& feedback,
+    Node* frame_state) {
   OperandGenerator g(this);
   FrameStateDescriptor* const descriptor = GetFrameStateDescriptor(frame_state);
   InstructionOperandVector args(instruction_zone());
@@ -2572,7 +2574,7 @@ Instruction* InstructionSelector::EmitDeoptimize(
   opcode |= MiscField::encode(static_cast<int>(input_count));
   DCHECK_NE(DeoptimizeKind::kLazy, kind);
   int const state_id =
-      sequence()->AddDeoptimizationEntry(descriptor, kind, reason);
+      sequence()->AddDeoptimizationEntry(descriptor, kind, reason, feedback);
   args.push_back(g.TempImmediate(state_id));
   StateObjectDeduplicator deduplicator(instruction_zone());
   AddInputsToFrameStateDescriptor(descriptor, frame_state, &g, &deduplicator,
@@ -2590,8 +2592,10 @@ void InstructionSelector::EmitIdentity(Node* node) {
 
 void InstructionSelector::VisitDeoptimize(DeoptimizeKind kind,
                                           DeoptimizeReason reason,
+                                          VectorSlotPair const& feedback,
                                           Node* value) {
-  EmitDeoptimize(kArchDeoptimize, 0, nullptr, 0, nullptr, kind, reason, value);
+  EmitDeoptimize(kArchDeoptimize, 0, nullptr, 0, nullptr, kind, reason,
+                 feedback, value);
 }
 
 void InstructionSelector::VisitThrow(Node* node) {

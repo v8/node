@@ -199,6 +199,12 @@
 }],  # novfp3 == True
 
 ##############################################################################
+# TODO(ahaas): Port multiple return values to ARM, MIPS, S390 and PPC
+['arch == arm or arch == arm64 or arch == mips or arch == mips64 or arch == mipsel or arch == mips64el or arch == s390 or arch == s390x or arch == ppc or arch == ppc64', {
+  'wasm/multi-value': [SKIP],
+}],
+
+##############################################################################
 ['gc_stress == True', {
   # Skip tests not suitable for GC stress.
   'allocation-site-info': [SKIP],
@@ -630,6 +636,7 @@
   'regress/regress-336820': [SKIP],
   'regress/regress-748069': [SKIP],
   'regress/regress-778668': [SKIP],
+  'ignition/regress-672027': [PASS, ['tsan', SKIP]],
 }],  # 'gc_fuzzer == True'
 
 ##############################################################################
@@ -638,6 +645,10 @@
   # Skip tests that are known to be non-deterministic.
   'd8/d8-worker-sharedarraybuffer': [SKIP],
   'd8/d8-os': [SKIP],
+
+  # BUG(v8:7166).
+  'harmony/futex': [SKIP],
+  'd8/enable-tracing': [SKIP],
 }],  # 'predictable == True'
 
 ##############################################################################
@@ -712,10 +723,6 @@
   'math-*': [SKIP],
   'unicode-test': [SKIP],
   'whitespaces': [SKIP],
-
-  # Lazy compilation is currently broken for --wasm-jit-to-native
-  # (crbug.com/v8/7140).
-  'wasm/lazy-compilation': [SKIP],
 }],  # variant == wasm_traps
 
 ['variant == wasm_traps and gc_stress == True', {

@@ -47,6 +47,7 @@ class JSBinopReduction final {
       case CompareOperationHint::kNone:
       case CompareOperationHint::kString:
       case CompareOperationHint::kSymbol:
+      case CompareOperationHint::kBigInt:
       case CompareOperationHint::kReceiver:
       case CompareOperationHint::kInternalizedString:
         break;
@@ -308,7 +309,8 @@ class JSBinopReduction final {
       case IrOpcode::kSpeculativeNumberLessThanOrEqual:
         return simplified()->NumberLessThanOrEqual();
       case IrOpcode::kSpeculativeNumberAdd:
-        return simplified()->NumberAdd();
+        // Handled by ReduceSpeculativeNumberAdd.
+        UNREACHABLE();
       case IrOpcode::kSpeculativeNumberSubtract:
         return simplified()->NumberSubtract();
       case IrOpcode::kSpeculativeNumberMultiply:
@@ -594,6 +596,9 @@ Reduction JSTypedLowering::ReduceSpeculativeNumberBinop(Node* node) {
   if ((hint == NumberOperationHint::kNumber ||
        hint == NumberOperationHint::kNumberOrOddball) &&
       r.BothInputsAre(Type::NumberOrUndefinedOrNullOrBoolean())) {
+    // We intentionally do this only in the Number and NumberOrOddball hint case
+    // because simplified lowering of these speculative ops may do some clever
+    // reductions in the other cases.
     r.ConvertInputsToNumber();
     return r.ChangeToPureOperator(r.NumberOpFromSpeculativeNumberOp(),
                                   Type::Number());
@@ -661,9 +666,9 @@ Reduction JSTypedLowering::ReduceCreateConsString(Node* node) {
     // has the additional benefit of not holding on to the lazy {frame_state}
     // and thus potentially reduces the number of live ranges and allows for
     // more truncations.
-    length = effect = graph()->NewNode(simplified()->CheckBounds(), length,
-                                       jsgraph()->Constant(String::kMaxLength),
-                                       effect, control);
+    length = effect = graph()->NewNode(
+        simplified()->CheckBounds(VectorSlotPair()), length,
+        jsgraph()->Constant(String::kMaxLength), effect, control);
   } else {
     // Check if we would overflow the allowed maximum string length.
     Node* check =
@@ -999,6 +1004,7 @@ Reduction JSTypedLowering::ReduceJSToNumberOrNumeric(Node* node) {
     NodeProperties::ChangeOp(node, simplified()->PlainPrimitiveToNumber());
     return Changed(node);
   }
+  // TODO(neis): Reduce ToNumeric to ToNumber if input can't be BigInt?
   return NoChange();
 }
 

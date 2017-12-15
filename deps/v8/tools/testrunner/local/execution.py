@@ -31,14 +31,12 @@ import os
 import re
 import shutil
 import sys
-import time
 
-from pool import Pool
 from . import command
 from . import perfdata
 from . import statusfile
 from . import utils
-from ..objects import output
+from pool import Pool
 
 
 # Base dir of the v8 checkout.
@@ -52,8 +50,12 @@ ProcessContext = collections.namedtuple(
     'process_context', ['sancov_dir'])
 
 
+TestJobResult = collections.namedtuple(
+    'TestJobResult', ['id', 'output'])
+
 def MakeProcessContext(sancov_dir):
   return ProcessContext(sancov_dir)
+
 
 # Global function for multiprocessing, because pickling a static method doesn't
 # work on Windows.
@@ -103,10 +105,9 @@ class TestJob(Job):
         os.rename(sancov_file, new_sancov_file)
 
   def run(self, context):
-    start_time = time.time()
     out = self.cmd.execute()
     self._rename_coverage_data(out, context.sancov_dir)
-    return (self.test_id, out, time.time() - start_time)
+    return TestJobResult(self.test_id, out)
 
 
 class Runner(object):
@@ -119,17 +120,22 @@ class Runner(object):
     self.perf_failures = False
     self.printed_allocations = False
     self.tests = [t for s in suites for t in s.tests]
+
+    # TODO(majeski): Pass dynamically instead of keeping them in the runner.
+    # Maybe some observer?
+    self.outputs = {t: None for t in self.tests}
+
     self.suite_names = [s.name for s in suites]
 
     # Always pre-sort by status file, slowest tests first.
-    slow_key = lambda t: statusfile.IsSlow(t.suite.GetStatusFileOutcomes(t))
+    slow_key = lambda t: statusfile.IsSlow(
+        t.suite.GetStatusFileOutcomes(t.name, t.variant))
     self.tests.sort(key=slow_key, reverse=True)
 
-    # Sort by stored duration of not opted out.
+    # Sort by stored duration if not opted out.
     if not context.no_sorting:
-      for t in self.tests:
-        t.duration = self.perfdata.FetchPerfData(t) or 1.0
-      self.tests.sort(key=lambda t: t.duration, reverse=True)
+      self.tests.sort(key=lambda t: self.perfdata.FetchPerfData(t) or 1.0,
+                      reverse=True)
 
     self._CommonInit(suites, progress_indicator, context)
 
@@ -155,7 +161,7 @@ class Runner(object):
       print("PerfData exception: %s" % e)
       self.perf_failures = True
 
-  def _MaybeRerun(self, pool, test):
+  def _MaybeRerun(self, pool, test, job_result):
     if test.run <= self.context.rerun_failures_count:
       # Possibly rerun this test if its run count is below the maximum per
       # test. <= as the flag controls reruns not including the first run.
@@ -167,25 +173,24 @@ class Runner(object):
           # Don't rerun this if the overall number of rerun tests has been
           # reached.
           return
-      if test.run >= 2 and test.duration > self.context.timeout / 20.0:
+      if (test.run >= 2 and
+          job_result.output.duration > self.context.timeout / 20.0):
         # Rerun slow tests at most once.
         return
 
       # Rerun this test.
-      test.duration = None
-      test.output = None
       test.run += 1
       pool.add([TestJob(test.id, test.cmd, test.run)])
       self.remaining += 1
       self.total += 1
 
-  def _ProcessTestNormal(self, test, result, pool):
-    test.output = result[1]
-    test.duration = result[2]
-    has_unexpected_output = test.suite.HasUnexpectedOutput(test)
+  def _ProcessTest(self, test, job_result, pool):
+    self.outputs[test] = job_result.output
+    has_unexpected_output = test.suite.HasUnexpectedOutput(
+        test, job_result.output, self.context)
     if has_unexpected_output:
       self.failed.append(test)
-      if test.output.HasCrashed():
+      if job_result.output.HasCrashed():
         self.crashed += 1
     else:
       self.succeeded += 1
@@ -193,56 +198,14 @@ class Runner(object):
     # For the indicator, everything that happens after the first run is treated
     # as unexpected even if it flakily passes in order to include it in the
     # output.
-    self.indicator.HasRun(test, has_unexpected_output or test.run > 1)
+    self.indicator.HasRun(test, job_result.output,
+                          has_unexpected_output or test.run > 1)
     if has_unexpected_output:
       # Rerun test failures after the indicator has processed the results.
       self._VerbosePrint("Attempting to rerun test after failure.")
-      self._MaybeRerun(pool, test)
+      self._MaybeRerun(pool, test, job_result)
     # Update the perf database if the test succeeded.
     return not has_unexpected_output
-
-  def _ProcessTestPredictable(self, test, result, pool):
-    def HasDifferentAllocations(output1, output2):
-      def AllocationStr(stdout):
-        for line in reversed((stdout or "").splitlines()):
-          if line.startswith("### Allocations = "):
-            self.printed_allocations = True
-            return line
-        return ""
-      return (AllocationStr(output1.stdout) != AllocationStr(output2.stdout))
-
-    # Always pass the test duration for the database update.
-    test.duration = result[2]
-    if test.run == 1 and result[1].HasTimedOut():
-      # If we get a timeout in the first run, we are already in an
-      # unpredictable state. Just report it as a failure and don't rerun.
-      test.output = result[1]
-      self.remaining -= 1
-      self.failed.append(test)
-      self.indicator.HasRun(test, True)
-    if test.run > 1 and HasDifferentAllocations(test.output, result[1]):
-      # From the second run on, check for different allocations. If a
-      # difference is found, call the indicator twice to report both tests.
-      # All runs of each test are counted as one for the statistic.
-      self.remaining -= 1
-      self.failed.append(test)
-      self.indicator.HasRun(test, True)
-      test.output = result[1]
-      self.indicator.HasRun(test, True)
-    elif test.run >= 3:
-      # No difference on the third run -> report a success.
-      self.remaining -= 1
-      self.succeeded += 1
-      test.output = result[1]
-      self.indicator.HasRun(test, False)
-    else:
-      # No difference yet and less than three runs -> add another run and
-      # remember the output for comparison.
-      test.run += 1
-      test.output = result[1]
-      pool.add([TestJob(test.id, test.cmd, test.run)])
-    # Always update the perf database.
-    return True
 
   def Run(self, jobs):
     self.indicator.Starting()
@@ -280,13 +243,14 @@ class Runner(object):
         if result.heartbeat:
           self.indicator.Heartbeat()
           continue
-        test = test_map[result.value[0]]
-        if self.context.predictable:
-          update_perf = self._ProcessTestPredictable(test, result.value, pool)
-        else:
-          update_perf = self._ProcessTestNormal(test, result.value, pool)
+
+        job_result = result.value
+
+        test = test_map[job_result.id]
+        update_perf = self._ProcessTest(test, job_result, pool)
         if update_perf:
-          self._RunPerfSafe(lambda: self.perfdata.UpdatePerfData(test))
+          self._RunPerfSafe(lambda: self.perfdata.UpdatePerfData(
+              test, job_result.output.duration))
     finally:
       self._VerbosePrint("Closing process pool.")
       pool.terminate()
@@ -299,14 +263,6 @@ class Runner(object):
         shutil.rmtree(self.datapath)
     if queued_exception[0]:
       raise queued_exception[0]
-
-    # Make sure that any allocations were printed in predictable mode (if we
-    # ran any tests).
-    assert (
-        not self.total or
-        not self.context.predictable or
-        self.printed_allocations
-    )
 
   def _VerbosePrint(self, text):
     if self.context.verbose:

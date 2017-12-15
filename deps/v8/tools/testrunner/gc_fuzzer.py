@@ -199,10 +199,10 @@ class GCFuzzer(base_runner.BaseTestRunner):
         '--stress_marking', '1000',
         '--trace_incremental_marking',
       ]
-      s.tests = map(lambda t: t.CopyAddingFlags(t.variant, analysis_flags),
+      s.tests = map(lambda t: t.create_variant(t.variant, analysis_flags),
                     s.tests)
       for t in s.tests:
-        t.cmd = s.GetCommand(t, ctx)
+        t.cmd = t.get_command(ctx)
 
     progress_indicator = progress.PROGRESS_INDICATORS[options.progress]()
     runner = execution.Runner(suites, progress_indicator, ctx)
@@ -213,12 +213,14 @@ class GCFuzzer(base_runner.BaseTestRunner):
     for s in suites:
       for t in s.tests:
         # Skip failed tests.
-        if s.HasUnexpectedOutput(t):
+        if s.HasUnexpectedOutput(t, runner.outputs[t]):
           print '%s failed, skipping' % t.path
           continue
-        max_limit = self._get_max_limit_reached(t)
+        max_limit = self._get_max_limit_reached(runner.outputs[t])
         if max_limit:
           test_results[t.path] = max_limit
+
+    runner = None
 
     if options.dump_results_file:
       with file("%s.%d.txt" % (options.dump_results_file, time.time()),
@@ -247,15 +249,14 @@ class GCFuzzer(base_runner.BaseTestRunner):
           ]
           if options.stress_compaction:
             fuzzing_flags.append('--stress_compaction_random')
-          s.tests.append(t.CopyAddingFlags(t.variant, fuzzing_flags))
-
+          s.tests.append(t.create_variant(t.variant, fuzzing_flags))
       for t in s.tests:
-        t.cmd = s.GetCommand(t, ctx)
+        t.cmd = t.get_command(ctx)
       num_tests += len(s.tests)
 
     if num_tests == 0:
       print "No tests to run."
-      return 0
+      return exit_code
 
     print(">>> Fuzzing phase (%d test cases)" % num_tests)
     progress_indicator = progress.PROGRESS_INDICATORS[options.progress]()
@@ -297,8 +298,6 @@ class GCFuzzer(base_runner.BaseTestRunner):
       if len(args) > 0:
         s.FilterTestCasesByArgs(args)
       s.FilterTestCasesByStatus(False)
-      for t in s.tests:
-        t.flags += s.GetStatusfileFlags(t)
 
       num_tests += len(s.tests)
       for t in s.tests:
@@ -311,7 +310,7 @@ class GCFuzzer(base_runner.BaseTestRunner):
   # incremental marking limit (0-100).
   # Skips values >=100% since they already trigger incremental marking.
   @staticmethod
-  def _get_max_limit_reached(test):
+  def _get_max_limit_reached(output):
     def is_im_line(l):
       return 'IncrementalMarking' in l and '% of the memory limit reached' in l
 
@@ -321,10 +320,10 @@ class GCFuzzer(base_runner.BaseTestRunner):
     def percent_str_to_float(s):
       return float(s[:-1])
 
-    if not (test.output and test.output.stdout):
+    if not (output and output.stdout):
       return None
 
-    im_lines = filter(is_im_line, test.output.stdout.splitlines())
+    im_lines = filter(is_im_line, output.stdout.splitlines())
     percents_str = map(line_to_percent, im_lines)
     percents = map(percent_str_to_float, percents_str)
 

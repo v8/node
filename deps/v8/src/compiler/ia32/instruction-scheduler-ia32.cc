@@ -258,10 +258,14 @@ int InstructionScheduler::GetTargetInstructionFlags(
     case kIA32Movl:
     case kIA32Movss:
     case kIA32Movsd:
+    case kIA32Movdqu:
       // Moves are used for memory load/store operations.
       return instr->HasOutput() ? kIsLoadOperation : kHasSideEffect;
 
     case kIA32StackCheck:
+    case kIA32Peek:
+    case kIA32PeekFloat32:
+    case kIA32PeekFloat64:
       return kIsLoadOperation;
 
     case kIA32Push:
@@ -292,11 +296,6 @@ int InstructionScheduler::GetInstructionLatency(const Instruction* instr) {
     case kCheckedLoadWord32:
     case kCheckedLoadFloat32:
     case kCheckedLoadFloat64:
-    case kCheckedStoreWord8:
-    case kCheckedStoreWord16:
-    case kCheckedStoreWord32:
-    case kCheckedStoreFloat32:
-    case kCheckedStoreFloat64:
     case kSSEFloat64Mul:
       return 5;
     case kIA32Imul:

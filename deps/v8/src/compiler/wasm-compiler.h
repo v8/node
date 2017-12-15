@@ -112,13 +112,13 @@ class WasmCompilationUnit final {
 
   size_t memory_cost() const { return memory_cost_; }
 
-  bool UseTrapHandler() const { return use_trap_handler_; }
-
  private:
   void PackProtectedInstructions(Handle<Code> code) const;
 
   struct LiftoffData {
     wasm::LiftoffAssembler asm_;
+    int safepoint_table_offset_;
+    SourcePositionTableBuilder source_position_table_builder_;
     explicit LiftoffData(Isolate* isolate) : asm_(isolate) {}
   };
   struct TurbofanData {
@@ -156,7 +156,6 @@ class WasmCompilationUnit final {
   size_t memory_cost_ = 0;
   wasm::NativeModule* native_module_;
   bool lower_simd_;
-  const bool use_trap_handler_;
   std::shared_ptr<std::vector<trap_handler::ProtectedInstructionData>>
       protected_instructions_;
   CompilationMode mode_;
@@ -190,8 +189,7 @@ V8_EXPORT_PRIVATE Handle<Code> CompileJSToWasmWrapper(
 // wasm instances (the WasmContext address must be changed).
 Handle<Code> CompileWasmToWasmWrapper(Isolate* isolate, WasmCodeWrapper target,
                                       wasm::FunctionSig* sig,
-                                      Address new_wasm_context_address,
-                                      bool use_trap_handler);
+                                      Address new_wasm_context_address);
 
 // Compiles a stub that redirects a call to a wasm function to the wasm
 // interpreter. It's ABI compatible with the compiled wasm function.
@@ -212,27 +210,25 @@ enum CWasmEntryParameters {
 Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig,
                                Address wasm_context_address);
 
+// Values from the {WasmContext} are cached between WASM-level function calls.
+// This struct allows the SSA environment handling this cache to be defined
+// and manipulated in wasm-compiler.{h,cc} instead of inside the WASM decoder.
+// (Note that currently, the globals base is immutable in a context, so not
+// cached here.)
+struct WasmContextCacheNodes {
+  Node* mem_start;
+  Node* mem_size;
+};
+
 // Abstracts details of building TurboFan graph nodes for wasm to separate
 // the wasm decoder from the internal details of TurboFan.
 typedef ZoneVector<Node*> NodeVector;
 class WasmGraphBuilder {
  public:
-  WasmGraphBuilder(const ModuleEnv* env, Zone* zone, JSGraph* graph,
+  WasmGraphBuilder(ModuleEnv* env, Zone* zone, JSGraph* graph,
                    Handle<Code> centry_stub, wasm::FunctionSig* sig,
                    compiler::SourcePositionTable* spt = nullptr,
-                   RuntimeExceptionSupport res = kRuntimeExceptionSupport)
-      : WasmGraphBuilder(env, (env && env->use_trap_handler), zone, graph,
-                         centry_stub, sig, spt, res) {
-    DCHECK_NOT_NULL(env);
-  }
-
-  // Same as above, but when no module environment is available.
-  WasmGraphBuilder(bool use_trap_handler, Zone* zone, JSGraph* graph,
-                   Handle<Code> centry_stub, wasm::FunctionSig* sig,
-                   compiler::SourcePositionTable* spt = nullptr,
-                   RuntimeExceptionSupport res = kRuntimeExceptionSupport)
-      : WasmGraphBuilder(nullptr, use_trap_handler, zone, graph, centry_stub,
-                         sig, spt, res) {}
+                   RuntimeExceptionSupport res = kRuntimeExceptionSupport);
 
   Node** Buffer(size_t count) {
     if (count > cur_bufsize_) {
@@ -254,6 +250,9 @@ class WasmGraphBuilder {
   Node* Terminate(Node* effect, Node* control);
   Node* Merge(unsigned count, Node** controls);
   Node* Phi(wasm::ValueType type, unsigned count, Node** vals, Node* control);
+  Node* CreateOrMergeIntoPhi(wasm::ValueType type, Node* merge, Node* tnode,
+                             Node* fnode);
+  Node* CreateOrMergeIntoEffectPhi(Node* merge, Node* tnode, Node* fnode);
   Node* EffectPhi(unsigned count, Node** effects, Node* control);
   Node* NumberConstant(int32_t value);
   Node* Uint32Constant(uint32_t value);
@@ -274,7 +273,6 @@ class WasmGraphBuilder {
   Node* ConvertExceptionTagToRuntimeId(uint32_t tag);
   Node* GetExceptionRuntimeId();
   Node** GetExceptionValues(const wasm::WasmException* except_decl);
-  unsigned InputCount(Node* node);
   bool IsPhiWithMerge(Node* phi, Node* merge);
   bool ThrowsException(Node* node, Node** if_success, Node** if_exception);
   void AppendToMerge(Node* merge, Node* from);
@@ -356,7 +354,7 @@ class WasmGraphBuilder {
   Node* LoadMem(wasm::ValueType type, MachineType memtype, Node* index,
                 uint32_t offset, uint32_t alignment,
                 wasm::WasmCodePosition position);
-  Node* StoreMem(MachineType memtype, Node* index, uint32_t offset,
+  Node* StoreMem(MachineRepresentation mem_rep, Node* index, uint32_t offset,
                  uint32_t alignment, Node* val, wasm::WasmCodePosition position,
                  wasm::ValueType type);
   static void PrintDebugName(Node* node);
@@ -377,9 +375,18 @@ class WasmGraphBuilder {
   void GetGlobalBaseAndOffset(MachineType mem_type, uint32_t offset,
                               Node** base_node, Node** offset_node);
 
-  void set_mem_size(Node** mem_size) { this->mem_size_ = mem_size; }
+  // Utilities to manipulate sets of context cache nodes.
+  void InitContextCache(WasmContextCacheNodes* context_cache);
+  void PrepareContextCacheForLoop(WasmContextCacheNodes* context_cache,
+                                  Node* control);
+  void NewContextCacheMerge(WasmContextCacheNodes* to,
+                            WasmContextCacheNodes* from, Node* merge);
+  void MergeContextCacheInto(WasmContextCacheNodes* to,
+                             WasmContextCacheNodes* from, Node* merge);
 
-  void set_mem_start(Node** mem_start) { this->mem_start_ = mem_start; }
+  void set_context_cache(WasmContextCacheNodes* context_cache) {
+    this->context_cache_ = context_cache;
+  }
 
   wasm::FunctionSig* GetFunctionSignature() { return sig_; }
 
@@ -411,7 +418,7 @@ class WasmGraphBuilder {
 
   const wasm::WasmModule* module() { return env_ ? env_->module : nullptr; }
 
-  bool UseTrapHandler() const { return use_trap_handler_; }
+  bool use_trap_handler() const { return env_ && env_->use_trap_handler; }
 
  private:
   static const int kDefaultBufferSize = 16;
@@ -419,22 +426,22 @@ class WasmGraphBuilder {
   Zone* zone_;
   JSGraph* jsgraph_;
   Node* centry_stub_node_;
-  const ModuleEnv* env_ = nullptr;
+  // env_ == nullptr means we're not compiling Wasm functions, such as for
+  // wrappers or interpreter stubs.
+  ModuleEnv* env_ = nullptr;
   Node* wasm_context_ = nullptr;
   NodeVector signature_tables_;
   NodeVector function_tables_;
   NodeVector function_table_sizes_;
   Node** control_ = nullptr;
   Node** effect_ = nullptr;
-  Node** mem_size_ = nullptr;
-  Node** mem_start_ = nullptr;
+  WasmContextCacheNodes* context_cache_ = nullptr;
   Node* globals_start_ = nullptr;
   Node** cur_buffer_;
   size_t cur_bufsize_;
   Node* def_buffer_[kDefaultBufferSize];
   bool has_simd_ = false;
   bool needs_stack_check_ = false;
-  const bool use_trap_handler_;
   // If the runtime doesn't support exception propagation,
   // we won't generate stack checks, and trap handling will also
   // be generated differently.
@@ -445,21 +452,17 @@ class WasmGraphBuilder {
 
   compiler::SourcePositionTable* source_position_table_ = nullptr;
 
-  WasmGraphBuilder(const ModuleEnv*, bool use_trap_handler, Zone*, JSGraph*,
-                   Handle<Code> centry_stub_, wasm::FunctionSig*,
-                   compiler::SourcePositionTable*, RuntimeExceptionSupport);
-
   // Internal helper methods.
   JSGraph* jsgraph() { return jsgraph_; }
   Graph* graph();
 
   Node* String(const char* string);
   Node* MemBuffer(uint32_t offset);
-  void BoundsCheckMem(MachineType memtype, Node* index, uint32_t offset,
+  void BoundsCheckMem(uint8_t access_size, Node* index, uint32_t offset,
                       wasm::WasmCodePosition position);
   const Operator* GetSafeLoadOperator(int offset, wasm::ValueType type);
   const Operator* GetSafeStoreOperator(int offset, wasm::ValueType type);
-  Node* BuildChangeEndiannessStore(Node* node, MachineType type,
+  Node* BuildChangeEndiannessStore(Node* node, MachineRepresentation rep,
                                    wasm::ValueType wasmtype = wasm::kWasmStmt);
   Node* BuildChangeEndiannessLoad(Node* node, MachineType type,
                                   wasm::ValueType wasmtype = wasm::kWasmStmt);

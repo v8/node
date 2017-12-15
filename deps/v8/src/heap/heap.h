@@ -413,10 +413,11 @@ class ObjectStats;
 class Page;
 class PagedSpace;
 class RootVisitor;
-class Scavenger;
 class ScavengeJob;
+class Scavenger;
 class Space;
 class StoreBuffer;
+class StressScavengeObserver;
 class TracePossibleWrapperReporter;
 class WeakObjectRetainer;
 
@@ -1364,6 +1365,12 @@ class Heap {
   // Retrieves names of buckets used by object statistics tracking.
   bool GetObjectTypeName(size_t index, const char** object_type,
                          const char** object_sub_type);
+
+  // The total number of native contexts object on the heap.
+  size_t NumberOfNativeContexts();
+  // The total number of native contexts that were detached but were not
+  // garbage collected yet.
+  size_t NumberOfDetachedContexts();
 
   // ===========================================================================
   // Code statistics. ==========================================================
@@ -2417,6 +2424,9 @@ class Heap {
   // Observer that causes more frequent checks for reached incremental marking
   // limit.
   AllocationObserver* stress_marking_observer_;
+
+  // Observer that can cause early scavenge start.
+  StressScavengeObserver* stress_scavenge_observer_;
 
   // How many mark-sweep collections happened.
   unsigned int ms_count_;

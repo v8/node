@@ -66,6 +66,9 @@ SLOW_ARCHS = ["arm",
               "s390x",
               "arm64"]
 
+PREDICTABLE_WRAPPER = os.path.join(
+    base_runner.BASE_DIR, 'tools', 'predictable_wrapper.py')
+
 
 class StandardTestRunner(base_runner.BaseTestRunner):
     def __init__(self):
@@ -113,13 +116,12 @@ class StandardTestRunner(base_runner.BaseTestRunner):
 
       suites = []
       for root in suite_paths:
+        if options.verbose:
+          print '>>> Loading test suite: %s' % root
         suite = testsuite.TestSuite.LoadTestSuite(
             os.path.join(base_runner.BASE_DIR, "test", root))
         if suite:
           suites.append(suite)
-
-      for s in suites:
-        s.PrepareSources()
 
       try:
         return self._execute(args, options, suites)
@@ -280,6 +282,9 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         options.extra_flags.append("--predictable")
         options.extra_flags.append("--verify_predictable")
         options.extra_flags.append("--no-inline-new")
+        # Add predictable wrapper to command prefix.
+        options.command_prefix.append(sys.executable)
+        options.command_prefix.append(PREDICTABLE_WRAPPER)
 
       # TODO(machenbach): Figure out how to test a bigger subset of variants on
       # msan.
@@ -424,7 +429,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
           verbose.PrintTestSource(s.tests)
           continue
         variant_gen = s.CreateVariantGenerator(VARIANTS)
-        variant_tests = [ t.CopyAddingFlags(v, flags)
+        variant_tests = [ t.create_variant(v, flags)
                           for t in s.tests
                           for v in variant_gen.FilterVariantsByTest(t)
                           for flags in variant_gen.GetFlagSets(t, v) ]
@@ -440,7 +445,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
               else:
                 yield ["--random-seed=%d" % self._random_seed()]
           s.tests = [
-            t.CopyAddingFlags(t.variant, flags)
+            t.create_variant(t.variant, flags)
             for t in variant_tests
             for flags in iter_seed_flags()
           ]
@@ -454,8 +459,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         s.tests = self._shard_tests(s.tests, options)
 
         for t in s.tests:
-          t.flags += s.GetStatusfileFlags(t)
-          t.cmd = s.GetCommand(t, ctx)
+          t.cmd = t.get_command(ctx)
 
         num_tests += len(s.tests)
 
@@ -488,7 +492,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
       overall_duration = time.time() - start_time
 
       if options.time:
-        verbose.PrintTestDurations(suites, overall_duration)
+        verbose.PrintTestDurations(suites, runner.outputs, overall_duration)
 
       if num_tests == 0:
         print("Warning: no tests were run!")

@@ -992,6 +992,11 @@ Reduction JSBuiltinReducer::ReduceArrayPop(Node* node) {
 // ES6 section 22.1.3.18 Array.prototype.push ( )
 Reduction JSBuiltinReducer::ReduceArrayPush(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
+  CallParameters const& p = CallParametersOf(node->op());
+  if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
+    return NoChange();
+  }
+
   int const num_values = node->op()->ValueInputCount() - 2;
   Node* receiver = NodeProperties::GetValueInput(node, 1);
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -1022,12 +1027,9 @@ Reduction JSBuiltinReducer::ReduceArrayPush(Node* node) {
       if (receiver_map->is_stable()) {
         dependencies()->AssumeMapStable(receiver_map);
       } else {
-        // TODO(turbofan): This is a potential - yet unlikely - deoptimization
-        // loop, since we might not learn from this deoptimization in baseline
-        // code. We need a way to learn from deoptimizations in optimized to
-        // address these problems.
         effect = graph()->NewNode(
-            simplified()->CheckMaps(CheckMapsFlag::kNone, receiver_maps),
+            simplified()->CheckMaps(CheckMapsFlag::kNone, receiver_maps,
+                                    p.feedback()),
             receiver, effect, control);
       }
     }
@@ -1045,8 +1047,9 @@ Reduction JSBuiltinReducer::ReduceArrayPush(Node* node) {
         value = effect =
             graph()->NewNode(simplified()->CheckSmi(), value, effect, control);
       } else if (IsDoubleElementsKind(receiver_map->elements_kind())) {
-        value = effect = graph()->NewNode(simplified()->CheckNumber(), value,
-                                          effect, control);
+        value = effect =
+            graph()->NewNode(simplified()->CheckNumber(VectorSlotPair()), value,
+                             effect, control);
         // Make sure we do not store signaling NaNs into double arrays.
         value = graph()->NewNode(simplified()->NumberSilenceNaN(), value);
       }
@@ -2258,14 +2261,13 @@ Reduction JSBuiltinReducer::ReduceObjectCreate(Node* node) {
   Node* control = NodeProperties::GetControlInput(node);
   Node* prototype = NodeProperties::GetValueInput(node, 2);
   Type* prototype_type = NodeProperties::GetType(prototype);
-  Handle<Map> instance_map;
   if (!prototype_type->IsHeapConstant()) return NoChange();
   Handle<HeapObject> prototype_const =
       prototype_type->AsHeapConstant()->Value();
-  if (!prototype_const->IsNull(isolate()) && !prototype_const->IsJSReceiver()) {
-    return NoChange();
-  }
-  instance_map = Map::GetObjectCreateMap(prototype_const);
+  Handle<Map> instance_map;
+  MaybeHandle<Map> maybe_instance_map =
+      Map::TryGetObjectCreateMap(prototype_const);
+  if (!maybe_instance_map.ToHandle(&instance_map)) return NoChange();
   Node* properties = jsgraph()->EmptyFixedArrayConstant();
   if (instance_map->is_dictionary_map()) {
     // Allocated an empty NameDictionary as backing store for the properties.

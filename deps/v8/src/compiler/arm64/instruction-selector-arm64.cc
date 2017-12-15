@@ -488,7 +488,8 @@ void VisitBinop(InstructionSelector* selector, Node* node,
   opcode = cont->Encode(opcode);
   if (cont->IsDeoptimize()) {
     selector->EmitDeoptimize(opcode, output_count, outputs, input_count, inputs,
-                             cont->kind(), cont->reason(), cont->frame_state());
+                             cont->kind(), cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else if (cont->IsTrap()) {
     inputs[input_count++] = g.UseImmediate(cont->trap_id());
     selector->Emit(opcode, output_count, outputs, input_count, inputs);
@@ -808,59 +809,6 @@ void InstructionSelector::VisitCheckedLoad(Node* node) {
   }
   Emit(opcode, g.DefineAsRegister(node), g.UseRegister(buffer),
        g.UseRegister(offset), g.UseOperand(length, kArithmeticImm));
-}
-
-
-void InstructionSelector::VisitCheckedStore(Node* node) {
-  MachineRepresentation rep = CheckedStoreRepresentationOf(node->op());
-  Arm64OperandGenerator g(this);
-  Node* const buffer = node->InputAt(0);
-  Node* const offset = node->InputAt(1);
-  Node* const length = node->InputAt(2);
-  Node* const value = node->InputAt(3);
-  ArchOpcode opcode = kArchNop;
-  switch (rep) {
-    case MachineRepresentation::kWord8:
-      opcode = kCheckedStoreWord8;
-      break;
-    case MachineRepresentation::kWord16:
-      opcode = kCheckedStoreWord16;
-      break;
-    case MachineRepresentation::kWord32:
-      opcode = kCheckedStoreWord32;
-      break;
-    case MachineRepresentation::kWord64:
-      opcode = kCheckedStoreWord64;
-      break;
-    case MachineRepresentation::kFloat32:
-      opcode = kCheckedStoreFloat32;
-      break;
-    case MachineRepresentation::kFloat64:
-      opcode = kCheckedStoreFloat64;
-      break;
-    case MachineRepresentation::kBit:      // Fall through.
-    case MachineRepresentation::kTaggedSigned:   // Fall through.
-    case MachineRepresentation::kTaggedPointer:  // Fall through.
-    case MachineRepresentation::kTagged:   // Fall through.
-    case MachineRepresentation::kSimd128:  // Fall through.
-    case MachineRepresentation::kNone:
-      UNREACHABLE();
-      return;
-  }
-  // If the length is a constant power of two, allow the code generator to
-  // pick a more efficient bounds check sequence by passing the length as an
-  // immediate.
-  if (length->opcode() == IrOpcode::kInt32Constant) {
-    Int32Matcher m(length);
-    if (m.IsPowerOf2()) {
-      Emit(opcode, g.NoOutput(), g.UseRegister(buffer), g.UseRegister(offset),
-           g.UseImmediate(length), g.UseRegisterOrImmediateZero(value));
-      return;
-    }
-  }
-  Emit(opcode, g.NoOutput(), g.UseRegister(buffer), g.UseRegister(offset),
-       g.UseOperand(length, kArithmeticImm),
-       g.UseRegisterOrImmediateZero(value));
 }
 
 
@@ -1483,7 +1431,8 @@ void EmitInt32MulWithOverflow(InstructionSelector* selector, Node* node,
   } else if (cont->IsDeoptimize()) {
     InstructionOperand in[] = {result, result};
     selector->EmitDeoptimize(opcode, 0, nullptr, 2, in, cont->kind(),
-                             cont->reason(), cont->frame_state());
+                             cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else if (cont->IsSet()) {
     selector->Emit(opcode, g.DefineAsRegister(cont->result()), result, result);
   } else {
@@ -1805,7 +1754,7 @@ void InstructionSelector::EmitPrepareArguments(
   // Poke the arguments into the stack.
   ArchOpcode poke = to_native_stack ? kArm64PokeCSP : kArm64PokeJSSP;
   while (slot >= 0) {
-    Emit(poke, g.NoOutput(), g.UseRegister((*arguments)[slot].node()),
+    Emit(poke, g.NoOutput(), g.UseRegister((*arguments)[slot].node),
          g.TempImmediate(slot));
     slot--;
     // TODO(ahaas): Poke arguments in pairs if two subsequent arguments have the
@@ -1816,6 +1765,11 @@ void InstructionSelector::EmitPrepareArguments(
   }
 }
 
+void InstructionSelector::EmitPrepareResults(ZoneVector<PushParameter>* results,
+                                             const CallDescriptor* descriptor,
+                                             Node* node) {
+  // TODO(ahaas): Port.
+}
 
 bool InstructionSelector::IsTailCallAddressImmediate() { return false; }
 
@@ -1834,7 +1788,8 @@ void VisitCompare(InstructionSelector* selector, InstructionCode opcode,
                    g.Label(cont->true_block()), g.Label(cont->false_block()));
   } else if (cont->IsDeoptimize()) {
     selector->EmitDeoptimize(opcode, g.NoOutput(), left, right, cont->kind(),
-                             cont->reason(), cont->frame_state());
+                             cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else if (cont->IsSet()) {
     selector->Emit(opcode, g.DefineAsRegister(cont->result()), left, right);
   } else {
@@ -2002,7 +1957,8 @@ void EmitBranchOrDeoptimize(InstructionSelector* selector,
   } else {
     DCHECK(cont->IsDeoptimize());
     selector->EmitDeoptimize(cont->Encode(opcode), g.NoOutput(), value,
-                             cont->kind(), cont->reason(), cont->frame_state());
+                             cont->kind(), cont->reason(), cont->feedback(),
+                             cont->frame_state());
   }
 }
 
@@ -2379,7 +2335,8 @@ void VisitWordCompareZero(InstructionSelector* selector, Node* user,
   } else if (cont->IsDeoptimize()) {
     selector->EmitDeoptimize(cont->Encode(kArm64Tst32), g.NoOutput(),
                              g.UseRegister(value), g.UseRegister(value),
-                             cont->kind(), cont->reason(), cont->frame_state());
+                             cont->kind(), cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else {
     DCHECK(cont->IsTrap());
     selector->Emit(cont->Encode(kArm64Tst32), g.NoOutput(),
@@ -2399,14 +2356,14 @@ void InstructionSelector::VisitBranch(Node* branch, BasicBlock* tbranch,
 void InstructionSelector::VisitDeoptimizeIf(Node* node) {
   DeoptimizeParameters p = DeoptimizeParametersOf(node->op());
   FlagsContinuation cont = FlagsContinuation::ForDeoptimize(
-      kNotEqual, p.kind(), p.reason(), node->InputAt(1));
+      kNotEqual, p.kind(), p.reason(), p.feedback(), node->InputAt(1));
   VisitWordCompareZero(this, node, node->InputAt(0), &cont);
 }
 
 void InstructionSelector::VisitDeoptimizeUnless(Node* node) {
   DeoptimizeParameters p = DeoptimizeParametersOf(node->op());
   FlagsContinuation cont = FlagsContinuation::ForDeoptimize(
-      kEqual, p.kind(), p.reason(), node->InputAt(1));
+      kEqual, p.kind(), p.reason(), p.feedback(), node->InputAt(1));
   VisitWordCompareZero(this, node, node->InputAt(0), &cont);
 }
 

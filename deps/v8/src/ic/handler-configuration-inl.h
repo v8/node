@@ -83,28 +83,6 @@ Handle<Smi> LoadHandler::LoadModuleExport(Isolate* isolate, int index) {
   return handle(Smi::FromInt(config), isolate);
 }
 
-Handle<Smi> LoadHandler::EnableAccessCheckOnReceiver(Isolate* isolate,
-                                                     Handle<Smi> smi_handler) {
-  int config = smi_handler->value();
-#ifdef DEBUG
-  Kind kind = KindBits::decode(config);
-  DCHECK_NE(kElement, kind);
-#endif
-  config = DoAccessCheckOnReceiverBits::update(config, true);
-  return handle(Smi::FromInt(config), isolate);
-}
-
-Handle<Smi> LoadHandler::EnableLookupOnReceiver(Isolate* isolate,
-                                                Handle<Smi> smi_handler) {
-  int config = smi_handler->value();
-#ifdef DEBUG
-  Kind kind = KindBits::decode(config);
-  DCHECK_NE(kElement, kind);
-#endif
-  config = LookupOnReceiverBits::update(config, true);
-  return handle(Smi::FromInt(config), isolate);
-}
-
 Handle<Smi> LoadHandler::LoadNonExistent(Isolate* isolate) {
   int config = KindBits::encode(kNonExistent);
   return handle(Smi::FromInt(config), isolate);
@@ -147,13 +125,6 @@ Handle<Smi> StoreHandler::StoreNormal(Isolate* isolate) {
 
 Handle<Smi> StoreHandler::StoreProxy(Isolate* isolate) {
   int config = KindBits::encode(kProxy);
-  return handle(Smi::FromInt(config), isolate);
-}
-
-Handle<Smi> StoreHandler::EnableAccessCheckOnReceiver(Isolate* isolate,
-                                                      Handle<Smi> smi_handler) {
-  int config = smi_handler->value();
-  config = DoAccessCheckOnReceiverBits::update(config, true);
   return handle(Smi::FromInt(config), isolate);
 }
 
@@ -240,22 +211,10 @@ Handle<Smi> StoreHandler::StoreApiSetter(Isolate* isolate,
 
 // static
 WeakCell* StoreHandler::GetTransitionCell(Object* handler) {
-  if (handler->IsTuple3()) {
-    STATIC_ASSERT(kDataOffset == Tuple3::kValue1Offset);
-    WeakCell* cell = WeakCell::cast(Tuple3::cast(handler)->value1());
-    DCHECK(!cell->cleared());
-    return cell;
-  }
-
-  DCHECK(handler->IsFixedArrayExact());
-  WeakCell* cell = WeakCell::cast(FixedArray::cast(handler)->get(kDataIndex));
+  DCHECK(handler->IsStoreHandler());
+  WeakCell* cell = WeakCell::cast(StoreHandler::cast(handler)->data1());
   DCHECK(!cell->cleared());
   return cell;
-}
-
-// static
-bool StoreHandler::IsHandler(Object* maybe_handler) {
-  return maybe_handler->IsFixedArrayExact() || maybe_handler->IsTuple3();
 }
 
 }  // namespace internal

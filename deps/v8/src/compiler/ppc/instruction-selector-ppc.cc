@@ -154,7 +154,8 @@ void VisitBinop(InstructionSelector* selector, Node* node,
   opcode = cont->Encode(opcode);
   if (cont->IsDeoptimize()) {
     selector->EmitDeoptimize(opcode, output_count, outputs, input_count, inputs,
-                             cont->kind(), cont->reason(), cont->frame_state());
+                             cont->kind(), cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else if (cont->IsTrap()) {
     inputs[input_count++] = g.UseImmediate(cont->trap_id());
     selector->Emit(opcode, output_count, outputs, input_count, inputs);
@@ -411,55 +412,6 @@ void InstructionSelector::VisitCheckedLoad(Node* node) {
        g.DefineAsRegister(node), g.UseRegister(base), g.UseRegister(offset),
        g.UseOperand(length, kInt16Imm_Unsigned));
 }
-
-
-void InstructionSelector::VisitCheckedStore(Node* node) {
-  MachineRepresentation rep = CheckedStoreRepresentationOf(node->op());
-  PPCOperandGenerator g(this);
-  Node* const base = node->InputAt(0);
-  Node* const offset = node->InputAt(1);
-  Node* const length = node->InputAt(2);
-  Node* const value = node->InputAt(3);
-  ArchOpcode opcode = kArchNop;
-  switch (rep) {
-    case MachineRepresentation::kWord8:
-      opcode = kCheckedStoreWord8;
-      break;
-    case MachineRepresentation::kWord16:
-      opcode = kCheckedStoreWord16;
-      break;
-    case MachineRepresentation::kWord32:
-      opcode = kCheckedStoreWord32;
-      break;
-#if V8_TARGET_ARCH_PPC64
-    case MachineRepresentation::kWord64:
-      opcode = kCheckedStoreWord64;
-      break;
-#endif
-    case MachineRepresentation::kFloat32:
-      opcode = kCheckedStoreFloat32;
-      break;
-    case MachineRepresentation::kFloat64:
-      opcode = kCheckedStoreFloat64;
-      break;
-    case MachineRepresentation::kBit:     // Fall through.
-    case MachineRepresentation::kTaggedSigned:   // Fall through.
-    case MachineRepresentation::kTaggedPointer:  // Fall through.
-    case MachineRepresentation::kTagged:  // Fall through.
-#if !V8_TARGET_ARCH_PPC64
-    case MachineRepresentation::kWord64:  // Fall through.
-#endif
-    case MachineRepresentation::kSimd128:  // Fall through.
-    case MachineRepresentation::kNone:
-      UNREACHABLE();
-      return;
-  }
-  AddressingMode addressingMode = kMode_MRR;
-  Emit(opcode | AddressingModeField::encode(addressingMode), g.NoOutput(),
-       g.UseRegister(base), g.UseRegister(offset),
-       g.UseOperand(length, kInt16Imm_Unsigned), g.UseRegister(value));
-}
-
 
 template <typename Matcher>
 static void VisitLogical(InstructionSelector* selector, Node* node, Matcher* m,
@@ -1553,7 +1505,8 @@ void VisitCompare(InstructionSelector* selector, InstructionCode opcode,
                    g.Label(cont->true_block()), g.Label(cont->false_block()));
   } else if (cont->IsDeoptimize()) {
     selector->EmitDeoptimize(opcode, g.NoOutput(), left, right, cont->kind(),
-                             cont->reason(), cont->frame_state());
+                             cont->reason(), cont->feedback(),
+                             cont->frame_state());
   } else if (cont->IsSet()) {
     selector->Emit(opcode, g.DefineAsRegister(cont->result()), left, right);
   } else {
@@ -1800,14 +1753,14 @@ void InstructionSelector::VisitBranch(Node* branch, BasicBlock* tbranch,
 void InstructionSelector::VisitDeoptimizeIf(Node* node) {
   DeoptimizeParameters p = DeoptimizeParametersOf(node->op());
   FlagsContinuation cont = FlagsContinuation::ForDeoptimize(
-      kNotEqual, p.kind(), p.reason(), node->InputAt(1));
+      kNotEqual, p.kind(), p.reason(), p.feedback(), node->InputAt(1));
   VisitWord32CompareZero(this, node, node->InputAt(0), &cont);
 }
 
 void InstructionSelector::VisitDeoptimizeUnless(Node* node) {
   DeoptimizeParameters p = DeoptimizeParametersOf(node->op());
   FlagsContinuation cont = FlagsContinuation::ForDeoptimize(
-      kEqual, p.kind(), p.reason(), node->InputAt(1));
+      kEqual, p.kind(), p.reason(), p.feedback(), node->InputAt(1));
   VisitWord32CompareZero(this, node, node->InputAt(0), &cont);
 }
 
@@ -1989,7 +1942,7 @@ void InstructionSelector::EmitPrepareArguments(
     // Poke any stack arguments.
     int slot = kStackFrameExtraParamSlot;
     for (PushParameter input : (*arguments)) {
-      Emit(kPPC_StoreToStackSlot, g.NoOutput(), g.UseRegister(input.node()),
+      Emit(kPPC_StoreToStackSlot, g.NoOutput(), g.UseRegister(input.node),
            g.TempImmediate(slot));
       ++slot;
     }
@@ -1997,8 +1950,8 @@ void InstructionSelector::EmitPrepareArguments(
     // Push any stack arguments.
     for (PushParameter input : base::Reversed(*arguments)) {
       // Skip any alignment holes in pushed nodes.
-      if (input.node() == nullptr) continue;
-      Emit(kPPC_Push, g.NoOutput(), g.UseRegister(input.node()));
+      if (input.node == nullptr) continue;
+      Emit(kPPC_Push, g.NoOutput(), g.UseRegister(input.node));
     }
   }
 }
@@ -2162,6 +2115,180 @@ void InstructionSelector::VisitInt32AbsWithOverflow(Node* node) {
 
 void InstructionSelector::VisitInt64AbsWithOverflow(Node* node) {
   UNREACHABLE();
+}
+
+void InstructionSelector::VisitI32x4Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4ExtractLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4ReplaceLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Shl(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4ShrS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4MaxS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4MinS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Eq(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Ne(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4MinU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4MaxU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4ShrU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4GtS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4GeS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4GtU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI32x4GeU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8ExtractLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8ReplaceLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Shl(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8ShrS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8ShrU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8AddSaturateS(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI16x8Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8SubSaturateS(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI16x8Mul(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8MinS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8MaxS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Eq(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Ne(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8AddSaturateU(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI16x8SubSaturateU(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI16x8MinU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8MaxU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8GtS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8GeS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8GtU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI16x8GeU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16Neg(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16ExtractLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16ReplaceLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16Add(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16AddSaturateS(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI8x16Sub(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16SubSaturateS(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI8x16MinS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16MaxS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16Eq(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16Ne(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16GtS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16GeS(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16AddSaturateU(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI8x16SubSaturateU(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitI8x16MinU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16MaxU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16GtU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitI8x16GeU(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS128And(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS128Or(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS128Xor(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS128Not(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitS128Zero(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4Eq(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4Ne(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4Lt(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4Le(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4Splat(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4ExtractLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::VisitF32x4ReplaceLane(Node* node) { UNIMPLEMENTED(); }
+
+void InstructionSelector::EmitPrepareResults(ZoneVector<PushParameter>* results,
+                                             const CallDescriptor* descriptor,
+                                             Node* node) {
+  // TODO(John): Port.
 }
 
 // static

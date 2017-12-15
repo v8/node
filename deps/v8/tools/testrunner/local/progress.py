@@ -50,7 +50,7 @@ class ProgressIndicator(object):
   def Done(self):
     pass
 
-  def HasRun(self, test, has_unexpected_output):
+  def HasRun(self, test, output, has_unexpected_output):
     pass
 
   def Heartbeat(self):
@@ -62,8 +62,8 @@ class ProgressIndicator(object):
     else:
       negative_marker = ''
     print "=== %(label)s %(negative)s===" % {
-      'label': test.GetLabel(),
-      'negative': negative_marker
+      'label': test,
+      'negative': negative_marker,
     }
 
 
@@ -100,18 +100,19 @@ class SimpleProgressIndicator(ProgressIndicator):
   def Done(self):
     print
     for failed in self.runner.failed:
+      output = self.runner.outputs[failed]
       self.PrintFailureHeader(failed)
-      if failed.output.stderr:
+      if output.stderr:
         print "--- stderr ---"
-        print failed.output.stderr.strip()
-      if failed.output.stdout:
+        print output.stderr.strip()
+      if output.stdout:
         print "--- stdout ---"
-        print failed.output.stdout.strip()
+        print output.stdout.strip()
       print "Command: %s" % failed.cmd.to_string()
-      if failed.output.HasCrashed():
-        print "exit code: %d" % failed.output.exit_code
+      if output.HasCrashed():
+        print "exit code: %d" % output.exit_code
         print "--- CRASHED ---"
-      if failed.output.HasTimedOut():
+      if output.HasTimedOut():
         print "--- TIMEOUT ---"
     if len(self.runner.failed) == 0:
       print "==="
@@ -128,15 +129,15 @@ class SimpleProgressIndicator(ProgressIndicator):
 
 class VerboseProgressIndicator(SimpleProgressIndicator):
 
-  def HasRun(self, test, has_unexpected_output):
+  def HasRun(self, test, output, has_unexpected_output):
     if has_unexpected_output:
-      if test.output.HasCrashed():
+      if output.HasCrashed():
         outcome = 'CRASH'
       else:
         outcome = 'FAIL'
     else:
       outcome = 'pass'
-    print 'Done running %s: %s' % (test.GetLabel(), outcome)
+    print 'Done running %s: %s' % (test, outcome)
     sys.stdout.flush()
 
   def Heartbeat(self):
@@ -146,15 +147,15 @@ class VerboseProgressIndicator(SimpleProgressIndicator):
 
 class DotsProgressIndicator(SimpleProgressIndicator):
 
-  def HasRun(self, test, has_unexpected_output):
+  def HasRun(self, test, output, has_unexpected_output):
     total = self.runner.succeeded + len(self.runner.failed)
     if (total > 1) and (total % 50 == 1):
       sys.stdout.write('\n')
     if has_unexpected_output:
-      if test.output.HasCrashed():
+      if output.HasCrashed():
         sys.stdout.write('C')
         sys.stdout.flush()
-      elif test.output.HasTimedOut():
+      elif output.HasTimedOut():
         sys.stdout.write('T')
         sys.stdout.flush()
       else:
@@ -178,22 +179,22 @@ class CompactProgressIndicator(ProgressIndicator):
     self.PrintProgress('Done')
     print ""  # Line break.
 
-  def HasRun(self, test, has_unexpected_output):
-    self.PrintProgress(test.GetLabel())
+  def HasRun(self, test, output, has_unexpected_output):
+    self.PrintProgress(str(test))
     if has_unexpected_output:
       self.ClearLine(self.last_status_length)
       self.PrintFailureHeader(test)
-      stdout = test.output.stdout.strip()
+      stdout = output.stdout.strip()
       if len(stdout):
         print self.templates['stdout'] % stdout
-      stderr = test.output.stderr.strip()
+      stderr = output.stderr.strip()
       if len(stderr):
         print self.templates['stderr'] % stderr
       print "Command: %s" % test.cmd.to_string()
-      if test.output.HasCrashed():
-        print "exit code: %d" % test.output.exit_code
+      if output.HasCrashed():
+        print "exit code: %d" % output.exit_code
         print "--- CRASHED ---"
-      if test.output.HasTimedOut():
+      if output.HasTimedOut():
         print "--- TIMEOUT ---"
 
   def Truncate(self, string, length):
@@ -269,24 +270,25 @@ class JUnitTestProgressIndicator(ProgressIndicator):
     if self.outfile != sys.stdout:
       self.outfile.close()
 
-  def HasRun(self, test, has_unexpected_output):
+  def HasRun(self, test, output, has_unexpected_output):
     fail_text = ""
     if has_unexpected_output:
-      stdout = test.output.stdout.strip()
+      stdout = output.stdout.strip()
       if len(stdout):
         fail_text += "stdout:\n%s\n" % stdout
-      stderr = test.output.stderr.strip()
+      stderr = output.stderr.strip()
       if len(stderr):
         fail_text += "stderr:\n%s\n" % stderr
       fail_text += "Command: %s" % self.test.cmd.to_string()
-      if test.output.HasCrashed():
-        fail_text += "exit code: %d\n--- CRASHED ---" % test.output.exit_code
-      if test.output.HasTimedOut():
+      if output.HasCrashed():
+        fail_text += "exit code: %d\n--- CRASHED ---" % output.exit_code
+      if output.HasTimedOut():
         fail_text += "--- TIMEOUT ---"
     self.outputter.HasRunTest(
-        [test.GetLabel()] + self.runner.context.mode_flags + test.flags,
-        test.duration,
-        fail_text)
+        test_name=str(test),
+        test_cmd=test.cmd.to_string(relative=True),
+        test_duration=output.duration,
+        test_failure=fail_text)
 
 
 class JsonTestProgressIndicator(ProgressIndicator):
@@ -311,20 +313,20 @@ class JsonTestProgressIndicator(ProgressIndicator):
     if self.tests:
       # Get duration mean.
       duration_mean = (
-          sum(t.duration for t in self.tests) / float(len(self.tests)))
+          sum(duration for (_, duration) in self.tests) /
+          float(len(self.tests)))
 
     # Sort tests by duration.
-    timed_tests = [t for t in self.tests if t.duration is not None]
-    timed_tests.sort(lambda a, b: cmp(b.duration, a.duration))
+    self.tests.sort(key=lambda (_, duration): duration, reverse=True)
     slowest_tests = [
       {
-        "name": test.GetLabel(),
-        "flags": test.flags,
+        "name": str(test),
+        "flags": test.cmd.args,
         "command": test.cmd.to_string(relative=True),
-        "duration": test.duration,
+        "duration": duration,
         "marked_slow": statusfile.IsSlow(
-          test.suite.GetStatusFileOutcomes(test)),
-      } for test in timed_tests[:20]
+            test.suite.GetStatusFileOutcomes(test.name, test.variant)),
+      } for (test, duration) in self.tests[:20]
     ]
 
     complete_results.append({
@@ -339,30 +341,30 @@ class JsonTestProgressIndicator(ProgressIndicator):
     with open(self.json_test_results, "w") as f:
       f.write(json.dumps(complete_results))
 
-  def HasRun(self, test, has_unexpected_output):
+  def HasRun(self, test, output, has_unexpected_output):
     # Buffer all tests for sorting the durations in the end.
-    self.tests.append(test)
+    self.tests.append((test, output.duration))
     if not has_unexpected_output:
       # Omit tests that run as expected. Passing tests of reruns after failures
       # will have unexpected_output to be reported here has well.
       return
 
     self.results.append({
-      "name": test.GetLabel(),
-      "flags": test.flags,
+      "name": str(test),
+      "flags": test.cmd.args,
       "command": test.cmd.to_string(relative=True),
       "run": test.run,
-      "stdout": test.output.stdout,
-      "stderr": test.output.stderr,
-      "exit_code": test.output.exit_code,
-      "result": test.suite.GetOutcome(test),
+      "stdout": output.stdout,
+      "stderr": output.stderr,
+      "exit_code": output.exit_code,
+      "result": test.suite.GetOutcome(test, output),
       "expected": test.suite.GetExpectedOutcomes(test),
-      "duration": test.duration,
+      "duration": output.duration,
 
       # TODO(machenbach): This stores only the global random seed from the
       # context and not possible overrides when using random-seed stress.
       "random_seed": self.random_seed,
-      "target_name": test.suite.GetShellForTestCase(test),
+      "target_name": test.cmd.shell,
       "variant": test.variant,
     })
 
@@ -392,13 +394,9 @@ class FlakinessTestProgressIndicator(ProgressIndicator):
         "version": 3,
       }, f)
 
-  def HasRun(self, test, has_unexpected_output):
-    key = "/".join(
-        sorted(flag.lstrip("-")
-               for flag in self.runner.context.extra_flags + test.flags) +
-        ["test", test.GetLabel()],
-    )
-    outcome = test.suite.GetOutcome(test)
+  def HasRun(self, test, output, has_unexpected_output):
+    key = test.get_id()
+    outcome = test.suite.GetOutcome(test, output)
     assert outcome in ["PASS", "FAIL", "CRASH", "TIMEOUT"]
     if test.run == 1:
       # First run of this test.
@@ -406,14 +404,14 @@ class FlakinessTestProgressIndicator(ProgressIndicator):
       self.results[key] = {
         "actual": outcome,
         "expected": " ".join(expected_outcomes),
-        "times": [test.duration],
+        "times": [output.duration],
       }
       self.summary[outcome] = self.summary[outcome] + 1
     else:
       # This is a rerun and a previous result exists.
       result = self.results[key]
       result["actual"] = "%s %s" % (result["actual"], outcome)
-      result["times"].append(test.duration)
+      result["times"].append(output.duration)
 
 
 PROGRESS_INDICATORS = {

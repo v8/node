@@ -484,10 +484,27 @@ namespace {
 class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
  public:
   virtual void* Allocate(size_t length) {
-    void* data = AllocateUninitialized(length);
-    return data == nullptr ? data : memset(data, 0, length);
+#if V8_OS_AIX && _LINUX_SOURCE_COMPAT
+    // Work around for GCC bug on AIX
+    // See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=79839
+    void* data = __linux_calloc(length, 1);
+#else
+    void* data = calloc(length, 1);
+#endif
+    return data;
   }
-  virtual void* AllocateUninitialized(size_t length) { return malloc(length); }
+
+  virtual void* AllocateUninitialized(size_t length) {
+#if V8_OS_AIX && _LINUX_SOURCE_COMPAT
+    // Work around for GCC bug on AIX
+    // See: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=79839
+    void* data = __linux_malloc(length);
+#else
+    void* data = malloc(length);
+#endif
+    return data;
+  }
+
   virtual void Free(void* data, size_t) { free(data); }
 
   virtual void* Reserve(size_t length) {
@@ -511,7 +528,9 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
         return Free(data, length);
       }
       case v8::ArrayBuffer::Allocator::AllocationMode::kReservation: {
-        CHECK(base::OS::Free(data, length));
+        size_t page_size = base::OS::AllocatePageSize();
+        size_t allocated = RoundUp(length, page_size);
+        CHECK(base::OS::Free(data, allocated));
         return;
       }
     }
@@ -1748,11 +1767,10 @@ static i::Handle<i::InterceptorInfo> CreateInterceptorInfo(
     i::Isolate* isolate, Getter getter, Setter setter, Query query,
     Descriptor descriptor, Deleter remover, Enumerator enumerator,
     Definer definer, Local<Value> data, PropertyHandlerFlags flags) {
-  DCHECK(query == nullptr ||
-         descriptor == nullptr);  // Either intercept attributes or descriptor.
-  DCHECK(query == nullptr ||
-         definer ==
-             nullptr);  // Only use descriptor callback with definer callback.
+  // Either intercept attributes or descriptor.
+  DCHECK(query == nullptr || descriptor == nullptr);
+  // Only use descriptor callback with definer callback.
+  DCHECK(query == nullptr || definer == nullptr);
   auto obj = i::Handle<i::InterceptorInfo>::cast(
       isolate->factory()->NewStruct(i::INTERCEPTOR_INFO_TYPE, i::TENURED));
   obj->set_flags(0);
@@ -1781,6 +1799,32 @@ static i::Handle<i::InterceptorInfo> CreateInterceptorInfo(
 
 template <typename Getter, typename Setter, typename Query, typename Descriptor,
           typename Deleter, typename Enumerator, typename Definer>
+static i::Handle<i::InterceptorInfo> CreateNamedInterceptorInfo(
+    i::Isolate* isolate, Getter getter, Setter setter, Query query,
+    Descriptor descriptor, Deleter remover, Enumerator enumerator,
+    Definer definer, Local<Value> data, PropertyHandlerFlags flags) {
+  auto interceptor =
+      CreateInterceptorInfo(isolate, getter, setter, query, descriptor, remover,
+                            enumerator, definer, data, flags);
+  interceptor->set_is_named(true);
+  return interceptor;
+}
+
+template <typename Getter, typename Setter, typename Query, typename Descriptor,
+          typename Deleter, typename Enumerator, typename Definer>
+static i::Handle<i::InterceptorInfo> CreateIndexedInterceptorInfo(
+    i::Isolate* isolate, Getter getter, Setter setter, Query query,
+    Descriptor descriptor, Deleter remover, Enumerator enumerator,
+    Definer definer, Local<Value> data, PropertyHandlerFlags flags) {
+  auto interceptor =
+      CreateInterceptorInfo(isolate, getter, setter, query, descriptor, remover,
+                            enumerator, definer, data, flags);
+  interceptor->set_is_named(false);
+  return interceptor;
+}
+
+template <typename Getter, typename Setter, typename Query, typename Descriptor,
+          typename Deleter, typename Enumerator, typename Definer>
 static void ObjectTemplateSetNamedPropertyHandler(
     ObjectTemplate* templ, Getter getter, Setter setter, Query query,
     Descriptor descriptor, Deleter remover, Enumerator enumerator,
@@ -1790,8 +1834,9 @@ static void ObjectTemplateSetNamedPropertyHandler(
   i::HandleScope scope(isolate);
   auto cons = EnsureConstructor(isolate, templ);
   EnsureNotInstantiated(cons, "ObjectTemplateSetNamedPropertyHandler");
-  auto obj = CreateInterceptorInfo(isolate, getter, setter, query, descriptor,
-                                   remover, enumerator, definer, data, flags);
+  auto obj =
+      CreateNamedInterceptorInfo(isolate, getter, setter, query, descriptor,
+                                 remover, enumerator, definer, data, flags);
   cons->set_named_property_handler(*obj);
 }
 
@@ -1868,12 +1913,12 @@ void ObjectTemplate::SetAccessCheckCallbackAndHandler(
       i::Handle<i::AccessCheckInfo>::cast(struct_info);
 
   SET_FIELD_WRAPPED(info, set_callback, callback);
-  auto named_interceptor = CreateInterceptorInfo(
+  auto named_interceptor = CreateNamedInterceptorInfo(
       isolate, named_handler.getter, named_handler.setter, named_handler.query,
       named_handler.descriptor, named_handler.deleter, named_handler.enumerator,
       named_handler.definer, named_handler.data, named_handler.flags);
   info->set_named_interceptor(*named_interceptor);
-  auto indexed_interceptor = CreateInterceptorInfo(
+  auto indexed_interceptor = CreateIndexedInterceptorInfo(
       isolate, indexed_handler.getter, indexed_handler.setter,
       indexed_handler.query, indexed_handler.descriptor,
       indexed_handler.deleter, indexed_handler.enumerator,
@@ -1896,10 +1941,10 @@ void ObjectTemplate::SetHandler(
   i::HandleScope scope(isolate);
   auto cons = EnsureConstructor(isolate, this);
   EnsureNotInstantiated(cons, "v8::ObjectTemplate::SetHandler");
-  auto obj = CreateInterceptorInfo(isolate, config.getter, config.setter,
-                                   config.query, config.descriptor,
-                                   config.deleter, config.enumerator,
-                                   config.definer, config.data, config.flags);
+  auto obj = CreateIndexedInterceptorInfo(
+      isolate, config.getter, config.setter, config.query, config.descriptor,
+      config.deleter, config.enumerator, config.definer, config.data,
+      config.flags);
   cons->set_indexed_property_handler(*obj);
 }
 
@@ -5362,6 +5407,8 @@ MaybeLocal<v8::Value> Function::Call(Local<Context> context,
            InternalEscapableScope);
   i::TimerEventScope<i::TimerEventExecute> timer_scope(isolate);
   auto self = Utils::OpenHandle(this);
+  Utils::ApiCheck(!self.is_null(), "v8::Function::Call",
+                  "Function to be called is a null pointer");
   i::Handle<i::Object> recv_obj = Utils::OpenHandle(*recv);
   STATIC_ASSERT(sizeof(v8::Local<v8::Value>) == sizeof(i::Object**));
   i::Handle<i::Object>* args = reinterpret_cast<i::Handle<i::Object>*>(argv);
@@ -6419,7 +6466,9 @@ HeapStatistics::HeapStatistics()
       heap_size_limit_(0),
       malloced_memory_(0),
       peak_malloced_memory_(0),
-      does_zap_garbage_(0) {}
+      does_zap_garbage_(0),
+      number_of_native_contexts_(0),
+      number_of_detached_contexts_(0) {}
 
 HeapSpaceStatistics::HeapSpaceStatistics(): space_name_(0),
                                             space_size_(0),
@@ -8221,14 +8270,14 @@ v8::SharedArrayBuffer::Contents v8::SharedArrayBuffer::GetContents() {
   i::Handle<i::JSArrayBuffer> self = Utils::OpenHandle(this);
   size_t byte_length = static_cast<size_t>(self->byte_length()->Number());
   Contents contents;
+  contents.allocation_base_ = self->allocation_base();
+  contents.allocation_length_ = self->allocation_length();
+  contents.allocation_mode_ =
+      self->has_guard_region()
+          ? ArrayBufferAllocator::Allocator::AllocationMode::kReservation
+          : ArrayBufferAllocator::Allocator::AllocationMode::kNormal;
   contents.data_ = self->backing_store();
   contents.byte_length_ = byte_length;
-  // SharedArrayBuffers never have guard regions, so their allocation and data
-  // are equivalent.
-  contents.allocation_base_ = self->backing_store();
-  contents.allocation_length_ = byte_length;
-  contents.allocation_mode_ =
-      ArrayBufferAllocator::Allocator::AllocationMode::kNormal;
   return contents;
 }
 
@@ -8766,6 +8815,9 @@ void Isolate::GetHeapStatistics(HeapStatistics* heap_statistics) {
       isolate->allocator()->GetCurrentMemoryUsage();
   heap_statistics->peak_malloced_memory_ =
       isolate->allocator()->GetMaxMemoryUsage();
+  heap_statistics->number_of_native_contexts_ = heap->NumberOfNativeContexts();
+  heap_statistics->number_of_detached_contexts_ =
+      heap->NumberOfDetachedContexts();
   heap_statistics->does_zap_garbage_ = heap->ShouldZapGarbage();
 }
 
@@ -8893,7 +8945,6 @@ void Isolate::RemoveCallCompletedCallback(CallCompletedCallback callback) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   isolate->RemoveCallCompletedCallback(callback);
 }
-
 
 void Isolate::AddCallCompletedCallback(
     DeprecatedCallCompletedCallback callback) {

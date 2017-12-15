@@ -104,7 +104,9 @@ class ModuleCompiler {
           compiler_->counters()));
     }
 
-    void Commit() {
+    bool Commit() {
+      if (units_.empty()) return false;
+
       {
         base::LockGuard<base::Mutex> guard(
             &compiler_->compilation_units_mutex_);
@@ -114,6 +116,7 @@ class ModuleCompiler {
             std::make_move_iterator(units_.end()));
       }
       units_.clear();
+      return true;
     }
 
     void Clear() { units_.clear(); }
@@ -166,8 +169,13 @@ class ModuleCompiler {
 
   bool CanAcceptWork() const { return executed_units_.CanAcceptWork(); }
 
-  bool ShouldIncreaseWorkload() const {
-    return executed_units_.ShouldIncreaseWorkload();
+  bool ShouldIncreaseWorkload() {
+    if (executed_units_.ShouldIncreaseWorkload()) {
+      // Check if it actually makes sense to increase the workload.
+      base::LockGuard<base::Mutex> guard(&compilation_units_mutex_);
+      return !compilation_units_.empty();
+    }
+    return false;
   }
 
   size_t InitializeCompilationUnits(const std::vector<WasmFunction>& functions,
@@ -342,7 +350,7 @@ class InstanceBuilder {
   }
   Counters* counters() const { return async_counters().get(); }
 
-  bool UseTrapHandler() const { return compiled_module_->use_trap_handler(); }
+  bool use_trap_handler() const { return compiled_module_->use_trap_handler(); }
 
 // Helper routines to print out errors with imports.
 #define ERROR_THROWER_WITH_MESSAGE(TYPE)                                      \
@@ -844,12 +852,13 @@ Address CompileLazy(Isolate* isolate) {
     // See EnsureExportedLazyDeoptData: exp_deopt_data[0...(len-1)] are pairs
     // of <export_table, index> followed by undefined values. Use this
     // information here to patch all export tables.
+    Handle<Foreign> foreign_holder =
+        isolate->factory()->NewForeign(result->instructions().start(), TENURED);
     for (int idx = 0, end = exp_deopt_data->length(); idx < end; idx += 2) {
       if (exp_deopt_data->get(idx)->IsUndefined(isolate)) break;
-      FixedArray* exp_table = FixedArray::cast(exp_deopt_data->get(idx));
+      DisallowHeapAllocation no_gc;
       int exp_index = Smi::ToInt(exp_deopt_data->get(idx + 1));
-      Handle<Foreign> foreign_holder = isolate->factory()->NewForeign(
-          result->instructions().start(), TENURED);
+      FixedArray* exp_table = FixedArray::cast(exp_deopt_data->get(idx));
       exp_table->set(exp_index, *foreign_holder);
     }
     // TODO(6792): No longer needed once WebAssembly code is off heap.
@@ -1034,6 +1043,40 @@ Code* ExtractWasmToWasmCallee(Code* wasm_to_wasm) {
   return callee;
 }
 
+const WasmCode* WasmExtractWasmToWasmCallee(const WasmCodeManager* code_manager,
+                                            const WasmCode* wasm_to_wasm) {
+  DCHECK_EQ(WasmCode::kWasmToWasmWrapper, wasm_to_wasm->kind());
+  // Find the one code target in this wrapper.
+  RelocIterator it(wasm_to_wasm->instructions(), wasm_to_wasm->reloc_info(),
+                   wasm_to_wasm->constant_pool(),
+                   RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL));
+  DCHECK(!it.done());
+  const WasmCode* callee =
+      code_manager->LookupCode(it.rinfo()->js_to_wasm_address());
+#ifdef DEBUG
+  it.next();
+  DCHECK(it.done());
+#endif
+  return callee;
+}
+
+// TODO(mtrofin): this should be a function again, when chromium:761307
+// is addressed. chromium:771171 is also related.
+#define WasmPatchWasmToWasmWrapper(isolate, wasm_to_wasm, new_target)          \
+  do {                                                                         \
+    TRACE_LAZY("Patching wasm-to-wasm wrapper.\n");                            \
+    DCHECK_EQ(WasmCode::kWasmToWasmWrapper, wasm_to_wasm->kind());             \
+    NativeModuleModificationScope scope(wasm_to_wasm->owner());                \
+    RelocIterator it(wasm_to_wasm->instructions(), wasm_to_wasm->reloc_info(), \
+                     wasm_to_wasm->constant_pool(),                            \
+                     RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL));         \
+    DCHECK(!it.done());                                                        \
+    it.rinfo()->set_js_to_wasm_address(isolate,                                \
+                                       new_target->instructions().start());    \
+    it.next();                                                                 \
+    DCHECK(it.done());                                                         \
+  } while (0)
+
 void PatchWasmToWasmWrapper(Isolate* isolate, Code* wasm_to_wasm,
                             Code* new_target) {
   DCHECK_EQ(Code::WASM_TO_WASM_FUNCTION, wasm_to_wasm->kind());
@@ -1216,18 +1259,26 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileFromJsToWasm(
   CompileFunction(isolate, instance, exported_func_index);
   {
     DisallowHeapAllocation no_gc;
-    int idx = 0;
-    for (RelocIterator it(*js_to_wasm_caller,
-                          RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL));
-         !it.done(); it.next()) {
-      ++idx;
-      const wasm::WasmCode* callee_compiled =
-          compiled_module->GetNativeModule()->GetCode(exported_func_index);
-      DCHECK_NOT_NULL(callee_compiled);
+    CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
+    RelocIterator it(*js_to_wasm_caller,
+                     RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL));
+    DCHECK(!it.done());
+    wasm::WasmCode* current_callee =
+        isolate->wasm_engine()->code_manager()->LookupCode(
+            it.rinfo()->js_to_wasm_address());
+    const wasm::WasmCode* callee_compiled =
+        compiled_module->GetNativeModule()->GetCode(exported_func_index);
+    DCHECK_NOT_NULL(callee_compiled);
+    if (current_callee->kind() == WasmCode::kWasmToWasmWrapper) {
+      WasmPatchWasmToWasmWrapper(isolate, current_callee, callee_compiled);
+    } else {
       it.rinfo()->set_js_to_wasm_address(
           isolate, callee_compiled->instructions().start());
     }
-    DCHECK_EQ(1, idx);
+#ifdef DEBUG
+    it.next();
+    CHECK(it.done());
+#endif
   }
 
   wasm::WasmCode* ret =
@@ -1251,12 +1302,10 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
     Isolate* isolate, Handle<WasmInstanceObject> instance,
     Maybe<uint32_t> maybe_func_to_return_idx, const wasm::WasmCode* wasm_caller,
     int call_offset) {
-  struct WasmDirectCallData {
-    uint32_t offset = 0;
-    uint32_t func_index = 0;
-  };
-  std::vector<Maybe<WasmDirectCallData>> non_compiled_functions;
+  std::vector<Maybe<uint32_t>> non_compiled_functions;
   Decoder decoder(nullptr, nullptr);
+  WasmCode* last_callee = nullptr;
+
   {
     DisallowHeapAllocation no_gc;
     Handle<WasmCompiledModule> caller_module(
@@ -1275,13 +1324,6 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
                           wasm_caller->constant_pool(),
                           RelocInfo::ModeMask(RelocInfo::WASM_CALL));
          !it.done(); it.next()) {
-      const WasmCode* callee =
-          isolate->wasm_engine()->code_manager()->LookupCode(
-              it.rinfo()->target_address());
-      if (callee->kind() != WasmCode::kLazyStub) {
-        non_compiled_functions.push_back(Nothing<WasmDirectCallData>());
-        continue;
-      }
       // TODO(clemensh): Introduce safe_cast<T, bool> which (D)CHECKS
       // (depending on the bool) against limits of T and then static_casts.
       size_t offset_l = it.rinfo()->pc() - wasm_caller->instructions().start();
@@ -1289,14 +1331,19 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
       int offset = static_cast<int>(offset_l);
       int byte_pos =
           AdvanceSourcePositionTableIterator(source_pos_iterator, offset);
+
+      WasmCode* callee = isolate->wasm_engine()->code_manager()->LookupCode(
+          it.rinfo()->target_address());
+      if (offset < call_offset) last_callee = callee;
+      if (callee->kind() != WasmCode::kLazyStub) {
+        non_compiled_functions.push_back(Nothing<uint32_t>());
+        continue;
+      }
       uint32_t called_func_index =
           ExtractDirectCallIndex(decoder, func_bytes + byte_pos);
       DCHECK_LT(called_func_index,
                 caller_module->GetNativeModule()->FunctionCount());
-      WasmDirectCallData data;
-      data.offset = offset;
-      data.func_index = called_func_index;
-      non_compiled_functions.push_back(Just<WasmDirectCallData>(data));
+      non_compiled_functions.push_back(Just(called_func_index));
       // Call offset one instruction after the call. Remember the last called
       // function before that offset.
       if (offset < call_offset) {
@@ -1304,7 +1351,15 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
       }
     }
   }
-  uint32_t func_to_return_idx = maybe_func_to_return_idx.ToChecked();
+  uint32_t func_to_return_idx = 0;
+
+  if (last_callee->kind() == WasmCode::kWasmToWasmWrapper) {
+    const WasmCode* actual_callee = WasmExtractWasmToWasmCallee(
+        isolate->wasm_engine()->code_manager(), last_callee);
+    func_to_return_idx = actual_callee->index();
+  } else {
+    func_to_return_idx = maybe_func_to_return_idx.ToChecked();
+  }
 
   TRACE_LAZY(
       "Starting lazy compilation (func %u @%d, js_to_wasm: false, patch "
@@ -1313,15 +1368,16 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
 
   // TODO(clemensh): compile all functions in non_compiled_functions in
   // background, wait for func_to_return_idx.
-  CompileFunction(isolate, instance, func_to_return_idx);
-
-  Handle<WasmCompiledModule> compiled_module(instance->compiled_module(),
-                                             isolate);
-  WasmCode* ret =
-      compiled_module->GetNativeModule()->GetCode(func_to_return_idx);
-
+  const WasmCode* ret = CompileFunction(isolate, instance, func_to_return_idx);
   DCHECK_NOT_NULL(ret);
-  {
+
+  if (last_callee->kind() == WasmCode::kWasmToWasmWrapper) {
+    // We can finish it all here by compiling the target wasm function and
+    // patching the wasm_to_wasm caller.
+    WasmPatchWasmToWasmWrapper(isolate, last_callee, ret);
+  } else {
+    Handle<WasmCompiledModule> compiled_module(instance->compiled_module(),
+                                               isolate);
     DisallowHeapAllocation no_gc;
     // Now patch the code object with all functions which are now compiled. This
     // will pick up any other compiled functions, not only {ret}.
@@ -1334,7 +1390,7 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
          !it.done(); it.next(), ++idx) {
       auto& info = non_compiled_functions[idx];
       if (info.IsNothing()) continue;
-      uint32_t lookup = info.ToChecked().func_index;
+      uint32_t lookup = info.ToChecked();
       const WasmCode* callee_compiled =
           compiled_module->GetNativeModule()->GetCode(lookup);
       if (callee_compiled->kind() != WasmCode::kFunction) continue;
@@ -1888,7 +1944,7 @@ WasmCodeWrapper MakeWasmToWasmWrapper(
   if (!FLAG_wasm_jit_to_native) {
     Handle<Code> wrapper_code = compiler::CompileWasmToWasmWrapper(
         isolate, imported_function->GetWasmCode(), *sig,
-        new_wasm_context_address, instance->UseTrapHandler());
+        new_wasm_context_address);
     // Set the deoptimization data for the WasmToWasm wrapper. This is
     // needed by the interpreter to find the imported instance for
     // a cross-instance call.
@@ -1898,7 +1954,7 @@ WasmCodeWrapper MakeWasmToWasmWrapper(
   } else {
     Handle<Code> code = compiler::CompileWasmToWasmWrapper(
         isolate, imported_function->GetWasmCode(), *sig,
-        new_wasm_context_address, instance->UseTrapHandler());
+        new_wasm_context_address);
     return WasmCodeWrapper(
         instance->compiled_module()->GetNativeModule()->AddCodeCopy(
             code, wasm::WasmCode::kWasmToWasmWrapper, index));
@@ -1920,15 +1976,15 @@ WasmCodeWrapper UnwrapExportOrCompileImportWrapper(
   // signature.
   if (FLAG_wasm_jit_to_native) {
     Handle<Code> temp_code = compiler::CompileWasmToJSWrapper(
-        isolate, target, sig, import_index, origin, instance->UseTrapHandler(),
-        js_imports_table);
+        isolate, target, sig, import_index, origin,
+        instance->compiled_module()->use_trap_handler(), js_imports_table);
     return WasmCodeWrapper(
         instance->compiled_module()->GetNativeModule()->AddCodeCopy(
             temp_code, wasm::WasmCode::kWasmToJsWrapper, import_index));
   } else {
     return WasmCodeWrapper(compiler::CompileWasmToJSWrapper(
-        isolate, target, sig, import_index, origin, instance->UseTrapHandler(),
-        js_imports_table));
+        isolate, target, sig, import_index, origin,
+        instance->compiled_module()->use_trap_handler(), js_imports_table));
   }
 }
 
@@ -2389,7 +2445,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
     // Set externally passed ArrayBuffer non neuterable.
     memory->set_is_neuterable(false);
 
-    DCHECK_IMPLIES(UseTrapHandler(),
+    DCHECK_IMPLIES(use_trap_handler(),
                    module_->is_asm_js() || memory->has_guard_region());
   } else if (initial_pages > 0) {
     memory_ = AllocateMemory(initial_pages);
@@ -2517,7 +2573,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   //--------------------------------------------------------------------------
   // Unpack and notify signal handler of protected instructions.
   //--------------------------------------------------------------------------
-  if (UseTrapHandler()) {
+  if (use_trap_handler()) {
     if (FLAG_wasm_jit_to_native) {
       UnpackAndRegisterProtectedInstructions(isolate_, native_module);
     } else {
@@ -2939,8 +2995,7 @@ int InstanceBuilder::ProcessImports(Handle<FixedArray> code_table,
                   imported_instance->wasm_context()->get();
               Handle<Code> wrapper = compiler::CompileWasmToWasmWrapper(
                   isolate_, target->GetWasmCode(), sig,
-                  reinterpret_cast<Address>(other_context),
-                  instance->UseTrapHandler());
+                  reinterpret_cast<Address>(other_context));
               set_of_native_module_scopes.Add(exporting_module);
               wrapper_code = exporting_module->AddExportedWrapper(
                   wrapper, exported_code->index());
@@ -3106,7 +3161,7 @@ Handle<JSArrayBuffer> InstanceBuilder::AllocateMemory(uint32_t num_pages) {
     thrower_->RangeError("Out of memory: wasm memory too large");
     return Handle<JSArrayBuffer>::null();
   }
-  const bool enable_guard_regions = UseTrapHandler();
+  const bool enable_guard_regions = use_trap_handler();
   Handle<JSArrayBuffer> mem_buffer = NewArrayBuffer(
       isolate_, num_pages * WasmModule::kPageSize, enable_guard_regions);
 
@@ -3499,7 +3554,7 @@ void InstanceBuilder::LoadTableSegments(Handle<FixedArray> code_table,
             Handle<Code> wrapper_code =
                 js_to_wasm_cache_.CloneOrCompileJSToWasmWrapper(
                     isolate_, module_, wasm_code, func_index,
-                    instance->UseTrapHandler());
+                    instance->compiled_module()->use_trap_handler());
             MaybeHandle<String> func_name;
             if (module_->is_asm_js()) {
               // For modules arising from asm.js, honor the names section.
@@ -3607,6 +3662,8 @@ class AsyncStreamingProcessor final : public StreamingProcessor {
  private:
   // Finishes the AsyncCOmpileJob with an error.
   void FinishAsyncCompileJobWithError(ResultBase result);
+
+  void CommitCompilationUnits();
 
   ModuleDecoder decoder_;
   AsyncCompileJob* job_;
@@ -3914,7 +3971,6 @@ class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileStep {
       DisallowHeapAllocation no_allocation;
       if (!job_->compiler_->FetchAndExecuteCompilationUnit(
               StartFinishCompilationUnit)) {
-        finished_ = true;
         break;
       }
     }
@@ -3939,7 +3995,7 @@ class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileStep {
     double deadline = MonotonicallyIncreasingTimeInMs() + 1.0;
 
     while (true) {
-      if (!finished_ && job_->compiler_->ShouldIncreaseWorkload()) {
+      if (job_->compiler_->ShouldIncreaseWorkload()) {
         job_->RestartBackgroundTasks();
       }
 
@@ -3995,7 +4051,6 @@ class AsyncCompileJob::ExecuteAndFinishCompilationUnits : public CompileStep {
 
  private:
   std::atomic<bool> failed_{false};
-  std::atomic<bool> finished_{false};
 };
 
 //==========================================================================
@@ -4145,6 +4200,12 @@ bool AsyncStreamingProcessor::ProcessSection(SectionCode section_code,
                                              Vector<const uint8_t> bytes,
                                              uint32_t offset) {
   TRACE_STREAMING("Process section %d ...\n", section_code);
+  if (compilation_unit_builder_) {
+    // We reached a section after the code section, we do not need the the
+    // compilation_unit_builder_ anymore.
+    CommitCompilationUnits();
+    compilation_unit_builder_.reset();
+  }
   if (section_code == SectionCode::kUnknownSectionCode) {
     // No need to decode unknown sections, even the names section. If decoding
     // of the unknown section fails, compilation should succeed anyways, and
@@ -4212,12 +4273,17 @@ bool AsyncStreamingProcessor::ProcessFunctionBody(Vector<const uint8_t> bytes,
   return true;
 }
 
-void AsyncStreamingProcessor::OnFinishedChunk() {
-  // TRACE_STREAMING("FinishChunk...\n");
-  if (compilation_unit_builder_) {
-    compilation_unit_builder_->Commit();
+void AsyncStreamingProcessor::CommitCompilationUnits() {
+  DCHECK(compilation_unit_builder_);
+  if (compilation_unit_builder_->Commit()) {
+    // Only restart background tasks when compilation units were committed.
     job_->RestartBackgroundTasks();
   }
+}
+
+void AsyncStreamingProcessor::OnFinishedChunk() {
+  TRACE_STREAMING("FinishChunk...\n");
+  if (compilation_unit_builder_) CommitCompilationUnits();
 }
 
 // Finish the processing of the stream.
@@ -4310,6 +4376,7 @@ Handle<Script> CreateWasmScript(Isolate* isolate,
 }  // namespace internal
 }  // namespace v8
 
+#undef WasmPatchWasmToWasmWrapper
 #undef TRACE
 #undef TRACE_CHAIN
 #undef TRACE_COMPILE

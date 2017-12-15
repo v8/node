@@ -1004,6 +1004,8 @@ class Assembler : public AssemblerBase {
   void rcpps(XMMRegister dst, XMMRegister src) { rcpps(dst, Operand(src)); }
   void rsqrtps(XMMRegister dst, const Operand& src);
   void rsqrtps(XMMRegister dst, XMMRegister src) { rsqrtps(dst, Operand(src)); }
+  void haddps(XMMRegister dst, const Operand& src);
+  void haddps(XMMRegister dst, XMMRegister src) { haddps(dst, Operand(src)); }
 
   void minps(XMMRegister dst, const Operand& src);
   void minps(XMMRegister dst, XMMRegister src) { minps(dst, Operand(src)); }
@@ -1477,6 +1479,12 @@ class Assembler : public AssemblerBase {
     vinstr(0x5B, dst, xmm0, src, kF3, k0F, kWIG);
   }
 
+  void vmovdqu(XMMRegister dst, const Operand& src) {
+    vinstr(0x6F, dst, xmm0, src, kF3, k0F, kWIG);
+  }
+  void vmovdqu(const Operand& dst, XMMRegister src) {
+    vinstr(0x7F, src, xmm0, dst, kF3, k0F, kWIG);
+  }
   void vmovd(XMMRegister dst, Register src) { vmovd(dst, Operand(src)); }
   void vmovd(XMMRegister dst, const Operand& src) {
     vinstr(0x6E, dst, xmm0, src, k66, k0F, kWIG);

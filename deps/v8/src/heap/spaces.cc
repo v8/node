@@ -320,8 +320,8 @@ class MemoryAllocator::Unmapper::UnmapFreeMemoryTask : public CancelableTask {
 
  private:
   void RunInternal() override {
-    GCTracer::BackgroundScope scope(
-        tracer_, GCTracer::BackgroundScope::BACKGROUND_UNMAPPER);
+    TRACE_BACKGROUND_GC(tracer_,
+                        GCTracer::BackgroundScope::BACKGROUND_UNMAPPER);
     unmapper_->PerformFreeMemoryOnQueuedChunks<FreeMode::kUncommitPooled>();
     unmapper_->pending_unmapping_tasks_semaphore_.Signal();
   }
@@ -847,6 +847,22 @@ size_t Page::AvailableInFreeList() {
   return sum;
 }
 
+#ifdef DEBUG
+namespace {
+// Skips filler starting from the given filler until the end address.
+// Returns the first address after the skipped fillers.
+Address SkipFillers(HeapObject* filler, Address end) {
+  Address addr = filler->address();
+  while (addr < end) {
+    filler = HeapObject::FromAddress(addr);
+    CHECK(filler->IsFiller());
+    addr = filler->address() + filler->Size();
+  }
+  return addr;
+}
+}  // anonymous namespace
+#endif  // DEBUG
+
 size_t Page::ShrinkToHighWaterMark() {
   // Shrinking only makes sense outside of the CodeRange, where we don't care
   // about address space fragmentation.
@@ -858,29 +874,13 @@ size_t Page::ShrinkToHighWaterMark() {
   HeapObject* filler = HeapObject::FromAddress(HighWaterMark());
   if (filler->address() == area_end()) return 0;
   CHECK(filler->IsFiller());
-  if (!filler->IsFreeSpace()) return 0;
+  // Ensure that no objects were allocated in [filler, area_end) region.
+  DCHECK_EQ(area_end(), SkipFillers(filler, area_end()));
+  // Ensure that no objects will be allocated on this page.
+  DCHECK_EQ(0u, AvailableInFreeList());
 
-#ifdef DEBUG
-  // Check the the filler is indeed the last filler on the page.
-  HeapObjectIterator it(this);
-  HeapObject* filler2 = nullptr;
-  for (HeapObject* obj = it.Next(); obj != nullptr; obj = it.Next()) {
-    filler2 = HeapObject::FromAddress(obj->address() + obj->Size());
-  }
-  if (filler2 == nullptr || filler2->address() == area_end()) return 0;
-  DCHECK(filler2->IsFiller());
-  // The deserializer might leave behind fillers. In this case we need to
-  // iterate even further.
-  while ((filler2->address() + filler2->Size()) != area_end()) {
-    filler2 = HeapObject::FromAddress(filler2->address() + filler2->Size());
-    DCHECK(filler2->IsFiller());
-  }
-  DCHECK_EQ(filler->address(), filler2->address());
-#endif  // DEBUG
-
-  size_t unused = RoundDown(
-      static_cast<size_t>(area_end() - filler->address() - FreeSpace::kSize),
-      MemoryAllocator::GetCommitPageSize());
+  size_t unused = RoundDown(static_cast<size_t>(area_end() - filler->address()),
+                            MemoryAllocator::GetCommitPageSize());
   if (unused > 0) {
     DCHECK_EQ(0u, unused % MemoryAllocator::GetCommitPageSize());
     if (FLAG_trace_gc_verbose) {
@@ -895,8 +895,10 @@ size_t Page::ShrinkToHighWaterMark() {
         ClearRecordedSlots::kNo);
     heap()->memory_allocator()->PartialFreeMemory(
         this, address() + size() - unused, unused, area_end() - unused);
-    CHECK(filler->IsFiller());
-    CHECK_EQ(filler->address() + filler->Size(), area_end());
+    if (filler->address() != area_end()) {
+      CHECK(filler->IsFiller());
+      CHECK_EQ(filler->address() + filler->Size(), area_end());
+    }
   }
   return unused;
 }
@@ -1360,7 +1362,7 @@ void Space::ResumeAllocationObservers() {
 
 void Space::AllocationStep(int bytes_since_last, Address soon_object,
                            int size) {
-  if (!allocation_observers_paused_) {
+  if (AllocationObserversActive()) {
     heap()->CreateFillerObjectAt(soon_object, size, ClearRecordedSlots::kNo);
     for (AllocationObserver* observer : allocation_observers_) {
       observer->AllocationStep(bytes_since_last, soon_object, size);
@@ -1380,14 +1382,11 @@ intptr_t Space::GetNextInlineAllocationStepSize() {
 
 PagedSpace::PagedSpace(Heap* heap, AllocationSpace space,
                        Executability executable)
-    : Space(heap, space, executable),
+    : SpaceWithLinearArea(heap, space, executable),
       anchor_(this),
-      free_list_(this),
-      top_on_previous_step_(0) {
+      free_list_(this) {
   area_size_ = MemoryAllocator::PageAreaSize(space);
   accounting_stats_.Clear();
-
-  allocation_info_.Reset(nullptr, nullptr);
 }
 
 
@@ -1555,12 +1554,18 @@ size_t PagedSpace::ShrinkPageToHighWaterMark(Page* page) {
   return unused;
 }
 
+void PagedSpace::ResetFreeList() {
+  for (Page* page : *this) {
+    free_list_.EvictFreeListItems(page);
+  }
+  DCHECK(free_list_.IsEmpty());
+}
+
 void PagedSpace::ShrinkImmortalImmovablePages() {
   DCHECK(!heap()->deserialization_complete());
   MemoryChunk::UpdateHighWaterMark(allocation_info_.top());
   EmptyAllocationInfo();
   ResetFreeList();
-
   for (Page* page : *this) {
     DCHECK(page->IsFlagSet(Page::NEVER_EVACUATE));
     ShrinkPageToHighWaterMark(page);
@@ -1633,24 +1638,26 @@ Address PagedSpace::ComputeLimit(Address start, Address end,
   if (heap()->inline_allocation_disabled()) {
     // Keep the linear allocation area to fit exactly the requested size.
     return start + size_in_bytes;
-  } else if (!allocation_observers_paused_ && !allocation_observers_.empty() &&
-             SupportsInlineAllocation()) {
+  } else if (SupportsInlineAllocation() && AllocationObserversActive()) {
     // Generated code may allocate inline from the linear allocation area for
     // Old Space. To make sure we can observe these allocations, we use a lower
     // limit.
     size_t step = RoundSizeDownToObjectAlignment(
         static_cast<int>(GetNextInlineAllocationStepSize()));
-    return Max(start + size_in_bytes, Min(start + step, end));
+    return Min(start + size_in_bytes + step, end);
   } else {
     // The entire node can be used as the linear allocation area.
     return end;
   }
 }
 
+// TODO(ofrobots): refactor this code into SpaceWithLinearArea
 void PagedSpace::StartNextInlineAllocationStep() {
-  if (!allocation_observers_paused_ && SupportsInlineAllocation()) {
-    top_on_previous_step_ = allocation_observers_.empty() ? 0 : top();
+  if (SupportsInlineAllocation() && AllocationObserversActive()) {
+    top_on_previous_step_ = top();
     DecreaseLimit(ComputeLimit(top(), limit(), 0));
+  } else {
+    DCHECK_NULL(top_on_previous_step_);
   }
 }
 
@@ -2052,8 +2059,11 @@ LocalAllocationBuffer& LocalAllocationBuffer::operator=(
 
 
 void NewSpace::UpdateAllocationInfo() {
+  Address new_top = to_space_.page_low();
+  InlineAllocationStep(top(), new_top, nullptr, 0);
+
   MemoryChunk::UpdateHighWaterMark(allocation_info_.top());
-  allocation_info_.Reset(to_space_.page_low(), to_space_.page_high());
+  allocation_info_.Reset(new_top, to_space_.page_high());
   original_top_.SetValue(top());
   original_limit_.SetValue(limit());
   UpdateInlineAllocationLimit(0);
@@ -2062,7 +2072,6 @@ void NewSpace::UpdateAllocationInfo() {
 
 
 void NewSpace::ResetAllocationInfo() {
-  Address old_top = allocation_info_.top();
   to_space_.Reset();
   UpdateAllocationInfo();
   // Clear all mark-bits in the to-space.
@@ -2073,7 +2082,6 @@ void NewSpace::ResetAllocationInfo() {
     // Concurrent marking may have local live bytes for this page.
     heap()->concurrent_marking()->ClearLiveness(p);
   }
-  InlineAllocationStep(old_top, allocation_info_.top(), nullptr, 0);
 }
 
 
@@ -2083,7 +2091,8 @@ void NewSpace::UpdateInlineAllocationLimit(int size_in_bytes) {
     Address high = to_space_.page_high();
     Address new_top = allocation_info_.top() + size_in_bytes;
     allocation_info_.set_limit(Min(new_top, high));
-  } else if (allocation_observers_paused_ || top_on_previous_step_ == 0) {
+  } else if (!AllocationObserversActive()) {
+    DCHECK_NULL(top_on_previous_step_);
     // Normal limit is the end of the current page.
     allocation_info_.set_limit(to_space_.page_high());
   } else {
@@ -2134,8 +2143,6 @@ bool NewSpace::EnsureAllocation(int size_in_bytes,
       return false;
     }
 
-    InlineAllocationStep(old_top, allocation_info_.top(), nullptr, 0);
-
     old_top = allocation_info_.top();
     high = to_space_.page_high();
     filler_size = Heap::GetFillToAlign(old_top, alignment);
@@ -2156,70 +2163,58 @@ bool NewSpace::EnsureAllocation(int size_in_bytes,
   return true;
 }
 
-
+// TODO(ofrobots): refactor this code into SpaceWithLinearArea
 void NewSpace::StartNextInlineAllocationStep() {
-  if (!allocation_observers_paused_) {
-    top_on_previous_step_ =
-        !allocation_observers_.empty() ? allocation_info_.top() : 0;
+  if (AllocationObserversActive()) {
+    top_on_previous_step_ = top();
     UpdateInlineAllocationLimit(0);
+  } else {
+    DCHECK_NULL(top_on_previous_step_);
   }
 }
 
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void NewSpace::AddAllocationObserver(AllocationObserver* observer) {
+void SpaceWithLinearArea::AddAllocationObserver(AllocationObserver* observer) {
   InlineAllocationStep(top(), top(), nullptr, 0);
   Space::AddAllocationObserver(observer);
+  DCHECK_IMPLIES(top_on_previous_step_, AllocationObserversActive());
 }
 
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void PagedSpace::AddAllocationObserver(AllocationObserver* observer) {
-  InlineAllocationStep(top(), top(), nullptr, 0);
-  Space::AddAllocationObserver(observer);
-}
-
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void NewSpace::RemoveAllocationObserver(AllocationObserver* observer) {
-  InlineAllocationStep(top(), top(), nullptr, 0);
+void SpaceWithLinearArea::RemoveAllocationObserver(
+    AllocationObserver* observer) {
+  Address top_for_next_step =
+      allocation_observers_.size() == 1 ? nullptr : top();
+  InlineAllocationStep(top(), top_for_next_step, nullptr, 0);
   Space::RemoveAllocationObserver(observer);
-}
-
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void PagedSpace::RemoveAllocationObserver(AllocationObserver* observer) {
-  InlineAllocationStep(top(), top(), nullptr, 0);
-  Space::RemoveAllocationObserver(observer);
+  DCHECK_IMPLIES(top_on_previous_step_, AllocationObserversActive());
 }
 
 void NewSpace::PauseAllocationObservers() {
   // Do a step to account for memory allocated so far.
-  InlineAllocationStep(top(), top(), nullptr, 0);
+  InlineAllocationStep(top(), nullptr, nullptr, 0);
   Space::PauseAllocationObservers();
-  top_on_previous_step_ = 0;
+  DCHECK_NULL(top_on_previous_step_);
   UpdateInlineAllocationLimit(0);
 }
 
 void PagedSpace::PauseAllocationObservers() {
   // Do a step to account for memory allocated so far.
+  // TODO(ofrobots): Refactor into SpaceWithLinearArea. Note subtle difference
+  // from NewSpace version.
   InlineAllocationStep(top(), nullptr, nullptr, 0);
   Space::PauseAllocationObservers();
-  top_on_previous_step_ = 0;
+  DCHECK_NULL(top_on_previous_step_);
 }
 
-void NewSpace::ResumeAllocationObservers() {
+void SpaceWithLinearArea::ResumeAllocationObservers() {
   DCHECK_NULL(top_on_previous_step_);
   Space::ResumeAllocationObservers();
   StartNextInlineAllocationStep();
 }
 
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void PagedSpace::ResumeAllocationObservers() {
-  DCHECK_NULL(top_on_previous_step_);
-  Space::ResumeAllocationObservers();
-  StartNextInlineAllocationStep();
-}
-
-// TODO(ofrobots): refactor into SpaceWithLinearArea
-void PagedSpace::InlineAllocationStep(Address top, Address new_top,
-                                      Address soon_object, size_t size) {
+void SpaceWithLinearArea::InlineAllocationStep(Address top,
+                                               Address top_for_next_step,
+                                               Address soon_object,
+                                               size_t size) {
   if (top_on_previous_step_) {
     if (top < top_on_previous_step_) {
       // Generated code decreased the top pointer to do folded allocations.
@@ -2230,23 +2225,7 @@ void PagedSpace::InlineAllocationStep(Address top, Address new_top,
     }
     int bytes_allocated = static_cast<int>(top - top_on_previous_step_);
     AllocationStep(bytes_allocated, soon_object, static_cast<int>(size));
-    top_on_previous_step_ = new_top;
-  }
-}
-
-void NewSpace::InlineAllocationStep(Address top, Address new_top,
-                                    Address soon_object, size_t size) {
-  if (top_on_previous_step_) {
-    if (top < top_on_previous_step_) {
-      // Generated code decreased the top pointer to do folded allocations.
-      DCHECK_NOT_NULL(top);
-      DCHECK_EQ(Page::FromAllocationAreaAddress(top),
-                Page::FromAllocationAreaAddress(top_on_previous_step_));
-      top_on_previous_step_ = top;
-    }
-    int bytes_allocated = static_cast<int>(top - top_on_previous_step_);
-    AllocationStep(bytes_allocated, soon_object, static_cast<int>(size));
-    top_on_previous_step_ = new_top;
+    top_on_previous_step_ = top_for_next_step;
   }
 }
 
@@ -2858,11 +2837,6 @@ void FreeListCategory::Relink() {
   owner()->AddCategory(this);
 }
 
-void FreeListCategory::Invalidate() {
-  Reset();
-  type_ = kInvalidCategory;
-}
-
 FreeList::FreeList(PagedSpace* owner) : owner_(owner), wasted_bytes_(0) {
   for (int i = kFirstCategory; i < kNumberOfCategories; i++) {
     categories_[i] = nullptr;
@@ -3046,14 +3020,10 @@ bool FreeList::Allocate(size_t size_in_bytes) {
 size_t FreeList::EvictFreeListItems(Page* page) {
   size_t sum = 0;
   page->ForAllFreeListCategories([this, &sum](FreeListCategory* category) {
-    // The category might have been already evicted
-    // if the page is an evacuation candidate.
-    if (category->type_ != kInvalidCategory) {
-      DCHECK_EQ(this, category->owner());
-      sum += category->available();
-      RemoveCategory(category);
-      category->Invalidate();
-    }
+    DCHECK_EQ(this, category->owner());
+    sum += category->available();
+    RemoveCategory(category);
+    category->Reset();
   });
   return sum;
 }

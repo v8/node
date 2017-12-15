@@ -44,6 +44,7 @@
 #include "src/heap/scavenger-inl.h"
 #include "src/heap/store-buffer.h"
 #include "src/heap/stress-marking-observer.h"
+#include "src/heap/stress-scavenge-observer.h"
 #include "src/heap/sweeper.h"
 #include "src/interpreter/interpreter.h"
 #include "src/objects/data-handler.h"
@@ -177,6 +178,7 @@ Heap::Heap()
       allocations_count_(0),
       raw_allocations_hash_(0),
       stress_marking_observer_(nullptr),
+      stress_scavenge_observer_(nullptr),
       ms_count_(0),
       gc_count_(0),
       mmap_region_base_(0),
@@ -1060,7 +1062,10 @@ class GCCallbacksScope {
 
 
 void Heap::HandleGCRequest() {
-  if (HighMemoryPressure()) {
+  if (FLAG_stress_scavenge > 0 && stress_scavenge_observer_->HasRequestedGC()) {
+    CollectAllGarbage(NEW_SPACE, GarbageCollectionReason::kTesting);
+    stress_scavenge_observer_->RequestedGCDone();
+  } else if (HighMemoryPressure()) {
     incremental_marking()->reset_request_type();
     CheckMemoryPressure();
   } else if (incremental_marking()->request_type() ==
@@ -1768,6 +1773,7 @@ void Heap::MinorMarkCompact() {
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
       incremental_marking());
   CodeSpaceMemoryModificationScope code_modifcation(this);
+  ConcurrentMarking::PauseScope pause_scope(concurrent_marking());
 
   minor_mark_compact_collector()->CollectGarbage();
 
@@ -1914,7 +1920,7 @@ class ScavengingTask final : public ItemParallelJob::Task {
         barrier_(barrier) {}
 
   void RunInParallel() final {
-    GCTracer::BackgroundScope scope(
+    TRACE_BACKGROUND_GC(
         heap_->tracer(),
         GCTracer::BackgroundScope::SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL);
     double scavenging_time = 0.0;
@@ -5668,6 +5674,10 @@ bool Heap::SetUp() {
     AddAllocationObserversToAllSpaces(stress_marking_observer_,
                                       stress_marking_observer_);
   }
+  if (FLAG_stress_scavenge_analysis || FLAG_stress_scavenge > 0) {
+    stress_scavenge_observer_ = new StressScavengeObserver(*this);
+    new_space()->AddAllocationObserver(stress_scavenge_observer_);
+  }
 
   write_protect_code_memory_ = FLAG_write_protect_code_memory;
 
@@ -5782,6 +5792,11 @@ void Heap::TearDown() {
                                            stress_marking_observer_);
     delete stress_marking_observer_;
     stress_marking_observer_ = nullptr;
+  }
+  if (FLAG_stress_scavenge_analysis || FLAG_stress_scavenge > 0) {
+    new_space()->RemoveAllocationObserver(stress_scavenge_observer_);
+    delete stress_scavenge_observer_;
+    stress_scavenge_observer_ = nullptr;
   }
 
   if (mark_compact_collector_ != nullptr) {
@@ -6509,6 +6524,22 @@ bool Heap::GetObjectTypeName(size_t index, const char** object_type,
 #undef COMPARE_AND_RETURN_NAME
   }
   return false;
+}
+
+size_t Heap::NumberOfNativeContexts() {
+  int result = 0;
+  Object* context = native_contexts_list();
+  while (!context->IsUndefined(isolate())) {
+    ++result;
+    Context* native_context = Context::cast(context);
+    context = native_context->next_context_link();
+  }
+  return result;
+}
+
+size_t Heap::NumberOfDetachedContexts() {
+  // The detached_contexts() array has two entries per detached context.
+  return detached_contexts()->length() / 2;
 }
 
 const char* AllocationSpaceName(AllocationSpace space) {

@@ -548,8 +548,8 @@ TNode<Object> CodeStubAssembler::NumberMax(SloppyTNode<Object> a,
   // TODO(danno): This could be optimized by specifically handling smi cases.
   VARIABLE(result, MachineRepresentation::kTagged);
   Label done(this), greater_than_equal_a(this), greater_than_equal_b(this);
-  GotoIfNumericGreaterThanOrEqual(a, b, &greater_than_equal_a);
-  GotoIfNumericGreaterThanOrEqual(b, a, &greater_than_equal_b);
+  GotoIfNumberGreaterThanOrEqual(a, b, &greater_than_equal_a);
+  GotoIfNumberGreaterThanOrEqual(b, a, &greater_than_equal_b);
   result.Bind(NanConstant());
   Goto(&done);
   BIND(&greater_than_equal_a);
@@ -567,8 +567,8 @@ TNode<Object> CodeStubAssembler::NumberMin(SloppyTNode<Object> a,
   // TODO(danno): This could be optimized by specifically handling smi cases.
   VARIABLE(result, MachineRepresentation::kTagged);
   Label done(this), greater_than_equal_a(this), greater_than_equal_b(this);
-  GotoIfNumericGreaterThanOrEqual(a, b, &greater_than_equal_a);
-  GotoIfNumericGreaterThanOrEqual(b, a, &greater_than_equal_b);
+  GotoIfNumberGreaterThanOrEqual(a, b, &greater_than_equal_a);
+  GotoIfNumberGreaterThanOrEqual(b, a, &greater_than_equal_b);
   result.Bind(NanConstant());
   Goto(&done);
   BIND(&greater_than_equal_a);
@@ -3510,8 +3510,8 @@ Node* CodeStubAssembler::TruncateTaggedToFloat64(Node* context, Node* value) {
 Node* CodeStubAssembler::TruncateTaggedToWord32(Node* context, Node* value) {
   VARIABLE(var_result, MachineRepresentation::kWord32);
   Label done(this);
-  TaggedToWord32OrBigIntImpl<Feedback::kNone, Object::Conversion::kToNumber>(
-      context, value, &done, &var_result);
+  TaggedToWord32OrBigIntImpl<Object::Conversion::kToNumber>(context, value,
+                                                            &done, &var_result);
   BIND(&done);
   return var_result.value();
 }
@@ -3523,7 +3523,7 @@ void CodeStubAssembler::TaggedToWord32OrBigInt(Node* context, Node* value,
                                                Variable* var_word32,
                                                Label* if_bigint,
                                                Variable* var_bigint) {
-  TaggedToWord32OrBigIntImpl<Feedback::kNone, Object::Conversion::kToNumeric>(
+  TaggedToWord32OrBigIntImpl<Object::Conversion::kToNumeric>(
       context, value, if_number, var_word32, if_bigint, var_bigint);
 }
 
@@ -3533,13 +3533,12 @@ void CodeStubAssembler::TaggedToWord32OrBigInt(Node* context, Node* value,
 void CodeStubAssembler::TaggedToWord32OrBigIntWithFeedback(
     Node* context, Node* value, Label* if_number, Variable* var_word32,
     Label* if_bigint, Variable* var_bigint, Variable* var_feedback) {
-  TaggedToWord32OrBigIntImpl<Feedback::kCollect,
-                             Object::Conversion::kToNumeric>(
+  TaggedToWord32OrBigIntImpl<Object::Conversion::kToNumeric>(
       context, value, if_number, var_word32, if_bigint, var_bigint,
       var_feedback);
 }
 
-template <CodeStubAssembler::Feedback feedback, Object::Conversion conversion>
+template <Object::Conversion conversion>
 void CodeStubAssembler::TaggedToWord32OrBigIntImpl(
     Node* context, Node* value, Label* if_number, Variable* var_word32,
     Label* if_bigint, Variable* var_bigint, Variable* var_feedback) {
@@ -3551,14 +3550,10 @@ void CodeStubAssembler::TaggedToWord32OrBigIntImpl(
 
   // We might need to loop after conversion.
   VARIABLE(var_value, MachineRepresentation::kTagged, value);
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kNone));
-  } else {
-    DCHECK(var_feedback == nullptr);
-  }
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kNone);
   Variable* loop_vars[] = {&var_value, var_feedback};
-  int num_vars = feedback == Feedback::kCollect ? arraysize(loop_vars)
-                                                : arraysize(loop_vars) - 1;
+  int num_vars =
+      var_feedback != nullptr ? arraysize(loop_vars) : arraysize(loop_vars) - 1;
   Label loop(this, num_vars, loop_vars);
   Goto(&loop);
   BIND(&loop);
@@ -3570,11 +3565,7 @@ void CodeStubAssembler::TaggedToWord32OrBigIntImpl(
 
     // {value} is a Smi.
     var_word32->Bind(SmiToWord32(value));
-    if (feedback == Feedback::kCollect) {
-      var_feedback->Bind(
-          SmiOr(var_feedback->value(),
-                SmiConstant(BinaryOperationFeedback::kSignedSmall)));
-    }
+    CombineFeedback(var_feedback, BinaryOperationFeedback::kSignedSmall);
     Goto(if_number);
 
     BIND(&not_smi);
@@ -3587,7 +3578,7 @@ void CodeStubAssembler::TaggedToWord32OrBigIntImpl(
 
     // Not HeapNumber (or BigInt if conversion == kToNumeric).
     {
-      if (feedback == Feedback::kCollect) {
+      if (var_feedback != nullptr) {
         // We do not require an Or with earlier feedback here because once we
         // convert the value to a Numeric, we cannot reach this path. We can
         // only reach this path on the first pass when the feedback is kNone.
@@ -3600,36 +3591,25 @@ void CodeStubAssembler::TaggedToWord32OrBigIntImpl(
                          ? Builtins::kNonNumberToNumeric
                          : Builtins::kNonNumberToNumber;
       var_value.Bind(CallBuiltin(builtin, context, value));
-      if (feedback == Feedback::kCollect) {
-        var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kAny));
-      }
+      OverwriteFeedback(var_feedback, BinaryOperationFeedback::kAny);
       Goto(&loop);
 
       BIND(&is_oddball);
       var_value.Bind(LoadObjectField(value, Oddball::kToNumberOffset));
-      if (feedback == Feedback::kCollect) {
-        var_feedback->Bind(
-            SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
-      }
+      OverwriteFeedback(var_feedback,
+                        BinaryOperationFeedback::kNumberOrOddball);
       Goto(&loop);
     }
 
     BIND(&is_heap_number);
     var_word32->Bind(TruncateHeapNumberValueToWord32(value));
-    if (feedback == Feedback::kCollect) {
-      var_feedback->Bind(SmiOr(var_feedback->value(),
-                               SmiConstant(BinaryOperationFeedback::kNumber)));
-    }
+    CombineFeedback(var_feedback, BinaryOperationFeedback::kNumber);
     Goto(if_number);
 
     if (conversion == Object::Conversion::kToNumeric) {
       BIND(&is_bigint);
       var_bigint->Bind(value);
-      if (feedback == Feedback::kCollect) {
-        var_feedback->Bind(
-            SmiOr(var_feedback->value(),
-                  SmiConstant(BinaryOperationFeedback::kBigInt)));
-      }
+      CombineFeedback(var_feedback, BinaryOperationFeedback::kBigInt);
       Goto(if_bigint);
     }
   }
@@ -4503,13 +4483,12 @@ Node* CodeStubAssembler::IsNumberArrayIndex(Node* number) {
   Label check_upper_bound(this), check_is_integer(this), out(this),
       return_false(this);
 
-  GotoIfNumericGreaterThanOrEqual(number, NumberConstant(0),
-                                  &check_upper_bound);
+  GotoIfNumberGreaterThanOrEqual(number, NumberConstant(0), &check_upper_bound);
   Goto(&return_false);
 
   BIND(&check_upper_bound);
-  GotoIfNumericGreaterThanOrEqual(number, NumberConstant(kMaxUInt32),
-                                  &return_false);
+  GotoIfNumberGreaterThanOrEqual(number, NumberConstant(kMaxUInt32),
+                                 &return_false);
   Goto(&check_is_integer);
 
   BIND(&check_is_integer);
@@ -5528,18 +5507,17 @@ TNode<Number> CodeStubAssembler::ToNumber(SloppyTNode<Context> context,
 
 void CodeStubAssembler::TaggedToNumeric(Node* context, Node* value, Label* done,
                                         Variable* var_numeric) {
-  TaggedToNumeric<Feedback::kNone>(context, value, done, var_numeric);
+  TaggedToNumeric(context, value, done, var_numeric, nullptr);
 }
 
 void CodeStubAssembler::TaggedToNumericWithFeedback(Node* context, Node* value,
                                                     Label* done,
                                                     Variable* var_numeric,
                                                     Variable* var_feedback) {
-  TaggedToNumeric<Feedback::kCollect>(context, value, done, var_numeric,
-                                      var_feedback);
+  DCHECK_NOT_NULL(var_feedback);
+  TaggedToNumeric(context, value, done, var_numeric, var_feedback);
 }
 
-template <CodeStubAssembler::Feedback feedback>
 void CodeStubAssembler::TaggedToNumeric(Node* context, Node* value, Label* done,
                                         Variable* var_numeric,
                                         Variable* var_feedback) {
@@ -5554,34 +5532,24 @@ void CodeStubAssembler::TaggedToNumeric(Node* context, Node* value, Label* done,
   // {value} is not a Numeric yet.
   GotoIf(Word32Equal(instance_type, Int32Constant(ODDBALL_TYPE)), &if_oddball);
   var_numeric->Bind(CallBuiltin(Builtins::kNonNumberToNumeric, context, value));
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kAny));
-  }
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kAny);
   Goto(done);
 
   BIND(&if_smi);
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kSignedSmall));
-  }
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kSignedSmall);
   Goto(done);
 
   BIND(&if_heapnumber);
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kNumber));
-  }
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kNumber);
   Goto(done);
 
   BIND(&if_bigint);
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kBigInt));
-  }
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kBigInt);
   Goto(done);
 
   BIND(&if_oddball);
+  OverwriteFeedback(var_feedback, BinaryOperationFeedback::kNumberOrOddball);
   var_numeric->Bind(LoadObjectField(value, Oddball::kToNumberOffset));
-  if (feedback == Feedback::kCollect) {
-    var_feedback->Bind(SmiConstant(BinaryOperationFeedback::kNumberOrOddball));
-  }
   Goto(done);
 }
 
@@ -7380,8 +7348,22 @@ void CodeStubAssembler::ReportFeedbackUpdate(
 #endif  // V8_TRACE_FEEDBACK_UPDATES
 }
 
+void CodeStubAssembler::OverwriteFeedback(Variable* existing_feedback,
+                                          int new_feedback) {
+  if (existing_feedback == nullptr) return;
+  existing_feedback->Bind(SmiConstant(new_feedback));
+}
+
+void CodeStubAssembler::CombineFeedback(Variable* existing_feedback,
+                                        int feedback) {
+  if (existing_feedback == nullptr) return;
+  existing_feedback->Bind(
+      SmiOr(existing_feedback->value(), SmiConstant(feedback)));
+}
+
 void CodeStubAssembler::CombineFeedback(Variable* existing_feedback,
                                         Node* feedback) {
+  if (existing_feedback == nullptr) return;
   existing_feedback->Bind(SmiOr(existing_feedback->value(), feedback));
 }
 
@@ -8138,109 +8120,86 @@ void CodeStubAssembler::InitializeFieldsWithRoot(
                 CodeStubAssembler::IndexAdvanceMode::kPre);
 }
 
-void CodeStubAssembler::BranchIfNumericRelationalComparison(
-    Operation op, Node* lhs, Node* rhs, Label* if_true, Label* if_false) {
-  CSA_SLOW_ASSERT(this, IsNumber(lhs));
-  CSA_SLOW_ASSERT(this, IsNumber(rhs));
+void CodeStubAssembler::BranchIfNumberRelationalComparison(
+    Operation op, Node* left, Node* right, Label* if_true, Label* if_false) {
+  CSA_SLOW_ASSERT(this, IsNumber(left));
+  CSA_SLOW_ASSERT(this, IsNumber(right));
 
-  Label end(this);
-  VARIABLE(result, MachineRepresentation::kTagged);
+  Label do_float_comparison(this);
+  TVARIABLE(Float64T, var_left_float);
+  TVARIABLE(Float64T, var_right_float);
 
-  // Shared entry for floating point comparison.
-  Label do_fcmp(this);
-  VARIABLE(var_fcmp_lhs, MachineRepresentation::kFloat64);
-  VARIABLE(var_fcmp_rhs, MachineRepresentation::kFloat64);
+  Label if_left_smi(this), if_left_not_smi(this);
+  Branch(TaggedIsSmi(left), &if_left_smi, &if_left_not_smi);
 
-  // Check if the {lhs} is a Smi or a HeapObject.
-  Label if_lhsissmi(this), if_lhsisnotsmi(this);
-  Branch(TaggedIsSmi(lhs), &if_lhsissmi, &if_lhsisnotsmi);
-
-  BIND(&if_lhsissmi);
+  BIND(&if_left_smi);
   {
-    // Check if {rhs} is a Smi or a HeapObject.
-    Label if_rhsissmi(this), if_rhsisnotsmi(this);
-    Branch(TaggedIsSmi(rhs), &if_rhsissmi, &if_rhsisnotsmi);
+    Label if_right_not_smi(this);
+    GotoIfNot(TaggedIsSmi(right), &if_right_not_smi);
 
-    BIND(&if_rhsissmi);
-    {
-      // Both {lhs} and {rhs} are Smi, so just perform a fast Smi comparison.
-      switch (op) {
-        case Operation::kLessThan:
-          BranchIfSmiLessThan(lhs, rhs, if_true, if_false);
-          break;
-        case Operation::kLessThanOrEqual:
-          BranchIfSmiLessThanOrEqual(lhs, rhs, if_true, if_false);
-          break;
-        case Operation::kGreaterThan:
-          BranchIfSmiLessThan(rhs, lhs, if_true, if_false);
-          break;
-        case Operation::kGreaterThanOrEqual:
-          BranchIfSmiLessThanOrEqual(rhs, lhs, if_true, if_false);
-          break;
-        default:
-          UNREACHABLE();
-      }
-    }
-
-    BIND(&if_rhsisnotsmi);
-    {
-      CSA_ASSERT(this, IsHeapNumber(rhs));
-      // Convert the {lhs} and {rhs} to floating point values, and
-      // perform a floating point comparison.
-      var_fcmp_lhs.Bind(SmiToFloat64(lhs));
-      var_fcmp_rhs.Bind(LoadHeapNumberValue(rhs));
-      Goto(&do_fcmp);
-    }
-  }
-
-  BIND(&if_lhsisnotsmi);
-  {
-    CSA_ASSERT(this, IsHeapNumber(lhs));
-
-    // Check if {rhs} is a Smi or a HeapObject.
-    Label if_rhsissmi(this), if_rhsisnotsmi(this);
-    Branch(TaggedIsSmi(rhs), &if_rhsissmi, &if_rhsisnotsmi);
-
-    BIND(&if_rhsissmi);
-    {
-      // Convert the {lhs} and {rhs} to floating point values, and
-      // perform a floating point comparison.
-      var_fcmp_lhs.Bind(LoadHeapNumberValue(lhs));
-      var_fcmp_rhs.Bind(SmiToFloat64(rhs));
-      Goto(&do_fcmp);
-    }
-
-    BIND(&if_rhsisnotsmi);
-    {
-      CSA_ASSERT(this, IsHeapNumber(rhs));
-
-      // Convert the {lhs} and {rhs} to floating point values, and
-      // perform a floating point comparison.
-      var_fcmp_lhs.Bind(LoadHeapNumberValue(lhs));
-      var_fcmp_rhs.Bind(LoadHeapNumberValue(rhs));
-      Goto(&do_fcmp);
-    }
-  }
-
-  BIND(&do_fcmp);
-  {
-    // Load the {lhs} and {rhs} floating point values.
-    Node* lhs = var_fcmp_lhs.value();
-    Node* rhs = var_fcmp_rhs.value();
-
-    // Perform a fast floating point comparison.
+    // Both {left} and {right} are Smi, so just perform a fast Smi comparison.
     switch (op) {
       case Operation::kLessThan:
-        Branch(Float64LessThan(lhs, rhs), if_true, if_false);
+        BranchIfSmiLessThan(left, right, if_true, if_false);
         break;
       case Operation::kLessThanOrEqual:
-        Branch(Float64LessThanOrEqual(lhs, rhs), if_true, if_false);
+        BranchIfSmiLessThanOrEqual(left, right, if_true, if_false);
         break;
       case Operation::kGreaterThan:
-        Branch(Float64GreaterThan(lhs, rhs), if_true, if_false);
+        BranchIfSmiLessThan(right, left, if_true, if_false);
         break;
       case Operation::kGreaterThanOrEqual:
-        Branch(Float64GreaterThanOrEqual(lhs, rhs), if_true, if_false);
+        BranchIfSmiLessThanOrEqual(right, left, if_true, if_false);
+        break;
+      default:
+        UNREACHABLE();
+    }
+
+    BIND(&if_right_not_smi);
+    {
+      CSA_ASSERT(this, IsHeapNumber(right));
+      var_left_float = SmiToFloat64(left);
+      var_right_float = LoadHeapNumberValue(right);
+      Goto(&do_float_comparison);
+    }
+  }
+
+  BIND(&if_left_not_smi);
+  {
+    CSA_ASSERT(this, IsHeapNumber(left));
+    var_left_float = LoadHeapNumberValue(left);
+
+    Label if_right_not_smi(this);
+    GotoIfNot(TaggedIsSmi(right), &if_right_not_smi);
+    var_right_float = SmiToFloat64(right);
+    Goto(&do_float_comparison);
+
+    BIND(&if_right_not_smi);
+    {
+      CSA_ASSERT(this, IsHeapNumber(right));
+      var_right_float = LoadHeapNumberValue(right);
+      Goto(&do_float_comparison);
+    }
+  }
+
+  BIND(&do_float_comparison);
+  {
+    switch (op) {
+      case Operation::kLessThan:
+        Branch(Float64LessThan(var_left_float, var_right_float), if_true,
+               if_false);
+        break;
+      case Operation::kLessThanOrEqual:
+        Branch(Float64LessThanOrEqual(var_left_float, var_right_float), if_true,
+               if_false);
+        break;
+      case Operation::kGreaterThan:
+        Branch(Float64GreaterThan(var_left_float, var_right_float), if_true,
+               if_false);
+        break;
+      case Operation::kGreaterThanOrEqual:
+        Branch(Float64GreaterThanOrEqual(var_left_float, var_right_float),
+               if_true, if_false);
         break;
       default:
         UNREACHABLE();
@@ -8248,11 +8207,11 @@ void CodeStubAssembler::BranchIfNumericRelationalComparison(
   }
 }
 
-void CodeStubAssembler::GotoIfNumericGreaterThanOrEqual(Node* lhs, Node* rhs,
-                                                        Label* if_true) {
+void CodeStubAssembler::GotoIfNumberGreaterThanOrEqual(Node* left, Node* right,
+                                                       Label* if_true) {
   Label if_false(this);
-  BranchIfNumericRelationalComparison(Operation::kGreaterThanOrEqual, lhs, rhs,
-                                      if_true, &if_false);
+  BranchIfNumberRelationalComparison(Operation::kGreaterThanOrEqual, left,
+                                     right, if_true, &if_false);
   BIND(&if_false);
 }
 
@@ -8274,22 +8233,20 @@ Operation Reverse(Operation op) {
 }
 }  // anonymous namespace
 
-Node* CodeStubAssembler::RelationalComparison(Operation op, Node* lhs,
-                                              Node* rhs, Node* context,
+Node* CodeStubAssembler::RelationalComparison(Operation op, Node* left,
+                                              Node* right, Node* context,
                                               Variable* var_type_feedback) {
-  Label return_true(this), return_false(this), end(this);
-  VARIABLE(result, MachineRepresentation::kTagged);
-
-  // Shared entry for floating point comparison.
-  Label do_fcmp(this);
-  VARIABLE(var_fcmp_lhs, MachineRepresentation::kFloat64);
-  VARIABLE(var_fcmp_rhs, MachineRepresentation::kFloat64);
+  Label return_true(this), return_false(this), do_float_comparison(this),
+      end(this);
+  TVARIABLE(Oddball, var_result);  // Actually only "true" or "false".
+  TVARIABLE(Float64T, var_left_float);
+  TVARIABLE(Float64T, var_right_float);
 
   // We might need to loop several times due to ToPrimitive and/or ToNumeric
   // conversions.
-  VARIABLE(var_lhs, MachineRepresentation::kTagged, lhs);
-  VARIABLE(var_rhs, MachineRepresentation::kTagged, rhs);
-  VariableList loop_variable_list({&var_lhs, &var_rhs}, zone());
+  VARIABLE(var_left, MachineRepresentation::kTagged, left);
+  VARIABLE(var_right, MachineRepresentation::kTagged, right);
+  VariableList loop_variable_list({&var_left, &var_right}, zone());
   if (var_type_feedback != nullptr) {
     // Initialize the type feedback to None. The current feedback is combined
     // with the previous feedback.
@@ -8300,397 +8257,330 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* lhs,
   Goto(&loop);
   BIND(&loop);
   {
-    // Load the current {lhs} and {rhs} values.
-    lhs = var_lhs.value();
-    rhs = var_rhs.value();
+    left = var_left.value();
+    right = var_right.value();
 
-    // Check if the {lhs} is a Smi or a HeapObject.
-    Label if_lhsissmi(this), if_lhsisnotsmi(this);
-    Branch(TaggedIsSmi(lhs), &if_lhsissmi, &if_lhsisnotsmi);
+    Label if_left_smi(this), if_left_not_smi(this);
+    Branch(TaggedIsSmi(left), &if_left_smi, &if_left_not_smi);
 
-    BIND(&if_lhsissmi);
+    BIND(&if_left_smi);
     {
-      Label if_rhsissmi(this), if_rhsisheapnumber(this),
-          if_rhsisbigint(this, Label::kDeferred),
-          if_rhsisnotnumeric(this, Label::kDeferred);
-      GotoIf(TaggedIsSmi(rhs), &if_rhsissmi);
-      Node* rhs_map = LoadMap(rhs);
-      GotoIf(IsHeapNumberMap(rhs_map), &if_rhsisheapnumber);
-      Node* rhs_instance_type = LoadMapInstanceType(rhs_map);
-      Branch(IsBigIntInstanceType(rhs_instance_type), &if_rhsisbigint,
-             &if_rhsisnotnumeric);
+      Label if_right_smi(this), if_right_heapnumber(this),
+          if_right_bigint(this, Label::kDeferred),
+          if_right_not_numeric(this, Label::kDeferred);
+      GotoIf(TaggedIsSmi(right), &if_right_smi);
+      Node* right_map = LoadMap(right);
+      GotoIf(IsHeapNumberMap(right_map), &if_right_heapnumber);
+      Node* right_instance_type = LoadMapInstanceType(right_map);
+      Branch(IsBigIntInstanceType(right_instance_type), &if_right_bigint,
+             &if_right_not_numeric);
 
-      BIND(&if_rhsissmi);
+      BIND(&if_right_smi);
       {
-        // Both {lhs} and {rhs} are Smi, so just perform a fast Smi comparison.
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kSignedSmall));
-        }
+        CombineFeedback(var_type_feedback,
+                        CompareOperationFeedback::kSignedSmall);
         switch (op) {
           case Operation::kLessThan:
-            BranchIfSmiLessThan(lhs, rhs, &return_true, &return_false);
+            BranchIfSmiLessThan(left, right, &return_true, &return_false);
             break;
           case Operation::kLessThanOrEqual:
-            BranchIfSmiLessThanOrEqual(lhs, rhs, &return_true, &return_false);
+            BranchIfSmiLessThanOrEqual(left, right, &return_true,
+                                       &return_false);
             break;
           case Operation::kGreaterThan:
-            BranchIfSmiLessThan(rhs, lhs, &return_true, &return_false);
+            BranchIfSmiLessThan(right, left, &return_true, &return_false);
             break;
           case Operation::kGreaterThanOrEqual:
-            BranchIfSmiLessThanOrEqual(rhs, lhs, &return_true, &return_false);
+            BranchIfSmiLessThanOrEqual(right, left, &return_true,
+                                       &return_false);
             break;
           default:
             UNREACHABLE();
         }
       }
 
-      BIND(&if_rhsisheapnumber);
+      BIND(&if_right_heapnumber);
       {
-        // Convert the {lhs} and {rhs} to floating point values, and
-        // perform a floating point comparison.
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kNumber));
-        }
-        var_fcmp_lhs.Bind(SmiToFloat64(lhs));
-        var_fcmp_rhs.Bind(LoadHeapNumberValue(rhs));
-        Goto(&do_fcmp);
+        CombineFeedback(var_type_feedback, CompareOperationFeedback::kNumber);
+        var_left_float = SmiToFloat64(left);
+        var_right_float = LoadHeapNumberValue(right);
+        Goto(&do_float_comparison);
       }
 
-      BIND(&if_rhsisbigint);
+      BIND(&if_right_bigint);
       {
-        // The {lhs} is a Smi and {rhs} is a BigInt.
-        if (var_type_feedback != nullptr) {
-          var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kAny));
-        }
-        result.Bind(CallRuntime(Runtime::kBigIntCompareToNumber,
-                                NoContextConstant(), SmiConstant(Reverse(op)),
-                                rhs, lhs));
+        OverwriteFeedback(var_type_feedback, CompareOperationFeedback::kAny);
+        var_result = CAST(CallRuntime(Runtime::kBigIntCompareToNumber,
+                                      NoContextConstant(),
+                                      SmiConstant(Reverse(op)), right, left));
         Goto(&end);
       }
 
-      BIND(&if_rhsisnotnumeric);
+      BIND(&if_right_not_numeric);
       {
-        // The {lhs} is a Smi and {rhs} is not a Numeric.
-        if (var_type_feedback != nullptr) {
-          var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kAny));
-        }
-        // Convert the {rhs} to a Numeric; we don't need to perform the
-        // dedicated ToPrimitive(rhs, hint Number) operation, as the
-        // ToNumeric(rhs) will by itself already invoke ToPrimitive with
+        OverwriteFeedback(var_type_feedback, CompareOperationFeedback::kAny);
+        // Convert {right} to a Numeric; we don't need to perform the
+        // dedicated ToPrimitive(right, hint Number) operation, as the
+        // ToNumeric(right) will by itself already invoke ToPrimitive with
         // a Number hint.
-        var_rhs.Bind(CallBuiltin(Builtins::kNonNumberToNumeric, context, rhs));
+        var_right.Bind(
+            CallBuiltin(Builtins::kNonNumberToNumeric, context, right));
         Goto(&loop);
       }
     }
 
-    BIND(&if_lhsisnotsmi);
+    BIND(&if_left_not_smi);
     {
-      Node* lhs_map = LoadMap(lhs);
+      Node* left_map = LoadMap(left);
 
-      // Check if {rhs} is a Smi or a HeapObject.
-      Label if_rhsissmi(this), if_rhsisnotsmi(this);
-      Branch(TaggedIsSmi(rhs), &if_rhsissmi, &if_rhsisnotsmi);
+      Label if_right_smi(this), if_right_not_smi(this);
+      Branch(TaggedIsSmi(right), &if_right_smi, &if_right_not_smi);
 
-      BIND(&if_rhsissmi);
+      BIND(&if_right_smi);
       {
-        Label if_lhsisheapnumber(this), if_lhsisbigint(this, Label::kDeferred),
-            if_lhsisnotnumeric(this, Label::kDeferred);
-        GotoIf(IsHeapNumberMap(lhs_map), &if_lhsisheapnumber);
-        Node* lhs_instance_type = LoadMapInstanceType(lhs_map);
-        Branch(IsBigIntInstanceType(lhs_instance_type), &if_lhsisbigint,
-               &if_lhsisnotnumeric);
+        Label if_left_heapnumber(this), if_left_bigint(this, Label::kDeferred),
+            if_left_not_numeric(this, Label::kDeferred);
+        GotoIf(IsHeapNumberMap(left_map), &if_left_heapnumber);
+        Node* left_instance_type = LoadMapInstanceType(left_map);
+        Branch(IsBigIntInstanceType(left_instance_type), &if_left_bigint,
+               &if_left_not_numeric);
 
-        BIND(&if_lhsisheapnumber);
+        BIND(&if_left_heapnumber);
         {
-          // Convert the {lhs} and {rhs} to floating point values, and
-          // perform a floating point comparison.
-          if (var_type_feedback != nullptr) {
-            CombineFeedback(var_type_feedback,
-                            SmiConstant(CompareOperationFeedback::kNumber));
-          }
-          var_fcmp_lhs.Bind(LoadHeapNumberValue(lhs));
-          var_fcmp_rhs.Bind(SmiToFloat64(rhs));
-          Goto(&do_fcmp);
+          CombineFeedback(var_type_feedback, CompareOperationFeedback::kNumber);
+          var_left_float = LoadHeapNumberValue(left);
+          var_right_float = SmiToFloat64(right);
+          Goto(&do_float_comparison);
         }
 
-        BIND(&if_lhsisbigint);
+        BIND(&if_left_bigint);
         {
-          if (var_type_feedback != nullptr) {
-            var_type_feedback->Bind(
-                SmiConstant(CompareOperationFeedback::kAny));
-          }
-          result.Bind(CallRuntime(Runtime::kBigIntCompareToNumber,
-                                  NoContextConstant(), SmiConstant(op), lhs,
-                                  rhs));
+          OverwriteFeedback(var_type_feedback, CompareOperationFeedback::kAny);
+          var_result = CAST(CallRuntime(Runtime::kBigIntCompareToNumber,
+                                        NoContextConstant(), SmiConstant(op),
+                                        left, right));
           Goto(&end);
         }
 
-        BIND(&if_lhsisnotnumeric);
+        BIND(&if_left_not_numeric);
         {
-          // The {lhs} is not a Numeric and {rhs} is an Smi.
-          if (var_type_feedback != nullptr) {
-            var_type_feedback->Bind(
-                SmiConstant(CompareOperationFeedback::kAny));
-          }
-          // Convert the {lhs} to a Numeric; we don't need to perform the
-          // dedicated ToPrimitive(lhs, hint Number) operation, as the
-          // ToNumeric(lhs) will by itself already invoke ToPrimitive with
+          OverwriteFeedback(var_type_feedback, CompareOperationFeedback::kAny);
+          // Convert {left} to a Numeric; we don't need to perform the
+          // dedicated ToPrimitive(left, hint Number) operation, as the
+          // ToNumeric(left) will by itself already invoke ToPrimitive with
           // a Number hint.
-          var_lhs.Bind(
-              CallBuiltin(Builtins::kNonNumberToNumeric, context, lhs));
+          var_left.Bind(
+              CallBuiltin(Builtins::kNonNumberToNumeric, context, left));
           Goto(&loop);
         }
       }
 
-      BIND(&if_rhsisnotsmi);
+      BIND(&if_right_not_smi);
       {
-        // Load the map of {rhs}.
-        Node* rhs_map = LoadMap(rhs);
+        Node* right_map = LoadMap(right);
 
-        // Further analyze {lhs}.
-        Label if_lhsisheapnumber(this), if_lhsisbigint(this, Label::kDeferred),
-            if_lhsisstring(this), if_lhsisother(this, Label::kDeferred);
-        GotoIf(IsHeapNumberMap(lhs_map), &if_lhsisheapnumber);
-        Node* lhs_instance_type = LoadMapInstanceType(lhs_map);
-        GotoIf(IsBigIntInstanceType(lhs_instance_type), &if_lhsisbigint);
-        Branch(IsStringInstanceType(lhs_instance_type), &if_lhsisstring,
-               &if_lhsisother);
+        Label if_left_heapnumber(this), if_left_bigint(this, Label::kDeferred),
+            if_left_string(this), if_left_other(this, Label::kDeferred);
+        GotoIf(IsHeapNumberMap(left_map), &if_left_heapnumber);
+        Node* left_instance_type = LoadMapInstanceType(left_map);
+        GotoIf(IsBigIntInstanceType(left_instance_type), &if_left_bigint);
+        Branch(IsStringInstanceType(left_instance_type), &if_left_string,
+               &if_left_other);
 
-        BIND(&if_lhsisheapnumber);
+        BIND(&if_left_heapnumber);
         {
-          // Further inspect {rhs}.
-          Label if_rhsisheapnumber(this),
-              if_rhsisbigint(this, Label::kDeferred),
-              if_rhsisnotnumeric(this, Label::kDeferred);
-          GotoIf(WordEqual(rhs_map, lhs_map), &if_rhsisheapnumber);
-          Node* rhs_instance_type = LoadMapInstanceType(rhs_map);
-          Branch(IsBigIntInstanceType(rhs_instance_type), &if_rhsisbigint,
-                 &if_rhsisnotnumeric);
+          Label if_right_heapnumber(this),
+              if_right_bigint(this, Label::kDeferred),
+              if_right_not_numeric(this, Label::kDeferred);
+          GotoIf(WordEqual(right_map, left_map), &if_right_heapnumber);
+          Node* right_instance_type = LoadMapInstanceType(right_map);
+          Branch(IsBigIntInstanceType(right_instance_type), &if_right_bigint,
+                 &if_right_not_numeric);
 
-          BIND(&if_rhsisheapnumber);
+          BIND(&if_right_heapnumber);
           {
-            // Convert the {lhs} and {rhs} to floating point values, and
-            // perform a floating point comparison.
-            if (var_type_feedback != nullptr) {
-              CombineFeedback(var_type_feedback,
-                              SmiConstant(CompareOperationFeedback::kNumber));
-            }
-            var_fcmp_lhs.Bind(LoadHeapNumberValue(lhs));
-            var_fcmp_rhs.Bind(LoadHeapNumberValue(rhs));
-            Goto(&do_fcmp);
+            CombineFeedback(var_type_feedback,
+                            CompareOperationFeedback::kNumber);
+            var_left_float = LoadHeapNumberValue(left);
+            var_right_float = LoadHeapNumberValue(right);
+            Goto(&do_float_comparison);
           }
 
-          BIND(&if_rhsisbigint);
+          BIND(&if_right_bigint);
           {
-            if (var_type_feedback != nullptr) {
-              var_type_feedback->Bind(
-                  SmiConstant(CompareOperationFeedback::kAny));
-            }
-            result.Bind(CallRuntime(Runtime::kBigIntCompareToNumber,
-                                    NoContextConstant(),
-                                    SmiConstant(Reverse(op)), rhs, lhs));
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            var_result = CAST(CallRuntime(
+                Runtime::kBigIntCompareToNumber, NoContextConstant(),
+                SmiConstant(Reverse(op)), right, left));
             Goto(&end);
           }
 
-          BIND(&if_rhsisnotnumeric);
+          BIND(&if_right_not_numeric);
           {
-            // The {lhs} is a HeapNumber and {rhs} is not a Numeric.
-            if (var_type_feedback != nullptr) {
-              var_type_feedback->Bind(
-                  SmiConstant(CompareOperationFeedback::kAny));
-            }
-            // Convert the {rhs} to a Numeric; we don't need to perform
-            // dedicated ToPrimitive(rhs, hint Number) operation, as the
-            // ToNumeric(rhs) will by itself already invoke ToPrimitive with
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            // Convert {right} to a Numeric; we don't need to perform
+            // dedicated ToPrimitive(right, hint Number) operation, as the
+            // ToNumeric(right) will by itself already invoke ToPrimitive with
             // a Number hint.
-            var_rhs.Bind(
-                CallBuiltin(Builtins::kNonNumberToNumeric, context, rhs));
+            var_right.Bind(
+                CallBuiltin(Builtins::kNonNumberToNumeric, context, right));
             Goto(&loop);
           }
         }
 
-        BIND(&if_lhsisbigint);
+        BIND(&if_left_bigint);
         {
-          if (var_type_feedback != nullptr) {
-            var_type_feedback->Bind(
-                SmiConstant(CompareOperationFeedback::kAny));
-          }
+          Label if_right_heapnumber(this), if_right_bigint(this),
+              if_right_not_numeric(this);
+          GotoIf(IsHeapNumberMap(right_map), &if_right_heapnumber);
+          Node* right_instance_type = LoadMapInstanceType(right_map);
+          Branch(IsBigIntInstanceType(right_instance_type), &if_right_bigint,
+                 &if_right_not_numeric);
 
-          Label if_rhsisheapnumber(this), if_rhsisbigint(this),
-              if_rhsisnotnumeric(this);
-          GotoIf(IsHeapNumberMap(rhs_map), &if_rhsisheapnumber);
-          Node* rhs_instance_type = LoadMapInstanceType(rhs_map);
-          Branch(IsBigIntInstanceType(rhs_instance_type), &if_rhsisbigint,
-                 &if_rhsisnotnumeric);
-
-          BIND(&if_rhsisheapnumber);
+          BIND(&if_right_heapnumber);
           {
-            result.Bind(CallRuntime(Runtime::kBigIntCompareToNumber,
-                                    NoContextConstant(), SmiConstant(op), lhs,
-                                    rhs));
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            var_result = CAST(CallRuntime(Runtime::kBigIntCompareToNumber,
+                                          NoContextConstant(), SmiConstant(op),
+                                          left, right));
             Goto(&end);
           }
 
-          BIND(&if_rhsisbigint);
+          BIND(&if_right_bigint);
           {
-            result.Bind(CallRuntime(Runtime::kBigIntCompareToBigInt,
-                                    NoContextConstant(), SmiConstant(op), lhs,
-                                    rhs));
+            CombineFeedback(var_type_feedback,
+                            CompareOperationFeedback::kBigInt);
+            var_result = CAST(CallRuntime(Runtime::kBigIntCompareToBigInt,
+                                          NoContextConstant(), SmiConstant(op),
+                                          left, right));
             Goto(&end);
           }
 
-          BIND(&if_rhsisnotnumeric);
+          BIND(&if_right_not_numeric);
           {
-            // Convert the {rhs} to a Numeric; we don't need to perform
-            // dedicated ToPrimitive(rhs, hint Number) operation, as the
-            // ToNumeric(rhs) will by itself already invoke ToPrimitive with
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            // Convert {right} to a Numeric; we don't need to perform
+            // dedicated ToPrimitive(right, hint Number) operation, as the
+            // ToNumeric(right) will by itself already invoke ToPrimitive with
             // a Number hint.
-            var_rhs.Bind(
-                CallBuiltin(Builtins::kNonNumberToNumeric, context, rhs));
+            var_right.Bind(
+                CallBuiltin(Builtins::kNonNumberToNumeric, context, right));
             Goto(&loop);
           }
         }
 
-        BIND(&if_lhsisstring);
+        BIND(&if_left_string);
         {
-          // Load the instance type of {rhs}.
-          Node* rhs_instance_type = LoadMapInstanceType(rhs_map);
+          Node* right_instance_type = LoadMapInstanceType(right_map);
 
-          // Check if {rhs} is also a String.
-          Label if_rhsisstring(this, Label::kDeferred),
-              if_rhsisnotstring(this, Label::kDeferred);
-          Branch(IsStringInstanceType(rhs_instance_type), &if_rhsisstring,
-                 &if_rhsisnotstring);
+          Label if_right_not_string(this, Label::kDeferred);
+          GotoIfNot(IsStringInstanceType(right_instance_type),
+                    &if_right_not_string);
 
-          BIND(&if_rhsisstring);
-          {
-            // Both {lhs} and {rhs} are strings.
-            if (var_type_feedback != nullptr) {
-              CombineFeedback(var_type_feedback,
-                              SmiConstant(CompareOperationFeedback::kString));
-            }
-            switch (op) {
-              case Operation::kLessThan:
-                result.Bind(
-                    CallBuiltin(Builtins::kStringLessThan, context, lhs, rhs));
-                Goto(&end);
-                break;
-              case Operation::kLessThanOrEqual:
-                result.Bind(CallBuiltin(Builtins::kStringLessThanOrEqual,
-                                        context, lhs, rhs));
-                Goto(&end);
-                break;
-              case Operation::kGreaterThan:
-                result.Bind(CallBuiltin(Builtins::kStringGreaterThan, context,
-                                        lhs, rhs));
-                Goto(&end);
-                break;
-              case Operation::kGreaterThanOrEqual:
-                result.Bind(CallBuiltin(Builtins::kStringGreaterThanOrEqual,
-                                        context, lhs, rhs));
-                Goto(&end);
-                break;
-              default:
-                UNREACHABLE();
-            }
+          // Both {left} and {right} are strings.
+          CombineFeedback(var_type_feedback, CompareOperationFeedback::kString);
+          Builtins::Name builtin;
+          switch (op) {
+            case Operation::kLessThan:
+              builtin = Builtins::kStringLessThan;
+              break;
+            case Operation::kLessThanOrEqual:
+              builtin = Builtins::kStringLessThanOrEqual;
+              break;
+            case Operation::kGreaterThan:
+              builtin = Builtins::kStringGreaterThan;
+              break;
+            case Operation::kGreaterThanOrEqual:
+              builtin = Builtins::kStringGreaterThanOrEqual;
+              break;
+            default:
+              UNREACHABLE();
           }
+          var_result = CAST(CallBuiltin(builtin, context, left, right));
+          Goto(&end);
 
-          BIND(&if_rhsisnotstring);
+          BIND(&if_right_not_string);
           {
-            // The {lhs} is a String and {rhs} is not a String.
-            if (var_type_feedback != nullptr) {
-              var_type_feedback->Bind(
-                  SmiConstant(CompareOperationFeedback::kAny));
-            }
-            // The {lhs} is a String, while {rhs} isn't. So we call
-            // ToPrimitive(rhs, hint Number) if {rhs} is a receiver, or
-            // ToNumeric(lhs) and then ToNumeric(rhs) in the other cases.
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            // {left} is a String, while {right} isn't. So we call
+            // ToPrimitive(right, hint Number) if {right} is a receiver, or
+            // ToNumeric(left) and then ToNumeric(right) in the other cases.
             STATIC_ASSERT(LAST_JS_RECEIVER_TYPE == LAST_TYPE);
-            Label if_rhsisreceiver(this, Label::kDeferred),
-                if_rhsisnotreceiver(this, Label::kDeferred);
-            Branch(IsJSReceiverInstanceType(rhs_instance_type),
-                   &if_rhsisreceiver, &if_rhsisnotreceiver);
+            Label if_right_receiver(this, Label::kDeferred);
+            GotoIf(IsJSReceiverInstanceType(right_instance_type),
+                   &if_right_receiver);
 
-            BIND(&if_rhsisreceiver);
+            var_left.Bind(
+                CallBuiltin(Builtins::kNonNumberToNumeric, context, left));
+            var_right.Bind(CallBuiltin(Builtins::kToNumeric, context, right));
+            Goto(&loop);
+
+            BIND(&if_right_receiver);
             {
-              // Convert {rhs} to a primitive first passing Number hint.
               Callable callable = CodeFactory::NonPrimitiveToPrimitive(
                   isolate(), ToPrimitiveHint::kNumber);
-              var_rhs.Bind(CallStub(callable, context, rhs));
-              Goto(&loop);
-            }
-
-            BIND(&if_rhsisnotreceiver);
-            {
-              // Convert both {lhs} and {rhs} to Numeric.
-              var_lhs.Bind(
-                  CallBuiltin(Builtins::kNonNumberToNumeric, context, lhs));
-              var_rhs.Bind(CallBuiltin(Builtins::kToNumeric, context, rhs));
+              var_right.Bind(CallStub(callable, context, right));
               Goto(&loop);
             }
           }
         }
 
-        BIND(&if_lhsisother);
+        BIND(&if_left_other);
         {
-          // The {lhs} is neither a Numeric nor a String, and {rhs} is not
-          // an Smi.
+          // {left} is neither a Numeric nor a String, and {right} is not a Smi.
           if (var_type_feedback != nullptr) {
-            // Collect NumberOrOddball feedback if {lhs} is an Oddball
-            // and {rhs} is either a HeapNumber or Oddball. Otherwise collect
+            // Collect NumberOrOddball feedback if {left} is an Oddball
+            // and {right} is either a HeapNumber or Oddball. Otherwise collect
             // Any feedback.
             Label collect_any_feedback(this), collect_oddball_feedback(this),
                 collect_feedback_done(this);
-            GotoIfNot(InstanceTypeEqual(lhs_instance_type, ODDBALL_TYPE),
+            GotoIfNot(InstanceTypeEqual(left_instance_type, ODDBALL_TYPE),
                       &collect_any_feedback);
 
-            Node* rhs_instance_type = LoadMapInstanceType(rhs_map);
-            GotoIf(InstanceTypeEqual(rhs_instance_type, HEAP_NUMBER_TYPE),
-                   &collect_oddball_feedback);
-            Branch(InstanceTypeEqual(rhs_instance_type, ODDBALL_TYPE),
+            GotoIf(IsHeapNumberMap(right_map), &collect_oddball_feedback);
+            Node* right_instance_type = LoadMapInstanceType(right_map);
+            Branch(InstanceTypeEqual(right_instance_type, ODDBALL_TYPE),
                    &collect_oddball_feedback, &collect_any_feedback);
 
             BIND(&collect_oddball_feedback);
             {
-              CombineFeedback(
-                  var_type_feedback,
-                  SmiConstant(CompareOperationFeedback::kNumberOrOddball));
+              CombineFeedback(var_type_feedback,
+                              CompareOperationFeedback::kNumberOrOddball);
               Goto(&collect_feedback_done);
             }
 
             BIND(&collect_any_feedback);
             {
-              var_type_feedback->Bind(
-                  SmiConstant(CompareOperationFeedback::kAny));
+              OverwriteFeedback(var_type_feedback,
+                                CompareOperationFeedback::kAny);
               Goto(&collect_feedback_done);
             }
 
             BIND(&collect_feedback_done);
           }
 
-          // If {lhs} is a receiver, we must call ToPrimitive(lhs, hint Number).
-          // Otherwise we must call ToNumeric(lhs) and then ToNumeric(rhs).
+          // If {left} is a receiver, call ToPrimitive(left, hint Number).
+          // Otherwise call ToNumeric(left) and then ToNumeric(right).
           STATIC_ASSERT(LAST_JS_RECEIVER_TYPE == LAST_TYPE);
-          Label if_lhsisreceiver(this, Label::kDeferred),
-              if_lhsisnotreceiver(this, Label::kDeferred);
-          Branch(IsJSReceiverInstanceType(lhs_instance_type), &if_lhsisreceiver,
-                 &if_lhsisnotreceiver);
+          Label if_left_receiver(this, Label::kDeferred);
+          GotoIf(IsJSReceiverInstanceType(left_instance_type),
+                 &if_left_receiver);
 
-          BIND(&if_lhsisreceiver);
+          var_left.Bind(
+              CallBuiltin(Builtins::kNonNumberToNumeric, context, left));
+          var_right.Bind(CallBuiltin(Builtins::kToNumeric, context, right));
+          Goto(&loop);
+
+          BIND(&if_left_receiver);
           {
             Callable callable = CodeFactory::NonPrimitiveToPrimitive(
                 isolate(), ToPrimitiveHint::kNumber);
-            var_lhs.Bind(CallStub(callable, context, lhs));
-            Goto(&loop);
-          }
-
-          BIND(&if_lhsisnotreceiver);
-          {
-            var_lhs.Bind(
-                CallBuiltin(Builtins::kNonNumberToNumeric, context, lhs));
-            var_rhs.Bind(CallBuiltin(Builtins::kToNumeric, context, rhs));
+            var_left.Bind(CallStub(callable, context, left));
             Goto(&loop);
           }
         }
@@ -8698,26 +8588,24 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* lhs,
     }
   }
 
-  BIND(&do_fcmp);
+  BIND(&do_float_comparison);
   {
-    // Load the {lhs} and {rhs} floating point values.
-    Node* lhs = var_fcmp_lhs.value();
-    Node* rhs = var_fcmp_rhs.value();
-
-    // Perform a fast floating point comparison.
     switch (op) {
       case Operation::kLessThan:
-        Branch(Float64LessThan(lhs, rhs), &return_true, &return_false);
+        Branch(Float64LessThan(var_left_float, var_right_float), &return_true,
+               &return_false);
         break;
       case Operation::kLessThanOrEqual:
-        Branch(Float64LessThanOrEqual(lhs, rhs), &return_true, &return_false);
+        Branch(Float64LessThanOrEqual(var_left_float, var_right_float),
+               &return_true, &return_false);
         break;
       case Operation::kGreaterThan:
-        Branch(Float64GreaterThan(lhs, rhs), &return_true, &return_false);
+        Branch(Float64GreaterThan(var_left_float, var_right_float),
+               &return_true, &return_false);
         break;
       case Operation::kGreaterThanOrEqual:
-        Branch(Float64GreaterThanOrEqual(lhs, rhs), &return_true,
-               &return_false);
+        Branch(Float64GreaterThanOrEqual(var_left_float, var_right_float),
+               &return_true, &return_false);
         break;
       default:
         UNREACHABLE();
@@ -8726,18 +8614,18 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* lhs,
 
   BIND(&return_true);
   {
-    result.Bind(TrueConstant());
+    var_result = TrueConstant();
     Goto(&end);
   }
 
   BIND(&return_false);
   {
-    result.Bind(FalseConstant());
+    var_result = FalseConstant();
     Goto(&end);
   }
 
   BIND(&end);
-  return result.value();
+  return var_result;
 }
 
 Node* CodeStubAssembler::CollectFeedbackForString(Node* instance_type) {
@@ -8767,10 +8655,11 @@ void CodeStubAssembler::GenerateEqual_Same(Node* value, Label* if_equal,
   if (var_type_feedback != nullptr) {
     Node* instance_type = LoadMapInstanceType(value_map);
 
-    Label if_string(this), if_receiver(this), if_symbol(this),
+    Label if_string(this), if_receiver(this), if_symbol(this), if_bigint(this),
         if_other(this, Label::kDeferred);
     GotoIf(IsStringInstanceType(instance_type), &if_string);
     GotoIf(IsJSReceiverInstanceType(instance_type), &if_receiver);
+    GotoIf(IsBigIntInstanceType(instance_type), &if_bigint);
     Branch(IsSymbolInstanceType(instance_type), &if_symbol, &if_other);
 
     BIND(&if_string);
@@ -8782,25 +8671,25 @@ void CodeStubAssembler::GenerateEqual_Same(Node* value, Label* if_equal,
 
     BIND(&if_symbol);
     {
-      CombineFeedback(var_type_feedback,
-                      SmiConstant(CompareOperationFeedback::kSymbol));
+      CombineFeedback(var_type_feedback, CompareOperationFeedback::kSymbol);
       Goto(if_equal);
     }
 
     BIND(&if_receiver);
     {
-      CombineFeedback(var_type_feedback,
-                      SmiConstant(CompareOperationFeedback::kReceiver));
+      CombineFeedback(var_type_feedback, CompareOperationFeedback::kReceiver);
       Goto(if_equal);
     }
 
-    // TODO(neis): Introduce BigInt CompareOperationFeedback and collect here
-    // and elsewhere?
+    BIND(&if_bigint);
+    {
+      CombineFeedback(var_type_feedback, CompareOperationFeedback::kBigInt);
+      Goto(if_equal);
+    }
 
     BIND(&if_other);
     {
-      CombineFeedback(var_type_feedback,
-                      SmiConstant(CompareOperationFeedback::kAny));
+      CombineFeedback(var_type_feedback, CompareOperationFeedback::kAny);
       Goto(if_equal);
     }
   } else {
@@ -8809,20 +8698,14 @@ void CodeStubAssembler::GenerateEqual_Same(Node* value, Label* if_equal,
 
   BIND(&if_heapnumber);
   {
-    if (var_type_feedback != nullptr) {
-      CombineFeedback(var_type_feedback,
-                      SmiConstant(CompareOperationFeedback::kNumber));
-    }
+    CombineFeedback(var_type_feedback, CompareOperationFeedback::kNumber);
     Node* number_value = LoadHeapNumberValue(value);
     BranchIfFloat64IsNaN(number_value, if_notequal, if_equal);
   }
 
   BIND(&if_smi);
   {
-    if (var_type_feedback != nullptr) {
-      CombineFeedback(var_type_feedback,
-                      SmiConstant(CompareOperationFeedback::kSignedSmall));
-    }
+    CombineFeedback(var_type_feedback, CompareOperationFeedback::kSignedSmall);
     Goto(if_equal);
   }
 }
@@ -8850,9 +8733,9 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
   VARIABLE(var_right, MachineRepresentation::kTagged, right);
   VariableList loop_variable_list({&var_left, &var_right}, zone());
   if (var_type_feedback != nullptr) {
-    // Initialize the type feedback to None. The current feedback is combined
-    // with the previous feedback.
-    var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kNone));
+    // Initialize the type feedback to None. The current feedback will be
+    // combined with the previous feedback.
+    OverwriteFeedback(var_type_feedback, CompareOperationFeedback::kNone);
     loop_variable_list.push_back(var_type_feedback);
   }
   Label loop(this, loop_variable_list);
@@ -8883,10 +8766,8 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
       {
         // We have already checked for {left} and {right} being the same value,
         // so when we get here they must be different Smis.
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kSignedSmall));
-        }
+        CombineFeedback(var_type_feedback,
+                        CompareOperationFeedback::kSignedSmall);
         Goto(&if_notequal);
       }
 
@@ -8911,10 +8792,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
       {
         var_left_float = SmiToFloat64(left);
         var_right_float = LoadHeapNumberValue(right);
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kNumber));
-        }
+        CombineFeedback(var_type_feedback, CompareOperationFeedback::kNumber);
         Goto(&do_float_comparison);
       }
 
@@ -8964,11 +8842,9 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
       {
         GotoIfNot(IsStringInstanceType(right_type), &use_symmetry);
         result.Bind(CallBuiltin(Builtins::kStringEqual, context, left, right));
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiOr(CollectFeedbackForString(left_type),
-                                CollectFeedbackForString(right_type)));
-        }
+        CombineFeedback(var_type_feedback,
+                        SmiOr(CollectFeedbackForString(left_type),
+                              CollectFeedbackForString(right_type)));
         Goto(&end);
       }
 
@@ -8979,10 +8855,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
         var_left_float = LoadHeapNumberValue(left);
         var_right_float = LoadHeapNumberValue(right);
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kNumber));
-        }
+        CombineFeedback(var_type_feedback, CompareOperationFeedback::kNumber);
         Goto(&do_float_comparison);
 
         BIND(&if_right_not_number);
@@ -9008,10 +8881,6 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
       BIND(&if_left_bigint);
       {
-        if (var_type_feedback != nullptr) {
-          var_type_feedback->Bind(SmiConstant(CompareOperationFeedback::kAny));
-        }
-
         Label if_right_heapnumber(this), if_right_bigint(this),
             if_right_string(this), if_right_boolean(this);
         GotoIf(IsHeapNumberMap(right_map), &if_right_heapnumber);
@@ -9023,6 +8892,10 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
         BIND(&if_right_heapnumber);
         {
+          if (var_type_feedback != nullptr) {
+            var_type_feedback->Bind(
+                SmiConstant(CompareOperationFeedback::kAny));
+          }
           result.Bind(CallRuntime(Runtime::kBigIntEqualToNumber,
                                   NoContextConstant(), left, right));
           Goto(&end);
@@ -9030,6 +8903,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
         BIND(&if_right_bigint);
         {
+          CombineFeedback(var_type_feedback, CompareOperationFeedback::kBigInt);
           result.Bind(CallRuntime(Runtime::kBigIntEqualToBigInt,
                                   NoContextConstant(), left, right));
           Goto(&end);
@@ -9037,6 +8911,10 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
         BIND(&if_right_string);
         {
+          if (var_type_feedback != nullptr) {
+            var_type_feedback->Bind(
+                SmiConstant(CompareOperationFeedback::kAny));
+          }
           result.Bind(CallRuntime(Runtime::kBigIntEqualToString,
                                   NoContextConstant(), left, right));
           Goto(&end);
@@ -9044,6 +8922,10 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
 
         BIND(&if_right_boolean);
         {
+          if (var_type_feedback != nullptr) {
+            var_type_feedback->Bind(
+                SmiConstant(CompareOperationFeedback::kAny));
+          }
           var_right.Bind(LoadObjectField(right, Oddball::kToNumberOffset));
           Goto(&loop);
         }
@@ -9086,7 +8968,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
           BIND(&if_right_symbol);
           {
             CombineFeedback(var_type_feedback,
-                            SmiConstant(CompareOperationFeedback::kSymbol));
+                            CompareOperationFeedback::kSymbol);
             Goto(&if_notequal);
           }
         } else {
@@ -9112,10 +8994,7 @@ Node* CodeStubAssembler::Equal(Node* left, Node* right, Node* context,
         GotoIfNot(IsJSReceiverInstanceType(right_type), &if_right_not_receiver);
 
         // {left} and {right} are different JSReceiver references.
-        if (var_type_feedback != nullptr) {
-          CombineFeedback(var_type_feedback,
-                          SmiConstant(CompareOperationFeedback::kReceiver));
-        }
+        CombineFeedback(var_type_feedback, CompareOperationFeedback::kReceiver);
         Goto(&if_notequal);
 
         BIND(&if_right_not_receiver);
@@ -9383,10 +9262,8 @@ Node* CodeStubAssembler::StrictEqual(Node* lhs, Node* rhs,
             BIND(&if_rhsisbigint);
             {
               if (var_type_feedback != nullptr) {
-                CSA_ASSERT(
-                    this,
-                    WordEqual(var_type_feedback->value(),
-                              SmiConstant(CompareOperationFeedback::kAny)));
+                var_type_feedback->Bind(
+                    SmiConstant(CompareOperationFeedback::kBigInt));
               }
               result.Bind(CallRuntime(Runtime::kBigIntEqualToBigInt,
                                       NoContextConstant(), lhs, rhs));

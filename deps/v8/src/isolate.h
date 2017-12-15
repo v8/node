@@ -384,10 +384,8 @@ class ThreadLocalTop BASE_EMBEDDED {
 
 #if USE_SIMULATOR
 
-#define ISOLATE_INIT_SIMULATOR_LIST(V)                       \
-  V(bool, simulator_initialized, false)                      \
-  V(base::CustomMatcherHashMap*, simulator_i_cache, nullptr) \
-  V(Redirection*, simulator_redirection, nullptr)
+#define ISOLATE_INIT_SIMULATOR_LIST(V)  \
+  V(base::CustomMatcherHashMap*, simulator_i_cache, nullptr)
 #else
 
 #define ISOLATE_INIT_SIMULATOR_LIST(V)
@@ -1084,7 +1082,7 @@ class Isolate {
   // memory usage is expected.
   void SetFeedbackVectorsForProfilingTools(Object* value);
 
-  void InitializeVectorListFromHeap();
+  void MaybeInitializeVectorListFromHeap();
 
   double time_millis_since_init() {
     return heap_.MonotonicallyIncreasingTimeInMs() - time_millis_at_init_;
@@ -1327,9 +1325,6 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex* simulator_i_cache_mutex() { return &simulator_i_cache_mutex_; }
-  base::Mutex* simulator_redirection_mutex() {
-    return &simulator_redirection_mutex_;
-  }
 #endif
 
   void set_allow_atomics_wait(bool set) { allow_atomics_wait_ = set; }
@@ -1665,7 +1660,6 @@ class Isolate {
 
 #ifdef USE_SIMULATOR
   base::Mutex simulator_i_cache_mutex_;
-  base::Mutex simulator_redirection_mutex_;
 #endif
 
   bool allow_atomics_wait_;
