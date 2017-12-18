@@ -8,9 +8,6 @@
 #ifdef V8_USE_ADDRESS_SANITIZER
 #include <sanitizer/asan_interface.h>
 #endif  // V8_USE_ADDRESS_SANITIZER
-#if defined(LEAK_SANITIZER)
-#include <sanitizer/lsan_interface.h>
-#endif            // defined(LEAK_SANITIZER)
 #include <cmath>  // For isnan.
 #include <limits>
 #include <vector>
@@ -508,16 +505,10 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
   virtual void Free(void* data, size_t) { free(data); }
 
   virtual void* Reserve(size_t length) {
-    size_t page_size = base::OS::AllocatePageSize();
+    size_t page_size = i::AllocatePageSize();
     size_t allocated = RoundUp(length, page_size);
-    void* address =
-        base::OS::Allocate(base::OS::GetRandomMmapAddr(), allocated, page_size,
-                           base::OS::MemoryPermission::kNoAccess);
-#if defined(LEAK_SANITIZER)
-    if (address != nullptr) {
-      __lsan_register_root_region(address, allocated);
-    }
-#endif
+    void* address = i::AllocatePages(i::GetRandomMmapAddr(), allocated,
+                                     page_size, i::MemoryPermission::kNoAccess);
     return address;
   }
 
@@ -528,9 +519,9 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
         return Free(data, length);
       }
       case v8::ArrayBuffer::Allocator::AllocationMode::kReservation: {
-        size_t page_size = base::OS::AllocatePageSize();
+        size_t page_size = i::AllocatePageSize();
         size_t allocated = RoundUp(length, page_size);
-        CHECK(base::OS::Free(data, allocated));
+        CHECK(i::FreePages(data, allocated));
         return;
       }
     }
@@ -541,11 +532,11 @@ class ArrayBufferAllocator : public v8::ArrayBuffer::Allocator {
       v8::ArrayBuffer::Allocator::Protection protection) {
     DCHECK(protection == v8::ArrayBuffer::Allocator::Protection::kNoAccess ||
            protection == v8::ArrayBuffer::Allocator::Protection::kReadWrite);
-    base::OS::MemoryPermission permission =
+    i::MemoryPermission permission =
         (protection == v8::ArrayBuffer::Allocator::Protection::kReadWrite)
-            ? base::OS::MemoryPermission::kReadWrite
-            : base::OS::MemoryPermission::kNoAccess;
-    CHECK(base::OS::SetPermissions(data, length, permission));
+            ? i::MemoryPermission::kReadWrite
+            : i::MemoryPermission::kNoAccess;
+    CHECK(i::SetPermissions(data, length, permission));
   }
 };
 
@@ -2712,19 +2703,36 @@ ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
   i::Handle<i::SharedFunctionInfo> shared =
       i::Handle<i::SharedFunctionInfo>::cast(
           Utils::OpenHandle(*unbound_script));
+  i::Isolate* isolate = shared->GetIsolate();
+  TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.Execute");
+  base::ElapsedTimer timer;
+  if (i::FLAG_profile_deserialization) {
+    timer.Start();
+  }
+  i::HistogramTimerScope histogram_timer(
+      isolate->counters()->compile_serialize());
+  i::RuntimeCallTimerScope runtimeTimer(
+      isolate, i::RuntimeCallCounterId::kCompileSerialize);
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"), "V8.CompileSerialize");
+
   DCHECK(shared->is_toplevel());
   i::Handle<i::Script> script(i::Script::cast(shared->script()));
-  i::Isolate* isolate = shared->GetIsolate();
   // TODO(7110): Enable serialization of Asm modules once the AsmWasmData is
   // context independent.
   if (script->ContainsAsmModule()) return nullptr;
   if (isolate->debug()->is_loaded()) return nullptr;
+
   i::ScriptData* script_data =
       i::CodeSerializer::Serialize(isolate, shared, Utils::OpenHandle(*source));
   CachedData* result = new CachedData(
       script_data->data(), script_data->length(), CachedData::BufferOwned);
   script_data->ReleaseDataOwnership();
   delete script_data;
+
+  if (i::FLAG_profile_deserialization) {
+    i::PrintF("[Serializing took %0.3f ms]\n",
+              timer.Elapsed().InMillisecondsF());
+  }
   return result;
 }
 

@@ -43,7 +43,7 @@ byte* TestingModuleBuilder::AddMemory(uint32_t size) {
   const bool enable_guard_regions =
       trap_handler::IsTrapHandlerEnabled() && test_module_.is_wasm();
   uint32_t alloc_size =
-      enable_guard_regions ? RoundUp(size, base::OS::CommitPageSize()) : size;
+      enable_guard_regions ? RoundUp(size, CommitPageSize()) : size;
   Handle<JSArrayBuffer> new_buffer =
       wasm::NewArrayBuffer(isolate_, alloc_size, enable_guard_regions);
   CHECK(!new_buffer.is_null());
@@ -61,8 +61,7 @@ byte* TestingModuleBuilder::AddMemory(uint32_t size) {
   // TODO(wasm): Delete the following two lines when test-run-wasm will use a
   // multiple of kPageSize as memory size. At the moment, the effect of these
   // two lines is used to shrink the memory for testing purposes.
-  instance_object_->wasm_context()->get()->mem_start = mem_start_;
-  instance_object_->wasm_context()->get()->mem_size = mem_size_;
+  instance_object_->wasm_context()->get()->SetRawMemory(mem_start_, mem_size_);
   return mem_start_;
 }
 

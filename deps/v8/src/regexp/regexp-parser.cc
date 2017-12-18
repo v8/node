@@ -285,7 +285,7 @@ RegExpTree* RegExpParser::ParseDisjunction() {
         }
 
         RegExpCharacterClass* cc =
-            new (zone()) RegExpCharacterClass(ranges, builder->flags());
+            new (zone()) RegExpCharacterClass(zone(), ranges, builder->flags());
         builder->AddCharacterClass(cc);
         break;
       }
@@ -332,8 +332,8 @@ RegExpTree* RegExpParser::ParseDisjunction() {
                 new (zone()) ZoneList<CharacterRange>(2, zone());
             CharacterRange::AddClassEscape(
                 c, ranges, unicode() && builder->ignore_case(), zone());
-            RegExpCharacterClass* cc =
-                new (zone()) RegExpCharacterClass(ranges, builder->flags());
+            RegExpCharacterClass* cc = new (zone())
+                RegExpCharacterClass(zone(), ranges, builder->flags());
             builder->AddCharacterClass(cc);
             break;
           }
@@ -348,8 +348,8 @@ RegExpTree* RegExpParser::ParseDisjunction() {
                 if (!ParsePropertyClass(ranges, p == 'P')) {
                   return ReportError(CStrVector("Invalid property name"));
                 }
-                RegExpCharacterClass* cc =
-                    new (zone()) RegExpCharacterClass(ranges, builder->flags());
+                RegExpCharacterClass* cc = new (zone())
+                    RegExpCharacterClass(zone(), ranges, builder->flags());
                 builder->AddCharacterClass(cc);
               } else {
                 // With /u, no identity escapes except for syntax characters
@@ -1255,7 +1255,12 @@ bool LookupSpecialPropertyValueName(const char* name,
                                     ZoneList<CharacterRange>* result,
                                     bool negate, Zone* zone) {
   if (NameEquals(name, "Any")) {
-    if (!negate) result->Add(CharacterRange::Everything(), zone);
+    if (negate) {
+      // Leave the list of character ranges empty, since the negation of 'Any'
+      // is the empty set.
+    } else {
+      result->Add(CharacterRange::Everything(), zone);
+    }
   } else if (NameEquals(name, "ASCII")) {
     result->Add(negate ? CharacterRange::Range(0x80, String::kMaxCodePoint)
                        : CharacterRange::Range(0x0, 0x7F),
@@ -1336,6 +1341,19 @@ bool IsSupportedBinaryProperty(UProperty property) {
   return false;
 }
 
+bool IsUnicodePropertyValueCharacter(char c) {
+  // https://tc39.github.io/proposal-regexp-unicode-property-escapes/
+  //
+  // Note that using this to validate each parsed char is quite conservative.
+  // A possible alternative solution would be to only ensure the parsed
+  // property name/value candidate string does not contain '\0' characters and
+  // let ICU lookups trigger the final failure.
+  if ('a' <= c && c <= 'z') return true;
+  if ('A' <= c && c <= 'Z') return true;
+  if ('0' <= c && c <= '9') return true;
+  return (c == '_');
+}
+
 }  // anonymous namespace
 
 bool RegExpParser::ParsePropertyClass(ZoneList<CharacterRange>* result,
@@ -1353,11 +1371,13 @@ bool RegExpParser::ParsePropertyClass(ZoneList<CharacterRange>* result,
   if (current() == '{') {
     // Parse \p{[PropertyName=]PropertyNameValue}
     for (Advance(); current() != '}' && current() != '='; Advance()) {
+      if (!IsUnicodePropertyValueCharacter(current())) return false;
       if (!has_next()) return false;
       first_part.push_back(static_cast<char>(current()));
     }
     if (current() == '=') {
       for (Advance(); current() != '}'; Advance()) {
+        if (!IsUnicodePropertyValueCharacter(current())) return false;
         if (!has_next()) return false;
         second_part.push_back(static_cast<char>(current()));
       }
@@ -1368,6 +1388,10 @@ bool RegExpParser::ParsePropertyClass(ZoneList<CharacterRange>* result,
   }
   Advance();
   first_part.push_back(0);  // null-terminate string.
+
+  DCHECK(first_part.size() - 1 == std::strlen(first_part.data()));
+  DCHECK(second_part.empty() ||
+         second_part.size() - 1 == std::strlen(second_part.data()));
 
   if (second_part.empty()) {
     // First attempt to interpret as general category property value name.
@@ -1653,14 +1677,10 @@ RegExpTree* RegExpParser::ParseCharacterClass(const RegExpBuilder* builder) {
     return ReportError(CStrVector(kUnterminated));
   }
   Advance();
-  if (ranges->length() == 0) {
-    ranges->Add(CharacterRange::Everything(), zone());
-    is_negated = !is_negated;
-  }
   RegExpCharacterClass::CharacterClassFlags character_class_flags;
   if (is_negated) character_class_flags = RegExpCharacterClass::NEGATED;
-  return new (zone())
-      RegExpCharacterClass(ranges, builder->flags(), character_class_flags);
+  return new (zone()) RegExpCharacterClass(zone(), ranges, builder->flags(),
+                                           character_class_flags);
 }
 
 
@@ -1834,7 +1854,8 @@ void RegExpBuilder::AddCharacterClass(RegExpCharacterClass* cc) {
 
 void RegExpBuilder::AddCharacterClassForDesugaring(uc32 c) {
   AddTerm(new (zone()) RegExpCharacterClass(
-      CharacterRange::List(zone(), CharacterRange::Singleton(c)), flags_));
+      zone(), CharacterRange::List(zone(), CharacterRange::Singleton(c)),
+      flags_));
 }
 
 
