@@ -1292,34 +1292,6 @@ void Logger::FunctionEvent(const char* reason, Script* script, int script_id,
   msg.WriteToLogFile();
 }
 
-void Logger::HeapSampleBeginEvent(const char* space, const char* kind) {
-  if (!log_->IsEnabled() || !FLAG_log_gc) return;
-  Log::MessageBuilder msg(log_);
-  // Using non-relative system time in order to be able to synchronize with
-  // external memory profiling events (e.g. DOM memory size).
-  msg << "heap-sample-begin" << kNext << space << kNext << kind << kNext;
-  msg.Append("%.0f", V8::GetCurrentPlatform()->CurrentClockTimeMillis());
-  msg.WriteToLogFile();
-}
-
-
-void Logger::HeapSampleEndEvent(const char* space, const char* kind) {
-  if (!log_->IsEnabled() || !FLAG_log_gc) return;
-  Log::MessageBuilder msg(log_);
-  msg << "heap-sample-end" << kNext << space << kNext << kind;
-  msg.WriteToLogFile();
-}
-
-
-void Logger::HeapSampleItemEvent(const char* type, int number, int bytes) {
-  if (!log_->IsEnabled() || !FLAG_log_gc) return;
-  Log::MessageBuilder msg(log_);
-  msg << "heap-sample-item" << kNext << type << kNext << number << kNext
-      << bytes;
-  msg.WriteToLogFile();
-}
-
-
 void Logger::RuntimeCallTimerEvent() {
   RuntimeCallStats* stats = isolate_->counters()->runtime_call_stats();
   RuntimeCallCounter* counter = stats->current_counter();
@@ -1387,6 +1359,7 @@ void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
   int line = -1;
   int column = -1;
   Address pc = 0;
+
   if (!isolate_->bootstrapper()->IsActive()) {
     pc = isolate_->GetAbstractPC(&line, &column);
   }
@@ -1410,6 +1383,15 @@ void Logger::MapEvent(const char* type, Map* from, Map* to, const char* reason,
   msg.WriteToLogFile();
 }
 
+void Logger::MapCreate(Map* map) {
+  if (!log_->IsEnabled() || !FLAG_trace_maps) return;
+  DisallowHeapAllocation no_gc;
+  Log::MessageBuilder msg(log_);
+  msg << "map-create" << kNext << timer_.Elapsed().InMicroseconds() << kNext
+      << reinterpret_cast<void*>(map);
+  msg.WriteToLogFile();
+}
+
 void Logger::MapDetails(Map* map) {
   if (!log_->IsEnabled() || !FLAG_trace_maps) return;
   // Disable logging Map details during bootstrapping since we use LogMaps() to
@@ -1419,9 +1401,11 @@ void Logger::MapDetails(Map* map) {
   Log::MessageBuilder msg(log_);
   msg << "map-details" << kNext << timer_.Elapsed().InMicroseconds() << kNext
       << reinterpret_cast<void*>(map) << kNext;
-  std::ostringstream buffer;
-  map->PrintMapDetails(buffer);
-  msg << buffer.str().c_str();
+  if (FLAG_trace_maps_details) {
+    std::ostringstream buffer;
+    map->PrintMapDetails(buffer);
+    msg << buffer.str().c_str();
+  }
   msg.WriteToLogFile();
 }
 

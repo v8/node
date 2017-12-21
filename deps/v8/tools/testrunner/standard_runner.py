@@ -283,8 +283,8 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         options.extra_flags.append("--verify_predictable")
         options.extra_flags.append("--no-inline-new")
         # Add predictable wrapper to command prefix.
-        options.command_prefix.append(sys.executable)
-        options.command_prefix.append(PREDICTABLE_WRAPPER)
+        options.command_prefix = (
+            [sys.executable, PREDICTABLE_WRAPPER] + options.command_prefix)
 
       # TODO(machenbach): Figure out how to test a bigger subset of variants on
       # msan.
@@ -422,7 +422,8 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         # First filtering by status applying the generic rules (tests without
         # variants)
         if options.warn_unused:
-          s.WarnUnusedRules(check_variant_rules=False)
+          tests = [(t.name, t.variant) for t in s.tests]
+          s.statusfile.warn_unused_rules(tests, check_variant_rules=False)
         s.FilterTestCasesByStatus(options.slow_tests, options.pass_fail_tests)
 
         if options.cat:
@@ -454,7 +455,8 @@ class StandardTestRunner(base_runner.BaseTestRunner):
 
         # Second filtering by status applying also the variant-dependent rules.
         if options.warn_unused:
-          s.WarnUnusedRules(check_variant_rules=True)
+          tests = [(t.name, t.variant) for t in s.tests]
+          s.statusfile.warn_unused_rules(tests, check_variant_rules=True)
         s.FilterTestCasesByStatus(options.slow_tests, options.pass_fail_tests)
         s.tests = self._shard_tests(s.tests, options)
 

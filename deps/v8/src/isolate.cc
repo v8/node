@@ -437,7 +437,7 @@ class FrameArrayBuilder {
         }
         Handle<WasmInstanceObject> instance = summary.wasm_instance();
         int flags = 0;
-        if (instance->compiled_module()->is_asm_js()) {
+        if (instance->compiled_module()->shared()->is_asm_js()) {
           flags |= FrameArray::kIsAsmJsWasmFrame;
           if (WasmCompiledFrame::cast(frame)->at_to_number_conversion()) {
             flags |= FrameArray::kAsmJsAtNumberConversion;
@@ -456,7 +456,7 @@ class FrameArrayBuilder {
         const auto& summary = summ.AsWasmInterpreted();
         Handle<WasmInstanceObject> instance = summary.wasm_instance();
         int flags = FrameArray::kIsWasmInterpretedFrame;
-        DCHECK(!instance->compiled_module()->is_asm_js());
+        DCHECK(!instance->compiled_module()->shared()->is_asm_js());
         elements_ = FrameArray::AppendWasmFrame(elements_, instance,
                                                 summary.function_index(), {},
                                                 summary.byte_offset(), flags);
@@ -670,6 +670,11 @@ Handle<FixedArray> Isolate::GetDetailedStackTrace(
 Address Isolate::GetAbstractPC(int* line, int* column) {
   JavaScriptFrameIterator it(this);
 
+  if (it.done()) {
+    *line = -1;
+    *column = -1;
+    return nullptr;
+  }
   JavaScriptFrame* frame = it.frame();
   DCHECK(!frame->is_builtin());
   int position = frame->position();
@@ -767,10 +772,10 @@ class CaptureStackTraceHelper {
       const FrameSummary::WasmFrameSummary& summ) {
     Handle<StackFrameInfo> info = factory()->NewStackFrameInfo();
 
-    Handle<WasmCompiledModule> compiled_module(
-        summ.wasm_instance()->compiled_module(), isolate_);
-    Handle<String> name = WasmCompiledModule::GetFunctionName(
-        isolate_, compiled_module, summ.function_index());
+    Handle<WasmSharedModuleData> shared(
+        summ.wasm_instance()->compiled_module()->shared(), isolate_);
+    Handle<String> name = WasmSharedModuleData::GetFunctionName(
+        isolate_, shared, summ.function_index());
     info->set_function_name(*name);
     // Encode the function index as line number (1-based).
     info->set_line_number(summ.function_index() + 1);
@@ -1686,8 +1691,7 @@ bool Isolate::ComputeLocationFromStackTrace(MessageLocation* target,
   for (int i = 0; i < frame_count; i++) {
     if (elements->IsWasmFrame(i) || elements->IsAsmJsWasmFrame(i)) {
       Handle<WasmCompiledModule> compiled_module(
-          WasmInstanceObject::cast(elements->WasmInstance(i))
-              ->compiled_module());
+          elements->WasmInstance(i)->compiled_module());
       uint32_t func_index =
           static_cast<uint32_t>(elements->WasmFunctionIndex(i)->value());
       int code_offset = elements->Offset(i)->value();
@@ -1704,9 +1708,10 @@ bool Isolate::ComputeLocationFromStackTrace(MessageLocation* target,
       bool is_at_number_conversion =
           elements->IsAsmJsWasmFrame(i) &&
           elements->Flags(i)->value() & FrameArray::kAsmJsAtNumberConversion;
-      int pos = WasmCompiledModule::GetSourcePosition(
-          compiled_module, func_index, byte_offset, is_at_number_conversion);
-      Handle<Script> script(compiled_module->script());
+      int pos = WasmSharedModuleData::GetSourcePosition(
+          handle(compiled_module->shared(), this), func_index, byte_offset,
+          is_at_number_conversion);
+      Handle<Script> script(compiled_module->shared()->script());
 
       *target = MessageLocation(script, pos, pos + 1);
       return true;
@@ -3169,7 +3174,7 @@ bool Isolate::use_optimizer() {
 bool Isolate::NeedsSourcePositionsForProfiling() const {
   return FLAG_trace_deopt || FLAG_trace_turbo || FLAG_trace_turbo_graph ||
          FLAG_turbo_profiling || FLAG_perf_prof || is_profiling() ||
-         debug_->is_active() || logger_->is_logging();
+         debug_->is_active() || logger_->is_logging() || FLAG_trace_maps;
 }
 
 void Isolate::SetFeedbackVectorsForProfilingTools(Object* value) {

@@ -324,8 +324,7 @@ class JsonTestProgressIndicator(ProgressIndicator):
         "flags": test.cmd.args,
         "command": test.cmd.to_string(relative=True),
         "duration": duration,
-        "marked_slow": statusfile.IsSlow(
-            test.suite.GetStatusFileOutcomes(test.name, test.variant)),
+        "marked_slow": test.is_slow,
       } for (test, duration) in self.tests[:20]
     ]
 
@@ -357,14 +356,14 @@ class JsonTestProgressIndicator(ProgressIndicator):
       "stdout": output.stdout,
       "stderr": output.stderr,
       "exit_code": output.exit_code,
-      "result": test.suite.GetOutcome(test, output),
-      "expected": test.suite.GetExpectedOutcomes(test),
+      "result": test.get_output_proc().get_outcome(output),
+      "expected": test.expected_outcomes,
       "duration": output.duration,
 
       # TODO(machenbach): This stores only the global random seed from the
       # context and not possible overrides when using random-seed stress.
       "random_seed": self.random_seed,
-      "target_name": test.cmd.shell,
+      "target_name": test.get_shell(),
       "variant": test.variant,
     })
 
@@ -396,14 +395,13 @@ class FlakinessTestProgressIndicator(ProgressIndicator):
 
   def HasRun(self, test, output, has_unexpected_output):
     key = test.get_id()
-    outcome = test.suite.GetOutcome(test, output)
+    outcome = test.get_output_proc().get_outcome(output)
     assert outcome in ["PASS", "FAIL", "CRASH", "TIMEOUT"]
     if test.run == 1:
       # First run of this test.
-      expected_outcomes = test.suite.GetExpectedOutcomes(test)
       self.results[key] = {
         "actual": outcome,
-        "expected": " ".join(expected_outcomes),
+        "expected": " ".join(test.expected_outcomes),
         "times": [output.duration],
       }
       self.summary[outcome] = self.summary[outcome] + 1

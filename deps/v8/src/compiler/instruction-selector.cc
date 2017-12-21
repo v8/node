@@ -693,20 +693,27 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
                                                bool is_tail_call,
                                                int stack_param_delta) {
   OperandGenerator g(this);
-  DCHECK_LE(call->op()->ValueOutputCount(),
-            static_cast<int>(buffer->descriptor->ReturnCount()));
+  size_t ret_count = buffer->descriptor->ReturnCount();
+  DCHECK_LE(call->op()->ValueOutputCount(), ret_count);
   DCHECK_EQ(
       call->op()->ValueInputCount(),
       static_cast<int>(buffer->input_count() + buffer->frame_state_count()));
 
-  if (buffer->descriptor->ReturnCount() > 0) {
+  if (ret_count > 0) {
     // Collect the projections that represent multiple outputs from this call.
-    if (buffer->descriptor->ReturnCount() == 1) {
+    if (ret_count == 1) {
       PushParameter result = {call, buffer->descriptor->GetReturnLocation(0)};
       buffer->output_nodes.push_back(result);
     } else {
-      buffer->output_nodes.resize(buffer->descriptor->ReturnCount());
+      buffer->output_nodes.resize(ret_count);
       int stack_count = 0;
+      for (size_t i = 0; i < ret_count; ++i) {
+        LinkageLocation location = buffer->descriptor->GetReturnLocation(i);
+        buffer->output_nodes[i] = PushParameter(nullptr, location);
+        if (location.IsCallerFrameSlot()) {
+          stack_count += location.GetSizeInPointers();
+        }
+      }
       for (Edge const edge : call->use_edges()) {
         if (!NodeProperties::IsValueEdge(edge)) continue;
         Node* node = edge.from();
@@ -715,13 +722,7 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
 
         DCHECK_LT(index, buffer->output_nodes.size());
         DCHECK(!buffer->output_nodes[index].node);
-        PushParameter result = {node,
-                                buffer->descriptor->GetReturnLocation(index)};
-        buffer->output_nodes[index] = result;
-
-        if (result.location.IsCallerFrameSlot()) {
-          stack_count += result.location.GetSizeInPointers();
-        }
+        buffer->output_nodes[index].node = node;
       }
       frame_->EnsureReturnSlots(stack_count);
     }
@@ -970,7 +971,7 @@ void InstructionSelector::VisitControl(BasicBlock* block) {
               << "only one predecessor." << std::endl
               << "# Current Block: " << *successor << std::endl
               << "#          Node: " << *node;
-          FATAL(str.str().c_str());
+          FATAL("%s", str.str().c_str());
         }
       }
     }
@@ -1018,11 +1019,15 @@ void InstructionSelector::VisitControl(BasicBlock* block) {
         if (sw.min_value > value) sw.min_value = value;
         if (sw.max_value < value) sw.max_value = value;
       }
-      DCHECK_LE(sw.min_value, sw.max_value);
-      // Note that {value_range} can be 0 if {min_value} is -2^31 and
-      // {max_value} is 2^31-1, so don't assume that it's non-zero below.
-      sw.value_range = 1u + bit_cast<uint32_t>(sw.max_value) -
-                       bit_cast<uint32_t>(sw.min_value);
+      if (sw.case_count != 0) {
+        DCHECK_LE(sw.min_value, sw.max_value);
+        // Note that {value_range} can be 0 if {min_value} is -2^31 and
+        // {max_value} is 2^31-1, so don't assume that it's non-zero below.
+        sw.value_range = 1u + bit_cast<uint32_t>(sw.max_value) -
+                         bit_cast<uint32_t>(sw.min_value);
+      } else {
+        sw.value_range = 0;
+      }
       return VisitSwitch(input, sw);
     }
     case BasicBlock::kReturn: {

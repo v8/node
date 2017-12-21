@@ -49,18 +49,14 @@ class VariantGenerator(object):
     self.standard_variant = STANDARD_VARIANT & variants
 
   def FilterVariantsByTest(self, test):
-    result = self.all_variants
-    outcomes = test.suite.GetStatusFileOutcomes(test.name, test.variant)
-    if outcomes:
-      if statusfile.OnlyStandardVariant(outcomes):
-        return self.standard_variant
-      if statusfile.OnlyFastVariants(outcomes):
-        result = self.fast_variants
-    return result
+    if test.only_standard_variant:
+      return self.standard_variant
+    if test.only_fast_variants:
+      return self.fast_variants
+    return self.all_variants
 
   def GetFlagSets(self, test, variant):
-    outcomes = test.suite.GetStatusFileOutcomes(test.name, test.variant)
-    if outcomes and statusfile.OnlyFastVariants(outcomes):
+    if test.only_fast_variants:
       return FAST_VARIANT_FLAGS[variant]
     else:
       return ALL_VARIANT_FLAGS[variant]
@@ -84,10 +80,7 @@ class TestSuite(object):
     self.name = name  # string
     self.root = root  # string containing path
     self.tests = None  # list of TestCase objects
-    self.rules = None  # {variant: {test name: [rule]}}
-    self.prefix_rules = None  # {variant: {test name prefix: [rule]}}
-
-    self._outcomes_cache = dict()
+    self.statusfile = None
 
   def status_file(self):
     return "%s/%s.status" % (self.root, self.name)
@@ -110,9 +103,7 @@ class TestSuite(object):
     return self._VariantGeneratorFactory()(self, set(variants))
 
   def ReadStatusFile(self, variables):
-    with open(self.status_file()) as f:
-      self.rules, self.prefix_rules = (
-          statusfile.ReadStatusFile(f.read(), variables))
+    self.statusfile = statusfile.StatusFile(self.status_file(), variables)
 
   def ReadTestCases(self, context):
     self.tests = self.ListTests(context)
@@ -145,56 +136,15 @@ class TestSuite(object):
         (mode == 'skip' and pass_fail))
 
     def _compliant(test):
-      outcomes = self.GetStatusFileOutcomes(test.name, test.variant)
-      if statusfile.DoSkip(outcomes):
+      if test.do_skip:
         return False
-      if _skip_slow(statusfile.IsSlow(outcomes), slow_tests_mode):
+      if _skip_slow(test.is_slow, slow_tests_mode):
         return False
-      if _skip_pass_fail(statusfile.IsPassOrFail(outcomes),
-                         pass_fail_tests_mode):
+      if _skip_pass_fail(test.is_pass_or_fail, pass_fail_tests_mode):
         return False
       return True
 
     self.tests = filter(_compliant, self.tests)
-
-  def WarnUnusedRules(self, check_variant_rules=False):
-    """Finds and prints unused rules in status file.
-
-    Rule X is unused when it doesn't apply to any tests, which can also mean
-    that all matching tests were skipped by another rule before evaluating X.
-
-    Status file has to be loaded before using this function.
-    """
-
-    if check_variant_rules:
-      variants = list(ALL_VARIANTS)
-    else:
-      variants = ['']
-    used_rules = set()
-
-    for test in self.tests:
-      variant = test.variant or ""
-
-      if test.name in self.rules.get(variant, {}):
-        used_rules.add((test.name, variant))
-        if statusfile.DoSkip(self.rules[variant][test.name]):
-          continue
-
-      for prefix in self.prefix_rules.get(variant, {}):
-        if test.name.startswith(prefix):
-          used_rules.add((prefix, variant))
-          if statusfile.DoSkip(self.prefix_rules[variant][prefix]):
-            break
-
-    for variant in variants:
-      for rule, value in (list(self.rules.get(variant, {}).iteritems()) +
-                          list(self.prefix_rules.get(variant, {}).iteritems())):
-        if (rule, variant) not in used_rules:
-          if variant == '':
-            variant_desc = 'variant independent'
-          else:
-            variant_desc = 'variant: %s' % variant
-          print('Unused rule: %s -> %s (%s)' % (rule, value, variant_desc))
 
   def FilterTestCasesByArgs(self, args):
     """Filter test cases based on command-line arguments.
@@ -221,84 +171,13 @@ class TestSuite(object):
           break
     self.tests = filtered
 
-  def GetExpectedOutcomes(self, test):
-    """Gets expected outcomes from status file.
-
-    It differs from GetStatusFileOutcomes by selecting only outcomes that can
-    be result of test execution.
-    Status file has to be loaded before using this function.
-    """
-    outcomes = self.GetStatusFileOutcomes(test.name, test.variant)
-
-    expected = []
-    if (statusfile.FAIL in outcomes or
-        statusfile.FAIL_OK in outcomes):
-      expected.append(statusfile.FAIL)
-
-    if statusfile.CRASH in outcomes:
-      expected.append(statusfile.CRASH)
-
-    if statusfile.PASS in outcomes:
-      expected.append(statusfile.PASS)
-
-    return expected or [statusfile.PASS]
-
-  def GetStatusFileOutcomes(self, testname, variant=None):
-    """Gets outcomes from status file.
-
-    Merges variant dependent and independent rules. Status file has to be loaded
-    before using this function.
-    """
-
-    variant = variant or ''
-    cache_key = '%s$%s' % (testname, variant)
-
-    if cache_key not in self._outcomes_cache:
-      # Load statusfile to get outcomes for the first time.
-      assert(self.rules is not None)
-      assert(self.prefix_rules is not None)
-
-      outcomes = frozenset()
-
-      for key in set([variant, '']):
-        rules = self.rules.get(key, {})
-        prefix_rules = self.prefix_rules.get(key, {})
-
-        if testname in rules:
-          outcomes |= rules[testname]
-
-        for prefix in prefix_rules:
-          if testname.startswith(prefix):
-            outcomes |= prefix_rules[prefix]
-
-      self._outcomes_cache[cache_key] = outcomes
-
-    return self._outcomes_cache[cache_key]
-
   def IsFailureOutput(self, testcase, output):
     return output.exit_code != 0
 
   def IsNegativeTest(self, testcase):
     return False
 
-  def HasFailed(self, testcase, output):
-    execution_failed = self.IsFailureOutput(testcase, output)
-    if self.IsNegativeTest(testcase):
-      return not execution_failed
-    else:
-      return execution_failed
-
-  def GetOutcome(self, testcase, output):
-    if output.HasCrashed():
-      return statusfile.CRASH
-    elif output.HasTimedOut():
-      return statusfile.TIMEOUT
-    elif self.HasFailed(testcase, output):
-      return statusfile.FAIL
-    else:
-      return statusfile.PASS
-
-  def HasUnexpectedOutput(self, testcase, output, ctx=None):
+  def HasUnexpectedOutput(self, test, output, ctx=None):
     if ctx and ctx.predictable:
       # Only check the exit code of the predictable_wrapper in
       # verify-predictable mode. Negative tests are not supported as they
@@ -307,15 +186,14 @@ class TestSuite(object):
       # the status file (e.g. known bugs).
       return (
           output.exit_code != 0 and
-          not self.IsNegativeTest(testcase) and
-          statusfile.FAIL not in self.GetExpectedOutcomes(testcase)
+          not self.IsNegativeTest(test) and
+          statusfile.FAIL not in test.expected_outcomes
       )
-    return (self.GetOutcome(testcase, output)
-            not in self.GetExpectedOutcomes(testcase))
+    return (
+      test.get_output_proc().get_outcome(output) not in test.expected_outcomes)
 
   def _create_test(self, path, **kwargs):
     test = self._test_class()(self, path, self._path_to_name(path), **kwargs)
-    test.precompute()
     return test
 
   def _test_class(self):

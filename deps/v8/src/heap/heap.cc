@@ -363,30 +363,6 @@ void Heap::SetGCState(HeapState state) {
   gc_state_ = state;
 }
 
-// TODO(1238405): Combine the infrastructure for --heap-stats and
-// --log-gc to avoid the complicated preprocessor and flag testing.
-void Heap::ReportStatisticsBeforeGC() {
-// Heap::ReportHeapStatistics will also log NewSpace statistics when
-// compiled --log-gc is set.  The following logic is used to avoid
-// double logging.
-#ifdef DEBUG
-  if (FLAG_heap_stats || FLAG_log_gc) new_space_->CollectStatistics();
-  if (FLAG_heap_stats) {
-    ReportHeapStatistics("Before GC");
-  } else if (FLAG_log_gc) {
-    new_space_->ReportStatistics();
-  }
-  if (FLAG_heap_stats || FLAG_log_gc) new_space_->ClearHistograms();
-#else
-  if (FLAG_log_gc) {
-    new_space_->CollectStatistics();
-    new_space_->ReportStatistics();
-    new_space_->ClearHistograms();
-  }
-#endif  // DEBUG
-}
-
-
 void Heap::PrintShortHeapStatistics() {
   if (!FLAG_trace_gc_verbose) return;
   PrintIsolate(isolate_, "Memory allocator,   used: %6" PRIuS
@@ -444,21 +420,7 @@ void Heap::PrintShortHeapStatistics() {
                total_gc_time_ms_);
 }
 
-// TODO(1238405): Combine the infrastructure for --heap-stats and
-// --log-gc to avoid the complicated preprocessor and flag testing.
 void Heap::ReportStatisticsAfterGC() {
-// Similar to the before GC, we use some complicated logic to ensure that
-// NewSpace statistics are logged exactly once when --log-gc is turned on.
-#if defined(DEBUG)
-  if (FLAG_heap_stats) {
-    new_space_->CollectStatistics();
-    ReportHeapStatistics("After GC");
-  } else if (FLAG_log_gc) {
-    new_space_->ReportStatistics();
-  }
-#else
-  if (FLAG_log_gc) new_space_->ReportStatistics();
-#endif  // DEBUG
   for (int i = 0; i < static_cast<int>(v8::Isolate::kUseCounterFeatureCount);
        ++i) {
     int count = deferred_counters_[i];
@@ -637,8 +599,6 @@ void Heap::GarbageCollectionPrologue() {
   DCHECK(!AllowHeapAllocation::IsAllowed() && gc_state_ == NOT_IN_GC);
 
   if (FLAG_gc_verbose) Print();
-
-  ReportStatisticsBeforeGC();
 #endif  // DEBUG
 
   if (new_space_->IsAtMaximumCapacity()) {
@@ -2501,7 +2461,7 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
   map->set_bit_field3(bit_field3);
   map->set_elements_kind(elements_kind);
   map->set_new_target_is_base(true);
-
+  if (FLAG_trace_maps) LOG(isolate(), MapCreate(map));
   return map;
 }
 
@@ -4594,37 +4554,6 @@ void Heap::ReportCodeStatistics(const char* title) {
   PrintF(">>>>>> Code Stats (%s) >>>>>>\n", title);
   CollectCodeStatistics();
   CodeStatistics::ReportCodeStatistics(isolate());
-}
-
-
-// This function expects that NewSpace's allocated objects histogram is
-// populated (via a call to CollectStatistics or else as a side effect of a
-// just-completed scavenge collection).
-void Heap::ReportHeapStatistics(const char* title) {
-  USE(title);
-  PrintF(">>>>>> =============== %s (%d) =============== >>>>>>\n", title,
-         gc_count_);
-  PrintF("old_generation_allocation_limit_ %" PRIuS "\n",
-         old_generation_allocation_limit_);
-
-  PrintF("\n");
-  PrintF("Number of handles : %d\n", HandleScope::NumberOfHandles(isolate_));
-  isolate_->global_handles()->PrintStats();
-  PrintF("\n");
-
-  PrintF("Heap statistics : ");
-  memory_allocator()->ReportStatistics();
-  PrintF("To space : ");
-  new_space_->ReportStatistics();
-  PrintF("Old space : ");
-  old_space_->ReportStatistics();
-  PrintF("Code space : ");
-  code_space_->ReportStatistics();
-  PrintF("Map space : ");
-  map_space_->ReportStatistics();
-  PrintF("Large object space : ");
-  lo_space_->ReportStatistics();
-  PrintF(">>>>>> ========================================= >>>>>>\n");
 }
 
 #endif  // DEBUG

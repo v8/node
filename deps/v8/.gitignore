@@ -52,9 +52,6 @@
 /test/fuzzer/wasm_corpus.tar.gz
 !/test/mjsunit/d8
 /test/mozilla/data
-/test/promises-aplus/promises-tests
-/test/promises-aplus/promises-tests.tar.gz
-/test/promises-aplus/sinon
 /test/test262/data
 /test/test262/data.tar
 /test/test262/harness

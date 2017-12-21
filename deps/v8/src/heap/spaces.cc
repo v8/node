@@ -1624,33 +1624,34 @@ void PagedSpace::DecreaseLimit(Address new_limit) {
   }
 }
 
-Address PagedSpace::ComputeLimit(Address start, Address end,
-                                 size_t size_in_bytes) {
-  DCHECK_GE(end - start, size_in_bytes);
+Address SpaceWithLinearArea::ComputeLimit(Address start, Address end,
+                                          size_t min_size) {
+  DCHECK_GE(end - start, min_size);
 
   if (heap()->inline_allocation_disabled()) {
-    // Keep the linear allocation area to fit exactly the requested size.
-    return start + size_in_bytes;
+    // Fit the requested area exactly.
+    return start + min_size;
   } else if (SupportsInlineAllocation() && AllocationObserversActive()) {
-    // Generated code may allocate inline from the linear allocation area for
-    // Old Space. To make sure we can observe these allocations, we use a lower
-    // limit.
-    size_t step = RoundSizeDownToObjectAlignment(
-        static_cast<int>(GetNextInlineAllocationStepSize()));
-    return Min(start + size_in_bytes + step, end);
+    // Generated code may allocate inline from the linear allocation area for.
+    // To make sure we can observe these allocations, we use a lower limit.
+    size_t step = GetNextInlineAllocationStepSize();
+
+    // TODO(ofrobots): there is subtle difference between old space and new
+    // space here. Any way to avoid it? `step - 1` makes more sense as we would
+    // like to sample the object that straddles the `start + step` boundary.
+    // Rounding down further would introduce a small statistical error in
+    // sampling. However, presently PagedSpace requires limit to be aligned.
+    size_t rounded_step;
+    if (identity() == NEW_SPACE) {
+      DCHECK_GE(step, 1);
+      rounded_step = step - 1;
+    } else {
+      rounded_step = RoundSizeDownToObjectAlignment(static_cast<int>(step));
+    }
+    return Min(start + min_size + rounded_step, end);
   } else {
     // The entire node can be used as the linear allocation area.
     return end;
-  }
-}
-
-// TODO(ofrobots): refactor this code into SpaceWithLinearArea
-void PagedSpace::StartNextInlineAllocationStep() {
-  if (SupportsInlineAllocation() && AllocationObserversActive()) {
-    top_on_previous_step_ = top();
-    DecreaseLimit(ComputeLimit(top(), limit(), 0));
-  } else {
-    DCHECK_NULL(top_on_previous_step_);
   }
 }
 
@@ -1928,7 +1929,7 @@ void NewSpace::Grow() {
       if (!to_space_.ShrinkTo(from_space_.current_capacity())) {
         // We are in an inconsistent state because we could not
         // commit/uncommit memory from new space.
-        CHECK(false);
+        FATAL("inconsistent state");
       }
     }
   }
@@ -1949,7 +1950,7 @@ void NewSpace::Shrink() {
       if (!to_space_.GrowTo(from_space_.current_capacity())) {
         // We are in an inconsistent state because we could not
         // commit/uncommit memory from new space.
-        CHECK(false);
+        FATAL("inconsistent state");
       }
     }
   }
@@ -2052,14 +2053,18 @@ LocalAllocationBuffer& LocalAllocationBuffer::operator=(
 
 
 void NewSpace::UpdateAllocationInfo() {
+  Address old_top = top();
   Address new_top = to_space_.page_low();
-  InlineAllocationStep(top(), new_top, nullptr, 0);
 
   MemoryChunk::UpdateHighWaterMark(allocation_info_.top());
   allocation_info_.Reset(new_top, to_space_.page_high());
   original_top_.SetValue(top());
   original_limit_.SetValue(limit());
   UpdateInlineAllocationLimit(0);
+  // TODO(ofrobots): It would be more correct to do a step before setting the
+  // limit on the new allocation area. However, fixing this causes a regression
+  // due to the idle scavenger getting pinged too frequently. crbug.com/795323.
+  InlineAllocationStep(old_top, new_top, nullptr, 0);
   DCHECK_SEMISPACE_ALLOCATION_INFO(allocation_info_, to_space_);
 }
 
@@ -2077,27 +2082,17 @@ void NewSpace::ResetAllocationInfo() {
   }
 }
 
-
-void NewSpace::UpdateInlineAllocationLimit(int size_in_bytes) {
-  if (heap()->inline_allocation_disabled()) {
-    // Lowest limit when linear allocation was disabled.
-    Address high = to_space_.page_high();
-    Address new_top = allocation_info_.top() + size_in_bytes;
-    allocation_info_.set_limit(Min(new_top, high));
-  } else if (!AllocationObserversActive()) {
-    DCHECK_NULL(top_on_previous_step_);
-    // Normal limit is the end of the current page.
-    allocation_info_.set_limit(to_space_.page_high());
-  } else {
-    // Lower limit during incremental marking.
-    Address high = to_space_.page_high();
-    Address new_top = allocation_info_.top() + size_in_bytes;
-    Address new_limit = new_top + GetNextInlineAllocationStepSize() - 1;
-    allocation_info_.set_limit(Min(new_limit, high));
-  }
+void NewSpace::UpdateInlineAllocationLimit(size_t min_size) {
+  Address new_limit = ComputeLimit(top(), to_space_.page_high(), min_size);
+  allocation_info_.set_limit(new_limit);
   DCHECK_SEMISPACE_ALLOCATION_INFO(allocation_info_, to_space_);
 }
 
+void PagedSpace::UpdateInlineAllocationLimit(size_t min_size) {
+  Address new_limit = ComputeLimit(top(), limit(), min_size);
+  DCHECK_LE(new_limit, limit());
+  DecreaseLimit(new_limit);
+}
 
 bool NewSpace::AddFreshPage() {
   Address top = allocation_info_.top();
@@ -2156,8 +2151,7 @@ bool NewSpace::EnsureAllocation(int size_in_bytes,
   return true;
 }
 
-// TODO(ofrobots): refactor this code into SpaceWithLinearArea
-void NewSpace::StartNextInlineAllocationStep() {
+void SpaceWithLinearArea::StartNextInlineAllocationStep() {
   if (AllocationObserversActive()) {
     top_on_previous_step_ = top();
     UpdateInlineAllocationLimit(0);
@@ -2181,21 +2175,12 @@ void SpaceWithLinearArea::RemoveAllocationObserver(
   DCHECK_IMPLIES(top_on_previous_step_, AllocationObserversActive());
 }
 
-void NewSpace::PauseAllocationObservers() {
+void SpaceWithLinearArea::PauseAllocationObservers() {
   // Do a step to account for memory allocated so far.
   InlineAllocationStep(top(), nullptr, nullptr, 0);
   Space::PauseAllocationObservers();
   DCHECK_NULL(top_on_previous_step_);
   UpdateInlineAllocationLimit(0);
-}
-
-void PagedSpace::PauseAllocationObservers() {
-  // Do a step to account for memory allocated so far.
-  // TODO(ofrobots): Refactor into SpaceWithLinearArea. Note subtle difference
-  // from NewSpace version.
-  InlineAllocationStep(top(), nullptr, nullptr, 0);
-  Space::PauseAllocationObservers();
-  DCHECK_NULL(top_on_previous_step_);
 }
 
 void SpaceWithLinearArea::ResumeAllocationObservers() {
@@ -2637,80 +2622,6 @@ static void ReportHistogram(Isolate* isolate, bool print_spill) {
   }
 }
 #endif  // DEBUG
-
-
-// Support for statistics gathering for --heap-stats and --log-gc.
-void NewSpace::ClearHistograms() {
-  for (int i = 0; i <= LAST_TYPE; i++) {
-    allocated_histogram_[i].clear();
-    promoted_histogram_[i].clear();
-  }
-}
-
-
-// Because the copying collector does not touch garbage objects, we iterate
-// the new space before a collection to get a histogram of allocated objects.
-// This only happens when --log-gc flag is set.
-void NewSpace::CollectStatistics() {
-  ClearHistograms();
-  SemiSpaceIterator it(this);
-  for (HeapObject* obj = it.Next(); obj != nullptr; obj = it.Next())
-    RecordAllocation(obj);
-}
-
-
-static void DoReportStatistics(Isolate* isolate, HistogramInfo* info,
-                               const char* description) {
-  LOG(isolate, HeapSampleBeginEvent("NewSpace", description));
-  // Lump all the string types together.
-  int string_number = 0;
-  int string_bytes = 0;
-#define INCREMENT(type, size, name, camel_name) \
-  string_number += info[type].number();         \
-  string_bytes += info[type].bytes();
-  STRING_TYPE_LIST(INCREMENT)
-#undef INCREMENT
-  if (string_number > 0) {
-    LOG(isolate,
-        HeapSampleItemEvent("STRING_TYPE", string_number, string_bytes));
-  }
-
-  // Then do the other types.
-  for (int i = FIRST_NONSTRING_TYPE; i <= LAST_TYPE; ++i) {
-    if (info[i].number() > 0) {
-      LOG(isolate, HeapSampleItemEvent(info[i].name(), info[i].number(),
-                                       info[i].bytes()));
-    }
-  }
-  LOG(isolate, HeapSampleEndEvent("NewSpace", description));
-}
-
-
-void NewSpace::ReportStatistics() {
-#ifdef DEBUG
-  if (FLAG_heap_stats) {
-    float pct = static_cast<float>(Available()) / TotalCapacity();
-    PrintF("  capacity: %" PRIuS ", available: %" PRIuS ", %%%d\n",
-           TotalCapacity(), Available(), static_cast<int>(pct * 100));
-    PrintF("\n  Object Histogram:\n");
-    for (int i = 0; i <= LAST_TYPE; i++) {
-      if (allocated_histogram_[i].number() > 0) {
-        PrintF("    %-34s%10d (%10d bytes)\n", allocated_histogram_[i].name(),
-               allocated_histogram_[i].number(),
-               allocated_histogram_[i].bytes());
-      }
-    }
-    PrintF("\n");
-  }
-#endif  // DEBUG
-
-  if (FLAG_log_gc) {
-    Isolate* isolate = heap()->isolate();
-    DoReportStatistics(isolate, allocated_histogram_, "allocated");
-    DoReportStatistics(isolate, promoted_histogram_, "promoted");
-  }
-}
-
 
 void NewSpace::RecordAllocation(HeapObject* obj) {
   InstanceType type = obj->map()->instance_type();
@@ -3565,13 +3476,14 @@ void LargeObjectSpace::Verify() {
     // We have only code, sequential strings, external strings (sequential
     // strings that have been morphed into external strings), thin strings
     // (sequential strings that have been morphed into thin strings), fixed
-    // arrays, fixed double arrays, byte arrays, feedback vectors and free space
-    // (right after allocation) in the large object space.
+    // arrays, fixed double arrays, byte arrays, feedback vectors, bigints and
+    // free space (right after allocation) in the large object space.
     CHECK(object->IsAbstractCode() || object->IsSeqString() ||
           object->IsExternalString() || object->IsThinString() ||
           object->IsFixedArray() || object->IsFixedDoubleArray() ||
           object->IsPropertyArray() || object->IsByteArray() ||
-          object->IsFeedbackVector() || object->IsFreeSpace());
+          object->IsFeedbackVector() || object->IsBigInt() ||
+          object->IsFreeSpace());
 
     // The object itself should look OK.
     object->ObjectVerify();

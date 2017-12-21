@@ -26,36 +26,33 @@ class Node;
 }
 
 // List of code stubs used on all platforms.
-#define CODE_STUB_LIST_ALL_PLATFORMS(V)       \
-  /* --- PlatformCodeStubs --- */             \
-  V(ArrayConstructor)                         \
-  V(CallApiCallback)                          \
-  V(CallApiGetter)                            \
-  V(CEntry)                                   \
-  V(DoubleToI)                                \
-  V(InternalArrayConstructor)                 \
-  V(JSEntry)                                  \
-  V(MathPow)                                  \
-  V(ProfileEntryHook)                         \
-  V(StoreSlowElement)                         \
-  /* --- TurboFanCodeStubs --- */             \
-  V(ArrayNoArgumentConstructor)               \
-  V(ArraySingleArgumentConstructor)           \
-  V(ArrayNArgumentsConstructor)               \
-  V(InternalArrayNoArgumentConstructor)       \
-  V(InternalArraySingleArgumentConstructor)   \
-  V(ElementsTransitionAndStore)               \
-  V(KeyedLoadSloppyArguments)                 \
-  V(KeyedStoreSloppyArguments)                \
-  V(LoadScriptContextField)                   \
-  V(StoreScriptContextField)                  \
-  V(StringAdd)                                \
-  V(GetProperty)                              \
-  V(StoreFastElement)                         \
-  V(StoreInterceptor)                         \
-  V(TransitionElementsKind)                   \
-  V(LoadIndexedInterceptor)                   \
-  V(GrowArrayElements)
+#define CODE_STUB_LIST_ALL_PLATFORMS(V)     \
+  /* --- PlatformCodeStubs --- */           \
+  V(ArrayConstructor)                       \
+  V(CallApiCallback)                        \
+  V(CallApiGetter)                          \
+  V(CEntry)                                 \
+  V(DoubleToI)                              \
+  V(InternalArrayConstructor)               \
+  V(JSEntry)                                \
+  V(MathPow)                                \
+  V(ProfileEntryHook)                       \
+  V(StoreSlowElement)                       \
+  /* --- TurboFanCodeStubs --- */           \
+  V(ArrayNoArgumentConstructor)             \
+  V(ArraySingleArgumentConstructor)         \
+  V(ArrayNArgumentsConstructor)             \
+  V(InternalArrayNoArgumentConstructor)     \
+  V(InternalArraySingleArgumentConstructor) \
+  V(ElementsTransitionAndStore)             \
+  V(KeyedLoadSloppyArguments)               \
+  V(KeyedStoreSloppyArguments)              \
+  V(StringAdd)                              \
+  V(GetProperty)                            \
+  V(StoreFastElement)                       \
+  V(StoreInterceptor)                       \
+  V(TransitionElementsKind)                 \
+  V(LoadIndexedInterceptor)
 
 // List of code stubs only used on ARM 32 bits platforms.
 #if V8_TARGET_ARCH_ARM
@@ -493,23 +490,6 @@ class GetPropertyStub : public TurboFanCodeStub {
   DEFINE_TURBOFAN_CODE_STUB(GetProperty, TurboFanCodeStub);
 };
 
-class GrowArrayElementsStub : public TurboFanCodeStub {
- public:
-  GrowArrayElementsStub(Isolate* isolate, ElementsKind kind)
-      : TurboFanCodeStub(isolate) {
-    minor_key_ = ElementsKindBits::encode(GetHoleyElementsKind(kind));
-  }
-
-  ElementsKind elements_kind() const {
-    return ElementsKindBits::decode(minor_key_);
-  }
-
- private:
-  class ElementsKindBits : public BitField<ElementsKind, 0, 8> {};
-
-  DEFINE_CALL_INTERFACE_DESCRIPTOR(GrowArrayElements);
-  DEFINE_TURBOFAN_CODE_STUB(GrowArrayElements, TurboFanCodeStub);
-};
 
 enum AllocationSiteOverrideMode {
   DONT_OVERRIDE,
@@ -791,59 +771,6 @@ class DoubleToIStub : public PlatformCodeStub {
 
   DEFINE_NULL_CALL_INTERFACE_DESCRIPTOR();
   DEFINE_PLATFORM_CODE_STUB(DoubleToI, PlatformCodeStub);
-};
-
-class ScriptContextFieldStub : public TurboFanCodeStub {
- public:
-  ScriptContextFieldStub(Isolate* isolate,
-                         const ScriptContextTable::LookupResult* lookup_result)
-      : TurboFanCodeStub(isolate) {
-    DCHECK(Accepted(lookup_result));
-    minor_key_ = ContextIndexBits::encode(lookup_result->context_index) |
-                 SlotIndexBits::encode(lookup_result->slot_index);
-  }
-
-  int context_index() const { return ContextIndexBits::decode(minor_key_); }
-
-  int slot_index() const { return SlotIndexBits::decode(minor_key_); }
-
-  static bool Accepted(const ScriptContextTable::LookupResult* lookup_result) {
-    return ContextIndexBits::is_valid(lookup_result->context_index) &&
-           SlotIndexBits::is_valid(lookup_result->slot_index);
-  }
-
- private:
-  static const int kContextIndexBits = 9;
-  static const int kSlotIndexBits = 12;
-  class ContextIndexBits : public BitField<int, 0, kContextIndexBits> {};
-  class SlotIndexBits
-      : public BitField<int, kContextIndexBits, kSlotIndexBits> {};
-
-  DEFINE_CODE_STUB_BASE(ScriptContextFieldStub, TurboFanCodeStub);
-};
-
-
-class LoadScriptContextFieldStub : public ScriptContextFieldStub {
- public:
-  LoadScriptContextFieldStub(
-      Isolate* isolate, const ScriptContextTable::LookupResult* lookup_result)
-      : ScriptContextFieldStub(isolate, lookup_result) {}
-
- private:
-  DEFINE_CALL_INTERFACE_DESCRIPTOR(LoadWithVector);
-  DEFINE_TURBOFAN_CODE_STUB(LoadScriptContextField, ScriptContextFieldStub);
-};
-
-
-class StoreScriptContextFieldStub : public ScriptContextFieldStub {
- public:
-  StoreScriptContextFieldStub(
-      Isolate* isolate, const ScriptContextTable::LookupResult* lookup_result)
-      : ScriptContextFieldStub(isolate, lookup_result) {}
-
- private:
-  DEFINE_CALL_INTERFACE_DESCRIPTOR(StoreWithVector);
-  DEFINE_TURBOFAN_CODE_STUB(StoreScriptContextField, ScriptContextFieldStub);
 };
 
 class StoreFastElementStub : public TurboFanCodeStub {

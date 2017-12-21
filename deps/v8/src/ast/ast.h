@@ -1465,7 +1465,8 @@ class ArrayLiteral final : public AggregateLiteral {
   ArrayLiteral(ZoneList<Expression*>* values, int first_spread_index, int pos)
       : AggregateLiteral(pos, kArrayLiteral),
         first_spread_index_(first_spread_index),
-        values_(values) {}
+        values_(values) {
+  }
 
   int first_spread_index_;
   Handle<ConstantElementsPair> constant_elements_;
@@ -1697,11 +1698,10 @@ class CallNew final : public Expression {
   ZoneList<Expression*>* arguments_;
 };
 
-
 // The CallRuntime class does not represent any official JavaScript
 // language construct. Instead it is used to call a C or JS function
 // with a set of arguments. This is used from the builtins that are
-// implemented in JavaScript (see "v8natives.js").
+// implemented in JavaScript.
 class CallRuntime final : public Expression {
  public:
   ZoneList<Expression*>* arguments() const { return arguments_; }
@@ -2168,7 +2168,8 @@ class FunctionLiteral final : public Expression {
     kAnonymousExpression,
     kNamedExpression,
     kDeclaration,
-    kAccessorOrMethod
+    kAccessorOrMethod,
+    kWrapped,
   };
 
   enum IdType { kIdTypeInvalid = -1, kIdTypeTopLevel = 0 };
@@ -2199,6 +2200,7 @@ class FunctionLiteral final : public Expression {
   bool is_anonymous_expression() const {
     return function_type() == kAnonymousExpression;
   }
+  bool is_wrapped() const { return function_type() == kWrapped; }
   LanguageMode language_mode() const;
 
   static bool NeedsHomeObject(Expression* expr);
@@ -2344,7 +2346,7 @@ class FunctionLiteral final : public Expression {
   }
 
   class FunctionTypeBits
-      : public BitField<FunctionType, Expression::kNextBitFieldIndex, 2> {};
+      : public BitField<FunctionType, Expression::kNextBitFieldIndex, 3> {};
   class Pretenure : public BitField<bool, FunctionTypeBits::kNext, 1> {};
   class HasDuplicateParameters : public BitField<bool, Pretenure::kNext, 1> {};
   class DontOptimizeReasonField

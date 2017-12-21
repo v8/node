@@ -1,4 +1,4 @@
-// Copyright 2014 the V8 project authors. All rights reserved.
+// Copyright 2017 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -25,5 +25,31 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// Defined in lib/mocha.js
-RunAllTests();
+// Flags: --allow-natives-syntax --opt
+
+
+function* opt() {
+  // The for loop to generate a SwitchOnSmiNoFeedback with holes
+  // at the end since yield will be eliminated.
+  for (;;)
+    if (true) {
+    } else {
+      yield;
+    }
+
+  // Another loop to force more holes in the constant pool to
+  // verify if bounds checks works when iterating over the jump
+  // table.
+  for (;;)
+    if (true) {
+    } else {
+      yield;
+    }
+}
+
+opt();
+// Optimize function to trigger the iteration over jump
+// table.
+%OptimizeFunctionOnNextCall(opt);
+opt();
+assertOptimized(opt);

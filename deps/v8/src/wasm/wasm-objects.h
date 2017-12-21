@@ -5,12 +5,14 @@
 #ifndef V8_WASM_OBJECTS_H_
 #define V8_WASM_OBJECTS_H_
 
+#include "src/base/bits.h"
 #include "src/debug/debug.h"
 #include "src/debug/interface-types.h"
 #include "src/managed.h"
 #include "src/objects.h"
 #include "src/objects/script.h"
 #include "src/wasm/decoder.h"
+#include "src/wasm/wasm-interpreter.h"
 #include "src/wasm/wasm-limits.h"
 
 #include "src/heap/heap.h"
@@ -24,7 +26,6 @@ namespace wasm {
 class InterpretedFrame;
 class NativeModule;
 class WasmCode;
-class WasmInterpreter;
 struct WasmModule;
 class SignatureMap;
 typedef Address GlobalHandleAddress;
@@ -63,6 +64,7 @@ class WasmInstanceObject;
 struct WasmContext {
   byte* mem_start = nullptr;
   uint32_t mem_size = 0;  // TODO(titzer): uintptr_t?
+  uint32_t mem_mask = 0;  // TODO(titzer): uintptr_t?
   byte* globals_start = nullptr;
 
   inline void SetRawMemory(void* mem_start, size_t mem_size) {
@@ -70,6 +72,8 @@ struct WasmContext {
               wasm::kV8MaxWasmMemoryPages * wasm::kSpecMaxWasmMemoryPages);
     this->mem_start = static_cast<byte*>(mem_start);
     this->mem_size = static_cast<uint32_t>(mem_size);
+    this->mem_mask = base::bits::RoundUpToPowerOfTwo32(this->mem_size) - 1;
+    DCHECK_LE(mem_size, this->mem_mask + 1);
   }
 };
 
@@ -171,8 +175,6 @@ class WasmMemoryObject : public JSObject {
       Isolate* isolate, MaybeHandle<JSArrayBuffer> buffer, int32_t maximum);
 
   static int32_t Grow(Isolate*, Handle<WasmMemoryObject>, uint32_t pages);
-  static void SetupNewBufferWithSameBackingStore(
-      Isolate* isolate, Handle<WasmMemoryObject> memory_object, uint32_t size);
 };
 
 // A WebAssembly.Instance JavaScript-level object.
@@ -186,6 +188,7 @@ class WasmInstanceObject : public JSObject {
   DECL_OPTIONAL_ACCESSORS(memory_object, WasmMemoryObject)
   DECL_OPTIONAL_ACCESSORS(globals_buffer, JSArrayBuffer)
   DECL_OPTIONAL_ACCESSORS(debug_info, WasmDebugInfo)
+  DECL_OPTIONAL_ACCESSORS(table_object, WasmTableObject)
   DECL_OPTIONAL_ACCESSORS(function_tables, FixedArray)
   DECL_OPTIONAL_ACCESSORS(signature_tables, FixedArray)
 
@@ -200,6 +203,7 @@ class WasmInstanceObject : public JSObject {
     kMemoryObjectIndex,
     kGlobalsBufferIndex,
     kDebugInfoIndex,
+    kTableObjectIndex,
     kFunctionTablesIndex,
     kSignatureTablesIndex,
     kDirectlyCalledInstancesIndex,
@@ -214,6 +218,7 @@ class WasmInstanceObject : public JSObject {
   DEF_OFFSET(MemoryObject)
   DEF_OFFSET(GlobalsBuffer)
   DEF_OFFSET(DebugInfo)
+  DEF_OFFSET(TableObject)
   DEF_OFFSET(FunctionTables)
   DEF_OFFSET(SignatureTables)
   DEF_OFFSET(DirectlyCalledInstances)
@@ -316,6 +321,77 @@ class WasmSharedModuleData : public FixedArray {
       Handle<SeqOneByteString> module_bytes, Handle<Script> script,
       Handle<ByteArray> asm_js_offset_table);
 
+  // Get the module name, if set. Returns an empty handle otherwise.
+  static MaybeHandle<String> GetModuleNameOrNull(Isolate*,
+                                                 Handle<WasmSharedModuleData>);
+
+  // Get the function name of the function identified by the given index.
+  // Returns a null handle if the function is unnamed or the name is not a valid
+  // UTF-8 string.
+  static MaybeHandle<String> GetFunctionNameOrNull(Isolate*,
+                                                   Handle<WasmSharedModuleData>,
+                                                   uint32_t func_index);
+
+  // Get the function name of the function identified by the given index.
+  // Returns "<WASM UNNAMED>" if the function is unnamed or the name is not a
+  // valid UTF-8 string.
+  static Handle<String> GetFunctionName(Isolate*, Handle<WasmSharedModuleData>,
+                                        uint32_t func_index);
+
+  // Get the raw bytes of the function name of the function identified by the
+  // given index.
+  // Meant to be used for debugging or frame printing.
+  // Does not allocate, hence gc-safe.
+  Vector<const uint8_t> GetRawFunctionName(uint32_t func_index);
+
+  // Return the byte offset of the function identified by the given index.
+  // The offset will be relative to the start of the module bytes.
+  // Returns -1 if the function index is invalid.
+  int GetFunctionOffset(uint32_t func_index);
+
+  // Returns the function containing the given byte offset.
+  // Returns -1 if the byte offset is not contained in any function of this
+  // module.
+  int GetContainingFunction(uint32_t byte_offset);
+
+  // Translate from byte offset in the module to function number and byte offset
+  // within that function, encoded as line and column in the position info.
+  // Returns true if the position is valid inside this module, false otherwise.
+  bool GetPositionInfo(uint32_t position, Script::PositionInfo* info);
+
+  // Get the source position from a given function index and byte offset,
+  // for either asm.js or pure WASM modules.
+  static int GetSourcePosition(Handle<WasmSharedModuleData>,
+                               uint32_t func_index, uint32_t byte_offset,
+                               bool is_at_number_conversion);
+
+  // Compute the disassembly of a wasm function.
+  // Returns the disassembly string and a list of <byte_offset, line, column>
+  // entries, mapping wasm byte offsets to line and column in the disassembly.
+  // The list is guaranteed to be ordered by the byte_offset.
+  // Returns an empty string and empty vector if the function index is invalid.
+  debug::WasmDisassembly DisassembleFunction(int func_index);
+
+  // Extract a portion of the wire bytes as UTF-8 string.
+  // Returns a null handle if the respective bytes do not form a valid UTF-8
+  // string.
+  static MaybeHandle<String> ExtractUtf8StringFromModuleBytes(
+      Isolate* isolate, Handle<WasmSharedModuleData>, wasm::WireBytesRef ref);
+  static MaybeHandle<String> ExtractUtf8StringFromModuleBytes(
+      Isolate* isolate, Handle<SeqOneByteString> module_bytes,
+      wasm::WireBytesRef ref);
+
+  // Get a list of all possible breakpoints within a given range of this module.
+  bool GetPossibleBreakpoints(const debug::Location& start,
+                              const debug::Location& end,
+                              std::vector<debug::BreakLocation>* locations);
+
+  // Return an empty handle if no breakpoint is hit at that location, or a
+  // FixedArray with all hit breakpoint objects.
+  static MaybeHandle<FixedArray> CheckBreakPoints(Isolate*,
+                                                  Handle<WasmSharedModuleData>,
+                                                  int position);
+
   DECL_OPTIONAL_ACCESSORS(lazy_compilation_orchestrator, Foreign)
 };
 
@@ -351,16 +427,13 @@ class WasmCompiledModule : public FixedArray {
 
 #define WCM_OBJECT_OR_WEAK(TYPE, NAME, ID, TYPE_CHECK, SETTER_MODIFIER) \
  public:                                                                \
-  inline Handle<TYPE> NAME() const;                                     \
-  inline MaybeHandle<TYPE> maybe_##NAME() const;                        \
-  inline TYPE* maybe_ptr_to_##NAME() const;                             \
-  inline TYPE* ptr_to_##NAME() const;                                   \
+  inline TYPE* maybe_##NAME() const;                                    \
+  inline TYPE* NAME() const;                                            \
   inline bool has_##NAME() const;                                       \
   inline void reset_##NAME();                                           \
                                                                         \
   SETTER_MODIFIER:                                                      \
-  inline void set_##NAME(Handle<TYPE> value);                           \
-  inline void set_ptr_to_##NAME(TYPE* value);
+  inline void set_##NAME(TYPE* value);
 
 #define WCM_OBJECT(TYPE, NAME) \
   WCM_OBJECT_OR_WEAK(TYPE, NAME, kID_##NAME, obj->Is##TYPE(), public)
@@ -383,7 +456,7 @@ class WasmCompiledModule : public FixedArray {
                      public)                                               \
                                                                            \
  public:                                                                   \
-  inline Handle<TYPE> NAME() const;
+  inline TYPE* NAME() const;
 
 // Add values here if they are required for creating new instances or
 // for deserialization, and if they are serializable.
@@ -391,7 +464,7 @@ class WasmCompiledModule : public FixedArray {
 // we embed the generated code with a value, then we track that value here.
 #define CORE_WCM_PROPERTY_TABLE(MACRO)                  \
   MACRO(WASM_OBJECT, WasmSharedModuleData, shared)      \
-  MACRO(OBJECT, Context, native_context)                \
+  MACRO(WEAK_LINK, Context, native_context)             \
   MACRO(CONST_OBJECT, FixedArray, export_wrappers)      \
   MACRO(OBJECT, FixedArray, weak_exported_functions)    \
   MACRO(WASM_OBJECT, WasmCompiledModule, next_instance) \
@@ -463,87 +536,12 @@ class WasmCompiledModule : public FixedArray {
 #undef DECLARATION
 
  public:
-// Allow to call method on WasmSharedModuleData also on this object.
-#define FORWARD_SHARED(type, name) inline type name();
-  FORWARD_SHARED(SeqOneByteString*, module_bytes)
-  FORWARD_SHARED(wasm::WasmModule*, module)
-  FORWARD_SHARED(Script*, script)
-  FORWARD_SHARED(bool, is_asm_js)
-#undef FORWARD_SHARED
-
   static bool IsWasmCompiledModule(Object* obj);
 
   void PrintInstancesChain();
 
   static void ReinitializeAfterDeserialization(Isolate*,
                                                Handle<WasmCompiledModule>);
-
-  // Get the module name, if set. Returns an empty handle otherwise.
-  static MaybeHandle<String> GetModuleNameOrNull(
-      Isolate* isolate, Handle<WasmCompiledModule> compiled_module);
-
-  // Get the function name of the function identified by the given index.
-  // Returns a null handle if the function is unnamed or the name is not a valid
-  // UTF-8 string.
-  static MaybeHandle<String> GetFunctionNameOrNull(
-      Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
-      uint32_t func_index);
-
-  // Get the function name of the function identified by the given index.
-  // Returns "<WASM UNNAMED>" if the function is unnamed or the name is not a
-  // valid UTF-8 string.
-  static Handle<String> GetFunctionName(
-      Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
-      uint32_t func_index);
-
-  // Get the raw bytes of the function name of the function identified by the
-  // given index.
-  // Meant to be used for debugging or frame printing.
-  // Does not allocate, hence gc-safe.
-  Vector<const uint8_t> GetRawFunctionName(uint32_t func_index);
-
-  // Return the byte offset of the function identified by the given index.
-  // The offset will be relative to the start of the module bytes.
-  // Returns -1 if the function index is invalid.
-  int GetFunctionOffset(uint32_t func_index);
-
-  // Returns the function containing the given byte offset.
-  // Returns -1 if the byte offset is not contained in any function of this
-  // module.
-  int GetContainingFunction(uint32_t byte_offset);
-
-  // Translate from byte offset in the module to function number and byte offset
-  // within that function, encoded as line and column in the position info.
-  // Returns true if the position is valid inside this module, false otherwise.
-  bool GetPositionInfo(uint32_t position, Script::PositionInfo* info);
-
-  // Get the source position from a given function index and byte offset,
-  // for either asm.js or pure WASM modules.
-  static int GetSourcePosition(Handle<WasmCompiledModule> compiled_module,
-                               uint32_t func_index, uint32_t byte_offset,
-                               bool is_at_number_conversion);
-
-  // Compute the disassembly of a wasm function.
-  // Returns the disassembly string and a list of <byte_offset, line, column>
-  // entries, mapping wasm byte offsets to line and column in the disassembly.
-  // The list is guaranteed to be ordered by the byte_offset.
-  // Returns an empty string and empty vector if the function index is invalid.
-  debug::WasmDisassembly DisassembleFunction(int func_index);
-
-  // Extract a portion of the wire bytes as UTF-8 string.
-  // Returns a null handle if the respective bytes do not form a valid UTF-8
-  // string.
-  static MaybeHandle<String> ExtractUtf8StringFromModuleBytes(
-      Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
-      wasm::WireBytesRef ref);
-  static MaybeHandle<String> ExtractUtf8StringFromModuleBytes(
-      Isolate* isolate, Handle<SeqOneByteString> module_bytes,
-      wasm::WireBytesRef ref);
-
-  // Get a list of all possible breakpoints within a given range of this module.
-  bool GetPossibleBreakpoints(const debug::Location& start,
-                              const debug::Location& end,
-                              std::vector<debug::BreakLocation>* locations);
 
   // Set a breakpoint on the given byte position inside the given module.
   // This will affect all live and future instances of the module.
@@ -553,10 +551,6 @@ class WasmCompiledModule : public FixedArray {
   // this function returns false and does not set any breakpoint.
   static bool SetBreakPoint(Handle<WasmCompiledModule>, int* position,
                             Handle<Object> break_point_object);
-
-  // Return an empty handle if no breakpoint is hit at that location, or a
-  // FixedArray with all hit breakpoint objects.
-  MaybeHandle<FixedArray> CheckBreakPoints(int position);
 
   inline void ReplaceCodeTableForTesting(
       std::vector<wasm::WasmCode*>&& testing_table);
@@ -638,8 +632,8 @@ class WasmDebugInfo : public FixedArray {
   std::vector<std::pair<uint32_t, int>> GetInterpretedStack(
       Address frame_pointer);
 
-  std::unique_ptr<wasm::InterpretedFrame> GetInterpretedFrame(
-      Address frame_pointer, int frame_index);
+  wasm::WasmInterpreter::FramePtr GetInterpretedFrame(Address frame_pointer,
+                                                      int frame_index);
 
   // Unwind the interpreted stack belonging to the passed interpreter entry
   // frame.

@@ -42,7 +42,6 @@ Log::Log(Logger* logger, const char* file_name)
   if (FLAG_log_all) {
     FLAG_log_api = true;
     FLAG_log_code = true;
-    FLAG_log_gc = true;
     FLAG_log_suspect = true;
     FLAG_log_handles = true;
     FLAG_log_internal_timer_events = true;
@@ -174,7 +173,7 @@ void Log::MessageBuilder::AppendCharacter(char c) {
   if (c >= 32 && c <= 126) {
     if (c == ',') {
       // Escape commas (log field separator) directly.
-      os << "\x2C";
+      os << "\\x2C";
     } else {
       // Directly append any printable ascii character.
       os << c;

@@ -463,6 +463,9 @@ DEFINE_BOOL(turbo_store_elimination, true,
 DEFINE_BOOL(trace_store_elimination, false, "trace store elimination")
 DEFINE_BOOL(turbo_rewrite_far_jumps, true,
             "rewrite far to near jumps (ia32,x64)")
+DEFINE_BOOL(extra_masking, false, "Extra mask for memory accesses")
+DEFINE_BOOL(mask_array_index, false, "Mask array index with bound")
+DEFINE_IMPLICATION(extra_masking, mask_array_index)
 
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
@@ -892,6 +895,7 @@ DEFINE_BOOL(trace_prototype_users, false,
 DEFINE_BOOL(use_verbose_printer, true, "allows verbose printing")
 DEFINE_BOOL(trace_for_in_enumerate, false, "Trace for-in enumerate slow-paths")
 DEFINE_BOOL(trace_maps, false, "trace map creation")
+DEFINE_BOOL(trace_maps_details, true, "also log map details")
 DEFINE_IMPLICATION(trace_maps, log_code)
 
 // parser.cc
@@ -1062,7 +1066,6 @@ DEFINE_BOOL(trace_contexts, false, "trace contexts operations")
 
 // heap.cc
 DEFINE_BOOL(gc_verbose, false, "print stuff during garbage collection")
-DEFINE_BOOL(heap_stats, false, "report heap statistics before and after GC")
 DEFINE_BOOL(code_stats, false, "report code statistics after GC")
 DEFINE_BOOL(print_handles, false, "report handles after GC")
 DEFINE_BOOL(check_handle_count, false,
@@ -1115,8 +1118,6 @@ DEFINE_BOOL(log_all, false, "Log all events to the log file.")
 DEFINE_BOOL(log_api, false, "Log API events to the log file.")
 DEFINE_BOOL(log_code, false,
             "Log code events to the log file without profiling.")
-DEFINE_BOOL(log_gc, false,
-            "Log heap samples on garbage collection for the hp2ps tool.")
 DEFINE_BOOL(log_handles, false, "Log global handle events.")
 DEFINE_BOOL(log_suspect, false, "Log suspect operations.")
 DEFINE_BOOL(log_source_code, false, "Log source code.")

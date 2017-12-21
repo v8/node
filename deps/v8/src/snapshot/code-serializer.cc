@@ -82,7 +82,7 @@ void CodeSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
       case Code::REGEXP:              // No regexp literals initialized yet.
       case Code::NUMBER_OF_KINDS:     // Pseudo enum value.
       case Code::BYTECODE_HANDLER:    // No direct references to handlers.
-        CHECK(false);
+        break;                        // hit UNREACHABLE below.
       case Code::BUILTIN:
         SerializeBuiltinReference(code_object, how_to_code, where_to_point, 0);
         return;
@@ -251,8 +251,9 @@ std::unique_ptr<ScriptData> WasmCompiledModuleSerializer::SerializeWasmModule(
     Isolate* isolate, Handle<FixedArray> input) {
   Handle<WasmCompiledModule> compiled_module =
       Handle<WasmCompiledModule>::cast(input);
-  WasmCompiledModuleSerializer wasm_cs(isolate, 0, isolate->native_context(),
-                                       handle(compiled_module->module_bytes()));
+  WasmCompiledModuleSerializer wasm_cs(
+      isolate, 0, isolate->native_context(),
+      handle(compiled_module->shared()->module_bytes()));
   ScriptData* data = wasm_cs.Serialize(compiled_module);
   return std::unique_ptr<ScriptData>(data);
 }

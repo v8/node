@@ -491,10 +491,16 @@ MaybeHandle<Object> LoadGlobalIC::Load(Handle<Name> name) {
         return ReferenceError(name);
       }
 
-      if (FLAG_use_ic && LoadScriptContextFieldStub::Accepted(&lookup_result)) {
-        TRACE_HANDLER_STATS(isolate(), LoadIC_LoadScriptContextFieldStub);
-        LoadScriptContextFieldStub stub(isolate(), &lookup_result);
-        PatchCache(name, stub.GetCode());
+      if (FLAG_use_ic) {
+        LoadGlobalICNexus* nexus = casted_nexus<LoadGlobalICNexus>();
+        if (nexus->ConfigureLexicalVarMode(lookup_result.context_index,
+                                           lookup_result.slot_index)) {
+          TRACE_HANDLER_STATS(isolate(), LoadGlobalIC_LoadScriptContextField);
+        } else {
+          // Given combination of indices can't be encoded, so use slow stub.
+          TRACE_HANDLER_STATS(isolate(), LoadGlobalIC_SlowStub);
+          PatchCache(name, slow_stub());
+        }
         TRACE_IC("LoadGlobalIC", name);
       }
       return result;
@@ -669,7 +675,7 @@ void LoadIC::UpdateCaches(LookupIterator* lookup) {
     Handle<Smi> smi_handler = LoadHandler::LoadNonExistent(isolate());
     code = LoadHandler::LoadFullChain(isolate(), receiver_map(),
                                       isolate()->factory()->null_value(),
-                                      lookup->name(), smi_handler);
+                                      smi_handler);
   } else {
     if (IsLoadGlobalIC()) {
       if (lookup->TryLookupCachedProperty()) {
@@ -759,7 +765,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
         }
         TRACE_HANDLER_STATS(isolate(), LoadIC_LoadNonMaskingInterceptorDH);
         return LoadHandler::LoadFullChain(isolate(), map, holder_ref,
-                                          lookup->name(), smi_handler);
+                                          smi_handler);
       }
 
       if (receiver_is_holder) {
@@ -770,7 +776,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
 
       TRACE_HANDLER_STATS(isolate(), LoadIC_LoadInterceptorFromPrototypeDH);
       return LoadHandler::LoadFromPrototype(isolate(), map, holder,
-                                            lookup->name(), smi_handler);
+                                            smi_handler);
     }
 
     case LookupIterator::ACCESSOR: {
@@ -836,12 +842,10 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
               isolate()->factory()->NewWeakCell(context);
           Handle<WeakCell> data_cell = isolate()->factory()->NewWeakCell(
               call_optimization.api_call_info());
-          Handle<Tuple2> data =
-              isolate()->factory()->NewTuple2(context_cell, data_cell, TENURED);
 
           TRACE_HANDLER_STATS(isolate(), LoadIC_LoadApiGetterFromPrototypeDH);
           return LoadHandler::LoadFromPrototype(
-              isolate(), map, holder, lookup->name(), smi_handler, data);
+              isolate(), map, holder, smi_handler, data_cell, context_cell);
         }
 
         if (holder->HasFastProperties()) {
@@ -856,8 +860,8 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
           smi_handler = LoadHandler::LoadGlobal(isolate());
           Handle<WeakCell> cell =
               isolate()->factory()->NewWeakCell(lookup->GetPropertyCell());
-          return LoadHandler::LoadFromPrototype(
-              isolate(), map, holder, lookup->name(), smi_handler, cell);
+          return LoadHandler::LoadFromPrototype(isolate(), map, holder,
+                                                smi_handler, cell);
         } else {
           smi_handler = LoadHandler::LoadNormal(isolate());
 
@@ -867,7 +871,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
         }
 
         return LoadHandler::LoadFromPrototype(isolate(), map, holder,
-                                              lookup->name(), smi_handler);
+                                              smi_handler);
       }
 
       Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(accessors);
@@ -887,7 +891,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
       TRACE_HANDLER_STATS(isolate(),
                           LoadIC_LoadNativeDataPropertyFromPrototypeDH);
       return LoadHandler::LoadFromPrototype(isolate(), map, holder,
-                                            lookup->name(), smi_handler);
+                                            smi_handler);
     }
 
     case LookupIterator::DATA: {
@@ -901,8 +905,8 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
           smi_handler = LoadHandler::LoadGlobal(isolate());
           Handle<WeakCell> cell =
               isolate()->factory()->NewWeakCell(lookup->GetPropertyCell());
-          return LoadHandler::LoadFromPrototype(
-              isolate(), map, holder, lookup->name(), smi_handler, cell);
+          return LoadHandler::LoadFromPrototype(isolate(), map, holder,
+                                                smi_handler, cell);
         }
 
         smi_handler = LoadHandler::LoadNormal(isolate());
@@ -925,7 +929,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
         TRACE_HANDLER_STATS(isolate(), LoadIC_LoadConstantFromPrototypeDH);
       }
       return LoadHandler::LoadFromPrototype(isolate(), map, holder,
-                                            lookup->name(), smi_handler);
+                                            smi_handler);
     }
     case LookupIterator::INTEGER_INDEXED_EXOTIC:
       TRACE_HANDLER_STATS(isolate(), LoadIC_LoadIntegerIndexedExoticDH);
@@ -938,7 +942,7 @@ Handle<Object> LoadIC::ComputeHandler(LookupIterator* lookup) {
         return smi_handler;
       }
       return LoadHandler::LoadFromPrototype(isolate(), map, holder_proxy,
-                                            lookup->name(), smi_handler);
+                                            smi_handler);
     }
     case LookupIterator::ACCESS_CHECK:
     case LookupIterator::NOT_FOUND:
@@ -1317,10 +1321,17 @@ MaybeHandle<Object> StoreGlobalIC::Store(Handle<Name> name,
       return ReferenceError(name);
     }
 
-    if (FLAG_use_ic && StoreScriptContextFieldStub::Accepted(&lookup_result)) {
-      TRACE_HANDLER_STATS(isolate(), StoreIC_StoreScriptContextFieldStub);
-      StoreScriptContextFieldStub stub(isolate(), &lookup_result);
-      PatchCache(name, stub.GetCode());
+    if (FLAG_use_ic) {
+      StoreGlobalICNexus* nexus = casted_nexus<StoreGlobalICNexus>();
+      if (nexus->ConfigureLexicalVarMode(lookup_result.context_index,
+                                         lookup_result.slot_index)) {
+        TRACE_HANDLER_STATS(isolate(), StoreGlobalIC_StoreScriptContextField);
+      } else {
+        // Given combination of indices can't be encoded, so use slow stub.
+        TRACE_HANDLER_STATS(isolate(), StoreGlobalIC_SlowStub);
+        PatchCache(name, slow_stub());
+      }
+      TRACE_IC("StoreGlobalIC", name);
     }
 
     script_context->set(lookup_result.slot_index, *value);
@@ -1444,8 +1455,7 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
         Handle<WeakCell> cell =
             isolate()->factory()->NewWeakCell(lookup->transition_cell());
         Handle<Object> handler = StoreHandler::StoreThroughPrototype(
-            isolate(), receiver_map(), store_target, lookup->name(),
-            smi_handler, cell);
+            isolate(), receiver_map(), store_target, smi_handler, cell);
         return handler;
       }
       // Currently not handled by CompileStoreTransition.
@@ -1469,7 +1479,7 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
 
       Handle<WeakCell> cell = Map::WeakCellForMap(transition);
       Handle<Object> handler = StoreHandler::StoreThroughPrototype(
-          isolate(), receiver_map(), holder, lookup->name(), smi_handler, cell);
+          isolate(), receiver_map(), holder, smi_handler, cell);
       TransitionsAccessor(receiver_map())
           .UpdateHandler(*lookup->name(), *handler);
       return handler;
@@ -1523,8 +1533,8 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
         if (receiver.is_identical_to(holder)) return smi_handler;
         TRACE_HANDLER_STATS(isolate(),
                             StoreIC_StoreNativeDataPropertyOnPrototypeDH);
-        return StoreHandler::StoreThroughPrototype(
-            isolate(), receiver_map(), holder, lookup->name(), smi_handler);
+        return StoreHandler::StoreThroughPrototype(isolate(), receiver_map(),
+                                                   holder, smi_handler);
 
       } else if (accessors->IsAccessorPair()) {
         Handle<Object> setter(Handle<AccessorPair>::cast(accessors)->setter(),
@@ -1551,12 +1561,10 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
                 isolate()->factory()->NewWeakCell(context);
             Handle<WeakCell> data_cell = isolate()->factory()->NewWeakCell(
                 call_optimization.api_call_info());
-            Handle<Tuple2> data = isolate()->factory()->NewTuple2(
-                context_cell, data_cell, TENURED);
             TRACE_HANDLER_STATS(isolate(), StoreIC_StoreApiSetterOnPrototypeDH);
             return StoreHandler::StoreThroughPrototype(
-                isolate(), receiver_map(), holder, lookup->name(), smi_handler,
-                data);
+                isolate(), receiver_map(), holder, smi_handler, data_cell,
+                context_cell);
           }
           TRACE_GENERIC_IC("incompatible receiver");
           TRACE_HANDLER_STATS(isolate(), StoreIC_SlowStub);
@@ -1574,8 +1582,8 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
         if (receiver.is_identical_to(holder)) return smi_handler;
         TRACE_HANDLER_STATS(isolate(), StoreIC_StoreAccessorOnPrototypeDH);
 
-        return StoreHandler::StoreThroughPrototype(
-            isolate(), receiver_map(), holder, lookup->name(), smi_handler);
+        return StoreHandler::StoreThroughPrototype(isolate(), receiver_map(),
+                                                   holder, smi_handler);
       }
       TRACE_HANDLER_STATS(isolate(), StoreIC_SlowStub);
       return slow_stub();
@@ -1626,7 +1634,7 @@ Handle<Object> StoreIC::ComputeHandler(LookupIterator* lookup) {
           Handle<JSReceiver>::cast(lookup->GetReceiver());
       Handle<JSProxy> holder = lookup->GetHolder<JSProxy>();
       return StoreHandler::StoreProxy(isolate(), receiver_map(), holder,
-                                      receiver, lookup->name());
+                                      receiver);
     }
 
     case LookupIterator::INTEGER_INDEXED_EXOTIC:
@@ -2330,8 +2338,6 @@ RUNTIME_FUNCTION(Runtime_ElementsTransitionAndStoreIC_Miss) {
 
 RUNTIME_FUNCTION(Runtime_Unreachable) {
   UNREACHABLE();
-  CHECK(false);
-  return isolate->heap()->undefined_value();
 }
 
 

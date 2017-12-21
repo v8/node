@@ -1459,6 +1459,9 @@ void LoadHandler::LoadHandlerPrint(std::ostream& os) {  // NOLINT
   if (data_count >= 2) {
     os << "\n - data2: " << Brief(data2());
   }
+  if (data_count >= 3) {
+    os << "\n - data3: " << Brief(data3());
+  }
   os << "\n";
 }
 
@@ -1473,6 +1476,9 @@ void StoreHandler::StoreHandlerPrint(std::ostream& os) {  // NOLINT
   }
   if (data_count >= 2) {
     os << "\n - data2: " << Brief(data2());
+  }
+  if (data_count >= 3) {
+    os << "\n - data3: " << Brief(data3());
   }
   os << "\n";
 }
@@ -1599,7 +1605,12 @@ void Script::ScriptPrint(std::ostream& os) {  // NOLINT
   os << "\n - wrapper: " << Brief(wrapper());
   os << "\n - compilation type: " << compilation_type();
   os << "\n - line ends: " << Brief(line_ends());
-  os << "\n - eval from shared: " << Brief(eval_from_shared());
+  if (has_eval_from_shared()) {
+    os << "\n - eval from shared: " << Brief(eval_from_shared());
+  }
+  if (is_wrapped()) {
+    os << "\n - wrapped arguments: " << Brief(wrapped_arguments());
+  }
   os << "\n - eval from position: " << eval_from_position();
   os << "\n - shared function infos: " << Brief(shared_function_infos());
   os << "\n";

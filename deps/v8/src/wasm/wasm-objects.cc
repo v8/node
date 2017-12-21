@@ -47,7 +47,9 @@ class CompiledModulesIterator
                           Handle<WasmCompiledModule> start_module, bool at_end)
       : isolate_(isolate),
         start_module_(start_module),
-        current_(at_end ? Handle<WasmCompiledModule>::null() : start_module) {}
+        current_(
+            at_end ? Handle<WasmCompiledModule>::null()
+                   : Handle<WasmCompiledModule>::New(*start_module, isolate)) {}
 
   Handle<WasmCompiledModule> operator*() const {
     DCHECK(!current_.is_null());
@@ -66,7 +68,7 @@ class CompiledModulesIterator
     DCHECK(!current_.is_null());
     if (!is_backwards_) {
       if (current_->has_next_instance()) {
-        current_ = current_->next_instance();
+        *current_.location() = current_->next_instance();
         return;
       }
       // No more modules in next-links, now try the previous-links.
@@ -74,7 +76,7 @@ class CompiledModulesIterator
       current_ = start_module_;
     }
     if (current_->has_prev_instance()) {
-      current_ = current_->prev_instance();
+      *current_.location() = current_->prev_instance();
       return;
     }
     current_ = Handle<WasmCompiledModule>::null();
@@ -120,7 +122,7 @@ class CompiledModuleInstancesIterator
   bool NeedToAdvance() {
     return !it.current_.is_null() &&
            (!it.current_->has_weak_owning_instance() ||
-            it.current_->ptr_to_weak_owning_instance()->cleared());
+            it.current_->weak_owning_instance()->cleared());
   }
   CompiledModulesIterator it;
 };
@@ -133,14 +135,14 @@ iterate_compiled_module_instance_chain(
 }
 
 #ifdef DEBUG
-bool IsBreakablePosition(Handle<WasmCompiledModule> compiled_module,
-                         int func_index, int offset_in_func) {
+bool IsBreakablePosition(WasmSharedModuleData* shared, int func_index,
+                         int offset_in_func) {
   DisallowHeapAllocation no_gc;
   AccountingAllocator alloc;
   Zone tmp(&alloc, ZONE_NAME);
   wasm::BodyLocalDecls locals(&tmp);
-  const byte* module_start = compiled_module->module_bytes()->GetChars();
-  WasmFunction& func = compiled_module->module()->functions[func_index];
+  const byte* module_start = shared->module_bytes()->GetChars();
+  WasmFunction& func = shared->module()->functions[func_index];
   wasm::BytecodeIterator iterator(module_start + func.code.offset(),
                                   module_start + func.code.end_offset(),
                                   &locals);
@@ -172,7 +174,7 @@ Handle<WasmModuleObject> WasmModuleObject::New(
   module_object->set_compiled_module(*compiled_module);
   Handle<WeakCell> link_to_module =
       isolate->factory()->NewWeakCell(module_object);
-  compiled_module->set_weak_wasm_module(link_to_module);
+  compiled_module->set_weak_wasm_module(*link_to_module);
   return module_object;
 }
 
@@ -181,7 +183,7 @@ void WasmModuleObject::ValidateStateForTesting(
   DisallowHeapAllocation no_gc;
   WasmCompiledModule* compiled_module = module_obj->compiled_module();
   CHECK(compiled_module->has_weak_wasm_module());
-  CHECK_EQ(compiled_module->ptr_to_weak_wasm_module()->value(), *module_obj);
+  CHECK_EQ(compiled_module->weak_wasm_module()->value(), *module_obj);
   CHECK(!compiled_module->has_prev_instance());
   CHECK(!compiled_module->has_next_instance());
   CHECK(!compiled_module->has_weak_owning_instance());
@@ -293,23 +295,23 @@ void WasmTableObject::Grow(Isolate* isolate, uint32_t count) {
           WasmInstanceObject::cast(dispatch_tables->get(i));
       WasmCompiledModule* compiled_module = instance->compiled_module();
       GlobalHandleAddress old_function_table_addr =
-          WasmCompiledModule::GetTableValue(
-              compiled_module->ptr_to_function_tables(), table_index);
+          WasmCompiledModule::GetTableValue(compiled_module->function_tables(),
+                                            table_index);
       GlobalHandleAddress old_signature_table_addr =
-          WasmCompiledModule::GetTableValue(
-              compiled_module->ptr_to_signature_tables(), table_index);
+          WasmCompiledModule::GetTableValue(compiled_module->signature_tables(),
+                                            table_index);
       code_specialization.PatchTableSize(old_size, old_size + count);
       code_specialization.RelocatePointer(old_function_table_addr,
                                           new_function_table_addr);
       code_specialization.RelocatePointer(old_signature_table_addr,
                                           new_signature_table_addr);
       code_specialization.ApplyToWholeInstance(instance);
-      WasmCompiledModule::UpdateTableValue(
-          compiled_module->ptr_to_function_tables(), table_index,
-          new_function_table_addr);
-      WasmCompiledModule::UpdateTableValue(
-          compiled_module->ptr_to_signature_tables(), table_index,
-          new_signature_table_addr);
+      WasmCompiledModule::UpdateTableValue(compiled_module->function_tables(),
+                                           table_index,
+                                           new_function_table_addr);
+      WasmCompiledModule::UpdateTableValue(compiled_module->signature_tables(),
+                                           table_index,
+                                           new_signature_table_addr);
     }
   }
 }
@@ -371,26 +373,43 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
       old_buffer.is_null() ? use_trap_handler : old_buffer->has_guard_region();
   size_t new_size =
       static_cast<size_t>(old_pages + pages) * WasmModule::kPageSize;
-  if (enable_guard_regions && old_size != 0) {
+  if (new_size > FLAG_wasm_max_mem_pages * WasmModule::kPageSize ||
+      new_size > kMaxInt) {
+    return Handle<JSArrayBuffer>::null();
+  }
+  if ((enable_guard_regions || old_size == new_size) && old_size != 0) {
     DCHECK_NOT_NULL(old_buffer->backing_store());
-    if (new_size > FLAG_wasm_max_mem_pages * WasmModule::kPageSize ||
-        new_size > kMaxInt) {
-      return Handle<JSArrayBuffer>::null();
+    if (old_size != new_size) {
+      isolate->array_buffer_allocator()->SetProtection(
+          old_mem_start, new_size,
+          v8::ArrayBuffer::Allocator::Protection::kReadWrite);
+      reinterpret_cast<v8::Isolate*>(isolate)
+          ->AdjustAmountOfExternalAllocatedMemory(pages *
+                                                  WasmModule::kPageSize);
     }
-    isolate->array_buffer_allocator()->SetProtection(
-        old_mem_start, new_size,
-        v8::ArrayBuffer::Allocator::Protection::kReadWrite);
-    reinterpret_cast<v8::Isolate*>(isolate)
-        ->AdjustAmountOfExternalAllocatedMemory(pages * WasmModule::kPageSize);
-    Handle<Object> length_obj = isolate->factory()->NewNumberFromSize(new_size);
-    old_buffer->set_byte_length(*length_obj);
-    return old_buffer;
+    // NOTE: We must allocate a new array buffer here because the spec
+    // assumes that ArrayBuffers do not change size.
+    void* allocation_base = old_buffer->allocation_base();
+    size_t allocation_length = old_buffer->allocation_length();
+    void* backing_store = old_buffer->backing_store();
+    bool has_guard_region = old_buffer->has_guard_region();
+    bool is_external = old_buffer->is_external();
+    // Disconnect buffer early so GC won't free it.
+    i::wasm::ExternalizeMemoryBuffer(isolate, old_buffer, false);
+    Handle<JSArrayBuffer> new_buffer = wasm::SetupArrayBuffer(
+        isolate, allocation_base, allocation_length, backing_store, new_size,
+        is_external, has_guard_region);
+    return new_buffer;
   } else {
     Handle<JSArrayBuffer> new_buffer;
     new_buffer = wasm::NewArrayBuffer(isolate, new_size, enable_guard_regions);
     if (new_buffer.is_null() || old_size == 0) return new_buffer;
     Address new_mem_start = static_cast<Address>(new_buffer->backing_store());
     memcpy(new_mem_start, old_mem_start, old_size);
+    DCHECK(old_buffer.is_null() || !old_buffer->is_shared());
+    DCHECK(old_buffer.is_null() || !old_buffer->has_guard_region());
+    bool free_memory = pages != 0;
+    i::wasm::ExternalizeMemoryBuffer(isolate, old_buffer, free_memory);
     return new_buffer;
   }
 }
@@ -474,32 +493,6 @@ void WasmMemoryObject::RemoveInstance(Isolate* isolate,
   }
 }
 
-void WasmMemoryObject::SetupNewBufferWithSameBackingStore(
-    Isolate* isolate, Handle<WasmMemoryObject> memory_object, uint32_t size) {
-  // In case of Memory.Grow(0), or Memory.Grow(delta) with guard pages enabled,
-  // Setup a new buffer, update memory object, and instances associated with the
-  // memory object, as the current buffer will be detached.
-  Handle<JSArrayBuffer> old_buffer(memory_object->array_buffer());
-  Handle<JSArrayBuffer> new_buffer;
-
-  constexpr bool is_external = false;
-  new_buffer = wasm::SetupArrayBuffer(
-      isolate, old_buffer->allocation_base(), old_buffer->allocation_length(),
-      old_buffer->backing_store(), size * WasmModule::kPageSize, is_external,
-      old_buffer->has_guard_region());
-  if (memory_object->has_instances()) {
-    Handle<WeakFixedArray> instances(memory_object->instances(), isolate);
-    for (int i = 0; i < instances->Length(); i++) {
-      Object* elem = instances->Get(i);
-      if (!elem->IsWasmInstanceObject()) continue;
-      Handle<WasmInstanceObject> instance(WasmInstanceObject::cast(elem),
-                                          isolate);
-      SetInstanceMemory(isolate, instance, new_buffer);
-    }
-  }
-  memory_object->set_array_buffer(*new_buffer);
-}
-
 // static
 int32_t WasmMemoryObject::Grow(Isolate* isolate,
                                Handle<WasmMemoryObject> memory_object,
@@ -510,8 +503,6 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
   CHECK(old_buffer->byte_length()->ToUint32(&old_size));
   DCHECK_EQ(0, old_size % WasmModule::kPageSize);
   Handle<JSArrayBuffer> new_buffer;
-  // Return current size if grow by 0.
-  if (pages == 0) return old_size / WasmModule::kPageSize;
 
   uint32_t maximum_pages = FLAG_wasm_max_mem_pages;
   if (memory_object->has_maximum_pages()) {
@@ -539,10 +530,12 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
 }
 
 WasmModuleObject* WasmInstanceObject::module_object() {
-  return *compiled_module()->wasm_module();
+  return compiled_module()->wasm_module();
 }
 
-WasmModule* WasmInstanceObject::module() { return compiled_module()->module(); }
+WasmModule* WasmInstanceObject::module() {
+  return compiled_module()->shared()->module();
+}
 
 Handle<WasmDebugInfo> WasmInstanceObject::GetOrCreateDebugInfo(
     Handle<WasmInstanceObject> instance) {
@@ -595,12 +588,13 @@ uint32_t WasmInstanceObject::GetMaxMemoryPages() {
       if (maximum < FLAG_wasm_max_mem_pages) return maximum;
     }
   }
-  uint32_t compiled_maximum_pages = compiled_module()->module()->maximum_pages;
+  uint32_t module_maximum_pages =
+      compiled_module()->shared()->module()->maximum_pages;
   Isolate* isolate = GetIsolate();
-  assert(compiled_module()->module()->is_wasm());
+  DCHECK(compiled_module()->shared()->module()->is_wasm());
   isolate->counters()->wasm_wasm_max_mem_pages_count()->AddSample(
-      compiled_maximum_pages);
-  if (compiled_maximum_pages != 0) return compiled_maximum_pages;
+      module_maximum_pages);
+  if (module_maximum_pages != 0) return module_maximum_pages;
   return FLAG_wasm_max_mem_pages;
 }
 
@@ -610,7 +604,7 @@ WasmInstanceObject* WasmInstanceObject::GetOwningInstance(
   Object* weak_link = nullptr;
   DCHECK(code->kind() == wasm::WasmCode::kFunction ||
          code->kind() == wasm::WasmCode::kInterpreterStub);
-  weak_link = code->owner()->compiled_module()->ptr_to_weak_owning_instance();
+  weak_link = code->owner()->compiled_module()->weak_owning_instance();
   DCHECK(weak_link->IsWeakCell());
   WeakCell* cell = WeakCell::cast(weak_link);
   if (cell->cleared()) return nullptr;
@@ -636,21 +630,21 @@ void WasmInstanceObject::ValidateInstancesChainForTesting(
   CHECK_GE(instance_count, 0);
   DisallowHeapAllocation no_gc;
   WasmCompiledModule* compiled_module = module_obj->compiled_module();
-  CHECK_EQ(JSObject::cast(compiled_module->ptr_to_weak_wasm_module()->value()),
+  CHECK_EQ(JSObject::cast(compiled_module->weak_wasm_module()->value()),
            *module_obj);
   Object* prev = nullptr;
   int found_instances = compiled_module->has_weak_owning_instance() ? 1 : 0;
   WasmCompiledModule* current_instance = compiled_module;
   while (current_instance->has_next_instance()) {
     CHECK((prev == nullptr && !current_instance->has_prev_instance()) ||
-          current_instance->ptr_to_prev_instance() == prev);
-    CHECK_EQ(current_instance->ptr_to_weak_wasm_module()->value(), *module_obj);
-    CHECK(current_instance->ptr_to_weak_owning_instance()
+          current_instance->prev_instance() == prev);
+    CHECK_EQ(current_instance->weak_wasm_module()->value(), *module_obj);
+    CHECK(current_instance->weak_owning_instance()
               ->value()
               ->IsWasmInstanceObject());
     prev = current_instance;
     current_instance =
-        WasmCompiledModule::cast(current_instance->ptr_to_next_instance());
+        WasmCompiledModule::cast(current_instance->next_instance());
     ++found_instances;
     CHECK_LE(found_instances, instance_count);
   }
@@ -662,7 +656,7 @@ void WasmInstanceObject::ValidateOrphanedInstanceForTesting(
   DisallowHeapAllocation no_gc;
   WasmCompiledModule* compiled_module = instance->compiled_module();
   CHECK(compiled_module->has_weak_wasm_module());
-  CHECK(compiled_module->ptr_to_weak_wasm_module()->cleared());
+  CHECK(compiled_module->weak_wasm_module()->cleared());
 }
 
 bool WasmExportedFunction::IsWasmExportedFunction(Object* object) {
@@ -972,8 +966,6 @@ void WasmSharedModuleData::SetBreakpointsOnNewInstance(
     Handle<WasmSharedModuleData> shared, Handle<WasmInstanceObject> instance) {
   if (!shared->has_breakpoint_infos()) return;
   Isolate* isolate = shared->GetIsolate();
-  Handle<WasmCompiledModule> compiled_module(instance->compiled_module(),
-                                             isolate);
   Handle<WasmDebugInfo> debug_info =
       WasmInstanceObject::GetOrCreateDebugInfo(instance);
 
@@ -993,9 +985,9 @@ void WasmSharedModuleData::SetBreakpointsOnNewInstance(
     int position = breakpoint_info->source_position();
 
     // Find the function for this breakpoint, and set the breakpoint.
-    int func_index = compiled_module->GetContainingFunction(position);
+    int func_index = shared->GetContainingFunction(position);
     DCHECK_LE(0, func_index);
-    WasmFunction& func = compiled_module->module()->functions[func_index];
+    WasmFunction& func = shared->module()->functions[func_index];
     int offset_in_func = position - func.code.offset();
     WasmDebugInfo::SetBreakpoint(debug_info, func_index, offset_in_func);
   }
@@ -1010,6 +1002,236 @@ void WasmSharedModuleData::PrepareForLazyCompilation(
   shared->set_lazy_compilation_orchestrator(*orch_handle);
 }
 
+namespace {
+
+enum AsmJsOffsetTableEntryLayout {
+  kOTEByteOffset,
+  kOTECallPosition,
+  kOTENumberConvPosition,
+  kOTESize
+};
+
+Handle<ByteArray> GetDecodedAsmJsOffsetTable(
+    Handle<WasmSharedModuleData> shared, Isolate* isolate) {
+  DCHECK(shared->is_asm_js());
+  Handle<ByteArray> offset_table(shared->asm_js_offset_table(), isolate);
+
+  // The last byte in the asm_js_offset_tables ByteArray tells whether it is
+  // still encoded (0) or decoded (1).
+  enum AsmJsTableType : int { Encoded = 0, Decoded = 1 };
+  int table_type = offset_table->get(offset_table->length() - 1);
+  DCHECK(table_type == Encoded || table_type == Decoded);
+  if (table_type == Decoded) return offset_table;
+
+  wasm::AsmJsOffsetsResult asm_offsets;
+  {
+    DisallowHeapAllocation no_gc;
+    const byte* bytes_start = offset_table->GetDataStartAddress();
+    const byte* bytes_end = bytes_start + offset_table->length() - 1;
+    asm_offsets = wasm::DecodeAsmJsOffsets(bytes_start, bytes_end);
+  }
+  // Wasm bytes must be valid and must contain asm.js offset table.
+  DCHECK(asm_offsets.ok());
+  DCHECK_GE(kMaxInt, asm_offsets.val.size());
+  int num_functions = static_cast<int>(asm_offsets.val.size());
+  int num_imported_functions =
+      static_cast<int>(shared->module()->num_imported_functions);
+  DCHECK_EQ(shared->module()->functions.size(),
+            static_cast<size_t>(num_functions) + num_imported_functions);
+  int num_entries = 0;
+  for (int func = 0; func < num_functions; ++func) {
+    size_t new_size = asm_offsets.val[func].size();
+    DCHECK_LE(new_size, static_cast<size_t>(kMaxInt) - num_entries);
+    num_entries += static_cast<int>(new_size);
+  }
+  // One byte to encode that this is a decoded table.
+  DCHECK_GE(kMaxInt,
+            1 + static_cast<uint64_t>(num_entries) * kOTESize * kIntSize);
+  int total_size = 1 + num_entries * kOTESize * kIntSize;
+  Handle<ByteArray> decoded_table =
+      isolate->factory()->NewByteArray(total_size, TENURED);
+  decoded_table->set(total_size - 1, AsmJsTableType::Decoded);
+  shared->set_asm_js_offset_table(*decoded_table);
+
+  int idx = 0;
+  std::vector<WasmFunction>& wasm_funs = shared->module()->functions;
+  for (int func = 0; func < num_functions; ++func) {
+    std::vector<wasm::AsmJsOffsetEntry>& func_asm_offsets =
+        asm_offsets.val[func];
+    if (func_asm_offsets.empty()) continue;
+    int func_offset = wasm_funs[num_imported_functions + func].code.offset();
+    for (wasm::AsmJsOffsetEntry& e : func_asm_offsets) {
+      // Byte offsets must be strictly monotonously increasing:
+      DCHECK_IMPLIES(idx > 0, func_offset + e.byte_offset >
+                                  decoded_table->get_int(idx - kOTESize));
+      decoded_table->set_int(idx + kOTEByteOffset, func_offset + e.byte_offset);
+      decoded_table->set_int(idx + kOTECallPosition, e.source_position_call);
+      decoded_table->set_int(idx + kOTENumberConvPosition,
+                             e.source_position_number_conversion);
+      idx += kOTESize;
+    }
+  }
+  DCHECK_EQ(total_size, idx * kIntSize + 1);
+  return decoded_table;
+}
+
+}  // namespace
+
+int WasmSharedModuleData::GetSourcePosition(Handle<WasmSharedModuleData> shared,
+                                            uint32_t func_index,
+                                            uint32_t byte_offset,
+                                            bool is_at_number_conversion) {
+  Isolate* isolate = shared->GetIsolate();
+  const WasmModule* module = shared->module();
+
+  if (!module->is_asm_js()) {
+    // for non-asm.js modules, we just add the function's start offset
+    // to make a module-relative position.
+    return byte_offset + shared->GetFunctionOffset(func_index);
+  }
+
+  // asm.js modules have an additional offset table that must be searched.
+  Handle<ByteArray> offset_table = GetDecodedAsmJsOffsetTable(shared, isolate);
+
+  DCHECK_LT(func_index, module->functions.size());
+  uint32_t func_code_offset = module->functions[func_index].code.offset();
+  uint32_t total_offset = func_code_offset + byte_offset;
+
+  // Binary search for the total byte offset.
+  int left = 0;                                              // inclusive
+  int right = offset_table->length() / kIntSize / kOTESize;  // exclusive
+  DCHECK_LT(left, right);
+  while (right - left > 1) {
+    int mid = left + (right - left) / 2;
+    int mid_entry = offset_table->get_int(kOTESize * mid);
+    DCHECK_GE(kMaxInt, mid_entry);
+    if (static_cast<uint32_t>(mid_entry) <= total_offset) {
+      left = mid;
+    } else {
+      right = mid;
+    }
+  }
+  // There should be an entry for each position that could show up on the stack
+  // trace:
+  DCHECK_EQ(total_offset, offset_table->get_int(kOTESize * left));
+  int idx = is_at_number_conversion ? kOTENumberConvPosition : kOTECallPosition;
+  return offset_table->get_int(kOTESize * left + idx);
+}
+
+v8::debug::WasmDisassembly WasmSharedModuleData::DisassembleFunction(
+    int func_index) {
+  DisallowHeapAllocation no_gc;
+
+  if (func_index < 0 ||
+      static_cast<uint32_t>(func_index) >= module()->functions.size())
+    return {};
+
+  SeqOneByteString* module_bytes_str = module_bytes();
+  Vector<const byte> module_bytes(module_bytes_str->GetChars(),
+                                  module_bytes_str->length());
+
+  std::ostringstream disassembly_os;
+  v8::debug::WasmDisassembly::OffsetTable offset_table;
+
+  PrintWasmText(module(), module_bytes, static_cast<uint32_t>(func_index),
+                disassembly_os, &offset_table);
+
+  return {disassembly_os.str(), std::move(offset_table)};
+}
+
+bool WasmSharedModuleData::GetPossibleBreakpoints(
+    const v8::debug::Location& start, const v8::debug::Location& end,
+    std::vector<v8::debug::BreakLocation>* locations) {
+  DisallowHeapAllocation no_gc;
+
+  std::vector<WasmFunction>& functions = module()->functions;
+  if (start.GetLineNumber() < 0 || start.GetColumnNumber() < 0 ||
+      (!end.IsEmpty() &&
+       (end.GetLineNumber() < 0 || end.GetColumnNumber() < 0)))
+    return false;
+
+  // start_func_index, start_offset and end_func_index is inclusive.
+  // end_offset is exclusive.
+  // start_offset and end_offset are module-relative byte offsets.
+  uint32_t start_func_index = start.GetLineNumber();
+  if (start_func_index >= functions.size()) return false;
+  int start_func_len = functions[start_func_index].code.length();
+  if (start.GetColumnNumber() > start_func_len) return false;
+  uint32_t start_offset =
+      functions[start_func_index].code.offset() + start.GetColumnNumber();
+  uint32_t end_func_index;
+  uint32_t end_offset;
+  if (end.IsEmpty()) {
+    // Default: everything till the end of the Script.
+    end_func_index = static_cast<uint32_t>(functions.size() - 1);
+    end_offset = functions[end_func_index].code.end_offset();
+  } else {
+    // If end is specified: Use it and check for valid input.
+    end_func_index = static_cast<uint32_t>(end.GetLineNumber());
+
+    // Special case: Stop before the start of the next function. Change to: Stop
+    // at the end of the function before, such that we don't disassemble the
+    // next function also.
+    if (end.GetColumnNumber() == 0 && end_func_index > 0) {
+      --end_func_index;
+      end_offset = functions[end_func_index].code.end_offset();
+    } else {
+      if (end_func_index >= functions.size()) return false;
+      end_offset =
+          functions[end_func_index].code.offset() + end.GetColumnNumber();
+      if (end_offset > functions[end_func_index].code.end_offset())
+        return false;
+    }
+  }
+
+  AccountingAllocator alloc;
+  Zone tmp(&alloc, ZONE_NAME);
+  const byte* module_start = module_bytes()->GetChars();
+
+  for (uint32_t func_idx = start_func_index; func_idx <= end_func_index;
+       ++func_idx) {
+    WasmFunction& func = functions[func_idx];
+    if (func.code.length() == 0) continue;
+
+    wasm::BodyLocalDecls locals(&tmp);
+    wasm::BytecodeIterator iterator(module_start + func.code.offset(),
+                                    module_start + func.code.end_offset(),
+                                    &locals);
+    DCHECK_LT(0u, locals.encoded_size);
+    for (uint32_t offset : iterator.offsets()) {
+      uint32_t total_offset = func.code.offset() + offset;
+      if (total_offset >= end_offset) {
+        DCHECK_EQ(end_func_index, func_idx);
+        break;
+      }
+      if (total_offset < start_offset) continue;
+      locations->emplace_back(func_idx, offset, debug::kCommonBreakLocation);
+    }
+  }
+  return true;
+}
+
+MaybeHandle<FixedArray> WasmSharedModuleData::CheckBreakPoints(
+    Isolate* isolate, Handle<WasmSharedModuleData> shared, int position) {
+  if (!shared->has_breakpoint_infos()) return {};
+
+  Handle<FixedArray> breakpoint_infos(shared->breakpoint_infos(), isolate);
+  int insert_pos =
+      FindBreakpointInfoInsertPos(isolate, breakpoint_infos, position);
+  if (insert_pos >= breakpoint_infos->length()) return {};
+
+  Handle<Object> maybe_breakpoint_info(breakpoint_infos->get(insert_pos),
+                                       isolate);
+  if (maybe_breakpoint_info->IsUndefined(isolate)) return {};
+  Handle<BreakPointInfo> breakpoint_info =
+      Handle<BreakPointInfo>::cast(maybe_breakpoint_info);
+  if (breakpoint_info->source_position() != position) return {};
+
+  Handle<Object> breakpoint_objects(breakpoint_info->break_point_objects(),
+                                    isolate);
+  return isolate->debug()->GetHitBreakPointObjects(breakpoint_objects);
+}
+
 Handle<WasmCompiledModule> WasmCompiledModule::New(
     Isolate* isolate, WasmModule* module, Handle<FixedArray> code_table,
     Handle<FixedArray> export_wrappers,
@@ -1022,13 +1244,14 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
   // WasmCompiledModule::cast would fail since fields are not set yet.
   Handle<WasmCompiledModule> compiled_module(
       reinterpret_cast<WasmCompiledModule*>(*ret), isolate);
-  compiled_module->set_native_context(isolate->native_context());
+  Handle<WeakCell> weak_native_context =
+      isolate->factory()->NewWeakCell(isolate->native_context());
+  compiled_module->set_weak_native_context(*weak_native_context);
   compiled_module->set_use_trap_handler(use_trap_handler);
   if (!FLAG_wasm_jit_to_native) {
     compiled_module->InitId();
-    compiled_module->set_native_context(isolate->native_context());
-    compiled_module->set_code_table(code_table);
-    compiled_module->set_export_wrappers(export_wrappers);
+    compiled_module->set_code_table(*code_table);
+    compiled_module->set_export_wrappers(*export_wrappers);
     // TODO(mtrofin): we copy these because the order of finalization isn't
     // reliable, and we need these at Reset (which is called at
     // finalization). If the order were reliable, and top-down, we could instead
@@ -1051,14 +1274,14 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
       // assumption that we compile and then instantiate. It needs rework if we
       // do direct instantiation. The empty tables are used as a default when
       // resetting the compiled module.
-      compiled_module->set_signature_tables(st);
-      compiled_module->set_empty_signature_tables(st);
-      compiled_module->set_function_tables(ft);
-      compiled_module->set_empty_function_tables(ft);
+      compiled_module->set_signature_tables(*st);
+      compiled_module->set_empty_signature_tables(*st);
+      compiled_module->set_function_tables(*ft);
+      compiled_module->set_empty_function_tables(*ft);
     }
   } else {
     if (!export_wrappers.is_null()) {
-      compiled_module->set_export_wrappers(export_wrappers);
+      compiled_module->set_export_wrappers(*export_wrappers);
     }
     wasm::NativeModule* native_module = nullptr;
     {
@@ -1067,7 +1290,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
       native_module = native_module_ptr.release();
       Handle<Foreign> native_module_wrapper =
           Managed<wasm::NativeModule>::From(isolate, native_module);
-      compiled_module->set_native_module(native_module_wrapper);
+      compiled_module->set_native_module(*native_module_wrapper);
       Handle<WasmCompiledModule> weak_link =
           isolate->global_handles()->Create(*compiled_module);
       GlobalHandles::MakeWeak(Handle<Object>::cast(weak_link).location(),
@@ -1079,7 +1302,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
     // This is here just because it's easier for APIs that need to work with
     // either code_table or native_module. Otherwise we need to check if
     // has_code_table and pass undefined.
-    compiled_module->set_code_table(code_table);
+    compiled_module->set_code_table(*code_table);
 
     native_module->function_tables() = function_tables;
     native_module->signature_tables() = signature_tables;
@@ -1087,10 +1310,12 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
     native_module->empty_signature_tables() = signature_tables;
 
     int function_count = static_cast<int>(module->functions.size());
-    compiled_module->set_handler_table(
-        isolate->factory()->NewFixedArray(function_count, TENURED));
-    compiled_module->set_source_positions(
-        isolate->factory()->NewFixedArray(function_count, TENURED));
+    Handle<FixedArray> handler_table =
+        isolate->factory()->NewFixedArray(function_count, TENURED);
+    compiled_module->set_handler_table(*handler_table);
+    Handle<FixedArray> source_positions =
+        isolate->factory()->NewFixedArray(function_count, TENURED);
+    compiled_module->set_source_positions(*source_positions);
   }
   // TODO(mtrofin): copy the rest of the specialization parameters over.
   // We're currently OK because we're only using defaults.
@@ -1101,7 +1326,8 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
     Isolate* isolate, Handle<WasmCompiledModule> module) {
   Handle<FixedArray> code_copy;
   if (!FLAG_wasm_jit_to_native) {
-    code_copy = isolate->factory()->CopyFixedArray(module->code_table());
+    code_copy = isolate->factory()->CopyFixedArray(
+        handle(module->code_table(), isolate));
   }
   Handle<WasmCompiledModule> ret = Handle<WasmCompiledModule>::cast(
       isolate->factory()->CopyFixedArray(module));
@@ -1111,7 +1337,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
   ret->reset_weak_exported_functions();
   if (!FLAG_wasm_jit_to_native) {
     ret->InitId();
-    ret->set_code_table(code_copy);
+    ret->set_code_table(*code_copy);
     return ret;
   }
 
@@ -1121,7 +1347,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
   // which would shift the this pointer in set_native_module.
   Handle<Foreign> native_module_wrapper =
       Managed<wasm::NativeModule>::From(isolate, native_module.release());
-  ret->set_native_module(native_module_wrapper);
+  ret->set_native_module(*native_module_wrapper);
   Handle<WasmCompiledModule> weak_link =
       isolate->global_handles()->Create(*ret);
   GlobalHandles::MakeWeak(Handle<Object>::cast(weak_link).location(),
@@ -1133,7 +1359,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
   if (module->has_lazy_compile_data()) {
     Handle<FixedArray> lazy_comp_data = isolate->factory()->NewFixedArray(
         module->lazy_compile_data()->length(), TENURED);
-    ret->set_lazy_compile_data(lazy_comp_data);
+    ret->set_lazy_compile_data(*lazy_comp_data);
   }
   return ret;
 }
@@ -1161,7 +1387,7 @@ Address WasmCompiledModule::GetTableValue(FixedArray* table, int index) {
 
 wasm::NativeModule* WasmCompiledModule::GetNativeModule() const {
   if (!has_native_module()) return nullptr;
-  return Managed<wasm::NativeModule>::cast(ptr_to_native_module())->get();
+  return Managed<wasm::NativeModule>::cast(native_module())->get();
 }
 
 void WasmCompiledModule::ResetGCModel(Isolate* isolate,
@@ -1169,7 +1395,7 @@ void WasmCompiledModule::ResetGCModel(Isolate* isolate,
   DisallowHeapAllocation no_gc;
   TRACE("Resetting %d\n", compiled_module->instance_id());
   Object* undefined = *isolate->factory()->undefined_value();
-  Object* fct_obj = compiled_module->ptr_to_code_table();
+  Object* fct_obj = compiled_module->code_table();
   if (fct_obj != nullptr && fct_obj != undefined) {
     // Patch code to update memory references, global references, and function
     // table references.
@@ -1178,12 +1404,12 @@ void WasmCompiledModule::ResetGCModel(Isolate* isolate,
 
     // Reset function tables.
     if (compiled_module->has_function_tables()) {
-      FixedArray* function_tables = compiled_module->ptr_to_function_tables();
-      FixedArray* signature_tables = compiled_module->ptr_to_signature_tables();
+      FixedArray* function_tables = compiled_module->function_tables();
+      FixedArray* signature_tables = compiled_module->signature_tables();
       FixedArray* empty_function_tables =
-          compiled_module->ptr_to_empty_function_tables();
+          compiled_module->empty_function_tables();
       FixedArray* empty_signature_tables =
-          compiled_module->ptr_to_empty_signature_tables();
+          compiled_module->empty_signature_tables();
       if (function_tables != empty_function_tables) {
         DCHECK_EQ(function_tables->length(), empty_function_tables->length());
         for (int i = 0, e = function_tables->length(); i < e; ++i) {
@@ -1198,8 +1424,8 @@ void WasmCompiledModule::ResetGCModel(Isolate* isolate,
               sig_addr,
               WasmCompiledModule::GetTableValue(empty_signature_tables, i));
         }
-        compiled_module->set_ptr_to_function_tables(empty_function_tables);
-        compiled_module->set_ptr_to_signature_tables(empty_signature_tables);
+        compiled_module->set_function_tables(empty_function_tables);
+        compiled_module->set_signature_tables(empty_signature_tables);
       }
     }
 
@@ -1318,17 +1544,15 @@ void WasmCompiledModule::Reset(Isolate* isolate,
   }
 }
 
-MaybeHandle<String> WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-    Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
+MaybeHandle<String> WasmSharedModuleData::ExtractUtf8StringFromModuleBytes(
+    Isolate* isolate, Handle<WasmSharedModuleData> shared,
     wasm::WireBytesRef ref) {
   // TODO(wasm): cache strings from modules if it's a performance win.
-  Handle<SeqOneByteString> module_bytes(compiled_module->module_bytes(),
-                                        isolate);
-  return WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-      isolate, module_bytes, ref);
+  Handle<SeqOneByteString> module_bytes(shared->module_bytes(), isolate);
+  return ExtractUtf8StringFromModuleBytes(isolate, module_bytes, ref);
 }
 
-MaybeHandle<String> WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
+MaybeHandle<String> WasmSharedModuleData::ExtractUtf8StringFromModuleBytes(
     Isolate* isolate, Handle<SeqOneByteString> module_bytes,
     wasm::WireBytesRef ref) {
   DCHECK_GE(module_bytes->length(), ref.end_offset());
@@ -1393,7 +1617,7 @@ void WasmCompiledModule::PrintInstancesChain() {
       PrintF("->%d", current->instance_id());
     }
     if (!current->has_next_instance()) break;
-    current = current->ptr_to_next_instance();
+    current = current->next_instance();
   }
   PrintF("\n");
 #endif
@@ -1402,8 +1626,8 @@ void WasmCompiledModule::PrintInstancesChain() {
 void WasmCompiledModule::InsertInChain(WasmModuleObject* module) {
   DisallowHeapAllocation no_gc;
   WasmCompiledModule* original = module->compiled_module();
-  set_ptr_to_next_instance(original);
-  original->set_ptr_to_prev_instance(this);
+  set_next_instance(original);
+  original->set_prev_instance(this);
   set_weak_wasm_module(original->weak_wasm_module());
 }
 
@@ -1424,7 +1648,7 @@ void WasmCompiledModule::RemoveFromChain() {
 
 void WasmCompiledModule::OnWasmModuleDecodingComplete(
     Handle<WasmSharedModuleData> shared) {
-  set_shared(shared);
+  set_shared(*shared);
 }
 
 void WasmCompiledModule::ReinitializeAfterDeserialization(
@@ -1440,7 +1664,7 @@ void WasmCompiledModule::ReinitializeAfterDeserialization(
     WasmSharedModuleData::ReinitializeAfterDeserialization(isolate, shared);
   }
   size_t function_table_count =
-      compiled_module->module()->function_tables.size();
+      compiled_module->shared()->module()->function_tables.size();
   wasm::NativeModule* native_module = compiled_module->GetNativeModule();
 
   if (function_table_count > 0) {
@@ -1448,11 +1672,17 @@ void WasmCompiledModule::ReinitializeAfterDeserialization(
     // addresses. Produce new global handles for the empty tables, then reset,
     // which will relocate the code. We end up with a WasmCompiledModule as-if
     // it were just compiled.
+    Handle<FixedArray> function_tables;
+    Handle<FixedArray> signature_tables;
     if (!FLAG_wasm_jit_to_native) {
       DCHECK(compiled_module->has_function_tables());
       DCHECK(compiled_module->has_signature_tables());
       DCHECK(compiled_module->has_empty_signature_tables());
       DCHECK(compiled_module->has_empty_function_tables());
+      function_tables =
+          handle(compiled_module->empty_function_tables(), isolate);
+      signature_tables =
+          handle(compiled_module->empty_signature_tables(), isolate);
     } else {
       DCHECK_GT(native_module->function_tables().size(), 0);
       DCHECK_GT(native_module->signature_tables().size(), 0);
@@ -1469,10 +1699,10 @@ void WasmCompiledModule::ReinitializeAfterDeserialization(
       GlobalHandleAddress new_func_table = global_func_table_handle.address();
       GlobalHandleAddress new_sig_table = global_sig_table_handle.address();
       if (!FLAG_wasm_jit_to_native) {
-        SetTableValue(isolate, compiled_module->empty_function_tables(),
-                      static_cast<int>(i), new_func_table);
-        SetTableValue(isolate, compiled_module->empty_signature_tables(),
-                      static_cast<int>(i), new_sig_table);
+        SetTableValue(isolate, function_tables, static_cast<int>(i),
+                      new_func_table);
+        SetTableValue(isolate, signature_tables, static_cast<int>(i),
+                      new_sig_table);
       } else {
         native_module->empty_function_tables()[i] = new_func_table;
         native_module->empty_signature_tables()[i] = new_sig_table;
@@ -1490,34 +1720,31 @@ uint32_t WasmCompiledModule::default_mem_size() const {
   return initial_pages() * WasmModule::kPageSize;
 }
 
-MaybeHandle<String> WasmCompiledModule::GetModuleNameOrNull(
-    Isolate* isolate, Handle<WasmCompiledModule> compiled_module) {
-  WasmModule* module = compiled_module->module();
+MaybeHandle<String> WasmSharedModuleData::GetModuleNameOrNull(
+    Isolate* isolate, Handle<WasmSharedModuleData> shared) {
+  WasmModule* module = shared->module();
   if (!module->name.is_set()) return {};
-  return WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-      isolate, compiled_module, module->name);
+  return ExtractUtf8StringFromModuleBytes(isolate, shared, module->name);
 }
 
-MaybeHandle<String> WasmCompiledModule::GetFunctionNameOrNull(
-    Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
+MaybeHandle<String> WasmSharedModuleData::GetFunctionNameOrNull(
+    Isolate* isolate, Handle<WasmSharedModuleData> shared,
     uint32_t func_index) {
-  DCHECK_LT(func_index, compiled_module->module()->functions.size());
-  WasmFunction& function = compiled_module->module()->functions[func_index];
+  DCHECK_LT(func_index, shared->module()->functions.size());
+  WasmFunction& function = shared->module()->functions[func_index];
   if (!function.name.is_set()) return {};
-  return WasmCompiledModule::ExtractUtf8StringFromModuleBytes(
-      isolate, compiled_module, function.name);
+  return ExtractUtf8StringFromModuleBytes(isolate, shared, function.name);
 }
 
-Handle<String> WasmCompiledModule::GetFunctionName(
-    Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
+Handle<String> WasmSharedModuleData::GetFunctionName(
+    Isolate* isolate, Handle<WasmSharedModuleData> shared,
     uint32_t func_index) {
-  MaybeHandle<String> name =
-      GetFunctionNameOrNull(isolate, compiled_module, func_index);
+  MaybeHandle<String> name = GetFunctionNameOrNull(isolate, shared, func_index);
   if (!name.is_null()) return name.ToHandleChecked();
   return isolate->factory()->NewStringFromStaticChars("<WASM UNNAMED>");
 }
 
-Vector<const uint8_t> WasmCompiledModule::GetRawFunctionName(
+Vector<const uint8_t> WasmSharedModuleData::GetRawFunctionName(
     uint32_t func_index) {
   DCHECK_GT(module()->functions.size(), func_index);
   WasmFunction& function = module()->functions[func_index];
@@ -1528,14 +1755,14 @@ Vector<const uint8_t> WasmCompiledModule::GetRawFunctionName(
       function.name.length());
 }
 
-int WasmCompiledModule::GetFunctionOffset(uint32_t func_index) {
+int WasmSharedModuleData::GetFunctionOffset(uint32_t func_index) {
   std::vector<WasmFunction>& functions = module()->functions;
   if (static_cast<uint32_t>(func_index) >= functions.size()) return -1;
   DCHECK_GE(kMaxInt, functions[func_index].code.offset());
   return static_cast<int>(functions[func_index].code.offset());
 }
 
-int WasmCompiledModule::GetContainingFunction(uint32_t byte_offset) {
+int WasmSharedModuleData::GetContainingFunction(uint32_t byte_offset) {
   std::vector<WasmFunction>& functions = module()->functions;
 
   // Binary search for a function containing the given position.
@@ -1560,8 +1787,8 @@ int WasmCompiledModule::GetContainingFunction(uint32_t byte_offset) {
   return left;
 }
 
-bool WasmCompiledModule::GetPositionInfo(uint32_t position,
-                                         Script::PositionInfo* info) {
+bool WasmSharedModuleData::GetPositionInfo(uint32_t position,
+                                           Script::PositionInfo* info) {
   int func_index = GetContainingFunction(position);
   if (func_index < 0) return false;
 
@@ -1574,234 +1801,25 @@ bool WasmCompiledModule::GetPositionInfo(uint32_t position,
   return true;
 }
 
-namespace {
-
-enum AsmJsOffsetTableEntryLayout {
-  kOTEByteOffset,
-  kOTECallPosition,
-  kOTENumberConvPosition,
-  kOTESize
-};
-
-Handle<ByteArray> GetDecodedAsmJsOffsetTable(
-    Handle<WasmCompiledModule> compiled_module, Isolate* isolate) {
-  DCHECK(compiled_module->is_asm_js());
-  Handle<ByteArray> offset_table(
-      compiled_module->shared()->asm_js_offset_table(), isolate);
-
-  // The last byte in the asm_js_offset_tables ByteArray tells whether it is
-  // still encoded (0) or decoded (1).
-  enum AsmJsTableType : int { Encoded = 0, Decoded = 1 };
-  int table_type = offset_table->get(offset_table->length() - 1);
-  DCHECK(table_type == Encoded || table_type == Decoded);
-  if (table_type == Decoded) return offset_table;
-
-  wasm::AsmJsOffsetsResult asm_offsets;
-  {
-    DisallowHeapAllocation no_gc;
-    const byte* bytes_start = offset_table->GetDataStartAddress();
-    const byte* bytes_end = bytes_start + offset_table->length() - 1;
-    asm_offsets = wasm::DecodeAsmJsOffsets(bytes_start, bytes_end);
-  }
-  // Wasm bytes must be valid and must contain asm.js offset table.
-  DCHECK(asm_offsets.ok());
-  DCHECK_GE(kMaxInt, asm_offsets.val.size());
-  int num_functions = static_cast<int>(asm_offsets.val.size());
-  int num_imported_functions =
-      static_cast<int>(compiled_module->module()->num_imported_functions);
-  DCHECK_EQ(compiled_module->module()->functions.size(),
-            static_cast<size_t>(num_functions) + num_imported_functions);
-  int num_entries = 0;
-  for (int func = 0; func < num_functions; ++func) {
-    size_t new_size = asm_offsets.val[func].size();
-    DCHECK_LE(new_size, static_cast<size_t>(kMaxInt) - num_entries);
-    num_entries += static_cast<int>(new_size);
-  }
-  // One byte to encode that this is a decoded table.
-  DCHECK_GE(kMaxInt,
-            1 + static_cast<uint64_t>(num_entries) * kOTESize * kIntSize);
-  int total_size = 1 + num_entries * kOTESize * kIntSize;
-  Handle<ByteArray> decoded_table =
-      isolate->factory()->NewByteArray(total_size, TENURED);
-  decoded_table->set(total_size - 1, AsmJsTableType::Decoded);
-  compiled_module->shared()->set_asm_js_offset_table(*decoded_table);
-
-  int idx = 0;
-  std::vector<WasmFunction>& wasm_funs = compiled_module->module()->functions;
-  for (int func = 0; func < num_functions; ++func) {
-    std::vector<wasm::AsmJsOffsetEntry>& func_asm_offsets =
-        asm_offsets.val[func];
-    if (func_asm_offsets.empty()) continue;
-    int func_offset = wasm_funs[num_imported_functions + func].code.offset();
-    for (wasm::AsmJsOffsetEntry& e : func_asm_offsets) {
-      // Byte offsets must be strictly monotonously increasing:
-      DCHECK_IMPLIES(idx > 0, func_offset + e.byte_offset >
-                                  decoded_table->get_int(idx - kOTESize));
-      decoded_table->set_int(idx + kOTEByteOffset, func_offset + e.byte_offset);
-      decoded_table->set_int(idx + kOTECallPosition, e.source_position_call);
-      decoded_table->set_int(idx + kOTENumberConvPosition,
-                             e.source_position_number_conversion);
-      idx += kOTESize;
-    }
-  }
-  DCHECK_EQ(total_size, idx * kIntSize + 1);
-  return decoded_table;
-}
-
-}  // namespace
-
-int WasmCompiledModule::GetSourcePosition(
-    Handle<WasmCompiledModule> compiled_module, uint32_t func_index,
-    uint32_t byte_offset, bool is_at_number_conversion) {
-  Isolate* isolate = compiled_module->GetIsolate();
-  const WasmModule* module = compiled_module->module();
-
-  if (!module->is_asm_js()) {
-    // for non-asm.js modules, we just add the function's start offset
-    // to make a module-relative position.
-    return byte_offset + compiled_module->GetFunctionOffset(func_index);
-  }
-
-  // asm.js modules have an additional offset table that must be searched.
-  Handle<ByteArray> offset_table =
-      GetDecodedAsmJsOffsetTable(compiled_module, isolate);
-
-  DCHECK_LT(func_index, module->functions.size());
-  uint32_t func_code_offset = module->functions[func_index].code.offset();
-  uint32_t total_offset = func_code_offset + byte_offset;
-
-  // Binary search for the total byte offset.
-  int left = 0;                                              // inclusive
-  int right = offset_table->length() / kIntSize / kOTESize;  // exclusive
-  DCHECK_LT(left, right);
-  while (right - left > 1) {
-    int mid = left + (right - left) / 2;
-    int mid_entry = offset_table->get_int(kOTESize * mid);
-    DCHECK_GE(kMaxInt, mid_entry);
-    if (static_cast<uint32_t>(mid_entry) <= total_offset) {
-      left = mid;
-    } else {
-      right = mid;
-    }
-  }
-  // There should be an entry for each position that could show up on the stack
-  // trace:
-  DCHECK_EQ(total_offset, offset_table->get_int(kOTESize * left));
-  int idx = is_at_number_conversion ? kOTENumberConvPosition : kOTECallPosition;
-  return offset_table->get_int(kOTESize * left + idx);
-}
-
-v8::debug::WasmDisassembly WasmCompiledModule::DisassembleFunction(
-    int func_index) {
-  DisallowHeapAllocation no_gc;
-
-  if (func_index < 0 ||
-      static_cast<uint32_t>(func_index) >= module()->functions.size())
-    return {};
-
-  SeqOneByteString* module_bytes_str = module_bytes();
-  Vector<const byte> module_bytes(module_bytes_str->GetChars(),
-                                  module_bytes_str->length());
-
-  std::ostringstream disassembly_os;
-  v8::debug::WasmDisassembly::OffsetTable offset_table;
-
-  PrintWasmText(module(), module_bytes, static_cast<uint32_t>(func_index),
-                disassembly_os, &offset_table);
-
-  return {disassembly_os.str(), std::move(offset_table)};
-}
-
-bool WasmCompiledModule::GetPossibleBreakpoints(
-    const v8::debug::Location& start, const v8::debug::Location& end,
-    std::vector<v8::debug::BreakLocation>* locations) {
-  DisallowHeapAllocation no_gc;
-
-  std::vector<WasmFunction>& functions = module()->functions;
-  if (start.GetLineNumber() < 0 || start.GetColumnNumber() < 0 ||
-      (!end.IsEmpty() &&
-       (end.GetLineNumber() < 0 || end.GetColumnNumber() < 0)))
-    return false;
-
-  // start_func_index, start_offset and end_func_index is inclusive.
-  // end_offset is exclusive.
-  // start_offset and end_offset are module-relative byte offsets.
-  uint32_t start_func_index = start.GetLineNumber();
-  if (start_func_index >= functions.size()) return false;
-  int start_func_len = functions[start_func_index].code.length();
-  if (start.GetColumnNumber() > start_func_len) return false;
-  uint32_t start_offset =
-      functions[start_func_index].code.offset() + start.GetColumnNumber();
-  uint32_t end_func_index;
-  uint32_t end_offset;
-  if (end.IsEmpty()) {
-    // Default: everything till the end of the Script.
-    end_func_index = static_cast<uint32_t>(functions.size() - 1);
-    end_offset = functions[end_func_index].code.end_offset();
-  } else {
-    // If end is specified: Use it and check for valid input.
-    end_func_index = static_cast<uint32_t>(end.GetLineNumber());
-
-    // Special case: Stop before the start of the next function. Change to: Stop
-    // at the end of the function before, such that we don't disassemble the
-    // next function also.
-    if (end.GetColumnNumber() == 0 && end_func_index > 0) {
-      --end_func_index;
-      end_offset = functions[end_func_index].code.end_offset();
-    } else {
-      if (end_func_index >= functions.size()) return false;
-      end_offset =
-          functions[end_func_index].code.offset() + end.GetColumnNumber();
-      if (end_offset > functions[end_func_index].code.end_offset())
-        return false;
-    }
-  }
-
-  AccountingAllocator alloc;
-  Zone tmp(&alloc, ZONE_NAME);
-  const byte* module_start = module_bytes()->GetChars();
-
-  for (uint32_t func_idx = start_func_index; func_idx <= end_func_index;
-       ++func_idx) {
-    WasmFunction& func = functions[func_idx];
-    if (func.code.length() == 0) continue;
-
-    wasm::BodyLocalDecls locals(&tmp);
-    wasm::BytecodeIterator iterator(module_start + func.code.offset(),
-                                    module_start + func.code.end_offset(),
-                                    &locals);
-    DCHECK_LT(0u, locals.encoded_size);
-    for (uint32_t offset : iterator.offsets()) {
-      uint32_t total_offset = func.code.offset() + offset;
-      if (total_offset >= end_offset) {
-        DCHECK_EQ(end_func_index, func_idx);
-        break;
-      }
-      if (total_offset < start_offset) continue;
-      locations->emplace_back(func_idx, offset, debug::kCommonBreakLocation);
-    }
-  }
-  return true;
-}
 
 bool WasmCompiledModule::SetBreakPoint(
     Handle<WasmCompiledModule> compiled_module, int* position,
     Handle<Object> break_point_object) {
   Isolate* isolate = compiled_module->GetIsolate();
+  Handle<WasmSharedModuleData> shared(compiled_module->shared(), isolate);
 
   // Find the function for this breakpoint.
-  int func_index = compiled_module->GetContainingFunction(*position);
+  int func_index = shared->GetContainingFunction(*position);
   if (func_index < 0) return false;
-  WasmFunction& func = compiled_module->module()->functions[func_index];
+  WasmFunction& func = shared->module()->functions[func_index];
   int offset_in_func = *position - func.code.offset();
 
   // According to the current design, we should only be called with valid
   // breakable positions.
-  DCHECK(IsBreakablePosition(compiled_module, func_index, offset_in_func));
+  DCHECK(IsBreakablePosition(*shared, func_index, offset_in_func));
 
   // Insert new break point into break_positions of shared module data.
-  WasmSharedModuleData::AddBreakpoint(compiled_module->shared(), *position,
-                                      break_point_object);
+  WasmSharedModuleData::AddBreakpoint(shared, *position, break_point_object);
 
   // Iterate over all instances of this module and tell them to set this new
   // breakpoint.
@@ -1813,27 +1831,6 @@ bool WasmCompiledModule::SetBreakPoint(
   }
 
   return true;
-}
-
-MaybeHandle<FixedArray> WasmCompiledModule::CheckBreakPoints(int position) {
-  Isolate* isolate = GetIsolate();
-  if (!shared()->has_breakpoint_infos()) return {};
-
-  Handle<FixedArray> breakpoint_infos(shared()->breakpoint_infos(), isolate);
-  int insert_pos =
-      FindBreakpointInfoInsertPos(isolate, breakpoint_infos, position);
-  if (insert_pos >= breakpoint_infos->length()) return {};
-
-  Handle<Object> maybe_breakpoint_info(breakpoint_infos->get(insert_pos),
-                                       isolate);
-  if (maybe_breakpoint_info->IsUndefined(isolate)) return {};
-  Handle<BreakPointInfo> breakpoint_info =
-      Handle<BreakPointInfo>::cast(maybe_breakpoint_info);
-  if (breakpoint_info->source_position() != position) return {};
-
-  Handle<Object> breakpoint_objects(breakpoint_info->break_point_objects(),
-                                    isolate);
-  return isolate->debug()->GetHitBreakPointObjects(breakpoint_objects);
 }
 
 void AttachWasmFunctionInfo(Isolate* isolate, Handle<Code> code,

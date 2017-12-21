@@ -2497,57 +2497,27 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
   PREPARE_FOR_EXECUTION(v8_context, ScriptCompiler, CompileFunctionInContext,
                         Function);
   TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.ScriptCompiler");
-  i::Handle<i::String> source_string;
-  auto factory = isolate->factory();
-  if (arguments_count) {
-    source_string = factory->NewStringFromStaticChars("(function(");
-    for (size_t i = 0; i < arguments_count; ++i) {
-      IsIdentifierHelper helper;
-      if (!helper.Check(*Utils::OpenHandle(*arguments[i]))) {
-        return Local<Function>();
-      }
-      has_pending_exception =
-          !factory->NewConsString(source_string,
-                                  Utils::OpenHandle(*arguments[i]))
-               .ToHandle(&source_string);
-      RETURN_ON_FAILED_EXECUTION(Function);
-      if (i + 1 == arguments_count) continue;
-      has_pending_exception =
-          !factory->NewConsString(source_string,
-                                  factory->LookupSingleCharacterStringFromCode(
-                                      ',')).ToHandle(&source_string);
-      RETURN_ON_FAILED_EXECUTION(Function);
-    }
-    i::Handle<i::String> brackets;
-    brackets = factory->NewStringFromStaticChars("){");
-    has_pending_exception = !factory->NewConsString(source_string, brackets)
-                                 .ToHandle(&source_string);
-    RETURN_ON_FAILED_EXECUTION(Function);
-  } else {
-    source_string = factory->NewStringFromStaticChars("(function(){");
-  }
-
-  int scope_position = source_string->length();
-  has_pending_exception =
-      !factory->NewConsString(source_string,
-                              Utils::OpenHandle(*source->source_string))
-           .ToHandle(&source_string);
-  RETURN_ON_FAILED_EXECUTION(Function);
-  // Include \n in case the source contains a line end comment.
-  auto brackets = factory->NewStringFromStaticChars("\n})");
-  has_pending_exception =
-      !factory->NewConsString(source_string, brackets).ToHandle(&source_string);
-  RETURN_ON_FAILED_EXECUTION(Function);
 
   i::Handle<i::Context> context = Utils::OpenHandle(*v8_context);
   i::Handle<i::SharedFunctionInfo> outer_info(context->closure()->shared(),
                                               isolate);
+
+  i::Handle<i::JSFunction> fun;
+  i::Handle<i::FixedArray> arguments_list =
+      isolate->factory()->NewFixedArray(static_cast<int>(arguments_count));
+  for (int i = 0; i < static_cast<int>(arguments_count); i++) {
+    IsIdentifierHelper helper;
+    i::Handle<i::String> argument = Utils::OpenHandle(*arguments[i]);
+    if (!helper.Check(*argument)) return Local<Function>();
+    arguments_list->set(i, *argument);
+  }
+
   for (size_t i = 0; i < context_extension_count; ++i) {
     i::Handle<i::JSReceiver> extension =
         Utils::OpenHandle(*context_extensions[i]);
     if (!extension->IsJSObject()) return Local<Function>();
     i::Handle<i::JSFunction> closure(context->closure(), isolate);
-    context = factory->NewWithContext(
+    context = isolate->factory()->NewWithContext(
         closure, context,
         i::ScopeInfo::CreateForWithScope(
             isolate, context->IsNativeContext()
@@ -2557,8 +2527,6 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
   }
 
   i::Handle<i::Object> name_obj;
-  int eval_scope_position = 0;
-  int eval_position = i::kNoSourcePosition;
   int line_offset = 0;
   int column_offset = 0;
   if (!source->resource_name.IsEmpty()) {
@@ -2570,27 +2538,15 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
   if (!source->resource_column_offset.IsEmpty()) {
     column_offset = static_cast<int>(source->resource_column_offset->Value());
   }
-  i::Handle<i::JSFunction> fun;
-  has_pending_exception =
-      !i::Compiler::GetFunctionFromEval(
-           source_string, outer_info, context, i::LanguageMode::kSloppy,
-           i::ONLY_SINGLE_FUNCTION_LITERAL, i::kNoSourcePosition,
-           eval_scope_position, eval_position, line_offset,
-           column_offset - scope_position, name_obj, source->resource_options)
-           .ToHandle(&fun);
-  if (has_pending_exception) {
-    isolate->ReportPendingMessages();
-  }
-  RETURN_ON_FAILED_EXECUTION(Function);
 
-  i::Handle<i::Object> result;
+  i::Handle<i::JSFunction> result;
   has_pending_exception =
-      !i::Execution::Call(isolate, fun,
-                          Utils::OpenHandle(*v8_context->Global()), 0,
-                          nullptr).ToHandle(&result);
+      !i::Compiler::GetWrappedFunction(
+           Utils::OpenHandle(*source->source_string), arguments_list, context,
+           line_offset, column_offset, name_obj, source->resource_options)
+           .ToHandle(&result);
   RETURN_ON_FAILED_EXECUTION(Function);
-  RETURN_ESCAPED(
-      Utils::CallableToLocal(i::Handle<i::JSFunction>::cast(result)));
+  RETURN_ESCAPED(Utils::CallableToLocal(result));
 }
 
 
@@ -2625,6 +2581,9 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
   i::StreamedSource* source = v8_source->impl();
   i::Handle<i::String> str = Utils::OpenHandle(*(full_source_string));
   i::Handle<i::Script> script = isolate->factory()->NewScript(str);
+  if (isolate->NeedsSourcePositionsForProfiling()) {
+    i::Script::InitLineEnds(script);
+  }
   if (!origin.ResourceName().IsEmpty()) {
     script->set_name(*Utils::OpenHandle(*(origin.ResourceName())));
   }
@@ -7821,8 +7780,8 @@ Local<String> WasmCompiledModule::GetWasmWireBytes() {
   i::Handle<i::WasmModuleObject> obj =
       i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
-      i::handle(i::WasmCompiledModule::cast(obj->compiled_module()));
-  i::Handle<i::String> wire_bytes(compiled_part->module_bytes());
+      i::handle(obj->compiled_module());
+  i::Handle<i::String> wire_bytes(compiled_part->shared()->module_bytes());
   return Local<String>::Cast(Utils::ToLocal(wire_bytes));
 }
 
@@ -9747,9 +9706,9 @@ bool debug::Script::GetPossibleBreakpoints(
   CHECK(!start.IsEmpty());
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   if (script->type() == i::Script::TYPE_WASM) {
-    i::Handle<i::WasmCompiledModule> compiled_module(
-        i::WasmCompiledModule::cast(script->wasm_compiled_module()));
-    return compiled_module->GetPossibleBreakpoints(start, end, locations);
+    i::WasmSharedModuleData* shared =
+        i::WasmCompiledModule::cast(script->wasm_compiled_module())->shared();
+    return shared->GetPossibleBreakpoints(start, end, locations);
   }
 
   i::Script::InitLineEnds(script);
@@ -9798,6 +9757,7 @@ int debug::Script::GetSourceOffset(const debug::Location& location) const {
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   if (script->type() == i::Script::TYPE_WASM) {
     return i::WasmCompiledModule::cast(script->wasm_compiled_module())
+               ->shared()
                ->GetFunctionOffset(location.GetLineNumber()) +
            location.GetColumnNumber();
   }
@@ -9867,8 +9827,9 @@ int debug::WasmScript::NumFunctions() const {
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
   i::WasmCompiledModule* compiled_module =
       i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  DCHECK_GE(i::kMaxInt, compiled_module->module()->functions.size());
-  return static_cast<int>(compiled_module->module()->functions.size());
+  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  DCHECK_GE(i::kMaxInt, module->functions.size());
+  return static_cast<int>(module->functions.size());
 }
 
 int debug::WasmScript::NumImportedFunctions() const {
@@ -9877,8 +9838,9 @@ int debug::WasmScript::NumImportedFunctions() const {
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
   i::WasmCompiledModule* compiled_module =
       i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  DCHECK_GE(i::kMaxInt, compiled_module->module()->num_imported_functions);
-  return static_cast<int>(compiled_module->module()->num_imported_functions);
+  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  DCHECK_GE(i::kMaxInt, module->num_imported_functions);
+  return static_cast<int>(module->num_imported_functions);
 }
 
 std::pair<int, int> debug::WasmScript::GetFunctionRange(
@@ -9888,10 +9850,10 @@ std::pair<int, int> debug::WasmScript::GetFunctionRange(
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
   i::WasmCompiledModule* compiled_module =
       i::WasmCompiledModule::cast(script->wasm_compiled_module());
+  i::wasm::WasmModule* module = compiled_module->shared()->module();
   DCHECK_LE(0, function_index);
-  DCHECK_GT(compiled_module->module()->functions.size(), function_index);
-  i::wasm::WasmFunction& func =
-      compiled_module->module()->functions[function_index];
+  DCHECK_GT(module->functions.size(), function_index);
+  i::wasm::WasmFunction& func = module->functions[function_index];
   DCHECK_GE(i::kMaxInt, func.code.offset());
   DCHECK_GE(i::kMaxInt, func.code.end_offset());
   return std::make_pair(static_cast<int>(func.code.offset()),
@@ -9905,7 +9867,7 @@ debug::WasmDisassembly debug::WasmScript::DisassembleFunction(
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
   i::WasmCompiledModule* compiled_module =
       i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  return compiled_module->DisassembleFunction(function_index);
+  return compiled_module->shared()->DisassembleFunction(function_index);
 }
 
 debug::Location::Location(int line_number, int column_number)

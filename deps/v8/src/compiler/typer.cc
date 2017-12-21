@@ -421,7 +421,9 @@ Type* Typer::Visitor::BinaryNumberOpTyper(Type* lhs, Type* rhs, Typer* t,
   if (lhs_is_number || rhs_is_number) {
     return Type::Number();
   }
-  // TODO(neis): Check if one side is BigInt in order to return BigInt?
+  if (lhs->Is(Type::BigInt()) || rhs->Is(Type::BigInt())) {
+    return Type::BigInt();
+  }
   return Type::Numeric();
 }
 
@@ -1954,6 +1956,10 @@ Type* Typer::Visitor::TypeStringIndexOf(Node* node) { UNREACHABLE(); }
 
 Type* Typer::Visitor::TypeStringLength(Node* node) {
   return typer_->cache_.kStringLengthType;
+}
+
+Type* Typer::Visitor::TypeMaskIndexWithBound(Node* node) {
+  return Type::Union(Operand(node, 0), typer_->cache_.kSingletonZero, zone());
 }
 
 Type* Typer::Visitor::TypeCheckBounds(Node* node) {

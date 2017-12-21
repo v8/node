@@ -1237,26 +1237,26 @@ WASM_SUMMARY_DISPATCH(int, byte_offset)
 #undef WASM_SUMMARY_DISPATCH
 
 int FrameSummary::WasmFrameSummary::SourcePosition() const {
-  Handle<WasmCompiledModule> compiled_module(wasm_instance()->compiled_module(),
-                                             isolate());
-  return WasmCompiledModule::GetSourcePosition(compiled_module,
-                                               function_index(), byte_offset(),
-                                               at_to_number_conversion());
+  Handle<WasmSharedModuleData> shared(
+      wasm_instance()->compiled_module()->shared(), isolate());
+  return WasmSharedModuleData::GetSourcePosition(
+      shared, function_index(), byte_offset(), at_to_number_conversion());
 }
 
 Handle<Script> FrameSummary::WasmFrameSummary::script() const {
-  return handle(wasm_instance()->compiled_module()->script());
+  return handle(wasm_instance()->compiled_module()->shared()->script());
 }
 
 Handle<String> FrameSummary::WasmFrameSummary::FunctionName() const {
-  Handle<WasmCompiledModule> compiled_module(
-      wasm_instance()->compiled_module());
-  return WasmCompiledModule::GetFunctionName(compiled_module->GetIsolate(),
-                                             compiled_module, function_index());
+  Handle<WasmSharedModuleData> shared(
+      wasm_instance()->compiled_module()->shared(), isolate());
+  return WasmSharedModuleData::GetFunctionName(isolate(), shared,
+                                               function_index());
 }
 
 Handle<Context> FrameSummary::WasmFrameSummary::native_context() const {
-  return wasm_instance()->compiled_module()->native_context();
+  return handle(wasm_instance()->compiled_module()->native_context(),
+                isolate());
 }
 
 FrameSummary::WasmCompiledFrameSummary::WasmCompiledFrameSummary(
@@ -1702,10 +1702,9 @@ void WasmCompiledFrame::Print(StringStream* accumulator, PrintMode mode,
                                         .start()
                                   : LookupCode()->instruction_start();
   int pc = static_cast<int>(this->pc() - instruction_start);
-  Object* instance = this->wasm_instance();
+  WasmSharedModuleData* shared = wasm_instance()->compiled_module()->shared();
   Vector<const uint8_t> raw_func_name =
-      WasmInstanceObject::cast(instance)->compiled_module()->GetRawFunctionName(
-          this->function_index());
+      shared->GetRawFunctionName(this->function_index());
   const int kMaxPrintedFunctionName = 64;
   char func_name[kMaxPrintedFunctionName + 1];
   int func_name_len = std::min(kMaxPrintedFunctionName, raw_func_name.length());
@@ -1744,7 +1743,7 @@ uint32_t WasmCompiledFrame::function_index() const {
 }
 
 Script* WasmCompiledFrame::script() const {
-  return wasm_instance()->compiled_module()->script();
+  return wasm_instance()->compiled_module()->shared()->script();
 }
 
 int WasmCompiledFrame::position() const {
@@ -1816,8 +1815,7 @@ int WasmCompiledFrame::LookupExceptionHandlerInTable(int* stack_slots) {
       isolate()->wasm_engine()->code_manager()->LookupCode(pc());
   if (!code->IsAnonymous()) {
     Object* table_entry =
-        code->owner()->compiled_module()->ptr_to_handler_table()->get(
-            code->index());
+        code->owner()->compiled_module()->handler_table()->get(code->index());
     if (table_entry->IsHandlerTable()) {
       HandlerTable* table = HandlerTable::cast(table_entry);
       int pc_offset = static_cast<int>(pc() - code->instructions().start());
@@ -1875,7 +1873,7 @@ WasmInstanceObject* WasmInterpreterEntryFrame::wasm_instance() const {
 }
 
 Script* WasmInterpreterEntryFrame::script() const {
-  return wasm_instance()->compiled_module()->script();
+  return wasm_instance()->compiled_module()->shared()->script();
 }
 
 int WasmInterpreterEntryFrame::position() const {
@@ -1883,7 +1881,7 @@ int WasmInterpreterEntryFrame::position() const {
 }
 
 Object* WasmInterpreterEntryFrame::context() const {
-  return wasm_instance()->compiled_module()->ptr_to_native_context();
+  return wasm_instance()->compiled_module()->native_context();
 }
 
 Address WasmInterpreterEntryFrame::GetCallerStackPointer() const {

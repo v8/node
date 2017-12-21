@@ -37,6 +37,7 @@ import tarfile
 from testrunner.local import statusfile
 from testrunner.local import testsuite
 from testrunner.local import utils
+from testrunner.objects import outproc
 from testrunner.objects import testcase
 
 # TODO(littledan): move the flag mapping into the status file
@@ -104,8 +105,7 @@ FAST_VARIANTS = {
 
 class VariantGenerator(testsuite.VariantGenerator):
   def GetFlagSets(self, test, variant):
-    outcomes = test.suite.GetStatusFileOutcomes(test.name, test.variant)
-    if outcomes and statusfile.OnlyFastVariants(outcomes):
+    if test.only_fast_variants:
       variant_flags = FAST_VARIANTS
     else:
       variant_flags = ALL_VARIANTS
@@ -190,34 +190,6 @@ class TestSuite(testsuite.TestSuite):
   def _test_class(self):
     return TestCase
 
-  def IsFailureOutput(self, test, output):
-    test_record = test.test_record
-    if output.exit_code != 0:
-      return True
-    if ("negative" in test_record and
-        "type" in test_record["negative"] and
-        self._ParseException(output.stdout, test) !=
-            test_record["negative"]["type"]):
-        return True
-    return "FAILED!" in output.stdout
-
-  def _ParseException(self, string, test):
-    # somefile:somelinenumber: someerror[: sometext]
-    # somefile might include an optional drive letter on windows e.g. "e:".
-    match = re.search(
-        '^(?:\w:)?[^:]*:[0-9]+: ([^: ]+?)($|: )', string, re.MULTILINE)
-    if match:
-      return match.group(1).strip()
-    else:
-      print "Error parsing exception for %s" % test
-      return None
-
-  def GetExpectedOutcomes(self, test):
-    outcomes = self.GetStatusFileOutcomes(test.name, test.variant)
-    if (statusfile.FAIL_SLOPPY in outcomes and not test.uses_strict()):
-      return [statusfile.FAIL]
-    return super(TestSuite, self).GetExpectedOutcomes(test)
-
   def _VariantGeneratorFactory(self):
     return VariantGenerator
 
@@ -226,17 +198,8 @@ class TestCase(testcase.TestCase):
   def __init__(self, *args, **kwargs):
     super(TestCase, self).__init__(*args, **kwargs)
 
-    # precomputed
-    self.test_record = None
-
-  def precompute(self):
     source = self.get_source()
     self.test_record = self.suite.parse_test_record(source, self.path)
-
-  def _copy(self):
-    copy = super(TestCase, self)._copy()
-    copy.test_record = self.test_record
-    return copy
 
   def _get_files_params(self, ctx):
     return (
@@ -275,8 +238,44 @@ class TestCase(testcase.TestCase):
       return path
     return os.path.join(self.suite.testroot, filename)
 
-  def uses_strict(self):
-    return '--use-strict' in self.variant_flags
+  def get_output_proc(self):
+    expected_exception = (
+        self.test_record
+          .get('negative', {})
+          .get('type', None)
+    )
+    if expected_exception is None:
+      return OutProc.NO_EXCEPTION
+    return OutProc(expected_exception)
+
+
+class OutProc(outproc.OutProc):
+  def __init__(self, expected_exception=None):
+    self._expected_exception = expected_exception
+
+  def _is_failure_output(self, output):
+    if output.exit_code != 0:
+      return True
+    if (self._expected_exception and
+        self._expected_exception != self._parse_exception(output.stdout)):
+      return True
+    return 'FAILED!' in output.stdout
+
+  def _parse_exception(self, string):
+    # somefile:somelinenumber: someerror[: sometext]
+    # somefile might include an optional drive letter on windows e.g. "e:".
+    match = re.search(
+        '^(?:\w:)?[^:]*:[0-9]+: ([^: ]+?)($|: )', string, re.MULTILINE)
+    if match:
+      return match.group(1).strip()
+    else:
+      return None
+
+  def _is_negative(self):
+    return False
+
+
+OutProc.NO_EXCEPTION = OutProc()
 
 
 def GetSuite(name, root):

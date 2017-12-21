@@ -383,6 +383,11 @@ class ParserBase {
     void AddProperty() { expected_property_count_++; }
     int expected_property_count() { return expected_property_count_; }
 
+    void DisableOptimization(BailoutReason reason) {
+      dont_optimize_reason_ = reason;
+    }
+    BailoutReason dont_optimize_reason() { return dont_optimize_reason_; }
+
     FunctionKind kind() const { return scope()->function_kind(); }
     FunctionState* outer() const { return outer_function_state_; }
 
@@ -462,6 +467,9 @@ class ParserBase {
     ZoneList<RewritableExpressionT> non_patterns_to_rewrite_;
 
     ZoneList<typename ExpressionClassifier::Error> reported_errors_;
+
+    // A reason, if any, why this function should not be optimized.
+    BailoutReason dont_optimize_reason_;
 
     // Record whether the next (=== immediately following) function literal is
     // preceded by a parenthesis / exclamation mark. Also record the previous
@@ -1540,6 +1548,7 @@ ParserBase<Impl>::FunctionState::FunctionState(
       destructuring_assignments_to_rewrite_(16, scope->zone()),
       non_patterns_to_rewrite_(0, scope->zone()),
       reported_errors_(16, scope->zone()),
+      dont_optimize_reason_(kNoReason),
       next_function_is_likely_called_(false),
       previous_function_was_likely_called_(false),
       contains_function_or_eval_(false) {
@@ -2334,7 +2343,7 @@ ParserBase<Impl>::ParseClassPropertyDefinition(
           name, scanner()->location(), kSkipFunctionNameCheck, kind,
           FLAG_harmony_function_tostring ? name_token_position
                                          : kNoSourcePosition,
-          FunctionLiteral::kAccessorOrMethod, language_mode(),
+          FunctionLiteral::kAccessorOrMethod, language_mode(), nullptr,
           CHECK_OK_CUSTOM(NullLiteralProperty));
 
       *property_kind = ClassLiteralProperty::METHOD;
@@ -2366,7 +2375,7 @@ ParserBase<Impl>::ParseClassPropertyDefinition(
           name, scanner()->location(), kSkipFunctionNameCheck, kind,
           FLAG_harmony_function_tostring ? name_token_position
                                          : kNoSourcePosition,
-          FunctionLiteral::kAccessorOrMethod, language_mode(),
+          FunctionLiteral::kAccessorOrMethod, language_mode(), nullptr,
           CHECK_OK_CUSTOM(NullLiteralProperty));
 
       *property_kind =
@@ -2567,7 +2576,7 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       ExpressionT value = impl()->ParseFunctionLiteral(
           name, scanner()->location(), kSkipFunctionNameCheck, kind,
           FLAG_harmony_function_tostring ? next_beg_pos : kNoSourcePosition,
-          FunctionLiteral::kAccessorOrMethod, language_mode(),
+          FunctionLiteral::kAccessorOrMethod, language_mode(), nullptr,
           CHECK_OK_CUSTOM(NullLiteralProperty));
 
       ObjectLiteralPropertyT result = factory()->NewObjectLiteralProperty(
@@ -2599,7 +2608,7 @@ ParserBase<Impl>::ParseObjectPropertyDefinition(ObjectLiteralChecker* checker,
       FunctionLiteralT value = impl()->ParseFunctionLiteral(
           name, scanner()->location(), kSkipFunctionNameCheck, kind,
           FLAG_harmony_function_tostring ? next_beg_pos : kNoSourcePosition,
-          FunctionLiteral::kAccessorOrMethod, language_mode(),
+          FunctionLiteral::kAccessorOrMethod, language_mode(), nullptr,
           CHECK_OK_CUSTOM(NullLiteralProperty));
 
       ObjectLiteralPropertyT result = factory()->NewObjectLiteralProperty(
@@ -2683,8 +2692,8 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseObjectLiteral(
                                            MessageTemplate::kTooManyArguments);
   }
 
-  return factory()->NewObjectLiteral(
-      properties, number_of_boilerplate_properties, pos, has_rest_property);
+  return impl()->InitializeObjectLiteral(factory()->NewObjectLiteral(
+      properties, number_of_boilerplate_properties, pos, has_rest_property));
 }
 
 template <typename Impl>
@@ -3505,7 +3514,7 @@ typename ParserBase<Impl>::ExpressionT ParserBase<Impl>::ParseMemberExpression(
         is_strict_reserved_name ? kFunctionNameIsStrictReserved
                                 : kFunctionNameValidityUnknown,
         function_kind, function_token_position, function_type, language_mode(),
-        CHECK_OK);
+        nullptr, CHECK_OK);
   } else if (peek() == Token::SUPER) {
     const bool is_new = false;
     result = ParseSuperExpression(is_new, CHECK_OK);
@@ -3993,7 +4002,7 @@ ParserBase<Impl>::ParseHoistableDeclaration(
 
   FunctionLiteralT function = impl()->ParseFunctionLiteral(
       name, scanner()->location(), name_validity, kind, pos,
-      FunctionLiteral::kDeclaration, language_mode(),
+      FunctionLiteral::kDeclaration, language_mode(), nullptr,
       CHECK_OK_CUSTOM(NullStatement));
 
   // In ES6, a function behaves as a lexical binding, except in
@@ -4064,6 +4073,8 @@ typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseClassDeclaration(
 template <typename Impl>
 typename ParserBase<Impl>::StatementT ParserBase<Impl>::ParseNativeDeclaration(
     bool* ok) {
+  function_state_->DisableOptimization(kNativeFunctionLiteral);
+
   int pos = peek_position();
   Expect(Token::FUNCTION, CHECK_OK_CUSTOM(NullStatement));
   // Allow "eval" or "arguments" for backward compatibility.
@@ -4118,6 +4129,11 @@ void ParserBase<Impl>::ParseFunctionBody(
     body = inner_block->statements();
   }
 
+  // If we are parsing the source as if it is wrapped in a function, the source
+  // ends without a closing brace.
+  Token::Value closing_token =
+      function_type == FunctionLiteral::kWrapped ? Token::EOS : Token::RBRACE;
+
   {
     BlockState block_state(&scope_, inner_scope);
 
@@ -4130,7 +4146,7 @@ void ParserBase<Impl>::ParseFunctionBody(
     } else if (IsAsyncFunction(kind)) {
       ParseAsyncFunctionBody(inner_scope, body, CHECK_OK_VOID);
     } else {
-      ParseStatementList(body, Token::RBRACE, CHECK_OK_VOID);
+      ParseStatementList(body, closing_token, CHECK_OK_VOID);
     }
 
     if (IsDerivedConstructor(kind)) {
@@ -4140,7 +4156,7 @@ void ParserBase<Impl>::ParseFunctionBody(
     }
   }
 
-  Expect(Token::RBRACE, CHECK_OK_VOID);
+  Expect(closing_token, CHECK_OK_VOID);
   scope()->set_end_position(scanner()->location().end_pos);
 
   if (!parameters.is_simple) {
@@ -4559,7 +4575,7 @@ ParserBase<Impl>::ParseAsyncFunctionLiteral(bool* ok) {
       name, scanner()->location(),
       is_strict_reserved ? kFunctionNameIsStrictReserved
                          : kFunctionNameValidityUnknown,
-      kind, pos, type, language_mode(), CHECK_OK);
+      kind, pos, type, language_mode(), nullptr, CHECK_OK);
 }
 
 template <typename Impl>

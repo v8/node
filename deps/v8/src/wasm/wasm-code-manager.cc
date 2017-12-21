@@ -180,14 +180,18 @@ void WasmCode::ResetTrapHandlerIndex() { trap_handler_index_ = -1; }
 // Disassembler::Decode.
 void WasmCode::Disassemble(Isolate* isolate, const char* name,
                            std::ostream& os) const {
-  os << name << std::endl;
+  if (name) os << name << std::endl;
   Disassembler::Decode(isolate, &os, instructions().start(),
                        instructions().end(), nullptr);
 }
 
 void WasmCode::Print(Isolate* isolate) const {
   OFStream os(stdout);
-  Disassemble(isolate, "", os);
+  if (index_.IsJust()) {
+    os << "index: " << index_.FromJust() << "\n";
+  }
+  os << "kind: " << GetWasmCodeKindAsString(kind_) << "\n";
+  Disassemble(isolate, nullptr, os);
 }
 
 const char* GetWasmCodeKindAsString(WasmCode::Kind kind) {
@@ -246,12 +250,16 @@ void NativeModule::ResizeCodeTableForTest(size_t last_index) {
     code_table_.resize(new_size);
     int grow_by = static_cast<int>(new_size) -
                   compiled_module()->source_positions()->length();
-    compiled_module()->set_source_positions(
-        isolate->factory()->CopyFixedArrayAndGrow(
-            compiled_module()->source_positions(), grow_by, TENURED));
-    compiled_module()->set_handler_table(
-        isolate->factory()->CopyFixedArrayAndGrow(
-            compiled_module()->handler_table(), grow_by, TENURED));
+    Handle<FixedArray> source_positions(compiled_module()->source_positions(),
+                                        isolate);
+    source_positions = isolate->factory()->CopyFixedArrayAndGrow(
+        source_positions, grow_by, TENURED);
+    compiled_module()->set_source_positions(*source_positions);
+    Handle<FixedArray> handler_table(compiled_module()->handler_table(),
+                                     isolate);
+    handler_table = isolate->factory()->CopyFixedArrayAndGrow(handler_table,
+                                                              grow_by, TENURED);
+    compiled_module()->set_handler_table(*handler_table);
   }
 }
 
@@ -301,10 +309,10 @@ WasmCode* NativeModule::AddCodeCopy(Handle<Code> code, WasmCode::Kind kind,
   WasmCode* ret = AddAnonymousCode(code, kind);
   SetCodeTable(index, ret);
   ret->index_ = Just(index);
-  compiled_module()->ptr_to_source_positions()->set(
-      static_cast<int>(index), code->source_position_table());
-  compiled_module()->ptr_to_handler_table()->set(static_cast<int>(index),
-                                                 code->handler_table());
+  compiled_module()->source_positions()->set(static_cast<int>(index),
+                                             code->source_position_table());
+  compiled_module()->handler_table()->set(static_cast<int>(index),
+                                          code->handler_table());
   return ret;
 }
 

@@ -132,13 +132,14 @@ Handle<JSFunction> TestingModuleBuilder::WrapCode(uint32_t index) {
   // Add weak reference to exported functions.
   Handle<WasmCompiledModule> compiled_module(
       instance_object()->compiled_module(), isolate_);
-  Handle<FixedArray> old_arr = compiled_module->weak_exported_functions();
+  Handle<FixedArray> old_arr(compiled_module->weak_exported_functions(),
+                             isolate_);
   Handle<FixedArray> new_arr =
       isolate_->factory()->NewFixedArray(old_arr->length() + 1);
   old_arr->CopyTo(0, *new_arr, 0, old_arr->length());
   Handle<WeakCell> weak_fn = isolate_->factory()->NewWeakCell(ret);
   new_arr->set(old_arr->length(), *weak_fn);
-  compiled_module->set_weak_exported_functions(new_arr);
+  compiled_module->set_weak_exported_functions(*new_arr);
 
   return ret;
 }
@@ -193,8 +194,9 @@ void TestingModuleBuilder::PopulateIndirectFunctionTable() {
 }
 
 uint32_t TestingModuleBuilder::AddBytes(Vector<const byte> bytes) {
-  Handle<SeqOneByteString> old_bytes(
-      instance_object_->compiled_module()->module_bytes(), isolate_);
+  Handle<WasmSharedModuleData> shared(
+      instance_object_->compiled_module()->shared(), isolate_);
+  Handle<SeqOneByteString> old_bytes(shared->module_bytes(), isolate_);
   uint32_t old_size = static_cast<uint32_t>(old_bytes->length());
   // Avoid placing strings at offset 0, this might be interpreted as "not
   // set", e.g. for function names.
@@ -204,8 +206,7 @@ uint32_t TestingModuleBuilder::AddBytes(Vector<const byte> bytes) {
   memcpy(new_bytes.start() + bytes_offset, bytes.start(), bytes.length());
   Handle<SeqOneByteString> new_bytes_str = Handle<SeqOneByteString>::cast(
       isolate_->factory()->NewStringFromOneByte(new_bytes).ToHandleChecked());
-  instance_object_->compiled_module()->shared()->set_module_bytes(
-      *new_bytes_str);
+  shared->set_module_bytes(*new_bytes_str);
   return bytes_offset;
 }
 
@@ -251,13 +252,13 @@ Handle<WasmInstanceObject> TestingModuleBuilder::InitInstanceObject() {
   native_module_ = compiled_module->GetNativeModule();
 
   Handle<FixedArray> weak_exported = isolate_->factory()->NewFixedArray(0);
-  compiled_module->set_weak_exported_functions(weak_exported);
+  compiled_module->set_weak_exported_functions(*weak_exported);
   DCHECK(WasmCompiledModule::IsWasmCompiledModule(*compiled_module));
   script->set_wasm_compiled_module(*compiled_module);
   auto instance = WasmInstanceObject::New(isolate_, compiled_module);
   instance->wasm_context()->get()->globals_start = globals_data_;
   Handle<WeakCell> weak_instance = isolate()->factory()->NewWeakCell(instance);
-  compiled_module->set_weak_owning_instance(weak_instance);
+  compiled_module->set_weak_owning_instance(*weak_instance);
   return instance;
 }
 
@@ -276,10 +277,8 @@ void TestBuildingGraphWithBuilder(compiler::WasmGraphBuilder* builder,
 #endif
 
     uint32_t pc = result.error_offset();
-    std::ostringstream str;
-    str << "Verification failed; pc = +" << pc
-        << ", msg = " << result.error_msg().c_str();
-    FATAL(str.str().c_str());
+    FATAL("Verification failed; pc = +%x, msg = %s", pc,
+          result.error_msg().c_str());
   }
   builder->LowerInt64();
   if (!CpuFeatures::SupportsWasmSimd128()) {
@@ -442,7 +441,7 @@ void WasmFunctionCompiler::Build(const byte* start, const byte* end) {
   if (FLAG_wasm_jit_to_native) {
     native_module->ResizeCodeTableForTest(function_->func_index);
   }
-  Handle<SeqOneByteString> wire_bytes(compiled_module->module_bytes(),
+  Handle<SeqOneByteString> wire_bytes(compiled_module->shared()->module_bytes(),
                                       isolate());
 
   compiler::ModuleEnv module_env = builder_->CreateModuleEnv();
@@ -490,7 +489,7 @@ void WasmFunctionCompiler::Build(const byte* start, const byte* end) {
     builder_->SetFunctionCode(function_index(), code);
 
     // Add to code table.
-    Handle<FixedArray> code_table = compiled_module->code_table();
+    Handle<FixedArray> code_table(compiled_module->code_table(), isolate());
     if (static_cast<int>(function_index()) >= code_table->length()) {
       Handle<FixedArray> new_arr = isolate()->factory()->NewFixedArray(
           static_cast<int>(function_index()) + 1);

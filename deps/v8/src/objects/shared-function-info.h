@@ -288,6 +288,9 @@ class SharedFunctionInfo : public HeapObject {
   inline LanguageMode language_mode();
   inline void set_language_mode(LanguageMode language_mode);
 
+  // Indicates whether the source is implicitly wrapped in a function.
+  DECL_BOOLEAN_ACCESSORS(is_wrapped)
+
   // True if the function has any duplicated parameter names.
   DECL_BOOLEAN_ACCESSORS(has_duplicate_parameters)
 
@@ -336,8 +339,8 @@ class SharedFunctionInfo : public HeapObject {
 
   // [source code]: Source code for the function.
   bool HasSourceCode() const;
-  Handle<Object> GetSourceCode();
-  Handle<Object> GetSourceCodeHarmony();
+  static Handle<Object> GetSourceCode(Handle<SharedFunctionInfo> shared);
+  static Handle<Object> GetSourceCodeHarmony(Handle<SharedFunctionInfo> shared);
 
   // Tells whether this function should be subject to debugging.
   inline bool IsSubjectToDebugging();
@@ -465,6 +468,7 @@ class SharedFunctionInfo : public HeapObject {
 #define COMPILER_HINTS_BIT_FIELDS(V, _)                  \
   V(IsNativeBit, bool, 1, _)                             \
   V(IsStrictBit, bool, 1, _)                             \
+  V(IsWrappedBit, bool, 1, _)                            \
   V(FunctionKindBits, FunctionKind, 10, _)               \
   V(HasDuplicateParametersBit, bool, 1, _)               \
   V(AllowLazyCompilationBit, bool, 1, _)                 \

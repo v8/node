@@ -3351,7 +3351,8 @@ Node* CodeStubAssembler::CalculateNewElementsCapacity(Node* old_capacity,
   CSA_SLOW_ASSERT(this, MatchesParameterMode(old_capacity, mode));
   Node* half_old_capacity = WordOrSmiShr(old_capacity, 1, mode);
   Node* new_capacity = IntPtrOrSmiAdd(half_old_capacity, old_capacity, mode);
-  Node* padding = IntPtrOrSmiConstant(16, mode);
+  Node* padding =
+      IntPtrOrSmiConstant(JSObject::kMinAddedElementsCapacity, mode);
   return IntPtrOrSmiAdd(new_capacity, padding, mode);
 }
 
@@ -5208,7 +5209,8 @@ TNode<Number> CodeStubAssembler::StringToNumber(SloppyTNode<Context> context,
   GotoIf(IsSetWord32(hash, Name::kDoesNotContainCachedArrayIndexMask),
          &runtime);
 
-  var_result = SmiTag(DecodeWordFromWord32<String::ArrayIndexValueBits>(hash));
+  var_result =
+      SmiTag(Signed(DecodeWordFromWord32<String::ArrayIndexValueBits>(hash)));
   Goto(&end);
 
   BIND(&runtime);
@@ -5745,8 +5747,8 @@ Node* CodeStubAssembler::ToSmiIndex(Node* const input, Node* const context,
   Branch(IsUndefined(result.value()), &return_zero, &defined);
 
   BIND(&defined);
-  result.Bind(ToInteger(context, result.value(),
-                        CodeStubAssembler::kTruncateMinusZero));
+  result.Bind(ToInteger_Inline(CAST(context), CAST(result.value()),
+                               CodeStubAssembler::kTruncateMinusZero));
   GotoIfNot(TaggedIsSmi(result.value()), range_error);
   CSA_ASSERT(this, TaggedIsSmi(result.value()));
   Goto(&negative_check);
@@ -5770,8 +5772,8 @@ Node* CodeStubAssembler::ToSmiLength(Node* input, Node* const context,
   Branch(TaggedIsSmi(result.value()), &negative_check, &to_integer);
 
   BIND(&to_integer);
-  result.Bind(ToInteger(context, result.value(),
-                        CodeStubAssembler::kTruncateMinusZero));
+  result.Bind(ToInteger_Inline(CAST(context), CAST(result.value()),
+                               CodeStubAssembler::kTruncateMinusZero));
   GotoIf(TaggedIsSmi(result.value()), &negative_check);
   // result.value() can still be a negative HeapNumber here.
   Branch(IsTrue(CallBuiltin(Builtins::kLessThan, context, result.value(),
@@ -5797,6 +5799,16 @@ Node* CodeStubAssembler::ToLength_Inline(Node* const context,
       TaggedIsSmi(input), [=] { return SmiMax(input, smi_zero); },
       [=] { return CallBuiltin(Builtins::kToLength, context, input); },
       MachineRepresentation::kTagged);
+}
+
+TNode<Number> CodeStubAssembler::ToInteger_Inline(
+    TNode<Context> context, TNode<Object> input, ToIntegerTruncationMode mode) {
+  Builtins::Name builtin = (mode == kNoTruncation)
+                               ? Builtins::kToInteger
+                               : Builtins::kToInteger_TruncateMinusZero;
+  return CAST(Select(TaggedIsSmi(input), [=] { return input; },
+                     [=] { return CallBuiltin(builtin, context, input); },
+                     MachineRepresentation::kTagged));
 }
 
 TNode<Number> CodeStubAssembler::ToInteger(SloppyTNode<Context> context,
@@ -5857,6 +5869,7 @@ TNode<Number> CodeStubAssembler::ToInteger(SloppyTNode<Context> context,
   }
 
   BIND(&out);
+  if (mode == kTruncateMinusZero) CSA_ASSERT(this, IsNumberNormalized(var_arg));
   return CAST(var_arg);
 }
 
@@ -5866,8 +5879,10 @@ TNode<Uint32T> CodeStubAssembler::DecodeWord32(SloppyTNode<Word32T> word32,
       Word32And(word32, Int32Constant(mask)), static_cast<int>(shift)));
 }
 
-Node* CodeStubAssembler::DecodeWord(Node* word, uint32_t shift, uint32_t mask) {
-  return WordShr(WordAnd(word, IntPtrConstant(mask)), static_cast<int>(shift));
+TNode<UintPtrT> CodeStubAssembler::DecodeWord(SloppyTNode<WordT> word,
+                                              uint32_t shift, uint32_t mask) {
+  return Unsigned(
+      WordShr(WordAnd(word, IntPtrConstant(mask)), static_cast<int>(shift)));
 }
 
 Node* CodeStubAssembler::UpdateWord(Node* word, Node* value, uint32_t shift,
@@ -7509,15 +7524,16 @@ Node* CodeStubAssembler::EmitKeyedSloppyArguments(Node* receiver, Node* key,
   return var_result.value();
 }
 
-Node* CodeStubAssembler::LoadScriptContext(Node* context, int context_index) {
-  Node* native_context = LoadNativeContext(context);
-  Node* script_context_table =
-      LoadContextElement(native_context, Context::SCRIPT_CONTEXT_TABLE_INDEX);
+TNode<Context> CodeStubAssembler::LoadScriptContext(
+    TNode<Context> context, TNode<IntPtrT> context_index) {
+  TNode<Context> native_context = LoadNativeContext(context);
+  TNode<ScriptContextTable> script_context_table = CAST(
+      LoadContextElement(native_context, Context::SCRIPT_CONTEXT_TABLE_INDEX));
 
-  int offset =
-      ScriptContextTable::GetContextOffset(context_index) - kHeapObjectTag;
-  return Load(MachineType::AnyTagged(), script_context_table,
-              IntPtrConstant(offset));
+  Node* script_context = LoadFixedArrayElement(
+      script_context_table, context_index,
+      ScriptContextTable::kFirstContextSlotIndex * kPointerSize);
+  return CAST(script_context);
 }
 
 namespace {
@@ -9487,8 +9503,10 @@ void CodeStubAssembler::BranchIfSameValue(Node* lhs, Node* rhs, Label* if_true,
   }
 }
 
-Node* CodeStubAssembler::HasProperty(Node* object, Node* key, Node* context,
-                                     HasPropertyLookupMode mode) {
+TNode<Oddball> CodeStubAssembler::HasProperty(SloppyTNode<HeapObject> object,
+                                              SloppyTNode<Name> key,
+                                              SloppyTNode<Context> context,
+                                              HasPropertyLookupMode mode) {
   Label call_runtime(this, Label::kDeferred), return_true(this),
       return_false(this), end(this), if_proxy(this, Label::kDeferred);
 
@@ -9513,16 +9531,16 @@ Node* CodeStubAssembler::HasProperty(Node* object, Node* key, Node* context,
                           lookup_element_in_holder, &return_false,
                           &call_runtime, &if_proxy);
 
-  VARIABLE(result, MachineRepresentation::kTagged);
+  TVARIABLE(Oddball, result);
 
   BIND(&if_proxy);
   {
-    Node* name = ToName(context, key);
+    TNode<Name> name = CAST(ToName(context, key));
     switch (mode) {
       case kHasProperty:
         GotoIf(IsPrivateSymbol(name), &return_false);
 
-        result.Bind(
+        result = CAST(
             CallBuiltin(Builtins::kProxyHasProperty, context, object, name));
         Goto(&end);
         break;
@@ -9534,13 +9552,13 @@ Node* CodeStubAssembler::HasProperty(Node* object, Node* key, Node* context,
 
   BIND(&return_true);
   {
-    result.Bind(TrueConstant());
+    result = TrueConstant();
     Goto(&end);
   }
 
   BIND(&return_false);
   {
-    result.Bind(FalseConstant());
+    result = FalseConstant();
     Goto(&end);
   }
 
@@ -9556,13 +9574,14 @@ Node* CodeStubAssembler::HasProperty(Node* object, Node* key, Node* context,
         break;
     }
 
-    result.Bind(
-        CallRuntime(fallback_runtime_function_id, context, object, key));
+    result =
+        CAST(CallRuntime(fallback_runtime_function_id, context, object, key));
     Goto(&end);
   }
 
   BIND(&end);
-  return result.value();
+  CSA_ASSERT(this, IsBoolean(result));
+  return result;
 }
 
 Node* CodeStubAssembler::ClassOf(Node* value) {

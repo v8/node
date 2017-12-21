@@ -51,7 +51,7 @@ class Verifier::Visitor {
       std::ostringstream str;
       str << "TypeError: node #" << node->id() << ":" << *node->op()
           << " should never have a type";
-      FATAL(str.str().c_str());
+      FATAL("%s", str.str().c_str());
     }
   }
   void CheckTypeIs(Node* node, Type* type) {
@@ -62,7 +62,7 @@ class Verifier::Visitor {
       NodeProperties::GetType(node)->PrintTo(str);
       str << " is not ";
       type->PrintTo(str);
-      FATAL(str.str().c_str());
+      FATAL("%s", str.str().c_str());
     }
   }
   void CheckTypeMaybe(Node* node, Type* type) {
@@ -73,7 +73,7 @@ class Verifier::Visitor {
       NodeProperties::GetType(node)->PrintTo(str);
       str << " must intersect ";
       type->PrintTo(str);
-      FATAL(str.str().c_str());
+      FATAL("%s", str.str().c_str());
     }
   }
   void CheckValueInputIs(Node* node, int i, Type* type) {
@@ -86,7 +86,7 @@ class Verifier::Visitor {
       NodeProperties::GetType(input)->PrintTo(str);
       str << " is not ";
       type->PrintTo(str);
-      FATAL(str.str().c_str());
+      FATAL("%s", str.str().c_str());
     }
   }
   void CheckOutput(Node* node, Node* use, int count, const char* kind) {
@@ -95,7 +95,7 @@ class Verifier::Visitor {
       str << "GraphError: node #" << node->id() << ":" << *node->op()
           << " does not produce " << kind << " output used by node #"
           << use->id() << ":" << *use->op();
-      FATAL(str.str().c_str());
+      FATAL("%s", str.str().c_str());
     }
   }
 };
@@ -1276,6 +1276,11 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, Type::Any());
       CheckValueInputIs(node, 1, Type::Unsigned31());
       CheckTypeIs(node, Type::Unsigned31());
+      break;
+    case IrOpcode::kMaskIndexWithBound:
+      CheckValueInputIs(node, 0, Type::Unsigned32());
+      CheckValueInputIs(node, 1, Type::Unsigned31());
+      CheckTypeIs(node, Type::Unsigned32());
       break;
     case IrOpcode::kCheckHeapObject:
       CheckValueInputIs(node, 0, Type::Any());
