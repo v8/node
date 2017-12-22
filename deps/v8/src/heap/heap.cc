@@ -1572,7 +1572,7 @@ bool Heap::PerformGarbageCollection(
 
   EnsureFromSpaceIsCommitted();
 
-  int start_new_space_size = static_cast<int>(Heap::new_space()->Size());
+  size_t start_new_space_size = Heap::new_space()->Size();
 
   {
     Heap::SkipStoreBufferScope skip_store_buffer_scope(store_buffer_);
@@ -1611,8 +1611,15 @@ bool Heap::PerformGarbageCollection(
     ProcessPretenuringFeedback();
   }
 
-  UpdateSurvivalStatistics(start_new_space_size);
+  UpdateSurvivalStatistics(static_cast<int>(start_new_space_size));
   ConfigureInitialOldGenerationSize();
+
+  if (collector != MARK_COMPACTOR) {
+    // Objects that died in the new space might have been accounted
+    // as bytes marked ahead of schedule by the incremental marker.
+    incremental_marking()->UpdateMarkedBytesAfterScavenge(
+        start_new_space_size - SurvivedNewSpaceObjectSize());
+  }
 
   if (!fast_promotion_mode_ || collector == MARK_COMPACTOR) {
     ComputeFastPromotionMode(promotion_ratio_ + semi_space_copied_rate_);
@@ -6081,18 +6088,6 @@ PagedSpace* PagedSpaces::next() {
       return heap_->code_space();
     case MAP_SPACE:
       return heap_->map_space();
-    default:
-      return nullptr;
-  }
-}
-
-
-OldSpace* OldSpaces::next() {
-  switch (counter_++) {
-    case OLD_SPACE:
-      return heap_->old_space();
-    case CODE_SPACE:
-      return heap_->code_space();
     default:
       return nullptr;
   }

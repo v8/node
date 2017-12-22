@@ -8,6 +8,7 @@ ALL_VARIANT_FLAGS = {
   "future": [["--future"]],
   "liftoff": [["--liftoff"]],
   "minor_mc": [["--minor-mc"]],
+  "slow_path": [["--force-slow-path"]],
   "stress": [["--stress-opt", "--always-opt"]],
   # TODO(6792): Write protected code has been temporary added to the below
   # variant until the feature has been enabled (or staged) by default.
@@ -18,6 +19,9 @@ ALL_VARIANT_FLAGS = {
   "nooptimization": [["--noopt"]],
   "stress_background_compile": [["--background-compile", "--stress-background-compile"]],
   "wasm_traps": [["--wasm_trap_handler", "--invoke-weak-callbacks", "--wasm-jit-to-native"]],
+
+  # Alias of exhaustive variants, but triggering new test framework features.
+  "infra_staging": [[]],
 }
 
 # FAST_VARIANTS implies no --always-opt.
