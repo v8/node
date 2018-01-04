@@ -152,49 +152,6 @@ class ArmOperandConverter final : public InstructionOperandConverter {
 
 namespace {
 
-class OutOfLineLoadFloat final : public OutOfLineCode {
- public:
-  OutOfLineLoadFloat(CodeGenerator* gen, SwVfpRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    // Compute sqrtf(-1.0f), which results in a quiet single-precision NaN.
-    __ vmov(result_, Float32(-1.0f));
-    __ vsqrt(result_, result_);
-  }
-
- private:
-  SwVfpRegister const result_;
-};
-
-class OutOfLineLoadDouble final : public OutOfLineCode {
- public:
-  OutOfLineLoadDouble(CodeGenerator* gen, DwVfpRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    // Compute sqrt(-1.0), which results in a quiet double-precision NaN.
-    __ vmov(result_, Double(-1.0));
-    __ vsqrt(result_, result_);
-  }
-
- private:
-  DwVfpRegister const result_;
-};
-
-
-class OutOfLineLoadInteger final : public OutOfLineCode {
- public:
-  OutOfLineLoadInteger(CodeGenerator* gen, Register result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final { __ mov(result_, Operand::Zero()); }
-
- private:
-  Register const result_;
-};
-
-
 class OutOfLineRecordWrite final : public OutOfLineCode {
  public:
   OutOfLineRecordWrite(CodeGenerator* gen, Register object, Register index,
@@ -358,38 +315,6 @@ Condition FlagsConditionToCondition(FlagsCondition condition) {
 }
 
 }  // namespace
-
-#define ASSEMBLE_CHECKED_LOAD_FP(Type)                         \
-  do {                                                         \
-    auto result = i.Output##Type##Register();                  \
-    auto offset = i.InputRegister(0);                          \
-    if (instr->InputAt(1)->IsRegister()) {                     \
-      __ cmp(offset, i.InputRegister(1));                      \
-    } else {                                                   \
-      __ cmp(offset, i.InputImmediate(1));                     \
-    }                                                          \
-    auto ool = new (zone()) OutOfLineLoad##Type(this, result); \
-    __ b(hs, ool->entry());                                    \
-    __ vldr(result, i.InputOffset(2));                         \
-    __ bind(ool->exit());                                      \
-    DCHECK_EQ(LeaveCC, i.OutputSBit());                        \
-  } while (0)
-
-#define ASSEMBLE_CHECKED_LOAD_INTEGER(asm_instr)                \
-  do {                                                          \
-    auto result = i.OutputRegister();                           \
-    auto offset = i.InputRegister(0);                           \
-    if (instr->InputAt(1)->IsRegister()) {                      \
-      __ cmp(offset, i.InputRegister(1));                       \
-    } else {                                                    \
-      __ cmp(offset, i.InputImmediate(1));                      \
-    }                                                           \
-    auto ool = new (zone()) OutOfLineLoadInteger(this, result); \
-    __ b(hs, ool->entry());                                     \
-    __ asm_instr(result, i.InputOffset(2));                     \
-    __ bind(ool->exit());                                       \
-    DCHECK_EQ(LeaveCC, i.OutputSBit());                         \
-  } while (0)
 
 #define ASSEMBLE_ATOMIC_LOAD_INTEGER(asm_instr)                       \
   do {                                                                \
@@ -1655,13 +1580,23 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArmPush:
       if (instr->InputAt(0)->IsFPRegister()) {
         LocationOperand* op = LocationOperand::cast(instr->InputAt(0));
-        if (op->representation() == MachineRepresentation::kFloat64) {
-          __ vpush(i.InputDoubleRegister(0));
-          frame_access_state()->IncreaseSPDelta(kDoubleSize / kPointerSize);
-        } else {
-          DCHECK_EQ(MachineRepresentation::kFloat32, op->representation());
-          __ vpush(i.InputFloatRegister(0));
-          frame_access_state()->IncreaseSPDelta(1);
+        switch (op->representation()) {
+          case MachineRepresentation::kFloat32:
+            __ vpush(i.InputFloatRegister(0));
+            frame_access_state()->IncreaseSPDelta(1);
+            break;
+          case MachineRepresentation::kFloat64:
+            __ vpush(i.InputDoubleRegister(0));
+            frame_access_state()->IncreaseSPDelta(kDoubleSize / kPointerSize);
+            break;
+          case MachineRepresentation::kSimd128: {
+            __ vpush(i.InputSimd128Register(0));
+            frame_access_state()->IncreaseSPDelta(kSimd128Size / kPointerSize);
+            break;
+          }
+          default:
+            UNREACHABLE();
+            break;
         }
       } else {
         __ push(i.InputRegister(0));
@@ -2549,31 +2484,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ ExtractLane(i.OutputRegister(), kScratchDoubleReg, NeonS8, 0);
       break;
     }
-    case kCheckedLoadInt8:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ldrsb);
-      break;
-    case kCheckedLoadUint8:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ldrb);
-      break;
-    case kCheckedLoadInt16:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ldrsh);
-      break;
-    case kCheckedLoadUint16:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ldrh);
-      break;
-    case kCheckedLoadWord32:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ldr);
-      break;
-    case kCheckedLoadFloat32:
-      ASSEMBLE_CHECKED_LOAD_FP(Float);
-      break;
-    case kCheckedLoadFloat64:
-      ASSEMBLE_CHECKED_LOAD_FP(Double);
-      break;
-    case kCheckedLoadWord64:
-      UNREACHABLE();  // currently unsupported checked int64 load.
-      break;
-
     case kAtomicLoadInt8:
       ASSEMBLE_ATOMIC_LOAD_INTEGER(ldrsb);
       break;
@@ -2671,8 +2581,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ATOMIC_BINOP_CASE(Or, orr)
       ATOMIC_BINOP_CASE(Xor, eor)
 #undef ATOMIC_BINOP_CASE
-#undef ASSEMBLE_CHECKED_LOAD_FP
-#undef ASSEMBLE_CHECKED_LOAD_INTEGER
 #undef ASSEMBLE_ATOMIC_LOAD_INTEGER
 #undef ASSEMBLE_ATOMIC_STORE_INTEGER
 #undef ASSEMBLE_ATOMIC_EXCHANGE_INTEGER

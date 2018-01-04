@@ -236,10 +236,19 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       // Dead is never connected to the graph.
       UNREACHABLE();
     case IrOpcode::kDeadValue:
+      CheckValueInputIs(node, 0, Type::None());
       CheckTypeIs(node, Type::None());
       break;
     case IrOpcode::kUnreachable:
-      CheckNotTyped(node);
+      CheckTypeIs(node, Type::None());
+      for (Edge edge : node->use_edges()) {
+        Node* use = edge.from();
+        if (NodeProperties::IsValueEdge(edge) && all.IsLive(use)) {
+          // {Unreachable} nodes can only be used by {DeadValue}, because they
+          // don't actually produce a value.
+          CHECK_EQ(IrOpcode::kDeadValue, use->opcode());
+        }
+      }
       break;
     case IrOpcode::kBranch: {
       // Branch uses are IfTrue and IfFalse.
@@ -1601,7 +1610,6 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
     case IrOpcode::kLoadParentFramePointer:
     case IrOpcode::kUnalignedLoad:
     case IrOpcode::kUnalignedStore:
-    case IrOpcode::kCheckedLoad:
     case IrOpcode::kAtomicLoad:
     case IrOpcode::kAtomicStore:
     case IrOpcode::kAtomicExchange:

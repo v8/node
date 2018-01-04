@@ -898,7 +898,7 @@ class ArrayBuiltinCodeStubAssembler : public CodeStubAssembler {
   ElementsKind source_elements_kind_ = ElementsKind::NO_ELEMENTS;
 };
 
-TF_BUILTIN(FastArrayPop, CodeStubAssembler) {
+TF_BUILTIN(ArrayPrototypePop, CodeStubAssembler) {
   Node* argc = Parameter(BuiltinDescriptor::kArgumentsCount);
   Node* context = Parameter(BuiltinDescriptor::kContext);
   CSA_ASSERT(this, IsUndefined(Parameter(BuiltinDescriptor::kNewTarget)));
@@ -996,7 +996,7 @@ TF_BUILTIN(FastArrayPop, CodeStubAssembler) {
   }
 }
 
-TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
+TF_BUILTIN(ArrayPrototypePush, CodeStubAssembler) {
   TVARIABLE(IntPtrT, arg_index);
   Label default_label(this, &arg_index);
   Label smi_transition(this);
@@ -1125,9 +1125,10 @@ TF_BUILTIN(FastArrayPush, CodeStubAssembler) {
   }
 }
 
-class FastArraySliceCodeStubAssembler : public CodeStubAssembler {
+class ArrayPrototypeSliceCodeStubAssembler : public CodeStubAssembler {
  public:
-  explicit FastArraySliceCodeStubAssembler(compiler::CodeAssemblerState* state)
+  explicit ArrayPrototypeSliceCodeStubAssembler(
+      compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state) {}
 
   Node* HandleFastSlice(Node* context, Node* array, Node* from, Node* count,
@@ -1283,7 +1284,7 @@ class FastArraySliceCodeStubAssembler : public CodeStubAssembler {
   }
 };
 
-TF_BUILTIN(FastArraySlice, FastArraySliceCodeStubAssembler) {
+TF_BUILTIN(ArrayPrototypeSlice, ArrayPrototypeSliceCodeStubAssembler) {
   Node* const argc =
       ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
   TNode<Context> context = CAST(Parameter(BuiltinDescriptor::kContext));
@@ -1458,7 +1459,7 @@ TF_BUILTIN(FastArraySlice, FastArraySliceCodeStubAssembler) {
   args.PopAndReturn(a);
 }
 
-TF_BUILTIN(FastArrayShift, CodeStubAssembler) {
+TF_BUILTIN(ArrayPrototypeShift, CodeStubAssembler) {
   Node* argc = Parameter(BuiltinDescriptor::kArgumentsCount);
   Node* context = Parameter(BuiltinDescriptor::kContext);
   CSA_ASSERT(this, IsUndefined(Parameter(BuiltinDescriptor::kNewTarget)));
@@ -2033,6 +2034,49 @@ TF_BUILTIN(TypedArrayPrototypeSome, ArrayBuiltinCodeStubAssembler) {
       &ArrayBuiltinCodeStubAssembler::SomeResultGenerator,
       &ArrayBuiltinCodeStubAssembler::SomeProcessor,
       &ArrayBuiltinCodeStubAssembler::NullPostLoopAction);
+}
+
+TF_BUILTIN(ArrayEveryLoopLazyDeoptContinuation, ArrayBuiltinCodeStubAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* this_arg = Parameter(Descriptor::kThisArg);
+  Node* initial_k = Parameter(Descriptor::kInitialK);
+  Node* len = Parameter(Descriptor::kLength);
+  Node* result = Parameter(Descriptor::kResult);
+
+  // This custom lazy deopt point is right after the callback. every() needs
+  // to pick up at the next step, which is either continuing to the next
+  // array element or returning false if {result} is false.
+  Label true_continue(this), false_continue(this);
+
+  // iii. If selected is true, then...
+  BranchIfToBooleanIsTrue(result, &true_continue, &false_continue);
+  BIND(&true_continue);
+  {
+    // Increment k.
+    initial_k = NumberInc(initial_k);
+
+    Return(CallBuiltin(Builtins::kArrayEveryLoopContinuation, context, receiver,
+                       callbackfn, this_arg, TrueConstant(), receiver,
+                       initial_k, len, UndefinedConstant()));
+  }
+  BIND(&false_continue);
+  { Return(FalseConstant()); }
+}
+
+TF_BUILTIN(ArrayEveryLoopEagerDeoptContinuation,
+           ArrayBuiltinCodeStubAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* this_arg = Parameter(Descriptor::kThisArg);
+  Node* initial_k = Parameter(Descriptor::kInitialK);
+  Node* len = Parameter(Descriptor::kLength);
+
+  Return(CallBuiltin(Builtins::kArrayEveryLoopContinuation, context, receiver,
+                     callbackfn, this_arg, TrueConstant(), receiver, initial_k,
+                     len, UndefinedConstant()));
 }
 
 TF_BUILTIN(ArrayEveryLoopContinuation, ArrayBuiltinCodeStubAssembler) {
@@ -3131,7 +3175,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
           {
             Label if_invalid(this, Label::kDeferred);
             // A fast array iterator transitioned to a slow iterator during
-            // iteration. Invalidate fast_array_iteration_prtoector cell to
+            // iteration. Invalidate fast_array_iteration_protector cell to
             // prevent potential deopt loops.
             StoreObjectFieldNoWriteBarrier(
                 iterator, JSArrayIterator::kIteratedObjectMapOffset,

@@ -118,48 +118,6 @@ static inline bool HasRegisterInput(Instruction* instr, size_t index) {
 
 namespace {
 
-class OutOfLineLoadNAN32 final : public OutOfLineCode {
- public:
-  OutOfLineLoadNAN32(CodeGenerator* gen, DoubleRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    __ LoadDoubleLiteral(
-        result_, Double(std::numeric_limits<double>::quiet_NaN()), kScratchReg);
-  }
-
- private:
-  DoubleRegister const result_;
-};
-
-
-class OutOfLineLoadNAN64 final : public OutOfLineCode {
- public:
-  OutOfLineLoadNAN64(CodeGenerator* gen, DoubleRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    __ LoadDoubleLiteral(
-        result_, Double(std::numeric_limits<double>::quiet_NaN()), kScratchReg);
-  }
-
- private:
-  DoubleRegister const result_;
-};
-
-
-class OutOfLineLoadZero final : public OutOfLineCode {
- public:
-  OutOfLineLoadZero(CodeGenerator* gen, Register result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final { __ li(result_, Operand::Zero()); }
-
- private:
-  Register const result_;
-};
-
-
 class OutOfLineRecordWrite final : public OutOfLineCode {
  public:
   OutOfLineRecordWrite(CodeGenerator* gen, Register object, Register offset,
@@ -652,56 +610,6 @@ Condition FlagsConditionToCondition(FlagsCondition condition, ArchOpcode op) {
 #else
 #define CleanUInt32(x)
 #endif
-
-#define ASSEMBLE_CHECKED_LOAD_FLOAT(asm_instr, asm_instrx, width)  \
-  do {                                                             \
-    DoubleRegister result = i.OutputDoubleRegister();              \
-    size_t index = 0;                                              \
-    AddressingMode mode = kMode_None;                              \
-    MemOperand operand = i.MemoryOperand(&mode, index);            \
-    DCHECK_EQ(kMode_MRR, mode);                                    \
-    Register offset = operand.rb();                                \
-    if (HasRegisterInput(instr, 2)) {                              \
-      __ cmplw(offset, i.InputRegister(2));                        \
-    } else {                                                       \
-      __ cmplwi(offset, i.InputImmediate(2));                      \
-    }                                                              \
-    auto ool = new (zone()) OutOfLineLoadNAN##width(this, result); \
-    __ bge(ool->entry());                                          \
-    if (mode == kMode_MRI) {                                       \
-      __ asm_instr(result, operand);                               \
-    } else {                                                       \
-      CleanUInt32(offset);                                         \
-      __ asm_instrx(result, operand);                              \
-    }                                                              \
-    __ bind(ool->exit());                                          \
-    DCHECK_EQ(LeaveRC, i.OutputRCBit());                           \
-  } while (0)
-
-#define ASSEMBLE_CHECKED_LOAD_INTEGER(asm_instr, asm_instrx) \
-  do {                                                       \
-    Register result = i.OutputRegister();                    \
-    size_t index = 0;                                        \
-    AddressingMode mode = kMode_None;                        \
-    MemOperand operand = i.MemoryOperand(&mode, index);      \
-    DCHECK_EQ(kMode_MRR, mode);                              \
-    Register offset = operand.rb();                          \
-    if (HasRegisterInput(instr, 2)) {                        \
-      __ cmplw(offset, i.InputRegister(2));                  \
-    } else {                                                 \
-      __ cmplwi(offset, i.InputImmediate(2));                \
-    }                                                        \
-    auto ool = new (zone()) OutOfLineLoadZero(this, result); \
-    __ bge(ool->entry());                                    \
-    if (mode == kMode_MRI) {                                 \
-      __ asm_instr(result, operand);                         \
-    } else {                                                 \
-      CleanUInt32(offset);                                   \
-      __ asm_instrx(result, operand);                        \
-    }                                                        \
-    __ bind(ool->exit());                                    \
-    DCHECK_EQ(LeaveRC, i.OutputRCBit());                     \
-  } while (0)
 
 #define ASSEMBLE_ATOMIC_LOAD_INTEGER(asm_instr, asm_instrx) \
   do {                                                      \
@@ -1942,35 +1850,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kPPC_StoreDouble:
       ASSEMBLE_STORE_DOUBLE();
-      break;
-    case kCheckedLoadInt8:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(lbz, lbzx);
-      __ extsb(i.OutputRegister(), i.OutputRegister());
-      break;
-    case kCheckedLoadUint8:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(lbz, lbzx);
-      break;
-    case kCheckedLoadInt16:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(lha, lhax);
-      break;
-    case kCheckedLoadUint16:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(lhz, lhzx);
-      break;
-    case kCheckedLoadWord32:
-      ASSEMBLE_CHECKED_LOAD_INTEGER(lwz, lwzx);
-      break;
-    case kCheckedLoadWord64:
-#if V8_TARGET_ARCH_PPC64
-      ASSEMBLE_CHECKED_LOAD_INTEGER(ld, ldx);
-#else
-      UNREACHABLE();
-#endif
-      break;
-    case kCheckedLoadFloat32:
-      ASSEMBLE_CHECKED_LOAD_FLOAT(lfs, lfsx, 32);
-      break;
-    case kCheckedLoadFloat64:
-      ASSEMBLE_CHECKED_LOAD_FLOAT(lfd, lfdx, 64);
       break;
     case kAtomicLoadInt8:
       ASSEMBLE_ATOMIC_LOAD_INTEGER(lbz, lbzx);

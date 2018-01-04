@@ -53,9 +53,7 @@ class V8_EXPORT_PRIVATE JSBuiltinReducer final
                                          IterationKind kind);
   Reduction ReduceTypedArrayToStringTag(Node* node);
   Reduction ReduceArrayIsArray(Node* node);
-  Reduction ReduceArrayPop(Node* node);
-  Reduction ReduceArrayPush(Node* node);
-  Reduction ReduceArrayShift(Node* node);
+
   Reduction ReduceCollectionIterator(Node* node,
                                      InstanceType collection_instance_type,
                                      int collection_iterator_map_index);
@@ -110,8 +108,6 @@ class V8_EXPORT_PRIVATE JSBuiltinReducer final
   Reduction ReduceNumberIsSafeInteger(Node* node);
   Reduction ReduceNumberParseInt(Node* node);
   Reduction ReduceObjectCreate(Node* node);
-  Reduction ReduceStringCharAt(Node* node);
-  Reduction ReduceStringCharCodeAt(Node* node);
   Reduction ReduceStringConcat(Node* node);
   Reduction ReduceStringFromCharCode(Node* node);
   Reduction ReduceStringIterator(Node* node);

@@ -116,10 +116,6 @@ class MachineRepresentationInferrer {
             representation_vector_[node->id()] = PromoteRepresentation(
                 LoadRepresentationOf(node->op()).representation());
             break;
-          case IrOpcode::kCheckedLoad:
-            representation_vector_[node->id()] = PromoteRepresentation(
-                CheckedLoadRepresentationOf(node->op()).representation());
-            break;
           case IrOpcode::kLoadStackPointer:
           case IrOpcode::kLoadFramePointer:
           case IrOpcode::kLoadParentFramePointer:
@@ -269,6 +265,11 @@ class MachineRepresentationInferrer {
                   MachineRepresentation::kFloat64;
             }
             break;
+          case IrOpcode::kI32x4ReplaceLane:
+          case IrOpcode::kI32x4Splat:
+            representation_vector_[node->id()] =
+                MachineRepresentation::kSimd128;
+            break;
 #undef LABEL
           default:
             break;
@@ -372,6 +373,14 @@ class MachineRepresentationChecker {
           case IrOpcode::kI8x16ExtractLane:
             CheckValueInputRepresentationIs(node, 0,
                                             MachineRepresentation::kSimd128);
+            break;
+          case IrOpcode::kI32x4ReplaceLane:
+            CheckValueInputRepresentationIs(node, 0,
+                                            MachineRepresentation::kSimd128);
+            CheckValueInputForInt32Op(node, 1);
+            break;
+          case IrOpcode::kI32x4Splat:
+            CheckValueInputForInt32Op(node, 0);
             break;
 #define LABEL(opcode) case IrOpcode::k##opcode:
           case IrOpcode::kChangeInt32ToTagged:

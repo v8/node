@@ -251,16 +251,16 @@ namespace internal {
   TFJ(ArrayIndexOf, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES6 #sec-array.prototype.pop */                                           \
   CPP(ArrayPop)                                                                \
-  TFJ(FastArrayPop, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
+  TFJ(ArrayPrototypePop, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
   /* ES6 #sec-array.prototype.push */                                          \
   CPP(ArrayPush)                                                               \
-  TFJ(FastArrayPush, SharedFunctionInfo::kDontAdaptArgumentsSentinel)          \
+  TFJ(ArrayPrototypePush, SharedFunctionInfo::kDontAdaptArgumentsSentinel)     \
   /* ES6 #sec-array.prototype.shift */                                         \
   CPP(ArrayShift)                                                              \
-  TFJ(FastArrayShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
+  TFJ(ArrayPrototypeShift, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.slice */                                         \
   CPP(ArraySlice)                                                              \
-  TFJ(FastArraySlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
+  TFJ(ArrayPrototypeSlice, SharedFunctionInfo::kDontAdaptArgumentsSentinel)    \
   /* ES6 #sec-array.prototype.splice */                                        \
   CPP(ArraySplice)                                                             \
   /* ES6 #sec-array.prototype.unshift */                                       \
@@ -279,6 +279,10 @@ namespace internal {
   /* ES6 #sec-array.prototype.every */                                         \
   TFS(ArrayEveryLoopContinuation, kReceiver, kCallbackFn, kThisArg, kArray,    \
       kObject, kInitialK, kLength, kTo)                                        \
+  TFJ(ArrayEveryLoopEagerDeoptContinuation, 4, kCallbackFn, kThisArg,          \
+      kInitialK, kLength)                                                      \
+  TFJ(ArrayEveryLoopLazyDeoptContinuation, 5, kCallbackFn, kThisArg,           \
+      kInitialK, kLength, kResult)                                             \
   TFJ(ArrayEvery, SharedFunctionInfo::kDontAdaptArgumentsSentinel)             \
   /* ES6 #sec-array.prototype.some */                                          \
   TFS(ArraySomeLoopContinuation, kReceiver, kCallbackFn, kThisArg, kArray,     \
