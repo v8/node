@@ -24,10 +24,10 @@ void* TryAllocateBackingStore(Isolate* isolate, size_t size,
 
     // We always allocate the largest possible offset into the heap, so the
     // addressable memory after the guard page can be made inaccessible.
-    allocation_length = RoundUp(kWasmMaxHeapOffset, base::OS::CommitPageSize());
-    DCHECK_EQ(0, size % base::OS::CommitPageSize());
+    allocation_length = RoundUp(kWasmMaxHeapOffset, CommitPageSize());
+    DCHECK_EQ(0, size % CommitPageSize());
 
-    // AllocateGuarded makes the whole region inaccessible by default.
+    // The Reserve makes the whole region inaccessible by default.
     allocation_base =
         isolate->array_buffer_allocator()->Reserve(allocation_length);
     if (allocation_base == nullptr) {
@@ -109,8 +109,8 @@ Handle<JSArrayBuffer> NewArrayBuffer(Isolate* isolate, size_t size,
                           size, is_external, enable_guard_regions, shared);
 }
 
-void DetachMemoryBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer,
-                        bool free_memory) {
+void ExternalizeMemoryBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer,
+                             bool free_memory) {
   const bool is_external = buffer->is_external();
   DCHECK(!buffer->is_neuterable());
   if (!is_external) {
@@ -125,6 +125,13 @@ void DetachMemoryBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer,
       buffer->FreeBackingStore();
     }
   }
+}
+
+void DetachMemoryBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer,
+                        bool free_memory) {
+  DCHECK(!buffer->is_neuterable());
+  ExternalizeMemoryBuffer(isolate, buffer, free_memory);
+  DCHECK(buffer->is_external());
   buffer->set_is_neuterable(true);
   buffer->Neuter();
 }

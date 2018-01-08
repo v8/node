@@ -296,11 +296,13 @@ int InstructionScheduler::GetInstructionFlags(const Instruction* instr) const {
     case kArchCallCFunction:
     case kArchCallCodeObject:
     case kArchCallJSFunction:
+    case kArchCallWasmFunction:
       return kHasSideEffect;
 
     case kArchTailCallCodeObjectFromJSFunction:
     case kArchTailCallCodeObject:
     case kArchTailCallAddress:
+    case kArchTailCallWasm:
       return kHasSideEffect | kIsBlockTerminator;
 
     case kArchDeoptimize:
@@ -313,22 +315,6 @@ int InstructionScheduler::GetInstructionFlags(const Instruction* instr) const {
     case kArchThrowTerminator:
       return kIsBlockTerminator;
 
-    case kCheckedLoadInt8:
-    case kCheckedLoadUint8:
-    case kCheckedLoadInt16:
-    case kCheckedLoadUint16:
-    case kCheckedLoadWord32:
-    case kCheckedLoadWord64:
-    case kCheckedLoadFloat32:
-    case kCheckedLoadFloat64:
-      return kIsLoadOperation;
-
-    case kCheckedStoreWord8:
-    case kCheckedStoreWord16:
-    case kCheckedStoreWord32:
-    case kCheckedStoreWord64:
-    case kCheckedStoreFloat32:
-    case kCheckedStoreFloat64:
     case kArchStoreWithWriteBarrier:
       return kHasSideEffect;
 

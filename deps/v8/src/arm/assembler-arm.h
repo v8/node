@@ -173,6 +173,7 @@ GENERAL_REGISTERS(DECLARE_REGISTER)
 #undef DECLARE_REGISTER
 constexpr Register no_reg = Register::no_reg();
 
+constexpr bool kPadArguments = false;
 constexpr bool kSimpleFPAliasing = false;
 constexpr bool kSimdMaskRegisters = false;
 
@@ -596,14 +597,15 @@ class Assembler : public AssemblerBase {
   // relocation information starting from the end of the buffer. See CodeDesc
   // for a detailed comment on the layout (globals.h).
   //
-  // If the provided buffer is NULL, the assembler allocates and grows its own
-  // buffer, and buffer_size determines the initial buffer size. The buffer is
-  // owned by the assembler and deallocated upon destruction of the assembler.
+  // If the provided buffer is nullptr, the assembler allocates and grows its
+  // own buffer, and buffer_size determines the initial buffer size. The buffer
+  // is owned by the assembler and deallocated upon destruction of the
+  // assembler.
   //
-  // If the provided buffer is not NULL, the assembler uses the provided buffer
-  // for code generation and assumes its size to be buffer_size. If the buffer
-  // is too small, a fatal error occurs. No deallocation of the buffer is done
-  // upon destruction of the assembler.
+  // If the provided buffer is not nullptr, the assembler uses the provided
+  // buffer for code generation and assumes its size to be buffer_size. If the
+  // buffer is too small, a fatal error occurs. No deallocation of the buffer is
+  // done upon destruction of the assembler.
   Assembler(Isolate* isolate, void* buffer, int buffer_size)
       : Assembler(IsolateData(isolate), buffer, buffer_size) {}
   Assembler(IsolateData isolate_data, void* buffer, int buffer_size);
@@ -1343,6 +1345,10 @@ class Assembler : public AssemblerBase {
 
   void pop();
 
+  void vpush(QwNeonRegister src, Condition cond = al) {
+    vstm(db_w, sp, src.low(), src.high(), cond);
+  }
+
   void vpush(DwVfpRegister src, Condition cond = al) {
     vstm(db_w, sp, src, src, cond);
   }
@@ -1713,7 +1719,7 @@ class Assembler : public AssemblerBase {
   void AddrMode5(Instr instr, CRegister crd, const MemOperand& x);
 
   // Labels
-  void print(Label* L);
+  void print(const Label* L);
   void bind_to(Label* L, int pos);
   void next(Label* L);
 
@@ -1724,7 +1730,6 @@ class Assembler : public AssemblerBase {
   void ConstantPoolAddEntry(int position, Double value);
 
   friend class RelocInfo;
-  friend class CodePatcher;
   friend class BlockConstPoolScope;
   friend class BlockCodeTargetSharingScope;
   friend class EnsureSpace;

@@ -83,17 +83,6 @@ typedef MachineRepresentation UnalignedStoreRepresentation;
 UnalignedStoreRepresentation const& UnalignedStoreRepresentationOf(
     Operator const*);
 
-// A CheckedLoad needs a MachineType.
-typedef MachineType CheckedLoadRepresentation;
-
-CheckedLoadRepresentation CheckedLoadRepresentationOf(Operator const*);
-
-
-// A CheckedStore needs a MachineType.
-typedef MachineRepresentation CheckedStoreRepresentation;
-
-CheckedStoreRepresentation CheckedStoreRepresentationOf(Operator const*);
-
 class StackSlotRepresentation final {
  public:
   StackSlotRepresentation(int size, int alignment)
@@ -250,6 +239,10 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const OptionalOperator Word64ReverseBytes();
   const OptionalOperator Int32AbsWithOverflow();
   const OptionalOperator Int64AbsWithOverflow();
+
+  // Return true if the target's Word32 shift implementation is directly
+  // compatible with JavaScript's specification. Otherwise, we have to manually
+  // generate a mask with 0x1f on the amount ahead of generating the shift.
   bool Word32ShiftIsSafe() const { return flags_ & kWord32ShiftIsSafe; }
 
   const Operator* Word64And();
@@ -601,11 +594,6 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* LoadStackPointer();
   const Operator* LoadFramePointer();
   const Operator* LoadParentFramePointer();
-
-  // checked-load heap, index, length
-  const Operator* CheckedLoad(CheckedLoadRepresentation);
-  // checked-store heap, index, length, value
-  const Operator* CheckedStore(CheckedStoreRepresentation);
 
   // atomic-load [base + index]
   const Operator* AtomicLoad(LoadRepresentation rep);
