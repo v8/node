@@ -2,11 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 // Declares a Simulator for PPC instructions if we are not generating a native
 // PPC binary. This Simulator allows us to run and debug PPC code generation on
 // regular desktop machines.
-// V8 calls into generated code by "calling" the CALL_GENERATED_CODE macro,
+// V8 calls into generated code via the GeneratedCode wrapper,
 // which will start execution in the Simulator or forwards to the real entry
 // on a PPC HW platform.
 
@@ -167,10 +166,11 @@ class Simulator : public SimulatorBase {
   // Executes PPC instructions until the PC reaches end_sim_pc.
   void Execute();
 
-  // V8 generally calls into generated JS code with 5 parameters and into
-  // generated RegExp code with 7 parameters. This is a convenience function,
-  // which sets up the simulator state and grabs the result on return.
-  intptr_t Call(byte* entry, int argument_count, ...);
+  template <typename Return, typename... Args>
+  Return Call(byte* entry, Args... args) {
+    return VariadicCall<Return>(this, &Simulator::CallImpl, entry, args...);
+  }
+
   // Alternative: call a 2-argument double function.
   void CallFP(byte* entry, double d0, double d1);
   int32_t CallFPReturnsInt(byte* entry, double d0, double d1);
@@ -208,6 +208,8 @@ class Simulator : public SimulatorBase {
     // C code.
     end_sim_pc = -2
   };
+
+  intptr_t CallImpl(byte* entry, int argument_count, const intptr_t* arguments);
 
   enum BCType { BC_OFFSET, BC_LINK_REG, BC_CTR_REG };
 
@@ -430,20 +432,6 @@ class Simulator : public SimulatorBase {
   GlobalMonitor::Processor global_monitor_processor_;
   static base::LazyInstance<GlobalMonitor>::type global_monitor_;
 };
-
-
-// When running with the simulator transition into simulated execution at this
-// point.
-#define CALL_GENERATED_CODE(isolate, entry, p0, p1, p2, p3, p4)          \
-  reinterpret_cast<Object*>(Simulator::current(isolate)->Call(           \
-      FUNCTION_ADDR(entry), 5, (intptr_t)p0, (intptr_t)p1, (intptr_t)p2, \
-      (intptr_t)p3, (intptr_t)p4))
-
-#define CALL_GENERATED_REGEXP_CODE(isolate, entry, p0, p1, p2, p3, p4, p5, p6, \
-                                   p7, p8)                                     \
-  Simulator::current(isolate)->Call(                                           \
-      entry, 9, (intptr_t)p0, (intptr_t)p1, (intptr_t)p2, (intptr_t)p3,        \
-      (intptr_t)p4, (intptr_t)p5, (intptr_t)p6, (intptr_t)p7, (intptr_t)p8)
 
 }  // namespace internal
 }  // namespace v8

@@ -5,6 +5,7 @@
 #include "src/wasm/baseline/liftoff-assembler.h"
 
 #include "src/assembler-inl.h"
+#include "src/base/optional.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/counters.h"
@@ -68,9 +69,15 @@ class LiftoffCompiler {
 
   using Value = ValueBase;
 
+  struct ElseState {
+    MovableLabel label;
+    LiftoffAssembler::CacheState state;
+  };
+
   struct Control : public ControlWithNamedConstructors<Control, Value> {
     MOVE_ONLY_WITH_DEFAULT_CONSTRUCTORS(Control);
 
+    std::unique_ptr<ElseState> else_state;
     LiftoffAssembler::CacheState label_state;
     MovableLabel label;
   };
@@ -83,21 +90,26 @@ class LiftoffCompiler {
     Builtins::Name builtin;
     wasm::WasmCodePosition position;
     LiftoffRegList regs_to_save;
+    uint32_t pc;  // for trap handler.
 
     // Named constructors:
-    static OutOfLineCode Trap(Builtins::Name b, wasm::WasmCodePosition pos) {
-      return {{}, {}, b, pos, {}};
+    static OutOfLineCode Trap(Builtins::Name b, wasm::WasmCodePosition pos,
+                              uint32_t pc) {
+      return {{}, {}, b, pos, {}, pc};
     }
     static OutOfLineCode StackCheck(wasm::WasmCodePosition pos,
                                     LiftoffRegList regs) {
-      return {{}, MovableLabel::None(), Builtins::kWasmStackGuard, pos, regs};
+      return {{}, MovableLabel::None(), Builtins::kWasmStackGuard, pos, regs,
+              0};
     }
   };
 
   LiftoffCompiler(LiftoffAssembler* liftoff_asm,
                   compiler::CallDescriptor* call_desc, compiler::ModuleEnv* env,
                   compiler::RuntimeExceptionSupport runtime_exception_support,
-                  SourcePositionTableBuilder* source_position_table_builder)
+                  SourcePositionTableBuilder* source_position_table_builder,
+                  std::vector<trap_handler::ProtectedInstructionData>*
+                      protected_instructions)
       : asm_(liftoff_asm),
         call_desc_(call_desc),
         env_(env),
@@ -108,6 +120,7 @@ class LiftoffCompiler {
                   wasm::WasmModule::kPageSize),
         runtime_exception_support_(runtime_exception_support),
         source_position_table_builder_(source_position_table_builder),
+        protected_instructions_(protected_instructions),
         compilation_zone_(liftoff_asm->isolate()->allocator(),
                           "liftoff compilation"),
         safepoint_table_builder_(&compilation_zone_) {
@@ -136,8 +149,13 @@ class LiftoffCompiler {
     // Bind all labels now, otherwise their destructor will fire a DCHECK error
     // if they where referenced before.
     for (uint32_t i = 0, e = decoder->control_depth(); i < e; ++i) {
-      Label* label = decoder->control_at(i)->label.get();
+      Control* c = decoder->control_at(i);
+      Label* label = c->label.get();
       if (!label->is_bound()) __ bind(label);
+      if (c->else_state) {
+        Label* else_label = c->else_state->label.get();
+        if (!else_label->is_bound()) __ bind(else_label);
+      }
     }
     for (auto& ool : out_of_line_code_) {
       if (!ool.label.get()->is_bound()) __ bind(ool.label.get());
@@ -293,6 +311,13 @@ class LiftoffCompiler {
       return;
     }
 
+    if (!is_stack_check && env_->use_trap_handler) {
+      uint32_t pc = static_cast<uint32_t>(__ pc_offset());
+      DCHECK_EQ(pc, __ pc_offset());
+      protected_instructions_->emplace_back(
+          trap_handler::ProtectedInstructionData{ool.pc, pc});
+    }
+
     if (!ool.regs_to_save.is_empty()) __ PushRegisters(ool.regs_to_save);
 
     source_position_table_builder_->AddPosition(
@@ -322,40 +347,61 @@ class LiftoffCompiler {
     BindUnboundLabels(decoder);
   }
 
-  void Block(Decoder* decoder, Control* new_block) {
-    // Note: This is called for blocks and loops.
-    DCHECK_EQ(new_block, decoder->control_at(0));
-
+  void Block(Decoder* decoder, Control* block) {
     TraceCacheState(decoder);
-
-    new_block->label_state.stack_base = __ cache_state()->stack_height();
-
-    if (new_block->is_loop()) {
-      // Before entering a loop, spill all locals to the stack, in order to free
-      // the cache registers, and to avoid unnecessarily reloading stack values
-      // into registers at branches.
-      // TODO(clemensh): Come up with a better strategy here, involving
-      // pre-analysis of the function.
-      __ SpillLocals();
-
-      // Loop labels bind at the beginning of the block, block labels at the
-      // end.
-      __ bind(new_block->label.get());
-
-      new_block->label_state.Split(*__ cache_state());
-    }
+    block->label_state.stack_base = __ cache_state()->stack_height();
   }
 
-  void Loop(Decoder* decoder, Control* block) { Block(decoder, block); }
+  void Loop(Decoder* decoder, Control* loop) {
+    TraceCacheState(decoder);
+    loop->label_state.stack_base = __ cache_state()->stack_height();
+
+    // Before entering a loop, spill all locals to the stack, in order to free
+    // the cache registers, and to avoid unnecessarily reloading stack values
+    // into registers at branches.
+    // TODO(clemensh): Come up with a better strategy here, involving
+    // pre-analysis of the function.
+    __ SpillLocals();
+
+    // Loop labels bind at the beginning of the block.
+    __ bind(loop->label.get());
+
+    // Save the current cache state for the merge when jumping to this loop.
+    loop->label_state.Split(*__ cache_state());
+
+    // Execute a stack check in the loop header.
+    StackCheck(decoder->position());
+  }
 
   void Try(Decoder* decoder, Control* block) { unsupported(decoder, "try"); }
+
   void If(Decoder* decoder, const Value& cond, Control* if_block) {
-    unsupported(decoder, "if");
+    DCHECK_EQ(if_block, decoder->control_at(0));
+    DCHECK(if_block->is_if());
+
+    if (if_block->start_merge.arity > 0 || if_block->end_merge.arity > 1)
+      return unsupported(decoder, "multi-value if");
+
+    // Allocate the else state.
+    if_block->else_state = base::make_unique<ElseState>();
+
+    // Test the condition, jump to else if zero.
+    Register value = __ PopToRegister(kGpReg).gp();
+    __ emit_i32_test(value);
+    __ emit_cond_jump(kEqual, if_block->else_state->label.get());
+
+    if_block->label_state.stack_base = __ cache_state()->stack_height();
+    // Store the state (after popping the value) for executing the else branch.
+    if_block->else_state->state.Split(*__ cache_state());
   }
 
   void FallThruTo(Decoder* decoder, Control* c) {
     TraceCacheState(decoder);
     if (c->end_merge.reached) {
+      __ MergeFullStackWith(c->label_state);
+    } else if (c->is_onearmed_if()) {
+      c->label_state.InitMerge(*__ cache_state(), __ num_locals(),
+                               c->br_merge()->arity);
       __ MergeFullStackWith(c->label_state);
     } else {
       c->label_state.Split(*__ cache_state());
@@ -472,6 +518,7 @@ class LiftoffCompiler {
 
   void GetLocal(Decoder* decoder, Value* result,
                 const LocalIndexOperand<validate>& operand) {
+    TraceCacheState(decoder);
     auto& slot = __ cache_state()->stack_state[operand.index];
     DCHECK_EQ(slot.type(), operand.type);
     switch (slot.loc()) {
@@ -615,18 +662,29 @@ class LiftoffCompiler {
                const Value& key) {
     unsupported(decoder, "br_table");
   }
+
   void Else(Decoder* decoder, Control* if_block) {
-    unsupported(decoder, "else");
+    if (if_block->reachable()) __ emit_jump(if_block->label.get());
+    __ bind(if_block->else_state->label.get());
+    __ cache_state()->Steal(if_block->else_state->state);
+  }
+
+  Label* AddOutOfLineTrap(wasm::WasmCodePosition position, uint32_t pc = 0) {
+    DCHECK(!FLAG_wasm_no_bounds_checks);
+    // The pc is needed exactly if trap handlers are enabled.
+    DCHECK_EQ(pc != 0, env_->use_trap_handler);
+
+    out_of_line_code_.push_back(OutOfLineCode::Trap(
+        Builtins::kThrowWasmTrapMemOutOfBounds, position, pc));
+    return out_of_line_code_.back().label.get();
   }
 
   void BoundsCheckMem(uint32_t access_size, uint32_t offset, Register index,
                       wasm::WasmCodePosition position, LiftoffRegList pinned) {
+    DCHECK(!env_->use_trap_handler);
     if (FLAG_wasm_no_bounds_checks) return;
 
-    // Add OOL code.
-    out_of_line_code_.push_back(
-        OutOfLineCode::Trap(Builtins::kThrowWasmTrapMemOutOfBounds, position));
-    Label* trap_label = out_of_line_code_.back().label.get();
+    Label* trap_label = AddOutOfLineTrap(position);
 
     if (access_size > max_size_ || offset > max_size_ - access_size) {
       // The access will be out of bounds, even for the largest memory.
@@ -673,7 +731,12 @@ class LiftoffCompiler {
     __ LoadFromContext(addr, offsetof(WasmContext, mem_start), kPointerSize);
     RegClass rc = reg_class_for(value_type);
     LiftoffRegister value = pinned.set(__ GetUnusedRegister(rc, pinned));
-    __ Load(value, addr, index, operand.offset, type, pinned);
+    uint32_t protected_load_pc = 0;
+    __ Load(value, addr, index, operand.offset, type, pinned,
+            &protected_load_pc);
+    if (env_->use_trap_handler) {
+      AddOutOfLineTrap(decoder->position(), protected_load_pc);
+    }
     __ PushRegister(value_type, value);
     CheckStackSizeLimit(decoder);
   }
@@ -683,9 +746,6 @@ class LiftoffCompiler {
                 const Value& index_val, const Value& value_val) {
     ValueType value_type = type.value_type();
     if (value_type != kWasmI32) return unsupported(decoder, "non-i32 store");
-    if (!env_->use_trap_handler) {
-      return unsupported(decoder, "non-traphandler");
-    }
     RegClass rc = reg_class_for(value_type);
     LiftoffRegList pinned;
     LiftoffRegister value = pinned.set(__ PopToRegister(rc));
@@ -697,8 +757,12 @@ class LiftoffCompiler {
     }
     Register addr = pinned.set(__ GetUnusedRegister(kGpReg, pinned)).gp();
     __ LoadFromContext(addr, offsetof(WasmContext, mem_start), kPointerSize);
-    __ Store(addr, index, operand.offset, value, type, pinned);
-    __ PushRegister(value_type, value);
+    uint32_t protected_store_pc = 0;
+    __ Store(addr, index, operand.offset, value, type, pinned,
+             &protected_store_pc);
+    if (env_->use_trap_handler) {
+      AddOutOfLineTrap(decoder->position(), protected_store_pc);
+    }
   }
 
   void CurrentMemoryPages(Decoder* decoder, Value* result) {
@@ -707,11 +771,38 @@ class LiftoffCompiler {
   void GrowMemory(Decoder* decoder, const Value& value, Value* result) {
     unsupported(decoder, "grow_memory");
   }
+
   void CallDirect(Decoder* decoder,
                   const CallFunctionOperand<validate>& operand,
                   const Value args[], Value returns[]) {
-    unsupported(decoder, "call");
+    if (operand.sig->return_count() > 1)
+      return unsupported(decoder, "multi-return");
+
+    TraceCacheState(decoder);
+
+    compiler::CallDescriptor* call_desc =
+        compiler::GetWasmCallDescriptor(&compilation_zone_, operand.sig);
+
+    __ PrepareCall(operand.sig, call_desc);
+
+    source_position_table_builder_->AddPosition(
+        __ pc_offset(), SourcePosition(decoder->position()), false);
+
+    if (FLAG_wasm_jit_to_native) {
+      return unsupported(decoder, "call with jit-to-native");
+    } else {
+      Handle<Code> target = operand.index < env_->function_code.size()
+                                ? env_->function_code[operand.index]
+                                : env_->default_function_code;
+      __ Call(target, RelocInfo::CODE_TARGET);
+    }
+
+    safepoint_table_builder_.DefineSafepoint(asm_, Safepoint::kSimple, 0,
+                                             Safepoint::kNoLazyDeopt);
+
+    __ FinishCall(operand.sig, call_desc);
   }
+
   void CallIndirect(Decoder* decoder, const Value& index,
                     const CallIndirectOperand<validate>& operand,
                     const Value args[], Value returns[]) {
@@ -762,6 +853,7 @@ class LiftoffCompiler {
   bool ok_ = true;
   std::vector<OutOfLineCode> out_of_line_code_;
   SourcePositionTableBuilder* const source_position_table_builder_;
+  std::vector<trap_handler::ProtectedInstructionData>* protected_instructions_;
   // Zone used to store information during compilation. The result will be
   // stored independently, such that this zone can die together with the
   // LiftoffCompiler after compilation.
@@ -770,36 +862,22 @@ class LiftoffCompiler {
 
   void TraceCacheState(Decoder* decoder) const {
 #ifdef DEBUG
-    if (!FLAG_trace_liftoff) return;
+    if (!FLAG_trace_liftoff || !FLAG_trace_wasm_decoder) return;
+    OFStream os(stdout);
     for (int control_depth = decoder->control_depth() - 1; control_depth >= -1;
          --control_depth) {
       LiftoffAssembler::CacheState* cache_state =
           control_depth == -1
               ? asm_->cache_state()
               : &decoder->control_at(control_depth)->label_state;
-      int idx = 0;
+      bool first = true;
       for (LiftoffAssembler::VarState& slot : cache_state->stack_state) {
-        if (idx++) PrintF("-");
-        PrintF("%s:", WasmOpcodes::TypeName(slot.type()));
-        switch (slot.loc()) {
-          case kStack:
-            PrintF("s");
-            break;
-          case kRegister:
-            if (slot.reg().is_gp()) {
-              PrintF("gp%d", slot.reg().gp().code());
-            } else {
-              PrintF("fp%d", slot.reg().fp().code());
-            }
-            break;
-          case kConstant:
-            PrintF("c");
-            break;
-        }
+        os << (first ? "" : "-") << slot;
+        first = false;
       }
       if (control_depth != -1) PrintF("; ");
     }
-    PrintF("\n");
+    os << "\n";
 #endif
   }
 };
@@ -816,11 +894,15 @@ bool compiler::WasmCompilationUnit::ExecuteLiftoffCompilation() {
   Zone zone(isolate_->allocator(), "LiftoffCompilationZone");
   const wasm::WasmModule* module = env_ ? env_->module : nullptr;
   auto* call_desc = compiler::GetWasmCallDescriptor(&zone, func_body_.sig);
+  base::Optional<TimedHistogramScope> liftoff_compile_time_scope(
+      base::in_place, counters()->liftoff_compile_time());
   wasm::WasmFullDecoder<wasm::Decoder::kValidate, wasm::LiftoffCompiler>
       decoder(&zone, module, func_body_, &liftoff_.asm_, call_desc, env_,
               runtime_exception_support_,
-              &liftoff_.source_position_table_builder_);
+              &liftoff_.source_position_table_builder_,
+              protected_instructions_.get());
   decoder.Decode();
+  liftoff_compile_time_scope.reset();
   if (!decoder.interface().ok()) {
     // Liftoff compilation failed.
     isolate_->counters()->liftoff_unsupported_functions()->Increment();

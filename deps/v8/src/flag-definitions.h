@@ -207,7 +207,8 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_static_fields)
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony fields in class literals")         \
   V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_bigint, "harmony arbitrary precision integers")
+  V(harmony_bigint, "harmony arbitrary precision integers")           \
+  V(harmony_optional_catch_binding, "allow omitting binding in catch blocks")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                               \
@@ -465,8 +466,6 @@ DEFINE_BOOL(turbo_store_elimination, true,
 DEFINE_BOOL(trace_store_elimination, false, "trace store elimination")
 DEFINE_BOOL(turbo_rewrite_far_jumps, true,
             "rewrite far to near jumps (ia32,x64)")
-// TODO(rmcilroy): Remove extra_masking once the finch experiment is removed.
-DEFINE_BOOL(extra_masking, false, "obsolete - has no effect")
 
 #ifdef DISABLE_UNTRUSTED_CODE_MITIGATIONS
 #define V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS false
@@ -567,8 +566,9 @@ DEFINE_BOOL(wasm_no_stack_checks, false,
 DEFINE_BOOL(wasm_trap_handler, false,
             "use signal handlers to catch out of bounds memory access in wasm"
             " (experimental, currently Linux x86_64 only)")
-DEFINE_BOOL(wasm_code_fuzzer_gen_test, false,
-            "Generate a test case when running the wasm-code fuzzer")
+DEFINE_BOOL(wasm_fuzzer_gen_test, false,
+            "Generate a test case when running a wasm fuzzer")
+DEFINE_IMPLICATION(wasm_fuzzer_gen_test, single_threaded)
 DEFINE_BOOL(print_wasm_code, false, "Print WebAssembly code")
 DEFINE_BOOL(wasm_interpret_all, false,
             "Execute all wasm code in the wasm interpreter")

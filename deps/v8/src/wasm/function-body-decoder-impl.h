@@ -1156,9 +1156,6 @@ class WasmFullDecoder : public WasmDecoder<validate> {
     DCHECK(stack_.empty());
     DCHECK(control_.empty());
 
-    if (FLAG_wasm_code_fuzzer_gen_test) {
-      PrintRawWasmCode(this->start_, this->end_);
-    }
     base::ElapsedTimer decode_timer;
     if (FLAG_trace_wasm_decode_time) {
       decode_timer.Start();
@@ -1474,8 +1471,8 @@ class WasmFullDecoder : public WasmDecoder<validate> {
               this->error(this->pc_, "else already present for if");
               break;
             }
-            c->kind = kControlIfElse;
             FallThruTo(c);
+            c->kind = kControlIfElse;
             CALL_INTERFACE_IF_PARENT_REACHABLE(Else, c);
             PushMergeValues(c, &c->start_merge);
             c->reachability = control_at(1)->innerReachability();
@@ -1494,6 +1491,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             if (c->is_onearmed_if()) {
               // Emulate empty else arm.
               FallThruTo(c);
+              if (this->failed()) break;
               CALL_INTERFACE_IF_PARENT_REACHABLE(Else, c);
               PushMergeValues(c, &c->start_merge);
               c->reachability = control_at(1)->innerReachability();
@@ -1874,22 +1872,25 @@ class WasmFullDecoder : public WasmDecoder<validate> {
           TRACE_PART(" %c@%d:%s", WasmOpcodes::ShortNameOf(val.type),
                      static_cast<int>(val.pc - this->start_),
                      WasmOpcodes::OpcodeName(opcode));
+          // If the decoder failed, don't try to decode the operands, as this
+          // can trigger a DCHECK failure.
+          if (this->failed()) continue;
           switch (opcode) {
             case kExprI32Const: {
-              ImmI32Operand<validate> operand(this, val.pc);
+              ImmI32Operand<Decoder::kNoValidate> operand(this, val.pc);
               TRACE_PART("[%d]", operand.value);
               break;
             }
             case kExprGetLocal:
             case kExprSetLocal:
             case kExprTeeLocal: {
-              LocalIndexOperand<Decoder::kValidate> operand(this, val.pc);
+              LocalIndexOperand<Decoder::kNoValidate> operand(this, val.pc);
               TRACE_PART("[%u]", operand.index);
               break;
             }
             case kExprGetGlobal:
             case kExprSetGlobal: {
-              GlobalIndexOperand<validate> operand(this, val.pc);
+              GlobalIndexOperand<Decoder::kNoValidate> operand(this, val.pc);
               TRACE_PART("[%u]", operand.index);
               break;
             }

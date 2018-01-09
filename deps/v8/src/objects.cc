@@ -73,6 +73,7 @@
 #include "src/trap-handler/trap-handler.h"
 #include "src/unicode-cache-inl.h"
 #include "src/utils-inl.h"
+#include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-objects.h"
 #include "src/zone/zone.h"
 
@@ -10236,8 +10237,10 @@ Handle<ArrayList> ArrayList::Add(Handle<ArrayList> array, Handle<Object> obj1,
 
 // static
 Handle<ArrayList> ArrayList::New(Isolate* isolate, int size) {
-  Handle<ArrayList> result = Handle<ArrayList>::cast(
-      isolate->factory()->NewFixedArray(size + kFirstIndex));
+  Handle<FixedArray> fixed_array =
+      isolate->factory()->NewFixedArray(size + kFirstIndex);
+  fixed_array->set_map_no_write_barrier(isolate->heap()->array_list_map());
+  Handle<ArrayList> result = Handle<ArrayList>::cast(fixed_array);
   result->SetLength(0);
   return result;
 }
@@ -10276,10 +10279,13 @@ Handle<FixedArray> EnsureSpaceInFixedArray(Handle<FixedArray> array,
 // static
 Handle<ArrayList> ArrayList::EnsureSpace(Handle<ArrayList> array, int length) {
   const bool empty = (array->length() == 0);
-  auto ret = Handle<ArrayList>::cast(
-      EnsureSpaceInFixedArray(array, kFirstIndex + length));
-  if (empty) ret->SetLength(0);
-  return ret;
+  auto ret = EnsureSpaceInFixedArray(array, kFirstIndex + length);
+  if (empty) {
+    ret->set_map_no_write_barrier(array->GetHeap()->array_list_map());
+
+    Handle<ArrayList>::cast(ret)->SetLength(0);
+  }
+  return Handle<ArrayList>::cast(ret);
 }
 
 Handle<RegExpMatchInfo> RegExpMatchInfo::ReserveCaptures(
@@ -16674,6 +16680,47 @@ MaybeHandle<JSTypedArray> JSTypedArray::Create(Isolate* isolate,
 }
 
 // static
+MaybeHandle<JSTypedArray> JSTypedArray::CreateFast(
+    Isolate* isolate, Handle<JSTypedArray> exemplar, int argc,
+    Handle<Object>* argv, const char* method_name) {
+  DCHECK_GT(argc, 0);
+  DCHECK_IMPLIES(argc == 1, argv[0]->IsNumber());
+  DCHECK_IMPLIES(argc == 3, argv[0]->IsJSArrayBuffer());
+  DCHECK_IMPLIES(argc == 3, argv[1]->IsNumber());
+  DCHECK_IMPLIES(argc == 3, argv[2]->IsNumber());
+
+  // 1. Let newTypedArray be ? Construct(constructor, argumentList).
+  Handle<JSTypedArray> new_array;
+  if (argc == 1) {
+    size_t length = NumberToSize(*argv[0]);
+    new_array = isolate->factory()->NewJSTypedArray(exemplar->GetElementsKind(),
+                                                    length);
+    DCHECK_GE(new_array->length_value(), length);
+    // We don't need a validation step for one argument case since
+    // NewJSTypedArray always returns a non-neutered typed array.
+  } else if (argc == 3) {
+    Handle<JSArrayBuffer> buffer(JSArrayBuffer::cast(*argv[0]));
+    size_t byte_offset = NumberToSize(*argv[1]);
+    size_t length = NumberToSize(*argv[2]);
+    new_array = isolate->factory()->NewJSTypedArray(exemplar->type(), buffer,
+                                                    byte_offset, length);
+
+    if (V8_UNLIKELY(new_array->WasNeutered())) {
+      const MessageTemplate::Template message =
+          MessageTemplate::kDetachedOperation;
+      Handle<String> operation =
+          isolate->factory()->NewStringFromAsciiChecked(method_name);
+      THROW_NEW_ERROR(isolate, NewTypeError(message, operation), JSTypedArray);
+    }
+  } else {
+    UNREACHABLE();
+  }
+
+  DCHECK(!new_array->WasNeutered());
+  return new_array;
+}
+
+// static
 MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
     Isolate* isolate, Handle<JSTypedArray> exemplar, int argc,
     Handle<Object>* argv, const char* method_name) {
@@ -16681,21 +16728,15 @@ MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
   // slot.
   DCHECK(exemplar->IsJSTypedArray());
 
-  // 2. Let defaultConstructor be the intrinsic object listed in column one of
-  // Table 51 for exemplar.[[TypedArrayName]].
-  Handle<JSFunction> default_ctor = isolate->uint8_array_fun();
-  switch (exemplar->type()) {
-#define TYPED_ARRAY_CTOR(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array: {                        \
-    default_ctor = isolate->type##_array_fun();         \
-    break;                                              \
+  if (exemplar->HasJSTypedArrayPrototype(isolate) &&
+      isolate->IsArraySpeciesLookupChainIntact()) {
+    return CreateFast(isolate, exemplar, argc, argv, method_name);
   }
 
-    TYPED_ARRAYS(TYPED_ARRAY_CTOR)
-#undef TYPED_ARRAY_CTOR
-    default:
-      UNREACHABLE();
-  }
+  // 2. Let defaultConstructor be the intrinsic object listed in column one of
+  // Table 51 for exemplar.[[TypedArrayName]].
+  Handle<JSFunction> default_ctor =
+      JSTypedArray::DefaultConstructor(isolate, exemplar);
 
   // 3. Let constructor be ? SpeciesConstructor(exemplar, defaultConstructor).
   Handle<Object> ctor;
@@ -16703,6 +16744,10 @@ MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
       isolate, ctor,
       Object::SpeciesConstructor(isolate, exemplar, default_ctor),
       JSTypedArray);
+
+  if (*default_ctor == *ctor) {
+    return CreateFast(isolate, exemplar, argc, argv, method_name);
+  }
 
   // 4. Return ? TypedArrayCreate(constructor, argumentList).
   return Create(isolate, ctor, argc, argv, method_name);
@@ -18958,6 +19003,13 @@ void JSArrayBuffer::FreeBackingStore() {
 
 // static
 void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
+  if (allocation.mode == ArrayBuffer::Allocator::AllocationMode::kReservation) {
+    // TODO(eholk): check with WasmAllocationTracker to make sure this is
+    // actually a buffer we are tracking.
+    isolate->wasm_engine()->allocation_tracker()->ReleaseAddressSpace(
+        allocation.length);
+  }
+
   isolate->array_buffer_allocator()->Free(allocation.allocation_base,
                                           allocation.length, allocation.mode);
 }

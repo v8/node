@@ -34,6 +34,7 @@ import time
 
 from . import junit_output
 from . import statusfile
+from ..testproc import progress as progress_proc
 
 
 class ProgressIndicator(object):
@@ -66,6 +67,11 @@ class ProgressIndicator(object):
       'negative': negative_marker,
     }
 
+  def ToProgressIndicatorProc(self):
+    print ('Warning: %s is not available as a processor' %
+           self.__class__.__name__)
+    return None
+
 
 class IndicatorNotifier(object):
   """Holds a list of progress indicators and notifies them all on events."""
@@ -74,6 +80,9 @@ class IndicatorNotifier(object):
 
   def Register(self, indicator):
     self.indicators.append(indicator)
+
+  def ToProgressIndicatorProcs(self):
+    return [i.ToProgressIndicatorProc() for i in self.indicators]
 
 
 # Forge all generic event-dispatching methods in IndicatorNotifier, which are
@@ -144,6 +153,9 @@ class VerboseProgressIndicator(SimpleProgressIndicator):
     print 'Still working...'
     sys.stdout.flush()
 
+  def ToProgressIndicatorProc(self):
+    return progress_proc.VerboseProgressIndicator()
+
 
 class DotsProgressIndicator(SimpleProgressIndicator):
 
@@ -164,6 +176,9 @@ class DotsProgressIndicator(SimpleProgressIndicator):
     else:
       sys.stdout.write('.')
       sys.stdout.flush()
+
+  def ToProgressIndicatorProc(self):
+    return progress_proc.DotsProgressIndicator()
 
 
 class CompactProgressIndicator(ProgressIndicator):
@@ -239,6 +254,9 @@ class ColorProgressIndicator(CompactProgressIndicator):
   def ClearLine(self, last_line_length):
     print "\033[1K\r",
 
+  def ToProgressIndicatorProc(self):
+    return progress_proc.ColorProgressIndicator()
+
 
 class MonochromeProgressIndicator(CompactProgressIndicator):
 
@@ -254,11 +272,15 @@ class MonochromeProgressIndicator(CompactProgressIndicator):
   def ClearLine(self, last_line_length):
     print ("\r" + (" " * last_line_length) + "\r"),
 
+  def ToProgressIndicatorProc(self):
+    return progress_proc.MonochromeProgressIndicator()
+
 
 class JUnitTestProgressIndicator(ProgressIndicator):
-
   def __init__(self, junitout, junittestsuite):
     super(JUnitTestProgressIndicator, self).__init__()
+    self.junitout = junitout
+    self.juinttestsuite = junittestsuite
     self.outputter = junit_output.JUnitTestOutput(junittestsuite)
     if junitout:
       self.outfile = open(junitout, "w")
@@ -279,7 +301,7 @@ class JUnitTestProgressIndicator(ProgressIndicator):
       stderr = output.stderr.strip()
       if len(stderr):
         fail_text += "stderr:\n%s\n" % stderr
-      fail_text += "Command: %s" % self.test.cmd.to_string()
+      fail_text += "Command: %s" % test.cmd.to_string()
       if output.HasCrashed():
         fail_text += "exit code: %d\n--- CRASHED ---" % output.exit_code
       if output.HasTimedOut():
@@ -289,6 +311,12 @@ class JUnitTestProgressIndicator(ProgressIndicator):
         test_cmd=test.cmd.to_string(relative=True),
         test_duration=output.duration,
         test_failure=fail_text)
+
+  def ToProgressIndicatorProc(self):
+    if self.outfile != sys.stdout:
+      self.outfile.close()
+    return progress_proc.JUnitTestProgressIndicator(self.junitout,
+                                                    self.junittestsuite)
 
 
 class JsonTestProgressIndicator(ProgressIndicator):
@@ -301,6 +329,10 @@ class JsonTestProgressIndicator(ProgressIndicator):
     self.random_seed = random_seed
     self.results = []
     self.tests = []
+
+  def ToProgressIndicatorProc(self):
+    return progress_proc.JsonTestProgressIndicator(
+        self.json_test_results, self.arch, self.mode, self.random_seed)
 
   def Done(self):
     complete_results = []

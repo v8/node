@@ -3555,33 +3555,39 @@ Node* WasmGraphBuilder::BoundsCheckMem(uint8_t access_size, Node* index,
 
   if (access_size > max_size || offset > max_size - access_size) {
     // The access will be out of bounds, even for the largest memory.
-    TrapIfEq32(wasm::kTrapMemOutOfBounds, jsgraph()->Int32Constant(0), 0,
-               position);
+    TrapIfEq32(wasm::kTrapMemOutOfBounds, Int32Constant(0), 0, position);
     return jsgraph()->IntPtrConstant(0);
   }
-  uint32_t end_offset = offset + access_size;
+  DCHECK_LE(1, access_size);
+  // This computation cannot overflow, since
+  //   {offset <= max_size - access_size <= kMaxUint32 - access_size}.
+  // It also cannot underflow, since {access_size >= 1}.
+  uint32_t end_offset = offset + access_size - 1;
+  Node* end_offset_node = Int32Constant(end_offset);
 
-  if (end_offset > min_size) {
+  // The accessed memory is [index + offset, index + end_offset].
+  // Check that the last read byte (at {index + end_offset}) is in bounds.
+  // 1) Check that {end_offset < mem_size}. This also ensures that we can safely
+  //    compute {effective_size} as {mem_size - end_offset)}.
+  //    {effective_size} is >= 1 if condition 1) holds.
+  // 2) Check that {index + end_offset < mem_size} by
+  //    - computing {effective_size} as {mem_size - end_offset} and
+  //    - checking that {index < effective_size}.
+
+  if (end_offset >= min_size) {
     // The end offset is larger than the smallest memory.
     // Dynamically check the end offset against the actual memory size, which
     // is not known at compile time.
-    Node* cond;
-    if (jsgraph()->machine()->Is32()) {
-      cond = graph()->NewNode(jsgraph()->machine()->Uint32LessThanOrEqual(),
-                              jsgraph()->Int32Constant(end_offset), mem_size);
-    } else {
-      cond = graph()->NewNode(
-          jsgraph()->machine()->Uint64LessThanOrEqual(),
-          jsgraph()->Int64Constant(static_cast<int64_t>(end_offset)), mem_size);
-    }
+    Node* cond = graph()->NewNode(jsgraph()->machine()->Uint32LessThan(),
+                                  end_offset_node, mem_size);
     TrapIfFalse(wasm::kTrapMemOutOfBounds, cond, position);
   } else {
     // The end offset is within the bounds of the smallest memory, so only
     // one check is required. Check to see if the index is also a constant.
-    UintPtrMatcher match(index);
+    Uint32Matcher match(index);
     if (match.HasValue()) {
-      uint64_t index_val = match.Value();
-      if ((index_val + offset + access_size) <= min_size) {
+      uint32_t index_val = match.Value();
+      if (index_val < min_size - end_offset) {
         // The input index is a constant and everything is statically within
         // bounds of the smallest possible memory.
         return Uint32ToUintptr(index);
@@ -3589,19 +3595,9 @@ Node* WasmGraphBuilder::BoundsCheckMem(uint8_t access_size, Node* index,
     }
   }
 
-  // Compute the effective size of the memory, which is the size of the memory
-  // minus the statically known offset, minus the byte size of the access minus
-  // one.
-  Node* effective_size;
-  if (jsgraph()->machine()->Is32()) {
-    effective_size =
-        graph()->NewNode(jsgraph()->machine()->Int32Sub(), mem_size,
-                         jsgraph()->Int32Constant(end_offset - 1));
-  } else {
-    effective_size = graph()->NewNode(
-        jsgraph()->machine()->Int64Sub(), mem_size,
-        jsgraph()->Int64Constant(static_cast<int64_t>(end_offset - 1)));
-  }
+  // This produces a positive number, since {end_offset < min_size <= mem_size}.
+  Node* effective_size = graph()->NewNode(jsgraph()->machine()->Int32Sub(),
+                                          mem_size, end_offset_node);
 
   // Introduce the actual bounds check.
   Node* cond = graph()->NewNode(m->Uint32LessThan(), index, effective_size);
@@ -4891,7 +4887,8 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
 
   if (func_index_ >= FLAG_trace_wasm_ast_start &&
       func_index_ < FLAG_trace_wasm_ast_end) {
-    PrintRawWasmCode(isolate_->allocator(), func_body_, env_->module);
+    PrintRawWasmCode(isolate_->allocator(), func_body_, env_->module,
+                     wasm::kPrintLocals);
   }
   if (FLAG_trace_wasm_decode_time) {
     *decode_ms = decode_timer.Elapsed().InMillisecondsF();
@@ -5138,7 +5135,7 @@ WasmCodeWrapper WasmCompilationUnit::FinishTurbofanCompilation(
         desc, tf_.job_->compilation_info()->wasm_code_desc()->frame_slot_count,
         func_index_,
         tf_.job_->compilation_info()->wasm_code_desc()->safepoint_table_offset,
-        protected_instructions_);
+        std::move(protected_instructions_));
     if (!code) {
       return WasmCodeWrapper(code);
     }
@@ -5223,8 +5220,13 @@ WasmCodeWrapper WasmCompilationUnit::FinishLiftoffCompilation(
       // TODO(wasm): Use proper log files, here and elsewhere.
       OFStream os(stdout);
       os << "--- Wasm liftoff code ---\n";
-      EmbeddedVector<char, 32> func_name;
-      func_name.Truncate(SNPrintF(func_name, "wasm#%d-liftoff", func_index_));
+      EmbeddedVector<char, 64> func_name;
+      if (func_name_.start() != nullptr) {
+        SNPrintF(func_name, "#%d:%.*s", func_index(), func_name_.length(),
+                 func_name_.start());
+      } else {
+        SNPrintF(func_name, "wasm#%d", func_index());
+      }
       code->Disassemble(func_name.start(), os);
       os << "--- End code ---\n";
     }
@@ -5242,9 +5244,10 @@ WasmCodeWrapper WasmCompilationUnit::FinishLiftoffCompilation(
     // Consider lifting them both to FinishCompilation.
     native_module_->compiled_module()->source_positions()->set(
         func_index_, *source_positions);
-    return WasmCodeWrapper(native_module_->AddCode(
-        desc, liftoff_.asm_.GetTotalFrameSlotCount(), func_index_,
-        liftoff_.safepoint_table_offset_, protected_instructions_, true));
+    return WasmCodeWrapper(
+        native_module_->AddCode(desc, liftoff_.asm_.GetTotalFrameSlotCount(),
+                                func_index_, liftoff_.safepoint_table_offset_,
+                                std::move(protected_instructions_), true));
   }
 }
 

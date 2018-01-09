@@ -27,11 +27,18 @@ inline Operand GetStackSlot(uint32_t index) {
 // TODO(clemensh): Make this a constexpr variable once Operand is constexpr.
 inline Operand GetContextOperand() { return Operand(ebp, -16); }
 
+static constexpr LiftoffRegList kByteRegs =
+    LiftoffRegList::FromBits<Register::ListOf<eax, ecx, edx, ebx>()>();
+static_assert(kByteRegs.GetNumRegsSet() == 4, "should have four byte regs");
+static_assert((kByteRegs & kGpCacheRegList) == kByteRegs,
+              "kByteRegs only contains gp cache registers");
+
 }  // namespace liftoff
 
 static constexpr DoubleRegister kScratchDoubleReg = xmm7;
 
 void LiftoffAssembler::ReserveStackSpace(uint32_t bytes) {
+  DCHECK_LE(bytes, kMaxInt);
   sub(esp, Immediate(bytes));
 }
 
@@ -44,9 +51,12 @@ void LiftoffAssembler::LoadConstant(LiftoffRegister reg, WasmValue value) {
         mov(reg.gp(), Immediate(value.to_i32()));
       }
       break;
-    case kWasmF32:
-      TurboAssembler::Move(reg.fp(), value.to_f32_boxed().get_bits());
+    case kWasmF32: {
+      Register tmp = GetUnusedRegister(kGpReg).gp();
+      mov(tmp, Immediate(value.to_f32_boxed().get_bits()));
+      movd(reg.fp(), tmp);
       break;
+    }
     default:
       UNREACHABLE();
   }
@@ -64,9 +74,14 @@ void LiftoffAssembler::SpillContext(Register context) {
   mov(liftoff::GetContextOperand(), context);
 }
 
+void LiftoffAssembler::FillContextInto(Register dst) {
+  mov(dst, liftoff::GetContextOperand());
+}
+
 void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
-                            LoadType type, LiftoffRegList pinned) {
+                            LoadType type, LiftoffRegList pinned,
+                            uint32_t* protected_load_pc) {
   Operand src_op = offset_reg == no_reg
                        ? Operand(src_addr, offset_imm)
                        : Operand(src_addr, offset_reg, times_1, offset_imm);
@@ -80,6 +95,7 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
     }
     src_op = Operand(src_addr, src, times_1, 0);
   }
+  if (protected_load_pc) *protected_load_pc = pc_offset();
   switch (type.value()) {
     case LoadType::kI32Load8U:
       movzx_b(dst.gp(), src_op);
@@ -103,23 +119,32 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
 
 void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
-                             StoreType type, LiftoffRegList pinned) {
+                             StoreType type, LiftoffRegList pinned,
+                             uint32_t* protected_store_pc) {
   Operand dst_op = offset_reg == no_reg
                        ? Operand(dst_addr, offset_imm)
                        : Operand(dst_addr, offset_reg, times_1, offset_imm);
   if (offset_imm > kMaxInt) {
     // The immediate can not be encoded in the operand. Load it to a register
     // first.
-    Register dst = GetUnusedRegister(kGpReg, pinned).gp();
+    Register dst = pinned.set(GetUnusedRegister(kGpReg, pinned).gp());
     mov(dst, Immediate(offset_imm));
     if (offset_reg != no_reg) {
       emit_ptrsize_add(dst, dst, offset_reg);
     }
     dst_op = Operand(dst_addr, dst, times_1, 0);
   }
+  if (protected_store_pc) *protected_store_pc = pc_offset();
   switch (type.value()) {
     case StoreType::kI32Store8:
-      mov_b(dst_op, src.gp());
+      // Only the lower 4 registers can be addressed as 8-bit registers.
+      if (src.gp().is_byte_register()) {
+        mov_b(dst_op, src.gp());
+      } else {
+        Register byte_src = GetUnusedRegister(liftoff::kByteRegs, pinned).gp();
+        mov(byte_src, src.gp());
+        mov_b(dst_op, byte_src);
+      }
       break;
     case StoreType::kI32Store16:
       mov_w(dst_op, src.gp());
@@ -252,7 +277,7 @@ COMMUTATIVE_I32_BINOP(or, or_)
 COMMUTATIVE_I32_BINOP(xor, xor_)
 // clang-format on
 
-#undef DEFAULT_I32_BINOP
+#undef COMMUTATIVE_I32_BINOP
 
 void LiftoffAssembler::emit_f32_add(DoubleRegister dst, DoubleRegister lhs,
                                     DoubleRegister rhs) {
@@ -322,6 +347,36 @@ void LiftoffAssembler::CallTrapCallbackForTesting() {
 
 void LiftoffAssembler::AssertUnreachable(AbortReason reason) {
   TurboAssembler::AssertUnreachable(reason);
+}
+
+void LiftoffAssembler::PushCallerFrameSlot(const VarState& src,
+                                           uint32_t src_index) {
+  switch (src.loc()) {
+    case VarState::kStack:
+      DCHECK_NE(kWasmF64, src.type());  // TODO(clemensh): Implement this.
+      push(liftoff::GetStackSlot(src_index));
+      break;
+    case VarState::kRegister:
+      switch (src.type()) {
+        case kWasmI32:
+          push(src.reg().gp());
+          break;
+        case kWasmF32:
+          sub(esp, Immediate(sizeof(float)));
+          movss(Operand(esp, 0), src.reg().fp());
+          break;
+        case kWasmF64:
+          sub(esp, Immediate(sizeof(double)));
+          movsd(Operand(esp, 0), src.reg().fp());
+          break;
+        default:
+          UNREACHABLE();
+      }
+      break;
+    case VarState::kConstant:
+      push(Immediate(src.i32_const()));
+      break;
+  }
 }
 
 void LiftoffAssembler::PushRegisters(LiftoffRegList regs) {

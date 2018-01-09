@@ -5,6 +5,7 @@
 #ifndef V8_WASM_BASELINE_LIFTOFF_REGISTER_H_
 #define V8_WASM_BASELINE_LIFTOFF_REGISTER_H_
 
+#include <iosfwd>
 #include <memory>
 
 // Clients of this interface shouldn't depend on lots of compiler internals.
@@ -69,6 +70,17 @@ class LiftoffRegister {
     return LiftoffRegister(code);
   }
 
+  static LiftoffRegister from_code(RegClass rc, int code) {
+    switch (rc) {
+      case kGpReg:
+        return LiftoffRegister(Register::from_code(code));
+      case kFpReg:
+        return LiftoffRegister(DoubleRegister::from_code(code));
+      default:
+        UNREACHABLE();
+    }
+  }
+
   constexpr bool is_gp() const { return code_ < kAfterMaxLiftoffGpRegCode; }
   constexpr bool is_fp() const {
     return code_ >= kAfterMaxLiftoffGpRegCode &&
@@ -107,6 +119,11 @@ class LiftoffRegister {
 static_assert(IS_TRIVIALLY_COPYABLE(LiftoffRegister),
               "LiftoffRegister can efficiently be passed by value");
 
+inline std::ostream& operator<<(std::ostream& os, LiftoffRegister reg) {
+  return reg.is_gp() ? os << "gp" << reg.gp().code()
+                     : os << "fp" << reg.fp().code();
+}
+
 class LiftoffRegList {
  public:
   static constexpr bool use_u16 = kAfterMaxLiftoffRegCode <= 16;
@@ -140,16 +157,25 @@ class LiftoffRegList {
     return (regs_ & (storage_t{1} << reg.liftoff_code())) != 0;
   }
 
-  bool is_empty() const { return regs_ == 0; }
+  constexpr bool is_empty() const { return regs_ == 0; }
 
-  unsigned GetNumRegsSet() const { return base::bits::CountPopulation(regs_); }
-
-  LiftoffRegList operator&(LiftoffRegList other) const {
-    return FromBits(regs_ & other.regs_);
+  constexpr unsigned GetNumRegsSet() const {
+    return base::bits::CountPopulation(regs_);
   }
 
-  LiftoffRegList operator~() const {
-    return FromBits(~regs_ & (kGpMask | kFpMask));
+  constexpr LiftoffRegList operator&(const LiftoffRegList other) const {
+    return LiftoffRegList(regs_ & other.regs_);
+  }
+
+  constexpr LiftoffRegList operator~() const {
+    return LiftoffRegList(~regs_ & (kGpMask | kFpMask));
+  }
+
+  constexpr bool operator==(const LiftoffRegList other) const {
+    return regs_ == other.regs_;
+  }
+  constexpr bool operator!=(const LiftoffRegList other) const {
+    return regs_ != other.regs_;
   }
 
   LiftoffRegister GetFirstRegSet() const {
@@ -165,10 +191,10 @@ class LiftoffRegList {
     return LiftoffRegister::from_liftoff_code(last_code);
   }
 
-  LiftoffRegList MaskOut(storage_t mask) const {
+  LiftoffRegList MaskOut(const LiftoffRegList mask) const {
     // Masking out is guaranteed to return a correct reg list, hence no checks
     // needed.
-    return FromBits(regs_ & ~mask);
+    return FromBits(regs_ & ~mask.regs_);
   }
 
   static LiftoffRegList FromBits(storage_t bits) {
