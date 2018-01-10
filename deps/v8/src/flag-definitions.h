@@ -207,8 +207,7 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_static_fields)
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony fields in class literals")         \
   V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_bigint, "harmony arbitrary precision integers")           \
-  V(harmony_optional_catch_binding, "allow omitting binding in catch blocks")
+  V(harmony_bigint, "harmony arbitrary precision integers")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                               \
@@ -217,7 +216,8 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_static_fields)
     "harmony disallow non undefined primitive return value from class " \
     "constructor")                                                      \
   V(harmony_dynamic_import, "harmony dynamic import")                   \
-  V(harmony_public_fields, "harmony public fields in class literals")
+  V(harmony_public_fields, "harmony public fields in class literals")   \
+  V(harmony_optional_catch_binding, "allow omitting binding in catch blocks")
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING_BASE(V)                                        \
@@ -602,6 +602,9 @@ DEFINE_BOOL(experimental_new_space_growth_heuristic, false,
 DEFINE_INT(max_old_space_size, 0, "max size of the old space (in Mbytes)")
 DEFINE_INT(initial_old_space_size, 0, "initial old space size (in Mbytes)")
 DEFINE_BOOL(gc_global, false, "always perform global GCs")
+DEFINE_INT(random_gc_interval, 0,
+           "Collect garbage after random(0, X) allocations. It overrides "
+           "gc_interval.")
 DEFINE_INT(gc_interval, -1, "garbage collect after <n> allocations")
 DEFINE_INT(retain_maps_for_n_gc, 2,
            "keeps maps alive for <n> old space garbage collections")
@@ -656,6 +659,8 @@ DEFINE_BOOL(parallel_pointer_update, true,
             "use parallel pointer update during compaction")
 DEFINE_BOOL(trace_incremental_marking, false,
             "trace progress of the incremental marking")
+DEFINE_BOOL(trace_stress_marking, false, "trace stress marking progress")
+DEFINE_BOOL(trace_stress_scavenge, false, "trace stress scavenge progress")
 DEFINE_BOOL(track_gc_object_stats, false,
             "track object counts and memory usage")
 DEFINE_BOOL(trace_gc_object_stats, false,
@@ -705,13 +710,18 @@ DEFINE_BOOL(stress_compaction_random, false,
             "evacuation candidates. It overrides stress_compaction.")
 DEFINE_BOOL(stress_incremental_marking, false,
             "force incremental marking for small heaps and run it more often")
+
+DEFINE_BOOL(fuzzer_gc_analysis, false,
+            "prints number of allocations and enables analysis mode for gc "
+            "fuzz testing, e.g. --stress-marking, --stress-scavenge")
 DEFINE_INT(stress_marking, 0,
            "force marking at random points between 0 and X (inclusive) percent "
            "of the regular marking start limit")
 DEFINE_INT(stress_scavenge, 0,
            "force scavenge at random points between 0 and X (inclusive) "
            "percent of the new space capacity")
-DEFINE_BOOL(stress_scavenge_analysis, false, "enables stress-scavenge logging.")
+DEFINE_IMPLICATION(fuzzer_gc_analysis, stress_marking)
+DEFINE_IMPLICATION(fuzzer_gc_analysis, stress_scavenge)
 
 DEFINE_BOOL(manual_evacuation_candidates_selection, false,
             "Test mode only flag. It allows an unit test to select evacuation "

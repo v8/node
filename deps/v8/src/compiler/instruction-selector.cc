@@ -815,7 +815,7 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
 
     int const state_id = sequence()->AddDeoptimizationEntry(
         buffer->frame_state_descriptor, DeoptimizeKind::kLazy,
-        DeoptimizeReason::kNoReason, VectorSlotPair());
+        DeoptimizeReason::kUnknown, VectorSlotPair());
     buffer->instruction_args.push_back(g.TempImmediate(state_id));
 
     StateObjectDeduplicator deduplicator(instruction_zone());
@@ -2114,8 +2114,6 @@ void InstructionSelector::VisitF32x4Neg(Node* node) { UNIMPLEMENTED(); }
 void InstructionSelector::VisitF32x4RecipSqrtApprox(Node* node) {
   UNIMPLEMENTED();
 }
-
-void InstructionSelector::VisitF32x4Add(Node* node) { UNIMPLEMENTED(); }
 #endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
         // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
 
@@ -2127,14 +2125,6 @@ void InstructionSelector::VisitF32x4AddHoriz(Node* node) { UNIMPLEMENTED(); }
 
 #if !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS && \
     !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64
-void InstructionSelector::VisitF32x4Sub(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Mul(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Max(Node* node) { UNIMPLEMENTED(); }
-
-void InstructionSelector::VisitF32x4Min(Node* node) { UNIMPLEMENTED(); }
-
 void InstructionSelector::VisitF32x4RecipApprox(Node* node) { UNIMPLEMENTED(); }
 #endif  // !V8_TARGET_ARCH_ARM && !V8_TARGET_ARCH_ARM64 && !V8_TARGET_ARCH_MIPS
         // && !V8_TARGET_ARCH_MIPS64 && !V8_TARGET_ARCH_X64

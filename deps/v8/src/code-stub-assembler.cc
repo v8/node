@@ -1996,7 +1996,10 @@ TNode<Smi> CodeStubAssembler::BuildAppendJSArray(ElementsKind kind,
 
   // Resize the capacity of the fixed array if it doesn't fit.
   TNode<IntPtrT> first = *arg_index;
-  Node* growth = WordToParameter(IntPtrSub(args->GetLength(), first), mode);
+  Node* growth = WordToParameter(
+      IntPtrSub(UncheckedCast<IntPtrT>(args->GetLength(INTPTR_PARAMETERS)),
+                first),
+      mode);
   PossiblyGrowElementsCapacity(mode, kind, array, var_length.value(),
                                &var_elements, growth, &pre_bailout);
 
@@ -7134,7 +7137,8 @@ void CodeStubAssembler::TryPrototypeChainLookup(
         GotoIfNot(InstanceTypeEqual(holder_instance_type, JS_TYPED_ARRAY_TYPE),
                   &next_proto);
         GotoIfNot(IsString(var_unique.value()), &next_proto);
-        BranchIfMaybeSpecialIndex(CAST(key), if_bailout, &next_proto);
+        BranchIfMaybeSpecialIndex(CAST(var_unique.value()), if_bailout,
+                                  &next_proto);
       }
 
       BIND(&next_proto);
@@ -10360,7 +10364,7 @@ Node* CodeStubAssembler::IsDetachedBuffer(Node* buffer) {
 }
 
 CodeStubArguments::CodeStubArguments(
-    CodeStubAssembler* assembler, SloppyTNode<IntPtrT> argc, Node* fp,
+    CodeStubAssembler* assembler, Node* argc, Node* fp,
     CodeStubAssembler::ParameterMode param_mode, ReceiverMode receiver_mode)
     : assembler_(assembler),
       argc_mode_(param_mode),
@@ -10397,7 +10401,7 @@ TNode<Object> CodeStubArguments::AtIndex(
     Node* index, CodeStubAssembler::ParameterMode mode) const {
   DCHECK_EQ(argc_mode_, mode);
   CSA_ASSERT(assembler_,
-             assembler_->UintPtrOrSmiLessThan(index, GetLength(), mode));
+             assembler_->UintPtrOrSmiLessThan(index, GetLength(mode), mode));
   return assembler_->UncheckedCast<Object>(
       assembler_->Load(MachineType::AnyTagged(), AtIndexPtr(index, mode)));
 }
@@ -10555,39 +10559,6 @@ Node* CodeStubAssembler::AllocatePromiseReactionJobInfo(
   StoreObjectFieldNoWriteBarrier(result, PromiseReactionJobInfo::kContextOffset,
                                  context);
   return result;
-}
-
-TNode<IntPtrT> CodeStubAssembler::GetPendingMicrotaskCount() {
-  auto ref = ExternalReference::pending_microtask_count_address(isolate());
-  if (kIntSize == 8) {
-    return TNode<IntPtrT>::UncheckedCast(
-        Load(MachineType::Int64(), ExternalConstant(ref)));
-  } else {
-    Node* const value = Load(MachineType::Int32(), ExternalConstant(ref));
-    return ChangeInt32ToIntPtr(value);
-  }
-}
-
-void CodeStubAssembler::SetPendingMicrotaskCount(TNode<IntPtrT> count) {
-  auto ref = ExternalReference::pending_microtask_count_address(isolate());
-  auto rep = kIntSize == 8 ? MachineRepresentation::kWord64
-                           : MachineRepresentation::kWord32;
-  if (kIntSize == 4 && kPointerSize == 8) {
-    Node* const truncated_count =
-        TruncateInt64ToInt32(TNode<Int64T>::UncheckedCast(count));
-    StoreNoWriteBarrier(rep, ExternalConstant(ref), truncated_count);
-  } else {
-    StoreNoWriteBarrier(rep, ExternalConstant(ref), count);
-  }
-}
-
-TNode<FixedArray> CodeStubAssembler::GetMicrotaskQueue() {
-  return TNode<FixedArray>::UncheckedCast(
-      LoadRoot(Heap::kMicrotaskQueueRootIndex));
-}
-
-void CodeStubAssembler::SetMicrotaskQueue(TNode<FixedArray> queue) {
-  StoreRoot(Heap::kMicrotaskQueueRootIndex, queue);
 }
 
 Node* CodeStubAssembler::MarkerIsFrameType(Node* marker_or_function,

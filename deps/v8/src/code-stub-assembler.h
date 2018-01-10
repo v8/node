@@ -1849,13 +1849,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                        Node* deferred_on_resolve,
                                        Node* deferred_on_reject, Node* context);
 
-  // Microtask helpers
-  TNode<IntPtrT> GetPendingMicrotaskCount();
-  void SetPendingMicrotaskCount(TNode<IntPtrT> count);
-
-  TNode<FixedArray> GetMicrotaskQueue();
-  void SetMicrotaskQueue(TNode<FixedArray> queue);
-
   // Helpers for StackFrame markers.
   Node* MarkerIsFrameType(Node* marker_or_function,
                           StackFrame::Type frame_type);
@@ -1997,15 +1990,16 @@ class CodeStubArguments {
   // |argc| is an intptr value which specifies the number of arguments passed
   // to the builtin excluding the receiver. The arguments will include a
   // receiver iff |receiver_mode| is kHasReceiver.
-  CodeStubArguments(CodeStubAssembler* assembler, SloppyTNode<IntPtrT> argc,
+  CodeStubArguments(CodeStubAssembler* assembler, Node* argc,
                     ReceiverMode receiver_mode = ReceiverMode::kHasReceiver)
       : CodeStubArguments(assembler, argc, nullptr,
                           CodeStubAssembler::INTPTR_PARAMETERS, receiver_mode) {
   }
+
   // |argc| is either a smi or intptr depending on |param_mode|. The arguments
   // include a receiver iff |receiver_mode| is kHasReceiver.
-  CodeStubArguments(CodeStubAssembler* assembler, SloppyTNode<IntPtrT> argc,
-                    Node* fp, CodeStubAssembler::ParameterMode param_mode,
+  CodeStubArguments(CodeStubAssembler* assembler, Node* argc, Node* fp,
+                    CodeStubAssembler::ParameterMode param_mode,
                     ReceiverMode receiver_mode = ReceiverMode::kHasReceiver);
 
   TNode<Object> GetReceiver() const;
@@ -2027,7 +2021,10 @@ class CodeStubArguments {
   TNode<Object> GetOptionalArgumentValue(int index,
                                          SloppyTNode<Object> default_value);
 
-  TNode<IntPtrT> GetLength() const { return argc_; }
+  Node* GetLength(CodeStubAssembler::ParameterMode mode) const {
+    DCHECK_EQ(mode, argc_mode_);
+    return argc_;
+  }
 
   typedef std::function<void(Node* arg)> ForEachBodyFunction;
 
@@ -2053,7 +2050,7 @@ class CodeStubArguments {
   CodeStubAssembler* assembler_;
   CodeStubAssembler::ParameterMode argc_mode_;
   ReceiverMode receiver_mode_;
-  TNode<IntPtrT> argc_;
+  Node* argc_;
   TNode<RawPtr<Object>> arguments_;
   Node* fp_;
 };

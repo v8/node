@@ -13718,8 +13718,11 @@ Handle<Object> SharedFunctionInfo::GetSourceCodeHarmony(
       script_source, start_pos, shared->end_position());
   if (!shared->is_wrapped()) return source;
 
+  DCHECK(!shared->name_should_print_as_anonymous());
   IncrementalStringBuilder builder(isolate);
-  builder.AppendCString("function (");
+  builder.AppendCString("function ");
+  builder.AppendString(Handle<String>(shared->name(), isolate));
+  builder.AppendCString("(");
   Handle<FixedArray> args(Script::cast(shared->script())->wrapped_arguments());
   int argc = args->length();
   for (int i = 0; i < argc; i++) {
@@ -14131,7 +14134,7 @@ void JSFunction::ClearTypeFeedbackInfo() {
 void Code::PrintDeoptLocation(FILE* out, Address pc) {
   Deoptimizer::DeoptInfo info = Deoptimizer::GetDeoptInfo(this, pc);
   class SourcePosition pos = info.position;
-  if (info.deopt_reason != DeoptimizeReason::kNoReason || pos.IsKnown()) {
+  if (info.deopt_reason != DeoptimizeReason::kUnknown || pos.IsKnown()) {
     PrintF(out, "            ;;; deoptimize at ");
     OFStream outstr(out);
     pos.Print(outstr, this);
@@ -14522,8 +14525,7 @@ void HandlerTable::HandlerTableReturnPrint(std::ostream& os) {
   }
 }
 
-
-void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
+void Code::Disassemble(const char* name, std::ostream& os) {
   os << "kind = " << Kind2String(kind()) << "\n";
   if (is_stub()) {
     const char* n = CodeStub::MajorName(CodeStub::GetMajorKey(this));
@@ -14551,7 +14553,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
   os << "compiler = " << (is_turbofanned() ? "turbofan" : "unknown") << "\n";
   os << "address = " << static_cast<const void*>(this) << "\n";
 
-  os << "Instructions (size = " << instruction_size() << ")\n";
+  os << "Body (size = " << instruction_size() << ")\n";
   {
     Isolate* isolate = GetIsolate();
     int size = instruction_size();
@@ -14563,6 +14565,7 @@ void Code::Disassemble(const char* name, std::ostream& os) {  // NOLINT
 
     // Stop before reaching any embedded tables
     int code_size = Min(safepoint_offset, constant_pool_offset);
+    os << "Instructions (size = " << code_size << ")\n";
     byte* begin = instruction_start();
     byte* end = begin + code_size;
     Disassembler::Decode(isolate, &os, begin, end, this);
