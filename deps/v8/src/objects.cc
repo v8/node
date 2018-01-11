@@ -1164,7 +1164,7 @@ MaybeHandle<Object> JSProxy::GetProperty(Isolate* isolate,
                     Object);
   }
   // 5. Let target be the value of the [[ProxyTarget]] internal slot of O.
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   // 6. Let trap be ? GetMethod(handler, "get").
   Handle<Object> trap;
   ASSIGN_RETURN_ON_EXCEPTION(
@@ -1537,7 +1537,7 @@ MaybeHandle<Object> JSProxy::GetPrototype(Handle<JSProxy> proxy) {
                     NewTypeError(MessageTemplate::kProxyRevoked, trap_name),
                     Object);
   }
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   Handle<JSReceiver> handler(JSReceiver::cast(proxy->handler()), isolate);
 
   // 5. Let trap be ? GetMethod(handler, "getPrototypeOf").
@@ -5513,7 +5513,13 @@ Handle<Map> JSObject::GetElementsTransitionMap(Handle<JSObject> object,
 
 void JSProxy::Revoke(Handle<JSProxy> proxy) {
   Isolate* isolate = proxy->GetIsolate();
-  if (!proxy->IsRevoked()) proxy->set_handler(isolate->heap()->null_value());
+  // ES#sec-proxy-revocation-functions
+  if (!proxy->IsRevoked()) {
+    // 5. Set p.[[ProxyTarget]] to null.
+    proxy->set_target(isolate->heap()->null_value());
+    // 6. Set p.[[ProxyHandler]] to null.
+    proxy->set_handler(isolate->heap()->null_value());
+  }
   DCHECK(proxy->IsRevoked());
 }
 
@@ -5529,7 +5535,7 @@ Maybe<bool> JSProxy::IsArray(Handle<JSProxy> proxy) {
           isolate->factory()->NewStringFromAsciiChecked("IsArray")));
       return Nothing<bool>();
     }
-    object = handle(proxy->target(), isolate);
+    object = handle(JSReceiver::cast(proxy->target()), isolate);
     if (object->IsJSArray()) return Just(true);
     if (!object->IsJSProxy()) return Just(false);
   }
@@ -5554,7 +5560,7 @@ Maybe<bool> JSProxy::HasProperty(Isolate* isolate, Handle<JSProxy> proxy,
     return Nothing<bool>();
   }
   // 5. Let target be the value of the [[ProxyTarget]] internal slot of O.
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   // 6. Let trap be ? GetMethod(handler, "has").
   Handle<Object> trap;
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
@@ -5627,7 +5633,7 @@ Maybe<bool> JSProxy::SetProperty(Handle<JSProxy> proxy, Handle<Name> name,
         *factory->NewTypeError(MessageTemplate::kProxyRevoked, trap_name));
     return Nothing<bool>();
   }
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   Handle<JSReceiver> handler(JSReceiver::cast(proxy->handler()), isolate);
 
   Handle<Object> trap;
@@ -5678,7 +5684,7 @@ Maybe<bool> JSProxy::DeletePropertyOrElement(Handle<JSProxy> proxy,
         *factory->NewTypeError(MessageTemplate::kProxyRevoked, trap_name));
     return Nothing<bool>();
   }
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   Handle<JSReceiver> handler(JSReceiver::cast(proxy->handler()), isolate);
 
   Handle<Object> trap;
@@ -7482,7 +7488,7 @@ Maybe<bool> JSProxy::DefineOwnProperty(Isolate* isolate, Handle<JSProxy> proxy,
     return Nothing<bool>();
   }
   // 5. Let target be the value of the [[ProxyTarget]] internal slot of O.
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   // 6. Let trap be ? GetMethod(handler, "defineProperty").
   Handle<Object> trap;
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
@@ -7755,7 +7761,7 @@ Maybe<bool> JSProxy::GetOwnPropertyDescriptor(Isolate* isolate,
     return Nothing<bool>();
   }
   // 5. Let target be the value of the [[ProxyTarget]] internal slot of O.
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   // 6. Let trap be ? GetMethod(handler, "getOwnPropertyDescriptor").
   Handle<Object> trap;
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
@@ -8207,7 +8213,7 @@ Maybe<bool> JSProxy::PreventExtensions(Handle<JSProxy> proxy,
         *factory->NewTypeError(MessageTemplate::kProxyRevoked, trap_name));
     return Nothing<bool>();
   }
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   Handle<JSReceiver> handler(JSReceiver::cast(proxy->handler()), isolate);
 
   Handle<Object> trap;
@@ -8315,7 +8321,7 @@ Maybe<bool> JSProxy::IsExtensible(Handle<JSProxy> proxy) {
         *factory->NewTypeError(MessageTemplate::kProxyRevoked, trap_name));
     return Nothing<bool>();
   }
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   Handle<JSReceiver> handler(JSReceiver::cast(proxy->handler()), isolate);
 
   Handle<Object> trap;
@@ -8785,9 +8791,10 @@ MUST_USE_RESULT Maybe<bool> FastGetOwnValuesOrEntries(
 MaybeHandle<FixedArray> GetOwnValuesOrEntries(Isolate* isolate,
                                               Handle<JSReceiver> object,
                                               PropertyFilter filter,
+                                              bool try_fast_path,
                                               bool get_entries) {
   Handle<FixedArray> values_or_entries;
-  if (filter == ENUMERABLE_STRINGS) {
+  if (try_fast_path && filter == ENUMERABLE_STRINGS) {
     Maybe<bool> fast_values_or_entries = FastGetOwnValuesOrEntries(
         isolate, object, get_entries, &values_or_entries);
     if (fast_values_or_entries.IsNothing()) return MaybeHandle<FixedArray>();
@@ -8840,13 +8847,17 @@ MaybeHandle<FixedArray> GetOwnValuesOrEntries(Isolate* isolate,
 }
 
 MaybeHandle<FixedArray> JSReceiver::GetOwnValues(Handle<JSReceiver> object,
-                                                 PropertyFilter filter) {
-  return GetOwnValuesOrEntries(object->GetIsolate(), object, filter, false);
+                                                 PropertyFilter filter,
+                                                 bool try_fast_path) {
+  return GetOwnValuesOrEntries(object->GetIsolate(), object, filter,
+                               try_fast_path, false);
 }
 
 MaybeHandle<FixedArray> JSReceiver::GetOwnEntries(Handle<JSReceiver> object,
-                                                  PropertyFilter filter) {
-  return GetOwnValuesOrEntries(object->GetIsolate(), object, filter, true);
+                                                  PropertyFilter filter,
+                                                  bool try_fast_path) {
+  return GetOwnValuesOrEntries(object->GetIsolate(), object, filter,
+                               try_fast_path, true);
 }
 
 bool Map::DictionaryElementsInPrototypeChainOnly() {
@@ -14131,11 +14142,11 @@ void JSFunction::ClearTypeFeedbackInfo() {
   }
 }
 
-void Code::PrintDeoptLocation(FILE* out, Address pc) {
+void Code::PrintDeoptLocation(FILE* out, const char* str, Address pc) {
   Deoptimizer::DeoptInfo info = Deoptimizer::GetDeoptInfo(this, pc);
   class SourcePosition pos = info.position;
   if (info.deopt_reason != DeoptimizeReason::kUnknown || pos.IsKnown()) {
-    PrintF(out, "            ;;; deoptimize at ");
+    PrintF(out, "%s", str);
     OFStream outstr(out);
     pos.Print(outstr, this);
     PrintF(out, ", %s\n", DeoptimizeReasonToString(info.deopt_reason));
@@ -15097,7 +15108,7 @@ Maybe<bool> JSProxy::SetPrototype(Handle<JSProxy> proxy, Handle<Object> value,
     return Nothing<bool>();
   }
   // 5. Let target be the value of the [[ProxyTarget]] internal slot.
-  Handle<JSReceiver> target(proxy->target(), isolate);
+  Handle<JSReceiver> target(JSReceiver::cast(proxy->target()), isolate);
   // 6. Let trap be ? GetMethod(handler, "getPrototypeOf").
   Handle<Object> trap;
   ASSIGN_RETURN_ON_EXCEPTION_VALUE(
@@ -16683,47 +16694,6 @@ MaybeHandle<JSTypedArray> JSTypedArray::Create(Isolate* isolate,
 }
 
 // static
-MaybeHandle<JSTypedArray> JSTypedArray::CreateFast(
-    Isolate* isolate, Handle<JSTypedArray> exemplar, int argc,
-    Handle<Object>* argv, const char* method_name) {
-  DCHECK_GT(argc, 0);
-  DCHECK_IMPLIES(argc == 1, argv[0]->IsNumber());
-  DCHECK_IMPLIES(argc == 3, argv[0]->IsJSArrayBuffer());
-  DCHECK_IMPLIES(argc == 3, argv[1]->IsNumber());
-  DCHECK_IMPLIES(argc == 3, argv[2]->IsNumber());
-
-  // 1. Let newTypedArray be ? Construct(constructor, argumentList).
-  Handle<JSTypedArray> new_array;
-  if (argc == 1) {
-    size_t length = NumberToSize(*argv[0]);
-    new_array = isolate->factory()->NewJSTypedArray(exemplar->GetElementsKind(),
-                                                    length);
-    DCHECK_GE(new_array->length_value(), length);
-    // We don't need a validation step for one argument case since
-    // NewJSTypedArray always returns a non-neutered typed array.
-  } else if (argc == 3) {
-    Handle<JSArrayBuffer> buffer(JSArrayBuffer::cast(*argv[0]));
-    size_t byte_offset = NumberToSize(*argv[1]);
-    size_t length = NumberToSize(*argv[2]);
-    new_array = isolate->factory()->NewJSTypedArray(exemplar->type(), buffer,
-                                                    byte_offset, length);
-
-    if (V8_UNLIKELY(new_array->WasNeutered())) {
-      const MessageTemplate::Template message =
-          MessageTemplate::kDetachedOperation;
-      Handle<String> operation =
-          isolate->factory()->NewStringFromAsciiChecked(method_name);
-      THROW_NEW_ERROR(isolate, NewTypeError(message, operation), JSTypedArray);
-    }
-  } else {
-    UNREACHABLE();
-  }
-
-  DCHECK(!new_array->WasNeutered());
-  return new_array;
-}
-
-// static
 MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
     Isolate* isolate, Handle<JSTypedArray> exemplar, int argc,
     Handle<Object>* argv, const char* method_name) {
@@ -16731,15 +16701,21 @@ MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
   // slot.
   DCHECK(exemplar->IsJSTypedArray());
 
-  if (exemplar->HasJSTypedArrayPrototype(isolate) &&
-      isolate->IsArraySpeciesLookupChainIntact()) {
-    return CreateFast(isolate, exemplar, argc, argv, method_name);
-  }
-
   // 2. Let defaultConstructor be the intrinsic object listed in column one of
   // Table 51 for exemplar.[[TypedArrayName]].
-  Handle<JSFunction> default_ctor =
-      JSTypedArray::DefaultConstructor(isolate, exemplar);
+  Handle<JSFunction> default_ctor = isolate->uint8_array_fun();
+  switch (exemplar->type()) {
+#define TYPED_ARRAY_CTOR(Type, type, TYPE, ctype, size) \
+  case kExternal##Type##Array: {                        \
+    default_ctor = isolate->type##_array_fun();         \
+    break;                                              \
+  }
+
+    TYPED_ARRAYS(TYPED_ARRAY_CTOR)
+#undef TYPED_ARRAY_CTOR
+    default:
+      UNREACHABLE();
+  }
 
   // 3. Let constructor be ? SpeciesConstructor(exemplar, defaultConstructor).
   Handle<Object> ctor;
@@ -16747,10 +16723,6 @@ MaybeHandle<JSTypedArray> JSTypedArray::SpeciesCreate(
       isolate, ctor,
       Object::SpeciesConstructor(isolate, exemplar, default_ctor),
       JSTypedArray);
-
-  if (*default_ctor == *ctor) {
-    return CreateFast(isolate, exemplar, argc, argv, method_name);
-  }
 
   // 4. Return ? TypedArrayCreate(constructor, argumentList).
   return Create(isolate, ctor, argc, argv, method_name);

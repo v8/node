@@ -2182,10 +2182,12 @@ class JSReceiver: public HeapObject {
       Handle<JSReceiver> object);
 
   MUST_USE_RESULT static MaybeHandle<FixedArray> GetOwnValues(
-      Handle<JSReceiver> object, PropertyFilter filter);
+      Handle<JSReceiver> object, PropertyFilter filter,
+      bool try_fast_path = true);
 
   MUST_USE_RESULT static MaybeHandle<FixedArray> GetOwnEntries(
-      Handle<JSReceiver> object, PropertyFilter filter);
+      Handle<JSReceiver> object, PropertyFilter filter,
+      bool try_fast_path = true);
 
   static const int kHashMask = PropertyArray::HashField::kMask;
 
@@ -4307,7 +4309,7 @@ class JSProxy: public JSReceiver {
   // [handler]: The handler property.
   DECL_ACCESSORS(handler, Object)
   // [target]: The target property.
-  DECL_ACCESSORS(target, JSReceiver)
+  DECL_ACCESSORS(target, Object)
 
   static MaybeHandle<Context> GetFunctionRealm(Handle<JSProxy> proxy);
 
