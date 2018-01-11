@@ -55,6 +55,10 @@ sys.path.insert(0, 'tools')
 import getmoduleversion
 from gyp_node import run_gyp
 
+# imports in deps/v8/toos/node
+sys.path.insert(0, os.path.join('deps', 'v8', 'tools', 'node'))
+from fetch_deps import FetchDeps
+
 # parse our options
 parser = optparse.OptionParser()
 
@@ -548,6 +552,12 @@ parser.add_option('--without-bundled-v8',
     help='do not use V8 includes from the bundled deps folder. ' +
          '(This mode is not officially supported for regular applications)')
 
+parser.add_option('--build-v8-with-gn',
+    action='store_true',
+    dest='build_v8_with_gn',
+    default=False,
+    help='build V8 using GN instead of gyp')
+
 # Create compile_commands.json in out/Debug and out/Release.
 parser.add_option('-C',
     action='store_true',
@@ -1027,6 +1037,7 @@ def configure_v8(o):
   o['variables']['v8_trace_maps'] = 1 if options.trace_maps else 0
   o['variables']['node_use_v8_platform'] = b(not options.without_v8_platform)
   o['variables']['node_use_bundled_v8'] = b(not options.without_bundled_v8)
+  o['variables']['build_v8_with_gn'] = b(options.build_v8_with_gn)
   o['variables']['force_dynamic_crt'] = 1 if options.shared else 0
   o['variables']['node_enable_d8'] = b(options.enable_d8)
   # Unconditionally force typed arrays to allocate outside the v8 heap. This
@@ -1037,6 +1048,12 @@ def configure_v8(o):
     o['variables']['test_isolation_mode'] = 'noop'  # Needed by d8.gyp.
   if options.without_bundled_v8 and options.enable_d8:
     raise Exception('--enable-d8 is incompatible with --without-bundled-v8.')
+  if options.without_bundled_v8 and options.build_v8_with_gn:
+    raise Exception('--build-v8-with-gn is incompatible with --without-bundled-v8.')
+  if options.build_v8_with_gn:
+    v8_path = os.path.join('deps', 'v8')
+    print('Fetching dependencies to build V8 with GN')
+    FetchDeps(v8_path)
 
 
 def configure_openssl(o):
