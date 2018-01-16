@@ -44,7 +44,6 @@ TurboAssembler::TurboAssembler(Isolate* isolate, void* buffer, int buffer_size,
 #endif
       tmp_list_(DefaultTmpList()),
       fptmp_list_(DefaultFPTmpList()),
-      sp_(csp),
       use_real_aborts_(true) {
   if (create_code_object == CodeObjectRequired::kYes) {
     code_object_ =
@@ -1425,7 +1424,7 @@ void MacroAssembler::PushCalleeSavedRegisters() {
   stp(d8, d9, tos);
 
   stp(x29, x30, tos);
-  stp(x27, x28, tos);    // x28 = jssp
+  stp(x27, x28, tos);
   stp(x25, x26, tos);
   stp(x23, x24, tos);
   stp(x21, x22, tos);
@@ -1447,7 +1446,7 @@ void MacroAssembler::PopCalleeSavedRegisters() {
   ldp(x21, x22, tos);
   ldp(x23, x24, tos);
   ldp(x25, x26, tos);
-  ldp(x27, x28, tos);    // x28 = jssp
+  ldp(x27, x28, tos);
   ldp(x29, x30, tos);
 
   ldp(d8, d9, tos);
@@ -1854,33 +1853,6 @@ void TurboAssembler::CallCFunction(Register function, int num_of_reg_args,
     DCHECK_LE(num_of_double_args + num_of_reg_args, 2);
   }
 
-  // We rely on the frame alignment being 16 bytes, which means we never need
-  // to align the CSP by an unknown number of bytes and we always know the delta
-  // between the stack pointer and the frame pointer.
-  DCHECK_EQ(ActivationFrameAlignment(), 16);
-
-  // If the stack pointer is not csp, we need to derive an aligned csp from the
-  // current stack pointer.
-  const Register old_stack_pointer = StackPointer();
-  if (!csp.Is(old_stack_pointer)) {
-    AssertStackConsistency();
-
-    int sp_alignment = ActivationFrameAlignment();
-    // The current stack pointer is a callee saved register, and is preserved
-    // across the call.
-    DCHECK(kCalleeSaved.IncludesAliasOf(old_stack_pointer));
-
-    // If more than eight arguments are passed to the function, we expect the
-    // ninth argument onwards to have been placed on the csp-based stack
-    // already. We assume csp already points to the last stack-passed argument
-    // in that case.
-    // Otherwise, align and synchronize the system stack pointer with jssp.
-    if (num_of_reg_args <= kRegisterPassedArguments) {
-      Bic(csp, old_stack_pointer, sp_alignment - 1);
-    }
-    SetStackPointer(csp);
-  }
-
   // Call directly. The function called cannot cause a GC, or allow preemption,
   // so the return address in the link register stays correct.
   Call(function);
@@ -1889,16 +1861,6 @@ void TurboAssembler::CallCFunction(Register function, int num_of_reg_args,
     // Drop the register passed arguments.
     int claim_slots = RoundUp(num_of_reg_args - kRegisterPassedArguments, 2);
     Drop(claim_slots);
-  }
-  if (jssp.Is(old_stack_pointer)) {
-    if (emit_debug_code()) {
-      UseScratchRegisterScope temps(this);
-      Register temp = temps.AcquireX();
-      Mov(temp, csp);
-      Cmp(old_stack_pointer, temp);
-      Check(eq, AbortReason::kTheStackWasCorruptedByMacroAssemblerCall);
-    }
-    SetStackPointer(old_stack_pointer);
   }
 }
 
@@ -2423,16 +2385,6 @@ void TurboAssembler::TruncateDoubleToIDelayed(Zone* zone, Register result,
   // contain our truncated int32 result.
   TryConvertDoubleToInt64(result, double_input, &done);
 
-  const Register old_stack_pointer = StackPointer();
-  if (csp.Is(old_stack_pointer)) {
-    // This currently only happens during compiler-unittest. If it arises
-    // during regular code generation the DoubleToI stub should be updated to
-    // cope with csp and have an extra parameter indicating which stack pointer
-    // it should use.
-    Push(jssp, xzr);  // Push xzr to maintain csp required 16-bytes alignment.
-    Mov(jssp, csp);
-  }
-
   // If we fell through then inline version didn't succeed - call stub instead.
   Push(lr, double_input);
 
@@ -2442,13 +2394,6 @@ void TurboAssembler::TruncateDoubleToIDelayed(Zone* zone, Register result,
 
   DCHECK_EQ(xzr.SizeInBytes(), double_input.SizeInBytes());
   Pop(xzr, lr);  // xzr to drop the double input on the stack.
-
-  if (csp.Is(old_stack_pointer)) {
-    Mov(csp, jssp);
-    SetStackPointer(csp);
-    AssertStackConsistency();
-    Pop(xzr, jssp);
-  }
 
   Bind(&done);
   // Keep our invariant that the upper 32 bits are zero.
@@ -2807,8 +2752,6 @@ int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
   // registers are saved. The following registers are excluded:
   //  - x16 and x17 (ip0 and ip1) because they shouldn't be preserved outside of
   //    the macro assembler.
-  //  - x28 (jssp) because JS stack pointer doesn't need to be included in
-  //    safepoint registers.
   //  - x31 (csp) because the system stack pointer doesn't need to be included
   //    in safepoint registers.
   //
@@ -2816,12 +2759,9 @@ int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
   // safepoint register slots.
   if ((reg_code >= 0) && (reg_code <= 15)) {
     return reg_code;
-  } else if ((reg_code >= 18) && (reg_code <= 27)) {
+  } else if ((reg_code >= 18) && (reg_code <= 30)) {
     // Skip ip0 and ip1.
     return reg_code - 2;
-  } else if ((reg_code == 29) || (reg_code == 30)) {
-    // Also skip jssp.
-    return reg_code - 3;
   } else {
     // This register has no safepoint register slot.
     UNREACHABLE();
@@ -3055,12 +2995,6 @@ void TurboAssembler::Abort(AbortReason reason) {
   }
 #endif
 
-  // Abort is used in some contexts where csp is the stack pointer. In order to
-  // simplify the CallRuntime code, make sure that jssp is the stack pointer.
-  // There is no risk of register corruption here because Abort doesn't return.
-  Register old_stack_pointer = StackPointer();
-  Mov(jssp, old_stack_pointer);
-
   // We need some scratch registers for the MacroAssembler, so make sure we have
   // some. This is safe here because Abort never returns.
   RegList old_tmp_list = TmpList()->list();
@@ -3100,7 +3034,6 @@ void TurboAssembler::Abort(AbortReason reason) {
     }
   }
 
-  SetStackPointer(old_stack_pointer);
   TmpList()->set_list(old_tmp_list);
 }
 

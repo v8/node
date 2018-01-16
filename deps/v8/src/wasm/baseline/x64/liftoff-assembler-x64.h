@@ -112,6 +112,9 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
     case LoadType::kI64Load:
       movq(dst.gp(), src_op);
       break;
+    case LoadType::kF32Load:
+      Movss(dst.fp(), src_op);
+      break;
     default:
       UNREACHABLE();
   }
@@ -147,6 +150,9 @@ void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
       break;
     case StoreType::kI64Store:
       movq(dst_op, src.gp());
+      break;
+    case StoreType::kF32Store:
+      Movss(dst_op, src.fp());
       break;
     default:
       UNREACHABLE();
@@ -194,7 +200,7 @@ void LiftoffAssembler::Move(LiftoffRegister dst, LiftoffRegister src) {
   if (dst.is_gp()) {
     movq(dst.gp(), src.gp());
   } else {
-    movsd(dst.fp(), src.fp());
+    Movsd(dst.fp(), src.fp());
   }
 }
 
@@ -453,7 +459,7 @@ void LiftoffAssembler::PushCallerFrameSlot(const VarState& src,
         pushq(src.reg().gp());
       } else {
         subp(rsp, Immediate(kStackSlotSize));
-        movsd(Operand(rsp, 0), src.reg().fp());
+        Movsd(Operand(rsp, 0), src.reg().fp());
       }
       break;
     case VarState::kI32Const:
@@ -476,7 +482,7 @@ void LiftoffAssembler::PushRegisters(LiftoffRegList regs) {
     unsigned offset = 0;
     while (!fp_regs.is_empty()) {
       LiftoffRegister reg = fp_regs.GetFirstRegSet();
-      movsd(Operand(rsp, offset), reg.fp());
+      Movsd(Operand(rsp, offset), reg.fp());
       fp_regs.clear(reg);
       offset += sizeof(double);
     }
@@ -489,7 +495,7 @@ void LiftoffAssembler::PopRegisters(LiftoffRegList regs) {
   unsigned fp_offset = 0;
   while (!fp_regs.is_empty()) {
     LiftoffRegister reg = fp_regs.GetFirstRegSet();
-    movsd(reg.fp(), Operand(rsp, fp_offset));
+    Movsd(reg.fp(), Operand(rsp, fp_offset));
     fp_regs.clear(reg);
     fp_offset += sizeof(double);
   }

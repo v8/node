@@ -27,7 +27,7 @@ from testrunner.local.variants import ALL_VARIANTS
 from testrunner.objects import context
 from testrunner.objects import predictable
 from testrunner.testproc.execution import ExecutionProc
-from testrunner.testproc.filter import StatusFileFilterProc
+from testrunner.testproc.filter import StatusFileFilterProc, NameFilterProc
 from testrunner.testproc.loader import LoadProc
 from testrunner.testproc.progress import (VerboseProgressIndicator,
                                           ResultsTracker)
@@ -84,7 +84,10 @@ class StandardTestRunner(base_runner.BaseTestRunner):
 
         self.sancov_dir = None
 
-    def _do_execute(self, options, args):
+    def _get_default_suite_names(self):
+      return ['default']
+
+    def _do_execute(self, suites, args, options):
       if options.swarming:
         # Swarming doesn't print how isolated commands are called. Lets make
         # this less cryptic by printing it ourselves.
@@ -100,41 +103,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
           except Exception:
             pass
 
-      suite_paths = utils.GetSuitePaths(join(self.basedir, "test"))
-
-      # Use default tests if no test configuration was provided at the cmd line.
-      if len(args) == 0:
-        args = ["default"]
-
-      # Expand arguments with grouped tests. The args should reflect the list
-      # of suites as otherwise filters would break.
-      def ExpandTestGroups(name):
-        if name in base_runner.TEST_MAP:
-          return [suite for suite in base_runner.TEST_MAP[name]]
-        else:
-          return [name]
-      args = reduce(lambda x, y: x + y,
-            [ExpandTestGroups(arg) for arg in args],
-            [])
-
-      args_suites = OrderedDict() # Used as set
-      for arg in args:
-        args_suites[arg.split('/')[0]] = True
-      suite_paths = [ s for s in args_suites if s in suite_paths ]
-
-      suites = []
-      for root in suite_paths:
-        if options.verbose:
-          print '>>> Loading test suite: %s' % root
-        suite = testsuite.TestSuite.LoadTestSuite(
-            os.path.join(self.basedir, "test", root))
-        if suite:
-          suites.append(suite)
-
-      try:
-        return self._execute(args, options, suites)
-      except KeyboardInterrupt:
-        return 2
+      return self._execute(args, options, suites)
 
     def _add_parser_options(self, parser):
       parser.add_option("--sancov-dir",
@@ -431,8 +400,10 @@ class StandardTestRunner(base_runner.BaseTestRunner):
       for s in suites:
         s.ReadStatusFile(variables)
         s.ReadTestCases(ctx)
-        if len(args) > 0:
-          s.FilterTestCasesByArgs(args)
+        if not options.infra_staging:
+          # Tests will be filtered in the test processors pipeline
+          if len(args) > 0:
+            s.FilterTestCasesByArgs(args)
         all_tests += s.tests
 
         # First filtering by status applying the generic rules (tests without
@@ -517,8 +488,9 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         outproc_factory = None
 
       if options.infra_staging:
-        exit_code = self._run_test_procs(suites, options, progress_indicator,
-                                         ctx, outproc_factory)
+        exit_code = self._run_test_procs(suites, args, options,
+                                         progress_indicator, ctx,
+                                         outproc_factory)
       else:
         runner = execution.Runner(suites, progress_indicator, ctx,
                                   outproc_factory)
@@ -590,8 +562,8 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         count += 1
       return shard
 
-    def _run_test_procs(self, suites, options, progress_indicator, context,
-                        outproc_factory):
+    def _run_test_procs(self, suites, args, options, progress_indicator,
+                        context, outproc_factory):
       jobs = options.j
 
       print '>>> Running with test processors'
@@ -601,6 +573,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
 
       procs = [
         loader,
+        NameFilterProc(args),
         VariantProc(VARIANTS),
         StatusFileFilterProc(options.slow_tests, options.pass_fail_tests),
         results,

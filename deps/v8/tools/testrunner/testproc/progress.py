@@ -34,10 +34,9 @@ class ResultsTracker(base.TestProcObserver):
     self.total += 1
     self.remaining += 1
 
-  def _on_result_for(self, test, result, is_last):
-    if not is_last and not self.count_subtests:
-      return
-
+  def _on_result_for(self, test, result):
+    # TODO(majeski): Count grouped results when count_subtests is set.
+    # TODO(majeski): Support for dummy/grouped results
     self.remaining -= 1
     if result.has_unexpected_output:
       self.failed += 1
@@ -61,7 +60,8 @@ class SimpleProgressIndicator(ProgressIndicator):
   def _on_next_test(self, test):
     self._total += 1
 
-  def _on_result_for(self, test, result, is_last):
+  def _on_result_for(self, test, result):
+    # TODO(majeski): Support for dummy/grouped results
     if result.has_unexpected_output:
       self._failed.append((test, result.output))
 
@@ -100,8 +100,9 @@ class SimpleProgressIndicator(ProgressIndicator):
 
 
 class VerboseProgressIndicator(SimpleProgressIndicator):
-  def _on_result_for(self, test, result, is_last):
-    super(VerboseProgressIndicator, self)._on_result_for(test, result, is_last)
+  def _on_result_for(self, test, result):
+    super(VerboseProgressIndicator, self)._on_result_for(test, result)
+    # TODO(majeski): Support for dummy/grouped results
     if result.has_unexpected_output:
       if result.output.HasCrashed():
         outcome = 'CRASH'
@@ -122,7 +123,8 @@ class DotsProgressIndicator(SimpleProgressIndicator):
     super(DotsProgressIndicator, self).__init__()
     self._count = 0
 
-  def _on_result_for(self, test, result, is_last):
+  def _on_result_for(self, test, result):
+    # TODO(majeski): Support for dummy/grouped results
     self._count += 1
     if self._count > 1 and self._count % 50 == 1:
       sys.stdout.write('\n')
@@ -155,11 +157,8 @@ class CompactProgressIndicator(ProgressIndicator):
   def _on_next_test(self, test):
     self._total += 1
 
-  def _on_result_for(self, test, result, is_last):
-    if not is_last:
-      # Some processor further in the chain created several subtests of one
-      # test, so lets add them to the total amount.
-      self._total += 1
+  def _on_result_for(self, test, result):
+    # TODO(majeski): Support for dummy/grouped results
     if result.has_unexpected_output:
       self._failed += 1
     else:
@@ -257,7 +256,8 @@ class JUnitTestProgressIndicator(ProgressIndicator):
     else:
       self.outfile = sys.stdout
 
-  def _on_result_for(self, test, result, is_last):
+  def _on_result_for(self, test, result):
+    # TODO(majeski): Support for dummy/grouped results
     fail_text = ""
     output = result.output
     if result.has_unexpected_output:
@@ -294,35 +294,43 @@ class JsonTestProgressIndicator(ProgressIndicator):
     self.results = []
     self.tests = []
 
-  def _on_result_for(self, test, result, is_last):
-    output = result.output
-    # Buffer all tests for sorting the durations in the end.
-    self.tests.append((test, output.duration))
+  def _on_result_for(self, test, result):
+    if result.is_rerun:
+      self.process_results(test, result.results)
+    else:
+      self.process_results(test, [result])
 
-    # TODO(majeski): Previously we included reruns here. If we still want this
-    # json progress indicator should be placed just before execution.
-    if not result.has_unexpected_output:
-      # Omit tests that run as expected.
-      return
+  def process_results(self, test, results):
+    for run, result in enumerate(results):
+      # TODO(majeski): Support for dummy/grouped results
+      output = result.output
+      # Buffer all tests for sorting the durations in the end.
+      self.tests.append((test, output.duration))
 
-    self.results.append({
-      "name": str(test),
-      "flags": test.cmd.args,
-      "command": test.cmd.to_string(relative=True),
-      "run": -100, # TODO(majeski): do we need this?
-      "stdout": output.stdout,
-      "stderr": output.stderr,
-      "exit_code": output.exit_code,
-      "result": test.output_proc.get_outcome(output),
-      "expected": test.expected_outcomes,
-      "duration": output.duration,
+      # Omit tests that run as expected on the first try.
+      # Everything that happens after the first run is included in the output
+      # even if it flakily passes.
+      if not result.has_unexpected_output and run == 0:
+        continue
 
-      # TODO(machenbach): This stores only the global random seed from the
-      # context and not possible overrides when using random-seed stress.
-      "random_seed": self.random_seed,
-      "target_name": test.get_shell(),
-      "variant": test.variant,
-    })
+      self.results.append({
+        "name": str(test),
+        "flags": test.cmd.args,
+        "command": test.cmd.to_string(relative=True),
+        "run": run + 1,
+        "stdout": output.stdout,
+        "stderr": output.stderr,
+        "exit_code": output.exit_code,
+        "result": test.output_proc.get_outcome(output),
+        "expected": test.expected_outcomes,
+        "duration": output.duration,
+
+        # TODO(machenbach): This stores only the global random seed from the
+        # context and not possible overrides when using random-seed stress.
+        "random_seed": self.random_seed,
+        "target_name": test.get_shell(),
+        "variant": test.variant,
+      })
 
   def finished(self):
     complete_results = []

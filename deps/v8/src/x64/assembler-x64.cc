@@ -1140,6 +1140,13 @@ void Assembler::emit_cmpxchg(const Operand& dst, Register src, int size) {
   emit_operand(src, dst);
 }
 
+void Assembler::lfence() {
+  EnsureSpace ensure_space(this);
+  emit(0x0F);
+  emit(0xAE);
+  emit(0xE8);
+}
+
 void Assembler::cpuid() {
   EnsureSpace ensure_space(this);
   emit(0x0F);
@@ -4562,6 +4569,11 @@ void Assembler::rorxl(Register dst, const Operand& src, byte imm8) {
   emit(0xF0);
   emit_operand(dst, src);
   emit(imm8);
+}
+
+void Assembler::pause() {
+  emit(0xF3);
+  emit(0x90);
 }
 
 void Assembler::minps(XMMRegister dst, XMMRegister src) {

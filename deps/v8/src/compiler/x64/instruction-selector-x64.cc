@@ -289,6 +289,11 @@ void InstructionSelector::VisitDebugAbort(Node* node) {
   Emit(kArchDebugAbort, g.NoOutput(), g.UseFixed(node->InputAt(0), rdx));
 }
 
+void InstructionSelector::VisitSpeculationFence(Node* node) {
+  X64OperandGenerator g(this);
+  Emit(kLFence, g.NoOutput());
+}
+
 void InstructionSelector::VisitLoad(Node* node) {
   LoadRepresentation load_rep = LoadRepresentationOf(node->op());
   X64OperandGenerator g(this);
@@ -1486,7 +1491,8 @@ void InstructionSelector::EmitPrepareResults(ZoneVector<PushParameter>* results,
       MarkAsFloat64(output.node);
     }
     InstructionOperand result = g.DefineAsRegister(output.node);
-    Emit(kX64Peek | MiscField::encode(reverse_slot), result);
+    InstructionOperand slot = g.UseImmediate(reverse_slot);
+    Emit(kX64Peek, 1, &result, 1, &slot);
   }
 }
 
@@ -2529,7 +2535,8 @@ MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {
   MachineOperatorBuilder::Flags flags =
       MachineOperatorBuilder::kWord32ShiftIsSafe |
-      MachineOperatorBuilder::kWord32Ctz | MachineOperatorBuilder::kWord64Ctz;
+      MachineOperatorBuilder::kWord32Ctz | MachineOperatorBuilder::kWord64Ctz |
+      MachineOperatorBuilder::kSpeculationFence;
   if (CpuFeatures::IsSupported(POPCNT)) {
     flags |= MachineOperatorBuilder::kWord32Popcnt |
              MachineOperatorBuilder::kWord64Popcnt;

@@ -333,6 +333,8 @@
   V(StringCharAt)                       \
   V(StringCharCodeAt)                   \
   V(SeqStringCharCodeAt)                \
+  V(StringCodePointAt)                  \
+  V(SeqStringCodePointAt)               \
   V(StringFromCharCode)                 \
   V(StringFromCodePoint)                \
   V(StringIndexOf)                      \
@@ -616,6 +618,7 @@
   V(AtomicAnd)                  \
   V(AtomicOr)                   \
   V(AtomicXor)                  \
+  V(SpeculationFence)           \
   V(UnsafePointerAdd)
 
 #define MACHINE_SIMD_OP_LIST(V) \
