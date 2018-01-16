@@ -942,7 +942,7 @@
             'deps/nghttp2/lib/includes'
           ]
         }],
-        [ 'node_use_v8_platform=="true"', {
+        [ 'node_use_v8_platform=="true" and build_v8_with_gn=="false"', {
           'dependencies': [
             'deps/v8/src/v8.gyp:v8_libplatform',
           ],

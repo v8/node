@@ -16,14 +16,14 @@
       'dependencies': [ 'deps/v8/src/d8.gyp:d8' ],
     }],
     [ 'node_use_bundled_v8=="true"', {
-      'dependencies': [
-        'deps/v8/src/v8.gyp:v8_libplatform'
-      ],
       'conditions': [
         [ 'build_v8_with_gn=="true"', {
           'dependencies': ['deps/v8/src/v8.gyp:v8_monolith'],
         }, {
-          'dependencies': ['deps/v8/src/v8.gyp:v8'],
+          'dependencies': [
+            'deps/v8/src/v8.gyp:v8',
+            'deps/v8/src/v8.gyp:v8_libplatform',
+          ],
         }],
       ],
     }],
