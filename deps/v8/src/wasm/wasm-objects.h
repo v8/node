@@ -132,14 +132,12 @@ class WasmTableObject : public JSObject {
   static void AddDispatchTable(Isolate* isolate, Handle<WasmTableObject> table,
                                Handle<WasmInstanceObject> instance,
                                int table_index,
-                               Handle<FixedArray> function_table,
-                               Handle<FixedArray> signature_table);
+                               Handle<FixedArray> function_table);
 
   static void Set(Isolate* isolate, Handle<WasmTableObject> table,
                   int32_t index, Handle<JSFunction> function);
 
-  static void UpdateDispatchTables(Isolate* isolate,
-                                   Handle<WasmTableObject> table, int index,
+  static void UpdateDispatchTables(Handle<WasmTableObject> table, int index,
                                    wasm::FunctionSig* sig,
                                    Handle<Object> code_or_foreign);
 };
@@ -196,7 +194,6 @@ class WasmInstanceObject : public JSObject {
   DECL_OPTIONAL_ACCESSORS(debug_info, WasmDebugInfo)
   DECL_OPTIONAL_ACCESSORS(table_object, WasmTableObject)
   DECL_OPTIONAL_ACCESSORS(function_tables, FixedArray)
-  DECL_OPTIONAL_ACCESSORS(signature_tables, FixedArray)
 
   // FixedArray of all instances whose code was imported
   DECL_OPTIONAL_ACCESSORS(directly_called_instances, FixedArray)
@@ -211,7 +208,6 @@ class WasmInstanceObject : public JSObject {
     kDebugInfoIndex,
     kTableObjectIndex,
     kFunctionTablesIndex,
-    kSignatureTablesIndex,
     kDirectlyCalledInstancesIndex,
     kJsImportsTableIndex,
     kFieldCount
@@ -226,7 +222,6 @@ class WasmInstanceObject : public JSObject {
   DEF_OFFSET(DebugInfo)
   DEF_OFFSET(TableObject)
   DEF_OFFSET(FunctionTables)
-  DEF_OFFSET(SignatureTables)
   DEF_OFFSET(DirectlyCalledInstances)
   DEF_OFFSET(JsImportsTable)
 
@@ -239,12 +234,8 @@ class WasmInstanceObject : public JSObject {
 
   static Handle<WasmInstanceObject> New(Isolate*, Handle<WasmCompiledModule>);
 
-  int32_t GetMemorySize();
-
   static int32_t GrowMemory(Isolate*, Handle<WasmInstanceObject>,
                             uint32_t pages);
-
-  uint32_t GetMaxMemoryPages();
 
   // Assumed to be called with a code object associated to a wasm module
   // instance. Intended to be called from runtime functions. Returns nullptr on
@@ -519,7 +510,6 @@ class WasmCompiledModule : public FixedArray {
       Isolate* isolate, wasm::WasmModule* module, Handle<FixedArray> code_table,
       Handle<FixedArray> export_wrappers,
       const std::vector<wasm::GlobalHandleAddress>& function_tables,
-      const std::vector<wasm::GlobalHandleAddress>& signature_tables,
       bool use_trap_hander);
 
   static Handle<WasmCompiledModule> Clone(Isolate* isolate,

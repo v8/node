@@ -176,6 +176,29 @@ class SystemTest(unittest.TestCase):
       self.assertIn('sweet/bananas', result.stderr, result)
       self.assertEqual(0, result.returncode, result)
 
+  def testShardedProc(self):
+    with temp_base() as basedir:
+      for shard in [1, 2]:
+        result = run_tests(
+            basedir,
+            '--mode=Release',
+            '--progress=verbose',
+            '--variants=default,stress',
+            '--shard-count=2',
+            '--shard-run=%d' % shard,
+            'sweet/bananas',
+            'sweet/raspberries',
+            infra_staging=True,
+        )
+        # One of the shards gets one variant of each test.
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn('2 tests ran', result.stdout, result)
+        if shard == 1:
+          self.assertIn('Done running sweet/bananas', result.stdout, result)
+        else:
+          self.assertIn('Done running sweet/raspberries', result.stdout, result)
+        self.assertEqual(0, result.returncode, result)
+
   def testSharded(self):
     """Test running a particular shard."""
     with temp_base() as basedir:
@@ -210,12 +233,38 @@ class SystemTest(unittest.TestCase):
           'sweet/strawberries',
           infra_staging=infra_staging,
       )
-      if infra_staging:
-        self.assertIn('Running 1 tests', result.stdout, result)
-      else:
+      if not infra_staging:
         self.assertIn('Running 2 tests', result.stdout, result)
+      else:
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn('2 tests ran', result.stdout, result)
       self.assertIn('Done running sweet/strawberries: FAIL', result.stdout, result)
       self.assertEqual(1, result.returncode, result)
+
+  def check_cleaned_json_output(self, expected_results_name, actual_json):
+    # Check relevant properties of the json output.
+    with open(actual_json) as f:
+      json_output = json.load(f)[0]
+      pretty_json = json.dumps(json_output, indent=2, sort_keys=True)
+
+    # Replace duration in actual output as it's non-deterministic. Also
+    # replace the python executable prefix as it has a different absolute
+    # path dependent on where this runs.
+    def replace_variable_data(data):
+      data['duration'] = 1
+      data['command'] = ' '.join(
+          ['/usr/bin/python'] + data['command'].split()[1:])
+    for data in json_output['slowest_tests']:
+      replace_variable_data(data)
+    for data in json_output['results']:
+      replace_variable_data(data)
+    json_output['duration_mean'] = 1
+
+    with open(os.path.join(TEST_DATA_ROOT, expected_results_name)) as f:
+      expected_test_results = json.load(f)
+
+    msg = None  # Set to pretty_json for bootstrapping.
+    self.assertDictEqual(json_output, expected_test_results, msg)
 
   def testFailWithRerunAndJSONProc(self):
     self.testFailWithRerunAndJSON(infra_staging=True)
@@ -235,7 +284,11 @@ class SystemTest(unittest.TestCase):
           'sweet/strawberries',
           infra_staging=infra_staging,
       )
-      self.assertIn('Running 1 tests', result.stdout, result)
+      if not infra_staging:
+        self.assertIn('Running 1 tests', result.stdout, result)
+      else:
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn('1 tests ran', result.stdout, result)
       self.assertIn('Done running sweet/strawberries: FAIL', result.stdout, result)
       if not infra_staging:
         # We run one test, which fails and gets re-run twice.
@@ -246,33 +299,42 @@ class SystemTest(unittest.TestCase):
         self.assertIn('1 tests failed', result.stdout, result)
       self.assertEqual(0, result.returncode, result)
 
-      # Check relevant properties of the json output.
-      with open(json_path) as f:
-        json_output = json.load(f)[0]
-        pretty_json = json.dumps(json_output, indent=2, sort_keys=True)
-
-      # Replace duration in actual output as it's non-deterministic. Also
-      # replace the python executable prefix as it has a different absolute
-      # path dependent on where this runs.
-      def replace_variable_data(data):
-        data['duration'] = 1
-        data['command'] = ' '.join(
-            ['/usr/bin/python'] + data['command'].split()[1:])
-      for data in json_output['slowest_tests']:
-        replace_variable_data(data)
-      for data in json_output['results']:
-        replace_variable_data(data)
-      json_output['duration_mean'] = 1
-
-      expected_results_name = 'expected_test_results1.json'
-      with open(os.path.join(TEST_DATA_ROOT, expected_results_name)) as f:
-        expected_test_results = json.load(f)
-
       # TODO(majeski): Previously we only reported the variant flags in the
       # flags field of the test result.
       # After recent changes we report all flags, including the file names.
       # This is redundant to the command. Needs investigation.
-      self.assertEqual(json_output, expected_test_results, pretty_json)
+      self.check_cleaned_json_output('expected_test_results1.json', json_path)
+
+  def testFlakeWithRerunAndJSONProc(self):
+    self.testFlakeWithRerunAndJSON(infra_staging=True)
+
+  def testFlakeWithRerunAndJSON(self, infra_staging=False):
+    """Test re-running a failing test and output to json."""
+    with temp_base(baseroot='testroot2') as basedir:
+      json_path = os.path.join(basedir, 'out.json')
+      result = run_tests(
+          basedir,
+          '--mode=Release',
+          '--progress=verbose',
+          '--variants=default',
+          '--rerun-failures-count=2',
+          '--random-seed=123',
+          '--json-test-results', json_path,
+          'sweet',
+          infra_staging=infra_staging,
+      )
+      if not infra_staging:
+        self.assertIn('Running 1 tests', result.stdout, result)
+        self.assertIn(
+            'Done running sweet/bananaflakes: FAIL', result.stdout, result)
+        self.assertIn('1 tests failed', result.stdout, result)
+      else:
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn(
+            'Done running sweet/bananaflakes: pass', result.stdout, result)
+        self.assertIn('All tests succeeded', result.stdout, result)
+      self.assertEqual(0, result.returncode, result)
+      self.check_cleaned_json_output('expected_test_results2.json', json_path)
 
   def testAutoDetect(self):
     """Fake a build with several auto-detected options.
@@ -309,9 +371,8 @@ class SystemTest(unittest.TestCase):
       # TODO(machenbach): Test some more implications of the auto-detected
       # options, e.g. that the right env variables are set.
 
-  # TODO(majeski): Fix "running 0 tests" vs "Warning: no tests were run!"
-  # def testSkipsProc(self):
-  #   self.testSkips(infra_staging=True)
+  def testSkipsProc(self):
+    self.testSkips(infra_staging=True)
 
   def testSkips(self, infra_staging=False):
     """Test skipping tests in status file for a specific variant."""
@@ -324,12 +385,15 @@ class SystemTest(unittest.TestCase):
           'sweet/strawberries',
           infra_staging=infra_staging,
       )
-      self.assertIn('Running 0 tests', result.stdout, result)
+      if not infra_staging:
+        self.assertIn('Running 0 tests', result.stdout, result)
+      else:
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn('0 tests ran', result.stdout, result)
       self.assertEqual(0, result.returncode, result)
 
-  # TODO(majeski): Fix "running 0 tests" vs "Warning: no tests were run!"
-  # def testDefaultProc(self):
-  #   self.testDefault(infra_staging=True)
+  def testDefaultProc(self):
+    self.testDefault(infra_staging=True)
 
   def testDefault(self, infra_staging=False):
     """Test using default test suites, though no tests are run since they don't
@@ -341,7 +405,11 @@ class SystemTest(unittest.TestCase):
           '--mode=Release',
           infra_staging=infra_staging,
       )
-      self.assertIn('Warning: no tests were run!', result.stdout, result)
+      if not infra_staging:
+        self.assertIn('Warning: no tests were run!', result.stdout, result)
+      else:
+        self.assertIn('Running 0 base tests', result.stdout, result)
+        self.assertIn('0 tests ran', result.stdout, result)
       self.assertEqual(0, result.returncode, result)
 
   def testNoBuildConfig(self):
@@ -454,7 +522,11 @@ class SystemTest(unittest.TestCase):
           'sweet/bananas',
           infra_staging=infra_staging,
       )
-      self.assertIn('Running 1 tests', result.stdout, result)
+      if not infra_staging:
+        self.assertIn('Running 1 tests', result.stdout, result)
+      else:
+        self.assertIn('Running 1 base tests', result.stdout, result)
+        self.assertIn('1 tests ran', result.stdout, result)
       self.assertIn('Done running sweet/bananas: FAIL', result.stdout, result)
       self.assertIn('Test had no allocation output', result.stdout, result)
       self.assertIn('--predictable --verify_predictable', result.stdout, result)
@@ -550,7 +622,11 @@ class SystemTest(unittest.TestCase):
           '--no-sorting', '-j1', # make results order deterministic
           infra_staging=infra_staging,
       )
-      self.assertIn('Running 2 tests', result.stdout, result)
+      if not infra_staging:
+        self.assertIn('Running 2 tests', result.stdout, result)
+      else:
+        self.assertIn('Running 2 base tests', result.stdout, result)
+        self.assertIn('2 tests ran', result.stdout, result)
       self.assertIn('F.', result.stdout, result)
       self.assertEqual(1, result.returncode, result)
 
@@ -586,7 +662,6 @@ class SystemTest(unittest.TestCase):
       self.assertIn('sweet/cherries', result.stdout)
       self.assertIn('sweet/bananas', result.stdout)
       self.assertEqual(1, result.returncode, result)
-
 
 if __name__ == '__main__':
   unittest.main()

@@ -43,25 +43,34 @@ class WasmCode;
 
 namespace compiler {
 
+// Indirect function tables contain a <smi(sig), code> pair for each entry.
+enum FunctionTableEntries : int {
+  kFunctionTableSignatureOffset = 0,
+  kFunctionTableCodeOffset = 1,
+  kFunctionTableEntrySize = 2
+};
+constexpr inline int FunctionTableSigOffset(int i) {
+  return kFunctionTableEntrySize * i + kFunctionTableSignatureOffset;
+}
+constexpr inline int FunctionTableCodeOffset(int i) {
+  return kFunctionTableEntrySize * i + kFunctionTableCodeOffset;
+}
+
 // The {ModuleEnv} encapsulates the module data that is used by the
 // {WasmGraphBuilder} during graph building. It represents the parameters to
 // which the  compiled code should be specialized, including which code to call
 // for direct calls {function_code}, which tables to use for indirect calls
 // {function_tables}, memory start address and size {mem_start, mem_size},
-// as well as signature maps {signature_maps} and the module itself {module}.
+// as well as the module itself {module}.
 // ModuleEnvs are shareable across multiple compilations.
 struct ModuleEnv {
   // A pointer to the decoded module's static representation.
   const wasm::WasmModule* module;
-  // The function tables are FixedArrays of code used to dispatch indirect
-  // calls. (the same length as module.function_tables). We use the address
-  // to a global handle to the FixedArray.
+  // The function tables are FixedArrays of <smi, code> pairs used to signature
+  // check and dispatch indirect calls. It has the same length as
+  // module.function_tables. We use the address to a global handle to the
+  // FixedArray.
   const std::vector<Address> function_tables;
-  // The signatures tables are FixedArrays of SMIs used to check signatures
-  // match at runtime.
-  // (the same length as module.function_tables)
-  //  We use the address to a global handle to the FixedArray.
-  const std::vector<Address> signature_tables;
 
   // TODO(mtrofin): remove these 2 once we don't need FLAG_wasm_jit_to_native
   // Contains the code objects to call for each direct call.
@@ -72,6 +81,22 @@ struct ModuleEnv {
   // True if trap handling should be used in compiled code, rather than
   // compiling in bounds checks for each memory access.
   const bool use_trap_handler;
+
+  ModuleEnv(const wasm::WasmModule* module, Handle<Code> default_function_code,
+            bool use_trap_handler)
+      : module(module),
+        default_function_code(default_function_code),
+        use_trap_handler(use_trap_handler) {}
+
+  ModuleEnv(const wasm::WasmModule* module,
+            std::vector<Address> function_tables,
+            std::vector<Handle<Code>> function_code,
+            Handle<Code> default_function_code, bool use_trap_handler)
+      : module(module),
+        function_tables(std::move(function_tables)),
+        function_code(std::move(function_code)),
+        default_function_code(default_function_code),
+        use_trap_handler(use_trap_handler) {}
 };
 
 enum RuntimeExceptionSupport : bool {
@@ -227,6 +252,8 @@ typedef ZoneVector<Node*> NodeVector;
 class WasmGraphBuilder {
  public:
   enum EnforceBoundsCheck : bool { kNeedsBoundsCheck, kCanOmitBoundsCheck };
+  struct IntConvertOps;
+  struct FloatConvertOps;
 
   WasmGraphBuilder(ModuleEnv* env, Zone* zone, JSGraph* graph,
                    Handle<Code> centry_stub, wasm::FunctionSig* sig,
@@ -432,9 +459,11 @@ class WasmGraphBuilder {
   // wrappers or interpreter stubs.
   ModuleEnv* const env_ = nullptr;
   SetOncePointer<Node> wasm_context_;
-  NodeVector signature_tables_;
-  NodeVector function_tables_;
-  NodeVector function_table_sizes_;
+  struct FunctionTableNodes {
+    Node* table_addr;
+    Node* size;
+  };
+  ZoneVector<FunctionTableNodes> function_tables_;
   Node** control_ = nullptr;
   Node** effect_ = nullptr;
   WasmContextCacheNodes* context_cache_ = nullptr;
@@ -482,11 +511,25 @@ class WasmGraphBuilder {
 
   Node* BuildF32CopySign(Node* left, Node* right);
   Node* BuildF64CopySign(Node* left, Node* right);
+
+  Node* BuildI32ConvertOp(Node* input, wasm::WasmCodePosition position,
+                          NumericImplementation impl, const Operator* op,
+                          wasm::WasmOpcode check_op,
+                          const IntConvertOps* int_ops,
+                          const FloatConvertOps* float_ops);
+  Node* BuildConvertCheck(Node* test, Node* result, Node* input,
+                          wasm::WasmCodePosition position,
+                          NumericImplementation impl,
+                          const IntConvertOps* int_ops,
+                          const FloatConvertOps* float_ops);
   Node* BuildI32SConvertF32(Node* input, wasm::WasmCodePosition position,
                             NumericImplementation impl);
-  Node* BuildI32SConvertF64(Node* input, wasm::WasmCodePosition position);
-  Node* BuildI32UConvertF32(Node* input, wasm::WasmCodePosition position);
-  Node* BuildI32UConvertF64(Node* input, wasm::WasmCodePosition position);
+  Node* BuildI32SConvertF64(Node* input, wasm::WasmCodePosition position,
+                            NumericImplementation impl);
+  Node* BuildI32UConvertF32(Node* input, wasm::WasmCodePosition position,
+                            NumericImplementation impl);
+  Node* BuildI32UConvertF64(Node* input, wasm::WasmCodePosition position,
+                            NumericImplementation impl);
   Node* BuildI32Ctz(Node* input);
   Node* BuildI32Popcnt(Node* input);
   Node* BuildI64Ctz(Node* input);

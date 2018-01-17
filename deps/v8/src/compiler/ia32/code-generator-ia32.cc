@@ -1599,7 +1599,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kIA32Peek: {
-      int reverse_slot = MiscField::decode(instr->opcode());
+      int reverse_slot = i.InputInt32(0) + 1;
       int offset =
           FrameSlotToFPOffset(frame()->GetTotalFrameSlotCount() - reverse_slot);
       if (instr->OutputAt(0)->IsFPRegister()) {
@@ -1661,6 +1661,50 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       CpuFeatureScope avx_scope(tasm(), AVX);
       __ vinsertps(i.OutputSimd128Register(), i.InputSimd128Register(0),
                    i.InputOperand(2), i.InputInt8(1) << 4);
+      break;
+    }
+    case kSSEF32x4Abs: {
+      XMMRegister dst = i.OutputSimd128Register();
+      Operand src = i.InputOperand(0);
+      if (src.is_reg(dst)) {
+        __ pcmpeqd(kScratchDoubleReg, kScratchDoubleReg);
+        __ psrld(kScratchDoubleReg, 1);
+        __ andps(dst, kScratchDoubleReg);
+      } else {
+        __ pcmpeqd(dst, dst);
+        __ psrld(dst, 1);
+        __ andps(dst, src);
+      }
+      break;
+    }
+    case kAVXF32x4Abs: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      __ vpcmpeqd(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
+      __ vpsrld(kScratchDoubleReg, kScratchDoubleReg, 1);
+      __ vandps(i.OutputSimd128Register(), kScratchDoubleReg,
+                i.InputOperand(0));
+      break;
+    }
+    case kSSEF32x4Neg: {
+      XMMRegister dst = i.OutputSimd128Register();
+      Operand src = i.InputOperand(0);
+      if (src.is_reg(dst)) {
+        __ pcmpeqd(kScratchDoubleReg, kScratchDoubleReg);
+        __ pslld(kScratchDoubleReg, 31);
+        __ xorps(dst, kScratchDoubleReg);
+      } else {
+        __ pcmpeqd(dst, dst);
+        __ pslld(dst, 31);
+        __ xorps(dst, src);
+      }
+      break;
+    }
+    case kAVXF32x4Neg: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      __ vpcmpeqd(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
+      __ vpslld(kScratchDoubleReg, kScratchDoubleReg, 31);
+      __ vxorps(i.OutputSimd128Register(), kScratchDoubleReg,
+                i.InputOperand(0));
       break;
     }
     case kSSEF32x4Add: {
@@ -2540,8 +2584,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(0);
       if (src.is_reg(dst)) {
-        __ movaps(kScratchDoubleReg, dst);
-        __ pcmpeqd(dst, dst);
+        __ pcmpeqd(kScratchDoubleReg, kScratchDoubleReg);
         __ pxor(dst, kScratchDoubleReg);
       } else {
         __ pcmpeqd(dst, dst);

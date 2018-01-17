@@ -2913,8 +2913,12 @@ class V8_EXPORT Private : public Data {
    */
   static Local<Private> ForApi(Isolate* isolate, Local<String> name);
 
+  V8_INLINE static Private* Cast(Data* data);
+
  private:
   Private();
+
+  static void CheckCast(Data* that);
 };
 
 
@@ -3872,8 +3876,8 @@ class V8_EXPORT Promise : public Object {
     /**
      * Create a new resolver, along with an associated promise in pending state.
      */
-    static V8_DEPRECATE_SOON("Use maybe version",
-                             Local<Resolver> New(Isolate* isolate));
+    static V8_DEPRECATED("Use maybe version",
+                         Local<Resolver> New(Isolate* isolate));
     static V8_WARN_UNUSED_RESULT MaybeLocal<Resolver> New(
         Local<Context> context);
 
@@ -3886,11 +3890,11 @@ class V8_EXPORT Promise : public Object {
      * Resolve/reject the associated promise with a given value.
      * Ignored if the promise is no longer pending.
      */
-    V8_DEPRECATE_SOON("Use maybe version", void Resolve(Local<Value> value));
+    V8_DEPRECATED("Use maybe version", void Resolve(Local<Value> value));
     V8_WARN_UNUSED_RESULT Maybe<bool> Resolve(Local<Context> context,
                                               Local<Value> value);
 
-    V8_DEPRECATE_SOON("Use maybe version", void Reject(Local<Value> value));
+    V8_DEPRECATED("Use maybe version", void Reject(Local<Value> value));
     V8_WARN_UNUSED_RESULT Maybe<bool> Reject(Local<Context> context,
                                              Local<Value> value);
 
@@ -5899,8 +5903,12 @@ class V8_EXPORT Signature : public Data {
       Isolate* isolate,
       Local<FunctionTemplate> receiver = Local<FunctionTemplate>());
 
+  V8_INLINE static Signature* Cast(Data* data);
+
  private:
   Signature();
+
+  static void CheckCast(Data* that);
 };
 
 
@@ -5914,8 +5922,12 @@ class V8_EXPORT AccessorSignature : public Data {
       Isolate* isolate,
       Local<FunctionTemplate> receiver = Local<FunctionTemplate>());
 
+  V8_INLINE static AccessorSignature* Cast(Data* data);
+
  private:
   AccessorSignature();
+
+  static void CheckCast(Data* that);
 };
 
 
@@ -7212,7 +7224,7 @@ class V8_EXPORT Isolate {
    * context of the top-most JavaScript frame.  If there are no
    * JavaScript frames an empty handle is returned.
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Calling context concept is not compatible with tail calls, and will be "
       "removed.",
       Local<Context> GetCallingContext());
@@ -7389,7 +7401,7 @@ class V8_EXPORT Isolate {
    * further callbacks.
    */
   void AddCallCompletedCallback(CallCompletedCallback callback);
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use callback with parameter",
       void AddCallCompletedCallback(DeprecatedCallCompletedCallback callback));
 
@@ -7397,10 +7409,9 @@ class V8_EXPORT Isolate {
    * Removes callback that was installed by AddCallCompletedCallback.
    */
   void RemoveCallCompletedCallback(CallCompletedCallback callback);
-  V8_DEPRECATE_SOON(
-      "Use callback with parameter",
-      void RemoveCallCompletedCallback(
-          DeprecatedCallCompletedCallback callback));
+  V8_DEPRECATED("Use callback with parameter",
+                void RemoveCallCompletedCallback(
+                    DeprecatedCallCompletedCallback callback));
 
   /**
    * Set the PromiseHook callback for various promise lifecycle
@@ -7434,15 +7445,14 @@ class V8_EXPORT Isolate {
    * Controls how Microtasks are invoked. See MicrotasksPolicy for details.
    */
   void SetMicrotasksPolicy(MicrotasksPolicy policy);
-  V8_DEPRECATE_SOON("Use SetMicrotasksPolicy",
-                    void SetAutorunMicrotasks(bool autorun));
+  V8_DEPRECATED("Use SetMicrotasksPolicy",
+                void SetAutorunMicrotasks(bool autorun));
 
   /**
    * Returns the policy controlling how Microtasks are invoked.
    */
   MicrotasksPolicy GetMicrotasksPolicy() const;
-  V8_DEPRECATE_SOON("Use GetMicrotasksPolicy",
-                    bool WillAutorunMicrotasks() const);
+  V8_DEPRECATED("Use GetMicrotasksPolicy", bool WillAutorunMicrotasks() const);
 
   /**
    * Adds a callback to notify the host application after
@@ -8252,7 +8262,7 @@ class V8_EXPORT TryCatch {
    * Returns the .stack property of the thrown object.  If no .stack
    * property is present an empty handle is returned.
    */
-  V8_DEPRECATE_SOON("Use maybe version.", Local<Value> StackTrace() const);
+  V8_DEPRECATED("Use maybe version.", Local<Value> StackTrace() const);
   V8_WARN_UNUSED_RESULT MaybeLocal<Value> StackTrace(
       Local<Context> context) const;
 
@@ -9488,6 +9498,20 @@ ObjectTemplate* ObjectTemplate::Cast(Data* data) {
   return reinterpret_cast<ObjectTemplate*>(data);
 }
 
+Signature* Signature::Cast(Data* data) {
+#ifdef V8_ENABLE_CHECKS
+  CheckCast(data);
+#endif
+  return reinterpret_cast<Signature*>(data);
+}
+
+AccessorSignature* AccessorSignature::Cast(Data* data) {
+#ifdef V8_ENABLE_CHECKS
+  CheckCast(data);
+#endif
+  return reinterpret_cast<AccessorSignature*>(data);
+}
+
 Local<Value> Object::GetInternalField(int index) {
 #ifndef V8_ENABLE_CHECKS
   typedef internal::Object O;
@@ -9703,6 +9727,14 @@ Symbol* Symbol::Cast(v8::Value* value) {
   CheckCast(value);
 #endif
   return static_cast<Symbol*>(value);
+}
+
+
+Private* Private::Cast(Data* data) {
+#ifdef V8_ENABLE_CHECKS
+  CheckCast(data);
+#endif
+  return reinterpret_cast<Private*>(data);
 }
 
 

@@ -5187,8 +5187,7 @@ TNode<String> CodeStubAssembler::StringFromCodePoint(TNode<Int32T> codepoint,
   return CAST(var_result.value());
 }
 
-TNode<Number> CodeStubAssembler::StringToNumber(SloppyTNode<Context> context,
-                                                SloppyTNode<String> input) {
+TNode<Number> CodeStubAssembler::StringToNumber(SloppyTNode<String> input) {
   CSA_SLOW_ASSERT(this, IsString(input));
   Label runtime(this, Label::kDeferred);
   Label end(this);
@@ -5206,7 +5205,8 @@ TNode<Number> CodeStubAssembler::StringToNumber(SloppyTNode<Context> context,
 
   BIND(&runtime);
   {
-    var_result = CAST(CallRuntime(Runtime::kStringToNumber, context, input));
+    var_result =
+        CAST(CallRuntime(Runtime::kStringToNumber, NoContextConstant(), input));
     Goto(&end);
   }
 
@@ -5214,7 +5214,7 @@ TNode<Number> CodeStubAssembler::StringToNumber(SloppyTNode<Context> context,
   return var_result;
 }
 
-Node* CodeStubAssembler::NumberToString(Node* context, Node* argument) {
+Node* CodeStubAssembler::NumberToString(Node* argument) {
   VARIABLE(result, MachineRepresentation::kTagged);
   Label runtime(this, Label::kDeferred), smi(this), done(this, &result);
 
@@ -5265,7 +5265,8 @@ Node* CodeStubAssembler::NumberToString(Node* context, Node* argument) {
   BIND(&runtime);
   {
     // No cache entry, go to the runtime.
-    result.Bind(CallRuntime(Runtime::kNumberToString, context, argument));
+    result.Bind(CallRuntime(Runtime::kNumberToStringSkipCache,
+                            NoContextConstant(), argument));
   }
   Goto(&done);
 
@@ -5368,7 +5369,7 @@ Node* CodeStubAssembler::NonNumberToNumberOrNumeric(
     BIND(&if_inputisstring);
     {
       // The {input} is a String, use the fast stub to convert it to a Number.
-      var_result.Bind(StringToNumber(context, input));
+      var_result.Bind(StringToNumber(input));
       Goto(&end);
     }
 
@@ -5666,7 +5667,7 @@ TNode<String> CodeStubAssembler::ToString(SloppyTNode<Context> context,
   Branch(IsHeapNumberMap(input_map), &is_number, &not_heap_number);
 
   BIND(&is_number);
-  result.Bind(NumberToString(context, input));
+  result.Bind(NumberToString(input));
   Goto(&done);
 
   BIND(&not_heap_number);
@@ -10467,7 +10468,9 @@ void CodeStubArguments::PopAndReturn(Node* value) {
   } else {
     pop_count = argc_;
   }
-  assembler_->PopAndReturn(pop_count, value);
+
+  assembler_->PopAndReturn(assembler_->ParameterToWord(pop_count, argc_mode_),
+                           value);
 }
 
 Node* CodeStubAssembler::IsFastElementsKind(Node* elements_kind) {
