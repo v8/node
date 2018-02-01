@@ -492,8 +492,8 @@ Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
 
     if (initial_map->instance_type() == JS_ASYNC_GENERATOR_OBJECT_TYPE) {
       a.Store(AccessBuilder::ForJSAsyncGeneratorObjectQueue(), undefined);
-      a.Store(AccessBuilder::ForJSAsyncGeneratorObjectAwaitedPromise(),
-              undefined);
+      a.Store(AccessBuilder::ForJSAsyncGeneratorObjectIsAwaiting(),
+              jsgraph()->ZeroConstant());
     }
 
     // Handle in-object properties, too.
@@ -1013,22 +1013,12 @@ Reduction JSCreateLowering::ReduceJSCreatePromise(Node* node) {
           jsgraph()->EmptyFixedArrayConstant());
   a.Store(AccessBuilder::ForJSObjectElements(),
           jsgraph()->EmptyFixedArrayConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kResultOffset),
-          jsgraph()->UndefinedConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kDeferredPromiseOffset),
-          jsgraph()->UndefinedConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kDeferredOnResolveOffset),
-          jsgraph()->UndefinedConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kDeferredOnRejectOffset),
-          jsgraph()->UndefinedConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kFulfillReactionsOffset),
-          jsgraph()->UndefinedConstant());
-  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kRejectReactionsOffset),
-          jsgraph()->UndefinedConstant());
+  a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kReactionsOrResultOffset),
+          jsgraph()->ZeroConstant());
   STATIC_ASSERT(v8::Promise::kPending == 0);
   a.Store(AccessBuilder::ForJSObjectOffset(JSPromise::kFlagsOffset),
           jsgraph()->ZeroConstant());
-  STATIC_ASSERT(JSPromise::kSize == 10 * kPointerSize);
+  STATIC_ASSERT(JSPromise::kSize == 5 * kPointerSize);
   for (int i = 0; i < v8::Promise::kEmbedderFieldCount; ++i) {
     a.Store(
         AccessBuilder::ForJSObjectOffset(JSPromise::kSize + i * kPointerSize),

@@ -7,7 +7,6 @@
 
 import multiprocessing
 import random
-import shlex
 import sys
 
 # Adds testrunner to the path hence it has to be imported at the beggining.
@@ -24,16 +23,10 @@ from testrunner.testproc.execution import ExecutionProc
 from testrunner.testproc.filter import StatusFileFilterProc, NameFilterProc
 from testrunner.testproc.loader import LoadProc
 from testrunner.testproc.progress import ResultsTracker, TestsCounter
-from testrunner.testproc.rerun import RerunProc
-from testrunner.testproc.timeout import TimeoutProc
+from testrunner.utils import random_utils
 
 
 DEFAULT_SUITES = ["mjsunit", "webkit", "benchmarks"]
-TIMEOUT_DEFAULT = 60
-
-# Double the timeout for these:
-SLOW_ARCHS = ["arm",
-              "mipsel"]
 
 
 class NumFuzzer(base_runner.BaseTestRunner):
@@ -41,15 +34,7 @@ class NumFuzzer(base_runner.BaseTestRunner):
     super(NumFuzzer, self).__init__(*args, **kwargs)
 
   def _add_parser_options(self, parser):
-    parser.add_option("--command-prefix",
-                      help="Prepended to each shell command used to run a test",
-                      default="")
     parser.add_option("--dump-results-file", help="Dump maximum limit reached")
-    parser.add_option("--extra-flags",
-                      help="Additional flags to pass to each test command",
-                      default="")
-    parser.add_option("--isolates", help="Whether to test isolates",
-                      default=False, action="store_true")
     parser.add_option("-j", help="The number of parallel tasks to run",
                       default=0, type="int")
     parser.add_option("--json-test-results",
@@ -59,20 +44,9 @@ class NumFuzzer(base_runner.BaseTestRunner):
                             " (verbose, dots, color, mono)"),
                       choices=progress.PROGRESS_INDICATORS.keys(),
                       default="mono")
-    parser.add_option("-t", "--timeout", help="Timeout in seconds",
-                      default= -1, type="int")
-    parser.add_option("--random-seed", default=0,
-                      help="Default seed for initializing random generator")
     parser.add_option("--fuzzer-random-seed", default=0,
                       help="Default seed for initializing fuzzer random "
                       "generator")
-    parser.add_option("--rerun-failures-count",
-                      help=("Number of times to rerun each failing test case."
-                            " Very slow tests will be rerun only once."),
-                      default=0, type="int")
-    parser.add_option("--rerun-failures-max",
-                      help="Maximum number of failing test cases to rerun.",
-                      default=100, type="int")
     parser.add_option("--swarming",
                       help="Indicates running test driver on swarming.",
                       default=False, action="store_true")
@@ -82,9 +56,6 @@ class NumFuzzer(base_runner.BaseTestRunner):
                            "value 0 to provide infinite number of subtests. "
                            "When --combine-tests is set it indicates how many "
                            "tests to create in total")
-    parser.add_option("--total-timeout-sec", default=0, type="int",
-                      help="How long should fuzzer run. It overrides "
-                           "--tests-count")
 
     # Stress gc
     parser.add_option("--stress-marking", default=0, type="int",
@@ -126,16 +97,10 @@ class NumFuzzer(base_runner.BaseTestRunner):
 
 
   def _process_options(self, options):
-    options.command_prefix = shlex.split(options.command_prefix)
-    options.extra_flags = shlex.split(options.extra_flags)
     if options.j == 0:
       options.j = multiprocessing.cpu_count()
-    while options.random_seed == 0:
-      options.random_seed = random.SystemRandom().randint(-2147483648,
-                                                          2147483647)
-    while options.fuzzer_random_seed == 0:
-      options.fuzzer_random_seed = random.SystemRandom().randint(-2147483648,
-                                                                 2147483647)
+    if not options.fuzzer_random_seed:
+      options.fuzzer_random_seed = random_utils.random_seed()
 
     if options.total_timeout_sec:
       options.tests_count = 0
@@ -151,6 +116,15 @@ class NumFuzzer(base_runner.BaseTestRunner):
   def _get_default_suite_names(self):
     return DEFAULT_SUITES
 
+  def _timeout_scalefactor(self, options):
+    factor = super(NumFuzzer, self)._timeout_scalefactor(options)
+    if options.stress_interrupt_budget:
+      # TODO(machenbach): This should be moved to a more generic config.
+      # Fuzzers have too much timeout in debug mode.
+      factor = max(int(factor * 0.25), 1)
+    return factor
+
+
   def _do_execute(self, suites, args, options):
     print(">>> Running tests for %s.%s" % (self.build_config.arch,
                                            self.mode_name))
@@ -165,8 +139,7 @@ class NumFuzzer(base_runner.BaseTestRunner):
       progress_indicator.Register(progress.JsonTestProgressIndicator(
           options.json_test_results,
           self.build_config.arch,
-          self.mode_options.execution_mode,
-          ctx.random_seed))
+          self.mode_options.execution_mode))
 
     loader = LoadProc()
     fuzzer_rng = random.Random(options.fuzzer_random_seed)
@@ -183,7 +156,8 @@ class NumFuzzer(base_runner.BaseTestRunner):
       # different random seeds for shards instead of splitting tests.
       self._create_shard_proc(options),
       combiner,
-      self._create_fuzzer(fuzzer_rng, options)
+      self._create_fuzzer(fuzzer_rng, options),
+      self._create_signal_proc(),
     ] + indicators + [
       results,
       self._create_timeout_proc(options),
@@ -213,24 +187,15 @@ class NumFuzzer(base_runner.BaseTestRunner):
 
   def _create_context(self, options):
     # Populate context object.
-    timeout = options.timeout
-    if timeout == -1:
-      # Simulators are slow, therefore allow a longer default timeout.
-      if self.build_config.arch in SLOW_ARCHS:
-        timeout = 2 * TIMEOUT_DEFAULT;
-      else:
-        timeout = TIMEOUT_DEFAULT;
-
-    timeout *= self.mode_options.timeout_scalefactor
     ctx = context.Context(self.build_config.arch,
                           self.mode_options.execution_mode,
                           self.outdir,
                           self.mode_options.flags, options.verbose,
-                          timeout, options.isolates,
+                          options.timeout * self._timeout_scalefactor(options),
+                          options.isolates,
                           options.command_prefix,
                           options.extra_flags,
                           False,  # Keep i18n on by default.
-                          options.random_seed,
                           True,  # No sorting of test cases.
                           options.rerun_failures_count,
                           options.rerun_failures_max,
@@ -275,6 +240,7 @@ class NumFuzzer(base_runner.BaseTestRunner):
       "no_snap": self.build_config.no_snap,
       "novfp3": False,
       "predictable": self.build_config.predictable,
+      "simd_mips": True,
       "simulator": utils.UseSimulator(self.build_config.arch),
       "simulator_run": False,
       "system": utils.GuessOS(),
@@ -332,16 +298,6 @@ class NumFuzzer(base_runner.BaseTestRunner):
     add('deopt', options.stress_deopt, options.stress_deopt_min)
     return fuzzers
 
-  def _create_timeout_proc(self, options):
-    if not options.total_timeout_sec:
-      return None
-    return TimeoutProc(options.total_timeout_sec)
-
-  def _create_rerun_proc(self, options):
-    if not options.rerun_failures_count:
-      return None
-    return RerunProc(options.rerun_failures_count,
-                     options.rerun_failures_max)
 
 if __name__ == '__main__':
   sys.exit(NumFuzzer().execute())

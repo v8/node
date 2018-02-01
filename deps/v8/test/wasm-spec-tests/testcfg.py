@@ -27,9 +27,9 @@ class TestSuite(testsuite.TestSuite):
 
 
 class TestCase(testcase.TestCase):
-  def _get_files_params(self, ctx):
+  def _get_files_params(self):
     return [os.path.join(self.suite.root, self.path + self._get_suffix())]
 
 
-def GetSuite(name, root):
-  return TestSuite(name, root)
+def GetSuite(*args, **kwargs):
+  return TestSuite(*args, **kwargs)

@@ -11,7 +11,6 @@ import multiprocessing
 import os
 import random
 import re
-import shlex
 import subprocess
 import sys
 import time
@@ -33,11 +32,10 @@ from testrunner.testproc.loader import LoadProc
 from testrunner.testproc.progress import (VerboseProgressIndicator,
                                           ResultsTracker,
                                           TestsCounter)
-from testrunner.testproc.rerun import RerunProc
+from testrunner.testproc.seed import SeedProc
 from testrunner.testproc.variant import VariantProc
+from testrunner.utils import random_utils
 
-
-TIMEOUT_DEFAULT = 60
 
 VARIANTS = ["default"]
 
@@ -68,15 +66,6 @@ GC_STRESS_FLAGS = ["--gc-interval=500", "--stress-compaction",
 RANDOM_GC_STRESS_FLAGS = ["--random-gc-interval=5000",
                           "--stress-compaction-random"]
 
-# Double the timeout for these:
-SLOW_ARCHS = ["arm",
-              "mips",
-              "mipsel",
-              "mips64",
-              "mips64el",
-              "s390",
-              "s390x",
-              "arm64"]
 
 PREDICTABLE_WRAPPER = os.path.join(
     base_runner.BASE_DIR, 'tools', 'predictable_wrapper.py')
@@ -137,13 +126,6 @@ class StandardTestRunner(base_runner.BaseTestRunner):
       parser.add_option("--random-gc-stress",
                         help="Switch on random GC stress mode",
                         default=False, action="store_true")
-      parser.add_option("--command-prefix",
-                        help="Prepended to each shell command used to run a"
-                        " test",
-                        default="")
-      parser.add_option("--extra-flags",
-                        help="Additional flags to pass to each test command",
-                        action="append", default=[])
       parser.add_option("--infra-staging", help="Use new test runner features",
                         dest='infra_staging', default=None,
                         action="store_true")
@@ -151,13 +133,8 @@ class StandardTestRunner(base_runner.BaseTestRunner):
                         help="Opt out of new test runner features",
                         dest='infra_staging', default=None,
                         action="store_false")
-      parser.add_option("--isolates", help="Whether to test isolates",
-                        default=False, action="store_true")
       parser.add_option("-j", help="The number of parallel tasks to run",
                         default=0, type="int")
-      parser.add_option("--no-harness", "--noharness",
-                        help="Run without test harness of a given suite",
-                        default=False, action="store_true")
       parser.add_option("--no-presubmit", "--nopresubmit",
                         help='Skip presubmit checks (deprecated)',
                         default=False, dest="no_presubmit", action="store_true")
@@ -190,13 +167,6 @@ class StandardTestRunner(base_runner.BaseTestRunner):
                         help="Path to a file for storing json results.")
       parser.add_option("--flakiness-results",
                         help="Path to a file for storing flakiness json.")
-      parser.add_option("--rerun-failures-count",
-                        help=("Number of times to rerun each failing test case."
-                              " Very slow tests will be rerun only once."),
-                        default=0, type="int")
-      parser.add_option("--rerun-failures-max",
-                        help="Maximum number of failing test cases to rerun.",
-                        default=100, type="int")
       parser.add_option("--dont-skip-slow-simulator-tests",
                         help="Don't skip more slow tests when using a"
                         " simulator.",
@@ -207,20 +177,17 @@ class StandardTestRunner(base_runner.BaseTestRunner):
                         default=False, action="store_true")
       parser.add_option("--time", help="Print timing information after running",
                         default=False, action="store_true")
-      parser.add_option("-t", "--timeout", help="Timeout in seconds",
-                        default=TIMEOUT_DEFAULT, type="int")
       parser.add_option("--warn-unused", help="Report unused rules",
                         default=False, action="store_true")
       parser.add_option("--junitout", help="File name of the JUnit output")
       parser.add_option("--junittestsuite",
                         help="The testsuite name in the JUnit output file",
                         default="v8tests")
-      parser.add_option("--random-seed", default=0, dest="random_seed",
-                        help="Default seed for initializing random generator",
-                        type=int)
       parser.add_option("--random-seed-stress-count", default=1, type="int",
                         dest="random_seed_stress_count",
-                        help="Number of runs with different random seeds")
+                        help="Number of runs with different random seeds. Only "
+                             "with test processors: 0 means infinite "
+                             "generation.")
 
     def _use_staging(self, options):
       if options.infra_staging is not None:
@@ -246,9 +213,6 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         if not os.path.exists(self.sancov_dir):
           print("sancov-dir %s doesn't exist" % self.sancov_dir)
           raise base_runner.TestRunnerError()
-
-      options.command_prefix = shlex.split(options.command_prefix)
-      options.extra_flags = sum(map(shlex.split, options.extra_flags), [])
 
       if options.gc_stress:
         options.extra_flags += GC_STRESS_FLAGS
@@ -302,9 +266,6 @@ class StandardTestRunner(base_runner.BaseTestRunner):
       if options.j == 0:
         options.j = multiprocessing.cpu_count()
 
-      if options.random_seed_stress_count <= 1 and options.random_seed == 0:
-        options.random_seed = self._random_seed()
-
       if options.variants == "infra_staging":
         options.variants = "exhaustive"
         options.infra_staging = True
@@ -356,45 +317,33 @@ class StandardTestRunner(base_runner.BaseTestRunner):
           "allow_user_segv_handler=1",
         ])
 
-    def _random_seed(self):
-      seed = 0
-      while not seed:
-        seed = random.SystemRandom().randint(-2147483648, 2147483647)
-      return seed
-
     def _execute(self, args, options, suites):
       print(">>> Running tests for %s.%s" % (self.build_config.arch,
                                              self.mode_name))
       # Populate context object.
-
-      # Simulators are slow, therefore allow a longer timeout.
-      if self.build_config.arch in SLOW_ARCHS:
-        options.timeout *= 2
-
-      options.timeout *= self.mode_options.timeout_scalefactor
-
-      if self.build_config.predictable:
-        # Predictable mode is slower.
-        options.timeout *= 2
-
       ctx = context.Context(self.build_config.arch,
                             self.mode_options.execution_mode,
                             self.outdir,
                             self.mode_options.flags,
                             options.verbose,
-                            options.timeout,
+                            options.timeout *
+                              self._timeout_scalefactor(options),
                             options.isolates,
                             options.command_prefix,
                             options.extra_flags,
                             self.build_config.no_i18n,
-                            options.random_seed,
                             options.no_sorting,
                             options.rerun_failures_count,
                             options.rerun_failures_max,
                             options.no_harness,
                             use_perf_data=not options.swarming,
-                            sancov_dir=self.sancov_dir,
-                            infra_staging=options.infra_staging)
+                            sancov_dir=self.sancov_dir)
+
+      # simd_mips is true if SIMD is fully supported on MIPS
+      simd_mips = (
+        self.build_config.arch in [ 'mipsel', 'mips', 'mips64', 'mips64el'] and
+        self.build_config.mips_arch_variant == "r6" and
+        self.build_config.mips_use_msa)
 
       # TODO(all): Combine "simulator" and "simulator_run".
       # TODO(machenbach): In GN we can derive simulator run from
@@ -426,6 +375,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         "predictable": self.build_config.predictable,
         "simulator": utils.UseSimulator(self.build_config.arch),
         "simulator_run": simulator_run,
+        "simd_mips": simd_mips,
         "system": utils.GuessOS(),
         "tsan": self.build_config.tsan,
         "ubsan_vptr": self.build_config.ubsan_vptr,
@@ -441,8 +391,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         progress_indicator.Register(progress.JsonTestProgressIndicator(
           options.json_test_results,
           self.build_config.arch,
-          self.mode_options.execution_mode,
-          ctx.random_seed))
+          self.mode_options.execution_mode))
       if options.flakiness_results:  # pragma: no cover
         progress_indicator.Register(progress.FlakinessTestProgressIndicator(
             options.flakiness_results))
@@ -480,23 +429,20 @@ class StandardTestRunner(base_runner.BaseTestRunner):
                           for v in variant_gen.FilterVariantsByTest(t)
                           for flags in variant_gen.GetFlagSets(t, v) ]
 
-        if options.random_seed_stress_count > 1:
-          # Duplicate test for random seed stress mode.
-          def iter_seed_flags():
-            for _ in range(0, options.random_seed_stress_count):
-              # Use given random seed for all runs (set by default in
-              # execution.py) or a new random seed if none is specified.
-              if options.random_seed:
-                yield []
-              else:
-                yield ["--random-seed=%d" % self._random_seed()]
-          s.tests = [
-            t.create_variant(t.variant, flags, 'seed-stress-%d' % n)
-            for t in variant_tests
-            for n, flags in enumerate(iter_seed_flags())
-          ]
-        else:
-          s.tests = variant_tests
+        # Duplicate test for random seed stress mode.
+        def iter_seed_flags():
+          for _ in range(0, options.random_seed_stress_count or 1):
+            # Use given random seed for all runs (set by default in
+            # execution.py) or a new random seed if none is specified.
+            if options.random_seed:
+              yield options.random_seed
+            else:
+              yield random_utils.random_seed()
+        s.tests = [
+          t.create_variant(t.variant, [], 'seed-%d' % n, random_seed=val)
+          for t in variant_tests
+          for n, val in enumerate(iter_seed_flags())
+        ]
 
         # Second filtering by status applying also the variant-dependent rules.
         if options.warn_unused:
@@ -507,7 +453,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         s.tests = self._shard_tests(s.tests, options)
 
         for t in s.tests:
-          t.cmd = t.get_command(ctx)
+          t.cmd = t.get_command()
 
         num_tests += len(s.tests)
 
@@ -592,9 +538,13 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         tests_counter,
         VariantProc(self._variants),
         StatusFileFilterProc(options.slow_tests, options.pass_fail_tests),
+        self._create_predictable_filter(),
+        self._create_seed_proc(options),
+        self._create_signal_proc(),
       ] + indicators + [
         results,
-        self._create_rerun_proc(context),
+        self._create_timeout_proc(options),
+        self._create_rerun_proc(options),
         execproc,
       ]
 
@@ -617,7 +567,7 @@ class StandardTestRunner(base_runner.BaseTestRunner):
       for indicator in indicators:
         indicator.finished()
 
-      print '>>> %d tests ran' % results.total
+      print '>>> %d tests ran' % (results.total - results.remaining)
 
       exit_code = 0
       if results.failed:
@@ -633,12 +583,17 @@ class StandardTestRunner(base_runner.BaseTestRunner):
         exit_code = 0
       return exit_code
 
-    def _create_rerun_proc(self, ctx):
-      if not ctx.rerun_failures_count:
+    def _create_predictable_filter(self):
+      if not self.build_config.predictable:
         return None
-      return RerunProc(ctx.rerun_failures_count,
-                       ctx.rerun_failures_max)
+      return predictable.PredictableFilterProc()
 
+
+    def _create_seed_proc(self, options):
+      if options.random_seed_stress_count == 1:
+        return None
+      return SeedProc(options.random_seed_stress_count, options.random_seed,
+                      options.j * 4)
 
 
 if __name__ == '__main__':

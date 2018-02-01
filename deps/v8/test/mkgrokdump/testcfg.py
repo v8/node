@@ -33,7 +33,7 @@ class TestCase(testcase.TestCase):
   def _get_statusfile_flags(self):
     return []
 
-  def _get_mode_flags(self, ctx):
+  def _get_mode_flags(self):
     return []
 
   def get_shell(self):
@@ -44,5 +44,5 @@ class TestCase(testcase.TestCase):
     return mkgrokdump.OutProc(self.expected_outcomes, self.suite.expected_path)
 
 
-def GetSuite(name, root):
-  return TestSuite(name, root)
+def GetSuite(*args, **kwargs):
+  return TestSuite(*args, **kwargs)

@@ -83,11 +83,11 @@ class TestCase(testcase.TestCase):
       path = head
     return False
 
-  def _get_cmd_params(self, ctx):
-    params = super(TestCase, self)._get_cmd_params(ctx)
+  def _get_cmd_params(self):
+    params = super(TestCase, self)._get_cmd_params()
     return [p for p in params if p not in INVALID_FLAGS]
 
-  def _get_files_params(self, ctx):
+  def _get_files_params(self):
     return self._source_files
 
   def _get_source_flags(self):
@@ -103,5 +103,5 @@ class TestCase(testcase.TestCase):
                            self._expected_fail())
 
 
-def GetSuite(name, root):
-  return TestSuite(name, root)
+def GetSuite(*args, **kwargs):
+  return TestSuite(*args, **kwargs)

@@ -3540,6 +3540,10 @@ void Tuple3::BriefPrintDetails(std::ostream& os) {
      << Brief(value3());
 }
 
+void CallableTask::BriefPrintDetails(std::ostream& os) {
+  os << " callable=" << Brief(callable());
+}
+
 void HeapObject::Iterate(ObjectVisitor* v) { IterateFast<ObjectVisitor>(v); }
 
 
@@ -13014,14 +13018,19 @@ MaybeHandle<Map> JSFunction::GetDerivedMap(Isolate* isolate,
                           constructor_initial_map->UnusedPropertyFields();
       int instance_size;
       int in_object_properties;
-      CalculateInstanceSizeForDerivedClass(function, instance_type,
-                                           embedder_fields, &instance_size,
-                                           &in_object_properties);
+      bool success = CalculateInstanceSizeForDerivedClass(
+          function, instance_type, embedder_fields, &instance_size,
+          &in_object_properties);
 
       int unused_property_fields = in_object_properties - pre_allocated;
-      Handle<Map> map =
-          Map::CopyInitialMap(constructor_initial_map, instance_size,
-                              in_object_properties, unused_property_fields);
+
+      Handle<Map> map;
+      if (success) {
+        map = Map::CopyInitialMap(constructor_initial_map, instance_size,
+                                  in_object_properties, unused_property_fields);
+      } else {
+        map = Map::CopyInitialMap(constructor_initial_map);
+      }
       map->set_new_target_is_base(false);
 
       JSFunction::SetInitialMap(function, map, prototype);
@@ -13777,12 +13786,14 @@ void JSFunction::CalculateInstanceSizeHelper(InstanceType instance_type,
                           requested_embedder_fields;
 }
 
-void JSFunction::CalculateInstanceSizeForDerivedClass(
+// static
+bool JSFunction::CalculateInstanceSizeForDerivedClass(
     Handle<JSFunction> function, InstanceType instance_type,
     int requested_embedder_fields, int* instance_size,
     int* in_object_properties) {
   Isolate* isolate = function->GetIsolate();
   int expected_nof_properties = 0;
+  bool result = true;
   for (PrototypeIterator iter(isolate, function, kStartAtReceiver);
        !iter.IsAtEnd(); iter.Advance()) {
     Handle<JSReceiver> current =
@@ -13796,6 +13807,11 @@ void JSFunction::CalculateInstanceSizeForDerivedClass(
         Compiler::Compile(func, Compiler::CLEAR_EXCEPTION)) {
       DCHECK(shared->is_compiled());
       expected_nof_properties += shared->expected_nof_properties();
+    } else if (!shared->is_compiled()) {
+      // In case there was a compilation error for the constructor we will
+      // throw an error during instantiation. Hence we directly return 0;
+      result = false;
+      break;
     }
     if (!IsDerivedConstructor(shared->kind())) {
       break;
@@ -13804,6 +13820,7 @@ void JSFunction::CalculateInstanceSizeForDerivedClass(
   CalculateInstanceSizeHelper(instance_type, true, requested_embedder_fields,
                               expected_nof_properties, instance_size,
                               in_object_properties);
+  return result;
 }
 
 
@@ -14253,30 +14270,6 @@ Code* Code::OptimizedCodeIterator::Next() {
   DCHECK_EQ(Code::OPTIMIZED_FUNCTION, code->kind());
   return code;
 }
-
-#if defined(OBJECT_PRINT) || defined(ENABLE_DISASSEMBLER)
-
-const char* Code::ICState2String(InlineCacheState state) {
-  switch (state) {
-    case UNINITIALIZED:
-      return "UNINITIALIZED";
-    case PREMONOMORPHIC:
-      return "PREMONOMORPHIC";
-    case MONOMORPHIC:
-      return "MONOMORPHIC";
-    case RECOMPUTE_HANDLER:
-      return "RECOMPUTE_HANDLER";
-    case POLYMORPHIC:
-      return "POLYMORPHIC";
-    case MEGAMORPHIC:
-      return "MEGAMORPHIC";
-    case GENERIC:
-      return "GENERIC";
-  }
-  UNREACHABLE();
-}
-
-#endif  // defined(OBJECT_PRINT) || defined(ENABLE_DISASSEMBLER)
 
 #ifdef ENABLE_DISASSEMBLER
 
@@ -15918,6 +15911,29 @@ const char* JSPromise::Status(v8::Promise::PromiseState status) {
       return "rejected";
   }
   UNREACHABLE();
+}
+
+// static
+MaybeHandle<Object> JSPromise::Resolve(Handle<JSPromise> promise,
+                                       Handle<Object> value) {
+  Isolate* isolate = promise->GetIsolate();
+  Handle<Object> argv[] = {promise, value};
+  MaybeHandle<Object> result = Execution::Call(
+      isolate, isolate->promise_resolve(),
+      isolate->factory()->undefined_value(), arraysize(argv), argv);
+  return result;
+}
+
+// static
+MaybeHandle<Object> JSPromise::Reject(Handle<JSPromise> promise,
+                                      Handle<Object> value) {
+  Isolate* isolate = promise->GetIsolate();
+  // We pass true to trigger the debugger's on exception handler.
+  Handle<Object> argv[] = {promise, value, isolate->factory()->ToBoolean(true)};
+  MaybeHandle<Object> result = Execution::Call(
+      isolate, isolate->promise_internal_reject(),
+      isolate->factory()->undefined_value(), arraysize(argv), argv);
+  return result;
 }
 
 namespace {

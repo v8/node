@@ -116,8 +116,8 @@ class TestSuite(testsuite.TestSuite):
   # Match the (...) in '/path/to/v8/test/test262/subdir/test/(...).js'
   # In practice, subdir is data or local-tests
 
-  def __init__(self, name, root):
-    super(TestSuite, self).__init__(name, root)
+  def __init__(self, *args, **kwargs):
+    super(TestSuite, self).__init__(*args, **kwargs)
     self.testroot = os.path.join(self.root, *TEST_262_SUITE_PATH)
     self.harnesspath = os.path.join(self.root, *TEST_262_HARNESS_PATH)
     self.harness = [os.path.join(self.harnesspath, f)
@@ -164,7 +164,7 @@ class TestSuite(testsuite.TestSuite):
                                                 os.walk(self.localtestroot)):
       for dotted in [x for x in dirs if x.startswith(".")]:
         dirs.remove(dotted)
-      if context.noi18n and "intl402" in dirs:
+      if self.test_config.noi18n and "intl402" in dirs:
         dirs.remove("intl402")
       dirs.sort()
       files.sort()
@@ -203,7 +203,7 @@ class TestCase(testcase.TestCase):
           .get('type', None)
     )
 
-  def _get_files_params(self, ctx):
+  def _get_files_params(self):
     return (
         list(self.suite.harness) +
         ([os.path.join(self.suite.root, "harness-agent.js")]
@@ -213,7 +213,7 @@ class TestCase(testcase.TestCase):
         [self._get_source_path()]
     )
 
-  def _get_suite_flags(self, ctx):
+  def _get_suite_flags(self):
     return (
         (["--throws"] if "negative" in self.test_record else []) +
         (["--allow-natives-syntax"]
@@ -250,5 +250,5 @@ class TestCase(testcase.TestCase):
     return test262.NoExceptionOutProc(self.expected_outcomes)
 
 
-def GetSuite(name, root):
-  return TestSuite(name, root)
+def GetSuite(*args, **kwargs):
+  return TestSuite(*args, **kwargs)

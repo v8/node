@@ -7,6 +7,7 @@ from collections import OrderedDict
 import json
 import optparse
 import os
+import shlex
 import sys
 
 
@@ -17,10 +18,13 @@ sys.path.insert(
     os.path.dirname(os.path.abspath(__file__))))
 
 
-from local import testsuite
-from local import utils
-
-from testproc.shard import ShardProc
+from testrunner.local import testsuite
+from testrunner.local import utils
+from testrunner.test_config import TestConfig
+from testrunner.testproc.rerun import RerunProc
+from testrunner.testproc.shard import ShardProc
+from testrunner.testproc.sigproc import SignalProc
+from testrunner.testproc.timeout import TimeoutProc
 
 
 BASE_DIR = (
@@ -89,6 +93,16 @@ TEST_MAP = {
     "unittests",
   ],
 }
+
+# Double the timeout for these:
+SLOW_ARCHS = ["arm",
+              "mips",
+              "mipsel",
+              "mips64",
+              "mips64el",
+              "s390",
+              "s390x",
+              "arm64"]
 
 
 class ModeConfig(object):
@@ -162,6 +176,10 @@ class BuildConfig(object):
     self.predictable = build_config['v8_enable_verify_predictable']
     self.tsan = build_config['is_tsan']
     self.ubsan_vptr = build_config['is_ubsan_vptr']
+    # Export only for MIPS target
+    if self.arch in ['mips', 'mipsel', 'mips64', 'mips64el']:
+      self.mips_arch_variant = build_config['mips_arch_variant']
+      self.mips_use_msa = build_config['mips_use_msa']
 
   def __str__(self):
     detected_options = []
@@ -215,7 +233,7 @@ class BaseTestRunner(object):
         raise
 
       args = self._parse_test_args(args)
-      suites = self._get_suites(args, options.verbose)
+      suites = self._get_suites(args, options)
 
       self._setup_env()
       return self._do_execute(suites, args, options)
@@ -247,14 +265,36 @@ class BaseTestRunner(object):
                       " and buildbot builds): %s" % MODES.keys())
     parser.add_option("--shell-dir", help="DEPRECATED! Executables from build "
                       "directory will be used")
-    parser.add_option("-v", "--verbose", help="Verbose output",
-                      default=False, action="store_true")
     parser.add_option("--shard-count",
                       help="Split tests into this number of shards",
                       default=1, type="int")
     parser.add_option("--shard-run",
                       help="Run this shard from the split up tests.",
                       default=1, type="int")
+    parser.add_option("--total-timeout-sec", default=0, type="int",
+                      help="How long should fuzzer run")
+    parser.add_option("--random-seed", default=0, type=int,
+                      help="Default seed for initializing random generator")
+
+    parser.add_option("--rerun-failures-count", default=0, type=int,
+                      help="Number of times to rerun each failing test case. "
+                           "Very slow tests will be rerun only once.")
+    parser.add_option("--rerun-failures-max", default=100, type=int,
+                      help="Maximum number of failing test cases to rerun")
+
+    parser.add_option("--command-prefix", default="",
+                      help="Prepended to each shell command used to run a test")
+    parser.add_option("--extra-flags", action="append", default=[],
+                      help="Additional flags to pass to each test command")
+    parser.add_option("--isolates", action="store_true", default=False,
+                      help="Whether to test isolates")
+    parser.add_option("--no-harness", "--noharness",
+                      default=False, action="store_true",
+                      help="Run without test harness of a given suite")
+    parser.add_option("-t", "--timeout", default=60, type=int,
+                      help="Timeout for single test in seconds")
+    parser.add_option("-v", "--verbose", default=False, action="store_true",
+                      help="Verbose output")
 
     # TODO(machenbach): Temporary options for rolling out new test runner
     # features.
@@ -387,6 +427,9 @@ class BaseTestRunner(object):
       print('Warning: --shell-dir is deprecated. Searching for executables in '
             'build directory (%s) instead.' % self.outdir)
 
+    options.command_prefix = shlex.split(options.command_prefix)
+    options.extra_flags = sum(map(shlex.split, options.extra_flags), [])
+
   def _buildbot_to_v8_mode(self, config):
     """Convert buildbot build configs to configs understood by the v8 runner.
 
@@ -480,9 +523,9 @@ class BaseTestRunner(object):
 
     return reduce(list.__add__, map(expand_test_group, args), [])
 
-  def _get_suites(self, args, verbose=False):
+  def _get_suites(self, args, options):
     names = self._args_to_suite_names(args)
-    return self._load_suites(names, verbose)
+    return self._load_suites(names, options)
 
   def _args_to_suite_names(self, args):
     # Use default tests if no test configuration was provided at the cmd line.
@@ -496,13 +539,43 @@ class BaseTestRunner(object):
   def _expand_test_group(self, name):
     return TEST_MAP.get(name, [name])
 
-  def _load_suites(self, names, verbose=False):
+  def _load_suites(self, names, options):
+    test_config = self._create_test_config(options)
     def load_suite(name):
-      if verbose:
+      if options.verbose:
         print '>>> Loading test suite: %s' % name
       return testsuite.TestSuite.LoadTestSuite(
-          os.path.join(self.basedir, 'test', name))
+          os.path.join(self.basedir, 'test', name),
+          test_config)
     return map(load_suite, names)
+
+  def _create_test_config(self, options):
+    timeout = options.timeout * self._timeout_scalefactor(options)
+    return TestConfig(
+        command_prefix=options.command_prefix,
+        extra_flags=options.extra_flags,
+        isolates=options.isolates,
+        mode_flags=self.mode_options.flags,
+        no_harness=options.no_harness,
+        noi18n=self.build_config.no_i18n,
+        random_seed=options.random_seed,
+        shell_dir=self.outdir,
+        timeout=timeout,
+        verbose=options.verbose,
+    )
+
+  def _timeout_scalefactor(self, options):
+    factor = self.mode_options.timeout_scalefactor
+
+    # Simulators are slow, therefore allow a longer timeout.
+    if self.build_config.arch in SLOW_ARCHS:
+      factor *= 2
+
+    # Predictable mode is slower.
+    if self.build_config.predictable:
+      factor *= 2
+
+    return factor
 
   # TODO(majeski): remove options & args parameters
   def _do_execute(self, suites, args, options):
@@ -550,3 +623,17 @@ class BaseTestRunner(object):
       return 1, 1
 
     return shard_run, shard_count
+
+  def _create_timeout_proc(self, options):
+    if not options.total_timeout_sec:
+      return None
+    return TimeoutProc(options.total_timeout_sec)
+
+  def _create_signal_proc(self):
+    return SignalProc()
+
+  def _create_rerun_proc(self, options):
+    if not options.rerun_failures_count:
+      return None
+    return RerunProc(options.rerun_failures_count,
+                     options.rerun_failures_max)

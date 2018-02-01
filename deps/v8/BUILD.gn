@@ -387,6 +387,9 @@ config("toolchain") {
         "_MIPS_ARCH_MIPS32R6",
         "FPU_MODE_FP64",
       ]
+      if (mips_use_msa) {
+        defines += [ "_MIPS_MSA" ]
+      }
     } else if (mips_arch_variant == "r2") {
       defines += [ "_MIPS_ARCH_MIPS32R2" ]
       if (mips_fpu_mode == "fp64") {
@@ -424,6 +427,9 @@ config("toolchain") {
     }
     if (mips_arch_variant == "r6") {
       defines += [ "_MIPS_ARCH_MIPS64R6" ]
+      if (mips_use_msa) {
+        defines += [ "_MIPS_MSA" ]
+      }
     } else if (mips_arch_variant == "r2") {
       defines += [ "_MIPS_ARCH_MIPS64R2" ]
     }
@@ -514,10 +520,11 @@ config("toolchain") {
 
   if (is_clang) {
     cflags += [
-      "-Wsign-compare",
-
       # TODO(hans): Remove once http://crbug.com/428099 is resolved.
       "-Winconsistent-missing-override",
+
+      # TODO(thakis): Consider enabling this, https://crbug.com/807632
+      "-Wno-implicit-fallthrough",
     ]
 
     if (v8_current_cpu != "mips" && v8_current_cpu != "mipsel") {
@@ -883,6 +890,14 @@ action("v8_dump_build_config") {
     "v8_target_cpu=\"$v8_target_cpu\"",
     "v8_use_snapshot=$v8_use_snapshot",
   ]
+
+  if (v8_current_cpu == "mips" || v8_current_cpu == "mipsel" ||
+      v8_current_cpu == "mips64" || v8_current_cpu == "mips64el") {
+    args += [
+      "mips_arch_variant=\"$mips_arch_variant\"",
+      "mips_use_msa=$mips_use_msa",
+    ]
+  }
 }
 
 ###############################################################################
@@ -2125,8 +2140,6 @@ v8_source_set("v8_base") {
     "src/wasm/signature-map.h",
     "src/wasm/streaming-decoder.cc",
     "src/wasm/streaming-decoder.h",
-    "src/wasm/wasm-api.cc",
-    "src/wasm/wasm-api.h",
     "src/wasm/wasm-code-manager.cc",
     "src/wasm/wasm-code-manager.h",
     "src/wasm/wasm-code-specialization.cc",

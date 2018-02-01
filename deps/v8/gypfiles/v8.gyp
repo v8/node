@@ -1455,8 +1455,6 @@
         '../src/wasm/signature-map.h',
         '../src/wasm/streaming-decoder.cc',
         '../src/wasm/streaming-decoder.h',
-        '../src/wasm/wasm-api.cc',
-        '../src/wasm/wasm-api.h',
         '../src/wasm/wasm-code-manager.cc',
         '../src/wasm/wasm-code-manager.h',
         '../src/wasm/wasm-code-specialization.cc',
@@ -2556,6 +2554,15 @@
             'v8_enable_verify_predictable=<(v8_enable_verify_predictable)',
             'v8_target_cpu=<(v8_target_arch)',
             'v8_use_snapshot=<(v8_use_snapshot)',
+          ],
+          'conditions': [
+            ['v8_target_arch=="mips" or v8_target_arch=="mipsel" \
+              or v8_target_arch=="mips64" or v8_target_arch=="mips64el"', {
+                'action':[
+                  'mips_arch_variant=<(mips_arch_variant)',
+                  'mips_use_msa=<(mips_use_msa)',
+                ],
+            }],
           ],
         },
       ],

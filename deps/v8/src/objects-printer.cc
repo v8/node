@@ -552,12 +552,11 @@ void JSArray::JSArrayPrint(std::ostream& os) {  // NOLINT
 void JSPromise::JSPromisePrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSPromise");
   os << "\n - status = " << JSPromise::Status(status());
-  os << "\n - result = " << Brief(result());
-  os << "\n - deferred_promise: " << Brief(deferred_promise());
-  os << "\n - deferred_on_resolve: " << Brief(deferred_on_resolve());
-  os << "\n - deferred_on_reject: " << Brief(deferred_on_reject());
-  os << "\n - fulfill_reactions = " << Brief(fulfill_reactions());
-  os << "\n - reject_reactions = " << Brief(reject_reactions());
+  if (status() == Promise::kPending) {
+    os << "\n - reactions = " << Brief(reactions());
+  } else {
+    os << "\n - result = " << Brief(result());
+  }
   os << "\n - has_handler = " << has_handler();
   os << "\n ";
 }
@@ -773,7 +772,7 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
     FeedbackSlotKind kind = iter.kind();
 
     os << "\n - slot " << slot << " " << kind << " ";
-    FeedbackSlotPrint(os, slot, kind);
+    FeedbackSlotPrint(os, slot);
 
     int entry_size = iter.entry_size();
     if (entry_size > 0) os << " {";
@@ -788,71 +787,62 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
 
 void FeedbackVector::FeedbackSlotPrint(std::ostream& os,
                                        FeedbackSlot slot) {  // NOLINT
-  FeedbackSlotPrint(os, slot, GetKind(slot));
+  FeedbackNexus nexus(this, slot);
+  nexus.Print(os);
 }
 
-void FeedbackVector::FeedbackSlotPrint(std::ostream& os, FeedbackSlot slot,
-                                       FeedbackSlotKind kind) {  // NOLINT
-  switch (kind) {
-    case FeedbackSlotKind::kLoadProperty: {
-      LoadICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
+namespace {
+
+const char* ICState2String(InlineCacheState state) {
+  switch (state) {
+    case UNINITIALIZED:
+      return "UNINITIALIZED";
+    case PREMONOMORPHIC:
+      return "PREMONOMORPHIC";
+    case MONOMORPHIC:
+      return "MONOMORPHIC";
+    case RECOMPUTE_HANDLER:
+      return "RECOMPUTE_HANDLER";
+    case POLYMORPHIC:
+      return "POLYMORPHIC";
+    case MEGAMORPHIC:
+      return "MEGAMORPHIC";
+    case GENERIC:
+      return "GENERIC";
+  }
+  UNREACHABLE();
+}
+}  // anonymous namespace
+
+void FeedbackNexus::Print(std::ostream& os) {  // NOLINT
+  switch (kind()) {
+    case FeedbackSlotKind::kCall:
+    case FeedbackSlotKind::kLoadProperty:
+    case FeedbackSlotKind::kLoadKeyed:
     case FeedbackSlotKind::kLoadGlobalInsideTypeof:
-    case FeedbackSlotKind::kLoadGlobalNotInsideTypeof: {
-      LoadGlobalICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
-    case FeedbackSlotKind::kLoadKeyed: {
-      KeyedLoadICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
-    case FeedbackSlotKind::kCall: {
-      CallICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
+    case FeedbackSlotKind::kLoadGlobalNotInsideTypeof:
     case FeedbackSlotKind::kStoreNamedSloppy:
     case FeedbackSlotKind::kStoreNamedStrict:
     case FeedbackSlotKind::kStoreOwnNamed:
     case FeedbackSlotKind::kStoreGlobalSloppy:
-    case FeedbackSlotKind::kStoreGlobalStrict: {
-      StoreICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
+    case FeedbackSlotKind::kStoreGlobalStrict:
     case FeedbackSlotKind::kStoreKeyedSloppy:
+    case FeedbackSlotKind::kInstanceOf:
+    case FeedbackSlotKind::kStoreDataPropertyInLiteral:
     case FeedbackSlotKind::kStoreKeyedStrict: {
-      KeyedStoreICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
+      os << ICState2String(StateFromFeedback());
       break;
     }
     case FeedbackSlotKind::kBinaryOp: {
-      BinaryOpICNexus nexus(this, slot);
-      os << "BinaryOp:" << nexus.GetBinaryOperationFeedback();
+      os << "BinaryOp:" << GetBinaryOperationFeedback();
       break;
     }
     case FeedbackSlotKind::kCompareOp: {
-      CompareICNexus nexus(this, slot);
-      os << "CompareOp:" << nexus.GetCompareOperationFeedback();
+      os << "CompareOp:" << GetCompareOperationFeedback();
       break;
     }
     case FeedbackSlotKind::kForIn: {
-      ForInICNexus nexus(this, slot);
-      os << "ForIn:" << nexus.GetForInFeedback();
-      break;
-    }
-    case FeedbackSlotKind::kInstanceOf: {
-      InstanceOfICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
-      break;
-    }
-    case FeedbackSlotKind::kStoreDataPropertyInLiteral: {
-      StoreDataPropertyInLiteralICNexus nexus(this, slot);
-      os << Code::ICState2String(nexus.StateFromFeedback());
+      os << "ForIn:" << GetForInFeedback();
       break;
     }
     case FeedbackSlotKind::kCreateClosure:
@@ -1338,6 +1328,50 @@ void AccessorInfo::AccessorInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+void CallbackTask::CallbackTaskPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "CallbackTask");
+  os << "\n - callback: " << Brief(callback());
+  os << "\n - data: " << Brief(data());
+  os << "\n";
+}
+
+void CallableTask::CallableTaskPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "CallableTask");
+  os << "\n - context: " << Brief(context());
+  os << "\n - callable: " << Brief(callable());
+  os << "\n";
+}
+
+void PromiseFulfillReactionJobTask::PromiseFulfillReactionJobTaskPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseFulfillReactionJobTask");
+  os << "\n - argument: " << Brief(argument());
+  os << "\n - context: " << Brief(context());
+  os << "\n - handler: " << Brief(handler());
+  os << "\n - promise_or_capability: " << Brief(promise_or_capability());
+  os << "\n";
+}
+
+void PromiseRejectReactionJobTask::PromiseRejectReactionJobTaskPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseRejectReactionJobTask");
+  os << "\n - argument: " << Brief(argument());
+  os << "\n - context: " << Brief(context());
+  os << "\n - handler: " << Brief(handler());
+  os << "\n - promise_or_capability: " << Brief(promise_or_capability());
+  os << "\n";
+}
+
+void PromiseResolveThenableJobTask::PromiseResolveThenableJobTaskPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseResolveThenableJobTask");
+  os << "\n - context: " << Brief(context());
+  os << "\n - promise_to_resolve: " << Brief(promise_to_resolve());
+  os << "\n - then: " << Brief(then());
+  os << "\n - thenable: " << Brief(thenable());
+  os << "\n";
+}
+
 void PromiseCapability::PromiseCapabilityPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "PromiseCapability");
   os << "\n - promise: " << Brief(promise());
@@ -1346,26 +1380,12 @@ void PromiseCapability::PromiseCapabilityPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
-void PromiseResolveThenableJobInfo::PromiseResolveThenableJobInfoPrint(
-    std::ostream& os) {  // NOLINT
-  HeapObject::PrintHeader(os, "PromiseResolveThenableJobInfo");
-  os << "\n - thenable: " << Brief(thenable());
-  os << "\n - then: " << Brief(then());
-  os << "\n - resolve: " << Brief(resolve());
-  os << "\n - reject: " << Brief(reject());
-  os << "\n - context: " << Brief(context());
-  os << "\n";
-}
-
-void PromiseReactionJobInfo::PromiseReactionJobInfoPrint(
-    std::ostream& os) {  // NOLINT
-  HeapObject::PrintHeader(os, "PromiseReactionJobInfo");
-  os << "\n - value: " << Brief(value());
-  os << "\n - tasks: " << Brief(tasks());
-  os << "\n - deferred_promise: " << Brief(deferred_promise());
-  os << "\n - deferred_on_resolve: " << Brief(deferred_on_resolve());
-  os << "\n - deferred_on_reject: " << Brief(deferred_on_reject());
-  os << "\n - reaction context: " << Brief(context());
+void PromiseReaction::PromiseReactionPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "PromiseReaction");
+  os << "\n - next: " << Brief(next());
+  os << "\n - reject_handler: " << Brief(reject_handler());
+  os << "\n - fulfill_handler: " << Brief(fulfill_handler());
+  os << "\n - promise_or_capability: " << Brief(promise_or_capability());
   os << "\n";
 }
 

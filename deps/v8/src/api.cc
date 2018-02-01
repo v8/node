@@ -7401,11 +7401,9 @@ Maybe<bool> Promise::Resolver::Resolve(Local<Context> context,
   ENTER_V8(isolate, context, Promise_Resolver, Resolve, Nothing<bool>(),
            i::HandleScope);
   auto self = Utils::OpenHandle(this);
-  i::Handle<i::Object> argv[] = {self, Utils::OpenHandle(*value)};
   has_pending_exception =
-      i::Execution::Call(isolate, isolate->promise_resolve(),
-                         isolate->factory()->undefined_value(), arraysize(argv),
-                         argv)
+      i::JSPromise::Resolve(i::Handle<i::JSPromise>::cast(self),
+                            Utils::OpenHandle(*value))
           .is_null();
   RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
   return Just(true);
@@ -7424,14 +7422,9 @@ Maybe<bool> Promise::Resolver::Reject(Local<Context> context,
   ENTER_V8(isolate, context, Promise_Resolver, Reject, Nothing<bool>(),
            i::HandleScope);
   auto self = Utils::OpenHandle(this);
-
-  // We pass true to trigger the debugger's on exception handler.
-  i::Handle<i::Object> argv[] = {self, Utils::OpenHandle(*value),
-                                 isolate->factory()->ToBoolean(true)};
   has_pending_exception =
-      i::Execution::Call(isolate, isolate->promise_internal_reject(),
-                         isolate->factory()->undefined_value(), arraysize(argv),
-                         argv)
+      i::JSPromise::Reject(i::Handle<i::JSPromise>::cast(self),
+                           Utils::OpenHandle(*value))
           .is_null();
   RETURN_ON_FAILED_EXECUTION_PRIMITIVE(bool);
   return Just(true);
@@ -8712,24 +8705,20 @@ void Isolate::RunMicrotasks() {
   reinterpret_cast<i::Isolate*>(this)->RunMicrotasks();
 }
 
-
-void Isolate::EnqueueMicrotask(Local<Function> microtask) {
+void Isolate::EnqueueMicrotask(Local<Function> function) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
-  isolate->EnqueueMicrotask(Utils::OpenHandle(*microtask));
+  i::Handle<i::CallableTask> microtask = isolate->factory()->NewCallableTask(
+      Utils::OpenHandle(*function), isolate->native_context());
+  isolate->EnqueueMicrotask(microtask);
 }
 
-
-void Isolate::EnqueueMicrotask(MicrotaskCallback microtask, void* data) {
+void Isolate::EnqueueMicrotask(MicrotaskCallback callback, void* data) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   i::HandleScope scope(isolate);
-  i::Handle<i::CallHandlerInfo> callback_info =
-      i::Handle<i::CallHandlerInfo>::cast(
-          isolate->factory()->NewStruct(i::TUPLE3_TYPE, i::NOT_TENURED));
-  SET_FIELD_WRAPPED(callback_info, set_callback, microtask);
-  SET_FIELD_WRAPPED(callback_info, set_js_callback,
-                    callback_info->redirected_callback());
-  SET_FIELD_WRAPPED(callback_info, set_data, data);
-  isolate->EnqueueMicrotask(callback_info);
+  i::Handle<i::CallbackTask> microtask = isolate->factory()->NewCallbackTask(
+      isolate->factory()->NewForeign(reinterpret_cast<i::Address>(callback)),
+      isolate->factory()->NewForeign(reinterpret_cast<i::Address>(data)));
+  isolate->EnqueueMicrotask(microtask);
 }
 
 

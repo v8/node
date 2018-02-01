@@ -121,12 +121,12 @@ class TestCase(testcase.TestCase):
   def _get_source_flags(self):
     return self._source_flags
 
-  def _get_files_params(self, ctx):
+  def _get_files_params(self):
     files = list(self._source_files)
-    if not ctx.no_harness:
+    if not self._test_config.no_harness:
       files += self._mjsunit_files
     files += self._files_suffix
-    if ctx.isolates:
+    if self._test_config.isolates:
       files += ['--isolate'] + files
 
     return files
@@ -179,14 +179,15 @@ class CombinedTest(testcase.TestCase):
       passed as arguments.
   """
   def __init__(self, name, tests):
-    super(CombinedTest, self).__init__(tests[0].suite, '', name)
+    super(CombinedTest, self).__init__(tests[0].suite, '', name,
+                                       tests[0]._test_config)
     self._tests = tests
 
   def _prepare_outcomes(self, force_update=True):
     self._statusfile_outcomes = outproc.OUTCOMES_PASS_OR_TIMEOUT
     self.expected_outcomes = outproc.OUTCOMES_PASS_OR_TIMEOUT
 
-  def _get_shell_with_flags(self, ctx):
+  def _get_shell_with_flags(self):
     """In addition to standard set of shell flags it appends:
       --disable-abortjs: %AbortJS can abort the test even inside
         trycatch-wrapper, so we disable it.
@@ -195,13 +196,11 @@ class CombinedTest(testcase.TestCase):
     """
     shell = 'd8'
     shell_flags = ['--test', '--disable-abortjs', '--quiet-load']
-    if ctx.random_seed:
-      shell_flags.append('--random-seed=%s' % ctx.random_seed)
     return shell, shell_flags
 
-  def _get_cmd_params(self, ctx):
+  def _get_cmd_params(self):
     return (
-      super(CombinedTest, self)._get_cmd_params(ctx) +
+      super(CombinedTest, self)._get_cmd_params() +
       self._tests[0]._mjsunit_files +
       ['tools/testrunner/trycatch_loader.js', '--'] +
       [t._files_suffix[0] for t in self._tests]
@@ -238,5 +237,5 @@ class SuppressedTestCase(TestCase):
     )
 
 
-def GetSuite(name, root):
-  return TestSuite(name, root)
+def GetSuite(*args, **kwargs):
+  return TestSuite(*args, **kwargs)
