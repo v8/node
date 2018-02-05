@@ -13,9 +13,6 @@
     'v8_experimental_extra_library_files%': [],
     'mksnapshot_exec': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)mksnapshot<(EXECUTABLE_SUFFIX)',
     'v8_os_page_size%': 0,
-    'v8_src': '../src',
-    'v8_include': '../include',
-    'v8_tools': '../tools',
   },
   'includes': ['toolchain.gypi', 'features.gypi', 'inspector.gypi'],
   'targets': [
@@ -709,6 +706,7 @@
         '../src/compiler/frame-elider.h',
         '../src/compiler/frame-states.cc',
         '../src/compiler/frame-states.h',
+        '../src/compiler/functional-list.h',
         '../src/compiler/gap-resolver.cc',
         '../src/compiler/gap-resolver.h',
         '../src/compiler/graph-assembler.cc',
@@ -1046,6 +1044,8 @@
         '../src/ic/ic.h',
         '../src/identity-map.cc',
         '../src/identity-map.h',
+        '../src/instruction-stream.cc',
+        '../src/instruction-stream.h',
         '../src/interface-descriptors.cc',
         '../src/interface-descriptors.h',
         '../src/interpreter/block-coverage-builder.h',
@@ -2059,9 +2059,10 @@
                 '-L/usr/local/lib -lexecinfo',
             ]},
             'sources': [
+              '../src/base/debug/stack_trace_posix.cc',
               '../src/base/platform/platform-openbsd.cc',
               '../src/base/platform/platform-posix.h',
-              '../src/base/platform/platform-posix.cc'
+              '../src/base/platform/platform-posix.cc',
               '../src/base/platform/platform-posix-time.h',
               '../src/base/platform/platform-posix-time.cc',
             ],

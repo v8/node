@@ -9,6 +9,8 @@
 // This include does not have a guard, because it is a template-style include,
 // which can be included multiple times in different modes.  It expects to have
 // a mode defined before it's included.  The modes are FLAG_MODE_... below:
+//
+// PRESUBMIT_INTENTIONALLY_MISSING_INCLUDE_GUARD
 
 #define DEFINE_IMPLICATION(whenflag, thenflag)              \
   DEFINE_VALUE_IMPLICATION(whenflag, thenflag, true)
@@ -490,6 +492,10 @@ DEFINE_BOOL(untrusted_code_mitigations, V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS,
             "Enable mitigations for executing untrusted code")
 #undef V8_DEFAULT_UNTRUSTED_CODE_MITIGATIONS
 
+DEFINE_BOOL(turbo_disable_switch_jump_table, false,
+            "do not emit jump-tables in Turbofan")
+DEFINE_IMPLICATION(untrusted_code_mitigations, turbo_disable_switch_jump_table)
+
 // Flags to help platform porters
 DEFINE_BOOL(minimal, false,
             "simplifies execution model to make porting "
@@ -642,6 +648,9 @@ DEFINE_BOOL(trace_gc_verbose, false,
             "print more details following each garbage collection")
 DEFINE_INT(trace_allocation_stack_interval, -1,
            "print stack trace after <n> free-list allocations")
+DEFINE_INT(trace_duplicate_threshold_kb, 0,
+           "print duplicate objects in the heap if their size is more than "
+           "given threshold")
 DEFINE_BOOL(trace_fragmentation, false, "report fragmentation for old space")
 DEFINE_BOOL(trace_fragmentation_verbose, false,
             "report fragmentation for old space (detailed)")
@@ -906,7 +915,8 @@ DEFINE_INT(histogram_interval, 600000,
 // heap-snapshot-generator.cc
 DEFINE_BOOL(heap_profiler_trace_objects, false,
             "Dump heap object allocations/movements/size_updates")
-
+DEFINE_BOOL(heap_profiler_use_embedder_graph, true,
+            "Use the new EmbedderGraph API to get embedder nodes")
 
 // sampling-heap-profiler.cc
 DEFINE_BOOL(sampling_heap_profiler_suppress_randomness, false,
@@ -1007,6 +1017,8 @@ DEFINE_INT(fuzzer_random_seed, 0,
 DEFINE_BOOL(trace_rail, false, "trace RAIL mode")
 DEFINE_BOOL(print_all_exceptions, false,
             "print exception object and stack trace on each thrown exception")
+DEFINE_BOOL(stress_off_heap_code, false,
+            "Move code objects off-heap for testing.")
 
 // runtime.cc
 DEFINE_BOOL(runtime_call_stats, false, "report runtime call counts and times")
@@ -1115,9 +1127,6 @@ DEFINE_BOOL(print_handles, false, "report handles after GC")
 DEFINE_BOOL(check_handle_count, false,
             "Check that there are not too many handles at GC")
 DEFINE_BOOL(print_global_handles, false, "report global handles after GC")
-DEFINE_INT(trace_duplicate_threshold_kb, 0,
-           "print duplicate objects in the heap if their size is more than "
-           "given threshold")
 
 // TurboFan debug-only flags.
 DEFINE_BOOL(trace_turbo_escape, false, "enable tracing in escape analysis")

@@ -15,12 +15,12 @@ class VariantsGenerator(testsuite.VariantsGenerator):
 
 class TestSuite(testsuite.TestSuite):
   SUB_TESTS = ( 'json', 'parser', 'regexp_builtins', 'regexp', 'multi_return', 'wasm',
-          'wasm_async', 'wasm_call', 'wasm_code', 'wasm_compile',
+          'wasm_async', 'wasm_code', 'wasm_compile',
           'wasm_data_section', 'wasm_function_sigs_section',
           'wasm_globals_section', 'wasm_imports_section', 'wasm_memory_section',
           'wasm_names_section', 'wasm_types_section' )
 
-  def ListTests(self, context):
+  def ListTests(self):
     tests = []
     for subtest in TestSuite.SUB_TESTS:
       for fname in os.listdir(os.path.join(self.root, subtest)):
@@ -36,9 +36,6 @@ class TestSuite(testsuite.TestSuite):
 
   def _variants_gen_class(self):
     return VariantsGenerator
-
-  def _LegacyVariantsGeneratorFactory(self):
-    return testsuite.StandardLegacyVariantsGenerator
 
 
 class TestCase(testcase.TestCase):

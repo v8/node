@@ -4033,10 +4033,10 @@ class JSPromise : public JSObject {
   v8::Promise::PromiseState status() const;
 
   // Resolve/reject the promise with a given value.
-  static MaybeHandle<Object> Resolve(Handle<JSPromise> promise,
-                                     Handle<Object> value);
-  static MaybeHandle<Object> Reject(Handle<JSPromise> promise,
-                                    Handle<Object> value);
+  MUST_USE_RESULT static MaybeHandle<Object> Resolve(Handle<JSPromise> promise,
+                                                     Handle<Object> value);
+  MUST_USE_RESULT static MaybeHandle<Object> Reject(Handle<JSPromise> promise,
+                                                    Handle<Object> value);
 
   DECL_CAST(JSPromise)
 
@@ -4602,9 +4602,14 @@ class JSAsyncFromSyncIterator : public JSObject {
   // (proposal-async-iteration/#table-async-from-sync-iterator-internal-slots)
   DECL_ACCESSORS(sync_iterator, JSReceiver)
 
+  // The "next" method is loaded during GetIterator, and is not reloaded for
+  // subsequent "next" invocations.
+  DECL_ACCESSORS(next, Object)
+
   // Offsets of object fields.
   static const int kSyncIteratorOffset = JSObject::kHeaderSize;
-  static const int kSize = kSyncIteratorOffset + kPointerSize;
+  static const int kNextOffset = kSyncIteratorOffset + kPointerSize;
+  static const int kSize = kNextOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncFromSyncIterator);

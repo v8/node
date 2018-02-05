@@ -5,16 +5,13 @@
 # found in the LICENSE file.
 
 
-import multiprocessing
 import random
 import sys
 
 # Adds testrunner to the path hence it has to be imported at the beggining.
 import base_runner
 
-from testrunner.local import progress
 from testrunner.local import utils
-from testrunner.objects import context
 
 from testrunner.testproc import fuzzer
 from testrunner.testproc.base import TestProcProducer
@@ -34,22 +31,9 @@ class NumFuzzer(base_runner.BaseTestRunner):
     super(NumFuzzer, self).__init__(*args, **kwargs)
 
   def _add_parser_options(self, parser):
-    parser.add_option("--dump-results-file", help="Dump maximum limit reached")
-    parser.add_option("-j", help="The number of parallel tasks to run",
-                      default=0, type="int")
-    parser.add_option("--json-test-results",
-                      help="Path to a file for storing json results.")
-    parser.add_option("-p", "--progress",
-                      help=("The style of progress indicator"
-                            " (verbose, dots, color, mono)"),
-                      choices=progress.PROGRESS_INDICATORS.keys(),
-                      default="mono")
     parser.add_option("--fuzzer-random-seed", default=0,
                       help="Default seed for initializing fuzzer random "
                       "generator")
-    parser.add_option("--swarming",
-                      help="Indicates running test driver on swarming.",
-                      default=False, action="store_true")
     parser.add_option("--tests-count", default=5, type="int",
                       help="Number of tests to generate from each base test. "
                            "Can be combined with --total-timeout-sec with "
@@ -97,8 +81,6 @@ class NumFuzzer(base_runner.BaseTestRunner):
 
 
   def _process_options(self, options):
-    if options.j == 0:
-      options.j = multiprocessing.cpu_count()
     if not options.fuzzer_random_seed:
       options.fuzzer_random_seed = random_utils.random_seed()
 
@@ -124,30 +106,28 @@ class NumFuzzer(base_runner.BaseTestRunner):
       factor = max(int(factor * 0.25), 1)
     return factor
 
+  def _get_statusfile_variables(self, options):
+    variables = (
+        super(NumFuzzer, self)._get_statusfile_variables(options))
+    variables.update({
+      'deopt_fuzzer': bool(options.stress_deopt),
+      'endurance_fuzzer': bool(options.combine_tests),
+      'gc_stress': bool(options.stress_gc),
+      'gc_fuzzer': bool(max([options.stress_marking,
+                             options.stress_scavenge,
+                             options.stress_compaction,
+                             options.stress_gc])),
+    })
+    return variables
 
-  def _do_execute(self, suites, args, options):
-    print(">>> Running tests for %s.%s" % (self.build_config.arch,
-                                           self.mode_name))
-
-    ctx = self._create_context(options)
-    self._setup_suites(options, suites)
-    tests = self._load_tests(options, suites, ctx)
-    progress_indicator = progress.IndicatorNotifier()
-    progress_indicator.Register(
-        progress.PROGRESS_INDICATORS[options.progress]())
-    if options.json_test_results:
-      progress_indicator.Register(progress.JsonTestProgressIndicator(
-          options.json_test_results,
-          self.build_config.arch,
-          self.mode_options.execution_mode))
-
+  def _do_execute(self, tests, args, options):
     loader = LoadProc()
     fuzzer_rng = random.Random(options.fuzzer_random_seed)
 
     combiner = self._create_combiner(fuzzer_rng, options)
     results = ResultsTracker()
-    execproc = ExecutionProc(options.j, ctx)
-    indicators = progress_indicator.ToProgressIndicatorProcs()
+    execproc = ExecutionProc(options.j)
+    indicators = self._create_progress_indicators(options)
     procs = [
       loader,
       NameFilterProc(args) if args else None,
@@ -181,85 +161,22 @@ class NumFuzzer(base_runner.BaseTestRunner):
 
     if results.failed:
       return 1
-    if results.remaining:
-      return 2
     return 0
 
-  def _create_context(self, options):
-    # Populate context object.
-    ctx = context.Context(self.build_config.arch,
-                          self.mode_options.execution_mode,
-                          self.outdir,
-                          self.mode_options.flags, options.verbose,
-                          options.timeout * self._timeout_scalefactor(options),
-                          options.isolates,
-                          options.command_prefix,
-                          options.extra_flags,
-                          False,  # Keep i18n on by default.
-                          True,  # No sorting of test cases.
-                          options.rerun_failures_count,
-                          options.rerun_failures_max,
-                          False,  # No no_harness mode.
-                          False,  # Don't use perf data.
-                          False)  # Coverage not supported.
-    return ctx
+  def _load_suites(self, names, options):
+    suites = super(NumFuzzer, self)._load_suites(names, options)
+    if options.combine_tests:
+      suites = [s for s in suites if s.test_combiner_available()]
+    return suites
 
-  def _setup_suites(self, options, suites):
+  def _prepare_suites(self, suites, options):
     """Sets additional configurations on test suites based on options."""
+    super(NumFuzzer, self)._prepare_suites(suites, options)
+
     if options.stress_interrupt_budget:
       # Changing interrupt budget forces us to suppress certain test assertions.
       for suite in suites:
         suite.do_suppress_internals()
-
-  def _load_tests(self, options, suites, ctx):
-    if options.combine_tests:
-      suites = [s for s in suites if s.test_combiner_available()]
-
-    # Find available test suites and read test cases from them.
-    deopt_fuzzer = bool(options.stress_deopt)
-    gc_stress = bool(options.stress_gc)
-    gc_fuzzer = bool(max([options.stress_marking,
-                          options.stress_scavenge,
-                          options.stress_compaction,
-                          options.stress_gc]))
-
-    variables = {
-      "arch": self.build_config.arch,
-      "asan": self.build_config.asan,
-      "byteorder": sys.byteorder,
-      "dcheck_always_on": self.build_config.dcheck_always_on,
-      "deopt_fuzzer": deopt_fuzzer,
-      "gc_fuzzer": gc_fuzzer,
-      "gc_stress": gc_stress,
-      "gcov_coverage": self.build_config.gcov_coverage,
-      "isolates": options.isolates,
-      "mode": self.mode_options.status_mode,
-      "msan": self.build_config.msan,
-      "no_harness": False,
-      "no_i18n": self.build_config.no_i18n,
-      "no_snap": self.build_config.no_snap,
-      "novfp3": False,
-      "predictable": self.build_config.predictable,
-      "simd_mips": True,
-      "simulator": utils.UseSimulator(self.build_config.arch),
-      "simulator_run": False,
-      "system": utils.GuessOS(),
-      "tsan": self.build_config.tsan,
-      "ubsan_vptr": self.build_config.ubsan_vptr,
-    }
-
-    tests = []
-    for s in suites:
-      s.ReadStatusFile(variables)
-      s.ReadTestCases(ctx)
-      tests += s.tests
-    return tests
-
-  def _prepare_procs(self, procs):
-    procs = filter(None, procs)
-    for i in xrange(0, len(procs) - 1):
-      procs[i].connect_to(procs[i + 1])
-    procs[0].setup()
 
   def _create_combiner(self, rng, options):
     if not options.combine_tests:

@@ -616,6 +616,7 @@ class ErrorUtils : public AllStatic {
     "Invalid left-hand side expression in prefix operation")                   \
   T(InvalidRegExpFlags, "Invalid flags supplied to RegExp constructor '%'")    \
   T(InvalidOrUnexpectedToken, "Invalid or unexpected token")                   \
+  T(InvalidPrivateFieldAccess, "Invalid private field '%'")                    \
   T(JsonParseUnexpectedEOS, "Unexpected end of JSON input")                    \
   T(JsonParseUnexpectedToken, "Unexpected token % in JSON at position %")      \
   T(JsonParseUnexpectedTokenNumber, "Unexpected number in JSON at position %") \
@@ -723,11 +724,10 @@ class ErrorUtils : public AllStatic {
   T(WasmTrapDivByZero, "divide by zero")                                       \
   T(WasmTrapDivUnrepresentable, "divide result unrepresentable")               \
   T(WasmTrapRemByZero, "remainder by zero")                                    \
-  T(WasmTrapFloatUnrepresentable, "integer result unrepresentable")            \
-  T(WasmTrapFuncInvalid, "invalid function")                                   \
+  T(WasmTrapFloatUnrepresentable, "float unrepresentable in integer range")    \
+  T(WasmTrapFuncInvalid, "invalid index into function table")                  \
   T(WasmTrapFuncSigMismatch, "function signature mismatch")                    \
-  T(WasmTrapInvalidIndex, "invalid index into function table")                 \
-  T(WasmTrapTypeError, "invalid type")                                         \
+  T(WasmTrapTypeError, "wasm function signature contains illegal type")        \
   T(WasmExceptionError, "wasm exception")                                      \
   /* Asm.js validation related */                                              \
   T(AsmJsInvalid, "Invalid asm.js: %")                                         \

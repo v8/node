@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_BUILTINS_BUILTINS_PROMISE_H_
-#define V8_BUILTINS_BUILTINS_PROMISE_H_
+#ifndef V8_BUILTINS_BUILTINS_PROMISE_GEN_H_
+#define V8_BUILTINS_BUILTINS_PROMISE_GEN_H_
 
 #include "src/code-stub-assembler.h"
 #include "src/contexts.h"
@@ -115,36 +115,29 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
   Node* CreatePromiseGetCapabilitiesExecutorContext(Node* native_context,
                                                     Node* promise_capability);
 
-  Node* NewPromiseCapability(Node* context, Node* constructor,
-                             Node* debug_event = nullptr);
-
  protected:
   void PromiseInit(Node* promise);
 
   void PromiseSetHasHandler(Node* promise);
   void PromiseSetHandledHint(Node* promise);
 
-  void AppendPromiseCallback(int offset, compiler::Node* promise,
-                             compiler::Node* value);
-
-  Node* InternalPromiseThen(Node* context, Node* promise, Node* on_resolve,
-                            Node* on_reject);
-
-  void InternalPerformPromiseThen(Node* context, Node* promise,
-                                  Node* on_fulfill, Node* on_reject,
-                                  Node* result);
+  void PerformPromiseThen(Node* context, Node* promise, Node* on_fulfilled,
+                          Node* on_rejected,
+                          Node* result_promise_or_capability);
 
   void InternalResolvePromise(Node* context, Node* promise, Node* result);
-
-  void BranchIfFastPath(Node* context, Node* promise, Label* if_isunmodified,
-                        Label* if_ismodified);
-
-  void BranchIfFastPath(Node* native_context, Node* promise_fun, Node* promise,
-                        Label* if_isunmodified, Label* if_ismodified);
 
   Node* CreatePromiseContext(Node* native_context, int slots);
   void PromiseFulfill(Node* context, Node* promise, Node* result,
                       v8::Promise::PromiseState status);
+
+  // We can skip the "then" lookup on {receiver_map} if it's [[Prototype]]
+  // is the (initial) Promise.prototype and the Promise#then() protector
+  // is intact, as that guards the lookup path for the "then" property
+  // on JSPromise instances which have the (initial) %PromisePrototype%.
+  void BranchIfPromiseThenLookupChainIntact(Node* native_context,
+                                            Node* receiver_map, Label* if_fast,
+                                            Label* if_slow);
 
   void BranchIfAccessCheckFailed(Node* context, Node* native_context,
                                  Node* promise_constructor, Node* executor,
@@ -186,7 +179,6 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
                           Node* promise_or_capability,
                           PromiseReaction::Type type);
 
- private:
   Node* IsPromiseStatus(Node* actual, v8::Promise::PromiseState expected);
   void PromiseSetStatus(Node* promise, v8::Promise::PromiseState status);
 
@@ -196,4 +188,4 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_BUILTINS_BUILTINS_PROMISE_H_
+#endif  // V8_BUILTINS_BUILTINS_PROMISE_GEN_H_

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_PARSING_PARSER_BASE_H
-#define V8_PARSING_PARSER_BASE_H
+#ifndef V8_PARSING_PARSER_BASE_H_
+#define V8_PARSING_PARSER_BASE_H_
 
 #include <vector>
 
@@ -3717,10 +3717,12 @@ ParserBase<Impl>::ParseMemberExpressionContinuation(ExpressionT expression,
         ExpressionT key;
         IdentifierT name;
         if (allow_harmony_private_fields() && peek() == Token::PRIVATE_NAME) {
-          // TODO(gsathya): Validate that we are in a class body.
           Consume(Token::PRIVATE_NAME);
           name = impl()->GetSymbol();
-          key = impl()->ExpressionFromIdentifier(name, pos, InferName::kNo);
+          auto key_proxy =
+              impl()->ExpressionFromIdentifier(name, pos, InferName::kNo);
+          key_proxy->set_is_private_field();
+          key = key_proxy;
         } else {
           name = ParseIdentifierName(CHECK_OK);
           key = factory()->NewStringLiteral(name, pos);
@@ -6235,4 +6237,4 @@ void ParserBase<Impl>::ClassLiteralChecker::CheckClassFieldName(bool is_static,
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_PARSING_PARSER_BASE_H
+#endif  // V8_PARSING_PARSER_BASE_H_

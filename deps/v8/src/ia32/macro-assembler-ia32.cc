@@ -14,6 +14,7 @@
 #include "src/external-reference-table.h"
 #include "src/frame-constants.h"
 #include "src/frames-inl.h"
+#include "src/instruction-stream.h"
 #include "src/runtime/runtime.h"
 
 #include "src/ia32/assembler-ia32-inl.h"
@@ -862,6 +863,12 @@ void MacroAssembler::JumpToExternalReference(const ExternalReference& ext,
   jmp(ces.GetCode(), RelocInfo::CODE_TARGET);
 }
 
+void MacroAssembler::JumpToInstructionStream(const InstructionStream* stream) {
+  Address bytes_address = reinterpret_cast<Address>(stream->bytes());
+  mov(kOffHeapTrampolineRegister, Immediate(bytes_address, RelocInfo::NONE));
+  jmp(kOffHeapTrampolineRegister);
+}
+
 void TurboAssembler::PrepareForTailCall(
     const ParameterCount& callee_args_count, Register caller_args_count_reg,
     Register scratch0, Register scratch1,
@@ -1064,6 +1071,7 @@ void MacroAssembler::InvokeFunctionCode(Register function, Register new_target,
     // We call indirectly through the code field in the function to
     // allow recompilation to take effect without changing any of the
     // call sites.
+    static_assert(kJavaScriptCallCodeStartRegister == ecx, "ABI mismatch");
     mov(ecx, FieldOperand(function, JSFunction::kCodeOffset));
     add(ecx, Immediate(Code::kHeaderSize - kHeapObjectTag));
     if (flag == CALL_FUNCTION) {

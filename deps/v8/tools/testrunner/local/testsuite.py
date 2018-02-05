@@ -34,30 +34,10 @@ from . import command
 from . import statusfile
 from . import utils
 from ..objects.testcase import TestCase
-from variants import ALL_VARIANTS, ALL_VARIANT_FLAGS
+from .variants import ALL_VARIANTS, ALL_VARIANT_FLAGS
 
 
 STANDARD_VARIANT = set(["default"])
-
-
-class LegacyVariantsGenerator(object):
-  def __init__(self, suite, variants):
-    self.suite = suite
-    self.all_variants = variants
-    self.standard_variant = STANDARD_VARIANT & variants
-
-  def FilterVariantsByTest(self, test):
-    if test.only_standard_variant:
-      return self.standard_variant
-    return self.all_variants
-
-  def GetFlagSets(self, test, variant):
-    return ALL_VARIANT_FLAGS[variant]
-
-
-class StandardLegacyVariantsGenerator(LegacyVariantsGenerator):
-  def FilterVariantsByTest(self, testcase):
-    return self.standard_variant
 
 
 class VariantsGenerator(object):
@@ -130,22 +110,8 @@ class TestSuite(object):
     """
     self.suppress_internals = True
 
-  def ListTests(self, context):
+  def ListTests(self):
     raise NotImplementedError
-
-  def _LegacyVariantsGeneratorFactory(self):
-    """The variant generator class to be used."""
-    return LegacyVariantsGenerator
-
-  def CreateLegacyVariantsGenerator(self, variants):
-    """Return a generator for the testing variants of this suite.
-
-    Args:
-      variants: List of variant names to be run as specified by the test
-                runner.
-    Returns: An object of type LegacyVariantsGenerator.
-    """
-    return self._LegacyVariantsGeneratorFactory()(self, set(variants))
 
   def get_variants_gen(self, variants):
     return self._variants_gen_class()(variants)
@@ -171,8 +137,8 @@ class TestSuite(object):
   def ReadStatusFile(self, variables):
     self.statusfile = statusfile.StatusFile(self.status_file(), variables)
 
-  def ReadTestCases(self, context):
-    self.tests = self.ListTests(context)
+  def ReadTestCases(self):
+    self.tests = self.ListTests()
 
 
   def FilterTestCasesByStatus(self,

@@ -106,31 +106,27 @@ PromiseBuiltinsAssembler::CreatePromiseResolvingFunctions(
   return std::make_pair(resolve, reject);
 }
 
-Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
-                                                     Node* constructor,
-                                                     Node* debug_event) {
-  if (debug_event == nullptr) {
-    debug_event = TrueConstant();
-  }
+// ES section #sec-newpromisecapability
+TF_BUILTIN(NewPromiseCapability, PromiseBuiltinsAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const constructor = Parameter(Descriptor::kConstructor);
+  Node* const debug_event = Parameter(Descriptor::kDebugEvent);
+  Node* const native_context = LoadNativeContext(context);
 
   Label if_not_constructor(this, Label::kDeferred),
-      if_notcallable(this, Label::kDeferred);
+      if_notcallable(this, Label::kDeferred), if_fast_promise_capability(this),
+      if_slow_promise_capability(this, Label::kDeferred);
   GotoIf(TaggedIsSmi(constructor), &if_not_constructor);
   GotoIfNot(IsConstructorMap(LoadMap(constructor)), &if_not_constructor);
-
-  Node* native_context = LoadNativeContext(context);
-
-  VARIABLE(var_capability, MachineRepresentation::kTagged);
-  Label if_builtin_promise(this), if_custom_promise(this, Label::kDeferred),
-      done(this);
   Branch(WordEqual(constructor,
                    LoadContextElement(native_context,
                                       Context::PROMISE_FUNCTION_INDEX)),
-         &if_builtin_promise, &if_custom_promise);
+         &if_fast_promise_capability, &if_slow_promise_capability);
 
-  BIND(&if_builtin_promise);
+  BIND(&if_fast_promise_capability);
   {
-    Node* promise = AllocateAndInitJSPromise(context, UndefinedConstant());
+    Node* promise =
+        AllocateAndInitJSPromise(native_context, UndefinedConstant());
 
     Node* resolve = nullptr;
     Node* reject = nullptr;
@@ -145,11 +141,10 @@ Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
                                    PromiseCapability::kResolveOffset, resolve);
     StoreObjectFieldNoWriteBarrier(capability, PromiseCapability::kRejectOffset,
                                    reject);
-    var_capability.Bind(capability);
-    Goto(&done);
+    Return(capability);
   }
 
-  BIND(&if_custom_promise);
+  BIND(&if_slow_promise_capability);
   {
     Node* capability = Allocate(PromiseCapability::kSize);
     StoreMapNoWriteBarrier(capability, Heap::kPromiseCapabilityMapRootIndex);
@@ -159,7 +154,6 @@ Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
                          Heap::kUndefinedValueRootIndex);
     StoreObjectFieldRoot(capability, PromiseCapability::kRejectOffset,
                          Heap::kUndefinedValueRootIndex);
-    var_capability.Bind(capability);
 
     Node* executor_context =
         CreatePromiseGetCapabilitiesExecutorContext(capability, native_context);
@@ -170,8 +164,8 @@ Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
     Node* executor = AllocateFunctionWithMapAndContext(
         function_map, executor_info, executor_context);
 
-    Node* promise = ConstructJS(CodeFactory::Construct(isolate()), context,
-                                constructor, executor);
+    Node* promise = ConstructJS(CodeFactory::Construct(isolate()),
+                                native_context, constructor, executor);
     StoreObjectField(capability, PromiseCapability::kPromiseOffset, promise);
 
     Node* resolve =
@@ -183,8 +177,7 @@ Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
         LoadObjectField(capability, PromiseCapability::kRejectOffset);
     GotoIf(TaggedIsSmi(reject), &if_notcallable);
     GotoIfNot(IsCallable(reject), &if_notcallable);
-
-    Goto(&done);
+    Return(capability);
   }
 
   BIND(&if_not_constructor);
@@ -192,9 +185,6 @@ Node* PromiseBuiltinsAssembler::NewPromiseCapability(Node* context,
 
   BIND(&if_notcallable);
   ThrowTypeError(context, MessageTemplate::kPromiseNonCallable);
-
-  BIND(&done);
-  return var_capability.value();
 }
 
 Node* PromiseBuiltinsAssembler::CreatePromiseContext(Node* native_context,
@@ -266,125 +256,18 @@ void PromiseBuiltinsAssembler::PromiseSetHandledHint(Node* promise) {
   StoreObjectFieldNoWriteBarrier(promise, JSPromise::kFlagsOffset, new_flags);
 }
 
-void PromiseBuiltinsAssembler::AppendPromiseCallback(int offset, Node* promise,
-                                                     Node* value) {
-  Node* elements = LoadObjectField(promise, offset);
-  Node* length = LoadFixedArrayBaseLength(elements);
-  CodeStubAssembler::ParameterMode mode = OptimalParameterMode();
-  length = TaggedToParameter(length, mode);
-
-  Node* delta = IntPtrOrSmiConstant(1, mode);
-  Node* new_capacity = IntPtrOrSmiAdd(length, delta, mode);
-
-  const WriteBarrierMode barrier_mode = UPDATE_WRITE_BARRIER;
-  int additional_offset = 0;
-
-  ExtractFixedArrayFlags flags;
-  flags |= ExtractFixedArrayFlag::kFixedArrays;
-  Node* new_elements =
-      ExtractFixedArray(elements, nullptr, length, new_capacity, flags, mode);
-
-  StoreFixedArrayElement(new_elements, length, value, barrier_mode,
-                         additional_offset, mode);
-
-  StoreObjectField(promise, offset, new_elements);
-}
-
-Node* PromiseBuiltinsAssembler::InternalPromiseThen(Node* context,
-                                                    Node* promise,
-                                                    Node* on_fulfill,
-                                                    Node* on_reject) {
-  // 2. If IsPromise(promise) is false, throw a TypeError exception.
-  ThrowIfNotInstanceType(context, promise, JS_PROMISE_TYPE,
-                         "Promise.prototype.then");
-
-  // 3. Let C be ? SpeciesConstructor(promise, %Promise%).
-  Label fast_promise_capability(this), slow_constructor(this, Label::kDeferred),
-      slow_promise_capability(this, Label::kDeferred);
-  Node* const native_context = LoadNativeContext(context);
-  Node* const promise_fun =
-      LoadContextElement(native_context, Context::PROMISE_FUNCTION_INDEX);
-  Node* const promise_prototype =
-      LoadContextElement(native_context, Context::PROMISE_PROTOTYPE_INDEX);
-  Node* const promise_map = LoadMap(promise);
-  GotoIfNot(WordEqual(LoadMapPrototype(promise_map), promise_prototype),
-            &slow_constructor);
-  Branch(IsSpeciesProtectorCellInvalid(), &slow_constructor,
-         &fast_promise_capability);
-
-  BIND(&slow_constructor);
-  Node* const constructor =
-      SpeciesConstructor(native_context, promise, promise_fun);
-  Branch(WordEqual(constructor, promise_fun), &fast_promise_capability,
-         &slow_promise_capability);
-
-  // 4. Let resultCapability be ? NewPromiseCapability(C).
-  Label perform_promise_then(this);
-  VARIABLE(var_result_promise, MachineRepresentation::kTagged);
-  VARIABLE(var_result_promise_or_capability, MachineRepresentation::kTagged);
-
-  BIND(&fast_promise_capability);
-  {
-    Node* const result_promise = AllocateAndInitJSPromise(context, promise);
-    var_result_promise.Bind(result_promise);
-    var_result_promise_or_capability.Bind(result_promise);
-    CSA_ASSERT(this, IsJSPromise(var_result_promise_or_capability.value()));
-    Goto(&perform_promise_then);
-  }
-
-  BIND(&slow_promise_capability);
-  {
-    Node* const capability = NewPromiseCapability(context, constructor);
-    var_result_promise.Bind(
-        LoadObjectField(capability, PromiseCapability::kPromiseOffset));
-    var_result_promise_or_capability.Bind(capability);
-    CSA_ASSERT(this,
-               IsPromiseCapability(var_result_promise_or_capability.value()));
-    Goto(&perform_promise_then);
-  }
-
-  // 5. Return PerformPromiseThen(promise, onFulfilled, onRejected,
-  //    resultCapability).
-  BIND(&perform_promise_then);
-  CSA_ASSERT(
-      this,
-      Word32Or(IsJSPromise(var_result_promise_or_capability.value()),
-               IsPromiseCapability(var_result_promise_or_capability.value())));
-  InternalPerformPromiseThen(context, promise, on_fulfill, on_reject,
-                             var_result_promise_or_capability.value());
-  return var_result_promise.value();
-}
-
-void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
-                                                          Node* promise,
-                                                          Node* on_fulfilled,
-                                                          Node* on_rejected,
-                                                          Node* result) {
-  CSA_ASSERT(this, TaggedIsNotSmi(result));
-  CSA_ASSERT(this, Word32Or(IsJSPromise(result), IsPromiseCapability(result)));
-
-  // 3. If IsCallable(onFulfilled) is false, then
-  //    a. Set onFulfilled to undefined.
-  VARIABLE(var_on_fulfilled, MachineRepresentation::kTagged, on_fulfilled);
-  Label if_fulfilled_done(this), if_fulfilled_notcallable(this);
-  GotoIf(TaggedIsSmi(on_fulfilled), &if_fulfilled_notcallable);
-  Branch(IsCallable(on_fulfilled), &if_fulfilled_done,
-         &if_fulfilled_notcallable);
-  BIND(&if_fulfilled_notcallable);
-  var_on_fulfilled.Bind(UndefinedConstant());
-  Goto(&if_fulfilled_done);
-  BIND(&if_fulfilled_done);
-
-  // 4. If IsCallable(onRejected) is false, then
-  //    a. Set onRejected to undefined.
-  VARIABLE(var_on_rejected, MachineRepresentation::kTagged, on_rejected);
-  Label if_rejected_done(this), if_rejected_notcallable(this);
-  GotoIf(TaggedIsSmi(on_rejected), &if_rejected_notcallable);
-  Branch(IsCallable(on_rejected), &if_rejected_done, &if_rejected_notcallable);
-  BIND(&if_rejected_notcallable);
-  var_on_rejected.Bind(UndefinedConstant());
-  Goto(&if_rejected_done);
-  BIND(&if_rejected_done);
+// ES section #sec-performpromisethen
+void PromiseBuiltinsAssembler::PerformPromiseThen(
+    Node* context, Node* promise, Node* on_fulfilled, Node* on_rejected,
+    Node* result_promise_or_capability) {
+  CSA_ASSERT(this, TaggedIsNotSmi(promise));
+  CSA_ASSERT(this, IsJSPromise(promise));
+  CSA_ASSERT(this,
+             Word32Or(IsCallable(on_fulfilled), IsUndefined(on_fulfilled)));
+  CSA_ASSERT(this, Word32Or(IsCallable(on_rejected), IsUndefined(on_rejected)));
+  CSA_ASSERT(this, TaggedIsNotSmi(result_promise_or_capability));
+  CSA_ASSERT(this, Word32Or(IsJSPromise(result_promise_or_capability),
+                            IsPromiseCapability(result_promise_or_capability)));
 
   Label if_pending(this), if_notpending(this), done(this);
   Node* const status = PromiseStatus(promise);
@@ -399,9 +282,9 @@ void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
     // push onto the microtask queue.
     Node* const promise_reactions =
         LoadObjectField(promise, JSPromise::kReactionsOrResultOffset);
-    Node* const reaction = AllocatePromiseReaction(promise_reactions, result,
-                                                   var_on_fulfilled.value(),
-                                                   var_on_rejected.value());
+    Node* const reaction =
+        AllocatePromiseReaction(promise_reactions, result_promise_or_capability,
+                                on_fulfilled, on_rejected);
     StoreObjectField(promise, JSPromise::kReactionsOrResultOffset, reaction);
     Goto(&done);
   }
@@ -418,7 +301,7 @@ void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
     BIND(&if_fulfilled);
     {
       var_map.Bind(LoadRoot(Heap::kPromiseFulfillReactionJobTaskMapRootIndex));
-      var_handler.Bind(var_on_fulfilled.value());
+      var_handler.Bind(on_fulfilled);
       Goto(&enqueue);
     }
 
@@ -426,7 +309,7 @@ void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
     {
       CSA_ASSERT(this, IsPromiseStatus(status, v8::Promise::kRejected));
       var_map.Bind(LoadRoot(Heap::kPromiseRejectReactionJobTaskMapRootIndex));
-      var_handler.Bind(var_on_rejected.value());
+      var_handler.Bind(on_rejected);
       GotoIf(PromiseHasHandler(promise), &enqueue);
       CallRuntime(Runtime::kPromiseRevokeReject, context, promise);
       Goto(&enqueue);
@@ -436,7 +319,8 @@ void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
     Node* argument =
         LoadObjectField(promise, JSPromise::kReactionsOrResultOffset);
     Node* microtask = AllocatePromiseReactionJobTask(
-        var_map.value(), context, argument, var_handler.value(), result);
+        var_map.value(), context, argument, var_handler.value(),
+        result_promise_or_capability);
     CallBuiltin(Builtins::kEnqueueMicrotask, NoContextConstant(), microtask);
     Goto(&done);
   }
@@ -445,48 +329,20 @@ void PromiseBuiltinsAssembler::InternalPerformPromiseThen(Node* context,
   PromiseSetHasHandler(promise);
 }
 
-// Promise fast path implementations rely on unmodified JSPromise instances.
-// We use a fairly coarse granularity for this and simply check whether both
-// the promise itself is unmodified (i.e. its map has not changed) and its
-// prototype is unmodified.
-// TODO(gsathya): Refactor this out to prevent code dupe with builtins-regexp
-void PromiseBuiltinsAssembler::BranchIfFastPath(Node* context, Node* promise,
-                                                Label* if_isunmodified,
-                                                Label* if_ismodified) {
-  Node* const native_context = LoadNativeContext(context);
-  Node* const promise_fun =
-      LoadContextElement(native_context, Context::PROMISE_FUNCTION_INDEX);
-  BranchIfFastPath(native_context, promise_fun, promise, if_isunmodified,
-                   if_ismodified);
-}
+// ES section #sec-performpromisethen
+TF_BUILTIN(PerformPromiseThen, PromiseBuiltinsAssembler) {
+  Node* const context = Parameter(Descriptor::kContext);
+  Node* const promise = Parameter(Descriptor::kPromise);
+  Node* const on_fulfilled = Parameter(Descriptor::kOnFulfilled);
+  Node* const on_rejected = Parameter(Descriptor::kOnRejected);
+  Node* const result_promise = Parameter(Descriptor::kResultPromise);
 
-void PromiseBuiltinsAssembler::BranchIfFastPath(Node* native_context,
-                                                Node* promise_fun,
-                                                Node* promise,
-                                                Label* if_isunmodified,
-                                                Label* if_ismodified) {
-  CSA_ASSERT(this, IsNativeContext(native_context));
-  CSA_ASSERT(this,
-             WordEqual(promise_fun,
-                       LoadContextElement(native_context,
-                                          Context::PROMISE_FUNCTION_INDEX)));
+  CSA_ASSERT(this, TaggedIsNotSmi(result_promise));
+  CSA_ASSERT(this, IsJSPromise(result_promise));
 
-  GotoIfForceSlowPath(if_ismodified);
-
-  Node* const map = LoadMap(promise);
-  Node* const initial_map =
-      LoadObjectField(promise_fun, JSFunction::kPrototypeOrInitialMapOffset);
-  Node* const has_initialmap = WordEqual(map, initial_map);
-
-  GotoIfNot(has_initialmap, if_ismodified);
-
-  Node* const initial_proto_initial_map =
-      LoadContextElement(native_context, Context::PROMISE_PROTOTYPE_MAP_INDEX);
-  Node* const proto_map = LoadMap(CAST(LoadMapPrototype(map)));
-  Node* const proto_has_initialmap =
-      WordEqual(proto_map, initial_proto_initial_map);
-
-  Branch(proto_has_initialmap, if_isunmodified, if_ismodified);
+  PerformPromiseThen(context, promise, on_fulfilled, on_rejected,
+                     result_promise);
+  Return(result_promise);
 }
 
 Node* PromiseBuiltinsAssembler::AllocatePromiseReaction(
@@ -552,14 +408,13 @@ Node* PromiseBuiltinsAssembler::AllocatePromiseResolveThenableJobTask(
 void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
                                                       Node* promise,
                                                       Node* result) {
-  Isolate* isolate = this->isolate();
+  CSA_ASSERT(this, TaggedIsNotSmi(promise));
+  CSA_ASSERT(this, IsJSPromise(promise));
 
+  Label do_enqueue(this), fulfill(this), if_cycle(this, Label::kDeferred),
+      if_rejectpromise(this, Label::kDeferred), out(this);
   VARIABLE(var_reason, MachineRepresentation::kTagged);
   VARIABLE(var_then, MachineRepresentation::kTagged);
-
-  Label do_enqueue(this), fulfill(this), if_nocycle(this),
-      if_cycle(this, Label::kDeferred),
-      if_rejectpromise(this, Label::kDeferred), out(this);
 
   Label cycle_check(this);
   GotoIfNot(IsPromiseHookEnabledOrDebugIsActive(), &cycle_check);
@@ -568,39 +423,40 @@ void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
 
   BIND(&cycle_check);
   // 6. If SameValue(resolution, promise) is true, then
-  BranchIfSameValue(promise, result, &if_cycle, &if_nocycle);
-  BIND(&if_nocycle);
+  // We can use pointer comparison here, since the {promise} is guaranteed
+  // to be a JSPromise inside this function and thus is reference comparable.
+  GotoIf(WordEqual(promise, result), &if_cycle);
 
   // 7. If Type(resolution) is not Object, then
   GotoIf(TaggedIsSmi(result), &fulfill);
-  GotoIfNot(IsJSReceiver(result), &fulfill);
+  Node* const result_map = LoadMap(result);
+  GotoIfNot(IsJSReceiverMap(result_map), &fulfill);
 
-  Label if_nativepromise(this), if_notnativepromise(this, Label::kDeferred);
+  // We can skip the "then" lookup on {result} if it's [[Prototype]]
+  // is the (initial) Promise.prototype and the Promise#then protector
+  // is intact, as that guards the lookup path for the "then" property
+  // on JSPromise instances which have the (initial) %PromisePrototype%.
+  Label if_fast(this), if_slow(this, Label::kDeferred);
   Node* const native_context = LoadNativeContext(context);
-  Node* const promise_fun =
-      LoadContextElement(native_context, Context::PROMISE_FUNCTION_INDEX);
-  BranchIfFastPath(native_context, promise_fun, result, &if_nativepromise,
-                   &if_notnativepromise);
+  BranchIfPromiseThenLookupChainIntact(native_context, result_map, &if_fast,
+                                       &if_slow);
 
   // Resolution is a native promise and if it's already resolved or
   // rejected, shortcircuit the resolution procedure by directly
   // reusing the value from the promise.
-  BIND(&if_nativepromise);
+  BIND(&if_fast);
   {
-    // TODO(gsathya): Use a marker here instead of the actual then
-    // callback, and check for the marker in PromiseResolveThenableJob
-    // and perform PromiseThen.
     Node* const then =
         LoadContextElement(native_context, Context::PROMISE_THEN_INDEX);
     var_then.Bind(then);
     Goto(&do_enqueue);
   }
 
-  BIND(&if_notnativepromise);
+  BIND(&if_slow);
   {
     // 8. Let then be Get(resolution, "then").
     Node* const then =
-        GetProperty(context, result, isolate->factory()->then_string());
+        GetProperty(context, result, isolate()->factory()->then_string());
 
     // 9. If then is an abrupt completion, then
     GotoIfException(then, &if_rejectpromise, &var_reason);
@@ -618,18 +474,21 @@ void PromiseBuiltinsAssembler::InternalResolvePromise(Node* context,
     Node* const info = AllocatePromiseResolveThenableJobTask(
         promise, var_then.value(), result, native_context);
 
-    Label enqueue(this);
-    GotoIfNot(IsDebugActive(), &enqueue);
+    Label enqueue(this), is_debug_active(this, Label::kDeferred);
+    Branch(IsDebugActive(), &is_debug_active, &enqueue);
 
-    GotoIf(TaggedIsSmi(result), &enqueue);
-    GotoIfNot(HasInstanceType(result, JS_PROMISE_TYPE), &enqueue);
+    BIND(&is_debug_active);
+    {
+      GotoIf(TaggedIsSmi(result), &enqueue);
+      GotoIfNot(IsJSPromise(result), &enqueue);
 
-    // Mark the dependency of the new promise on the resolution
-    Node* const key =
-        HeapConstant(isolate->factory()->promise_handled_by_symbol());
-    CallRuntime(Runtime::kSetProperty, context, result, key, promise,
-                SmiConstant(LanguageMode::kStrict));
-    Goto(&enqueue);
+      // Mark the dependency of the new promise on the resolution
+      Node* const key =
+          HeapConstant(isolate()->factory()->promise_handled_by_symbol());
+      CallRuntime(Runtime::kSetProperty, context, result, key, promise,
+                  SmiConstant(LanguageMode::kStrict));
+      Goto(&enqueue);
+    }
 
     // 12. Perform EnqueueJob("PromiseJobs",
     // PromiseResolveThenableJob, « promise, resolution, thenAction»).
@@ -751,6 +610,20 @@ void PromiseBuiltinsAssembler::PromiseFulfill(
     }
     BIND(&done_loop);
   }
+}
+
+void PromiseBuiltinsAssembler::BranchIfPromiseThenLookupChainIntact(
+    Node* native_context, Node* receiver_map, Label* if_fast, Label* if_slow) {
+  CSA_ASSERT(this, IsMap(receiver_map));
+  CSA_ASSERT(this, IsNativeContext(native_context));
+
+  GotoIfForceSlowPath(if_slow);
+  GotoIfNot(IsJSPromiseMap(receiver_map), if_slow);
+  Node* const promise_prototype =
+      LoadContextElement(native_context, Context::PROMISE_PROTOTYPE_INDEX);
+  GotoIfNot(WordEqual(LoadMapPrototype(receiver_map), promise_prototype),
+            if_slow);
+  Branch(IsPromiseThenProtectorCellInvalid(), if_slow, if_fast);
 }
 
 void PromiseBuiltinsAssembler::BranchIfAccessCheckFailed(
@@ -1020,13 +893,96 @@ TF_BUILTIN(PromiseInternalConstructor, PromiseBuiltinsAssembler) {
 TF_BUILTIN(PromisePrototypeThen, PromiseBuiltinsAssembler) {
   // 1. Let promise be the this value.
   Node* const promise = Parameter(Descriptor::kReceiver);
-  Node* const on_resolve = Parameter(Descriptor::kOnFullfilled);
-  Node* const on_reject = Parameter(Descriptor::kOnRejected);
+  Node* const on_fulfilled = Parameter(Descriptor::kOnFulfilled);
+  Node* const on_rejected = Parameter(Descriptor::kOnRejected);
   Node* const context = Parameter(Descriptor::kContext);
 
-  Node* const result =
-      InternalPromiseThen(context, promise, on_resolve, on_reject);
-  Return(result);
+  // 2. If IsPromise(promise) is false, throw a TypeError exception.
+  ThrowIfNotInstanceType(context, promise, JS_PROMISE_TYPE,
+                         "Promise.prototype.then");
+
+  // 3. Let C be ? SpeciesConstructor(promise, %Promise%).
+  Label fast_promise_capability(this), slow_constructor(this, Label::kDeferred),
+      slow_promise_capability(this, Label::kDeferred);
+  Node* const native_context = LoadNativeContext(context);
+  Node* const promise_fun =
+      LoadContextElement(native_context, Context::PROMISE_FUNCTION_INDEX);
+  Node* const promise_prototype =
+      LoadContextElement(native_context, Context::PROMISE_PROTOTYPE_INDEX);
+  Node* const promise_map = LoadMap(promise);
+  GotoIfNot(WordEqual(LoadMapPrototype(promise_map), promise_prototype),
+            &slow_constructor);
+  Branch(IsSpeciesProtectorCellInvalid(), &slow_constructor,
+         &fast_promise_capability);
+
+  BIND(&slow_constructor);
+  Node* const constructor =
+      SpeciesConstructor(native_context, promise, promise_fun);
+  Branch(WordEqual(constructor, promise_fun), &fast_promise_capability,
+         &slow_promise_capability);
+
+  // 4. Let resultCapability be ? NewPromiseCapability(C).
+  Label perform_promise_then(this);
+  VARIABLE(var_result_promise, MachineRepresentation::kTagged);
+  VARIABLE(var_result_promise_or_capability, MachineRepresentation::kTagged);
+
+  BIND(&fast_promise_capability);
+  {
+    Node* const result_promise = AllocateAndInitJSPromise(context, promise);
+    var_result_promise_or_capability.Bind(result_promise);
+    var_result_promise.Bind(result_promise);
+    Goto(&perform_promise_then);
+  }
+
+  BIND(&slow_promise_capability);
+  {
+    Node* const debug_event = TrueConstant();
+    Node* const capability = CallBuiltin(Builtins::kNewPromiseCapability,
+                                         context, constructor, debug_event);
+    var_result_promise.Bind(
+        LoadObjectField(capability, PromiseCapability::kPromiseOffset));
+    var_result_promise_or_capability.Bind(capability);
+    Goto(&perform_promise_then);
+  }
+
+  // 5. Return PerformPromiseThen(promise, onFulfilled, onRejected,
+  //    resultCapability).
+  BIND(&perform_promise_then);
+  {
+    // We do some work of the PerformPromiseThen operation here, in that
+    // we check the handlers and turn non-callable handlers into undefined.
+    // This is because this is the one and only callsite of PerformPromiseThen
+    // that has to do this.
+
+    // 3. If IsCallable(onFulfilled) is false, then
+    //    a. Set onFulfilled to undefined.
+    VARIABLE(var_on_fulfilled, MachineRepresentation::kTagged, on_fulfilled);
+    Label if_fulfilled_done(this), if_fulfilled_notcallable(this);
+    GotoIf(TaggedIsSmi(on_fulfilled), &if_fulfilled_notcallable);
+    Branch(IsCallable(on_fulfilled), &if_fulfilled_done,
+           &if_fulfilled_notcallable);
+    BIND(&if_fulfilled_notcallable);
+    var_on_fulfilled.Bind(UndefinedConstant());
+    Goto(&if_fulfilled_done);
+    BIND(&if_fulfilled_done);
+
+    // 4. If IsCallable(onRejected) is false, then
+    //    a. Set onRejected to undefined.
+    VARIABLE(var_on_rejected, MachineRepresentation::kTagged, on_rejected);
+    Label if_rejected_done(this), if_rejected_notcallable(this);
+    GotoIf(TaggedIsSmi(on_rejected), &if_rejected_notcallable);
+    Branch(IsCallable(on_rejected), &if_rejected_done,
+           &if_rejected_notcallable);
+    BIND(&if_rejected_notcallable);
+    var_on_rejected.Bind(UndefinedConstant());
+    Goto(&if_rejected_done);
+    BIND(&if_rejected_done);
+
+    PerformPromiseThen(context, promise, var_on_fulfilled.value(),
+                       var_on_rejected.value(),
+                       var_result_promise_or_capability.value());
+    Return(var_result_promise.value());
+  }
 }
 
 // ES#sec-promise-resolve-functions
@@ -1053,7 +1009,7 @@ TF_BUILTIN(ResolvePromise, PromiseBuiltinsAssembler) {
 // Promise.prototype.catch ( onRejected )
 TF_BUILTIN(PromisePrototypeCatch, PromiseBuiltinsAssembler) {
   // 1. Let promise be the this value.
-  Node* const promise = Parameter(Descriptor::kReceiver);
+  Node* const receiver = Parameter(Descriptor::kReceiver);
   Node* const on_fulfilled = UndefinedConstant();
   Node* const on_rejected = Parameter(Descriptor::kOnRejected);
   Node* const context = Parameter(Descriptor::kContext);
@@ -1061,12 +1017,18 @@ TF_BUILTIN(PromisePrototypeCatch, PromiseBuiltinsAssembler) {
   // 2. Return ? Invoke(promise, "then", « undefined, onRejected »).
   VARIABLE(var_then, MachineRepresentation::kTagged);
   Label if_fast(this), if_slow(this, Label::kDeferred), done(this);
-  GotoIf(TaggedIsSmi(promise), &if_slow);
-  BranchIfFastPath(context, promise, &if_fast, &if_slow);
+  GotoIf(TaggedIsSmi(receiver), &if_slow);
+  Node* const receiver_map = LoadMap(receiver);
+  // We can skip the "then" lookup on {receiver} if it's [[Prototype]]
+  // is the (initial) Promise.prototype and the Promise#then protector
+  // is intact, as that guards the lookup path for the "then" property
+  // on JSPromise instances which have the (initial) %PromisePrototype%.
+  Node* const native_context = LoadNativeContext(context);
+  BranchIfPromiseThenLookupChainIntact(native_context, receiver_map, &if_fast,
+                                       &if_slow);
 
   BIND(&if_fast);
   {
-    Node* const native_context = LoadNativeContext(context);
     var_then.Bind(
         LoadContextElement(native_context, Context::PROMISE_THEN_INDEX));
     Goto(&done);
@@ -1075,7 +1037,7 @@ TF_BUILTIN(PromisePrototypeCatch, PromiseBuiltinsAssembler) {
   BIND(&if_slow);
   {
     var_then.Bind(
-        GetProperty(context, promise, isolate()->factory()->then_string()));
+        GetProperty(context, receiver, isolate()->factory()->then_string()));
     Goto(&done);
   }
 
@@ -1083,7 +1045,7 @@ TF_BUILTIN(PromisePrototypeCatch, PromiseBuiltinsAssembler) {
   Node* const then = var_then.value();
   Node* const result = CallJS(
       CodeFactory::Call(isolate(), ConvertReceiverMode::kNotNullOrUndefined),
-      context, then, promise, on_fulfilled, on_rejected);
+      context, then, receiver, on_fulfilled, on_rejected);
   Return(result);
 }
 
@@ -1330,7 +1292,9 @@ TF_BUILTIN(PromiseResolve, PromiseBuiltinsAssembler) {
 
     BIND(&if_notnativepromise);
     {
-      Node* const capability = NewPromiseCapability(context, constructor);
+      Node* const debug_event = TrueConstant();
+      Node* const capability = CallBuiltin(Builtins::kNewPromiseCapability,
+                                           context, constructor, debug_event);
 
       Node* const resolve =
           LoadObjectField(capability, PromiseCapability::kResolveOffset);
@@ -1370,17 +1334,6 @@ TF_BUILTIN(PromiseGetCapabilitiesExecutor, PromiseBuiltinsAssembler) {
   ThrowTypeError(context, MessageTemplate::kPromiseExecutorAlreadyInvoked);
 }
 
-// ES6 #sec-newpromisecapability
-TF_BUILTIN(NewPromiseCapability, PromiseBuiltinsAssembler) {
-  Node* constructor = Parameter(Descriptor::kConstructor);
-  Node* debug_event = Parameter(Descriptor::kDebugEvent);
-  Node* context = Parameter(Descriptor::kContext);
-
-  CSA_ASSERT_JS_ARGC_EQ(this, 2);
-
-  Return(NewPromiseCapability(context, constructor, debug_event));
-}
-
 TF_BUILTIN(PromiseReject, PromiseBuiltinsAssembler) {
   // 1. Let C be the this value.
   Node* const receiver = Parameter(Descriptor::kReceiver);
@@ -1411,7 +1364,9 @@ TF_BUILTIN(PromiseReject, PromiseBuiltinsAssembler) {
   BIND(&if_custompromise);
   {
     // 3. Let promiseCapability be ? NewPromiseCapability(C).
-    Node* const capability = NewPromiseCapability(context, receiver);
+    Node* const debug_event = TrueConstant();
+    Node* const capability = CallBuiltin(Builtins::kNewPromiseCapability,
+                                         context, receiver, debug_event);
 
     // 4. Perform ? Call(promiseCapability.[[Reject]], undefined, « r »).
     Node* const reject =
@@ -1669,20 +1624,6 @@ TF_BUILTIN(RejectNativePromise, PromiseBuiltinsAssembler) {
   Return(UndefinedConstant());
 }
 
-TF_BUILTIN(PerformNativePromiseThen, PromiseBuiltinsAssembler) {
-  Node* const promise = Parameter(Descriptor::kPromise);
-  Node* const resolve_reaction = Parameter(Descriptor::kResolveReaction);
-  Node* const reject_reaction = Parameter(Descriptor::kRejectReaction);
-  Node* const result_promise = Parameter(Descriptor::kResultPromise);
-  Node* const context = Parameter(Descriptor::kContext);
-
-  CSA_ASSERT(this, IsJSPromise(result_promise));
-
-  InternalPerformPromiseThen(context, promise, resolve_reaction,
-                             reject_reaction, result_promise);
-  Return(result_promise);
-}
-
 Node* PromiseBuiltinsAssembler::PerformPromiseAll(
     Node* context, Node* constructor, Node* capability,
     const IteratorRecord& iterator, Label* if_exception,
@@ -1884,7 +1825,8 @@ TF_BUILTIN(PromiseAll, PromiseBuiltinsAssembler) {
   // Don't fire debugEvent so that forwarding the rejection through all does not
   // trigger redundant ExceptionEvents
   Node* const debug_event = FalseConstant();
-  Node* const capability = NewPromiseCapability(context, receiver, debug_event);
+  Node* const capability = CallBuiltin(Builtins::kNewPromiseCapability, context,
+                                       receiver, debug_event);
 
   VARIABLE(var_exception, MachineRepresentation::kTagged, TheHoleConstant());
   Label reject_promise(this, &var_exception, Label::kDeferred);
@@ -2010,7 +1952,8 @@ TF_BUILTIN(PromiseRace, PromiseBuiltinsAssembler) {
   // Don't fire debugEvent so that forwarding the rejection through all does not
   // trigger redundant ExceptionEvents
   Node* const debug_event = FalseConstant();
-  Node* const capability = NewPromiseCapability(context, receiver, debug_event);
+  Node* const capability = CallBuiltin(Builtins::kNewPromiseCapability, context,
+                                       receiver, debug_event);
 
   Node* const resolve =
       LoadObjectField(capability, PromiseCapability::kResolveOffset);

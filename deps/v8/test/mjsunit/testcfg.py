@@ -25,6 +25,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from collections import OrderedDict
+import itertools
 import os
 import re
 
@@ -39,9 +41,22 @@ SELF_SCRIPT_PATTERN = re.compile(r"//\s+Env: TEST_FILE_NAME")
 MODULE_PATTERN = re.compile(r"^// MODULE$", flags=re.MULTILINE)
 NO_HARNESS_PATTERN = re.compile(r"^// NO HARNESS$", flags=re.MULTILINE)
 
+# Flags known to misbehave when combining arbitrary mjsunit tests. Can also
+# be compiled regular expressions.
+COMBINE_TESTS_FLAGS_BLACKLIST = [
+  '--check-handle-count',
+  '--enable-tracing',
+  re.compile('--experimental.*'),
+  '--expose-trigger-failure',
+  re.compile('--harmony.*'),
+  '--mock-arraybuffer-allocator',
+  '--print-ast',
+  re.compile('--trace.*'),
+  '--wasm-lazy-compilation',
+]
 
 class TestSuite(testsuite.TestSuite):
-  def ListTests(self, context):
+  def ListTests(self):
     tests = []
     for dirname, dirs, files in os.walk(self.root, followlinks=True):
       for dotted in [x for x in dirs if x.startswith('.')]:
@@ -164,9 +179,9 @@ class TestCombiner(testsuite.TestCombiner):
     if 'async' in source_code:
       return None
 
-    # TODO(majeski): Investigate if we can maybe ignore the flags while
-    # grouping.
-    return str(sorted(list(set(source_flags + test._get_statusfile_flags()))))
+    # TODO(machenbach): Remove grouping if combining tests in a flag-independent
+    # way works well.
+    return 1
 
   def _combined_test_class(self):
     return CombinedTest
@@ -191,26 +206,81 @@ class CombinedTest(testcase.TestCase):
     """In addition to standard set of shell flags it appends:
       --disable-abortjs: %AbortJS can abort the test even inside
         trycatch-wrapper, so we disable it.
+      --es-staging: We blacklist all harmony flags due to false positives,
+          but always pass the staging flag to cover the mature features.
+      --omit-quit: Calling quit() in JS would otherwise early terminate.
       --quiet-load: suppress any stdout from load() function used by
         trycatch-wrapper.
     """
     shell = 'd8'
-    shell_flags = ['--test', '--disable-abortjs', '--quiet-load']
+    shell_flags = [
+      '--test',
+      '--disable-abortjs',
+      '--es-staging',
+      '--omit-quit',
+      '--quiet-load',
+    ]
     return shell, shell_flags
 
   def _get_cmd_params(self):
     return (
       super(CombinedTest, self)._get_cmd_params() +
-      self._tests[0]._mjsunit_files +
       ['tools/testrunner/trycatch_loader.js', '--'] +
+      self._tests[0]._mjsunit_files +
+      ['--'] +
       [t._files_suffix[0] for t in self._tests]
     )
 
+  def _merge_flags(self, flags):
+    """Merges flags from a list of flags.
+
+    Flag values not starting with '-' are merged with the preceeding flag,
+    e.g. --foo 1 will become --foo=1. All other flags remain the same.
+
+    Returns: A generator of flags.
+    """
+    if not flags:
+      return
+    # Iterate over flag pairs. ['-'] is a sentinel value for the last iteration.
+    for flag1, flag2 in itertools.izip(flags, flags[1:] + ['-']):
+      if not flag2.startswith('-'):
+        assert '=' not in flag1
+        yield flag1 + '=' + flag2
+      elif flag1.startswith('-'):
+        yield flag1
+
+  def _is_flag_blacklisted(self, flag):
+    for item in COMBINE_TESTS_FLAGS_BLACKLIST:
+      if isinstance(item, basestring):
+        if item == flag:
+          return True
+      elif item.match(flag):
+        return True
+    return False
+
+  def _get_combined_flags(self, flags_gen):
+    """Combines all flags - dedupes, keeps order and filters some flags.
+
+    Args:
+      flags_gen: Generator for flag lists.
+    Returns: A list of flags.
+    """
+    merged_flags = self._merge_flags(list(itertools.chain(*flags_gen)))
+    unique_flags = OrderedDict((flag, True) for flag in merged_flags).keys()
+    return [
+      flag for flag in unique_flags
+      if not self._is_flag_blacklisted(flag)
+    ]
+
   def _get_source_flags(self):
-    return self._tests[0]._get_source_flags()
+    # Combine flags from all source files.
+    return self._get_combined_flags(
+        test._get_source_flags() for test in self._tests)
 
   def _get_statusfile_flags(self):
-    return self._tests[0]._get_statusfile_flags()
+    # Combine flags from all status file entries.
+    return self._get_combined_flags(
+        test._get_statusfile_flags() for test in self._tests)
 
 
 class SuppressedTestCase(TestCase):

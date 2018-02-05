@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_MIPS_MACRO_ASSEMBLER_MIPS_H_
-#define V8_MIPS_MACRO_ASSEMBLER_MIPS_H_
+#ifndef V8_MIPS64_MACRO_ASSEMBLER_MIPS64_H_
+#define V8_MIPS64_MACRO_ASSEMBLER_MIPS64_H_
 
 #include "src/assembler.h"
 #include "src/globals.h"
@@ -26,6 +26,7 @@ constexpr Register kInterpreterDispatchTableRegister = t2;
 constexpr Register kInterpreterTargetBytecodeRegister = a7;
 constexpr Register kJavaScriptCallArgCountRegister = a0;
 constexpr Register kJavaScriptCallNewTargetRegister = a3;
+constexpr Register kOffHeapTrampolineRegister = at;
 constexpr Register kRuntimeCallFunctionRegister = a1;
 constexpr Register kRuntimeCallArgCountRegister = a0;
 
@@ -1153,6 +1154,9 @@ const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
                                BranchDelaySlot bd = PROTECT,
                                bool builtin_exit_frame = false);
 
+  // Generates a trampoline to jump to the off-heap instruction stream.
+  void JumpToInstructionStream(const InstructionStream* stream);
+
   // -------------------------------------------------------------------------
   // StatsCounter support.
 
@@ -1298,4 +1302,4 @@ void TurboAssembler::GenerateSwitchTable(Register index, size_t case_count,
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_MIPS_MACRO_ASSEMBLER_MIPS_H_
+#endif  // V8_MIPS64_MACRO_ASSEMBLER_MIPS64_H_

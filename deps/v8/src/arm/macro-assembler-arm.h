@@ -26,7 +26,9 @@ constexpr Register kInterpreterBytecodeArrayRegister = r6;
 constexpr Register kInterpreterDispatchTableRegister = r8;
 constexpr Register kInterpreterTargetBytecodeRegister = r4;
 constexpr Register kJavaScriptCallArgCountRegister = r0;
+constexpr Register kJavaScriptCallCodeStartRegister = r2;
 constexpr Register kJavaScriptCallNewTargetRegister = r3;
+constexpr Register kOffHeapTrampolineRegister = r4;
 constexpr Register kRuntimeCallFunctionRegister = r1;
 constexpr Register kRuntimeCallArgCountRegister = r0;
 
@@ -306,15 +308,15 @@ class TurboAssembler : public Assembler {
   inline bool AllowThisStubCall(CodeStub* stub);
 
   void LslPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register scratch, Register shift);
+               Register src_high, Register shift);
   void LslPair(Register dst_low, Register dst_high, Register src_low,
                Register src_high, uint32_t shift);
   void LsrPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register scratch, Register shift);
+               Register src_high, Register shift);
   void LsrPair(Register dst_low, Register dst_high, Register src_low,
                Register src_high, uint32_t shift);
   void AsrPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register scratch, Register shift);
+               Register src_high, Register shift);
   void AsrPair(Register dst_low, Register dst_high, Register src_low,
                Register src_high, uint32_t shift);
 
@@ -789,6 +791,9 @@ class MacroAssembler : public TurboAssembler {
   // Jump to a runtime routine.
   void JumpToExternalReference(const ExternalReference& builtin,
                                bool builtin_exit_frame = false);
+
+  // Generates a trampoline to jump to the off-heap instruction stream.
+  void JumpToInstructionStream(const InstructionStream* stream);
 
   // ---------------------------------------------------------------------------
   // StatsCounter support

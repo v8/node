@@ -15,6 +15,7 @@
 #include "src/external-reference-table.h"
 #include "src/frames-inl.h"
 #include "src/heap/heap-inl.h"
+#include "src/instruction-stream.h"
 #include "src/objects-inl.h"
 #include "src/register-configuration.h"
 #include "src/x64/assembler-x64.h"
@@ -1631,6 +1632,12 @@ void MacroAssembler::Jump(Handle<Code> code_object, RelocInfo::Mode rmode) {
   jmp(code_object, rmode);
 }
 
+void MacroAssembler::JumpToInstructionStream(const InstructionStream* stream) {
+  Address bytes_address = reinterpret_cast<Address>(stream->bytes());
+  Move(kOffHeapTrampolineRegister, bytes_address, RelocInfo::NONE);
+  jmp(kOffHeapTrampolineRegister);
+}
+
 int TurboAssembler::CallSize(ExternalReference ext) {
   // Opcode for call kScratchRegister is: Rex.B FF D4 (three bytes).
   return LoadAddressSize(ext) +
@@ -2307,6 +2314,7 @@ void MacroAssembler::InvokeFunctionCode(Register function, Register new_target,
     // We call indirectly through the code field in the function to
     // allow recompilation to take effect without changing any of the
     // call sites.
+    static_assert(kJavaScriptCallCodeStartRegister == rcx, "ABI mismatch");
     movp(rcx, FieldOperand(function, JSFunction::kCodeOffset));
     addp(rcx, Immediate(Code::kHeaderSize - kHeapObjectTag));
     if (flag == CALL_FUNCTION) {
