@@ -2058,29 +2058,31 @@ bool InternalPromiseHasUserDefinedRejectHandler(Isolate* isolate,
     return true;
   }
 
-  for (Handle<Object> current(promise->reactions(), isolate);
-       !current->IsSmi();) {
-    Handle<PromiseReaction> reaction = Handle<PromiseReaction>::cast(current);
-    Handle<HeapObject> promise_or_capability(reaction->promise_or_capability(),
-                                             isolate);
-    Handle<JSPromise> promise = Handle<JSPromise>::cast(
-        promise_or_capability->IsJSPromise()
-            ? promise_or_capability
-            : handle(Handle<PromiseCapability>::cast(promise_or_capability)
-                         ->promise(),
-                     isolate));
-    if (reaction->reject_handler()->IsUndefined(isolate)) {
-      if (InternalPromiseHasUserDefinedRejectHandler(isolate, promise)) {
-        return true;
+  if (promise->status() == Promise::kPending) {
+    for (Handle<Object> current(promise->reactions(), isolate);
+         !current->IsSmi();) {
+      Handle<PromiseReaction> reaction = Handle<PromiseReaction>::cast(current);
+      Handle<HeapObject> promise_or_capability(
+          reaction->promise_or_capability(), isolate);
+      Handle<JSPromise> promise = Handle<JSPromise>::cast(
+          promise_or_capability->IsJSPromise()
+              ? promise_or_capability
+              : handle(Handle<PromiseCapability>::cast(promise_or_capability)
+                           ->promise(),
+                       isolate));
+      if (reaction->reject_handler()->IsUndefined(isolate)) {
+        if (InternalPromiseHasUserDefinedRejectHandler(isolate, promise)) {
+          return true;
+        }
+      } else {
+        Handle<JSReceiver> current_handler(
+            JSReceiver::cast(reaction->reject_handler()), isolate);
+        if (PromiseHandlerCheck(isolate, current_handler, promise)) {
+          return true;
+        }
       }
-    } else {
-      Handle<JSReceiver> current_handler(
-          JSReceiver::cast(reaction->reject_handler()), isolate);
-      if (PromiseHandlerCheck(isolate, current_handler, promise)) {
-        return true;
-      }
+      current = handle(reaction->next(), isolate);
     }
-    current = handle(reaction->next(), isolate);
   }
 
   return false;
@@ -2917,9 +2919,11 @@ void ChangeToOffHeapTrampoline(Isolate* isolate, Handle<Code> code,
   std::memset(trailing_instruction_start, 0, trailing_instruction_size);
 }
 
-void LogInstructionStream(Isolate* isolate, const InstructionStream* stream) {
-  // TODO(jgruber): Log the given instruction stream object (the profiler needs
-  // this to assign ticks to builtins).
+void LogInstructionStream(Isolate* isolate, Code* code,
+                          const InstructionStream* stream) {
+  if (isolate->logger()->is_logging_code_events() || isolate->is_profiling()) {
+    isolate->logger()->LogInstructionStream(code, stream);
+  }
 }
 
 void MoveBuiltinsOffHeap(Isolate* isolate) {
@@ -2939,7 +2943,7 @@ void MoveBuiltinsOffHeap(Isolate* isolate) {
     if (!Builtins::IsIsolateIndependent(i)) continue;
     Handle<Code> code(builtins->builtin(i));
     InstructionStream* stream = new InstructionStream(*code);
-    LogInstructionStream(isolate, stream);
+    LogInstructionStream(isolate, *code, stream);
     ChangeToOffHeapTrampoline(isolate, code, stream);
     isolate->PushOffHeapCode(stream);
   }

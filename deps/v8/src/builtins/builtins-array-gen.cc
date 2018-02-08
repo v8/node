@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "src/builtins/builtins-string-gen.h"
+#include "src/builtins/builtins-typedarray-gen.h"
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
@@ -200,7 +201,13 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
 
   void ArrayBuiltinsAssembler::TypedArrayMapResultGenerator() {
     // 6. Let A be ? TypedArraySpeciesCreate(O, len).
-    Node* a = TypedArraySpeciesCreateByLength(context(), o(), len_);
+    TNode<JSTypedArray> original_array = CAST(o());
+    TNode<Smi> length = CAST(len_);
+    const char* method_name = "%TypedArray%.prototype.map";
+
+    TypedArrayBuiltinsAssembler typedarray_asm(state());
+    TNode<JSTypedArray> a = typedarray_asm.SpeciesCreateByLength(
+        CAST(context()), original_array, length, method_name);
     // In the Spec and our current implementation, the length check is already
     // performed in TypedArraySpeciesCreate.
     CSA_ASSERT(this,
@@ -2286,6 +2293,22 @@ TF_BUILTIN(ArrayReduceLoopContinuation, ArrayBuiltinsAssembler) {
       MissingPropertyMode::kSkip);
 }
 
+TF_BUILTIN(ArrayReducePreLoopEagerDeoptContinuation, ArrayBuiltinsAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* len = Parameter(Descriptor::kLength);
+
+  Callable stub(
+      Builtins::CallableFor(isolate(), Builtins::kArrayReduceLoopContinuation));
+  // Simulate starting the loop at 0, but ensuring that the accumulator is
+  // the hole. The continuation stub will search for the initial non-hole
+  // element, rightly throwing an exception if not found.
+  Return(CallStub(stub, context, receiver, callbackfn, UndefinedConstant(),
+                  TheHoleConstant(), receiver, SmiConstant(0), len,
+                  UndefinedConstant()));
+}
+
 TF_BUILTIN(ArrayReduceLoopEagerDeoptContinuation, ArrayBuiltinsAssembler) {
   Node* context = Parameter(Descriptor::kContext);
   Node* receiver = Parameter(Descriptor::kReceiver);
@@ -2374,6 +2397,23 @@ TF_BUILTIN(ArrayReduceRightLoopContinuation, ArrayBuiltinsAssembler) {
       &ArrayBuiltinsAssembler::ReduceProcessor,
       &ArrayBuiltinsAssembler::ReducePostLoopAction, MissingPropertyMode::kSkip,
       ForEachDirection::kReverse);
+}
+
+TF_BUILTIN(ArrayReduceRightPreLoopEagerDeoptContinuation,
+           ArrayBuiltinsAssembler) {
+  Node* context = Parameter(Descriptor::kContext);
+  Node* receiver = Parameter(Descriptor::kReceiver);
+  Node* callbackfn = Parameter(Descriptor::kCallbackFn);
+  Node* len = Parameter(Descriptor::kLength);
+
+  Callable stub(Builtins::CallableFor(
+      isolate(), Builtins::kArrayReduceRightLoopContinuation));
+  // Simulate starting the loop at 0, but ensuring that the accumulator is
+  // the hole. The continuation stub will search for the initial non-hole
+  // element, rightly throwing an exception if not found.
+  Return(CallStub(stub, context, receiver, callbackfn, UndefinedConstant(),
+                  TheHoleConstant(), receiver, SmiConstant(0), len,
+                  UndefinedConstant()));
 }
 
 TF_BUILTIN(ArrayReduceRightLoopEagerDeoptContinuation, ArrayBuiltinsAssembler) {
@@ -3123,8 +3163,7 @@ TF_BUILTIN(ArrayPrototypeKeys, ArrayPrototypeIterationAssembler) {
 }
 
 TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
-  Handle<String> operation = factory()->NewStringFromAsciiChecked(
-      "Array Iterator.prototype.next", TENURED);
+  const char* method_name = "Array Iterator.prototype.next";
 
   Node* context = Parameter(Descriptor::kContext);
   Node* iterator = Parameter(Descriptor::kReceiver);
@@ -3518,14 +3557,12 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
   BIND(&throw_bad_receiver);
   {
     // The {receiver} is not a valid JSArrayIterator.
-    CallRuntime(Runtime::kThrowIncompatibleMethodReceiver, context,
-                HeapConstant(operation), iterator);
-    Unreachable();
+    ThrowTypeError(context, MessageTemplate::kIncompatibleMethodReceiver,
+                   StringConstant(method_name), iterator);
   }
 
   BIND(&if_isdetached);
-  ThrowTypeError(context, MessageTemplate::kDetachedOperation,
-                 HeapConstant(operation));
+  ThrowTypeError(context, MessageTemplate::kDetachedOperation, method_name);
 }
 
 }  // namespace internal

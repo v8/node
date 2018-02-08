@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-private-fields --no-lazy --allow-natives-syntax
+// Flags: --harmony-private-fields --allow-natives-syntax
 
 
 "use strict";
@@ -11,8 +11,7 @@
 // (a) check private field access on proxies.
 // (b) throw reference error on missing private field access.
 // (c) throw when private fields are set without being declared.
-// (d) check that private field isn't called 'constructor'.
-// (e) tests involving eval
+// (d) tests involving eval
 {
   class C {
     #a;

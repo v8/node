@@ -67,7 +67,6 @@
       'V8 Linux64 - debug builder': 'gn_debug_x64',
       'V8 Linux64 - custom snapshot - debug builder': 'gn_debug_x64_custom',
       'V8 Linux64 - internal snapshot': 'gn_release_x64_internal',
-      'V8 Linux64 - gyp': 'gyp_release_x64',
       'V8 Linux64 - verify csa': 'gn_release_x64_verify_csa',
       # Windows.
       'V8 Win32 - builder': 'gn_release_x86_minimal_symbols',
@@ -157,7 +156,7 @@
           'gn_debug_simulate_arm64_no_snap',
       'V8 Linux - arm64 - sim - gc stress': 'gn_debug_simulate_arm64',
       # Mips.
-      'V8 Mips - builder': 'gyp_release_mips_no_snap_no_i18n',
+      'V8 Mips - builder': 'gn_release_mips_no_snap_no_i18n',
       'V8 Linux - mipsel - sim - builder': 'gn_release_simulate_mipsel',
       'V8 Linux - mips64el - sim - builder': 'gn_release_simulate_mips64el',
       # PPC.
@@ -210,7 +209,6 @@
       'v8_linux64_fyi_rel_ng': 'gn_release_x64_test_features_trybot',
       'v8_linux64_rel_ng': 'gn_release_x64_test_features_trybot',
       'v8_linux64_verify_csa_rel_ng': 'gn_release_x64_verify_csa',
-      'v8_linux64_gyp_rel_ng': 'gyp_release_x64',
       'v8_linux64_asan_rel_ng': 'gn_release_x64_asan_minimal_symbols',
       'v8_linux64_msan_rel': 'gn_release_simulate_arm64_msan_minimal_symbols',
       'v8_linux64_sanitizer_coverage_rel':
@@ -535,14 +533,10 @@
       'gn', 'release_bot', 'x86', 'swarming', 'dcheck_always_on',
       'v8_enable_slow_dchecks', 'v8_verify_csa'],
 
-    # Gyp release configs for mips.
-    'gyp_release_mips_no_snap_no_i18n': [
-      'gyp', 'release', 'mips', 'crosscompile', 'no_sysroot', 'static',
+    # GN release configs for mips.
+    'gn_release_mips_no_snap_no_i18n': [
+      'gn', 'release', 'mips', 'crosscompile', 'no_sysroot', 'static',
       'v8_no_i18n', 'v8_snapshot_none'],
-
-    # Gyp release configs for x64.
-    'gyp_release_x64': [
-      'gyp', 'release_bot', 'x64', 'no_sysroot', 'swarming'],
   },
 
   'mixins': {
@@ -649,8 +643,6 @@
       'gyp_defines': 'use_goma=1',
     },
 
-    'gyp': {'type': 'gyp'},
-
     'hard_float': {
       'gn_args': 'arm_float_abi="hard"',
       'gyp_defines': 'arm_float_abi=hard',
@@ -668,8 +660,13 @@
     },
 
     'mips': {
+      'mixins': ['mips_bundled_toolchain'],
       'gn_args': 'target_cpu="mips"',
       'gyp_defines': 'target_arch=mips',
+    },
+
+    'mips_bundled_toolchain': {
+      'gn_args': 'custom_toolchain="//tools/toolchain:mips-bundled"',
     },
 
     'msan': {

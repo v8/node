@@ -118,33 +118,6 @@ function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2) {
   return TypedArrayCreate(constructor, arg0, arg1, arg2);
 }
 
-function TypedArrayConstructByIterable(obj, iterable, iteratorFn, elementSize) {
-  if (%IterableToListCanBeElided(iterable)) {
-    // This .length access is unobservable, because it being observable would
-    // mean that iteration has side effects, and we wouldn't reach this path.
-    %typed_array_construct_by_array_like(
-        obj, iterable, iterable.length, elementSize);
-  } else {
-    var list = new InternalArray();
-    // Reading the Symbol.iterator property of iterable twice would be
-    // observable with getters, so instead, we call the function which
-    // was already looked up, and wrap it in another iterable. The
-    // __proto__ of the new iterable is set to null to avoid any chance
-    // of modifications to Object.prototype being observable here.
-    var iterator = %_Call(iteratorFn, iterable);
-    var newIterable = {
-      __proto__: null
-    };
-    // TODO(littledan): Computed properties don't work yet in nosnap.
-    // Rephrase when they do.
-    newIterable[iteratorSymbol] = function() { return iterator; }
-    for (var value of newIterable) {
-      list.push(value);
-    }
-    %typed_array_construct_by_array_like(obj, list, list.length, elementSize);
-  }
-}
-
 // The following functions cannot be made efficient on sparse arrays while
 // preserving the semantics, since the calls to the receiver function can add
 // or delete elements from the array.
@@ -230,20 +203,6 @@ DEFINE_METHOD(
 );
 
 
-// ES6 draft 08-24-14, section 22.2.2.2
-DEFINE_METHOD(
-  GlobalTypedArray,
-  of() {
-    var length = arguments.length;
-    var array = TypedArrayCreate(this, length);
-    for (var i = 0; i < length; i++) {
-      array[i] = arguments[i];
-    }
-    return array;
-  }
-);
-
-
 // ES#sec-iterabletoarraylike Runtime Semantics: IterableToArrayLike( items )
 function IterableToArrayLike(items) {
   var iterable = GetMethod(items, iteratorSymbol);
@@ -306,9 +265,5 @@ function TypedArrayConstructor() {
 
 %AddNamedProperty(GlobalTypedArray.prototype, "toString", ArrayToString,
                   DONT_ENUM);
-
-%InstallToContext([
-  "typed_array_construct_by_iterable", TypedArrayConstructByIterable
-]);
 
 })

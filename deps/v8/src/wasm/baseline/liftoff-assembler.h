@@ -36,26 +36,27 @@ class LiftoffAssembler : public TurboAssembler {
 
   class VarState {
    public:
-    enum Location : uint8_t { kStack, kRegister, kI32Const };
+    enum Location : uint8_t { kStack, kRegister, KIntConst };
 
     explicit VarState(ValueType type) : loc_(kStack), type_(type) {}
     explicit VarState(ValueType type, LiftoffRegister r)
         : loc_(kRegister), type_(type), reg_(r) {
       DCHECK_EQ(r.reg_class(), reg_class_for(type));
     }
-    explicit VarState(ValueType type, uint32_t i32_const)
-        : loc_(kI32Const), type_(type), i32_const_(i32_const) {
+    explicit VarState(ValueType type, int32_t i32_const)
+        : loc_(KIntConst), type_(type), i32_const_(i32_const) {
       DCHECK(type_ == kWasmI32 || type_ == kWasmI64);
     }
 
     bool operator==(const VarState& other) const {
       if (loc_ != other.loc_) return false;
+      if (type_ != other.type_) return false;
       switch (loc_) {
         case kStack:
           return true;
         case kRegister:
           return reg_ == other.reg_;
-        case kI32Const:
+        case KIntConst:
           return i32_const_ == other.i32_const_;
       }
       UNREACHABLE();
@@ -65,16 +66,23 @@ class LiftoffAssembler : public TurboAssembler {
     bool is_gp_reg() const { return loc_ == kRegister && reg_.is_gp(); }
     bool is_fp_reg() const { return loc_ == kRegister && reg_.is_fp(); }
     bool is_reg() const { return loc_ == kRegister; }
-    bool is_const() const { return loc_ == kI32Const; }
+    bool is_const() const { return loc_ == KIntConst; }
 
     ValueType type() const { return type_; }
 
     Location loc() const { return loc_; }
 
-    uint32_t i32_const() const {
-      DCHECK_EQ(loc_, kI32Const);
+    int32_t i32_const() const {
+      DCHECK_EQ(loc_, KIntConst);
       return i32_const_;
     }
+    WasmValue constant() const {
+      DCHECK(type_ == kWasmI32 || type_ == kWasmI64);
+      DCHECK_EQ(loc_, KIntConst);
+      return type_ == kWasmI32 ? WasmValue(i32_const_)
+                               : WasmValue(int64_t{i32_const_});
+    }
+
     Register gp_reg() const { return reg().gp(); }
     DoubleRegister fp_reg() const { return reg().fp(); }
     LiftoffRegister reg() const {
@@ -93,7 +101,7 @@ class LiftoffAssembler : public TurboAssembler {
 
     union {
       LiftoffRegister reg_;  // used if loc_ == kRegister
-      uint32_t i32_const_;   // used if loc_ == kI32Const
+      int32_t i32_const_;    // used if loc_ == KIntConst
     };
   };
 
@@ -115,6 +123,11 @@ class LiftoffAssembler : public TurboAssembler {
     uint32_t stack_base = 0;
 
     bool has_unused_register(RegClass rc, LiftoffRegList pinned = {}) const {
+      if (kNeedI64RegPair && rc == kGpRegPair) {
+        LiftoffRegList available_regs =
+            kGpCacheRegList & ~used_registers & ~pinned;
+        return available_regs.GetNumRegsSet() >= 2;
+      }
       DCHECK(rc == kGpReg || rc == kFpReg);
       LiftoffRegList candidates = GetCacheRegList(rc);
       return has_unused_register(candidates, pinned);
@@ -128,9 +141,14 @@ class LiftoffAssembler : public TurboAssembler {
 
     LiftoffRegister unused_register(RegClass rc,
                                     LiftoffRegList pinned = {}) const {
+      if (kNeedI64RegPair && rc == kGpRegPair) {
+        LiftoffRegister low = pinned.set(unused_register(kGpReg, pinned));
+        LiftoffRegister high = unused_register(kGpReg, pinned);
+        return LiftoffRegister::ForPair(low, high);
+      }
       DCHECK(rc == kGpReg || rc == kFpReg);
       LiftoffRegList candidates = GetCacheRegList(rc);
-      return unused_register(candidates);
+      return unused_register(candidates, pinned);
     }
 
     LiftoffRegister unused_register(LiftoffRegList candidates,
@@ -164,10 +182,7 @@ class LiftoffAssembler : public TurboAssembler {
     }
 
     bool is_used(LiftoffRegister reg) const {
-      if (reg.is_pair()) {
-        DCHECK_EQ(is_used(reg.low()), is_used(reg.high()));
-        reg = reg.low();
-      }
+      if (reg.is_pair()) return is_used(reg.low()) || is_used(reg.high());
       bool used = used_registers.has(reg);
       DCHECK_EQ(used, register_use_count[reg.liftoff_code()] != 0);
       return used;
@@ -255,6 +270,7 @@ class LiftoffAssembler : public TurboAssembler {
       LiftoffRegister high = GetUnusedRegister(candidates, pinned);
       return LiftoffRegister::ForPair(low, high);
     }
+    DCHECK(rc == kGpReg || rc == kFpReg);
     LiftoffRegList candidates = GetCacheRegList(rc);
     return GetUnusedRegister(candidates, pinned);
   }
@@ -323,6 +339,7 @@ class LiftoffAssembler : public TurboAssembler {
   inline void Spill(uint32_t index, LiftoffRegister, ValueType);
   inline void Spill(uint32_t index, WasmValue);
   inline void Fill(LiftoffRegister, uint32_t index, ValueType);
+  inline void FillI64Half(Register, uint32_t half_index);
 
   // i32 binops.
   inline void emit_i32_add(Register dst, Register lhs, Register rhs);
@@ -367,7 +384,8 @@ class LiftoffAssembler : public TurboAssembler {
   inline void AssertUnreachable(AbortReason reason);
 
   // Push a value to the stack (will become a caller frame slot).
-  inline void PushCallerFrameSlot(const VarState& src, uint32_t src_index);
+  inline void PushCallerFrameSlot(const VarState& src, uint32_t src_index,
+                                  RegPairHalf half);
   inline void PushCallerFrameSlot(LiftoffRegister reg);
   inline void PushRegisters(LiftoffRegList);
   inline void PopRegisters(LiftoffRegList);

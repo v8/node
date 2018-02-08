@@ -45,6 +45,9 @@ class ProfilerListener : public CodeEventListener {
                       int fp_to_sp_delta) override;
   void GetterCallbackEvent(Name* name, Address entry_point) override;
   void RegExpCodeCreateEvent(AbstractCode* code, String* source) override;
+  void InstructionStreamCreateEvent(CodeEventListener::LogEventsAndTags tag,
+                                    const InstructionStream* stream,
+                                    const char* description) override;
   void SetterCallbackEvent(Name* name, Address entry_point) override;
   void SharedFunctionInfoMoveEvent(Address from, Address to) override {}
 
@@ -54,7 +57,7 @@ class ProfilerListener : public CodeEventListener {
       const char* resource_name = CodeEntry::kEmptyResourceName,
       int line_number = v8::CpuProfileNode::kNoLineNumberInfo,
       int column_number = v8::CpuProfileNode::kNoColumnNumberInfo,
-      JITLineInfoTable* line_info = nullptr,
+      std::unique_ptr<JITLineInfoTable> line_info = nullptr,
       Address instruction_start = nullptr);
 
   void AddObserver(CodeEventObserver* observer);

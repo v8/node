@@ -11,35 +11,9 @@
 #include "src/simulator.h"
 #include "src/snapshot/snapshot.h"
 
-// To generate the binary files for the test function (used in the IncbinInText
-// below), enable this section and run GenerateTestFunctionData once on each
-// arch.
+// To generate the binary files for the test function, enable this section and
+// run GenerateTestFunctionData once on each arch.
 #define GENERATE_TEST_FUNCTION_DATA false
-
-// Arch-specific defines.
-#if V8_TARGET_ARCH_IA32
-#define TEST_FUNCTION_FILE "f-ia32.bin"
-#elif V8_TARGET_ARCH_X64 && _WIN64
-#define TEST_FUNCTION_FILE "f-x64-win.bin"
-#elif V8_TARGET_ARCH_X64
-#define TEST_FUNCTION_FILE "f-x64.bin"
-#elif V8_TARGET_ARCH_ARM64
-#define TEST_FUNCTION_FILE "f-arm64.bin"
-#elif V8_TARGET_ARCH_ARM
-#define TEST_FUNCTION_FILE "f-arm.bin"
-#elif V8_TARGET_ARCH_PPC
-#define TEST_FUNCTION_FILE "f-ppc.bin"
-#elif V8_TARGET_ARCH_MIPS
-#define TEST_FUNCTION_FILE "f-mips.bin"
-#elif V8_TARGET_ARCH_MIPS64
-#define TEST_FUNCTION_FILE "f-mips64.bin"
-#elif V8_TARGET_ARCH_S390
-#define TEST_FUNCTION_FILE "f-s390.bin"
-#else
-#error "Unknown architecture."
-#endif
-
-#define __ masm.
 
 namespace v8 {
 namespace internal {
@@ -108,62 +82,42 @@ TEST(VerifyBuiltinsIsolateIndependence) {
   CHECK(!found_mismatch);
 }
 
-// .incbin macros.
-
 // V8_CC_MSVC is true for both MSVC and clang on windows. clang can handle
-// .incbin but MSVC cannot, and thus we need a more precise compiler detection
-// that can distinguish between the two. clang on windows sets both __clang__
-// and _MSC_VER, MSVC sets only _MSC_VER.
+// __asm__-style inline assembly but MSVC cannot, and thus we need a more
+// precise compiler detection that can distinguish between the two. clang on
+// windows sets both __clang__ and _MSC_VER, MSVC sets only _MSC_VER.
 #if defined(_MSC_VER) && !defined(__clang__)
 #define V8_COMPILER_IS_MSVC
 #endif
 
 #ifndef V8_COMPILER_IS_MSVC
-#if defined(V8_OS_MACOSX)
-#define INCBIN_RODATA_SECTION ".const_data\n"
-#define INCBIN_TEXT_SECTION ".text\n"
-#define INCBIN_MANGLE "_"
-#define INCBIN_GLOBAL(NAME) ".globl " INCBIN_MANGLE NAME "\n"
-#elif defined(V8_OS_WIN)
-#define INCBIN_RODATA_SECTION ".section .rodata\n"
-#define INCBIN_TEXT_SECTION ".section .text\n"
-#if defined(V8_TARGET_ARCH_X64)
-#define INCBIN_MANGLE ""
-#else
-#define INCBIN_MANGLE "_"
-#endif
-#define INCBIN_GLOBAL(NAME) ".global " INCBIN_MANGLE NAME "\n"
-#else
-#define INCBIN_RODATA_SECTION ".section .rodata\n"
-#define INCBIN_TEXT_SECTION ".section .text\n"
-#define INCBIN_MANGLE ""
-#define INCBIN_GLOBAL(NAME) ".global " INCBIN_MANGLE NAME "\n"
-#endif
-
-// clang-format off
-#define INCBIN_RODATA(LABEL, FILE)              \
-  __asm__(INCBIN_RODATA_SECTION                 \
-          INCBIN_GLOBAL(#LABEL)                 \
-          ".balign 16\n"                        \
-          INCBIN_MANGLE #LABEL ":\n"            \
-          ".incbin \"" FILE "\"\n");            \
-  extern "C" V8_ALIGNED(16) const char LABEL[]
-
-#define INCBIN_TEXT(LABEL, FILE)                \
-  __asm__(INCBIN_TEXT_SECTION                   \
-          INCBIN_GLOBAL(#LABEL)                 \
-          ".balign 16\n"                        \
-          INCBIN_MANGLE #LABEL ":\n"            \
-          ".incbin \"" FILE "\"\n");            \
-  extern "C" V8_ALIGNED(16) const char LABEL[]
-// clang-format on
-
-INCBIN_RODATA(test_string_bytes,
-              "gen/test-isolate-independent-builtins/string.bin");
-INCBIN_TEXT(test_function_bytes,
-            "gen/test-isolate-independent-builtins/" TEST_FUNCTION_FILE);
-
 #if GENERATE_TEST_FUNCTION_DATA
+
+// Arch-specific defines.
+#if V8_TARGET_ARCH_IA32
+#define TEST_FUNCTION_FILE "f-ia32.bin"
+#elif V8_TARGET_ARCH_X64 && _WIN64
+#define TEST_FUNCTION_FILE "f-x64-win.bin"
+#elif V8_TARGET_ARCH_X64
+#define TEST_FUNCTION_FILE "f-x64.bin"
+#elif V8_TARGET_ARCH_ARM64
+#define TEST_FUNCTION_FILE "f-arm64.bin"
+#elif V8_TARGET_ARCH_ARM
+#define TEST_FUNCTION_FILE "f-arm.bin"
+#elif V8_TARGET_ARCH_PPC
+#define TEST_FUNCTION_FILE "f-ppc.bin"
+#elif V8_TARGET_ARCH_MIPS
+#define TEST_FUNCTION_FILE "f-mips.bin"
+#elif V8_TARGET_ARCH_MIPS64
+#define TEST_FUNCTION_FILE "f-mips64.bin"
+#elif V8_TARGET_ARCH_S390
+#define TEST_FUNCTION_FILE "f-s390.bin"
+#else
+#error "Unknown architecture."
+#endif
+
+#define __ masm.
+
 TEST(GenerateTestFunctionData) {
   CcTest::InitializeVM();
   Isolate* isolate = CcTest::i_isolate();
@@ -226,10 +180,7 @@ TEST(GenerateTestFunctionData) {
 #elif V8_TARGET_ARCH_S390
   Assembler masm(isolate, nullptr, 0);
 
-  __ lhi(r1, Operand(3));
-  __ llilf(r2, Operand(4));
-  __ lgr(r2, r2);
-  __ ar(r2, r1);
+  __ agr(r2, r3);
   __ b(r14);
 #else  // Unknown architecture.
 #error "Unknown architecture."
@@ -243,30 +194,109 @@ TEST(GenerateTestFunctionData) {
 }
 #endif  // GENERATE_TEST_FUNCTION_DATA
 
-#undef __
-#undef GENERATE_TEST_FUNCTION_DATA
-#undef INCBIN_GLOBAL
-#undef INCBIN_MANGLE
-#undef INCBIN_RODATA
-#undef INCBIN_RODATA_SECTION
-#undef INCBIN_TEXT
-#undef INCBIN_TEXT_SECTION
-#undef TEST_FUNCTION_FILE
+#if V8_TARGET_ARCH_IA32
+#define FUNCTION_BYTES \
+  ".byte 0x8b, 0x44, 0x24, 0x04, 0x03, 0x44, 0x24, 0x08, 0xc3\n"
+#elif V8_TARGET_ARCH_X64 && _WIN64
+#define FUNCTION_BYTES ".byte 0x48, 0x8b, 0xc2, 0x48, 0x03, 0xc1, 0xc3\n"
+#elif V8_TARGET_ARCH_X64
+#define FUNCTION_BYTES ".byte 0x48, 0x8b, 0xc6, 0x48, 0x03, 0xc7, 0xc3\n"
+#elif V8_TARGET_ARCH_ARM64
+#define FUNCTION_BYTES ".byte 0x00, 0x00, 0x01, 0x8b, 0xc0, 0x03, 0x5f, 0xd6\n"
+#elif V8_TARGET_ARCH_ARM
+#define FUNCTION_BYTES ".byte 0x01, 0x00, 0x80, 0xe0, 0x0e, 0xf0, 0xa0, 0xe1\n"
+#elif V8_TARGET_ARCH_PPC
+#define FUNCTION_BYTES ".byte 0x14, 0x22, 0x63, 0x7c, 0x20, 0x00, 0x80, 0x4e\n"
+#elif V8_TARGET_ARCH_MIPS
+#define FUNCTION_BYTES                               \
+  ".byte 0x21, 0x10, 0x85, 0x00, 0x08, 0x00, 0xe0, " \
+  "0x03, 0x00, 0x00, 0x00, 0x00\n"
+#elif V8_TARGET_ARCH_MIPS64
+#define FUNCTION_BYTES                               \
+  ".byte 0x21, 0x10, 0x85, 0x00, 0x08, 0x00, 0xe0, " \
+  "0x03, 0x00, 0x00, 0x00, 0x00\n"
+#elif V8_TARGET_ARCH_S390
+#define FUNCTION_BYTES                               \
+  ".byte 0xb9, 0x08, 0x00, 0x23, 0x07, 0xfe\n"
+#else
+#error "Unknown architecture."
+#endif
 
-TEST(IncbinInRodata) {
-  CHECK_EQ(0, std::strcmp("0123456789\n", test_string_bytes));
+// .byte macros to handle small differences across operating systems.
+
+#if defined(V8_OS_MACOSX)
+#define ASM_RODATA_SECTION ".const_data\n"
+#define ASM_TEXT_SECTION ".text\n"
+#define ASM_MANGLE_LABEL "_"
+#define ASM_GLOBAL(NAME) ".globl " ASM_MANGLE_LABEL NAME "\n"
+#elif defined(V8_OS_WIN)
+#define ASM_RODATA_SECTION ".section .rodata\n"
+#define ASM_TEXT_SECTION ".section .text\n"
+#if defined(V8_TARGET_ARCH_X64)
+#define ASM_MANGLE_LABEL ""
+#else
+#define ASM_MANGLE_LABEL "_"
+#endif
+#define ASM_GLOBAL(NAME) ".global " ASM_MANGLE_LABEL NAME "\n"
+#else
+#define ASM_RODATA_SECTION ".section .rodata\n"
+#define ASM_TEXT_SECTION ".section .text\n"
+#define ASM_MANGLE_LABEL ""
+#define ASM_GLOBAL(NAME) ".global " ASM_MANGLE_LABEL NAME "\n"
+#endif
+
+// clang-format off
+#define EMBED_IN_RODATA_HEADER(LABEL)    \
+  __asm__(ASM_RODATA_SECTION             \
+          ASM_GLOBAL(#LABEL)             \
+          ".balign 16\n"                 \
+          ASM_MANGLE_LABEL #LABEL ":\n");
+
+#define EMBED_IN_TEXT_HEADER(LABEL)        \
+    __asm__(ASM_TEXT_SECTION               \
+            ASM_GLOBAL(#LABEL)             \
+            ".balign 16\n"                 \
+            ASM_MANGLE_LABEL #LABEL ":\n");
+
+EMBED_IN_RODATA_HEADER(test_string0_bytes)
+__asm__(".byte 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37\n"
+        ".byte 0x38, 0x39, 0x0a, 0x00\n");
+extern "C" V8_ALIGNED(16) const char test_string0_bytes[];
+
+EMBED_IN_TEXT_HEADER(test_function0_bytes)
+__asm__(FUNCTION_BYTES);
+extern "C" V8_ALIGNED(16) const char test_function0_bytes[];
+// clang-format on
+
+// A historical note: We use .byte over .incbin since the latter leads to
+// complications involving generation of build-time dependencies.  Goma parses
+// #include statements, and clang has -MD/-MMD. Neither recognize .incbin.
+
+TEST(ByteInRodata) {
+  CHECK_EQ(0, std::strcmp("0123456789\n", test_string0_bytes));
 }
 
-TEST(IncbinInText) {
+TEST(ByteInText) {
   CcTest::InitializeVM();
   Isolate* isolate = CcTest::i_isolate();
   auto f = GeneratedCode<int(int, int)>::FromAddress(
-      isolate, const_cast<char*>(test_function_bytes));
+      isolate, const_cast<char*>(test_function0_bytes));
   CHECK_EQ(7, f.Call(3, 4));
   CHECK_EQ(11, f.Call(5, 6));
 }
 #endif  // #ifndef V8_COMPILER_IS_MSVC
 #undef V8_COMPILER_IS_MSVC
+
+#undef __
+#undef ASM_GLOBAL
+#undef ASM_MANGLE_LABEL
+#undef ASM_RODATA_SECTION
+#undef ASM_TEXT_SECTION
+#undef EMBED_IN_RODATA_HEADER
+#undef EMBED_IN_TEXT_HEADER
+#undef FUNCTION_BYTES
+#undef GENERATE_TEST_FUNCTION_DATA
+#undef TEST_FUNCTION_FILE
 
 }  // namespace test_isolate_independent_builtins
 }  // namespace internal

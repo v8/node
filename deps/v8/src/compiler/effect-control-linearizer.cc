@@ -1175,9 +1175,9 @@ void EffectControlLinearizer::TruncateTaggedPointerToBit(
   __ Bind(&if_bigint);
   {
     Node* bitfield = __ LoadField(AccessBuilder::ForBigIntBitfield(), value);
-    Node* length_is_zero = __ Word32Equal(
-        __ Word32And(bitfield, __ Int32Constant(BigInt::LengthBits::kMask)),
-        zero);
+    Node* length_is_zero = __ WordEqual(
+        __ WordAnd(bitfield, __ IntPtrConstant(BigInt::LengthBits::kMask)),
+        __ IntPtrConstant(0));
     __ Goto(done, __ Word32Equal(length_is_zero, zero));
   }
 }
@@ -1935,7 +1935,8 @@ Node* EffectControlLinearizer::BuildCheckedHeapNumberOrOddballToFloat64(
 
 Node* EffectControlLinearizer::LowerCheckedTaggedToFloat64(Node* node,
                                                            Node* frame_state) {
-  CheckTaggedInputMode mode = CheckTaggedInputModeOf(node->op());
+  CheckTaggedInputParameters const& p =
+      CheckTaggedInputParametersOf(node->op());
   Node* value = node->InputAt(0);
 
   auto if_smi = __ MakeLabel();
@@ -1947,7 +1948,7 @@ Node* EffectControlLinearizer::LowerCheckedTaggedToFloat64(Node* node,
   // In the Smi case, just convert to int32 and then float64.
   // Otherwise, check heap numberness and load the number.
   Node* number = BuildCheckedHeapNumberOrOddballToFloat64(
-      mode, VectorSlotPair(), value, frame_state);
+      p.mode(), p.feedback(), value, frame_state);
   __ Goto(&done, number);
 
   __ Bind(&if_smi);
@@ -3692,8 +3693,9 @@ Node* EffectControlLinearizer::LowerLoadTypedElement(Node* node) {
   // Compute the effective storage pointer, handling the case where the
   // {external} pointer is the effective storage pointer (i.e. the {base}
   // is Smi zero).
-  Node* storage = NumberMatcher(base).Is(0) ? external : __ UnsafePointerAdd(
-                                                             base, external);
+  Node* storage = IntPtrMatcher(base).Is(0)
+                      ? external
+                      : __ UnsafePointerAdd(base, external);
 
   // Perform the actual typed element access.
   return __ LoadElement(AccessBuilder::ForTypedArrayElement(array_type, true),
@@ -3715,8 +3717,9 @@ void EffectControlLinearizer::LowerStoreTypedElement(Node* node) {
   // Compute the effective storage pointer, handling the case where the
   // {external} pointer is the effective storage pointer (i.e. the {base}
   // is Smi zero).
-  Node* storage = NumberMatcher(base).Is(0) ? external : __ UnsafePointerAdd(
-                                                             base, external);
+  Node* storage = IntPtrMatcher(base).Is(0)
+                      ? external
+                      : __ UnsafePointerAdd(base, external);
 
   // Perform the actual typed element access.
   __ StoreElement(AccessBuilder::ForTypedArrayElement(array_type, true),

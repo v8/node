@@ -1816,12 +1816,12 @@ void Heap::MarkCompact() {
 void Heap::MinorMarkCompact() {
   DCHECK(FLAG_minor_mc);
 
+  PauseAllocationObserversScope pause_observers(this);
   SetGCState(MINOR_MARK_COMPACT);
   LOG(isolate_, ResourceEvent("MinorMarkCompact", "begin"));
 
   TRACE_GC(tracer(), GCTracer::Scope::MINOR_MC);
   AlwaysAllocateScope always_allocate(isolate());
-  PauseAllocationObserversScope pause_observers(this);
   IncrementalMarking::PauseBlackAllocationScope pause_black_allocation(
       incremental_marking());
   CodeSpaceMemoryModificationScope code_modifcation(this);
@@ -1981,6 +1981,9 @@ class ScavengingTask final : public ItemParallelJob::Task {
       TimedScope scope(&scavenging_time);
       PageScavengingItem* item = nullptr;
       while ((item = GetItem<PageScavengingItem>()) != nullptr) {
+        TRACE_BACKGROUND_GC(
+            heap_->tracer(),
+            GCTracer::BackgroundScope::SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL);
         item->Process(scavenger_);
         item->MarkFinished();
       }
@@ -2007,11 +2010,10 @@ int Heap::NumberOfScavengeTasks() {
   if (!FLAG_parallel_scavenge) return 1;
   const int num_scavenge_tasks =
       static_cast<int>(new_space()->TotalCapacity()) / MB;
-  return Max(
-      1,
-      Min(Min(num_scavenge_tasks, kMaxScavengerTasks),
-          static_cast<int>(
-              V8::GetCurrentPlatform()->NumberOfAvailableBackgroundThreads())));
+  static int num_cores =
+      1 + static_cast<int>(
+              V8::GetCurrentPlatform()->NumberOfAvailableBackgroundThreads());
+  return Max(1, Min(Min(num_scavenge_tasks, kMaxScavengerTasks), num_cores));
 }
 
 void Heap::Scavenge() {
@@ -2098,7 +2100,7 @@ void Heap::Scavenge() {
     {
       // Parallel phase scavenging all copied and promoted objects.
       TRACE_GC(tracer(), GCTracer::Scope::SCAVENGER_SCAVENGE_PARALLEL);
-      job.Run();
+      job.Run(isolate()->async_counters());
       DCHECK(copied_list.IsGlobalEmpty());
       DCHECK(promotion_list.IsGlobalEmpty());
     }

@@ -1076,8 +1076,11 @@ v8_source_set("v8_initializers") {
     "src/builtins/builtins-string-gen.h",
     "src/builtins/builtins-symbol-gen.cc",
     "src/builtins/builtins-typedarray-gen.cc",
+    "src/builtins/builtins-typedarray-gen.h",
     "src/builtins/builtins-utils-gen.h",
     "src/builtins/builtins-wasm-gen.cc",
+    "src/builtins/growable-fixed-array-gen.cc",
+    "src/builtins/growable-fixed-array-gen.h",
     "src/builtins/setup-builtins-internal.cc",
     "src/heap/setup-heap-internal.cc",
     "src/ic/accessor-assembler.cc",
@@ -1685,6 +1688,7 @@ v8_source_set("v8_base") {
     "src/heap/invalidated-slots-inl.h",
     "src/heap/invalidated-slots.cc",
     "src/heap/invalidated-slots.h",
+    "src/heap/item-parallel-job.cc",
     "src/heap/item-parallel-job.h",
     "src/heap/local-allocator.h",
     "src/heap/mark-compact-inl.h",
@@ -2585,11 +2589,15 @@ v8_component("v8_libbase") {
 
   if (is_posix) {
     sources += [
-      "src/base/platform/platform-posix-time.cc",
-      "src/base/platform/platform-posix-time.h",
       "src/base/platform/platform-posix.cc",
       "src/base/platform/platform-posix.h",
     ]
+    if (current_os != "aix") {
+      sources += [
+        "src/base/platform/platform-posix-time.cc",
+        "src/base/platform/platform-posix-time.h"
+      ]
+    }
   }
 
   if (is_linux) {

@@ -29,11 +29,8 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
 
  protected:
   enum PromiseAllResolveElementContextSlots {
-    // Whether the resolve callback was already called.
-    kPromiseAllResolveElementAlreadyVisitedSlot = Context::MIN_CONTEXT_SLOTS,
-
-    // Index into the values array
-    kPromiseAllResolveElementIndexSlot,
+    // Index into the values array, or -1 if the callback was already called
+    kPromiseAllResolveElementIndexSlot = Context::MIN_CONTEXT_SLOTS,
 
     // Remaining elements count (mutable HeapNumber)
     kPromiseAllResolveElementRemainingElementsSlot,
@@ -131,6 +128,14 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
   void PromiseFulfill(Node* context, Node* promise, Node* result,
                       v8::Promise::PromiseState status);
 
+  // We can shortcut the SpeciesConstructor on {promise_map} if it's
+  // [[Prototype]] is the (initial)  Promise.prototype and the @@species
+  // protector is intact, as that guards the lookup path for the "constructor"
+  // property on JSPromise instances which have the %PromisePrototype%.
+  void BranchIfPromiseSpeciesLookupChainIntact(Node* native_context,
+                                               Node* promise_map,
+                                               Label* if_fast, Label* if_slow);
+
   // We can skip the "then" lookup on {receiver_map} if it's [[Prototype]]
   // is the (initial) Promise.prototype and the Promise#then() protector
   // is intact, as that guards the lookup path for the "then" property
@@ -138,6 +143,9 @@ class PromiseBuiltinsAssembler : public CodeStubAssembler {
   void BranchIfPromiseThenLookupChainIntact(Node* native_context,
                                             Node* receiver_map, Label* if_fast,
                                             Label* if_slow);
+
+  template <typename... TArgs>
+  Node* InvokeThen(Node* native_context, Node* receiver, TArgs... args);
 
   void BranchIfAccessCheckFailed(Node* context, Node* native_context,
                                  Node* promise_constructor, Node* executor,

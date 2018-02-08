@@ -4268,12 +4268,28 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
 void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
                                     const ParameterCount& expected,
                                     const ParameterCount& actual) {
-  Label skip_hook;
+  Label skip_hook, call_hook;
+
+  ExternalReference debug_is_active =
+      ExternalReference::debug_is_active_address(isolate());
+  li(t0, Operand(debug_is_active));
+  Lb(t0, MemOperand(t0));
+  Branch(&skip_hook, eq, t0, Operand(zero_reg));
+
   ExternalReference debug_hook_active =
       ExternalReference::debug_hook_on_function_call_address(isolate());
   li(t0, Operand(debug_hook_active));
   Lb(t0, MemOperand(t0));
+  Branch(&call_hook, ne, t0, Operand(zero_reg));
+
+  Lw(t0, FieldMemOperand(fun, JSFunction::kSharedFunctionInfoOffset));
+  Lw(t0, FieldMemOperand(t0, SharedFunctionInfo::kDebugInfoOffset));
+  JumpIfSmi(t0, &skip_hook);
+  Lw(t0, FieldMemOperand(t0, DebugInfo::kFlagsOffset));
+  And(t0, t0, Operand(Smi::FromInt(DebugInfo::kBreakAtEntry)));
   Branch(&skip_hook, eq, t0, Operand(zero_reg));
+
+  bind(&call_hook);
   {
     FrameScope frame(this,
                      has_frame() ? StackFrame::NONE : StackFrame::INTERNAL);
@@ -4331,7 +4347,7 @@ void MacroAssembler::InvokeFunctionCode(Register function, Register new_target,
     // We call indirectly through the code field in the function to
     // allow recompilation to take effect without changing any of the
     // call sites.
-    Register code = t0;
+    Register code = kJavaScriptCallCodeStartRegister;
     Ld(code, FieldMemOperand(function, JSFunction::kCodeOffset));
     if (flag == CALL_FUNCTION) {
       Daddu(code, code, Operand(Code::kHeaderSize - kHeapObjectTag));

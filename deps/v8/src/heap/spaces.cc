@@ -71,6 +71,8 @@ bool HeapObjectIterator::AdvanceToNextPage() {
 
 PauseAllocationObserversScope::PauseAllocationObserversScope(Heap* heap)
     : heap_(heap) {
+  DCHECK_EQ(heap->gc_state(), Heap::NOT_IN_GC);
+
   for (SpaceIterator it(heap_); it.has_next();) {
     it.next()->PauseAllocationObservers();
   }
@@ -352,8 +354,8 @@ void MemoryAllocator::Unmapper::WaitUntilCompleted() {
         CancelableTaskManager::kTaskAborted) {
       pending_unmapping_tasks_semaphore_.Wait();
     }
-    concurrent_unmapping_tasks_active_ = 0;
   }
+  concurrent_unmapping_tasks_active_ = 0;
 }
 
 template <MemoryAllocator::Unmapper::FreeMode mode>

@@ -56,9 +56,6 @@ namespace internal {
   F(SpreadIterablePrepare, 1, 1)
 
 #define FOR_EACH_INTRINSIC_ATOMICS(F)           \
-  F(ThrowNotIntegerSharedTypedArrayError, 1, 1) \
-  F(ThrowNotInt32SharedTypedArrayError, 1, 1)   \
-  F(ThrowInvalidAtomicAccessIndexError, 0, 1)   \
   F(AtomicsExchange, 3, 1)                      \
   F(AtomicsCompareExchange, 4, 1)               \
   F(AtomicsAdd, 3, 1)                           \
@@ -130,8 +127,7 @@ namespace internal {
 
 #define FOR_EACH_INTRINSIC_DATE(F) \
   F(IsDate, 1, 1)                  \
-  F(DateCurrentTime, 0, 1)         \
-  F(ThrowNotDateError, 0, 1)
+  F(DateCurrentTime, 0, 1)
 
 #define FOR_EACH_INTRINSIC_DEBUG(F)             \
   F(HandleDebuggerStatement, 0, 1)              \
@@ -313,28 +309,20 @@ namespace internal {
   F(StackGuard, 0, 1)                                                \
   F(Throw, 1, 1)                                                     \
   F(ThrowApplyNonFunction, 1, 1)                                     \
-  F(ThrowCannotConvertToPrimitive, 0, 1)                             \
   F(ThrowCalledNonCallable, 1, 1)                                    \
-  F(ThrowCalledOnNullOrUndefined, 1, 1)                              \
   F(ThrowConstructedNonConstructable, 1, 1)                          \
   F(ThrowConstructorReturnedNonObject, 0, 1)                         \
-  F(ThrowGeneratorRunning, 0, 1)                                     \
-  F(ThrowIncompatibleMethodReceiver, 2, 1)                           \
-  F(ThrowInvalidHint, 1, 1)                                          \
   F(ThrowInvalidStringLength, 0, 1)                                  \
   F(ThrowInvalidTypedArrayAlignment, 2, 1)                           \
   F(ThrowIteratorResultNotAnObject, 1, 1)                            \
   F(ThrowThrowMethodMissing, 0, 1)                                   \
   F(ThrowSymbolIteratorInvalid, 0, 1)                                \
-  F(ThrowNonCallableInInstanceOfCheck, 0, 1)                         \
-  F(ThrowNonObjectInInstanceOfCheck, 0, 1)                           \
   F(ThrowNotConstructor, 1, 1)                                       \
   F(ThrowRangeError, -1 /* >= 1 */, 1)                               \
   F(ThrowReferenceError, 1, 1)                                       \
   F(ThrowStackOverflow, 0, 1)                                        \
   F(ThrowSymbolAsyncIteratorInvalid, 0, 1)                           \
   F(ThrowTypeError, -1 /* >= 1 */, 1)                                \
-  F(ThrowUndefinedOrNullToObject, 1, 1)                              \
   F(Typeof, 1, 1)                                                    \
   F(UnwindAndFindExceptionHandler, 0, 1)                             \
   F(AllowDynamicFunction, 1, 1)                                      \
@@ -390,6 +378,10 @@ namespace internal {
   F(ObjectCreate, 2, 1)                                         \
   F(InternalSetPrototype, 2, 1)                                 \
   F(OptimizeObjectForAddingMultipleProperties, 2, 1)            \
+  F(ObjectValues, 1, 1)                                         \
+  F(ObjectValuesSkipFastPath, 1, 1)                             \
+  F(ObjectEntries, 1, 1)                                        \
+  F(ObjectEntriesSkipFastPath, 1, 1)                            \
   F(GetProperty, 2, 1)                                          \
   F(KeyedGetProperty, 2, 1)                                     \
   F(AddNamedProperty, 4, 1)                                     \
@@ -557,7 +549,6 @@ namespace internal {
 #define FOR_EACH_INTRINSIC_TEST(F)            \
   F(Abort, 1, 1)                              \
   F(AbortJS, 1, 1)                            \
-  F(CheckWasmWrapperElision, 2, 1)            \
   F(ClearFunctionFeedback, 1, 1)              \
   F(CompleteInobjectSlackTracking, 1, 1)      \
   F(ConstructConsString, 2, 1)                \
@@ -633,21 +624,15 @@ namespace internal {
   F(WasmTraceMemory, 1, 1)
 
 #define FOR_EACH_INTRINSIC_TYPEDARRAY(F) \
-  F(ArrayBufferGetByteLength, 1, 1)      \
   F(ArrayBufferNeuter, 1, 1)             \
   F(TypedArrayCopyElements, 3, 1)        \
-  F(ArrayBufferViewGetByteOffset, 1, 1)  \
   F(ArrayBufferViewWasNeutered, 1, 1)    \
   F(TypedArrayGetLength, 1, 1)           \
   F(TypedArrayGetBuffer, 1, 1)           \
   F(TypedArraySortFast, 1, 1)            \
   F(TypedArraySet, 2, 1)                 \
   F(TypedArraySlice, 4, 1)               \
-  F(IsTypedArray, 1, 1)                  \
-  F(IsSharedTypedArray, 1, 1)            \
-  F(IsSharedIntegerTypedArray, 1, 1)     \
-  F(IsSharedInteger32TypedArray, 1, 1)   \
-  F(TypedArraySpeciesCreateByLength, 2, 1)
+  F(IsTypedArray, 1, 1)
 
 #define FOR_EACH_INTRINSIC_WASM(F)   \
   F(WasmGrowMemory, 1, 1)            \

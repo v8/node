@@ -343,15 +343,15 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(AllocateSeqOneByteString)            \
   V(AllocateSeqTwoByteString)            \
   V(ObjectCreate)                        \
+  V(ObjectEntries)                       \
+  V(ObjectEntriesSkipFastPath)           \
   V(ObjectHasOwnProperty)                \
+  V(ObjectValues)                        \
+  V(ObjectValuesSkipFastPath)            \
   V(ArrayIndexOf)                        \
   V(ArrayIncludes_Slow)                  \
   V(ArrayIsArray)                        \
   V(ThrowTypeError)                      \
-  V(ThrowCalledOnNullOrUndefined)        \
-  V(ThrowIncompatibleMethodReceiver)     \
-  V(ThrowInvalidHint)                    \
-  V(ThrowNotDateError)                   \
   V(ThrowRangeError)                     \
   V(ToName)                              \
   V(GetOwnPropertyDescriptor)            \

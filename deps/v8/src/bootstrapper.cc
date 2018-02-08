@@ -1508,9 +1508,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
         object_function, "keys", Builtins::kObjectKeys, 1, true);
     native_context()->set_object_keys(*object_keys);
     SimpleInstallFunction(object_function, factory->entries_string(),
-                          Builtins::kObjectEntries, 1, false);
+                          Builtins::kObjectEntries, 1, true);
     SimpleInstallFunction(object_function, factory->values_string(),
-                          Builtins::kObjectValues, 1, false);
+                          Builtins::kObjectValues, 1, true);
 
     SimpleInstallFunction(isolate->initial_object_prototype(),
                           "__defineGetter__", Builtins::kObjectDefineGetter, 2,
@@ -3004,6 +3004,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     InstallSpeciesGetter(typed_array_fun);
     native_context()->set_typed_array_function(*typed_array_fun);
 
+    SimpleInstallFunction(typed_array_fun, "of", Builtins::kTypedArrayOf, 0,
+                          false);
+
     // Setup %TypedArrayPrototype%.
     Handle<JSObject> prototype(
         JSObject::cast(typed_array_fun->instance_prototype()));
@@ -3087,14 +3090,6 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   }
     TYPED_ARRAYS(INSTALL_TYPED_ARRAY)
 #undef INSTALL_TYPED_ARRAY
-
-    // %typed_array_construct_by_array_like
-    Handle<JSFunction> construct_by_array_like = SimpleCreateFunction(
-        isolate,
-        factory->NewStringFromAsciiChecked("typedArrayConstructByArrayLike"),
-        Builtins::kTypedArrayConstructByArrayLike, 4, false);
-    native_context()->set_typed_array_construct_by_array_like(
-        *construct_by_array_like);
   }
 
   {  // -- D a t a V i e w
@@ -3740,17 +3735,8 @@ bool Bootstrapper::CompileNative(Isolate* isolate, Vector<const char> name,
                                  Handle<Object> argv[],
                                  NativesFlag natives_flag) {
   SuppressDebug compiling_natives(isolate->debug());
-  // During genesis, the boilerplate for stack overflow won't work until the
-  // environment has been at least partially initialized. Add a stack check
-  // before entering JS code to catch overflow early.
-  StackLimitCheck check(isolate);
-  if (check.JsHasOverflowed(kStackSpaceRequiredForCompilation * KB)) {
-    isolate->StackOverflow();
-    return false;
-  }
 
   Handle<Context> context(isolate->context());
-
   Handle<String> script_name =
       isolate->factory()->NewStringFromUtf8(name).ToHandleChecked();
   MaybeHandle<SharedFunctionInfo> maybe_function_info =
@@ -5453,15 +5439,6 @@ Genesis::Genesis(
   // on all function exits.
   SaveContext saved_context(isolate);
 
-  // During genesis, the boilerplate for stack overflow won't work until the
-  // environment has been at least partially initialized. Add a stack check
-  // before entering JS code to catch overflow early.
-  StackLimitCheck check(isolate);
-  if (check.HasOverflowed()) {
-    isolate->StackOverflow();
-    return;
-  }
-
   // The deserializer needs to hook up references to the global proxy.
   // Create an uninitialized global proxy now if we don't have one
   // and initialize it later in CreateNewGlobals.
@@ -5589,15 +5566,6 @@ Genesis::Genesis(Isolate* isolate,
   // Before creating the roots we must save the context and restore it
   // on all function exits.
   SaveContext saved_context(isolate);
-
-  // During genesis, the boilerplate for stack overflow won't work until the
-  // environment has been at least partially initialized. Add a stack check
-  // before entering JS code to catch overflow early.
-  StackLimitCheck check(isolate);
-  if (check.HasOverflowed()) {
-    isolate->StackOverflow();
-    return;
-  }
 
   const int proxy_size = JSGlobalProxy::SizeWithEmbedderFields(
       global_proxy_template->InternalFieldCount());
