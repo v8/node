@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_SRC_IC_ACCESSOR_ASSEMBLER_H_
-#define V8_SRC_IC_ACCESSOR_ASSEMBLER_H_
+#ifndef V8_IC_ACCESSOR_ASSEMBLER_H_
+#define V8_IC_ACCESSOR_ASSEMBLER_H_
 
 #include "src/code-stub-assembler.h"
 
@@ -42,6 +42,8 @@ class AccessorAssembler : public CodeStubAssembler {
 
   void GenerateKeyedStoreIC();
   void GenerateKeyedStoreICTrampoline();
+
+  void GenerateStoreInArrayLiteralIC();
 
   void TryProbeStubCache(StubCache* stub_cache, Node* receiver, Node* name,
                          Label* if_handler, Variable* var_handler,
@@ -127,6 +129,7 @@ class AccessorAssembler : public CodeStubAssembler {
   void StoreGlobalIC_PropertyCellCase(Node* property_cell, Node* value,
                                       ExitPoint* exit_point, Label* miss);
   void KeyedStoreIC(const StoreICParameters* p);
+  void StoreInArrayLiteralIC(const StoreICParameters* p);
 
   // IC dispatcher behavior.
 
@@ -194,6 +197,7 @@ class AccessorAssembler : public CodeStubAssembler {
                                  Representation representation, Node* value,
                                  Node* transition, Label* miss);
 
+  void CheckPrototypeValidityCell(Node* maybe_validity_cell, Label* miss);
   void HandleStoreICNativeDataProperty(const StoreICParameters* p, Node* holder,
                                        Node* handler_word);
 
@@ -335,4 +339,4 @@ class ExitPoint {
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_SRC_IC_ACCESSOR_ASSEMBLER_H_
+#endif  // V8_IC_ACCESSOR_ASSEMBLER_H_

@@ -743,11 +743,12 @@ class FeedbackVectorFixer {
 
     for (int i = 0; i < function_instances->length(); i++) {
       Handle<JSFunction> fun(JSFunction::cast(function_instances->get(i)));
-      Handle<Cell> new_cell = isolate->factory()->NewManyClosuresCell(
-          isolate->factory()->undefined_value());
-      fun->set_feedback_vector_cell(*new_cell);
+      Handle<FeedbackCell> feedback_cell =
+          isolate->factory()->NewManyClosuresCell(
+              isolate->factory()->undefined_value());
+      fun->set_feedback_cell(*feedback_cell);
       // Only create feedback vectors if we already have the metadata.
-      if (shared_info->is_compiled()) JSFunction::EnsureLiterals(fun);
+      if (shared_info->is_compiled()) JSFunction::EnsureFeedbackVector(fun);
     }
   }
 
@@ -846,8 +847,9 @@ void LiveEdit::ReplaceFunctionCode(
         new_shared_info->feedback_metadata());
     shared_info->set_feedback_metadata(*new_feedback_metadata);
   } else {
-    shared_info->set_feedback_metadata(
-        FeedbackMetadata::cast(isolate->heap()->empty_fixed_array()));
+    // Use an empty FeedbackMetadata.
+    Handle<FeedbackMetadata> feedback_metadata = FeedbackMetadata::New(isolate);
+    shared_info->set_feedback_metadata(*feedback_metadata);
   }
 
   int start_position = compile_info_wrapper.GetStartPosition();
@@ -882,7 +884,7 @@ void LiveEdit::FixupScript(Handle<Script> script, int max_function_literal_id) {
     // as we severed the link from the Script to the SharedFunctionInfo above.
     Handle<SharedFunctionInfo> info(shared, isolate);
     info->set_script(isolate->heap()->undefined_value());
-    Handle<Object> new_noscript_list = WeakFixedArray::Add(
+    Handle<Object> new_noscript_list = FixedArrayOfWeakCells::Add(
         isolate->factory()->noscript_shared_function_infos(), info);
     isolate->heap()->SetRootNoScriptSharedFunctionInfos(*new_noscript_list);
 

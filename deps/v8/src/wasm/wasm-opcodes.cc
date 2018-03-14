@@ -60,6 +60,12 @@ namespace wasm {
   CASE_I32_OP(name, str "32")             \
   CASE_UNSIGNED_OP(I32, name##8, str "8") \
   CASE_UNSIGNED_OP(I32, name##16, str "16")
+#define CASE_UNSIGNED_ALL_OP(name, str)     \
+  CASE_U32_OP(name, str)                    \
+  CASE_I64_OP(name, str "64")               \
+  CASE_UNSIGNED_OP(I64, name##8, str "8")   \
+  CASE_UNSIGNED_OP(I64, name##16, str "16") \
+  CASE_UNSIGNED_OP(I64, name##32, str "32")
 
 const char* WasmOpcodes::OpcodeName(WasmOpcode opcode) {
   switch (opcode) {
@@ -101,9 +107,11 @@ const char* WasmOpcodes::OpcodeName(WasmOpcode opcode) {
     CASE_I32_OP(ConvertI64, "wrap/i64")
     CASE_CONVERT_OP(Convert, INT, F32, "f32", "trunc")
     CASE_CONVERT_OP(Convert, INT, F64, "f64", "trunc")
-    // TODO(kschimpf): Add I64 versions of saturating conversions.
+    // TODO(kschimpf): Simplify after filling in other saturating operations.
     CASE_CONVERT_SAT_OP(Convert, I32, F32, "f32", "trunc")
     CASE_CONVERT_SAT_OP(Convert, I32, F64, "f64", "trunc")
+    CASE_CONVERT_SAT_OP(Convert, I64, F32, "f32", "trunc")
+    CASE_CONVERT_SAT_OP(Convert, I64, F64, "f64", "trunc")
 
     CASE_CONVERT_OP(Convert, I64, I32, "i32", "extend")
     CASE_CONVERT_OP(Convert, F32, I32, "i32", "convert")
@@ -116,6 +124,9 @@ const char* WasmOpcodes::OpcodeName(WasmOpcode opcode) {
     CASE_I64_OP(ReinterpretF64, "reinterpret/f64")
     CASE_F32_OP(ReinterpretI32, "reinterpret/i32")
     CASE_F64_OP(ReinterpretI64, "reinterpret/i64")
+    CASE_INT_OP(SExtendI8, "sign_extend8")
+    CASE_INT_OP(SExtendI16, "sign_extend16")
+    CASE_I64_OP(SExtendI32, "sign_extend32")
     CASE_OP(Unreachable, "unreachable")
     CASE_OP(Nop, "nop")
     CASE_OP(Block, "block")
@@ -242,15 +253,15 @@ const char* WasmOpcodes::OpcodeName(WasmOpcode opcode) {
     CASE_S1x16_OP(AllTrue, "all_true")
 
     // Atomic operations.
-    CASE_U32_OP(AtomicLoad, "atomic_load")
-    CASE_U32_OP(AtomicStore, "atomic_store")
-    CASE_U32_OP(AtomicAdd, "atomic_add")
-    CASE_U32_OP(AtomicSub, "atomic_sub")
-    CASE_U32_OP(AtomicAnd, "atomic_and")
-    CASE_U32_OP(AtomicOr, "atomic_or")
-    CASE_U32_OP(AtomicXor, "atomic_xor")
-    CASE_U32_OP(AtomicExchange, "atomic_xchng")
-    CASE_U32_OP(AtomicCompareExchange, "atomic_cmpxchng")
+    CASE_UNSIGNED_ALL_OP(AtomicLoad, "atomic_load")
+    CASE_UNSIGNED_ALL_OP(AtomicStore, "atomic_store")
+    CASE_UNSIGNED_ALL_OP(AtomicAdd, "atomic_add")
+    CASE_UNSIGNED_ALL_OP(AtomicSub, "atomic_sub")
+    CASE_UNSIGNED_ALL_OP(AtomicAnd, "atomic_and")
+    CASE_UNSIGNED_ALL_OP(AtomicOr, "atomic_or")
+    CASE_UNSIGNED_ALL_OP(AtomicXor, "atomic_xor")
+    CASE_UNSIGNED_ALL_OP(AtomicExchange, "atomic_xchng")
+    CASE_UNSIGNED_ALL_OP(AtomicCompareExchange, "atomic_cmpxchng")
 
     default : return "unknown";
     // clang-format on
@@ -280,6 +291,7 @@ const char* WasmOpcodes::OpcodeName(WasmOpcode opcode) {
 #undef CASE_SIMDI_OP
 #undef CASE_SIGN_OP
 #undef CASE_UNSIGNED_OP
+#undef CASE_UNSIGNED_ALL_OP
 #undef CASE_ALL_SIGN_OP
 #undef CASE_CONVERT_OP
 #undef CASE_CONVERT_SAT_OP
@@ -314,6 +326,19 @@ bool WasmOpcodes::IsUnconditionalJump(WasmOpcode opcode) {
     case kExprBr:
     case kExprBrTable:
     case kExprReturn:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool WasmOpcodes::IsSignExtensionOpcode(WasmOpcode opcode) {
+  switch (opcode) {
+    case kExprI32SExtendI8:
+    case kExprI32SExtendI16:
+    case kExprI64SExtendI8:
+    case kExprI64SExtendI16:
+    case kExprI64SExtendI32:
       return true;
     default:
       return false;

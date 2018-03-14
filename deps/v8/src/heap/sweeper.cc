@@ -157,8 +157,7 @@ void Sweeper::StartSweeperTasks() {
                                           &num_sweeping_tasks_, space);
       DCHECK_LT(num_tasks_, kMaxSweeperTasks);
       task_ids_[num_tasks_++] = task->id();
-      V8::GetCurrentPlatform()->CallOnBackgroundThread(
-          task, v8::Platform::kShortRunningTask);
+      V8::GetCurrentPlatform()->CallOnWorkerThread(task);
     });
     ScheduleIncrementalSweepingTask();
   }
@@ -279,8 +278,8 @@ int Sweeper::RawSweep(Page* p, FreeListRebuildingMode free_list_mode,
         memset(free_start, 0xCC, size);
       }
       if (free_list_mode == REBUILD_FREE_LIST) {
-        freed_bytes = reinterpret_cast<PagedSpace*>(space)->UnaccountedFree(
-            free_start, size);
+        freed_bytes = reinterpret_cast<PagedSpace*>(space)->Free(
+            free_start, size, SpaceAccountingMode::kSpaceUnaccounted);
         max_freed_bytes = Max(freed_bytes, max_freed_bytes);
       } else {
         p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
@@ -318,8 +317,8 @@ int Sweeper::RawSweep(Page* p, FreeListRebuildingMode free_list_mode,
       memset(free_start, 0xCC, size);
     }
     if (free_list_mode == REBUILD_FREE_LIST) {
-      freed_bytes = reinterpret_cast<PagedSpace*>(space)->UnaccountedFree(
-          free_start, size);
+      freed_bytes = reinterpret_cast<PagedSpace*>(space)->Free(
+          free_start, size, SpaceAccountingMode::kSpaceUnaccounted);
       max_freed_bytes = Max(freed_bytes, max_freed_bytes);
     } else {
       p->heap()->CreateFillerObjectAt(free_start, static_cast<int>(size),
@@ -554,8 +553,7 @@ void Sweeper::StartIterabilityTasks() {
                                                 &iterability_task_semaphore_);
     iterability_task_id_ = task->id();
     iterability_task_started_ = true;
-    V8::GetCurrentPlatform()->CallOnBackgroundThread(
-        task, v8::Platform::kShortRunningTask);
+    V8::GetCurrentPlatform()->CallOnWorkerThread(task);
   }
 }
 

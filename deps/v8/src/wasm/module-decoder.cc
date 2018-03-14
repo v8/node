@@ -91,6 +91,12 @@ const char* SectionName(SectionCode code) {
 
 namespace {
 
+bool validate_utf8(Decoder* decoder, WireBytesRef string) {
+  return unibrow::Utf8::ValidateEncoding(
+      decoder->start() + decoder->GetBufferRelativeOffset(string.offset()),
+      string.length());
+}
+
 ValueType TypeOf(const WasmModule* module, const WasmInitExpr& expr) {
   switch (expr.kind) {
     case WasmInitExpr::kNone:
@@ -270,7 +276,7 @@ class ModuleDecoderImpl : public Decoder {
     pc_ = end_;  // On error, terminate section decoding loop.
   }
 
-  void DumpModule(const ModuleResult& result) {
+  void DumpModule(const Vector<const byte> module_bytes) {
     std::string path;
     if (FLAG_dump_wasm_module_path) {
       path = FLAG_dump_wasm_module_path;
@@ -280,12 +286,13 @@ class ModuleDecoderImpl : public Decoder {
       }
     }
     // File are named `HASH.{ok,failed}.wasm`.
-    size_t hash = base::hash_range(start_, end_);
+    size_t hash = base::hash_range(module_bytes.start(), module_bytes.end());
     EmbeddedVector<char, 32> buf;
-    SNPrintF(buf, "%016zx.%s.wasm", hash, result.ok() ? "ok" : "failed");
+    SNPrintF(buf, "%016zx.%s.wasm", hash, ok() ? "ok" : "failed");
     std::string name(buf.start());
     if (FILE* wasm_file = base::OS::FOpen((path + name).c_str(), "wb")) {
-      if (fwrite(start_, end_ - start_, 1, wasm_file) != 1) {
+      if (fwrite(module_bytes.start(), module_bytes.length(), 1, wasm_file) !=
+          1) {
         OFStream os(stderr);
         os << "Error while dumping wasm file" << std::endl;
       }
@@ -467,7 +474,6 @@ class ModuleDecoderImpl : public Decoder {
           module_->functions.push_back({nullptr,        // sig
                                         import->index,  // func_index
                                         0,              // sig_index
-                                        {0, 0},         // name_offset
                                         {0, 0},         // code
                                         true,           // imported
                                         false});        // exported
@@ -534,7 +540,6 @@ class ModuleDecoderImpl : public Decoder {
       module_->functions.push_back({nullptr,     // sig
                                     func_index,  // func_index
                                     0,           // sig_index
-                                    {0, 0},      // name
                                     {0, 0},      // code
                                     false,       // imported
                                     false});     // exported
@@ -793,35 +798,13 @@ class ModuleDecoderImpl : public Decoder {
       uint32_t name_payload_len = inner.consume_u32v("name payload length");
       if (!inner.checkAvailable(name_payload_len)) break;
 
-      // Decode function names, ignore the rest.
-      // Local names will be decoded when needed.
-      switch (name_type) {
-        case NameSectionKindCode::kModule: {
-          WireBytesRef name = wasm::consume_string(inner, false, "module name");
-          if (inner.ok() && validate_utf8(&inner, name)) module_->name = name;
-          break;
-        }
-        case NameSectionKindCode::kFunction: {
-          uint32_t functions_count = inner.consume_u32v("functions count");
-
-          for (; inner.ok() && functions_count > 0; --functions_count) {
-            uint32_t function_index = inner.consume_u32v("function index");
-            WireBytesRef name =
-                wasm::consume_string(inner, false, "function name");
-
-            // Be lenient with errors in the name section: Ignore illegal
-            // or out-of-order indexes and non-UTF8 names. You can even assign
-            // to the same function multiple times (last valid one wins).
-            if (inner.ok() && function_index < module_->functions.size() &&
-                validate_utf8(&inner, name)) {
-              module_->functions[function_index].name = name;
-            }
-          }
-          break;
-        }
-        default:
-          inner.consume_bytes(name_payload_len, "name subsection payload");
-          break;
+      // Decode module name, ignore the rest.
+      // Function and local names will be decoded when needed.
+      if (name_type == NameSectionKindCode::kModule) {
+        WireBytesRef name = wasm::consume_string(inner, false, "module name");
+        if (inner.ok() && validate_utf8(&inner, name)) module_->name = name;
+      } else {
+        inner.consume_bytes(name_payload_len, "name subsection payload");
       }
     }
     // Skip the whole names section in the outer decoder.
@@ -848,7 +831,6 @@ class ModuleDecoderImpl : public Decoder {
       // Copy error code and location.
       result.MoveErrorFrom(intermediate_result_);
     }
-    if (FLAG_dump_wasm_module) DumpModule(result);
     return result;
   }
 
@@ -856,6 +838,7 @@ class ModuleDecoderImpl : public Decoder {
   ModuleResult DecodeModule(Isolate* isolate, bool verify_functions = true) {
     StartDecoding(isolate);
     uint32_t offset = 0;
+    Vector<const byte> orig_bytes(start(), end() - start());
     DecodeModuleHeader(Vector<const uint8_t>(start(), end() - start()), offset);
     if (failed()) {
       return FinishDecoding(verify_functions);
@@ -878,6 +861,8 @@ class ModuleDecoderImpl : public Decoder {
       section_iter.advance(true);
     }
 
+    if (FLAG_dump_wasm_module) DumpModule(orig_bytes);
+
     if (decoder.failed()) {
       return decoder.toResult<std::unique_ptr<WasmModule>>(nullptr);
     }
@@ -892,7 +877,6 @@ class ModuleDecoderImpl : public Decoder {
                                       std::unique_ptr<WasmFunction> function) {
     pc_ = start_;
     function->sig = consume_sig(zone);
-    function->name = {0, 0};
     function->code = {off(pc_), static_cast<uint32_t>(end_ - pc_)};
 
     if (ok())
@@ -1036,7 +1020,8 @@ class ModuleDecoderImpl : public Decoder {
   void VerifyFunctionBody(AccountingAllocator* allocator, uint32_t func_num,
                           const ModuleWireBytes& wire_bytes,
                           const WasmModule* module, WasmFunction* function) {
-    WasmFunctionName func_name(function, wire_bytes.GetNameOrNull(function));
+    WasmFunctionName func_name(function,
+                               wire_bytes.GetNameOrNull(function, module));
     if (FLAG_trace_wasm_decoder || FLAG_trace_wasm_decode_time) {
       OFStream os(stdout);
       os << "Verifying wasm function " << func_name << std::endl;
@@ -1062,12 +1047,6 @@ class ModuleDecoderImpl : public Decoder {
 
   WireBytesRef consume_string(bool validate_utf8, const char* name) {
     return wasm::consume_string(*this, validate_utf8, name);
-  }
-
-  bool validate_utf8(Decoder* decoder, WireBytesRef string) {
-    return unibrow::Utf8::ValidateEncoding(
-        decoder->start() + decoder->GetBufferRelativeOffset(string.offset()),
-        string.length());
   }
 
   uint32_t consume_sig_index(WasmModule* module, FunctionSig** sig) {
@@ -1571,13 +1550,10 @@ std::vector<CustomSectionOffset> DecodeCustomSections(const byte* start,
   return result;
 }
 
-void DecodeLocalNames(const byte* module_start, const byte* module_end,
-                      LocalNames* result) {
-  DCHECK_NOT_NULL(result);
-  DCHECK(result->names.empty());
+namespace {
 
+bool FindSection(Decoder& decoder, SectionCode section_code) {
   static constexpr int kModuleHeaderSize = 8;
-  Decoder decoder(module_start, module_end);
   decoder.consume_bytes(kModuleHeaderSize, "module header");
 
   WasmSectionIterator section_iter(decoder);
@@ -1586,10 +1562,57 @@ void DecodeLocalNames(const byte* module_start, const byte* module_end,
          section_iter.section_code() != kNameSectionCode) {
     section_iter.advance(true);
   }
-  if (!section_iter.more()) return;
+  if (!section_iter.more()) return false;
 
   // Reset the decoder to not read beyond the name section end.
   decoder.Reset(section_iter.payload(), decoder.pc_offset());
+  return true;
+}
+
+}  // namespace
+
+void DecodeFunctionNames(const byte* module_start, const byte* module_end,
+                         std::unordered_map<uint32_t, WireBytesRef>* names) {
+  DCHECK_NOT_NULL(names);
+  DCHECK(names->empty());
+
+  Decoder decoder(module_start, module_end);
+  if (!FindSection(decoder, kNameSectionCode)) return;
+
+  while (decoder.ok() && decoder.more()) {
+    uint8_t name_type = decoder.consume_u8("name type");
+    if (name_type & 0x80) break;  // no varuint7
+
+    uint32_t name_payload_len = decoder.consume_u32v("name payload length");
+    if (!decoder.checkAvailable(name_payload_len)) break;
+
+    if (name_type != NameSectionKindCode::kFunction) {
+      decoder.consume_bytes(name_payload_len, "name subsection payload");
+      continue;
+    }
+    uint32_t functions_count = decoder.consume_u32v("functions count");
+
+    for (; decoder.ok() && functions_count > 0; --functions_count) {
+      uint32_t function_index = decoder.consume_u32v("function index");
+      WireBytesRef name = wasm::consume_string(decoder, false, "function name");
+
+      // Be lenient with errors in the name section: Ignore non-UTF8 names. You
+      // can even assign to the same function multiple times (last valid one
+      // wins).
+      if (decoder.ok() && validate_utf8(&decoder, name)) {
+        names->insert(std::make_pair(function_index, name));
+      }
+    }
+  }
+}
+
+void DecodeLocalNames(const byte* module_start, const byte* module_end,
+                      LocalNames* result) {
+  DCHECK_NOT_NULL(result);
+  DCHECK(result->names.empty());
+
+  Decoder decoder(module_start, module_end);
+  if (!FindSection(decoder, kNameSectionCode)) return;
 
   while (decoder.ok() && decoder.more()) {
     uint8_t name_type = decoder.consume_u8("name type");

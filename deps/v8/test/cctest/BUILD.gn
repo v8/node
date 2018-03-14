@@ -113,6 +113,7 @@ v8_source_set("cctest_sources") {
     "heap/test-mark-compact.cc",
     "heap/test-page-promotion.cc",
     "heap/test-spaces.cc",
+    "heap/test-weak-references.cc",
     "interpreter/bytecode-expectations-printer.cc",
     "interpreter/bytecode-expectations-printer.h",
     "interpreter/interpreter-tester.cc",
@@ -180,6 +181,7 @@ v8_source_set("cctest_sources") {
     "test-identity-map.cc",
     "test-inobject-slack-tracking.cc",
     "test-intl.cc",
+    "test-isolate-independent-builtins.cc",
     "test-liveedit.cc",
     "test-lockers.cc",
     "test-log.cc",
@@ -227,6 +229,7 @@ v8_source_set("cctest_sources") {
     "wasm/test-run-wasm-js.cc",
     "wasm/test-run-wasm-module.cc",
     "wasm/test-run-wasm-relocation.cc",
+    "wasm/test-run-wasm-sign-extension.cc",
     "wasm/test-run-wasm-simd.cc",
     "wasm/test-run-wasm.cc",
     "wasm/test-streaming-compilation.cc",
@@ -235,6 +238,7 @@ v8_source_set("cctest_sources") {
     "wasm/test-wasm-interpreter-entry.cc",
     "wasm/test-wasm-stack.cc",
     "wasm/test-wasm-trap-position.cc",
+    "wasm/wasm-atomics-utils.h",
     "wasm/wasm-run-utils.cc",
     "wasm/wasm-run-utils.h",
   ]
@@ -335,6 +339,7 @@ v8_source_set("cctest_sources") {
       "test-log-stack-tracer.cc",
       "test-macro-assembler-x64.cc",
       "test-run-wasm-relocation-x64.cc",
+      "wasm/test-run-wasm-atomics64.cc",
     ]
   } else if (v8_current_cpu == "ppc" || v8_current_cpu == "ppc64") {
     sources += [  ### gcmole(arch:ppc) ###

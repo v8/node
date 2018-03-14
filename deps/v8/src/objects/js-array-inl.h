@@ -204,15 +204,6 @@ void JSTypedArray::set_length(Object* value, WriteBarrierMode mode) {
   CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kLengthOffset, value, mode);
 }
 
-bool JSTypedArray::HasJSTypedArrayPrototype(Isolate* isolate) {
-  DisallowHeapAllocation no_gc;
-  Object* proto = map()->prototype();
-  if (!proto->IsJSObject()) return false;
-
-  JSObject* proto_obj = JSObject::cast(proto);
-  return proto_obj->map()->prototype() == *isolate->typed_array_prototype();
-}
-
 // static
 MaybeHandle<JSTypedArray> JSTypedArray::Validate(Isolate* isolate,
                                                  Handle<Object> receiver,
@@ -236,33 +227,21 @@ MaybeHandle<JSTypedArray> JSTypedArray::Validate(Isolate* isolate,
   return array;
 }
 
-// static
-Handle<JSFunction> JSTypedArray::DefaultConstructor(
-    Isolate* isolate, Handle<JSTypedArray> exemplar) {
-  Handle<JSFunction> default_ctor = isolate->uint8_array_fun();
-  switch (exemplar->type()) {
-#define TYPED_ARRAY_CTOR(Type, type, TYPE, ctype, size) \
-  case kExternal##Type##Array: {                        \
-    default_ctor = isolate->type##_array_fun();         \
-    break;                                              \
-  }
-
-    TYPED_ARRAYS(TYPED_ARRAY_CTOR)
-#undef TYPED_ARRAY_CTOR
-    default:
-      UNREACHABLE();
-  }
-
-  return default_ctor;
-}
-
 #ifdef VERIFY_HEAP
 ACCESSORS(JSTypedArray, raw_length, Object, kLengthOffset)
 #endif
 
-ACCESSORS(JSArrayIterator, object, Object, kIteratedObjectOffset)
-ACCESSORS(JSArrayIterator, index, Object, kNextIndexOffset)
-ACCESSORS(JSArrayIterator, object_map, Object, kIteratedObjectMapOffset)
+ACCESSORS(JSArrayIterator, iterated_object, Object, kIteratedObjectOffset)
+ACCESSORS(JSArrayIterator, next_index, Object, kNextIndexOffset)
+
+IterationKind JSArrayIterator::kind() const {
+  return static_cast<IterationKind>(
+      Smi::cast(READ_FIELD(this, kKindOffset))->value());
+}
+
+void JSArrayIterator::set_kind(IterationKind kind) {
+  WRITE_FIELD(this, kKindOffset, Smi::FromInt(static_cast<int>(kind)));
+}
 
 }  // namespace internal
 }  // namespace v8

@@ -503,6 +503,7 @@ bool Map::IsJSObjectMap() const {
   STATIC_ASSERT(LAST_JS_OBJECT_TYPE == LAST_TYPE);
   return instance_type() >= FIRST_JS_OBJECT_TYPE;
 }
+bool Map::IsJSPromiseMap() const { return instance_type() == JS_PROMISE_TYPE; }
 bool Map::IsJSArrayMap() const { return instance_type() == JS_ARRAY_TYPE; }
 bool Map::IsJSFunctionMap() const {
   return instance_type() == JS_FUNCTION_TYPE;
@@ -659,6 +660,7 @@ void Map::SetBackPointer(Object* value, WriteBarrierMode mode) {
 
 ACCESSORS(Map, dependent_code, DependentCode, kDependentCodeOffset)
 ACCESSORS(Map, weak_cell_cache, Object, kWeakCellCacheOffset)
+ACCESSORS(Map, prototype_validity_cell, Object, kPrototypeValidityCellOffset)
 ACCESSORS(Map, constructor_or_backpointer, Object,
           kConstructorOrBackPointerOffset)
 

@@ -187,17 +187,17 @@ TNode<Uint32T> ObjectEntriesValuesBuiltinsAssembler::HasHiddenPrototype(
 void ObjectEntriesValuesBuiltinsAssembler::GetOwnValuesOrEntries(
     TNode<Context> context, TNode<Object> maybe_object,
     CollectType collect_type) {
-  TNode<JSObject> object = TNode<JSObject>::UncheckedCast(
-      CallBuiltin(Builtins::kToObject, context, maybe_object));
+  TNode<JSReceiver> receiver = ToObject(context, maybe_object);
 
   Label if_call_runtime_with_fast_path(this, Label::kDeferred),
       if_call_runtime(this, Label::kDeferred),
       if_no_properties(this, Label::kDeferred);
 
-  TNode<Map> map = LoadMap(object);
+  TNode<Map> map = LoadMap(receiver);
   GotoIfNot(IsJSObjectMap(map), &if_call_runtime);
   GotoIfMapHasSlowProperties(map, &if_call_runtime);
 
+  TNode<JSObject> object = CAST(receiver);
   TNode<FixedArrayBase> elements = LoadElements(object);
   // If the object has elements, we treat it as slow case.
   // So, we go to runtime call.
@@ -232,10 +232,12 @@ void ObjectEntriesValuesBuiltinsAssembler::GetOwnValuesOrEntries(
   {
     // In slow case, we simply call runtime.
     if (collect_type == CollectType::kEntries) {
-      Return(CallRuntime(Runtime::kObjectEntriesSkipFastPath, context, object));
+      Return(
+          CallRuntime(Runtime::kObjectEntriesSkipFastPath, context, receiver));
     } else {
       DCHECK(collect_type == CollectType::kValues);
-      Return(CallRuntime(Runtime::kObjectValuesSkipFastPath, context, object));
+      Return(
+          CallRuntime(Runtime::kObjectValuesSkipFastPath, context, receiver));
     }
   }
 }
@@ -293,13 +295,13 @@ TNode<JSArray> ObjectEntriesValuesBuiltinsAssembler::FastGetOwnValuesOrEntries(
                             Heap::kTheHoleValueRootIndex);
 
     TVARIABLE(IntPtrT, var_result_index, IntPtrConstant(0));
-    TVARIABLE(IntPtrT, var_descriptor_index, IntPtrConstant(0));
-    Variable* vars[] = {&var_descriptor_index, &var_result_index};
+    TVARIABLE(IntPtrT, var_descriptor_number, IntPtrConstant(0));
+    Variable* vars[] = {&var_descriptor_number, &var_result_index};
     // Let desc be ? O.[[GetOwnProperty]](key).
     TNode<DescriptorArray> descriptors = LoadMapDescriptors(map);
     Label loop(this, 2, vars), after_loop(this), loop_condition(this);
-    Branch(IntPtrEqual(var_descriptor_index, object_enum_length), &after_loop,
-           &loop);
+    Branch(IntPtrEqual(var_descriptor_number.value(), object_enum_length),
+           &after_loop, &loop);
 
     // We dont use BuildFastLoop.
     // Instead, we use hand-written loop
@@ -310,7 +312,7 @@ TNode<JSArray> ObjectEntriesValuesBuiltinsAssembler::FastGetOwnValuesOrEntries(
       // so, map will not be changed.
       CSA_ASSERT(this, WordEqual(map, LoadMap(object)));
       TNode<Uint32T> descriptor_index = TNode<Uint32T>::UncheckedCast(
-          TruncateWordToWord32(var_descriptor_index));
+          TruncateIntPtrToInt32(var_descriptor_number.value()));
       Node* next_key = DescriptorArrayGetKey(descriptors, descriptor_index);
 
       // Skip Symbols.
@@ -329,7 +331,8 @@ TNode<JSArray> ObjectEntriesValuesBuiltinsAssembler::FastGetOwnValuesOrEntries(
 
       VARIABLE(var_property_value, MachineRepresentation::kTagged,
                UndefinedConstant());
-      Node* descriptor_name_index = DescriptorNumberToIndex(descriptor_index);
+      Node* descriptor_name_index = DescriptorArrayToKeyIndex(
+          TruncateIntPtrToInt32(var_descriptor_number.value()));
 
       // Let value be ? Get(O, key).
       LoadPropertyFromFastObject(object, map, descriptors,
@@ -351,20 +354,21 @@ TNode<JSArray> ObjectEntriesValuesBuiltinsAssembler::FastGetOwnValuesOrEntries(
         value = array;
       }
 
-      StoreFixedArrayElement(values_or_entries, var_result_index, value);
+      StoreFixedArrayElement(values_or_entries, var_result_index.value(),
+                             value);
       Increment(&var_result_index, 1);
       Goto(&loop_condition);
 
       BIND(&loop_condition);
       {
-        Increment(&var_descriptor_index, 1);
-        Branch(IntPtrEqual(var_descriptor_index, object_enum_length),
+        Increment(&var_descriptor_number, 1);
+        Branch(IntPtrEqual(var_descriptor_number.value(), object_enum_length),
                &after_loop, &loop);
       }
     }
     BIND(&after_loop);
     return FinalizeValuesOrEntriesJSArray(context, values_or_entries,
-                                          var_result_index, array_map,
+                                          var_result_index.value(), array_map,
                                           if_no_properties);
   }
 }
@@ -390,7 +394,7 @@ TF_BUILTIN(ObjectPrototypeToLocaleString, CodeStubAssembler) {
   GotoIf(IsNullOrUndefined(receiver), &if_null_or_undefined);
 
   TNode<Object> method =
-      CAST(GetProperty(context, receiver, factory()->toString_string()));
+      GetProperty(context, receiver, factory()->toString_string());
   Return(CallJS(CodeFactory::Call(isolate()), context, method, receiver));
 
   BIND(&if_null_or_undefined);
@@ -605,7 +609,7 @@ TF_BUILTIN(ObjectPrototypeIsPrototypeOf, ObjectBuiltinsAssembler) {
     GotoIfNot(IsJSReceiver(value), &if_valueisnotreceiver);
 
     // Simulate the ToObject invocation on {receiver}.
-    CallBuiltin(Builtins::kToObject, context, receiver);
+    ToObject(context, receiver);
     Unreachable();
   }
 
@@ -668,9 +672,7 @@ TF_BUILTIN(ObjectPrototypeToString, ObjectBuiltinsAssembler) {
     Branch(IsString(var_tag.value()), &if_tagisstring, &if_tagisnotstring);
     BIND(&if_tagisnotstring);
     {
-      var_tag.Bind(
-          CallStub(Builtins::CallableFor(isolate(), Builtins::kClassOf),
-                   context, receiver));
+      var_tag.Bind(CallRuntime(Runtime::kClassOf, context, receiver));
       Goto(&if_tagisstring);
     }
     BIND(&if_tagisstring);
@@ -875,9 +877,8 @@ TF_BUILTIN(ObjectPrototypeToString, ObjectBuiltinsAssembler) {
 
     BIND(&return_generic);
     {
-      Node* tag = GetProperty(
-          context, CallBuiltin(Builtins::kToObject, context, receiver),
-          LoadRoot(Heap::kto_string_tag_symbolRootIndex));
+      Node* tag = GetProperty(context, ToObject(context, receiver),
+                              LoadRoot(Heap::kto_string_tag_symbolRootIndex));
       GotoIf(TaggedIsSmi(tag), &return_default);
       GotoIfNot(IsString(tag), &return_default);
       ReturnToStringFormat(context, tag);
@@ -893,7 +894,7 @@ TF_BUILTIN(ObjectPrototypeValueOf, CodeStubAssembler) {
   Node* receiver = Parameter(Descriptor::kReceiver);
   Node* context = Parameter(Descriptor::kContext);
 
-  Return(CallBuiltin(Builtins::kToObject, context, receiver));
+  Return(ToObject(context, receiver));
 }
 
 // ES #sec-object.create
@@ -1061,7 +1062,7 @@ TF_BUILTIN(CreateGeneratorObject, ObjectBuiltinsAssembler) {
 
   // Get the initial map from the function, jumping to the runtime if we don't
   // have one.
-  Label runtime(this);
+  Label done(this), runtime(this);
   GotoIfNot(IsFunctionWithPrototypeSlotMap(LoadMap(closure)), &runtime);
   Node* maybe_map =
       LoadObjectField(closure, JSFunction::kPrototypeOrInitialMapOffset);
@@ -1091,7 +1092,13 @@ TF_BUILTIN(CreateGeneratorObject, ObjectBuiltinsAssembler) {
   Node* executing = SmiConstant(JSGeneratorObject::kGeneratorExecuting);
   StoreObjectFieldNoWriteBarrier(result, JSGeneratorObject::kContinuationOffset,
                                  executing);
-  Return(result);
+  GotoIfNot(HasInstanceType(maybe_map, JS_ASYNC_GENERATOR_OBJECT_TYPE), &done);
+  StoreObjectFieldNoWriteBarrier(
+      result, JSAsyncGeneratorObject::kIsAwaitingOffset, SmiConstant(0));
+  Goto(&done);
+
+  BIND(&done);
+  { Return(result); }
 
   BIND(&runtime);
   {
@@ -1111,7 +1118,7 @@ TF_BUILTIN(ObjectGetOwnPropertyDescriptor, ObjectBuiltinsAssembler) {
   Node* key = args.GetOptionalArgumentValue(1);
 
   // 1. Let obj be ? ToObject(O).
-  object = CallBuiltin(Builtins::kToObject, context, object);
+  object = ToObject(context, object);
 
   // 2. Let key be ? ToPropertyKey(P).
   key = ToName(context, key);

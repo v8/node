@@ -17,7 +17,9 @@
 #include "src/objects/bigint.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
+#include "src/objects/microtask-inl.h"
 #include "src/objects/module.h"
+#include "src/objects/promise-inl.h"
 #include "src/objects/scope-info.h"
 #include "src/unicode-cache.h"
 #include "src/unicode-decoder.h"
@@ -98,9 +100,8 @@ Handle<HeapObject> Factory::NewFillerObject(int size,
 Handle<PrototypeInfo> Factory::NewPrototypeInfo() {
   Handle<PrototypeInfo> result =
       Handle<PrototypeInfo>::cast(NewStruct(PROTOTYPE_INFO_TYPE, TENURED));
-  result->set_prototype_users(WeakFixedArray::Empty());
+  result->set_prototype_users(FixedArrayOfWeakCells::Empty());
   result->set_registry_slot(PrototypeInfo::UNREGISTERED);
-  result->set_validity_cell(Smi::FromInt(Map::kPrototypeChainValid));
   result->set_bit_field(0);
   return result;
 }
@@ -149,13 +150,11 @@ Handle<ConstantElementsPair> Factory::NewConstantElementsPair(
 }
 
 Handle<TemplateObjectDescription> Factory::NewTemplateObjectDescription(
-    int hash, Handle<FixedArray> raw_strings,
-    Handle<FixedArray> cooked_strings) {
+    Handle<FixedArray> raw_strings, Handle<FixedArray> cooked_strings) {
   DCHECK_EQ(raw_strings->length(), cooked_strings->length());
   DCHECK_LT(0, raw_strings->length());
   Handle<TemplateObjectDescription> result =
-      Handle<TemplateObjectDescription>::cast(NewStruct(TUPLE3_TYPE, TENURED));
-  result->set_hash(hash);
+      Handle<TemplateObjectDescription>::cast(NewStruct(TUPLE2_TYPE, TENURED));
   result->set_raw_strings(*raw_strings);
   result->set_cooked_strings(*cooked_strings);
   return result;
@@ -178,16 +177,22 @@ Handle<PropertyArray> Factory::NewPropertyArray(int length,
       PropertyArray);
 }
 
-Handle<FixedArray> Factory::NewFixedArrayWithMap(
-    Heap::RootListIndex map_root_index, int length, PretenureFlag pretenure) {
+template <typename T>
+Handle<T> Factory::NewFixedArrayWithMap(Heap::RootListIndex map_root_index,
+                                        int length, PretenureFlag pretenure) {
+  static_assert(std::is_base_of<FixedArray, T>::value,
+                "T must be a descendant of FixedArray");
   // Zero-length case must be handled outside, where the knowledge about
   // the map is.
   DCHECK_LT(0, length);
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->AllocateFixedArrayWithMap(
                          map_root_index, length, pretenure),
-                     FixedArray);
+                     T);
 }
+
+template Handle<FixedArray> Factory::NewFixedArrayWithMap<FixedArray>(
+    Heap::RootListIndex, int, PretenureFlag);
 
 Handle<FixedArray> Factory::NewFixedArray(int length, PretenureFlag pretenure) {
   DCHECK_LE(0, length);
@@ -196,6 +201,16 @@ Handle<FixedArray> Factory::NewFixedArray(int length, PretenureFlag pretenure) {
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->AllocateFixedArray(length, pretenure),
                      FixedArray);
+}
+
+Handle<WeakFixedArray> Factory::NewWeakFixedArray(int length,
+                                                  PretenureFlag pretenure) {
+  DCHECK_LE(0, length);
+  if (length == 0) return empty_weak_fixed_array();
+
+  CALL_HEAP_FUNCTION(
+      isolate(), isolate()->heap()->AllocateWeakFixedArray(length, pretenure),
+      WeakFixedArray);
 }
 
 MaybeHandle<FixedArray> Factory::TryNewFixedArray(int length,
@@ -222,7 +237,8 @@ Handle<FixedArray> Factory::NewFixedArrayWithHoles(int length,
       FixedArray);
 }
 
-Handle<FixedArray> Factory::NewUninitializedFixedArray(int length) {
+Handle<FixedArray> Factory::NewUninitializedFixedArray(
+    int length, PretenureFlag pretenure) {
   DCHECK_LE(0, length);
   if (length == 0) return empty_fixed_array();
 
@@ -230,7 +246,7 @@ Handle<FixedArray> Factory::NewUninitializedFixedArray(int length) {
   // array. After getting canary/performance coverage, either remove the
   // function or revert to returning uninitilized array.
   CALL_HEAP_FUNCTION(isolate(),
-                     isolate()->heap()->AllocateFixedArray(length, NOT_TENURED),
+                     isolate()->heap()->AllocateFixedArray(length, pretenure),
                      FixedArray);
 }
 
@@ -260,13 +276,22 @@ Handle<BoilerplateDescription> Factory::NewBoilerplateDescription(
     size++;
   }
 
+  if (size == 0) {
+    return isolate()->factory()->empty_boilerplate_description();
+  }
+
+  /* Handle<FixedArray> array = NewFixedArray(size, TENURED); */
+  /* array->set_map_no_write_barrier(*boilerplate_description_map()); */
   Handle<BoilerplateDescription> description =
-      Handle<BoilerplateDescription>::cast(NewFixedArray(size, TENURED));
+      Handle<BoilerplateDescription>::cast(NewFixedArrayWithMap(
+          Heap::kBoilerplateDescriptionMapRootIndex, size, TENURED));
 
   if (has_different_size_backing_store) {
-    DCHECK((boilerplate != (all_properties - index_keys)) || has_seen_proto);
+    DCHECK_IMPLIES((boilerplate == (all_properties - index_keys)),
+                   has_seen_proto);
     description->set_backing_store_size(isolate(), backing_store_size);
   }
+
   return description;
 }
 
@@ -289,6 +314,13 @@ Handle<FixedArrayBase> Factory::NewFixedDoubleArrayWithHoles(
     Handle<FixedDoubleArray>::cast(array)->FillWithHoles(0, size);
   }
   return array;
+}
+
+Handle<FeedbackMetadata> Factory::NewFeedbackMetadata(int slot_count) {
+  DCHECK_LE(0, slot_count);
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateFeedbackMetadata(slot_count),
+                     FeedbackMetadata);
 }
 
 Handle<FrameArray> Factory::NewFrameArray(int number_of_frames,
@@ -391,9 +423,9 @@ MaybeHandle<String> Factory::NewStringFromOneByte(Vector<const uint8_t> string,
 MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
                                                PretenureFlag pretenure) {
   // Check for ASCII first since this is the common case.
-  const char* start = string.start();
+  const char* ascii_data = string.start();
   int length = string.length();
-  int non_ascii_start = String::NonAsciiStart(start, length);
+  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
   if (non_ascii_start >= length) {
     // If the string is ASCII, we do not need to convert the characters
     // since UTF8 is backwards compatible with ASCII.
@@ -401,35 +433,38 @@ MaybeHandle<String> Factory::NewStringFromUtf8(Vector<const char> string,
   }
 
   // Non-ASCII and we need to decode.
+  auto non_ascii = string.SubVector(non_ascii_start, length);
   Access<UnicodeCache::Utf8Decoder>
       decoder(isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(string.start() + non_ascii_start,
-                 length - non_ascii_start);
+  decoder->Reset(non_ascii);
+
   int utf16_length = static_cast<int>(decoder->Utf16Length());
   DCHECK_GT(utf16_length, 0);
+
   // Allocate string.
   Handle<SeqTwoByteString> result;
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate(), result,
       NewRawTwoByteString(non_ascii_start + utf16_length, pretenure),
       String);
+
   // Copy ASCII portion.
   uint16_t* data = result->GetChars();
-  const char* ascii_data = string.start();
   for (int i = 0; i < non_ascii_start; i++) {
     *data++ = *ascii_data++;
   }
+
   // Now write the remainder.
-  decoder->WriteUtf16(data, utf16_length);
+  decoder->WriteUtf16(data, utf16_length, non_ascii);
   return result;
 }
 
 MaybeHandle<String> Factory::NewStringFromUtf8SubString(
     Handle<SeqOneByteString> str, int begin, int length,
     PretenureFlag pretenure) {
-  // Check for ASCII first since this is the common case.
-  const char* start = reinterpret_cast<const char*>(str->GetChars() + begin);
-  int non_ascii_start = String::NonAsciiStart(start, length);
+  const char* ascii_data =
+      reinterpret_cast<const char*>(str->GetChars() + begin);
+  int non_ascii_start = String::NonAsciiStart(ascii_data, length);
   if (non_ascii_start >= length) {
     // If the string is ASCII, we can just make a substring.
     // TODO(v8): the pretenure flag is ignored in this case.
@@ -437,28 +472,35 @@ MaybeHandle<String> Factory::NewStringFromUtf8SubString(
   }
 
   // Non-ASCII and we need to decode.
+  auto non_ascii = Vector<const char>(ascii_data + non_ascii_start,
+                                      length - non_ascii_start);
   Access<UnicodeCache::Utf8Decoder> decoder(
       isolate()->unicode_cache()->utf8_decoder());
-  decoder->Reset(start + non_ascii_start, length - non_ascii_start);
+  decoder->Reset(non_ascii);
+
   int utf16_length = static_cast<int>(decoder->Utf16Length());
   DCHECK_GT(utf16_length, 0);
+
   // Allocate string.
   Handle<SeqTwoByteString> result;
   ASSIGN_RETURN_ON_EXCEPTION(
       isolate(), result,
       NewRawTwoByteString(non_ascii_start + utf16_length, pretenure), String);
 
-  // Reset the decoder, because the original {str} may have moved.
-  const char* ascii_data =
-      reinterpret_cast<const char*>(str->GetChars() + begin);
-  decoder->Reset(ascii_data + non_ascii_start, length - non_ascii_start);
+  // Update pointer references, since the original string may have moved after
+  // allocation.
+  ascii_data = reinterpret_cast<const char*>(str->GetChars() + begin);
+  non_ascii = Vector<const char>(ascii_data + non_ascii_start,
+                                 length - non_ascii_start);
+
   // Copy ASCII portion.
   uint16_t* data = result->GetChars();
   for (int i = 0; i < non_ascii_start; i++) {
     *data++ = *ascii_data++;
   }
+
   // Now write the remainder.
-  decoder->WriteUtf16(data, utf16_length);
+  decoder->WriteUtf16(data, utf16_length, non_ascii);
   return result;
 }
 
@@ -985,11 +1027,15 @@ Handle<Symbol> Factory::NewPrivateSymbol() {
   return symbol;
 }
 
+Handle<Symbol> Factory::NewPrivateFieldSymbol() {
+  Handle<Symbol> symbol = NewSymbol();
+  symbol->set_is_private_field();
+  return symbol;
+}
+
 Handle<Context> Factory::NewNativeContext() {
-  Handle<FixedArray> array =
-      NewFixedArray(Context::NATIVE_CONTEXT_SLOTS, TENURED);
-  array->set_map_no_write_barrier(*native_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kNativeContextMapRootIndex, Context::NATIVE_CONTEXT_SLOTS, TENURED);
   context->set_native_context(*context);
   context->set_errors_thrown(Smi::kZero);
   context->set_math_random_index(Smi::kZero);
@@ -1004,10 +1050,8 @@ Handle<Context> Factory::NewNativeContext() {
 Handle<Context> Factory::NewScriptContext(Handle<JSFunction> function,
                                           Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), SCRIPT_SCOPE);
-  Handle<FixedArray> array =
-      NewFixedArray(scope_info->ContextLength(), TENURED);
-  array->set_map_no_write_barrier(*script_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kScriptContextMapRootIndex, scope_info->ContextLength(), TENURED);
   context->set_closure(*function);
   context->set_previous(function->context());
   context->set_extension(*scope_info);
@@ -1018,10 +1062,10 @@ Handle<Context> Factory::NewScriptContext(Handle<JSFunction> function,
 
 
 Handle<ScriptContextTable> Factory::NewScriptContextTable() {
-  Handle<FixedArray> array = NewFixedArray(1);
-  array->set_map_no_write_barrier(*script_context_table_map());
   Handle<ScriptContextTable> context_table =
-      Handle<ScriptContextTable>::cast(array);
+      NewFixedArrayWithMap<ScriptContextTable>(
+          Heap::kScriptContextTableMapRootIndex,
+          ScriptContextTable::kMinLength);
   context_table->set_used(0);
   return context_table;
 }
@@ -1030,10 +1074,8 @@ Handle<Context> Factory::NewModuleContext(Handle<Module> module,
                                           Handle<JSFunction> function,
                                           Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), MODULE_SCOPE);
-  Handle<FixedArray> array =
-      NewFixedArray(scope_info->ContextLength(), TENURED);
-  array->set_map_no_write_barrier(*module_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kModuleContextMapRootIndex, scope_info->ContextLength(), TENURED);
   context->set_closure(*function);
   context->set_previous(function->context());
   context->set_extension(*module);
@@ -1047,20 +1089,18 @@ Handle<Context> Factory::NewFunctionContext(int length,
                                             ScopeType scope_type) {
   DCHECK(function->shared()->scope_info()->scope_type() == scope_type);
   DCHECK(length >= Context::MIN_CONTEXT_SLOTS);
-  Handle<FixedArray> array = NewFixedArray(length);
-  Handle<Map> map;
+  Heap::RootListIndex mapRootIndex;
   switch (scope_type) {
     case EVAL_SCOPE:
-      map = eval_context_map();
+      mapRootIndex = Heap::kEvalContextMapRootIndex;
       break;
     case FUNCTION_SCOPE:
-      map = function_context_map();
+      mapRootIndex = Heap::kFunctionContextMapRootIndex;
       break;
     default:
       UNREACHABLE();
   }
-  array->set_map_no_write_barrier(*map);
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(mapRootIndex, length);
   context->set_closure(*function);
   context->set_previous(function->context());
   context->set_extension(*the_hole_value());
@@ -1075,9 +1115,8 @@ Handle<Context> Factory::NewCatchContext(Handle<JSFunction> function,
                                          Handle<Object> thrown_object) {
   STATIC_ASSERT(Context::MIN_CONTEXT_SLOTS == Context::THROWN_OBJECT_INDEX);
   Handle<ContextExtension> extension = NewContextExtension(scope_info, name);
-  Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS + 1);
-  array->set_map_no_write_barrier(*catch_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kCatchContextMapRootIndex, Context::MIN_CONTEXT_SLOTS + 1);
   context->set_closure(*function);
   context->set_previous(*previous);
   context->set_extension(*extension);
@@ -1096,9 +1135,8 @@ Handle<Context> Factory::NewDebugEvaluateContext(Handle<Context> previous,
   Handle<ContextExtension> context_extension = NewContextExtension(
       scope_info, extension.is_null() ? Handle<Object>::cast(undefined_value())
                                       : Handle<Object>::cast(extension));
-  Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS + 2);
-  array->set_map_no_write_barrier(*debug_evaluate_context_map());
-  Handle<Context> c = Handle<Context>::cast(array);
+  Handle<Context> c = NewFixedArrayWithMap<Context>(
+      Heap::kDebugEvaluateContextMapRootIndex, Context::MIN_CONTEXT_SLOTS + 2);
   c->set_closure(wrapped.is_null() ? previous->closure() : wrapped->closure());
   c->set_previous(*previous);
   c->set_native_context(previous->native_context());
@@ -1114,9 +1152,8 @@ Handle<Context> Factory::NewWithContext(Handle<JSFunction> function,
                                         Handle<JSReceiver> extension) {
   Handle<ContextExtension> context_extension =
       NewContextExtension(scope_info, extension);
-  Handle<FixedArray> array = NewFixedArray(Context::MIN_CONTEXT_SLOTS);
-  array->set_map_no_write_barrier(*with_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kWithContextMapRootIndex, Context::MIN_CONTEXT_SLOTS);
   context->set_closure(*function);
   context->set_previous(*previous);
   context->set_extension(*context_extension);
@@ -1129,9 +1166,8 @@ Handle<Context> Factory::NewBlockContext(Handle<JSFunction> function,
                                          Handle<Context> previous,
                                          Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), BLOCK_SCOPE);
-  Handle<FixedArray> array = NewFixedArray(scope_info->ContextLength());
-  array->set_map_no_write_barrier(*block_context_map());
-  Handle<Context> context = Handle<Context>::cast(array);
+  Handle<Context> context = NewFixedArrayWithMap<Context>(
+      Heap::kBlockContextMapRootIndex, scope_info->ContextLength());
   context->set_closure(*function);
   context->set_previous(*previous);
   context->set_extension(*scope_info);
@@ -1182,20 +1218,47 @@ Handle<Script> Factory::NewScript(Handle<String> source) {
   script->set_shared_function_infos(*empty_fixed_array(), SKIP_WRITE_BARRIER);
   script->set_flags(0);
   script->set_host_defined_options(*empty_fixed_array());
-  heap->set_script_list(*WeakFixedArray::Add(script_list(), script));
+  heap->set_script_list(*FixedArrayOfWeakCells::Add(script_list(), script));
   return script;
 }
 
+Handle<CallableTask> Factory::NewCallableTask(Handle<JSReceiver> callable,
+                                              Handle<Context> context) {
+  DCHECK(callable->IsCallable());
+  Handle<CallableTask> microtask =
+      Handle<CallableTask>::cast(NewStruct(CALLABLE_TASK_TYPE));
+  microtask->set_callable(*callable);
+  microtask->set_context(*context);
+  return microtask;
+}
+
+Handle<CallbackTask> Factory::NewCallbackTask(Handle<Foreign> callback,
+                                              Handle<Foreign> data) {
+  Handle<CallbackTask> microtask =
+      Handle<CallbackTask>::cast(NewStruct(CALLBACK_TASK_TYPE));
+  microtask->set_callback(*callback);
+  microtask->set_data(*data);
+  return microtask;
+}
+
+Handle<PromiseResolveThenableJobTask> Factory::NewPromiseResolveThenableJobTask(
+    Handle<JSPromise> promise_to_resolve, Handle<JSReceiver> then,
+    Handle<JSReceiver> thenable, Handle<Context> context) {
+  DCHECK(then->IsCallable());
+  Handle<PromiseResolveThenableJobTask> microtask =
+      Handle<PromiseResolveThenableJobTask>::cast(
+          NewStruct(PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE));
+  microtask->set_promise_to_resolve(*promise_to_resolve);
+  microtask->set_then(*then);
+  microtask->set_thenable(*thenable);
+  microtask->set_context(*context);
+  return microtask;
+}
 
 Handle<Foreign> Factory::NewForeign(Address addr, PretenureFlag pretenure) {
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->AllocateForeign(addr, pretenure),
                      Foreign);
-}
-
-
-Handle<Foreign> Factory::NewForeign(const AccessorDescriptor* desc) {
-  return NewForeign((Address) desc, TENURED);
 }
 
 
@@ -1247,22 +1310,28 @@ Handle<Cell> Factory::NewCell(Handle<Object> value) {
       Cell);
 }
 
-Handle<Cell> Factory::NewNoClosuresCell(Handle<Object> value) {
-  Handle<Cell> cell = NewCell(value);
-  cell->set_map_no_write_barrier(*no_closures_cell_map());
-  return cell;
+Handle<FeedbackCell> Factory::NewNoClosuresCell(Handle<HeapObject> value) {
+  AllowDeferredHandleDereference convert_to_cell;
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateFeedbackCell(
+                         isolate()->heap()->no_closures_cell_map(), *value),
+                     FeedbackCell);
 }
 
-Handle<Cell> Factory::NewOneClosureCell(Handle<Object> value) {
-  Handle<Cell> cell = NewCell(value);
-  cell->set_map_no_write_barrier(*one_closure_cell_map());
-  return cell;
+Handle<FeedbackCell> Factory::NewOneClosureCell(Handle<HeapObject> value) {
+  AllowDeferredHandleDereference convert_to_cell;
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateFeedbackCell(
+                         isolate()->heap()->one_closure_cell_map(), *value),
+                     FeedbackCell);
 }
 
-Handle<Cell> Factory::NewManyClosuresCell(Handle<Object> value) {
-  Handle<Cell> cell = NewCell(value);
-  cell->set_map_no_write_barrier(*many_closures_cell_map());
-  return cell;
+Handle<FeedbackCell> Factory::NewManyClosuresCell(Handle<HeapObject> value) {
+  AllowDeferredHandleDereference convert_to_cell;
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateFeedbackCell(
+                         isolate()->heap()->many_closures_cell_map(), *value),
+                     FeedbackCell);
 }
 
 Handle<PropertyCell> Factory::NewPropertyCell(Handle<Name> name) {
@@ -1423,8 +1492,10 @@ Handle<HeapNumber> Factory::NewHeapNumber(MutableMode mode,
                      HeapNumber);
 }
 
-Handle<FreshlyAllocatedBigInt> Factory::NewBigInt(int length) {
-  CALL_HEAP_FUNCTION(isolate(), isolate()->heap()->AllocateBigInt(length),
+Handle<FreshlyAllocatedBigInt> Factory::NewBigInt(int length,
+                                                  PretenureFlag pretenure) {
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateBigInt(length, pretenure),
                      FreshlyAllocatedBigInt);
 }
 
@@ -1519,7 +1590,7 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
   function->set_shared(*info);
   function->set_code(info->code());
   function->set_context(*context_or_undefined);
-  function->set_feedback_vector_cell(*undefined_cell());
+  function->set_feedback_cell(*many_closures_cell());
   int header_size;
   if (map->has_prototype_slot()) {
     header_size = JSFunction::kSizeWithPrototype;
@@ -1664,11 +1735,11 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
 
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<SharedFunctionInfo> info, Handle<Context> context,
-    Handle<Cell> vector, PretenureFlag pretenure) {
+    Handle<FeedbackCell> feedback_cell, PretenureFlag pretenure) {
   Handle<Map> initial_map(
       Map::cast(context->native_context()->get(info->function_map_index())));
-  return NewFunctionFromSharedFunctionInfo(initial_map, info, context, vector,
-                                           pretenure);
+  return NewFunctionFromSharedFunctionInfo(initial_map, info, context,
+                                           feedback_cell, pretenure);
 }
 
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
@@ -1688,29 +1759,29 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
 
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<Map> initial_map, Handle<SharedFunctionInfo> info,
-    Handle<Object> context_or_undefined, Handle<Cell> vector,
+    Handle<Object> context_or_undefined, Handle<FeedbackCell> feedback_cell,
     PretenureFlag pretenure) {
   DCHECK_EQ(JS_FUNCTION_TYPE, initial_map->instance_type());
   Handle<JSFunction> result =
       NewFunction(initial_map, info, context_or_undefined, pretenure);
 
-  // Bump the closure count that is encoded in the vector cell's map.
-  if (vector->map() == *no_closures_cell_map()) {
-    vector->set_map(*one_closure_cell_map());
-  } else if (vector->map() == *one_closure_cell_map()) {
-    vector->set_map(*many_closures_cell_map());
+  // Bump the closure count that is encoded in the feedback cell's map.
+  if (feedback_cell->map() == *no_closures_cell_map()) {
+    feedback_cell->set_map(*one_closure_cell_map());
+  } else if (feedback_cell->map() == *one_closure_cell_map()) {
+    feedback_cell->set_map(*many_closures_cell_map());
   } else {
-    DCHECK_EQ(vector->map(), *many_closures_cell_map());
+    DCHECK_EQ(feedback_cell->map(), *many_closures_cell_map());
   }
 
-  // Check that the optimized code in the feedback vector wasn't marked for
+  // Check that the optimized code in the feedback cell wasn't marked for
   // deoptimization while not pointed to by any live JSFunction.
-  if (vector->value()->IsFeedbackVector()) {
-    FeedbackVector::cast(vector->value())
+  if (feedback_cell->value()->IsFeedbackVector()) {
+    FeedbackVector::cast(feedback_cell->value())
         ->EvictOptimizedCodeMarkedForDeoptimization(
             *info, "new function from shared function info");
   }
-  result->set_feedback_vector_cell(*vector);
+  result->set_feedback_cell(*feedback_cell);
 
   if (context_or_undefined->IsContext()) {
     // Give compiler a chance to pre-initialize.
@@ -1721,16 +1792,13 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
 }
 
 Handle<ScopeInfo> Factory::NewScopeInfo(int length) {
-  Handle<FixedArray> array = NewFixedArray(length, TENURED);
-  array->set_map_no_write_barrier(*scope_info_map());
-  Handle<ScopeInfo> scope_info = Handle<ScopeInfo>::cast(array);
-  return scope_info;
+  return NewFixedArrayWithMap<ScopeInfo>(Heap::kScopeInfoMapRootIndex, length,
+                                         TENURED);
 }
 
 Handle<ModuleInfo> Factory::NewModuleInfo() {
-  Handle<FixedArray> array = NewFixedArray(ModuleInfo::kLength, TENURED);
-  array->set_map_no_write_barrier(*module_info_map());
-  return Handle<ModuleInfo>::cast(array);
+  return NewFixedArrayWithMap<ModuleInfo>(Heap::kModuleInfoMapRootIndex,
+                                          ModuleInfo::kLength, TENURED);
 }
 
 Handle<PreParsedScopeData> Factory::NewPreParsedScopeData() {
@@ -1759,17 +1827,13 @@ Handle<CodeDataContainer> Factory::NewCodeDataContainer(int flags) {
 
 Handle<Code> Factory::NewCode(
     const CodeDesc& desc, Code::Kind kind, Handle<Object> self_ref,
-    int32_t builtin_index, MaybeHandle<HandlerTable> maybe_handler_table,
-    MaybeHandle<ByteArray> maybe_source_position_table,
+    int32_t builtin_index, MaybeHandle<ByteArray> maybe_source_position_table,
     MaybeHandle<DeoptimizationData> maybe_deopt_data, Movability movability,
     uint32_t stub_key, bool is_turbofanned, int stack_slots,
-    int safepoint_table_offset) {
+    int safepoint_table_offset, int handler_table_offset) {
   Handle<ByteArray> reloc_info = NewByteArray(desc.reloc_size, TENURED);
   Handle<CodeDataContainer> data_container = NewCodeDataContainer(0);
 
-  Handle<HandlerTable> handler_table =
-      maybe_handler_table.is_null() ? HandlerTable::Empty(isolate())
-                                    : maybe_handler_table.ToHandleChecked();
   Handle<ByteArray> source_position_table =
       maybe_source_position_table.is_null()
           ? empty_byte_array()
@@ -1778,13 +1842,13 @@ Handle<Code> Factory::NewCode(
       maybe_deopt_data.is_null() ? DeoptimizationData::Empty(isolate())
                                  : maybe_deopt_data.ToHandleChecked();
 
-  CALL_HEAP_FUNCTION(
-      isolate(),
-      isolate()->heap()->AllocateCode(
-          desc, kind, self_ref, builtin_index, *reloc_info, *data_container,
-          *handler_table, *source_position_table, *deopt_data, movability,
-          stub_key, is_turbofanned, stack_slots, safepoint_table_offset),
-      Code);
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateCode(
+                         desc, kind, self_ref, builtin_index, *reloc_info,
+                         *data_container, *source_position_table, *deopt_data,
+                         movability, stub_key, is_turbofanned, stack_slots,
+                         safepoint_table_offset, handler_table_offset),
+                     Code);
 }
 
 Handle<Code> Factory::NewCodeForDeserialization(uint32_t size) {
@@ -2079,12 +2143,13 @@ Handle<JSIteratorResult> Factory::NewJSIteratorResult(Handle<Object> value,
 }
 
 Handle<JSAsyncFromSyncIterator> Factory::NewJSAsyncFromSyncIterator(
-    Handle<JSReceiver> sync_iterator) {
+    Handle<JSReceiver> sync_iterator, Handle<Object> next) {
   Handle<Map> map(isolate()->native_context()->async_from_sync_iterator_map());
   Handle<JSAsyncFromSyncIterator> iterator =
       Handle<JSAsyncFromSyncIterator>::cast(NewJSObjectFromMap(map));
 
   iterator->set_sync_iterator(*sync_iterator);
+  iterator->set_next(*next);
   return iterator;
 }
 
@@ -2450,29 +2515,15 @@ void Factory::ReinitializeJSGlobalProxy(Handle<JSGlobalProxy> object,
   heap->InitializeJSObjectFromMap(*object, *raw_properties_or_hash, *map);
 }
 
-Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
-    MaybeHandle<String> name, FunctionKind kind, Handle<Code> code,
-    Handle<ScopeInfo> scope_info) {
-  DCHECK(IsValidFunctionKind(kind));
-  Handle<SharedFunctionInfo> shared =
-      NewSharedFunctionInfo(name, code, IsConstructable(kind), kind);
-  shared->set_scope_info(*scope_info);
-  shared->set_outer_scope_info(*the_hole_value());
-  if (IsGeneratorFunction(kind)) {
-    shared->set_instance_class_name(isolate()->heap()->Generator_string());
-  }
-  return shared;
-}
-
 Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForLiteral(
     FunctionLiteral* literal, Handle<Script> script) {
   Handle<Code> code = BUILTIN_CODE(isolate(), CompileLazy);
-  Handle<ScopeInfo> scope_info(ScopeInfo::Empty(isolate()));
-  Handle<SharedFunctionInfo> result =
-      NewSharedFunctionInfo(literal->name(), literal->kind(), code, scope_info);
-  SharedFunctionInfo::InitFromFunctionLiteral(result, literal);
-  SharedFunctionInfo::SetScript(result, script, false);
-  return result;
+  FunctionKind kind = literal->kind();
+  Handle<SharedFunctionInfo> shared =
+      NewSharedFunctionInfo(literal->name(), code, IsConstructable(kind), kind);
+  SharedFunctionInfo::InitFromFunctionLiteral(shared, literal);
+  SharedFunctionInfo::SetScript(shared, script, false);
+  return shared;
 }
 
 Handle<JSMessageObject> Factory::NewJSMessageObject(
@@ -2508,57 +2559,56 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
 
   Handle<Map> map = shared_function_info_map();
   Handle<SharedFunctionInfo> share = New<SharedFunctionInfo>(map, OLD_SPACE);
+  {
+    DisallowHeapAllocation no_allocation;
 
-  // Set pointer fields.
-  share->set_raw_name(has_shared_name
-                          ? *shared_name
-                          : SharedFunctionInfo::kNoSharedNameSentinel);
-  Handle<Code> code;
-  if (!maybe_code.ToHandle(&code)) {
-    code = BUILTIN_CODE(isolate(), Illegal);
-  }
-  Object* function_data = (Builtins::IsBuiltinId(maybe_builtin_index) &&
-                           Builtins::IsLazy(maybe_builtin_index))
-                              ? Smi::FromInt(maybe_builtin_index)
-                              : Object::cast(*undefined_value());
-  share->set_function_data(function_data, SKIP_WRITE_BARRIER);
-  share->set_code(*code);
-  share->set_scope_info(ScopeInfo::Empty(isolate()));
-  share->set_outer_scope_info(*the_hole_value());
-  DCHECK(!Builtins::IsLazy(Builtins::kConstructedNonConstructable));
-  Handle<Code> construct_stub =
-      is_constructor ? isolate()->builtins()->JSConstructStubGeneric()
-                     : BUILTIN_CODE(isolate(), ConstructedNonConstructable);
-  share->SetConstructStub(*construct_stub);
-  share->set_instance_class_name(*Object_string());
-  share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
-  share->set_debug_info(Smi::kZero, SKIP_WRITE_BARRIER);
-  share->set_function_identifier(*undefined_value(), SKIP_WRITE_BARRIER);
-  StaticFeedbackVectorSpec empty_spec;
-  Handle<FeedbackMetadata> feedback_metadata =
-      FeedbackMetadata::New(isolate(), &empty_spec);
-  share->set_feedback_metadata(*feedback_metadata, SKIP_WRITE_BARRIER);
-  share->set_function_literal_id(FunctionLiteral::kIdTypeInvalid);
+    // Set pointer fields.
+    share->set_raw_name(has_shared_name
+                            ? *shared_name
+                            : SharedFunctionInfo::kNoSharedNameSentinel);
+    Handle<Code> code;
+    if (!maybe_code.ToHandle(&code)) {
+      code = BUILTIN_CODE(isolate(), Illegal);
+    }
+    Object* function_data = (Builtins::IsBuiltinId(maybe_builtin_index) &&
+                             Builtins::IsLazy(maybe_builtin_index))
+                                ? Smi::FromInt(maybe_builtin_index)
+                                : Object::cast(*undefined_value());
+    share->set_function_data(function_data, SKIP_WRITE_BARRIER);
+    share->set_code(*code);
+    share->set_scope_info(ScopeInfo::Empty(isolate()));
+    share->set_outer_scope_info(*the_hole_value());
+    DCHECK(!Builtins::IsLazy(Builtins::kConstructedNonConstructable));
+    Handle<Code> construct_stub =
+        is_constructor ? isolate()->builtins()->JSConstructStubGeneric()
+                       : BUILTIN_CODE(isolate(), ConstructedNonConstructable);
+    share->SetConstructStub(*construct_stub);
+    share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
+    share->set_debug_info(Smi::kZero, SKIP_WRITE_BARRIER);
+    share->set_function_identifier(*undefined_value(), SKIP_WRITE_BARRIER);
+    share->set_feedback_metadata(isolate()->heap()->empty_feedback_metadata(),
+                                 SKIP_WRITE_BARRIER);
+    share->set_function_literal_id(FunctionLiteral::kIdTypeInvalid);
 #if V8_SFI_HAS_UNIQUE_ID
-  share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
+    share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
 
-  // Set integer fields (smi or int, depending on the architecture).
-  share->set_length(0);
-  share->set_internal_formal_parameter_count(0);
-  share->set_expected_nof_properties(0);
-  share->set_start_position_and_type(0);
-  share->set_end_position(0);
-  share->set_function_token_position(0);
-  // All compiler hints default to false or 0.
-  share->set_compiler_hints(0);
-  share->set_kind(kind);
+    // Set integer fields (smi or int, depending on the architecture).
+    share->set_length(0);
+    share->set_internal_formal_parameter_count(0);
+    share->set_expected_nof_properties(0);
+    share->set_start_position_and_type(0);
+    share->set_end_position(0);
+    share->set_function_token_position(0);
+    // All compiler hints default to false or 0.
+    share->set_compiler_hints(0);
+    share->set_kind(kind);
 
-  share->clear_padding();
-
+    share->clear_padding();
+  }
   // Link into the list.
   Handle<Object> new_noscript_list =
-      WeakFixedArray::Add(noscript_shared_function_infos(), share);
+      FixedArrayOfWeakCells::Add(noscript_shared_function_infos(), share);
   isolate()->heap()->set_noscript_shared_function_infos(*new_noscript_list);
 
 #ifdef VERIFY_HEAP
@@ -2673,7 +2723,7 @@ Handle<BreakPointInfo> Factory::NewBreakPointInfo(int source_position) {
   Handle<BreakPointInfo> new_break_point_info =
       Handle<BreakPointInfo>::cast(NewStruct(TUPLE2_TYPE, TENURED));
   new_break_point_info->set_source_position(source_position);
-  new_break_point_info->set_break_point_objects(*undefined_value());
+  new_break_point_info->set_break_points(*undefined_value());
   return new_break_point_info;
 }
 
@@ -2701,7 +2751,7 @@ Handle<StackFrameInfo> Factory::NewStackFrameInfo() {
 Handle<SourcePositionTableWithFrameCache>
 Factory::NewSourcePositionTableWithFrameCache(
     Handle<ByteArray> source_position_table,
-    Handle<NumberDictionary> stack_frame_cache) {
+    Handle<SimpleNumberDictionary> stack_frame_cache) {
   Handle<SourcePositionTableWithFrameCache>
       source_position_table_with_frame_cache =
           Handle<SourcePositionTableWithFrameCache>::cast(
@@ -3082,6 +3132,19 @@ Handle<Map> Factory::CreateClassFunctionMap(Handle<JSFunction> empty_function) {
     map->AppendDescriptor(&d);
   }
   return map;
+}
+
+Handle<JSPromise> Factory::NewJSPromiseWithoutHook(PretenureFlag pretenure) {
+  CALL_HEAP_FUNCTION(isolate(),
+                     isolate()->heap()->AllocateJSPromise(
+                         *isolate()->promise_function(), pretenure),
+                     JSPromise);
+}
+
+Handle<JSPromise> Factory::NewJSPromise(PretenureFlag pretenure) {
+  Handle<JSPromise> promise = NewJSPromiseWithoutHook(pretenure);
+  isolate()->RunPromiseHook(PromiseHookType::kInit, promise, undefined_value());
+  return promise;
 }
 
 // static

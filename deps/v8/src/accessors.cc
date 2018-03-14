@@ -28,6 +28,7 @@ Handle<AccessorInfo> Accessors::MakeAccessor(
   info->set_is_special_data_property(true);
   info->set_is_sloppy(false);
   info->set_replace_on_access(false);
+  info->set_has_no_side_effect(false);
   name = factory->InternalizeName(name);
   info->set_name(*name);
   Handle<Object> get = v8::FromCData(isolate, getter);
@@ -97,6 +98,9 @@ MUST_USE_RESULT MaybeHandle<Object> ReplaceAccessorWithDataProperty(
 
 }  // namespace
 
+//
+// Accessors::ReconfigureToDataProperty
+//
 void Accessors::ReconfigureToDataProperty(
     v8::Local<v8::Name> key, v8::Local<v8::Value> val,
     const v8::PropertyCallbackInfo<v8::Boolean>& info) {
@@ -116,6 +120,18 @@ void Accessors::ReconfigureToDataProperty(
   } else {
     info.GetReturnValue().Set(true);
   }
+}
+
+void Accessors::ReconfigureToDataPropertyGetter(
+    v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
+  UNREACHABLE();
+}
+
+Handle<AccessorInfo> Accessors::MakeReconfigureToDataPropertyInfo(
+    Isolate* isolate) {
+  Handle<Name> name = isolate->factory()->ReconfigureToDataProperty_string();
+  return MakeAccessor(isolate, name, &ReconfigureToDataPropertyGetter,
+                      &ReconfigureToDataProperty);
 }
 
 //
@@ -298,7 +314,6 @@ Handle<AccessorInfo> Accessors::MakeStringLengthInfo(Isolate* isolate) {
   return MakeAccessor(isolate, isolate->factory()->length_string(),
                       &StringLengthGetter, nullptr);
 }
-
 
 //
 // Accessors::ScriptColumnOffset

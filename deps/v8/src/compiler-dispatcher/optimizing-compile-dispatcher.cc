@@ -25,10 +25,10 @@ void DisposeCompilationJob(CompilationJob* job, bool restore_function_code) {
     if (function->IsInOptimizationQueue()) {
       function->ClearOptimizationMarker();
     }
-    // TODO(mvstanton): We can't call EnsureLiterals here due to allocation,
-    // but we probably shouldn't call set_code either, as this
+    // TODO(mvstanton): We can't call EnsureFeedbackVector here due to
+    // allocation, but we probably shouldn't call set_code either, as this
     // sometimes runs on the worker thread!
-    // JSFunction::EnsureLiterals(function);
+    // JSFunction::EnsureFeedbackVector(function);
   }
   delete job;
 }
@@ -224,15 +224,15 @@ void OptimizingCompileDispatcher::QueueForOptimization(CompilationJob* job) {
   if (FLAG_block_concurrent_recompilation) {
     blocked_jobs_++;
   } else {
-    V8::GetCurrentPlatform()->CallOnBackgroundThread(
-        new CompileTask(isolate_, this), v8::Platform::kShortRunningTask);
+    V8::GetCurrentPlatform()->CallOnWorkerThread(
+        new CompileTask(isolate_, this));
   }
 }
 
 void OptimizingCompileDispatcher::Unblock() {
   while (blocked_jobs_ > 0) {
-    V8::GetCurrentPlatform()->CallOnBackgroundThread(
-        new CompileTask(isolate_, this), v8::Platform::kShortRunningTask);
+    V8::GetCurrentPlatform()->CallOnWorkerThread(
+        new CompileTask(isolate_, this));
     blocked_jobs_--;
   }
 }

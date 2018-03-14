@@ -112,8 +112,6 @@ TEST(ContextMaps) {
                            Context::STRING_FUNCTION_INDEX);
   VerifyStoredPrototypeMap(isolate, Context::REGEXP_PROTOTYPE_MAP_INDEX,
                            Context::REGEXP_FUNCTION_INDEX);
-  VerifyStoredPrototypeMap(isolate, Context::PROMISE_PROTOTYPE_MAP_INDEX,
-                           Context::PROMISE_FUNCTION_INDEX);
 }
 
 TEST(InitialObjects) {
@@ -124,9 +122,6 @@ TEST(InitialObjects) {
   CHECK_EQ(
       context->initial_array_iterator_prototype(),
       *v8::Utils::OpenHandle(*CompileRun("[][Symbol.iterator]().__proto__")));
-  // Initial ArrayIterator prototype map.
-  CHECK_EQ(context->initial_array_iterator_prototype_map(),
-           context->initial_array_iterator_prototype()->map());
   // Initial Array prototype.
   CHECK_EQ(context->initial_array_prototype(),
            *v8::Utils::OpenHandle(*CompileRun("Array.prototype")));
@@ -1333,35 +1328,45 @@ TEST(CompilationCacheCachingBehavior) {
   }
 
   // The script should be in the cache now.
-  InfoVectorPair pair = compilation_cache->LookupScript(
-      source, Handle<Object>(), 0, 0, v8::ScriptOriginOptions(true, false),
-      native_context, language_mode);
-  CHECK(pair.has_shared());
-
-  // Check that the code cache entry survives at least on GC.
-  // (Unless --optimize-for-size, in which case it might get collected
-  // immediately.)
-  if (!FLAG_optimize_for_size) {
-    CcTest::CollectAllGarbage();
-    pair = compilation_cache->LookupScript(source, Handle<Object>(), 0, 0,
-                                           v8::ScriptOriginOptions(true, false),
-                                           native_context, language_mode);
-    CHECK(pair.has_shared());
+  {
+    v8::HandleScope scope(CcTest::isolate());
+    MaybeHandle<SharedFunctionInfo> cached_script =
+        compilation_cache->LookupScript(source, Handle<Object>(), 0, 0,
+                                        v8::ScriptOriginOptions(true, false),
+                                        native_context, language_mode);
+    CHECK(!cached_script.is_null());
   }
 
-  // Progress code age until it's old and ready for GC.
-  const int kAgingThreshold = 6;
-  for (int i = 0; i < kAgingThreshold; i++) {
-    CHECK(pair.shared()->HasBytecodeArray());
-    pair.shared()->bytecode_array()->MakeOlder();
+  // Check that the code cache entry survives at least one GC.
+  {
+    CcTest::CollectAllGarbage();
+    v8::HandleScope scope(CcTest::isolate());
+    MaybeHandle<SharedFunctionInfo> cached_script =
+        compilation_cache->LookupScript(source, Handle<Object>(), 0, 0,
+                                        v8::ScriptOriginOptions(true, false),
+                                        native_context, language_mode);
+    CHECK(!cached_script.is_null());
+
+    // Progress code age until it's old and ready for GC.
+    Handle<SharedFunctionInfo> shared = cached_script.ToHandleChecked();
+    CHECK(shared->HasBytecodeArray());
+    const int kAgingThreshold = 6;
+    for (int i = 0; i < kAgingThreshold; i++) {
+      shared->bytecode_array()->MakeOlder();
+    }
   }
 
   CcTest::CollectAllGarbage();
-  // Ensure code aging cleared the entry from the cache.
-  pair = compilation_cache->LookupScript(source, Handle<Object>(), 0, 0,
-                                         v8::ScriptOriginOptions(true, false),
-                                         native_context, language_mode);
-  CHECK(!pair.has_shared());
+
+  {
+    v8::HandleScope scope(CcTest::isolate());
+    // Ensure code aging cleared the entry from the cache.
+    MaybeHandle<SharedFunctionInfo> cached_script =
+        compilation_cache->LookupScript(source, Handle<Object>(), 0, 0,
+                                        v8::ScriptOriginOptions(true, false),
+                                        native_context, language_mode);
+    CHECK(cached_script.is_null());
+  }
 }
 
 
@@ -3031,14 +3036,8 @@ static void CheckVectorIC(Handle<JSFunction> f, int slot_index,
   Handle<FeedbackVector> vector = Handle<FeedbackVector>(f->feedback_vector());
   FeedbackVectorHelper helper(vector);
   FeedbackSlot slot = helper.slot(slot_index);
-  if (vector->IsLoadIC(slot)) {
-    LoadICNexus nexus(vector, slot);
-    CHECK(nexus.StateFromFeedback() == desired_state);
-  } else {
-    CHECK(vector->IsKeyedLoadIC(slot));
-    KeyedLoadICNexus nexus(vector, slot);
-    CHECK(nexus.StateFromFeedback() == desired_state);
-  }
+  FeedbackNexus nexus(vector, slot);
+  CHECK(nexus.StateFromFeedback() == desired_state);
 }
 
 TEST(IncrementalMarkingPreservesMonomorphicConstructor) {
@@ -3408,7 +3407,8 @@ TEST(LargeObjectSlotRecording) {
 
 class DummyVisitor : public RootVisitor {
  public:
-  void VisitRootPointers(Root root, Object** start, Object** end) override {}
+  void VisitRootPointers(Root root, const char* description, Object** start,
+                         Object** end) override {}
 };
 
 
@@ -4238,7 +4238,7 @@ void CheckIC(Handle<JSFunction> function, int slot_index,
              InlineCacheState state) {
   FeedbackVector* vector = function->feedback_vector();
   FeedbackSlot slot(slot_index);
-  LoadICNexus nexus(vector, slot);
+  FeedbackNexus nexus(vector, slot);
   CHECK_EQ(nexus.StateFromFeedback(), state);
 }
 
@@ -4772,15 +4772,16 @@ TEST(WritableVsImmortalRoots) {
   }
 }
 
-TEST(WeakFixedArray) {
+TEST(FixedArrayOfWeakCells) {
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
 
   Handle<HeapNumber> number = CcTest::i_isolate()->factory()->NewHeapNumber(1);
-  Handle<WeakFixedArray> array = WeakFixedArray::Add(Handle<Object>(), number);
+  Handle<FixedArrayOfWeakCells> array =
+      FixedArrayOfWeakCells::Add(Handle<Object>(), number);
   array->Remove(number);
-  array->Compact<WeakFixedArray::NullCallback>();
-  WeakFixedArray::Add(array, number);
+  array->Compact<FixedArrayOfWeakCells::NullCallback>();
+  FixedArrayOfWeakCells::Add(array, number);
 }
 
 
@@ -5803,8 +5804,7 @@ Handle<Code> GenerateDummyImmovableCode(Isolate* isolate) {
   assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
       desc, Code::STUB, Handle<Code>(), Builtins::kNoBuiltinId,
-      HandlerTable::Empty(isolate), MaybeHandle<ByteArray>(),
-      DeoptimizationData::Empty(isolate), kImmovable);
+      MaybeHandle<ByteArray>(), DeoptimizationData::Empty(isolate), kImmovable);
   CHECK(code->IsCode());
 
   return code;

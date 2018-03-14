@@ -100,7 +100,7 @@
 //         - ScopeInfo
 //         - ModuleInfo
 //         - ScriptContextTable
-//         - WeakFixedArray
+//         - FixedArrayOfWeakCells
 //         - WasmSharedModuleData
 //         - WasmCompiledModule
 //       - FixedDoubleArray
@@ -140,8 +140,7 @@
 //     - SharedFunctionInfo
 //     - Struct
 //       - AccessorInfo
-//       - PromiseResolveThenableJobInfo
-//       - PromiseReactionJobInfo
+//       - PromiseReaction
 //       - PromiseCapability
 //       - AccessorPair
 //       - AccessCheckInfo
@@ -159,10 +158,18 @@
 //       - SourcePositionTableWithFrameCache
 //       - CodeCache
 //       - PrototypeInfo
+//       - Microtask
+//         - CallbackTask
+//         - CallableTask
+//         - PromiseReactionJobTask
+//           - PromiseFulfillReactionJobTask
+//           - PromiseRejectReactionJobTask
+//         - PromiseResolveThenableJobTask
 //       - Module
 //       - ModuleInfoEntry
 //       - PreParsedScopeData
 //     - WeakCell
+//     - FeedbackCell
 //     - FeedbackVector
 //
 // Formats of Object*:
@@ -184,7 +191,7 @@ enum KeyedAccessStoreMode {
   STANDARD_STORE,
   STORE_TRANSITION_TO_OBJECT,
   STORE_TRANSITION_TO_DOUBLE,
-  STORE_AND_GROW_NO_TRANSITION,
+  STORE_AND_GROW_NO_TRANSITION_HANDLE_COW,
   STORE_AND_GROW_TRANSITION_TO_OBJECT,
   STORE_AND_GROW_TRANSITION_TO_DOUBLE,
   STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS,
@@ -204,21 +211,25 @@ static inline bool IsTransitionStoreMode(KeyedAccessStoreMode store_mode) {
          store_mode == STORE_AND_GROW_TRANSITION_TO_DOUBLE;
 }
 
+static inline bool IsCOWHandlingStoreMode(KeyedAccessStoreMode store_mode) {
+  return store_mode == STORE_NO_TRANSITION_HANDLE_COW ||
+         store_mode == STORE_AND_GROW_NO_TRANSITION_HANDLE_COW;
+}
 
 static inline KeyedAccessStoreMode GetNonTransitioningStoreMode(
     KeyedAccessStoreMode store_mode) {
   if (store_mode >= STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS) {
     return store_mode;
   }
-  if (store_mode >= STORE_AND_GROW_NO_TRANSITION) {
-    return STORE_AND_GROW_NO_TRANSITION;
+  if (store_mode >= STORE_AND_GROW_NO_TRANSITION_HANDLE_COW) {
+    return STORE_AND_GROW_NO_TRANSITION_HANDLE_COW;
   }
   return STANDARD_STORE;
 }
 
 
 static inline bool IsGrowStoreMode(KeyedAccessStoreMode store_mode) {
-  return store_mode >= STORE_AND_GROW_NO_TRANSITION &&
+  return store_mode >= STORE_AND_GROW_NO_TRANSITION_HANDLE_COW &&
          store_mode <= STORE_AND_GROW_TRANSITION_TO_DOUBLE;
 }
 
@@ -345,8 +356,11 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(FIXED_FLOAT32_ARRAY_TYPE)                                   \
   V(FIXED_FLOAT64_ARRAY_TYPE)                                   \
   V(FIXED_UINT8_CLAMPED_ARRAY_TYPE)                             \
+  V(FIXED_BIGINT64_ARRAY_TYPE)                                  \
+  V(FIXED_BIGUINT64_ARRAY_TYPE)                                 \
                                                                 \
   V(FIXED_DOUBLE_ARRAY_TYPE)                                    \
+  V(FEEDBACK_METADATA_TYPE)                                     \
   V(FILLER_TYPE)                                                \
                                                                 \
   V(ACCESS_CHECK_INFO_TYPE)                                     \
@@ -363,21 +377,33 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(MODULE_INFO_ENTRY_TYPE)                                     \
   V(MODULE_TYPE)                                                \
   V(OBJECT_TEMPLATE_INFO_TYPE)                                  \
-  V(PROMISE_REACTION_JOB_INFO_TYPE)                             \
-  V(PROMISE_RESOLVE_THENABLE_JOB_INFO_TYPE)                     \
+  V(PROMISE_CAPABILITY_TYPE)                                    \
+  V(PROMISE_REACTION_TYPE)                                      \
   V(PROTOTYPE_INFO_TYPE)                                        \
   V(SCRIPT_TYPE)                                                \
   V(STACK_FRAME_INFO_TYPE)                                      \
   V(TUPLE2_TYPE)                                                \
   V(TUPLE3_TYPE)                                                \
+  V(WASM_COMPILED_MODULE_TYPE)                                  \
+  V(WASM_DEBUG_INFO_TYPE)                                       \
+  V(WASM_SHARED_MODULE_DATA_TYPE)                               \
+                                                                \
+  V(CALLABLE_TASK_TYPE)                                         \
+  V(CALLBACK_TASK_TYPE)                                         \
+  V(PROMISE_FULFILL_REACTION_JOB_TASK_TYPE)                     \
+  V(PROMISE_REJECT_REACTION_JOB_TASK_TYPE)                      \
+  V(PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE)                     \
                                                                 \
   V(FIXED_ARRAY_TYPE)                                           \
+  V(BOILERPLATE_DESCRIPTION_TYPE)                               \
   V(DESCRIPTOR_ARRAY_TYPE)                                      \
   V(HASH_TABLE_TYPE)                                            \
+  V(SCOPE_INFO_TYPE)                                            \
   V(TRANSITION_ARRAY_TYPE)                                      \
                                                                 \
   V(CELL_TYPE)                                                  \
   V(CODE_DATA_CONTAINER_TYPE)                                   \
+  V(FEEDBACK_CELL_TYPE)                                         \
   V(FEEDBACK_VECTOR_TYPE)                                       \
   V(LOAD_HANDLER_TYPE)                                          \
   V(PROPERTY_ARRAY_TYPE)                                        \
@@ -387,6 +413,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(SMALL_ORDERED_HASH_SET_TYPE)                                \
   V(STORE_HANDLER_TYPE)                                         \
   V(WEAK_CELL_TYPE)                                             \
+  V(WEAK_FIXED_ARRAY_TYPE)                                      \
                                                                 \
   V(JS_PROXY_TYPE)                                              \
   V(JS_GLOBAL_OBJECT_TYPE)                                      \
@@ -399,6 +426,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
                                                                 \
   V(JS_ARGUMENTS_TYPE)                                          \
   V(JS_ARRAY_BUFFER_TYPE)                                       \
+  V(JS_ARRAY_ITERATOR_TYPE)                                     \
   V(JS_ARRAY_TYPE)                                              \
   V(JS_ASYNC_FROM_SYNC_ITERATOR_TYPE)                           \
   V(JS_ASYNC_GENERATOR_OBJECT_TYPE)                             \
@@ -422,8 +450,6 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
                                                                 \
   V(JS_TYPED_ARRAY_TYPE)                                        \
   V(JS_DATA_VIEW_TYPE)                                          \
-                                                                \
-  ARRAY_ITERATOR_TYPE_LIST(V)                                   \
                                                                 \
   V(WASM_INSTANCE_TYPE)                                         \
   V(WASM_MEMORY_TYPE)                                           \
@@ -486,47 +512,6 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(THIN_ONE_BYTE_STRING_TYPE, ThinString::kSize, thin_one_byte_string,       \
     ThinOneByteString)
 
-#define ARRAY_ITERATOR_TYPE_LIST(V)                     \
-  V(JS_TYPED_ARRAY_KEY_ITERATOR_TYPE)                   \
-  V(JS_FAST_ARRAY_KEY_ITERATOR_TYPE)                    \
-  V(JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE)                 \
-                                                        \
-  V(JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)             \
-  V(JS_INT8_ARRAY_KEY_VALUE_ITERATOR_TYPE)              \
-  V(JS_UINT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)            \
-  V(JS_INT16_ARRAY_KEY_VALUE_ITERATOR_TYPE)             \
-  V(JS_UINT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)            \
-  V(JS_INT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)             \
-  V(JS_FLOAT32_ARRAY_KEY_VALUE_ITERATOR_TYPE)           \
-  V(JS_FLOAT64_ARRAY_KEY_VALUE_ITERATOR_TYPE)           \
-  V(JS_UINT8_CLAMPED_ARRAY_KEY_VALUE_ITERATOR_TYPE)     \
-                                                        \
-  V(JS_FAST_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)          \
-  V(JS_FAST_HOLEY_SMI_ARRAY_KEY_VALUE_ITERATOR_TYPE)    \
-  V(JS_FAST_ARRAY_KEY_VALUE_ITERATOR_TYPE)              \
-  V(JS_FAST_HOLEY_ARRAY_KEY_VALUE_ITERATOR_TYPE)        \
-  V(JS_FAST_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE)       \
-  V(JS_FAST_HOLEY_DOUBLE_ARRAY_KEY_VALUE_ITERATOR_TYPE) \
-  V(JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE)           \
-                                                        \
-  V(JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE)                 \
-  V(JS_INT8_ARRAY_VALUE_ITERATOR_TYPE)                  \
-  V(JS_UINT16_ARRAY_VALUE_ITERATOR_TYPE)                \
-  V(JS_INT16_ARRAY_VALUE_ITERATOR_TYPE)                 \
-  V(JS_UINT32_ARRAY_VALUE_ITERATOR_TYPE)                \
-  V(JS_INT32_ARRAY_VALUE_ITERATOR_TYPE)                 \
-  V(JS_FLOAT32_ARRAY_VALUE_ITERATOR_TYPE)               \
-  V(JS_FLOAT64_ARRAY_VALUE_ITERATOR_TYPE)               \
-  V(JS_UINT8_CLAMPED_ARRAY_VALUE_ITERATOR_TYPE)         \
-                                                        \
-  V(JS_FAST_SMI_ARRAY_VALUE_ITERATOR_TYPE)              \
-  V(JS_FAST_HOLEY_SMI_ARRAY_VALUE_ITERATOR_TYPE)        \
-  V(JS_FAST_ARRAY_VALUE_ITERATOR_TYPE)                  \
-  V(JS_FAST_HOLEY_ARRAY_VALUE_ITERATOR_TYPE)            \
-  V(JS_FAST_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)           \
-  V(JS_FAST_HOLEY_DOUBLE_ARRAY_VALUE_ITERATOR_TYPE)     \
-  V(JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE)
-
 // A struct is a simple object a set of object-valued fields.  Including an
 // object type in this causes the compiler to generate most of the boilerplate
 // code for the class including allocation and garbage collection routines,
@@ -551,15 +536,24 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(MODULE_INFO_ENTRY, ModuleInfoEntry, module_info_entry)                   \
   V(MODULE, Module, module)                                                  \
   V(OBJECT_TEMPLATE_INFO, ObjectTemplateInfo, object_template_info)          \
-  V(PROMISE_REACTION_JOB_INFO, PromiseReactionJobInfo,                       \
-    promise_reaction_job_info)                                               \
-  V(PROMISE_RESOLVE_THENABLE_JOB_INFO, PromiseResolveThenableJobInfo,        \
-    promise_resolve_thenable_job_info)                                       \
+  V(PROMISE_CAPABILITY, PromiseCapability, promise_capability)               \
+  V(PROMISE_REACTION, PromiseReaction, promise_reaction)                     \
   V(PROTOTYPE_INFO, PrototypeInfo, prototype_info)                           \
   V(SCRIPT, Script, script)                                                  \
   V(STACK_FRAME_INFO, StackFrameInfo, stack_frame_info)                      \
   V(TUPLE2, Tuple2, tuple2)                                                  \
-  V(TUPLE3, Tuple3, tuple3)
+  V(TUPLE3, Tuple3, tuple3)                                                  \
+  V(WASM_COMPILED_MODULE, WasmCompiledModule, wasm_compiled_module)          \
+  V(WASM_DEBUG_INFO, WasmDebugInfo, wasm_debug_info)                         \
+  V(WASM_SHARED_MODULE_DATA, WasmSharedModuleData, wasm_shared_module_data)  \
+  V(CALLABLE_TASK, CallableTask, callable_task)                              \
+  V(CALLBACK_TASK, CallbackTask, callback_task)                              \
+  V(PROMISE_FULFILL_REACTION_JOB_TASK, PromiseFulfillReactionJobTask,        \
+    promise_fulfill_reaction_job_task)                                       \
+  V(PROMISE_REJECT_REACTION_JOB_TASK, PromiseRejectReactionJobTask,          \
+    promise_reject_reaction_job_task)                                        \
+  V(PROMISE_RESOLVE_THENABLE_JOB_TASK, PromiseResolveThenableJobTask,        \
+    promise_resolve_thenable_job_task)
 
 #define DATA_HANDLER_LIST(V)                        \
   V(LOAD_HANDLER, LoadHandler, 1, load_handler1)    \
@@ -714,8 +708,11 @@ enum InstanceType : uint16_t {
   FIXED_UINT32_ARRAY_TYPE,
   FIXED_FLOAT32_ARRAY_TYPE,
   FIXED_FLOAT64_ARRAY_TYPE,
-  FIXED_UINT8_CLAMPED_ARRAY_TYPE,  // LAST_FIXED_TYPED_ARRAY_TYPE
+  FIXED_UINT8_CLAMPED_ARRAY_TYPE,
+  FIXED_BIGINT64_ARRAY_TYPE,
+  FIXED_BIGUINT64_ARRAY_TYPE,  // LAST_FIXED_TYPED_ARRAY_TYPE
   FIXED_DOUBLE_ARRAY_TYPE,
+  FEEDBACK_METADATA_TYPE,
   FILLER_TYPE,  // LAST_DATA_TYPE
 
   // Structs.
@@ -733,23 +730,35 @@ enum InstanceType : uint16_t {
   MODULE_INFO_ENTRY_TYPE,
   MODULE_TYPE,
   OBJECT_TEMPLATE_INFO_TYPE,
-  PROMISE_REACTION_JOB_INFO_TYPE,
-  PROMISE_RESOLVE_THENABLE_JOB_INFO_TYPE,
+  PROMISE_CAPABILITY_TYPE,
+  PROMISE_REACTION_TYPE,
   PROTOTYPE_INFO_TYPE,
   SCRIPT_TYPE,
   STACK_FRAME_INFO_TYPE,
   TUPLE2_TYPE,
   TUPLE3_TYPE,
+  WASM_COMPILED_MODULE_TYPE,
+  WASM_DEBUG_INFO_TYPE,
+  WASM_SHARED_MODULE_DATA_TYPE,
+
+  CALLABLE_TASK_TYPE,  // FIRST_MICROTASK_TYPE
+  CALLBACK_TASK_TYPE,
+  PROMISE_FULFILL_REACTION_JOB_TASK_TYPE,
+  PROMISE_REJECT_REACTION_JOB_TASK_TYPE,
+  PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE,  // LAST_MICROTASK_TYPE
 
   // FixedArrays.
   FIXED_ARRAY_TYPE,  // FIRST_FIXED_ARRAY_TYPE
+  BOILERPLATE_DESCRIPTION_TYPE,
   DESCRIPTOR_ARRAY_TYPE,
   HASH_TABLE_TYPE,
+  SCOPE_INFO_TYPE,
   TRANSITION_ARRAY_TYPE,  // LAST_FIXED_ARRAY_TYPE
 
   // Misc.
   CELL_TYPE,
   CODE_DATA_CONTAINER_TYPE,
+  FEEDBACK_CELL_TYPE,
   FEEDBACK_VECTOR_TYPE,
   LOAD_HANDLER_TYPE,
   PROPERTY_ARRAY_TYPE,
@@ -759,6 +768,7 @@ enum InstanceType : uint16_t {
   SMALL_ORDERED_HASH_SET_TYPE,
   STORE_HANDLER_TYPE,
   WEAK_CELL_TYPE,
+  WEAK_FIXED_ARRAY_TYPE,
 
   // All the following types are subtypes of JSReceiver, which corresponds to
   // objects in the JS sense. The first and the last type in this range are
@@ -780,6 +790,7 @@ enum InstanceType : uint16_t {
   JS_OBJECT_TYPE,
   JS_ARGUMENTS_TYPE,
   JS_ARRAY_BUFFER_TYPE,
+  JS_ARRAY_ITERATOR_TYPE,
   JS_ARRAY_TYPE,
   JS_ASYNC_FROM_SYNC_ITERATOR_TYPE,
   JS_ASYNC_GENERATOR_OBJECT_TYPE,
@@ -804,11 +815,7 @@ enum InstanceType : uint16_t {
   JS_TYPED_ARRAY_TYPE,
   JS_DATA_VIEW_TYPE,
 
-#define ARRAY_ITERATOR_TYPE(type) type,
-  ARRAY_ITERATOR_TYPE_LIST(ARRAY_ITERATOR_TYPE)
-#undef ARRAY_ITERATOR_TYPE
-
-      WASM_INSTANCE_TYPE,
+  WASM_INSTANCE_TYPE,
   WASM_MEMORY_TYPE,
   WASM_MODULE_TYPE,
   WASM_TABLE_TYPE,
@@ -830,9 +837,12 @@ enum InstanceType : uint16_t {
   // Boundaries for testing if given HeapObject is a subclass of FixedArray.
   FIRST_FIXED_ARRAY_TYPE = FIXED_ARRAY_TYPE,
   LAST_FIXED_ARRAY_TYPE = TRANSITION_ARRAY_TYPE,
+  // Boundaries for testing if given HeapObject is a subclass of Microtask.
+  FIRST_MICROTASK_TYPE = CALLABLE_TASK_TYPE,
+  LAST_MICROTASK_TYPE = PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE,
   // Boundaries for testing for a fixed typed array.
   FIRST_FIXED_TYPED_ARRAY_TYPE = FIXED_INT8_ARRAY_TYPE,
-  LAST_FIXED_TYPED_ARRAY_TYPE = FIXED_UINT8_CLAMPED_ARRAY_TYPE,
+  LAST_FIXED_TYPED_ARRAY_TYPE = FIXED_BIGUINT64_ARRAY_TYPE,
   // Boundary for promotion to old space.
   LAST_DATA_TYPE = FILLER_TYPE,
   // Boundary for objects represented as JSReceiver (i.e. JSObject or JSProxy).
@@ -851,18 +861,6 @@ enum InstanceType : uint16_t {
   // an empty fixed array as elements backing store. This is true for string
   // wrappers.
   LAST_CUSTOM_ELEMENTS_RECEIVER = JS_VALUE_TYPE,
-
-  FIRST_ARRAY_KEY_ITERATOR_TYPE = JS_TYPED_ARRAY_KEY_ITERATOR_TYPE,
-  LAST_ARRAY_KEY_ITERATOR_TYPE = JS_GENERIC_ARRAY_KEY_ITERATOR_TYPE,
-
-  FIRST_ARRAY_KEY_VALUE_ITERATOR_TYPE = JS_UINT8_ARRAY_KEY_VALUE_ITERATOR_TYPE,
-  LAST_ARRAY_KEY_VALUE_ITERATOR_TYPE = JS_GENERIC_ARRAY_KEY_VALUE_ITERATOR_TYPE,
-
-  FIRST_ARRAY_VALUE_ITERATOR_TYPE = JS_UINT8_ARRAY_VALUE_ITERATOR_TYPE,
-  LAST_ARRAY_VALUE_ITERATOR_TYPE = JS_GENERIC_ARRAY_VALUE_ITERATOR_TYPE,
-
-  FIRST_ARRAY_ITERATOR_TYPE = FIRST_ARRAY_KEY_ITERATOR_TYPE,
-  LAST_ARRAY_ITERATOR_TYPE = LAST_ARRAY_VALUE_ITERATOR_TYPE,
 
   FIRST_SET_ITERATOR_TYPE = JS_SET_KEY_VALUE_ITERATOR_TYPE,
   LAST_SET_ITERATOR_TYPE = JS_SET_VALUE_ITERATOR_TYPE,
@@ -907,6 +905,7 @@ class FixedArrayBase;
 class PropertyArray;
 class FunctionLiteral;
 class JSGlobalObject;
+class JSPromise;
 class KeyAccumulator;
 class LayoutDescriptor;
 class LookupIterator;
@@ -921,12 +920,12 @@ class RootVisitor;
 class SafepointEntry;
 class SharedFunctionInfo;
 class StringStream;
+class FeedbackCell;
 class FeedbackMetadata;
 class FeedbackVector;
 class WeakCell;
 class TransitionArray;
 class TemplateList;
-class TemplateMap;
 template <typename T>
 class ZoneForwardList;
 
@@ -952,14 +951,16 @@ template <class C> inline bool Is(Object* obj);
   V(AccessCheckNeeded)                    \
   V(ArrayList)                            \
   V(BigInt)                               \
+  V(BigIntWrapper)                        \
   V(BoilerplateDescription)               \
   V(Boolean)                              \
+  V(BooleanWrapper)                       \
   V(BreakPoint)                           \
   V(BreakPointInfo)                       \
   V(ByteArray)                            \
   V(BytecodeArray)                        \
-  V(Callable)                             \
   V(CallHandlerInfo)                      \
+  V(Callable)                             \
   V(Cell)                                 \
   V(ClassBoilerplate)                     \
   V(Code)                                 \
@@ -979,12 +980,16 @@ template <class C> inline bool Is(Object* obj);
   V(ExternalOneByteString)                \
   V(ExternalString)                       \
   V(ExternalTwoByteString)                \
+  V(FeedbackCell)                         \
   V(FeedbackMetadata)                     \
   V(FeedbackVector)                       \
   V(Filler)                               \
   V(FixedArray)                           \
   V(FixedArrayBase)                       \
   V(FixedArrayExact)                      \
+  V(FixedArrayOfWeakCells)                \
+  V(FixedBigInt64Array)                   \
+  V(FixedBigUint64Array)                  \
   V(FixedDoubleArray)                     \
   V(FixedFloat32Array)                    \
   V(FixedFloat64Array)                    \
@@ -1042,30 +1047,34 @@ template <class C> inline bool Is(Object* obj);
   V(LoadHandler)                          \
   V(Map)                                  \
   V(MapCache)                             \
+  V(Microtask)                            \
   V(ModuleInfo)                           \
   V(MutableHeapNumber)                    \
   V(Name)                                 \
   V(NameDictionary)                       \
   V(NativeContext)                        \
   V(NormalizedMapCache)                   \
+  V(NumberDictionary)                     \
+  V(NumberWrapper)                        \
   V(ObjectHashSet)                        \
   V(ObjectHashTable)                      \
   V(Oddball)                              \
   V(OrderedHashMap)                       \
   V(OrderedHashSet)                       \
   V(PreParsedScopeData)                   \
-  V(PromiseCapability)                    \
+  V(PromiseReactionJobTask)               \
   V(PropertyArray)                        \
   V(PropertyCell)                         \
   V(PropertyDescriptorObject)             \
   V(RegExpMatchInfo)                      \
   V(ScopeInfo)                            \
   V(ScriptContextTable)                   \
-  V(NumberDictionary)                     \
+  V(ScriptWrapper)                        \
   V(SeqOneByteString)                     \
   V(SeqString)                            \
   V(SeqTwoByteString)                     \
   V(SharedFunctionInfo)                   \
+  V(SimpleNumberDictionary)               \
   V(SlicedString)                         \
   V(SloppyArgumentsElements)              \
   V(SmallOrderedHashMap)                  \
@@ -1078,9 +1087,9 @@ template <class C> inline bool Is(Object* obj);
   V(StringWrapper)                        \
   V(Struct)                               \
   V(Symbol)                               \
+  V(SymbolWrapper)                        \
   V(TemplateInfo)                         \
   V(TemplateList)                         \
-  V(TemplateMap)                          \
   V(TemplateObjectDescription)            \
   V(ThinString)                           \
   V(TransitionArray)                      \
@@ -1210,8 +1219,6 @@ class Object {
   // implementation of a JSObject's elements.
   inline bool HasValidElements();
 
-  inline bool HasSpecificClassOf(String* name);
-
   bool BooleanValue();                                      // ECMA-262 9.2.
 
   // ES6 section 7.2.11 Abstract Relational Comparison
@@ -1304,34 +1311,10 @@ class Object {
   // ES6 section 12.5.6 The typeof Operator
   static Handle<String> TypeOf(Isolate* isolate, Handle<Object> object);
 
-  // ES6 section 12.6 Multiplicative Operators
-  MUST_USE_RESULT static MaybeHandle<Object> Multiply(Isolate* isolate,
-                                                      Handle<Object> lhs,
-                                                      Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> Divide(Isolate* isolate,
-                                                    Handle<Object> lhs,
-                                                    Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> Modulus(Isolate* isolate,
-                                                     Handle<Object> lhs,
-                                                     Handle<Object> rhs);
-
   // ES6 section 12.7 Additive Operators
   MUST_USE_RESULT static MaybeHandle<Object> Add(Isolate* isolate,
                                                  Handle<Object> lhs,
                                                  Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> Subtract(Isolate* isolate,
-                                                      Handle<Object> lhs,
-                                                      Handle<Object> rhs);
-
-  // ES6 section 12.8 Bitwise Shift Operators
-  MUST_USE_RESULT static MaybeHandle<Object> ShiftLeft(Isolate* isolate,
-                                                       Handle<Object> lhs,
-                                                       Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> ShiftRight(Isolate* isolate,
-                                                        Handle<Object> lhs,
-                                                        Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> ShiftRightLogical(
-      Isolate* isolate, Handle<Object> lhs, Handle<Object> rhs);
 
   // ES6 section 12.9 Relational Operators
   MUST_USE_RESULT static inline Maybe<bool> GreaterThan(Handle<Object> x,
@@ -1342,17 +1325,6 @@ class Object {
                                                      Handle<Object> y);
   MUST_USE_RESULT static inline Maybe<bool> LessThanOrEqual(Handle<Object> x,
                                                             Handle<Object> y);
-
-  // ES6 section 12.11 Binary Bitwise Operators
-  MUST_USE_RESULT static MaybeHandle<Object> BitwiseAnd(Isolate* isolate,
-                                                        Handle<Object> lhs,
-                                                        Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> BitwiseOr(Isolate* isolate,
-                                                       Handle<Object> lhs,
-                                                       Handle<Object> rhs);
-  MUST_USE_RESULT static MaybeHandle<Object> BitwiseXor(Isolate* isolate,
-                                                        Handle<Object> lhs,
-                                                        Handle<Object> rhs);
 
   // ES6 section 7.3.19 OrdinaryHasInstance (C, O).
   MUST_USE_RESULT static MaybeHandle<Object> OrdinaryHasInstance(
@@ -1773,6 +1745,7 @@ class HeapObject: public Object {
   // Does not invoke write barrier, so should only be assigned to
   // during marking GC.
   static inline Object** RawField(HeapObject* obj, int offset);
+  static inline MaybeObject** RawMaybeWeakField(HeapObject* obj, int offset);
 
   DECL_CAST(HeapObject)
 
@@ -1800,7 +1773,7 @@ class HeapObject: public Object {
   static void VerifyHeapPointer(Object* p);
 #endif
 
-  inline AllocationAlignment RequiredAlignment() const;
+  static inline AllocationAlignment RequiredAlignment(Map* map);
 
   // Whether the object needs rehashing. That is the case if the object's
   // content depends on FLAG_hash_seed. When the object is deserialized into
@@ -1900,7 +1873,10 @@ enum AccessorComponent {
   ACCESSOR_SETTER
 };
 
-enum class GetKeysConversion { kKeepNumbers, kConvertToString };
+enum class GetKeysConversion {
+  kKeepNumbers = static_cast<int>(v8::KeyConversionMode::kKeepNumbers),
+  kConvertToString = static_cast<int>(v8::KeyConversionMode::kConvertToString)
+};
 
 enum class KeyCollectionMode {
   kOwnOnly = static_cast<int>(v8::KeyCollectionMode::kOwnOnly),
@@ -2275,6 +2251,8 @@ class JSObject: public JSReceiver {
   inline bool HasFixedUint32Elements();
   inline bool HasFixedFloat32Elements();
   inline bool HasFixedFloat64Elements();
+  inline bool HasFixedBigInt64Elements();
+  inline bool HasFixedBigUint64Elements();
 
   inline bool HasFastArgumentsElements();
   inline bool HasSlowArgumentsElements();
@@ -2382,7 +2360,7 @@ class JSObject: public JSReceiver {
   // Utility used by many Array builtins and runtime functions
   static inline bool PrototypeHasNoElements(Isolate* isolate, JSObject* object);
 
-  // Alternative implementation of WeakFixedArray::NullCallback.
+  // Alternative implementation of FixedArrayOfWeakCells::NullCallback.
   class PrototypeRegistryCompactionCallback {
    public:
     static void Callback(Object* value, int old_index, int new_index);
@@ -2673,6 +2651,11 @@ class JSObject: public JSReceiver {
   static const int kMaxInObjectProperties =
       (kMaxInstanceSize - kHeaderSize) >> kPointerSizeLog2;
   STATIC_ASSERT(kMaxInObjectProperties <= kMaxNumberOfDescriptors);
+  // TODO(cbruni): Revisit calculation of the max supported embedder fields.
+  static const int kMaxEmbedderFields =
+      ((1 << kFirstInobjectPropertyOffsetBitCount) - 1 - kHeaderSize) >>
+      kPointerSizeLog2;
+  STATIC_ASSERT(kMaxEmbedderFields <= kMaxInObjectProperties);
 
   class BodyDescriptor;
   // No weak fields.
@@ -2869,86 +2852,6 @@ class Tuple3 : public Tuple2 {
   DISALLOW_IMPLICIT_CONSTRUCTORS(Tuple3);
 };
 
-class PromiseCapability : public Tuple3 {
- public:
-  DECL_CAST(PromiseCapability)
-  DECL_PRINTER(PromiseCapability)
-  DECL_VERIFIER(PromiseCapability)
-
-  DECL_ACCESSORS(promise, Object)
-  DECL_ACCESSORS(resolve, Object)
-  DECL_ACCESSORS(reject, Object)
-
-  static const int kPromiseOffset = Tuple3::kValue1Offset;
-  static const int kResolveOffset = Tuple3::kValue2Offset;
-  static const int kRejectOffset = Tuple3::kValue3Offset;
-  static const int kSize = Tuple3::kSize;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(PromiseCapability);
-};
-
-// A container struct to hold state required for PromiseResolveThenableJob.
-class PromiseResolveThenableJobInfo : public Struct {
- public:
-  DECL_ACCESSORS(thenable, JSReceiver)
-  DECL_ACCESSORS(then, JSReceiver)
-  DECL_ACCESSORS(resolve, JSFunction)
-  DECL_ACCESSORS(reject, JSFunction)
-
-  DECL_ACCESSORS(context, Context)
-
-  static const int kThenableOffset = Struct::kHeaderSize;
-  static const int kThenOffset = kThenableOffset + kPointerSize;
-  static const int kResolveOffset = kThenOffset + kPointerSize;
-  static const int kRejectOffset = kResolveOffset + kPointerSize;
-  static const int kContextOffset = kRejectOffset + kPointerSize;
-  static const int kSize = kContextOffset + kPointerSize;
-
-  DECL_CAST(PromiseResolveThenableJobInfo)
-  DECL_PRINTER(PromiseResolveThenableJobInfo)
-  DECL_VERIFIER(PromiseResolveThenableJobInfo)
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(PromiseResolveThenableJobInfo);
-};
-
-class JSPromise;
-
-// Struct to hold state required for PromiseReactionJob.
-class PromiseReactionJobInfo : public Struct {
- public:
-  DECL_ACCESSORS(value, Object)
-  DECL_ACCESSORS(tasks, Object)
-
-  // Check comment in JSPromise for information on what state these
-  // deferred fields could be in.
-  DECL_ACCESSORS(deferred_promise, Object)
-  DECL_ACCESSORS(deferred_on_resolve, Object)
-  DECL_ACCESSORS(deferred_on_reject, Object)
-
-  DECL_INT_ACCESSORS(debug_id)
-
-  DECL_ACCESSORS(context, Context)
-
-  static const int kValueOffset = Struct::kHeaderSize;
-  static const int kTasksOffset = kValueOffset + kPointerSize;
-  static const int kDeferredPromiseOffset = kTasksOffset + kPointerSize;
-  static const int kDeferredOnResolveOffset =
-      kDeferredPromiseOffset + kPointerSize;
-  static const int kDeferredOnRejectOffset =
-      kDeferredOnResolveOffset + kPointerSize;
-  static const int kContextOffset = kDeferredOnRejectOffset + kPointerSize;
-  static const int kSize = kContextOffset + kPointerSize;
-
-  DECL_CAST(PromiseReactionJobInfo)
-  DECL_PRINTER(PromiseReactionJobInfo)
-  DECL_VERIFIER(PromiseReactionJobInfo)
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(PromiseReactionJobInfo);
-};
-
 class AsyncGeneratorRequest : public Struct {
  public:
   // Holds an AsyncGeneratorRequest, or Undefined.
@@ -2979,8 +2882,8 @@ class PrototypeInfo : public Struct {
   // [weak_cell]: A WeakCell containing this prototype. ICs cache the cell here.
   DECL_ACCESSORS(weak_cell, Object)
 
-  // [prototype_users]: WeakFixedArray containing maps using this prototype,
-  // or Smi(0) if uninitialized.
+  // [prototype_users]: FixedArrayOfWeakCells containing maps using this
+  // prototype, or Smi(0) if uninitialized.
   DECL_ACCESSORS(prototype_users, Object)
 
   // [object_create_map]: A field caching the map for Object.create(prototype).
@@ -2993,13 +2896,7 @@ class PrototypeInfo : public Struct {
   // is stored. Returns UNREGISTERED if this prototype has not been registered.
   inline int registry_slot() const;
   inline void set_registry_slot(int slot);
-  // [validity_cell]: Cell containing the validity bit for prototype chains
-  // going through this object, or Smi(0) if uninitialized.
-  // When a prototype object changes its map, then both its own validity cell
-  // and those of all "downstream" prototypes are invalidated; handlers for a
-  // given receiver embed the currently valid cell for that receiver's prototype
-  // during their compilation and check it on execution.
-  DECL_ACCESSORS(validity_cell, Object)
+
   // [bit_field]
   inline int bit_field() const;
   inline void set_bit_field(int bit_field);
@@ -3125,8 +3022,8 @@ class ContextExtension : public Struct {
   V(String.prototype, toString, StringToString)             \
   V(String.prototype, toUpperCase, StringToUpperCase)       \
   V(String.prototype, trim, StringTrim)                     \
-  V(String.prototype, trimLeft, StringTrimLeft)             \
-  V(String.prototype, trimRight, StringTrimRight)           \
+  V(String.prototype, trimLeft, StringTrimStart)            \
+  V(String.prototype, trimRight, StringTrimEnd)             \
   V(String.prototype, valueOf, StringValueOf)               \
   V(String, fromCharCode, StringFromCharCode)               \
   V(String, fromCodePoint, StringFromCodePoint)             \
@@ -3332,14 +3229,14 @@ class JSAsyncGeneratorObject : public JSGeneratorObject {
   // undefined.
   DECL_ACCESSORS(queue, HeapObject)
 
-  // [awaited_promise]
-  // A reference to the Promise of an AwaitExpression.
-  DECL_ACCESSORS(awaited_promise, HeapObject)
+  // [is_awaiting]
+  // Whether or not the generator is currently awaiting.
+  DECL_INT_ACCESSORS(is_awaiting)
 
   // Layout description.
   static const int kQueueOffset = JSGeneratorObject::kSize;
-  static const int kAwaitedPromiseOffset = kQueueOffset + kPointerSize;
-  static const int kSize = kAwaitedPromiseOffset + kPointerSize;
+  static const int kIsAwaitingOffset = kQueueOffset + kPointerSize;
+  static const int kSize = kIsAwaitingOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncGeneratorObject);
@@ -3474,22 +3371,14 @@ class JSFunction: public JSObject {
   // Completes inobject slack tracking on initial map if it is active.
   inline void CompleteInobjectSlackTrackingIfActive();
 
-  // [feedback_vector_cell]: The feedback vector.
-  DECL_ACCESSORS(feedback_vector_cell, Cell)
-
-  enum FeedbackVectorState {
-    TOP_LEVEL_SCRIPT_NEEDS_VECTOR,
-    NEEDS_VECTOR,
-    HAS_VECTOR,
-    NO_VECTOR_NEEDED
-  };
-
-  inline FeedbackVectorState GetFeedbackVectorState(Isolate* isolate) const;
+  // [feedback_cell]: The FeedbackCell used to hold the FeedbackVector
+  // eventually.
+  DECL_ACCESSORS(feedback_cell, FeedbackCell)
 
   // feedback_vector() can be used once the function is compiled.
   inline FeedbackVector* feedback_vector() const;
   inline bool has_feedback_vector() const;
-  static void EnsureLiterals(Handle<JSFunction> function);
+  static void EnsureFeedbackVector(Handle<JSFunction> function);
 
   // Unconditionally clear the type feedback vector.
   void ClearTypeFeedbackInfo();
@@ -3572,7 +3461,7 @@ class JSFunction: public JSObject {
   /* Pointer fields. */                                    \
   V(kSharedFunctionInfoOffset, kPointerSize)               \
   V(kContextOffset, kPointerSize)                          \
-  V(kFeedbackVectorOffset, kPointerSize)                   \
+  V(kFeedbackCellOffset, kPointerSize)                     \
   V(kEndOfStrongFieldsOffset, 0)                           \
   V(kCodeOffset, kPointerSize)                             \
   /* Size of JSFunction object without prototype field. */ \
@@ -3846,76 +3735,6 @@ class JSMessageObject: public JSObject {
                               kSize> BodyDescriptor;
   // No weak fields.
   typedef BodyDescriptor BodyDescriptorWeak;
-};
-
-class JSPromise : public JSObject {
- public:
-  DECL_ACCESSORS(result, Object)
-
-  // There are 3 possible states for these fields --
-  // 1) Undefined -- This is the zero state when there is no callback
-  // or deferred fields registered.
-  //
-  // 2) Object -- There is a single callback directly attached to the
-  // fulfill_reactions, reject_reactions and the deferred fields are
-  // directly attached to the slots. In this state, deferred_promise
-  // is a JSReceiver and deferred_on_{resolve, reject} are Callables.
-  //
-  // 3) FixedArray -- There is more than one callback and deferred
-  // fields attached to a FixedArray.
-  //
-  // The callback can be a Callable or a Symbol.
-  DECL_ACCESSORS(deferred_promise, Object)
-  DECL_ACCESSORS(deferred_on_resolve, Object)
-  DECL_ACCESSORS(deferred_on_reject, Object)
-  DECL_ACCESSORS(fulfill_reactions, Object)
-  DECL_ACCESSORS(reject_reactions, Object)
-
-  DECL_INT_ACCESSORS(flags)
-
-  // [has_handler]: Whether this promise has a reject handler or not.
-  DECL_BOOLEAN_ACCESSORS(has_handler)
-
-  // [handled_hint]: Whether this promise will be handled by a catch
-  // block in an async function.
-  DECL_BOOLEAN_ACCESSORS(handled_hint)
-
-  static const char* Status(v8::Promise::PromiseState status);
-  v8::Promise::PromiseState status() const;
-
-  DECL_CAST(JSPromise)
-
-  // Dispatched behavior.
-  DECL_PRINTER(JSPromise)
-  DECL_VERIFIER(JSPromise)
-
-  // Layout description.
-  static const int kResultOffset = JSObject::kHeaderSize;
-  static const int kDeferredPromiseOffset = kResultOffset + kPointerSize;
-  static const int kDeferredOnResolveOffset =
-      kDeferredPromiseOffset + kPointerSize;
-  static const int kDeferredOnRejectOffset =
-      kDeferredOnResolveOffset + kPointerSize;
-  static const int kFulfillReactionsOffset =
-      kDeferredOnRejectOffset + kPointerSize;
-  static const int kRejectReactionsOffset =
-      kFulfillReactionsOffset + kPointerSize;
-  static const int kFlagsOffset = kRejectReactionsOffset + kPointerSize;
-  static const int kSize = kFlagsOffset + kPointerSize;
-  static const int kSizeWithEmbedderFields =
-      kSize + v8::Promise::kEmbedderFieldCount * kPointerSize;
-
-  // Flags layout.
-  // The first two bits store the v8::Promise::PromiseState.
-  static const int kStatusBits = 2;
-  static const int kHasHandlerBit = 2;
-  static const int kHandledHintBit = 3;
-
-  static const int kStatusShift = 0;
-  static const int kStatusMask = 0x3;
-  STATIC_ASSERT(v8::Promise::kPending == 0);
-  STATIC_ASSERT(v8::Promise::kFulfilled == 1);
-  STATIC_ASSERT(v8::Promise::kRejected == 2);
 };
 
 class AllocationSite: public Struct {
@@ -4214,6 +4033,33 @@ class Cell: public HeapObject {
   DISALLOW_IMPLICIT_CONSTRUCTORS(Cell);
 };
 
+// This is a special cell used to maintain both the link between a
+// closure and it's feedback vector, as well as a way to count the
+// number of closures created for a certain function per native
+// context. There's at most one FeedbackCell for each function in
+// a native context.
+class FeedbackCell : public Struct {
+ public:
+  // [value]: value of the cell.
+  DECL_ACCESSORS(value, HeapObject)
+
+  DECL_CAST(FeedbackCell)
+
+  // Dispatched behavior.
+  DECL_PRINTER(FeedbackCell)
+  DECL_VERIFIER(FeedbackCell)
+
+  static const int kValueOffset = HeapObject::kHeaderSize;
+  static const int kSize = kValueOffset + kPointerSize;
+
+  typedef FixedBodyDescriptor<kValueOffset, kValueOffset + kPointerSize, kSize>
+      BodyDescriptor;
+  // No weak fields.
+  typedef BodyDescriptor BodyDescriptorWeak;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(FeedbackCell);
+};
 
 class PropertyCell : public HeapObject {
  public:
@@ -4412,10 +4258,10 @@ class JSProxy: public JSReceiver {
   // No weak fields.
   typedef BodyDescriptor BodyDescriptorWeak;
 
-  static Maybe<bool> SetPrivateProperty(Isolate* isolate, Handle<JSProxy> proxy,
-                                        Handle<Symbol> private_name,
-                                        PropertyDescriptor* desc,
-                                        ShouldThrow should_throw);
+  static Maybe<bool> SetPrivateSymbol(Isolate* isolate, Handle<JSProxy> proxy,
+                                      Handle<Symbol> private_name,
+                                      PropertyDescriptor* desc,
+                                      ShouldThrow should_throw);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSProxy);
@@ -4456,9 +4302,14 @@ class JSAsyncFromSyncIterator : public JSObject {
   // (proposal-async-iteration/#table-async-from-sync-iterator-internal-slots)
   DECL_ACCESSORS(sync_iterator, JSReceiver)
 
+  // The "next" method is loaded during GetIterator, and is not reloaded for
+  // subsequent "next" invocations.
+  DECL_ACCESSORS(next, Object)
+
   // Offsets of object fields.
   static const int kSyncIteratorOffset = JSObject::kHeaderSize;
-  static const int kSize = kSyncIteratorOffset + kPointerSize;
+  static const int kNextOffset = kSyncIteratorOffset + kPointerSize;
+  static const int kSize = kNextOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSAsyncFromSyncIterator);
@@ -4540,6 +4391,7 @@ class AccessorInfo: public Struct {
   DECL_ACCESSORS(getter, Object)
   inline bool has_getter();
   DECL_ACCESSORS(setter, Object)
+  inline bool has_setter();
   // This either points at the same as above, or a trampoline in case we are
   // running with the simulator. Use these entries from generated code.
   DECL_ACCESSORS(js_getter, Object)
@@ -4557,6 +4409,7 @@ class AccessorInfo: public Struct {
   DECL_BOOLEAN_ACCESSORS(is_special_data_property)
   DECL_BOOLEAN_ACCESSORS(replace_on_access)
   DECL_BOOLEAN_ACCESSORS(is_sloppy)
+  DECL_BOOLEAN_ACCESSORS(has_no_side_effect)
 
   // The property attributes used when an API object template is instantiated
   // for the first time. Changing of this value afterwards does not affect
@@ -4605,6 +4458,7 @@ class AccessorInfo: public Struct {
   V(IsSpecialDataPropertyBit, bool, 1, _)    \
   V(IsSloppyBit, bool, 1, _)                 \
   V(ReplaceOnAccessBit, bool, 1, _)          \
+  V(HasNoSideEffectBit, bool, 1, _)          \
   V(InitialAttributesBits, PropertyAttributes, 3, _)
 
   DEFINE_BIT_FIELDS(ACCESSOR_INFO_FLAGS_BIT_FIELDS)
@@ -4999,7 +4853,7 @@ class StackFrameInfo : public Struct {
 class SourcePositionTableWithFrameCache : public Tuple2 {
  public:
   DECL_ACCESSORS(source_position_table, ByteArray)
-  DECL_ACCESSORS(stack_frame_cache, NumberDictionary)
+  DECL_ACCESSORS(stack_frame_cache, SimpleNumberDictionary)
 
   DECL_CAST(SourcePositionTableWithFrameCache)
 

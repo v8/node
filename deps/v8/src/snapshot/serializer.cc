@@ -92,8 +92,9 @@ bool Serializer<AllocatorT>::MustBeDeferred(HeapObject* object) {
 }
 
 template <class AllocatorT>
-void Serializer<AllocatorT>::VisitRootPointers(Root root, Object** start,
-                                               Object** end) {
+void Serializer<AllocatorT>::VisitRootPointers(Root root,
+                                               const char* description,
+                                               Object** start, Object** end) {
   // Builtins and bytecode handlers are serialized in a separate pass by the
   // BuiltinSerializer.
   if (root == Root::kBuiltins || root == Root::kDispatchTable) return;
@@ -283,7 +284,7 @@ void Serializer<AllocatorT>::PutAttachedReference(SerializerReference reference,
 
 template <class AllocatorT>
 int Serializer<AllocatorT>::PutAlignmentPrefix(HeapObject* object) {
-  AllocationAlignment alignment = object->RequiredAlignment();
+  AllocationAlignment alignment = HeapObject::RequiredAlignment(object->map());
   if (alignment != kWordAligned) {
     DCHECK(1 <= alignment && alignment <= 3);
     byte prefix = (kAlignmentPrefix - 1) + alignment;
@@ -684,23 +685,40 @@ template <class AllocatorT>
 void Serializer<AllocatorT>::ObjectSerializer::VisitPointers(HeapObject* host,
                                                              Object** start,
                                                              Object** end) {
-  Object** current = start;
-  while (current < end) {
-    while (current < end && (*current)->IsSmi()) current++;
-    if (current < end) OutputRawData(reinterpret_cast<Address>(current));
+  VisitPointers(host, reinterpret_cast<MaybeObject**>(start),
+                reinterpret_cast<MaybeObject**>(end));
+}
 
-    while (current < end && !(*current)->IsSmi()) {
-      HeapObject* current_contents = HeapObject::cast(*current);
+template <class AllocatorT>
+void Serializer<AllocatorT>::ObjectSerializer::VisitPointers(
+    HeapObject* host, MaybeObject** start, MaybeObject** end) {
+  MaybeObject** current = start;
+  while (current < end) {
+    while (current < end &&
+           ((*current)->IsSmi() || (*current)->IsClearedWeakHeapObject())) {
+      current++;
+    }
+    if (current < end) {
+      OutputRawData(reinterpret_cast<Address>(current));
+
+      // At the moment, there are no weak references reachable by the
+      // serializer. TODO(marja): Implement this, once the relevant objects can
+      // contain weak references.
+      CHECK(!(*current)->IsWeakHeapObject());
+      CHECK(!(*current)->IsClearedWeakHeapObject());
+    }
+    HeapObject* current_contents;
+    while (current < end && (*current)->ToStrongHeapObject(&current_contents)) {
       int root_index = serializer_->root_index_map()->Lookup(current_contents);
       // Repeats are not subject to the write barrier so we can only use
       // immortal immovable root members. They are never in new space.
       if (current != start && root_index != RootIndexMap::kInvalidRootIndex &&
           Heap::RootIsImmortalImmovable(root_index) &&
-          current_contents == current[-1]) {
+          *current == current[-1]) {
         DCHECK(!serializer_->isolate()->heap()->InNewSpace(current_contents));
         int repeat_count = 1;
         while (&current[repeat_count] < end - 1 &&
-               current[repeat_count] == current_contents) {
+               current[repeat_count] == *current) {
           repeat_count++;
         }
         current += repeat_count;
@@ -716,6 +734,12 @@ void Serializer<AllocatorT>::ObjectSerializer::VisitPointers(HeapObject* host,
                                      0);
         bytes_processed_so_far_ += kPointerSize;
         current++;
+      }
+
+      // TODO(marja): ditto.
+      if (current < end) {
+        CHECK(!(*current)->IsWeakHeapObject());
+        CHECK(!(*current)->IsClearedWeakHeapObject());
       }
     }
   }
@@ -885,7 +909,7 @@ void Serializer<AllocatorT>::ObjectSerializer::OutputCode(int size) {
                     RelocInfo::ModeMask(RelocInfo::INTERNAL_REFERENCE_ENCODED);
     for (RelocIterator it(code, mode_mask); !it.done(); it.next()) {
       RelocInfo* rinfo = it.rinfo();
-      rinfo->WipeOut(serializer_->isolate());
+      rinfo->WipeOut();
     }
     // We need to wipe out the header fields *after* wiping out the
     // relocations, because some of these fields are needed for the latter.

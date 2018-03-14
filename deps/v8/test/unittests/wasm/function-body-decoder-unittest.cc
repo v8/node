@@ -220,7 +220,6 @@ class TestModuleBuilder {
     mod.functions.push_back({sig,      // sig
                              0,        // func_index
                              0,        // sig_index
-                             {0, 0},   // name
                              {0, 0},   // code
                              false,    // import
                              false});  // export
@@ -1228,6 +1227,7 @@ TEST_F(FunctionBodyDecoderTest, MacrosInt64) {
 }
 
 TEST_F(FunctionBodyDecoderTest, AllSimpleExpressions) {
+  EXPERIMENTAL_FLAG_SCOPE(se);
 // Test all simple expressions which are described by a signature.
 #define DECODE_TEST(name, opcode, sig)                      \
   {                                                         \
