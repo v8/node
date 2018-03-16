@@ -20,16 +20,18 @@ keys.forEach(function(key) {
 });
 
 
-const expectedHeapSpaces = [
-  'new_space',
-  'old_space',
-  'code_space',
-  'map_space',
-  'large_object_space'
-];
+// const expectedHeapSpaces = [
+//   'new_space',
+//   'old_space',
+//   'code_space',
+//   'map_space',
+//   'large_object_space'
+// ];
 const heapSpaceStatistics = v8.getHeapSpaceStatistics();
-const actualHeapSpaceNames = heapSpaceStatistics.map((s) => s.space_name);
-assert.deepStrictEqual(actualHeapSpaceNames.sort(), expectedHeapSpaces.sort());
+// TODO(delphick) enable once the read-only space is committed.
+// const actualHeapSpaceNames = heapSpaceStatistics.map((s) => s.space_name);
+// assert.deepStrictEqual(
+//     actualHeapSpaceNames.sort(), expectedHeapSpaces.sort());
 heapSpaceStatistics.forEach((heapSpace) => {
   assert.strictEqual(typeof heapSpace.space_name, 'string');
   assert.strictEqual(typeof heapSpace.space_size, 'number');
