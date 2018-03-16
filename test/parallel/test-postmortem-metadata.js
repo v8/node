@@ -97,8 +97,8 @@ function getExpectedSymbols() {
     'v8dbg_class_SharedFunctionInfo__end_position__int',
     'v8dbg_class_SharedFunctionInfo__function_identifier__Object',
     'v8dbg_class_SharedFunctionInfo__internal_formal_parameter_count__int',
-    'v8dbg_class_SharedFunctionInfo__raw_name__Object',
-    'v8dbg_class_SharedFunctionInfo__scope_info__ScopeInfo',
+    // TODO(camillobruni): enable once corresponding V8 CL has landed.
+    // 'v8dbg_class_SharedFunctionInfo__name_or_scope_info__Object',
     'v8dbg_class_SharedFunctionInfo__script__Object',
     'v8dbg_class_SharedFunctionInfo__start_position_and_type__int',
     'v8dbg_class_SlicedString__offset__SMI',
