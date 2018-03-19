@@ -16,6 +16,7 @@
 #include "src/globals.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/wasm/wasm-code-specialization.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-objects.h"
@@ -214,7 +215,7 @@ void WasmCode::Disassemble(const char* name, Isolate* isolate,
   // Anonymous functions don't have source positions.
   if (!IsAnonymous()) {
     Object* source_positions_or_undef =
-        owner_->compiled_module()->source_positions()->get(index());
+        native_module_->compiled_module()->source_positions()->get(index());
     if (!source_positions_or_undef->IsUndefined(isolate)) {
       os << "Source positions:\n pc offset  position\n";
       for (SourcePositionTableIterator it(
@@ -278,6 +279,8 @@ NativeModule::NativeModule(uint32_t num_functions, uint32_t num_imports,
     : instance_id(next_id_.Increment(1)),
       code_table_(num_functions),
       num_imported_functions_(num_imports),
+      compilation_state_(NewCompilationState(
+          reinterpret_cast<Isolate*>(code_manager->isolate_))),
       free_memory_(reinterpret_cast<Address>(mem->address()),
                    reinterpret_cast<Address>(mem->end())),
       wasm_code_manager_(code_manager),
@@ -534,45 +537,12 @@ Address NativeModule::GetLocalAddressFor(Handle<Code> code) {
   }
 }
 
-WasmCode* NativeModule::GetExportedWrapper(uint32_t index) {
-  auto found = exported_wasm_to_wasm_wrappers_.find(index);
-  if (found != exported_wasm_to_wasm_wrappers_.end()) {
-    return found->second;
-  }
-  return nullptr;
-}
-
-WasmCode* NativeModule::AddExportedWrapper(Handle<Code> code, uint32_t index) {
-  WasmCode* ret = AddAnonymousCode(code, WasmCode::kWasmToWasmWrapper);
-  ret->index_ = Just(index);
-  exported_wasm_to_wasm_wrappers_.insert(std::make_pair(index, ret));
-  return ret;
-}
-
 void NativeModule::LinkAll() {
-  for (uint32_t index = 0; index < code_table_.size(); ++index) {
-    Link(index);
-  }
-}
-
-void NativeModule::Link(uint32_t index) {
-  WasmCode* code = code_table_[index];
-  // skip imports
-  if (!code) return;
-  int mode_mask = RelocInfo::ModeMask(RelocInfo::WASM_CALL);
-  for (RelocIterator it(code->instructions(), code->reloc_info(),
-                        code->constant_pool(), mode_mask);
-       !it.done(); it.next()) {
-    uint32_t index = GetWasmCalleeTag(it.rinfo());
-    const WasmCode* target = GetCode(index);
-    if (target == nullptr) continue;
-    Address target_addr = target->instructions().start();
-    DCHECK_NOT_NULL(target);
-    it.rinfo()->set_wasm_call_address(target_addr,
-                                      ICacheFlushMode::SKIP_ICACHE_FLUSH);
-  }
-  Assembler::FlushICache(code->instructions().start(),
-                         code->instructions().size());
+  Isolate* isolate = compiled_module()->GetIsolate();
+  Zone specialization_zone(isolate->allocator(), ZONE_NAME);
+  CodeSpecialization code_specialization(isolate, &specialization_zone);
+  code_specialization.RelocateDirectCalls(this);
+  code_specialization.ApplyToWholeModule(this);
 }
 
 Address NativeModule::AllocateForCode(size_t size) {

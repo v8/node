@@ -92,12 +92,9 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
   Reduction ReduceArrayPrototypeShift(Node* node);
   enum class ArrayIteratorKind { kArray, kTypedArray };
   Reduction ReduceArrayIterator(Node* node, IterationKind kind);
-  Reduction ReduceTypedArrayIterator(Node* node, IterationKind kind);
   Reduction ReduceArrayIteratorPrototypeNext(Node* node);
   Reduction ReduceFastArrayIteratorNext(InstanceType type, Node* node,
                                         IterationKind kind);
-  Reduction ReduceTypedArrayIteratorNext(InstanceType type, Node* node,
-                                         IterationKind kind);
 
   Reduction ReduceCallOrConstructWithArrayLikeOrSpread(
       Node* node, int arity, CallFrequency const& frequency,
@@ -142,6 +139,9 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
   Reduction ReducePromisePrototypeThen(Node* node);
   Reduction ReducePromiseResolveTrampoline(Node* node);
 
+  Reduction ReduceTypedArrayConstructor(Node* node,
+                                        Handle<SharedFunctionInfo> shared);
+
   Reduction ReduceSoftDeoptimize(Node* node, DeoptimizeReason reason);
 
   Reduction ReduceMathUnary(Node* node, const Operator* op);
@@ -149,6 +149,13 @@ class V8_EXPORT_PRIVATE JSCallReducer final : public AdvancedReducer {
   Reduction ReduceMathImul(Node* node);
   Reduction ReduceMathClz32(Node* node);
   Reduction ReduceMathMinMax(Node* node, const Operator* op, Node* empty_value);
+
+  Reduction ReduceNumberIsFinite(Node* node);
+  Reduction ReduceNumberIsInteger(Node* node);
+  Reduction ReduceNumberIsNaN(Node* node);
+
+  Reduction ReduceMapPrototypeHas(Node* node);
+  Reduction ReduceMapPrototypeGet(Node* node);
 
   // Returns the updated {to} node, and updates control and effect along the
   // way.

@@ -543,7 +543,7 @@ BytecodeGraphBuilder::BytecodeGraphBuilder(
       exit_controls_(local_zone),
       state_values_cache_(jsgraph),
       source_positions_(source_positions),
-      start_position_(shared_info->start_position(), inlining_id),
+      start_position_(shared_info->StartPosition(), inlining_id),
       native_context_(native_context) {}
 
 Node* BytecodeGraphBuilder::GetFunctionClosure() {
@@ -2529,6 +2529,12 @@ void BytecodeGraphBuilder::VisitToName() {
 
 void BytecodeGraphBuilder::VisitToObject() {
   BuildCastOperator(javascript()->ToObject());
+}
+
+void BytecodeGraphBuilder::VisitToString() {
+  Node* value =
+      NewNode(javascript()->ToString(), environment()->LookupAccumulator());
+  environment()->BindAccumulator(value, Environment::kAttachFrameState);
 }
 
 void BytecodeGraphBuilder::VisitToNumber() {

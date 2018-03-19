@@ -684,120 +684,6 @@ Reduction JSBuiltinReducer::ReduceGlobalIsNaN(Node* node) {
   return NoChange();
 }
 
-Reduction JSBuiltinReducer::ReduceMapGet(Node* node) {
-  // We only optimize if we have target, receiver and key parameters.
-  if (node->op()->ValueInputCount() != 3) return NoChange();
-  Node* receiver = NodeProperties::GetValueInput(node, 1);
-  Node* effect = NodeProperties::GetEffectInput(node);
-  Node* control = NodeProperties::GetControlInput(node);
-  Node* key = NodeProperties::GetValueInput(node, 2);
-
-  if (!NodeProperties::HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE))
-    return NoChange();
-
-  Node* table = effect = graph()->NewNode(
-      simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
-      effect, control);
-
-  Node* entry = effect = graph()->NewNode(
-      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
-
-  Node* check = graph()->NewNode(simplified()->NumberEqual(), entry,
-                                 jsgraph()->MinusOneConstant());
-
-  Node* branch = graph()->NewNode(common()->Branch(), check, control);
-
-  // Key not found.
-  Node* if_true = graph()->NewNode(common()->IfTrue(), branch);
-  Node* etrue = effect;
-  Node* vtrue = jsgraph()->UndefinedConstant();
-
-  // Key found.
-  Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
-  Node* efalse = effect;
-  Node* vfalse = efalse = graph()->NewNode(
-      simplified()->LoadElement(AccessBuilder::ForOrderedHashMapEntryValue()),
-      table, entry, efalse, if_false);
-
-  control = graph()->NewNode(common()->Merge(2), if_true, if_false);
-  Node* value = graph()->NewNode(
-      common()->Phi(MachineRepresentation::kTagged, 2), vtrue, vfalse, control);
-  effect = graph()->NewNode(common()->EffectPhi(2), etrue, efalse, control);
-
-  ReplaceWithValue(node, value, effect, control);
-  return Replace(value);
-}
-
-Reduction JSBuiltinReducer::ReduceMapHas(Node* node) {
-  // We only optimize if we have target, receiver and key parameters.
-  if (node->op()->ValueInputCount() != 3) return NoChange();
-  Node* receiver = NodeProperties::GetValueInput(node, 1);
-  Node* effect = NodeProperties::GetEffectInput(node);
-  Node* control = NodeProperties::GetControlInput(node);
-  Node* key = NodeProperties::GetValueInput(node, 2);
-
-  if (!NodeProperties::HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE))
-    return NoChange();
-
-  Node* table = effect = graph()->NewNode(
-      simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
-      effect, control);
-
-  Node* index = effect = graph()->NewNode(
-      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
-
-  Node* value = graph()->NewNode(simplified()->NumberEqual(), index,
-                                 jsgraph()->MinusOneConstant());
-  value = graph()->NewNode(simplified()->BooleanNot(), value);
-
-  ReplaceWithValue(node, value, effect, control);
-  return Replace(value);
-}
-
-// ES6 section 20.1.2.2 Number.isFinite ( number )
-Reduction JSBuiltinReducer::ReduceNumberIsFinite(Node* node) {
-  JSCallReduction r(node);
-  if (r.InputsMatchOne(Type::Number())) {
-    // Number.isFinite(a:number) -> NumberEqual(a', a')
-    // where a' = NumberSubtract(a, a)
-    Node* input = r.GetJSCallInput(0);
-    Node* diff = graph()->NewNode(simplified()->NumberSubtract(), input, input);
-    Node* value = graph()->NewNode(simplified()->NumberEqual(), diff, diff);
-    return Replace(value);
-  }
-  return NoChange();
-}
-
-// ES6 section 20.1.2.3 Number.isInteger ( number )
-Reduction JSBuiltinReducer::ReduceNumberIsInteger(Node* node) {
-  JSCallReduction r(node);
-  if (r.InputsMatchOne(Type::Number())) {
-    // Number.isInteger(x:number) -> NumberEqual(NumberSubtract(x, x'), #0)
-    // where x' = NumberTrunc(x)
-    Node* input = r.GetJSCallInput(0);
-    Node* trunc = graph()->NewNode(simplified()->NumberTrunc(), input);
-    Node* diff = graph()->NewNode(simplified()->NumberSubtract(), input, trunc);
-    Node* value = graph()->NewNode(simplified()->NumberEqual(), diff,
-                                   jsgraph()->ZeroConstant());
-    return Replace(value);
-  }
-  return NoChange();
-}
-
-// ES6 section 20.1.2.4 Number.isNaN ( number )
-Reduction JSBuiltinReducer::ReduceNumberIsNaN(Node* node) {
-  JSCallReduction r(node);
-  if (r.InputsMatchZero()) {
-    // Number.isNaN() -> #false
-    Node* value = jsgraph()->FalseConstant();
-    return Replace(value);
-  }
-  // Number.isNaN(a:number) -> ObjectIsNaN(a)
-  Node* input = r.GetJSCallInput(0);
-  Node* value = graph()->NewNode(simplified()->ObjectIsNaN(), input);
-  return Replace(value);
-}
-
 // ES6 section 20.1.2.5 Number.isSafeInteger ( number )
 Reduction JSBuiltinReducer::ReduceNumberIsSafeInteger(Node* node) {
   JSCallReduction r(node);
@@ -978,12 +864,6 @@ Reduction JSBuiltinReducer::Reduce(Node* node) {
     case kMapEntries:
       return ReduceCollectionIterator(
           node, JS_MAP_TYPE, Context::MAP_KEY_VALUE_ITERATOR_MAP_INDEX);
-    case kMapGet:
-      reduction = ReduceMapGet(node);
-      break;
-    case kMapHas:
-      reduction = ReduceMapHas(node);
-      break;
     case kMapKeys:
       return ReduceCollectionIterator(node, JS_MAP_TYPE,
                                       Context::MAP_KEY_ITERATOR_MAP_INDEX);
@@ -996,14 +876,6 @@ Reduction JSBuiltinReducer::Reduce(Node* node) {
       return ReduceCollectionIteratorNext(
           node, OrderedHashMap::kEntrySize, factory()->empty_ordered_hash_map(),
           FIRST_MAP_ITERATOR_TYPE, LAST_MAP_ITERATOR_TYPE);
-    case kNumberIsFinite:
-      reduction = ReduceNumberIsFinite(node);
-      break;
-    case kNumberIsInteger:
-      reduction = ReduceNumberIsInteger(node);
-      break;
-    case kNumberIsNaN:
-      reduction = ReduceNumberIsNaN(node);
       break;
     case kNumberIsSafeInteger:
       reduction = ReduceNumberIsSafeInteger(node);

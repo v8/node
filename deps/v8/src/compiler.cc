@@ -201,9 +201,8 @@ void CompilationJob::RecordFunctionCompilation(
     return;
   }
 
-  int line_num = Script::GetLineNumber(script, shared->start_position()) + 1;
-  int column_num =
-      Script::GetColumnNumber(script, shared->start_position()) + 1;
+  int line_num = Script::GetLineNumber(script, shared->StartPosition()) + 1;
+  int column_num = Script::GetColumnNumber(script, shared->StartPosition()) + 1;
   String* script_name = script->name()->IsString()
                             ? String::cast(script->name())
                             : isolate->heap()->empty_string();
@@ -236,7 +235,7 @@ void CompilationJob::RecordFunctionCompilation(
   }
 
   LOG(isolate, FunctionEvent(name.c_str(), nullptr, script->id(), ms,
-                             shared->start_position(), shared->end_position(),
+                             shared->StartPosition(), shared->EndPosition(),
                              shared->DebugName()));
 }
 
@@ -296,15 +295,6 @@ void InstallUnoptimizedCode(CompilationInfo* compilation_info,
   shared->set_scope_info(*scope_info);
   Scope* outer_scope = compilation_info->scope()->GetOuterScopeWithContext();
   if (outer_scope) shared->set_outer_scope_info(*outer_scope->scope_info());
-  if (scope_info->HasFunctionName()) {
-    if (scope_info->HasPendingFunctionName()) {
-      scope_info->SetPendingFunctionName(shared->name());
-    } else {
-      DCHECK_EQ(shared->name(), scope_info->FunctionName());
-    }
-  } else {
-    DCHECK_EQ(shared->name(), isolate->heap()->empty_string());
-  }
 
   DCHECK(!compilation_info->code().is_null());
   shared->set_code(*compilation_info->code());

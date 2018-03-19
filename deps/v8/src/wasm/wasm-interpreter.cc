@@ -641,7 +641,7 @@ Handle<HeapObject> UnwrapWasmToJSWrapper(Isolate* isolate,
   Handle<FixedArray> js_imports_table;
   int index = 0;
   DCHECK_EQ(wasm::WasmCode::kWasmToJsWrapper, wasm_code->kind());
-  js_imports_table = Handle<FixedArray>(wasm_code->owner()
+  js_imports_table = Handle<FixedArray>(wasm_code->native_module()
                                             ->compiled_module()
                                             ->owning_instance()
                                             ->js_imports_table());
@@ -993,10 +993,6 @@ class CodeMap {
   WasmInstanceObject* instance() const {
     DCHECK(has_instance());
     return *instance_;
-  }
-  MaybeHandle<WasmInstanceObject> maybe_instance() const {
-    return has_instance() ? handle(instance())
-                          : MaybeHandle<WasmInstanceObject>();
   }
 
   const wasm::WasmCode* GetImportedFunction(uint32_t function_index) {
@@ -2129,12 +2125,12 @@ class ThreadImpl {
           MemoryIndexOperand<Decoder::kNoValidate> operand(&decoder,
                                                            code->at(pc));
           uint32_t delta_pages = Pop().to<uint32_t>();
-          Handle<WasmInstanceObject> instance =
-              codemap()->maybe_instance().ToHandleChecked();
-          DCHECK_EQ(wasm_context_, instance->wasm_context()->get());
-          Isolate* isolate = instance->GetIsolate();
-          int32_t result =
-              WasmInstanceObject::GrowMemory(isolate, instance, delta_pages);
+          Handle<WasmMemoryObject> memory(
+              codemap()->instance()->memory_object());
+          DCHECK_EQ(wasm_context_,
+                    codemap()->instance()->wasm_context()->get());
+          Isolate* isolate = memory->GetIsolate();
+          int32_t result = WasmMemoryObject::Grow(isolate, memory, delta_pages);
           Push(WasmValue(result));
           len = 1 + operand.length;
           // Treat one grow_memory instruction like 1000 other instructions,
@@ -2464,7 +2460,7 @@ class ThreadImpl {
     static_assert(compiler::CWasmEntryParameters::kNumParameters == 3,
                   "code below needs adaption");
     Handle<Object> args[compiler::CWasmEntryParameters::kNumParameters];
-    WasmContext* context = code->owner()
+    WasmContext* context = code->native_module()
                                ->compiled_module()
                                ->owning_instance()
                                ->wasm_context()
@@ -2522,7 +2518,7 @@ class ThreadImpl {
     DCHECK(AllowHeapAllocation::IsAllowed());
 
     if (code->kind() == wasm::WasmCode::kFunction) {
-      if (code->owner()->compiled_module()->owning_instance() !=
+      if (code->native_module()->compiled_module()->owning_instance() !=
           codemap()->instance()) {
         return CallExternalWasmFunction(isolate, code, signature);
       }

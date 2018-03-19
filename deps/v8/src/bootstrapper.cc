@@ -620,8 +620,8 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
   script->set_type(Script::TYPE_NATIVE);
   Handle<FixedArray> infos = factory->NewFixedArray(2);
   script->set_shared_function_infos(*infos);
-  empty_function->shared()->set_start_position(0);
-  empty_function->shared()->set_end_position(source->length());
+  empty_function->shared()->set_raw_start_position(0);
+  empty_function->shared()->set_raw_end_position(source->length());
   empty_function->shared()->set_function_literal_id(1);
   empty_function->shared()->DontAdaptArguments();
   SharedFunctionInfo::SetScript(handle(empty_function->shared()), script);
@@ -4214,7 +4214,7 @@ void Genesis::InitializeGlobal_harmony_string_trimming() {
             .ToHandleChecked());
     JSObject::AddProperty(string_prototype, trim_start_name, trim_left_fun,
                           DONT_ENUM);
-    trim_left_fun->shared()->set_name(*trim_start_name);
+    trim_left_fun->shared()->SetName(*trim_start_name);
   }
 
   {
@@ -4226,7 +4226,7 @@ void Genesis::InitializeGlobal_harmony_string_trimming() {
             .ToHandleChecked());
     JSObject::AddProperty(string_prototype, trim_end_name, trim_right_fun,
                           DONT_ENUM);
-    trim_right_fun->shared()->set_name(*trim_end_name);
+    trim_right_fun->shared()->SetName(*trim_end_name);
   }
 }
 
@@ -4249,6 +4249,17 @@ void Genesis::InitializeGlobal_harmony_array_prototype_values() {
   JSObject::AddProperty(Handle<JSObject>::cast(unscopables),
                         factory()->values_string(), factory()->true_value(),
                         NONE);
+}
+
+void Genesis::InitializeGlobal_harmony_array_flatten() {
+  if (!FLAG_harmony_array_flatten) return;
+  Handle<JSFunction> array_constructor(native_context()->array_function());
+  Handle<JSObject> array_prototype(
+      JSObject::cast(array_constructor->instance_prototype()));
+  SimpleInstallFunction(array_prototype, "flatten",
+                        Builtins::kArrayPrototypeFlatten, 0, false, DONT_ENUM);
+  SimpleInstallFunction(array_prototype, "flatMap",
+                        Builtins::kArrayPrototypeFlatMap, 1, false, DONT_ENUM);
 }
 
 void Genesis::InitializeGlobal_harmony_promise_finally() {

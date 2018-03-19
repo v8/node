@@ -523,9 +523,7 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* StringLessThan();
   const Operator* StringLessThanOrEqual();
   const Operator* StringCharCodeAt();
-  const Operator* SeqStringCharCodeAt();
   const Operator* StringCodePointAt(UnicodeEncoding encoding);
-  const Operator* SeqStringCodePointAt(UnicodeEncoding encoding);
   const Operator* StringFromCharCode();
   const Operator* StringFromCodePoint(UnicodeEncoding encoding);
   const Operator* StringIndexOf();
@@ -578,7 +576,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* CheckNotTaggedHole();
   const Operator* CheckNumber(const VectorSlotPair& feedback);
   const Operator* CheckReceiver();
-  const Operator* CheckSeqString();
   const Operator* CheckSmi(const VectorSlotPair& feedback);
   const Operator* CheckString(const VectorSlotPair& feedback);
   const Operator* CheckSymbol();
@@ -625,6 +622,10 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* ObjectIsUndetectable();
 
   const Operator* NumberIsFloat64Hole();
+  const Operator* NumberIsFinite();
+  const Operator* ObjectIsFiniteNumber();
+  const Operator* NumberIsInteger();
+  const Operator* ObjectIsInteger();
 
   const Operator* ArgumentsFrame();
   const Operator* ArgumentsLength(int formal_parameter_count,

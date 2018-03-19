@@ -56,7 +56,6 @@
 #include "src/snapshot/serializer-common.h"
 #include "src/snapshot/snapshot.h"
 #include "src/tracing/trace-event.h"
-#include "src/trap-handler/trap-handler.h"
 #include "src/unicode-decoder.h"
 #include "src/unicode-inl.h"
 #include "src/utils-inl.h"
@@ -230,7 +229,6 @@ Heap::Heap()
       heap_iterator_depth_(0),
       local_embedder_heap_tracer_(nullptr),
       fast_promotion_mode_(false),
-      use_tasks_(true),
       force_oom_(false),
       delay_sweeper_tasks_for_testing_(false),
       pending_layout_change_object_(nullptr),
@@ -3288,7 +3286,6 @@ AllocationResult Heap::AllocateCode(
   code->set_source_position_table(source_position_table);
   code->set_constant_pool_offset(desc.instr_size - desc.constant_pool_size);
   code->set_builtin_index(builtin_index);
-  code->set_trap_handler_index(Smi::FromInt(-1));
 
   switch (code->kind()) {
     case Code::OPTIMIZED_FUNCTION:
@@ -3343,11 +3340,6 @@ AllocationResult Heap::CopyCode(Code* code, CodeDataContainer* data_container) {
 
   // Set the {CodeDataContainer}, it cannot be shared.
   new_code->set_code_data_container(data_container);
-
-  // Clear the trap handler index since they can't be shared between code. We
-  // have to do this before calling Relocate because relocate would adjust the
-  // base pointer for the old code.
-  new_code->set_trap_handler_index(Smi::FromInt(trap_handler::kInvalidIndex));
 
   // Relocate the copy.
   new_code->Relocate(new_addr - old_addr);
@@ -5924,7 +5916,7 @@ void Heap::RegisterExternallyReferencedObject(Object** object) {
 }
 
 void Heap::TearDown() {
-  DCHECK(!use_tasks_);
+  SetGCState(TEAR_DOWN);
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
     Verify();
@@ -6838,9 +6830,7 @@ bool Heap::GcSafeCodeContains(HeapObject* code, Address addr) {
   Map* map = GcSafeMapOfCodeSpaceObject(code);
   DCHECK(map == code->GetHeap()->code_map());
 #ifdef V8_EMBEDDED_BUILTINS
-  if (FLAG_stress_off_heap_code) {
-    if (InstructionStream::TryLookupCode(isolate(), addr) == code) return true;
-  }
+  if (InstructionStream::TryLookupCode(isolate(), addr) == code) return true;
 #endif
   Address start = code->address();
   Address end = code->address() + code->SizeFromMap(map);
@@ -6849,10 +6839,8 @@ bool Heap::GcSafeCodeContains(HeapObject* code, Address addr) {
 
 Code* Heap::GcSafeFindCodeForInnerPointer(Address inner_pointer) {
 #ifdef V8_EMBEDDED_BUILTINS
-  if (FLAG_stress_off_heap_code) {
-    Code* code = InstructionStream::TryLookupCode(isolate(), inner_pointer);
-    if (code != nullptr) return code;
-  }
+  Code* code = InstructionStream::TryLookupCode(isolate(), inner_pointer);
+  if (code != nullptr) return code;
 #endif
 
   // Check if the inner pointer points into a large object chunk.

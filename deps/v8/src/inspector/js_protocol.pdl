@@ -1229,6 +1229,8 @@ domain Runtime
     parameters
       # Identifier of the prototype to return objects for.
       RemoteObjectId prototypeObjectId
+      # Symbolic group name that can be used to release the results.
+      optional string objectGroup
     returns
       # Array with objects.
       RemoteObject objects
@@ -1279,6 +1281,10 @@ domain Runtime
   experimental command setCustomObjectFormatterEnabled
     parameters
       boolean enabled
+
+  # Terminate current or next JavaScript execution.
+  # Will cancel the termination when the outer-most script execution ends.
+  experimental command terminateExecution
 
   # Issued when console API was called.
   event consoleAPICalled

@@ -25,11 +25,6 @@
   assertEquals(octal, 0o777);
 }
 {
-  const implicitOctal = 07_7_7;
-  assertEquals(implicitOctal, 0o777);
-}
-
-{
   let exception = false;
   try {
     const code = `"use strict" const implicitOctal = 07_7_7`;
@@ -50,6 +45,40 @@
   assertEquals(leadingZeros, 0913);
 }
 
+{
+  const dot1 = 9_1.1_3;
+  assertEquals(dot1, 91.13);
+
+  const dot2 = 1.1_3;
+  assertEquals(dot2, 1.13);
+
+  const dot3 = 1_1.21;
+  assertEquals(dot3, 11.21);
+}
+
+{
+  const basic = Number('1_2_3');
+  assertEquals(NaN, basic);
+  const exponent = Number('1_0e+1');
+  assertEquals(NaN, exponent);
+  const exponent2 = Number('1_0e+1_0');
+  assertEquals(NaN, exponent2);
+  const hex = Number('0xF_F_FF');
+  assertEquals(NaN, hex);
+  const octal = Number('0o7_7_7');
+  assertEquals(NaN, octal);
+  const binary = Number('0b0_1_0_1_0');
+  assertEquals(NaN, binary);
+  const leadingZeros = Number('09_1_3');
+  assertEquals(NaN, leadingZeros);
+  const dot1 = Number('9_1.1_3');
+  assertEquals(NaN, dot1);
+  const dot2 = Number('1.1_3');
+  assertEquals(NaN, dot2);
+  const dot3 = Number('1_1.21');
+  assertEquals(NaN, dot3);
+}
+
 assertThrows('1_0_0_0_', SyntaxError);
 assertThrows('1e_1', SyntaxError);
 assertThrows('1e+_1', SyntaxError);
@@ -66,3 +95,4 @@ assertThrows('0o_777', SyntaxError);
 assertThrows('0o7__77', SyntaxError);
 assertThrows('0777_', SyntaxError);
 assertThrows('07__77', SyntaxError);
+assertThrows('07_7_7', SyntaxError);

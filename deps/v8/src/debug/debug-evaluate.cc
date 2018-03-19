@@ -312,53 +312,53 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
 // Use macro to include both inlined and non-inlined version of an intrinsic.
 #define INTRINSIC_WHITELIST(V)           \
   /* Conversions */                      \
+  V(NumberToStringSkipCache)             \
+  V(ToBigInt)                            \
   V(ToInteger)                           \
-  V(ToObject)                            \
-  V(ToString)                            \
   V(ToLength)                            \
   V(ToNumber)                            \
-  V(ToBigInt)                            \
-  V(NumberToStringSkipCache)             \
+  V(ToObject)                            \
+  V(ToString)                            \
   /* Type checks */                      \
-  V(IsJSReceiver)                        \
-  V(IsSmi)                               \
   V(IsArray)                             \
-  V(IsFunction)                          \
   V(IsDate)                              \
-  V(IsJSProxy)                           \
+  V(IsFunction)                          \
   V(IsJSMap)                             \
+  V(IsJSProxy)                           \
+  V(IsJSReceiver)                        \
   V(IsJSSet)                             \
   V(IsJSWeakMap)                         \
   V(IsJSWeakSet)                         \
   V(IsRegExp)                            \
+  V(IsSmi)                               \
   V(IsTypedArray)                        \
   /* Loads */                            \
   V(LoadLookupSlotForCall)               \
   /* Arrays */                           \
   V(ArraySpeciesConstructor)             \
-  V(NormalizeElements)                   \
-  V(GetArrayKeys)                        \
-  V(TrySliceSimpleNonFastElements)       \
-  V(HasComplexElements)                  \
   V(EstimateNumberOfElements)            \
+  V(GetArrayKeys)                        \
+  V(HasComplexElements)                  \
   V(NewArray)                            \
+  V(NormalizeElements)                   \
+  V(TrySliceSimpleNonFastElements)       \
   V(TypedArrayGetBuffer)                 \
   /* Errors */                           \
+  V(NewTypeError)                        \
   V(ReThrow)                             \
+  V(ThrowCalledNonCallable)              \
+  V(ThrowInvalidStringLength)            \
+  V(ThrowIteratorResultNotAnObject)      \
   V(ThrowReferenceError)                 \
   V(ThrowSymbolIteratorInvalid)          \
-  V(ThrowIteratorResultNotAnObject)      \
-  V(NewTypeError)                        \
-  V(ThrowInvalidStringLength)            \
-  V(ThrowCalledNonCallable)              \
   /* Strings */                          \
-  V(StringIndexOf)                       \
+  V(RegExpInternalReplace)               \
   V(StringIncludes)                      \
+  V(StringIndexOf)                       \
   V(StringReplaceOneCharWithString)      \
+  V(StringSubstring)                     \
   V(StringToNumber)                      \
   V(StringTrim)                          \
-  V(StringSubstring)                     \
-  V(RegExpInternalReplace)               \
   /* BigInts */                          \
   V(BigIntEqualToBigInt)                 \
   V(BigIntToBoolean)                     \
@@ -368,48 +368,49 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(CreateObjectLiteral)                 \
   V(CreateRegExpLiteral)                 \
   /* Called from builtins */             \
-  V(ClassOf)                             \
-  V(StringAdd)                           \
-  V(StringParseFloat)                    \
-  V(StringParseInt)                      \
-  V(StringCharCodeAt)                    \
-  V(StringIndexOfUnchecked)              \
-  V(StringEqual)                         \
-  V(RegExpInitializeAndCompile)          \
-  V(SymbolDescriptiveString)             \
-  V(GenerateRandomNumbers)               \
-  V(GlobalPrint)                         \
   V(AllocateInNewSpace)                  \
   V(AllocateInTargetSpace)               \
   V(AllocateSeqOneByteString)            \
   V(AllocateSeqTwoByteString)            \
+  V(ArrayIncludes_Slow)                  \
+  V(ArrayIndexOf)                        \
+  V(ArrayIsArray)                        \
+  V(ClassOf)                             \
+  V(GenerateRandomNumbers)               \
+  V(GetFunctionName)                     \
+  V(GetOwnPropertyDescriptor)            \
+  V(GlobalPrint)                         \
+  V(HasProperty)                         \
   V(ObjectCreate)                        \
   V(ObjectEntries)                       \
   V(ObjectEntriesSkipFastPath)           \
   V(ObjectHasOwnProperty)                \
   V(ObjectValues)                        \
   V(ObjectValuesSkipFastPath)            \
-  V(ArrayIndexOf)                        \
-  V(ArrayIncludes_Slow)                  \
-  V(ArrayIsArray)                        \
-  V(ThrowTypeError)                      \
-  V(ThrowRangeError)                     \
-  V(ToName)                              \
-  V(GetOwnPropertyDescriptor)            \
-  V(HasProperty)                         \
+  V(RegExpInitializeAndCompile)          \
   V(StackGuard)                          \
+  V(StringAdd)                           \
+  V(StringCharCodeAt)                    \
+  V(StringEqual)                         \
+  V(StringIndexOfUnchecked)              \
+  V(StringParseFloat)                    \
+  V(StringParseInt)                      \
+  V(SymbolDescriptiveString)             \
+  V(ThrowRangeError)                     \
+  V(ThrowTypeError)                      \
+  V(ToName)                              \
   /* Misc. */                            \
   V(Call)                                \
-  V(MaxSmi)                              \
-  V(NewObject)                           \
   V(CompleteInobjectSlackTrackingForMap) \
   V(HasInPrototypeChain)                 \
+  V(MaxSmi)                              \
+  V(NewObject)                           \
   V(StringMaxLength)                     \
   /* Test */                             \
-  V(OptimizeOsr)                         \
+  V(GetOptimizationStatus)               \
   V(OptimizeFunctionOnNextCall)          \
-  V(UnblockConcurrentRecompilation)      \
-  V(GetOptimizationStatus)
+  V(OptimizeOsr)                         \
+  V(UnblockConcurrentRecompilation)
 
 #define CASE(Name)       \
   case Runtime::k##Name: \
@@ -549,6 +550,7 @@ bool BytecodeHasNoSideEffect(interpreter::Bytecode bytecode) {
     case Bytecode::kToObject:
     case Bytecode::kToNumber:
     case Bytecode::kToName:
+    case Bytecode::kToString:
     // Misc.
     case Bytecode::kForInEnumerate:
     case Bytecode::kForInPrepare:
@@ -935,6 +937,12 @@ bool DebugEvaluate::CallbackHasNoSideEffect(Object* callback_info) {
       PrintF("[debug-evaluate] API Callback '");
       info->name()->ShortPrint();
       PrintF("' may cause side effect.\n");
+    }
+  } else if (callback_info->IsInterceptorInfo()) {
+    InterceptorInfo* info = InterceptorInfo::cast(callback_info);
+    if (info->has_no_side_effect()) return true;
+    if (FLAG_trace_side_effect_free_debug_evaluate) {
+      PrintF("[debug-evaluate] API Interceptor may cause side effect.\n");
     }
   }
   return false;

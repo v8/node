@@ -27,11 +27,6 @@ inline Operand GetStackSlot(uint32_t index) {
   return Operand(rbp, -kFirstStackSlotOffset - offset);
 }
 
-inline Operand GetHalfStackSlot(uint32_t half_index) {
-  int32_t offset = half_index * (LiftoffAssembler::kStackSlotSize / 2);
-  return Operand(rbp, -kFirstStackSlotOffset - offset);
-}
-
 // TODO(clemensh): Make this a constexpr variable once Operand is constexpr.
 inline Operand GetContextOperand() { return Operand(rbp, -16); }
 
@@ -160,6 +155,9 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
                             LoadType type, LiftoffRegList pinned,
                             uint32_t* protected_load_pc) {
+  if (emit_debug_code() && offset_reg != no_reg) {
+    AssertZeroExtended(offset_reg);
+  }
   Operand src_op =
       liftoff::GetMemOp(this, src_addr, offset_reg, offset_imm, pinned);
   if (protected_load_pc) *protected_load_pc = pc_offset();
@@ -209,6 +207,9 @@ void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
                              StoreType type, LiftoffRegList pinned,
                              uint32_t* protected_store_pc) {
+  if (emit_debug_code() && offset_reg != no_reg) {
+    AssertZeroExtended(offset_reg);
+  }
   Operand dst_op =
       liftoff::GetMemOp(this, dst_addr, offset_reg, offset_imm, pinned);
   if (protected_store_pc) *protected_store_pc = pc_offset();
@@ -319,13 +320,17 @@ void LiftoffAssembler::Spill(uint32_t index, WasmValue value) {
       movl(dst, Immediate(value.to_i32()));
       break;
     case kWasmI64: {
-      // We could use movq, but this would require a temporary register. For
-      // simplicity (and to avoid potentially having to spill another register),
-      // we use two movl instructions.
-      int32_t low_word = static_cast<int32_t>(value.to_i64());
-      int32_t high_word = static_cast<int32_t>(value.to_i64() >> 32);
-      movl(dst, Immediate(low_word));
-      movl(liftoff::GetHalfStackSlot(2 * index + 1), Immediate(high_word));
+      if (is_int32(value.to_i64())) {
+        // Sign extend low word.
+        movq(dst, Immediate(static_cast<int32_t>(value.to_i64())));
+      } else if (is_uint32(value.to_i64())) {
+        // Zero extend low word.
+        movl(kScratchRegister, Immediate(static_cast<int32_t>(value.to_i64())));
+        movq(dst, kScratchRegister);
+      } else {
+        movq(kScratchRegister, value.to_i64());
+        movq(dst, kScratchRegister);
+      }
       break;
     }
     default:
@@ -643,8 +648,18 @@ bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
                                             LiftoffRegister src) {
   switch (opcode) {
+    case kExprI32ConvertI64:
+      movl(dst.gp(), src.gp());
+      return true;
     case kExprI32ReinterpretF32:
       Movd(dst.gp(), src.fp());
+      return true;
+    case kExprI64SConvertI32:
+      movsxlq(dst.gp(), src.gp());
+      return true;
+    case kExprI64UConvertI32:
+      AssertZeroExtended(src.gp());
+      if (dst.gp() != src.gp()) movl(dst.gp(), src.gp());
       return true;
     case kExprI64ReinterpretF64:
       Movq(dst.gp(), src.fp());
@@ -752,9 +767,9 @@ void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
 }
 
 void LiftoffAssembler::StackCheck(Label* ool_code) {
-  Register limit = GetUnusedRegister(kGpReg).gp();
-  LoadAddress(limit, ExternalReference::address_of_stack_limit(isolate()));
-  cmpp(rsp, Operand(limit, 0));
+  Operand stack_limit = ExternalOperand(
+      ExternalReference::address_of_stack_limit(isolate()), kScratchRegister);
+  cmpp(rsp, stack_limit);
   j(below_equal, ool_code);
 }
 

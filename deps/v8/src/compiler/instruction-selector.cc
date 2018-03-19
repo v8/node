@@ -96,9 +96,13 @@ bool InstructionSelector::SelectInstructions() {
     size_t start = instruction_block->code_start();
     DCHECK_LE(end, start);
     StartBlock(RpoNumber::FromInt(block->rpo_number()));
-    while (start-- > end) {
-      UpdateRenames(instructions_[start]);
-      AddInstruction(instructions_[start]);
+    if (end != start) {
+      while (start-- > end + 1) {
+        UpdateRenames(instructions_[start]);
+        AddInstruction(instructions_[start]);
+      }
+      UpdateRenames(instructions_[end]);
+      AddTerminator(instructions_[end]);
     }
     EndBlock(RpoNumber::FromInt(block->rpo_number()));
   }
@@ -127,6 +131,14 @@ void InstructionSelector::EndBlock(RpoNumber rpo) {
   }
 }
 
+void InstructionSelector::AddTerminator(Instruction* instr) {
+  if (UseInstructionScheduling()) {
+    DCHECK_NOT_NULL(scheduler_);
+    scheduler_->AddTerminator(instr);
+  } else {
+    sequence()->AddInstruction(instr);
+  }
+}
 
 void InstructionSelector::AddInstruction(Instruction* instr) {
   if (UseInstructionScheduling()) {
@@ -1000,7 +1012,7 @@ void InstructionSelector::InitializeCallBuffer(Node* call, CallBuffer* buffer,
         if (reg == kSpeculationPoisonRegister.code()) {
           buffer->instruction_args[poison_alias_index] = g.TempImmediate(
               static_cast<int32_t>(buffer->instruction_args.size()));
-          op = g.Use(*iter);
+          op = g.UseRegisterOrSlotOrConstant(*iter);
         }
       }
       buffer->instruction_args.push_back(op);

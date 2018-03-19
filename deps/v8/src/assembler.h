@@ -366,7 +366,6 @@ class RelocInfo {
     // wasm code. Everything after WASM_CONTEXT_REFERENCE (inclusive) is not
     // GC'ed.
     WASM_CONTEXT_REFERENCE,
-    WASM_FUNCTION_TABLE_SIZE_REFERENCE,
     WASM_GLOBAL_HANDLE,
     WASM_CALL,
     JS_TO_WASM_CALL,
@@ -379,6 +378,9 @@ class RelocInfo {
 
     // Encoded internal reference, used only on MIPS, MIPS64 and PPC.
     INTERNAL_REFERENCE_ENCODED,
+
+    // An off-heap instruction stream target. See http://goo.gl/Z2HUiM.
+    OFF_HEAP_TARGET,
 
     // Marks constant and veneer pools. Only used on ARM and ARM64.
     // They use a custom noncompact encoding.
@@ -456,18 +458,15 @@ class RelocInfo {
   static inline bool IsInternalReferenceEncoded(Mode mode) {
     return mode == INTERNAL_REFERENCE_ENCODED;
   }
+  static inline bool IsOffHeapTarget(Mode mode) {
+    return mode == OFF_HEAP_TARGET;
+  }
   static inline bool IsNone(Mode mode) { return mode == NONE; }
   static inline bool IsWasmContextReference(Mode mode) {
     return mode == WASM_CONTEXT_REFERENCE;
   }
-  static inline bool IsWasmFunctionTableSizeReference(Mode mode) {
-    return mode == WASM_FUNCTION_TABLE_SIZE_REFERENCE;
-  }
   static inline bool IsWasmReference(Mode mode) {
-    return IsWasmPtrReference(mode) || IsWasmSizeReference(mode);
-  }
-  static inline bool IsWasmSizeReference(Mode mode) {
-    return IsWasmFunctionTableSizeReference(mode);
+    return IsWasmPtrReference(mode);
   }
   static inline bool IsWasmPtrReference(Mode mode) {
     return mode == WASM_CONTEXT_REFERENCE || mode == WASM_GLOBAL_HANDLE ||
@@ -503,16 +502,12 @@ class RelocInfo {
   bool IsInConstantPool();
 
   Address wasm_context_reference() const;
-  uint32_t wasm_function_table_size_reference() const;
   Address global_handle() const;
   Address js_to_wasm_address() const;
   Address wasm_call_address() const;
 
   void set_wasm_context_reference(
       Address address,
-      ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
-  void update_wasm_function_table_size_reference(
-      uint32_t old_base, uint32_t new_base,
       ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED);
   void set_target_address(
       Address target,
@@ -540,6 +535,7 @@ class RelocInfo {
       Address target,
       WriteBarrierMode write_barrier_mode = UPDATE_WRITE_BARRIER,
       ICacheFlushMode icache_flush_mode = FLUSH_ICACHE_IF_NEEDED));
+  INLINE(Address target_off_heap_target());
   INLINE(Cell* target_cell());
   INLINE(Handle<Cell> target_cell_handle());
   INLINE(void set_target_cell(

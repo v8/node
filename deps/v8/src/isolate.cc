@@ -70,11 +70,8 @@ base::Atomic32 ThreadId::highest_thread_id_ = 0;
 extern const uint8_t* DefaultEmbeddedBlob();
 extern uint32_t DefaultEmbeddedBlobSize();
 
-const uint8_t* Isolate::embedded_blob() const { return DefaultEmbeddedBlob(); }
-
-uint32_t Isolate::embedded_blob_size() const {
-  return DefaultEmbeddedBlobSize();
-}
+const uint8_t* Isolate::embedded_blob() const { return embedded_blob_; }
+uint32_t Isolate::embedded_blob_size() const { return embedded_blob_size_; }
 #endif
 
 int ThreadId::AllocateThreadId() {
@@ -2594,8 +2591,6 @@ void Isolate::ClearSerializerData() {
 void Isolate::Deinit() {
   TRACE_ISOLATE(deinit);
 
-  // Make sure that the GC does not post any new tasks.
-  heap_.stop_using_tasks();
   debug()->Unload();
 
   if (concurrent_recompilation_enabled()) {
@@ -2604,7 +2599,7 @@ void Isolate::Deinit() {
     optimizing_compile_dispatcher_ = nullptr;
   }
 
-  wasm_engine()->compilation_manager()->TearDown();
+  wasm_engine()->TearDown();
 
   heap_.mark_compact_collector()->EnsureSweepingCompleted();
   heap_.memory_allocator()->unmapper()->WaitUntilCompleted();
@@ -2652,6 +2647,14 @@ void Isolate::Deinit() {
 
   heap_.TearDown();
   logger_->TearDown();
+
+#ifdef V8_EMBEDDED_BUILTINS
+  if (DefaultEmbeddedBlob() == nullptr && embedded_blob() != nullptr) {
+    // We own the embedded blob. Free it.
+    uint8_t* data = const_cast<uint8_t*>(embedded_blob_);
+    InstructionStream::FreeOffHeapInstructionStream(data, embedded_blob_size_);
+  }
+#endif
 
   delete interpreter_;
   interpreter_ = nullptr;
@@ -2820,69 +2823,13 @@ void PrintBuiltinSizes(Isolate* isolate) {
 }
 
 #ifdef V8_EMBEDDED_BUILTINS
-void ChangeToOffHeapTrampoline(Isolate* isolate, Handle<Code> code,
-                               const uint8_t* entry) {
-  DCHECK(Builtins::IsOffHeapSafe(code->builtin_index()));
-  HandleScope scope(isolate);
-
-  constexpr size_t buffer_size = 256;  // Enough to fit the single jmp.
-  byte buffer[buffer_size];            // NOLINT(runtime/arrays)
-
-  // Generate replacement code that simply tail-calls the off-heap code.
-  MacroAssembler masm(isolate, buffer, buffer_size, CodeObjectRequired::kYes);
-  DCHECK(!masm.has_frame());
-  {
-    FrameScope scope(&masm, StackFrame::NONE);
-    masm.JumpToInstructionStream(
-        reinterpret_cast<Address>(const_cast<uint8_t*>(entry)));
-  }
-
-  CodeDesc desc;
-  masm.GetCode(isolate, &desc);
-
-  // Hack in an empty reloc info to satisfy the GC.
-  DCHECK_EQ(0, desc.reloc_size);
-  Handle<ByteArray> reloc_info =
-      isolate->factory()->NewByteArray(desc.reloc_size, TENURED);
-  code->set_relocation_info(*reloc_info);
-
-  // Overwrites the original code.
-  CHECK_LE(desc.instr_size, code->instruction_size());
-  CHECK_IMPLIES(code->has_safepoint_info(),
-                desc.instr_size <= code->safepoint_table_offset());
-  code->CopyFrom(desc);
-
-  // TODO(jgruber): CopyFrom isn't intended to overwrite existing code, and
-  // doesn't update things like instruction_size. The result is a code object in
-  // which the first instructions are overwritten while the rest remain intact
-  // (but are never executed). That's fine for our current purposes, just
-  // manually zero the trailing part.
-
-  int code_instruction_size = code->instruction_size();
-  DCHECK_LE(desc.instr_size, code_instruction_size);
-  byte* trailing_instruction_start =
-      code->instruction_start() + desc.instr_size;
-  if (code->has_safepoint_info()) {
-    CHECK_LE(code->safepoint_table_offset(), code->instruction_size());
-    code_instruction_size = code->safepoint_table_offset();
-    CHECK_LE(desc.instr_size, code_instruction_size);
-  }
-  size_t trailing_instruction_size = code_instruction_size - desc.instr_size;
-  std::memset(trailing_instruction_start, 0, trailing_instruction_size);
-}
-
-void CreateOnHeapTrampolines(Isolate* isolate) {
-  DCHECK(FLAG_stress_off_heap_code);
-  DCHECK(!isolate->serializer_enabled());
+void CreateOffHeapTrampolines(Isolate* isolate) {
+  DCHECK(isolate->serializer_enabled());
   DCHECK_NOT_NULL(isolate->embedded_blob());
+  DCHECK_NE(0, isolate->embedded_blob_size());
 
   HandleScope scope(isolate);
   Builtins* builtins = isolate->builtins();
-
-  // Lazy deserialization would defeat our off-heap stress test (we'd
-  // deserialize later without moving off-heap), so force eager
-  // deserialization.
-  Snapshot::EnsureAllBuiltinsAreDeserialized(isolate);
 
   EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
                                           isolate->embedded_blob_size());
@@ -2892,24 +2839,54 @@ void CreateOnHeapTrampolines(Isolate* isolate) {
     if (!Builtins::IsOffHeapSafe(i)) continue;
 
     const uint8_t* instruction_start = d.InstructionStartOfBuiltin(i);
+    Handle<Code> trampoline = isolate->factory()->NewOffHeapTrampolineFor(
+        builtins->builtin_handle(i), const_cast<Address>(instruction_start));
 
-    // TODO(jgruber,v8:6666): Create fresh trampolines instead of rewriting
-    // existing ones. This could happen prior to serialization or
-    // post-deserialization.
-    Handle<Code> code(builtins->builtin(i));
-    ChangeToOffHeapTrampoline(isolate, code, instruction_start);
+    // Note that references to the old, on-heap code objects may still exist on
+    // the heap. This is fine for the sake of serialization, as serialization
+    // will replace all of them with a builtin reference which is later
+    // deserialized to point to the object within the builtins table.
+    //
+    // From this point onwards, some builtin code objects may be unreachable and
+    // thus collected by the GC.
+    builtins->set_builtin(i, *trampoline);
 
     if (isolate->logger()->is_logging_code_events() ||
         isolate->is_profiling()) {
-      isolate->logger()->LogCodeObject(*code);
+      isolate->logger()->LogCodeObject(*trampoline);
     }
   }
 }
 #endif  // V8_EMBEDDED_BUILTINS
 }  // namespace
 
+#ifdef V8_EMBEDDED_BUILTINS
+void Isolate::PrepareEmbeddedBlobForSerialization() {
+  // When preparing the embedded blob, ensure it doesn't exist yet.
+  DCHECK_NULL(embedded_blob());
+  DCHECK_NULL(DefaultEmbeddedBlob());
+  DCHECK(serializer_enabled());
+
+  // The isolate takes ownership of this pointer into an executable mmap'd
+  // area. We muck around with const-casts because the standard use-case in
+  // shipping builds is for embedded_blob_ to point into a read-only
+  // .text-embedded section.
+  uint8_t* data;
+  uint32_t size;
+  InstructionStream::CreateOffHeapInstructionStream(this, &data, &size);
+
+  embedded_blob_ = const_cast<const uint8_t*>(data);
+  embedded_blob_size_ = size;
+
+  CreateOffHeapTrampolines(this);
+}
+#endif  // V8_EMBEDDED_BUILTINS
+
 bool Isolate::Init(StartupDeserializer* des) {
   TRACE_ISOLATE(init);
+
+  base::ElapsedTimer timer;
+  if (des == nullptr && FLAG_profile_deserialization) timer.Start();
 
   time_millis_at_init_ = heap_.MonotonicallyIncreasingTimeInMs();
 
@@ -2960,6 +2937,11 @@ bool Isolate::Init(StartupDeserializer* des) {
   interpreter_ = new interpreter::Interpreter(this);
   compiler_dispatcher_ =
       new CompilerDispatcher(this, V8::GetCurrentPlatform(), FLAG_stack_size);
+
+#ifdef V8_EMBEDDED_BUILTINS
+  embedded_blob_ = DefaultEmbeddedBlob();
+  embedded_blob_size_ = DefaultEmbeddedBlobSize();
+#endif
 
   // Enable logging before setting up the heap
   logger_->SetUp(this);
@@ -3068,14 +3050,6 @@ bool Isolate::Init(StartupDeserializer* des) {
 
   if (FLAG_print_builtin_size) PrintBuiltinSizes(this);
 
-#ifdef V8_EMBEDDED_BUILTINS
-  if (FLAG_stress_off_heap_code && !serializer_enabled() &&
-      embedded_blob() != nullptr) {
-    // Create the on-heap trampolines that jump into embedded code.
-    CreateOnHeapTrampolines(this);
-  }
-#endif
-
   // Finish initialization of ThreadLocal after deserialization is done.
   clear_pending_exception();
   clear_pending_message();
@@ -3128,6 +3102,11 @@ bool Isolate::Init(StartupDeserializer* des) {
         v8::HeapProfiler::SamplingFlags::kSamplingForceGC;
     heap_profiler()->StartSamplingHeapProfiler(sample_interval, stack_depth,
                                                sampling_flags);
+  }
+
+  if (des == nullptr && FLAG_profile_deserialization) {
+    double ms = timer.Elapsed().InMillisecondsF();
+    PrintF("[Initializing isolate from scratch took %0.3f ms]\n", ms);
   }
 
   return true;
@@ -3729,7 +3708,8 @@ void Isolate::FireCallCompletedCallback() {
   // Fire callbacks.  Increase call depth to prevent recursive callbacks.
   v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(this);
   v8::Isolate::SuppressMicrotaskExecutionScope suppress(isolate);
-  for (auto& callback : call_completed_callbacks_) {
+  std::vector<CallCompletedCallback> callbacks(call_completed_callbacks_);
+  for (auto& callback : callbacks) {
     callback(reinterpret_cast<v8::Isolate*>(this));
   }
 }

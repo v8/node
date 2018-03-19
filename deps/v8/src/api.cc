@@ -2892,34 +2892,34 @@ int Message::ErrorLevel() const {
   return self->error_level();
 }
 
-Maybe<int> Message::GetStartColumn(Local<Context> context) const {
+int Message::GetStartColumn() const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
-  return Just(msg->GetColumnNumber());
+  return msg->GetColumnNumber();
 }
 
-
-int Message::GetStartColumn() const {
-  auto context = ContextFromHeapObject(Utils::OpenHandle(this));
-  const int default_value = kNoColumnInfo;
-  return GetStartColumn(context).FromMaybe(default_value);
+Maybe<int> Message::GetStartColumn(Local<Context> context) const {
+  return Just(GetStartColumn());
 }
 
-
-Maybe<int> Message::GetEndColumn(Local<Context> context) const {
+int Message::GetEndColumn() const {
   auto self = Utils::OpenHandle(this);
   i::Isolate* isolate = self->GetIsolate();
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   EscapableHandleScope handle_scope(reinterpret_cast<Isolate*>(isolate));
   auto msg = i::Handle<i::JSMessageObject>::cast(self);
   const int column_number = msg->GetColumnNumber();
-  if (column_number == -1) return Just(-1);
+  if (column_number == -1) return -1;
   const int start = self->start_position();
   const int end = self->end_position();
-  return Just(column_number + (end - start));
+  return column_number + (end - start);
+}
+
+Maybe<int> Message::GetEndColumn(Local<Context> context) const {
+  return Just(GetEndColumn());
 }
 
 
@@ -5113,7 +5113,7 @@ void Function::SetName(v8::Local<v8::String> name) {
   auto self = Utils::OpenHandle(this);
   if (!self->IsJSFunction()) return;
   auto func = i::Handle<i::JSFunction>::cast(self);
-  func->shared()->set_name(*Utils::OpenHandle(*name));
+  func->shared()->SetName(*Utils::OpenHandle(*name));
 }
 
 
@@ -5130,7 +5130,7 @@ Local<Value> Function::GetName() const {
   }
   if (self->IsJSFunction()) {
     auto func = i::Handle<i::JSFunction>::cast(self);
-    return Utils::ToLocal(handle(func->shared()->name(), isolate));
+    return Utils::ToLocal(handle(func->shared()->Name(), isolate));
   }
   return ToApiHandle<Primitive>(isolate->factory()->undefined_value());
 }
@@ -5205,7 +5205,7 @@ int Function::GetScriptLineNumber() const {
   auto func = i::Handle<i::JSFunction>::cast(self);
   if (func->shared()->script()->IsScript()) {
     i::Handle<i::Script> script(i::Script::cast(func->shared()->script()));
-    return i::Script::GetLineNumber(script, func->shared()->start_position());
+    return i::Script::GetLineNumber(script, func->shared()->StartPosition());
   }
   return kLineOffsetNotFound;
 }
@@ -5219,7 +5219,7 @@ int Function::GetScriptColumnNumber() const {
   auto func = i::Handle<i::JSFunction>::cast(self);
   if (func->shared()->script()->IsScript()) {
     i::Handle<i::Script> script(i::Script::cast(func->shared()->script()));
-    return i::Script::GetColumnNumber(script, func->shared()->start_position());
+    return i::Script::GetColumnNumber(script, func->shared()->StartPosition());
   }
   return kLineOffsetNotFound;
 }
@@ -5578,6 +5578,7 @@ static int Utf8Length(i::String* str, i::Isolate* isolate) {
 
 int String::Utf8Length() const {
   i::Handle<i::String> str = Utils::OpenHandle(this);
+  str = i::String::Flatten(str);
   i::Isolate* isolate = str->GetIsolate();
   return v8::Utf8Length(*str, isolate);
 }
@@ -5791,9 +5792,7 @@ int String::WriteUtf8(char* buffer,
   i::Isolate* isolate = str->GetIsolate();
   LOG_API(isolate, String, WriteUtf8);
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
-  if (options & HINT_MANY_WRITES_EXPECTED) {
-    str = i::String::Flatten(str);  // Flatten the string for efficiency.
-  }
+  str = i::String::Flatten(str);  // Flatten the string for efficiency.
   const int string_length = str->length();
   bool write_null = !(options & NO_NULL_TERMINATION);
   bool replace_invalid_utf8 = (options & REPLACE_INVALID_UTF8);
@@ -5845,11 +5844,7 @@ static inline int WriteHelper(const String* string,
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
   DCHECK(start >= 0 && length >= -1);
   i::Handle<i::String> str = Utils::OpenHandle(string);
-  if (options & String::HINT_MANY_WRITES_EXPECTED) {
-    // Flatten the string for efficiency.  This applies whether we are
-    // using StringCharacterStream or Get(i) to access the characters.
-    str = i::String::Flatten(str);
-  }
+  str = i::String::Flatten(str);
   int end = start + length;
   if ((length == -1) || (length > str->length() - start) )
     end = str->length();
@@ -6157,6 +6152,10 @@ HeapObjectStatistics::HeapObjectStatistics()
 
 HeapCodeStatistics::HeapCodeStatistics()
     : code_and_metadata_size_(0), bytecode_and_metadata_size_(0) {}
+
+bool v8::V8::InitializeICU(const char* icu_data_file) {
+  return i::InitializeICU(icu_data_file);
+}
 
 bool v8::V8::InitializeICUDefaultLocation(const char* exec_path,
                                           const char* icu_data_file) {
@@ -9104,6 +9103,16 @@ void debug::SetContextId(Local<Context> context, int id) {
 int debug::GetContextId(Local<Context> context) {
   i::Object* value = Utils::OpenHandle(*context)->debug_context_id();
   return (value->IsSmi()) ? i::Smi::ToInt(value) : 0;
+}
+
+void debug::SetInspector(Isolate* isolate,
+                         v8_inspector::V8Inspector* inspector) {
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  i_isolate->set_inspector(inspector);
+}
+
+v8_inspector::V8Inspector* debug::GetInspector(Isolate* isolate) {
+  return reinterpret_cast<i::Isolate*>(isolate)->inspector();
 }
 
 Local<Context> debug::GetDebugContext(Isolate* isolate) {

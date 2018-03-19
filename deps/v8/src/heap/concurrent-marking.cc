@@ -144,6 +144,7 @@ class ConcurrentMarkingVisitor final
     for (int i = 0; i < snapshot.number_of_slots(); i++) {
       Object** slot = snapshot.slot(i);
       Object* object = snapshot.value(i);
+      DCHECK(!Internals::HasWeakHeapObjectTag(object));
       if (!object->IsHeapObject()) continue;
       MarkObject(HeapObject::cast(object));
       MarkCompactCollector::RecordSlot(host, slot, object);
@@ -375,7 +376,6 @@ class ConcurrentMarkingVisitor final
       for (Object** p = start; p < end; p++) {
         Object* object = reinterpret_cast<Object*>(
             base::Relaxed_Load(reinterpret_cast<const base::AtomicWord*>(p)));
-        DCHECK(!Internals::HasWeakHeapObjectTag(object));
         slot_snapshot_->add(p, object);
       }
     }
@@ -551,7 +551,7 @@ void ConcurrentMarking::Run(int task_id, TaskState* task_state) {
 }
 
 void ConcurrentMarking::ScheduleTasks() {
-  DCHECK(heap_->use_tasks());
+  DCHECK(!heap_->IsTearingDown());
   if (!FLAG_concurrent_marking) return;
   base::LockGuard<base::Mutex> guard(&pending_lock_);
   DCHECK_EQ(0, pending_task_count_);
@@ -589,7 +589,7 @@ void ConcurrentMarking::ScheduleTasks() {
 }
 
 void ConcurrentMarking::RescheduleTasksIfNeeded() {
-  if (!FLAG_concurrent_marking || !heap_->use_tasks()) return;
+  if (!FLAG_concurrent_marking || heap_->IsTearingDown()) return;
   {
     base::LockGuard<base::Mutex> guard(&pending_lock_);
     if (pending_task_count_ > 0) return;

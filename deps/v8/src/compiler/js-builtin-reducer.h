@@ -55,11 +55,6 @@ class V8_EXPORT_PRIVATE JSBuiltinReducer final
   Reduction ReduceDateGetTime(Node* node);
   Reduction ReduceGlobalIsFinite(Node* node);
   Reduction ReduceGlobalIsNaN(Node* node);
-  Reduction ReduceMapHas(Node* node);
-  Reduction ReduceMapGet(Node* node);
-  Reduction ReduceNumberIsFinite(Node* node);
-  Reduction ReduceNumberIsInteger(Node* node);
-  Reduction ReduceNumberIsNaN(Node* node);
   Reduction ReduceNumberIsSafeInteger(Node* node);
   Reduction ReduceNumberParseInt(Node* node);
   Reduction ReduceObjectCreate(Node* node);

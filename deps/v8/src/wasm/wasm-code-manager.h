@@ -9,12 +9,13 @@
 #include <list>
 #include <map>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "src/base/macros.h"
 #include "src/handles.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/vector.h"
+
+#include "src/wasm/module-compiler.h"
 
 namespace v8 {
 class Isolate;
@@ -112,7 +113,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
   // trampolines.
   bool IsAnonymous() const { return index_.IsNothing(); }
   Kind kind() const { return kind_; }
-  NativeModule* owner() const { return owner_; }
+  NativeModule* native_module() const { return native_module_; }
   Tier tier() const { return tier_; }
   Address constant_pool() const;
   size_t constant_pool_offset() const { return constant_pool_offset_; }
@@ -147,7 +148,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
 
   WasmCode(Vector<byte> instructions,
            std::unique_ptr<const byte[]>&& reloc_info, size_t reloc_size,
-           NativeModule* owner, Maybe<uint32_t> index, Kind kind,
+           NativeModule* native_module, Maybe<uint32_t> index, Kind kind,
            size_t constant_pool_offset, uint32_t stack_slots,
            size_t safepoint_table_offset, size_t handler_table_offset,
            std::shared_ptr<ProtectedInstructions> protected_instructions,
@@ -155,7 +156,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
       : instructions_(instructions),
         reloc_info_(std::move(reloc_info)),
         reloc_size_(reloc_size),
-        owner_(owner),
+        native_module_(native_module),
         index_(index),
         kind_(kind),
         constant_pool_offset_(constant_pool_offset),
@@ -171,7 +172,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
   Vector<byte> instructions_;
   std::unique_ptr<const byte[]> reloc_info_;
   size_t reloc_size_ = 0;
-  NativeModule* owner_ = nullptr;
+  NativeModule* native_module_ = nullptr;
   Maybe<uint32_t> index_;
   Kind kind_;
   size_t constant_pool_offset_ = 0;
@@ -222,11 +223,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // by the runtime.
   void SetLazyBuiltin(Handle<Code> code);
 
-  // ExportedWrappers are WasmToWasmWrappers for functions placed on import
-  // tables. We construct them as-needed.
-  WasmCode* GetExportedWrapper(uint32_t index);
-  WasmCode* AddExportedWrapper(Handle<Code> code, uint32_t index);
-
   // FunctionCount is WasmModule::functions.size().
   uint32_t FunctionCount() const;
   WasmCode* GetCode(uint32_t index) const;
@@ -247,7 +243,8 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // on the fly, and bypass the instance builder pipeline.
   void ResizeCodeTableForTest(size_t);
   void LinkAll();
-  void Link(uint32_t index);
+
+  CompilationState* compilation_state() { return compilation_state_.get(); }
 
   // TODO(mstarzinger): needed until we sort out source positions, which are
   // still on the  GC-heap.
@@ -304,7 +301,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   Address CreateTrampolineTo(Handle<Code>);
 
   std::vector<std::unique_ptr<WasmCode>> owned_code_;
-  std::unordered_map<uint32_t, WasmCode*> exported_wasm_to_wasm_wrappers_;
 
   WasmCodeUniquePtrComparer owned_code_comparer_;
 
@@ -313,6 +309,8 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
   std::unordered_map<Address, Address, AddressHasher> trampolines_;
   std::unordered_map<uint32_t, WasmCode*> stubs_;
+
+  std::unique_ptr<CompilationState, CompilationStateDeleter> compilation_state_;
 
   DisjointAllocationPool free_memory_;
   DisjointAllocationPool allocated_memory_;

@@ -3424,6 +3424,16 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
     case Builtins::kMathMin:
       return ReduceMathMinMax(node, simplified()->NumberMin(),
                               jsgraph()->Constant(V8_INFINITY));
+    case Builtins::kNumberIsFinite:
+      return ReduceNumberIsFinite(node);
+    case Builtins::kNumberIsInteger:
+      return ReduceNumberIsInteger(node);
+    case Builtins::kNumberIsNaN:
+      return ReduceNumberIsNaN(node);
+    case Builtins::kMapPrototypeGet:
+      return ReduceMapPrototypeGet(node);
+    case Builtins::kMapPrototypeHas:
+      return ReduceMapPrototypeHas(node);
     case Builtins::kReturnReceiver:
       return ReduceReturnReceiver(node);
     case Builtins::kStringPrototypeIndexOf:
@@ -3611,44 +3621,48 @@ Reduction JSCallReducer::ReduceJSConstruct(Node* node) {
       // Don't inline cross native context.
       if (function->native_context() != *native_context()) return NoChange();
 
-      // Check for the ArrayConstructor.
-      if (*function == function->native_context()->array_function()) {
-        // TODO(bmeurer): Deal with Array subclasses here.
-        Handle<AllocationSite> site;
-        // Turn the {node} into a {JSCreateArray} call.
-        for (int i = arity; i > 0; --i) {
-          NodeProperties::ReplaceValueInput(
-              node, NodeProperties::GetValueInput(node, i), i + 1);
-        }
-        NodeProperties::ReplaceValueInput(node, new_target, 1);
-        NodeProperties::ChangeOp(node, javascript()->CreateArray(arity, site));
-        return Changed(node);
-      }
-
-      // Check for the ObjectConstructor.
-      if (*function == function->native_context()->object_function()) {
-        // If no value is passed, we can immediately lower to a simple
-        // JSCreate and don't need to do any massaging of the {node}.
-        if (arity == 0) {
-          NodeProperties::ChangeOp(node, javascript()->Create());
+      // Check for known builtin functions.
+      switch (function->shared()->code()->builtin_index()) {
+        case Builtins::kArrayConstructor: {
+          // TODO(bmeurer): Deal with Array subclasses here.
+          Handle<AllocationSite> site;
+          // Turn the {node} into a {JSCreateArray} call.
+          for (int i = arity; i > 0; --i) {
+            NodeProperties::ReplaceValueInput(
+                node, NodeProperties::GetValueInput(node, i), i + 1);
+          }
+          NodeProperties::ReplaceValueInput(node, new_target, 1);
+          NodeProperties::ChangeOp(node,
+                                   javascript()->CreateArray(arity, site));
           return Changed(node);
         }
+        case Builtins::kObjectConstructor: {
+          // If no value is passed, we can immediately lower to a simple
+          // JSCreate and don't need to do any massaging of the {node}.
+          if (arity == 0) {
+            NodeProperties::ChangeOp(node, javascript()->Create());
+            return Changed(node);
+          }
 
-        // Otherwise we can only lower to JSCreate if we know that
-        // the value parameter is ignored, which is only the case if
-        // the {new_target} and {target} are definitely not identical.
-        HeapObjectMatcher mnew_target(new_target);
-        if (mnew_target.HasValue() && *mnew_target.Value() != *function) {
-          // Drop the value inputs.
-          for (int i = arity; i > 0; --i) node->RemoveInput(i);
-          NodeProperties::ChangeOp(node, javascript()->Create());
-          return Changed(node);
+          // Otherwise we can only lower to JSCreate if we know that
+          // the value parameter is ignored, which is only the case if
+          // the {new_target} and {target} are definitely not identical.
+          HeapObjectMatcher mnew_target(new_target);
+          if (mnew_target.HasValue() && *mnew_target.Value() != *function) {
+            // Drop the value inputs.
+            for (int i = arity; i > 0; --i) node->RemoveInput(i);
+            NodeProperties::ChangeOp(node, javascript()->Create());
+            return Changed(node);
+          }
+          break;
         }
-      }
-
-      // Check for the PromiseConstructor
-      if (*function == function->native_context()->promise_function()) {
-        return ReducePromiseConstructor(node);
+        case Builtins::kPromiseConstructor:
+          return ReducePromiseConstructor(node);
+        case Builtins::kTypedArrayConstructor:
+          return ReduceTypedArrayConstructor(
+              node, handle(function->shared(), isolate()));
+        default:
+          break;
       }
     } else if (m.Value()->IsJSBoundFunction()) {
       Handle<JSBoundFunction> function =
@@ -5061,7 +5075,9 @@ Reduction JSCallReducer::ReduceStringIteratorPrototypeNext(Node* node) {
 // ES #sec-string.prototype.concat
 Reduction JSCallReducer::ReduceStringPrototypeConcat(
     Node* node, Handle<SharedFunctionInfo> shared) {
-  if (node->op()->ValueInputCount() < 2) return NoChange();
+  if (node->op()->ValueInputCount() < 2 || node->op()->ValueInputCount() > 3) {
+    return NoChange();
+  }
   CallParameters const& p = CallParametersOf(node->op());
   if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
     return NoChange();
@@ -5830,6 +5846,156 @@ Reduction JSCallReducer::ReducePromiseResolveTrampoline(Node* node) {
   node->TrimInputCount(6);
   NodeProperties::ChangeOp(node, javascript()->PromiseResolve());
   return Changed(node);
+}
+
+// ES #sec-typedarray-constructors
+Reduction JSCallReducer::ReduceTypedArrayConstructor(
+    Node* node, Handle<SharedFunctionInfo> shared) {
+  DCHECK_EQ(IrOpcode::kJSConstruct, node->opcode());
+  ConstructParameters const& p = ConstructParametersOf(node->op());
+  int arity = static_cast<int>(p.arity() - 2);
+  Node* target = NodeProperties::GetValueInput(node, 0);
+  Node* arg1 = (arity >= 1) ? NodeProperties::GetValueInput(node, 1)
+                            : jsgraph()->UndefinedConstant();
+  Node* arg2 = (arity >= 2) ? NodeProperties::GetValueInput(node, 2)
+                            : jsgraph()->UndefinedConstant();
+  Node* arg3 = (arity >= 3) ? NodeProperties::GetValueInput(node, 3)
+                            : jsgraph()->UndefinedConstant();
+  Node* new_target = NodeProperties::GetValueInput(node, arity + 1);
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+
+  // Insert a construct stub frame into the chain of frame states. This will
+  // reconstruct the proper frame when deoptimizing within the constructor.
+  frame_state = CreateArtificialFrameState(
+      node, frame_state, arity, BailoutId::ConstructStubInvoke(),
+      FrameStateType::kConstructStub, shared);
+
+  // This continuation just returns the newly created JSTypedArray. We
+  // pass the_hole as the receiver, just like the builtin construct stub
+  // does in this case.
+  Node* const parameters[] = {jsgraph()->TheHoleConstant()};
+  int const num_parameters = static_cast<int>(arraysize(parameters));
+  frame_state = CreateJavaScriptBuiltinContinuationFrameState(
+      jsgraph(), shared, Builtins::kTypedArrayConstructorLazyDeoptContinuation,
+      target, context, parameters, num_parameters, frame_state,
+      ContinuationFrameStateMode::LAZY);
+
+  Node* result =
+      graph()->NewNode(javascript()->CreateTypedArray(), target, new_target,
+                       arg1, arg2, arg3, context, frame_state, effect, control);
+  return Replace(result);
+}
+
+// ES #sec-number.isfinite
+Reduction JSCallReducer::ReduceNumberIsFinite(Node* node) {
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->FalseConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+  Node* input = NodeProperties::GetValueInput(node, 2);
+  Node* value = graph()->NewNode(simplified()->ObjectIsFiniteNumber(), input);
+  ReplaceWithValue(node, value);
+  return Replace(value);
+}
+
+// ES #sec-number.isfinite
+Reduction JSCallReducer::ReduceNumberIsInteger(Node* node) {
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->FalseConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+  Node* input = NodeProperties::GetValueInput(node, 2);
+  Node* value = graph()->NewNode(simplified()->ObjectIsInteger(), input);
+  ReplaceWithValue(node, value);
+  return Replace(value);
+}
+
+// ES #sec-number.isnan
+Reduction JSCallReducer::ReduceNumberIsNaN(Node* node) {
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->FalseConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+  Node* input = NodeProperties::GetValueInput(node, 2);
+  Node* value = graph()->NewNode(simplified()->ObjectIsNaN(), input);
+  ReplaceWithValue(node, value);
+  return Replace(value);
+}
+
+Reduction JSCallReducer::ReduceMapPrototypeGet(Node* node) {
+  // We only optimize if we have target, receiver and key parameters.
+  if (node->op()->ValueInputCount() != 3) return NoChange();
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* key = NodeProperties::GetValueInput(node, 2);
+
+  if (!NodeProperties::HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE))
+    return NoChange();
+
+  Node* table = effect = graph()->NewNode(
+      simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
+      effect, control);
+
+  Node* entry = effect = graph()->NewNode(
+      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
+
+  Node* check = graph()->NewNode(simplified()->NumberEqual(), entry,
+                                 jsgraph()->MinusOneConstant());
+
+  Node* branch = graph()->NewNode(common()->Branch(), check, control);
+
+  // Key not found.
+  Node* if_true = graph()->NewNode(common()->IfTrue(), branch);
+  Node* etrue = effect;
+  Node* vtrue = jsgraph()->UndefinedConstant();
+
+  // Key found.
+  Node* if_false = graph()->NewNode(common()->IfFalse(), branch);
+  Node* efalse = effect;
+  Node* vfalse = efalse = graph()->NewNode(
+      simplified()->LoadElement(AccessBuilder::ForOrderedHashMapEntryValue()),
+      table, entry, efalse, if_false);
+
+  control = graph()->NewNode(common()->Merge(2), if_true, if_false);
+  Node* value = graph()->NewNode(
+      common()->Phi(MachineRepresentation::kTagged, 2), vtrue, vfalse, control);
+  effect = graph()->NewNode(common()->EffectPhi(2), etrue, efalse, control);
+
+  ReplaceWithValue(node, value, effect, control);
+  return Replace(value);
+}
+
+Reduction JSCallReducer::ReduceMapPrototypeHas(Node* node) {
+  // We only optimize if we have target, receiver and key parameters.
+  if (node->op()->ValueInputCount() != 3) return NoChange();
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* key = NodeProperties::GetValueInput(node, 2);
+
+  if (!NodeProperties::HasInstanceTypeWitness(receiver, effect, JS_MAP_TYPE))
+    return NoChange();
+
+  Node* table = effect = graph()->NewNode(
+      simplified()->LoadField(AccessBuilder::ForJSCollectionTable()), receiver,
+      effect, control);
+
+  Node* index = effect = graph()->NewNode(
+      simplified()->FindOrderedHashMapEntry(), table, key, effect, control);
+
+  Node* value = graph()->NewNode(simplified()->NumberEqual(), index,
+                                 jsgraph()->MinusOneConstant());
+  value = graph()->NewNode(simplified()->BooleanNot(), value);
+
+  ReplaceWithValue(node, value, effect, control);
+  return Replace(value);
 }
 
 Graph* JSCallReducer::graph() const { return jsgraph()->graph(); }

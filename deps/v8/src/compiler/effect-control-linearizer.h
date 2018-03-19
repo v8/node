@@ -63,7 +63,6 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerCheckNumber(Node* node, Node* frame_state);
   Node* LowerCheckReceiver(Node* node, Node* frame_state);
   Node* LowerCheckString(Node* node, Node* frame_state);
-  Node* LowerCheckSeqString(Node* node, Node* frame_state);
   Node* LowerCheckSymbol(Node* node, Node* frame_state);
   void LowerCheckIf(Node* node, Node* frame_state);
   Node* LowerCheckedInt32Add(Node* node, Node* frame_state);
@@ -106,6 +105,10 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerObjectIsSymbol(Node* node);
   Node* LowerObjectIsUndetectable(Node* node);
   Node* LowerNumberIsFloat64Hole(Node* node);
+  Node* LowerNumberIsFinite(Node* node);
+  Node* LowerObjectIsFiniteNumber(Node* node);
+  Node* LowerNumberIsInteger(Node* node);
+  Node* LowerObjectIsInteger(Node* node);
   Node* LowerArgumentsFrame(Node* node);
   Node* LowerArgumentsLength(Node* node);
   Node* LowerNewDoubleElements(Node* node);
@@ -117,9 +120,7 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
   Node* LowerDeadValue(Node* node);
   Node* LowerStringToNumber(Node* node);
   Node* LowerStringCharCodeAt(Node* node);
-  Node* LowerSeqStringCharCodeAt(Node* node);
   Node* LowerStringCodePointAt(Node* node, UnicodeEncoding encoding);
-  Node* LowerSeqStringCodePointAt(Node* node, UnicodeEncoding encoding);
   Node* LowerStringToLowerCaseIntl(Node* node);
   Node* LowerStringToUpperCaseIntl(Node* node);
   Node* LowerStringFromCharCode(Node* node);
@@ -170,6 +171,7 @@ class V8_EXPORT_PRIVATE EffectControlLinearizer {
                                                  Node* value,
                                                  Node* frame_state);
   Node* BuildFloat64RoundDown(Node* value);
+  Node* BuildFloat64RoundTruncate(Node* input);
   Node* ComputeIntegerHash(Node* value);
   Node* LowerStringComparison(Callable const& callable, Node* node);
   Node* IsElementsKindGreaterThan(Node* kind, ElementsKind reference_kind);

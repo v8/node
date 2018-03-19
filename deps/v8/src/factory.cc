@@ -1856,6 +1856,36 @@ Handle<Code> Factory::NewCodeForDeserialization(uint32_t size) {
                      Code);
 }
 
+#ifdef V8_EMBEDDED_BUILTINS
+Handle<Code> Factory::NewOffHeapTrampolineFor(Handle<Code> code,
+                                              Address off_heap_entry) {
+  DCHECK(isolate()->serializer_enabled());
+  DCHECK_NOT_NULL(isolate()->embedded_blob());
+  DCHECK_NE(0, isolate()->embedded_blob_size());
+  DCHECK(Builtins::IsOffHeapBuiltin(*code));
+
+  Handle<Code> result =
+      Builtins::GenerateOffHeapTrampolineFor(isolate(), off_heap_entry);
+
+  // The trampoline code object must inherit specific flags from the original
+  // builtin (e.g. the safepoint-table offset). We set them manually here.
+
+  const int stack_slots = code->has_safepoint_info() ? code->stack_slots() : 0;
+  result->initialize_flags(code->kind(), code->has_unwinding_info(),
+                           code->is_turbofanned(), stack_slots);
+  result->set_builtin_index(code->builtin_index());
+  result->set_has_tagged_params(code->has_tagged_params());
+  result->set_handler_table_offset(code->handler_table_offset());
+  result->code_data_container()->set_kind_specific_flags(
+      code->code_data_container()->kind_specific_flags());
+  if (code->has_safepoint_info()) {
+    result->set_safepoint_table_offset(code->safepoint_table_offset());
+  }
+
+  return result;
+}
+#endif
+
 Handle<Code> Factory::CopyCode(Handle<Code> code) {
   Handle<CodeDataContainer> data_container =
       NewCodeDataContainer(code->code_data_container()->kind_specific_flags());
@@ -2563,9 +2593,9 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     DisallowHeapAllocation no_allocation;
 
     // Set pointer fields.
-    share->set_raw_name(has_shared_name
-                            ? *shared_name
-                            : SharedFunctionInfo::kNoSharedNameSentinel);
+    share->set_name_or_scope_info(
+        has_shared_name ? *shared_name
+                        : SharedFunctionInfo::kNoSharedNameSentinel);
     Handle<Code> code;
     if (!maybe_code.ToHandle(&code)) {
       code = BUILTIN_CODE(isolate(), Illegal);
@@ -2576,7 +2606,6 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
                                 : Object::cast(*undefined_value());
     share->set_function_data(function_data, SKIP_WRITE_BARRIER);
     share->set_code(*code);
-    share->set_scope_info(ScopeInfo::Empty(isolate()));
     share->set_outer_scope_info(*the_hole_value());
     DCHECK(!Builtins::IsLazy(Builtins::kConstructedNonConstructable));
     Handle<Code> construct_stub =
@@ -2597,8 +2626,8 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     share->set_length(0);
     share->set_internal_formal_parameter_count(0);
     share->set_expected_nof_properties(0);
-    share->set_start_position_and_type(0);
-    share->set_end_position(0);
+    share->set_raw_start_position_and_type(0);
+    share->set_raw_end_position(0);
     share->set_function_token_position(0);
     // All compiler hints default to false or 0.
     share->set_compiler_hints(0);

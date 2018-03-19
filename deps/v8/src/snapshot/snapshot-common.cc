@@ -293,7 +293,6 @@ v8::StartupData Snapshot::CreateSnapshotBlob(
 }
 
 #ifdef V8_EMBEDDED_BUILTINS
-#ifdef DEBUG
 namespace {
 bool BuiltinAliasesOffHeapTrampolineRegister(Isolate* isolate, Code* code) {
   DCHECK(Builtins::IsOffHeapSafe(code->builtin_index()));
@@ -326,14 +325,10 @@ bool BuiltinAliasesOffHeapTrampolineRegister(Isolate* isolate, Code* code) {
   return false;
 }
 }  // namespace
-#endif  // DEBUG
 
 // static
 EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
   Builtins* builtins = isolate->builtins();
-
-  // Builtins must be deserialized to be copied off-heap.
-  Snapshot::EnsureAllBuiltinsAreDeserialized(isolate);
 
   // Store instruction stream lengths and offsets.
   std::vector<uint32_t> lengths(kTableSize);
@@ -345,7 +340,8 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
     Code* code = builtins->builtin(i);
 
     if (Builtins::IsOffHeapSafe(i)) {
-#ifdef DEBUG
+      DCHECK(!Builtins::IsLazy(i));
+
       // Sanity-check that the given builtin is process-independent and does not
       // use the trampoline register in its calling convention.
       if (!code->IsProcessIndependent()) {
@@ -357,7 +353,6 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
         fprintf(stderr, "%s aliases the off-heap trampoline register.\n",
                 Builtins::name(i));
       }
-#endif
 
       uint32_t length = static_cast<uint32_t>(code->instruction_size());
 
@@ -399,6 +394,8 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
 }
 
 EmbeddedData EmbeddedData::FromBlob(const uint8_t* data, uint32_t size) {
+  DCHECK_NOT_NULL(data);
+  DCHECK_LT(0, size);
   return {data, size};
 }
 
@@ -415,12 +412,6 @@ uint32_t EmbeddedData::InstructionSizeOfBuiltin(int i) const {
   DCHECK(Builtins::IsBuiltinId(i));
   const uint32_t* lengths = Lengths();
   return lengths[i];
-}
-
-// static
-EmbeddedData Snapshot::CreateEmbeddedBlob(Isolate* isolate) {
-  DisallowHeapAllocation no_gc;
-  return EmbeddedData::FromIsolate(isolate);
 }
 #endif
 

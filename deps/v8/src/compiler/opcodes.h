@@ -144,6 +144,7 @@
   V(JSCreateStringIterator)     \
   V(JSCreateKeyValueArray)      \
   V(JSCreatePromise)            \
+  V(JSCreateTypedArray)         \
   V(JSCreateLiteralArray)       \
   V(JSCreateEmptyLiteralArray)  \
   V(JSCreateLiteralObject)      \
@@ -342,9 +343,7 @@
   V(BooleanNot)                         \
   V(StringToNumber)                     \
   V(StringCharCodeAt)                   \
-  V(SeqStringCharCodeAt)                \
   V(StringCodePointAt)                  \
-  V(SeqStringCodePointAt)               \
   V(StringFromCharCode)                 \
   V(StringFromCodePoint)                \
   V(StringIndexOf)                      \
@@ -359,7 +358,6 @@
   V(CheckInternalizedString)            \
   V(CheckReceiver)                      \
   V(CheckString)                        \
-  V(CheckSeqString)                     \
   V(CheckSymbol)                        \
   V(CheckSmi)                           \
   V(CheckHeapObject)                    \
@@ -386,6 +384,10 @@
   V(TransitionAndStoreNonNumberElement) \
   V(ToBoolean)                          \
   V(NumberIsFloat64Hole)                \
+  V(NumberIsFinite)                     \
+  V(ObjectIsFiniteNumber)               \
+  V(NumberIsInteger)                    \
+  V(ObjectIsInteger)                    \
   V(ObjectIsArrayBufferView)            \
   V(ObjectIsBigInt)                     \
   V(ObjectIsCallable)                   \

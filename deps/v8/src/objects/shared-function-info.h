@@ -42,8 +42,8 @@ class SharedFunctionInfo : public HeapObject {
   static constexpr Object* const kNoSharedNameSentinel = Smi::kZero;
 
   // [name]: Returns shared name if it exists or an empty string otherwise.
-  inline String* name() const;
-  inline void set_name(String* name);
+  inline String* Name() const;
+  inline void SetName(String* name);
 
   // [code]: Function code.
   DECL_ACCESSORS(code, Code)
@@ -85,6 +85,12 @@ class SharedFunctionInfo : public HeapObject {
 
   // [scope_info]: Scope info.
   DECL_ACCESSORS(scope_info, ScopeInfo)
+
+  // End position of this function in the script source.
+  inline int EndPosition() const;
+
+  // Start position of this function in the script source.
+  inline int StartPosition() const;
 
   // The outer scope info for the purpose of parsing this function, or the hole
   // value if it isn't yet known.
@@ -189,13 +195,6 @@ class SharedFunctionInfo : public HeapObject {
   // [script]: Script from which the function originates.
   DECL_ACCESSORS(script, Object)
 
-  // [start_position_and_type]: Field used to store both the source code
-  // position, whether or not the function is a function expression,
-  // and whether or not the function is a toplevel function. The two
-  // least significants bit indicates whether the function is an
-  // expression and the rest contains the source code position.
-  DECL_INT_ACCESSORS(start_position_and_type)
-
   // The function is subject to debugging if a debug info is attached.
   inline bool HasDebugInfo() const;
   DebugInfo* GetDebugInfo() const;
@@ -259,14 +258,24 @@ class SharedFunctionInfo : public HeapObject {
   // Position of the 'function' token in the script source.
   DECL_INT_ACCESSORS(function_token_position)
 
+  // [raw_start_position_and_type]: Field used to store both the source code
+  // position, whether or not the function is a function expression,
+  // and whether or not the function is a toplevel function. The two
+  // least significants bit indicates whether the function is an
+  // expression and the rest contains the source code position.
+  // TODO(cbruni): start_position should be removed from SFI.
+  DECL_INT_ACCESSORS(raw_start_position_and_type)
+
   // Position of this function in the script source.
-  DECL_INT_ACCESSORS(start_position)
+  // TODO(cbruni): start_position should be removed from SFI.
+  DECL_INT_ACCESSORS(raw_start_position)
 
   // End position of this function in the script source.
-  DECL_INT_ACCESSORS(end_position)
+  // TODO(cbruni): end_position should be removed from SFI.
+  DECL_INT_ACCESSORS(raw_end_position)
 
   // Returns true if the function has shared name.
-  inline bool has_shared_name() const;
+  inline bool HasSharedName() const;
 
   // Is this function a named function expression in the source code.
   DECL_BOOLEAN_ACCESSORS(is_named_expression)
@@ -421,8 +430,7 @@ class SharedFunctionInfo : public HeapObject {
 #define SHARED_FUNCTION_INFO_FIELDS(V)        \
   /* Pointer fields. */                       \
   V(kCodeOffset, kPointerSize)                \
-  V(kNameOffset, kPointerSize)                \
-  V(kScopeInfoOffset, kPointerSize)           \
+  V(kNameOrScopeInfoOffset, kPointerSize)     \
   V(kOuterScopeInfoOffset, kPointerSize)      \
   V(kConstructStubOffset, kPointerSize)       \
   V(kFunctionDataOffset, kPointerSize)        \
@@ -455,7 +463,7 @@ class SharedFunctionInfo : public HeapObject {
   // No weak fields.
   typedef BodyDescriptor BodyDescriptorWeak;
 
-// Bit fields in |start_position_and_type|.
+// Bit fields in |raw_start_position_and_type|.
 #define START_POSITION_AND_TYPE_BIT_FIELDS(V, _) \
   V(IsNamedExpressionBit, bool, 1, _)            \
   V(IsTopLevelBit, bool, 1, _)                   \
@@ -510,8 +518,9 @@ class SharedFunctionInfo : public HeapObject {
   inline bool needs_home_object() const;
 
  private:
-  // [raw_name]: Function name string or kNoSharedNameSentinel.
-  DECL_ACCESSORS(raw_name, Object)
+  // [name_or_scope_info]: Function name string, kNoSharedNameSentinel or
+  // ScopeInfo.
+  DECL_ACCESSORS(name_or_scope_info, Object)
 
   inline void set_kind(FunctionKind kind);
 

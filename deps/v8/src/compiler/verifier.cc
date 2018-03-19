@@ -693,6 +693,10 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       // Type is OtherObject.
       CheckTypeIs(node, Type::OtherObject());
       break;
+    case IrOpcode::kJSCreateTypedArray:
+      // Type is OtherObject.
+      CheckTypeIs(node, Type::OtherObject());
+      break;
     case IrOpcode::kJSCreateLiteralArray:
       // Type is Array.
       CheckTypeIs(node, Type::Array());
@@ -1090,19 +1094,7 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 1, Type::Unsigned32());
       CheckTypeIs(node, Type::UnsignedSmall());
       break;
-    case IrOpcode::kSeqStringCharCodeAt:
-      // (SeqString, Unsigned32) -> UnsignedSmall
-      CheckValueInputIs(node, 0, Type::SeqString());
-      CheckValueInputIs(node, 1, Type::Unsigned32());
-      CheckTypeIs(node, Type::UnsignedSmall());
-      break;
     case IrOpcode::kStringCodePointAt:
-      // (String, Unsigned32) -> UnsignedSmall
-      CheckValueInputIs(node, 0, Type::String());
-      CheckValueInputIs(node, 1, Type::Unsigned32());
-      CheckTypeIs(node, Type::UnsignedSmall());
-      break;
-    case IrOpcode::kSeqStringCodePointAt:
       // (String, Unsigned32) -> UnsignedSmall
       CheckValueInputIs(node, 0, Type::String());
       CheckValueInputIs(node, 1, Type::Unsigned32());
@@ -1172,6 +1164,22 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       break;
     case IrOpcode::kNumberIsFloat64Hole:
       CheckValueInputIs(node, 0, Type::NumberOrHole());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kNumberIsFinite:
+      CheckValueInputIs(node, 0, Type::Number());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kObjectIsFiniteNumber:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kNumberIsInteger:
+      CheckValueInputIs(node, 0, Type::Number());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kObjectIsInteger:
+      CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::Boolean());
       break;
     case IrOpcode::kFindOrderedHashMapEntry:
@@ -1391,10 +1399,6 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
     case IrOpcode::kCheckString:
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::String());
-      break;
-    case IrOpcode::kCheckSeqString:
-      CheckValueInputIs(node, 0, Type::Any());
-      CheckTypeIs(node, Type::SeqString());
       break;
     case IrOpcode::kCheckSymbol:
       CheckValueInputIs(node, 0, Type::Any());

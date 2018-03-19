@@ -30,18 +30,12 @@ class CodeSpecialization {
 
   // Update WasmContext references.
   void RelocateWasmContextReferences(Address new_context);
-  // Update function table size.
-  // TODO(wasm): Prepare this for more than one indirect function table.
-  void PatchTableSize(uint32_t old_size, uint32_t new_size);
   // Update all direct call sites based on the code table in the given instance.
-  void RelocateDirectCalls(Handle<WasmInstanceObject> instance);
-  // Relocate an arbitrary object (e.g. function table).
-  void RelocatePointer(Address old_obj, Address new_obj);
-
+  void RelocateDirectCalls(NativeModule* module);
   // Apply all relocations and patching to all code in the instance (wasm code
   // and exported functions).
-  bool ApplyToWholeInstance(WasmInstanceObject*,
-                            ICacheFlushMode = FLUSH_ICACHE_IF_NEEDED);
+  bool ApplyToWholeModule(NativeModule*,
+                          ICacheFlushMode = FLUSH_ICACHE_IF_NEEDED);
   // Apply all relocations and patching to one wasm code object.
   bool ApplyToWasmCode(wasm::WasmCode*,
                        ICacheFlushMode = FLUSH_ICACHE_IF_NEEDED);
@@ -49,12 +43,7 @@ class CodeSpecialization {
  private:
   Address new_wasm_context_address_ = 0;
 
-  uint32_t old_function_table_size_ = 0;
-  uint32_t new_function_table_size_ = 0;
-
-  Handle<WasmInstanceObject> relocate_direct_calls_instance_;
-
-  std::unordered_map<Address, Address> pointers_to_relocate_;
+  NativeModule* relocate_direct_calls_module_ = nullptr;
 };
 
 }  // namespace wasm

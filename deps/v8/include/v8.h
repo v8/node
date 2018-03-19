@@ -1645,13 +1645,14 @@ class V8_EXPORT Message {
    * Returns the index within the line of the first character where
    * the error occurred.
    */
-  V8_DEPRECATED("Use maybe version", int GetStartColumn() const);
+  int GetStartColumn() const;
   V8_WARN_UNUSED_RESULT Maybe<int> GetStartColumn(Local<Context> context) const;
 
   /**
    * Returns the index within the line of the last character where
    * the error occurred.
    */
+  int GetEndColumn() const;
   V8_WARN_UNUSED_RESULT Maybe<int> GetEndColumn(Local<Context> context) const;
 
   /**
@@ -7953,6 +7954,15 @@ class V8_EXPORT V8 {
    * to use if the process needs the resources taken up by v8.
    */
   static bool Dispose();
+
+  /**
+   * Initialize the ICU library bundled with V8. The embedder should only
+   * invoke this method when using the bundled ICU. Returns true on success.
+   *
+   * If V8 was compiled with the ICU data in an external file, the location
+   * of the data file has to be provided.
+   */
+  static bool InitializeICU(const char* icu_data_file = nullptr);
 
   /**
    * Initialize the ICU library bundled with V8. The embedder should only

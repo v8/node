@@ -1241,6 +1241,10 @@ Type* Typer::Visitor::TypeJSCreatePromise(Node* node) {
   return Type::OtherObject();
 }
 
+Type* Typer::Visitor::TypeJSCreateTypedArray(Node* node) {
+  return Type::OtherObject();
+}
+
 Type* Typer::Visitor::TypeJSCreateLiteralArray(Node* node) {
   return Type::Array();
 }
@@ -1978,15 +1982,7 @@ Type* Typer::Visitor::TypeStringCharCodeAt(Node* node) {
   return typer_->cache_.kUint16;
 }
 
-Type* Typer::Visitor::TypeSeqStringCharCodeAt(Node* node) {
-  return typer_->cache_.kUint16;
-}
-
 Type* Typer::Visitor::TypeStringCodePointAt(Node* node) {
-  return Type::Range(0.0, String::kMaxCodePoint, zone());
-}
-
-Type* Typer::Visitor::TypeSeqStringCodePointAt(Node* node) {
   return Type::Range(0.0, String::kMaxCodePoint, zone());
 }
 
@@ -2064,11 +2060,6 @@ Type* Typer::Visitor::TypeCheckSmi(Node* node) {
 Type* Typer::Visitor::TypeCheckString(Node* node) {
   Type* arg = Operand(node, 0);
   return Type::Intersect(arg, Type::String(), zone());
-}
-
-Type* Typer::Visitor::TypeCheckSeqString(Node* node) {
-  Type* arg = Operand(node, 0);
-  return Type::Intersect(arg, Type::SeqString(), zone());
 }
 
 Type* Typer::Visitor::TypeCheckSymbol(Node* node) {
@@ -2185,6 +2176,18 @@ Type* Typer::Visitor::TypeNumberIsFloat64Hole(Node* node) {
   return Type::Boolean();
 }
 
+Type* Typer::Visitor::TypeNumberIsFinite(Node* node) { UNREACHABLE(); }
+
+Type* Typer::Visitor::TypeObjectIsFiniteNumber(Node* node) {
+  return Type::Boolean();
+}
+
+Type* Typer::Visitor::TypeNumberIsInteger(Node* node) { UNREACHABLE(); }
+
+Type* Typer::Visitor::TypeObjectIsInteger(Node* node) {
+  return Type::Boolean();
+}
+
 Type* Typer::Visitor::TypeObjectIsNaN(Node* node) {
   return TypeUnaryOp(node, ObjectIsNaN);
 }
@@ -2240,7 +2243,7 @@ Type* Typer::Visitor::TypeNewArgumentsElements(Node* node) {
 }
 
 Type* Typer::Visitor::TypeNewConsString(Node* node) {
-  return Type::OtherNonSeqString();
+  return Type::OtherString();
 }
 
 Type* Typer::Visitor::TypeArrayBufferWasNeutered(Node* node) {

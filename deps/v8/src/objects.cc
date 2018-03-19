@@ -73,7 +73,6 @@
 #include "src/string-builder.h"
 #include "src/string-search.h"
 #include "src/string-stream.h"
-#include "src/trap-handler/trap-handler.h"
 #include "src/unicode-cache-inl.h"
 #include "src/unicode-decoder.h"
 #include "src/utils-inl.h"
@@ -2853,7 +2852,7 @@ void JSObject::JSObjectShortPrint(StringStream* accumulator) {
             accumulator->Add("!!!INVALID SHARED ON CONSTRUCTOR!!!");
           } else {
             String* constructor_name =
-                JSFunction::cast(constructor)->shared()->name();
+                JSFunction::cast(constructor)->shared()->Name();
             if (constructor_name->length() > 0) {
               accumulator->Add(global_object ? "<GlobalObject " : "<");
               accumulator->Put(constructor_name);
@@ -3048,6 +3047,9 @@ VisitorId Map::GetVisitorId(Map* map) {
     case CODE_DATA_CONTAINER_TYPE:
       return kVisitCodeDataContainer;
 
+    case WASM_INSTANCE_TYPE:
+      return kVisitWasmInstanceObject;
+
     case JS_OBJECT_TYPE:
     case JS_ERROR_TYPE:
     case JS_ARGUMENTS_TYPE:
@@ -3074,7 +3076,6 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_MAP_VALUE_ITERATOR_TYPE:
     case JS_STRING_ITERATOR_TYPE:
     case JS_PROMISE_TYPE:
-    case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
@@ -5810,7 +5811,7 @@ Handle<Object> JSFunction::GetName(Isolate* isolate,
   if (function->shared()->name_should_print_as_anonymous()) {
     return isolate->factory()->anonymous_string();
   }
-  return handle(function->shared()->name(), isolate);
+  return handle(function->shared()->Name(), isolate);
 }
 
 // static
@@ -13038,7 +13039,7 @@ Handle<String> NativeCodeFunctionSourceString(
   Isolate* const isolate = shared_info->GetIsolate();
   IncrementalStringBuilder builder(isolate);
   builder.AppendCString("function ");
-  builder.AppendString(handle(shared_info->name(), isolate));
+  builder.AppendString(handle(shared_info->Name(), isolate));
   builder.AppendCString("() { [native code] }");
   return builder.Finish().ToHandleChecked();
 }
@@ -13111,7 +13112,7 @@ Handle<String> JSFunction::ToString(Handle<JSFunction> function) {
     if (shared_info->name_should_print_as_anonymous()) {
       builder.AppendCString("anonymous");
     } else if (!shared_info->is_anonymous_expression()) {
-      builder.AppendString(handle(shared_info->name(), isolate));
+      builder.AppendString(handle(shared_info->Name(), isolate));
     }
   }
   if (shared_info->is_wrapped()) {
@@ -13551,8 +13552,8 @@ void SharedFunctionInfo::set_debugger_hints(int value) {
 }
 
 String* SharedFunctionInfo::DebugName() {
-  if (name()->length() == 0) return inferred_name();
-  return name();
+  if (Name()->length() == 0) return inferred_name();
+  return Name();
 }
 
 // static
@@ -13613,8 +13614,8 @@ Handle<Object> SharedFunctionInfo::GetSourceCode(
   Isolate* isolate = shared->GetIsolate();
   if (!shared->HasSourceCode()) return isolate->factory()->undefined_value();
   Handle<String> source(String::cast(Script::cast(shared->script())->source()));
-  return isolate->factory()->NewSubString(source, shared->start_position(),
-                                          shared->end_position());
+  return isolate->factory()->NewSubString(source, shared->StartPosition(),
+                                          shared->EndPosition());
 }
 
 // static
@@ -13625,15 +13626,15 @@ Handle<Object> SharedFunctionInfo::GetSourceCodeHarmony(
   Handle<String> script_source(
       String::cast(Script::cast(shared->script())->source()));
   int start_pos = shared->function_token_position();
-  if (start_pos == kNoSourcePosition) start_pos = shared->start_position();
+  if (start_pos == kNoSourcePosition) start_pos = shared->StartPosition();
   Handle<String> source = isolate->factory()->NewSubString(
-      script_source, start_pos, shared->end_position());
+      script_source, start_pos, shared->EndPosition());
   if (!shared->is_wrapped()) return source;
 
   DCHECK(!shared->name_should_print_as_anonymous());
   IncrementalStringBuilder builder(isolate);
   builder.AppendCString("function ");
-  builder.AppendString(Handle<String>(shared->name(), isolate));
+  builder.AppendString(Handle<String>(shared->Name(), isolate));
   builder.AppendCString("(");
   Handle<FixedArray> args(Script::cast(shared->script())->wrapped_arguments());
   int argc = args->length();
@@ -13658,9 +13659,7 @@ bool SharedFunctionInfo::IsInlineable() {
   return !optimization_disabled();
 }
 
-int SharedFunctionInfo::SourceSize() {
-  return end_position() - start_position();
-}
+int SharedFunctionInfo::SourceSize() { return EndPosition() - StartPosition(); }
 
 void JSFunction::CalculateInstanceSizeHelper(InstanceType instance_type,
                                              bool has_prototype_slot,
@@ -13744,19 +13743,19 @@ std::ostream& operator<<(std::ostream& os, const SourceCodeOf& v) {
 
   if (!s->is_toplevel()) {
     os << "function ";
-    String* name = s->name();
+    String* name = s->Name();
     if (name->length() > 0) {
       name->PrintUC16(os);
     }
   }
 
-  int len = s->end_position() - s->start_position();
+  int len = s->EndPosition() - s->StartPosition();
   if (len <= v.max_length || v.max_length < 0) {
-    script_source->PrintUC16(os, s->start_position(), s->end_position());
+    script_source->PrintUC16(os, s->StartPosition(), s->EndPosition());
     return os;
   } else {
-    script_source->PrintUC16(os, s->start_position(),
-                             s->start_position() + v.max_length);
+    script_source->PrintUC16(os, s->StartPosition(),
+                             s->StartPosition() + v.max_length);
     return os << "...\n";
   }
 }
@@ -13784,8 +13783,12 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   // updated accordingly.
   shared_info->set_internal_formal_parameter_count(lit->parameter_count());
   shared_info->set_function_token_position(lit->function_token_position());
-  shared_info->set_start_position(lit->start_position());
-  shared_info->set_end_position(lit->end_position());
+  shared_info->set_raw_start_position(lit->start_position());
+  shared_info->set_raw_end_position(lit->end_position());
+  if (shared_info->scope_info()->HasPositionInfo()) {
+    shared_info->scope_info()->SetPositionInfo(lit->start_position(),
+                                               lit->end_position());
+  }
   shared_info->set_is_declaration(lit->is_declaration());
   shared_info->set_is_named_expression(lit->is_named_expression());
   shared_info->set_is_anonymous_expression(lit->is_anonymous_expression());
@@ -13901,12 +13904,6 @@ void Code::InvalidateEmbeddedObjects() {
 
 
 void Code::Relocate(intptr_t delta) {
-  if (trap_handler::IsTrapHandlerEnabled() && is_wasm_code()) {
-    const int index = trap_handler_index()->value();
-    if (index >= 0) {
-      trap_handler::UpdateHandlerDataCodePointer(index, instruction_start());
-    }
-  }
   for (RelocIterator it(this, RelocInfo::kApplyMask); !it.done(); it.next()) {
     it.rinfo()->apply(delta);
   }
@@ -13975,6 +13972,7 @@ SafepointEntry Code::GetSafepointEntry(Address pc) {
 int Code::OffHeapInstructionSize() {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
   Isolate* isolate = GetIsolate();
+  if (isolate->embedded_blob() == nullptr) return instruction_size();
   EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
                                           isolate->embedded_blob_size());
   return d.InstructionSizeOfBuiltin(builtin_index());
@@ -13983,6 +13981,7 @@ int Code::OffHeapInstructionSize() {
 Address Code::OffHeapInstructionStart() {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
   Isolate* isolate = GetIsolate();
+  if (isolate->embedded_blob() == nullptr) return instruction_start();
   EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
                                           isolate->embedded_blob_size());
   return reinterpret_cast<Address>(
@@ -13992,6 +13991,7 @@ Address Code::OffHeapInstructionStart() {
 Address Code::OffHeapInstructionEnd() {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
   Isolate* isolate = GetIsolate();
+  if (isolate->embedded_blob() == nullptr) return instruction_end();
   EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
                                           isolate->embedded_blob_size());
   return reinterpret_cast<Address>(
@@ -14143,6 +14143,7 @@ bool Code::IsProcessIndependent() {
       all_real_modes_mask & ~RelocInfo::ModeMask(RelocInfo::COMMENT) &
       ~RelocInfo::ModeMask(RelocInfo::INTERNAL_REFERENCE) &
       ~RelocInfo::ModeMask(RelocInfo::INTERNAL_REFERENCE_ENCODED) &
+      ~RelocInfo::ModeMask(RelocInfo::OFF_HEAP_TARGET) &
       ~RelocInfo::ModeMask(RelocInfo::CONST_POOL) &
       ~RelocInfo::ModeMask(RelocInfo::VENEER_POOL);
   STATIC_ASSERT(RelocInfo::LAST_REAL_RELOC_MODE == RelocInfo::VENEER_POOL);
@@ -14153,7 +14154,6 @@ bool Code::IsProcessIndependent() {
       (RelocInfo::ModeMask(RelocInfo::CODE_TARGET) |
        RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
        RelocInfo::ModeMask(RelocInfo::WASM_CONTEXT_REFERENCE) |
-       RelocInfo::ModeMask(RelocInfo::WASM_FUNCTION_TABLE_SIZE_REFERENCE) |
        RelocInfo::ModeMask(RelocInfo::WASM_GLOBAL_HANDLE) |
        RelocInfo::ModeMask(RelocInfo::WASM_CALL) |
        RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL) |
@@ -19052,6 +19052,7 @@ void JSArrayBuffer::Neuter() {
   set_allocation_base(nullptr);
   set_allocation_length(0);
   set_was_neutered(true);
+  set_is_neuterable(false);
   // Invalidate the neutering protector.
   Isolate* const isolate = GetIsolate();
   if (isolate->IsArrayBufferNeuteringIntact()) {

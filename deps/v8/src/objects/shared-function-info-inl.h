@@ -23,7 +23,8 @@ TYPE_CHECKER(SharedFunctionInfo, SHARED_FUNCTION_INFO_TYPE)
 CAST_ACCESSOR(SharedFunctionInfo)
 DEFINE_DEOPT_ELEMENT_ACCESSORS(SharedFunctionInfo, Object)
 
-ACCESSORS(SharedFunctionInfo, raw_name, Object, kNameOffset)
+ACCESSORS(SharedFunctionInfo, name_or_scope_info, Object,
+          kNameOrScopeInfoOffset)
 ACCESSORS(SharedFunctionInfo, construct_stub, Code, kConstructStubOffset)
 ACCESSORS(SharedFunctionInfo, feedback_metadata, FeedbackMetadata,
           kFeedbackMetadataOffset)
@@ -33,11 +34,11 @@ ACCESSORS(SharedFunctionInfo, debug_info, Object, kDebugInfoOffset)
 ACCESSORS(SharedFunctionInfo, function_identifier, Object,
           kFunctionIdentifierOffset)
 
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, start_position_and_type,
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, raw_start_position_and_type,
                     is_named_expression,
                     SharedFunctionInfo::IsNamedExpressionBit)
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, start_position_and_type, is_toplevel,
-                    SharedFunctionInfo::IsTopLevelBit)
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, raw_start_position_and_type,
+                    is_toplevel, SharedFunctionInfo::IsTopLevelBit)
 
 INT_ACCESSORS(SharedFunctionInfo, function_literal_id, kFunctionLiteralIdOffset)
 #if V8_SFI_HAS_UNIQUE_ID
@@ -48,25 +49,42 @@ INT_ACCESSORS(SharedFunctionInfo, internal_formal_parameter_count,
               kFormalParameterCountOffset)
 INT_ACCESSORS(SharedFunctionInfo, expected_nof_properties,
               kExpectedNofPropertiesOffset)
-INT_ACCESSORS(SharedFunctionInfo, end_position, kEndPositionOffset)
-INT_ACCESSORS(SharedFunctionInfo, start_position_and_type,
+INT_ACCESSORS(SharedFunctionInfo, raw_end_position, kEndPositionOffset)
+INT_ACCESSORS(SharedFunctionInfo, raw_start_position_and_type,
               kStartPositionAndTypeOffset)
 INT_ACCESSORS(SharedFunctionInfo, function_token_position,
               kFunctionTokenPositionOffset)
 INT_ACCESSORS(SharedFunctionInfo, compiler_hints, kCompilerHintsOffset)
 
-bool SharedFunctionInfo::has_shared_name() const {
-  return raw_name() != kNoSharedNameSentinel;
+bool SharedFunctionInfo::HasSharedName() const {
+  Object* value = name_or_scope_info();
+  if (value->IsScopeInfo()) {
+    return ScopeInfo::cast(value)->HasSharedFunctionName();
+  }
+  return value != kNoSharedNameSentinel;
 }
 
-String* SharedFunctionInfo::name() const {
-  if (!has_shared_name()) return GetHeap()->empty_string();
-  DCHECK(raw_name()->IsString());
-  return String::cast(raw_name());
+String* SharedFunctionInfo::Name() const {
+  if (!HasSharedName()) return GetHeap()->empty_string();
+  Object* value = name_or_scope_info();
+  if (value->IsScopeInfo()) {
+    if (ScopeInfo::cast(value)->HasFunctionName()) {
+      return String::cast(ScopeInfo::cast(value)->FunctionName());
+    }
+    return GetHeap()->empty_string();
+  }
+  return String::cast(value);
 }
 
-void SharedFunctionInfo::set_name(String* name) {
-  set_raw_name(name);
+void SharedFunctionInfo::SetName(String* name) {
+  Object* maybe_scope_info = name_or_scope_info();
+  if (maybe_scope_info->IsScopeInfo()) {
+    ScopeInfo::cast(maybe_scope_info)->SetFunctionName(name);
+  } else {
+    DCHECK(maybe_scope_info->IsString() ||
+           maybe_scope_info == kNoSharedNameSentinel);
+    set_name_or_scope_info(name);
+  }
   UpdateFunctionMapIndex();
 }
 
@@ -167,7 +185,7 @@ void SharedFunctionInfo::clear_padding() {
 
 void SharedFunctionInfo::UpdateFunctionMapIndex() {
   int map_index = Context::FunctionMapIndex(
-      language_mode(), kind(), true, has_shared_name(), needs_home_object());
+      language_mode(), kind(), true, HasSharedName(), needs_home_object());
   set_function_map_index(map_index);
 }
 
@@ -197,8 +215,26 @@ void SharedFunctionInfo::DontAdaptArguments() {
   set_internal_formal_parameter_count(kDontAdaptArgumentsSentinel);
 }
 
-BIT_FIELD_ACCESSORS(SharedFunctionInfo, start_position_and_type, start_position,
-                    SharedFunctionInfo::StartPositionBits)
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, raw_start_position_and_type,
+                    raw_start_position, SharedFunctionInfo::StartPositionBits)
+
+int SharedFunctionInfo::StartPosition() const {
+  ScopeInfo* info = scope_info();
+  if (!info->HasPositionInfo()) {
+    // TODO(cbruni): use preparsed_scope_data
+    return raw_start_position();
+  }
+  return info->StartPosition();
+}
+
+int SharedFunctionInfo::EndPosition() const {
+  ScopeInfo* info = scope_info();
+  if (!info->HasPositionInfo()) {
+    // TODO(cbruni): use preparsed_scope_data
+    return raw_end_position();
+  }
+  return info->EndPosition();
+}
 
 Code* SharedFunctionInfo::code() const {
   return Code::cast(READ_FIELD(this, kCodeOffset));
@@ -219,14 +255,32 @@ bool SharedFunctionInfo::IsInterpreted() const {
 }
 
 ScopeInfo* SharedFunctionInfo::scope_info() const {
-  return reinterpret_cast<ScopeInfo*>(READ_FIELD(this, kScopeInfoOffset));
+  Object* maybe_scope_info = name_or_scope_info();
+  if (maybe_scope_info->IsScopeInfo()) {
+    return ScopeInfo::cast(maybe_scope_info);
+  }
+  return ScopeInfo::Empty(GetIsolate());
 }
 
-void SharedFunctionInfo::set_scope_info(ScopeInfo* value,
+void SharedFunctionInfo::set_scope_info(ScopeInfo* scope_info,
                                         WriteBarrierMode mode) {
-  WRITE_FIELD(this, kScopeInfoOffset, reinterpret_cast<Object*>(value));
-  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kScopeInfoOffset,
-                            reinterpret_cast<Object*>(value), mode);
+  // TODO(cbruni): this code is no longer necessary once we store the positon
+  // only on the ScopeInfo.
+  if (scope_info->HasPositionInfo()) {
+    scope_info->SetPositionInfo(raw_start_position(), raw_end_position());
+  }
+  // Move the existing name onto the ScopeInfo.
+  Object* name = name_or_scope_info();
+  if (name->IsScopeInfo()) {
+    name = ScopeInfo::cast(name)->FunctionName();
+  }
+  DCHECK(name->IsString() || name == kNoSharedNameSentinel);
+  // Only set the function name for function scopes.
+  scope_info->SetFunctionName(name);
+  WRITE_FIELD(this, kNameOrScopeInfoOffset,
+              reinterpret_cast<Object*>(scope_info));
+  CONDITIONAL_WRITE_BARRIER(GetHeap(), this, kNameOrScopeInfoOffset,
+                            reinterpret_cast<Object*>(scope_info), mode);
 }
 
 ACCESSORS(SharedFunctionInfo, outer_scope_info, HeapObject,

@@ -343,6 +343,7 @@ class ErrorUtils : public AllStatic {
   T(IteratorSymbolNonCallable, "Found non-callable @@iterator")                \
   T(IteratorValueNotAnObject, "Iterator value % is not an entry object")       \
   T(LanguageID, "Language ID should be string or object.")                     \
+  T(MapperFunctionNonCallable, "flatMap mapper function is not callable")      \
   T(MethodCalledOnWrongObject,                                                 \
     "Method % called on a non-object or on a wrong type of object.")           \
   T(MethodInvokedOnNullOrUndefined,                                            \
@@ -555,6 +556,8 @@ class ErrorUtils : public AllStatic {
   T(LetInLexicalBinding, "let is disallowed as a lexically bound name")        \
   T(LocaleMatcher, "Illegal value for localeMatcher:%")                        \
   T(NormalizationForm, "The normalization form should be one of %.")           \
+  T(ZeroDigitNumericSeparator,                                                 \
+    "Numeric separator can not be used after leading 0.")                      \
   T(NumberFormatRange, "% argument must be between 0 and 100")                 \
   T(TrailingNumericSeparator,                                                  \
     "Numeric separators are not allowed at the end of numeric literals")       \
@@ -641,6 +644,9 @@ class ErrorUtils : public AllStatic {
   T(NoCatchOrFinally, "Missing catch or finally after try")                    \
   T(NotIsvar, "builtin %%IS_VAR: not a variable")                              \
   T(ParamAfterRest, "Rest parameter must be last formal parameter")            \
+  T(FlattenPastSafeLength,                                                     \
+    "Flattening % elements on an array-like of length % "                      \
+    "is disallowed, as the total surpasses 2**53-1")                           \
   T(PushPastSafeLength,                                                        \
     "Pushing % elements on an array-like of length % "                         \
     "is disallowed, as the total surpasses 2**53-1")                           \
