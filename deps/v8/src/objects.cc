@@ -3573,7 +3573,7 @@ bool HeapObject::CanBeRehashed() const {
       // TODO(yangguo): actually support rehashing OrderedHash{Map,Set}.
       return IsNameDictionary() || IsGlobalDictionary() ||
              IsNumberDictionary() || IsSimpleNumberDictionary() ||
-             IsStringTable() || IsWeakHashTable();
+             IsStringTable();
     case DESCRIPTOR_ARRAY_TYPE:
       return true;
     case TRANSITION_ARRAY_TYPE:
@@ -3601,8 +3601,6 @@ void HeapObject::RehashBasedOnMap() {
         GlobalDictionary::cast(this)->Rehash();
       } else if (IsStringTable()) {
         StringTable::cast(this)->Rehash();
-      } else if (IsWeakHashTable()) {
-        WeakHashTable::cast(this)->Rehash();
       } else {
         UNREACHABLE();
       }
@@ -13387,11 +13385,14 @@ MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
   // AstTraversalVisitor doesn't recurse properly in the construct which
   // triggers the mismatch.
   CHECK_LT(fun->function_literal_id(), shared_function_infos()->length());
-  Object* shared = shared_function_infos()->get(fun->function_literal_id());
-  if (shared->IsUndefined(isolate) || WeakCell::cast(shared)->cleared()) {
+  MaybeObject* shared =
+      shared_function_infos()->Get(fun->function_literal_id());
+  HeapObject* heap_object;
+  if (!shared->ToStrongOrWeakHeapObject(&heap_object) ||
+      heap_object->IsUndefined(isolate)) {
     return MaybeHandle<SharedFunctionInfo>();
   }
-  return handle(SharedFunctionInfo::cast(WeakCell::cast(shared)->value()));
+  return handle(SharedFunctionInfo::cast(heap_object));
 }
 
 Script::Iterator::Iterator(Isolate* isolate)
@@ -13406,16 +13407,20 @@ SharedFunctionInfo::ScriptIterator::ScriptIterator(Handle<Script> script)
                      handle(script->shared_function_infos())) {}
 
 SharedFunctionInfo::ScriptIterator::ScriptIterator(
-    Isolate* isolate, Handle<FixedArray> shared_function_infos)
+    Isolate* isolate, Handle<WeakFixedArray> shared_function_infos)
     : isolate_(isolate),
       shared_function_infos_(shared_function_infos),
       index_(0) {}
 
 SharedFunctionInfo* SharedFunctionInfo::ScriptIterator::Next() {
   while (index_ < shared_function_infos_->length()) {
-    Object* raw = shared_function_infos_->get(index_++);
-    if (raw->IsUndefined(isolate_) || WeakCell::cast(raw)->cleared()) continue;
-    return SharedFunctionInfo::cast(WeakCell::cast(raw)->value());
+    MaybeObject* raw = shared_function_infos_->Get(index_++);
+    HeapObject* heap_object;
+    if (!raw->ToStrongOrWeakHeapObject(&heap_object) ||
+        heap_object->IsUndefined(isolate_)) {
+      continue;
+    }
+    return SharedFunctionInfo::cast(heap_object);
   }
   return nullptr;
 }
@@ -13459,18 +13464,18 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
   // duplicates.
   if (script_object->IsScript()) {
     Handle<Script> script = Handle<Script>::cast(script_object);
-    Handle<FixedArray> list = handle(script->shared_function_infos(), isolate);
+    Handle<WeakFixedArray> list =
+        handle(script->shared_function_infos(), isolate);
 #ifdef DEBUG
     DCHECK_LT(shared->function_literal_id(), list->length());
-    if (list->get(shared->function_literal_id())->IsWeakCell() &&
-        !WeakCell::cast(list->get(shared->function_literal_id()))->cleared()) {
-      DCHECK(
-          WeakCell::cast(list->get(shared->function_literal_id()))->value() ==
-          *shared);
+    MaybeObject* maybe_object = list->Get(shared->function_literal_id());
+    HeapObject* heap_object;
+    if (maybe_object->ToWeakHeapObject(&heap_object)) {
+      DCHECK_EQ(heap_object, *shared);
     }
 #endif
-    Handle<WeakCell> cell = isolate->factory()->NewWeakCell(shared);
-    list->set(shared->function_literal_id(), *cell);
+    list->Set(shared->function_literal_id(),
+              HeapObjectReference::Weak(*shared));
   } else {
     Handle<Object> list = isolate->factory()->noscript_shared_function_infos();
 
@@ -13495,13 +13500,15 @@ void SharedFunctionInfo::SetScript(Handle<SharedFunctionInfo> shared,
 
     // Due to liveedit, it might happen that the old_script doesn't know
     // about the SharedFunctionInfo, so we have to guard against that.
-    Handle<FixedArray> infos(old_script->shared_function_infos(), isolate);
+    Handle<WeakFixedArray> infos(old_script->shared_function_infos(), isolate);
     if (shared->function_literal_id() < infos->length()) {
-      Object* raw = old_script->shared_function_infos()->get(
+      MaybeObject* raw = old_script->shared_function_infos()->Get(
           shared->function_literal_id());
-      if (!raw->IsWeakCell() || WeakCell::cast(raw)->value() == *shared) {
-        old_script->shared_function_infos()->set(
-            shared->function_literal_id(), isolate->heap()->undefined_value());
+      HeapObject* heap_object;
+      if (raw->ToWeakHeapObject(&heap_object) && heap_object == *shared) {
+        old_script->shared_function_infos()->Set(
+            shared->function_literal_id(),
+            HeapObjectReference::Strong(isolate->heap()->undefined_value()));
       }
     }
   } else {
@@ -13862,7 +13869,9 @@ void SharedFunctionInfo::SetConstructStub(Code* code) {
     int builtin_id = code->builtin_index();
     DCHECK_NE(Builtins::kDeserializeLazy, builtin_id);
     DCHECK(builtin_id == Builtins::kJSBuiltinsConstructStub ||
-           this->code() == code || !Builtins::IsLazy(builtin_id));
+           !Builtins::IsLazy(builtin_id));
+    // Builtins should use JSBuiltinsConstructStub.
+    DCHECK_NE(this->code(), code);
   }
 #endif
   set_construct_stub(code);
@@ -14495,12 +14504,12 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     int size = instruction_size();
     int safepoint_offset =
         has_safepoint_info() ? safepoint_table_offset() : size;
-    int constant_pool_offset = FLAG_enable_embedded_constant_pool
-                                   ? this->constant_pool_offset()
-                                   : size;
+    int constant_pool_offset = this->constant_pool_offset();
+    int handler_offset = handler_table_offset() ? handler_table_offset() : size;
 
     // Stop before reaching any embedded tables
-    int code_size = Min(safepoint_offset, constant_pool_offset);
+    int code_size =
+        Min(handler_offset, Min(safepoint_offset, constant_pool_offset));
     os << "Instructions (size = " << code_size << ")\n";
     byte* begin = instruction_start();
     byte* end = begin + code_size;
@@ -14909,7 +14918,6 @@ bool DependentCode::MarkCodeForDeoptimization(
   DisallowHeapAllocation no_allocation_scope;
   // Mark all the code that needs to be deoptimized.
   bool marked = false;
-  bool invalidate_embedded_objects = group == kWeakCodeGroup;
   int count = this->count();
   for (int i = 0; i < count; i++) {
     Object* obj = object_at(i);
@@ -14918,10 +14926,7 @@ bool DependentCode::MarkCodeForDeoptimization(
       if (cell->cleared()) continue;
       Code* code = Code::cast(cell->value());
       if (!code->marked_for_deoptimization()) {
-        SetMarkedForDeoptimization(code, group);
-        if (invalidate_embedded_objects) {
-          code->InvalidateEmbeddedObjects();
-        }
+        code->SetMarkedForDeoptimization(DependencyGroupName(group));
         marked = true;
       }
     } else {
@@ -14951,27 +14956,24 @@ void DependentCode::DeoptimizeDependentCodeGroup(
   }
 }
 
-
-void DependentCode::SetMarkedForDeoptimization(Code* code,
-                                               DependencyGroup group) {
-  code->set_marked_for_deoptimization(true);
+void Code::SetMarkedForDeoptimization(const char* reason) {
+  set_marked_for_deoptimization(true);
   if (FLAG_trace_deopt &&
-      (code->deoptimization_data() != code->GetHeap()->empty_fixed_array())) {
+      (deoptimization_data() != GetHeap()->empty_fixed_array())) {
     DeoptimizationData* deopt_data =
-        DeoptimizationData::cast(code->deoptimization_data());
-    CodeTracer::Scope scope(code->GetHeap()->isolate()->GetCodeTracer());
-    PrintF(scope.file(), "[marking dependent code 0x%08" V8PRIxPTR
-                         " (opt #%d) for deoptimization, reason: %s]\n",
-           reinterpret_cast<intptr_t>(code),
-           deopt_data->OptimizationId()->value(), DependencyGroupName(group));
+        DeoptimizationData::cast(deoptimization_data());
+    CodeTracer::Scope scope(GetHeap()->isolate()->GetCodeTracer());
+    PrintF(scope.file(),
+           "[marking dependent code 0x%08" V8PRIxPTR
+           " (opt #%d) for deoptimization, reason: %s]\n",
+           reinterpret_cast<intptr_t>(this),
+           deopt_data->OptimizationId()->value(), reason);
   }
 }
 
 
 const char* DependentCode::DependencyGroupName(DependencyGroup group) {
   switch (group) {
-    case kWeakCodeGroup:
-      return "weak-code";
     case kTransitionGroup:
       return "transition";
     case kPrototypeCheckGroup:
@@ -16526,19 +16528,21 @@ bool HashTable<Derived, Shape>::HasSufficientCapacityToAdd(
 }
 
 template <typename Derived, typename Shape>
-Handle<Derived> HashTable<Derived, Shape>::Shrink(Handle<Derived> table) {
+Handle<Derived> HashTable<Derived, Shape>::Shrink(Handle<Derived> table,
+                                                  int additionalCapacity) {
   int capacity = table->Capacity();
   int nof = table->NumberOfElements();
 
   // Shrink to fit the number of elements if only a quarter of the
   // capacity is filled with elements.
   if (nof > (capacity >> 2)) return table;
-  // Allocate a new dictionary with room for at least the current
-  // number of elements. The allocation method will make sure that
-  // there is extra room in the dictionary for additions. Don't go
-  // lower than room for 16 elements.
-  int at_least_room_for = nof;
-  if (at_least_room_for < 16) return table;
+  // Allocate a new dictionary with room for at least the current number of
+  // elements + {additionalCapacity}. The allocation method will make sure that
+  // there is extra room in the dictionary for additions. Don't go lower than
+  // room for {kMinShrinkCapacity} elements.
+  int at_least_room_for = nof + additionalCapacity;
+  DCHECK_LE(at_least_room_for, capacity);
+  if (at_least_room_for < Derived::kMinShrinkCapacity) return table;
 
   Isolate* isolate = table->GetIsolate();
   const int kMinCapacityForPretenure = 256;
@@ -16577,8 +16581,6 @@ template class HashTable<StringTable, StringTableShape>;
 template class HashTable<CompilationCacheTable, CompilationCacheShape>;
 
 template class HashTable<ObjectHashTable, ObjectHashTableShape>;
-
-template class HashTable<WeakHashTable, WeakHashTableShape>;
 
 template class Dictionary<NameDictionary, NameDictionaryShape>;
 
@@ -16641,8 +16643,9 @@ HashTable<ObjectHashSet, ObjectHashSetShape>::New(Isolate*, int n,
                                                   PretenureFlag,
                                                   MinimumCapacity);
 
-template Handle<NameDictionary> HashTable<
-    NameDictionary, NameDictionaryShape>::Shrink(Handle<NameDictionary>);
+template Handle<NameDictionary>
+HashTable<NameDictionary, NameDictionaryShape>::Shrink(Handle<NameDictionary>,
+                                                       int additionalCapacity);
 
 template Handle<NameDictionary>
 BaseNameDictionary<NameDictionary, NameDictionaryShape>::Add(
@@ -17048,6 +17051,7 @@ Handle<String> StringTable::LookupKey(Isolate* isolate, StringTableKey* key) {
     return handle(String::cast(table->KeyAt(entry)), isolate);
   }
 
+  table = StringTable::CautiousShrink(table);
   // Adding new string. Grow table if needed.
   table = StringTable::EnsureCapacity(table, 1);
 
@@ -17067,6 +17071,18 @@ Handle<String> StringTable::LookupKey(Isolate* isolate, StringTableKey* key) {
   return Handle<String>::cast(string);
 }
 
+Handle<StringTable> StringTable::CautiousShrink(Handle<StringTable> table) {
+  // Only shrink if the table is very empty to avoid performance penalty.
+  int capacity = table->Capacity();
+  int nof = table->NumberOfElements();
+  if (capacity <= StringTable::kMinCapacity) return table;
+  if (nof > (capacity / kMaxEmptyFactor)) return table;
+  // Make sure that after shrinking the table is half empty (aka. has capacity
+  // for another {nof} elements).
+  DCHECK_LE(nof * 2, capacity);
+  return Shrink(table, nof);
+}
+
 namespace {
 
 class StringTableNoAllocateKey : public StringTableKey {
@@ -17082,12 +17098,22 @@ class StringTableNoAllocateKey : public StringTableKey {
       special_flattening_ = true;
       uint32_t hash_field = 0;
       if (one_byte_) {
-        one_byte_content_ = new uint8_t[length];
+        if (V8_LIKELY(length <=
+                      static_cast<int>(arraysize(one_byte_buffer_)))) {
+          one_byte_content_ = one_byte_buffer_;
+        } else {
+          one_byte_content_ = new uint8_t[length];
+        }
         String::WriteToFlat(string, one_byte_content_, 0, length);
         hash_field =
             StringHasher::HashSequentialString(one_byte_content_, length, seed);
       } else {
-        two_byte_content_ = new uint16_t[length];
+        if (V8_LIKELY(length <=
+                      static_cast<int>(arraysize(two_byte_buffer_)))) {
+          two_byte_content_ = two_byte_buffer_;
+        } else {
+          two_byte_content_ = new uint16_t[length];
+        }
         String::WriteToFlat(string, two_byte_content_, 0, length);
         hash_field =
             StringHasher::HashSequentialString(two_byte_content_, length, seed);
@@ -17105,9 +17131,9 @@ class StringTableNoAllocateKey : public StringTableKey {
 
   ~StringTableNoAllocateKey() {
     if (one_byte_) {
-      delete[] one_byte_content_;
+      if (one_byte_content_ != one_byte_buffer_) delete[] one_byte_content_;
     } else {
-      delete[] two_byte_content_;
+      if (two_byte_content_ != two_byte_buffer_) delete[] two_byte_content_;
     }
   }
 
@@ -17180,6 +17206,10 @@ class StringTableNoAllocateKey : public StringTableKey {
   union {
     uint8_t* one_byte_content_;
     uint16_t* two_byte_content_;
+  };
+  union {
+    uint8_t one_byte_buffer_[256];
+    uint16_t two_byte_buffer_[128];
   };
 };
 
@@ -18081,48 +18111,6 @@ void ObjectHashTable::RemoveEntry(int entry) {
   set_the_hole(EntryToIndex(entry));
   set_the_hole(EntryToIndex(entry) + 1);
   ElementRemoved();
-}
-
-
-Object* WeakHashTable::Lookup(Handle<HeapObject> key) {
-  DisallowHeapAllocation no_gc;
-  Isolate* isolate = GetIsolate();
-  DCHECK(IsKey(isolate, *key));
-  int entry = FindEntry(key);
-  if (entry == kNotFound) return isolate->heap()->the_hole_value();
-  return get(EntryToValueIndex(entry));
-}
-
-
-Handle<WeakHashTable> WeakHashTable::Put(Handle<WeakHashTable> table,
-                                         Handle<HeapObject> key,
-                                         Handle<HeapObject> value) {
-  Isolate* isolate = key->GetIsolate();
-  DCHECK(table->IsKey(isolate, *key));
-  int entry = table->FindEntry(key);
-  // Key is already in table, just overwrite value.
-  if (entry != kNotFound) {
-    table->set(EntryToValueIndex(entry), *value);
-    return table;
-  }
-
-  Handle<WeakCell> key_cell = isolate->factory()->NewWeakCell(key);
-
-  // Check whether the hash table should be extended.
-  table = EnsureCapacity(table, 1, TENURED);
-
-  uint32_t hash = ShapeT::Hash(isolate, key);
-  table->AddEntry(table->FindInsertionEntry(hash), key_cell, value);
-  return table;
-}
-
-
-void WeakHashTable::AddEntry(int entry, Handle<WeakCell> key_cell,
-                             Handle<HeapObject> value) {
-  DisallowHeapAllocation no_allocation;
-  set(EntryToIndex(entry), *key_cell);
-  set(EntryToValueIndex(entry), *value);
-  ElementAdded();
 }
 
 template <class Derived, int entrysize>
@@ -19049,8 +19037,6 @@ void JSArrayBuffer::Neuter() {
   CHECK(is_external());
   set_backing_store(nullptr);
   set_byte_length(Smi::kZero);
-  set_allocation_base(nullptr);
-  set_allocation_length(0);
   set_was_neutered(true);
   set_is_neuterable(false);
   // Invalidate the neutering protector.
@@ -19064,28 +19050,21 @@ void JSArrayBuffer::FreeBackingStore() {
   if (allocation_base() == nullptr) {
     return;
   }
-  using AllocationMode = ArrayBuffer::Allocator::AllocationMode;
-  const size_t length = allocation_length();
-  const AllocationMode mode = allocation_mode();
-  FreeBackingStore(GetIsolate(), {allocation_base(), length, mode});
-
+  FreeBackingStore(GetIsolate(), {allocation_base(), allocation_length(),
+                                  backing_store(), allocation_mode()});
   // Zero out the backing store and allocation base to avoid dangling
   // pointers.
   set_backing_store(nullptr);
-  // TODO(eholk): set_byte_length(0) once we aren't using Smis for the
-  // byte_length. We can't do it now because the GC needs to call
-  // FreeBackingStore while it is collecting.
-  set_allocation_base(nullptr);
-  set_allocation_length(0);
 }
 
 // static
 void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
   if (allocation.mode == ArrayBuffer::Allocator::AllocationMode::kReservation) {
-    // TODO(eholk): check with WasmAllocationTracker to make sure this is
-    // actually a buffer we are tracking.
-    isolate->wasm_engine()->allocation_tracker()->ReleaseAddressSpace(
-        allocation.length);
+    wasm::WasmMemoryTracker* memory_tracker =
+        isolate->wasm_engine()->memory_tracker();
+    if (memory_tracker->IsWasmMemory(allocation.backing_store)) {
+      memory_tracker->ReleaseAllocation(allocation.backing_store);
+    }
     CHECK(FreePages(allocation.allocation_base, allocation.length));
   } else {
     isolate->array_buffer_allocator()->Free(allocation.allocation_base,
@@ -19093,17 +19072,13 @@ void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
   }
 }
 
-void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
-                          bool is_external, void* data, size_t allocated_length,
-                          SharedFlag shared) {
-  return Setup(array_buffer, isolate, is_external, data, allocated_length, data,
-               allocated_length, shared);
+void JSArrayBuffer::set_is_wasm_memory(bool is_wasm_memory) {
+  set_bit_field(IsWasmMemory::update(bit_field(), is_wasm_memory));
 }
 
 void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
-                          bool is_external, void* allocation_base,
-                          size_t allocation_length, void* data,
-                          size_t byte_length, SharedFlag shared) {
+                          bool is_external, void* data, size_t byte_length,
+                          SharedFlag shared, bool is_wasm_memory) {
   DCHECK_EQ(array_buffer->GetEmbedderFieldCount(),
             v8::ArrayBuffer::kEmbedderFieldCount);
   for (int i = 0; i < v8::ArrayBuffer::kEmbedderFieldCount; i++) {
@@ -19113,6 +19088,7 @@ void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
   array_buffer->set_is_external(is_external);
   array_buffer->set_is_neuterable(shared == SharedFlag::kNotShared);
   array_buffer->set_is_shared(shared == SharedFlag::kShared);
+  array_buffer->set_is_wasm_memory(is_wasm_memory);
 
   Handle<Object> heap_byte_length =
       isolate->factory()->NewNumberFromSize(byte_length);
@@ -19123,9 +19099,6 @@ void JSArrayBuffer::Setup(Handle<JSArrayBuffer> array_buffer, Isolate* isolate,
   // registration method below handles the case of registering a buffer that has
   // already been promoted.
   array_buffer->set_backing_store(data);
-
-  array_buffer->set_allocation_base(allocation_base);
-  array_buffer->set_allocation_length(allocation_length);
 
   if (data && !is_external) {
     isolate->heap()->RegisterNewArrayBuffer(*array_buffer);
@@ -19188,9 +19161,8 @@ Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
 
   Handle<JSArrayBuffer> buffer(JSArrayBuffer::cast(typed_array->buffer()),
                                isolate);
-  // This code does not know how to materialize from a buffer with guard
-  // regions.
-  DCHECK(!buffer->has_guard_region());
+  // This code does not know how to materialize from wasm buffers.
+  DCHECK(!buffer->is_wasm_memory());
 
   void* backing_store =
       isolate->array_buffer_allocator()->AllocateUninitialized(
@@ -19204,8 +19176,6 @@ Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
   // registration method below handles the case of registering a buffer that has
   // already been promoted.
   buffer->set_backing_store(backing_store);
-  buffer->set_allocation_base(backing_store);
-  buffer->set_allocation_length(NumberToSize(buffer->byte_length()));
   // RegisterNewArrayBuffer expects a valid length for adjusting counters.
   isolate->heap()->RegisterNewArrayBuffer(*buffer);
   memcpy(buffer->backing_store(),
@@ -19227,7 +19197,7 @@ Handle<JSArrayBuffer> JSTypedArray::GetBuffer() {
                                      GetIsolate());
   if (array_buffer->was_neutered() ||
       array_buffer->backing_store() != nullptr ||
-      array_buffer->has_guard_region()) {
+      array_buffer->is_wasm_memory()) {
     return array_buffer;
   }
   Handle<JSTypedArray> self(this);

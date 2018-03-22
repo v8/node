@@ -333,6 +333,12 @@ AllocationResult Heap::AllocateRaw(int size_in_bytes, AllocationSpace space,
     allocation = lo_space_->AllocateRaw(size_in_bytes, NOT_EXECUTABLE);
   } else if (MAP_SPACE == space) {
     allocation = map_space_->AllocateRawUnaligned(size_in_bytes);
+  } else if (RO_SPACE == space) {
+#ifdef V8_USE_SNAPSHOT
+    DCHECK(isolate_->serializer_enabled());
+#endif
+    DCHECK(!large_object);
+    allocation = read_only_space_->AllocateRaw(size_in_bytes, alignment);
   } else {
     // NEW_SPACE is not allowed here.
     UNREACHABLE();
@@ -455,17 +461,17 @@ void Heap::FinalizeExternalString(String* string) {
 Address Heap::NewSpaceTop() { return new_space_->top(); }
 
 bool Heap::InNewSpace(Object* object) {
-  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  DCHECK(!HasWeakHeapObjectTag(object));
   return InNewSpace(MaybeObject::FromObject(object));
 }
 
 bool Heap::InFromSpace(Object* object) {
-  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  DCHECK(!HasWeakHeapObjectTag(object));
   return InFromSpace(MaybeObject::FromObject(object));
 }
 
 bool Heap::InToSpace(Object* object) {
-  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  DCHECK(!HasWeakHeapObjectTag(object));
   return InToSpace(MaybeObject::FromObject(object));
 }
 
@@ -512,8 +518,8 @@ bool Heap::ShouldBePromoted(Address old_address) {
 }
 
 void Heap::RecordWrite(Object* object, Object** slot, Object* value) {
-  DCHECK(!Internals::HasWeakHeapObjectTag(*slot));
-  DCHECK(!Internals::HasWeakHeapObjectTag(value));
+  DCHECK(!HasWeakHeapObjectTag(*slot));
+  DCHECK(!HasWeakHeapObjectTag(value));
   RecordWrite(object, reinterpret_cast<MaybeObject**>(slot),
               reinterpret_cast<MaybeObject*>(value));
 }

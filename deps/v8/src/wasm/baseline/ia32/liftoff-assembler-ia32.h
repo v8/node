@@ -318,10 +318,9 @@ void LiftoffAssembler::MoveToReturnRegister(LiftoffRegister reg,
                                             ValueType type) {
   // TODO(wasm): Extract the destination register from the CallDescriptor.
   // TODO(wasm): Add multi-return support.
-  LiftoffRegister dst =
-      reg.is_pair()
-          ? LiftoffRegister::ForPair(LiftoffRegister(eax), LiftoffRegister(edx))
-          : reg.is_gp() ? LiftoffRegister(eax) : LiftoffRegister(xmm1);
+  LiftoffRegister dst = reg.is_pair() ? LiftoffRegister::ForPair(eax, edx)
+                                      : reg.is_gp() ? LiftoffRegister(eax)
+                                                    : LiftoffRegister(xmm1);
   if (reg != dst) Move(dst, reg, type);
 }
 
@@ -352,7 +351,7 @@ void LiftoffAssembler::Spill(uint32_t index, LiftoffRegister reg,
       break;
     case kWasmI64:
       mov(dst, reg.low_gp());
-      mov(liftoff::GetHalfStackSlot(2 * index + 1), reg.high_gp());
+      mov(liftoff::GetHalfStackSlot(2 * index - 1), reg.high_gp());
       break;
     case kWasmF32:
       movss(dst, reg.fp());
@@ -376,7 +375,7 @@ void LiftoffAssembler::Spill(uint32_t index, WasmValue value) {
       int32_t low_word = value.to_i64();
       int32_t high_word = value.to_i64() >> 32;
       mov(dst, Immediate(low_word));
-      mov(liftoff::GetHalfStackSlot(2 * index + 1), Immediate(high_word));
+      mov(liftoff::GetHalfStackSlot(2 * index - 1), Immediate(high_word));
       break;
     }
     default:
@@ -394,7 +393,7 @@ void LiftoffAssembler::Fill(LiftoffRegister reg, uint32_t index,
       break;
     case kWasmI64:
       mov(reg.low_gp(), src);
-      mov(reg.high_gp(), liftoff::GetHalfStackSlot(2 * index + 1));
+      mov(reg.high_gp(), liftoff::GetHalfStackSlot(2 * index - 1));
       break;
     case kWasmF32:
       movss(reg.fp(), src);
@@ -451,37 +450,37 @@ COMMUTATIVE_I32_BINOP(xor, xor_)
 
 namespace liftoff {
 inline void EmitShiftOperation(LiftoffAssembler* assm, Register dst,
-                               Register lhs, Register rhs,
+                               Register src, Register amount,
                                void (Assembler::*emit_shift)(Register),
                                LiftoffRegList pinned) {
   pinned.set(dst);
-  pinned.set(lhs);
-  pinned.set(rhs);
+  pinned.set(src);
+  pinned.set(amount);
   // If dst is ecx, compute into a tmp register first, then move to ecx.
   if (dst == ecx) {
     Register tmp = assm->GetUnusedRegister(kGpReg, pinned).gp();
-    assm->mov(tmp, lhs);
-    if (rhs != ecx) assm->mov(ecx, rhs);
+    assm->mov(tmp, src);
+    if (amount != ecx) assm->mov(ecx, amount);
     (assm->*emit_shift)(tmp);
     assm->mov(ecx, tmp);
     return;
   }
 
-  // Move rhs into ecx. If ecx is in use, move its content to a tmp register
-  // first. If lhs is ecx, lhs is now the tmp register.
+  // Move amount into ecx. If ecx is in use, move its content to a tmp register
+  // first. If src is ecx, src is now the tmp register.
   Register tmp_reg = no_reg;
-  if (rhs != ecx) {
+  if (amount != ecx) {
     if (assm->cache_state()->is_used(LiftoffRegister(ecx)) ||
         pinned.has(LiftoffRegister(ecx))) {
       tmp_reg = assm->GetUnusedRegister(kGpReg, pinned).gp();
       assm->mov(tmp_reg, ecx);
-      if (lhs == ecx) lhs = tmp_reg;
+      if (src == ecx) src = tmp_reg;
     }
-    assm->mov(ecx, rhs);
+    assm->mov(ecx, amount);
   }
 
   // Do the actual shift.
-  if (dst != lhs) assm->mov(dst, lhs);
+  if (dst != src) assm->mov(dst, src);
   (assm->*emit_shift)(dst);
 
   // Restore ecx if needed.
@@ -489,19 +488,22 @@ inline void EmitShiftOperation(LiftoffAssembler* assm, Register dst,
 }
 }  // namespace liftoff
 
-void LiftoffAssembler::emit_i32_shl(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_shl(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::shl_cl, pinned);
+  liftoff::EmitShiftOperation(this, dst, src, amount, &Assembler::shl_cl,
+                              pinned);
 }
 
-void LiftoffAssembler::emit_i32_sar(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_sar(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::sar_cl, pinned);
+  liftoff::EmitShiftOperation(this, dst, src, amount, &Assembler::sar_cl,
+                              pinned);
 }
 
-void LiftoffAssembler::emit_i32_shr(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_shr(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::shr_cl, pinned);
+  liftoff::EmitShiftOperation(this, dst, src, amount, &Assembler::shr_cl,
+                              pinned);
 }
 
 bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
@@ -543,6 +545,77 @@ bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
   CpuFeatureScope scope(this, POPCNT);
   popcnt(dst, src);
   return true;
+}
+
+namespace liftoff {
+inline bool PairContains(LiftoffRegister pair, Register reg) {
+  return pair.low_gp() == reg || pair.high_gp() == reg;
+}
+
+inline LiftoffRegister ReplaceInPair(LiftoffRegister pair, Register old_reg,
+                                     Register new_reg) {
+  if (pair.low_gp() == old_reg) {
+    return LiftoffRegister::ForPair(new_reg, pair.high_gp());
+  }
+  if (pair.high_gp() == old_reg) {
+    return LiftoffRegister::ForPair(pair.low_gp(), new_reg);
+  }
+  return pair;
+}
+
+inline void Emit64BitShiftOperation(
+    LiftoffAssembler* assm, LiftoffRegister dst, LiftoffRegister src,
+    Register amount, void (TurboAssembler::*emit_shift)(Register, Register),
+    LiftoffRegList pinned) {
+  pinned.set(dst);
+  pinned.set(src);
+  pinned.set(amount);
+  // If dst contains ecx, replace it by an unused register, which is then moved
+  // to ecx in the end.
+  Register ecx_replace = no_reg;
+  if (PairContains(dst, ecx)) {
+    ecx_replace = pinned.set(assm->GetUnusedRegister(kGpReg, pinned)).gp();
+    dst = ReplaceInPair(dst, ecx, ecx_replace);
+  }
+
+  // Move src to dst.
+  if (dst != src) assm->Move(dst, src, kWasmI64);
+
+  // Move amount into ecx. If ecx is in use and not part of dst, move its
+  // content to a tmp register first.
+  if (amount != ecx) {
+    if (assm->cache_state()->is_used(LiftoffRegister(ecx)) &&
+        ecx_replace == no_reg) {
+      ecx_replace = assm->GetUnusedRegister(kGpReg, pinned).gp();
+      assm->mov(ecx_replace, ecx);
+    }
+    assm->mov(ecx, amount);
+  }
+
+  // Do the actual shift.
+  (assm->*emit_shift)(dst.high_gp(), dst.low_gp());
+
+  // Restore ecx if needed.
+  if (ecx_replace != no_reg) assm->mov(ecx, ecx_replace);
+}
+}  // namespace liftoff
+
+void LiftoffAssembler::emit_i64_shl(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::ShlPair_cl, pinned);
+}
+
+void LiftoffAssembler::emit_i64_sar(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::SarPair_cl, pinned);
+}
+
+void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::ShrPair_cl, pinned);
 }
 
 void LiftoffAssembler::emit_ptrsize_add(Register dst, Register lhs,
@@ -603,6 +676,17 @@ void LiftoffAssembler::emit_f32_div(DoubleRegister dst, DoubleRegister lhs,
   } else {
     if (dst != lhs) movss(dst, lhs);
     divss(dst, rhs);
+  }
+}
+
+void LiftoffAssembler::emit_f32_abs(DoubleRegister dst, DoubleRegister src) {
+  static constexpr uint32_t kSignBit = uint32_t{1} << 31;
+  if (dst == src) {
+    TurboAssembler::Move(kScratchDoubleReg, kSignBit - 1);
+    Andps(dst, kScratchDoubleReg);
+  } else {
+    TurboAssembler::Move(dst, kSignBit - 1);
+    Andps(dst, src);
   }
 }
 
@@ -674,6 +758,17 @@ void LiftoffAssembler::emit_f64_div(DoubleRegister dst, DoubleRegister lhs,
   } else {
     if (dst != lhs) movsd(dst, lhs);
     divsd(dst, rhs);
+  }
+}
+
+void LiftoffAssembler::emit_f64_abs(DoubleRegister dst, DoubleRegister src) {
+  static constexpr uint64_t kSignBit = uint64_t{1} << 63;
+  if (dst == src) {
+    TurboAssembler::Move(kScratchDoubleReg, kSignBit - 1);
+    Andpd(dst, kScratchDoubleReg);
+  } else {
+    TurboAssembler::Move(dst, kSignBit - 1);
+    Andpd(dst, src);
   }
 }
 
@@ -793,14 +888,69 @@ inline void setcc_32(LiftoffAssembler* assm, Condition cond, Register dst) {
 }
 }  // namespace liftoff
 
+void LiftoffAssembler::emit_i32_eqz(Register dst, Register src) {
+  test(src, src);
+  liftoff::setcc_32(this, equal, dst);
+}
+
 void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
                                          Register lhs, Register rhs) {
-  if (rhs != no_reg) {
-    cmp(lhs, rhs);
-  } else {
-    test(lhs, lhs);
-  }
+  cmp(lhs, rhs);
   liftoff::setcc_32(this, cond, dst);
+}
+
+void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
+  // Compute the OR of both registers in the src pair, using dst as scratch
+  // register. Then check whether the result is equal to zero.
+  if (src.low_gp() == dst) {
+    or_(dst, src.high_gp());
+  } else {
+    if (src.high_gp() != dst) mov(dst, src.high_gp());
+    or_(dst, src.low_gp());
+  }
+  liftoff::setcc_32(this, equal, dst);
+}
+
+namespace liftoff {
+inline Condition cond_make_unsigned(Condition cond) {
+  switch (cond) {
+    case kSignedLessThan:
+      return kUnsignedLessThan;
+    case kSignedLessEqual:
+      return kUnsignedLessEqual;
+    case kSignedGreaterThan:
+      return kUnsignedGreaterThan;
+    case kSignedGreaterEqual:
+      return kUnsignedGreaterEqual;
+    default:
+      return cond;
+  }
+}
+}  // namespace liftoff
+
+void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,
+                                         LiftoffRegister lhs,
+                                         LiftoffRegister rhs) {
+  // For signed i64 comparisons, we still need to use unsigned comparison for
+  // the low word (the only bit carrying signedness information is the MSB in
+  // the high word).
+  Condition unsigned_cond = liftoff::cond_make_unsigned(cond);
+  Label setcc;
+  Label cont;
+  // Compare high word first. If it differs, use if for the setcc. If it's
+  // equal, compare the low word and use that for setcc.
+  cmp(lhs.high_gp(), rhs.high_gp());
+  j(not_equal, &setcc, Label::kNear);
+  cmp(lhs.low_gp(), rhs.low_gp());
+  if (unsigned_cond != cond) {
+    // If the condition predicate for the low differs from that for the high
+    // word, emit a separete setcc sequence for the low word.
+    liftoff::setcc_32(this, unsigned_cond, dst);
+    jmp(&cont);
+  }
+  bind(&setcc);
+  liftoff::setcc_32(this, cond, dst);
+  bind(&cont);
 }
 
 void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
@@ -850,7 +1000,7 @@ void LiftoffAssembler::PushCallerFrameSlot(const VarState& src,
         DCHECK_EQ(kLowWord, half);
         push(liftoff::GetHalfStackSlot(2 * src_index - 1));
       }
-      push(liftoff::GetHalfStackSlot(2 * src_index +
+      push(liftoff::GetHalfStackSlot(2 * src_index -
                                      (half == kLowWord ? 0 : 1)));
       break;
     case VarState::kRegister:

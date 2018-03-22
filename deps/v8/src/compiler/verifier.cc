@@ -1178,6 +1178,14 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, Type::Number());
       CheckTypeIs(node, Type::Boolean());
       break;
+    case IrOpcode::kObjectIsSafeInteger:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kNumberIsSafeInteger:
+      CheckValueInputIs(node, 0, Type::Number());
+      CheckTypeIs(node, Type::Boolean());
+      break;
     case IrOpcode::kObjectIsInteger:
       CheckValueInputIs(node, 0, Type::Any());
       CheckTypeIs(node, Type::Boolean());
@@ -1214,7 +1222,7 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, TypeCache::Get().kStringLengthType);
       CheckValueInputIs(node, 1, Type::String());
       CheckValueInputIs(node, 2, Type::String());
-      CheckTypeIs(node, Type::OtherString());
+      CheckTypeIs(node, Type::String());
       break;
     case IrOpcode::kAllocate:
       CheckValueInputIs(node, 0, Type::PlainNumber());
@@ -1681,6 +1689,7 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
     case IrOpcode::kLoadStackPointer:
     case IrOpcode::kLoadFramePointer:
     case IrOpcode::kLoadParentFramePointer:
+    case IrOpcode::kLoadRootsPointer:
     case IrOpcode::kUnalignedLoad:
     case IrOpcode::kUnalignedStore:
     case IrOpcode::kWord32AtomicLoad:

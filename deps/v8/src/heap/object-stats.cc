@@ -552,9 +552,6 @@ void ObjectStatsCollectorImpl::CollectGlobalStatistics() {
   }
 
   // FixedArray.
-  RecordSimpleVirtualObjectStats(
-      nullptr, heap_->weak_new_space_object_to_code_list(),
-      ObjectStats::WEAK_NEW_SPACE_OBJECT_TO_CODE_TYPE);
   RecordSimpleVirtualObjectStats(nullptr, heap_->serialized_objects(),
                                  ObjectStats::SERIALIZED_OBJECTS_TYPE);
   RecordSimpleVirtualObjectStats(nullptr, heap_->number_string_cache(),
@@ -583,10 +580,6 @@ void ObjectStatsCollectorImpl::CollectGlobalStatistics() {
                                     ObjectStats::STRING_TABLE_TYPE);
   RecordHashTableVirtualObjectStats(nullptr, heap_->code_stubs(),
                                     ObjectStats::CODE_STUBS_TABLE_TYPE);
-
-  // WeakHashTable.
-  RecordHashTableVirtualObjectStats(nullptr, heap_->weak_object_to_code_table(),
-                                    ObjectStats::OBJECT_TO_CODE_TYPE);
 }
 
 void ObjectStatsCollectorImpl::RecordObjectStats(HeapObject* obj,
@@ -640,18 +633,9 @@ void ObjectStatsCollectorImpl::RecordVirtualMapDetails(Map* map) {
 }
 
 void ObjectStatsCollectorImpl::RecordVirtualScriptDetails(Script* script) {
-  FixedArray* infos = script->shared_function_infos();
   RecordSimpleVirtualObjectStats(
       script, script->shared_function_infos(),
       ObjectStats::SCRIPT_SHARED_FUNCTION_INFOS_TYPE);
-  // Split off weak cells from the regular weak cell type.
-  for (int i = 0; i < infos->length(); i++) {
-    if (infos->get(i)->IsWeakCell()) {
-      RecordSimpleVirtualObjectStats(
-          infos, WeakCell::cast(infos->get(i)),
-          ObjectStats::SCRIPT_SHARED_FUNCTION_INFOS_TYPE);
-    }
-  }
 
   // Log the size of external source code.
   Object* source = script->source();

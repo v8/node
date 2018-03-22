@@ -20,14 +20,16 @@ class Smi;
 class MaybeObject {
  public:
   bool IsSmi() const { return HAS_SMI_TAG(this); }
-  inline bool IsSmi(Smi** value);
+  inline bool ToSmi(Smi** value);
 
   bool IsClearedWeakHeapObject() {
-    return Internals::IsClearedWeakHeapObject(this);
+    return ::v8::internal::IsClearedWeakHeapObject(this);
   }
 
   inline bool IsStrongOrWeakHeapObject();
   inline bool ToStrongOrWeakHeapObject(HeapObject** result);
+  inline bool ToStrongOrWeakHeapObject(HeapObject** result,
+                                       HeapObjectReferenceType* reference_type);
   inline bool IsStrongHeapObject();
   inline bool ToStrongHeapObject(HeapObject** result);
   inline bool IsWeakHeapObject();
@@ -41,7 +43,13 @@ class MaybeObject {
   }
 
   static MaybeObject* FromObject(Object* object) {
+    DCHECK(!HasWeakHeapObjectTag(object));
     return reinterpret_cast<MaybeObject*>(object);
+  }
+
+  static MaybeObject* MakeWeak(MaybeObject* object) {
+    DCHECK(object->IsStrongOrWeakHeapObject());
+    return AddWeakHeapObjectMask(object);
   }
 
 #ifdef VERIFY_HEAP
@@ -56,17 +64,14 @@ class MaybeObject {
 // reference to a HeapObject, or a cleared weak reference.
 class HeapObjectReference : public MaybeObject {
  public:
-  enum ReferenceType {
-    WEAK,
-    STRONG,
-  };
-
   static HeapObjectReference* Strong(HeapObject* object) {
+    DCHECK(!HasWeakHeapObjectTag(object));
     return reinterpret_cast<HeapObjectReference*>(object);
   }
 
   static HeapObjectReference* Weak(HeapObject* object) {
-    return Internals::AddWeakHeapObjectMask(object);
+    DCHECK(!HasWeakHeapObjectTag(object));
+    return AddWeakHeapObjectMask(object);
   }
 
   static HeapObjectReference* ClearedValue() {
@@ -78,7 +83,7 @@ class HeapObjectReference : public MaybeObject {
     DCHECK(Internals::HasHeapObjectTag(value));
 
 #ifdef DEBUG
-    bool weak_before = Internals::HasWeakHeapObjectTag(*slot);
+    bool weak_before = HasWeakHeapObjectTag(*slot);
 #endif
 
     *slot = reinterpret_cast<HeapObjectReference*>(
@@ -86,7 +91,7 @@ class HeapObjectReference : public MaybeObject {
         (reinterpret_cast<intptr_t>(*slot) & kWeakHeapObjectMask));
 
 #ifdef DEBUG
-    bool weak_after = Internals::HasWeakHeapObjectTag(*slot);
+    bool weak_after = HasWeakHeapObjectTag(*slot);
     DCHECK_EQ(weak_before, weak_after);
 #endif
   }

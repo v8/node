@@ -235,7 +235,7 @@ class YoungGenerationMarkingVerifier : public MarkingVerifier {
 
   void VerifyPointers(Object** start, Object** end) override {
     for (Object** current = start; current < end; current++) {
-      DCHECK(!Internals::HasWeakHeapObjectTag(*current));
+      DCHECK(!HasWeakHeapObjectTag(*current));
       if ((*current)->IsHeapObject()) {
         HeapObject* object = HeapObject::cast(*current);
         if (!heap_->InNewSpace(object)) return;
@@ -606,6 +606,13 @@ void MarkCompactCollector::CollectGarbage() {
 }
 
 #ifdef VERIFY_HEAP
+void MarkCompactCollector::VerifyMarkbitsAreDirty(PagedSpace* space) {
+  HeapObjectIterator iterator(space);
+  while (HeapObject* object = iterator.Next()) {
+    CHECK(non_atomic_marking_state()->IsBlack(object));
+  }
+}
+
 void MarkCompactCollector::VerifyMarkbitsAreClean(PagedSpace* space) {
   for (Page* p : *space) {
     CHECK(non_atomic_marking_state()->bitmap(p)->IsClean());
@@ -627,23 +634,15 @@ void MarkCompactCollector::VerifyMarkbitsAreClean() {
   VerifyMarkbitsAreClean(heap_->code_space());
   VerifyMarkbitsAreClean(heap_->map_space());
   VerifyMarkbitsAreClean(heap_->new_space());
+  // Read-only space should always be black since we never collect any objects
+  // in it or linked from it.
+  VerifyMarkbitsAreDirty(heap_->read_only_space());
 
   LargeObjectIterator it(heap_->lo_space());
   for (HeapObject* obj = it.Next(); obj != nullptr; obj = it.Next()) {
     CHECK(non_atomic_marking_state()->IsWhite(obj));
     CHECK_EQ(0, non_atomic_marking_state()->live_bytes(
                     MemoryChunk::FromAddress(obj->address())));
-  }
-}
-
-void MarkCompactCollector::VerifyWeakEmbeddedObjectsInCode() {
-  HeapObjectIterator code_iterator(heap()->code_space());
-  for (HeapObject* obj = code_iterator.Next(); obj != nullptr;
-       obj = code_iterator.Next()) {
-    Code* code = Code::cast(obj);
-    if (!code->is_optimized_code()) continue;
-    if (WillBeDeoptimized(code)) continue;
-    code->VerifyEmbeddedObjectsDependency();
   }
 }
 
@@ -984,9 +983,6 @@ void MarkCompactCollector::Finish() {
   sweeper()->StartSweeperTasks();
   sweeper()->StartIterabilityTasks();
 
-  // The hashing of weak_object_to_code_table is no longer valid.
-  heap()->weak_object_to_code_table()->Rehash();
-
   // Clear the marking state of live large objects.
   heap_->lo_space()->ClearMarkingStateOfLiveObjects();
 
@@ -1065,7 +1061,7 @@ class MarkCompactCollector::CustomRootBodyMarkingVisitor final
 
   void VisitPointers(HeapObject* host, Object** start, Object** end) final {
     for (Object** p = start; p < end; p++) {
-      DCHECK(!Internals::HasWeakHeapObjectTag(*p));
+      DCHECK(!HasWeakHeapObjectTag(*p));
       MarkObject(host, *p);
     }
   }
@@ -1259,7 +1255,7 @@ class RecordMigratedSlotVisitor : public ObjectVisitor {
       : collector_(collector) {}
 
   inline void VisitPointer(HeapObject* host, Object** p) final {
-    DCHECK(!Internals::HasWeakHeapObjectTag(*p));
+    DCHECK(!HasWeakHeapObjectTag(*p));
     RecordMigratedSlot(host, reinterpret_cast<MaybeObject*>(*p),
                        reinterpret_cast<Address>(p));
   }
@@ -1833,7 +1829,7 @@ class YoungGenerationMarkingVisitor final
 
   V8_INLINE void VisitPointer(HeapObject* host, Object** slot) final {
     Object* target = *slot;
-    DCHECK(!Internals::HasWeakHeapObjectTag(target));
+    DCHECK(!HasWeakHeapObjectTag(target));
     if (heap_->InNewSpace(target)) {
       HeapObject* target_object = HeapObject::cast(target);
       MarkObjectViaMarkingWorklist(target_object);
@@ -2562,75 +2558,29 @@ void MarkCompactCollector::ClearNonLiveReferences() {
     // ClearFullMapTransitions must be called before WeakCells are cleared.
     ClearFullMapTransitions();
   }
-  DependentCode* dependent_code_list;
-  ClearWeakCellsAndSimpleMapTransitions(&dependent_code_list);
+  ClearWeakCellsAndSimpleMapTransitions();
   ClearWeakReferences();
-  MarkDependentCodeForDeoptimization(dependent_code_list);
+  MarkDependentCodeForDeoptimization();
 
   ClearWeakCollections();
 
   DCHECK(weak_objects_.weak_cells.IsGlobalEmpty());
   DCHECK(weak_objects_.transition_arrays.IsGlobalEmpty());
   DCHECK(weak_objects_.weak_references.IsGlobalEmpty());
+  DCHECK(weak_objects_.weak_objects_in_code.IsGlobalEmpty());
 }
 
-
-void MarkCompactCollector::MarkDependentCodeForDeoptimization(
-    DependentCode* list_head) {
-  TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_CLEAR_DEPENDENT_CODE);
-  Isolate* isolate = this->isolate();
-  DependentCode* current = list_head;
-  while (current->length() > 0) {
-    have_code_to_deoptimize_ |= current->MarkCodeForDeoptimization(
-        isolate, DependentCode::kWeakCodeGroup);
-    current = current->next_link();
-  }
-
-  {
-    ArrayList* list = heap_->weak_new_space_object_to_code_list();
-    int counter = 0;
-    for (int i = 0; i < list->Length(); i += 2) {
-      WeakCell* obj = WeakCell::cast(list->Get(i));
-      WeakCell* dep = WeakCell::cast(list->Get(i + 1));
-      if (obj->cleared() || dep->cleared()) {
-        if (!dep->cleared()) {
-          Code* code = Code::cast(dep->value());
-          if (!code->marked_for_deoptimization()) {
-            DependentCode::SetMarkedForDeoptimization(
-                code, DependentCode::DependencyGroup::kWeakCodeGroup);
-            code->InvalidateEmbeddedObjects();
-            have_code_to_deoptimize_ = true;
-          }
-        }
-      } else {
-        // We record the slot manually because marking is finished at this
-        // point and the write barrier would bailout.
-        list->Set(counter, obj, SKIP_WRITE_BARRIER);
-        RecordSlot(list, list->Slot(counter), obj);
-        counter++;
-        list->Set(counter, dep, SKIP_WRITE_BARRIER);
-        RecordSlot(list, list->Slot(counter), dep);
-        counter++;
-      }
-    }
-  }
-
-  WeakHashTable* table = heap_->weak_object_to_code_table();
-  uint32_t capacity = table->Capacity();
-  for (uint32_t i = 0; i < capacity; i++) {
-    uint32_t key_index = table->EntryToIndex(i);
-    Object* key = table->get(key_index);
-    if (!table->IsKey(isolate, key)) continue;
-    uint32_t value_index = table->EntryToValueIndex(i);
-    Object* value = table->get(value_index);
-    DCHECK(key->IsWeakCell());
-    if (WeakCell::cast(key)->cleared()) {
-      have_code_to_deoptimize_ |=
-          DependentCode::cast(value)->MarkCodeForDeoptimization(
-              isolate, DependentCode::kWeakCodeGroup);
-      table->set(key_index, heap_->the_hole_value());
-      table->set(value_index, heap_->the_hole_value());
-      table->ElementRemoved();
+void MarkCompactCollector::MarkDependentCodeForDeoptimization() {
+  std::pair<HeapObject*, Code*> weak_object_in_code;
+  while (weak_objects_.weak_objects_in_code.Pop(kMainThread,
+                                                &weak_object_in_code)) {
+    HeapObject* object = weak_object_in_code.first;
+    Code* code = weak_object_in_code.second;
+    if (!non_atomic_marking_state()->IsBlackOrGrey(object) &&
+        !code->marked_for_deoptimization()) {
+      code->SetMarkedForDeoptimization("weak objects");
+      code->InvalidateEmbeddedObjects();
+      have_code_to_deoptimize_ = true;
     }
   }
 }
@@ -2852,12 +2802,9 @@ void MarkCompactCollector::AbortWeakCollections() {
   heap()->set_encountered_weak_collections(Smi::kZero);
 }
 
-void MarkCompactCollector::ClearWeakCellsAndSimpleMapTransitions(
-    DependentCode** dependent_code_list) {
+void MarkCompactCollector::ClearWeakCellsAndSimpleMapTransitions() {
   Heap* heap = this->heap();
   TRACE_GC(heap->tracer(), GCTracer::Scope::MC_CLEAR_WEAK_CELLS);
-  DependentCode* dependent_code_head =
-      DependentCode::cast(heap->empty_fixed_array());
   WeakCell* weak_cell;
   while (weak_objects_.weak_cells.Pop(kMainThread, &weak_cell)) {
     // We do not insert cleared weak cells into the list, so the value
@@ -2886,15 +2833,6 @@ void MarkCompactCollector::ClearWeakCellsAndSimpleMapTransitions(
       } else if (value->IsMap()) {
         // The map is non-live.
         Map* map = Map::cast(value);
-        // Add dependent code to the dependent_code_list.
-        DependentCode* candidate = map->dependent_code();
-        // We rely on the fact that the weak code group comes first.
-        STATIC_ASSERT(DependentCode::kWeakCodeGroup == 0);
-        if (candidate->length() > 0 &&
-            candidate->group() == DependentCode::kWeakCodeGroup) {
-          candidate->set_next_link(dependent_code_head);
-          dependent_code_head = candidate;
-        }
         ClearSimpleMapTransition(weak_cell, map);
         weak_cell->clear();
       } else {
@@ -2907,7 +2845,6 @@ void MarkCompactCollector::ClearWeakCellsAndSimpleMapTransitions(
       RecordSlot(weak_cell, slot, *slot);
     }
   }
-  *dependent_code_list = dependent_code_head;
 }
 
 void MarkCompactCollector::ClearWeakReferences() {
@@ -2933,6 +2870,7 @@ void MarkCompactCollector::AbortWeakObjects() {
   weak_objects_.weak_cells.Clear();
   weak_objects_.transition_arrays.Clear();
   weak_objects_.weak_references.Clear();
+  weak_objects_.weak_objects_in_code.Clear();
 }
 
 void MarkCompactCollector::RecordRelocSlot(Code* host, RelocInfo* rinfo,
@@ -2962,7 +2900,7 @@ void MarkCompactCollector::RecordRelocSlot(Code* host, RelocInfo* rinfo,
 template <AccessMode access_mode>
 static inline SlotCallbackResult UpdateSlot(
     MaybeObject** slot, MaybeObject* old, HeapObject* heap_obj,
-    HeapObjectReference::ReferenceType reference_type) {
+    HeapObjectReferenceType reference_type) {
   MapWord map_word = heap_obj->map_word();
   if (map_word.IsForwardingAddress()) {
     DCHECK(heap_obj->GetHeap()->InFromSpace(heap_obj) ||
@@ -2970,7 +2908,7 @@ static inline SlotCallbackResult UpdateSlot(
            Page::FromAddress(heap_obj->address())
                ->IsFlagSet(Page::COMPACTION_WAS_ABORTED));
     MaybeObject* target =
-        reference_type == HeapObjectReference::WEAK
+        reference_type == HeapObjectReferenceType::WEAK
             ? HeapObjectReference::Weak(map_word.ToForwardingAddress())
             : HeapObjectReference::Strong(map_word.ToForwardingAddress());
     if (access_mode == AccessMode::NON_ATOMIC) {
@@ -2990,10 +2928,10 @@ static inline SlotCallbackResult UpdateSlot(MaybeObject** slot) {
   MaybeObject* obj = base::AsAtomicPointer::Relaxed_Load(slot);
   HeapObject* heap_obj;
   if (obj->ToWeakHeapObject(&heap_obj)) {
-    UpdateSlot<access_mode>(slot, obj, heap_obj, HeapObjectReference::WEAK);
+    UpdateSlot<access_mode>(slot, obj, heap_obj, HeapObjectReferenceType::WEAK);
   } else if (obj->ToStrongHeapObject(&heap_obj)) {
     return UpdateSlot<access_mode>(slot, obj, heap_obj,
-                                   HeapObjectReference::STRONG);
+                                   HeapObjectReferenceType::STRONG);
   }
   return REMOVE_SLOT;
 }
@@ -3006,7 +2944,7 @@ static inline SlotCallbackResult UpdateStrongSlot(MaybeObject** maybe_slot) {
   if (obj->IsHeapObject()) {
     HeapObject* heap_obj = HeapObject::cast(obj);
     return UpdateSlot<access_mode>(maybe_slot, MaybeObject::FromObject(obj),
-                                   heap_obj, HeapObjectReference::STRONG);
+                                   heap_obj, HeapObjectReferenceType::STRONG);
   }
   return REMOVE_SLOT;
 }
@@ -3067,7 +3005,7 @@ class PointersUpdatingVisitor : public ObjectVisitor, public RootVisitor {
   }
 
   static inline SlotCallbackResult UpdateStrongSlotInternal(Object** slot) {
-    DCHECK(!Internals::HasWeakHeapObjectTag(*slot));
+    DCHECK(!HasWeakHeapObjectTag(*slot));
     return UpdateStrongSlot<AccessMode::NON_ATOMIC>(
         reinterpret_cast<MaybeObject**>(slot));
   }

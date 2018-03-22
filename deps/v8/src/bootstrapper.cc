@@ -618,7 +618,7 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
   Handle<String> source = factory->NewStringFromStaticChars("() {}");
   Handle<Script> script = factory->NewScript(source);
   script->set_type(Script::TYPE_NATIVE);
-  Handle<FixedArray> infos = factory->NewFixedArray(2);
+  Handle<WeakFixedArray> infos = factory->NewWeakFixedArray(2);
   script->set_shared_function_infos(*infos);
   empty_function->shared()->set_raw_start_position(0);
   empty_function->shared()->set_raw_end_position(source->length());
@@ -1344,7 +1344,7 @@ static void InstallError(Isolate* isolate, Handle<JSObject> global,
       factory->the_hole_value(), Builtins::kErrorConstructor, DONT_ENUM);
   error_fun->shared()->DontAdaptArguments();
   error_fun->shared()->SetConstructStub(
-      *BUILTIN_CODE(isolate, ErrorConstructor));
+      *BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
   error_fun->shared()->set_length(1);
 
   if (context_index == Context::ERROR_FUNCTION_INDEX) {
@@ -1554,7 +1554,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     function_fun->set_prototype_or_initial_map(*isolate->sloppy_function_map());
     function_fun->shared()->DontAdaptArguments();
     function_fun->shared()->SetConstructStub(
-        *BUILTIN_CODE(isolate, FunctionConstructor));
+        *BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
     function_fun->shared()->set_length(1);
     InstallWithIntrinsicDefaultProto(isolate, function_fun,
                                      Context::FUNCTION_FUNCTION_INDEX);
@@ -3796,7 +3796,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
         native_context->generator_function_map());
     generator_function_function->shared()->DontAdaptArguments();
     generator_function_function->shared()->SetConstructStub(
-        *BUILTIN_CODE(isolate, GeneratorFunctionConstructor));
+        *BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
     generator_function_function->shared()->set_length(1);
     InstallWithIntrinsicDefaultProto(
         isolate, generator_function_function,
@@ -3826,7 +3826,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
         native_context->async_generator_function_map());
     async_generator_function_function->shared()->DontAdaptArguments();
     async_generator_function_function->shared()->SetConstructStub(
-        *BUILTIN_CODE(isolate, AsyncGeneratorFunctionConstructor));
+        *BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
     async_generator_function_function->shared()->set_length(1);
     InstallWithIntrinsicDefaultProto(
         isolate, async_generator_function_function,
@@ -4039,7 +4039,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
         native_context->async_function_map());
     async_function_constructor->shared()->DontAdaptArguments();
     async_function_constructor->shared()->SetConstructStub(
-        *BUILTIN_CODE(isolate, AsyncFunctionConstructor));
+        *BUILTIN_CODE(isolate, JSBuiltinsConstructStub));
     async_function_constructor->shared()->set_length(1);
     native_context->set_async_function_constructor(*async_function_constructor);
     JSObject::ForceSetPrototype(async_function_constructor,
@@ -4419,8 +4419,8 @@ Handle<JSFunction> Genesis::CreateArrayBuffer(
       CreateFunction(isolate(), name, JS_ARRAY_BUFFER_TYPE,
                      JSArrayBuffer::kSizeWithEmbedderFields, 0, prototype,
                      Builtins::kArrayBufferConstructor);
-  Handle<Code> code = BUILTIN_CODE(isolate(), JSBuiltinsConstructStub);
-  array_buffer_fun->shared()->SetConstructStub(*code);
+  array_buffer_fun->shared()->SetConstructStub(
+      *BUILTIN_CODE(isolate(), JSBuiltinsConstructStub));
   array_buffer_fun->shared()->DontAdaptArguments();
   array_buffer_fun->shared()->set_length(1);
 
@@ -4475,9 +4475,8 @@ Handle<JSFunction> Genesis::InstallInternalArray(Handle<JSObject> target,
       InstallFunction(target, name, JS_ARRAY_TYPE, JSArray::kSize, 0, prototype,
                       Builtins::kInternalArrayConstructor);
 
-  InternalArrayConstructorStub internal_array_constructor_stub(isolate());
-  Handle<Code> code = internal_array_constructor_stub.GetCode();
-  array_function->shared()->SetConstructStub(*code);
+  array_function->shared()->SetConstructStub(
+      *BUILTIN_CODE(isolate_, JSBuiltinsConstructStub));
   array_function->shared()->DontAdaptArguments();
 
   Handle<Map> original_map(array_function->initial_map());

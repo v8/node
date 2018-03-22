@@ -82,13 +82,6 @@ void Builtins::Generate_AdaptorWithBuiltinExitFrame(MacroAssembler* masm) {
   AdaptorWithExitFrameType(masm, BUILTIN_EXIT);
 }
 
-// Load the built-in InternalArray function from the current context.
-static void GenerateLoadInternalArrayFunction(MacroAssembler* masm,
-                                              Register result) {
-  // Load the InternalArray function from the native context.
-  __ LoadNativeContextSlot(Context::INTERNAL_ARRAY_FUNCTION_INDEX, result);
-}
-
 // Load the built-in Array function from the current context.
 static void GenerateLoadArrayFunction(MacroAssembler* masm, Register result) {
   // Load the Array function from the native context.
@@ -102,9 +95,6 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   //  -- sp[...]: constructor arguments
   // -----------------------------------
   Label generic_array_code, one_or_more_arguments, two_or_more_arguments;
-
-  // Get the InternalArray function.
-  GenerateLoadInternalArrayFunction(masm, a1);
 
   if (FLAG_debug_code) {
     // Initial map for the builtin InternalArray functions should be maps.
@@ -120,6 +110,7 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   // Run the native code for the InternalArray function called as a normal
   // function.
   // Tail call a stub.
+  __ LoadRoot(a2, Heap::kUndefinedValueRootIndex);
   InternalArrayConstructorStub stub(masm->isolate());
   __ TailCallStub(&stub);
 }
@@ -1109,10 +1100,9 @@ void Builtins::Generate_InterpreterPushArgsThenCallImpl(
   }
 
   // Call the target.
-  if (mode == InterpreterPushArgsMode::kJSFunction) {
-    __ Jump(
-        masm->isolate()->builtins()->CallFunction(ConvertReceiverMode::kAny),
-        RelocInfo::CODE_TARGET);
+  if (mode == InterpreterPushArgsMode::kArrayFunction) {
+    // Unreachable code.
+    __ break_(0xCC);
   } else if (mode == InterpreterPushArgsMode::kWithFinalSpread) {
     __ Jump(BUILTIN_CODE(masm->isolate(), CallWithSpread),
             RelocInfo::CODE_TARGET);
@@ -1156,7 +1146,7 @@ void Builtins::Generate_InterpreterPushArgsThenConstructImpl(
     __ AssertUndefinedOrAllocationSite(a2, t0);
   }
 
-  if (mode == InterpreterPushArgsMode::kJSFunction) {
+  if (mode == InterpreterPushArgsMode::kArrayFunction) {
     __ AssertFunction(a1);
 
     // Tail call to the function-specific construct stub (still in the caller

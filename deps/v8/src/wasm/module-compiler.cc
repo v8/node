@@ -568,8 +568,6 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileFunction(
                                      CStrVector(func_name.c_str()), func_index,
                                      CEntryStub(isolate, 1).GetCode());
   unit.ExecuteCompilation();
-  // TODO(6792): No longer needed once WebAssembly code is off heap.
-  CodeSpaceMemoryModificationScope modification_scope(isolate->heap());
   wasm::WasmCode* wasm_code = unit.FinishCompilation(&thrower);
 
   // If there is a pending error, something really went wrong. The module was
@@ -915,7 +913,7 @@ wasm::WasmCode* EnsureExportedLazyDeoptData(Isolate* isolate,
     return code;
   }
   // Clone the lazy builtin into the native module.
-  return native_module->CloneLazyBuiltinInto(code, func_index);
+  return native_module->CloneLazyBuiltinInto(code, func_index, kFlushICache);
 }
 
 // Ensure that the code object in <code_table> at offset <func_index> has
@@ -1173,6 +1171,7 @@ wasm::WasmCode* FinishCompilationUnit(CompilationState* compilation_state,
 void FinishCompilationUnits(CompilationState* compilation_state,
                             ErrorThrower* thrower) {
   while (true) {
+    if (compilation_state->failed()) break;
     int func_index = -1;
     wasm::WasmCode* result =
         FinishCompilationUnit(compilation_state, thrower, &func_index);
@@ -1185,8 +1184,10 @@ void FinishCompilationUnits(CompilationState* compilation_state,
     DCHECK_IMPLIES(result == nullptr, thrower->error());
     if (result == nullptr) break;
   }
-  if (compilation_state->ShouldIncreaseWorkload())
+  if (compilation_state->ShouldIncreaseWorkload() &&
+      !compilation_state->failed()) {
     compilation_state->RestartBackgroundTasks();
+  }
 }
 
 void CompileInParallel(Isolate* isolate, NativeModule* native_module,
@@ -1247,16 +1248,22 @@ void CompileInParallel(Isolate* isolate, NativeModule* native_module,
     //      are finished concurrently to the background threads to save
     //      memory.
     FinishCompilationUnits(compilation_state, thrower);
+
+    if (compilation_state->failed()) break;
   }
 
   // 3) After the parallel phase of all compilation units has started, the
   //    main thread waits for all {BackgroundCompileTasks} instances to finish -
   //    which happens once they all realize there's no next work item to
-  //    process.
-  compilation_state->CancelAndWait();
+  //    process. If compilation already failed, all background tasks have
+  //    already been canceled in {FinishCompilationUnits}, and there are
+  //    no units to finish.
+  if (!compilation_state->failed()) {
+    compilation_state->CancelAndWait();
 
-  // 4) Finish all compilation units which have been executed while we waited.
-  FinishCompilationUnits(compilation_state, thrower);
+    // 4) Finish all compilation units which have been executed while we waited.
+    FinishCompilationUnits(compilation_state, thrower);
+  }
 }
 
 void CompileSequentially(Isolate* isolate, NativeModule* native_module,
@@ -1521,6 +1528,7 @@ class BackgroundCompileTask : public CancelableTask {
   void RunInternal() override {
     TRACE_COMPILE("(3b) Compiling...\n");
     while (compilation_state_->CanAcceptWork()) {
+      if (compilation_state_->failed()) break;
       DisallowHandleAllocation no_handle;
       DisallowHeapAllocation no_allocation;
 
@@ -1644,10 +1652,9 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   // Set up the globals for the new instance.
   //--------------------------------------------------------------------------
   WasmContext* wasm_context = instance->wasm_context()->get();
-  MaybeHandle<JSArrayBuffer> old_globals;
   uint32_t globals_size = module_->globals_size;
   if (globals_size > 0) {
-    const bool enable_guard_regions = false;
+    constexpr bool enable_guard_regions = false;
     Handle<JSArrayBuffer> global_buffer =
         NewArrayBuffer(isolate_, globals_size, enable_guard_regions);
     globals_ = global_buffer;
@@ -1700,8 +1707,9 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
     Handle<JSArrayBuffer> memory = memory_.ToHandleChecked();
     memory->set_is_neuterable(false);
 
-    DCHECK_IMPLIES(use_trap_handler(),
-                   module_->is_asm_js() || memory->has_guard_region());
+    DCHECK_IMPLIES(use_trap_handler(), module_->is_asm_js() ||
+                                           memory->is_wasm_memory() ||
+                                           memory->backing_store() == nullptr);
   } else if (initial_pages > 0) {
     // Allocate memory if the initial size is more than 0 pages.
     memory_ = AllocateMemory(initial_pages);
@@ -3033,21 +3041,27 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
 
     CompilationState* compilation_state =
         job_->compiled_module_->GetNativeModule()->compilation_state();
-    compilation_state->AddCallback(
-        [&](CompilationEvent event, Handle<Object> error_reason) {
-          switch (event) {
-            case CompilationEvent::kFinishedBaselineCompilation:
-              if (job_->DecrementAndCheckFinisherCount()) {
-                job_->DoSync<FinishCompile>();
-              }
-              return;
-            case CompilationEvent::kFailedCompilation:
-              job_->DoSync<CompileFailed>(error_reason);
-              return;
-          }
-          UNREACHABLE();
-        });
-
+    {
+      // Instance field {job_} cannot be captured by copy, therefore
+      // we need to add a local helper variable {job}. We want to
+      // capture the {job} pointer by copy, as it otherwise is dependent
+      // on the current step we are in.
+      AsyncCompileJob* job = job_;
+      compilation_state->AddCallback(
+          [job](CompilationEvent event, Handle<Object> error_reason) {
+            switch (event) {
+              case CompilationEvent::kFinishedBaselineCompilation:
+                if (job->DecrementAndCheckFinisherCount()) {
+                  job->DoSync<FinishCompile>();
+                }
+                return;
+              case CompilationEvent::kFailedCompilation:
+                job->DoSync<CompileFailed>(error_reason);
+                return;
+            }
+            UNREACHABLE();
+          });
+    }
     if (start_compilation_) {
       // TODO(ahaas): Try to remove the {start_compilation_} check when
       // streaming decoding is done in the background. If

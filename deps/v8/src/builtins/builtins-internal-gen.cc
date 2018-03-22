@@ -207,6 +207,7 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
       CAST(LoadObjectField(shared, SharedFunctionInfo::kCodeOffset));
   // Use the ConstructTrampolineDescriptor because it passes new.target too in
   // case this is called during construct.
+  CSA_ASSERT(this, IsCode(code));
   ConstructTrampolineDescriptor descriptor(isolate());
   TailCallStub(descriptor, code, context, function, new_target, arg_count);
 }
@@ -959,8 +960,10 @@ TF_BUILTIN(RunMicrotasks, InternalBuiltinsAssembler) {
         // But from our current measurements it doesn't seem to be a
         // serious performance problem, even if the microtask is full
         // of CallHandlerTasks (which is not a realistic use case anyways).
-        CallRuntime(Runtime::kRunMicrotaskCallback, current_context,
-                    microtask_callback, microtask_data);
+        Node* const result =
+            CallRuntime(Runtime::kRunMicrotaskCallback, current_context,
+                        microtask_callback, microtask_data);
+        GotoIfException(result, &if_exception, &var_exception);
         Goto(&loop_next);
       }
 

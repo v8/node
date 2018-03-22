@@ -1050,10 +1050,9 @@ void Builtins::Generate_InterpreterPushArgsThenCallImpl(
   // Call the target.
   __ Push(edx);  // Re-push return address.
 
-  if (mode == InterpreterPushArgsMode::kJSFunction) {
-    __ Jump(
-        masm->isolate()->builtins()->CallFunction(ConvertReceiverMode::kAny),
-        RelocInfo::CODE_TARGET);
+  if (mode == InterpreterPushArgsMode::kArrayFunction) {
+    // This should be unreachable.
+    __ int3();
   } else if (mode == InterpreterPushArgsMode::kWithFinalSpread) {
     __ Jump(BUILTIN_CODE(masm->isolate(), CallWithSpread),
             RelocInfo::CODE_TARGET);
@@ -1198,7 +1197,7 @@ void Builtins::Generate_InterpreterPushArgsThenConstructImpl(
     __ AssertUndefinedOrAllocationSite(ebx);
   }
 
-  if (mode == InterpreterPushArgsMode::kJSFunction) {
+  if (mode == InterpreterPushArgsMode::kArrayFunction) {
     // Tail call to the function-specific construct stub (still in the caller
     // context at this point).
     __ AssertFunction(edi);
@@ -1809,9 +1808,6 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   // -----------------------------------
   Label generic_array_code;
 
-  // Get the InternalArray function.
-  __ LoadGlobalFunction(Context::INTERNAL_ARRAY_FUNCTION_INDEX, edi);
-
   if (FLAG_debug_code) {
     // Initial map for the builtin InternalArray function should be a map.
     __ mov(ebx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
@@ -1827,6 +1823,7 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   // Run the native code for the InternalArray function called as a normal
   // function.
   // tail call a stub
+  __ mov(ebx, masm->isolate()->factory()->undefined_value());
   InternalArrayConstructorStub stub(masm->isolate());
   __ TailCallStub(&stub);
 }

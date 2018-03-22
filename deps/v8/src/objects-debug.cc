@@ -959,6 +959,7 @@ void CodeDataContainer::CodeDataContainerVerify() {
 }
 
 void Code::CodeVerify() {
+  CHECK_LE(constant_pool_offset(), instruction_size());
   CHECK(IsAligned(reinterpret_cast<intptr_t>(instruction_start()),
                   kCodeAlignment));
   relocation_info()->ObjectVerify();
@@ -970,46 +971,6 @@ void Code::CodeVerify() {
     if (RelocInfo::IsGCRelocMode(it.rinfo()->rmode())) {
       CHECK(it.rinfo()->pc() != last_gc_pc);
       last_gc_pc = it.rinfo()->pc();
-    }
-  }
-}
-
-
-void Code::VerifyEmbeddedObjectsDependency() {
-  if (!CanContainWeakObjects()) return;
-  WeakCell* cell = CachedWeakCell();
-  DisallowHeapAllocation no_gc;
-  Isolate* isolate = GetIsolate();
-  HandleScope scope(isolate);
-  int mode_mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
-  for (RelocIterator it(this, mode_mask); !it.done(); it.next()) {
-    Object* obj = it.rinfo()->target_object();
-    if (IsWeakObject(obj)) {
-      if (obj->IsMap()) {
-        Map* map = Map::cast(obj);
-        CHECK(map->dependent_code()->Contains(DependentCode::kWeakCodeGroup,
-                                              cell));
-      } else if (obj->IsJSObject()) {
-        if (isolate->heap()->InNewSpace(obj)) {
-          ArrayList* list =
-              GetIsolate()->heap()->weak_new_space_object_to_code_list();
-          bool found = false;
-          for (int i = 0; i < list->Length(); i += 2) {
-            WeakCell* obj_cell = WeakCell::cast(list->Get(i));
-            if (!obj_cell->cleared() && obj_cell->value() == obj &&
-                WeakCell::cast(list->Get(i + 1)) == cell) {
-              found = true;
-              break;
-            }
-          }
-          CHECK(found);
-        } else {
-          Handle<HeapObject> key_obj(HeapObject::cast(obj), isolate);
-          DependentCode* dep =
-              GetIsolate()->heap()->LookupWeakObjectToCodeDependency(key_obj);
-          dep->Contains(DependentCode::kWeakCodeGroup, cell);
-        }
-      }
     }
   }
 }
@@ -1642,6 +1603,14 @@ void Script::ScriptVerify() {
   VerifyPointer(name());
   VerifyPointer(wrapper());
   VerifyPointer(line_ends());
+  for (int i = 0; i < shared_function_infos()->length(); ++i) {
+    MaybeObject* maybe_object = shared_function_infos()->Get(i);
+    HeapObject* heap_object;
+    CHECK(maybe_object->IsWeakHeapObject() ||
+          maybe_object->IsClearedWeakHeapObject() ||
+          (maybe_object->ToStrongHeapObject(&heap_object) &&
+           heap_object->IsUndefined(GetIsolate())));
+  }
 }
 
 

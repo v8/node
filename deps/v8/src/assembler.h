@@ -37,13 +37,17 @@
 
 #include <forward_list>
 #include <iosfwd>
+#include <map>
 
 #include "src/allocation.h"
+#include "src/contexts.h"
 #include "src/deoptimize-reason.h"
 #include "src/double.h"
 #include "src/external-reference.h"
+#include "src/flags.h"
 #include "src/globals.h"
 #include "src/label.h"
+#include "src/objects.h"
 #include "src/register-configuration.h"
 #include "src/reglist.h"
 
@@ -496,6 +500,10 @@ class RelocInfo {
   // or is it strange in some way (e.g. relative or patched into a series of
   // instructions).
   bool IsCodedSpecially();
+
+  // The static pendant to IsCodedSpecially, just for off-heap targets. Used
+  // during deserialization, when we don't actually have a RelocInfo handy.
+  static bool OffHeapTargetIsCodedSpecially();
 
   // If true, the pointer this relocation info refers to is an entry in the
   // constant pool, otherwise the pointer is embedded in the instruction stream.

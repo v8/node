@@ -22,8 +22,6 @@ namespace test_isolate_independent_builtins {
 
 #ifdef V8_EMBEDDED_BUILTINS
 UNINITIALIZED_TEST(VerifyBuiltinsIsolateIndependence) {
-  FLAG_stress_off_heap_code = false;  // Disable off-heap trampolines.
-
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
   v8::Isolate* v8_isolate = v8::Isolate::New(create_params);
@@ -236,7 +234,11 @@ TEST(GenerateTestFunctionData) {
 #elif V8_TARGET_ARCH_ARM
 #define FUNCTION_BYTES ".byte 0x01, 0x00, 0x80, 0xe0, 0x0e, 0xf0, 0xa0, 0xe1\n"
 #elif V8_TARGET_ARCH_PPC
+#if defined(V8_OS_AIX)
+#define FUNCTION_BYTES ".byte 0x7c, 0x64, 0x1a, 0x14, 0x4e, 0x80, 0x00, 0x20\n"
+#else
 #define FUNCTION_BYTES ".byte 0x14, 0x22, 0x63, 0x7c, 0x20, 0x00, 0x80, 0x4e\n"
+#endif
 #elif defined(V8_TARGET_ARCH_MIPS) || defined(V8_TARGET_ARCH_MIPS64)
 #if defined(V8_TARGET_BIG_ENDIAN)
 #define FUNCTION_BYTES                               \

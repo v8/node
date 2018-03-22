@@ -170,6 +170,7 @@ Heap::Heap()
       code_space_(nullptr),
       map_space_(nullptr),
       lo_space_(nullptr),
+      read_only_space_(nullptr),
       write_protect_code_memory_(false),
       code_space_memory_modification_scope_depth_(0),
       gc_state_(NOT_IN_GC),
@@ -324,7 +325,8 @@ bool Heap::CanExpandOldGeneration(size_t size) {
 
 bool Heap::HasBeenSetUp() {
   return old_space_ != nullptr && code_space_ != nullptr &&
-         map_space_ != nullptr && lo_space_ != nullptr;
+         map_space_ != nullptr && lo_space_ != nullptr &&
+         read_only_space_ != nullptr;
 }
 
 
@@ -617,6 +619,8 @@ const char* Heap::GetSpaceName(int idx) {
       return "code_space";
     case LO_SPACE:
       return "large_object_space";
+    case RO_SPACE:
+      return "read_only_space";
     default:
       UNREACHABLE();
   }
@@ -1446,7 +1450,7 @@ class StringTableVerifier : public ObjectVisitor {
   void VisitPointers(HeapObject* host, Object** start, Object** end) override {
     // Visit all HeapObject pointers in [start, end).
     for (Object** p = start; p < end; p++) {
-      DCHECK(!Internals::HasWeakHeapObjectTag(*p));
+      DCHECK(!HasWeakHeapObjectTag(*p));
       if ((*p)->IsHeapObject()) {
         HeapObject* object = HeapObject::cast(*p);
         Isolate* isolate = object->GetIsolate();
@@ -2495,6 +2499,7 @@ AllocationResult Heap::AllocatePartialMap(InstanceType instance_type,
   map->SetInObjectUnusedPropertyFields(0);
   map->set_bit_field(0);
   map->set_bit_field2(0);
+  DCHECK(!map->is_in_retained_map_list());
   int bit_field3 = Map::EnumLengthBits::encode(kInvalidEnumCacheSentinel) |
                    Map::OwnsDescriptorsBit::encode(true) |
                    Map::ConstructionCounterBits::encode(Map::kNoSlackTracking);
@@ -2548,6 +2553,7 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
   map->set_visitor_id(Map::GetVisitorId(map));
   map->set_bit_field(0);
   map->set_bit_field2(Map::IsExtensibleBit::kMask);
+  DCHECK(!map->is_in_retained_map_list());
   int bit_field3 = Map::EnumLengthBits::encode(kInvalidEnumCacheSentinel) |
                    Map::OwnsDescriptorsBit::encode(true) |
                    Map::ConstructionCounterBits::encode(Map::kNoSlackTracking);
@@ -2751,8 +2757,6 @@ bool Heap::RootCanBeWrittenAfterInitialization(Heap::RootListIndex root_index) {
     case kMaterializedObjectsRootIndex:
     case kMicrotaskQueueRootIndex:
     case kDetachedContextsRootIndex:
-    case kWeakObjectToCodeTableRootIndex:
-    case kWeakNewSpaceObjectToCodeListRootIndex:
     case kRetainedMapsRootIndex:
     case kRetainingPathTargetsRootIndex:
     case kFeedbackVectorsForProfilingToolsRootIndex:
@@ -4766,7 +4770,7 @@ bool Heap::Contains(HeapObject* value) {
   return HasBeenSetUp() &&
          (new_space_->ToSpaceContains(value) || old_space_->Contains(value) ||
           code_space_->Contains(value) || map_space_->Contains(value) ||
-          lo_space_->Contains(value));
+          lo_space_->Contains(value) || read_only_space_->Contains(value));
 }
 
 bool Heap::ContainsSlow(Address addr) {
@@ -4776,7 +4780,8 @@ bool Heap::ContainsSlow(Address addr) {
   return HasBeenSetUp() &&
          (new_space_->ToSpaceContainsSlow(addr) ||
           old_space_->ContainsSlow(addr) || code_space_->ContainsSlow(addr) ||
-          map_space_->ContainsSlow(addr) || lo_space_->ContainsSlow(addr));
+          map_space_->ContainsSlow(addr) || lo_space_->ContainsSlow(addr) ||
+          read_only_space_->Contains(addr));
 }
 
 bool Heap::InSpace(HeapObject* value, AllocationSpace space) {
@@ -4796,6 +4801,8 @@ bool Heap::InSpace(HeapObject* value, AllocationSpace space) {
       return map_space_->Contains(value);
     case LO_SPACE:
       return lo_space_->Contains(value);
+    case RO_SPACE:
+      return read_only_space_->Contains(value);
   }
   UNREACHABLE();
 }
@@ -4817,6 +4824,8 @@ bool Heap::InSpaceSlow(Address addr, AllocationSpace space) {
       return map_space_->ContainsSlow(addr);
     case LO_SPACE:
       return lo_space_->ContainsSlow(addr);
+    case RO_SPACE:
+      return read_only_space_->ContainsSlow(addr);
   }
   UNREACHABLE();
 }
@@ -4829,6 +4838,7 @@ bool Heap::IsValidAllocationSpace(AllocationSpace space) {
     case CODE_SPACE:
     case MAP_SPACE:
     case LO_SPACE:
+    case RO_SPACE:
       return true;
     default:
       return false;
@@ -4854,6 +4864,22 @@ bool Heap::RootIsImmortalImmovable(int root_index) {
 }
 
 #ifdef VERIFY_HEAP
+class VerifyReadOnlyPointersVisitor : public VerifyPointersVisitor {
+ protected:
+  void VerifyPointers(HeapObject* host, MaybeObject** start,
+                      MaybeObject** end) override {
+    VerifyPointersVisitor::VerifyPointers(host, start, end);
+
+    for (MaybeObject** current = start; current < end; current++) {
+      HeapObject* object;
+      if ((*current)->ToStrongOrWeakHeapObject(&object)) {
+        CHECK(
+            object->GetIsolate()->heap()->read_only_space()->Contains(object));
+      }
+    }
+  }
+};
+
 void Heap::Verify() {
   CHECK(HasBeenSetUp());
   HandleScope scope(isolate());
@@ -4877,7 +4903,8 @@ void Heap::Verify() {
 
   lo_space_->Verify();
 
-  mark_compact_collector()->VerifyWeakEmbeddedObjectsInCode();
+  VerifyReadOnlyPointersVisitor read_only_visitor;
+  read_only_space_->Verify(&read_only_visitor);
 }
 
 class SlotVerifyingVisitor : public ObjectVisitor {
@@ -4892,7 +4919,7 @@ class SlotVerifyingVisitor : public ObjectVisitor {
   void VisitPointers(HeapObject* host, Object** start, Object** end) override {
 #ifdef DEBUG
     for (Object** slot = start; slot < end; slot++) {
-      DCHECK(!Internals::HasWeakHeapObjectTag(*slot));
+      DCHECK(!HasWeakHeapObjectTag(*slot));
     }
 #endif  // DEBUG
     VisitPointers(host, reinterpret_cast<MaybeObject**>(start),
@@ -5753,6 +5780,10 @@ bool Heap::SetUp() {
   space_[LO_SPACE] = lo_space_ = new LargeObjectSpace(this, LO_SPACE);
   if (!lo_space_->SetUp()) return false;
 
+  space_[RO_SPACE] = read_only_space_ =
+      new ReadOnlySpace(this, RO_SPACE, NOT_EXECUTABLE);
+  if (!read_only_space_->SetUp()) return false;
+
   // Set up the seed that is used to randomize the string hash function.
   DCHECK_EQ(Smi::kZero, hash_seed());
   if (FLAG_randomize_hashes) InitializeHashSeed();
@@ -6034,6 +6065,11 @@ void Heap::TearDown() {
     lo_space_ = nullptr;
   }
 
+  if (read_only_space_ != nullptr) {
+    delete read_only_space_;
+    read_only_space_ = nullptr;
+  }
+
   store_buffer()->TearDown();
 
   memory_allocator()->TearDown();
@@ -6098,37 +6134,6 @@ void Heap::RemoveGCEpilogueCallback(v8::Isolate::GCCallbackWithData callback,
   UNREACHABLE();
 }
 
-// TODO(ishell): Find a better place for this.
-void Heap::AddWeakNewSpaceObjectToCodeDependency(Handle<HeapObject> obj,
-                                                 Handle<WeakCell> code) {
-  DCHECK(InNewSpace(*obj));
-  DCHECK(!InNewSpace(*code));
-  Handle<ArrayList> list(weak_new_space_object_to_code_list(), isolate());
-  list = ArrayList::Add(list, isolate()->factory()->NewWeakCell(obj), code);
-  if (*list != weak_new_space_object_to_code_list()) {
-    set_weak_new_space_object_to_code_list(*list);
-  }
-}
-
-// TODO(ishell): Find a better place for this.
-void Heap::AddWeakObjectToCodeDependency(Handle<HeapObject> obj,
-                                         Handle<DependentCode> dep) {
-  DCHECK(!InNewSpace(*obj));
-  DCHECK(!InNewSpace(*dep));
-  Handle<WeakHashTable> table(weak_object_to_code_table(), isolate());
-  table = WeakHashTable::Put(table, obj, dep);
-  if (*table != weak_object_to_code_table())
-    set_weak_object_to_code_table(*table);
-  DCHECK_EQ(*dep, LookupWeakObjectToCodeDependency(obj));
-}
-
-
-DependentCode* Heap::LookupWeakObjectToCodeDependency(Handle<HeapObject> obj) {
-  Object* dep = weak_object_to_code_table()->Lookup(obj);
-  if (dep->IsDependentCode()) return DependentCode::cast(dep);
-  return DependentCode::cast(empty_fixed_array());
-}
-
 namespace {
 void CompactFixedArrayOfWeakCells(Object* object) {
   if (object->IsFixedArrayOfWeakCells()) {
@@ -6157,6 +6162,9 @@ void Heap::CompactFixedArraysOfWeakCells() {
 }
 
 void Heap::AddRetainedMap(Handle<Map> map) {
+  if (map->is_in_retained_map_list()) {
+    return;
+  }
   Handle<WeakCell> cell = Map::WeakCellForMap(map);
   Handle<ArrayList> array(retained_maps(), isolate());
   if (array->IsFull()) {
@@ -6168,6 +6176,7 @@ void Heap::AddRetainedMap(Handle<Map> map) {
   if (*array != retained_maps()) {
     set_retained_maps(*array);
   }
+  map->set_is_in_retained_map_list(true);
 }
 
 
@@ -6708,6 +6717,8 @@ const char* AllocationSpaceName(AllocationSpace space) {
       return "MAP_SPACE";
     case LO_SPACE:
       return "LO_SPACE";
+    case RO_SPACE:
+      return "RO_SPACE";
     default:
       UNREACHABLE();
   }
@@ -6716,23 +6727,24 @@ const char* AllocationSpaceName(AllocationSpace space) {
 
 void VerifyPointersVisitor::VisitPointers(HeapObject* host, Object** start,
                                           Object** end) {
-  VerifyPointers(reinterpret_cast<MaybeObject**>(start),
+  VerifyPointers(host, reinterpret_cast<MaybeObject**>(start),
                  reinterpret_cast<MaybeObject**>(end));
 }
 
 void VerifyPointersVisitor::VisitPointers(HeapObject* host, MaybeObject** start,
                                           MaybeObject** end) {
-  VerifyPointers(start, end);
+  VerifyPointers(host, start, end);
 }
 
 void VerifyPointersVisitor::VisitRootPointers(Root root,
                                               const char* description,
                                               Object** start, Object** end) {
-  VerifyPointers(reinterpret_cast<MaybeObject**>(start),
+  VerifyPointers(nullptr, reinterpret_cast<MaybeObject**>(start),
                  reinterpret_cast<MaybeObject**>(end));
 }
 
-void VerifyPointersVisitor::VerifyPointers(MaybeObject** start,
+void VerifyPointersVisitor::VerifyPointers(HeapObject* host,
+                                           MaybeObject** start,
                                            MaybeObject** end) {
   for (MaybeObject** current = start; current < end; current++) {
     HeapObject* object;
@@ -6778,6 +6790,7 @@ bool Heap::AllowedToBeMigrated(HeapObject* obj, AllocationSpace dst) {
       return dst == CODE_SPACE && type == CODE_TYPE;
     case MAP_SPACE:
     case LO_SPACE:
+    case RO_SPACE:
       return false;
   }
   UNREACHABLE();

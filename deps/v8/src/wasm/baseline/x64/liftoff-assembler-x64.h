@@ -403,33 +403,34 @@ COMMUTATIVE_I32_BINOP(xor, xor)
 #undef COMMUTATIVE_I32_BINOP
 
 namespace liftoff {
+template <ValueType type>
 inline void EmitShiftOperation(LiftoffAssembler* assm, Register dst,
-                               Register lhs, Register rhs,
+                               Register src, Register amount,
                                void (Assembler::*emit_shift)(Register),
                                LiftoffRegList pinned) {
   // If dst is rcx, compute into the scratch register first, then move to rcx.
   if (dst == rcx) {
-    assm->movl(kScratchRegister, lhs);
-    if (rhs != rcx) assm->movl(rcx, rhs);
+    assm->Move(kScratchRegister, src, type);
+    if (amount != rcx) assm->Move(rcx, amount, type);
     (assm->*emit_shift)(kScratchRegister);
-    assm->movl(rcx, kScratchRegister);
+    assm->Move(rcx, kScratchRegister, type);
     return;
   }
 
-  // Move rhs into rcx. If rcx is in use, move its content into the scratch
-  // register. If lhs is rcx, lhs is now the scratch register.
+  // Move amount into rcx. If rcx is in use, move its content into the scratch
+  // register. If src is rcx, src is now the scratch register.
   bool use_scratch = false;
-  if (rhs != rcx) {
-    use_scratch = lhs == rcx ||
+  if (amount != rcx) {
+    use_scratch = src == rcx ||
                   assm->cache_state()->is_used(LiftoffRegister(rcx)) ||
                   pinned.has(LiftoffRegister(rcx));
     if (use_scratch) assm->movq(kScratchRegister, rcx);
-    if (lhs == rcx) lhs = kScratchRegister;
-    assm->movl(rcx, rhs);
+    if (src == rcx) src = kScratchRegister;
+    assm->Move(rcx, amount, type);
   }
 
   // Do the actual shift.
-  if (dst != lhs) assm->movl(dst, lhs);
+  if (dst != src) assm->Move(dst, src, type);
   (assm->*emit_shift)(dst);
 
   // Restore rcx if needed.
@@ -437,19 +438,22 @@ inline void EmitShiftOperation(LiftoffAssembler* assm, Register dst,
 }
 }  // namespace liftoff
 
-void LiftoffAssembler::emit_i32_shl(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_shl(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::shll_cl, pinned);
+  liftoff::EmitShiftOperation<kWasmI32>(this, dst, src, amount,
+                                        &Assembler::shll_cl, pinned);
 }
 
-void LiftoffAssembler::emit_i32_sar(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_sar(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::sarl_cl, pinned);
+  liftoff::EmitShiftOperation<kWasmI32>(this, dst, src, amount,
+                                        &Assembler::sarl_cl, pinned);
 }
 
-void LiftoffAssembler::emit_i32_shr(Register dst, Register lhs, Register rhs,
+void LiftoffAssembler::emit_i32_shr(Register dst, Register src, Register amount,
                                     LiftoffRegList pinned) {
-  liftoff::EmitShiftOperation(this, dst, lhs, rhs, &Assembler::shrl_cl, pinned);
+  liftoff::EmitShiftOperation<kWasmI32>(this, dst, src, amount,
+                                        &Assembler::shrl_cl, pinned);
 }
 
 bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
@@ -491,6 +495,24 @@ bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
   CpuFeatureScope scope(this, POPCNT);
   popcntl(dst, src);
   return true;
+}
+
+void LiftoffAssembler::emit_i64_shl(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::EmitShiftOperation<kWasmI64>(this, dst.gp(), src.gp(), amount,
+                                        &Assembler::shlq_cl, pinned);
+}
+
+void LiftoffAssembler::emit_i64_sar(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::EmitShiftOperation<kWasmI64>(this, dst.gp(), src.gp(), amount,
+                                        &Assembler::sarq_cl, pinned);
+}
+
+void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::EmitShiftOperation<kWasmI64>(this, dst.gp(), src.gp(), amount,
+                                        &Assembler::shrq_cl, pinned);
 }
 
 void LiftoffAssembler::emit_ptrsize_add(Register dst, Register lhs,
@@ -555,6 +577,17 @@ void LiftoffAssembler::emit_f32_div(DoubleRegister dst, DoubleRegister lhs,
   } else {
     if (dst != lhs) movss(dst, lhs);
     divss(dst, rhs);
+  }
+}
+
+void LiftoffAssembler::emit_f32_abs(DoubleRegister dst, DoubleRegister src) {
+  static constexpr uint32_t kSignBit = uint32_t{1} << 31;
+  if (dst == src) {
+    TurboAssembler::Move(kScratchDoubleReg, kSignBit - 1);
+    Andps(dst, kScratchDoubleReg);
+  } else {
+    TurboAssembler::Move(dst, kSignBit - 1);
+    Andps(dst, src);
   }
 }
 
@@ -626,6 +659,17 @@ void LiftoffAssembler::emit_f64_div(DoubleRegister dst, DoubleRegister lhs,
   } else {
     if (dst != lhs) movsd(dst, lhs);
     divsd(dst, rhs);
+  }
+}
+
+void LiftoffAssembler::emit_f64_abs(DoubleRegister dst, DoubleRegister src) {
+  static constexpr uint64_t kSignBit = uint64_t{1} << 63;
+  if (dst == src) {
+    TurboAssembler::Move(kScratchDoubleReg, kSignBit - 1);
+    Andpd(dst, kScratchDoubleReg);
+  } else {
+    TurboAssembler::Move(dst, kSignBit - 1);
+    Andpd(dst, src);
   }
 }
 
@@ -731,14 +775,29 @@ void LiftoffAssembler::emit_cond_jump(Condition cond, Label* label,
   j(cond, label);
 }
 
+void LiftoffAssembler::emit_i32_eqz(Register dst, Register src) {
+  testl(src, src);
+  setcc(equal, dst);
+  movzxbl(dst, dst);
+}
+
 void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
                                          Register lhs, Register rhs) {
-  if (rhs != no_reg) {
-    cmpl(lhs, rhs);
-  } else {
-    testl(lhs, lhs);
-  }
+  cmpl(lhs, rhs);
+  setcc(cond, dst);
+  movzxbl(dst, dst);
+}
 
+void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
+  testq(src.gp(), src.gp());
+  setcc(equal, dst);
+  movzxbl(dst, dst);
+}
+
+void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,
+                                         LiftoffRegister lhs,
+                                         LiftoffRegister rhs) {
+  cmpq(lhs.gp(), rhs.gp());
   setcc(cond, dst);
   movzxbl(dst, dst);
 }

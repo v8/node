@@ -49,6 +49,24 @@ struct FieldAccess {
   MachineType machine_type;       // machine type of the field.
   WriteBarrierKind write_barrier_kind;  // write barrier hint.
 
+  FieldAccess()
+      : base_is_tagged(kTaggedBase),
+        offset(0),
+        type(Type::None()),
+        machine_type(MachineType::None()),
+        write_barrier_kind(kFullWriteBarrier) {}
+
+  FieldAccess(BaseTaggedness base_is_tagged, int offset, MaybeHandle<Name> name,
+              MaybeHandle<Map> map, Type* type, MachineType machine_type,
+              WriteBarrierKind write_barrier_kind)
+      : base_is_tagged(base_is_tagged),
+        offset(offset),
+        name(name),
+        map(map),
+        type(type),
+        machine_type(machine_type),
+        write_barrier_kind(write_barrier_kind) {}
+
   int tag() const { return base_is_tagged == kTaggedBase ? kHeapObjectTag : 0; }
 };
 
@@ -58,7 +76,8 @@ size_t hash_value(FieldAccess const&);
 
 V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, FieldAccess const&);
 
-FieldAccess const& FieldAccessOf(const Operator* op) WARN_UNUSED_RESULT;
+V8_EXPORT_PRIVATE FieldAccess const& FieldAccessOf(const Operator* op)
+    WARN_UNUSED_RESULT;
 
 template <>
 void Operator1<FieldAccess>::PrintParameter(std::ostream& os,
@@ -75,6 +94,21 @@ struct ElementAccess {
   MachineType machine_type;       // machine type of the element.
   WriteBarrierKind write_barrier_kind;  // write barrier hint.
 
+  ElementAccess()
+      : base_is_tagged(kTaggedBase),
+        header_size(0),
+        type(Type::None()),
+        machine_type(MachineType::None()),
+        write_barrier_kind(kFullWriteBarrier) {}
+
+  ElementAccess(BaseTaggedness base_is_tagged, int header_size, Type* type,
+                MachineType machine_type, WriteBarrierKind write_barrier_kind)
+      : base_is_tagged(base_is_tagged),
+        header_size(header_size),
+        type(type),
+        machine_type(machine_type),
+        write_barrier_kind(write_barrier_kind) {}
+
   int tag() const { return base_is_tagged == kTaggedBase ? kHeapObjectTag : 0; }
 };
 
@@ -90,7 +124,8 @@ V8_EXPORT_PRIVATE ElementAccess const& ElementAccessOf(const Operator* op)
 ExternalArrayType ExternalArrayTypeOf(const Operator* op) WARN_UNUSED_RESULT;
 
 // The ConvertReceiverMode is used as parameter by ConvertReceiver operators.
-ConvertReceiverMode ConvertReceiverModeOf(Operator const* op);
+ConvertReceiverMode ConvertReceiverModeOf(Operator const* op)
+    WARN_UNUSED_RESULT;
 
 // A the parameters for several Check nodes. The {feedback} parameter is
 // optional. If {feedback} references a valid CallIC slot and this MapCheck
@@ -329,11 +364,11 @@ ElementsTransition const& ElementsTransitionOf(const Operator* op)
 // Parameters for TransitionAndStoreElement, or
 // TransitionAndStoreNonNumberElement, or
 // TransitionAndStoreNumberElement.
-Handle<Map> DoubleMapParameterOf(const Operator* op);
-Handle<Map> FastMapParameterOf(const Operator* op);
+Handle<Map> DoubleMapParameterOf(const Operator* op) WARN_UNUSED_RESULT;
+Handle<Map> FastMapParameterOf(const Operator* op) WARN_UNUSED_RESULT;
 
 // Parameters for TransitionAndStoreNonNumberElement.
-Type* ValueTypeParameterOf(const Operator* op);
+Type* ValueTypeParameterOf(const Operator* op) WARN_UNUSED_RESULT;
 
 // A hint for speculative number operations.
 enum class NumberOperationHint : uint8_t {
@@ -348,7 +383,7 @@ size_t hash_value(NumberOperationHint);
 
 V8_EXPORT_PRIVATE std::ostream& operator<<(std::ostream&, NumberOperationHint);
 
-NumberOperationHint NumberOperationHintOf(const Operator* op)
+V8_EXPORT_PRIVATE NumberOperationHint NumberOperationHintOf(const Operator* op)
     WARN_UNUSED_RESULT;
 
 class NumberOperationParameters {
@@ -625,6 +660,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* NumberIsFinite();
   const Operator* ObjectIsFiniteNumber();
   const Operator* NumberIsInteger();
+  const Operator* ObjectIsSafeInteger();
+  const Operator* NumberIsSafeInteger();
   const Operator* ObjectIsInteger();
 
   const Operator* ArgumentsFrame();

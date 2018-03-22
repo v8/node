@@ -145,9 +145,7 @@ class Arguments;
 class DeferredHandles;
 class Heap;
 class HeapObject;
-class HeapObjectReference;
 class Isolate;
-class MaybeObject;
 class Object;
 struct ScriptStreamingData;
 template<typename T> class CustomArguments;
@@ -8037,7 +8035,16 @@ class V8_EXPORT V8 {
    * Enable the default signal handler rather than using one provided by the
    * embedder.
    */
-  static bool RegisterDefaultSignalHandler();
+  V8_DEPRECATE_SOON("Use EnableWebAssemblyTrapHandler",
+                    static bool RegisterDefaultSignalHandler());
+
+  /**
+   * Activate trap-based bounds checking for WebAssembly.
+   *
+   * \param use_v8_signal_handler Whether V8 should install its own signal
+   * handler or rely on the embedder's.
+   */
+  static bool EnableWebAssemblyTrapHandler(bool use_v8_signal_handler);
 
  private:
   V8();
@@ -8860,9 +8867,6 @@ const int kWeakHeapObjectTag = 3;
 const int kHeapObjectTagSize = 2;
 const intptr_t kHeapObjectTagMask = (1 << kHeapObjectTagSize) - 1;
 
-const intptr_t kWeakHeapObjectMask = 1 << 1;
-const intptr_t kClearedWeakHeapObject = 3;
-
 // Tag information for Smi.
 const int kSmiTag = 0;
 const int kSmiTagSize = 1;
@@ -9002,35 +9006,6 @@ class Internals {
   V8_INLINE static bool HasHeapObjectTag(const internal::Object* value) {
     return ((reinterpret_cast<intptr_t>(value) & kHeapObjectTagMask) ==
             kHeapObjectTag);
-  }
-
-  V8_INLINE static bool HasWeakHeapObjectTag(
-      const internal::MaybeObject* value) {
-    return ((reinterpret_cast<intptr_t>(value) & kHeapObjectTagMask) ==
-            kWeakHeapObjectTag);
-  }
-
-  // Object* should never have the weak tag; this variant is for overzealous
-  // checking.
-  V8_INLINE static bool HasWeakHeapObjectTag(const internal::Object* value) {
-    return ((reinterpret_cast<intptr_t>(value) & kHeapObjectTagMask) ==
-            kWeakHeapObjectTag);
-  }
-
-  V8_INLINE static bool IsClearedWeakHeapObject(internal::MaybeObject* value) {
-    return reinterpret_cast<intptr_t>(value) == kClearedWeakHeapObject;
-  }
-
-  V8_INLINE static internal::HeapObject* RemoveWeakHeapObjectMask(
-      internal::HeapObjectReference* value) {
-    return reinterpret_cast<HeapObject*>(reinterpret_cast<intptr_t>(value) &
-                                         ~kWeakHeapObjectMask);
-  }
-
-  V8_INLINE static internal::HeapObjectReference* AddWeakHeapObjectMask(
-      internal::HeapObject* value) {
-    return reinterpret_cast<HeapObjectReference*>(
-        reinterpret_cast<intptr_t>(value) | kWeakHeapObjectMask);
   }
 
   V8_INLINE static int SmiValue(const internal::Object* value) {

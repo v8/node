@@ -134,7 +134,6 @@ using v8::MemoryPressureLevel;
   V(Map, small_ordered_hash_set_map, SmallOrderedHashSetMap)                   \
   V(Map, string_table_map, StringTableMap)                                     \
   V(Map, weak_fixed_array_map, WeakFixedArrayMap)                              \
-  V(Map, weak_hash_table_map, WeakHashTableMap)                                \
   /* String maps */                                                            \
   V(Map, native_source_string_map, NativeSourceStringMap)                      \
   V(Map, string_map, StringMap)                                                \
@@ -254,12 +253,6 @@ using v8::MemoryPressureLevel;
   V(FixedArray, detached_contexts, DetachedContexts)                           \
   V(HeapObject, retaining_path_targets, RetainingPathTargets)                  \
   V(ArrayList, retained_maps, RetainedMaps)                                    \
-  V(WeakHashTable, weak_object_to_code_table, WeakObjectToCodeTable)           \
-  /* weak_new_space_object_to_code_list is an array of weak cells, where */    \
-  /* slots with even indices refer to the weak object, and the subsequent */   \
-  /* slots refer to the code with the reference to the weak object. */         \
-  V(ArrayList, weak_new_space_object_to_code_list,                             \
-    WeakNewSpaceObjectToCodeList)                                              \
   /* Indirection lists for isolate-independent builtins */                     \
   V(FixedArray, builtins_constants_table, BuiltinsConstantsTable)              \
   /* Feedback vectors that we need for code coverage or type profile */        \
@@ -406,7 +399,6 @@ using v8::MemoryPressureLevel;
   V(UninitializedValue)                 \
   V(WeakCellMap)                        \
   V(WeakFixedArrayMap)                  \
-  V(WeakHashTableMap)                   \
   V(WithContextMap)                     \
   V(empty_string)                       \
   PRIVATE_SYMBOL_LIST(V)
@@ -920,14 +912,6 @@ class Heap {
     external_memory_concurrently_freed_.SetValue(0);
   }
 
-  void AddWeakNewSpaceObjectToCodeDependency(Handle<HeapObject> obj,
-                                             Handle<WeakCell> code);
-
-  void AddWeakObjectToCodeDependency(Handle<HeapObject> obj,
-                                     Handle<DependentCode> dep);
-
-  DependentCode* LookupWeakObjectToCodeDependency(Handle<HeapObject> obj);
-
   void CompactFixedArraysOfWeakCells();
 
   void AddRetainedMap(Handle<Map> map);
@@ -1025,6 +1009,7 @@ class Heap {
   OldSpace* code_space() { return code_space_; }
   MapSpace* map_space() { return map_space_; }
   LargeObjectSpace* lo_space() { return lo_space_; }
+  ReadOnlySpace* read_only_space() { return read_only_space_; }
 
   inline PagedSpace* paged_space(int idx);
   inline Space* space(int idx);
@@ -1773,7 +1758,7 @@ class Heap {
     void* data;
   };
 
-  static const int kInitialStringTableSize = 2048;
+  static const int kInitialStringTableSize = StringTable::kMinCapacity;
   static const int kInitialEvalCacheSize = 64;
   static const int kInitialNumberStringCacheSize = 256;
 
@@ -2454,6 +2439,7 @@ class Heap {
   OldSpace* code_space_;
   MapSpace* map_space_;
   LargeObjectSpace* lo_space_;
+  ReadOnlySpace* read_only_space_;
   // Map from the space id to the space.
   Space* space_[LAST_SPACE + 1];
 
@@ -2800,8 +2786,9 @@ class VerifyPointersVisitor : public ObjectVisitor, public RootVisitor {
   void VisitRootPointers(Root root, const char* description, Object** start,
                          Object** end) override;
 
- private:
-  void VerifyPointers(MaybeObject** start, MaybeObject** end);
+ protected:
+  virtual void VerifyPointers(HeapObject* host, MaybeObject** start,
+                              MaybeObject** end);
 };
 
 

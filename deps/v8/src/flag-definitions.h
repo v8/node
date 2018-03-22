@@ -478,6 +478,7 @@ DEFINE_BOOL(turbo_loop_peeling, true, "Turbofan loop peeling")
 DEFINE_BOOL(turbo_loop_variable, true, "Turbofan loop variable optimization")
 DEFINE_BOOL(turbo_cf_optimization, true, "optimize control flow in TurboFan")
 DEFINE_BOOL(turbo_escape, true, "enable escape analysis")
+DEFINE_BOOL(turbo_allocation_folding, true, "Turbofan allocation folding")
 DEFINE_BOOL(turbo_instruction_scheduling, false,
             "enable instruction scheduling in TurboFan")
 DEFINE_BOOL(turbo_stress_instruction_scheduling, false,
@@ -587,6 +588,8 @@ DEFINE_BOOL(experimental_wasm_sat_f2i_conversions, false,
             "enable non-trapping float-to-int conversions for wasm")
 DEFINE_BOOL(experimental_wasm_se, false,
             "enable prototype sign extension opcodes for wasm")
+DEFINE_BOOL(experimental_wasm_anyref, false,
+            "enable prototype anyref support for wasm")
 
 DEFINE_BOOL(wasm_opt, false, "enable wasm optimization")
 DEFINE_BOOL(wasm_no_bounds_checks, false,
@@ -1025,13 +1028,6 @@ DEFINE_INT(fuzzer_random_seed, 0,
 DEFINE_BOOL(trace_rail, false, "trace RAIL mode")
 DEFINE_BOOL(print_all_exceptions, false,
             "print exception object and stack trace on each thrown exception")
-#ifdef V8_EMBEDDED_BUILTINS
-DEFINE_BOOL(stress_off_heap_code, false,
-            "Move code objects off-heap for testing.")
-#else
-FLAG_READONLY(BOOL, bool, stress_off_heap_code, false,
-              "Move code objects off-heap for testing.")
-#endif
 
 // runtime.cc
 DEFINE_BOOL(runtime_call_stats, false, "report runtime call counts and times")
@@ -1067,6 +1063,9 @@ DEFINE_INT(testing_prng_seed, 42, "Seed used for threading test randomness")
 // mksnapshot.cc
 DEFINE_STRING(embedded_src, nullptr,
               "Path for the generated embedded data file. (mksnapshot only)")
+DEFINE_STRING(
+    embedded_variant, nullptr,
+    "Label to disambiguate symbols in embedded data file. (mksnapshot only)")
 DEFINE_STRING(startup_src, nullptr,
               "Write V8 startup as C++ src. (mksnapshot only)")
 DEFINE_STRING(startup_blob, nullptr,

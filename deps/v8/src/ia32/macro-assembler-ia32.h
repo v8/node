@@ -179,7 +179,7 @@ class TurboAssembler : public Assembler {
   void ShlPair(Register high, Register low, uint8_t imm8);
   void ShlPair_cl(Register high, Register low);
   void ShrPair(Register high, Register low, uint8_t imm8);
-  void ShrPair_cl(Register high, Register src);
+  void ShrPair_cl(Register high, Register low);
   void SarPair(Register high, Register low, uint8_t imm8);
   void SarPair_cl(Register high, Register low);
 
@@ -251,6 +251,8 @@ class TurboAssembler : public Assembler {
   AVX_OP3_XO(Psubw, psubw)
   AVX_OP3_XO(Psubd, psubd)
   AVX_OP3_XO(Pxor, pxor)
+  AVX_OP3_XO(Andps, andps)
+  AVX_OP3_XO(Andpd, andpd)
   AVX_OP3_XO(Xorps, xorps)
   AVX_OP3_XO(Xorpd, xorpd)
   AVX_OP3_XO(Sqrtss, sqrtss)

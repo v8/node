@@ -387,6 +387,8 @@
   V(NumberIsFinite)                     \
   V(ObjectIsFiniteNumber)               \
   V(NumberIsInteger)                    \
+  V(ObjectIsSafeInteger)                \
+  V(NumberIsSafeInteger)                \
   V(ObjectIsInteger)                    \
   V(ObjectIsArrayBufferView)            \
   V(ObjectIsBigInt)                     \
@@ -613,6 +615,7 @@
   V(LoadStackPointer)            \
   V(LoadFramePointer)            \
   V(LoadParentFramePointer)      \
+  V(LoadRootsPointer)            \
   V(UnalignedLoad)               \
   V(UnalignedStore)              \
   V(Int32PairAdd)                \

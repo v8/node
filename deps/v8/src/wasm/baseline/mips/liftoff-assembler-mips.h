@@ -293,9 +293,8 @@ void LiftoffAssembler::MoveToReturnRegister(LiftoffRegister reg,
   // TODO(wasm): Extract the destination register from the CallDescriptor.
   // TODO(wasm): Add multi-return support.
   LiftoffRegister dst =
-      reg.is_pair()
-          ? LiftoffRegister::ForPair(LiftoffRegister(v0), LiftoffRegister(v1))
-          : reg.is_gp() ? LiftoffRegister(v0) : LiftoffRegister(f2);
+      reg.is_pair() ? LiftoffRegister::ForPair(v0, v1)
+                    : reg.is_gp() ? LiftoffRegister(v0) : LiftoffRegister(f2);
   if (reg != dst) Move(dst, reg, type);
 }
 
@@ -429,10 +428,10 @@ bool LiftoffAssembler::emit_i32_popcnt(Register dst, Register src) {
   return true;
 }
 
-#define I32_SHIFTOP(name, instruction)                                   \
-  void LiftoffAssembler::emit_i32_##name(                                \
-      Register dst, Register lhs, Register rhs, LiftoffRegList pinned) { \
-    instruction(dst, lhs, rhs);                                          \
+#define I32_SHIFTOP(name, instruction)                                      \
+  void LiftoffAssembler::emit_i32_##name(                                   \
+      Register dst, Register src, Register amount, LiftoffRegList pinned) { \
+    instruction(dst, src, amount);                                          \
   }
 
 I32_SHIFTOP(shl, sllv)
@@ -441,31 +440,46 @@ I32_SHIFTOP(shr, srlv)
 
 #undef I32_SHIFTOP
 
+#define UNIMPLEMENTED_I64_SHIFTOP(name)                                        \
+  void LiftoffAssembler::emit_i64_##name(LiftoffRegister dst,                  \
+                                         LiftoffRegister src, Register amount, \
+                                         LiftoffRegList pinned) {              \
+    BAILOUT("i64 shiftop");                                                    \
+  }
+
+UNIMPLEMENTED_I64_SHIFTOP(shl)
+UNIMPLEMENTED_I64_SHIFTOP(sar)
+UNIMPLEMENTED_I64_SHIFTOP(shr)
+
+#undef I32_SHIFTOP
+
 #define FP_BINOP(name, instruction)                                          \
   void LiftoffAssembler::emit_##name(DoubleRegister dst, DoubleRegister lhs, \
                                      DoubleRegister rhs) {                   \
     instruction(dst, lhs, rhs);                                              \
   }
-#define UNIMPLEMENTED_FP_UNOP(name)                                            \
+#define FP_UNOP(name, instruction)                                             \
   void LiftoffAssembler::emit_##name(DoubleRegister dst, DoubleRegister src) { \
-    BAILOUT("fp unop");                                                        \
+    instruction(dst, src);                                                     \
   }
 
 FP_BINOP(f32_add, add_s)
 FP_BINOP(f32_sub, sub_s)
 FP_BINOP(f32_mul, mul_s)
 FP_BINOP(f32_div, div_s)
-UNIMPLEMENTED_FP_UNOP(f32_neg)
-UNIMPLEMENTED_FP_UNOP(f32_sqrt)
+FP_UNOP(f32_abs, abs_s)
+FP_UNOP(f32_neg, neg_s)
+FP_UNOP(f32_sqrt, sqrt_s)
 FP_BINOP(f64_add, add_d)
 FP_BINOP(f64_sub, sub_d)
 FP_BINOP(f64_mul, mul_d)
 FP_BINOP(f64_div, div_d)
-UNIMPLEMENTED_FP_UNOP(f64_neg)
-UNIMPLEMENTED_FP_UNOP(f64_sqrt)
+FP_UNOP(f64_abs, abs_d)
+FP_UNOP(f64_neg, neg_d)
+FP_UNOP(f64_sqrt, sqrt_d)
 
 #undef FP_BINOP
-#undef UNIMPLEMENTED_FP_BINOP
+#undef FP_UNOP
 
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
@@ -488,6 +502,28 @@ void LiftoffAssembler::emit_cond_jump(Condition cond, Label* label,
   }
 }
 
+void LiftoffAssembler::emit_i32_eqz(Register dst, Register src) {
+  Label true_label;
+  if (dst != src) {
+    ori(dst, zero_reg, 0x1);
+  }
+
+  TurboAssembler::Branch(&true_label, eq, src, Operand(zero_reg));
+  // If not true, set on 0.
+  TurboAssembler::mov(dst, zero_reg);
+
+  if (dst != src) {
+    bind(&true_label);
+  } else {
+    Label end_label;
+    TurboAssembler::Branch(&end_label);
+    bind(&true_label);
+
+    ori(dst, zero_reg, 0x1);
+    bind(&end_label);
+  }
+}
+
 void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
                                          Register lhs, Register rhs) {
   Label true_label;
@@ -495,11 +531,7 @@ void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
     ori(dst, zero_reg, 0x1);
   }
 
-  if (rhs != no_reg) {
-    TurboAssembler::Branch(&true_label, cond, lhs, Operand(rhs));
-  } else {
-    TurboAssembler::Branch(&true_label, cond, lhs, Operand(zero_reg));
-  }
+  TurboAssembler::Branch(&true_label, cond, lhs, Operand(rhs));
   // If not true, set on 0.
   TurboAssembler::mov(dst, zero_reg);
 
@@ -513,6 +545,16 @@ void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
     ori(dst, zero_reg, 0x1);
     bind(&end_label);
   }
+}
+
+void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
+  BAILOUT("emit_i64_eqz");
+}
+
+void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,
+                                         LiftoffRegister lhs,
+                                         LiftoffRegister rhs) {
+  BAILOUT("emit_i64_set_cond");
 }
 
 void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
@@ -692,21 +734,29 @@ void LiftoffAssembler::CallNativeWasmCode(Address addr) {
 }
 
 void LiftoffAssembler::CallRuntime(Zone* zone, Runtime::FunctionId fid) {
-  BAILOUT("CallRuntime");
+  // Set context to zero.
+  TurboAssembler::Move(cp, zero_reg);
+  CallRuntimeDelayed(zone, fid);
 }
 
 void LiftoffAssembler::CallIndirect(wasm::FunctionSig* sig,
                                     compiler::CallDescriptor* call_descriptor,
                                     Register target) {
-  BAILOUT("CallIndirect");
+  if (target == no_reg) {
+    pop(at);
+    Call(at);
+  } else {
+    Call(target);
+  }
 }
 
 void LiftoffAssembler::AllocateStackSlot(Register addr, uint32_t size) {
-  BAILOUT("AllocateStackSlot");
+  addiu(sp, sp, -size);
+  TurboAssembler::Move(addr, sp);
 }
 
 void LiftoffAssembler::DeallocateStackSlot(uint32_t size) {
-  BAILOUT("DeallocateStackSlot");
+  addiu(sp, sp, size);
 }
 
 }  // namespace wasm

@@ -79,11 +79,9 @@
       'V8 Win64 - debug': 'debug_x64_minimal_symbols',
       'V8 Win64 - msvc': 'release_x64_msvc',
       # Mac.
-      'V8 Mac': 'release_x86',
-      'V8 Mac - debug': 'debug_x86',
       'V8 Mac64': 'release_x64',
       'V8 Mac64 - debug': 'debug_x64',
-      'V8 Mac GC Stress': 'debug_x86',
+      'V8 Mac64 GC Stress': 'debug_x64',
       'V8 Mac64 ASAN': 'release_x64_asan_no_lsan',
       # Sanitizers.
       'V8 Linux64 ASAN': 'release_x64_asan',
@@ -226,11 +224,9 @@
       'v8_win64_asan_rel_ng': 'release_x64_asan_no_lsan',
       'v8_win64_msvc_compile_rel': 'release_x64_msvc',
       'v8_win64_dbg': 'debug_x64_minimal_symbols',
+      'v8_win64_msvc_rel_ng': 'release_x64_msvc',
       'v8_win64_rel_ng': 'release_x64_trybot',
-      'v8_mac_rel_ng': 'release_x86_trybot',
-      'v8_mac_dbg': 'debug_x86_trybot',
-      'v8_mac_gc_stress_dbg': 'debug_x86_trybot',
-      'v8_mac64_rel': 'release_x64_trybot',
+      'v8_mac64_gc_stress_dbg': 'debug_x64_trybot',
       'v8_mac64_rel_ng': 'release_x64_trybot',
       'v8_mac64_dbg': 'debug_x64',
       'v8_mac64_dbg_ng': 'debug_x64',
@@ -463,6 +459,8 @@
       'debug_bot', 'x64', 'minimal_symbols', 'swarming'],
     'debug_x64_no_snap': [
       'debug_bot', 'x64', 'swarming', 'v8_snapshot_none'],
+    'debug_x64_trybot': [
+      'debug_trybot', 'x64', 'swarming'],
 
     # Debug configs for x86.
     'debug_x86': [
