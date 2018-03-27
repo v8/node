@@ -173,20 +173,25 @@ class JSArrayBuffer : public JSObject {
     using AllocationMode = ArrayBuffer::Allocator::AllocationMode;
 
     Allocation(void* allocation_base, size_t length, void* backing_store,
-               AllocationMode mode)
+               AllocationMode mode, bool is_wasm_memory)
         : allocation_base(allocation_base),
           length(length),
           backing_store(backing_store),
-          mode(mode) {}
+          mode(mode),
+          is_wasm_memory(is_wasm_memory) {}
 
     void* allocation_base;
     size_t length;
     void* backing_store;
     AllocationMode mode;
+    bool is_wasm_memory;
   };
 
   // Returns whether the buffer is tracked by the WasmMemoryTracker.
   inline bool is_wasm_memory() const;
+
+  // Sets whether the buffer is tracked by the WasmMemoryTracker.
+  void set_is_wasm_memory(bool is_wasm_memory);
 
   void FreeBackingStore();
   static void FreeBackingStore(Isolate* isolate, Allocation allocation);
@@ -236,8 +241,6 @@ class JSArrayBuffer : public JSObject {
   class IsWasmMemory : public BitField<bool, 6, 1> {};
 
  private:
-  void set_is_wasm_memory(bool is_wasm_memory);
-
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSArrayBuffer);
 };
 

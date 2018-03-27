@@ -1209,7 +1209,6 @@ Handle<SharedFunctionInfo> FunctionTemplateInfo::GetOrCreateSharedFunctionInfo(
   } else {
     name_string = isolate->factory()->empty_string();
   }
-  Handle<Code> code = BUILTIN_CODE(isolate, HandleApiCall);
   bool is_constructor;
   FunctionKind function_kind;
   if (info->remove_prototype()) {
@@ -1219,14 +1218,14 @@ Handle<SharedFunctionInfo> FunctionTemplateInfo::GetOrCreateSharedFunctionInfo(
     is_constructor = true;
     function_kind = kNormalFunction;
   }
-  Handle<SharedFunctionInfo> result = isolate->factory()->NewSharedFunctionInfo(
-      name_string, code, is_constructor, function_kind);
+  Handle<SharedFunctionInfo> result =
+      isolate->factory()->NewSharedFunctionInfoForApiFunction(name_string, info,
+                                                              function_kind);
   if (is_constructor) {
     result->SetConstructStub(*BUILTIN_CODE(isolate, JSConstructStubApi));
   }
 
   result->set_length(info->length());
-  result->set_api_func_data(*info);
   result->DontAdaptArguments();
   DCHECK(result->IsApiFunction());
 
@@ -1342,8 +1341,7 @@ int JSObject::GetHeaderSize(InstanceType type,
     case JS_BOUND_FUNCTION_TYPE:
       return JSBoundFunction::kSize;
     case JS_FUNCTION_TYPE:
-      return function_has_prototype_slot ? JSFunction::kSizeWithPrototype
-                                         : JSFunction::kSizeWithoutPrototype;
+      return JSFunction::GetHeaderSize(function_has_prototype_slot);
     case JS_VALUE_TYPE:
       return JSValue::kSize;
     case JS_DATE_TYPE:
@@ -2132,7 +2130,14 @@ MUST_USE_RESULT Maybe<bool> FastAssign(
     }
 
     if (use_set) {
-      LookupIterator it(target, next_key, target);
+      Handle<Map> target_map(target->map(), isolate);
+      MaybeHandle<Map> maybe_transition_map =
+          TransitionsAccessor(target_map)
+              .FindTransitionToDataProperty(next_key);
+
+      LookupIterator it = LookupIterator::ForTransitionHandler(
+          isolate, target, next_key, prop_value, maybe_transition_map);
+
       Maybe<bool> result =
           Object::SetProperty(&it, prop_value, LanguageMode::kStrict,
                               Object::CERTAINLY_NOT_STORE_FROM_KEYED);
@@ -2981,6 +2986,15 @@ VisitorId Map::GetVisitorId(Map* map) {
     case HASH_TABLE_TYPE:
     case DESCRIPTOR_ARRAY_TYPE:
     case SCOPE_INFO_TYPE:
+    case BLOCK_CONTEXT_TYPE:
+    case CATCH_CONTEXT_TYPE:
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+    case EVAL_CONTEXT_TYPE:
+    case FUNCTION_CONTEXT_TYPE:
+    case MODULE_CONTEXT_TYPE:
+    case NATIVE_CONTEXT_TYPE:
+    case SCRIPT_CONTEXT_TYPE:
+    case WITH_CONTEXT_TYPE:
       return kVisitFixedArray;
 
     case WEAK_FIXED_ARRAY_TYPE:
@@ -3023,8 +3037,6 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_WEAK_SET_TYPE:
       return kVisitJSWeakCollection;
 
-    case JS_REGEXP_TYPE:
-      return kVisitJSRegExp;
 
     case SHARED_FUNCTION_INFO_TYPE:
       return kVisitSharedFunctionInfo;
@@ -3076,6 +3088,7 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_MAP_VALUE_ITERATOR_TYPE:
     case JS_STRING_ITERATOR_TYPE:
     case JS_PROMISE_TYPE:
+    case JS_REGEXP_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
@@ -3355,6 +3368,8 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
       os << "<Code " << Code::Kind2String(code->kind());
       if (code->is_stub()) {
         os << " " << CodeStub::MajorName(CodeStub::GetMajorKey(code));
+      } else if (code->is_builtin()) {
+        os << " " << Builtins::name(code->builtin_index());
       }
       os << ">";
       break;
@@ -3462,27 +3477,24 @@ void HeapObject::Iterate(ObjectVisitor* v) { IterateFast<ObjectVisitor>(v); }
 
 void HeapObject::IterateBody(ObjectVisitor* v) {
   Map* m = map();
-  IterateBodyFast<ObjectVisitor>(m->instance_type(), SizeFromMap(m), v);
+  IterateBodyFast<ObjectVisitor>(m, SizeFromMap(m), v);
 }
 
-
-void HeapObject::IterateBody(InstanceType type, int object_size,
-                             ObjectVisitor* v) {
-  IterateBodyFast<ObjectVisitor>(type, object_size, v);
+void HeapObject::IterateBody(Map* map, int object_size, ObjectVisitor* v) {
+  IterateBodyFast<ObjectVisitor>(map, object_size, v);
 }
 
 
 struct CallIsValidSlot {
   template <typename BodyDescriptor>
-  static bool apply(HeapObject* obj, int offset, int) {
-    return BodyDescriptor::IsValidSlot(obj, offset);
+  static bool apply(Map* map, HeapObject* obj, int offset, int) {
+    return BodyDescriptor::IsValidSlot(map, obj, offset);
   }
 };
 
-
-bool HeapObject::IsValidSlot(int offset) {
+bool HeapObject::IsValidSlot(Map* map, int offset) {
   DCHECK_NE(0, offset);
-  return BodyDescriptorApply<CallIsValidSlot, bool>(map()->instance_type(),
+  return BodyDescriptorApply<CallIsValidSlot, bool>(map->instance_type(), map,
                                                     this, offset, 0);
 }
 
@@ -6622,6 +6634,11 @@ void JSReceiver::DeleteNormalizedProperty(Handle<JSReceiver> object,
     dictionary = NameDictionary::DeleteEntry(dictionary, entry);
     object->SetProperties(*dictionary);
   }
+  if (object->map()->is_prototype_map()) {
+    // Invalidate prototype validity cell as this may invalidate transitioning
+    // store IC handlers.
+    JSObject::InvalidatePrototypeChains(object->map());
+  }
 }
 
 
@@ -9058,7 +9075,7 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
 #ifdef ENABLE_SLOW_DCHECKS
     if (FLAG_enable_slow_asserts) {
       // The cached map should match newly created normalized map bit-by-bit,
-      // except for the code cache, which can contain some ics which can be
+      // except for the code cache, which can contain some ICs which can be
       // applied to the shared map, dependent code and weak cell cache.
       Handle<Map> fresh = Map::CopyNormalized(fast_map, mode);
 
@@ -9078,7 +9095,9 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
       }
       STATIC_ASSERT(Map::kWeakCellCacheOffset ==
                     Map::kDependentCodeOffset + kPointerSize);
-      int offset = Map::kWeakCellCacheOffset + kPointerSize;
+      STATIC_ASSERT(Map::kPrototypeValidityCellOffset ==
+                    Map::kWeakCellCacheOffset + kPointerSize);
+      int offset = Map::kPrototypeValidityCellOffset + kPointerSize;
       DCHECK_EQ(0, memcmp(fresh->address() + offset,
                           new_map->address() + offset, Map::kSize - offset));
     }
@@ -13806,10 +13825,8 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   //  shared_info->set_kind(lit->kind());
   // FunctionKind must have already been set.
   DCHECK(lit->kind() == shared_info->kind());
-  if (!IsConstructable(lit->kind())) {
-    shared_info->SetConstructStub(
-        *BUILTIN_CODE(shared_info->GetIsolate(), ConstructedNonConstructable));
-  }
+  DCHECK_EQ(*shared_info->GetIsolate()->builtins()->JSConstructStubGeneric(),
+            shared_info->construct_stub());
   shared_info->set_needs_home_object(lit->scope()->NeedsHomeObject());
   shared_info->set_function_literal_id(lit->function_literal_id());
   DCHECK_IMPLIES(lit->requires_instance_fields_initializer(),
@@ -13871,7 +13888,7 @@ void SharedFunctionInfo::SetConstructStub(Code* code) {
     DCHECK(builtin_id == Builtins::kJSBuiltinsConstructStub ||
            !Builtins::IsLazy(builtin_id));
     // Builtins should use JSBuiltinsConstructStub.
-    DCHECK_NE(this->code(), code);
+    DCHECK_NE(this->GetCode(), code);
   }
 #endif
   set_construct_stub(code);
@@ -13978,31 +13995,25 @@ SafepointEntry Code::GetSafepointEntry(Address pc) {
 }
 
 #ifdef V8_EMBEDDED_BUILTINS
-int Code::OffHeapInstructionSize() {
+int Code::OffHeapInstructionSize() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  Isolate* isolate = GetIsolate();
-  if (isolate->embedded_blob() == nullptr) return instruction_size();
-  EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
-                                          isolate->embedded_blob_size());
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_size();
+  EmbeddedData d = EmbeddedData::FromBlob();
   return d.InstructionSizeOfBuiltin(builtin_index());
 }
 
-Address Code::OffHeapInstructionStart() {
+Address Code::OffHeapInstructionStart() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  Isolate* isolate = GetIsolate();
-  if (isolate->embedded_blob() == nullptr) return instruction_start();
-  EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
-                                          isolate->embedded_blob_size());
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_start();
+  EmbeddedData d = EmbeddedData::FromBlob();
   return reinterpret_cast<Address>(
       const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index())));
 }
 
-Address Code::OffHeapInstructionEnd() {
+Address Code::OffHeapInstructionEnd() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  Isolate* isolate = GetIsolate();
-  if (isolate->embedded_blob() == nullptr) return instruction_end();
-  EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
-                                          isolate->embedded_blob_size());
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_end();
+  EmbeddedData d = EmbeddedData::FromBlob();
   return reinterpret_cast<Address>(
       const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index()) +
                            d.InstructionSizeOfBuiltin(builtin_index())));
@@ -14498,10 +14509,10 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
   os << "compiler = " << (is_turbofanned() ? "turbofan" : "unknown") << "\n";
   os << "address = " << static_cast<const void*>(this) << "\n";
 
-  os << "Body (size = " << instruction_size() << ")\n";
+  os << "Body (size = " << InstructionSize() << ")\n";
   {
     Isolate* isolate = GetIsolate();
-    int size = instruction_size();
+    int size = InstructionSize();
     int safepoint_offset =
         has_safepoint_info() ? safepoint_table_offset() : size;
     int constant_pool_offset = this->constant_pool_offset();
@@ -14511,7 +14522,7 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     int code_size =
         Min(handler_offset, Min(safepoint_offset, constant_pool_offset));
     os << "Instructions (size = " << code_size << ")\n";
-    byte* begin = instruction_start();
+    byte* begin = InstructionStart();
     byte* end = begin + code_size;
     Disassembler::Decode(isolate, &os, begin, end, this, current_pc);
 
@@ -14552,7 +14563,7 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     os << "Safepoints (size = " << table.size() << ")\n";
     for (unsigned i = 0; i < table.length(); i++) {
       unsigned pc_offset = table.GetPcOffset(i);
-      os << static_cast<const void*>(instruction_start() + pc_offset) << "  ";
+      os << static_cast<const void*>(InstructionStart() + pc_offset) << "  ";
       os << std::setw(6) << std::hex << pc_offset << "  " << std::setw(4);
       int trampoline_pc = table.GetTrampolinePcOffset(i);
       print_pc(os, trampoline_pc);
@@ -16365,7 +16376,7 @@ Handle<Derived> HashTable<Derived, Shape>::New(
                      ? at_least_space_for
                      : ComputeCapacity(at_least_space_for);
   if (capacity > HashTable::kMaxCapacity) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid table size", true);
+    isolate->heap()->FatalProcessOutOfMemory("invalid table size");
   }
   return NewInternal(isolate, capacity, pretenure);
 }
@@ -18123,7 +18134,7 @@ Handle<Derived> OrderedHashTable<Derived, entrysize>::Allocate(
   // field of this object.
   capacity = base::bits::RoundUpToPowerOfTwo32(Max(kMinCapacity, capacity));
   if (capacity > kMaxCapacity) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid table size", true);
+    isolate->heap()->FatalProcessOutOfMemory("invalid table size");
   }
   int num_buckets = capacity / kLoadFactor;
   Handle<FixedArray> backing_store = isolate->factory()->NewFixedArrayWithMap(
@@ -19050,8 +19061,9 @@ void JSArrayBuffer::FreeBackingStore() {
   if (allocation_base() == nullptr) {
     return;
   }
-  FreeBackingStore(GetIsolate(), {allocation_base(), allocation_length(),
-                                  backing_store(), allocation_mode()});
+  FreeBackingStore(GetIsolate(),
+                   {allocation_base(), allocation_length(), backing_store(),
+                    allocation_mode(), is_wasm_memory()});
   // Zero out the backing store and allocation base to avoid dangling
   // pointers.
   set_backing_store(nullptr);
@@ -19060,12 +19072,17 @@ void JSArrayBuffer::FreeBackingStore() {
 // static
 void JSArrayBuffer::FreeBackingStore(Isolate* isolate, Allocation allocation) {
   if (allocation.mode == ArrayBuffer::Allocator::AllocationMode::kReservation) {
-    wasm::WasmMemoryTracker* memory_tracker =
-        isolate->wasm_engine()->memory_tracker();
-    if (memory_tracker->IsWasmMemory(allocation.backing_store)) {
-      memory_tracker->ReleaseAllocation(allocation.backing_store);
+    bool needs_free = true;
+    if (allocation.is_wasm_memory) {
+      wasm::WasmMemoryTracker* memory_tracker =
+          isolate->wasm_engine()->memory_tracker();
+      if (memory_tracker->FreeMemoryIfIsWasmMemory(allocation.backing_store)) {
+        needs_free = false;
+      }
     }
-    CHECK(FreePages(allocation.allocation_base, allocation.length));
+    if (needs_free) {
+      CHECK(FreePages(allocation.allocation_base, allocation.length));
+    }
   } else {
     isolate->array_buffer_allocator()->Free(allocation.allocation_base,
                                             allocation.length);

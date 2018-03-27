@@ -1715,10 +1715,11 @@ Node* WasmGraphBuilder::BuildI32Ctz(Node* input) {
 }
 
 Node* WasmGraphBuilder::BuildI64Ctz(Node* input) {
-  return Unop(wasm::kExprI64UConvertI32,
-              BuildBitCountingCall(input, ExternalReference::wasm_word64_ctz(
-                                              jsgraph()->isolate()),
-                                   MachineRepresentation::kWord64));
+  return Unop(
+      wasm::kExprI64UConvertI32,
+      BuildBitCountingCall(
+          input, ExternalReference::wasm_word64_ctz(jsgraph()->isolate()),
+          MachineRepresentation::kWord64));
 }
 
 Node* WasmGraphBuilder::BuildI32Popcnt(Node* input) {
@@ -1728,10 +1729,11 @@ Node* WasmGraphBuilder::BuildI32Popcnt(Node* input) {
 }
 
 Node* WasmGraphBuilder::BuildI64Popcnt(Node* input) {
-  return Unop(wasm::kExprI64UConvertI32,
-              BuildBitCountingCall(input, ExternalReference::wasm_word64_popcnt(
-                                              jsgraph()->isolate()),
-                                   MachineRepresentation::kWord64));
+  return Unop(
+      wasm::kExprI64UConvertI32,
+      BuildBitCountingCall(
+          input, ExternalReference::wasm_word64_popcnt(jsgraph()->isolate()),
+          MachineRepresentation::kWord64));
 }
 
 Node* WasmGraphBuilder::BuildF32Trunc(Node* input) {
@@ -3203,7 +3205,7 @@ bool WasmGraphBuilder::BuildWasmToJSWrapper(
     Callable callable = CodeFactory::Call(isolate);
     args[pos++] = jsgraph()->HeapConstant(callable.code());
     args[pos++] = LoadImportData(index, kFunction, table);  // target callable.
-    args[pos++] = jsgraph()->Int32Constant(wasm_count);  // argument count
+    args[pos++] = jsgraph()->Int32Constant(wasm_count);     // argument count
     args[pos++] = jsgraph()->Constant(
         handle(isolate->heap()->undefined_value(), isolate));  // receiver
 
@@ -4779,40 +4781,38 @@ Handle<Code> CompileWasmToJSWrapper(
     }
   }
 
-    if (FLAG_trace_turbo_graph) {  // Simple textual RPO.
-      OFStream os(stdout);
-      os << "-- Graph after change lowering -- " << std::endl;
-      os << AsRPO(graph);
-    }
+  if (FLAG_trace_turbo_graph) {  // Simple textual RPO.
+    OFStream os(stdout);
+    os << "-- Graph after change lowering -- " << std::endl;
+    os << AsRPO(graph);
+  }
 
-    // Schedule and compile to machine code.
-    CallDescriptor* incoming = GetWasmCallDescriptor(&zone, sig);
-    if (machine.Is32()) {
-      incoming = GetI32WasmCallDescriptor(&zone, incoming);
-    }
+  // Schedule and compile to machine code.
+  CallDescriptor* incoming = GetWasmCallDescriptor(&zone, sig);
+  if (machine.Is32()) {
+    incoming = GetI32WasmCallDescriptor(&zone, incoming);
+  }
 
 #ifdef DEBUG
-    EmbeddedVector<char, 32> func_name;
-    static unsigned id = 0;
-    func_name.Truncate(SNPrintF(func_name, "wasm-to-js#%d", id++));
+  EmbeddedVector<char, 32> func_name;
+  static unsigned id = 0;
+  func_name.Truncate(SNPrintF(func_name, "wasm-to-js#%d", id++));
 #else
-    Vector<const char> func_name = CStrVector("wasm-to-js");
+  Vector<const char> func_name = CStrVector("wasm-to-js");
 #endif
 
-    CompilationInfo info(func_name, &zone, Code::WASM_TO_JS_FUNCTION);
-    Handle<Code> code = Pipeline::GenerateCodeForTesting(
-        &info, isolate, incoming, &graph, nullptr, source_position_table);
-    ValidateImportWrapperReferencesImmovables(code);
-    Handle<FixedArray> deopt_data =
-        isolate->factory()->NewFixedArray(2, TENURED);
-    intptr_t loc =
-        reinterpret_cast<intptr_t>(global_js_imports_table.location());
-    Handle<Object> loc_handle = isolate->factory()->NewHeapNumberFromBits(loc);
-    deopt_data->set(0, *loc_handle);
-    Handle<Object> index_handle = isolate->factory()->NewNumberFromInt(
-        OffsetForImportData(index, WasmGraphBuilder::kFunction));
-    deopt_data->set(1, *index_handle);
-    code->set_deoptimization_data(*deopt_data);
+  CompilationInfo info(func_name, &zone, Code::WASM_TO_JS_FUNCTION);
+  Handle<Code> code = Pipeline::GenerateCodeForTesting(
+      &info, isolate, incoming, &graph, nullptr, source_position_table);
+  ValidateImportWrapperReferencesImmovables(code);
+  Handle<FixedArray> deopt_data = isolate->factory()->NewFixedArray(2, TENURED);
+  intptr_t loc = reinterpret_cast<intptr_t>(global_js_imports_table.location());
+  Handle<Object> loc_handle = isolate->factory()->NewHeapNumberFromBits(loc);
+  deopt_data->set(0, *loc_handle);
+  Handle<Object> index_handle = isolate->factory()->NewNumberFromInt(
+      OffsetForImportData(index, WasmGraphBuilder::kFunction));
+  deopt_data->set(1, *index_handle);
+  code->set_deoptimization_data(*deopt_data);
 #ifdef ENABLE_DISASSEMBLER
     if (FLAG_print_opt_code && !code.is_null()) {
       CodeTracer::Scope tracing_scope(isolate->GetCodeTracer());
@@ -5029,7 +5029,6 @@ Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig) {
 
 SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
     double* decode_ms) {
-
   base::ElapsedTimer decode_timer;
   if (FLAG_trace_wasm_decode_time) {
     decode_timer.Start();
@@ -5150,12 +5149,7 @@ void WasmCompilationUnit::ExecuteCompilation() {
   TimedHistogramScope wasm_compile_function_time_scope(timed_histogram);
 
   if (FLAG_trace_wasm_compiler) {
-    if (func_name_.start() != nullptr) {
-      PrintF("Compiling wasm function %d:'%.*s'\n\n", func_index(),
-             func_name_.length(), func_name_.start());
-    } else {
-      PrintF("Compiling wasm function %d:<unnamed>\n\n", func_index());
-    }
+    PrintF("Compiling wasm function %d\n\n", func_index());
   }
 
   switch (mode_) {
@@ -5298,7 +5292,9 @@ wasm::WasmCode* WasmCompilationUnit::FinishTurbofanCompilation(
       func_index_,
       tf_.job_->compilation_info()->wasm_code_desc()->safepoint_table_offset,
       tf_.job_->compilation_info()->wasm_code_desc()->handler_table_offset,
-      std::move(protected_instructions_), wasm::WasmCode::kTurbofan);
+      std::move(protected_instructions_),
+      tf_.job_->compilation_info()->wasm_code_desc()->source_positions_table,
+      wasm::WasmCode::kTurbofan);
   if (!code) return code;
   if (FLAG_trace_wasm_decode_time) {
     double codegen_ms = codegen_timer.Elapsed().InMillisecondsF();
@@ -5307,32 +5303,6 @@ wasm::WasmCode* WasmCompilationUnit::FinishTurbofanCompilation(
            codegen_ms);
   }
 
-  PROFILE(isolate_,
-          CodeCreateEvent(CodeEventListener::FUNCTION_TAG, code, func_name_));
-
-  Handle<ByteArray> source_positions =
-      tf_.job_->compilation_info()->wasm_code_desc()->source_positions_table;
-
-  native_module_->compiled_module()->source_positions()->set(func_index_,
-                                                             *source_positions);
-
-#ifdef ENABLE_DISASSEMBLER
-  // Note: only do this after setting source positions, as this will be
-  // accessed and printed here.
-  if (FLAG_print_code || FLAG_print_wasm_code) {
-    // TODO(wasm): Use proper log files, here and elsewhere.
-    PrintF("--- Native Wasm code ---\n");
-    code->Print(isolate_);
-    PrintF("--- End code ---\n");
-  }
-#endif
-
-  // TODO(mtrofin): this should probably move up in the common caller,
-  // once liftoff has source positions. Until then, we'd need to handle
-  // undefined values, which is complicating the code.
-  LOG_CODE_EVENT(isolate_,
-                 CodeLinePosInfoRecordEvent(code->instructions().start(),
-                                            *source_positions));
   return code;
 }
 
@@ -5344,31 +5314,11 @@ wasm::WasmCode* WasmCompilationUnit::FinishLiftoffCompilation(
   Handle<ByteArray> source_positions =
       liftoff_.source_position_table_builder_.ToSourcePositionTable(isolate_);
 
-  // TODO(herhut) Consider lifting it to FinishCompilation.
-  native_module_->compiled_module()->source_positions()->set(func_index_,
-                                                             *source_positions);
   wasm::WasmCode* code = native_module_->AddCode(
       desc, liftoff_.asm_.GetTotalFrameSlotCount(), func_index_,
       liftoff_.safepoint_table_offset_, 0, std::move(protected_instructions_),
-      wasm::WasmCode::kLiftoff);
-  PROFILE(isolate_,
-          CodeCreateEvent(CodeEventListener::FUNCTION_TAG, code, func_name_));
-#ifdef ENABLE_DISASSEMBLER
-  if (FLAG_print_code || FLAG_print_wasm_code) {
-    // TODO(wasm): Use proper log files, here and elsewhere.
-    OFStream os(stdout);
-    os << "--- Wasm liftoff code ---\n";
-    EmbeddedVector<char, 64> func_name;
-    if (func_name_.start() != nullptr) {
-      SNPrintF(func_name, "#%d:%.*s", func_index(), func_name_.length(),
-               func_name_.start());
-    } else {
-      SNPrintF(func_name, "wasm#%d", func_index());
-    }
-    code->Disassemble(func_name.start(), isolate_, os);
-    os << "--- End code ---\n";
-  }
-#endif
+      source_positions, wasm::WasmCode::kLiftoff);
+
   return code;
 }
 

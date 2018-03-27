@@ -191,11 +191,10 @@ class PredictablePlatform : public Platform {
     return platform_->GetForegroundTaskRunner(isolate);
   }
 
-  void CallOnWorkerThread(Task* task) override {
+  void CallOnWorkerThread(std::unique_ptr<Task> task) override {
     // It's not defined when background tasks are being executed, so we can just
     // execute them right away.
     task->Run();
-    delete task;
   }
 
   void CallOnForegroundThread(v8::Isolate* isolate, Task* task) override {
@@ -1279,7 +1278,7 @@ void WriteToFile(FILE* file, const v8::FunctionCallbackInfo<v8::Value>& args) {
     int n = static_cast<int>(fwrite(*str, sizeof(**str), str.length(), file));
     if (n != str.length()) {
       printf("Error in fwrite\n");
-      Shell::Exit(1);
+      base::OS::ExitProcess(1);
     }
   }
 }
@@ -1501,7 +1500,7 @@ void Shell::QuitOnce(v8::FunctionCallbackInfo<v8::Value>* args) {
   CleanupWorkers();
   args->GetIsolate()->Exit();
   OnExit(args->GetIsolate());
-  Exit(exit_code);
+  base::OS::ExitProcess(exit_code);
 }
 
 
@@ -1625,7 +1624,7 @@ void Shell::MapCounters(v8::Isolate* isolate, const char* name) {
       (counters_file_ == nullptr) ? nullptr : counters_file_->memory();
   if (memory == nullptr) {
     printf("Could not map counters file %s\n", name);
-    Exit(1);
+    base::OS::ExitProcess(1);
   }
   counters_ = static_cast<CounterCollection*>(memory);
   isolate->SetCounterFunction(LookupCounter);
@@ -2467,7 +2466,7 @@ void SourceGroup::Execute(Isolate* isolate) {
     Local<String> source = ReadFile(isolate, arg);
     if (source.IsEmpty()) {
       printf("Error reading '%s'\n", arg);
-      Shell::Exit(1);
+      base::OS::ExitProcess(1);
     }
     Shell::options.script_executed = true;
     if (!Shell::ExecuteString(isolate, source, file_name, Shell::kNoPrintResult,
@@ -2478,7 +2477,7 @@ void SourceGroup::Execute(Isolate* isolate) {
     }
   }
   if (exception_was_thrown != Shell::options.expected_to_throw) {
-    Shell::Exit(1);
+    base::OS::ExitProcess(1);
   }
 }
 
@@ -3277,21 +3276,7 @@ void Shell::CleanupWorkers() {
 
 int Shell::Main(int argc, char* argv[]) {
   std::ofstream trace_file;
-#if (defined(_WIN32) || defined(_WIN64))
-  UINT new_flags =
-      SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
-  UINT existing_flags = SetErrorMode(new_flags);
-  SetErrorMode(existing_flags | new_flags);
-#if defined(_MSC_VER)
-  _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
-  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
-  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
-  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
-  _set_error_mode(_OUT_TO_STDERR);
-#endif  // defined(_MSC_VER)
-#endif  // defined(_WIN32) || defined(_WIN64)
+  v8::base::EnsureConsoleOutput();
   if (!SetOptions(argc, argv)) return 1;
   v8::V8::InitializeICUDefaultLocation(argv[0], options.icu_data_file);
 

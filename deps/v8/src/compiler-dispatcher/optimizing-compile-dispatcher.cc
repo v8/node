@@ -5,6 +5,7 @@
 #include "src/compiler-dispatcher/optimizing-compile-dispatcher.h"
 
 #include "src/base/atomicops.h"
+#include "src/base/template-utils.h"
 #include "src/cancelable-task.h"
 #include "src/compilation-info.h"
 #include "src/compiler.h"
@@ -21,7 +22,7 @@ namespace {
 void DisposeCompilationJob(CompilationJob* job, bool restore_function_code) {
   if (restore_function_code) {
     Handle<JSFunction> function = job->compilation_info()->closure();
-    function->set_code(function->shared()->code());
+    function->set_code(function->shared()->GetCode());
     if (function->IsInOptimizationQueue()) {
       function->ClearOptimizationMarker();
     }
@@ -225,14 +226,14 @@ void OptimizingCompileDispatcher::QueueForOptimization(CompilationJob* job) {
     blocked_jobs_++;
   } else {
     V8::GetCurrentPlatform()->CallOnWorkerThread(
-        new CompileTask(isolate_, this));
+        base::make_unique<CompileTask>(isolate_, this));
   }
 }
 
 void OptimizingCompileDispatcher::Unblock() {
   while (blocked_jobs_ > 0) {
     V8::GetCurrentPlatform()->CallOnWorkerThread(
-        new CompileTask(isolate_, this));
+        base::make_unique<CompileTask>(isolate_, this));
     blocked_jobs_--;
   }
 }

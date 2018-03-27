@@ -323,8 +323,7 @@ class StoreIC : public IC {
   // Update the inline cache and the global stub cache based on the
   // lookup result.
   void UpdateCaches(LookupIterator* lookup, Handle<Object> value,
-                    JSReceiver::StoreFromKeyed store_mode,
-                    MaybeHandle<Object> cached_handler);
+                    JSReceiver::StoreFromKeyed store_mode);
 
  private:
   Handle<Object> ComputeHandler(LookupIterator* lookup);
@@ -371,7 +370,8 @@ class KeyedStoreIC : public StoreIC {
 
  protected:
   void UpdateStoreElement(Handle<Map> receiver_map,
-                          KeyedAccessStoreMode store_mode);
+                          KeyedAccessStoreMode store_mode,
+                          bool receiver_was_cow);
 
   Handle<Code> slow_stub() const override {
     return BUILTIN_CODE(isolate(), KeyedStoreIC_Slow);

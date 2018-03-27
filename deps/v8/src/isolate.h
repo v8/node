@@ -71,7 +71,6 @@ class DescriptorLookupCache;
 class EmptyStatement;
 class EternalHandles;
 class ExternalCallbackScope;
-class ExternalReferenceTable;
 class Factory;
 class HandleScopeImplementer;
 class HeapObjectToIndexHashMap;
@@ -422,7 +421,6 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   V(Relocatable*, relocatable_top, nullptr)                                   \
   V(DebugObjectCache*, string_stream_debug_object_cache, nullptr)             \
   V(Object*, string_stream_current_security_token, nullptr)                   \
-  V(ExternalReferenceTable*, external_reference_table, nullptr)               \
   V(const intptr_t*, api_external_references, nullptr)                        \
   V(AddressToIndexHashMap*, external_reference_map, nullptr)                  \
   V(HeapObjectToIndexHashMap*, root_index_map, nullptr)                       \
@@ -1261,6 +1259,10 @@ class Isolate {
     return builtins_constants_table_builder_;
   }
 
+  static const uint8_t* CurrentEmbeddedBlob();
+  static uint32_t CurrentEmbeddedBlobSize();
+
+  // TODO(jgruber): Remove these in favor of the static methods above.
   const uint8_t* embedded_blob() const;
   uint32_t embedded_blob_size() const;
 #endif
@@ -1640,6 +1642,8 @@ class Isolate {
   // Used during builtins compilation to build the builtins constants table,
   // which is stored on the root list prior to serialization.
   BuiltinsConstantsTableBuilder* builtins_constants_table_builder_ = nullptr;
+
+  void SetEmbeddedBlob(const uint8_t* blob, uint32_t blob_size);
 
   const uint8_t* embedded_blob_ = nullptr;
   uint32_t embedded_blob_size_ = 0;

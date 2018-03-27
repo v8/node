@@ -607,7 +607,7 @@ bool Debug::SetBreakPoint(Handle<JSFunction> function,
 
   // Make sure the function is compiled and has set up the debug info.
   Handle<SharedFunctionInfo> shared(function->shared());
-  if (!EnsureBreakInfo(shared)) return true;
+  if (!EnsureBreakInfo(shared)) return false;
   PrepareFunctionForBreakPoints(shared);
   Handle<DebugInfo> debug_info(shared->GetDebugInfo());
   // Source positions starts with zero.
@@ -627,8 +627,11 @@ bool Debug::SetBreakPoint(Handle<JSFunction> function,
 }
 
 bool Debug::SetBreakPointForScript(Handle<Script> script,
-                                   Handle<BreakPoint> break_point,
-                                   int* source_position) {
+                                   Handle<String> condition,
+                                   int* source_position, int* id) {
+  *id = ++thread_local_.last_breakpoint_id_;
+  Handle<BreakPoint> break_point =
+      isolate_->factory()->NewBreakPoint(*id, condition);
   if (script->type() == Script::TYPE_WASM) {
     Handle<WasmCompiledModule> compiled_module(
         WasmCompiledModule::cast(script->wasm_compiled_module()), isolate_);
@@ -741,12 +744,13 @@ void Debug::ClearBreakPoint(Handle<BreakPoint> break_point) {
   }
 }
 
-bool Debug::SetBreakpoint(Handle<Script> script, Handle<String> condition,
-                          int* offset, int* id) {
+bool Debug::SetBreakpointForFunction(Handle<JSFunction> function,
+                                     Handle<String> condition, int* id) {
   *id = ++thread_local_.last_breakpoint_id_;
   Handle<BreakPoint> breakpoint =
       isolate_->factory()->NewBreakPoint(*id, condition);
-  return SetBreakPointForScript(script, breakpoint, offset);
+  int source_position = 0;
+  return SetBreakPoint(function, breakpoint, &source_position);
 }
 
 void Debug::RemoveBreakpoint(int id) {
@@ -1404,7 +1408,7 @@ bool Debug::EnsureBreakInfo(Handle<SharedFunctionInfo> shared) {
       !Compiler::Compile(shared, Compiler::CLEAR_EXCEPTION)) {
     return false;
   }
-  if (shared->code() ==
+  if (shared->GetCode() ==
       isolate_->builtins()->builtin(Builtins::kDeserializeLazy)) {
     Snapshot::EnsureBuiltinIsDeserialized(isolate_, shared);
   }
@@ -1862,19 +1866,20 @@ void Debug::RunPromiseHook(PromiseHookType hook_type, Handle<JSPromise> promise,
           return;
         }
         last_frame_was_promise_builtin = false;
-        Handle<Code> code(info->code());
-        if (*code == *BUILTIN_CODE(isolate_, AsyncFunctionPromiseCreate)) {
-          type = debug::kDebugAsyncFunctionPromiseCreated;
-          last_frame_was_promise_builtin = true;
-        } else if (*code == *BUILTIN_CODE(isolate_, PromisePrototypeThen)) {
-          type = debug::kDebugPromiseThen;
-          last_frame_was_promise_builtin = true;
-        } else if (*code == *BUILTIN_CODE(isolate_, PromisePrototypeCatch)) {
-          type = debug::kDebugPromiseCatch;
-          last_frame_was_promise_builtin = true;
-        } else if (*code == *BUILTIN_CODE(isolate_, PromisePrototypeFinally)) {
-          type = debug::kDebugPromiseFinally;
-          last_frame_was_promise_builtin = true;
+        if (info->HasBuiltinId()) {
+          if (info->builtin_id() == Builtins::kAsyncFunctionPromiseCreate) {
+            type = debug::kDebugAsyncFunctionPromiseCreated;
+            last_frame_was_promise_builtin = true;
+          } else if (info->builtin_id() == Builtins::kPromisePrototypeThen) {
+            type = debug::kDebugPromiseThen;
+            last_frame_was_promise_builtin = true;
+          } else if (info->builtin_id() == Builtins::kPromisePrototypeCatch) {
+            type = debug::kDebugPromiseCatch;
+            last_frame_was_promise_builtin = true;
+          } else if (info->builtin_id() == Builtins::kPromisePrototypeFinally) {
+            type = debug::kDebugPromiseFinally;
+            last_frame_was_promise_builtin = true;
+          }
         }
       }
       it.Advance();
@@ -2383,7 +2388,7 @@ NoSideEffectScope::~NoSideEffectScope() {
     isolate_->Throw(*isolate_->factory()->NewEvalError(
         MessageTemplate::kNoSideEffectDebugEvaluate));
   }
-  isolate_->set_needs_side_effect_check(old_needs_side_effect_check_);
+  isolate_->set_needs_side_effect_check(false);
   isolate_->debug()->UpdateHookOnFunctionCall();
   isolate_->debug()->side_effect_check_failed_ = false;
 }

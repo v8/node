@@ -41,30 +41,30 @@ namespace internal {
     return Handle<TYPE>(TYPE::cast(__object__), ISOLATE); \
   }
 
-#define CALL_HEAP_FUNCTION(ISOLATE, FUNCTION_CALL, TYPE)                      \
-  do {                                                                        \
-    AllocationResult __allocation__ = FUNCTION_CALL;                          \
-    Object* __object__ = nullptr;                                             \
-    RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                 \
-    /* Two GCs before panicking.  In newspace will almost always succeed. */  \
-    for (int __i__ = 0; __i__ < 2; __i__++) {                                 \
-      (ISOLATE)->heap()->CollectGarbage(                                      \
-          __allocation__.RetrySpace(),                                        \
-          GarbageCollectionReason::kAllocationFailure);                       \
-      __allocation__ = FUNCTION_CALL;                                         \
-      RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                               \
-    }                                                                         \
-    (ISOLATE)->counters()->gc_last_resort_from_handles()->Increment();        \
-    (ISOLATE)->heap()->CollectAllAvailableGarbage(                            \
-        GarbageCollectionReason::kLastResort);                                \
-    {                                                                         \
-      AlwaysAllocateScope __scope__(ISOLATE);                                 \
-      __allocation__ = FUNCTION_CALL;                                         \
-    }                                                                         \
-    RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                 \
-    /* TODO(1181417): Fix this. */                                            \
-    v8::internal::Heap::FatalProcessOutOfMemory("CALL_AND_RETRY_LAST", true); \
-    return Handle<TYPE>();                                                    \
+#define CALL_HEAP_FUNCTION(ISOLATE, FUNCTION_CALL, TYPE)                     \
+  do {                                                                       \
+    AllocationResult __allocation__ = FUNCTION_CALL;                         \
+    Object* __object__ = nullptr;                                            \
+    RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                \
+    /* Two GCs before panicking.  In newspace will almost always succeed. */ \
+    for (int __i__ = 0; __i__ < 2; __i__++) {                                \
+      (ISOLATE)->heap()->CollectGarbage(                                     \
+          __allocation__.RetrySpace(),                                       \
+          GarbageCollectionReason::kAllocationFailure);                      \
+      __allocation__ = FUNCTION_CALL;                                        \
+      RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                              \
+    }                                                                        \
+    (ISOLATE)->counters()->gc_last_resort_from_handles()->Increment();       \
+    (ISOLATE)->heap()->CollectAllAvailableGarbage(                           \
+        GarbageCollectionReason::kLastResort);                               \
+    {                                                                        \
+      AlwaysAllocateScope __scope__(ISOLATE);                                \
+      __allocation__ = FUNCTION_CALL;                                        \
+    }                                                                        \
+    RETURN_OBJECT_UNLESS_RETRY(ISOLATE, TYPE)                                \
+    /* TODO(1181417): Fix this. */                                           \
+    (ISOLATE)->heap()->FatalProcessOutOfMemory("CALL_AND_RETRY_LAST");       \
+    return Handle<TYPE>();                                                   \
   } while (false)
 
 template<typename T>
@@ -1589,7 +1589,7 @@ Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
   function->initialize_properties();
   function->initialize_elements();
   function->set_shared(*info);
-  function->set_code(info->code());
+  function->set_code(info->GetCode());
   function->set_context(*context_or_undefined);
   function->set_feedback_cell(*many_closures_cell());
   int header_size;
@@ -1617,9 +1617,8 @@ Handle<JSFunction> Factory::NewFunction(const NewFunctionArgs& args) {
   // Create the SharedFunctionInfo.
   Handle<Context> context(isolate()->native_context());
   Handle<Map> map = args.GetMap(isolate());
-  Handle<SharedFunctionInfo> info =
-      NewSharedFunctionInfo(args.name_, args.maybe_code_, map->is_constructor(),
-                            kNormalFunction, args.maybe_builtin_id_);
+  Handle<SharedFunctionInfo> info = NewSharedFunctionInfo(
+      args.name_, args.maybe_code_, args.maybe_builtin_id_, kNormalFunction);
 
   // Proper language mode in shared function info will be set later.
   DCHECK(is_sloppy(info->language_mode()));
@@ -1628,7 +1627,6 @@ Handle<JSFunction> Factory::NewFunction(const NewFunctionArgs& args) {
 #ifdef DEBUG
   if (isolate()->bootstrapper()->IsActive()) {
     Handle<Code> code;
-    bool has_code = args.maybe_code_.ToHandle(&code);
     DCHECK(
         // During bootstrapping some of these maps could be not created yet.
         (*map == context->get(Context::STRICT_FUNCTION_MAP_INDEX)) ||
@@ -1639,8 +1637,8 @@ Handle<JSFunction> Factory::NewFunction(const NewFunctionArgs& args) {
              Context::STRICT_FUNCTION_WITH_READONLY_PROTOTYPE_MAP_INDEX)) ||
         // Check if it's a creation of an empty or Proxy function during
         // bootstrapping.
-        (has_code && (code->builtin_index() == Builtins::kEmptyFunction ||
-                      code->builtin_index() == Builtins::kProxyConstructor)));
+        (args.maybe_builtin_id_ == Builtins::kEmptyFunction ||
+         args.maybe_builtin_id_ == Builtins::kProxyConstructor));
   } else {
     DCHECK(
         (*map == *isolate()->sloppy_function_map()) ||
@@ -1879,6 +1877,7 @@ Handle<Code> Factory::NewOffHeapTrampolineFor(Handle<Code> code,
   result->set_handler_table_offset(code->handler_table_offset());
   result->code_data_container()->set_kind_specific_flags(
       code->code_data_container()->kind_specific_flags());
+  result->set_constant_pool_offset(code->constant_pool_offset());
   if (code->has_safepoint_info()) {
     result->set_safepoint_table_offset(code->safepoint_table_offset());
   }
@@ -2548,10 +2547,9 @@ void Factory::ReinitializeJSGlobalProxy(Handle<JSGlobalProxy> object,
 
 Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForLiteral(
     FunctionLiteral* literal, Handle<Script> script) {
-  Handle<Code> code = BUILTIN_CODE(isolate(), CompileLazy);
   FunctionKind kind = literal->kind();
-  Handle<SharedFunctionInfo> shared =
-      NewSharedFunctionInfo(literal->name(), code, IsConstructable(kind), kind);
+  Handle<SharedFunctionInfo> shared = NewSharedFunctionInfoForBuiltin(
+      literal->name(), Builtins::kCompileLazy, kind);
   SharedFunctionInfo::InitFromFunctionLiteral(shared, literal);
   SharedFunctionInfo::SetScript(shared, script, false);
   return shared;
@@ -2577,9 +2575,22 @@ Handle<JSMessageObject> Factory::NewJSMessageObject(
   return message_obj;
 }
 
+Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForApiFunction(
+    MaybeHandle<String> maybe_name,
+    Handle<FunctionTemplateInfo> function_template_info, FunctionKind kind) {
+  return NewSharedFunctionInfo(maybe_name, function_template_info,
+                               Builtins::kNoBuiltinId, kind);
+}
+
+Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForBuiltin(
+    MaybeHandle<String> maybe_name, int builtin_index, FunctionKind kind) {
+  return NewSharedFunctionInfo(maybe_name, MaybeHandle<Code>(), builtin_index,
+                               kind);
+}
+
 Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
-    MaybeHandle<String> maybe_name, MaybeHandle<Code> maybe_code,
-    bool is_constructor, FunctionKind kind, int maybe_builtin_index) {
+    MaybeHandle<String> maybe_name, MaybeHandle<HeapObject> maybe_function_data,
+    int maybe_builtin_index, FunctionKind kind) {
   // Function names are assumed to be flat elsewhere. Must flatten before
   // allocating SharedFunctionInfo to avoid GC seeing the uninitialized SFI.
   Handle<String> shared_name;
@@ -2597,22 +2608,22 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     share->set_name_or_scope_info(
         has_shared_name ? *shared_name
                         : SharedFunctionInfo::kNoSharedNameSentinel);
-    Handle<Code> code;
-    if (!maybe_code.ToHandle(&code)) {
-      code = BUILTIN_CODE(isolate(), Illegal);
+    Handle<HeapObject> function_data;
+    if (maybe_function_data.ToHandle(&function_data)) {
+      // If we pass function_data then we shouldn't pass a builtin index, and
+      // the function_data should not be code with a builtin.
+      DCHECK(!Builtins::IsBuiltinId(maybe_builtin_index));
+      DCHECK_IMPLIES(function_data->IsCode(),
+                     !Code::cast(*function_data)->is_builtin());
+      share->set_function_data(*function_data);
+    } else if (Builtins::IsBuiltinId(maybe_builtin_index)) {
+      DCHECK_NE(maybe_builtin_index, Builtins::kDeserializeLazy);
+      share->set_builtin_id(maybe_builtin_index);
+    } else {
+      share->set_builtin_id(Builtins::kIllegal);
     }
-    Object* function_data = (Builtins::IsBuiltinId(maybe_builtin_index) &&
-                             Builtins::IsLazy(maybe_builtin_index))
-                                ? Smi::FromInt(maybe_builtin_index)
-                                : Object::cast(*undefined_value());
-    share->set_function_data(function_data, SKIP_WRITE_BARRIER);
-    share->set_code(*code);
     share->set_outer_scope_info(*the_hole_value());
-    DCHECK(!Builtins::IsLazy(Builtins::kConstructedNonConstructable));
-    Handle<Code> construct_stub =
-        is_constructor ? isolate()->builtins()->JSConstructStubGeneric()
-                       : BUILTIN_CODE(isolate(), ConstructedNonConstructable);
-    share->SetConstructStub(*construct_stub);
+    share->SetConstructStub(*isolate()->builtins()->JSConstructStubGeneric());
     share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
     share->set_debug_info(Smi::kZero, SKIP_WRITE_BARRIER);
     share->set_function_identifier(*undefined_value(), SKIP_WRITE_BARRIER);
@@ -2641,6 +2652,7 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
       FixedArrayOfWeakCells::Add(noscript_shared_function_infos(), share);
   isolate()->heap()->set_noscript_shared_function_infos(*new_noscript_list);
 
+  DCHECK_EQ(SharedFunctionInfo::kNoDebuggingId, share->debugging_id());
 #ifdef VERIFY_HEAP
   share->SharedFunctionInfoVerify();
 #endif
@@ -3192,14 +3204,12 @@ NewFunctionArgs NewFunctionArgs::ForWasm(Handle<String> name, Handle<Code> code,
 
 // static
 NewFunctionArgs NewFunctionArgs::ForBuiltin(Handle<String> name,
-                                            Handle<Code> code, Handle<Map> map,
-                                            int builtin_id) {
+                                            Handle<Map> map, int builtin_id) {
   DCHECK(Builtins::IsBuiltinId(builtin_id));
 
   NewFunctionArgs args;
   args.name_ = name;
   args.maybe_map_ = map;
-  args.maybe_code_ = code;
   args.maybe_builtin_id_ = builtin_id;
   args.language_mode_ = LanguageMode::kStrict;
   args.prototype_mutability_ = MUTABLE;
@@ -3215,6 +3225,7 @@ NewFunctionArgs NewFunctionArgs::ForFunctionWithoutCode(
   NewFunctionArgs args;
   args.name_ = name;
   args.maybe_map_ = map;
+  args.maybe_builtin_id_ = Builtins::kIllegal;
   args.language_mode_ = language_mode;
   args.prototype_mutability_ = MUTABLE;
 
@@ -3225,14 +3236,13 @@ NewFunctionArgs NewFunctionArgs::ForFunctionWithoutCode(
 
 // static
 NewFunctionArgs NewFunctionArgs::ForBuiltinWithPrototype(
-    Handle<String> name, Handle<Code> code, Handle<Object> prototype,
-    InstanceType type, int instance_size, int inobject_properties,
-    int builtin_id, MutableMode prototype_mutability) {
+    Handle<String> name, Handle<Object> prototype, InstanceType type,
+    int instance_size, int inobject_properties, int builtin_id,
+    MutableMode prototype_mutability) {
   DCHECK(Builtins::IsBuiltinId(builtin_id));
 
   NewFunctionArgs args;
   args.name_ = name;
-  args.maybe_code_ = code;
   args.type_ = type;
   args.instance_size_ = instance_size;
   args.inobject_properties_ = inobject_properties;
@@ -3250,13 +3260,11 @@ NewFunctionArgs NewFunctionArgs::ForBuiltinWithPrototype(
 
 // static
 NewFunctionArgs NewFunctionArgs::ForBuiltinWithoutPrototype(
-    Handle<String> name, Handle<Code> code, int builtin_id,
-    LanguageMode language_mode) {
+    Handle<String> name, int builtin_id, LanguageMode language_mode) {
   DCHECK(Builtins::IsBuiltinId(builtin_id));
 
   NewFunctionArgs args;
   args.name_ = name;
-  args.maybe_code_ = code;
   args.maybe_builtin_id_ = builtin_id;
   args.language_mode_ = language_mode;
   args.prototype_mutability_ = MUTABLE;
@@ -3307,6 +3315,9 @@ Handle<Map> NewFunctionArgs::GetMap(Isolate* isolate) const {
   }
   UNREACHABLE();
 }
+
+#undef RETURN_OBJECT_UNLESS_RETRY
+#undef CALL_HEAP_FUNCTION
 
 }  // namespace internal
 }  // namespace v8

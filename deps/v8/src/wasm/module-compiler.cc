@@ -113,10 +113,10 @@ class CompilationState {
       std::vector<std::unique_ptr<compiler::WasmCompilationUnit>>& units);
   std::unique_ptr<compiler::WasmCompilationUnit> GetNextCompilationUnit();
   std::unique_ptr<compiler::WasmCompilationUnit> GetNextExecutedUnit();
-  // Takes the {thrower} that contains information on whether compilation
-  // failed and a {notify} enum, which determines whether or not to notify
-  // listeners waiting on a compilation event callback.
-  void OnFinishedUnit(ErrorThrower* thrower, NotifyCompilationCallback notify);
+  bool HasCompilationUnitToFinish();
+
+  void OnError(Handle<Object> error, NotifyCompilationCallback notify);
+  void OnFinishedUnit(NotifyCompilationCallback notify);
   void ScheduleUnitForFinishing(
       std::unique_ptr<compiler::WasmCompilationUnit>& unit);
 
@@ -124,7 +124,8 @@ class CompilationState {
   void OnBackgroundTaskStopped();
   void RestartBackgroundTasks();
   // Only one foreground thread (finisher) is allowed to run at a time.
-  void SetFinisherIsRunning(bool value);
+  // {SetFinisherIsRunning} returns whether the flag changed its state.
+  bool SetFinisherIsRunning(bool value);
   void ScheduleFinisherTask();
 
   bool CanAcceptWork() const { return executed_units_.CanAcceptWork(); }
@@ -147,7 +148,7 @@ class CompilationState {
  private:
   void StartCompilation(size_t num_functions);
 
-  void NotifyOnEvent(CompilationEvent event, ErrorThrower* thrower);
+  void NotifyOnEvent(CompilationEvent event, Handle<Object> error);
 
   Isolate* isolate_;
 
@@ -570,6 +571,8 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileFunction(
   unit.ExecuteCompilation();
   wasm::WasmCode* wasm_code = unit.FinishCompilation(&thrower);
 
+  if (wasm::WasmCode::ShouldBeLogged(isolate)) wasm_code->LogCode(isolate);
+
   // If there is a pending error, something really went wrong. The module was
   // verified before starting execution with lazy compilation.
   // This might be OOM, but then we cannot continue execution anyway.
@@ -735,8 +738,7 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileDirectCall(
     SeqOneByteString* module_bytes = caller_module->shared()->module_bytes();
     uint32_t caller_func_index = wasm_caller->index();
     SourcePositionTableIterator source_pos_iterator(
-        Handle<ByteArray>(ByteArray::cast(
-            caller_module->source_positions()->get(caller_func_index))));
+        wasm_caller->source_positions());
 
     const byte* func_bytes =
         module_bytes->GetChars() + caller_module->shared()
@@ -913,7 +915,8 @@ wasm::WasmCode* EnsureExportedLazyDeoptData(Isolate* isolate,
     return code;
   }
   // Clone the lazy builtin into the native module.
-  return native_module->CloneLazyBuiltinInto(code, func_index, kFlushICache);
+  return native_module->CloneLazyBuiltinInto(code, func_index,
+                                             WasmCode::kFlushICache);
 }
 
 // Ensure that the code object in <code_table> at offset <func_index> has
@@ -1179,8 +1182,7 @@ void FinishCompilationUnits(CompilationState* compilation_state,
     if (func_index < 0) break;
 
     // Update the compilation state.
-    compilation_state->OnFinishedUnit(thrower,
-                                      NotifyCompilationCallback::kNoNotify);
+    compilation_state->OnFinishedUnit(NotifyCompilationCallback::kNoNotify);
     DCHECK_IMPLIES(result == nullptr, thrower->error());
     if (result == nullptr) break;
   }
@@ -1485,20 +1487,30 @@ class FinishCompileTask : public CancelableTask {
       wasm::WasmCode* result =
           FinishCompilationUnit(compilation_state_, &thrower, &func_index);
 
-      // We need to read the value of the {thrower} object
-      // before calling {OnFinishedUnit}. The reason is
-      // that the {thrower} might be reset if callbacks are notified.
-      bool error_occurred = thrower.error();
+      if (thrower.error()) {
+        DCHECK_NULL(result);
+        USE(result);
+        Handle<Object> error = thrower.Reify();
+        compilation_state_->OnError(error, NotifyCompilationCallback::kNotify);
+        compilation_state_->SetFinisherIsRunning(false);
+        break;
+      }
 
-      if (func_index < 0 && !error_occurred) break;
-      DCHECK_IMPLIES(result == nullptr, error_occurred);
-      USE(result);
+      if (func_index < 0) {
+        // It might happen that a background task just scheduled a unit to be
+        // finished, but did not start a finisher task since the flag was still
+        // set. Check for this case, and continue if there is more work.
+        compilation_state_->SetFinisherIsRunning(false);
+        if (compilation_state_->HasCompilationUnitToFinish() &&
+            compilation_state_->SetFinisherIsRunning(true)) {
+          continue;
+        }
+        break;
+      }
 
       // Update the compilation state, and possibly notify
       // threads waiting for events.
-      compilation_state_->OnFinishedUnit(&thrower,
-                                         NotifyCompilationCallback::kNotify);
-      if (error_occurred) break;
+      compilation_state_->OnFinishedUnit(NotifyCompilationCallback::kNotify);
 
       if (deadline < MonotonicallyIncreasingTimeInMs()) {
         // We reached the deadline. We reschedule this task and return
@@ -1508,10 +1520,6 @@ class FinishCompileTask : public CancelableTask {
         return;
       }
     }
-
-    // This task finishes without being rescheduled. Therefore we set the
-    // FinisherIsRunning flag to false.
-    compilation_state_->SetFinisherIsRunning(false);
   }
 
  private:
@@ -1710,7 +1718,10 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
     DCHECK_IMPLIES(use_trap_handler(), module_->is_asm_js() ||
                                            memory->is_wasm_memory() ||
                                            memory->backing_store() == nullptr);
-  } else if (initial_pages > 0) {
+  } else if (initial_pages > 0 || use_trap_handler()) {
+    // We need to unconditionally create a guard region if using trap handlers,
+    // even when the size is zero to prevent null-derefence issues
+    // (e.g. https://crbug.com/769637).
     // Allocate memory if the initial size is more than 0 pages.
     memory_ = AllocateMemory(initial_pages);
     if (memory_.is_null()) return {};  // failed to allocate memory
@@ -2907,15 +2918,6 @@ void AsyncCompileJob::StartBackgroundTask() {
       base::make_unique<CompileTask>(this, false));
 }
 
-void AsyncCompileJob::RestartBackgroundTasks() {
-  int num_restarts = stopped_tasks_.Value();
-  stopped_tasks_.Decrement(num_restarts);
-
-  for (int i = 0; i < num_restarts; ++i) {
-    StartBackgroundTask();
-  }
-}
-
 template <typename Step, typename... Args>
 void AsyncCompileJob::DoAsync(Args&&... args) {
   NextStep<Step>(std::forward<Args>(args)...);
@@ -3048,7 +3050,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
       // on the current step we are in.
       AsyncCompileJob* job = job_;
       compilation_state->AddCallback(
-          [job](CompilationEvent event, Handle<Object> error_reason) {
+          [job](CompilationEvent event, Handle<Object> error) {
             switch (event) {
               case CompilationEvent::kFinishedBaselineCompilation:
                 if (job->DecrementAndCheckFinisherCount()) {
@@ -3056,7 +3058,10 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
                 }
                 return;
               case CompilationEvent::kFailedCompilation:
-                job->DoSync<CompileFailed>(error_reason);
+                DeferredHandleScope deferred(job->isolate());
+                error = handle(*error, job->isolate());
+                job->deferred_handles_.push_back(deferred.Detach());
+                job->DoSync<CompileFailed>(error);
                 return;
             }
             UNREACHABLE();
@@ -3483,28 +3488,29 @@ CompilationState::GetNextExecutedUnit() {
   return std::unique_ptr<compiler::WasmCompilationUnit>();
 }
 
-// TODO(kimanh): Fix semantics of function. Currently, if {notify} is set to
-// kNotify, the {thrower.Reify()} is called, which resets the thrower.
-// The reason is that we need to pass the error message on to the listener,
-// but at the same time we are not allowed to create ErrorThrower objects on
-// the heap. The created error however, can be passed on to a separate thread.
-void CompilationState::OnFinishedUnit(ErrorThrower* thrower,
-                                      NotifyCompilationCallback notify) {
-  if (thrower->error()) {
-    failed_ = true;
+bool CompilationState::HasCompilationUnitToFinish() {
+  base::LockGuard<base::Mutex> guard(&result_mutex_);
+  return !executed_units_.IsEmpty();
+}
+
+void CompilationState::OnError(Handle<Object> error,
+                               NotifyCompilationCallback notify) {
+  failed_ = true;
+  CancelAndWait();
+  if (notify == NotifyCompilationCallback::kNotify) {
+    NotifyOnEvent(CompilationEvent::kFailedCompilation, error);
+  }
+}
+
+void CompilationState::OnFinishedUnit(NotifyCompilationCallback notify) {
+  DCHECK_GT(outstanding_units_, 0);
+  --outstanding_units_;
+
+  if (outstanding_units_ == 0) {
     CancelAndWait();
     if (notify == NotifyCompilationCallback::kNotify) {
-      NotifyOnEvent(CompilationEvent::kFailedCompilation, thrower);
-    }
-  } else {
-    DCHECK_GT(outstanding_units_, 0);
-    --outstanding_units_;
-
-    if (outstanding_units_ == 0) {
-      CancelAndWait();
-      if (notify == NotifyCompilationCallback::kNotify) {
-        NotifyOnEvent(CompilationEvent::kFinishedBaselineCompilation, thrower);
-      }
+      NotifyOnEvent(CompilationEvent::kFinishedBaselineCompilation,
+                    Handle<Object>::null());
     }
   }
 }
@@ -3542,9 +3548,11 @@ void CompilationState::RestartBackgroundTasks() {
   }
 }
 
-void CompilationState::SetFinisherIsRunning(bool value) {
+bool CompilationState::SetFinisherIsRunning(bool value) {
   base::LockGuard<base::Mutex> guard(&result_mutex_);
+  if (finisher_is_running_ == value) return false;
   finisher_is_running_ = value;
+  return true;
 }
 
 void CompilationState::ScheduleFinisherTask() {
@@ -3579,19 +3587,9 @@ void CompilationState::StartCompilation(size_t num_functions) {
 }
 
 void CompilationState::NotifyOnEvent(CompilationEvent event,
-                                     ErrorThrower* thrower) {
-  Handle<Object> error_reason;
-  if (thrower->error()) {
-    error_reason = thrower->Reify();
-    DeferredHandleScope deferred(isolate_);
-    error_reason = Handle<Object>(*error_reason, isolate_);
-    deferred_handles_.push_back(deferred.Detach());
-  } else {
-    error_reason = Handle<Object>::null();
-  }
-
+                                     Handle<Object> error) {
   for (auto& callback_function : callbacks_) {
-    callback_function(event, error_reason);
+    callback_function(event, error);
   }
 }
 

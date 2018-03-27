@@ -38,7 +38,6 @@ namespace internal {
   V(JSFunction)            \
   V(JSObject)              \
   V(JSObjectFast)          \
-  V(JSRegExp)              \
   V(JSWeakCollection)      \
   V(Map)                   \
   V(NativeContext)         \
@@ -579,6 +578,10 @@ class Map : public HeapObject {
   // field contains the validity cell which guards modifications of this map's
   // prototype.
   DECL_ACCESSORS(prototype_validity_cell, Object)
+
+  // Returns true if prototype validity cell value represents "valid" prototype
+  // chain state.
+  inline bool IsPrototypeValidityCellValid() const;
 
   inline PropertyDetails GetLastDescriptorDetails() const;
 

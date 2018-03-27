@@ -824,11 +824,11 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kDeadValue:
       result = LowerDeadValue(node);
       break;
-    case IrOpcode::kStringFromCharCode:
-      result = LowerStringFromCharCode(node);
+    case IrOpcode::kStringFromSingleCharCode:
+      result = LowerStringFromSingleCharCode(node);
       break;
-    case IrOpcode::kStringFromCodePoint:
-      result = LowerStringFromCodePoint(node);
+    case IrOpcode::kStringFromSingleCodePoint:
+      result = LowerStringFromSingleCodePoint(node);
       break;
     case IrOpcode::kStringIndexOf:
       result = LowerStringIndexOf(node);
@@ -2951,7 +2951,7 @@ Node* EffectControlLinearizer::LoadFromSeqString(Node* receiver, Node* position,
   return done.PhiAt(0);
 }
 
-Node* EffectControlLinearizer::LowerStringFromCharCode(Node* node) {
+Node* EffectControlLinearizer::LowerStringFromSingleCharCode(Node* node) {
   Node* value = node->InputAt(0);
   Node* code = __ Word32And(value, __ Uint32Constant(0xFFFF));
 
@@ -3067,7 +3067,7 @@ Node* EffectControlLinearizer::LowerStringToUpperCaseIntl(Node* node) {
 
 #endif  // V8_INTL_SUPPORT
 
-Node* EffectControlLinearizer::LowerStringFromCodePoint(Node* node) {
+Node* EffectControlLinearizer::LowerStringFromSingleCodePoint(Node* node) {
   Node* value = node->InputAt(0);
   Node* code = value;
 

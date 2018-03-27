@@ -91,6 +91,15 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       break;
     case HASH_TABLE_TYPE:
     case FIXED_ARRAY_TYPE:
+    case BLOCK_CONTEXT_TYPE:
+    case CATCH_CONTEXT_TYPE:
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+    case EVAL_CONTEXT_TYPE:
+    case FUNCTION_CONTEXT_TYPE:
+    case MODULE_CONTEXT_TYPE:
+    case NATIVE_CONTEXT_TYPE:
+    case SCRIPT_CONTEXT_TYPE:
+    case WITH_CONTEXT_TYPE:
       FixedArray::cast(this)->FixedArrayPrint(os);
       break;
     case BOILERPLATE_DESCRIPTION_TYPE:
@@ -1102,8 +1111,8 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
   int builtin_index = code()->builtin_index();
   if (builtin_index != -1 && !IsInterpreted()) {
     if (builtin_index == Builtins::kDeserializeLazy) {
-      if (shared()->HasLazyDeserializationBuiltinId()) {
-        builtin_index = shared()->lazy_deserialization_builtin_id();
+      if (shared()->HasBuiltinId()) {
+        builtin_index = shared()->builtin_id();
         os << "\n - builtin: " << GetIsolate()->builtins()->name(builtin_index)
            << "(lazy)";
       }
@@ -1161,6 +1170,9 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   } else {
     os << "<no-shared-name>";
   }
+  if (HasInferredName()) {
+    os << "\n - inferred name: " << Brief(inferred_name());
+  }
   os << "\n - kind: " << kind();
   if (needs_home_object()) {
     os << "\n - needs_home_object";
@@ -1169,13 +1181,8 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - formal_parameter_count: " << internal_formal_parameter_count();
   os << "\n - expected_nof_properties: " << expected_nof_properties();
   os << "\n - language_mode: " << language_mode();
-  os << "\n - code: " << Brief(code());
-  if (HasBytecodeArray()) {
-    os << "\n - bytecode_array: " << bytecode_array();
-  }
-  if (HasAsmWasmData()) {
-    os << "\n - asm_wasm_data: " << Brief(asm_wasm_data());
-  }
+  os << "\n - data: " << Brief(function_data());
+  os << "\n - code (from data): " << Brief(GetCode());
   PrintSourceCode(os);
   // Script files are often large, hard to read.
   // os << "\n - script =";
@@ -1199,11 +1206,6 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n - length: " << length();
   os << "\n - feedback_metadata: ";
   feedback_metadata()->FeedbackMetadataPrint(os);
-  if (HasPreParsedScopeData()) {
-    os << "\n - preparsed scope data: " << preparsed_scope_data();
-  } else {
-    os << "\n - no preparsed scope data";
-  }
   os << "\n";
 }
 

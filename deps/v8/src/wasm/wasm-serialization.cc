@@ -24,6 +24,7 @@
 namespace v8 {
 namespace internal {
 namespace wasm {
+
 namespace {
 
 class Writer {
@@ -103,7 +104,7 @@ void WriteVersion(Isolate* isolate, Vector<byte> buffer) {
   DCHECK_GE(buffer.size(), kVersionSize);
   Writer writer(buffer);
   writer.Write(SerializedData::ComputeMagicNumber(
-      ExternalReferenceTable::instance(isolate)));
+      isolate->heap()->external_reference_table()));
   writer.Write(Version::Hash());
   writer.Write(static_cast<uint32_t>(CpuFeatures::SupportedFeatures()));
   writer.Write(FlagList::Hash());
@@ -115,6 +116,29 @@ bool IsSupportedVersion(Isolate* isolate, const Vector<const byte> buffer) {
   WriteVersion(isolate, {version, kVersionSize});
   if (memcmp(buffer.start(), version, kVersionSize) == 0) return true;
   return false;
+}
+
+// On Intel, call sites are encoded as a displacement. For linking
+// and for serialization/deserialization, we want to store/retrieve
+// a tag (the function index). On Intel, that means accessing the
+// raw displacement. Everywhere else, that simply means accessing
+// the target address.
+void SetWasmCalleeTag(RelocInfo* rinfo, uint32_t tag) {
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_IA32
+  *(reinterpret_cast<uint32_t*>(rinfo->target_address_address())) = tag;
+#else
+  rinfo->set_target_address(reinterpret_cast<Address>(tag), SKIP_WRITE_BARRIER,
+                            SKIP_ICACHE_FLUSH);
+#endif
+}
+
+uint32_t GetWasmCalleeTag(RelocInfo* rinfo) {
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_IA32
+  return *(reinterpret_cast<uint32_t*>(rinfo->target_address_address()));
+#else
+  return static_cast<uint32_t>(
+      reinterpret_cast<size_t>(rinfo->target_address()));
+#endif
 }
 
 }  // namespace
@@ -133,7 +157,6 @@ class V8_EXPORT_PRIVATE NativeModuleSerializer {
   static size_t GetCodeHeaderSize();
   size_t MeasureCode(const WasmCode*) const;
   size_t MeasureCopiedStubs() const;
-  ByteArray* GetSourcePositions(const WasmCode*) const;
 
   void BufferHeader();
   // we buffer all the stubs because they are small
@@ -188,7 +211,7 @@ NativeModuleSerializer::NativeModuleSerializer(Isolate* isolate,
   DCHECK_NOT_NULL(native_module_);
   // TODO(mtrofin): persist the export wrappers. Ideally, we'd only persist
   // the unique ones, i.e. the cache.
-  ExternalReferenceTable* table = ExternalReferenceTable::instance(isolate_);
+  ExternalReferenceTable* table = isolate_->heap()->external_reference_table();
   for (uint32_t i = 0; i < table->size(); ++i) {
     Address addr = table->address(i);
     reference_table_lookup_.insert(std::make_pair(addr, i));
@@ -228,20 +251,16 @@ size_t NativeModuleSerializer::GetCodeHeaderSize() {
          sizeof(uint32_t) +       // stack slots
          sizeof(size_t) +         // code size
          sizeof(size_t) +         // reloc size
-         sizeof(uint32_t) +       // source positions size
+         sizeof(size_t) +         // source positions size
          sizeof(size_t) +         // protected instructions size
          sizeof(WasmCode::Tier);  // tier
 }
 
 size_t NativeModuleSerializer::MeasureCode(const WasmCode* code) const {
-  ByteArray* source_positions = GetSourcePositions(code);
   return GetCodeHeaderSize() + code->instructions().size() +  // code
          code->reloc_info().size() +                          // reloc info
-         (source_positions == nullptr
-              ? 0
-              : static_cast<uint32_t>(
-                    source_positions->length())) +  // source positions
-         code->protected_instructions().size() *
+         code->source_positions().size() +                    // source pos.
+         code->protected_instructions().size() *              // protected inst.
              sizeof(trap_handler::ProtectedInstructionData);
 }
 
@@ -306,19 +325,6 @@ void NativeModuleSerializer::BufferCopiedStubs() {
   }
 }
 
-ByteArray* NativeModuleSerializer::GetSourcePositions(
-    const WasmCode* code) const {
-  if (code->kind() != WasmCode::kFunction) return nullptr;
-  uint32_t index = code->index();
-  Object* source_positions_entry =
-      native_module_->compiled_module()->source_positions()->get(
-          static_cast<int>(index));
-  if (source_positions_entry->IsByteArray()) {
-    return ByteArray::cast(source_positions_entry);
-  }
-  return nullptr;
-}
-
 void NativeModuleSerializer::BufferCurrentWasmCode() {
   const WasmCode* code = native_module_->GetCode(index_);
   size_t size = MeasureCode(code);
@@ -331,14 +337,6 @@ void NativeModuleSerializer::BufferCodeInAllocatedScratch(
     const WasmCode* code) {
   // We write the address, the size, and then copy the code as-is, followed
   // by reloc info, followed by source positions.
-  ByteArray* source_positions_entry = GetSourcePositions(code);
-  Address source_positions = nullptr;
-  uint32_t source_positions_size = 0;
-  if (source_positions_entry != nullptr) {
-    source_positions = source_positions_entry->GetDataStartAddress();
-    source_positions_size =
-        static_cast<uint32_t>(source_positions_entry->length());
-  }
   Writer writer(remaining_);
   // write the header
   writer.Write(MeasureCode(code));
@@ -348,7 +346,7 @@ void NativeModuleSerializer::BufferCodeInAllocatedScratch(
   writer.Write(code->stack_slots());
   writer.Write(code->instructions().size());
   writer.Write(code->reloc_info().size());
-  writer.Write(source_positions_size);
+  writer.Write(code->source_positions().size());
   writer.Write(code->protected_instructions().size());
   writer.Write(code->tier());
   // next is the code, which we have to reloc.
@@ -356,7 +354,7 @@ void NativeModuleSerializer::BufferCodeInAllocatedScratch(
   // write the code and everything else
   writer.WriteVector(code->instructions());
   writer.WriteVector(code->reloc_info());
-  writer.WriteVector({source_positions, source_positions_size});
+  writer.WriteVector(code->source_positions());
   writer.WriteVector(
       {reinterpret_cast<const byte*>(code->protected_instructions().data()),
        sizeof(trap_handler::ProtectedInstructionData) *
@@ -534,7 +532,7 @@ bool NativeModuleDeserializer::ReadCode() {
   uint32_t stack_slot_count = reader.Read<uint32_t>();
   size_t code_size = reader.Read<size_t>();
   size_t reloc_size = reader.Read<size_t>();
-  uint32_t source_position_size = reader.Read<uint32_t>();
+  size_t source_position_size = reader.Read<size_t>();
   size_t protected_instructions_size = reader.Read<size_t>();
   WasmCode::Tier tier = reader.Read<WasmCode::Tier>();
 
@@ -548,11 +546,17 @@ bool NativeModuleDeserializer::ReadCode() {
     reloc_info.reset(new byte[reloc_size]);
     reader.ReadIntoVector({reloc_info.get(), reloc_size});
   }
+  std::unique_ptr<byte[]> source_pos;
+  if (source_position_size > 0) {
+    source_pos.reset(new byte[source_position_size]);
+    reader.ReadIntoVector({source_pos.get(), source_position_size});
+  }
   WasmCode* ret = native_module_->AddOwnedCode(
-      code_buffer, std::move(reloc_info), reloc_size, Just(index_),
-      WasmCode::kFunction, constant_pool_offset, stack_slot_count,
-      safepoint_table_offset, handler_table_offset, protected_instructions,
-      tier, kNoFlushICache);
+      code_buffer, std::move(reloc_info), reloc_size, std::move(source_pos),
+      source_position_size, Just(index_), WasmCode::kFunction,
+      constant_pool_offset, stack_slot_count, safepoint_table_offset,
+      handler_table_offset, protected_instructions, tier,
+      WasmCode::kNoFlushICache);
   native_module_->code_table_[index_] = ret;
 
   // now relocate the code
@@ -580,7 +584,7 @@ bool NativeModuleDeserializer::ReadCode() {
       case RelocInfo::RUNTIME_ENTRY: {
         uint32_t tag = GetWasmCalleeTag(iter.rinfo());
         Address address =
-            ExternalReferenceTable::instance(isolate_)->address(tag);
+            isolate_->heap()->external_reference_table()->address(tag);
         iter.rinfo()->set_target_runtime_entry(address, SKIP_WRITE_BARRIER,
                                                SKIP_ICACHE_FLUSH);
         break;
@@ -594,14 +598,6 @@ bool NativeModuleDeserializer::ReadCode() {
   Assembler::FlushICache(ret->instructions().start(),
                          ret->instructions().size());
 
-  if (source_position_size > 0) {
-    Handle<ByteArray> source_positions = isolate_->factory()->NewByteArray(
-        static_cast<int>(source_position_size), TENURED);
-    reader.ReadIntoVector(
-        {source_positions->GetDataStartAddress(), source_position_size});
-    native_module_->compiled_module()->source_positions()->set(
-        static_cast<int>(index_), *source_positions);
-  }
   if (protected_instructions_size > 0) {
     reader.ReadIntoVector(
         {reinterpret_cast<byte*>(protected_instructions->data()),

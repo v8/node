@@ -18,6 +18,7 @@
 #include "src/allocation.h"
 #include "src/assert-scope.h"
 #include "src/base/atomic-utils.h"
+#include "src/external-reference-table.h"
 #include "src/globals.h"
 #include "src/heap-symbols.h"
 #include "src/objects.h"
@@ -278,6 +279,7 @@ using v8::MemoryPressureLevel;
   V(Smi, stack_limit, StackLimit)                                              \
   V(Smi, real_stack_limit, RealStackLimit)                                     \
   V(Smi, last_script_id, LastScriptId)                                         \
+  V(Smi, last_debugging_id, LastDebuggingId)                                   \
   V(Smi, hash_seed, HashSeed)                                                  \
   /* To distinguish the function templates, so that we can find them in the */ \
   /* function cache of the native context. */                                  \
@@ -679,8 +681,7 @@ class Heap {
   template <typename T>
   static inline bool IsOneByte(T t, int chars);
 
-  static void FatalProcessOutOfMemory(const char* location,
-                                      bool is_heap_oom = false);
+  void FatalProcessOutOfMemory(const char* location);
 
   V8_EXPORT_PRIVATE static bool RootIsImmortalImmovable(int root_index);
 
@@ -890,6 +891,7 @@ class Heap {
   inline uint32_t HashSeed();
 
   inline int NextScriptId();
+  inline int NextDebuggingId();
   inline int GetNextTemplateSerialNumber();
 
   void SetSerializedObjects(FixedArray* objects);
@@ -1091,6 +1093,15 @@ class Heap {
 
   // Generated code can embed this address to get access to the roots.
   Object** roots_array_start() { return roots_; }
+
+  ExternalReferenceTable* external_reference_table() {
+    DCHECK(external_reference_table_.is_initialized());
+    return &external_reference_table_;
+  }
+
+  static constexpr int roots_to_external_reference_table_offset() {
+    return kRootsExternalReferenceTableOffset;
+  }
 
   // Sets the stub_cache_ (only used when expanding the dictionary).
   void SetRootCodeStubs(SimpleNumberDictionary* value);
@@ -1390,9 +1401,7 @@ class Heap {
   // ===========================================================================
 
   // Returns the maximum amount of memory reserved for the heap.
-  size_t MaxReserved() {
-    return 2 * max_semi_space_size_ + max_old_generation_size_;
-  }
+  size_t MaxReserved();
   size_t MaxSemiSpaceSize() { return max_semi_space_size_; }
   size_t InitialSemiSpaceSize() { return initial_semispace_size_; }
   size_t MaxOldGenerationSize() { return max_old_generation_size_; }
@@ -2061,10 +2070,6 @@ class Heap {
 
   bool CanExpandOldGeneration(size_t size);
 
-  bool IsCloseToOutOfMemory(size_t slack) {
-    return OldGenerationCapacity() + slack >= MaxOldGenerationSize();
-  }
-
   bool ShouldExpandOldGenerationOnSlowAllocation();
 
   enum class IncrementalMarkingLimit { kNoLimit, kSoftLimit, kHardLimit };
@@ -2398,6 +2403,13 @@ class Heap {
   Isolate* isolate_;
 
   Object* roots_[kRootListLength];
+
+  // This table is accessed from builtin code compiled into the snapshot, and
+  // thus its offset from roots_ must remain static. This is verified in
+  // Isolate::Init() using runtime checks.
+  static constexpr int kRootsExternalReferenceTableOffset =
+      kRootListLength * kPointerSize;
+  ExternalReferenceTable external_reference_table_;
 
   size_t code_range_size_;
   size_t max_semi_space_size_;

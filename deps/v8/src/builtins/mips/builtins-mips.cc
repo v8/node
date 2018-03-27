@@ -82,12 +82,6 @@ void Builtins::Generate_AdaptorWithBuiltinExitFrame(MacroAssembler* masm) {
   AdaptorWithExitFrameType(masm, BUILTIN_EXIT);
 }
 
-// Load the built-in Array function from the current context.
-static void GenerateLoadArrayFunction(MacroAssembler* masm, Register result) {
-  // Load the Array function from the native context.
-  __ LoadNativeContextSlot(Context::ARRAY_FUNCTION_INDEX, result);
-}
-
 void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- a0     : number of arguments
@@ -118,13 +112,11 @@ void Builtins::Generate_InternalArrayConstructor(MacroAssembler* masm) {
 void Builtins::Generate_ArrayConstructor(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- a0     : number of arguments
+  //  -- a1     : array function
   //  -- ra     : return address
   //  -- sp[...]: constructor arguments
   // -----------------------------------
   Label generic_array_code;
-
-  // Get the Array function.
-  GenerateLoadArrayFunction(masm, a1);
 
   if (FLAG_debug_code) {
     // Initial map for the builtin Array functions should be maps.
@@ -132,15 +124,21 @@ void Builtins::Generate_ArrayConstructor(MacroAssembler* masm) {
     __ SmiTst(a2, t0);
     __ Assert(ne, AbortReason::kUnexpectedInitialMapForArrayFunction1, t0,
               Operand(zero_reg));
-    __ GetObjectType(a2, a3, t0);
+    __ GetObjectType(a2, t1, t0);
     __ Assert(eq, AbortReason::kUnexpectedInitialMapForArrayFunction2, t0,
               Operand(MAP_TYPE));
   }
 
-  // Run the native code for the Array function called as a normal function.
-  // Tail call a stub.
-  __ mov(a3, a1);
+  // a2 is the AllocationSite - here undefined.
   __ LoadRoot(a2, Heap::kUndefinedValueRootIndex);
+  // If a3 (new target) is undefined, then this is the 'Call' case, so move
+  // a1 (the constructor) to a3.
+  Label call;
+  __ Branch(&call, ne, a3, Operand(a2));
+  __ mov(a3, a1);
+
+  // Run the native code for the Array function called as a normal function.
+  __ bind(&call);
   ArrayConstructorStub stub(masm->isolate());
   __ TailCallStub(&stub);
 }
@@ -1075,6 +1073,7 @@ static void Generate_InterpreterPushArgs(MacroAssembler* masm,
 void Builtins::Generate_InterpreterPushArgsThenCallImpl(
     MacroAssembler* masm, ConvertReceiverMode receiver_mode,
     InterpreterPushArgsMode mode) {
+  DCHECK(mode != InterpreterPushArgsMode::kArrayFunction);
   // ----------- S t a t e -------------
   //  -- a0 : the number of arguments (not including the receiver)
   //  -- a2 : the address of the first argument to be pushed. Subsequent
@@ -1103,10 +1102,7 @@ void Builtins::Generate_InterpreterPushArgsThenCallImpl(
   }
 
   // Call the target.
-  if (mode == InterpreterPushArgsMode::kArrayFunction) {
-    // Unreachable code.
-    __ break_(0xCC);
-  } else if (mode == InterpreterPushArgsMode::kWithFinalSpread) {
+  if (mode == InterpreterPushArgsMode::kWithFinalSpread) {
     __ Jump(BUILTIN_CODE(masm->isolate(), CallWithSpread),
             RelocInfo::CODE_TARGET);
   } else {
@@ -1152,11 +1148,10 @@ void Builtins::Generate_InterpreterPushArgsThenConstructImpl(
   if (mode == InterpreterPushArgsMode::kArrayFunction) {
     __ AssertFunction(a1);
 
-    // Tail call to the function-specific construct stub (still in the caller
+    // Tail call to the array construct stub (still in the caller
     // context at this point).
-    __ lw(t0, FieldMemOperand(a1, JSFunction::kSharedFunctionInfoOffset));
-    __ lw(t0, FieldMemOperand(t0, SharedFunctionInfo::kConstructStubOffset));
-    __ Jump(at, t0, Code::kHeaderSize - kHeapObjectTag);
+    ArrayConstructorStub array_constructor_stub(masm->isolate());
+    __ Jump(array_constructor_stub.GetCode(), RelocInfo::CODE_TARGET);
   } else if (mode == InterpreterPushArgsMode::kWithFinalSpread) {
     // Call the constructor with a0, a1, and a3 unmodified.
     __ Jump(BUILTIN_CODE(masm->isolate(), ConstructWithSpread),
@@ -1257,15 +1252,75 @@ void Builtins::Generate_InterpreterEnterBytecodeDispatch(MacroAssembler* masm) {
 }
 
 void Builtins::Generate_CompileLazyDeoptimizedCode(MacroAssembler* masm) {
-  // Set the code slot inside the JSFunction to the trampoline to the
-  // interpreter entry.
-  __ lw(a2, FieldMemOperand(a1, JSFunction::kSharedFunctionInfoOffset));
-  __ lw(a2, FieldMemOperand(a2, SharedFunctionInfo::kCodeOffset));
+  // Set the code slot inside the JSFunction to CompileLazy.
+  __ Move(a2, BUILTIN_CODE(masm->isolate(), CompileLazy));
   __ sw(a2, FieldMemOperand(a1, JSFunction::kCodeOffset));
   __ RecordWriteField(a1, JSFunction::kCodeOffset, a2, t0, kRAHasNotBeenSaved,
                       kDontSaveFPRegs, OMIT_REMEMBERED_SET, OMIT_SMI_CHECK);
   // Jump to compile lazy.
   Generate_CompileLazy(masm);
+}
+
+static void GetSharedFunctionInfoCode(MacroAssembler* masm, Register sfi_data,
+                                      Register scratch1) {
+  // Figure out the SFI's code object.
+  Label done;
+  Label check_is_bytecode_array;
+  Label check_is_code;
+  Label check_is_fixed_array;
+  Label check_is_pre_parsed_scope_data;
+  Label check_is_function_template_info;
+
+  Register data_type = scratch1;
+
+  // IsSmi: Is builtin
+  __ JumpIfNotSmi(sfi_data, &check_is_bytecode_array);
+  __ li(scratch1,
+        Operand(ExternalReference::builtins_address(masm->isolate())));
+  // Avoid untagging the Smi.
+  STATIC_ASSERT(kPointerSizeLog2 > kSmiTagSize);
+  STATIC_ASSERT(kSmiShiftSize == 0);
+  __ Lsa(scratch1, scratch1, sfi_data, kPointerSizeLog2 - kSmiTagSize);
+  __ lw(sfi_data, MemOperand(scratch1));
+  __ Branch(&done);
+
+  // Get map for subsequent checks.
+  __ bind(&check_is_bytecode_array);
+  __ lw(data_type, FieldMemOperand(sfi_data, HeapObject::kMapOffset));
+  __ lhu(data_type, FieldMemOperand(data_type, Map::kInstanceTypeOffset));
+
+  // IsBytecodeArray: Interpret bytecode
+  __ Branch(&check_is_code, ne, data_type, Operand(BYTECODE_ARRAY_TYPE));
+  __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), InterpreterEntryTrampoline));
+  __ Branch(&done);
+
+  // IsCode: Run code
+  __ bind(&check_is_code);
+  __ Branch(&done, eq, data_type, Operand(CODE_TYPE));
+
+  // IsFixedArray: Instantiate using AsmWasmData,
+  __ bind(&check_is_fixed_array);
+  __ Branch(&check_is_pre_parsed_scope_data, ne, data_type,
+            Operand(FIXED_ARRAY_TYPE));
+  __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), InstantiateAsmJs));
+  __ Branch(&done);
+
+  // IsPreParsedScopeData: Compile lazy
+  __ bind(&check_is_pre_parsed_scope_data);
+  __ Branch(&check_is_function_template_info, ne, data_type,
+            Operand(TUPLE2_TYPE));
+  __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), CompileLazy));
+  __ Branch(&done);
+
+  // IsFunctionTemplateInfo: API call
+  __ bind(&check_is_function_template_info);
+  if (FLAG_debug_code) {
+    __ Assert(eq, AbortReason::kInvalidSharedFunctionInfoData, data_type,
+              Operand(FUNCTION_TEMPLATE_INFO_TYPE));
+  }
+  __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), HandleApiCall));
+
+  __ bind(&done);
 }
 
 void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
@@ -1290,12 +1345,13 @@ void Builtins::Generate_CompileLazy(MacroAssembler* masm) {
   // Is there an optimization marker or optimized code in the feedback vector?
   MaybeTailCallOptimizedCodeSlot(masm, feedback_vector, t0, t3, t1);
 
-  // We found no optimized code.
+  // We found no optimized code. Infer the code object needed for the SFI.
   Register entry = t0;
   __ lw(entry, FieldMemOperand(closure, JSFunction::kSharedFunctionInfoOffset));
+  __ lw(entry, FieldMemOperand(entry, SharedFunctionInfo::kFunctionDataOffset));
+  GetSharedFunctionInfoCode(masm, entry, t1);
 
-  // If SFI points to anything other than CompileLazy, install that.
-  __ lw(entry, FieldMemOperand(entry, SharedFunctionInfo::kCodeOffset));
+  // If code entry points to anything other than CompileLazy, install that.
   __ Move(t1, masm->CodeObject());
   __ Branch(&gotta_call_runtime, eq, entry, Operand(t1));
 
@@ -1363,25 +1419,9 @@ void Builtins::Generate_DeserializeLazy(MacroAssembler* masm) {
 
   {
     // If we've reached this spot, the target builtin has been deserialized and
-    // we simply need to copy it over. First to the shared function info.
+    // we simply need to copy it over to the target function.
 
     Register target_builtin = scratch1;
-    Register shared = scratch0;
-
-    __ lw(shared,
-          FieldMemOperand(target, JSFunction::kSharedFunctionInfoOffset));
-
-    CHECK(t1 != target && t1 != scratch0 && t1 != scratch1);
-    CHECK(t3 != target && t3 != scratch0 && t3 != scratch1);
-
-    __ sw(target_builtin,
-          FieldMemOperand(shared, SharedFunctionInfo::kCodeOffset));
-    __ mov(t3, target_builtin);  // Write barrier clobbers t3 below.
-    __ RecordWriteField(shared, SharedFunctionInfo::kCodeOffset, t3, t1,
-                        kRAHasNotBeenSaved, kDontSaveFPRegs,
-                        OMIT_REMEMBERED_SET, OMIT_SMI_CHECK);
-
-    // And second to the target function.
 
     __ sw(target_builtin, FieldMemOperand(target, JSFunction::kCodeOffset));
     __ mov(t3, target_builtin);  // Write barrier clobbers t3 below.
@@ -2190,6 +2230,7 @@ void Builtins::Generate_ConstructFunction(MacroAssembler* masm) {
   //  -- a1 : the constructor to call (checked to be a JSFunction)
   //  -- a3 : the new target (checked to be a constructor)
   // -----------------------------------
+  __ AssertConstructor(a1);
   __ AssertFunction(a1);
 
   // Calling convention for function specific ConstructStubs require
@@ -2210,6 +2251,7 @@ void Builtins::Generate_ConstructBoundFunction(MacroAssembler* masm) {
   //  -- a1 : the function to call (checked to be a JSBoundFunction)
   //  -- a3 : the new target (checked to be a constructor)
   // -----------------------------------
+  __ AssertConstructor(a1);
   __ AssertBoundFunction(a1);
 
   // Load [[BoundArguments]] into a2 and length of that into t0.
@@ -2304,15 +2346,16 @@ void Builtins::Generate_Construct(MacroAssembler* masm) {
   Label non_constructor, non_proxy;
   __ JumpIfSmi(a1, &non_constructor);
 
-  // Dispatch based on instance type.
-  __ GetObjectType(a1, t1, t2);
-  __ Jump(BUILTIN_CODE(masm->isolate(), ConstructFunction),
-          RelocInfo::CODE_TARGET, eq, t2, Operand(JS_FUNCTION_TYPE));
-
   // Check if target has a [[Construct]] internal method.
+  __ lw(t1, FieldMemOperand(a1, HeapObject::kMapOffset));
   __ lbu(t3, FieldMemOperand(t1, Map::kBitFieldOffset));
   __ And(t3, t3, Operand(Map::IsConstructorBit::kMask));
   __ Branch(&non_constructor, eq, t3, Operand(zero_reg));
+
+  // Dispatch based on instance type.
+  __ lhu(t2, FieldMemOperand(t1, Map::kInstanceTypeOffset));
+  __ Jump(BUILTIN_CODE(masm->isolate(), ConstructFunction),
+          RelocInfo::CODE_TARGET, eq, t2, Operand(JS_FUNCTION_TYPE));
 
   // Only dispatch to bound functions after checking whether they are
   // constructors.

@@ -22,7 +22,7 @@ void Deserializer<AllocatorT>::Initialize(Isolate* isolate) {
   DCHECK_NOT_NULL(isolate);
   isolate_ = isolate;
   DCHECK_NULL(external_reference_table_);
-  external_reference_table_ = ExternalReferenceTable::instance(isolate);
+  external_reference_table_ = isolate->heap()->external_reference_table();
 #ifdef DEBUG
   // Count the number of external references registered through the API.
   num_api_references_ = 0;
@@ -253,6 +253,7 @@ HeapObject* Deserializer<AllocatorT>::PostProcessNewObject(HeapObject* obj,
         interpreter::Interpreter::InterruptBudget());
     bytecode_array->set_osr_loop_nesting_level(0);
   }
+
   // Check alignment.
   DCHECK_EQ(0, Heap::GetFillToAlign(obj->address(),
                                     HeapObject::RequiredAlignment(obj->map())));
@@ -523,8 +524,7 @@ bool Deserializer<AllocatorT>::ReadData(MaybeObject** current,
             reinterpret_cast<Address>(current) + skip);
 
         CHECK_NOT_NULL(isolate->embedded_blob());
-        EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
-                                                isolate->embedded_blob_size());
+        EmbeddedData d = EmbeddedData::FromBlob();
         const uint8_t* address = d.InstructionStartOfBuiltin(builtin_index);
         CHECK_NOT_NULL(address);
 

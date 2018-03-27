@@ -21,6 +21,7 @@
 #include "src/machine-type.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/snapshot/serializer-common.h"
 #include "src/utils.h"
 #include "src/zone/zone.h"
 
@@ -261,37 +262,30 @@ TNode<HeapObject> CodeAssembler::LookupConstant(Handle<HeapObject> object) {
       Load(MachineType::AnyTagged(), builtins_constants_table, offset));
 }
 
-// External references are stored on the builtins constants list, wrapped in
-// Foreign objects.
-// TODO(jgruber,v8:6666): A more efficient solution.
+// External references are stored in the external reference table.
 TNode<ExternalReference> CodeAssembler::LookupExternalReference(
     ExternalReference reference) {
   DCHECK(isolate()->serializer_enabled());
 
-  // Ensure the given object is in the builtins constants table and fetch its
-  // index.
-  BuiltinsConstantsTableBuilder* builder =
-      isolate()->builtins_constants_table_builder();
-  uint32_t index = builder->AddExternalReference(reference);
+  // Encode as an index into the external reference table stored on the isolate.
 
-  // The builtins constants table is loaded through the root register on all
-  // supported platforms. This is checked by the
-  // VerifyBuiltinsIsolateIndependence cctest, which disallows embedded objects
-  // in isolate-independent builtins.
-  DCHECK(isolate()->heap()->RootCanBeTreatedAsConstant(
-      Heap::kBuiltinsConstantsTableRootIndex));
-  TNode<FixedArray> builtins_constants_table = UncheckedCast<FixedArray>(
-      LoadRoot(Heap::kBuiltinsConstantsTableRootIndex));
+  ExternalReferenceEncoder encoder(isolate());
+  ExternalReferenceEncoder::Value v = encoder.Encode(reference.address());
+  CHECK(!v.is_from_api());
+  uint32_t index = v.index();
 
-  // Generate the lookup.
-  const int32_t header_size = FixedArray::kHeaderSize - kHeapObjectTag;
-  TNode<IntPtrT> offset = IntPtrConstant(header_size + kPointerSize * index);
-  TNode<Object> foreign = UncheckedCast<HeapObject>(
-      Load(MachineType::AnyTagged(), builtins_constants_table, offset));
+  // Generate code to load from the external reference table.
+
+  const intptr_t roots_to_external_reference_offset =
+      Heap::roots_to_external_reference_table_offset()
+#ifdef V8_TARGET_ARCH_X64
+      - kRootRegisterBias
+#endif
+      + ExternalReferenceTable::OffsetOfEntry(index);
 
   return UncheckedCast<ExternalReference>(
-      Load(MachineType::Pointer(), foreign,
-           IntPtrConstant(Foreign::kForeignAddressOffset - kHeapObjectTag)));
+      Load(MachineType::Pointer(), LoadRootsPointer(),
+           IntPtrConstant(roots_to_external_reference_offset)));
 }
 #endif  // V8_EMBEDDED_BUILTINS
 
@@ -583,6 +577,10 @@ TNode<WordT> CodeAssembler::WordShl(SloppyTNode<WordT> value, int shift) {
 
 TNode<WordT> CodeAssembler::WordShr(SloppyTNode<WordT> value, int shift) {
   return (shift != 0) ? WordShr(value, IntPtrConstant(shift)) : value;
+}
+
+TNode<WordT> CodeAssembler::WordSar(SloppyTNode<WordT> value, int shift) {
+  return (shift != 0) ? WordSar(value, IntPtrConstant(shift)) : value;
 }
 
 TNode<Word32T> CodeAssembler::Word32Shr(SloppyTNode<Word32T> value, int shift) {

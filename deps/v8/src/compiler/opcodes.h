@@ -344,8 +344,8 @@
   V(StringToNumber)                     \
   V(StringCharCodeAt)                   \
   V(StringCodePointAt)                  \
-  V(StringFromCharCode)                 \
-  V(StringFromCodePoint)                \
+  V(StringFromSingleCharCode)           \
+  V(StringFromSingleCodePoint)          \
   V(StringIndexOf)                      \
   V(StringLength)                       \
   V(StringToLowerCaseIntl)              \

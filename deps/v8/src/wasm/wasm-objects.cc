@@ -183,6 +183,8 @@ Handle<WasmModuleObject> WasmModuleObject::New(
   Handle<WeakCell> link_to_module =
       isolate->factory()->NewWeakCell(module_object);
   compiled_module->set_weak_wasm_module(*link_to_module);
+
+  compiled_module->LogWasmCodes(isolate);
   return module_object;
 }
 
@@ -369,14 +371,18 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
       new_size > kMaxInt) {
     return Handle<JSArrayBuffer>::null();
   }
-  if (((use_trap_handler && !old_buffer->is_external() &&
-        new_size < old_buffer->allocation_length()) ||
-       old_size == new_size) &&
-      old_size != 0) {
+  // Reusing the backing store from externalized buffers causes problems with
+  // Blink's array buffers. The connection between the two is lost, which can
+  // lead to Blink not knowing about the other reference to the buffer and
+  // freeing it too early.
+  if (!old_buffer->is_external() && old_size != 0 &&
+      ((new_size < old_buffer->allocation_length()) || old_size == new_size)) {
     DCHECK_NOT_NULL(old_buffer->backing_store());
     if (old_size != new_size) {
       // If adjusting permissions fails, propagate error back to return
       // failure to grow.
+      DCHECK(!isolate->wasm_engine()->memory_tracker()->IsEmptyBackingStore(
+          old_mem_start));
       if (!i::SetPermissions(old_mem_start, new_size,
                              PageAllocator::kReadWrite)) {
         return Handle<JSArrayBuffer>::null();
@@ -394,6 +400,8 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
         wasm::SetupArrayBuffer(isolate, backing_store, new_size, is_external);
     return new_buffer;
   } else {
+    // We couldn't reuse the old backing store, so create a new one and copy the
+    // old contents in.
     Handle<JSArrayBuffer> new_buffer;
     new_buffer = wasm::NewArrayBuffer(isolate, new_size, use_trap_handler);
     if (new_buffer.is_null() || old_size == 0) return new_buffer;
@@ -1253,10 +1261,6 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
     compiled_module->GetNativeModule()->SetCompiledModule(weak_link);
   }
 
-  int function_count = static_cast<int>(module->functions.size());
-  Handle<FixedArray> source_positions =
-      isolate->factory()->NewFixedArray(function_count, TENURED);
-  compiled_module->set_source_positions(*source_positions);
   // TODO(mtrofin): copy the rest of the specialization parameters over.
   // We're currently OK because we're only using defaults.
   return compiled_module;
@@ -1271,7 +1275,6 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
   ret->set_weak_native_context(module->weak_native_context());
   ret->set_export_wrappers(module->export_wrappers());
   ret->set_weak_wasm_module(module->weak_wasm_module());
-  ret->set_source_positions(module->source_positions());
   ret->set_native_module(module->native_module());
   if (module->has_lazy_compile_data()) {
     ret->set_lazy_compile_data(module->lazy_compile_data());
@@ -1543,6 +1546,8 @@ bool WasmCompiledModule::SetBreakPoint(
 }
 
 void WasmCompiledModule::LogWasmCodes(Isolate* isolate) {
+  if (!wasm::WasmCode::ShouldBeLogged(isolate)) return;
+
   wasm::NativeModule* native_module = GetNativeModule();
   if (native_module == nullptr) return;
   const uint32_t number_of_codes = native_module->FunctionCount();
@@ -1551,15 +1556,7 @@ void WasmCompiledModule::LogWasmCodes(Isolate* isolate) {
     for (uint32_t i = 0; i < number_of_codes; i++) {
       wasm::WasmCode* code = native_module->GetCode(i);
       if (code == nullptr) continue;
-      int name_length;
-      Handle<String> name(
-          WasmSharedModuleData::GetFunctionName(isolate, shared_handle, i));
-      auto cname = name->ToCString(AllowNullsFlag::DISALLOW_NULLS,
-                                   RobustnessFlag::ROBUST_STRING_TRAVERSAL,
-                                   &name_length);
-      wasm::WasmName wasm_name(cname.get(), name_length);
-      PROFILE(isolate, CodeCreateEvent(CodeEventListener::FUNCTION_TAG, code,
-                                       wasm_name));
+      code->LogCode(isolate);
     }
   }
 }

@@ -445,10 +445,8 @@ StackFrame::Type StackFrame::ComputeType(const StackFrameIteratorBase* iterator,
     }
   } else {
     Address pc = *(state->pc_address);
-    // If FLAG_wasm_jit_to_native is disabled, we still have an empty
-    // wasm_code_manager, and this test will be false. This is easier to read
-    // than checking the flag, then getting the code, and then, if both are true
-    // (non-null, respectivelly), going down the wasm_code path.
+    // If the {pc} does not point into WebAssembly code we can rely on the
+    // returned {wasm_code} to be null and fall back to {GetContainingCode}.
     wasm::WasmCode* wasm_code =
         iterator->isolate()->wasm_engine()->code_manager()->LookupCode(pc);
     if (wasm_code != nullptr) {
@@ -1324,10 +1322,7 @@ int FrameSummary::WasmCompiledFrameSummary::GetWasmSourcePosition(
   int position = 0;
   // Subtract one because the current PC is one instruction after the call site.
   offset--;
-  Handle<ByteArray> source_position_table(ByteArray::cast(
-      code->native_module()->compiled_module()->source_positions()->get(
-          code->index())));
-  for (SourcePositionTableIterator iterator(source_position_table);
+  for (SourcePositionTableIterator iterator(code->source_positions());
        !iterator.done() && iterator.code_offset() <= offset;
        iterator.Advance()) {
     position = iterator.source_position().ScriptOffset();
@@ -1924,6 +1919,7 @@ void JavaScriptFrame::Print(StringStream* accumulator,
   Code* code = nullptr;
   if (IsConstructor()) accumulator->Add("new ");
   accumulator->PrintFunction(function, receiver, &code);
+  accumulator->Add(" [%p]", function);
 
   // Get scope information for nicer output, if possible. If code is nullptr, or
   // doesn't contain scope info, scope_info will return 0 for the number of

@@ -4,6 +4,7 @@
 
 #include "src/heap/sweeper.h"
 
+#include "src/base/template-utils.h"
 #include "src/heap/array-buffer-tracker-inl.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/mark-compact-inl.h"
@@ -78,16 +79,18 @@ class Sweeper::SweeperTask final : public CancelableTask {
   void RunInternal() final {
     TRACE_BACKGROUND_GC(tracer_,
                         GCTracer::BackgroundScope::MC_BACKGROUND_SWEEPING);
-    DCHECK_GE(space_to_start_, FIRST_PAGED_SPACE);
-    DCHECK_LE(space_to_start_, LAST_PAGED_SPACE);
-    const int offset = space_to_start_ - FIRST_PAGED_SPACE;
-    const int num_spaces = LAST_PAGED_SPACE - FIRST_PAGED_SPACE + 1;
+    DCHECK_GE(space_to_start_, FIRST_GROWABLE_PAGED_SPACE);
+    DCHECK_LE(space_to_start_, LAST_GROWABLE_PAGED_SPACE);
+    const int offset = space_to_start_ - FIRST_GROWABLE_PAGED_SPACE;
+    const int num_spaces =
+        LAST_GROWABLE_PAGED_SPACE - FIRST_GROWABLE_PAGED_SPACE + 1;
     for (int i = 0; i < num_spaces; i++) {
-      const int space_id = FIRST_PAGED_SPACE + ((i + offset) % num_spaces);
+      const int space_id =
+          FIRST_GROWABLE_PAGED_SPACE + ((i + offset) % num_spaces);
       // Do not sweep code space concurrently.
       if (static_cast<AllocationSpace>(space_id) == CODE_SPACE) continue;
-      DCHECK_GE(space_id, FIRST_PAGED_SPACE);
-      DCHECK_LE(space_id, LAST_PAGED_SPACE);
+      DCHECK_GE(space_id, FIRST_GROWABLE_PAGED_SPACE);
+      DCHECK_LE(space_id, LAST_GROWABLE_PAGED_SPACE);
       sweeper_->SweepSpaceFromTask(static_cast<AllocationSpace>(space_id));
     }
     num_sweeping_tasks_->Decrement(1);
@@ -152,12 +155,12 @@ void Sweeper::StartSweeperTasks() {
     ForAllSweepingSpaces([this](AllocationSpace space) {
       DCHECK(IsValidSweepingSpace(space));
       num_sweeping_tasks_.Increment(1);
-      SweeperTask* task = new SweeperTask(heap_->isolate(), this,
-                                          &pending_sweeper_tasks_semaphore_,
-                                          &num_sweeping_tasks_, space);
+      auto task = base::make_unique<SweeperTask>(
+          heap_->isolate(), this, &pending_sweeper_tasks_semaphore_,
+          &num_sweeping_tasks_, space);
       DCHECK_LT(num_tasks_, kMaxSweeperTasks);
       task_ids_[num_tasks_++] = task->id();
-      V8::GetCurrentPlatform()->CallOnWorkerThread(task);
+      V8::GetCurrentPlatform()->CallOnWorkerThread(std::move(task));
     });
     ScheduleIncrementalSweepingTask();
   }
@@ -549,11 +552,11 @@ void Sweeper::StartIterabilityTasks() {
 
   DCHECK(!iterability_task_started_);
   if (FLAG_concurrent_sweeping && !iterability_list_.empty()) {
-    IterabilityTask* task = new IterabilityTask(heap_->isolate(), this,
-                                                &iterability_task_semaphore_);
+    auto task = base::make_unique<IterabilityTask>(
+        heap_->isolate(), this, &iterability_task_semaphore_);
     iterability_task_id_ = task->id();
     iterability_task_started_ = true;
-    V8::GetCurrentPlatform()->CallOnWorkerThread(task);
+    V8::GetCurrentPlatform()->CallOnWorkerThread(std::move(task));
   }
 }
 

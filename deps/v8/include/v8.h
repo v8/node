@@ -3109,7 +3109,7 @@ enum class KeyCollectionMode { kOwnOnly, kIncludePrototypes };
 
 /**
  * kIncludesIndices allows for integer indices to be collected, while
- * kSkipIndices will exclude integer indicies from being collected.
+ * kSkipIndices will exclude integer indices from being collected.
  */
 enum class IndexFilter { kIncludeIndices, kSkipIndices };
 
@@ -5554,7 +5554,7 @@ class V8_EXPORT FunctionTemplate : public Template {
 
   /**
    * Causes the function template to inherit from a parent function template.
-   * This means the the function's prototype.__proto__ is set to the parent
+   * This means the function's prototype.__proto__ is set to the parent
    * function's prototype.
    **/
   void Inherit(Local<FunctionTemplate> parent);
@@ -5842,7 +5842,7 @@ class V8_EXPORT ObjectTemplate : public Template {
    * \param data A piece of data that will be passed to the callbacks
    *   whenever they are invoked.
    */
-  V8_DEPRECATE_SOON(
+  V8_DEPRECATED(
       "Use SetHandler(const NamedPropertyHandlerConfiguration) "
       "with the kOnlyInterceptStrings flag set.",
       void SetNamedPropertyHandler(
@@ -6582,8 +6582,17 @@ struct JitCodeEvent {
   // statement, and is used to indicate possible break locations.
   enum PositionType { POSITION, STATEMENT_POSITION };
 
+  // There are two different kinds of JitCodeEvents, one for JIT code generated
+  // by the optimizing compiler, and one for byte code generated for the
+  // interpreter.  For JIT_CODE events, the |code_start| member of the event
+  // points to the beginning of jitted assembly code, while for BYTE_CODE
+  // events, |code_start| points to the first bytecode of the interpreted
+  // function.
+  enum CodeType { BYTE_CODE, JIT_CODE };
+
   // Type of event.
   EventType type;
+  CodeType code_type;
   // Start of the instructions.
   void* code_start;
   // Size of the instructions.

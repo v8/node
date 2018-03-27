@@ -2359,12 +2359,12 @@ class RepresentationSelector {
                           UseInfo::TruncatingWord32(),
                           MachineRepresentation::kTaggedSigned);
       }
-      case IrOpcode::kStringFromCharCode: {
+      case IrOpcode::kStringFromSingleCharCode: {
         VisitUnop(node, UseInfo::TruncatingWord32(),
                   MachineRepresentation::kTaggedPointer);
         return;
       }
-      case IrOpcode::kStringFromCodePoint: {
+      case IrOpcode::kStringFromSingleCodePoint: {
         VisitUnop(node, UseInfo::TruncatingWord32(),
                   MachineRepresentation::kTaggedPointer);
         return;

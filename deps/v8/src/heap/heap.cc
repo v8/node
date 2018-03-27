@@ -251,6 +251,12 @@ Heap::Heap()
   RememberUnmappedPage(nullptr, false);
 }
 
+size_t Heap::MaxReserved() {
+  const double kFactor = Page::kPageSize * 1.0 / Page::kAllocatableMemory;
+  return static_cast<size_t>(
+      (2 * max_semi_space_size_ + max_old_generation_size_) * kFactor);
+}
+
 size_t Heap::Capacity() {
   if (!HasBeenSetUp()) return 0;
 
@@ -1272,11 +1278,15 @@ void Heap::EnsureFillerObjectAtTop() {
 bool Heap::CollectGarbage(AllocationSpace space,
                           GarbageCollectionReason gc_reason,
                           const v8::GCCallbackFlags gc_callback_flags) {
-  // The VM is in the GC state until exiting this function.
-  VMState<GC> state(isolate());
-
   const char* collector_reason = nullptr;
   GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
+
+  if (!CanExpandOldGeneration(new_space()->Capacity())) {
+    InvokeOutOfMemoryCallback();
+  }
+
+  // The VM is in the GC state until exiting this function.
+  VMState<GC> state(isolate());
 
 #ifdef V8_ENABLE_ALLOCATION_TIMEOUT
   // Reset the allocation timeout, but make sure to allow at least a few
@@ -1479,8 +1489,8 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
   static const int kThreshold = 20;
   while (gc_performed && counter++ < kThreshold) {
     gc_performed = false;
-    for (int space = NEW_SPACE; space < SerializerDeserializer::kNumberOfSpaces;
-         space++) {
+    for (int space = FIRST_SPACE;
+         space < SerializerDeserializer::kNumberOfSpaces; space++) {
       Reservation* reservation = &reservations[space];
       DCHECK_LE(1, reservation->size());
       if (reservation->at(0).size == 0) continue;
@@ -1553,7 +1563,7 @@ bool Heap::ReserveSpace(Reservation* reservations, std::vector<Address>* maps) {
         // so that we cannot allocate space to deserialize the initial heap.
         if (!deserialization_complete_) {
           V8::FatalProcessOutOfMemory(
-              "insufficient memory to create an Isolate");
+              isolate(), "insufficient memory to create an Isolate");
         }
         if (space == NEW_SPACE) {
           CollectGarbage(NEW_SPACE, GarbageCollectionReason::kDeserializer);
@@ -1582,7 +1592,7 @@ void Heap::EnsureFromSpaceIsCommitted() {
 
   // Committing memory to from space failed.
   // Memory is exhausted and we will die.
-  V8::FatalProcessOutOfMemory("Committing semi space failed.");
+  FatalProcessOutOfMemory("Committing semi space failed.");
 }
 
 
@@ -2604,7 +2614,7 @@ AllocationResult Heap::AllocateHeapNumber(MutableMode mode,
 
 AllocationResult Heap::AllocateBigInt(int length, PretenureFlag pretenure) {
   if (length < 0 || length > BigInt::kMaxLength) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid BigInt length", true);
+    FatalProcessOutOfMemory("invalid BigInt length");
   }
   int size = BigInt::SizeFor(length);
   AllocationSpace space = SelectSpace(pretenure);
@@ -2909,7 +2919,7 @@ AllocationResult Heap::AllocateSmallOrderedHashMap(int capacity,
 
 AllocationResult Heap::AllocateByteArray(int length, PretenureFlag pretenure) {
   if (length < 0 || length > ByteArray::kMaxLength) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid array length", true);
+    FatalProcessOutOfMemory("invalid array length");
   }
   int size = ByteArray::SizeFor(length);
   AllocationSpace space = SelectSpace(pretenure);
@@ -2932,7 +2942,7 @@ AllocationResult Heap::AllocateBytecodeArray(int length,
                                              int parameter_count,
                                              FixedArray* constant_pool) {
   if (length < 0 || length > BytecodeArray::kMaxLength) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid array length", true);
+    FatalProcessOutOfMemory("invalid array length");
   }
   // Bytecode array is pretenured, so constant pool array should be to.
   DCHECK(!InNewSpace(constant_pool));
@@ -3017,8 +3027,9 @@ FixedArrayBase* Heap::LeftTrimFixedArray(FixedArrayBase* object,
                                          int elements_to_trim) {
   CHECK_NOT_NULL(object);
   DCHECK(CanMoveObjectStart(object));
-  DCHECK(!object->IsFixedTypedArrayBase());
-  DCHECK(!object->IsByteArray());
+  // Add custom visitor to concurrent marker if new left-trimmable type
+  // is added.
+  DCHECK(object->IsFixedArray() || object->IsFixedDoubleArray());
   const int element_size = object->IsFixedArray() ? kPointerSize : kDoubleSize;
   const int bytes_to_trim = elements_to_trim * element_size;
   Map* map = object->map();
@@ -4070,7 +4081,7 @@ AllocationResult Heap::AllocateUninitializedFixedDoubleArray(
 AllocationResult Heap::AllocateRawFixedDoubleArray(int length,
                                                    PretenureFlag pretenure) {
   if (length < 0 || length > FixedDoubleArray::kMaxLength) {
-    v8::internal::Heap::FatalProcessOutOfMemory("invalid array length", true);
+    FatalProcessOutOfMemory("invalid array length");
   }
   int size = FixedDoubleArray::SizeFor(length);
   AllocationSpace space = SelectSpace(pretenure);
@@ -5308,7 +5319,8 @@ bool Heap::ConfigureHeap(size_t max_semi_space_size_in_kb,
   }
 
   // The old generation is paged and needs at least one page for each space.
-  int paged_space_count = LAST_PAGED_SPACE - FIRST_PAGED_SPACE + 1;
+  int paged_space_count =
+      LAST_GROWABLE_PAGED_SPACE - FIRST_GROWABLE_PAGED_SPACE + 1;
   initial_max_old_generation_size_ = max_old_generation_size_ =
       Max(static_cast<size_t>(paged_space_count * Page::kPageSize),
           max_old_generation_size_);
@@ -5835,6 +5847,8 @@ bool Heap::SetUp() {
 
   write_protect_code_memory_ = FLAG_write_protect_code_memory;
 
+  external_reference_table_.Init(isolate_);
+
   return true;
 }
 
@@ -6208,8 +6222,8 @@ void Heap::CompactRetainedMaps(ArrayList* retained_maps) {
   if (new_length != length) retained_maps->SetLength(new_length);
 }
 
-void Heap::FatalProcessOutOfMemory(const char* location, bool is_heap_oom) {
-  v8::internal::V8::FatalProcessOutOfMemory(location, is_heap_oom);
+void Heap::FatalProcessOutOfMemory(const char* location) {
+  v8::internal::V8::FatalProcessOutOfMemory(isolate(), location, true);
 }
 
 #ifdef DEBUG

@@ -9,6 +9,7 @@
 #include "src/base/bits.h"
 #include "src/base/macros.h"
 #include "src/base/platform/semaphore.h"
+#include "src/base/template-utils.h"
 #include "src/counters.h"
 #include "src/heap/array-buffer-tracker.h"
 #include "src/heap/concurrent-marking.h"
@@ -349,7 +350,7 @@ void MemoryAllocator::Unmapper::FreeQueuedChunks() {
       }
       return;
     }
-    UnmapFreeMemoryTask* task = new UnmapFreeMemoryTask(heap_->isolate(), this);
+    auto task = base::make_unique<UnmapFreeMemoryTask>(heap_->isolate(), this);
     if (FLAG_trace_unmapper) {
       PrintIsolate(heap_->isolate(),
                    "Unmapper::FreeQueuedChunks: new task id=%" PRIu64 "\n",
@@ -360,7 +361,7 @@ void MemoryAllocator::Unmapper::FreeQueuedChunks() {
     DCHECK_GE(active_unmapping_tasks_.Value(), 0);
     active_unmapping_tasks_.Increment(1);
     task_ids_[pending_unmapping_tasks_++] = task->id();
-    V8::GetCurrentPlatform()->CallOnWorkerThread(task);
+    V8::GetCurrentPlatform()->CallOnWorkerThread(std::move(task));
   } else {
     PerformFreeMemoryOnQueuedChunks<FreeMode::kUncommitPooled>();
   }
@@ -1930,7 +1931,7 @@ void PagedSpace::Verify(ObjectVisitor* visitor) {
 
       // All the interior pointers should be contained in the heap.
       int size = object->Size();
-      object->IterateBody(map->instance_type(), size, visitor);
+      object->IterateBody(map, size, visitor);
       CHECK(object->address() + size <= top);
       end_of_previous_object = object->address() + size;
     }
@@ -2382,7 +2383,7 @@ void NewSpace::Verify() {
       // All the interior pointers should be contained in the heap.
       VerifyPointersVisitor visitor;
       int size = object->Size();
-      object->IterateBody(map->instance_type(), size, &visitor);
+      object->IterateBody(map, size, &visitor);
 
       current += size;
     } else {
@@ -3473,7 +3474,7 @@ void LargeObjectSpace::Verify() {
     // Byte arrays and strings don't have interior pointers.
     if (object->IsAbstractCode()) {
       VerifyPointersVisitor code_visitor;
-      object->IterateBody(map->instance_type(), object->Size(), &code_visitor);
+      object->IterateBody(map, object->Size(), &code_visitor);
     } else if (object->IsFixedArray()) {
       FixedArray* array = FixedArray::cast(object);
       for (int j = 0; j < array->length(); j++) {

@@ -127,9 +127,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return ParameterRepresentation(OptimalParameterMode());
   }
 
-  Node* ParameterToIntPtr(Node* value, ParameterMode mode) {
+  TNode<IntPtrT> ParameterToIntPtr(Node* value, ParameterMode mode) {
     if (mode == SMI_PARAMETERS) value = SmiUntag(value);
-    return value;
+    return UncheckedCast<IntPtrT>(value);
   }
 
   Node* IntPtrToParameter(SloppyTNode<IntPtrT> value, ParameterMode mode) {
@@ -294,7 +294,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Smi> SmiMax(SloppyTNode<Smi> a, SloppyTNode<Smi> b);
   TNode<Smi> SmiMin(SloppyTNode<Smi> a, SloppyTNode<Smi> b);
   // Computes a % b for Smi inputs a and b; result is not necessarily a Smi.
-  Node* SmiMod(Node* a, Node* b);
+  TNode<Number> SmiMod(SloppyTNode<Smi> a, SloppyTNode<Smi> b);
   // Computes a * b for Smi inputs a and b; result is not necessarily a Smi.
   TNode<Number> SmiMul(SloppyTNode<Smi> a, SloppyTNode<Smi> b);
   // Tries to computes dividend / divisor for Smi inputs; branching to bailout
@@ -1118,6 +1118,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       TNode<Context> native_context);
   Node* IsFeedbackCell(Node* object);
   Node* IsFeedbackVector(Node* object);
+  Node* IsContext(Node* object);
   Node* IsFixedArray(Node* object);
   Node* IsFixedArraySubclass(Node* object);
   Node* IsFixedArrayWithKind(Node* object, ElementsKind kind);
@@ -1180,7 +1181,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   Node* IsSymbol(Node* object);
   Node* IsUndetectableMap(Node* map);
   Node* IsWeakCell(Node* object);
-  Node* IsZeroOrFixedArray(Node* object);
+  Node* IsZeroOrContext(Node* object);
 
   inline Node* IsSharedFunctionInfo(Node* object) {
     return IsSharedFunctionInfoMap(LoadMap(object));
@@ -1219,7 +1220,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Int32T> StringCharCodeAt(SloppyTNode<String> string,
                                  SloppyTNode<IntPtrT> index);
   // Return the single character string with only {code}.
-  TNode<String> StringFromCharCode(TNode<Int32T> code);
+  TNode<String> StringFromSingleCharCode(TNode<Int32T> code);
 
   // Return a new string object which holds a substring containing the range
   // [from,to[ of string.  |from| and |to| are expected to be tagged.
@@ -1246,8 +1247,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                  Variable* var_right, Node* right_instance_type,
                                  Label* did_something);
 
-  TNode<String> StringFromCodePoint(TNode<Int32T> codepoint,
-                                    UnicodeEncoding encoding);
+  TNode<String> StringFromSingleCodePoint(TNode<Int32T> codepoint,
+                                          UnicodeEncoding encoding);
 
   // Type conversion helpers.
   enum class BigIntHandling { kConvertToNumber, kThrow };
@@ -1932,6 +1933,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* ElementOffsetFromIndex(Node* index, ElementsKind kind,
                                ParameterMode mode, int base_size = 0);
+
+  // Load a builtin's code from the builtin array in the isolate.
+  TNode<Code> LoadBuiltin(TNode<Smi> builtin_id);
+
+  // Figure out the SFI's code object using its data field.
+  TNode<Code> GetSharedFunctionInfoCode(
+      SloppyTNode<SharedFunctionInfo> shared_info);
 
   Node* AllocateFunctionWithMapAndContext(Node* map, Node* shared_info,
                                           Node* context);

@@ -85,8 +85,6 @@ class V8_EXPORT_PRIVATE DisjointAllocationPool final {
 using ProtectedInstructions =
     std::vector<trap_handler::ProtectedInstructionData>;
 
-enum FlushICache : bool { kFlushICache = true, kNoFlushICache = false };
-
 class V8_EXPORT_PRIVATE WasmCode final {
  public:
   enum Kind {
@@ -107,6 +105,9 @@ class V8_EXPORT_PRIVATE WasmCode final {
   Vector<byte> instructions() const { return instructions_; }
   Vector<const byte> reloc_info() const {
     return {reloc_info_.get(), reloc_size_};
+  }
+  Vector<const byte> source_positions() const {
+    return {source_position_table_.get(), source_position_size_};
   }
 
   uint32_t index() const { return index_.ToChecked(); }
@@ -138,13 +139,19 @@ class V8_EXPORT_PRIVATE WasmCode final {
   void Print(Isolate* isolate) const;
   void Disassemble(const char* name, Isolate* isolate, std::ostream& os) const;
 
+  static bool ShouldBeLogged(Isolate* isolate);
+  void LogCode(Isolate* isolate) const;
+
   ~WasmCode();
+
+  enum FlushICache : bool { kFlushICache = true, kNoFlushICache = false };
 
  private:
   friend class NativeModule;
 
   WasmCode(Vector<byte> instructions,
            std::unique_ptr<const byte[]>&& reloc_info, size_t reloc_size,
+           std::unique_ptr<const byte[]>&& source_pos, size_t source_pos_size,
            NativeModule* native_module, Maybe<uint32_t> index, Kind kind,
            size_t constant_pool_offset, uint32_t stack_slots,
            size_t safepoint_table_offset, size_t handler_table_offset,
@@ -153,6 +160,8 @@ class V8_EXPORT_PRIVATE WasmCode final {
       : instructions_(instructions),
         reloc_info_(std::move(reloc_info)),
         reloc_size_(reloc_size),
+        source_position_table_(std::move(source_pos)),
+        source_position_size_(source_pos_size),
         native_module_(native_module),
         index_(index),
         kind_(kind),
@@ -170,6 +179,8 @@ class V8_EXPORT_PRIVATE WasmCode final {
   Vector<byte> instructions_;
   std::unique_ptr<const byte[]> reloc_info_;
   size_t reloc_size_ = 0;
+  std::unique_ptr<const byte[]> source_position_table_;
+  size_t source_position_size_ = 0;
   NativeModule* native_module_ = nullptr;
   Maybe<uint32_t> index_;
   Kind kind_;
@@ -199,11 +210,32 @@ class WasmCodeManager;
 // WasmCodeManager::Commit.
 class V8_EXPORT_PRIVATE NativeModule final {
  public:
+  // Helper class to selectively clone and patch code from a
+  // {source_native_module} into a {cloning_native_module}.
+  class CloneCodeHelper {
+   public:
+    explicit CloneCodeHelper(NativeModule* source_native_module,
+                             NativeModule* cloning_native_module);
+
+    void SelectForCloning(int32_t code_index);
+
+    void CloneAndPatchCode(bool patch_stub_to_stub_calls);
+
+   private:
+    void PatchStubToStubCalls();
+
+    NativeModule* source_native_module_;
+    NativeModule* cloning_native_module_;
+    std::vector<uint32_t> selection_;
+    std::unordered_map<Address, Address, AddressHasher> reverse_lookup_;
+  };
+
   std::unique_ptr<NativeModule> Clone();
 
   WasmCode* AddCode(const CodeDesc& desc, uint32_t frame_count, uint32_t index,
                     size_t safepoint_table_offset, size_t handler_table_offset,
                     std::unique_ptr<ProtectedInstructions>,
+                    Handle<ByteArray> source_position_table,
                     WasmCode::Tier tier);
 
   // A way to copy over JS-allocated code. This is because we compile
@@ -236,7 +268,7 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // TODO(mtrofin): perhaps we can do exactly that - either before or after
   // this change.
   WasmCode* CloneLazyBuiltinInto(const WasmCode* code, uint32_t index,
-                                 FlushICache);
+                                 WasmCode::FlushICache);
 
   bool SetExecutable(bool executable);
 
@@ -277,14 +309,17 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // whether it has an index or is anonymous, etc.
   WasmCode* AddOwnedCode(Vector<const byte> orig_instructions,
                          std::unique_ptr<const byte[]> reloc_info,
-                         size_t reloc_size, Maybe<uint32_t> index,
+                         size_t reloc_size,
+                         std::unique_ptr<const byte[]> source_pos,
+                         size_t source_pos_size, Maybe<uint32_t> index,
                          WasmCode::Kind kind, size_t constant_pool_offset,
                          uint32_t stack_slots, size_t safepoint_table_offset,
                          size_t handler_table_offset,
                          std::shared_ptr<ProtectedInstructions>, WasmCode::Tier,
-                         FlushICache);
-  WasmCode* CloneCode(const WasmCode*, FlushICache);
-  void CloneTrampolinesAndStubs(const NativeModule* other, FlushICache);
+                         WasmCode::FlushICache);
+  WasmCode* CloneCode(const WasmCode*, WasmCode::FlushICache);
+  void CloneTrampolinesAndStubs(const NativeModule* other,
+                                WasmCode::FlushICache);
   WasmCode* Lookup(Address);
   Address GetLocalAddressFor(Handle<Code>);
   Address CreateTrampolineTo(Handle<Code>);
@@ -385,13 +420,6 @@ class NativeModuleModificationScope final {
  private:
   NativeModule* native_module_;
 };
-
-// Utilities specific to wasm code generation. We embed a tag for call sites -
-// the index of the called function - when serializing and when creating the
-// code, initially. These APIs offer accessors. The implementation has platform
-// specific nuances.
-void SetWasmCalleeTag(RelocInfo* rinfo, uint32_t tag);
-uint32_t GetWasmCalleeTag(RelocInfo* rinfo);
 
 }  // namespace wasm
 }  // namespace internal

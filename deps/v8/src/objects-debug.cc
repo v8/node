@@ -124,6 +124,15 @@ void HeapObject::HeapObjectVerify() {
     case BOILERPLATE_DESCRIPTION_TYPE:
     case FIXED_ARRAY_TYPE:
     case SCOPE_INFO_TYPE:
+    case BLOCK_CONTEXT_TYPE:
+    case CATCH_CONTEXT_TYPE:
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+    case EVAL_CONTEXT_TYPE:
+    case FUNCTION_CONTEXT_TYPE:
+    case MODULE_CONTEXT_TYPE:
+    case NATIVE_CONTEXT_TYPE:
+    case SCRIPT_CONTEXT_TYPE:
+    case WITH_CONTEXT_TYPE:
       FixedArray::cast(this)->FixedArrayVerify();
       break;
     case WEAK_FIXED_ARRAY_TYPE:
@@ -832,10 +841,9 @@ void JSFunction::JSFunctionVerify() {
 void SharedFunctionInfo::SharedFunctionInfoVerify() {
   CHECK(IsSharedFunctionInfo());
 
-  VerifyObjectField(kCodeOffset);
+  VerifyObjectField(kFunctionDataOffset);
   VerifyObjectField(kDebugInfoOffset);
   VerifyObjectField(kFeedbackMetadataOffset);
-  VerifyObjectField(kFunctionDataOffset);
   VerifyObjectField(kFunctionIdentifierOffset);
   VerifyObjectField(kNameOrScopeInfoOffset);
   VerifyObjectField(kOuterScopeInfoOffset);
@@ -850,9 +858,8 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
   }
 
   Isolate* isolate = GetIsolate();
-  CHECK(function_data()->IsUndefined(isolate) || IsApiFunction() ||
-        HasBytecodeArray() || HasAsmWasmData() ||
-        HasLazyDeserializationBuiltinId() || HasPreParsedScopeData());
+  CHECK(HasCodeObject() || IsApiFunction() || HasBytecodeArray() ||
+        HasAsmWasmData() || HasBuiltinId() || HasPreParsedScopeData());
 
   CHECK(function_identifier()->IsUndefined(isolate) || HasBuiltinFunctionId() ||
         HasInferredName());
@@ -959,8 +966,8 @@ void CodeDataContainer::CodeDataContainerVerify() {
 }
 
 void Code::CodeVerify() {
-  CHECK_LE(constant_pool_offset(), instruction_size());
-  CHECK(IsAligned(reinterpret_cast<intptr_t>(instruction_start()),
+  CHECK_LE(constant_pool_offset(), InstructionSize());
+  CHECK(IsAligned(reinterpret_cast<intptr_t>(InstructionStart()),
                   kCodeAlignment));
   relocation_info()->ObjectVerify();
   Address last_gc_pc = nullptr;
@@ -1452,7 +1459,6 @@ void WasmCompiledModule::WasmCompiledModuleVerify() {
   VerifyObjectField(kPrevInstanceOffset);
   VerifyObjectField(kOwningInstanceOffset);
   VerifyObjectField(kWasmModuleOffset);
-  VerifyObjectField(kSourcePositionsOffset);
   VerifyObjectField(kNativeModuleOffset);
   VerifyObjectField(kLazyCompileDataOffset);
   VerifyObjectField(kUseTrapHandlerOffset);

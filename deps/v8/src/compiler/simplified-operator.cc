@@ -550,7 +550,7 @@ Type* AllocateTypeOf(const Operator* op) {
 }
 
 UnicodeEncoding UnicodeEncodingOf(const Operator* op) {
-  DCHECK(op->opcode() == IrOpcode::kStringFromCodePoint ||
+  DCHECK(op->opcode() == IrOpcode::kStringFromSingleCodePoint ||
          op->opcode() == IrOpcode::kStringCodePointAt);
   return OpParameter<UnicodeEncoding>(op);
 }
@@ -670,7 +670,7 @@ bool operator==(CheckMinusZeroParameters const& lhs,
   V(NumberToUint8Clamped, Operator::kNoProperties, 1, 0)         \
   V(NumberSilenceNaN, Operator::kNoProperties, 1, 0)             \
   V(StringToNumber, Operator::kNoProperties, 1, 0)               \
-  V(StringFromCharCode, Operator::kNoProperties, 1, 0)           \
+  V(StringFromSingleCharCode, Operator::kNoProperties, 1, 0)     \
   V(StringIndexOf, Operator::kNoProperties, 3, 0)                \
   V(StringLength, Operator::kNoProperties, 1, 0)                 \
   V(StringToLowerCaseIntl, Operator::kNoProperties, 1, 0)        \
@@ -836,16 +836,17 @@ struct SimplifiedOperatorGlobalCache final {
       kStringCodePointAtOperatorUTF32;
 
   template <UnicodeEncoding kEncoding>
-  struct StringFromCodePointOperator final : public Operator1<UnicodeEncoding> {
-    StringFromCodePointOperator()
-        : Operator1<UnicodeEncoding>(IrOpcode::kStringFromCodePoint,
-                                     Operator::kPure, "StringFromCodePoint", 1,
-                                     0, 0, 1, 0, 0, kEncoding) {}
+  struct StringFromSingleCodePointOperator final
+      : public Operator1<UnicodeEncoding> {
+    StringFromSingleCodePointOperator()
+        : Operator1<UnicodeEncoding>(
+              IrOpcode::kStringFromSingleCodePoint, Operator::kPure,
+              "StringFromSingleCodePoint", 1, 0, 0, 1, 0, 0, kEncoding) {}
   };
-  StringFromCodePointOperator<UnicodeEncoding::UTF16>
-      kStringFromCodePointOperatorUTF16;
-  StringFromCodePointOperator<UnicodeEncoding::UTF32>
-      kStringFromCodePointOperatorUTF32;
+  StringFromSingleCodePointOperator<UnicodeEncoding::UTF16>
+      kStringFromSingleCodePointOperatorUTF16;
+  StringFromSingleCodePointOperator<UnicodeEncoding::UTF32>
+      kStringFromSingleCodePointOperatorUTF32;
 
   struct ArrayBufferWasNeuteredOperator final : public Operator {
     ArrayBufferWasNeuteredOperator()
@@ -1450,13 +1451,13 @@ const Operator* SimplifiedOperatorBuilder::StringCodePointAt(
   UNREACHABLE();
 }
 
-const Operator* SimplifiedOperatorBuilder::StringFromCodePoint(
+const Operator* SimplifiedOperatorBuilder::StringFromSingleCodePoint(
     UnicodeEncoding encoding) {
   switch (encoding) {
     case UnicodeEncoding::UTF16:
-      return &cache_.kStringFromCodePointOperatorUTF16;
+      return &cache_.kStringFromSingleCodePointOperatorUTF16;
     case UnicodeEncoding::UTF32:
-      return &cache_.kStringFromCodePointOperatorUTF32;
+      return &cache_.kStringFromSingleCodePointOperatorUTF32;
   }
   UNREACHABLE();
 }

@@ -308,18 +308,21 @@ static ScriptOrigin GetScriptOriginForScript(i::Isolate* isolate,
 
 // --- E x c e p t i o n   B e h a v i o r ---
 
-
-void i::FatalProcessOutOfMemory(const char* location) {
-  i::V8::FatalProcessOutOfMemory(location, false);
+void i::FatalProcessOutOfMemory(i::Isolate* isolate, const char* location) {
+  i::V8::FatalProcessOutOfMemory(isolate, location, false);
 }
 
 // When V8 cannot allocate memory FatalProcessOutOfMemory is called. The default
 // OOM error handler is called and execution is stopped.
-void i::V8::FatalProcessOutOfMemory(const char* location, bool is_heap_oom) {
-  i::Isolate* isolate = i::Isolate::Current();
+void i::V8::FatalProcessOutOfMemory(i::Isolate* isolate, const char* location,
+                                    bool is_heap_oom) {
   char last_few_messages[Heap::kTraceRingBufferSize + 1];
   char js_stacktrace[Heap::kStacktraceBufferSize + 1];
   i::HeapStats heap_stats;
+
+  if (isolate == nullptr) {
+    isolate = Isolate::Current();
+  }
 
   if (isolate == nullptr) {
     // On a background thread -> we cannot retrieve memory information from the
@@ -394,7 +397,7 @@ void i::V8::FatalProcessOutOfMemory(const char* location, bool is_heap_oom) {
     PrintF("\n<--- Last few GCs --->\n%s\n", first_newline);
     PrintF("\n<--- JS stacktrace --->\n%s\n", js_stacktrace);
   }
-  Utils::ReportOOMFailure(location, is_heap_oom);
+  Utils::ReportOOMFailure(isolate, location, is_heap_oom);
   // If the fatal error handler returns, we stop execution.
   FATAL("API fatal error handler returned after process out of memory");
 }
@@ -416,8 +419,8 @@ void Utils::ReportApiFailure(const char* location, const char* message) {
   isolate->SignalFatalError();
 }
 
-void Utils::ReportOOMFailure(const char* location, bool is_heap_oom) {
-  i::Isolate* isolate = i::Isolate::Current();
+void Utils::ReportOOMFailure(i::Isolate* isolate, const char* location,
+                             bool is_heap_oom) {
   OOMErrorCallback oom_callback = isolate->oom_behavior();
   if (oom_callback == nullptr) {
     // TODO(wfh): Remove this fallback once Blink is setting OOM handler. See
@@ -729,15 +732,33 @@ StartupData SnapshotCreator::CreateBlob(
   i::SerializedHandleChecker handle_checker(isolate, &contexts);
   CHECK(handle_checker.CheckGlobalAndEternalHandles());
 
-  // Complete in-object slack tracking for all functions.
   i::HeapIterator heap_iterator(isolate->heap());
   while (i::HeapObject* current_obj = heap_iterator.next()) {
-    if (!current_obj->IsJSFunction()) continue;
-    i::JSFunction* fun = i::JSFunction::cast(current_obj);
-    fun->CompleteInobjectSlackTrackingIfActive();
+    // Complete in-object slack tracking for all functions.
+    if (current_obj->IsJSFunction()) {
+      i::JSFunction* fun = i::JSFunction::cast(current_obj);
+      fun->CompleteInobjectSlackTrackingIfActive();
+    }
+
+    // Clear out re-compilable data from all shared function infos. Any
+    // JSFunctions using these SFIs will have their code pointers reset by the
+    // partial serializer.
+    if (current_obj->IsSharedFunctionInfo() &&
+        function_code_handling == FunctionCodeHandling::kClear) {
+      i::SharedFunctionInfo* shared = i::SharedFunctionInfo::cast(current_obj);
+      if (shared->HasBytecodeArray()) {
+        shared->ClearBytecodeArray();
+      } else if (shared->HasAsmWasmData()) {
+        shared->ClearAsmWasmData();
+      } else if (shared->HasPreParsedScopeData()) {
+        shared->ClearPreParsedScopeData();
+      }
+      DCHECK(shared->HasCodeObject() || shared->HasBuiltinId() ||
+             shared->IsApiFunction());
+    }
   }
 
-  i::StartupSerializer startup_serializer(isolate, function_code_handling);
+  i::StartupSerializer startup_serializer(isolate);
   startup_serializer.SerializeStrongReferences();
 
   // Serialize each context with a new partial serializer.
@@ -7752,7 +7773,7 @@ Local<ArrayBuffer> v8::ArrayBuffer::New(Isolate* isolate, size_t byte_length) {
   // TODO(jbroman): It may be useful in the future to provide a MaybeLocal
   // version that throws an exception or otherwise does not crash.
   if (!i::JSArrayBuffer::SetupAllocatingData(obj, i_isolate, byte_length)) {
-    i::FatalProcessOutOfMemory("v8::ArrayBuffer::New");
+    i::FatalProcessOutOfMemory(i_isolate, "v8::ArrayBuffer::New");
   }
   return Utils::ToLocal(obj);
 }
@@ -7971,7 +7992,7 @@ Local<SharedArrayBuffer> v8::SharedArrayBuffer::New(Isolate* isolate,
   // version that throws an exception or otherwise does not crash.
   if (!i::JSArrayBuffer::SetupAllocatingData(obj, i_isolate, byte_length, true,
                                              i::SharedFlag::kShared)) {
-    i::FatalProcessOutOfMemory("v8::SharedArrayBuffer::New");
+    i::FatalProcessOutOfMemory(i_isolate, "v8::SharedArrayBuffer::New");
   }
   return Utils::ToLocalShared(obj);
 }
@@ -9445,8 +9466,8 @@ bool debug::Script::SetBreakpoint(v8::Local<v8::String> condition,
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   i::Isolate* isolate = script->GetIsolate();
   int offset = GetSourceOffset(*location);
-  if (!isolate->debug()->SetBreakpoint(script, Utils::OpenHandle(*condition),
-                                       &offset, id)) {
+  if (!isolate->debug()->SetBreakPointForScript(
+          script, Utils::OpenHandle(*condition), &offset, id)) {
     return false;
   }
   *location = GetSourceLocation(offset);
@@ -9689,9 +9710,8 @@ Local<Function> debug::GetBuiltin(Isolate* v8_isolate, Builtin builtin) {
   }
 
   i::Handle<i::String> name = isolate->factory()->empty_string();
-  i::Handle<i::Code> code(isolate->builtins()->builtin(builtin_id));
   i::NewFunctionArgs args = i::NewFunctionArgs::ForBuiltinWithoutPrototype(
-      name, code, builtin_id, i::LanguageMode::kSloppy);
+      name, builtin_id, i::LanguageMode::kSloppy);
   i::Handle<i::JSFunction> fun = isolate->factory()->NewFunction(args);
 
   fun->shared()->DontAdaptArguments();
@@ -9853,6 +9873,35 @@ int64_t debug::GetNextRandomInt64(v8::Isolate* v8_isolate) {
   return reinterpret_cast<i::Isolate*>(v8_isolate)
       ->random_number_generator()
       ->NextInt64();
+}
+
+int debug::GetDebuggingId(v8::Local<v8::Function> function) {
+  i::JSReceiver* callable = *v8::Utils::OpenHandle(*function);
+  if (!callable->IsJSFunction()) return i::SharedFunctionInfo::kNoDebuggingId;
+  i::JSFunction* fun = i::JSFunction::cast(callable);
+  i::SharedFunctionInfo* shared = fun->shared();
+  int id = shared->debugging_id();
+  if (id == i::SharedFunctionInfo::kNoDebuggingId) {
+    id = shared->GetHeap()->NextDebuggingId();
+    shared->set_debugging_id(id);
+  }
+  DCHECK_NE(i::SharedFunctionInfo::kNoDebuggingId, id);
+  return id;
+}
+
+bool debug::SetFunctionBreakpoint(v8::Local<v8::Function> function,
+                                  v8::Local<v8::String> condition,
+                                  BreakpointId* id) {
+  i::Handle<i::JSReceiver> callable = Utils::OpenHandle(*function);
+  if (!callable->IsJSFunction()) return false;
+  i::Handle<i::JSFunction> jsfunction =
+      i::Handle<i::JSFunction>::cast(callable);
+  i::Isolate* isolate = jsfunction->GetIsolate();
+  i::Handle<i::String> condition_string =
+      condition.IsEmpty() ? isolate->factory()->empty_string()
+                          : Utils::OpenHandle(*condition);
+  return isolate->debug()->SetBreakpointForFunction(jsfunction,
+                                                    condition_string, id);
 }
 
 Local<String> CpuProfileNode::GetFunctionName() const {

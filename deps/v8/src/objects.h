@@ -216,14 +216,26 @@ static inline bool IsCOWHandlingStoreMode(KeyedAccessStoreMode store_mode) {
 }
 
 static inline KeyedAccessStoreMode GetNonTransitioningStoreMode(
-    KeyedAccessStoreMode store_mode) {
-  if (store_mode >= STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS) {
-    return store_mode;
+    KeyedAccessStoreMode store_mode, bool receiver_was_cow) {
+  switch (store_mode) {
+    case STORE_AND_GROW_NO_TRANSITION_HANDLE_COW:
+    case STORE_AND_GROW_TRANSITION_TO_OBJECT:
+    case STORE_AND_GROW_TRANSITION_TO_DOUBLE:
+      store_mode = STORE_AND_GROW_NO_TRANSITION_HANDLE_COW;
+      break;
+    case STANDARD_STORE:
+    case STORE_TRANSITION_TO_OBJECT:
+    case STORE_TRANSITION_TO_DOUBLE:
+      store_mode =
+          receiver_was_cow ? STORE_NO_TRANSITION_HANDLE_COW : STANDARD_STORE;
+      break;
+    case STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS:
+    case STORE_NO_TRANSITION_HANDLE_COW:
+      break;
   }
-  if (store_mode >= STORE_AND_GROW_NO_TRANSITION_HANDLE_COW) {
-    return STORE_AND_GROW_NO_TRANSITION_HANDLE_COW;
-  }
-  return STANDARD_STORE;
+  DCHECK(!IsTransitionStoreMode(store_mode));
+  DCHECK_IMPLIES(receiver_was_cow, IsCOWHandlingStoreMode(store_mode));
+  return store_mode;
 }
 
 
@@ -399,6 +411,16 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(HASH_TABLE_TYPE)                                            \
   V(SCOPE_INFO_TYPE)                                            \
   V(TRANSITION_ARRAY_TYPE)                                      \
+                                                                \
+  V(BLOCK_CONTEXT_TYPE)                                         \
+  V(CATCH_CONTEXT_TYPE)                                         \
+  V(DEBUG_EVALUATE_CONTEXT_TYPE)                                \
+  V(EVAL_CONTEXT_TYPE)                                          \
+  V(FUNCTION_CONTEXT_TYPE)                                      \
+  V(MODULE_CONTEXT_TYPE)                                        \
+  V(NATIVE_CONTEXT_TYPE)                                        \
+  V(SCRIPT_CONTEXT_TYPE)                                        \
+  V(WITH_CONTEXT_TYPE)                                          \
                                                                 \
   V(CELL_TYPE)                                                  \
   V(CODE_DATA_CONTAINER_TYPE)                                   \
@@ -752,7 +774,16 @@ enum InstanceType : uint16_t {
   DESCRIPTOR_ARRAY_TYPE,
   HASH_TABLE_TYPE,
   SCOPE_INFO_TYPE,
-  TRANSITION_ARRAY_TYPE,  // LAST_FIXED_ARRAY_TYPE
+  TRANSITION_ARRAY_TYPE,
+  BLOCK_CONTEXT_TYPE,  // FIRST_CONTEXT_TYPE
+  CATCH_CONTEXT_TYPE,
+  DEBUG_EVALUATE_CONTEXT_TYPE,
+  EVAL_CONTEXT_TYPE,
+  FUNCTION_CONTEXT_TYPE,
+  MODULE_CONTEXT_TYPE,
+  NATIVE_CONTEXT_TYPE,
+  SCRIPT_CONTEXT_TYPE,
+  WITH_CONTEXT_TYPE,  // LAST_FIXED_ARRAY_TYPE, LAST_CONTEXT_TYPE
 
   // Misc.
   CELL_TYPE,
@@ -835,7 +866,10 @@ enum InstanceType : uint16_t {
   LAST_FUNCTION_TYPE = JS_FUNCTION_TYPE,
   // Boundaries for testing if given HeapObject is a subclass of FixedArray.
   FIRST_FIXED_ARRAY_TYPE = FIXED_ARRAY_TYPE,
-  LAST_FIXED_ARRAY_TYPE = TRANSITION_ARRAY_TYPE,
+  LAST_FIXED_ARRAY_TYPE = WITH_CONTEXT_TYPE,
+  // Boundaries for testing if given HeapObject is a Context
+  FIRST_CONTEXT_TYPE = BLOCK_CONTEXT_TYPE,
+  LAST_CONTEXT_TYPE = WITH_CONTEXT_TYPE,
   // Boundaries for testing if given HeapObject is a subclass of Microtask.
   FIRST_MICROTASK_TYPE = CALLABLE_TASK_TYPE,
   LAST_MICROTASK_TYPE = PROMISE_RESOLVE_THENABLE_JOB_TASK_TYPE,
@@ -1716,19 +1750,18 @@ class HeapObject: public Object {
   // If it's not performance critical iteration use the non-templatized
   // version.
   void IterateBody(ObjectVisitor* v);
-  void IterateBody(InstanceType type, int object_size, ObjectVisitor* v);
+  void IterateBody(Map* map, int object_size, ObjectVisitor* v);
 
   template <typename ObjectVisitor>
   inline void IterateBodyFast(ObjectVisitor* v);
 
   template <typename ObjectVisitor>
-  inline void IterateBodyFast(InstanceType type, int object_size,
-                              ObjectVisitor* v);
+  inline void IterateBodyFast(Map* map, int object_size, ObjectVisitor* v);
 
   // Returns true if the object contains a tagged value at given offset.
   // It is used for invalid slots filtering. If the offset points outside
   // of the object or to the map word, the result is UNDEFINED (!!!).
-  bool IsValidSlot(int offset);
+  bool IsValidSlot(Map* map, int offset);
 
   // Returns the heap object's size in bytes
   inline int Size() const;
@@ -3410,6 +3443,11 @@ class JSFunction: public JSObject {
 
   // Returns if this function has been compiled to native code yet.
   inline bool is_compiled();
+
+  static int GetHeaderSize(bool function_has_prototype_slot) {
+    return function_has_prototype_slot ? JSFunction::kSizeWithPrototype
+                                       : JSFunction::kSizeWithoutPrototype;
+  }
 
   // Prints the name of the function using PrintF.
   void PrintName(FILE* out = stdout);

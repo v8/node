@@ -655,29 +655,30 @@ TNode<IntPtrT> CodeStubAssembler::ConvertToRelativeIndex(
   return result.value();
 }
 
-Node* CodeStubAssembler::SmiMod(Node* a, Node* b) {
-  VARIABLE(var_result, MachineRepresentation::kTagged);
+TNode<Number> CodeStubAssembler::SmiMod(SloppyTNode<Smi> a,
+                                        SloppyTNode<Smi> b) {
+  TVARIABLE(Number, var_result);
   Label return_result(this, &var_result),
       return_minuszero(this, Label::kDeferred),
       return_nan(this, Label::kDeferred);
 
   // Untag {a} and {b}.
-  a = SmiToInt32(a);
-  b = SmiToInt32(b);
+  TNode<Int32T> int_a = SmiToInt32(a);
+  TNode<Int32T> int_b = SmiToInt32(b);
 
   // Return NaN if {b} is zero.
-  GotoIf(Word32Equal(b, Int32Constant(0)), &return_nan);
+  GotoIf(Word32Equal(int_b, Int32Constant(0)), &return_nan);
 
   // Check if {a} is non-negative.
   Label if_aisnotnegative(this), if_aisnegative(this, Label::kDeferred);
-  Branch(Int32LessThanOrEqual(Int32Constant(0), a), &if_aisnotnegative,
+  Branch(Int32LessThanOrEqual(Int32Constant(0), int_a), &if_aisnotnegative,
          &if_aisnegative);
 
   BIND(&if_aisnotnegative);
   {
     // Fast case, don't need to check any other edge cases.
-    Node* r = Int32Mod(a, b);
-    var_result.Bind(SmiFromInt32(r));
+    TNode<Int32T> r = Int32Mod(int_a, int_b);
+    var_result = SmiFromInt32(r);
     Goto(&return_result);
   }
 
@@ -687,14 +688,14 @@ Node* CodeStubAssembler::SmiMod(Node* a, Node* b) {
       // Check if {a} is kMinInt and {b} is -1 (only relevant if the
       // kMinInt is actually representable as a Smi).
       Label join(this);
-      GotoIfNot(Word32Equal(a, Int32Constant(kMinInt)), &join);
-      GotoIf(Word32Equal(b, Int32Constant(-1)), &return_minuszero);
+      GotoIfNot(Word32Equal(int_a, Int32Constant(kMinInt)), &join);
+      GotoIf(Word32Equal(int_b, Int32Constant(-1)), &return_minuszero);
       Goto(&join);
       BIND(&join);
     }
 
     // Perform the integer modulus operation.
-    Node* r = Int32Mod(a, b);
+    TNode<Int32T> r = Int32Mod(int_a, int_b);
 
     // Check if {r} is zero, and if so return -0, because we have to
     // take the sign of the left hand side {a}, which is negative.
@@ -702,20 +703,20 @@ Node* CodeStubAssembler::SmiMod(Node* a, Node* b) {
 
     // The remainder {r} can be outside the valid Smi range on 32bit
     // architectures, so we cannot just say SmiFromInt32(r) here.
-    var_result.Bind(ChangeInt32ToTagged(r));
+    var_result = ChangeInt32ToTagged(r);
     Goto(&return_result);
   }
 
   BIND(&return_minuszero);
-  var_result.Bind(MinusZeroConstant());
+  var_result = MinusZeroConstant();
   Goto(&return_result);
 
   BIND(&return_nan);
-  var_result.Bind(NanConstant());
+  var_result = NanConstant();
   Goto(&return_result);
 
   BIND(&return_result);
-  return TNode<Object>::UncheckedCast(var_result.value());
+  return var_result.value();
 }
 
 TNode<Number> CodeStubAssembler::SmiMul(SloppyTNode<Smi> a,
@@ -2134,8 +2135,10 @@ Node* CodeStubAssembler::StoreFixedArrayElement(Node* object, Node* index_node,
                                                 int additional_offset,
                                                 ParameterMode parameter_mode) {
   CSA_SLOW_ASSERT(
-      this, Word32Or(IsHashTable(object),
-                     Word32Or(IsFixedArray(object), IsPropertyArray(object))));
+      this,
+      Word32Or(IsHashTable(object),
+               Word32Or(IsFixedArray(object),
+                        Word32Or(IsPropertyArray(object), IsContext(object)))));
   CSA_SLOW_ASSERT(this, MatchesParameterMode(index_node, parameter_mode));
   DCHECK(barrier_mode == SKIP_WRITE_BARRIER ||
          barrier_mode == UPDATE_WRITE_BARRIER);
@@ -2438,12 +2441,12 @@ TNode<String> CodeStubAssembler::AllocateSeqOneByteString(
   return CAST(result);
 }
 
-Node* CodeStubAssembler::IsZeroOrFixedArray(Node* object) {
+Node* CodeStubAssembler::IsZeroOrContext(Node* object) {
   Label out(this);
   VARIABLE(var_result, MachineRepresentation::kWord32, Int32Constant(1));
 
   GotoIf(WordEqual(object, SmiConstant(0)), &out);
-  GotoIf(IsFixedArray(object), &out);
+  GotoIf(IsContext(object), &out);
 
   var_result.Bind(Int32Constant(0));
   Goto(&out);
@@ -2455,7 +2458,7 @@ Node* CodeStubAssembler::IsZeroOrFixedArray(Node* object) {
 TNode<String> CodeStubAssembler::AllocateSeqOneByteString(
     Node* context, TNode<Smi> length, AllocationFlags flags) {
   Comment("AllocateSeqOneByteString");
-  CSA_SLOW_ASSERT(this, IsZeroOrFixedArray(context));
+  CSA_SLOW_ASSERT(this, IsZeroOrContext(context));
   VARIABLE(var_result, MachineRepresentation::kTagged);
 
   // Compute the SeqOneByteString size and check if it fits into new space.
@@ -2524,7 +2527,7 @@ TNode<String> CodeStubAssembler::AllocateSeqTwoByteString(
 
 TNode<String> CodeStubAssembler::AllocateSeqTwoByteString(
     Node* context, TNode<Smi> length, AllocationFlags flags) {
-  CSA_SLOW_ASSERT(this, IsZeroOrFixedArray(context));
+  CSA_SLOW_ASSERT(this, IsZeroOrContext(context));
   Comment("AllocateSeqTwoByteString");
   VARIABLE(var_result, MachineRepresentation::kTagged);
 
@@ -2650,7 +2653,7 @@ TNode<String> CodeStubAssembler::NewConsString(Node* context, TNode<Smi> length,
                                                TNode<String> left,
                                                TNode<String> right,
                                                AllocationFlags flags) {
-  CSA_ASSERT(this, IsFixedArray(context));
+  CSA_ASSERT(this, IsContext(context));
   // Added string can be a cons string.
   Comment("Allocating ConsString");
   Node* left_instance_type = LoadInstanceType(left);
@@ -4552,6 +4555,13 @@ Node* CodeStubAssembler::IsJSAsyncGeneratorObject(Node* object) {
   return HasInstanceType(object, JS_ASYNC_GENERATOR_OBJECT_TYPE);
 }
 
+Node* CodeStubAssembler::IsContext(Node* object) {
+  Node* instance_type = LoadInstanceType(object);
+  return Word32And(
+      Int32GreaterThanOrEqual(instance_type, Int32Constant(FIRST_CONTEXT_TYPE)),
+      Int32LessThanOrEqual(instance_type, Int32Constant(LAST_CONTEXT_TYPE)));
+}
+
 Node* CodeStubAssembler::IsFixedArray(Node* object) {
   return HasInstanceType(object, FIXED_ARRAY_TYPE);
 }
@@ -4888,7 +4898,7 @@ TNode<Int32T> CodeStubAssembler::StringCharCodeAt(SloppyTNode<String> string,
   return var_result.value();
 }
 
-TNode<String> CodeStubAssembler::StringFromCharCode(TNode<Int32T> code) {
+TNode<String> CodeStubAssembler::StringFromSingleCharCode(TNode<Int32T> code) {
   VARIABLE(var_result, MachineRepresentation::kTagged);
 
   // Check if the {code} is a one-byte char code.
@@ -5086,7 +5096,7 @@ TNode<String> CodeStubAssembler::SubString(TNode<String> string,
   BIND(&single_char);
   {
     TNode<Int32T> char_code = StringCharCodeAt(string, from);
-    var_result = StringFromCharCode(char_code);
+    var_result = StringFromSingleCharCode(char_code);
     Goto(&end);
   }
 
@@ -5451,8 +5461,8 @@ TNode<String> CodeStubAssembler::StringAdd(Node* context, TNode<String> left,
   return result.value();
 }
 
-TNode<String> CodeStubAssembler::StringFromCodePoint(TNode<Int32T> codepoint,
-                                                     UnicodeEncoding encoding) {
+TNode<String> CodeStubAssembler::StringFromSingleCodePoint(
+    TNode<Int32T> codepoint, UnicodeEncoding encoding) {
   VARIABLE(var_result, MachineRepresentation::kTagged, EmptyStringConstant());
 
   Label if_isword16(this), if_isword32(this), return_result(this);
@@ -5462,7 +5472,7 @@ TNode<String> CodeStubAssembler::StringFromCodePoint(TNode<Int32T> codepoint,
 
   BIND(&if_isword16);
   {
-    var_result.Bind(StringFromCharCode(codepoint));
+    var_result.Bind(StringFromSingleCharCode(codepoint));
     Goto(&return_result);
   }
 
@@ -10778,13 +10788,98 @@ Node* CodeStubAssembler::IsPromiseHookEnabledOrDebugIsActive() {
   return Word32NotEqual(promise_hook_or_debug_is_active, Int32Constant(0));
 }
 
+TNode<Code> CodeStubAssembler::LoadBuiltin(TNode<Smi> builtin_id) {
+  CSA_ASSERT(this, SmiGreaterThanOrEqual(builtin_id, SmiConstant(0)));
+  CSA_ASSERT(this,
+             SmiLessThan(builtin_id, SmiConstant(Builtins::builtin_count)));
+
+  int const kSmiShiftBits = kSmiShiftSize + kSmiTagSize;
+  int index_shift = kPointerSizeLog2 - kSmiShiftBits;
+  TNode<WordT> table_index =
+      index_shift >= 0 ? WordShl(BitcastTaggedToWord(builtin_id), index_shift)
+                       : WordSar(BitcastTaggedToWord(builtin_id), -index_shift);
+
+  return CAST(
+      Load(MachineType::TaggedPointer(),
+           ExternalConstant(ExternalReference::builtins_address(isolate())),
+           table_index));
+}
+
+TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
+    SloppyTNode<SharedFunctionInfo> shared_info) {
+  TNode<Object> sfi_data =
+      LoadObjectField(shared_info, SharedFunctionInfo::kFunctionDataOffset);
+
+  TYPED_VARIABLE_DEF(Code, sfi_code, this);
+
+  Label done(this);
+  Label check_instance_type(this);
+
+  // IsSmi: Is builtin
+  GotoIf(TaggedIsNotSmi(sfi_data), &check_instance_type);
+  sfi_code = LoadBuiltin(CAST(sfi_data));
+  Goto(&done);
+
+  // Switch on data's instance type.
+  BIND(&check_instance_type);
+  TNode<Int32T> data_type = LoadInstanceType(CAST(sfi_data));
+
+  int32_t case_values[] = {BYTECODE_ARRAY_TYPE, CODE_TYPE, FIXED_ARRAY_TYPE,
+                           TUPLE2_TYPE};
+  Label check_is_bytecode_array(this);
+  Label check_is_code(this);
+  Label check_is_fixed_array(this);
+  Label check_is_pre_parsed_scope_data(this);
+  Label check_is_function_template_info(this);
+  Label* case_labels[] = {&check_is_bytecode_array, &check_is_code,
+                          &check_is_fixed_array,
+                          &check_is_pre_parsed_scope_data};
+  STATIC_ASSERT(arraysize(case_values) == arraysize(case_labels));
+  Switch(data_type, &check_is_function_template_info, case_values, case_labels,
+         arraysize(case_labels));
+
+  // IsBytecodeArray: Interpret bytecode
+  BIND(&check_is_bytecode_array);
+  DCHECK(!Builtins::IsLazy(Builtins::kInterpreterEntryTrampoline));
+  sfi_code = HeapConstant(BUILTIN_CODE(isolate(), InterpreterEntryTrampoline));
+  Goto(&done);
+
+  // IsCode: Run code
+  BIND(&check_is_code);
+  sfi_code = CAST(sfi_data);
+  Goto(&done);
+
+  // IsFixedArray: Instantiate using AsmWasmData,
+  BIND(&check_is_fixed_array);
+  DCHECK(!Builtins::IsLazy(Builtins::kInstantiateAsmJs));
+  sfi_code = HeapConstant(BUILTIN_CODE(isolate(), InstantiateAsmJs));
+  Goto(&done);
+
+  // IsPreParsedScopeData: Compile lazy
+  BIND(&check_is_pre_parsed_scope_data);
+  DCHECK(!Builtins::IsLazy(Builtins::kCompileLazy));
+  sfi_code = HeapConstant(BUILTIN_CODE(isolate(), CompileLazy));
+  Goto(&done);
+
+  // IsFunctionTemplateInfo: API call
+  BIND(&check_is_function_template_info);
+  // This is the default branch, so assert that we have the expected data type.
+  CSA_ASSERT(
+      this, Word32Equal(data_type, Int32Constant(FUNCTION_TEMPLATE_INFO_TYPE)));
+  DCHECK(!Builtins::IsLazy(Builtins::kHandleApiCall));
+  sfi_code = HeapConstant(BUILTIN_CODE(isolate(), HandleApiCall));
+  Goto(&done);
+
+  BIND(&done);
+  return sfi_code.value();
+}
+
 Node* CodeStubAssembler::AllocateFunctionWithMapAndContext(Node* map,
                                                            Node* shared_info,
                                                            Node* context) {
   CSA_SLOW_ASSERT(this, IsMap(map));
 
-  Node* const code =
-      LoadObjectField(shared_info, SharedFunctionInfo::kCodeOffset);
+  Node* const code = GetSharedFunctionInfoCode(shared_info);
 
   // TODO(ishell): All the callers of this function pass map loaded from
   // Context::STRICT_FUNCTION_WITHOUT_PROTOTYPE_MAP_INDEX. So we can remove

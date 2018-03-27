@@ -1746,6 +1746,20 @@ void MacroAssembler::AssertFixedArray(Register object) {
   }
 }
 
+void MacroAssembler::AssertConstructor(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    TestIfSmi(object, r0);
+    Check(ne, AbortReason::kOperandIsASmiAndNotAConstructor);
+    push(object);
+    LoadP(object, FieldMemOperand(object, HeapObject::kMapOffset));
+    lbz(object, FieldMemOperand(object, Map::kBitFieldOffset));
+    andi(object, object, Operand(Map::IsConstructorBit::kMask));
+    pop(object);
+    Check(ne, AbortReason::kOperandIsNotAConstructor, cr0);
+  }
+}
+
 void MacroAssembler::AssertFunction(Register object) {
   if (emit_debug_code()) {
     STATIC_ASSERT(kSmiTag == 0);
@@ -2391,11 +2405,12 @@ void MacroAssembler::AndSmiLiteral(Register dst, Register src, Smi* smi,
 // Load a "pointer" sized value from the memory location
 void TurboAssembler::LoadP(Register dst, const MemOperand& mem,
                            Register scratch) {
+  DCHECK_EQ(mem.rb(), no_reg);
   int offset = mem.offset();
 
   if (!is_int16(offset)) {
     /* cannot use d-form */
-    DCHECK(scratch != no_reg);
+    DCHECK_EQ(scratch, no_reg);
     mov(scratch, Operand(offset));
     LoadPX(dst, MemOperand(mem.ra(), scratch));
   } else {

@@ -57,7 +57,7 @@ static const char* ComputeMarker(SharedFunctionInfo* shared,
   }
 }
 
-static const char* ComputeMarker(wasm::WasmCode* code) {
+static const char* ComputeMarker(const wasm::WasmCode* code) {
   switch (code->kind()) {
     case wasm::WasmCode::kFunction:
       return code->is_liftoff() ? "" : "*";
@@ -214,7 +214,7 @@ void CodeEventLogger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
 }
 
 void CodeEventLogger::CodeCreateEvent(LogEventsAndTags tag,
-                                      wasm::WasmCode* code,
+                                      const wasm::WasmCode* code,
                                       wasm::WasmName name) {
   name_buffer_->Init(tag);
   if (name.is_empty()) {
@@ -251,7 +251,7 @@ class PerfBasicLogger : public CodeEventLogger {
  private:
   void LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
                          const char* name, int length) override;
-  void LogRecordedBuffer(wasm::WasmCode* code, const char* name,
+  void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                          int length) override;
   void WriteLogRecordedBuffer(uintptr_t address, int size, const char* name,
                               int name_length);
@@ -313,8 +313,8 @@ void PerfBasicLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
                          code->instruction_size(), name, length);
 }
 
-void PerfBasicLogger::LogRecordedBuffer(wasm::WasmCode* code, const char* name,
-                                        int length) {
+void PerfBasicLogger::LogRecordedBuffer(const wasm::WasmCode* code,
+                                        const char* name, int length) {
   WriteLogRecordedBuffer(
       reinterpret_cast<uintptr_t>(code->instructions().start()),
       code->instructions().length(), name, length);
@@ -337,7 +337,7 @@ class LowLevelLogger : public CodeEventLogger {
  private:
   void LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
                          const char* name, int length) override;
-  void LogRecordedBuffer(wasm::WasmCode* code, const char* name,
+  void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                          int length) override;
 
   // Low-level profiling event structures.
@@ -435,8 +435,8 @@ void LowLevelLogger::LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo*,
       code->instruction_size());
 }
 
-void LowLevelLogger::LogRecordedBuffer(wasm::WasmCode* code, const char* name,
-                                       int length) {
+void LowLevelLogger::LogRecordedBuffer(const wasm::WasmCode* code,
+                                       const char* name, int length) {
   CodeCreateStruct event;
   event.name_size = length;
   event.code_address = code->instructions().start();
@@ -486,7 +486,7 @@ class JitLogger : public CodeEventLogger {
  private:
   void LogRecordedBuffer(AbstractCode* code, SharedFunctionInfo* shared,
                          const char* name, int length) override;
-  void LogRecordedBuffer(wasm::WasmCode* code, const char* name,
+  void LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                          int length) override;
 
   JitCodeEventHandler code_event_handler_;
@@ -505,6 +505,8 @@ void JitLogger::LogRecordedBuffer(AbstractCode* code,
   memset(&event, 0, sizeof(event));
   event.type = JitCodeEvent::CODE_ADDED;
   event.code_start = code->instruction_start();
+  event.code_type =
+      code->IsCode() ? JitCodeEvent::JIT_CODE : JitCodeEvent::BYTE_CODE;
   event.code_len = code->instruction_size();
   Handle<SharedFunctionInfo> shared_function_handle;
   if (shared && shared->script()->IsScript()) {
@@ -516,11 +518,12 @@ void JitLogger::LogRecordedBuffer(AbstractCode* code,
   code_event_handler_(&event);
 }
 
-void JitLogger::LogRecordedBuffer(wasm::WasmCode* code, const char* name,
+void JitLogger::LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
                                   int length) {
   JitCodeEvent event;
   memset(&event, 0, sizeof(event));
   event.type = JitCodeEvent::CODE_ADDED;
+  event.code_type = JitCodeEvent::JIT_CODE;
   event.code_start = code->instructions().start();
   event.code_len = code->instructions().length();
   event.name.str = name;
@@ -533,6 +536,8 @@ void JitLogger::CodeMoveEvent(AbstractCode* from, Address to) {
 
   JitCodeEvent event;
   event.type = JitCodeEvent::CODE_MOVED;
+  event.code_type =
+      from->IsCode() ? JitCodeEvent::JIT_CODE : JitCodeEvent::BYTE_CODE;
   event.code_start = from->instruction_start();
   event.code_len = from->instruction_size();
 
@@ -1110,7 +1115,7 @@ void Logger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
 }
 
 void Logger::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
-                             wasm::WasmCode* code, wasm::WasmName name) {
+                             const wasm::WasmCode* code, wasm::WasmName name) {
   if (!is_logging_code_events()) return;
   if (!FLAG_log_code || !log_->IsEnabled()) return;
   Log::MessageBuilder msg(log_);
@@ -1285,24 +1290,39 @@ void Logger::CodeMoveEvent(AbstractCode* from, Address to) {
   MoveEventInternal(CodeEventListener::CODE_MOVE_EVENT, from->address(), to);
 }
 
-void Logger::CodeLinePosInfoRecordEvent(Address code_start,
-                                        ByteArray* source_position_table) {
-  if (jit_logger_) {
-    void* jit_handler_data = jit_logger_->StartCodePosInfoEvent();
-    for (SourcePositionTableIterator iter(source_position_table); !iter.done();
-         iter.Advance()) {
+namespace {
+
+void CodeLinePosEvent(JitLogger* jit_logger, Address code_start,
+                      SourcePositionTableIterator& iter) {
+  if (jit_logger) {
+    void* jit_handler_data = jit_logger->StartCodePosInfoEvent();
+    for (; !iter.done(); iter.Advance()) {
       if (iter.is_statement()) {
-        jit_logger_->AddCodeLinePosInfoEvent(
+        jit_logger->AddCodeLinePosInfoEvent(
             jit_handler_data, iter.code_offset(),
             iter.source_position().ScriptOffset(),
             JitCodeEvent::STATEMENT_POSITION);
       }
-      jit_logger_->AddCodeLinePosInfoEvent(
-          jit_handler_data, iter.code_offset(),
-          iter.source_position().ScriptOffset(), JitCodeEvent::POSITION);
+      jit_logger->AddCodeLinePosInfoEvent(jit_handler_data, iter.code_offset(),
+                                          iter.source_position().ScriptOffset(),
+                                          JitCodeEvent::POSITION);
     }
-    jit_logger_->EndCodePosInfoEvent(code_start, jit_handler_data);
+    jit_logger->EndCodePosInfoEvent(code_start, jit_handler_data);
   }
+}
+
+}  // namespace
+
+void Logger::CodeLinePosInfoRecordEvent(Address code_start,
+                                        ByteArray* source_position_table) {
+  SourcePositionTableIterator iter(source_position_table);
+  CodeLinePosEvent(jit_logger_, code_start, iter);
+}
+
+void Logger::CodeLinePosInfoRecordEvent(
+    Address code_start, Vector<const byte> source_position_table) {
+  SourcePositionTableIterator iter(source_position_table);
+  CodeLinePosEvent(jit_logger_, code_start, iter);
 }
 
 void Logger::CodeNameEvent(Address addr, int pos, const char* code_name) {
@@ -1558,19 +1578,9 @@ static int EnumerateCompiledFunctions(Heap* heap,
       if (sfi->is_compiled() &&
           (!sfi->script()->IsScript() ||
            Script::cast(sfi->script())->HasValidSource())) {
-        // In some cases, an SFI might have (and have executing!) both bytecode
-        // and baseline code, so check for both and add them both if needed.
-        if (sfi->HasBytecodeArray()) {
-          AddFunctionAndCode(sfi, AbstractCode::cast(sfi->bytecode_array()),
-                             sfis, code_objects, compiled_funcs_count);
-          ++compiled_funcs_count;
-        }
-
-        if (!sfi->IsInterpreted()) {
-          AddFunctionAndCode(sfi, AbstractCode::cast(sfi->code()), sfis,
-                             code_objects, compiled_funcs_count);
-          ++compiled_funcs_count;
-        }
+        AddFunctionAndCode(sfi, AbstractCode::cast(sfi->abstract_code()), sfis,
+                           code_objects, compiled_funcs_count);
+        ++compiled_funcs_count;
       }
     } else if (obj->IsJSFunction()) {
       // Given that we no longer iterate over all optimized JSFunctions, we need

@@ -440,18 +440,71 @@ I32_SHIFTOP(shr, srlv)
 
 #undef I32_SHIFTOP
 
-#define UNIMPLEMENTED_I64_SHIFTOP(name)                                        \
-  void LiftoffAssembler::emit_i64_##name(LiftoffRegister dst,                  \
-                                         LiftoffRegister src, Register amount, \
-                                         LiftoffRegList pinned) {              \
-    BAILOUT("i64 shiftop");                                                    \
+namespace liftoff {
+
+inline bool IsRegInRegPair(LiftoffRegister pair, Register reg) {
+  DCHECK(pair.is_pair());
+  return pair.low_gp() == reg || pair.high_gp() == reg;
+}
+
+inline void Emit64BitShiftOperation(
+    LiftoffAssembler* assm, LiftoffRegister dst, LiftoffRegister src,
+    Register amount,
+    void (TurboAssembler::*emit_shift)(Register, Register, Register, Register,
+                                       Register),
+    LiftoffRegList pinned) {
+  Label move, done;
+  pinned.set(dst);
+  pinned.set(src);
+  pinned.set(amount);
+
+  // If shift amount is 0, don't do the shifting.
+  assm->TurboAssembler::Branch(&move, eq, amount, Operand(zero_reg));
+
+  if (liftoff::IsRegInRegPair(dst, amount) || dst.overlaps(src)) {
+    // If some of destination registers are in use, get another, unused pair.
+    // That way we prevent overwriting some input registers while shifting.
+    LiftoffRegister tmp = assm->GetUnusedRegister(kGpRegPair, pinned);
+
+    // Do the actual shift.
+    (assm->*emit_shift)(tmp.low_gp(), tmp.high_gp(), src.low_gp(),
+                        src.high_gp(), amount);
+
+    // Place result in destination register.
+    assm->TurboAssembler::Move(dst.high_gp(), tmp.high_gp());
+    assm->TurboAssembler::Move(dst.low_gp(), tmp.low_gp());
+  } else {
+    (assm->*emit_shift)(dst.low_gp(), dst.high_gp(), src.low_gp(),
+                        src.high_gp(), amount);
   }
+  assm->TurboAssembler::Branch(&done);
 
-UNIMPLEMENTED_I64_SHIFTOP(shl)
-UNIMPLEMENTED_I64_SHIFTOP(sar)
-UNIMPLEMENTED_I64_SHIFTOP(shr)
+  // If shift amount is 0, move src to dst.
+  assm->bind(&move);
+  assm->TurboAssembler::Move(dst.high_gp(), src.high_gp());
+  assm->TurboAssembler::Move(dst.low_gp(), src.low_gp());
 
-#undef I32_SHIFTOP
+  assm->bind(&done);
+}
+}  // namespace liftoff
+
+void LiftoffAssembler::emit_i64_shl(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::ShlPair, pinned);
+}
+
+void LiftoffAssembler::emit_i64_sar(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::SarPair, pinned);
+}
+
+void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
+                                    Register amount, LiftoffRegList pinned) {
+  liftoff::Emit64BitShiftOperation(this, dst, src, amount,
+                                   &TurboAssembler::ShrPair, pinned);
+}
 
 #define FP_BINOP(name, instruction)                                          \
   void LiftoffAssembler::emit_##name(DoubleRegister dst, DoubleRegister lhs, \
@@ -503,25 +556,7 @@ void LiftoffAssembler::emit_cond_jump(Condition cond, Label* label,
 }
 
 void LiftoffAssembler::emit_i32_eqz(Register dst, Register src) {
-  Label true_label;
-  if (dst != src) {
-    ori(dst, zero_reg, 0x1);
-  }
-
-  TurboAssembler::Branch(&true_label, eq, src, Operand(zero_reg));
-  // If not true, set on 0.
-  TurboAssembler::mov(dst, zero_reg);
-
-  if (dst != src) {
-    bind(&true_label);
-  } else {
-    Label end_label;
-    TurboAssembler::Branch(&end_label);
-    bind(&true_label);
-
-    ori(dst, zero_reg, 0x1);
-    bind(&end_label);
-  }
+  sltiu(dst, src, 1);
 }
 
 void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
@@ -548,7 +583,11 @@ void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
 }
 
 void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
-  BAILOUT("emit_i64_eqz");
+  Register tmp =
+      GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(src, dst)).gp();
+  sltiu(tmp, src.low_gp(), 1);
+  sltiu(dst, src.high_gp(), 1);
+  and_(dst, dst, tmp);
 }
 
 void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,

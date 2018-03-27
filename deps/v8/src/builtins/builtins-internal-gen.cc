@@ -7,6 +7,7 @@
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
 #include "src/heap/heap-inl.h"
+#include "src/ic/accessor-assembler.h"
 #include "src/macro-assembler.h"
 #include "src/objects/debug-objects.h"
 #include "src/objects/shared-function-info.h"
@@ -203,8 +204,7 @@ TF_BUILTIN(DebugBreakTrampoline, CodeStubAssembler) {
 
   BIND(&tailcall_to_shared);
   // Tail call into code object on the SharedFunctionInfo.
-  TNode<Code> code =
-      CAST(LoadObjectField(shared, SharedFunctionInfo::kCodeOffset));
+  TNode<Code> code = GetSharedFunctionInfoCode(shared);
   // Use the ConstructTrampolineDescriptor because it passes new.target too in
   // case this is called during construct.
   CSA_ASSERT(this, IsCode(code));
@@ -481,10 +481,10 @@ TF_BUILTIN(RecordWrite, RecordWriteCodeStubAssembler) {
   Return(TrueConstant());
 }
 
-class DeletePropertyBaseAssembler : public CodeStubAssembler {
+class DeletePropertyBaseAssembler : public AccessorAssembler {
  public:
   explicit DeletePropertyBaseAssembler(compiler::CodeAssemblerState* state)
-      : CodeStubAssembler(state) {}
+      : AccessorAssembler(state) {}
 
   void DeleteDictionaryProperty(Node* receiver, Node* properties, Node* name,
                                 Node* context, Label* dont_delete,
@@ -571,6 +571,8 @@ TF_BUILTIN(DeleteProperty, DeletePropertyBaseAssembler) {
 
     BIND(&dictionary);
     {
+      InvalidateValidityCellIfPrototype(receiver_map);
+
       Node* properties = LoadSlowProperties(receiver);
       DeleteDictionaryProperty(receiver, properties, unique, context,
                                &dont_delete, &if_notfound);

@@ -989,10 +989,16 @@ class TurboAssembler : public Assembler {
     // High bits must be identical to fit into an 32-bit integer
     cgfr(value, value);
   }
-  void SmiUntag(Register reg) { SmiUntag(reg, reg); }
+  void SmiUntag(Register reg, int scale = 0) { SmiUntag(reg, reg, scale); }
 
-  void SmiUntag(Register dst, Register src) {
-    ShiftRightArithP(dst, src, Operand(kSmiShift));
+  void SmiUntag(Register dst, Register src, int scale = 0) {
+    if (scale > kSmiShift) {
+      ShiftLeftP(dst, src, Operand(scale - kSmiShift));
+    } else if (scale < kSmiShift) {
+      ShiftRightArithP(dst, src, Operand(kSmiShift - scale));
+    } else {
+      // do nothing
+    }
   }
 
   // Activation support.
@@ -1232,6 +1238,10 @@ class MacroAssembler : public TurboAssembler {
   // Abort execution if argument is not a FixedArray, enabled via --debug-code.
   void AssertFixedArray(Register object);
 
+  // Abort execution if argument is not a Constructor, enabled via --debug-code.
+  void AssertConstructor(Register object, Register scratch);
+
+  // Abort execution if argument is not a JSFunction, enabled via --debug-code.
   void AssertFunction(Register object);
 
   // Abort execution if argument is not a JSBoundFunction,

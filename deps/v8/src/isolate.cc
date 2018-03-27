@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 
+#include <atomic>
 #include <fstream>  // NOLINT(readability/streams)
 #include <sstream>
 
@@ -30,7 +31,6 @@
 #include "src/debug/debug.h"
 #include "src/deoptimizer.h"
 #include "src/elements.h"
-#include "src/external-reference-table.h"
 #include "src/frames-inl.h"
 #include "src/ic/stub-cache.h"
 #include "src/instruction-stream.h"
@@ -75,9 +75,40 @@ extern const uint8_t* TrustedEmbeddedBlob();
 extern uint32_t TrustedEmbeddedBlobSize();
 #endif
 
+namespace {
+// These variables provide access to the current embedded blob without requiring
+// an isolate instance. This is needed e.g. by Code::InstructionStart, which may
+// not have access to an isolate but still needs to access the embedded blob.
+// The variables are initialized by each isolate in Init(). Writes and reads are
+// relaxed since we can guarantee that the current thread has initialized these
+// variables before accessing them. Different threads may race, but this is fine
+// since they all attempt to set the same values of the blob pointer and size.
+
+std::atomic<const uint8_t*> current_embedded_blob_(nullptr);
+std::atomic<uint32_t> current_embedded_blob_size_(0);
+}  // namespace
+
+void Isolate::SetEmbeddedBlob(const uint8_t* blob, uint32_t blob_size) {
+  embedded_blob_ = blob;
+  embedded_blob_size_ = blob_size;
+  current_embedded_blob_.store(blob, std::memory_order_relaxed);
+  current_embedded_blob_size_.store(blob_size, std::memory_order_relaxed);
+}
+
 const uint8_t* Isolate::embedded_blob() const { return embedded_blob_; }
 uint32_t Isolate::embedded_blob_size() const { return embedded_blob_size_; }
-#endif
+
+// static
+const uint8_t* Isolate::CurrentEmbeddedBlob() {
+  return current_embedded_blob_.load(std::memory_order::memory_order_relaxed);
+}
+
+// static
+uint32_t Isolate::CurrentEmbeddedBlobSize() {
+  return current_embedded_blob_size_.load(
+      std::memory_order::memory_order_relaxed);
+}
+#endif  // V8_EMBEDDED_BUILTINS
 
 int ThreadId::AllocateThreadId() {
   int new_id = base::Relaxed_AtomicIncrement(&highest_thread_id_, 1);
@@ -2586,8 +2617,6 @@ void Isolate::GlobalTearDown() {
 
 
 void Isolate::ClearSerializerData() {
-  delete external_reference_table_;
-  external_reference_table_ = nullptr;
   delete external_reference_map_;
   external_reference_map_ = nullptr;
 }
@@ -2840,8 +2869,7 @@ void CreateOffHeapTrampolines(Isolate* isolate) {
   HandleScope scope(isolate);
   Builtins* builtins = isolate->builtins();
 
-  EmbeddedData d = EmbeddedData::FromBlob(isolate->embedded_blob(),
-                                          isolate->embedded_blob_size());
+  EmbeddedData d = EmbeddedData::FromBlob();
 
   CodeSpaceMemoryModificationScope code_allocation(isolate->heap());
   for (int i = 0; i < Builtins::builtin_count; i++) {
@@ -2883,10 +2911,7 @@ void Isolate::PrepareEmbeddedBlobForSerialization() {
   uint8_t* data;
   uint32_t size;
   InstructionStream::CreateOffHeapInstructionStream(this, &data, &size);
-
-  embedded_blob_ = const_cast<const uint8_t*>(data);
-  embedded_blob_size_ = size;
-
+  SetEmbeddedBlob(const_cast<const uint8_t*>(data), size);
   CreateOffHeapTrampolines(this);
 }
 #endif  // V8_EMBEDDED_BUILTINS
@@ -2950,15 +2975,12 @@ bool Isolate::Init(StartupDeserializer* des) {
 #ifdef V8_EMBEDDED_BUILTINS
 #ifdef V8_MULTI_SNAPSHOTS
   if (FLAG_untrusted_code_mitigations) {
-    embedded_blob_ = DefaultEmbeddedBlob();
-    embedded_blob_size_ = DefaultEmbeddedBlobSize();
+    SetEmbeddedBlob(DefaultEmbeddedBlob(), DefaultEmbeddedBlobSize());
   } else {
-    embedded_blob_ = TrustedEmbeddedBlob();
-    embedded_blob_size_ = TrustedEmbeddedBlobSize();
+    SetEmbeddedBlob(TrustedEmbeddedBlob(), TrustedEmbeddedBlobSize());
   }
 #else
-  embedded_blob_ = DefaultEmbeddedBlob();
-  embedded_blob_size_ = DefaultEmbeddedBlobSize();
+  SetEmbeddedBlob(DefaultEmbeddedBlob(), DefaultEmbeddedBlobSize());
 #endif
 #endif
 
@@ -2981,7 +3003,7 @@ bool Isolate::Init(StartupDeserializer* des) {
   // SetUp the object heap.
   DCHECK(!heap_.HasBeenSetUp());
   if (!heap_.SetUp()) {
-    V8::FatalProcessOutOfMemory("heap setup");
+    V8::FatalProcessOutOfMemory(this, "heap setup");
     return false;
   }
 
@@ -3009,7 +3031,7 @@ bool Isolate::Init(StartupDeserializer* des) {
   }
 
   if (!setup_delegate_->SetupHeap(&heap_)) {
-    V8::FatalProcessOutOfMemory("heap object creation");
+    V8::FatalProcessOutOfMemory(this, "heap object creation");
     return false;
   }
 
@@ -3097,6 +3119,10 @@ bool Isolate::Init(StartupDeserializer* des) {
   CHECK_EQ(static_cast<int>(
                OFFSET_OF(Isolate, heap_.external_memory_at_last_mark_compact_)),
            Internals::kExternalMemoryAtLastMarkCompactOffset);
+  CHECK_EQ(
+      static_cast<int>(OFFSET_OF(Isolate, heap_.external_reference_table_)),
+      Internals::kIsolateRootsOffset +
+          Heap::kRootsExternalReferenceTableOffset);
 
   {
     HandleScope scope(this);
