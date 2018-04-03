@@ -82,7 +82,7 @@ TYPE_CHECKER(BigInt, BIGINT_TYPE)
 TYPE_CHECKER(BoilerplateDescription, BOILERPLATE_DESCRIPTION_TYPE)
 TYPE_CHECKER(BreakPoint, TUPLE2_TYPE)
 TYPE_CHECKER(BreakPointInfo, TUPLE2_TYPE)
-TYPE_CHECKER(CallHandlerInfo, TUPLE3_TYPE)
+TYPE_CHECKER(CallHandlerInfo, CALL_HANDLER_INFO_TYPE)
 TYPE_CHECKER(Cell, CELL_TYPE)
 TYPE_CHECKER(ConstantElementsPair, TUPLE2_TYPE)
 TYPE_CHECKER(CoverageInfo, FIXED_ARRAY_TYPE)
@@ -119,6 +119,7 @@ TYPE_CHECKER(SmallOrderedHashSet, SMALL_ORDERED_HASH_SET_TYPE)
 TYPE_CHECKER(SourcePositionTableWithFrameCache, TUPLE2_TYPE)
 TYPE_CHECKER(TemplateObjectDescription, TUPLE2_TYPE)
 TYPE_CHECKER(TransitionArray, TRANSITION_ARRAY_TYPE)
+TYPE_CHECKER(WasmGlobalObject, WASM_GLOBAL_TYPE)
 TYPE_CHECKER(WasmInstanceObject, WASM_INSTANCE_TYPE)
 TYPE_CHECKER(WasmMemoryObject, WASM_MEMORY_TYPE)
 TYPE_CHECKER(WasmModuleObject, WASM_MODULE_TYPE)
@@ -2327,6 +2328,15 @@ bool FunctionTemplateInfo::instantiated() {
   return shared_function_info()->IsSharedFunctionInfo();
 }
 
+bool FunctionTemplateInfo::BreakAtEntry() {
+  Object* maybe_shared = shared_function_info();
+  if (maybe_shared->IsSharedFunctionInfo()) {
+    SharedFunctionInfo* shared = SharedFunctionInfo::cast(maybe_shared);
+    return shared->BreakAtEntry();
+  }
+  return false;
+}
+
 FunctionTemplateInfo* FunctionTemplateInfo::GetParent(Isolate* isolate) {
   Object* parent = parent_template();
   return parent->IsUndefined(isolate) ? nullptr
@@ -2401,6 +2411,12 @@ BOOL_ACCESSORS(InterceptorInfo, flags, has_no_side_effect, kHasNoSideEffect)
 ACCESSORS(CallHandlerInfo, callback, Object, kCallbackOffset)
 ACCESSORS(CallHandlerInfo, js_callback, Object, kJsCallbackOffset)
 ACCESSORS(CallHandlerInfo, data, Object, kDataOffset)
+
+bool CallHandlerInfo::IsSideEffectFreeCallHandlerInfo() const {
+  DCHECK(map() == GetHeap()->side_effect_call_handler_info_map() ||
+         map() == GetHeap()->side_effect_free_call_handler_info_map());
+  return map() == GetHeap()->side_effect_free_call_handler_info_map();
+}
 
 ACCESSORS(TemplateInfo, tag, Object, kTagOffset)
 ACCESSORS(TemplateInfo, serial_number, Object, kSerialNumberOffset)

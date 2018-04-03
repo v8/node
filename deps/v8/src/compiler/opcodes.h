@@ -611,7 +611,8 @@
   V(Float64ExtractHighWord32)    \
   V(Float64InsertLowWord32)      \
   V(Float64InsertHighWord32)     \
-  V(SpeculationPoison)           \
+  V(PoisonOnSpeculationTagged)   \
+  V(PoisonOnSpeculationWord)     \
   V(LoadStackPointer)            \
   V(LoadFramePointer)            \
   V(LoadParentFramePointer)      \
@@ -635,6 +636,8 @@
   V(Word32AtomicAnd)             \
   V(Word32AtomicOr)              \
   V(Word32AtomicXor)             \
+  V(Word64AtomicLoad)            \
+  V(Word64AtomicStore)           \
   V(Word64AtomicAdd)             \
   V(Word64AtomicSub)             \
   V(Word64AtomicAnd)             \

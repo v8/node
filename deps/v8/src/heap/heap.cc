@@ -161,8 +161,6 @@ Heap::Heap()
       survived_last_scavenge_(0),
       always_allocate_scope_count_(0),
       memory_pressure_level_(MemoryPressureLevel::kNone),
-      out_of_memory_callback_(nullptr),
-      out_of_memory_callback_data_(nullptr),
       contexts_disposed_(0),
       number_of_disposed_maps_(0),
       new_space_(nullptr),
@@ -183,6 +181,7 @@ Heap::Heap()
       max_marking_limit_reached_(0.0),
       ms_count_(0),
       gc_count_(0),
+      consecutive_ineffective_mark_compacts_(0),
       mmap_region_base_(0),
       remembered_unmapped_pages_index_(0),
       old_generation_allocation_limit_(initial_old_generation_size_),
@@ -1174,7 +1173,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
   // hope that eventually there will be no weak callbacks invocations.
   // Therefore stop recollecting after several attempts.
   if (gc_reason == GarbageCollectionReason::kLastResort) {
-    InvokeOutOfMemoryCallback();
+    InvokeNearHeapLimitCallback();
   }
   RuntimeCallTimerScope runtime_timer(
       isolate(), RuntimeCallCounterId::kGC_Custom_AllAvailableGarbage);
@@ -1237,7 +1236,7 @@ void Heap::ReportExternalMemoryPressure() {
   }
   if (incremental_marking()->IsStopped()) {
     if (incremental_marking()->CanBeActivated()) {
-      StartIncrementalMarking(i::Heap::kNoGCFlags,
+      StartIncrementalMarking(GCFlagsForIncrementalMarking(),
                               GarbageCollectionReason::kExternalMemoryPressure,
                               kGCCallbackFlagsForExternalMemory);
     } else {
@@ -1282,7 +1281,7 @@ bool Heap::CollectGarbage(AllocationSpace space,
   GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
 
   if (!CanExpandOldGeneration(new_space()->Capacity())) {
-    InvokeOutOfMemoryCallback();
+    InvokeNearHeapLimitCallback();
   }
 
   // The VM is in the GC state until exiting this function.
@@ -1372,7 +1371,8 @@ bool Heap::CollectGarbage(AllocationSpace space,
   if (IsYoungGenerationCollector(collector) &&
       !ShouldAbortIncrementalMarking()) {
     StartIncrementalMarkingIfAllocationLimitIsReached(
-        kNoGCFlags, kGCCallbackScheduleIdleGarbageCollection);
+        GCFlagsForIncrementalMarking(),
+        kGCCallbackScheduleIdleGarbageCollection);
   }
 
   return next_gc_likely_to_collect_more;
@@ -1727,6 +1727,8 @@ bool Heap::PerformGarbageCollection(
     external_memory_at_last_mark_compact_ = external_memory_;
     external_memory_limit_ = external_memory_ + kExternalAllocationSoftLimit;
     SetOldGenerationAllocationLimit(old_gen_size, gc_speed, mutator_speed);
+    CheckIneffectiveMarkCompact(
+        old_gen_size, tracer()->AverageMarkCompactMutatorUtilization());
   } else if (HasLowYoungGenerationAllocationRate() &&
              old_generation_size_configured_) {
     DampenOldGenerationAllocationLimit(old_gen_size, gc_speed, mutator_speed);
@@ -1999,7 +2001,13 @@ int Heap::NumberOfScavengeTasks() {
   const int num_scavenge_tasks =
       static_cast<int>(new_space()->TotalCapacity()) / MB;
   static int num_cores = V8::GetCurrentPlatform()->NumberOfWorkerThreads() + 1;
-  return Max(1, Min(Min(num_scavenge_tasks, kMaxScavengerTasks), num_cores));
+  int tasks =
+      Max(1, Min(Min(num_scavenge_tasks, kMaxScavengerTasks), num_cores));
+  if (!CanExpandOldGeneration(static_cast<size_t>(tasks * Page::kPageSize))) {
+    // Optimize for memory usage near the heap limit.
+    tasks = 1;
+  }
+  return tasks;
 }
 
 void Heap::Scavenge() {
@@ -3547,6 +3555,7 @@ AllocationResult Heap::CopyJSObject(JSObject* source, AllocationSite* site) {
         map->instance_type() == JS_ERROR_TYPE ||
         map->instance_type() == JS_ARRAY_TYPE ||
         map->instance_type() == JS_API_OBJECT_TYPE ||
+        map->instance_type() == WASM_GLOBAL_TYPE ||
         map->instance_type() == WASM_INSTANCE_TYPE ||
         map->instance_type() == WASM_MEMORY_TYPE ||
         map->instance_type() == WASM_MODULE_TYPE ||
@@ -4272,6 +4281,34 @@ bool Heap::HasLowAllocationRate() {
          HasLowOldGenerationAllocationRate();
 }
 
+bool Heap::IsIneffectiveMarkCompact(size_t old_generation_size,
+                                    double mutator_utilization) {
+  const double kHighHeapPercentage = 0.8;
+  const double kLowMutatorUtilization = 0.4;
+  return old_generation_size >=
+             kHighHeapPercentage * max_old_generation_size_ &&
+         mutator_utilization < kLowMutatorUtilization;
+}
+
+void Heap::CheckIneffectiveMarkCompact(size_t old_generation_size,
+                                       double mutator_utilization) {
+  const int kMaxConsecutiveIneffectiveMarkCompacts = 4;
+  if (!FLAG_detect_ineffective_gcs_near_heap_limit) return;
+  if (!IsIneffectiveMarkCompact(old_generation_size, mutator_utilization)) {
+    consecutive_ineffective_mark_compacts_ = 0;
+    return;
+  }
+  ++consecutive_ineffective_mark_compacts_;
+  if (consecutive_ineffective_mark_compacts_ ==
+      kMaxConsecutiveIneffectiveMarkCompacts) {
+    if (InvokeNearHeapLimitCallback()) {
+      // The callback increased the heap limit.
+      consecutive_ineffective_mark_compacts_ = 0;
+      return;
+    }
+    FatalProcessOutOfMemory("Ineffective mark-compacts near heap limit");
+  }
+}
 
 bool Heap::HasHighFragmentation() {
   size_t used = PromotedSpaceSizeOfObjects();
@@ -4288,8 +4325,9 @@ bool Heap::HasHighFragmentation(size_t used, size_t committed) {
 }
 
 bool Heap::ShouldOptimizeForMemoryUsage() {
+  const size_t kOldGenerationSlack = max_old_generation_size_ / 8;
   return FLAG_optimize_for_size || isolate()->IsIsolateInBackground() ||
-         HighMemoryPressure();
+         HighMemoryPressure() || !CanExpandOldGeneration(kOldGenerationSlack);
 }
 
 void Heap::ActivateMemoryReducerIfNeeded() {
@@ -4682,16 +4720,43 @@ void Heap::MemoryPressureNotification(MemoryPressureLevel level,
   }
 }
 
-void Heap::SetOutOfMemoryCallback(v8::debug::OutOfMemoryCallback callback,
-                                  void* data) {
-  out_of_memory_callback_ = callback;
-  out_of_memory_callback_data_ = data;
+void Heap::AddNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
+                                    void* data) {
+  const size_t kMaxCallbacks = 100;
+  CHECK_LT(near_heap_limit_callbacks_.size(), kMaxCallbacks);
+  for (auto callback_data : near_heap_limit_callbacks_) {
+    CHECK_NE(callback_data.first, callback);
+  }
+  near_heap_limit_callbacks_.push_back(std::make_pair(callback, data));
 }
 
-void Heap::InvokeOutOfMemoryCallback() {
-  if (out_of_memory_callback_) {
-    out_of_memory_callback_(out_of_memory_callback_data_);
+void Heap::RemoveNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
+                                       size_t heap_limit) {
+  for (size_t i = 0; i < near_heap_limit_callbacks_.size(); i++) {
+    if (near_heap_limit_callbacks_[i].first == callback) {
+      near_heap_limit_callbacks_.erase(near_heap_limit_callbacks_.begin() + i);
+      if (heap_limit) {
+        RestoreHeapLimit(heap_limit);
+      }
+      return;
+    }
   }
+  UNREACHABLE();
+}
+
+bool Heap::InvokeNearHeapLimitCallback() {
+  if (near_heap_limit_callbacks_.size() > 0) {
+    v8::NearHeapLimitCallback callback =
+        near_heap_limit_callbacks_.back().first;
+    void* data = near_heap_limit_callbacks_.back().second;
+    size_t heap_limit = callback(data, max_old_generation_size_,
+                                 initial_max_old_generation_size_);
+    if (heap_limit > max_old_generation_size_) {
+      max_old_generation_size_ = heap_limit;
+      return true;
+    }
+  }
+  return false;
 }
 
 void Heap::CollectCodeStatistics() {
@@ -5960,8 +6025,10 @@ void Heap::RegisterExternallyReferencedObject(Object** object) {
   }
 }
 
+void Heap::StartTearDown() { SetGCState(TEAR_DOWN); }
+
 void Heap::TearDown() {
-  SetGCState(TEAR_DOWN);
+  DCHECK_EQ(gc_state_, TEAR_DOWN);
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
     Verify();
@@ -6327,6 +6394,10 @@ void Heap::RecordWritesIntoCode(Code* code) {
 
 PagedSpace* PagedSpaces::next() {
   switch (counter_++) {
+    case RO_SPACE:
+      // skip NEW_SPACE
+      counter_++;
+      return heap_->read_only_space();
     case OLD_SPACE:
       return heap_->old_space();
     case CODE_SPACE:

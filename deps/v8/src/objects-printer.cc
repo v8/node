@@ -149,6 +149,7 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_ASYNC_GENERATOR_OBJECT_TYPE:
     case JS_ARGUMENTS_TYPE:
     case JS_ERROR_TYPE:
+    case WASM_GLOBAL_TYPE:
     case WASM_INSTANCE_TYPE:  // TODO(titzer): debug printing for wasm objects
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
@@ -220,6 +221,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
       break;
     case FOREIGN_TYPE:
       Foreign::cast(this)->ForeignPrint(os);
+      break;
+    case CALL_HANDLER_INFO_TYPE:
+      CallHandlerInfo::cast(this)->CallHandlerInfoPrint(os);
       break;
     case SHARED_FUNCTION_INFO_TYPE:
       SharedFunctionInfo::cast(this)->SharedFunctionInfoPrint(os);
@@ -1548,6 +1552,15 @@ void AccessCheckInfo::AccessCheckInfoPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+void CallHandlerInfo::CallHandlerInfoPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "CallHandlerInfo");
+  os << "\n - callback: " << Brief(callback());
+  os << "\n - js_callback: " << Brief(js_callback());
+  os << "\n - data: " << Brief(data());
+  os << "\n - side_effect_free: "
+     << (IsSideEffectFreeCallHandlerInfo() ? "true" : "false");
+  os << "\n";
+}
 
 void InterceptorInfo::InterceptorInfoPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "InterceptorInfo");

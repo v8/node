@@ -219,7 +219,7 @@ void InstructionSelector::VisitLoad(Node* node) {
   }
 
   if (node->opcode() == IrOpcode::kPoisonedLoad &&
-      load_poisoning_ == LoadPoisoning::kDoPoison) {
+      poisoning_enabled_ == PoisoningMitigationLevel::kOn) {
     opcode |= MiscField::encode(kMemoryAccessPoisoned);
   }
 
@@ -2206,6 +2206,12 @@ void InstructionSelector::VisitF32x4Neg(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Abs(Node* node) { UNIMPLEMENTED(); }
 
+void InstructionSelector::VisitF32x4RecipSqrtApprox(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitF32x4RecipApprox(Node* node) { UNIMPLEMENTED(); }
+
 // static
 MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {
@@ -2227,9 +2233,6 @@ InstructionSelector::AlignmentRequirements() {
   return MachineOperatorBuilder::AlignmentRequirements::
       FullUnalignedAccessSupport();
 }
-
-// static
-bool InstructionSelector::SupportsSpeculationPoisoning() { return true; }
 
 }  // namespace compiler
 }  // namespace internal

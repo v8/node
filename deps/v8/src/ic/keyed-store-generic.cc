@@ -236,10 +236,11 @@ void KeyedStoreGenericAssembler::StoreElementWithCapacity(
     GotoIf(IsDictionaryMap(receiver_map), slow);
     // The length property is non-configurable, so it's guaranteed to always
     // be the first property.
-    Node* descriptors = LoadMapDescriptors(receiver_map);
-    Node* details =
-        LoadFixedArrayElement(descriptors, DescriptorArray::ToDetailsIndex(0));
-    GotoIf(IsSetSmi(details, PropertyDetails::kAttributesReadOnlyMask), slow);
+    TNode<DescriptorArray> descriptors = LoadMapDescriptors(receiver_map);
+    TNode<Int32T> details = LoadAndUntagToWord32FixedArrayElement(
+        descriptors, DescriptorArray::ToDetailsIndex(0));
+    GotoIf(IsSetWord32(details, PropertyDetails::kAttributesReadOnlyMask),
+           slow);
   }
   STATIC_ASSERT(FixedArray::kHeaderSize == FixedDoubleArray::kHeaderSize);
   const int kHeaderSize = FixedArray::kHeaderSize - kHeapObjectTag;
@@ -540,8 +541,8 @@ void KeyedStoreGenericAssembler::LookupPropertyOnPrototypeChain(
     Label next_proto(this);
     {
       Label found(this), found_fast(this), found_dict(this), found_global(this);
-      VARIABLE(var_meta_storage, MachineRepresentation::kTagged);
-      VARIABLE(var_entry, MachineType::PointerRepresentation());
+      TVARIABLE(HeapObject, var_meta_storage);
+      TVARIABLE(IntPtrT, var_entry);
       TryLookupProperty(holder, holder_map, instance_type, name, &found_fast,
                         &found_dict, &found_global, &var_meta_storage,
                         &var_entry, &next_proto, bailout);
@@ -625,7 +626,7 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
     Comment("fast property store");
     Node* descriptors = LoadMapDescriptors(receiver_map);
     Label descriptor_found(this), lookup_transition(this);
-    VARIABLE(var_name_index, MachineType::PointerRepresentation());
+    TVARIABLE(IntPtrT, var_name_index);
     Label* notfound = use_stub_cache == kUseStubCache ? &stub_cache : slow;
     DescriptorLookup(p->name, descriptors, bitfield3, &descriptor_found,
                      &var_name_index, &lookup_transition);
@@ -884,9 +885,7 @@ void KeyedStoreGenericAssembler::StoreIC_Uninitialized() {
   Node* instance_type = LoadMapInstanceType(receiver_map);
   // Receivers requiring non-standard element accesses (interceptors, access
   // checks, strings and string wrappers, proxies) are handled in the runtime.
-  GotoIf(Int32LessThanOrEqual(instance_type,
-                              Int32Constant(LAST_SPECIAL_RECEIVER_TYPE)),
-         &miss);
+  GotoIf(IsSpecialReceiverInstanceType(instance_type), &miss);
 
   // Optimistically write the state transition to the vector.
   StoreFeedbackVectorSlot(vector, slot,

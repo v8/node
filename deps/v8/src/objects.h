@@ -72,6 +72,7 @@
 //           - JSDate
 //         - JSMessageObject
 //         - JSModuleNamespace
+//         - WasmGlobalObject
 //         - WasmInstanceObject
 //         - WasmMemoryObject
 //         - WasmModuleObject
@@ -422,6 +423,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(SCRIPT_CONTEXT_TYPE)                                        \
   V(WITH_CONTEXT_TYPE)                                          \
                                                                 \
+  V(CALL_HANDLER_INFO_TYPE)                                     \
   V(CELL_TYPE)                                                  \
   V(CODE_DATA_CONTAINER_TYPE)                                   \
   V(FEEDBACK_CELL_TYPE)                                         \
@@ -472,6 +474,7 @@ const int kStubMinorKeyBits = kSmiValueSize - kStubMajorKeyBits - 1;
   V(JS_TYPED_ARRAY_TYPE)                                        \
   V(JS_DATA_VIEW_TYPE)                                          \
                                                                 \
+  V(WASM_GLOBAL_TYPE)                                           \
   V(WASM_INSTANCE_TYPE)                                         \
   V(WASM_MEMORY_TYPE)                                           \
   V(WASM_MODULE_TYPE)                                           \
@@ -786,6 +789,7 @@ enum InstanceType : uint16_t {
   WITH_CONTEXT_TYPE,  // LAST_FIXED_ARRAY_TYPE, LAST_CONTEXT_TYPE
 
   // Misc.
+  CALL_HANDLER_INFO_TYPE,
   CELL_TYPE,
   CODE_DATA_CONTAINER_TYPE,
   FEEDBACK_CELL_TYPE,
@@ -845,6 +849,7 @@ enum InstanceType : uint16_t {
   JS_TYPED_ARRAY_TYPE,
   JS_DATA_VIEW_TYPE,
 
+  WASM_GLOBAL_TYPE,
   WASM_INSTANCE_TYPE,
   WASM_MEMORY_TYPE,
   WASM_MODULE_TYPE,
@@ -1128,6 +1133,7 @@ template <class C> inline bool Is(Object* obj);
   V(TransitionArray)                      \
   V(Undetectable)                         \
   V(UniqueName)                           \
+  V(WasmGlobalObject)                     \
   V(WasmInstanceObject)                   \
   V(WasmMemoryObject)                     \
   V(WasmModuleObject)                     \
@@ -4634,6 +4640,12 @@ class CallHandlerInfo : public Tuple3 {
 
   DECL_CAST(CallHandlerInfo)
 
+  inline bool IsSideEffectFreeCallHandlerInfo() const;
+
+  // Dispatched behavior.
+  DECL_PRINTER(CallHandlerInfo)
+  DECL_VERIFIER(CallHandlerInfo)
+
   Address redirected_callback() const;
 
   static const int kCallbackOffset = kValue1Offset;
@@ -4800,6 +4812,8 @@ class FunctionTemplateInfo: public TemplateInfo {
   inline bool IsTemplateFor(JSObject* object);
   bool IsTemplateFor(Map* map);
   inline bool instantiated();
+
+  inline bool BreakAtEntry();
 
   // Helper function for cached accessors.
   static MaybeHandle<Name> TryGetCachedPropertyName(Isolate* isolate,

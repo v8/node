@@ -5934,6 +5934,41 @@ UNINITIALIZED_TEST(OutOfMemory) {
   }
 }
 
+UNINITIALIZED_TEST(OutOfMemoryIneffectiveGC) {
+  if (!FLAG_detect_ineffective_gcs_near_heap_limit) return;
+  if (FLAG_stress_incremental_marking) return;
+#ifdef VERIFY_HEAP
+  if (FLAG_verify_heap) return;
+#endif
+
+  FLAG_max_old_space_size = kHeapLimit / MB;
+  v8::Isolate::CreateParams create_params;
+  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  Isolate* i_isolate = reinterpret_cast<Isolate*>(isolate);
+  oom_isolate = i_isolate;
+  isolate->SetOOMErrorHandler(OOMCallback);
+  Factory* factory = i_isolate->factory();
+  Heap* heap = i_isolate->heap();
+  heap->CollectAllGarbage(Heap::kNoGCFlags, GarbageCollectionReason::kTesting);
+  {
+    HandleScope scope(i_isolate);
+    while (heap->PromotedSpaceSizeOfObjects() <
+           heap->MaxOldGenerationSize() * 0.9) {
+      factory->NewFixedArray(100, TENURED);
+    }
+    {
+      int initial_ms_count = heap->ms_count();
+      while (heap->ms_count() < initial_ms_count + 10) {
+        HandleScope inner_scope(i_isolate);
+        factory->NewFixedArray(30000, TENURED);
+      }
+      CHECK_GE(heap->tracer()->AverageMarkCompactMutatorUtilization(), 0.09);
+    }
+  }
+  isolate->Dispose();
+}
+
 HEAP_TEST(Regress779503) {
   // The following regression test ensures that the Scavenger does not allocate
   // over invalid slots. More specific, the Scavenger should not sweep a page
@@ -5981,15 +6016,18 @@ struct OutOfMemoryState {
   bool oom_triggered;
   size_t old_generation_capacity_at_oom;
   size_t memory_allocator_size_at_oom;
+  size_t new_space_capacity_at_oom;
 };
 
-void OutOfMemoryCallback(void* raw_state) {
+size_t NearHeapLimitCallback(void* raw_state, size_t current_heap_limit,
+                             size_t initial_heap_limit) {
   OutOfMemoryState* state = static_cast<OutOfMemoryState*>(raw_state);
   Heap* heap = state->heap;
   state->oom_triggered = true;
   state->old_generation_capacity_at_oom = heap->OldGenerationCapacity();
   state->memory_allocator_size_at_oom = heap->memory_allocator()->Size();
-  heap->IncreaseHeapLimitForDebugging();
+  state->new_space_capacity_at_oom = heap->new_space()->Capacity();
+  return initial_heap_limit + 100 * MB;
 }
 
 size_t MemoryAllocatorSizeFromHeapCapacity(size_t capacity) {
@@ -6017,7 +6055,7 @@ UNINITIALIZED_TEST(OutOfMemorySmallObjects) {
   OutOfMemoryState state;
   state.heap = heap;
   state.oom_triggered = false;
-  heap->SetOutOfMemoryCallback(OutOfMemoryCallback, &state);
+  heap->AddNearHeapLimitCallback(NearHeapLimitCallback, &state);
   {
     HandleScope handle_scope(isolate);
     while (!state.oom_triggered) {
@@ -6025,13 +6063,13 @@ UNINITIALIZED_TEST(OutOfMemorySmallObjects) {
     }
   }
   CHECK_LE(state.old_generation_capacity_at_oom,
-           kOldGenerationLimit + heap->new_space()->Capacity());
+           kOldGenerationLimit + state.new_space_capacity_at_oom);
   CHECK_LE(kOldGenerationLimit, state.old_generation_capacity_at_oom +
-                                    heap->new_space()->Capacity());
+                                    state.new_space_capacity_at_oom);
   CHECK_LE(
       state.memory_allocator_size_at_oom,
       MemoryAllocatorSizeFromHeapCapacity(state.old_generation_capacity_at_oom +
-                                          2 * heap->new_space()->Capacity()));
+                                          2 * state.new_space_capacity_at_oom));
   reinterpret_cast<v8::Isolate*>(isolate)->Dispose();
 }
 
@@ -6051,7 +6089,7 @@ UNINITIALIZED_TEST(OutOfMemoryLargeObjects) {
   OutOfMemoryState state;
   state.heap = heap;
   state.oom_triggered = false;
-  heap->SetOutOfMemoryCallback(OutOfMemoryCallback, &state);
+  heap->AddNearHeapLimitCallback(NearHeapLimitCallback, &state);
   const int kFixedArrayLength = 1000000;
   {
     HandleScope handle_scope(isolate);
@@ -6065,7 +6103,7 @@ UNINITIALIZED_TEST(OutOfMemoryLargeObjects) {
   CHECK_LE(
       state.memory_allocator_size_at_oom,
       MemoryAllocatorSizeFromHeapCapacity(state.old_generation_capacity_at_oom +
-                                          2 * heap->new_space()->Capacity()));
+                                          2 * state.new_space_capacity_at_oom));
   reinterpret_cast<v8::Isolate*>(isolate)->Dispose();
 }
 

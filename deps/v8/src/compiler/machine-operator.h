@@ -600,9 +600,9 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
   const Operator* StackSlot(int size, int alignment = 0);
   const Operator* StackSlot(MachineRepresentation rep, int alignment = 0);
 
-  // Returns a value which can be used as a mask to poison values when executing
-  // speculatively.
-  const Operator* SpeculationPoison();
+  // Destroy value by masking when misspeculating.
+  const Operator* PoisonOnSpeculationTagged();
+  const Operator* PoisonOnSpeculationWord();
 
   // Access to the machine stack.
   const Operator* LoadStackPointer();
@@ -614,8 +614,12 @@ class V8_EXPORT_PRIVATE MachineOperatorBuilder final
 
   // atomic-load [base + index]
   const Operator* Word32AtomicLoad(LoadRepresentation rep);
+  // atomic-load [base + index]
+  const Operator* Word64AtomicLoad(LoadRepresentation rep);
   // atomic-store [base + index], value
   const Operator* Word32AtomicStore(MachineRepresentation rep);
+  // atomic-store [base + index], value
+  const Operator* Word64AtomicStore(MachineRepresentation rep);
   // atomic-exchange [base + index], value
   const Operator* Word32AtomicExchange(MachineType rep);
   // atomic-exchange [base + index], value

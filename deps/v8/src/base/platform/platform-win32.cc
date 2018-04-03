@@ -27,6 +27,10 @@
 #include "src/base/timezone-cache.h"
 #include "src/base/utils/random-number-generator.h"
 
+#if defined(_MSC_VER)
+#include <crtdbg.h>  // NOLINT
+#endif               // defined(_MSC_VER)
+
 // Extra functions for MinGW. Most of these are the _s functions which are in
 // the Microsoft Visual Studio C++ CRT.
 #ifdef __MINGW32__
@@ -111,7 +115,7 @@ class WindowsTimezoneCache : public TimezoneCache {
 
   const char* LocalTimezone(double time) override;
 
-  double LocalTimeOffset() override;
+  double LocalTimeOffset(double time, bool is_utc) override;
 
   double DaylightSavingsOffset(double time) override;
 
@@ -462,7 +466,9 @@ const char* WindowsTimezoneCache::LocalTimezone(double time) {
 
 // Returns the local time offset in milliseconds east of UTC without
 // taking daylight savings time into account.
-double WindowsTimezoneCache::LocalTimeOffset() {
+double WindowsTimezoneCache::LocalTimeOffset(double time_ms, bool is_utc) {
+  // Ignore is_utc and time_ms for now. That way, the behavior wouldn't
+  // change with icu_timezone_data disabled.
   // Use current time, rounded to the millisecond.
   Win32Time t(OS::TimeCurrentMillis());
   // Time::LocalOffset inlcudes any daylight savings offset, so subtract it.

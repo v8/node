@@ -289,7 +289,7 @@ void InstructionSelector::VisitLoad(Node* node) {
       g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count);
   InstructionCode code = opcode | AddressingModeField::encode(mode);
   if (node->opcode() == IrOpcode::kPoisonedLoad) {
-    CHECK_EQ(load_poisoning_, LoadPoisoning::kDoPoison);
+    CHECK_EQ(poisoning_enabled_, PoisoningMitigationLevel::kOn);
     code |= MiscField::encode(kMemoryAccessPoisoned);
   }
   Emit(code, 1, outputs, input_count, inputs);
@@ -1792,14 +1792,17 @@ VISIT_ATOMIC_BINOP(Xor)
   V(S128Or)                \
   V(S128Xor)
 
-#define SIMD_INT_UNOP_LIST(V) \
-  V(I32x4Neg)                 \
-  V(I16x8Neg)                 \
+#define SIMD_UNOP_LIST(V) \
+  V(F32x4SConvertI32x4)   \
+  V(F32x4RecipApprox)     \
+  V(F32x4RecipSqrtApprox) \
+  V(I32x4Neg)             \
+  V(I16x8Neg)             \
   V(I8x16Neg)
 
-#define SIMD_OTHER_UNOP_LIST(V) \
-  V(F32x4Abs)                   \
-  V(F32x4Neg)                   \
+#define SIMD_UNOP_PREFIX_LIST(V) \
+  V(F32x4Abs)                    \
+  V(F32x4Neg)                    \
   V(S128Not)
 
 #define SIMD_SHIFT_OPCODES(V) \
@@ -1829,6 +1832,16 @@ void InstructionSelector::VisitF32x4ExtractLane(Node* node) {
     Emit(kAVXF32x4ExtractLane, g.DefineAsRegister(node), operand0, operand1);
   } else {
     Emit(kSSEF32x4ExtractLane, g.DefineSameAsFirst(node), operand0, operand1);
+  }
+}
+
+void InstructionSelector::VisitF32x4UConvertI32x4(Node* node) {
+  IA32OperandGenerator g(this);
+  InstructionOperand operand0 = g.UseRegister(node->InputAt(0));
+  if (IsSupported(AVX)) {
+    Emit(kAVXF32x4UConvertI32x4, g.DefineAsRegister(node), operand0);
+  } else {
+    Emit(kSSEF32x4UConvertI32x4, g.DefineSameAsFirst(node), operand0);
   }
 }
 
@@ -1932,24 +1945,24 @@ SIMD_SHIFT_OPCODES(VISIT_SIMD_SHIFT)
 #undef VISIT_SIMD_SHIFT
 #undef SIMD_SHIFT_OPCODES
 
-#define VISIT_SIMD_INT_UNOP(Opcode)                                         \
+#define VISIT_SIMD_UNOP(Opcode)                                             \
   void InstructionSelector::Visit##Opcode(Node* node) {                     \
     IA32OperandGenerator g(this);                                           \
     Emit(kIA32##Opcode, g.DefineAsRegister(node), g.Use(node->InputAt(0))); \
   }
-SIMD_INT_UNOP_LIST(VISIT_SIMD_INT_UNOP)
-#undef VISIT_SIMD_INT_UNOP
-#undef SIMD_INT_UNOP_LIST
+SIMD_UNOP_LIST(VISIT_SIMD_UNOP)
+#undef VISIT_SIMD_UNOP
+#undef SIMD_UNOP_LIST
 
-#define VISIT_SIMD_OTHER_UNOP(Opcode)                                        \
+#define VISIT_SIMD_UNOP_PREFIX(Opcode)                                       \
   void InstructionSelector::Visit##Opcode(Node* node) {                      \
     IA32OperandGenerator g(this);                                            \
     InstructionCode opcode = IsSupported(AVX) ? kAVX##Opcode : kSSE##Opcode; \
     Emit(opcode, g.DefineAsRegister(node), g.Use(node->InputAt(0)));         \
   }
-SIMD_OTHER_UNOP_LIST(VISIT_SIMD_OTHER_UNOP)
-#undef VISIT_SIMD_OTHER_UNOP
-#undef SIMD_OTHER_UNOP_LIST
+SIMD_UNOP_PREFIX_LIST(VISIT_SIMD_UNOP_PREFIX)
+#undef VISIT_SIMD_UNOP_PREFIX
+#undef SIMD_UNOP_PREFIX_LIST
 
 #define VISIT_SIMD_BINOP(Opcode)                           \
   void InstructionSelector::Visit##Opcode(Node* node) {    \
@@ -2033,9 +2046,6 @@ InstructionSelector::AlignmentRequirements() {
   return MachineOperatorBuilder::AlignmentRequirements::
       FullUnalignedAccessSupport();
 }
-
-// static
-bool InstructionSelector::SupportsSpeculationPoisoning() { return true; }
 
 }  // namespace compiler
 }  // namespace internal

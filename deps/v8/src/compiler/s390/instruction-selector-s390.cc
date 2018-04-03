@@ -271,7 +271,7 @@ bool S390OpcodeOnlySupport12BitDisp(InstructionCode op) {
 
 ArchOpcode SelectLoadOpcode(Node* node) {
   NodeMatcher m(node);
-  DCHECK(m.IsLoad());
+  DCHECK(m.IsLoad() || m.IsPoisonedLoad());
   LoadRepresentation load_rep = LoadRepresentationOf(node->op());
   ArchOpcode opcode = kArchNop;
   switch (load_rep.representation()) {
@@ -690,7 +690,7 @@ void InstructionSelector::VisitLoad(Node* node) {
       g.GetEffectiveAddressMemoryOperand(node, inputs, &input_count);
   opcode |= AddressingModeField::encode(mode);
   if (node->opcode() == IrOpcode::kPoisonedLoad) {
-    CHECK_EQ(load_poisoning_, LoadPoisoning::kDoPoison);
+    CHECK_EQ(poisoning_enabled_, PoisoningMitigationLevel::kOn);
     opcode |= MiscField::encode(kMemoryAccessPoisoned);
   }
 
@@ -2477,6 +2477,12 @@ void InstructionSelector::VisitF32x4Neg(Node* node) { UNIMPLEMENTED(); }
 
 void InstructionSelector::VisitF32x4Abs(Node* node) { UNIMPLEMENTED(); }
 
+void InstructionSelector::VisitF32x4RecipSqrtApprox(Node* node) {
+  UNIMPLEMENTED();
+}
+
+void InstructionSelector::VisitF32x4RecipApprox(Node* node) { UNIMPLEMENTED(); }
+
 // static
 MachineOperatorBuilder::Flags
 InstructionSelector::SupportedMachineOperatorFlags() {
@@ -2501,9 +2507,6 @@ InstructionSelector::AlignmentRequirements() {
   return MachineOperatorBuilder::AlignmentRequirements::
       FullUnalignedAccessSupport();
 }
-
-// static
-bool InstructionSelector::SupportsSpeculationPoisoning() { return true; }
 
 }  // namespace compiler
 }  // namespace internal

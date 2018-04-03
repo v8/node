@@ -1387,6 +1387,8 @@ int JSObject::GetHeaderSize(InstanceType type,
       return JSStringIterator::kSize;
     case JS_MODULE_NAMESPACE_TYPE:
       return JSModuleNamespace::kHeaderSize;
+    case WASM_GLOBAL_TYPE:
+      return WasmGlobalObject::kSize;
     case WASM_INSTANCE_TYPE:
       return WasmInstanceObject::kSize;
     case WASM_MEMORY_TYPE:
@@ -3037,6 +3039,8 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_WEAK_SET_TYPE:
       return kVisitJSWeakCollection;
 
+    case CALL_HANDLER_INFO_TYPE:
+      return kVisitStruct;
 
     case SHARED_FUNCTION_INFO_TYPE:
       return kVisitSharedFunctionInfo;
@@ -3089,6 +3093,7 @@ VisitorId Map::GetVisitorId(Map* map) {
     case JS_STRING_ITERATOR_TYPE:
     case JS_PROMISE_TYPE:
     case JS_REGEXP_TYPE:
+    case WASM_GLOBAL_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
@@ -3275,6 +3280,34 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
       }
       os << ">";
     } break;
+    case BLOCK_CONTEXT_TYPE:
+      os << "<BlockContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case CATCH_CONTEXT_TYPE:
+      os << "<CatchContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case DEBUG_EVALUATE_CONTEXT_TYPE:
+      os << "<DebugEvaluateContext[" << FixedArray::cast(this)->length()
+         << "]>";
+      break;
+    case EVAL_CONTEXT_TYPE:
+      os << "<EvalContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case FUNCTION_CONTEXT_TYPE:
+      os << "<FunctionContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case MODULE_CONTEXT_TYPE:
+      os << "<ModuleContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case NATIVE_CONTEXT_TYPE:
+      os << "<NativeContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case SCRIPT_CONTEXT_TYPE:
+      os << "<ScriptContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
+    case WITH_CONTEXT_TYPE:
+      os << "<WithContext[" << FixedArray::cast(this)->length() << "]>";
+      break;
     case HASH_TABLE_TYPE:
       os << "<HashTable[" << FixedArray::cast(this)->length() << "]>";
       break;
@@ -3449,6 +3482,19 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
       WeakCell::cast(this)->value()->ShortPrint(&accumulator);
       os << accumulator.ToCString().get();
       os << '>';
+      break;
+    }
+    case CALL_HANDLER_INFO_TYPE: {
+      CallHandlerInfo* info = CallHandlerInfo::cast(this);
+      os << "<CallHandlerInfo ";
+      os << "callback= " << Brief(info->callback());
+      os << ", js_callback= " << Brief(info->js_callback());
+      os << ", data= " << Brief(info->data());
+      if (info->IsSideEffectFreeCallHandlerInfo()) {
+        os << ", side_effect_free= true>";
+      } else {
+        os << ", side_effect_free= false>";
+      }
       break;
     }
     default:
@@ -12783,6 +12829,7 @@ bool CanSubclassHaveInobjectProperties(InstanceType instance_type) {
     case JS_VALUE_TYPE:
     case JS_WEAK_MAP_TYPE:
     case JS_WEAK_SET_TYPE:
+    case WASM_GLOBAL_TYPE:
     case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
@@ -13547,6 +13594,13 @@ bool SharedFunctionInfo::HasBreakInfo() const {
   return has_break_info;
 }
 
+bool SharedFunctionInfo::BreakAtEntry() const {
+  if (!HasDebugInfo()) return false;
+  DebugInfo* info = DebugInfo::cast(debug_info());
+  bool break_at_entry = info->BreakAtEntry();
+  return break_at_entry;
+}
+
 bool SharedFunctionInfo::HasCoverageInfo() const {
   if (!HasDebugInfo()) return false;
   DebugInfo* info = DebugInfo::cast(debug_info());
@@ -13790,8 +13844,7 @@ std::ostream& operator<<(std::ostream& os, const SourceCodeOf& v) {
 void SharedFunctionInfo::DisableOptimization(BailoutReason reason) {
   DCHECK_NE(reason, BailoutReason::kNoReason);
 
-  set_compiler_hints(
-      DisabledOptimizationReasonBits::update(compiler_hints(), reason));
+  set_flags(DisabledOptimizationReasonBits::update(flags(), reason));
   // Code should be the lazy compilation stub or else interpreted.
   DCHECK(abstract_code()->kind() == AbstractCode::INTERPRETED_FUNCTION ||
          abstract_code()->kind() == AbstractCode::BUILTIN);
@@ -15735,7 +15788,8 @@ bool JSObject::WasConstructedFromApiFunction() {
   bool is_api_object = instance_type == JS_API_OBJECT_TYPE ||
                        instance_type == JS_SPECIAL_API_OBJECT_TYPE;
   bool is_wasm_object =
-      instance_type == WASM_MEMORY_TYPE || instance_type == WASM_MODULE_TYPE ||
+      instance_type == WASM_GLOBAL_TYPE || instance_type == WASM_MEMORY_TYPE ||
+      instance_type == WASM_MODULE_TYPE ||
       instance_type == WASM_INSTANCE_TYPE || instance_type == WASM_TABLE_TYPE;
 #ifdef ENABLE_SLOW_DCHECKS
   if (FLAG_enable_slow_asserts) {
@@ -17065,20 +17119,28 @@ Handle<String> StringTable::LookupKey(Isolate* isolate, StringTableKey* key) {
   table = StringTable::CautiousShrink(table);
   // Adding new string. Grow table if needed.
   table = StringTable::EnsureCapacity(table, 1);
+  isolate->heap()->SetRootStringTable(*table);
 
+  return AddKeyNoResize(isolate, key);
+}
+
+Handle<String> StringTable::AddKeyNoResize(Isolate* isolate,
+                                           StringTableKey* key) {
+  Handle<StringTable> table = isolate->factory()->string_table();
+  DCHECK(table->HasSufficientCapacityToAdd(1));
   // Create string object.
   Handle<String> string = key->AsHandle(isolate);
   // There must be no attempts to internalize strings that could throw
   // InvalidStringLength error.
   CHECK(!string.is_null());
   DCHECK(string->HasHashCode());
+  DCHECK_EQ(table->FindEntry(key), kNotFound);
 
   // Add the new string and return it along with the string table.
-  entry = table->FindInsertionEntry(key->Hash());
+  int entry = table->FindInsertionEntry(key->Hash());
   table->set(EntryToIndex(entry), *string);
   table->ElementAdded();
 
-  isolate->heap()->SetRootStringTable(*table);
   return Handle<String>::cast(string);
 }
 

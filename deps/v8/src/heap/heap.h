@@ -129,6 +129,9 @@ using v8::MemoryPressureLevel;
   V(Map, ordered_hash_map_map, OrderedHashMapMap)                              \
   V(Map, ordered_hash_set_map, OrderedHashSetMap)                              \
   V(Map, property_array_map, PropertyArrayMap)                                 \
+  V(Map, side_effect_call_handler_info_map, SideEffectCallHandlerInfoMap)      \
+  V(Map, side_effect_free_call_handler_info_map,                               \
+    SideEffectFreeCallHandlerInfoMap)                                          \
   V(Map, simple_number_dictionary_map, SimpleNumberDictionaryMap)              \
   V(Map, sloppy_arguments_elements_map, SloppyArgumentsElementsMap)            \
   V(Map, small_ordered_hash_map_map, SmallOrderedHashMapMap)                   \
@@ -870,8 +873,9 @@ class Heap {
                                   bool is_isolate_locked);
   void CheckMemoryPressure();
 
-  void SetOutOfMemoryCallback(v8::debug::OutOfMemoryCallback callback,
-                              void* data);
+  void AddNearHeapLimitCallback(v8::NearHeapLimitCallback, void* data);
+  void RemoveNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
+                                   size_t heap_limit);
 
   double MonotonicallyIncreasingTimeInMs();
 
@@ -942,28 +946,11 @@ class Heap {
     return memory_pressure_level_.Value() != MemoryPressureLevel::kNone;
   }
 
-  size_t HeapLimitForDebugging() {
-    const size_t kDebugHeapSizeFactor = 4;
-    size_t max_limit = std::numeric_limits<size_t>::max() / 4;
-    return Min(max_limit,
-               initial_max_old_generation_size_ * kDebugHeapSizeFactor);
-  }
-
-  void IncreaseHeapLimitForDebugging() {
-    max_old_generation_size_ =
-        Max(max_old_generation_size_, HeapLimitForDebugging());
-  }
-
-  void RestoreOriginalHeapLimit() {
+  void RestoreHeapLimit(size_t heap_limit) {
     // Do not set the limit lower than the live size + some slack.
     size_t min_limit = SizeOfObjects() + SizeOfObjects() / 4;
     max_old_generation_size_ =
-        Min(max_old_generation_size_,
-            Max(initial_max_old_generation_size_, min_limit));
-  }
-
-  bool IsHeapLimitIncreasedForDebugging() {
-    return max_old_generation_size_ == HeapLimitForDebugging();
+        Min(max_old_generation_size_, Max(heap_limit, min_limit));
   }
 
   // ===========================================================================
@@ -993,6 +980,9 @@ class Heap {
 
   // Create ObjectStats if live_object_stats_ or dead_object_stats_ are nullptr.
   void CreateObjectStats();
+
+  // Sets the TearDown state, so no new GC tasks get posted.
+  void StartTearDown();
 
   // Destroys all memory allocated by the heap.
   void TearDown();
@@ -1246,6 +1236,11 @@ class Heap {
   // ===========================================================================
   // Incremental marking API. ==================================================
   // ===========================================================================
+
+  int GCFlagsForIncrementalMarking() {
+    return ShouldOptimizeForMemoryUsage() ? kReduceMemoryFootprintMask
+                                          : kNoGCFlags;
+  }
 
   // Start incremental marking and ensure that idle time handler can perform
   // incremental steps.
@@ -1939,7 +1934,7 @@ class Heap {
 
   void CollectGarbageOnMemoryPressure();
 
-  void InvokeOutOfMemoryCallback();
+  bool InvokeNearHeapLimitCallback();
 
   void ComputeFastPromotionMode(double survival_rate);
 
@@ -2033,6 +2028,11 @@ class Heap {
   void UpdateTotalGCTime(double duration);
 
   bool MaximumSizeScavenge() { return maximum_size_scavenges_ > 0; }
+
+  bool IsIneffectiveMarkCompact(size_t old_generation_size,
+                                double mutator_utilization);
+  void CheckIneffectiveMarkCompact(size_t old_generation_size,
+                                   double mutator_utilization);
 
   // ===========================================================================
   // Growing strategy. =========================================================
@@ -2435,8 +2435,8 @@ class Heap {
   // and reset by a mark-compact garbage collection.
   base::AtomicValue<MemoryPressureLevel> memory_pressure_level_;
 
-  v8::debug::OutOfMemoryCallback out_of_memory_callback_;
-  void* out_of_memory_callback_data_;
+  std::vector<std::pair<v8::NearHeapLimitCallback, void*> >
+      near_heap_limit_callbacks_;
 
   // For keeping track of context disposals.
   int contexts_disposed_;
@@ -2496,6 +2496,10 @@ class Heap {
 
   // How many gc happened.
   unsigned int gc_count_;
+
+  // The number of Mark-Compact garbage collections that are considered as
+  // ineffective. See IsIneffectiveMarkCompact() predicate.
+  int consecutive_ineffective_mark_compacts_;
 
   static const uintptr_t kMmapRegionMask = 0xFFFFFFFFu;
   uintptr_t mmap_region_base_;
@@ -2812,11 +2816,17 @@ class VerifySmisVisitor : public RootVisitor {
 };
 
 // Space iterator for iterating over all the paged spaces of the heap: Map
-// space, old space, code space and cell space.  Returns
-// each space in turn, and null when it is done.
+// space, old space, code space and optionally read only space. Returns each
+// space in turn, and null when it is done.
 class V8_EXPORT_PRIVATE PagedSpaces BASE_EMBEDDED {
  public:
-  explicit PagedSpaces(Heap* heap) : heap_(heap), counter_(OLD_SPACE) {}
+  enum class SpacesSpecifier { kSweepablePagedSpaces, kAllPagedSpaces };
+
+  explicit PagedSpaces(Heap* heap, SpacesSpecifier specifier =
+                                       SpacesSpecifier::kSweepablePagedSpaces)
+      : heap_(heap),
+        counter_(specifier == SpacesSpecifier::kAllPagedSpaces ? RO_SPACE
+                                                               : OLD_SPACE) {}
   PagedSpace* next();
 
  private:

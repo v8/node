@@ -431,8 +431,57 @@ FP_UNOP(f64_sqrt, sqrt_d)
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
                                             LiftoffRegister src) {
-  BAILOUT("emit_type_conversion");
-  return true;
+  switch (opcode) {
+    case kExprI32ConvertI64:
+      TurboAssembler::Ext(dst.gp(), src.gp(), 0, 32);
+      return true;
+    case kExprI32ReinterpretF32:
+      TurboAssembler::FmoveLow(dst.gp(), src.fp());
+      return true;
+    case kExprI64SConvertI32:
+      sll(dst.gp(), src.gp(), 0);
+      return true;
+    case kExprI64UConvertI32:
+      TurboAssembler::Dext(dst.gp(), src.gp(), 0, 32);
+      return true;
+    case kExprI64ReinterpretF64:
+      dmfc1(dst.gp(), src.fp());
+      return true;
+    case kExprF32SConvertI32: {
+      LiftoffRegister scratch =
+          GetUnusedRegister(kFpReg, LiftoffRegList::ForRegs(dst));
+      mtc1(src.gp(), scratch.fp());
+      cvt_s_w(dst.fp(), scratch.fp());
+      return true;
+    }
+    case kExprF32UConvertI32:
+      TurboAssembler::Cvt_s_uw(dst.fp(), src.gp());
+      return true;
+    case kExprF32ConvertF64:
+      cvt_s_d(dst.fp(), src.fp());
+      return true;
+    case kExprF32ReinterpretI32:
+      TurboAssembler::FmoveLow(dst.fp(), src.gp());
+      return true;
+    case kExprF64SConvertI32: {
+      LiftoffRegister scratch =
+          GetUnusedRegister(kFpReg, LiftoffRegList::ForRegs(dst));
+      mtc1(src.gp(), scratch.fp());
+      cvt_d_w(dst.fp(), scratch.fp());
+      return true;
+    }
+    case kExprF64UConvertI32:
+      TurboAssembler::Cvt_d_uw(dst.fp(), src.gp());
+      return true;
+    case kExprF64ConvertF32:
+      cvt_d_s(dst.fp(), src.fp());
+      return true;
+    case kExprF64ReinterpretI64:
+      dmtc1(src.gp(), dst.fp());
+      return true;
+    default:
+      return false;
+  }
 }
 
 void LiftoffAssembler::emit_jump(Label* label) {
@@ -455,25 +504,19 @@ void LiftoffAssembler::emit_i32_eqz(Register dst, Register src) {
 
 void LiftoffAssembler::emit_i32_set_cond(Condition cond, Register dst,
                                          Register lhs, Register rhs) {
-  Label true_label;
-  if (dst != lhs && dst != rhs) {
-    ori(dst, zero_reg, 0x1);
+  Register tmp = dst;
+  if (dst == lhs || dst == rhs) {
+    tmp = GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(lhs, rhs)).gp();
   }
+  // Write 1 as result.
+  TurboAssembler::li(tmp, 1);
 
-  TurboAssembler::Branch(&true_label, cond, lhs, Operand(rhs));
-  // If not true, set on 0.
-  TurboAssembler::mov(dst, zero_reg);
+  // If negative condition is true, write 0 as result.
+  Condition neg_cond = NegateCondition(cond);
+  TurboAssembler::LoadZeroOnCondition(tmp, lhs, Operand(rhs), neg_cond);
 
-  if (dst != lhs && dst != rhs) {
-    bind(&true_label);
-  } else {
-    Label end_label;
-    TurboAssembler::Branch(&end_label);
-    bind(&true_label);
-
-    ori(dst, zero_reg, 0x1);
-    bind(&end_label);
-  }
+  // If tmp != dst, result will be moved.
+  TurboAssembler::Move(dst, tmp);
 }
 
 void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
@@ -483,7 +526,20 @@ void LiftoffAssembler::emit_i64_eqz(Register dst, LiftoffRegister src) {
 void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,
                                          LiftoffRegister lhs,
                                          LiftoffRegister rhs) {
-  BAILOUT("emit_i64_set_cond");
+  Register tmp = dst;
+  if (dst == lhs.gp() || dst == rhs.gp()) {
+    tmp = GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(lhs, rhs)).gp();
+  }
+  // Write 1 as result.
+  TurboAssembler::li(tmp, 1);
+
+  // If negative condition is true, write 0 as result.
+  Condition neg_cond = NegateCondition(cond);
+  TurboAssembler::LoadZeroOnCondition(tmp, lhs.gp(), Operand(rhs.gp()),
+                                      neg_cond);
+
+  // If tmp != dst, result will be moved.
+  TurboAssembler::Move(dst, tmp);
 }
 
 void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,

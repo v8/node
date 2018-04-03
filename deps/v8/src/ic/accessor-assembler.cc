@@ -17,14 +17,19 @@ namespace internal {
 
 using compiler::CodeAssemblerState;
 using compiler::Node;
+template <typename T>
+using TNode = compiler::TNode<T>;
+template <typename T>
+using SloppyTNode = compiler::SloppyTNode<T>;
 
 //////////////////// Private helpers.
 
 // Loads dataX field from the DataHandler object.
-Node* AccessorAssembler::LoadHandlerDataField(Node* handler, int data_index) {
+TNode<Object> AccessorAssembler::LoadHandlerDataField(
+    SloppyTNode<DataHandler> handler, int data_index) {
 #ifdef DEBUG
-  Node* handler_map = LoadMap(handler);
-  Node* instance_type = LoadMapInstanceType(handler_map);
+  TNode<Map> handler_map = LoadMap(handler);
+  TNode<Int32T> instance_type = LoadMapInstanceType(handler_map);
 #endif
   CSA_ASSERT(this,
              Word32Or(InstanceTypeEqual(instance_type, LOAD_HANDLER_TYPE),
@@ -124,7 +129,7 @@ void AccessorAssembler::HandlePolymorphicCase(Node* receiver_map,
 
     Label next_entry(this);
     Node* cached_map =
-        LoadWeakCellValue(LoadFixedArrayElement(feedback, map_index));
+        LoadWeakCellValue(CAST(LoadFixedArrayElement(feedback, map_index)));
     GotoIf(WordNotEqual(receiver_map, cached_map), &next_entry);
 
     // Found, now call handler.
@@ -144,7 +149,7 @@ void AccessorAssembler::HandlePolymorphicCase(Node* receiver_map,
       start_index, end_index,
       [this, receiver_map, feedback, if_handler, var_handler](Node* index) {
         Node* cached_map =
-            LoadWeakCellValue(LoadFixedArrayElement(feedback, index));
+            LoadWeakCellValue(CAST(LoadFixedArrayElement(feedback, index)));
 
         Label next_entry(this);
         GotoIf(WordNotEqual(receiver_map, cached_map), &next_entry);
@@ -467,11 +472,10 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
 
     // Context is stored either in data2 or data3 field depending on whether
     // the access check is enabled for this handler or not.
-    Node* context_cell = Select(
+    TNode<Object> context_cell = Select<Object>(
         IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
         [=] { return LoadHandlerDataField(handler, 3); },
-        [=] { return LoadHandlerDataField(handler, 2); },
-        MachineRepresentation::kTagged);
+        [=] { return LoadHandlerDataField(handler, 2); });
 
     Node* context = LoadWeakCellValueUnchecked(context_cell);
     Node* foreign =
@@ -1303,11 +1307,10 @@ void AccessorAssembler::HandleStoreICProtoHandler(
 
       // Context is stored either in data2 or data3 field depending on whether
       // the access check is enabled for this handler or not.
-      Node* context_cell = Select(
+      TNode<Object> context_cell = Select<Object>(
           IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
           [=] { return LoadHandlerDataField(handler, 3); },
-          [=] { return LoadHandlerDataField(handler, 2); },
-          MachineRepresentation::kTagged);
+          [=] { return LoadHandlerDataField(handler, 2); });
 
       Node* context = LoadWeakCellValueUnchecked(context_cell);
 
@@ -2045,9 +2048,7 @@ void AccessorAssembler::GenericPropertyLoad(Node* receiver, Node* receiver_map,
 
   // Receivers requiring non-standard accesses (interceptors, access
   // checks, strings and string wrappers) are handled in the runtime.
-  GotoIf(Int32LessThanOrEqual(instance_type,
-                              Int32Constant(LAST_SPECIAL_RECEIVER_TYPE)),
-         &special_receiver);
+  GotoIf(IsSpecialReceiverInstanceType(instance_type), &special_receiver);
 
   // Check if the receiver has fast or slow properties.
   Node* bitfield3 = LoadMapBitField3(receiver_map);
@@ -2059,7 +2060,7 @@ void AccessorAssembler::GenericPropertyLoad(Node* receiver, Node* receiver_map,
   Node* descriptors = LoadMapDescriptors(receiver_map);
 
   Label if_descriptor_found(this), stub_cache(this);
-  VARIABLE(var_name_index, MachineType::PointerRepresentation());
+  TVARIABLE(IntPtrT, var_name_index);
   Label* notfound =
       use_stub_cache == kUseStubCache ? &stub_cache : &lookup_prototype_chain;
   DescriptorLookup(p->name, descriptors, bitfield3, &if_descriptor_found,

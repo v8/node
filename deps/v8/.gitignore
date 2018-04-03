@@ -51,7 +51,6 @@
 !/test/mjsunit/d8
 /test/mozilla/data
 /test/test262/data
-/test/test262/data.tar
 /test/test262/harness
 /test/wasm-js
 /test/wasm-spec-tests/tests

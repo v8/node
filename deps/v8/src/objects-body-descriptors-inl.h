@@ -593,6 +593,7 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3, T4 p4) {
     case JS_SPECIAL_API_OBJECT_TYPE:
     case JS_MESSAGE_OBJECT_TYPE:
     case JS_BOUND_FUNCTION_TYPE:
+    case WASM_GLOBAL_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
     case WASM_TABLE_TYPE:
@@ -668,6 +669,7 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3, T4 p4) {
       } else {
         return Op::template apply<StructBodyDescriptor>(p1, p2, p3, p4);
       }
+    case CALL_HANDLER_INFO_TYPE:
     case LOAD_HANDLER_TYPE:
     case STORE_HANDLER_TYPE:
       return Op::template apply<StructBodyDescriptor>(p1, p2, p3, p4);

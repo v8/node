@@ -520,13 +520,19 @@ void NativeModule::SetLazyBuiltin(Handle<Code> code) {
 }
 
 WasmCompiledModule* NativeModule::compiled_module() const {
+  DCHECK_NOT_NULL(compiled_module_);
   return *compiled_module_;
 }
 
 void NativeModule::SetCompiledModule(
     Handle<WasmCompiledModule> compiled_module) {
-  DCHECK(compiled_module_.is_null());
-  compiled_module_ = compiled_module;
+  DCHECK_NULL(compiled_module_);
+  compiled_module_ = compiled_module->GetIsolate()
+                         ->global_handles()
+                         ->Create(*compiled_module)
+                         .location();
+  GlobalHandles::MakeWeak(reinterpret_cast<Object***>(&compiled_module_));
+  wasm::SetCompiledModule(compilation_state_.get(), compiled_module);
 }
 
 WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
@@ -861,6 +867,14 @@ WasmCode* NativeModule::CloneCode(const WasmCode* original_code,
 
 NativeModule::~NativeModule() {
   TRACE_HEAP("Deleting native module: %p\n", reinterpret_cast<void*>(this));
+  // Clear the handle at the beginning of destructor to make it robust against
+  // potential GCs in the rest of the desctructor.
+  if (compiled_module_ != nullptr) {
+    Isolate* isolate = compiled_module()->GetIsolate();
+    isolate->global_handles()->Destroy(
+        reinterpret_cast<Object**>(compiled_module_));
+    compiled_module_ = nullptr;
+  }
   wasm_code_manager_->FreeNativeModuleMemories(this);
 }
 

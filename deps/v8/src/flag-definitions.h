@@ -222,7 +222,6 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
     "constructor")                                                      \
   V(harmony_public_fields, "harmony public fields in class literals")   \
   V(harmony_private_fields, "harmony private fields in class literals") \
-  V(harmony_bigint, "harmony arbitrary precision integers")             \
   V(harmony_numeric_separator, "harmony numeric separator between digits")
 
 // Features that are shipping (turned on by default, but internal flag remains).
@@ -236,6 +235,7 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_promise_finally, "harmony Promise.prototype.finally")             \
   V(harmony_optional_catch_binding, "allow omitting binding in catch blocks") \
   V(harmony_import_meta, "harmony import.meta property")                      \
+  V(harmony_bigint, "harmony arbitrary precision integers")                   \
   V(harmony_dynamic_import, "harmony dynamic import")
 
 #ifdef V8_INTL_SUPPORT
@@ -590,6 +590,8 @@ DEFINE_BOOL(experimental_wasm_se, false,
             "enable prototype sign extension opcodes for wasm")
 DEFINE_BOOL(experimental_wasm_anyref, false,
             "enable prototype anyref support for wasm")
+DEFINE_BOOL(experimental_wasm_mut_global, false,
+            "enable prototype import/export mutable global support for wasm")
 
 DEFINE_BOOL(wasm_opt, false, "enable wasm optimization")
 DEFINE_BOOL(wasm_no_bounds_checks, false,
@@ -698,6 +700,8 @@ DEFINE_BOOL(concurrent_sweeping, true, "use concurrent sweeping")
 DEFINE_BOOL(parallel_compaction, true, "use parallel compaction")
 DEFINE_BOOL(parallel_pointer_update, true,
             "use parallel pointer update during compaction")
+DEFINE_BOOL(detect_ineffective_gcs_near_heap_limit, true,
+            "trigger out-of-memory failure to avoid GC storm near heap limit")
 DEFINE_BOOL(trace_incremental_marking, false,
             "trace progress of the incremental marking")
 DEFINE_BOOL(trace_stress_marking, false, "trace stress marking progress")
@@ -832,7 +836,7 @@ DEFINE_BOOL(expose_trigger_failure, false, "expose trigger-failure extension")
 DEFINE_INT(stack_trace_limit, 10, "number of stack frames to capture")
 DEFINE_BOOL(builtins_in_stack_traces, false,
             "show built-in functions in stack traces")
-DEFINE_BOOL(enable_experimental_builtins, true,
+DEFINE_BOOL(enable_experimental_builtins, false,
             "enable new csa-based experimental builtins")
 DEFINE_BOOL(disallow_code_generation_from_strings, false,
             "disallow eval and friends")

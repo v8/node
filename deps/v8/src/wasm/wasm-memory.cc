@@ -12,10 +12,56 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
-void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, size_t size,
-                              bool require_guard_regions,
+namespace {
+void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, Heap* heap,
+                              size_t size, bool require_guard_regions,
                               void** allocation_base,
-                              size_t* allocation_length);
+                              size_t* allocation_length) {
+#if V8_TARGET_ARCH_32_BIT
+  DCHECK(!require_guard_regions);
+#endif
+  // We always allocate the largest possible offset into the heap, so the
+  // addressable memory after the guard page can be made inaccessible.
+  *allocation_length =
+      require_guard_regions
+          ? RoundUp(kWasmMaxHeapOffset, CommitPageSize())
+          : RoundUp(
+                base::bits::RoundUpToPowerOfTwo32(static_cast<uint32_t>(size)),
+                kWasmPageSize);
+  DCHECK_GE(*allocation_length, size);
+  DCHECK_GE(*allocation_length, kWasmPageSize);
+
+  // Let the WasmMemoryTracker know we are going to reserve a bunch of
+  // address space.
+  if (!memory_tracker->ReserveAddressSpace(*allocation_length)) {
+    // If we fail the first time, collect garbage and retry.
+    heap->MemoryPressureNotification(MemoryPressureLevel::kCritical, true);
+    if (!memory_tracker->ReserveAddressSpace(*allocation_length)) {
+      // If we are over the address space limit, fail.
+      return nullptr;
+    }
+  }
+
+  // The Reserve makes the whole region inaccessible by default.
+  *allocation_base = AllocatePages(nullptr, *allocation_length, kWasmPageSize,
+                                   PageAllocator::kNoAccess);
+  if (*allocation_base == nullptr) {
+    memory_tracker->ReleaseReservation(*allocation_length);
+    return nullptr;
+  }
+  void* memory = *allocation_base;
+
+  // Make the part we care about accessible.
+  if (size > 0) {
+    CHECK(SetPermissions(memory, RoundUp(size, kWasmPageSize),
+                         PageAllocator::kReadWrite));
+  }
+
+  memory_tracker->RegisterAllocation(*allocation_base, *allocation_length,
+                                     memory, size);
+  return memory;
+}
+}  // namespace
 
 WasmMemoryTracker::~WasmMemoryTracker() {
   if (empty_backing_store_.allocation_base != nullptr) {
@@ -119,15 +165,16 @@ bool WasmMemoryTracker::IsWasmMemory(const void* buffer_start) {
 }
 
 void* WasmMemoryTracker::GetEmptyBackingStore(void** allocation_base,
-                                              size_t* allocation_length) {
+                                              size_t* allocation_length,
+                                              Heap* heap) {
   if (empty_backing_store_.allocation_base == nullptr) {
     constexpr size_t buffer_length = 0;
     const bool require_guard_regions = trap_handler::IsTrapHandlerEnabled();
     void* local_allocation_base;
     size_t local_allocation_length;
     void* buffer_start = TryAllocateBackingStore(
-        this, buffer_length, require_guard_regions, &local_allocation_base,
-        &local_allocation_length);
+        this, heap, buffer_length, require_guard_regions,
+        &local_allocation_base, &local_allocation_length);
 
     empty_backing_store_ =
         AllocationData(local_allocation_base, local_allocation_length,
@@ -155,51 +202,6 @@ bool WasmMemoryTracker::FreeMemoryIfIsWasmMemory(const void* buffer_start) {
     return true;
   }
   return false;
-}
-
-void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, size_t size,
-                              bool require_guard_regions,
-                              void** allocation_base,
-                              size_t* allocation_length) {
-#if V8_TARGET_ARCH_32_BIT
-  DCHECK(!require_guard_regions);
-#endif
-  // We always allocate the largest possible offset into the heap, so the
-  // addressable memory after the guard page can be made inaccessible.
-  *allocation_length =
-      require_guard_regions
-          ? RoundUp(kWasmMaxHeapOffset, CommitPageSize())
-          : RoundUp(
-                base::bits::RoundUpToPowerOfTwo32(static_cast<uint32_t>(size)),
-                kWasmPageSize);
-  DCHECK_GE(*allocation_length, size);
-  DCHECK_GE(*allocation_length, kWasmPageSize);
-
-  // Let the WasmMemoryTracker know we are going to reserve a bunch of
-  // address space.
-  if (!memory_tracker->ReserveAddressSpace(*allocation_length)) {
-    // If we are over the address space limit, fail.
-    return nullptr;
-  }
-
-  // The Reserve makes the whole region inaccessible by default.
-  *allocation_base = AllocatePages(nullptr, *allocation_length, kWasmPageSize,
-                                   PageAllocator::kNoAccess);
-  if (*allocation_base == nullptr) {
-    memory_tracker->ReleaseReservation(*allocation_length);
-    return nullptr;
-  }
-  void* memory = *allocation_base;
-
-  // Make the part we care about accessible.
-  if (size > 0) {
-    CHECK(SetPermissions(memory, RoundUp(size, kWasmPageSize),
-                         PageAllocator::kReadWrite));
-  }
-
-  memory_tracker->RegisterAllocation(*allocation_base, *allocation_length,
-                                     memory, size);
-  return memory;
 }
 
 Handle<JSArrayBuffer> SetupArrayBuffer(Isolate* isolate, void* backing_store,
@@ -234,11 +236,13 @@ Handle<JSArrayBuffer> NewArrayBuffer(Isolate* isolate, size_t size,
   void* allocation_base = nullptr;
   size_t allocation_length = 0;
 
-  void* memory = (size == 0) ? memory_tracker->GetEmptyBackingStore(
-                                   &allocation_base, &allocation_length)
-                             : TryAllocateBackingStore(
-                                   memory_tracker, size, require_guard_regions,
-                                   &allocation_base, &allocation_length);
+  void* memory =
+      (size == 0)
+          ? memory_tracker->GetEmptyBackingStore(
+                &allocation_base, &allocation_length, isolate->heap())
+          : TryAllocateBackingStore(memory_tracker, isolate->heap(), size,
+                                    require_guard_regions, &allocation_base,
+                                    &allocation_length);
 
   if (size > 0 && memory == nullptr) {
     return Handle<JSArrayBuffer>::null();

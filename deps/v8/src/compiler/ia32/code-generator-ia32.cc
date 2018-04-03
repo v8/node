@@ -549,7 +549,7 @@ void CodeGenerator::BailoutIfDeoptimized() {
   __ j(not_zero, code, RelocInfo::CODE_TARGET);
 }
 
-void CodeGenerator::GenerateSpeculationPoison() {
+void CodeGenerator::GenerateSpeculationPoisonFromCodeStartRegister() {
   __ push(eax);  // Push eax so we can use it as a scratch register.
 
   // Set a mask which has all bits set in the normal case, but has all
@@ -1112,6 +1112,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kIA32Popcnt:
       __ Popcnt(i.OutputRegister(), i.InputOperand(0));
+      break;
+    case kArchPoisonOnSpeculationWord:
+      DCHECK_EQ(i.OutputRegister(), i.InputRegister(0));
+      __ and_(i.InputRegister(0), kSpeculationPoisonRegister);
       break;
     case kLFence:
       __ lfence();
@@ -1764,6 +1768,40 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                    i.InputOperand(2), i.InputInt8(1) << 4);
       break;
     }
+    case kIA32F32x4SConvertI32x4: {
+      __ Cvtdq2ps(i.OutputSimd128Register(), i.InputOperand(0));
+      break;
+    }
+    case kSSEF32x4UConvertI32x4: {
+      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      XMMRegister dst = i.OutputSimd128Register();
+      __ pxor(kScratchDoubleReg, kScratchDoubleReg);      // zeros
+      __ pblendw(kScratchDoubleReg, dst, 0x55);           // get lo 16 bits
+      __ psubd(dst, kScratchDoubleReg);                   // get hi 16 bits
+      __ cvtdq2ps(kScratchDoubleReg, kScratchDoubleReg);  // convert lo exactly
+      __ psrld(dst, 1);                  // divide by 2 to get in unsigned range
+      __ cvtdq2ps(dst, dst);             // convert hi exactly
+      __ addps(dst, dst);                // double hi, exactly
+      __ addps(dst, kScratchDoubleReg);  // add hi and lo, may round.
+      break;
+    }
+    case kAVXF32x4UConvertI32x4: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      XMMRegister dst = i.OutputSimd128Register();
+      XMMRegister src = i.InputSimd128Register(0);
+      __ vpxor(kScratchDoubleReg, kScratchDoubleReg,
+               kScratchDoubleReg);  // zeros
+      __ vpblendw(kScratchDoubleReg, kScratchDoubleReg, src,
+                  0x55);                                   // get lo 16 bits
+      __ vpsubd(dst, src, kScratchDoubleReg);              // get hi 16 bits
+      __ vcvtdq2ps(kScratchDoubleReg, kScratchDoubleReg);  // convert lo exactly
+      __ vpsrld(dst, dst, 1);    // divide by 2 to get in unsigned range
+      __ vcvtdq2ps(dst, dst);    // convert hi exactly
+      __ vaddps(dst, dst, dst);  // double hi, exactly
+      __ vaddps(dst, dst, kScratchDoubleReg);  // add hi and lo, may round.
+      break;
+    }
     case kSSEF32x4Abs: {
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(0);
@@ -1806,6 +1844,14 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ vpslld(kScratchDoubleReg, kScratchDoubleReg, 31);
       __ vxorps(i.OutputSimd128Register(), kScratchDoubleReg,
                 i.InputOperand(0));
+      break;
+    }
+    case kIA32F32x4RecipApprox: {
+      __ Rcpps(i.OutputSimd128Register(), i.InputOperand(0));
+      break;
+    }
+    case kIA32F32x4RecipSqrtApprox: {
+      __ Rsqrtps(i.OutputSimd128Register(), i.InputOperand(0));
       break;
     }
     case kSSEF32x4Add: {
@@ -3535,7 +3581,7 @@ void CodeGenerator::AssembleConstructFrame() {
     if (FLAG_code_comments) __ RecordComment("-- OSR entrypoint --");
     osr_pc_offset_ = __ pc_offset();
     shrink_slots -= osr_helper()->UnoptimizedFrameSlots();
-    InitializePoisonForLoadsIfNeeded();
+    ResetSpeculationPoison();
   }
 
   const RegList saves = call_descriptor->CalleeSavedRegisters();

@@ -121,10 +121,15 @@ namespace compiler {
   V(AVXF32x4ExtractLane)           \
   V(SSEF32x4ReplaceLane)           \
   V(AVXF32x4ReplaceLane)           \
+  V(IA32F32x4SConvertI32x4)        \
+  V(SSEF32x4UConvertI32x4)         \
+  V(AVXF32x4UConvertI32x4)         \
   V(SSEF32x4Abs)                   \
   V(AVXF32x4Abs)                   \
   V(SSEF32x4Neg)                   \
   V(AVXF32x4Neg)                   \
+  V(IA32F32x4RecipApprox)          \
+  V(IA32F32x4RecipSqrtApprox)      \
   V(SSEF32x4Add)                   \
   V(AVXF32x4Add)                   \
   V(SSEF32x4Sub)                   \

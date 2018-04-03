@@ -222,12 +222,15 @@ class TurboAssembler : public Assembler {
     }                                                           \
   }
 
+  AVX_OP2_WITH_TYPE(Rcpps, rcpps, XMMRegister, const Operand&)
+  AVX_OP2_WITH_TYPE(Rsqrtps, rsqrtps, XMMRegister, const Operand&)
   AVX_OP2_WITH_TYPE(Movdqu, movdqu, XMMRegister, Operand)
   AVX_OP2_WITH_TYPE(Movdqu, movdqu, Operand, XMMRegister)
   AVX_OP2_WITH_TYPE(Movd, movd, XMMRegister, Register)
   AVX_OP2_WITH_TYPE(Movd, movd, XMMRegister, Operand)
   AVX_OP2_WITH_TYPE(Movd, movd, Register, XMMRegister)
   AVX_OP2_WITH_TYPE(Movd, movd, Operand, XMMRegister)
+  AVX_OP2_WITH_TYPE(Cvtdq2ps, cvtdq2ps, XMMRegister, Operand)
 
 #undef AVX_OP2_WITH_TYPE
 

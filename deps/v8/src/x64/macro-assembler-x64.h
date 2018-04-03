@@ -20,9 +20,9 @@ constexpr Register kReturnRegister2 = r8;
 constexpr Register kJSFunctionRegister = rdi;
 constexpr Register kContextRegister = rsi;
 constexpr Register kAllocateSizeRegister = rdx;
-constexpr Register kSpeculationPoisonRegister = r9;
+constexpr Register kSpeculationPoisonRegister = r12;
 constexpr Register kInterpreterAccumulatorRegister = rax;
-constexpr Register kInterpreterBytecodeOffsetRegister = r12;
+constexpr Register kInterpreterBytecodeOffsetRegister = r9;
 constexpr Register kInterpreterBytecodeArrayRegister = r14;
 constexpr Register kInterpreterDispatchTableRegister = r15;
 constexpr Register kJavaScriptCallArgCountRegister = rax;
@@ -366,9 +366,6 @@ class TurboAssembler : public Assembler {
   // that is guaranteed not to be clobbered.
   Operand ExternalOperand(ExternalReference reference,
                           Register scratch = kScratchRegister);
-  Operand ExternalOperandReuseScratchRegister(
-      ExternalReference target, ExternalReference previous,
-      Register scratch = kScratchRegister);
 
   void Call(Operand op);
   void Call(Handle<Code> code_object, RelocInfo::Mode rmode);

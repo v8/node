@@ -155,14 +155,6 @@ bool IsBreakablePosition(WasmSharedModuleData* shared, int func_index,
 }
 #endif  // DEBUG
 
-void CompiledModuleFinalizer(const v8::WeakCallbackInfo<void>& data) {
-  DisallowHeapAllocation no_gc;
-  JSObject** p = reinterpret_cast<JSObject**>(data.GetParameter());
-  WasmCompiledModule* compiled_module = WasmCompiledModule::cast(*p);
-  compiled_module->reset_native_module();
-  GlobalHandles::Destroy(reinterpret_cast<Object**>(p));
-}
-
 enum DispatchTableElements : int {
   kDispatchTableInstanceOffset,
   kDispatchTableIndexOffset,
@@ -524,6 +516,36 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
   }
   memory_object->set_array_buffer(*new_buffer);
   return old_size / wasm::kWasmPageSize;
+}
+
+// static
+Handle<WasmGlobalObject> WasmGlobalObject::New(
+    Isolate* isolate, MaybeHandle<JSArrayBuffer> maybe_buffer,
+    wasm::ValueType type, int32_t offset, bool is_mutable) {
+  Handle<JSFunction> global_ctor(
+      isolate->native_context()->wasm_global_constructor());
+  auto global_obj = Handle<WasmGlobalObject>::cast(
+      isolate->factory()->NewJSObject(global_ctor));
+
+  uint32_t type_size = 1 << ElementSizeLog2Of(type);
+
+  Handle<JSArrayBuffer> buffer;
+  if (!maybe_buffer.ToHandle(&buffer)) {
+    // If no buffer was provided, create one long enough for the given type.
+    buffer = wasm::SetupArrayBuffer(isolate, nullptr, type_size, false);
+  }
+
+  // Check that the offset is in bounds.
+  uint32_t buffer_size = 0;
+  CHECK(buffer->byte_length()->ToUint32(&buffer_size));
+  CHECK(offset + type_size <= buffer_size);
+
+  global_obj->set_array_buffer(*buffer);
+  global_obj->set_type(static_cast<int>(type));
+  global_obj->set_offset(offset);
+  global_obj->set_is_mutable(is_mutable);
+
+  return global_obj;
 }
 
 bool WasmInstanceObject::EnsureIndirectFunctionTableWithMinimumSize(
@@ -1252,13 +1274,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
     Handle<Foreign> native_module_wrapper =
         Managed<wasm::NativeModule>::From(isolate, native_module);
     compiled_module->set_native_module(*native_module_wrapper);
-    Handle<WasmCompiledModule> weak_link =
-        isolate->global_handles()->Create(*compiled_module);
-    GlobalHandles::MakeWeak(Handle<Object>::cast(weak_link).location(),
-                            Handle<Object>::cast(weak_link).location(),
-                            &CompiledModuleFinalizer,
-                            v8::WeakCallbackType::kFinalizer);
-    compiled_module->GetNativeModule()->SetCompiledModule(weak_link);
+    compiled_module->GetNativeModule()->SetCompiledModule(compiled_module);
   }
 
   // TODO(mtrofin): copy the rest of the specialization parameters over.
@@ -1292,13 +1308,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
   Handle<Foreign> native_module_wrapper =
       Managed<wasm::NativeModule>::From(isolate, native_module.release());
   ret->set_native_module(*native_module_wrapper);
-  Handle<WasmCompiledModule> weak_link =
-      isolate->global_handles()->Create(*ret);
-  GlobalHandles::MakeWeak(Handle<Object>::cast(weak_link).location(),
-                          Handle<Object>::cast(weak_link).location(),
-                          &CompiledModuleFinalizer,
-                          v8::WeakCallbackType::kFinalizer);
-  ret->GetNativeModule()->SetCompiledModule(weak_link);
+  ret->GetNativeModule()->SetCompiledModule(ret);
 
   if (module->has_lazy_compile_data()) {
     Handle<FixedArray> lazy_comp_data = isolate->factory()->NewFixedArray(

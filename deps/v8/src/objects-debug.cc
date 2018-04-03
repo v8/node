@@ -120,6 +120,9 @@ void HeapObject::HeapObjectVerify() {
     case BIGINT_TYPE:
       BigInt::cast(this)->BigIntVerify();
       break;
+    case CALL_HANDLER_INFO_TYPE:
+      CallHandlerInfo::cast(this)->CallHandlerInfoVerify();
+      break;
     case HASH_TABLE_TYPE:
     case BOILERPLATE_DESCRIPTION_TYPE:
     case FIXED_ARRAY_TYPE:
@@ -188,6 +191,7 @@ void HeapObject::HeapObjectVerify() {
     case JS_API_OBJECT_TYPE:
     case JS_SPECIAL_API_OBJECT_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
+    case WASM_GLOBAL_TYPE:
     case WASM_INSTANCE_TYPE:
     case WASM_MEMORY_TYPE:
     case WASM_MODULE_TYPE:
@@ -1547,6 +1551,14 @@ void AccessCheckInfo::AccessCheckInfoVerify() {
   VerifyPointer(data());
 }
 
+void CallHandlerInfo::CallHandlerInfoVerify() {
+  CHECK(IsCallHandlerInfo());
+  CHECK(map() == GetHeap()->side_effect_call_handler_info_map() ||
+        map() == GetHeap()->side_effect_free_call_handler_info_map());
+  VerifyPointer(callback());
+  VerifyPointer(js_callback());
+  VerifyPointer(data());
+}
 
 void InterceptorInfo::InterceptorInfoVerify() {
   CHECK(IsInterceptorInfo());

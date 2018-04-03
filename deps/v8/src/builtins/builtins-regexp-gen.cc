@@ -142,8 +142,8 @@ Node* RegExpBuiltinsAssembler::ConstructNewResultFromMatchInfo(
 
   Label named_captures(this), out(this);
 
-  TNode<IntPtrT> num_indices = SmiUntag(LoadFixedArrayElement(
-      match_info, RegExpMatchInfo::kNumberOfCapturesIndex));
+  TNode<IntPtrT> num_indices = SmiUntag(CAST(LoadFixedArrayElement(
+      match_info, RegExpMatchInfo::kNumberOfCapturesIndex)));
   Node* const num_results = SmiTag(WordShr(num_indices, 1));
   Node* const start =
       LoadFixedArrayElement(match_info, RegExpMatchInfo::kFirstCaptureIndex);
@@ -1185,16 +1185,14 @@ Node* RegExpBuiltinsAssembler::RegExpInitialize(Node* const context,
   CSA_ASSERT(this, IsJSRegExp(regexp));
 
   // Normalize pattern.
-  Node* const pattern = Select<Object>(
+  TNode<Object> const pattern = Select<Object>(
       IsUndefined(maybe_pattern), [=] { return EmptyStringConstant(); },
-      [=] { return ToString_Inline(context, maybe_pattern); },
-      MachineRepresentation::kTagged);
+      [=] { return ToString_Inline(context, maybe_pattern); });
 
   // Normalize flags.
-  Node* const flags = Select<Object>(
+  TNode<Object> const flags = Select<Object>(
       IsUndefined(maybe_flags), [=] { return EmptyStringConstant(); },
-      [=] { return ToString_Inline(context, maybe_flags); },
-      MachineRepresentation::kTagged);
+      [=] { return ToString_Inline(context, maybe_flags); });
 
   // Initialize.
 
