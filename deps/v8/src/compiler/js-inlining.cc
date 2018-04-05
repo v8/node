@@ -5,7 +5,6 @@
 #include "src/compiler/js-inlining.h"
 
 #include "src/ast/ast.h"
-#include "src/compilation-info.h"
 #include "src/compiler.h"
 #include "src/compiler/all-nodes.h"
 #include "src/compiler/bytecode-graph-builder.h"
@@ -18,6 +17,7 @@
 #include "src/compiler/operator-properties.h"
 #include "src/compiler/simplified-operator.h"
 #include "src/isolate-inl.h"
+#include "src/optimized-compilation-info.h"
 #include "src/parsing/parse-info.h"
 
 namespace v8 {
@@ -261,9 +261,7 @@ namespace {
 // TODO(mstarzinger,verwaest): Move this predicate onto SharedFunctionInfo?
 bool NeedsImplicitReceiver(Handle<SharedFunctionInfo> shared_info) {
   DisallowHeapAllocation no_gc;
-  Isolate* const isolate = shared_info->GetIsolate();
-  Code* const construct_stub = shared_info->construct_stub();
-  if (construct_stub == *isolate->builtins()->JSConstructStubGeneric()) {
+  if (!shared_info->construct_as_builtin()) {
     return !IsDerivedConstructor(shared_info->kind());
   } else {
     return false;

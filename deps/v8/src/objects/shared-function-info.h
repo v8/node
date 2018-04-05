@@ -96,13 +96,6 @@ class SharedFunctionInfo : public HeapObject {
   // value if it isn't yet known.
   DECL_ACCESSORS(outer_scope_info, HeapObject)
 
-  // [construct stub]: Code stub for constructing instances of this function.
-  DECL_ACCESSORS(construct_stub, Code)
-
-  // Sets the given code as the construct stub, and marks builtin code objects
-  // as a construct stub.
-  void SetConstructStub(Code* code);
-
   // Returns if this function has been compiled to native code yet.
   inline bool is_compiled() const;
 
@@ -239,6 +232,9 @@ class SharedFunctionInfo : public HeapObject {
 
   // Indicates that the function cannot cause side-effects.
   DECL_BOOLEAN_ACCESSORS(has_no_side_effect)
+
+  // Indicates that the function requires runtime side-effect checks.
+  DECL_BOOLEAN_ACCESSORS(requires_runtime_side_effect_checks);
 
   // Indicates that |has_no_side_effect| has been computed and set.
   DECL_BOOLEAN_ACCESSORS(computed_has_no_side_effect)
@@ -386,6 +382,15 @@ class SharedFunctionInfo : public HeapObject {
   // Sets the expected number of properties based on estimate from parser.
   void SetExpectedNofPropertiesFromEstimate(FunctionLiteral* literal);
 
+  inline bool construct_as_builtin() const;
+
+  // Determines and sets the ConstructAsBuiltinBit in |flags|, based on the
+  // |function_data|. Must be called when creating the SFI after other fields
+  // are initialized. The ConstructAsBuiltinBit determines whether
+  // JSBuiltinsConstructStub or JSConstructStubGeneric should be called to
+  // construct this function.
+  inline void CalculateConstructAsBuiltin();
+
   // Dispatched behavior.
   DECL_PRINTER(SharedFunctionInfo)
   DECL_VERIFIER(SharedFunctionInfo)
@@ -444,7 +449,6 @@ class SharedFunctionInfo : public HeapObject {
   V(kFunctionDataOffset, kPointerSize)        \
   V(kNameOrScopeInfoOffset, kPointerSize)     \
   V(kOuterScopeInfoOffset, kPointerSize)      \
-  V(kConstructStubOffset, kPointerSize)       \
   V(kScriptOffset, kPointerSize)              \
   V(kDebugInfoOffset, kPointerSize)           \
   V(kFunctionIdentifierOffset, kPointerSize)  \
@@ -499,7 +503,8 @@ class SharedFunctionInfo : public HeapObject {
   V(IsAsmWasmBrokenBit, bool, 1, _)                      \
   V(FunctionMapIndexBits, int, 5, _)                     \
   V(DisabledOptimizationReasonBits, BailoutReason, 4, _) \
-  V(RequiresInstanceFieldsInitializer, bool, 1, _)
+  V(RequiresInstanceFieldsInitializer, bool, 1, _)       \
+  V(ConstructAsBuiltinBit, bool, 1, _)
 
   DEFINE_BIT_FIELDS(FLAGS_BIT_FIELDS)
 #undef FLAGS_BIT_FIELDS
@@ -511,15 +516,16 @@ class SharedFunctionInfo : public HeapObject {
   STATIC_ASSERT(kLastFunctionKind <= FunctionKindBits::kMax);
 
 // Bit positions in |debugger_hints|.
-#define DEBUGGER_HINTS_BIT_FIELDS(V, _)        \
-  V(IsAnonymousExpressionBit, bool, 1, _)      \
-  V(NameShouldPrintAsAnonymousBit, bool, 1, _) \
-  V(IsDeserializedBit, bool, 1, _)             \
-  V(HasNoSideEffectBit, bool, 1, _)            \
-  V(ComputedHasNoSideEffectBit, bool, 1, _)    \
-  V(DebugIsBlackboxedBit, bool, 1, _)          \
-  V(ComputedDebugIsBlackboxedBit, bool, 1, _)  \
-  V(HasReportedBinaryCoverageBit, bool, 1, _)  \
+#define DEBUGGER_HINTS_BIT_FIELDS(V, _)             \
+  V(IsAnonymousExpressionBit, bool, 1, _)           \
+  V(NameShouldPrintAsAnonymousBit, bool, 1, _)      \
+  V(IsDeserializedBit, bool, 1, _)                  \
+  V(HasNoSideEffectBit, bool, 1, _)                 \
+  V(RequiresRuntimeSideEffectChecksBit, bool, 1, _) \
+  V(ComputedHasNoSideEffectBit, bool, 1, _)         \
+  V(DebugIsBlackboxedBit, bool, 1, _)               \
+  V(ComputedDebugIsBlackboxedBit, bool, 1, _)       \
+  V(HasReportedBinaryCoverageBit, bool, 1, _)       \
   V(DebuggingIdBits, int, 20, _)
 
   DEFINE_BIT_FIELDS(DEBUGGER_HINTS_BIT_FIELDS)

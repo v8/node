@@ -285,8 +285,11 @@ void WasmTableObject::Set(Isolate* isolate, Handle<WasmTableObject> table,
   }
 
   // TODO(titzer): Change this to MaybeHandle<WasmExportedFunction>
+  DCHECK(WasmExportedFunction::IsWasmExportedFunction(*function));
   auto exported_function = Handle<WasmExportedFunction>::cast(function);
-  auto* wasm_function = wasm::GetWasmFunctionForExport(isolate, function);
+  Handle<WasmInstanceObject> other_instance(exported_function->instance());
+  int func_index = exported_function->function_index();
+  auto* wasm_function = &other_instance->module()->functions[func_index];
   DCHECK_NOT_NULL(wasm_function);
   DCHECK_NOT_NULL(wasm_function->sig);
   wasm::WasmCode* wasm_code = exported_function->GetWasmCode();
@@ -339,11 +342,12 @@ void WasmTableObject::ClearDispatchTables(Handle<WasmTableObject> table,
 }
 
 namespace {
-Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
-                                       Handle<JSArrayBuffer> old_buffer,
-                                       uint32_t pages, uint32_t maximum_pages,
-                                       bool use_trap_handler) {
-  if (!old_buffer->is_growable()) return Handle<JSArrayBuffer>::null();
+MaybeHandle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
+                                            Handle<JSArrayBuffer> old_buffer,
+                                            uint32_t pages,
+                                            uint32_t maximum_pages,
+                                            bool use_trap_handler) {
+  if (!old_buffer->is_growable()) return {};
   Address old_mem_start = nullptr;
   uint32_t old_size = 0;
   if (!old_buffer.is_null()) {
@@ -354,14 +358,12 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   uint32_t old_pages = old_size / wasm::kWasmPageSize;
   DCHECK_GE(std::numeric_limits<uint32_t>::max(),
             old_size + pages * wasm::kWasmPageSize);
-  if (old_pages > maximum_pages || pages > maximum_pages - old_pages) {
-    return Handle<JSArrayBuffer>::null();
-  }
+  if (old_pages > maximum_pages || pages > maximum_pages - old_pages) return {};
   size_t new_size =
       static_cast<size_t>(old_pages + pages) * wasm::kWasmPageSize;
   if (new_size > FLAG_wasm_max_mem_pages * wasm::kWasmPageSize ||
       new_size > kMaxInt) {
-    return Handle<JSArrayBuffer>::null();
+    return {};
   }
   // Reusing the backing store from externalized buffers causes problems with
   // Blink's array buffers. The connection between the two is lost, which can
@@ -377,7 +379,7 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
           old_mem_start));
       if (!i::SetPermissions(old_mem_start, new_size,
                              PageAllocator::kReadWrite)) {
-        return Handle<JSArrayBuffer>::null();
+        return {};
       }
       reinterpret_cast<v8::Isolate*>(isolate)
           ->AdjustAmountOfExternalAllocatedMemory(pages * wasm::kWasmPageSize);
@@ -395,8 +397,11 @@ Handle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
     // We couldn't reuse the old backing store, so create a new one and copy the
     // old contents in.
     Handle<JSArrayBuffer> new_buffer;
-    new_buffer = wasm::NewArrayBuffer(isolate, new_size, use_trap_handler);
-    if (new_buffer.is_null() || old_size == 0) return new_buffer;
+    if (!wasm::NewArrayBuffer(isolate, new_size, use_trap_handler)
+             .ToHandle(&new_buffer)) {
+      return {};
+    }
+    if (old_size == 0) return new_buffer;
     Address new_mem_start = static_cast<Address>(new_buffer->backing_store());
     memcpy(new_mem_start, old_mem_start, old_size);
     DCHECK(old_buffer.is_null() || !old_buffer->is_shared());
@@ -499,9 +504,11 @@ int32_t WasmMemoryObject::Grow(Isolate* isolate,
   }
   // TODO(kschimpf): We need to fix this by adding a field to WasmMemoryObject
   // that defines the style of memory being used.
-  new_buffer = GrowMemoryBuffer(isolate, old_buffer, pages, maximum_pages,
-                                trap_handler::IsTrapHandlerEnabled());
-  if (new_buffer.is_null()) return -1;
+  if (!GrowMemoryBuffer(isolate, old_buffer, pages, maximum_pages,
+                        trap_handler::IsTrapHandlerEnabled())
+           .ToHandle(&new_buffer)) {
+    return -1;
+  }
 
   if (memory_object->has_instances()) {
     Handle<FixedArrayOfWeakCells> instances(memory_object->instances(),
@@ -1334,24 +1341,12 @@ void WasmCompiledModule::Reset(Isolate* isolate,
 
   TRACE("Resetting %zu\n", native_module->instance_id);
   if (compiled_module->use_trap_handler()) {
-    for (uint32_t i = native_module->num_imported_functions(),
-                  e = native_module->FunctionCount();
-         i < e; ++i) {
-      wasm::WasmCode* wasm_code = native_module->GetCode(i);
-      if (wasm_code->HasTrapHandlerIndex()) {
-        CHECK_LT(wasm_code->trap_handler_index(),
-                 static_cast<size_t>(std::numeric_limits<int>::max()));
-        trap_handler::ReleaseHandlerData(
-            static_cast<int>(wasm_code->trap_handler_index()));
-        wasm_code->ResetTrapHandlerIndex();
-      }
-    }
+    native_module->ReleaseProtectedInstructions();
   }
 
   // Patch code to update memory references, global references, and function
   // table references.
-  Zone specialization_zone(isolate->allocator(), ZONE_NAME);
-  wasm::CodeSpecialization code_specialization(isolate, &specialization_zone);
+  wasm::CodeSpecialization code_specialization;
 
   if (compiled_module->has_lazy_compile_data()) {
     for (int i = 0, e = compiled_module->lazy_compile_data()->length(); i < e;

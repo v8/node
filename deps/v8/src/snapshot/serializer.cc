@@ -398,9 +398,7 @@ void Serializer<AllocatorT>::ObjectSerializer::SerializeJSTypedArray() {
       FixedTypedArrayBase::cast(typed_array->elements());
 
   if (!typed_array->WasNeutered()) {
-    bool off_heap = elements->base_pointer() == nullptr;
-
-    if (off_heap) {
+    if (!typed_array->is_on_heap()) {
       // Explicitly serialize the backing store now.
       JSArrayBuffer* buffer = JSArrayBuffer::cast(typed_array->buffer());
       CHECK(buffer->byte_length()->IsSmi());
@@ -796,9 +794,9 @@ void Serializer<AllocatorT>::ObjectSerializer::VisitInternalReference(
   intptr_t pc_offset = rinfo->target_internal_reference_address() - entry;
   intptr_t target_offset = rinfo->target_internal_reference() - entry;
   DCHECK(0 <= pc_offset &&
-         pc_offset <= Code::cast(object_)->instruction_size());
+         pc_offset <= Code::cast(object_)->raw_instruction_size());
   DCHECK(0 <= target_offset &&
-         target_offset <= Code::cast(object_)->instruction_size());
+         target_offset <= Code::cast(object_)->raw_instruction_size());
   sink_->Put(rinfo->rmode() == RelocInfo::INTERNAL_REFERENCE
                  ? kInternalReference
                  : kInternalReferenceEncoded,

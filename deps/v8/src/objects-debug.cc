@@ -595,15 +595,29 @@ void FeedbackMetadata::FeedbackMetadataVerify() {
 
 void DescriptorArray::DescriptorArrayVerify() {
   FixedArrayVerify();
+  int nof_descriptors = number_of_descriptors();
   if (number_of_descriptors_storage() == 0) {
     Heap* heap = GetHeap();
     CHECK_EQ(heap->empty_descriptor_array(), this);
     CHECK_EQ(2, length());
-    CHECK_EQ(0, number_of_descriptors());
+    CHECK_EQ(0, nof_descriptors);
     CHECK_EQ(heap->empty_enum_cache(), GetEnumCache());
   } else {
     CHECK_LT(2, length());
-    CHECK_LE(LengthFor(number_of_descriptors()), length());
+    CHECK_LE(LengthFor(nof_descriptors), length());
+
+    Isolate* isolate = GetIsolate();
+    // Check that properties with private symbols names are non-enumerable.
+    for (int descriptor = 0; descriptor < nof_descriptors; descriptor++) {
+      Object* key = get(ToKeyIndex(descriptor));
+      // number_of_descriptors() may be out of sync with the actual descriptors
+      // written during descriptor array construction.
+      if (key->IsUndefined(isolate)) continue;
+      if (Name::cast(key)->IsPrivate()) {
+        PropertyDetails details = GetDetails(descriptor);
+        CHECK_NE(details.attributes() & DONT_ENUM, 0);
+      }
+    }
   }
 }
 
@@ -878,6 +892,19 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
     CHECK_EQ(kind() == kModule, info->scope_type() == MODULE_SCOPE);
     CHECK_EQ(raw_start_position(), info->StartPosition());
     CHECK_EQ(raw_end_position(), info->EndPosition());
+  }
+
+  if (IsApiFunction()) {
+    CHECK(construct_as_builtin());
+  } else if (!HasBuiltinId()) {
+    CHECK(!construct_as_builtin());
+  } else {
+    int id = builtin_id();
+    if (id != Builtins::kCompileLazy && id != Builtins::kEmptyFunction) {
+      CHECK(construct_as_builtin());
+    } else {
+      CHECK(!construct_as_builtin());
+    }
   }
 }
 

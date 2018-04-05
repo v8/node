@@ -19,6 +19,8 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 
+using WasmCompilationData = compiler::WasmCompilationData;
+
 constexpr auto kRegister = LiftoffAssembler::VarState::kRegister;
 constexpr auto KIntConst = LiftoffAssembler::VarState::KIntConst;
 constexpr auto kStack = LiftoffAssembler::VarState::kStack;
@@ -121,10 +123,8 @@ class LiftoffCompiler {
   LiftoffCompiler(LiftoffAssembler* liftoff_asm,
                   compiler::CallDescriptor* call_descriptor,
                   compiler::ModuleEnv* env,
-                  compiler::RuntimeExceptionSupport runtime_exception_support,
                   SourcePositionTableBuilder* source_position_table_builder,
-                  std::vector<trap_handler::ProtectedInstructionData>*
-                      protected_instructions,
+                  WasmCompilationData* wasm_compilation_data,
                   Zone* compilation_zone, std::unique_ptr<Zone>* codegen_zone)
       : asm_(liftoff_asm),
         descriptor_(
@@ -135,9 +135,8 @@ class LiftoffCompiler {
                                ? env_->module->maximum_pages
                                : wasm::kV8MaxWasmMemoryPages} *
                   wasm::kWasmPageSize),
-        runtime_exception_support_(runtime_exception_support),
         source_position_table_builder_(source_position_table_builder),
-        protected_instructions_(protected_instructions),
+        wasm_compilation_data_(wasm_compilation_data),
         compilation_zone_(compilation_zone),
         codegen_zone_(codegen_zone),
         safepoint_table_builder_(compilation_zone_) {}
@@ -251,7 +250,10 @@ class LiftoffCompiler {
   }
 
   void StackCheck(wasm::WasmCodePosition position) {
-    if (FLAG_wasm_no_stack_checks || !runtime_exception_support_) return;
+    if (FLAG_wasm_no_stack_checks ||
+        !wasm_compilation_data_->runtime_exception_support()) {
+      return;
+    }
     out_of_line_code_.push_back(
         OutOfLineCode::StackCheck(position, __ cache_state()->used_registers));
     OutOfLineCode& ool = out_of_line_code_.back();
@@ -332,7 +334,16 @@ class LiftoffCompiler {
   void GenerateOutOfLineCode(OutOfLineCode& ool) {
     __ bind(ool.label.get());
     const bool is_stack_check = ool.builtin == Builtins::kWasmStackGuard;
-    if (!runtime_exception_support_) {
+    const bool is_mem_out_of_bounds =
+        ool.builtin == Builtins::kThrowWasmTrapMemOutOfBounds;
+
+    if (is_mem_out_of_bounds && env_->use_trap_handler) {
+      uint32_t pc = static_cast<uint32_t>(__ pc_offset());
+      DCHECK_EQ(pc, __ pc_offset());
+      wasm_compilation_data_->AddProtectedInstruction(ool.pc, pc);
+    }
+
+    if (!wasm_compilation_data_->runtime_exception_support()) {
       // We cannot test calls to the runtime in cctest/test-run-wasm.
       // Therefore we emit a call to C here instead of a call to the runtime.
       // In this mode, we never generate stack checks.
@@ -341,13 +352,6 @@ class LiftoffCompiler {
       __ LeaveFrame(StackFrame::WASM_COMPILED);
       __ Ret();
       return;
-    }
-
-    if (!is_stack_check && env_->use_trap_handler) {
-      uint32_t pc = static_cast<uint32_t>(__ pc_offset());
-      DCHECK_EQ(pc, __ pc_offset());
-      protected_instructions_->emplace_back(
-          trap_handler::ProtectedInstructionData{ool.pc, pc});
     }
 
     if (!ool.regs_to_save.is_empty()) __ PushRegisters(ool.regs_to_save);
@@ -621,9 +625,17 @@ class LiftoffCompiler {
       CASE_I32_UNOP(I32Ctz, i32_ctz)
       CASE_FLOAT_UNOP(F32Abs, F32, f32_abs)
       CASE_FLOAT_UNOP(F32Neg, F32, f32_neg)
+      CASE_FLOAT_UNOP(F32Ceil, F32, f32_ceil)
+      CASE_FLOAT_UNOP(F32Floor, F32, f32_floor)
+      CASE_FLOAT_UNOP(F32Trunc, F32, f32_trunc)
+      CASE_FLOAT_UNOP(F32NearestInt, F32, f32_nearest_int)
       CASE_FLOAT_UNOP(F32Sqrt, F32, f32_sqrt)
       CASE_FLOAT_UNOP(F64Abs, F64, f64_abs)
       CASE_FLOAT_UNOP(F64Neg, F64, f64_neg)
+      CASE_FLOAT_UNOP(F64Ceil, F64, f64_ceil)
+      CASE_FLOAT_UNOP(F64Floor, F64, f64_floor)
+      CASE_FLOAT_UNOP(F64Trunc, F64, f64_trunc)
+      CASE_FLOAT_UNOP(F64NearestInt, F64, f64_nearest_int)
       CASE_FLOAT_UNOP(F64Sqrt, F64, f64_sqrt)
       CASE_TYPE_CONVERSION(I32ConvertI64, I32, I64, nullptr)
       CASE_TYPE_CONVERSION(I32ReinterpretF32, I32, F32, nullptr)
@@ -687,6 +699,12 @@ class LiftoffCompiler {
         [=](LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
           __ emit_##fn(dst.gp(), lhs.gp(), rhs.gp());                        \
         });
+#define CASE_I64_BINOP(opcode, fn)                                           \
+  case WasmOpcode::kExpr##opcode:                                            \
+    return EmitBinOp<kWasmI64, kWasmI64>(                                    \
+        [=](LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
+          __ emit_##fn(dst, lhs, rhs);                                       \
+        });
 #define CASE_FLOAT_BINOP(opcode, type, fn)                                   \
   case WasmOpcode::kExpr##opcode:                                            \
     return EmitBinOp<kWasm##type, kWasm##type>(                              \
@@ -710,6 +728,12 @@ class LiftoffCompiler {
     return EmitBinOp<kWasmF32, kWasmI32>(                                    \
         [=](LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
           __ emit_f32_set_cond(cond, dst.gp(), lhs.fp(), rhs.fp());          \
+        });
+#define CASE_F64_CMPOP(opcode, cond)                                         \
+  case WasmOpcode::kExpr##opcode:                                            \
+    return EmitBinOp<kWasmF64, kWasmI32>(                                    \
+        [=](LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
+          __ emit_f64_set_cond(cond, dst.gp(), lhs.fp(), rhs.fp());          \
         });
 #define CASE_I32_SHIFTOP(opcode, fn)                                         \
   case WasmOpcode::kExpr##opcode:                                            \
@@ -742,6 +766,9 @@ class LiftoffCompiler {
       CASE_I32_BINOP(I32And, i32_and)
       CASE_I32_BINOP(I32Ior, i32_or)
       CASE_I32_BINOP(I32Xor, i32_xor)
+      CASE_I64_BINOP(I64And, i64_and)
+      CASE_I64_BINOP(I64Ior, i64_or)
+      CASE_I64_BINOP(I64Xor, i64_xor)
       CASE_I32_CMPOP(I32Eq, kEqual)
       CASE_I32_CMPOP(I32Ne, kUnequal)
       CASE_I32_CMPOP(I32LtS, kSignedLessThan)
@@ -752,6 +779,8 @@ class LiftoffCompiler {
       CASE_I32_CMPOP(I32LeU, kUnsignedLessEqual)
       CASE_I32_CMPOP(I32GeS, kSignedGreaterEqual)
       CASE_I32_CMPOP(I32GeU, kUnsignedGreaterEqual)
+      CASE_I64_BINOP(I64Add, i64_add)
+      CASE_I64_BINOP(I64Sub, i64_sub)
       CASE_I64_CMPOP(I64Eq, kEqual)
       CASE_I64_CMPOP(I64Ne, kUnequal)
       CASE_I64_CMPOP(I64LtS, kSignedLessThan)
@@ -768,6 +797,12 @@ class LiftoffCompiler {
       CASE_F32_CMPOP(F32Gt, kUnsignedGreaterThan)
       CASE_F32_CMPOP(F32Le, kUnsignedLessEqual)
       CASE_F32_CMPOP(F32Ge, kUnsignedGreaterEqual)
+      CASE_F64_CMPOP(F64Eq, kEqual)
+      CASE_F64_CMPOP(F64Ne, kUnequal)
+      CASE_F64_CMPOP(F64Lt, kUnsignedLessThan)
+      CASE_F64_CMPOP(F64Gt, kUnsignedGreaterThan)
+      CASE_F64_CMPOP(F64Le, kUnsignedLessEqual)
+      CASE_F64_CMPOP(F64Ge, kUnsignedGreaterEqual)
       CASE_I32_SHIFTOP(I32Shl, i32_shl)
       CASE_I32_SHIFTOP(I32ShrS, i32_sar)
       CASE_I32_SHIFTOP(I32ShrU, i32_shr)
@@ -788,10 +823,12 @@ class LiftoffCompiler {
         return unsupported(decoder, WasmOpcodes::OpcodeName(opcode));
     }
 #undef CASE_I32_BINOP
+#undef CASE_I64_BINOP
 #undef CASE_FLOAT_BINOP
 #undef CASE_I32_CMPOP
 #undef CASE_I64_CMPOP
 #undef CASE_F32_CMPOP
+#undef CASE_F64_CMPOP
 #undef CASE_I32_SHIFTOP
 #undef CASE_I64_SHIFTOP
 #undef CASE_CCALL_BINOP
@@ -1423,11 +1460,10 @@ class LiftoffCompiler {
   // {min_size_} and {max_size_} are cached values computed from the ModuleEnv.
   const uint64_t min_size_;
   const uint64_t max_size_;
-  const compiler::RuntimeExceptionSupport runtime_exception_support_;
   bool ok_ = true;
   std::vector<OutOfLineCode> out_of_line_code_;
   SourcePositionTableBuilder* const source_position_table_builder_;
-  std::vector<trap_handler::ProtectedInstructionData>* protected_instructions_;
+  WasmCompilationData* wasm_compilation_data_;
   // Zone used to store information during compilation. The result will be
   // stored independently, such that this zone can die together with the
   // LiftoffCompiler after compilation.
@@ -1478,9 +1514,8 @@ bool compiler::WasmCompilationUnit::ExecuteLiftoffCompilation() {
       base::in_place, counters()->liftoff_compile_time());
   wasm::WasmFullDecoder<wasm::Decoder::kValidate, wasm::LiftoffCompiler>
       decoder(&zone, module, func_body_, &liftoff_.asm_, call_descriptor, env_,
-              runtime_exception_support_,
-              &liftoff_.source_position_table_builder_,
-              protected_instructions_.get(), &zone, &liftoff_.codegen_zone_);
+              &liftoff_.source_position_table_builder_, &wasm_compilation_data_,
+              &zone, &liftoff_.codegen_zone_);
   decoder.Decode();
   liftoff_compile_time_scope.reset();
   if (!decoder.interface().ok()) {

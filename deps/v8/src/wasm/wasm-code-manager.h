@@ -26,15 +26,9 @@ class WasmCompiledModule;
 
 namespace wasm {
 
-using GlobalHandleAddress = Address;
 class NativeModule;
+class WasmCodeManager;
 struct WasmModule;
-
-struct AddressHasher {
-  size_t operator()(const Address& addr) const {
-    return std::hash<intptr_t>()(reinterpret_cast<intptr_t>(addr));
-  }
-};
 
 // Sorted, disjoint and non-overlapping memory ranges. A range is of the
 // form [start, end). So there's no [start, end), [end, other_end),
@@ -124,6 +118,8 @@ class V8_EXPORT_PRIVATE WasmCode final {
   uint32_t stack_slots() const { return stack_slots_; }
   bool is_liftoff() const { return tier_ == kLiftoff; }
 
+  // TODO(mstarzinger): Make the next four methods private once wasm-to-wasm
+  // wrappers are gone. All uses are in {NativeModule} by now.
   size_t trap_handler_index() const;
   void set_trap_handler_index(size_t);
   bool HasTrapHandlerIndex() const;
@@ -201,8 +197,6 @@ class V8_EXPORT_PRIVATE WasmCode final {
 // Return a textual description of the kind.
 const char* GetWasmCodeKindAsString(WasmCode::Kind);
 
-class WasmCodeManager;
-
 // Note that we currently need to add code on the main thread, because we may
 // trigger a GC if we believe there's a chance the GC would clear up native
 // modules. The code is ready for concurrency otherwise, we just need to be
@@ -210,26 +204,6 @@ class WasmCodeManager;
 // WasmCodeManager::Commit.
 class V8_EXPORT_PRIVATE NativeModule final {
  public:
-  // Helper class to selectively clone and patch code from a
-  // {source_native_module} into a {cloning_native_module}.
-  class CloneCodeHelper {
-   public:
-    explicit CloneCodeHelper(NativeModule* source_native_module,
-                             NativeModule* cloning_native_module);
-
-    void SelectForCloning(int32_t code_index);
-
-    void CloneAndPatchCode(bool patch_stub_to_stub_calls);
-
-   private:
-    void PatchStubToStubCalls();
-
-    NativeModule* source_native_module_;
-    NativeModule* cloning_native_module_;
-    std::vector<uint32_t> selection_;
-    std::unordered_map<Address, Address, AddressHasher> reverse_lookup_;
-  };
-
   std::unique_ptr<NativeModule> Clone();
 
   WasmCode* AddCode(const CodeDesc& desc, uint32_t frame_count, uint32_t index,
@@ -258,6 +232,11 @@ class V8_EXPORT_PRIVATE NativeModule final {
   // FunctionCount is WasmModule::functions.size().
   uint32_t FunctionCount() const;
   WasmCode* GetCode(uint32_t index) const;
+
+  // Register/release the protected instructions in all code objects with the
+  // global trap handler for this process.
+  void UnpackAndRegisterProtectedInstructions();
+  void ReleaseProtectedInstructions();
 
   // We special-case lazy cloning because we currently rely on making copies
   // of the lazy builtin, to be able to identify, in the runtime, which function
@@ -294,6 +273,13 @@ class V8_EXPORT_PRIVATE NativeModule final {
   friend class NativeModuleSerializer;
   friend class NativeModuleDeserializer;
   friend class NativeModuleModificationScope;
+
+  class CloneCodeHelper;
+  struct AddressHasher {
+    size_t operator()(const Address& addr) const {
+      return std::hash<intptr_t>()(reinterpret_cast<intptr_t>(addr));
+    }
+  };
 
   static base::AtomicNumber<size_t> next_id_;
   NativeModule(uint32_t num_functions, uint32_t num_imports,

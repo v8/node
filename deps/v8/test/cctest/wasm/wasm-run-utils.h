@@ -204,8 +204,7 @@ class TestingModuleBuilder {
   Address globals_start() { return reinterpret_cast<Address>(globals_data_); }
   void Link() {
     if (!linked_) {
-      Zone specialization_zone(isolate()->allocator(), ZONE_NAME);
-      CodeSpecialization code_specialization(isolate(), &specialization_zone);
+      CodeSpecialization code_specialization;
       code_specialization.RelocateDirectCalls(native_module_);
       code_specialization.ApplyToWholeModule(native_module_);
       linked_ = true;
@@ -452,6 +451,7 @@ class WasmRunner : public WasmRunnerBase {
 
     ReturnType return_value = static_cast<ReturnType>(0xDEADBEEFDEADBEEF);
     WasmRunnerBase::trap_happened = false;
+
     auto trap_callback = []() -> void {
       WasmRunnerBase::trap_happened = true;
       set_trap_callback_for_testing(nullptr);
@@ -466,8 +466,13 @@ class WasmRunner : public WasmRunnerBase {
     Handle<Code> wrapper_code = wrapper_.GetWrapperCode();
     compiler::CodeRunner<int32_t> runner(CcTest::InitIsolateOnce(),
                                          wrapper_code, wrapper_.signature());
-    int32_t result = runner.Call(static_cast<void*>(&p)...,
-                                 static_cast<void*>(&return_value));
+    int32_t result;
+    {
+      trap_handler::ThreadInWasmScope scope;
+
+      result = runner.Call(static_cast<void*>(&p)...,
+                           static_cast<void*>(&return_value));
+    }
     CHECK_EQ(WASM_WRAPPER_RETURN_VALUE, result);
     return WasmRunnerBase::trap_happened
                ? static_cast<ReturnType>(0xDEADBEEFDEADBEEF)

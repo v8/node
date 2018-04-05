@@ -25,7 +25,6 @@ DEFINE_DEOPT_ELEMENT_ACCESSORS(SharedFunctionInfo, Object)
 
 ACCESSORS(SharedFunctionInfo, name_or_scope_info, Object,
           kNameOrScopeInfoOffset)
-ACCESSORS(SharedFunctionInfo, construct_stub, Code, kConstructStubOffset)
 ACCESSORS(SharedFunctionInfo, feedback_metadata, FeedbackMetadata,
           kFeedbackMetadataOffset)
 ACCESSORS(SharedFunctionInfo, function_data, Object, kFunctionDataOffset)
@@ -161,6 +160,26 @@ void SharedFunctionInfo::set_needs_home_object(bool value) {
   UpdateFunctionMapIndex();
 }
 
+bool SharedFunctionInfo::construct_as_builtin() const {
+  return ConstructAsBuiltinBit::decode(flags());
+}
+
+void SharedFunctionInfo::CalculateConstructAsBuiltin() {
+  bool uses_builtins_construct_stub = false;
+  if (HasBuiltinId()) {
+    int id = builtin_id();
+    if (id != Builtins::kCompileLazy && id != Builtins::kEmptyFunction) {
+      uses_builtins_construct_stub = true;
+    }
+  } else if (IsApiFunction()) {
+    uses_builtins_construct_stub = true;
+  }
+
+  int f = flags();
+  f = ConstructAsBuiltinBit::update(f, uses_builtins_construct_stub);
+  set_flags(f);
+}
+
 int SharedFunctionInfo::function_map_index() const {
   // Note: Must be kept in sync with the FastNewClosure builtin.
   int index =
@@ -197,6 +216,9 @@ BIT_FIELD_ACCESSORS(SharedFunctionInfo, debugger_hints, deserialized,
                     SharedFunctionInfo::IsDeserializedBit)
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, debugger_hints, has_no_side_effect,
                     SharedFunctionInfo::HasNoSideEffectBit)
+BIT_FIELD_ACCESSORS(SharedFunctionInfo, debugger_hints,
+                    requires_runtime_side_effect_checks,
+                    SharedFunctionInfo::RequiresRuntimeSideEffectChecksBit)
 BIT_FIELD_ACCESSORS(SharedFunctionInfo, debugger_hints,
                     computed_has_no_side_effect,
                     SharedFunctionInfo::ComputedHasNoSideEffectBit)

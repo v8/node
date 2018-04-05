@@ -124,8 +124,7 @@ void IC::TraceIC(const char* type, Handle<Object> name, State old_state,
   if (function->IsInterpreted()) {
     code_offset = InterpretedFrame::GetBytecodeOffset(fp());
   } else {
-    code_offset =
-        static_cast<int>(pc() - function->code()->instruction_start());
+    code_offset = static_cast<int>(pc() - function->code()->InstructionStart());
   }
   JavaScriptFrame::CollectFunctionAndOffsetForICStats(
       function, function->abstract_code(), code_offset);
@@ -1391,16 +1390,7 @@ MaybeHandle<Object> StoreIC::Store(Handle<Object> object, Handle<Name> name,
   if (state() != UNINITIALIZED) {
     JSObject::MakePrototypesFast(object, kStartAtPrototype, isolate());
   }
-  MaybeHandle<Map> maybe_transition_map;
-  if (object->IsJSReceiver()) {
-    name = isolate()->factory()->InternalizeName(name);
-    maybe_transition_map =
-        TransitionsAccessor(receiver_map()).FindTransitionToDataProperty(name);
-  }
-
-  LookupIterator it = LookupIterator::ForTransitionHandler(
-      isolate(), object, name, value, maybe_transition_map);
-
+  LookupIterator it(object, name);
   bool use_ic = FLAG_use_ic;
 
   if (name->IsPrivate()) {
@@ -1860,7 +1850,10 @@ Handle<Object> KeyedStoreIC::StoreElementHandler(
 
   Handle<Object> validity_cell =
       Map::GetOrCreatePrototypeChainValidityCell(receiver_map, isolate());
-  if (validity_cell.is_null()) return stub;
+  if (validity_cell->IsSmi()) {
+    // There's no prototype validity cell to check, so we can just use the stub.
+    return stub;
+  }
   Handle<StoreHandler> handler = isolate()->factory()->NewStoreHandler(0);
   handler->set_validity_cell(*validity_cell);
   handler->set_smi_handler(*stub);

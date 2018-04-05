@@ -1730,11 +1730,19 @@ Node* CodeStubAssembler::LoadFixedBigInt64ArrayElementAsTagged(
     TVARIABLE(WordT, var_sign, IntPtrConstant(BigInt::SignBits::encode(false)));
     TVARIABLE(IntPtrT, var_low);
     TVARIABLE(IntPtrT, var_high);
+#if defined(V8_TARGET_BIG_ENDIAN)
+    var_high = UncheckedCast<IntPtrT>(
+        Load(MachineType::UintPtr(), data_pointer, offset));
+    var_low = UncheckedCast<IntPtrT>(
+        Load(MachineType::UintPtr(), data_pointer,
+             Int32Add(offset, Int32Constant(kPointerSize))));
+#else
     var_low = UncheckedCast<IntPtrT>(
         Load(MachineType::UintPtr(), data_pointer, offset));
     var_high = UncheckedCast<IntPtrT>(
         Load(MachineType::UintPtr(), data_pointer,
              Int32Add(offset, Int32Constant(kPointerSize))));
+#endif
 
     Label high_zero(this), negative(this), allocate_one_digit(this),
         allocate_two_digits(this);
@@ -1813,11 +1821,19 @@ Node* CodeStubAssembler::LoadFixedBigUint64ArrayElementAsTagged(
     DCHECK(!Is64());
     Label high_zero(this);
 
+#if defined(V8_TARGET_BIG_ENDIAN)
+    TNode<UintPtrT> high = UncheckedCast<UintPtrT>(
+        Load(MachineType::UintPtr(), data_pointer, offset));
+    TNode<UintPtrT> low = UncheckedCast<UintPtrT>(
+        Load(MachineType::UintPtr(), data_pointer,
+             Int32Add(offset, Int32Constant(kPointerSize))));
+#else
     TNode<UintPtrT> low = UncheckedCast<UintPtrT>(
         Load(MachineType::UintPtr(), data_pointer, offset));
     TNode<UintPtrT> high = UncheckedCast<UintPtrT>(
         Load(MachineType::UintPtr(), data_pointer,
              Int32Add(offset, Int32Constant(kPointerSize))));
+#endif
 
     GotoIf(WordEqual(high, IntPtrConstant(0)), &high_zero);
     var_result = AllocateBigInt(IntPtrConstant(2));
@@ -6754,11 +6770,25 @@ TNode<Uint32T> CodeStubAssembler::NumberOfEntries<DescriptorArray>(
       descriptors, IntPtrConstant(DescriptorArray::kDescriptorLengthIndex)));
 }
 
+template <>
+TNode<Uint32T> CodeStubAssembler::NumberOfEntries<TransitionArray>(
+    TNode<TransitionArray> transitions) {
+  TNode<IntPtrT> length = LoadAndUntagFixedArrayBaseLength(transitions);
+  return Select<Uint32T>(
+      UintPtrLessThan(length, IntPtrConstant(TransitionArray::kFirstIndex)),
+      [=] { return Unsigned(Int32Constant(0)); },
+      [=] {
+        return Unsigned(LoadAndUntagToWord32FixedArrayElement(
+            transitions,
+            IntPtrConstant(TransitionArray::kTransitionLengthIndex)));
+      });
+}
+
 template <typename Array>
 TNode<IntPtrT> CodeStubAssembler::EntryIndexToIndex(
     TNode<Uint32T> entry_index) {
-  TNode<Int32T> descriptor_size = Int32Constant(Array::kEntrySize);
-  TNode<Word32T> index = Int32Mul(entry_index, descriptor_size);
+  TNode<Int32T> entry_size = Int32Constant(Array::kEntrySize);
+  TNode<Word32T> index = Int32Mul(entry_index, entry_size);
   return ChangeInt32ToIntPtr(index);
 }
 
@@ -6769,6 +6799,8 @@ TNode<IntPtrT> CodeStubAssembler::ToKeyIndex(TNode<Uint32T> entry_index) {
 }
 
 template TNode<IntPtrT> CodeStubAssembler::ToKeyIndex<DescriptorArray>(
+    TNode<Uint32T>);
+template TNode<IntPtrT> CodeStubAssembler::ToKeyIndex<TransitionArray>(
     TNode<Uint32T>);
 
 template <>
@@ -6795,6 +6827,8 @@ TNode<Name> CodeStubAssembler::GetKey(TNode<Array> array,
 
 template TNode<Name> CodeStubAssembler::GetKey<DescriptorArray>(
     TNode<DescriptorArray>, TNode<Uint32T>);
+template TNode<Name> CodeStubAssembler::GetKey<TransitionArray>(
+    TNode<TransitionArray>, TNode<Uint32T>);
 
 TNode<Uint32T> CodeStubAssembler::DescriptorArrayGetDetails(
     TNode<DescriptorArray> descriptors, TNode<Uint32T> descriptor_number) {
@@ -6884,6 +6918,16 @@ void CodeStubAssembler::DescriptorLookup(
   TNode<Uint32T> nof = DecodeWord32<Map::NumberOfOwnDescriptorsBits>(bitfield3);
   Lookup<DescriptorArray>(unique_name, descriptors, nof, if_found,
                           var_name_index, if_not_found);
+}
+
+void CodeStubAssembler::TransitionLookup(
+    SloppyTNode<Name> unique_name, SloppyTNode<TransitionArray> transitions,
+    Label* if_found, TVariable<IntPtrT>* var_name_index, Label* if_not_found) {
+  Comment("TransitionArrayLookup");
+  TNode<Uint32T> number_of_valid_transitions =
+      NumberOfEntries<TransitionArray>(transitions);
+  Lookup<TransitionArray>(unique_name, transitions, number_of_valid_transitions,
+                          if_found, var_name_index, if_not_found);
 }
 
 template <typename Array>
@@ -8206,12 +8250,23 @@ void CodeStubAssembler::EmitBigTypedArrayElementStore(
   Node* offset = ElementOffsetFromIndex(intptr_key, BIGINT64_ELEMENTS,
                                         INTPTR_PARAMETERS, 0);
   MachineRepresentation rep = WordT::kMachineRepresentation;
+#if defined(V8_TARGET_BIG_ENDIAN)
+  if (!Is64()) {
+    StoreNoWriteBarrier(rep, backing_store, offset, var_high.value());
+    StoreNoWriteBarrier(rep, backing_store,
+                        IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
+                        var_low.value());
+  } else {
+    StoreNoWriteBarrier(rep, backing_store, offset, var_low.value());
+  }
+#else
   StoreNoWriteBarrier(rep, backing_store, offset, var_low.value());
   if (!Is64()) {
     StoreNoWriteBarrier(rep, backing_store,
                         IntPtrAdd(offset, IntPtrConstant(kPointerSize)),
                         var_high.value());
   }
+#endif
 }
 
 void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,

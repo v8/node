@@ -152,6 +152,15 @@ void TransitionArray::SetTarget(int transition_number, Object* value) {
   set(ToTargetIndex(transition_number), value);
 }
 
+bool TransitionArray::GetTargetIfExists(int transition_number, Isolate* isolate,
+                                        Map** target) {
+  Object* raw = GetRawTarget(transition_number);
+  if (raw->IsUndefined(isolate)) {
+    return false;
+  }
+  *target = TransitionsAccessor::GetTargetFromRaw(raw);
+  return true;
+}
 
 int TransitionArray::SearchName(Name* name, int* out_insertion_index) {
   DCHECK(name->IsUniqueName());
@@ -202,7 +211,7 @@ void TransitionArray::Set(int transition_number, Name* key, Object* target) {
 
 int TransitionArray::Capacity() {
   if (length() <= kFirstIndex) return 0;
-  return (length() - kFirstIndex) / kTransitionSize;
+  return (length() - kFirstIndex) / kEntrySize;
 }
 
 void TransitionArray::SetNumberOfTransitions(int number_of_transitions) {

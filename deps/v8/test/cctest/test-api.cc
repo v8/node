@@ -3940,6 +3940,28 @@ THREADED_TEST(ArrayBuffer_AllocationInformation) {
   CHECK_LE(data + contents.ByteLength(), alloc + contents.AllocationLength());
 }
 
+THREADED_TEST(ArrayBuffer_ExternalizeEmpty) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  v8::HandleScope handle_scope(isolate);
+
+  Local<v8::ArrayBuffer> ab = v8::ArrayBuffer::New(isolate, 0);
+  CheckInternalFieldsAreZero(ab);
+  CHECK_EQ(0, static_cast<int>(ab->ByteLength()));
+  CHECK(!ab->IsExternal());
+
+  // Externalize the buffer (taking ownership of the backing store memory).
+  ScopedArrayBufferContents ab_contents(ab->Externalize());
+
+  Local<v8::Uint8Array> u8a = v8::Uint8Array::New(ab, 0, 0);
+  // Calling Buffer() will materialize the ArrayBuffer (transitioning it from
+  // on-heap to off-heap if need be). This should not affect whether it is
+  // marked as is_external or not.
+  USE(u8a->Buffer());
+
+  CHECK(ab->IsExternal());
+}
+
 class ScopedSharedArrayBufferContents {
  public:
   explicit ScopedSharedArrayBufferContents(
@@ -12981,16 +13003,95 @@ TEST(CallHandlerHasNoSideEffect) {
   CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("new f()"), true).IsEmpty());
 
   // Side-effect-free version.
-  // TODO(luoe): turn on has_no_side_effect flag from API once it is exposed.
-  i::Handle<i::FunctionTemplateInfo> info =
-      i::Handle<i::FunctionTemplateInfo>::cast(v8::Utils::OpenHandle(*templ));
-  i::Heap* heap = reinterpret_cast<i::Isolate*>(isolate)->heap();
-  i::CallHandlerInfo* handler_info =
-      i::CallHandlerInfo::cast(info->call_code());
-  CHECK(!handler_info->IsSideEffectFreeCallHandlerInfo());
-  handler_info->set_map(heap->side_effect_free_call_handler_info_map());
-  v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).ToLocalChecked();
-  v8::debug::EvaluateGlobal(isolate, v8_str("new f()"), true).ToLocalChecked();
+  Local<v8::FunctionTemplate> templ2 = v8::FunctionTemplate::New(isolate);
+  templ2->SetCallHandler(EmptyHandler, v8::Local<Value>(),
+                         v8::SideEffectType::kHasNoSideEffect);
+  CHECK(context->Global()
+            ->Set(context.local(), v8_str("f2"),
+                  templ2->GetFunction(context.local()).ToLocalChecked())
+            .FromJust());
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), true).ToLocalChecked();
+  v8::debug::EvaluateGlobal(isolate, v8_str("new f2()"), true).ToLocalChecked();
+}
+
+TEST(FunctionTemplateNewHasNoSideEffect) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  LocalContext context;
+
+  // Function template with call handler.
+  Local<v8::FunctionTemplate> templ =
+      v8::FunctionTemplate::New(isolate, EmptyHandler);
+  CHECK(context->Global()
+            ->Set(context.local(), v8_str("f"),
+                  templ->GetFunction(context.local()).ToLocalChecked())
+            .FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).IsEmpty());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("new f()"), true).IsEmpty());
+
+  // Side-effect-free version.
+  Local<v8::FunctionTemplate> templ2 = v8::FunctionTemplate::New(
+      isolate, EmptyHandler, v8::Local<Value>(), v8::Local<v8::Signature>(), 0,
+      v8::ConstructorBehavior::kAllow, v8::SideEffectType::kHasNoSideEffect);
+  CHECK(context->Global()
+            ->Set(context.local(), v8_str("f2"),
+                  templ2->GetFunction(context.local()).ToLocalChecked())
+            .FromJust());
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), true).ToLocalChecked();
+  v8::debug::EvaluateGlobal(isolate, v8_str("new f2()"), true).ToLocalChecked();
+}
+
+TEST(FunctionTemplateNewWithCacheHasNoSideEffect) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  LocalContext context;
+  v8::Local<v8::Private> priv =
+      v8::Private::ForApi(isolate, v8_str("Foo#draft"));
+
+  // Function template with call handler.
+  Local<v8::FunctionTemplate> templ =
+      v8::FunctionTemplate::NewWithCache(isolate, EmptyHandler, priv);
+  CHECK(context->Global()
+            ->Set(context.local(), v8_str("f"),
+                  templ->GetFunction(context.local()).ToLocalChecked())
+            .FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).IsEmpty());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("new f()"), true).IsEmpty());
+
+  // Side-effect-free version.
+  Local<v8::FunctionTemplate> templ2 = v8::FunctionTemplate::NewWithCache(
+      isolate, EmptyHandler, priv, v8::Local<Value>(),
+      v8::Local<v8::Signature>(), 0, v8::SideEffectType::kHasNoSideEffect);
+  CHECK(context->Global()
+            ->Set(context.local(), v8_str("f2"),
+                  templ2->GetFunction(context.local()).ToLocalChecked())
+            .FromJust());
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), true).ToLocalChecked();
+  v8::debug::EvaluateGlobal(isolate, v8_str("new f2()"), true).ToLocalChecked();
+}
+
+TEST(FunctionNewHasNoSideEffect) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  LocalContext context;
+
+  // Function with side-effect.
+  Local<Function> func =
+      Function::New(context.local(), EmptyHandler).ToLocalChecked();
+  CHECK(context->Global()->Set(context.local(), v8_str("f"), func).FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).IsEmpty());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("new f()"), true).IsEmpty());
+
+  // Side-effect-free version.
+  Local<Function> func2 =
+      Function::New(context.local(), EmptyHandler, Local<Value>(), 0,
+                    v8::ConstructorBehavior::kAllow,
+                    v8::SideEffectType::kHasNoSideEffect)
+          .ToLocalChecked();
+  CHECK(
+      context->Global()->Set(context.local(), v8_str("f2"), func2).FromJust());
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), true).ToLocalChecked();
+  v8::debug::EvaluateGlobal(isolate, v8_str("new f2()"), true).ToLocalChecked();
 }
 
 TEST(CallHandlerAsFunctionHasNoSideEffectNotSupported) {
@@ -13006,7 +13107,6 @@ TEST(CallHandlerAsFunctionHasNoSideEffectNotSupported) {
   CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("obj()"), true).IsEmpty());
 
   // Side-effect-free version is not supported.
-  // TODO(luoe): turn on has_no_side_effect flag from API once it is exposed.
   i::FunctionTemplateInfo* cons = i::FunctionTemplateInfo::cast(
       v8::Utils::OpenHandle(*templ)->constructor());
   i::Heap* heap = reinterpret_cast<i::Isolate*>(isolate)->heap();
@@ -14155,14 +14255,14 @@ void SetFunctionEntryHookTest::OnEntryHook(
   if (!bar_func_.is_null() && function_code == bar_func_->code()) {
     // Check that we have a symbol for the "bar" function at the right location.
     SymbolLocationMap::iterator it(
-        symbol_locations_.find(function_code->instruction_start()));
+        symbol_locations_.find(function_code->raw_instruction_start()));
     CHECK(it != symbol_locations_.end());
   }
 
   if (!foo_func_.is_null() && function_code == foo_func_->code()) {
     // Check that we have a symbol for "foo" at the right location.
     SymbolLocationMap::iterator it(
-        symbol_locations_.find(function_code->instruction_start()));
+        symbol_locations_.find(function_code->raw_instruction_start()));
     CHECK(it != symbol_locations_.end());
   }
 }

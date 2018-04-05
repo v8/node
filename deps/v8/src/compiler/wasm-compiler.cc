@@ -4718,7 +4718,7 @@ Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
   Vector<const char> func_name = CStrVector("js-to-wasm");
 #endif
 
-  CompilationInfo info(func_name, &zone, Code::JS_TO_WASM_FUNCTION);
+  OptimizedCompilationInfo info(func_name, &zone, Code::JS_TO_WASM_FUNCTION);
   Handle<Code> code =
       Pipeline::GenerateCodeForTesting(&info, isolate, incoming, &graph);
 #ifdef ENABLE_DISASSEMBLER
@@ -4840,7 +4840,7 @@ Handle<Code> CompileWasmToJSWrapper(
   Vector<const char> func_name = CStrVector("wasm-to-js");
 #endif
 
-  CompilationInfo info(func_name, &zone, Code::WASM_TO_JS_FUNCTION);
+  OptimizedCompilationInfo info(func_name, &zone, Code::WASM_TO_JS_FUNCTION);
   Handle<Code> code = Pipeline::GenerateCodeForTesting(
       &info, isolate, incoming, &graph, nullptr, source_position_table);
   ValidateImportWrapperReferencesImmovables(code);
@@ -4919,7 +4919,7 @@ Handle<Code> CompileWasmToWasmWrapper(Isolate* isolate, wasm::WasmCode* target,
     func_name = Vector<const char>::cast(buffer.SubVector(0, chars));
   }
 
-  CompilationInfo info(func_name, &zone, Code::WASM_TO_WASM_FUNCTION);
+  OptimizedCompilationInfo info(func_name, &zone, Code::WASM_TO_WASM_FUNCTION);
   Handle<Code> code =
       Pipeline::GenerateCodeForTesting(&info, isolate, incoming, &graph);
 #ifdef ENABLE_DISASSEMBLER
@@ -4985,7 +4985,8 @@ Handle<Code> CompileWasmInterpreterEntry(Isolate* isolate, uint32_t func_index,
     Vector<const char> func_name = CStrVector("wasm-interpreter-entry");
 #endif
 
-    CompilationInfo info(func_name, &zone, Code::WASM_INTERPRETER_ENTRY);
+    OptimizedCompilationInfo info(func_name, &zone,
+                                  Code::WASM_INTERPRETER_ENTRY);
     code = Pipeline::GenerateCodeForTesting(&info, isolate, incoming, &graph,
                                             nullptr);
 #ifdef ENABLE_DISASSEMBLER
@@ -5052,7 +5053,7 @@ Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig) {
   debug_name[name_len] = '\0';
   Vector<const char> debug_name_vec(debug_name, name_len);
 
-  CompilationInfo info(debug_name_vec, &zone, Code::C_WASM_ENTRY);
+  OptimizedCompilationInfo info(debug_name_vec, &zone, Code::C_WASM_ENTRY);
   Handle<Code> code =
       Pipeline::GenerateCodeForTesting(&info, isolate, incoming, &graph);
 #ifdef ENABLE_DISASSEMBLER
@@ -5064,6 +5065,18 @@ Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig) {
 #endif
 
   return code;
+}
+
+WasmCompilationData::WasmCompilationData(
+    RuntimeExceptionSupport runtime_exception_support)
+    : protected_instructions_(
+          new std::vector<trap_handler::ProtectedInstructionData>()),
+      runtime_exception_support_(runtime_exception_support) {}
+
+void WasmCompilationData::AddProtectedInstruction(uint32_t instr_offset,
+                                                  uint32_t landing_offset) {
+  protected_instructions_->emplace_back(
+      trap_handler::ProtectedInstructionData{instr_offset, landing_offset});
 }
 
 SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
@@ -5078,7 +5091,7 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
       new (tf_.jsgraph_->zone()) SourcePositionTable(tf_.jsgraph_->graph());
   WasmGraphBuilder builder(env_, tf_.jsgraph_->zone(), tf_.jsgraph_,
                            centry_stub_, func_body_.sig, source_position_table,
-                           runtime_exception_support_);
+                           wasm_compilation_data_.runtime_exception_support());
   tf_.graph_construction_result_ =
       wasm::BuildTFGraph(isolate_->allocator(), &builder, func_body_);
   if (tf_.graph_construction_result_.failed()) {
@@ -5149,11 +5162,9 @@ WasmCompilationUnit::WasmCompilationUnit(
       counters_(counters ? counters : isolate->counters()),
       centry_stub_(centry_stub),
       func_index_(index),
-      runtime_exception_support_(exception_support),
       native_module_(native_module),
       lower_simd_(lower_simd),
-      protected_instructions_(
-          new std::vector<trap_handler::ProtectedInstructionData>()),
+      wasm_compilation_data_(exception_support),
       mode_(mode) {
   switch (mode_) {
     case WasmCompilationUnit::CompilationMode::kLiftoff:
@@ -5188,7 +5199,7 @@ void WasmCompilationUnit::ExecuteCompilation() {
   TimedHistogramScope wasm_compile_function_time_scope(timed_histogram);
 
   if (FLAG_trace_wasm_compiler) {
-    PrintF("Compiling wasm function %d\n\n", func_index());
+    PrintF("Compiling wasm function %d\n\n", func_index_);
   }
 
   switch (mode_) {
@@ -5242,14 +5253,13 @@ void WasmCompilationUnit::ExecuteTurbofanCompilation() {
       call_descriptor = GetI32WasmCallDescriptor(tf_.compilation_zone_.get(),
                                                  call_descriptor);
     }
-    tf_.info_.reset(new CompilationInfo(
+    tf_.info_.reset(new OptimizedCompilationInfo(
         GetDebugName(tf_.compilation_zone_.get(), func_name_, func_index_),
         tf_.compilation_zone_.get(), Code::WASM_FUNCTION));
 
     tf_.job_.reset(Pipeline::NewWasmCompilationJob(
         tf_.info_.get(), isolate_, tf_.jsgraph_, call_descriptor,
-        source_positions, protected_instructions_.get(),
-        env_->module->origin()));
+        source_positions, &wasm_compilation_data_, env_->module->origin()));
     ok_ = tf_.job_->ExecuteJob() == CompilationJob::SUCCEEDED;
     // TODO(bradnelson): Improve histogram handling of size_t.
     counters()->wasm_compile_function_peak_memory_bytes()->AddSample(
@@ -5331,7 +5341,7 @@ wasm::WasmCode* WasmCompilationUnit::FinishTurbofanCompilation(
       func_index_,
       tf_.job_->compilation_info()->wasm_code_desc()->safepoint_table_offset,
       tf_.job_->compilation_info()->wasm_code_desc()->handler_table_offset,
-      std::move(protected_instructions_),
+      wasm_compilation_data_.ReleaseProtectedInstructions(),
       tf_.job_->compilation_info()->wasm_code_desc()->source_positions_table,
       wasm::WasmCode::kTurbofan);
   if (!code) return code;
@@ -5355,8 +5365,9 @@ wasm::WasmCode* WasmCompilationUnit::FinishLiftoffCompilation(
 
   wasm::WasmCode* code = native_module_->AddCode(
       desc, liftoff_.asm_.GetTotalFrameSlotCount(), func_index_,
-      liftoff_.safepoint_table_offset_, 0, std::move(protected_instructions_),
-      source_positions, wasm::WasmCode::kLiftoff);
+      liftoff_.safepoint_table_offset_, 0,
+      wasm_compilation_data_.ReleaseProtectedInstructions(), source_positions,
+      wasm::WasmCode::kLiftoff);
 
   return code;
 }

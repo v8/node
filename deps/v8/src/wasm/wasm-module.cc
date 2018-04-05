@@ -15,7 +15,6 @@
 #include "src/property-descriptor.h"
 #include "src/simulator.h"
 #include "src/snapshot/snapshot.h"
-#include "src/trap-handler/trap-handler.h"
 #include "src/v8.h"
 #include "src/wasm/compilation-manager.h"
 #include "src/wasm/module-decoder.h"
@@ -38,34 +37,6 @@ constexpr const char* WasmException::kRuntimeIdStr;
 
 // static
 constexpr const char* WasmException::kRuntimeValuesStr;
-
-void UnpackAndRegisterProtectedInstructions(
-    Isolate* isolate, const wasm::NativeModule* native_module) {
-  DisallowHeapAllocation no_gc;
-
-  for (uint32_t i = native_module->num_imported_functions(),
-                e = native_module->FunctionCount();
-       i < e; ++i) {
-    wasm::WasmCode* code = native_module->GetCode(i);
-
-    if (code == nullptr || code->kind() != wasm::WasmCode::kFunction) {
-      continue;
-    }
-
-    if (code->HasTrapHandlerIndex()) continue;
-
-    Address base = code->instructions().start();
-
-    size_t size = code->instructions().size();
-    const int index =
-        RegisterHandlerData(base, size, code->protected_instructions().size(),
-                            code->protected_instructions().data());
-
-    // TODO(eholk): if index is negative, fail.
-    CHECK_LE(0, index);
-    code->set_trap_handler_index(static_cast<size_t>(index));
-  }
-}
 
 WireBytesRef WasmModule::LookupName(const ModuleWireBytes* wire_bytes,
                                     uint32_t function_index) const {
@@ -137,20 +108,6 @@ std::ostream& operator<<(std::ostream& os, const WasmFunctionName& name) {
 
 WasmModule::WasmModule(std::unique_ptr<Zone> owned)
     : signature_zone(std::move(owned)) {}
-
-WasmFunction* GetWasmFunctionForExport(Isolate* isolate,
-                                       Handle<Object> target) {
-  if (target->IsJSFunction()) {
-    Handle<JSFunction> func = Handle<JSFunction>::cast(target);
-    if (func->code()->kind() == Code::JS_TO_WASM_FUNCTION) {
-      auto exported = Handle<WasmExportedFunction>::cast(func);
-      Handle<WasmInstanceObject> other_instance(exported->instance(), isolate);
-      int func_index = exported->function_index();
-      return &other_instance->module()->functions[func_index];
-    }
-  }
-  return nullptr;
-}
 
 bool IsWasmCodegenAllowed(Isolate* isolate, Handle<Context> context) {
   // TODO(wasm): Once wasm has its own CSP policy, we should introduce a

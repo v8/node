@@ -408,11 +408,6 @@ I32_BINOP(xor, xor_)
 
 #undef I32_BINOP
 
-void LiftoffAssembler::emit_ptrsize_add(Register dst, Register lhs,
-                                        Register rhs) {
-  emit_i32_add(dst, lhs, rhs);
-}
-
 bool LiftoffAssembler::emit_i32_clz(Register dst, Register src) {
   TurboAssembler::Clz(dst, src);
   return true;
@@ -439,6 +434,17 @@ I32_SHIFTOP(sar, srav)
 I32_SHIFTOP(shr, srlv)
 
 #undef I32_SHIFTOP
+
+#define UNIMPLEMENTED_I64_BINOP(name)                                  \
+  void LiftoffAssembler::emit_i64_##name(                              \
+      LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
+    BAILOUT("i64 binop: " #name);                                      \
+  }
+
+UNIMPLEMENTED_I64_BINOP(add)
+UNIMPLEMENTED_I64_BINOP(sub)
+
+#undef UNIMPLEMENTED_I64_BINOP
 
 namespace liftoff {
 
@@ -522,6 +528,10 @@ FP_BINOP(f32_mul, mul_s)
 FP_BINOP(f32_div, div_s)
 FP_UNOP(f32_abs, abs_s)
 FP_UNOP(f32_neg, neg_s)
+FP_UNOP(f32_ceil, ceil_w_s)
+FP_UNOP(f32_floor, floor_w_s)
+FP_UNOP(f32_trunc, trunc_w_s)
+FP_UNOP(f32_nearest_int, rint_s)
 FP_UNOP(f32_sqrt, sqrt_s)
 FP_BINOP(f64_add, add_d)
 FP_BINOP(f64_sub, sub_d)
@@ -529,6 +539,10 @@ FP_BINOP(f64_mul, mul_d)
 FP_BINOP(f64_div, div_d)
 FP_UNOP(f64_abs, abs_d)
 FP_UNOP(f64_neg, neg_d)
+FP_UNOP(f64_ceil, ceil_w_d)
+FP_UNOP(f64_floor, floor_w_d)
+FP_UNOP(f64_trunc, trunc_w_d)
+FP_UNOP(f64_nearest_int, rint_d)
 FP_UNOP(f64_sqrt, sqrt_d)
 
 #undef FP_BINOP
@@ -701,6 +715,12 @@ void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
                                          DoubleRegister lhs,
                                          DoubleRegister rhs) {
   BAILOUT("emit_f32_set_cond");
+}
+
+void LiftoffAssembler::emit_f64_set_cond(Condition cond, Register dst,
+                                         DoubleRegister lhs,
+                                         DoubleRegister rhs) {
+  BAILOUT("emit_f64_set_cond");
 }
 
 void LiftoffAssembler::StackCheck(Label* ool_code) {

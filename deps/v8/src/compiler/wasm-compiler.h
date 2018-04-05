@@ -9,8 +9,8 @@
 
 // Clients of this interface shouldn't depend on lots of compiler internals.
 // Do not include anything from src/compiler here!
-#include "src/compilation-info.h"
 #include "src/compiler.h"
+#include "src/optimized-compilation-info.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/baseline/liftoff-assembler.h"
 #include "src/wasm/function-body-decoder.h"
@@ -91,6 +91,33 @@ enum RuntimeExceptionSupport : bool {
   kNoRuntimeExceptionSupport = false
 };
 
+// Information about Wasm compilation that needs to be plumbed through the
+// different layers of the compiler.
+class WasmCompilationData {
+ public:
+  explicit WasmCompilationData(RuntimeExceptionSupport);
+
+  void AddProtectedInstruction(uint32_t instr_offset, uint32_t landing_offset);
+
+  std::unique_ptr<std::vector<trap_handler::ProtectedInstructionData>>
+  ReleaseProtectedInstructions() {
+    return std::move(protected_instructions_);
+  }
+
+  RuntimeExceptionSupport runtime_exception_support() const {
+    return runtime_exception_support_;
+  }
+
+ private:
+  std::unique_ptr<std::vector<trap_handler::ProtectedInstructionData>>
+      protected_instructions_;
+
+  // See WasmGraphBuilder::runtime_exception_support_.
+  const RuntimeExceptionSupport runtime_exception_support_;
+
+  DISALLOW_COPY_AND_ASSIGN(WasmCompilationData);
+};
+
 class WasmCompilationUnit final {
  public:
   enum class CompilationMode : uint8_t { kLiftoff, kTurbofan };
@@ -111,8 +138,6 @@ class WasmCompilationUnit final {
 
   ~WasmCompilationUnit();
 
-  int func_index() const { return func_index_; }
-
   void ExecuteCompilation();
   wasm::WasmCode* FinishCompilation(wasm::ErrorThrower* thrower);
 
@@ -123,6 +148,7 @@ class WasmCompilationUnit final {
       CompilationMode = GetDefaultCompilationMode());
 
   size_t memory_cost() const { return memory_cost_; }
+  wasm::NativeModule* native_module() const { return native_module_; }
 
  private:
   struct LiftoffData {
@@ -142,8 +168,8 @@ class WasmCompilationUnit final {
     // ExecuteCompilation, onto FinishCompilation (which happens on the main
     // thread).
     std::unique_ptr<Zone> compilation_zone_;
-    std::unique_ptr<CompilationInfo> info_;
-    std::unique_ptr<CompilationJob> job_;
+    std::unique_ptr<OptimizedCompilationInfo> info_;
+    std::unique_ptr<OptimizedCompilationJob> job_;
     wasm::Result<wasm::DecodeStruct*> graph_construction_result_;
   };
 
@@ -163,14 +189,11 @@ class WasmCompilationUnit final {
   Counters* counters_;
   Handle<Code> centry_stub_;
   int func_index_;
-  // See WasmGraphBuilder::runtime_exception_support_.
-  RuntimeExceptionSupport runtime_exception_support_;
   bool ok_ = true;
   size_t memory_cost_ = 0;
   wasm::NativeModule* native_module_;
   bool lower_simd_;
-  std::unique_ptr<std::vector<trap_handler::ProtectedInstructionData>>
-      protected_instructions_;
+  WasmCompilationData wasm_compilation_data_;
   CompilationMode mode_;
   // {liftoff_} is valid if mode_ == kLiftoff, tf_ if mode_ == kTurbofan.
   union {

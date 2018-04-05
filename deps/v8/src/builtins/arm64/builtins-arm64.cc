@@ -483,9 +483,6 @@ void Builtins::Generate_JSConstructStubGenericUnrestrictedReturn(
     MacroAssembler* masm) {
   Generate_JSConstructStubGeneric(masm, false);
 }
-void Builtins::Generate_JSConstructStubApi(MacroAssembler* masm) {
-  Generate_JSBuiltinsConstructStubHelper(masm);
-}
 void Builtins::Generate_JSBuiltinsConstructStub(MacroAssembler* masm) {
   Generate_JSBuiltinsConstructStubHelper(masm);
 }
@@ -1131,12 +1128,26 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   // kInterpreterBytecodeArrayRegister is already loaded with
   // SharedFunctionInfo::kFunctionDataOffset.
   __ Bind(&maybe_load_debug_bytecode_array);
-  __ Ldrsw(x10, UntagSmiFieldMemOperand(x11, DebugInfo::kFlagsOffset));
-  __ TestAndBranchIfAllClear(x10, DebugInfo::kHasBreakInfo,
-                             &bytecode_array_loaded);
-  __ Ldr(kInterpreterBytecodeArrayRegister,
-         FieldMemOperand(x11, DebugInfo::kDebugBytecodeArrayOffset));
-  __ B(&bytecode_array_loaded);
+  __ Ldr(x10, FieldMemOperand(x11, DebugInfo::kDebugBytecodeArrayOffset));
+  __ JumpIfRoot(x10, Heap::kUndefinedValueRootIndex, &bytecode_array_loaded);
+
+  __ Mov(kInterpreterBytecodeArrayRegister, x10);
+  __ Ldr(x10, UntagSmiFieldMemOperand(x11, DebugInfo::kFlagsOffset));
+  __ And(x10, x10, Immediate(DebugInfo::kDebugExecutionMode));
+
+  STATIC_ASSERT(static_cast<int>(DebugInfo::kDebugExecutionMode) ==
+                static_cast<int>(DebugInfo::kSideEffects));
+  ExternalReference debug_execution_mode =
+      ExternalReference::debug_execution_mode_address(masm->isolate());
+  __ Mov(x11, Operand(debug_execution_mode));
+  __ Ldrsb(x11, MemOperand(x11));
+  __ CompareAndBranch(x10, x11, eq, &bytecode_array_loaded);
+
+  __ Push(closure, feedback_vector);
+  __ PushArgument(closure);
+  __ CallRuntime(Runtime::kDebugApplyInstrumentation);
+  __ Pop(feedback_vector, closure);
+  __ jmp(&bytecode_array_loaded);
 }
 
 static void Generate_InterpreterPushArgs(MacroAssembler* masm,
@@ -2644,12 +2655,20 @@ void Builtins::Generate_ConstructFunction(MacroAssembler* masm) {
   // x2 to contain either an AllocationSite or undefined.
   __ LoadRoot(x2, Heap::kUndefinedValueRootIndex);
 
-  // Tail call to the function-specific construct stub (still in the caller
-  // context at this point).
+  Label call_generic_stub;
+
+  // Jump to JSBuiltinsConstructStub or JSConstructStubGeneric.
   __ Ldr(x4, FieldMemOperand(x1, JSFunction::kSharedFunctionInfoOffset));
-  __ Ldr(x4, FieldMemOperand(x4, SharedFunctionInfo::kConstructStubOffset));
-  __ Add(x4, x4, Code::kHeaderSize - kHeapObjectTag);
-  __ Br(x4);
+  __ Ldr(w4, FieldMemOperand(x4, SharedFunctionInfo::kFlagsOffset));
+  __ TestAndBranchIfAllClear(
+      w4, SharedFunctionInfo::ConstructAsBuiltinBit::kMask, &call_generic_stub);
+
+  __ Jump(BUILTIN_CODE(masm->isolate(), JSBuiltinsConstructStub),
+          RelocInfo::CODE_TARGET);
+
+  __ bind(&call_generic_stub);
+  __ Jump(masm->isolate()->builtins()->JSConstructStubGeneric(),
+          RelocInfo::CODE_TARGET);
 }
 
 // static

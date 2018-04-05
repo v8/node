@@ -656,10 +656,12 @@ void WebAssemblyMemory(const v8::FunctionCallbackInfo<v8::Value>& args) {
                 static_cast<size_t>(initial);
   const bool enable_guard_regions =
       internal::trap_handler::IsTrapHandlerEnabled();
-  i::Handle<i::JSArrayBuffer> buffer = i::wasm::NewArrayBuffer(
-      i_isolate, size, enable_guard_regions,
-      is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared);
-  if (buffer.is_null()) {
+  i::SharedFlag shared_flag =
+      is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared;
+  i::Handle<i::JSArrayBuffer> buffer;
+  if (!i::wasm::NewArrayBuffer(i_isolate, size, enable_guard_regions,
+                               shared_flag)
+           .ToHandle(&buffer)) {
     thrower.RangeError("could not allocate memory");
     return;
   }
@@ -852,11 +854,8 @@ void WebAssemblyTableSet(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   // Parameter 1.
   i::Handle<i::Object> value = Utils::OpenHandle(*args[1]);
-  // TODO(titzer): use WasmExportedFunction::IsWasmExportedFunction() here.
   if (!value->IsNull(i_isolate) &&
-      (!value->IsJSFunction() ||
-       i::Handle<i::JSFunction>::cast(value)->code()->kind() !=
-           i::Code::JS_TO_WASM_FUNCTION)) {
+      !i::WasmExportedFunction::IsWasmExportedFunction(*value)) {
     thrower.TypeError("Argument 1 must be null or a WebAssembly function");
     return;
   }

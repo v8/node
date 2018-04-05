@@ -44,8 +44,9 @@ byte* TestingModuleBuilder::AddMemory(uint32_t size) {
       trap_handler::IsTrapHandlerEnabled() && test_module_.is_wasm();
   uint32_t alloc_size =
       enable_guard_regions ? RoundUp(size, CommitPageSize()) : size;
-  Handle<JSArrayBuffer> new_buffer =
-      wasm::NewArrayBuffer(isolate_, alloc_size, enable_guard_regions);
+  Handle<JSArrayBuffer> new_buffer;
+  CHECK(wasm::NewArrayBuffer(isolate_, alloc_size, enable_guard_regions)
+            .ToHandle(&new_buffer));
   CHECK(!new_buffer.is_null());
   mem_start_ = reinterpret_cast<byte*>(new_buffer->backing_store());
   mem_size_ = size;
@@ -382,8 +383,8 @@ Handle<Code> WasmFunctionWrapper::GetWrapperCode() {
       r.LowerGraph();
     }
 
-    CompilationInfo info(ArrayVector("testing"), graph()->zone(),
-                         Code::C_WASM_ENTRY);
+    OptimizedCompilationInfo info(ArrayVector("testing"), graph()->zone(),
+                                  Code::C_WASM_ENTRY);
     code_ = compiler::Pipeline::GenerateCodeForTesting(
         &info, isolate, call_descriptor, graph(), nullptr);
     CHECK(!code_.is_null());
@@ -461,7 +462,7 @@ void WasmFunctionCompiler::Build(const byte* start, const byte* end) {
   }
   CHECK(!thrower.error());
   if (trap_handler::IsTrapHandlerEnabled()) {
-    UnpackAndRegisterProtectedInstructions(isolate(), native_module);
+    native_module->UnpackAndRegisterProtectedInstructions();
   }
 }
 

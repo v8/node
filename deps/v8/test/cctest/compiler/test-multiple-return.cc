@@ -157,8 +157,8 @@ void TestReturnMultipleValues(MachineType type) {
     }
     m.Return(count, returns.get());
 
-    CompilationInfo info(ArrayVector("testing"), handles.main_zone(),
-                         Code::STUB);
+    OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
+                                  Code::STUB);
     Handle<Code> code = Pipeline::GenerateCodeForTesting(
         &info, handles.main_isolate(), desc, m.graph(), m.Export());
 #ifdef ENABLE_DISASSEMBLER
@@ -177,8 +177,8 @@ void TestReturnMultipleValues(MachineType type) {
       if (i % 4 == 0) sign = -sign;
     }
 
-    std::unique_ptr<wasm::NativeModule> module =
-        AllocateNativeModule(handles.main_isolate(), code->instruction_size());
+    std::unique_ptr<wasm::NativeModule> module = AllocateNativeModule(
+        handles.main_isolate(), code->raw_instruction_size());
     byte* code_start = module->AddCodeCopy(code, wasm::WasmCode::kFunction, 0)
                            ->instructions()
                            .start();
@@ -250,13 +250,13 @@ void ReturnLastValue(MachineType type) {
 
     m.Return(return_count, returns.get());
 
-    CompilationInfo info(ArrayVector("testing"), handles.main_zone(),
-                         Code::STUB);
+    OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
+                                  Code::STUB);
     Handle<Code> code = Pipeline::GenerateCodeForTesting(
         &info, handles.main_isolate(), desc, m.graph(), m.Export());
 
-    std::unique_ptr<wasm::NativeModule> module =
-        AllocateNativeModule(handles.main_isolate(), code->instruction_size());
+    std::unique_ptr<wasm::NativeModule> module = AllocateNativeModule(
+        handles.main_isolate(), code->raw_instruction_size());
     byte* code_start = module->AddCodeCopy(code, wasm::WasmCode::kFunction, 0)
                            ->instructions()
                            .start();
@@ -310,13 +310,13 @@ void ReturnSumOfReturns(MachineType type) {
 
     m.Return(return_count, returns.get());
 
-    CompilationInfo info(ArrayVector("testing"), handles.main_zone(),
-                         Code::STUB);
+    OptimizedCompilationInfo info(ArrayVector("testing"), handles.main_zone(),
+                                  Code::STUB);
     Handle<Code> code = Pipeline::GenerateCodeForTesting(
         &info, handles.main_isolate(), desc, m.graph(), m.Export());
 
-    std::unique_ptr<wasm::NativeModule> module =
-        AllocateNativeModule(handles.main_isolate(), code->instruction_size());
+    std::unique_ptr<wasm::NativeModule> module = AllocateNativeModule(
+        handles.main_isolate(), code->raw_instruction_size());
     byte* code_start = module->AddCodeCopy(code, wasm::WasmCode::kFunction, 0)
                            ->instructions()
                            .start();

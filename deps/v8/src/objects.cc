@@ -1209,21 +1209,15 @@ Handle<SharedFunctionInfo> FunctionTemplateInfo::GetOrCreateSharedFunctionInfo(
   } else {
     name_string = isolate->factory()->empty_string();
   }
-  bool is_constructor;
   FunctionKind function_kind;
   if (info->remove_prototype()) {
-    is_constructor = false;
     function_kind = kConciseMethod;
   } else {
-    is_constructor = true;
     function_kind = kNormalFunction;
   }
   Handle<SharedFunctionInfo> result =
       isolate->factory()->NewSharedFunctionInfoForApiFunction(name_string, info,
                                                               function_kind);
-  if (is_constructor) {
-    result->SetConstructStub(*BUILTIN_CODE(isolate, JSConstructStubApi));
-  }
 
   result->set_length(info->length());
   result->DontAdaptArguments();
@@ -2132,14 +2126,7 @@ MUST_USE_RESULT Maybe<bool> FastAssign(
     }
 
     if (use_set) {
-      Handle<Map> target_map(target->map(), isolate);
-      MaybeHandle<Map> maybe_transition_map =
-          TransitionsAccessor(target_map)
-              .FindTransitionToDataProperty(next_key);
-
-      LookupIterator it = LookupIterator::ForTransitionHandler(
-          isolate, target, next_key, prop_value, maybe_transition_map);
-
+      LookupIterator it(target, next_key, target);
       Maybe<bool> result =
           Object::SetProperty(&it, prop_value, LanguageMode::kStrict,
                               Object::CERTAINLY_NOT_STORE_FROM_KEYED);
@@ -2507,6 +2494,26 @@ std::ostream& operator<<(std::ostream& os, const Brief& v) {
     // TODO(svenpanne) Const-correct HeapObjectShortPrint!
     HeapObject* obj = const_cast<HeapObject*>(HeapObject::cast(v.value));
     obj->HeapObjectShortPrint(os);
+  }
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const MaybeObjectBrief& v) {
+  // TODO(marja): const-correct this the same way as the Object* version.
+  MaybeObject* maybe_object = const_cast<MaybeObject*>(v.value);
+  Smi* smi;
+  HeapObject* heap_object;
+  if (maybe_object->ToSmi(&smi)) {
+    smi->SmiPrint(os);
+  } else if (maybe_object->IsClearedWeakHeapObject()) {
+    os << "[cleared]";
+  } else if (maybe_object->ToWeakHeapObject(&heap_object)) {
+    os << "[weak] ";
+    heap_object->HeapObjectShortPrint(os);
+  } else if (maybe_object->ToStrongHeapObject(&heap_object)) {
+    heap_object->HeapObjectShortPrint(os);
+  } else {
+    UNREACHABLE();
   }
   return os;
 }
@@ -12568,8 +12575,8 @@ void Map::SetShouldBeFastPrototypeMap(Handle<Map> map, bool value,
 }
 
 // static
-Handle<Cell> Map::GetOrCreatePrototypeChainValidityCell(Handle<Map> map,
-                                                        Isolate* isolate) {
+Handle<Object> Map::GetOrCreatePrototypeChainValidityCell(Handle<Map> map,
+                                                          Isolate* isolate) {
   Handle<Object> maybe_prototype;
   if (map->IsJSGlobalObjectMap()) {
     DCHECK(map->is_prototype_map());
@@ -12580,7 +12587,9 @@ Handle<Cell> Map::GetOrCreatePrototypeChainValidityCell(Handle<Map> map,
     maybe_prototype =
         handle(map->GetPrototypeChainRootMap(isolate)->prototype(), isolate);
   }
-  if (!maybe_prototype->IsJSObject()) return Handle<Cell>::null();
+  if (!maybe_prototype->IsJSObject()) {
+    return handle(Smi::FromInt(Map::kPrototypeChainValid), isolate);
+  }
   Handle<JSObject> prototype = Handle<JSObject>::cast(maybe_prototype);
   // Ensure the prototype is registered with its own prototypes so its cell
   // will be invalidated when necessary.
@@ -13639,8 +13648,12 @@ String* SharedFunctionInfo::DebugName() {
 // static
 bool SharedFunctionInfo::HasNoSideEffect(Handle<SharedFunctionInfo> info) {
   if (!info->computed_has_no_side_effect()) {
-    bool has_no_side_effect = DebugEvaluate::FunctionHasNoSideEffect(info);
-    info->set_has_no_side_effect(has_no_side_effect);
+    DebugEvaluate::SideEffectState has_no_side_effect =
+        DebugEvaluate::FunctionGetSideEffectState(info);
+    info->set_has_no_side_effect(has_no_side_effect !=
+                                 DebugEvaluate::kHasSideEffects);
+    info->set_requires_runtime_side_effect_checks(
+        has_no_side_effect == DebugEvaluate::kRequiresRuntimeChecks);
     info->set_computed_has_no_side_effect(true);
   }
   return info->has_no_side_effect();
@@ -13878,8 +13891,6 @@ void SharedFunctionInfo::InitFromFunctionLiteral(
   //  shared_info->set_kind(lit->kind());
   // FunctionKind must have already been set.
   DCHECK(lit->kind() == shared_info->kind());
-  DCHECK_EQ(*shared_info->GetIsolate()->builtins()->JSConstructStubGeneric(),
-            shared_info->construct_stub());
   shared_info->set_needs_home_object(lit->scope()->NeedsHomeObject());
   shared_info->set_function_literal_id(lit->function_literal_id());
   DCHECK_IMPLIES(lit->requires_instance_fields_initializer(),
@@ -13930,23 +13941,6 @@ void SharedFunctionInfo::SetExpectedNofPropertiesFromEstimate(
   set_expected_nof_properties(estimate);
 }
 
-void SharedFunctionInfo::SetConstructStub(Code* code) {
-  if (code->kind() == Code::BUILTIN) code->set_is_construct_stub(true);
-#ifdef DEBUG
-  if (code->is_builtin()) {
-    // See https://crbug.com/v8/6787. Lazy deserialization currently cannot
-    // handle lazy construct stubs that differ from the code object.
-    int builtin_id = code->builtin_index();
-    DCHECK_NE(Builtins::kDeserializeLazy, builtin_id);
-    DCHECK(builtin_id == Builtins::kJSBuiltinsConstructStub ||
-           !Builtins::IsLazy(builtin_id));
-    // Builtins should use JSBuiltinsConstructStub.
-    DCHECK_NE(this->GetCode(), code);
-  }
-#endif
-  set_construct_stub(code);
-}
-
 void Map::StartInobjectSlackTracking() {
   DCHECK(!IsInobjectSlackTrackingInProgress());
   if (UnusedPropertyFields() == 0) return;
@@ -13986,13 +13980,13 @@ void Code::Relocate(intptr_t delta) {
   for (RelocIterator it(this, RelocInfo::kApplyMask); !it.done(); it.next()) {
     it.rinfo()->apply(delta);
   }
-  Assembler::FlushICache(instruction_start(), instruction_size());
+  Assembler::FlushICache(raw_instruction_start(), raw_instruction_size());
 }
 
 
 void Code::CopyFrom(const CodeDesc& desc) {
   // copy code
-  CopyBytes(instruction_start(), desc.buffer,
+  CopyBytes(raw_instruction_start(), desc.buffer,
             static_cast<size_t>(desc.instr_size));
 
   // copy unwinding info, if any
@@ -14027,18 +14021,18 @@ void Code::CopyFrom(const CodeDesc& desc) {
       // code object
       Handle<Object> p = it.rinfo()->target_object_handle(origin);
       Code* code = Code::cast(*p);
-      it.rinfo()->set_target_address(code->instruction_start(),
+      it.rinfo()->set_target_address(code->raw_instruction_start(),
                                      UPDATE_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
     } else if (RelocInfo::IsRuntimeEntry(mode)) {
       Address p = it.rinfo()->target_runtime_entry(origin);
       it.rinfo()->set_target_runtime_entry(p, UPDATE_WRITE_BARRIER,
                                            SKIP_ICACHE_FLUSH);
     } else {
-      intptr_t delta = instruction_start() - desc.buffer;
+      intptr_t delta = raw_instruction_start() - desc.buffer;
       it.rinfo()->apply(delta);
     }
   }
-  Assembler::FlushICache(instruction_start(), instruction_size());
+  Assembler::FlushICache(raw_instruction_start(), raw_instruction_size());
 }
 
 
@@ -14050,14 +14044,14 @@ SafepointEntry Code::GetSafepointEntry(Address pc) {
 #ifdef V8_EMBEDDED_BUILTINS
 int Code::OffHeapInstructionSize() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_size();
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_size();
   EmbeddedData d = EmbeddedData::FromBlob();
   return d.InstructionSizeOfBuiltin(builtin_index());
 }
 
 Address Code::OffHeapInstructionStart() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_start();
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_start();
   EmbeddedData d = EmbeddedData::FromBlob();
   return reinterpret_cast<Address>(
       const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index())));
@@ -14065,7 +14059,7 @@ Address Code::OffHeapInstructionStart() const {
 
 Address Code::OffHeapInstructionEnd() const {
   DCHECK(Builtins::IsOffHeapBuiltin(this));
-  if (Isolate::CurrentEmbeddedBlob() == nullptr) return instruction_end();
+  if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_end();
   EmbeddedData d = EmbeddedData::FromBlob();
   return reinterpret_cast<Address>(
       const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index()) +
@@ -14177,7 +14171,7 @@ void Code::PrintDeoptLocation(FILE* out, const char* str, Address pc) {
 bool Code::CanDeoptAt(Address pc) {
   DeoptimizationData* deopt_data =
       DeoptimizationData::cast(deoptimization_data());
-  Address code_start_address = instruction_start();
+  Address code_start_address = InstructionStart();
   for (int i = 0; i < deopt_data->DeoptCount(); i++) {
     if (deopt_data->Pc(i)->value() == -1) continue;
     Address address = code_start_address + deopt_data->Pc(i)->value();
@@ -14397,7 +14391,8 @@ void DeoptimizationData::DeoptimizationDataPrint(std::ostream& os) {  // NOLINT
         }
 
         case Translation::BUILTIN_CONTINUATION_FRAME:
-        case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME: {
+        case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_FRAME:
+        case Translation::JAVA_SCRIPT_BUILTIN_CONTINUATION_WITH_CATCH_FRAME: {
           int bailout_id = iterator.Next();
           int shared_info_id = iterator.Next();
           Object* shared_info = LiteralArray()->get(shared_info_id);
@@ -14551,7 +14546,7 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
   } else {
     // There are some handlers and ICs that we can also find names for with
     // Builtins::Lookup.
-    name = GetIsolate()->builtins()->Lookup(instruction_start());
+    name = GetIsolate()->builtins()->Lookup(raw_instruction_start());
     if (name != nullptr) {
       os << "name = " << name << "\n";
     }
@@ -19226,14 +19221,13 @@ bool JSArrayBuffer::SetupAllocatingData(Handle<JSArrayBuffer> array_buffer,
   return true;
 }
 
-
 Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
     Handle<JSTypedArray> typed_array) {
+  DCHECK(typed_array->is_on_heap());
 
-  Handle<Map> map(typed_array->map());
   Isolate* isolate = typed_array->GetIsolate();
 
-  DCHECK(IsFixedTypedArrayElementsKind(map->elements_kind()));
+  DCHECK(IsFixedTypedArrayElementsKind(typed_array->GetElementsKind()));
 
   Handle<FixedTypedArrayBase> fixed_typed_array(
       FixedTypedArrayBase::cast(typed_array->elements()));
@@ -19266,17 +19260,14 @@ Handle<JSArrayBuffer> JSTypedArray::MaterializeArrayBuffer(
           static_cast<uint8_t*>(buffer->backing_store()));
 
   typed_array->set_elements(*new_elements);
+  DCHECK(!typed_array->is_on_heap());
 
   return buffer;
 }
 
-
 Handle<JSArrayBuffer> JSTypedArray::GetBuffer() {
-  Handle<JSArrayBuffer> array_buffer(JSArrayBuffer::cast(buffer()),
-                                     GetIsolate());
-  if (array_buffer->was_neutered() ||
-      array_buffer->backing_store() != nullptr ||
-      array_buffer->is_wasm_memory()) {
+  if (!is_on_heap()) {
+    Handle<JSArrayBuffer> array_buffer(JSArrayBuffer::cast(buffer()));
     return array_buffer;
   }
   Handle<JSTypedArray> self(this);

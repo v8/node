@@ -103,6 +103,11 @@ void LiftoffAssembler::FillI64Half(Register, uint32_t half_index) {
                                      Register rhs) {             \
     BAILOUT("gp binop: " #name);                                 \
   }
+#define UNIMPLEMENTED_I64_BINOP(name)                                          \
+  void LiftoffAssembler::emit_##name(LiftoffRegister dst, LiftoffRegister lhs, \
+                                     LiftoffRegister rhs) {                    \
+    BAILOUT("i64 binop: " #name);                                              \
+  }
 #define UNIMPLEMENTED_GP_UNOP(name)                                \
   bool LiftoffAssembler::emit_##name(Register dst, Register src) { \
     BAILOUT("gp unop: " #name);                                    \
@@ -137,19 +142,24 @@ UNIMPLEMENTED_GP_BINOP(i32_xor)
 UNIMPLEMENTED_I32_SHIFTOP(i32_shl)
 UNIMPLEMENTED_I32_SHIFTOP(i32_sar)
 UNIMPLEMENTED_I32_SHIFTOP(i32_shr)
+UNIMPLEMENTED_I64_BINOP(i64_add)
+UNIMPLEMENTED_I64_BINOP(i64_sub)
 UNIMPLEMENTED_I64_SHIFTOP(i64_shl)
 UNIMPLEMENTED_I64_SHIFTOP(i64_sar)
 UNIMPLEMENTED_I64_SHIFTOP(i64_shr)
 UNIMPLEMENTED_GP_UNOP(i32_clz)
 UNIMPLEMENTED_GP_UNOP(i32_ctz)
 UNIMPLEMENTED_GP_UNOP(i32_popcnt)
-UNIMPLEMENTED_GP_BINOP(ptrsize_add)
 UNIMPLEMENTED_FP_BINOP(f32_add)
 UNIMPLEMENTED_FP_BINOP(f32_sub)
 UNIMPLEMENTED_FP_BINOP(f32_mul)
 UNIMPLEMENTED_FP_BINOP(f32_div)
 UNIMPLEMENTED_FP_UNOP(f32_abs)
 UNIMPLEMENTED_FP_UNOP(f32_neg)
+UNIMPLEMENTED_FP_UNOP(f32_ceil)
+UNIMPLEMENTED_FP_UNOP(f32_floor)
+UNIMPLEMENTED_FP_UNOP(f32_trunc)
+UNIMPLEMENTED_FP_UNOP(f32_nearest_int)
 UNIMPLEMENTED_FP_UNOP(f32_sqrt)
 UNIMPLEMENTED_FP_BINOP(f64_add)
 UNIMPLEMENTED_FP_BINOP(f64_sub)
@@ -157,9 +167,14 @@ UNIMPLEMENTED_FP_BINOP(f64_mul)
 UNIMPLEMENTED_FP_BINOP(f64_div)
 UNIMPLEMENTED_FP_UNOP(f64_abs)
 UNIMPLEMENTED_FP_UNOP(f64_neg)
+UNIMPLEMENTED_FP_UNOP(f64_ceil)
+UNIMPLEMENTED_FP_UNOP(f64_floor)
+UNIMPLEMENTED_FP_UNOP(f64_trunc)
+UNIMPLEMENTED_FP_UNOP(f64_nearest_int)
 UNIMPLEMENTED_FP_UNOP(f64_sqrt)
 
 #undef UNIMPLEMENTED_GP_BINOP
+#undef UNIMPLEMENTED_I64_BINOP
 #undef UNIMPLEMENTED_GP_UNOP
 #undef UNIMPLEMENTED_FP_BINOP
 #undef UNIMPLEMENTED_FP_UNOP
@@ -204,6 +219,12 @@ void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
                                          DoubleRegister lhs,
                                          DoubleRegister rhs) {
   BAILOUT("emit_f32_set_cond");
+}
+
+void LiftoffAssembler::emit_f64_set_cond(Condition cond, Register dst,
+                                         DoubleRegister lhs,
+                                         DoubleRegister rhs) {
+  BAILOUT("emit_f64_set_cond");
 }
 
 void LiftoffAssembler::StackCheck(Label* ool_code) { BAILOUT("StackCheck"); }

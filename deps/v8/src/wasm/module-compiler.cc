@@ -15,6 +15,7 @@
 #include "src/code-stubs.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/counters.h"
+#include "src/identity-map.h"
 #include "src/property-descriptor.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/compilation-manager.h"
@@ -143,17 +144,6 @@ class CompilationState {
 
   Isolate* isolate() { return isolate_; }
 
-  WasmCompiledModule* compiled_module() const {
-    DCHECK_NOT_NULL(compiled_module_);
-    return *compiled_module_;
-  }
-
-  void SetCompiledModule(Handle<WasmCompiledModule> compiled_module) {
-    compiled_module_ =
-        isolate_->global_handles()->Create(*compiled_module).location();
-    GlobalHandles::MakeWeak(reinterpret_cast<Object***>(&compiled_module_));
-  }
-
   bool failed() { return failed_; }
 
  private:
@@ -162,11 +152,6 @@ class CompilationState {
   void NotifyOnEvent(CompilationEvent event, Handle<Object> error);
 
   Isolate* isolate_;
-
-  // A phantom reference to the {WasmCompiledModule}. It is intentionally not
-  // typed {Handle<WasmCompiledModule>} because this location will be cleared
-  // when the phantom reference is cleared.
-  WasmCompiledModule** compiled_module_ = nullptr;
 
   std::vector<std::unique_ptr<compiler::WasmCompilationUnit>>
       compilation_units_;
@@ -594,8 +579,7 @@ const wasm::WasmCode* LazyCompilationOrchestrator::CompileFunction(
   CHECK(!thrower.error());
 
   // Now specialize the generated code for this instance.
-  Zone specialization_zone(isolate->allocator(), ZONE_NAME);
-  CodeSpecialization code_specialization(isolate, &specialization_zone);
+  CodeSpecialization code_specialization;
   code_specialization.RelocateDirectCalls(compiled_module->GetNativeModule());
   code_specialization.ApplyToWasmCode(wasm_code, SKIP_ICACHE_FLUSH);
   int64_t func_size =
@@ -879,7 +863,8 @@ void FlushICache(Handle<FixedArray> functions) {
   for (int i = 0, e = functions->length(); i < e; ++i) {
     if (!functions->get(i)->IsCode()) continue;
     Code* code = Code::cast(functions->get(i));
-    Assembler::FlushICache(code->instruction_start(), code->instruction_size());
+    Assembler::FlushICache(code->raw_instruction_start(),
+                           code->raw_instruction_size());
   }
 }
 
@@ -1174,25 +1159,14 @@ void InitializeCompilationUnits(const std::vector<WasmFunction>& functions,
   builder.Commit();
 }
 
-wasm::WasmCode* FinishCompilationUnit(CompilationState* compilation_state,
-                                      ErrorThrower* thrower, int* func_index) {
-  std::unique_ptr<compiler::WasmCompilationUnit> unit =
-      compilation_state->GetNextExecutedUnit();
-  if (unit == nullptr) return {};
-  *func_index = unit->func_index();
-  DCHECK_LE(0, *func_index);
-  return unit->FinishCompilation(thrower);
-}
-
 void FinishCompilationUnits(CompilationState* compilation_state,
                             ErrorThrower* thrower) {
   while (true) {
     if (compilation_state->failed()) break;
-    int func_index = -1;
-    wasm::WasmCode* result =
-        FinishCompilationUnit(compilation_state, thrower, &func_index);
-
-    if (func_index < 0) break;
+    std::unique_ptr<compiler::WasmCompilationUnit> unit =
+        compilation_state->GetNextExecutedUnit();
+    if (unit == nullptr) break;
+    wasm::WasmCode* result = unit->FinishCompilation(thrower);
 
     // Update the compilation state.
     compilation_state->OnFinishedUnit(NotifyCompilationCallback::kNoNotify);
@@ -1479,16 +1453,13 @@ class FinishCompileTask : public CancelableTask {
     Isolate* isolate = compilation_state_->isolate();
     HandleScope scope(isolate);
     SaveContext saved_context(isolate);
-    isolate->set_context(
-        compilation_state_->compiled_module()->native_context());
+    isolate->set_context(nullptr);
 
     TRACE_COMPILE("(4a) Finishing compilation units...\n");
     if (compilation_state_->failed()) {
       compilation_state_->SetFinisherIsRunning(false);
       return;
     }
-
-    ErrorThrower thrower(compilation_state_->isolate(), "AsyncCompile");
 
     // We execute for 1 ms and then reschedule the task, same as the GC.
     double deadline = MonotonicallyIncreasingTimeInMs() + 1.0;
@@ -1497,20 +1468,10 @@ class FinishCompileTask : public CancelableTask {
         compilation_state_->RestartBackgroundTasks();
       }
 
-      int func_index = -1;
-      wasm::WasmCode* result =
-          FinishCompilationUnit(compilation_state_, &thrower, &func_index);
+      std::unique_ptr<compiler::WasmCompilationUnit> unit =
+          compilation_state_->GetNextExecutedUnit();
 
-      if (thrower.error()) {
-        DCHECK_NULL(result);
-        USE(result);
-        Handle<Object> error = thrower.Reify();
-        compilation_state_->OnError(error, NotifyCompilationCallback::kNotify);
-        compilation_state_->SetFinisherIsRunning(false);
-        break;
-      }
-
-      if (func_index < 0) {
+      if (unit == nullptr) {
         // It might happen that a background task just scheduled a unit to be
         // finished, but did not start a finisher task since the flag was still
         // set. Check for this case, and continue if there is more work.
@@ -1519,6 +1480,21 @@ class FinishCompileTask : public CancelableTask {
             compilation_state_->SetFinisherIsRunning(true)) {
           continue;
         }
+        break;
+      }
+
+      ErrorThrower thrower(compilation_state_->isolate(), "AsyncCompile");
+      wasm::WasmCode* result = unit->FinishCompilation(&thrower);
+
+      if (thrower.error()) {
+        DCHECK_NULL(result);
+        USE(result);
+        SaveContext saved_context(isolate);
+        isolate->set_context(
+            unit->native_module()->compiled_module()->native_context());
+        Handle<Object> error = thrower.Reify();
+        compilation_state_->OnError(error, NotifyCompilationCallback::kNotify);
+        compilation_state_->SetFinisherIsRunning(false);
         break;
       }
 
@@ -1665,8 +1641,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   //--------------------------------------------------------------------------
   // Create the WebAssembly.Instance object.
   //--------------------------------------------------------------------------
-  Zone instantiation_zone(isolate_->allocator(), ZONE_NAME);
-  CodeSpecialization code_specialization(isolate_, &instantiation_zone);
+  CodeSpecialization code_specialization;
   Handle<WasmInstanceObject> instance =
       WasmInstanceObject::New(isolate_, compiled_module_);
 
@@ -1677,16 +1652,14 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   uint32_t globals_size = module_->globals_size;
   if (globals_size > 0) {
     constexpr bool enable_guard_regions = false;
-    Handle<JSArrayBuffer> global_buffer =
-        NewArrayBuffer(isolate_, globals_size, enable_guard_regions);
-    globals_ = global_buffer;
-    if (globals_.is_null()) {
+    if (!NewArrayBuffer(isolate_, globals_size, enable_guard_regions)
+             .ToHandle(&globals_)) {
       thrower_->RangeError("Out of memory: wasm globals");
       return {};
     }
     wasm_context->globals_start =
-        reinterpret_cast<byte*>(global_buffer->backing_store());
-    instance->set_globals_buffer(*global_buffer);
+        reinterpret_cast<byte*>(globals_->backing_store());
+    instance->set_globals_buffer(*globals_);
   }
 
   //--------------------------------------------------------------------------
@@ -1832,7 +1805,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   // Unpack and notify signal handler of protected instructions.
   //--------------------------------------------------------------------------
   if (use_trap_handler()) {
-    UnpackAndRegisterProtectedInstructions(isolate_, native_module);
+    native_module->UnpackAndRegisterProtectedInstructions();
   }
 
   //--------------------------------------------------------------------------
@@ -2378,11 +2351,12 @@ Handle<JSArrayBuffer> InstanceBuilder::AllocateMemory(uint32_t num_pages) {
   const bool enable_guard_regions = use_trap_handler();
   const bool is_shared_memory =
       module_->has_shared_memory && i::FLAG_experimental_wasm_threads;
-  Handle<JSArrayBuffer> mem_buffer = NewArrayBuffer(
-      isolate_, num_pages * kWasmPageSize, enable_guard_regions,
-      is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared);
-
-  if (mem_buffer.is_null()) {
+  i::SharedFlag shared_flag =
+      is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared;
+  Handle<JSArrayBuffer> mem_buffer;
+  if (!NewArrayBuffer(isolate_, num_pages * kWasmPageSize, enable_guard_regions,
+                      shared_flag)
+           .ToHandle(&mem_buffer)) {
     thrower_->RangeError("Out of memory: wasm memory");
   }
   return mem_buffer;
@@ -3432,11 +3406,6 @@ std::unique_ptr<CompilationState, CompilationStateDeleter> NewCompilationState(
       new CompilationState(isolate));
 }
 
-void SetCompiledModule(CompilationState* compilation_state,
-                       Handle<WasmCompiledModule> compiled_module) {
-  compilation_state->SetCompiledModule(compiled_module);
-}
-
 CompilationState::CompilationState(internal::Isolate* isolate)
     : isolate_(isolate),
       executed_units_(isolate->random_number_generator(),
@@ -3451,13 +3420,6 @@ CompilationState::CompilationState(internal::Isolate* isolate)
 }
 
 CompilationState::~CompilationState() {
-  // Clear the handle at the beginning of destructor to make it robust against
-  // potential GCs in the rest of the desctructor.
-  if (compiled_module_ != nullptr) {
-    isolate_->global_handles()->Destroy(
-        reinterpret_cast<Object**>(compiled_module_));
-    compiled_module_ = nullptr;
-  }
   CancelAndWait();
   foreground_task_manager_.CancelAndWait();
 }

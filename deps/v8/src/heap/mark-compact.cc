@@ -2627,16 +2627,21 @@ void MarkCompactCollector::ClearFullMapTransitions() {
   while (weak_objects_.transition_arrays.Pop(kMainThread, &array)) {
     int num_transitions = array->number_of_entries();
     if (num_transitions > 0) {
-      Map* map = array->GetTarget(0);
-      DCHECK_NOT_NULL(map);  // WeakCells aren't cleared yet.
-      Map* parent = Map::cast(map->constructor_or_backpointer());
-      bool parent_is_alive = non_atomic_marking_state()->IsBlackOrGrey(parent);
-      DescriptorArray* descriptors =
-          parent_is_alive ? parent->instance_descriptors() : nullptr;
-      bool descriptors_owner_died =
-          CompactTransitionArray(parent, array, descriptors);
-      if (descriptors_owner_died) {
-        TrimDescriptorArray(parent, descriptors);
+      Map* map;
+      // The array might contain "undefined" elements because it's not yet
+      // filled. Allow it.
+      if (array->GetTargetIfExists(0, isolate(), &map)) {
+        DCHECK_NOT_NULL(map);  // WeakCells aren't cleared yet.
+        Map* parent = Map::cast(map->constructor_or_backpointer());
+        bool parent_is_alive =
+            non_atomic_marking_state()->IsBlackOrGrey(parent);
+        DescriptorArray* descriptors =
+            parent_is_alive ? parent->instance_descriptors() : nullptr;
+        bool descriptors_owner_died =
+            CompactTransitionArray(parent, array, descriptors);
+        if (descriptors_owner_died) {
+          TrimDescriptorArray(parent, descriptors);
+        }
       }
     }
   }
@@ -2683,8 +2688,7 @@ bool MarkCompactCollector::CompactTransitionArray(
   // array disappeared during GC.
   int trim = transitions->Capacity() - transition_index;
   if (trim > 0) {
-    heap_->RightTrimFixedArray(transitions,
-                               trim * TransitionArray::kTransitionSize);
+    heap_->RightTrimFixedArray(transitions, trim * TransitionArray::kEntrySize);
     transitions->SetNumberOfTransitions(transition_index);
   }
   return descriptors_owner_died;
@@ -3384,7 +3388,8 @@ void MarkCompactCollectorBase::CreateAndExecuteEvacuationTasks(
   const bool profiling =
       heap()->isolate()->is_profiling() ||
       heap()->isolate()->logger()->is_logging_code_events() ||
-      heap()->isolate()->heap_profiler()->is_tracking_object_moves();
+      heap()->isolate()->heap_profiler()->is_tracking_object_moves() ||
+      heap()->has_heap_object_allocation_tracker();
   ProfilingMigrationObserver profiling_observer(heap());
 
   const int wanted_num_tasks =
