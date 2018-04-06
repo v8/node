@@ -1087,6 +1087,33 @@ void Heap::FinalizeIncrementalMarking(GarbageCollectionReason gc_reason) {
   }
 }
 
+HistogramTimer* Heap::GCTypePriorityTimer(GarbageCollector collector) {
+  if (IsYoungGenerationCollector(collector)) {
+    if (isolate_->IsIsolateInBackground()) {
+      return isolate_->counters()->gc_scavenger_background();
+    }
+    return isolate_->counters()->gc_scavenger_foreground();
+  } else {
+    if (!incremental_marking()->IsStopped()) {
+      if (ShouldReduceMemory()) {
+        if (isolate_->IsIsolateInBackground()) {
+          return isolate_->counters()->gc_finalize_reduce_memory_background();
+        }
+        return isolate_->counters()->gc_finalize_reduce_memory_foreground();
+      } else {
+        if (isolate_->IsIsolateInBackground()) {
+          return isolate_->counters()->gc_finalize_background();
+        }
+        return isolate_->counters()->gc_finalize_foreground();
+      }
+    } else {
+      if (isolate_->IsIsolateInBackground()) {
+        return isolate_->counters()->gc_compactor_background();
+      }
+      return isolate_->counters()->gc_compactor_foreground();
+    }
+  }
+}
 
 HistogramTimer* Heap::GCTypeTimer(GarbageCollector collector) {
   if (IsYoungGenerationCollector(collector)) {
@@ -1338,6 +1365,10 @@ bool Heap::CollectGarbage(AllocationSpace space,
       HistogramTimer* gc_type_timer = GCTypeTimer(collector);
       HistogramTimerScope histogram_timer_scope(gc_type_timer);
       TRACE_EVENT0("v8", gc_type_timer->name());
+
+      HistogramTimer* gc_type_priority_timer = GCTypePriorityTimer(collector);
+      HistogramTimerScope histogram_timer_priority_scope(
+          gc_type_priority_timer);
 
       next_gc_likely_to_collect_more =
           PerformGarbageCollection(collector, gc_callback_flags);
@@ -2575,7 +2606,7 @@ AllocationResult Heap::AllocateMap(InstanceType instance_type,
   map->set_dependent_code(DependentCode::cast(empty_fixed_array()),
                           SKIP_WRITE_BARRIER);
   map->set_weak_cell_cache(Smi::kZero);
-  map->set_raw_transitions(Smi::kZero);
+  map->set_raw_transitions(MaybeObject::FromSmi(Smi::kZero));
   map->SetInObjectUnusedPropertyFields(inobject_properties);
   map->set_instance_descriptors(empty_descriptor_array());
   if (FLAG_unbox_double_fields) {
@@ -3317,25 +3348,11 @@ AllocationResult Heap::AllocateCode(
   code->set_safepoint_table_offset(safepoint_table_offset);
   code->set_handler_table_offset(handler_table_offset);
   code->set_code_data_container(data_container);
-  code->set_has_tagged_params(true);
   code->set_deoptimization_data(deopt_data);
   code->set_stub_key(stub_key);
   code->set_source_position_table(source_position_table);
   code->set_constant_pool_offset(desc.instr_size - desc.constant_pool_size);
   code->set_builtin_index(builtin_index);
-
-  switch (code->kind()) {
-    case Code::OPTIMIZED_FUNCTION:
-      code->set_marked_for_deoptimization(false);
-      break;
-    case Code::JS_TO_WASM_FUNCTION:
-    case Code::C_WASM_ENTRY:
-    case Code::WASM_FUNCTION:
-      code->set_has_tagged_params(false);
-      break;
-    default:
-      break;
-  }
 
   // Allow self references to created code object by patching the handle to
   // point to the newly allocated Code object.
@@ -6131,6 +6148,11 @@ void Heap::TearDown() {
   isolate_->global_handles()->TearDown();
 
   external_string_table_.TearDown();
+
+  // Tear down all ArrayBuffers before tearing down the heap since  their
+  // byte_length may be a HeapNumber which is required for freeing the backing
+  // store.
+  ArrayBufferTracker::TearDown(this);
 
   delete tracer_;
   tracer_ = nullptr;

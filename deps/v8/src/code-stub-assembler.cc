@@ -561,11 +561,11 @@ TNode<Float64T> CodeStubAssembler::SmiToFloat64(SloppyTNode<Smi> value) {
 }
 
 TNode<Smi> CodeStubAssembler::SmiMax(SloppyTNode<Smi> a, SloppyTNode<Smi> b) {
-  return SelectTaggedConstant(SmiLessThan(a, b), b, a);
+  return SelectConstant<Smi>(SmiLessThan(a, b), b, a);
 }
 
 TNode<Smi> CodeStubAssembler::SmiMin(SloppyTNode<Smi> a, SloppyTNode<Smi> b) {
-  return SelectTaggedConstant(SmiLessThan(a, b), a, b);
+  return SelectConstant<Smi>(SmiLessThan(a, b), a, b);
 }
 
 TNode<Object> CodeStubAssembler::NumberMax(SloppyTNode<Object> a,
@@ -1397,9 +1397,11 @@ TNode<BoolT> CodeStubAssembler::TaggedDoesntHaveInstanceType(
 TNode<HeapObject> CodeStubAssembler::LoadFastProperties(
     SloppyTNode<JSObject> object) {
   CSA_SLOW_ASSERT(this, Word32Not(IsDictionaryMap(LoadMap(object))));
-  Node* properties = LoadObjectField(object, JSObject::kPropertiesOrHashOffset);
-  return SelectTaggedConstant<HeapObject>(
-      TaggedIsSmi(properties), EmptyFixedArrayConstant(), properties);
+  TNode<Object> properties =
+      LoadObjectField(object, JSObject::kPropertiesOrHashOffset);
+  return Select<HeapObject>(TaggedIsSmi(properties),
+                            [=] { return EmptyFixedArrayConstant(); },
+                            [=] { return CAST(properties); });
 }
 
 TNode<HeapObject> CodeStubAssembler::LoadSlowProperties(
@@ -1407,9 +1409,9 @@ TNode<HeapObject> CodeStubAssembler::LoadSlowProperties(
   CSA_SLOW_ASSERT(this, IsDictionaryMap(LoadMap(object)));
   TNode<Object> properties =
       LoadObjectField(object, JSObject::kPropertiesOrHashOffset);
-  return SelectTaggedConstant<HeapObject>(TaggedIsSmi(properties),
-                                          EmptyPropertyDictionaryConstant(),
-                                          CAST(properties));
+  return Select<HeapObject>(TaggedIsSmi(properties),
+                            [=] { return EmptyPropertyDictionaryConstant(); },
+                            [=] { return CAST(properties); });
 }
 
 TNode<FixedArrayBase> CodeStubAssembler::LoadElements(
@@ -1483,14 +1485,20 @@ TNode<Object> CodeStubAssembler::LoadMapPrototype(SloppyTNode<Map> map) {
 
 TNode<PrototypeInfo> CodeStubAssembler::LoadMapPrototypeInfo(
     SloppyTNode<Map> map, Label* if_no_proto_info) {
+  Label if_strong_heap_object(this);
   CSA_ASSERT(this, IsMap(map));
-  Node* prototype_info =
+  Node* maybe_prototype_info =
       LoadObjectField(map, Map::kTransitionsOrPrototypeInfoOffset);
-  GotoIf(TaggedIsSmi(prototype_info), if_no_proto_info);
-  GotoIfNot(WordEqual(LoadMap(prototype_info),
+  VARIABLE(prototype_info, MachineRepresentation::kTagged);
+  DispatchMaybeObject(maybe_prototype_info, if_no_proto_info, if_no_proto_info,
+                      if_no_proto_info, &if_strong_heap_object,
+                      &prototype_info);
+
+  BIND(&if_strong_heap_object);
+  GotoIfNot(WordEqual(LoadMap(prototype_info.value()),
                       LoadRoot(Heap::kPrototypeInfoMapRootIndex)),
             if_no_proto_info);
-  return CAST(prototype_info);
+  return CAST(prototype_info.value());
 }
 
 TNode<IntPtrT> CodeStubAssembler::LoadMapInstanceSizeInWords(
@@ -1666,6 +1674,37 @@ TNode<Object> CodeStubAssembler::LoadWeakCellValue(
     GotoIf(WordEqual(value, IntPtrConstant(0)), if_cleared);
   }
   return value;
+}
+
+void CodeStubAssembler::DispatchMaybeObject(Node* maybe_object, Label* if_smi,
+                                            Label* if_cleared, Label* if_weak,
+                                            Label* if_strong,
+                                            Variable* extracted) {
+  Label inner_if_smi(this), inner_if_strong(this);
+
+  GotoIf(TaggedIsSmi(maybe_object), &inner_if_smi);
+
+  GotoIf(WordEqual(maybe_object, IntPtrConstant(reinterpret_cast<intptr_t>(
+                                     HeapObjectReference::ClearedValue()))),
+         if_cleared);
+
+  GotoIf(WordEqual(WordAnd(BitcastTaggedToWord(maybe_object),
+                           IntPtrConstant(kWeakHeapObjectMask)),
+                   IntPtrConstant(0)),
+         &inner_if_strong);
+
+  extracted->Bind(
+      BitcastWordToTagged(WordAnd(BitcastTaggedToWord(maybe_object),
+                                  IntPtrConstant(~kWeakHeapObjectMask))));
+  Goto(if_weak);
+
+  BIND(&inner_if_smi);
+  extracted->Bind(maybe_object);
+  Goto(if_smi);
+
+  BIND(&inner_if_strong);
+  extracted->Bind(maybe_object);
+  Goto(if_strong);
 }
 
 TNode<Object> CodeStubAssembler::LoadFixedArrayElement(
@@ -6958,20 +6997,21 @@ void CodeStubAssembler::Lookup(TNode<Name> unique_name, TNode<Array> array,
   }
 }
 
-void CodeStubAssembler::TryLookupProperty(
-    Node* object, Node* map, Node* instance_type, Node* unique_name,
-    Label* if_found_fast, Label* if_found_dict, Label* if_found_global,
+void CodeStubAssembler::TryLookupPropertyInSimpleObject(
+    TNode<JSObject> object, TNode<Map> map, TNode<Name> unique_name,
+    Label* if_found_fast, Label* if_found_dict,
     TVariable<HeapObject>* var_meta_storage, TVariable<IntPtrT>* var_name_index,
-    Label* if_not_found, Label* if_bailout) {
-  Label if_objectisspecial(this);
-  GotoIf(IsSpecialReceiverInstanceType(instance_type), &if_objectisspecial);
+    Label* if_not_found) {
+  CSA_ASSERT(
+      this,
+      Word32BinaryNot(IsSpecialReceiverInstanceType(LoadMapInstanceType(map))));
 
   uint32_t mask =
       Map::HasNamedInterceptorBit::kMask | Map::IsAccessCheckNeededBit::kMask;
   CSA_ASSERT(this, Word32BinaryNot(IsSetWord32(LoadMapBitField(map), mask)));
   USE(mask);
 
-  Node* bit_field3 = LoadMapBitField3(map);
+  TNode<Uint32T> bit_field3 = LoadMapBitField3(map);
   Label if_isfastmap(this), if_isslowmap(this);
   Branch(IsSetWord32<Map::IsDictionaryMapBit>(bit_field3), &if_isslowmap,
          &if_isfastmap);
@@ -6991,6 +7031,21 @@ void CodeStubAssembler::TryLookupProperty(
     NameDictionaryLookup<NameDictionary>(dictionary, unique_name, if_found_dict,
                                          var_name_index, if_not_found);
   }
+}
+
+void CodeStubAssembler::TryLookupProperty(
+    SloppyTNode<JSObject> object, SloppyTNode<Map> map,
+    SloppyTNode<Int32T> instance_type, SloppyTNode<Name> unique_name,
+    Label* if_found_fast, Label* if_found_dict, Label* if_found_global,
+    TVariable<HeapObject>* var_meta_storage, TVariable<IntPtrT>* var_name_index,
+    Label* if_not_found, Label* if_bailout) {
+  Label if_objectisspecial(this);
+  GotoIf(IsSpecialReceiverInstanceType(instance_type), &if_objectisspecial);
+
+  TryLookupPropertyInSimpleObject(object, map, unique_name, if_found_fast,
+                                  if_found_dict, var_meta_storage,
+                                  var_name_index, if_not_found);
+
   BIND(&if_objectisspecial);
   {
     // Handle global object here and bailout for other special objects.
@@ -6998,7 +7053,7 @@ void CodeStubAssembler::TryLookupProperty(
               if_bailout);
 
     // Handle interceptors and access checks in runtime.
-    Node* bit_field = LoadMapBitField(map);
+    TNode<Int32T> bit_field = LoadMapBitField(map);
     int mask =
         Map::HasNamedInterceptorBit::kMask | Map::IsAccessCheckNeededBit::kMask;
     GotoIf(IsSetWord32(bit_field, mask), if_bailout);
@@ -7199,10 +7254,9 @@ void CodeStubAssembler::LoadPropertyFromGlobalDictionary(Node* dictionary,
 // |value| is the property backing store's contents, which is either a value
 // or an accessor pair, as specified by |details|.
 // Returns either the original value, or the result of the getter call.
-Node* CodeStubAssembler::CallGetterIfAccessor(Node* value, Node* details,
-                                              Node* context, Node* receiver,
-                                              Label* if_bailout,
-                                              GetOwnPropertyMode mode) {
+TNode<Object> CodeStubAssembler::CallGetterIfAccessor(
+    Node* value, Node* details, Node* context, Node* receiver,
+    Label* if_bailout, GetOwnPropertyMode mode) {
   VARIABLE(var_value, MachineRepresentation::kTagged, value);
   Label done(this), if_accessor_info(this, Label::kDeferred);
 
@@ -7300,7 +7354,7 @@ Node* CodeStubAssembler::CallGetterIfAccessor(Node* value, Node* details,
   }
 
   BIND(&done);
-  return var_value.value();
+  return UncheckedCast<Object>(var_value.value());
 }
 
 void CodeStubAssembler::TryGetOwnProperty(
@@ -10270,19 +10324,17 @@ Node* CodeStubAssembler::Typeof(Node* value) {
   return result_var.value();
 }
 
-Node* CodeStubAssembler::GetSuperConstructor(Node* active_function,
-                                             Node* context) {
-  CSA_ASSERT(this, IsJSFunction(active_function));
-
+TNode<Object> CodeStubAssembler::GetSuperConstructor(
+    SloppyTNode<Context> context, SloppyTNode<JSFunction> active_function) {
   Label is_not_constructor(this, Label::kDeferred), out(this);
-  VARIABLE(result, MachineRepresentation::kTagged);
+  TVARIABLE(Object, result);
 
-  Node* map = LoadMap(active_function);
-  Node* prototype = LoadMapPrototype(map);
-  Node* prototype_map = LoadMap(prototype);
+  TNode<Map> map = LoadMap(active_function);
+  TNode<Object> prototype = LoadMapPrototype(map);
+  TNode<Map> prototype_map = LoadMap(CAST(prototype));
   GotoIfNot(IsConstructorMap(prototype_map), &is_not_constructor);
 
-  result.Bind(prototype);
+  result = prototype;
   Goto(&out);
 
   BIND(&is_not_constructor);
@@ -10296,14 +10348,14 @@ Node* CodeStubAssembler::GetSuperConstructor(Node* active_function,
   return result.value();
 }
 
-Node* CodeStubAssembler::SpeciesConstructor(Node* context, Node* object,
-                                            Node* default_constructor) {
+TNode<Object> CodeStubAssembler::SpeciesConstructor(
+    SloppyTNode<Context> context, SloppyTNode<Object> object,
+    SloppyTNode<Object> default_constructor) {
   Isolate* isolate = this->isolate();
-  VARIABLE(var_result, MachineRepresentation::kTagged);
-  var_result.Bind(default_constructor);
+  TVARIABLE(Object, var_result, default_constructor);
 
   // 2. Let C be ? Get(O, "constructor").
-  Node* const constructor =
+  TNode<Object> constructor =
       GetProperty(context, object, isolate->factory()->constructor_string());
 
   // 3. If C is undefined, return defaultConstructor.
@@ -10315,7 +10367,7 @@ Node* CodeStubAssembler::SpeciesConstructor(Node* context, Node* object,
                        MessageTemplate::kConstructorNotReceiver);
 
   // 5. Let S be ? Get(C, @@species).
-  Node* const species =
+  TNode<Object> species =
       GetProperty(context, constructor, isolate->factory()->species_symbol());
 
   // 6. If S is either undefined or null, return defaultConstructor.
@@ -10324,8 +10376,8 @@ Node* CodeStubAssembler::SpeciesConstructor(Node* context, Node* object,
   // 7. If IsConstructor(S) is true, return S.
   Label throw_error(this);
   GotoIf(TaggedIsSmi(species), &throw_error);
-  GotoIfNot(IsConstructorMap(LoadMap(species)), &throw_error);
-  var_result.Bind(species);
+  GotoIfNot(IsConstructorMap(LoadMap(CAST(species))), &throw_error);
+  var_result = species;
   Goto(&out);
 
   // 8. Throw a TypeError exception.

@@ -41,7 +41,15 @@ class KeyedStoreGenericAssembler : public AccessorAssembler {
                                Node* value, Node* context, Label* slow);
 
   void EmitGenericPropertyStore(Node* receiver, Node* receiver_map,
-                                const StoreICParameters* p, Label* slow);
+                                const StoreICParameters* p,
+                                ExitPoint* exit_point, Label* slow,
+                                bool assume_strict_language_mode = false);
+
+  void EmitGenericPropertyStore(Node* receiver, Node* receiver_map,
+                                const StoreICParameters* p, Label* slow) {
+    ExitPoint direct_exit(this);
+    EmitGenericPropertyStore(receiver, receiver_map, p, &direct_exit, slow);
+  }
 
   void BranchIfPrototypesHaveNonFastElements(Node* receiver_map,
                                              Label* non_fast_elements,
@@ -611,7 +619,7 @@ void KeyedStoreGenericAssembler::LookupPropertyOnPrototypeChain(
 
 void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
     Node* receiver, Node* receiver_map, const StoreICParameters* p,
-    Label* slow) {
+    ExitPoint* exit_point, Label* slow, bool assume_strict_language_mode) {
   VARIABLE(var_accessor_pair, MachineRepresentation::kTagged);
   VARIABLE(var_accessor_holder, MachineRepresentation::kTagged);
   Label stub_cache(this), fast_properties(this), dictionary_properties(this),
@@ -651,25 +659,42 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
         OverwriteExistingFastDataProperty(receiver, receiver_map, descriptors,
                                           name_index, details, p->value, slow,
                                           false);
-        Return(p->value);
+        exit_point->Return(p->value);
       }
     }
     BIND(&lookup_transition);
     {
       Comment("lookup transition");
-      TVARIABLE(WeakCell, var_transition_map_weak_cell);
-      Label simple_transition(this), found_handler_candidate(this);
+      TVARIABLE(Map, var_transition_map);
+      Label simple_transition(this), transition_array(this),
+          found_handler_candidate(this);
       TNode<Object> maybe_handler =
           LoadObjectField(receiver_map, Map::kTransitionsOrPrototypeInfoOffset);
-      GotoIf(TaggedIsSmi(maybe_handler), slow);
-      TNode<Map> maybe_handler_map = LoadMap(CAST(maybe_handler));
-      GotoIf(IsWeakCellMap(maybe_handler_map), &simple_transition);
-      GotoIfNot(IsTransitionArrayMap(maybe_handler_map), slow);
 
+      // SMI -> slow
+      // cleared weak reference -> slow
+      // weak reference -> simple_transition
+      // strong reference -> transition_array
+      VARIABLE(var_transition_map_or_array, MachineRepresentation::kTagged);
+      DispatchMaybeObject(maybe_handler, slow, slow, &simple_transition,
+                          &transition_array, &var_transition_map_or_array);
+
+      BIND(&simple_transition);
       {
+        var_transition_map = CAST(var_transition_map_or_array.value());
+        Goto(&found_handler_candidate);
+      }
+
+      BIND(&transition_array);
+      {
+        TNode<Map> maybe_handler_map =
+            LoadMap(CAST(var_transition_map_or_array.value()));
+        GotoIfNot(IsTransitionArrayMap(maybe_handler_map), slow);
+
         TVARIABLE(IntPtrT, var_name_index);
         Label if_found_candidate(this);
-        TNode<TransitionArray> transitions = CAST(maybe_handler);
+        TNode<TransitionArray> transitions =
+            CAST(var_transition_map_or_array.value());
         TransitionLookup(p->name, transitions, &if_found_candidate,
                          &var_name_index, slow);
 
@@ -691,24 +716,20 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
           const int kKeyToTargetOffset = (TransitionArray::kEntryTargetIndex -
                                           TransitionArray::kEntryKeyIndex) *
                                          kPointerSize;
-          var_transition_map_weak_cell = CAST(LoadFixedArrayElement(
+          TNode<WeakCell> transition_map_weak_cell = CAST(LoadFixedArrayElement(
               transitions, var_name_index.value(), kKeyToTargetOffset));
+          var_transition_map =
+              CAST(LoadWeakCellValue(transition_map_weak_cell, slow));
           Goto(&found_handler_candidate);
         }
       }
 
-      BIND(&simple_transition);
-      {
-        var_transition_map_weak_cell = CAST(maybe_handler);
-        Goto(&found_handler_candidate);
-      }
-
       BIND(&found_handler_candidate);
       {
-        TNode<Map> transition_map =
-            CAST(LoadWeakCellValue(var_transition_map_weak_cell.value(), slow));
         // Validate the transition handler candidate and apply the transition.
-        HandleStoreICTransitionMapHandlerCase(p, transition_map, slow, true);
+        HandleStoreICTransitionMapHandlerCase(p, var_transition_map.value(),
+                                              slow, true);
+        exit_point->Return(p->value);
       }
     }
   }
@@ -742,7 +763,7 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
         CheckForAssociatedProtector(p->name, slow);
         StoreValueByKeyIndex<NameDictionary>(properties, var_name_index.value(),
                                              p->value);
-        Return(p->value);
+        exit_point->Return(p->value);
       }
     }
 
@@ -762,11 +783,11 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
       InvalidateValidityCellIfPrototype(receiver_map, bitfield2);
       Add<NameDictionary>(properties, p->name, p->value,
                           &add_dictionary_property_slow);
-      Return(p->value);
+      exit_point->Return(p->value);
 
       BIND(&add_dictionary_property_slow);
-      TailCallRuntime(Runtime::kAddDictionaryProperty, p->context, p->receiver,
-                      p->name, p->value);
+      exit_point->ReturnCallRuntime(Runtime::kAddDictionaryProperty, p->context,
+                                    p->receiver, p->name, p->value);
     }
   }
 
@@ -784,13 +805,17 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
 
     Callable callable = CodeFactory::Call(isolate());
     CallJS(callable, p->context, setter, receiver, p->value);
-    Return(p->value);
+    exit_point->Return(p->value);
 
     BIND(&not_callable);
     {
       Label strict(this);
-      BranchIfStrictMode(p->vector, p->slot, &strict);
-      Return(p->value);
+      if (assume_strict_language_mode) {
+        Goto(&strict);
+      } else {
+        BranchIfStrictMode(p->vector, p->slot, &strict);
+        exit_point->Return(p->value);
+      }
 
       BIND(&strict);
       {
@@ -803,9 +828,12 @@ void KeyedStoreGenericAssembler::EmitGenericPropertyStore(
   BIND(&readonly);
   {
     Label strict(this);
-    BranchIfStrictMode(p->vector, p->slot, &strict);
-    Return(p->value);
-
+    if (assume_strict_language_mode) {
+      Goto(&strict);
+    } else {
+      BranchIfStrictMode(p->vector, p->slot, &strict);
+      exit_point->Return(p->value);
+    }
     BIND(&strict);
     {
       Node* type = Typeof(p->receiver);

@@ -504,6 +504,26 @@ class WasmInstanceObject::BodyDescriptor final : public BodyDescriptorBase {
   }
 };
 
+class Map::BodyDescriptor final : public BodyDescriptorBase {
+ public:
+  static bool IsValidSlot(Map* map, HeapObject* obj, int offset) {
+    return offset >= Map::kPointerFieldsBeginOffset &&
+           offset < Map::kPointerFieldsEndOffset;
+  }
+
+  template <typename ObjectVisitor>
+  static inline void IterateBody(Map* map, HeapObject* obj, int object_size,
+                                 ObjectVisitor* v) {
+    IteratePointers(obj, Map::kPointerFieldsBeginOffset,
+                    Map::kTransitionsOrPrototypeInfoOffset, v);
+    IterateMaybeWeakPointer(obj, kTransitionsOrPrototypeInfoOffset, v);
+    IteratePointers(obj, Map::kTransitionsOrPrototypeInfoOffset + kPointerSize,
+                    Map::kPointerFieldsEndOffset, v);
+  }
+
+  static inline int SizeOf(Map* map, HeapObject* obj) { return Map::kSize; }
+};
+
 template <typename Op, typename ReturnType, typename T1, typename T2,
           typename T3, typename T4>
 ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3, T4 p4) {
@@ -586,6 +606,7 @@ ReturnType BodyDescriptorApply(InstanceType type, T1 p1, T2 p2, T3 p3, T4 p4) {
     case JS_MAP_KEY_VALUE_ITERATOR_TYPE:
     case JS_MAP_VALUE_ITERATOR_TYPE:
     case JS_STRING_ITERATOR_TYPE:
+    case JS_REGEXP_STRING_ITERATOR_TYPE:
     case JS_REGEXP_TYPE:
     case JS_GLOBAL_PROXY_TYPE:
     case JS_GLOBAL_OBJECT_TYPE:

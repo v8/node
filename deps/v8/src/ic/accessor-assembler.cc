@@ -894,6 +894,7 @@ void AccessorAssembler::HandleStoreICHandlerCase(
     }
     BIND(&store_transition);
     HandleStoreICTransitionMapHandlerCase(p, map_or_property_cell, miss, false);
+    Return(p->value);
   }
 }
 
@@ -949,7 +950,6 @@ void AccessorAssembler::HandleStoreICTransitionMapHandlerCase(
   OverwriteExistingFastDataProperty(p->receiver, transition_map, descriptors,
                                     last_key_index, details, p->value, miss,
                                     true);
-  Return(p->value);
 }
 
 void AccessorAssembler::CheckFieldType(Node* descriptors, Node* name_index,
@@ -1910,8 +1910,8 @@ void AccessorAssembler::BranchIfStrictMode(Node* vector, Node* slot,
                                            Label* if_strict) {
   Node* sfi =
       LoadObjectField(vector, FeedbackVector::kSharedFunctionInfoOffset);
-  Node* metadata =
-      LoadObjectField(sfi, SharedFunctionInfo::kFeedbackMetadataOffset);
+  TNode<FeedbackMetadata> metadata = CAST(LoadObjectField(
+      sfi, SharedFunctionInfo::kOuterScopeInfoOrFeedbackMetadataOffset));
   Node* slot_int = SmiToInt32(slot);
 
   // See VectorICComputer::index().

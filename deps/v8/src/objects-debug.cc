@@ -276,6 +276,9 @@ void HeapObject::HeapObjectVerify() {
     case JS_REGEXP_TYPE:
       JSRegExp::cast(this)->JSRegExpVerify();
       break;
+    case JS_REGEXP_STRING_ITERATOR_TYPE:
+      JSRegExpStringIterator::cast(this)->JSRegExpStringIteratorVerify();
+      break;
     case FILLER_TYPE:
       break;
     case JS_PROXY_TYPE:
@@ -861,10 +864,9 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
 
   VerifyObjectField(kFunctionDataOffset);
   VerifyObjectField(kDebugInfoOffset);
-  VerifyObjectField(kFeedbackMetadataOffset);
+  VerifyObjectField(kOuterScopeInfoOrFeedbackMetadataOffset);
   VerifyObjectField(kFunctionIdentifierOffset);
   VerifyObjectField(kNameOrScopeInfoOffset);
-  VerifyObjectField(kOuterScopeInfoOffset);
   VerifyObjectField(kScriptOffset);
 
   Object* value = name_or_scope_info();
@@ -881,6 +883,15 @@ void SharedFunctionInfo::SharedFunctionInfoVerify() {
 
   CHECK(function_identifier()->IsUndefined(isolate) || HasBuiltinFunctionId() ||
         HasInferredName());
+
+  if (!is_compiled()) {
+    CHECK(!HasFeedbackMetadata());
+    CHECK(outer_scope_info()->IsScopeInfo() ||
+          outer_scope_info()->IsTheHole(isolate));
+  } else if (HasBytecodeArray()) {
+    CHECK(HasFeedbackMetadata());
+    CHECK(feedback_metadata()->IsFeedbackMetadata());
+  }
 
   int expected_map_index = Context::FunctionMapIndex(
       language_mode(), kind(), true, HasSharedName(), needs_home_object());
@@ -1313,6 +1324,14 @@ void JSRegExp::JSRegExpVerify() {
       CHECK(data()->IsUndefined(isolate));
       break;
   }
+}
+
+void JSRegExpStringIterator::JSRegExpStringIteratorVerify() {
+  CHECK(IsJSRegExpStringIterator());
+  JSObjectVerify();
+  CHECK(iterating_string()->IsString());
+  CHECK(iterating_regexp()->IsObject());
+  VerifySmiField(kFlagsOffset);
 }
 
 void JSProxy::JSProxyVerify() {

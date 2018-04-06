@@ -279,7 +279,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   }
 
 #define SMI_COMPARISON_OP(SmiOpName, IntPtrOpName)                       \
-  Node* SmiOpName(Node* a, Node* b) {                                    \
+  TNode<BoolT> SmiOpName(Node* a, Node* b) {                             \
     return IntPtrOpName(BitcastTaggedToWord(a), BitcastTaggedToWord(b)); \
   }
   SMI_COMPARISON_OP(SmiEqual, WordEqual)
@@ -376,13 +376,6 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<IntPtrT> SelectIntPtrConstant(SloppyTNode<BoolT> condition,
                                       int true_value, int false_value);
   TNode<Oddball> SelectBooleanConstant(SloppyTNode<BoolT> condition);
-  template <class A>
-  TNode<A> SelectTaggedConstant(SloppyTNode<BoolT> condition,
-                                TNode<A> true_value,
-                                SloppyTNode<A> false_value) {
-    static_assert(std::is_base_of<Object, A>::value, "not a tagged type");
-    return SelectConstant<A>(condition, true_value, false_value);
-  }
   TNode<Smi> SelectSmiConstant(SloppyTNode<BoolT> condition, Smi* true_value,
                                Smi* false_value);
   TNode<Smi> SelectSmiConstant(SloppyTNode<BoolT> condition, int true_value,
@@ -598,6 +591,18 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Object> LoadWeakCellValueUnchecked(Node* weak_cell);
   TNode<Object> LoadWeakCellValue(SloppyTNode<WeakCell> weak_cell,
                                   Label* if_cleared = nullptr);
+
+  // Figures out whether the value of maybe_object is:
+  // - a SMI (jump to "if_smi", "extracted" will be the SMI value)
+  // - a cleared weak reference (jump to "if_cleared", "extracted" will be
+  // untouched)
+  // - a weak reference (jump to "if_weak", "extracted" will be the object
+  // pointed to)
+  // - a strong reference (jump to "if_strong", "extracted" will be the object
+  // pointed to)
+  void DispatchMaybeObject(Node* maybe_object, Label* if_smi, Label* if_cleared,
+                           Label* if_weak, Label* if_strong,
+                           Variable* extracted);
 
   // Load an array element from a FixedArray.
   TNode<Object> LoadFixedArrayElement(
@@ -1705,12 +1710,23 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   //
   // Note: this code does not check if the global dictionary points to deleted
   // entry! This has to be done by the caller.
-  void TryLookupProperty(Node* object, Node* map, Node* instance_type,
-                         Node* unique_name, Label* if_found_fast,
+  void TryLookupProperty(SloppyTNode<JSObject> object, SloppyTNode<Map> map,
+                         SloppyTNode<Int32T> instance_type,
+                         SloppyTNode<Name> unique_name, Label* if_found_fast,
                          Label* if_found_dict, Label* if_found_global,
                          TVariable<HeapObject>* var_meta_storage,
                          TVariable<IntPtrT>* var_name_index,
                          Label* if_not_found, Label* if_bailout);
+
+  // This is a building block for TryLookupProperty() above. Supports only
+  // non-special fast and dictionary objects.
+  void TryLookupPropertyInSimpleObject(TNode<JSObject> object, TNode<Map> map,
+                                       TNode<Name> unique_name,
+                                       Label* if_found_fast,
+                                       Label* if_found_dict,
+                                       TVariable<HeapObject>* var_meta_storage,
+                                       TVariable<IntPtrT>* var_name_index,
+                                       Label* if_not_found);
 
   // This method jumps to if_found if the element is known to exist. To
   // if_absent if it's known to not exist. To if_not_found if the prototype
@@ -1948,10 +1964,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   Node* Typeof(Node* value);
 
-  Node* GetSuperConstructor(Node* value, Node* context);
+  TNode<Object> GetSuperConstructor(SloppyTNode<Context> context,
+                                    SloppyTNode<JSFunction> active_function);
 
-  Node* SpeciesConstructor(Node* context, Node* object,
-                           Node* default_constructor);
+  TNode<Object> SpeciesConstructor(SloppyTNode<Context> context,
+                                   SloppyTNode<Object> object,
+                                   SloppyTNode<Object> default_constructor);
 
   Node* InstanceOf(Node* object, Node* callable, Node* context);
 
@@ -2062,9 +2080,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Uint32T> DescriptorArrayGetDetails(TNode<DescriptorArray> descriptors,
                                            TNode<Uint32T> descriptor_number);
 
-  Node* CallGetterIfAccessor(Node* value, Node* details, Node* context,
-                             Node* receiver, Label* if_bailout,
-                             GetOwnPropertyMode mode = kCallJSGetter);
+  TNode<Object> CallGetterIfAccessor(Node* value, Node* details, Node* context,
+                                     Node* receiver, Label* if_bailout,
+                                     GetOwnPropertyMode mode = kCallJSGetter);
 
   TNode<IntPtrT> TryToIntptr(Node* key, Label* miss);
 

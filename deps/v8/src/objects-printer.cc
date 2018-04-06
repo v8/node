@@ -165,6 +165,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case JS_REGEXP_TYPE:
       JSRegExp::cast(this)->JSRegExpPrint(os);
       break;
+    case JS_REGEXP_STRING_ITERATOR_TYPE:
+      JSRegExpStringIterator::cast(this)->JSRegExpStringIteratorPrint(os);
+      break;
     case ODDBALL_TYPE:
       Oddball::cast(this)->to_string()->Print(os);
       break;
@@ -619,6 +622,16 @@ void JSRegExp::JSRegExpPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintBody(os, this);
 }
 
+void JSRegExpStringIterator::JSRegExpStringIteratorPrint(
+    std::ostream& os) {  // NOLINT
+  JSObjectPrintHeader(os, this, "JSRegExpStringIterator");
+  os << "\n - regex: " << Brief(iterating_regexp());
+  os << "\n - string: " << Brief(iterating_string());
+  os << "\n - done: " << done();
+  os << "\n - global: " << global();
+  os << "\n - unicode: " << unicode();
+  JSObjectPrintBody(os, this);
+}
 
 void Symbol::SymbolPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "Symbol");
@@ -688,8 +701,14 @@ void Map::MapPrint(std::ostream& os) {  // NOLINT
     TransitionsAccessor transitions(this, &no_gc);
     int nof_transitions = transitions.NumberOfTransitions();
     if (nof_transitions > 0) {
-      os << "\n - transitions #" << nof_transitions << ": "
-         << Brief(raw_transitions());
+      os << "\n - transitions #" << nof_transitions << ": ";
+      HeapObject* heap_object;
+      Smi* smi;
+      if (raw_transitions()->ToSmi(&smi)) {
+        os << Brief(smi);
+      } else if (raw_transitions()->ToStrongOrWeakHeapObject(&heap_object)) {
+        os << Brief(heap_object);
+      }
       transitions.PrintTransitions(os);
     }
   }
@@ -1079,7 +1098,6 @@ void JSCollectionIterator::JSCollectionIteratorPrint(
   os << "\n";
 }
 
-
 void JSSetIterator::JSSetIteratorPrint(std::ostream& os) {  // NOLINT
   JSObjectPrintHeader(os, this, "JSSetIterator");
   JSCollectionIteratorPrint(os);
@@ -1203,8 +1221,6 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
     WasmExportedFunction* function = WasmExportedFunction::cast(this);
     os << "\n - WASM instance "
        << reinterpret_cast<void*>(function->instance());
-    os << "\n   context "
-       << reinterpret_cast<void*>(function->instance()->wasm_context()->get());
     os << "\n - WASM function index " << function->function_index();
   }
   shared()->PrintSourceCode(os);
@@ -1270,9 +1286,16 @@ void SharedFunctionInfo::SharedFunctionInfoPrint(std::ostream& os) {  // NOLINT
     os << "\n - no debug info";
   }
   os << "\n - scope info: " << Brief(scope_info());
+  if (HasOuterScopeInfo()) {
+    os << "\n - outer scope info: " << Brief(GetOuterScopeInfo());
+  }
   os << "\n - length: " << length();
   os << "\n - feedback_metadata: ";
-  feedback_metadata()->FeedbackMetadataPrint(os);
+  if (HasFeedbackMetadata()) {
+    feedback_metadata()->FeedbackMetadataPrint(os);
+  } else {
+    os << "<none>";
+  }
   os << "\n";
 }
 
@@ -1770,9 +1793,12 @@ void ScopeInfo::ScopeInfoPrint(std::ostream& os) {  // NOLINT
     os << "\n - outer scope info: " << Brief(OuterScopeInfo());
   }
   if (HasFunctionName()) {
-    os << "\n - function name: ";
-    FunctionName()->ShortPrint(os);
+    os << "\n - function name: " << Brief(FunctionName());
   }
+  if (HasInferredFunctionName()) {
+    os << "\n - inferred function name: " << Brief(InferredFunctionName());
+  }
+
   if (HasPositionInfo()) {
     os << "\n - start position: " << StartPosition();
     os << "\n - end position: " << EndPosition();
@@ -2029,24 +2055,25 @@ void TransitionArray::Print(std::ostream& os) {
 }
 
 void TransitionsAccessor::PrintTransitions(std::ostream& os) {  // NOLINT
-  WeakCell* cell = nullptr;
+  Map* target;
   switch (encoding()) {
     case kPrototypeInfo:
     case kUninitialized:
       return;
-    case kWeakCell:
-      cell = GetTargetCell<kWeakCell>();
+    case kWeakRef:
+      target = Map::cast(raw_transitions_->ToWeakHeapObject());
       break;
-    case kHandler:
-      cell = GetTargetCell<kHandler>();
+    case kHandler: {
+      WeakCell* cell = GetTargetCell();
+      DCHECK(!cell->cleared());
+      target = Map::cast(cell->value());
       break;
+    }
     case kFullTransitionArray:
       return transitions()->Print(os);
   }
-  DCHECK(!cell->cleared());
-  Map* target = Map::cast(cell->value());
   Name* key = GetSimpleTransitionKey(target);
-  PrintOneTransition(os, key, target, raw_transitions_);
+  PrintOneTransition(os, key, target, raw_transitions_->GetHeapObject());
 }
 
 void TransitionsAccessor::PrintTransitionTree() {
