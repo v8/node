@@ -45,22 +45,10 @@
     'conditions': [
       ['GENERATOR=="ninja"', {
         'obj_dir': '<(PRODUCT_DIR)/obj',
-        'conditions': [
-          [ 'build_v8_with_gn=="true"', {
-            'v8_base': '<(PRODUCT_DIR)/obj/deps/v8/gypfiles/v8_monolith.gen/gn/obj/libv8_monolith.a',
-          }, {
-            'v8_base': '<(PRODUCT_DIR)/obj/deps/v8/gypfiles/libv8_base.a',
-          }],
-        ]
+        'v8_base': '<(PRODUCT_DIR)/obj/deps/v8/gypfiles/libv8_base.a',
        }, {
-         'obj_dir%': '<(PRODUCT_DIR)/obj.target',
-         'conditions': [
-           [ 'build_v8_with_gn=="true"', {
-             'v8_base': '<(PRODUCT_DIR)/obj.target/v8_monolith/geni/gn/obj/libv8_monolith.a',
-           }, {
-             'v8_base': '<(PRODUCT_DIR)/obj.target/deps/v8/gypfiles/libv8_base.a',
-           }],
-         ],
+        'obj_dir%': '<(PRODUCT_DIR)/obj.target',
+        'v8_base': '<(PRODUCT_DIR)/obj.target/deps/v8/gypfiles/libv8_base.a',
       }],
       ['OS == "win"', {
         'os_posix': 0,
@@ -71,14 +59,16 @@
         'os_posix': 1,
         'v8_postmortem_support%': 'true',
       }],
-      ['OS== "mac"', {
+      ['OS == "mac"', {
         'obj_dir%': '<(PRODUCT_DIR)/obj.target',
         'v8_base': '<(PRODUCT_DIR)/libv8_base.a',
+      }],
+      ['build_v8_with_gn == "true"', {
         'conditions': [
-          [ 'build_v8_with_gn=="true"', {
-            'v8_base': '<(PRODUCT_DIR)/obj.target/v8_monolith/geni/gn/obj/libv8_monolith.a',
+          ['GENERATOR == "ninja"', {
+            'v8_base': '<(PRODUCT_DIR)/obj/deps/v8/gypfiles/v8_monolith.gen/gn/obj/libv8_monolith.a',
           }, {
-            'v8_base': '<(PRODUCT_DIR)/libv8_base.a',
+            'v8_base': '<(PRODUCT_DIR)/obj.target/v8_monolith/geni/gn/obj/libv8_monolith.a',
           }],
         ],
       }],
