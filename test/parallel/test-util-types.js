@@ -149,7 +149,10 @@ try {
 const exclude = [
   'Undefined', 'Null', 'NullOrUndefined', 'True', 'False', 'Name', 'String',
   'Symbol', 'Function', 'Array', 'Object', 'Boolean', 'Number', 'Int32',
-  'Uint32', 'BigInt'
+  'Uint32', 'BigInt',
+  // ModuleNamespaceObject is added only to unbreak CI,
+  // it is not implmented anywhere
+  'ModuleNamespaceObject',
 ];
 
 const start = v8_h.indexOf('Value : public Data');
