@@ -34,7 +34,7 @@
 #include "src/base/platform/platform.h"
 #include "src/code-stubs.h"
 #include "src/double.h"
-#include "src/factory.h"
+#include "src/heap/factory.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
@@ -94,7 +94,7 @@ void RunOneTruncationTestWithTest(ConvertDToICallWrapper callWrapper,
   CHECK_EQ(to, result);
 }
 
-
+DISABLE_CFI_ICALL
 int32_t DefaultCallWrapper(ConvertDToIFunc func,
                            double from) {
   return (*func)(from);

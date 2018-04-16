@@ -27,6 +27,9 @@
 //
 // Tests of profiles generator and utilities.
 
+#include <limits>
+#include <memory>
+
 #include "src/v8.h"
 
 #include "include/v8-profiler.h"
@@ -83,18 +86,18 @@ TEST(StartStop) {
 
 static void EnqueueTickSampleEvent(ProfilerEventsProcessor* proc,
                                    i::Address frame1,
-                                   i::Address frame2 = nullptr,
-                                   i::Address frame3 = nullptr) {
+                                   i::Address frame2 = kNullAddress,
+                                   i::Address frame3 = kNullAddress) {
   v8::TickSample* sample = proc->StartTickSample();
-  sample->pc = frame1;
-  sample->tos = frame1;
+  sample->pc = reinterpret_cast<void*>(frame1);
+  sample->tos = reinterpret_cast<void*>(frame1);
   sample->frames_count = 0;
-  if (frame2 != nullptr) {
-    sample->stack[0] = frame2;
+  if (frame2 != kNullAddress) {
+    sample->stack[0] = reinterpret_cast<void*>(frame2);
     sample->frames_count = 1;
   }
-  if (frame3 != nullptr) {
-    sample->stack[1] = frame3;
+  if (frame3 != kNullAddress) {
+    sample->stack[1] = reinterpret_cast<void*>(frame3);
     sample->frames_count = 2;
   }
   proc->FinishTickSample();
@@ -303,11 +306,11 @@ TEST(Issue1398) {
   profiler_listener.CodeCreateEvent(i::Logger::BUILTIN_TAG, code, "bbb");
 
   v8::TickSample* sample = processor->StartTickSample();
-  sample->pc = code->address();
-  sample->tos = 0;
+  sample->pc = reinterpret_cast<void*>(code->address());
+  sample->tos = nullptr;
   sample->frames_count = v8::TickSample::kMaxFramesCount;
   for (unsigned i = 0; i < sample->frames_count; ++i) {
-    sample->stack[i] = code->address();
+    sample->stack[i] = reinterpret_cast<void*>(code->address());
   }
   processor->FinishTickSample();
 
@@ -1108,9 +1111,10 @@ static void TickLines(bool optimize) {
   CodeEntry* func_entry = generator->code_map()->FindEntry(code_address);
   CHECK(func_entry);
   CHECK_EQ(0, strcmp(func_name, func_entry->name()));
-  const i::JITLineInfoTable* line_info = func_entry->line_info();
+  const i::SourcePositionTable* line_info = func_entry->line_info();
   CHECK(line_info);
-  CHECK(!line_info->empty());
+  CHECK_NE(v8::CpuProfileNode::kNoLineNumberInfo,
+           line_info->GetSourceLineNumber(100));
 
   // Check the hit source lines using V8 Public APIs.
   const i::ProfileTree* tree = profile->top_down();
@@ -2244,7 +2248,6 @@ TEST(TracingCpuProfiler) {
   v8::HandleScope scope(env->GetIsolate());
   {
     tracing_controller->StartTracing(trace_config);
-    auto profiler = v8::TracingCpuProfiler::Create(env->GetIsolate());
     CompileRun("function foo() { } foo();");
     tracing_controller->StopTracing();
     CompileRun("function bar() { } bar();");
@@ -2432,6 +2435,52 @@ TEST(NativeFrameStackTrace) {
   }
 
   profile->Delete();
+}
+
+TEST(SourcePositionTable) {
+  std::unique_ptr<i::SourcePositionTable> info(new SourcePositionTable());
+
+  // Newly created tables should return NoLineNumberInfo for any lookup.
+  int no_info = v8::CpuProfileNode::kNoLineNumberInfo;
+  CHECK_EQ(no_info, info->GetSourceLineNumber(std::numeric_limits<int>::min()));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(0));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(1));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(9));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(10));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(11));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(19));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(20));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(21));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(100));
+  CHECK_EQ(no_info, info->GetSourceLineNumber(std::numeric_limits<int>::max()));
+
+  info->SetPosition(10, 1);
+  info->SetPosition(20, 2);
+
+  // The only valid return values are 1 or 2 - every pc maps to a line number.
+  CHECK_EQ(1, info->GetSourceLineNumber(std::numeric_limits<int>::min()));
+  CHECK_EQ(1, info->GetSourceLineNumber(0));
+  CHECK_EQ(1, info->GetSourceLineNumber(1));
+  CHECK_EQ(1, info->GetSourceLineNumber(9));
+  CHECK_EQ(1, info->GetSourceLineNumber(10));
+  CHECK_EQ(1, info->GetSourceLineNumber(11));
+  CHECK_EQ(1, info->GetSourceLineNumber(19));
+  CHECK_EQ(2, info->GetSourceLineNumber(20));
+  CHECK_EQ(2, info->GetSourceLineNumber(21));
+  CHECK_EQ(2, info->GetSourceLineNumber(100));
+  CHECK_EQ(2, info->GetSourceLineNumber(std::numeric_limits<int>::max()));
+
+  // Test SetPosition behavior.
+  // Setting a position to the same value has no effect.
+  info->SetPosition(10, 1);
+  CHECK_EQ(1, info->GetSourceLineNumber(9));
+  CHECK_EQ(1, info->GetSourceLineNumber(10));
+  CHECK_EQ(1, info->GetSourceLineNumber(11));
+
+  info->SetPosition(25, 3);
+  CHECK_EQ(2, info->GetSourceLineNumber(21));
+  CHECK_EQ(3, info->GetSourceLineNumber(100));
+  CHECK_EQ(3, info->GetSourceLineNumber(std::numeric_limits<int>::max()));
 }
 
 }  // namespace test_cpu_profiler

@@ -519,9 +519,10 @@ RUNTIME_FUNCTION(Runtime_DebugPrint) {
     args[0]->Print(os);
     JavaScriptFrameIterator it(isolate);
     JavaScriptFrame* frame = it.frame();
-    os << "fp = " << static_cast<void*>(frame->fp())
-       << ", sp = " << static_cast<void*>(frame->sp())
-       << ", caller_sp = " << static_cast<void*>(frame->caller_sp()) << ": ";
+    os << "fp = " << reinterpret_cast<void*>(frame->fp())
+       << ", sp = " << reinterpret_cast<void*>(frame->sp())
+       << ", caller_sp = " << reinterpret_cast<void*>(frame->caller_sp())
+       << ": ";
   } else {
     os << "DebugPrint: ";
     args[0]->Print(os);
@@ -873,7 +874,7 @@ RUNTIME_FUNCTION(Runtime_DeserializeWasmModule) {
   CONVERT_ARG_HANDLE_CHECKED(JSArrayBuffer, buffer, 0);
   CONVERT_ARG_HANDLE_CHECKED(JSArrayBuffer, wire_bytes, 1);
 
-  Address mem_start = static_cast<Address>(buffer->backing_store());
+  uint8_t* mem_start = reinterpret_cast<uint8_t*>(buffer->backing_store());
   size_t mem_size = static_cast<size_t>(buffer->byte_length()->Number());
 
   // Note that {wasm::DeserializeNativeModule} will allocate. We assume the
@@ -1018,12 +1019,7 @@ RUNTIME_FUNCTION(Runtime_FreezeWasmLazyCompilation) {
   DisallowHeapAllocation no_gc;
   CONVERT_ARG_CHECKED(WasmInstanceObject, instance, 0);
 
-  WasmSharedModuleData* shared = instance->compiled_module()->shared();
-  CHECK(shared->has_lazy_compilation_orchestrator());
-  auto* orchestrator = Managed<wasm::LazyCompilationOrchestrator>::cast(
-                           shared->lazy_compilation_orchestrator())
-                           ->get();
-  orchestrator->FreezeLazyCompilationForTesting();
+  instance->compiled_module()->GetNativeModule()->set_lazy_compile_frozen(true);
   return isolate->heap()->undefined_value();
 }
 

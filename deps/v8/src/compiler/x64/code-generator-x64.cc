@@ -193,6 +193,7 @@ class OutOfLineTruncateDoubleToI final : public OutOfLineCode {
         result_(result),
         input_(input),
         unwinding_info_writer_(unwinding_info_writer),
+        isolate_(gen->isolate()),
         zone_(gen->zone()) {}
 
   void Generate() final {
@@ -200,7 +201,8 @@ class OutOfLineTruncateDoubleToI final : public OutOfLineCode {
     unwinding_info_writer_->MaybeIncreaseBaseOffsetAt(__ pc_offset(),
                                                       kDoubleSize);
     __ Movsd(MemOperand(rsp, 0), input_);
-    __ SlowTruncateToIDelayed(zone_, result_);
+    __ Call(BUILTIN_CODE(isolate_, DoubleToI), RelocInfo::CODE_TARGET);
+    __ movl(result_, MemOperand(rsp, 0));
     __ addp(rsp, Immediate(kDoubleSize));
     unwinding_info_writer_->MaybeIncreaseBaseOffsetAt(__ pc_offset(),
                                                       -kDoubleSize);
@@ -210,6 +212,7 @@ class OutOfLineTruncateDoubleToI final : public OutOfLineCode {
   Register const result_;
   XMMRegister const input_;
   UnwindingInfoWriter* const unwinding_info_writer_;
+  Isolate* isolate_;
   Zone* zone_;
 };
 
@@ -701,8 +704,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kArchCallWasmFunction: {
       if (HasImmediateInput(instr, 0)) {
-        Address wasm_code = reinterpret_cast<Address>(
-            i.ToConstant(instr->InputAt(0)).ToInt64());
+        Address wasm_code =
+            static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
         if (info()->IsWasm()) {
           __ near_call(wasm_code, RelocInfo::WASM_CALL);
         } else {
@@ -750,8 +753,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kArchTailCallWasm: {
       if (HasImmediateInput(instr, 0)) {
-        Address wasm_code = reinterpret_cast<Address>(
-            i.ToConstant(instr->InputAt(0)).ToInt64());
+        Address wasm_code =
+            static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
         if (info()->IsWasm()) {
           __ near_jmp(wasm_code, RelocInfo::WASM_CALL);
         } else {
@@ -1026,8 +1029,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kIeee754Float64Pow: {
       // TODO(bmeurer): Improve integration of the stub.
       __ Movsd(xmm2, xmm0);
-      __ CallStubDelayed(new (zone())
-                             MathPowStub(nullptr, MathPowStub::DOUBLE));
+      __ Call(BUILTIN_CODE(isolate(), MathPowInternal), RelocInfo::CODE_TARGET);
       __ Movsd(xmm0, xmm3);
       break;
     }

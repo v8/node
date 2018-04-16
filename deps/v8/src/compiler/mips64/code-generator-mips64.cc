@@ -19,11 +19,6 @@ namespace compiler {
 
 #define __ tasm()->
 
-// TODO(plind): Possibly avoid using these lithium names.
-#define kScratchReg kLithiumScratchReg
-#define kScratchReg2 kLithiumScratchReg2
-#define kScratchDoubleReg kLithiumScratchDouble
-
 
 // TODO(plind): consider renaming these macros.
 #define TRACE_MSG(msg)                                                      \
@@ -142,41 +137,6 @@ static inline bool HasRegisterInput(Instruction* instr, size_t index) {
 
 
 namespace {
-
-class OutOfLineRound : public OutOfLineCode {
- public:
-  OutOfLineRound(CodeGenerator* gen, DoubleRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    // Handle rounding to zero case where sign has to be preserved.
-    // High bits of double input already in kScratchReg.
-    __ dsrl(at, kScratchReg, 31);
-    __ dsll(at, at, 31);
-    __ mthc1(at, result_);
-  }
-
- private:
-  DoubleRegister const result_;
-};
-
-
-class OutOfLineRound32 : public OutOfLineCode {
- public:
-  OutOfLineRound32(CodeGenerator* gen, DoubleRegister result)
-      : OutOfLineCode(gen), result_(result) {}
-
-  void Generate() final {
-    // Handle rounding to zero case where sign has to be preserved.
-    // High bits of float input already in kScratchReg.
-    __ srl(at, kScratchReg, 31);
-    __ sll(at, at, 31);
-    __ mtc1(at, result_);
-  }
-
- private:
-  DoubleRegister const result_;
-};
 
 
 class OutOfLineRecordWrite final : public OutOfLineCode {
@@ -374,56 +334,6 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen,
 }
 
 }  // namespace
-
-#define ASSEMBLE_ROUND_DOUBLE_TO_DOUBLE(mode)                                  \
-  if (kArchVariant == kMips64r6) {                                             \
-    __ cfc1(kScratchReg, FCSR);                                                \
-    __ li(at, Operand(mode_##mode));                                           \
-    __ ctc1(at, FCSR);                                                         \
-    __ rint_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));             \
-    __ ctc1(kScratchReg, FCSR);                                                \
-  } else {                                                                     \
-    auto ool = new (zone()) OutOfLineRound(this, i.OutputDoubleRegister());    \
-    Label done;                                                                \
-    __ mfhc1(kScratchReg, i.InputDoubleRegister(0));                           \
-    __ Ext(at, kScratchReg, HeapNumber::kExponentShift,                        \
-           HeapNumber::kExponentBits);                                         \
-    __ Branch(USE_DELAY_SLOT, &done, hs, at,                                   \
-              Operand(HeapNumber::kExponentBias + HeapNumber::kMantissaBits)); \
-    __ mov_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));              \
-    __ mode##_l_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));         \
-    __ dmfc1(at, i.OutputDoubleRegister());                                    \
-    __ Branch(USE_DELAY_SLOT, ool->entry(), eq, at, Operand(zero_reg));        \
-    __ cvt_d_l(i.OutputDoubleRegister(), i.OutputDoubleRegister());            \
-    __ bind(ool->exit());                                                      \
-    __ bind(&done);                                                            \
-  }
-
-#define ASSEMBLE_ROUND_FLOAT_TO_FLOAT(mode)                                   \
-  if (kArchVariant == kMips64r6) {                                            \
-    __ cfc1(kScratchReg, FCSR);                                               \
-    __ li(at, Operand(mode_##mode));                                          \
-    __ ctc1(at, FCSR);                                                        \
-    __ rint_s(i.OutputDoubleRegister(), i.InputDoubleRegister(0));            \
-    __ ctc1(kScratchReg, FCSR);                                               \
-  } else {                                                                    \
-    int32_t kFloat32ExponentBias = 127;                                       \
-    int32_t kFloat32MantissaBits = 23;                                        \
-    int32_t kFloat32ExponentBits = 8;                                         \
-    auto ool = new (zone()) OutOfLineRound32(this, i.OutputDoubleRegister()); \
-    Label done;                                                               \
-    __ mfc1(kScratchReg, i.InputDoubleRegister(0));                           \
-    __ Ext(at, kScratchReg, kFloat32MantissaBits, kFloat32ExponentBits);      \
-    __ Branch(USE_DELAY_SLOT, &done, hs, at,                                  \
-              Operand(kFloat32ExponentBias + kFloat32MantissaBits));          \
-    __ mov_s(i.OutputDoubleRegister(), i.InputDoubleRegister(0));             \
-    __ mode##_w_s(i.OutputDoubleRegister(), i.InputDoubleRegister(0));        \
-    __ mfc1(at, i.OutputDoubleRegister());                                    \
-    __ Branch(USE_DELAY_SLOT, ool->entry(), eq, at, Operand(zero_reg));       \
-    __ cvt_s_w(i.OutputDoubleRegister(), i.OutputDoubleRegister());           \
-    __ bind(ool->exit());                                                     \
-    __ bind(&done);                                                           \
-  }
 
 #define ASSEMBLE_ATOMIC_LOAD_INTEGER(asm_instr)          \
   do {                                                   \
@@ -719,8 +629,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                                          i.TempRegister(2));
       }
       if (instr->InputAt(0)->IsImmediate()) {
-        Address wasm_code = reinterpret_cast<Address>(
-            i.ToConstant(instr->InputAt(0)).ToInt64());
+        Address wasm_code =
+            static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
         __ Call(wasm_code, info()->IsWasm() ? RelocInfo::WASM_CALL
                                             : RelocInfo::JS_TO_WASM_CALL);
       } else {
@@ -750,8 +660,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kArchTailCallWasm: {
       if (instr->InputAt(0)->IsImmediate()) {
-        Address wasm_code = reinterpret_cast<Address>(
-            i.ToConstant(instr->InputAt(0)).ToInt64());
+        Address wasm_code =
+            static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
         __ Jump(wasm_code, info()->IsWasm() ? RelocInfo::WASM_CALL
                                             : RelocInfo::JS_TO_WASM_CALL);
       } else {
@@ -911,8 +821,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ mov(i.OutputRegister(), kRootRegister);
       break;
     case kArchTruncateDoubleToI:
-      __ TruncateDoubleToIDelayed(zone(), i.OutputRegister(),
-                                  i.InputDoubleRegister(0));
+      __ TruncateDoubleToI(isolate(), zone(), i.OutputRegister(),
+                           i.InputDoubleRegister(0));
       break;
     case kArchStoreWithWriteBarrier: {
       RecordWriteMode mode =
@@ -1019,8 +929,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ASSEMBLE_IEEE754_UNOP(log10);
       break;
     case kIeee754Float64Pow: {
-      __ CallStubDelayed(new (zone())
-                             MathPowStub(nullptr, MathPowStub::DOUBLE));
+      __ Call(BUILTIN_CODE(isolate(), MathPowInternal), RelocInfo::CODE_TARGET);
       break;
     }
     case kIeee754Float64Sin:
@@ -1459,35 +1368,35 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                i.InputDoubleRegister(1));
       break;
     case kMips64Float64RoundDown: {
-      ASSEMBLE_ROUND_DOUBLE_TO_DOUBLE(floor);
+      __ Floor_d_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));
       break;
     }
     case kMips64Float32RoundDown: {
-      ASSEMBLE_ROUND_FLOAT_TO_FLOAT(floor);
+      __ Floor_s_s(i.OutputSingleRegister(), i.InputSingleRegister(0));
       break;
     }
     case kMips64Float64RoundTruncate: {
-      ASSEMBLE_ROUND_DOUBLE_TO_DOUBLE(trunc);
+      __ Trunc_d_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));
       break;
     }
     case kMips64Float32RoundTruncate: {
-      ASSEMBLE_ROUND_FLOAT_TO_FLOAT(trunc);
+      __ Trunc_s_s(i.OutputSingleRegister(), i.InputSingleRegister(0));
       break;
     }
     case kMips64Float64RoundUp: {
-      ASSEMBLE_ROUND_DOUBLE_TO_DOUBLE(ceil);
+      __ Ceil_d_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));
       break;
     }
     case kMips64Float32RoundUp: {
-      ASSEMBLE_ROUND_FLOAT_TO_FLOAT(ceil);
+      __ Ceil_s_s(i.OutputSingleRegister(), i.InputSingleRegister(0));
       break;
     }
     case kMips64Float64RoundTiesEven: {
-      ASSEMBLE_ROUND_DOUBLE_TO_DOUBLE(round);
+      __ Round_d_d(i.OutputDoubleRegister(), i.InputDoubleRegister(0));
       break;
     }
     case kMips64Float32RoundTiesEven: {
-      ASSEMBLE_ROUND_FLOAT_TO_FLOAT(round);
+      __ Round_s_s(i.OutputSingleRegister(), i.InputSingleRegister(0));
       break;
     }
     case kMips64Float32Max: {

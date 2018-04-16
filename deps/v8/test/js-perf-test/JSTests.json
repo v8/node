@@ -272,6 +272,41 @@
           ]
         },
         {
+          "name": "StringMatchAll",
+          "main": "run.js",
+          "resources": [ "string-matchall.js" ],
+          "flags": [
+            "--harmony-string-matchall"
+          ],
+          "test_flags": [ "string-matchall" ],
+          "results_regexp": "^%s\\-Strings\\(Score\\): (.+)$",
+          "run_count": 1,
+          "tests": [
+            {"name": "StringMatchAllBuiltinRegExpIteratorCreation"},
+            {"name": "StringMatchAllBuiltinStringIteratorCreation"},
+            {"name": "StringMatchAllBuiltinString"},
+            {"name": "StringMatchAllManualString"},
+            {"name": "StringMatchAllBuiltinRegExp"},
+            {"name": "StringMatchAllManualRegExp"},
+            {"name": "StringMatchAllBuiltinZeroWidth"},
+            {"name": "StringMatchAllBuiltinZeroWidthUnicode"}
+          ]
+        },
+        {
+          "name": "StringStartsEndsWithComparison",
+          "main": "run.js",
+          "resources": [ "string-startsendswith-comp.js" ],
+          "test_flags": [ "string-startsendswith-comp" ],
+          "results_regexp": "^%s\\-Strings\\(Score\\): (.+)$",
+          "run_count": 1,
+          "tests": [
+            {"name": "startsWith"},
+            {"name": "startsIndex"},
+            {"name": "endsWith"},
+            {"name": "endsIndex"}
+          ]
+        },
+        {
           "name": "StringSubstring",
           "main": "run.js",
           "resources": [ "string-substring.js" ],
@@ -497,10 +532,28 @@
           "test_flags": ["slice-nospecies"]
         },
         {
-          "name": "Sort",
+          "name": "SortIntTypes",
           "main": "run.js",
-          "resources": ["sort.js"],
-          "test_flags": ["sort"]
+          "resources": ["sort.js", "sort-int.js"],
+          "test_flags": ["sort-int"]
+        },
+        {
+          "name": "SortFloatTypes",
+          "main": "run.js",
+          "resources": ["sort.js", "sort-float.js"],
+          "test_flags": ["sort-float"]
+        },
+        {
+          "name": "SortCustomCompareFnIntTypes",
+          "main": "run.js",
+          "resources": ["sort.js", "sort-cmpfn-int.js"],
+          "test_flags": ["sort-cmpfn-int"]
+        },
+        {
+          "name": "SortCustomCompareFnFloatTypes",
+          "main": "run.js",
+          "resources": ["sort.js", "sort-cmpfn-float.js"],
+          "test_flags": ["sort-cmpfn-float"]
         },
         {
           "name": "SubarrayNoSpecies",
@@ -603,6 +656,79 @@
         {"name": "StringFrom"},
         {"name": "StringNoMapFrom"},
         {"name": "MixedFrom"}
+      ]
+    },
+    {
+      "name": "ArraySort",
+      "path": ["ArraySort"],
+      "main": "run.js",
+      "resources": ["sort-base.js", "sort.js"],
+      "test_flags": ["sort"],
+      "results_regexp": "^%s\\-ArraySort\\(Score\\): (.+)$",
+      "flags": [
+        "--allow-natives-syntax"
+      ],
+      "tests": [
+        {"name": "PackedSmi"},
+        {"name": "PackedDouble"},
+        {"name": "PackedElement"},
+        {"name": "HoleySmi"},
+        {"name": "HoleyDouble"},
+        {"name": "HoleyElement"},
+        {"name": "Dictionary"}
+      ]
+    },
+    {
+      "name": "ArraySortCompareFns",
+      "path": ["ArraySort"],
+      "main": "run.js",
+      "resources": ["sort-base.js", "sort-cmpfn.js"],
+      "test_flags": ["sort-cmpfn"],
+      "results_regexp": "^%s\\-ArraySort\\(Score\\): (.+)$",
+      "flags": [
+        "--allow-natives-syntax"
+      ],
+      "tests": [
+        {"name": "PackedSmi"},
+        {"name": "PackedDouble"},
+        {"name": "PackedElement"},
+        {"name": "HoleySmi"},
+        {"name": "HoleyDouble"},
+        {"name": "HoleyElement"},
+        {"name": "Dictionary"}
+      ]
+    },
+    {
+      "name": "ArraySortCompareFnKindChange",
+      "path": ["ArraySort"],
+      "main": "run.js",
+      "resources": ["sort-base.js", "sort-cmpfn-kindchange.js"],
+      "test_flags": ["sort-cmpfn-kindchange"],
+      "results_regexp": "^%s\\-ArraySort\\(Score\\): (.+)$",
+      "flags": [
+        "--allow-natives-syntax"
+      ],
+      "tests": [
+        {"name": "PackedSmiToPackedDouble"},
+        {"name": "HoleySmiToHoleyDouble"},
+        {"name": "PackedDoubleToHoleyDouble"},
+        {"name": "PackedElementToDictionary"},
+        {"name": "HoleyElementToDictionary"}
+      ]
+    },
+    {
+      "name": "ArraySortPreSorted",
+      "path": ["ArraySort"],
+      "main": "run.js",
+      "resources": ["sort-base.js", "sort-presorted.js"],
+      "test_flags": ["sort-presorted"],
+      "results_regexp": "^%s\\-ArraySort\\(Score\\): (.+)$",
+      "flags": [
+        "--allow-natives-syntax"
+      ],
+      "tests": [
+        {"name": "PackedSmiPreSorted"},
+        {"name": "PackedSmiPreSortedReversed"}
       ]
     },
     {

@@ -450,6 +450,18 @@ void Builtins::Generate_JSBuiltinsConstructStub(MacroAssembler* masm) {
   Generate_JSBuiltinsConstructStubHelper(masm);
 }
 
+static void GetSharedFunctionInfoBytecode(MacroAssembler* masm,
+                                          Register sfi_data,
+                                          Register scratch1) {
+  Label done;
+
+  __ CompareObjectType(sfi_data, scratch1, scratch1, INTERPRETER_DATA_TYPE);
+  __ bne(&done, Label::kNear);
+  __ LoadP(sfi_data,
+           FieldMemOperand(sfi_data, InterpreterData::kBytecodeArrayOffset));
+  __ bind(&done);
+}
+
 // static
 void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   // ----------- S t a t e -------------
@@ -534,7 +546,9 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
 
   // Underlying function needs to have bytecode available.
   if (FLAG_debug_code) {
+    __ LoadP(r5, FieldMemOperand(r6, JSFunction::kSharedFunctionInfoOffset));
     __ LoadP(r5, FieldMemOperand(r5, SharedFunctionInfo::kFunctionDataOffset));
+    GetSharedFunctionInfoBytecode(masm, r5, r1);
     __ CompareObjectType(r5, r5, r5, BYTECODE_ARRAY_TYPE);
     __ Assert(eq, AbortReason::kMissingBytecodeArray);
   }
@@ -556,6 +570,8 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   {
     FrameAndConstantPoolScope scope(masm, StackFrame::INTERNAL);
     __ Push(r3, r6);
+    // Push hole as receiver since we do not use it for stepping.
+    __ PushRoot(Heap::kTheHoleValueRootIndex);
     __ CallRuntime(Runtime::kDebugOnFunctionCall);
     __ Pop(r3);
     __ LoadP(r6, FieldMemOperand(r3, JSGeneratorObject::kFunctionOffset));
@@ -932,6 +948,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   // Load original bytecode array or the debug copy.
   __ LoadP(kInterpreterBytecodeArrayRegister,
            FieldMemOperand(r2, SharedFunctionInfo::kFunctionDataOffset));
+  GetSharedFunctionInfoBytecode(masm, kInterpreterBytecodeArrayRegister, r6);
   __ LoadP(r6, FieldMemOperand(r2, SharedFunctionInfo::kDebugInfoOffset));
   __ TestIfSmi(r6);
   __ bne(&maybe_load_debug_bytecode_array);
@@ -1069,7 +1086,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   ExternalReference debug_execution_mode =
       ExternalReference::debug_execution_mode_address(masm->isolate());
   __ mov(r6, Operand(debug_execution_mode));
-  __ LoadB(r6, MemOperand(r6));
+  __ LoadW(r6, MemOperand(r6));
   STATIC_ASSERT(static_cast<int>(DebugInfo::kDebugExecutionMode) ==
                 static_cast<int>(DebugInfo::kSideEffects));
   __ CmpP(r6, ip);
@@ -1220,10 +1237,29 @@ void Builtins::Generate_InterpreterPushArgsThenConstructImpl(
 static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
   // Set the return address to the correct point in the interpreter entry
   // trampoline.
+  Label builtin_trampoline, trampoline_loaded;
   Smi* interpreter_entry_return_pc_offset(
       masm->isolate()->heap()->interpreter_entry_return_pc_offset());
   DCHECK_NE(interpreter_entry_return_pc_offset, Smi::kZero);
+
+  // If the SFI function_data is an InterpreterData, get the trampoline stored
+  // in it, otherwise get the trampoline from the builtins list.
+  __ LoadP(r4, MemOperand(fp, StandardFrameConstants::kFunctionOffset));
+  __ LoadP(r4, FieldMemOperand(r4, JSFunction::kSharedFunctionInfoOffset));
+  __ LoadP(r4, FieldMemOperand(r4, SharedFunctionInfo::kFunctionDataOffset));
+  __ CompareObjectType(r4, kInterpreterDispatchTableRegister,
+                       kInterpreterDispatchTableRegister,
+                       INTERPRETER_DATA_TYPE);
+  __ bne(&builtin_trampoline);
+
+  __ LoadP(r4,
+           FieldMemOperand(r4, InterpreterData::kInterpreterTrampolineOffset));
+  __ b(&trampoline_loaded);
+
+  __ bind(&builtin_trampoline);
   __ Move(r4, BUILTIN_CODE(masm->isolate(), InterpreterEntryTrampoline));
+
+  __ bind(&trampoline_loaded);
   __ AddP(r14, r4, Operand(interpreter_entry_return_pc_offset->value() +
                            Code::kHeaderSize - kHeapObjectTag));
 
@@ -1314,6 +1350,7 @@ static void GetSharedFunctionInfoCode(MacroAssembler* masm, Register sfi_data,
   Label check_is_fixed_array;
   Label check_is_pre_parsed_scope_data;
   Label check_is_function_template_info;
+  Label check_is_interpreter_data;
 
   Register data_type = scratch1;
 
@@ -1358,11 +1395,21 @@ static void GetSharedFunctionInfoCode(MacroAssembler* masm, Register sfi_data,
 
   // IsFunctionTemplateInfo: API call
   __ bind(&check_is_function_template_info);
+  __ CmpP(data_type, Operand(FUNCTION_TEMPLATE_INFO_TYPE));
+  __ bne(&check_is_interpreter_data);
+  __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), HandleApiCall));
+  __ b(&done);
+
+  // IsInterpreterData: Interpret bytecode
+  __ bind(&check_is_interpreter_data);
   if (FLAG_debug_code) {
-    __ CmpP(data_type, Operand(FUNCTION_TEMPLATE_INFO_TYPE));
+    __ CmpP(data_type, Operand(INTERPRETER_DATA_TYPE));
     __ Assert(eq, AbortReason::kInvalidSharedFunctionInfoData);
   }
   __ Move(sfi_data, BUILTIN_CODE(masm->isolate(), HandleApiCall));
+  __ LoadP(
+      sfi_data,
+      FieldMemOperand(sfi_data, InterpreterData::kInterpreterTrampolineOffset));
 
   __ bind(&done);
 }
@@ -2343,7 +2390,7 @@ void Builtins::Generate_ConstructFunction(MacroAssembler* masm) {
 
   // Jump to JSBuiltinsConstructStub or JSConstructStubGeneric.
   __ LoadP(r6, FieldMemOperand(r3, JSFunction::kSharedFunctionInfoOffset));
-  __ LoadP(r6, FieldMemOperand(r6, SharedFunctionInfo::kFlagsOffset));
+  __ LoadlW(r6, FieldMemOperand(r6, SharedFunctionInfo::kFlagsOffset));
   __ AndP(r6, Operand(SharedFunctionInfo::ConstructAsBuiltinBit::kMask));
   __ beq(&call_generic_stub);
 
@@ -2630,9 +2677,9 @@ void Builtins::Generate_WasmCompileLazy(MacroAssembler* masm) {
     __ LoadSmiLiteral(cp, Smi::kZero);
     __ CallRuntime(Runtime::kWasmCompileLazy);
     // The entrypoint address is the first return value.
-    __ mov(ip, r2);
+    __ LoadRR(ip, r2);
     // The WASM instance is the second return value.
-    __ movq(wasm_instance_reg, kReturnRegister1);
+    __ LoadRR(wasm_instance_reg, kReturnRegister1);
 
     // Restore registers.
     __ MultiPopDoubles(fp_regs);
@@ -2640,6 +2687,210 @@ void Builtins::Generate_WasmCompileLazy(MacroAssembler* masm) {
   }
   // Finally, jump to the entrypoint.
   __ Jump(ip);
+}
+
+void Builtins::Generate_DoubleToI(MacroAssembler* masm) {
+  Label out_of_range, only_low, negate, done, fastpath_done;
+  Register result_reg = r2;
+
+  // Immediate values for this stub fit in instructions, so it's safe to use ip.
+  Register scratch = GetRegisterThatIsNotOneOf(result_reg);
+  Register scratch_low = GetRegisterThatIsNotOneOf(result_reg, scratch);
+  Register scratch_high =
+      GetRegisterThatIsNotOneOf(result_reg, scratch, scratch_low);
+  DoubleRegister double_scratch = kScratchDoubleReg;
+
+  __ Push(result_reg, scratch);
+  // Account for saved regs.
+  int argument_offset = 2 * kPointerSize;
+
+  // Load double input.
+  __ LoadDouble(double_scratch, MemOperand(sp, argument_offset));
+
+  // Do fast-path convert from double to int.
+  __ ConvertDoubleToInt64(result_reg, double_scratch);
+
+  // Test for overflow
+  __ TestIfInt32(result_reg);
+  __ beq(&fastpath_done, Label::kNear);
+
+  __ Push(scratch_high, scratch_low);
+  // Account for saved regs.
+  argument_offset += 2 * kPointerSize;
+
+  __ LoadlW(scratch_high,
+            MemOperand(sp, argument_offset + Register::kExponentOffset));
+  __ LoadlW(scratch_low,
+            MemOperand(sp, argument_offset + Register::kMantissaOffset));
+
+  __ ExtractBitMask(scratch, scratch_high, HeapNumber::kExponentMask);
+  // Load scratch with exponent - 1. This is faster than loading
+  // with exponent because Bias + 1 = 1024 which is a *S390* immediate value.
+  STATIC_ASSERT(HeapNumber::kExponentBias + 1 == 1024);
+  __ SubP(scratch, Operand(HeapNumber::kExponentBias + 1));
+  // If exponent is greater than or equal to 84, the 32 less significant
+  // bits are 0s (2^84 = 1, 52 significant bits, 32 uncoded bits),
+  // the result is 0.
+  // Compare exponent with 84 (compare exponent - 1 with 83).
+  __ CmpP(scratch, Operand(83));
+  __ bge(&out_of_range, Label::kNear);
+
+  // If we reach this code, 31 <= exponent <= 83.
+  // So, we don't have to handle cases where 0 <= exponent <= 20 for
+  // which we would need to shift right the high part of the mantissa.
+  // Scratch contains exponent - 1.
+  // Load scratch with 52 - exponent (load with 51 - (exponent - 1)).
+  __ Load(r0, Operand(51));
+  __ SubP(scratch, r0, scratch);
+  __ CmpP(scratch, Operand::Zero());
+  __ ble(&only_low, Label::kNear);
+  // 21 <= exponent <= 51, shift scratch_low and scratch_high
+  // to generate the result.
+  __ ShiftRight(scratch_low, scratch_low, scratch);
+  // Scratch contains: 52 - exponent.
+  // We needs: exponent - 20.
+  // So we use: 32 - scratch = 32 - 52 + exponent = exponent - 20.
+  __ Load(r0, Operand(32));
+  __ SubP(scratch, r0, scratch);
+  __ ExtractBitMask(result_reg, scratch_high, HeapNumber::kMantissaMask);
+  // Set the implicit 1 before the mantissa part in scratch_high.
+  STATIC_ASSERT(HeapNumber::kMantissaBitsInTopWord >= 16);
+  __ Load(r0, Operand(1 << ((HeapNumber::kMantissaBitsInTopWord)-16)));
+  __ ShiftLeftP(r0, r0, Operand(16));
+  __ OrP(result_reg, result_reg, r0);
+  __ ShiftLeft(r0, result_reg, scratch);
+  __ OrP(result_reg, scratch_low, r0);
+  __ b(&negate, Label::kNear);
+
+  __ bind(&out_of_range);
+  __ mov(result_reg, Operand::Zero());
+  __ b(&done, Label::kNear);
+
+  __ bind(&only_low);
+  // 52 <= exponent <= 83, shift only scratch_low.
+  // On entry, scratch contains: 52 - exponent.
+  __ LoadComplementRR(scratch, scratch);
+  __ ShiftLeft(result_reg, scratch_low, scratch);
+
+  __ bind(&negate);
+  // If input was positive, scratch_high ASR 31 equals 0 and
+  // scratch_high LSR 31 equals zero.
+  // New result = (result eor 0) + 0 = result.
+  // If the input was negative, we have to negate the result.
+  // Input_high ASR 31 equals 0xFFFFFFFF and scratch_high LSR 31 equals 1.
+  // New result = (result eor 0xFFFFFFFF) + 1 = 0 - result.
+  __ ShiftRightArith(r0, scratch_high, Operand(31));
+#if V8_TARGET_ARCH_S390X
+  __ lgfr(r0, r0);
+  __ ShiftRightP(r0, r0, Operand(32));
+#endif
+  __ XorP(result_reg, r0);
+  __ ShiftRight(r0, scratch_high, Operand(31));
+  __ AddP(result_reg, r0);
+
+  __ bind(&done);
+  __ Pop(scratch_high, scratch_low);
+  argument_offset -= 2 * kPointerSize;
+
+  __ bind(&fastpath_done);
+  __ StoreP(result_reg, MemOperand(sp, argument_offset));
+  __ Pop(result_reg, scratch);
+
+  __ Ret();
+}
+
+void Builtins::Generate_MathPowInternal(MacroAssembler* masm) {
+  const Register exponent = MathPowTaggedDescriptor::exponent();
+  DCHECK(exponent == r4);
+  const DoubleRegister double_base = d1;
+  const DoubleRegister double_exponent = d2;
+  const DoubleRegister double_result = d3;
+  const DoubleRegister double_scratch = d0;
+  const Register scratch = r1;
+  const Register scratch2 = r9;
+
+  Label call_runtime, done, int_exponent;
+
+  // Detect integer exponents stored as double.
+  __ TryDoubleToInt32Exact(scratch, double_exponent, scratch2, double_scratch);
+  __ beq(&int_exponent, Label::kNear);
+
+  __ push(r14);
+  {
+    AllowExternalCallThatCantCauseGC scope(masm);
+    __ PrepareCallCFunction(0, 2, scratch);
+    __ MovToFloatParameters(double_base, double_exponent);
+    __ CallCFunction(
+        ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+  }
+  __ pop(r14);
+  __ MovFromFloatResult(double_result);
+  __ b(&done);
+
+  // Calculate power with integer exponent.
+  __ bind(&int_exponent);
+
+  // Get two copies of exponent in the registers scratch and exponent.
+  // Exponent has previously been stored into scratch as untagged integer.
+  __ LoadRR(exponent, scratch);
+
+  __ ldr(double_scratch, double_base);  // Back up base.
+  __ LoadImmP(scratch2, Operand(1));
+  __ ConvertIntToDouble(double_result, scratch2);
+
+  // Get absolute value of exponent.
+  Label positive_exponent;
+  __ CmpP(scratch, Operand::Zero());
+  __ bge(&positive_exponent, Label::kNear);
+  __ LoadComplementRR(scratch, scratch);
+  __ bind(&positive_exponent);
+
+  Label while_true, no_carry, loop_end;
+  __ bind(&while_true);
+  __ mov(scratch2, Operand(1));
+  __ AndP(scratch2, scratch);
+  __ beq(&no_carry, Label::kNear);
+  __ mdbr(double_result, double_scratch);
+  __ bind(&no_carry);
+  __ ShiftRightP(scratch, scratch, Operand(1));
+  __ LoadAndTestP(scratch, scratch);
+  __ beq(&loop_end, Label::kNear);
+  __ mdbr(double_scratch, double_scratch);
+  __ b(&while_true);
+  __ bind(&loop_end);
+
+  __ CmpP(exponent, Operand::Zero());
+  __ bge(&done);
+
+  // get 1/double_result:
+  __ ldr(double_scratch, double_result);
+  __ LoadImmP(scratch2, Operand(1));
+  __ ConvertIntToDouble(double_result, scratch2);
+  __ ddbr(double_result, double_scratch);
+
+  // Test whether result is zero.  Bail out to check for subnormal result.
+  // Due to subnormals, x^-y == (1/x)^y does not hold in all cases.
+  __ lzdr(kDoubleRegZero);
+  __ cdbr(double_result, kDoubleRegZero);
+  __ bne(&done, Label::kNear);
+  // double_exponent may not containe the exponent value if the input was a
+  // smi.  We set it with exponent value before bailing out.
+  __ ConvertIntToDouble(double_exponent, exponent);
+
+  // Returning or bailing out.
+  __ push(r14);
+  {
+    AllowExternalCallThatCantCauseGC scope(masm);
+    __ PrepareCallCFunction(0, 2, scratch);
+    __ MovToFloatParameters(double_base, double_exponent);
+    __ CallCFunction(
+        ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+  }
+  __ pop(r14);
+  __ MovFromFloatResult(double_result);
+
+  __ bind(&done);
+  __ Ret();
 }
 
 #undef __

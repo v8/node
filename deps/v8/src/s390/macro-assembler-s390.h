@@ -866,8 +866,8 @@ class TurboAssembler : public Assembler {
 
   // Emit code for a truncating division by a constant. The dividend register is
   // unchanged and ip gets clobbered. Dividend and result must be different.
-  void TruncateDoubleToIDelayed(Zone* zone, Register result,
-                                DoubleRegister double_input);
+  void TruncateDoubleToI(Isolate* isolate, Zone* zone, Register result,
+                         DoubleRegister double_input);
   void TryInlineTruncateDoubleToI(Register result, DoubleRegister double_input,
                                   Label* done);
 
@@ -1011,6 +1011,7 @@ class TurboAssembler : public Assembler {
                      Label* condition_met);
 
   void ResetSpeculationPoisonRegister();
+  void ComputeCodeStartAddress(Register dst);
 
  private:
   static const int kSmiShift = kSmiTagSize + kSmiShiftSize;

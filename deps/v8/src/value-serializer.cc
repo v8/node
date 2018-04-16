@@ -10,12 +10,11 @@
 #include "src/api.h"
 #include "src/base/logging.h"
 #include "src/conversions.h"
-#include "src/factory.h"
 #include "src/flags.h"
 #include "src/handles-inl.h"
+#include "src/heap/factory.h"
 #include "src/isolate.h"
 #include "src/objects-inl.h"
-#include "src/objects.h"
 #include "src/snapshot/code-serializer.h"
 #include "src/transitions.h"
 #include "src/wasm/wasm-engine.h"
@@ -526,7 +525,7 @@ Maybe<bool> ValueSerializer::WriteJSReceiver(Handle<JSReceiver> receiver) {
 }
 
 Maybe<bool> ValueSerializer::WriteJSObject(Handle<JSObject> object) {
-  DCHECK_GT(object->map()->instance_type(), LAST_CUSTOM_ELEMENTS_RECEIVER);
+  DCHECK(!object->map()->IsCustomElementsReceiverMap());
   const bool can_serialize_fast =
       object->HasFastProperties() && object->elements()->length() == 0;
   if (!can_serialize_fast) return WriteJSObjectSlow(object);
@@ -1797,7 +1796,6 @@ MaybeHandle<JSObject> ValueDeserializer::ReadWasmModule() {
     result = isolate_->wasm_engine()->SyncCompile(
         isolate_, &thrower, wasm::ModuleWireBytes(wire_bytes));
   }
-  RETURN_EXCEPTION_IF_SCHEDULED_EXCEPTION(isolate_, JSObject);
   uint32_t id = next_id_++;
   if (!result.is_null()) {
     AddObjectWithID(id, result.ToHandleChecked());

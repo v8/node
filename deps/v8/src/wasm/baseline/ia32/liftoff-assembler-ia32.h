@@ -20,9 +20,9 @@ namespace wasm {
 
 namespace liftoff {
 
-// ebp-8 holds the stack marker, ebp-16 is the instance parameter, first stack
-// slot is located at ebp-24.
-constexpr int32_t kConstantStackSpace = 16;
+// ebp-4 holds the stack marker, ebp-8 is the instance parameter, first stack
+// slot is located at ebp-16.
+constexpr int32_t kConstantStackSpace = 8;
 constexpr int32_t kFirstStackSlotOffset =
     kConstantStackSpace + LiftoffAssembler::kStackSlotSize;
 
@@ -37,7 +37,7 @@ inline Operand GetHalfStackSlot(uint32_t half_index) {
 }
 
 // TODO(clemensh): Make this a constexpr variable once Operand is constexpr.
-inline Operand GetInstanceOperand() { return Operand(ebp, -16); }
+inline Operand GetInstanceOperand() { return Operand(ebp, -8); }
 
 static constexpr LiftoffRegList kByteRegs =
     LiftoffRegList::FromBits<Register::ListOf<eax, ecx, edx, ebx>()>();
@@ -114,9 +114,7 @@ void LiftoffAssembler::LoadConstant(LiftoffRegister reg, WasmValue value,
                                     RelocInfo::Mode rmode) {
   switch (value.type()) {
     case kWasmI32:
-      TurboAssembler::Move(
-          reg.gp(),
-          Immediate(reinterpret_cast<Address>(value.to_i32()), rmode));
+      TurboAssembler::Move(reg.gp(), Immediate(value.to_i32(), rmode));
       break;
     case kWasmI64: {
       DCHECK(RelocInfo::IsNone(rmode));
@@ -156,7 +154,7 @@ void LiftoffAssembler::FillInstanceInto(Register dst) {
 void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
                             LoadType type, LiftoffRegList pinned,
-                            uint32_t* protected_load_pc) {
+                            uint32_t* protected_load_pc, bool is_load_mem) {
   DCHECK_EQ(type.value_type() == kWasmI64, dst.is_pair());
   // Wasm memory is limited to a size <2GB, so all offsets can be encoded as
   // immediate value (in 31 bits, interpreted as signed value).
@@ -237,7 +235,7 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
 void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
                              StoreType type, LiftoffRegList pinned,
-                             uint32_t* protected_store_pc) {
+                             uint32_t* protected_store_pc, bool is_store_mem) {
   DCHECK_EQ(type.value_type() == kWasmI64, src.is_pair());
   // Wasm memory is limited to a size <2GB, so all offsets can be encoded as
   // immediate value (in 31 bits, interpreted as signed value).
@@ -296,6 +294,17 @@ void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
     default:
       UNREACHABLE();
   }
+}
+
+void LiftoffAssembler::ChangeEndiannessLoad(LiftoffRegister dst, LoadType type,
+                                            LiftoffRegList pinned) {
+  // Nop.
+}
+
+void LiftoffAssembler::ChangeEndiannessStore(LiftoffRegister src,
+                                             StoreType type,
+                                             LiftoffRegList pinned) {
+  // Nop.
 }
 
 void LiftoffAssembler::LoadCallerFrameSlot(LiftoffRegister dst,
@@ -590,6 +599,49 @@ void LiftoffAssembler::emit_i64_add(LiftoffRegister dst, LiftoffRegister lhs,
 void LiftoffAssembler::emit_i64_sub(LiftoffRegister dst, LiftoffRegister lhs,
                                     LiftoffRegister rhs) {
   liftoff::OpWithCarry<&Assembler::sub, &Assembler::sbb>(this, dst, lhs, rhs);
+}
+
+void LiftoffAssembler::emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
+                                    LiftoffRegister rhs) {
+  // Idea:
+  //        [           lhs_hi  |           lhs_lo  ] * [  rhs_hi  |  rhs_lo  ]
+  //    =   [  lhs_hi * rhs_lo  |                   ]  (32 bit mul, shift 32)
+  //      + [  lhs_lo * rhs_hi  |                   ]  (32 bit mul, shift 32)
+  //      + [             lhs_lo * rhs_lo           ]  (32x32->64 mul, shift 0)
+
+  // For simplicity, we move lhs and rhs into fixed registers.
+  Register dst_hi = edx;
+  Register dst_lo = eax;
+  Register lhs_hi = ecx;
+  Register lhs_lo = dst_lo;
+  Register rhs_hi = dst_hi;
+  Register rhs_lo = ebx;
+
+  // Spill all these registers if they are still holding other values.
+  for (Register r : {dst_hi, dst_lo, lhs_hi, rhs_lo}) {
+    if (!cache_state_.is_used(LiftoffRegister(r))) continue;
+    SpillRegister(LiftoffRegister(r));
+  }
+
+  // Move lhs and rhs into the respective registers.
+  ParallelRegisterMove(
+      {{LiftoffRegister::ForPair(lhs_lo, lhs_hi), lhs, kWasmI64},
+       {LiftoffRegister::ForPair(rhs_lo, rhs_hi), rhs, kWasmI64}});
+
+  // First mul: lhs_hi' = lhs_hi * rhs_lo.
+  imul(lhs_hi, rhs_lo);
+  // Second mul: rhi_hi' = rhs_hi * lhs_lo.
+  imul(rhs_hi, lhs_lo);
+  // Add them: lhs_hi'' = lhs_hi' + rhs_hi' = lhs_hi * rhs_lo + rhs_hi * lhs_lo.
+  add(lhs_hi, rhs_hi);
+  // Third mul: edx:eax (dst_hi:dst_lo) = eax * ebx (lhs_lo * rhs_lo).
+  mul(rhs_lo);
+  // Add lhs_hi'' to dst_hi.
+  add(dst_hi, lhs_hi);
+
+  // Finally, move back the temporary result to the actual dst register pair.
+  LiftoffRegister dst_tmp = LiftoffRegister::ForPair(dst_lo, dst_hi);
+  if (dst != dst_tmp) Move(dst, dst_tmp, kWasmI64);
 }
 
 namespace liftoff {

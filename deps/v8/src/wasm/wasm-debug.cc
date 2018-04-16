@@ -10,8 +10,8 @@
 #include "src/compiler/wasm-compiler.h"
 #include "src/debug/debug-scopes.h"
 #include "src/debug/debug.h"
-#include "src/factory.h"
 #include "src/frames-inl.h"
+#include "src/heap/factory.h"
 #include "src/identity-map.h"
 #include "src/isolate.h"
 #include "src/wasm/module-decoder.h"
@@ -169,14 +169,13 @@ class InterpreterHandle {
   // was not handled inside this activation. In the latter case, a pending
   // exception will have been set on the isolate.
   bool Execute(Handle<WasmInstanceObject> instance_object,
-               Address frame_pointer, uint32_t func_index,
-               uint8_t* arg_buffer) {
+               Address frame_pointer, uint32_t func_index, Address arg_buffer) {
     DCHECK_GE(module()->functions.size(), func_index);
     FunctionSig* sig = module()->functions[func_index].sig;
     DCHECK_GE(kMaxInt, sig->parameter_count());
     int num_params = static_cast<int>(sig->parameter_count());
     ScopedVector<WasmValue> wasm_args(num_params);
-    uint8_t* arg_buf_ptr = arg_buffer;
+    Address arg_buf_ptr = arg_buffer;
     for (int i = 0; i < num_params; ++i) {
       uint32_t param_size = 1 << ElementSizeLog2Of(sig->GetParam(i));
 #define CASE_ARG_TYPE(type, ctype)                                    \
@@ -612,12 +611,9 @@ void RedirectCallsitesInInstance(Isolate* isolate, WasmInstanceObject* instance,
   // TODO(6668): Find instances that imported our code and also patch those.
 
   // Redirect all calls in exported functions.
-  FixedArray* weak_exported_functions =
-      instance->compiled_module()->weak_exported_functions();
-  for (int i = 0, e = weak_exported_functions->length(); i != e; ++i) {
-    WeakCell* weak_function = WeakCell::cast(weak_exported_functions->get(i));
-    if (weak_function->cleared()) continue;
-    Code* code = JSFunction::cast(weak_function->value())->code();
+  FixedArray* export_wrapper = instance->compiled_module()->export_wrappers();
+  for (int i = 0, e = export_wrapper->length(); i != e; ++i) {
+    Code* code = Code::cast(export_wrapper->get(i));
     RedirectCallsitesInJSWrapperCode(isolate, code, map);
   }
 }
@@ -686,12 +682,11 @@ void WasmDebugInfo::RedirectToInterpreter(Handle<WasmDebugInfo> debug_info,
     const wasm::WasmCode* old_code =
         native_module->GetCode(static_cast<uint32_t>(func_index));
     Handle<Foreign> foreign_holder = isolate->factory()->NewForeign(
-        wasm_new_code->instructions().start(), TENURED);
+        wasm_new_code->instruction_start(), TENURED);
     interpreted_functions->set(func_index, *foreign_holder);
-    DCHECK_EQ(0, code_to_relocate.count(old_code->instructions().start()));
-    code_to_relocate.insert(
-        std::make_pair(old_code->instructions().start(),
-                       wasm_new_code->instructions().start()));
+    DCHECK_EQ(0, code_to_relocate.count(old_code->instruction_start()));
+    code_to_relocate.insert(std::make_pair(old_code->instruction_start(),
+                                           wasm_new_code->instruction_start()));
   }
   RedirectCallsitesInInstance(isolate, *instance, &code_to_relocate);
 }
@@ -701,7 +696,7 @@ void WasmDebugInfo::PrepareStep(StepAction step_action) {
 }
 
 bool WasmDebugInfo::RunInterpreter(Address frame_pointer, int func_index,
-                                   uint8_t* arg_buffer) {
+                                   Address arg_buffer) {
   DCHECK_LE(0, func_index);
   Handle<WasmInstanceObject> instance(wasm_instance());
   return GetInterpreterHandle(this)->Execute(

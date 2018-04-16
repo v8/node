@@ -15,10 +15,10 @@
 #include "src/debug/debug-interface.h"
 #include "src/debug/interface-types.h"
 #include "src/execution.h"
-#include "src/factory.h"
 #include "src/flags.h"
 #include "src/frames.h"
 #include "src/globals.h"
+#include "src/heap/factory.h"
 #include "src/objects/debug-objects.h"
 #include "src/runtime/runtime.h"
 #include "src/source-position-table.h"
@@ -225,8 +225,8 @@ class Debug {
   void OnCompileError(Handle<Script> script);
   void OnAfterCompile(Handle<Script> script);
 
-  MUST_USE_RESULT MaybeHandle<Object> Call(Handle<Object> fun,
-                                           Handle<Object> data);
+  V8_WARN_UNUSED_RESULT MaybeHandle<Object> Call(Handle<Object> fun,
+                                                 Handle<Object> data);
   Handle<Context> GetDebugContext();
   void HandleDebugBreak(IgnoreBreakMode ignore_break_mode);
 
@@ -345,7 +345,8 @@ class Debug {
   void ApplySideEffectChecks(Handle<DebugInfo> debug_info);
   void ClearSideEffectChecks(Handle<DebugInfo> debug_info);
 
-  bool PerformSideEffectCheck(Handle<JSFunction> function);
+  bool PerformSideEffectCheck(Handle<JSFunction> function,
+                              Handle<Object> receiver);
   bool PerformSideEffectCheckForCallback(Handle<Object> callback_info);
   bool PerformSideEffectCheckAtBytecode(InterpretedFrame* frame);
 
@@ -445,14 +446,12 @@ class Debug {
   void OnException(Handle<Object> exception, Handle<Object> promise);
 
   // Constructors for debug event objects.
-  MUST_USE_RESULT MaybeHandle<Object> MakeExecutionState();
-  MUST_USE_RESULT MaybeHandle<Object> MakeExceptionEvent(
-      Handle<Object> exception,
-      bool uncaught,
-      Handle<Object> promise);
-  MUST_USE_RESULT MaybeHandle<Object> MakeCompileEvent(
+  V8_WARN_UNUSED_RESULT MaybeHandle<Object> MakeExecutionState();
+  V8_WARN_UNUSED_RESULT MaybeHandle<Object> MakeExceptionEvent(
+      Handle<Object> exception, bool uncaught, Handle<Object> promise);
+  V8_WARN_UNUSED_RESULT MaybeHandle<Object> MakeCompileEvent(
       Handle<Script> script, v8::DebugEvent type);
-  MUST_USE_RESULT MaybeHandle<Object> MakeAsyncTaskEvent(
+  V8_WARN_UNUSED_RESULT MaybeHandle<Object> MakeAsyncTaskEvent(
       v8::debug::PromiseDebugActionType type, int id);
 
   void ProcessCompileEvent(v8::DebugEvent event, Handle<Script> script);
@@ -503,6 +502,7 @@ class Debug {
   void FindDebugInfo(Handle<DebugInfo> debug_info, DebugInfoListNode** prev,
                      DebugInfoListNode** curr);
   void FreeDebugInfoListNode(DebugInfoListNode* prev, DebugInfoListNode* node);
+  bool PerformSideEffectCheckForObject(Handle<Object> object);
 
   // Global handles.
   Handle<Context> debug_context_;

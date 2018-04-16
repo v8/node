@@ -177,10 +177,6 @@ int TurboAssembler::PopCallerSaved(SaveFPRegsMode fp_mode, Register exclusion1,
   return bytes;
 }
 
-void TurboAssembler::SlowTruncateToIDelayed(Zone* zone, Register result_reg) {
-  CallStubDelayed(new (zone) DoubleToIStub(nullptr, result_reg));
-}
-
 void MacroAssembler::DoubleToI(Register result_reg, XMMRegister input_reg,
                                XMMRegister scratch, Label* lost_precision,
                                Label* is_nan, Label::Distance dst) {
@@ -1021,12 +1017,19 @@ void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
     if (actual.is_reg()) {
       SmiTag(actual.reg());
       Push(actual.reg());
+      SmiUntag(actual.reg());
     }
     if (new_target.is_valid()) {
       Push(new_target);
     }
     Push(fun);
     Push(fun);
+    Operand receiver_op =
+        actual.is_reg()
+            ? Operand(ebp, actual.reg(), times_pointer_size, kPointerSize * 2)
+            : Operand(ebp, actual.immediate() * times_pointer_size +
+                               kPointerSize * 2);
+    Push(receiver_op);
     CallRuntime(Runtime::kDebugOnFunctionCall);
     Pop(fun);
     if (new_target.is_valid()) {

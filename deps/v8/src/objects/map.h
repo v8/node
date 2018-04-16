@@ -57,7 +57,7 @@ namespace internal {
   V(TransitionArray)       \
   V(WasmInstanceObject)    \
   V(WeakCell)              \
-  V(WeakFixedArray)
+  V(WeakArray)
 
 // For data objects, JS objects and structs along with generic visitor which
 // can visit object of any size we provide visitors specialized by
@@ -466,7 +466,7 @@ class Map : public HeapObject {
                               int* old_number_of_fields) const;
   // TODO(ishell): moveit!
   static Handle<Map> GeneralizeAllFields(Handle<Map> map);
-  MUST_USE_RESULT static Handle<FieldType> GeneralizeFieldType(
+  V8_WARN_UNUSED_RESULT static Handle<FieldType> GeneralizeFieldType(
       Representation rep1, Handle<FieldType> type1, Representation rep2,
       Handle<FieldType> type2, Isolate* isolate);
   static void GeneralizeField(Handle<Map> map, int modify_index,
@@ -648,12 +648,12 @@ class Map : public HeapObject {
   static Handle<Object> WrapFieldType(Handle<FieldType> type);
   static FieldType* UnwrapFieldType(Object* wrapped_type);
 
-  MUST_USE_RESULT static MaybeHandle<Map> CopyWithField(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Map> CopyWithField(
       Handle<Map> map, Handle<Name> name, Handle<FieldType> type,
       PropertyAttributes attributes, PropertyConstness constness,
       Representation representation, TransitionFlag flag);
 
-  MUST_USE_RESULT static MaybeHandle<Map> CopyWithConstant(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Map> CopyWithConstant(
       Handle<Map> map, Handle<Name> name, Handle<Object> constant,
       PropertyAttributes attributes, TransitionFlag flag);
 
@@ -754,6 +754,8 @@ class Map : public HeapObject {
   inline bool IsJSDataViewMap() const;
 
   inline bool IsSpecialReceiverMap() const;
+
+  inline bool IsCustomElementsReceiverMap() const;
 
   static void AddDependentCode(Handle<Map> map,
                                DependentCode::DependencyGroup group,
@@ -900,7 +902,7 @@ class Map : public HeapObject {
                                            Handle<DescriptorArray> descriptors,
                                            Descriptor* descriptor, int index,
                                            TransitionFlag flag);
-  static MUST_USE_RESULT MaybeHandle<Map> TryReconfigureExistingProperty(
+  static V8_WARN_UNUSED_RESULT MaybeHandle<Map> TryReconfigureExistingProperty(
       Handle<Map> map, int descriptor, PropertyKind kind,
       PropertyAttributes attributes, const char** reason);
 
@@ -952,8 +954,8 @@ class NormalizedMapCache : public FixedArray {
  public:
   static Handle<NormalizedMapCache> New(Isolate* isolate);
 
-  MUST_USE_RESULT MaybeHandle<Map> Get(Handle<Map> fast_map,
-                                       PropertyNormalizationMode mode);
+  V8_WARN_UNUSED_RESULT MaybeHandle<Map> Get(Handle<Map> fast_map,
+                                             PropertyNormalizationMode mode);
   void Set(Handle<Map> fast_map, Handle<Map> normalized_map,
            Handle<WeakCell> normalized_map_weak_cell);
 

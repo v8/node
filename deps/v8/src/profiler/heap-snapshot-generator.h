@@ -265,6 +265,7 @@ class HeapObjectsMap {
   };
 
   SnapshotObjectId next_id_;
+  // TODO(jkummerow): Use a map that uses {Address} as the key type.
   base::HashMap entries_map_;
   std::vector<EntryInfo> entries_;
   std::vector<TimeInterval> time_intervals_;
@@ -395,7 +396,8 @@ class V8HeapExplorer : public HeapEntriesAllocator {
   void ExtractFixedArrayReferences(int entry, FixedArray* array);
   void ExtractFeedbackVectorReferences(int entry,
                                        FeedbackVector* feedback_vector);
-  void ExtractWeakFixedArrayReferences(int entry, WeakFixedArray* array);
+  template <typename T>
+  void ExtractWeakArrayReferences(int header_size, int entry, T* array);
   void ExtractPropertyReferences(JSObject* js_obj, int entry);
   void ExtractAccessorPairProperty(JSObject* js_obj, int entry, Name* key,
                                    Object* callback_obj, int field_offset = -1);

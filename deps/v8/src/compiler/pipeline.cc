@@ -342,12 +342,20 @@ class PipelineData {
 
   void InitializeCodeGenerator(Linkage* linkage) {
     DCHECK_NULL(code_generator_);
+
+    CodeGeneratorPoisoningLevel poisoning =
+        CodeGeneratorPoisoningLevel::kDontPoison;
+    if (info()->has_untrusted_code_mitigations()) {
+      poisoning = CodeGeneratorPoisoningLevel::kPoisonStackPointerInPrologue;
+    }
+    if (info()->is_poison_loads()) {
+      poisoning = CodeGeneratorPoisoningLevel::kPoisonAll;
+    }
+
     code_generator_ = new CodeGenerator(
         codegen_zone(), frame(), linkage, sequence(), info(), isolate(),
         osr_helper_, start_source_position_, jump_optimization_info_,
-        wasm_compilation_data_,
-        info()->is_poison_loads() ? PoisoningMitigationLevel::kOn
-                                  : PoisoningMitigationLevel::kOff);
+        wasm_compilation_data_, poisoning);
   }
 
   void BeginPhaseKind(const char* phase_kind_name) {
@@ -786,7 +794,7 @@ class PipelineCompilationJob final : public OptimizedCompilationJob {
 
 PipelineCompilationJob::Status PipelineCompilationJob::PrepareJobImpl(
     Isolate* isolate) {
-  if (compilation_info()->shared_info()->bytecode_array()->length() >
+  if (compilation_info()->shared_info()->GetBytecodeArray()->length() >
       kMaxBytecodeSizeForTurbofan) {
     return AbortOptimization(BailoutReason::kFunctionTooBig);
   }
@@ -1015,14 +1023,7 @@ void PipelineWasmCompilationJob::ValidateImmovableEmbeddedObjects() const {
     bool is_wasm = target->IsCode() &&
                    (Code::cast(target)->kind() == Code::WASM_FUNCTION ||
                     Code::cast(target)->kind() == Code::WASM_TO_JS_FUNCTION);
-    bool is_allowed_stub = false;
-    if (target->IsCode()) {
-      Code* code = Code::cast(target);
-      is_allowed_stub =
-          code->kind() == Code::STUB &&
-          CodeStub::MajorKeyFromKey(code->stub_key()) == CodeStub::DoubleToI;
-    }
-    CHECK(is_immovable || is_wasm || is_allowed_stub);
+    CHECK(is_immovable || is_wasm);
   }
 #endif
 }

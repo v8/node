@@ -8,8 +8,8 @@
 #include "src/contexts.h"
 #include "src/deoptimizer.h"
 #include "src/execution.h"
-#include "src/factory.h"
 #include "src/frames-inl.h"
+#include "src/heap/factory.h"
 #include "src/isolate-inl.h"
 #include "src/messages.h"
 #include "src/property-details.h"
@@ -37,7 +37,7 @@ Handle<AccessorInfo> Accessors::MakeAccessor(
   info->set_getter(*get);
   info->set_setter(*set);
   Address redirected = info->redirected_getter();
-  if (redirected != nullptr) {
+  if (redirected != kNullAddress) {
     Handle<Object> js_get = v8::FromCData(isolate, redirected);
     info->set_js_getter(*js_get);
   }
@@ -79,7 +79,7 @@ bool Accessors::IsJSObjectFieldAccessor(Handle<Map> map, Handle<Name> name,
 
 namespace {
 
-MUST_USE_RESULT MaybeHandle<Object> ReplaceAccessorWithDataProperty(
+V8_WARN_UNUSED_RESULT MaybeHandle<Object> ReplaceAccessorWithDataProperty(
     Isolate* isolate, Handle<Object> receiver, Handle<JSObject> holder,
     Handle<Name> name, Handle<Object> value) {
   LookupIterator it(receiver, name, holder,

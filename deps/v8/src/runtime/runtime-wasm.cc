@@ -9,8 +9,8 @@
 #include "src/compiler/wasm-compiler.h"
 #include "src/conversions.h"
 #include "src/debug/debug.h"
-#include "src/factory.h"
 #include "src/frame-constants.h"
+#include "src/heap/factory.h"
 #include "src/objects-inl.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/trap-handler/trap-handler.h"
@@ -238,7 +238,7 @@ RUNTIME_FUNCTION(Runtime_WasmRunInterpreter) {
   // cast it back to the raw pointer.
   CHECK(!arg_buffer_obj->IsHeapObject());
   CHECK(arg_buffer_obj->IsSmi());
-  uint8_t* arg_buffer = reinterpret_cast<uint8_t*>(*arg_buffer_obj);
+  Address arg_buffer = reinterpret_cast<Address>(*arg_buffer_obj);
 
   ClearThreadInWasmScope wasm_flag(true);
 

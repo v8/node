@@ -277,6 +277,9 @@ void HeapObject::HeapObjectPrint(std::ostream& os) {  // NOLINT
     case WEAK_FIXED_ARRAY_TYPE:
       WeakFixedArray::cast(this)->WeakFixedArrayPrint(os);
       break;
+    case WEAK_ARRAY_LIST_TYPE:
+      WeakArrayList::cast(this)->WeakArrayListPrint(os);
+      break;
     case INTERNALIZED_STRING_TYPE:
     case EXTERNAL_INTERNALIZED_STRING_TYPE:
     case ONE_BYTE_INTERNALIZED_STRING_TYPE:
@@ -735,7 +738,8 @@ void PrintFixedArrayWithHeader(std::ostream& os, FixedArray* array,
   os << "\n";
 }
 
-void PrintWeakFixedArrayElements(std::ostream& os, WeakFixedArray* array) {
+template <typename T>
+void PrintWeakArrayElements(std::ostream& os, T* array) {
   // Print in array notation for non-sparse arrays.
   MaybeObject* previous_value = array->length() > 0 ? array->Get(0) : nullptr;
   MaybeObject* value = nullptr;
@@ -761,7 +765,15 @@ void PrintWeakFixedArrayElements(std::ostream& os, WeakFixedArray* array) {
 void PrintWeakFixedArrayWithHeader(std::ostream& os, WeakFixedArray* array) {
   array->PrintHeader(os, "WeakFixedArray");
   os << "\n - length: " << array->length() << "\n";
-  PrintWeakFixedArrayElements(os, array);
+  PrintWeakArrayElements(os, array);
+  os << "\n";
+}
+
+void PrintWeakArrayListWithHeader(std::ostream& os, WeakArrayList* array) {
+  array->PrintHeader(os, "WeakArrayList");
+  os << "\n - capacity: " << array->capacity();
+  os << "\n - length: " << array->length() << "\n";
+  PrintWeakArrayElements(os, array);
   os << "\n";
 }
 
@@ -793,6 +805,10 @@ void FixedDoubleArray::FixedDoubleArrayPrint(std::ostream& os) {  // NOLINT
 
 void WeakFixedArray::WeakFixedArrayPrint(std::ostream& os) {
   PrintWeakFixedArrayWithHeader(os, this);
+}
+
+void WeakArrayList::WeakArrayListPrint(std::ostream& os) {
+  PrintWeakArrayListWithHeader(os, this);
 }
 
 void TransitionArray::TransitionArrayPrint(std::ostream& os) {  // NOLINT
@@ -1214,7 +1230,7 @@ void JSFunction::JSFunctionPrint(std::ostream& os) {  // NOLINT
   if (IsInterpreted()) {
     os << "\n - interpreted";
     if (shared()->HasBytecodeArray()) {
-      os << "\n - bytecode: " << shared()->bytecode_array();
+      os << "\n - bytecode: " << shared()->GetBytecodeArray();
     }
   }
   if (WasmExportedFunction::IsWasmExportedFunction(this)) {
@@ -1893,6 +1909,13 @@ void PreParsedScopeData::PreParsedScopeDataPrint(std::ostream& os) {  // NOLINT
   os << "\n";
 }
 
+void InterpreterData::InterpreterDataPrint(std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "InterpreterData");
+  os << "\n - bytecode_array: " << Brief(bytecode_array());
+  os << "\n - interpreter_trampoline: " << Brief(interpreter_trampoline());
+  os << "\n";
+}
+
 #endif  // OBJECT_PRINT
 
 // TODO(cbruni): remove once the new maptracer is in place.
@@ -2160,19 +2183,19 @@ extern void _v8_internal_Print_Code(void* object) {
       !isolate->heap()->InSpaceSlow(address, i::LO_SPACE)) {
     i::PrintF(
         "%p is not within the current isolate's large object or code spaces\n",
-        static_cast<void*>(address));
+        reinterpret_cast<void*>(address));
     return;
   }
 
   i::Code* code = isolate->FindCodeObject(address);
   if (!code->IsCode()) {
     i::PrintF("No code object found containing %p\n",
-              static_cast<void*>(address));
+              reinterpret_cast<void*>(address));
     return;
   }
 #ifdef ENABLE_DISASSEMBLER
   i::OFStream os(stdout);
-  code->Disassemble(nullptr, os, address);
+  code->Disassemble(nullptr, os, reinterpret_cast<void*>(address));
 #else   // ENABLE_DISASSEMBLER
   code->Print();
 #endif  // ENABLE_DISASSEMBLER

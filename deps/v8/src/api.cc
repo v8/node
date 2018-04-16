@@ -1527,7 +1527,9 @@ i::Handle<i::AccessorInfo> MakeAccessorInfo(
   }
   SET_FIELD_WRAPPED(obj, set_setter, setter);
   i::Address redirected = obj->redirected_getter();
-  if (redirected != nullptr) SET_FIELD_WRAPPED(obj, set_js_getter, redirected);
+  if (redirected != i::kNullAddress) {
+    SET_FIELD_WRAPPED(obj, set_js_getter, redirected);
+  }
   if (data.IsEmpty()) {
     data = v8::Undefined(reinterpret_cast<v8::Isolate*>(isolate));
   }
@@ -3582,6 +3584,10 @@ bool Value::IsSetIterator() const {
 }
 
 bool Value::IsPromise() const { return Utils::OpenHandle(this)->IsJSPromise(); }
+
+bool Value::IsModuleNamespaceObject() const {
+  return Utils::OpenHandle(this)->IsJSModuleNamespace();
+}
 
 MaybeLocal<String> Value::ToString(Local<Context> context) const {
   auto obj = Utils::OpenHandle(this);
@@ -6071,7 +6077,7 @@ static void* ExternalValue(i::Object* obj) {
     return nullptr;
   }
   i::Object* foreign = i::JSObject::cast(obj)->GetEmbedderField(0);
-  return i::Foreign::cast(foreign)->foreign_address();
+  return reinterpret_cast<void*>(i::Foreign::cast(foreign)->foreign_address());
 }
 
 
@@ -6635,8 +6641,7 @@ inline int StringLength(const uint16_t* string) {
   return length;
 }
 
-
-MUST_USE_RESULT
+V8_WARN_UNUSED_RESULT
 inline i::MaybeHandle<i::String> NewString(i::Factory* factory,
                                            v8::NewStringType type,
                                            i::Vector<const char> string) {
@@ -6646,8 +6651,7 @@ inline i::MaybeHandle<i::String> NewString(i::Factory* factory,
   return factory->NewStringFromUtf8(string);
 }
 
-
-MUST_USE_RESULT
+V8_WARN_UNUSED_RESULT
 inline i::MaybeHandle<i::String> NewString(i::Factory* factory,
                                            v8::NewStringType type,
                                            i::Vector<const uint8_t> string) {
@@ -6657,8 +6661,7 @@ inline i::MaybeHandle<i::String> NewString(i::Factory* factory,
   return factory->NewStringFromOneByte(string);
 }
 
-
-MUST_USE_RESULT
+V8_WARN_UNUSED_RESULT
 inline i::MaybeHandle<i::String> NewString(i::Factory* factory,
                                            v8::NewStringType type,
                                            i::Vector<const uint16_t> string) {
@@ -8846,7 +8849,8 @@ void Isolate::SetStackLimit(uintptr_t stack_limit) {
 void Isolate::GetCodeRange(void** start, size_t* length_in_bytes) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
   if (isolate->heap()->memory_allocator()->code_range()->valid()) {
-    *start = isolate->heap()->memory_allocator()->code_range()->start();
+    *start = reinterpret_cast<void*>(
+        isolate->heap()->memory_allocator()->code_range()->start());
     *length_in_bytes =
         isolate->heap()->memory_allocator()->code_range()->size();
   } else {
@@ -9468,6 +9472,10 @@ void debug::RemoveBreakpoint(Isolate* v8_isolate, BreakpointId id) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
   i::HandleScope handle_scope(isolate);
   isolate->debug()->RemoveBreakpoint(id);
+}
+
+v8::Platform* debug::GetCurrentPlatform() {
+  return i::V8::GetCurrentPlatform();
 }
 
 debug::WasmScript* debug::WasmScript::Cast(debug::Script* script) {
@@ -10669,8 +10677,7 @@ void InvokeAccessorGetterCallback(
   Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
   RuntimeCallTimerScope timer(isolate,
                               RuntimeCallCounterId::kAccessorGetterCallback);
-  Address getter_address = reinterpret_cast<Address>(reinterpret_cast<intptr_t>(
-      getter));
+  Address getter_address = reinterpret_cast<Address>(getter);
   VMState<EXTERNAL> state(isolate);
   ExternalCallbackScope call_scope(isolate, getter_address);
   getter(property, info);
@@ -10682,8 +10689,7 @@ void InvokeFunctionCallback(const v8::FunctionCallbackInfo<v8::Value>& info,
   Isolate* isolate = reinterpret_cast<Isolate*>(info.GetIsolate());
   RuntimeCallTimerScope timer(isolate,
                               RuntimeCallCounterId::kInvokeFunctionCallback);
-  Address callback_address =
-      reinterpret_cast<Address>(reinterpret_cast<intptr_t>(callback));
+  Address callback_address = reinterpret_cast<Address>(callback);
   VMState<EXTERNAL> state(isolate);
   ExternalCallbackScope call_scope(isolate, callback_address);
   callback(info);

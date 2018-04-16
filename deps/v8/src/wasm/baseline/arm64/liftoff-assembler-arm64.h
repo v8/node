@@ -44,15 +44,26 @@ void LiftoffAssembler::FillInstanceInto(Register dst) {
 void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
                             LoadType type, LiftoffRegList pinned,
-                            uint32_t* protected_load_pc) {
+                            uint32_t* protected_load_pc, bool is_load_mem) {
   BAILOUT("Load");
 }
 
 void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
                              StoreType type, LiftoffRegList pinned,
-                             uint32_t* protected_store_pc) {
+                             uint32_t* protected_store_pc, bool is_store_mem) {
   BAILOUT("Store");
+}
+
+void LiftoffAssembler::ChangeEndiannessLoad(LiftoffRegister dst, LoadType type,
+                                            LiftoffRegList pinned) {
+  BAILOUT("ChangeEndiannessLoad");
+}
+
+void LiftoffAssembler::ChangeEndiannessStore(LiftoffRegister src,
+                                             StoreType type,
+                                             LiftoffRegList pinned) {
+  BAILOUT("ChangeEndiannessStore");
 }
 
 void LiftoffAssembler::LoadCallerFrameSlot(LiftoffRegister dst,
@@ -144,6 +155,7 @@ UNIMPLEMENTED_I32_SHIFTOP(i32_sar)
 UNIMPLEMENTED_I32_SHIFTOP(i32_shr)
 UNIMPLEMENTED_I64_BINOP(i64_add)
 UNIMPLEMENTED_I64_BINOP(i64_sub)
+UNIMPLEMENTED_I64_BINOP(i64_mul)
 UNIMPLEMENTED_I64_BINOP(i64_and)
 UNIMPLEMENTED_I64_BINOP(i64_or)
 UNIMPLEMENTED_I64_BINOP(i64_xor)

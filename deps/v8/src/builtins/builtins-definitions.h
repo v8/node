@@ -203,7 +203,6 @@ namespace internal {
   TFH(KeyedStoreIC_Megamorphic, StoreWithVector)                               \
   TFH(KeyedStoreIC_Slow, StoreWithVector)                                      \
   TFH(LoadGlobalIC_Slow, LoadWithVector)                                       \
-  TFH(LoadField, LoadField)                                                    \
   TFH(LoadIC_FunctionPrototype, LoadWithVector)                                \
   TFH(LoadIC_Slow, LoadWithVector)                                             \
   TFH(LoadIC_StringLength, LoadWithVector)                                     \
@@ -763,7 +762,7 @@ namespace internal {
   /* Object */                                                                 \
   /* ES #sec-object-constructor */                                             \
   TFJ(ObjectConstructor, SharedFunctionInfo::kDontAdaptArgumentsSentinel)      \
-  CPP(ObjectAssign)                                                            \
+  TFJ(ObjectAssign, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES #sec-object.create */                                                  \
   TFJ(ObjectCreate, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   CPP(ObjectDefineGetter)                                                      \
@@ -1097,7 +1096,8 @@ namespace internal {
                                                                                \
   /* TypedArray */                                                             \
   TFS(IterableToList, kIterable, kIteratorFn)                                  \
-  TFS(TypedArrayInitialize, kHolder, kLength, kElementSize, kInitialize)       \
+  TFS(TypedArrayInitialize, kHolder, kLength, kElementSize, kInitialize,       \
+      kBufferConstructor)                                                      \
   TFS(TypedArrayInitializeWithBuffer, kHolder, kLength, kBuffer, kElementSize, \
       kByteOffset)                                                             \
   /* ES #sec-typedarray-constructors */                                        \
@@ -1247,7 +1247,12 @@ namespace internal {
   /* #sec-%asyncfromsynciteratorprototype%.return */                           \
   TFJ(AsyncFromSyncIteratorPrototypeReturn, 1, kValue)                         \
   /* #sec-async-iterator-value-unwrap-functions */                             \
-  TFJ(AsyncIteratorValueUnwrap, 1, kValue)
+  TFJ(AsyncIteratorValueUnwrap, 1, kValue)                                     \
+                                                                               \
+  /* Miscellaneous */                                                          \
+                                                                               \
+  ASM(DoubleToI)                                                               \
+  ASM(MathPowInternal)
 
 #ifdef V8_INTL_SUPPORT
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)        \

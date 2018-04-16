@@ -36,9 +36,9 @@
 #include "src/deoptimizer.h"
 #include "src/elements.h"
 #include "src/execution.h"
-#include "src/factory.h"
 #include "src/field-type.h"
 #include "src/global-handles.h"
+#include "src/heap/factory.h"
 #include "src/heap/gc-tracer.h"
 #include "src/heap/incremental-marking.h"
 #include "src/heap/mark-compact.h"
@@ -779,7 +779,8 @@ TEST(BytecodeArray) {
   CHECK_GE(array->address() + array->BytecodeArraySize(),
            array->GetFirstBytecodeAddress() + array->length());
   for (int i = 0; i < kRawBytesSize; i++) {
-    CHECK_EQ(array->GetFirstBytecodeAddress()[i], kRawBytes[i]);
+    CHECK_EQ(Memory::uint8_at(array->GetFirstBytecodeAddress() + i),
+             kRawBytes[i]);
     CHECK_EQ(array->get(i), kRawBytes[i]);
   }
 
@@ -796,7 +797,8 @@ TEST(BytecodeArray) {
   CHECK_EQ(array->frame_size(), kFrameSize);
   for (int i = 0; i < kRawBytesSize; i++) {
     CHECK_EQ(array->get(i), kRawBytes[i]);
-    CHECK_EQ(array->GetFirstBytecodeAddress()[i], kRawBytes[i]);
+    CHECK_EQ(Memory::uint8_at(array->GetFirstBytecodeAddress() + i),
+             kRawBytes[i]);
   }
 
   // Constant pool should have been migrated.
@@ -1352,7 +1354,7 @@ TEST(CompilationCacheCachingBehavior) {
     CHECK(shared->HasBytecodeArray());
     const int kAgingThreshold = 6;
     for (int i = 0; i < kAgingThreshold; i++) {
-      shared->bytecode_array()->MakeOlder();
+      shared->GetBytecodeArray()->MakeOlder();
     }
   }
 
@@ -1550,6 +1552,7 @@ TEST(TestSizeOfRegExpCode) {
 
 HEAP_TEST(TestSizeOfObjects) {
   v8::V8::Initialize();
+  Isolate* isolate = CcTest::i_isolate();
   Heap* heap = CcTest::heap();
   MarkCompactCollector* collector = heap->mark_compact_collector();
 
@@ -1562,13 +1565,14 @@ HEAP_TEST(TestSizeOfObjects) {
   int initial_size = static_cast<int>(heap->SizeOfObjects());
 
   {
+    HandleScope scope(isolate);
     // Allocate objects on several different old-space pages so that
     // concurrent sweeper threads will be busy sweeping the old space on
     // subsequent GC runs.
     AlwaysAllocateScope always_allocate(CcTest::i_isolate());
     int filler_size = static_cast<int>(FixedArray::SizeFor(8192));
     for (int i = 1; i <= 100; i++) {
-      heap->AllocateFixedArray(8192, TENURED).ToObjectChecked();
+      isolate->factory()->NewFixedArray(8192, TENURED);
       CHECK_EQ(initial_size + i * filler_size,
                static_cast<int>(heap->SizeOfObjects()));
     }
@@ -1597,7 +1601,7 @@ TEST(TestAlignmentCalculations) {
   int max_double_unaligned_fill = Heap::GetMaximumFillToAlign(kDoubleUnaligned);
   CHECK_EQ(maximum_double_misalignment, max_double_unaligned_fill);
 
-  Address base = static_cast<Address>(nullptr);
+  Address base = kNullAddress;
   int fill = 0;
 
   // Word alignment never requires fill.
@@ -4458,7 +4462,7 @@ TEST(Regress507979) {
 
   for (HeapObject* obj = it.next(); obj != nullptr; obj = it.next()) {
     // Let's not optimize the loop away.
-    CHECK_NOT_NULL(obj->address());
+    CHECK_NE(obj->address(), kNullAddress);
   }
 }
 
@@ -4614,17 +4618,18 @@ TEST(Regress3877) {
   CHECK(weak_prototype->cleared());
 }
 
-
-Handle<WeakCell> AddRetainedMap(Isolate* isolate, Heap* heap) {
-    HandleScope inner_scope(isolate);
-    Handle<Map> map = Map::Create(isolate, 1);
-    v8::Local<v8::Value> result =
-        CompileRun("(function () { return {x : 10}; })();");
-    Handle<JSReceiver> proto =
-        v8::Utils::OpenHandle(*v8::Local<v8::Object>::Cast(result));
-    Map::SetPrototype(map, proto);
-    heap->AddRetainedMap(map);
-    return inner_scope.CloseAndEscape(Map::WeakCellForMap(map));
+Handle<WeakFixedArray> AddRetainedMap(Isolate* isolate, Heap* heap) {
+  HandleScope inner_scope(isolate);
+  Handle<Map> map = Map::Create(isolate, 1);
+  v8::Local<v8::Value> result =
+      CompileRun("(function () { return {x : 10}; })();");
+  Handle<JSReceiver> proto =
+      v8::Utils::OpenHandle(*v8::Local<v8::Object>::Cast(result));
+  Map::SetPrototype(map, proto);
+  heap->AddRetainedMap(map);
+  Handle<WeakFixedArray> array = isolate->factory()->NewWeakFixedArray(1);
+  array->Set(0, HeapObjectReference::Weak(*map));
+  return inner_scope.CloseAndEscape(array);
 }
 
 
@@ -4632,16 +4637,16 @@ void CheckMapRetainingFor(int n) {
   FLAG_retain_maps_for_n_gc = n;
   Isolate* isolate = CcTest::i_isolate();
   Heap* heap = isolate->heap();
-  Handle<WeakCell> weak_cell = AddRetainedMap(isolate, heap);
-  CHECK(!weak_cell->cleared());
+  Handle<WeakFixedArray> array_with_map = AddRetainedMap(isolate, heap);
+  CHECK(array_with_map->Get(0)->IsWeakHeapObject());
   for (int i = 0; i < n; i++) {
     heap::SimulateIncrementalMarking(heap);
     CcTest::CollectGarbage(OLD_SPACE);
   }
-  CHECK(!weak_cell->cleared());
+  CHECK(array_with_map->Get(0)->IsWeakHeapObject());
   heap::SimulateIncrementalMarking(heap);
   CcTest::CollectGarbage(OLD_SPACE);
-  CHECK(weak_cell->cleared());
+  CHECK(array_with_map->Get(0)->IsClearedWeakHeapObject());
 }
 
 
@@ -4655,28 +4660,6 @@ TEST(MapRetaining) {
   CheckMapRetainingFor(1);
   CheckMapRetainingFor(7);
 }
-
-
-TEST(RegressArrayListGC) {
-  FLAG_retain_maps_for_n_gc = 1;
-  FLAG_incremental_marking = 0;
-  FLAG_gc_global = true;
-  CcTest::InitializeVM();
-  v8::HandleScope scope(CcTest::isolate());
-  Isolate* isolate = CcTest::i_isolate();
-  Heap* heap = isolate->heap();
-  AddRetainedMap(isolate, heap);
-  Handle<Map> map = Map::Create(isolate, 1);
-  CcTest::CollectGarbage(OLD_SPACE);
-  // Force GC in old space on next addition of retained map.
-  Map::WeakCellForMap(map);
-  heap::SimulateFullSpace(CcTest::heap()->new_space());
-  for (int i = 0; i < 10; i++) {
-    heap->AddRetainedMap(map);
-  }
-  CcTest::CollectGarbage(OLD_SPACE);
-}
-
 
 TEST(WritableVsImmortalRoots) {
   for (int i = 0; i < Heap::kStrongRootListLength; ++i) {
@@ -5027,6 +5010,25 @@ TEST(SharedFunctionInfoIterator) {
   CHECK_EQ(0, sfi_count);
 }
 
+// This is the same as Factory::NewByteArray, except it doesn't retry on
+// allocation failure.
+AllocationResult HeapTester::AllocateByteArrayForTest(Heap* heap, int length,
+                                                      PretenureFlag pretenure) {
+  DCHECK(length >= 0 && length <= ByteArray::kMaxLength);
+  int size = ByteArray::SizeFor(length);
+  AllocationSpace space = heap->SelectSpace(pretenure);
+  HeapObject* result = nullptr;
+  {
+    AllocationResult allocation = heap->AllocateRaw(size, space);
+    if (!allocation.To(&result)) return allocation;
+  }
+
+  result->set_map_after_allocation(heap->byte_array_map(), SKIP_WRITE_BARRIER);
+  ByteArray::cast(result)->set_length(length);
+  ByteArray::cast(result)->clear_padding();
+  return result;
+}
+
 HEAP_TEST(Regress587004) {
   ManualGCScope manual_gc_scope;
 #ifdef VERIFY_HEAP
@@ -5055,7 +5057,7 @@ HEAP_TEST(Regress587004) {
   // Don't allow old space expansion. The test works without this flag too,
   // but becomes very slow.
   heap->set_force_oom(true);
-  while (heap->AllocateByteArray(M, TENURED).To(&byte_array)) {
+  while (AllocateByteArrayForTest(heap, M, TENURED).To(&byte_array)) {
     for (int j = 0; j < M; j++) {
       byte_array->set(j, 0x31);
     }
@@ -5082,7 +5084,7 @@ HEAP_TEST(Regress589413) {
   // Fill the new space with byte arrays with elements looking like pointers.
   const int M = 256;
   ByteArray* byte_array;
-  while (heap->AllocateByteArray(M).To(&byte_array)) {
+  while (AllocateByteArrayForTest(heap, M, NOT_TENURED).To(&byte_array)) {
     for (int j = 0; j < M; j++) {
       byte_array->set(j, 0x31);
     }
@@ -5099,7 +5101,7 @@ HEAP_TEST(Regress589413) {
     FixedArray* array;
     // Fill all pages with fixed arrays.
     heap->set_force_oom(true);
-    while (heap->AllocateFixedArray(N, TENURED).To(&array)) {
+    while (AllocateFixedArrayForTest(heap, N, TENURED).To(&array)) {
       arrays.push_back(array);
       pages.insert(Page::FromAddress(array->address()));
       // Add the array in root set.
@@ -5107,7 +5109,7 @@ HEAP_TEST(Regress589413) {
     }
     // Expand and full one complete page with fixed arrays.
     heap->set_force_oom(false);
-    while (heap->AllocateFixedArray(N, TENURED).To(&array)) {
+    while (AllocateFixedArrayForTest(heap, N, TENURED).To(&array)) {
       arrays.push_back(array);
       pages.insert(Page::FromAddress(array->address()));
       // Add the array in root set.
@@ -5824,20 +5826,18 @@ HEAP_TEST(RegressMissingWriteBarrierInAllocate) {
   Isolate* isolate = heap->isolate();
   CcTest::CollectAllGarbage();
   heap::SimulateIncrementalMarking(heap, false);
-  Map* map;
+  Handle<Map> map;
   {
     AlwaysAllocateScope always_allocate(isolate);
-    map = Map::cast(heap->AllocateMap(HEAP_NUMBER_TYPE, HeapNumber::kSize)
-                        .ToObjectChecked());
+    map = isolate->factory()->NewMap(HEAP_NUMBER_TYPE, HeapNumber::kSize);
   }
   heap->incremental_marking()->StartBlackAllocationForTesting();
   Handle<HeapObject> object;
   {
     AlwaysAllocateScope always_allocate(isolate);
-    object = Handle<HeapObject>(
-        heap->Allocate(map, OLD_SPACE).ToObjectChecked(), isolate);
+    object = handle(isolate->factory()->NewForTest(map, TENURED), isolate);
   }
-  // The object is black. If Heap::Allocate sets the map without write-barrier,
+  // The object is black. If Factory::New sets the map without write-barrier,
   // then the map is white and will be freed prematurely.
   heap::SimulateIncrementalMarking(heap, true);
   CcTest::CollectAllGarbage();
@@ -5926,11 +5926,18 @@ UNINITIALIZED_TEST(OutOfMemoryIneffectiveGC) {
     }
     {
       int initial_ms_count = heap->ms_count();
+      int ineffective_ms_start = initial_ms_count;
       while (heap->ms_count() < initial_ms_count + 10) {
         HandleScope inner_scope(i_isolate);
         factory->NewFixedArray(30000, TENURED);
+        if (heap->tracer()->AverageMarkCompactMutatorUtilization() >= 0.3) {
+          ineffective_ms_start = heap->ms_count() + 1;
+        }
       }
-      CHECK_GE(heap->tracer()->AverageMarkCompactMutatorUtilization(), 0.09);
+      int consecutive_ineffective_ms = heap->ms_count() - ineffective_ms_start;
+      CHECK_IMPLIES(
+          consecutive_ineffective_ms >= 4,
+          heap->tracer()->AverageMarkCompactMutatorUtilization() >= 0.3);
     }
   }
   isolate->Dispose();

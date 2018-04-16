@@ -15,9 +15,9 @@ namespace wasm {
 
 namespace liftoff {
 
-// fp-8 holds the stack marker, fp-16 is the instance parameter, first stack
-// slot is located at fp-24.
-constexpr int32_t kConstantStackSpace = 16;
+// fp-4 holds the stack marker, fp-8 is the instance parameter, first stack
+// slot is located at fp-16.
+constexpr int32_t kConstantStackSpace = 8;
 constexpr int32_t kFirstStackSlotOffset =
     kConstantStackSpace + LiftoffAssembler::kStackSlotSize;
 
@@ -31,7 +31,7 @@ inline MemOperand GetHalfStackSlot(uint32_t half_index) {
   return MemOperand(fp, -kFirstStackSlotOffset - offset);
 }
 
-inline MemOperand GetInstanceOperand() { return MemOperand(fp, -16); }
+inline MemOperand GetInstanceOperand() { return MemOperand(fp, -8); }
 
 // Use this register to store the address of the last argument pushed on the
 // stack for a call to C. This register must be callee saved according to the c
@@ -148,7 +148,7 @@ void LiftoffAssembler::FillInstanceInto(Register dst) {
 void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
                             LoadType type, LiftoffRegList pinned,
-                            uint32_t* protected_load_pc) {
+                            uint32_t* protected_load_pc, bool is_load_mem) {
   // TODO(ksreten): Add check if unaligned memory access
   Register src = no_reg;
   if (offset_reg != no_reg) {
@@ -219,12 +219,18 @@ void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
     default:
       UNREACHABLE();
   }
+
+#if defined(V8_TARGET_BIG_ENDIAN)
+  if (is_load_mem) {
+    ChangeEndiannessLoad(dst, type, pinned);
+  }
+#endif
 }
 
 void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
                              StoreType type, LiftoffRegList pinned,
-                             uint32_t* protected_store_pc) {
+                             uint32_t* protected_store_pc, bool is_store_mem) {
   // TODO(ksreten): Add check if unaligned memory access
   Register dst = no_reg;
   if (offset_reg != no_reg) {
@@ -233,6 +239,18 @@ void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
   }
   MemOperand dst_op = (offset_reg != no_reg) ? MemOperand(dst, offset_imm)
                                              : MemOperand(dst_addr, offset_imm);
+
+#if defined(V8_TARGET_BIG_ENDIAN)
+  if (is_store_mem) {
+    LiftoffRegister tmp = GetUnusedRegister(src.reg_class(), pinned);
+    // Save original value.
+    Move(tmp, src, type.value_type());
+
+    src = tmp;
+    pinned.set(tmp);
+    ChangeEndiannessStore(src, type, pinned);
+  }
+#endif
 
   if (protected_store_pc) *protected_store_pc = pc_offset();
   switch (type.value()) {
@@ -270,6 +288,134 @@ void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
       break;
     default:
       UNREACHABLE();
+  }
+}
+
+void LiftoffAssembler::ChangeEndiannessLoad(LiftoffRegister dst, LoadType type,
+                                            LiftoffRegList pinned) {
+  bool is_float = false;
+  LiftoffRegister tmp = dst;
+  switch (type.value()) {
+    case LoadType::kI64Load8U:
+    case LoadType::kI64Load8S:
+      // Swap low and high registers.
+      TurboAssembler::Move(at, tmp.low_gp());
+      TurboAssembler::Move(tmp.low_gp(), tmp.high_gp());
+      TurboAssembler::Move(tmp.high_gp(), at);
+      V8_FALLTHROUGH;
+    case LoadType::kI32Load8U:
+    case LoadType::kI32Load8S:
+      // No need to change endianness for byte size.
+      return;
+    case LoadType::kF32Load:
+      is_float = true;
+      tmp = GetUnusedRegister(kGpReg, pinned);
+      emit_type_conversion(kExprI32ReinterpretF32, tmp, dst);
+      V8_FALLTHROUGH;
+    case LoadType::kI32Load:
+      TurboAssembler::ByteSwapSigned(tmp.gp(), tmp.gp(), 4);
+      break;
+    case LoadType::kI32Load16S:
+      TurboAssembler::ByteSwapSigned(tmp.gp(), tmp.gp(), 2);
+      break;
+    case LoadType::kI32Load16U:
+      TurboAssembler::ByteSwapUnsigned(tmp.gp(), tmp.gp(), 2);
+      break;
+    case LoadType::kF64Load:
+      is_float = true;
+      tmp = GetUnusedRegister(kGpRegPair, pinned);
+      emit_type_conversion(kExprI64ReinterpretF64, tmp, dst);
+      V8_FALLTHROUGH;
+    case LoadType::kI64Load:
+      TurboAssembler::Move(at, tmp.low_gp());
+      TurboAssembler::ByteSwapSigned(tmp.low_gp(), tmp.high_gp(), 4);
+      TurboAssembler::ByteSwapSigned(tmp.high_gp(), at, 4);
+      break;
+    case LoadType::kI64Load16U:
+      TurboAssembler::ByteSwapUnsigned(tmp.low_gp(), tmp.high_gp(), 2);
+      TurboAssembler::Move(tmp.high_gp(), zero_reg);
+      break;
+    case LoadType::kI64Load16S:
+      TurboAssembler::ByteSwapSigned(tmp.low_gp(), tmp.high_gp(), 2);
+      sra(tmp.high_gp(), tmp.high_gp(), 31);
+      break;
+    case LoadType::kI64Load32U:
+      TurboAssembler::ByteSwapSigned(tmp.low_gp(), tmp.high_gp(), 4);
+      TurboAssembler::Move(tmp.high_gp(), zero_reg);
+      break;
+    case LoadType::kI64Load32S:
+      TurboAssembler::ByteSwapSigned(tmp.low_gp(), tmp.high_gp(), 4);
+      sra(tmp.high_gp(), tmp.high_gp(), 31);
+      break;
+    default:
+      UNREACHABLE();
+  }
+
+  if (is_float) {
+    switch (type.value()) {
+      case LoadType::kF32Load:
+        emit_type_conversion(kExprF32ReinterpretI32, dst, tmp);
+        break;
+      case LoadType::kF64Load:
+        emit_type_conversion(kExprF64ReinterpretI64, dst, tmp);
+        break;
+      default:
+        UNREACHABLE();
+    }
+  }
+}
+
+void LiftoffAssembler::ChangeEndiannessStore(LiftoffRegister src,
+                                             StoreType type,
+                                             LiftoffRegList pinned) {
+  bool is_float = false;
+  LiftoffRegister tmp = src;
+  switch (type.value()) {
+    case StoreType::kI64Store8:
+      // Swap low and high registers.
+      TurboAssembler::Move(at, tmp.low_gp());
+      TurboAssembler::Move(tmp.low_gp(), tmp.high_gp());
+      TurboAssembler::Move(tmp.high_gp(), at);
+      V8_FALLTHROUGH;
+    case StoreType::kI32Store8:
+      // No need to change endianness for byte size.
+      return;
+    case StoreType::kF32Store:
+      is_float = true;
+      tmp = GetUnusedRegister(kGpReg, pinned);
+      emit_type_conversion(kExprI32ReinterpretF32, tmp, src);
+      V8_FALLTHROUGH;
+    case StoreType::kI32Store:
+    case StoreType::kI32Store16:
+      TurboAssembler::ByteSwapSigned(tmp.gp(), tmp.gp(), 4);
+      break;
+    case StoreType::kF64Store:
+      is_float = true;
+      tmp = GetUnusedRegister(kGpRegPair, pinned);
+      emit_type_conversion(kExprI64ReinterpretF64, tmp, src);
+      V8_FALLTHROUGH;
+    case StoreType::kI64Store:
+    case StoreType::kI64Store32:
+    case StoreType::kI64Store16:
+      TurboAssembler::Move(at, tmp.low_gp());
+      TurboAssembler::ByteSwapSigned(tmp.low_gp(), tmp.high_gp(), 4);
+      TurboAssembler::ByteSwapSigned(tmp.high_gp(), at, 4);
+      break;
+    default:
+      UNREACHABLE();
+  }
+
+  if (is_float) {
+    switch (type.value()) {
+      case StoreType::kF32Store:
+        emit_type_conversion(kExprF32ReinterpretI32, src, tmp);
+        break;
+      case StoreType::kF64Store:
+        emit_type_conversion(kExprF64ReinterpretI64, src, tmp);
+        break;
+      default:
+        UNREACHABLE();
+    }
   }
 }
 
@@ -443,6 +589,7 @@ I32_SHIFTOP(shr, srlv)
 
 UNIMPLEMENTED_I64_BINOP(add)
 UNIMPLEMENTED_I64_BINOP(sub)
+UNIMPLEMENTED_I64_BINOP(mul)
 
 #undef UNIMPLEMENTED_I64_BINOP
 
@@ -457,7 +604,7 @@ inline void Emit64BitShiftOperation(
     LiftoffAssembler* assm, LiftoffRegister dst, LiftoffRegister src,
     Register amount,
     void (TurboAssembler::*emit_shift)(Register, Register, Register, Register,
-                                       Register),
+                                       Register, Register, Register),
     LiftoffRegList pinned) {
   Label move, done;
   pinned.set(dst);
@@ -474,14 +621,14 @@ inline void Emit64BitShiftOperation(
 
     // Do the actual shift.
     (assm->*emit_shift)(tmp.low_gp(), tmp.high_gp(), src.low_gp(),
-                        src.high_gp(), amount);
+                        src.high_gp(), amount, kScratchReg, kScratchReg2);
 
     // Place result in destination register.
     assm->TurboAssembler::Move(dst.high_gp(), tmp.high_gp());
     assm->TurboAssembler::Move(dst.low_gp(), tmp.low_gp());
   } else {
     (assm->*emit_shift)(dst.low_gp(), dst.high_gp(), src.low_gp(),
-                        src.high_gp(), amount);
+                        src.high_gp(), amount, kScratchReg, kScratchReg2);
   }
   assm->TurboAssembler::Branch(&done);
 
@@ -528,10 +675,10 @@ FP_BINOP(f32_mul, mul_s)
 FP_BINOP(f32_div, div_s)
 FP_UNOP(f32_abs, abs_s)
 FP_UNOP(f32_neg, neg_s)
-FP_UNOP(f32_ceil, ceil_w_s)
-FP_UNOP(f32_floor, floor_w_s)
-FP_UNOP(f32_trunc, trunc_w_s)
-FP_UNOP(f32_nearest_int, rint_s)
+FP_UNOP(f32_ceil, Ceil_s_s)
+FP_UNOP(f32_floor, Floor_s_s)
+FP_UNOP(f32_trunc, Trunc_s_s)
+FP_UNOP(f32_nearest_int, Round_s_s)
 FP_UNOP(f32_sqrt, sqrt_s)
 FP_BINOP(f64_add, add_d)
 FP_BINOP(f64_sub, sub_d)
@@ -539,14 +686,47 @@ FP_BINOP(f64_mul, mul_d)
 FP_BINOP(f64_div, div_d)
 FP_UNOP(f64_abs, abs_d)
 FP_UNOP(f64_neg, neg_d)
-FP_UNOP(f64_ceil, ceil_w_d)
-FP_UNOP(f64_floor, floor_w_d)
-FP_UNOP(f64_trunc, trunc_w_d)
-FP_UNOP(f64_nearest_int, rint_d)
 FP_UNOP(f64_sqrt, sqrt_d)
 
 #undef FP_BINOP
 #undef FP_UNOP
+
+void LiftoffAssembler::emit_f64_ceil(DoubleRegister dst, DoubleRegister src) {
+  if ((IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r6)) &&
+      IsFp64Mode()) {
+    Ceil_d_d(dst, src);
+  } else {
+    BAILOUT("emit_f64_ceil");
+  }
+}
+
+void LiftoffAssembler::emit_f64_floor(DoubleRegister dst, DoubleRegister src) {
+  if ((IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r6)) &&
+      IsFp64Mode()) {
+    Floor_d_d(dst, src);
+  } else {
+    BAILOUT("emit_f64_floor");
+  }
+}
+
+void LiftoffAssembler::emit_f64_trunc(DoubleRegister dst, DoubleRegister src) {
+  if ((IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r6)) &&
+      IsFp64Mode()) {
+    Trunc_d_d(dst, src);
+  } else {
+    BAILOUT("emit_f64_trunc");
+  }
+}
+
+void LiftoffAssembler::emit_f64_nearest_int(DoubleRegister dst,
+                                            DoubleRegister src) {
+  if ((IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r6)) &&
+      IsFp64Mode()) {
+    Round_d_d(dst, src);
+  } else {
+    BAILOUT("emit_f64_nearest_int");
+  }
+}
 
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
@@ -713,16 +893,94 @@ void LiftoffAssembler::emit_i64_set_cond(Condition cond, Register dst,
   TurboAssembler::Move(dst, tmp);
 }
 
+namespace liftoff {
+
+inline FPUCondition ConditionToConditionCmpFPU(bool& predicate,
+                                               Condition condition) {
+  switch (condition) {
+    case kEqual:
+      predicate = true;
+      return EQ;
+    case kUnequal:
+      predicate = false;
+      return EQ;
+    case kUnsignedLessThan:
+      predicate = true;
+      return OLT;
+    case kUnsignedGreaterEqual:
+      predicate = false;
+      return OLT;
+    case kUnsignedLessEqual:
+      predicate = true;
+      return OLE;
+    case kUnsignedGreaterThan:
+      predicate = false;
+      return OLE;
+    default:
+      predicate = true;
+      break;
+  }
+  UNREACHABLE();
+}
+
+};  // namespace liftoff
+
 void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
                                          DoubleRegister lhs,
                                          DoubleRegister rhs) {
-  BAILOUT("emit_f32_set_cond");
+  Label not_nan, cont;
+  TurboAssembler::CompareIsNanF32(lhs, rhs);
+  TurboAssembler::BranchFalseF(&not_nan);
+  // If one of the operands is NaN, return 1 for f32.ne, else 0.
+  if (cond == ne) {
+    TurboAssembler::li(dst, 1);
+  } else {
+    TurboAssembler::Move(dst, zero_reg);
+  }
+  TurboAssembler::Branch(&cont);
+
+  bind(&not_nan);
+
+  TurboAssembler::li(dst, 1);
+  bool predicate;
+  FPUCondition fcond = liftoff::ConditionToConditionCmpFPU(predicate, cond);
+  TurboAssembler::CompareF32(fcond, lhs, rhs);
+  if (predicate) {
+    TurboAssembler::Movf(dst, zero_reg);
+  } else {
+    TurboAssembler::Movt(dst, zero_reg);
+  }
+
+  bind(&cont);
 }
 
 void LiftoffAssembler::emit_f64_set_cond(Condition cond, Register dst,
                                          DoubleRegister lhs,
                                          DoubleRegister rhs) {
-  BAILOUT("emit_f64_set_cond");
+  Label not_nan, cont;
+  TurboAssembler::CompareIsNanF64(lhs, rhs);
+  TurboAssembler::BranchFalseF(&not_nan);
+  // If one of the operands is NaN, return 1 for f64.ne, else 0.
+  if (cond == ne) {
+    TurboAssembler::li(dst, 1);
+  } else {
+    TurboAssembler::Move(dst, zero_reg);
+  }
+  TurboAssembler::Branch(&cont);
+
+  bind(&not_nan);
+
+  TurboAssembler::li(dst, 1);
+  bool predicate;
+  FPUCondition fcond = liftoff::ConditionToConditionCmpFPU(predicate, cond);
+  TurboAssembler::CompareF64(fcond, lhs, rhs);
+  if (predicate) {
+    TurboAssembler::Movf(dst, zero_reg);
+  } else {
+    TurboAssembler::Movt(dst, zero_reg);
+  }
+
+  bind(&cont);
 }
 
 void LiftoffAssembler::StackCheck(Label* ool_code) {

@@ -5,8 +5,8 @@
 #ifndef V8_LOOKUP_H_
 #define V8_LOOKUP_H_
 
-#include "src/factory.h"
 #include "src/globals.h"
+#include "src/heap/factory.h"
 #include "src/isolate.h"
 #include "src/objects.h"
 #include "src/objects/descriptor-array.h"
@@ -303,7 +303,7 @@ class V8_EXPORT_PRIVATE LookupIterator final BASE_EMBEDDED {
 
   Handle<Map> GetReceiverMap() const;
 
-  MUST_USE_RESULT inline JSReceiver* NextHolder(Map* map);
+  V8_WARN_UNUSED_RESULT inline JSReceiver* NextHolder(Map* map);
 
   template <bool is_element>
   V8_EXPORT_PRIVATE void Start();

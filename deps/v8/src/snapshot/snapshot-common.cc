@@ -296,7 +296,7 @@ v8::StartupData Snapshot::CreateSnapshotBlob(
 #ifdef V8_EMBEDDED_BUILTINS
 namespace {
 bool BuiltinAliasesOffHeapTrampolineRegister(Isolate* isolate, Code* code) {
-  DCHECK(Builtins::IsOffHeapSafe(code->builtin_index()));
+  DCHECK(Builtins::IsIsolateIndependent(code->builtin_index()));
   switch (Builtins::KindOf(code->builtin_index())) {
     case Builtins::CPP:
     case Builtins::TFC:
@@ -340,7 +340,7 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
   for (int i = 0; i < Builtins::builtin_count; i++) {
     Code* code = builtins->builtin(i);
 
-    if (Builtins::IsOffHeapSafe(i)) {
+    if (Builtins::IsIsolateIndependent(i)) {
       DCHECK(!Builtins::IsLazy(i));
 
       // Sanity-check that the given builtin is process-independent and does not
@@ -383,13 +383,13 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
 
   // Write the raw data section.
   for (int i = 0; i < Builtins::builtin_count; i++) {
-    if (!Builtins::IsOffHeapSafe(i)) continue;
+    if (!Builtins::IsIsolateIndependent(i)) continue;
     Code* code = builtins->builtin(i);
     uint32_t offset = offsets[i];
     uint8_t* dst = blob + RawDataOffset() + offset;
     DCHECK_LE(RawDataOffset() + offset + code->raw_instruction_size(),
               blob_size);
-    std::memcpy(dst, code->raw_instruction_start(),
+    std::memcpy(dst, reinterpret_cast<uint8_t*>(code->raw_instruction_start()),
                 code->raw_instruction_size());
   }
 
@@ -404,13 +404,13 @@ EmbeddedData EmbeddedData::FromBlob() {
   return {data, size};
 }
 
-const uint8_t* EmbeddedData::InstructionStartOfBuiltin(int i) const {
+Address EmbeddedData::InstructionStartOfBuiltin(int i) const {
   DCHECK(Builtins::IsBuiltinId(i));
 
   const uint32_t* offsets = Offsets();
   const uint8_t* result = RawData() + offsets[i];
   DCHECK_LT(result, data_ + size_);
-  return result;
+  return reinterpret_cast<Address>(result);
 }
 
 uint32_t EmbeddedData::InstructionSizeOfBuiltin(int i) const {

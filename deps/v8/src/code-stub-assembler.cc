@@ -871,15 +871,14 @@ void CodeStubAssembler::BranchIfPrototypesHaveNoElements(
     Node* prototype = LoadMapPrototype(map);
     GotoIf(IsNull(prototype), definitely_no_elements);
     Node* prototype_map = LoadMap(prototype);
-    Node* prototype_instance_type = LoadMapInstanceType(prototype_map);
+    TNode<Int32T> prototype_instance_type = LoadMapInstanceType(prototype_map);
 
     // Pessimistically assume elements if a Proxy, Special API Object,
     // or JSValue wrapper is found on the prototype chain. After this
     // instance type check, it's not necessary to check for interceptors or
     // access checks.
     Label if_custom(this, Label::kDeferred), if_notcustom(this);
-    Branch(Int32LessThanOrEqual(prototype_instance_type,
-                                Int32Constant(LAST_CUSTOM_ELEMENTS_RECEIVER)),
+    Branch(IsCustomElementsReceiverInstanceType(prototype_instance_type),
            &if_custom, &if_notcustom);
 
     BIND(&if_custom);
@@ -2110,6 +2109,26 @@ Node* CodeStubAssembler::LoadJSFunctionPrototype(Node* function,
   return var_result.value();
 }
 
+Node* CodeStubAssembler::LoadSharedFunctionInfoBytecodeArray(Node* shared) {
+  CSA_ASSERT(this, TaggedIsNotSmi(shared));
+  CSA_ASSERT(this, IsSharedFunctionInfo(shared));
+
+  Node* function_data =
+      LoadObjectField(shared, SharedFunctionInfo::kFunctionDataOffset);
+
+  VARIABLE(var_result, MachineRepresentation::kTagged, function_data);
+  Label done(this, &var_result);
+
+  GotoIfNot(HasInstanceType(function_data, INTERPRETER_DATA_TYPE), &done);
+  Node* bytecode_array =
+      LoadObjectField(function_data, InterpreterData::kBytecodeArrayOffset);
+  var_result.Bind(bytecode_array);
+  Goto(&done);
+
+  BIND(&done);
+  return var_result.value();
+}
+
 void CodeStubAssembler::StoreHeapNumberValue(SloppyTNode<HeapNumber> object,
                                              SloppyTNode<Float64T> value) {
   StoreObjectFieldNoWriteBarrier(object, HeapNumber::kValueOffset, value,
@@ -2244,14 +2263,28 @@ Node* CodeStubAssembler::StoreFeedbackVectorSlot(Node* object,
   }
 }
 
-void CodeStubAssembler::EnsureArrayLengthWritable(Node* map, Label* bailout) {
+void CodeStubAssembler::EnsureArrayLengthWritable(TNode<Map> map,
+                                                  Label* bailout) {
+  // Don't support arrays in dictionary named property mode.
+  GotoIf(IsDictionaryMap(map), bailout);
+
   // Check whether the length property is writable. The length property is the
   // only default named property on arrays. It's nonconfigurable, hence is
   // guaranteed to stay the first property.
-  Node* descriptors = LoadMapDescriptors(map);
-  Node* details =
-      LoadFixedArrayElement(descriptors, DescriptorArray::ToDetailsIndex(0));
-  GotoIf(IsSetSmi(details, PropertyDetails::kAttributesReadOnlyMask), bailout);
+  TNode<DescriptorArray> descriptors = LoadMapDescriptors(map);
+
+  int length_index = JSArray::kLengthDescriptorIndex;
+#ifdef DEBUG
+  TNode<Name> maybe_length = CAST(LoadFixedArrayElement(
+      descriptors, DescriptorArray::ToKeyIndex(length_index)));
+  CSA_ASSERT(this,
+             WordEqual(maybe_length, LoadRoot(Heap::klength_stringRootIndex)));
+#endif
+
+  TNode<Int32T> details = LoadAndUntagToWord32FixedArrayElement(
+      descriptors, DescriptorArray::ToDetailsIndex(length_index));
+  GotoIf(IsSetWord32(details, PropertyDetails::kAttributesReadOnlyMask),
+         bailout);
 }
 
 TNode<Int32T> CodeStubAssembler::EnsureArrayPushable(TNode<Map> map,
@@ -2264,11 +2297,6 @@ TNode<Int32T> CodeStubAssembler::EnsureArrayPushable(TNode<Map> map,
   Node* test = Word32And(bit_field2, Int32Constant(mask));
   GotoIf(Word32NotEqual(test, Int32Constant(Map::IsExtensibleBit::kMask)),
          bailout);
-
-  // Disallow pushing onto arrays in dictionary named property mode. We need
-  // to figure out whether the length property is still writable.
-  Comment("Disallow pushing onto arrays in dictionary named property mode");
-  GotoIf(IsDictionaryMap(map), bailout);
 
   EnsureArrayLengthWritable(map, bailout);
 
@@ -4478,10 +4506,16 @@ Node* CodeStubAssembler::IsFunctionWithPrototypeSlotMap(Node* map) {
 }
 
 TNode<BoolT> CodeStubAssembler::IsSpecialReceiverInstanceType(
-    Node* instance_type) {
+    TNode<Int32T> instance_type) {
   STATIC_ASSERT(JS_GLOBAL_OBJECT_TYPE <= LAST_SPECIAL_RECEIVER_TYPE);
   return Int32LessThanOrEqual(instance_type,
                               Int32Constant(LAST_SPECIAL_RECEIVER_TYPE));
+}
+
+TNode<BoolT> CodeStubAssembler::IsCustomElementsReceiverInstanceType(
+    TNode<Int32T> instance_type) {
+  return Int32LessThanOrEqual(instance_type,
+                              Int32Constant(LAST_CUSTOM_ELEMENTS_RECEIVER));
 }
 
 Node* CodeStubAssembler::IsStringInstanceType(Node* instance_type) {
@@ -6980,6 +7014,27 @@ void CodeStubAssembler::LookupBinary(TNode<Name> unique_name,
   }
 }
 
+void CodeStubAssembler::DescriptorArrayForEach(
+    VariableList& variable_list, TNode<Uint32T> start_descriptor,
+    TNode<Uint32T> end_descriptor, const ForEachDescriptorBodyFunction& body) {
+  TNode<IntPtrT> start_index =
+      IntPtrAdd(IntPtrConstant(DescriptorArray::ToKeyIndex(0)),
+                EntryIndexToIndex<DescriptorArray>(start_descriptor));
+
+  TNode<IntPtrT> end_index =
+      IntPtrAdd(IntPtrConstant(DescriptorArray::ToKeyIndex(0)),
+                EntryIndexToIndex<DescriptorArray>(end_descriptor));
+
+  BuildFastLoop(variable_list, start_index, end_index,
+                [=](Node* index) {
+                  TNode<UintPtrT> descriptor_key_index =
+                      TNode<UintPtrT>::UncheckedCast(index);
+                  body(descriptor_key_index);
+                },
+                DescriptorArray::kEntrySize, INTPTR_PARAMETERS,
+                IndexAdvanceMode::kPost);
+}
+
 void CodeStubAssembler::DescriptorLookup(
     SloppyTNode<Name> unique_name, SloppyTNode<DescriptorArray> descriptors,
     SloppyTNode<Uint32T> bitfield3, Label* if_found,
@@ -7414,7 +7469,7 @@ void CodeStubAssembler::TryGetOwnProperty(
   if (!var_details) {
     var_details = &local_var_details;
   }
-  Label if_found(this, {var_value, var_details});
+  Label if_found(this);
 
   TryLookupProperty(object, map, instance_type, unique_name, &if_found_fast,
                     &if_found_dict, &if_found_global, &var_meta_storage,
@@ -7459,7 +7514,7 @@ void CodeStubAssembler::TryGetOwnProperty(
 }
 
 void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
-                                         Node* instance_type,
+                                         SloppyTNode<Int32T> instance_type,
                                          Node* intptr_index, Label* if_found,
                                          Label* if_absent, Label* if_not_found,
                                          Label* if_bailout) {
@@ -7750,7 +7805,7 @@ Node* CodeStubAssembler::HasInPrototypeChain(Node* context, Node* object,
     // Check if we can determine the prototype directly from the {object_map}.
     Label if_objectisdirect(this), if_objectisspecial(this, Label::kDeferred);
     Node* object_map = var_object_map.value();
-    Node* object_instance_type = LoadMapInstanceType(object_map);
+    TNode<Int32T> object_instance_type = LoadMapInstanceType(object_map);
     Branch(IsSpecialReceiverInstanceType(object_instance_type),
            &if_objectisspecial, &if_objectisdirect);
     BIND(&if_objectisspecial);
@@ -9132,11 +9187,12 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* left,
         BIND(&if_left_bigint);
         {
           Label if_right_heapnumber(this), if_right_bigint(this),
-              if_right_not_numeric(this);
+              if_right_string(this), if_right_other(this);
           GotoIf(IsHeapNumberMap(right_map), &if_right_heapnumber);
           Node* right_instance_type = LoadMapInstanceType(right_map);
-          Branch(IsBigIntInstanceType(right_instance_type), &if_right_bigint,
-                 &if_right_not_numeric);
+          GotoIf(IsBigIntInstanceType(right_instance_type), &if_right_bigint);
+          Branch(IsStringInstanceType(right_instance_type), &if_right_string,
+                 &if_right_other);
 
           BIND(&if_right_heapnumber);
           {
@@ -9158,7 +9214,18 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* left,
             Goto(&end);
           }
 
-          BIND(&if_right_not_numeric);
+          BIND(&if_right_string);
+          {
+            OverwriteFeedback(var_type_feedback,
+                              CompareOperationFeedback::kAny);
+            var_result = CAST(CallRuntime(Runtime::kBigIntCompareToString,
+                                          NoContextConstant(), SmiConstant(op),
+                                          left, right));
+            Goto(&end);
+          }
+
+          // {right} is not a Number, BigInt, or String.
+          BIND(&if_right_other);
           {
             OverwriteFeedback(var_type_feedback,
                               CompareOperationFeedback::kAny);
@@ -9206,11 +9273,14 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* left,
           {
             OverwriteFeedback(var_type_feedback,
                               CompareOperationFeedback::kAny);
-            // {left} is a String, while {right} isn't. So we call
-            // ToPrimitive(right, hint Number) if {right} is a receiver, or
-            // ToNumeric(left) and then ToNumeric(right) in the other cases.
+            // {left} is a String, while {right} isn't. Check if {right} is
+            // a BigInt, otherwise call ToPrimitive(right, hint Number) if
+            // {right} is a receiver, or ToNumeric(left) and then
+            // ToNumeric(right) in the other cases.
             STATIC_ASSERT(LAST_JS_RECEIVER_TYPE == LAST_TYPE);
-            Label if_right_receiver(this, Label::kDeferred);
+            Label if_right_bigint(this),
+                if_right_receiver(this, Label::kDeferred);
+            GotoIf(IsBigIntInstanceType(right_instance_type), &if_right_bigint);
             GotoIf(IsJSReceiverInstanceType(right_instance_type),
                    &if_right_receiver);
 
@@ -9218,6 +9288,14 @@ Node* CodeStubAssembler::RelationalComparison(Operation op, Node* left,
                 CallBuiltin(Builtins::kNonNumberToNumeric, context, left));
             var_right.Bind(CallBuiltin(Builtins::kToNumeric, context, right));
             Goto(&loop);
+
+            BIND(&if_right_bigint);
+            {
+              var_result = CAST(CallRuntime(
+                  Runtime::kBigIntCompareToString, NoContextConstant(),
+                  SmiConstant(Reverse(op)), right, left));
+              Goto(&end);
+            }
 
             BIND(&if_right_receiver);
             {
@@ -10934,11 +11012,15 @@ void CodeStubArguments::PopAndReturn(Node* value) {
 }
 
 Node* CodeStubAssembler::IsFastElementsKind(Node* elements_kind) {
+  STATIC_ASSERT(FIRST_ELEMENTS_KIND == FIRST_FAST_ELEMENTS_KIND);
   return Uint32LessThanOrEqual(elements_kind,
                                Int32Constant(LAST_FAST_ELEMENTS_KIND));
 }
 
 Node* CodeStubAssembler::IsFastSmiOrTaggedElementsKind(Node* elements_kind) {
+  STATIC_ASSERT(FIRST_ELEMENTS_KIND == FIRST_FAST_ELEMENTS_KIND);
+  STATIC_ASSERT(PACKED_DOUBLE_ELEMENTS > TERMINAL_FAST_ELEMENTS_KIND);
+  STATIC_ASSERT(HOLEY_DOUBLE_ELEMENTS > TERMINAL_FAST_ELEMENTS_KIND);
   return Uint32LessThanOrEqual(elements_kind,
                                Int32Constant(TERMINAL_FAST_ELEMENTS_KIND));
 }
@@ -11015,17 +11097,18 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
   TNode<Int32T> data_type = LoadInstanceType(CAST(sfi_data));
 
   int32_t case_values[] = {BYTECODE_ARRAY_TYPE, CODE_TYPE, FIXED_ARRAY_TYPE,
-                           TUPLE2_TYPE};
+                           TUPLE2_TYPE, FUNCTION_TEMPLATE_INFO_TYPE};
   Label check_is_bytecode_array(this);
   Label check_is_code(this);
   Label check_is_fixed_array(this);
   Label check_is_pre_parsed_scope_data(this);
   Label check_is_function_template_info(this);
-  Label* case_labels[] = {&check_is_bytecode_array, &check_is_code,
-                          &check_is_fixed_array,
-                          &check_is_pre_parsed_scope_data};
+  Label check_is_interpreter_data(this);
+  Label* case_labels[] = {
+      &check_is_bytecode_array, &check_is_code, &check_is_fixed_array,
+      &check_is_pre_parsed_scope_data, &check_is_function_template_info};
   STATIC_ASSERT(arraysize(case_values) == arraysize(case_labels));
-  Switch(data_type, &check_is_function_template_info, case_values, case_labels,
+  Switch(data_type, &check_is_interpreter_data, case_values, case_labels,
          arraysize(case_labels));
 
   // IsBytecodeArray: Interpret bytecode
@@ -11053,11 +11136,17 @@ TNode<Code> CodeStubAssembler::GetSharedFunctionInfoCode(
 
   // IsFunctionTemplateInfo: API call
   BIND(&check_is_function_template_info);
-  // This is the default branch, so assert that we have the expected data type.
-  CSA_ASSERT(
-      this, Word32Equal(data_type, Int32Constant(FUNCTION_TEMPLATE_INFO_TYPE)));
   DCHECK(!Builtins::IsLazy(Builtins::kHandleApiCall));
   sfi_code = HeapConstant(BUILTIN_CODE(isolate(), HandleApiCall));
+  Goto(&done);
+
+  // IsInterpreterData: Interpret bytecode
+  BIND(&check_is_interpreter_data);
+  // This is the default branch, so assert that we have the expected data type.
+  CSA_ASSERT(this,
+             Word32Equal(data_type, Int32Constant(INTERPRETER_DATA_TYPE)));
+  sfi_code = CAST(LoadObjectField(
+      CAST(sfi_data), InterpreterData::kInterpreterTrampolineOffset));
   Goto(&done);
 
   BIND(&done);

@@ -68,6 +68,7 @@ namespace internal {
   F(BigIntBinaryOp, 3, 1)            \
   F(BigIntCompareToBigInt, 3, 1)     \
   F(BigIntCompareToNumber, 3, 1)     \
+  F(BigIntCompareToString, 3, 1)     \
   F(BigIntEqualToBigInt, 2, 1)       \
   F(BigIntEqualToNumber, 2, 1)       \
   F(BigIntEqualToString, 2, 1)       \
@@ -143,7 +144,7 @@ namespace internal {
   F(DebugGetPropertyDetails, 2, 1)              \
   F(DebugGetPrototype, 1, 1)                    \
   F(DebugIsActive, 0, 1)                        \
-  F(DebugOnFunctionCall, 1, 1)                  \
+  F(DebugOnFunctionCall, 2, 1)                  \
   F(DebugPopPromise, 0, 1)                      \
   F(DebugPrepareStepInSuspendedGenerator, 0, 1) \
   F(DebugPropertyAttributesFromDetails, 1, 1)   \
@@ -400,6 +401,7 @@ namespace internal {
   F(OptimizeObjectForAddingMultipleProperties, 2, 1)            \
   F(SameValue, 2, 1)                                            \
   F(SameValueZero, 2, 1)                                        \
+  F(SetDataProperties, 2, 1)                                    \
   F(SetProperty, 4, 1)                                          \
   F(ShrinkPropertyDictionary, 1, 1)                             \
   F(ToFastProperties, 1, 1)                                     \
@@ -746,22 +748,22 @@ class Runtime : public AllStatic {
   // Get the runtime intrinsic function table.
   static const Function* RuntimeFunctionTable(Isolate* isolate);
 
-  MUST_USE_RESULT static Maybe<bool> DeleteObjectProperty(
+  V8_WARN_UNUSED_RESULT static Maybe<bool> DeleteObjectProperty(
       Isolate* isolate, Handle<JSReceiver> receiver, Handle<Object> key,
       LanguageMode language_mode);
 
-  MUST_USE_RESULT static MaybeHandle<Object> SetObjectProperty(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> SetObjectProperty(
       Isolate* isolate, Handle<Object> object, Handle<Object> key,
       Handle<Object> value, LanguageMode language_mode);
 
-  MUST_USE_RESULT static MaybeHandle<Object> GetObjectProperty(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> GetObjectProperty(
       Isolate* isolate, Handle<Object> object, Handle<Object> key,
       bool* is_found_out = nullptr);
 
-  MUST_USE_RESULT static MaybeHandle<JSArray> GetInternalProperties(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<JSArray> GetInternalProperties(
       Isolate* isolate, Handle<Object>);
 
-  MUST_USE_RESULT static MaybeHandle<Object> ThrowIteratorError(
+  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> ThrowIteratorError(
       Isolate* isolate, Handle<Object> object);
 };
 

@@ -18,15 +18,13 @@
 #include "src/builtins/builtins.h"
 #include "src/contexts-inl.h"
 #include "src/conversions-inl.h"
-#include "src/factory.h"
 #include "src/feedback-vector-inl.h"
 #include "src/field-index-inl.h"
 #include "src/field-type.h"
 #include "src/handles-inl.h"
+#include "src/heap/factory.h"
 #include "src/heap/heap-inl.h"
-#include "src/heap/heap.h"
 #include "src/isolate-inl.h"
-#include "src/isolate.h"
 #include "src/keys.h"
 #include "src/layout-descriptor-inl.h"
 #include "src/lookup-cache-inl.h"
@@ -37,7 +35,6 @@
 #include "src/objects/data-handler-inl.h"
 #include "src/objects/fixed-array-inl.h"
 #include "src/objects/hash-table-inl.h"
-#include "src/objects/hash-table.h"
 #include "src/objects/js-array-inl.h"
 #include "src/objects/js-collection-inl.h"
 #include "src/objects/js-promise-inl.h"
@@ -885,7 +882,7 @@ MaybeHandle<Object> JSReceiver::GetProperty(Isolate* isolate,
 }
 
 // static
-MUST_USE_RESULT MaybeHandle<FixedArray> JSReceiver::OwnPropertyKeys(
+V8_WARN_UNUSED_RESULT MaybeHandle<FixedArray> JSReceiver::OwnPropertyKeys(
     Handle<JSReceiver> object) {
   return KeyAccumulator::GetKeys(object, KeyCollectionMode::kOwnOnly,
                                  ALL_PROPERTIES,
@@ -901,7 +898,7 @@ bool JSObject::PrototypeHasNoElements(Isolate* isolate, JSObject* object) {
       isolate->heap()->empty_slow_element_dictionary();
   while (prototype != null) {
     Map* map = prototype->map();
-    if (map->instance_type() <= LAST_CUSTOM_ELEMENTS_RECEIVER) return false;
+    if (map->IsCustomElementsReceiverMap()) return false;
     HeapObject* elements = JSObject::cast(prototype)->elements();
     if (elements != empty_fixed_array &&
         elements != empty_slow_element_dictionary) {
@@ -935,13 +932,13 @@ bool MapWord::IsForwardingAddress() const {
 
 MapWord MapWord::FromForwardingAddress(HeapObject* object) {
   Address raw = reinterpret_cast<Address>(object) - kHeapObjectTag;
-  return MapWord(reinterpret_cast<uintptr_t>(raw));
+  return MapWord(static_cast<uintptr_t>(raw));
 }
 
 
 HeapObject* MapWord::ToForwardingAddress() {
   DCHECK(IsForwardingAddress());
-  return HeapObject::FromAddress(reinterpret_cast<Address>(value_));
+  return HeapObject::FromAddress(static_cast<Address>(value_));
 }
 
 
@@ -1451,6 +1448,16 @@ bool Map::IsSpecialReceiverMap() const {
   DCHECK_IMPLIES(!result,
                  !has_named_interceptor() && !is_access_check_needed());
   return result;
+}
+
+inline bool IsCustomElementsReceiverInstanceType(InstanceType instance_type) {
+  return instance_type <= LAST_CUSTOM_ELEMENTS_RECEIVER;
+}
+
+// This should be in objects/map-inl.h, but can't, because of a cyclic
+// dependency.
+bool Map::IsCustomElementsReceiverMap() const {
+  return IsCustomElementsReceiverInstanceType(instance_type());
 }
 
 // static
@@ -2235,6 +2242,10 @@ int HeapObject::SizeFromMap(Map* map) const {
     return WeakFixedArray::SizeFor(
         reinterpret_cast<const WeakFixedArray*>(this)->synchronized_length());
   }
+  if (instance_type == WEAK_ARRAY_LIST_TYPE) {
+    return WeakArrayList::SizeForCapacity(
+        reinterpret_cast<const WeakArrayList*>(this)->synchronized_capacity());
+  }
   if (instance_type >= FIRST_FIXED_TYPED_ARRAY_TYPE &&
       instance_type <= LAST_FIXED_TYPED_ARRAY_TYPE) {
     return reinterpret_cast<const FixedTypedArrayBase*>(this)->TypedArraySize(
@@ -2292,15 +2303,17 @@ ACCESSORS(AccessorInfo, data, Object, kDataOffset)
 
 bool AccessorInfo::has_getter() {
   bool result = getter() != Smi::kZero;
-  DCHECK_EQ(result, getter() != Smi::kZero &&
-                        Foreign::cast(getter())->foreign_address() != nullptr);
+  DCHECK_EQ(result,
+            getter() != Smi::kZero &&
+                Foreign::cast(getter())->foreign_address() != kNullAddress);
   return result;
 }
 
 bool AccessorInfo::has_setter() {
   bool result = setter() != Smi::kZero;
-  DCHECK_EQ(result, setter() != Smi::kZero &&
-                        Foreign::cast(setter())->foreign_address() != nullptr);
+  DCHECK_EQ(result,
+            setter() != Smi::kZero &&
+                Foreign::cast(setter())->foreign_address() != kNullAddress);
   return result;
 }
 
@@ -2612,7 +2625,7 @@ void JSFunction::CompleteInobjectSlackTrackingIfActive() {
 
 AbstractCode* JSFunction::abstract_code() {
   if (IsInterpreted()) {
-    return AbstractCode::cast(shared()->bytecode_array());
+    return AbstractCode::cast(shared()->GetBytecodeArray());
   } else {
     return AbstractCode::cast(code());
   }
@@ -2747,7 +2760,7 @@ bool JSProxy::IsRevoked() const { return !handler()->IsJSReceiver(); }
 // static
 bool Foreign::IsNormalized(Object* value) {
   if (value == Smi::kZero) return true;
-  return Foreign::cast(value)->foreign_address() != nullptr;
+  return Foreign::cast(value)->foreign_address() != kNullAddress;
 }
 
 Address Foreign::foreign_address() {

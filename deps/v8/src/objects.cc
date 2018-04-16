@@ -554,6 +554,14 @@ Maybe<ComparisonResult> Object::Compare(Handle<Object> x, Handle<Object> y) {
     return Just(
         String::Compare(Handle<String>::cast(x), Handle<String>::cast(y)));
   }
+  if (x->IsBigInt() && y->IsString()) {
+    return Just(BigInt::CompareToString(Handle<BigInt>::cast(x),
+                                        Handle<String>::cast(y)));
+  }
+  if (x->IsString() && y->IsBigInt()) {
+    return Just(Reverse(BigInt::CompareToString(Handle<BigInt>::cast(y),
+                                                Handle<String>::cast(x))));
+  }
   // ES6 section 7.2.11 Abstract Relational Comparison step 6.
   if (!Object::ToNumeric(x).ToHandle(&x) ||
       !Object::ToNumeric(y).ToHandle(&y)) {
@@ -1541,7 +1549,7 @@ Address AccessorInfo::redirect(Isolate* isolate, Address address,
 
 Address AccessorInfo::redirected_getter() const {
   Address accessor = v8::ToCData<Address>(getter());
-  if (accessor == nullptr) return nullptr;
+  if (accessor == kNullAddress) return kNullAddress;
   return redirect(GetIsolate(), accessor, ACCESSOR_GETTER);
 }
 
@@ -2061,7 +2069,7 @@ bool HasExcludedProperty(
   return false;
 }
 
-MUST_USE_RESULT Maybe<bool> FastAssign(
+V8_WARN_UNUSED_RESULT Maybe<bool> FastAssign(
     Handle<JSReceiver> target, Handle<Object> source,
     const ScopedVector<Handle<Object>>* excluded_properties, bool use_set) {
   // Non-empty strings are the only non-JSReceivers that need to be handled
@@ -2405,7 +2413,7 @@ MaybeHandle<Object> Object::ArraySpeciesConstructor(
 }
 
 // ES6 section 7.3.20 SpeciesConstructor ( O, defaultConstructor )
-MUST_USE_RESULT MaybeHandle<Object> Object::SpeciesConstructor(
+V8_WARN_UNUSED_RESULT MaybeHandle<Object> Object::SpeciesConstructor(
     Isolate* isolate, Handle<JSReceiver> recv,
     Handle<JSFunction> default_ctor) {
   Handle<Object> ctor_obj;
@@ -3010,7 +3018,8 @@ VisitorId Map::GetVisitorId(Map* map) {
       return kVisitFixedArray;
 
     case WEAK_FIXED_ARRAY_TYPE:
-      return kVisitWeakFixedArray;
+    case WEAK_ARRAY_LIST_TYPE:
+      return kVisitWeakArray;
 
     case FIXED_DOUBLE_ARRAY_TYPE:
       return kVisitFixedDoubleArray;
@@ -8148,7 +8157,7 @@ bool TestDictionaryPropertiesIntegrityLevel(Dictionary* dict, Isolate* isolate,
 
 bool TestFastPropertiesIntegrityLevel(Map* map, PropertyAttributes level) {
   DCHECK(level == SEALED || level == FROZEN);
-  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, map->instance_type());
+  DCHECK(!map->IsCustomElementsReceiverMap());
   DCHECK(!map->is_dictionary_map());
 
   DescriptorArray* descriptors = map->instance_descriptors();
@@ -8165,7 +8174,7 @@ bool TestFastPropertiesIntegrityLevel(Map* map, PropertyAttributes level) {
 }
 
 bool TestPropertiesIntegrityLevel(JSObject* object, PropertyAttributes level) {
-  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, object->map()->instance_type());
+  DCHECK(!object->map()->IsCustomElementsReceiverMap());
 
   if (object->HasFastProperties()) {
     return TestFastPropertiesIntegrityLevel(object->map(), level);
@@ -8193,7 +8202,7 @@ bool TestElementsIntegrityLevel(JSObject* object, PropertyAttributes level) {
 }
 
 bool FastTestIntegrityLevel(JSObject* object, PropertyAttributes level) {
-  DCHECK_LT(LAST_CUSTOM_ELEMENTS_RECEIVER, object->map()->instance_type());
+  DCHECK(!object->map()->IsCustomElementsReceiverMap());
 
   return !object->map()->is_extensible() &&
          TestElementsIntegrityLevel(object, level) &&
@@ -8236,7 +8245,7 @@ Maybe<bool> GenericTestIntegrityLevel(Handle<JSReceiver> receiver,
 
 Maybe<bool> JSReceiver::TestIntegrityLevel(Handle<JSReceiver> receiver,
                                            IntegrityLevel level) {
-  if (receiver->map()->instance_type() > LAST_CUSTOM_ELEMENTS_RECEIVER) {
+  if (!receiver->map()->IsCustomElementsReceiverMap()) {
     return JSObject::TestIntegrityLevel(Handle<JSObject>::cast(receiver),
                                         level);
   }
@@ -8245,7 +8254,7 @@ Maybe<bool> JSReceiver::TestIntegrityLevel(Handle<JSReceiver> receiver,
 
 Maybe<bool> JSObject::TestIntegrityLevel(Handle<JSObject> object,
                                          IntegrityLevel level) {
-  if (object->map()->instance_type() > LAST_CUSTOM_ELEMENTS_RECEIVER &&
+  if (!object->map()->IsCustomElementsReceiverMap() &&
       !object->HasSloppyArgumentsElements()) {
     return Just(FastTestIntegrityLevel(*object, level));
   }
@@ -8777,7 +8786,7 @@ bool Map::OnlyHasSimpleProperties() const {
          !is_dictionary_map();
 }
 
-MUST_USE_RESULT Maybe<bool> FastGetOwnValuesOrEntries(
+V8_WARN_UNUSED_RESULT Maybe<bool> FastGetOwnValuesOrEntries(
     Isolate* isolate, Handle<JSReceiver> receiver, bool get_entries,
     Handle<FixedArray>* result) {
   Handle<Map> map(JSReceiver::cast(*receiver)->map(), isolate);
@@ -9138,7 +9147,8 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
 
       if (new_map->is_prototype_map()) {
         // For prototype maps, the PrototypeInfo is not copied.
-        DCHECK_EQ(0, memcmp(fresh->address(), new_map->address(),
+        DCHECK_EQ(0, memcmp(reinterpret_cast<void*>(fresh->address()),
+                            reinterpret_cast<void*>(new_map->address()),
                             kTransitionsOrPrototypeInfoOffset));
         DCHECK_EQ(fresh->raw_transitions(),
                   MaybeObject::FromObject(Smi::kZero));
@@ -9148,7 +9158,8 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
                             HeapObject::RawField(*new_map, kDescriptorsOffset),
                             kDependentCodeOffset - kDescriptorsOffset));
       } else {
-        DCHECK_EQ(0, memcmp(fresh->address(), new_map->address(),
+        DCHECK_EQ(0, memcmp(reinterpret_cast<void*>(fresh->address()),
+                            reinterpret_cast<void*>(new_map->address()),
                             Map::kDependentCodeOffset));
       }
       STATIC_ASSERT(Map::kWeakCellCacheOffset ==
@@ -9156,8 +9167,9 @@ Handle<Map> Map::Normalize(Handle<Map> fast_map, PropertyNormalizationMode mode,
       STATIC_ASSERT(Map::kPrototypeValidityCellOffset ==
                     Map::kWeakCellCacheOffset + kPointerSize);
       int offset = Map::kPrototypeValidityCellOffset + kPointerSize;
-      DCHECK_EQ(0, memcmp(fresh->address() + offset,
-                          new_map->address() + offset, Map::kSize - offset));
+      DCHECK_EQ(0, memcmp(reinterpret_cast<void*>(fresh->address() + offset),
+                          reinterpret_cast<void*>(new_map->address() + offset),
+                          Map::kSize - offset));
     }
 #endif
   } else {
@@ -10275,14 +10287,11 @@ Handle<FixedArrayOfWeakCells> FixedArrayOfWeakCells::Allocate(
 }
 
 // static
-Handle<ArrayList> ArrayList::Add(Handle<ArrayList> array, Handle<Object> obj,
-                                 AddMode mode) {
+Handle<ArrayList> ArrayList::Add(Handle<ArrayList> array, Handle<Object> obj) {
   int length = array->Length();
   array = EnsureSpace(array, length + 1);
-  if (mode == kReloadLengthAfterAllocation) {
-    DCHECK(array->Length() <= length);
-    length = array->Length();
-  }
+  // Check that GC didn't remove elements from the array.
+  DCHECK_EQ(array->Length(), length);
   array->Set(length, *obj);
   array->SetLength(length + 1);
   return array;
@@ -10290,12 +10299,11 @@ Handle<ArrayList> ArrayList::Add(Handle<ArrayList> array, Handle<Object> obj,
 
 // static
 Handle<ArrayList> ArrayList::Add(Handle<ArrayList> array, Handle<Object> obj1,
-                                 Handle<Object> obj2, AddMode mode) {
+                                 Handle<Object> obj2) {
   int length = array->Length();
   array = EnsureSpace(array, length + 2);
-  if (mode == kReloadLengthAfterAllocation) {
-    length = array->Length();
-  }
+  // Check that GC didn't remove elements from the array.
+  DCHECK_EQ(array->Length(), length);
   array->Set(length, *obj1);
   array->Set(length + 1, *obj2);
   array->SetLength(length + 2);
@@ -10353,6 +10361,35 @@ Handle<ArrayList> ArrayList::EnsureSpace(Handle<ArrayList> array, int length) {
     Handle<ArrayList>::cast(ret)->SetLength(0);
   }
   return Handle<ArrayList>::cast(ret);
+}
+
+// static
+Handle<WeakArrayList> WeakArrayList::Add(Handle<WeakArrayList> array,
+                                         Handle<HeapObject> obj1, Smi* obj2) {
+  int length = array->length();
+  array = EnsureSpace(array, length + 2);
+  // Check that GC didn't remove elements from the array.
+  DCHECK_EQ(array->length(), length);
+  array->Set(length, HeapObjectReference::Weak(*obj1));
+  array->Set(length + 1, MaybeObject::FromSmi(obj2));
+  array->set_length(length + 2);
+  return array;
+}
+
+bool WeakArrayList::IsFull() { return length() == capacity(); }
+
+// static
+Handle<WeakArrayList> WeakArrayList::EnsureSpace(Handle<WeakArrayList> array,
+                                                 int length) {
+  int capacity = array->capacity();
+  if (capacity < length) {
+    Isolate* isolate = array->GetIsolate();
+    int new_capacity = length;
+    new_capacity = new_capacity + Max(new_capacity / 2, 2);
+    int grow_by = new_capacity - capacity;
+    array = isolate->factory()->CopyWeakArrayListAndGrow(array, grow_by);
+  }
+  return array;
 }
 
 Handle<RegExpMatchInfo> RegExpMatchInfo::ReserveCaptures(
@@ -12042,12 +12079,14 @@ Handle<String> SeqString::Truncate(Handle<SeqString> string, int new_length) {
 
 void SeqOneByteString::clear_padding() {
   int data_size = SeqString::kHeaderSize + length() * kOneByteSize;
-  memset(address() + data_size, 0, SizeFor(length()) - data_size);
+  memset(reinterpret_cast<void*>(address() + data_size), 0,
+         SizeFor(length()) - data_size);
 }
 
 void SeqTwoByteString::clear_padding() {
   int data_size = SeqString::kHeaderSize + length() * kUC16Size;
-  memset(address() + data_size, 0, SizeFor(length()) - data_size);
+  memset(reinterpret_cast<void*>(address() + data_size), 0,
+         SizeFor(length()) - data_size);
 }
 
 uint32_t StringHasher::MakeArrayIndexHash(uint32_t value, int length) {
@@ -13648,17 +13687,14 @@ String* SharedFunctionInfo::DebugName() {
 }
 
 // static
-bool SharedFunctionInfo::HasNoSideEffect(Handle<SharedFunctionInfo> info) {
-  if (!info->computed_has_no_side_effect()) {
-    DebugEvaluate::SideEffectState has_no_side_effect =
+SharedFunctionInfo::SideEffectState SharedFunctionInfo::GetSideEffectState(
+    Handle<SharedFunctionInfo> info) {
+  if (info->side_effect_state() == kNotComputed) {
+    SharedFunctionInfo::SideEffectState has_no_side_effect =
         DebugEvaluate::FunctionGetSideEffectState(info);
-    info->set_has_no_side_effect(has_no_side_effect !=
-                                 DebugEvaluate::kHasSideEffects);
-    info->set_requires_runtime_side_effect_checks(
-        has_no_side_effect == DebugEvaluate::kRequiresRuntimeChecks);
-    info->set_computed_has_no_side_effect(true);
+    info->set_side_effect_state(has_no_side_effect);
   }
-  return info->has_no_side_effect();
+  return static_cast<SideEffectState>(info->side_effect_state());
 }
 
 // The filter is a pattern that matches function names in this way:
@@ -13999,14 +14035,15 @@ void Code::Relocate(intptr_t delta) {
 
 void Code::CopyFrom(const CodeDesc& desc) {
   // copy code
-  CopyBytes(raw_instruction_start(), desc.buffer,
+  CopyBytes(reinterpret_cast<byte*>(raw_instruction_start()), desc.buffer,
             static_cast<size_t>(desc.instr_size));
 
   // copy unwinding info, if any
   if (desc.unwinding_info) {
     DCHECK_GT(desc.unwinding_info_size, 0);
     set_unwinding_info_size(desc.unwinding_info_size);
-    CopyBytes(unwinding_info_start(), desc.unwinding_info,
+    CopyBytes(reinterpret_cast<byte*>(unwinding_info_start()),
+              desc.unwinding_info,
               static_cast<size_t>(desc.unwinding_info_size));
   }
 
@@ -14041,7 +14078,8 @@ void Code::CopyFrom(const CodeDesc& desc) {
       it.rinfo()->set_target_runtime_entry(p, UPDATE_WRITE_BARRIER,
                                            SKIP_ICACHE_FLUSH);
     } else {
-      intptr_t delta = raw_instruction_start() - desc.buffer;
+      intptr_t delta =
+          raw_instruction_start() - reinterpret_cast<Address>(desc.buffer);
       it.rinfo()->apply(delta);
     }
   }
@@ -14056,27 +14094,25 @@ SafepointEntry Code::GetSafepointEntry(Address pc) {
 
 #ifdef V8_EMBEDDED_BUILTINS
 int Code::OffHeapInstructionSize() const {
-  DCHECK(Builtins::IsOffHeapBuiltin(this));
+  DCHECK(Builtins::IsEmbeddedBuiltin(this));
   if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_size();
   EmbeddedData d = EmbeddedData::FromBlob();
   return d.InstructionSizeOfBuiltin(builtin_index());
 }
 
 Address Code::OffHeapInstructionStart() const {
-  DCHECK(Builtins::IsOffHeapBuiltin(this));
+  DCHECK(Builtins::IsEmbeddedBuiltin(this));
   if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_start();
   EmbeddedData d = EmbeddedData::FromBlob();
-  return reinterpret_cast<Address>(
-      const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index())));
+  return d.InstructionStartOfBuiltin(builtin_index());
 }
 
 Address Code::OffHeapInstructionEnd() const {
-  DCHECK(Builtins::IsOffHeapBuiltin(this));
+  DCHECK(Builtins::IsEmbeddedBuiltin(this));
   if (Isolate::CurrentEmbeddedBlob() == nullptr) return raw_instruction_end();
   EmbeddedData d = EmbeddedData::FromBlob();
-  return reinterpret_cast<Address>(
-      const_cast<uint8_t*>(d.InstructionStartOfBuiltin(builtin_index()) +
-                           d.InstructionSizeOfBuiltin(builtin_index())));
+  return d.InstructionStartOfBuiltin(builtin_index()) +
+         d.InstructionSizeOfBuiltin(builtin_index());
 }
 #endif
 
@@ -14582,9 +14618,10 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     int code_size =
         Min(handler_offset, Min(safepoint_offset, constant_pool_offset));
     os << "Instructions (size = " << code_size << ")\n";
-    byte* begin = InstructionStart();
-    byte* end = begin + code_size;
-    Disassembler::Decode(isolate, &os, begin, end, this, current_pc);
+    Address begin = InstructionStart();
+    Address end = begin + code_size;
+    Disassembler::Decode(isolate, &os, reinterpret_cast<byte*>(begin),
+                         reinterpret_cast<byte*>(end), this, current_pc);
 
     if (constant_pool_offset < size) {
       int constant_pool_size = safepoint_offset - constant_pool_offset;
@@ -14623,7 +14660,8 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     os << "Safepoints (size = " << table.size() << ")\n";
     for (unsigned i = 0; i < table.length(); i++) {
       unsigned pc_offset = table.GetPcOffset(i);
-      os << static_cast<const void*>(InstructionStart() + pc_offset) << "  ";
+      os << reinterpret_cast<const void*>(InstructionStart() + pc_offset)
+         << "  ";
       os << std::setw(6) << std::hex << pc_offset << "  " << std::setw(4);
       int trampoline_pc = table.GetTrampolinePcOffset(i);
       print_pc(os, trampoline_pc);
@@ -14661,8 +14699,9 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
 
   if (has_unwinding_info()) {
     os << "UnwindingInfo (size = " << unwinding_info_size() << ")\n";
-    EhFrameDisassembler eh_frame_disassembler(unwinding_info_start(),
-                                              unwinding_info_end());
+    EhFrameDisassembler eh_frame_disassembler(
+        reinterpret_cast<byte*>(unwinding_info_start()),
+        reinterpret_cast<byte*>(unwinding_info_end()));
     eh_frame_disassembler.DisassembleToStream(os);
     os << "\n";
   }
@@ -14674,7 +14713,7 @@ void BytecodeArray::Disassemble(std::ostream& os) {
   os << "Parameter count " << parameter_count() << "\n";
   os << "Frame size " << frame_size() << "\n";
 
-  const uint8_t* base_address = GetFirstBytecodeAddress();
+  Address base_address = GetFirstBytecodeAddress();
   SourcePositionTableIterator source_positions(SourcePositionTable());
 
   interpreter::BytecodeArrayIterator iterator(handle(this));
@@ -14687,15 +14726,15 @@ void BytecodeArray::Disassemble(std::ostream& os) {
     } else {
       os << "         ";
     }
-    const uint8_t* current_address = base_address + iterator.current_offset();
+    Address current_address = base_address + iterator.current_offset();
     os << reinterpret_cast<const void*>(current_address) << " @ "
        << std::setw(4) << iterator.current_offset() << " : ";
-    interpreter::BytecodeDecoder::Decode(os, current_address,
-                                         parameter_count());
+    interpreter::BytecodeDecoder::Decode(
+        os, reinterpret_cast<byte*>(current_address), parameter_count());
     if (interpreter::Bytecodes::IsJump(iterator.current_bytecode())) {
-      const void* jump_target = base_address + iterator.GetJumpTargetOffset();
-      os << " (" << jump_target << " @ " << iterator.GetJumpTargetOffset()
-         << ")";
+      Address jump_target = base_address + iterator.GetJumpTargetOffset();
+      os << " (" << reinterpret_cast<void*>(jump_target) << " @ "
+         << iterator.GetJumpTargetOffset() << ")";
     }
     if (interpreter::Bytecodes::IsSwitch(iterator.current_bytecode())) {
       os << " {";
@@ -14733,7 +14772,8 @@ void BytecodeArray::Disassemble(std::ostream& os) {
 void BytecodeArray::CopyBytecodesTo(BytecodeArray* to) {
   BytecodeArray* from = this;
   DCHECK_EQ(from->length(), to->length());
-  CopyBytes(to->GetFirstBytecodeAddress(), from->GetFirstBytecodeAddress(),
+  CopyBytes(reinterpret_cast<byte*>(to->GetFirstBytecodeAddress()),
+            reinterpret_cast<byte*>(from->GetFirstBytecodeAddress()),
             from->length());
 }
 
@@ -14741,12 +14781,12 @@ void BytecodeArray::MakeOlder() {
   // BytecodeArray is aged in concurrent marker.
   // The word must be completely within the byte code array.
   Address age_addr = address() + kBytecodeAgeOffset;
-  DCHECK_LE((reinterpret_cast<uintptr_t>(age_addr) & ~kPointerAlignmentMask) +
-                kPointerSize,
-            reinterpret_cast<uintptr_t>(address() + Size()));
+  DCHECK_LE((age_addr & ~kPointerAlignmentMask) + kPointerSize,
+            address() + Size());
   Age age = bytecode_age();
   if (age < kLastBytecodeAge) {
-    base::AsAtomic8::Release_CompareAndSwap(age_addr, age, age + 1);
+    base::AsAtomic8::Release_CompareAndSwap(reinterpret_cast<byte*>(age_addr),
+                                            age, age + 1);
   }
 
   DCHECK_GE(bytecode_age(), kFirstBytecodeAge);
@@ -17275,7 +17315,7 @@ class StringTableNoAllocateKey : public StringTableKey {
     }
   }
 
-  MUST_USE_RESULT Handle<String> AsHandle(Isolate* isolate) override {
+  V8_WARN_UNUSED_RESULT Handle<String> AsHandle(Isolate* isolate) override {
     UNREACHABLE();
   }
 
@@ -17650,7 +17690,7 @@ void CompilationCacheTable::Age() {
       }
     } else if (get(entry_index)->IsFixedArray()) {
       SharedFunctionInfo* info = SharedFunctionInfo::cast(get(value_index));
-      if (info->IsInterpreted() && info->bytecode_array()->IsOld()) {
+      if (info->IsInterpreted() && info->GetBytecodeArray()->IsOld()) {
         for (int i = 0; i < kEntrySize; i++) {
           NoWriteBarrierSet(this, entry_index + i, the_hole_value);
         }
@@ -19440,7 +19480,7 @@ int JSGeneratorObject::source_position() const {
   // is used in the source position table, hence the subtraction.
   code_offset -= BytecodeArray::kHeaderSize - kHeapObjectTag;
   AbstractCode* code =
-      AbstractCode::cast(function()->shared()->bytecode_array());
+      AbstractCode::cast(function()->shared()->GetBytecodeArray());
   return code->SourcePosition(code_offset);
 }
 

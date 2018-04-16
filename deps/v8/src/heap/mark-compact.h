@@ -117,7 +117,7 @@ class MarkBitCellIterator {
     return cell_base_;
   }
 
-  MUST_USE_RESULT inline bool Advance() {
+  V8_WARN_UNUSED_RESULT inline bool Advance() {
     cell_base_ += Bitmap::kBitsPerCell * kPointerSize;
     return ++cell_index_ != last_cell_index_;
   }
@@ -352,76 +352,6 @@ class MinorNonAtomicMarkingState final
   void SetLiveBytes(MemoryChunk* chunk, intptr_t value) {
     chunk->young_generation_live_byte_count_ = value;
   }
-};
-
-// Collector for young-generation only.
-class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
- public:
-  using MarkingState = MinorMarkingState;
-  using NonAtomicMarkingState = MinorNonAtomicMarkingState;
-
-  explicit MinorMarkCompactCollector(Heap* heap);
-  ~MinorMarkCompactCollector();
-
-  MarkingState* marking_state() { return &marking_state_; }
-
-  NonAtomicMarkingState* non_atomic_marking_state() {
-    return &non_atomic_marking_state_;
-  }
-
-  void SetUp() override;
-  void TearDown() override;
-  void CollectGarbage() override;
-
-  void MakeIterable(Page* page, MarkingTreatmentMode marking_mode,
-                    FreeSpaceTreatmentMode free_space_mode);
-  void CleanupSweepToIteratePages();
-
- private:
-  using MarkingWorklist = Worklist<HeapObject*, 64 /* segment size */>;
-  class RootMarkingVisitor;
-
-  static const int kNumMarkers = 8;
-  static const int kMainMarker = 0;
-
-  inline MarkingWorklist* worklist() { return worklist_; }
-
-  inline YoungGenerationMarkingVisitor* main_marking_visitor() {
-    return main_marking_visitor_;
-  }
-
-  void MarkLiveObjects() override;
-  void MarkRootSetInParallel();
-  void ProcessMarkingWorklist() override;
-  void ClearNonLiveReferences() override;
-
-  void EvacuatePrologue() override;
-  void EvacuateEpilogue() override;
-  void Evacuate() override;
-  void EvacuatePagesInParallel() override;
-  void UpdatePointersAfterEvacuation() override;
-
-  UpdatingItem* CreateToSpaceUpdatingItem(MemoryChunk* chunk, Address start,
-                                          Address end) override;
-  UpdatingItem* CreateRememberedSetUpdatingItem(
-      MemoryChunk* chunk, RememberedSetUpdatingMode updating_mode) override;
-
-  int CollectNewSpaceArrayBufferTrackerItems(ItemParallelJob* job);
-
-  int NumberOfParallelMarkingTasks(int pages);
-
-  MarkingWorklist* worklist_;
-
-  YoungGenerationMarkingVisitor* main_marking_visitor_;
-  base::Semaphore page_parallel_job_semaphore_;
-  std::vector<Page*> new_space_evacuation_pages_;
-  std::vector<Page*> sweep_to_iterate_pages_;
-
-  MarkingState marking_state_;
-  NonAtomicMarkingState non_atomic_marking_state_;
-
-  friend class YoungGenerationMarkingTask;
-  friend class YoungGenerationMarkingVisitor;
 };
 
 // This marking state is used when concurrent marking is running.
@@ -983,6 +913,80 @@ class EvacuationScope {
  private:
   MarkCompactCollector* collector_;
 };
+
+#ifdef ENABLE_MINOR_MC
+
+// Collector for young-generation only.
+class MinorMarkCompactCollector final : public MarkCompactCollectorBase {
+ public:
+  using MarkingState = MinorMarkingState;
+  using NonAtomicMarkingState = MinorNonAtomicMarkingState;
+
+  explicit MinorMarkCompactCollector(Heap* heap);
+  ~MinorMarkCompactCollector();
+
+  MarkingState* marking_state() { return &marking_state_; }
+
+  NonAtomicMarkingState* non_atomic_marking_state() {
+    return &non_atomic_marking_state_;
+  }
+
+  void SetUp() override;
+  void TearDown() override;
+  void CollectGarbage() override;
+
+  void MakeIterable(Page* page, MarkingTreatmentMode marking_mode,
+                    FreeSpaceTreatmentMode free_space_mode);
+  void CleanupSweepToIteratePages();
+
+ private:
+  using MarkingWorklist = Worklist<HeapObject*, 64 /* segment size */>;
+  class RootMarkingVisitor;
+
+  static const int kNumMarkers = 8;
+  static const int kMainMarker = 0;
+
+  inline MarkingWorklist* worklist() { return worklist_; }
+
+  inline YoungGenerationMarkingVisitor* main_marking_visitor() {
+    return main_marking_visitor_;
+  }
+
+  void MarkLiveObjects() override;
+  void MarkRootSetInParallel();
+  void ProcessMarkingWorklist() override;
+  void ClearNonLiveReferences() override;
+
+  void EvacuatePrologue() override;
+  void EvacuateEpilogue() override;
+  void Evacuate() override;
+  void EvacuatePagesInParallel() override;
+  void UpdatePointersAfterEvacuation() override;
+
+  UpdatingItem* CreateToSpaceUpdatingItem(MemoryChunk* chunk, Address start,
+                                          Address end) override;
+  UpdatingItem* CreateRememberedSetUpdatingItem(
+      MemoryChunk* chunk, RememberedSetUpdatingMode updating_mode) override;
+
+  int CollectNewSpaceArrayBufferTrackerItems(ItemParallelJob* job);
+
+  int NumberOfParallelMarkingTasks(int pages);
+
+  MarkingWorklist* worklist_;
+
+  YoungGenerationMarkingVisitor* main_marking_visitor_;
+  base::Semaphore page_parallel_job_semaphore_;
+  std::vector<Page*> new_space_evacuation_pages_;
+  std::vector<Page*> sweep_to_iterate_pages_;
+
+  MarkingState marking_state_;
+  NonAtomicMarkingState non_atomic_marking_state_;
+
+  friend class YoungGenerationMarkingTask;
+  friend class YoungGenerationMarkingVisitor;
+};
+
+#endif  // ENABLE_MINOR_MC
 
 }  // namespace internal
 }  // namespace v8

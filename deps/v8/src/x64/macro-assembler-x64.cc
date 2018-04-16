@@ -91,10 +91,8 @@ int64_t TurboAssembler::RootRegisterDelta(ExternalReference other) {
     delta = other.address() - roots_register_value;
   } else {
     // For x32, zero extend the address to 64-bit and calculate the delta.
-    uint64_t o = static_cast<uint32_t>(
-        reinterpret_cast<intptr_t>(other.address()));
-    uint64_t r = static_cast<uint32_t>(
-        reinterpret_cast<intptr_t>(roots_register_value));
+    uint64_t o = static_cast<uint32_t>(other.address());
+    uint64_t r = static_cast<uint32_t>(roots_register_value);
     delta = o - r;
   }
   return delta;
@@ -182,11 +180,10 @@ int TurboAssembler::LoadAddressSize(ExternalReference source) {
 
 
 void MacroAssembler::PushAddress(ExternalReference source) {
-  int64_t address = reinterpret_cast<int64_t>(source.address());
+  Address address = source.address();
   if (is_int32(address) && !serializer_enabled()) {
     if (emit_debug_code()) {
-      Move(kScratchRegister, reinterpret_cast<Address>(kZapValue),
-           RelocInfo::NONE);
+      Move(kScratchRegister, kZapValue, RelocInfo::NONE);
     }
     Push(Immediate(static_cast<int32_t>(address)));
     return;
@@ -254,8 +251,8 @@ void MacroAssembler::RecordWriteField(Register object, int offset,
   // Clobber clobbered input registers when running with the debug-code flag
   // turned on to provoke errors.
   if (emit_debug_code()) {
-    Move(value, reinterpret_cast<Address>(kZapValue), RelocInfo::NONE);
-    Move(dst, reinterpret_cast<Address>(kZapValue), RelocInfo::NONE);
+    Move(value, kZapValue, RelocInfo::NONE);
+    Move(dst, kZapValue, RelocInfo::NONE);
   }
 }
 
@@ -385,8 +382,8 @@ void MacroAssembler::RecordWrite(Register object, Register address,
   // Clobber clobbered registers when running with the debug-code flag
   // turned on to provoke errors.
   if (emit_debug_code()) {
-    Move(address, reinterpret_cast<Address>(kZapValue), RelocInfo::NONE);
-    Move(value, reinterpret_cast<Address>(kZapValue), RelocInfo::NONE);
+    Move(address, kZapValue, RelocInfo::NONE);
+    Move(value, kZapValue, RelocInfo::NONE);
   }
 }
 
@@ -914,7 +911,7 @@ void TurboAssembler::Move(Register dst, Smi* source) {
   if (value == 0) {
     xorl(dst, dst);
   } else {
-    Move(dst, source, RelocInfo::NONE);
+    Move(dst, reinterpret_cast<Address>(source), RelocInfo::NONE);
   }
 }
 
@@ -1222,7 +1219,7 @@ void TurboAssembler::Push(Handle<HeapObject> source) {
 
 void TurboAssembler::Move(Register result, Handle<HeapObject> object,
                           RelocInfo::Mode rmode) {
-  movp(result, reinterpret_cast<void*>(object.address()), rmode);
+  movp(result, object.address(), rmode);
 }
 
 void TurboAssembler::Move(Operand dst, Handle<HeapObject> object,
@@ -1765,10 +1762,6 @@ void MacroAssembler::CmpInstanceType(Register map, InstanceType type) {
   cmpw(FieldOperand(map, Map::kInstanceTypeOffset), Immediate(type));
 }
 
-void TurboAssembler::SlowTruncateToIDelayed(Zone* zone, Register result_reg) {
-  CallStubDelayed(new (zone) DoubleToIStub(nullptr, result_reg));
-}
-
 void MacroAssembler::DoubleToI(Register result_reg, XMMRegister input_reg,
                                XMMRegister scratch, Label* lost_precision,
                                Label* is_nan, Label::Distance dst) {
@@ -2142,12 +2135,14 @@ void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
     if (actual.is_reg()) {
       Integer32ToSmi(actual.reg(), actual.reg());
       Push(actual.reg());
+      SmiToInteger64(actual.reg(), actual.reg());
     }
     if (new_target.is_valid()) {
       Push(new_target);
     }
     Push(fun);
     Push(fun);
+    Push(StackArgumentsAccessor(rbp, actual).GetReceiverOperand());
     CallRuntime(Runtime::kDebugOnFunctionCall);
     Pop(fun);
     if (new_target.is_valid()) {

@@ -141,6 +141,9 @@ void HeapObject::HeapObjectVerify() {
     case WEAK_FIXED_ARRAY_TYPE:
       WeakFixedArray::cast(this)->WeakFixedArrayVerify();
       break;
+    case WEAK_ARRAY_LIST_TYPE:
+      WeakArrayList::cast(this)->WeakArrayListVerify();
+      break;
     case FIXED_DOUBLE_ARRAY_TYPE:
       FixedDoubleArray::cast(this)->FixedDoubleArrayVerify();
       break;
@@ -392,7 +395,7 @@ void FixedTypedArray<Traits>::FixedTypedArrayVerify() {
         HeapObject::cast(this)->map()->instance_type() ==
             Traits::kInstanceType);
   if (base_pointer() == this) {
-    CHECK(external_pointer() ==
+    CHECK(reinterpret_cast<Address>(external_pointer()) ==
           ExternalReference::fixed_typed_array_base_data_offset(GetIsolate())
               .address());
   } else {
@@ -549,6 +552,12 @@ void FixedArray::FixedArrayVerify() {
 }
 
 void WeakFixedArray::WeakFixedArrayVerify() {
+  for (int i = 0; i < length(); i++) {
+    MaybeObject::VerifyMaybeObjectPointer(Get(i));
+  }
+}
+
+void WeakArrayList::WeakArrayListVerify() {
   for (int i = 0; i < length(); i++) {
     MaybeObject::VerifyMaybeObjectPointer(Get(i));
   }
@@ -1009,10 +1018,9 @@ void CodeDataContainer::CodeDataContainerVerify() {
 
 void Code::CodeVerify() {
   CHECK_LE(constant_pool_offset(), InstructionSize());
-  CHECK(IsAligned(reinterpret_cast<intptr_t>(InstructionStart()),
-                  kCodeAlignment));
+  CHECK(IsAligned(InstructionStart(), kCodeAlignment));
   relocation_info()->ObjectVerify();
-  Address last_gc_pc = nullptr;
+  Address last_gc_pc = kNullAddress;
   Isolate* isolate = GetIsolate();
   for (RelocIterator it(this); !it.done(); it.next()) {
     it.rinfo()->Verify(isolate);
@@ -1504,7 +1512,6 @@ void WasmCompiledModule::WasmCompiledModuleVerify() {
   VerifyObjectField(kSharedOffset);
   VerifyObjectField(kNativeContextOffset);
   VerifyObjectField(kExportWrappersOffset);
-  VerifyObjectField(kWeakExportedFunctionsOffset);
   VerifyObjectField(kNextInstanceOffset);
   VerifyObjectField(kPrevInstanceOffset);
   VerifyObjectField(kOwningInstanceOffset);
@@ -1535,7 +1542,6 @@ void WasmSharedModuleData::WasmSharedModuleDataVerify() {
   VerifyObjectField(kScriptOffset);
   VerifyObjectField(kAsmJsOffsetTableOffset);
   VerifyObjectField(kBreakPointInfosOffset);
-  VerifyObjectField(kLazyCompilationOrchestratorOffset);
 }
 
 void DataHandler::DataHandlerVerify() {
@@ -1715,6 +1721,12 @@ void PreParsedScopeData::PreParsedScopeDataVerify() {
   CHECK(IsPreParsedScopeData());
   CHECK(scope_data()->IsByteArray());
   CHECK(child_data()->IsFixedArray());
+}
+
+void InterpreterData::InterpreterDataVerify() {
+  CHECK(IsInterpreterData());
+  CHECK(bytecode_array()->IsBytecodeArray());
+  CHECK(interpreter_trampoline()->IsCode());
 }
 
 #endif  // VERIFY_HEAP

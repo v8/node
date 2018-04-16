@@ -43,12 +43,6 @@
       'x64.optdebug': 'default_optdebug_x64',
       'x64.release': 'default_release_x64',
     },
-
-    'client.dart.fyi': {
-      'v8-linux-release': 'release_x86_disassembler',
-      'v8-win-release': 'release_x86_disassembler',
-      'v8-mac-release': 'release_x86_disassembler',
-    },
     'client.dynamorio': {
       'linux-v8-dr': 'release_x64',
     },
@@ -71,6 +65,8 @@
       # Jumbo.
       'V8 Linux64 Jumbo': 'release_x64_jumbo',
       'V8 Linux64 Jumbo - debug': 'debug_x64_jumbo',
+      'V8 Linux64 Jumbo - limited': 'release_x64_jumbo_limited',
+      'V8 Linux64 Jumbo - limited - debug': 'debug_x64_jumbo_limited',
       # Windows.
       'V8 Win32 - builder': 'release_x86_minimal_symbols',
       'V8 Win32 - debug builder': 'debug_x86_minimal_symbols',
@@ -205,6 +201,7 @@
       'v8_linux_gcc_compile_rel': 'release_x86_gcc_minimal_symbols',
       'v8_linux_gcc_rel': 'release_x86_gcc_minimal_symbols',
       'v8_linux_shared_compile_rel': 'release_x86_shared_verify_heap',
+      'v8_linux64_dbg_ng': 'debug_x64_trybot',
       'v8_linux64_gcc_compile_dbg': 'debug_x64_gcc',
       'v8_linux64_fyi_rel_ng': 'release_x64_test_features_trybot',
       'v8_linux64_rel_ng': 'release_x64_test_features_trybot',
@@ -215,6 +212,7 @@
       'v8_linux64_sanitizer_coverage_rel':
           'release_x64_asan_minimal_symbols_coverage',
       'v8_linux64_jumbo_compile_rel': 'release_x64_jumbo_trybot',
+      'v8_linux64_jumbo_limited_compile_rel': 'release_x64_jumbo_limited_trybot',
       'v8_linux64_tsan_rel': 'release_x64_tsan_minimal_symbols',
       'v8_linux64_tsan_concurrent_marking_rel_ng':
           'release_x64_tsan_concurrent_marking_minimal_symbols',
@@ -422,6 +420,10 @@
       'release_bot', 'x64', 'jumbo'],
     'release_x64_jumbo_trybot': [
       'release_trybot', 'x64', 'jumbo'],
+    'release_x64_jumbo_limited': [
+      'release_bot', 'x64', 'jumbo_limited'],
+    'release_x64_jumbo_limited_trybot': [
+      'release_trybot', 'x64', 'jumbo_limited'],
     'release_x64_minimal_symbols': [
       'release_bot', 'x64', 'minimal_symbols'],
     'release_x64_no_snap': [
@@ -465,6 +467,8 @@
       'debug_bot', 'x64', 'gcc'],
     'debug_x64_jumbo': [
       'debug_bot', 'x64', 'jumbo'],
+    'debug_x64_jumbo_limited': [
+      'debug_bot', 'x64', 'jumbo_limited'],
     'debug_x64_minimal_symbols': [
       'debug_bot', 'x64', 'minimal_symbols'],
     'debug_x64_no_snap': [
@@ -494,8 +498,6 @@
     # Release configs for x86.
     'release_x86': [
       'release_bot', 'x86'],
-    'release_x86_disassembler': [
-      'release_bot', 'x86', 'v8_enable_disassembler'],
     'release_x86_gcc': [
       'release_bot', 'x86', 'gcc'],
     'release_x86_gcc_minimal_symbols': [
@@ -557,14 +559,14 @@
 
     'cfi': {
       'mixins': ['v8_enable_test_features'],
-      'gn_args': ('is_cfi=true use_cfi_cast=true use_cfi_diag=true '
-                  'use_cfi_recover=false'),
+      'gn_args': ('is_cfi=true use_cfi_cast=true use_cfi_icall=true '
+                  'use_cfi_diag=true use_cfi_recover=false'),
     },
 
     'cfi_clusterfuzz': {
       'mixins': ['v8_enable_test_features'],
-      'gn_args': ('is_cfi=true use_cfi_cast=true use_cfi_diag=true '
-                  'use_cfi_recover=true'),
+      'gn_args': ('is_cfi=true use_cfi_cast=true use_cfi_icall=true '
+                  'use_cfi_diag=true use_cfi_recover=true'),
     },
 
     'clang': {
@@ -620,6 +622,10 @@
 
     'jumbo': {
       'gn_args': 'use_jumbo_build=true',
+    },
+
+    'jumbo_limited': {
+      'gn_args': 'use_jumbo_build=true jumbo_file_merge_limit=50',
     },
 
     'lsan': {
@@ -748,10 +754,6 @@
     'v8_correctness_fuzzer': {
       'mixins': ['v8_enable_test_features'],
       'gn_args': 'v8_correctness_fuzzer=true v8_multi_arch_build=true',
-    },
-
-    'v8_enable_disassembler': {
-      'gn_args': 'v8_enable_disassembler=true',
     },
 
     'v8_enable_embedded_builtins': {

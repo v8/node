@@ -558,8 +558,8 @@ class TurboAssembler : public Assembler {
   // Performs a truncating conversion of a floating point number as used by
   // the JS bitwise operations. See ECMA-262 9.5: ToInt32.
   // Exits with 'result' holding the answer.
-  void TruncateDoubleToIDelayed(Zone* zone, Register result,
-                                DoubleRegister double_input);
+  void TruncateDoubleToI(Isolate* isolate, Zone* zone, Register result,
+                         DoubleRegister double_input);
 
   // Conditional move.
   void Movz(Register rd, Register rs, Register rt);
@@ -584,22 +584,25 @@ class TurboAssembler : public Assembler {
                Register left_high, Register right_low, Register right_high);
 
   void ShlPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register shift);
+               Register src_high, Register shift, Register scratch1,
+               Register scratch2);
 
   void ShlPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, uint32_t shift);
+               Register src_high, uint32_t shift, Register scratch);
 
   void ShrPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register shift);
+               Register src_high, Register shift, Register scratch1,
+               Register scratch2);
 
   void ShrPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, uint32_t shift);
+               Register src_high, uint32_t shift, Register scratch);
 
   void SarPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, Register shift);
+               Register src_high, Register shift, Register scratch1,
+               Register scratch2);
 
   void SarPair(Register dst_low, Register dst_high, Register src_low,
-               Register src_high, uint32_t shift);
+               Register src_high, uint32_t shift, Register scratch);
 
   // MIPS32 R2 instruction macro.
   void Ins(Register rt, Register rs, uint16_t pos, uint16_t size);
@@ -625,6 +628,18 @@ class TurboAssembler : public Assembler {
   void Round_w_d(FPURegister fd, FPURegister fs);
   void Floor_w_d(FPURegister fd, FPURegister fs);
   void Ceil_w_d(FPURegister fd, FPURegister fs);
+
+  // Round double functions
+  void Trunc_d_d(FPURegister fd, FPURegister fs);
+  void Round_d_d(FPURegister fd, FPURegister fs);
+  void Floor_d_d(FPURegister fd, FPURegister fs);
+  void Ceil_d_d(FPURegister fd, FPURegister fs);
+
+  // Round float functions
+  void Trunc_s_s(FPURegister fd, FPURegister fs);
+  void Round_s_s(FPURegister fd, FPURegister fs);
+  void Floor_s_s(FPURegister fd, FPURegister fs);
+  void Ceil_s_s(FPURegister fd, FPURegister fs);
 
   // FP32 mode: Move the general purpose register into
   // the high part of the double-register pair.
@@ -866,6 +881,14 @@ class TurboAssembler : public Assembler {
                                Register rs, const Operand& rt,
                                BranchDelaySlot bdslot);
   void BranchAndLinkLong(Label* L, BranchDelaySlot bdslot);
+
+  template <typename RoundFunc>
+  void RoundDouble(FPURegister dst, FPURegister src, FPURoundingMode mode,
+                   RoundFunc round);
+
+  template <typename RoundFunc>
+  void RoundFloat(FPURegister dst, FPURegister src, FPURoundingMode mode,
+                  RoundFunc round);
 
   // Push a fixed frame, consisting of ra, fp.
   void PushCommonFrame(Register marker_reg = no_reg);

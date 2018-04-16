@@ -56,6 +56,7 @@
 /test/wasm-spec-tests/tests
 /test/wasm-spec-tests/tests.tar.gz
 /third_party/*
+!/third_party/antlr4
 !/third_party/binutils
 !/third_party/colorama
 /third_party/colorama/src

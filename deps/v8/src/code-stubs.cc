@@ -14,7 +14,6 @@
 #include "src/code-stub-assembler.h"
 #include "src/code-stubs-utils.h"
 #include "src/counters.h"
-#include "src/factory.h"
 #include "src/gdb-jit.h"
 #include "src/heap/heap-inl.h"
 #include "src/ic/ic-stats.h"
@@ -34,7 +33,7 @@ CodeStubDescriptor::CodeStubDescriptor(CodeStub* stub)
       stack_parameter_count_(no_reg),
       hint_stack_parameter_count_(-1),
       function_mode_(NOT_JS_FUNCTION_STUB_MODE),
-      deoptimization_handler_(nullptr),
+      deoptimization_handler_(kNullAddress),
       miss_handler_(),
       has_miss_handler_(false) {
   stub->InitializeDescriptor(this);
@@ -45,7 +44,7 @@ CodeStubDescriptor::CodeStubDescriptor(Isolate* isolate, uint32_t stub_key)
       stack_parameter_count_(no_reg),
       hint_stack_parameter_count_(-1),
       function_mode_(NOT_JS_FUNCTION_STUB_MODE),
-      deoptimization_handler_(nullptr),
+      deoptimization_handler_(kNullAddress),
       miss_handler_(),
       has_miss_handler_(false) {
   CodeStub::InitializeDescriptor(isolate, stub_key, this);

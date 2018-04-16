@@ -167,6 +167,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return UncheckedCast<JSArray>(value);
   }
 
+  TNode<HeapObject> TaggedToCallable(TNode<Object> value, Label* fail) {
+    GotoIf(TaggedIsSmi(value), fail);
+    TNode<HeapObject> result = UncheckedCast<HeapObject>(value);
+    GotoIfNot(IsCallableMap(LoadMap(result)), fail);
+    return result;
+  }
+
   Node* MatchesParameterMode(Node* value, ParameterMode mode);
 
 #define PARAMETER_BINOP(OpName, IntPtrOpName, SmiOpName) \
@@ -369,6 +376,23 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
              Node* extra_node3 = nullptr, const char* extra_node3_name = "",
              Node* extra_node4 = nullptr, const char* extra_node4_name = "",
              Node* extra_node5 = nullptr, const char* extra_node5_name = "");
+
+  // The following Call wrappers call an object according to the semantics that
+  // one finds in the EcmaScript spec, operating on an Callable (e.g. a
+  // JSFunction or proxy) rather than a Code object.
+  template <class... TArgs>
+  TNode<Object> Call(TNode<Context> context, TNode<Object> callable,
+                     TNode<JSReceiver> receiver, TArgs... args) {
+    return UncheckedCast<Object>(CallJS(
+        CodeFactory::Call(isolate(), ConvertReceiverMode::kNotNullOrUndefined),
+        context, callable, receiver, args...));
+  }
+  template <class... TArgs>
+  TNode<Object> Call(TNode<Context> context, TNode<Object> callable,
+                     TNode<Object> receiver, TArgs... args) {
+    return UncheckedCast<Object>(CallJS(CodeFactory::Call(isolate()), context,
+                                        callable, receiver, args...));
+  }
 
   template <class A, class F, class G>
   TNode<A> Select(SloppyTNode<BoolT> condition, const F& true_body,
@@ -725,6 +749,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Load the "prototype" property of a JSFunction.
   Node* LoadJSFunctionPrototype(Node* function, Label* if_bailout);
 
+  Node* LoadSharedFunctionInfoBytecodeArray(Node* shared);
+
   // Store the floating point value of a HeapNumber.
   void StoreHeapNumberValue(SloppyTNode<HeapNumber> object,
                             SloppyTNode<Float64T> value);
@@ -778,7 +804,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
       int additional_offset = 0,
       ParameterMode parameter_mode = INTPTR_PARAMETERS);
 
-  void EnsureArrayLengthWritable(Node* map, Label* bailout);
+  void EnsureArrayLengthWritable(TNode<Map> map, Label* bailout);
 
   // EnsureArrayPushable verifies that receiver with this map is:
   //   1. Is not a prototype.
@@ -1301,7 +1327,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                                               SloppyTNode<Map> map);
   Node* IsSequentialStringInstanceType(Node* instance_type);
   Node* IsShortExternalStringInstanceType(Node* instance_type);
-  TNode<BoolT> IsSpecialReceiverInstanceType(Node* instance_type);
+  TNode<BoolT> IsSpecialReceiverInstanceType(TNode<Int32T> instance_type);
+  TNode<BoolT> IsCustomElementsReceiverInstanceType(
+      TNode<Int32T> instance_type);
   Node* IsSpecialReceiverMap(Node* map);
   Node* IsStringInstanceType(Node* instance_type);
   Node* IsString(Node* object);
@@ -1830,9 +1858,10 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // This method jumps to if_found if the element is known to exist. To
   // if_absent if it's known to not exist. To if_not_found if the prototype
   // chain needs to be checked. And if_bailout if the lookup is unsupported.
-  void TryLookupElement(Node* object, Node* map, Node* instance_type,
-                        Node* intptr_index, Label* if_found, Label* if_absent,
-                        Label* if_not_found, Label* if_bailout);
+  void TryLookupElement(Node* object, Node* map,
+                        SloppyTNode<Int32T> instance_type, Node* intptr_index,
+                        Label* if_found, Label* if_absent, Label* if_not_found,
+                        Label* if_bailout);
 
   // This is a type of a lookup in holder generator function. In case of a
   // property lookup the {key} is guaranteed to be an unique name and in case of
@@ -2206,6 +2235,14 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Implements DescriptorArray::GetDetails.
   TNode<Uint32T> DescriptorArrayGetDetails(TNode<DescriptorArray> descriptors,
                                            TNode<Uint32T> descriptor_number);
+
+  typedef std::function<void(TNode<UintPtrT> descriptor_key_index)>
+      ForEachDescriptorBodyFunction;
+
+  void DescriptorArrayForEach(VariableList& variable_list,
+                              TNode<Uint32T> start_descriptor,
+                              TNode<Uint32T> end_descriptor,
+                              const ForEachDescriptorBodyFunction& body);
 
   TNode<Object> CallGetterIfAccessor(Node* value, Node* details, Node* context,
                                      Node* receiver, Label* if_bailout,

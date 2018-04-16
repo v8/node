@@ -265,6 +265,7 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case FIXED_ARRAY_TYPE:
     case HASH_TABLE_TYPE:
     case WEAK_FIXED_ARRAY_TYPE:
+    case WEAK_ARRAY_LIST_TYPE:
     case FIXED_DOUBLE_ARRAY_TYPE:
     case FEEDBACK_METADATA_TYPE:
     case BYTE_ARRAY_TYPE:
@@ -318,6 +319,7 @@ Type::bitset BitsetType::Lub(i::Map* map) {
     case SMALL_ORDERED_HASH_MAP_TYPE:
     case SMALL_ORDERED_HASH_SET_TYPE:
     case PROTOTYPE_INFO_TYPE:
+    case INTERPRETER_DATA_TYPE:
     case TUPLE2_TYPE:
     case TUPLE3_TYPE:
     case WASM_COMPILED_MODULE_TYPE:

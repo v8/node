@@ -30,7 +30,7 @@
 #include "src/compiler/pipeline.h"
 #include "src/compiler/simd-scalar-lowering.h"
 #include "src/compiler/zone-stats.h"
-#include "src/factory.h"
+#include "src/heap/factory.h"
 #include "src/isolate-inl.h"
 #include "src/log-inl.h"
 #include "src/trap-handler/trap-handler.h"
@@ -97,12 +97,13 @@ bool ContainsSimd(wasm::FunctionSig* sig) {
 
 WasmGraphBuilder::WasmGraphBuilder(
     ModuleEnv* env, Zone* zone, JSGraph* jsgraph, Handle<Code> centry_stub,
-    wasm::FunctionSig* sig,
+    Handle<Oddball> anyref_null, wasm::FunctionSig* sig,
     compiler::SourcePositionTable* source_position_table,
     RuntimeExceptionSupport exception_support)
     : zone_(zone),
       jsgraph_(jsgraph),
       centry_stub_node_(jsgraph_->HeapConstant(centry_stub)),
+      anyref_null_node_(jsgraph_->HeapConstant(anyref_null)),
       env_(env),
       cur_buffer_(def_buffer_),
       cur_bufsize_(kDefaultBufferSize),
@@ -810,6 +811,8 @@ Node* WasmGraphBuilder::Unop(wasm::WasmOpcode opcode, Node* input,
       return jsgraph()->machine()->Is32()
                  ? BuildCcallConvertFloat(input, position, opcode)
                  : BuildIntConvertFloat(input, position, opcode);
+    case wasm::kExprRefIsNull:
+      return graph()->NewNode(m->WordEqual(), input, anyref_null_node_);
     case wasm::kExprI32AsmjsLoadMem8S:
       return BuildAsmjsLoadMem(MachineType::Int8(), input);
     case wasm::kExprI32AsmjsLoadMem8U:
@@ -2616,9 +2619,8 @@ Node* WasmGraphBuilder::CallDirect(uint32_t index, Node** args, Node*** rets,
   } else {
     // A call to a function in this module.
     // Just encode the function index. This will be patched at instantiation.
-    Address code = reinterpret_cast<Address>(index);
-    args[0] = jsgraph()->RelocatableIntPtrConstant(
-        reinterpret_cast<intptr_t>(code), RelocInfo::WASM_CALL);
+    Address code = static_cast<Address>(index);
+    args[0] = jsgraph()->RelocatableIntPtrConstant(code, RelocInfo::WASM_CALL);
 
     return BuildWasmCall(sig, args, rets, position);
   }
@@ -3068,9 +3070,9 @@ void WasmGraphBuilder::BuildJSToWasmWrapper(Handle<WeakCell> weak_instance,
       *effect_, *control_);
 
   Address instr_start =
-      wasm_code == nullptr ? nullptr : wasm_code->instructions().start();
+      wasm_code == nullptr ? kNullAddress : wasm_code->instruction_start();
   Node* wasm_code_node = jsgraph()->RelocatableIntPtrConstant(
-      reinterpret_cast<intptr_t>(instr_start), RelocInfo::JS_TO_WASM_CALL);
+      instr_start, RelocInfo::JS_TO_WASM_CALL);
   if (!wasm::IsJSCompatibleSignature(sig_)) {
     // Throw a TypeError. Use the js_context of the calling javascript function
     // (passed as a parameter), such that the generated code is js_context
@@ -4664,7 +4666,8 @@ Handle<Code> CompileJSToWasmWrapper(Isolate* isolate, wasm::WasmModule* module,
   ModuleEnv env(module, use_trap_handler);
 
   WasmGraphBuilder builder(&env, &zone, &jsgraph,
-                           CEntryStub(isolate, 1).GetCode(), func->sig);
+                           CEntryStub(isolate, 1).GetCode(),
+                           isolate->factory()->null_value(), func->sig);
   builder.set_control_ptr(&control);
   builder.set_effect_ptr(&effect);
   builder.BuildJSToWasmWrapper(weak_instance, wasm_code);
@@ -4736,16 +4739,7 @@ void ValidateImportWrapperReferencesImmovables(Handle<Code> wrapper) {
         UNREACHABLE();
     }
     DCHECK_NOT_NULL(target);
-    bool is_immovable =
-        target->IsSmi() || Heap::IsImmovable(HeapObject::cast(target));
-    bool is_allowed_stub = false;
-    if (target->IsCode()) {
-      Code* code = Code::cast(target);
-      is_allowed_stub =
-          code->kind() == Code::STUB &&
-          CodeStub::MajorKeyFromKey(code->stub_key()) == CodeStub::DoubleToI;
-    }
-    DCHECK(is_immovable || is_allowed_stub);
+    DCHECK(target->IsSmi() || Heap::IsImmovable(HeapObject::cast(target)));
   }
 #endif
 }
@@ -4776,9 +4770,9 @@ Handle<Code> CompileWasmToJSWrapper(Isolate* isolate, Handle<JSReceiver> target,
                                    : nullptr;
 
   ModuleEnv env(nullptr, use_trap_handler);
-  WasmGraphBuilder builder(&env, &zone, &jsgraph,
-                           CEntryStub(isolate, 1).GetCode(), sig,
-                           source_position_table);
+  WasmGraphBuilder builder(
+      &env, &zone, &jsgraph, CEntryStub(isolate, 1).GetCode(),
+      isolate->factory()->null_value(), sig, source_position_table);
   builder.set_control_ptr(&control);
   builder.set_effect_ptr(&effect);
   builder.BuildWasmToJSWrapper(target, index);
@@ -4842,7 +4836,8 @@ Handle<Code> CompileWasmInterpreterEntry(Isolate* isolate, uint32_t func_index,
   Node* effect = nullptr;
 
   WasmGraphBuilder builder(nullptr, &zone, &jsgraph,
-                           CEntryStub(isolate, 1).GetCode(), sig);
+                           CEntryStub(isolate, 1).GetCode(),
+                           isolate->factory()->null_value(), sig);
   builder.set_control_ptr(&control);
   builder.set_effect_ptr(&effect);
   builder.BuildWasmInterpreterEntry(func_index);
@@ -4903,7 +4898,8 @@ Handle<Code> CompileCWasmEntry(Isolate* isolate, wasm::FunctionSig* sig) {
   Node* effect = nullptr;
 
   WasmGraphBuilder builder(nullptr, &zone, &jsgraph,
-                           CEntryStub(isolate, 1).GetCode(), sig);
+                           CEntryStub(isolate, 1).GetCode(),
+                           isolate->factory()->null_value(), sig);
   builder.set_control_ptr(&control);
   builder.set_effect_ptr(&effect);
   builder.BuildCWasmEntry();
@@ -4977,8 +4973,12 @@ SourcePositionTable* WasmCompilationUnit::BuildGraphForWasmFunction(
 
   SourcePositionTable* source_position_table =
       new (tf_.jsgraph_->zone()) SourcePositionTable(tf_.jsgraph_->graph());
+  // We get the handle for {null_value()} directly from the isolate although we
+  // are on a background task because the handle is stored in the isolate
+  // anyways, and it is immortal and immovable.
   WasmGraphBuilder builder(env_, tf_.jsgraph_->zone(), tf_.jsgraph_,
-                           centry_stub_, func_body_.sig, source_position_table,
+                           centry_stub_, isolate_->factory()->null_value(),
+                           func_body_.sig, source_position_table,
                            wasm_compilation_data_.runtime_exception_support());
   tf_.graph_construction_result_ =
       wasm::BuildTFGraph(isolate_->allocator(), &builder, func_body_);

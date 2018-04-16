@@ -339,7 +339,7 @@ void Debug::ThreadInit() {
   thread_local_.async_task_count_ = 0;
   thread_local_.last_breakpoint_id_ = 0;
   clear_suspended_generator();
-  thread_local_.restart_fp_ = nullptr;
+  thread_local_.restart_fp_ = kNullAddress;
   base::Relaxed_Store(&thread_local_.current_debug_scope_,
                       static_cast<base::AtomicWord>(0));
   UpdateHookOnFunctionCall();
@@ -1232,7 +1232,7 @@ void Debug::PrepareFunctionForDebugExecution(
   Handle<Object> maybe_debug_bytecode_array =
       isolate_->factory()->undefined_value();
   if (shared->HasBytecodeArray()) {
-    Handle<BytecodeArray> original(shared->bytecode_array());
+    Handle<BytecodeArray> original(shared->GetBytecodeArray());
     maybe_debug_bytecode_array =
         isolate_->factory()->CopyBytecodeArray(original);
   }
@@ -2367,36 +2367,50 @@ void Debug::ClearSideEffectChecks(Handle<DebugInfo> debug_info) {
   }
 }
 
-bool Debug::PerformSideEffectCheck(Handle<JSFunction> function) {
+bool Debug::PerformSideEffectCheck(Handle<JSFunction> function,
+                                   Handle<Object> receiver) {
   DCHECK_EQ(isolate_->debug_execution_mode(), DebugInfo::kSideEffects);
   DisallowJavascriptExecution no_js(isolate_);
   if (!function->is_compiled() &&
       !Compiler::Compile(function, Compiler::KEEP_EXCEPTION)) {
     return false;
   }
-  if (!SharedFunctionInfo::HasNoSideEffect(handle(function->shared()))) {
-    if (FLAG_trace_side_effect_free_debug_evaluate) {
-      PrintF("[debug-evaluate] Function %s failed side effect check.\n",
-             function->shared()->DebugName()->ToCString().get());
+  SharedFunctionInfo::SideEffectState side_effect_state =
+      SharedFunctionInfo::GetSideEffectState(handle(function->shared()));
+  switch (side_effect_state) {
+    case SharedFunctionInfo::kHasSideEffects:
+      if (FLAG_trace_side_effect_free_debug_evaluate) {
+        PrintF("[debug-evaluate] Function %s failed side effect check.\n",
+               function->shared()->DebugName()->ToCString().get());
+      }
+      side_effect_check_failed_ = true;
+      // Throw an uncatchable termination exception.
+      isolate_->TerminateExecution();
+      return false;
+    case SharedFunctionInfo::kRequiresRuntimeChecks: {
+      Handle<SharedFunctionInfo> shared(function->shared());
+      if (!shared->HasBytecodeArray()) {
+        return PerformSideEffectCheckForObject(receiver);
+      }
+      // If function has bytecode array then prepare function for debug
+      // execution to perform runtime side effect checks.
+      DCHECK(shared->is_compiled());
+      if (shared->GetCode() ==
+          isolate_->builtins()->builtin(Builtins::kDeserializeLazy)) {
+        Snapshot::EnsureBuiltinIsDeserialized(isolate_, shared);
+      }
+      GetOrCreateDebugInfo(shared);
+      PrepareFunctionForDebugExecution(shared);
+      return true;
     }
-    side_effect_check_failed_ = true;
-    // Throw an uncatchable termination exception.
-    isolate_->TerminateExecution();
-    return false;
+    case SharedFunctionInfo::kHasNoSideEffect:
+      return true;
+    case SharedFunctionInfo::kNotComputed:
+      UNREACHABLE();
+      return false;
   }
-  // If function has bytecode array then prepare function for debug execution
-  // to perform runtime side effect checks.
-  if (function->shared()->requires_runtime_side_effect_checks()) {
-    Handle<SharedFunctionInfo> shared(function->shared());
-    DCHECK(shared->is_compiled());
-    if (shared->GetCode() ==
-        isolate_->builtins()->builtin(Builtins::kDeserializeLazy)) {
-      Snapshot::EnsureBuiltinIsDeserialized(isolate_, shared);
-    }
-    GetOrCreateDebugInfo(shared);
-    PrepareFunctionForDebugExecution(shared);
-  }
-  return true;
+  UNREACHABLE();
+  return false;
 }
 
 bool Debug::PerformSideEffectCheckForCallback(Handle<Object> callback_info) {
@@ -2418,7 +2432,7 @@ bool Debug::PerformSideEffectCheckAtBytecode(InterpretedFrame* frame) {
 
   DCHECK_EQ(isolate_->debug_execution_mode(), DebugInfo::kSideEffects);
   SharedFunctionInfo* shared = frame->function()->shared();
-  BytecodeArray* bytecode_array = shared->bytecode_array();
+  BytecodeArray* bytecode_array = shared->GetBytecodeArray();
   int offset = frame->GetBytecodeOffset();
   interpreter::BytecodeArrayAccessor bytecode_accessor(handle(bytecode_array),
                                                        offset);
@@ -2435,6 +2449,12 @@ bool Debug::PerformSideEffectCheckAtBytecode(InterpretedFrame* frame) {
   }
   Handle<Object> object =
       handle(frame->ReadInterpreterRegister(reg.index()), isolate_);
+  return PerformSideEffectCheckForObject(object);
+}
+
+bool Debug::PerformSideEffectCheckForObject(Handle<Object> object) {
+  DCHECK_EQ(isolate_->debug_execution_mode(), DebugInfo::kSideEffects);
+
   if (object->IsHeapObject()) {
     Address address = Handle<HeapObject>::cast(object)->address();
     if (temporary_objects_->HasObject(address)) {
@@ -2442,8 +2462,7 @@ bool Debug::PerformSideEffectCheckAtBytecode(InterpretedFrame* frame) {
     }
   }
   if (FLAG_trace_side_effect_free_debug_evaluate) {
-    PrintF("[debug-evaluate] %s failed runtime side effect check.\n",
-           interpreter::Bytecodes::ToString(bytecode));
+    PrintF("[debug-evaluate] failed runtime side effect check.\n");
   }
   side_effect_check_failed_ = true;
   // Throw an uncatchable termination exception.

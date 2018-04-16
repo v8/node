@@ -37,7 +37,7 @@ void IncrementalMarking::Observer::Step(int bytes_allocated, Address addr,
       heap->isolate(),
       RuntimeCallCounterId::kGC_Custom_IncrementalMarkingObserver);
   incremental_marking_.AdvanceIncrementalMarkingOnAllocation();
-  if (incremental_marking_.black_allocation() && addr != nullptr) {
+  if (incremental_marking_.black_allocation() && addr != kNullAddress) {
     // AdvanceIncrementalMarkingOnAllocation can start black allocation.
     // Ensure that the new object is marked black.
     HeapObject* object = HeapObject::FromAddress(addr);
@@ -511,19 +511,21 @@ void IncrementalMarking::RetainMaps() {
   bool map_retaining_is_disabled = heap()->ShouldReduceMemory() ||
                                    heap()->ShouldAbortIncrementalMarking() ||
                                    FLAG_retain_maps_for_n_gc == 0;
-  ArrayList* retained_maps = heap()->retained_maps();
-  int length = retained_maps->Length();
+  WeakArrayList* retained_maps = heap()->retained_maps();
+  int length = retained_maps->length();
   // The number_of_disposed_maps separates maps in the retained_maps
   // array that were created before and after context disposal.
   // We do not age and retain disposed maps to avoid memory leaks.
   int number_of_disposed_maps = heap()->number_of_disposed_maps_;
   for (int i = 0; i < length; i += 2) {
-    DCHECK(retained_maps->Get(i)->IsWeakCell());
-    WeakCell* cell = WeakCell::cast(retained_maps->Get(i));
-    if (cell->cleared()) continue;
-    int age = Smi::ToInt(retained_maps->Get(i + 1));
+    MaybeObject* value = retained_maps->Get(i);
+    HeapObject* map_heap_object;
+    if (!value->ToWeakHeapObject(&map_heap_object)) {
+      continue;
+    }
+    int age = Smi::ToInt(retained_maps->Get(i + 1)->ToSmi());
     int new_age;
-    Map* map = Map::cast(cell->value());
+    Map* map = Map::cast(map_heap_object);
     if (i >= number_of_disposed_maps && !map_retaining_is_disabled &&
         marking_state()->IsWhite(map)) {
       if (ShouldRetainMap(map, age)) {
@@ -544,7 +546,7 @@ void IncrementalMarking::RetainMaps() {
     }
     // Compact the array and update the age.
     if (new_age != age) {
-      retained_maps->Set(i + 1, Smi::FromInt(new_age));
+      retained_maps->Set(i + 1, MaybeObject::FromSmi(Smi::FromInt(new_age)));
     }
   }
 }
@@ -588,8 +590,12 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
 
   Map* filler_map = heap_->one_pointer_filler_map();
 
+#ifdef ENABLE_MINOR_MC
   MinorMarkCompactCollector::MarkingState* minor_marking_state =
       heap()->minor_mark_compact_collector()->marking_state();
+#else
+  void* minor_marking_state = nullptr;
+#endif  // ENABLE_MINOR_MC
 
   marking_worklist()->Update([this, filler_map, minor_marking_state](
                                  HeapObject* obj, HeapObject** out) -> bool {
@@ -613,19 +619,24 @@ void IncrementalMarking::UpdateMarkingWorklistAfterScavenge() {
       // The object may be on a page that was moved in new space.
       DCHECK(
           Page::FromAddress(obj->address())->IsFlagSet(Page::SWEEP_TO_ITERATE));
+#ifdef ENABLE_MINOR_MC
       if (minor_marking_state->IsGrey(obj)) {
         *out = obj;
         return true;
       }
+#endif  // ENABLE_MINOR_MC
       return false;
     } else {
-      // The object may be on a page that was moved from new to old space.
+      // The object may be on a page that was moved from new to old space. Only
+      // applicable during minor MC garbage collections.
       if (Page::FromAddress(obj->address())
               ->IsFlagSet(Page::SWEEP_TO_ITERATE)) {
+#ifdef ENABLE_MINOR_MC
         if (minor_marking_state->IsGrey(obj)) {
           *out = obj;
           return true;
         }
+#endif  // ENABLE_MINOR_MC
         return false;
       }
       DCHECK_IMPLIES(marking_state()->IsWhite(obj), obj->IsFiller());
@@ -657,9 +668,13 @@ void IncrementalMarking::UpdateWeakReferencesAfterScavenge() {
               distance_to_slot;
           slot_out->first = map_word.ToForwardingAddress();
           slot_out->second = reinterpret_cast<HeapObjectReference**>(new_slot);
-        } else {
-          *slot_out = slot_in;
+          return true;
         }
+        if (heap_obj->GetHeap()->InNewSpace(heap_obj)) {
+          // The new space object containing the weak reference died.
+          return false;
+        }
+        *slot_out = slot_in;
         return true;
       });
   weak_objects_->weak_objects_in_code.Update(

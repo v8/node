@@ -389,6 +389,7 @@ WASM_COMPILED_EXEC_TEST(I64AtomicStoreLoad8U) {
     CHECK_EQ(*i, r.builder().ReadMemory(&memory[0]));
   }
 }
+
 }  // namespace test_run_wasm_atomics_64
 }  // namespace wasm
 }  // namespace internal

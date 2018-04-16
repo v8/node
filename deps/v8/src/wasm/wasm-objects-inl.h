@@ -6,6 +6,7 @@
 #define V8_WASM_WASM_OBJECTS_INL_H_
 
 #include "src/heap/heap-inl.h"
+#include "src/v8memory.h"
 #include "src/wasm/wasm-objects.h"
 
 namespace v8 {
@@ -60,21 +61,56 @@ OPTIONAL_ACCESSORS(WasmMemoryObject, instances, FixedArrayOfWeakCells,
 
 // WasmGlobalObject
 ACCESSORS(WasmGlobalObject, array_buffer, JSArrayBuffer, kArrayBufferOffset)
-SMI_ACCESSORS(WasmGlobalObject, type, kTypeOffset)
 SMI_ACCESSORS(WasmGlobalObject, offset, kOffsetOffset)
-SMI_ACCESSORS(WasmGlobalObject, is_mutable, kIsMutableOffset)
+SMI_ACCESSORS(WasmGlobalObject, flags, kFlagsOffset)
+BIT_FIELD_ACCESSORS(WasmGlobalObject, flags, type, WasmGlobalObject::TypeBits)
+BIT_FIELD_ACCESSORS(WasmGlobalObject, flags, is_mutable,
+                    WasmGlobalObject::IsMutableBit)
+
+// static
+uint32_t WasmGlobalObject::TypeSize(wasm::ValueType type) {
+  return 1U << ElementSizeLog2Of(type);
+}
+
+uint32_t WasmGlobalObject::type_size() const { return TypeSize(type()); }
+
+Address WasmGlobalObject::address() const {
+  uint32_t buffer_size = 0;
+  DCHECK(array_buffer()->byte_length()->ToUint32(&buffer_size));
+  DCHECK(offset() + type_size() <= buffer_size);
+  USE(buffer_size);
+  return Address(array_buffer()->backing_store()) + offset();
+}
+
+int32_t WasmGlobalObject::GetI32() { return Memory::int32_at(address()); }
+
+float WasmGlobalObject::GetF32() { return Memory::float_at(address()); }
+
+double WasmGlobalObject::GetF64() { return Memory::double_at(address()); }
+
+void WasmGlobalObject::SetI32(int32_t value) {
+  Memory::int32_at(address()) = value;
+}
+
+void WasmGlobalObject::SetF32(float value) {
+  Memory::float_at(address()) = value;
+}
+
+void WasmGlobalObject::SetF64(double value) {
+  Memory::double_at(address()) = value;
+}
 
 // WasmInstanceObject
 PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_start, byte*, kMemoryStartOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_size, uintptr_t,
+PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_size, uint32_t,
                     kMemorySizeOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_mask, uintptr_t,
+PRIMITIVE_ACCESSORS(WasmInstanceObject, memory_mask, uint32_t,
                     kMemoryMaskOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, imported_function_targets, Address*,
                     kImportedFunctionTargetsOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, globals_start, byte*,
                     kGlobalsStartOffset)
-PRIMITIVE_ACCESSORS(WasmInstanceObject, indirect_function_table_size, uintptr_t,
+PRIMITIVE_ACCESSORS(WasmInstanceObject, indirect_function_table_size, uint32_t,
                     kIndirectFunctionTableSizeOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, indirect_function_table_sig_ids,
                     uint32_t*, kIndirectFunctionTableSigIdsOffset)
@@ -100,9 +136,25 @@ OPTIONAL_ACCESSORS(WasmInstanceObject, indirect_function_table_instances,
                    FixedArray, kIndirectFunctionTableInstancesOffset)
 ACCESSORS(WasmInstanceObject, managed_native_allocations, Foreign,
           kManagedNativeAllocationsOffset)
+OPTIONAL_ACCESSORS(WasmInstanceObject, managed_indirect_patcher, Foreign,
+                   kManagedIndirectPatcherOffset)
 
 inline bool WasmInstanceObject::has_indirect_function_table() {
   return indirect_function_table_sig_ids() != nullptr;
+}
+
+IndirectFunctionTableEntry::IndirectFunctionTableEntry(
+    WasmInstanceObject* instance, int index)
+    : instance_(instance), index_(index) {
+  DCHECK_GE(index, 0);
+  DCHECK_LT(index, instance->indirect_function_table_size());
+}
+
+ImportedFunctionEntry::ImportedFunctionEntry(WasmInstanceObject* instance,
+                                             int index)
+    : instance_(instance), index_(index) {
+  DCHECK_GE(index, 0);
+  DCHECK_LT(index, instance->module()->num_imported_functions);
 }
 
 // WasmSharedModuleData
@@ -114,8 +166,6 @@ OPTIONAL_ACCESSORS(WasmSharedModuleData, asm_js_offset_table, ByteArray,
                    kAsmJsOffsetTableOffset)
 OPTIONAL_ACCESSORS(WasmSharedModuleData, breakpoint_infos, FixedArray,
                    kBreakPointInfosOffset)
-OPTIONAL_ACCESSORS(WasmSharedModuleData, lazy_compilation_orchestrator, Foreign,
-                   kLazyCompilationOrchestratorOffset)
 void WasmSharedModuleData::reset_breakpoint_infos() {
   DCHECK(IsWasmSharedModuleData());
   WRITE_FIELD(this, kBreakPointInfosOffset, GetHeap()->undefined_value());
@@ -170,7 +220,6 @@ OPTIONAL_ACCESSORS(WasmDebugInfo, c_wasm_entry_map, Managed<wasm::SignatureMap>,
 WCM_OBJECT(WasmSharedModuleData, shared, kSharedOffset)
 WCM_WEAK_LINK(Context, native_context, kNativeContextOffset)
 WCM_OBJECT(FixedArray, export_wrappers, kExportWrappersOffset)
-WCM_OBJECT(FixedArray, weak_exported_functions, kWeakExportedFunctionsOffset)
 WCM_OBJECT(WasmCompiledModule, next_instance, kNextInstanceOffset)
 WCM_OBJECT(WasmCompiledModule, prev_instance, kPrevInstanceOffset)
 WCM_WEAK_LINK(WasmInstanceObject, owning_instance, kOwningInstanceOffset)

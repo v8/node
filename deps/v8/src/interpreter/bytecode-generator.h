@@ -177,6 +177,10 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
   void BuildArrayLiteralSpread(Spread* spread, Register array, Register index,
                                FeedbackSlot index_slot,
                                FeedbackSlot element_slot);
+  void BuildArrayLiteralElementsInsertion(Register array,
+                                          int first_spread_index,
+                                          ZoneList<Expression*>* elements,
+                                          bool skip_constants);
 
   void AllocateTopLevelRegisters();
   void VisitArgumentsObject(Variable* variable);
@@ -243,7 +247,7 @@ class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
   // specifies the type of the result of the visited expression.
   TypeHint VisitForAccumulatorValue(Expression* expr);
   void VisitForAccumulatorValueOrTheHole(Expression* expr);
-  MUST_USE_RESULT Register VisitForRegisterValue(Expression* expr);
+  V8_WARN_UNUSED_RESULT Register VisitForRegisterValue(Expression* expr);
   INLINE(void VisitForRegisterValue(Expression* expr, Register destination));
   void VisitAndPushIntoRegisterList(Expression* expr, RegisterList* reg_list);
   void VisitForEffect(Expression* expr);

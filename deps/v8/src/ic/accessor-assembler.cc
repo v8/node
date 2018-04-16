@@ -1970,8 +1970,8 @@ void AccessorAssembler::InvalidateValidityCellIfPrototype(Node* map,
 }
 
 void AccessorAssembler::GenericElementLoad(Node* receiver, Node* receiver_map,
-                                           Node* instance_type, Node* index,
-                                           Label* slow) {
+                                           SloppyTNode<Int32T> instance_type,
+                                           Node* index, Label* slow) {
   Comment("integer index");
 
   ExitPoint direct_exit(this);
@@ -1979,9 +1979,7 @@ void AccessorAssembler::GenericElementLoad(Node* receiver, Node* receiver_map,
   Label if_custom(this), if_element_hole(this), if_oob(this);
   // Receivers requiring non-standard element accesses (interceptors, access
   // checks, strings and string wrappers, proxies) are handled in the runtime.
-  GotoIf(Int32LessThanOrEqual(instance_type,
-                              Int32Constant(LAST_CUSTOM_ELEMENTS_RECEIVER)),
-         &if_custom);
+  GotoIf(IsCustomElementsReceiverInstanceType(instance_type), &if_custom);
   Node* elements = LoadElements(receiver);
   Node* elements_kind = LoadMapElementsKind(receiver_map);
   Node* is_jsarray_condition = InstanceTypeEqual(instance_type, JS_ARRAY_TYPE);
@@ -2034,7 +2032,7 @@ void AccessorAssembler::GenericElementLoad(Node* receiver, Node* receiver_map,
 }
 
 void AccessorAssembler::GenericPropertyLoad(Node* receiver, Node* receiver_map,
-                                            Node* instance_type,
+                                            SloppyTNode<Int32T> instance_type,
                                             const LoadICParameters* p,
                                             Label* slow,
                                             UseStubCache use_stub_cache) {
@@ -3171,30 +3169,6 @@ void AccessorAssembler::GenerateLoadICTrampoline() {
   Node* vector = LoadFeedbackVectorForStub();
 
   TailCallBuiltin(Builtins::kLoadIC, context, receiver, name, slot, vector);
-}
-
-void AccessorAssembler::GenerateLoadField() {
-  typedef LoadFieldDescriptor Descriptor;
-
-  Node* receiver = Parameter(Descriptor::kReceiver);
-  Node* name = nullptr;
-  Node* slot = nullptr;
-  Node* vector = nullptr;
-  Node* context = Parameter(Descriptor::kContext);
-  LoadICParameters p(context, receiver, name, slot, vector);
-
-  ExitPoint direct_exit(this);
-
-  VARIABLE(var_double_value, MachineRepresentation::kFloat64);
-  Label rebox_double(this, &var_double_value);
-
-  Node* smi_handler = Parameter(Descriptor::kSmiHandler);
-  Node* handler_word = SmiUntag(smi_handler);
-  HandleLoadField(receiver, handler_word, &var_double_value, &rebox_double,
-                  &direct_exit);
-
-  BIND(&rebox_double);
-  Return(AllocateHeapNumberWithValue(var_double_value.value()));
 }
 
 void AccessorAssembler::GenerateLoadGlobalIC(TypeofMode typeof_mode) {
