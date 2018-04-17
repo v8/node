@@ -140,8 +140,16 @@
           },
           'msvs_settings': {
             'VCLinkerTool': {
-              'AdditionalOptions': [
-                '/WHOLEARCHIVE:<(PRODUCT_DIR)\\lib\\zlib<(STATIC_LIB_SUFFIX)',
+              'conditions': [
+                ['GENERATOR=="ninja"', {
+                  'AdditionalOptions': [
+                    '/WHOLEARCHIVE:<(obj_dir)\\deps\\zlib\\<(STATIC_LIB_PREFIX)zlib<(STATIC_LIB_SUFFIX)',
+                  ],
+                }, {
+                  'AdditionalOptions': [
+                    '/WHOLEARCHIVE:<(LIB_DIR)\\<(STATIC_LIB_PREFIX)zlib<(STATIC_LIB_SUFFIX)',
+                  ],
+                }],
               ],
             },
           },
@@ -178,8 +186,16 @@
           },
           'msvs_settings': {
             'VCLinkerTool': {
-              'AdditionalOptions': [
-                '/WHOLEARCHIVE:<(PRODUCT_DIR)\\lib\\libuv<(STATIC_LIB_SUFFIX)',
+              'conditions': [
+                ['GENERATOR=="ninja"', {
+                  'AdditionalOptions': [
+                    '/WHOLEARCHIVE:<(obj_dir)\\deps\\uv\\<(STATIC_LIB_PREFIX)libuv<(STATIC_LIB_SUFFIX)',
+                  ],
+                }, {
+                  'AdditionalOptions': [
+                    '/WHOLEARCHIVE:<(LIB_DIR)\\<(STATIC_LIB_PREFIX)libuv<(STATIC_LIB_SUFFIX)',
+                  ],
+                }],
               ],
             },
           },
@@ -258,11 +274,21 @@
         'NODE_PLATFORM="sunos"',
       ],
     }],
-    [ '(OS=="freebsd" or OS=="linux") and node_shared=="false"'
-        ' and force_load=="true"', {
-      'ldflags': [ '-Wl,-z,noexecstack',
-                   '-Wl,--whole-archive <(v8_base)',
-                   '-Wl,--no-whole-archive' ]
+    [ 'node_shared=="false" and force_load=="true"', {
+      'msvs_settings': {
+        'VCLinkerTool': {
+          'AdditionalOptions': [
+            '/WHOLEARCHIVE:<(v8_base)',
+          ],
+        },
+      },
+      'conditions': [
+        ['OS=="freebsd" or OS=="linux"', {
+          'ldflags': [ '-Wl,-z,noexecstack',
+                       '-Wl,--whole-archive <(v8_base)',
+                       '-Wl,--no-whole-archive' ],
+        }],
+      ],
     }],
     [ 'OS in "mac freebsd linux" and node_shared=="false"'
         ' and coverage=="true"', {
@@ -315,8 +341,16 @@
               },
               'msvs_settings': {
                 'VCLinkerTool': {
-                  'AdditionalOptions': [
-                    '/WHOLEARCHIVE:<(PRODUCT_DIR)\\lib\\<(openssl_product)',
+                  'conditions': [
+                    ['GENERATOR=="ninja"', {
+                      'AdditionalOptions': [
+                        '/WHOLEARCHIVE:<(obj_dir)\\deps\\openssl\\<(STATIC_LIB_PREFIX)<(openssl_product)',
+                      ],
+                    }, {
+                      'AdditionalOptions': [
+                        '/WHOLEARCHIVE:<(LIB_DIR)\\<(STATIC_LIB_PREFIX)<(openssl_product)',
+                      ],
+                    }],
                   ],
                 },
               },
