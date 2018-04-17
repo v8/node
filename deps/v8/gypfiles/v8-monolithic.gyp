@@ -23,19 +23,31 @@
         'include_dirs': [
           '../include/',
         ],
+        'link_settings': {
+          'conditions': [
+            ['OS=="win"', {
+              'libraries': ['-ldbghelp.lib', '-lshlwapi.lib', '-lwinmm.lib', '-lws2_32.lib'],
+            }, 'OS=="linux"', {
+              'libraries': ['-ldl', '-lrt'],
+            }],
+          ],
+        },
       },
       'actions': [
         {
-          'action_name': 'build_with_gn',
+          'action_name': 'build_with_gn_generate_build_files',
+          # No need to list full set of inputs because after the initial
+          # generation, ninja (run by the next action), will check to see
+          # if build.ninja is stale.
           'inputs': [
-            '../tools//node/build_gn.py',
+            '../tools/node/build_gn.py',
           ],
           'outputs': [
-            '<(INTERMEDIATE_DIR)/gn/obj/libv8_monolith.a',
-            '<(INTERMEDIATE_DIR)/gn/args.gn',
+            '<(INTERMEDIATE_DIR)/gn/build.ninja',
           ],
           'action': [
-            '../tools//node/build_gn.py',
+            'python',
+            '../tools/node/build_gn.py',
             '--mode', '<(CONFIGURATION_NAME)',
             '--v8_path', '../',
             '--build_path', '<(INTERMEDIATE_DIR)/gn',
@@ -49,7 +61,31 @@
             '--flag', 'v8_optimized_debug=<(v8_optimized_debug)',
             '--flag', 'v8_enable_disassembler=<(v8_enable_disassembler)',
             '--flag', 'v8_postmortem_support=<(v8_postmortem_support)',
+            '--flag', 'use_goma=<(build_v8_with_gn_use_goma)',
           ],
+        },
+        {
+          'action_name': 'build_with_gn',
+          'inputs': [
+            '../tools/node/build_gn.py',
+            '<(INTERMEDIATE_DIR)/gn/build.ninja',
+          ],
+          # Specify a non-existent output to make the target permanently dirty.
+          # Alternatively, a depfile could be used, but then two dirty checks
+          # would run: one by outer the build tool, and one by build_gn.py.
+          'outputs': [
+            '<(v8_base)',
+            'does-not-exist',
+          ],
+          'action': [
+            'python',
+            '../tools/node/build_gn.py',
+            '--build_path', '<(INTERMEDIATE_DIR)/gn',
+            '--v8_path', '../',
+            '--build',
+          ],
+          # Allows sub-ninja's build progress to be printed.
+          'ninja_use_console': 1,
         },
       ],
     },

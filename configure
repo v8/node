@@ -557,6 +557,12 @@ parser.add_option('--build-v8-with-gn',
     dest='build_v8_with_gn',
     default=False,
     help='build V8 using GN instead of gyp')
+parser.add_option('--build-v8-with-gn-use-goma',
+    action='store_true',
+    dest='build_v8_with_gn_use_goma',
+    default=False,
+    help='For Googlers: Enable use_goma=true for building v8')
+
 
 # Create compile_commands.json in out/Debug and out/Release.
 parser.add_option('-C',
@@ -1054,6 +1060,7 @@ def configure_v8(o):
     print('Fetching dependencies to build V8 with GN')
     options.build_v8_with_gn = FetchDeps(v8_path)
   o['variables']['build_v8_with_gn'] = b(options.build_v8_with_gn)
+  o['variables']['build_v8_with_gn_use_goma'] = b(options.build_v8_with_gn_use_goma)
 
 
 def configure_openssl(o):
