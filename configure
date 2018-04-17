@@ -575,7 +575,6 @@ parser.add_option('--clang-cl-base-path',
     help='Absolute path to a directory containing a bin\\clang-cl.exe '
          '(requires --use-clang-cl).')
 
-
 # Create compile_commands.json in out/Debug and out/Release.
 parser.add_option('-C',
     action='store_true',
