@@ -25,14 +25,19 @@ import sys
 import node_common
 
 GN_ARGS = [
-  "v8_monolithic = true",
-  "is_component_build = false",
-  "v8_use_external_startup_data = false",
-  "use_custom_libcxx = false",
-  "use_sysroot = false",
+  "v8_monolithic=true",
+  "is_component_build=false",
+  "v8_use_external_startup_data=false",
+  "use_custom_libcxx=false",
 ]
 
 BUILD_TARGET = "v8_monolith"
+
+def FindTargetOs(flags):
+  for flag in flags:
+    if flag.startswith("target_os="):
+      return flag[len("target_os="):].strip('"')
+  raise Exception('No target_os was set.')
 
 def FindGn(options):
   if options.host_os == "linux":
@@ -47,8 +52,11 @@ def FindGn(options):
 
 def GenerateBuildFiles(options):
   gn = FindGn(options)
-  gn_args = []
-  gn_args.extend(GN_ARGS)
+  gn_args = list(GN_ARGS)
+  target_os = FindTargetOs(options.flag)
+  if target_os != "win":
+    gn_args.append("use_sysroot=false")
+
   for flag in options.flag:
     flag = flag.replace("=1", "=true")
     flag = flag.replace("=0", "=false")
