@@ -10,7 +10,6 @@ const script = `
   'use strict';
   const assert = require('assert');
   const vm = require('vm');
-  const { kParsingContext } = process.binding('contextify');
   global.outer = true;
   global.inner = false;
   const context = vm.createContext({
@@ -59,22 +58,22 @@ async function runTests() {
   const topContext = await getContext(session);
   await session.send({ 'method': 'Debugger.resume' });
   const childContext = await getContext(session);
-  await session.waitForBreakOnLine(14, '[eval]');
+  await session.waitForBreakOnLine(13, '[eval]');
 
   console.error('[test]', 'Script is unbound');
   await session.send({ 'method': 'Debugger.resume' });
-  await session.waitForBreakOnLine(18, '[eval]');
+  await session.waitForBreakOnLine(17, '[eval]');
 
   console.error('[test]', 'vm.runInContext associates script with context');
   await session.send({ 'method': 'Debugger.resume' });
   await checkScriptContext(session, childContext);
-  await session.waitForBreakOnLine(21, '[eval]');
+  await session.waitForBreakOnLine(20, '[eval]');
 
   console.error('[test]', 'vm.runInNewContext associates script with context');
   await session.send({ 'method': 'Debugger.resume' });
   const thirdContext = await getContext(session);
   await checkScriptContext(session, thirdContext);
-  await session.waitForBreakOnLine(24, '[eval]');
+  await session.waitForBreakOnLine(23, '[eval]');
 
   console.error('[test]', 'vm.runInNewContext can contain debugger statements');
   await session.send({ 'method': 'Debugger.resume' });
