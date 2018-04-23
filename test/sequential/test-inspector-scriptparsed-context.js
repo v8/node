@@ -55,7 +55,6 @@ async function runTests() {
   await session.waitForBreakOnLine(0, '[eval]');
 
   await session.send({ 'method': 'Runtime.enable' });
-  const topContext = await getContext(session);
   await session.send({ 'method': 'Debugger.resume' });
   const childContext = await getContext(session);
   await session.waitForBreakOnLine(13, '[eval]');
