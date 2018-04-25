@@ -815,7 +815,7 @@ void TransitionArray::TransitionArrayPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "TransitionArray");
   os << "\n - capacity: " << length();
   for (int i = 0; i < length(); i++) {
-    os << "\n  [" << i << "]: " << Brief(get(i));
+    os << "\n  [" << i << "]: " << MaybeObjectBrief(Get(i));
     if (i == kPrototypeTransitionsIndex) os << " (prototype transitions)";
     if (i == kTransitionLengthIndex) os << " (number of transitions)";
   }
@@ -2024,7 +2024,7 @@ void DescriptorArray::Print() {
 }
 // static
 void TransitionsAccessor::PrintOneTransition(std::ostream& os, Name* key,
-                                             Map* target, Object* raw_target) {
+                                             Map* target) {
   os << "\n     ";
 #ifdef OBJECT_PRINT
   key->NamePrint(os);
@@ -2054,9 +2054,6 @@ void TransitionsAccessor::PrintOneTransition(std::ostream& os, Name* key,
     os << ")";
   }
   os << " -> " << Brief(target);
-  if (!raw_target->IsMap() && !raw_target->IsWeakCell()) {
-    os << " (handler: " << Brief(raw_target) << ")";
-  }
 }
 
 void TransitionArray::Print() {
@@ -2071,32 +2068,25 @@ void TransitionArray::Print(std::ostream& os) {
   for (int i = 0; i < num_transitions; i++) {
     Name* key = GetKey(i);
     Map* target = GetTarget(i);
-    Object* raw_target = GetRawTarget(i);
-    TransitionsAccessor::PrintOneTransition(os, key, target, raw_target);
+    TransitionsAccessor::PrintOneTransition(os, key, target);
   }
   os << "\n" << std::flush;
 }
 
 void TransitionsAccessor::PrintTransitions(std::ostream& os) {  // NOLINT
-  Map* target;
   switch (encoding()) {
     case kPrototypeInfo:
     case kUninitialized:
       return;
-    case kWeakRef:
-      target = Map::cast(raw_transitions_->ToWeakHeapObject());
-      break;
-    case kHandler: {
-      WeakCell* cell = GetTargetCell();
-      DCHECK(!cell->cleared());
-      target = Map::cast(cell->value());
+    case kWeakRef: {
+      Map* target = Map::cast(raw_transitions_->ToWeakHeapObject());
+      Name* key = GetSimpleTransitionKey(target);
+      PrintOneTransition(os, key, target);
       break;
     }
     case kFullTransitionArray:
       return transitions()->Print(os);
   }
-  Name* key = GetSimpleTransitionKey(target);
-  PrintOneTransition(os, key, target, raw_transitions_->GetHeapObject());
 }
 
 void TransitionsAccessor::PrintTransitionTree() {
@@ -2175,7 +2165,8 @@ extern void _v8_internal_Print_Code(void* object) {
   i::wasm::WasmCode* wasm_code =
       isolate->wasm_engine()->code_manager()->LookupCode(address);
   if (wasm_code) {
-    wasm_code->Print(isolate);
+    i::OFStream os(stdout);
+    wasm_code->Disassemble(nullptr, isolate, os, address);
     return;
   }
 
@@ -2183,19 +2174,18 @@ extern void _v8_internal_Print_Code(void* object) {
       !isolate->heap()->InSpaceSlow(address, i::LO_SPACE)) {
     i::PrintF(
         "%p is not within the current isolate's large object or code spaces\n",
-        reinterpret_cast<void*>(address));
+        object);
     return;
   }
 
   i::Code* code = isolate->FindCodeObject(address);
   if (!code->IsCode()) {
-    i::PrintF("No code object found containing %p\n",
-              reinterpret_cast<void*>(address));
+    i::PrintF("No code object found containing %p\n", object);
     return;
   }
 #ifdef ENABLE_DISASSEMBLER
   i::OFStream os(stdout);
-  code->Disassemble(nullptr, os, reinterpret_cast<void*>(address));
+  code->Disassemble(nullptr, os, address);
 #else   // ENABLE_DISASSEMBLER
   code->Print();
 #endif  // ENABLE_DISASSEMBLER

@@ -144,6 +144,7 @@
   V(JSCreateIterResultObject)   \
   V(JSCreateStringIterator)     \
   V(JSCreateKeyValueArray)      \
+  V(JSCreateObject)             \
   V(JSCreatePromise)            \
   V(JSCreateTypedArray)         \
   V(JSCreateLiteralArray)       \
@@ -206,6 +207,7 @@
   V(JSRejectPromise)                   \
   V(JSResolvePromise)                  \
   V(JSStackCheck)                      \
+  V(JSObjectIsArray)                   \
   V(JSDebugger)
 
 #define JS_OP_LIST(V)     \
@@ -398,6 +400,7 @@
   V(ObjectIsDetectableCallable)         \
   V(ObjectIsMinusZero)                  \
   V(ObjectIsNaN)                        \
+  V(NumberIsNaN)                        \
   V(ObjectIsNonCallable)                \
   V(ObjectIsNumber)                     \
   V(ObjectIsReceiver)                   \

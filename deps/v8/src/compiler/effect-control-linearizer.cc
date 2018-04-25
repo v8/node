@@ -770,6 +770,9 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kObjectIsNaN:
       result = LowerObjectIsNaN(node);
       break;
+    case IrOpcode::kNumberIsNaN:
+      result = LowerNumberIsNaN(node);
+      break;
     case IrOpcode::kObjectIsNonCallable:
       result = LowerObjectIsNonCallable(node);
       break;
@@ -2327,6 +2330,13 @@ Node* EffectControlLinearizer::LowerObjectIsNaN(Node* node) {
   return done.PhiAt(0);
 }
 
+Node* EffectControlLinearizer::LowerNumberIsNaN(Node* node) {
+  Node* number = node->InputAt(0);
+  Node* diff = __ Float64Equal(number, number);
+  Node* check = __ Word32Equal(diff, __ Int32Constant(0));
+  return check;
+}
+
 Node* EffectControlLinearizer::LowerObjectIsNonCallable(Node* node) {
   Node* value = node->InputAt(0);
 
@@ -3167,7 +3177,11 @@ Node* EffectControlLinearizer::LowerStringFromSingleCodePoint(Node* node) {
                                   __ Int32Constant(0xDC00));
 
         // codpoint = (trail << 16) | lead;
+#if V8_TARGET_BIG_ENDIAN
+        code = __ Word32Or(__ Word32Shl(lead, __ Int32Constant(16)), trail);
+#else
         code = __ Word32Or(__ Word32Shl(trail, __ Int32Constant(16)), lead);
+#endif
         break;
       }
     }

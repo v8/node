@@ -4,7 +4,7 @@
 
 #include "src/builtins/builtins-iterator-gen.h"
 #include "src/builtins/builtins-string-gen.h"
-#include "src/builtins/builtins-typedarray-gen.h"
+#include "src/builtins/builtins-typed-array-gen.h"
 #include "src/builtins/builtins-utils-gen.h"
 #include "src/builtins/builtins.h"
 #include "src/code-stub-assembler.h"
@@ -20,7 +20,7 @@ using Node = compiler::Node;
 
 ArrayBuiltinsAssembler::ArrayBuiltinsAssembler(
     compiler::CodeAssemblerState* state)
-    : CodeStubAssembler(state),
+    : BaseBuiltinsFromDSLAssembler(state),
       k_(this, MachineRepresentation::kTagged),
       a_(this, MachineRepresentation::kTagged),
       to_(this, MachineRepresentation::kTagged, SmiConstant(0)),
@@ -679,6 +679,9 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
       Label* array_changed, ParameterMode mode, ForEachDirection direction,
       MissingPropertyMode missing_property_mode, TNode<Smi> length) {
     Comment("begin VisitAllFastElementsOneKind");
+    // We only use this kind of processing if the no-elements protector is
+    // in place at the start. We'll continue checking during array iteration.
+    CSA_ASSERT(this, Word32BinaryNot(IsNoElementsProtectorCellInvalid()));
     VARIABLE(original_map, MachineRepresentation::kTagged);
     original_map.Bind(LoadMap(o()));
     VariableList list({&original_map, &a_, &k_, &to_}, zone());
@@ -730,10 +733,9 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
 
           BIND(&hole_element);
           if (missing_property_mode == MissingPropertyMode::kSkip) {
-            // Check if o's prototype change unexpectedly has elements after
-            // the callback in the case of a hole.
-            BranchIfPrototypesHaveNoElements(o_map, &one_element_done,
-                                             array_changed);
+            // The NoElementsProtectorCell could go invalid during callbacks.
+            Branch(IsNoElementsProtectorCellInvalid(), array_changed,
+                   &one_element_done);
           } else {
             value.Bind(UndefinedConstant());
             Goto(&process_element);
@@ -815,7 +817,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
     GotoIfNot(IsPrototypeInitialArrayPrototype(context(), original_map),
               &runtime);
 
-    Node* species_protector = SpeciesProtectorConstant();
+    Node* species_protector = ArraySpeciesProtectorConstant();
     Node* value =
         LoadObjectField(species_protector, PropertyCell::kValueOffset);
     TNode<Smi> const protector_invalid =
@@ -860,7 +862,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
     GotoIfNot(IsPrototypeInitialArrayPrototype(context(), original_map),
               &runtime);
 
-    Node* species_protector = SpeciesProtectorConstant();
+    Node* species_protector = ArraySpeciesProtectorConstant();
     Node* value =
         LoadObjectField(species_protector, PropertyCell::kValueOffset);
     Node* const protector_invalid = SmiConstant(Isolate::kProtectorInvalid);
@@ -1153,7 +1155,7 @@ class ArrayPrototypeSliceCodeStubAssembler : public CodeStubAssembler {
 
     GotoIf(IsNoElementsProtectorCellInvalid(), slow);
 
-    GotoIf(IsSpeciesProtectorCellInvalid(), slow);
+    GotoIf(IsArraySpeciesProtectorCellInvalid(), slow);
 
     // Bailout if receiver has slow elements.
     Node* elements_kind = LoadMapElementsKind(map);

@@ -227,6 +227,29 @@ Handle<T> Factory::NewFixedArrayWithMap(Heap::RootListIndex map_root_index,
       map_root_index, length, *undefined_value(), pretenure));
 }
 
+template <typename T>
+Handle<T> Factory::NewWeakFixedArrayWithMap(Heap::RootListIndex map_root_index,
+                                            int length,
+                                            PretenureFlag pretenure) {
+  static_assert(std::is_base_of<WeakFixedArray, T>::value,
+                "T must be a descendant of WeakFixedArray");
+
+  // Zero-length case must be handled outside.
+  DCHECK_LT(0, length);
+
+  HeapObject* result =
+      AllocateRawArray(WeakFixedArray::SizeFor(length), pretenure);
+  Map* map = Map::cast(isolate()->heap()->root(map_root_index));
+  result->set_map_after_allocation(map, SKIP_WRITE_BARRIER);
+
+  Handle<WeakFixedArray> array(WeakFixedArray::cast(result), isolate());
+  array->set_length(length);
+  MemsetPointer(array->data_start(),
+                HeapObjectReference::Strong(*undefined_value()), length);
+
+  return Handle<T>::cast(array);
+}
+
 template Handle<FixedArray> Factory::NewFixedArrayWithMap<FixedArray>(
     Heap::RootListIndex, int, PretenureFlag);
 
@@ -663,7 +686,11 @@ Handle<SeqOneByteString> Factory::AllocateRawOneByteInternalizedString(
 
   Map* map = *one_byte_internalized_string_map();
   int size = SeqOneByteString::SizeFor(length);
-  HeapObject* result = AllocateRawWithImmortalMap(size, TENURED, map);
+  HeapObject* result = AllocateRawWithImmortalMap(
+      size,
+      isolate()->heap()->CanAllocateInReadOnlySpace() ? TENURED_READ_ONLY
+                                                      : TENURED,
+      map);
   Handle<SeqOneByteString> answer(SeqOneByteString::cast(result), isolate());
   answer->set_length(length);
   answer->set_hash_field(hash_field);
@@ -707,7 +734,11 @@ Handle<String> Factory::AllocateInternalizedStringImpl(T t, int chars,
     size = SeqTwoByteString::SizeFor(chars);
   }
 
-  HeapObject* result = AllocateRawWithImmortalMap(size, TENURED, map);
+  HeapObject* result = AllocateRawWithImmortalMap(
+      size,
+      isolate()->heap()->CanAllocateInReadOnlySpace() ? TENURED_READ_ONLY
+                                                      : TENURED,
+      map);
   Handle<String> answer(String::cast(result), isolate());
   answer->set_length(chars);
   answer->set_hash_field(hash_field);
@@ -1128,7 +1159,7 @@ MaybeHandle<String> Factory::NewExternalStringFromOneByte(
     map = external_one_byte_string_map();
   }
   Handle<ExternalOneByteString> external_string(
-      ExternalOneByteString::cast(New(map, NOT_TENURED)), isolate());
+      ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
   external_string->set_resource(resource);
@@ -1160,7 +1191,7 @@ MaybeHandle<String> Factory::NewExternalStringFromTwoByte(
                       : external_string_map();
   }
   Handle<ExternalTwoByteString> external_string(
-      ExternalTwoByteString::cast(New(map, NOT_TENURED)), isolate());
+      ExternalTwoByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
   external_string->set_resource(resource);
@@ -1607,20 +1638,23 @@ Handle<PropertyCell> Factory::NewPropertyCell(Handle<Name> name) {
   return cell;
 }
 
-Handle<WeakCell> Factory::NewWeakCell(Handle<HeapObject> value) {
+Handle<WeakCell> Factory::NewWeakCell(Handle<HeapObject> value,
+                                      PretenureFlag pretenure) {
   // It is safe to dereference the value because we are embedding it
   // in cell and not inspecting its fields.
   AllowDeferredHandleDereference convert_to_cell;
   STATIC_ASSERT(WeakCell::kSize <= kMaxRegularHeapObjectSize);
   HeapObject* result =
-      AllocateRawWithImmortalMap(WeakCell::kSize, TENURED, *weak_cell_map());
+      AllocateRawWithImmortalMap(WeakCell::kSize, pretenure, *weak_cell_map());
   Handle<WeakCell> cell(WeakCell::cast(result), isolate());
   cell->initialize(*value);
   return cell;
 }
 
-Handle<TransitionArray> Factory::NewTransitionArray(int capacity) {
-  Handle<TransitionArray> array = NewFixedArrayWithMap<TransitionArray>(
+Handle<TransitionArray> Factory::NewTransitionArray(int number_of_transitions,
+                                                    int slack) {
+  int capacity = TransitionArray::LengthFor(number_of_transitions + slack);
+  Handle<TransitionArray> array = NewWeakFixedArrayWithMap<TransitionArray>(
       Heap::kTransitionArrayMapRootIndex, capacity, TENURED);
   // Transition arrays are tenured. When black allocation is on we have to
   // add the transition array to the list of encountered_transition_arrays.
@@ -1628,6 +1662,11 @@ Handle<TransitionArray> Factory::NewTransitionArray(int capacity) {
   if (heap->incremental_marking()->black_allocation()) {
     heap->mark_compact_collector()->AddTransitionArray(*array);
   }
+  array->WeakFixedArray::Set(TransitionArray::kPrototypeTransitionsIndex,
+                             MaybeObject::FromObject(Smi::kZero));
+  array->WeakFixedArray::Set(
+      TransitionArray::kTransitionLengthIndex,
+      MaybeObject::FromObject(Smi::FromInt(number_of_transitions)));
   return array;
 }
 
@@ -1843,6 +1882,30 @@ Handle<FixedArray> Factory::CopyFixedArrayAndGrow(Handle<FixedArray> array,
                                                   int grow_by,
                                                   PretenureFlag pretenure) {
   return CopyArrayAndGrow(array, grow_by, pretenure);
+}
+
+Handle<WeakFixedArray> Factory::CopyWeakFixedArrayAndGrow(
+    Handle<WeakFixedArray> src, int grow_by, PretenureFlag pretenure) {
+  DCHECK(
+      !src->IsTransitionArray());  // Compacted by GC, this code doesn't work.
+  int old_len = src->length();
+  int new_len = old_len + grow_by;
+  DCHECK_GE(new_len, old_len);
+  HeapObject* obj = AllocateRawFixedArray(new_len, pretenure);
+  DCHECK_EQ(old_len, src->length());
+  obj->set_map_after_allocation(src->map(), SKIP_WRITE_BARRIER);
+
+  WeakFixedArray* result = WeakFixedArray::cast(obj);
+  result->set_length(new_len);
+
+  // Copy the content.
+  DisallowHeapAllocation no_gc;
+  WriteBarrierMode mode = obj->GetWriteBarrierMode(no_gc);
+  for (int i = 0; i < old_len; i++) result->Set(i, src->Get(i), mode);
+  HeapObjectReference* undefined_reference =
+      HeapObjectReference::Strong(isolate()->heap()->undefined_value());
+  MemsetPointer(result->data_start() + old_len, undefined_reference, grow_by);
+  return Handle<WeakFixedArray>(result, isolate());
 }
 
 Handle<WeakArrayList> Factory::CopyWeakArrayListAndGrow(
@@ -2074,17 +2137,15 @@ DEFINE_ERROR(WasmRuntimeError, wasm_runtime_error)
 
 Handle<JSFunction> Factory::NewFunction(Handle<Map> map,
                                         Handle<SharedFunctionInfo> info,
-                                        Handle<Object> context_or_undefined,
+                                        Handle<Context> context,
                                         PretenureFlag pretenure) {
   Handle<JSFunction> function(JSFunction::cast(New(map, pretenure)), isolate());
-  DCHECK(context_or_undefined->IsContext() ||
-         context_or_undefined->IsUndefined(isolate()));
 
   function->initialize_properties();
   function->initialize_elements();
   function->set_shared(*info);
   function->set_code(info->GetCode());
-  function->set_context(*context_or_undefined);
+  function->set_context(*context);
   function->set_feedback_cell(*many_closures_cell());
   int header_size;
   if (map->has_prototype_slot()) {
@@ -2235,26 +2296,24 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
 
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<Map> initial_map, Handle<SharedFunctionInfo> info,
-    Handle<Object> context_or_undefined, PretenureFlag pretenure) {
+    Handle<Context> context, PretenureFlag pretenure) {
   DCHECK_EQ(JS_FUNCTION_TYPE, initial_map->instance_type());
   Handle<JSFunction> result =
-      NewFunction(initial_map, info, context_or_undefined, pretenure);
+      NewFunction(initial_map, info, context, pretenure);
 
-  if (context_or_undefined->IsContext()) {
-    // Give compiler a chance to pre-initialize.
-    Compiler::PostInstantiation(result, pretenure);
-  }
+  // Give compiler a chance to pre-initialize.
+  Compiler::PostInstantiation(result, pretenure);
 
   return result;
 }
 
 Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
     Handle<Map> initial_map, Handle<SharedFunctionInfo> info,
-    Handle<Object> context_or_undefined, Handle<FeedbackCell> feedback_cell,
+    Handle<Context> context, Handle<FeedbackCell> feedback_cell,
     PretenureFlag pretenure) {
   DCHECK_EQ(JS_FUNCTION_TYPE, initial_map->instance_type());
   Handle<JSFunction> result =
-      NewFunction(initial_map, info, context_or_undefined, pretenure);
+      NewFunction(initial_map, info, context, pretenure);
 
   // Bump the closure count that is encoded in the feedback cell's map.
   if (feedback_cell->map() == *no_closures_cell_map()) {
@@ -2274,10 +2333,8 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
   }
   result->set_feedback_cell(*feedback_cell);
 
-  if (context_or_undefined->IsContext()) {
-    // Give compiler a chance to pre-initialize.
-    Compiler::PostInstantiation(result, pretenure);
-  }
+  // Give compiler a chance to pre-initialize.
+  Compiler::PostInstantiation(result, pretenure);
 
   return result;
 }

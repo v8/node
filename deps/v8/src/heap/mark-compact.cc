@@ -816,9 +816,7 @@ void MarkCompactCollector::Prepare() {
     heap()->incremental_marking()->Stop();
   }
 
-  // If concurrent unmapping tasks are still running, we should wait for
-  // them here.
-  heap()->memory_allocator()->unmapper()->WaitUntilCompleted();
+  heap()->memory_allocator()->unmapper()->PrepareForMarkCompact();
 
   // Clear marking bits if incremental marking is aborted.
   if (was_marked_incrementally_ && heap_->ShouldAbortIncrementalMarking()) {
@@ -1716,7 +1714,8 @@ void MarkCompactCollector::ClearNonLiveReferences() {
 
   {
     TRACE_GC(heap()->tracer(), GCTracer::Scope::MC_CLEAR_MAPS);
-    // ClearFullMapTransitions must be called before WeakCells are cleared.
+    // ClearFullMapTransitions must be called before weak references are
+    // cleared.
     ClearFullMapTransitions();
   }
   ClearWeakCells();
@@ -1820,12 +1819,14 @@ bool MarkCompactCollector::CompactTransitionArray(
       if (i != transition_index) {
         Name* key = transitions->GetKey(i);
         transitions->SetKey(transition_index, key);
-        Object** key_slot = transitions->GetKeySlot(transition_index);
+        HeapObjectReference** key_slot =
+            transitions->GetKeySlot(transition_index);
         RecordSlot(transitions, key_slot, key);
-        Object* raw_target = transitions->GetRawTarget(i);
-        transitions->SetTarget(transition_index, raw_target);
-        Object** target_slot = transitions->GetTargetSlot(transition_index);
-        RecordSlot(transitions, target_slot, raw_target);
+        MaybeObject* raw_target = transitions->GetRawTarget(i);
+        transitions->SetRawTarget(transition_index, raw_target);
+        HeapObjectReference** target_slot =
+            transitions->GetTargetSlot(transition_index);
+        RecordSlot(transitions, target_slot, raw_target->GetHeapObject());
       }
       transition_index++;
     }
@@ -1841,7 +1842,8 @@ bool MarkCompactCollector::CompactTransitionArray(
   // array disappeared during GC.
   int trim = transitions->Capacity() - transition_index;
   if (trim > 0) {
-    heap_->RightTrimFixedArray(transitions, trim * TransitionArray::kEntrySize);
+    heap_->RightTrimWeakFixedArray(transitions,
+                                   trim * TransitionArray::kEntrySize);
     transitions->SetNumberOfTransitions(transition_index);
   }
   return descriptors_owner_died;

@@ -30,6 +30,7 @@ constexpr Register kJavaScriptCallNewTargetRegister = a3;
 constexpr Register kOffHeapTrampolineRegister = at;
 constexpr Register kRuntimeCallFunctionRegister = a1;
 constexpr Register kRuntimeCallArgCountRegister = a0;
+constexpr Register kWasmInstanceRegister = a0;
 
 // Forward declaration.
 class JumpTarget;
@@ -227,11 +228,11 @@ class TurboAssembler : public Assembler {
     CompareIsNanF(D, cmp1, cmp2);
   }
 
-  void BranchTrueShortF(Label* target);
-  void BranchFalseShortF(Label* target);
+  void BranchTrueShortF(Label* target, BranchDelaySlot bd = PROTECT);
+  void BranchFalseShortF(Label* target, BranchDelaySlot bd = PROTECT);
 
-  void BranchTrueF(Label* target);
-  void BranchFalseF(Label* target);
+  void BranchTrueF(Label* target, BranchDelaySlot bd = PROTECT);
+  void BranchFalseF(Label* target, BranchDelaySlot bd = PROTECT);
 
   // MSA Branches
   void BranchMSA(Label* target, MSABranchDF df, MSABranchCondition cond,
@@ -567,6 +568,9 @@ class TurboAssembler : public Assembler {
   void Movt(Register rd, Register rs, uint16_t cc = 0);
   void Movf(Register rd, Register rs, uint16_t cc = 0);
 
+  void LoadZeroIfFPUCondition(Register dest);
+  void LoadZeroIfNotFPUCondition(Register dest);
+
   void LoadZeroIfConditionNotZero(Register dest, Register condition);
   void LoadZeroIfConditionZero(Register dest, Register condition);
   void LoadZeroOnCondition(Register rd, Register rs, const Operand& rt,
@@ -578,10 +582,16 @@ class TurboAssembler : public Assembler {
 
   // Int64Lowering instructions
   void AddPair(Register dst_low, Register dst_high, Register left_low,
-               Register left_high, Register right_low, Register right_high);
+               Register left_high, Register right_low, Register right_high,
+               Register scratch1, Register scratch2);
 
   void SubPair(Register dst_low, Register dst_high, Register left_low,
-               Register left_high, Register right_low, Register right_high);
+               Register left_high, Register right_low, Register right_high,
+               Register scratch1, Register scratch2);
+
+  void MulPair(Register dst_low, Register dst_high, Register left_low,
+               Register left_high, Register right_low, Register right_high,
+               Register scratch1, Register scratch2);
 
   void ShlPair(Register dst_low, Register dst_high, Register src_low,
                Register src_high, Register shift, Register scratch1,

@@ -794,6 +794,29 @@ Reduction JSCallReducer::ReduceReflectGetPrototypeOf(Node* node) {
   return ReduceObjectGetPrototype(node, target);
 }
 
+// ES6 section #sec-object.create Object.create(proto, properties)
+Reduction JSCallReducer::ReduceObjectCreate(Node* node) {
+  int arg_count = node->op()->ValueInputCount();
+  Node* properties = arg_count >= 4 ? NodeProperties::GetValueInput(node, 3)
+                                    : jsgraph()->UndefinedConstant();
+  if (properties != jsgraph()->UndefinedConstant()) return NoChange();
+
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
+  Node* prototype = arg_count >= 3 ? NodeProperties::GetValueInput(node, 2)
+                                   : jsgraph()->UndefinedConstant();
+  node->ReplaceInput(0, prototype);
+  node->ReplaceInput(1, context);
+  node->ReplaceInput(2, frame_state);
+  node->ReplaceInput(3, effect);
+  node->ReplaceInput(4, control);
+  node->TrimInputCount(5);
+  NodeProperties::ChangeOp(node, javascript()->CreateObject());
+  return Changed(node);
+}
+
 // ES section #sec-reflect.get
 Reduction JSCallReducer::ReduceReflectGet(Node* node) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
@@ -1458,7 +1481,7 @@ Reduction JSCallReducer::ReduceArrayMap(Node* node,
   if (result == NodeProperties::kNoReceiverMaps) return NoChange();
 
   // Ensure that any changes to the Array species constructor cause deopt.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
 
   const ElementsKind kind = receiver_maps[0]->elements_kind();
 
@@ -1469,7 +1492,7 @@ Reduction JSCallReducer::ReduceArrayMap(Node* node,
     if (receiver_map->elements_kind() != kind) return NoChange();
   }
 
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->array_species_protector());
 
   Handle<JSFunction> handle_constructor(
       JSFunction::cast(
@@ -1658,7 +1681,7 @@ Reduction JSCallReducer::ReduceArrayFilter(Node* node,
   if (result == NodeProperties::kNoReceiverMaps) return NoChange();
 
   // And ensure that any changes to the Array species constructor cause deopt.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
 
   const ElementsKind kind = receiver_maps[0]->elements_kind();
   // The output array is packed (filter doesn't visit holes).
@@ -1673,7 +1696,7 @@ Reduction JSCallReducer::ReduceArrayFilter(Node* node,
     if (receiver_map->elements_kind() != kind) return NoChange();
   }
 
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->array_species_protector());
 
   Handle<Map> initial_map(
       Map::cast(native_context()->GetInitialJSArrayMap(packed_kind)));
@@ -2251,7 +2274,7 @@ Reduction JSCallReducer::ReduceArrayEvery(Node* node,
   if (result == NodeProperties::kNoReceiverMaps) return NoChange();
 
   // And ensure that any changes to the Array species constructor cause deopt.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
 
   const ElementsKind kind = receiver_maps[0]->elements_kind();
 
@@ -2262,7 +2285,7 @@ Reduction JSCallReducer::ReduceArrayEvery(Node* node,
     if (receiver_map->elements_kind() != kind) return NoChange();
   }
 
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->array_species_protector());
 
   // If we have unreliable maps, we need a map check.
   if (result == NodeProperties::kUnreliableReceiverMaps) {
@@ -2574,7 +2597,7 @@ Reduction JSCallReducer::ReduceArraySome(Node* node,
   if (result == NodeProperties::kNoReceiverMaps) return NoChange();
 
   // And ensure that any changes to the Array species constructor cause deopt.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsArraySpeciesLookupChainIntact()) return NoChange();
 
   if (receiver_maps.size() == 0) return NoChange();
 
@@ -2587,7 +2610,7 @@ Reduction JSCallReducer::ReduceArraySome(Node* node,
     if (receiver_map->elements_kind() != kind) return NoChange();
   }
 
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->array_species_protector());
 
   Node* k = jsgraph()->ZeroConstant();
 
@@ -3303,6 +3326,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
       return ReduceFunctionPrototypeHasInstance(node);
     case Builtins::kObjectConstructor:
       return ReduceObjectConstructor(node);
+    case Builtins::kObjectCreate:
+      return ReduceObjectCreate(node);
     case Builtins::kObjectGetPrototypeOf:
       return ReduceObjectGetPrototypeOf(node);
     case Builtins::kObjectIs:
@@ -3359,6 +3384,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
       return ReduceArrayIterator(node, IterationKind::kValues);
     case Builtins::kArrayIteratorPrototypeNext:
       return ReduceArrayIteratorPrototypeNext(node);
+    case Builtins::kArrayIsArray:
+      return ReduceArrayIsArray(node);
     case Builtins::kArrayBufferIsView:
       return ReduceArrayBufferIsView(node);
     case Builtins::kDataViewPrototypeGetByteLength:
@@ -3458,6 +3485,10 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
       return ReduceNumberIsSafeInteger(node);
     case Builtins::kNumberIsNaN:
       return ReduceNumberIsNaN(node);
+    case Builtins::kGlobalIsFinite:
+      return ReduceGlobalIsFinite(node);
+    case Builtins::kGlobalIsNaN:
+      return ReduceGlobalIsNaN(node);
     case Builtins::kMapPrototypeGet:
       return ReduceMapPrototypeGet(node);
     case Builtins::kMapPrototypeHas:
@@ -4606,6 +4637,30 @@ Reduction JSCallReducer::ReduceArrayPrototypeShift(Node* node) {
     return Replace(value);
 }
 
+// ES6 section 22.1.2.2 Array.isArray ( arg )
+Reduction JSCallReducer::ReduceArrayIsArray(Node* node) {
+  // We certainly know that undefined is not an array.
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->FalseConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
+  Node* object = NodeProperties::GetValueInput(node, 2);
+  node->ReplaceInput(0, object);
+  node->ReplaceInput(1, context);
+  node->ReplaceInput(2, frame_state);
+  node->ReplaceInput(3, effect);
+  node->ReplaceInput(4, control);
+  node->TrimInputCount(5);
+  NodeProperties::ChangeOp(node, javascript()->ObjectIsArray());
+  return Changed(node);
+}
+
 Reduction JSCallReducer::ReduceArrayIterator(Node* node, IterationKind kind) {
   DCHECK_EQ(IrOpcode::kJSCall, node->opcode());
   Node* receiver = NodeProperties::GetValueInput(node, 1);
@@ -5701,7 +5756,7 @@ Reduction JSCallReducer::ReducePromisePrototypeFinally(Node* node) {
   // lookup of "constructor" on JSPromise instances, whoch [[Prototype]] is
   // the initial %PromisePrototype%, and the Symbol.species lookup on the
   // %PromisePrototype%.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsPromiseSpeciesLookupChainIntact()) return NoChange();
 
   // Check if we know something about {receiver} already.
   ZoneHandleSet<Map> receiver_maps;
@@ -5722,7 +5777,7 @@ Reduction JSCallReducer::ReducePromisePrototypeFinally(Node* node) {
   // Add a code dependency on the necessary protectors.
   dependencies()->AssumePropertyCell(factory()->promise_hook_protector());
   dependencies()->AssumePropertyCell(factory()->promise_then_protector());
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->promise_species_protector());
 
   // If the {receiver_maps} aren't reliable, we need to repeat the
   // map check here, guarded by the CALL_IC.
@@ -5840,6 +5895,7 @@ Reduction JSCallReducer::ReducePromisePrototypeThen(Node* node) {
   Node* context = NodeProperties::GetContextInput(node);
   Node* effect = NodeProperties::GetEffectInput(node);
   Node* control = NodeProperties::GetControlInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
 
   // Check that promises aren't being observed through (debug) hooks.
   if (!isolate()->IsPromiseHookProtectorIntact()) return NoChange();
@@ -5848,7 +5904,7 @@ Reduction JSCallReducer::ReducePromisePrototypeThen(Node* node) {
   // guards the "constructor" lookup on all JSPromise instances and the
   // initial Promise.prototype, as well as the  Symbol.species lookup on
   // the Promise constructor.
-  if (!isolate()->IsSpeciesLookupChainIntact()) return NoChange();
+  if (!isolate()->IsPromiseSpeciesLookupChainIntact()) return NoChange();
 
   // Check if we know something about {receiver} already.
   ZoneHandleSet<Map> receiver_maps;
@@ -5870,7 +5926,7 @@ Reduction JSCallReducer::ReducePromisePrototypeThen(Node* node) {
 
   // Add a code dependency on the necessary protectors.
   dependencies()->AssumePropertyCell(factory()->promise_hook_protector());
-  dependencies()->AssumePropertyCell(factory()->species_protector());
+  dependencies()->AssumePropertyCell(factory()->promise_species_protector());
 
   // If the {receiver_maps} aren't reliable, we need to repeat the
   // map check here, guarded by the CALL_IC.
@@ -5898,9 +5954,9 @@ Reduction JSCallReducer::ReducePromisePrototypeThen(Node* node) {
       graph()->NewNode(javascript()->CreatePromise(), context, effect);
 
   // Chain {result} onto {receiver}.
-  result = effect = graph()->NewNode(javascript()->PerformPromiseThen(),
-                                     receiver, on_fulfilled, on_rejected,
-                                     result, context, effect, control);
+  result = effect = graph()->NewNode(
+      javascript()->PerformPromiseThen(), receiver, on_fulfilled, on_rejected,
+      result, context, frame_state, effect, control);
   ReplaceWithValue(node, result, effect, control);
   return Replace(result);
 }
@@ -6561,6 +6617,56 @@ Reduction JSCallReducer::ReduceArrayBufferViewAccessor(
     return Replace(value);
   }
   return NoChange();
+}
+
+// ES6 section 18.2.2 isFinite ( number )
+Reduction JSCallReducer::ReduceGlobalIsFinite(Node* node) {
+  CallParameters const& p = CallParametersOf(node->op());
+  if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
+    return NoChange();
+  }
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->FalseConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* input = NodeProperties::GetValueInput(node, 2);
+
+  input = effect =
+      graph()->NewNode(simplified()->SpeculativeToNumber(
+                           NumberOperationHint::kNumberOrOddball, p.feedback()),
+                       input, effect, control);
+  Node* value = graph()->NewNode(simplified()->NumberIsFinite(), input);
+  ReplaceWithValue(node, value, effect);
+  return Replace(value);
+}
+
+// ES6 section 18.2.3 isNaN ( number )
+Reduction JSCallReducer::ReduceGlobalIsNaN(Node* node) {
+  CallParameters const& p = CallParametersOf(node->op());
+  if (p.speculation_mode() == SpeculationMode::kDisallowSpeculation) {
+    return NoChange();
+  }
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->TrueConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* input = NodeProperties::GetValueInput(node, 2);
+
+  input = effect =
+      graph()->NewNode(simplified()->SpeculativeToNumber(
+                           NumberOperationHint::kNumberOrOddball, p.feedback()),
+                       input, effect, control);
+  Node* value = graph()->NewNode(simplified()->NumberIsNaN(), input);
+  ReplaceWithValue(node, value, effect);
+  return Replace(value);
 }
 
 Graph* JSCallReducer::graph() const { return jsgraph()->graph(); }

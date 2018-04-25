@@ -247,7 +247,7 @@ BUILTIN(ArraySplice) {
           // If this is a subclass of Array, then call out to JS.
           !Handle<JSArray>::cast(receiver)->HasArrayPrototype(isolate) ||
           // If anything with @@species has been messed with, call out to JS.
-          !isolate->IsSpeciesLookupChainIntact())) {
+          !isolate->IsArraySpeciesLookupChainIntact())) {
     return CallJsIntrinsic(isolate, isolate->array_splice(), args);
   }
   Handle<JSArray> array = Handle<JSArray>::cast(receiver);
@@ -376,6 +376,8 @@ class ArrayConcatVisitor {
     }
     return true;
   }
+
+  uint32_t index_offset() const { return index_offset_; }
 
   void increase_index_offset(uint32_t delta) {
     if (JSObject::kMaxElementCount - index_offset_ < delta) {
@@ -709,6 +711,11 @@ bool IterateElements(Isolate* isolate, Handle<JSReceiver> receiver,
     Handle<Object> val;
     ASSIGN_RETURN_ON_EXCEPTION_VALUE(
         isolate, val, Object::GetLengthFromArrayLike(isolate, receiver), false);
+    if (visitor->index_offset() + val->Number() > kMaxSafeInteger) {
+      isolate->Throw(*isolate->factory()->NewTypeError(
+          MessageTemplate::kInvalidArrayLength));
+      return false;
+    }
     // TODO(caitp): Support larger element indexes (up to 2^53-1).
     if (!val->ToUint32(&length)) {
       length = 0;
@@ -1116,7 +1123,7 @@ BUILTIN(ArrayConcat) {
   // Avoid a real species read to avoid extra lookups to the array constructor
   if (V8_LIKELY(receiver->IsJSArray() &&
                 Handle<JSArray>::cast(receiver)->HasArrayPrototype(isolate) &&
-                isolate->IsSpeciesLookupChainIntact())) {
+                isolate->IsArraySpeciesLookupChainIntact())) {
     if (Fast_ArrayConcat(isolate, &args).ToHandle(&result_array)) {
       return *result_array;
     }

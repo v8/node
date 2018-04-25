@@ -188,17 +188,6 @@ void MacroAssembler::DoubleToI(Register result_reg, XMMRegister input_reg,
   j(parity_even, is_nan, dst);
 }
 
-void TurboAssembler::LoadUint32(XMMRegister dst, Operand src) {
-  Label done;
-  cmp(src, Immediate(0));
-  ExternalReference uint32_bias =
-      ExternalReference::address_of_uint32_bias(isolate());
-  Cvtsi2sd(dst, src);
-  j(not_sign, &done, Label::kNear);
-  addsd(dst, Operand::StaticVariable(uint32_bias));
-  bind(&done);
-}
-
 void MacroAssembler::RecordWriteField(Register object, int offset,
                                       Register value, Register dst,
                                       SaveFPRegsMode save_fp,
@@ -365,27 +354,65 @@ void MacroAssembler::MaybeDropFrames() {
     RelocInfo::CODE_TARGET);
 }
 
-void TurboAssembler::Cvtsi2sd(XMMRegister dst, Operand src) {
+void TurboAssembler::Cvtsi2ss(XMMRegister dst, Operand src) {
   xorps(dst, dst);
+  cvtsi2ss(dst, src);
+}
+
+void TurboAssembler::Cvtsi2sd(XMMRegister dst, Operand src) {
+  xorpd(dst, dst);
   cvtsi2sd(dst, src);
 }
 
-void TurboAssembler::Cvtui2ss(XMMRegister dst, Register src, Register tmp) {
-  Label msb_set_src;
-  Label jmp_return;
-  test(src, src);
-  j(sign, &msb_set_src, Label::kNear);
-  cvtsi2ss(dst, src);
-  jmp(&jmp_return, Label::kNear);
-  bind(&msb_set_src);
-  mov(tmp, src);
-  shr(src, 1);
-  // Recover the least significant bit to avoid rounding errors.
-  and_(tmp, Immediate(1));
-  or_(src, tmp);
-  cvtsi2ss(dst, src);
+void TurboAssembler::Cvtui2ss(XMMRegister dst, Operand src, Register tmp) {
+  Label done;
+  Register src_reg = src.is_reg_only() ? src.reg() : tmp;
+  if (src_reg == tmp) mov(tmp, src);
+  cvtsi2ss(dst, src_reg);
+  test(src_reg, src_reg);
+  j(positive, &done, Label::kNear);
+
+  // Compute {src/2 | (src&1)} (retain the LSB to avoid rounding errors).
+  if (src_reg != tmp) mov(tmp, src_reg);
+  shr(tmp, 1);
+  // The LSB is shifted into CF. If it is set, set the LSB in {tmp}.
+  Label msb_not_set;
+  j(not_carry, &msb_not_set, Label::kNear);
+  or_(tmp, Immediate(1));
+  bind(&msb_not_set);
+  cvtsi2ss(dst, tmp);
   addss(dst, dst);
-  bind(&jmp_return);
+  bind(&done);
+}
+
+void TurboAssembler::Cvttss2ui(Register dst, Operand src, XMMRegister tmp) {
+  Label done;
+  cvttss2si(dst, src);
+  test(dst, dst);
+  j(positive, &done);
+  Move(tmp, static_cast<float>(INT32_MIN));
+  addss(tmp, src);
+  cvttss2si(dst, tmp);
+  or_(dst, Immediate(0x80000000));
+  bind(&done);
+}
+
+void TurboAssembler::Cvtui2sd(XMMRegister dst, Operand src) {
+  Label done;
+  cmp(src, Immediate(0));
+  ExternalReference uint32_bias =
+      ExternalReference::address_of_uint32_bias(isolate());
+  Cvtsi2sd(dst, src);
+  j(not_sign, &done, Label::kNear);
+  addsd(dst, Operand::StaticVariable(uint32_bias));
+  bind(&done);
+}
+
+void TurboAssembler::Cvttsd2ui(Register dst, Operand src, XMMRegister tmp) {
+  Move(tmp, -2147483648.0);
+  addsd(tmp, src);
+  cvttsd2si(dst, tmp);
+  add(dst, Immediate(0x80000000));
 }
 
 void TurboAssembler::ShlPair(Register high, Register low, uint8_t shift) {
@@ -1291,6 +1318,20 @@ void TurboAssembler::Psignd(XMMRegister dst, Operand src) {
   if (CpuFeatures::IsSupported(SSSE3)) {
     CpuFeatureScope sse_scope(this, SSSE3);
     psignd(dst, src);
+    return;
+  }
+  UNREACHABLE();
+}
+
+void TurboAssembler::Ptest(XMMRegister dst, Operand src) {
+  if (CpuFeatures::IsSupported(AVX)) {
+    CpuFeatureScope scope(this, AVX);
+    vptest(dst, src);
+    return;
+  }
+  if (CpuFeatures::IsSupported(SSE4_1)) {
+    CpuFeatureScope sse_scope(this, SSE4_1);
+    ptest(dst, src);
     return;
   }
   UNREACHABLE();

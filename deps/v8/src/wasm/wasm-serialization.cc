@@ -13,6 +13,7 @@
 #include "src/snapshot/serializer-common.h"
 #include "src/utils.h"
 #include "src/version.h"
+#include "src/wasm/function-compiler.h"
 #include "src/wasm/module-compiler.h"
 #include "src/wasm/module-decoder.h"
 #include "src/wasm/wasm-code-manager.h"
@@ -29,7 +30,8 @@ namespace {
 
 class Writer {
  public:
-  explicit Writer(Vector<byte> buffer) : buffer_(buffer) {}
+  explicit Writer(Vector<byte> buffer)
+      : buffer_(buffer), start_(buffer_.start()) {}
   template <typename T>
   void Write(const T& value) {
     if (FLAG_wasm_trace_serialization) {
@@ -54,14 +56,27 @@ class Writer {
   }
   Vector<byte> current_buffer() const { return buffer_; }
 
+  void Align(size_t alignment) {
+    size_t num_written_bytes = static_cast<size_t>(buffer_.start() - start_);
+    if (num_written_bytes % alignment) {
+      size_t padding = alignment - num_written_bytes % alignment;
+      buffer_ = buffer_ + padding;
+      if (FLAG_wasm_trace_serialization) {
+        OFStream os(stdout);
+        os << "wrote padding, sized: " << padding << std::endl;
+      }
+    }
+  }
+
  private:
   Vector<byte> buffer_;
+  byte* const start_;
 };
 
 class Reader {
  public:
-  explicit Reader(Vector<const byte> buffer) : buffer_(buffer) {}
-
+  explicit Reader(Vector<const byte> buffer)
+      : buffer_(buffer), start_(buffer_.start()) {}
   template <typename T>
   T Read() {
     DCHECK_GE(buffer_.size(), sizeof(T));
@@ -94,8 +109,21 @@ class Reader {
 
   Vector<const byte> current_buffer() const { return buffer_; }
 
+  void Align(size_t alignment) {
+    size_t num_read_bytes = static_cast<size_t>(buffer_.start() - start_);
+    if (num_read_bytes % alignment) {
+      size_t padding = alignment - num_read_bytes % alignment;
+      buffer_ = buffer_ + padding;
+      if (FLAG_wasm_trace_serialization) {
+        OFStream os(stdout);
+        os << "read padding, sized: " << padding << std::endl;
+      }
+    }
+  }
+
  private:
   Vector<const byte> buffer_;
+  const byte* const start_;
 };
 
 constexpr size_t kVersionSize = 4 * sizeof(uint32_t);
@@ -253,16 +281,17 @@ void NativeModuleSerializer::BufferHeader() {
 }
 
 size_t NativeModuleSerializer::GetCodeHeaderSize() {
-  return sizeof(size_t) +         // size of this section
-         sizeof(size_t) +         // offset of constant pool
-         sizeof(size_t) +         // offset of safepoint table
-         sizeof(size_t) +         // offset of handler table
-         sizeof(uint32_t) +       // stack slots
-         sizeof(size_t) +         // code size
-         sizeof(size_t) +         // reloc size
-         sizeof(size_t) +         // source positions size
-         sizeof(size_t) +         // protected instructions size
-         sizeof(WasmCode::Tier);  // tier
+  size_t size = sizeof(size_t) +         // size of this section
+                sizeof(size_t) +         // offset of constant pool
+                sizeof(size_t) +         // offset of safepoint table
+                sizeof(size_t) +         // offset of handler table
+                sizeof(uint32_t) +       // stack slots
+                sizeof(size_t) +         // code size
+                sizeof(size_t) +         // reloc size
+                sizeof(size_t) +         // source positions size
+                sizeof(size_t) +         // protected instructions size
+                sizeof(WasmCode::Tier);  // tier
+  return RoundUp(size, sizeof(size_t));
 }
 
 size_t NativeModuleSerializer::MeasureCode(const WasmCode* code) const {
@@ -292,8 +321,7 @@ size_t NativeModuleSerializer::DrainBuffer(Vector<byte> dest) {
 }
 
 size_t NativeModuleSerializer::MeasureCopiedStubs() const {
-  size_t ret = sizeof(uint32_t) +  // number of stubs
-               native_module_->stubs_.size() * sizeof(uint32_t);  // stub keys
+  size_t ret = sizeof(uint32_t);  // number of stubs
   for (auto pair : native_module_->trampolines_) {
     v8::internal::Code* code = Code::GetCodeFromTargetAddress(pair.first);
     int builtin_index = code->builtin_index();
@@ -314,14 +342,6 @@ void NativeModuleSerializer::BufferCopiedStubs() {
   writer.Write(
       static_cast<uint32_t>((buff_size - sizeof(uint32_t)) / sizeof(uint32_t)));
   uint32_t stub_id = kFirstStubId;
-
-  for (auto pair : native_module_->stubs_) {
-    uint32_t key = pair.first;
-    writer.Write(key);
-    stub_lookup_.insert(
-        std::make_pair(pair.second->instruction_start(), stub_id));
-    ++stub_id;
-  }
 
   for (auto pair : native_module_->trampolines_) {
     v8::internal::Code* code = Code::GetCodeFromTargetAddress(pair.first);
@@ -358,6 +378,7 @@ void NativeModuleSerializer::BufferCodeInAllocatedScratch(
   writer.Write(code->source_positions().size());
   writer.Write(code->protected_instructions().size());
   writer.Write(code->tier());
+  writer.Align(kPointerSize);
   // next is the code, which we have to reloc.
   byte* serialized_code_start = writer.current_buffer().start();
   // write the code and everything else
@@ -555,6 +576,7 @@ bool NativeModuleDeserializer::ReadCode() {
   size_t source_position_size = reader.Read<size_t>();
   size_t protected_instructions_size = reader.Read<size_t>();
   WasmCode::Tier tier = reader.Read<WasmCode::Tier>();
+  reader.Align(kPointerSize);
 
   std::shared_ptr<ProtectedInstructions> protected_instructions(
       new ProtectedInstructions(protected_instructions_size));
@@ -681,9 +703,14 @@ MaybeHandle<WasmCompiledModule> DeserializeNativeModule(
   Handle<FixedArray> export_wrappers = isolate->factory()->NewFixedArray(
       static_cast<int>(export_wrappers_size), TENURED);
 
+  // TODO(eholk): We need to properly preserve the flag whether the trap
+  // handler was used or not when serializing.
+  UseTrapHandler use_trap_handler =
+      trap_handler::IsTrapHandlerEnabled() ? kUseTrapHandler : kNoTrapHandler;
+  wasm::ModuleEnv env(shared->module(), use_trap_handler,
+                      wasm::RuntimeExceptionSupport::kRuntimeExceptionSupport);
   Handle<WasmCompiledModule> compiled_module =
-      WasmCompiledModule::New(isolate, shared->module(), export_wrappers,
-                              trap_handler::IsTrapHandlerEnabled());
+      WasmCompiledModule::New(isolate, shared->module(), export_wrappers, env);
   compiled_module->set_shared(*shared);
   script->set_wasm_compiled_module(*compiled_module);
   NativeModuleDeserializer deserializer(isolate,

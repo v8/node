@@ -30,6 +30,7 @@ constexpr Register kJavaScriptCallNewTargetRegister = a3;
 constexpr Register kOffHeapTrampolineRegister = at;
 constexpr Register kRuntimeCallFunctionRegister = a1;
 constexpr Register kRuntimeCallArgCountRegister = a0;
+constexpr Register kWasmInstanceRegister = a0;
 
 // Forward declaration.
 class JumpTarget;
@@ -256,11 +257,11 @@ class TurboAssembler : public Assembler {
     CompareIsNanF(D, cmp1, cmp2);
   }
 
-  void BranchTrueShortF(Label* target);
-  void BranchFalseShortF(Label* target);
+  void BranchTrueShortF(Label* target, BranchDelaySlot bd = PROTECT);
+  void BranchFalseShortF(Label* target, BranchDelaySlot bd = PROTECT);
 
-  void BranchTrueF(Label* target);
-  void BranchFalseF(Label* target);
+  void BranchTrueF(Label* target, BranchDelaySlot bd = PROTECT);
+  void BranchFalseF(Label* target, BranchDelaySlot bd = PROTECT);
 
   // MSA branches
   void BranchMSA(Label* target, MSABranchDF df, MSABranchCondition cond,
@@ -597,6 +598,9 @@ class TurboAssembler : public Assembler {
   void Movn(Register rd, Register rs, Register rt);
   void Movt(Register rd, Register rs, uint16_t cc = 0);
   void Movf(Register rd, Register rs, uint16_t cc = 0);
+
+  void LoadZeroIfFPUCondition(Register dest);
+  void LoadZeroIfNotFPUCondition(Register dest);
 
   void LoadZeroIfConditionNotZero(Register dest, Register condition);
   void LoadZeroIfConditionZero(Register dest, Register condition);

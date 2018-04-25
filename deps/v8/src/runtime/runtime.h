@@ -351,7 +351,6 @@ namespace internal {
   F(IsSmi, 1, 1)                      \
   F(IsValidSmi, 1, 1)                 \
   F(MaxSmi, 0, 1)                     \
-  F(NumberToSmi, 1, 1)                \
   F(NumberToStringSkipCache, 1, 1)    \
   F(SmiLexicographicCompare, 2, 1)    \
   F(StringParseFloat, 1, 1)           \
@@ -589,7 +588,9 @@ namespace internal {
   F(SetForceSlowPath, 1, 1)                   \
   F(SetWasmCompileControls, 2, 1)             \
   F(SetWasmInstantiateControls, 0, 1)         \
-  F(SpeciesProtector, 0, 1)                   \
+  F(ArraySpeciesProtector, 0, 1)              \
+  F(TypedArraySpeciesProtector, 0, 1)         \
+  F(PromiseSpeciesProtector, 0, 1)            \
   F(SystemBreak, 0, 1)                        \
   F(TraceEnter, 0, 1)                         \
   F(TraceExit, 1, 1)                          \

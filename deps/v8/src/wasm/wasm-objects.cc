@@ -9,6 +9,7 @@
 #include "src/base/iterator.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/debug/debug-interface.h"
+#include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/trap-handler/trap-handler.h"
@@ -772,19 +773,6 @@ Handle<WasmInstanceObject> WasmInstanceObject::New(
   return instance;
 }
 
-WasmInstanceObject* WasmInstanceObject::GetOwningInstance(
-    const wasm::WasmCode* code) {
-  DisallowHeapAllocation no_gc;
-  Object* weak_link = nullptr;
-  DCHECK(code->kind() == wasm::WasmCode::kFunction ||
-         code->kind() == wasm::WasmCode::kInterpreterStub);
-  weak_link = code->native_module()->compiled_module()->weak_owning_instance();
-  DCHECK(weak_link->IsWeakCell());
-  WeakCell* cell = WeakCell::cast(weak_link);
-  if (cell->cleared()) return nullptr;
-  return WasmInstanceObject::cast(cell->value());
-}
-
 void WasmInstanceObject::ValidateInstancesChainForTesting(
     Isolate* isolate, Handle<WasmModuleObject> module_obj, int instance_count) {
   CHECK_GE(instance_count, 0);
@@ -1083,10 +1071,10 @@ void WasmSharedModuleData::AddBreakpoint(Handle<WasmSharedModuleData> shared,
       new_breakpoint_infos->set(i, breakpoint_infos->get(i));
   }
 
-  // Move elements [insert_pos+1, ...] up by one.
-  for (int i = insert_pos + 1; i < breakpoint_infos->length(); ++i) {
+  // Move elements [insert_pos, ...] up by one.
+  for (int i = breakpoint_infos->length() - 1; i >= insert_pos; --i) {
     Object* entry = breakpoint_infos->get(i);
-    if (entry->IsUndefined(isolate)) break;
+    if (entry->IsUndefined(isolate)) continue;
     new_breakpoint_infos->set(i + 1, entry);
   }
 
@@ -1369,13 +1357,13 @@ MaybeHandle<FixedArray> WasmSharedModuleData::CheckBreakPoints(
 
 Handle<WasmCompiledModule> WasmCompiledModule::New(
     Isolate* isolate, WasmModule* module, Handle<FixedArray> export_wrappers,
-    bool use_trap_handler) {
+    wasm::ModuleEnv& env) {
   Handle<WasmCompiledModule> compiled_module = Handle<WasmCompiledModule>::cast(
       isolate->factory()->NewStruct(WASM_COMPILED_MODULE_TYPE, TENURED));
   Handle<WeakCell> weak_native_context =
       isolate->factory()->NewWeakCell(isolate->native_context());
   compiled_module->set_weak_native_context(*weak_native_context);
-  compiled_module->set_use_trap_handler(use_trap_handler);
+  compiled_module->set_use_trap_handler(env.use_trap_handler);
   if (!export_wrappers.is_null()) {
     compiled_module->set_export_wrappers(*export_wrappers);
   }
@@ -1383,7 +1371,7 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
   wasm::NativeModule* native_module = nullptr;
   {
     std::unique_ptr<wasm::NativeModule> native_module_ptr =
-        isolate->wasm_engine()->code_manager()->NewNativeModule(*module);
+        isolate->wasm_engine()->code_manager()->NewNativeModule(*module, env);
     native_module = native_module_ptr.release();
     Handle<Foreign> native_module_wrapper =
         Managed<wasm::NativeModule>::From(isolate, native_module);

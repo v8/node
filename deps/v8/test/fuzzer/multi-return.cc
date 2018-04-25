@@ -14,6 +14,7 @@
 #include "src/compiler/raw-machine-assembler.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/machine-type.h"
+#include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
 #include "src/objects.h"
 #include "src/optimized-compilation-info.h"
@@ -150,12 +151,16 @@ CallDescriptor* CreateRandomCallDescriptor(Zone* zone, size_t return_count,
 
 std::unique_ptr<wasm::NativeModule> AllocateNativeModule(i::Isolate* isolate,
                                                          size_t code_size) {
+  wasm::ModuleEnv env(
+      nullptr, wasm::UseTrapHandler::kNoTrapHandler,
+      wasm::RuntimeExceptionSupport::kNoRuntimeExceptionSupport);
+
   // We have to add the code object to a NativeModule, because the
   // WasmCallDescriptor assumes that code is on the native heap and not
   // within a code object.
   std::unique_ptr<wasm::NativeModule> module =
       isolate->wasm_engine()->code_manager()->NewNativeModule(code_size, 1, 0,
-                                                              false);
+                                                              false, env);
   return module;
 }
 

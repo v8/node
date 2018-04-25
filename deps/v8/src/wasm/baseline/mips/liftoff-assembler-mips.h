@@ -33,11 +33,6 @@ inline MemOperand GetHalfStackSlot(uint32_t half_index) {
 
 inline MemOperand GetInstanceOperand() { return MemOperand(fp, -8); }
 
-// Use this register to store the address of the last argument pushed on the
-// stack for a call to C. This register must be callee saved according to the c
-// calling convention.
-static constexpr Register kCCallLastArgAddrReg = s1;
-
 inline void Load(LiftoffAssembler* assm, LiftoffRegister dst, MemOperand src,
                  ValueType type) {
   switch (type) {
@@ -49,6 +44,28 @@ inline void Load(LiftoffAssembler* assm, LiftoffRegister dst, MemOperand src,
       break;
     case kWasmF64:
       assm->Ldc1(dst.fp(), src);
+      break;
+    default:
+      UNREACHABLE();
+  }
+}
+
+inline void Store(LiftoffAssembler* assm, Register base, int32_t offset,
+                  LiftoffRegister src, ValueType type) {
+  MemOperand dst(base, offset);
+  switch (type) {
+    case kWasmI32:
+      assm->Usw(src.gp(), dst);
+      break;
+    case kWasmI64:
+      assm->Usw(src.low_gp(), dst);
+      assm->Usw(src.high_gp(), MemOperand(base, offset + 4));
+      break;
+    case kWasmF32:
+      assm->Uswc1(src.fp(), dst, t8);
+      break;
+    case kWasmF64:
+      assm->Usdc1(src.fp(), dst, t8);
       break;
     default:
       UNREACHABLE();
@@ -103,6 +120,8 @@ void LiftoffAssembler::PatchPrepareStackFrame(uint32_t offset,
   // register and, as third instruction, addu will be generated.
   patching_assembler.Addu(sp, sp, Operand(-bytes));
 }
+
+void LiftoffAssembler::FinishCode() {}
 
 void LiftoffAssembler::LoadConstant(LiftoffRegister reg, WasmValue value,
                                     RelocInfo::Mode rmode) {
@@ -489,16 +508,15 @@ void LiftoffAssembler::Spill(uint32_t index, WasmValue value) {
       break;
     }
     case kWasmI64: {
-      LiftoffRegister low = GetUnusedRegister(kGpReg);
-      LiftoffRegister high = GetUnusedRegister(kGpReg);
+      LiftoffRegister tmp = GetUnusedRegister(kGpRegPair);
 
       int32_t low_word = value.to_i64();
       int32_t high_word = value.to_i64() >> 32;
-      TurboAssembler::li(low.gp(), Operand(low_word));
-      TurboAssembler::li(high.gp(), Operand(high_word));
+      TurboAssembler::li(tmp.low_gp(), Operand(low_word));
+      TurboAssembler::li(tmp.high_gp(), Operand(high_word));
 
-      sw(low.gp(), dst);
-      sw(high.gp(), liftoff::GetHalfStackSlot(2 * index + 1));
+      sw(tmp.low_gp(), dst);
+      sw(tmp.high_gp(), liftoff::GetHalfStackSlot(2 * index + 1));
       break;
     }
     default:
@@ -536,6 +554,27 @@ void LiftoffAssembler::FillI64Half(Register reg, uint32_t half_index) {
 
 void LiftoffAssembler::emit_i32_mul(Register dst, Register lhs, Register rhs) {
   TurboAssembler::Mul(dst, lhs, rhs);
+}
+
+void LiftoffAssembler::emit_i32_divs(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero,
+                                     Label* trap_div_unrepresentable) {
+  BAILOUT("i32_divs");
+}
+
+void LiftoffAssembler::emit_i32_divu(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_divu");
+}
+
+void LiftoffAssembler::emit_i32_rems(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_rems");
+}
+
+void LiftoffAssembler::emit_i32_remu(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_remu");
 }
 
 #define I32_BINOP(name, instruction)                                 \
@@ -581,17 +620,26 @@ I32_SHIFTOP(shr, srlv)
 
 #undef I32_SHIFTOP
 
-#define UNIMPLEMENTED_I64_BINOP(name)                                  \
-  void LiftoffAssembler::emit_i64_##name(                              \
-      LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
-    BAILOUT("i64 binop: " #name);                                      \
-  }
+void LiftoffAssembler::emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
+                                    LiftoffRegister rhs) {
+  TurboAssembler::MulPair(dst.low_gp(), dst.high_gp(), lhs.low_gp(),
+                          lhs.high_gp(), rhs.low_gp(), rhs.high_gp(),
+                          kScratchReg, kScratchReg2);
+}
 
-UNIMPLEMENTED_I64_BINOP(add)
-UNIMPLEMENTED_I64_BINOP(sub)
-UNIMPLEMENTED_I64_BINOP(mul)
+void LiftoffAssembler::emit_i64_add(LiftoffRegister dst, LiftoffRegister lhs,
+                                    LiftoffRegister rhs) {
+  TurboAssembler::AddPair(dst.low_gp(), dst.high_gp(), lhs.low_gp(),
+                          lhs.high_gp(), rhs.low_gp(), rhs.high_gp(),
+                          kScratchReg, kScratchReg2);
+}
 
-#undef UNIMPLEMENTED_I64_BINOP
+void LiftoffAssembler::emit_i64_sub(LiftoffRegister dst, LiftoffRegister lhs,
+                                    LiftoffRegister rhs) {
+  TurboAssembler::SubPair(dst.low_gp(), dst.high_gp(), lhs.low_gp(),
+                          lhs.high_gp(), rhs.low_gp(), rhs.high_gp(),
+                          kScratchReg, kScratchReg2);
+}
 
 namespace liftoff {
 
@@ -659,6 +707,14 @@ void LiftoffAssembler::emit_i64_shr(LiftoffRegister dst, LiftoffRegister src,
                                    &TurboAssembler::ShrPair, pinned);
 }
 
+void LiftoffAssembler::emit_f32_neg(DoubleRegister dst, DoubleRegister src) {
+  TurboAssembler::Neg_s(dst, src);
+}
+
+void LiftoffAssembler::emit_f64_neg(DoubleRegister dst, DoubleRegister src) {
+  TurboAssembler::Neg_d(dst, src);
+}
+
 #define FP_BINOP(name, instruction)                                          \
   void LiftoffAssembler::emit_##name(DoubleRegister dst, DoubleRegister lhs, \
                                      DoubleRegister rhs) {                   \
@@ -674,7 +730,6 @@ FP_BINOP(f32_sub, sub_s)
 FP_BINOP(f32_mul, mul_s)
 FP_BINOP(f32_div, div_s)
 FP_UNOP(f32_abs, abs_s)
-FP_UNOP(f32_neg, neg_s)
 FP_UNOP(f32_ceil, Ceil_s_s)
 FP_UNOP(f32_floor, Floor_s_s)
 FP_UNOP(f32_trunc, Trunc_s_s)
@@ -685,7 +740,6 @@ FP_BINOP(f64_sub, sub_d)
 FP_BINOP(f64_mul, mul_d)
 FP_BINOP(f64_div, div_d)
 FP_UNOP(f64_abs, abs_d)
-FP_UNOP(f64_neg, neg_d)
 FP_UNOP(f64_sqrt, sqrt_d)
 
 #undef FP_BINOP
@@ -730,7 +784,7 @@ void LiftoffAssembler::emit_f64_nearest_int(DoubleRegister dst,
 
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
-                                            LiftoffRegister src) {
+                                            LiftoffRegister src, Label* trap) {
   switch (opcode) {
     case kExprI32ConvertI64:
       TurboAssembler::Move(dst.gp(), src.low_gp());
@@ -946,9 +1000,9 @@ void LiftoffAssembler::emit_f32_set_cond(Condition cond, Register dst,
   FPUCondition fcond = liftoff::ConditionToConditionCmpFPU(predicate, cond);
   TurboAssembler::CompareF32(fcond, lhs, rhs);
   if (predicate) {
-    TurboAssembler::Movf(dst, zero_reg);
+    TurboAssembler::LoadZeroIfNotFPUCondition(dst);
   } else {
-    TurboAssembler::Movt(dst, zero_reg);
+    TurboAssembler::LoadZeroIfFPUCondition(dst);
   }
 
   bind(&cont);
@@ -975,9 +1029,9 @@ void LiftoffAssembler::emit_f64_set_cond(Condition cond, Register dst,
   FPUCondition fcond = liftoff::ConditionToConditionCmpFPU(predicate, cond);
   TurboAssembler::CompareF64(fcond, lhs, rhs);
   if (predicate) {
-    TurboAssembler::Movf(dst, zero_reg);
+    TurboAssembler::LoadZeroIfNotFPUCondition(dst);
   } else {
-    TurboAssembler::Movt(dst, zero_reg);
+    TurboAssembler::LoadZeroIfFPUCondition(dst);
   }
 
   bind(&cont);
@@ -999,44 +1053,6 @@ void LiftoffAssembler::CallTrapCallbackForTesting() {
 
 void LiftoffAssembler::AssertUnreachable(AbortReason reason) {
   if (emit_debug_code()) Abort(reason);
-}
-
-void LiftoffAssembler::PushCallerFrameSlot(const VarState& src,
-                                           uint32_t src_index,
-                                           RegPairHalf half) {
-  switch (src.loc()) {
-    case VarState::kStack: {
-      if (src.type() == kWasmF64) {
-        DCHECK_EQ(kLowWord, half);
-        lw(at, liftoff::GetHalfStackSlot(2 * src_index - 1));
-        push(at);
-      }
-      lw(at,
-         liftoff::GetHalfStackSlot(2 * src_index + (half == kLowWord ? 0 : 1)));
-      push(at);
-      break;
-    }
-    case VarState::kRegister:
-      if (src.type() == kWasmI64) {
-        PushCallerFrameSlot(
-            half == kLowWord ? src.reg().low() : src.reg().high(), kWasmI32);
-      } else {
-        PushCallerFrameSlot(src.reg(), src.type());
-      }
-      break;
-    case VarState::KIntConst: {
-      // The high word is the sign extension of the low word.
-      li(at,
-         Operand(half == kLowWord ? src.i32_const() : src.i32_const() >> 31));
-      push(at);
-      break;
-    }
-  }
-}
-
-void LiftoffAssembler::PushCallerFrameSlot(LiftoffRegister reg,
-                                           ValueType type) {
-  liftoff::push(this, reg, type);
 }
 
 void LiftoffAssembler::PushRegisters(LiftoffRegList regs) {
@@ -1094,59 +1110,48 @@ void LiftoffAssembler::DropStackSlotsAndRet(uint32_t num_stack_slots) {
   TurboAssembler::DropAndRet(static_cast<int>(num_stack_slots));
 }
 
-void LiftoffAssembler::PrepareCCall(wasm::FunctionSig* sig,
-                                    const LiftoffRegister* args,
-                                    ValueType out_argument_type) {
-  int pushed_bytes = 0;
+void LiftoffAssembler::CallC(wasm::FunctionSig* sig,
+                             const LiftoffRegister* args,
+                             const LiftoffRegister* rets,
+                             ValueType out_argument_type, int stack_bytes,
+                             ExternalReference ext_ref) {
+  addiu(sp, sp, -stack_bytes);
+
+  int arg_bytes = 0;
   for (ValueType param_type : sig->parameters()) {
-    pushed_bytes += RoundUp<kPointerSize>(WasmOpcodes::MemSize(param_type));
-    liftoff::push(this, *args++, param_type);
+    liftoff::Store(this, sp, arg_bytes, *args++, param_type);
+    arg_bytes += ValueTypes::MemSize(param_type);
   }
-  if (out_argument_type != kWasmStmt) {
-    int size = RoundUp<kPointerSize>(WasmOpcodes::MemSize(out_argument_type));
-    addiu(sp, sp, -size);
-    pushed_bytes += size;
-  }
-  // Save the original sp (before the first push), such that we can later
-  // compute pointers to the pushed values. Do this only *after* pushing the
-  // values, because {kCCallLastArgAddrReg} might collide with an arg register.
-  addiu(liftoff::kCCallLastArgAddrReg, sp, pushed_bytes);
+  DCHECK_LE(arg_bytes, stack_bytes);
+
+  // Pass a pointer to the buffer with the arguments to the C function.
+  // On mips, the first argument is passed in {a0}.
+  constexpr Register kFirstArgReg = a0;
+  mov(kFirstArgReg, sp);
+
+  // Now call the C function.
   constexpr Register kScratch = at;
-  static_assert(kScratch != liftoff::kCCallLastArgAddrReg, "collision");
-  int num_c_call_arguments = static_cast<int>(sig->parameter_count()) +
-                             (out_argument_type != kWasmStmt);
-  PrepareCallCFunction(num_c_call_arguments, kScratch);
-}
+  constexpr int kNumCCallArgs = 1;
+  PrepareCallCFunction(kNumCCallArgs, kScratch);
+  CallCFunction(ext_ref, kNumCCallArgs);
 
-void LiftoffAssembler::SetCCallRegParamAddr(Register dst, int param_byte_offset,
-                                            ValueType type) {
-  // Check that we don't accidentally override kCCallLastArgAddrReg.
-  DCHECK_NE(liftoff::kCCallLastArgAddrReg, dst);
-  addiu(dst, liftoff::kCCallLastArgAddrReg, -param_byte_offset);
-}
+  // Move return value to the right register.
+  const LiftoffRegister* next_result_reg = rets;
+  if (sig->return_count() > 0) {
+    DCHECK_EQ(1, sig->return_count());
+    constexpr Register kReturnReg = v0;
+    if (kReturnReg != next_result_reg->gp()) {
+      Move(*next_result_reg, LiftoffRegister(kReturnReg), sig->GetReturn(0));
+    }
+    ++next_result_reg;
+  }
 
-void LiftoffAssembler::SetCCallStackParamAddr(int stack_param_idx,
-                                              int param_byte_offset,
-                                              ValueType type) {
-  static constexpr Register kScratch = at;
-  SetCCallRegParamAddr(kScratch, param_byte_offset, type);
-  sw(kScratch, MemOperand(sp, stack_param_idx * kPointerSize));
-}
+  // Load potential output value from the buffer on the stack.
+  if (out_argument_type != kWasmStmt) {
+    liftoff::Load(this, *next_result_reg, MemOperand(sp, 0), out_argument_type);
+  }
 
-void LiftoffAssembler::LoadCCallOutArgument(LiftoffRegister dst, ValueType type,
-                                            int param_byte_offset) {
-  // Check that we don't accidentally override kCCallLastArgAddrReg.
-  DCHECK_NE(LiftoffRegister(liftoff::kCCallLastArgAddrReg), dst);
-  MemOperand src(liftoff::kCCallLastArgAddrReg, -param_byte_offset);
-  liftoff::Load(this, dst, src, type);
-}
-
-void LiftoffAssembler::CallC(ExternalReference ext_ref, uint32_t num_params) {
-  CallCFunction(ext_ref, static_cast<int>(num_params));
-}
-
-void LiftoffAssembler::FinishCCall() {
-  TurboAssembler::Move(sp, liftoff::kCCallLastArgAddrReg);
+  addiu(sp, sp, stack_bytes);
 }
 
 void LiftoffAssembler::CallNativeWasmCode(Address addr) {
@@ -1177,6 +1182,42 @@ void LiftoffAssembler::AllocateStackSlot(Register addr, uint32_t size) {
 
 void LiftoffAssembler::DeallocateStackSlot(uint32_t size) {
   addiu(sp, sp, size);
+}
+
+void LiftoffStackSlots::Construct() {
+  for (auto& slot : slots_) {
+    const LiftoffAssembler::VarState& src = slot.src_;
+    switch (src.loc()) {
+      case LiftoffAssembler::VarState::kStack: {
+        if (src.type() == kWasmF64) {
+          DCHECK_EQ(kLowWord, slot.half_);
+          asm_->lw(at, liftoff::GetHalfStackSlot(2 * slot.src_index_ - 1));
+          asm_->push(at);
+        }
+        asm_->lw(at,
+                 liftoff::GetHalfStackSlot(2 * slot.src_index_ +
+                                           (slot.half_ == kLowWord ? 0 : 1)));
+        asm_->push(at);
+        break;
+      }
+      case LiftoffAssembler::VarState::kRegister:
+        if (src.type() == kWasmI64) {
+          liftoff::push(
+              asm_, slot.half_ == kLowWord ? src.reg().low() : src.reg().high(),
+              kWasmI32);
+        } else {
+          liftoff::push(asm_, src.reg(), src.type());
+        }
+        break;
+      case LiftoffAssembler::VarState::KIntConst: {
+        // The high word is the sign extension of the low word.
+        asm_->li(at, Operand(slot.half_ == kLowWord ? src.i32_const()
+                                                    : src.i32_const() >> 31));
+        asm_->push(at);
+        break;
+      }
+    }
+  }
 }
 
 }  // namespace wasm

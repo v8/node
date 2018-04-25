@@ -256,6 +256,9 @@ class WeakFixedArray : public HeapObject {
   // Setter that uses write barrier.
   inline void Set(int index, MaybeObject* value);
 
+  // Setter with explicit barrier mode.
+  inline void Set(int index, MaybeObject* value, WriteBarrierMode mode);
+
   static constexpr int SizeFor(int length) {
     return kHeaderSize + length * kPointerSize;
   }
@@ -268,6 +271,11 @@ class WeakFixedArray : public HeapObject {
 
   // Gives access to raw memory which stores the array's data.
   inline MaybeObject** data_start();
+
+  inline MaybeObject** RawFieldOfElementAt(int index);
+
+  // Shrink length and insert filler objects.
+  void Shrink(int new_length);
 
   DECL_PRINTER(WeakFixedArray)
   DECL_VERIFIER(WeakFixedArray)

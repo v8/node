@@ -1194,7 +1194,8 @@ bool Object::ToInt32(int32_t* value) {
   }
   if (IsHeapNumber()) {
     double num = HeapNumber::cast(this)->value();
-    if (FastI2D(FastD2I(num)) == num) {
+    // Check range before conversion to avoid undefined behavior.
+    if (num >= kMinInt && num <= kMaxInt && FastI2D(FastD2I(num)) == num) {
       *value = FastD2I(num);
       return true;
     }
@@ -1508,10 +1509,10 @@ MaybeHandle<Object> Object::GetPropertyWithAccessor(LookupIterator* it) {
     if (result.is_null()) return isolate->factory()->undefined_value();
     Handle<Object> reboxed_result = handle(*result, isolate);
     if (info->replace_on_access() && receiver->IsJSReceiver()) {
-      args.CallAccessorSetter(
-          isolate->factory()->reconfigure_to_data_property_accessor(), name,
-          result);
-      RETURN_EXCEPTION_IF_SCHEDULED_EXCEPTION(isolate, Object);
+      RETURN_ON_EXCEPTION(isolate,
+                          Accessors::ReplaceAccessorWithDataProperty(
+                              isolate, receiver, holder, name, result),
+                          Object);
     }
     return reboxed_result;
   }
@@ -2267,10 +2268,13 @@ Object* GetSimpleHash(Object* object) {
     if (std::isnan(num)) return Smi::FromInt(Smi::kMaxValue);
     // Use ComputeIntegerHash for all values in Signed32 range, including -0,
     // which is considered equal to 0 because collections use SameValueZero.
-    int32_t inum = FastD2I(num);
-    uint32_t hash = (FastI2D(inum) == num)
-                        ? ComputeIntegerHash(inum)
-                        : ComputeLongHash(double_to_uint64(num));
+    uint32_t hash;
+    // Check range before conversion to avoid undefined behavior.
+    if (num >= kMinInt && num <= kMaxInt && FastI2D(FastD2I(num)) == num) {
+      hash = ComputeIntegerHash(FastD2I(num));
+    } else {
+      hash = ComputeLongHash(double_to_uint64(num));
+    }
     return Smi::FromInt(hash & Smi::kMaxValue);
   }
   if (object->IsName()) {
@@ -2366,7 +2370,7 @@ MaybeHandle<Object> Object::ArraySpeciesConstructor(
   Handle<Object> default_species = isolate->array_function();
   if (original_array->IsJSArray() &&
       Handle<JSArray>::cast(original_array)->HasArrayPrototype(isolate) &&
-      isolate->IsSpeciesLookupChainIntact()) {
+      isolate->IsArraySpeciesLookupChainIntact()) {
     return default_species;
   }
   Handle<Object> constructor = isolate->factory()->undefined_value();
@@ -3273,7 +3277,7 @@ void HeapObject::HeapObjectShortPrint(std::ostream& os) {  // NOLINT
     return;
   }
 
-  os << this << " ";
+  os << AsHex(reinterpret_cast<Address>(this), kPointerHexDigits, true) << " ";
 
   if (IsString()) {
     HeapStringAllocator allocator;
@@ -10154,6 +10158,12 @@ bool FixedArray::IsEqualTo(FixedArray* other) {
 }
 #endif
 
+void WeakFixedArray::Shrink(int new_length) {
+  DCHECK(0 <= new_length && new_length <= length());
+  if (new_length < length()) {
+    GetHeap()->RightTrimWeakFixedArray(this, length() - new_length);
+  }
+}
 
 // static
 void FixedArrayOfWeakCells::Set(Handle<FixedArrayOfWeakCells> array, int index,
@@ -14576,8 +14586,7 @@ void DeoptimizationData::DeoptimizationDataPrint(std::ostream& os) {  // NOLINT
   }
 }
 
-
-void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
+void Code::Disassemble(const char* name, std::ostream& os, Address current_pc) {
   os << "kind = " << Kind2String(kind()) << "\n";
   if (is_stub()) {
     const char* n = CodeStub::MajorName(CodeStub::GetMajorKey(this));
@@ -14620,8 +14629,16 @@ void Code::Disassemble(const char* name, std::ostream& os, void* current_pc) {
     os << "Instructions (size = " << code_size << ")\n";
     Address begin = InstructionStart();
     Address end = begin + code_size;
-    Disassembler::Decode(isolate, &os, reinterpret_cast<byte*>(begin),
-                         reinterpret_cast<byte*>(end), this, current_pc);
+    {
+      // TODO(mstarzinger): Refactor CodeReference to avoid the
+      // unhandlified->handlified transition.
+      AllowHandleAllocation allow_handles;
+      DisallowHeapAllocation no_gc;
+      HandleScope handle_scope(isolate);
+      Disassembler::Decode(isolate, &os, reinterpret_cast<byte*>(begin),
+                           reinterpret_cast<byte*>(end),
+                           CodeReference(handle(this, isolate)), current_pc);
+    }
 
     if (constant_pool_offset < size) {
       int constant_pool_size = safepoint_offset - constant_pool_offset;
@@ -15075,7 +15092,7 @@ void Code::SetMarkedForDeoptimization(const char* reason) {
         DeoptimizationData::cast(deoptimization_data());
     CodeTracer::Scope scope(GetHeap()->isolate()->GetCodeTracer());
     PrintF(scope.file(),
-           "[marking dependent code 0x%08" V8PRIxPTR
+           "[marking dependent code " V8PRIxPTR_FMT
            " (opt #%d) for deoptimization, reason: %s]\n",
            reinterpret_cast<intptr_t>(this),
            deopt_data->OptimizationId()->value(), reason);

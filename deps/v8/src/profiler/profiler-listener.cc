@@ -16,7 +16,7 @@ namespace v8 {
 namespace internal {
 
 ProfilerListener::ProfilerListener(Isolate* isolate)
-    : function_and_resource_names_(isolate->heap()) {}
+    : isolate_(isolate), function_and_resource_names_(isolate->heap()) {}
 
 ProfilerListener::~ProfilerListener() = default;
 
@@ -87,8 +87,6 @@ void ProfilerListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
   if (shared->script()->IsScript()) {
     Script* script = Script::cast(shared->script());
     line_table.reset(new SourcePositionTable());
-    int offset = abstract_code->IsCode() ? Code::kHeaderSize
-                                         : BytecodeArray::kHeaderSize;
     for (SourcePositionTableIterator it(abstract_code->source_position_table());
          !it.done(); it.Advance()) {
       // TODO(alph,tebbi) Skipping inlined positions for now, because they might
@@ -97,8 +95,7 @@ void ProfilerListener::CodeCreateEvent(CodeEventListener::LogEventsAndTags tag,
         continue;
       int position = it.source_position().ScriptOffset();
       int line_number = script->GetLineNumber(position) + 1;
-      int pc_offset = it.code_offset() + offset;
-      line_table->SetPosition(pc_offset, line_number);
+      line_table->SetPosition(it.code_offset(), line_number);
     }
   }
   rec->entry = NewCodeEntry(
@@ -307,21 +304,25 @@ CodeEntry* ProfilerListener::NewCodeEntry(
 }
 
 void ProfilerListener::AddObserver(CodeEventObserver* observer) {
-  base::LockGuard<base::Mutex> guard(&mutex_);
+  if (std::find(observers_.begin(), observers_.end(), observer) !=
+      observers_.end()) {
+    return;
+  }
   if (observers_.empty()) {
     code_entries_.clear();
+    isolate_->logger()->AddCodeEventListener(this);
   }
-  if (std::find(observers_.begin(), observers_.end(), observer) ==
-      observers_.end()) {
-    observers_.push_back(observer);
-  }
+  observers_.push_back(observer);
 }
 
 void ProfilerListener::RemoveObserver(CodeEventObserver* observer) {
-  base::LockGuard<base::Mutex> guard(&mutex_);
   auto it = std::find(observers_.begin(), observers_.end(), observer);
-  if (it == observers_.end()) return;
-  observers_.erase(it);
+  if (it != observers_.end()) {
+    observers_.erase(it);
+  }
+  if (observers_.empty()) {
+    isolate_->logger()->RemoveCodeEventListener(this);
+  }
 }
 
 }  // namespace internal

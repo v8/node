@@ -723,39 +723,76 @@ void TurboAssembler::Cvtqsi2sd(XMMRegister dst, Operand src) {
   }
 }
 
-void TurboAssembler::Cvtqui2ss(XMMRegister dst, Register src, Register tmp) {
-  Label msb_set_src;
-  Label jmp_return;
-  testq(src, src);
-  j(sign, &msb_set_src, Label::kNear);
-  Cvtqsi2ss(dst, src);
-  jmp(&jmp_return, Label::kNear);
-  bind(&msb_set_src);
-  movq(tmp, src);
-  shrq(src, Immediate(1));
-  // Recover the least significant bit to avoid rounding errors.
-  andq(tmp, Immediate(1));
-  orq(src, tmp);
-  Cvtqsi2ss(dst, src);
-  addss(dst, dst);
-  bind(&jmp_return);
+void TurboAssembler::Cvtlui2ss(XMMRegister dst, Register src) {
+  // Zero-extend the 32 bit value to 64 bit.
+  movl(kScratchRegister, src);
+  Cvtqsi2ss(dst, kScratchRegister);
 }
 
-void TurboAssembler::Cvtqui2sd(XMMRegister dst, Register src, Register tmp) {
-  Label msb_set_src;
-  Label jmp_return;
+void TurboAssembler::Cvtlui2ss(XMMRegister dst, Operand src) {
+  // Zero-extend the 32 bit value to 64 bit.
+  movl(kScratchRegister, src);
+  Cvtqsi2ss(dst, kScratchRegister);
+}
+
+void TurboAssembler::Cvtlui2sd(XMMRegister dst, Register src) {
+  // Zero-extend the 32 bit value to 64 bit.
+  movl(kScratchRegister, src);
+  Cvtqsi2sd(dst, kScratchRegister);
+}
+
+void TurboAssembler::Cvtlui2sd(XMMRegister dst, Operand src) {
+  // Zero-extend the 32 bit value to 64 bit.
+  movl(kScratchRegister, src);
+  Cvtqsi2sd(dst, kScratchRegister);
+}
+
+void TurboAssembler::Cvtqui2ss(XMMRegister dst, Register src) {
+  Label done;
+  Cvtqsi2ss(dst, src);
   testq(src, src);
-  j(sign, &msb_set_src, Label::kNear);
+  j(positive, &done, Label::kNear);
+
+  // Compute {src/2 | (src&1)} (retain the LSB to avoid rounding errors).
+  if (src != kScratchRegister) movq(kScratchRegister, src);
+  shrq(kScratchRegister, Immediate(1));
+  // The LSB is shifted into CF. If it is set, set the LSB in {tmp}.
+  Label msb_not_set;
+  j(not_carry, &msb_not_set, Label::kNear);
+  orq(kScratchRegister, Immediate(1));
+  bind(&msb_not_set);
+  Cvtqsi2ss(dst, kScratchRegister);
+  addss(dst, dst);
+  bind(&done);
+}
+
+void TurboAssembler::Cvtqui2ss(XMMRegister dst, Operand src) {
+  movq(kScratchRegister, src);
+  Cvtqui2ss(dst, kScratchRegister);
+}
+
+void TurboAssembler::Cvtqui2sd(XMMRegister dst, Register src) {
+  Label done;
   Cvtqsi2sd(dst, src);
-  jmp(&jmp_return, Label::kNear);
-  bind(&msb_set_src);
-  movq(tmp, src);
-  shrq(src, Immediate(1));
-  andq(tmp, Immediate(1));
-  orq(src, tmp);
-  Cvtqsi2sd(dst, src);
+  testq(src, src);
+  j(positive, &done, Label::kNear);
+
+  // Compute {src/2 | (src&1)} (retain the LSB to avoid rounding errors).
+  if (src != kScratchRegister) movq(kScratchRegister, src);
+  shrq(kScratchRegister, Immediate(1));
+  // The LSB is shifted into CF. If it is set, set the LSB in {tmp}.
+  Label msb_not_set;
+  j(not_carry, &msb_not_set, Label::kNear);
+  orq(kScratchRegister, Immediate(1));
+  bind(&msb_not_set);
+  Cvtqsi2sd(dst, kScratchRegister);
   addsd(dst, dst);
-  bind(&jmp_return);
+  bind(&done);
+}
+
+void TurboAssembler::Cvtqui2sd(XMMRegister dst, Operand src) {
+  movq(kScratchRegister, src);
+  Cvtqui2sd(dst, kScratchRegister);
 }
 
 void TurboAssembler::Cvttss2si(Register dst, XMMRegister src) {
@@ -828,6 +865,62 @@ void TurboAssembler::Cvttsd2siq(Register dst, Operand src) {
   } else {
     cvttsd2siq(dst, src);
   }
+}
+
+namespace {
+template <typename OperandOrXMMRegister, bool is_double>
+void ConvertFloatToUint64(TurboAssembler* tasm, Register dst,
+                          OperandOrXMMRegister src, Label* fail) {
+  Label success;
+  // There does not exist a native float-to-uint instruction, so we have to use
+  // a float-to-int, and postprocess the result.
+  if (is_double) {
+    tasm->Cvttsd2siq(dst, src);
+  } else {
+    tasm->Cvttss2siq(dst, src);
+  }
+  // If the result of the conversion is positive, we are already done.
+  tasm->testq(dst, dst);
+  tasm->j(positive, &success);
+  // The result of the first conversion was negative, which means that the
+  // input value was not within the positive int64 range. We subtract 2^63
+  // and convert it again to see if it is within the uint64 range.
+  if (is_double) {
+    tasm->Move(kScratchDoubleReg, -9223372036854775808.0);
+    tasm->addsd(kScratchDoubleReg, src);
+    tasm->Cvttsd2siq(dst, kScratchDoubleReg);
+  } else {
+    tasm->Move(kScratchDoubleReg, -9223372036854775808.0f);
+    tasm->addss(kScratchDoubleReg, src);
+    tasm->Cvttss2siq(dst, kScratchDoubleReg);
+  }
+  tasm->testq(dst, dst);
+  // The only possible negative value here is 0x80000000000000000, which is
+  // used on x64 to indicate an integer overflow.
+  tasm->j(negative, fail ? fail : &success);
+  // The input value is within uint64 range and the second conversion worked
+  // successfully, but we still have to undo the subtraction we did
+  // earlier.
+  tasm->Set(kScratchRegister, 0x8000000000000000);
+  tasm->orq(dst, kScratchRegister);
+  tasm->bind(&success);
+}
+}  // namespace
+
+void TurboAssembler::Cvttsd2uiq(Register dst, Operand src, Label* success) {
+  ConvertFloatToUint64<Operand, true>(this, dst, src, success);
+}
+
+void TurboAssembler::Cvttsd2uiq(Register dst, XMMRegister src, Label* success) {
+  ConvertFloatToUint64<XMMRegister, true>(this, dst, src, success);
+}
+
+void TurboAssembler::Cvttss2uiq(Register dst, Operand src, Label* success) {
+  ConvertFloatToUint64<Operand, false>(this, dst, src, success);
+}
+
+void TurboAssembler::Cvttss2uiq(Register dst, XMMRegister src, Label* success) {
+  ConvertFloatToUint64<XMMRegister, false>(this, dst, src, success);
 }
 
 void MacroAssembler::Load(Register dst, Operand src, Representation r) {

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <memory>
 #include <queue>
+#include <unordered_map>
 #include <vector>
 
 #include "include/v8-inspector.h"
@@ -23,6 +24,7 @@
 #include "src/futex-emulation.h"
 #include "src/globals.h"
 #include "src/handles.h"
+#include "src/heap/factory.h"
 #include "src/heap/heap.h"
 #include "src/messages.h"
 #include "src/objects/code.h"
@@ -72,7 +74,6 @@ class DescriptorLookupCache;
 class EmptyStatement;
 class EternalHandles;
 class ExternalCallbackScope;
-class Factory;
 class HandleScopeImplementer;
 class HeapObjectToIndexHashMap;
 class HeapProfiler;
@@ -104,11 +105,6 @@ class TracingCpuProfilerImpl;
 class UnicodeCache;
 
 template <StateTag Tag> class VMState;
-
-// 'void function pointer', used to roundtrip the
-// ExternalReference::ExternalReferenceRedirector since we can not include
-// assembler.h, where it is defined, here.
-typedef void* ExternalReferenceRedirectorPointer();
 
 namespace interpreter {
 class Interpreter;
@@ -249,6 +245,8 @@ class ThreadId {
     return *this;
   }
 
+  bool operator==(const ThreadId& other) const { return Equals(other); }
+
   // Returns ThreadId for current thread.
   static ThreadId Current() { return ThreadId(GetCurrentThreadId()); }
 
@@ -288,7 +286,6 @@ class ThreadId {
 
   friend class Isolate;
 };
-
 
 #define FIELD_ACCESSOR(type, name)                 \
   inline void set_##name(type v) { name##_ = v; }  \
@@ -417,8 +414,6 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   V(ExtensionCallback, wasm_module_callback, &NoExtension)                    \
   V(ExtensionCallback, wasm_instance_callback, &NoExtension)                  \
   V(ApiImplementationCallback, wasm_compile_streaming_callback, nullptr)      \
-  V(ExternalReferenceRedirectorPointer*, external_reference_redirector,       \
-    nullptr)                                                                  \
   /* State for Relocatable. */                                                \
   V(Relocatable*, relocatable_top, nullptr)                                   \
   V(DebugObjectCache*, string_stream_debug_object_cache, nullptr)             \
@@ -454,8 +449,11 @@ typedef std::vector<HeapObject*> DebugObjectCache;
 #define THREAD_LOCAL_TOP_ADDRESS(type, name) \
   type* name##_address() { return &thread_local_top_.name##_; }
 
+// HiddenFactory exists so Isolate can privately inherit from it without making
+// Factory's members available to Isolate directly.
+class V8_EXPORT_PRIVATE HiddenFactory : private Factory {};
 
-class Isolate {
+class Isolate : private HiddenFactory {
   // These forward declarations are required to make the friend declarations in
   // PerIsolateThreadData work on some older versions of gcc.
   class ThreadDataTable;
@@ -551,8 +549,6 @@ class Isolate {
   void TearDown();
 
   void ReleaseManagedObjects();
-
-  static void GlobalTearDown();
 
   void ClearSerializerData();
 
@@ -983,7 +979,11 @@ class Isolate {
   }
 #endif
 
-  Factory* factory() { return reinterpret_cast<Factory*>(this); }
+  v8::internal::Factory* factory() {
+    // Upcast to the privately inherited base-class using c-style casts to avoid
+    // undefined behavior (as static_cast cannot cast across private bases).
+    return (v8::internal::Factory*)this;  // NOLINT(readability/casting)
+  }
 
   static const int kJSRegexpStaticOffsetsVectorSize = 128;
 
@@ -1001,6 +1001,9 @@ class Isolate {
   }
 
   bool serializer_enabled() const { return serializer_enabled_; }
+
+  void enable_serializer() { serializer_enabled_ = true; }
+
   bool snapshot_available() const {
     return snapshot_blob_ != nullptr && snapshot_blob_->raw_size != 0;
   }
@@ -1077,7 +1080,9 @@ class Isolate {
   bool IsNoElementsProtectorIntact(Context* context);
   bool IsNoElementsProtectorIntact();
 
-  inline bool IsSpeciesLookupChainIntact();
+  inline bool IsArraySpeciesLookupChainIntact();
+  inline bool IsTypedArraySpeciesLookupChainIntact();
+  inline bool IsPromiseSpeciesLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact();
   bool IsIsConcatSpreadableLookupChainIntact(JSReceiver* receiver);
   inline bool IsStringLengthOverflowIntact();
@@ -1117,7 +1122,9 @@ class Isolate {
     UpdateNoElementsProtectorOnSetElement(object);
   }
   void InvalidateArrayConstructorProtector();
-  void InvalidateSpeciesProtector();
+  void InvalidateArraySpeciesProtector();
+  void InvalidateTypedArraySpeciesProtector();
+  void InvalidatePromiseSpeciesProtector();
   void InvalidateIsConcatSpreadableProtector();
   void InvalidateStringLengthOverflowProtector();
   void InvalidateArrayIteratorProtector();
@@ -1382,7 +1389,7 @@ class Isolate {
   void SetIdle(bool is_idle);
 
  protected:
-  explicit Isolate(bool enable_serializer);
+  Isolate();
   bool IsArrayOrObjectOrStringPrototype(Object* object);
 
  private:
@@ -1395,20 +1402,24 @@ class Isolate {
   void* embedder_data_[Internals::kNumIsolateDataSlots];
   Heap heap_;
 
-  // The per-process lock should be acquired before the ThreadDataTable is
-  // modified.
   class ThreadDataTable {
    public:
     ThreadDataTable();
     ~ThreadDataTable();
 
-    PerIsolateThreadData* Lookup(Isolate* isolate, ThreadId thread_id);
+    PerIsolateThreadData* Lookup(ThreadId thread_id);
     void Insert(PerIsolateThreadData* data);
     void Remove(PerIsolateThreadData* data);
-    void RemoveAllThreads(Isolate* isolate);
+    void RemoveAllThreads();
 
    private:
-    PerIsolateThreadData* list_;
+    struct Hasher {
+      std::size_t operator()(const ThreadId& t) const {
+        return std::hash<int>()(t.ToInteger());
+      }
+    };
+
+    std::unordered_map<ThreadId, PerIsolateThreadData*, Hasher> table_;
   };
 
   // These items form a stack synchronously with threads Enter'ing and Exit'ing
@@ -1436,12 +1447,15 @@ class Isolate {
     DISALLOW_COPY_AND_ASSIGN(EntryStackItem);
   };
 
-  static base::LazyMutex thread_data_table_mutex_;
+  // TODO(kenton@cloudflare.com): This mutex can be removed if
+  // thread_data_table_ is always accessed under the isolate lock. I do not
+  // know if this is the case, so I'm preserving it for now.
+  base::Mutex thread_data_table_mutex_;
 
   static base::Thread::LocalStorageKey per_isolate_thread_data_key_;
   static base::Thread::LocalStorageKey isolate_key_;
   static base::Thread::LocalStorageKey thread_id_key_;
-  static ThreadDataTable* thread_data_table_;
+  ThreadDataTable thread_data_table_;
 
   // A global counter for all generated Isolates, might overflow.
   static base::Atomic32 isolate_counter_;
@@ -1816,37 +1830,62 @@ class StackLimitCheck BASE_EMBEDDED {
     }                                      \
   } while (false)
 
-// Support for temporarily postponing interrupts. When the outermost
-// postpone scope is left the interrupts will be re-enabled and any
-// interrupts that occurred while in the scope will be taken into
-// account.
-class PostponeInterruptsScope BASE_EMBEDDED {
+// Scope intercepts only interrupt which is part of its interrupt_mask and does
+// not affect other interrupts.
+class InterruptsScope {
  public:
-  PostponeInterruptsScope(Isolate* isolate,
-                          int intercept_mask = StackGuard::ALL_INTERRUPTS)
-      : stack_guard_(isolate->stack_guard()),
-        intercept_mask_(intercept_mask),
-        intercepted_flags_(0) {
-    stack_guard_->PushPostponeInterruptsScope(this);
-  }
+  enum Mode { kPostponeInterrupts, kRunInterrupts };
 
-  ~PostponeInterruptsScope() {
-    stack_guard_->PopPostponeInterruptsScope();
-  }
+  virtual ~InterruptsScope() { stack_guard_->PopInterruptsScope(); }
 
-  // Find the bottom-most scope that intercepts this interrupt.
+  // Find the scope that intercepts this interrupt.
+  // It may be outermost PostponeInterruptsScope or innermost
+  // SafeForInterruptsScope if any.
   // Return whether the interrupt has been intercepted.
   bool Intercept(StackGuard::InterruptFlag flag);
+
+ protected:
+  InterruptsScope(Isolate* isolate, int intercept_mask, Mode mode)
+      : stack_guard_(isolate->stack_guard()),
+        intercept_mask_(intercept_mask),
+        intercepted_flags_(0),
+        mode_(mode) {
+    stack_guard_->PushInterruptsScope(this);
+  }
 
  private:
   StackGuard* stack_guard_;
   int intercept_mask_;
   int intercepted_flags_;
-  PostponeInterruptsScope* prev_;
+  Mode mode_;
+  InterruptsScope* prev_;
 
   friend class StackGuard;
 };
 
+// Support for temporarily postponing interrupts. When the outermost
+// postpone scope is left the interrupts will be re-enabled and any
+// interrupts that occurred while in the scope will be taken into
+// account.
+class PostponeInterruptsScope : public InterruptsScope {
+ public:
+  PostponeInterruptsScope(Isolate* isolate,
+                          int intercept_mask = StackGuard::ALL_INTERRUPTS)
+      : InterruptsScope(isolate, intercept_mask,
+                        InterruptsScope::kPostponeInterrupts) {}
+  virtual ~PostponeInterruptsScope() = default;
+};
+
+// Support for overriding PostponeInterruptsScope. Interrupt is not ignored if
+// innermost scope is SafeForInterruptsScope ignoring any outer
+// PostponeInterruptsScopes.
+class SafeForInterruptsScope : public InterruptsScope {
+ public:
+  SafeForInterruptsScope(Isolate* isolate, int intercept_mask)
+      : InterruptsScope(isolate, intercept_mask,
+                        InterruptsScope::kRunInterrupts) {}
+  virtual ~SafeForInterruptsScope() = default;
+};
 
 class CodeTracer final : public Malloced {
  public:

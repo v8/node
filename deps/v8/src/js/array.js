@@ -540,8 +540,6 @@ function ArrayShiftFallback() {
     return;
   }
 
-  if (%object_is_sealed(array)) throw %make_type_error(kArrayFunctionsOnSealed);
-
   var first = array[0];
 
   if (UseSparseVariant(array, len, IS_ARRAY(array), len)) {
@@ -561,20 +559,24 @@ function ArrayUnshiftFallback(arg1) {  // length == 1
   var len = TO_LENGTH(array.length);
   var num_arguments = arguments.length;
 
-  if (len > 0 && UseSparseVariant(array, len, IS_ARRAY(array), len) &&
-      !%object_is_sealed(array)) {
-    SparseMove(array, 0, 0, len, num_arguments);
-  } else {
-    SimpleMove(array, 0, 0, len, num_arguments);
+  const new_len = len + num_arguments;
+  if (num_arguments > 0) {
+    if (new_len >= 2**53) throw %make_type_error(kInvalidArrayLength);
+
+    if (len > 0 && UseSparseVariant(array, len, IS_ARRAY(array), len) &&
+        !%object_is_sealed(array)) {
+      SparseMove(array, 0, 0, len, num_arguments);
+    } else {
+      SimpleMove(array, 0, 0, len, num_arguments);
+    }
+
+    for (var i = 0; i < num_arguments; i++) {
+      array[i] = arguments[i];
+    }
   }
 
-  for (var i = 0; i < num_arguments; i++) {
-    array[i] = arguments[i];
-  }
-
-  var new_length = len + num_arguments;
-  array.length = new_length;
-  return new_length;
+  array.length = new_len;
+  return new_len;
 }
 
 
@@ -624,15 +626,13 @@ function ArraySpliceFallback(start, delete_count) {
   var start_i = ComputeSpliceStartIndex(TO_INTEGER(start), len);
   var del_count = ComputeSpliceDeleteCount(delete_count, num_arguments, len,
                                            start_i);
-  var deleted_elements = ArraySpeciesCreate(array, del_count);
-  deleted_elements.length = del_count;
   var num_elements_to_add = num_arguments > 2 ? num_arguments - 2 : 0;
 
-  if (del_count != num_elements_to_add && %object_is_sealed(array)) {
-    throw %make_type_error(kArrayFunctionsOnSealed);
-  } else if (del_count > 0 && %object_is_frozen(array)) {
-    throw %make_type_error(kArrayFunctionsOnFrozen);
-  }
+  const new_len = len - del_count + num_elements_to_add;
+  if (new_len >= 2**53) throw %make_type_error(kInvalidArrayLength);
+
+  var deleted_elements = ArraySpeciesCreate(array, del_count);
+  deleted_elements.length = del_count;
 
   var changed_elements = del_count;
   if (num_elements_to_add != del_count) {
@@ -658,7 +658,7 @@ function ArraySpliceFallback(start, delete_count) {
   while (arguments_index < arguments_length) {
     array[i++] = arguments[arguments_index++];
   }
-  array.length = len - del_count + num_elements_to_add;
+  array.length = new_len;
 
   // Return the deleted elements.
   return deleted_elements;
@@ -1101,10 +1101,6 @@ DEFINE_METHOD_LEN(
       if (end < 0) end = 0;
     } else {
       if (end > length) end = length;
-    }
-
-    if ((end - i) > 0 && %object_is_frozen(array)) {
-      throw %make_type_error(kArrayFunctionsOnFrozen);
     }
 
     for (; i < end; i++)

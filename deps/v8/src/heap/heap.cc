@@ -264,15 +264,25 @@ size_t Heap::Capacity() {
 
 size_t Heap::OldGenerationCapacity() {
   if (!HasBeenSetUp()) return 0;
-  return old_space_->Capacity() + code_space_->Capacity() +
-         map_space_->Capacity() + lo_space_->SizeOfObjects();
+  PagedSpaces spaces(this, PagedSpaces::SpacesSpecifier::kAllPagedSpaces);
+  size_t total = 0;
+  for (PagedSpace* space = spaces.next(); space != nullptr;
+       space = spaces.next()) {
+    total += space->Capacity();
+  }
+  return total + lo_space_->SizeOfObjects();
 }
 
 size_t Heap::CommittedOldGenerationMemory() {
   if (!HasBeenSetUp()) return 0;
 
-  return old_space_->CommittedMemory() + code_space_->CommittedMemory() +
-         map_space_->CommittedMemory() + lo_space_->Size();
+  PagedSpaces spaces(this, PagedSpaces::SpacesSpecifier::kAllPagedSpaces);
+  size_t total = 0;
+  for (PagedSpace* space = spaces.next(); space != nullptr;
+       space = spaces.next()) {
+    total += space->CommittedMemory();
+  }
+  return total + lo_space_->Size();
 }
 
 size_t Heap::CommittedMemory() {
@@ -285,11 +295,12 @@ size_t Heap::CommittedMemory() {
 size_t Heap::CommittedPhysicalMemory() {
   if (!HasBeenSetUp()) return 0;
 
-  return new_space_->CommittedPhysicalMemory() +
-         old_space_->CommittedPhysicalMemory() +
-         code_space_->CommittedPhysicalMemory() +
-         map_space_->CommittedPhysicalMemory() +
-         lo_space_->CommittedPhysicalMemory();
+  size_t total = 0;
+  for (SpaceIterator it(this); it.has_next();) {
+    total += it.next()->CommittedPhysicalMemory();
+  }
+
+  return total;
 }
 
 size_t Heap::CommittedMemoryExecutable() {
@@ -380,6 +391,15 @@ void Heap::PrintShortHeapStatistics() {
                          " available: %6" PRIuS " KB\n",
                memory_allocator()->Size() / KB,
                memory_allocator()->Available() / KB);
+  PrintIsolate(isolate_,
+               "Read-only space,    used: %6" PRIuS
+               " KB"
+               ", available: %6" PRIuS
+               " KB"
+               ", committed: %6" PRIuS " KB\n",
+               read_only_space_->Size() / KB,
+               read_only_space_->Available() / KB,
+               read_only_space_->CommittedMemory() / KB);
   PrintIsolate(isolate_, "New space,          used: %6" PRIuS
                          " KB"
                          ", available: %6" PRIuS
@@ -1237,6 +1257,7 @@ void Heap::CollectAllAvailableGarbage(GarbageCollectionReason gc_reason) {
   set_current_gc_flags(kNoGCFlags);
   new_space_->Shrink();
   UncommitFromSpace();
+  memory_allocator()->unmapper()->EnsureUnmappingCompleted();
 
   if (FLAG_trace_duplicate_threshold_kb) {
     std::map<int, std::vector<HeapObject*>> objects_by_size;
@@ -2853,14 +2874,27 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
     bytes_to_trim = elements_to_trim * kDoubleSize;
   }
 
+  CreateFillerForArray<FixedArrayBase>(object, elements_to_trim, bytes_to_trim);
+}
+
+void Heap::RightTrimWeakFixedArray(WeakFixedArray* object,
+                                   int elements_to_trim) {
+  CreateFillerForArray<WeakFixedArray>(object, elements_to_trim,
+                                       elements_to_trim * kPointerSize);
+}
+
+template <typename T>
+void Heap::CreateFillerForArray(T* object, int elements_to_trim,
+                                int bytes_to_trim) {
+  DCHECK(object->IsFixedArrayBase() || object->IsByteArray() ||
+         object->IsWeakFixedArray());
 
   // For now this trick is only applied to objects in new and paged space.
   DCHECK(object->map() != fixed_cow_array_map());
 
   if (bytes_to_trim == 0) {
-    // No need to create filler and update live bytes counters, just initialize
-    // header of the trimmed array.
-    object->synchronized_set_length(len - elements_to_trim);
+    DCHECK_EQ(elements_to_trim, 0);
+    // No need to create filler and update live bytes counters.
     return;
   }
 
@@ -2892,7 +2926,7 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
   // Initialize header of the trimmed array. We are storing the new length
   // using release store after creating a filler for the left-over space to
   // avoid races with the sweeper thread.
-  object->synchronized_set_length(len - elements_to_trim);
+  object->synchronized_set_length(object->length() - elements_to_trim);
 
   // Notify the heap object allocation tracker of change in object layout. The
   // array may not be moved during GC, and size has to be adjusted nevertheless.
@@ -4128,6 +4162,8 @@ bool Heap::ConfigureHeapDefault() { return ConfigureHeap(0, 0, 0); }
 void Heap::RecordStats(HeapStats* stats, bool take_snapshot) {
   *stats->start_marker = HeapStats::kStartMarker;
   *stats->end_marker = HeapStats::kEndMarker;
+  *stats->ro_space_size = read_only_space_->Size();
+  *stats->ro_space_capacity = read_only_space_->Capacity();
   *stats->new_space_size = new_space_->Size();
   *stats->new_space_capacity = new_space_->Capacity();
   *stats->old_space_size = old_space_->SizeOfObjects();
@@ -4168,8 +4204,13 @@ void Heap::RecordStats(HeapStats* stats, bool take_snapshot) {
 }
 
 size_t Heap::PromotedSpaceSizeOfObjects() {
-  return old_space_->SizeOfObjects() + code_space_->SizeOfObjects() +
-         map_space_->SizeOfObjects() + lo_space_->SizeOfObjects();
+  PagedSpaces spaces(this, PagedSpaces::SpacesSpecifier::kAllPagedSpaces);
+  size_t total = 0;
+  for (PagedSpace* space = spaces.next(); space != nullptr;
+       space = spaces.next()) {
+    total += space->SizeOfObjects();
+  }
+  return total + lo_space_->SizeOfObjects();
 }
 
 uint64_t Heap::PromotedExternalMemorySize() {

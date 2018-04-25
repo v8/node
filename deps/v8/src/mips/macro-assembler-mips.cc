@@ -1411,34 +1411,44 @@ void TurboAssembler::MultiPopFPU(RegList regs) {
   addiu(sp, sp, stack_offset);
 }
 
-
 void TurboAssembler::AddPair(Register dst_low, Register dst_high,
                              Register left_low, Register left_high,
-                             Register right_low, Register right_high) {
-  Register kScratchReg = s3;
-  if (left_low == right_low) {
-    // Special case for left = right and the sum potentially overwriting both
-    // left and right.
-    Slt(kScratchReg, left_low, zero_reg);
-    Addu(dst_low, left_low, right_low);
-  } else {
-    Addu(dst_low, left_low, right_low);
-    // If the sum overwrites right, left remains unchanged, otherwise right
-    // remains unchanged.
-    Sltu(kScratchReg, dst_low, (dst_low == right_low) ? left_low : right_low);
-  }
-  Addu(dst_high, left_high, right_high);
-  Addu(dst_high, dst_high, kScratchReg);
+                             Register right_low, Register right_high,
+                             Register scratch1, Register scratch2) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  Register scratch3 = t8;
+  Addu(scratch1, left_low, right_low);
+  Sltu(scratch3, scratch1, left_low);
+  Addu(scratch2, left_high, right_high);
+  Addu(dst_high, scratch2, scratch3);
+  Move(dst_low, scratch1);
 }
 
 void TurboAssembler::SubPair(Register dst_low, Register dst_high,
                              Register left_low, Register left_high,
-                             Register right_low, Register right_high) {
-  Register kScratchReg = s3;
-  Sltu(kScratchReg, left_low, right_low);
-  Subu(dst_low, left_low, right_low);
-  Subu(dst_high, left_high, right_high);
-  Subu(dst_high, dst_high, kScratchReg);
+                             Register right_low, Register right_high,
+                             Register scratch1, Register scratch2) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  Register scratch3 = t8;
+  Sltu(scratch3, left_low, right_low);
+  Subu(scratch1, left_low, right_low);
+  Subu(scratch2, left_high, right_high);
+  Subu(dst_high, scratch2, scratch3);
+  Move(dst_low, scratch1);
+}
+
+void TurboAssembler::MulPair(Register dst_low, Register dst_high,
+                             Register left_low, Register left_high,
+                             Register right_low, Register right_high,
+                             Register scratch1, Register scratch2) {
+  BlockTrampolinePoolScope block_trampoline_pool(this);
+  Register scratch3 = t8;
+  Mulu(scratch2, scratch1, left_low, right_low);
+  Mul(scratch3, left_low, right_high);
+  Addu(scratch2, scratch2, scratch3);
+  Mul(scratch3, left_high, right_low);
+  Addu(dst_high, scratch2, scratch3);
+  Move(dst_low, scratch1);
 }
 
 void TurboAssembler::ShlPair(Register dst_low, Register dst_high,
@@ -1700,6 +1710,7 @@ void TurboAssembler::Neg_s(FPURegister fd, FPURegister fs) {
   } else {
     DCHECK(IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r1) ||
            IsMipsArchVariant(kLoongson));
+    BlockTrampolinePoolScope block_trampoline_pool(this);
     Label is_nan, done;
     Register scratch1 = t8;
     Register scratch2 = t9;
@@ -1725,6 +1736,7 @@ void TurboAssembler::Neg_d(FPURegister fd, FPURegister fs) {
   } else {
     DCHECK(IsMipsArchVariant(kMips32r2) || IsMipsArchVariant(kMips32r1) ||
            IsMipsArchVariant(kLoongson));
+    BlockTrampolinePoolScope block_trampoline_pool(this);
     Label is_nan, done;
     Register scratch1 = t8;
     Register scratch2 = t9;
@@ -1735,7 +1747,8 @@ void TurboAssembler::Neg_d(FPURegister fd, FPURegister fs) {
     // while the sign has to be changed separately.
     neg_d(fd, fs);  // In delay slot.
     bind(&is_nan);
-    Mfhc1(scratch1, fs);
+    Move(fd, fs);
+    Mfhc1(scratch1, fd);
     li(scratch2, HeapNumber::kSignMask);
     Xor(scratch1, scratch1, scratch2);
     Mthc1(scratch1, fd);
@@ -2104,49 +2117,51 @@ void TurboAssembler::CompareIsNanF(SecondaryField sizeField, FPURegister cmp1,
   CompareF(sizeField, UN, cmp1, cmp2);
 }
 
-void TurboAssembler::BranchTrueShortF(Label* target) {
+void TurboAssembler::BranchTrueShortF(Label* target, BranchDelaySlot bd) {
   if (IsMipsArchVariant(kMips32r6)) {
     bc1nez(target, kDoubleCompareReg);
-    nop();
   } else {
     bc1t(target);
+  }
+  if (bd == PROTECT) {
     nop();
   }
 }
 
-void TurboAssembler::BranchFalseShortF(Label* target) {
+void TurboAssembler::BranchFalseShortF(Label* target, BranchDelaySlot bd) {
   if (IsMipsArchVariant(kMips32r6)) {
     bc1eqz(target, kDoubleCompareReg);
-    nop();
   } else {
     bc1f(target);
+  }
+  if (bd == PROTECT) {
     nop();
   }
 }
 
-void TurboAssembler::BranchTrueF(Label* target) {
+void TurboAssembler::BranchTrueF(Label* target, BranchDelaySlot bd) {
   bool long_branch =
       target->is_bound() ? !is_near(target) : is_trampoline_emitted();
   if (long_branch) {
     Label skip;
     BranchFalseShortF(&skip);
-    BranchLong(target, PROTECT);
+    BranchLong(target, bd);
     bind(&skip);
   } else {
-    BranchTrueShortF(target);
+    BranchTrueShortF(target, bd);
   }
 }
 
-void TurboAssembler::BranchFalseF(Label* target) {
+void TurboAssembler::BranchFalseF(Label* target, BranchDelaySlot bd) {
   bool long_branch =
       target->is_bound() ? !is_near(target) : is_trampoline_emitted();
   if (long_branch) {
     Label skip;
     BranchTrueShortF(&skip);
-    BranchLong(target, PROTECT);
+    BranchLong(target, bd);
     bind(&skip);
   } else {
-    BranchFalseShortF(target);
+    BranchFalseShortF(target, bd);
   }
 }
 
@@ -2388,6 +2403,24 @@ void TurboAssembler::LoadZeroIfConditionZero(Register dest,
     selnez(dest, dest, condition);
   } else {
     Movz(dest, zero_reg, condition);
+  }
+}
+
+void TurboAssembler::LoadZeroIfFPUCondition(Register dest) {
+  if (IsMipsArchVariant(kMips32r6)) {
+    mfc1(kScratchReg, kDoubleCompareReg);
+    LoadZeroIfConditionNotZero(dest, kScratchReg);
+  } else {
+    Movt(dest, zero_reg);
+  }
+}
+
+void TurboAssembler::LoadZeroIfNotFPUCondition(Register dest) {
+  if (IsMipsArchVariant(kMips32r6)) {
+    mfc1(kScratchReg, kDoubleCompareReg);
+    LoadZeroIfConditionZero(dest, kScratchReg);
+  } else {
+    Movf(dest, zero_reg);
   }
 }
 

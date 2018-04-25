@@ -81,7 +81,7 @@ enum FunctionMode {
 };
 
 // Interface for handle based allocation.
-class V8_EXPORT_PRIVATE Factory final {
+class V8_EXPORT_PRIVATE Factory {
  public:
   Handle<Oddball> NewOddball(Handle<Map> map, const char* to_string,
                              Handle<Object> to_number, const char* type_of,
@@ -92,6 +92,13 @@ class V8_EXPORT_PRIVATE Factory final {
   template <typename T = FixedArray>
   Handle<T> NewFixedArrayWithMap(Heap::RootListIndex map_root_index, int length,
                                  PretenureFlag pretenure = NOT_TENURED);
+
+  // Allocates a weak fixed array-like object with given map and initialized
+  // with undefined values.
+  template <typename T = WeakFixedArray>
+  Handle<T> NewWeakFixedArrayWithMap(Heap::RootListIndex map_root_index,
+                                     int length,
+                                     PretenureFlag pretenure = NOT_TENURED);
 
   // Allocates a fixed array initialized with undefined values.
   Handle<FixedArray> NewFixedArray(int length,
@@ -435,13 +442,15 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<PropertyCell> NewPropertyCell(Handle<Name> name);
 
-  Handle<WeakCell> NewWeakCell(Handle<HeapObject> value);
+  Handle<WeakCell> NewWeakCell(Handle<HeapObject> value,
+                               PretenureFlag pretenure = TENURED);
 
   Handle<FeedbackCell> NewNoClosuresCell(Handle<HeapObject> value);
   Handle<FeedbackCell> NewOneClosureCell(Handle<HeapObject> value);
   Handle<FeedbackCell> NewManyClosuresCell(Handle<HeapObject> value);
 
-  Handle<TransitionArray> NewTransitionArray(int capacity);
+  Handle<TransitionArray> NewTransitionArray(int number_of_transitions,
+                                             int slack = 0);
 
   // Allocate a tenured AllocationSite. Its payload is null.
   Handle<AllocationSite> NewAllocationSite();
@@ -475,6 +484,10 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<FixedArray> CopyFixedArrayAndGrow(
       Handle<FixedArray> array, int grow_by,
+      PretenureFlag pretenure = NOT_TENURED);
+
+  Handle<WeakFixedArray> CopyWeakFixedArrayAndGrow(
+      Handle<WeakFixedArray> array, int grow_by,
       PretenureFlag pretenure = NOT_TENURED);
 
   Handle<WeakArrayList> CopyWeakArrayListAndGrow(
@@ -669,7 +682,7 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<JSFunction> NewFunctionFromSharedFunctionInfo(
       Handle<Map> initial_map, Handle<SharedFunctionInfo> function_info,
-      Handle<Object> context_or_undefined, Handle<FeedbackCell> feedback_cell,
+      Handle<Context> context, Handle<FeedbackCell> feedback_cell,
       PretenureFlag pretenure = TENURED);
 
   Handle<JSFunction> NewFunctionFromSharedFunctionInfo(
@@ -678,7 +691,7 @@ class V8_EXPORT_PRIVATE Factory final {
 
   Handle<JSFunction> NewFunctionFromSharedFunctionInfo(
       Handle<Map> initial_map, Handle<SharedFunctionInfo> function_info,
-      Handle<Object> context_or_undefined, PretenureFlag pretenure = TENURED);
+      Handle<Context> context, PretenureFlag pretenure = TENURED);
 
   Handle<JSFunction> NewFunctionFromSharedFunctionInfo(
       Handle<SharedFunctionInfo> function_info, Handle<Context> context,
@@ -688,7 +701,7 @@ class V8_EXPORT_PRIVATE Factory final {
   // initialization. All other utility methods call into this.
   Handle<JSFunction> NewFunction(Handle<Map> map,
                                  Handle<SharedFunctionInfo> info,
-                                 Handle<Object> context_or_undefined,
+                                 Handle<Context> context,
                                  PretenureFlag pretenure = TENURED);
 
   // Create a serialized scope info.
@@ -894,7 +907,12 @@ class V8_EXPORT_PRIVATE Factory final {
   }
 
  private:
-  Isolate* isolate() { return reinterpret_cast<Isolate*>(this); }
+  Isolate* isolate() {
+    // Downcast to the privately inherited sub-class using c-style casts to
+    // avoid undefined behavior (as static_cast cannot cast across private
+    // bases).
+    return (Isolate*)this;  // NOLINT(readability/casting)
+  }
 
   HeapObject* AllocateRawWithImmortalMap(
       int size, PretenureFlag pretenure, Map* map,

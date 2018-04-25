@@ -727,6 +727,7 @@ class V8_EXPORT_PRIVATE JSOperatorBuilder final
   const Operator* CreateIterResultObject();
   const Operator* CreateStringIterator();
   const Operator* CreateKeyValueArray();
+  const Operator* CreateObject();
   const Operator* CreatePromise();
   const Operator* CreateTypedArray();
   const Operator* CreateLiteralArray(Handle<ConstantElementsPair> constant,
@@ -837,6 +838,8 @@ class V8_EXPORT_PRIVATE JSOperatorBuilder final
                                      const Handle<ScopeInfo>& scope_info);
   const Operator* CreateWithContext(const Handle<ScopeInfo>& scope_info);
   const Operator* CreateBlockContext(const Handle<ScopeInfo>& scpope_info);
+
+  const Operator* ObjectIsArray();
 
  private:
   Zone* zone() const { return zone_; }

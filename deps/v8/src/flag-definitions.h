@@ -489,7 +489,7 @@ DEFINE_BOOL(turbo_store_elimination, true,
 DEFINE_BOOL(trace_store_elimination, false, "trace store elimination")
 DEFINE_BOOL(turbo_rewrite_far_jumps, true,
             "rewrite far to near jumps (ia32,x64)")
-DEFINE_BOOL(experimental_inline_promise_constructor, false,
+DEFINE_BOOL(experimental_inline_promise_constructor, true,
             "inline the Promise constructor in TurboFan")
 
 #ifdef DISABLE_UNTRUSTED_CODE_MITIGATIONS
@@ -603,9 +603,9 @@ DEFINE_BOOL(wasm_no_bounds_checks, false,
 DEFINE_BOOL(wasm_no_stack_checks, false,
             "disable stack checks (performance testing only)")
 
-DEFINE_BOOL(wasm_trap_handler, false,
+DEFINE_BOOL(wasm_trap_handler, true,
             "use signal handlers to catch out of bounds memory access in wasm"
-            " (experimental, currently Linux x86_64 only)")
+            " (currently Linux x86_64 only)")
 DEFINE_BOOL(wasm_fuzzer_gen_test, false,
             "Generate a test case when running a wasm fuzzer")
 DEFINE_IMPLICATION(wasm_fuzzer_gen_test, single_threaded)

@@ -341,6 +341,10 @@ void i::V8::FatalProcessOutOfMemory(i::Isolate* isolate, const char* location,
 
   intptr_t start_marker;
   heap_stats.start_marker = &start_marker;
+  size_t ro_space_size;
+  heap_stats.ro_space_size = &ro_space_size;
+  size_t ro_space_capacity;
+  heap_stats.ro_space_capacity = &ro_space_capacity;
   size_t new_space_size;
   heap_stats.new_space_size = &new_space_size;
   size_t new_space_capacity;
@@ -539,14 +543,15 @@ struct SnapshotCreatorData {
 
 }  // namespace
 
-SnapshotCreator::SnapshotCreator(const intptr_t* external_references,
+SnapshotCreator::SnapshotCreator(Isolate* isolate,
+                                 const intptr_t* external_references,
                                  StartupData* existing_snapshot) {
-  i::Isolate* internal_isolate = new i::Isolate(true);
-  Isolate* isolate = reinterpret_cast<Isolate*>(internal_isolate);
   SnapshotCreatorData* data = new SnapshotCreatorData(isolate);
   data->isolate_ = isolate;
+  i::Isolate* internal_isolate = reinterpret_cast<i::Isolate*>(isolate);
   internal_isolate->set_array_buffer_allocator(&data->allocator_);
   internal_isolate->set_api_external_references(external_references);
+  internal_isolate->enable_serializer();
   isolate->Enter();
   const StartupData* blob = existing_snapshot
                                 ? existing_snapshot
@@ -559,6 +564,11 @@ SnapshotCreator::SnapshotCreator(const intptr_t* external_references,
   }
   data_ = data;
 }
+
+SnapshotCreator::SnapshotCreator(const intptr_t* external_references,
+                                 StartupData* existing_snapshot)
+    : SnapshotCreator(reinterpret_cast<Isolate*>(new i::Isolate()),
+                      external_references, existing_snapshot) {}
 
 SnapshotCreator::~SnapshotCreator() {
   SnapshotCreatorData* data = SnapshotCreatorData::cast(data_);
@@ -1696,13 +1706,11 @@ static i::Handle<i::FunctionTemplateInfo> EnsureConstructor(
 }
 
 template <typename Getter, typename Setter, typename Data, typename Template>
-static void TemplateSetAccessor(Template* template_obj, v8::Local<Name> name,
-                                Getter getter, Setter setter, Data data,
-                                AccessControl settings,
-                                PropertyAttribute attribute,
-                                v8::Local<AccessorSignature> signature,
-                                bool is_special_data_property,
-                                bool replace_on_access) {
+static void TemplateSetAccessor(
+    Template* template_obj, v8::Local<Name> name, Getter getter, Setter setter,
+    Data data, AccessControl settings, PropertyAttribute attribute,
+    v8::Local<AccessorSignature> signature, bool is_special_data_property,
+    bool replace_on_access, SideEffectType getter_side_effect_type) {
   auto info = Utils::OpenHandle(template_obj);
   auto isolate = info->GetIsolate();
   ENTER_V8_NO_SCRIPT_NO_EXCEPTION(isolate);
@@ -1712,40 +1720,38 @@ static void TemplateSetAccessor(Template* template_obj, v8::Local<Name> name,
                        is_special_data_property, replace_on_access);
   accessor_info->set_initial_property_attributes(
       static_cast<i::PropertyAttributes>(attribute));
+  accessor_info->set_has_no_side_effect(getter_side_effect_type ==
+                                        SideEffectType::kHasNoSideEffect);
   i::ApiNatives::AddNativeDataProperty(isolate, info, accessor_info);
 }
 
-
-void Template::SetNativeDataProperty(v8::Local<String> name,
-                                     AccessorGetterCallback getter,
-                                     AccessorSetterCallback setter,
-                                     v8::Local<Value> data,
-                                     PropertyAttribute attribute,
-                                     v8::Local<AccessorSignature> signature,
-                                     AccessControl settings) {
+void Template::SetNativeDataProperty(
+    v8::Local<String> name, AccessorGetterCallback getter,
+    AccessorSetterCallback setter, v8::Local<Value> data,
+    PropertyAttribute attribute, v8::Local<AccessorSignature> signature,
+    AccessControl settings, SideEffectType getter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, true, false);
+                      signature, true, false, getter_side_effect_type);
 }
 
-
-void Template::SetNativeDataProperty(v8::Local<Name> name,
-                                     AccessorNameGetterCallback getter,
-                                     AccessorNameSetterCallback setter,
-                                     v8::Local<Value> data,
-                                     PropertyAttribute attribute,
-                                     v8::Local<AccessorSignature> signature,
-                                     AccessControl settings) {
+void Template::SetNativeDataProperty(
+    v8::Local<Name> name, AccessorNameGetterCallback getter,
+    AccessorNameSetterCallback setter, v8::Local<Value> data,
+    PropertyAttribute attribute, v8::Local<AccessorSignature> signature,
+    AccessControl settings, SideEffectType getter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, true, false);
+                      signature, true, false, getter_side_effect_type);
 }
 
 void Template::SetLazyDataProperty(v8::Local<Name> name,
                                    AccessorNameGetterCallback getter,
                                    v8::Local<Value> data,
-                                   PropertyAttribute attribute) {
-  TemplateSetAccessor(
-      this, name, getter, static_cast<AccessorNameSetterCallback>(nullptr),
-      data, DEFAULT, attribute, Local<AccessorSignature>(), true, true);
+                                   PropertyAttribute attribute,
+                                   SideEffectType getter_side_effect_type) {
+  TemplateSetAccessor(this, name, getter,
+                      static_cast<AccessorNameSetterCallback>(nullptr), data,
+                      DEFAULT, attribute, Local<AccessorSignature>(), true,
+                      true, getter_side_effect_type);
 }
 
 void Template::SetIntrinsicDataProperty(Local<Name> name, Intrinsic intrinsic,
@@ -1759,26 +1765,28 @@ void Template::SetIntrinsicDataProperty(Local<Name> name, Intrinsic intrinsic,
                                  static_cast<i::PropertyAttributes>(attribute));
 }
 
-
 void ObjectTemplate::SetAccessor(v8::Local<String> name,
                                  AccessorGetterCallback getter,
                                  AccessorSetterCallback setter,
                                  v8::Local<Value> data, AccessControl settings,
                                  PropertyAttribute attribute,
-                                 v8::Local<AccessorSignature> signature) {
+                                 v8::Local<AccessorSignature> signature,
+                                 SideEffectType getter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, i::FLAG_disable_old_api_accessors, false);
+                      signature, i::FLAG_disable_old_api_accessors, false,
+                      getter_side_effect_type);
 }
-
 
 void ObjectTemplate::SetAccessor(v8::Local<Name> name,
                                  AccessorNameGetterCallback getter,
                                  AccessorNameSetterCallback setter,
                                  v8::Local<Value> data, AccessControl settings,
                                  PropertyAttribute attribute,
-                                 v8::Local<AccessorSignature> signature) {
+                                 v8::Local<AccessorSignature> signature,
+                                 SideEffectType getter_side_effect_type) {
   TemplateSetAccessor(this, name, getter, setter, data, settings, attribute,
-                      signature, i::FLAG_disable_old_api_accessors, false);
+                      signature, i::FLAG_disable_old_api_accessors, false,
+                      getter_side_effect_type);
 }
 
 template <typename Getter, typename Setter, typename Query, typename Descriptor,
@@ -2628,21 +2636,29 @@ uint32_t ScriptCompiler::CachedDataVersionTag() {
 
 ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
     Local<UnboundScript> unbound_script, Local<String> source) {
+  return CreateCodeCache(unbound_script);
+}
+
+ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
+    Local<UnboundScript> unbound_script) {
   i::Handle<i::SharedFunctionInfo> shared =
       i::Handle<i::SharedFunctionInfo>::cast(
           Utils::OpenHandle(*unbound_script));
-  i::Handle<i::String> source_str = Utils::OpenHandle(*source);
   DCHECK(shared->is_toplevel());
-  return i::CodeSerializer::Serialize(shared, source_str);
+  return i::CodeSerializer::Serialize(shared);
 }
 
 ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCacheForFunction(
     Local<Function> function, Local<String> source) {
+  return CreateCodeCacheForFunction(function);
+}
+
+ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCacheForFunction(
+    Local<Function> function) {
   i::Handle<i::SharedFunctionInfo> shared(
       i::Handle<i::JSFunction>::cast(Utils::OpenHandle(*function))->shared());
-  i::Handle<i::String> source_str = Utils::OpenHandle(*source);
   CHECK(shared->is_wrapped());
-  return i::CodeSerializer::Serialize(shared, source_str);
+  return i::CodeSerializer::Serialize(shared);
 }
 
 MaybeLocal<Script> Script::Compile(Local<Context> context, Local<String> source,
@@ -5397,202 +5413,28 @@ bool String::ContainsOnlyOneByte() const {
 }
 
 
-class Utf8LengthHelper : public i::AllStatic {
- public:
-  enum State {
-    kEndsWithLeadingSurrogate = 1 << 0,
-    kStartsWithTrailingSurrogate = 1 << 1,
-    kLeftmostEdgeIsCalculated = 1 << 2,
-    kRightmostEdgeIsCalculated = 1 << 3,
-    kLeftmostEdgeIsSurrogate = 1 << 4,
-    kRightmostEdgeIsSurrogate = 1 << 5
-  };
-
-  static const uint8_t kInitialState = 0;
-
-  static inline bool EndsWithSurrogate(uint8_t state) {
-    return state & kEndsWithLeadingSurrogate;
-  }
-
-  static inline bool StartsWithSurrogate(uint8_t state) {
-    return state & kStartsWithTrailingSurrogate;
-  }
-
-  class Visitor {
-   public:
-    Visitor() : utf8_length_(0), state_(kInitialState) {}
-
-    void VisitOneByteString(const uint8_t* chars, int length) {
-      int utf8_length = 0;
-      // Add in length 1 for each non-Latin1 character.
-      for (int i = 0; i < length; i++) {
-        utf8_length += *chars++ >> 7;
-      }
-      // Add in length 1 for each character.
-      utf8_length_ = utf8_length + length;
-      state_ = kInitialState;
-    }
-
-    void VisitTwoByteString(const uint16_t* chars, int length) {
-      int utf8_length = 0;
-      int last_character = unibrow::Utf16::kNoPreviousCharacter;
-      for (int i = 0; i < length; i++) {
-        uint16_t c = chars[i];
-        utf8_length += unibrow::Utf8::Length(c, last_character);
-        last_character = c;
-      }
-      utf8_length_ = utf8_length;
-      uint8_t state = 0;
-      if (unibrow::Utf16::IsTrailSurrogate(chars[0])) {
-        state |= kStartsWithTrailingSurrogate;
-      }
-      if (unibrow::Utf16::IsLeadSurrogate(chars[length-1])) {
-        state |= kEndsWithLeadingSurrogate;
-      }
-      state_ = state;
-    }
-
-    static i::ConsString* VisitFlat(i::String* string,
-                                    int* length,
-                                    uint8_t* state) {
-      Visitor visitor;
-      i::ConsString* cons_string = i::String::VisitFlat(&visitor, string);
-      *length = visitor.utf8_length_;
-      *state = visitor.state_;
-      return cons_string;
-    }
-
-   private:
-    int utf8_length_;
-    uint8_t state_;
-    DISALLOW_COPY_AND_ASSIGN(Visitor);
-  };
-
-  static inline void MergeLeafLeft(int* length,
-                                   uint8_t* state,
-                                   uint8_t leaf_state) {
-    bool edge_surrogate = StartsWithSurrogate(leaf_state);
-    if (!(*state & kLeftmostEdgeIsCalculated)) {
-      DCHECK(!(*state & kLeftmostEdgeIsSurrogate));
-      *state |= kLeftmostEdgeIsCalculated
-          | (edge_surrogate ? kLeftmostEdgeIsSurrogate : 0);
-    } else if (EndsWithSurrogate(*state) && edge_surrogate) {
-      *length -= unibrow::Utf8::kBytesSavedByCombiningSurrogates;
-    }
-    if (EndsWithSurrogate(leaf_state)) {
-      *state |= kEndsWithLeadingSurrogate;
-    } else {
-      *state &= ~kEndsWithLeadingSurrogate;
-    }
-  }
-
-  static inline void MergeLeafRight(int* length,
-                                    uint8_t* state,
-                                    uint8_t leaf_state) {
-    bool edge_surrogate = EndsWithSurrogate(leaf_state);
-    if (!(*state & kRightmostEdgeIsCalculated)) {
-      DCHECK(!(*state & kRightmostEdgeIsSurrogate));
-      *state |= (kRightmostEdgeIsCalculated
-                 | (edge_surrogate ? kRightmostEdgeIsSurrogate : 0));
-    } else if (edge_surrogate && StartsWithSurrogate(*state)) {
-      *length -= unibrow::Utf8::kBytesSavedByCombiningSurrogates;
-    }
-    if (StartsWithSurrogate(leaf_state)) {
-      *state |= kStartsWithTrailingSurrogate;
-    } else {
-      *state &= ~kStartsWithTrailingSurrogate;
-    }
-  }
-
-  static inline void MergeTerminal(int* length,
-                                   uint8_t state,
-                                   uint8_t* state_out) {
-    DCHECK((state & kLeftmostEdgeIsCalculated) &&
-           (state & kRightmostEdgeIsCalculated));
-    if (EndsWithSurrogate(state) && StartsWithSurrogate(state)) {
-      *length -= unibrow::Utf8::kBytesSavedByCombiningSurrogates;
-    }
-    *state_out = kInitialState |
-        (state & kLeftmostEdgeIsSurrogate ? kStartsWithTrailingSurrogate : 0) |
-        (state & kRightmostEdgeIsSurrogate ? kEndsWithLeadingSurrogate : 0);
-  }
-
-  static int Calculate(i::ConsString* current, uint8_t* state_out) {
-    using internal::ConsString;
-    int total_length = 0;
-    uint8_t state = kInitialState;
-    while (true) {
-      i::String* left = current->first();
-      i::String* right = current->second();
-      uint8_t right_leaf_state;
-      uint8_t left_leaf_state;
-      int leaf_length;
-      ConsString* left_as_cons =
-          Visitor::VisitFlat(left, &leaf_length, &left_leaf_state);
-      if (left_as_cons == nullptr) {
-        total_length += leaf_length;
-        MergeLeafLeft(&total_length, &state, left_leaf_state);
-      }
-      ConsString* right_as_cons =
-          Visitor::VisitFlat(right, &leaf_length, &right_leaf_state);
-      if (right_as_cons == nullptr) {
-        total_length += leaf_length;
-        MergeLeafRight(&total_length, &state, right_leaf_state);
-        if (left_as_cons != nullptr) {
-          // 1 Leaf node. Descend in place.
-          current = left_as_cons;
-          continue;
-        } else {
-          // Terminal node.
-          MergeTerminal(&total_length, state, state_out);
-          return total_length;
-        }
-      } else if (left_as_cons == nullptr) {
-        // 1 Leaf node. Descend in place.
-        current = right_as_cons;
-        continue;
-      }
-      // Both strings are ConsStrings.
-      // Recurse on smallest.
-      if (left->length() < right->length()) {
-        total_length += Calculate(left_as_cons, &left_leaf_state);
-        MergeLeafLeft(&total_length, &state, left_leaf_state);
-        current = right_as_cons;
-      } else {
-        total_length += Calculate(right_as_cons, &right_leaf_state);
-        MergeLeafRight(&total_length, &state, right_leaf_state);
-        current = left_as_cons;
-      }
-    }
-    UNREACHABLE();
-  }
-
-  static inline int Calculate(i::ConsString* current) {
-    uint8_t state = kInitialState;
-    return Calculate(current, &state);
-  }
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(Utf8LengthHelper);
-};
-
-
-static int Utf8Length(i::String* str, i::Isolate* isolate) {
-  int length = str->length();
-  if (length == 0) return 0;
-  uint8_t state;
-  i::ConsString* cons_string =
-      Utf8LengthHelper::Visitor::VisitFlat(str, &length, &state);
-  if (cons_string == nullptr) return length;
-  return Utf8LengthHelper::Calculate(cons_string);
-}
-
-
 int String::Utf8Length() const {
   i::Handle<i::String> str = Utils::OpenHandle(this);
   str = i::String::Flatten(str);
-  i::Isolate* isolate = str->GetIsolate();
-  return v8::Utf8Length(*str, isolate);
+  int length = str->length();
+  if (length == 0) return 0;
+  i::DisallowHeapAllocation no_gc;
+  i::String::FlatContent flat = str->GetFlatContent();
+  DCHECK(flat.IsFlat());
+  int utf8_length = 0;
+  if (flat.IsOneByte()) {
+    for (uint8_t c : flat.ToOneByteVector()) {
+      utf8_length += c >> 7;
+    }
+    utf8_length += length;
+  } else {
+    int last_character = unibrow::Utf16::kNoPreviousCharacter;
+    for (uint16_t c : flat.ToUC16Vector()) {
+      utf8_length += unibrow::Utf8::Length(c, last_character);
+      last_character = c;
+    }
+  }
+  return utf8_length;
 }
 
 
@@ -5817,7 +5659,7 @@ int String::WriteUtf8(char* buffer,
     if (success) return writer.CompleteWrite(write_null, nchars_ref);
   } else if (capacity >= string_length) {
     // First check that the buffer is large enough.
-    int utf8_bytes = v8::Utf8Length(*str, isolate);
+    int utf8_bytes = Utf8Length();
     if (utf8_bytes <= capacity) {
       // one-byte fast path.
       if (utf8_bytes == string_length) {
@@ -5837,8 +5679,6 @@ int String::WriteUtf8(char* buffer,
       return WriteUtf8(buffer, -1, nchars_ref, options);
     }
   }
-  // Recursive slow path can potentially be unreasonable slow. Flatten.
-  str = i::String::Flatten(str);
   Utf8WriterVisitor writer(buffer, capacity, false, replace_invalid_utf8);
   i::String::VisitFlat(&writer, *str);
   return writer.CompleteWrite(write_null, nchars_ref);
@@ -8314,22 +8154,22 @@ Isolate* Isolate::GetCurrent() {
   return reinterpret_cast<Isolate*>(isolate);
 }
 
-
-Isolate* Isolate::New(const Isolate::CreateParams& params) {
-  i::Isolate* isolate = new i::Isolate(false);
-  return IsolateNewImpl(isolate, params);
+// static
+Isolate* Isolate::Allocate() {
+  return reinterpret_cast<Isolate*>(new i::Isolate());
 }
 
+// static
 // This is separate so that tests can provide a different |isolate|.
-Isolate* IsolateNewImpl(internal::Isolate* isolate,
-                        const v8::Isolate::CreateParams& params) {
-  Isolate* v8_isolate = reinterpret_cast<Isolate*>(isolate);
+void Isolate::Initialize(Isolate* isolate,
+                         const v8::Isolate::CreateParams& params) {
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   CHECK_NOT_NULL(params.array_buffer_allocator);
-  isolate->set_array_buffer_allocator(params.array_buffer_allocator);
+  i_isolate->set_array_buffer_allocator(params.array_buffer_allocator);
   if (params.snapshot_blob != nullptr) {
-    isolate->set_snapshot_blob(params.snapshot_blob);
+    i_isolate->set_snapshot_blob(params.snapshot_blob);
   } else {
-    isolate->set_snapshot_blob(i::Snapshot::DefaultSnapshotBlob());
+    i_isolate->set_snapshot_blob(i::Snapshot::DefaultSnapshotBlob());
   }
   if (params.entry_hook) {
 #ifdef V8_USE_SNAPSHOT
@@ -8338,7 +8178,7 @@ Isolate* IsolateNewImpl(internal::Isolate* isolate,
         false, "v8::Isolate::New",
         "Setting a FunctionEntryHook is only supported in no-snapshot builds.");
 #endif
-    isolate->set_function_entry_hook(params.entry_hook);
+    i_isolate->set_function_entry_hook(params.entry_hook);
   }
   auto code_event_handler = params.code_event_handler;
 #ifdef ENABLE_GDB_JIT_INTERFACE
@@ -8347,44 +8187,48 @@ Isolate* IsolateNewImpl(internal::Isolate* isolate,
   }
 #endif  // ENABLE_GDB_JIT_INTERFACE
   if (code_event_handler) {
-    isolate->InitializeLoggingAndCounters();
-    isolate->logger()->SetCodeEventHandler(kJitCodeEventDefault,
-                                           code_event_handler);
+    i_isolate->InitializeLoggingAndCounters();
+    i_isolate->logger()->SetCodeEventHandler(kJitCodeEventDefault,
+                                             code_event_handler);
   }
   if (params.counter_lookup_callback) {
-    v8_isolate->SetCounterFunction(params.counter_lookup_callback);
+    isolate->SetCounterFunction(params.counter_lookup_callback);
   }
 
   if (params.create_histogram_callback) {
-    v8_isolate->SetCreateHistogramFunction(params.create_histogram_callback);
+    isolate->SetCreateHistogramFunction(params.create_histogram_callback);
   }
 
   if (params.add_histogram_sample_callback) {
-    v8_isolate->SetAddHistogramSampleFunction(
+    isolate->SetAddHistogramSampleFunction(
         params.add_histogram_sample_callback);
   }
 
-  isolate->set_api_external_references(params.external_references);
-  isolate->set_allow_atomics_wait(params.allow_atomics_wait);
+  i_isolate->set_api_external_references(params.external_references);
+  i_isolate->set_allow_atomics_wait(params.allow_atomics_wait);
 
-  SetResourceConstraints(isolate, params.constraints);
+  SetResourceConstraints(i_isolate, params.constraints);
   // TODO(jochen): Once we got rid of Isolate::Current(), we can remove this.
-  Isolate::Scope isolate_scope(v8_isolate);
-  if (params.entry_hook || !i::Snapshot::Initialize(isolate)) {
+  Isolate::Scope isolate_scope(isolate);
+  if (params.entry_hook || !i::Snapshot::Initialize(i_isolate)) {
     // If snapshot data was provided and we failed to deserialize it must
     // have been corrupted.
-    CHECK_NULL(isolate->snapshot_blob());
+    CHECK_NULL(i_isolate->snapshot_blob());
     base::ElapsedTimer timer;
     if (i::FLAG_profile_deserialization) timer.Start();
-    isolate->Init(nullptr);
+    i_isolate->Init(nullptr);
     if (i::FLAG_profile_deserialization) {
       double ms = timer.Elapsed().InMillisecondsF();
       i::PrintF("[Initializing isolate from scratch took %0.3f ms]\n", ms);
     }
   }
-  return v8_isolate;
 }
 
+Isolate* Isolate::New(const Isolate::CreateParams& params) {
+  Isolate* isolate = Allocate();
+  Initialize(isolate, params);
+  return isolate;
+}
 
 void Isolate::Dispose() {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
@@ -9047,8 +8891,7 @@ String::Utf8Value::Utf8Value(v8::Isolate* isolate, v8::Local<v8::Value> obj)
   TryCatch try_catch(isolate);
   Local<String> str;
   if (!obj->ToString(context).ToLocal(&str)) return;
-  i::Handle<i::String> i_str = Utils::OpenHandle(*str);
-  length_ = v8::Utf8Length(*i_str, i_isolate);
+  length_ = str->Utf8Length();
   str_ = i::NewArray<char>(length_ + 1);
   str->WriteUtf8(str_);
 }

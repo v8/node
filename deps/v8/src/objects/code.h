@@ -49,7 +49,7 @@ class Code : public HeapObject {
 
 #ifdef ENABLE_DISASSEMBLER
   void Disassemble(const char* name, std::ostream& os,
-                   void* current_pc = nullptr);  // NOLINT
+                   Address current_pc = kNullAddress);
 #endif
 
   // [instruction_size]: Size of the native instructions, including embedded
@@ -242,6 +242,9 @@ class Code : public HeapObject {
 
   // Returns the address of the first relocation info (read backwards!).
   inline byte* relocation_start() const;
+
+  // Returns the address right after the relocation info (read backwards!).
+  inline byte* relocation_end() const;
 
   // [has_unwinding_info]: Whether this code object has unwinding information.
   // If it doesn't, unwinding_information_start() will point to invalid data.

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "src/assembler-inl.h"
+#include "src/macro-assembler-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/value-helper.h"
 #include "test/cctest/wasm/wasm-run-utils.h"
@@ -820,44 +821,18 @@ WASM_SIMD_TEST(I8x16ReplaceLane) {
 
 #if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
     V8_TARGET_ARCH_MIPS64
-// Determines if conversion from float to int will be valid.
-bool CanRoundToZeroAndConvert(double val, bool unsigned_integer) {
-  const double max_uint = static_cast<double>(0xFFFFFFFFu);
-  const double max_int = static_cast<double>(kMaxInt);
-  const double min_int = static_cast<double>(kMinInt);
-
-  // Check for NaN.
-  if (val != val) {
-    return false;
-  }
-
-  // Round to zero and check for overflow. This code works because 32 bit
-  // integers can be exactly represented by ieee-754 64bit floating-point
-  // values.
-  return unsigned_integer ? (val < (max_uint + 1.0)) && (val > -1)
-                          : (val < (max_int + 1.0)) && (val > (min_int - 1.0));
-}
-
-int ConvertInvalidValue(double val, bool unsigned_integer) {
-  if (val != val) {
-    return 0;
-  } else {
-    if (unsigned_integer) {
-      return (val < 0) ? 0 : 0xFFFFFFFFu;
-    } else {
-      return (val < 0) ? kMinInt : kMaxInt;
-    }
-  }
-}
 
 int32_t ConvertToInt(double val, bool unsigned_integer) {
-  int32_t result =
-      unsigned_integer ? static_cast<uint32_t>(val) : static_cast<int32_t>(val);
-
-  if (!CanRoundToZeroAndConvert(val, unsigned_integer)) {
-    result = ConvertInvalidValue(val, unsigned_integer);
+  if (std::isnan(val)) return 0;
+  if (unsigned_integer) {
+    if (val < 0) return 0;
+    if (val > kMaxUInt32) return kMaxUInt32;
+    return static_cast<uint32_t>(val);
+  } else {
+    if (val < kMinInt) return kMinInt;
+    if (val > kMaxInt) return kMaxInt;
+    return static_cast<int>(val);
   }
-  return result;
 }
 
 // Tests both signed and unsigned conversion.
@@ -1115,7 +1090,7 @@ WASM_SIMD_TEST(I16x8Neg) {
 #if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
     V8_TARGET_ARCH_MIPS64
 // Tests both signed and unsigned conversion from I32x4 (packing).
-WASM_SIMD_COMPILED_TEST(I16x8ConvertI32x4) {
+WASM_SIMD_TEST(I16x8ConvertI32x4) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteTurbofan,
                                                    lower_simd);
   byte a = 0;
@@ -1309,7 +1284,7 @@ WASM_SIMD_TEST(I8x16Neg) {
 #if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
     V8_TARGET_ARCH_MIPS64
 // Tests both signed and unsigned conversion from I16x8 (packing).
-WASM_SIMD_COMPILED_TEST(I8x16ConvertI16x8) {
+WASM_SIMD_TEST(I8x16ConvertI16x8) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteTurbofan,
                                                    lower_simd);
   byte a = 0;
@@ -1893,11 +1868,7 @@ WASM_SIMD_TEST(S8x16Concat) {
     RunBinaryLaneOpTest(lower_simd, kExprS8x16Shuffle, expected);
   }
 }
-#endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
-#if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
 // Boolean unary operations are 'AllTrue' and 'AnyTrue', which return an integer
 // result. Use relational ops on numeric vectors to create the boolean vector
 // test inputs. Test inputs with all true, all false, one true, and one false.
@@ -1985,7 +1956,7 @@ WASM_SIMD_TEST(SimdI32x4ExtractWithF32x4) {
   CHECK_EQ(1, r.Call());
 }
 #endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 WASM_SIMD_TEST(SimdF32x4ExtractWithI32x4) {
   WasmRunner<int32_t> r(kExecuteTurbofan, lower_simd);

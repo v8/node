@@ -26,6 +26,7 @@ namespace internal {
 namespace wasm {
 class InterpretedFrame;
 class NativeModule;
+struct ModuleEnv;
 class WasmCode;
 struct WasmModule;
 class SignatureMap;
@@ -324,11 +325,6 @@ class WasmInstanceObject : public JSObject {
 
   static Handle<WasmInstanceObject> New(Isolate*, Handle<WasmCompiledModule>);
 
-  // Assumed to be called with a code object associated to a wasm module
-  // instance. Intended to be called from runtime functions. Returns nullptr on
-  // failing to get owning instance.
-  static WasmInstanceObject* GetOwningInstance(const wasm::WasmCode* code);
-
   static void ValidateInstancesChainForTesting(
       Isolate* isolate, Handle<WasmModuleObject> module_obj,
       int instance_count);
@@ -550,10 +546,10 @@ class WasmCompiledModule : public Struct {
   WCM_SMALL_CONST_NUMBER(bool, use_trap_handler)
 
  public:
-  static Handle<WasmCompiledModule> New(
-      Isolate* isolate, wasm::WasmModule* module,
-      Handle<FixedArray> export_wrappers,
-      bool use_trap_hander);
+  static Handle<WasmCompiledModule> New(Isolate* isolate,
+                                        wasm::WasmModule* module,
+                                        Handle<FixedArray> export_wrappers,
+                                        wasm::ModuleEnv& env);
 
   static Handle<WasmCompiledModule> Clone(Isolate* isolate,
                                           Handle<WasmCompiledModule> module);

@@ -184,6 +184,22 @@ void WasmCode::set_trap_handler_index(size_t value) {
   trap_handler_index_ = value;
 }
 
+void WasmCode::RegisterTrapHandlerData() {
+  if (kind() != wasm::WasmCode::kFunction) return;
+  if (HasTrapHandlerIndex()) return;
+
+  Address base = instruction_start();
+
+  size_t size = instructions().size();
+  const int index =
+      RegisterHandlerData(base, size, protected_instructions().size(),
+                          protected_instructions().data());
+
+  // TODO(eholk): if index is negative, fail.
+  CHECK_LE(0, index);
+  set_trap_handler_index(static_cast<size_t>(index));
+}
+
 bool WasmCode::HasTrapHandlerIndex() const { return trap_handler_index_ >= 0; }
 
 void WasmCode::ResetTrapHandlerIndex() { trap_handler_index_ = -1; }
@@ -232,8 +248,8 @@ void WasmCode::Print(Isolate* isolate) const {
   Disassemble(nullptr, isolate, os);
 }
 
-void WasmCode::Disassemble(const char* name, Isolate* isolate,
-                           std::ostream& os) const {
+void WasmCode::Disassemble(const char* name, Isolate* isolate, std::ostream& os,
+                           Address current_pc) const {
   if (name) os << "name: " << name << "\n";
   if (index_.IsJust()) os << "index: " << index_.FromJust() << "\n";
   os << "kind: " << GetWasmCodeKindAsString(kind_) << "\n";
@@ -255,7 +271,8 @@ void WasmCode::Disassemble(const char* name, Isolate* isolate,
   // TODO(mtrofin): rework the dependency on isolate and code in
   // Disassembler::Decode.
   Disassembler::Decode(isolate, &os, instructions().start(),
-                       instructions().start() + instruction_size, nullptr);
+                       instructions().start() + instruction_size,
+                       CodeReference(this), current_pc);
   os << "\n";
 
   if (!source_positions().is_empty()) {
@@ -313,28 +330,46 @@ WasmCode::~WasmCode() {
 // {source_native_module} into a {cloning_native_module}.
 class NativeModule::CloneCodeHelper {
  public:
-  explicit CloneCodeHelper(NativeModule* source_native_module,
+  explicit CloneCodeHelper(const NativeModule* source_native_module,
                            NativeModule* cloning_native_module);
 
-  void SelectForCloning(int32_t code_index);
+  void SelectForCloning(uint32_t code_index);
 
-  void CloneAndPatchCode(bool patch_stub_to_stub_calls);
+  void CloneAndPatchCode();
 
   void PatchTrampolineAndStubCalls(const WasmCode* original_code,
                                    const WasmCode* new_code,
                                    WasmCode::FlushICache flush_icache);
 
  private:
-  void PatchStubToStubCalls();
-
-  NativeModule* source_native_module_;
+  const NativeModule* source_native_module_;
   NativeModule* cloning_native_module_;
   std::vector<uint32_t> selection_;
   std::unordered_map<Address, Address, AddressHasher> reverse_lookup_;
 };
 
+void NativeModule::CloneHigherTierCodeFrom(
+    const NativeModule* source_native_module) {
+  NativeModule::CloneCodeHelper helper(source_native_module, this);
+
+  for (uint32_t i = num_imported_functions_, e = FunctionCount(); i < e; ++i) {
+    WasmCode* wasm_code = GetCode(i);
+    if (!wasm_code->is_liftoff()) continue;
+    helper.SelectForCloning(i);
+  }
+
+  helper.CloneAndPatchCode();
+
+  // Sanity check: after cloning the code, every function in the
+  // code table should not be Liftoff-compiled code anymore.
+  for (uint32_t i = num_imported_functions(), e = FunctionCount(); i < e; ++i) {
+    DCHECK(!GetCode(i)->is_liftoff());
+  }
+}
+
 NativeModule::CloneCodeHelper::CloneCodeHelper(
-    NativeModule* source_native_module, NativeModule* cloning_native_module)
+    const NativeModule* source_native_module,
+    NativeModule* cloning_native_module)
     : source_native_module_(source_native_module),
       cloning_native_module_(cloning_native_module) {
   for (auto& pair : source_native_module_->trampolines_) {
@@ -344,26 +379,13 @@ NativeModule::CloneCodeHelper::CloneCodeHelper(
     Address new_dest = local->second;
     reverse_lookup_.emplace(old_dest, new_dest);
   }
-
-  for (auto& pair : source_native_module_->stubs_) {
-    Address old_dest = pair.second->instruction_start();
-    auto local = cloning_native_module_->stubs_.find(pair.first);
-    DCHECK(local != cloning_native_module_->stubs_.end());
-    Address new_dest = local->second->instruction_start();
-    reverse_lookup_.emplace(old_dest, new_dest);
-  }
 }
 
-void NativeModule::CloneCodeHelper::SelectForCloning(int32_t code_index) {
+void NativeModule::CloneCodeHelper::SelectForCloning(uint32_t code_index) {
   selection_.emplace_back(code_index);
 }
 
-void NativeModule::CloneCodeHelper::CloneAndPatchCode(
-    bool patch_stub_to_stub_calls) {
-  if (patch_stub_to_stub_calls) {
-    PatchStubToStubCalls();
-  }
-
+void NativeModule::CloneCodeHelper::CloneAndPatchCode() {
   WasmCode* anonymous_lazy_builtin = nullptr;
   for (uint32_t index : selection_) {
     const WasmCode* original_code = source_native_module_->GetCode(index);
@@ -397,14 +419,6 @@ void NativeModule::CloneCodeHelper::CloneAndPatchCode(
       default:
         UNREACHABLE();
     }
-  }
-}
-
-void NativeModule::CloneCodeHelper::PatchStubToStubCalls() {
-  for (auto& pair : cloning_native_module_->stubs_) {
-    WasmCode* new_stub = pair.second;
-    WasmCode* old_stub = source_native_module_->stubs_.find(pair.first)->second;
-    PatchTrampolineAndStubCalls(old_stub, new_stub, WasmCode::kFlushICache);
   }
 }
 
@@ -444,12 +458,12 @@ base::AtomicNumber<size_t> NativeModule::next_id_;
 
 NativeModule::NativeModule(uint32_t num_functions, uint32_t num_imports,
                            bool can_request_more, VirtualMemory* mem,
-                           WasmCodeManager* code_manager)
+                           WasmCodeManager* code_manager, ModuleEnv& env)
     : instance_id(next_id_.Increment(1)),
       code_table_(num_functions),
       num_imported_functions_(num_imports),
       compilation_state_(NewCompilationState(
-          reinterpret_cast<Isolate*>(code_manager->isolate_))),
+          reinterpret_cast<Isolate*>(code_manager->isolate_), env)),
       free_memory_(mem->address(), mem->end()),
       wasm_code_manager_(code_manager),
       can_request_more_memory_(can_request_more) {
@@ -872,11 +886,6 @@ void NativeModule::CloneTrampolinesAndStubs(
     DCHECK_NE(local, kNullAddress);
     trampolines_.emplace(std::make_pair(key, local));
   }
-  for (auto& pair : other->stubs_) {
-    uint32_t key = pair.first;
-    WasmCode* clone = CloneCode(pair.second, flush_icache);
-    stubs_.emplace(std::make_pair(key, clone));
-  }
 }
 
 WasmCode* NativeModule::CloneCode(const WasmCode* original_code,
@@ -911,21 +920,8 @@ WasmCode* NativeModule::CloneCode(const WasmCode* original_code,
 void NativeModule::UnpackAndRegisterProtectedInstructions() {
   for (uint32_t i = num_imported_functions(), e = FunctionCount(); i < e; ++i) {
     WasmCode* code = GetCode(i);
-
     if (code == nullptr) continue;
-    if (code->kind() != wasm::WasmCode::kFunction) continue;
-    if (code->HasTrapHandlerIndex()) continue;
-
-    Address base = code->instruction_start();
-
-    size_t size = code->instructions().size();
-    const int index =
-        RegisterHandlerData(base, size, code->protected_instructions().size(),
-                            code->protected_instructions().data());
-
-    // TODO(eholk): if index is negative, fail.
-    CHECK_LE(0, index);
-    code->set_trap_handler_index(static_cast<size_t>(index));
+    code->RegisterTrapHandlerData();
   }
 }
 
@@ -1045,24 +1041,25 @@ size_t WasmCodeManager::GetAllocationChunk(const WasmModule& module) {
 }
 
 std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
-    const WasmModule& module) {
+    const WasmModule& module, ModuleEnv& env) {
   size_t code_size = GetAllocationChunk(module);
   return NewNativeModule(
       code_size, static_cast<uint32_t>(module.functions.size()),
-      module.num_imported_functions, kModuleCanAllocateMoreMemory);
+      module.num_imported_functions, kModuleCanAllocateMoreMemory, env);
 }
 
 std::unique_ptr<NativeModule> WasmCodeManager::NewNativeModule(
     size_t size_estimate, uint32_t num_functions,
-    uint32_t num_imported_functions, bool can_request_more) {
+    uint32_t num_imported_functions, bool can_request_more, ModuleEnv& env) {
   VirtualMemory mem;
   TryAllocate(size_estimate, &mem);
   if (mem.IsReserved()) {
     Address start = mem.address();
     size_t size = mem.size();
     Address end = mem.end();
-    std::unique_ptr<NativeModule> ret(new NativeModule(
-        num_functions, num_imported_functions, can_request_more, &mem, this));
+    std::unique_ptr<NativeModule> ret(
+        new NativeModule(num_functions, num_imported_functions,
+                         can_request_more, &mem, this, env));
     TRACE_HEAP("New Module: ID:%zu. Mem: %p,+%zu\n", ret->instance_id,
                reinterpret_cast<void*>(start), size);
     AssignRanges(start, end, ret.get());
@@ -1122,9 +1119,10 @@ bool NativeModule::SetExecutable(bool executable) {
 }
 
 std::unique_ptr<NativeModule> NativeModule::Clone() {
+  ModuleEnv* module_env = GetModuleEnv(compilation_state());
   std::unique_ptr<NativeModule> ret = wasm_code_manager_->NewNativeModule(
       owned_memory_.front().size(), FunctionCount(), num_imported_functions(),
-      can_request_more_memory_);
+      can_request_more_memory_, *module_env);
   TRACE_HEAP("%zu cloned from %zu\n", ret->instance_id, instance_id);
   if (!ret) return ret;
 
@@ -1137,7 +1135,7 @@ std::unique_ptr<NativeModule> NativeModule::Clone() {
   for (uint32_t i = num_imported_functions(), e = FunctionCount(); i < e; ++i) {
     helper.SelectForCloning(i);
   }
-  helper.CloneAndPatchCode(true);
+  helper.CloneAndPatchCode();
 
   return ret;
 }

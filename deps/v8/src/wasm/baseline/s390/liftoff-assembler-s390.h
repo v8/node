@@ -23,6 +23,8 @@ void LiftoffAssembler::PatchPrepareStackFrame(uint32_t offset,
   BAILOUT("PatchPrepareStackFrame");
 }
 
+void LiftoffAssembler::FinishCode() {}
+
 void LiftoffAssembler::LoadConstant(LiftoffRegister reg, WasmValue value,
                                     RelocInfo::Mode rmode) {
   BAILOUT("LoadConstant");
@@ -198,9 +200,30 @@ UNIMPLEMENTED_FP_UNOP(f64_sqrt)
 #undef UNIMPLEMENTED_I32_SHIFTOP
 #undef UNIMPLEMENTED_I64_SHIFTOP
 
+void LiftoffAssembler::emit_i32_divs(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero,
+                                     Label* trap_div_unrepresentable) {
+  BAILOUT("i32_divs");
+}
+
+void LiftoffAssembler::emit_i32_divu(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_divu");
+}
+
+void LiftoffAssembler::emit_i32_rems(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_rems");
+}
+
+void LiftoffAssembler::emit_i32_remu(Register dst, Register lhs, Register rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i32_remu");
+}
+
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,
                                             LiftoffRegister dst,
-                                            LiftoffRegister src) {
+                                            LiftoffRegister src, Label* trap) {
   BAILOUT("emit_type_conversion");
   return true;
 }
@@ -256,17 +279,6 @@ void LiftoffAssembler::AssertUnreachable(AbortReason reason) {
   BAILOUT("AssertUnreachable");
 }
 
-void LiftoffAssembler::PushCallerFrameSlot(const VarState& src,
-                                           uint32_t src_index,
-                                           RegPairHalf half) {
-  BAILOUT("PushCallerFrameSlot");
-}
-
-void LiftoffAssembler::PushCallerFrameSlot(LiftoffRegister reg,
-                                           ValueType type) {
-  BAILOUT("PushCallerFrameSlot reg");
-}
-
 void LiftoffAssembler::PushRegisters(LiftoffRegList regs) {
   BAILOUT("PushRegisters");
 }
@@ -279,33 +291,13 @@ void LiftoffAssembler::DropStackSlotsAndRet(uint32_t num_stack_slots) {
   BAILOUT("DropStackSlotsAndRet");
 }
 
-void LiftoffAssembler::PrepareCCall(wasm::FunctionSig* sig,
-                                    const LiftoffRegister* args,
-                                    ValueType out_argument_type) {
-  BAILOUT("PrepareCCall");
-}
-
-void LiftoffAssembler::SetCCallRegParamAddr(Register dst, int param_byte_offset,
-                                            ValueType type) {
-  BAILOUT("SetCCallRegParamAddr");
-}
-
-void LiftoffAssembler::SetCCallStackParamAddr(int stack_param_idx,
-                                              int param_byte_offset,
-                                              ValueType type) {
-  BAILOUT("SetCCallStackParamAddr");
-}
-
-void LiftoffAssembler::LoadCCallOutArgument(LiftoffRegister dst, ValueType type,
-                                            int param_byte_offset) {
-  BAILOUT("LoadCCallOutArgument");
-}
-
-void LiftoffAssembler::CallC(ExternalReference ext_ref, uint32_t num_params) {
+void LiftoffAssembler::CallC(wasm::FunctionSig* sig,
+                             const LiftoffRegister* args,
+                             const LiftoffRegister* rets,
+                             ValueType out_argument_type, int stack_bytes,
+                             ExternalReference ext_ref) {
   BAILOUT("CallC");
 }
-
-void LiftoffAssembler::FinishCCall() { BAILOUT("FinishCCall"); }
 
 void LiftoffAssembler::CallNativeWasmCode(Address addr) {
   BAILOUT("CallNativeWasmCode");
@@ -327,6 +319,10 @@ void LiftoffAssembler::AllocateStackSlot(Register addr, uint32_t size) {
 
 void LiftoffAssembler::DeallocateStackSlot(uint32_t size) {
   BAILOUT("DeallocateStackSlot");
+}
+
+void LiftoffStackSlots::Construct() {
+  asm_->BAILOUT("LiftoffStackSlots::Construct");
 }
 
 }  // namespace wasm

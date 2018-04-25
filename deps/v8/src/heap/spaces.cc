@@ -373,7 +373,7 @@ void MemoryAllocator::Unmapper::FreeQueuedChunks() {
   }
 }
 
-void MemoryAllocator::Unmapper::WaitUntilCompleted() {
+void MemoryAllocator::Unmapper::CancelAndWaitForPendingTasks() {
   for (int i = 0; i < pending_unmapping_tasks_; i++) {
     if (heap_->isolate()->cancelable_task_manager()->TryAbort(task_ids_[i]) !=
         CancelableTaskManager::kTaskAborted) {
@@ -384,9 +384,21 @@ void MemoryAllocator::Unmapper::WaitUntilCompleted() {
   active_unmapping_tasks_.SetValue(0);
 
   if (FLAG_trace_unmapper) {
-    PrintIsolate(heap_->isolate(),
-                 "Unmapper::WaitUntilCompleted: no tasks remaining\n");
+    PrintIsolate(
+        heap_->isolate(),
+        "Unmapper::CancelAndWaitForPendingTasks: no tasks remaining\n");
   }
+}
+
+void MemoryAllocator::Unmapper::PrepareForMarkCompact() {
+  CancelAndWaitForPendingTasks();
+  // Free non-regular chunks because they cannot be re-used.
+  PerformFreeMemoryOnQueuedNonRegularChunks();
+}
+
+void MemoryAllocator::Unmapper::EnsureUnmappingCompleted() {
+  CancelAndWaitForPendingTasks();
+  PerformFreeMemoryOnQueuedChunks<FreeMode::kReleasePooled>();
 }
 
 bool MemoryAllocator::Unmapper::MakeRoomForNewTasks() {
@@ -395,9 +407,16 @@ bool MemoryAllocator::Unmapper::MakeRoomForNewTasks() {
   if (active_unmapping_tasks_.Value() == 0 && pending_unmapping_tasks_ > 0) {
     // All previous unmapping tasks have been run to completion.
     // Finalize those tasks to make room for new ones.
-    WaitUntilCompleted();
+    CancelAndWaitForPendingTasks();
   }
   return pending_unmapping_tasks_ != kMaxUnmapperTasks;
+}
+
+void MemoryAllocator::Unmapper::PerformFreeMemoryOnQueuedNonRegularChunks() {
+  MemoryChunk* chunk = nullptr;
+  while ((chunk = GetMemoryChunkSafe<kNonRegular>()) != nullptr) {
+    allocator_->PerformFreeMemory(chunk);
+  }
 }
 
 template <MemoryAllocator::Unmapper::FreeMode mode>
@@ -423,10 +442,7 @@ void MemoryAllocator::Unmapper::PerformFreeMemoryOnQueuedChunks() {
       allocator_->Free<MemoryAllocator::kAlreadyPooled>(chunk);
     }
   }
-  // Non-regular chunks.
-  while ((chunk = GetMemoryChunkSafe<kNonRegular>()) != nullptr) {
-    allocator_->PerformFreeMemory(chunk);
-  }
+  PerformFreeMemoryOnQueuedNonRegularChunks();
 }
 
 void MemoryAllocator::Unmapper::TearDown() {
@@ -1923,7 +1939,8 @@ void PagedSpace::Verify(ObjectVisitor* visitor) {
       // be in map space.
       Map* map = object->map();
       CHECK(map->IsMap());
-      CHECK(heap()->map_space()->Contains(map));
+      CHECK(heap()->map_space()->Contains(map) ||
+            heap()->read_only_space()->Contains(map));
 
       // Perform space-specific object verification.
       VerifyObject(object);
@@ -2374,10 +2391,11 @@ void NewSpace::Verify() {
       HeapObject* object = HeapObject::FromAddress(current);
 
       // The first word should be a map, and we expect all map pointers to
-      // be in map space.
+      // be in map space or read-only space.
       Map* map = object->map();
       CHECK(map->IsMap());
-      CHECK(heap()->map_space()->Contains(map));
+      CHECK(heap()->map_space()->Contains(map) ||
+            heap()->read_only_space()->Contains(map));
 
       // The object should not be code or a map.
       CHECK(!object->IsMap());
@@ -3452,10 +3470,11 @@ void LargeObjectSpace::Verify() {
     CHECK(object->address() == page->area_start());
 
     // The first word should be a map, and we expect all map pointers to be
-    // in map space.
+    // in map space or read-only space.
     Map* map = object->map();
     CHECK(map->IsMap());
-    CHECK(heap()->map_space()->Contains(map));
+    CHECK(heap()->map_space()->Contains(map) ||
+          heap()->read_only_space()->Contains(map));
 
     // We have only code, sequential strings, external strings (sequential
     // strings that have been morphed into external strings), thin strings

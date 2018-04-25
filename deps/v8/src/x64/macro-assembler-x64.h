@@ -30,6 +30,7 @@ constexpr Register kJavaScriptCallCodeStartRegister = rcx;
 constexpr Register kJavaScriptCallNewTargetRegister = rdx;
 constexpr Register kRuntimeCallFunctionRegister = rbx;
 constexpr Register kRuntimeCallArgCountRegister = rax;
+constexpr Register kWasmInstanceRegister = rsi;
 
 // Default scratch register used by MacroAssembler (and other code that needs
 // a spare register). The register isn't callee save, and not used by the
@@ -286,8 +287,18 @@ class TurboAssembler : public Assembler {
   void Cvtqsi2sd(XMMRegister dst, Operand src);
   void Cvtlsi2ss(XMMRegister dst, Register src);
   void Cvtlsi2ss(XMMRegister dst, Operand src);
-  void Cvtqui2ss(XMMRegister dst, Register src, Register tmp);
-  void Cvtqui2sd(XMMRegister dst, Register src, Register tmp);
+  void Cvtlui2ss(XMMRegister dst, Register src);
+  void Cvtlui2ss(XMMRegister dst, Operand src);
+  void Cvtlui2sd(XMMRegister dst, Register src);
+  void Cvtlui2sd(XMMRegister dst, Operand src);
+  void Cvtqui2ss(XMMRegister dst, Register src);
+  void Cvtqui2ss(XMMRegister dst, Operand src);
+  void Cvtqui2sd(XMMRegister dst, Register src);
+  void Cvtqui2sd(XMMRegister dst, Operand src);
+  void Cvttsd2uiq(Register dst, Operand src, Label* fail = nullptr);
+  void Cvttsd2uiq(Register dst, XMMRegister src, Label* fail = nullptr);
+  void Cvttss2uiq(Register dst, Operand src, Label* fail = nullptr);
+  void Cvttss2uiq(Register dst, XMMRegister src, Label* fail = nullptr);
 
   // cvtsi2sd instruction only writes to the low 64-bit of dst register, which
   // hinders register renaming and makes dependence chains longer. So we use

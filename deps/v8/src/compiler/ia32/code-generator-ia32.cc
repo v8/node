@@ -1351,43 +1351,27 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kSSEFloat32ToInt32:
       __ cvttss2si(i.OutputRegister(), i.InputOperand(0));
       break;
-    case kSSEFloat32ToUint32: {
-      Label success;
-      __ cvttss2si(i.OutputRegister(), i.InputOperand(0));
-      __ test(i.OutputRegister(), i.OutputRegister());
-      __ j(positive, &success);
-      __ Move(kScratchDoubleReg, static_cast<float>(INT32_MIN));
-      __ addss(kScratchDoubleReg, i.InputOperand(0));
-      __ cvttss2si(i.OutputRegister(), kScratchDoubleReg);
-      __ or_(i.OutputRegister(), Immediate(0x80000000));
-      __ bind(&success);
+    case kSSEFloat32ToUint32:
+      __ Cvttss2ui(i.OutputRegister(), i.InputOperand(0), kScratchDoubleReg);
       break;
-    }
     case kSSEFloat64ToInt32:
       __ cvttsd2si(i.OutputRegister(), i.InputOperand(0));
       break;
-    case kSSEFloat64ToUint32: {
-      __ Move(kScratchDoubleReg, -2147483648.0);
-      __ addsd(kScratchDoubleReg, i.InputOperand(0));
-      __ cvttsd2si(i.OutputRegister(), kScratchDoubleReg);
-      __ add(i.OutputRegister(), Immediate(0x80000000));
+    case kSSEFloat64ToUint32:
+      __ Cvttsd2ui(i.OutputRegister(), i.InputOperand(0), kScratchDoubleReg);
       break;
-    }
     case kSSEInt32ToFloat32:
       __ cvtsi2ss(i.OutputDoubleRegister(), i.InputOperand(0));
       break;
-    case kSSEUint32ToFloat32: {
-      Register scratch0 = i.TempRegister(0);
-      Register scratch1 = i.TempRegister(1);
-      __ mov(scratch0, i.InputOperand(0));
-      __ Cvtui2ss(i.OutputDoubleRegister(), scratch0, scratch1);
+    case kSSEUint32ToFloat32:
+      __ Cvtui2ss(i.OutputDoubleRegister(), i.InputOperand(0),
+                  i.TempRegister(0));
       break;
-    }
     case kSSEInt32ToFloat64:
       __ cvtsi2sd(i.OutputDoubleRegister(), i.InputOperand(0));
       break;
     case kSSEUint32ToFloat64:
-      __ LoadUint32(i.OutputDoubleRegister(), i.InputOperand(0));
+      __ Cvtui2sd(i.OutputDoubleRegister(), i.InputOperand(0));
       break;
     case kSSEFloat64ExtractLowWord32:
       if (instr->InputAt(0)->IsFPStackSlot()) {
@@ -3124,6 +3108,40 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ Pshufd(i.OutputSimd128Register(), i.InputOperand(0), i.InputInt8(1));
       break;
     }
+    case kIA32S1x4AnyTrue:
+    case kIA32S1x8AnyTrue:
+    case kIA32S1x16AnyTrue: {
+      Register dst = i.OutputRegister();
+      XMMRegister src = i.InputSimd128Register(0);
+      Register tmp = i.TempRegister(0);
+      __ xor_(tmp, tmp);
+      __ mov(dst, Immediate(-1));
+      __ Ptest(src, src);
+      __ cmov(zero, dst, tmp);
+      break;
+    }
+    case kIA32S1x4AllTrue:
+    case kIA32S1x8AllTrue:
+    case kIA32S1x16AllTrue: {
+      Register dst = i.OutputRegister();
+      Operand src = i.InputOperand(0);
+      Register tmp = i.TempRegister(0);
+      __ mov(tmp, Immediate(-1));
+      __ xor_(dst, dst);
+      // Compare all src lanes to false.
+      __ Pxor(kScratchDoubleReg, kScratchDoubleReg);
+      if (arch_opcode == kIA32S1x4AllTrue) {
+        __ Pcmpeqd(kScratchDoubleReg, src);
+      } else if (arch_opcode == kIA32S1x8AllTrue) {
+        __ Pcmpeqw(kScratchDoubleReg, src);
+      } else {
+        __ Pcmpeqb(kScratchDoubleReg, src);
+      }
+      // If kScratchDoubleReg is all zero, none of src lanes are false.
+      __ Ptest(kScratchDoubleReg, kScratchDoubleReg);
+      __ cmov(zero, dst, tmp);
+      break;
+    }
     case kIA32StackCheck: {
       ExternalReference const stack_limit =
           ExternalReference::address_of_stack_limit(__ isolate());
@@ -3602,6 +3620,9 @@ void CodeGenerator::AssembleConstructFrame() {
       }
     } else {
       __ StubPrologue(info()->GetOutputStackFrameType());
+      if (call_descriptor->IsWasmFunctionCall()) {
+        __ push(kWasmInstanceRegister);
+      }
     }
   }
 

@@ -693,6 +693,10 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       // Type is OtherObject.
       CheckTypeIs(node, Type::OtherObject());
       break;
+    case IrOpcode::kJSCreateObject:
+      // Type is Object.
+      CheckTypeIs(node, Type::OtherObject());
+      break;
     case IrOpcode::kJSCreatePromise:
       // Type is OtherObject.
       CheckTypeIs(node, Type::OtherObject());
@@ -894,6 +898,10 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckValueInputIs(node, 0, Type::Any());
       CheckValueInputIs(node, 1, Type::Any());
       CheckTypeIs(node, Type::Undefined());
+      break;
+    case IrOpcode::kJSObjectIsArray:
+      CheckValueInputIs(node, 0, Type::Any());
+      CheckTypeIs(node, Type::Boolean());
       break;
 
     case IrOpcode::kComment:
@@ -1171,6 +1179,10 @@ void Verifier::Visitor::Check(Node* node, const AllNodes& all) {
       CheckTypeIs(node, Type::Boolean());
       break;
     case IrOpcode::kNumberIsFinite:
+      CheckValueInputIs(node, 0, Type::Number());
+      CheckTypeIs(node, Type::Boolean());
+      break;
+    case IrOpcode::kNumberIsNaN:
       CheckValueInputIs(node, 0, Type::Number());
       CheckTypeIs(node, Type::Boolean());
       break;

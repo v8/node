@@ -39,14 +39,9 @@ class V8_EXPORT_PRIVATE JSBuiltinReducer final
   Reduction Reduce(Node* node) final;
 
  private:
-  Reduction ReduceArrayIsArray(Node* node);
-
   Reduction ReduceDateNow(Node* node);
   Reduction ReduceDateGetTime(Node* node);
-  Reduction ReduceGlobalIsFinite(Node* node);
-  Reduction ReduceGlobalIsNaN(Node* node);
   Reduction ReduceNumberParseInt(Node* node);
-  Reduction ReduceObjectCreate(Node* node);
   Node* ToNumber(Node* value);
   Node* ToUint32(Node* value);
 

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/builtins/builtins-typedarray-gen.h"
+#include "src/builtins/builtins-typed-array-gen.h"
 
 #include "src/builtins/builtins-constructor-gen.h"
 #include "src/builtins/builtins-iterator-gen.h"
@@ -883,7 +883,7 @@ TNode<Object> TypedArrayBuiltinsAssembler::TypedArraySpeciesConstructor(
   var_constructor = default_constructor;
   Node* map = LoadMap(exemplar);
   GotoIfNot(IsPrototypeTypedArrayPrototype(context, map), &slow);
-  Branch(IsSpeciesProtectorCellInvalid(), &slow, &done);
+  Branch(IsTypedArraySpeciesProtectorCellInvalid(), &slow, &done);
 
   BIND(&slow);
   var_constructor = SpeciesConstructor(context, exemplar, default_constructor);

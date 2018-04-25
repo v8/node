@@ -248,8 +248,6 @@ class ExternalReference BASE_EMBEDDED {
       EXTERNAL_REFERENCE_LIST(COUNT_EXTERNAL_REFERENCE);
 #undef COUNT_EXTERNAL_REFERENCE
 
-  static void SetUp();
-
   typedef Address ExternalReferenceRedirector(Address original, Type type);
 
   ExternalReference() : address_(kNullAddress) {}
@@ -278,21 +276,17 @@ class ExternalReference BASE_EMBEDDED {
 
   Address address() const { return address_; }
 
-  // This lets you register a function that rewrites all external references.
-  // Used by the ARM simulator to catch calls to external references.
-  static void set_redirector(Isolate* isolate,
-                             ExternalReferenceRedirector* redirector);
-
  private:
   explicit ExternalReference(void* address)
       : address_(reinterpret_cast<Address>(address)) {}
   explicit ExternalReference(Address address) : address_(address) {}
 
-  static Address Redirect(Isolate* isolate, Address address_arg,
+  static Address Redirect(Address address_arg,
                           Type type = ExternalReference::BUILTIN_CALL);
 
   Address address_;
 };
+ASSERT_TRIVIALLY_COPYABLE(ExternalReference);
 
 V8_EXPORT_PRIVATE bool operator==(ExternalReference, ExternalReference);
 bool operator!=(ExternalReference, ExternalReference);
