@@ -103,6 +103,8 @@ def ParseOptions(args):
   parser.add_argument("--host_os", help="Current operating system")
   parser.add_argument("--bundled-win-toolchain",
                       help="Value for DEPOT_TOOLS_WIN_TOOLCHAIN")
+  parser.add_argument("--bundled-win-toolchain-root",
+                      help="Value for DEPOT_TOOLS_WIN_TOOLCHAIN_ROOT")
   parser.add_argument("--depot-tools", help="Absolute path to depot_tools")
   parser.add_argument("--extra-gn-args", help="Additional GN args")
   parser.add_argument("--build", help="Run ninja as opposed to gn gen.",
