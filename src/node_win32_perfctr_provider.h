@@ -32,7 +32,7 @@
 
 namespace node {
 
-extern HANDLE NodeCounterProvider;
+EXTERN_C HANDLE NodeCounterProvider;
 
 INLINE bool NODE_COUNTER_ENABLED() { return NodeCounterProvider != nullptr; }
 void NODE_COUNT_HTTP_SERVER_REQUEST();
