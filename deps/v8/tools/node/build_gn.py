@@ -128,7 +128,7 @@ if __name__ == "__main__":
   # Build can result in running gn gen, so need to set environment variables
   # for build as well as generate.
   os.environ['DEPOT_TOOLS_WIN_TOOLCHAIN'] = options.bundled_win_toolchain
-  os.environ['PATH'] += os.path.pathsep + options.depot_tools
+  os.environ['PATH'] = options.depot_tools + os.path.pathsep + os.environ['PATH']
   if not options.build:
     GenerateBuildFiles(options)
   else:
