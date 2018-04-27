@@ -296,6 +296,7 @@ def JS2C(source, target):
     # later on anyway, so get it out of the way now
     if name.endswith(".gypi"):
       lines = re.sub(r'#.*?\n', '', lines)
+      lines = re.sub(r'"', '\\"', lines)
       lines = re.sub(r'\'', '"', lines)
     name = name.split('.', 1)[0]
     var = name.replace('-', '_').replace('/', '_')

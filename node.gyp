@@ -731,6 +731,7 @@
           'action_name': 'node_js2c',
           'process_outputs_as_sources': 1,
           'inputs': [
+            'tools/js2c.py',
             '<@(library_files)',
             './config.gypi',
             'tools/check_macros.py'
@@ -756,7 +757,9 @@
             'python',
             'tools/js2c.py',
             '<@(_outputs)',
-            '<@(_inputs)',
+            '<@(library_files)',
+            './config.gypi',
+            'tools/check_macros.py'
           ],
         },
       ],
