@@ -731,6 +731,8 @@
           'action_name': 'node_js2c',
           'process_outputs_as_sources': 1,
           'inputs': [
+            # TODO(machenbach): This should include 'tools/js2c.py' to properly
+            # re-run on script changes.
             '<@(library_files)',
             './config.gypi',
             'tools/check_macros.py'
