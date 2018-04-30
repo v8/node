@@ -11,7 +11,6 @@ builder.addFunction("test", kSig_i_v).addBody([
   kExprI32Const, 12,         // i32.const 0
 ]);
 
-let bla = 0;
 let module = new WebAssembly.Module(builder.toBuffer());
 module.then = () => {
   // Use setTimeout to get out of the promise chain.

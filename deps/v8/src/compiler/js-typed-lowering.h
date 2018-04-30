@@ -86,6 +86,7 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   Reduction ReduceSpeculativeNumberBinop(Node* node);
   Reduction ReduceSpeculativeNumberComparison(Node* node);
   Reduction ReduceObjectIsArray(Node* node);
+  Reduction ReduceJSParseInt(Node* node);
 
   // Helper for ReduceJSLoadModule and ReduceJSStoreModule.
   Node* BuildGetModuleCell(Node* node);
@@ -102,8 +103,8 @@ class V8_EXPORT_PRIVATE JSTypedLowering final
   SimplifiedOperatorBuilder* simplified() const;
 
   JSGraph* jsgraph_;
-  Type* empty_string_type_;
-  Type* pointer_comparable_type_;
+  Type empty_string_type_;
+  Type pointer_comparable_type_;
   TypeCache const& type_cache_;
 };
 

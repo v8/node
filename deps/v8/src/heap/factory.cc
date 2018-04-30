@@ -1579,8 +1579,7 @@ Handle<FixedTypedArrayBase> Factory::NewFixedTypedArray(
   elements->set_base_pointer(*elements, SKIP_WRITE_BARRIER);
   elements->set_external_pointer(
       reinterpret_cast<void*>(
-          ExternalReference::fixed_typed_array_base_data_offset(isolate())
-              .address()),
+          ExternalReference::fixed_typed_array_base_data_offset().address()),
       SKIP_WRITE_BARRIER);
   elements->set_length(static_cast<int>(length));
   if (initialize) memset(elements->DataPtr(), 0, elements->DataSize());
@@ -1686,7 +1685,7 @@ Handle<Map> Factory::NewMap(InstanceType type, int instance_size,
                             ElementsKind elements_kind,
                             int inobject_properties) {
   STATIC_ASSERT(LAST_JS_OBJECT_TYPE == LAST_TYPE);
-  DCHECK_IMPLIES(type >= FIRST_JS_OBJECT_TYPE &&
+  DCHECK_IMPLIES(Map::IsJSObject(type) &&
                      !Map::CanHaveFastTransitionableElementsKind(type),
                  IsDictionaryElementsKind(elements_kind) ||
                      IsTerminalElementsKind(elements_kind));
@@ -1706,6 +1705,7 @@ Map* Factory::InitializeMap(Map* map, InstanceType type, int instance_size,
   map->set_constructor_or_backpointer(*null_value(), SKIP_WRITE_BARRIER);
   map->set_instance_size(instance_size);
   if (map->IsJSObjectMap()) {
+    DCHECK(!isolate()->heap()->InReadOnlySpace(map));
     map->SetInObjectPropertiesStartInWords(instance_size / kPointerSize -
                                            inobject_properties);
     DCHECK_EQ(map->GetInObjectProperties(), inobject_properties);

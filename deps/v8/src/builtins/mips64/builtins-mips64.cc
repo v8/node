@@ -20,7 +20,7 @@ namespace internal {
 
 void Builtins::Generate_Adaptor(MacroAssembler* masm, Address address,
                                 ExitFrameType exit_frame_type) {
-  __ li(s2, Operand(ExternalReference(address, masm->isolate())));
+  __ li(s2, ExternalReference::Create(address));
   if (exit_frame_type == BUILTIN_EXIT) {
     __ Jump(BUILTIN_CODE(masm->isolate(), AdaptorWithBuiltinExitFrame),
             RelocInfo::CODE_TARGET);
@@ -605,8 +605,6 @@ static void Generate_CheckStackOverflow(MacroAssembler* masm, Register argc) {
 
 static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
                                              bool is_construct) {
-  // Called from JSEntryStub::GenerateBody
-
   // ----------- S t a t e -------------
   //  -- a0: new.target
   //  -- a1: function
@@ -621,8 +619,8 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     FrameScope scope(masm, StackFrame::INTERNAL);
 
     // Setup the context (we need to use the caller context from the isolate).
-    ExternalReference context_address(IsolateAddressId::kContextAddress,
-                                      masm->isolate());
+    ExternalReference context_address = ExternalReference::Create(
+        IsolateAddressId::kContextAddress, masm->isolate());
     __ li(cp, Operand(context_address));
     __ Ld(cp, MemOperand(cp));
 
@@ -829,9 +827,7 @@ static void AdvanceBytecodeOffsetOrReturn(MacroAssembler* masm,
   Register bytecode_size_table = scratch1;
   DCHECK(!AreAliased(bytecode_array, bytecode_offset, bytecode_size_table,
                      bytecode));
-  __ li(
-      bytecode_size_table,
-      Operand(ExternalReference::bytecode_size_table_address(masm->isolate())));
+  __ li(bytecode_size_table, ExternalReference::bytecode_size_table_address());
 
   // Check if the bytecode is a Wide or ExtraWide prefix bytecode.
   Label process_bytecode, extra_wide;
@@ -997,8 +993,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   Label do_dispatch;
   __ bind(&do_dispatch);
   __ li(kInterpreterDispatchTableRegister,
-        Operand(ExternalReference::interpreter_dispatch_table_address(
-            masm->isolate())));
+        ExternalReference::interpreter_dispatch_table_address(masm->isolate()));
   __ Daddu(a0, kInterpreterBytecodeArrayRegister,
            kInterpreterBytecodeOffsetRegister);
   __ Lbu(a7, MemOperand(a0));
@@ -1221,7 +1216,7 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
   __ Branch(&trampoline_loaded);
 
   __ bind(&builtin_trampoline);
-  __ li(t0, Operand(BUILTIN_CODE(masm->isolate(), InterpreterEntryTrampoline)));
+  __ li(t0, BUILTIN_CODE(masm->isolate(), InterpreterEntryTrampoline));
 
   __ bind(&trampoline_loaded);
   __ Daddu(ra, t0, Operand(interpreter_entry_return_pc_offset->value() +
@@ -1229,8 +1224,7 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
 
   // Initialize the dispatch table register.
   __ li(kInterpreterDispatchTableRegister,
-        Operand(ExternalReference::interpreter_dispatch_table_address(
-            masm->isolate())));
+        ExternalReference::interpreter_dispatch_table_address(masm->isolate()));
 
   // Get the bytecode array pointer from the frame.
   __ Ld(kInterpreterBytecodeArrayRegister,
@@ -1323,8 +1317,7 @@ static void GetSharedFunctionInfoCode(MacroAssembler* masm, Register sfi_data,
 
   // IsSmi: Is builtin
   __ JumpIfNotSmi(sfi_data, &check_is_bytecode_array);
-  __ li(scratch1,
-        Operand(ExternalReference::builtins_address(masm->isolate())));
+  __ li(scratch1, ExternalReference::builtins_address(masm->isolate()));
   // Avoid untagging the Smi by merging the shift
   STATIC_ASSERT(kPointerSizeLog2 < kSmiShift);
   __ dsrl(sfi_data, sfi_data, kSmiShift - kPointerSizeLog2);
@@ -1460,8 +1453,7 @@ void Builtins::Generate_DeserializeLazy(MacroAssembler* masm) {
     // Load the code object at builtins_table[builtin_id] into scratch1.
 
     __ SmiUntag(scratch1);
-    __ li(scratch0,
-          Operand(ExternalReference::builtins_address(masm->isolate())));
+    __ li(scratch0, ExternalReference::builtins_address(masm->isolate()));
     __ Dlsa(scratch1, scratch0, scratch1, kPointerSizeLog2);
     __ Ld(scratch1, MemOperand(scratch1));
 
@@ -2827,8 +2819,7 @@ void Builtins::Generate_MathPowInternal(MacroAssembler* masm) {
     AllowExternalCallThatCantCauseGC scope(masm);
     __ PrepareCallCFunction(0, 2, scratch2);
     __ MovToFloatParameters(double_base, double_exponent);
-    __ CallCFunction(
-        ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+    __ CallCFunction(ExternalReference::power_double_double_function(), 0, 2);
   }
   __ pop(ra);
   __ MovFromFloatResult(double_result);
@@ -2895,8 +2886,7 @@ void Builtins::Generate_MathPowInternal(MacroAssembler* masm) {
     AllowExternalCallThatCantCauseGC scope(masm);
     __ PrepareCallCFunction(0, 2, scratch);
     __ MovToFloatParameters(double_base, double_exponent);
-    __ CallCFunction(
-        ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+    __ CallCFunction(ExternalReference::power_double_double_function(), 0, 2);
   }
   __ pop(ra);
   __ MovFromFloatResult(double_result);

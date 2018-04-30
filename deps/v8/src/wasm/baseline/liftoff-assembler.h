@@ -419,6 +419,15 @@ class LiftoffAssembler : public TurboAssembler {
                            LiftoffRegister rhs);
   inline void emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
                            LiftoffRegister rhs);
+  inline bool emit_i64_divs(LiftoffRegister dst, LiftoffRegister lhs,
+                            LiftoffRegister rhs, Label* trap_div_by_zero,
+                            Label* trap_div_unrepresentable);
+  inline bool emit_i64_divu(LiftoffRegister dst, LiftoffRegister lhs,
+                            LiftoffRegister rhs, Label* trap_div_by_zero);
+  inline bool emit_i64_rems(LiftoffRegister dst, LiftoffRegister lhs,
+                            LiftoffRegister rhs, Label* trap_rem_by_zero);
+  inline bool emit_i64_remu(LiftoffRegister dst, LiftoffRegister lhs,
+                            LiftoffRegister rhs, Label* trap_rem_by_zero);
   inline void emit_i64_and(LiftoffRegister dst, LiftoffRegister lhs,
                            LiftoffRegister rhs);
   inline void emit_i64_or(LiftoffRegister dst, LiftoffRegister lhs,
@@ -450,6 +459,11 @@ class LiftoffAssembler : public TurboAssembler {
                            DoubleRegister rhs);
   inline void emit_f32_div(DoubleRegister dst, DoubleRegister lhs,
                            DoubleRegister rhs);
+  inline void emit_f32_min(DoubleRegister dst, DoubleRegister lhs,
+                           DoubleRegister rhs);
+  inline void emit_f32_max(DoubleRegister dst, DoubleRegister lhs,
+                           DoubleRegister rhs);
+
   // f32 unops.
   inline void emit_f32_abs(DoubleRegister dst, DoubleRegister src);
   inline void emit_f32_neg(DoubleRegister dst, DoubleRegister src);
@@ -467,6 +481,10 @@ class LiftoffAssembler : public TurboAssembler {
   inline void emit_f64_mul(DoubleRegister dst, DoubleRegister lhs,
                            DoubleRegister rhs);
   inline void emit_f64_div(DoubleRegister dst, DoubleRegister lhs,
+                           DoubleRegister rhs);
+  inline void emit_f64_min(DoubleRegister dst, DoubleRegister lhs,
+                           DoubleRegister rhs);
+  inline void emit_f64_max(DoubleRegister dst, DoubleRegister lhs,
                            DoubleRegister rhs);
 
   // f64 unops.

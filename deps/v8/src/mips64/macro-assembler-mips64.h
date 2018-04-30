@@ -279,8 +279,15 @@ class TurboAssembler : public Assembler {
     li(rd, Operand(j), mode);
   }
   void li(Register dst, Handle<HeapObject> value, LiFlags mode = OPTIMIZE_SIZE);
+  void li(Register dst, ExternalReference value, LiFlags mode = OPTIMIZE_SIZE);
 
-  // Jump, Call, and Ret pseudo instructions implementing inter-working.
+#ifdef V8_EMBEDDED_BUILTINS
+  void LookupConstant(Register destination, Handle<Object> object);
+  void LookupExternalReference(Register destination,
+                               ExternalReference reference);
+#endif  // V8_EMBEDDED_BUILTINS
+
+// Jump, Call, and Ret pseudo instructions implementing inter-working.
 #define COND_ARGS Condition cond = al, Register rs = zero_reg, \
   const Operand& rt = Operand(zero_reg), BranchDelaySlot bd = PROTECT
 
@@ -565,7 +572,7 @@ class TurboAssembler : public Assembler {
   // See comments at the beginning of CEntryStub::Generate.
   inline void PrepareCEntryArgs(int num_args) { li(a0, num_args); }
   inline void PrepareCEntryFunction(const ExternalReference& ref) {
-    li(a1, Operand(ref));
+    li(a1, ref);
   }
 
   void CheckPageFlag(Register object, Register scratch, int mask, Condition cc,
@@ -630,7 +637,7 @@ class TurboAssembler : public Assembler {
 
   // Convert single to unsigned word.
   void Trunc_uw_s(FPURegister fd, FPURegister fs, FPURegister scratch);
-  void Trunc_uw_s(FPURegister fd, Register rs, FPURegister scratch);
+  void Trunc_uw_s(Register rd, FPURegister fs, FPURegister scratch);
 
   // Change endianness
   void ByteSwapSigned(Register dest, Register src, int operand_size);
@@ -814,18 +821,18 @@ class TurboAssembler : public Assembler {
 
   // Convert double to unsigned word.
   void Trunc_uw_d(FPURegister fd, FPURegister fs, FPURegister scratch);
-  void Trunc_uw_d(FPURegister fd, Register rs, FPURegister scratch);
+  void Trunc_uw_d(Register rd, FPURegister fs, FPURegister scratch);
 
   // Convert double to unsigned long.
   void Trunc_ul_d(FPURegister fd, FPURegister fs, FPURegister scratch,
                   Register result = no_reg);
-  void Trunc_ul_d(FPURegister fd, Register rs, FPURegister scratch,
+  void Trunc_ul_d(Register rd, FPURegister fs, FPURegister scratch,
                   Register result = no_reg);
 
   // Convert single to unsigned long.
   void Trunc_ul_s(FPURegister fd, FPURegister fs, FPURegister scratch,
                   Register result = no_reg);
-  void Trunc_ul_s(FPURegister fd, Register rs, FPURegister scratch,
+  void Trunc_ul_s(Register rd, FPURegister fs, FPURegister scratch,
                   Register result = no_reg);
 
   // Round double functions
@@ -864,12 +871,16 @@ class TurboAssembler : public Assembler {
 
   void ResetSpeculationPoisonRegister();
 
+  bool root_array_available() const { return root_array_available_; }
+  void set_root_array_available(bool v) { root_array_available_ = v; }
+
  protected:
   inline Register GetRtAsRegisterHelper(const Operand& rt, Register scratch);
   inline int32_t GetOffset(int32_t offset, Label* L, OffsetSize bits);
 
  private:
   bool has_frame_ = false;
+  bool root_array_available_ = true;
   Isolate* const isolate_;
   // This handle will be patched with the code object on installation.
   Handle<HeapObject> code_object_;

@@ -136,8 +136,6 @@
   'built-ins/TypedArray/prototype/reduceRight/BigInt/callbackfn-detachbuffer': [FAIL],
   'built-ins/TypedArray/prototype/some/callbackfn-detachbuffer': [FAIL],
   'built-ins/TypedArray/prototype/some/BigInt/callbackfn-detachbuffer': [FAIL],
-  'built-ins/TypedArray/prototype/sort/detached-buffer-comparefn': [FAIL],
-  'built-ins/TypedArray/prototype/sort/BigInt/detached-buffer-comparefn': [FAIL],
   # DataView functions should also throw on detached buffers
   'built-ins/ArrayBuffer/prototype/byteLength/detached-buffer': [FAIL],
   'built-ins/DataView/detached-buffer': [FAIL],
@@ -340,9 +338,6 @@
   'language/expressions/object/method-definition/name-param-redecl': [FAIL],
   'language/statements/async-function/early-errors-declaration-formals-body-duplicate': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=5601
-  'intl402/PluralRules/*': ['--harmony-plural-rules'],
-
   # SharedArrayBuffer tests that require flags
   'built-ins/SharedArrayBuffer/*': ['--harmony-sharedarraybuffer'],
   'built-ins/Atomics/*': ['--harmony-sharedarraybuffer'],
@@ -437,17 +432,8 @@
   'language/expressions/call/eval-spread-empty-leading': [FAIL],
   'language/expressions/call/eval-spread-empty-trailing': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=7471
-  'intl402/DateTimeFormat/prototype/format/time-clip-near-time-boundaries': [FAIL],
-  'intl402/DateTimeFormat/prototype/format/time-clip-to-integer': [FAIL],
-  'intl402/DateTimeFormat/prototype/formatToParts/time-clip-near-time-boundaries': [FAIL],
-  'intl402/DateTimeFormat/prototype/formatToParts/time-clip-to-integer': [FAIL],
-
   # https://bugs.chromium.org/p/v8/issues/detail?id=7472
   'intl402/NumberFormat/currency-digits': [FAIL],
-
-  # https://bugs.chromium.org/p/v8/issues/detail?id=7473
-  'intl402/language-tags-canonicalized': [FAIL],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=7474
   'intl402/NumberFormat/prototype/format/format-fraction-digits': [FAIL],
@@ -470,10 +456,9 @@
   # https://bugs.chromium.org/p/v8/issues/detail?id=7483
   'annexB/built-ins/Function/createdynfn-html-close-comment-params': [FAIL],
 
-  # https://bugs.chromium.org/p/v8/issues/detail?id=5012
+  # https://bugs.chromium.org/p/v8/issues/detail?id=7669
   'intl402/Intl/getCanonicalLocales/canonicalized-tags': [FAIL],
   'intl402/Intl/getCanonicalLocales/preferred-grandfathered': [FAIL],
-  'intl402/Intl/getCanonicalLocales/preferred-variant': [FAIL],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=7513
   'built-ins/TypedArrays/ctors/buffer-arg/buffer-arg-bufferbyteoffset-throws-from-modulo-element-size': [FAIL],

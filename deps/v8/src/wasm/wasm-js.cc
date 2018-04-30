@@ -13,6 +13,7 @@
 #include "src/heap/factory.h"
 #include "src/isolate.h"
 #include "src/objects-inl.h"
+#include "src/objects/templates.h"
 #include "src/parsing/parse-info.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/wasm/wasm-engine.h"
@@ -329,16 +330,22 @@ MaybeLocal<Value> WebAssemblyInstantiateImpl(Isolate* isolate,
   i::MaybeHandle<i::Object> instance_object;
   {
     ScheduledErrorThrower thrower(i_isolate, "WebAssembly Instantiation");
+
+    // TODO(ahaas): These checks on the module should not be necessary here They
+    // are just a workaround for https://crbug.com/837417.
+    i::Handle<i::Object> module_obj = Utils::OpenHandle(*module);
+    if (!module_obj->IsWasmModuleObject()) {
+      thrower.TypeError("Argument 0 must be a WebAssembly.Module object");
+      return {};
+    }
+
     i::MaybeHandle<i::JSReceiver> maybe_imports =
         GetValueAsImports(ffi, &thrower);
     if (thrower.error()) return {};
 
-    i::Handle<i::WasmModuleObject> module_obj =
-        i::Handle<i::WasmModuleObject>::cast(
-            Utils::OpenHandle(Object::Cast(*module)));
     instance_object = i_isolate->wasm_engine()->SyncInstantiate(
-        i_isolate, &thrower, module_obj, maybe_imports,
-        i::MaybeHandle<i::JSArrayBuffer>());
+        i_isolate, &thrower, i::Handle<i::WasmModuleObject>::cast(module_obj),
+        maybe_imports, i::MaybeHandle<i::JSArrayBuffer>());
   }
 
   DCHECK_EQ(instance_object.is_null(), i_isolate->has_scheduled_exception());
@@ -686,10 +693,6 @@ void WebAssemblyGlobal(const v8::FunctionCallbackInfo<v8::Value>& args) {
   Local<Context> context = isolate->GetCurrentContext();
   Local<v8::Object> descriptor = Local<Object>::Cast(args[0]);
 
-  // The descriptor's 'value'.
-  v8::MaybeLocal<v8::Value> maybe_value =
-      descriptor->Get(context, v8_str(isolate, "value"));
-
   // The descriptor's 'mutable'.
   bool is_mutable = false;
   {
@@ -738,38 +741,43 @@ void WebAssemblyGlobal(const v8::FunctionCallbackInfo<v8::Value>& args) {
     return;
   }
 
-  // Convert value to a WebAssembly value.
-  v8::Local<v8::Value> value;
-  if (maybe_value.ToLocal(&value)) {
-    switch (type) {
-      case i::wasm::kWasmI32: {
-        int32_t i32_value = 0;
+  // Convert value to a WebAssembly value, the default value is 0.
+  Local<v8::Value> value = Local<Value>::Cast(args[1]);
+  switch (type) {
+    case i::wasm::kWasmI32: {
+      int32_t i32_value = 0;
+      if (!value->IsUndefined()) {
         v8::Local<v8::Int32> int32_value;
         if (!value->ToInt32(context).ToLocal(&int32_value)) return;
         if (!int32_value->Int32Value(context).To(&i32_value)) return;
-        global_obj->SetI32(i32_value);
-        break;
       }
-      case i::wasm::kWasmF32: {
-        double f64_value = 0;
-        v8::Local<v8::Number> number_value;
-        if (!value->ToNumber(context).ToLocal(&number_value)) return;
-        if (!number_value->NumberValue(context).To(&f64_value)) return;
-        float f32_value = static_cast<float>(f64_value);
-        global_obj->SetF32(f32_value);
-        break;
-      }
-      case i::wasm::kWasmF64: {
-        double f64_value = 0;
-        v8::Local<v8::Number> number_value;
-        if (!value->ToNumber(context).ToLocal(&number_value)) return;
-        if (!number_value->NumberValue(context).To(&f64_value)) return;
-        global_obj->SetF64(f64_value);
-        break;
-      }
-      default:
-        UNREACHABLE();
+      global_obj->SetI32(i32_value);
+      break;
     }
+    case i::wasm::kWasmF32: {
+      float f32_value = 0;
+      if (!value->IsUndefined()) {
+        double f64_value = 0;
+        v8::Local<v8::Number> number_value;
+        if (!value->ToNumber(context).ToLocal(&number_value)) return;
+        if (!number_value->NumberValue(context).To(&f64_value)) return;
+        f32_value = static_cast<float>(f64_value);
+      }
+      global_obj->SetF32(f32_value);
+      break;
+    }
+    case i::wasm::kWasmF64: {
+      double f64_value = 0;
+      if (!value->IsUndefined()) {
+        v8::Local<v8::Number> number_value;
+        if (!value->ToNumber(context).ToLocal(&number_value)) return;
+        if (!number_value->NumberValue(context).To(&f64_value)) return;
+      }
+      global_obj->SetF64(f64_value);
+      break;
+    }
+    default:
+      UNREACHABLE();
   }
 
   i::Handle<i::JSObject> global_js_object(global_obj);
@@ -1025,6 +1033,11 @@ void WebAssemblyGlobalSetValue(
   ScheduledErrorThrower thrower(i_isolate, "set WebAssembly.Global.value");
   EXTRACT_THIS(receiver, WasmGlobalObject);
 
+  if (!receiver->is_mutable()) {
+    thrower.TypeError("Can't set the value of an immutable global.");
+    return;
+  }
+
   switch (receiver->type()) {
     case i::wasm::kWasmI32: {
       int32_t i32_value = 0;
@@ -1117,6 +1130,7 @@ void InstallGetterSetter(Isolate* isolate, Handle<JSObject> object,
       CreateFunc(isolate, GetterName(isolate, name), getter);
   Handle<JSFunction> setter_func =
       CreateFunc(isolate, SetterName(isolate, name), setter);
+  setter_func->shared()->set_length(1);
 
   v8::PropertyAttribute attributes =
       static_cast<v8::PropertyAttribute>(v8::DontEnum);

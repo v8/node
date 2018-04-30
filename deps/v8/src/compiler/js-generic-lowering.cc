@@ -122,7 +122,7 @@ void JSGenericLowering::ReplaceWithRuntimeCall(Node* node,
   int nargs = (nargs_override < 0) ? fun->nargs : nargs_override;
   auto call_descriptor =
       Linkage::GetRuntimeCallDescriptor(zone(), f, nargs, properties, flags);
-  Node* ref = jsgraph()->ExternalConstant(ExternalReference(f, isolate()));
+  Node* ref = jsgraph()->ExternalConstant(ExternalReference::Create(f));
   Node* arity = jsgraph()->Int32Constant(nargs);
   node->InsertInput(zone(), 0, jsgraph()->CEntryStubConstant(fun->result_size));
   node->InsertInput(zone(), nargs + 1, ref);
@@ -397,6 +397,12 @@ void JSGenericLowering::LowerJSCreateObject(Node* node) {
   CallDescriptor::Flags flags = FrameStateFlagForCall(node);
   Callable callable = Builtins::CallableFor(
       isolate(), Builtins::kCreateObjectWithoutProperties);
+  ReplaceWithStubCall(node, callable, flags);
+}
+
+void JSGenericLowering::LowerJSParseInt(Node* node) {
+  CallDescriptor::Flags flags = FrameStateFlagForCall(node);
+  Callable callable = Builtins::CallableFor(isolate(), Builtins::kParseInt);
   ReplaceWithStubCall(node, callable, flags);
 }
 

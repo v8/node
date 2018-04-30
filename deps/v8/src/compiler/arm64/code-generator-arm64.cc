@@ -443,18 +443,16 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen,
     __ Cbnz(i.TempRegister32(2), &binop);                                    \
   } while (0)
 
-#define ASSEMBLE_IEEE754_BINOP(name)                                       \
-  do {                                                                     \
-    FrameScope scope(tasm(), StackFrame::MANUAL);                          \
-    __ CallCFunction(                                                      \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 0, 2); \
+#define ASSEMBLE_IEEE754_BINOP(name)                                        \
+  do {                                                                      \
+    FrameScope scope(tasm(), StackFrame::MANUAL);                           \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 0, 2); \
   } while (0)
 
-#define ASSEMBLE_IEEE754_UNOP(name)                                        \
-  do {                                                                     \
-    FrameScope scope(tasm(), StackFrame::MANUAL);                          \
-    __ CallCFunction(                                                      \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 0, 1); \
+#define ASSEMBLE_IEEE754_UNOP(name)                                         \
+  do {                                                                      \
+    FrameScope scope(tasm(), StackFrame::MANUAL);                           \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 0, 1); \
   } while (0)
 
 void CodeGenerator::AssembleDeconstructFrame() {
@@ -563,6 +561,9 @@ void CodeGenerator::BailoutIfDeoptimized() {
          FieldMemOperand(scratch, CodeDataContainer::kKindSpecificFlagsOffset));
   Label not_deoptimized;
   __ Tbz(scratch, Code::kMarkedForDeoptimizationBit, &not_deoptimized);
+  // Ensure we're not serializing (otherwise we'd need to use an indirection to
+  // access the builtin below).
+  DCHECK(!isolate()->ShouldLoadConstantsFromRootList());
   Handle<Code> code = isolate()->builtins()->builtin_handle(
       Builtins::kCompileLazyDeoptimizedCode);
   __ Jump(code, RelocInfo::CODE_TARGET);
@@ -837,7 +838,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       break;
     case kArchRootsPointer:
-      __ mov(i.OutputRegister(), root);
+      __ mov(i.OutputRegister(), kRootRegister);
       break;
     case kArchTruncateDoubleToI:
       __ TruncateDoubleToI(isolate(), zone(), i.OutputRegister(),
@@ -1372,8 +1373,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       DCHECK(d1.is(i.InputDoubleRegister(1)));
       DCHECK(d0.is(i.OutputDoubleRegister()));
       // TODO(dcarney): make sure this saves all relevant registers.
-      __ CallCFunction(
-          ExternalReference::mod_two_doubles_operation(__ isolate()), 0, 2);
+      __ CallCFunction(ExternalReference::mod_two_doubles_operation(), 0, 2);
       break;
     }
     case kArm64Float32Max: {
@@ -1586,7 +1586,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ Dsb(FullSystem, BarrierAll);
       __ Isb();
       break;
-    case kArchPoisonOnSpeculationWord:
+    case kArchWordPoisonOnSpeculation:
       __ And(i.OutputRegister(0), i.InputRegister(0),
              Operand(kSpeculationPoisonRegister));
       break;
@@ -2284,9 +2284,8 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
       if (trap_id == Builtins::builtin_count) {
         // We cannot test calls to the runtime in cctest/test-run-wasm.
         // Therefore we emit a call to C here instead of a call to the runtime.
-        __ CallCFunction(ExternalReference::wasm_call_trap_callback_for_testing(
-                             __ isolate()),
-                         0);
+        __ CallCFunction(
+            ExternalReference::wasm_call_trap_callback_for_testing(), 0);
         __ LeaveFrame(StackFrame::WASM_COMPILED);
         auto call_descriptor = gen_->linkage()->GetIncomingDescriptor();
         int pop_count =

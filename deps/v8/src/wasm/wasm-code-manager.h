@@ -156,7 +156,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
            Maybe<uint32_t> index, Kind kind, size_t constant_pool_offset,
            uint32_t stack_slots, size_t safepoint_table_offset,
            size_t handler_table_offset,
-           std::shared_ptr<ProtectedInstructions> protected_instructions,
+           std::unique_ptr<ProtectedInstructions> protected_instructions,
            Tier tier)
       : instructions_(instructions),
         reloc_info_(std::move(reloc_info)),
@@ -201,7 +201,7 @@ class V8_EXPORT_PRIVATE WasmCode final {
   size_t safepoint_table_offset_ = 0;
   size_t handler_table_offset_ = 0;
   intptr_t trap_handler_index_ = -1;
-  std::shared_ptr<ProtectedInstructions> protected_instructions_;
+  std::unique_ptr<ProtectedInstructions> protected_instructions_;
   Tier tier_;
 
   DISALLOW_COPY_AND_ASSIGN(WasmCode);
@@ -217,8 +217,6 @@ const char* GetWasmCodeKindAsString(WasmCode::Kind);
 // WasmCodeManager::Commit.
 class V8_EXPORT_PRIVATE NativeModule final {
  public:
-  std::unique_ptr<NativeModule> Clone();
-
   WasmCode* AddCode(const CodeDesc& desc, uint32_t frame_count, uint32_t index,
                     size_t safepoint_table_offset, size_t handler_table_offset,
                     std::unique_ptr<ProtectedInstructions>,
@@ -247,10 +245,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   WasmCode* GetCode(uint32_t index) const;
   void SetCode(uint32_t index, WasmCode* wasm_code);
 
-  // Clones higher tier code from a {source_native_module} to
-  // this native module.
-  void CloneHigherTierCodeFrom(const NativeModule* source_native_module);
-
   // Register/release the protected instructions in all code objects with the
   // global trap handler for this process.
   void UnpackAndRegisterProtectedInstructions();
@@ -269,10 +263,10 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
   CompilationState* compilation_state() { return compilation_state_.get(); }
 
-  // TODO(mstarzinger): The link to the {compiled_module} is deprecated and all
-  // uses should vanish to make {NativeModule} independent of the Isolate.
-  WasmCompiledModule* compiled_module() const;
-  void SetCompiledModule(Handle<WasmCompiledModule>);
+  // TODO(mstarzinger): The link to the {shared_module_data} is deprecated and
+  // all uses should vanish to make {NativeModule} independent of the Isolate.
+  WasmSharedModuleData* shared_module_data() const;
+  void SetSharedModuleData(Handle<WasmSharedModuleData>);
 
   uint32_t num_imported_functions() const { return num_imported_functions_; }
 
@@ -291,7 +285,6 @@ class V8_EXPORT_PRIVATE NativeModule final {
   friend class NativeModuleDeserializer;
   friend class NativeModuleModificationScope;
 
-  class CloneCodeHelper;
   struct AddressHasher {
     size_t operator()(const Address& addr) const {
       return std::hash<Address>()(addr);
@@ -318,11 +311,9 @@ class V8_EXPORT_PRIVATE NativeModule final {
                          WasmCode::Kind kind, size_t constant_pool_offset,
                          uint32_t stack_slots, size_t safepoint_table_offset,
                          size_t handler_table_offset,
-                         std::shared_ptr<ProtectedInstructions>, WasmCode::Tier,
+                         std::unique_ptr<ProtectedInstructions>, WasmCode::Tier,
                          WasmCode::FlushICache);
   WasmCode* CloneCode(const WasmCode*, WasmCode::FlushICache);
-  void CloneTrampolinesAndStubs(const NativeModule* other,
-                                WasmCode::FlushICache);
   WasmCode* Lookup(Address);
   Address GetLocalAddressFor(Handle<Code>);
   Address CreateTrampolineTo(Handle<Code>);
@@ -341,10 +332,10 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
   std::unique_ptr<CompilationState, CompilationStateDeleter> compilation_state_;
 
-  // A phantom reference to the {WasmCompiledModule}. It is intentionally not
-  // typed {Handle<WasmCompiledModule>} because this location will be cleared
+  // A phantom reference to the {WasmSharedModuleData}. It is intentionally not
+  // typed {Handle<WasmSharedModuleData>} because this location will be cleared
   // when the phantom reference is cleared.
-  WasmCompiledModule** compiled_module_ = nullptr;
+  WasmSharedModuleData** shared_module_data_ = nullptr;
 
   DisjointAllocationPool free_memory_;
   DisjointAllocationPool allocated_memory_;

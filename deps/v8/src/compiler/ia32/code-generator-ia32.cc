@@ -345,35 +345,33 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen,
     }                                                                 \
   } while (0)
 
-#define ASSEMBLE_IEEE754_BINOP(name)                                    \
-  do {                                                                  \
-    /* Pass two doubles as arguments on the stack. */                   \
-    __ PrepareCallCFunction(4, eax);                                    \
-    __ movsd(Operand(esp, 0 * kDoubleSize), i.InputDoubleRegister(0));  \
-    __ movsd(Operand(esp, 1 * kDoubleSize), i.InputDoubleRegister(1));  \
-    __ CallCFunction(                                                   \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 4); \
-    /* Return value is in st(0) on ia32. */                             \
-    /* Store it into the result register. */                            \
-    __ sub(esp, Immediate(kDoubleSize));                                \
-    __ fstp_d(Operand(esp, 0));                                         \
-    __ movsd(i.OutputDoubleRegister(), Operand(esp, 0));                \
-    __ add(esp, Immediate(kDoubleSize));                                \
+#define ASSEMBLE_IEEE754_BINOP(name)                                     \
+  do {                                                                   \
+    /* Pass two doubles as arguments on the stack. */                    \
+    __ PrepareCallCFunction(4, eax);                                     \
+    __ movsd(Operand(esp, 0 * kDoubleSize), i.InputDoubleRegister(0));   \
+    __ movsd(Operand(esp, 1 * kDoubleSize), i.InputDoubleRegister(1));   \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 4); \
+    /* Return value is in st(0) on ia32. */                              \
+    /* Store it into the result register. */                             \
+    __ sub(esp, Immediate(kDoubleSize));                                 \
+    __ fstp_d(Operand(esp, 0));                                          \
+    __ movsd(i.OutputDoubleRegister(), Operand(esp, 0));                 \
+    __ add(esp, Immediate(kDoubleSize));                                 \
   } while (false)
 
-#define ASSEMBLE_IEEE754_UNOP(name)                                     \
-  do {                                                                  \
-    /* Pass one double as argument on the stack. */                     \
-    __ PrepareCallCFunction(2, eax);                                    \
-    __ movsd(Operand(esp, 0 * kDoubleSize), i.InputDoubleRegister(0));  \
-    __ CallCFunction(                                                   \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 2); \
-    /* Return value is in st(0) on ia32. */                             \
-    /* Store it into the result register. */                            \
-    __ sub(esp, Immediate(kDoubleSize));                                \
-    __ fstp_d(Operand(esp, 0));                                         \
-    __ movsd(i.OutputDoubleRegister(), Operand(esp, 0));                \
-    __ add(esp, Immediate(kDoubleSize));                                \
+#define ASSEMBLE_IEEE754_UNOP(name)                                      \
+  do {                                                                   \
+    /* Pass one double as argument on the stack. */                      \
+    __ PrepareCallCFunction(2, eax);                                     \
+    __ movsd(Operand(esp, 0 * kDoubleSize), i.InputDoubleRegister(0));   \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 2); \
+    /* Return value is in st(0) on ia32. */                              \
+    /* Store it into the result register. */                             \
+    __ sub(esp, Immediate(kDoubleSize));                                 \
+    __ fstp_d(Operand(esp, 0));                                          \
+    __ movsd(i.OutputDoubleRegister(), Operand(esp, 0));                 \
+    __ add(esp, Immediate(kDoubleSize));                                 \
   } while (false)
 
 #define ASSEMBLE_BINOP(asm_instr)                                     \
@@ -547,6 +545,9 @@ void CodeGenerator::BailoutIfDeoptimized() {
   __ mov(ebx, Operand(kJavaScriptCallCodeStartRegister, offset));
   __ test(FieldOperand(ebx, CodeDataContainer::kKindSpecificFlagsOffset),
           Immediate(1 << Code::kMarkedForDeoptimizationBit));
+  // Ensure we're not serializing (otherwise we'd need to use an indirection to
+  // access the builtin below).
+  DCHECK(!isolate()->ShouldLoadConstantsFromRootList());
   Handle<Code> code = isolate()->builtins()->builtin_handle(
       Builtins::kCompileLazyDeoptimizedCode);
   __ j(not_zero, code, RelocInfo::CODE_TARGET);
@@ -1115,7 +1116,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kIA32Popcnt:
       __ Popcnt(i.OutputRegister(), i.InputOperand(0));
       break;
-    case kArchPoisonOnSpeculationWord:
+    case kArchWordPoisonOnSpeculation:
       DCHECK_EQ(i.OutputRegister(), i.InputRegister(0));
       __ and_(i.InputRegister(0), kSpeculationPoisonRegister);
       break;
@@ -2264,6 +2265,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                 i.InputInt8(1));
       break;
     }
+    case kSSEI16x8SConvertI32x4: {
+      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      __ packssdw(i.OutputSimd128Register(), i.InputOperand(1));
+      break;
+    }
+    case kAVXI16x8SConvertI32x4: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      __ vpackssdw(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                   i.InputOperand(1));
+      break;
+    }
     case kSSEI16x8Add: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
       __ paddw(i.OutputSimd128Register(), i.InputOperand(1));
@@ -2418,6 +2430,29 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                 i.InputInt8(1));
       break;
     }
+    case kSSEI16x8UConvertI32x4: {
+      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      XMMRegister dst = i.OutputSimd128Register();
+      // Change negative lanes to 0x7FFFFFFF
+      __ pcmpeqd(kScratchDoubleReg, kScratchDoubleReg);
+      __ psrld(kScratchDoubleReg, 1);
+      __ pminud(dst, kScratchDoubleReg);
+      __ pminud(kScratchDoubleReg, i.InputOperand(1));
+      __ packusdw(dst, kScratchDoubleReg);
+      break;
+    }
+    case kAVXI16x8UConvertI32x4: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      XMMRegister dst = i.OutputSimd128Register();
+      // Change negative lanes to 0x7FFFFFFF
+      __ vpcmpeqd(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
+      __ vpsrld(kScratchDoubleReg, kScratchDoubleReg, 1);
+      __ vpminud(dst, kScratchDoubleReg, i.InputSimd128Register(0));
+      __ vpminud(kScratchDoubleReg, kScratchDoubleReg, i.InputOperand(1));
+      __ vpackusdw(dst, dst, kScratchDoubleReg);
+      break;
+    }
     case kSSEI16x8AddSaturateU: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
       __ paddusw(i.OutputSimd128Register(), i.InputOperand(1));
@@ -2526,6 +2561,17 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       CpuFeatureScope avx_scope(tasm(), AVX);
       __ vpinsrb(i.OutputSimd128Register(), i.InputSimd128Register(0),
                  i.InputOperand(2), i.InputInt8(1));
+      break;
+    }
+    case kSSEI8x16SConvertI16x8: {
+      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      __ packsswb(i.OutputSimd128Register(), i.InputOperand(1));
+      break;
+    }
+    case kAVXI8x16SConvertI16x8: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      __ vpacksswb(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                   i.InputOperand(1));
       break;
     }
     case kIA32I8x16Neg: {
@@ -2863,6 +2909,29 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       Operand src2 = i.InputOperand(1);
       __ vpminsb(kScratchDoubleReg, src1, src2);
       __ vpcmpeqb(i.OutputSimd128Register(), kScratchDoubleReg, src2);
+      break;
+    }
+    case kSSEI8x16UConvertI16x8: {
+      DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
+      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      XMMRegister dst = i.OutputSimd128Register();
+      // Change negative lanes to 0x7FFF
+      __ pcmpeqw(kScratchDoubleReg, kScratchDoubleReg);
+      __ psrlw(kScratchDoubleReg, 1);
+      __ pminuw(dst, kScratchDoubleReg);
+      __ pminuw(kScratchDoubleReg, i.InputOperand(1));
+      __ packuswb(dst, kScratchDoubleReg);
+      break;
+    }
+    case kAVXI8x16UConvertI16x8: {
+      CpuFeatureScope avx_scope(tasm(), AVX);
+      XMMRegister dst = i.OutputSimd128Register();
+      // Change negative lanes to 0x7FFF
+      __ vpcmpeqw(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
+      __ vpsrlw(kScratchDoubleReg, kScratchDoubleReg, 1);
+      __ vpminuw(dst, kScratchDoubleReg, i.InputSimd128Register(0));
+      __ vpminuw(kScratchDoubleReg, kScratchDoubleReg, i.InputOperand(1));
+      __ vpackuswb(dst, dst, kScratchDoubleReg);
       break;
     }
     case kSSEI8x16AddSaturateU: {
@@ -3363,9 +3432,8 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
         // We cannot test calls to the runtime in cctest/test-run-wasm.
         // Therefore we emit a call to C here instead of a call to the runtime.
         __ PrepareCallCFunction(0, esi);
-        __ CallCFunction(ExternalReference::wasm_call_trap_callback_for_testing(
-                             __ isolate()),
-                         0);
+        __ CallCFunction(
+            ExternalReference::wasm_call_trap_callback_for_testing(), 0);
         __ LeaveFrame(StackFrame::WASM_COMPILED);
         auto call_descriptor = gen_->linkage()->GetIncomingDescriptor();
         size_t pop_size = call_descriptor->StackParameterCount() * kPointerSize;

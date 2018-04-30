@@ -9,7 +9,6 @@
 #include "src/base/iterator.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/debug/debug-interface.h"
-#include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/trap-handler/trap-handler.h"
@@ -18,6 +17,7 @@
 #include "src/wasm/wasm-code-manager.h"
 #include "src/wasm/wasm-code-specialization.h"
 #include "src/wasm/wasm-engine.h"
+#include "src/wasm/wasm-limits.h"
 #include "src/wasm/wasm-memory.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
@@ -61,10 +61,14 @@ class WasmInstanceNativeAllocations {
 
   // Allocates initial native storage for a given instance.
   WasmInstanceNativeAllocations(Handle<WasmInstanceObject> instance,
-                                size_t num_imported_functions) {
+                                size_t num_imported_functions,
+                                size_t num_imported_mutable_globals) {
     SET(instance, imported_function_targets,
         reinterpret_cast<Address*>(
             calloc(num_imported_functions, sizeof(Address))));
+    SET(instance, imported_mutable_globals,
+        reinterpret_cast<Address*>(
+            calloc(num_imported_mutable_globals, sizeof(Address))));
   }
   ~WasmInstanceNativeAllocations() { free(); }
   // Frees natively-allocated storage.
@@ -72,9 +76,11 @@ class WasmInstanceNativeAllocations {
     ::free(indirect_function_table_sig_ids_);
     ::free(indirect_function_table_targets_);
     ::free(imported_function_targets_);
+    ::free(imported_mutable_globals_);
     indirect_function_table_sig_ids_ = nullptr;
     indirect_function_table_targets_ = nullptr;
     imported_function_targets_ = nullptr;
+    imported_mutable_globals_ = nullptr;
   }
   // Resizes the indirect function table.
   void resize_indirect_function_table(Isolate* isolate,
@@ -111,12 +117,13 @@ class WasmInstanceNativeAllocations {
 
     instance->set_indirect_function_table_instances(*new_instances);
     for (uint32_t j = old_size; j < new_size; j++) {
-      IndirectFunctionTableEntry(*instance, static_cast<int>(j)).clear();
+      IndirectFunctionTableEntry(instance, static_cast<int>(j)).clear();
     }
   }
   uint32_t* indirect_function_table_sig_ids_ = nullptr;
   Address* indirect_function_table_targets_ = nullptr;
   Address* imported_function_targets_ = nullptr;
+  Address* imported_mutable_globals_ = nullptr;
 #undef SET
 };
 
@@ -124,7 +131,7 @@ WasmInstanceNativeAllocations* GetNativeAllocations(
     WasmInstanceObject* instance) {
   return reinterpret_cast<Managed<WasmInstanceNativeAllocations>*>(
              instance->managed_native_allocations())
-      ->get();
+      ->raw();
 }
 
 // An iterator that returns first the module itself, then all modules linked via
@@ -353,7 +360,7 @@ void WasmTableObject::Set(Isolate* isolate, Handle<WasmTableObject> table,
                           int32_t table_index, Handle<JSFunction> function) {
   Handle<FixedArray> array(table->functions(), isolate);
   if (function.is_null()) {
-    ClearDispatchTables(table, table_index);  // Degenerate case of null value.
+    ClearDispatchTables(isolate, table, table_index);  // Degenerate case.
     array->set(table_index, isolate->heap()->null_value());
     return;
   }
@@ -378,31 +385,34 @@ void WasmTableObject::UpdateDispatchTables(
     wasm::WasmCode* wasm_code) {
   // We simply need to update the IFTs for each instance that imports
   // this table.
-  DisallowHeapAllocation no_gc;
-  FixedArray* dispatch_tables = table->dispatch_tables();
+  Handle<FixedArray> dispatch_tables(table->dispatch_tables(), isolate);
   DCHECK_EQ(0, dispatch_tables->length() % kDispatchTableNumElements);
 
   for (int i = 0; i < dispatch_tables->length();
        i += kDispatchTableNumElements) {
+    Handle<WasmInstanceObject> to_instance(
+        WasmInstanceObject::cast(
+            dispatch_tables->get(i + kDispatchTableInstanceOffset)),
+        isolate);
     // Note that {SignatureMap::Find} may return {-1} if the signature is
     // not found; it will simply never match any check.
-    WasmInstanceObject* to_instance = WasmInstanceObject::cast(
-        dispatch_tables->get(i + kDispatchTableInstanceOffset));
     auto sig_id = to_instance->module()->signature_map.Find(sig);
     IndirectFunctionTableEntry(to_instance, table_index)
         .set(sig_id, *from_instance, wasm_code);
   }
 }
 
-void WasmTableObject::ClearDispatchTables(Handle<WasmTableObject> table,
+void WasmTableObject::ClearDispatchTables(Isolate* isolate,
+                                          Handle<WasmTableObject> table,
                                           int index) {
-  DisallowHeapAllocation no_gc;
-  FixedArray* dispatch_tables = table->dispatch_tables();
+  Handle<FixedArray> dispatch_tables(table->dispatch_tables(), isolate);
   DCHECK_EQ(0, dispatch_tables->length() % kDispatchTableNumElements);
   for (int i = 0; i < dispatch_tables->length();
        i += kDispatchTableNumElements) {
-    WasmInstanceObject* target_instance = WasmInstanceObject::cast(
-        dispatch_tables->get(i + kDispatchTableInstanceOffset));
+    Handle<WasmInstanceObject> target_instance(
+        WasmInstanceObject::cast(
+            dispatch_tables->get(i + kDispatchTableInstanceOffset)),
+        isolate);
     DCHECK_LT(index, target_instance->indirect_function_table_size());
     IndirectFunctionTableEntry(target_instance, index).clear();
   }
@@ -637,7 +647,7 @@ void IndirectFunctionTableEntry::clear() {
 void IndirectFunctionTableEntry::set(int sig_id, WasmInstanceObject* instance,
                                      const wasm::WasmCode* wasm_code) {
   TRACE_IFT("IFT entry %p[%d] = {sig_id=%d, instance=%p, target=%p}\n",
-            instance_, index_, sig_id, instance,
+            *instance_, index_, sig_id, instance,
             wasm_code->instructions().start());
   instance_->indirect_function_table_sig_ids()[index_] = sig_id;
   instance_->indirect_function_table_targets()[index_] =
@@ -660,10 +670,10 @@ Address IndirectFunctionTableEntry::target() {
 
 void ImportedFunctionEntry::set(JSReceiver* callable,
                                 const wasm::WasmCode* wasm_to_js_wrapper) {
-  TRACE_IFT("Import callable %p[%d] = {callable=%p, target=%p}\n", instance_,
+  TRACE_IFT("Import callable %p[%d] = {callable=%p, target=%p}\n", *instance_,
             index_, callable, wasm_to_js_wrapper->instructions().start());
   DCHECK_EQ(wasm::WasmCode::kWasmToJsWrapper, wasm_to_js_wrapper->kind());
-  instance_->imported_function_instances()->set(index_, instance_);
+  instance_->imported_function_instances()->set(index_, *instance_);
   instance_->imported_function_callables()->set(index_, callable);
   instance_->imported_function_targets()[index_] =
       wasm_to_js_wrapper->instruction_start();
@@ -671,7 +681,7 @@ void ImportedFunctionEntry::set(JSReceiver* callable,
 
 void ImportedFunctionEntry::set(WasmInstanceObject* instance,
                                 const wasm::WasmCode* wasm_code) {
-  TRACE_IFT("Import WASM %p[%d] = {instance=%p, target=%p}\n", instance_,
+  TRACE_IFT("Import WASM %p[%d] = {instance=%p, target=%p}\n", *instance_,
             index_, instance, wasm_code->instructions().start());
   instance_->imported_function_instances()->set(index_, instance);
   instance_->imported_function_callables()->set(
@@ -750,8 +760,10 @@ Handle<WasmInstanceObject> WasmInstanceObject::New(
   // Initialize the imported function arrays.
   auto num_imported_functions =
       compiled_module->shared()->module()->num_imported_functions;
+  auto num_imported_mutable_globals =
+      compiled_module->shared()->module()->num_imported_mutable_globals;
   auto native_allocations = Managed<WasmInstanceNativeAllocations>::Allocate(
-      isolate, instance, num_imported_functions);
+      isolate, instance, num_imported_functions, num_imported_mutable_globals);
   instance->set_managed_native_allocations(*native_allocations);
 
   Handle<FixedArray> imported_function_instances =
@@ -965,22 +977,16 @@ wasm::WasmCode* WasmExportedFunction::GetWasmCode() {
 }
 
 WasmModule* WasmSharedModuleData::module() const {
-  // We populate the kModuleWrapper field with a Foreign holding the
-  // address to the address of a WasmModule. This is because we can
-  // handle both cases when the WasmModule's lifetime is managed through
-  // a Managed<WasmModule> object, as well as cases when it's managed
-  // by the embedder. CcTests fall into the latter case.
-  return *(reinterpret_cast<WasmModule**>(
-      Foreign::cast(module_wrapper())->foreign_address()));
+  return Managed<WasmModule>::cast(managed_module())->raw();
 }
 
 Handle<WasmSharedModuleData> WasmSharedModuleData::New(
-    Isolate* isolate, Handle<Foreign> module_wrapper,
+    Isolate* isolate, Handle<Foreign> managed_module,
     Handle<SeqOneByteString> module_bytes, Handle<Script> script,
     Handle<ByteArray> asm_js_offset_table) {
   Handle<WasmSharedModuleData> data = Handle<WasmSharedModuleData>::cast(
       isolate->factory()->NewStruct(WASM_SHARED_MODULE_DATA_TYPE, TENURED));
-  data->set_module_wrapper(*module_wrapper);
+  data->set_managed_module(*managed_module);
   if (!module_bytes.is_null()) {
     data->set_module_bytes(*module_bytes);
   }
@@ -1368,15 +1374,13 @@ Handle<WasmCompiledModule> WasmCompiledModule::New(
     compiled_module->set_export_wrappers(*export_wrappers);
   }
   compiled_module->set_weak_owning_instance(isolate->heap()->empty_weak_cell());
-  wasm::NativeModule* native_module = nullptr;
   {
-    std::unique_ptr<wasm::NativeModule> native_module_ptr =
+    auto native_module =
         isolate->wasm_engine()->code_manager()->NewNativeModule(*module, env);
-    native_module = native_module_ptr.release();
     Handle<Foreign> native_module_wrapper =
-        Managed<wasm::NativeModule>::From(isolate, native_module);
+        Managed<wasm::NativeModule>::FromUniquePtr(isolate,
+                                                   std::move(native_module));
     compiled_module->set_native_module(*native_module_wrapper);
-    compiled_module->GetNativeModule()->SetCompiledModule(compiled_module);
   }
 
   // TODO(mtrofin): copy the rest of the specialization parameters over.
@@ -1401,21 +1405,20 @@ Handle<WasmCompiledModule> WasmCompiledModule::Clone(
       handle(module->export_wrappers(), isolate));
   ret->set_export_wrappers(*export_copy);
 
-  std::unique_ptr<wasm::NativeModule> native_module =
-      module->GetNativeModule()->Clone();
   // construct the wrapper in 2 steps, because its construction may trigger GC,
   // which would shift the this pointer in set_native_module.
   Handle<Foreign> native_module_wrapper =
-      Managed<wasm::NativeModule>::From(isolate, native_module.release());
+      Managed<wasm::NativeModule>::FromSharedPtr(
+          isolate,
+          Managed<wasm::NativeModule>::cast(module->native_module())->get());
   ret->set_native_module(*native_module_wrapper);
-  ret->GetNativeModule()->SetCompiledModule(ret);
 
   return ret;
 }
 
 wasm::NativeModule* WasmCompiledModule::GetNativeModule() const {
   if (!has_native_module()) return nullptr;
-  return Managed<wasm::NativeModule>::cast(native_module())->get();
+  return Managed<wasm::NativeModule>::cast(native_module())->raw();
 }
 
 void WasmCompiledModule::Reset(Isolate* isolate,

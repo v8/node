@@ -297,9 +297,8 @@ class WasmOutOfLineTrap : public OutOfLineCode {
       // We cannot test calls to the runtime in cctest/test-run-wasm.
       // Therefore we emit a call to C here instead of a call to the runtime.
       __ PrepareCallCFunction(0);
-      __ CallCFunction(
-          ExternalReference::wasm_call_trap_callback_for_testing(__ isolate()),
-          0);
+      __ CallCFunction(ExternalReference::wasm_call_trap_callback_for_testing(),
+                       0);
       __ LeaveFrame(StackFrame::WASM_COMPILED);
       auto call_descriptor = gen_->linkage()->GetIncomingDescriptor();
       size_t pop_size = call_descriptor->StackParameterCount() * kPointerSize;
@@ -500,18 +499,16 @@ void EmitWordLoadPoisoningIfNeeded(CodeGenerator* codegen,
     }                                                                  \
   } while (0)
 
-#define ASSEMBLE_IEEE754_BINOP(name)                                    \
-  do {                                                                  \
-    __ PrepareCallCFunction(2);                                         \
-    __ CallCFunction(                                                   \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 2); \
+#define ASSEMBLE_IEEE754_BINOP(name)                                     \
+  do {                                                                   \
+    __ PrepareCallCFunction(2);                                          \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 2); \
   } while (false)
 
-#define ASSEMBLE_IEEE754_UNOP(name)                                     \
-  do {                                                                  \
-    __ PrepareCallCFunction(1);                                         \
-    __ CallCFunction(                                                   \
-        ExternalReference::ieee754_##name##_function(__ isolate()), 1); \
+#define ASSEMBLE_IEEE754_UNOP(name)                                      \
+  do {                                                                   \
+    __ PrepareCallCFunction(1);                                          \
+    __ CallCFunction(ExternalReference::ieee754_##name##_function(), 1); \
   } while (false)
 
 #define ASSEMBLE_ATOMIC_BINOP(bin_inst, mov_inst, cmpxchg_inst) \
@@ -657,6 +654,9 @@ void CodeGenerator::BailoutIfDeoptimized() {
   __ movp(rbx, Operand(kJavaScriptCallCodeStartRegister, offset));
   __ testl(FieldOperand(rbx, CodeDataContainer::kKindSpecificFlagsOffset),
            Immediate(1 << Code::kMarkedForDeoptimizationBit));
+  // Ensure we're not serializing (otherwise we'd need to use an indirection to
+  // access the builtin below).
+  DCHECK(!isolate()->ShouldLoadConstantsFromRootList());
   Handle<Code> code = isolate()->builtins()->builtin_handle(
       Builtins::kCompileLazyDeoptimizedCode);
   __ j(not_zero, code, RelocInfo::CODE_TARGET);
@@ -964,7 +964,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ bind(ool->exit());
       break;
     }
-    case kArchPoisonOnSpeculationWord:
+    case kArchWordPoisonOnSpeculation:
       DCHECK_EQ(i.OutputRegister(), i.InputRegister(0));
       __ andq(i.InputRegister(0), kSpeculationPoisonRegister);
       break;

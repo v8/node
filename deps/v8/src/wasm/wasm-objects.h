@@ -8,15 +8,11 @@
 #include "src/base/bits.h"
 #include "src/debug/debug.h"
 #include "src/debug/interface-types.h"
-#include "src/managed.h"
+#include "src/heap/heap.h"
+#include "src/machine-type.h"
 #include "src/objects.h"
 #include "src/objects/script.h"
-#include "src/wasm/decoder.h"
 #include "src/wasm/wasm-interpreter.h"
-#include "src/wasm/wasm-limits.h"
-#include "src/wasm/wasm-module.h"
-
-#include "src/heap/heap.h"
 
 // Has to be the last include (doesn't have include guards)
 #include "src/objects/object-macros.h"
@@ -30,13 +26,21 @@ struct ModuleEnv;
 class WasmCode;
 struct WasmModule;
 class SignatureMap;
+class WireBytesRef;
 using ValueType = MachineRepresentation;
 using FunctionSig = Signature<ValueType>;
 }  // namespace wasm
 
+class BreakPoint;
+class JSArrayBuffer;
+class FixedArrayOfWeakCells;
+class SeqOneByteString;
 class WasmCompiledModule;
 class WasmDebugInfo;
 class WasmInstanceObject;
+
+template <class CppType>
+class Managed;
 
 #define DECL_OPTIONAL_ACCESSORS(name, type) \
   INLINE(bool has_##name());                \
@@ -49,7 +53,7 @@ class WasmInstanceObject;
 // - target   = entrypoint to wasm code for the function, or wasm-to-js wrapper
 class IndirectFunctionTableEntry {
  public:
-  inline IndirectFunctionTableEntry(WasmInstanceObject*, int index);
+  inline IndirectFunctionTableEntry(Handle<WasmInstanceObject>, int index);
 
   void clear();
   void set(int sig_id, WasmInstanceObject* instance,
@@ -60,10 +64,7 @@ class IndirectFunctionTableEntry {
   Address target();
 
  private:
-#ifdef DEBUG
-  DisallowHeapAllocation no_gc;
-#endif
-  WasmInstanceObject* const instance_;
+  Handle<WasmInstanceObject> const instance_;
   int const index_;
 };
 
@@ -80,7 +81,7 @@ class IndirectFunctionTableEntry {
 //      - target   = entrypoint to wasm code of the function
 class ImportedFunctionEntry {
  public:
-  inline ImportedFunctionEntry(WasmInstanceObject*, int index);
+  inline ImportedFunctionEntry(Handle<WasmInstanceObject>, int index);
 
   // Initialize this entry as a {JSReceiver} call.
   void set(JSReceiver* callable, const wasm::WasmCode* wasm_to_js_wrapper);
@@ -94,10 +95,7 @@ class ImportedFunctionEntry {
   bool is_js_receiver_entry();
 
  private:
-#ifdef DEBUG
-  DisallowHeapAllocation no_gc;
-#endif
-  WasmInstanceObject* const instance_;
+  Handle<WasmInstanceObject> const instance_;
   int const index_;
 };
 
@@ -164,7 +162,8 @@ class WasmTableObject : public JSObject {
                                    Handle<WasmInstanceObject> from_instance,
                                    wasm::WasmCode* wasm_code);
 
-  static void ClearDispatchTables(Handle<WasmTableObject> table, int index);
+  static void ClearDispatchTables(Isolate* isolate,
+                                  Handle<WasmTableObject> table, int index);
 };
 
 // Representation of a WebAssembly.Memory JavaScript-level object.
@@ -240,10 +239,12 @@ class WasmGlobalObject : public JSObject {
   inline uint32_t type_size() const;
 
   inline int32_t GetI32();
+  inline int64_t GetI64();
   inline float GetF32();
   inline double GetF64();
 
   inline void SetI32(int32_t value);
+  inline void SetI64(int64_t value);
   inline void SetF32(float value);
   inline void SetF64(double value);
 
@@ -263,6 +264,7 @@ class WasmInstanceObject : public JSObject {
   DECL_ACCESSORS(exports_object, JSObject)
   DECL_OPTIONAL_ACCESSORS(memory_object, WasmMemoryObject)
   DECL_OPTIONAL_ACCESSORS(globals_buffer, JSArrayBuffer)
+  DECL_OPTIONAL_ACCESSORS(imported_mutable_globals_buffers, FixedArray)
   DECL_OPTIONAL_ACCESSORS(debug_info, WasmDebugInfo)
   DECL_OPTIONAL_ACCESSORS(table_object, WasmTableObject)
   DECL_ACCESSORS(imported_function_instances, FixedArray)
@@ -275,6 +277,7 @@ class WasmInstanceObject : public JSObject {
   DECL_PRIMITIVE_ACCESSORS(memory_mask, uint32_t)
   DECL_PRIMITIVE_ACCESSORS(imported_function_targets, Address*)
   DECL_PRIMITIVE_ACCESSORS(globals_start, byte*)
+  DECL_PRIMITIVE_ACCESSORS(imported_mutable_globals, Address*)
   DECL_PRIMITIVE_ACCESSORS(indirect_function_table_size, uint32_t)
   DECL_PRIMITIVE_ACCESSORS(indirect_function_table_sig_ids, uint32_t*)
   DECL_PRIMITIVE_ACCESSORS(indirect_function_table_targets, Address*)
@@ -285,6 +288,7 @@ class WasmInstanceObject : public JSObject {
   V(kExportsObjectOffset, kPointerSize)                                 \
   V(kMemoryObjectOffset, kPointerSize)                                  \
   V(kGlobalsBufferOffset, kPointerSize)                                 \
+  V(kImportedMutableGlobalsBuffersOffset, kPointerSize)                 \
   V(kDebugInfoOffset, kPointerSize)                                     \
   V(kTableObjectOffset, kPointerSize)                                   \
   V(kFunctionTablesOffset, kPointerSize)                                \
@@ -299,6 +303,7 @@ class WasmInstanceObject : public JSObject {
   V(kMemoryMaskOffset, kUInt32Size)                      /* untagged */ \
   V(kImportedFunctionTargetsOffset, kPointerSize)        /* untagged */ \
   V(kGlobalsStartOffset, kPointerSize)                   /* untagged */ \
+  V(kImportedMutableGlobalsOffset, kPointerSize)         /* untagged */ \
   V(kIndirectFunctionTableSigIdsOffset, kPointerSize)    /* untagged */ \
   V(kIndirectFunctionTableTargetsOffset, kPointerSize)   /* untagged */ \
   V(kIndirectFunctionTableSizeOffset, kUInt32Size)       /* untagged */ \
@@ -362,7 +367,7 @@ class WasmExportedFunction : public JSFunction {
 // Information shared by all WasmCompiledModule objects for the same module.
 class WasmSharedModuleData : public Struct {
  public:
-  DECL_ACCESSORS(module_wrapper, Object)
+  DECL_ACCESSORS(managed_module, Object)
   wasm::WasmModule* module() const;
   DECL_ACCESSORS(module_bytes, SeqOneByteString)
   DECL_ACCESSORS(script, Script)
@@ -377,12 +382,12 @@ class WasmSharedModuleData : public Struct {
   DECL_VERIFIER(WasmSharedModuleData)
 
 // Layout description.
-#define WASM_SHARED_MODULE_DATA_FIELDS(V)             \
-  V(kModuleWrapperOffset, kPointerSize)               \
-  V(kModuleBytesOffset, kPointerSize)                 \
-  V(kScriptOffset, kPointerSize)                      \
-  V(kAsmJsOffsetTableOffset, kPointerSize)            \
-  V(kBreakPointInfosOffset, kPointerSize)             \
+#define WASM_SHARED_MODULE_DATA_FIELDS(V)  \
+  V(kManagedModuleOffset, kPointerSize)    \
+  V(kModuleBytesOffset, kPointerSize)      \
+  V(kScriptOffset, kPointerSize)           \
+  V(kAsmJsOffsetTableOffset, kPointerSize) \
+  V(kBreakPointInfosOffset, kPointerSize)  \
   V(kSize, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
@@ -399,7 +404,7 @@ class WasmSharedModuleData : public Struct {
                                           Handle<WasmInstanceObject>);
 
   static Handle<WasmSharedModuleData> New(
-      Isolate* isolate, Handle<Foreign> module_wrapper,
+      Isolate* isolate, Handle<Foreign> managed_module,
       Handle<SeqOneByteString> module_bytes, Handle<Script> script,
       Handle<ByteArray> asm_js_offset_table);
 

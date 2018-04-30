@@ -865,6 +865,7 @@ action("run_torque") {
   inputs = [
     "src/builtins/base.tq",
     "src/builtins/array.tq",
+    "src/builtins/typed-array.tq",
   ]
 
   outputs = [
@@ -873,6 +874,8 @@ action("run_torque") {
     "$target_gen_dir/builtins-array-from-dsl-gen.h",
     "$target_gen_dir/builtins-base-from-dsl-gen.cc",
     "$target_gen_dir/builtins-base-from-dsl-gen.h",
+    "$target_gen_dir/builtins-typed-array-from-dsl-gen.cc",
+    "$target_gen_dir/builtins-typed-array-from-dsl-gen.h",
   ]
 
   args = [
@@ -883,6 +886,7 @@ action("run_torque") {
     rebase_path("$target_gen_dir", root_build_dir),
     rebase_path("src/builtins/base.tq", root_build_dir),
     rebase_path("src/builtins/array.tq", root_build_dir),
+    rebase_path("src/builtins/typed-array.tq", root_build_dir),
   ]
 }
 
@@ -1196,6 +1200,7 @@ v8_source_set("v8_initializers") {
   sources = [
     "$target_gen_dir/builtins-array-from-dsl-gen.cc",
     "$target_gen_dir/builtins-base-from-dsl-gen.cc",
+    "$target_gen_dir/builtins-typed-array-from-dsl-gen.cc",
 
     ### gcmole(all) ###
     "src/builtins/builtins-arguments-gen.cc",
@@ -1415,6 +1420,7 @@ v8_source_set("v8_base") {
     "src/asmjs/asm-types.h",
     "src/asmjs/switch-logic.cc",
     "src/asmjs/switch-logic.h",
+    "src/assembler-arch.h",
     "src/assembler-inl.h",
     "src/assembler.cc",
     "src/assembler.h",
@@ -1605,8 +1611,6 @@ v8_source_set("v8_base") {
     "src/compiler/instruction.h",
     "src/compiler/int64-lowering.cc",
     "src/compiler/int64-lowering.h",
-    "src/compiler/js-builtin-reducer.cc",
-    "src/compiler/js-builtin-reducer.h",
     "src/compiler/js-call-reducer.cc",
     "src/compiler/js-call-reducer.h",
     "src/compiler/js-context-specialization.cc",
@@ -1726,7 +1730,6 @@ v8_source_set("v8_base") {
     "src/compiler/verifier.h",
     "src/compiler/wasm-compiler.cc",
     "src/compiler/wasm-compiler.h",
-    "src/compiler/wasm-linkage.cc",
     "src/compiler/zone-stats.cc",
     "src/compiler/zone-stats.h",
     "src/contexts-inl.h",
@@ -1991,7 +1994,6 @@ v8_source_set("v8_base") {
     "src/machine-type.h",
     "src/macro-assembler-inl.h",
     "src/macro-assembler.h",
-    "src/managed.h",
     "src/map-updater.cc",
     "src/map-updater.h",
     "src/messages.cc",
@@ -2038,6 +2040,8 @@ v8_source_set("v8_base") {
     "src/objects/literal-objects-inl.h",
     "src/objects/literal-objects.cc",
     "src/objects/literal-objects.h",
+    "src/objects/managed.cc",
+    "src/objects/managed.h",
     "src/objects/map-inl.h",
     "src/objects/map.h",
     "src/objects/maybe-object-inl.h",
@@ -2067,6 +2071,8 @@ v8_source_set("v8_base") {
     "src/objects/string.h",
     "src/objects/template-objects.cc",
     "src/objects/template-objects.h",
+    "src/objects/templates-inl.h",
+    "src/objects/templates.h",
     "src/optimized-compilation-info.cc",
     "src/optimized-compilation-info.h",
     "src/ostreams.cc",
@@ -2352,6 +2358,7 @@ v8_source_set("v8_base") {
     "src/wasm/wasm-js.cc",
     "src/wasm/wasm-js.h",
     "src/wasm/wasm-limits.h",
+    "src/wasm/wasm-linkage.h",
     "src/wasm/wasm-memory.cc",
     "src/wasm/wasm-memory.h",
     "src/wasm/wasm-module-builder.cc",
@@ -3388,7 +3395,6 @@ group("gn_all") {
     ":d8",
     ":v8_fuzzers",
     ":v8_hello_world",
-    ":v8_parser_shell",
     ":v8_sample_process",
     "test:gn_all",
     "tools:gn_all",
@@ -3578,26 +3584,6 @@ v8_executable("v8_sample_process") {
     # Note: don't use :internal_config here because this target will get
     # the :external_config applied to it by virtue of depending on :v8, and
     # you can't have both applied to the same target.
-    ":internal_config_base",
-  ]
-
-  deps = [
-    ":v8",
-    ":v8_libbase",
-    ":v8_libplatform",
-    "//build/config:exe_and_shlib_deps",
-    "//build/win:default_exe_manifest",
-  ]
-}
-
-v8_executable("v8_parser_shell") {
-  sources = [
-    "tools/parser-shell.cc",
-    "tools/shell-utils.h",
-  ]
-
-  configs = [
-    ":external_config",
     ":internal_config_base",
   ]
 

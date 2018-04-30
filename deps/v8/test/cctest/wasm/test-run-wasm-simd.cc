@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "src/assembler-inl.h"
-#include "src/macro-assembler-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/compiler/value-helper.h"
 #include "test/cctest/wasm/wasm-run-utils.h"
@@ -1088,7 +1087,7 @@ WASM_SIMD_TEST(I16x8Neg) {
 }
 
 #if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 // Tests both signed and unsigned conversion from I32x4 (packing).
 WASM_SIMD_TEST(I16x8ConvertI32x4) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteTurbofan,
@@ -1118,7 +1117,7 @@ WASM_SIMD_TEST(I16x8ConvertI32x4) {
   }
 }
 #endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI16x8BinOpTest(LowerSimd lower_simd, WasmOpcode simd_op,
                        Int16BinOp expected_op) {
@@ -1282,7 +1281,7 @@ WASM_SIMD_TEST(I8x16Neg) {
 }
 
 #if V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS || \
-    V8_TARGET_ARCH_MIPS64
+    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 // Tests both signed and unsigned conversion from I16x8 (packing).
 WASM_SIMD_TEST(I8x16ConvertI16x8) {
   WasmRunner<int32_t, int32_t, int32_t, int32_t> r(kExecuteTurbofan,
@@ -1312,7 +1311,7 @@ WASM_SIMD_TEST(I8x16ConvertI16x8) {
   }
 }
 #endif  // V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_MIPS ||
-        // V8_TARGET_ARCH_MIPS64
+        // V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_IA32
 
 void RunI8x16BinOpTest(LowerSimd lower_simd, WasmOpcode simd_op,
                        Int8BinOp expected_op) {
@@ -2199,7 +2198,8 @@ WASM_SIMD_TEST(SimdF32x4SetGlobal) {
 
 WASM_SIMD_COMPILED_TEST(SimdLoadStoreLoad) {
   WasmRunner<int32_t> r(kExecuteTurbofan, lower_simd);
-  int32_t* memory = r.builder().AddMemoryElems<int32_t>(8);
+  int32_t* memory =
+      r.builder().AddMemoryElems<int32_t>(kWasmPageSize / sizeof(int32_t));
   // Load memory, store it, then reload it and extract the first lane. Use a
   // non-zero offset into the memory of 1 lane (4 bytes) to test indexing.
   BUILD(r, WASM_SIMD_STORE_MEM(WASM_I32V(4), WASM_SIMD_LOAD_MEM(WASM_I32V(4))),

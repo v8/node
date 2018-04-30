@@ -12,7 +12,6 @@
 #include "src/compiler/wasm-compiler.h"
 #include "src/conversions.h"
 #include "src/identity-map.h"
-#include "src/macro-assembler-inl.h"
 #include "src/objects-inl.h"
 #include "src/trap-handler/trap-handler.h"
 #include "src/utils.h"
@@ -1467,9 +1466,10 @@ class ThreadImpl {
   template <typename type>
   bool ExtractAtomicOpParams(Decoder* decoder, InterpreterCode* code,
                              Address& address, pc_t pc, int& len,
-                             type* val = nullptr) {
+                             type* val = nullptr, type* val2 = nullptr) {
     MemoryAccessOperand<Decoder::kNoValidate> operand(decoder, code->at(pc + 1),
                                                       sizeof(type));
+    if (val2) *val2 = Pop().to<uint32_t>();
     if (val) *val = Pop().to<uint32_t>();
     uint32_t index = Pop().to<uint32_t>();
     address = BoundsCheckMem<type>(operand.offset, index);
@@ -1554,6 +1554,27 @@ class ThreadImpl {
       ATOMIC_BINOP_CASE(I32AtomicExchange8U, uint8_t, atomic_exchange);
       ATOMIC_BINOP_CASE(I32AtomicExchange16U, uint16_t, atomic_exchange);
 #undef ATOMIC_BINOP_CASE
+#define ATOMIC_COMPARE_EXCHANGE_CASE(name, type)                         \
+  case kExpr##name: {                                                    \
+    type val;                                                            \
+    type val2;                                                           \
+    Address addr;                                                        \
+    if (!ExtractAtomicOpParams<type>(decoder, code, addr, pc, len, &val, \
+                                     &val2)) {                           \
+      return false;                                                      \
+    }                                                                    \
+    static_assert(sizeof(std::atomic<type>) == sizeof(type),             \
+                  "Size mismatch for types std::atomic<" #type           \
+                  ">, and " #type);                                      \
+    std::atomic_compare_exchange_strong(                                 \
+        reinterpret_cast<std::atomic<type>*>(addr), &val, val2);         \
+    Push(WasmValue(val));                                                \
+    break;                                                               \
+  }
+      ATOMIC_COMPARE_EXCHANGE_CASE(I32AtomicCompareExchange, uint32_t);
+      ATOMIC_COMPARE_EXCHANGE_CASE(I32AtomicCompareExchange8U, uint8_t);
+      ATOMIC_COMPARE_EXCHANGE_CASE(I32AtomicCompareExchange16U, uint16_t);
+#undef ATOMIC_COMPARE_EXCHANGE_CASE
 #define ATOMIC_LOAD_CASE(name, type, operation)                                \
   case kExpr##name: {                                                          \
     Address addr;                                                              \
@@ -1590,9 +1611,20 @@ class ThreadImpl {
       ATOMIC_STORE_CASE(I32AtomicStore16U, uint16_t, atomic_store);
 #undef ATOMIC_STORE_CASE
       default:
+        UNREACHABLE();
         return false;
     }
     return true;
+  }
+
+  byte* GetGlobalPtr(const WasmGlobal* global) {
+    if (global->mutability && global->imported) {
+      DCHECK(FLAG_experimental_wasm_mut_global);
+      return reinterpret_cast<byte*>(
+          instance_object_->imported_mutable_globals()[global->index]);
+    } else {
+      return instance_object_->globals_start() + global->offset;
+    }
   }
 
   // Check if our control stack (frames_) exceeds the limit. Trigger stack
@@ -1898,7 +1930,7 @@ class ThreadImpl {
           GlobalIndexOperand<Decoder::kNoValidate> operand(&decoder,
                                                            code->at(pc));
           const WasmGlobal* global = &module()->globals[operand.index];
-          byte* ptr = instance_object_->globals_start() + global->offset;
+          byte* ptr = GetGlobalPtr(global);
           WasmValue val;
           switch (global->type) {
 #define CASE_TYPE(wasm, ctype)                       \
@@ -1918,7 +1950,7 @@ class ThreadImpl {
           GlobalIndexOperand<Decoder::kNoValidate> operand(&decoder,
                                                            code->at(pc));
           const WasmGlobal* global = &module()->globals[operand.index];
-          byte* ptr = instance_object_->globals_start() + global->offset;
+          byte* ptr = GetGlobalPtr(global);
           WasmValue val = Pop();
           switch (global->type) {
 #define CASE_TYPE(wasm, ctype)                        \
@@ -2360,7 +2392,7 @@ class ThreadImpl {
     Handle<WasmInstanceObject> instance;
     WasmCode* code;
     {
-      ImportedFunctionEntry entry(*instance_object_, function_index);
+      ImportedFunctionEntry entry(instance_object_, function_index);
       instance = handle(entry.instance(), isolate);
       code = isolate->wasm_engine()->code_manager()->GetCodeFromStartAddress(
           entry.target());
@@ -2407,7 +2439,7 @@ class ThreadImpl {
     WasmCode* code;
     Handle<WasmInstanceObject> instance;
     {
-      IndirectFunctionTableEntry entry(*instance_object_, entry_index);
+      IndirectFunctionTableEntry entry(instance_object_, entry_index);
       // Signature check.
       if (entry.sig_id() != static_cast<int32_t>(expected_sig_id)) {
         return {ExternalCallResult::SIGNATURE_MISMATCH};

@@ -819,7 +819,7 @@ class IsSpeculativeBinopMatcher final : public TestNodeMatcher {
 
  private:
   const Matcher<NumberOperationHint> hint_matcher_;
-  const Matcher<Type*> type_matcher_;
+  const Matcher<Type> type_matcher_;
   const Matcher<Node*> lhs_matcher_;
   const Matcher<Node*> rhs_matcher_;
   const Matcher<Node*> effect_matcher_;
@@ -2115,6 +2115,7 @@ IS_BINOP_MATCHER(Int64Add)
 IS_BINOP_MATCHER(Int64Sub)
 IS_BINOP_MATCHER(Int64Mul)
 IS_BINOP_MATCHER(JSAdd)
+IS_BINOP_MATCHER(JSParseInt)
 IS_BINOP_MATCHER(Float32Equal)
 IS_BINOP_MATCHER(Float32LessThan)
 IS_BINOP_MATCHER(Float32LessThanOrEqual)
@@ -2201,7 +2202,7 @@ IS_UNOP_MATCHER(Word32Ctz)
 IS_UNOP_MATCHER(Word32Popcnt)
 IS_UNOP_MATCHER(Word32ReverseBytes)
 IS_UNOP_MATCHER(SpeculativeToNumber)
-IS_UNOP_MATCHER(PoisonOnSpeculationTagged)
+IS_UNOP_MATCHER(TaggedPoisonOnSpeculation)
 #undef IS_UNOP_MATCHER
 
 // Special-case Bitcast operators which are disabled when ENABLE_VERIFY_CSA is

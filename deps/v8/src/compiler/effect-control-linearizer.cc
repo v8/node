@@ -661,8 +661,8 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
     case IrOpcode::kCheckBounds:
       result = LowerCheckBounds(node, frame_state);
       break;
-    case IrOpcode::kMaskIndexWithBound:
-      result = LowerMaskIndexWithBound(node);
+    case IrOpcode::kPoisonIndex:
+      result = LowerPoisonIndex(node);
       break;
     case IrOpcode::kCheckMaps:
       LowerCheckMaps(node, frame_state);
@@ -975,6 +975,9 @@ bool EffectControlLinearizer::TryWireInStateEffect(Node* node,
       if (!LowerFloat64RoundTiesEven(node).To(&result)) {
         return false;
       }
+      break;
+    case IrOpcode::kDateNow:
+      result = LowerDateNow(node);
       break;
     default:
       return false;
@@ -1313,22 +1316,14 @@ Node* EffectControlLinearizer::LowerCheckBounds(Node* node, Node* frame_state) {
 
   Node* check = __ Uint32LessThan(index, limit);
   __ DeoptimizeIfNot(DeoptimizeReason::kOutOfBounds, params.feedback(), check,
-                     frame_state);
+                     frame_state, IsSafetyCheck::kCriticalSafetyCheck);
   return index;
 }
 
-Node* EffectControlLinearizer::LowerMaskIndexWithBound(Node* node) {
+Node* EffectControlLinearizer::LowerPoisonIndex(Node* node) {
   Node* index = node->InputAt(0);
   if (mask_array_index_ == kMaskArrayIndex) {
-    Node* limit = node->InputAt(1);
-
-    // mask = ((index - limit) & ~index) >> 31
-    // index = index & mask
-    Node* neg_index = __ Word32Xor(index, __ Int32Constant(-1));
-    Node* mask =
-        __ Word32Sar(__ Word32And(__ Int32Sub(index, limit), neg_index),
-                     __ Int32Constant(31));
-    index = __ Word32And(index, mask);
+    index = __ Word32PoisonOnSpeculation(index);
   }
   return index;
 }
@@ -1376,10 +1371,9 @@ void EffectControlLinearizer::LowerCheckMaps(Node* node, Node* frame_state) {
       Runtime::FunctionId id = Runtime::kTryMigrateInstance;
       auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
           graph()->zone(), id, 1, properties, CallDescriptor::kNoFlags);
-      Node* result =
-          __ Call(call_descriptor, __ CEntryStubConstant(1), value,
-                  __ ExternalConstant(ExternalReference(id, isolate())),
-                  __ Int32Constant(1), __ NoContextConstant());
+      Node* result = __ Call(call_descriptor, __ CEntryStubConstant(1), value,
+                             __ ExternalConstant(ExternalReference::Create(id)),
+                             __ Int32Constant(1), __ NoContextConstant());
       Node* check = ObjectIsSmi(result);
       __ DeoptimizeIf(DeoptimizeReason::kInstanceMigrationFailed, p.feedback(),
                       check, frame_state);
@@ -1529,8 +1523,8 @@ Node* EffectControlLinearizer::LowerCheckInternalizedString(Node* node,
 
 void EffectControlLinearizer::LowerCheckIf(Node* node, Node* frame_state) {
   Node* value = node->InputAt(0);
-  __ DeoptimizeIfNot(DeoptimizeKind::kEager, DeoptimizeReasonOf(node->op()),
-                     VectorSlotPair(), value, frame_state);
+  __ DeoptimizeIfNot(DeoptimizeReasonOf(node->op()), VectorSlotPair(), value,
+                     frame_state);
 }
 
 Node* EffectControlLinearizer::LowerCheckedInt32Add(Node* node,
@@ -2909,11 +2903,10 @@ Node* EffectControlLinearizer::LowerStringCharCodeAt(Node* node) {
       Runtime::FunctionId id = Runtime::kStringCharCodeAt;
       auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
           graph()->zone(), id, 2, properties, CallDescriptor::kNoFlags);
-      Node* result =
-          __ Call(call_descriptor, __ CEntryStubConstant(1), receiver,
-                  ChangeInt32ToSmi(position),
-                  __ ExternalConstant(ExternalReference(id, isolate())),
-                  __ Int32Constant(2), __ NoContextConstant());
+      Node* result = __ Call(call_descriptor, __ CEntryStubConstant(1),
+                             receiver, ChangeInt32ToSmi(position),
+                             __ ExternalConstant(ExternalReference::Create(id)),
+                             __ Int32Constant(2), __ NoContextConstant());
       __ Goto(&loop_done, ChangeSmiToInt32(result));
     }
 
@@ -3059,7 +3052,7 @@ Node* EffectControlLinearizer::LowerStringToUpperCaseIntl(Node* node) {
   auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
       graph()->zone(), id, 1, properties, CallDescriptor::kNoFlags);
   return __ Call(call_descriptor, __ CEntryStubConstant(1), receiver,
-                 __ ExternalConstant(ExternalReference(id, isolate())),
+                 __ ExternalConstant(ExternalReference::Create(id)),
                  __ Int32Constant(1), __ NoContextConstant());
 }
 
@@ -3357,7 +3350,7 @@ void EffectControlLinearizer::LowerCheckEqualsInternalizedString(
       builder.AddReturn(MachineType::AnyTagged());
       builder.AddParam(MachineType::AnyTagged());
       Node* try_internalize_string_function = __ ExternalConstant(
-          ExternalReference::try_internalize_string_function(isolate()));
+          ExternalReference::try_internalize_string_function());
       auto call_descriptor =
           Linkage::GetSimplifiedCDescriptor(graph()->zone(), builder.Build());
       Node* val_internalized = __ Call(common()->Call(call_descriptor),
@@ -3619,7 +3612,7 @@ void EffectControlLinearizer::LowerTransitionElementsKind(Node* node) {
       auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
           graph()->zone(), id, 2, properties, CallDescriptor::kNoFlags);
       __ Call(call_descriptor, __ CEntryStubConstant(1), object, target_map,
-              __ ExternalConstant(ExternalReference(id, isolate())),
+              __ ExternalConstant(ExternalReference::Create(id)),
               __ Int32Constant(2), __ NoContextConstant());
       break;
     }
@@ -3749,7 +3742,8 @@ Node* EffectControlLinearizer::LowerLoadTypedElement(Node* node) {
                       : __ UnsafePointerAdd(base, external);
 
   // Perform the actual typed element access.
-  return __ LoadElement(AccessBuilder::ForTypedArrayElement(array_type, true),
+  return __ LoadElement(AccessBuilder::ForTypedArrayElement(
+                            array_type, true, LoadSensitivity::kCritical),
                         storage, index);
 }
 
@@ -3796,7 +3790,7 @@ void EffectControlLinearizer::TransitionElementsTo(Node* node, Node* array,
     auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
         graph()->zone(), id, 2, properties, CallDescriptor::kNoFlags);
     __ Call(call_descriptor, __ CEntryStubConstant(1), array, target_map,
-            __ ExternalConstant(ExternalReference(id, isolate())),
+            __ ExternalConstant(ExternalReference::Create(id)),
             __ Int32Constant(2), __ NoContextConstant());
   }
 }
@@ -4070,8 +4064,8 @@ void EffectControlLinearizer::LowerTransitionAndStoreNonNumberElement(
   Node* elements = __ LoadField(AccessBuilder::ForJSObjectElements(), array);
   // Our ElementsKind is HOLEY_ELEMENTS.
   ElementAccess access = AccessBuilder::ForFixedArrayElement(HOLEY_ELEMENTS);
-  Type* value_type = ValueTypeParameterOf(node->op());
-  if (value_type->Is(Type::BooleanOrNullOrUndefined())) {
+  Type value_type = ValueTypeParameterOf(node->op());
+  if (value_type.Is(Type::BooleanOrNullOrUndefined())) {
     access.type = value_type;
     access.write_barrier_kind = kNoWriteBarrier;
   }
@@ -4144,7 +4138,7 @@ void EffectControlLinearizer::LowerRuntimeAbort(Node* node) {
       graph()->zone(), id, 1, properties, CallDescriptor::kNoFlags);
   __ Call(call_descriptor, __ CEntryStubConstant(1),
           jsgraph()->SmiConstant(static_cast<int>(reason)),
-          __ ExternalConstant(ExternalReference(id, isolate())),
+          __ ExternalConstant(ExternalReference::Create(id)),
           __ Int32Constant(1), __ NoContextConstant());
 }
 
@@ -4670,6 +4664,16 @@ Node* EffectControlLinearizer::LowerFindOrderedHashMapEntryForInt32Key(
 
   __ Bind(&done);
   return done.PhiAt(0);
+}
+
+Node* EffectControlLinearizer::LowerDateNow(Node* node) {
+  Operator::Properties properties = Operator::kNoDeopt | Operator::kNoThrow;
+  Runtime::FunctionId id = Runtime::kDateCurrentTime;
+  auto call_descriptor = Linkage::GetRuntimeCallDescriptor(
+      graph()->zone(), id, 0, properties, CallDescriptor::kNoFlags);
+  return __ Call(call_descriptor, __ CEntryStubConstant(1),
+                 __ ExternalConstant(ExternalReference::Create(id)),
+                 __ Int32Constant(0), __ NoContextConstant());
 }
 
 #undef __

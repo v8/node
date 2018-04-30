@@ -96,6 +96,22 @@ inline CPURegister AcquireByType(UseScratchRegisterScope* temps,
   }
 }
 
+inline MemOperand GetMemOp(LiftoffAssembler* assm,
+                           UseScratchRegisterScope* temps, Register addr,
+                           Register offset, uint32_t offset_imm) {
+  // Wasm memory is limited to a size <2GB, so all offsets can be encoded as
+  // immediate value (in 31 bits, interpreted as signed value).
+  // If the offset is bigger, we always trap and this code is not reached.
+  DCHECK(is_uint31(offset_imm));
+  if (offset.IsValid()) {
+    if (offset_imm == 0) return MemOperand(addr.X(), offset.W(), UXTW);
+    Register tmp = temps->AcquireW();
+    assm->Add(tmp, offset.W(), offset_imm);
+    return MemOperand(addr.X(), tmp, UXTW);
+  }
+  return MemOperand(addr.X(), offset_imm);
+}
+
 }  // namespace liftoff
 
 uint32_t LiftoffAssembler::PrepareStackFrame() {
@@ -141,12 +157,34 @@ void LiftoffAssembler::FinishCode() { CheckConstPool(true, false); }
 
 void LiftoffAssembler::LoadConstant(LiftoffRegister reg, WasmValue value,
                                     RelocInfo::Mode rmode) {
-  BAILOUT("LoadConstant");
+  switch (value.type()) {
+    case kWasmI32:
+      Mov(reg.gp().W(), Immediate(value.to_i32(), rmode));
+      break;
+    case kWasmI64:
+      Mov(reg.gp().X(), Immediate(value.to_i64(), rmode));
+      break;
+    case kWasmF32:
+      Fmov(reg.fp().S(), value.to_f32_boxed().get_scalar());
+      break;
+    case kWasmF64:
+      Fmov(reg.fp().D(), value.to_f64_boxed().get_scalar());
+      break;
+    default:
+      UNREACHABLE();
+  }
 }
 
 void LiftoffAssembler::LoadFromInstance(Register dst, uint32_t offset,
                                         int size) {
-  BAILOUT("LoadFromInstance");
+  DCHECK_LE(offset, kMaxInt);
+  Ldr(dst, liftoff::GetInstanceOperand());
+  DCHECK(size == 4 || size == 8);
+  if (size == 4) {
+    Ldr(dst.W(), MemOperand(dst, offset));
+  } else {
+    Ldr(dst, MemOperand(dst, offset));
+  }
 }
 
 void LiftoffAssembler::SpillInstance(Register instance) {
@@ -154,32 +192,103 @@ void LiftoffAssembler::SpillInstance(Register instance) {
 }
 
 void LiftoffAssembler::FillInstanceInto(Register dst) {
-  BAILOUT("FillInstanceInto");
+  Ldr(dst, liftoff::GetInstanceOperand());
 }
 
 void LiftoffAssembler::Load(LiftoffRegister dst, Register src_addr,
                             Register offset_reg, uint32_t offset_imm,
                             LoadType type, LiftoffRegList pinned,
                             uint32_t* protected_load_pc, bool is_load_mem) {
-  BAILOUT("Load");
+  UseScratchRegisterScope temps(this);
+  MemOperand src_op =
+      liftoff::GetMemOp(this, &temps, src_addr, offset_reg, offset_imm);
+  if (protected_load_pc) *protected_load_pc = pc_offset();
+  switch (type.value()) {
+    case LoadType::kI32Load8U:
+    case LoadType::kI64Load8U:
+      Ldrb(dst.gp().W(), src_op);
+      break;
+    case LoadType::kI32Load8S:
+      Ldrsb(dst.gp().W(), src_op);
+      break;
+    case LoadType::kI64Load8S:
+      Ldrsb(dst.gp().X(), src_op);
+      break;
+    case LoadType::kI32Load16U:
+    case LoadType::kI64Load16U:
+      Ldrh(dst.gp().W(), src_op);
+      break;
+    case LoadType::kI32Load16S:
+      Ldrsh(dst.gp().W(), src_op);
+      break;
+    case LoadType::kI64Load16S:
+      Ldrsh(dst.gp().X(), src_op);
+      break;
+    case LoadType::kI32Load:
+    case LoadType::kI64Load32U:
+      Ldr(dst.gp().W(), src_op);
+      break;
+    case LoadType::kI64Load32S:
+      Ldrsw(dst.gp().X(), src_op);
+      break;
+    case LoadType::kI64Load:
+      Ldr(dst.gp().X(), src_op);
+      break;
+    case LoadType::kF32Load:
+      Ldr(dst.fp().S(), src_op);
+      break;
+    case LoadType::kF64Load:
+      Ldr(dst.fp().D(), src_op);
+      break;
+    default:
+      UNREACHABLE();
+  }
 }
 
 void LiftoffAssembler::Store(Register dst_addr, Register offset_reg,
                              uint32_t offset_imm, LiftoffRegister src,
                              StoreType type, LiftoffRegList pinned,
                              uint32_t* protected_store_pc, bool is_store_mem) {
-  BAILOUT("Store");
+  UseScratchRegisterScope temps(this);
+  MemOperand dst_op =
+      liftoff::GetMemOp(this, &temps, dst_addr, offset_reg, offset_imm);
+  if (protected_store_pc) *protected_store_pc = pc_offset();
+  switch (type.value()) {
+    case StoreType::kI32Store8:
+    case StoreType::kI64Store8:
+      Strb(src.gp().W(), dst_op);
+      break;
+    case StoreType::kI32Store16:
+    case StoreType::kI64Store16:
+      Strh(src.gp().W(), dst_op);
+      break;
+    case StoreType::kI32Store:
+    case StoreType::kI64Store32:
+      Str(src.gp().W(), dst_op);
+      break;
+    case StoreType::kI64Store:
+      Str(src.gp().X(), dst_op);
+      break;
+    case StoreType::kF32Store:
+      Str(src.fp().S(), dst_op);
+      break;
+    case StoreType::kF64Store:
+      Str(src.fp().D(), dst_op);
+      break;
+    default:
+      UNREACHABLE();
+  }
 }
 
 void LiftoffAssembler::ChangeEndiannessLoad(LiftoffRegister dst, LoadType type,
                                             LiftoffRegList pinned) {
-  BAILOUT("ChangeEndiannessLoad");
+  // Nop.
 }
 
 void LiftoffAssembler::ChangeEndiannessStore(LiftoffRegister src,
                                              StoreType type,
                                              LiftoffRegList pinned) {
-  BAILOUT("ChangeEndiannessStore");
+  // Nop.
 }
 
 void LiftoffAssembler::LoadCallerFrameSlot(LiftoffRegister dst,
@@ -241,15 +350,15 @@ void LiftoffAssembler::FillI64Half(Register, uint32_t half_index) {
   BAILOUT("FillI64Half");
 }
 
-#define UNIMPLEMENTED_GP_BINOP(name)                             \
+#define I32_BINOP(name, instruction)                             \
   void LiftoffAssembler::emit_##name(Register dst, Register lhs, \
                                      Register rhs) {             \
-    BAILOUT("gp binop: " #name);                                 \
+    instruction(dst.W(), lhs.W(), rhs.W());                      \
   }
-#define UNIMPLEMENTED_I64_BINOP(name)                                          \
+#define I64_BINOP(name, instruction)                                           \
   void LiftoffAssembler::emit_##name(LiftoffRegister dst, LiftoffRegister lhs, \
                                      LiftoffRegister rhs) {                    \
-    BAILOUT("i64 binop: " #name);                                              \
+    instruction(dst.gp().X(), lhs.gp().X(), rhs.gp().X());                     \
   }
 #define UNIMPLEMENTED_GP_UNOP(name)                                \
   bool LiftoffAssembler::emit_##name(Register dst, Register src) { \
@@ -265,35 +374,35 @@ void LiftoffAssembler::FillI64Half(Register, uint32_t half_index) {
   void LiftoffAssembler::emit_##name(DoubleRegister dst, DoubleRegister src) { \
     BAILOUT("fp unop: " #name);                                                \
   }
-#define UNIMPLEMENTED_I32_SHIFTOP(name)                                        \
+#define I32_SHIFTOP(name, instruction)                                         \
   void LiftoffAssembler::emit_##name(Register dst, Register src,               \
                                      Register amount, LiftoffRegList pinned) { \
-    BAILOUT("i32 shiftop: " #name);                                            \
+    instruction(dst.W(), src.W(), amount.W());                                 \
   }
-#define UNIMPLEMENTED_I64_SHIFTOP(name)                                        \
+#define I64_SHIFTOP(name, instruction)                                         \
   void LiftoffAssembler::emit_##name(LiftoffRegister dst, LiftoffRegister src, \
                                      Register amount, LiftoffRegList pinned) { \
-    BAILOUT("i64 shiftop: " #name);                                            \
+    instruction(dst.gp().X(), src.gp().X(), amount.X());                       \
   }
 
-UNIMPLEMENTED_GP_BINOP(i32_add)
-UNIMPLEMENTED_GP_BINOP(i32_sub)
-UNIMPLEMENTED_GP_BINOP(i32_mul)
-UNIMPLEMENTED_GP_BINOP(i32_and)
-UNIMPLEMENTED_GP_BINOP(i32_or)
-UNIMPLEMENTED_GP_BINOP(i32_xor)
-UNIMPLEMENTED_I32_SHIFTOP(i32_shl)
-UNIMPLEMENTED_I32_SHIFTOP(i32_sar)
-UNIMPLEMENTED_I32_SHIFTOP(i32_shr)
-UNIMPLEMENTED_I64_BINOP(i64_add)
-UNIMPLEMENTED_I64_BINOP(i64_sub)
-UNIMPLEMENTED_I64_BINOP(i64_mul)
-UNIMPLEMENTED_I64_BINOP(i64_and)
-UNIMPLEMENTED_I64_BINOP(i64_or)
-UNIMPLEMENTED_I64_BINOP(i64_xor)
-UNIMPLEMENTED_I64_SHIFTOP(i64_shl)
-UNIMPLEMENTED_I64_SHIFTOP(i64_sar)
-UNIMPLEMENTED_I64_SHIFTOP(i64_shr)
+I32_BINOP(i32_add, Add)
+I32_BINOP(i32_sub, Sub)
+I32_BINOP(i32_mul, Mul)
+I32_BINOP(i32_and, And)
+I32_BINOP(i32_or, Orr)
+I32_BINOP(i32_xor, Eor)
+I32_SHIFTOP(i32_shl, Lsl)
+I32_SHIFTOP(i32_sar, Asr)
+I32_SHIFTOP(i32_shr, Lsr)
+I64_BINOP(i64_add, Add)
+I64_BINOP(i64_sub, Sub)
+I64_BINOP(i64_mul, Mul)
+I64_BINOP(i64_and, And)
+I64_BINOP(i64_or, Orr)
+I64_BINOP(i64_xor, Eor)
+I64_SHIFTOP(i64_shl, Lsl)
+I64_SHIFTOP(i64_sar, Asr)
+I64_SHIFTOP(i64_shr, Lsr)
 UNIMPLEMENTED_GP_UNOP(i32_clz)
 UNIMPLEMENTED_GP_UNOP(i32_ctz)
 UNIMPLEMENTED_GP_UNOP(i32_popcnt)
@@ -301,6 +410,8 @@ UNIMPLEMENTED_FP_BINOP(f32_add)
 UNIMPLEMENTED_FP_BINOP(f32_sub)
 UNIMPLEMENTED_FP_BINOP(f32_mul)
 UNIMPLEMENTED_FP_BINOP(f32_div)
+UNIMPLEMENTED_FP_BINOP(f32_min)
+UNIMPLEMENTED_FP_BINOP(f32_max)
 UNIMPLEMENTED_FP_UNOP(f32_abs)
 UNIMPLEMENTED_FP_UNOP(f32_neg)
 UNIMPLEMENTED_FP_UNOP(f32_ceil)
@@ -312,6 +423,8 @@ UNIMPLEMENTED_FP_BINOP(f64_add)
 UNIMPLEMENTED_FP_BINOP(f64_sub)
 UNIMPLEMENTED_FP_BINOP(f64_mul)
 UNIMPLEMENTED_FP_BINOP(f64_div)
+UNIMPLEMENTED_FP_BINOP(f64_min)
+UNIMPLEMENTED_FP_BINOP(f64_max)
 UNIMPLEMENTED_FP_UNOP(f64_abs)
 UNIMPLEMENTED_FP_UNOP(f64_neg)
 UNIMPLEMENTED_FP_UNOP(f64_ceil)
@@ -320,13 +433,13 @@ UNIMPLEMENTED_FP_UNOP(f64_trunc)
 UNIMPLEMENTED_FP_UNOP(f64_nearest_int)
 UNIMPLEMENTED_FP_UNOP(f64_sqrt)
 
-#undef UNIMPLEMENTED_GP_BINOP
-#undef UNIMPLEMENTED_I64_BINOP
+#undef I32_BINOP
+#undef I64_BINOP
 #undef UNIMPLEMENTED_GP_UNOP
 #undef UNIMPLEMENTED_FP_BINOP
 #undef UNIMPLEMENTED_FP_UNOP
-#undef UNIMPLEMENTED_I32_SHIFTOP
-#undef UNIMPLEMENTED_I64_SHIFTOP
+#undef I32_SHIFTOP
+#undef I64_SHIFTOP
 
 void LiftoffAssembler::emit_i32_divs(Register dst, Register lhs, Register rhs,
                                      Label* trap_div_by_zero,
@@ -347,6 +460,35 @@ void LiftoffAssembler::emit_i32_rems(Register dst, Register lhs, Register rhs,
 void LiftoffAssembler::emit_i32_remu(Register dst, Register lhs, Register rhs,
                                      Label* trap_div_by_zero) {
   BAILOUT("i32_remu");
+}
+
+bool LiftoffAssembler::emit_i64_divs(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero,
+                                     Label* trap_div_unrepresentable) {
+  BAILOUT("i64_divs");
+  return true;
+}
+
+bool LiftoffAssembler::emit_i64_divu(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i64_divu");
+  return true;
+}
+
+bool LiftoffAssembler::emit_i64_rems(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i64_rems");
+  return true;
+}
+
+bool LiftoffAssembler::emit_i64_remu(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  BAILOUT("i64_remu");
+  return true;
 }
 
 bool LiftoffAssembler::emit_type_conversion(WasmOpcode opcode,

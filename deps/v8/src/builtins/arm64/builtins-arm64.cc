@@ -21,7 +21,7 @@ namespace internal {
 
 void Builtins::Generate_Adaptor(MacroAssembler* masm, Address address,
                                 ExitFrameType exit_frame_type) {
-  __ Mov(x5, ExternalReference(address, masm->isolate()));
+  __ Mov(x5, ExternalReference::Create(address));
   if (exit_frame_type == BUILTIN_EXIT) {
     __ Jump(BUILTIN_CODE(masm->isolate(), AdaptorWithBuiltinExitFrame),
             RelocInfo::CODE_TARGET);
@@ -666,7 +666,6 @@ static void Generate_StackOverflowCheck(MacroAssembler* masm, Register num_args,
 //   x0: result.
 static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
                                              bool is_construct) {
-  // Called from JSEntryStub::GenerateBody().
   Register new_target = x0;
   Register function = x1;
   Register receiver = x2;
@@ -675,18 +674,20 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
   Register scratch = x10;
   Register slots_to_claim = x11;
 
-  ProfileEntryHookStub::MaybeCallEntryHook(masm);
+  {
+    NoRootArrayScope no_root_array(masm);
+    ProfileEntryHookStub::MaybeCallEntryHook(masm);
+    __ InitializeRootRegister();
+  }
 
   {
     // Enter an internal frame.
     FrameScope scope(masm, StackFrame::INTERNAL);
 
     // Setup the context (we need to use the caller context from the isolate).
-    __ Mov(scratch, Operand(ExternalReference(IsolateAddressId::kContextAddress,
-                                              masm->isolate())));
+    __ Mov(scratch, ExternalReference::Create(IsolateAddressId::kContextAddress,
+                                              masm->isolate()));
     __ Ldr(cp, MemOperand(scratch));
-
-    __ InitializeRootRegister();
 
     // Claim enough space for the arguments, the receiver and the function,
     // including an optional slot of padding.
@@ -755,7 +756,7 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     __ Mov(x25, x19);
     __ Mov(x28, x19);
     // Don't initialize the reserved registers.
-    // x26 : root register (root).
+    // x26 : root register (kRootRegister).
     // x27 : context pointer (cp).
     // x29 : frame pointer (fp).
 
@@ -933,9 +934,7 @@ static void AdvanceBytecodeOffsetOrReturn(MacroAssembler* masm,
   DCHECK(!AreAliased(bytecode_array, bytecode_offset, bytecode_size_table,
                      bytecode));
 
-  __ Mov(
-      bytecode_size_table,
-      Operand(ExternalReference::bytecode_size_table_address(masm->isolate())));
+  __ Mov(bytecode_size_table, ExternalReference::bytecode_size_table_address());
 
   // Check if the bytecode is a Wide or ExtraWide prefix bytecode.
   Label process_bytecode, extra_wide;
@@ -1103,9 +1102,9 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   // handler at the current bytecode offset.
   Label do_dispatch;
   __ bind(&do_dispatch);
-  __ Mov(kInterpreterDispatchTableRegister,
-         Operand(ExternalReference::interpreter_dispatch_table_address(
-             masm->isolate())));
+  __ Mov(
+      kInterpreterDispatchTableRegister,
+      ExternalReference::interpreter_dispatch_table_address(masm->isolate()));
   __ Ldrb(x18, MemOperand(kInterpreterBytecodeArrayRegister,
                           kInterpreterBytecodeOffsetRegister));
   __ Mov(x1, Operand(x18, LSL, kPointerSizeLog2));
@@ -1342,9 +1341,9 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
                          Code::kHeaderSize - kHeapObjectTag));
 
   // Initialize the dispatch table register.
-  __ Mov(kInterpreterDispatchTableRegister,
-         Operand(ExternalReference::interpreter_dispatch_table_address(
-             masm->isolate())));
+  __ Mov(
+      kInterpreterDispatchTableRegister,
+      ExternalReference::interpreter_dispatch_table_address(masm->isolate()));
 
   // Get the bytecode array pointer from the frame.
   __ Ldr(kInterpreterBytecodeArrayRegister,
@@ -3163,8 +3162,7 @@ void Builtins::Generate_MathPowInternal(MacroAssembler* masm) {
   {
     AllowExternalCallThatCantCauseGC scope(masm);
     __ Mov(saved_lr, lr);
-    __ CallCFunction(
-        ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+    __ CallCFunction(ExternalReference::power_double_double_function(), 0, 2);
     __ Mov(lr, saved_lr);
     __ B(&done);
   }
@@ -3236,8 +3234,7 @@ void Builtins::Generate_MathPowInternal(MacroAssembler* masm) {
   __ Mov(saved_lr, lr);
   __ Fmov(base_double, base_double_copy);
   __ Scvtf(exponent_double, exponent_integer);
-  __ CallCFunction(
-      ExternalReference::power_double_double_function(masm->isolate()), 0, 2);
+  __ CallCFunction(ExternalReference::power_double_double_function(), 0, 2);
   __ Mov(lr, saved_lr);
   __ Bind(&done);
   __ Ret();

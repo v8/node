@@ -129,8 +129,14 @@ if __name__ == "__main__":
   options = ParseOptions(sys.argv[1:])
   # Build can result in running gn gen, so need to set environment variables
   # for build as well as generate.
-  os.environ['DEPOT_TOOLS_WIN_TOOLCHAIN'] = options.bundled_win_toolchain
-  os.environ['PATH'] = options.depot_tools + os.path.pathsep + os.environ['PATH']
+  if options.bundled_win_toolchain:
+    os.environ['DEPOT_TOOLS_WIN_TOOLCHAIN'] = options.bundled_win_toolchain
+  if options.bundled_win_toolchain_root:
+    os.environ['DEPOT_TOOLS_WIN_TOOLCHAIN_ROOT'] = (
+        options.bundled_win_toolchain_root)
+  if options.depot_tools:
+    os.environ['PATH'] = (
+        options.depot_tools + os.path.pathsep + os.environ['PATH'])
   if not options.build:
     GenerateBuildFiles(options)
   else:

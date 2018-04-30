@@ -31,7 +31,7 @@ CAST_ACCESSOR(WasmTableObject)
   ACCESSORS(holder, name, type, offset)
 
 #define READ_PRIMITIVE_FIELD(p, type, offset) \
-  (*reinterpret_cast<type const*>(FIELD_ADDR_CONST(p, offset)))
+  (*reinterpret_cast<type const*>(FIELD_ADDR(p, offset)))
 
 #define WRITE_PRIMITIVE_FIELD(p, type, offset, value) \
   (*reinterpret_cast<type*>(FIELD_ADDR(p, offset)) = value)
@@ -84,12 +84,18 @@ Address WasmGlobalObject::address() const {
 
 int32_t WasmGlobalObject::GetI32() { return Memory::int32_at(address()); }
 
+int64_t WasmGlobalObject::GetI64() { return Memory::int64_at(address()); }
+
 float WasmGlobalObject::GetF32() { return Memory::float_at(address()); }
 
 double WasmGlobalObject::GetF64() { return Memory::double_at(address()); }
 
 void WasmGlobalObject::SetI32(int32_t value) {
   Memory::int32_at(address()) = value;
+}
+
+void WasmGlobalObject::SetI64(int64_t value) {
+  Memory::int64_at(address()) = value;
 }
 
 void WasmGlobalObject::SetF32(float value) {
@@ -110,6 +116,8 @@ PRIMITIVE_ACCESSORS(WasmInstanceObject, imported_function_targets, Address*,
                     kImportedFunctionTargetsOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, globals_start, byte*,
                     kGlobalsStartOffset)
+PRIMITIVE_ACCESSORS(WasmInstanceObject, imported_mutable_globals, Address*,
+                    kImportedMutableGlobalsOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, indirect_function_table_size, uint32_t,
                     kIndirectFunctionTableSizeOffset)
 PRIMITIVE_ACCESSORS(WasmInstanceObject, indirect_function_table_sig_ids,
@@ -124,6 +132,8 @@ OPTIONAL_ACCESSORS(WasmInstanceObject, memory_object, WasmMemoryObject,
                    kMemoryObjectOffset)
 ACCESSORS(WasmInstanceObject, globals_buffer, JSArrayBuffer,
           kGlobalsBufferOffset)
+ACCESSORS(WasmInstanceObject, imported_mutable_globals_buffers, FixedArray,
+          kImportedMutableGlobalsBuffersOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, debug_info, WasmDebugInfo,
                    kDebugInfoOffset)
 OPTIONAL_ACCESSORS(WasmInstanceObject, table_object, WasmTableObject,
@@ -144,21 +154,21 @@ inline bool WasmInstanceObject::has_indirect_function_table() {
 }
 
 IndirectFunctionTableEntry::IndirectFunctionTableEntry(
-    WasmInstanceObject* instance, int index)
+    Handle<WasmInstanceObject> instance, int index)
     : instance_(instance), index_(index) {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, instance->indirect_function_table_size());
 }
 
-ImportedFunctionEntry::ImportedFunctionEntry(WasmInstanceObject* instance,
-                                             int index)
+ImportedFunctionEntry::ImportedFunctionEntry(
+    Handle<WasmInstanceObject> instance, int index)
     : instance_(instance), index_(index) {
   DCHECK_GE(index, 0);
   DCHECK_LT(index, instance->module()->num_imported_functions);
 }
 
 // WasmSharedModuleData
-ACCESSORS(WasmSharedModuleData, module_wrapper, Object, kModuleWrapperOffset)
+ACCESSORS(WasmSharedModuleData, managed_module, Object, kManagedModuleOffset)
 ACCESSORS(WasmSharedModuleData, module_bytes, SeqOneByteString,
           kModuleBytesOffset)
 ACCESSORS(WasmSharedModuleData, script, Script, kScriptOffset)

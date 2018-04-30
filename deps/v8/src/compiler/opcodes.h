@@ -123,7 +123,8 @@
   V(JSToNumber)                    \
   V(JSToNumeric)                   \
   V(JSToObject)                    \
-  V(JSToString)
+  V(JSToString)                    \
+  V(JSParseInt)
 
 #define JS_SIMPLE_UNOP_LIST(V) \
   JS_CONVERSION_UNOP_LIST(V)   \
@@ -420,8 +421,9 @@
   V(TransitionElementsKind)             \
   V(FindOrderedHashMapEntry)            \
   V(FindOrderedHashMapEntryForInt32Key) \
-  V(MaskIndexWithBound)                 \
-  V(RuntimeAbort)
+  V(PoisonIndex)                        \
+  V(RuntimeAbort)                       \
+  V(DateNow)
 
 #define SIMPLIFIED_OP_LIST(V)                 \
   SIMPLIFIED_CHANGE_OP_LIST(V)                \
@@ -615,8 +617,9 @@
   V(Float64ExtractHighWord32)    \
   V(Float64InsertLowWord32)      \
   V(Float64InsertHighWord32)     \
-  V(PoisonOnSpeculationTagged)   \
-  V(PoisonOnSpeculationWord)     \
+  V(TaggedPoisonOnSpeculation)   \
+  V(Word32PoisonOnSpeculation)   \
+  V(Word64PoisonOnSpeculation)   \
   V(LoadStackPointer)            \
   V(LoadFramePointer)            \
   V(LoadParentFramePointer)      \

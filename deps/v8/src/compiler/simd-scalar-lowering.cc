@@ -10,7 +10,6 @@
 #include "src/compiler/node-properties.h"
 #include "src/compiler/node.h"
 #include "src/compiler/wasm-compiler.h"
-#include "src/macro-assembler-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -621,8 +620,7 @@ Node* SimdScalarLowering::BuildF64Trunc(Node* input) {
   if (machine()->Float64RoundTruncate().IsSupported()) {
     return graph()->NewNode(machine()->Float64RoundTruncate().op(), input);
   } else {
-    ExternalReference ref =
-        ExternalReference::wasm_f64_trunc(jsgraph_->isolate());
+    ExternalReference ref = ExternalReference::wasm_f64_trunc();
     Node* stack_slot =
         graph()->NewNode(machine()->StackSlot(MachineRepresentation::kFloat64));
     const Operator* store_op = machine()->Store(

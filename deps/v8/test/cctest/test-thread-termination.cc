@@ -602,6 +602,87 @@ TEST(SafeForTerminateException) {
     }  // safe -> postpone
   }    // postpone -> no scope
   AssertFinishedCodeRun(isolate);
+
+  {  // no scope -> postpone
+    i::PostponeInterruptsScope p1(CcTest::i_isolate(),
+                                  i::StackGuard::TERMINATE_EXECUTION);
+    {  // postpone -> safe
+      i::SafeForInterruptsScope p2(CcTest::i_isolate(),
+                                   i::StackGuard::TERMINATE_EXECUTION);
+      {  // safe -> postpone
+        i::PostponeInterruptsScope p3(CcTest::i_isolate(),
+                                      i::StackGuard::TERMINATE_EXECUTION);
+        isolate->TerminateExecution();
+      }  // postpone -> safe
+      AssertTerminatedCodeRun(isolate);
+    }  // safe -> postpone
+  }    // postpone -> no scope
+}
+
+void RequestTermianteAndCallAPI(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  args.GetIsolate()->TerminateExecution();
+  AssertFinishedCodeRun(args.GetIsolate());
+}
+
+UNINITIALIZED_TEST(IsolateSafeForTerminationMode) {
+  v8::Isolate::CreateParams create_params;
+  create_params.only_terminate_in_safe_scope = true;
+  create_params.array_buffer_allocator = CcTest::array_buffer_allocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
+  {
+    v8::Isolate::Scope isolate_scope(isolate);
+    v8::HandleScope handle_scope(isolate);
+    v8::Local<v8::ObjectTemplate> global = v8::ObjectTemplate::New(isolate);
+    global->Set(v8_str("terminateAndCallAPI"),
+                v8::FunctionTemplate::New(isolate, RequestTermianteAndCallAPI));
+    v8::Local<v8::Context> context = v8::Context::New(isolate, nullptr, global);
+    v8::Context::Scope context_scope(context);
+
+    // Should postpone termination without safe scope.
+    isolate->TerminateExecution();
+    AssertFinishedCodeRun(isolate);
+    {
+      v8::Isolate::SafeForTerminationScope safe_scope(isolate);
+      AssertTerminatedCodeRun(isolate);
+    }
+    AssertFinishedCodeRun(isolate);
+
+    {
+      isolate->TerminateExecution();
+      AssertFinishedCodeRun(isolate);
+      i::PostponeInterruptsScope p1(i_isolate,
+                                    i::StackGuard::TERMINATE_EXECUTION);
+      {
+        // SafeForTermination overrides postpone.
+        v8::Isolate::SafeForTerminationScope safe_scope(isolate);
+        AssertTerminatedCodeRun(isolate);
+      }
+      AssertFinishedCodeRun(isolate);
+    }
+
+    {
+      v8::Isolate::SafeForTerminationScope safe_scope(isolate);
+      // Request terminate and call API recursively.
+      CompileRun("terminateAndCallAPI()");
+      AssertTerminatedCodeRun(isolate);
+    }
+
+    {
+      i::PostponeInterruptsScope p1(i_isolate,
+                                    i::StackGuard::TERMINATE_EXECUTION);
+      // Request terminate and call API recursively.
+      CompileRun("terminateAndCallAPI()");
+      AssertFinishedCodeRun(isolate);
+    }
+    AssertFinishedCodeRun(isolate);
+    {
+      v8::Isolate::SafeForTerminationScope safe_scope(isolate);
+      AssertTerminatedCodeRun(isolate);
+    }
+  }
+  isolate->Dispose();
 }
 
 TEST(ErrorObjectAfterTermination) {

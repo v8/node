@@ -763,7 +763,8 @@ class Heap {
 
   // Move len elements within a given array from src_index index to dst_index
   // index.
-  void MoveElements(FixedArray* array, int dst_index, int src_index, int len);
+  void MoveElements(FixedArray* array, int dst_index, int src_index, int len,
+                    WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
 
   // Initialize a filler object to keep the ability to iterate over the heap
   // when introducing gaps within pages. If slots could have been recorded in
@@ -1353,14 +1354,20 @@ class Heap {
 
   // Returns whether the object resides in new space.
   inline bool InNewSpace(Object* object);
-  inline bool InFromSpace(Object* object);
-  inline bool InToSpace(Object* object);
   inline bool InNewSpace(MaybeObject* object);
+  inline bool InNewSpace(HeapObject* heap_object);
+  inline bool InFromSpace(Object* object);
   inline bool InFromSpace(MaybeObject* object);
+  inline bool InFromSpace(HeapObject* heap_object);
+  inline bool InToSpace(Object* object);
   inline bool InToSpace(MaybeObject* object);
+  inline bool InToSpace(HeapObject* heap_object);
 
   // Returns whether the object resides in old space.
   inline bool InOldSpace(Object* object);
+
+  // Returns whether the object resides in read-only space.
+  inline bool InReadOnlySpace(Object* object);
 
   // Checks whether an address/object in the heap (including auxiliary
   // area and unused area).

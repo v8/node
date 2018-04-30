@@ -103,6 +103,7 @@ class ThreadState;
 class ThreadVisitor;  // Defined in v8threads.h
 class TracingCpuProfilerImpl;
 class UnicodeCache;
+struct ManagedPtrDestructor;
 
 template <StateTag Tag> class VMState;
 
@@ -440,7 +441,9 @@ typedef std::vector<HeapObject*> DebugObjectCache;
   V(debug::TypeProfile::Mode, type_profile_mode, debug::TypeProfile::kNone)   \
   V(int, last_stack_frame_info_id, 0)                                         \
   V(int, last_console_context_id, 0)                                          \
-  V(v8_inspector::V8Inspector*, inspector, nullptr)
+  V(v8_inspector::V8Inspector*, inspector, nullptr)                           \
+  V(bool, next_v8_call_is_safe_for_termination, false)                        \
+  V(bool, only_terminate_in_safe_scope, false)
 
 #define THREAD_LOCAL_TOP_ACCESSOR(type, name)                        \
   inline void set_##name(type v) { thread_local_top_.name##_ = v; }  \
@@ -548,7 +551,7 @@ class Isolate : private HiddenFactory {
   // for legacy API reasons.
   void TearDown();
 
-  void ReleaseManagedObjects();
+  void ReleaseSharedPtrs();
 
   void ClearSerializerData();
 
@@ -1265,6 +1268,17 @@ class Isolate : private HiddenFactory {
     return &partial_snapshot_cache_;
   }
 
+  // Off-heap builtins cannot embed constants within the code object itself,
+  // and thus need to load them from the root list.
+  bool ShouldLoadConstantsFromRootList() const {
+#ifdef V8_EMBEDDED_BUILTINS
+    return (serializer_enabled() &&
+            builtins_constants_table_builder() != nullptr);
+#else
+    return false;
+#endif  // V8_EMBEDDED_BUILTINS
+  }
+
 #ifdef V8_EMBEDDED_BUILTINS
   // Called only prior to serialization.
   // This function copies off-heap-safe builtins off the heap, creates off-heap
@@ -1337,41 +1351,11 @@ class Isolate : private HiddenFactory {
   void set_allow_atomics_wait(bool set) { allow_atomics_wait_ = set; }
   bool allow_atomics_wait() { return allow_atomics_wait_; }
 
-  // List of native heap values allocated by the runtime as part of its
-  // implementation that must be freed at isolate deinit.
-  class ManagedObjectFinalizer {
-   public:
-    using Deleter = void (*)(ManagedObjectFinalizer*);
-
-    ManagedObjectFinalizer(void* value, Deleter deleter)
-        : value_(value), deleter_(deleter) {}
-
-    void Dispose() { deleter_(this); }
-
-    void* value() const { return value_; }
-
-   private:
-    friend class Isolate;
-
-    ManagedObjectFinalizer() = default;
-
-    void* value_ = nullptr;
-    Deleter deleter_ = nullptr;
-    ManagedObjectFinalizer* prev_ = nullptr;
-    ManagedObjectFinalizer* next_ = nullptr;
-  };
-
-  static_assert(offsetof(ManagedObjectFinalizer, value_) == 0,
-                "value_ must be the first member");
-
   // Register a finalizer to be called at isolate teardown.
-  void RegisterForReleaseAtTeardown(ManagedObjectFinalizer*);
+  void RegisterManagedPtrDestructor(ManagedPtrDestructor* finalizer);
 
-  // Unregister a previously registered value from release at
-  // isolate teardown.
-  // This transfers the responsibility of the previously managed value's
-  // deletion to the caller.
-  void UnregisterFromReleaseAtTeardown(ManagedObjectFinalizer*);
+  // Removes a previously-registered shared object finalizer.
+  void UnregisterManagedPtrDestructor(ManagedPtrDestructor* finalizer);
 
   size_t elements_deletion_counter() { return elements_deletion_counter_; }
   void set_elements_deletion_counter(size_t value) {
@@ -1685,7 +1669,7 @@ class Isolate : private HiddenFactory {
 
   bool allow_atomics_wait_;
 
-  ManagedObjectFinalizer managed_object_finalizers_list_;
+  ManagedPtrDestructor* managed_ptr_destructors_head_ = nullptr;
 
   size_t total_regexp_code_generated_;
 

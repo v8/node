@@ -15,6 +15,7 @@
 #include "src/wasm/function-body-decoder-impl.h"
 #include "src/wasm/function-compiler.h"
 #include "src/wasm/memory-tracing.h"
+#include "src/wasm/wasm-linkage.h"
 #include "src/wasm/wasm-objects.h"
 #include "src/wasm/wasm-opcodes.h"
 
@@ -452,7 +453,8 @@ class LiftoffCompiler {
       DCHECK(!is_stack_check);
       __ CallTrapCallbackForTesting();
       __ LeaveFrame(StackFrame::WASM_COMPILED);
-      __ Ret();
+      __ DropStackSlotsAndRet(
+          static_cast<uint32_t>(descriptor_->StackParameterCount()));
       return;
     }
 
@@ -601,10 +603,10 @@ class LiftoffCompiler {
 
   void EmitI32UnOpWithCFallback(bool (LiftoffAssembler::*emit_fn)(Register,
                                                                   Register),
-                                ExternalReference (*fallback_fn)(Isolate*)) {
+                                ExternalReference (*fallback_fn)()) {
     auto emit_with_c_fallback = [=](LiftoffRegister dst, LiftoffRegister src) {
       if (emit_fn && (asm_->*emit_fn)(dst.gp(), src.gp())) return;
-      ExternalReference ext_ref = fallback_fn(asm_->isolate());
+      ExternalReference ext_ref = fallback_fn();
       ValueType sig_i_i_reps[] = {kWasmI32, kWasmI32};
       FunctionSig sig_i_i(1, 1, sig_i_i_reps);
       GenerateCCall(&dst, &sig_i_i, kWasmStmt, &src, ext_ref);
@@ -615,8 +617,7 @@ class LiftoffCompiler {
   enum TypeConversionTrapping : bool { kCanTrap = true, kNoTrap = false };
   template <ValueType dst_type, ValueType src_type,
             TypeConversionTrapping can_trap>
-  void EmitTypeConversion(WasmOpcode opcode,
-                          ExternalReference (*fallback_fn)(Isolate*),
+  void EmitTypeConversion(WasmOpcode opcode, ExternalReference (*fallback_fn)(),
                           WasmCodePosition trap_position) {
     static constexpr RegClass src_rc = reg_class_for(src_type);
     static constexpr RegClass dst_rc = reg_class_for(dst_type);
@@ -630,7 +631,7 @@ class LiftoffCompiler {
                            : nullptr;
     if (!__ emit_type_conversion(opcode, dst, src, trap)) {
       DCHECK_NOT_NULL(fallback_fn);
-      ExternalReference ext_ref = fallback_fn(asm_->isolate());
+      ExternalReference ext_ref = fallback_fn();
       if (can_trap) {
         // External references for potentially trapping conversions return int.
         ValueType sig_reps[] = {kWasmI32, src_type};
@@ -752,6 +753,30 @@ class LiftoffCompiler {
     __ PushRegister(result_type, dst);
   }
 
+  void EmitDivOrRem64CCall(LiftoffRegister dst, LiftoffRegister lhs,
+                           LiftoffRegister rhs, ExternalReference ext_ref,
+                           Label* trap_by_zero,
+                           Label* trap_unrepresentable = nullptr) {
+    // Cannot emit native instructions, build C call.
+    LiftoffRegister ret =
+        __ GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(dst));
+    LiftoffRegister tmp =
+        __ GetUnusedRegister(kGpReg, LiftoffRegList::ForRegs(dst, ret));
+    LiftoffRegister arg_regs[] = {lhs, rhs};
+    LiftoffRegister result_regs[] = {ret, dst};
+    ValueType sig_types[] = {kWasmI32, kWasmI64, kWasmI64};
+    // <i64, i64> -> i32 (with i64 output argument)
+    FunctionSig sig(1, 2, sig_types);
+    GenerateCCall(result_regs, &sig, kWasmI64, arg_regs, ext_ref);
+    __ LoadConstant(tmp, WasmValue(int32_t{0}));
+    __ emit_cond_jump(kEqual, trap_by_zero, kWasmI32, ret.gp(), tmp.gp());
+    if (trap_unrepresentable) {
+      __ LoadConstant(tmp, WasmValue(int32_t{-1}));
+      __ emit_cond_jump(kEqual, trap_unrepresentable, kWasmI32, ret.gp(),
+                        tmp.gp());
+    }
+  }
+
   void BinOp(Decoder* decoder, WasmOpcode opcode, FunctionSig*,
              const Value& lhs, const Value& rhs, Value* result) {
 #define CASE_I32_BINOP(opcode, fn)                                           \
@@ -815,7 +840,7 @@ class LiftoffCompiler {
     return EmitBinOp<kWasmI32, kWasmI32>(                                    \
         [=](LiftoffRegister dst, LiftoffRegister lhs, LiftoffRegister rhs) { \
           LiftoffRegister args[] = {lhs, rhs};                               \
-          auto ext_ref = ExternalReference::ext_ref_fn(__ isolate());        \
+          auto ext_ref = ExternalReference::ext_ref_fn();                    \
           ValueType sig_i_ii_reps[] = {kWasmI32, kWasmI32, kWasmI32};        \
           FunctionSig sig_i_ii(1, 2, sig_i_ii_reps);                         \
           GenerateCCall(&dst, &sig_i_ii, kWasmStmt, args, ext_ref);          \
@@ -877,10 +902,14 @@ class LiftoffCompiler {
       CASE_FLOAT_BINOP(F32Sub, F32, f32_sub)
       CASE_FLOAT_BINOP(F32Mul, F32, f32_mul)
       CASE_FLOAT_BINOP(F32Div, F32, f32_div)
+      CASE_FLOAT_BINOP(F32Min, F32, f32_min)
+      CASE_FLOAT_BINOP(F32Max, F32, f32_max)
       CASE_FLOAT_BINOP(F64Add, F64, f64_add)
       CASE_FLOAT_BINOP(F64Sub, F64, f64_sub)
       CASE_FLOAT_BINOP(F64Mul, F64, f64_mul)
       CASE_FLOAT_BINOP(F64Div, F64, f64_div)
+      CASE_FLOAT_BINOP(F64Min, F64, f64_min)
+      CASE_FLOAT_BINOP(F64Max, F64, f64_max)
       case WasmOpcode::kExprI32DivS:
         EmitBinOp<kWasmI32, kWasmI32>([this, decoder](LiftoffRegister dst,
                                                       LiftoffRegister lhs,
@@ -922,6 +951,62 @@ class LiftoffCompiler {
           Label* rem_by_zero = AddOutOfLineTrap(
               decoder->position(), Builtins::kThrowWasmTrapRemByZero);
           __ emit_i32_remu(dst.gp(), lhs.gp(), rhs.gp(), rem_by_zero);
+        });
+        break;
+      case WasmOpcode::kExprI64DivS:
+        EmitBinOp<kWasmI64, kWasmI64>([this, decoder](LiftoffRegister dst,
+                                                      LiftoffRegister lhs,
+                                                      LiftoffRegister rhs) {
+          WasmCodePosition position = decoder->position();
+          AddOutOfLineTrap(position, Builtins::kThrowWasmTrapDivByZero);
+          // Adding the second trap might invalidate the pointer returned for
+          // the first one, thus get both pointers afterwards.
+          AddOutOfLineTrap(position,
+                           Builtins::kThrowWasmTrapDivUnrepresentable);
+          Label* div_by_zero = out_of_line_code_.end()[-2].label.get();
+          Label* div_unrepresentable = out_of_line_code_.end()[-1].label.get();
+          if (!__ emit_i64_divs(dst, lhs, rhs, div_by_zero,
+                                div_unrepresentable)) {
+            ExternalReference ext_ref = ExternalReference::wasm_int64_div();
+            EmitDivOrRem64CCall(dst, lhs, rhs, ext_ref, div_by_zero,
+                                div_unrepresentable);
+          }
+        });
+        break;
+      case WasmOpcode::kExprI64DivU:
+        EmitBinOp<kWasmI64, kWasmI64>([this, decoder](LiftoffRegister dst,
+                                                      LiftoffRegister lhs,
+                                                      LiftoffRegister rhs) {
+          Label* div_by_zero = AddOutOfLineTrap(
+              decoder->position(), Builtins::kThrowWasmTrapDivByZero);
+          if (!__ emit_i64_divu(dst, lhs, rhs, div_by_zero)) {
+            ExternalReference ext_ref = ExternalReference::wasm_uint64_div();
+            EmitDivOrRem64CCall(dst, lhs, rhs, ext_ref, div_by_zero);
+          }
+        });
+        break;
+      case WasmOpcode::kExprI64RemS:
+        EmitBinOp<kWasmI64, kWasmI64>([this, decoder](LiftoffRegister dst,
+                                                      LiftoffRegister lhs,
+                                                      LiftoffRegister rhs) {
+          Label* rem_by_zero = AddOutOfLineTrap(
+              decoder->position(), Builtins::kThrowWasmTrapRemByZero);
+          if (!__ emit_i64_rems(dst, lhs, rhs, rem_by_zero)) {
+            ExternalReference ext_ref = ExternalReference::wasm_int64_mod();
+            EmitDivOrRem64CCall(dst, lhs, rhs, ext_ref, rem_by_zero);
+          }
+        });
+        break;
+      case WasmOpcode::kExprI64RemU:
+        EmitBinOp<kWasmI64, kWasmI64>([this, decoder](LiftoffRegister dst,
+                                                      LiftoffRegister lhs,
+                                                      LiftoffRegister rhs) {
+          Label* rem_by_zero = AddOutOfLineTrap(
+              decoder->position(), Builtins::kThrowWasmTrapRemByZero);
+          if (!__ emit_i64_remu(dst, lhs, rhs, rem_by_zero)) {
+            ExternalReference ext_ref = ExternalReference::wasm_uint64_mod();
+            EmitDivOrRem64CCall(dst, lhs, rhs, ext_ref, rem_by_zero);
+          }
         });
         break;
       default:
@@ -1069,18 +1154,35 @@ class LiftoffCompiler {
     SetLocal(operand.index, true);
   }
 
+  LiftoffRegister GetGlobalBaseAndOffset(const WasmGlobal* global,
+                                         LiftoffRegList& pinned,
+                                         uint32_t* offset) {
+    LiftoffRegister addr = pinned.set(__ GetUnusedRegister(kGpReg));
+    if (global->mutability && global->imported) {
+      DCHECK(FLAG_experimental_wasm_mut_global);
+      LOAD_INSTANCE_FIELD(addr, ImportedMutableGlobals, kPointerLoadType);
+      __ Load(addr, addr.gp(), no_reg, global->index * sizeof(Address),
+              kPointerLoadType, pinned);
+      *offset = 0;
+    } else {
+      LOAD_INSTANCE_FIELD(addr, GlobalsStart, kPointerLoadType);
+      *offset = global->offset;
+    }
+    return addr;
+  }
+
   void GetGlobal(Decoder* decoder, Value* result,
                  const GlobalIndexOperand<validate>& operand) {
     const auto* global = &env_->module->globals[operand.index];
     if (!CheckSupportedType(decoder, kTypes_ilfd, global->type, "global"))
       return;
     LiftoffRegList pinned;
-    LiftoffRegister addr = pinned.set(__ GetUnusedRegister(kGpReg));
-    LOAD_INSTANCE_FIELD(addr, GlobalsStart, kPointerLoadType);
+    uint32_t offset = 0;
+    LiftoffRegister addr = GetGlobalBaseAndOffset(global, pinned, &offset);
     LiftoffRegister value =
         pinned.set(__ GetUnusedRegister(reg_class_for(global->type), pinned));
     LoadType type = LoadType::ForValueType(global->type);
-    __ Load(value, addr.gp(), no_reg, global->offset, type, pinned);
+    __ Load(value, addr.gp(), no_reg, offset, type, pinned);
     __ PushRegister(global->type, value);
   }
 
@@ -1090,18 +1192,38 @@ class LiftoffCompiler {
     if (!CheckSupportedType(decoder, kTypes_ilfd, global->type, "global"))
       return;
     LiftoffRegList pinned;
-    LiftoffRegister addr = pinned.set(__ GetUnusedRegister(kGpReg));
-    LOAD_INSTANCE_FIELD(addr, GlobalsStart, kPointerLoadType);
+    uint32_t offset = 0;
+    LiftoffRegister addr = GetGlobalBaseAndOffset(global, pinned, &offset);
     LiftoffRegister reg = pinned.set(__ PopToRegister(pinned));
     StoreType type = StoreType::ForValueType(global->type);
-    __ Store(addr.gp(), no_reg, global->offset, reg, type, pinned);
+    __ Store(addr.gp(), no_reg, offset, reg, type, pinned);
   }
 
   void Unreachable(Decoder* decoder) { unsupported(decoder, "unreachable"); }
 
   void Select(Decoder* decoder, const Value& cond, const Value& fval,
               const Value& tval, Value* result) {
-    unsupported(decoder, "select");
+    LiftoffRegList pinned;
+    Register condition = pinned.set(__ PopToRegister()).gp();
+    ValueType type = __ cache_state()->stack_state.end()[-1].type();
+    DCHECK_EQ(type, __ cache_state()->stack_state.end()[-2].type());
+    LiftoffRegister false_value = pinned.set(__ PopToRegister(pinned));
+    LiftoffRegister true_value = __ PopToRegister(pinned);
+    LiftoffRegister dst =
+        __ GetUnusedRegister(true_value.reg_class(), {true_value, false_value});
+    __ PushRegister(type, dst);
+
+    // Now emit the actual code to move either {true_value} or {false_value}
+    // into {dst}.
+    Label cont;
+    Label case_false;
+    __ emit_cond_jump(kEqual, &case_false, kWasmI32, condition);
+    if (dst != true_value) __ Move(dst, true_value, type);
+    __ emit_jump(&cont);
+
+    __ bind(&case_false);
+    if (dst != false_value) __ Move(dst, false_value, type);
+    __ bind(&cont);
   }
 
   void Br(Control* target) {
@@ -1718,6 +1840,12 @@ wasm::WasmCode* LiftoffCompilationUnit::FinishCompilation(
       source_positions, wasm::WasmCode::kLiftoff);
 
   return code;
+}
+
+void LiftoffCompilationUnit::AbortCompilation() {
+  // The compilation is aborted. Put the assembler in a clean mode before
+  // its deletion.
+  asm_.FinishCode();
 }
 
 #undef __

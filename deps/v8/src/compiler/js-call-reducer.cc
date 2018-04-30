@@ -2140,7 +2140,7 @@ Node* JSCallReducer::DoFilterPostCallbackWork(ElementsKind kind, Node** control,
         simplified()->LoadField(AccessBuilder::ForJSObjectElements()), a, etrue,
         if_true);
 
-    DCHECK(TypeCache::Get().kFixedDoubleArrayLengthType->Is(
+    DCHECK(TypeCache::Get().kFixedDoubleArrayLengthType.Is(
         TypeCache::Get().kFixedArrayLengthType));
     Node* checked_to = etrue = graph()->NewNode(
         common()->TypeGuard(TypeCache::Get().kFixedArrayLengthType), to, etrue,
@@ -2238,12 +2238,10 @@ Node* JSCallReducer::SafeLoadElement(ElementsKind kind, Node* receiver,
       simplified()->LoadField(AccessBuilder::ForJSObjectElements()), receiver,
       *effect, control);
 
-  Node* masked_index =
-      graph()->NewNode(simplified()->MaskIndexWithBound(), *k, length);
-
   Node* element = *effect = graph()->NewNode(
-      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement(kind)),
-      elements, masked_index, *effect, control);
+      simplified()->LoadElement(AccessBuilder::ForFixedArrayElement(
+          kind, LoadSensitivity::kCritical)),
+      elements, *k, *effect, control);
   return element;
 }
 
@@ -2885,8 +2883,8 @@ Reduction JSCallReducer::ReduceCallApiFunction(
   Node* holder = lookup == CallOptimization::kHolderFound
                      ? jsgraph()->HeapConstant(api_holder)
                      : receiver;
-  ExternalReference function_reference(
-      &api_function, ExternalReference::DIRECT_API_CALL, isolate());
+  ExternalReference function_reference = ExternalReference::Create(
+      &api_function, ExternalReference::DIRECT_API_CALL);
   node->InsertInput(graph()->zone(), 0,
                     jsgraph()->HeapConstant(stub.GetCode()));
   node->ReplaceInput(1, context);
@@ -3485,6 +3483,8 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
       return ReduceNumberIsSafeInteger(node);
     case Builtins::kNumberIsNaN:
       return ReduceNumberIsNaN(node);
+    case Builtins::kNumberParseInt:
+      return ReduceNumberParseInt(node);
     case Builtins::kGlobalIsFinite:
       return ReduceGlobalIsFinite(node);
     case Builtins::kGlobalIsNaN:
@@ -3580,6 +3580,10 @@ Reduction JSCallReducer::ReduceJSCall(Node* node,
       return ReduceCollectionIteratorPrototypeNext(
           node, OrderedHashSet::kEntrySize, factory()->empty_ordered_hash_set(),
           FIRST_SET_ITERATOR_TYPE, LAST_SET_ITERATOR_TYPE);
+    case Builtins::kDatePrototypeGetTime:
+      return ReduceDatePrototypeGetTime(node);
+    case Builtins::kDateNow:
+      return ReduceDateNow(node);
     default:
       break;
   }
@@ -4602,8 +4606,8 @@ Reduction JSCallReducer::ReduceArrayPrototypeShift(Node* node) {
       Node* stub_code =
           jsgraph()->CEntryStubConstant(1, kDontSaveFPRegs, kArgvOnStack, true);
       Address builtin_entry = Builtins::CppEntryOf(builtin_index);
-      Node* entry = jsgraph()->ExternalConstant(
-          ExternalReference(builtin_entry, isolate()));
+      Node* entry =
+          jsgraph()->ExternalConstant(ExternalReference::Create(builtin_entry));
       Node* argc =
           jsgraph()->Constant(BuiltinArguments::kNumExtraArgsWithReceiver);
       if_false1 = efalse1 = vfalse1 =
@@ -4838,7 +4842,7 @@ Reduction JSCallReducer::ReduceArrayIteratorPrototypeNext(Node* node) {
     // We know that the {index} is range of the {length} now.
     index = etrue = graph()->NewNode(
         common()->TypeGuard(
-            Type::Range(0.0, length_access.type->Max() - 1.0, graph()->zone())),
+            Type::Range(0.0, length_access.type.Max() - 1.0, graph()->zone())),
         index, etrue, if_true);
 
     done_true = jsgraph()->FalseConstant();
@@ -4982,8 +4986,7 @@ Reduction JSCallReducer::ReduceStringPrototypeStringAt(
                                     index, receiver_length, effect, control);
 
   // Return the character from the {receiver} as single character string.
-  Node* masked_index = graph()->NewNode(simplified()->MaskIndexWithBound(),
-                                        index, receiver_length);
+  Node* masked_index = graph()->NewNode(simplified()->PoisonIndex(), index);
   Node* value = effect = graph()->NewNode(string_access_operator, receiver,
                                           masked_index, effect, control);
 
@@ -5019,8 +5022,7 @@ Reduction JSCallReducer::ReduceStringPrototypeCharAt(Node* node) {
                                     index, receiver_length, effect, control);
 
   // Return the character from the {receiver} as single character string.
-  Node* masked_index = graph()->NewNode(simplified()->MaskIndexWithBound(),
-                                        index, receiver_length);
+  Node* masked_index = graph()->NewNode(simplified()->PoisonIndex(), index);
   Node* value = effect =
       graph()->NewNode(simplified()->StringCharCodeAt(), receiver, masked_index,
                        effect, control);
@@ -6667,6 +6669,59 @@ Reduction JSCallReducer::ReduceGlobalIsNaN(Node* node) {
   Node* value = graph()->NewNode(simplified()->NumberIsNaN(), input);
   ReplaceWithValue(node, value, effect);
   return Replace(value);
+}
+
+// ES6 section 20.3.4.10 Date.prototype.getTime ( )
+Reduction JSCallReducer::ReduceDatePrototypeGetTime(Node* node) {
+  Node* receiver = NodeProperties::GetValueInput(node, 1);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  if (NodeProperties::HasInstanceTypeWitness(receiver, effect, JS_DATE_TYPE)) {
+    Node* value = effect = graph()->NewNode(
+        simplified()->LoadField(AccessBuilder::ForJSDateValue()), receiver,
+        effect, control);
+    ReplaceWithValue(node, value, effect, control);
+    return Replace(value);
+  }
+  return NoChange();
+}
+
+// ES6 section 20.3.3.1 Date.now ( )
+Reduction JSCallReducer::ReduceDateNow(Node* node) {
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* value = effect =
+      graph()->NewNode(simplified()->DateNow(), effect, control);
+  ReplaceWithValue(node, value, effect, control);
+  return Replace(value);
+}
+
+// ES6 section 20.1.2.13 Number.parseInt ( string, radix )
+Reduction JSCallReducer::ReduceNumberParseInt(Node* node) {
+  // We certainly know that undefined is not an array.
+  if (node->op()->ValueInputCount() < 3) {
+    Node* value = jsgraph()->NaNConstant();
+    ReplaceWithValue(node, value);
+    return Replace(value);
+  }
+
+  int arg_count = node->op()->ValueInputCount();
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  Node* context = NodeProperties::GetContextInput(node);
+  Node* frame_state = NodeProperties::GetFrameStateInput(node);
+  Node* object = NodeProperties::GetValueInput(node, 2);
+  Node* radix = arg_count >= 4 ? NodeProperties::GetValueInput(node, 3)
+                               : jsgraph()->UndefinedConstant();
+  node->ReplaceInput(0, object);
+  node->ReplaceInput(1, radix);
+  node->ReplaceInput(2, context);
+  node->ReplaceInput(3, frame_state);
+  node->ReplaceInput(4, effect);
+  node->ReplaceInput(5, control);
+  node->TrimInputCount(6);
+  NodeProperties::ChangeOp(node, javascript()->ParseInt());
+  return Changed(node);
 }
 
 Graph* JSCallReducer::graph() const { return jsgraph()->graph(); }

@@ -770,6 +770,31 @@ void LiftoffAssembler::emit_i64_mul(LiftoffRegister dst, LiftoffRegister lhs,
   if (dst != dst_tmp) Move(dst, dst_tmp, kWasmI64);
 }
 
+bool LiftoffAssembler::emit_i64_divs(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero,
+                                     Label* trap_div_unrepresentable) {
+  return false;
+}
+
+bool LiftoffAssembler::emit_i64_divu(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  return false;
+}
+
+bool LiftoffAssembler::emit_i64_rems(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  return false;
+}
+
+bool LiftoffAssembler::emit_i64_remu(LiftoffRegister dst, LiftoffRegister lhs,
+                                     LiftoffRegister rhs,
+                                     Label* trap_div_by_zero) {
+  return false;
+}
+
 namespace liftoff {
 inline bool PairContains(LiftoffRegister pair, Register reg) {
   return pair.low_gp() == reg || pair.high_gp() == reg;
@@ -894,6 +919,79 @@ void LiftoffAssembler::emit_f32_div(DoubleRegister dst, DoubleRegister lhs,
   }
 }
 
+namespace liftoff {
+enum class MinOrMax : uint8_t { kMin, kMax };
+template <typename type>
+inline void EmitFloatMinOrMax(LiftoffAssembler* assm, DoubleRegister dst,
+                              DoubleRegister lhs, DoubleRegister rhs,
+                              MinOrMax min_or_max) {
+  Label is_nan;
+  Label lhs_below_rhs;
+  Label lhs_above_rhs;
+  Label done;
+
+  // We need one tmp register to extract the sign bit. Get it right at the
+  // beginning, such that the spilling code is not accidentially jumped over.
+  Register tmp = assm->GetUnusedRegister(kGpReg).gp();
+
+#define dop(name, ...)            \
+  do {                            \
+    if (sizeof(type) == 4) {      \
+      assm->name##s(__VA_ARGS__); \
+    } else {                      \
+      assm->name##d(__VA_ARGS__); \
+    }                             \
+  } while (false)
+
+  // Check the easy cases first: nan (e.g. unordered), smaller and greater.
+  // NaN has to be checked first, because PF=1 implies CF=1.
+  dop(ucomis, lhs, rhs);
+  assm->j(parity_even, &is_nan, Label::kNear);   // PF=1
+  assm->j(below, &lhs_below_rhs, Label::kNear);  // CF=1
+  assm->j(above, &lhs_above_rhs, Label::kNear);  // CF=0 && ZF=0
+
+  // If we get here, then either
+  // a) {lhs == rhs},
+  // b) {lhs == -0.0} and {rhs == 0.0}, or
+  // c) {lhs == 0.0} and {rhs == -0.0}.
+  // For a), it does not matter whether we return {lhs} or {rhs}. Check the sign
+  // bit of {rhs} to differentiate b) and c).
+  dop(movmskp, tmp, rhs);
+  assm->test(tmp, Immediate(1));
+  assm->j(zero, &lhs_below_rhs, Label::kNear);
+  assm->jmp(&lhs_above_rhs, Label::kNear);
+
+  assm->bind(&is_nan);
+  // Create a NaN output.
+  dop(xorp, dst, dst);
+  dop(divs, dst, dst);
+  assm->jmp(&done, Label::kNear);
+
+  assm->bind(&lhs_below_rhs);
+  DoubleRegister lhs_below_rhs_src = min_or_max == MinOrMax::kMin ? lhs : rhs;
+  if (dst != lhs_below_rhs_src) dop(movs, dst, lhs_below_rhs_src);
+  assm->jmp(&done, Label::kNear);
+
+  assm->bind(&lhs_above_rhs);
+  DoubleRegister lhs_above_rhs_src = min_or_max == MinOrMax::kMin ? rhs : lhs;
+  if (dst != lhs_above_rhs_src) dop(movs, dst, lhs_above_rhs_src);
+
+  assm->bind(&done);
+}
+}  // namespace liftoff
+
+void LiftoffAssembler::emit_f32_min(DoubleRegister dst, DoubleRegister lhs,
+                                    DoubleRegister rhs) {
+  liftoff::EmitFloatMinOrMax<float>(this, dst, lhs, rhs,
+                                    liftoff::MinOrMax::kMin);
+}
+
+void LiftoffAssembler::emit_f32_max(DoubleRegister dst, DoubleRegister lhs,
+                                    DoubleRegister rhs) {
+  liftoff::EmitFloatMinOrMax<float>(this, dst, lhs, rhs,
+                                    liftoff::MinOrMax::kMax);
+}
+
 void LiftoffAssembler::emit_f32_abs(DoubleRegister dst, DoubleRegister src) {
   static constexpr uint32_t kSignBit = uint32_t{1} << 31;
   if (dst == src) {
@@ -995,6 +1093,18 @@ void LiftoffAssembler::emit_f64_div(DoubleRegister dst, DoubleRegister lhs,
     if (dst != lhs) movsd(dst, lhs);
     divsd(dst, rhs);
   }
+}
+
+void LiftoffAssembler::emit_f64_min(DoubleRegister dst, DoubleRegister lhs,
+                                    DoubleRegister rhs) {
+  liftoff::EmitFloatMinOrMax<double>(this, dst, lhs, rhs,
+                                     liftoff::MinOrMax::kMin);
+}
+
+void LiftoffAssembler::emit_f64_max(DoubleRegister dst, DoubleRegister lhs,
+                                    DoubleRegister rhs) {
+  liftoff::EmitFloatMinOrMax<double>(this, dst, lhs, rhs,
+                                     liftoff::MinOrMax::kMax);
 }
 
 void LiftoffAssembler::emit_f64_abs(DoubleRegister dst, DoubleRegister src) {
@@ -1352,8 +1462,7 @@ void LiftoffAssembler::StackCheck(Label* ool_code) {
 
 void LiftoffAssembler::CallTrapCallbackForTesting() {
   PrepareCallCFunction(0, GetUnusedRegister(kGpReg).gp());
-  CallCFunction(
-      ExternalReference::wasm_call_trap_callback_for_testing(isolate()), 0);
+  CallCFunction(ExternalReference::wasm_call_trap_callback_for_testing(), 0);
 }
 
 void LiftoffAssembler::AssertUnreachable(AbortReason reason) {

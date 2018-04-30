@@ -255,26 +255,33 @@ Response buildScopes(v8::debug::ScopeIterator* iterator,
                      std::unique_ptr<Array<Scope>>* scopes) {
   *scopes = Array<Scope>::create();
   if (!injectedScript) return Response::OK();
+  if (iterator->Done()) return Response::OK();
+
+  String16 scriptId = String16::fromInteger(iterator->GetScriptId());
+
   for (; !iterator->Done(); iterator->Advance()) {
     std::unique_ptr<RemoteObject> object;
     Response result = injectedScript->wrapObject(
         iterator->GetObject(), kBacktraceObjectGroup, false, false, &object);
     if (!result.isSuccess()) return result;
+
     auto scope = Scope::create()
                      .setType(scopeType(iterator->GetType()))
                      .setObject(std::move(object))
                      .build();
-    v8::Local<v8::Function> closure = iterator->GetFunction();
-    if (!closure.IsEmpty()) {
-      String16 name = toProtocolStringWithTypeCheck(closure->GetDebugName());
-      if (!name.isEmpty()) scope->setName(name);
-      String16 scriptId = String16::fromInteger(closure->ScriptId());
+
+    String16 name =
+        toProtocolStringWithTypeCheck(iterator->GetFunctionDebugName());
+    if (!name.isEmpty()) scope->setName(name);
+
+    if (iterator->HasLocationInfo()) {
       v8::debug::Location start = iterator->GetStartLocation();
       scope->setStartLocation(protocol::Debugger::Location::create()
                                   .setScriptId(scriptId)
                                   .setLineNumber(start.GetLineNumber())
                                   .setColumnNumber(start.GetColumnNumber())
                                   .build());
+
       v8::debug::Location end = iterator->GetEndLocation();
       scope->setEndLocation(protocol::Debugger::Location::create()
                                 .setScriptId(scriptId)
@@ -1104,7 +1111,8 @@ Response V8DebuggerAgentImpl::evaluateOnCallFrame(
     const String16& callFrameId, const String16& expression,
     Maybe<String16> objectGroup, Maybe<bool> includeCommandLineAPI,
     Maybe<bool> silent, Maybe<bool> returnByValue, Maybe<bool> generatePreview,
-    Maybe<bool> throwOnSideEffect, std::unique_ptr<RemoteObject>* result,
+    Maybe<bool> throwOnSideEffect, Maybe<double> timeout,
+    std::unique_ptr<RemoteObject>* result,
     Maybe<protocol::Runtime::ExceptionDetails>* exceptionDetails) {
   if (!isPaused()) return Response::Error(kDebuggerNotPaused);
   InjectedScript::CallFrameScope scope(m_session, callFrameId);
@@ -1118,8 +1126,17 @@ Response V8DebuggerAgentImpl::evaluateOnCallFrame(
   if (it->Done()) {
     return Response::Error("Could not find call frame with given id");
   }
-  v8::MaybeLocal<v8::Value> maybeResultValue = it->Evaluate(
-      toV8String(m_isolate, expression), throwOnSideEffect.fromMaybe(false));
+
+  v8::MaybeLocal<v8::Value> maybeResultValue;
+  {
+    V8InspectorImpl::EvaluateScope evaluateScope(m_isolate);
+    if (timeout.isJust()) {
+      response = evaluateScope.setTimeout(timeout.fromJust() / 1000.0);
+      if (!response.isSuccess()) return response;
+    }
+    maybeResultValue = it->Evaluate(toV8String(m_isolate, expression),
+                                    throwOnSideEffect.fromMaybe(false));
+  }
   // Re-initialize after running client's code, as it could have destroyed
   // context or session.
   response = scope.initialize();
@@ -1335,7 +1352,7 @@ Response V8DebuggerAgentImpl::currentCallFrames(
     auto frame =
         CallFrame::create()
             .setCallFrameId(callFrameId)
-            .setFunctionName(toProtocolString(iterator->GetFunctionName()))
+            .setFunctionName(toProtocolString(iterator->GetFunctionDebugName()))
             .setLocation(std::move(location))
             .setUrl(url)
             .setScopeChain(std::move(scopes))

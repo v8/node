@@ -17,6 +17,7 @@
 #include "src/globals.h"
 #include "src/heap/heap.h"
 #include "src/machine-type.h"
+#include "src/objects.h"
 #include "src/objects/data-handler.h"
 #include "src/objects/map.h"
 #include "src/objects/maybe-object.h"
@@ -406,6 +407,7 @@ class SloppyTNode : public TNode<T> {
   V(Float32GreaterThan, BoolT, Float32T, Float32T)        \
   V(Float32GreaterThanOrEqual, BoolT, Float32T, Float32T) \
   V(Float64Equal, BoolT, Float64T, Float64T)              \
+  V(Float64NotEqual, BoolT, Float64T, Float64T)           \
   V(Float64LessThan, BoolT, Float64T, Float64T)           \
   V(Float64LessThanOrEqual, BoolT, Float64T, Float64T)    \
   V(Float64GreaterThan, BoolT, Float64T, Float64T)        \
@@ -588,7 +590,7 @@ class V8_EXPORT_PRIVATE CodeAssembler {
 #ifdef DEBUG
       if (FLAG_debug_code) {
         Node* function = code_assembler_->ExternalConstant(
-            ExternalReference::check_object_type(code_assembler_->isolate()));
+            ExternalReference::check_object_type());
         code_assembler_->CallCFunction3(
             MachineType::AnyTagged(), MachineType::AnyTagged(),
             MachineType::TaggedSigned(), MachineType::AnyTagged(), function,
@@ -653,13 +655,6 @@ class V8_EXPORT_PRIVATE CodeAssembler {
 #endif
 
 #ifdef V8_EMBEDDED_BUILTINS
-  // Off-heap builtins cannot embed constants within the code object itself,
-  // and thus need to load them from the root list.
-  bool ShouldLoadConstantsFromRootList() const {
-    return (isolate()->serializer_enabled() &&
-            isolate()->builtins_constants_table_builder() != nullptr);
-  }
-
   TNode<HeapObject> LookupConstant(Handle<HeapObject> object);
   TNode<ExternalReference> LookupExternalReference(ExternalReference reference);
 #endif
@@ -698,6 +693,9 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   bool ToInt64Constant(Node* node, int64_t& out_value);
   bool ToSmiConstant(Node* node, Smi*& out_value);
   bool ToIntPtrConstant(Node* node, intptr_t& out_value);
+
+  bool IsUndefinedConstant(TNode<Object> node);
+  bool IsNullConstant(TNode<Object> node);
 
   TNode<Int32T> Signed(TNode<Word32T> x) { return UncheckedCast<Int32T>(x); }
   TNode<IntPtrT> Signed(TNode<WordT> x) { return UncheckedCast<IntPtrT>(x); }
@@ -748,8 +746,8 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   Node* LoadStackPointer();
 
   // Poison |value| on speculative paths.
-  TNode<Object> PoisonOnSpeculationTagged(SloppyTNode<Object> value);
-  TNode<WordT> PoisonOnSpeculationWord(SloppyTNode<WordT> value);
+  TNode<Object> TaggedPoisonOnSpeculation(SloppyTNode<Object> value);
+  TNode<WordT> WordPoisonOnSpeculation(SloppyTNode<WordT> value);
 
   // Load raw memory location.
   Node* Load(MachineType rep, Node* base,
@@ -1117,7 +1115,7 @@ class V8_EXPORT_PRIVATE CodeAssembler {
   void UnregisterCallGenerationCallbacks();
 
   bool Word32ShiftIsSafe() const;
-  PoisoningMitigationLevel poisoning_enabled() const;
+  PoisoningMitigationLevel poisoning_level() const;
 
  private:
   // These two don't have definitions and are here only for catching use cases
@@ -1262,15 +1260,14 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
   // TODO(rmcilroy): move result_size to the CallInterfaceDescriptor.
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      const CallInterfaceDescriptor& descriptor, Code::Kind kind,
-                     const char* name,
-                     PoisoningMitigationLevel poisoning_enabled,
+                     const char* name, PoisoningMitigationLevel poisoning_level,
                      size_t result_size = 1, uint32_t stub_key = 0,
                      int32_t builtin_index = Builtins::kNoBuiltinId);
 
   // Create with JSCall linkage.
   CodeAssemblerState(Isolate* isolate, Zone* zone, int parameter_count,
                      Code::Kind kind, const char* name,
-                     PoisoningMitigationLevel poisoning_enabled,
+                     PoisoningMitigationLevel poisoning_level,
                      int32_t builtin_index = Builtins::kNoBuiltinId);
 
   ~CodeAssemblerState();
@@ -1292,8 +1289,7 @@ class V8_EXPORT_PRIVATE CodeAssemblerState {
 
   CodeAssemblerState(Isolate* isolate, Zone* zone,
                      CallDescriptor* call_descriptor, Code::Kind kind,
-                     const char* name,
-                     PoisoningMitigationLevel poisoning_enabled,
+                     const char* name, PoisoningMitigationLevel poisoning_level,
                      uint32_t stub_key, int32_t builtin_index);
 
   std::unique_ptr<RawMachineAssembler> raw_assembler_;

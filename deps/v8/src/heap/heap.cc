@@ -1492,9 +1492,8 @@ void Heap::StartIdleIncrementalMarking(
                           gc_callback_flags);
 }
 
-
 void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
-                        int len) {
+                        int len, WriteBarrierMode mode) {
   if (len == 0) return;
 
   DCHECK(array->map() != fixed_cow_array_map());
@@ -1515,6 +1514,7 @@ void Heap::MoveElements(FixedArray* array, int dst_index, int src_index,
   } else {
     MemMove(dst, src, len * kPointerSize);
   }
+  if (mode == SKIP_WRITE_BARRIER) return;
   FIXED_ARRAY_ELEMENTS_WRITE_BARRIER(this, array, dst_index, len);
 }
 
@@ -3470,6 +3470,7 @@ void Heap::RemoveNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
 
 bool Heap::InvokeNearHeapLimitCallback() {
   if (near_heap_limit_callbacks_.size() > 0) {
+    HandleScope scope(isolate());
     v8::NearHeapLimitCallback callback =
         near_heap_limit_callbacks_.back().first;
     void* data = near_heap_limit_callbacks_.back().second;
@@ -3668,13 +3669,16 @@ class VerifyReadOnlyPointersVisitor : public VerifyPointersVisitor {
  protected:
   void VerifyPointers(HeapObject* host, MaybeObject** start,
                       MaybeObject** end) override {
+    Heap* heap = host->GetIsolate()->heap();
+    if (host != nullptr) {
+      CHECK(heap->InReadOnlySpace(host->map()));
+    }
     VerifyPointersVisitor::VerifyPointers(host, start, end);
 
     for (MaybeObject** current = start; current < end; current++) {
       HeapObject* object;
       if ((*current)->ToStrongOrWeakHeapObject(&object)) {
-        CHECK(
-            object->GetIsolate()->heap()->read_only_space()->Contains(object));
+        CHECK(heap->InReadOnlySpace(object));
       }
     }
   }

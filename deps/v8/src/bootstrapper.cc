@@ -20,6 +20,7 @@
 #include "src/heap/heap.h"
 #include "src/isolate-inl.h"
 #include "src/objects/js-regexp.h"
+#include "src/objects/templates.h"
 #include "src/snapshot/natives.h"
 #include "src/snapshot/snapshot.h"
 #include "src/wasm/wasm-js.h"
@@ -161,7 +162,7 @@ class Genesis BASE_EMBEDDED {
   // Creates some basic objects. Used for creating a context from scratch.
   void CreateRoots();
   // Creates the empty function.  Used for creating a context from scratch.
-  Handle<JSFunction> CreateEmptyFunction(Isolate* isolate);
+  Handle<JSFunction> CreateEmptyFunction();
   // Returns the %ThrowTypeError% intrinsic function.
   // See ES#sec-%throwtypeerror% for details.
   Handle<JSFunction> GetThrowTypeErrorIntrinsic();
@@ -590,29 +591,33 @@ V8_NOINLINE void InstallSpeciesGetter(Handle<JSFunction> constructor) {
 
 }  // namespace
 
-Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
-  Factory* factory = isolate->factory();
-
+Handle<JSFunction> Genesis::CreateEmptyFunction() {
   // Allocate the function map first and then patch the prototype later.
-  Handle<Map> empty_function_map = factory->CreateSloppyFunctionMap(
+  Handle<Map> empty_function_map = factory()->CreateSloppyFunctionMap(
       FUNCTION_WITHOUT_PROTOTYPE, MaybeHandle<JSFunction>());
   empty_function_map->set_is_prototype_map(true);
   DCHECK(!empty_function_map->is_dictionary_map());
 
+  // Allocate ScopeInfo for the empty function.
+  Handle<ScopeInfo> scope_info = ScopeInfo::CreateForEmptyFunction(isolate());
+
   // Allocate the empty function as the prototype for function according to
   // ES#sec-properties-of-the-function-prototype-object
   NewFunctionArgs args = NewFunctionArgs::ForBuiltin(
-      factory->empty_string(), empty_function_map, Builtins::kEmptyFunction);
-  Handle<JSFunction> empty_function = factory->NewFunction(args);
+      factory()->empty_string(), empty_function_map, Builtins::kEmptyFunction);
+  Handle<JSFunction> empty_function = factory()->NewFunction(args);
+  native_context()->set_empty_function(*empty_function);
 
   // --- E m p t y ---
-  Handle<String> source = factory->NewStringFromStaticChars("() {}");
-  Handle<Script> script = factory->NewScript(source);
+  Handle<String> source = factory()->NewStringFromStaticChars("() {}");
+  Handle<Script> script = factory()->NewScript(source);
   script->set_type(Script::TYPE_NATIVE);
-  Handle<WeakFixedArray> infos = factory->NewWeakFixedArray(2);
+  Handle<WeakFixedArray> infos = factory()->NewWeakFixedArray(2);
   script->set_shared_function_infos(*infos);
+  // TODO(cbruni): fix position information here.
   empty_function->shared()->set_raw_start_position(0);
   empty_function->shared()->set_raw_end_position(source->length());
+  empty_function->shared()->set_scope_info(*scope_info);
   empty_function->shared()->set_function_literal_id(1);
   empty_function->shared()->DontAdaptArguments();
   SharedFunctionInfo::SetScript(handle(empty_function->shared()), script);
@@ -2743,6 +2748,14 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       JSObject::AddProperty(
           prototype, factory->to_string_tag_symbol(), factory->Object_string(),
           static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+
+      Handle<String> name = factory->InternalizeUtf8String("formatToParts");
+      InstallFunction(
+          prototype,
+          SimpleCreateFunction(isolate, name,
+                               Builtins::kNumberFormatPrototypeFormatToParts, 1,
+                               false),
+          name);
     }
 
     {
@@ -2769,6 +2782,22 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
 
       Handle<JSObject> prototype(
           JSObject::cast(v8_break_iterator_constructor->prototype()), isolate);
+
+      // Install the @@toStringTag property on the {prototype}.
+      JSObject::AddProperty(
+          prototype, factory->to_string_tag_symbol(), factory->Object_string(),
+          static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+    }
+
+    {
+      Handle<JSFunction> plural_rules_constructor = InstallFunction(
+          intl, "PluralRules", JS_OBJECT_TYPE, PluralRules::kSize, 0,
+          factory->the_hole_value(), Builtins::kIllegal);
+      native_context()->set_intl_plural_rules_function(
+          *plural_rules_constructor);
+
+      Handle<JSObject> prototype(
+          JSObject::cast(plural_rules_constructor->prototype()), isolate);
 
       // Install the @@toStringTag property on the {prototype}.
       JSObject::AddProperty(
@@ -2918,6 +2947,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     SimpleInstallFunction(prototype, "slice",
                           Builtins::kTypedArrayPrototypeSlice, 2, false);
     SimpleInstallFunction(prototype, "some", Builtins::kTypedArrayPrototypeSome,
+                          1, false);
+    SimpleInstallFunction(prototype, "sort", Builtins::kTypedArrayPrototypeSort,
                           1, false);
     SimpleInstallFunction(prototype, "subarray",
                           Builtins::kTypedArrayPrototypeSubArray, 2, false);
@@ -4068,24 +4099,6 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
       }
     }
   }
-
-#ifdef V8_INTL_SUPPORT
-  {  // I n t l  P l u r a l R u l e s
-    Handle<JSObject> plural_rules_prototype =
-        factory->NewJSObject(isolate->object_function(), TENURED);
-    // Install the @@toStringTag property on the {prototype}.
-    JSObject::AddProperty(
-        plural_rules_prototype, factory->to_string_tag_symbol(),
-        factory->Object_string(),
-        static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
-    Handle<JSFunction> plural_rules_constructor = InstallFunction(
-        container, "PluralRules", JS_OBJECT_TYPE, PluralRules::kSize, 0,
-        plural_rules_prototype, Builtins::kIllegal);
-    JSObject::AddProperty(plural_rules_prototype, factory->constructor_string(),
-                          plural_rules_constructor, DONT_ENUM);
-    native_context->set_intl_plural_rules_function(*plural_rules_constructor);
-  }
-#endif  // V8_INTL_SUPPORT
 }
 
 
@@ -4379,36 +4392,6 @@ void Genesis::InitializeGlobal_harmony_bigint() {
   SimpleInstallFunction(dataview_prototype, "setBigUint64",
                         Builtins::kDataViewPrototypeSetBigUint64, 2, false);
 }
-
-#ifdef V8_INTL_SUPPORT
-
-void Genesis::InitializeGlobal_harmony_number_format_to_parts() {
-  if (!FLAG_harmony_number_format_to_parts) return;
-  Handle<JSObject> number_format_prototype(JSObject::cast(
-      native_context()->intl_number_format_function()->prototype()));
-  Handle<String> name = factory()->InternalizeUtf8String("formatToParts");
-  InstallFunction(number_format_prototype,
-                  SimpleCreateFunction(
-                      isolate(), name,
-                      Builtins::kNumberFormatPrototypeFormatToParts, 1, false),
-                  name);
-}
-
-void Genesis::InitializeGlobal_harmony_plural_rules() {
-  if (!FLAG_harmony_plural_rules) return;
-
-  Handle<JSFunction> plural_rules(
-      native_context()->intl_plural_rules_function());
-  Handle<JSObject> intl = Handle<JSObject>::cast(
-      JSReceiver::GetProperty(
-          Handle<JSReceiver>(native_context()->global_object()),
-          factory()->InternalizeUtf8String("Intl"))
-          .ToHandleChecked());
-  JSObject::AddProperty(intl, factory()->InternalizeUtf8String("PluralRules"),
-                        plural_rules, DONT_ENUM);
-}
-
-#endif  // V8_INTL_SUPPORT
 
 Handle<JSFunction> Genesis::CreateArrayBuffer(
     Handle<String> name, ArrayBufferKind array_buffer_kind) {
@@ -5383,7 +5366,7 @@ Genesis::Genesis(
     DCHECK_EQ(0u, context_snapshot_index);
     // We get here if there was no context snapshot.
     CreateRoots();
-    Handle<JSFunction> empty_function = CreateEmptyFunction(isolate);
+    Handle<JSFunction> empty_function = CreateEmptyFunction();
     CreateSloppyModeFunctionMaps(empty_function);
     CreateStrictModeFunctionMaps(empty_function);
     CreateObjectFunction(empty_function);
