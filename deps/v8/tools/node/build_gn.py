@@ -103,6 +103,8 @@ def ParseOptions(args):
   parser.add_argument("--host_os", help="Current operating system")
   parser.add_argument("--bundled-win-toolchain",
                       help="Value for DEPOT_TOOLS_WIN_TOOLCHAIN")
+  parser.add_argument("--bundled-win-toolchain-root",
+                      help="Value for DEPOT_TOOLS_WIN_TOOLCHAIN_ROOT")
   parser.add_argument("--depot-tools", help="Absolute path to depot_tools")
   parser.add_argument("--extra-gn-args", help="Additional GN args")
   parser.add_argument("--build", help="Run ninja as opposed to gn gen.",
@@ -128,7 +130,7 @@ if __name__ == "__main__":
   # Build can result in running gn gen, so need to set environment variables
   # for build as well as generate.
   os.environ['DEPOT_TOOLS_WIN_TOOLCHAIN'] = options.bundled_win_toolchain
-  os.environ['PATH'] += os.path.pathsep + options.depot_tools
+  os.environ['PATH'] = options.depot_tools + os.path.pathsep + os.environ['PATH']
   if not options.build:
     GenerateBuildFiles(options)
   else:
