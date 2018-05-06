@@ -14,6 +14,7 @@
 #include "src/layout-descriptor.h"
 #include "src/objects-body-descriptors.h"
 #include "src/objects-inl.h"
+#include "src/objects/api-callbacks.h"
 #include "src/profiler/allocation-tracker.h"
 #include "src/profiler/heap-profiler.h"
 #include "src/profiler/heap-snapshot-generator-inl.h"
@@ -1071,7 +1072,7 @@ void V8HeapExplorer::ExtractContextReferences(int entry, Context* context) {
     SetWeakReference(context, entry, #name, context->get(Context::index), \
         FixedArray::OffsetOfElementAt(Context::index)); \
   }
-  EXTRACT_CONTEXT_FIELD(CLOSURE_INDEX, JSFunction, closure);
+  EXTRACT_CONTEXT_FIELD(SCOPE_INFO_INDEX, ScopeInfo, scope_info);
   EXTRACT_CONTEXT_FIELD(PREVIOUS_INDEX, Context, previous);
   EXTRACT_CONTEXT_FIELD(EXTENSION_INDEX, HeapObject, extension);
   EXTRACT_CONTEXT_FIELD(NATIVE_CONTEXT_INDEX, Context, native_context);

@@ -15,18 +15,17 @@ namespace wasm {
 namespace {
 
 void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, Heap* heap,
-                              size_t size, bool require_guard_regions,
+                              size_t size, bool require_full_guard_regions,
                               void** allocation_base,
                               size_t* allocation_length) {
   using AllocationStatus = WasmMemoryTracker::AllocationStatus;
-
 #if V8_TARGET_ARCH_32_BIT
-  DCHECK(!require_guard_regions);
+  DCHECK(!require_full_guard_regions);
 #endif
   // We always allocate the largest possible offset into the heap, so the
   // addressable memory after the guard page can be made inaccessible.
   *allocation_length =
-      require_guard_regions
+      require_full_guard_regions
           ? RoundUp(kWasmMaxHeapOffset, CommitPageSize())
           : RoundUp(
                 base::bits::RoundUpToPowerOfTwo32(static_cast<uint32_t>(size)),
@@ -73,8 +72,13 @@ void* TryAllocateBackingStore(WasmMemoryTracker* memory_tracker, Heap* heap,
 
   // Make the part we care about accessible.
   if (size > 0) {
-    CHECK(SetPermissions(memory, RoundUp(size, kWasmPageSize),
-                         PageAllocator::kReadWrite));
+    bool result = SetPermissions(memory, RoundUp(size, kWasmPageSize),
+                                 PageAllocator::kReadWrite);
+    // SetPermissions commits the extra memory, which may put us over the
+    // process memory limit. If so, report this as an OOM.
+    if (!result) {
+      V8::FatalProcessOutOfMemory(nullptr, "TryAllocateBackingStore");
+    }
   }
 
   memory_tracker->RegisterAllocation(*allocation_base, *allocation_length,
@@ -122,18 +126,12 @@ void WasmMemoryTracker::ReleaseReservation(size_t num_bytes) {
   size_t const old_reserved = reserved_address_space_.fetch_sub(num_bytes);
   USE(old_reserved);
   DCHECK_LE(num_bytes, old_reserved);
-  DCHECK_GE(old_reserved - num_bytes, allocated_address_space_);
 }
 
 void WasmMemoryTracker::RegisterAllocation(void* allocation_base,
                                            size_t allocation_length,
                                            void* buffer_start,
                                            size_t buffer_length) {
-  // Make sure the caller has reserved the address space before registering the
-  // allocation.
-  DCHECK_LE(allocated_address_space_ + allocation_length,
-            reserved_address_space_);
-
   base::LockGuard<base::Mutex> scope_lock(&mutex_);
 
   allocated_address_space_ += allocation_length;
@@ -194,11 +192,12 @@ void* WasmMemoryTracker::GetEmptyBackingStore(void** allocation_base,
                                               Heap* heap) {
   if (empty_backing_store_.allocation_base == nullptr) {
     constexpr size_t buffer_length = 0;
-    const bool require_guard_regions = trap_handler::IsTrapHandlerEnabled();
+    const bool require_full_guard_regions =
+        trap_handler::IsTrapHandlerEnabled();
     void* local_allocation_base;
     size_t local_allocation_length;
     void* buffer_start = TryAllocateBackingStore(
-        this, heap, buffer_length, require_guard_regions,
+        this, heap, buffer_length, require_full_guard_regions,
         &local_allocation_base, &local_allocation_length);
 
     empty_backing_store_ =
@@ -260,7 +259,6 @@ Handle<JSArrayBuffer> SetupArrayBuffer(Isolate* isolate, void* backing_store,
 }
 
 MaybeHandle<JSArrayBuffer> NewArrayBuffer(Isolate* isolate, size_t size,
-                                          bool require_guard_regions,
                                           SharedFlag shared) {
   // Check against kMaxInt, since the byte length is stored as int in the
   // JSArrayBuffer. Note that wasm_max_mem_pages can be raised from the command
@@ -276,15 +274,31 @@ MaybeHandle<JSArrayBuffer> NewArrayBuffer(Isolate* isolate, size_t size,
   void* allocation_base = nullptr;
   size_t allocation_length = 0;
 
-  void* memory =
-      (size == 0)
-          ? memory_tracker->GetEmptyBackingStore(
-                &allocation_base, &allocation_length, isolate->heap())
-          : TryAllocateBackingStore(memory_tracker, isolate->heap(), size,
-                                    require_guard_regions, &allocation_base,
-                                    &allocation_length);
-
-  if (size > 0 && memory == nullptr) return {};
+  void* memory;
+  if (size == 0) {
+    memory = memory_tracker->GetEmptyBackingStore(
+        &allocation_base, &allocation_length, isolate->heap());
+  } else {
+#if V8_TARGET_ARCH_64_BIT
+    bool require_full_guard_regions = true;
+#else
+    bool require_full_guard_regions = false;
+#endif
+    memory = TryAllocateBackingStore(memory_tracker, isolate->heap(), size,
+                                     require_full_guard_regions,
+                                     &allocation_base, &allocation_length);
+    if (memory == nullptr && !trap_handler::IsTrapHandlerEnabled()) {
+      // If we failed to allocate with full guard regions, fall back on
+      // mini-guards.
+      require_full_guard_regions = false;
+      memory = TryAllocateBackingStore(memory_tracker, isolate->heap(), size,
+                                       require_full_guard_regions,
+                                       &allocation_base, &allocation_length);
+    }
+  }
+  if (memory == nullptr) {
+    return {};
+  }
 
 #if DEBUG
   // Double check the API allocator actually zero-initialized the memory.
@@ -317,7 +331,7 @@ void DetachMemoryBuffer(Isolate* isolate, Handle<JSArrayBuffer> buffer,
       // by Neuter. This means there is a dangling pointer until we neuter the
       // buffer. Since there is no way for the user to directly call
       // FreeBackingStore, we can ensure this is safe.
-      buffer->FreeBackingStore();
+      buffer->FreeBackingStoreFromMainThread();
     }
   }
 

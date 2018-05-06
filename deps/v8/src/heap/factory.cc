@@ -10,11 +10,13 @@
 #include "src/ast/ast.h"
 #include "src/base/bits.h"
 #include "src/bootstrapper.h"
+#include "src/builtins/constants-table-builder.h"
 #include "src/compiler.h"
 #include "src/conversions.h"
 #include "src/interpreter/interpreter.h"
 #include "src/isolate-inl.h"
 #include "src/macro-assembler.h"
+#include "src/objects/api-callbacks.h"
 #include "src/objects/bigint.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/frame-array-inl.h"
@@ -153,15 +155,6 @@ Handle<Tuple3> Factory::NewTuple3(Handle<Object> value1, Handle<Object> value2,
   return result;
 }
 
-Handle<ContextExtension> Factory::NewContextExtension(
-    Handle<ScopeInfo> scope_info, Handle<Object> extension) {
-  Handle<ContextExtension> result = Handle<ContextExtension>::cast(
-      NewStruct(CONTEXT_EXTENSION_TYPE, TENURED));
-  result->set_scope_info(*scope_info);
-  result->set_extension(*extension);
-  return result;
-}
-
 Handle<ConstantElementsPair> Factory::NewConstantElementsPair(
     ElementsKind elements_kind, Handle<FixedArrayBase> constant_values) {
   Handle<ConstantElementsPair> result =
@@ -188,6 +181,12 @@ Handle<Oddball> Factory::NewOddball(Handle<Map> map, const char* to_string,
   Handle<Oddball> oddball(Oddball::cast(New(map, TENURED)), isolate());
   Oddball::Initialize(isolate(), oddball, to_string, to_number, type_of, kind);
   return oddball;
+}
+
+Handle<Oddball> Factory::NewSelfReferenceMarker() {
+  return NewOddball(self_reference_marker_map(), "self_reference_marker",
+                    handle(Smi::FromInt(-1), isolate()), "undefined",
+                    Oddball::kSelfReferenceMarker);
 }
 
 Handle<PropertyArray> Factory::NewPropertyArray(int length,
@@ -433,7 +432,7 @@ Handle<SmallOrderedHashSet> Factory::NewSmallOrderedHashSet(
   CHECK_LE(capacity, SmallOrderedHashSet::kMaxCapacity);
   DCHECK_EQ(0, capacity % SmallOrderedHashSet::kLoadFactor);
 
-  int size = SmallOrderedHashSet::Size(capacity);
+  int size = SmallOrderedHashSet::SizeFor(capacity);
   Map* map = *small_ordered_hash_set_map();
   HeapObject* result = AllocateRawWithImmortalMap(size, pretenure, map);
   Handle<SmallOrderedHashSet> table(SmallOrderedHashSet::cast(result),
@@ -448,7 +447,7 @@ Handle<SmallOrderedHashMap> Factory::NewSmallOrderedHashMap(
   CHECK_LE(capacity, SmallOrderedHashMap::kMaxCapacity);
   DCHECK_EQ(0, capacity % SmallOrderedHashMap::kLoadFactor);
 
-  int size = SmallOrderedHashMap::Size(capacity);
+  int size = SmallOrderedHashMap::SizeFor(capacity);
   Map* map = *small_ordered_hash_map_map();
   HeapObject* result = AllocateRawWithImmortalMap(size, pretenure, map);
   Handle<SmallOrderedHashMap> table(SmallOrderedHashMap::cast(result),
@@ -1270,15 +1269,16 @@ Handle<Context> Factory::NewNativeContext() {
   return context;
 }
 
-Handle<Context> Factory::NewScriptContext(Handle<JSFunction> function,
+Handle<Context> Factory::NewScriptContext(Handle<Context> outer,
                                           Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), SCRIPT_SCOPE);
+  DCHECK(outer->IsNativeContext());
   Handle<Context> context = NewFixedArrayWithMap<Context>(
       Heap::kScriptContextMapRootIndex, scope_info->ContextLength(), TENURED);
-  context->set_closure(*function);
-  context->set_previous(function->context());
-  context->set_extension(*scope_info);
-  context->set_native_context(function->native_context());
+  context->set_scope_info(*scope_info);
+  context->set_previous(*outer);
+  context->set_extension(*the_hole_value());
+  context->set_native_context(*outer);
   DCHECK(context->IsScriptContext());
   return context;
 }
@@ -1293,26 +1293,25 @@ Handle<ScriptContextTable> Factory::NewScriptContextTable() {
 }
 
 Handle<Context> Factory::NewModuleContext(Handle<Module> module,
-                                          Handle<JSFunction> function,
+                                          Handle<Context> outer,
                                           Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), MODULE_SCOPE);
   Handle<Context> context = NewFixedArrayWithMap<Context>(
       Heap::kModuleContextMapRootIndex, scope_info->ContextLength(), TENURED);
-  context->set_closure(*function);
-  context->set_previous(function->context());
+  context->set_scope_info(*scope_info);
+  context->set_previous(*outer);
   context->set_extension(*module);
-  context->set_native_context(function->native_context());
+  context->set_native_context(*outer);
   DCHECK(context->IsModuleContext());
   return context;
 }
 
-Handle<Context> Factory::NewFunctionContext(int length,
-                                            Handle<JSFunction> function,
-                                            ScopeType scope_type) {
-  DCHECK(function->shared()->scope_info()->scope_type() == scope_type);
-  DCHECK(length >= Context::MIN_CONTEXT_SLOTS);
+Handle<Context> Factory::NewFunctionContext(Handle<Context> outer,
+                                            Handle<ScopeInfo> scope_info) {
+  int length = scope_info->ContextLength();
+  DCHECK_LE(Context::MIN_CONTEXT_SLOTS, length);
   Heap::RootListIndex mapRootIndex;
-  switch (scope_type) {
+  switch (scope_info->scope_type()) {
     case EVAL_SCOPE:
       mapRootIndex = Heap::kEvalContextMapRootIndex;
       break;
@@ -1323,25 +1322,22 @@ Handle<Context> Factory::NewFunctionContext(int length,
       UNREACHABLE();
   }
   Handle<Context> context = NewFixedArrayWithMap<Context>(mapRootIndex, length);
-  context->set_closure(*function);
-  context->set_previous(function->context());
+  context->set_scope_info(*scope_info);
+  context->set_previous(*outer);
   context->set_extension(*the_hole_value());
-  context->set_native_context(function->native_context());
+  context->set_native_context(outer->native_context());
   return context;
 }
 
-Handle<Context> Factory::NewCatchContext(Handle<JSFunction> function,
-                                         Handle<Context> previous,
+Handle<Context> Factory::NewCatchContext(Handle<Context> previous,
                                          Handle<ScopeInfo> scope_info,
-                                         Handle<String> name,
                                          Handle<Object> thrown_object) {
   STATIC_ASSERT(Context::MIN_CONTEXT_SLOTS == Context::THROWN_OBJECT_INDEX);
-  Handle<ContextExtension> extension = NewContextExtension(scope_info, name);
   Handle<Context> context = NewFixedArrayWithMap<Context>(
       Heap::kCatchContextMapRootIndex, Context::MIN_CONTEXT_SLOTS + 1);
-  context->set_closure(*function);
+  context->set_scope_info(*scope_info);
   context->set_previous(*previous);
-  context->set_extension(*extension);
+  context->set_extension(*the_hole_value());
   context->set_native_context(previous->native_context());
   context->set(Context::THROWN_OBJECT_INDEX, *thrown_object);
   return context;
@@ -1354,44 +1350,40 @@ Handle<Context> Factory::NewDebugEvaluateContext(Handle<Context> previous,
                                                  Handle<StringSet> whitelist) {
   STATIC_ASSERT(Context::WHITE_LIST_INDEX == Context::MIN_CONTEXT_SLOTS + 1);
   DCHECK(scope_info->IsDebugEvaluateScope());
-  Handle<ContextExtension> context_extension = NewContextExtension(
-      scope_info, extension.is_null() ? Handle<Object>::cast(undefined_value())
-                                      : Handle<Object>::cast(extension));
+  Handle<HeapObject> ext = extension.is_null()
+                               ? Handle<HeapObject>::cast(the_hole_value())
+                               : Handle<HeapObject>::cast(extension);
   Handle<Context> c = NewFixedArrayWithMap<Context>(
       Heap::kDebugEvaluateContextMapRootIndex, Context::MIN_CONTEXT_SLOTS + 2);
-  c->set_closure(wrapped.is_null() ? previous->closure() : wrapped->closure());
+  c->set_scope_info(*scope_info);
   c->set_previous(*previous);
   c->set_native_context(previous->native_context());
-  c->set_extension(*context_extension);
+  c->set_extension(*ext);
   if (!wrapped.is_null()) c->set(Context::WRAPPED_CONTEXT_INDEX, *wrapped);
   if (!whitelist.is_null()) c->set(Context::WHITE_LIST_INDEX, *whitelist);
   return c;
 }
 
-Handle<Context> Factory::NewWithContext(Handle<JSFunction> function,
-                                        Handle<Context> previous,
+Handle<Context> Factory::NewWithContext(Handle<Context> previous,
                                         Handle<ScopeInfo> scope_info,
                                         Handle<JSReceiver> extension) {
-  Handle<ContextExtension> context_extension =
-      NewContextExtension(scope_info, extension);
   Handle<Context> context = NewFixedArrayWithMap<Context>(
       Heap::kWithContextMapRootIndex, Context::MIN_CONTEXT_SLOTS);
-  context->set_closure(*function);
+  context->set_scope_info(*scope_info);
   context->set_previous(*previous);
-  context->set_extension(*context_extension);
+  context->set_extension(*extension);
   context->set_native_context(previous->native_context());
   return context;
 }
 
-Handle<Context> Factory::NewBlockContext(Handle<JSFunction> function,
-                                         Handle<Context> previous,
+Handle<Context> Factory::NewBlockContext(Handle<Context> previous,
                                          Handle<ScopeInfo> scope_info) {
   DCHECK_EQ(scope_info->scope_type(), BLOCK_SCOPE);
   Handle<Context> context = NewFixedArrayWithMap<Context>(
       Heap::kBlockContextMapRootIndex, scope_info->ContextLength());
-  context->set_closure(*function);
+  context->set_scope_info(*scope_info);
   context->set_previous(*previous);
-  context->set_extension(*scope_info);
+  context->set_extension(*the_hole_value());
   context->set_native_context(previous->native_context());
   return context;
 }
@@ -2455,7 +2447,15 @@ Handle<Code> Factory::NewCode(
 
   // Allow self references to created code object by patching the handle to
   // point to the newly allocated Code object.
-  if (!self_ref.is_null()) *(self_ref.location()) = *code;
+  if (!self_ref.is_null()) {
+    DCHECK(self_ref->IsOddball());
+    DCHECK(Oddball::cast(*self_ref)->kind() == Oddball::kSelfReferenceMarker);
+#ifdef V8_EMBEDDED_BUILTINS
+    auto builder = isolate()->builtins_constants_table_builder();
+    if (builder != nullptr) builder->PatchSelfReference(self_ref, code);
+#endif  // V8_EMBEDDED_BUILTINS
+    *(self_ref.location()) = *code;
+  }
 
   // Migrate generated code.
   // The generated code can contain Object** values (typically from handles)

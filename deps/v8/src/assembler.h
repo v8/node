@@ -99,7 +99,7 @@ class AssemblerBase: public Malloced {
     IsolateData(const IsolateData&) = default;
 
     bool serializer_enabled_;
-#if V8_TARGET_ARCH_X64
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64
     Address code_range_start_;
 #endif
   };
@@ -617,10 +617,8 @@ class RelocInfo {
   uint32_t embedded_size() const;
   Address embedded_address() const;
 
-  // On ARM, note that pc_ is the address of the constant pool entry
-  // to be relocated and not the address of the instruction
-  // referencing the constant pool entry (except when rmode_ ==
-  // comment).
+  // On ARM/ARM64, note that pc_ is the address of the instruction referencing
+  // the constant pool and not the address of the constant pool entry.
   Address pc_;
   Mode rmode_;
   intptr_t data_ = 0;
@@ -964,8 +962,8 @@ class RegisterBase {
   }
 
   template <RegisterCode reg_code>
-  static constexpr int bit() {
-    return 1 << code<reg_code>();
+  static constexpr RegList bit() {
+    return RegList{1} << code<reg_code>();
   }
 
   static SubType from_code(int code) {
@@ -974,9 +972,16 @@ class RegisterBase {
     return SubType{code};
   }
 
+  // Constexpr version (pass registers as template parameters).
   template <RegisterCode... reg_codes>
   static constexpr RegList ListOf() {
     return CombineRegLists(RegisterBase::bit<reg_codes>()...);
+  }
+
+  // Non-constexpr version (pass registers as method parameters).
+  template <typename... Register>
+  static RegList ListOf(Register... regs) {
+    return CombineRegLists(regs.bit()...);
   }
 
   bool is_valid() const { return reg_code_ != kCode_no_reg; }
@@ -986,7 +991,7 @@ class RegisterBase {
     return reg_code_;
   }
 
-  int bit() const { return 1 << code(); }
+  RegList bit() const { return RegList{1} << code(); }
 
   inline constexpr bool operator==(SubType other) const {
     return reg_code_ == other.reg_code_;

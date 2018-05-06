@@ -181,17 +181,15 @@ class PredictablePlatform : public Platform {
     return platform_->GetForegroundTaskRunner(isolate);
   }
 
-  std::shared_ptr<TaskRunner> GetWorkerThreadsTaskRunner(
-      v8::Isolate* isolate) override {
-    // Return the foreground task runner here, so that all tasks get executed
-    // sequentially in a predictable order.
-    return platform_->GetForegroundTaskRunner(isolate);
-  }
-
   void CallOnWorkerThread(std::unique_ptr<Task> task) override {
     // It's not defined when background tasks are being executed, so we can just
     // execute them right away.
     task->Run();
+  }
+
+  void CallDelayedOnWorkerThread(std::unique_ptr<Task> task,
+                                 double delay_in_seconds) override {
+    platform_->CallDelayedOnWorkerThread(std::move(task), delay_in_seconds);
   }
 
   void CallOnForegroundThread(v8::Isolate* isolate, Task* task) override {
@@ -3320,9 +3318,9 @@ int Shell::Main(int argc, char* argv[]) {
   }
 
   if (V8_TRAP_HANDLER_SUPPORTED && i::FLAG_wasm_trap_handler) {
-    constexpr bool use_default_signal_handler = true;
-    if (!v8::V8::EnableWebAssemblyTrapHandler(use_default_signal_handler)) {
-      fprintf(stderr, "Could not register signal handler");
+    constexpr bool use_default_trap_handler = true;
+    if (!v8::V8::EnableWebAssemblyTrapHandler(use_default_trap_handler)) {
+      fprintf(stderr, "Could not register trap handler");
       exit(1);
     }
   }

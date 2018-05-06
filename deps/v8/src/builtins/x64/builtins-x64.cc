@@ -859,9 +859,13 @@ static void AdvanceBytecodeOffsetOrReturn(MacroAssembler* masm,
   Label process_bytecode, extra_wide;
   STATIC_ASSERT(0 == static_cast<int>(interpreter::Bytecode::kWide));
   STATIC_ASSERT(1 == static_cast<int>(interpreter::Bytecode::kExtraWide));
-  __ cmpb(bytecode, Immediate(0x1));
+  STATIC_ASSERT(2 == static_cast<int>(interpreter::Bytecode::kDebugBreakWide));
+  STATIC_ASSERT(3 ==
+                static_cast<int>(interpreter::Bytecode::kDebugBreakExtraWide));
+  __ cmpb(bytecode, Immediate(0x3));
   __ j(above, &process_bytecode, Label::kNear);
-  __ j(equal, &extra_wide, Label::kNear);
+  __ testb(bytecode, Immediate(0x1));
+  __ j(not_equal, &extra_wide, Label::kNear);
 
   // Load the next bytecode and update table to the wide scaled table.
   __ incl(bytecode_offset);
@@ -1233,9 +1237,6 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
   // Set the return address to the correct point in the interpreter entry
   // trampoline.
   Label builtin_trampoline, trampoline_loaded;
-  // TODO(jgruber,v8:6666): Update logic once builtin is isolate-independent.
-  DCHECK(
-      !Builtins::IsIsolateIndependent(Builtins::kInterpreterEntryTrampoline));
   Smi* interpreter_entry_return_pc_offset(
       masm->isolate()->heap()->interpreter_entry_return_pc_offset());
   DCHECK_NE(interpreter_entry_return_pc_offset, Smi::kZero);

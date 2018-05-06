@@ -237,6 +237,7 @@ void BaseCollectionsAssembler::AddConstructorEntriesFromFastJSArray(
   TNode<Map> original_fast_js_array_map = LoadMap(fast_jsarray);
 #endif
   Label exit(this), if_doubles(this), if_smiorobjects(this);
+  GotoIf(IntPtrEqual(length, IntPtrConstant(0)), &exit);
   Branch(IsFastSmiOrTaggedElementsKind(elements_kind), &if_smiorobjects,
          &if_doubles);
   BIND(&if_smiorobjects);
@@ -261,12 +262,11 @@ void BaseCollectionsAssembler::AddConstructorEntriesFromFastJSArray(
     // A Map constructor requires entries to be arrays (ex. [key, value]),
     // so a FixedDoubleArray can never succeed.
     if (variant == kMap || variant == kWeakMap) {
-      TNode<Float64T> element =
-          UncheckedCast<Float64T>(LoadFixedDoubleArrayElement(
-              elements, IntPtrConstant(0), MachineType::Float64(), 0,
-              INTPTR_PARAMETERS));
+      CSA_ASSERT(this, IntPtrGreaterThan(length, IntPtrConstant(0)));
+      TNode<Object> element =
+          LoadAndNormalizeFixedDoubleArrayElement(elements, IntPtrConstant(0));
       ThrowTypeError(context, MessageTemplate::kIteratorValueNotAnObject,
-                     AllocateHeapNumberWithValue(element));
+                     element);
     } else {
       DCHECK(variant == kSet || variant == kWeakSet);
       auto set_entry = [&](Node* index) {
@@ -2031,8 +2031,8 @@ TNode<Object> WeakCollectionsBuiltinsAssembler::AllocateTable(
 
   // See HashTable::NewInternal().
   TNode<IntPtrT> length = KeyIndexFromEntry(capacity);
-  TNode<Object> table = CAST(AllocateFixedArray(
-      HOLEY_ELEMENTS, length, INTPTR_PARAMETERS, kAllowLargeObjectAllocation));
+  TNode<FixedArray> table = AllocateFixedArray(
+      HOLEY_ELEMENTS, length, INTPTR_PARAMETERS, kAllowLargeObjectAllocation);
 
   Heap::RootListIndex map_root_index =
       static_cast<Heap::RootListIndex>(ObjectHashTableShape::GetMapRootIndex());

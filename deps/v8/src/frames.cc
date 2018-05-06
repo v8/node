@@ -463,7 +463,6 @@ StackFrame::Type StackFrame::ComputeType(const StackFrameIteratorBase* iterator,
         case wasm::WasmCode::kInterpreterStub:
           return WASM_INTERPRETER_ENTRY;
         case wasm::WasmCode::kFunction:
-        case wasm::WasmCode::kCopiedStub:
           return WASM_COMPILED;
         case wasm::WasmCode::kLazyStub:
           if (StackFrame::IsTypeMarker(marker)) break;
@@ -1335,8 +1334,7 @@ Handle<String> FrameSummary::WasmFrameSummary::FunctionName() const {
 }
 
 Handle<Context> FrameSummary::WasmFrameSummary::native_context() const {
-  return handle(wasm_instance()->compiled_module()->native_context(),
-                isolate());
+  return handle(wasm_instance()->native_context(), isolate());
 }
 
 FrameSummary::WasmCompiledFrameSummary::WasmCompiledFrameSummary(
@@ -1915,7 +1913,7 @@ int WasmInterpreterEntryFrame::position() const {
 }
 
 Object* WasmInterpreterEntryFrame::context() const {
-  return compiled_module()->native_context();
+  return wasm_instance()->native_context();
 }
 
 Address WasmInterpreterEntryFrame::GetCallerStackPointer() const {

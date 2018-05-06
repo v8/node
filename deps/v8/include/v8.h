@@ -1222,6 +1222,14 @@ class V8_EXPORT Module {
    * The module's status must be at least kInstantiated.
    */
   Local<Value> GetModuleNamespace();
+
+  /**
+   * Returns the corresponding context-unbound script.
+   *
+   * The module must be unevaluated, i.e. its status must not be kEvaluating,
+   * kEvaluated or kErrored.
+   */
+  Local<UnboundScript> GetUnboundScript();
 };
 
 /**
@@ -3904,6 +3912,15 @@ class V8_EXPORT Function : public Object {
       Local<Context> context) const {
     return NewInstance(context, 0, nullptr);
   }
+
+  /**
+   * When side effect checks are enabled, passing kHasNoSideEffect allows the
+   * constructor to be invoked without throwing. Calls made within the
+   * constructor are still checked.
+   */
+  V8_WARN_UNUSED_RESULT MaybeLocal<Object> NewInstanceWithSideEffectType(
+      Local<Context> context, int argc, Local<Value> argv[],
+      SideEffectType side_effect_type = SideEffectType::kHasSideEffect) const;
 
   V8_DEPRECATE_SOON("Use maybe version",
                     Local<Value> Call(Local<Value> recv, int argc,
@@ -6593,10 +6610,12 @@ class V8_EXPORT HeapCodeStatistics {
   HeapCodeStatistics();
   size_t code_and_metadata_size() { return code_and_metadata_size_; }
   size_t bytecode_and_metadata_size() { return bytecode_and_metadata_size_; }
+  size_t external_script_source_size() { return external_script_source_size_; }
 
  private:
   size_t code_and_metadata_size_;
   size_t bytecode_and_metadata_size_;
+  size_t external_script_source_size_;
 
   friend class Isolate;
 };

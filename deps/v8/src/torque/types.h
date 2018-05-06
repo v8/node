@@ -14,9 +14,11 @@ namespace v8 {
 namespace internal {
 namespace torque {
 
+static const char* const CONSTEXPR_TYPE_PREFIX = "constexpr ";
 static const char* const NEVER_TYPE_STRING = "never";
 static const char* const BRANCH_TYPE_STRING = "branch";
-static const char* const BIT_TYPE_STRING = "bit";
+static const char* const CONSTEXPR_BOOL_TYPE_STRING = "constexpr bool";
+static const char* const BOOL_TYPE_STRING = "bool";
 static const char* const VOID_TYPE_STRING = "void";
 static const char* const ARGUMENTS_TYPE_STRING = "Arguments";
 static const char* const TAGGED_TYPE_STRING = "tagged";
@@ -25,27 +27,13 @@ static const char* const EXCEPTION_TYPE_STRING = "Exception";
 static const char* const OBJECT_TYPE_STRING = "Object";
 static const char* const STRING_TYPE_STRING = "String";
 static const char* const INTPTR_TYPE_STRING = "intptr";
-static const char* const CONST_INT31_TYPE_STRING = "const_int31";
-static const char* const CONST_INT32_TYPE_STRING = "const_int32";
-static const char* const CONST_FLOAT64_TYPE_STRING = "const_float64";
+static const char* const CONST_INT31_TYPE_STRING = "constexpr int31";
+static const char* const CONST_INT32_TYPE_STRING = "constexpr int32";
+static const char* const CONST_FLOAT64_TYPE_STRING = "constexpr float64";
 
 class Label;
 
-struct Type;
-class TypeImpl {
- public:
-  TypeImpl(TypeImpl* parent, const std::string& name,
-           const std::string& generated_type)
-      : parent_(parent), name_(name), generated_type_(generated_type) {}
-  TypeImpl* parent() const { return parent_; }
-  const std::string& name() const { return name_; }
-  const std::string& generated_type() const { return generated_type_; }
-
- private:
-  TypeImpl* parent_;
-  std::string name_;
-  std::string generated_type_;
-};
+class TypeImpl;
 
 typedef struct Type {
  public:
@@ -54,35 +42,26 @@ typedef struct Type {
   bool operator==(const Type& other) const { return impl_ == other.impl_; }
   bool operator!=(const Type& other) const { return impl_ != other.impl_; }
   bool Is(const Type& other) const { return impl_ == other.impl_; }
-  bool Is(const std::string& name) const { return name == impl_->name(); }
+  bool Is(const std::string& name) const;
 
-  bool IsSubclass(Type from) {
-    TypeImpl* to_class = type_impl();
-    TypeImpl* from_class = from.type_impl();
-    while (from_class != nullptr) {
-      if (to_class == from_class) return true;
-      from_class = from_class->parent();
-    }
-    return false;
-  }
+  bool IsSubclass(Type from);
 
   bool IsException() const { return name() == EXCEPTION_TYPE_STRING; }
   bool IsVoid() const { return name() == VOID_TYPE_STRING; }
   bool IsNever() const { return name() == NEVER_TYPE_STRING; }
-  bool IsBit() const { return name() == BIT_TYPE_STRING; }
+  bool IsBool() const { return name() == BOOL_TYPE_STRING; }
   bool IsVoidOrNever() const { return IsVoid() || IsNever(); }
 
-  const std::string& name() const { return impl_->name(); }
-
-  const std::string& GetGeneratedTypeName() const {
-    return type_impl()->generated_type();
+  bool IsConstexpr() const {
+    return name().substr(0, strlen(CONSTEXPR_TYPE_PREFIX)) ==
+           CONSTEXPR_TYPE_PREFIX;
   }
 
-  std::string GetGeneratedTNodeTypeName() const {
-    std::string result = type_impl()->generated_type();
-    result = result.substr(6, result.length() - 7);
-    return result;
-  }
+  const std::string& name() const;
+
+  const std::string& GetGeneratedTypeName() const;
+
+  std::string GetGeneratedTNodeTypeName() const;
 
  protected:
   TypeImpl* type_impl() const { return impl_; }

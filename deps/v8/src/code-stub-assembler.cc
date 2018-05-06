@@ -7,6 +7,7 @@
 #include "src/code-factory.h"
 #include "src/frames-inl.h"
 #include "src/frames.h"
+#include "src/objects/api-callbacks.h"
 
 namespace v8 {
 namespace internal {
@@ -3407,16 +3408,14 @@ Node* CodeStubAssembler::CloneFastJSArray(Node* context, Node* array,
   return result;
 }
 
-Node* CodeStubAssembler::AllocateFixedArray(ElementsKind kind,
-                                            Node* capacity_node,
-                                            ParameterMode mode,
-                                            AllocationFlags flags,
-                                            Node* fixed_array_map) {
+TNode<FixedArray> CodeStubAssembler::AllocateFixedArray(
+    ElementsKind kind, Node* capacity, ParameterMode mode,
+    AllocationFlags flags, SloppyTNode<Map> fixed_array_map) {
   Comment("AllocateFixedArray");
-  CSA_SLOW_ASSERT(this, MatchesParameterMode(capacity_node, mode));
-  CSA_ASSERT(this, IntPtrOrSmiGreaterThan(capacity_node,
+  CSA_SLOW_ASSERT(this, MatchesParameterMode(capacity, mode));
+  CSA_ASSERT(this, IntPtrOrSmiGreaterThan(capacity,
                                           IntPtrOrSmiConstant(0, mode), mode));
-  Node* total_size = GetFixedArrayAllocationSize(capacity_node, kind, mode);
+  TNode<IntPtrT> total_size = GetFixedArrayAllocationSize(capacity, kind, mode);
 
   if (IsDoubleElementsKind(kind)) flags |= kDoubleAlignment;
   // Allocate both array and elements object, and initialize the JSArray.
@@ -3441,8 +3440,8 @@ Node* CodeStubAssembler::AllocateFixedArray(ElementsKind kind,
     StoreMapNoWriteBarrier(array, map_index);
   }
   StoreObjectFieldNoWriteBarrier(array, FixedArray::kLengthOffset,
-                                 ParameterToTagged(capacity_node, mode));
-  return array;
+                                 ParameterToTagged(capacity, mode));
+  return UncheckedCast<FixedArray>(array);
 }
 
 TNode<FixedArray> CodeStubAssembler::ExtractFixedArray(
@@ -11090,11 +11089,11 @@ Node* CodeStubAssembler::BitwiseOp(Node* left32, Node* right32,
 }
 
 // ES #sec-createarrayiterator
-Node* CodeStubAssembler::CreateArrayIterator(Node* context, Node* object,
-                                             IterationKind kind) {
-  Node* native_context = LoadNativeContext(context);
-  Node* iterator_map = LoadContextElement(
-      native_context, Context::INITIAL_ARRAY_ITERATOR_MAP_INDEX);
+TNode<JSArrayIterator> CodeStubAssembler::CreateArrayIterator(
+    TNode<Context> context, TNode<Object> object, IterationKind kind) {
+  TNode<Context> native_context = LoadNativeContext(context);
+  TNode<Map> iterator_map = CAST(LoadContextElement(
+      native_context, Context::INITIAL_ARRAY_ITERATOR_MAP_INDEX));
   Node* iterator = Allocate(JSArrayIterator::kSize);
   StoreMapNoWriteBarrier(iterator, iterator_map);
   StoreObjectFieldRoot(iterator, JSArrayIterator::kPropertiesOrHashOffset,
@@ -11108,7 +11107,7 @@ Node* CodeStubAssembler::CreateArrayIterator(Node* context, Node* object,
   StoreObjectFieldNoWriteBarrier(
       iterator, JSArrayIterator::kKindOffset,
       SmiConstant(Smi::FromInt(static_cast<int>(kind))));
-  return iterator;
+  return CAST(iterator);
 }
 
 Node* CodeStubAssembler::AllocateJSIteratorResult(Node* context, Node* value,
@@ -11580,8 +11579,8 @@ TNode<Object> CodeStubAssembler::GetArgumentValue(CodeStubArguments* args,
   return args->GetOptionalArgumentValue(index);
 }
 
-TNode<Object> CodeStubAssembler::GetArgumentValue(CodeStubArguments* args,
-                                                  TNode<Smi> index) {
+TNode<Object> CodeStubAssembler::GetArgumentValueSmiIndex(
+    CodeStubArguments* args, TNode<Smi> index) {
   return args->GetOptionalArgumentValue(SmiUntag(index));
 }
 
@@ -11631,9 +11630,10 @@ void CodeStubAssembler::InitializeFunctionContext(Node* native_context,
   StoreObjectFieldNoWriteBarrier(context, FixedArray::kLengthOffset,
                                  SmiConstant(slots));
 
-  Node* const empty_fn =
-      LoadContextElement(native_context, Context::CLOSURE_INDEX);
-  StoreContextElementNoWriteBarrier(context, Context::CLOSURE_INDEX, empty_fn);
+  Node* const empty_scope_info =
+      LoadContextElement(native_context, Context::SCOPE_INFO_INDEX);
+  StoreContextElementNoWriteBarrier(context, Context::SCOPE_INFO_INDEX,
+                                    empty_scope_info);
   StoreContextElementNoWriteBarrier(context, Context::PREVIOUS_INDEX,
                                     UndefinedConstant());
   StoreContextElementNoWriteBarrier(context, Context::EXTENSION_INDEX,

@@ -233,6 +233,7 @@ enum RoundingMode {
 
 class Immediate BASE_EMBEDDED {
  public:
+  // Calls where x is an Address (uintptr_t) resolve to this overload.
   inline explicit Immediate(int x, RelocInfo::Mode rmode = RelocInfo::NONE) {
     value_.immediate = x;
     rmode_ = rmode;
@@ -243,9 +244,6 @@ class Immediate BASE_EMBEDDED {
       : Immediate(handle.address(), RelocInfo::EMBEDDED_OBJECT) {}
   inline explicit Immediate(Smi* value)
       : Immediate(reinterpret_cast<intptr_t>(value)) {}
-  inline explicit Immediate(Address addr,
-                            RelocInfo::Mode rmode = RelocInfo::NONE)
-      : Immediate(static_cast<int32_t>(addr), rmode) {}
 
   static Immediate EmbeddedNumber(double number);  // Smi or HeapNumber.
   static Immediate EmbeddedCode(CodeStub* code);
@@ -528,10 +526,18 @@ class Assembler : public AssemblerBase {
   inline static void deserialization_set_special_target_at(
       Address instruction_payload, Code* code, Address target);
 
+  // Get the size of the special target encoded at 'instruction_payload'.
+  inline static int deserialization_special_target_size(
+      Address instruction_payload);
+
   // This sets the internal reference at the pc.
   inline static void deserialization_set_target_internal_reference_at(
       Address pc, Address target,
       RelocInfo::Mode mode = RelocInfo::INTERNAL_REFERENCE);
+
+  // TODO(arm64): This is only needed until direct calls are supported in
+  // WebAssembly for ARM64.
+  void set_code_in_js_code_space(bool) {}
 
   static constexpr int kSpecialTargetSize = kPointerSize;
 

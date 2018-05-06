@@ -16,6 +16,7 @@
 #include "src/interpreter/bytecode-array-iterator.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/isolate-inl.h"
+#include "src/objects/api-callbacks.h"
 #include "src/snapshot/snapshot.h"
 
 namespace v8 {
@@ -112,8 +113,8 @@ MaybeHandle<Object> DebugEvaluate::WithTopmostArguments(Isolate* isolate,
   Handle<Context> evaluation_context =
       factory->NewDebugEvaluateContext(native_context, scope_info, materialized,
                                        Handle<Context>(), Handle<StringSet>());
-  Handle<SharedFunctionInfo> outer_info(native_context->closure()->shared(),
-                                        isolate);
+  Handle<SharedFunctionInfo> outer_info(
+      native_context->empty_function()->shared(), isolate);
   Handle<JSObject> receiver(native_context->global_proxy());
   const bool throw_on_side_effect = false;
   MaybeHandle<Object> maybe_result =
@@ -347,6 +348,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(EstimateNumberOfElements)            \
   V(GetArrayKeys)                        \
   V(HasComplexElements)                  \
+  V(HasFastPackedElements)               \
   V(NewArray)                            \
   V(NormalizeElements)                   \
   V(RemoveArrayHoles)                    \
@@ -494,6 +496,8 @@ bool BytecodeHasNoSideEffect(interpreter::Bytecode bytecode) {
     case Bytecode::kLdaGlobal:
     case Bytecode::kLdaNamedProperty:
     case Bytecode::kLdaKeyedProperty:
+    case Bytecode::kLdaGlobalInsideTypeof:
+    case Bytecode::kLdaLookupSlotInsideTypeof:
     // Arithmetics.
     case Bytecode::kAdd:
     case Bytecode::kAddSmi:
@@ -870,6 +874,7 @@ SharedFunctionInfo::SideEffectState BuiltinGetSideEffectState(
     case Builtins::kArrayPrototypePop:
     case Builtins::kArrayPrototypePush:
     case Builtins::kArrayPrototypeShift:
+    case Builtins::kArraySplice:
     case Builtins::kArrayUnshift:
     // Map builtins.
     case Builtins::kMapIteratorPrototypeNext:

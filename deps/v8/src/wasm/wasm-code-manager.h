@@ -86,7 +86,6 @@ class V8_EXPORT_PRIVATE WasmCode final {
     kWasmToJsWrapper,
     kLazyStub,
     kInterpreterStub,
-    kCopiedStub,
     kTrampoline
   };
 
@@ -269,27 +268,20 @@ class V8_EXPORT_PRIVATE NativeModule final {
   void SetSharedModuleData(Handle<WasmSharedModuleData>);
 
   uint32_t num_imported_functions() const { return num_imported_functions_; }
-
   const std::vector<WasmCode*>& code_table() const { return code_table_; }
-
   size_t committed_memory() const { return committed_memory_; }
+  bool use_trap_handler() const { return use_trap_handler_; }
+  void set_lazy_compile_frozen(bool frozen) { lazy_compile_frozen_ = frozen; }
+  bool lazy_compile_frozen() const { return lazy_compile_frozen_; }
+
   const size_t instance_id = 0;
   ~NativeModule();
-
-  void set_lazy_compile_frozen(bool frozen) { frozen_ = frozen; }
-  bool lazy_compile_frozen() const { return frozen_; }
 
  private:
   friend class WasmCodeManager;
   friend class NativeModuleSerializer;
   friend class NativeModuleDeserializer;
   friend class NativeModuleModificationScope;
-
-  struct AddressHasher {
-    size_t operator()(const Address& addr) const {
-      return std::hash<Address>()(addr);
-    }
-  };
 
   static base::AtomicNumber<size_t> next_id_;
   NativeModule(uint32_t num_functions, uint32_t num_imports,
@@ -328,7 +320,7 @@ class V8_EXPORT_PRIVATE NativeModule final {
 
   // Maps from instruction start of an immovable code object to instruction
   // start of the trampoline.
-  std::unordered_map<Address, Address, AddressHasher> trampolines_;
+  std::unordered_map<Address, Address> trampolines_;
 
   std::unique_ptr<CompilationState, CompilationStateDeleter> compilation_state_;
 
@@ -343,10 +335,11 @@ class V8_EXPORT_PRIVATE NativeModule final {
   WasmCodeManager* wasm_code_manager_;
   base::Mutex allocation_mutex_;
   size_t committed_memory_ = 0;
-  bool can_request_more_memory_;
-  bool is_executable_ = false;
-  bool frozen_ = false;
   int modification_scope_depth_ = 0;
+  bool can_request_more_memory_;
+  bool use_trap_handler_;
+  bool is_executable_ = false;
+  bool lazy_compile_frozen_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(NativeModule);
 };

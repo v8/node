@@ -53,6 +53,7 @@
 #include "src/map-updater.h"
 #include "src/messages.h"
 #include "src/objects-body-descriptors-inl.h"
+#include "src/objects/api-callbacks.h"
 #include "src/objects/bigint.h"
 #include "src/objects/code-inl.h"
 #include "src/objects/compilation-cache-inl.h"
@@ -3571,18 +3572,6 @@ bool HeapObject::IsValidSlot(Map* map, int offset) {
 void HeapNumber::HeapNumberPrint(std::ostream& os) {  // NOLINT
   os << value();
 }
-
-#define FIELD_ADDR(p, offset) \
-  (reinterpret_cast<byte*>(p) + offset - kHeapObjectTag)
-
-#define READ_INT32_FIELD(p, offset) \
-  (*reinterpret_cast<const int32_t*>(FIELD_ADDR(p, offset)))
-
-#define READ_INT64_FIELD(p, offset) \
-  (*reinterpret_cast<const int64_t*>(FIELD_ADDR(p, offset)))
-
-#define READ_BYTE_FIELD(p, offset) \
-  (*reinterpret_cast<const byte*>(FIELD_ADDR(p, offset)))
 
 String* JSReceiver::class_name() {
   if (IsFunction()) return GetHeap()->Function_string();
@@ -9786,14 +9775,16 @@ Handle<Map> Map::TransitionToDataProperty(Handle<Map> map, Handle<Name> name,
 
   TransitionFlag flag = INSERT_TRANSITION;
   MaybeHandle<Map> maybe_map;
-  if (!FLAG_track_constant_fields && value->IsJSFunction()) {
-    maybe_map = Map::CopyWithConstant(map, name, value, attributes, flag);
-  } else if (!map->TooManyFastProperties(store_mode)) {
-    Isolate* isolate = name->GetIsolate();
-    Representation representation = value->OptimalRepresentation();
-    Handle<FieldType> type = value->OptimalType(isolate, representation);
-    maybe_map = Map::CopyWithField(map, name, type, attributes, constness,
-                                   representation, flag);
+  if (!map->TooManyFastProperties(store_mode)) {
+    if (!FLAG_track_constant_fields && value->IsJSFunction()) {
+      maybe_map = Map::CopyWithConstant(map, name, value, attributes, flag);
+    } else {
+      Isolate* isolate = name->GetIsolate();
+      Representation representation = value->OptimalRepresentation();
+      Handle<FieldType> type = value->OptimalType(isolate, representation);
+      maybe_map = Map::CopyWithField(map, name, type, attributes, constness,
+                                     representation, flag);
+    }
   }
 
   Handle<Map> result;
@@ -12098,6 +12089,11 @@ void SeqTwoByteString::clear_padding() {
          SizeFor(length()) - data_size);
 }
 
+int ExternalString::ExternalPayloadSize() const {
+  int length_multiplier = IsTwoByteRepresentation() ? i::kShortSize : kCharSize;
+  return length() * length_multiplier;
+}
+
 uint32_t StringHasher::MakeArrayIndexHash(uint32_t value, int length) {
   // For array indexes mix the length into the hash as an array index could
   // be zero.
@@ -13369,11 +13365,10 @@ bool Script::GetPositionInfo(int position, PositionInfo* info,
   // For wasm, we do not rely on the line_ends array, but do the translation
   // directly.
   if (type() == Script::TYPE_WASM) {
-    Handle<WasmCompiledModule> compiled_module(
-        WasmCompiledModule::cast(wasm_compiled_module()));
     DCHECK_LE(0, position);
-    return compiled_module->shared()->GetPositionInfo(
-        static_cast<uint32_t>(position), info);
+    return WasmModuleObject::cast(wasm_module_object())
+        ->shared()
+        ->GetPositionInfo(static_cast<uint32_t>(position), info);
   }
 
   if (line_ends()->IsUndefined(GetIsolate())) {
@@ -14023,6 +14018,11 @@ void ObjectVisitor::VisitEmbeddedPointer(Code* host, RelocInfo* rinfo) {
   DCHECK_EQ(old_pointer, new_pointer);
 }
 
+void ObjectVisitor::VisitRelocInfo(RelocIterator* it) {
+  for (; !it->done(); it->next()) {
+    it->rinfo()->Visit(this);
+  }
+}
 
 void Code::InvalidateEmbeddedObjects() {
   HeapObject* undefined = GetHeap()->undefined_value();
@@ -17440,10 +17440,9 @@ Handle<ObjectHashSet> ObjectHashSet::Add(Handle<ObjectHashSet> set,
 }
 
 Handle<Object> CompilationCacheTable::Lookup(Handle<String> src,
-                                             Handle<Context> context,
+                                             Handle<SharedFunctionInfo> shared,
                                              LanguageMode language_mode) {
   Isolate* isolate = GetIsolate();
-  Handle<SharedFunctionInfo> shared(context->closure()->shared());
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);
   int entry = FindEntry(&key);
   if (entry == kNotFound) return isolate->factory()->undefined_value();
@@ -17566,8 +17565,9 @@ FeedbackCell* SearchLiteralsMap(CompilationCacheTable* cache, int cache_entry,
 }  // namespace
 
 MaybeHandle<SharedFunctionInfo> CompilationCacheTable::LookupScript(
-    Handle<String> src, Handle<Context> context, LanguageMode language_mode) {
-  Handle<SharedFunctionInfo> shared(context->closure()->shared());
+    Handle<String> src, Handle<Context> native_context,
+    LanguageMode language_mode) {
+  Handle<SharedFunctionInfo> shared(native_context->empty_function()->shared());
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);
   int entry = FindEntry(&key);
   if (entry == kNotFound) return MaybeHandle<SharedFunctionInfo>();
@@ -17608,12 +17608,11 @@ Handle<Object> CompilationCacheTable::LookupRegExp(Handle<String> src,
   return Handle<Object>(get(EntryToIndex(entry) + 1), isolate);
 }
 
-
 Handle<CompilationCacheTable> CompilationCacheTable::Put(
     Handle<CompilationCacheTable> cache, Handle<String> src,
-    Handle<Context> context, LanguageMode language_mode, Handle<Object> value) {
+    Handle<SharedFunctionInfo> shared, LanguageMode language_mode,
+    Handle<Object> value) {
   Isolate* isolate = cache->GetIsolate();
-  Handle<SharedFunctionInfo> shared(context->closure()->shared());
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);
   Handle<Object> k = key.AsHandle(isolate);
   cache = EnsureCapacity(cache, 1);
@@ -17626,11 +17625,10 @@ Handle<CompilationCacheTable> CompilationCacheTable::Put(
 
 Handle<CompilationCacheTable> CompilationCacheTable::PutScript(
     Handle<CompilationCacheTable> cache, Handle<String> src,
-    Handle<Context> context, LanguageMode language_mode,
+    Handle<Context> native_context, LanguageMode language_mode,
     Handle<SharedFunctionInfo> value) {
   Isolate* isolate = cache->GetIsolate();
-  Handle<SharedFunctionInfo> shared(context->closure()->shared());
-  Handle<Context> native_context(context->native_context());
+  Handle<SharedFunctionInfo> shared(native_context->empty_function()->shared());
   StringSharedKey key(src, shared, language_mode, kNoSourcePosition);
   Handle<Object> k = key.AsHandle(isolate);
   cache = EnsureCapacity(cache, 1);
@@ -18562,6 +18560,7 @@ SmallOrderedHashTable<SmallOrderedHashMap>::Allocate(Isolate* isolate,
 template <class Derived>
 void SmallOrderedHashTable<Derived>::Initialize(Isolate* isolate,
                                                 int capacity) {
+  DisallowHeapAllocation no_gc;
   int num_buckets = capacity / kLoadFactor;
   int num_chains = capacity;
 
@@ -18569,12 +18568,12 @@ void SmallOrderedHashTable<Derived>::Initialize(Isolate* isolate,
   SetNumberOfElements(0);
   SetNumberOfDeletedElements(0);
 
-  byte* hashtable_start =
-      FIELD_ADDR(this, kHeaderSize + (kBucketsStartOffset * kOneByteSize));
-  memset(hashtable_start, kNotFound, num_buckets + num_chains);
+  Address hashtable_start = GetHashTableStartAddress(capacity);
+  memset(reinterpret_cast<byte*>(hashtable_start), kNotFound,
+         num_buckets + num_chains);
 
   if (isolate->heap()->InNewSpace(this)) {
-    MemsetPointer(RawField(this, GetDataTableStartOffset()),
+    MemsetPointer(RawField(this, kHeaderSize + kDataTableStartOffset),
                   isolate->heap()->the_hole_value(),
                   capacity * Derived::kEntrySize);
   } else {
@@ -18592,6 +18591,12 @@ void SmallOrderedHashTable<Derived>::Initialize(Isolate* isolate,
 
   for (int i = 0; i < num_chains; ++i) {
     DCHECK_EQ(kNotFound, GetNextEntry(i));
+  }
+
+  for (int i = 0; i < capacity; ++i) {
+    for (int j = 0; j < Derived::kEntrySize; j++) {
+      DCHECK_EQ(isolate->heap()->the_hole_value(), GetDataEntry(i, j));
+    }
   }
 #endif  // DEBUG
 }
@@ -19184,7 +19189,7 @@ void JSArrayBuffer::Neuter() {
   }
 }
 
-void JSArrayBuffer::FreeBackingStore() {
+void JSArrayBuffer::FreeBackingStoreFromMainThread() {
   if (allocation_base() == nullptr) {
     return;
   }
@@ -19558,11 +19563,6 @@ MaybeHandle<Name> FunctionTemplateInfo::TryGetCachedPropertyName(
   }
   return MaybeHandle<Name>();
 }
-
-#undef FIELD_ADDR
-#undef READ_INT32_FIELD
-#undef READ_INT64_FIELD
-#undef READ_BYTE_FIELD
 
 }  // namespace internal
 }  // namespace v8

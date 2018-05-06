@@ -140,11 +140,6 @@ class CompilationState {
                                           : baseline_finish_units_;
   }
 
-  size_t GetNumCompilationUnitsScheduled() const {
-    return baseline_compilation_units_.size() +
-           tiering_compilation_units_.size();
-  }
-
   Isolate* const isolate_;
   ModuleEnv module_env_;
   const size_t max_memory_;
@@ -187,7 +182,6 @@ class CompilationState {
   // the CompilationState in order to cleanly clean up.
   CancelableTaskManager background_task_manager_;
   CancelableTaskManager foreground_task_manager_;
-  std::shared_ptr<v8::TaskRunner> background_task_runner_;
   std::shared_ptr<v8::TaskRunner> foreground_task_runner_;
 
   const size_t max_background_tasks_ = 0;
@@ -287,8 +281,9 @@ class InstanceBuilder {
   Counters* counters() const { return async_counters().get(); }
 
   wasm::UseTrapHandler use_trap_handler() const {
-    return compiled_module_->use_trap_handler() ? kUseTrapHandler
-                                                : kNoTrapHandler;
+    return compiled_module_->GetNativeModule()->use_trap_handler()
+               ? kUseTrapHandler
+               : kNoTrapHandler;
   }
 
 // Helper routines to print out errors with imports.
@@ -486,10 +481,10 @@ class IndirectPatcher {
 
 ModuleEnv CreateModuleEnvFromCompiledModule(
     Isolate* isolate, Handle<WasmCompiledModule> compiled_module) {
-  DisallowHeapAllocation no_gc;
   WasmModule* module = compiled_module->shared()->module();
   wasm::UseTrapHandler use_trap_handler =
-      compiled_module->use_trap_handler() ? kUseTrapHandler : kNoTrapHandler;
+      compiled_module->GetNativeModule()->use_trap_handler() ? kUseTrapHandler
+                                                             : kNoTrapHandler;
   return ModuleEnv(module, use_trap_handler, wasm::kRuntimeExceptionSupport);
 }
 
@@ -727,7 +722,6 @@ const wasm::WasmCode* LazyCompileDirectCall(Isolate* isolate,
 
   int patched = 0;
   {
-    DisallowHeapAllocation no_gc;
     // Now patch the code in {wasm_caller} with all functions which are now
     // compiled. This will pick up any other compiled functions, not only {ret}.
     size_t pos = 0;
@@ -1447,7 +1441,6 @@ MaybeHandle<WasmModuleObject> CompileToModuleObjectInternal(
     // Close the CodeSpaceMemoryModificationScope before calling into the
     // debugger.
     modification_scope.reset();
-    script->set_wasm_compiled_module(*compiled_module);
     isolate->debug()->OnAfterCompile(script);
   }
 
@@ -1653,9 +1646,6 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
       TRACE("Reusing existing instance %zu\n",
             compiled_module_->GetNativeModule()->instance_id);
     }
-    Handle<WeakCell> weak_native_context =
-        isolate_->factory()->NewWeakCell(isolate_->native_context());
-    compiled_module_->set_weak_native_context(*weak_native_context);
   }
   base::Optional<wasm::NativeModuleModificationScope>
       native_module_modification_scope;
@@ -1668,7 +1658,7 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   //--------------------------------------------------------------------------
   CodeSpecialization code_specialization;
   Handle<WasmInstanceObject> instance =
-      WasmInstanceObject::New(isolate_, compiled_module_);
+      WasmInstanceObject::New(isolate_, module_object_, compiled_module_);
   Handle<WeakCell> weak_instance = factory->NewWeakCell(instance);
   Handle<WeakCell> old_weak_instance(original->weak_owning_instance(),
                                      isolate_);
@@ -1682,9 +1672,19 @@ MaybeHandle<WasmInstanceObject> InstanceBuilder::Build() {
   MaybeHandle<JSArrayBuffer> old_globals;
   uint32_t globals_size = module_->globals_size;
   if (globals_size > 0) {
-    constexpr bool enable_guard_regions = false;
-    if (!NewArrayBuffer(isolate_, globals_size, enable_guard_regions)
-             .ToHandle(&globals_)) {
+    void* backing_store =
+        isolate_->array_buffer_allocator()->Allocate(globals_size);
+    if (backing_store == nullptr) {
+      thrower_->RangeError("Out of memory: wasm globals");
+      return {};
+    }
+    globals_ =
+        isolate_->factory()->NewJSArrayBuffer(SharedFlag::kNotShared, TENURED);
+    constexpr bool is_external = false;
+    constexpr bool is_wasm_memory = false;
+    JSArrayBuffer::Setup(globals_, isolate_, is_external, backing_store,
+                         globals_size, SharedFlag::kNotShared, is_wasm_memory);
+    if (globals_.is_null()) {
       thrower_->RangeError("Out of memory: wasm globals");
       return {};
     }
@@ -2465,14 +2465,12 @@ Handle<JSArrayBuffer> InstanceBuilder::AllocateMemory(uint32_t num_pages) {
     thrower_->RangeError("Out of memory: wasm memory too large");
     return Handle<JSArrayBuffer>::null();
   }
-  const bool enable_guard_regions = use_trap_handler();
   const bool is_shared_memory =
       module_->has_shared_memory && i::FLAG_experimental_wasm_threads;
   i::SharedFlag shared_flag =
       is_shared_memory ? i::SharedFlag::kShared : i::SharedFlag::kNotShared;
   Handle<JSArrayBuffer> mem_buffer;
-  if (!NewArrayBuffer(isolate_, num_pages * kWasmPageSize, enable_guard_regions,
-                      shared_flag)
+  if (!NewArrayBuffer(isolate_, num_pages * kWasmPageSize, shared_flag)
            .ToHandle(&mem_buffer)) {
     thrower_->RangeError("Out of memory: wasm memory");
   }
@@ -2777,7 +2775,6 @@ AsyncCompileJob::AsyncCompileJob(Isolate* isolate,
   v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate);
   v8::Platform* platform = V8::GetCurrentPlatform();
   foreground_task_runner_ = platform->GetForegroundTaskRunner(v8_isolate);
-  background_task_runner_ = platform->GetWorkerThreadsTaskRunner(v8_isolate);
   // The handles for the context and promise must be deferred.
   DeferredHandleScope deferred(isolate);
   context_ = Handle<Context>(*context);
@@ -2887,7 +2884,6 @@ void AsyncCompileJob::FinishCompile() {
       script, asm_js_offset_table);
   compiled_module_->set_shared(*shared);
   compiled_module_->GetNativeModule()->SetSharedModuleData(shared);
-  script->set_wasm_compiled_module(*compiled_module_);
 
   // Finish the wasm script now and make it public to the debugger.
   isolate_->debug()->OnAfterCompile(
@@ -2977,12 +2973,15 @@ void AsyncCompileJob::DoSync(Args&&... args) {
 }
 
 void AsyncCompileJob::StartBackgroundTask() {
+  auto task = base::make_unique<CompileTask>(this, false);
+
   // If --wasm-num-compilation-tasks=0 is passed, do only spawn foreground
   // tasks. This is used to make timing deterministic.
-  v8::TaskRunner* task_runner = FLAG_wasm_num_compilation_tasks > 0
-                                    ? background_task_runner_.get()
-                                    : foreground_task_runner_.get();
-  task_runner->PostTask(base::make_unique<CompileTask>(this, false));
+  if (FLAG_wasm_num_compilation_tasks > 0) {
+    V8::GetCurrentPlatform()->CallOnWorkerThread(std::move(task));
+  } else {
+    foreground_task_runner_->PostTask(std::move(task));
+  }
 }
 
 template <typename Step, typename... Args>
@@ -3122,9 +3121,9 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
               case CompilationEvent::kFinishedBaselineCompilation:
                 if (job->DecrementAndCheckFinisherCount()) {
                   SaveContext saved_context(job->isolate());
-                  job->isolate()->set_context(
-                      job->compiled_module_->native_context());
-
+                  // TODO(mstarzinger): Make {AsyncCompileJob::context} point
+                  // to the native context and also rename to {native_context}.
+                  job->isolate()->set_context(job->context_->native_context());
                   job->FinishCompile();
                 }
                 return;
@@ -3149,8 +3148,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
                             ->baseline_compilation_finished());
 
                 SaveContext saved_context(job->isolate());
-                job->isolate()->set_context(
-                    job->compiled_module_->native_context());
+                job->isolate()->set_context(job->context_->native_context());
                 Handle<Object> error = thrower->Reify();
 
                 DeferredHandleScope deferred(job->isolate());
@@ -3473,7 +3471,6 @@ CompilationState::CompilationState(internal::Isolate* isolate, ModuleEnv& env)
   v8::Isolate* v8_isolate = reinterpret_cast<v8::Isolate*>(isolate_);
   v8::Platform* platform = V8::GetCurrentPlatform();
   foreground_task_runner_ = platform->GetForegroundTaskRunner(v8_isolate);
-  background_task_runner_ = platform->GetWorkerThreadsTaskRunner(v8_isolate);
 
   // Register task manager for clean shutdown in case of an isolate shutdown.
   isolate_->wasm_engine()->Register(&background_task_manager_);
@@ -3526,7 +3523,7 @@ void CompilationState::AddCompilationUnits(
         std::make_move_iterator(baseline_units.end()));
   }
 
-  RestartBackgroundTasks(GetNumCompilationUnitsScheduled());
+  RestartBackgroundTasks();
 }
 
 std::unique_ptr<WasmCompilationUnit>
@@ -3594,7 +3591,7 @@ void CompilationState::OnFinishedUnit() {
     // If we are in {kRegular} mode, {num_tiering_units_} is 0, therefore
     // this case is already caught by the previous check.
     NotifyOnEvent(CompilationEvent::kFinishedBaselineCompilation, nullptr);
-    RestartBackgroundTasks(GetNumCompilationUnitsScheduled());
+    RestartBackgroundTasks();
   }
 }
 
@@ -3630,27 +3627,31 @@ void CompilationState::OnBackgroundTaskStopped() {
 }
 
 void CompilationState::RestartBackgroundTasks(size_t max) {
-  size_t num_restart = max;
+  size_t num_restart;
   {
     base::LockGuard<base::Mutex> guard(&mutex_);
     bool should_increase_workload = allocated_memory_ <= max_memory_ / 2;
     if (!should_increase_workload) return;
     DCHECK_LE(num_background_tasks_, max_background_tasks_);
     if (num_background_tasks_ == max_background_tasks_) return;
-    num_restart = std::min(
-        num_restart, std::min(GetNumCompilationUnitsScheduled(),
-                              max_background_tasks_ - num_background_tasks_));
+    size_t num_compilation_units =
+        baseline_compilation_units_.size() + tiering_compilation_units_.size();
+    size_t stopped_tasks = max_background_tasks_ - num_background_tasks_;
+    num_restart = std::min(max, std::min(num_compilation_units, stopped_tasks));
     num_background_tasks_ += num_restart;
   }
 
-  // If --wasm-num-compilation-tasks=0 is passed, do only spawn foreground
-  // tasks. This is used to make timing deterministic.
-  v8::TaskRunner* task_runner = FLAG_wasm_num_compilation_tasks > 0
-                                    ? background_task_runner_.get()
-                                    : foreground_task_runner_.get();
   for (; num_restart > 0; --num_restart) {
-    task_runner->PostTask(base::make_unique<BackgroundCompileTask>(
-        this, &background_task_manager_));
+    auto task = base::make_unique<BackgroundCompileTask>(
+        this, &background_task_manager_);
+
+    // If --wasm-num-compilation-tasks=0 is passed, do only spawn foreground
+    // tasks. This is used to make timing deterministic.
+    if (FLAG_wasm_num_compilation_tasks > 0) {
+      V8::GetCurrentPlatform()->CallOnWorkerThread(std::move(task));
+    } else {
+      foreground_task_runner_->PostTask(std::move(task));
+    }
   }
 }
 
@@ -3702,7 +3703,8 @@ void CompileJsToWasmWrappers(Isolate* isolate,
                                      isolate);
   NativeModule* native_module = compiled_module->GetNativeModule();
   wasm::UseTrapHandler use_trap_handler =
-      compiled_module->use_trap_handler() ? kUseTrapHandler : kNoTrapHandler;
+      compiled_module->GetNativeModule()->use_trap_handler() ? kUseTrapHandler
+                                                             : kNoTrapHandler;
   for (auto exp : compiled_module->shared()->module()->export_table) {
     if (exp.kind != kExternalFunction) continue;
     wasm::WasmCode* wasm_code =

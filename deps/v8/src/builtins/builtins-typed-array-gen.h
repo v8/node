@@ -24,7 +24,8 @@ class TypedArrayBuiltinsAssembler : public CodeStubAssembler {
   void GenerateTypedArrayPrototypeGetter(Node* context, Node* receiver,
                                          const char* method_name,
                                          int object_offset);
-  void GenerateTypedArrayPrototypeIterationMethod(Node* context, Node* receiver,
+  void GenerateTypedArrayPrototypeIterationMethod(TNode<Context> context,
+                                                  TNode<Object> receiver,
                                                   const char* method_name,
                                                   IterationKind iteration_kind);
 
@@ -140,10 +141,6 @@ class TypedArrayBuiltinsAssembler : public CodeStubAssembler {
   // Returns true iff number is NaN.
   // TOOD(szuend): Remove when UncheckedCasts are supported in Torque.
   TNode<BoolT> NumberIsNaN(TNode<Number> number);
-
-  // Always CSA_ASSERTs false.
-  // TODO(szuend): Remove when Unreachable is supported in Torque.
-  void AssertUnreachable() { CSA_ASSERT(this, Int32FalseConstant()); }
 };
 
 }  // namespace internal

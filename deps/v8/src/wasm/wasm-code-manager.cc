@@ -16,6 +16,7 @@
 #include "src/globals.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/wasm/function-compiler.h"
 #include "src/wasm/wasm-module.h"
 #include "src/wasm/wasm-objects-inl.h"
 #include "src/wasm/wasm-objects.h"
@@ -305,8 +306,6 @@ const char* GetWasmCodeKindAsString(WasmCode::Kind kind) {
       return "lazy-compile";
     case WasmCode::kInterpreterStub:
       return "interpreter-entry";
-    case WasmCode::kCopiedStub:
-      return "copied stub";
     case WasmCode::kTrampoline:
       return "trampoline";
   }
@@ -338,7 +337,8 @@ NativeModule::NativeModule(uint32_t num_functions, uint32_t num_imports,
           reinterpret_cast<Isolate*>(code_manager->isolate_), env)),
       free_memory_(mem->address(), mem->end()),
       wasm_code_manager_(code_manager),
-      can_request_more_memory_(can_request_more) {
+      can_request_more_memory_(can_request_more),
+      use_trap_handler_(env.use_trap_handler) {
   VirtualMemory my_mem;
   owned_memory_.push_back(my_mem);
   owned_memory_.back().TakeControl(mem);
@@ -472,8 +472,8 @@ WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
   std::unique_ptr<ProtectedInstructions> protected_instructions(
       new ProtectedInstructions(0));
   Vector<const byte> orig_instructions(
-      reinterpret_cast<byte*>(code->raw_instruction_start()),
-      static_cast<size_t>(code->raw_instruction_size()));
+      reinterpret_cast<byte*>(code->InstructionStart()),
+      static_cast<size_t>(code->InstructionSize()));
   int stack_slots = code->has_safepoint_info() ? code->stack_slots() : 0;
   int safepoint_table_offset =
       code->has_safepoint_info() ? code->safepoint_table_offset() : 0;
@@ -492,7 +492,7 @@ WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
                    std::move(protected_instructions),  // protected_instructions
                    WasmCode::kOther,                   // kind
                    WasmCode::kNoFlushICache);          // flush_icache
-  intptr_t delta = ret->instruction_start() - code->raw_instruction_start();
+  intptr_t delta = ret->instruction_start() - code->InstructionStart();
   int mask = RelocInfo::kApplyMask | RelocInfo::kCodeTargetMask |
              RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
 

@@ -9,10 +9,9 @@
 #include "src/debug/debug.h"
 #include "src/debug/interface-types.h"
 #include "src/heap/heap.h"
-#include "src/machine-type.h"
 #include "src/objects.h"
 #include "src/objects/script.h"
-#include "src/wasm/wasm-interpreter.h"
+#include "src/signature.h"
 
 // Has to be the last include (doesn't have include guards)
 #include "src/objects/object-macros.h"
@@ -21,12 +20,14 @@ namespace v8 {
 namespace internal {
 namespace wasm {
 class InterpretedFrame;
+struct InterpretedFrameDeleter;
 class NativeModule;
 struct ModuleEnv;
 class WasmCode;
 struct WasmModule;
 class SignatureMap;
 class WireBytesRef;
+class WasmInterpreter;
 using ValueType = MachineRepresentation;
 using FunctionSig = Signature<ValueType>;
 }  // namespace wasm
@@ -107,6 +108,11 @@ class WasmModuleObject : public JSObject {
   // Shared compiled code between multiple WebAssembly.Module objects.
   DECL_ACCESSORS(compiled_module, WasmCompiledModule)
 
+  // TODO(mstarzinger): Currently this getter uses an indirection via the
+  // {WasmCompiledModule}, but we will soon move the reference to the shared
+  // data directly into this {WasmModuleObject}, making this a normal accessor.
+  inline WasmSharedModuleData* shared() const;
+
 // Layout description.
 #define WASM_MODULE_OBJECT_FIELDS(V)     \
   V(kCompiledModuleOffset, kPointerSize) \
@@ -118,6 +124,15 @@ class WasmModuleObject : public JSObject {
 
   static Handle<WasmModuleObject> New(
       Isolate* isolate, Handle<WasmCompiledModule> compiled_module);
+
+  // Set a breakpoint on the given byte position inside the given module.
+  // This will affect all live and future instances of the module.
+  // The passed position might be modified to point to the next breakable
+  // location inside the same function.
+  // If it points outside a function, or behind the last breakable location,
+  // this function returns false and does not set any breakpoint.
+  static bool SetBreakPoint(Handle<WasmModuleObject>, int* position,
+                            Handle<BreakPoint> break_point);
 
   static void ValidateStateForTesting(Isolate* isolate,
                                       Handle<WasmModuleObject> module);
@@ -261,7 +276,9 @@ class WasmInstanceObject : public JSObject {
   DECL_CAST(WasmInstanceObject)
 
   DECL_ACCESSORS(compiled_module, WasmCompiledModule)
+  DECL_ACCESSORS(module_object, WasmModuleObject)
   DECL_ACCESSORS(exports_object, JSObject)
+  DECL_ACCESSORS(native_context, Context)
   DECL_OPTIONAL_ACCESSORS(memory_object, WasmMemoryObject)
   DECL_OPTIONAL_ACCESSORS(globals_buffer, JSArrayBuffer)
   DECL_OPTIONAL_ACCESSORS(imported_mutable_globals_buffers, FixedArray)
@@ -285,7 +302,9 @@ class WasmInstanceObject : public JSObject {
 // Layout description.
 #define WASM_INSTANCE_OBJECT_FIELDS(V)                                  \
   V(kCompiledModuleOffset, kPointerSize)                                \
+  V(kModuleObjectOffset, kPointerSize)                                  \
   V(kExportsObjectOffset, kPointerSize)                                 \
+  V(kNativeContextOffset, kPointerSize)                                 \
   V(kMemoryObjectOffset, kPointerSize)                                  \
   V(kGlobalsBufferOffset, kPointerSize)                                 \
   V(kImportedMutableGlobalsBuffersOffset, kPointerSize)                 \
@@ -314,7 +333,6 @@ class WasmInstanceObject : public JSObject {
                                 WASM_INSTANCE_OBJECT_FIELDS)
 #undef WASM_INSTANCE_OBJECT_FIELDS
 
-  WasmModuleObject* module_object();
   V8_EXPORT_PRIVATE wasm::WasmModule* module();
 
   static bool EnsureIndirectFunctionTableWithMinimumSize(
@@ -328,14 +346,12 @@ class WasmInstanceObject : public JSObject {
   // If no debug info exists yet, it is created automatically.
   static Handle<WasmDebugInfo> GetOrCreateDebugInfo(Handle<WasmInstanceObject>);
 
-  static Handle<WasmInstanceObject> New(Isolate*, Handle<WasmCompiledModule>);
+  static Handle<WasmInstanceObject> New(Isolate*, Handle<WasmModuleObject>,
+                                        Handle<WasmCompiledModule>);
 
   static void ValidateInstancesChainForTesting(
       Isolate* isolate, Handle<WasmModuleObject> module_obj,
       int instance_count);
-
-  static void ValidateOrphanedInstanceForTesting(
-      Isolate* isolate, Handle<WasmInstanceObject> instance);
 
   static void InstallFinalizer(Isolate* isolate,
                                Handle<WasmInstanceObject> instance);
@@ -493,15 +509,11 @@ class WasmCompiledModule : public Struct {
 // Layout description.
 #define WASM_COMPILED_MODULE_FIELDS(V)          \
   V(kSharedOffset, kPointerSize)                \
-  V(kNativeContextOffset, kPointerSize)         \
   V(kExportWrappersOffset, kPointerSize)        \
   V(kNextInstanceOffset, kPointerSize)          \
   V(kPrevInstanceOffset, kPointerSize)          \
   V(kOwningInstanceOffset, kPointerSize)        \
-  V(kWasmModuleOffset, kPointerSize)            \
   V(kNativeModuleOffset, kPointerSize)          \
-  V(kLazyCompileDataOffset, kPointerSize)       \
-  V(kUseTrapHandlerOffset, kPointerSize)        \
   V(kSize, 0)
 
   DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
@@ -522,13 +534,6 @@ class WasmCompiledModule : public Struct {
 
 #define WCM_CONST_OBJECT(TYPE, NAME) WCM_OBJECT_OR_WEAK(TYPE, NAME, private)
 
-#define WCM_SMALL_CONST_NUMBER(TYPE, NAME) \
- public:                                   \
-  inline TYPE NAME() const;                \
-                                           \
- private:                                  \
-  inline void set_##NAME(TYPE value);
-
 #define WCM_WEAK_LINK(TYPE, NAME)                   \
   WCM_OBJECT_OR_WEAK(WeakCell, weak_##NAME, public) \
                                                     \
@@ -540,15 +545,11 @@ class WasmCompiledModule : public Struct {
   // By default, instance values go to WasmInstanceObject, however, if
   // we embed the generated code with a value, then we track that value here.
   WCM_OBJECT(WasmSharedModuleData, shared)
-  WCM_WEAK_LINK(Context, native_context)
   WCM_OBJECT(FixedArray, export_wrappers)
   WCM_CONST_OBJECT(WasmCompiledModule, next_instance)
   WCM_CONST_OBJECT(WasmCompiledModule, prev_instance)
   WCM_WEAK_LINK(WasmInstanceObject, owning_instance)
-  WCM_WEAK_LINK(WasmModuleObject, wasm_module)
   WCM_OBJECT(Foreign, native_module)
-  // TODO(mstarzinger): Make {use_trap_handler} smaller.
-  WCM_SMALL_CONST_NUMBER(bool, use_trap_handler)
 
  public:
   static Handle<WasmCompiledModule> New(Isolate* isolate,
@@ -573,15 +574,6 @@ class WasmCompiledModule : public Struct {
 
   static void ReinitializeAfterDeserialization(Isolate*,
                                                Handle<WasmCompiledModule>);
-
-  // Set a breakpoint on the given byte position inside the given module.
-  // This will affect all live and future instances of the module.
-  // The passed position might be modified to point to the next breakable
-  // location inside the same function.
-  // If it points outside a function, or behind the last breakable location,
-  // this function returns false and does not set any breakpoint.
-  static bool SetBreakPoint(Handle<WasmCompiledModule>, int* position,
-                            Handle<BreakPoint> break_point);
 
   void LogWasmCodes(Isolate* isolate);
 
@@ -652,8 +644,8 @@ class WasmDebugInfo : public Struct {
   std::vector<std::pair<uint32_t, int>> GetInterpretedStack(
       Address frame_pointer);
 
-  wasm::WasmInterpreter::FramePtr GetInterpretedFrame(Address frame_pointer,
-                                                      int frame_index);
+  std::unique_ptr<wasm::InterpretedFrame, wasm::InterpretedFrameDeleter>
+  GetInterpretedFrame(Address frame_pointer, int frame_index);
 
   // Unwind the interpreted stack belonging to the passed interpreter entry
   // frame.
@@ -688,7 +680,6 @@ class WasmDebugInfo : public Struct {
 #undef WCM_LARGE_NUMBER
 #undef WCM_OBJECT
 #undef WCM_OBJECT_OR_WEAK
-#undef WCM_SMALL_CONST_NUMBER
 #undef WCM_WEAK_LINK
 
 #include "src/objects/object-macros-undef.h"

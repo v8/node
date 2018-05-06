@@ -49,6 +49,7 @@
 #include "src/json-stringifier.h"
 #include "src/messages.h"
 #include "src/objects-inl.h"
+#include "src/objects/api-callbacks.h"
 #include "src/objects/templates.h"
 #include "src/parsing/parser.h"
 #include "src/parsing/scanner-character-streams.h"
@@ -349,7 +350,9 @@ void i::V8::FatalProcessOutOfMemory(i::Isolate* isolate, const char* location,
     memset(&heap_stats, 0xBADC0DE, sizeof(heap_stats));
     // Note that the embedder's oom handler won't be called in this case. We
     // just crash.
-    FATAL("API fatal error handler returned after process out of memory");
+    FATAL(
+        "API fatal error handler returned after process out of memory on the "
+        "background thread");
     UNREACHABLE();
   }
 
@@ -2325,6 +2328,15 @@ Local<Value> Module::GetModuleNamespace() {
   return ToApiHandle<Value>(module_namespace);
 }
 
+Local<UnboundScript> Module::GetUnboundScript() {
+  Utils::ApiCheck(
+      GetStatus() < kEvaluating, "v8::Module::GetUnboundScript",
+      "v8::Module::GetUnboundScript must be used on an unevaluated module");
+  i::Handle<i::Module> self = Utils::OpenHandle(this);
+  return ToApiHandle<UnboundScript>(
+      i::Handle<i::SharedFunctionInfo>(self->GetSharedFunctionInfo()));
+}
+
 int Module::GetIdentityHash() const { return Utils::OpenHandle(this)->hash(); }
 
 Maybe<bool> Module::InstantiateModule(Local<Context> context,
@@ -2532,8 +2544,10 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
          options == CompileOptions::kNoCompileOptions);
 
   i::Handle<i::Context> context = Utils::OpenHandle(*v8_context);
-  i::Handle<i::SharedFunctionInfo> outer_info(context->closure()->shared(),
-                                              isolate);
+
+  DCHECK(context->IsNativeContext());
+  i::Handle<i::SharedFunctionInfo> outer_info(
+      context->empty_function()->shared(), isolate);
 
   i::Handle<i::JSFunction> fun;
   i::Handle<i::FixedArray> arguments_list =
@@ -2549,9 +2563,8 @@ MaybeLocal<Function> ScriptCompiler::CompileFunctionInContext(
     i::Handle<i::JSReceiver> extension =
         Utils::OpenHandle(*context_extensions[i]);
     if (!extension->IsJSObject()) return Local<Function>();
-    i::Handle<i::JSFunction> closure(context->closure(), isolate);
     context = isolate->factory()->NewWithContext(
-        closure, context,
+        context,
         i::ScopeInfo::CreateForWithScope(
             isolate, context->IsNativeContext()
                          ? i::Handle<i::ScopeInfo>::null()
@@ -5106,9 +5119,15 @@ Local<Function> Function::New(Isolate* v8_isolate, FunctionCallback callback,
       .FromMaybe(Local<Function>());
 }
 
-
 MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc,
                                          v8::Local<v8::Value> argv[]) const {
+  return NewInstanceWithSideEffectType(context, argc, argv,
+                                       SideEffectType::kHasSideEffect);
+}
+
+MaybeLocal<Object> Function::NewInstanceWithSideEffectType(
+    Local<Context> context, int argc, v8::Local<v8::Value> argv[],
+    SideEffectType side_effect_type) const {
   auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
   TRACE_EVENT_CALL_STATS_SCOPED(isolate, "v8", "V8.Execute");
   ENTER_V8(isolate, context, Function, NewInstance, MaybeLocal<Object>(),
@@ -5116,10 +5135,37 @@ MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc,
   i::TimerEventScope<i::TimerEventExecute> timer_scope(isolate);
   auto self = Utils::OpenHandle(this);
   STATIC_ASSERT(sizeof(v8::Local<v8::Value>) == sizeof(i::Object**));
+  if (side_effect_type == SideEffectType::kHasNoSideEffect) {
+    CHECK(self->IsJSFunction() &&
+          i::JSFunction::cast(*self)->shared()->IsApiFunction());
+    DCHECK(isolate->debug_execution_mode() == i::DebugInfo::kSideEffects);
+    i::Object* obj =
+        i::JSFunction::cast(*self)->shared()->get_api_func_data()->call_code();
+    if (obj->IsCallHandlerInfo()) {
+      i::CallHandlerInfo* handler_info = i::CallHandlerInfo::cast(obj);
+      if (!handler_info->IsSideEffectFreeCallHandlerInfo()) {
+        handler_info->SetNextCallHasNoSideEffect();
+      }
+    }
+  }
   i::Handle<i::Object>* args = reinterpret_cast<i::Handle<i::Object>*>(argv);
   Local<Object> result;
   has_pending_exception = !ToLocal<Object>(
       i::Execution::New(isolate, self, self, argc, args), &result);
+  if (side_effect_type == SideEffectType::kHasNoSideEffect) {
+    i::Object* obj =
+        i::JSFunction::cast(*self)->shared()->get_api_func_data()->call_code();
+    if (obj->IsCallHandlerInfo()) {
+      i::CallHandlerInfo* handler_info = i::CallHandlerInfo::cast(obj);
+      if (has_pending_exception) {
+        // Restore the map if an exception prevented restoration.
+        handler_info->NextCallHasNoSideEffect();
+      } else {
+        DCHECK(handler_info->IsSideEffectCallHandlerInfo() ||
+               handler_info->IsSideEffectFreeCallHandlerInfo());
+      }
+    }
+  }
   RETURN_ON_FAILED_EXECUTION(Object);
   RETURN_ESCAPED(result);
 }
@@ -5971,7 +6017,7 @@ bool V8::TryHandleSignal(int signum, void* info, void* context) {
 #endif
 
 bool V8::RegisterDefaultSignalHandler() {
-  return v8::internal::trap_handler::RegisterDefaultSignalHandler();
+  return v8::internal::trap_handler::RegisterDefaultTrapHandler();
 }
 
 bool V8::EnableWebAssemblyTrapHandler(bool use_v8_signal_handler) {
@@ -6024,7 +6070,9 @@ HeapObjectStatistics::HeapObjectStatistics()
       object_size_(0) {}
 
 HeapCodeStatistics::HeapCodeStatistics()
-    : code_and_metadata_size_(0), bytecode_and_metadata_size_(0) {}
+    : code_and_metadata_size_(0),
+      bytecode_and_metadata_size_(0),
+      external_script_source_size_(0) {}
 
 bool v8::V8::InitializeICU(const char* icu_data_file) {
   return i::InitializeICU(icu_data_file);
@@ -7401,7 +7449,13 @@ WasmCompiledModule::SerializedModule WasmCompiledModule::Serialize() {
       i::Handle<i::WasmModuleObject>::cast(Utils::OpenHandle(this));
   i::Handle<i::WasmCompiledModule> compiled_part =
       i::handle(i::WasmCompiledModule::cast(obj->compiled_module()));
-  return i::wasm::SerializeNativeModule(obj->GetIsolate(), compiled_part);
+  size_t buffer_size =
+      i::wasm::GetSerializedNativeModuleSize(obj->GetIsolate(), compiled_part);
+  std::unique_ptr<uint8_t[]> buffer(new uint8_t[buffer_size]);
+  if (i::wasm::SerializeNativeModule(obj->GetIsolate(), compiled_part,
+                                     {buffer.get(), buffer_size}))
+    return {std::move(buffer), buffer_size};
+  return {};
 }
 
 MaybeLocal<WasmCompiledModule> WasmCompiledModule::Deserialize(
@@ -8459,6 +8513,8 @@ bool Isolate::GetHeapCodeAndMetadataStatistics(
   code_statistics->code_and_metadata_size_ = isolate->code_and_metadata_size();
   code_statistics->bytecode_and_metadata_size_ =
       isolate->bytecode_and_metadata_size();
+  code_statistics->external_script_source_size_ =
+      isolate->external_script_source_size();
   return true;
 }
 
@@ -9237,7 +9293,7 @@ bool debug::Script::GetPossibleBreakpoints(
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   if (script->type() == i::Script::TYPE_WASM) {
     i::WasmSharedModuleData* shared =
-        i::WasmCompiledModule::cast(script->wasm_compiled_module())->shared();
+        i::WasmModuleObject::cast(script->wasm_module_object())->shared();
     return shared->GetPossibleBreakpoints(start, end, locations);
   }
 
@@ -9286,7 +9342,7 @@ bool debug::Script::GetPossibleBreakpoints(
 int debug::Script::GetSourceOffset(const debug::Location& location) const {
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   if (script->type() == i::Script::TYPE_WASM) {
-    return i::WasmCompiledModule::cast(script->wasm_compiled_module())
+    return i::WasmModuleObject::cast(script->wasm_module_object())
                ->shared()
                ->GetFunctionOffset(location.GetLineNumber()) +
            location.GetColumnNumber();
@@ -9359,9 +9415,9 @@ int debug::WasmScript::NumFunctions() const {
   i::DisallowHeapAllocation no_gc;
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
-  i::WasmCompiledModule* compiled_module =
-      i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  i::WasmModuleObject* module_object =
+      i::WasmModuleObject::cast(script->wasm_module_object());
+  i::wasm::WasmModule* module = module_object->shared()->module();
   DCHECK_GE(i::kMaxInt, module->functions.size());
   return static_cast<int>(module->functions.size());
 }
@@ -9370,9 +9426,9 @@ int debug::WasmScript::NumImportedFunctions() const {
   i::DisallowHeapAllocation no_gc;
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
-  i::WasmCompiledModule* compiled_module =
-      i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  i::WasmModuleObject* module_object =
+      i::WasmModuleObject::cast(script->wasm_module_object());
+  i::wasm::WasmModule* module = module_object->shared()->module();
   DCHECK_GE(i::kMaxInt, module->num_imported_functions);
   return static_cast<int>(module->num_imported_functions);
 }
@@ -9382,9 +9438,9 @@ std::pair<int, int> debug::WasmScript::GetFunctionRange(
   i::DisallowHeapAllocation no_gc;
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
-  i::WasmCompiledModule* compiled_module =
-      i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  i::WasmModuleObject* module_object =
+      i::WasmModuleObject::cast(script->wasm_module_object());
+  i::wasm::WasmModule* module = module_object->shared()->module();
   DCHECK_LE(0, function_index);
   DCHECK_GT(module->functions.size(), function_index);
   i::wasm::WasmFunction& func = module->functions[function_index];
@@ -9398,13 +9454,13 @@ uint32_t debug::WasmScript::GetFunctionHash(int function_index) {
   i::DisallowHeapAllocation no_gc;
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
-  i::WasmCompiledModule* compiled_module =
-      i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  i::wasm::WasmModule* module = compiled_module->shared()->module();
+  i::WasmModuleObject* module_object =
+      i::WasmModuleObject::cast(script->wasm_module_object());
+  i::wasm::WasmModule* module = module_object->shared()->module();
   DCHECK_LE(0, function_index);
   DCHECK_GT(module->functions.size(), function_index);
   i::wasm::WasmFunction& func = module->functions[function_index];
-  i::SeqOneByteString* module_bytes = compiled_module->shared()->module_bytes();
+  i::SeqOneByteString* module_bytes = module_object->shared()->module_bytes();
   i::wasm::ModuleWireBytes wire_bytes(
       module_bytes->GetFlatContent().ToOneByteVector());
   i::Vector<const i::byte> function_bytes = wire_bytes.GetFunctionBytes(&func);
@@ -9418,9 +9474,9 @@ debug::WasmDisassembly debug::WasmScript::DisassembleFunction(
   i::DisallowHeapAllocation no_gc;
   i::Handle<i::Script> script = Utils::OpenHandle(this);
   DCHECK_EQ(i::Script::TYPE_WASM, script->type());
-  i::WasmCompiledModule* compiled_module =
-      i::WasmCompiledModule::cast(script->wasm_compiled_module());
-  return compiled_module->shared()->DisassembleFunction(function_index);
+  i::WasmModuleObject* module_object =
+      i::WasmModuleObject::cast(script->wasm_module_object());
+  return module_object->shared()->DisassembleFunction(function_index);
 }
 
 debug::Location::Location(int line_number, int column_number)

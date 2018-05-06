@@ -32,6 +32,8 @@ ScopeIterator::ScopeIterator(Isolate* isolate, FrameInspector* frame_inspector,
   }
   context_ = Handle<Context>::cast(frame_inspector->GetContext());
 
+  context_ = Handle<Context>::cast(frame_inspector->GetContext());
+
   // We should not instantiate a ScopeIterator for wasm frames.
   DCHECK(frame_inspector->GetScript()->type() != Script::TYPE_WASM);
 
@@ -42,7 +44,8 @@ Handle<Object> ScopeIterator::GetFunctionDebugName() const {
   if (HasNestedScopeChain()) return JSFunction::GetDebugName(function_);
   if (!context_->IsNativeContext()) {
     DisallowHeapAllocation no_gc;
-    Handle<String> debug_name(context_->raw_scope_info()->FunctionDebugName());
+    ScopeInfo* closure_info = context_->closure_context()->scope_info();
+    Handle<String> debug_name(closure_info->FunctionDebugName());
     if (debug_name->length() > 0) return debug_name;
   }
   return isolate_->factory()->undefined_value();
@@ -220,7 +223,7 @@ int ScopeIterator::start_position() {
     return LastNestedScopeChain().start_position;
   }
   if (context_->IsNativeContext()) return 0;
-  return context_->raw_scope_info()->StartPosition();
+  return context_->closure_context()->scope_info()->StartPosition();
 }
 
 int ScopeIterator::end_position() {
@@ -228,7 +231,7 @@ int ScopeIterator::end_position() {
     return LastNestedScopeChain().end_position;
   }
   if (context_->IsNativeContext()) return 0;
-  return context_->raw_scope_info()->EndPosition();
+  return context_->closure_context()->scope_info()->EndPosition();
 }
 
 void ScopeIterator::Next() {
@@ -336,11 +339,10 @@ MaybeHandle<JSObject> ScopeIterator::ScopeObject() {
       return MaterializeLocalScope();
     case ScopeIterator::ScopeTypeWith:
       return WithContextExtension();
-    case ScopeIterator::ScopeTypeCatch:
-      return MaterializeCatchScope();
     case ScopeIterator::ScopeTypeClosure:
       // Materialize the content of the closure scope into a JSObject.
       return MaterializeClosure();
+    case ScopeIterator::ScopeTypeCatch:
     case ScopeIterator::ScopeTypeBlock:
     case ScopeIterator::ScopeTypeEval:
       return MaterializeInnerScope();
@@ -373,12 +375,11 @@ bool ScopeIterator::SetVariableValue(Handle<String> variable_name,
       return SetLocalVariableValue(variable_name, new_value);
     case ScopeIterator::ScopeTypeWith:
       break;
-    case ScopeIterator::ScopeTypeCatch:
-      return SetCatchVariableValue(variable_name, new_value);
     case ScopeIterator::ScopeTypeClosure:
       return SetClosureVariableValue(variable_name, new_value);
     case ScopeIterator::ScopeTypeScript:
       return SetScriptVariableValue(variable_name, new_value);
+    case ScopeIterator::ScopeTypeCatch:
     case ScopeIterator::ScopeTypeBlock:
     case ScopeIterator::ScopeTypeEval:
       return SetInnerScopeVariableValue(variable_name, new_value);
@@ -395,7 +396,7 @@ Handle<ScopeInfo> ScopeIterator::CurrentScopeInfo() {
   if (HasNestedScopeChain()) {
     return LastNestedScopeChain().scope_info;
   } else if (context_->IsBlockContext() || context_->IsFunctionContext() ||
-             context_->IsEvalContext()) {
+             context_->IsEvalContext() || context_->IsCatchContext()) {
     return Handle<ScopeInfo>(context_->scope_info());
   }
   return Handle<ScopeInfo>::null();
@@ -595,22 +596,6 @@ Handle<JSObject> ScopeIterator::MaterializeClosure() {
 }
 
 
-// Create a plain JSObject which materializes the scope for the specified
-// catch context.
-Handle<JSObject> ScopeIterator::MaterializeCatchScope() {
-  Handle<Context> context = CurrentContext();
-  DCHECK(context->IsCatchContext());
-  Handle<String> name(context->catch_name());
-  Handle<Object> thrown_object(context->get(Context::THROWN_OBJECT_INDEX),
-                               isolate_);
-  Handle<JSObject> catch_scope =
-      isolate_->factory()->NewJSObjectWithNullProto();
-  JSObject::SetOwnPropertyIgnoreAttributes(catch_scope, name, thrown_object,
-                                           NONE)
-      .Check();
-  return catch_scope;
-}
-
 // Retrieve the with-context extension object. If the extension object is
 // a proxy, return an empty object.
 Handle<JSObject> ScopeIterator::WithContextExtension() {
@@ -809,7 +794,8 @@ bool ScopeIterator::SetInnerScopeVariableValue(Handle<String> variable_name,
                                                Handle<Object> new_value) {
   Handle<ScopeInfo> scope_info = CurrentScopeInfo();
   DCHECK(scope_info->scope_type() == BLOCK_SCOPE ||
-         scope_info->scope_type() == EVAL_SCOPE);
+         scope_info->scope_type() == EVAL_SCOPE ||
+         scope_info->scope_type() == CATCH_SCOPE);
 
   // Setting stack locals of optimized frames is not supported.
   if (SetStackVariableValue(scope_info, variable_name, new_value)) {
@@ -851,19 +837,6 @@ bool ScopeIterator::SetScriptVariableValue(Handle<String> variable_name,
 
   return false;
 }
-
-bool ScopeIterator::SetCatchVariableValue(Handle<String> variable_name,
-                                          Handle<Object> new_value) {
-  Handle<Context> context = CurrentContext();
-  DCHECK(context->IsCatchContext());
-  Handle<String> name(context->catch_name());
-  if (!String::Equals(name, variable_name)) {
-    return false;
-  }
-  context->set(Context::THROWN_OBJECT_INDEX, *new_value);
-  return true;
-}
-
 
 void ScopeIterator::CopyContextLocalsToScopeObject(
     Handle<ScopeInfo> scope_info, Handle<Context> context,

@@ -49,6 +49,8 @@ struct SourcePosition {
   V(BreakStatement)                     \
   V(ContinueStatement)                  \
   V(ReturnStatement)                    \
+  V(DebugStatement)                     \
+  V(AssertStatement)                    \
   V(TailCallStatement)                  \
   V(VarDeclarationStatement)            \
   V(GotoStatement)                      \
@@ -158,9 +160,32 @@ struct ExplicitModuleDeclaration : ModuleDeclaration {
   std::string name;
 };
 
+class SourceFileMap {
+ public:
+  SourceFileMap() {}
+  const std::string& GetSource(SourceId id) const {
+    return sources_[static_cast<int>(id)];
+  }
+
+  std::string PositionAsString(SourcePosition pos) {
+    return GetSource(pos.source) + ":" + std::to_string(pos.line) + ":" +
+           std::to_string(pos.column);
+  }
+
+ private:
+  friend class Ast;
+  SourceId AddSource(std::string path) {
+    sources_.push_back(std::move(path));
+    return static_cast<SourceId>(sources_.size() - 1);
+  }
+  std::vector<std::string> sources_;
+};
+
 class Ast {
  public:
-  Ast() : default_module_{SourcePosition(), {}} {}
+  Ast()
+      : default_module_{SourcePosition(), {}},
+        source_file_map_(new SourceFileMap()) {}
 
   std::vector<Declaration*>& declarations() {
     return default_module_.declarations;
@@ -172,21 +197,14 @@ class Ast {
     nodes_.emplace_back(std::move(node));
   }
   SourceId AddSource(std::string path) {
-    sources_.push_back(std::move(path));
-    return static_cast<SourceId>(sources_.size() - 1);
+    return source_file_map_->AddSource(path);
   }
-  const std::string& GetSource(SourceId id) const {
-    return sources_[static_cast<int>(id)];
-  }
-  std::string PositionAsString(SourcePosition pos) {
-    return GetSource(pos.source) + ":" + std::to_string(pos.line) + ":" +
-           std::to_string(pos.column);
-  }
-  DefaultModuleDeclaration* GetDefaultModule() { return &default_module_; }
+  DefaultModuleDeclaration* default_module() { return &default_module_; }
+  SourceFileMap* source_file_map() { return &*source_file_map_; }
 
  private:
   DefaultModuleDeclaration default_module_;
-  std::vector<std::string> sources_;
+  std::unique_ptr<SourceFileMap> source_file_map_;
   std::vector<std::unique_ptr<AstNode>> nodes_;
 };
 
@@ -316,10 +334,15 @@ struct ExpressionStatement : Statement {
 
 struct IfStatement : Statement {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(IfStatement)
-  IfStatement(SourcePosition p, Expression* c, Statement* t,
+  IfStatement(SourcePosition p, Expression* c, bool cexpr, Statement* t,
               base::Optional<Statement*> f)
-      : Statement(kKind, p), condition(c), if_true(t), if_false(f) {}
+      : Statement(kKind, p),
+        condition(c),
+        is_constexpr(cexpr),
+        if_true(t),
+        if_false(f) {}
   Expression* condition;
+  bool is_constexpr;
   Statement* if_true;
   base::Optional<Statement*> if_false;
 };
@@ -337,6 +360,22 @@ struct ReturnStatement : Statement {
   ReturnStatement(SourcePosition p, base::Optional<Expression*> v)
       : Statement(kKind, p), value(v) {}
   base::Optional<Expression*> value;
+};
+
+struct DebugStatement : Statement {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(DebugStatement)
+  DebugStatement(SourcePosition p, const std::string& r, bool n)
+      : Statement(kKind, p), reason(r), never_continues(n) {}
+  std::string reason;
+  bool never_continues;
+};
+
+struct AssertStatement : Statement {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(AssertStatement)
+  AssertStatement(SourcePosition p, Expression* e, const std::string& s)
+      : Statement(kKind, p), expression(e), source(s) {}
+  Expression* expression;
+  std::string source;
 };
 
 struct TailCallStatement : Statement {
@@ -467,6 +506,7 @@ struct TypeDeclaration : Declaration {
   std::string name;
   base::Optional<std::string> extends;
   base::Optional<std::string> generates;
+  base::Optional<std::string> constexpr_generates;
 };
 
 struct LabelAndTypes {

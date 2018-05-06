@@ -13073,6 +13073,92 @@ TEST(FunctionNewHasNoSideEffect) {
   v8::debug::EvaluateGlobal(isolate, v8_str("new f2()"), true).ToLocalChecked();
 }
 
+// These handlers instantiate a function the embedder considers safe in some
+// cases (e.g. "building object wrappers"), but those functions themselves were
+// not explicitly marked as side-effect-free.
+static void DefaultConstructHandler(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+  v8::Context::Scope context_scope(context);
+  v8::MaybeLocal<v8::Object> instance = Function::New(context, EmptyHandler)
+                                            .ToLocalChecked()
+                                            ->NewInstance(context, 0, nullptr);
+  USE(instance);
+}
+
+static void NoSideEffectConstructHandler(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+  v8::Context::Scope context_scope(context);
+  v8::MaybeLocal<v8::Object> instance =
+      Function::New(context, EmptyHandler)
+          .ToLocalChecked()
+          ->NewInstanceWithSideEffectType(context, 0, nullptr,
+                                          v8::SideEffectType::kHasNoSideEffect);
+  USE(instance);
+}
+
+static void NoSideEffectAndSideEffectConstructHandler(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+  v8::Context::Scope context_scope(context);
+  // Constructs an instance in a side-effect-free way, followed by another with
+  // side effects.
+  v8::MaybeLocal<v8::Object> instance =
+      Function::New(context, EmptyHandler)
+          .ToLocalChecked()
+          ->NewInstanceWithSideEffectType(context, 0, nullptr,
+                                          v8::SideEffectType::kHasNoSideEffect);
+  v8::MaybeLocal<v8::Object> instance2 = Function::New(context, EmptyHandler)
+                                             .ToLocalChecked()
+                                             ->NewInstance(context, 0, nullptr);
+  USE(instance);
+  USE(instance2);
+}
+
+TEST(FunctionNewInstanceHasNoSideEffect) {
+  v8::Isolate* isolate = CcTest::isolate();
+  v8::HandleScope scope(isolate);
+  LocalContext context;
+
+  // A whitelisted function that creates a new object with both side-effect
+  // free/full instantiations. Should throw.
+  Local<Function> func0 =
+      Function::New(context.local(), NoSideEffectAndSideEffectConstructHandler,
+                    Local<Value>(), 0, v8::ConstructorBehavior::kAllow,
+                    v8::SideEffectType::kHasNoSideEffect)
+          .ToLocalChecked();
+  CHECK(context->Global()->Set(context.local(), v8_str("f"), func0).FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).IsEmpty());
+
+  // A whitelisted function that creates a new object. Should throw.
+  Local<Function> func =
+      Function::New(context.local(), DefaultConstructHandler, Local<Value>(), 0,
+                    v8::ConstructorBehavior::kAllow,
+                    v8::SideEffectType::kHasNoSideEffect)
+          .ToLocalChecked();
+  CHECK(context->Global()->Set(context.local(), v8_str("f"), func).FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f()"), true).IsEmpty());
+
+  // A whitelisted function that creates a new object with explicit intent to
+  // have no side-effects (e.g. building an "object wrapper"). Should not throw.
+  Local<Function> func2 =
+      Function::New(context.local(), NoSideEffectConstructHandler,
+                    Local<Value>(), 0, v8::ConstructorBehavior::kAllow,
+                    v8::SideEffectType::kHasNoSideEffect)
+          .ToLocalChecked();
+  CHECK(
+      context->Global()->Set(context.local(), v8_str("f2"), func2).FromJust());
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), true).ToLocalChecked();
+
+  // Check that side effect skipping did not leak outside to future evaluations.
+  Local<Function> func3 =
+      Function::New(context.local(), EmptyHandler).ToLocalChecked();
+  CHECK(
+      context->Global()->Set(context.local(), v8_str("f3"), func3).FromJust());
+  CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f3()"), true).IsEmpty());
+}
+
 TEST(CallHandlerAsFunctionHasNoSideEffectNotSupported) {
   v8::Isolate* isolate = CcTest::isolate();
   v8::HandleScope scope(isolate);
@@ -18308,6 +18394,12 @@ TEST(PromiseHook) {
   CompileRun("resolve(Promise.resolve(value));\n");
   CHECK_EQ(v8::Promise::kFulfilled, GetPromise("p")->State());
   CHECK_EQ(9, promise_hook_data->promise_hook_count);
+
+  promise_hook_data->Reset();
+  source = "(async() => await p)();\n";
+
+  CompileRun(source);
+  CHECK_EQ(11, promise_hook_data->promise_hook_count);
 
   delete promise_hook_data;
   isolate->SetPromiseHook(nullptr);
@@ -24656,6 +24748,15 @@ TEST(CaptureStackTraceForStackOverflow) {
   CHECK(try_catch.HasCaught());
 }
 
+namespace {
+bool ValueEqualsString(v8::Isolate* isolate, Local<Value> lhs,
+                       const char* rhs) {
+  CHECK(!lhs.IsEmpty());
+  CHECK(lhs->IsString());
+  String::Utf8Value utf8_lhs(isolate, lhs);
+  return strcmp(rhs, *utf8_lhs) == 0;
+}
+}  // namespace
 
 TEST(ScriptNameAndLineNumber) {
   LocalContext env;
@@ -24664,13 +24765,12 @@ TEST(ScriptNameAndLineNumber) {
   const char* url = "http://www.foo.com/foo.js";
   v8::ScriptOrigin origin(v8_str(url), v8::Integer::New(isolate, 13));
   v8::ScriptCompiler::Source script_source(v8_str("var foo;"), origin);
+
   Local<Script> script =
       v8::ScriptCompiler::Compile(env.local(), &script_source).ToLocalChecked();
-  Local<Value> script_name = script->GetUnboundScript()->GetScriptName();
-  CHECK(!script_name.IsEmpty());
-  CHECK(script_name->IsString());
-  String::Utf8Value utf8_name(env->GetIsolate(), script_name);
-  CHECK_EQ(0, strcmp(url, *utf8_name));
+  CHECK(ValueEqualsString(isolate, script->GetUnboundScript()->GetScriptName(),
+                          url));
+
   int line_number = script->GetUnboundScript()->GetLineNumber(0);
   CHECK_EQ(13, line_number);
 }
@@ -27310,6 +27410,39 @@ TEST(GetModuleNamespace) {
   CHECK(ns->Get(context.local(), v8_str("a"))
             .ToLocalChecked()
             ->StrictEquals(v8::Number::New(isolate, 10)));
+}
+
+TEST(ModuleGetUnboundScript) {
+  LocalContext context;
+  v8::Isolate* isolate = context->GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  Local<String> url = v8_str("www.google.com");
+  Local<String> source_text = v8_str("export default 5; export const a = 10;");
+  v8::ScriptOrigin origin(url, Local<v8::Integer>(), Local<v8::Integer>(),
+                          Local<v8::Boolean>(), Local<v8::Integer>(),
+                          Local<v8::Value>(), Local<v8::Boolean>(),
+                          Local<v8::Boolean>(), True(isolate));
+  v8::ScriptCompiler::Source source(source_text, origin);
+  Local<Module> module =
+      v8::ScriptCompiler::CompileModule(isolate, &source).ToLocalChecked();
+  Local<v8::UnboundScript> sfi_before_instantiation =
+      module->GetUnboundScript();
+  module->InstantiateModule(context.local(), UnexpectedModuleResolveCallback)
+      .ToChecked();
+  Local<v8::UnboundScript> sfi_after_instantiation = module->GetUnboundScript();
+
+  // Check object identity.
+  {
+    i::Handle<i::Object> s1 = v8::Utils::OpenHandle(*sfi_before_instantiation);
+    i::Handle<i::Object> s2 = v8::Utils::OpenHandle(*sfi_after_instantiation);
+    CHECK_EQ(*s1, *s2);
+  }
+
+  // Check unbound script values.
+  Local<v8::UnboundScript> sfi = sfi_after_instantiation;
+  CHECK(ValueEqualsString(isolate, sfi->GetScriptName(), "www.google.com"));
+  CHECK_EQ(0, sfi->GetLineNumber(0));
 }
 
 TEST(GlobalTemplateWithDoubleProperty) {

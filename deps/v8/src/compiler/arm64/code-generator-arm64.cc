@@ -618,11 +618,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kArchCallWasmFunction: {
-      // We must not share code targets for calls to builtins for wasm code, as
-      // they might need to be patched individually.
-      internal::Assembler::BlockCodeTargetSharingScope scope;
-      if (info()->IsWasm()) scope.Open(tasm());
-
       if (instr->InputAt(0)->IsImmediate()) {
         Address wasm_code =
             static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
@@ -664,11 +659,6 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kArchTailCallWasm: {
-      // We must not share code targets for calls to builtins for wasm code, as
-      // they might need to be patched individually.
-      internal::Assembler::BlockCodeTargetSharingScope scope;
-      if (info()->IsWasm()) scope.Open(tasm());
-
       if (instr->InputAt(0)->IsImmediate()) {
         Address wasm_code =
             static_cast<Address>(i.ToConstant(instr->InputAt(0)).ToInt64());
@@ -800,6 +790,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                 RelocInfo::CODE_TARGET);
       }
       __ Debug("kArchDebugAbort", 0, BREAK);
+      unwinding_info_writer_.MarkBlockWillExit();
       break;
     case kArchDebugBreak:
       __ Debug("kArchDebugBreak", 0, BREAK);
@@ -809,8 +800,10 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ RecordComment(reinterpret_cast<const char*>(comment_string));
       break;
     }
-    case kArchNop:
     case kArchThrowTerminator:
+      unwinding_info_writer_.MarkBlockWillExit();
+      break;
+    case kArchNop:
       // don't emit code for nops.
       break;
     case kArchDeoptimize: {
@@ -819,6 +812,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       CodeGenResult result =
           AssembleDeoptimizerCall(deopt_state_id, current_source_position_);
       if (result != kSuccess) return result;
+      unwinding_info_writer_.MarkBlockWillExit();
       break;
     }
     case kArchRet:

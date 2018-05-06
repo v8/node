@@ -214,6 +214,11 @@ class TorqueListener : public antlr4::tree::ParseTreeListener {
   virtual void enterTryCatch(TorqueParser::TryCatchContext* ctx) = 0;
   virtual void exitTryCatch(TorqueParser::TryCatchContext* ctx) = 0;
 
+  virtual void enterDiagnosticStatement(
+      TorqueParser::DiagnosticStatementContext* ctx) = 0;
+  virtual void exitDiagnosticStatement(
+      TorqueParser::DiagnosticStatementContext* ctx) = 0;
+
   virtual void enterStatement(TorqueParser::StatementContext* ctx) = 0;
   virtual void exitStatement(TorqueParser::StatementContext* ctx) = 0;
 
@@ -231,15 +236,20 @@ class TorqueListener : public antlr4::tree::ParseTreeListener {
   virtual void enterHelperBody(TorqueParser::HelperBodyContext* ctx) = 0;
   virtual void exitHelperBody(TorqueParser::HelperBodyContext* ctx) = 0;
 
+  virtual void enterExtendsDeclaration(
+      TorqueParser::ExtendsDeclarationContext* ctx) = 0;
+  virtual void exitExtendsDeclaration(
+      TorqueParser::ExtendsDeclarationContext* ctx) = 0;
+
   virtual void enterGeneratesDeclaration(
       TorqueParser::GeneratesDeclarationContext* ctx) = 0;
   virtual void exitGeneratesDeclaration(
       TorqueParser::GeneratesDeclarationContext* ctx) = 0;
 
-  virtual void enterExtendsDeclaration(
-      TorqueParser::ExtendsDeclarationContext* ctx) = 0;
-  virtual void exitExtendsDeclaration(
-      TorqueParser::ExtendsDeclarationContext* ctx) = 0;
+  virtual void enterConstexprDeclaration(
+      TorqueParser::ConstexprDeclarationContext* ctx) = 0;
+  virtual void exitConstexprDeclaration(
+      TorqueParser::ConstexprDeclarationContext* ctx) = 0;
 
   virtual void enterTypeDeclaration(
       TorqueParser::TypeDeclarationContext* ctx) = 0;

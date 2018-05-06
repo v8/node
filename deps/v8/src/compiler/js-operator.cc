@@ -152,45 +152,16 @@ ContextAccess const& ContextAccessOf(Operator const* op) {
   return OpParameter<ContextAccess>(op);
 }
 
-CreateCatchContextParameters::CreateCatchContextParameters(
-    Handle<String> catch_name, Handle<ScopeInfo> scope_info)
-    : catch_name_(catch_name), scope_info_(scope_info) {}
-
-bool operator==(CreateCatchContextParameters const& lhs,
-                CreateCatchContextParameters const& rhs) {
-  return lhs.catch_name().location() == rhs.catch_name().location() &&
-         lhs.scope_info().location() == rhs.scope_info().location();
-}
-
-bool operator!=(CreateCatchContextParameters const& lhs,
-                CreateCatchContextParameters const& rhs) {
-  return !(lhs == rhs);
-}
-
-size_t hash_value(CreateCatchContextParameters const& parameters) {
-  return base::hash_combine(parameters.catch_name().location(),
-                            parameters.scope_info().location());
-}
-
-std::ostream& operator<<(std::ostream& os,
-                         CreateCatchContextParameters const& parameters) {
-  return os << Brief(*parameters.catch_name()) << ", "
-            << Brief(*parameters.scope_info());
-}
-
-CreateCatchContextParameters const& CreateCatchContextParametersOf(
-    Operator const* op) {
-  DCHECK_EQ(IrOpcode::kJSCreateCatchContext, op->opcode());
-  return OpParameter<CreateCatchContextParameters>(op);
-}
-
 CreateFunctionContextParameters::CreateFunctionContextParameters(
-    int slot_count, ScopeType scope_type)
-    : slot_count_(slot_count), scope_type_(scope_type) {}
+    Handle<ScopeInfo> scope_info, int slot_count, ScopeType scope_type)
+    : scope_info_(scope_info),
+      slot_count_(slot_count),
+      scope_type_(scope_type) {}
 
 bool operator==(CreateFunctionContextParameters const& lhs,
                 CreateFunctionContextParameters const& rhs) {
-  return lhs.slot_count() == rhs.slot_count() &&
+  return lhs.scope_info().location() == rhs.scope_info().location() &&
+         lhs.slot_count() == rhs.slot_count() &&
          lhs.scope_type() == rhs.scope_type();
 }
 
@@ -200,7 +171,8 @@ bool operator!=(CreateFunctionContextParameters const& lhs,
 }
 
 size_t hash_value(CreateFunctionContextParameters const& parameters) {
-  return base::hash_combine(parameters.slot_count(),
+  return base::hash_combine(parameters.scope_info().location(),
+                            parameters.slot_count(),
                             static_cast<int>(parameters.scope_type()));
 }
 
@@ -1227,24 +1199,24 @@ const Operator* JSOperatorBuilder::CreateLiteralRegExp(
       parameters);                                         // parameter
 }
 
-const Operator* JSOperatorBuilder::CreateFunctionContext(int slot_count,
-                                                         ScopeType scope_type) {
-  CreateFunctionContextParameters parameters(slot_count, scope_type);
+const Operator* JSOperatorBuilder::CreateFunctionContext(
+    Handle<ScopeInfo> scope_info, int slot_count, ScopeType scope_type) {
+  CreateFunctionContextParameters parameters(scope_info, slot_count,
+                                             scope_type);
   return new (zone()) Operator1<CreateFunctionContextParameters>(   // --
       IrOpcode::kJSCreateFunctionContext, Operator::kNoProperties,  // opcode
       "JSCreateFunctionContext",                                    // name
-      1, 1, 1, 1, 1, 2,                                             // counts
+      0, 1, 1, 1, 1, 2,                                             // counts
       parameters);                                                  // parameter
 }
 
 const Operator* JSOperatorBuilder::CreateCatchContext(
-    const Handle<String>& name, const Handle<ScopeInfo>& scope_info) {
-  CreateCatchContextParameters parameters(name, scope_info);
-  return new (zone()) Operator1<CreateCatchContextParameters>(
+    const Handle<ScopeInfo>& scope_info) {
+  return new (zone()) Operator1<Handle<ScopeInfo>>(
       IrOpcode::kJSCreateCatchContext, Operator::kNoProperties,  // opcode
       "JSCreateCatchContext",                                    // name
-      2, 1, 1, 1, 1, 2,                                          // counts
-      parameters);                                               // parameter
+      1, 1, 1, 1, 1, 2,                                          // counts
+      scope_info);                                               // parameter
 }
 
 const Operator* JSOperatorBuilder::CreateWithContext(
@@ -1252,7 +1224,7 @@ const Operator* JSOperatorBuilder::CreateWithContext(
   return new (zone()) Operator1<Handle<ScopeInfo>>(
       IrOpcode::kJSCreateWithContext, Operator::kNoProperties,  // opcode
       "JSCreateWithContext",                                    // name
-      2, 1, 1, 1, 1, 2,                                         // counts
+      1, 1, 1, 1, 1, 2,                                         // counts
       scope_info);                                              // parameter
 }
 
@@ -1261,13 +1233,14 @@ const Operator* JSOperatorBuilder::CreateBlockContext(
   return new (zone()) Operator1<Handle<ScopeInfo>>(              // --
       IrOpcode::kJSCreateBlockContext, Operator::kNoProperties,  // opcode
       "JSCreateBlockContext",                                    // name
-      1, 1, 1, 1, 1, 2,                                          // counts
+      0, 1, 1, 1, 1, 2,                                          // counts
       scope_info);                                               // parameter
 }
 
 Handle<ScopeInfo> ScopeInfoOf(const Operator* op) {
   DCHECK(IrOpcode::kJSCreateBlockContext == op->opcode() ||
-         IrOpcode::kJSCreateWithContext == op->opcode());
+         IrOpcode::kJSCreateWithContext == op->opcode() ||
+         IrOpcode::kJSCreateCatchContext == op->opcode());
   return OpParameter<Handle<ScopeInfo>>(op);
 }
 

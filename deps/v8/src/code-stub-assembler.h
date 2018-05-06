@@ -7,6 +7,7 @@
 
 #include <functional>
 
+#include "src/base/macros.h"
 #include "src/compiler/code-assembler.h"
 #include "src/globals.h"
 #include "src/objects.h"
@@ -222,6 +223,12 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Int32T> HashSeed();
 
   Node* IntPtrOrSmiConstant(int value, ParameterMode mode);
+  TNode<BoolT> BoolConstant(bool value) {
+    return value ? Int32TrueConstant() : Int32FalseConstant();
+  }
+  TNode<Smi> LanguageModeConstant(LanguageMode mode) {
+    return SmiConstant(static_cast<int>(mode));
+  }
 
   bool IsIntPtrOrSmiConstantZero(Node* test, ParameterMode mode);
   bool TryGetIntPtrOrSmiConstantValue(Node* maybe_constant, int* value,
@@ -409,8 +416,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                   const G& false_body) {
     return UncheckedCast<A>(SelectImpl(
         condition,
-        [&]() -> Node* { return base::implicit_cast<TNode<A>>(true_body()); },
-        [&]() -> Node* { return base::implicit_cast<TNode<A>>(false_body()); },
+        [&]() -> Node* { return implicit_cast<TNode<A>>(true_body()); },
+        [&]() -> Node* { return implicit_cast<TNode<A>>(false_body()); },
         MachineRepresentationOf<A>::value));
   }
 
@@ -1027,18 +1034,19 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                            Node* capacity = nullptr,
                            Node* allocation_site = nullptr);
 
-  Node* AllocateFixedArray(ElementsKind kind, Node* capacity,
-                           ParameterMode mode = INTPTR_PARAMETERS,
-                           AllocationFlags flags = kNone,
-                           Node* fixed_array_map = nullptr);
+  TNode<FixedArray> AllocateFixedArray(
+      ElementsKind kind, Node* capacity, ParameterMode mode = INTPTR_PARAMETERS,
+      AllocationFlags flags = kNone,
+      SloppyTNode<Map> fixed_array_map = nullptr);
 
-  Node* AllocateFixedArray(ElementsKind kind, TNode<Smi> capacity,
-                           AllocationFlags flags = kNone) {
+  TNode<FixedArray> AllocateFixedArray(ElementsKind kind, TNode<Smi> capacity,
+                                       AllocationFlags flags = kNone) {
     return AllocateFixedArray(kind, capacity, SMI_PARAMETERS, flags);
   }
 
-  Node* AllocateFixedArray(ElementsKind kind, TNode<Smi> capacity,
-                           TNode<Map> map, AllocationFlags flags = kNone) {
+  TNode<FixedArray> AllocateFixedArray(ElementsKind kind, TNode<Smi> capacity,
+                                       TNode<Map> map,
+                                       AllocationFlags flags = kNone) {
     return AllocateFixedArray(kind, capacity, SMI_PARAMETERS, flags, map);
   }
 
@@ -1047,7 +1055,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
                               AllocationFlags flags = kNone);
 
   // Perform CreateArrayIterator (ES #sec-createarrayiterator).
-  Node* CreateArrayIterator(Node* context, Node* object, IterationKind mode);
+  TNode<JSArrayIterator> CreateArrayIterator(TNode<Context> context,
+                                             TNode<Object> object,
+                                             IterationKind mode);
 
   Node* AllocateJSIteratorResult(Node* context, Node* value, Node* done);
   Node* AllocateJSIteratorResultForEntry(Node* context, Node* key, Node* value);
@@ -2236,7 +2246,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   TNode<IntPtrT> GetArgumentsLength(CodeStubArguments* args);
   TNode<Object> GetArgumentValue(CodeStubArguments* args, TNode<IntPtrT> index);
-  TNode<Object> GetArgumentValue(CodeStubArguments* args, TNode<Smi> index);
+  TNode<Object> GetArgumentValueSmiIndex(CodeStubArguments* args,
+                                         TNode<Smi> index);
 
   // Support for printf-style debugging
   void Print(const char* s);
@@ -2543,11 +2554,11 @@ class ToDirectStringAssembler : public CodeStubAssembler {
   const Flags flags_;
 };
 
-#define CSA_CHECK(csa, x)                                              \
-  (csa)->Check(                                                        \
-      [&]() -> compiler::Node* {                                       \
-        return base::implicit_cast<compiler::SloppyTNode<Word32T>>(x); \
-      },                                                               \
+#define CSA_CHECK(csa, x)                                        \
+  (csa)->Check(                                                  \
+      [&]() -> compiler::Node* {                                 \
+        return implicit_cast<compiler::SloppyTNode<Word32T>>(x); \
+      },                                                         \
       #x, __FILE__, __LINE__)
 
 #ifdef DEBUG
@@ -2580,7 +2591,7 @@ class ToDirectStringAssembler : public CodeStubAssembler {
 #define CSA_ASSERT(csa, ...)                                             \
   (csa)->Assert(                                                         \
       [&]() -> compiler::Node* {                                         \
-        return base::implicit_cast<compiler::SloppyTNode<Word32T>>(      \
+        return implicit_cast<compiler::SloppyTNode<Word32T>>(            \
             EXPAND(CSA_ASSERT_GET_FIRST(__VA_ARGS__)));                  \
       },                                                                 \
       EXPAND(CSA_ASSERT_GET_FIRST_STR(__VA_ARGS__)), __FILE__, __LINE__, \

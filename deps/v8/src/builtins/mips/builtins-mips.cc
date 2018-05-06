@@ -10,6 +10,7 @@
 #include "src/deoptimizer.h"
 #include "src/frame-constants.h"
 #include "src/frames.h"
+#include "src/mips/constants-mips.h"
 #include "src/objects-inl.h"
 #include "src/runtime/runtime.h"
 
@@ -482,7 +483,7 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
     // Setup the context (we need to use the caller context from the isolate).
     ExternalReference context_address = ExternalReference::Create(
         IsolateAddressId::kContextAddress, masm->isolate());
-    __ li(cp, Operand(context_address));
+    __ li(cp, context_address);
     __ lw(cp, MemOperand(cp));
 
     // Push the function and the receiver onto the stack.
@@ -583,14 +584,14 @@ void Builtins::Generate_ResumeGeneratorTrampoline(MacroAssembler* masm) {
   Label stepping_prepared;
   ExternalReference debug_hook =
       ExternalReference::debug_hook_on_function_call_address(masm->isolate());
-  __ li(t1, Operand(debug_hook));
+  __ li(t1, debug_hook);
   __ lb(t1, MemOperand(t1));
   __ Branch(&prepare_step_in_if_stepping, ne, t1, Operand(zero_reg));
 
   // Flood function if we need to continue stepping in the suspended generator.
   ExternalReference debug_suspended_generator =
       ExternalReference::debug_suspended_generator_address(masm->isolate());
-  __ li(t1, Operand(debug_suspended_generator));
+  __ li(t1, debug_suspended_generator);
   __ lw(t1, MemOperand(t1));
   __ Branch(&prepare_step_in_suspended_generator, eq, a1, Operand(t1));
   __ bind(&stepping_prepared);
@@ -836,8 +837,12 @@ static void AdvanceBytecodeOffsetOrReturn(MacroAssembler* masm,
   Label process_bytecode, extra_wide;
   STATIC_ASSERT(0 == static_cast<int>(interpreter::Bytecode::kWide));
   STATIC_ASSERT(1 == static_cast<int>(interpreter::Bytecode::kExtraWide));
-  __ Branch(&process_bytecode, hi, bytecode, Operand(1));
-  __ Branch(&extra_wide, eq, bytecode, Operand(1));
+  STATIC_ASSERT(2 == static_cast<int>(interpreter::Bytecode::kDebugBreakWide));
+  STATIC_ASSERT(3 ==
+                static_cast<int>(interpreter::Bytecode::kDebugBreakExtraWide));
+  __ Branch(&process_bytecode, hi, bytecode, Operand(3));
+  __ And(scratch2, bytecode, Operand(1));
+  __ Branch(&extra_wide, ne, scratch2, Operand(zero_reg));
 
   // Load the next bytecode and update table to the wide scaled table.
   __ Addu(bytecode_offset, bytecode_offset, Operand(1));
@@ -1044,7 +1049,7 @@ void Builtins::Generate_InterpreterEntryTrampoline(MacroAssembler* masm) {
   ExternalReference debug_execution_mode =
       ExternalReference::debug_execution_mode_address(masm->isolate());
   __ li(t0, Operand(debug_execution_mode));
-  __ lb(t0, MemOperand(t0));
+  __ lb(t0, MemOperand(t0, kLeastSignificantByteInInt32Offset));
   STATIC_ASSERT(static_cast<int>(DebugInfo::kDebugExecutionMode) ==
                 static_cast<int>(DebugInfo::kSideEffects));
   __ Branch(&bytecode_array_loaded, eq, t0, Operand(t1));

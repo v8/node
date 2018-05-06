@@ -229,8 +229,7 @@ Address CodeRange::AllocateRawMemory(const size_t requested_size,
 
 
 bool CodeRange::CommitRawMemory(Address start, size_t length) {
-  return isolate_->heap()->memory_allocator()->CommitMemory(start, length,
-                                                            EXECUTABLE);
+  return isolate_->heap()->memory_allocator()->CommitMemory(start, length);
 }
 
 
@@ -462,8 +461,7 @@ int MemoryAllocator::Unmapper::NumberOfChunks() {
   return static_cast<int>(result);
 }
 
-bool MemoryAllocator::CommitMemory(Address base, size_t size,
-                                   Executability executable) {
+bool MemoryAllocator::CommitMemory(Address base, size_t size) {
   if (!SetPermissions(base, size, PageAllocator::kReadWrite)) {
     return false;
   }
@@ -884,8 +882,8 @@ MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
     }
 
     if (Heap::ShouldZapGarbage()) {
-      ZapBlock(base, CodePageGuardStartOffset());
-      ZapBlock(base + CodePageAreaStartOffset(), commit_area_size);
+      ZapBlock(base, CodePageGuardStartOffset(), kZapValue);
+      ZapBlock(base + CodePageAreaStartOffset(), commit_area_size, kZapValue);
     }
 
     area_start = base + CodePageAreaStartOffset();
@@ -903,7 +901,7 @@ MemoryChunk* MemoryAllocator::AllocateChunk(size_t reserve_area_size,
     if (base == kNullAddress) return nullptr;
 
     if (Heap::ShouldZapGarbage()) {
-      ZapBlock(base, Page::kObjectStartOffset + commit_area_size);
+      ZapBlock(base, Page::kObjectStartOffset + commit_area_size, kZapValue);
     }
 
     area_start = base + Page::kObjectStartOffset;
@@ -1180,7 +1178,7 @@ MemoryChunk* MemoryAllocator::AllocatePagePooled(SpaceType* owner) {
   const Address start = reinterpret_cast<Address>(chunk);
   const Address area_start = start + MemoryChunk::kObjectStartOffset;
   const Address area_end = start + size;
-  if (!CommitBlock(start, size, NOT_EXECUTABLE)) {
+  if (!CommitBlock(start, size)) {
     return nullptr;
   }
   VirtualMemory reservation(start, size);
@@ -1190,13 +1188,11 @@ MemoryChunk* MemoryAllocator::AllocatePagePooled(SpaceType* owner) {
   return chunk;
 }
 
-bool MemoryAllocator::CommitBlock(Address start, size_t size,
-                                  Executability executable) {
-  if (!CommitMemory(start, size, executable)) return false;
+bool MemoryAllocator::CommitBlock(Address start, size_t size) {
+  if (!CommitMemory(start, size)) return false;
 
-  if (Heap::ShouldZapGarbage()) {
-    ZapBlock(start, size);
-  }
+  ZapBlock(start, size,
+           Heap::ShouldZapGarbage() ? kZapValue : kClearedFreeMemoryValue);
 
   isolate_->counters()->memory_allocated()->Increment(static_cast<int>(size));
   return true;
@@ -1209,10 +1205,10 @@ bool MemoryAllocator::UncommitBlock(Address start, size_t size) {
   return true;
 }
 
-
-void MemoryAllocator::ZapBlock(Address start, size_t size) {
+void MemoryAllocator::ZapBlock(Address start, size_t size,
+                               uintptr_t zap_value) {
   for (size_t s = 0; s + kPointerSize <= size; s += kPointerSize) {
-    Memory::Address_at(start + s) = static_cast<Address>(kZapValue);
+    Memory::Address_at(start + s) = static_cast<Address>(zap_value);
   }
 }
 
@@ -1751,7 +1747,7 @@ Address SpaceWithLinearArea::ComputeLimit(Address start, Address end,
     } else {
       rounded_step = RoundSizeDownToObjectAlignment(static_cast<int>(step));
     }
-    return Min(start + min_size + rounded_step, end);
+    return Min(static_cast<Address>(start + min_size + rounded_step), end);
   } else {
     // The entire node can be used as the linear allocation area.
     return end;

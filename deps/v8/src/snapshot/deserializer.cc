@@ -6,6 +6,7 @@
 
 #include "src/assembler-inl.h"
 #include "src/isolate.h"
+#include "src/objects/api-callbacks.h"
 #include "src/objects/hash-table.h"
 #include "src/objects/maybe-object.h"
 #include "src/objects/string.h"
@@ -544,11 +545,13 @@ bool Deserializer<AllocatorT>::ReadData(MaybeObject** current,
 
         if (RelocInfo::OffHeapTargetIsCodedSpecially()) {
           Address location_of_branch_data = reinterpret_cast<Address>(current);
+          int skip = Assembler::deserialization_special_target_size(
+              location_of_branch_data);
           Assembler::deserialization_set_special_target_at(
               location_of_branch_data,
               Code::cast(HeapObject::FromAddress(current_object_address)),
               address);
-          location_of_branch_data += Assembler::kSpecialTargetSize;
+          location_of_branch_data += skip;
           current = reinterpret_cast<MaybeObject**>(location_of_branch_data);
         } else {
           MaybeObject* o = reinterpret_cast<MaybeObject*>(address);
@@ -780,10 +783,12 @@ void** Deserializer<AllocatorT>::ReadExternalReferenceCase(
 
   if (how == kFromCode) {
     Address location_of_branch_data = reinterpret_cast<Address>(current);
+    int skip =
+        Assembler::deserialization_special_target_size(location_of_branch_data);
     Assembler::deserialization_set_special_target_at(
         location_of_branch_data,
         Code::cast(HeapObject::FromAddress(current_object_address)), address);
-    location_of_branch_data += Assembler::kSpecialTargetSize;
+    location_of_branch_data += skip;
     current = reinterpret_cast<void**>(location_of_branch_data);
   } else {
     void* new_current = reinterpret_cast<void**>(address);
@@ -862,11 +867,13 @@ MaybeObject** Deserializer<AllocatorT>::ReadDataCase(
     if (how == kFromCode) {
       DCHECK(!allocator()->next_reference_is_weak());
       Address location_of_branch_data = reinterpret_cast<Address>(current);
+      int skip = Assembler::deserialization_special_target_size(
+          location_of_branch_data);
       Assembler::deserialization_set_special_target_at(
           location_of_branch_data,
           Code::cast(HeapObject::FromAddress(current_object_address)),
           reinterpret_cast<Address>(new_object));
-      location_of_branch_data += Assembler::kSpecialTargetSize;
+      location_of_branch_data += skip;
       current = reinterpret_cast<MaybeObject**>(location_of_branch_data);
       current_was_incremented = true;
     } else {

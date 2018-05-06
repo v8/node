@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "src/base/macros.h"
 #include "src/torque/ast.h"
 #include "src/torque/file-visitor.h"
 #include "src/torque/global-context.h"
@@ -30,7 +31,7 @@ class ImplementationVisitor : public FileVisitor {
   explicit ImplementationVisitor(GlobalContext& global_context)
       : FileVisitor(global_context), indent_(0), next_temp_(0) {}
 
-  void Visit(Ast* ast) { Visit(ast->GetDefaultModule()); }
+  void Visit(Ast* ast) { Visit(ast->default_module()); }
 
   VisitResult Visit(Expression* expr);
   Type Visit(Statement* stmt);
@@ -38,7 +39,8 @@ class ImplementationVisitor : public FileVisitor {
 
   LocationReference GetLocationReference(LocationExpression* location);
   LocationReference GetLocationReference(IdentifierExpression* expr) {
-    return LocationReference(LookupValue(expr->pos, expr->name), {}, {});
+    return LocationReference(declarations()->LookupValue(expr->pos, expr->name),
+                             {}, {});
   }
   LocationReference GetLocationReference(FieldAccessExpression* expr) {
     return LocationReference({}, Visit(expr->object), {});
@@ -89,10 +91,10 @@ class ImplementationVisitor : public FileVisitor {
 
   void Visit(ModuleDeclaration* decl);
   void Visit(DefaultModuleDeclaration* decl) {
-    Visit(base::implicit_cast<ModuleDeclaration*>(decl));
+    Visit(implicit_cast<ModuleDeclaration*>(decl));
   }
   void Visit(ExplicitModuleDeclaration* decl) {
-    Visit(base::implicit_cast<ModuleDeclaration*>(decl));
+    Visit(implicit_cast<ModuleDeclaration*>(decl));
   }
   void Visit(MacroDeclaration* decl);
   void Visit(BuiltinDeclaration* decl);
@@ -130,6 +132,8 @@ class ImplementationVisitor : public FileVisitor {
   Type Visit(ForOfLoopStatement* stmt);
   Type Visit(BlockStatement* block);
   Type Visit(ExpressionStatement* stmt);
+  Type Visit(DebugStatement* stmt);
+  Type Visit(AssertStatement* stmt);
 
   Label* GetLabel(SourcePosition pos, const std::string& label);
 

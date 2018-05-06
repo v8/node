@@ -23,7 +23,7 @@ module array {
     if (IsArraySpeciesProtectorCellInvalid()) goto Bailout;
 
     // Fast path only works on fast elements kind and with writable length.
-    let elementsKind: int32 = EnsureArrayPushable(map) otherwise Bailout;
+    let elementsKind: ElementsKind = EnsureArrayPushable(map) otherwise Bailout;
     if (!IsFastElementsKind(elementsKind)) goto Bailout;
 
     // For now, only support non-double fast elements
@@ -60,6 +60,9 @@ module array {
       newElements.map = elementsMap;
       a.elements = newElements;
     }
+
+    // Double check that the array is still in fast elements mode
+    assert(IsFastSmiElementsKind(a.map.elements_kind));
 
     // Copy over inserted elements.
     let k: Smi = actualStart;

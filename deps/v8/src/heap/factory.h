@@ -27,6 +27,7 @@ class BreakPoint;
 class BreakPointInfo;
 class CallableTask;
 class CallbackTask;
+class CallHandlerInfo;
 class ConstantElementsPair;
 class CoverageInfo;
 class DebugInfo;
@@ -86,6 +87,9 @@ class V8_EXPORT_PRIVATE Factory {
   Handle<Oddball> NewOddball(Handle<Map> map, const char* to_string,
                              Handle<Object> to_number, const char* type_of,
                              byte kind);
+
+  // Marks self references within code generation.
+  Handle<Oddball> NewSelfReferenceMarker();
 
   // Allocates a fixed array-like object with given map and initialized with
   // undefined values.
@@ -181,10 +185,6 @@ class V8_EXPORT_PRIVATE Factory {
   // Create a new Tuple3 struct.
   Handle<Tuple3> NewTuple3(Handle<Object> value1, Handle<Object> value2,
                            Handle<Object> value3, PretenureFlag pretenure);
-
-  // Create a new ContextExtension struct.
-  Handle<ContextExtension> NewContextExtension(Handle<ScopeInfo> scope_info,
-                                               Handle<Object> extension);
 
   // Create a new ConstantElementsPair struct.
   Handle<ConstantElementsPair> NewConstantElementsPair(
@@ -353,31 +353,27 @@ class V8_EXPORT_PRIVATE Factory {
   Handle<Context> NewNativeContext();
 
   // Create a script context.
-  Handle<Context> NewScriptContext(Handle<JSFunction> function,
+  Handle<Context> NewScriptContext(Handle<Context> outer,
                                    Handle<ScopeInfo> scope_info);
 
   // Create an empty script context table.
   Handle<ScriptContextTable> NewScriptContextTable();
 
   // Create a module context.
-  Handle<Context> NewModuleContext(Handle<Module> module,
-                                   Handle<JSFunction> function,
+  Handle<Context> NewModuleContext(Handle<Module> module, Handle<Context> outer,
                                    Handle<ScopeInfo> scope_info);
 
   // Create a function or eval context.
-  Handle<Context> NewFunctionContext(int length, Handle<JSFunction> function,
-                                     ScopeType scope_type);
+  Handle<Context> NewFunctionContext(Handle<Context> outer,
+                                     Handle<ScopeInfo> scope_info);
 
   // Create a catch context.
-  Handle<Context> NewCatchContext(Handle<JSFunction> function,
-                                  Handle<Context> previous,
+  Handle<Context> NewCatchContext(Handle<Context> previous,
                                   Handle<ScopeInfo> scope_info,
-                                  Handle<String> name,
                                   Handle<Object> thrown_object);
 
   // Create a 'with' context.
-  Handle<Context> NewWithContext(Handle<JSFunction> function,
-                                 Handle<Context> previous,
+  Handle<Context> NewWithContext(Handle<Context> previous,
                                  Handle<ScopeInfo> scope_info,
                                  Handle<JSReceiver> extension);
 
@@ -388,8 +384,7 @@ class V8_EXPORT_PRIVATE Factory {
                                           Handle<StringSet> whitelist);
 
   // Create a block context.
-  Handle<Context> NewBlockContext(Handle<JSFunction> function,
-                                  Handle<Context> previous,
+  Handle<Context> NewBlockContext(Handle<Context> previous,
                                   Handle<ScopeInfo> scope_info);
 
   Handle<Struct> NewStruct(InstanceType type,

@@ -19,6 +19,7 @@
 #include "src/extensions/trigger-failure-extension.h"
 #include "src/heap/heap.h"
 #include "src/isolate-inl.h"
+#include "src/objects/api-callbacks.h"
 #include "src/objects/js-regexp.h"
 #include "src/objects/templates.h"
 #include "src/snapshot/natives.h"
@@ -1171,8 +1172,8 @@ void Genesis::InstallGlobalThisBinding() {
   Handle<ScriptContextTable> script_contexts(
       native_context()->script_context_table());
   Handle<ScopeInfo> scope_info = ScopeInfo::CreateGlobalThisBinding(isolate());
-  Handle<JSFunction> closure(native_context()->closure());
-  Handle<Context> context = factory()->NewScriptContext(closure, scope_info);
+  Handle<Context> context =
+      factory()->NewScriptContext(native_context(), scope_info);
 
   // Go ahead and hook it up while we're at it.
   int slot = scope_info->ReceiverContextSlotIndex();
@@ -1405,8 +1406,8 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
                                Handle<JSFunction> empty_function,
                                GlobalContextType context_type) {
   // --- N a t i v e   C o n t e x t ---
-  // Use the empty function as closure (no scope info).
-  native_context()->set_closure(*empty_function);
+  // Use the empty scope info.
+  native_context()->set_scope_info(empty_function->shared()->scope_info());
   native_context()->set_previous(nullptr);
   // Set extension and global object.
   native_context()->set_extension(*global_object);
@@ -2732,6 +2733,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       JSObject::AddProperty(
           prototype, factory->to_string_tag_symbol(), factory->Object_string(),
           static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
+
+      SimpleInstallFunction(prototype, "formatToParts",
+                            Builtins::kDateTimeFormatPrototypeFormatToParts, 1,
+                            false);
     }
 
     {
@@ -2749,13 +2754,9 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
           prototype, factory->to_string_tag_symbol(), factory->Object_string(),
           static_cast<PropertyAttributes>(DONT_ENUM | READ_ONLY));
 
-      Handle<String> name = factory->InternalizeUtf8String("formatToParts");
-      InstallFunction(
-          prototype,
-          SimpleCreateFunction(isolate, name,
-                               Builtins::kNumberFormatPrototypeFormatToParts, 1,
-                               false),
-          name);
+      SimpleInstallFunction(prototype, "formatToParts",
+                            Builtins::kNumberFormatPrototypeFormatToParts, 1,
+                            false);
     }
 
     {

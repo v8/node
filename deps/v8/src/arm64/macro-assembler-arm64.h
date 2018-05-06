@@ -220,6 +220,12 @@ class TurboAssembler : public Assembler {
   bool allow_macro_instructions() const { return allow_macro_instructions_; }
 #endif
 
+  // We should avoid using near calls or jumps when generating WebAssembly code
+  // or calls to WebAssembly from JavaScript.
+  bool CanUseNearCallOrJump(RelocInfo::Mode rmode) {
+    return near_branches_allowed() && rmode != RelocInfo::JS_TO_WASM_CALL;
+  }
+
   // Activation support.
   void EnterFrame(StackFrame::Type type);
   void EnterFrame(StackFrame::Type type, bool load_constant_pool_pointer_reg) {
@@ -584,6 +590,10 @@ class TurboAssembler : public Assembler {
   // Use --debug_code to enable.
   void Assert(Condition cond, AbortReason reason);
 
+  // Like Assert(), but without condition.
+  // Use --debug_code to enable.
+  void AssertUnreachable(AbortReason reason);
+
   void AssertSmi(Register object,
                  AbortReason reason = AbortReason::kOperandIsNotASmi);
 
@@ -878,23 +888,23 @@ class TurboAssembler : public Assembler {
   void Jump(Register target, Condition cond = al);
   void Jump(Address target, RelocInfo::Mode rmode, Condition cond = al);
   void Jump(Handle<Code> code, RelocInfo::Mode rmode, Condition cond = al);
-  void Jump(intptr_t target, RelocInfo::Mode rmode, Condition cond = al);
 
   void Call(Register target);
-  void Call(Label* target);
   void Call(Address target, RelocInfo::Mode rmode);
   void Call(Handle<Code> code, RelocInfo::Mode rmode = RelocInfo::CODE_TARGET);
   void Call(ExternalReference target);
+
+  // Generate an indirect call (for when a direct call's range is not adequate).
+  void IndirectCall(Address target, RelocInfo::Mode rmode);
 
   void CallForDeoptimization(Address target, RelocInfo::Mode rmode);
 
   // For every Call variant, there is a matching CallSize function that returns
   // the size (in bytes) of the call sequence.
   static int CallSize(Register target);
-  static int CallSize(Label* target);
-  static int CallSize(Address target, RelocInfo::Mode rmode);
-  static int CallSize(Handle<Code> code,
-                      RelocInfo::Mode rmode = RelocInfo::CODE_TARGET);
+  int CallSize(Address target, RelocInfo::Mode rmode);
+  int CallSize(Handle<Code> code,
+               RelocInfo::Mode rmode = RelocInfo::CODE_TARGET);
 
   // Calls a C function.
   // The called function is not allowed to trigger a
@@ -1249,6 +1259,9 @@ class TurboAssembler : public Assembler {
   // have mixed types. The format string (x0) should not be included.
   void CallPrintf(int arg_count = 0, const CPURegister* args = nullptr);
 
+  // This handle will be patched with the code object on installation.
+  Handle<HeapObject> code_object_;
+
  private:
   bool has_frame_ = false;
   bool root_array_available_ = true;
@@ -1259,8 +1272,7 @@ class TurboAssembler : public Assembler {
   // of instructions is called.
   bool allow_macro_instructions_;
 #endif
-  // This handle will be patched with the code object on installation.
-  Handle<HeapObject> code_object_;
+
 
   // Scratch registers available for use by the MacroAssembler.
   CPURegList tmp_list_;
@@ -1288,6 +1300,9 @@ class TurboAssembler : public Assembler {
 
   void LoadStorePairMacro(const CPURegister& rt, const CPURegister& rt2,
                           const MemOperand& addr, LoadStorePairOp op);
+
+  static bool IsNearCallOffset(int64_t offset);
+  void JumpHelper(int64_t offset, RelocInfo::Mode rmode, Condition cond = al);
 };
 
 class MacroAssembler : public TurboAssembler {

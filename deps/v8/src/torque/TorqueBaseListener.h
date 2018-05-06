@@ -225,6 +225,11 @@ class TorqueBaseListener : public TorqueListener {
   void enterTryCatch(TorqueParser::TryCatchContext* /*ctx*/) override {}
   void exitTryCatch(TorqueParser::TryCatchContext* /*ctx*/) override {}
 
+  void enterDiagnosticStatement(
+      TorqueParser::DiagnosticStatementContext* /*ctx*/) override {}
+  void exitDiagnosticStatement(
+      TorqueParser::DiagnosticStatementContext* /*ctx*/) override {}
+
   void enterStatement(TorqueParser::StatementContext* /*ctx*/) override {}
   void exitStatement(TorqueParser::StatementContext* /*ctx*/) override {}
 
@@ -246,15 +251,20 @@ class TorqueBaseListener : public TorqueListener {
   void enterHelperBody(TorqueParser::HelperBodyContext* /*ctx*/) override {}
   void exitHelperBody(TorqueParser::HelperBodyContext* /*ctx*/) override {}
 
+  void enterExtendsDeclaration(
+      TorqueParser::ExtendsDeclarationContext* /*ctx*/) override {}
+  void exitExtendsDeclaration(
+      TorqueParser::ExtendsDeclarationContext* /*ctx*/) override {}
+
   void enterGeneratesDeclaration(
       TorqueParser::GeneratesDeclarationContext* /*ctx*/) override {}
   void exitGeneratesDeclaration(
       TorqueParser::GeneratesDeclarationContext* /*ctx*/) override {}
 
-  void enterExtendsDeclaration(
-      TorqueParser::ExtendsDeclarationContext* /*ctx*/) override {}
-  void exitExtendsDeclaration(
-      TorqueParser::ExtendsDeclarationContext* /*ctx*/) override {}
+  void enterConstexprDeclaration(
+      TorqueParser::ConstexprDeclarationContext* /*ctx*/) override {}
+  void exitConstexprDeclaration(
+      TorqueParser::ConstexprDeclarationContext* /*ctx*/) override {}
 
   void enterTypeDeclaration(
       TorqueParser::TypeDeclarationContext* /*ctx*/) override {}

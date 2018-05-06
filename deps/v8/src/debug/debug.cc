@@ -681,10 +681,10 @@ bool Debug::SetBreakPointForScript(Handle<Script> script,
   Handle<BreakPoint> break_point =
       isolate_->factory()->NewBreakPoint(*id, condition);
   if (script->type() == Script::TYPE_WASM) {
-    Handle<WasmCompiledModule> compiled_module(
-        WasmCompiledModule::cast(script->wasm_compiled_module()), isolate_);
-    return WasmCompiledModule::SetBreakPoint(compiled_module, source_position,
-                                             break_point);
+    Handle<WasmModuleObject> module_object(
+        WasmModuleObject::cast(script->wasm_module_object()), isolate_);
+    return WasmModuleObject::SetBreakPoint(module_object, source_position,
+                                           break_point);
   }
 
   HandleScope scope(isolate_);
@@ -2429,6 +2429,10 @@ bool Debug::PerformSideEffectCheck(Handle<JSFunction> function,
 
 bool Debug::PerformSideEffectCheckForCallback(Handle<Object> callback_info) {
   DCHECK_EQ(isolate_->debug_execution_mode(), DebugInfo::kSideEffects);
+  if (!callback_info.is_null() && callback_info->IsCallHandlerInfo() &&
+      i::CallHandlerInfo::cast(*callback_info)->NextCallHasNoSideEffect()) {
+    return true;
+  }
   // TODO(7515): always pass a valid callback info object.
   if (!callback_info.is_null() &&
       DebugEvaluate::CallbackHasNoSideEffect(*callback_info)) {

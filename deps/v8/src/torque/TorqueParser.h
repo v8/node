@@ -47,50 +47,54 @@ class TorqueParser : public antlr4::Parser {
     FOR = 32,
     WHILE = 33,
     RETURN = 34,
-    CONTINUE = 35,
-    BREAK = 36,
-    GOTO = 37,
-    OTHERWISE = 38,
-    TRY = 39,
-    CATCH = 40,
-    LABEL = 41,
-    LABELS = 42,
-    TAIL = 43,
-    ISNT = 44,
-    IS = 45,
-    LET = 46,
-    ASSIGNMENT = 47,
-    ASSIGNMENT_OPERATOR = 48,
-    EQUAL = 49,
-    PLUS = 50,
-    MINUS = 51,
-    MULTIPLY = 52,
-    DIVIDE = 53,
-    MODULO = 54,
-    BIT_OR = 55,
-    BIT_AND = 56,
-    BIT_NOT = 57,
-    MAX = 58,
-    MIN = 59,
-    NOT_EQUAL = 60,
-    LESS_THAN = 61,
-    LESS_THAN_EQUAL = 62,
-    GREATER_THAN = 63,
-    GREATER_THAN_EQUAL = 64,
-    SHIFT_LEFT = 65,
-    SHIFT_RIGHT = 66,
-    SHIFT_RIGHT_ARITHMETIC = 67,
-    VARARGS = 68,
-    EQUALITY_OPERATOR = 69,
-    INCREMENT = 70,
-    DECREMENT = 71,
-    NOT = 72,
-    STRING_LITERAL = 73,
-    IDENTIFIER = 74,
-    WS = 75,
-    BLOCK_COMMENT = 76,
-    LINE_COMMENT = 77,
-    DECIMAL_LITERAL = 78
+    CONSTEXPR = 35,
+    CONTINUE = 36,
+    BREAK = 37,
+    GOTO = 38,
+    OTHERWISE = 39,
+    TRY = 40,
+    CATCH = 41,
+    LABEL = 42,
+    LABELS = 43,
+    TAIL = 44,
+    ISNT = 45,
+    IS = 46,
+    LET = 47,
+    ASSERT = 48,
+    UNREACHABLE_TOKEN = 49,
+    DEBUG_TOKEN = 50,
+    ASSIGNMENT = 51,
+    ASSIGNMENT_OPERATOR = 52,
+    EQUAL = 53,
+    PLUS = 54,
+    MINUS = 55,
+    MULTIPLY = 56,
+    DIVIDE = 57,
+    MODULO = 58,
+    BIT_OR = 59,
+    BIT_AND = 60,
+    BIT_NOT = 61,
+    MAX = 62,
+    MIN = 63,
+    NOT_EQUAL = 64,
+    LESS_THAN = 65,
+    LESS_THAN_EQUAL = 66,
+    GREATER_THAN = 67,
+    GREATER_THAN_EQUAL = 68,
+    SHIFT_LEFT = 69,
+    SHIFT_RIGHT = 70,
+    SHIFT_RIGHT_ARITHMETIC = 71,
+    VARARGS = 72,
+    EQUALITY_OPERATOR = 73,
+    INCREMENT = 74,
+    DECREMENT = 75,
+    NOT = 76,
+    STRING_LITERAL = 77,
+    IDENTIFIER = 78,
+    WS = 79,
+    BLOCK_COMMENT = 80,
+    LINE_COMMENT = 81,
+    DECIMAL_LITERAL = 82
   };
 
   enum {
@@ -141,23 +145,25 @@ class TorqueParser : public antlr4::Parser {
     RuleGotoStatement = 44,
     RuleHandlerWithStatement = 45,
     RuleTryCatch = 46,
-    RuleStatement = 47,
-    RuleStatementList = 48,
-    RuleStatementScope = 49,
-    RuleStatementBlock = 50,
-    RuleHelperBody = 51,
-    RuleGeneratesDeclaration = 52,
+    RuleDiagnosticStatement = 47,
+    RuleStatement = 48,
+    RuleStatementList = 49,
+    RuleStatementScope = 50,
+    RuleStatementBlock = 51,
+    RuleHelperBody = 52,
     RuleExtendsDeclaration = 53,
-    RuleTypeDeclaration = 54,
-    RuleExternalBuiltin = 55,
-    RuleExternalMacro = 56,
-    RuleExternalRuntime = 57,
-    RuleBuiltinDeclaration = 58,
-    RuleMacroDeclaration = 59,
-    RuleConstDeclaration = 60,
-    RuleDeclaration = 61,
-    RuleModuleDeclaration = 62,
-    RuleFile = 63
+    RuleGeneratesDeclaration = 54,
+    RuleConstexprDeclaration = 55,
+    RuleTypeDeclaration = 56,
+    RuleExternalBuiltin = 57,
+    RuleExternalMacro = 58,
+    RuleExternalRuntime = 59,
+    RuleBuiltinDeclaration = 60,
+    RuleMacroDeclaration = 61,
+    RuleConstDeclaration = 62,
+    RuleDeclaration = 63,
+    RuleModuleDeclaration = 64,
+    RuleFile = 65
   };
 
   explicit TorqueParser(antlr4::TokenStream* input);
@@ -218,13 +224,15 @@ class TorqueParser : public antlr4::Parser {
   class GotoStatementContext;
   class HandlerWithStatementContext;
   class TryCatchContext;
+  class DiagnosticStatementContext;
   class StatementContext;
   class StatementListContext;
   class StatementScopeContext;
   class StatementBlockContext;
   class HelperBodyContext;
-  class GeneratesDeclarationContext;
   class ExtendsDeclarationContext;
+  class GeneratesDeclarationContext;
+  class ConstexprDeclarationContext;
   class TypeDeclarationContext;
   class ExternalBuiltinContext;
   class ExternalMacroContext;
@@ -241,6 +249,7 @@ class TorqueParser : public antlr4::Parser {
     TypeContext(antlr4::ParserRuleContext* parent, size_t invokingState);
     size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode* IDENTIFIER();
+    antlr4::tree::TerminalNode* CONSTEXPR();
 
     void enterRule(antlr4::tree::ParseTreeListener* listener) override;
     void exitRule(antlr4::tree::ParseTreeListener* listener) override;
@@ -911,6 +920,7 @@ class TorqueParser : public antlr4::Parser {
     ExpressionContext* expression();
     std::vector<StatementBlockContext*> statementBlock();
     StatementBlockContext* statementBlock(size_t i);
+    antlr4::tree::TerminalNode* CONSTEXPR();
 
     void enterRule(antlr4::tree::ParseTreeListener* listener) override;
     void exitRule(antlr4::tree::ParseTreeListener* listener) override;
@@ -1035,6 +1045,24 @@ class TorqueParser : public antlr4::Parser {
 
   TryCatchContext* tryCatch();
 
+  class DiagnosticStatementContext : public antlr4::ParserRuleContext {
+   public:
+    DiagnosticStatementContext(antlr4::ParserRuleContext* parent,
+                               size_t invokingState);
+    size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode* ASSERT();
+    ExpressionContext* expression();
+    antlr4::tree::TerminalNode* UNREACHABLE_TOKEN();
+    antlr4::tree::TerminalNode* DEBUG_TOKEN();
+
+    void enterRule(antlr4::tree::ParseTreeListener* listener) override;
+    void exitRule(antlr4::tree::ParseTreeListener* listener) override;
+
+    antlrcpp::Any accept(antlr4::tree::ParseTreeVisitor* visitor) override;
+  };
+
+  DiagnosticStatementContext* diagnosticStatement();
+
   class StatementContext : public antlr4::ParserRuleContext {
    public:
     StatementContext(antlr4::ParserRuleContext* parent, size_t invokingState);
@@ -1048,6 +1076,7 @@ class TorqueParser : public antlr4::Parser {
     ContinueStatementContext* continueStatement();
     GotoStatementContext* gotoStatement();
     IfStatementContext* ifStatement();
+    DiagnosticStatementContext* diagnosticStatement();
     WhileLoopContext* whileLoop();
     ForOfLoopContext* forOfLoop();
     ForLoopContext* forLoop();
@@ -1123,21 +1152,6 @@ class TorqueParser : public antlr4::Parser {
 
   HelperBodyContext* helperBody();
 
-  class GeneratesDeclarationContext : public antlr4::ParserRuleContext {
-   public:
-    GeneratesDeclarationContext(antlr4::ParserRuleContext* parent,
-                                size_t invokingState);
-    size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode* STRING_LITERAL();
-
-    void enterRule(antlr4::tree::ParseTreeListener* listener) override;
-    void exitRule(antlr4::tree::ParseTreeListener* listener) override;
-
-    antlrcpp::Any accept(antlr4::tree::ParseTreeVisitor* visitor) override;
-  };
-
-  GeneratesDeclarationContext* generatesDeclaration();
-
   class ExtendsDeclarationContext : public antlr4::ParserRuleContext {
    public:
     ExtendsDeclarationContext(antlr4::ParserRuleContext* parent,
@@ -1153,6 +1167,36 @@ class TorqueParser : public antlr4::Parser {
 
   ExtendsDeclarationContext* extendsDeclaration();
 
+  class GeneratesDeclarationContext : public antlr4::ParserRuleContext {
+   public:
+    GeneratesDeclarationContext(antlr4::ParserRuleContext* parent,
+                                size_t invokingState);
+    size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode* STRING_LITERAL();
+
+    void enterRule(antlr4::tree::ParseTreeListener* listener) override;
+    void exitRule(antlr4::tree::ParseTreeListener* listener) override;
+
+    antlrcpp::Any accept(antlr4::tree::ParseTreeVisitor* visitor) override;
+  };
+
+  GeneratesDeclarationContext* generatesDeclaration();
+
+  class ConstexprDeclarationContext : public antlr4::ParserRuleContext {
+   public:
+    ConstexprDeclarationContext(antlr4::ParserRuleContext* parent,
+                                size_t invokingState);
+    size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode* STRING_LITERAL();
+
+    void enterRule(antlr4::tree::ParseTreeListener* listener) override;
+    void exitRule(antlr4::tree::ParseTreeListener* listener) override;
+
+    antlrcpp::Any accept(antlr4::tree::ParseTreeVisitor* visitor) override;
+  };
+
+  ConstexprDeclarationContext* constexprDeclaration();
+
   class TypeDeclarationContext : public antlr4::ParserRuleContext {
    public:
     TypeDeclarationContext(antlr4::ParserRuleContext* parent,
@@ -1161,6 +1205,7 @@ class TorqueParser : public antlr4::Parser {
     antlr4::tree::TerminalNode* IDENTIFIER();
     ExtendsDeclarationContext* extendsDeclaration();
     GeneratesDeclarationContext* generatesDeclaration();
+    ConstexprDeclarationContext* constexprDeclaration();
 
     void enterRule(antlr4::tree::ParseTreeListener* listener) override;
     void exitRule(antlr4::tree::ParseTreeListener* listener) override;

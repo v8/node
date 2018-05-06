@@ -3866,9 +3866,8 @@ static Handle<Code> DummyOptimizedCode(Isolate* isolate) {
   masm.Push(isolate->factory()->undefined_value());
   masm.Drop(2);
   masm.GetCode(isolate, &desc);
-  Handle<Object> undefined(isolate->heap()->undefined_value(), isolate);
-  Handle<Code> code =
-      isolate->factory()->NewCode(desc, Code::OPTIMIZED_FUNCTION, undefined);
+  Handle<Code> code = isolate->factory()->NewCode(
+      desc, Code::OPTIMIZED_FUNCTION, masm.CodeObject());
   CHECK(code->IsCode());
   return code;
 }
@@ -5944,7 +5943,7 @@ UNINITIALIZED_TEST(OutOfMemoryIneffectiveGC) {
   heap->CollectAllGarbage(Heap::kNoGCFlags, GarbageCollectionReason::kTesting);
   {
     HandleScope scope(i_isolate);
-    while (heap->PromotedSpaceSizeOfObjects() <
+    while (heap->OldGenerationSizeOfObjects() <
            heap->MaxOldGenerationSize() * 0.9) {
       factory->NewFixedArray(100, TENURED);
     }
