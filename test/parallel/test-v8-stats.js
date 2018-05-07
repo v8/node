@@ -23,6 +23,7 @@ keys.forEach(function(key) {
 const expectedHeapSpaces = [
   'new_space',
   'old_space',
+  'read_only_space',
   'code_space',
   'map_space',
   'large_object_space'
