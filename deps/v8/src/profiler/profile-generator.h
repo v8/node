@@ -37,20 +37,16 @@ class SourcePositionTable : public Malloced {
   DISALLOW_COPY_AND_ASSIGN(SourcePositionTable);
 };
 
-
 class CodeEntry {
  public:
   // CodeEntry doesn't own name strings, just references them.
   inline CodeEntry(CodeEventListener::LogEventsAndTags tag, const char* name,
-                   const char* name_prefix = CodeEntry::kEmptyNamePrefix,
                    const char* resource_name = CodeEntry::kEmptyResourceName,
                    int line_number = v8::CpuProfileNode::kNoLineNumberInfo,
                    int column_number = v8::CpuProfileNode::kNoColumnNumberInfo,
                    std::unique_ptr<SourcePositionTable> line_info = nullptr,
                    Address instruction_start = kNullAddress);
 
-  const char* name_prefix() const { return name_prefix_; }
-  bool has_name_prefix() const { return name_prefix_[0] != '\0'; }
   const char* name() const { return name_; }
   const char* resource_name() const { return resource_name_; }
   int line_number() const { return line_number_; }
@@ -67,14 +63,19 @@ class CodeEntry {
 
   void set_deopt_info(const char* deopt_reason, int deopt_id) {
     DCHECK(!has_deopt_info());
-    deopt_reason_ = deopt_reason;
-    deopt_id_ = deopt_id;
+    RareData* rare_data = EnsureRareData();
+    rare_data->deopt_reason_ = deopt_reason;
+    rare_data->deopt_id_ = deopt_id;
   }
   CpuProfileDeoptInfo GetDeoptInfo();
-  bool has_deopt_info() const { return deopt_id_ != kNoDeoptimizationId; }
+  bool has_deopt_info() const {
+    return rare_data_ && rare_data_->deopt_id_ != kNoDeoptimizationId;
+  }
   void clear_deopt_info() {
-    deopt_reason_ = kNoDeoptReason;
-    deopt_id_ = kNoDeoptimizationId;
+    if (!rare_data_) return;
+    // TODO(alph): Clear rare_data_ if that was the only field in use.
+    rare_data_->deopt_reason_ = kNoDeoptReason;
+    rare_data_->deopt_id_ = kNoDeoptimizationId;
   }
 
   void FillFunctionInfo(SharedFunctionInfo* shared);
@@ -102,7 +103,6 @@ class CodeEntry {
     return TagField::decode(bit_field_);
   }
 
-  static const char* const kEmptyNamePrefix;
   static const char* const kEmptyResourceName;
   static const char* const kEmptyBailoutReason;
   static const char* const kNoDeoptReason;
@@ -124,6 +124,16 @@ class CodeEntry {
   }
 
  private:
+  struct RareData {
+    const char* deopt_reason_ = kNoDeoptReason;
+    int deopt_id_ = kNoDeoptimizationId;
+    // Should be an unordered_map, but it doesn't currently work on Win & MacOS.
+    std::map<int, std::vector<std::unique_ptr<CodeEntry>>> inline_locations_;
+    std::map<int, std::vector<CpuProfileDeoptFrame>> deopt_inlined_frames_;
+  };
+
+  RareData* EnsureRareData();
+
   struct ProgramEntryCreateTrait {
     static CodeEntry* Create();
   };
@@ -150,7 +160,6 @@ class CodeEntry {
   class BuiltinIdField : public BitField<Builtins::Name, 8, 24> {};
 
   uint32_t bit_field_;
-  const char* name_prefix_;
   const char* name_;
   const char* resource_name_;
   int line_number_;
@@ -158,13 +167,9 @@ class CodeEntry {
   int script_id_;
   int position_;
   const char* bailout_reason_;
-  const char* deopt_reason_;
-  int deopt_id_;
   std::unique_ptr<SourcePositionTable> line_info_;
   Address instruction_start_;
-  // Should be an unordered_map, but it doesn't currently work on Win & MacOS.
-  std::map<int, std::vector<std::unique_ptr<CodeEntry>>> inline_locations_;
-  std::map<int, std::vector<CpuProfileDeoptFrame>> deopt_inlined_frames_;
+  std::unique_ptr<RareData> rare_data_;
 
   DISALLOW_COPY_AND_ASSIGN(CodeEntry);
 };

@@ -358,6 +358,10 @@ inline LanguageMode stricter_language_mode(LanguageMode mode1,
 
 enum TypeofMode : int { INSIDE_TYPEOF, NOT_INSIDE_TYPEOF };
 
+// Enums used by CEntry.
+enum SaveFPRegsMode { kDontSaveFPRegs, kSaveFPRegs };
+enum ArgvMode { kArgvOnStack, kArgvInRegister };
+
 // This constant is used as an undefined value when passing source positions.
 constexpr int kNoSourcePosition = -1;
 
@@ -461,6 +465,7 @@ class AccessorInfo;
 class Arguments;
 class Assembler;
 class Code;
+class CodeSpace;
 class CodeStub;
 class Context;
 class Debug;
@@ -1514,7 +1519,7 @@ V8_INLINE static HeapObject* RemoveWeakHeapObjectMask(
                                        ~kWeakHeapObjectMask);
 }
 
-V8_INLINE static HeapObjectReference* AddWeakHeapObjectMask(HeapObject* value) {
+V8_INLINE static HeapObjectReference* AddWeakHeapObjectMask(Object* value) {
   return reinterpret_cast<HeapObjectReference*>(
       reinterpret_cast<intptr_t>(value) | kWeakHeapObjectMask);
 }

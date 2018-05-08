@@ -5,18 +5,21 @@
 #ifndef V8_WASM_WASM_OBJECTS_INL_H_
 #define V8_WASM_WASM_OBJECTS_INL_H_
 
-#include "src/heap/heap-inl.h"
-#include "src/v8memory.h"
 #include "src/wasm/wasm-objects.h"
 
-namespace v8 {
-namespace internal {
+#include "src/heap/heap-inl.h"
+#include "src/v8memory.h"
+#include "src/wasm/wasm-module.h"
 
 // Has to be the last include (doesn't have include guards)
 #include "src/objects/object-macros.h"
 
+namespace v8 {
+namespace internal {
+
 CAST_ACCESSOR(WasmCompiledModule)
 CAST_ACCESSOR(WasmDebugInfo)
+CAST_ACCESSOR(WasmExportedFunctionData)
 CAST_ACCESSOR(WasmGlobalObject)
 CAST_ACCESSOR(WasmInstanceObject)
 CAST_ACCESSOR(WasmMemoryObject)
@@ -71,17 +74,14 @@ BIT_FIELD_ACCESSORS(WasmGlobalObject, flags, type, WasmGlobalObject::TypeBits)
 BIT_FIELD_ACCESSORS(WasmGlobalObject, flags, is_mutable,
                     WasmGlobalObject::IsMutableBit)
 
-// static
-uint32_t WasmGlobalObject::TypeSize(wasm::ValueType type) {
-  return 1U << ElementSizeLog2Of(type);
+int WasmGlobalObject::type_size() const {
+  return wasm::ValueTypes::ElementSizeInBytes(type());
 }
-
-uint32_t WasmGlobalObject::type_size() const { return TypeSize(type()); }
 
 Address WasmGlobalObject::address() const {
   uint32_t buffer_size = 0;
   DCHECK(array_buffer()->byte_length()->ToUint32(&buffer_size));
-  DCHECK(offset() + type_size() <= buffer_size);
+  DCHECK_LE(offset() + type_size(), buffer_size);
   USE(buffer_size);
   return Address(array_buffer()->backing_store()) + offset();
 }
@@ -173,6 +173,12 @@ ImportedFunctionEntry::ImportedFunctionEntry(
   DCHECK_GE(index, 0);
   DCHECK_LT(index, instance->module()->num_imported_functions);
 }
+
+// WasmExportedFunctionData
+ACCESSORS(WasmExportedFunctionData, wrapper_code, Code, kWrapperCodeOffset)
+ACCESSORS(WasmExportedFunctionData, instance, WasmInstanceObject,
+          kInstanceOffset)
+SMI_ACCESSORS(WasmExportedFunctionData, function_index, kFunctionIndexOffset)
 
 // WasmSharedModuleData
 ACCESSORS(WasmSharedModuleData, managed_module, Object, kManagedModuleOffset)

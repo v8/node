@@ -85,10 +85,6 @@
   'language/statements/variable/binding-resolution': [FAIL],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=4895
-  'built-ins/TypedArrays/ctors/typedarray-arg/typedarray-arg-detached-when-species-retrieved-different-type': [FAIL],
-  'built-ins/TypedArrays/ctors-bigint/typedarray-arg/typedarray-arg-detached-when-species-retrieved-different-type': [FAIL],
-  'built-ins/TypedArrays/ctors/typedarray-arg/typedarray-arg-detached-when-species-retrieved-same-type': [FAIL],
-  'built-ins/TypedArrays/ctors-bigint/typedarray-arg/typedarray-arg-detached-when-species-retrieved-same-type': [FAIL],
   'built-ins/TypedArrays/internals/DefineOwnProperty/detached-buffer': [FAIL],
   'built-ins/TypedArrays/internals/DefineOwnProperty/BigInt/detached-buffer': [FAIL],
   'built-ins/TypedArrays/internals/DefineOwnProperty/detached-buffer-realm': [FAIL],
@@ -470,19 +466,6 @@
   'intl402/DateTimeFormat/prototype/resolvedOptions/hourCycle': [FAIL],
 
   ##################### DELIBERATE INCOMPATIBILITIES #####################
-
-  # We do not expose Array.prototype.values due to webcompat issues.
-  # Most recent incompatibility: https://crbug.com/615873
-  # https://code.google.com/p/v8/issues/detail?id=4247
-  'built-ins/Array/prototype/Symbol.iterator': [FAIL],
-  'built-ins/Array/prototype/values/returns-iterator': [FAIL],
-  'built-ins/Array/prototype/values/returns-iterator-from-object': [FAIL],
-  'built-ins/Array/prototype/values/prop-desc': [FAIL],
-  'built-ins/Array/prototype/values/name': [FAIL],
-  'built-ins/Array/prototype/values/length': [FAIL],
-  'built-ins/Array/prototype/values/iteration': [FAIL],
-  'built-ins/Array/prototype/values/iteration-mutable': [FAIL],
-  'built-ins/Array/prototype/Symbol.unscopables/value': [FAIL],
 
   # https://github.com/tc39/ecma262/pull/889
   'annexB/language/function-code/block-decl-func-skip-arguments': [FAIL],

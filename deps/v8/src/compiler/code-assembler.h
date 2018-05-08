@@ -131,6 +131,10 @@ struct MachineTypeOf<Object> {
   static constexpr MachineType value = MachineType::AnyTagged();
 };
 template <>
+struct MachineTypeOf<MaybeObject> {
+  static constexpr MachineType value = MachineType::AnyTagged();
+};
+template <>
 struct MachineTypeOf<Smi> {
   static constexpr MachineType value = MachineType::TaggedSigned();
 };
@@ -153,6 +157,12 @@ struct MachineRepresentationOf {
 template <class T>
 struct MachineRepresentationOf<
     T, typename std::enable_if<std::is_base_of<Object, T>::value>::type> {
+  static const MachineRepresentation value =
+      MachineTypeOf<T>::value.representation();
+};
+template <class T>
+struct MachineRepresentationOf<
+    T, typename std::enable_if<std::is_base_of<MaybeObject, T>::value>::type> {
   static const MachineRepresentation value =
       MachineTypeOf<T>::value.representation();
 };
@@ -232,6 +242,7 @@ class StringWrapper;
 class SymbolWrapper;
 class Undetectable;
 class UniqueName;
+class WasmExportedFunctionData;
 class WasmGlobalObject;
 class WasmMemoryObject;
 class WasmModuleObject;

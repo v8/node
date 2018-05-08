@@ -39,8 +39,6 @@ int SourcePositionTable::GetSourceLineNumber(int pc_offset) const {
   return it->second;
 }
 
-
-const char* const CodeEntry::kEmptyNamePrefix = "";
 const char* const CodeEntry::kEmptyResourceName = "";
 const char* const CodeEntry::kEmptyBailoutReason = "";
 const char* const CodeEntry::kNoDeoptReason = "";
@@ -88,8 +86,6 @@ uint32_t CodeEntry::GetHash() const {
     hash ^= ComputeIntegerHash(static_cast<uint32_t>(position_));
   } else {
     hash ^= ComputeIntegerHash(
-        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(name_prefix_)));
-    hash ^= ComputeIntegerHash(
         static_cast<uint32_t>(reinterpret_cast<uintptr_t>(name_)));
     hash ^= ComputeIntegerHash(
         static_cast<uint32_t>(reinterpret_cast<uintptr_t>(resource_name_)));
@@ -103,8 +99,7 @@ bool CodeEntry::IsSameFunctionAs(const CodeEntry* entry) const {
   if (script_id_ != v8::UnboundScript::kNoScriptId) {
     return script_id_ == entry->script_id_ && position_ == entry->position_;
   }
-  return name_prefix_ == entry->name_prefix_ && name_ == entry->name_ &&
-         resource_name_ == entry->resource_name_ &&
+  return name_ == entry->name_ && resource_name_ == entry->resource_name_ &&
          line_number_ == entry->line_number_;
 }
 
@@ -122,23 +117,26 @@ int CodeEntry::GetSourceLine(int pc_offset) const {
 
 void CodeEntry::AddInlineStack(
     int pc_offset, std::vector<std::unique_ptr<CodeEntry>> inline_stack) {
-  inline_locations_.insert(std::make_pair(pc_offset, std::move(inline_stack)));
+  EnsureRareData()->inline_locations_.insert(
+      std::make_pair(pc_offset, std::move(inline_stack)));
 }
 
 const std::vector<std::unique_ptr<CodeEntry>>* CodeEntry::GetInlineStack(
     int pc_offset) const {
-  auto it = inline_locations_.find(pc_offset);
-  return it != inline_locations_.end() ? &it->second : nullptr;
+  if (!rare_data_) return nullptr;
+  auto it = rare_data_->inline_locations_.find(pc_offset);
+  return it != rare_data_->inline_locations_.end() ? &it->second : nullptr;
 }
 
 void CodeEntry::AddDeoptInlinedFrames(
     int deopt_id, std::vector<CpuProfileDeoptFrame> inlined_frames) {
-  deopt_inlined_frames_.insert(
+  EnsureRareData()->deopt_inlined_frames_.insert(
       std::make_pair(deopt_id, std::move(inlined_frames)));
 }
 
 bool CodeEntry::HasDeoptInlinedFramesFor(int deopt_id) const {
-  return deopt_inlined_frames_.find(deopt_id) != deopt_inlined_frames_.end();
+  return rare_data_ && rare_data_->deopt_inlined_frames_.find(deopt_id) !=
+                           rare_data_->deopt_inlined_frames_.end();
 }
 
 void CodeEntry::FillFunctionInfo(SharedFunctionInfo* shared) {
@@ -153,17 +151,24 @@ CpuProfileDeoptInfo CodeEntry::GetDeoptInfo() {
   DCHECK(has_deopt_info());
 
   CpuProfileDeoptInfo info;
-  info.deopt_reason = deopt_reason_;
-  DCHECK_NE(kNoDeoptimizationId, deopt_id_);
-  if (deopt_inlined_frames_.find(deopt_id_) == deopt_inlined_frames_.end()) {
+  info.deopt_reason = rare_data_->deopt_reason_;
+  DCHECK_NE(kNoDeoptimizationId, rare_data_->deopt_id_);
+  if (rare_data_->deopt_inlined_frames_.find(rare_data_->deopt_id_) ==
+      rare_data_->deopt_inlined_frames_.end()) {
     info.stack.push_back(CpuProfileDeoptFrame(
         {script_id_, static_cast<size_t>(std::max(0, position()))}));
   } else {
-    info.stack = deopt_inlined_frames_[deopt_id_];
+    info.stack = rare_data_->deopt_inlined_frames_[rare_data_->deopt_id_];
   }
   return info;
 }
 
+CodeEntry::RareData* CodeEntry::EnsureRareData() {
+  if (!rare_data_) {
+    rare_data_.reset(new RareData());
+  }
+  return rare_data_.get();
+}
 
 void ProfileNode::CollectDeoptInfo(CodeEntry* entry) {
   deopt_infos_.push_back(entry->GetDeoptInfo());
@@ -224,9 +229,8 @@ bool ProfileNode::GetLineTicks(v8::CpuProfileNode::LineTick* entries,
 
 
 void ProfileNode::Print(int indent) {
-  base::OS::Print("%5u %*s %s%s %d #%d", self_ticks_, indent, "",
-                  entry_->name_prefix(), entry_->name(), entry_->script_id(),
-                  id());
+  base::OS::Print("%5u %*s %s %d #%d", self_ticks_, indent, "", entry_->name(),
+                  entry_->script_id(), id());
   if (entry_->resource_name()[0] != '\0')
     base::OS::Print(" %s:%d", entry_->resource_name(), entry_->line_number());
   base::OS::Print("\n");

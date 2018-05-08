@@ -1088,6 +1088,34 @@ THREADED_PROFILED_TEST(FunctionTemplate) {
   TestFunctionTemplateAccessor(construct_callback, Return239Callback);
 }
 
+static void FunctionCallbackForProxyTest(
+    const v8::FunctionCallbackInfo<Value>& info) {
+  info.GetReturnValue().Set(info.This());
+}
+
+THREADED_TEST(FunctionTemplateWithProxy) {
+  LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  v8::Local<v8::FunctionTemplate> function_template =
+      v8::FunctionTemplate::New(isolate, FunctionCallbackForProxyTest);
+  v8::Local<v8::Function> function =
+      function_template->GetFunction(env.local()).ToLocalChecked();
+  CHECK((*env)->Global()->Set(env.local(), v8_str("f"), function).FromJust());
+  v8::Local<v8::Value> proxy =
+      CompileRun("var proxy = new Proxy({}, {}); proxy");
+  CHECK(proxy->IsProxy());
+
+  v8::Local<v8::Value> result = CompileRun("f(proxy)");
+  CHECK(result->Equals(env.local(), (*env)->Global()).FromJust());
+
+  result = CompileRun("f.call(proxy)");
+  CHECK(result->Equals(env.local(), proxy).FromJust());
+
+  result = CompileRun("Reflect.apply(f, proxy, [1])");
+  CHECK(result->Equals(env.local(), proxy).FromJust());
+}
 
 static void SimpleCallback(const v8::FunctionCallbackInfo<v8::Value>& info) {
   ApiTestFuzzer::Fuzz();
@@ -13157,6 +13185,10 @@ TEST(FunctionNewInstanceHasNoSideEffect) {
   CHECK(
       context->Global()->Set(context.local(), v8_str("f3"), func3).FromJust());
   CHECK(v8::debug::EvaluateGlobal(isolate, v8_str("f3()"), true).IsEmpty());
+
+  // Check that using side effect free NewInstance works in normal evaluation
+  // (without throwOnSideEffect).
+  v8::debug::EvaluateGlobal(isolate, v8_str("f2()"), false).ToLocalChecked();
 }
 
 TEST(CallHandlerAsFunctionHasNoSideEffectNotSupported) {
@@ -14457,8 +14489,13 @@ void SetFunctionEntryHookTest::RunTest() {
       CHECK_LE(202, CountInvocations(nullptr, "InterpreterEntryTrampoline"));
     }
 
-    // Verify that we have an entry hook on some specific stubs.
-    CHECK_NE(0, CountInvocations(nullptr, "CEntryStub"));
+    // Verify that we have an entry hook on some specific stubs and builtins.
+    CHECK_NE(0, CountInvocations(
+                    nullptr,
+                    "CEntry_Return1_DontSaveFPRegs_ArgvOnStack_NoBuiltinExit"));
+    CHECK_NE(0, CountInvocations(
+                    nullptr,
+                    "CEntry_Return1_DontSaveFPRegs_ArgvOnStack_BuiltinExit"));
     CHECK_NE(0, CountInvocations(nullptr, "JSEntryStub"));
     CHECK_NE(0, CountInvocations(nullptr, "JSEntryTrampoline"));
   }

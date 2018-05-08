@@ -149,7 +149,11 @@ struct WasmInstanceCacheNodes {
 typedef ZoneVector<Node*> NodeVector;
 class WasmGraphBuilder {
  public:
-  enum EnforceBoundsCheck : bool { kNeedsBoundsCheck, kCanOmitBoundsCheck };
+  enum EnforceBoundsCheck : bool {
+    kNeedsBoundsCheck = true,
+    kCanOmitBoundsCheck = false
+  };
+  enum UseRetpoline : bool { kRetpoline = true, kNoRetpoline = false };
 
   WasmGraphBuilder(wasm::ModuleEnv* env, Zone* zone, JSGraph* graph,
                    Handle<Code> centry_stub, Handle<Oddball> anyref_null,
@@ -176,8 +180,8 @@ class WasmGraphBuilder {
   Node* Terminate(Node* effect, Node* control);
   Node* Merge(unsigned count, Node** controls);
   Node* Phi(wasm::ValueType type, unsigned count, Node** vals, Node* control);
-  Node* CreateOrMergeIntoPhi(wasm::ValueType type, Node* merge, Node* tnode,
-                             Node* fnode);
+  Node* CreateOrMergeIntoPhi(MachineRepresentation rep, Node* merge,
+                             Node* tnode, Node* fnode);
   Node* CreateOrMergeIntoEffectPhi(Node* merge, Node* tnode, Node* fnode);
   Node* EffectPhi(unsigned count, Node** effects, Node* control);
   Node* NumberConstant(int32_t value);
@@ -387,9 +391,8 @@ class WasmGraphBuilder {
   template <typename... Args>
   Node* BuildCCall(MachineSignature* sig, Node* function, Args... args);
   Node* BuildWasmCall(wasm::FunctionSig* sig, Node** args, Node*** rets,
-                      wasm::WasmCodePosition position,
-                      Node* instance_node = nullptr,
-                      bool use_retpoline = false);
+                      wasm::WasmCodePosition position, Node* instance_node,
+                      UseRetpoline use_retpoline);
 
   Node* BuildF32CopySign(Node* left, Node* right);
   Node* BuildF64CopySign(Node* left, Node* right);
@@ -491,7 +494,7 @@ class WasmGraphBuilder {
   void SetNeedsStackCheck() { needs_stack_check_ = true; }
 
   //-----------------------------------------------------------------------
-  // Operations involving the CEntryStub, a dependency we want to remove
+  // Operations involving the CEntry, a dependency we want to remove
   // to get off the GC heap.
   //-----------------------------------------------------------------------
   Node* BuildCallToRuntime(Runtime::FunctionId f, Node** parameters,
@@ -508,7 +511,9 @@ class WasmGraphBuilder {
 };
 
 V8_EXPORT_PRIVATE CallDescriptor* GetWasmCallDescriptor(
-    Zone* zone, wasm::FunctionSig* signature, bool use_retpoline = false);
+    Zone* zone, wasm::FunctionSig* signature,
+    WasmGraphBuilder::UseRetpoline use_retpoline =
+        WasmGraphBuilder::kNoRetpoline);
 
 V8_EXPORT_PRIVATE CallDescriptor* GetI32WasmCallDescriptor(
     Zone* zone, CallDescriptor* call_descriptor);

@@ -177,7 +177,8 @@ class InterpreterHandle {
     ScopedVector<WasmValue> wasm_args(num_params);
     Address arg_buf_ptr = arg_buffer;
     for (int i = 0; i < num_params; ++i) {
-      uint32_t param_size = 1 << ElementSizeLog2Of(sig->GetParam(i));
+      uint32_t param_size = static_cast<uint32_t>(
+          ValueTypes::ElementSizeInBytes(sig->GetParam(i)));
 #define CASE_ARG_TYPE(type, ctype)                                    \
   case type:                                                          \
     DCHECK_EQ(param_size, sizeof(ctype));                             \
@@ -240,10 +241,11 @@ class InterpreterHandle {
     DCHECK_EQ(1, kV8MaxWasmFunctionReturns);
     if (sig->return_count()) {
       WasmValue ret_val = thread->GetReturnValue(0);
-#define CASE_RET_TYPE(type, ctype)                                       \
-  case type:                                                             \
-    DCHECK_EQ(1 << ElementSizeLog2Of(sig->GetReturn(0)), sizeof(ctype)); \
-    WriteUnalignedValue<ctype>(arg_buffer, ret_val.to<ctype>());         \
+#define CASE_RET_TYPE(type, ctype)                               \
+  case type:                                                     \
+    DCHECK_EQ(ValueTypes::ElementSizeInBytes(sig->GetReturn(0)), \
+              sizeof(ctype));                                    \
+    WriteUnalignedValue<ctype>(arg_buffer, ret_val.to<ctype>()); \
     break;
       switch (sig->GetReturn(0)) {
         CASE_RET_TYPE(kWasmI32, uint32_t)
@@ -605,7 +607,7 @@ void RedirectCallsitesInInstance(Isolate* isolate, WasmInstanceObject* instance,
   // Redirect all calls in wasm functions.
   for (uint32_t i = 0, e = GetNumFunctions(instance); i < e; ++i) {
     wasm::WasmCode* code =
-        instance->compiled_module()->GetNativeModule()->GetCode(i);
+        instance->compiled_module()->GetNativeModule()->code(i);
     RedirectCallsitesInCode(isolate, code, map);
   }
   // TODO(6668): Find instances that imported our code and also patch those.
@@ -680,7 +682,7 @@ void WasmDebugInfo::RedirectToInterpreter(Handle<WasmDebugInfo> debug_info,
     const wasm::WasmCode* wasm_new_code =
         native_module->AddInterpreterWrapper(new_code, func_index);
     const wasm::WasmCode* old_code =
-        native_module->GetCode(static_cast<uint32_t>(func_index));
+        native_module->code(static_cast<uint32_t>(func_index));
     Handle<Foreign> foreign_holder = isolate->factory()->NewForeign(
         wasm_new_code->instruction_start(), TENURED);
     interpreted_functions->set(func_index, *foreign_holder);
@@ -769,10 +771,16 @@ Handle<JSFunction> WasmDebugInfo::GetCWasmEntry(
     }
     DCHECK(entries->get(index)->IsUndefined(isolate));
     Handle<Code> new_entry_code = compiler::CompileCWasmEntry(isolate, sig);
+    Handle<WasmExportedFunctionData> function_data =
+        Handle<WasmExportedFunctionData>::cast(isolate->factory()->NewStruct(
+            WASM_EXPORTED_FUNCTION_DATA_TYPE, TENURED));
+    function_data->set_wrapper_code(*new_entry_code);
+    function_data->set_instance(debug_info->wasm_instance());
+    function_data->set_function_index(-1);
     Handle<String> name = isolate->factory()->InternalizeOneByteString(
         STATIC_CHAR_VECTOR("c-wasm-entry"));
     NewFunctionArgs args = NewFunctionArgs::ForWasm(
-        name, new_entry_code, isolate->sloppy_function_map());
+        name, function_data, isolate->sloppy_function_map());
     Handle<JSFunction> new_entry = isolate->factory()->NewFunction(args);
     new_entry->set_context(debug_info->wasm_instance()->native_context());
     new_entry->shared()->set_internal_formal_parameter_count(

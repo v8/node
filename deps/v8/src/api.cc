@@ -783,7 +783,7 @@ StartupData SnapshotCreator::CreateBlob(
       if (shared->CanFlushCompiled()) {
         shared->FlushCompiled();
       }
-      DCHECK(shared->HasCodeObject() || shared->HasBuiltinId() ||
+      DCHECK(shared->HasWasmExportedFunctionData() || shared->HasBuiltinId() ||
              shared->IsApiFunction());
     }
   }
@@ -5135,10 +5135,12 @@ MaybeLocal<Object> Function::NewInstanceWithSideEffectType(
   i::TimerEventScope<i::TimerEventExecute> timer_scope(isolate);
   auto self = Utils::OpenHandle(this);
   STATIC_ASSERT(sizeof(v8::Local<v8::Value>) == sizeof(i::Object**));
-  if (side_effect_type == SideEffectType::kHasNoSideEffect) {
+  bool should_set_has_no_side_effect =
+      side_effect_type == SideEffectType::kHasNoSideEffect &&
+      isolate->debug_execution_mode() == i::DebugInfo::kSideEffects;
+  if (should_set_has_no_side_effect) {
     CHECK(self->IsJSFunction() &&
           i::JSFunction::cast(*self)->shared()->IsApiFunction());
-    DCHECK(isolate->debug_execution_mode() == i::DebugInfo::kSideEffects);
     i::Object* obj =
         i::JSFunction::cast(*self)->shared()->get_api_func_data()->call_code();
     if (obj->IsCallHandlerInfo()) {
@@ -5152,7 +5154,7 @@ MaybeLocal<Object> Function::NewInstanceWithSideEffectType(
   Local<Object> result;
   has_pending_exception = !ToLocal<Object>(
       i::Execution::New(isolate, self, self, argc, args), &result);
-  if (side_effect_type == SideEffectType::kHasNoSideEffect) {
+  if (should_set_has_no_side_effect) {
     i::Object* obj =
         i::JSFunction::cast(*self)->shared()->get_api_func_data()->call_code();
     if (obj->IsCallHandlerInfo()) {
@@ -9836,15 +9838,7 @@ Local<String> CpuProfileNode::GetFunctionName() const {
   const i::CodeEntry* entry = node->entry();
   i::Handle<i::String> name =
       isolate->factory()->InternalizeUtf8String(entry->name());
-  if (!entry->has_name_prefix()) {
-    return ToApiHandle<String>(name);
-  } else {
-    // We do not expect this to fail. Change this if it does.
-    i::Handle<i::String> cons = isolate->factory()->NewConsString(
-        isolate->factory()->InternalizeUtf8String(entry->name_prefix()),
-        name).ToHandleChecked();
-    return ToApiHandle<String>(cons);
-  }
+  return ToApiHandle<String>(name);
 }
 
 int debug::Coverage::BlockData::StartOffset() const { return block_->start; }

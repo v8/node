@@ -10,6 +10,7 @@
 #include "src/base/optional.h"
 #include "src/base/template-utils.h"
 #include "src/base/utils/random-number-generator.h"
+#include "src/code-factory.h"
 #include "src/code-stubs.h"
 #include "src/compiler/wasm-compiler.h"
 #include "src/counters.h"
@@ -439,7 +440,7 @@ class IndirectPatcher {
       DCHECK(!entry.is_js_receiver_entry());
       WasmInstanceObject* target_instance = entry.instance();
       WasmCode* new_code =
-          target_instance->compiled_module()->GetNativeModule()->GetCode(
+          target_instance->compiled_module()->GetNativeModule()->code(
               code->index());
       if (new_code->kind() != WasmCode::kLazyStub) {
         // Patch an imported function entry which is already compiled.
@@ -461,7 +462,7 @@ class IndirectPatcher {
                  code->instructions().start());
       WasmInstanceObject* target_instance = entry.instance();
       WasmCode* new_code =
-          target_instance->compiled_module()->GetNativeModule()->GetCode(
+          target_instance->compiled_module()->GetNativeModule()->code(
               code->index());
       if (new_code->kind() != WasmCode::kLazyStub) {
         // Patch an indirect function table entry which is already compiled.
@@ -492,7 +493,7 @@ const wasm::WasmCode* LazyCompileFunction(
     Isolate* isolate, Handle<WasmCompiledModule> compiled_module,
     int func_index) {
   base::ElapsedTimer compilation_timer;
-  wasm::WasmCode* existing_code = compiled_module->GetNativeModule()->GetCode(
+  wasm::WasmCode* existing_code = compiled_module->GetNativeModule()->code(
       static_cast<uint32_t>(func_index));
   if (existing_code != nullptr &&
       existing_code->kind() == wasm::WasmCode::kFunction) {
@@ -526,10 +527,9 @@ const wasm::WasmCode* LazyCompileFunction(
                     module_start + func->code.end_offset()};
 
   ErrorThrower thrower(isolate, "WasmLazyCompile");
-  WasmCompilationUnit unit(isolate, &module_env,
-                           compiled_module->GetNativeModule(), body,
-                           CStrVector(func_name.c_str()), func_index,
-                           CEntryStub(isolate, 1).GetCode());
+  WasmCompilationUnit unit(
+      isolate, &module_env, compiled_module->GetNativeModule(), body,
+      CStrVector(func_name.c_str()), func_index, CodeFactory::CEntry(isolate));
   unit.ExecuteCompilation();
   wasm::WasmCode* wasm_code = unit.FinishCompilation(&thrower);
 
@@ -602,7 +602,7 @@ const wasm::WasmCode* LazyCompileFromJsToWasm(
                      RelocInfo::ModeMask(RelocInfo::JS_TO_WASM_CALL));
     DCHECK(!it.done());
     const wasm::WasmCode* callee_compiled =
-        compiled_module->GetNativeModule()->GetCode(callee_func_index);
+        compiled_module->GetNativeModule()->code(callee_func_index);
     DCHECK_NOT_NULL(callee_compiled);
     DCHECK_EQ(WasmCode::kLazyStub,
               isolate->wasm_engine()
@@ -619,7 +619,7 @@ const wasm::WasmCode* LazyCompileFromJsToWasm(
   }
 
   wasm::WasmCode* ret =
-      compiled_module->GetNativeModule()->GetCode(callee_func_index);
+      compiled_module->GetNativeModule()->code(callee_func_index);
   DCHECK_NOT_NULL(ret);
   DCHECK_EQ(wasm::WasmCode::kFunction, ret->kind());
   return ret;
@@ -685,7 +685,7 @@ const wasm::WasmCode* LazyCompileDirectCall(Isolate* isolate,
         int32_t callee_func_index =
             ExtractDirectCallIndex(decoder, func_bytes + byte_pos);
         DCHECK_LT(callee_func_index,
-                  wasm_caller->native_module()->FunctionCount());
+                  wasm_caller->native_module()->function_count());
         // {caller_ret_offset} points to one instruction after the call.
         // Remember the last called function before that offset.
         if (offset < caller_ret_offset) {
@@ -733,7 +733,7 @@ const wasm::WasmCode* LazyCompileDirectCall(Isolate* isolate,
       auto callee_index = direct_callees[pos];
       if (callee_index < 0) continue;  // callee already compiled.
       const WasmCode* callee_compiled =
-          compiled_module->GetNativeModule()->GetCode(callee_index);
+          compiled_module->GetNativeModule()->code(callee_index);
       if (callee_compiled->kind() != WasmCode::kFunction) continue;
       DCHECK_EQ(WasmCode::kLazyStub,
                 isolate->wasm_engine()
@@ -871,8 +871,8 @@ bool compile_lazy(const WasmModule* module) {
 }
 
 void FlushICache(const wasm::NativeModule* native_module) {
-  for (uint32_t i = 0, e = native_module->FunctionCount(); i < e; ++i) {
-    const wasm::WasmCode* code = native_module->GetCode(i);
+  for (uint32_t i = 0, e = native_module->function_count(); i < e; ++i) {
+    const wasm::WasmCode* code = native_module->code(i);
     if (code == nullptr) continue;
     Assembler::FlushICache(code->instructions().start(),
                            code->instructions().size());
@@ -913,8 +913,8 @@ void RecordStats(Handle<FixedArray> functions, Counters* counters) {
 }
 
 void RecordStats(const wasm::NativeModule* native_module, Counters* counters) {
-  for (uint32_t i = 0, e = native_module->FunctionCount(); i < e; ++i) {
-    const wasm::WasmCode* code = native_module->GetCode(i);
+  for (uint32_t i = 0, e = native_module->function_count(); i < e; ++i) {
+    const wasm::WasmCode* code = native_module->code(i);
     if (code != nullptr) RecordStats(code, counters);
   }
 }
@@ -1327,7 +1327,7 @@ MaybeHandle<WasmModuleObject> CompileToModuleObjectInternal(
     const ModuleWireBytes& wire_bytes, Handle<Script> asm_js_script,
     Vector<const byte> asm_js_offset_table_bytes) {
   WasmModule* wasm_module = module.get();
-  Handle<Code> centry_stub = CEntryStub(isolate, 1).GetCode();
+  Handle<Code> centry_stub = CodeFactory::CEntry(isolate);
   TimedHistogramScope wasm_compile_module_time_scope(
       wasm_module->is_wasm()
           ? isolate->async_counters()->wasm_compile_wasm_module_time()
@@ -2170,7 +2170,7 @@ int InstanceBuilder::ProcessImports(Handle<WasmInstanceObject> instance) {
           auto wasm_code = imported_function->GetWasmCode();
           ImportedFunctionEntry(instance, func_index)
               .set(*imported_instance, wasm_code);
-          native_module->SetCode(func_index, wasm_code);
+          native_module->set_code(func_index, wasm_code);
         } else {
           // The imported function is a callable.
           Handle<JSReceiver> js_receiver(JSReceiver::cast(*value), isolate_);
@@ -3067,14 +3067,7 @@ class AsyncCompileJob::PrepareAndStartCompile : public CompileStep {
 
     Isolate* isolate = job_->isolate_;
 
-    Handle<Code> centry_stub = CEntryStub(isolate, 1).GetCode();
-    {
-      // Now reopen the handles in a deferred scope in order to use
-      // them in the concurrent steps.
-      DeferredHandleScope deferred(isolate);
-      job_->centry_stub_ = Handle<Code>(*centry_stub, isolate);
-      job_->deferred_handles_.push_back(deferred.Detach());
-    }
+    job_->centry_stub_ = CodeFactory::CEntry(isolate);
 
     DCHECK_LE(module_->num_imported_functions, module_->functions.size());
     // Create the compiled module object and populate with compiled functions

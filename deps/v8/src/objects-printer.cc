@@ -933,7 +933,7 @@ void FeedbackVector::FeedbackVectorPrint(std::ostream& os) {  // NOLINT
     if (entry_size > 0) os << " {";
     for (int i = 0; i < entry_size; i++) {
       int index = GetIndex(slot) + i;
-      os << "\n     [" << index << "]: " << Brief(get(index));
+      os << "\n     [" << index << "]: " << MaybeObjectBrief(get(index));
     }
     if (entry_size > 0) os << "\n  }";
   }
@@ -1599,6 +1599,15 @@ void WasmCompiledModule::WasmCompiledModulePrint(std::ostream& os) {  // NOLINT
 void WasmDebugInfo::WasmDebugInfoPrint(std::ostream& os) {  // NOLINT
   HeapObject::PrintHeader(os, "WasmDebugInfo");
   os << "\n - wasm_instance: " << Brief(wasm_instance());
+  os << "\n";
+}
+
+void WasmExportedFunctionData::WasmExportedFunctionDataPrint(
+    std::ostream& os) {  // NOLINT
+  HeapObject::PrintHeader(os, "WasmExportedFunctionData");
+  os << "\n - wrapper_code: " << Brief(wrapper_code());
+  os << "\n - instance: " << Brief(instance());
+  os << "\n - function_index: " << function_index();
   os << "\n";
 }
 
