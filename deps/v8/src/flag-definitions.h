@@ -212,17 +212,17 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony fields in class literals")         \
   V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_array_flatten, "harmony Array.prototype.flat{ten,Map}")   \
-  V(harmony_string_matchall, "harmony String.prototype.matchAll")
+  V(harmony_array_flatten, "harmony Array.prototype.flat{ten,Map}")
 
 // Features that are complete (but still behind --harmony/es-staging flag).
-#define HARMONY_STAGED(V)                                               \
-  V(harmony_restrict_constructor_return,                                \
-    "harmony disallow non undefined primitive return value from class " \
-    "constructor")                                                      \
-  V(harmony_public_fields, "harmony public fields in class literals")   \
-  V(harmony_private_fields, "harmony private fields in class literals") \
-  V(harmony_numeric_separator, "harmony numeric separator between digits")
+#define HARMONY_STAGED(V)                                                  \
+  V(harmony_restrict_constructor_return,                                   \
+    "harmony disallow non undefined primitive return value from class "    \
+    "constructor")                                                         \
+  V(harmony_public_fields, "harmony public fields in class literals")      \
+  V(harmony_private_fields, "harmony private fields in class literals")    \
+  V(harmony_numeric_separator, "harmony numeric separator between digits") \
+  V(harmony_string_matchall, "harmony String.prototype.matchAll")
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                                   \
@@ -521,12 +521,8 @@ DEFINE_BOOL(wasm_trace_serialization, false,
             "trace serialization/deserialization")
 DEFINE_BOOL(wasm_async_compilation, true,
             "enable actual asynchronous compilation for WebAssembly.compile")
-DEFINE_BOOL(wasm_stream_compilation, true,
-            "enable streaming compilation for WebAssembly")
-DEFINE_IMPLICATION(wasm_stream_compilation, wasm_async_compilation)
 DEFINE_BOOL(wasm_test_streaming, false,
             "use streaming compilation instead of async compilation for tests")
-DEFINE_IMPLICATION(wasm_test_streaming, wasm_stream_compilation)
 // Parallel compilation confuses turbo_stats, force single threaded.
 DEFINE_VALUE_IMPLICATION(turbo_stats, wasm_num_compilation_tasks, 0)
 DEFINE_UINT(wasm_max_mem_pages, v8::internal::wasm::kV8MaxWasmMemoryPages,

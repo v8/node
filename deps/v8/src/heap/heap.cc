@@ -920,7 +920,10 @@ void Heap::DeoptMarkedAllocationSites() {
 
 void Heap::GarbageCollectionEpilogue() {
   TRACE_GC(tracer(), GCTracer::Scope::HEAP_EPILOGUE);
-  ZapFromSpace();
+  // In release mode, we only zap the from space under heap verification.
+  if (Heap::ShouldZapGarbage()) {
+    ZapFromSpace();
+  }
 
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
@@ -1761,7 +1764,7 @@ bool Heap::PerformGarbageCollection(
   }
 
   if (!fast_promotion_mode_ || collector == MARK_COMPACTOR) {
-    ComputeFastPromotionMode(promotion_ratio_ + semi_space_copied_rate_);
+    ComputeFastPromotionMode();
   }
 
   isolate_->counters()->objs_since_last_young()->Set(0);
@@ -2238,7 +2241,7 @@ void Heap::Scavenge() {
   SetGCState(NOT_IN_GC);
 }
 
-void Heap::ComputeFastPromotionMode(double survival_rate) {
+void Heap::ComputeFastPromotionMode() {
   const size_t survived_in_new_space =
       survived_last_scavenge_ * 100 / new_space_->Capacity();
   fast_promotion_mode_ =
@@ -3837,13 +3840,12 @@ void Heap::VerifyCountersBeforeConcurrentSweeping() {
 
 void Heap::ZapFromSpace() {
   if (!new_space_->IsFromSpaceCommitted()) return;
-
   for (Page* page :
        PageRange(new_space_->FromSpaceStart(), new_space_->FromSpaceEnd())) {
-    memory_allocator()->ZapBlock(page->area_start(), page->area_size(),
-                                 Heap::ShouldZapGarbage()
-                                     ? kFromSpaceZapValue
-                                     : kClearedFreeMemoryValue);
+    for (Address cursor = page->area_start(), limit = page->area_end();
+         cursor < limit; cursor += kPointerSize) {
+      Memory::Address_at(cursor) = static_cast<Address>(kFromSpaceZapValue);
+    }
   }
 }
 
@@ -4792,6 +4794,7 @@ void Heap::NotifyDeserializationComplete() {
 #endif  // DEBUG
   }
 
+  read_only_space()->MarkAsReadOnly();
   deserialization_complete_ = true;
 }
 

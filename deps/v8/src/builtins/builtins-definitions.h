@@ -6,7 +6,7 @@
 #define V8_BUILTINS_BUILTINS_DEFINITIONS_H_
 
 // include generated header
-#include "builtin-definitions-from-dsl.h"  //NOLINT
+#include "torque-generated/builtin-definitions-from-dsl.h"
 
 namespace v8 {
 namespace internal {
@@ -278,14 +278,6 @@ namespace internal {
   /* Support for Array.from and other array-copying idioms */                  \
   TFS(CloneFastJSArray, kSource)                                               \
   TFS(ExtractFastJSArray, kSource, kBegin, kCount)                             \
-  /* ES6 #sec-array.prototype.foreach */                                       \
-  TFS(ArrayForEachLoopContinuation, kReceiver, kCallbackFn, kThisArg, kArray,  \
-      kObject, kInitialK, kLength, kTo)                                        \
-  TFJ(ArrayForEachLoopEagerDeoptContinuation, 4, kCallbackFn, kThisArg,        \
-      kInitialK, kLength)                                                      \
-  TFJ(ArrayForEachLoopLazyDeoptContinuation, 5, kCallbackFn, kThisArg,         \
-      kInitialK, kLength, kResult)                                             \
-  TFJ(ArrayForEach, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES6 #sec-array.prototype.every */                                         \
   TFS(ArrayEveryLoopContinuation, kReceiver, kCallbackFn, kThisArg, kArray,    \
       kObject, kInitialK, kLength, kTo)                                        \

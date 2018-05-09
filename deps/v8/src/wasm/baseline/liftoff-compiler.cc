@@ -43,6 +43,15 @@ namespace {
   __ LoadFromInstance(dst.gp(), WASM_INSTANCE_OBJECT_OFFSET(name), \
                       LoadType(type).size());
 
+#ifdef DEBUG
+#define DEBUG_CODE_COMMENT(str) \
+  do {                          \
+    __ RecordComment(str);      \
+  } while (false)
+#else
+#define DEBUG_CODE_COMMENT(str) ((void)0)
+#endif
+
 constexpr LoadType::LoadTypeValue kPointerLoadType =
     kPointerSize == 8 ? LoadType::kI64Load : LoadType::kI32Load;
 
@@ -493,8 +502,9 @@ class LiftoffCompiler {
     BindUnboundLabels(decoder);
   }
 
-  void NextInstruction(Decoder* decoder, WasmOpcode) {
+  void NextInstruction(Decoder* decoder, WasmOpcode opcode) {
     TraceCacheState(decoder);
+    DEBUG_CODE_COMMENT(WasmOpcodes::OpcodeName(opcode));
   }
 
   void Block(Decoder* decoder, Control* block) {
@@ -1473,6 +1483,7 @@ class LiftoffCompiler {
     if (!FLAG_untrusted_code_mitigations || env_->use_trap_handler) {
       return index;
     }
+    DEBUG_CODE_COMMENT("Mask memory index");
     // Make sure that we can overwrite {index}.
     if (__ cache_state()->is_used(index)) {
       LiftoffRegister old_index = index;
@@ -1501,6 +1512,7 @@ class LiftoffCompiler {
     }
     uint32_t offset = imm.offset;
     index = AddMemoryMasking(index, &offset, pinned);
+    DEBUG_CODE_COMMENT("Load from memory");
     LiftoffRegister addr = pinned.set(__ GetUnusedRegister(kGpReg, pinned));
     LOAD_INSTANCE_FIELD(addr, MemoryStart, kPointerLoadType);
     RegClass rc = reg_class_for(value_type);
@@ -1534,6 +1546,7 @@ class LiftoffCompiler {
     }
     uint32_t offset = imm.offset;
     index = AddMemoryMasking(index, &offset, pinned);
+    DEBUG_CODE_COMMENT("Store to memory");
     LiftoffRegister addr = pinned.set(__ GetUnusedRegister(kGpReg, pinned));
     LOAD_INSTANCE_FIELD(addr, MemoryStart, kPointerLoadType);
     uint32_t protected_store_pc = 0;
@@ -1741,6 +1754,30 @@ class LiftoffCompiler {
     __ emit_cond_jump(kUnsignedGreaterEqual, invalid_func_label, kWasmI32,
                       index.gp(), tmp_const.gp());
 
+    // Mask the index to prevent SSCA.
+    if (FLAG_untrusted_code_mitigations) {
+      DEBUG_CODE_COMMENT("Mask indirect call index");
+      // mask = ((index - size) & ~index) >> 31
+      // Reuse allocated registers; note: size is still stored in {tmp_const}.
+      LiftoffRegister diff = table;
+      LiftoffRegister neg_index = tmp_const;
+      LiftoffRegister mask = scratch;
+      // 1) diff = index - size
+      __ emit_i32_sub(diff.gp(), index.gp(), tmp_const.gp());
+      // 2) neg_index = ~index
+      __ LoadConstant(neg_index, WasmValue(int32_t{-1}));
+      __ emit_i32_xor(neg_index.gp(), neg_index.gp(), index.gp());
+      // 3) mask = diff & neg_index
+      __ emit_i32_and(mask.gp(), diff.gp(), neg_index.gp());
+      // 4) mask = mask >> 31
+      __ LoadConstant(tmp_const, WasmValue(int32_t{31}));
+      __ emit_i32_sar(mask.gp(), mask.gp(), tmp_const.gp(), pinned);
+
+      // Apply mask.
+      __ emit_i32_and(index.gp(), index.gp(), mask.gp());
+    }
+
+    DEBUG_CODE_COMMENT("Check indirect call signature");
     // Load the signature from {instance->ift_sig_ids[key]}
     LOAD_INSTANCE_FIELD(table, IndirectFunctionTableSigIds, kPointerLoadType);
     __ LoadConstant(tmp_const,
@@ -1759,6 +1796,7 @@ class LiftoffCompiler {
                       LiftoffAssembler::kWasmIntPtr, scratch.gp(),
                       tmp_const.gp());
 
+    DEBUG_CODE_COMMENT("Execute indirect call");
     if (kPointerSize == 8) {
       // {index} has already been multiplied by 4. Multiply by another 2.
       __ LoadConstant(tmp_const, WasmValue(2));
@@ -1964,6 +2002,7 @@ void LiftoffCompilationUnit::AbortCompilation() {
 #undef TRACE
 #undef WASM_INSTANCE_OBJECT_OFFSET
 #undef LOAD_INSTANCE_FIELD
+#undef DEBUG_CODE_COMMENT
 
 }  // namespace wasm
 }  // namespace internal

@@ -857,6 +857,12 @@ void CodeStubAssembler::Bind(Label* label, AssemblerDebugInfo debug_info) {
 void CodeStubAssembler::Bind(Label* label) { CodeAssembler::Bind(label); }
 #endif  // DEBUG
 
+TNode<Float64T> CodeStubAssembler::LoadDoubleWithHoleCheck(
+    TNode<FixedDoubleArray> array, TNode<Smi> index, Label* if_hole) {
+  return TNode<Float64T>::UncheckedCast(LoadFixedDoubleArrayElement(
+      array, index, MachineType::Float64(), 0, SMI_PARAMETERS, if_hole));
+}
+
 void CodeStubAssembler::BranchIfPrototypesHaveNoElements(
     Node* receiver_map, Label* definitely_no_elements,
     Label* possibly_elements) {
@@ -1355,27 +1361,6 @@ TNode<BoolT> CodeStubAssembler::HasInstanceType(SloppyTNode<HeapObject> object,
   return InstanceTypeEqual(LoadInstanceType(object), instance_type);
 }
 
-TNode<BoolT>
-CodeStubAssembler::InitialArrayPrototypeHasInitialArrayPrototypeMap(
-    TNode<Context> native_context) {
-  CSA_ASSERT(this, IsNativeContext(native_context));
-  TNode<Map> proto_map = LoadMap(CAST(LoadContextElement(
-      native_context, Context::INITIAL_ARRAY_PROTOTYPE_INDEX)));
-  TNode<Map> initial_map = CAST(LoadContextElement(
-      native_context, Context::INITIAL_ARRAY_PROTOTYPE_MAP_INDEX));
-  return WordEqual(proto_map, initial_map);
-}
-
-TNode<BoolT> CodeStubAssembler::HasInitialFastElementsKindMap(
-    TNode<Context> native_context, TNode<JSArray> jsarray) {
-  CSA_ASSERT(this, IsNativeContext(native_context));
-  TNode<Map> map = LoadMap(jsarray);
-  TNode<Int32T> elements_kind = LoadMapElementsKind(map);
-  TNode<Map> initial_jsarray_element_map =
-      LoadJSArrayElementsMap(elements_kind, native_context);
-  return WordEqual(initial_jsarray_element_map, map);
-}
-
 TNode<BoolT> CodeStubAssembler::DoesntHaveInstanceType(
     SloppyTNode<HeapObject> object, InstanceType instance_type) {
   return Word32NotEqual(LoadInstanceType(object), Int32Constant(instance_type));
@@ -1794,11 +1779,7 @@ TNode<MaybeObject> CodeStubAssembler::LoadArrayElement(
   STATIC_ASSERT(FixedArrayBase::kLengthOffset == WeakFixedArray::kLengthOffset);
   // Check that index_node + additional_offset <= object.length.
   // TODO(cbruni): Use proper LoadXXLength helpers
-  CSA_SLOW_ASSERT(
-      this,
-      IsOffsetInBounds(
-          offset, LoadAndUntagObjectField(array, FixedArrayBase::kLengthOffset),
-          FixedArray::kHeaderSize));
+  // TODO(cbruni): Re-add bounds check here.
   return UncheckedCast<MaybeObject>(
       Load(MachineType::AnyTagged(), array, offset, needs_poisoning));
 }

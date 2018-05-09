@@ -3034,17 +3034,6 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
   }
 
   {  // -- M a p
-    {
-      Handle<String> index_string = isolate->factory()->zero_string();
-      uint32_t field =
-          StringHasher::MakeArrayIndexHash(0, index_string->length());
-      index_string->set_hash_field(field);
-
-      index_string = isolate->factory()->one_string();
-      field = StringHasher::MakeArrayIndexHash(1, index_string->length());
-      index_string->set_hash_field(field);
-    }
-
     Handle<JSFunction> js_map_fun =
         InstallFunction(global, "Map", JS_MAP_TYPE, JSMap::kSize, 0,
                         factory->the_hole_value(), Builtins::kMapConstructor);
@@ -4348,8 +4337,6 @@ void Genesis::InitializeGlobal_harmony_bigint() {
   bigint_fun->shared()->set_length(1);
   InstallWithIntrinsicDefaultProto(isolate(), bigint_fun,
                                    Context::BIGINT_FUNCTION_INDEX);
-  heap()->bigint_map()->SetConstructorFunctionIndex(
-      Context::BIGINT_FUNCTION_INDEX);
 
   // Install the properties of the BigInt constructor.
   // asUintN(bits, bigint)
@@ -5143,11 +5130,6 @@ bool Genesis::ConfigureGlobalObjects(
 
   native_context()->set_js_map_map(js_map_fun->initial_map());
   native_context()->set_js_set_map(js_set_fun->initial_map());
-
-  Handle<JSFunction> js_array_constructor(native_context()->array_function());
-  Handle<JSObject> js_array_prototype(
-      JSObject::cast(js_array_constructor->instance_prototype()));
-  native_context()->set_initial_array_prototype_map(js_array_prototype->map());
 
   return true;
 }

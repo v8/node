@@ -119,13 +119,8 @@ Handle<JSFunction> TestingModuleBuilder::WrapCode(uint32_t index) {
   // Wrap the code so it can be called as a JS function.
   Link();
   wasm::WasmCode* code = native_module_->code(index);
-
-  Handle<WasmCompiledModule> compiled_module(
-      instance_object()->compiled_module(), isolate_);
-  Handle<WeakCell> weak_instance(compiled_module->weak_owning_instance(),
-                                 isolate_);
   Handle<Code> ret_code = compiler::CompileJSToWasmWrapper(
-      isolate_, test_module_ptr_, weak_instance, code, index,
+      isolate_, test_module_ptr_, code, index,
       trap_handler::IsTrapHandlerEnabled() ? kUseTrapHandler : kNoTrapHandler);
   Handle<JSFunction> ret = WasmExportedFunction::New(
       isolate_, instance_object(), MaybeHandle<String>(),
@@ -134,6 +129,8 @@ Handle<JSFunction> TestingModuleBuilder::WrapCode(uint32_t index) {
       ret_code);
 
   // Add reference to the exported wrapper code.
+  Handle<WasmCompiledModule> compiled_module(
+      instance_object()->compiled_module(), isolate_);
   Handle<FixedArray> old_arr(compiled_module->export_wrappers(), isolate_);
   Handle<FixedArray> new_arr =
       isolate_->factory()->NewFixedArray(old_arr->length() + 1);
@@ -273,13 +270,15 @@ void TestBuildingGraph(Zone* zone, compiler::JSGraph* jsgraph,
                        const byte* start, const byte* end) {
   if (module) {
     compiler::WasmGraphBuilder builder(
-        module, zone, jsgraph, CodeFactory::CEntry(jsgraph->isolate(), 1),
+        jsgraph->isolate(), module, zone, jsgraph,
+        CodeFactory::CEntry(jsgraph->isolate(), 1),
         jsgraph->isolate()->factory()->null_value(), sig,
         source_position_table);
     TestBuildingGraphWithBuilder(&builder, zone, sig, start, end);
   } else {
     compiler::WasmGraphBuilder builder(
-        nullptr, zone, jsgraph, CodeFactory::CEntry(jsgraph->isolate(), 1),
+        jsgraph->isolate(), nullptr, zone, jsgraph,
+        CodeFactory::CEntry(jsgraph->isolate(), 1),
         jsgraph->isolate()->factory()->null_value(), sig,
         source_position_table);
     TestBuildingGraphWithBuilder(&builder, zone, sig, start, end);
