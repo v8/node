@@ -1,6 +1,7 @@
 // Flags: --expose-internals
 'use strict';
 const common = require('../common');
+common.skip('skip until V8 roll');
 common.skipIfInspectorDisabled();
 common.crashOnUnhandledRejection();
 const { NodeInstance } = require('../common/inspector-helper.js');
@@ -52,7 +53,7 @@ async function runTests() {
     { 'method': 'Debugger.enable' },
     { 'method': 'Runtime.runIfWaitingForDebugger' }
   ]);
-  await session.waitForBreakOnLine(0, '[eval]');
+  await session.waitForBreakOnLine(4, '[eval]');
 
   await session.send({ 'method': 'Runtime.enable' });
   await getContext(session);

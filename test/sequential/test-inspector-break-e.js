@@ -1,7 +1,7 @@
 // Flags: --expose-internals
 'use strict';
 const common = require('../common');
-
+common.skip('skip until V8 roll');
 common.skipIfInspectorDisabled();
 common.crashOnUnhandledRejection();
 
@@ -16,7 +16,7 @@ async function runTests() {
     { 'method': 'Debugger.enable' },
     { 'method': 'Runtime.runIfWaitingForDebugger' }
   ]);
-  await session.waitForBreakOnLine(0, '[eval]');
+  await session.waitForBreakOnLine(2, '[eval]');
   await session.runToCompletion();
   assert.strictEqual(0, (await instance.expectShutdown()).exitCode);
 }
