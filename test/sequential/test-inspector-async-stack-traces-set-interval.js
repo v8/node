@@ -1,6 +1,7 @@
 // Flags: --expose-internals
 'use strict';
 const common = require('../common');
+common.skip('skip until V8 roll');
 common.skipIfInspectorDisabled();
 common.skipIf32Bits();
 common.crashOnUnhandledRejection();
@@ -11,7 +12,7 @@ const script = 'setInterval(() => { debugger; }, 50);';
 
 async function skipFirstBreakpoint(session) {
   console.log('[test]', 'Skipping the first breakpoint in the eval script');
-  await session.waitForBreakOnLine(0, '[eval]');
+  await session.waitForBreakOnLine(2, '[eval]');
   await session.send({ 'method': 'Debugger.resume' });
 }
 

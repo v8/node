@@ -1,6 +1,7 @@
 // Flags: --expose-internals
 'use strict';
 const common = require('../common');
+common.skip('skip until V8 roll');
 const fixtures = require('../common/fixtures');
 
 common.skipIfInspectorDisabled();
@@ -29,7 +30,7 @@ async function testBreakpointOnStart(session) {
   ];
 
   await session.send(commands);
-  await session.waitForBreakOnLine(0, script);
+  await session.waitForBreakOnLine(21, script);
 }
 
 
