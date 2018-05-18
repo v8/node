@@ -57,6 +57,13 @@ RELEASE_WORKDIR = "/tmp/v8-release-scripts-work-dir/"
 V8_BASE = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Add our copy of depot_tools to the PATH as many scripts use tools from there,
+# e.g. git-cl, fetch, git-new-branch etc, and we can not depend on depot_tools
+# being in the PATH on the LUCI bots.
+path_to_depot_tools = os.path.join(V8_BASE, 'third_party', 'depot_tools')
+new_path = path_to_depot_tools + os.pathsep + os.environ.get('PATH')
+os.environ['PATH'] = new_path
+
 
 def TextToFile(text, file_name):
   with open(file_name, "w") as f:
@@ -865,6 +872,11 @@ class ScriptsBase(object):
     options = self.MakeOptions(args)
     if not options:
       return 1
+
+    # Ensure temp dir exists for state files.
+    state_dir = os.path.dirname(self._config["PERSISTFILE_BASENAME"])
+    if not os.path.exists(state_dir):
+      os.makedirs(state_dir)
 
     state_file = "%s-state.json" % self._config["PERSISTFILE_BASENAME"]
     if options.step == 0 and os.path.exists(state_file):
