@@ -4,9 +4,9 @@ namespace node {
 namespace tracing {
 
 InternalTraceBuffer::InternalTraceBuffer(size_t max_chunks, uint32_t id,
-                                         Agent* agent)
+                                         NodeTraceWriter* trace_writer)
     : flushing_(false), max_chunks_(max_chunks),
-      agent_(agent), id_(id) {
+      trace_writer_(trace_writer), id_(id) {
   chunks_.resize(max_chunks);
 }
 
@@ -59,14 +59,14 @@ void InternalTraceBuffer::Flush(bool blocking) {
       for (size_t i = 0; i < total_chunks_; ++i) {
         auto& chunk = chunks_[i];
         for (size_t j = 0; j < chunk->size(); ++j) {
-          agent_->AppendTraceEvent(chunk->GetEventAt(j));
+          trace_writer_->AppendTraceEvent(chunk->GetEventAt(j));
         }
       }
       total_chunks_ = 0;
       flushing_ = false;
     }
   }
-  agent_->Flush(blocking);
+  trace_writer_->Flush(blocking);
 }
 
 uint64_t InternalTraceBuffer::MakeHandle(
@@ -87,10 +87,10 @@ void InternalTraceBuffer::ExtractHandle(
 }
 
 NodeTraceBuffer::NodeTraceBuffer(size_t max_chunks,
-    Agent* agent, uv_loop_t* tracing_loop)
-    : tracing_loop_(tracing_loop), agent_(agent),
-      buffer1_(max_chunks, 0, agent),
-      buffer2_(max_chunks, 1, agent) {
+    NodeTraceWriter* trace_writer, uv_loop_t* tracing_loop)
+    : tracing_loop_(tracing_loop), trace_writer_(trace_writer),
+      buffer1_(max_chunks, 0, trace_writer),
+      buffer2_(max_chunks, 1, trace_writer) {
   current_buf_.store(&buffer1_);
 
   flush_signal_.data = this;

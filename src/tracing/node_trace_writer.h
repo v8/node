@@ -6,7 +6,6 @@
 
 #include "node_mutex.h"
 #include "libplatform/v8-tracing.h"
-#include "tracing/agent.h"
 #include "uv.h"
 
 namespace node {
@@ -15,14 +14,15 @@ namespace tracing {
 using v8::platform::tracing::TraceObject;
 using v8::platform::tracing::TraceWriter;
 
-class NodeTraceWriter : public AsyncTraceWriter {
+class NodeTraceWriter : public TraceWriter {
  public:
   explicit NodeTraceWriter(const std::string& log_file_pattern,
                            uv_loop_t* tracing_loop);
   ~NodeTraceWriter();
 
   void AppendTraceEvent(TraceObject* trace_event) override;
-  void Flush(bool blocking) override;
+  void Flush() override;
+  void Flush(bool blocking);
 
   static const int kTracesPerFile = 1 << 19;
 

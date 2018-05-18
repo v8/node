@@ -56,8 +56,4 @@ async function test() {
 
 common.crashOnUnhandledRejection();
 
-const interval = setInterval(() => {}, 1000);
-test().then(() => {
-  clearInterval(interval);
-  console.log('Done!');
-});
+test();
