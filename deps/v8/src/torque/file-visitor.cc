@@ -87,10 +87,37 @@ Callable* FileVisitor::LookupCall(const std::string& name,
 }
 
 void FileVisitor::QueueGenericSpecialization(
-    SpecializationKey key, CallableNode* callable,
-    const CallableNodeSignature* signature, Statement* body) {
-  pending_specializations_.push_back({key, callable, signature, body,
-                                      declarations()->GetScopeChainSnapshot()});
+    const SpecializationKey& key, CallableNode* callable,
+    const CallableNodeSignature* signature, base::Optional<Statement*> body) {
+  pending_specializations_.push_back(
+      {key, callable, signature, body, CurrentSourcePosition::Get()});
+}
+
+void FileVisitor::SpecializeGeneric(
+    const PendingSpecialization& specialization) {
+  CurrentSourcePosition::Scope scope(specialization.request_position);
+  if (completed_specializations_.find(specialization.key) !=
+      completed_specializations_.end()) {
+    std::stringstream stream;
+    stream << "cannot redeclare specialization of "
+           << specialization.key.first->declaration()->callable->name
+           << " with types <" << specialization.key.second << ">";
+    ReportError(stream.str());
+  }
+  if (!specialization.body) {
+    std::stringstream stream;
+    stream << "missing specialization of "
+           << specialization.key.first->declaration()->callable->name
+           << " with types <" << specialization.key.second << ">";
+    ReportError(stream.str());
+  }
+  Declarations::ScopedGenericSpecializationKey instantiation(
+      declarations(), specialization.key);
+  FileVisitor::ScopedModuleActivator activator(
+      this, specialization.key.first->module());
+  Specialize(specialization.key, specialization.callable,
+             specialization.signature, *specialization.body);
+  completed_specializations_.insert(specialization.key);
 }
 
 void FileVisitor::DrainSpecializationQueue() {
@@ -99,13 +126,9 @@ void FileVisitor::DrainSpecializationQueue() {
     pending_specializations_.pop_front();
     if (completed_specializations_.find(specialization.key) ==
         completed_specializations_.end()) {
-      Declarations::ScopedGenericInstantiation instantiation(
-          declarations(), specialization.key);
-      FileVisitor::ScopedModuleActivator activator(
-          this, specialization.key.first->module());
-      Specialize(specialization.key, specialization.callable,
-                 specialization.signature, specialization.body);
-      completed_specializations_.insert(specialization.key);
+      Declarations::ScopedGenericScopeChainSnapshot scope(declarations(),
+                                                          specialization.key);
+      SpecializeGeneric(specialization);
     }
   }
 }

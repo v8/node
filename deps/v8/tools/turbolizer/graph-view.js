@@ -15,9 +15,10 @@ class GraphView extends View {
     return pane;
   }
 
-  constructor(d3, id, broker) {
-    super(id, broker);
+  constructor(id, broker, showPhaseByName) {
+    super(id);
     var graph = this;
+    this.showPhaseByName = showPhaseByName
 
     var svg = this.divElement.append("svg").attr('version', '1.1')
       .attr("width", "100%")
@@ -490,6 +491,7 @@ class GraphView extends View {
       var filterFunction = function (n) {
         return (reg.exec(n.getDisplayLabel()) != null ||
           (graph.state.showTypes && reg.exec(n.getDisplayType())) ||
+          (reg.exec(n.getTitle())) ||
           reg.exec(n.opcode) != null);
       };
 
@@ -540,7 +542,7 @@ class GraphView extends View {
 
     var showSelectionFrontierNodes = function (inEdges, filter, select) {
       var frontier = graph.getNodeFrontier(state.selection, inEdges, filter);
-      if (frontier != undefined) {
+      if (frontier != undefined && frontier.size) {
         if (select) {
           if (!d3.event.shiftKey) {
             state.selection.clear();
@@ -585,13 +587,13 @@ class GraphView extends View {
         break;
       case 67:
         // 'c'
-        showSelectionFrontierNodes(!d3.event.altKey,
+        showSelectionFrontierNodes(d3.event.altKey,
           (edge, index) => { return edge.type == 'control'; },
           true);
         break;
       case 69:
         // 'e'
-        showSelectionFrontierNodes(!d3.event.altKey,
+        showSelectionFrontierNodes(d3.event.altKey,
             (edge, index) => { return edge.type == 'effect'; },
             true);
         break;
@@ -621,6 +623,10 @@ class GraphView extends View {
           eventHandled = false;
         }
         break;
+      case 83:
+        // 's'
+        graph.selectOrigins();
+        break;
       case 191:
         // '/'
         document.getElementById("search-input").focus();
@@ -644,6 +650,26 @@ class GraphView extends View {
 
   layoutGraph() {
     layoutNodeGraph(this);
+  }
+
+  selectOrigins() {
+    const state = this.state;
+    const origins = [];
+    let phase = null;
+    for (const n of state.selection) {
+      if (n.origin) {
+        const node = this.nodeMap[n.origin.nodeId];
+        origins.push(node);
+        phase = n.origin.phase;
+      }
+    }
+    if (origins.length) {
+      state.selection.clear();
+      state.selection.select(origins, true);
+      if (phase) {
+        this.showPhaseByName(phase);
+      }
+    }
   }
 
   // call to propagate changes to graph
@@ -872,6 +898,7 @@ class GraphView extends View {
     });
 
     graph.svg.style.height = '100%';
+    redetermineGraphBoundingBox(this);
   }
 
   getVisibleTranslation(translate, scale) {

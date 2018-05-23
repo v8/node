@@ -50,7 +50,7 @@ class DeclarationVisitor : public FileVisitor {
     Visit(implicit_cast<ModuleDeclaration*>(decl));
   }
 
-  void Visit(IdentifierExpression* expr) {}
+  void Visit(IdentifierExpression* expr);
   void Visit(NumberLiteralExpression* expr) {}
   void Visit(StringLiteralExpression* expr) {}
   void Visit(CallExpression* expr);
@@ -82,6 +82,11 @@ class DeclarationVisitor : public FileVisitor {
       declarations()->DeclareAbstractType(
           constexpr_name, *decl->constexpr_generates, &(decl->name));
     }
+  }
+
+  void Visit(TypeAliasDeclaration* decl) {
+    declarations()->DeclareType(decl->name,
+                                declarations()->GetType(decl->type));
   }
 
   Builtin* BuiltinDeclarationCommon(BuiltinDeclaration* decl, bool external,
@@ -353,6 +358,8 @@ class DeclarationVisitor : public FileVisitor {
       }
     }
   }
+
+  void DeclareSpecializedTypes(const SpecializationKey& key);
 
   void Specialize(const SpecializationKey& key, CallableNode* callable,
                   const CallableNodeSignature* signature,

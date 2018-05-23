@@ -281,7 +281,6 @@ namespace internal {
   F(ExportFromRuntime, 1, 1)                                         \
   F(GetAndResetRuntimeCallStats, -1 /* <= 2 */, 1)                   \
   F(IncrementUseCounter, 1, 1)                                       \
-  F(IncrementUseCounterConstructorReturnNonUndefinedPrimitive, 0, 1) \
   F(InstallToContext, 1, 1)                                          \
   F(Interrupt, 0, 1)                                                 \
   F(IS_VAR, 1, 1)                                                    \
@@ -520,6 +519,7 @@ namespace internal {
   F(ClearFunctionFeedback, 1, 1)              \
   F(CompleteInobjectSlackTracking, 1, 1)      \
   F(ConstructConsString, 2, 1)                \
+  F(ConstructSlicedString, 2, 1)              \
   F(ConstructDouble, 2, 1)                    \
   F(DebugPrint, 1, 1)                         \
   F(DebugTrace, 0, 1)                         \

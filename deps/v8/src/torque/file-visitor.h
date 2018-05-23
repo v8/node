@@ -81,13 +81,16 @@ class FileVisitor {
     SpecializationKey key;
     CallableNode* callable;
     const CallableNodeSignature* signature;
-    Statement* body;
-    ScopeChain::Snapshot snapshot;
+    base::Optional<Statement*> body;
+    SourcePosition request_position;
   };
 
-  void QueueGenericSpecialization(SpecializationKey, CallableNode* callable,
+  void QueueGenericSpecialization(const SpecializationKey& key,
+                                  CallableNode* callable,
                                   const CallableNodeSignature* signature,
-                                  Statement* body);
+                                  base::Optional<Statement*> body);
+
+  void SpecializeGeneric(const PendingSpecialization& specialization);
 
   virtual void Specialize(const SpecializationKey&, CallableNode* callable,
                           const CallableNodeSignature* signature,

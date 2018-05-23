@@ -75,13 +75,7 @@ class ImplementationVisitor : public FileVisitor {
 
   VisitResult GetBuiltinCode(Builtin* builtin);
 
-  VisitResult Visit(IdentifierExpression* expr) {
-    if (Builtin* builtin =
-            Builtin::DynamicCast(declarations()->Lookup(expr->name))) {
-      return GetBuiltinCode(builtin);
-    }
-    return GenerateFetchFromLocation(expr, GetLocationReference(expr));
-  }
+  VisitResult Visit(IdentifierExpression* expr);
   VisitResult Visit(FieldAccessExpression* expr) {
     return GenerateFetchFromLocation(expr, GetLocationReference(expr));
   }
@@ -100,6 +94,7 @@ class ImplementationVisitor : public FileVisitor {
     Visit(implicit_cast<ModuleDeclaration*>(decl));
   }
   void Visit(TypeDeclaration* decl) {}
+  void Visit(TypeAliasDeclaration* decl) {}
   void Visit(ConstDeclaration* decl) {}
   void Visit(StandardDeclaration* decl);
   void Visit(GenericDeclaration* decl) {}

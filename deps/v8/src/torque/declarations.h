@@ -47,6 +47,8 @@ class Declarations {
   const Type* LookupGlobalType(const std::string& name);
   const Type* GetType(TypeExpression* type_expression);
 
+  const AbstractType* GetAbstractType(const Type* parent, std::string name,
+                                      std::string generated);
   const Type* GetFunctionPointerType(TypeVector argument_types,
                                      const Type* return_type);
 
@@ -66,7 +68,7 @@ class Declarations {
                                           const std::string& generated,
                                           const std::string* parent = nullptr);
 
-  void DeclareTypeAlias(const std::string& name, const Type* aliased_type);
+  void DeclareType(const std::string& name, const Type* type);
 
   Label* DeclareLabel(const std::string& name);
 
@@ -106,7 +108,8 @@ class Declarations {
 
   class NodeScopeActivator;
   class GenericScopeActivator;
-  class ScopedGenericInstantiation;
+  class ScopedGenericSpecializationKey;
+  class ScopedGenericScopeChainSnapshot;
 
  private:
   Scope* GetNodeScope(const AstNode* node);
@@ -133,6 +136,7 @@ class Declarations {
   Statement* next_body_;
   std::vector<std::unique_ptr<Declarable>> declarables_;
   Deduplicator<FunctionPointerType> function_pointer_types_;
+  std::vector<std::unique_ptr<Type>> nominal_types_;
   std::map<std::pair<const AstNode*, TypeVector>, Scope*> scopes_;
   std::map<Generic*, ScopeChain::Snapshot> generic_declaration_scopes_;
 };
@@ -156,20 +160,29 @@ class Declarations::GenericScopeActivator {
   Scope::Activator activator_;
 };
 
-class Declarations::ScopedGenericInstantiation {
+class Declarations::ScopedGenericSpecializationKey {
  public:
-  ScopedGenericInstantiation(Declarations* declarations,
-                             const SpecializationKey& key)
-      : declarations_(declarations),
-        restorer_(declarations->generic_declaration_scopes_[key.first]) {
+  ScopedGenericSpecializationKey(Declarations* declarations,
+                                 const SpecializationKey& key)
+      : declarations_(declarations) {
     declarations->current_generic_specialization_ = &key;
   }
-  ~ScopedGenericInstantiation() {
+  ~ScopedGenericSpecializationKey() {
     declarations_->current_generic_specialization_ = nullptr;
   }
 
  private:
   Declarations* declarations_;
+};
+
+class Declarations::ScopedGenericScopeChainSnapshot {
+ public:
+  ScopedGenericScopeChainSnapshot(Declarations* declarations,
+                                  const SpecializationKey& key)
+      : restorer_(declarations->generic_declaration_scopes_[key.first]) {}
+  ~ScopedGenericScopeChainSnapshot() {}
+
+ private:
   ScopeChain::ScopedSnapshotRestorer restorer_;
 };
 

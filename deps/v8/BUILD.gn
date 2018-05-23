@@ -581,6 +581,8 @@ config("toolchain") {
       "/wd4715",  # Not all control paths return a value.
 
       "/wd4718",  # Recursive call has no side-effect.
+      "/wd4723",  # https://crbug.com/v8/7771
+      "/wd4724",  # https://crbug.com/v8/7771
       "/wd4800",  # Forcing value to bool.
     ]
   }
@@ -1717,6 +1719,8 @@ v8_source_set("v8_base") {
     "src/compiler/node-marker.h",
     "src/compiler/node-matchers.cc",
     "src/compiler/node-matchers.h",
+    "src/compiler/node-origin-table.cc",
+    "src/compiler/node-origin-table.h",
     "src/compiler/node-properties.cc",
     "src/compiler/node-properties.h",
     "src/compiler/node.cc",
@@ -2810,6 +2814,7 @@ v8_component("v8_libbase") {
     "src/base/ieee754.h",
     "src/base/iterator.h",
     "src/base/lazy-instance.h",
+    "src/base/list.h",
     "src/base/logging.cc",
     "src/base/logging.h",
     "src/base/macros.h",

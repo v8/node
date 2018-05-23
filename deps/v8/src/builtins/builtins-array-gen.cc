@@ -2137,7 +2137,9 @@ TF_BUILTIN(ArrayFrom, ArrayPopulatorAssembler) {
 
     TVARIABLE(Number, index, SmiConstant(0));
 
-    GotoIf(SmiEqual(CAST(length.value()), SmiConstant(0)), &finished);
+    // TODO(ishell): remove <Object, Object>
+    GotoIf(WordEqual<Object, Object>(length.value(), SmiConstant(0)),
+           &finished);
 
     // Loop from 0 to length-1.
     {
@@ -3919,8 +3921,8 @@ TF_BUILTIN(FlatMapIntoArray, ArrayFlattenAssembler) {
                           mapper_function, this_arg));
 }
 
-// https://tc39.github.io/proposal-flatMap/#sec-Array.prototype.flatten
-TF_BUILTIN(ArrayPrototypeFlatten, CodeStubAssembler) {
+// https://tc39.github.io/proposal-flatMap/#sec-Array.prototype.flat
+TF_BUILTIN(ArrayPrototypeFlat, CodeStubAssembler) {
   Node* const argc =
       ChangeInt32ToIntPtr(Parameter(BuiltinDescriptor::kArgumentsCount));
   CodeStubArguments args(this, argc);

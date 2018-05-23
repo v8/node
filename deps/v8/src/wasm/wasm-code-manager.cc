@@ -10,10 +10,10 @@
 #include "src/base/atomic-utils.h"
 #include "src/base/macros.h"
 #include "src/base/platform/platform.h"
-#include "src/code-stubs.h"
 #include "src/codegen.h"
 #include "src/disassembler.h"
 #include "src/globals.h"
+#include "src/macro-assembler-inl.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
 #include "src/wasm/function-compiler.h"
@@ -58,6 +58,17 @@ constexpr bool kModuleCanAllocateMoreMemory = false;
 void GenerateJumpTrampoline(MacroAssembler* masm, Address target) {
   __ mov(ip, Operand(bit_cast<intptr_t, Address>(target)));
   __ b(ip);
+}
+#undef __
+#elif V8_TARGET_ARCH_ARM64
+#define __ masm->
+constexpr bool kModuleCanAllocateMoreMemory = false;
+
+void GenerateJumpTrampoline(MacroAssembler* masm, Address target) {
+  UseScratchRegisterScope temps(masm);
+  Register scratch = temps.AcquireX();
+  __ Mov(scratch, reinterpret_cast<uint64_t>(target));
+  __ Br(scratch);
 }
 #undef __
 #else
@@ -575,7 +586,7 @@ WasmCode* NativeModule::AddCode(
   return ret;
 }
 
-#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_S390X
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_S390X || V8_TARGET_ARCH_ARM64
 Address NativeModule::CreateTrampolineTo(Handle<Code> code) {
   MacroAssembler masm(code->GetIsolate(), nullptr, 0, CodeObjectRequired::kNo);
   Address dest = code->raw_instruction_start();
@@ -612,6 +623,10 @@ Address NativeModule::CreateTrampolineTo(Handle<Code> code) {
 
 Address NativeModule::GetLocalAddressFor(Handle<Code> code) {
   DCHECK(Heap::IsImmovable(*code));
+
+  // Limit calls of {Code} objects on the GC heap to builtins (i.e. disallow
+  // calls to {CodeStub} or dynamic code). The serializer depends on this.
+  DCHECK(code->is_builtin());
 
   Address index = code->raw_instruction_start();
   auto trampoline_iter = trampolines_.find(index);

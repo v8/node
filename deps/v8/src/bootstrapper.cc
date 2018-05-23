@@ -4180,9 +4180,7 @@ EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_static_fields)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_class_fields)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_dynamic_import)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_import_meta)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_restrict_constructor_return)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_optional_catch_binding)
-EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_subsume_json)
 EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE(harmony_numeric_separator)
 
 #undef EMPTY_INITIALIZE_GLOBAL_FOR_FEATURE
@@ -4278,13 +4276,13 @@ void Genesis::InitializeGlobal_harmony_array_prototype_values() {
                         NONE);
 }
 
-void Genesis::InitializeGlobal_harmony_array_flatten() {
-  if (!FLAG_harmony_array_flatten) return;
+void Genesis::InitializeGlobal_harmony_array_flat() {
+  if (!FLAG_harmony_array_flat) return;
   Handle<JSFunction> array_constructor(native_context()->array_function());
   Handle<JSObject> array_prototype(
       JSObject::cast(array_constructor->instance_prototype()));
-  SimpleInstallFunction(array_prototype, "flatten",
-                        Builtins::kArrayPrototypeFlatten, 0, false, DONT_ENUM);
+  SimpleInstallFunction(array_prototype, "flat", Builtins::kArrayPrototypeFlat,
+                        0, false, DONT_ENUM);
   SimpleInstallFunction(array_prototype, "flatMap",
                         Builtins::kArrayPrototypeFlatMap, 1, false, DONT_ENUM);
 }

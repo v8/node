@@ -65,6 +65,7 @@ DECLARE_CONTEXTUAL_VARIABLE(CurrentSourcePosition, SourcePosition)
 
 #define AST_DECLARATION_NODE_KIND_LIST(V) \
   V(TypeDeclaration)                      \
+  V(TypeAliasDeclaration)                 \
   V(StandardDeclaration)                  \
   V(GenericDeclaration)                   \
   V(SpecializationDeclaration)            \
@@ -235,9 +236,13 @@ class Ast {
 
 struct IdentifierExpression : LocationExpression {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(IdentifierExpression)
-  IdentifierExpression(SourcePosition p, std::string n)
-      : LocationExpression(kKind, p), name(std::move(n)) {}
+  IdentifierExpression(SourcePosition p, std::string n,
+                       std::vector<TypeExpression*> args)
+      : LocationExpression(kKind, p),
+        name(std::move(n)),
+        generic_arguments(std::move(args)) {}
   std::string name;
+  std::vector<TypeExpression*> generic_arguments;
 };
 
 struct CallExpression : Expression {
@@ -246,14 +251,12 @@ struct CallExpression : Expression {
                  std::vector<TypeExpression*> ga, std::vector<Expression*> a,
                  std::vector<std::string> l)
       : Expression(kKind, p),
-        callee(p, std::move(c)),
+        callee(p, std::move(c), std::move(ga)),
         is_operator(o),
-        generic_arguments(ga),
         arguments(std::move(a)),
         labels(l) {}
   IdentifierExpression callee;
   bool is_operator;
-  std::vector<TypeExpression*> generic_arguments;
   std::vector<Expression*> arguments;
   std::vector<std::string> labels;
 };
@@ -551,6 +554,14 @@ struct TypeDeclaration : Declaration {
   base::Optional<std::string> constexpr_generates;
 };
 
+struct TypeAliasDeclaration : Declaration {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(TypeAliasDeclaration)
+  TypeAliasDeclaration(SourcePosition p, std::string n, TypeExpression* t)
+      : Declaration(kKind, p), name(std::move(n)), type(t) {}
+  std::string name;
+  TypeExpression* type;
+};
+
 struct LabelAndTypes {
   std::string name;
   std::vector<TypeExpression*> types;
@@ -640,14 +651,15 @@ struct StandardDeclaration : Declaration {
 struct GenericDeclaration : Declaration {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(GenericDeclaration)
   GenericDeclaration(SourcePosition p, CallableNode* c,
-                     std::vector<std::string> gp, Statement* b)
+                     std::vector<std::string> gp,
+                     base::Optional<Statement*> b = base::nullopt)
       : Declaration(kKind, p),
         callable(c),
         generic_parameters(std::move(gp)),
         body(b) {}
   CallableNode* callable;
   std::vector<std::string> generic_parameters;
-  Statement* body;
+  base::Optional<Statement*> body;
 };
 
 struct SpecializationDeclaration : Declaration {

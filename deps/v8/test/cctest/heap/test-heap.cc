@@ -2183,6 +2183,33 @@ HEAP_TEST(GCFlags) {
   CHECK_EQ(Heap::kNoGCFlags, heap->current_gc_flags_);
 }
 
+HEAP_TEST(Regress845060) {
+  // Regression test for crbug.com/845060, where a raw pointer to a string's
+  // data was kept across an allocation. If the allocation causes GC and
+  // moves the string, such raw pointers become invalid.
+  FLAG_allow_natives_syntax = true;
+  FLAG_stress_incremental_marking = false;
+  FLAG_stress_compaction = false;
+  CcTest::InitializeVM();
+  LocalContext context;
+  v8::HandleScope scope(CcTest::isolate());
+  Heap* heap = CcTest::heap();
+
+  // Preparation: create a string in new space.
+  Local<Value> str = CompileRun("var str = (new Array(10000)).join('x'); str");
+  CHECK(heap->InNewSpace(*v8::Utils::OpenHandle(*str)));
+
+  // Idle incremental marking sets the "kReduceMemoryFootprint" flag, which
+  // causes from_space to be unmapped after scavenging.
+  heap->StartIdleIncrementalMarking(GarbageCollectionReason::kTesting);
+  CHECK(heap->ShouldReduceMemory());
+
+  // Run the test (which allocates results) until the original string was
+  // promoted to old space. Unmapping of from_space causes accesses to any
+  // stale raw pointers to crash.
+  CompileRun("while (%InNewSpace(str)) { str.split(''); }");
+  CHECK(!heap->InNewSpace(*v8::Utils::OpenHandle(*str)));
+}
 
 TEST(IdleNotificationFinishMarking) {
   if (!FLAG_incremental_marking) return;
@@ -2989,22 +3016,14 @@ TEST(IncrementalMarkingPreservesMonomorphicCallIC) {
   CHECK_EQ(expected_slots, feedback_helper.slot_count());
   int slot1 = 0;
   int slot2 = 1;
-  CHECK(feedback_vector->Get(feedback_helper.slot(slot1))
-            ->ToStrongHeapObject()
-            ->IsWeakCell());
-  CHECK(feedback_vector->Get(feedback_helper.slot(slot2))
-            ->ToStrongHeapObject()
-            ->IsWeakCell());
+  CHECK(feedback_vector->Get(feedback_helper.slot(slot1))->IsWeakHeapObject());
+  CHECK(feedback_vector->Get(feedback_helper.slot(slot2))->IsWeakHeapObject());
 
   heap::SimulateIncrementalMarking(CcTest::heap());
   CcTest::CollectAllGarbage();
 
-  CHECK(!WeakCell::cast(feedback_vector->Get(feedback_helper.slot(slot1))
-                            ->ToStrongHeapObject())
-             ->cleared());
-  CHECK(!WeakCell::cast(feedback_vector->Get(feedback_helper.slot(slot2))
-                            ->ToStrongHeapObject())
-             ->cleared());
+  feedback_vector->Get(feedback_helper.slot(slot1))->IsWeakHeapObject();
+  feedback_vector->Get(feedback_helper.slot(slot2))->IsWeakHeapObject();
 }
 
 
@@ -3033,12 +3052,12 @@ TEST(IncrementalMarkingPreservesMonomorphicConstructor) {
           CcTest::global()->Get(ctx, v8_str("f")).ToLocalChecked())));
 
   Handle<FeedbackVector> vector(f->feedback_vector());
-  CHECK(vector->Get(FeedbackSlot(0))->ToStrongHeapObject()->IsWeakCell());
+  CHECK(vector->Get(FeedbackSlot(0))->IsWeakOrClearedHeapObject());
 
   heap::SimulateIncrementalMarking(CcTest::heap());
   CcTest::CollectAllGarbage();
 
-  CHECK(vector->Get(FeedbackSlot(0))->ToStrongHeapObject()->IsWeakCell());
+  CHECK(vector->Get(FeedbackSlot(0))->IsWeakOrClearedHeapObject());
 }
 
 TEST(IncrementalMarkingPreservesMonomorphicIC) {
@@ -3960,19 +3979,19 @@ TEST(WeakFunctionInConstructor) {
   Handle<FeedbackVector> feedback_vector =
       Handle<FeedbackVector>(createObj->feedback_vector(), CcTest::i_isolate());
   for (int i = 0; i < 20; i++) {
-    Object* slot_value = feedback_vector->Get(FeedbackSlot(0))->ToObject();
-    CHECK(slot_value->IsWeakCell());
-    if (WeakCell::cast(slot_value)->cleared()) break;
+    MaybeObject* slot_value = feedback_vector->Get(FeedbackSlot(0));
+    CHECK(slot_value->IsWeakOrClearedHeapObject());
+    if (slot_value->IsClearedWeakHeapObject()) break;
     CcTest::CollectAllGarbage();
   }
 
-  Object* slot_value = feedback_vector->Get(FeedbackSlot(0))->ToObject();
-  CHECK(slot_value->IsWeakCell() && WeakCell::cast(slot_value)->cleared());
+  MaybeObject* slot_value = feedback_vector->Get(FeedbackSlot(0));
+  CHECK(slot_value->IsClearedWeakHeapObject());
   CompileRun(
       "function coat() { this.x = 6; }"
       "createObj(coat);");
-  slot_value = feedback_vector->Get(FeedbackSlot(0))->ToObject();
-  CHECK(slot_value->IsWeakCell() && !WeakCell::cast(slot_value)->cleared());
+  slot_value = feedback_vector->Get(FeedbackSlot(0));
+  CHECK(slot_value->IsWeakHeapObject());
 }
 
 
@@ -5790,7 +5809,7 @@ HEAP_TEST(Regress5831) {
   // Generate the code.
   Handle<Code> code = GenerateDummyImmovableCode(isolate);
   CHECK_GE(i::kMaxRegularHeapObjectSize, code->Size());
-  CHECK(!heap->code_space()->FirstPage()->Contains(code->address()));
+  CHECK(!heap->code_space()->first_page()->Contains(code->address()));
 
   // Ensure it's not in large object space.
   MemoryChunk* chunk = MemoryChunk::FromAddress(code->address());
@@ -6108,6 +6127,11 @@ UNINITIALIZED_TEST(OutOfMemoryLargeObjects) {
       MemoryAllocatorSizeFromHeapCapacity(state.old_generation_capacity_at_oom +
                                           2 * state.new_space_capacity_at_oom));
   reinterpret_cast<v8::Isolate*>(isolate)->Dispose();
+}
+
+void HeapTester::UncommitFromSpace(Heap* heap) {
+  heap->UncommitFromSpace();
+  heap->memory_allocator()->unmapper()->EnsureUnmappingCompleted();
 }
 
 }  // namespace heap

@@ -212,7 +212,7 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_do_expressions, "harmony do-expressions")                 \
   V(harmony_class_fields, "harmony fields in class literals")         \
   V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_array_flatten, "harmony Array.prototype.flat{ten,Map}")
+  V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")
 
 #ifdef V8_INTL_SUPPORT
 #define HARMONY_INPROGRESS(V) \
@@ -224,9 +224,6 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 
 // Features that are complete (but still behind --harmony/es-staging flag).
 #define HARMONY_STAGED(V)                                                  \
-  V(harmony_restrict_constructor_return,                                   \
-    "harmony disallow non undefined primitive return value from class "    \
-    "constructor")                                                         \
   V(harmony_public_fields, "harmony public fields in class literals")      \
   V(harmony_private_fields, "harmony private fields in class literals")    \
   V(harmony_numeric_separator, "harmony numeric separator between digits") \
@@ -234,7 +231,6 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 
 // Features that are shipping (turned on by default, but internal flag remains).
 #define HARMONY_SHIPPING(V)                                                   \
-  V(harmony_subsume_json, "harmony subsume JSON")                             \
   V(harmony_string_trimming, "harmony String.prototype.trim{Start,End}")      \
   V(harmony_sharedarraybuffer, "harmony sharedarraybuffer")                   \
   V(harmony_regexp_named_captures, "harmony regexp named captures")           \
