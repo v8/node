@@ -4623,9 +4623,14 @@ Isolate* NewIsolate(ArrayBufferAllocator* allocator) {
   params.code_event_handler = vTune::GetVtuneCodeEventHandler();
 #endif
 
-  Isolate* isolate = Isolate::New(params);
+  Isolate* isolate = Isolate::Allocate();
   if (isolate == nullptr)
     return nullptr;
+
+  // Register the isolate on the platform before the isolate gets initialized,
+  // so that the isolate can access the platform during initialization.
+  v8_platform.Platform()->RegisterIsolate(isolate, event_loop);
+  Isolate::Initialize(isolate, params);
 
   isolate->AddMessageListener(OnMessage);
   isolate->SetAbortOnUncaughtExceptionCallback(ShouldAbortOnUncaughtException);
@@ -4677,6 +4682,7 @@ inline int Start(uv_loop_t* event_loop,
   }
 
   isolate->Dispose();
+  v8_platform.Platform()->UnregisterIsolate(isolate);
 
   return exit_code;
 }
