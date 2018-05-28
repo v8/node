@@ -235,7 +235,8 @@ class MultiIsolatePlatform : public v8::Platform {
 };
 
 // Creates a new isolate with Node.js-specific settings.
-NODE_EXTERN v8::Isolate* NewIsolate(ArrayBufferAllocator* allocator);
+NODE_EXTERN v8::Isolate* NewIsolate(ArrayBufferAllocator* allocator,
+                                    struct uv_loop_s* event_loop);
 
 // Creates a new context with Node.js-specific tweaks.  Currently, it removes
 // the `v8BreakIterator` property from the global `Intl` object if present.
