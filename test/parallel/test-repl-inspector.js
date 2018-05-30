@@ -26,9 +26,10 @@ putIn.run([
   'const inspector = require("inspector")',
   'const session = new inspector.Session()',
   'session.connect()',
-  'session.post("Runtime.evaluate", { expression: "1 + 1" }, console.log)',
+  'session.post("Runtime.evaluate", { expression: "\'a\' + \'b\'" }, ' +
+    'console.log)',
   'session.disconnect()'
 ]);
 
 assert(output.includes(
-  "null { result: { type: 'number', value: 2, description: '2' } }"));
+  "null { result: { type: 'string', value: 'ab' } }"));
