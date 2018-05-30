@@ -465,8 +465,7 @@ StackFrame::Type StackFrame::ComputeType(const StackFrameIteratorBase* iterator,
         case wasm::WasmCode::kFunction:
           return WASM_COMPILED;
         case wasm::WasmCode::kLazyStub:
-          if (StackFrame::IsTypeMarker(marker)) break;
-          return BUILTIN;
+          return WASM_COMPILE_LAZY;
         case wasm::WasmCode::kWasmToJsWrapper:
           return WASM_TO_JS;
         default:
@@ -876,6 +875,7 @@ void StandardFrame::IterateCompiledFrame(RootVisitor* v) const {
       case WASM_TO_JS:
       case WASM_COMPILED:
       case WASM_INTERPRETER_ENTRY:
+      case WASM_COMPILE_LAZY:
         frame_header_size = WasmCompiledFrameConstants::kFixedFrameSizeFromFp;
         break;
       case OPTIMIZED:
@@ -1748,13 +1748,7 @@ Address InternalFrame::GetCallerStackPointer() const {
   return fp() + StandardFrameConstants::kCallerSPOffset;
 }
 
-Code* InternalFrame::unchecked_code() const {
-  const int offset = InternalFrameConstants::kCodeOffset;
-  Object* code = Memory::Object_at(fp() + offset);
-  DCHECK_NOT_NULL(code);
-  return reinterpret_cast<Code*>(code);
-}
-
+Code* InternalFrame::unchecked_code() const { UNREACHABLE(); }
 
 void WasmCompiledFrame::Print(StringStream* accumulator, PrintMode mode,
                               int index) const {
@@ -1918,6 +1912,27 @@ Object* WasmInterpreterEntryFrame::context() const {
 
 Address WasmInterpreterEntryFrame::GetCallerStackPointer() const {
   return fp() + ExitFrameConstants::kCallerSPOffset;
+}
+
+WasmInstanceObject* WasmCompileLazyFrame::wasm_instance() const {
+  return WasmInstanceObject::cast(*wasm_instance_slot());
+}
+
+Object** WasmCompileLazyFrame::wasm_instance_slot() const {
+  const int offset = WasmCompileLazyFrameConstants::kWasmInstanceOffset;
+  return &Memory::Object_at(fp() + offset);
+}
+
+void WasmCompileLazyFrame::Iterate(RootVisitor* v) const {
+  const int header_size = WasmCompileLazyFrameConstants::kFixedFrameSizeFromFp;
+  Object** base = &Memory::Object_at(sp());
+  Object** limit = &Memory::Object_at(fp() - header_size);
+  v->VisitRootPointers(Root::kTop, nullptr, base, limit);
+  v->VisitRootPointer(Root::kTop, nullptr, wasm_instance_slot());
+}
+
+Address WasmCompileLazyFrame::GetCallerStackPointer() const {
+  return fp() + WasmCompileLazyFrameConstants::kCallerSPOffset;
 }
 
 namespace {
@@ -2123,21 +2138,15 @@ void JavaScriptFrame::Iterate(RootVisitor* v) const {
 }
 
 void InternalFrame::Iterate(RootVisitor* v) const {
-  wasm::WasmCode* wasm_code =
-      isolate()->wasm_engine()->code_manager()->LookupCode(pc());
-  if (wasm_code != nullptr) {
-    DCHECK(wasm_code->kind() == wasm::WasmCode::kLazyStub);
-  } else {
-    Code* code = LookupCode();
-    IteratePc(v, pc_address(), constant_pool_address(), code);
-    // Internal frames typically do not receive any arguments, hence their stack
-    // only contains tagged pointers.
-    // We are misusing the has_tagged_params flag here to tell us whether
-    // the full stack frame contains only tagged pointers or only raw values.
-    // This is used for the WasmCompileLazy builtin, where we actually pass
-    // untagged arguments and also store untagged values on the stack.
-    if (code->has_tagged_params()) IterateExpressions(v);
-  }
+  Code* code = LookupCode();
+  IteratePc(v, pc_address(), constant_pool_address(), code);
+  // Internal frames typically do not receive any arguments, hence their stack
+  // only contains tagged pointers.
+  // We are misusing the has_tagged_params flag here to tell us whether
+  // the full stack frame contains only tagged pointers or only raw values.
+  // This is used for the WasmCompileLazy builtin, where we actually pass
+  // untagged arguments and also store untagged values on the stack.
+  if (code->has_tagged_params()) IterateExpressions(v);
 }
 
 // -------------------------------------------------------------------------

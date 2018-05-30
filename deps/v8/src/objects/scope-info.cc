@@ -10,7 +10,9 @@
 #include "src/ast/scopes.h"
 #include "src/ast/variables.h"
 #include "src/bootstrapper.h"
+#include "src/heap/heap-inl.h"
 #include "src/objects-inl.h"
+#include "src/objects/module-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -431,7 +433,7 @@ Handle<ScopeInfo> ScopeInfo::CreateForBootstrapping(Isolate* isolate,
   }
   DCHECK_EQ(index, scope_info->ContextLocalInfosIndex());
   if (context_local_count) {
-    const uint32_t value = VariableModeField::encode(CONST) |
+    const uint32_t value = VariableModeField::encode(VariableMode::kConst) |
                            InitFlagField::encode(kCreatedInitialized) |
                            MaybeAssignedFlagField::encode(kNotAssigned);
     scope_info->set(index++, Smi::FromInt(value));
@@ -796,8 +798,8 @@ int ScopeInfo::ContextSlotIndex(Handle<ScopeInfo> scope_info,
     }
   }
   // Cache as not found. Mode, init flag and maybe assigned flag don't matter.
-  context_slot_cache->Update(scope_info, name, TEMPORARY, kNeedsInitialization,
-                             kNotAssigned, -1);
+  context_slot_cache->Update(scope_info, name, VariableMode::kTemporary,
+                             kNeedsInitialization, kNotAssigned, -1);
 
   return -1;
 }

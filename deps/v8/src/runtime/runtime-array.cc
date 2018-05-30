@@ -13,6 +13,7 @@
 #include "src/isolate-inl.h"
 #include "src/keys.h"
 #include "src/messages.h"
+#include "src/objects/arguments-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/prototype.h"
 
@@ -500,10 +501,7 @@ RUNTIME_FUNCTION(Runtime_GetArrayKeys) {
     j++;
   }
 
-  if (j != keys->length()) {
-    isolate->heap()->RightTrimFixedArray(*keys, keys->length() - j);
-  }
-
+  keys = FixedArray::ShrinkOrEmpty(keys, j);
   return *isolate->factory()->NewJSArrayWithElements(keys);
 }
 

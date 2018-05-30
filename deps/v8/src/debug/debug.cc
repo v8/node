@@ -30,6 +30,7 @@
 #include "src/log.h"
 #include "src/messages.h"
 #include "src/objects/debug-objects-inl.h"
+#include "src/objects/js-promise-inl.h"
 #include "src/snapshot/natives.h"
 #include "src/snapshot/snapshot.h"
 #include "src/wasm/wasm-objects-inl.h"
@@ -644,7 +645,7 @@ bool Debug::CheckBreakPoint(Handle<BreakPoint> break_point,
     }
     return false;
   }
-  return result->BooleanValue();
+  return result->BooleanValue(isolate_);
 }
 
 bool Debug::SetBreakPoint(Handle<JSFunction> function,
@@ -1680,8 +1681,7 @@ Handle<FixedArray> Debug::GetLoadedScripts() {
       if (script->HasValidSource()) results->set(length++, script);
     }
   }
-  results->Shrink(length);
-  return results;
+  return FixedArray::ShrinkOrEmpty(results, length);
 }
 
 

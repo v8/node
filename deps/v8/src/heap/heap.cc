@@ -1384,8 +1384,12 @@ bool Heap::CollectGarbage(AllocationSpace space,
       TRACE_EVENT0("v8", gc_type_timer->name());
 
       HistogramTimer* gc_type_priority_timer = GCTypePriorityTimer(collector);
-      HistogramTimerScope histogram_timer_priority_scope(
-          gc_type_priority_timer);
+      OptionalHistogramTimerScopeMode mode =
+          isolate_->IsMemorySavingsModeActive()
+              ? OptionalHistogramTimerScopeMode::DONT_TAKE_TIME
+              : OptionalHistogramTimerScopeMode::TAKE_TIME;
+      OptionalHistogramTimerScope histogram_timer_priority_scope(
+          gc_type_priority_timer, mode);
 
       next_gc_likely_to_collect_more =
           PerformGarbageCollection(collector, gc_callback_flags);
@@ -1975,7 +1979,7 @@ void Heap::EvacuateYoungGeneration() {
   LOG(isolate_, ResourceEvent("scavenge", "begin"));
 
   // Move pages from new->old generation.
-  PageRange range(new_space()->bottom(), new_space()->top());
+  PageRange range(new_space()->first_allocatable_address(), new_space()->top());
   for (auto it = range.begin(); it != range.end();) {
     Page* p = (*++it)->prev_page();
     new_space()->from_space().RemovePage(p);
@@ -2198,8 +2202,7 @@ void Heap::Scavenge() {
   if (FLAG_concurrent_marking) {
     // Ensure that concurrent marker does not track pages that are
     // going to be unmapped.
-    for (Page* p : PageRange(new_space()->FromSpaceStart(),
-                             new_space()->FromSpaceEnd())) {
+    for (Page* p : PageRange(new_space()->from_space().first_page(), nullptr)) {
       concurrent_marking()->ClearLiveness(p);
     }
   }
@@ -2859,9 +2862,11 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
     bytes_to_trim = ByteArray::SizeFor(len) - new_size;
     DCHECK_GE(bytes_to_trim, 0);
   } else if (object->IsFixedArray()) {
+    CHECK_NE(elements_to_trim, len);
     bytes_to_trim = elements_to_trim * kPointerSize;
   } else {
     DCHECK(object->IsFixedDoubleArray());
+    CHECK_NE(elements_to_trim, len);
     bytes_to_trim = elements_to_trim * kDoubleSize;
   }
 
@@ -2870,6 +2875,12 @@ void Heap::RightTrimFixedArray(FixedArrayBase* object, int elements_to_trim) {
 
 void Heap::RightTrimWeakFixedArray(WeakFixedArray* object,
                                    int elements_to_trim) {
+  // This function is safe to use only 1) during GC and 2) for old space
+  // WeakFixedArrays: 1) When marking, we record the weak slots, and shrinking
+  // invalidates them. 2) Scavenger might move new space WeakFixedArrays around,
+  // making the recorded slots collide with other objects.
+  DCHECK_EQ(gc_state(), MARK_COMPACT);
+  DCHECK(InOldSpace(object));
   CreateFillerForArray<WeakFixedArray>(object, elements_to_trim,
                                        elements_to_trim * kPointerSize);
 }
@@ -3042,7 +3053,8 @@ bool Heap::HasHighFragmentation(size_t used, size_t committed) {
 bool Heap::ShouldOptimizeForMemoryUsage() {
   const size_t kOldGenerationSlack = max_old_generation_size_ / 8;
   return FLAG_optimize_for_size || isolate()->IsIsolateInBackground() ||
-         HighMemoryPressure() || !CanExpandOldGeneration(kOldGenerationSlack);
+         isolate()->IsMemorySavingsModeActive() || HighMemoryPressure() ||
+         !CanExpandOldGeneration(kOldGenerationSlack);
 }
 
 void Heap::ActivateMemoryReducerIfNeeded() {
@@ -3658,19 +3670,22 @@ bool Heap::RootIsImmortalImmovable(int root_index) {
 
 #ifdef VERIFY_HEAP
 class VerifyReadOnlyPointersVisitor : public VerifyPointersVisitor {
+ public:
+  explicit VerifyReadOnlyPointersVisitor(Heap* heap)
+      : VerifyPointersVisitor(heap) {}
+
  protected:
   void VerifyPointers(HeapObject* host, MaybeObject** start,
                       MaybeObject** end) override {
-    Heap* heap = host->GetIsolate()->heap();
     if (host != nullptr) {
-      CHECK(heap->InReadOnlySpace(host->map()));
+      CHECK(heap_->InReadOnlySpace(host->map()));
     }
     VerifyPointersVisitor::VerifyPointers(host, start, end);
 
     for (MaybeObject** current = start; current < end; current++) {
       HeapObject* object;
       if ((*current)->ToStrongOrWeakHeapObject(&object)) {
-        CHECK(heap->InReadOnlySpace(object));
+        CHECK(heap_->InReadOnlySpace(object));
       }
     }
   }
@@ -3683,7 +3698,7 @@ void Heap::Verify() {
   // We have to wait here for the sweeper threads to have an iterable heap.
   mark_compact_collector()->EnsureSweepingCompleted();
 
-  VerifyPointersVisitor visitor;
+  VerifyPointersVisitor visitor(this);
   IterateRoots(&visitor, VISIT_ONLY_STRONG);
 
   VerifySmisVisitor smis_visitor;
@@ -3694,12 +3709,12 @@ void Heap::Verify() {
   old_space_->Verify(&visitor);
   map_space_->Verify(&visitor);
 
-  VerifyPointersVisitor no_dirty_regions_visitor;
+  VerifyPointersVisitor no_dirty_regions_visitor(this);
   code_space_->Verify(&no_dirty_regions_visitor);
 
   lo_space_->Verify();
 
-  VerifyReadOnlyPointersVisitor read_only_visitor;
+  VerifyReadOnlyPointersVisitor read_only_visitor(this);
   read_only_space_->Verify(&read_only_visitor);
 }
 
@@ -3838,8 +3853,7 @@ void Heap::VerifyCountersBeforeConcurrentSweeping() {
 
 void Heap::ZapFromSpace() {
   if (!new_space_->IsFromSpaceCommitted()) return;
-  for (Page* page :
-       PageRange(new_space_->FromSpaceStart(), new_space_->FromSpaceEnd())) {
+  for (Page* page : PageRange(new_space_->from_space().first_page(), nullptr)) {
     for (Address cursor = page->area_start(), limit = page->area_end();
          cursor < limit; cursor += kPointerSize) {
       Memory::Address_at(cursor) = static_cast<Address>(kFromSpaceZapValue);
@@ -5680,7 +5694,7 @@ void VerifyPointersVisitor::VerifyPointers(HeapObject* host,
   for (MaybeObject** current = start; current < end; current++) {
     HeapObject* object;
     if ((*current)->ToStrongOrWeakHeapObject(&object)) {
-      CHECK(object->GetIsolate()->heap()->Contains(object));
+      CHECK(heap_->Contains(object));
       CHECK(object->map()->IsMap());
     } else {
       CHECK((*current)->IsSmi() || (*current)->IsClearedWeakHeapObject());

@@ -153,8 +153,6 @@
   'asm/sqlite3/*': [PASS, SLOW, NO_VARIANTS],
 
   # Slow tests.
-  'compiler/osr-one': [PASS, SLOW],
-  'compiler/osr-two': [PASS, SLOW],
   'copy-on-write-assert': [PASS, SLOW],
   'es6/typedarray-construct-offset-not-smi': [PASS, SLOW],
   'harmony/regexp-property-script-extensions': [PASS, SLOW],
@@ -164,6 +162,7 @@
   'regress/regress-605470': [PASS, SLOW],
   'regress/regress-655573': [PASS, SLOW],
   'regress/regress-1200351': [PASS, SLOW],
+  'wasm/asm-wasm-f32': [PASS, SLOW],
   'wasm/embenchen/*': [PASS, SLOW],
   'wasm/grow-memory': [PASS, SLOW],
   'wasm/unreachable-validation': [PASS, SLOW],
@@ -264,6 +263,7 @@
 
   # TODO(mstarzinger): Takes too long with TF.
   'array-sort': [PASS, NO_VARIANTS],
+  'lexicographic-compare': [PASS, NO_VARIANTS],
   'regress/regress-91008': [PASS, NO_VARIANTS],
   'regress/regress-transcendental': [PASS, ['arch == arm64', NO_VARIANTS]],
   'compiler/osr-regress-max-locals': [PASS, NO_VARIANTS],
@@ -356,11 +356,11 @@
   'compiler/osr-with-args': [PASS, SLOW],
   'generated-transition-stub': [PASS, SLOW],
   'json2': [PASS, SLOW],
+  'lexicographic-compare': [PASS, SLOW],
   'math-floor-of-div-nosudiv': [PASS, SLOW],
   'math-floor-of-div': [PASS, SLOW],
   'messages': [PASS, SLOW],
   'packed-elements': [PASS, SLOW],
-  'regress/regress-2185-2': [PASS, SLOW],
   'regress/regress-2185': [PASS, SLOW],
   'regress/regress-2790': [PASS, SLOW],
   'regress/regress-331444': [PASS, SLOW],
@@ -383,6 +383,7 @@
 
   # Pass but take too long with the simulator in debug mode.
   'array-sort': [PASS, SLOW],
+  'lexicographic-compare': [PASS, SLOW],
   'packed-elements': [SKIP],
   'regexp-global': [SKIP],
   'math-floor-of-div': [PASS, SLOW],
@@ -434,9 +435,6 @@
   # Too slow.
   'harmony/regexp-property-lu-ui': [SKIP],
   'regress/regress-165637': [SKIP],
-
-  # Flaky with baseline?
-  'regress/regress-2185-2': [SKIP],
 
   # https://bugs.chromium.org/p/v8/issues/detail?id=7102
   # Flaky due to huge string allocation.
@@ -497,8 +495,8 @@
   # Slow tests.
   'array-sort': [PASS, SLOW],
   'compiler/osr-with-args': [PASS, SLOW],
+  'lexicographic-compare': [PASS, SLOW],
   'packed-elements': [PASS, SLOW],
-  'regress/regress-2185-2': [PASS, SLOW],
   'regress/regress-2790': [PASS, SLOW],
   'regress/regress-91008': [PASS, SLOW],
   'regress/regress-json-stringify-gc': [PASS, SLOW],
@@ -530,6 +528,9 @@
   # Slow tests which times out in debug mode.
   'try': [PASS, ['mode == debug', SKIP]],
   'array-constructor': [PASS, ['mode == debug', SKIP]],
+
+  # Expects to finish in a certain time, but in debug mode sometimes doesn't.
+  'regress/regress-165637': [PASS, ['mode == debug', SKIP]],
 
   # Slow in release mode on MIPS.
   'compiler/regress-stacktrace-methods': [PASS, SLOW],
@@ -565,6 +566,9 @@
   # Slow tests which times out in debug mode.
   'try': [PASS, ['mode == debug', SKIP]],
   'array-constructor': [PASS, ['mode == debug', SKIP]],
+
+  # Expects to finish in a certain time, but in debug mode sometimes doesn't.
+  'regress/regress-165637': [PASS, ['mode == debug', SKIP]],
 
   # Slow in release mode on MIPS.
   'compiler/regress-stacktrace-methods': [PASS, SLOW],
@@ -643,7 +647,6 @@
 
   # Skip tests that are not suitable for deoptimization fuzzing.
   'never-optimize': [SKIP],
-  'regress/regress-2185-2': [SKIP],
   'readonly': [SKIP],
   'array-feedback': [SKIP],
   'deopt-recursive-eager-once': [SKIP],
@@ -765,26 +768,13 @@
 
   # Flaky crash on Odroid devices: https://crbug.com/v8/7678
   'regress/regress-336820': [PASS, ['arch == arm and not simulator_run', SKIP]],
-
-  # Slow tests.
-  'regress/regress-2185-2': [SKIP],
 }],  # variant == stress
-
-##############################################################################
-['variant == nooptimization', {
-  # Slow tests.
-  'regress/regress-2185-2': [SKIP],
-}],  # variant == nooptimization
 
 ##############################################################################
 ['variant == nooptimization and (arch == arm or arch == arm64) and simulator_run', {
   # Slow tests: https://crbug.com/v8/7783
-  'array-sort': [SKIP],
-  'compiler/alloc-number': [SKIP],
-  'compiler/osr-one': [SKIP],
-  'compiler/osr-two': [SKIP],
+  'lexicographic-compare': [SKIP],
   'regress/regress-2185': [SKIP],
-  'regress/regress-deep-proto': [SKIP],
   'wasm/grow-memory': [SKIP],
 }],  # variant == nooptimization and (arch == arm or arch == arm64) and simulator_run
 

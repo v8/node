@@ -11,6 +11,7 @@
 #include "src/isolate-inl.h"
 #include "src/messages.h"
 #include "src/objects-inl.h"
+#include "src/objects/arguments-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/utils.h"
 
@@ -446,9 +447,10 @@ static void TraceTopFrame(Isolate* isolate) {
   }
   StackFrame* raw_frame = it.frame();
   if (raw_frame->is_internal()) {
-    Code* apply_builtin =
-        isolate->builtins()->builtin(Builtins::kFunctionPrototypeApply);
-    if (raw_frame->unchecked_code() == apply_builtin) {
+    Code* current_code_object =
+        isolate->heap()->GcSafeFindCodeForInnerPointer(raw_frame->pc());
+    if (current_code_object->builtin_index() ==
+        Builtins::kFunctionPrototypeApply) {
       PrintF("apply from ");
       it.Advance();
       raw_frame = it.frame();
@@ -1265,7 +1267,7 @@ class ElementsAccessorBase : public InternalElementsAccessor {
       // Shrink combined_keys to the final size.
       int final_size = nof_indices + nof_property_keys;
       DCHECK_LE(final_size, combined_keys->length());
-      combined_keys->Shrink(final_size);
+      return FixedArray::ShrinkOrEmpty(combined_keys, final_size);
     }
 
     return combined_keys;

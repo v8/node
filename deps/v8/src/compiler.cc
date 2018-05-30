@@ -84,8 +84,9 @@ void LogFunctionCompilation(CodeEventListener::LogEventsAndTags tag,
   // Log the code generation. If source information is available include
   // script name and line number. Check explicitly whether logging is
   // enabled as finding the line number is not free.
-  if (!isolate->logger()->is_logging_code_events() &&
-      !isolate->is_profiling() && !FLAG_log_function_events) {
+  if (!isolate->logger()->is_listening_to_code_events() &&
+      !isolate->is_profiling() && !FLAG_log_function_events &&
+      !isolate->code_event_dispatcher()->IsListeningToCodeEvents()) {
     return;
   }
 
@@ -1686,7 +1687,8 @@ MaybeHandle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
       TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                    "V8.CompileDeserialize");
       Handle<SharedFunctionInfo> inner_result;
-      if (CodeSerializer::Deserialize(isolate, cached_data, source)
+      if (CodeSerializer::Deserialize(isolate, cached_data, source,
+                                      origin_options)
               .ToHandle(&inner_result)) {
         // Promote to per-isolate compilation cache.
         DCHECK(inner_result->is_compiled());
@@ -1764,7 +1766,8 @@ MaybeHandle<JSFunction> Compiler::GetWrappedFunction(
         isolate, RuntimeCallCounterId::kCompileDeserialize);
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.compile"),
                  "V8.CompileDeserialize");
-    maybe_result = CodeSerializer::Deserialize(isolate, cached_data, source);
+    maybe_result = CodeSerializer::Deserialize(isolate, cached_data, source,
+                                               origin_options);
     if (maybe_result.is_null()) {
       // Deserializer failed. Fall through to compile.
       compile_timer.set_consuming_code_cache_failed();

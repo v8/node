@@ -42,6 +42,7 @@
 #include "src/messages.h"
 #include "src/objects/frame-array-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/module-inl.h"
 #include "src/objects/promise-inl.h"
 #include "src/profiler/cpu-profiler.h"
 #include "src/profiler/tracing-cpu-profiler.h"
@@ -400,6 +401,7 @@ StackTraceFailureMessage::StackTraceFailureMessage(Isolate* isolate, void* ptr1,
   size_t i = 0;
   StackFrameIterator it(isolate);
   for (; !it.done() && i < code_objects_length; it.Advance()) {
+    if (it.frame()->type() == StackFrame::INTERNAL) continue;
     code_objects_[i++] = it.frame()->unchecked_code();
   }
 }
@@ -866,8 +868,7 @@ Handle<FixedArray> Isolate::CaptureCurrentStackTrace(
       frames_seen++;
     }
   }
-  stack_trace_elems->Shrink(frames_seen);
-  return stack_trace_elems;
+  return FixedArray::ShrinkOrEmpty(stack_trace_elems, frames_seen);
 }
 
 
@@ -2524,6 +2525,7 @@ Isolate::Isolate()
       initialized_from_snapshot_(false),
       is_tail_call_elimination_enabled_(true),
       is_isolate_in_background_(false),
+      memory_savings_mode_active_(false),
       cpu_profiler_(nullptr),
       heap_profiler_(nullptr),
       code_event_dispatcher_(new CodeEventDispatcher()),
@@ -2892,7 +2894,7 @@ void CreateOffHeapTrampolines(Isolate* isolate) {
     // thus collected by the GC.
     builtins->set_builtin(i, *trampoline);
 
-    if (isolate->logger()->is_logging_code_events() ||
+    if (isolate->logger()->is_listening_to_code_events() ||
         isolate->is_profiling()) {
       isolate->logger()->LogCodeObject(*trampoline);
     }
@@ -3085,10 +3087,6 @@ bool Isolate::Init(StartupDeserializer* des) {
 
     heap_.NotifyDeserializationComplete();
   }
-  // Flush the instruction cache for the entire code-space. Must happen after
-  // builtins deserialization and setting the memory executable again.
-  if (!create_heap_objects) des->FlushICacheForNewIsolate();
-
   delete setup_delegate_;
   setup_delegate_ = nullptr;
 

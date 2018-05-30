@@ -20,11 +20,13 @@
 #include "src/heap/heap.h"
 #include "src/isolate-inl.h"
 #include "src/objects/api-callbacks.h"
+#include "src/objects/arguments.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/intl-objects.h"
 #include "src/objects/js-locale.h"
 #endif  // V8_INTL_SUPPORT
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-regexp-string-iterator.h"
 #include "src/objects/js-regexp.h"
 #include "src/objects/templates.h"
 #include "src/snapshot/natives.h"
@@ -5054,6 +5056,8 @@ void Genesis::InitializeNormalizedMapCaches() {
 
 bool Bootstrapper::InstallExtensions(Handle<Context> native_context,
                                      v8::ExtensionConfiguration* extensions) {
+  // Don't install extensions into the snapshot.
+  if (isolate_->serializer_enabled()) return true;
   BootstrapperActive active(this);
   SaveContext saved_context(isolate_);
   isolate_->set_context(*native_context);
@@ -5064,8 +5068,6 @@ bool Bootstrapper::InstallExtensions(Handle<Context> native_context,
 
 bool Genesis::InstallSpecialObjects(Handle<Context> native_context) {
   Isolate* isolate = native_context->GetIsolate();
-  // Don't install extensions into the snapshot.
-  if (isolate->serializer_enabled()) return true;
 
   Factory* factory = isolate->factory();
   HandleScope scope(isolate);

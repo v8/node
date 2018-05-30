@@ -357,7 +357,7 @@ class MemoryChunk {
       + kPointerSize      // Address owner_
       + kPointerSize      // Heap* heap_
       + kIntptrSize       // intptr_t progress_bar_
-      + kIntptrSize       // intptr_t live_byte_count_
+      + kIntptrSize       // std::atomic<intptr_t> live_byte_count_
       + kPointerSize * NUMBER_OF_REMEMBERED_SET_TYPES  // SlotSet* array
       + kPointerSize * NUMBER_OF_REMEMBERED_SET_TYPES  // TypedSlotSet* array
       + kPointerSize      // InvalidatedSlots* invalidated_slots_
@@ -372,8 +372,8 @@ class MemoryChunk {
       + kPointerSize * 2  // base::ListNode
       + kPointerSize * kNumberOfCategories
       // FreeListCategory categories_[kNumberOfCategories]
-      + kPointerSize   // LocalArrayBufferTracker* local_tracker_
-      + kIntptrSize    // intptr_t young_generation_live_byte_count_
+      + kPointerSize  // LocalArrayBufferTracker* local_tracker_
+      + kIntptrSize   // std::atomic<intptr_t> young_generation_live_byte_count_
       + kPointerSize;  // Bitmap* young_generation_bitmap_
 
   // We add some more space to the computed header size to amount for missing
@@ -649,7 +649,7 @@ class MemoryChunk {
   intptr_t progress_bar_;
 
   // Count of bytes marked black on page.
-  intptr_t live_byte_count_;
+  std::atomic<intptr_t> live_byte_count_;
 
   // A single slot set for small pages (of size kPageSize) or an array of slot
   // set for large pages. In the latter case the number of entries in the array
@@ -696,7 +696,7 @@ class MemoryChunk {
 
   LocalArrayBufferTracker* local_tracker_;
 
-  intptr_t young_generation_live_byte_count_;
+  std::atomic<intptr_t> young_generation_live_byte_count_;
   Bitmap* young_generation_bitmap_;
 
  private:
@@ -1262,7 +1262,7 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
     CancelableTaskManager::Id task_ids_[kMaxUnmapperTasks];
     base::Semaphore pending_unmapping_tasks_semaphore_;
     intptr_t pending_unmapping_tasks_;
-    base::AtomicNumber<intptr_t> active_unmapping_tasks_;
+    std::atomic<intptr_t> active_unmapping_tasks_;
 
     friend class MemoryAllocator;
   };
@@ -1321,10 +1321,10 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   void Free(MemoryChunk* chunk);
 
   // Returns allocated spaces in bytes.
-  size_t Size() { return size_.Value(); }
+  size_t Size() { return size_; }
 
   // Returns allocated executable spaces in bytes.
-  size_t SizeExecutable() { return size_executable_.Value(); }
+  size_t SizeExecutable() { return size_executable_; }
 
   // Returns the maximum available bytes of heaps.
   size_t Available() {
@@ -1450,9 +1450,9 @@ class V8_EXPORT_PRIVATE MemoryAllocator {
   size_t capacity_;
 
   // Allocated space size in bytes.
-  base::AtomicNumber<size_t> size_;
+  std::atomic<size_t> size_;
   // Allocated executable space size in bytes.
-  base::AtomicNumber<size_t> size_executable_;
+  std::atomic<size_t> size_executable_;
 
   // We keep the lowest and highest addresses allocated as a quick way
   // of determining that pointers are outside the heap. The estimate is
@@ -1650,7 +1650,7 @@ class AllocationStats BASE_EMBEDDED {
   }
 
   // Accessors for the allocation statistics.
-  size_t Capacity() { return capacity_.Value(); }
+  size_t Capacity() { return capacity_; }
   size_t MaxCapacity() { return max_capacity_; }
   size_t Size() { return size_; }
 #ifdef DEBUG
@@ -1675,19 +1675,16 @@ class AllocationStats BASE_EMBEDDED {
   }
 
   void DecreaseCapacity(size_t bytes) {
-    size_t capacity = capacity_.Value();
-    DCHECK_GE(capacity, bytes);
-    DCHECK_GE(capacity - bytes, size_);
-    USE(capacity);
-    capacity_.Decrement(bytes);
+    DCHECK_GE(capacity_, bytes);
+    DCHECK_GE(capacity_ - bytes, size_);
+    capacity_ -= bytes;
   }
 
   void IncreaseCapacity(size_t bytes) {
-    size_t capacity = capacity_.Value();
-    DCHECK_GE(capacity + bytes, capacity);
-    capacity_.Increment(bytes);
-    if (capacity > max_capacity_) {
-      max_capacity_ = capacity;
+    DCHECK_GE(capacity_ + bytes, capacity_);
+    capacity_ += bytes;
+    if (capacity_ > max_capacity_) {
+      max_capacity_ = capacity_;
     }
   }
 
@@ -1696,7 +1693,7 @@ class AllocationStats BASE_EMBEDDED {
   // bookkeeping structures) currently in the space.
   // During evacuation capacity of the main spaces is accessed from multiple
   // threads to check the old generation hard limit.
-  base::AtomicNumber<size_t> capacity_;
+  std::atomic<size_t> capacity_;
 
   // |max_capacity_|: The maximum capacity ever observed.
   size_t max_capacity_;
@@ -1787,7 +1784,7 @@ class V8_EXPORT_PRIVATE FreeList {
   void Reset();
 
   void ResetStats() {
-    wasted_bytes_.SetValue(0);
+    wasted_bytes_ = 0;
     ForAllFreeListCategories(
         [](FreeListCategory* category) { category->ResetStats(); });
   }
@@ -1815,7 +1812,7 @@ class V8_EXPORT_PRIVATE FreeList {
   size_t EvictFreeListItems(Page* page);
   bool ContainsPageFreeListItems(Page* page);
 
-  size_t wasted_bytes() { return wasted_bytes_.Value(); }
+  size_t wasted_bytes() { return wasted_bytes_; }
 
   template <typename Callback>
   void ForAllFreeListCategories(FreeListCategoryType type, Callback callback) {
@@ -1911,7 +1908,7 @@ class V8_EXPORT_PRIVATE FreeList {
     return categories_[type];
   }
 
-  base::AtomicNumber<size_t> wasted_bytes_;
+  std::atomic<size_t> wasted_bytes_;
   FreeListCategory* categories_[kNumberOfCategories];
 
   friend class FreeListCategory;
@@ -2386,6 +2383,8 @@ class SemiSpace : public Space {
 
   bool EnsureCurrentCapacity();
 
+  Address space_end() { return memory_chunk_list_.back()->area_end(); }
+
   // Returns the start address of the first page of the space.
   Address space_start() {
     DCHECK_NE(memory_chunk_list_.front(), nullptr);
@@ -2394,9 +2393,6 @@ class SemiSpace : public Space {
 
   Page* current_page() { return current_page_; }
   int pages_used() { return pages_used_; }
-
-  // Returns one past the end address of the space.
-  Address space_end() { return memory_chunk_list_.back()->area_end(); }
 
   // Returns the start address of the current page of the space.
   Address page_low() { return current_page_->area_start(); }
@@ -2458,6 +2454,7 @@ class SemiSpace : public Space {
   }
 
   Page* first_page() { return reinterpret_cast<Page*>(Space::first_page()); }
+  Page* last_page() { return reinterpret_cast<Page*>(Space::last_page()); }
 
   iterator begin() { return iterator(first_page()); }
   iterator end() { return iterator(nullptr); }
@@ -2683,8 +2680,9 @@ class NewSpace : public SpaceWithLinearArea {
   Address original_top() { return original_top_.Value(); }
   Address original_limit() { return original_limit_.Value(); }
 
-  // Return the address of the first object in the active semispace.
-  Address bottom() { return to_space_.space_start(); }
+  // Return the address of the first allocatable address in the active
+  // semispace. This may be the address where the first object resides.
+  Address first_allocatable_address() { return to_space_.space_start(); }
 
   // Get the age mark of the inactive semispace.
   Address age_mark() { return from_space_.age_mark(); }
@@ -2712,18 +2710,6 @@ class NewSpace : public SpaceWithLinearArea {
   // allocation_info_.limit to be lower than the actual limit and and increasing
   // it in steps to guarantee that the observers are notified periodically.
   void UpdateInlineAllocationLimit(size_t size_in_bytes) override;
-
-  // Get the extent of the inactive semispace (for use as a marking stack,
-  // or to zap it). Notice: space-addresses are not necessarily on the
-  // same page, so FromSpaceStart() might be above FromSpaceEnd().
-  Address FromSpacePageLow() { return from_space_.page_low(); }
-  Address FromSpacePageHigh() { return from_space_.page_high(); }
-  Address FromSpaceStart() { return from_space_.space_start(); }
-  Address FromSpaceEnd() { return from_space_.space_end(); }
-
-  // Get the extent of the active semispace's pages' memory.
-  Address ToSpaceStart() { return to_space_.space_start(); }
-  Address ToSpaceEnd() { return to_space_.space_end(); }
 
   inline bool ToSpaceContainsSlow(Address a);
   inline bool FromSpaceContainsSlow(Address a);
@@ -2761,6 +2747,9 @@ class NewSpace : public SpaceWithLinearArea {
   bool IsFromSpaceCommitted() { return from_space_.is_committed(); }
 
   SemiSpace* active_space() { return &to_space_; }
+
+  Page* first_page() { return to_space_.first_page(); }
+  Page* last_page() { return to_space_.last_page(); }
 
   iterator begin() { return to_space_.begin(); }
   iterator end() { return to_space_.end(); }

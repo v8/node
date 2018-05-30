@@ -474,14 +474,12 @@ MaybeHandle<JSArrayBuffer> GrowMemoryBuffer(Isolate* isolate,
   // Blink's array buffers. The connection between the two is lost, which can
   // lead to Blink not knowing about the other reference to the buffer and
   // freeing it too early.
-  if (!old_buffer->is_external() && old_size != 0 &&
+  if (!old_buffer->is_external() &&
       ((new_size < old_buffer->allocation_length()) || old_size == new_size)) {
-    DCHECK_NOT_NULL(old_buffer->backing_store());
     if (old_size != new_size) {
+      DCHECK_NOT_NULL(old_buffer->backing_store());
       // If adjusting permissions fails, propagate error back to return
       // failure to grow.
-      DCHECK(!isolate->wasm_engine()->memory_tracker()->IsEmptyBackingStore(
-          old_mem_start));
       if (!i::SetPermissions(old_mem_start, new_size,
                              PageAllocator::kReadWrite)) {
         return {};
@@ -805,6 +803,8 @@ Handle<WasmInstanceObject> WasmInstanceObject::New(
   instance->set_compiled_module(*compiled_module);
   instance->set_native_context(*isolate->native_context());
   instance->set_module_object(*module_object);
+  instance->set_undefined_value(isolate->heap()->undefined_value());
+  instance->set_null_value(isolate->heap()->null_value());
 
   return instance;
 }
@@ -987,7 +987,7 @@ Handle<WasmSharedModuleData> WasmSharedModuleData::New(
 }
 
 bool WasmSharedModuleData::is_asm_js() {
-  bool asm_js = module()->is_asm_js();
+  bool asm_js = module()->origin == wasm::kAsmJsOrigin;
   DCHECK_EQ(asm_js, script()->IsUserJavaScript());
   DCHECK_EQ(asm_js, has_asm_js_offset_table());
   return asm_js;
@@ -1194,7 +1194,7 @@ int WasmSharedModuleData::GetSourcePosition(Handle<WasmSharedModuleData> shared,
   Isolate* isolate = shared->GetIsolate();
   const WasmModule* module = shared->module();
 
-  if (!module->is_asm_js()) {
+  if (module->origin != wasm::kAsmJsOrigin) {
     // for non-asm.js modules, we just add the function's start offset
     // to make a module-relative position.
     return byte_offset + shared->GetFunctionOffset(func_index);

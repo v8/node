@@ -13,17 +13,21 @@
 #include "src/layout-descriptor.h"
 #include "src/macro-assembler.h"
 #include "src/objects-inl.h"
+#include "src/objects/arguments-inl.h"
 #include "src/objects/bigint.h"
 #include "src/objects/data-handler-inl.h"
 #include "src/objects/debug-objects-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-collection-inl.h"
 #include "src/objects/literal-objects.h"
 #ifdef V8_INTL_SUPPORT
 #include "src/objects/js-locale-inl.h"
 #endif  // V8_INTL_SUPPORT
+#include "src/objects/js-regexp-inl.h"
+#include "src/objects/js-regexp-string-iterator-inl.h"
 #include "src/objects/maybe-object.h"
 #include "src/objects/microtask-inl.h"
-#include "src/objects/module.h"
+#include "src/objects/module-inl.h"
 #include "src/objects/promise-inl.h"
 #include "src/ostreams.h"
 #include "src/regexp/jsregexp.h"
@@ -767,7 +771,7 @@ void JSGeneratorObject::JSGeneratorObjectVerify() {
   VerifyObjectField(kFunctionOffset);
   VerifyObjectField(kContextOffset);
   VerifyObjectField(kReceiverOffset);
-  VerifyObjectField(kRegisterFileOffset);
+  VerifyObjectField(kParametersAndRegistersOffset);
   VerifyObjectField(kContinuationOffset);
 }
 
@@ -1094,6 +1098,9 @@ void JSArray::JSArrayVerify() {
   if (!ElementsAreSafeToExamine()) return;
   if (elements()->IsUndefined(isolate)) return;
   CHECK(elements()->IsFixedArray() || elements()->IsFixedDoubleArray());
+  if (elements()->length() == 0) {
+    CHECK_EQ(elements(), isolate->heap()->empty_fixed_array());
+  }
   if (!length()->IsNumber()) return;
   // Verify that the length and the elements backing store are in sync.
   if (length()->IsSmi() && HasFastElements()) {
@@ -1622,7 +1629,7 @@ void DataHandler::DataHandlerVerify() {
   CHECK(validity_cell()->IsSmi() || validity_cell()->IsCell());
   int data_count = data_field_count();
   if (data_count >= 1) {
-    VerifyObjectField(kData1Offset);
+    VerifyMaybeObjectField(kData1Offset);
   }
   if (data_count >= 2) {
     VerifyObjectField(kData2Offset);

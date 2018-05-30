@@ -67,7 +67,7 @@ constexpr bool kModuleCanAllocateMoreMemory = false;
 void GenerateJumpTrampoline(MacroAssembler* masm, Address target) {
   UseScratchRegisterScope temps(masm);
   Register scratch = temps.AcquireX();
-  __ Mov(scratch, reinterpret_cast<uint64_t>(target));
+  __ Mov(scratch, static_cast<uint64_t>(target));
   __ Br(scratch);
 }
 #undef __
@@ -217,7 +217,7 @@ bool WasmCode::HasTrapHandlerIndex() const { return trap_handler_index_ >= 0; }
 void WasmCode::ResetTrapHandlerIndex() { trap_handler_index_ = -1; }
 
 bool WasmCode::ShouldBeLogged(Isolate* isolate) {
-  return isolate->logger()->is_logging_code_events() ||
+  return isolate->logger()->is_listening_to_code_events() ||
          isolate->is_profiling() || FLAG_print_wasm_code || FLAG_print_code;
 }
 
@@ -253,6 +253,35 @@ void WasmCode::LogCode(Isolate* isolate) const {
                                                          source_positions()));
     }
   }
+}
+
+void WasmCode::Validate() const {
+#ifdef DEBUG
+  // We expect certain relocation info modes to never appear in {WasmCode}
+  // objects or to be restricted to a small set of valid values. Hence the
+  // iteration below does not use a mask, but visits all relocation data.
+  for (RelocIterator it(instructions(), reloc_info(), constant_pool());
+       !it.done(); it.next()) {
+    RelocInfo::Mode mode = it.rinfo()->rmode();
+    switch (mode) {
+      case RelocInfo::CODE_TARGET:
+      // TODO(mstarzinger): Validate that we go through a trampoline.
+      case RelocInfo::WASM_CODE_TABLE_ENTRY:
+      case RelocInfo::WASM_CALL:
+      case RelocInfo::JS_TO_WASM_CALL:
+      case RelocInfo::EXTERNAL_REFERENCE:
+      case RelocInfo::INTERNAL_REFERENCE_ENCODED:
+      case RelocInfo::OFF_HEAP_TARGET:
+      case RelocInfo::COMMENT:
+      case RelocInfo::CONST_POOL:
+      case RelocInfo::VENEER_POOL:
+        // These are OK to appear.
+        break;
+      default:
+        FATAL("Unexpected mode: %d", mode);
+    }
+  }
+#endif
 }
 
 void WasmCode::Print(Isolate* isolate) const {
@@ -415,6 +444,7 @@ WasmCode* NativeModule::AddOwnedCode(
     Assembler::FlushICache(ret->instructions().start(),
                            ret->instructions().size());
   }
+  ret->Validate();
   return ret;
 }
 
@@ -488,10 +518,10 @@ WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
                    std::move(protected_instructions),  // protected_instructions
                    WasmCode::kOther,                   // kind
                    WasmCode::kNoFlushICache);          // flush_icache
-  intptr_t delta = ret->instruction_start() - code->InstructionStart();
-  int mask = RelocInfo::kApplyMask | RelocInfo::kCodeTargetMask |
-             RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
 
+  // Apply the relocation delta by iterating over the RelocInfo.
+  intptr_t delta = ret->instruction_start() - code->InstructionStart();
+  int mask = RelocInfo::kApplyMask | RelocInfo::kCodeTargetMask;
   RelocIterator orig_it(*code, mask);
   for (RelocIterator it(ret->instructions(), ret->reloc_info(),
                         ret->constant_pool(), mask);
@@ -502,13 +532,10 @@ WasmCode* NativeModule::AddAnonymousCode(Handle<Code> code,
       it.rinfo()->set_target_address(GetLocalAddressFor(handle(call_target)),
                                      SKIP_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
     } else {
-      if (RelocInfo::IsEmbeddedObject(it.rinfo()->rmode())) {
-        DCHECK(Heap::IsImmovable(it.rinfo()->target_object()));
-      } else {
-        it.rinfo()->apply(delta);
-      }
+      it.rinfo()->apply(delta);
     }
   }
+
   // Flush the i-cache here instead of in AddOwnedCode, to include the changes
   // made while iterating over the RelocInfo above.
   Assembler::FlushICache(ret->instructions().start(),
@@ -547,38 +574,27 @@ WasmCode* NativeModule::AddCode(
       std::move(protected_instructions), tier, WasmCode::kNoFlushICache);
 
   code_table_[index] = ret;
-  // TODO(mtrofin): this is a copy and paste from Code::CopyFrom.
-  int mode_mask = RelocInfo::kCodeTargetMask |
-                  RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
-                  RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY) |
-                  RelocInfo::kApplyMask;
-  // Needed to find target_object and runtime_entry on X64
 
+  // Apply the relocation delta by iterating over the RelocInfo.
   AllowDeferredHandleDereference embedding_raw_address;
+  intptr_t delta = ret->instructions().start() - desc.buffer;
+  int mode_mask = RelocInfo::kApplyMask | RelocInfo::kCodeTargetMask;
   for (RelocIterator it(ret->instructions(), ret->reloc_info(),
                         ret->constant_pool(), mode_mask);
        !it.done(); it.next()) {
     RelocInfo::Mode mode = it.rinfo()->rmode();
-    if (mode == RelocInfo::EMBEDDED_OBJECT) {
-      Handle<HeapObject> p = it.rinfo()->target_object_handle(origin);
-      DCHECK(p->IsUndefined(p->GetIsolate()) || p->IsNull(p->GetIsolate()));
-      it.rinfo()->set_target_object(*p, SKIP_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
-    } else if (RelocInfo::IsCodeTarget(mode)) {
+    if (RelocInfo::IsCodeTarget(mode)) {
       // rewrite code handles to direct pointers to the first instruction in the
       // code object
       Handle<Object> p = it.rinfo()->target_object_handle(origin);
       Code* code = Code::cast(*p);
       it.rinfo()->set_target_address(GetLocalAddressFor(handle(code)),
                                      SKIP_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
-    } else if (RelocInfo::IsRuntimeEntry(mode)) {
-      Address p = it.rinfo()->target_runtime_entry(origin);
-      it.rinfo()->set_target_runtime_entry(p, SKIP_WRITE_BARRIER,
-                                           SKIP_ICACHE_FLUSH);
     } else {
-      intptr_t delta = ret->instructions().start() - desc.buffer;
       it.rinfo()->apply(delta);
     }
   }
+
   // Flush the i-cache here instead of in AddOwnedCode, to include the changes
   // made while iterating over the RelocInfo above.
   Assembler::FlushICache(ret->instructions().start(),

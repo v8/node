@@ -606,6 +606,28 @@ namespace internal {
   F(TypedArraySet, 2, 1)                 \
   F(TypedArraySortFast, 1, 1)
 
+#define FOR_EACH_INTRINSIC_DATAVIEW(F) \
+  F(DataViewGetInt8, 1, 1)             \
+  F(DataViewGetUint8, 1, 1)            \
+  F(DataViewGetInt16, 2, 1)            \
+  F(DataViewGetUint16, 2, 1)           \
+  F(DataViewGetInt32, 2, 1)            \
+  F(DataViewGetUint32, 2, 1)           \
+  F(DataViewGetFloat32, 2, 1)          \
+  F(DataViewGetFloat64, 2, 1)          \
+  F(DataViewGetBigInt64, 2, 1)         \
+  F(DataViewGetBigUint64, 2, 1)        \
+  F(DataViewSetInt8, 2, 1)             \
+  F(DataViewSetUint8, 2, 1)            \
+  F(DataViewSetInt16, 3, 1)            \
+  F(DataViewSetUint16, 3, 1)           \
+  F(DataViewSetInt32, 3, 1)            \
+  F(DataViewSetUint32, 3, 1)           \
+  F(DataViewSetFloat32, 3, 1)          \
+  F(DataViewSetFloat64, 3, 1)          \
+  F(DataViewSetBigInt64, 3, 1)         \
+  F(DataViewSetBigUint64, 3, 1)
+
 #define FOR_EACH_INTRINSIC_WASM(F)   \
   F(ThrowWasmError, 1, 1)            \
   F(ThrowWasmStackOverflow, 0, 1)    \
@@ -617,10 +639,10 @@ namespace internal {
   F(WasmStackGuard, 0, 1)            \
   F(WasmThrow, 0, 1)                 \
   F(WasmThrowCreate, 2, 1)           \
-  F(WasmThrowTypeError, 0, 1)
+  F(WasmThrowTypeError, 0, 1)        \
+  F(WasmCompileLazy, 1, 1)
 
 #define FOR_EACH_INTRINSIC_RETURN_PAIR(F) \
-  F(WasmCompileLazy, 1, 2)                \
   F(DebugBreakOnBytecode, 1, 2)           \
   F(LoadLookupSlotForCall, 1, 2)
 
@@ -675,6 +697,7 @@ namespace internal {
   FOR_EACH_INTRINSIC_SYMBOL(F)              \
   FOR_EACH_INTRINSIC_TEST(F)                \
   FOR_EACH_INTRINSIC_TYPEDARRAY(F)          \
+  FOR_EACH_INTRINSIC_DATAVIEW(F)            \
   FOR_EACH_INTRINSIC_WASM(F)
 
 // FOR_EACH_INTRINSIC defines the list of all intrinsics, coming in 2 flavors,

@@ -43,59 +43,61 @@ class TorqueParser : public antlr4::Parser {
     DEFERRED = 28,
     IF = 29,
     CAST_KEYWORD = 30,
-    CONVERT_KEYWORD = 31,
-    FOR = 32,
-    WHILE = 33,
-    RETURN = 34,
-    CONSTEXPR = 35,
-    CONTINUE = 36,
-    BREAK = 37,
-    GOTO = 38,
-    OTHERWISE = 39,
-    TRY = 40,
-    CATCH = 41,
-    LABEL = 42,
-    LABELS = 43,
-    TAIL = 44,
-    ISNT = 45,
-    IS = 46,
-    LET = 47,
-    EXTERN = 48,
-    ASSERT = 49,
-    UNREACHABLE_TOKEN = 50,
-    DEBUG_TOKEN = 51,
-    ASSIGNMENT = 52,
-    ASSIGNMENT_OPERATOR = 53,
-    EQUAL = 54,
-    PLUS = 55,
-    MINUS = 56,
-    MULTIPLY = 57,
-    DIVIDE = 58,
-    MODULO = 59,
-    BIT_OR = 60,
-    BIT_AND = 61,
-    BIT_NOT = 62,
-    MAX = 63,
-    MIN = 64,
-    NOT_EQUAL = 65,
-    LESS_THAN = 66,
-    LESS_THAN_EQUAL = 67,
-    GREATER_THAN = 68,
-    GREATER_THAN_EQUAL = 69,
-    SHIFT_LEFT = 70,
-    SHIFT_RIGHT = 71,
-    SHIFT_RIGHT_ARITHMETIC = 72,
-    VARARGS = 73,
-    EQUALITY_OPERATOR = 74,
-    INCREMENT = 75,
-    DECREMENT = 76,
-    NOT = 77,
-    STRING_LITERAL = 78,
-    IDENTIFIER = 79,
-    WS = 80,
-    BLOCK_COMMENT = 81,
-    LINE_COMMENT = 82,
-    DECIMAL_LITERAL = 83
+    UNSAFE_CAST_KEYWORD = 31,
+    CONVERT_KEYWORD = 32,
+    FOR = 33,
+    WHILE = 34,
+    RETURN = 35,
+    CONSTEXPR = 36,
+    CONTINUE = 37,
+    BREAK = 38,
+    GOTO = 39,
+    OTHERWISE = 40,
+    TRY = 41,
+    CATCH = 42,
+    LABEL = 43,
+    LABELS = 44,
+    TAIL = 45,
+    ISNT = 46,
+    IS = 47,
+    LET = 48,
+    EXTERN = 49,
+    ASSERT_TOKEN = 50,
+    CHECK_TOKEN = 51,
+    UNREACHABLE_TOKEN = 52,
+    DEBUG_TOKEN = 53,
+    ASSIGNMENT = 54,
+    ASSIGNMENT_OPERATOR = 55,
+    EQUAL = 56,
+    PLUS = 57,
+    MINUS = 58,
+    MULTIPLY = 59,
+    DIVIDE = 60,
+    MODULO = 61,
+    BIT_OR = 62,
+    BIT_AND = 63,
+    BIT_NOT = 64,
+    MAX = 65,
+    MIN = 66,
+    NOT_EQUAL = 67,
+    LESS_THAN = 68,
+    LESS_THAN_EQUAL = 69,
+    GREATER_THAN = 70,
+    GREATER_THAN_EQUAL = 71,
+    SHIFT_LEFT = 72,
+    SHIFT_RIGHT = 73,
+    SHIFT_RIGHT_ARITHMETIC = 74,
+    VARARGS = 75,
+    EQUALITY_OPERATOR = 76,
+    INCREMENT = 77,
+    DECREMENT = 78,
+    NOT = 79,
+    STRING_LITERAL = 80,
+    IDENTIFIER = 81,
+    WS = 82,
+    BLOCK_COMMENT = 83,
+    LINE_COMMENT = 84,
+    DECIMAL_LITERAL = 85
   };
 
   enum {
@@ -261,7 +263,9 @@ class TorqueParser : public antlr4::Parser {
     antlr4::tree::TerminalNode* CONSTEXPR();
     antlr4::tree::TerminalNode* BUILTIN();
     TypeListContext* typeList();
-    TypeContext* type();
+    std::vector<TypeContext*> type();
+    TypeContext* type(size_t i);
+    antlr4::tree::TerminalNode* BIT_OR();
 
     void enterRule(antlr4::tree::ParseTreeListener* listener) override;
     void exitRule(antlr4::tree::ParseTreeListener* listener) override;
@@ -270,7 +274,7 @@ class TorqueParser : public antlr4::Parser {
   };
 
   TypeContext* type();
-
+  TypeContext* type(int precedence);
   class TypeListContext : public antlr4::ParserRuleContext {
    public:
     TypeListContext(antlr4::ParserRuleContext* parent, size_t invokingState);
@@ -734,6 +738,7 @@ class TorqueParser : public antlr4::Parser {
     ExpressionContext* expression();
     antlr4::tree::TerminalNode* OTHERWISE();
     antlr4::tree::TerminalNode* IDENTIFIER();
+    antlr4::tree::TerminalNode* UNSAFE_CAST_KEYWORD();
     antlr4::tree::TerminalNode* CONVERT_KEYWORD();
 
     void enterRule(antlr4::tree::ParseTreeListener* listener) override;
@@ -1097,8 +1102,9 @@ class TorqueParser : public antlr4::Parser {
     DiagnosticStatementContext(antlr4::ParserRuleContext* parent,
                                size_t invokingState);
     size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode* ASSERT();
     ExpressionContext* expression();
+    antlr4::tree::TerminalNode* ASSERT_TOKEN();
+    antlr4::tree::TerminalNode* CHECK_TOKEN();
     antlr4::tree::TerminalNode* UNREACHABLE_TOKEN();
     antlr4::tree::TerminalNode* DEBUG_TOKEN();
 
@@ -1479,6 +1485,7 @@ class TorqueParser : public antlr4::Parser {
 
   bool sempred(antlr4::RuleContext* _localctx, size_t ruleIndex,
                size_t predicateIndex) override;
+  bool typeSempred(TypeContext* _localctx, size_t predicateIndex);
   bool conditionalExpressionSempred(ConditionalExpressionContext* _localctx,
                                     size_t predicateIndex);
   bool logicalORExpressionSempred(LogicalORExpressionContext* _localctx,

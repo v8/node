@@ -526,6 +526,21 @@ VisitResult ImplementationVisitor::Visit(CastExpression* expr) {
   return GenerateOperation("cast<>", args, declarations()->GetType(expr->type));
 }
 
+VisitResult ImplementationVisitor::Visit(UnsafeCastExpression* expr) {
+  const Type* type = declarations()->GetType(expr->type);
+  if (type->IsConstexpr()) {
+    ReportError("unsafe_cast can only be used for non constexpr types.");
+  }
+
+  VisitResult result = Visit(expr->value);
+
+  std::string result_variable_name = GenerateNewTempVariable(type);
+  source_out() << "CAST(";
+  source_out() << result.variable();
+  source_out() << ");\n";
+  return VisitResult{type, result_variable_name};
+}
+
 VisitResult ImplementationVisitor::Visit(ConvertExpression* expr) {
   Arguments args;
   args.parameters = {Visit(expr->value)};
@@ -692,46 +707,50 @@ const Type* ImplementationVisitor::Visit(DebugStatement* stmt) {
 }
 
 const Type* ImplementationVisitor::Visit(AssertStatement* stmt) {
+  bool do_check = !stmt->debug_only;
 #if defined(DEBUG)
-  // CSA_ASSERT & co. are not used here on purpose for two reasons. First,
-  // Torque allows and handles two types of expressions in the if protocol
-  // automagically, ones that return TNode<BoolT> and those that use the
-  // BranchIf(..., Label* true, Label* false) idiom. Because the machinery to
-  // handle this is embedded in the expression handling and to it's not possible
-  // to make the decision to use CSA_ASSERT or CSA_ASSERT_BRANCH isn't trivial
-  // up-front. Secondly, on failure, the assert text should be the corresponding
-  // Torque code, not the -gen.cc code, which would be the case when using
-  // CSA_ASSERT_XXX.
-  Label* true_label = nullptr;
-  Label* false_label = nullptr;
-  Declarations::NodeScopeActivator scope(declarations(), stmt->expression);
-  true_label = declarations()->LookupLabel(kTrueLabelName);
-  GenerateLabelDefinition(true_label);
-  false_label = declarations()->LookupLabel(kFalseLabelName);
-  GenerateLabelDefinition(false_label);
-
-  VisitResult expression_result = Visit(stmt->expression);
-  if (expression_result.type() == GetTypeOracle().GetBoolType()) {
-    GenerateBranch(expression_result, true_label, false_label);
-  } else {
-    if (expression_result.type() != GetTypeOracle().GetNeverType()) {
-      std::stringstream s;
-      s << "unexpected return type " << expression_result.type()
-        << " for branch expression";
-      ReportError(s.str());
-    }
-  }
-
-  GenerateLabelBind(false_label);
-  GenerateIndent();
-  source_out() << "Print(\""
-               << "assert '" << stmt->source << "' failed at "
-               << PositionAsString(stmt->pos) << "\");" << std::endl;
-  GenerateIndent();
-  source_out() << "Unreachable();" << std::endl;
-
-  GenerateLabelBind(true_label);
+  do_check = true;
 #endif
+  if (do_check) {
+    // CSA_ASSERT & co. are not used here on purpose for two reasons. First,
+    // Torque allows and handles two types of expressions in the if protocol
+    // automagically, ones that return TNode<BoolT> and those that use the
+    // BranchIf(..., Label* true, Label* false) idiom. Because the machinery to
+    // handle this is embedded in the expression handling and to it's not
+    // possible to make the decision to use CSA_ASSERT or CSA_ASSERT_BRANCH
+    // isn't trivial up-front. Secondly, on failure, the assert text should be
+    // the corresponding Torque code, not the -gen.cc code, which would be the
+    // case when using CSA_ASSERT_XXX.
+    Label* true_label = nullptr;
+    Label* false_label = nullptr;
+    Declarations::NodeScopeActivator scope(declarations(), stmt->expression);
+    true_label = declarations()->LookupLabel(kTrueLabelName);
+    GenerateLabelDefinition(true_label);
+    false_label = declarations()->LookupLabel(kFalseLabelName);
+    GenerateLabelDefinition(false_label);
+
+    VisitResult expression_result = Visit(stmt->expression);
+    if (expression_result.type() == GetTypeOracle().GetBoolType()) {
+      GenerateBranch(expression_result, true_label, false_label);
+    } else {
+      if (expression_result.type() != GetTypeOracle().GetNeverType()) {
+        std::stringstream s;
+        s << "unexpected return type " << expression_result.type()
+          << " for branch expression";
+        ReportError(s.str());
+      }
+    }
+
+    GenerateLabelBind(false_label);
+    GenerateIndent();
+    source_out() << "Print(\""
+                 << "assert '" << stmt->source << "' failed at "
+                 << PositionAsString(stmt->pos) << "\");" << std::endl;
+    GenerateIndent();
+    source_out() << "Unreachable();" << std::endl;
+
+    GenerateLabelBind(true_label);
+  }
   return GetTypeOracle().GetVoidType();
 }
 
@@ -1088,8 +1107,7 @@ VisitResult ImplementationVisitor::GenerateOperation(
           }
         }
 
-        if (!return_type || (GetTypeOracle().IsAssignableFrom(
-                                *return_type, handler.result_type))) {
+        if (!return_type || return_type == handler.result_type) {
           return GenerateCall(handler.macro_name, arguments, false);
         }
       }
@@ -1287,6 +1305,24 @@ VisitResult ImplementationVisitor::GeneratePointerCall(
   }
   const FunctionPointerType* type =
       FunctionPointerType::cast(callee_result.type());
+
+  if (type->parameter_types().size() != parameter_types.size()) {
+    std::stringstream stream;
+    stream << "parameter count mismatch calling function pointer with Type: "
+           << type << " - expected "
+           << std::to_string(type->parameter_types().size()) << ", found "
+           << std::to_string(parameter_types.size());
+    ReportError(stream.str());
+  }
+
+  ParameterTypes types{type->parameter_types(), false};
+  if (!GetTypeOracle().IsCompatibleSignature(types, parameter_types)) {
+    std::stringstream stream;
+    stream << "parameters do not match function pointer signature. Expected: ("
+           << type->parameter_types() << ") but got: (" << parameter_types
+           << ")";
+    ReportError(stream.str());
+  }
 
   std::vector<std::string> variables;
   for (size_t current = 0; current < arguments.parameters.size(); ++current) {

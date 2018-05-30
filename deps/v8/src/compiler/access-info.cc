@@ -12,6 +12,7 @@
 #include "src/field-type.h"
 #include "src/ic/call-optimization.h"
 #include "src/objects-inl.h"
+#include "src/objects/module-inl.h"
 #include "src/objects/templates.h"
 
 namespace v8 {
@@ -88,7 +89,8 @@ PropertyAccessInfo PropertyAccessInfo::DataField(
     FieldIndex field_index, MachineRepresentation field_representation,
     Type field_type, MaybeHandle<Map> field_map, MaybeHandle<JSObject> holder,
     MaybeHandle<Map> transition_map) {
-  Kind kind = constness == kConst ? kDataConstantField : kDataField;
+  Kind kind =
+      constness == PropertyConstness::kConst ? kDataConstantField : kDataField;
   return PropertyAccessInfo(kind, holder, transition_map, field_index,
                             field_representation, field_type, field_map,
                             receiver_maps);
@@ -396,7 +398,8 @@ bool AccessInfoFactory::ComputePropertyAccessInfo(
               dependencies()->AssumeFieldOwner(field_owner_map);
 
               // Remember the field map, and try to infer a useful type.
-              field_type = Type::For(descriptors_field_type->AsClass());
+              field_type =
+                  Type::For(isolate(), descriptors_field_type->AsClass());
               field_map = descriptors_field_type->AsClass();
             }
           }
@@ -645,9 +648,9 @@ bool AccessInfoFactory::LookupSpecialFieldAccessor(
       }
     }
     // Special fields are always mutable.
-    *access_info =
-        PropertyAccessInfo::DataField(kMutable, MapHandles{map}, field_index,
-                                      field_representation, field_type);
+    *access_info = PropertyAccessInfo::DataField(
+        PropertyConstness::kMutable, MapHandles{map}, field_index,
+        field_representation, field_type);
     return true;
   }
   return false;
@@ -700,15 +703,15 @@ bool AccessInfoFactory::LookupTransition(Handle<Map> map, Handle<Name> name,
       dependencies()->AssumeFieldOwner(field_owner_map);
 
       // Remember the field map, and try to infer a useful type.
-      field_type = Type::For(descriptors_field_type->AsClass());
+      field_type = Type::For(isolate(), descriptors_field_type->AsClass());
       field_map = descriptors_field_type->AsClass();
     }
   }
   dependencies()->AssumeMapNotDeprecated(transition_map);
   // Transitioning stores are never stores to constant fields.
   *access_info = PropertyAccessInfo::DataField(
-      kMutable, MapHandles{map}, field_index, field_representation, field_type,
-      field_map, holder, transition_map);
+      PropertyConstness::kMutable, MapHandles{map}, field_index,
+      field_representation, field_type, field_map, holder, transition_map);
   return true;
 }
 

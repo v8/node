@@ -21,6 +21,7 @@
 #include "src/objects-inl.h"
 #include "src/register-configuration.h"
 #include "src/snapshot/serializer-common.h"
+#include "src/snapshot/snapshot.h"
 #include "src/x64/assembler-x64.h"
 
 #include "src/x64/macro-assembler-x64.h"  // Cannot be the first include.
@@ -1097,48 +1098,31 @@ void TurboAssembler::Move(Register dst, ExternalReference ext) {
   movp(dst, ext.address(), RelocInfo::EXTERNAL_REFERENCE);
 }
 
-void MacroAssembler::Integer32ToSmi(Register dst, Register src) {
-  STATIC_ASSERT(kSmiTag == 0);
-  if (dst != src) {
-    movl(dst, src);
-  }
-  shlp(dst, Immediate(kSmiShift));
-}
-
-void TurboAssembler::SmiToInteger32(Register dst, Register src) {
+void MacroAssembler::SmiTag(Register dst, Register src) {
   STATIC_ASSERT(kSmiTag == 0);
   if (dst != src) {
     movp(dst, src);
   }
-
-  if (SmiValuesAre32Bits()) {
-    shrp(dst, Immediate(kSmiShift));
-  } else {
-    DCHECK(SmiValuesAre31Bits());
-    sarl(dst, Immediate(kSmiShift));
-  }
+  shlp(dst, Immediate(kSmiShift));
 }
 
-void TurboAssembler::SmiToInteger32(Register dst, Operand src) {
-  if (SmiValuesAre32Bits()) {
-    movl(dst, Operand(src, kSmiShift / kBitsPerByte));
-  } else {
-    DCHECK(SmiValuesAre31Bits());
-    movl(dst, src);
-    sarl(dst, Immediate(kSmiShift));
-  }
-}
-
-
-void MacroAssembler::SmiToInteger64(Register dst, Register src) {
+void TurboAssembler::SmiUntag(Register dst, Register src) {
   STATIC_ASSERT(kSmiTag == 0);
   if (dst != src) {
     movp(dst, src);
   }
   sarp(dst, Immediate(kSmiShift));
-  if (kPointerSize == kInt32Size) {
+}
+
+void TurboAssembler::SmiUntag(Register dst, Operand src) {
+  if (SmiValuesAre32Bits()) {
+    movl(dst, Operand(src, kSmiShift / kBitsPerByte));
     // Sign extend to 64-bit.
     movsxlq(dst, dst);
+  } else {
+    DCHECK(SmiValuesAre31Bits());
+    movp(dst, src);
+    sarp(dst, Immediate(kSmiShift));
   }
 }
 
@@ -1527,13 +1511,12 @@ void MacroAssembler::PopQuad(Operand dst) {
   }
 }
 
-
-void MacroAssembler::Jump(ExternalReference ext) {
+void TurboAssembler::Jump(ExternalReference ext) {
   LoadAddress(kScratchRegister, ext);
   jmp(kScratchRegister);
 }
 
-void MacroAssembler::Jump(Operand op) {
+void TurboAssembler::Jump(Operand op) {
   if (kPointerSize == kInt64Size) {
     jmp(op);
   } else {
@@ -1542,17 +1525,22 @@ void MacroAssembler::Jump(Operand op) {
   }
 }
 
-
-void MacroAssembler::Jump(Address destination, RelocInfo::Mode rmode) {
+void TurboAssembler::Jump(Address destination, RelocInfo::Mode rmode) {
   Move(kScratchRegister, destination, rmode);
   jmp(kScratchRegister);
 }
 
-void MacroAssembler::Jump(Handle<Code> code_object, RelocInfo::Mode rmode,
+void TurboAssembler::Jump(Handle<Code> code_object, RelocInfo::Mode rmode,
                           Condition cc) {
 // TODO(X64): Inline this
 #ifdef V8_EMBEDDED_BUILTINS
-  if (root_array_available_ && isolate()->ShouldLoadConstantsFromRootList()) {
+  if (root_array_available_ && isolate()->ShouldLoadConstantsFromRootList() &&
+      !Builtins::IsEmbeddedBuiltin(*code_object)) {
+    // Calls to embedded targets are initially generated as standard
+    // pc-relative calls below. When creating the embedded blob, call offsets
+    // are patched up to point directly to the off-heap instruction start.
+    // Note: It is safe to dereference code_object above since code generation
+    // for builtins and code stubs happens on the main thread.
     Label skip;
     if (cc != always) {
       if (cc == never) return;
@@ -1563,6 +1551,18 @@ void MacroAssembler::Jump(Handle<Code> code_object, RelocInfo::Mode rmode,
     jmp(kScratchRegister);
     bind(&skip);
     return;
+  } else if (!isolate()->serializer_enabled()) {
+    int builtin_index = Builtins::kNoBuiltinId;
+    if (isolate()->builtins()->IsBuiltinHandle(code_object, &builtin_index) &&
+        Builtins::IsIsolateIndependent(builtin_index)) {
+      // Inline the trampoline.
+      CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
+      EmbeddedData d = EmbeddedData::FromBlob();
+      Address entry = d.InstructionStartOfBuiltin(builtin_index);
+      Move(kScratchRegister, entry, RelocInfo::OFF_HEAP_TARGET);
+      jmp(kScratchRegister);
+      return;
+    }
   }
 #endif  // V8_EMBEDDED_BUILTINS
   j(cc, code_object, rmode);
@@ -1608,11 +1608,29 @@ void TurboAssembler::Call(Address destination, RelocInfo::Mode rmode) {
 
 void TurboAssembler::Call(Handle<Code> code_object, RelocInfo::Mode rmode) {
 #ifdef V8_EMBEDDED_BUILTINS
-  if (root_array_available_ && isolate()->ShouldLoadConstantsFromRootList()) {
+  if (root_array_available_ && isolate()->ShouldLoadConstantsFromRootList() &&
+      !Builtins::IsEmbeddedBuiltin(*code_object)) {
+    // Calls to embedded targets are initially generated as standard
+    // pc-relative calls below. When creating the embedded blob, call offsets
+    // are patched up to point directly to the off-heap instruction start.
+    // Note: It is safe to dereference code_object above since code generation
+    // for builtins and code stubs happens on the main thread.
     LookupConstant(kScratchRegister, code_object);
     leap(kScratchRegister, FieldOperand(kScratchRegister, Code::kHeaderSize));
     call(kScratchRegister);
     return;
+  } else if (!isolate()->serializer_enabled()) {
+    int builtin_index = Builtins::kNoBuiltinId;
+    if (isolate()->builtins()->IsBuiltinHandle(code_object, &builtin_index) &&
+        Builtins::IsIsolateIndependent(builtin_index)) {
+      // Inline the trampoline.
+      CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
+      EmbeddedData d = EmbeddedData::FromBlob();
+      Address entry = d.InstructionStartOfBuiltin(builtin_index);
+      Move(kScratchRegister, entry, RelocInfo::OFF_HEAP_TARGET);
+      call(kScratchRegister);
+      return;
+    }
   }
 #endif  // V8_EMBEDDED_BUILTINS
 #ifdef DEBUG
@@ -2350,13 +2368,13 @@ void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
     FrameScope frame(this,
                      has_frame() ? StackFrame::NONE : StackFrame::INTERNAL);
     if (expected.is_reg()) {
-      Integer32ToSmi(expected.reg(), expected.reg());
+      SmiTag(expected.reg(), expected.reg());
       Push(expected.reg());
     }
     if (actual.is_reg()) {
-      Integer32ToSmi(actual.reg(), actual.reg());
+      SmiTag(actual.reg(), actual.reg());
       Push(actual.reg());
-      SmiToInteger64(actual.reg(), actual.reg());
+      SmiUntag(actual.reg(), actual.reg());
     }
     if (new_target.is_valid()) {
       Push(new_target);
@@ -2371,11 +2389,11 @@ void MacroAssembler::CheckDebugHook(Register fun, Register new_target,
     }
     if (actual.is_reg()) {
       Pop(actual.reg());
-      SmiToInteger64(actual.reg(), actual.reg());
+      SmiUntag(actual.reg(), actual.reg());
     }
     if (expected.is_reg()) {
       Pop(expected.reg());
-      SmiToInteger64(expected.reg(), expected.reg());
+      SmiUntag(expected.reg(), expected.reg());
     }
   }
   bind(&skip_hook);
@@ -2398,17 +2416,6 @@ void TurboAssembler::EnterFrame(StackFrame::Type type) {
   pushq(rbp);
   movp(rbp, rsp);
   Push(Immediate(StackFrame::TypeToMarker(type)));
-  if (type == StackFrame::INTERNAL) {
-    Move(kScratchRegister, CodeObject(), RelocInfo::EMBEDDED_OBJECT);
-    Push(kScratchRegister);
-    // Check at runtime that this code object was patched correctly.
-    if (emit_debug_code()) {
-      Move(kScratchRegister, isolate()->factory()->undefined_value(),
-           RelocInfo::EMBEDDED_OBJECT);
-      cmpp(Operand(rsp, 0), kScratchRegister);
-      Check(not_equal, AbortReason::kCodeObjectNotProperlyPatched);
-    }
-  }
 }
 
 void TurboAssembler::LeaveFrame(StackFrame::Type type) {

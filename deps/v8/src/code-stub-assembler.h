@@ -163,6 +163,11 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     return UncheckedCast<Smi>(value);
   }
 
+  TNode<Number> TaggedToNumber(TNode<Object> value, Label* fail) {
+    GotoIfNot(IsNumber(value), fail);
+    return UncheckedCast<Number>(value);
+  }
+
   TNode<HeapObject> TaggedToHeapObject(TNode<Object> value, Label* fail) {
     GotoIf(TaggedIsSmi(value), fail);
     return UncheckedCast<HeapObject>(value);
@@ -173,6 +178,13 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
     TNode<HeapObject> heap_object = CAST(value);
     GotoIfNot(IsJSArray(heap_object), fail);
     return UncheckedCast<JSArray>(heap_object);
+  }
+
+  TNode<JSDataView> TaggedToJSDataView(TNode<Object> value, Label* fail) {
+    GotoIf(TaggedIsSmi(value), fail);
+    TNode<HeapObject> heap_object = CAST(value);
+    GotoIfNot(IsJSDataView(heap_object), fail);
+    return UncheckedCast<JSDataView>(heap_object);
   }
 
   TNode<JSReceiver> TaggedToCallable(TNode<Object> value, Label* fail) {
@@ -598,6 +610,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<Smi> LoadWeakFixedArrayLength(TNode<WeakFixedArray> array);
   TNode<IntPtrT> LoadAndUntagWeakFixedArrayLength(
       SloppyTNode<WeakFixedArray> array);
+  // Load the length of a JSTypedArray instance.
+  TNode<Smi> LoadTypedArrayLength(TNode<JSTypedArray> typed_array);
   // Load the bit field of a Map.
   TNode<Int32T> LoadMapBitField(SloppyTNode<Map> map);
   // Load bit field 2 of a map.
@@ -774,9 +788,9 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   }
 
   // Load an array element from a FixedDoubleArray.
-  Node* LoadFixedDoubleArrayElement(
-      Node* object, Node* index, MachineType machine_type,
-      int additional_offset = 0,
+  TNode<Float64T> LoadFixedDoubleArrayElement(
+      SloppyTNode<FixedDoubleArray> object, Node* index,
+      MachineType machine_type, int additional_offset = 0,
       ParameterMode parameter_mode = INTPTR_PARAMETERS,
       Label* if_hole = nullptr);
 
@@ -793,8 +807,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   // Load Float64 value by |base| + |offset| address. If the value is a double
   // hole then jump to |if_hole|. If |machine_type| is None then only the hole
   // check is generated.
-  Node* LoadDoubleWithHoleCheck(
-      Node* base, Node* offset, Label* if_hole,
+  TNode<Float64T> LoadDoubleWithHoleCheck(
+      SloppyTNode<Object> base, SloppyTNode<IntPtrT> offset, Label* if_hole,
       MachineType machine_type = MachineType::Float64());
   TNode<RawPtrT> LoadFixedTypedArrayBackingStore(
       TNode<FixedTypedArrayBase> typed_array);
@@ -1404,6 +1418,7 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
   TNode<BoolT> IsHeapNumber(SloppyTNode<HeapObject> object);
   TNode<BoolT> IsIndirectStringInstanceType(SloppyTNode<Int32T> instance_type);
   TNode<BoolT> IsJSArrayBuffer(SloppyTNode<HeapObject> object);
+  TNode<BoolT> IsJSDataView(TNode<HeapObject> object);
   TNode<BoolT> IsJSArrayInstanceType(SloppyTNode<Int32T> instance_type);
   TNode<BoolT> IsJSArrayMap(SloppyTNode<Map> map);
   TNode<BoolT> IsJSArray(SloppyTNode<HeapObject> object);
@@ -2283,6 +2298,8 @@ class V8_EXPORT_PRIVATE CodeStubAssembler : public compiler::CodeAssembler {
 
   // TypedArray/ArrayBuffer helpers
   Node* IsDetachedBuffer(Node* buffer);
+  TNode<JSArrayBuffer> LoadArrayBufferViewBuffer(
+      TNode<JSArrayBufferView> array_buffer_view);
 
   TNode<IntPtrT> ElementOffsetFromIndex(Node* index, ElementsKind kind,
                                         ParameterMode mode, int base_size = 0);

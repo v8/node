@@ -1,0 +1,167 @@
+diff --git a/include/v8.h b/include/v8.h
+index 31407fa083..3b4e68e7a0 100644
+--- a/include/v8.h
++++ b/include/v8.h
+@@ -1576,6 +1576,9 @@ class V8_EXPORT ScriptCompiler {
+    * This will return nullptr if the script cannot be serialized. The
+    * CachedData returned by this function should be owned by the caller.
+    */
++  static CachedData* CreateCodeCache(Local<UnboundScript> unbound_script);
++
++  // Deprecated.
+   static CachedData* CreateCodeCache(Local<UnboundScript> unbound_script,
+                                      Local<String> source);
+
+diff --git a/src/api.cc b/src/api.cc
+index f5be62058a..9b981c844b 100644
+--- a/src/api.cc
++++ b/src/api.cc
+@@ -2600,6 +2600,11 @@ uint32_t ScriptCompiler::CachedDataVersionTag() {
+
+ ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
+     Local<UnboundScript> unbound_script, Local<String> source) {
++  return CreateCodeCache(unbound_script);
++}
++
++ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
++    Local<UnboundScript> unbound_script) {
+   i::Handle<i::SharedFunctionInfo> shared =
+       i::Handle<i::SharedFunctionInfo>::cast(
+           Utils::OpenHandle(*unbound_script));
+@@ -2623,7 +2628,7 @@ ScriptCompiler::CachedData* ScriptCompiler::CreateCodeCache(
+   if (isolate->debug()->is_loaded()) return nullptr;
+
+   i::ScriptData* script_data =
+-      i::CodeSerializer::Serialize(isolate, shared, Utils::OpenHandle(*source));
++      i::CodeSerializer::Serialize(isolate, shared);
+   CachedData* result = new CachedData(
+       script_data->data(), script_data->length(), CachedData::BufferOwned);
+   script_data->ReleaseDataOwnership();
+diff --git a/src/d8.cc b/src/d8.cc
+index 7399af9995..f9b3f9daa5 100644
+--- a/src/d8.cc
++++ b/src/d8.cc
+@@ -639,7 +639,7 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
+         ShellOptions::CodeCacheOptions::kProduceCache) {
+       // Serialize and store it in memory for the next execution.
+       ScriptCompiler::CachedData* cached_data =
+-          ScriptCompiler::CreateCodeCache(script->GetUnboundScript(), source);
++          ScriptCompiler::CreateCodeCache(script->GetUnboundScript());
+       StoreInCodeCache(isolate, source, cached_data);
+       delete cached_data;
+     }
+@@ -648,7 +648,7 @@ bool Shell::ExecuteString(Isolate* isolate, Local<String> source,
+         ShellOptions::CodeCacheOptions::kProduceCacheAfterExecute) {
+       // Serialize and store it in memory for the next execution.
+       ScriptCompiler::CachedData* cached_data =
+-          ScriptCompiler::CreateCodeCache(script->GetUnboundScript(), source);
++          ScriptCompiler::CreateCodeCache(script->GetUnboundScript());
+       StoreInCodeCache(isolate, source, cached_data);
+       delete cached_data;
+     }
+diff --git a/src/snapshot/code-serializer.cc b/src/snapshot/code-serializer.cc
+index 8126e9ee2c..ac96630411 100644
+--- a/src/snapshot/code-serializer.cc
++++ b/src/snapshot/code-serializer.cc
+@@ -34,18 +34,19 @@ ScriptData::ScriptData(const byte* data, int length)
+ }
+
+ ScriptData* CodeSerializer::Serialize(Isolate* isolate,
+-                                      Handle<SharedFunctionInfo> info,
+-                                      Handle<String> source) {
++                                      Handle<SharedFunctionInfo> info) {
+   base::ElapsedTimer timer;
+   if (FLAG_profile_deserialization) timer.Start();
++
++  Handle<Script> script(Script::cast(info->script()), isolate);
+   if (FLAG_trace_serializer) {
+     PrintF("[Serializing from");
+-    Object* script = info->script();
+-    if (script->IsScript()) Script::cast(script)->name()->ShortPrint();
++    script->name()->ShortPrint();
+     PrintF("]\n");
+   }
+
+   // Serialize code object.
++  Handle<String> source(String::cast(script->source()), isolate);
+   CodeSerializer cs(isolate, SerializedCodeData::SourceHash(source));
+   DisallowHeapAllocation no_gc;
+   cs.reference_map()->AddAttachedReference(*source);
+diff --git a/src/snapshot/code-serializer.h b/src/snapshot/code-serializer.h
+index 8dd5131eb1..043b7c3598 100644
+--- a/src/snapshot/code-serializer.h
++++ b/src/snapshot/code-serializer.h
+@@ -46,8 +46,7 @@ class ScriptData {
+ class CodeSerializer : public Serializer<> {
+  public:
+   static ScriptData* Serialize(Isolate* isolate,
+-                               Handle<SharedFunctionInfo> info,
+-                               Handle<String> source);
++                               Handle<SharedFunctionInfo> info);
+
+   ScriptData* Serialize(Handle<HeapObject> obj);
+
+diff --git a/test/cctest/test-api.cc b/test/cctest/test-api.cc
+index 5d4c260752..bf3377d1e9 100644
+--- a/test/cctest/test-api.cc
++++ b/test/cctest/test-api.cc
+@@ -25266,8 +25266,7 @@ TEST(CodeCache) {
+         v8::ScriptCompiler::kNoCompileOptions;
+     v8::Local<v8::Script> script =
+         v8::ScriptCompiler::Compile(context, &source, option).ToLocalChecked();
+-    cache = v8::ScriptCompiler::CreateCodeCache(script->GetUnboundScript(),
+-                                                source_string);
++    cache = v8::ScriptCompiler::CreateCodeCache(script->GetUnboundScript());
+   }
+   isolate1->Dispose();
+
+diff --git a/test/cctest/test-serialize.cc b/test/cctest/test-serialize.cc
+index 11a50fa54c..a2832e47b1 100644
+--- a/test/cctest/test-serialize.cc
++++ b/test/cctest/test-serialize.cc
+@@ -1244,8 +1244,7 @@ static Handle<SharedFunctionInfo> CompileScriptAndProduceCache(
+           NOT_NATIVES_CODE)
+           .ToHandleChecked();
+   std::unique_ptr<ScriptCompiler::CachedData> cached_data(
+-      ScriptCompiler::CreateCodeCache(ToApiHandle<UnboundScript>(sfi),
+-                                      Utils::ToLocal(source)));
++      ScriptCompiler::CreateCodeCache(ToApiHandle<UnboundScript>(sfi)));
+   uint8_t* buffer = NewArray<uint8_t>(cached_data->length);
+   MemCopy(buffer, cached_data->data, cached_data->length);
+   *script_data = new i::ScriptData(buffer, cached_data->length);
+@@ -1899,7 +1898,7 @@ v8::ScriptCompiler::CachedData* CompileRunAndProduceCache(
+             .ToLocalChecked();
+
+     if (cacheType != CodeCacheType::kAfterExecute) {
+-      cache = ScriptCompiler::CreateCodeCache(script, source_str);
++      cache = ScriptCompiler::CreateCodeCache(script);
+     }
+
+     v8::Local<v8::Value> result = script->BindToCurrentContext()
+@@ -1911,7 +1910,7 @@ v8::ScriptCompiler::CachedData* CompileRunAndProduceCache(
+               .FromJust());
+
+     if (cacheType == CodeCacheType::kAfterExecute) {
+-      cache = ScriptCompiler::CreateCodeCache(script, source_str);
++      cache = ScriptCompiler::CreateCodeCache(script);
+     }
+     CHECK(cache);
+   }
+@@ -2157,7 +2156,7 @@ TEST(CodeSerializerWithHarmonyScoping) {
+         v8::ScriptCompiler::CompileUnboundScript(
+             isolate1, &source, v8::ScriptCompiler::kNoCompileOptions)
+             .ToLocalChecked();
+-    cache = v8::ScriptCompiler::CreateCodeCache(script, source_str);
++    cache = v8::ScriptCompiler::CreateCodeCache(script);
+     CHECK(cache);
+
+     v8::Local<v8::Value> result = script->BindToCurrentContext()
+@@ -2221,7 +2220,7 @@ TEST(Regress503552) {
+
+   heap::SimulateIncrementalMarking(isolate->heap());
+
+-  script_data = CodeSerializer::Serialize(isolate, shared, source);
++  script_data = CodeSerializer::Serialize(isolate, shared);
+   delete script_data;
+ }
+

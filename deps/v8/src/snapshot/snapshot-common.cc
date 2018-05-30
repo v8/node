@@ -7,6 +7,7 @@
 #include "src/snapshot/snapshot.h"
 
 #include "src/api.h"
+#include "src/assembler-inl.h"
 #include "src/base/platform/platform.h"
 #include "src/callable.h"
 #include "src/interface-descriptors.h"
@@ -114,7 +115,8 @@ Code* Snapshot::DeserializeBuiltin(Isolate* isolate, int builtin_id) {
            Builtins::name(builtin_id), bytes, ms);
   }
 
-  if (isolate->logger()->is_logging_code_events() || isolate->is_profiling()) {
+  if (isolate->logger()->is_listening_to_code_events() ||
+      isolate->is_profiling()) {
     isolate->logger()->LogCodeObject(code);
   }
 
@@ -195,7 +197,8 @@ Code* Snapshot::DeserializeHandler(Isolate* isolate,
            bytes, ms);
   }
 
-  if (isolate->logger()->is_logging_code_events() || isolate->is_profiling()) {
+  if (isolate->logger()->is_listening_to_code_events() ||
+      isolate->is_profiling()) {
     isolate->logger()->LogBytecodeHandler(bytecode, operand_scale, code);
   }
 
@@ -325,6 +328,42 @@ bool BuiltinAliasesOffHeapTrampolineRegister(Isolate* isolate, Code* code) {
 
   return false;
 }
+
+void FinalizeEmbeddedCodeTargets(Isolate* isolate, EmbeddedData* blob) {
+  static const int kRelocMask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET);
+
+  for (int i = 0; i < Builtins::builtin_count; i++) {
+    if (!Builtins::IsIsolateIndependent(i)) continue;
+
+    Code* code = isolate->builtins()->builtin(i);
+    RelocIterator on_heap_it(code, kRelocMask);
+    RelocIterator off_heap_it(blob, code, kRelocMask);
+
+#ifdef V8_TARGET_ARCH_X64
+    while (!on_heap_it.done()) {
+      DCHECK(!off_heap_it.done());
+
+      RelocInfo* rinfo = on_heap_it.rinfo();
+      DCHECK(RelocInfo::IsCodeTarget(rinfo->rmode()));
+      Code* target = Code::GetCodeFromTargetAddress(rinfo->target_address());
+      CHECK(Builtins::IsEmbeddedBuiltin(target));
+
+      off_heap_it.rinfo()->set_target_address(
+          blob->InstructionStartOfBuiltin(target->builtin_index()));
+
+      on_heap_it.next();
+      off_heap_it.next();
+    }
+    DCHECK(off_heap_it.done());
+#else
+    // Architectures other than x64 do not use pc-relative calls and thus must
+    // not contain embedded code targets. Instead, we use an indirection through
+    // the root register.
+    CHECK(on_heap_it.done());
+    CHECK(off_heap_it.done());
+#endif  // V8_TARGET_ARCH_X64
+  }
+}
 }  // namespace
 
 // static
@@ -345,7 +384,7 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
 
       // Sanity-check that the given builtin is isolate-independent and does not
       // use the trampoline register in its calling convention.
-      if (!code->IsProcessIndependent()) {
+      if (!code->IsProcessIndependent(isolate)) {
         saw_unsafe_builtin = true;
         fprintf(stderr, "%s is not isolate-independent.\n", Builtins::name(i));
       }
@@ -398,6 +437,9 @@ EmbeddedData EmbeddedData::FromIsolate(Isolate* isolate) {
   }
 
   EmbeddedData d(blob, blob_size);
+
+  // Fix up call targets that point to other embedded builtins.
+  FinalizeEmbeddedCodeTargets(isolate, &d);
 
   // Hash the blob and store the result.
   STATIC_ASSERT(HashSize() == kSizetSize);

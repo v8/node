@@ -20,7 +20,10 @@
 #include "src/compiler/simplified-operator.h"
 #include "src/compiler/state-values-utils.h"
 #include "src/objects-inl.h"
+#include "src/objects/arguments.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-promise.h"
+#include "src/objects/js-regexp-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -499,14 +502,19 @@ Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
 
     // Allocate a register file.
     DCHECK(js_function->shared()->HasBytecodeArray());
-    int size = js_function->shared()->GetBytecodeArray()->register_count();
+    Handle<BytecodeArray> bytecode_array(
+        js_function->shared()->GetBytecodeArray());
+    int parameter_count_no_receiver = bytecode_array->parameter_count() - 1;
+    DCHECK_EQ(parameter_count_no_receiver,
+              js_function->shared()->internal_formal_parameter_count());
+    int size = parameter_count_no_receiver + bytecode_array->register_count();
     AllocationBuilder ab(jsgraph(), effect, control);
     ab.AllocateArray(size, factory()->fixed_array_map());
     for (int i = 0; i < size; ++i) {
       ab.Store(AccessBuilder::ForFixedArraySlot(i),
                jsgraph()->UndefinedConstant());
     }
-    Node* register_file = effect = ab.Finish();
+    Node* parameters_and_registers = effect = ab.Finish();
 
     // Emit code to allocate the JS[Async]GeneratorObject instance.
     AllocationBuilder a(jsgraph(), effect, control);
@@ -524,7 +532,8 @@ Reduction JSCreateLowering::ReduceJSCreateGeneratorObject(Node* node) {
             jsgraph()->Constant(JSGeneratorObject::kNext));
     a.Store(AccessBuilder::ForJSGeneratorObjectContinuation(),
             jsgraph()->Constant(JSGeneratorObject::kGeneratorExecuting));
-    a.Store(AccessBuilder::ForJSGeneratorObjectRegisterFile(), register_file);
+    a.Store(AccessBuilder::ForJSGeneratorObjectParametersAndRegisters(),
+            parameters_and_registers);
 
     if (initial_map->instance_type() == JS_ASYNC_GENERATOR_OBJECT_TYPE) {
       a.Store(AccessBuilder::ForJSAsyncGeneratorObjectQueue(), undefined);
@@ -718,35 +727,36 @@ Reduction JSCreateLowering::ReduceNewArrayToStubCall(
           : Operator::kNoDeopt | Operator::kNoWrite;
 
   if (arity == 0) {
-    ArrayNoArgumentConstructorStub stub(isolate(), elements_kind,
-                                        override_mode);
+    Callable callable = CodeFactory::ArrayNoArgumentConstructor(
+        isolate(), elements_kind, override_mode);
     auto call_descriptor = Linkage::GetStubCallDescriptor(
-        isolate(), graph()->zone(), stub.GetCallInterfaceDescriptor(),
-        arity + 1, CallDescriptor::kNeedsFrameState, properties);
-    node->ReplaceInput(0, jsgraph()->HeapConstant(stub.GetCode()));
+        isolate(), graph()->zone(), callable.descriptor(), arity + 1,
+        CallDescriptor::kNeedsFrameState, properties);
+    node->ReplaceInput(0, jsgraph()->HeapConstant(callable.code()));
     node->InsertInput(graph()->zone(), 2, type_info);
     node->InsertInput(graph()->zone(), 3, jsgraph()->Constant(arity));
     node->InsertInput(graph()->zone(), 4, jsgraph()->UndefinedConstant());
     NodeProperties::ChangeOp(node, common()->Call(call_descriptor));
   } else if (arity == 1) {
     // Require elements kind to "go holey".
-    ArraySingleArgumentConstructorStub stub(
+    Callable callable = CodeFactory::ArraySingleArgumentConstructor(
         isolate(), GetHoleyElementsKind(elements_kind), override_mode);
     auto call_descriptor = Linkage::GetStubCallDescriptor(
-        isolate(), graph()->zone(), stub.GetCallInterfaceDescriptor(),
-        arity + 1, CallDescriptor::kNeedsFrameState, properties);
-    node->ReplaceInput(0, jsgraph()->HeapConstant(stub.GetCode()));
+        isolate(), graph()->zone(), callable.descriptor(), arity + 1,
+        CallDescriptor::kNeedsFrameState, properties);
+    node->ReplaceInput(0, jsgraph()->HeapConstant(callable.code()));
     node->InsertInput(graph()->zone(), 2, type_info);
     node->InsertInput(graph()->zone(), 3, jsgraph()->Constant(arity));
     node->InsertInput(graph()->zone(), 4, jsgraph()->UndefinedConstant());
     NodeProperties::ChangeOp(node, common()->Call(call_descriptor));
   } else {
     DCHECK_GT(arity, 1);
-    ArrayNArgumentsConstructorStub stub(isolate());
+    Handle<Code> code = BUILTIN_CODE(isolate(), ArrayNArgumentsConstructor);
     auto call_descriptor = Linkage::GetStubCallDescriptor(
-        isolate(), graph()->zone(), stub.GetCallInterfaceDescriptor(),
-        arity + 1, CallDescriptor::kNeedsFrameState);
-    node->ReplaceInput(0, jsgraph()->HeapConstant(stub.GetCode()));
+        isolate(), graph()->zone(),
+        ArrayNArgumentsConstructorDescriptor(isolate()), arity + 1,
+        CallDescriptor::kNeedsFrameState);
+    node->ReplaceInput(0, jsgraph()->HeapConstant(code));
     node->InsertInput(graph()->zone(), 2, type_info);
     node->InsertInput(graph()->zone(), 3, jsgraph()->Constant(arity));
     node->InsertInput(graph()->zone(), 4, jsgraph()->UndefinedConstant());
@@ -764,9 +774,10 @@ Reduction JSCreateLowering::ReduceJSCreateArray(Node* node) {
   Handle<JSFunction> constructor(native_context()->array_function(), isolate());
   Node* target = NodeProperties::GetValueInput(node, 0);
   Node* new_target = NodeProperties::GetValueInput(node, 1);
-  Type new_target_type = (target == new_target)
-                             ? Type::HeapConstant(constructor, zone())
-                             : NodeProperties::GetType(new_target);
+  Type new_target_type =
+      (target == new_target)
+          ? Type::HeapConstant(isolate(), constructor, zone())
+          : NodeProperties::GetType(new_target);
 
   // Extract original constructor function.
   if (new_target_type.IsHeapConstant() &&
@@ -1778,7 +1789,7 @@ Node* JSCreateLowering::AllocateFastLiteral(
   // Actually allocate and initialize the object.
   AllocationBuilder builder(jsgraph(), effect, control);
   builder.Allocate(boilerplate_map->instance_size(), pretenure,
-                   Type::For(boilerplate_map));
+                   Type::For(isolate(), boilerplate_map));
   builder.Store(AccessBuilder::ForMap(), boilerplate_map);
   builder.Store(AccessBuilder::ForJSObjectPropertiesOrHash(), properties);
   builder.Store(AccessBuilder::ForJSObjectElements(), elements);
@@ -1884,7 +1895,7 @@ Node* JSCreateLowering::AllocateLiteralRegExp(Node* effect, Node* control,
       JSRegExp::kSize + JSRegExp::kInObjectFieldCount * kPointerSize;
 
   AllocationBuilder builder(jsgraph(), effect, control);
-  builder.Allocate(size, pretenure, Type::For(boilerplate_map));
+  builder.Allocate(size, pretenure, Type::For(isolate(), boilerplate_map));
   builder.Store(AccessBuilder::ForMap(), boilerplate_map);
   builder.Store(AccessBuilder::ForJSObjectPropertiesOrHash(),
                 handle(boilerplate->raw_properties_or_hash(), isolate()));

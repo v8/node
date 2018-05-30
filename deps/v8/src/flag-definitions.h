@@ -208,11 +208,10 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
 // Update bootstrapper.cc whenever adding a new feature flag.
 
 // Features that are still work in progress (behind individual flags).
-#define HARMONY_INPROGRESS_BASE(V)                                    \
-  V(harmony_do_expressions, "harmony do-expressions")                 \
-  V(harmony_class_fields, "harmony fields in class literals")         \
-  V(harmony_static_fields, "harmony static fields in class literals") \
-  V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")
+#define HARMONY_INPROGRESS_BASE(V)                            \
+  V(harmony_do_expressions, "harmony do-expressions")         \
+  V(harmony_class_fields, "harmony fields in class literals") \
+  V(harmony_static_fields, "harmony static fields in class literals")
 
 #ifdef V8_INTL_SUPPORT
 #define HARMONY_INPROGRESS(V) \
@@ -241,7 +240,8 @@ DEFINE_IMPLICATION(harmony_class_fields, harmony_private_fields)
   V(harmony_import_meta, "harmony import.meta property")                      \
   V(harmony_bigint, "harmony arbitrary precision integers")                   \
   V(harmony_dynamic_import, "harmony dynamic import")                         \
-  V(harmony_array_prototype_values, "harmony Array.prototype.values")
+  V(harmony_array_prototype_values, "harmony Array.prototype.values")         \
+  V(harmony_array_flat, "harmony Array.prototype.{flat,flatMap}")
 
 // Once a shipping feature has proved stable in the wild, it will be dropped
 // from HARMONY_SHIPPING, all occurrences of the FLAG_ variable are removed,
@@ -559,7 +559,6 @@ DEFINE_BOOL(liftoff, false,
             "enable liftoff, the experimental wasm baseline compiler")
 DEFINE_DEBUG_BOOL(trace_liftoff, false,
                   "trace liftoff, the wasm baseline compiler")
-DEFINE_UINT(skip_compiling_wasm_funcs, 0, "start compiling at function N")
 DEFINE_DEBUG_BOOL(wasm_break_on_decoder_error, false,
                   "debug break when wasm decoder encounters an error")
 DEFINE_BOOL(wasm_trace_memory, false,

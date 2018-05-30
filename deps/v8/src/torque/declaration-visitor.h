@@ -60,6 +60,7 @@ class DeclarationVisitor : public FileVisitor {
   }
   void Visit(FieldAccessExpression* expr) { Visit(expr->object); }
   void Visit(CastExpression* expr) { Visit(expr->value); }
+  void Visit(UnsafeCastExpression* expr) { Visit(expr->value); }
   void Visit(ConvertExpression* expr) { Visit(expr->value); }
   void Visit(BlockStatement* expr) {
     Declarations::NodeScopeActivator scope(declarations(), expr);
@@ -85,8 +86,9 @@ class DeclarationVisitor : public FileVisitor {
   }
 
   void Visit(TypeAliasDeclaration* decl) {
-    declarations()->DeclareType(decl->name,
-                                declarations()->GetType(decl->type));
+    const Type* type = declarations()->GetType(decl->type);
+    type->AddAlias(decl->name);
+    declarations()->DeclareType(decl->name, type);
   }
 
   Builtin* BuiltinDeclarationCommon(BuiltinDeclaration* decl, bool external,
@@ -115,9 +117,11 @@ class DeclarationVisitor : public FileVisitor {
 
   void Visit(DebugStatement* stmt) {}
   void Visit(AssertStatement* stmt) {
+    bool do_check = !stmt->debug_only;
 #if defined(DEBUG)
-    DeclareExpressionForBranch(stmt->expression);
+    do_check = true;
 #endif
+    if (do_check) DeclareExpressionForBranch(stmt->expression);
   }
 
   void Visit(VarDeclarationStatement* stmt) {

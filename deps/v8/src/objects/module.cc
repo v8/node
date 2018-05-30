@@ -12,6 +12,7 @@
 #include "src/ast/modules.h"
 #include "src/objects-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/module-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -769,7 +770,7 @@ MaybeHandle<Object> Module::Evaluate(Handle<Module> module,
       Object);
   DCHECK(static_cast<JSIteratorResult*>(JSObject::cast(*result))
              ->done()
-             ->BooleanValue());
+             ->BooleanValue(isolate));
 
   CHECK(MaybeTransitionComponent(module, stack, kEvaluated));
   return handle(

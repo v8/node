@@ -22,6 +22,7 @@
 #include "src/macro-assembler.h"
 #include "src/objects/api-callbacks.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/module-inl.h"
 #include "src/prototype.h"
 #include "src/runtime-profiler.h"
 #include "src/runtime/runtime-utils.h"
@@ -720,21 +721,7 @@ StubCache* IC::stub_cache() {
 
 void IC::UpdateMegamorphicCache(Handle<Map> map, Handle<Name> name,
                                 const MaybeObjectHandle& handler) {
-  HeapObject* heap_object;
-  if (handler->ToWeakHeapObject(&heap_object)) {
-    // TODO(marja): remove this conversion once megamorphic stub cache supports
-    // weak handlers.
-    Handle<Object> weak_cell;
-    if (heap_object->IsMap()) {
-      weak_cell = Map::WeakCellForMap(handle(Map::cast(heap_object)));
-    } else {
-      weak_cell = isolate_->factory()->NewWeakCell(
-          handle(PropertyCell::cast(heap_object)));
-    }
-    stub_cache()->Set(*name, *map, *weak_cell);
-  } else {
-    stub_cache()->Set(*name, *map, handler->ToObject());
-  }
+  stub_cache()->Set(*name, *map, *handler);
 }
 
 void IC::TraceHandlerCacheHitStats(LookupIterator* lookup) {
@@ -1361,7 +1348,7 @@ MaybeHandle<Object> StoreGlobalIC::Store(Handle<Name> name,
   if (ScriptContextTable::Lookup(script_contexts, str_name, &lookup_result)) {
     Handle<Context> script_context = ScriptContextTable::GetContext(
         script_contexts, lookup_result.context_index);
-    if (lookup_result.mode == CONST) {
+    if (lookup_result.mode == VariableMode::kConst) {
       return TypeError(MessageTemplate::kConstAssign, global, name);
     }
 
@@ -1653,10 +1640,12 @@ MaybeObjectHandle StoreIC::ComputeHandler(LookupIterator* lookup) {
         int descriptor = lookup->GetFieldDescriptorIndex();
         FieldIndex index = lookup->GetFieldIndex();
         PropertyConstness constness = lookup->constness();
-        if (constness == kConst && IsStoreOwnICKind(nexus()->kind())) {
+        if (constness == PropertyConstness::kConst &&
+            IsStoreOwnICKind(nexus()->kind())) {
           // StoreOwnICs are used for initializing object literals therefore
-          // we must store the value unconditionally even to kConst fields.
-          constness = kMutable;
+          // we must store the value unconditionally even to
+          // VariableMode::kConst fields.
+          constness = PropertyConstness::kMutable;
         }
         return MaybeObjectHandle(StoreHandler::StoreField(
             isolate(), descriptor, index, constness, lookup->representation()));
@@ -2349,7 +2338,7 @@ RUNTIME_FUNCTION(Runtime_StoreGlobalIC_Slow) {
   if (ScriptContextTable::Lookup(script_contexts, name, &lookup_result)) {
     Handle<Context> script_context = ScriptContextTable::GetContext(
         script_contexts, lookup_result.context_index);
-    if (lookup_result.mode == CONST) {
+    if (lookup_result.mode == VariableMode::kConst) {
       THROW_NEW_ERROR_RETURN_FAILURE(
           isolate, NewTypeError(MessageTemplate::kConstAssign, global, name));
     }

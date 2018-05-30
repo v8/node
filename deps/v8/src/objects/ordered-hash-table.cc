@@ -6,6 +6,7 @@
 
 #include "src/isolate.h"
 #include "src/objects-inl.h"
+#include "src/objects/js-collection-inl.h"
 #include "src/objects/ordered-hash-table-inl.h"
 
 namespace v8 {
@@ -138,8 +139,7 @@ Handle<FixedArray> OrderedHashSet::ConvertToKeysArray(
     }
     result->set(i, key);
   }
-  result->Shrink(length);
-  return result;
+  return FixedArray::ShrinkOrEmpty(result, length);
 }
 
 HeapObject* OrderedHashSet::GetEmpty(Isolate* isolate) {

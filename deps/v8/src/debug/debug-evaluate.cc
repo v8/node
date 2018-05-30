@@ -354,6 +354,17 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(PrepareElementsForSort)              \
   V(TrySliceSimpleNonFastElements)       \
   V(TypedArrayGetBuffer)                 \
+  /* DataView */                         \
+  V(DataViewGetInt8)                     \
+  V(DataViewGetUint8)                    \
+  V(DataViewGetInt16)                    \
+  V(DataViewGetUint16)                   \
+  V(DataViewGetInt32)                    \
+  V(DataViewGetUint32)                   \
+  V(DataViewGetFloat32)                  \
+  V(DataViewGetFloat64)                  \
+  V(DataViewGetBigInt64)                 \
+  V(DataViewGetBigUint64)                \
   /* Errors */                           \
   V(NewTypeError)                        \
   V(ReThrow)                             \
@@ -410,6 +421,7 @@ bool IntrinsicHasNoSideEffect(Runtime::FunctionId id) {
   V(ThrowRangeError)                     \
   V(ThrowTypeError)                      \
   V(ToName)                              \
+  V(TransitionElementsKind)              \
   /* Misc. */                            \
   V(Call)                                \
   V(CompleteInobjectSlackTrackingForMap) \
@@ -620,6 +632,8 @@ SharedFunctionInfo::SideEffectState BuiltinGetSideEffectState(
     case Builtins::kArrayPrototypeEntries:
     case Builtins::kArrayPrototypeFind:
     case Builtins::kArrayPrototypeFindIndex:
+    case Builtins::kArrayPrototypeFlat:
+    case Builtins::kArrayPrototypeFlatMap:
     case Builtins::kArrayPrototypeKeys:
     case Builtins::kArrayPrototypeSlice:
     case Builtins::kArrayForEach:

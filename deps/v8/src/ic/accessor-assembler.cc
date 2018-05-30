@@ -11,6 +11,7 @@
 #include "src/ic/ic.h"
 #include "src/ic/stub-cache.h"
 #include "src/objects-inl.h"
+#include "src/objects/module.h"
 
 namespace v8 {
 namespace internal {
@@ -25,7 +26,7 @@ using SloppyTNode = compiler::SloppyTNode<T>;
 //////////////////// Private helpers.
 
 // Loads dataX field from the DataHandler object.
-TNode<Object> AccessorAssembler::LoadHandlerDataField(
+TNode<MaybeObject> AccessorAssembler::LoadHandlerDataField(
     SloppyTNode<DataHandler> handler, int data_index) {
 #ifdef DEBUG
   TNode<Map> handler_map = LoadMap(handler);
@@ -57,7 +58,7 @@ TNode<Object> AccessorAssembler::LoadHandlerDataField(
   CSA_ASSERT(this, UintPtrGreaterThanOrEqual(
                        LoadMapInstanceSizeInWords(handler_map),
                        IntPtrConstant(minimum_size / kPointerSize)));
-  return LoadObjectField(handler, offset);
+  return LoadMaybeWeakObjectField(handler, offset);
 }
 
 TNode<MaybeObject> AccessorAssembler::TryMonomorphicCase(
@@ -475,8 +476,8 @@ void AccessorAssembler::HandleLoadICSmiHandlerCase(
     // the access check is enabled for this handler or not.
     TNode<Object> context_cell = Select<Object>(
         IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
-        [=] { return LoadHandlerDataField(handler, 3); },
-        [=] { return LoadHandlerDataField(handler, 2); });
+        [=] { return CAST(LoadHandlerDataField(handler, 3)); },
+        [=] { return CAST(LoadHandlerDataField(handler, 2)); });
 
     Node* context = LoadWeakCellValueUnchecked(CAST(context_cell));
     Node* foreign =
@@ -660,7 +661,7 @@ Node* AccessorAssembler::HandleProtoHandler(
 
       BIND(&if_do_access_check);
       {
-        Node* data2 = LoadHandlerDataField(handler, 2);
+        TNode<WeakCell> data2 = CAST(LoadHandlerDataField(handler, 2));
         Node* expected_native_context = LoadWeakCellValue(data2, miss);
         EmitAccessCheck(expected_native_context, p->context, p->receiver, &done,
                         miss);
@@ -721,7 +722,7 @@ void AccessorAssembler::HandleLoadICProtoHandler(
       },
       miss, ic_mode);
 
-  Node* maybe_holder_cell = LoadHandlerDataField(handler, 1);
+  TNode<Object> maybe_holder_cell = CAST(LoadHandlerDataField(handler, 1));
 
   Label load_from_cached_holder(this), done(this);
 
@@ -732,7 +733,7 @@ void AccessorAssembler::HandleLoadICProtoHandler(
     // For regular holders, having passed the receiver map check and the
     // validity cell check implies that |holder| is alive. However, for
     // global object receivers, the |maybe_holder_cell| may be cleared.
-    Node* holder = LoadWeakCellValue(maybe_holder_cell, miss);
+    Node* holder = LoadWeakCellValue(CAST(maybe_holder_cell), miss);
 
     var_holder->Bind(holder);
     Goto(&done);
@@ -1039,8 +1040,9 @@ void AccessorAssembler::OverwriteExistingFastDataProperty(
     if (FLAG_track_constant_fields && !do_transitioning_store) {
       // TODO(ishell): Taking the slow path is not necessary if new and old
       // values are identical.
-      GotoIf(Word32Equal(DecodeWord32<PropertyDetails::ConstnessField>(details),
-                         Int32Constant(kConst)),
+      GotoIf(Word32Equal(
+                 DecodeWord32<PropertyDetails::ConstnessField>(details),
+                 Int32Constant(static_cast<int32_t>(VariableMode::kConst))),
              slow);
     }
 
@@ -1219,9 +1221,10 @@ void AccessorAssembler::HandleStoreICProtoHandler(
 
       BIND(&if_transitioning_element_store);
       {
-        Node* transition_map_cell = LoadHandlerDataField(handler, 1);
-        Node* transition_map = LoadWeakCellValue(transition_map_cell, miss);
-        CSA_ASSERT(this, IsMap(transition_map));
+        TNode<MaybeObject> maybe_transition_map =
+            LoadHandlerDataField(handler, 1);
+        TNode<Map> transition_map =
+            CAST(ToWeakHeapObject(maybe_transition_map, miss));
 
         GotoIf(IsDeprecatedMap(transition_map), miss);
 
@@ -1261,7 +1264,7 @@ void AccessorAssembler::HandleStoreICProtoHandler(
     GotoIf(WordEqual(handler_kind, IntPtrConstant(StoreHandler::kNormal)),
            &if_add_normal);
 
-    Node* holder_cell = LoadHandlerDataField(handler, 1);
+    TNode<WeakCell> holder_cell = CAST(LoadHandlerDataField(handler, 1));
     Node* holder = LoadWeakCellValue(holder_cell, miss);
 
     GotoIf(WordEqual(handler_kind, IntPtrConstant(StoreHandler::kGlobalProxy)),
@@ -1320,8 +1323,8 @@ void AccessorAssembler::HandleStoreICProtoHandler(
       // the access check is enabled for this handler or not.
       TNode<Object> context_cell = Select<Object>(
           IsSetWord<LoadHandler::DoAccessCheckOnReceiverBits>(handler_word),
-          [=] { return LoadHandlerDataField(handler, 3); },
-          [=] { return LoadHandlerDataField(handler, 2); });
+          [=] { return CAST(LoadHandlerDataField(handler, 3)); },
+          [=] { return CAST(LoadHandlerDataField(handler, 2)); });
 
       Node* context = LoadWeakCellValueUnchecked(CAST(context_cell));
 
@@ -1808,8 +1811,7 @@ void AccessorAssembler::EmitElementLoad(
     GotoIf(IsDetachedBuffer(buffer), miss);
 
     // Bounds check.
-    Node* length =
-        SmiUntag(CAST(LoadObjectField(object, JSTypedArray::kLengthOffset)));
+    Node* length = SmiUntag(LoadTypedArrayLength(CAST(object)));
     GotoIfNot(UintPtrLessThan(intptr_index, length), out_of_bounds);
 
     Node* backing_store = LoadFixedTypedArrayBackingStore(CAST(elements));
@@ -2088,7 +2090,7 @@ void AccessorAssembler::GenericPropertyLoad(Node* receiver, Node* receiver_map,
   if (use_stub_cache == kUseStubCache) {
     BIND(&stub_cache);
     Comment("stub cache probe for fast property load");
-    VARIABLE(var_handler, MachineRepresentation::kTagged);
+    TVARIABLE(MaybeObject, var_handler);
     Label found_handler(this, &var_handler), stub_cache_miss(this);
     TryProbeStubCache(isolate()->load_stub_cache(), receiver, p->name,
                       &found_handler, &var_handler, &stub_cache_miss);
@@ -2237,12 +2239,10 @@ Node* AccessorAssembler::StubCacheSecondaryOffset(Node* name, Node* seed) {
   return ChangeUint32ToWord(Word32And(hash, Int32Constant(mask)));
 }
 
-void AccessorAssembler::TryProbeStubCacheTable(StubCache* stub_cache,
-                                               StubCacheTable table_id,
-                                               Node* entry_offset, Node* name,
-                                               Node* map, Label* if_handler,
-                                               Variable* var_handler,
-                                               Label* if_miss) {
+void AccessorAssembler::TryProbeStubCacheTable(
+    StubCache* stub_cache, StubCacheTable table_id, Node* entry_offset,
+    Node* name, Node* map, Label* if_handler,
+    TVariable<MaybeObject>* var_handler, Label* if_miss) {
   StubCache::Table table = static_cast<StubCache::Table>(table_id);
 #ifdef DEBUG
   if (FLAG_test_secondary_stub_cache && table == StubCache::kPrimary) {
@@ -2274,17 +2274,18 @@ void AccessorAssembler::TryProbeStubCacheTable(StubCache* stub_cache,
 
   DCHECK_EQ(kPointerSize, stub_cache->value_reference(table).address() -
                               stub_cache->key_reference(table).address());
-  Node* handler = Load(MachineType::TaggedPointer(), key_base,
-                       IntPtrAdd(entry_offset, IntPtrConstant(kPointerSize)));
+  TNode<MaybeObject> handler = ReinterpretCast<MaybeObject>(
+      Load(MachineType::TaggedPointer(), key_base,
+           IntPtrAdd(entry_offset, IntPtrConstant(kPointerSize))));
 
   // We found the handler.
-  var_handler->Bind(handler);
+  *var_handler = handler;
   Goto(if_handler);
 }
 
 void AccessorAssembler::TryProbeStubCache(StubCache* stub_cache, Node* receiver,
                                           Node* name, Label* if_handler,
-                                          Variable* var_handler,
+                                          TVariable<MaybeObject>* var_handler,
                                           Label* if_miss) {
   Label try_secondary(this), miss(this);
 
@@ -2421,7 +2422,7 @@ void AccessorAssembler::LoadIC(const LoadICParameters* p) {
 void AccessorAssembler::LoadIC_Noninlined(const LoadICParameters* p,
                                           Node* receiver_map,
                                           TNode<HeapObject> feedback,
-                                          Variable* var_handler,
+                                          TVariable<MaybeObject>* var_handler,
                                           Label* if_handler, Label* miss,
                                           ExitPoint* exit_point) {
   Label try_uninitialized(this, Label::kDeferred);
@@ -2842,26 +2843,7 @@ void AccessorAssembler::StoreIC(const StoreICParameters* p) {
               &try_uninitialized);
 
     TryProbeStubCache(isolate()->store_stub_cache(), p->receiver, p->name,
-                      &if_handler_from_stub_cache, &var_handler, &miss);
-  }
-  BIND(&if_handler_from_stub_cache);
-  {
-    // If the stub cache contains a WeakCell pointing to a Map, convert it to an
-    // in-place weak reference. TODO(marja): This well get simplified once more
-    // WeakCells are converted into in-place weak references.
-    Comment("StoreIC_if_handler_from_stub_cache");
-    GotoIf(TaggedIsSmi(var_handler.value()), &if_handler);
-
-    TNode<HeapObject> handler = CAST(var_handler.value());
-    GotoIfNot(IsWeakCell(handler), &if_handler);
-
-    TNode<HeapObject> value = CAST(LoadWeakCellValue(CAST(handler), &miss));
-    TNode<Map> value_map = LoadMap(value);
-    GotoIfNot(Word32Or(IsMetaMap(value_map), IsPropertyCellMap(value_map)),
-              &if_handler);
-
-    TNode<MaybeObject> weak_handler = MakeWeak(value);
-    HandleStoreICHandlerCase(p, weak_handler, &miss, ICMode::kNonGlobalIC);
+                      &if_handler, &var_handler, &miss);
   }
   BIND(&try_uninitialized);
   {
@@ -3097,9 +3079,10 @@ void AccessorAssembler::StoreInArrayLiteralIC(const StoreICParameters* p) {
 
       BIND(&if_transitioning_element_store);
       {
-        Node* transition_map_cell = LoadHandlerDataField(CAST(handler), 1);
-        Node* transition_map = LoadWeakCellValue(transition_map_cell, &miss);
-        CSA_ASSERT(this, IsMap(transition_map));
+        TNode<MaybeObject> maybe_transition_map =
+            LoadHandlerDataField(CAST(handler), 1);
+        TNode<Map> transition_map =
+            CAST(ToWeakHeapObject(maybe_transition_map, &miss));
         GotoIf(IsDeprecatedMap(transition_map), &miss);
         Node* code = LoadObjectField(handler, StoreHandler::kSmiHandlerOffset);
         CSA_ASSERT(this, IsCode(code));
@@ -3170,7 +3153,7 @@ void AccessorAssembler::GenerateLoadIC_Noninlined() {
   Node* context = Parameter(Descriptor::kContext);
 
   ExitPoint direct_exit(this);
-  VARIABLE(var_handler, MachineRepresentation::kTagged);
+  TVARIABLE(MaybeObject, var_handler);
   Label if_handler(this, &var_handler), miss(this, Label::kDeferred);
 
   Node* receiver_map = LoadReceiverMap(receiver);

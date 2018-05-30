@@ -6,9 +6,11 @@
 #define V8_PROFILER_PROFILE_GENERATOR_H_
 
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "include/v8-profiler.h"
@@ -72,12 +74,9 @@ class CodeEntry {
     return rare_data_ ? rare_data_->bailout_reason_ : kEmptyBailoutReason;
   }
 
-  void set_deopt_info(const char* deopt_reason, int deopt_id) {
-    DCHECK(!has_deopt_info());
-    RareData* rare_data = EnsureRareData();
-    rare_data->deopt_reason_ = deopt_reason;
-    rare_data->deopt_id_ = deopt_id;
-  }
+  void set_deopt_info(const char* deopt_reason, int deopt_id,
+                      std::vector<CpuProfileDeoptFrame> inlined_frames);
+
   CpuProfileDeoptInfo GetDeoptInfo();
   bool has_deopt_info() const {
     return rare_data_ && rare_data_->deopt_id_ != kNoDeoptimizationId;
@@ -108,14 +107,12 @@ class CodeEntry {
   const std::vector<std::unique_ptr<CodeEntry>>* GetInlineStack(
       int pc_offset) const;
 
-  void AddDeoptInlinedFrames(int deopt_id, std::vector<CpuProfileDeoptFrame>);
-  bool HasDeoptInlinedFramesFor(int deopt_id) const;
-
   Address instruction_start() const { return instruction_start_; }
   CodeEventListener::LogEventsAndTags tag() const {
     return TagField::decode(bit_field_);
   }
 
+  static const char* const kWasmResourceNamePrefix;
   static const char* const kEmptyResourceName;
   static const char* const kEmptyBailoutReason;
   static const char* const kNoDeoptReason;
@@ -143,8 +140,7 @@ class CodeEntry {
     int deopt_id_ = kNoDeoptimizationId;
     std::unordered_map<int, std::vector<std::unique_ptr<CodeEntry>>>
         inline_locations_;
-    std::unordered_map<int, std::vector<CpuProfileDeoptFrame>>
-        deopt_inlined_frames_;
+    std::vector<CpuProfileDeoptFrame> deopt_inlined_frames_;
   };
 
   RareData* EnsureRareData();
@@ -373,15 +369,27 @@ class CodeMap {
   void Print();
 
  private:
-  struct CodeEntryInfo {
+  struct CodeEntryMapInfo {
     unsigned index;
     unsigned size;
   };
 
-  void ClearCodesInRange(Address start, Address end);
+  union CodeEntrySlotInfo {
+    CodeEntry* entry;
+    unsigned next_free_slot;
+  };
 
-  std::deque<std::unique_ptr<CodeEntry>> code_entries_;
-  std::map<Address, CodeEntryInfo> code_map_;
+  static constexpr unsigned kNoFreeSlot = std::numeric_limits<unsigned>::max();
+
+  void ClearCodesInRange(Address start, Address end);
+  unsigned AddCodeEntry(Address start, CodeEntry*);
+  void DeleteCodeEntry(unsigned index);
+
+  CodeEntry* entry(unsigned index) { return code_entries_[index].entry; }
+
+  std::deque<CodeEntrySlotInfo> code_entries_;
+  std::map<Address, CodeEntryMapInfo> code_map_;
+  unsigned free_list_head_ = kNoFreeSlot;
 
   DISALLOW_COPY_AND_ASSIGN(CodeMap);
 };

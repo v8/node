@@ -1309,7 +1309,8 @@ class Object {
   // implementation of a JSObject's elements.
   inline bool HasValidElements();
 
-  bool BooleanValue();                                      // ECMA-262 9.2.
+  // ECMA-262 9.2.
+  bool BooleanValue(Isolate* isolate);
 
   // ES6 section 7.2.11 Abstract Relational Comparison
   V8_WARN_UNUSED_RESULT static Maybe<ComparisonResult> Compare(
@@ -1869,6 +1870,7 @@ class HeapObject: public Object {
 #ifdef VERIFY_HEAP
   inline void VerifyObjectField(int offset);
   inline void VerifySmiField(int offset);
+  inline void VerifyMaybeObjectField(int offset);
 
   // Verify a pointer is a valid HeapObject pointer that points to object
   // areas in the heap.
@@ -3273,8 +3275,8 @@ class JSGeneratorObject: public JSObject {
   // is suspended.
   int source_position() const;
 
-  // [register_file]: Saved interpreter register file.
-  DECL_ACCESSORS(register_file, FixedArray)
+  // [parameters_and_registers]: Saved interpreter register file.
+  DECL_ACCESSORS(parameters_and_registers, FixedArray)
 
   DECL_CAST(JSGeneratorObject)
 
@@ -3293,8 +3295,9 @@ class JSGeneratorObject: public JSObject {
   static const int kInputOrDebugPosOffset = kReceiverOffset + kPointerSize;
   static const int kResumeModeOffset = kInputOrDebugPosOffset + kPointerSize;
   static const int kContinuationOffset = kResumeModeOffset + kPointerSize;
-  static const int kRegisterFileOffset = kContinuationOffset + kPointerSize;
-  static const int kSize = kRegisterFileOffset + kPointerSize;
+  static const int kParametersAndRegistersOffset =
+      kContinuationOffset + kPointerSize;
+  static const int kSize = kParametersAndRegistersOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(JSGeneratorObject);

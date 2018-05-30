@@ -47,6 +47,10 @@
 #include "src/messages.h"
 #include "src/objects-inl.h"
 #include "src/objects/api-callbacks.h"
+#include "src/objects/js-collection-inl.h"
+#include "src/objects/js-promise-inl.h"
+#include "src/objects/js-regexp-inl.h"
+#include "src/objects/module-inl.h"
 #include "src/objects/ordered-hash-table-inl.h"
 #include "src/objects/templates.h"
 #include "src/parsing/parser.h"
@@ -2471,15 +2475,18 @@ MaybeLocal<Script> ScriptCompiler::Compile(Local<Context> context,
   return result->BindToCurrentContext();
 }
 
-MaybeLocal<Module> ScriptCompiler::CompileModule(Isolate* isolate,
-                                                 Source* source) {
+MaybeLocal<Module> ScriptCompiler::CompileModule(
+    Isolate* isolate, Source* source, CompileOptions options,
+    NoCacheReason no_cache_reason) {
+  CHECK(options == kNoCompileOptions || options == kConsumeCodeCache);
+
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
 
   Utils::ApiCheck(source->GetResourceOptions().IsModule(),
                   "v8::ScriptCompiler::CompileModule",
                   "Invalid ScriptOrigin: is_module must be true");
-  auto maybe = CompileUnboundInternal(isolate, source, kNoCompileOptions,
-                                      kNoCacheBecauseModule);
+  auto maybe =
+      CompileUnboundInternal(isolate, source, options, no_cache_reason);
   Local<UnboundScript> unbound;
   if (!maybe.ToLocal(&unbound)) return MaybeLocal<Module>();
 
@@ -3700,7 +3707,7 @@ MaybeLocal<Boolean> Value::ToBoolean(Local<Context> context) const {
   auto obj = Utils::OpenHandle(this);
   if (obj->IsBoolean()) return ToApiHandle<Boolean>(obj);
   auto isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
-  auto val = isolate->factory()->ToBoolean(obj->BooleanValue());
+  auto val = isolate->factory()->ToBoolean(obj->BooleanValue(isolate));
   return ToApiHandle<Boolean>(val);
 }
 
@@ -4014,12 +4021,17 @@ void v8::RegExp::CheckCast(v8::Value* that) {
 
 
 Maybe<bool> Value::BooleanValue(Local<Context> context) const {
-  return Just(Utils::OpenHandle(this)->BooleanValue());
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(context->GetIsolate());
+  return Just(Utils::OpenHandle(this)->BooleanValue(isolate));
 }
 
 
 bool Value::BooleanValue() const {
-  return Utils::OpenHandle(this)->BooleanValue();
+  auto obj = Utils::OpenHandle(this);
+  if (obj->IsSmi()) return *obj != i::Smi::kZero;
+  DCHECK(obj->IsHeapObject());
+  i::Isolate* isolate = i::Handle<i::HeapObject>::cast(obj)->GetIsolate();
+  return obj->BooleanValue(isolate);
 }
 
 
@@ -6399,10 +6411,12 @@ i::Object** GetSerializedDataFromFixedArray(i::Isolate* isolate,
     i::Object* object = list->get(int_index);
     if (!object->IsTheHole(isolate)) {
       list->set_the_hole(isolate, int_index);
-      // Shrink the list so that the last element is not the hole.
+      // Shrink the list so that the last element is not the hole (unless it's
+      // the first element, because we don't want to end up with a non-canonical
+      // empty FixedArray).
       int last = list->length() - 1;
       while (last >= 0 && list->is_the_hole(isolate, last)) last--;
-      list->Shrink(last + 1);
+      if (last != -1) list->Shrink(last + 1);
       return i::Handle<i::Object>(object, isolate).location();
     }
   }
@@ -6413,7 +6427,7 @@ i::Object** GetSerializedDataFromFixedArray(i::Isolate* isolate,
 i::Object** Context::GetDataFromSnapshotOnce(size_t index) {
   auto context = Utils::OpenHandle(this);
   i::Isolate* i_isolate = context->GetIsolate();
-  i::FixedArray* list = i::FixedArray::cast(context->serialized_objects());
+  i::FixedArray* list = context->serialized_objects();
   return GetSerializedDataFromFixedArray(i_isolate, list, index);
 }
 
@@ -7510,6 +7524,38 @@ MaybeLocal<WasmCompiledModule> WasmCompiledModule::Compile(Isolate* isolate,
       Utils::ToLocal(maybe_compiled.ToHandleChecked()));
 }
 
+// Resolves the result of streaming compilation.
+// TODO(ahaas): Refactor the streaming compilation API so that this class can
+// move to wasm-js.cc.
+class AsyncCompilationResolver : public i::wasm::CompilationResultResolver {
+ public:
+  AsyncCompilationResolver(Isolate* isolate, Handle<Promise> promise)
+      : promise_(
+            reinterpret_cast<i::Isolate*>(isolate)->global_handles()->Create(
+                *Utils::OpenHandle(*promise))) {}
+
+  ~AsyncCompilationResolver() {
+    i::GlobalHandles::Destroy(i::Handle<i::Object>::cast(promise_).location());
+  }
+
+  void OnCompilationSucceeded(i::Handle<i::WasmModuleObject> result) override {
+    i::MaybeHandle<i::Object> promise_result =
+        i::JSPromise::Resolve(promise_, result);
+    CHECK_EQ(promise_result.is_null(),
+             promise_->GetIsolate()->has_pending_exception());
+  }
+
+  void OnCompilationFailed(i::Handle<i::Object> error_reason) override {
+    i::MaybeHandle<i::Object> promise_result =
+        i::JSPromise::Reject(promise_, error_reason);
+    CHECK_EQ(promise_result.is_null(),
+             promise_->GetIsolate()->has_pending_exception());
+  }
+
+ private:
+  i::Handle<i::JSPromise> promise_;
+};
+
 WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
     Isolate* isolate)
     : isolate_(isolate) {
@@ -7518,10 +7564,10 @@ WasmModuleObjectBuilderStreaming::WasmModuleObjectBuilderStreaming(
   Local<Promise::Resolver> resolver = maybe_resolver.ToLocalChecked();
   promise_.Reset(isolate, resolver->GetPromise());
 
-  i::Handle<i::JSPromise> promise = Utils::OpenHandle(*GetPromise());
   i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
   streaming_decoder_ = i_isolate->wasm_engine()->StartStreamingCompilation(
-      i_isolate, handle(i_isolate->context()), promise);
+      i_isolate, handle(i_isolate->context()),
+      base::make_unique<AsyncCompilationResolver>(isolate, GetPromise()));
 }
 
 Local<Promise> WasmModuleObjectBuilderStreaming::GetPromise() {
@@ -8717,6 +8763,16 @@ void Isolate::MemoryPressureNotification(MemoryPressureLevel level) {
   isolate->allocator()->MemoryPressureNotification(level);
   isolate->compiler_dispatcher()->MemoryPressureNotification(level,
                                                              on_isolate_thread);
+}
+
+void Isolate::EnableMemorySavingsMode() {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->EnableMemorySavingsMode();
+}
+
+void Isolate::DisableMemorySavingsMode() {
+  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
+  isolate->DisableMemorySavingsMode();
 }
 
 void Isolate::SetRAILMode(RAILMode rail_mode) {
@@ -10109,6 +10165,70 @@ void CpuProfiler::SetIdle(bool is_idle) {
   isolate->SetIdle(is_idle);
 }
 
+uintptr_t CodeEvent::GetCodeStartAddress() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_start_address;
+}
+
+size_t CodeEvent::GetCodeSize() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_size;
+}
+
+Local<String> CodeEvent::GetFunctionName() {
+  return ToApiHandle<String>(
+      reinterpret_cast<i::CodeEvent*>(this)->function_name);
+}
+
+Local<String> CodeEvent::GetScriptName() {
+  return ToApiHandle<String>(
+      reinterpret_cast<i::CodeEvent*>(this)->script_name);
+}
+
+int CodeEvent::GetScriptLine() {
+  return reinterpret_cast<i::CodeEvent*>(this)->script_line;
+}
+
+int CodeEvent::GetScriptColumn() {
+  return reinterpret_cast<i::CodeEvent*>(this)->script_column;
+}
+
+CodeEventType CodeEvent::GetCodeType() {
+  return reinterpret_cast<i::CodeEvent*>(this)->code_type;
+}
+
+const char* CodeEvent::GetComment() {
+  return reinterpret_cast<i::CodeEvent*>(this)->comment;
+}
+
+const char* CodeEvent::GetCodeEventTypeName(CodeEventType code_event_type) {
+  switch (code_event_type) {
+    case kUnknownType:
+      return "Unknown";
+#define V(Name)       \
+  case k##Name##Type: \
+    return #Name;
+      CODE_EVENTS_LIST(V)
+#undef V
+  }
+}
+
+CodeEventHandler::CodeEventHandler(Isolate* isolate) {
+  internal_listener_ =
+      new i::ExternalCodeEventListener(reinterpret_cast<i::Isolate*>(isolate));
+}
+
+CodeEventHandler::~CodeEventHandler() {
+  delete reinterpret_cast<i::ExternalCodeEventListener*>(internal_listener_);
+}
+
+void CodeEventHandler::Enable() {
+  reinterpret_cast<i::ExternalCodeEventListener*>(internal_listener_)
+      ->StartListening(this);
+}
+
+void CodeEventHandler::Disable() {
+  reinterpret_cast<i::ExternalCodeEventListener*>(internal_listener_)
+      ->StopListening();
+}
 
 static i::HeapGraphEdge* ToInternal(const HeapGraphEdge* edge) {
   return const_cast<i::HeapGraphEdge*>(

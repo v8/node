@@ -13,6 +13,7 @@
 #include "src/compiler/operator-properties.h"
 #include "src/feedback-vector.h"
 #include "src/isolate-inl.h"
+#include "src/objects/arguments.h"
 #include "test/unittests/compiler/compiler-test-utils.h"
 #include "test/unittests/compiler/graph-unittest.h"
 #include "test/unittests/compiler/node-test-utils.h"
@@ -69,7 +70,8 @@ class JSCreateLoweringTest : public TypedGraphTest {
 
 TEST_F(JSCreateLoweringTest, JSCreate) {
   Handle<JSFunction> function = isolate()->object_function();
-  Node* const target = Parameter(Type::HeapConstant(function, graph()->zone()));
+  Node* const target =
+      Parameter(Type::HeapConstant(isolate(), function, graph()->zone()));
   Node* const context = Parameter(Type::Any());
   Node* const effect = graph()->start();
   Node* const control = graph()->start();

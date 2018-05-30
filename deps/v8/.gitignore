@@ -104,9 +104,11 @@ d8_g
 gccauses
 gcsuspects
 gtags.files
+node_modules
 shell
 shell_g
 tags
+tools/turbolizer/build
 turbo*.cfg
 turbo*.dot
 turbo*.json

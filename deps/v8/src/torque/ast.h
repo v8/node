@@ -40,11 +40,13 @@ DECLARE_CONTEXTUAL_VARIABLE(CurrentSourcePosition, SourcePosition)
   V(AssignmentExpression)                \
   V(IncrementDecrementExpression)        \
   V(CastExpression)                      \
+  V(UnsafeCastExpression)                \
   V(ConvertExpression)
 
 #define AST_TYPE_EXPRESSION_NODE_KIND_LIST(V) \
   V(BasicTypeExpression)                      \
-  V(FunctionTypeExpression)
+  V(FunctionTypeExpression)                   \
+  V(UnionTypeExpression)
 
 #define AST_STATEMENT_NODE_KIND_LIST(V) \
   V(BlockStatement)                     \
@@ -319,6 +321,14 @@ struct ConvertExpression : Expression {
   Expression* value;
 };
 
+struct UnsafeCastExpression : Expression {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(UnsafeCastExpression)
+  UnsafeCastExpression(SourcePosition p, TypeExpression* t, Expression* v)
+      : Expression(kKind, p), type(t), value(v) {}
+  TypeExpression* type;
+  Expression* value;
+};
+
 struct ElementAccessExpression : LocationExpression {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(ElementAccessExpression)
   ElementAccessExpression(SourcePosition p, Expression* a, Expression* i)
@@ -380,6 +390,14 @@ struct FunctionTypeExpression : TypeExpression {
   TypeExpression* return_type;
 };
 
+struct UnionTypeExpression : TypeExpression {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(UnionTypeExpression)
+  UnionTypeExpression(SourcePosition pos, TypeExpression* a, TypeExpression* b)
+      : TypeExpression(kKind, pos), a(a), b(b) {}
+  TypeExpression* a;
+  TypeExpression* b;
+};
+
 struct ExpressionStatement : Statement {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(ExpressionStatement)
   ExpressionStatement(SourcePosition p, Expression* e)
@@ -427,8 +445,13 @@ struct DebugStatement : Statement {
 
 struct AssertStatement : Statement {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(AssertStatement)
-  AssertStatement(SourcePosition p, Expression* e, const std::string& s)
-      : Statement(kKind, p), expression(e), source(s) {}
+  AssertStatement(SourcePosition pos, bool debug_only, Expression* expression,
+                  std::string source)
+      : Statement(kKind, pos),
+        debug_only(debug_only),
+        expression(expression),
+        source(std::move(source)) {}
+  bool debug_only;
   Expression* expression;
   std::string source;
 };

@@ -76,14 +76,20 @@ LabelAndTypesVector AstGenerator::GetOptionalLabelAndTypeList(
 TypeExpression* AstGenerator::GetType(TorqueParser::TypeContext* context) {
   if (context->BUILTIN()) {
     ParameterList parameters = context->typeList()->accept(this);
-    TypeExpression* return_type = GetType(context->type());
+    TypeExpression* return_type = GetType(context->type(0));
     return RegisterNode(
         new FunctionTypeExpression(Pos(context), parameters, return_type));
-  } else {
+  } else if (context->BIT_OR()) {
+    return RegisterNode(new UnionTypeExpression(
+        Pos(context), GetType(context->type(0)), GetType(context->type(1))));
+  } else if (context->IDENTIFIER()) {
     bool is_constexpr = context->CONSTEXPR() != nullptr;
     std::string name = context->IDENTIFIER()->getSymbol()->getText();
     return RegisterNode(
         new BasicTypeExpression(Pos(context), is_constexpr, std::move(name)));
+  } else {
+    DCHECK_EQ(1, context->type().size());
+    return GetType(context->type(0));
   }
 }
 
@@ -547,6 +553,10 @@ antlrcpp::Any AstGenerator::visitPrimaryExpression(
     return implicit_cast<Expression*>(RegisterNode(new ConvertExpression{
         Pos(context), GetType(context->type()),
         context->expression()->accept(this).as<Expression*>()}));
+  if (context->UNSAFE_CAST_KEYWORD())
+    return implicit_cast<Expression*>(RegisterNode(new UnsafeCastExpression{
+        Pos(context), GetType(context->type()),
+        context->expression()->accept(this).as<Expression*>()}));
   if (context->CAST_KEYWORD())
     return implicit_cast<Expression*>(RegisterNode(new CastExpression{
         Pos(context), GetType(context->type()),
@@ -748,14 +758,14 @@ antlrcpp::Any AstGenerator::visitConditionalExpression(
 
 antlrcpp::Any AstGenerator::visitDiagnosticStatement(
     TorqueParser::DiagnosticStatementContext* context) {
-  if (context->ASSERT()) {
+  if (context->ASSERT_TOKEN() || context->CHECK_TOKEN()) {
     size_t a = context->expression()->start->getStartIndex();
     size_t b = context->expression()->stop->getStopIndex();
     antlr4::misc::Interval interval(a, b);
     std::string source = source_file_context_->stream->getText(interval);
     return implicit_cast<Statement*>(RegisterNode(new AssertStatement{
-        Pos(context), context->expression()->accept(this).as<Expression*>(),
-        source}));
+        Pos(context), context->ASSERT_TOKEN() != nullptr,
+        context->expression()->accept(this).as<Expression*>(), source}));
   } else if (context->UNREACHABLE_TOKEN()) {
     return implicit_cast<Statement*>(
         RegisterNode(new DebugStatement{Pos(context), "unreachable", true}));

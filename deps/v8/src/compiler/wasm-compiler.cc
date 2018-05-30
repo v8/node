@@ -112,15 +112,13 @@ bool ContainsInt64(wasm::FunctionSig* sig) {
 
 WasmGraphBuilder::WasmGraphBuilder(
     Isolate* isolate, wasm::ModuleEnv* env, Zone* zone, MachineGraph* mcgraph,
-    Handle<Code> centry_stub, Handle<Oddball> anyref_null,
-    wasm::FunctionSig* sig,
+    Handle<Code> centry_stub, wasm::FunctionSig* sig,
     compiler::SourcePositionTable* source_position_table)
     : isolate_(isolate),
       zone_(zone),
       mcgraph_(mcgraph),
       env_(env),
       centry_stub_(centry_stub),
-      anyref_null_(anyref_null),
       cur_buffer_(def_buffer_),
       cur_bufsize_(kDefaultBufferSize),
       has_simd_(ContainsSimd(sig)),
@@ -214,11 +212,9 @@ Node* WasmGraphBuilder::EffectPhi(unsigned count, Node** effects,
 }
 
 Node* WasmGraphBuilder::RefNull() {
-  if (!anyref_null_node_.is_set()) {
-    anyref_null_node_.set(
-        graph()->NewNode(mcgraph()->common()->HeapConstant(anyref_null_)));
-  }
-  return anyref_null_node_.get();
+  Node* null = LOAD_INSTANCE_FIELD(NullValue, MachineType::TaggedPointer());
+  *effect_ = null;
+  return null;
 }
 
 Node* WasmGraphBuilder::CEntryStub() {
@@ -2949,7 +2945,7 @@ Node* WasmGraphBuilder::MemBuffer(uint32_t offset) {
 
 Node* WasmGraphBuilder::CurrentMemoryPages() {
   // CurrentMemoryPages can not be called from asm.js.
-  DCHECK_EQ(wasm::kWasmOrigin, env_->module->origin());
+  DCHECK_EQ(wasm::kWasmOrigin, env_->module->origin);
   DCHECK_NOT_NULL(instance_cache_);
   Node* mem_size = instance_cache_->mem_size;
   DCHECK_NOT_NULL(mem_size);
@@ -3952,7 +3948,8 @@ Node* WasmGraphBuilder::AtomicOp(wasm::WasmOpcode opcode, Node* const* inputs,
 
 namespace {
 bool must_record_function_compilation(Isolate* isolate) {
-  return isolate->logger()->is_logging_code_events() || isolate->is_profiling();
+  return isolate->logger()->is_listening_to_code_events() ||
+         isolate->is_profiling();
 }
 
 PRINTF_FORMAT(4, 5)
@@ -3978,8 +3975,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
                           wasm::FunctionSig* sig,
                           compiler::SourcePositionTable* spt)
       : WasmGraphBuilder(jsgraph->isolate(), env, zone, jsgraph,
-                         CodeFactory::CEntry(jsgraph->isolate()),
-                         jsgraph->isolate()->factory()->null_value(), sig, spt),
+                         CodeFactory::CEntry(jsgraph->isolate()), sig, spt),
         jsgraph_(jsgraph) {}
 
   Node* BuildAllocateHeapNumberWithValue(Node* value, Node* control) {
@@ -4182,8 +4178,10 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     Node* if_not_smi = graph()->NewNode(common->IfTrue(), branch);
 
     Node* vnot_smi;
-    Node* check_undefined = graph()->NewNode(machine->WordEqual(), value,
-                                             jsgraph()->UndefinedConstant());
+    Node* undefined_node =
+        LOAD_INSTANCE_FIELD(UndefinedValue, MachineType::TaggedPointer());
+    Node* check_undefined =
+        graph()->NewNode(machine->WordEqual(), value, undefined_node);
     Node* branch_undefined = graph()->NewNode(
         common->Branch(BranchHint::kFalse), check_undefined, if_not_smi);
 
@@ -4226,8 +4224,6 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
         return BuildChangeFloat64ToTagged(node);
       case wasm::kWasmAnyRef:
         return node;
-      case wasm::kWasmStmt:
-        return jsgraph()->UndefinedConstant();
       default:
         UNREACHABLE();
     }
@@ -4337,7 +4333,7 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
       // js_context independent.
       BuildCallToRuntimeWithContext(Runtime::kWasmThrowTypeError, js_context,
                                     nullptr, 0);
-      Return(jsgraph()->UndefinedConstant());
+      Return(jsgraph()->SmiConstant(0));
       return;
     }
 
@@ -4393,7 +4389,8 @@ class WasmWrapperGraphBuilder : public WasmGraphBuilder {
     Node* callables_node = LOAD_INSTANCE_FIELD(ImportedFunctionCallables,
                                                MachineType::TaggedPointer());
     Node* callable_node = LOAD_FIXED_ARRAY_SLOT(callables_node, index);
-    Node* undefined_node = jsgraph()->UndefinedConstant();
+    Node* undefined_node =
+        LOAD_INSTANCE_FIELD(UndefinedValue, MachineType::TaggedPointer());
     Node* native_context =
         LOAD_INSTANCE_FIELD(NativeContext, MachineType::TaggedPointer());
 
@@ -4763,9 +4760,6 @@ void ValidateImportWrapperReferencesImmovables(Handle<Code> wrapper) {
         // we didn't link yet.
         target = Code::GetCodeFromTargetAddress(it.rinfo()->target_address());
         break;
-      case RelocInfo::EMBEDDED_OBJECT:
-        target = it.rinfo()->target_object();
-        break;
       default:
         UNREACHABLE();
     }
@@ -5007,12 +5001,8 @@ SourcePositionTable* TurbofanWasmCompilationUnit::BuildGraphForWasmFunction(
   // Create a TF graph during decoding.
   SourcePositionTable* source_position_table =
       new (mcgraph_->zone()) SourcePositionTable(mcgraph_->graph());
-  // We get the handle for {null_value()} directly from the isolate although we
-  // are on a background task because the handle is stored in the isolate
-  // anyways, and it is immortal and immovable.
   WasmGraphBuilder builder(wasm_unit_->isolate_, wasm_unit_->env_,
                            mcgraph_->zone(), mcgraph_, wasm_unit_->centry_stub_,
-                           wasm_unit_->isolate_->factory()->null_value(),
                            wasm_unit_->func_body_.sig, source_position_table);
   graph_construction_result_ = wasm::BuildTFGraph(
       wasm_unit_->isolate_->allocator(), &builder, wasm_unit_->func_body_);
@@ -5111,7 +5101,7 @@ void TurbofanWasmCompilationUnit::ExecuteCompilation() {
                      wasm_unit_->func_index_),
         compilation_zone_.get(), Code::WASM_FUNCTION));
 
-    NodeOriginTable* node_origins = info_->trace_turbo_graph_enabled()
+    NodeOriginTable* node_origins = info_->trace_turbo_json_enabled()
                                         ? new (&graph_zone)
                                               NodeOriginTable(mcgraph_->graph())
                                         : nullptr;
@@ -5119,7 +5109,9 @@ void TurbofanWasmCompilationUnit::ExecuteCompilation() {
     job_.reset(Pipeline::NewWasmCompilationJob(
         info_.get(), wasm_unit_->isolate_, mcgraph_, call_descriptor,
         source_positions, node_origins, &wasm_compilation_data_,
-        wasm_unit_->env_->module->origin()));
+        wasm_unit_->func_body_,
+        const_cast<wasm::WasmModule*>(wasm_unit_->env_->module),
+        wasm_unit_->env_->module->origin));
     ok_ = job_->ExecuteJob() == CompilationJob::SUCCEEDED;
     // TODO(bradnelson): Improve histogram handling of size_t.
     wasm_unit_->counters_->wasm_compile_function_peak_memory_bytes()->AddSample(

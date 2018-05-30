@@ -43,6 +43,7 @@
 #include "src/ostreams.h"
 #include "src/simulator.h"  // For flushing instruction cache.
 #include "src/snapshot/serializer-common.h"
+#include "src/snapshot/snapshot.h"
 
 namespace v8 {
 namespace internal {
@@ -213,12 +214,6 @@ bool RelocInfo::OffHeapTargetIsCodedSpecially() {
 #endif
 }
 
-void RelocInfo::set_global_handle(Address address,
-                                  ICacheFlushMode icache_flush_mode) {
-  DCHECK_EQ(rmode_, WASM_GLOBAL_HANDLE);
-  set_embedded_address(address, icache_flush_mode);
-}
-
 Address RelocInfo::wasm_call_address() const {
   DCHECK_EQ(rmode_, WASM_CALL);
   return Assembler::target_address_at(pc_, constant_pool_);
@@ -229,11 +224,6 @@ void RelocInfo::set_wasm_call_address(Address address,
   DCHECK_EQ(rmode_, WASM_CALL);
   Assembler::set_target_address_at(pc_, constant_pool_, address,
                                    icache_flush_mode);
-}
-
-Address RelocInfo::global_handle() const {
-  DCHECK_EQ(rmode_, WASM_GLOBAL_HANDLE);
-  return embedded_address();
 }
 
 void RelocInfo::set_target_address(Address target,
@@ -461,6 +451,16 @@ RelocIterator::RelocIterator(const CodeReference code_reference, int mode_mask)
                     code_reference.relocation_end(),
                     code_reference.relocation_start(), mode_mask) {}
 
+#ifdef V8_EMBEDDED_BUILTINS
+RelocIterator::RelocIterator(EmbeddedData* embedded_data, Code* code,
+                             int mode_mask)
+    : RelocIterator(
+          code, embedded_data->InstructionStartOfBuiltin(code->builtin_index()),
+          code->constant_pool(),
+          code->relocation_start() + code->relocation_size(),
+          code->relocation_start(), mode_mask) {}
+#endif  // V8_EMBEDDED_BUILTINS
+
 RelocIterator::RelocIterator(const CodeDesc& desc, int mode_mask)
     : RelocIterator(nullptr, reinterpret_cast<Address>(desc.buffer), 0,
                     desc.buffer + desc.buffer_size,
@@ -537,8 +537,6 @@ const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
       return "constant pool";
     case VENEER_POOL:
       return "veneer pool";
-    case WASM_GLOBAL_HANDLE:
-      return "global handle";
     case WASM_CALL:
       return "internal wasm call";
     case WASM_CODE_TABLE_ENTRY:
@@ -641,7 +639,6 @@ void RelocInfo::Verify(Isolate* isolate) {
     case DEOPT_ID:
     case CONST_POOL:
     case VENEER_POOL:
-    case WASM_GLOBAL_HANDLE:
     case WASM_CALL:
     case JS_TO_WASM_CALL:
     case WASM_CODE_TABLE_ENTRY:

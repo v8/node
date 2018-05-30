@@ -563,9 +563,8 @@ void CodeGenerator::AssemblePopArgumentsAdaptorFrame(Register args_reg,
   // Load arguments count from current arguments adaptor frame (note, it
   // does not include receiver).
   Register caller_args_count_reg = scratch1;
-  __ SmiToInteger32(
-      caller_args_count_reg,
-      Operand(rbp, ArgumentsAdaptorFrameConstants::kLengthOffset));
+  __ SmiUntag(caller_args_count_reg,
+              Operand(rbp, ArgumentsAdaptorFrameConstants::kLengthOffset));
 
   ParameterCount callee_args_count(args_reg);
   __ PrepareForTailCall(callee_args_count, caller_args_count_reg, scratch2,
@@ -736,7 +735,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       }
       if (HasImmediateInput(instr, 0)) {
         Handle<Code> code = i.InputCode(0);
-        __ jmp(code, RelocInfo::CODE_TARGET);
+        __ Jump(code, RelocInfo::CODE_TARGET);
       } else {
         Register reg = i.InputRegister(0);
         __ addp(reg, Immediate(Code::kHeaderSize - kHeapObjectTag));

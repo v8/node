@@ -624,7 +624,8 @@ Reduction JSNativeContextSpecialization::ReduceGlobalAccess(
             Handle<Map> property_cell_value_map(
                 Handle<HeapObject>::cast(property_cell_value)->map(),
                 isolate());
-            property_cell_value_type = Type::For(property_cell_value_map);
+            property_cell_value_type =
+                Type::For(isolate(), property_cell_value_map);
             representation = MachineRepresentation::kTaggedPointer;
 
             // We can only use the property cell value map for map check
@@ -1736,9 +1737,9 @@ Node* JSNativeContextSpecialization::InlineApiCall(
   // Only setters have a value.
   int const argc = value == nullptr ? 0 : 1;
   // The stub always expects the receiver as the first param on the stack.
-  CallApiCallbackStub stub(isolate(), argc);
+  Callable call_api_callback = CodeFactory::CallApiCallback(isolate(), argc);
   CallInterfaceDescriptor call_interface_descriptor =
-      stub.GetCallInterfaceDescriptor();
+      call_api_callback.descriptor();
   auto call_descriptor = Linkage::GetStubCallDescriptor(
       isolate(), graph()->zone(), call_interface_descriptor,
       call_interface_descriptor.GetStackParameterCount() + argc +
@@ -1751,7 +1752,7 @@ Node* JSNativeContextSpecialization::InlineApiCall(
   Node* function_reference =
       graph()->NewNode(common()->ExternalConstant(ExternalReference::Create(
           &function, ExternalReference::DIRECT_API_CALL)));
-  Node* code = jsgraph()->HeapConstant(stub.GetCode());
+  Node* code = jsgraph()->HeapConstant(call_api_callback.code());
 
   // Add CallApiCallbackStub's register argument as well.
   Node* context = jsgraph()->Constant(native_context());
@@ -2891,7 +2892,7 @@ bool JSNativeContextSpecialization::LookupInScriptContextTable(
   Handle<Context> script_context = ScriptContextTable::GetContext(
       script_context_table, lookup_result.context_index);
   result->context = script_context;
-  result->immutable = lookup_result.mode == CONST;
+  result->immutable = lookup_result.mode == VariableMode::kConst;
   result->index = lookup_result.slot_index;
   return true;
 }

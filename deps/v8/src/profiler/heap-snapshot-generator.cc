@@ -16,6 +16,9 @@
 #include "src/objects-inl.h"
 #include "src/objects/api-callbacks.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-collection-inl.h"
+#include "src/objects/js-promise-inl.h"
+#include "src/objects/js-regexp-inl.h"
 #include "src/profiler/allocation-tracker.h"
 #include "src/profiler/heap-profiler.h"
 #include "src/profiler/heap-snapshot-generator-inl.h"
@@ -1413,6 +1416,9 @@ void V8HeapExplorer::ExtractWeakArrayReferences(int header_size, int entry,
     if (object->ToWeakHeapObject(&heap_object)) {
       SetWeakReference(array, entry, i, heap_object,
                        header_size + i * kPointerSize);
+    } else if (object->ToStrongHeapObject(&heap_object)) {
+      SetInternalReference(array, entry, i, heap_object,
+                           header_size + i * kPointerSize);
     }
   }
 }

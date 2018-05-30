@@ -128,9 +128,10 @@ void MarkingVerifier::VerifyMarking(NewSpace* space) {
   Address end = space->top();
   // The bottom position is at the start of its page. Allows us to use
   // page->area_start() as start of range on all pages.
-  CHECK_EQ(space->bottom(), Page::FromAddress(space->bottom())->area_start());
+  CHECK_EQ(space->first_allocatable_address(),
+           space->first_page()->area_start());
 
-  PageRange range(space->bottom(), end);
+  PageRange range(space->first_allocatable_address(), end);
   for (auto it = range.begin(); it != range.end();) {
     Page* page = *(it++);
     Address limit = it != range.end() ? page->area_end() : end;
@@ -258,7 +259,7 @@ void EvacuationVerifier::VerifyEvacuationOnPage(Address start, Address end) {
 }
 
 void EvacuationVerifier::VerifyEvacuation(NewSpace* space) {
-  PageRange range(space->bottom(), space->top());
+  PageRange range(space->first_allocatable_address(), space->top());
   for (auto it = range.begin(); it != range.end();) {
     Page* page = *(it++);
     Address current = page->area_start();
@@ -488,7 +489,7 @@ void MarkCompactCollector::VerifyMarkbitsAreClean(PagedSpace* space) {
 
 
 void MarkCompactCollector::VerifyMarkbitsAreClean(NewSpace* space) {
-  for (Page* p : PageRange(space->bottom(), space->top())) {
+  for (Page* p : PageRange(space->first_allocatable_address(), space->top())) {
     CHECK(non_atomic_marking_state()->bitmap(p)->IsClean());
     CHECK_EQ(0, non_atomic_marking_state()->live_bytes(p));
   }
@@ -2142,7 +2143,8 @@ void MarkCompactCollector::EvacuatePrologue() {
   // New space.
   NewSpace* new_space = heap()->new_space();
   // Append the list of new space pages to be processed.
-  for (Page* p : PageRange(new_space->bottom(), new_space->top())) {
+  for (Page* p :
+       PageRange(new_space->first_allocatable_address(), new_space->top())) {
     new_space_evacuation_pages_.push_back(p);
   }
   new_space->Flip();
@@ -2414,7 +2416,7 @@ void MarkCompactCollectorBase::CreateAndExecuteEvacuationTasks(
 
   const bool profiling =
       heap()->isolate()->is_profiling() ||
-      heap()->isolate()->logger()->is_logging_code_events() ||
+      heap()->isolate()->logger()->is_listening_to_code_events() ||
       heap()->isolate()->heap_profiler()->is_tracking_object_moves() ||
       heap()->has_heap_object_allocation_tracker();
   ProfilingMigrationObserver profiling_observer(heap());
@@ -2954,7 +2956,7 @@ class ArrayBufferTrackerUpdatingItem : public UpdatingItem {
 int MarkCompactCollectorBase::CollectToSpaceUpdatingItems(
     ItemParallelJob* job) {
   // Seed to space pages.
-  const Address space_start = heap()->new_space()->bottom();
+  const Address space_start = heap()->new_space()->first_allocatable_address();
   const Address space_end = heap()->new_space()->top();
   int pages = 0;
   for (Page* page : PageRange(space_start, space_end)) {
@@ -3677,8 +3679,8 @@ void MinorMarkCompactCollector::CollectGarbage() {
 
   {
     TRACE_GC(heap()->tracer(), GCTracer::Scope::MINOR_MC_RESET_LIVENESS);
-    for (Page* p : PageRange(heap()->new_space()->FromSpaceStart(),
-                             heap()->new_space()->FromSpaceEnd())) {
+    for (Page* p :
+         PageRange(heap()->new_space()->from_space().first_page(), nullptr)) {
       DCHECK(!p->IsFlagSet(Page::SWEEP_TO_ITERATE));
       non_atomic_marking_state()->ClearLiveness(p);
       if (FLAG_concurrent_marking) {
@@ -3840,7 +3842,8 @@ void MinorMarkCompactCollector::ClearNonLiveReferences() {
 void MinorMarkCompactCollector::EvacuatePrologue() {
   NewSpace* new_space = heap()->new_space();
   // Append the list of new space pages to be processed.
-  for (Page* p : PageRange(new_space->bottom(), new_space->top())) {
+  for (Page* p :
+       PageRange(new_space->first_allocatable_address(), new_space->top())) {
     new_space_evacuation_pages_.push_back(p);
   }
   new_space->Flip();
@@ -3959,10 +3962,9 @@ class YoungGenerationMarkingTask : public ItemParallelJob::Task {
 
 class PageMarkingItem : public MarkingItem {
  public:
-  explicit PageMarkingItem(MemoryChunk* chunk,
-                           base::AtomicNumber<intptr_t>* global_slots)
+  explicit PageMarkingItem(MemoryChunk* chunk, std::atomic<int>* global_slots)
       : chunk_(chunk), global_slots_(global_slots), slots_(0) {}
-  virtual ~PageMarkingItem() { global_slots_->Increment(slots_); }
+  virtual ~PageMarkingItem() { *global_slots_ = *global_slots_ + slots_; }
 
   void Process(YoungGenerationMarkingTask* task) override {
     TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.gc"),
@@ -4013,8 +4015,8 @@ class PageMarkingItem : public MarkingItem {
   }
 
   MemoryChunk* chunk_;
-  base::AtomicNumber<intptr_t>* global_slots_;
-  intptr_t slots_;
+  std::atomic<int>* global_slots_;
+  int slots_;
 };
 
 class GlobalHandlesMarkingItem : public MarkingItem {
@@ -4064,7 +4066,7 @@ class GlobalHandlesMarkingItem : public MarkingItem {
 
 void MinorMarkCompactCollector::MarkRootSetInParallel(
     RootMarkingVisitor* root_visitor) {
-  base::AtomicNumber<intptr_t> slots;
+  std::atomic<int> slots;
   {
     ItemParallelJob job(isolate()->cancelable_task_manager(),
                         &page_parallel_job_semaphore_);
@@ -4097,7 +4099,7 @@ void MinorMarkCompactCollector::MarkRootSetInParallel(
       DCHECK(worklist()->IsGlobalEmpty());
     }
   }
-  old_to_new_slots_ = static_cast<int>(slots.Value());
+  old_to_new_slots_ = slots;
 }
 
 void MinorMarkCompactCollector::MarkLiveObjects() {

@@ -879,8 +879,8 @@ void CodeStubAssembler::Bind(Label* label) { CodeAssembler::Bind(label); }
 
 TNode<Float64T> CodeStubAssembler::LoadDoubleWithHoleCheck(
     TNode<FixedDoubleArray> array, TNode<Smi> index, Label* if_hole) {
-  return TNode<Float64T>::UncheckedCast(LoadFixedDoubleArrayElement(
-      array, index, MachineType::Float64(), 0, SMI_PARAMETERS, if_hole));
+  return LoadFixedDoubleArrayElement(array, index, MachineType::Float64(), 0,
+                                     SMI_PARAMETERS, if_hole);
 }
 
 void CodeStubAssembler::BranchIfPrototypesHaveNoElements(
@@ -1459,6 +1459,11 @@ TNode<Smi> CodeStubAssembler::LoadWeakFixedArrayLength(
 TNode<IntPtrT> CodeStubAssembler::LoadAndUntagWeakFixedArrayLength(
     SloppyTNode<WeakFixedArray> array) {
   return LoadAndUntagObjectField(array, WeakFixedArray::kLengthOffset);
+}
+
+TNode<Smi> CodeStubAssembler::LoadTypedArrayLength(
+    TNode<JSTypedArray> typed_array) {
+  return CAST(LoadObjectField(typed_array, JSTypedArray::kLengthOffset));
 }
 
 TNode<Int32T> CodeStubAssembler::LoadMapBitField(SloppyTNode<Map> map) {
@@ -2164,16 +2169,17 @@ TNode<MaybeObject> CodeStubAssembler::LoadWeakFixedArrayElement(
                           additional_offset, parameter_mode, needs_poisoning);
 }
 
-Node* CodeStubAssembler::LoadFixedDoubleArrayElement(
-    Node* object, Node* index_node, MachineType machine_type,
-    int additional_offset, ParameterMode parameter_mode, Label* if_hole) {
+TNode<Float64T> CodeStubAssembler::LoadFixedDoubleArrayElement(
+    SloppyTNode<FixedDoubleArray> object, Node* index_node,
+    MachineType machine_type, int additional_offset,
+    ParameterMode parameter_mode, Label* if_hole) {
   CSA_ASSERT(this, IsFixedDoubleArray(object));
   DCHECK_EQ(additional_offset % kPointerSize, 0);
   CSA_SLOW_ASSERT(this, MatchesParameterMode(index_node, parameter_mode));
   int32_t header_size =
       FixedDoubleArray::kHeaderSize + additional_offset - kHeapObjectTag;
-  Node* offset = ElementOffsetFromIndex(index_node, HOLEY_DOUBLE_ELEMENTS,
-                                        parameter_mode, header_size);
+  TNode<IntPtrT> offset = ElementOffsetFromIndex(
+      index_node, HOLEY_DOUBLE_ELEMENTS, parameter_mode, header_size);
   CSA_SLOW_ASSERT(
       this,
       IsOffsetInBounds(offset, LoadAndUntagFixedArrayBaseLength(object),
@@ -2181,9 +2187,9 @@ Node* CodeStubAssembler::LoadFixedDoubleArrayElement(
   return LoadDoubleWithHoleCheck(object, offset, if_hole, machine_type);
 }
 
-Node* CodeStubAssembler::LoadDoubleWithHoleCheck(Node* base, Node* offset,
-                                                 Label* if_hole,
-                                                 MachineType machine_type) {
+TNode<Float64T> CodeStubAssembler::LoadDoubleWithHoleCheck(
+    SloppyTNode<Object> base, SloppyTNode<IntPtrT> offset, Label* if_hole,
+    MachineType machine_type) {
   if (if_hole) {
     // TODO(ishell): Compare only the upper part for the hole once the
     // compiler is able to fold addition of already complex |offset| with
@@ -2201,9 +2207,9 @@ Node* CodeStubAssembler::LoadDoubleWithHoleCheck(Node* base, Node* offset,
   }
   if (machine_type.IsNone()) {
     // This means the actual value is not needed.
-    return nullptr;
+    return TNode<Float64T>();
   }
-  return Load(machine_type, base, offset);
+  return UncheckedCast<Float64T>(Load(machine_type, base, offset));
 }
 
 TNode<Object> CodeStubAssembler::LoadContextElement(
@@ -5260,6 +5266,10 @@ TNode<BoolT> CodeStubAssembler::IsJSArrayBuffer(
   return HasInstanceType(object, JS_ARRAY_BUFFER_TYPE);
 }
 
+TNode<BoolT> CodeStubAssembler::IsJSDataView(TNode<HeapObject> object) {
+  return HasInstanceType(object, JS_DATA_VIEW_TYPE);
+}
+
 TNode<BoolT> CodeStubAssembler::IsFixedTypedArray(
     SloppyTNode<HeapObject> object) {
   TNode<Int32T> instance_type = LoadInstanceType(object);
@@ -8058,8 +8068,7 @@ void CodeStubAssembler::TryLookupElement(Node* object, Node* map,
     Node* buffer = LoadObjectField(object, JSArrayBufferView::kBufferOffset);
     GotoIf(IsDetachedBuffer(buffer), if_absent);
 
-    Node* length = TryToIntptr(
-        LoadObjectField(object, JSTypedArray::kLengthOffset), if_bailout);
+    Node* length = SmiUntag(LoadTypedArrayLength(CAST(object)));
     Branch(UintPtrLessThan(intptr_index, length), if_found, if_absent);
   }
   BIND(&if_oob);
@@ -8880,9 +8889,8 @@ void CodeStubAssembler::EmitElementStore(Node* object, Node* key, Node* value,
   if (IsFixedTypedArrayElementsKind(elements_kind)) {
     Label done(this);
     // Bounds check.
-    Node* length = TaggedToParameter(
-        CAST(LoadObjectField(object, JSTypedArray::kLengthOffset)),
-        parameter_mode);
+    Node* length =
+        TaggedToParameter(LoadTypedArrayLength(CAST(object)), parameter_mode);
 
     if (store_mode == STORE_NO_TRANSITION_IGNORE_OUT_OF_BOUNDS) {
       // Skip the store if we write beyond the length or
@@ -11295,6 +11303,12 @@ Node* CodeStubAssembler::IsDetachedBuffer(Node* buffer) {
   Node* buffer_bit_field = LoadObjectField(
       buffer, JSArrayBuffer::kBitFieldOffset, MachineType::Uint32());
   return IsSetWord32<JSArrayBuffer::WasNeutered>(buffer_bit_field);
+}
+
+TNode<JSArrayBuffer> CodeStubAssembler::LoadArrayBufferViewBuffer(
+    TNode<JSArrayBufferView> array_buffer_view) {
+  return LoadObjectField<JSArrayBuffer>(array_buffer_view,
+                                        JSArrayBufferView::kBufferOffset);
 }
 
 CodeStubArguments::CodeStubArguments(

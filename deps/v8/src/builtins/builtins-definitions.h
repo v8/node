@@ -236,7 +236,49 @@ namespace internal {
                                                                                \
   /* Array */                                                                  \
   ASM(ArrayConstructor)                                                        \
+  ASM(ArrayConstructorImpl)                                                    \
+  TFC(ArrayNoArgumentConstructor_PackedSmi_DontOverride,                       \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_HoleySmi_DontOverride,                        \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_PackedSmi_DisableAllocationSites,             \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_HoleySmi_DisableAllocationSites,              \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_Packed_DisableAllocationSites,                \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_Holey_DisableAllocationSites,                 \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_PackedDouble_DisableAllocationSites,          \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArrayNoArgumentConstructor_HoleyDouble_DisableAllocationSites,           \
+      ArrayNoArgumentConstructor, 1)                                           \
+  TFC(ArraySingleArgumentConstructor_PackedSmi_DontOverride,                   \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_HoleySmi_DontOverride,                    \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_PackedSmi_DisableAllocationSites,         \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_HoleySmi_DisableAllocationSites,          \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_Packed_DisableAllocationSites,            \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_Holey_DisableAllocationSites,             \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_PackedDouble_DisableAllocationSites,      \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(ArraySingleArgumentConstructor_HoleyDouble_DisableAllocationSites,       \
+      ArraySingleArgumentConstructor, 1)                                       \
+  ASM(ArrayNArgumentsConstructor)                                              \
   ASM(InternalArrayConstructor)                                                \
+  ASM(InternalArrayConstructorImpl)                                            \
+  TFC(InternalArrayNoArgumentConstructor_Packed, ArrayNoArgumentConstructor,   \
+      1)                                                                       \
+  TFC(InternalArrayNoArgumentConstructor_Holey, ArrayNoArgumentConstructor, 1) \
+  TFC(InternalArraySingleArgumentConstructor_Packed,                           \
+      ArraySingleArgumentConstructor, 1)                                       \
+  TFC(InternalArraySingleArgumentConstructor_Holey,                            \
+      ArraySingleArgumentConstructor, 1)                                       \
   CPP(ArrayConcat)                                                             \
   /* ES6 #sec-array.isarray */                                                 \
   TFJ(ArrayIsArray, 1, kArg)                                                   \
@@ -446,29 +488,6 @@ namespace internal {
   /* DataView */                                                               \
   /* ES #sec-dataview-constructor */                                           \
   CPP(DataViewConstructor)                                                     \
-  CPP(DataViewPrototypeGetBuffer)                                              \
-  CPP(DataViewPrototypeGetByteLength)                                          \
-  CPP(DataViewPrototypeGetByteOffset)                                          \
-  CPP(DataViewPrototypeGetInt8)                                                \
-  CPP(DataViewPrototypeSetInt8)                                                \
-  CPP(DataViewPrototypeGetUint8)                                               \
-  CPP(DataViewPrototypeSetUint8)                                               \
-  CPP(DataViewPrototypeGetInt16)                                               \
-  CPP(DataViewPrototypeSetInt16)                                               \
-  CPP(DataViewPrototypeGetUint16)                                              \
-  CPP(DataViewPrototypeSetUint16)                                              \
-  CPP(DataViewPrototypeGetInt32)                                               \
-  CPP(DataViewPrototypeSetInt32)                                               \
-  CPP(DataViewPrototypeGetUint32)                                              \
-  CPP(DataViewPrototypeSetUint32)                                              \
-  CPP(DataViewPrototypeGetFloat32)                                             \
-  CPP(DataViewPrototypeSetFloat32)                                             \
-  CPP(DataViewPrototypeGetFloat64)                                             \
-  CPP(DataViewPrototypeSetFloat64)                                             \
-  CPP(DataViewPrototypeGetBigInt64)                                            \
-  CPP(DataViewPrototypeSetBigInt64)                                            \
-  CPP(DataViewPrototypeGetBigUint64)                                           \
-  CPP(DataViewPrototypeSetBigUint64)                                           \
                                                                                \
   /* Date */                                                                   \
   /* ES #sec-date-constructor */                                               \
@@ -1167,8 +1186,6 @@ namespace internal {
   TFJ(TypedArrayOf, SharedFunctionInfo::kDontAdaptArgumentsSentinel)           \
   /* ES6 %TypedArray%.from */                                                  \
   TFJ(TypedArrayFrom, SharedFunctionInfo::kDontAdaptArgumentsSentinel)         \
-  TFS(TypedArrayLoadElementAsTagged, kArray, kKind, kIndex)                    \
-  TFS(TypedArrayStoreElementFromTagged, kArray, kKind, kIndex, kValue)         \
                                                                                \
   /* Wasm */                                                                   \
   ASM(WasmCompileLazy)                                                         \
@@ -1267,6 +1284,9 @@ namespace internal {
   TFS(StringAdd_ConvertRight_NotTenured, kLeft, kRight)                        \
                                                                                \
   /* Miscellaneous */                                                          \
+  ASM(CallApiCallback_Argc0)                                                   \
+  ASM(CallApiCallback_Argc1)                                                   \
+  ASM(CallApiGetter)                                                           \
   ASM(DoubleToI)                                                               \
   TFC(GetProperty, GetProperty, 1)                                             \
   ASM(MathPowInternal)

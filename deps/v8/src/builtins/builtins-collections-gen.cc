@@ -8,6 +8,7 @@
 #include "src/code-stub-assembler.h"
 #include "src/heap/factory-inl.h"
 #include "src/objects/hash-table-inl.h"
+#include "src/objects/js-collection.h"
 
 namespace v8 {
 namespace internal {
@@ -500,8 +501,9 @@ TNode<Object> BaseCollectionsAssembler::LoadAndNormalizeFixedDoubleArrayElement(
     TNode<HeapObject> elements, TNode<IntPtrT> index) {
   TVARIABLE(Object, entry);
   Label if_hole(this, Label::kDeferred), next(this);
-  TNode<Float64T> element = UncheckedCast<Float64T>(LoadFixedDoubleArrayElement(
-      elements, index, MachineType::Float64(), 0, INTPTR_PARAMETERS, &if_hole));
+  TNode<Float64T> element =
+      LoadFixedDoubleArrayElement(CAST(elements), index, MachineType::Float64(),
+                                  0, INTPTR_PARAMETERS, &if_hole);
   {  // not hole
     entry = AllocateHeapNumberWithValue(element);
     Goto(&next);

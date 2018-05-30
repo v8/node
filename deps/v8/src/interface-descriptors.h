@@ -49,7 +49,6 @@ class PlatformInterfaceDescriptor;
   V(ConstructWithSpread)              \
   V(ConstructWithArrayLike)           \
   V(ConstructTrampoline)              \
-  V(TransitionElementsKind)           \
   V(AbortJS)                          \
   V(AllocateHeapNumber)               \
   V(Builtin)                          \
@@ -658,12 +657,6 @@ class CallFunctionDescriptor : public CallInterfaceDescriptor {
   DECLARE_DESCRIPTOR(CallFunctionDescriptor, CallInterfaceDescriptor)
 };
 
-class TransitionElementsKindDescriptor : public CallInterfaceDescriptor {
- public:
-  DEFINE_PARAMETERS(kObject, kMap)
-  DECLARE_DESCRIPTOR(TransitionElementsKindDescriptor, CallInterfaceDescriptor)
-};
-
 class AbortJSDescriptor : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS(kObject)
@@ -693,6 +686,7 @@ class IteratingArrayBuiltinDescriptor : public BuiltinDescriptor {
   DECLARE_BUILTIN_DESCRIPTOR(IteratingArrayBuiltinDescriptor)
 };
 
+// TODO(jgruber): Replace with generic TFS descriptor.
 class ArrayConstructorDescriptor : public CallInterfaceDescriptor {
  public:
   DEFINE_PARAMETERS(kTarget, kNewTarget, kActualArgumentsCount, kAllocationSite)

@@ -18,6 +18,7 @@ IMPLICIT: 'implicit';
 DEFERRED: 'deferred';
 IF: 'if';
 CAST_KEYWORD: 'cast';
+UNSAFE_CAST_KEYWORD: 'unsafe_cast';
 CONVERT_KEYWORD: 'convert';
 FOR: 'for';
 WHILE: 'while';
@@ -36,7 +37,8 @@ ISNT: 'isnt';
 IS: 'is';
 LET: 'let';
 EXTERN: 'extern';
-ASSERT: 'assert';
+ASSERT_TOKEN: 'assert';
+CHECK_TOKEN: 'check';
 UNREACHABLE_TOKEN: 'unreachable';
 DEBUG_TOKEN: 'debug';
 
@@ -119,7 +121,10 @@ DECIMAL_LITERAL
 
 type : CONSTEXPR? IDENTIFIER
      | BUILTIN '(' typeList ')' '=>' type
+     | type BIT_OR type
+     | '(' type ')'
      ;
+
 typeList : (type (',' type)*)?;
 genericSpecializationTypeList: '<' typeList '>';
 
@@ -212,6 +217,7 @@ primaryExpression
         | DECIMAL_LITERAL
         | STRING_LITERAL
         | CAST_KEYWORD '<' type '>' '(' expression ')' OTHERWISE IDENTIFIER
+        | UNSAFE_CAST_KEYWORD '<' type '>' '(' expression ')'
         | CONVERT_KEYWORD '<' type '>' '(' expression ')'
         | ('(' expression ')');
 
@@ -241,7 +247,7 @@ gotoStatement: GOTO labelReference argumentList?;
 handlerWithStatement: (CATCH IDENTIFIER | LABEL labelDeclaration) statementBlock;
 tryCatch: TRY statementBlock handlerWithStatement+;
 
-diagnosticStatement: (ASSERT '(' expression ')') | UNREACHABLE_TOKEN | DEBUG_TOKEN;
+diagnosticStatement: ((ASSERT_TOKEN | CHECK_TOKEN) '(' expression ')') | UNREACHABLE_TOKEN | DEBUG_TOKEN;
 
 statement : variableDeclarationWithInitialization ';'
           | helperCallStatement ';'

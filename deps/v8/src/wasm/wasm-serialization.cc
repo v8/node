@@ -316,7 +316,6 @@ void NativeModuleSerializer::WriteCode(const WasmCode* code, Writer* writer) {
   // Relocate the code.
   int mask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET) |
              RelocInfo::ModeMask(RelocInfo::WASM_CALL) |
-             RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY) |
              RelocInfo::ModeMask(RelocInfo::EXTERNAL_REFERENCE);
   RelocIterator orig_iter(code->instructions(), code->reloc_info(),
                           code->constant_pool(), mask);
@@ -335,13 +334,6 @@ void NativeModuleSerializer::WriteCode(const WasmCode* code, Writer* writer) {
       case RelocInfo::WASM_CALL: {
         Address orig_target = orig_iter.rinfo()->wasm_call_address();
         uint32_t tag = wasm_targets_lookup_[orig_target];
-        SetWasmCalleeTag(iter.rinfo(), tag);
-      } break;
-      case RelocInfo::RUNTIME_ENTRY: {
-        Address orig_target = orig_iter.rinfo()->target_address();
-        auto ref_iter = reference_table_lookup_.find(orig_target);
-        DCHECK(ref_iter != reference_table_lookup_.end());
-        uint32_t tag = ref_iter->second;
         SetWasmCalleeTag(iter.rinfo(), tag);
       } break;
       case RelocInfo::EXTERNAL_REFERENCE: {
@@ -488,10 +480,8 @@ bool NativeModuleDeserializer::ReadCode(uint32_t fn_index, Reader* reader) {
       WasmCode::kNoFlushICache);
   native_module_->code_table_[fn_index] = ret;
 
-  // now relocate the code
-  int mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
-             RelocInfo::ModeMask(RelocInfo::CODE_TARGET) |
-             RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY) |
+  // Relocate the code.
+  int mask = RelocInfo::ModeMask(RelocInfo::CODE_TARGET) |
              RelocInfo::ModeMask(RelocInfo::EXTERNAL_REFERENCE) |
              RelocInfo::ModeMask(RelocInfo::WASM_CODE_TABLE_ENTRY);
   for (RelocIterator iter(ret->instructions(), ret->reloc_info(),
@@ -499,25 +489,11 @@ bool NativeModuleDeserializer::ReadCode(uint32_t fn_index, Reader* reader) {
        !iter.done(); iter.next()) {
     RelocInfo::Mode mode = iter.rinfo()->rmode();
     switch (mode) {
-      case RelocInfo::EMBEDDED_OBJECT: {
-        // We only expect {undefined}. We check for that when we add code.
-        iter.rinfo()->set_target_object(isolate_->heap()->undefined_value(),
-                                        SKIP_WRITE_BARRIER, SKIP_ICACHE_FLUSH);
-        break;
-      }
       case RelocInfo::CODE_TARGET: {
         uint32_t tag = GetWasmCalleeTag(iter.rinfo());
         Address target = GetBuiltinTrampolineFromTag(tag);
         iter.rinfo()->set_target_address(target, SKIP_WRITE_BARRIER,
                                          SKIP_ICACHE_FLUSH);
-        break;
-      }
-      case RelocInfo::RUNTIME_ENTRY: {
-        uint32_t tag = GetWasmCalleeTag(iter.rinfo());
-        Address address =
-            isolate_->heap()->external_reference_table()->address(tag);
-        iter.rinfo()->set_target_runtime_entry(address, SKIP_WRITE_BARRIER,
-                                               SKIP_ICACHE_FLUSH);
         break;
       }
       case RelocInfo::EXTERNAL_REFERENCE: {

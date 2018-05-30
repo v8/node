@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/builtins/builtins-array-gen.h"
+
 #include "src/builtins/builtins-iterator-gen.h"
 #include "src/builtins/builtins-string-gen.h"
 #include "src/builtins/builtins-typed-array-gen.h"
@@ -10,8 +12,7 @@
 #include "src/code-stub-assembler.h"
 #include "src/frame-constants.h"
 #include "src/heap/factory-inl.h"
-
-#include "src/builtins/builtins-array-gen.h"
+#include "src/objects/arguments-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -211,10 +212,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
         context(), original_array, length, method_name);
     // In the Spec and our current implementation, the length check is already
     // performed in TypedArraySpeciesCreate.
-    CSA_ASSERT(
-        this,
-        SmiLessThanOrEqual(
-            CAST(len_), CAST(LoadObjectField(a, JSTypedArray::kLengthOffset))));
+    CSA_ASSERT(this, SmiLessThanOrEqual(CAST(len_), LoadTypedArrayLength(a)));
     fast_typed_array_target_ =
         Word32Equal(LoadInstanceType(LoadElements(original_array)),
                     LoadInstanceType(LoadElements(a)));
@@ -296,9 +294,18 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
       Node* const native_context = LoadNativeContext(context());
       Node* const double_map = LoadContextElement(
           native_context, Context::JS_ARRAY_HOLEY_DOUBLE_ELEMENTS_MAP_INDEX);
-      CallStub(CodeFactory::TransitionElementsKind(
-                   isolate(), HOLEY_SMI_ELEMENTS, HOLEY_DOUBLE_ELEMENTS, true),
-               context(), a(), double_map);
+
+      const ElementsKind kFromKind = HOLEY_SMI_ELEMENTS;
+      const ElementsKind kToKind = HOLEY_DOUBLE_ELEMENTS;
+      const bool kIsJSArray = true;
+
+      Label transition_in_runtime(this, Label::kDeferred);
+      TransitionElementsKind(a(), double_map, kFromKind, kToKind, kIsJSArray,
+                             &transition_in_runtime);
+      Goto(&array_double);
+
+      BIND(&transition_in_runtime);
+      CallRuntime(Runtime::kTransitionElementsKind, context(), a(), double_map);
       Goto(&array_double);
     }
 
@@ -501,7 +508,7 @@ Node* ArrayBuiltinsAssembler::FindProcessor(Node* k_value, Node* k) {
         LoadObjectField(typed_array, JSTypedArray::kBufferOffset);
     GotoIf(IsDetachedBuffer(array_buffer), &throw_detached);
 
-    len_ = LoadObjectField<Smi>(typed_array, JSTypedArray::kLengthOffset);
+    len_ = LoadTypedArrayLength(typed_array);
 
     Label throw_not_callable(this, Label::kDeferred);
     Label distinguish_types(this);
@@ -3627,8 +3634,7 @@ TF_BUILTIN(ArrayIteratorPrototypeNext, CodeStubAssembler) {
     Node* buffer = LoadObjectField(array, JSTypedArray::kBufferOffset);
     GotoIf(IsDetachedBuffer(buffer), &if_detached);
 
-    TNode<Smi> length =
-        CAST(LoadObjectField(array, JSTypedArray::kLengthOffset));
+    TNode<Smi> length = LoadTypedArrayLength(CAST(array));
 
     GotoIfNot(SmiBelow(CAST(index), length), &set_done);
 
@@ -4004,6 +4010,174 @@ TF_BUILTIN(ArrayPrototypeFlatMap, CodeStubAssembler) {
   BIND(&if_not_callable);
   { ThrowTypeError(context, MessageTemplate::kMapperFunctionNonCallable); }
 }
+
+void ArrayBuiltinsAssembler::GenerateConstructor(
+    Node* context, Node* array_function, Node* array_map, Node* array_size,
+    Node* allocation_site, ElementsKind elements_kind,
+    AllocationSiteMode mode) {
+  Label ok(this);
+  Label smi_size(this);
+  Label small_smi_size(this);
+  Label call_runtime(this, Label::kDeferred);
+
+  Branch(TaggedIsSmi(array_size), &smi_size, &call_runtime);
+
+  BIND(&smi_size);
+
+  if (IsFastPackedElementsKind(elements_kind)) {
+    Label abort(this, Label::kDeferred);
+    Branch(SmiEqual(CAST(array_size), SmiConstant(0)), &small_smi_size, &abort);
+
+    BIND(&abort);
+    Node* reason = SmiConstant(AbortReason::kAllocatingNonEmptyPackedArray);
+    TailCallRuntime(Runtime::kAbort, context, reason);
+  } else {
+    int element_size =
+        IsDoubleElementsKind(elements_kind) ? kDoubleSize : kPointerSize;
+    int max_fast_elements =
+        (kMaxRegularHeapObjectSize - FixedArray::kHeaderSize - JSArray::kSize -
+         AllocationMemento::kSize) /
+        element_size;
+    Branch(SmiAboveOrEqual(CAST(array_size), SmiConstant(max_fast_elements)),
+           &call_runtime, &small_smi_size);
+  }
+
+  BIND(&small_smi_size);
+  {
+    Node* array = AllocateJSArray(
+        elements_kind, array_map, array_size, array_size,
+        mode == DONT_TRACK_ALLOCATION_SITE ? nullptr : allocation_site,
+        CodeStubAssembler::SMI_PARAMETERS);
+    Return(array);
+  }
+
+  BIND(&call_runtime);
+  {
+    TailCallRuntime(Runtime::kNewArray, context, array_function, array_size,
+                    array_function, allocation_site);
+  }
+}
+
+void ArrayBuiltinsAssembler::GenerateArrayNoArgumentConstructor(
+    ElementsKind kind, AllocationSiteOverrideMode mode) {
+  typedef ArrayNoArgumentConstructorDescriptor Descriptor;
+  Node* native_context = LoadObjectField(Parameter(Descriptor::kFunction),
+                                         JSFunction::kContextOffset);
+  bool track_allocation_site =
+      AllocationSite::ShouldTrack(kind) && mode != DISABLE_ALLOCATION_SITES;
+  Node* allocation_site =
+      track_allocation_site ? Parameter(Descriptor::kAllocationSite) : nullptr;
+  Node* array_map = LoadJSArrayElementsMap(kind, native_context);
+  Node* array = AllocateJSArray(
+      kind, array_map, IntPtrConstant(JSArray::kPreallocatedArrayElements),
+      SmiConstant(0), allocation_site);
+  Return(array);
+}
+
+void ArrayBuiltinsAssembler::GenerateArraySingleArgumentConstructor(
+    ElementsKind kind, AllocationSiteOverrideMode mode) {
+  typedef ArraySingleArgumentConstructorDescriptor Descriptor;
+  Node* context = Parameter(Descriptor::kContext);
+  Node* function = Parameter(Descriptor::kFunction);
+  Node* native_context = LoadObjectField(function, JSFunction::kContextOffset);
+  Node* array_map = LoadJSArrayElementsMap(kind, native_context);
+
+  AllocationSiteMode allocation_site_mode = DONT_TRACK_ALLOCATION_SITE;
+  if (mode == DONT_OVERRIDE) {
+    allocation_site_mode = AllocationSite::ShouldTrack(kind)
+                               ? TRACK_ALLOCATION_SITE
+                               : DONT_TRACK_ALLOCATION_SITE;
+  }
+
+  Node* array_size = Parameter(Descriptor::kArraySizeSmiParameter);
+  Node* allocation_site = Parameter(Descriptor::kAllocationSite);
+
+  GenerateConstructor(context, function, array_map, array_size, allocation_site,
+                      kind, allocation_site_mode);
+}
+
+void ArrayBuiltinsAssembler::GenerateInternalArrayNoArgumentConstructor(
+    ElementsKind kind) {
+  typedef ArrayNoArgumentConstructorDescriptor Descriptor;
+  Node* array_map = LoadObjectField(Parameter(Descriptor::kFunction),
+                                    JSFunction::kPrototypeOrInitialMapOffset);
+  Node* array = AllocateJSArray(
+      kind, array_map, IntPtrConstant(JSArray::kPreallocatedArrayElements),
+      SmiConstant(0));
+  Return(array);
+}
+
+void ArrayBuiltinsAssembler::GenerateInternalArraySingleArgumentConstructor(
+    ElementsKind kind) {
+  typedef ArraySingleArgumentConstructorDescriptor Descriptor;
+  Node* context = Parameter(Descriptor::kContext);
+  Node* function = Parameter(Descriptor::kFunction);
+  Node* array_map =
+      LoadObjectField(function, JSFunction::kPrototypeOrInitialMapOffset);
+  Node* array_size = Parameter(Descriptor::kArraySizeSmiParameter);
+  Node* allocation_site = UndefinedConstant();
+
+  GenerateConstructor(context, function, array_map, array_size, allocation_site,
+                      kind, DONT_TRACK_ALLOCATION_SITE);
+}
+
+#define GENERATE_ARRAY_CTOR(name, kind_camel, kind_caps, mode_camel, \
+                            mode_caps)                               \
+  TF_BUILTIN(Array##name##Constructor_##kind_camel##_##mode_camel,   \
+             ArrayBuiltinsAssembler) {                               \
+    GenerateArray##name##Constructor(kind_caps, mode_caps);          \
+  }
+
+// The ArrayNoArgumentConstructor builtin family.
+GENERATE_ARRAY_CTOR(NoArgument, PackedSmi, PACKED_SMI_ELEMENTS, DontOverride,
+                    DONT_OVERRIDE);
+GENERATE_ARRAY_CTOR(NoArgument, HoleySmi, HOLEY_SMI_ELEMENTS, DontOverride,
+                    DONT_OVERRIDE);
+GENERATE_ARRAY_CTOR(NoArgument, PackedSmi, PACKED_SMI_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(NoArgument, HoleySmi, HOLEY_SMI_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(NoArgument, Packed, PACKED_ELEMENTS, DisableAllocationSites,
+                    DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(NoArgument, Holey, HOLEY_ELEMENTS, DisableAllocationSites,
+                    DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(NoArgument, PackedDouble, PACKED_DOUBLE_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(NoArgument, HoleyDouble, HOLEY_DOUBLE_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+
+// The ArraySingleArgumentConstructor builtin family.
+GENERATE_ARRAY_CTOR(SingleArgument, PackedSmi, PACKED_SMI_ELEMENTS,
+                    DontOverride, DONT_OVERRIDE);
+GENERATE_ARRAY_CTOR(SingleArgument, HoleySmi, HOLEY_SMI_ELEMENTS, DontOverride,
+                    DONT_OVERRIDE);
+GENERATE_ARRAY_CTOR(SingleArgument, PackedSmi, PACKED_SMI_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(SingleArgument, HoleySmi, HOLEY_SMI_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(SingleArgument, Packed, PACKED_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(SingleArgument, Holey, HOLEY_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(SingleArgument, PackedDouble, PACKED_DOUBLE_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+GENERATE_ARRAY_CTOR(SingleArgument, HoleyDouble, HOLEY_DOUBLE_ELEMENTS,
+                    DisableAllocationSites, DISABLE_ALLOCATION_SITES);
+
+#undef GENERATE_ARRAY_CTOR
+
+#define GENERATE_INTERNAL_ARRAY_CTOR(name, kind_camel, kind_caps) \
+  TF_BUILTIN(InternalArray##name##Constructor_##kind_camel,       \
+             ArrayBuiltinsAssembler) {                            \
+    GenerateInternalArray##name##Constructor(kind_caps);          \
+  }
+
+GENERATE_INTERNAL_ARRAY_CTOR(NoArgument, Packed, PACKED_ELEMENTS);
+GENERATE_INTERNAL_ARRAY_CTOR(NoArgument, Holey, HOLEY_ELEMENTS);
+GENERATE_INTERNAL_ARRAY_CTOR(SingleArgument, Packed, PACKED_ELEMENTS);
+GENERATE_INTERNAL_ARRAY_CTOR(SingleArgument, Holey, HOLEY_ELEMENTS);
+
+#undef GENERATE_INTERNAL_ARRAY_CTOR
 
 }  // namespace internal
 }  // namespace v8

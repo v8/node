@@ -38,13 +38,13 @@ struct WasmException;
   }())
 
 #define RET_ON_PROTOTYPE_OPCODE(flag)                                          \
-  DCHECK(!this->module_ || !this->module_->is_asm_js());                       \
+  DCHECK(!this->module_ || this->module_->origin == kWasmOrigin);              \
   if (!FLAG_experimental_wasm_##flag) {                                        \
     this->error("Invalid opcode (enable with --experimental-wasm-" #flag ")"); \
   }
 
 #define CHECK_PROTOTYPE_OPCODE(flag)                                           \
-  DCHECK(!this->module_ || !this->module_->is_asm_js());                       \
+  DCHECK(!this->module_ || this->module_->origin == kWasmOrigin);              \
   if (!FLAG_experimental_wasm_##flag) {                                        \
     this->error("Invalid opcode (enable with --experimental-wasm-" #flag ")"); \
     break;                                                                     \
@@ -1403,7 +1403,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
 #define TRACE_PART(...)
 #endif
 
-      FunctionSig* sig = WasmOpcodes::Signature(opcode);
+      FunctionSig* sig = const_cast<FunctionSig*>(kSimpleOpcodeSigs[opcode]);
       if (sig) {
         BuildSimpleOperator(opcode, sig);
       } else {
@@ -1830,7 +1830,7 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             MemoryIndexImmediate<validate> imm(this, this->pc_);
             len = 1 + imm.length;
             DCHECK_NOT_NULL(this->module_);
-            if (!VALIDATE(this->module_->is_wasm())) {
+            if (!VALIDATE(this->module_->origin == kWasmOrigin)) {
               this->error("grow_memory is not supported for asmjs modules");
               break;
             }
@@ -1908,9 +1908,18 @@ class WasmFullDecoder : public WasmDecoder<validate> {
             len += DecodeAtomicOpcode(opcode);
             break;
           }
+// Note that prototype opcodes are not handled in the fastpath
+// above this switch, to avoid checking a feature flag.
+#define SIMPLE_PROTOTYPE_CASE(name, opc, sig) \
+  case kExpr##name: /* fallthrough */
+            FOREACH_SIMPLE_PROTOTYPE_OPCODE(SIMPLE_PROTOTYPE_CASE)
+#undef SIMPLE_PROTOTYPE_CASE
+            BuildSimplePrototypeOperator(opcode);
+            break;
           default: {
             // Deal with special asmjs opcodes.
-            if (this->module_ != nullptr && this->module_->is_asm_js()) {
+            if (this->module_ != nullptr &&
+                this->module_->origin == kAsmJsOrigin) {
               sig = WasmOpcodes::AsmjsSignature(opcode);
               if (sig) {
                 BuildSimpleOperator(opcode, sig);
@@ -2422,14 +2431,18 @@ class WasmFullDecoder : public WasmDecoder<validate> {
     CALL_INTERFACE(OnFirstError);
   }
 
-  inline void BuildSimpleOperator(WasmOpcode opcode, FunctionSig* sig) {
+  void BuildSimplePrototypeOperator(WasmOpcode opcode) {
     if (WasmOpcodes::IsSignExtensionOpcode(opcode)) {
       RET_ON_PROTOTYPE_OPCODE(se);
     }
     if (WasmOpcodes::IsAnyRefOpcode(opcode)) {
       RET_ON_PROTOTYPE_OPCODE(anyref);
     }
+    FunctionSig* sig = WasmOpcodes::Signature(opcode);
+    BuildSimpleOperator(opcode, sig);
+  }
 
+  inline void BuildSimpleOperator(WasmOpcode opcode, FunctionSig* sig) {
     switch (sig->parameter_count()) {
       case 1: {
         auto val = Pop(0, sig->GetParam(0));

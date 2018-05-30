@@ -21,6 +21,7 @@
 #include "src/register-configuration.h"
 #include "src/runtime/runtime.h"
 #include "src/snapshot/serializer-common.h"
+#include "src/snapshot/snapshot.h"
 
 #include "src/arm64/macro-assembler-arm64-inl.h"
 #include "src/arm64/macro-assembler-arm64.h"  // Cannot be the first include
@@ -1994,6 +1995,20 @@ void TurboAssembler::Jump(Handle<Code> code, RelocInfo::Mode rmode,
     Add(scratch, scratch, Operand(Code::kHeaderSize - kHeapObjectTag));
     Jump(scratch, cond);
     return;
+  } else if (!isolate()->serializer_enabled()) {
+    int builtin_index = Builtins::kNoBuiltinId;
+    if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
+        Builtins::IsIsolateIndependent(builtin_index)) {
+      // Inline the trampoline.
+      CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
+      UseScratchRegisterScope temps(this);
+      Register scratch = temps.AcquireX();
+      EmbeddedData d = EmbeddedData::FromBlob();
+      Address entry = d.InstructionStartOfBuiltin(builtin_index);
+      Mov(scratch, Operand(entry, RelocInfo::OFF_HEAP_TARGET));
+      Jump(scratch, cond);
+      return;
+    }
   }
 #endif  // V8_EMBEDDED_BUILTINS
   if (CanUseNearCallOrJump(rmode)) {
@@ -2053,6 +2068,20 @@ void TurboAssembler::Call(Handle<Code> code, RelocInfo::Mode rmode) {
     Add(scratch, scratch, Operand(Code::kHeaderSize - kHeapObjectTag));
     Call(scratch);
     return;
+  } else if (!isolate()->serializer_enabled()) {
+    int builtin_index = Builtins::kNoBuiltinId;
+    if (isolate()->builtins()->IsBuiltinHandle(code, &builtin_index) &&
+        Builtins::IsIsolateIndependent(builtin_index)) {
+      // Inline the trampoline.
+      CHECK_NE(builtin_index, Builtins::kNoBuiltinId);
+      UseScratchRegisterScope temps(this);
+      Register scratch = temps.AcquireX();
+      EmbeddedData d = EmbeddedData::FromBlob();
+      Address entry = d.InstructionStartOfBuiltin(builtin_index);
+      Mov(scratch, Operand(entry, RelocInfo::OFF_HEAP_TARGET));
+      Call(scratch);
+      return;
+    }
   }
 #endif  // V8_EMBEDDED_BUILTINS
   if (CanUseNearCallOrJump(rmode)) {
@@ -2467,17 +2496,19 @@ void TurboAssembler::EnterFrame(StackFrame::Type type) {
   UseScratchRegisterScope temps(this);
 
   if (type == StackFrame::INTERNAL) {
-    Register code_reg = temps.AcquireX();
-    Move(code_reg, CodeObject());
     Register type_reg = temps.AcquireX();
     Mov(type_reg, StackFrame::TypeToMarker(type));
-    Push(lr, fp, type_reg, code_reg);
-    Add(fp, sp, InternalFrameConstants::kFixedFrameSizeFromFp);
-    // sp[4] : lr
-    // sp[3] : fp
+    // type_reg pushed twice for alignment.
+    Push(lr, fp, type_reg, type_reg);
+    const int kFrameSize =
+        TypedFrameConstants::kFixedFrameSizeFromFp + kPointerSize;
+    Add(fp, sp, kFrameSize);
+    // sp[3] : lr
+    // sp[2] : fp
     // sp[1] : type
-    // sp[0] : [code object]
-  } else if (type == StackFrame::WASM_COMPILED) {
+    // sp[0] : for alignment
+  } else if (type == StackFrame::WASM_COMPILED ||
+             type == StackFrame::WASM_COMPILE_LAZY) {
     Register type_reg = temps.AcquireX();
     Mov(type_reg, StackFrame::TypeToMarker(type));
     Push(lr, fp);
@@ -2507,15 +2538,10 @@ void TurboAssembler::EnterFrame(StackFrame::Type type) {
 }
 
 void TurboAssembler::LeaveFrame(StackFrame::Type type) {
-  if (type == StackFrame::WASM_COMPILED) {
-    Mov(sp, fp);
-    Pop(fp, lr);
-  } else {
-    // Drop the execution stack down to the frame pointer and restore
-    // the caller frame pointer and return address.
-    Mov(sp, fp);
-    Pop(fp, lr);
-  }
+  // Drop the execution stack down to the frame pointer and restore
+  // the caller frame pointer and return address.
+  Mov(sp, fp);
+  Pop(fp, lr);
 }
 
 
