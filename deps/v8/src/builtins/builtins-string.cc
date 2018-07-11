@@ -52,7 +52,7 @@ uc32 NextCodePoint(Isolate* isolate, BuiltinArguments args, int index) {
 BUILTIN(StringFromCodePoint) {
   HandleScope scope(isolate);
   int const length = args.length() - 1;
-  if (length == 0) return isolate->heap()->empty_string();
+  if (length == 0) return ReadOnlyRoots(isolate).empty_string();
   DCHECK_LT(0, length);
 
   // Optimistically assume that the resulting String contains only one byte
@@ -64,7 +64,7 @@ BUILTIN(StringFromCodePoint) {
   for (index = 0; index < length; index++) {
     code = NextCodePoint(isolate, args, index);
     if (code < 0) {
-      return isolate->heap()->exception();
+      return ReadOnlyRoots(isolate).exception();
     }
     if (code > String::kMaxOneByteCharCode) {
       break;
@@ -94,7 +94,7 @@ BUILTIN(StringFromCodePoint) {
     }
     code = NextCodePoint(isolate, args, index);
     if (code < 0) {
-      return isolate->heap()->exception();
+      return ReadOnlyRoots(isolate).exception();
     }
   }
 
@@ -122,7 +122,7 @@ BUILTIN(StringPrototypeEndsWith) {
   Maybe<bool> is_reg_exp = RegExpUtils::IsRegExp(isolate, search);
   if (is_reg_exp.IsNothing()) {
     DCHECK(isolate->has_pending_exception());
-    return isolate->heap()->exception();
+    return ReadOnlyRoots(isolate).exception();
   }
   if (is_reg_exp.FromJust()) {
     THROW_NEW_ERROR_RETURN_FAILURE(
@@ -146,10 +146,10 @@ BUILTIN(StringPrototypeEndsWith) {
   }
 
   int start = end - search_string->length();
-  if (start < 0) return isolate->heap()->false_value();
+  if (start < 0) return ReadOnlyRoots(isolate).false_value();
 
-  str = String::Flatten(str);
-  search_string = String::Flatten(search_string);
+  str = String::Flatten(isolate, str);
+  search_string = String::Flatten(isolate, search_string);
 
   DisallowHeapAllocation no_gc;  // ensure vectors stay valid
   String::FlatContent str_content = str->GetFlatContent();
@@ -169,10 +169,10 @@ BUILTIN(StringPrototypeEndsWith) {
 
   for (int i = 0; i < search_string->length(); i++) {
     if (str_reader.Get(start + i) != search_reader.Get(i)) {
-      return isolate->heap()->false_value();
+      return ReadOnlyRoots(isolate).false_value();
     }
   }
-  return isolate->heap()->true_value();
+  return ReadOnlyRoots(isolate).true_value();
 }
 
 // ES6 section 21.1.3.9
@@ -219,8 +219,8 @@ BUILTIN(StringPrototypeLocaleCompare) {
   int d = str1->Get(0) - str2->Get(0);
   if (d != 0) return Smi::FromInt(d);
 
-  str1 = String::Flatten(str1);
-  str2 = String::Flatten(str2);
+  str1 = String::Flatten(isolate, str1);
+  str2 = String::Flatten(isolate, str2);
 
   DisallowHeapAllocation no_gc;
   String::FlatContent flat1 = str1->GetFlatContent();
@@ -252,13 +252,13 @@ BUILTIN(StringPrototypeNormalize) {
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, form,
                                      Object::ToString(isolate, form_input));
 
-  if (!(String::Equals(form,
+  if (!(String::Equals(isolate, form,
                        isolate->factory()->NewStringFromStaticChars("NFC")) ||
-        String::Equals(form,
+        String::Equals(isolate, form,
                        isolate->factory()->NewStringFromStaticChars("NFD")) ||
-        String::Equals(form,
+        String::Equals(isolate, form,
                        isolate->factory()->NewStringFromStaticChars("NFKC")) ||
-        String::Equals(form,
+        String::Equals(isolate, form,
                        isolate->factory()->NewStringFromStaticChars("NFKD")))) {
     Handle<String> valid_forms =
         isolate->factory()->NewStringFromStaticChars("NFC, NFD, NFKC, NFKD");
@@ -280,7 +280,7 @@ BUILTIN(StringPrototypeStartsWith) {
   Maybe<bool> is_reg_exp = RegExpUtils::IsRegExp(isolate, search);
   if (is_reg_exp.IsNothing()) {
     DCHECK(isolate->has_pending_exception());
-    return isolate->heap()->exception();
+    return ReadOnlyRoots(isolate).exception();
   }
   if (is_reg_exp.FromJust()) {
     THROW_NEW_ERROR_RETURN_FAILURE(
@@ -304,18 +304,19 @@ BUILTIN(StringPrototypeStartsWith) {
   }
 
   if (start + search_string->length() > str->length()) {
-    return isolate->heap()->false_value();
+    return ReadOnlyRoots(isolate).false_value();
   }
 
-  FlatStringReader str_reader(isolate, String::Flatten(str));
-  FlatStringReader search_reader(isolate, String::Flatten(search_string));
+  FlatStringReader str_reader(isolate, String::Flatten(isolate, str));
+  FlatStringReader search_reader(isolate,
+                                 String::Flatten(isolate, search_string));
 
   for (int i = 0; i < search_string->length(); i++) {
     if (str_reader.Get(start + i) != search_reader.Get(i)) {
-      return isolate->heap()->false_value();
+      return ReadOnlyRoots(isolate).false_value();
     }
   }
-  return isolate->heap()->true_value();
+  return ReadOnlyRoots(isolate).true_value();
 }
 
 #ifndef V8_INTL_SUPPORT
@@ -430,7 +431,7 @@ template <class Converter>
 V8_WARN_UNUSED_RESULT static Object* ConvertCase(
     Handle<String> s, Isolate* isolate,
     unibrow::Mapping<Converter, 128>* mapping) {
-  s = String::Flatten(s);
+  s = String::Flatten(isolate, s);
   int length = s->length();
   // Assume that the string is not empty; we need this assumption later
   if (length == 0) return *s;

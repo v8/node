@@ -58,6 +58,10 @@ int BaseShape<Key>::GetMapRootIndex() {
   return Heap::kHashTableMapRootIndex;
 }
 
+int EphemeronHashTableShape::GetMapRootIndex() {
+  return Heap::kEphemeronHashTableMapRootIndex;
+}
+
 template <typename Derived, typename Shape>
 int HashTable<Derived, Shape>::FindEntry(Key key) {
   return FindEntry(GetIsolate(), key);
@@ -76,8 +80,9 @@ int HashTable<Derived, Shape>::FindEntry(Isolate* isolate, Key key,
   uint32_t entry = FirstProbe(hash, capacity);
   uint32_t count = 1;
   // EnsureCapacity will guarantee the hash table is never full.
-  Object* undefined = isolate->heap()->undefined_value();
-  Object* the_hole = isolate->heap()->the_hole_value();
+  ReadOnlyRoots roots(isolate);
+  Object* undefined = roots.undefined_value();
+  Object* the_hole = roots.the_hole_value();
   USE(the_hole);
   while (true) {
     Object* element = KeyAt(entry);
@@ -92,10 +97,29 @@ int HashTable<Derived, Shape>::FindEntry(Isolate* isolate, Key key,
   return kNotFound;
 }
 
+template <typename Derived, typename Shape>
+bool HashTable<Derived, Shape>::IsKey(Isolate* isolate, Object* k) {
+  return Shape::IsKey(isolate, k);
+}
+
+template <typename Derived, typename Shape>
+bool HashTable<Derived, Shape>::ToKey(Isolate* isolate, int entry,
+                                      Object** out_k) {
+  Object* k = KeyAt(entry);
+  if (!IsKey(isolate, k)) return false;
+  *out_k = Shape::Unwrap(k);
+  return true;
+}
+
+template <typename KeyT>
+bool BaseShape<KeyT>::IsKey(Isolate* isolate, Object* key) {
+  return IsLive(isolate, key);
+}
+
 template <typename KeyT>
 bool BaseShape<KeyT>::IsLive(Isolate* isolate, Object* k) {
-  Heap* heap = isolate->heap();
-  return k != heap->the_hole_value() && k != heap->undefined_value();
+  ReadOnlyRoots roots(isolate);
+  return k != roots.the_hole_value() && k != roots.undefined_value();
 }
 
 template <typename Derived, typename Shape>
@@ -119,19 +143,6 @@ bool ObjectHashSet::Has(Isolate* isolate, Handle<Object> key) {
   Object* hash = key->GetHash();
   if (!hash->IsSmi()) return false;
   return FindEntry(isolate, key, Smi::ToInt(hash)) != kNotFound;
-}
-
-int OrderedHashSet::GetMapRootIndex() {
-  return Heap::kOrderedHashSetMapRootIndex;
-}
-
-int OrderedHashMap::GetMapRootIndex() {
-  return Heap::kOrderedHashMapMapRootIndex;
-}
-
-inline Object* OrderedHashMap::ValueAt(int entry) {
-  DCHECK_LT(entry, this->UsedCapacity());
-  return get(EntryToIndex(entry) + kValueOffset);
 }
 
 }  // namespace internal

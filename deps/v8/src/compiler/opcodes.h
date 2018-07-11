@@ -123,7 +123,8 @@
   V(JSToNumber)                    \
   V(JSToNumeric)                   \
   V(JSToObject)                    \
-  V(JSToString)
+  V(JSToString)                    \
+  V(JSParseInt)
 
 #define JS_SIMPLE_UNOP_LIST(V) \
   JS_CONVERSION_UNOP_LIST(V)   \
@@ -144,6 +145,7 @@
   V(JSCreateIterResultObject)   \
   V(JSCreateStringIterator)     \
   V(JSCreateKeyValueArray)      \
+  V(JSCreateObject)             \
   V(JSCreatePromise)            \
   V(JSCreateTypedArray)         \
   V(JSCreateLiteralArray)       \
@@ -206,6 +208,8 @@
   V(JSRejectPromise)                   \
   V(JSResolvePromise)                  \
   V(JSStackCheck)                      \
+  V(JSObjectIsArray)                   \
+  V(JSRegExpTest)                      \
   V(JSDebugger)
 
 #define JS_OP_LIST(V)     \
@@ -376,9 +380,11 @@
   V(LoadField)                          \
   V(LoadElement)                        \
   V(LoadTypedElement)                   \
+  V(LoadDataViewElement)                \
   V(StoreField)                         \
   V(StoreElement)                       \
   V(StoreTypedElement)                  \
+  V(StoreDataViewElement)               \
   V(StoreSignedSmallElement)            \
   V(TransitionAndStoreElement)          \
   V(TransitionAndStoreNumberElement)    \
@@ -398,6 +404,7 @@
   V(ObjectIsDetectableCallable)         \
   V(ObjectIsMinusZero)                  \
   V(ObjectIsNaN)                        \
+  V(NumberIsNaN)                        \
   V(ObjectIsNonCallable)                \
   V(ObjectIsNumber)                     \
   V(ObjectIsReceiver)                   \
@@ -417,8 +424,9 @@
   V(TransitionElementsKind)             \
   V(FindOrderedHashMapEntry)            \
   V(FindOrderedHashMapEntryForInt32Key) \
-  V(MaskIndexWithBound)                 \
-  V(RuntimeAbort)
+  V(PoisonIndex)                        \
+  V(RuntimeAbort)                       \
+  V(DateNow)
 
 #define SIMPLIFIED_OP_LIST(V)                 \
   SIMPLIFIED_CHANGE_OP_LIST(V)                \
@@ -612,12 +620,12 @@
   V(Float64ExtractHighWord32)    \
   V(Float64InsertLowWord32)      \
   V(Float64InsertHighWord32)     \
-  V(PoisonOnSpeculationTagged)   \
-  V(PoisonOnSpeculationWord)     \
+  V(TaggedPoisonOnSpeculation)   \
+  V(Word32PoisonOnSpeculation)   \
+  V(Word64PoisonOnSpeculation)   \
   V(LoadStackPointer)            \
   V(LoadFramePointer)            \
   V(LoadParentFramePointer)      \
-  V(LoadRootsPointer)            \
   V(UnalignedLoad)               \
   V(UnalignedStore)              \
   V(Int32PairAdd)                \

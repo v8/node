@@ -169,7 +169,7 @@ class BaseNameDictionary : public Dictionary<Derived, Shape> {
   // Copies enumerable keys to preallocated fixed array.
   // Does not throw for uninitialized exports in module namespace objects, so
   // this has to be checked separately.
-  static void CopyEnumKeysTo(Handle<Derived> dictionary,
+  static void CopyEnumKeysTo(Isolate* isolate, Handle<Derived> dictionary,
                              Handle<FixedArray> storage, KeyCollectionMode mode,
                              KeyAccumulator* accumulator);
 
@@ -301,6 +301,7 @@ class NumberDictionary
     : public Dictionary<NumberDictionary, NumberDictionaryShape> {
  public:
   DECL_CAST(NumberDictionary)
+  DECL_PRINTER(NumberDictionary)
 
   // Type specific at put (default NONE attributes is used when adding).
   V8_WARN_UNUSED_RESULT static Handle<NumberDictionary> Set(

@@ -9,6 +9,7 @@
 #include "src/debug/debug.h"
 #include "src/isolate-inl.h"
 #include "src/messages.h"
+#include "src/objects/hash-table-inl.h"
 #include "src/objects/property-descriptor-object.h"
 #include "src/property-descriptor.h"
 #include "src/runtime/runtime.h"
@@ -21,6 +22,9 @@ MaybeHandle<Object> Runtime::GetObjectProperty(Isolate* isolate,
                                                Handle<Object> key,
                                                bool* is_found_out) {
   if (object->IsNullOrUndefined(isolate)) {
+    if (*key == ReadOnlyRoots(isolate).iterator_symbol()) {
+      return Runtime::ThrowIteratorError(isolate, object);
+    }
     THROW_NEW_ERROR(
         isolate,
         NewTypeError(MessageTemplate::kNonObjectPropertyLoad, key, object),
@@ -126,7 +130,7 @@ static MaybeHandle<Object> KeyedGetObjectProperty(Isolate* isolate,
     if (index >= 0 && index < str->length()) {
       Factory* factory = isolate->factory();
       return factory->LookupSingleCharacterStringFromCode(
-          String::Flatten(str)->Get(index));
+          String::Flatten(isolate, str)->Get(index));
     }
   }
 
@@ -176,9 +180,9 @@ bool DeleteObjectPropertyFast(Isolate* isolate, Handle<JSReceiver> receiver,
     if (!index.is_inobject() && index.outobject_array_index() == 0) {
       DCHECK(!Map::cast(backpointer)->HasOutOfObjectProperties());
       // Clear out the properties backing store.
-      receiver->SetProperties(isolate->heap()->empty_fixed_array());
+      receiver->SetProperties(ReadOnlyRoots(isolate).empty_fixed_array());
     } else {
-      Object* filler = isolate->heap()->one_pointer_filler_map();
+      Object* filler = ReadOnlyRoots(isolate).one_pointer_filler_map();
       JSObject::cast(*receiver)->RawFastPropertyAtPut(index, filler);
       // We must clear any recorded slot for the deleted property, because
       // subsequent object modifications might put a raw double there.
@@ -198,8 +202,8 @@ bool DeleteObjectPropertyFast(Isolate* isolate, Handle<JSReceiver> receiver,
   // Finally, perform the map rollback.
   receiver->synchronized_set_map(Map::cast(backpointer));
 #if VERIFY_HEAP
-  receiver->HeapObjectVerify();
-  receiver->property_array()->PropertyArrayVerify();
+  receiver->HeapObjectVerify(isolate);
+  receiver->property_array()->PropertyArrayVerify(isolate);
 #endif
   return true;
 }
@@ -240,6 +244,56 @@ RUNTIME_FUNCTION(Runtime_ObjectKeys) {
   return *keys;
 }
 
+// ES #sec-object.getOwnPropertyNames
+RUNTIME_FUNCTION(Runtime_ObjectGetOwnPropertyNames) {
+  HandleScope scope(isolate);
+  Handle<Object> object = args.at(0);
+
+  // Convert the {object} to a proper {receiver}.
+  Handle<JSReceiver> receiver;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, receiver,
+                                     Object::ToObject(isolate, object));
+
+  // Collect the own keys for the {receiver}.
+  Handle<FixedArray> keys;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+      isolate, keys,
+      KeyAccumulator::GetKeys(receiver, KeyCollectionMode::kOwnOnly,
+                              SKIP_SYMBOLS,
+                              GetKeysConversion::kConvertToString));
+  return *keys;
+}
+
+RUNTIME_FUNCTION(Runtime_ObjectGetOwnPropertyNamesTryFast) {
+  HandleScope scope(isolate);
+  Handle<Object> object = args.at(0);
+
+  // Convert the {object} to a proper {receiver}.
+  Handle<JSReceiver> receiver;
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, receiver,
+                                     Object::ToObject(isolate, object));
+
+  Handle<Map> map(receiver->map(), isolate);
+
+  int nod = map->NumberOfOwnDescriptors();
+  Handle<FixedArray> keys;
+  if (nod != 0 && map->NumberOfEnumerableProperties() == nod) {
+    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+        isolate, keys,
+        KeyAccumulator::GetKeys(receiver, KeyCollectionMode::kOwnOnly,
+                                ENUMERABLE_STRINGS,
+                                GetKeysConversion::kConvertToString));
+  } else {
+    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+        isolate, keys,
+        KeyAccumulator::GetKeys(receiver, KeyCollectionMode::kOwnOnly,
+                                SKIP_SYMBOLS,
+                                GetKeysConversion::kConvertToString));
+  }
+
+  return *keys;
+}
+
 // ES6 19.1.3.2
 RUNTIME_FUNCTION(Runtime_ObjectHasOwnProperty) {
   HandleScope scope(isolate);
@@ -261,12 +315,12 @@ RUNTIME_FUNCTION(Runtime_ObjectHasOwnProperty) {
     if (key.is_null()) {
       DCHECK(key_is_array_index);
       // Namespace objects can't have indexed properties.
-      return isolate->heap()->false_value();
+      return ReadOnlyRoots(isolate).false_value();
     }
 
     Maybe<bool> result =
         JSReceiver::HasOwnProperty(Handle<JSReceiver>::cast(object), key);
-    if (!result.IsJust()) return isolate->heap()->exception();
+    if (!result.IsJust()) return ReadOnlyRoots(isolate).exception();
     return isolate->heap()->ToBoolean(result.FromJust());
 
   } else if (object->IsJSObject()) {
@@ -282,16 +336,16 @@ RUNTIME_FUNCTION(Runtime_ObjectHasOwnProperty) {
           key_is_array_index ? LookupIterator(isolate, js_obj, index, js_obj, c)
                              : LookupIterator(js_obj, key, js_obj, c);
       Maybe<bool> maybe = JSReceiver::HasProperty(&it);
-      if (maybe.IsNothing()) return isolate->heap()->exception();
+      if (maybe.IsNothing()) return ReadOnlyRoots(isolate).exception();
       DCHECK(!isolate->has_pending_exception());
-      if (maybe.FromJust()) return isolate->heap()->true_value();
+      if (maybe.FromJust()) return ReadOnlyRoots(isolate).true_value();
     }
 
     Map* map = js_obj->map();
     if (!map->has_hidden_prototype() &&
         (key_is_array_index ? !map->has_indexed_interceptor()
                             : !map->has_named_interceptor())) {
-      return isolate->heap()->false_value();
+      return ReadOnlyRoots(isolate).false_value();
     }
 
     // Slow case.
@@ -301,7 +355,7 @@ RUNTIME_FUNCTION(Runtime_ObjectHasOwnProperty) {
                             : LookupIterator(js_obj, key, js_obj, c);
 
     Maybe<bool> maybe = JSReceiver::HasProperty(&it);
-    if (maybe.IsNothing()) return isolate->heap()->exception();
+    if (maybe.IsNothing()) return ReadOnlyRoots(isolate).exception();
     DCHECK(!isolate->has_pending_exception());
     return isolate->heap()->ToBoolean(maybe.FromJust());
 
@@ -313,20 +367,20 @@ RUNTIME_FUNCTION(Runtime_ObjectHasOwnProperty) {
 
     Maybe<bool> result =
         JSReceiver::HasOwnProperty(Handle<JSProxy>::cast(object), key);
-    if (result.IsNothing()) return isolate->heap()->exception();
+    if (result.IsNothing()) return ReadOnlyRoots(isolate).exception();
     return isolate->heap()->ToBoolean(result.FromJust());
 
   } else if (object->IsString()) {
     return isolate->heap()->ToBoolean(
         key_is_array_index
             ? index < static_cast<uint32_t>(String::cast(*object)->length())
-            : key->Equals(isolate->heap()->length_string()));
+            : key->Equals(ReadOnlyRoots(isolate).length_string()));
   } else if (object->IsNullOrUndefined(isolate)) {
     THROW_NEW_ERROR_RETURN_FAILURE(
         isolate, NewTypeError(MessageTemplate::kUndefinedOrNullToObject));
   }
 
-  return isolate->heap()->false_value();
+  return ReadOnlyRoots(isolate).false_value();
 }
 
 RUNTIME_FUNCTION(Runtime_AddDictionaryProperty) {
@@ -360,7 +414,7 @@ RUNTIME_FUNCTION(Runtime_ObjectCreate) {
   // TODO(bmeurer): Use a dedicated cache for Object.create; think about
   // slack tracking for Object.create.
   Handle<Map> map =
-      Map::GetObjectCreateMap(Handle<HeapObject>::cast(prototype));
+      Map::GetObjectCreateMap(isolate, Handle<HeapObject>::cast(prototype));
 
   // Actually allocate the object.
   Handle<JSObject> object;
@@ -431,13 +485,13 @@ RUNTIME_FUNCTION(Runtime_InternalSetPrototype) {
       Handle<Map> function_map(function->map(), isolate);
       if (!JSFunction::SetName(function, isolate->factory()->proto_string(),
                                isolate->factory()->empty_string())) {
-        return isolate->heap()->exception();
+        return ReadOnlyRoots(isolate).exception();
       }
       CHECK_EQ(*function_map, function->map());
     }
   }
   MAYBE_RETURN(JSReceiver::SetPrototype(obj, prototype, false, kThrowOnError),
-               isolate->heap()->exception());
+               ReadOnlyRoots(isolate).exception());
   return *obj;
 }
 
@@ -548,7 +602,7 @@ RUNTIME_FUNCTION(Runtime_AddNamedProperty) {
   DCHECK(!name->ToArrayIndex(&index));
   LookupIterator it(object, name, object, LookupIterator::OWN_SKIP_INTERCEPTOR);
   Maybe<PropertyAttributes> maybe = JSReceiver::GetPropertyAttributes(&it);
-  if (maybe.IsNothing()) return isolate->heap()->exception();
+  if (maybe.IsNothing()) return ReadOnlyRoots(isolate).exception();
   DCHECK(!it.IsFound());
 #endif
 
@@ -574,7 +628,7 @@ RUNTIME_FUNCTION(Runtime_AddElement) {
   LookupIterator it(isolate, object, index, object,
                     LookupIterator::OWN_SKIP_INTERCEPTOR);
   Maybe<PropertyAttributes> maybe = JSReceiver::GetPropertyAttributes(&it);
-  if (maybe.IsNothing()) return isolate->heap()->exception();
+  if (maybe.IsNothing()) return ReadOnlyRoots(isolate).exception();
   DCHECK(!it.IsFound());
 
   if (object->IsJSArray()) {
@@ -613,7 +667,7 @@ Object* DeleteProperty(Isolate* isolate, Handle<Object> object,
                                      Object::ToObject(isolate, object));
   Maybe<bool> result =
       Runtime::DeleteObjectProperty(isolate, receiver, key, language_mode);
-  MAYBE_RETURN(result, isolate->heap()->exception());
+  MAYBE_RETURN(result, ReadOnlyRoots(isolate).exception());
   return isolate->heap()->ToBoolean(result.FromJust());
 }
 
@@ -661,7 +715,7 @@ RUNTIME_FUNCTION(Runtime_HasProperty) {
 
   // Lookup the {name} on {receiver}.
   Maybe<bool> maybe = JSReceiver::HasProperty(receiver, name);
-  if (maybe.IsNothing()) return isolate->heap()->exception();
+  if (maybe.IsNothing()) return ReadOnlyRoots(isolate).exception();
   return isolate->heap()->ToBoolean(maybe.FromJust());
 }
 
@@ -680,24 +734,6 @@ RUNTIME_FUNCTION(Runtime_GetOwnPropertyKeys) {
                               GetKeysConversion::kConvertToString));
 
   return *isolate->factory()->NewJSArrayWithElements(keys);
-}
-
-
-// Return information on whether an object has a named or indexed interceptor.
-// args[0]: object
-RUNTIME_FUNCTION(Runtime_GetInterceptorInfo) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  if (!args[0]->IsJSObject()) {
-    return Smi::kZero;
-  }
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, obj, 0);
-
-  int result = 0;
-  if (obj->HasNamedInterceptor()) result |= 2;
-  if (obj->HasIndexedInterceptor()) result |= 1;
-
-  return Smi::FromInt(result);
 }
 
 
@@ -734,9 +770,9 @@ RUNTIME_FUNCTION(Runtime_CompleteInobjectSlackTrackingForMap) {
   DCHECK_EQ(1, args.length());
 
   CONVERT_ARG_HANDLE_CHECKED(Map, initial_map, 0);
-  initial_map->CompleteInobjectSlackTracking();
+  initial_map->CompleteInobjectSlackTracking(isolate);
 
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 
@@ -782,7 +818,7 @@ RUNTIME_FUNCTION(Runtime_DefineAccessorPropertyUnchecked) {
 
   RETURN_FAILURE_ON_EXCEPTION(
       isolate, JSObject::DefineAccessor(obj, name, getter, setter, attrs));
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 
@@ -799,14 +835,14 @@ RUNTIME_FUNCTION(Runtime_DefineDataPropertyInLiteral) {
   FeedbackNexus nexus(vector, FeedbackVector::ToSlot(index));
   if (nexus.ic_state() == UNINITIALIZED) {
     if (name->IsUniqueName()) {
-      nexus.ConfigureMonomorphic(name, handle(object->map()),
-                                 Handle<Code>::null());
+      nexus.ConfigureMonomorphic(name, handle(object->map(), isolate),
+                                 MaybeObjectHandle());
     } else {
       nexus.ConfigureMegamorphic(PROPERTY);
     }
   } else if (nexus.ic_state() == MONOMORPHIC) {
     if (nexus.FindFirstMap() != object->map() ||
-        nexus.GetFeedbackExtra() != *name) {
+        nexus.GetFeedbackExtra() != MaybeObject::FromObject(*name)) {
       nexus.ConfigureMegamorphic(PROPERTY);
     }
   }
@@ -825,7 +861,7 @@ RUNTIME_FUNCTION(Runtime_DefineDataPropertyInLiteral) {
     Handle<Map> function_map(function->map(), isolate);
     if (!JSFunction::SetName(function, name,
                              isolate->factory()->empty_string())) {
-      return isolate->heap()->exception();
+      return ReadOnlyRoots(isolate).exception();
     }
     // Class constructors do not reserve in-object space for name field.
     CHECK_IMPLIES(!IsClassConstructor(function->shared()->kind()),
@@ -856,14 +892,14 @@ RUNTIME_FUNCTION(Runtime_CollectTypeProfile) {
   } else if (value->IsNull(isolate)) {
     // typeof(null) is object. But it's more user-friendly to annotate
     // null as type "null".
-    type = Handle<String>(isolate->heap()->null_string());
+    type = Handle<String>(ReadOnlyRoots(isolate).null_string(), isolate);
   }
 
   DCHECK(vector->metadata()->HasTypeProfileSlot());
   FeedbackNexus nexus(vector, vector->GetTypeProfileSlot());
   nexus.Collect(type, position->value());
 
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_HasFastPackedElements) {
@@ -896,7 +932,7 @@ RUNTIME_FUNCTION(Runtime_ClassOf) {
   SealHandleScope shs(isolate);
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_CHECKED(Object, obj, 0);
-  if (!obj->IsJSReceiver()) return isolate->heap()->null_value();
+  if (!obj->IsJSReceiver()) return ReadOnlyRoots(isolate).null_value();
   return JSReceiver::cast(obj)->class_name();
 }
 
@@ -918,7 +954,7 @@ RUNTIME_FUNCTION(Runtime_DefineGetterPropertyUnchecked) {
   if (String::cast(getter->shared()->Name())->length() == 0) {
     Handle<Map> getter_map(getter->map(), isolate);
     if (!JSFunction::SetName(getter, name, isolate->factory()->get_string())) {
-      return isolate->heap()->exception();
+      return ReadOnlyRoots(isolate).exception();
     }
     CHECK_EQ(*getter_map, getter->map());
   }
@@ -927,7 +963,23 @@ RUNTIME_FUNCTION(Runtime_DefineGetterPropertyUnchecked) {
       isolate,
       JSObject::DefineAccessor(object, name, getter,
                                isolate->factory()->null_value(), attrs));
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
+}
+
+RUNTIME_FUNCTION(Runtime_SetDataProperties) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(JSReceiver, target, 0);
+  CONVERT_ARG_HANDLE_CHECKED(Object, source, 1);
+
+  // 2. If source is undefined or null, let keys be an empty List.
+  if (source->IsUndefined(isolate) || source->IsNull(isolate)) {
+    return ReadOnlyRoots(isolate).undefined_value();
+  }
+
+  MAYBE_RETURN(JSReceiver::SetOrCopyDataProperties(isolate, target, source),
+               ReadOnlyRoots(isolate).exception());
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_CopyDataProperties) {
@@ -938,13 +990,13 @@ RUNTIME_FUNCTION(Runtime_CopyDataProperties) {
 
   // 2. If source is undefined or null, let keys be an empty List.
   if (source->IsUndefined(isolate) || source->IsNull(isolate)) {
-    return isolate->heap()->undefined_value();
+    return ReadOnlyRoots(isolate).undefined_value();
   }
 
   MAYBE_RETURN(JSReceiver::SetOrCopyDataProperties(isolate, target, source,
                                                    nullptr, false),
-               isolate->heap()->exception());
-  return isolate->heap()->undefined_value();
+               ReadOnlyRoots(isolate).exception());
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_CopyDataPropertiesWithExcludedProperties) {
@@ -954,7 +1006,7 @@ RUNTIME_FUNCTION(Runtime_CopyDataPropertiesWithExcludedProperties) {
 
   // 2. If source is undefined or null, let keys be an empty List.
   if (source->IsUndefined(isolate) || source->IsNull(isolate)) {
-    return isolate->heap()->undefined_value();
+    return ReadOnlyRoots(isolate).undefined_value();
   }
 
   ScopedVector<Handle<Object>> excluded_properties(args.length() - 1);
@@ -977,7 +1029,7 @@ RUNTIME_FUNCTION(Runtime_CopyDataPropertiesWithExcludedProperties) {
       isolate->factory()->NewJSObject(isolate->object_function());
   MAYBE_RETURN(JSReceiver::SetOrCopyDataProperties(isolate, target, source,
                                                    &excluded_properties, false),
-               isolate->heap()->exception());
+               ReadOnlyRoots(isolate).exception());
   return *target;
 }
 
@@ -1019,7 +1071,7 @@ RUNTIME_FUNCTION(Runtime_DefineMethodsInternal) {
 
   for (int i = 0; i < keys->length(); ++i) {
     Handle<Name> key = Handle<Name>::cast(FixedArray::get(*keys, i, isolate));
-    if (*key == isolate->heap()->constructor_string()) continue;
+    if (*key == ReadOnlyRoots(isolate).constructor_string()) continue;
 
     PropertyDescriptor descriptor;
     Maybe<bool> did_get_descriptor =
@@ -1036,7 +1088,7 @@ RUNTIME_FUNCTION(Runtime_DefineMethodsInternal) {
         isolate, target, key, &descriptor, kDontThrow);
     CHECK(success.FromJust());
   }
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_DefineSetterPropertyUnchecked) {
@@ -1050,7 +1102,7 @@ RUNTIME_FUNCTION(Runtime_DefineSetterPropertyUnchecked) {
   if (String::cast(setter->shared()->Name())->length() == 0) {
     Handle<Map> setter_map(setter->map(), isolate);
     if (!JSFunction::SetName(setter, name, isolate->factory()->set_string())) {
-      return isolate->heap()->exception();
+      return ReadOnlyRoots(isolate).exception();
     }
     CHECK_EQ(*setter_map, setter->map());
   }
@@ -1059,7 +1111,7 @@ RUNTIME_FUNCTION(Runtime_DefineSetterPropertyUnchecked) {
       isolate,
       JSObject::DefineAccessor(object, name, isolate->factory()->null_value(),
                                setter, attrs));
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 RUNTIME_FUNCTION(Runtime_ToObject) {
@@ -1152,10 +1204,10 @@ RUNTIME_FUNCTION(Runtime_HasInPrototypeChain) {
   DCHECK_EQ(2, args.length());
   CONVERT_ARG_HANDLE_CHECKED(Object, object, 0);
   CONVERT_ARG_HANDLE_CHECKED(Object, prototype, 1);
-  if (!object->IsJSReceiver()) return isolate->heap()->false_value();
+  if (!object->IsJSReceiver()) return ReadOnlyRoots(isolate).false_value();
   Maybe<bool> result = JSReceiver::HasInPrototypeChain(
       isolate, Handle<JSReceiver>::cast(object), prototype);
-  MAYBE_RETURN(result, isolate->heap()->exception());
+  MAYBE_RETURN(result, ReadOnlyRoots(isolate).exception());
   return isolate->heap()->ToBoolean(result.FromJust());
 }
 
@@ -1166,7 +1218,8 @@ RUNTIME_FUNCTION(Runtime_CreateIterResultObject) {
   DCHECK_EQ(2, args.length());
   CONVERT_ARG_HANDLE_CHECKED(Object, value, 0);
   CONVERT_ARG_HANDLE_CHECKED(Object, done, 1);
-  return *isolate->factory()->NewJSIteratorResult(value, done->BooleanValue());
+  return *isolate->factory()->NewJSIteratorResult(value,
+                                                  done->BooleanValue(isolate));
 }
 
 RUNTIME_FUNCTION(Runtime_CreateDataProperty) {
@@ -1178,9 +1231,9 @@ RUNTIME_FUNCTION(Runtime_CreateDataProperty) {
   bool success;
   LookupIterator it = LookupIterator::PropertyOrElement(
       isolate, o, key, &success, LookupIterator::OWN);
-  if (!success) return isolate->heap()->exception();
+  if (!success) return ReadOnlyRoots(isolate).exception();
   MAYBE_RETURN(JSReceiver::CreateDataProperty(&it, value, kThrowOnError),
-               isolate->heap()->exception());
+               ReadOnlyRoots(isolate).exception());
   return *value;
 }
 
@@ -1215,9 +1268,9 @@ RUNTIME_FUNCTION(Runtime_GetOwnPropertyDescriptor) {
   PropertyDescriptor desc;
   Maybe<bool> found =
       JSReceiver::GetOwnPropertyDescriptor(isolate, object, name, &desc);
-  MAYBE_RETURN(found, isolate->heap()->exception());
+  MAYBE_RETURN(found, ReadOnlyRoots(isolate).exception());
 
-  if (!found.FromJust()) return isolate->heap()->undefined_value();
+  if (!found.FromJust()) return ReadOnlyRoots(isolate).undefined_value();
   return *desc.ToPropertyDescriptorObject(isolate);
 }
 
@@ -1240,7 +1293,7 @@ RUNTIME_FUNCTION(Runtime_AddPrivateField) {
   CHECK(Object::AddDataProperty(&it, value, NONE, kDontThrow,
                                 Object::MAY_BE_STORE_FROM_KEYED)
             .FromJust());
-  return isolate->heap()->undefined_value();
+  return ReadOnlyRoots(isolate).undefined_value();
 }
 
 }  // namespace internal

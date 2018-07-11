@@ -13,12 +13,10 @@
 
 namespace v8 {
 namespace internal {
-
-class CompilationDependencies;
-
 namespace compiler {
 
 class CommonOperatorBuilder;
+class CompilationDependencies;
 class Graph;
 class JSGraph;
 class Node;
@@ -43,12 +41,6 @@ class PropertyAccessBuilder {
                       std::vector<Handle<Map>> const& receiver_maps);
   Node* BuildCheckValue(Node* receiver, Node** effect, Node* control,
                         Handle<HeapObject> value);
-
-  // Adds stability dependencies on all prototypes of every class in
-  // {receiver_type} up to (and including) the {holder}.
-  void AssumePrototypesStable(Handle<Context> native_context,
-                              std::vector<Handle<Map>> const& receiver_maps,
-                              Handle<JSObject> holder);
 
   // Builds the actual load for data-field and data-constant-field
   // properties (without heap-object or map checks).

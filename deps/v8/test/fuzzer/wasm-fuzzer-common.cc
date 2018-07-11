@@ -10,6 +10,7 @@
 #include "src/wasm/wasm-engine.h"
 #include "src/wasm/wasm-module-builder.h"
 #include "src/wasm/wasm-module.h"
+#include "src/wasm/wasm-objects.h"
 #include "src/zone/accounting-allocator.h"
 #include "src/zone/zone.h"
 #include "test/common/wasm/flag-utils.h"
@@ -58,14 +59,18 @@ int FuzzWasmSection(SectionCode section, const uint8_t* data, size_t size) {
 
   ErrorThrower thrower(i_isolate, "decoder");
 
-  std::unique_ptr<const WasmModule> module(testing::DecodeWasmModuleForTesting(
-      i_isolate, &thrower, buffer.begin(), buffer.end(), kWasmOrigin));
+  testing::DecodeWasmModuleForTesting(i_isolate, &thrower, buffer.begin(),
+                                      buffer.end(), kWasmOrigin);
 
   return 0;
 }
 
 void InterpretAndExecuteModule(i::Isolate* isolate,
                                Handle<WasmModuleObject> module_object) {
+  // We do not instantiate the module if there is a start function, because a
+  // start function can contain an infinite loop which we cannot handle.
+  if (module_object->module()->start_function_index >= 0) return;
+
   ErrorThrower thrower(isolate, "WebAssembly Instantiation");
   MaybeHandle<WasmInstanceObject> maybe_instance;
   Handle<WasmInstanceObject> instance;
@@ -143,6 +148,7 @@ struct PrintName {
 std::ostream& operator<<(std::ostream& os, const PrintName& name) {
   return os.write(name.name.start(), name.name.size());
 }
+}  // namespace
 
 void GenerateTestCase(Isolate* isolate, ModuleWireBytes wire_bytes,
                       bool compiles) {
@@ -154,7 +160,7 @@ void GenerateTestCase(Isolate* isolate, ModuleWireBytes wire_bytes,
   WasmModule* module = module_res.val.get();
   CHECK_NOT_NULL(module);
 
-  OFStream os(stdout);
+  StdoutStream os;
 
   os << "// Copyright 2018 the V8 project authors. All rights reserved.\n"
         "// Use of this source code is governed by a BSD-style license that "
@@ -170,10 +176,15 @@ void GenerateTestCase(Isolate* isolate, ModuleWireBytes wire_bytes,
   if (module->has_memory) {
     os << "  builder.addMemory(" << module->initial_pages;
     if (module->has_maximum_pages) {
-      os << ", " << module->maximum_pages << ");\n";
+      os << ", " << module->maximum_pages;
     } else {
-      os << ");\n";
+      os << ", undefined";
     }
+    os << ", " << (module->mem_export ? "true" : "false");
+    if (FLAG_experimental_wasm_threads && module->has_shared_memory) {
+      os << ", shared";
+    }
+    os << ");\n";
   }
 
   for (WasmGlobal& glob : module->globals) {
@@ -205,7 +216,7 @@ void GenerateTestCase(Isolate* isolate, ModuleWireBytes wire_bytes,
         ValueType type = decls.type_list[pos];
         while (pos + count < locals && decls.type_list[pos + count] == type)
           ++count;
-        os << ".addLocals({" << WasmOpcodes::TypeName(type)
+        os << ".addLocals({" << ValueTypes::TypeName(type)
            << "_count: " << count << "})";
       }
       os << "\n";
@@ -235,7 +246,6 @@ void GenerateTestCase(Isolate* isolate, ModuleWireBytes wire_bytes,
   }
   os << "})();\n";
 }
-}  // namespace
 
 int WasmExecutionFuzzer::FuzzWasmModule(const uint8_t* data, size_t size,
                                         bool require_valid) {
@@ -336,7 +346,11 @@ int WasmExecutionFuzzer::FuzzWasmModule(const uint8_t* data, size_t size,
   // result_turbofan. Therefore we do not check the equality of the results
   // if the execution may have produced a NaN at some point.
   if (!possible_nondeterminism) {
-    CHECK_EQ(expect_exception, i_isolate->has_pending_exception());
+    if (expect_exception != i_isolate->has_pending_exception()) {
+      const char* exception_text[] = {"no exception", "exception"};
+      FATAL("interpreter: %s; turbofan: %s", exception_text[expect_exception],
+            exception_text[i_isolate->has_pending_exception()]);
+    }
 
     if (!expect_exception) CHECK_EQ(result_interpreter, result_turbofan);
   }
@@ -347,6 +361,7 @@ int WasmExecutionFuzzer::FuzzWasmModule(const uint8_t* data, size_t size,
   int32_t result_liftoff;
   {
     FlagScope<bool> liftoff(&FLAG_liftoff, true);
+    FlagScope<bool> no_tier_up(&FLAG_wasm_tier_up, false);
     ErrorThrower compiler_thrower(i_isolate, "Liftoff");
     // Re-compile with Liftoff.
     MaybeHandle<WasmInstanceObject> compiled_instance =
@@ -358,7 +373,11 @@ int WasmExecutionFuzzer::FuzzWasmModule(const uint8_t* data, size_t size,
         "main", num_args, compiler_args.get());
   }
   if (!possible_nondeterminism) {
-    CHECK_EQ(expect_exception, i_isolate->has_pending_exception());
+    if (expect_exception != i_isolate->has_pending_exception()) {
+      const char* exception_text[] = {"no exception", "exception"};
+      FATAL("interpreter: %s; liftoff: %s", exception_text[expect_exception],
+            exception_text[i_isolate->has_pending_exception()]);
+    }
 
     if (!expect_exception) CHECK_EQ(result_interpreter, result_liftoff);
   }
