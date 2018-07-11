@@ -88,7 +88,9 @@ class NodeTestFixture : public ::testing::Test {
   virtual void SetUp() {
     allocator = ArrayBufferUniquePtr(node::CreateArrayBufferAllocator(),
                                      &node::FreeArrayBufferAllocator);
-    isolate_ = NewIsolate(allocator.get());
+    v8::Isolate::CreateParams params;
+    params.array_buffer_allocator = allocator.get();
+    isolate_ = v8::Isolate::Allocate();
     CHECK_NE(isolate_, nullptr);
     platform->RegisterIsolate(isolate_, &current_loop);
     v8::Isolate::Initialize(isolate_, params);
