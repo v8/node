@@ -85,7 +85,6 @@ class DescriptorArray : public WeakFixedArray {
   inline void SetSortedKey(int pointer, int descriptor_number);
 
   // Accessor for complete descriptor.
-  inline void Get(int descriptor_number, Descriptor* desc);
   inline void Set(int descriptor_number, Descriptor* desc);
   inline void Set(int descriptor_number, Name* key, MaybeObject* value,
                   PropertyDetails details);
@@ -158,7 +157,7 @@ class DescriptorArray : public WeakFixedArray {
 
 #ifdef DEBUG
   // Is the descriptor array sorted and without duplicates?
-  bool IsSortedNoDuplicates(Isolate* isolate, int valid_descriptors = -1);
+  bool IsSortedNoDuplicates(int valid_descriptors = -1);
 
   // Are two DescriptorArrays equal?
   bool IsEqualTo(DescriptorArray* other);

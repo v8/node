@@ -574,7 +574,7 @@ Handle<String> Factory::InternalizeOneByteString(Vector<const uint8_t> string) {
 
 Handle<String> Factory::InternalizeOneByteString(
     Handle<SeqOneByteString> string, int from, int length) {
-  SeqOneByteSubStringKey key(string, from, length);
+  SeqOneByteSubStringKey key(isolate(), string, from, length);
   return InternalizeStringWithKey(&key);
 }
 
@@ -926,7 +926,7 @@ Handle<StringClass> Factory::InternalizeExternalString(Handle<String> string) {
                                       isolate());
   external_string->set_length(cast_string->length());
   external_string->set_hash_field(cast_string->hash_field());
-  external_string->set_resource(nullptr);
+  external_string->SetResource(nullptr);
   isolate()->heap()->RegisterExternalString(*external_string);
   return external_string;
 }
@@ -1145,8 +1145,8 @@ Handle<String> Factory::NewConsString(Handle<String> left, Handle<String> right,
 
   result->set_hash_field(String::kEmptyHashField);
   result->set_length(length);
-  result->set_first(*left, mode);
-  result->set_second(*right, mode);
+  result->set_first(isolate(), *left, mode);
+  result->set_second(isolate(), *right, mode);
   return result;
 }
 
@@ -1226,7 +1226,7 @@ Handle<String> Factory::NewProperSubString(Handle<String> str, int begin,
 
   slice->set_hash_field(String::kEmptyHashField);
   slice->set_length(length);
-  slice->set_parent(*str);
+  slice->set_parent(isolate(), *str);
   slice->set_offset(offset);
   return slice;
 }
@@ -1250,7 +1250,7 @@ MaybeHandle<String> Factory::NewExternalStringFromOneByte(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1283,7 +1283,7 @@ MaybeHandle<String> Factory::NewExternalStringFromTwoByte(
       ExternalTwoByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1299,7 +1299,7 @@ Handle<ExternalOneByteString> Factory::NewNativeSourceString(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->set_resource(resource);
+  external_string->SetResource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -2498,11 +2498,17 @@ Handle<ModuleInfo> Factory::NewModuleInfo() {
                                           ModuleInfo::kLength, TENURED);
 }
 
-Handle<PreParsedScopeData> Factory::NewPreParsedScopeData() {
-  Handle<PreParsedScopeData> result =
-      Handle<PreParsedScopeData>::cast(NewStruct(TUPLE2_TYPE, TENURED));
+Handle<PreParsedScopeData> Factory::NewPreParsedScopeData(int length) {
+  int size = PreParsedScopeData::SizeFor(length);
+  Handle<PreParsedScopeData> result(
+      PreParsedScopeData::cast(AllocateRawWithImmortalMap(
+          size, TENURED, *pre_parsed_scope_data_map())),
+      isolate());
   result->set_scope_data(PodArray<uint8_t>::cast(*empty_byte_array()));
-  result->set_child_data(*empty_fixed_array());
+  result->set_length(length);
+  MemsetPointer(result->child_data_start(), *null_value(), length);
+
+  result->clear_padding();
   return result;
 }
 

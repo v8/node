@@ -533,7 +533,7 @@ TEST(Issue23768) {
       CcTest::i_isolate());
   // This situation can happen if source was an external string disposed
   // by its owner.
-  i_source->set_resource(nullptr);
+  i_source->SetResource(nullptr);
 
   // Must not crash.
   CcTest::i_isolate()->logger()->LogCompiledFunctions();
@@ -1007,7 +1007,7 @@ TEST(LogMaps) {
       uintptr_t address = reinterpret_cast<uintptr_t>(obj);
       if (map_addresses.find(address) != map_addresses.end()) continue;
       logger.PrintLog(200);
-      i::Map::cast(obj)->Print(heap->isolate());
+      i::Map::cast(obj)->Print();
       V8_Fatal(__FILE__, __LINE__,
                "Map (%p, #%zu) was not logged during startup with --trace-maps!"
                "\n# Expected Log Line: map_details, ... %p"

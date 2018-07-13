@@ -6460,7 +6460,7 @@ i::Object** GetSerializedDataFromFixedArray(i::Isolate* isolate,
       // empty FixedArray).
       int last = list->length() - 1;
       while (last >= 0 && list->is_the_hole(isolate, last)) last--;
-      if (last != -1) list->Shrink(last + 1);
+      if (last != -1) list->Shrink(isolate, last + 1);
       return i::Handle<i::Object>(object, isolate).location();
     }
   }
@@ -8939,6 +8939,9 @@ CALLBACK_SETTER(WasmInstanceCallback, ExtensionCallback, wasm_instance_callback)
 CALLBACK_SETTER(WasmCompileStreamingCallback, ApiImplementationCallback,
                 wasm_compile_streaming_callback)
 
+CALLBACK_SETTER(WasmStreamingCallback, WasmStreamingCallback,
+                wasm_streaming_callback)
+
 void Isolate::AddNearHeapLimitCallback(v8::NearHeapLimitCallback callback,
                                        void* data) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(this);
@@ -10636,6 +10639,15 @@ void Testing::DeoptimizeAll(Isolate* isolate) {
   i::Deoptimizer::DeoptimizeAll(i_isolate);
 }
 
+void EmbedderHeapTracer::FinalizeTracing() {
+  if (isolate_) {
+    i::Isolate* isolate = reinterpret_cast<i::Isolate*>(isolate_);
+    if (isolate->heap()->incremental_marking()->IsMarking()) {
+      isolate->heap()->FinalizeIncrementalMarkingAtomically(
+          i::GarbageCollectionReason::kExternalFinalize);
+    }
+  }
+}
 
 namespace internal {
 

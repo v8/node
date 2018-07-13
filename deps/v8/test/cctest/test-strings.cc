@@ -627,8 +627,8 @@ TEST(ConsStringWithEmptyFirstFlatten) {
   i::Handle<i::String> new_fst = isolate->factory()->empty_string();
   i::Handle<i::String> new_snd =
       isolate->factory()->NewStringFromAsciiChecked("snd012345012345678");
-  cons->set_first(*new_fst);
-  cons->set_second(*new_snd);
+  cons->set_first(isolate, *new_fst);
+  cons->set_second(isolate, *new_snd);
   CHECK(!cons->IsFlat());
   CHECK_EQ(initial_length, new_fst->length() + new_snd->length());
   CHECK_EQ(initial_length, cons->length());
@@ -1217,7 +1217,7 @@ TEST(InternalizeExternal) {
     CHECK(!i::Heap::InNewSpace(*string));
     CHECK_EQ(
         isolate->factory()->string_table()->LookupStringIfExists_NoAllocate(
-            *string),
+            isolate, *string),
         Smi::FromInt(ResultSentinel::kNotFound));
     factory->InternalizeName(string);
     CHECK(string->IsExternalString());
@@ -1245,7 +1245,7 @@ TEST(SliceFromExternal) {
   CHECK(SlicedString::cast(*slice)->parent()->IsExternalString());
   CHECK(slice->IsFlat());
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(string)->set_resource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(string)->SetResource(nullptr);
 }
 
 

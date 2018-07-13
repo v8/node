@@ -131,7 +131,7 @@ TYPE_CHECKER(NumberDictionary, NUMBER_DICTIONARY_TYPE)
 TYPE_CHECKER(Oddball, ODDBALL_TYPE)
 TYPE_CHECKER(OrderedHashMap, ORDERED_HASH_MAP_TYPE)
 TYPE_CHECKER(OrderedHashSet, ORDERED_HASH_SET_TYPE)
-TYPE_CHECKER(PreParsedScopeData, TUPLE2_TYPE)
+TYPE_CHECKER(PreParsedScopeData, PRE_PARSED_SCOPE_DATA_TYPE)
 TYPE_CHECKER(PropertyArray, PROPERTY_ARRAY_TYPE)
 TYPE_CHECKER(PropertyCell, PROPERTY_CELL_TYPE)
 TYPE_CHECKER(PropertyDescriptorObject, FIXED_ARRAY_TYPE)
@@ -645,7 +645,6 @@ CAST_ACCESSOR(OrderedHashMap)
 CAST_ACCESSOR(OrderedHashSet)
 CAST_ACCESSOR(PropertyArray)
 CAST_ACCESSOR(PropertyCell)
-CAST_ACCESSOR(PrototypeInfo)
 CAST_ACCESSOR(RegExpMatchInfo)
 CAST_ACCESSOR(ScopeInfo)
 CAST_ACCESSOR(SimpleNumberDictionary)
@@ -1447,8 +1446,8 @@ void Oddball::set_kind(byte value) {
 
 
 // static
-Handle<Object> Oddball::ToNumber(Handle<Oddball> input) {
-  return handle(input->to_number(), input->GetIsolate());
+Handle<Object> Oddball::ToNumber(Isolate* isolate, Handle<Oddball> input) {
+  return handle(input->to_number(), isolate);
 }
 
 
@@ -1967,9 +1966,8 @@ int LinearSearch(T* array, Name* name, int valid_entries,
 }
 
 template <SearchMode search_mode, typename T>
-int Search(Isolate* isolate, T* array, Name* name, int valid_entries,
-           int* out_insertion_index) {
-  SLOW_DCHECK(array->IsSortedNoDuplicates(isolate));
+int Search(T* array, Name* name, int valid_entries, int* out_insertion_index) {
+  SLOW_DCHECK(array->IsSortedNoDuplicates());
 
   if (valid_entries == 0) {
     if (search_mode == ALL_ENTRIES && out_insertion_index != nullptr) {
@@ -1993,8 +1991,8 @@ int Search(Isolate* isolate, T* array, Name* name, int valid_entries,
 
 int DescriptorArray::Search(Name* name, int valid_descriptors) {
   DCHECK(name->IsUniqueName());
-  return internal::Search<VALID_ENTRIES>(GetIsolate(), this, name,
-                                         valid_descriptors, nullptr);
+  return internal::Search<VALID_ENTRIES>(this, name, valid_descriptors,
+                                         nullptr);
 }
 
 int DescriptorArray::Search(Name* name, Map* map) {
@@ -2099,12 +2097,6 @@ FieldType* DescriptorArray::GetFieldType(int descriptor_number) {
   DCHECK_EQ(GetDetails(descriptor_number).location(), kField);
   MaybeObject* wrapped_type = GetValue(descriptor_number);
   return Map::UnwrapFieldType(wrapped_type);
-}
-
-void DescriptorArray::Get(int descriptor_number, Descriptor* desc) {
-  desc->Init(handle(GetKey(descriptor_number), GetIsolate()),
-             MaybeObjectHandle(GetStrongValue(descriptor_number), GetIsolate()),
-             GetDetails(descriptor_number));
 }
 
 void DescriptorArray::Set(int descriptor_number, Name* key, MaybeObject* value,
@@ -2367,6 +2359,10 @@ int HeapObject::SizeFromMap(Map* map) const {
   if (instance_type == BIGINT_TYPE) {
     return BigInt::SizeFor(reinterpret_cast<const BigInt*>(this)->length());
   }
+  if (instance_type == PRE_PARSED_SCOPE_DATA_TYPE) {
+    return PreParsedScopeData::SizeFor(
+        reinterpret_cast<const PreParsedScopeData*>(this)->length());
+  }
   DCHECK(instance_type == CODE_TYPE);
   return reinterpret_cast<const Code*>(this)->CodeSize();
 }
@@ -2392,28 +2388,6 @@ ACCESSORS(AsyncGeneratorRequest, next, Object, kNextOffset)
 SMI_ACCESSORS(AsyncGeneratorRequest, resume_mode, kResumeModeOffset)
 ACCESSORS(AsyncGeneratorRequest, value, Object, kValueOffset)
 ACCESSORS(AsyncGeneratorRequest, promise, Object, kPromiseOffset)
-
-Map* PrototypeInfo::ObjectCreateMap() {
-  return Map::cast(object_create_map()->ToWeakHeapObject());
-}
-
-// static
-void PrototypeInfo::SetObjectCreateMap(Handle<PrototypeInfo> info,
-                                       Handle<Map> map) {
-  info->set_object_create_map(HeapObjectReference::Weak(*map));
-}
-
-bool PrototypeInfo::HasObjectCreateMap() {
-  MaybeObject* cache = object_create_map();
-  return cache->IsWeakHeapObject();
-}
-
-ACCESSORS(PrototypeInfo, weak_cell, Object, kWeakCellOffset)
-ACCESSORS(PrototypeInfo, prototype_users, Object, kPrototypeUsersOffset)
-WEAK_ACCESSORS(PrototypeInfo, object_create_map, kObjectCreateMapOffset)
-SMI_ACCESSORS(PrototypeInfo, registry_slot, kRegistrySlotOffset)
-SMI_ACCESSORS(PrototypeInfo, bit_field, kBitFieldOffset)
-BOOL_ACCESSORS(PrototypeInfo, bit_field, should_be_fast_map, kShouldBeFastBit)
 
 ACCESSORS(Tuple2, value1, Object, kValue1Offset)
 ACCESSORS(Tuple2, value2, Object, kValue2Offset)
@@ -3182,15 +3156,13 @@ PropertyCell* GlobalDictionary::CellAt(int entry) {
   return PropertyCell::cast(KeyAt(entry));
 }
 
-bool GlobalDictionaryShape::IsLive(Isolate* isolate, Object* k) {
-  ReadOnlyRoots roots(isolate);
+bool GlobalDictionaryShape::IsLive(ReadOnlyRoots roots, Object* k) {
   DCHECK_NE(roots.the_hole_value(), k);
   return k != roots.undefined_value();
 }
 
-bool GlobalDictionaryShape::IsKey(Isolate* isolate, Object* k) {
-  return IsLive(isolate, k) &&
-         !PropertyCell::cast(k)->value()->IsTheHole(isolate);
+bool GlobalDictionaryShape::IsKey(ReadOnlyRoots roots, Object* k) {
+  return IsLive(roots, k) && !PropertyCell::cast(k)->value()->IsTheHole(roots);
 }
 
 Name* GlobalDictionary::NameAt(int entry) { return CellAt(entry)->name(); }
@@ -3431,6 +3403,11 @@ bool ScopeInfo::HasSimpleParameters() const {
   }
 FOR_EACH_SCOPE_INFO_NUMERIC_FIELD(FIELD_ACCESSORS)
 #undef FIELD_ACCESSORS
+
+FreshlyAllocatedBigInt* FreshlyAllocatedBigInt::cast(Object* object) {
+  SLOW_DCHECK(object->IsBigInt());
+  return reinterpret_cast<FreshlyAllocatedBigInt*>(object);
+}
 
 }  // namespace internal
 }  // namespace v8

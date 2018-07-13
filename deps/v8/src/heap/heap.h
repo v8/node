@@ -47,7 +47,7 @@ class DeoptimizationData;
 class HandlerTable;
 class IncrementalMarking;
 class JSArrayBuffer;
-
+class ExternalString;
 using v8::MemoryPressureLevel;
 
 // Heap roots that are known to be immortal immovable, for which we can safely
@@ -129,6 +129,7 @@ using v8::MemoryPressureLevel;
   V(OptimizedOut)                           \
   V(OrderedHashMapMap)                      \
   V(OrderedHashSetMap)                      \
+  V(PreParsedScopeDataMap)                  \
   V(PropertyArrayMap)                       \
   V(ScopeInfoMap)                           \
   V(ScriptContextMap)                       \
@@ -241,7 +242,8 @@ enum class GarbageCollectionReason {
   kRuntime = 18,
   kSamplingProfiler = 19,
   kSnapshotCreator = 20,
-  kTesting = 21
+  kTesting = 21,
+  kExternalFinalize = 22
   // If you add new items here, then update the incremental_marking_reason,
   // mark_compact_reason, and scavenge_reason counters in counters.h.
   // Also update src/tools/metrics/histograms/histograms.xml in chromium.
@@ -676,6 +678,9 @@ class Heap {
     external_memory_concurrently_freed_ = 0;
   }
 
+  void ProcessMovedExternalString(Page* old_page, Page* new_page,
+                                  ExternalString* string);
+
   void CompactFixedArraysOfWeakCells();
 
   void AddRetainedMap(Handle<Map> map);
@@ -912,14 +917,14 @@ class Heap {
   // Performs garbage collection operation.
   // Returns whether there is a chance that another major GC could
   // collect more garbage.
-  bool CollectGarbage(
+  V8_EXPORT_PRIVATE bool CollectGarbage(
       AllocationSpace space, GarbageCollectionReason gc_reason,
       const GCCallbackFlags gc_callback_flags = kNoGCCallbackFlags);
 
   // Performs a full garbage collection.  If (flags & kMakeHeapIterableMask) is
   // non-zero, then the slower precise sweeper is used, which leaves the heap
   // in a state where we can iterate over the heap visiting all objects.
-  void CollectAllGarbage(
+  V8_EXPORT_PRIVATE void CollectAllGarbage(
       int flags, GarbageCollectionReason gc_reason,
       const GCCallbackFlags gc_callback_flags = kNoGCCallbackFlags);
 
@@ -1019,6 +1024,8 @@ class Heap {
       GCCallbackFlags gc_callback_flags = GCCallbackFlags::kNoGCCallbackFlags);
 
   void FinalizeIncrementalMarkingIfComplete(GarbageCollectionReason gc_reason);
+  // Synchronously finalizes incremental marking.
+  void FinalizeIncrementalMarkingAtomically(GarbageCollectionReason gc_reason);
 
   void RegisterDeserializedObjectsForBlackAllocation(
       Reservation* reservations, const std::vector<HeapObject*>& large_objects,
@@ -1084,6 +1091,11 @@ class Heap {
 
   // Registers an external string.
   inline void RegisterExternalString(String* string);
+
+  // Called when a string's resource is changed. The size of the payload is sent
+  // as argument of the method.
+  inline void UpdateExternalString(String* string, size_t old_payload,
+                                   size_t new_payload);
 
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
@@ -1720,7 +1732,8 @@ class Heap {
   // implicit references from global handles, but don't atomically complete
   // marking. If we continue to mark incrementally, we might have marked
   // objects that die later.
-  void FinalizeIncrementalMarking(GarbageCollectionReason gc_reason);
+  void FinalizeIncrementalMarkingIncrementally(
+      GarbageCollectionReason gc_reason);
 
   // Returns the timer used for a given GC type.
   // - GCScavenger: young generation GC

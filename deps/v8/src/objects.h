@@ -170,10 +170,10 @@
 //         - PromiseResolveThenableJobTask
 //       - Module
 //       - ModuleInfoEntry
-//       - PreParsedScopeData
 //     - WeakCell
 //     - FeedbackCell
 //     - FeedbackVector
+//     - PreParsedScopeData
 //     - UncompiledData
 //       - UncompiledDataWithoutPreParsedScope
 //       - UncompiledDataWithPreParsedScope
@@ -523,6 +523,7 @@ enum InstanceType : uint16_t {
   FEEDBACK_CELL_TYPE,
   FEEDBACK_VECTOR_TYPE,
   LOAD_HANDLER_TYPE,
+  PRE_PARSED_SCOPE_DATA_TYPE,
   PROPERTY_ARRAY_TYPE,
   PROPERTY_CELL_TYPE,
   SHARED_FUNCTION_INFO_TYPE,
@@ -706,6 +707,7 @@ class ModuleInfoEntry;
 class ObjectHashTable;
 class ObjectTemplateInfo;
 class ObjectVisitor;
+class PreParsedScopeData;
 class PropertyCell;
 class PropertyDescriptor;
 class RootVisitor;
@@ -728,11 +730,8 @@ template <class C> inline bool Is(Object* obj);
 
 #ifdef OBJECT_PRINT
 #define DECL_PRINTER(Name) void Name##Print(std::ostream& os);  // NOLINT
-#define DECL_PRINTER_WITH_ISOLATE(Name) \
-  void Name##Print(Isolate* isolate, std::ostream& os);  // NOLINT
 #else
 #define DECL_PRINTER(Name)
-#define DECL_PRINTER_WITH_ISOLATE(Name)
 #endif
 
 #define OBJECT_TYPE_LIST(V) \
@@ -1297,13 +1296,13 @@ class Object {
 
 #ifdef OBJECT_PRINT
   // For our gdb macros, we should perhaps change these in the future.
-  void Print(Isolate* isolate);
+  void Print();
 
   // Prints this object with details.
-  void Print(Isolate* isolate, std::ostream& os);  // NOLINT
+  void Print(std::ostream& os);  // NOLINT
 #else
-  void Print(Isolate* isolate) { ShortPrint(); }
-  void Print(Isolate* isolate, std::ostream& os) { ShortPrint(os); }  // NOLINT
+  void Print() { ShortPrint(); }
+  void Print(std::ostream& os) { ShortPrint(os); }  // NOLINT
 #endif
 
  private:
@@ -1625,7 +1624,7 @@ class HeapObject: public Object {
 #ifdef OBJECT_PRINT
   void PrintHeader(std::ostream& os, const char* id);  // NOLINT
 #endif
-  DECL_PRINTER_WITH_ISOLATE(HeapObject)
+  DECL_PRINTER(HeapObject)
   DECL_VERIFIER(HeapObject)
 #ifdef VERIFY_HEAP
   inline void VerifyObjectField(int offset);
@@ -1650,7 +1649,7 @@ class HeapObject: public Object {
   bool CanBeRehashed() const;
 
   // Rehash the object based on the layout inferred from its map.
-  void RehashBasedOnMap();
+  void RehashBasedOnMap(Isolate* isolate);
 
   // Layout description.
   // First field in a heap object is map.
@@ -2461,7 +2460,7 @@ class JSObject: public JSReceiver {
 
   // Dispatched behavior.
   void JSObjectShortPrint(StringStream* accumulator);
-  DECL_PRINTER_WITH_ISOLATE(JSObject)
+  DECL_PRINTER(JSObject)
   DECL_VERIFIER(JSObject)
 #ifdef OBJECT_PRINT
   bool PrintProperties(std::ostream& os);  // NOLINT
@@ -2772,60 +2771,6 @@ class AsyncGeneratorRequest : public Struct {
   DISALLOW_IMPLICIT_CONSTRUCTORS(AsyncGeneratorRequest);
 };
 
-// Container for metadata stored on each prototype map.
-class PrototypeInfo : public Struct {
- public:
-  static const int UNREGISTERED = -1;
-
-  // [weak_cell]: A WeakCell containing this prototype. ICs cache the cell here.
-  DECL_ACCESSORS(weak_cell, Object)
-
-  // [prototype_users]: FixedArrayOfWeakCells containing maps using this
-  // prototype, or Smi(0) if uninitialized.
-  DECL_ACCESSORS(prototype_users, Object)
-
-  // [object_create_map]: A field caching the map for Object.create(prototype).
-  static inline void SetObjectCreateMap(Handle<PrototypeInfo> info,
-                                        Handle<Map> map);
-  inline Map* ObjectCreateMap();
-  inline bool HasObjectCreateMap();
-
-  // [registry_slot]: Slot in prototype's user registry where this user
-  // is stored. Returns UNREGISTERED if this prototype has not been registered.
-  inline int registry_slot() const;
-  inline void set_registry_slot(int slot);
-
-  // [bit_field]
-  inline int bit_field() const;
-  inline void set_bit_field(int bit_field);
-
-  DECL_BOOLEAN_ACCESSORS(should_be_fast_map)
-
-  DECL_CAST(PrototypeInfo)
-
-  // Dispatched behavior.
-  DECL_PRINTER(PrototypeInfo)
-  DECL_VERIFIER(PrototypeInfo)
-
-  static const int kWeakCellOffset = HeapObject::kHeaderSize;
-  static const int kPrototypeUsersOffset = kWeakCellOffset + kPointerSize;
-  static const int kRegistrySlotOffset = kPrototypeUsersOffset + kPointerSize;
-  static const int kValidityCellOffset = kRegistrySlotOffset + kPointerSize;
-  static const int kObjectCreateMapOffset = kValidityCellOffset + kPointerSize;
-  static const int kBitFieldOffset = kObjectCreateMapOffset + kPointerSize;
-  static const int kSize = kBitFieldOffset + kPointerSize;
-
-  // Bit field usage.
-  static const int kShouldBeFastBit = 0;
-
-  class BodyDescriptor;
-
- private:
-  DECL_ACCESSORS(object_create_map, MaybeObject)
-
-  DISALLOW_IMPLICIT_CONSTRUCTORS(PrototypeInfo);
-};
-
 // List of builtin functions we want to identify to improve code
 // generation.
 //
@@ -3068,7 +3013,7 @@ class JSGeneratorObject: public JSObject {
   DECL_CAST(JSGeneratorObject)
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSGeneratorObject)
+  DECL_PRINTER(JSGeneratorObject)
   DECL_VERIFIER(JSGeneratorObject)
 
   // Magic sentinel values for the continuation.
@@ -3140,7 +3085,7 @@ class JSBoundFunction : public JSObject {
   DECL_CAST(JSBoundFunction)
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSBoundFunction)
+  DECL_PRINTER(JSBoundFunction)
   DECL_VERIFIER(JSBoundFunction)
 
   // The bound function's string representation implemented according
@@ -3311,7 +3256,7 @@ class JSFunction: public JSObject {
   class BodyDescriptor;
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSFunction)
+  DECL_PRINTER(JSFunction)
   DECL_VERIFIER(JSFunction)
 
   // The function's name if it is configured, otherwise shared function info
@@ -3378,7 +3323,7 @@ class JSGlobalProxy : public JSObject {
   static int SizeWithEmbedderFields(int embedder_field_count);
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSGlobalProxy)
+  DECL_PRINTER(JSGlobalProxy)
   DECL_VERIFIER(JSGlobalProxy)
 
   // Layout description.
@@ -3415,7 +3360,7 @@ class JSGlobalObject : public JSObject {
   inline bool IsDetached();
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSGlobalObject)
+  DECL_PRINTER(JSGlobalObject)
   DECL_VERIFIER(JSGlobalObject)
 
   // Layout description.
@@ -3438,7 +3383,7 @@ class JSValue: public JSObject {
   DECL_CAST(JSValue)
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSValue)
+  DECL_PRINTER(JSValue)
   DECL_VERIFIER(JSValue)
 
   // Layout description.
@@ -3493,7 +3438,7 @@ class JSDate: public JSObject {
   void SetValue(Object* value, bool is_value_nan);
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSDate)
+  DECL_PRINTER(JSDate)
   DECL_VERIFIER(JSDate)
 
   // The order is important. It must be kept in sync with date macros
@@ -3596,7 +3541,7 @@ class JSMessageObject: public JSObject {
   DECL_CAST(JSMessageObject)
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(JSMessageObject)
+  DECL_PRINTER(JSMessageObject)
   DECL_VERIFIER(JSMessageObject)
 
   // Layout description.
@@ -3844,7 +3789,7 @@ class Oddball: public HeapObject {
 
   // ES6 section 7.1.3 ToNumber for Boolean, Null, Undefined.
   V8_WARN_UNUSED_RESULT static inline Handle<Object> ToNumber(
-      Handle<Oddball> input);
+      Isolate* isolate, Handle<Oddball> input);
 
   DECL_CAST(Oddball)
 
@@ -3940,7 +3885,7 @@ class FeedbackCell : public Struct {
   DECL_CAST(FeedbackCell)
 
   // Dispatched behavior.
-  DECL_PRINTER_WITH_ISOLATE(FeedbackCell)
+  DECL_PRINTER(FeedbackCell)
   DECL_VERIFIER(FeedbackCell)
 
   static const int kValueOffset = HeapObject::kHeaderSize;

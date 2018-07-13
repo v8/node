@@ -572,7 +572,7 @@ void Heap::PrintRetainingPath(HeapObject* target, RetainingPathOption option) {
     object->ShortPrint();
     PrintF("\n");
 #ifdef OBJECT_PRINT
-    object->Print(isolate());
+    object->Print();
     PrintF("\n");
 #endif
     --distance;
@@ -1093,7 +1093,7 @@ void Heap::HandleGCRequest() {
              incremental_marking()->IsMarking() &&
              !incremental_marking()->finalize_marking_completed()) {
     incremental_marking()->reset_request_type();
-    FinalizeIncrementalMarking(
+    FinalizeIncrementalMarkingIncrementally(
         GarbageCollectionReason::kFinalizeMarkingViaStackGuard);
   }
 }
@@ -1101,41 +1101,6 @@ void Heap::HandleGCRequest() {
 
 void Heap::ScheduleIdleScavengeIfNeeded(int bytes_allocated) {
   scavenge_job_->ScheduleIdleTaskIfNeeded(this, bytes_allocated);
-}
-
-void Heap::FinalizeIncrementalMarking(GarbageCollectionReason gc_reason) {
-  if (FLAG_trace_incremental_marking) {
-    isolate()->PrintWithTimestamp(
-        "[IncrementalMarking] (%s).\n",
-        Heap::GarbageCollectionReasonToString(gc_reason));
-  }
-
-  HistogramTimerScope incremental_marking_scope(
-      isolate()->counters()->gc_incremental_marking_finalize());
-  TRACE_EVENT0("v8", "V8.GCIncrementalMarkingFinalize");
-  TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_FINALIZE);
-
-  {
-    GCCallbacksScope scope(this);
-    if (scope.CheckReenter()) {
-      AllowHeapAllocation allow_allocation;
-      TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_EXTERNAL_PROLOGUE);
-      VMState<EXTERNAL> state(isolate_);
-      HandleScope handle_scope(isolate_);
-      CallGCPrologueCallbacks(kGCTypeIncrementalMarking, kNoGCCallbackFlags);
-    }
-  }
-  incremental_marking()->FinalizeIncrementally();
-  {
-    GCCallbacksScope scope(this);
-    if (scope.CheckReenter()) {
-      AllowHeapAllocation allow_allocation;
-      TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_EXTERNAL_EPILOGUE);
-      VMState<EXTERNAL> state(isolate_);
-      HandleScope handle_scope(isolate_);
-      CallGCEpilogueCallbacks(kGCTypeIncrementalMarking, kNoGCCallbackFlags);
-    }
-  }
 }
 
 HistogramTimer* Heap::GCTypePriorityTimer(GarbageCollector collector) {
@@ -1247,7 +1212,7 @@ void ReportDuplicates(Isolate* isolate, int size,
     PrintF("%d duplicates of size %d each (%dKB)\n", it->first, size,
            duplicate_bytes / KB);
     PrintF("Sample object: ");
-    it->second->Print(isolate);
+    it->second->Print();
     PrintF("============================\n");
   }
 }
@@ -2332,6 +2297,15 @@ void Heap::ProtectUnprotectedMemoryChunks() {
   unprotected_memory_chunks_.clear();
 }
 
+void Heap::ProcessMovedExternalString(Page* old_page, Page* new_page,
+                                      ExternalString* string) {
+  size_t size = string->ExternalPayloadSize();
+  old_page->DecrementExternalBackingStoreBytes(
+      ExternalBackingStoreType::kExternalString, size);
+  new_page->IncrementExternalBackingStoreBytes(
+      ExternalBackingStoreType::kExternalString, size);
+}
+
 String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
                                                                 Object** p) {
   MapWord first_word = HeapObject::cast(*p)->map_word();
@@ -2349,24 +2323,53 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   }
 
   // String is still reachable.
-  String* string = String::cast(first_word.ToForwardingAddress());
-  if (string->IsThinString()) string = ThinString::cast(string)->actual();
+  String* new_string = String::cast(first_word.ToForwardingAddress());
+  if (new_string->IsThinString()) {
+    // Filtering Thin strings out of the external string table.
+    return nullptr;
+  } else if (new_string->IsExternalString()) {
+    heap->ProcessMovedExternalString(
+        Page::FromAddress(reinterpret_cast<Address>(*p)),
+        Page::FromHeapObject(new_string), ExternalString::cast(new_string));
+    return new_string;
+  }
+
   // Internalization can replace external strings with non-external strings.
-  return string->IsExternalString() ? string : nullptr;
+  return new_string->IsExternalString() ? new_string : nullptr;
 }
 
 void Heap::ExternalStringTable::Verify() {
 #ifdef DEBUG
+  std::set<String*> visited_map;
+  std::map<MemoryChunk*, size_t> size_map;
+  ExternalBackingStoreType type = ExternalBackingStoreType::kExternalString;
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
-    Object* obj = Object::cast(new_space_strings_[i]);
-    DCHECK(InNewSpace(obj));
+    String* obj = String::cast(new_space_strings_[i]);
+    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
+    DCHECK(mc->InNewSpace());
+    DCHECK(heap_->InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
+    DCHECK(obj->IsExternalString());
+    // Note: we can have repeated elements in the table.
+    DCHECK_EQ(0, visited_map.count(obj));
+    visited_map.insert(obj);
+    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
-    Object* obj = Object::cast(old_space_strings_[i]);
-    DCHECK(!InNewSpace(obj));
+    String* obj = String::cast(old_space_strings_[i]);
+    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
+    DCHECK(!mc->InNewSpace());
+    DCHECK(!heap_->InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
+    DCHECK(obj->IsExternalString());
+    // Note: we can have repeated elements in the table.
+    DCHECK_EQ(0, visited_map.count(obj));
+    visited_map.insert(obj);
+    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
+  for (std::map<MemoryChunk*, size_t>::iterator it = size_map.begin();
+       it != size_map.end(); it++)
+    DCHECK_EQ(it->first->ExternalBackingStoreBytes(type), it->second);
 #endif
 }
 
@@ -3198,12 +3201,54 @@ void Heap::FinalizeIncrementalMarkingIfComplete(
        (!incremental_marking()->finalize_marking_completed() &&
         mark_compact_collector()->marking_worklist()->IsEmpty() &&
         local_embedder_heap_tracer()->ShouldFinalizeIncrementalMarking()))) {
-    FinalizeIncrementalMarking(gc_reason);
+    FinalizeIncrementalMarkingIncrementally(gc_reason);
   } else if (incremental_marking()->IsComplete() ||
              (mark_compact_collector()->marking_worklist()->IsEmpty() &&
               local_embedder_heap_tracer()
                   ->ShouldFinalizeIncrementalMarking())) {
     CollectAllGarbage(current_gc_flags_, gc_reason, current_gc_callback_flags_);
+  }
+}
+
+void Heap::FinalizeIncrementalMarkingAtomically(
+    GarbageCollectionReason gc_reason) {
+  DCHECK(!incremental_marking()->IsStopped());
+  CollectAllGarbage(current_gc_flags_, gc_reason, current_gc_callback_flags_);
+}
+
+void Heap::FinalizeIncrementalMarkingIncrementally(
+    GarbageCollectionReason gc_reason) {
+  if (FLAG_trace_incremental_marking) {
+    isolate()->PrintWithTimestamp(
+        "[IncrementalMarking] (%s).\n",
+        Heap::GarbageCollectionReasonToString(gc_reason));
+  }
+
+  HistogramTimerScope incremental_marking_scope(
+      isolate()->counters()->gc_incremental_marking_finalize());
+  TRACE_EVENT0("v8", "V8.GCIncrementalMarkingFinalize");
+  TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_FINALIZE);
+
+  {
+    GCCallbacksScope scope(this);
+    if (scope.CheckReenter()) {
+      AllowHeapAllocation allow_allocation;
+      TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_EXTERNAL_PROLOGUE);
+      VMState<EXTERNAL> state(isolate_);
+      HandleScope handle_scope(isolate_);
+      CallGCPrologueCallbacks(kGCTypeIncrementalMarking, kNoGCCallbackFlags);
+    }
+  }
+  incremental_marking()->FinalizeIncrementally();
+  {
+    GCCallbacksScope scope(this);
+    if (scope.CheckReenter()) {
+      AllowHeapAllocation allow_allocation;
+      TRACE_GC(tracer(), GCTracer::Scope::MC_INCREMENTAL_EXTERNAL_EPILOGUE);
+      VMState<EXTERNAL> state(isolate_);
+      HandleScope handle_scope(isolate_);
+      CallGCEpilogueCallbacks(kGCTypeIncrementalMarking, kNoGCCallbackFlags);
+    }
   }
 }
 
@@ -3664,6 +3709,8 @@ const char* Heap::GarbageCollectionReasonToString(
       return "snapshot creator";
     case GarbageCollectionReason::kTesting:
       return "testing";
+    case GarbageCollectionReason::kExternalFinalize:
+      return "external finalize";
     case GarbageCollectionReason::kUnknown:
       return "unknown";
   }
@@ -4680,7 +4727,7 @@ void Heap::SetUp() {
     dead_object_stats_ = new ObjectStats(this);
   }
   scavenge_job_ = new ScavengeJob();
-  local_embedder_heap_tracer_ = new LocalEmbedderHeapTracer();
+  local_embedder_heap_tracer_ = new LocalEmbedderHeapTracer(isolate());
 
   LOG(isolate_, IntPtrTEvent("heap-capacity", Capacity()));
   LOG(isolate_, IntPtrTEvent("heap-available", Available()));
@@ -5004,10 +5051,10 @@ void Heap::RemoveGCEpilogueCallback(v8::Isolate::GCCallbackWithData callback,
 }
 
 namespace {
-void CompactFixedArrayOfWeakCells(Object* object) {
+void CompactFixedArrayOfWeakCells(Isolate* isolate, Object* object) {
   if (object->IsFixedArrayOfWeakCells()) {
     FixedArrayOfWeakCells* array = FixedArrayOfWeakCells::cast(object);
-    array->Compact<FixedArrayOfWeakCells::NullCallback>();
+    array->Compact<FixedArrayOfWeakCells::NullCallback>(isolate);
   }
 }
 }  // anonymous namespace
@@ -5021,13 +5068,14 @@ void Heap::CompactFixedArraysOfWeakCells() {
       if (prototype_users->IsFixedArrayOfWeakCells()) {
         FixedArrayOfWeakCells* array =
             FixedArrayOfWeakCells::cast(prototype_users);
-        array->Compact<JSObject::PrototypeRegistryCompactionCallback>();
+        array->Compact<JSObject::PrototypeRegistryCompactionCallback>(
+            isolate());
       }
     }
   }
-  CompactFixedArrayOfWeakCells(noscript_shared_function_infos());
-  CompactFixedArrayOfWeakCells(script_list());
-  CompactFixedArrayOfWeakCells(weak_stack_trace_list());
+  CompactFixedArrayOfWeakCells(isolate(), noscript_shared_function_infos());
+  CompactFixedArrayOfWeakCells(isolate(), script_list());
+  CompactFixedArrayOfWeakCells(isolate(), weak_stack_trace_list());
 }
 
 void Heap::AddRetainedMap(Handle<Map> map) {
@@ -5438,19 +5486,15 @@ void Heap::ExternalStringTable::CleanUpAll() {
 void Heap::ExternalStringTable::TearDown() {
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
     Object* o = new_space_strings_[i];
-    if (o->IsThinString()) {
-      o = ThinString::cast(o)->actual();
-      if (!o->IsExternalString()) continue;
-    }
+    // Dont finalize thin strings.
+    if (o->IsThinString()) continue;
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   new_space_strings_.clear();
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     Object* o = old_space_strings_[i];
-    if (o->IsThinString()) {
-      o = ThinString::cast(o)->actual();
-      if (!o->IsExternalString()) continue;
-    }
+    // Dont finalize thin strings.
+    if (o->IsThinString()) continue;
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   old_space_strings_.clear();

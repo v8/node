@@ -567,6 +567,10 @@ DEFINE_DEBUG_BOOL(wasm_break_on_decoder_error, false,
                   "debug break when wasm decoder encounters an error")
 DEFINE_BOOL(wasm_trace_memory, false,
             "print all memory updates performed in wasm code")
+// Fuzzers use {wasm_tier_mask_for_testing} together with {liftoff} and
+// {no_wasm_tier_up} to force some functions to be compiled with Turbofan.
+DEFINE_INT(wasm_tier_mask_for_testing, 0,
+           "bitmask of functions to compile with TurboFan instead of Liftoff")
 
 DEFINE_BOOL(validate_asm, true, "validate asm.js modules before compiling")
 DEFINE_BOOL(suppress_asm_messages, false,
@@ -700,7 +704,7 @@ DEFINE_BOOL(concurrent_marking, V8_CONCURRENT_MARKING_BOOL,
             "use concurrent marking")
 DEFINE_BOOL(parallel_marking, true, "use parallel marking in atomic pause")
 DEFINE_IMPLICATION(parallel_marking, concurrent_marking)
-DEFINE_INT(ephemeron_fixpoint_iterations, 0,
+DEFINE_INT(ephemeron_fixpoint_iterations, 10,
            "number of fixpoint iterations it takes to switch to linear "
            "ephemeron algorithm")
 DEFINE_BOOL(trace_concurrent_marking, false, "trace concurrent marking")

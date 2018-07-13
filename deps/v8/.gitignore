@@ -1,3 +1,4 @@
+
 #*#
 *.Makefile
 *.a
@@ -108,7 +109,9 @@ node_modules
 shell
 shell_g
 tags
+tools/turbolizer/.rpt2_cache
 tools/turbolizer/build
+tools/turbolizer/deploy
 turbo*.cfg
 turbo*.dot
 turbo*.json

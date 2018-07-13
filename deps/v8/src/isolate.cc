@@ -535,7 +535,7 @@ class FrameArrayBuilder {
   bool full() { return elements_->FrameCount() >= limit_; }
 
   Handle<FrameArray> GetElements() {
-    elements_->ShrinkToFit();
+    elements_->ShrinkToFit(isolate_);
     return elements_;
   }
 
@@ -876,7 +876,7 @@ Handle<FixedArray> Isolate::CaptureCurrentStackTrace(
       frames_seen++;
     }
   }
-  return FixedArray::ShrinkOrEmpty(stack_trace_elems, frames_seen);
+  return FixedArray::ShrinkOrEmpty(this, stack_trace_elems, frames_seen);
 }
 
 
@@ -1199,7 +1199,7 @@ Object* Isolate::Throw(Object* raw_exception, MessageLocation* location) {
         printf(", line %d\n", script->GetLineNumber(location->start_pos()) + 1);
       }
     }
-    raw_exception->Print(this);
+    raw_exception->Print();
     printf("Stack Trace:\n");
     PrintStack(stdout);
     printf("=========================================================\n");
@@ -2436,7 +2436,7 @@ class VerboseAccountingAllocator : public AccountingAllocator {
         "\"name\": \"%s\", "
         "\"size\": %" PRIuS
         ","
-        "\"nesting\": %" PRIuS "}\n",
+        "\"nesting\": %zu}\n",
         type, reinterpret_cast<void*>(heap_->isolate()),
         heap_->isolate()->time_millis_since_init(),
         reinterpret_cast<const void*>(zone), zone->name(),
