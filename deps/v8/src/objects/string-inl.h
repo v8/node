@@ -195,7 +195,7 @@ Char FlatStringReader::Get(int index) {
 template <typename Char>
 class SequentialStringKey : public StringTableKey {
  public:
-  explicit SequentialStringKey(Vector<const Char> string, uint32_t seed)
+  explicit SequentialStringKey(Vector<const Char> string, uint64_t seed)
       : StringTableKey(StringHasher::HashSequentialString<Char>(
             string.start(), string.length(), seed)),
         string_(string) {}
@@ -205,7 +205,7 @@ class SequentialStringKey : public StringTableKey {
 
 class OneByteStringKey : public SequentialStringKey<uint8_t> {
  public:
-  OneByteStringKey(Vector<const uint8_t> str, uint32_t seed)
+  OneByteStringKey(Vector<const uint8_t> str, uint64_t seed)
       : SequentialStringKey<uint8_t>(str, seed) {}
 
   bool IsMatch(Object* string) override {
@@ -251,7 +251,7 @@ class SeqOneByteSubStringKey : public StringTableKey {
 
 class TwoByteStringKey : public SequentialStringKey<uc16> {
  public:
-  explicit TwoByteStringKey(Vector<const uc16> str, uint32_t seed)
+  explicit TwoByteStringKey(Vector<const uc16> str, uint64_t seed)
       : SequentialStringKey<uc16>(str, seed) {}
 
   bool IsMatch(Object* string) override {
@@ -264,7 +264,7 @@ class TwoByteStringKey : public SequentialStringKey<uc16> {
 // Utf8StringKey carries a vector of chars as key.
 class Utf8StringKey : public StringTableKey {
  public:
-  explicit Utf8StringKey(Vector<const char> string, uint32_t seed)
+  explicit Utf8StringKey(Vector<const char> string, uint64_t seed)
       : StringTableKey(StringHasher::ComputeUtf8Hash(string, seed, &chars_)),
         string_(string) {}
 
@@ -577,13 +577,6 @@ void ExternalOneByteString::update_data_cache() {
   *data_field = resource()->data();
 }
 
-void ExternalOneByteString::SetResource(
-    const ExternalOneByteString::Resource* resource) {
-  set_resource(resource);
-  size_t new_payload = resource == nullptr ? 0 : resource->length();
-  if (new_payload > 0) GetHeap()->UpdateExternalString(this, 0, new_payload);
-}
-
 void ExternalOneByteString::set_resource(
     const ExternalOneByteString::Resource* resource) {
   DCHECK(IsAligned(reinterpret_cast<intptr_t>(resource), kPointerSize));
@@ -610,13 +603,6 @@ void ExternalTwoByteString::update_data_cache() {
   const uint16_t** data_field =
       reinterpret_cast<const uint16_t**>(FIELD_ADDR(this, kResourceDataOffset));
   *data_field = resource()->data();
-}
-
-void ExternalTwoByteString::SetResource(
-    const ExternalTwoByteString::Resource* resource) {
-  set_resource(resource);
-  size_t new_payload = resource == nullptr ? 0 : resource->length() * 2;
-  if (new_payload > 0) GetHeap()->UpdateExternalString(this, 0, new_payload);
 }
 
 void ExternalTwoByteString::set_resource(

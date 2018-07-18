@@ -372,6 +372,7 @@ class ErrorUtils : public AllStatic {
     "% is not a function or its return value is not iterable")                 \
   T(NotCallableOrAsyncIterable,                                                \
     "% is not a function or its return value is not async iterable")           \
+  T(NotFiniteNumber, "Value need to be finite number for %()")                 \
   T(NotIterable, "% is not iterable")                                          \
   T(NotAsyncIterable, "% is not async iterable")                               \
   T(NotPropertyName, "% is not a valid property name")                         \
@@ -770,7 +771,7 @@ class MessageTemplate {
 
   static const char* TemplateString(int template_index);
 
-  static MaybeHandle<String> FormatMessage(int template_index,
+  static MaybeHandle<String> FormatMessage(Isolate* isolate, int template_index,
                                            Handle<String> arg0,
                                            Handle<String> arg1,
                                            Handle<String> arg2);

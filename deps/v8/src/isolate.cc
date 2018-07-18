@@ -149,44 +149,11 @@ int ThreadId::GetCurrentThreadId() {
   return thread_id;
 }
 
-
-ThreadLocalTop::ThreadLocalTop() {
-  InitializeInternal();
-}
-
-
-void ThreadLocalTop::InitializeInternal() {
-  c_entry_fp_ = 0;
-  c_function_ = 0;
-  handler_ = 0;
+void ThreadLocalTop::Initialize(Isolate* isolate) {
+  *this = ThreadLocalTop();
+  isolate_ = isolate;
 #ifdef USE_SIMULATOR
-  simulator_ = nullptr;
-#endif
-  js_entry_sp_ = kNullAddress;
-  external_callback_scope_ = nullptr;
-  current_vm_state_ = EXTERNAL;
-  try_catch_handler_ = nullptr;
-  context_ = nullptr;
-  thread_id_ = ThreadId::Invalid();
-  external_caught_exception_ = false;
-  failed_access_check_callback_ = nullptr;
-  save_context_ = nullptr;
-  promise_on_stack_ = nullptr;
-
-  // These members are re-initialized later after deserialization
-  // is complete.
-  pending_exception_ = nullptr;
-  wasm_caught_exception_ = nullptr;
-  rethrowing_message_ = false;
-  pending_message_obj_ = nullptr;
-  scheduled_exception_ = nullptr;
-}
-
-
-void ThreadLocalTop::Initialize() {
-  InitializeInternal();
-#ifdef USE_SIMULATOR
-  simulator_ = Simulator::current(isolate_);
+  simulator_ = Simulator::current(isolate);
 #endif
   thread_id_ = ThreadId::Current();
 }
@@ -685,10 +652,11 @@ MaybeHandle<JSReceiver> Isolate::CaptureAndSetDetailedStackTrace(
     Handle<FixedArray> stack_trace = CaptureCurrentStackTrace(
         stack_trace_for_uncaught_exceptions_frame_limit_,
         stack_trace_for_uncaught_exceptions_options_);
-    RETURN_ON_EXCEPTION(this,
-                        JSReceiver::SetProperty(error_object, key, stack_trace,
-                                                LanguageMode::kStrict),
-                        JSReceiver);
+    RETURN_ON_EXCEPTION(
+        this,
+        JSReceiver::SetProperty(this, error_object, key, stack_trace,
+                                LanguageMode::kStrict),
+        JSReceiver);
   }
   return error_object;
 }
@@ -700,10 +668,11 @@ MaybeHandle<JSReceiver> Isolate::CaptureAndSetSimpleStackTrace(
   Handle<Name> key = factory()->stack_trace_symbol();
   Handle<Object> stack_trace =
       CaptureSimpleStackTrace(error_object, mode, caller);
-  RETURN_ON_EXCEPTION(this,
-                      JSReceiver::SetProperty(error_object, key, stack_trace,
-                                              LanguageMode::kStrict),
-                      JSReceiver);
+  RETURN_ON_EXCEPTION(
+      this,
+      JSReceiver::SetProperty(this, error_object, key, stack_trace,
+                              LanguageMode::kStrict),
+      JSReceiver);
   return error_object;
 }
 
@@ -777,7 +746,7 @@ class CaptureStackTraceHelper {
       } else {
         cache = SimpleNumberDictionary::New(isolate_, 1);
       }
-      int entry = cache->FindEntry(code_offset);
+      int entry = cache->FindEntry(isolate_, code_offset);
       if (entry != NumberDictionary::kNotFound) {
         Handle<StackFrameInfo> frame(
             StackFrameInfo::cast(cache->ValueAt(entry)), isolate_);
@@ -804,7 +773,8 @@ class CaptureStackTraceHelper {
     frame->set_is_constructor(summ.is_constructor());
     frame->set_is_wasm(false);
     if (!FLAG_optimize_for_size) {
-      auto new_cache = SimpleNumberDictionary::Set(cache, code_offset, frame);
+      auto new_cache =
+          SimpleNumberDictionary::Set(isolate_, cache, code_offset, frame);
       if (*new_cache != *cache || !maybe_cache->IsNumberDictionary()) {
         AbstractCode::SetStackFrameCache(summ.abstract_code(), new_cache);
       }
@@ -2809,11 +2779,7 @@ Isolate::~Isolate() {
   allocator_ = nullptr;
 }
 
-
-void Isolate::InitializeThreadLocal() {
-  thread_local_top_.isolate_ = this;
-  thread_local_top_.Initialize();
-}
+void Isolate::InitializeThreadLocal() { thread_local_top_.Initialize(this); }
 
 void Isolate::SetTerminationOnExternalTryCatch() {
   if (try_catch_handler() == nullptr) return;
@@ -3002,10 +2968,6 @@ bool Isolate::Init(StartupDeserializer* des) {
     wasm_engine_.reset(
         new wasm::WasmEngine(std::unique_ptr<wasm::WasmCodeManager>(
             new wasm::WasmCodeManager(kMaxWasmCodeMemory))));
-    wasm_engine_->memory_tracker()->SetAllocationResultHistogram(
-        counters()->wasm_memory_allocation_result());
-    wasm_engine_->memory_tracker()->SetAddressSpaceUsageHistogram(
-        counters()->wasm_address_space_usage_mb());
     wasm_engine_->code_manager()->SetModuleCodeSizeHistogram(
         counters()->wasm_module_code_size_mb());
   }
@@ -3320,7 +3282,7 @@ void Isolate::MaybeInitializeVectorListFromHeap() {
   // Add collected feedback vectors to the root list lest we lose them to GC.
   Handle<ArrayList> list =
       ArrayList::New(this, static_cast<int>(vectors.size()));
-  for (const auto& vector : vectors) list = ArrayList::Add(list, vector);
+  for (const auto& vector : vectors) list = ArrayList::Add(this, list, vector);
   SetFeedbackVectorsForProfilingTools(*list);
 }
 
@@ -3451,7 +3413,7 @@ bool Isolate::IsIsConcatSpreadableLookupChainIntact() {
   Handle<Object> array_prototype(array_function()->prototype(), this);
   Handle<Symbol> key = factory()->is_concat_spreadable_symbol();
   Handle<Object> value;
-  LookupIterator it(array_prototype, key);
+  LookupIterator it(this, array_prototype, key);
   if (it.IsFound() && !JSReceiver::GetDataProperty(&it)->IsUndefined(this)) {
     // TODO(cbruni): Currently we do not revert if we unset the
     // @@isConcatSpreadable property on Array.prototype or Object.prototype
@@ -3668,13 +3630,13 @@ Handle<Symbol> Isolate::SymbolFor(Heap::RootListIndex dictionary_index,
   Handle<String> key = factory()->InternalizeString(name);
   Handle<NameDictionary> dictionary =
       Handle<NameDictionary>::cast(heap()->root_handle(dictionary_index));
-  int entry = dictionary->FindEntry(key);
+  int entry = dictionary->FindEntry(this, key);
   Handle<Symbol> symbol;
   if (entry == NameDictionary::kNotFound) {
     symbol =
         private_symbol ? factory()->NewPrivateSymbol() : factory()->NewSymbol();
     symbol->set_name(*key);
-    dictionary = NameDictionary::Add(dictionary, key, symbol,
+    dictionary = NameDictionary::Add(this, dictionary, key, symbol,
                                      PropertyDetails::Empty(), &entry);
     switch (dictionary_index) {
       case Heap::kPublicSymbolTableRootIndex:

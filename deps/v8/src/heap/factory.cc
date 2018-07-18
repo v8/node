@@ -205,7 +205,7 @@ Handle<HeapObject> Factory::NewFillerObject(int size, bool double_align,
 Handle<PrototypeInfo> Factory::NewPrototypeInfo() {
   Handle<PrototypeInfo> result =
       Handle<PrototypeInfo>::cast(NewStruct(PROTOTYPE_INFO_TYPE, TENURED));
-  result->set_prototype_users(FixedArrayOfWeakCells::Empty());
+  result->set_prototype_users(*empty_weak_array_list());
   result->set_registry_slot(PrototypeInfo::UNREGISTERED);
   result->set_bit_field(0);
   return result;
@@ -926,7 +926,7 @@ Handle<StringClass> Factory::InternalizeExternalString(Handle<String> string) {
                                       isolate());
   external_string->set_length(cast_string->length());
   external_string->set_hash_field(cast_string->hash_field());
-  external_string->SetResource(nullptr);
+  external_string->set_resource(nullptr);
   isolate()->heap()->RegisterExternalString(*external_string);
   return external_string;
 }
@@ -1250,7 +1250,7 @@ MaybeHandle<String> Factory::NewExternalStringFromOneByte(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->SetResource(resource);
+  external_string->set_resource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1283,7 +1283,7 @@ MaybeHandle<String> Factory::NewExternalStringFromTwoByte(
       ExternalTwoByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->SetResource(resource);
+  external_string->set_resource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1299,7 +1299,7 @@ Handle<ExternalOneByteString> Factory::NewNativeSourceString(
       ExternalOneByteString::cast(New(map, TENURED)), isolate());
   external_string->set_length(static_cast<int>(length));
   external_string->set_hash_field(String::kEmptyHashField);
-  external_string->SetResource(resource);
+  external_string->set_resource(resource);
   isolate()->heap()->RegisterExternalString(*external_string);
 
   return external_string;
@@ -1852,7 +1852,6 @@ Map* Factory::InitializeMap(Map* map, InstanceType type, int instance_size,
   }
   map->set_dependent_code(DependentCode::cast(*empty_fixed_array()),
                           SKIP_WRITE_BARRIER);
-  map->set_weak_cell_cache(Smi::kZero);
   map->set_raw_transitions(MaybeObject::FromSmi(Smi::kZero));
   map->SetInObjectUnusedPropertyFields(inobject_properties);
   map->set_instance_descriptors(*empty_descriptor_array());
@@ -2514,19 +2513,23 @@ Handle<PreParsedScopeData> Factory::NewPreParsedScopeData(int length) {
 
 Handle<UncompiledDataWithoutPreParsedScope>
 Factory::NewUncompiledDataWithoutPreParsedScope(int32_t start_position,
-                                                int32_t end_position) {
+                                                int32_t end_position,
+                                                int32_t function_literal_id) {
   Handle<UncompiledDataWithoutPreParsedScope> result(
       UncompiledDataWithoutPreParsedScope::cast(
           New(uncompiled_data_without_pre_parsed_scope_map(), TENURED)),
       isolate());
   result->set_start_position(start_position);
   result->set_end_position(end_position);
+  result->set_function_literal_id(function_literal_id);
+
+  result->clear_padding();
   return result;
 }
 
 Handle<UncompiledDataWithPreParsedScope>
 Factory::NewUncompiledDataWithPreParsedScope(
-    int32_t start_position, int32_t end_position,
+    int32_t start_position, int32_t end_position, int32_t function_literal_id,
     Handle<PreParsedScopeData> pre_parsed_scope_data) {
   Handle<UncompiledDataWithPreParsedScope> result(
       UncompiledDataWithPreParsedScope::cast(
@@ -2534,7 +2537,10 @@ Factory::NewUncompiledDataWithPreParsedScope(
       isolate());
   result->set_start_position(start_position);
   result->set_end_position(end_position);
+  result->set_function_literal_id(function_literal_id);
   result->set_pre_parsed_scope_data(*pre_parsed_scope_data);
+
+  result->clear_padding();
   return result;
 }
 
@@ -2812,7 +2818,7 @@ Handle<JSGlobalObject> Factory::NewJSGlobalObject(
     Handle<PropertyCell> cell = NewPropertyCell(name);
     cell->set_value(descs->GetStrongValue(i));
     // |dictionary| already contains enough space for all properties.
-    USE(GlobalDictionary::Add(dictionary, name, cell, d));
+    USE(GlobalDictionary::Add(isolate(), dictionary, name, cell, d));
   }
 
   // Allocate the global object and initialize it with the backing store.
@@ -3392,7 +3398,7 @@ void Factory::ReinitializeJSGlobalProxy(Handle<JSGlobalProxy> object,
     map->set_is_prototype_map(true);
   }
   JSObject::NotifyMapChange(old_map, map, isolate());
-  old_map->NotifyLeafMapLayoutChange();
+  old_map->NotifyLeafMapLayoutChange(isolate());
 
   // Check that the already allocated object has the same size and type as
   // objects allocated using the constructor.
@@ -3416,7 +3422,8 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfoForLiteral(
   Handle<SharedFunctionInfo> shared = NewSharedFunctionInfoForBuiltin(
       literal->name(), Builtins::kCompileLazy, kind);
   SharedFunctionInfo::InitFromFunctionLiteral(shared, literal, is_toplevel);
-  SharedFunctionInfo::SetScript(shared, script, false);
+  SharedFunctionInfo::SetScript(shared, script, literal->function_literal_id(),
+                                false);
   return shared;
 }
 
@@ -3504,7 +3511,6 @@ Handle<SharedFunctionInfo> Factory::NewSharedFunctionInfo(
     share->set_script(*undefined_value(), SKIP_WRITE_BARRIER);
     share->set_function_identifier_or_debug_info(*undefined_value(),
                                                  SKIP_WRITE_BARRIER);
-    share->set_function_literal_id(FunctionLiteral::kIdTypeInvalid);
 #if V8_SFI_HAS_UNIQUE_ID
     share->set_unique_id(isolate()->GetNextUniqueSharedFunctionInfoId());
 #endif
@@ -3690,10 +3696,12 @@ Handle<JSObject> Factory::NewArgumentsObject(Handle<JSFunction> callee,
   DCHECK(!isolate()->has_pending_exception());
   Handle<JSObject> result = NewJSObjectFromMap(map);
   Handle<Smi> value(Smi::FromInt(length), isolate());
-  Object::SetProperty(result, length_string(), value, LanguageMode::kStrict)
+  Object::SetProperty(isolate(), result, length_string(), value,
+                      LanguageMode::kStrict)
       .Assert();
   if (!strict_mode_callee) {
-    Object::SetProperty(result, callee_string(), callee, LanguageMode::kStrict)
+    Object::SetProperty(isolate(), result, callee_string(), callee,
+                        LanguageMode::kStrict)
         .Assert();
   }
   return result;
@@ -3902,8 +3910,8 @@ Handle<Map> Factory::CreateSloppyFunctionMap(
   if (IsFunctionModeWithName(function_mode)) {
     // Add name field.
     Handle<Name> name = isolate()->factory()->name_string();
-    Descriptor d = Descriptor::DataField(name, field_index++, roc_attribs,
-                                         Representation::Tagged());
+    Descriptor d = Descriptor::DataField(isolate(), name, field_index++,
+                                         roc_attribs, Representation::Tagged());
     map->AppendDescriptor(&d);
 
   } else {
@@ -3978,8 +3986,8 @@ Handle<Map> Factory::CreateStrictFunctionMap(
   if (IsFunctionModeWithName(function_mode)) {
     // Add name field.
     Handle<Name> name = isolate()->factory()->name_string();
-    Descriptor d = Descriptor::DataField(name, field_index++, roc_attribs,
-                                         Representation::Tagged());
+    Descriptor d = Descriptor::DataField(isolate(), name, field_index++,
+                                         roc_attribs, Representation::Tagged());
     map->AppendDescriptor(&d);
 
   } else {
@@ -3993,8 +4001,8 @@ Handle<Map> Factory::CreateStrictFunctionMap(
   if (IsFunctionModeWithHomeObject(function_mode)) {
     // Add home object field.
     Handle<Name> name = isolate()->factory()->home_object_symbol();
-    Descriptor d = Descriptor::DataField(name, field_index++, DONT_ENUM,
-                                         Representation::Tagged());
+    Descriptor d = Descriptor::DataField(isolate(), name, field_index++,
+                                         DONT_ENUM, Representation::Tagged());
     map->AppendDescriptor(&d);
   }
 

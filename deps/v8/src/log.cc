@@ -191,8 +191,8 @@ class CodeEventLogger::NameBuffer {
   uc16 utf16_buffer[kUtf16BufferSize];
 };
 
-
-CodeEventLogger::CodeEventLogger() : name_buffer_(new NameBuffer) { }
+CodeEventLogger::CodeEventLogger(Isolate* isolate)
+    : isolate_(isolate), name_buffer_(new NameBuffer) {}
 
 CodeEventLogger::~CodeEventLogger() { delete name_buffer_; }
 
@@ -267,7 +267,7 @@ void CodeEventLogger::RegExpCodeCreateEvent(AbstractCode* code,
 // Linux perf tool logging support
 class PerfBasicLogger : public CodeEventLogger {
  public:
-  PerfBasicLogger();
+  explicit PerfBasicLogger(Isolate* isolate);
   ~PerfBasicLogger() override;
 
   void CodeMoveEvent(AbstractCode* from, Address to) override {}
@@ -293,7 +293,8 @@ const char PerfBasicLogger::kFilenameFormatString[] = "/tmp/perf-%d.map";
 // Extra space for the PID in the filename
 const int PerfBasicLogger::kFilenameBufferPadding = 16;
 
-PerfBasicLogger::PerfBasicLogger() : perf_output_handle_(nullptr) {
+PerfBasicLogger::PerfBasicLogger(Isolate* isolate)
+    : CodeEventLogger(isolate), perf_output_handle_(nullptr) {
   // Open the perf JIT dump file.
   int bufferSize = sizeof(kFilenameFormatString) + kFilenameBufferPadding;
   ScopedVector<char> perf_dump_name(bufferSize);
@@ -405,7 +406,8 @@ void ExternalCodeEventListener::CodeCreateEvent(
 void ExternalCodeEventListener::CodeCreateEvent(
     CodeEventListener::LogEventsAndTags tag, AbstractCode* code, Name* name) {
   Handle<String> name_string =
-      Name::ToFunctionName(Handle<Name>(name, isolate_)).ToHandleChecked();
+      Name::ToFunctionName(isolate_, Handle<Name>(name, isolate_))
+          .ToHandleChecked();
 
   CodeEvent code_event;
   code_event.code_start_address =
@@ -425,7 +427,8 @@ void ExternalCodeEventListener::CodeCreateEvent(
     CodeEventListener::LogEventsAndTags tag, AbstractCode* code,
     SharedFunctionInfo* shared, Name* name) {
   Handle<String> name_string =
-      Name::ToFunctionName(Handle<Name>(name, isolate_)).ToHandleChecked();
+      Name::ToFunctionName(isolate_, Handle<Name>(name, isolate_))
+          .ToHandleChecked();
 
   CodeEvent code_event;
   code_event.code_start_address =
@@ -445,10 +448,11 @@ void ExternalCodeEventListener::CodeCreateEvent(
     CodeEventListener::LogEventsAndTags tag, AbstractCode* code,
     SharedFunctionInfo* shared, Name* source, int line, int column) {
   Handle<String> name_string =
-      Name::ToFunctionName(Handle<Name>(shared->Name(), isolate_))
+      Name::ToFunctionName(isolate_, Handle<Name>(shared->Name(), isolate_))
           .ToHandleChecked();
   Handle<String> source_string =
-      Name::ToFunctionName(Handle<Name>(source, isolate_)).ToHandleChecked();
+      Name::ToFunctionName(isolate_, Handle<Name>(source, isolate_))
+          .ToHandleChecked();
 
   CodeEvent code_event;
   code_event.code_start_address =
@@ -489,7 +493,7 @@ void ExternalCodeEventListener::RegExpCodeCreateEvent(AbstractCode* code,
 // Low-level logging support.
 class LowLevelLogger : public CodeEventLogger {
  public:
-  explicit LowLevelLogger(const char* file_name);
+  LowLevelLogger(Isolate* isolate, const char* file_name);
   ~LowLevelLogger() override;
 
   void CodeMoveEvent(AbstractCode* from, Address to) override;
@@ -543,7 +547,8 @@ class LowLevelLogger : public CodeEventLogger {
 
 const char LowLevelLogger::kLogExt[] = ".ll";
 
-LowLevelLogger::LowLevelLogger(const char* name) : ll_output_handle_(nullptr) {
+LowLevelLogger::LowLevelLogger(Isolate* isolate, const char* name)
+    : CodeEventLogger(isolate), ll_output_handle_(nullptr) {
   // Open the low-level log file.
   size_t len = strlen(name);
   ScopedVector<char> ll_name(static_cast<int>(len + sizeof(kLogExt)));
@@ -634,7 +639,7 @@ void LowLevelLogger::CodeMovingGCEvent() {
 
 class JitLogger : public CodeEventLogger {
  public:
-  explicit JitLogger(JitCodeEventHandler code_event_handler);
+  JitLogger(Isolate* isolate, JitCodeEventHandler code_event_handler);
 
   void CodeMoveEvent(AbstractCode* from, Address to) override;
   void CodeDisableOptEvent(AbstractCode* code,
@@ -656,10 +661,8 @@ class JitLogger : public CodeEventLogger {
   base::Mutex logger_mutex_;
 };
 
-
-JitLogger::JitLogger(JitCodeEventHandler code_event_handler)
-    : code_event_handler_(code_event_handler) {
-}
+JitLogger::JitLogger(Isolate* isolate, JitCodeEventHandler code_event_handler)
+    : CodeEventLogger(isolate), code_event_handler_(code_event_handler) {}
 
 void JitLogger::LogRecordedBuffer(AbstractCode* code,
                                   SharedFunctionInfo* shared, const char* name,
@@ -679,6 +682,7 @@ void JitLogger::LogRecordedBuffer(AbstractCode* code,
   event.script = ToApiHandle<v8::UnboundScript>(shared_function_handle);
   event.name.str = name;
   event.name.len = length;
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
   code_event_handler_(&event);
 }
 
@@ -692,6 +696,7 @@ void JitLogger::LogRecordedBuffer(const wasm::WasmCode* code, const char* name,
   event.code_len = code->instructions().length();
   event.name.str = name;
   event.name.len = length;
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
   code_event_handler_(&event);
 }
 
@@ -710,6 +715,7 @@ void JitLogger::CodeMoveEvent(AbstractCode* from, Address to) {
 
   // Calculate the new start address of the instructions.
   event.new_code_start = reinterpret_cast<void*>(to + header_size);
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
 
   code_event_handler_(&event);
 }
@@ -726,6 +732,7 @@ void JitLogger::AddCodeLinePosInfoEvent(
   event.line_info.offset = pc_offset;
   event.line_info.pos = position;
   event.line_info.position_type = position_type;
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
 
   code_event_handler_(&event);
 }
@@ -735,6 +742,7 @@ void* JitLogger::StartCodePosInfoEvent() {
   JitCodeEvent event;
   memset(&event, 0, sizeof(event));
   event.type = JitCodeEvent::CODE_START_LINE_INFO_RECORDING;
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
 
   code_event_handler_(&event);
   return event.user_data;
@@ -747,6 +755,7 @@ void JitLogger::EndCodePosInfoEvent(Address start_address,
   event.type = JitCodeEvent::CODE_END_LINE_INFO_RECORDING;
   event.code_start = reinterpret_cast<void*>(start_address);
   event.user_data = jit_handler_data;
+  event.isolate = reinterpret_cast<v8::Isolate*>(isolate_);
 
   code_event_handler_(&event);
 }
@@ -1546,25 +1555,18 @@ void Logger::FunctionEvent(const char* reason, int script_id, double time_delta,
   msg.WriteToLogFile();
 }
 
-namespace {
-void AppendCompilationCacheMessage(Log::MessageBuilder& msg,
-                                   SharedFunctionInfo* sfi) {
-  int script_id = -1;
-  if (sfi->script()->IsScript()) {
-    script_id = Script::cast(sfi->script())->id();
-  }
-  msg << script_id << Logger::kNext << sfi->StartPosition() << Logger::kNext
-      << sfi->EndPosition();
-}
-}  // namespace
-
 void Logger::CompilationCacheEvent(const char* action, const char* cache_type,
                                    SharedFunctionInfo* sfi) {
   if (!log_->IsEnabled() || !FLAG_log_function_events) return;
   Log::MessageBuilder msg(log_);
+  int script_id = -1;
+  if (sfi->script()->IsScript()) {
+    script_id = Script::cast(sfi->script())->id();
+  }
   msg << "compilation-cache" << Logger::kNext << action << Logger::kNext
-      << cache_type << Logger::kNext;
-  AppendCompilationCacheMessage(msg, sfi);
+      << cache_type << Logger::kNext << script_id << Logger::kNext
+      << sfi->StartPosition() << Logger::kNext << sfi->EndPosition()
+      << Logger::kNext << timer_.Elapsed().InMicroseconds();
   msg.WriteToLogFile();
 }
 
@@ -1585,24 +1587,31 @@ void Logger::ScriptEvent(ScriptEventType type, int script_id) {
     case ScriptEventType::kBackgroundCompile:
       msg << "background-compile";
       break;
+    case ScriptEventType::kStreamingCompile:
+      msg << "streaming-compile";
+      break;
   }
-  msg << Logger::kNext << script_id;
+  msg << Logger::kNext << script_id << Logger::kNext
+      << timer_.Elapsed().InMicroseconds();
   msg.WriteToLogFile();
 }
 
 void Logger::ScriptDetails(Script* script) {
   if (!log_->IsEnabled() || !FLAG_log_function_events) return;
-  Log::MessageBuilder msg(log_);
-  msg << "script-details" << Logger::kNext << script->id() << Logger::kNext;
-  if (script->name()->IsString()) {
-    msg << String::cast(script->name());
+  {
+    Log::MessageBuilder msg(log_);
+    msg << "script-details" << Logger::kNext << script->id() << Logger::kNext;
+    if (script->name()->IsString()) {
+      msg << String::cast(script->name());
+    }
+    msg << Logger::kNext << script->line_offset() << Logger::kNext
+        << script->column_offset() << Logger::kNext;
+    if (script->source_mapping_url()->IsString()) {
+      msg << String::cast(script->source_mapping_url());
+    }
+    msg.WriteToLogFile();
   }
-  msg << Logger::kNext << script->line_offset() << Logger::kNext
-      << script->column_offset() << Logger::kNext;
-  if (script->source_mapping_url()->IsString()) {
-    msg << String::cast(script->source_mapping_url());
-  }
-  msg.WriteToLogFile();
+  EnsureLogScriptSource(script);
 }
 
 bool Logger::EnsureLogScriptSource(Script* script) {
@@ -1964,17 +1973,17 @@ bool Logger::SetUp(Isolate* isolate) {
   log_ = new Log(this, log_file_name.str().c_str());
 
   if (FLAG_perf_basic_prof) {
-    perf_basic_logger_ = new PerfBasicLogger();
+    perf_basic_logger_ = new PerfBasicLogger(isolate);
     AddCodeEventListener(perf_basic_logger_);
   }
 
   if (FLAG_perf_prof) {
-    perf_jit_logger_ = new PerfJitLogger();
+    perf_jit_logger_ = new PerfJitLogger(isolate);
     AddCodeEventListener(perf_jit_logger_);
   }
 
   if (FLAG_ll_prof) {
-    ll_logger_ = new LowLevelLogger(log_file_name.str().c_str());
+    ll_logger_ = new LowLevelLogger(isolate, log_file_name.str().c_str());
     AddCodeEventListener(ll_logger_);
   }
 
@@ -2009,7 +2018,7 @@ void Logger::SetCodeEventHandler(uint32_t options,
   }
 
   if (event_handler) {
-    jit_logger_ = new JitLogger(event_handler);
+    jit_logger_ = new JitLogger(isolate_, event_handler);
     AddCodeEventListener(jit_logger_);
     if (options & kJitCodeEventEnumExisting) {
       HandleScope scope(isolate_);

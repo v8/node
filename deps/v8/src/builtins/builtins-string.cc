@@ -19,7 +19,8 @@ namespace internal {
 namespace {  // for String.fromCodePoint
 
 bool IsValidCodePoint(Isolate* isolate, Handle<Object> value) {
-  if (!value->IsNumber() && !Object::ToNumber(value).ToHandle(&value)) {
+  if (!value->IsNumber() &&
+      !Object::ToNumber(isolate, value).ToHandle(&value)) {
     return false;
   }
 
@@ -37,7 +38,8 @@ bool IsValidCodePoint(Isolate* isolate, Handle<Object> value) {
 
 uc32 NextCodePoint(Isolate* isolate, BuiltinArguments args, int index) {
   Handle<Object> value = args.at(1 + index);
-  ASSIGN_RETURN_ON_EXCEPTION_VALUE(isolate, value, Object::ToNumber(value), -1);
+  ASSIGN_RETURN_ON_EXCEPTION_VALUE(isolate, value,
+                                   Object::ToNumber(isolate, value), -1);
   if (!IsValidCodePoint(isolate, value)) {
     isolate->Throw(*isolate->factory()->NewRangeError(
         MessageTemplate::kInvalidCodePoint, value));
@@ -526,14 +528,14 @@ BUILTIN(StringRaw) {
                                      Object::ToObject(isolate, templ));
 
   Handle<Object> raw;
-  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, raw,
-                                     Object::GetProperty(cooked, raw_string));
+  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+      isolate, raw, Object::GetProperty(isolate, cooked, raw_string));
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, raw,
                                      Object::ToObject(isolate, raw));
   Handle<Object> raw_len;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
       isolate, raw_len,
-      Object::GetProperty(raw, isolate->factory()->length_string()));
+      Object::GetProperty(isolate, raw, isolate->factory()->length_string()));
 
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, raw_len,
                                      Object::ToLength(isolate, raw_len));

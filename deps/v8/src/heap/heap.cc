@@ -1425,7 +1425,7 @@ bool Heap::CollectGarbage(AllocationSpace space,
       if (deserialization_complete_) {
         memory_reducer_->NotifyMarkCompact(event);
       }
-      memory_pressure_level_.SetValue(MemoryPressureLevel::kNone);
+      memory_pressure_level_ = MemoryPressureLevel::kNone;
     }
 
     tracer()->Stop(collector);
@@ -2297,15 +2297,6 @@ void Heap::ProtectUnprotectedMemoryChunks() {
   unprotected_memory_chunks_.clear();
 }
 
-void Heap::ProcessMovedExternalString(Page* old_page, Page* new_page,
-                                      ExternalString* string) {
-  size_t size = string->ExternalPayloadSize();
-  old_page->DecrementExternalBackingStoreBytes(
-      ExternalBackingStoreType::kExternalString, size);
-  new_page->IncrementExternalBackingStoreBytes(
-      ExternalBackingStoreType::kExternalString, size);
-}
-
 String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
                                                                 Object** p) {
   MapWord first_word = HeapObject::cast(*p)->map_word();
@@ -2323,53 +2314,24 @@ String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
   }
 
   // String is still reachable.
-  String* new_string = String::cast(first_word.ToForwardingAddress());
-  if (new_string->IsThinString()) {
-    // Filtering Thin strings out of the external string table.
-    return nullptr;
-  } else if (new_string->IsExternalString()) {
-    heap->ProcessMovedExternalString(
-        Page::FromAddress(reinterpret_cast<Address>(*p)),
-        Page::FromHeapObject(new_string), ExternalString::cast(new_string));
-    return new_string;
-  }
-
+  String* string = String::cast(first_word.ToForwardingAddress());
+  if (string->IsThinString()) string = ThinString::cast(string)->actual();
   // Internalization can replace external strings with non-external strings.
-  return new_string->IsExternalString() ? new_string : nullptr;
+  return string->IsExternalString() ? string : nullptr;
 }
 
 void Heap::ExternalStringTable::Verify() {
 #ifdef DEBUG
-  std::set<String*> visited_map;
-  std::map<MemoryChunk*, size_t> size_map;
-  ExternalBackingStoreType type = ExternalBackingStoreType::kExternalString;
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
-    String* obj = String::cast(new_space_strings_[i]);
-    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
-    DCHECK(mc->InNewSpace());
-    DCHECK(heap_->InNewSpace(obj));
+    Object* obj = Object::cast(new_space_strings_[i]);
+    DCHECK(InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
-    DCHECK(obj->IsExternalString());
-    // Note: we can have repeated elements in the table.
-    DCHECK_EQ(0, visited_map.count(obj));
-    visited_map.insert(obj);
-    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
-    String* obj = String::cast(old_space_strings_[i]);
-    MemoryChunk* mc = MemoryChunk::FromHeapObject(obj);
-    DCHECK(!mc->InNewSpace());
-    DCHECK(!heap_->InNewSpace(obj));
+    Object* obj = Object::cast(old_space_strings_[i]);
+    DCHECK(!InNewSpace(obj));
     DCHECK(!obj->IsTheHole(heap_->isolate()));
-    DCHECK(obj->IsExternalString());
-    // Note: we can have repeated elements in the table.
-    DCHECK_EQ(0, visited_map.count(obj));
-    visited_map.insert(obj);
-    size_map[mc] += ExternalString::cast(obj)->ExternalPayloadSize();
   }
-  for (std::map<MemoryChunk*, size_t>::iterator it = size_map.begin();
-       it != size_map.end(); it++)
-    DCHECK_EQ(it->first->ExternalBackingStoreBytes(type), it->second);
 #endif
 }
 
@@ -3427,16 +3389,6 @@ void Heap::IdleNotificationEpilogue(GCIdleTimeAction action,
 
   contexts_disposed_ = 0;
 
-  if (deadline_in_ms - start_ms >
-      GCIdleTimeHandler::kMaxFrameRenderingIdleTime) {
-    int committed_memory = static_cast<int>(CommittedMemory() / KB);
-    int used_memory = static_cast<int>(heap_state.size_of_objects / KB);
-    isolate()->counters()->aggregated_memory_heap_committed()->AddSample(
-        start_ms, committed_memory);
-    isolate()->counters()->aggregated_memory_heap_used()->AddSample(
-        start_ms, used_memory);
-  }
-
   if ((FLAG_trace_idle_notification && action.type > DO_NOTHING) ||
       FLAG_trace_idle_notification_verbose) {
     isolate_->PrintWithTimestamp(
@@ -3522,9 +3474,9 @@ void Heap::CheckMemoryPressure() {
     // The optimizing compiler may be unnecessarily holding on to memory.
     isolate()->AbortConcurrentOptimization(BlockingBehavior::kDontBlock);
   }
-  if (memory_pressure_level_.Value() == MemoryPressureLevel::kCritical) {
+  if (memory_pressure_level_ == MemoryPressureLevel::kCritical) {
     CollectGarbageOnMemoryPressure();
-  } else if (memory_pressure_level_.Value() == MemoryPressureLevel::kModerate) {
+  } else if (memory_pressure_level_ == MemoryPressureLevel::kModerate) {
     if (FLAG_incremental_marking && incremental_marking()->IsStopped()) {
       StartIncrementalMarking(kReduceMemoryFootprintMask,
                               GarbageCollectionReason::kMemoryPressure);
@@ -3576,8 +3528,8 @@ void Heap::CollectGarbageOnMemoryPressure() {
 
 void Heap::MemoryPressureNotification(MemoryPressureLevel level,
                                       bool is_isolate_locked) {
-  MemoryPressureLevel previous = memory_pressure_level_.Value();
-  memory_pressure_level_.SetValue(level);
+  MemoryPressureLevel previous = memory_pressure_level_;
+  memory_pressure_level_ = level;
   if ((previous != MemoryPressureLevel::kCritical &&
        level == MemoryPressureLevel::kCritical) ||
       (previous == MemoryPressureLevel::kNone &&
@@ -4704,10 +4656,6 @@ void Heap::SetUp() {
   space_[LO_SPACE] = lo_space_ = new LargeObjectSpace(this);
   space_[NEW_LO_SPACE] = new_lo_space_ = new NewLargeObjectSpace(this);
 
-  // Set up the seed that is used to randomize the string hash function.
-  DCHECK_EQ(Smi::kZero, hash_seed());
-  if (FLAG_randomize_hashes) InitializeHashSeed();
-
   for (int i = 0; i < static_cast<int>(v8::Isolate::kUseCounterFeatureCount);
        i++) {
     deferred_counters_[i] = 0;
@@ -4765,12 +4713,14 @@ void Heap::SetUp() {
 }
 
 void Heap::InitializeHashSeed() {
+  uint64_t new_hash_seed;
   if (FLAG_hash_seed == 0) {
-    int rnd = isolate()->random_number_generator()->NextInt();
-    set_hash_seed(Smi::FromInt(rnd & Name::kHashBitMask));
+    int64_t rnd = isolate()->random_number_generator()->NextInt64();
+    new_hash_seed = static_cast<uint64_t>(rnd);
   } else {
-    set_hash_seed(Smi::FromInt(FLAG_hash_seed));
+    new_hash_seed = static_cast<uint64_t>(FLAG_hash_seed);
   }
+  hash_seed()->copy_in(0, reinterpret_cast<byte*>(&new_hash_seed), kInt64Size);
 }
 
 void Heap::SetStackLimits() {
@@ -5060,19 +5010,28 @@ void CompactFixedArrayOfWeakCells(Isolate* isolate, Object* object) {
 }  // anonymous namespace
 
 void Heap::CompactFixedArraysOfWeakCells() {
-  // Find known FixedArrayOfWeakCells and compact them.
-  HeapIterator iterator(this);
-  for (HeapObject* o = iterator.next(); o != nullptr; o = iterator.next()) {
-    if (o->IsPrototypeInfo()) {
-      Object* prototype_users = PrototypeInfo::cast(o)->prototype_users();
-      if (prototype_users->IsFixedArrayOfWeakCells()) {
-        FixedArrayOfWeakCells* array =
-            FixedArrayOfWeakCells::cast(prototype_users);
-        array->Compact<JSObject::PrototypeRegistryCompactionCallback>(
-            isolate());
+  // Find known PrototypeUsers and compact them.
+  std::vector<Handle<PrototypeInfo>> prototype_infos;
+  {
+    HeapIterator iterator(this);
+    for (HeapObject* o = iterator.next(); o != nullptr; o = iterator.next()) {
+      if (o->IsPrototypeInfo()) {
+        PrototypeInfo* prototype_info = PrototypeInfo::cast(o);
+        if (prototype_info->prototype_users()->IsWeakArrayList()) {
+          prototype_infos.emplace_back(handle(prototype_info, isolate()));
+        }
       }
     }
   }
+  for (auto& prototype_info : prototype_infos) {
+    Handle<WeakArrayList> array(
+        WeakArrayList::cast(prototype_info->prototype_users()), isolate());
+    WeakArrayList* new_array = PrototypeUsers::Compact(
+        array, this, JSObject::PrototypeRegistryCompactionCallback);
+    prototype_info->set_prototype_users(new_array);
+  }
+
+  // Find known FixedArrayOfWeakCells and compact them.
   CompactFixedArrayOfWeakCells(isolate(), noscript_shared_function_infos());
   CompactFixedArrayOfWeakCells(isolate(), script_list());
   CompactFixedArrayOfWeakCells(isolate(), weak_stack_trace_list());
@@ -5086,9 +5045,10 @@ void Heap::AddRetainedMap(Handle<Map> map) {
   if (array->IsFull()) {
     CompactRetainedMaps(*array);
   }
-  array = WeakArrayList::AddToEnd(array, MaybeObjectHandle::Weak(map));
+  array =
+      WeakArrayList::AddToEnd(isolate(), array, MaybeObjectHandle::Weak(map));
   array = WeakArrayList::AddToEnd(
-      array,
+      isolate(), array,
       MaybeObjectHandle(Smi::FromInt(FLAG_retain_maps_for_n_gc), isolate()));
   if (*array != retained_maps()) {
     set_retained_maps(*array);
@@ -5486,15 +5446,19 @@ void Heap::ExternalStringTable::CleanUpAll() {
 void Heap::ExternalStringTable::TearDown() {
   for (size_t i = 0; i < new_space_strings_.size(); ++i) {
     Object* o = new_space_strings_[i];
-    // Dont finalize thin strings.
-    if (o->IsThinString()) continue;
+    if (o->IsThinString()) {
+      o = ThinString::cast(o)->actual();
+      if (!o->IsExternalString()) continue;
+    }
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   new_space_strings_.clear();
   for (size_t i = 0; i < old_space_strings_.size(); ++i) {
     Object* o = old_space_strings_[i];
-    // Dont finalize thin strings.
-    if (o->IsThinString()) continue;
+    if (o->IsThinString()) {
+      o = ThinString::cast(o)->actual();
+      if (!o->IsExternalString()) continue;
+    }
     heap_->FinalizeExternalString(ExternalString::cast(o));
   }
   old_space_strings_.clear();

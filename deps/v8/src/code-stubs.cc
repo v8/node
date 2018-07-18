@@ -13,6 +13,7 @@
 #include "src/code-factory.h"
 #include "src/code-stub-assembler.h"
 #include "src/code-stubs-utils.h"
+#include "src/code-tracer.h"
 #include "src/counters.h"
 #include "src/gdb-jit.h"
 #include "src/heap/heap-inl.h"
@@ -96,7 +97,7 @@ void CodeStub::RecordCodeGeneration(Handle<Code> code) {
 void CodeStub::DeleteStubFromCacheForTesting() {
   Heap* heap = isolate_->heap();
   Handle<SimpleNumberDictionary> dict(heap->code_stubs(), isolate());
-  int entry = dict->FindEntry(GetKey());
+  int entry = dict->FindEntry(isolate(), GetKey());
   DCHECK_NE(SimpleNumberDictionary::kNotFound, entry);
   dict = SimpleNumberDictionary::DeleteEntry(isolate(), dict, entry);
   heap->SetRootCodeStubs(*dict);
@@ -166,7 +167,7 @@ Handle<Code> CodeStub::GetCode() {
 
     // Update the dictionary and the root in Heap.
     Handle<SimpleNumberDictionary> dict = SimpleNumberDictionary::Set(
-        handle(heap->code_stubs(), isolate_), GetKey(), new_object);
+        isolate(), handle(heap->code_stubs(), isolate_), GetKey(), new_object);
     heap->SetRootCodeStubs(*dict);
     code = *new_object;
   }

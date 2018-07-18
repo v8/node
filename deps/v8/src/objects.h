@@ -1081,10 +1081,10 @@ class Object {
 
   // ES6 section 7.1.3 ToNumber
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> ToNumber(
-      Handle<Object> input);
+      Isolate* isolate, Handle<Object> input);
 
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> ToNumeric(
-      Handle<Object> input);
+      Isolate* isolate, Handle<Object> input);
 
   // ES6 section 7.1.4 ToInteger
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> ToInteger(
@@ -1173,12 +1173,12 @@ class Object {
       LookupIterator* it, Handle<Object> value, LanguageMode language_mode,
       StoreFromKeyed store_mode);
   V8_WARN_UNUSED_RESULT static MaybeHandle<Object> SetProperty(
-      Handle<Object> object, Handle<Name> name, Handle<Object> value,
-      LanguageMode language_mode,
+      Isolate* isolate, Handle<Object> object, Handle<Name> name,
+      Handle<Object> value, LanguageMode language_mode,
       StoreFromKeyed store_mode = MAY_BE_STORE_FROM_KEYED);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> SetPropertyOrElement(
-      Handle<Object> object, Handle<Name> name, Handle<Object> value,
-      LanguageMode language_mode,
+      Isolate* isolate, Handle<Object> object, Handle<Name> name,
+      Handle<Object> value, LanguageMode language_mode,
       StoreFromKeyed store_mode = MAY_BE_STORE_FROM_KEYED);
 
   V8_WARN_UNUSED_RESULT static Maybe<bool> SetSuperProperty(
@@ -1202,11 +1202,11 @@ class Object {
       LookupIterator* it, Handle<Object> value, PropertyAttributes attributes,
       ShouldThrow should_throw, StoreFromKeyed store_mode);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> GetPropertyOrElement(
-      Handle<Object> object, Handle<Name> name);
+      Isolate* isolate, Handle<Object> object, Handle<Name> name);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> GetPropertyOrElement(
       Handle<Object> receiver, Handle<Name> name, Handle<JSReceiver> holder);
   V8_WARN_UNUSED_RESULT static inline MaybeHandle<Object> GetProperty(
-      Handle<Object> object, Handle<Name> name);
+      Isolate* isolate, Handle<Object> object, Handle<Name> name);
 
   V8_WARN_UNUSED_RESULT static MaybeHandle<Object> GetPropertyWithAccessor(
       LookupIterator* it);
@@ -1273,10 +1273,7 @@ class Object {
   DECL_VERIFIER(Object)
 #ifdef VERIFY_HEAP
   // Verify a pointer is a valid object pointer.
-  static void VerifyPointer(Object* p);
-  // Special non-isolate overload for cases where we don't have an isolate.
-  // TODO(v8:7786): Remove this overload.
-  void ObjectVerify();
+  static void VerifyPointer(Isolate* isolate, Object* p);
 #endif
 
   inline void VerifyApiCallResultType();
@@ -1518,20 +1515,6 @@ class HeapObject: public Object {
   // places where it might not be safe to access it.
   inline ReadOnlyRoots GetReadOnlyRoots() const;
 
-  // The Heap the object was allocated in. Used also to access Isolate.
-#ifdef DEPRECATE_GET_ISOLATE
-  [[deprecated("Pass Heap explicitly or use a NeverReadOnlyHeapObject")]]
-#endif
-      inline Heap*
-      GetHeap() const;
-
-// Convenience method to get current isolate.
-#ifdef DEPRECATE_GET_ISOLATE
-  [[deprecated("Pass Isolate explicitly or use a NeverReadOnlyHeapObject")]]
-#endif
-      inline Isolate*
-      GetIsolate() const;
-
 #define IS_TYPE_FUNCTION_DECL(Type) V8_INLINE bool Is##Type() const;
   HEAP_OBJECT_TYPE_LIST(IS_TYPE_FUNCTION_DECL)
 #undef IS_TYPE_FUNCTION_DECL
@@ -1627,13 +1610,13 @@ class HeapObject: public Object {
   DECL_PRINTER(HeapObject)
   DECL_VERIFIER(HeapObject)
 #ifdef VERIFY_HEAP
-  inline void VerifyObjectField(int offset);
+  inline void VerifyObjectField(Isolate* isolate, int offset);
   inline void VerifySmiField(int offset);
-  inline void VerifyMaybeObjectField(int offset);
+  inline void VerifyMaybeObjectField(Isolate* isolate, int offset);
 
   // Verify a pointer is a valid HeapObject pointer that points to object
   // areas in the heap.
-  static void VerifyHeapPointer(Object* p);
+  static void VerifyHeapPointer(Isolate* isolate, Object* p);
 #endif
 
   static inline AllocationAlignment RequiredAlignment(Map* map);
@@ -1657,6 +1640,8 @@ class HeapObject: public Object {
   static const int kHeaderSize = kMapOffset + kPointerSize;
 
   STATIC_ASSERT(kMapOffset == Internals::kHeapObjectMapOffset);
+
+  inline Address GetFieldAddress(int field_offset) const;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(HeapObject);
@@ -2258,11 +2243,9 @@ class JSObject: public JSReceiver {
   // Utility used by many Array builtins and runtime functions
   static inline bool PrototypeHasNoElements(Isolate* isolate, JSObject* object);
 
-  // Alternative implementation of FixedArrayOfWeakCells::NullCallback.
-  class PrototypeRegistryCompactionCallback {
-   public:
-    static void Callback(Object* value, int old_index, int new_index);
-  };
+  // To be passed to PrototypeUsers::Compact.
+  static void PrototypeRegistryCompactionCallback(HeapObject* value,
+                                                  int old_index, int new_index);
 
   // Retrieve interceptors.
   inline InterceptorInfo* GetNamedInterceptor();
@@ -3912,7 +3895,7 @@ class PropertyCell : public HeapObject {
   // property.
   DECL_ACCESSORS(dependent_code, DependentCode)
 
-  inline PropertyDetails property_details();
+  inline PropertyDetails property_details() const;
   inline void set_property_details(PropertyDetails details);
 
   PropertyCellConstantType GetConstantType();
@@ -3984,141 +3967,6 @@ class WeakCell : public HeapObject {
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(WeakCell);
-};
-
-
-// The JSProxy describes EcmaScript Harmony proxies
-class JSProxy: public JSReceiver {
- public:
-  V8_WARN_UNUSED_RESULT static MaybeHandle<JSProxy> New(Isolate* isolate,
-                                                        Handle<Object>,
-                                                        Handle<Object>);
-
-  // [handler]: The handler property.
-  DECL_ACCESSORS(handler, Object)
-  // [target]: The target property.
-  DECL_ACCESSORS(target, Object)
-
-  static MaybeHandle<Context> GetFunctionRealm(Handle<JSProxy> proxy);
-
-  DECL_CAST(JSProxy)
-
-  V8_INLINE bool IsRevoked() const;
-  static void Revoke(Handle<JSProxy> proxy);
-
-  // ES6 9.5.1
-  static MaybeHandle<Object> GetPrototype(Handle<JSProxy> receiver);
-
-  // ES6 9.5.2
-  V8_WARN_UNUSED_RESULT static Maybe<bool> SetPrototype(
-      Handle<JSProxy> proxy, Handle<Object> value, bool from_javascript,
-      ShouldThrow should_throw);
-  // ES6 9.5.3
-  V8_WARN_UNUSED_RESULT static Maybe<bool> IsExtensible(Handle<JSProxy> proxy);
-
-  // ES6, #sec-isarray.  NOT to be confused with %_IsArray.
-  V8_WARN_UNUSED_RESULT static Maybe<bool> IsArray(Handle<JSProxy> proxy);
-
-  // ES6 9.5.4 (when passed kDontThrow)
-  V8_WARN_UNUSED_RESULT static Maybe<bool> PreventExtensions(
-      Handle<JSProxy> proxy, ShouldThrow should_throw);
-
-  // ES6 9.5.5
-  V8_WARN_UNUSED_RESULT static Maybe<bool> GetOwnPropertyDescriptor(
-      Isolate* isolate, Handle<JSProxy> proxy, Handle<Name> name,
-      PropertyDescriptor* desc);
-
-  // ES6 9.5.6
-  V8_WARN_UNUSED_RESULT static Maybe<bool> DefineOwnProperty(
-      Isolate* isolate, Handle<JSProxy> object, Handle<Object> key,
-      PropertyDescriptor* desc, ShouldThrow should_throw);
-
-  // ES6 9.5.7
-  V8_WARN_UNUSED_RESULT static Maybe<bool> HasProperty(Isolate* isolate,
-                                                       Handle<JSProxy> proxy,
-                                                       Handle<Name> name);
-
-  // This function never returns false.
-  // It returns either true or throws.
-  V8_WARN_UNUSED_RESULT static Maybe<bool> CheckHasTrap(
-      Isolate* isolate, Handle<Name> name, Handle<JSReceiver> target);
-
-  // ES6 9.5.8
-  V8_WARN_UNUSED_RESULT static MaybeHandle<Object> GetProperty(
-      Isolate* isolate, Handle<JSProxy> proxy, Handle<Name> name,
-      Handle<Object> receiver, bool* was_found);
-
-  enum AccessKind { kGet, kSet };
-
-  static MaybeHandle<Object> CheckGetSetTrapResult(Isolate* isolate,
-                                                   Handle<Name> name,
-                                                   Handle<JSReceiver> target,
-                                                   Handle<Object> trap_result,
-                                                   AccessKind access_kind);
-
-  // ES6 9.5.9
-  V8_WARN_UNUSED_RESULT static Maybe<bool> SetProperty(
-      Handle<JSProxy> proxy, Handle<Name> name, Handle<Object> value,
-      Handle<Object> receiver, LanguageMode language_mode);
-
-  // ES6 9.5.10 (when passed LanguageMode::kSloppy)
-  V8_WARN_UNUSED_RESULT static Maybe<bool> DeletePropertyOrElement(
-      Handle<JSProxy> proxy, Handle<Name> name, LanguageMode language_mode);
-
-  // ES6 9.5.12
-  V8_WARN_UNUSED_RESULT static Maybe<bool> OwnPropertyKeys(
-      Isolate* isolate, Handle<JSReceiver> receiver, Handle<JSProxy> proxy,
-      PropertyFilter filter, KeyAccumulator* accumulator);
-
-  V8_WARN_UNUSED_RESULT static Maybe<PropertyAttributes> GetPropertyAttributes(
-      LookupIterator* it);
-
-  // Dispatched behavior.
-  DECL_PRINTER(JSProxy)
-  DECL_VERIFIER(JSProxy)
-
-  static const int kMaxIterationLimit = 100 * 1024;
-
-  // Layout description.
-  static const int kTargetOffset = JSReceiver::kHeaderSize;
-  static const int kHandlerOffset = kTargetOffset + kPointerSize;
-  static const int kSize = kHandlerOffset + kPointerSize;
-
-  // kTargetOffset aliases with the elements of JSObject. The fact that
-  // JSProxy::target is a Javascript value which cannot be confused with an
-  // elements backing store is exploited by loading from this offset from an
-  // unknown JSReceiver.
-  STATIC_ASSERT(JSObject::kElementsOffset == JSProxy::kTargetOffset);
-
-  typedef FixedBodyDescriptor<JSReceiver::kPropertiesOrHashOffset, kSize, kSize>
-      BodyDescriptor;
-  // No weak fields.
-  typedef BodyDescriptor BodyDescriptorWeak;
-
-  static Maybe<bool> SetPrivateSymbol(Isolate* isolate, Handle<JSProxy> proxy,
-                                      Handle<Symbol> private_name,
-                                      PropertyDescriptor* desc,
-                                      ShouldThrow should_throw);
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(JSProxy);
-};
-
-// JSProxyRevocableResult is just a JSObject with a specific initial map.
-// This initial map adds in-object properties for "proxy" and "revoke".
-// See https://tc39.github.io/ecma262/#sec-proxy.revocable
-class JSProxyRevocableResult : public JSObject {
- public:
-  // Offsets of object fields.
-  static const int kProxyOffset = JSObject::kHeaderSize;
-  static const int kRevokeOffset = kProxyOffset + kPointerSize;
-  static const int kSize = kRevokeOffset + kPointerSize;
-  // Indices of in-object properties.
-  static const int kProxyIndex = 0;
-  static const int kRevokeIndex = 1;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(JSProxyRevocableResult);
 };
 
 // The [Async-from-Sync Iterator] object
@@ -4223,13 +4071,14 @@ class AccessorPair: public Struct {
 
   DECL_CAST(AccessorPair)
 
-  static Handle<AccessorPair> Copy(Handle<AccessorPair> pair);
+  static Handle<AccessorPair> Copy(Isolate* isolate, Handle<AccessorPair> pair);
 
   inline Object* get(AccessorComponent component);
   inline void set(AccessorComponent component, Object* value);
 
   // Note: Returns undefined if the component is not set.
-  static Handle<Object> GetComponent(Handle<AccessorPair> accessor_pair,
+  static Handle<Object> GetComponent(Isolate* isolate,
+                                     Handle<AccessorPair> accessor_pair,
                                      AccessorComponent component);
 
   // Set both components, skipping arguments which are a JavaScript null.
@@ -4259,8 +4108,11 @@ class AccessorPair: public Struct {
   DISALLOW_IMPLICIT_CONSTRUCTORS(AccessorPair);
 };
 
-class StackFrameInfo : public Struct {
+class StackFrameInfo : public Struct, public NeverReadOnlySpaceObject {
  public:
+  using NeverReadOnlySpaceObject::GetHeap;
+  using NeverReadOnlySpaceObject::GetIsolate;
+
   DECL_INT_ACCESSORS(line_number)
   DECL_INT_ACCESSORS(column_number)
   DECL_INT_ACCESSORS(script_id)

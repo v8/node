@@ -31,6 +31,7 @@ TAIL: 'tail';
 ISNT: 'isnt';
 IS: 'is';
 LET: 'let';
+CONST: 'const';
 EXTERN: 'extern';
 ASSERT_TOKEN: 'assert';
 CHECK_TOKEN: 'check';
@@ -189,9 +190,11 @@ unaryExpression
         | op=(PLUS | MINUS | BIT_NOT | NOT) unaryExpression;
 
 locationExpression
-        : IDENTIFIER genericSpecializationTypeList?
+        : IDENTIFIER
         | locationExpression '.' IDENTIFIER
-        | locationExpression '[' expression ']';
+        | primaryExpression '.' IDENTIFIER
+        | locationExpression '[' expression ']'
+        | primaryExpression '[' expression ']';
 
 incrementDecrement
         : INCREMENT locationExpression
@@ -205,14 +208,24 @@ assignment
         | locationExpression ((ASSIGNMENT | ASSIGNMENT_OPERATOR) expression)?;
 
 assignmentExpression
-        : primaryExpression
+        : functionPointerExpression
         | assignment;
+
+structExpression
+        : IDENTIFIER '{' (expression (',' expression)*)? '}';
+
+functionPointerExpression
+        : primaryExpression
+        | IDENTIFIER genericSpecializationTypeList?
+        ;
 
 primaryExpression
         : helperCall
+        | structExpression
         | DECIMAL_LITERAL
         | STRING_LITERAL
-        | ('(' expression ')');
+        | ('(' expression ')')
+        ;
 
 forInitialization : variableDeclarationWithInitialization?;
 forLoop: FOR '(' forInitialization ';' expression ';' assignment ')' statementBlock;
@@ -227,7 +240,7 @@ argumentList: '(' argument? (',' argument)* ')';
 helperCall: (MIN | MAX | IDENTIFIER) genericSpecializationTypeList? argumentList optionalOtherwise;
 
 labelReference: IDENTIFIER;
-variableDeclaration: LET IDENTIFIER ':' type;
+variableDeclaration: (LET | CONST) IDENTIFIER ':' type;
 variableDeclarationWithInitialization: variableDeclaration (ASSIGNMENT expression)?;
 helperCallStatement: (TAIL)? helperCall;
 expressionStatement: assignment;
@@ -265,6 +278,9 @@ statementBlock
 
 helperBody : statementScope;
 
+fieldDeclaration: IDENTIFIER ':' type ';';
+fieldListDeclaration: fieldDeclaration*;
+
 extendsDeclaration: 'extends' IDENTIFIER;
 generatesDeclaration: 'generates' STRING_LITERAL;
 constexprDeclaration: 'constexpr' STRING_LITERAL;
@@ -277,10 +293,13 @@ externalRuntime : EXTERN RUNTIME IDENTIFIER typeListMaybeVarArgs optionalType ';
 builtinDeclaration : JAVASCRIPT? BUILTIN IDENTIFIER optionalGenericTypeList parameterList optionalType (helperBody | ';');
 genericSpecialization: IDENTIFIER genericSpecializationTypeList parameterList optionalType optionalLabelList helperBody;
 macroDeclaration : ('operator' STRING_LITERAL)? MACRO IDENTIFIER optionalGenericTypeList parameterList optionalType optionalLabelList (helperBody | ';');
-externConstDeclaration : 'const' IDENTIFIER ':' type generatesDeclaration ';';
+externConstDeclaration : CONST IDENTIFIER ':' type generatesDeclaration ';';
+constDeclaration: CONST IDENTIFIER ':' type ASSIGNMENT expression ';';
+structDeclaration : 'struct' IDENTIFIER '{' fieldListDeclaration '}';
 
 declaration
-        : typeDeclaration
+        : structDeclaration
+        | typeDeclaration
         | typeAliasDeclaration
         | builtinDeclaration
         | genericSpecialization
@@ -288,7 +307,8 @@ declaration
         | externalMacro
         | externalBuiltin
         | externalRuntime
-        | externConstDeclaration;
+        | externConstDeclaration
+        | constDeclaration;
 
 moduleDeclaration : MODULE IDENTIFIER '{' declaration* '}';
 

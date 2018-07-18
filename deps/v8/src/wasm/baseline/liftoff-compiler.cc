@@ -11,6 +11,7 @@
 #include "src/compiler/wasm-compiler.h"
 #include "src/counters.h"
 #include "src/macro-assembler-inl.h"
+#include "src/tracing/trace-event.h"
 #include "src/wasm/baseline/liftoff-assembler.h"
 #include "src/wasm/function-body-decoder-impl.h"
 #include "src/wasm/function-compiler.h"
@@ -629,9 +630,11 @@ class LiftoffCompiler {
           __ emit_##fn(dst.fp(), src.fp());             \
         });                                             \
     break;
-#define CASE_FLOAT_UNOP_WITH_CFALLBACK(type, fn)                        \
-  EmitFloatUnOpWithCFallback<kWasm##type>(&LiftoffAssembler::emit_##fn, \
-                                          &ExternalReference::wasm_##fn);
+#define CASE_FLOAT_UNOP_WITH_CFALLBACK(opcode, type, fn)                    \
+  case WasmOpcode::kExpr##opcode:                                           \
+    EmitFloatUnOpWithCFallback<kWasm##type>(&LiftoffAssembler::emit_##fn,   \
+                                            &ExternalReference::wasm_##fn); \
+    break;
 #define CASE_TYPE_CONVERSION(opcode, dst_type, src_type, ext_ref, can_trap) \
   case WasmOpcode::kExpr##opcode:                                           \
     EmitTypeConversion<kWasm##dst_type, kWasm##src_type, can_trap>(         \
@@ -650,10 +653,10 @@ class LiftoffCompiler {
       CASE_FLOAT_UNOP(F32Sqrt, F32, f32_sqrt)
       CASE_FLOAT_UNOP(F64Abs, F64, f64_abs)
       CASE_FLOAT_UNOP(F64Neg, F64, f64_neg)
-      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64, f64_ceil)
-      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64, f64_floor)
-      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64, f64_trunc)
-      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64, f64_nearest_int)
+      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64Ceil, F64, f64_ceil)
+      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64Floor, F64, f64_floor)
+      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64Trunc, F64, f64_trunc)
+      CASE_FLOAT_UNOP_WITH_CFALLBACK(F64NearestInt, F64, f64_nearest_int)
       CASE_FLOAT_UNOP(F64Sqrt, F64, f64_sqrt)
       CASE_TYPE_CONVERSION(I32ConvertI64, I32, I64, nullptr, kNoTrap)
       CASE_TYPE_CONVERSION(I32SConvertF32, I32, F32, nullptr, kCanTrap)
@@ -1830,12 +1833,14 @@ class LiftoffCompiler {
 }  // namespace
 
 bool LiftoffCompilationUnit::ExecuteCompilation() {
+  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("v8.wasm"),
+               "ExecuteLiftoffCompilation");
   base::ElapsedTimer compile_timer;
   if (FLAG_trace_wasm_decode_time) {
     compile_timer.Start();
   }
 
-  Zone zone(wasm_unit_->isolate_->allocator(), "LiftoffCompilationZone");
+  Zone zone(wasm_unit_->wasm_engine_->allocator(), "LiftoffCompilationZone");
   const wasm::WasmModule* module =
       wasm_unit_->env_ ? wasm_unit_->env_->module : nullptr;
   auto call_descriptor =
@@ -1879,10 +1884,7 @@ bool LiftoffCompilationUnit::ExecuteCompilation() {
       wasm_unit_->func_index_, desc, frame_slot_count, safepoint_table_offset,
       0, std::move(protected_instructions), std::move(source_positions),
       wasm::WasmCode::kLiftoff);
-
-  // Record the memory cost this unit places on the system until
-  // it is finalized.
-  wasm_unit_->memory_cost_ = sizeof(*this);
+  wasm_unit_->native_module_->PublishCode(code_);
 
   return true;
 }

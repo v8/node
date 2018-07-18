@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "src/api.h"
 #include "src/global-handles.h"
@@ -20,6 +21,7 @@
 #include "src/objects/intl-objects.h"
 #include "src/objects/js-locale-inl.h"
 #include "unicode/locid.h"
+#include "unicode/uloc.h"
 #include "unicode/unistr.h"
 #include "unicode/uvernum.h"
 #include "unicode/uversion.h"
@@ -32,6 +34,14 @@ namespace v8 {
 namespace internal {
 
 namespace {
+
+struct OptionData {
+  const char* name;
+  const char* key;
+  const std::vector<const char*>* possible_values;
+  bool is_bool_value;
+};
+
 // Inserts tags from options into locale string.
 Maybe<bool> InsertOptionsIntoLocale(Isolate* isolate,
                                     Handle<JSReceiver> options,
@@ -39,32 +49,47 @@ Maybe<bool> InsertOptionsIntoLocale(Isolate* isolate,
   CHECK(isolate);
   CHECK(icu_locale);
 
-  static const std::array<std::pair<const char*, const char*>, 6>
-      kOptionToUnicodeTagMap = {{{"calendar", "ca"},
-                                 {"collation", "co"},
-                                 {"hourCycle", "hc"},
-                                 {"caseFirst", "kf"},
-                                 {"numeric", "kn"},
-                                 {"numberingSystem", "nu"}}};
+  static std::vector<const char*> hour_cycle_values = {"h11", "h12", "h23",
+                                                       "h24"};
+  static std::vector<const char*> case_first_values = {"upper", "lower",
+                                                       "false"};
+  static std::vector<const char*> empty_values = {};
+  static const std::array<OptionData, 6> kOptionToUnicodeTagMap = {
+      {{"calendar", "ca", &empty_values, false},
+       {"collation", "co", &empty_values, false},
+       {"hourCycle", "hc", &hour_cycle_values, false},
+       {"caseFirst", "kf", &case_first_values, false},
+       {"numeric", "kn", &empty_values, true},
+       {"numberingSystem", "nu", &empty_values, false}}};
 
   // TODO(cira): Pass in values as per the spec to make this to be
   // spec compliant.
-  std::vector<const char*> values = {};
 
   for (const auto& option_to_bcp47 : kOptionToUnicodeTagMap) {
     std::unique_ptr<char[]> value_str = nullptr;
-    Maybe<bool> maybe_found = Intl::GetStringOption(
-        isolate, options, option_to_bcp47.first, values, "locale", &value_str);
+    bool value_bool = false;
+    Maybe<bool> maybe_found =
+        option_to_bcp47.is_bool_value
+            ? Intl::GetBoolOption(isolate, options, option_to_bcp47.name,
+                                  "locale", &value_bool)
+            : Intl::GetStringOption(isolate, options, option_to_bcp47.name,
+                                    *(option_to_bcp47.possible_values),
+                                    "locale", &value_str);
     if (maybe_found.IsNothing()) return maybe_found;
 
     // TODO(cira): Use fallback value if value is not found to make
     // this spec compliant.
     if (!maybe_found.FromJust()) continue;
+
+    if (option_to_bcp47.is_bool_value) {
+      value_str = value_bool ? isolate->factory()->true_string()->ToCString()
+                             : isolate->factory()->false_string()->ToCString();
+    }
     DCHECK_NOT_NULL(value_str.get());
 
     // Convert bcp47 key and value into legacy ICU format so we can use
     // uloc_setKeywordValue.
-    const char* key = uloc_toLegacyKey(option_to_bcp47.second);
+    const char* key = uloc_toLegacyKey(option_to_bcp47.key);
     DCHECK_NOT_NULL(key);
 
     // Overwrite existing, or insert new key-value to the locale string.
@@ -113,17 +138,11 @@ bool PopulateLocaleWithUnicodeTags(Isolate* isolate, const char* icu_locale,
     if (bcp47_key) {
       const char* bcp47_value = uloc_toUnicodeLocaleType(bcp47_key, value);
       if (bcp47_value) {
-          // It's either Boolean value.
-          if (strncmp(bcp47_key, "kn", 2) == 0) {
-            bool numeric = strcmp(bcp47_value, "true") == 0 ? true : false;
-            Handle<Object> numeric_handle = factory->ToBoolean(numeric);
-            locale_holder->set_numeric(*numeric_handle);
-            continue;
-          }
-          // Or a string.
           Handle<String> bcp47_handle =
               factory->NewStringFromAsciiChecked(bcp47_value);
-          if (strncmp(bcp47_key, "ca", 2) == 0) {
+          if (strncmp(bcp47_key, "kn", 2) == 0) {
+            locale_holder->set_numeric(*bcp47_handle);
+          } else if (strncmp(bcp47_key, "ca", 2) == 0) {
             locale_holder->set_calendar(*bcp47_handle);
           } else if (strncmp(bcp47_key, "kf", 2) == 0) {
             locale_holder->set_case_first(*bcp47_handle);
@@ -281,6 +300,34 @@ MaybeHandle<JSLocale> JSLocale::InitializeLocale(Isolate* isolate,
   locale_holder->set_locale(*locale_handle);
 
   return locale_holder;
+}
+
+namespace {
+
+Handle<String> MorphLocale(Isolate* isolate, String* input,
+                           int32_t (*morph_func)(const char*, char*, int32_t,
+                                                 UErrorCode*)) {
+  Factory* factory = isolate->factory();
+  char localeBuffer[ULOC_FULLNAME_CAPACITY];
+  UErrorCode status = U_ZERO_ERROR;
+  DCHECK_NOT_NULL(morph_func);
+  int32_t length = (*morph_func)(input->ToCString().get(), localeBuffer,
+                                 ULOC_FULLNAME_CAPACITY, &status);
+  DCHECK(U_SUCCESS(status));
+  DCHECK_GT(length, 0);
+  std::string locale(localeBuffer, length);
+  std::replace(locale.begin(), locale.end(), '_', '-');
+  return factory->NewStringFromAsciiChecked(locale.c_str());
+}
+
+}  // namespace
+
+Handle<String> JSLocale::Maximize(Isolate* isolate, String* locale) {
+  return MorphLocale(isolate, locale, uloc_addLikelySubtags);
+}
+
+Handle<String> JSLocale::Minimize(Isolate* isolate, String* locale) {
+  return MorphLocale(isolate, locale, uloc_minimizeSubtags);
 }
 
 }  // namespace internal

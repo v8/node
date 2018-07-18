@@ -381,7 +381,6 @@ UNINITIALIZED_TEST(StartupSerializerRootMapDependencies) {
     v8::internal::Handle<Map> map(
         ReadOnlyRoots(internal_isolate).one_byte_internalized_string_map(),
         internal_isolate);
-    Map::WeakCellForMap(internal_isolate, map);
     // Need to avoid DCHECKs inside SnapshotCreator.
     snapshot_creator.SetDefaultContext(v8::Context::New(isolate));
   }
@@ -1365,9 +1364,9 @@ static Handle<SharedFunctionInfo> CompileScript(
     Isolate* isolate, Handle<String> source, Handle<String> name,
     ScriptData* cached_data, v8::ScriptCompiler::CompileOptions options) {
   return Compiler::GetSharedFunctionInfoForScript(
-             source, Compiler::ScriptDetails(name), v8::ScriptOriginOptions(),
-             nullptr, cached_data, options, ScriptCompiler::kNoCacheNoReason,
-             NOT_NATIVES_CODE)
+             isolate, source, Compiler::ScriptDetails(name),
+             v8::ScriptOriginOptions(), nullptr, cached_data, options,
+             ScriptCompiler::kNoCacheNoReason, NOT_NATIVES_CODE)
       .ToHandleChecked();
 }
 
@@ -1376,9 +1375,9 @@ static Handle<SharedFunctionInfo> CompileScriptAndProduceCache(
     ScriptData** script_data, v8::ScriptCompiler::CompileOptions options) {
   Handle<SharedFunctionInfo> sfi =
       Compiler::GetSharedFunctionInfoForScript(
-          source, Compiler::ScriptDetails(name), v8::ScriptOriginOptions(),
-          nullptr, nullptr, options, ScriptCompiler::kNoCacheNoReason,
-          NOT_NATIVES_CODE)
+          isolate, source, Compiler::ScriptDetails(name),
+          v8::ScriptOriginOptions(), nullptr, nullptr, options,
+          ScriptCompiler::kNoCacheNoReason, NOT_NATIVES_CODE)
           .ToHandleChecked();
   std::unique_ptr<ScriptCompiler::CachedData> cached_data(
       ScriptCompiler::CreateCodeCache(ToApiHandle<UnboundScript>(sfi)));
@@ -1903,9 +1902,9 @@ TEST(CodeSerializerExternalString) {
 
   // This avoids the GC from trying to free stack allocated resources.
   i::Handle<i::ExternalOneByteString>::cast(one_byte_string)
-      ->SetResource(nullptr);
+      ->set_resource(nullptr);
   i::Handle<i::ExternalTwoByteString>::cast(two_byte_string)
-      ->SetResource(nullptr);
+      ->set_resource(nullptr);
   delete cache;
 }
 
@@ -1963,7 +1962,7 @@ TEST(CodeSerializerLargeExternalString) {
   CHECK_EQ(42.0, copy_result->Number());
 
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(name)->SetResource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(name)->set_resource(nullptr);
   delete cache;
   string.Dispose();
 }
@@ -2014,7 +2013,7 @@ TEST(CodeSerializerExternalScriptName) {
   CHECK_EQ(10.0, copy_result->Number());
 
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(name)->SetResource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(name)->set_resource(nullptr);
   delete cache;
 }
 
@@ -3467,7 +3466,8 @@ UNINITIALIZED_TEST(ReinitializeHashSeedNotRehashable) {
   v8::Isolate* isolate = v8::Isolate::New(create_params);
   {
     // Check that no rehashing has been performed.
-    CHECK_EQ(42, reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
+    CHECK_EQ(static_cast<uint64_t>(42),
+             reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
     v8::Local<v8::Context> context = v8::Context::New(isolate);
@@ -3529,7 +3529,8 @@ UNINITIALIZED_TEST(ReinitializeHashSeedRehashable) {
   v8::Isolate* isolate = v8::Isolate::New(create_params);
   {
     // Check that rehashing has been performed.
-    CHECK_EQ(1337, reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
+    CHECK_EQ(static_cast<uint64_t>(1337),
+             reinterpret_cast<i::Isolate*>(isolate)->heap()->HashSeed());
     v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
     v8::Local<v8::Context> context = v8::Context::New(isolate);

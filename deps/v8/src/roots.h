@@ -254,6 +254,8 @@ namespace internal {
   V(Object, deserialize_lazy_handler_wide, DeserializeLazyHandlerWide)       \
   V(Object, deserialize_lazy_handler_extra_wide,                             \
     DeserializeLazyHandlerExtraWide)                                         \
+  /* Hash seed */                                                            \
+  V(ByteArray, hash_seed, HashSeed)                                          \
   /* JS Entries */                                                           \
   V(Code, js_entry_code, JsEntryCode)                                        \
   V(Code, js_construct_entry_code, JsConstructEntryCode)                     \
@@ -269,7 +271,6 @@ namespace internal {
   V(Smi, real_stack_limit, RealStackLimit)                                     \
   V(Smi, last_script_id, LastScriptId)                                         \
   V(Smi, last_debugging_id, LastDebuggingId)                                   \
-  V(Smi, hash_seed, HashSeed)                                                  \
   /* To distinguish the function templates, so that we can find them in the */ \
   /* function cache of the native context. */                                  \
   V(Smi, next_template_serial_number, NextTemplateSerialNumber)                \
@@ -289,6 +290,7 @@ namespace internal {
   MUTABLE_ROOT_LIST(V) \
   STRONG_READ_ONLY_ROOT_LIST(V)
 
+class FixedTypedArrayBase;
 class Heap;
 class Isolate;
 class Map;
@@ -337,6 +339,8 @@ class ReadOnlyRoots {
   inline class Handle<Map> name##_map_handle();
   ALLOCATION_SITE_LIST(ALLOCATION_SITE_MAP_ACCESSOR)
 #undef ALLOCATION_SITE_MAP_ACCESSOR
+
+  inline FixedTypedArrayBase* EmptyFixedTypedArrayForMap(const Map* map);
 
  private:
   Heap* heap_;

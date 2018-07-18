@@ -35,7 +35,8 @@ class Declarable {
     kGenericList,
     kTypeAlias,
     kLabel,
-    kConstant
+    kExternConstant,
+    kModuleConstant
   };
   Kind kind() const { return kind_; }
   bool IsMacro() const { return kind() == kMacro; }
@@ -48,8 +49,12 @@ class Declarable {
   bool IsVariable() const { return kind() == kVariable; }
   bool IsMacroList() const { return kind() == kMacroList; }
   bool IsGenericList() const { return kind() == kGenericList; }
-  bool IsConstant() const { return kind() == kConstant; }
-  bool IsValue() const { return IsVariable() || IsConstant() || IsParameter(); }
+  bool IsExternConstant() const { return kind() == kExternConstant; }
+  bool IsModuleConstant() const { return kind() == kModuleConstant; }
+  bool IsValue() const {
+    return IsVariable() || IsExternConstant() || IsParameter() ||
+           IsModuleConstant();
+  }
   virtual const char* type_name() const { return "<<unknown>>"; }
 
  protected:
@@ -112,22 +117,27 @@ class Parameter : public Value {
   std::string var_name_;
 };
 
+class ModuleConstant : public Value {
+ public:
+  DECLARE_DECLARABLE_BOILERPLATE(ModuleConstant, constant);
+  std::string value() const override { UNREACHABLE(); }
+  std::string RValue() const override { return name() + "()"; }
+
+ private:
+  friend class Declarations;
+  explicit ModuleConstant(const std::string& name, const Type* type)
+      : Value(Declarable::kModuleConstant, type, name) {}
+};
+
 class Variable : public Value {
  public:
   DECLARE_DECLARABLE_BOILERPLATE(Variable, variable);
-  bool IsConst() const override { return false; }
+  bool IsConst() const override { return const_; }
   std::string value() const override { return value_; }
-  std::string RValue() const override {
-    if (!IsDefined()) {
-      ReportError("Reading uninitialized variable.");
-    }
-    std::string result = "(*" + value() + ")";
-    if (!type()->IsConstexpr()) result += ".value()";
-    return result;
-  }
+  std::string RValue() const override;
   void Define() {
-    if (defined_ && type()->IsConstexpr()) {
-      ReportError("Cannot re-define a constexpr variable.");
+    if (defined_ && IsConst()) {
+      ReportError("Cannot re-define a const-bound variable.");
     }
     defined_ = true;
   }
@@ -135,13 +145,18 @@ class Variable : public Value {
 
  private:
   friend class Declarations;
-  Variable(const std::string& name, const std::string& value, const Type* type)
+  Variable(const std::string& name, const std::string& value, const Type* type,
+           bool is_const)
       : Value(Declarable::kVariable, type, name),
         value_(value),
-        defined_(false) {}
+        defined_(false),
+        const_(is_const) {
+    DCHECK_IMPLIES(type->IsConstexpr(), IsConst());
+  }
 
   std::string value_;
   bool defined_;
+  bool const_;
 };
 
 class Label : public Declarable {
@@ -172,16 +187,16 @@ class Label : public Declarable {
   bool used_;
 };
 
-class Constant : public Value {
+class ExternConstant : public Value {
  public:
-  DECLARE_DECLARABLE_BOILERPLATE(Constant, constant);
+  DECLARE_DECLARABLE_BOILERPLATE(ExternConstant, constant);
   std::string value() const override { return value_; }
 
  private:
   friend class Declarations;
-  explicit Constant(const std::string& name, const Type* type,
-                    const std::string& value)
-      : Value(Declarable::kConstant, type, name), value_(value) {}
+  explicit ExternConstant(const std::string& name, const Type* type,
+                          const std::string& value)
+      : Value(Declarable::kExternConstant, type, name), value_(value) {}
 
   std::string value_;
 };

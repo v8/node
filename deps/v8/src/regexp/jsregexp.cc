@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "src/base/platform/platform.h"
+#include "src/code-tracer.h"
 #include "src/compilation-cache.h"
 #include "src/elements.h"
 #include "src/execution.h"
@@ -571,8 +572,8 @@ Handle<RegExpMatchInfo> RegExpImpl::SetLastMatchInfo(
   // here.
 
   int capture_register_count = (capture_count + 1) * 2;
-  Handle<RegExpMatchInfo> result =
-      RegExpMatchInfo::ReserveCaptures(last_match_info, capture_register_count);
+  Handle<RegExpMatchInfo> result = RegExpMatchInfo::ReserveCaptures(
+      isolate, last_match_info, capture_register_count);
   result->SetNumberOfCaptureRegisters(capture_register_count);
 
   if (*result != *last_match_info) {

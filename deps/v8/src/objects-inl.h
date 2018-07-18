@@ -32,6 +32,7 @@
 #include "src/lookup.h"
 #include "src/objects/bigint.h"
 #include "src/objects/descriptor-array.h"
+#include "src/objects/js-proxy-inl.h"
 #include "src/objects/literal-objects.h"
 #include "src/objects/maybe-object-inl.h"
 #include "src/objects/regexp-match-info.h"
@@ -517,7 +518,7 @@ bool HeapObject::IsStringSet() const { return IsHashTable(); }
 bool HeapObject::IsObjectHashSet() const { return IsHashTable(); }
 
 bool HeapObject::IsNormalizedMapCache() const {
-  return NormalizedMapCache::IsNormalizedMapCache(GetIsolate(), this);
+  return NormalizedMapCache::IsNormalizedMapCache(this);
 }
 
 bool HeapObject::IsCompilationCacheTable() const { return IsHashTable(); }
@@ -627,7 +628,6 @@ CAST_ACCESSOR(JSGlobalObject)
 CAST_ACCESSOR(JSGlobalProxy)
 CAST_ACCESSOR(JSMessageObject)
 CAST_ACCESSOR(JSObject)
-CAST_ACCESSOR(JSProxy)
 CAST_ACCESSOR(JSReceiver)
 CAST_ACCESSOR(JSStringIterator)
 CAST_ACCESSOR(JSValue)
@@ -802,17 +802,15 @@ MaybeHandle<Object> Object::ToPrimitive(Handle<Object> input,
 }
 
 // static
-MaybeHandle<Object> Object::ToNumber(Handle<Object> input) {
+MaybeHandle<Object> Object::ToNumber(Isolate* isolate, Handle<Object> input) {
   if (input->IsNumber()) return input;  // Shortcut.
-  return ConvertToNumberOrNumeric(HeapObject::cast(*input)->GetIsolate(), input,
-                                  Conversion::kToNumber);
+  return ConvertToNumberOrNumeric(isolate, input, Conversion::kToNumber);
 }
 
 // static
-MaybeHandle<Object> Object::ToNumeric(Handle<Object> input) {
+MaybeHandle<Object> Object::ToNumeric(Isolate* isolate, Handle<Object> input) {
   if (input->IsNumber() || input->IsBigInt()) return input;  // Shortcut.
-  return ConvertToNumberOrNumeric(HeapObject::cast(*input)->GetIsolate(), input,
-                                  Conversion::kToNumeric);
+  return ConvertToNumberOrNumeric(isolate, input, Conversion::kToNumeric);
 }
 
 // static
@@ -855,9 +853,9 @@ MaybeHandle<Object> Object::ToIndex(Isolate* isolate, Handle<Object> input,
   return ConvertToIndex(isolate, input, error_index);
 }
 
-MaybeHandle<Object> Object::GetProperty(Handle<Object> object,
+MaybeHandle<Object> Object::GetProperty(Isolate* isolate, Handle<Object> object,
                                         Handle<Name> name) {
-  LookupIterator it(object, name);
+  LookupIterator it(isolate, object, name);
   if (!it.IsFound()) return it.factory()->undefined_value();
   return GetProperty(&it);
 }
@@ -984,12 +982,12 @@ HeapObject* MapWord::ToForwardingAddress() {
 
 
 #ifdef VERIFY_HEAP
-void HeapObject::VerifyObjectField(int offset) {
-  VerifyPointer(READ_FIELD(this, offset));
+void HeapObject::VerifyObjectField(Isolate* isolate, int offset) {
+  VerifyPointer(isolate, READ_FIELD(this, offset));
 }
 
-void HeapObject::VerifyMaybeObjectField(int offset) {
-  MaybeObject::VerifyMaybeObjectPointer(READ_WEAK_FIELD(this, offset));
+void HeapObject::VerifyMaybeObjectField(Isolate* isolate, int offset) {
+  MaybeObject::VerifyMaybeObjectPointer(isolate, READ_WEAK_FIELD(this, offset));
 }
 
 void HeapObject::VerifySmiField(int offset) {
@@ -1001,19 +999,6 @@ ReadOnlyRoots HeapObject::GetReadOnlyRoots() const {
   // TODO(v8:7464): When RO_SPACE is embedded, this will access a global
   // variable instead.
   return ReadOnlyRoots(MemoryChunk::FromHeapObject(this)->heap());
-}
-
-Heap* HeapObject::GetHeap() const {
-  Heap* heap = MemoryChunk::FromAddress(
-                   reinterpret_cast<Address>(const_cast<HeapObject*>(this)))
-                   ->heap();
-  SLOW_DCHECK(heap != nullptr);
-  return heap;
-}
-
-
-Isolate* HeapObject::GetIsolate() const {
-  return GetHeap()->isolate();
 }
 
 Heap* NeverReadOnlySpaceObject::GetHeap() const {
@@ -1458,7 +1443,7 @@ ACCESSORS(PropertyCell, name, Name, kNameOffset)
 ACCESSORS(PropertyCell, value, Object, kValueOffset)
 ACCESSORS(PropertyCell, property_details_raw, Object, kDetailsOffset)
 
-PropertyDetails PropertyCell::property_details() {
+PropertyDetails PropertyCell::property_details() const {
   return PropertyDetails(Smi::cast(property_details_raw()));
 }
 
@@ -1838,6 +1823,10 @@ bool HeapObject::NeedsRehashing() const {
     default:
       return false;
   }
+}
+
+Address HeapObject::GetFieldAddress(int field_offset) const {
+  return FIELD_ADDR(this, field_offset);
 }
 
 void PropertyArray::set(int index, Object* value, WriteBarrierMode mode) {
@@ -2646,11 +2635,6 @@ bool JSFunction::is_compiled() {
   return code()->builtin_index() != Builtins::kCompileLazy;
 }
 
-ACCESSORS(JSProxy, target, Object, kTargetOffset)
-ACCESSORS(JSProxy, handler, Object, kHandlerOffset)
-
-bool JSProxy::IsRevoked() const { return !handler()->IsJSReceiver(); }
-
 // static
 bool Foreign::IsNormalized(Object* value) {
   if (value == Smi::kZero) return true;
@@ -2923,20 +2907,20 @@ Maybe<bool> Object::LessThanOrEqual(Isolate* isolate, Handle<Object> x,
   return Nothing<bool>();
 }
 
-MaybeHandle<Object> Object::GetPropertyOrElement(Handle<Object> object,
+MaybeHandle<Object> Object::GetPropertyOrElement(Isolate* isolate,
+                                                 Handle<Object> object,
                                                  Handle<Name> name) {
-  LookupIterator it =
-      LookupIterator::PropertyOrElement(name->GetIsolate(), object, name);
+  LookupIterator it = LookupIterator::PropertyOrElement(isolate, object, name);
   return GetProperty(&it);
 }
 
-MaybeHandle<Object> Object::SetPropertyOrElement(Handle<Object> object,
+MaybeHandle<Object> Object::SetPropertyOrElement(Isolate* isolate,
+                                                 Handle<Object> object,
                                                  Handle<Name> name,
                                                  Handle<Object> value,
                                                  LanguageMode language_mode,
                                                  StoreFromKeyed store_mode) {
-  LookupIterator it =
-      LookupIterator::PropertyOrElement(name->GetIsolate(), object, name);
+  LookupIterator it = LookupIterator::PropertyOrElement(isolate, object, name);
   MAYBE_RETURN_NULL(SetProperty(&it, value, language_mode, store_mode));
   return value;
 }
@@ -3118,14 +3102,15 @@ bool AccessorPair::IsJSAccessor(Object* obj) {
 }
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::ClearEntry(int entry) {
+void Dictionary<Derived, Shape>::ClearEntry(Isolate* isolate, int entry) {
   Object* the_hole = this->GetReadOnlyRoots().the_hole_value();
   PropertyDetails details = PropertyDetails::Empty();
-  Derived::cast(this)->SetEntry(entry, the_hole, the_hole, details);
+  Derived::cast(this)->SetEntry(isolate, entry, the_hole, the_hole, details);
 }
 
 template <typename Derived, typename Shape>
-void Dictionary<Derived, Shape>::SetEntry(int entry, Object* key, Object* value,
+void Dictionary<Derived, Shape>::SetEntry(Isolate* isolate, int entry,
+                                          Object* key, Object* value,
                                           PropertyDetails details) {
   DCHECK(Dictionary::kEntrySize == 2 || Dictionary::kEntrySize == 3);
   DCHECK(!key->IsName() || details.dictionary_index() > 0);
@@ -3134,7 +3119,7 @@ void Dictionary<Derived, Shape>::SetEntry(int entry, Object* key, Object* value,
   WriteBarrierMode mode = this->GetWriteBarrierMode(no_gc);
   this->set(index + Derived::kEntryKeyIndex, key, mode);
   this->set(index + Derived::kEntryValueIndex, value, mode);
-  if (Shape::kHasDetails) DetailsAtPut(entry, details);
+  if (Shape::kHasDetails) DetailsAtPut(isolate, entry, details);
 }
 
 Object* GlobalDictionaryShape::Unwrap(Object* object) {
@@ -3168,11 +3153,11 @@ bool GlobalDictionaryShape::IsKey(ReadOnlyRoots roots, Object* k) {
 Name* GlobalDictionary::NameAt(int entry) { return CellAt(entry)->name(); }
 Object* GlobalDictionary::ValueAt(int entry) { return CellAt(entry)->value(); }
 
-void GlobalDictionary::SetEntry(int entry, Object* key, Object* value,
-                                PropertyDetails details) {
+void GlobalDictionary::SetEntry(Isolate* isolate, int entry, Object* key,
+                                Object* value, PropertyDetails details) {
   DCHECK_EQ(key, PropertyCell::cast(value)->name());
   set(EntryToIndex(entry) + kEntryKeyIndex, value);
-  DetailsAtPut(entry, details);
+  DetailsAtPut(isolate, entry, details);
 }
 
 void GlobalDictionary::ValueAtPut(int entry, Object* value) {
@@ -3244,15 +3229,14 @@ PropertyDetails GlobalDictionaryShape::DetailsAt(Dictionary* dict, int entry) {
   return dict->CellAt(entry)->property_details();
 }
 
-
 template <typename Dictionary>
-void GlobalDictionaryShape::DetailsAtPut(Dictionary* dict, int entry,
-                                         PropertyDetails value) {
+void GlobalDictionaryShape::DetailsAtPut(Isolate* isolate, Dictionary* dict,
+                                         int entry, PropertyDetails value) {
   DCHECK_LE(0, entry);  // Not found is -1, which is not caught by get().
   PropertyCell* cell = dict->CellAt(entry);
   if (cell->property_details().IsReadOnly() != value.IsReadOnly()) {
     cell->dependent_code()->DeoptimizeDependentCodeGroup(
-        cell->GetIsolate(), DependentCode::kPropertyCellChangedGroup);
+        isolate, DependentCode::kPropertyCellChangedGroup);
   }
   cell->set_property_details(value);
 }

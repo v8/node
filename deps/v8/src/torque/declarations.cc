@@ -179,6 +179,18 @@ GenericList* Declarations::LookupGeneric(const std::string& name) {
   return nullptr;
 }
 
+ModuleConstant* Declarations::LookupModuleConstant(const std::string& name) {
+  Declarable* declarable = Lookup(name);
+  if (declarable != nullptr) {
+    if (declarable->IsModuleConstant()) {
+      return ModuleConstant::cast(declarable);
+    }
+    ReportError(name + " is not a constant");
+  }
+  ReportError(std::string("constant \"") + name + "\" is not defined");
+  return nullptr;
+}
+
 const AbstractType* Declarations::DeclareAbstractType(
     const std::string& name, const std::string& generated,
     base::Optional<const AbstractType*> non_constexpr_version,
@@ -210,6 +222,12 @@ void Declarations::DeclareType(const std::string& name, const Type* type) {
   CheckAlreadyDeclared(name, "type");
   TypeAlias* result = new TypeAlias(type);
   Declare(name, std::unique_ptr<TypeAlias>(result));
+}
+
+void Declarations::DeclareStruct(Module* module, const std::string& name,
+                                 const std::vector<NameAndType>& fields) {
+  const StructType* new_type = TypeOracle::GetStructType(module, name, fields);
+  DeclareType(name, new_type);
 }
 
 Label* Declarations::DeclareLabel(const std::string& name) {
@@ -276,10 +294,12 @@ RuntimeFunction* Declarations::DeclareRuntimeFunction(
 }
 
 Variable* Declarations::DeclareVariable(const std::string& var,
-                                        const Type* type) {
-  std::string name(var + std::to_string(GetNextUniqueDeclarationNumber()));
+                                        const Type* type, bool is_const) {
+  std::string name(var + "_" +
+                   std::to_string(GetNextUniqueDeclarationNumber()));
+  std::replace(name.begin(), name.end(), '.', '_');
   CheckAlreadyDeclared(var, "variable");
-  Variable* result = new Variable(var, name, type);
+  Variable* result = new Variable(var, name, type, is_const);
   Declare(var, std::unique_ptr<Declarable>(result));
   return result;
 }
@@ -302,11 +322,20 @@ Label* Declarations::DeclarePrivateLabel(const std::string& raw_name) {
   return result;
 }
 
-void Declarations::DeclareConstant(const std::string& name, const Type* type,
-                                   const std::string& value) {
+void Declarations::DeclareExternConstant(const std::string& name,
+                                         const Type* type,
+                                         const std::string& value) {
   CheckAlreadyDeclared(name, "constant, parameter or arguments");
-  Constant* result = new Constant(name, type, value);
+  ExternConstant* result = new ExternConstant(name, type, value);
   Declare(name, std::unique_ptr<Declarable>(result));
+}
+
+ModuleConstant* Declarations::DeclareModuleConstant(const std::string& name,
+                                                    const Type* type) {
+  CheckAlreadyDeclared(name, "module constant");
+  ModuleConstant* result = new ModuleConstant(name, type);
+  Declare(name, std::unique_ptr<Declarable>(result));
+  return result;
 }
 
 Generic* Declarations::DeclareGeneric(const std::string& name, Module* module,

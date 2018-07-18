@@ -29,6 +29,7 @@ DECLARE_CONTEXTUAL_VARIABLE(CurrentSourcePosition, SourcePosition)
 
 #define AST_EXPRESSION_NODE_KIND_LIST(V) \
   V(CallExpression)                      \
+  V(StructExpression)                    \
   V(LogicalOrExpression)                 \
   V(LogicalAndExpression)                \
   V(ConditionalExpression)               \
@@ -69,8 +70,10 @@ DECLARE_CONTEXTUAL_VARIABLE(CurrentSourcePosition, SourcePosition)
   V(GenericDeclaration)                   \
   V(SpecializationDeclaration)            \
   V(ExternConstDeclaration)               \
+  V(StructDeclaration)                    \
   V(DefaultModuleDeclaration)             \
-  V(ExplicitModuleDeclaration)
+  V(ExplicitModuleDeclaration)            \
+  V(ConstDeclaration)
 
 #define AST_CALLABLE_NODE_KIND_LIST(V) \
   V(TorqueMacroDeclaration)            \
@@ -259,6 +262,14 @@ struct CallExpression : Expression {
   std::vector<std::string> labels;
 };
 
+struct StructExpression : Expression {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(StructExpression)
+  StructExpression(SourcePosition p, std::string n, std::vector<Expression*> e)
+      : Expression(kKind, p), name(n), expressions(std::move(e)) {}
+  std::string name;
+  std::vector<Expression*> expressions;
+};
+
 struct LogicalOrExpression : Expression {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(LogicalOrExpression)
   LogicalOrExpression(SourcePosition p, Expression* l, Expression* r)
@@ -435,9 +446,14 @@ struct TailCallStatement : Statement {
 
 struct VarDeclarationStatement : Statement {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(VarDeclarationStatement)
-  VarDeclarationStatement(SourcePosition p, std::string n, TypeExpression* t,
-                          base::Optional<Expression*> i)
-      : Statement(kKind, p), name(std::move(n)), type(t), initializer(i) {}
+  VarDeclarationStatement(SourcePosition p, bool c, std::string n,
+                          TypeExpression* t, base::Optional<Expression*> i)
+      : Statement(kKind, p),
+        const_qualified(c),
+        name(std::move(n)),
+        type(t),
+        initializer(i) {}
+  bool const_qualified;
   std::string name;
   TypeExpression* type;
   base::Optional<Expression*> initializer;
@@ -546,6 +562,11 @@ struct TypeAliasDeclaration : Declaration {
   TypeExpression* type;
 };
 
+struct FieldNameAndType {
+  std::string name;
+  TypeExpression* type;
+};
+
 struct LabelAndTypes {
   std::string name;
   std::vector<TypeExpression*> types;
@@ -623,6 +644,16 @@ struct ExternalRuntimeDeclaration : CallableNode {
       : CallableNode(kKind, p, n, pl, r, {}) {}
 };
 
+struct ConstDeclaration : Declaration {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(ConstDeclaration)
+  ConstDeclaration(SourcePosition p, std::string n, TypeExpression* r,
+                   Expression* e)
+      : Declaration(kKind, p), name(std::move(n)), type(r), expression(e) {}
+  std::string name;
+  TypeExpression* type;
+  Expression* expression;
+};
+
 struct StandardDeclaration : Declaration {
   DEFINE_AST_NODE_LEAF_BOILERPLATE(StandardDeclaration)
   StandardDeclaration(SourcePosition p, CallableNode* c, Statement* b)
@@ -675,6 +706,14 @@ struct ExternConstDeclaration : Declaration {
   std::string name;
   TypeExpression* type;
   std::string literal;
+};
+
+struct StructDeclaration : Declaration {
+  DEFINE_AST_NODE_LEAF_BOILERPLATE(StructDeclaration)
+  StructDeclaration(SourcePosition p, std::string n)
+      : Declaration(kKind, p), name(std::move(n)) {}
+  std::string name;
+  std::vector<FieldNameAndType> fields;
 };
 
 #define ENUM_ITEM(name)                     \

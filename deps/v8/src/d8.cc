@@ -425,8 +425,8 @@ base::OnceType Shell::quit_once_ = V8_ONCE_INIT;
 // Dummy external source stream which returns the whole source in one go.
 class DummySourceStream : public v8::ScriptCompiler::ExternalSourceStream {
  public:
-  explicit DummySourceStream(Local<String> source) : done_(false) {
-    source_length_ = source->Utf8Length();
+  DummySourceStream(Local<String> source, Isolate* isolate) : done_(false) {
+    source_length_ = source->Utf8Length(isolate);
     source_buffer_.reset(new uint8_t[source_length_]);
     source->WriteUtf8(reinterpret_cast<char*>(source_buffer_.get()),
                       source_length_);
@@ -453,7 +453,7 @@ class BackgroundCompileThread : public base::Thread {
   BackgroundCompileThread(Isolate* isolate, Local<String> source)
       : base::Thread(GetThreadOptions("BackgroundCompileThread")),
         source_(source),
-        streamed_source_(new DummySourceStream(source),
+        streamed_source_(new DummySourceStream(source, isolate),
                          v8::ScriptCompiler::StreamedSource::UTF8),
         task_(v8::ScriptCompiler::StartStreamingScript(isolate,
                                                        &streamed_source_)) {}
@@ -2423,6 +2423,14 @@ SourceGroup::~SourceGroup() {
   thread_ = nullptr;
 }
 
+bool ends_with(const char* input, const char* suffix) {
+  size_t input_length = strlen(input);
+  size_t suffix_length = strlen(suffix);
+  if (suffix_length <= input_length) {
+    return strcmp(input + input_length - suffix_length, suffix) == 0;
+  }
+  return false;
+}
 
 void SourceGroup::Execute(Isolate* isolate) {
   bool exception_was_thrown = false;
@@ -2445,6 +2453,13 @@ void SourceGroup::Execute(Isolate* isolate) {
         break;
       }
       ++i;
+      continue;
+    } else if (ends_with(arg, ".mjs")) {
+      Shell::options.script_executed = true;
+      if (!Shell::ExecuteModule(isolate, arg)) {
+        exception_was_thrown = true;
+        break;
+      }
       continue;
     } else if (strcmp(arg, "--module") == 0 && i + 1 < end_offset_) {
       // Treat the next file as a module.
@@ -2905,8 +2920,8 @@ bool Shell::SetOptions(int argc, char* argv[]) {
       current->Begin(argv, i + 1);
     } else if (strcmp(str, "--module") == 0) {
       // Pass on to SourceGroup, which understands this option.
-    } else if (strncmp(argv[i], "--", 2) == 0) {
-      printf("Warning: unknown flag %s.\nTry --help for options\n", argv[i]);
+    } else if (strncmp(str, "--", 2) == 0) {
+      printf("Warning: unknown flag %s.\nTry --help for options\n", str);
     } else if (strcmp(str, "-e") == 0 && i + 1 < argc) {
       options.script_executed = true;
     } else if (strncmp(str, "-", 1) != 0) {
@@ -3344,7 +3359,9 @@ int Shell::Main(int argc, char* argv[]) {
   if (i::FLAG_trace_turbo_cfg_file == nullptr) {
     SetFlagsFromString("--trace-turbo-cfg-file=turbo.cfg");
   }
-  SetFlagsFromString("--redirect-code-traces-to=code.asm");
+  if (i::FLAG_redirect_code_traces_to == nullptr) {
+    SetFlagsFromString("--redirect-code-traces-to=code.asm");
+  }
   int result = 0;
   Isolate::CreateParams create_params;
   ShellArrayBufferAllocator shell_array_buffer_allocator;

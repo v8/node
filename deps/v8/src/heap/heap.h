@@ -47,7 +47,7 @@ class DeoptimizationData;
 class HandlerTable;
 class IncrementalMarking;
 class JSArrayBuffer;
-class ExternalString;
+
 using v8::MemoryPressureLevel;
 
 // Heap roots that are known to be immortal immovable, for which we can safely
@@ -652,7 +652,7 @@ class Heap {
 
   void IncrementDeferredCount(v8::Isolate::UseCounterFeature feature);
 
-  inline uint32_t HashSeed();
+  inline uint64_t HashSeed();
 
   inline int NextScriptId();
   inline int NextDebuggingId();
@@ -677,9 +677,6 @@ class Heap {
     external_memory_ -= external_memory_concurrently_freed_;
     external_memory_concurrently_freed_ = 0;
   }
-
-  void ProcessMovedExternalString(Page* old_page, Page* new_page,
-                                  ExternalString* string);
 
   void CompactFixedArraysOfWeakCells();
 
@@ -707,7 +704,7 @@ class Heap {
   bool ShouldOptimizeForMemoryUsage();
 
   bool HighMemoryPressure() {
-    return memory_pressure_level_.Value() != MemoryPressureLevel::kNone;
+    return memory_pressure_level_ != MemoryPressureLevel::kNone;
   }
 
   void RestoreHeapLimit(size_t heap_limit) {
@@ -1091,11 +1088,6 @@ class Heap {
 
   // Registers an external string.
   inline void RegisterExternalString(String* string);
-
-  // Called when a string's resource is changed. The size of the payload is sent
-  // as argument of the method.
-  inline void UpdateExternalString(String* string, size_t old_payload,
-                                   size_t new_payload);
 
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
@@ -2013,7 +2005,7 @@ class Heap {
 
   // Stores the memory pressure level that set by MemoryPressureNotification
   // and reset by a mark-compact garbage collection.
-  base::AtomicValue<MemoryPressureLevel> memory_pressure_level_;
+  std::atomic<MemoryPressureLevel> memory_pressure_level_;
 
   std::vector<std::pair<v8::NearHeapLimitCallback, void*> >
       near_heap_limit_callbacks_;

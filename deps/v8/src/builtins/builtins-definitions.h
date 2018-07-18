@@ -186,6 +186,7 @@ namespace internal {
   TFC(NonNumberToNumber, TypeConversion, 1)                                    \
   TFC(NonNumberToNumeric, TypeConversion, 1)                                   \
   TFC(ToNumber, TypeConversion, 1)                                             \
+  TFC(ToNumberConvertBigInt, TypeConversion, 1)                                \
   TFC(ToNumeric, TypeConversion, 1)                                            \
   TFC(NumberToString, TypeConversion, 1)                                       \
   TFC(ToString, TypeConversion, 1)                                             \
@@ -1340,14 +1341,22 @@ namespace internal {
   CPP(LocalePrototypeNumeric)                                          \
   CPP(LocalePrototypeNumberingSystem)                                  \
   CPP(LocalePrototypeToString)                                         \
+  /* ecma402 #sec-Intl.Locale.prototype.maximize */                    \
+  CPP(LocalePrototypeMaximize)                                         \
+  /* ecma402 #sec-Intl.Locale.prototype.minimize */                    \
+  CPP(LocalePrototypeMinimize)                                         \
   /* ecma402 #sec-number-format-functions */                           \
   CPP(NumberFormatInternalFormatNumber)                                \
   /* ecma402 #sec-intl.numberformat.prototype.format */                \
   CPP(NumberFormatPrototypeFormatNumber)                               \
-  /* ecma402 #sec-intl-relativetimeformat-constructor */               \
+  /* ecma402 #sec-intl.RelativeTimeFormat.constructor */               \
   CPP(RelativeTimeFormatConstructor)                                   \
-  /* ecma402 #sec-intl.relativetimeformat.prototype.resolvedoptions */ \
-  CPP(RelativeTimeFormatPrototypeResolvedOptions)
+  /* ecma402 #sec-intl.RelativeTimeFormat.prototype.resolvedOptions */ \
+  CPP(RelativeTimeFormatPrototypeResolvedOptions)                      \
+  /* ecma402 #sec-intl.RelativeTimeFormat.prototype.format */          \
+  CPP(RelativeTimeFormatPrototypeFormat)                               \
+  /* ecma402 #sec-intl.RelativeTimeFormat.prototype.formatToParts */   \
+  CPP(RelativeTimeFormatPrototypeFormatToParts)
 #else
 #define BUILTIN_LIST(CPP, API, TFJ, TFC, TFS, TFH, ASM)    \
   BUILTIN_LIST_BASE(CPP, API, TFJ, TFC, TFS, TFH, ASM)     \

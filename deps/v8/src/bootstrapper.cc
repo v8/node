@@ -397,7 +397,8 @@ V8_NOINLINE void InstallFunction(Isolate* isolate, Handle<JSObject> target,
 V8_NOINLINE void InstallFunction(Isolate* isolate, Handle<JSObject> target,
                                  Handle<JSFunction> function, Handle<Name> name,
                                  PropertyAttributes attributes = DONT_ENUM) {
-  Handle<String> name_string = Name::ToFunctionName(name).ToHandleChecked();
+  Handle<String> name_string =
+      Name::ToFunctionName(isolate, name).ToHandleChecked();
   InstallFunction(isolate, target, name, function, name_string, attributes);
 }
 
@@ -434,7 +435,8 @@ V8_NOINLINE Handle<JSFunction> InstallFunction(
     InstanceType type, int instance_size, int inobject_properties,
     MaybeHandle<Object> maybe_prototype, Builtins::Name call,
     PropertyAttributes attributes) {
-  Handle<String> name_string = Name::ToFunctionName(name).ToHandleChecked();
+  Handle<String> name_string =
+      Name::ToFunctionName(isolate, name).ToHandleChecked();
   Handle<JSFunction> function =
       CreateFunction(isolate, name_string, type, instance_size,
                      inobject_properties, maybe_prototype, call);
@@ -529,13 +531,13 @@ V8_NOINLINE void SimpleInstallGetterSetter(Isolate* isolate,
                                            Builtins::Name call_setter,
                                            PropertyAttributes attribs) {
   Handle<String> getter_name =
-      Name::ToFunctionName(name, isolate->factory()->get_string())
+      Name::ToFunctionName(isolate, name, isolate->factory()->get_string())
           .ToHandleChecked();
   Handle<JSFunction> getter =
       SimpleCreateFunction(isolate, getter_name, call_getter, 0, true);
 
   Handle<String> setter_name =
-      Name::ToFunctionName(name, isolate->factory()->set_string())
+      Name::ToFunctionName(isolate, name, isolate->factory()->set_string())
           .ToHandleChecked();
   Handle<JSFunction> setter =
       SimpleCreateFunction(isolate, setter_name, call_setter, 1, true);
@@ -547,7 +549,7 @@ V8_NOINLINE Handle<JSFunction> SimpleInstallGetter(
     Isolate* isolate, Handle<JSObject> base, Handle<Name> name,
     Handle<Name> property_name, Builtins::Name call, bool adapt) {
   Handle<String> getter_name =
-      Name::ToFunctionName(name, isolate->factory()->get_string())
+      Name::ToFunctionName(isolate, name, isolate->factory()->get_string())
           .ToHandleChecked();
   Handle<JSFunction> getter =
       SimpleCreateFunction(isolate, getter_name, call, 0, adapt);
@@ -621,10 +623,9 @@ Handle<JSFunction> Genesis::CreateEmptyFunction() {
   Handle<WeakFixedArray> infos = factory()->NewWeakFixedArray(2);
   script->set_shared_function_infos(*infos);
   empty_function->shared()->set_scope_info(*scope_info);
-  empty_function->shared()->set_function_literal_id(1);
   empty_function->shared()->DontAdaptArguments();
   SharedFunctionInfo::SetScript(handle(empty_function->shared(), isolate()),
-                                script);
+                                script, 1);
 
   return empty_function;
 }
@@ -1103,15 +1104,15 @@ void Genesis::CreateJSProxyMaps() {
     Map::EnsureDescriptorSlack(isolate_, map, 2);
 
     {  // proxy
-      Descriptor d = Descriptor::DataField(factory()->proxy_string(),
+      Descriptor d = Descriptor::DataField(isolate(), factory()->proxy_string(),
                                            JSProxyRevocableResult::kProxyIndex,
                                            NONE, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // revoke
-      Descriptor d = Descriptor::DataField(factory()->revoke_string(),
-                                           JSProxyRevocableResult::kRevokeIndex,
-                                           NONE, Representation::Tagged());
+      Descriptor d = Descriptor::DataField(
+          isolate(), factory()->revoke_string(),
+          JSProxyRevocableResult::kRevokeIndex, NONE, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
 
@@ -2610,7 +2611,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     // ECMA-262, section 15.10.7.5.
     PropertyAttributes writable =
         static_cast<PropertyAttributes>(DONT_ENUM | DONT_DELETE);
-    Descriptor d = Descriptor::DataField(factory->lastIndex_string(),
+    Descriptor d = Descriptor::DataField(isolate(), factory->lastIndex_string(),
                                          JSRegExp::kLastIndexFieldIndex,
                                          writable, Representation::Tagged());
     initial_map->AppendDescriptor(&d);
@@ -3323,7 +3324,7 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
       PropertyAttributes attribs =
           static_cast<PropertyAttributes>(DONT_DELETE | DONT_ENUM | READ_ONLY);
       Descriptor d =
-          Descriptor::DataField(factory->to_string_tag_symbol(),
+          Descriptor::DataField(isolate(), factory->to_string_tag_symbol(),
                                 JSModuleNamespace::kToStringTagFieldIndex,
                                 attribs, Representation::Tagged());
       map->AppendDescriptor(&d);
@@ -3337,14 +3338,14 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     Map::EnsureDescriptorSlack(isolate_, map, 2);
 
     {  // value
-      Descriptor d = Descriptor::DataField(factory->value_string(),
+      Descriptor d = Descriptor::DataField(isolate(), factory->value_string(),
                                            JSIteratorResult::kValueIndex, NONE,
                                            Representation::Tagged());
       map->AppendDescriptor(&d);
     }
 
     {  // done
-      Descriptor d = Descriptor::DataField(factory->done_string(),
+      Descriptor d = Descriptor::DataField(isolate(), factory->done_string(),
                                            JSIteratorResult::kDoneIndex, NONE,
                                            Representation::Tagged());
       map->AppendDescriptor(&d);
@@ -3555,15 +3556,17 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     Map::EnsureDescriptorSlack(isolate_, map, 2);
 
     {  // length
-      Descriptor d = Descriptor::DataField(
-          factory->length_string(), JSSloppyArgumentsObject::kLengthIndex,
-          DONT_ENUM, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory->length_string(),
+                                JSSloppyArgumentsObject::kLengthIndex,
+                                DONT_ENUM, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // callee
-      Descriptor d = Descriptor::DataField(
-          factory->callee_string(), JSSloppyArgumentsObject::kCalleeIndex,
-          DONT_ENUM, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory->callee_string(),
+                                JSSloppyArgumentsObject::kCalleeIndex,
+                                DONT_ENUM, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     // @@iterator method is added later.
@@ -3607,9 +3610,10 @@ void Genesis::InitializeGlobal(Handle<JSGlobalObject> global_object,
     Map::EnsureDescriptorSlack(isolate_, map, 2);
 
     {  // length
-      Descriptor d = Descriptor::DataField(
-          factory->length_string(), JSStrictArgumentsObject::kLengthIndex,
-          DONT_ENUM, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory->length_string(),
+                                JSStrictArgumentsObject::kLengthIndex,
+                                DONT_ENUM, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // callee
@@ -3762,9 +3766,10 @@ bool Bootstrapper::CompileNative(Isolate* isolate, Vector<const char> name,
       isolate->factory()->NewStringFromUtf8(name).ToHandleChecked();
   MaybeHandle<SharedFunctionInfo> maybe_function_info =
       Compiler::GetSharedFunctionInfoForScript(
-          source, Compiler::ScriptDetails(script_name), ScriptOriginOptions(),
-          nullptr, nullptr, ScriptCompiler::kNoCompileOptions,
-          ScriptCompiler::kNoCacheNoReason, natives_flag);
+          isolate, source, Compiler::ScriptDetails(script_name),
+          ScriptOriginOptions(), nullptr, nullptr,
+          ScriptCompiler::kNoCompileOptions, ScriptCompiler::kNoCacheNoReason,
+          natives_flag);
   Handle<SharedFunctionInfo> function_info;
   if (!maybe_function_info.ToHandle(&function_info)) return false;
 
@@ -3827,8 +3832,9 @@ bool Genesis::CompileExtension(Isolate* isolate, v8::Extension* extension) {
         factory->NewStringFromUtf8(name).ToHandleChecked();
     MaybeHandle<SharedFunctionInfo> maybe_function_info =
         Compiler::GetSharedFunctionInfoForScript(
-            source, Compiler::ScriptDetails(script_name), ScriptOriginOptions(),
-            extension, nullptr, ScriptCompiler::kNoCompileOptions,
+            isolate, source, Compiler::ScriptDetails(script_name),
+            ScriptOriginOptions(), extension, nullptr,
+            ScriptCompiler::kNoCompileOptions,
             ScriptCompiler::kNoCacheBecauseV8Extension, EXTENSION_CODE);
     if (!maybe_function_info.ToHandle(&function_info)) return false;
     cache->Add(isolate, name, function_info);
@@ -3857,7 +3863,7 @@ static Handle<JSObject> ResolveBuiltinIdHolder(Isolate* isolate,
   if (period_pos == nullptr) {
     return Handle<JSObject>::cast(
         Object::GetPropertyOrElement(
-            global, factory->InternalizeUtf8String(holder_expr))
+            isolate, global, factory->InternalizeUtf8String(holder_expr))
             .ToHandleChecked());
   }
   const char* inner = period_pos + 1;
@@ -3936,7 +3942,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
                         iterator_prototype, NONE);
 
   {
-    PrototypeIterator iter(native_context->generator_function_map());
+    PrototypeIterator iter(isolate, native_context->generator_function_map());
     Handle<JSObject> generator_function_prototype(iter.GetCurrent<JSObject>(),
                                                   isolate);
 
@@ -3969,7 +3975,8 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
   }
 
   {
-    PrototypeIterator iter(native_context->async_generator_function_map());
+    PrototypeIterator iter(isolate,
+                           native_context->async_generator_function_map());
     Handle<JSObject> async_generator_function_prototype(
         iter.GetCurrent<JSObject>(), isolate);
 
@@ -4074,7 +4081,7 @@ void Bootstrapper::ExportFromRuntime(Isolate* isolate,
 
   {  // -- A s y n c F u n c t i o n
     // Builtin functions for AsyncFunction.
-    PrototypeIterator iter(native_context->async_function_map());
+    PrototypeIterator iter(isolate, native_context->async_function_map());
     Handle<JSObject> async_function_prototype(iter.GetCurrent<JSObject>(),
                                               isolate);
 
@@ -4527,6 +4534,10 @@ void Genesis::InitializeGlobal_harmony_locale() {
 
   SimpleInstallFunction(isolate(), prototype, "toString",
                         Builtins::kLocalePrototypeToString, 0, false);
+  SimpleInstallFunction(isolate(), prototype, "maximize",
+                        Builtins::kLocalePrototypeMaximize, 0, false);
+  SimpleInstallFunction(isolate(), prototype, "minimize",
+                        Builtins::kLocalePrototypeMinimize, 0, false);
   // Base locale getters.
   SimpleInstallGetter(isolate(), prototype,
                       factory()->InternalizeUtf8String("language"),
@@ -4590,6 +4601,11 @@ void Genesis::InitializeGlobal_harmony_intl_relative_time_format() {
   SimpleInstallFunction(isolate(), prototype, "resolvedOptions",
                         Builtins::kRelativeTimeFormatPrototypeResolvedOptions,
                         0, false);
+  SimpleInstallFunction(isolate(), prototype, "format",
+                        Builtins::kRelativeTimeFormatPrototypeFormat, 2, false);
+  SimpleInstallFunction(isolate(), prototype, "formatToParts",
+                        Builtins::kRelativeTimeFormatPrototypeFormatToParts, 2,
+                        false);
 }
 
 #endif  // V8_INTL_SUPPORT
@@ -4883,27 +4899,29 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     Map::EnsureDescriptorSlack(isolate(), map, 4);
 
     {  // get
-      Descriptor d = Descriptor::DataField(
-          factory()->get_string(), JSAccessorPropertyDescriptor::kGetIndex,
-          NONE, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory()->get_string(),
+                                JSAccessorPropertyDescriptor::kGetIndex, NONE,
+                                Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // set
-      Descriptor d = Descriptor::DataField(
-          factory()->set_string(), JSAccessorPropertyDescriptor::kSetIndex,
-          NONE, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory()->set_string(),
+                                JSAccessorPropertyDescriptor::kSetIndex, NONE,
+                                Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // enumerable
       Descriptor d =
-          Descriptor::DataField(factory()->enumerable_string(),
+          Descriptor::DataField(isolate(), factory()->enumerable_string(),
                                 JSAccessorPropertyDescriptor::kEnumerableIndex,
                                 NONE, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // configurable
       Descriptor d = Descriptor::DataField(
-          factory()->configurable_string(),
+          isolate(), factory()->configurable_string(),
           JSAccessorPropertyDescriptor::kConfigurableIndex, NONE,
           Representation::Tagged());
       map->AppendDescriptor(&d);
@@ -4927,28 +4945,29 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
     Map::EnsureDescriptorSlack(isolate(), map, 4);
 
     {  // value
-      Descriptor d = Descriptor::DataField(
-          factory()->value_string(), JSDataPropertyDescriptor::kValueIndex,
-          NONE, Representation::Tagged());
+      Descriptor d =
+          Descriptor::DataField(isolate(), factory()->value_string(),
+                                JSDataPropertyDescriptor::kValueIndex, NONE,
+                                Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // writable
       Descriptor d =
-          Descriptor::DataField(factory()->writable_string(),
+          Descriptor::DataField(isolate(), factory()->writable_string(),
                                 JSDataPropertyDescriptor::kWritableIndex, NONE,
                                 Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // enumerable
       Descriptor d =
-          Descriptor::DataField(factory()->enumerable_string(),
+          Descriptor::DataField(isolate(), factory()->enumerable_string(),
                                 JSDataPropertyDescriptor::kEnumerableIndex,
                                 NONE, Representation::Tagged());
       map->AppendDescriptor(&d);
     }
     {  // configurable
       Descriptor d =
-          Descriptor::DataField(factory()->configurable_string(),
+          Descriptor::DataField(isolate(), factory()->configurable_string(),
                                 JSDataPropertyDescriptor::kConfigurableIndex,
                                 NONE, Representation::Tagged());
       map->AppendDescriptor(&d);
@@ -5003,7 +5022,7 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
 
     // index descriptor.
     {
-      Descriptor d = Descriptor::DataField(factory()->index_string(),
+      Descriptor d = Descriptor::DataField(isolate(), factory()->index_string(),
                                            JSRegExpResult::kIndexIndex, NONE,
                                            Representation::Tagged());
       initial_map->AppendDescriptor(&d);
@@ -5011,7 +5030,7 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
 
     // input descriptor.
     {
-      Descriptor d = Descriptor::DataField(factory()->input_string(),
+      Descriptor d = Descriptor::DataField(isolate(), factory()->input_string(),
                                            JSRegExpResult::kInputIndex, NONE,
                                            Representation::Tagged());
       initial_map->AppendDescriptor(&d);
@@ -5019,9 +5038,9 @@ bool Genesis::InstallNatives(GlobalContextType context_type) {
 
     // groups descriptor.
     {
-      Descriptor d = Descriptor::DataField(factory()->groups_string(),
-                                           JSRegExpResult::kGroupsIndex, NONE,
-                                           Representation::Tagged());
+      Descriptor d = Descriptor::DataField(
+          isolate(), factory()->groups_string(), JSRegExpResult::kGroupsIndex,
+          NONE, Representation::Tagged());
       initial_map->AppendDescriptor(&d);
     }
 
@@ -5412,7 +5431,8 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
         } else {
           DCHECK_EQ(kAccessor, details.kind());
           Handle<Name> key(descs->GetKey(i), isolate());
-          LookupIterator it(to, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
+          LookupIterator it(isolate(), to, key,
+                            LookupIterator::OWN_SKIP_INTERCEPTOR);
           CHECK_NE(LookupIterator::ACCESS_CHECK, it.state());
           // If the property is already there we skip it
           if (it.IsFound()) continue;
@@ -5430,13 +5450,15 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
     // Copy all keys and values in enumeration order.
     Handle<GlobalDictionary> properties(
         JSGlobalObject::cast(*from)->global_dictionary(), isolate());
-    Handle<FixedArray> indices = GlobalDictionary::IterationIndices(properties);
+    Handle<FixedArray> indices =
+        GlobalDictionary::IterationIndices(isolate(), properties);
     for (int i = 0; i < indices->length(); i++) {
       int index = Smi::ToInt(indices->get(i));
       // If the property is already there we skip it.
       Handle<PropertyCell> cell(properties->CellAt(index), isolate());
       Handle<Name> key(cell->name(), isolate());
-      LookupIterator it(to, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
+      LookupIterator it(isolate(), to, key,
+                        LookupIterator::OWN_SKIP_INTERCEPTOR);
       CHECK_NE(LookupIterator::ACCESS_CHECK, it.state());
       if (it.IsFound()) continue;
       // Set the property.
@@ -5451,7 +5473,7 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
     Handle<NameDictionary> properties =
         Handle<NameDictionary>(from->property_dictionary(), isolate());
     Handle<FixedArray> key_indices =
-        NameDictionary::IterationIndices(properties);
+        NameDictionary::IterationIndices(isolate(), properties);
     ReadOnlyRoots roots(isolate());
     for (int i = 0; i < key_indices->length(); i++) {
       int key_index = Smi::ToInt(key_indices->get(i));
@@ -5460,7 +5482,8 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
       DCHECK(raw_key->IsName());
       // If the property is already there we skip it.
       Handle<Name> key(Name::cast(raw_key), isolate());
-      LookupIterator it(to, key, LookupIterator::OWN_SKIP_INTERCEPTOR);
+      LookupIterator it(isolate(), to, key,
+                        LookupIterator::OWN_SKIP_INTERCEPTOR);
       CHECK_NE(LookupIterator::ACCESS_CHECK, it.state());
       if (it.IsFound()) continue;
       // Set the property.

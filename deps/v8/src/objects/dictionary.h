@@ -43,8 +43,8 @@ class Dictionary : public HashTable<Derived, Shape> {
   }
 
   // Set the details for entry.
-  void DetailsAtPut(int entry, PropertyDetails value) {
-    Shape::DetailsAtPut(static_cast<Derived*>(this), entry, value);
+  void DetailsAtPut(Isolate* isolate, int entry, PropertyDetails value) {
+    Shape::DetailsAtPut(isolate, static_cast<Derived*>(this), entry, value);
   }
 
   // Delete a property from the dictionary.
@@ -69,19 +69,18 @@ class Dictionary : public HashTable<Derived, Shape> {
   Object* SlowReverseLookup(Object* value);
 
   // Sets the entry to (key, value) pair.
-  inline void ClearEntry(int entry);
-  inline void SetEntry(int entry, Object* key, Object* value,
+  inline void ClearEntry(Isolate* isolate, int entry);
+  inline void SetEntry(Isolate* isolate, int entry, Object* key, Object* value,
                        PropertyDetails details);
 
-  V8_WARN_UNUSED_RESULT static Handle<Derived> Add(Handle<Derived> dictionary,
-                                                   Key key,
-                                                   Handle<Object> value,
-                                                   PropertyDetails details,
-                                                   int* entry_out = nullptr);
+  V8_WARN_UNUSED_RESULT static Handle<Derived> Add(
+      Isolate* isolate, Handle<Derived> dictionary, Key key,
+      Handle<Object> value, PropertyDetails details, int* entry_out = nullptr);
 
  protected:
   // Generic at put operation.
-  V8_WARN_UNUSED_RESULT static Handle<Derived> AtPut(Handle<Derived> dictionary,
+  V8_WARN_UNUSED_RESULT static Handle<Derived> AtPut(Isolate* isolate,
+                                                     Handle<Derived> dictionary,
                                                      Key key,
                                                      Handle<Object> value,
                                                      PropertyDetails details);
@@ -100,7 +99,7 @@ class BaseDictionaryShape : public BaseShape<Key> {
   }
 
   template <typename Dictionary>
-  static inline void DetailsAtPut(Dictionary* dict, int entry,
+  static inline void DetailsAtPut(Isolate* isolate, Dictionary* dict, int entry,
                                   PropertyDetails value) {
     STATIC_ASSERT(Dictionary::kEntrySize == 3);
     dict->set(Dictionary::EntryToIndex(entry) + Dictionary::kEntryDetailsIndex,
@@ -164,7 +163,8 @@ class BaseNameDictionary : public Dictionary<Derived, Shape> {
   static void CollectKeysTo(Handle<Derived> dictionary, KeyAccumulator* keys);
 
   // Return the key indices sorted by its enumeration index.
-  static Handle<FixedArray> IterationIndices(Handle<Derived> dictionary);
+  static Handle<FixedArray> IterationIndices(Isolate* isolate,
+                                             Handle<Derived> dictionary);
 
   // Copies enumerable keys to preallocated fixed array.
   // Does not throw for uninitialized exports in module namespace objects, so
@@ -178,14 +178,12 @@ class BaseNameDictionary : public Dictionary<Derived, Shape> {
                                         Handle<Derived> dictionary, int n);
 
   V8_WARN_UNUSED_RESULT static Handle<Derived> AddNoUpdateNextEnumerationIndex(
-      Handle<Derived> dictionary, Key key, Handle<Object> value,
-      PropertyDetails details, int* entry_out = nullptr);
+      Isolate* isolate, Handle<Derived> dictionary, Key key,
+      Handle<Object> value, PropertyDetails details, int* entry_out = nullptr);
 
-  V8_WARN_UNUSED_RESULT static Handle<Derived> Add(Handle<Derived> dictionary,
-                                                   Key key,
-                                                   Handle<Object> value,
-                                                   PropertyDetails details,
-                                                   int* entry_out = nullptr);
+  V8_WARN_UNUSED_RESULT static Handle<Derived> Add(
+      Isolate* isolate, Handle<Derived> dictionary, Key key,
+      Handle<Object> value, PropertyDetails details, int* entry_out = nullptr);
 };
 
 class NameDictionary
@@ -212,7 +210,7 @@ class GlobalDictionaryShape : public NameDictionaryShape {
   static inline PropertyDetails DetailsAt(Dictionary* dict, int entry);
 
   template <typename Dictionary>
-  static inline void DetailsAtPut(Dictionary* dict, int entry,
+  static inline void DetailsAtPut(Isolate* isolate, Dictionary* dict, int entry,
                                   PropertyDetails value);
 
   static inline Object* Unwrap(Object* key);
@@ -228,7 +226,7 @@ class GlobalDictionary
 
   inline Object* ValueAt(int entry);
   inline PropertyCell* CellAt(int entry);
-  inline void SetEntry(int entry, Object* key, Object* value,
+  inline void SetEntry(Isolate* isolate, int entry, Object* key, Object* value,
                        PropertyDetails details);
   inline Name* NameAt(int entry);
   inline void ValueAtPut(int entry, Object* value);
@@ -263,7 +261,7 @@ class SimpleNumberDictionaryShape : public NumberDictionaryBaseShape {
   }
 
   template <typename Dictionary>
-  static inline void DetailsAtPut(Dictionary* dict, int entry,
+  static inline void DetailsAtPut(Isolate* isolate, Dictionary* dict, int entry,
                                   PropertyDetails value) {
     UNREACHABLE();
   }
@@ -284,7 +282,7 @@ class SimpleNumberDictionary
   DECL_CAST(SimpleNumberDictionary)
   // Type specific at put (default NONE attributes is used when adding).
   V8_WARN_UNUSED_RESULT static Handle<SimpleNumberDictionary> Set(
-      Handle<SimpleNumberDictionary> dictionary, uint32_t key,
+      Isolate* isolate, Handle<SimpleNumberDictionary> dictionary, uint32_t key,
       Handle<Object> value);
 
   static const int kEntryValueIndex = 1;
@@ -306,7 +304,8 @@ class NumberDictionary
 
   // Type specific at put (default NONE attributes is used when adding).
   V8_WARN_UNUSED_RESULT static Handle<NumberDictionary> Set(
-      Handle<NumberDictionary> dictionary, uint32_t key, Handle<Object> value,
+      Isolate* isolate, Handle<NumberDictionary> dictionary, uint32_t key,
+      Handle<Object> value,
       Handle<JSObject> dictionary_holder = Handle<JSObject>::null(),
       PropertyDetails details = PropertyDetails::Empty());
 

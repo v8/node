@@ -295,7 +295,7 @@ void FeedbackVector::AddToVectorsForProfilingTools(
   if (!vector->shared_function_info()->IsSubjectToDebugging()) return;
   Handle<ArrayList> list = Handle<ArrayList>::cast(
       isolate->factory()->feedback_vectors_for_profiling_tools());
-  list = ArrayList::Add(list, vector);
+  list = ArrayList::Add(isolate, list, vector);
   isolate->SetFeedbackVectorsForProfilingTools(*list);
 }
 
@@ -1068,18 +1068,20 @@ void FeedbackNexus::Collect(Handle<String> type, int position) {
 
   Handle<ArrayList> position_specific_types;
 
-  int entry = types->FindEntry(position);
+  int entry = types->FindEntry(isolate, position);
   if (entry == SimpleNumberDictionary::kNotFound) {
     position_specific_types = ArrayList::New(isolate, 1);
     types = SimpleNumberDictionary::Set(
-        types, position, ArrayList::Add(position_specific_types, type));
+        isolate, types, position,
+        ArrayList::Add(isolate, position_specific_types, type));
   } else {
     DCHECK(types->ValueAt(entry)->IsArrayList());
     position_specific_types =
         handle(ArrayList::cast(types->ValueAt(entry)), isolate);
     if (!InList(position_specific_types, type)) {  // Add type
       types = SimpleNumberDictionary::Set(
-          types, position, ArrayList::Add(position_specific_types, type));
+          isolate, types, position,
+          ArrayList::Add(isolate, position_specific_types, type));
     }
   }
   SetFeedback(*types);
@@ -1127,7 +1129,7 @@ std::vector<Handle<String>> FeedbackNexus::GetTypesForSourcePositions(
   Handle<SimpleNumberDictionary> types(
       SimpleNumberDictionary::cast(feedback->ToStrongHeapObject()), isolate);
 
-  int entry = types->FindEntry(position);
+  int entry = types->FindEntry(isolate, position);
   if (entry == SimpleNumberDictionary::kNotFound) {
     return types_for_position;
   }
@@ -1164,7 +1166,7 @@ Handle<JSObject> ConvertToJSObject(Isolate* isolate,
       JSObject::AddDataElement(
           type_profile, position,
           isolate->factory()->NewJSArrayWithElements(
-              ArrayList::Elements(position_specific_types)),
+              ArrayList::Elements(isolate, position_specific_types)),
           PropertyAttributes::NONE);
     }
   }

@@ -270,14 +270,14 @@ Object* DoFunctionBind(Isolate* isolate, BuiltinArguments args) {
     if (target_name->IsString()) {
       ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
           isolate, name,
-          Name::ToFunctionName(Handle<String>::cast(target_name)));
+          Name::ToFunctionName(isolate, Handle<String>::cast(target_name)));
       ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
           isolate, name, isolate->factory()->NewConsString(
                              isolate->factory()->bound__string(), name));
     } else {
       name = isolate->factory()->bound__string();
     }
-    LookupIterator it(function, isolate->factory()->name_string());
+    LookupIterator it(isolate, function, isolate->factory()->name_string());
     DCHECK_EQ(LookupIterator::ACCESSOR, it.state());
     RETURN_FAILURE_ON_EXCEPTION(isolate,
                                 JSObject::DefineOwnPropertyIgnoreAttributes(

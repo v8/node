@@ -1460,7 +1460,7 @@ class DictionaryElementsAccessor
             if (dict->IsKey(roots, index)) {
               uint32_t number = static_cast<uint32_t>(index->Number());
               if (length <= number && number < old_length) {
-                dict->ClearEntry(entry);
+                dict->ClearEntry(isolate, entry);
                 removed_entries++;
               }
             }
@@ -1571,7 +1571,7 @@ class DictionaryElementsAccessor
     details = PropertyDetails(kData, attributes, PropertyCellType::kNoCell,
                               details.dictionary_index());
 
-    dictionary->DetailsAtPut(entry, details);
+    dictionary->DetailsAtPut(object->GetIsolate(), entry, details);
   }
 
   static void AddImpl(Handle<JSObject> object, uint32_t index,
@@ -1583,8 +1583,8 @@ class DictionaryElementsAccessor
             ? JSObject::NormalizeElements(object)
             : handle(NumberDictionary::cast(object->elements()),
                      object->GetIsolate());
-    Handle<NumberDictionary> new_dictionary =
-        NumberDictionary::Add(dictionary, index, value, details);
+    Handle<NumberDictionary> new_dictionary = NumberDictionary::Add(
+        object->GetIsolate(), dictionary, index, value, details);
     new_dictionary->UpdateMaxNumberKey(index, object);
     if (attributes != NONE) object->RequireSlowElements(*new_dictionary);
     if (dictionary.is_identical_to(new_dictionary)) return;
@@ -1965,7 +1965,8 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
       }
       max_number_key = i;
       Handle<Object> value = Subclass::GetImpl(isolate, *store, i);
-      dictionary = NumberDictionary::Add(dictionary, i, value, details);
+      dictionary =
+          NumberDictionary::Add(isolate, dictionary, i, value, details);
       j++;
     }
 
@@ -2074,7 +2075,7 @@ class FastElementsAccessor : public ElementsAccessorBase<Subclass, KindTraits> {
                               Handle<Object> value,
                               PropertyAttributes attributes) {
     Handle<NumberDictionary> dictionary = JSObject::NormalizeElements(object);
-    entry = dictionary->FindEntry(entry);
+    entry = dictionary->FindEntry(object->GetIsolate(), entry);
     DictionaryElementsAccessor::ReconfigureImpl(object, dictionary, entry,
                                                 value, attributes);
   }
@@ -2944,7 +2945,7 @@ class TypedElementsAccessor
 
   static Handle<Object> GetImpl(Isolate* isolate, FixedArrayBase* backing_store,
                                 uint32_t entry) {
-    return BackingStore::get(BackingStore::cast(backing_store), entry);
+    return BackingStore::get(isolate, BackingStore::cast(backing_store), entry);
   }
 
   static PropertyDetails GetDetailsImpl(JSObject* holder, uint32_t entry) {
@@ -3506,7 +3507,7 @@ class TypedElementsAccessor
                                            BigInt::FromObject(isolate, elem));
       } else {
         ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, elem,
-                                           Object::ToNumber(elem));
+                                           Object::ToNumber(isolate, elem));
       }
 
       if (V8_UNLIKELY(destination->WasNeutered())) {
@@ -4017,7 +4018,7 @@ class SlowSloppyArgumentsElementsAccessor
             : JSObject::NormalizeElements(object);
     PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
     Handle<NumberDictionary> new_dictionary =
-        NumberDictionary::Add(dictionary, index, value, details);
+        NumberDictionary::Add(isolate, dictionary, index, value, details);
     if (attributes != NONE) object->RequireSlowElements(*new_dictionary);
     if (*dictionary != *new_dictionary) {
       elements->set_arguments(*new_dictionary);
@@ -4051,7 +4052,8 @@ class SlowSloppyArgumentsElementsAccessor
       PropertyDetails details(kData, attributes, PropertyCellType::kNoCell);
       Handle<NumberDictionary> arguments(
           NumberDictionary::cast(elements->arguments()), isolate);
-      arguments = NumberDictionary::Add(arguments, entry, value, details);
+      arguments =
+          NumberDictionary::Add(isolate, arguments, entry, value, details);
       // If the attributes were NONE, we would have called set rather than
       // reconfigure.
       DCHECK_NE(NONE, attributes);
@@ -4107,7 +4109,8 @@ class FastSloppyArgumentsElementsAccessor
     if (*entry == kMaxUInt32) return dictionary;
     uint32_t length = elements->parameter_map_length();
     if (*entry >= length) {
-      *entry = dictionary->FindEntry(*entry - length) + length;
+      *entry =
+          dictionary->FindEntry(object->GetIsolate(), *entry - length) + length;
     }
     return dictionary;
   }

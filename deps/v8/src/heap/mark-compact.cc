@@ -2301,14 +2301,7 @@ static String* UpdateReferenceInExternalStringTableEntry(Heap* heap,
   MapWord map_word = HeapObject::cast(*p)->map_word();
 
   if (map_word.IsForwardingAddress()) {
-    String* new_string = String::cast(map_word.ToForwardingAddress());
-
-    if (new_string->IsExternalString()) {
-      heap->ProcessMovedExternalString(
-          Page::FromAddress(reinterpret_cast<Address>(*p)),
-          Page::FromHeapObject(new_string), ExternalString::cast(new_string));
-    }
-    return new_string;
+    return String::cast(map_word.ToForwardingAddress());
   }
 
   return String::cast(*p);
@@ -3386,7 +3379,7 @@ void MarkCompactCollector::StartSweepSpace(PagedSpace* space) {
       // that this adds unusable memory into the free list that is later on
       // (in the free list) dropped again. Since we only use the flag for
       // testing this is fine.
-      p->concurrent_sweeping_state().SetValue(Page::kSweepingInProgress);
+      p->set_concurrent_sweeping_state(Page::kSweepingInProgress);
       sweeper()->RawSweep(p, Sweeper::IGNORE_FREE_LIST,
                           Heap::ShouldZapGarbage()
                               ? FreeSpaceTreatmentMode::ZAP_FREE_SPACE

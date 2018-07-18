@@ -373,7 +373,7 @@ THREADED_TEST(HulIgennem) {
   v8::HandleScope scope(isolate);
   v8::Local<v8::Primitive> undef = v8::Undefined(isolate);
   Local<String> undef_str = undef->ToString(env.local()).ToLocalChecked();
-  char* value = i::NewArray<char>(undef_str->Utf8Length() + 1);
+  char* value = i::NewArray<char>(undef_str->Utf8Length(isolate) + 1);
   undef_str->WriteUtf8(value);
   CHECK_EQ(0, strcmp(value, "undefined"));
   i::DeleteArray(value);
@@ -2581,7 +2581,8 @@ THREADED_TEST(AccessorIsPreservedOnAttributeChange) {
   CHECK_EQ(0, a->map()->instance_descriptors()->number_of_descriptors());
   // But we should still have an AccessorInfo.
   i::Handle<i::String> name(v8::Utils::OpenHandle(*v8_str("length")));
-  i::LookupIterator it(a, name, i::LookupIterator::OWN_SKIP_INTERCEPTOR);
+  i::LookupIterator it(CcTest::i_isolate(), a, name,
+                       i::LookupIterator::OWN_SKIP_INTERCEPTOR);
   CHECK_EQ(i::LookupIterator::ACCESSOR, it.state());
   CHECK(it.GetAccessors()->IsAccessorInfo());
 }
@@ -8271,12 +8272,12 @@ static int StrNCmp16(uint16_t* a, uint16_t* b, int n) {
 }
 
 int GetUtf8Length(v8::Isolate* isolate, Local<String> str) {
-  int len = str->Utf8Length();
+  int len = str->Utf8Length(isolate);
   if (len < 0) {
     i::Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
     i::Handle<i::String> istr(v8::Utils::OpenHandle(*str));
     i::String::Flatten(i_isolate, istr);
-    len = str->Utf8Length();
+    len = str->Utf8Length(isolate);
   }
   return len;
 }
@@ -15654,16 +15655,14 @@ static void MorphAString(i::String* string,
     string->set_map(roots.external_string_map());
     i::ExternalTwoByteString* morphed =
          i::ExternalTwoByteString::cast(string);
-    CcTest::heap()->UpdateExternalString(morphed, string->length(), 0);
-    morphed->SetResource(uc16_resource);
+    morphed->set_resource(uc16_resource);
   } else {
     // Check old map is not internalized or long.
     CHECK(string->map() == roots.external_string_map());
     // Morph external string to be one-byte string.
     string->set_map(roots.external_one_byte_string_map());
     i::ExternalOneByteString* morphed = i::ExternalOneByteString::cast(string);
-    CcTest::heap()->UpdateExternalString(morphed, string->length(), 0);
-    morphed->SetResource(one_byte_resource);
+    morphed->set_resource(one_byte_resource);
   }
 }
 
@@ -15678,7 +15677,8 @@ THREADED_TEST(MorphCompositeStringTest) {
   {
     LocalContext env;
     i::Factory* factory = CcTest::i_isolate()->factory();
-    v8::HandleScope scope(env->GetIsolate());
+    v8::Isolate* isolate = env->GetIsolate();
+    v8::HandleScope scope(isolate);
     OneByteVectorResource one_byte_resource(
         i::Vector<const char>(c_string, i::StrLength(c_string)));
     UC16VectorResource uc16_resource(
@@ -15710,7 +15710,7 @@ THREADED_TEST(MorphCompositeStringTest) {
     // This should UTF-8 without flattening, since everything is ASCII.
     Local<String> cons =
         v8_compile("cons")->Run(env.local()).ToLocalChecked().As<String>();
-    CHECK_EQ(128, cons->Utf8Length());
+    CHECK_EQ(128, cons->Utf8Length(isolate));
     int nchars = -1;
     CHECK_EQ(129, cons->WriteUtf8(utf_buffer, -1, &nchars));
     CHECK_EQ(128, nchars);
@@ -15751,13 +15751,13 @@ THREADED_TEST(MorphCompositeStringTest) {
 
     // This avoids the GC from trying to free a stack allocated resource.
     if (ilhs->IsExternalOneByteString())
-      i::ExternalOneByteString::cast(ilhs)->SetResource(nullptr);
+      i::ExternalOneByteString::cast(ilhs)->set_resource(nullptr);
     else
-      i::ExternalTwoByteString::cast(ilhs)->SetResource(nullptr);
+      i::ExternalTwoByteString::cast(ilhs)->set_resource(nullptr);
     if (irhs->IsExternalOneByteString())
-      i::ExternalOneByteString::cast(irhs)->SetResource(nullptr);
+      i::ExternalOneByteString::cast(irhs)->set_resource(nullptr);
     else
-      i::ExternalTwoByteString::cast(irhs)->SetResource(nullptr);
+      i::ExternalTwoByteString::cast(irhs)->set_resource(nullptr);
   }
   i::DeleteArray(two_byte_string);
 }
@@ -20377,7 +20377,7 @@ THREADED_TEST(TwoByteStringInOneByteCons) {
   CHECK_EQ(static_cast<int32_t>('e'),
            reresult->Int32Value(context.local()).FromJust());
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalTwoByteString>::cast(flat_string)->SetResource(nullptr);
+  i::Handle<i::ExternalTwoByteString>::cast(flat_string)->set_resource(nullptr);
 }
 
 

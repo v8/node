@@ -37,35 +37,31 @@ class ImplementationVisitor : public FileVisitor {
   const Type* Visit(Statement* stmt);
   void Visit(Declaration* decl);
 
+  VisitResult Visit(StructExpression* decl);
+
   LocationReference GetLocationReference(LocationExpression* location);
   LocationReference GetLocationReference(IdentifierExpression* expr) {
     return LocationReference(declarations()->LookupValue(expr->name), {}, {});
   }
-  LocationReference GetLocationReference(FieldAccessExpression* expr) {
-    return LocationReference({}, Visit(expr->object), {});
-  }
+  LocationReference GetLocationReference(FieldAccessExpression* expr);
   LocationReference GetLocationReference(ElementAccessExpression* expr) {
     return LocationReference({}, Visit(expr->array), Visit(expr->index));
   }
 
+  std::string RValueFlattenStructs(VisitResult result);
+
+  VisitResult GenerateFetchFromLocation(LocationReference reference) {
+    const Value* value = reference.value;
+    return VisitResult(value->type(), value);
+  }
   VisitResult GenerateFetchFromLocation(LocationExpression* location,
                                         LocationReference reference);
   VisitResult GenerateFetchFromLocation(IdentifierExpression* expr,
                                         LocationReference reference) {
-    Value* value = reference.value;
-    if (value->IsVariable() && !Variable::cast(value)->IsDefined()) {
-      std::stringstream s;
-      s << "\"" << value->name() << "\" is used before it is defined";
-      ReportError(s.str());
-    }
-    return VisitResult(value->type(), value);
+    return GenerateFetchFromLocation(reference);
   }
   VisitResult GenerateFetchFromLocation(FieldAccessExpression* expr,
-                                        LocationReference reference) {
-    Arguments arguments;
-    arguments.parameters = {reference.base};
-    return GenerateCall(std::string(".") + expr->field, arguments);
-  }
+                                        LocationReference reference);
   VisitResult GenerateFetchFromLocation(ElementAccessExpression* expr,
                                         LocationReference reference) {
     Arguments arguments;
@@ -93,6 +89,7 @@ class ImplementationVisitor : public FileVisitor {
   void Visit(TypeDeclaration* decl) {}
   void Visit(TypeAliasDeclaration* decl) {}
   void Visit(ExternConstDeclaration* decl) {}
+  void Visit(StructDeclaration* decl);
   void Visit(StandardDeclaration* decl);
   void Visit(GenericDeclaration* decl) {}
   void Visit(SpecializationDeclaration* decl);
@@ -108,6 +105,7 @@ class ImplementationVisitor : public FileVisitor {
   void Visit(ExternalRuntimeDeclaration* decl, const Signature& signature,
              Statement* body) {}
   void Visit(CallableNode* decl, const Signature& signature, Statement* body);
+  void Visit(ConstDeclaration* decl);
 
   VisitResult Visit(CallExpression* expr, bool is_tail = false);
   const Type* Visit(TailCallStatement* stmt);
@@ -175,6 +173,11 @@ class ImplementationVisitor : public FileVisitor {
 
   Callable* LookupCall(const std::string& name, const Arguments& arguments);
 
+  bool GenerateChangedVarFromControlSplit(const Variable* v, bool first = true);
+
+  void GetFlattenedStructsVars(const Variable* base,
+                               std::set<const Variable*>& vars);
+
   void GenerateChangedVarsFromControlSplit(AstNode* node);
 
   const Type* GetCommonType(const Type* left, const Type* right);
@@ -186,6 +189,8 @@ class ImplementationVisitor : public FileVisitor {
   void GenerateAssignToLocation(LocationExpression* location,
                                 const LocationReference& reference,
                                 VisitResult assignment_value);
+
+  void GenerateVariableDeclaration(const Variable* var);
 
   Variable* GenerateVariableDeclaration(
       AstNode* node, const std::string& name,
@@ -216,6 +221,11 @@ class ImplementationVisitor : public FileVisitor {
   void GenerateMacroFunctionDeclaration(std::ostream& o,
                                         const std::string& macro_prefix,
                                         Macro* macro);
+  void GenerateFunctionDeclaration(std::ostream& o,
+                                   const std::string& macro_prefix,
+                                   const std::string& name,
+                                   const Signature& signature,
+                                   const NameVector& parameter_names);
 
   VisitResult GenerateImplicitConvert(const Type* destination_type,
                                       VisitResult source);

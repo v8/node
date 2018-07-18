@@ -207,7 +207,8 @@ RUNTIME_FUNCTION(Runtime_MarkAsInitializedIntlObjectOfType) {
 #endif
 
   Handle<Symbol> marker = isolate->factory()->intl_initialized_marker_symbol();
-  JSObject::SetProperty(input, marker, type, LanguageMode::kStrict).Assert();
+  JSObject::SetProperty(isolate, input, marker, type, LanguageMode::kStrict)
+      .Assert();
 
   return ReadOnlyRoots(isolate).undefined_value();
 }
@@ -313,7 +314,7 @@ RUNTIME_FUNCTION(Runtime_InternalNumberFormat) {
 
   Handle<Object> number_obj;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, number_obj,
-                                     Object::ToNumber(value));
+                                     Object::ToNumber(isolate, value));
 
   double number = number_obj->Number();
   RETURN_RESULT_OR_FAILURE(isolate, NumberFormat::FormatNumber(

@@ -95,6 +95,15 @@ Builtin* DeclarationVisitor::BuiltinDeclarationCommon(
     }
   }
 
+  if (const StructType* struct_type =
+          StructType::DynamicCast(signature.return_type)) {
+    std::stringstream stream;
+    stream << "builtins (in this case" << decl->name
+           << ") cannot return structs (in this case " << struct_type->name()
+           << ")";
+    ReportError(stream.str());
+  }
+
   std::string generated_name = GetGeneratedCallableName(
       decl->name, declarations()->GetCurrentSpecializationTypeNamesVector());
   return declarations()->DeclareBuiltin(generated_name, kind, external,
@@ -114,6 +123,15 @@ void DeclarationVisitor::Visit(ExternalRuntimeDeclaration* decl,
     std::stringstream stream;
     stream << "first parameter to runtime " << decl->name
            << " is not a context but should be";
+    ReportError(stream.str());
+  }
+
+  if (signature.return_type->IsStructType()) {
+    std::stringstream stream;
+    stream << "runtime functions (in this case" << decl->name
+           << ") cannot return structs (in this case "
+           << static_cast<const StructType*>(signature.return_type)->name()
+           << ")";
     ReportError(stream.str());
   }
 
@@ -138,7 +156,7 @@ void DeclarationVisitor::Visit(TorqueBuiltinDeclaration* decl,
   CurrentCallableActivator activator(global_context_, builtin, decl);
   DeclareSignature(signature);
   if (signature.parameter_types.var_args) {
-    declarations()->DeclareConstant(
+    declarations()->DeclareExternConstant(
         decl->signature->parameters.arguments_variable,
         TypeOracle::GetArgumentsType(), "arguments");
   }
@@ -158,8 +176,9 @@ void DeclarationVisitor::Visit(TorqueMacroDeclaration* decl,
   DeclareSignature(signature);
   Variable* return_variable = nullptr;
   if (!signature.return_type->IsVoidOrNever()) {
-    return_variable = declarations()->DeclareVariable(kReturnValueVariable,
-                                                      signature.return_type);
+    return_variable =
+        DeclareVariable(kReturnValueVariable, signature.return_type,
+                        signature.return_type->IsConstexpr());
   }
 
   PushControlSplit();
@@ -171,6 +190,12 @@ void DeclarationVisitor::Visit(TorqueMacroDeclaration* decl,
   global_context_.AddControlSplitChangedVariables(
       decl, declarations()->GetCurrentSpecializationTypeNamesVector(),
       changed_vars);
+}
+
+void DeclarationVisitor::Visit(ConstDeclaration* decl) {
+  declarations()->DeclareModuleConstant(decl->name,
+                                        declarations()->GetType(decl->type));
+  Visit(decl->expression);
 }
 
 void DeclarationVisitor::Visit(StandardDeclaration* decl) {
@@ -245,17 +270,53 @@ void DeclarationVisitor::Visit(ReturnStatement* stmt) {
   }
 }
 
+Variable* DeclarationVisitor::DeclareVariable(const std::string& name,
+                                              const Type* type, bool is_const) {
+  Variable* result = declarations()->DeclareVariable(name, type, is_const);
+  if (type->IsStructType()) {
+    const StructType* struct_type = StructType::cast(type);
+    for (auto& field : struct_type->fields()) {
+      std::string field_var_name = name + "." + field.name;
+      DeclareVariable(field_var_name, field.type, is_const);
+    }
+  }
+  return result;
+}
+
+Parameter* DeclarationVisitor::DeclareParameter(const std::string& name,
+                                                const Type* type) {
+  Parameter* result = declarations()->DeclareParameter(
+      name, GetParameterVariableFromName(name), type);
+  if (type->IsStructType()) {
+    const StructType* struct_type = StructType::cast(type);
+    for (auto& field : struct_type->fields()) {
+      std::string field_var_name = name + "." + field.name;
+      DeclareParameter(field_var_name, field.type);
+    }
+  }
+  return result;
+}
+
 void DeclarationVisitor::Visit(VarDeclarationStatement* stmt) {
   std::string variable_name = stmt->name;
   const Type* type = declarations()->GetType(stmt->type);
-  if (type->IsConstexpr()) {
-    ReportError("cannot declare variable with constexpr type");
+  if (type->IsConstexpr() && !stmt->const_qualified) {
+    ReportError(
+        "cannot declare variable with constexpr type. Use 'const' instead.");
   }
-  declarations()->DeclareVariable(variable_name, type);
+  DeclareVariable(variable_name, type, stmt->const_qualified);
   if (global_context_.verbose()) {
     std::cout << "declared variable " << variable_name << " with type " << *type
               << "\n";
   }
+
+  // const qualified variables are required to be initialized properly.
+  if (stmt->const_qualified && !stmt->initializer) {
+    std::stringstream stream;
+    stream << "local constant \"" << variable_name << "\" is not initialized.";
+    ReportError(stream.str());
+  }
+
   if (stmt->initializer) {
     Visit(*stmt->initializer);
     if (global_context_.verbose()) {
@@ -263,6 +324,27 @@ void DeclarationVisitor::Visit(VarDeclarationStatement* stmt) {
                 << CurrentPositionAsString() << "\n";
     }
   }
+}
+
+void DeclarationVisitor::Visit(ExternConstDeclaration* decl) {
+  const Type* type = declarations()->GetType(decl->type);
+  if (!type->IsConstexpr()) {
+    std::stringstream stream;
+    stream << "extern constants must have constexpr type, but found: \""
+           << *type << "\"\n";
+    ReportError(stream.str());
+  }
+
+  declarations()->DeclareExternConstant(decl->name, type, decl->literal);
+}
+
+void DeclarationVisitor::Visit(StructDeclaration* decl) {
+  std::vector<NameAndType> fields;
+  for (auto& field : decl->fields) {
+    const Type* field_type = declarations()->GetType(field.type);
+    fields.push_back({field.name, field_type});
+  }
+  declarations()->DeclareStruct(CurrentModule(), decl->name, fields);
 }
 
 void DeclarationVisitor::Visit(LogicalOrExpression* expr) {
@@ -381,8 +463,13 @@ void DeclarationVisitor::Visit(TryLabelStatement* stmt) {
 
         size_t i = 0;
         for (auto p : block->parameters.names) {
-          shared_label->AddVariable(declarations()->DeclareVariable(
-              p, declarations()->GetType(block->parameters.types[i])));
+          const Type* type =
+              declarations()->GetType(block->parameters.types[i]);
+          if (type->IsConstexpr()) {
+            ReportError("no constexpr type allowed for label arguments");
+          }
+
+          shared_label->AddVariable(DeclareVariable(p, type, false));
           ++i;
         }
       }
@@ -522,8 +609,7 @@ void DeclarationVisitor::DeclareSignature(const Signature& signature) {
   for (auto name : signature.parameter_names) {
     const Type* t(*type_iterator++);
     if (name.size() != 0) {
-      declarations()->DeclareParameter(name, GetParameterVariableFromName(name),
-                                       t);
+      DeclareParameter(name, t);
     }
   }
   for (auto& label : signature.labels) {
@@ -531,9 +617,12 @@ void DeclarationVisitor::DeclareSignature(const Signature& signature) {
     Label* new_label = declarations()->DeclareLabel(label.name);
     size_t i = 0;
     for (auto var_type : label_params) {
+      if (var_type->IsConstexpr()) {
+        ReportError("no constexpr type allowed for label arguments");
+      }
+
       std::string var_name = label.name + std::to_string(i++);
-      new_label->AddVariable(
-          declarations()->DeclareVariable(var_name, var_type));
+      new_label->AddVariable(DeclareVariable(var_name, var_type, false));
     }
   }
 }

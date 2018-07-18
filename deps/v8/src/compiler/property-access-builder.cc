@@ -136,7 +136,8 @@ void PropertyAccessBuilder::BuildCheckMaps(
     if (receiver_map->is_stable()) {
       for (Handle<Map> map : receiver_maps) {
         if (map.is_identical_to(receiver_map)) {
-          dependencies()->DependOnStableMap(receiver_map);
+          dependencies()->DependOnStableMap(
+              MapRef(js_heap_broker(), receiver_map));
           return;
         }
       }
@@ -193,7 +194,8 @@ Node* PropertyAccessBuilder::TryBuildLoadConstantDataField(
     // TODO(turbofan): Given that we already have the field_index here, we
     // might be smarter in the future and not rely on the LookupIterator,
     // but for now let's just do what Crankshaft does.
-    LookupIterator it(m.Value(), name, LookupIterator::OWN_SKIP_INTERCEPTOR);
+    LookupIterator it(isolate(), m.Value(), name,
+                      LookupIterator::OWN_SKIP_INTERCEPTOR);
     if (it.state() == LookupIterator::DATA) {
       bool is_readonly_non_configurable =
           it.IsReadOnly() && !it.IsConfigurable();
@@ -205,7 +207,9 @@ Node* PropertyAccessBuilder::TryBuildLoadConstantDataField(
           // the field.
           DCHECK(access_info.IsDataConstantField());
           DCHECK(!it.is_dictionary_holder());
-          dependencies()->DependOnFieldType(&it);
+          MapRef map(js_heap_broker(),
+                     handle(it.GetHolder<HeapObject>()->map(), isolate()));
+          dependencies()->DependOnFieldType(map, it.GetFieldDescriptorIndex());
         }
         return value;
       }
@@ -263,7 +267,7 @@ Node* PropertyAccessBuilder::BuildLoadDataField(
     Handle<Map> field_map;
     if (access_info.field_map().ToHandle(&field_map)) {
       if (field_map->is_stable()) {
-        dependencies()->DependOnStableMap(field_map);
+        dependencies()->DependOnStableMap(MapRef(js_heap_broker(), field_map));
         field_access.map = field_map;
       }
     }

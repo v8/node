@@ -85,7 +85,7 @@ static void TestHashMap(Handle<HashMap> table) {
     Handle<JSObject> value = factory->NewJSArray(11);
     table = HashMap::Put(table, key, value);
     CHECK_EQ(table->NumberOfElements(), i + 1);
-    CHECK_NE(table->FindEntry(key), HashMap::kNotFound);
+    CHECK_NE(table->FindEntry(isolate, key), HashMap::kNotFound);
     CHECK_EQ(table->Lookup(key), *value);
     CHECK(key->GetIdentityHash(isolate)->IsSmi());
   }
@@ -95,7 +95,7 @@ static void TestHashMap(Handle<HashMap> table) {
   for (int i = 0; i < 100; i++) {
     Handle<JSReceiver> key = factory->NewJSArray(7);
     CHECK(key->GetOrCreateIdentityHash(isolate)->IsSmi());
-    CHECK_EQ(table->FindEntry(key), HashMap::kNotFound);
+    CHECK_EQ(table->FindEntry(isolate, key), HashMap::kNotFound);
     CHECK_EQ(table->Lookup(key), roots.the_hole_value());
     CHECK(key->GetIdentityHash(isolate)->IsSmi());
   }
@@ -195,7 +195,7 @@ class ObjectHashTableTest: public ObjectHashTable {
   }
 
   int lookup(int key) {
-    Handle<Object> key_obj(Smi::FromInt(key), GetIsolate());
+    Handle<Object> key_obj(Smi::FromInt(key), CcTest::i_isolate());
     return Smi::ToInt(Lookup(key_obj));
   }
 

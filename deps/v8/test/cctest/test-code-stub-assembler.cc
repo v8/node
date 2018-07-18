@@ -325,15 +325,21 @@ TEST(JSFunction) {
 
 TEST(ComputeIntegerHash) {
   Isolate* isolate(CcTest::InitIsolateOnce());
-  const int kNumParams = 2;
+  const int kNumParams = 1;
   CodeAssemblerTester asm_tester(isolate, kNumParams);
   CodeStubAssembler m(asm_tester.state());
-  m.Return(m.SmiFromInt32(m.ComputeIntegerHash(m.SmiUntag(m.Parameter(0)),
-                                               m.SmiToInt32(m.Parameter(1)))));
+
+  TNode<Int32T> int32_seed;
+  if (m.Is64()) {
+    int32_seed = m.TruncateInt64ToInt32(m.HashSeed());
+  } else {
+    int32_seed = m.HashSeedLow();
+  }
+
+  m.Return(m.SmiFromInt32(
+      m.ComputeIntegerHash(m.SmiUntag(m.Parameter(0)), int32_seed)));
 
   FunctionTester ft(asm_tester.GenerateCode(), kNumParams);
-
-  Handle<Smi> hash_seed = isolate->factory()->hash_seed();
 
   base::RandomNumberGenerator rand_gen(FLAG_random_seed);
 
@@ -341,9 +347,9 @@ TEST(ComputeIntegerHash) {
     int k = rand_gen.NextInt(Smi::kMaxValue);
 
     Handle<Smi> key(Smi::FromInt(k), isolate);
-    Handle<Object> result = ft.Call(key, hash_seed).ToHandleChecked();
+    Handle<Object> result = ft.Call(key).ToHandleChecked();
 
-    uint32_t hash = ComputeIntegerHash(k, hash_seed->value());
+    uint32_t hash = ComputeIntegerHash(k, isolate->heap()->HashSeed());
     Smi* expected = Smi::FromInt(hash & Smi::kMaxValue);
     CHECK_EQ(expected, Smi::cast(*result));
   }
@@ -680,11 +686,12 @@ void TestNameDictionaryLookup() {
 
   for (size_t i = 0; i < arraysize(keys); i++) {
     Handle<Object> value = factory->NewPropertyCell(keys[i]);
-    dictionary = Dictionary::Add(dictionary, keys[i], value, fake_details);
+    dictionary =
+        Dictionary::Add(isolate, dictionary, keys[i], value, fake_details);
   }
 
   for (size_t i = 0; i < arraysize(keys); i++) {
-    int entry = dictionary->FindEntry(keys[i]);
+    int entry = dictionary->FindEntry(isolate, keys[i]);
     int name_index =
         Dictionary::EntryToIndex(entry) + Dictionary::kEntryKeyIndex;
     CHECK_NE(Dictionary::kNotFound, entry);
@@ -706,7 +713,7 @@ void TestNameDictionaryLookup() {
   };
 
   for (size_t i = 0; i < arraysize(non_existing_keys); i++) {
-    int entry = dictionary->FindEntry(non_existing_keys[i]);
+    int entry = dictionary->FindEntry(isolate, non_existing_keys[i]);
     CHECK_EQ(Dictionary::kNotFound, entry);
 
     ft.CheckTrue(dictionary, non_existing_keys[i], expect_not_found);
@@ -776,15 +783,16 @@ TEST(NumberDictionaryLookup) {
   for (int i = 0; i < kKeysCount; i++) {
     int random_key = rand_gen.NextInt(Smi::kMaxValue);
     keys[i] = static_cast<uint32_t>(random_key);
-    if (dictionary->FindEntry(keys[i]) != NumberDictionary::kNotFound) continue;
+    if (dictionary->FindEntry(isolate, keys[i]) != NumberDictionary::kNotFound)
+      continue;
 
-    dictionary =
-        NumberDictionary::Add(dictionary, keys[i], fake_value, fake_details);
+    dictionary = NumberDictionary::Add(isolate, dictionary, keys[i], fake_value,
+                                       fake_details);
   }
 
   // Now try querying existing keys.
   for (int i = 0; i < kKeysCount; i++) {
-    int entry = dictionary->FindEntry(keys[i]);
+    int entry = dictionary->FindEntry(isolate, keys[i]);
     CHECK_NE(NumberDictionary::kNotFound, entry);
 
     Handle<Object> key(Smi::FromInt(keys[i]), isolate);
@@ -795,7 +803,7 @@ TEST(NumberDictionaryLookup) {
   // Now try querying random keys which do not exist in the dictionary.
   for (int i = 0; i < kKeysCount;) {
     int random_key = rand_gen.NextInt(Smi::kMaxValue);
-    int entry = dictionary->FindEntry(random_key);
+    int entry = dictionary->FindEntry(isolate, random_key);
     if (entry != NumberDictionary::kNotFound) continue;
     i++;
 

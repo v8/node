@@ -29,7 +29,8 @@ LookupIterator LookupIterator::PropertyOrElement(
   if (!*success) {
     DCHECK(isolate->has_pending_exception());
     // Return an unusable dummy.
-    return LookupIterator(receiver, isolate->factory()->empty_string());
+    return LookupIterator(isolate, receiver,
+                          isolate->factory()->empty_string());
   }
 
   if (name->AsArrayIndex(&index)) {
@@ -61,7 +62,8 @@ LookupIterator LookupIterator::PropertyOrElement(Isolate* isolate,
   if (!*success) {
     DCHECK(isolate->has_pending_exception());
     // Return an unusable dummy.
-    return LookupIterator(receiver, isolate->factory()->empty_string());
+    return LookupIterator(isolate, receiver,
+                          isolate->factory()->empty_string());
   }
 
   if (name->AsArrayIndex(&index)) {
@@ -72,7 +74,7 @@ LookupIterator LookupIterator::PropertyOrElement(Isolate* isolate,
     return it;
   }
 
-  return LookupIterator(receiver, name, configuration);
+  return LookupIterator(isolate, receiver, name, configuration);
 }
 
 // TODO(ishell): Consider removing this way of LookupIterator creation.
@@ -84,7 +86,7 @@ LookupIterator LookupIterator::ForTransitionHandler(
   if (!maybe_transition_map.ToHandle(&transition_map) ||
       !transition_map->IsPrototypeValidityCellValid()) {
     // This map is not a valid transition handler, so full lookup is required.
-    return LookupIterator(receiver, name);
+    return LookupIterator(isolate, receiver, name);
   }
 
   PropertyDetails details = PropertyDetails::Empty();
@@ -513,7 +515,8 @@ void LookupIterator::ReconfigureDataProperty(Handle<Object> value,
       int enumeration_index = original_details.dictionary_index();
       DCHECK_GT(enumeration_index, 0);
       details = details.set_index(enumeration_index);
-      dictionary->SetEntry(dictionary_entry(), *name(), *value, details);
+      dictionary->SetEntry(isolate(), dictionary_entry(), *name(), *value,
+                           details);
       property_details_ = details;
     }
     state_ = DATA;
@@ -639,7 +642,7 @@ void LookupIterator::ApplyTransitionToDataProperty(
     if (receiver->map()->is_prototype_map() && receiver->IsJSObject()) {
       JSObject::InvalidatePrototypeChains(receiver->map());
     }
-    dictionary = NameDictionary::Add(dictionary, name(),
+    dictionary = NameDictionary::Add(isolate(), dictionary, name(),
                                      isolate_->factory()->uninitialized_value(),
                                      property_details_, &entry);
     receiver->SetProperties(*dictionary);
@@ -736,7 +739,7 @@ void LookupIterator::TransitionToAccessorProperty(
         return;
       }
     } else {
-      pair = AccessorPair::Copy(pair);
+      pair = AccessorPair::Copy(isolate(), pair);
       pair->SetComponents(*getter, *setter);
     }
   } else {
@@ -766,8 +769,8 @@ void LookupIterator::TransitionToAccessorPair(Handle<Object> pair,
     isolate_->CountUsage(v8::Isolate::kIndexAccessor);
     Handle<NumberDictionary> dictionary = JSObject::NormalizeElements(receiver);
 
-    dictionary =
-        NumberDictionary::Set(dictionary, index_, pair, receiver, details);
+    dictionary = NumberDictionary::Set(isolate_, dictionary, index_, pair,
+                                       receiver, details);
     receiver->RequireSlowElements(*dictionary);
 
     if (receiver->HasSlowArgumentsElements()) {
@@ -1064,7 +1067,7 @@ LookupIterator::State LookupIterator::LookupInSpecialHolder(
       if (!is_element && map->IsJSGlobalObjectMap()) {
         GlobalDictionary* dict =
             JSGlobalObject::cast(holder)->global_dictionary();
-        int number = dict->FindEntry(name_);
+        int number = dict->FindEntry(isolate(), name_);
         if (number == GlobalDictionary::kNotFound) return NOT_FOUND;
         number_ = static_cast<uint32_t>(number);
         PropertyCell* cell = dict->CellAt(number_);
@@ -1117,7 +1120,7 @@ LookupIterator::State LookupIterator::LookupInRegularHolder(
   } else {
     DCHECK_IMPLIES(holder->IsJSProxy(), name()->IsPrivate());
     NameDictionary* dict = holder->property_dictionary();
-    int number = dict->FindEntry(name_);
+    int number = dict->FindEntry(isolate(), name_);
     if (number == NameDictionary::kNotFound) return NotFound(holder);
     number_ = static_cast<uint32_t>(number);
     property_details_ = dict->DetailsAt(number_);

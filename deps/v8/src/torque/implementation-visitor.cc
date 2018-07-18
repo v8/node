@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <algorithm>
+
 #include "src/torque/implementation-visitor.h"
 #include "src/torque/parameter-difference.h"
 
@@ -164,6 +166,42 @@ void ImplementationVisitor::Visit(ModuleDeclaration* decl) {
   module_ = saved_module;
 }
 
+void ImplementationVisitor::Visit(ConstDeclaration* decl) {
+  Signature signature = MakeSignatureFromReturnType(decl->type);
+  std::string name = decl->name;
+
+  header_out() << "  ";
+  GenerateFunctionDeclaration(header_out(), "", name, signature, {});
+  header_out() << ";\n";
+
+  GenerateFunctionDeclaration(source_out(),
+                              GetDSLAssemblerName(CurrentModule()) + "::", name,
+                              signature, {});
+  source_out() << " {\n";
+
+  DCHECK(!signature.return_type->IsVoidOrNever());
+
+  VisitResult expression_result = Visit(decl->expression);
+  VisitResult return_result =
+      GenerateImplicitConvert(signature.return_type, expression_result);
+
+  GenerateIndent();
+  source_out() << "return " << return_result.RValue() << ";\n";
+  source_out() << "}\n\n";
+}
+
+void ImplementationVisitor::Visit(StructDeclaration* decl) {
+  header_out() << "  struct " << decl->name << " {\n";
+  const StructType* struct_type =
+      static_cast<const StructType*>(declarations()->LookupType(decl->name));
+  for (auto& field : struct_type->fields()) {
+    header_out() << "    " << field.type->GetGeneratedTypeName();
+    header_out() << " " << field.name << ";\n";
+  }
+  header_out() << "  } "
+               << ";\n";
+}
+
 void ImplementationVisitor::Visit(TorqueMacroDeclaration* decl,
                                   const Signature& sig, Statement* body) {
   Signature signature = MakeSignature(decl->signature.get());
@@ -222,7 +260,8 @@ void ImplementationVisitor::Visit(TorqueMacroDeclaration* decl,
     if (result_var != nullptr) {
       GenerateIndent();
       source_out() << "return "
-                   << VisitResult(result_var->type(), result_var).RValue()
+                   << RValueFlattenStructs(
+                          VisitResult(result_var->type(), result_var))
                    << ";" << std::endl;
     }
     source_out() << "}" << std::endl << std::endl;
@@ -251,8 +290,9 @@ void ImplementationVisitor::Visit(TorqueBuiltinDeclaration* decl,
   size_t first = 1;
   if (builtin->IsVarArgsJavaScript()) {
     assert(decl->signature->parameters.has_varargs);
-    Constant* arguments = Constant::cast(declarations()->LookupValue(
-        decl->signature->parameters.arguments_variable));
+    ExternConstant* arguments =
+        ExternConstant::cast(declarations()->LookupValue(
+            decl->signature->parameters.arguments_variable));
     std::string arguments_name = arguments->value();
     GenerateIndent();
     source_out()
@@ -310,7 +350,7 @@ VisitResult ImplementationVisitor::Visit(ConditionalExpression* expr) {
     source_out() << "" << std::endl;
     left = Visit(expr->if_true);
     GenerateIndent();
-    source_out() << "return " << left.RValue() << ";" << std::endl;
+    source_out() << "return " << RValueFlattenStructs(left) << ";" << std::endl;
   }
   source_out() << ";" << std::endl;
   GenerateIndent();
@@ -320,7 +360,8 @@ VisitResult ImplementationVisitor::Visit(ConditionalExpression* expr) {
     source_out() << "" << std::endl;
     right = Visit(expr->if_false);
     GenerateIndent();
-    source_out() << "return " << right.RValue() << ";" << std::endl;
+    source_out() << "return " << RValueFlattenStructs(right) << ";"
+                 << std::endl;
   }
   source_out() << ";" << std::endl;
 
@@ -372,7 +413,7 @@ VisitResult ImplementationVisitor::Visit(LogicalOrExpression* expr) {
     if (left_result.type()->IsBool()) {
       Label* true_label = declarations()->LookupLabel(kTrueLabelName);
       GenerateIndent();
-      source_out() << "GotoIf(" << left_result.RValue() << ", "
+      source_out() << "GotoIf(" << RValueFlattenStructs(left_result) << ", "
                    << true_label->generated() << ");" << std::endl;
     } else if (!left_result.type()->IsConstexprBool()) {
       GenerateLabelBind(false_label);
@@ -387,9 +428,9 @@ VisitResult ImplementationVisitor::Visit(LogicalOrExpression* expr) {
     ReportError(stream.str());
   }
   if (left_result.type()->IsConstexprBool()) {
-    return VisitResult(left_result.type(), std::string("(") +
-                                               left_result.RValue() + " || " +
-                                               right_result.RValue() + ")");
+    return VisitResult(left_result.type(),
+                       std::string("(") + RValueFlattenStructs(left_result) +
+                           " || " + RValueFlattenStructs(right_result) + ")");
   } else {
     return right_result;
   }
@@ -405,7 +446,7 @@ VisitResult ImplementationVisitor::Visit(LogicalAndExpression* expr) {
     if (left_result.type()->IsBool()) {
       Label* false_label = declarations()->LookupLabel(kFalseLabelName);
       GenerateIndent();
-      source_out() << "GotoIfNot(" << left_result.RValue() << ", "
+      source_out() << "GotoIfNot(" << RValueFlattenStructs(left_result) << ", "
                    << false_label->generated() << ");" << std::endl;
     } else if (!left_result.type()->IsConstexprBool()) {
       GenerateLabelBind(true_label);
@@ -420,9 +461,9 @@ VisitResult ImplementationVisitor::Visit(LogicalAndExpression* expr) {
     ReportError(stream.str());
   }
   if (left_result.type()->IsConstexprBool()) {
-    return VisitResult(left_result.type(), std::string("(") +
-                                               left_result.RValue() + " && " +
-                                               right_result.RValue() + ")");
+    return VisitResult(left_result.type(),
+                       std::string("(") + RValueFlattenStructs(left_result) +
+                           " && " + RValueFlattenStructs(right_result) + ")");
   } else {
     return right_result;
   }
@@ -566,7 +607,8 @@ const Type* ImplementationVisitor::Visit(IfStatement* stmt) {
     const Type* right_result = TypeOracle::GetVoidType();
     {
       GenerateIndent();
-      source_out() << "if ((" << expression_result.RValue() << ")) ";
+      source_out() << "if ((" << RValueFlattenStructs(expression_result)
+                   << ")) ";
       ScopedIndent indent(this, false);
       source_out() << std::endl;
       left_result = Visit(stmt->if_true);
@@ -782,11 +824,12 @@ const Type* ImplementationVisitor::Visit(ReturnStatement* stmt) {
     } else if (current_callable->IsBuiltin()) {
       if (Builtin::cast(current_callable)->IsVarArgsJavaScript()) {
         GenerateIndent();
-        source_out() << "arguments->PopAndReturn(" << return_result.RValue()
-                     << ");" << std::endl;
+        source_out() << "arguments->PopAndReturn("
+                     << RValueFlattenStructs(return_result) << ");"
+                     << std::endl;
       } else {
         GenerateIndent();
-        source_out() << "Return(" << return_result.RValue() << ");"
+        source_out() << "Return(" << RValueFlattenStructs(return_result) << ");"
                      << std::endl;
       }
     } else {
@@ -1030,26 +1073,35 @@ void ImplementationVisitor::GenerateIndent() {
 
 void ImplementationVisitor::GenerateMacroFunctionDeclaration(
     std::ostream& o, const std::string& macro_prefix, Macro* macro) {
+  GenerateFunctionDeclaration(o, macro_prefix, macro->name(),
+                              macro->signature(), macro->parameter_names());
+}
+
+void ImplementationVisitor::GenerateFunctionDeclaration(
+    std::ostream& o, const std::string& macro_prefix, const std::string& name,
+    const Signature& signature, const NameVector& parameter_names) {
   if (global_context_.verbose()) {
-    std::cout << "generating source for declaration " << *macro << ""
+    std::cout << "generating source for declaration " << name << ""
               << std::endl;
   }
 
   // Quite a hack here. Make sure that TNode is namespace qualified if the
-  // macro name is also qualified.
-  std::string return_type_name(
-      macro->signature().return_type->GetGeneratedTypeName());
-  if (macro_prefix != "" && (return_type_name.length() > 5) &&
-      (return_type_name.substr(0, 5) == "TNode")) {
+  // macro/constant name is also qualified.
+  std::string return_type_name(signature.return_type->GetGeneratedTypeName());
+  if (const StructType* struct_type =
+          StructType::DynamicCast(signature.return_type)) {
+    o << GetDSLAssemblerName(struct_type->module()) << "::";
+  } else if (macro_prefix != "" && (return_type_name.length() > 5) &&
+             (return_type_name.substr(0, 5) == "TNode")) {
     o << "compiler::";
   }
   o << return_type_name;
-  o << " " << macro_prefix << macro->name() << "(";
+  o << " " << macro_prefix << name << "(";
 
-  DCHECK_EQ(macro->signature().types().size(), macro->parameter_names().size());
-  auto type_iterator = macro->signature().types().begin();
+  DCHECK_EQ(signature.types().size(), parameter_names.size());
+  auto type_iterator = signature.types().begin();
   bool first = true;
-  for (const std::string& name : macro->parameter_names()) {
+  for (const std::string& name : parameter_names) {
     if (!first) {
       o << ", ";
     }
@@ -1062,7 +1114,7 @@ void ImplementationVisitor::GenerateMacroFunctionDeclaration(
     first = false;
   }
 
-  for (const LabelDeclaration& label_info : macro->signature().labels) {
+  for (const LabelDeclaration& label_info : signature.labels) {
     Label* label = declarations()->LookupLabel(label_info.name);
     if (!first) {
       o << ", ";
@@ -1189,21 +1241,33 @@ Callable* ImplementationVisitor::LookupCall(const std::string& name,
   return result;
 }
 
+void ImplementationVisitor::GetFlattenedStructsVars(
+    const Variable* base, std::set<const Variable*>& vars) {
+  const Type* type = base->type();
+  if (base->IsConst()) return;
+  if (type->IsStructType()) {
+    const StructType* struct_type = StructType::cast(type);
+    for (auto& field : struct_type->fields()) {
+      std::string field_var_name = base->name() + "." + field.name;
+      GetFlattenedStructsVars(
+          Variable::cast(declarations()->LookupValue(field_var_name)), vars);
+    }
+  } else {
+    vars.insert(base);
+  }
+}
+
 void ImplementationVisitor::GenerateChangedVarsFromControlSplit(AstNode* node) {
   const std::set<const Variable*>& changed_vars =
       global_context_.GetControlSplitChangedVariables(
           node, declarations()->GetCurrentSpecializationTypeNamesVector());
-  source_out() << "{";
-  bool first = true;
+  std::set<const Variable*> flattened_vars;
   for (auto v : changed_vars) {
-    if (v->type()->IsConstexpr()) continue;
-    if (first) {
-      first = false;
-    } else {
-      source_out() << ", ";
-    }
-    source_out() << v->value();
+    GetFlattenedStructsVars(v, flattened_vars);
   }
+  source_out() << "{";
+  PrintCommaSeparatedList(source_out(), flattened_vars,
+                          [&](const Variable* v) { return v->value(); });
   source_out() << "}";
 }
 
@@ -1223,10 +1287,40 @@ const Type* ImplementationVisitor::GetCommonType(const Type* left,
 
 VisitResult ImplementationVisitor::GenerateCopy(const VisitResult& to_copy) {
   std::string temp = GenerateNewTempVariable(to_copy.type());
-  source_out() << to_copy.RValue() << ";" << std::endl;
+  source_out() << RValueFlattenStructs(to_copy) << ";" << std::endl;
   GenerateIndent();
   source_out() << "USE(" << temp << ");" << std::endl;
   return VisitResult(to_copy.type(), temp);
+}
+
+VisitResult ImplementationVisitor::Visit(StructExpression* decl) {
+  const Type* raw_type = declarations()->LookupType(decl->name);
+  if (!raw_type->IsStructType()) {
+    std::stringstream s;
+    s << decl->name << " is not a struct but used like one ";
+    ReportError(s.str());
+  }
+  const StructType* struct_type = StructType::cast(raw_type);
+  if (struct_type->fields().size() != decl->expressions.size()) {
+    std::stringstream s;
+    s << "initializer count mismatch for struct " << decl->name << " (expected "
+      << struct_type->fields().size() << ", found " << decl->expressions.size()
+      << ")";
+    ReportError(s.str());
+  }
+  std::vector<VisitResult> expression_results;
+  for (auto& field : struct_type->fields()) {
+    VisitResult value = Visit(decl->expressions[expression_results.size()]);
+    value = GenerateImplicitConvert(field.type, value);
+    expression_results.push_back(value);
+  }
+  std::string result_var_name = GenerateNewTempVariable(struct_type);
+  source_out() << "{";
+  PrintCommaSeparatedList(
+      source_out(), expression_results,
+      [&](const VisitResult& result) { return RValueFlattenStructs(result); });
+  source_out() << "};\n";
+  return VisitResult(struct_type, result_var_name);
 }
 
 LocationReference ImplementationVisitor::GetLocationReference(
@@ -1243,6 +1337,47 @@ LocationReference ImplementationVisitor::GetLocationReference(
     default:
       UNREACHABLE();
   }
+}
+
+LocationReference ImplementationVisitor::GetLocationReference(
+    FieldAccessExpression* expr) {
+  VisitResult result = Visit(expr->object);
+  if (result.type()->IsStructType()) {
+    if (result.declarable()) {
+      return LocationReference(
+          declarations()->LookupValue((*result.declarable())->name() + "." +
+                                      expr->field),
+          {}, {});
+
+    } else {
+      return LocationReference(
+          nullptr,
+          VisitResult(result.type(), result.RValue() + "." + expr->field), {});
+    }
+  }
+  return LocationReference(nullptr, result, {});
+}
+
+std::string ImplementationVisitor::RValueFlattenStructs(VisitResult result) {
+  if (result.declarable()) {
+    const Value* value = *result.declarable();
+    const Type* type = value->type();
+    if (const StructType* struct_type = StructType::DynamicCast(type)) {
+      std::stringstream s;
+      s << struct_type->name() << "{";
+      PrintCommaSeparatedList(
+          s, struct_type->fields(), [&](const NameAndType& field) {
+            std::string field_declaration = value->name() + "." + field.name;
+            Variable* field_variable =
+                Variable::cast(declarations()->LookupValue(field_declaration));
+            return RValueFlattenStructs(
+                VisitResult(field_variable->type(), field_variable));
+          });
+      s << "}";
+      return s.str();
+    }
+  }
+  return result.RValue();
 }
 
 VisitResult ImplementationVisitor::GenerateFetchFromLocation(
@@ -1262,28 +1397,77 @@ VisitResult ImplementationVisitor::GenerateFetchFromLocation(
   }
 }
 
+VisitResult ImplementationVisitor::GenerateFetchFromLocation(
+    FieldAccessExpression* expr, LocationReference reference) {
+  const Type* type = reference.base.type();
+  if (reference.value != nullptr) {
+    return GenerateFetchFromLocation(reference);
+  } else if (const StructType* struct_type = StructType::DynamicCast(type)) {
+    auto& fields = struct_type->fields();
+    auto i = std::find_if(
+        fields.begin(), fields.end(),
+        [&](const NameAndType& f) { return f.name == expr->field; });
+    if (i == fields.end()) {
+      std::stringstream s;
+      s << "\"" << expr->field << "\" is not a field of struct type \""
+        << struct_type->name() << "\"";
+      ReportError(s.str());
+    }
+    return VisitResult(i->type, reference.base.RValue());
+  } else {
+    Arguments arguments;
+    arguments.parameters = {reference.base};
+    return GenerateCall(std::string(".") + expr->field, arguments);
+  }
+}
+
 void ImplementationVisitor::GenerateAssignToVariable(Variable* var,
                                                      VisitResult value) {
-  VisitResult casted_value = GenerateImplicitConvert(var->type(), value);
-  GenerateIndent();
-  VisitResult variable_result = {var->type(), var};
-  source_out() << variable_result.LValue() << " = " << casted_value.RValue()
-               << ";\n";
+  if (var->type()->IsStructType()) {
+    if (value.type() != var->type()) {
+      std::stringstream s;
+      s << "incompatable assignment from type " << *value.type() << " to "
+        << *var->type();
+      ReportError(s.str());
+    }
+    const StructType* struct_type = StructType::cast(var->type());
+    for (auto& field : struct_type->fields()) {
+      std::string field_declaration = var->name() + "." + field.name;
+      Variable* field_variable =
+          Variable::cast(declarations()->LookupValue(field_declaration));
+      if (value.declarable() && (*value.declarable())->IsVariable()) {
+        Variable* source_field = Variable::cast(declarations()->LookupValue(
+            Variable::cast((*value.declarable()))->name() + "." + field.name));
+        GenerateAssignToVariable(
+            field_variable, VisitResult{source_field->type(), source_field});
+      } else {
+        GenerateAssignToVariable(
+            field_variable, VisitResult{field_variable->type(),
+                                        value.RValue() + "." + field.name});
+      }
+    }
+  } else {
+    VisitResult casted_value = GenerateImplicitConvert(var->type(), value);
+    GenerateIndent();
+    VisitResult var_value = {var->type(), var};
+    source_out() << var_value.LValue() << " = "
+                 << RValueFlattenStructs(casted_value) << ";" << std::endl;
+  }
   var->Define();
 }
 
 void ImplementationVisitor::GenerateAssignToLocation(
     LocationExpression* location, const LocationReference& reference,
     VisitResult assignment_value) {
-  if (IdentifierExpression::cast(location)) {
+  if (reference.value != nullptr) {
     Value* value = reference.value;
-    if (value->IsConst()) {
+    Variable* var = Variable::cast(value);
+    if (var->IsConst()) {
       std::stringstream s;
-      s << "\"" << value->name()
+      s << "\"" << var->name()
         << "\" is declared const (maybe implicitly) and cannot be assigned to";
       ReportError(s.str());
     }
-    Variable* var = Variable::cast(value);
     GenerateAssignToVariable(var, assignment_value);
   } else if (auto access = FieldAccessExpression::cast(location)) {
     GenerateCall(std::string(".") + access->field + "=",
@@ -1292,6 +1476,36 @@ void ImplementationVisitor::GenerateAssignToLocation(
     DCHECK_NOT_NULL(ElementAccessExpression::cast(location));
     GenerateCall("[]=",
                  {{reference.base, reference.index, assignment_value}, {}});
+  }
+}
+
+void ImplementationVisitor::GenerateVariableDeclaration(const Variable* var) {
+  const Type* var_type = var->type();
+  if (var_type->IsStructType()) {
+    const StructType* struct_type = StructType::cast(var_type);
+    for (auto& field : struct_type->fields()) {
+      GenerateVariableDeclaration(Variable::cast(
+          declarations()->LookupValue(var->name() + "." + field.name)));
+    }
+  } else {
+    std::string value = var->value();
+    GenerateIndent();
+    if (var_type->IsConstexpr()) {
+      source_out() << var_type->GetGeneratedTypeName();
+      source_out() << " " << value << "_impl;" << std::endl;
+    } else if (var->IsConst()) {
+      source_out() << "TNode<" << var->type()->GetGeneratedTNodeTypeName();
+      source_out() << "> " << var->value() << "_impl;\n";
+    } else {
+      source_out() << "TVARIABLE(";
+      source_out() << var_type->GetGeneratedTNodeTypeName();
+      source_out() << ", " << value << "_impl);" << std::endl;
+    }
+    GenerateIndent();
+    source_out() << "auto " << value << " = &" << value << "_impl;"
+                 << std::endl;
+    GenerateIndent();
+    source_out() << "USE(" << value << ");" << std::endl;
   }
 }
 
@@ -1304,7 +1518,7 @@ Variable* ImplementationVisitor::GenerateVariableDeclaration(
   if (declarations()->TryLookup(name)) {
     variable = Variable::cast(declarations()->LookupValue(name));
   } else {
-    variable = declarations()->DeclareVariable(name, *type);
+    variable = declarations()->DeclareVariable(name, *type, false);
     // Because the variable is being defined during code generation, it must be
     // assumed that it changes along all control split paths because it's no
     // longer possible to run the control-flow anlaysis in the declaration pass
@@ -1313,21 +1527,7 @@ Variable* ImplementationVisitor::GenerateVariableDeclaration(
         node, declarations()->GetCurrentSpecializationTypeNamesVector(),
         variable);
   }
-
-  GenerateIndent();
-  if (variable->type()->IsConstexpr()) {
-    source_out() << variable->type()->GetGeneratedTypeName();
-    source_out() << " " << variable->value() << "_impl;" << std::endl;
-  } else {
-    source_out() << "TVARIABLE(";
-    source_out() << variable->type()->GetGeneratedTNodeTypeName();
-    source_out() << ", " << variable->value() << "_impl);" << std::endl;
-  }
-  GenerateIndent();
-  source_out() << "auto " << variable->value() << " = &" << variable->value()
-               << "_impl;" << std::endl;
-  GenerateIndent();
-  source_out() << "USE(" << variable->value() << ");" << std::endl;
+  GenerateVariableDeclaration(variable);
   if (initialization) {
     GenerateAssignToVariable(variable, *initialization);
   }
@@ -1397,7 +1597,7 @@ VisitResult ImplementationVisitor::GeneratePointerCall(
     const Type* to_type = type->parameter_types()[current];
     VisitResult result =
         GenerateImplicitConvert(to_type, arguments.parameters[current]);
-    variables.push_back(result.RValue());
+    variables.push_back(RValueFlattenStructs(result));
   }
 
   std::string result_variable_name;
@@ -1405,10 +1605,15 @@ VisitResult ImplementationVisitor::GeneratePointerCall(
   if (no_result) {
     GenerateIndent();
   } else {
-    result_variable_name = GenerateNewTempVariable(type->return_type());
-    source_out() << "UncheckedCast<";
-    source_out() << type->return_type()->GetGeneratedTNodeTypeName();
-    source_out() << ">(";
+    const Type* return_type = type->return_type();
+    result_variable_name = GenerateNewTempVariable(return_type);
+    if (return_type->IsStructType()) {
+      source_out() << "(";
+    } else {
+      source_out() << "UncheckedCast<";
+      source_out() << type->return_type()->GetGeneratedTNodeTypeName();
+      source_out() << ">(";
+    }
   }
 
   Builtin* example_builtin =
@@ -1426,7 +1631,7 @@ VisitResult ImplementationVisitor::GeneratePointerCall(
   }
   source_out() << "Builtins::CallableFor(isolate(), Builtins::k"
                << example_builtin->name() << ").descriptor(), "
-               << callee_result.RValue() << ", ";
+               << RValueFlattenStructs(callee_result) << ", ";
 
   size_t total_parameters = 0;
   for (size_t i = 0; i < arguments.parameters.size(); ++i) {
@@ -1465,7 +1670,7 @@ VisitResult ImplementationVisitor::GenerateCall(
                               : callable->signature().types()[current];
     VisitResult result =
         GenerateImplicitConvert(to_type, arguments.parameters[current]);
-    variables.push_back(result.RValue());
+    variables.push_back(RValueFlattenStructs(result));
   }
 
   std::string result_variable_name;
@@ -1474,9 +1679,13 @@ VisitResult ImplementationVisitor::GenerateCall(
   } else {
     result_variable_name = GenerateNewTempVariable(result_type);
     if (!result_type->IsConstexpr()) {
-      source_out() << "UncheckedCast<";
-      source_out() << result_type->GetGeneratedTNodeTypeName();
-      source_out() << ">(";
+      if (result_type->IsStructType()) {
+        source_out() << "(";
+      } else {
+        source_out() << "UncheckedCast<";
+        source_out() << result_type->GetGeneratedTNodeTypeName();
+        source_out() << ">(";
+      }
     }
   }
   if (callable->IsBuiltin()) {
@@ -1629,7 +1838,7 @@ VisitResult ImplementationVisitor::Visit(CallExpression* expr,
   }
   if (!result.type()->IsVoidOrNever()) {
     GenerateIndent();
-    source_out() << "USE(" << result.RValue() << ");" << std::endl;
+    source_out() << "USE(" << RValueFlattenStructs(result) << ");" << std::endl;
   }
   if (is_tailcall) {
     result = {TypeOracle::GetNeverType(), ""};
@@ -1661,7 +1870,7 @@ void ImplementationVisitor::GenerateBranch(const VisitResult& condition,
                                            Label* true_label,
                                            Label* false_label) {
   GenerateIndent();
-  source_out() << "Branch(" << condition.RValue() << ", "
+  source_out() << "Branch(" << RValueFlattenStructs(condition) << ", "
                << true_label->generated() << ", " << false_label->generated()
                << ");" << std::endl;
 }
@@ -1700,11 +1909,8 @@ VisitResult ImplementationVisitor::GenerateImplicitConvert(
         GetGeneratedCallableName(kFromConstexprMacroName, {destination_type});
     return GenerateCall(name, {{source}, {}}, false);
   } else if (IsAssignableFrom(destination_type, source.type())) {
-    if (source.declarable()) {
-      return VisitResult(destination_type, *source.declarable());
-    } else {
-      return VisitResult(destination_type, source.value());
-    }
+    source.SetType(destination_type);
+    return source;
   } else {
     std::stringstream s;
     s << "cannot use expression of type " << *source.type()

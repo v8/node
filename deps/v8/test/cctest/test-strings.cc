@@ -923,7 +923,7 @@ TEST(Utf8Conversion) {
                                     v8::NewStringType::kNormal,
                                     StrLength(one_byte_string))
                 .ToLocalChecked()
-                ->Utf8Length();
+                ->Utf8Length(CcTest::isolate());
   CHECK_EQ(StrLength(one_byte_string), len);
   // A mixed one-byte and two-byte string
   // U+02E4 -> CB A4
@@ -942,7 +942,7 @@ TEST(Utf8Conversion) {
       v8::String::NewFromTwoByte(CcTest::isolate(), mixed_string,
                                  v8::NewStringType::kNormal, 5)
           .ToLocalChecked();
-  CHECK_EQ(10, mixed->Utf8Length());
+  CHECK_EQ(10, mixed->Utf8Length(CcTest::isolate()));
   // Try encoding the string with all capacities
   char buffer[11];
   const char kNoChar = static_cast<char>(-1);
@@ -1245,7 +1245,7 @@ TEST(SliceFromExternal) {
   CHECK(SlicedString::cast(*slice)->parent()->IsExternalString());
   CHECK(slice->IsFlat());
   // This avoids the GC from trying to free stack allocated resources.
-  i::Handle<i::ExternalOneByteString>::cast(string)->SetResource(nullptr);
+  i::Handle<i::ExternalOneByteString>::cast(string)->set_resource(nullptr);
 }
 
 
@@ -1526,8 +1526,9 @@ TEST(FormatMessage) {
   Handle<String> arg1 = isolate->factory()->NewStringFromAsciiChecked("arg1");
   Handle<String> arg2 = isolate->factory()->NewStringFromAsciiChecked("arg2");
   Handle<String> result =
-      MessageTemplate::FormatMessage(MessageTemplate::kPropertyNotFunction,
-                                     arg0, arg1, arg2).ToHandleChecked();
+      MessageTemplate::FormatMessage(
+          isolate, MessageTemplate::kPropertyNotFunction, arg0, arg1, arg2)
+          .ToHandleChecked();
   Handle<String> expected = isolate->factory()->NewStringFromAsciiChecked(
       "'arg0' returned for property 'arg1' of object 'arg2' is not a function");
   CHECK(String::Equals(isolate, result, expected));

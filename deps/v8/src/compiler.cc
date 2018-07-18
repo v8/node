@@ -970,7 +970,7 @@ BackgroundCompileTask::BackgroundCompileTask(ScriptStreamingData* source,
   // Prepare the data for the internalization phase and compilation phase, which
   // will happen in the main thread after parsing.
   ParseInfo* info = new ParseInfo(isolate);
-  LOG(isolate, ScriptEvent(Logger::ScriptEventType::kBackgroundCompile,
+  LOG(isolate, ScriptEvent(Logger::ScriptEventType::kStreamingCompile,
                            info->script_id()));
   if (V8_UNLIKELY(FLAG_runtime_stats)) {
     info->set_runtime_call_stats(new (info->zone()) RuntimeCallStats());
@@ -1595,11 +1595,11 @@ Handle<Script> NewScript(Isolate* isolate, ParseInfo* parse_info,
 }  // namespace
 
 MaybeHandle<SharedFunctionInfo> Compiler::GetSharedFunctionInfoForScript(
-    Handle<String> source, const Compiler::ScriptDetails& script_details,
+    Isolate* isolate, Handle<String> source,
+    const Compiler::ScriptDetails& script_details,
     ScriptOriginOptions origin_options, v8::Extension* extension,
     ScriptData* cached_data, ScriptCompiler::CompileOptions compile_options,
     ScriptCompiler::NoCacheReason no_cache_reason, NativesFlag natives) {
-  Isolate* isolate = source->GetIsolate();
   ScriptCompileTimerScope compile_timer(isolate, no_cache_reason);
 
   if (compile_options == ScriptCompiler::kNoCompileOptions ||
@@ -1775,9 +1775,9 @@ ScriptCompiler::ScriptStreamingTask* Compiler::NewBackgroundCompileTask(
 
 MaybeHandle<SharedFunctionInfo>
 Compiler::GetSharedFunctionInfoForStreamedScript(
-    Handle<String> source, const ScriptDetails& script_details,
-    ScriptOriginOptions origin_options, ScriptStreamingData* streaming_data) {
-  Isolate* isolate = source->GetIsolate();
+    Isolate* isolate, Handle<String> source,
+    const ScriptDetails& script_details, ScriptOriginOptions origin_options,
+    ScriptStreamingData* streaming_data) {
   ScriptCompileTimerScope compile_timer(
       isolate, ScriptCompiler::kNoCacheBecauseStreamingSource);
   PostponeInterruptsScope postpone(isolate);
