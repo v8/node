@@ -1043,7 +1043,7 @@
     }], # end aix section
     [ 'v8_enable_inspector==1', {
       'variables': {
-        'protocol_path': 'deps/v8/third_party/inspector_protocol',
+        'protocol_path': 'tools/inspector_protocol',
         'node_inspector_path': 'src/inspector',
         'node_inspector_generated_sources': [
           '<(SHARED_INTERMEDIATE_DIR)/src/node/inspector/protocol/Forward.h',
@@ -1074,7 +1074,7 @@
           '<(protocol_path)/templates/Imported_h.template',
           '<(protocol_path)/templates/TypeBuilder_cpp.template',
           '<(protocol_path)/templates/TypeBuilder_h.template',
-          '<(protocol_path)/code_generator.py',
+          '<(protocol_path)/CodeGenerator.py',
         ]
       },
       'targets': [
@@ -1102,7 +1102,7 @@
               ],
               'action': [
                 'python',
-                'deps/v8/third_party/inspector_protocol/convert_protocol_to_json.py',
+                'tools/inspector_protocol/ConvertProtocolToJSON.py',
                 '<@(_inputs)',
                 '<@(_outputs)',
               ],
@@ -1127,7 +1127,7 @@
               ],
               'action': [
                 'python',
-                '<(protocol_path)/code_generator.py',
+                '<(protocol_path)/CodeGenerator.py',
                 '--jinja_dir', '<@(protocol_path)/..',
                 '--output_base', '<(SHARED_INTERMEDIATE_DIR)/src/',
                 '--config', '<(SHARED_INTERMEDIATE_DIR)/node_protocol_config.json',
@@ -1157,7 +1157,7 @@
               ],
               'action': [
                 'python',
-                'deps/v8/third_party/inspector_protocol/convert_protocol_to_json.py',
+                'tools/inspector_protocol/ConvertProtocolToJSON.py',
                 '<@(_inputs)',
                 '<@(_outputs)',
               ],
@@ -1173,7 +1173,7 @@
               ],
               'action': [
                 'python',
-                'deps/v8/third_party/inspector_protocol/concatenate_protocols.py',
+                'tools/inspector_protocol/ConcatenateProtocols.py',
                 '<@(_inputs)',
                 '<@(_outputs)',
               ],
