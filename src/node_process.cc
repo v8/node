@@ -147,8 +147,8 @@ void Kill(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() != 2)
     return env->ThrowError("Bad argument.");
 
-  int pid = args[0]->Int32Value();
-  int sig = args[1]->Int32Value();
+  int pid = args[0]->Int32Value(env->context()).FromMaybe(0);
+  int sig = args[1]->Int32Value(env->context()).FromMaybe(0);
   int err = uv_kill(pid, sig);
   args.GetReturnValue().Set(err);
 }
@@ -310,22 +310,20 @@ static const char* name_by_gid(gid_t gid) {
 }
 #endif
 
-
-static uid_t uid_by_name(Isolate* isolate, Local<Value> value) {
+static uid_t uid_by_name(Environment* env, Local<Value> value) {
   if (value->IsUint32()) {
-    return static_cast<uid_t>(value->Uint32Value());
+    return static_cast<uid_t>(value->Uint32Value(env->context()).ToChecked());
   } else {
-    Utf8Value name(isolate, value);
+    Utf8Value name(env->isolate(), value);
     return uid_by_name(*name);
   }
 }
 
-
-static gid_t gid_by_name(Isolate* isolate, Local<Value> value) {
+static gid_t gid_by_name(Environment* env, Local<Value> value) {
   if (value->IsUint32()) {
-    return static_cast<gid_t>(value->Uint32Value());
+    return static_cast<uid_t>(value->Uint32Value(env->context()).ToChecked());
   } else {
-    Utf8Value name(isolate, value);
+    Utf8Value name(env->isolate(), value);
     return gid_by_name(*name);
   }
 }
@@ -361,7 +359,7 @@ void SetGid(const FunctionCallbackInfo<Value>& args) {
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
-  gid_t gid = gid_by_name(env->isolate(), args[0]);
+  gid_t gid = gid_by_name(env, args[0]);
 
   if (gid == gid_not_found) {
     // Tells JS to throw ERR_INVALID_CREDENTIAL
@@ -381,7 +379,7 @@ void SetEGid(const FunctionCallbackInfo<Value>& args) {
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
-  gid_t gid = gid_by_name(env->isolate(), args[0]);
+  gid_t gid = gid_by_name(env, args[0]);
 
   if (gid == gid_not_found) {
     // Tells JS to throw ERR_INVALID_CREDENTIAL
@@ -401,7 +399,7 @@ void SetUid(const FunctionCallbackInfo<Value>& args) {
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
-  uid_t uid = uid_by_name(env->isolate(), args[0]);
+  uid_t uid = uid_by_name(env, args[0]);
 
   if (uid == uid_not_found) {
     // Tells JS to throw ERR_INVALID_CREDENTIAL
@@ -421,7 +419,7 @@ void SetEUid(const FunctionCallbackInfo<Value>& args) {
   CHECK_EQ(args.Length(), 1);
   CHECK(args[0]->IsUint32() || args[0]->IsString());
 
-  uid_t uid = uid_by_name(env->isolate(), args[0]);
+  uid_t uid = uid_by_name(env, args[0]);
 
   if (uid == uid_not_found) {
     // Tells JS to throw ERR_INVALID_CREDENTIAL
@@ -481,7 +479,7 @@ void SetGroups(const FunctionCallbackInfo<Value>& args) {
   gid_t* groups = new gid_t[size];
 
   for (size_t i = 0; i < size; i++) {
-    gid_t gid = gid_by_name(env->isolate(), groups_list->Get(i));
+    gid_t gid = gid_by_name(env, groups_list->Get(i));
 
     if (gid == gid_not_found) {
       delete[] groups;
@@ -516,7 +514,7 @@ void InitGroups(const FunctionCallbackInfo<Value>& args) {
   char* user;
 
   if (args[0]->IsUint32()) {
-    user = name_by_uid(args[0]->Uint32Value());
+    user = name_by_uid(args[0]->Uint32Value(env->context()).ToChecked());
     must_free = true;
   } else {
     user = *arg0;
@@ -528,7 +526,7 @@ void InitGroups(const FunctionCallbackInfo<Value>& args) {
     return args.GetReturnValue().Set(1);
   }
 
-  extra_group = gid_by_name(env->isolate(), args[1]);
+  extra_group = gid_by_name(env, args[1]);
 
   if (extra_group == gid_not_found) {
     if (must_free)

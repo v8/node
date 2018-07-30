@@ -981,14 +981,15 @@ void SecureContext::SetOptions(const FunctionCallbackInfo<Value>& args) {
   SecureContext* sc;
   ASSIGN_OR_RETURN_UNWRAP(&sc, args.Holder());
 
-  if (args.Length() != 1 || !args[0]->IntegerValue()) {
+  int64_t value;
+  if (args.Length() != 1 ||
+      !args[0]->IntegerValue(sc->env()->context()).To(&value)) {
     return THROW_ERR_INVALID_ARG_TYPE(
         sc->env(), "Options must be an integer value");
   }
 
-  SSL_CTX_set_options(
-      sc->ctx_.get(),
-      static_cast<long>(args[0]->IntegerValue()));  // NOLINT(runtime/int)
+  SSL_CTX_set_options(sc->ctx_.get(),
+                      static_cast<long>(value));  // NOLINT(runtime/int)
 }
 
 
@@ -1040,7 +1041,8 @@ void SecureContext::SetSessionTimeout(const FunctionCallbackInfo<Value>& args) {
         sc->env(), "Session timeout must be a 32-bit integer");
   }
 
-  int32_t sessionTimeout = args[0]->Int32Value();
+  int32_t sessionTimeout =
+      args[0]->Int32Value(sc->env()->context()).FromMaybe(0);
   SSL_CTX_set_timeout(sc->ctx_.get(), sessionTimeout);
 }
 
@@ -1262,8 +1264,9 @@ int SecureContext::TicketKeyCallback(SSL* ssl,
                                         {0, 0}).ToLocalChecked();
   Local<Array> arr = ret.As<Array>();
 
-  int r = arr->Get(kTicketKeyReturnIndex)->Int32Value();
-  if (r < 0)
+  int r;
+  if (!arr->Get(kTicketKeyReturnIndex)->Int32Value(env->context()).To(&r) ||
+      r < 0)
     return r;
 
   Local<Value> hmac = arr->Get(kTicketKeyHMACIndex);
@@ -3076,7 +3079,9 @@ void CipherBase::SetAutoPadding(const FunctionCallbackInfo<Value>& args) {
   CipherBase* cipher;
   ASSIGN_OR_RETURN_UNWRAP(&cipher, args.Holder());
 
-  if (!cipher->SetAutoPadding(args.Length() < 1 || args[0]->BooleanValue()))
+  if (!cipher->SetAutoPadding(
+          args.Length() < 1 ||
+          args[0]->BooleanValue(cipher->env()->context()).FromMaybe(false)))
     args.GetReturnValue().Set(false);  // Report invalid state failure
 }
 
@@ -3856,7 +3861,7 @@ void PublicKeyCipher::Cipher(const FunctionCallbackInfo<Value>& args) {
   char* buf = Buffer::Data(args[1]);
   ssize_t len = Buffer::Length(args[1]);
 
-  int padding = args[2]->Uint32Value();
+  int padding = args[2]->Uint32Value(env->context()).FromMaybe(0);
 
   String::Utf8Value passphrase(args.GetIsolate(), args[3]);
 
@@ -4049,14 +4054,15 @@ void DiffieHellman::New(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() == 2) {
     if (args[0]->IsInt32()) {
       if (args[1]->IsInt32()) {
-        initialized = diffieHellman->Init(args[0]->Int32Value(),
-                                          args[1]->Int32Value());
+        initialized = diffieHellman->Init(
+            args[0]->Int32Value(env->context()).FromMaybe(0),
+            args[1]->Int32Value(env->context()).FromMaybe(0));
       }
     } else {
       if (args[1]->IsInt32()) {
-        initialized = diffieHellman->Init(Buffer::Data(args[0]),
-                                          Buffer::Length(args[0]),
-                                          args[1]->Int32Value());
+        initialized = diffieHellman->Init(
+            Buffer::Data(args[0]), Buffer::Length(args[0]),
+            args[1]->Int32Value(env->context()).FromMaybe(0));
       } else {
         initialized = diffieHellman->Init(Buffer::Data(args[0]),
                                           Buffer::Length(args[0]),
@@ -4421,8 +4427,8 @@ void ECDH::GetPublicKey(const FunctionCallbackInfo<Value>& args) {
     return env->ThrowError("Failed to get ECDH public key");
 
   int size;
-  point_conversion_form_t form =
-      static_cast<point_conversion_form_t>(args[0]->Uint32Value());
+  point_conversion_form_t form = static_cast<point_conversion_form_t>(
+      args[0]->Uint32Value(env->context()).FromMaybe(0));
 
   size = EC_POINT_point2oct(ecdh->group_, pub, form, nullptr, 0, nullptr);
   if (size == 0)
@@ -5034,8 +5040,8 @@ void ConvertKey(const FunctionCallbackInfo<Value>& args) {
   if (pub == nullptr)
     return env->ThrowError("Failed to convert Buffer to EC_POINT");
 
-  point_conversion_form_t form =
-      static_cast<point_conversion_form_t>(args[2]->Uint32Value());
+  point_conversion_form_t form = static_cast<point_conversion_form_t>(
+      args[2]->Uint32Value(env->context()).FromMaybe(0));
 
   int size = EC_POINT_point2oct(
       group.get(), pub.get(), form, nullptr, 0, nullptr);
@@ -5129,7 +5135,7 @@ void InitCryptoOnce() {
 void SetEngine(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   CHECK(args.Length() >= 2 && args[0]->IsString());
-  unsigned int flags = args[1]->Uint32Value();
+  unsigned int flags = args[1]->Uint32Value(env->context()).FromMaybe(0);
 
   ClearErrorOnReturn clear_error_on_return;
 

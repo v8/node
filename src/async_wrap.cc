@@ -36,6 +36,7 @@ using v8::HeapProfiler;
 using v8::Integer;
 using v8::Isolate;
 using v8::Local;
+using v8::Maybe;
 using v8::MaybeLocal;
 using v8::Number;
 using v8::Object;
@@ -480,15 +481,19 @@ void AsyncWrap::PopAsyncIds(const FunctionCallbackInfo<Value>& args) {
 void AsyncWrap::AsyncReset(const FunctionCallbackInfo<Value>& args) {
   AsyncWrap* wrap;
   ASSIGN_OR_RETURN_UNWRAP(&wrap, args.Holder());
-  double execution_async_id = args[0]->IsNumber() ? args[0]->NumberValue() : -1;
+  double execution_async_id =
+      args[0]->IsNumber()
+          ? args[0]->NumberValue(wrap->env()->context()).ToChecked()
+          : -1;
   wrap->AsyncReset(execution_async_id);
 }
 
 
 void AsyncWrap::QueueDestroyAsyncId(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsNumber());
-  AsyncWrap::EmitDestroy(
-      Environment::GetCurrent(args), args[0]->NumberValue());
+  Environment* env = Environment::GetCurrent(args);
+  AsyncWrap::EmitDestroy(env,
+                         args[0]->NumberValue(env->context()).FromMaybe(0));
 }
 
 void AsyncWrap::AddWrapMethods(Environment* env,

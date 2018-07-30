@@ -446,9 +446,8 @@ class NodeInspectorClient : public V8InspectorClient {
 
     Local<v8::StackTrace> stack_trace = message->GetStackTrace();
 
-    if (!stack_trace.IsEmpty() &&
-        stack_trace->GetFrameCount() > 0 &&
-        script_id == stack_trace->GetFrame(0)->GetScriptId()) {
+    if (!stack_trace.IsEmpty() && stack_trace->GetFrameCount() > 0 &&
+        script_id == stack_trace->GetFrame(env_->isolate(), 0)->GetScriptId()) {
       script_id = 0;
     }
 

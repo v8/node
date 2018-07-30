@@ -1127,7 +1127,7 @@ static void Exit(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
   WaitForInspectorDisconnect(env);
   v8_platform.StopTracingAgent();
-  env->Exit(args[0]->Int32Value());
+  env->Exit(args[0]->Int32Value(env->context()).FromMaybe(0));
 }
 
 extern "C" void node_module_register(void* m) {
@@ -1917,7 +1917,8 @@ static void DebugPortSetter(Local<Name> property,
                             Local<Value> value,
                             const PropertyCallbackInfo<void>& info) {
   Mutex::ScopedLock lock(process_mutex);
-  debug_options.set_port(value->Int32Value());
+  debug_options.set_port(
+      value->Int32Value(info.Holder()->CreationContext()).FromMaybe(0));
 }
 
 
@@ -3002,7 +3003,7 @@ void DebugProcess(const FunctionCallbackInfo<Value>& args) {
   pid_t pid;
   int r;
 
-  pid = args[0]->IntegerValue();
+  pid = args[0]->IntegerValue(env->context()).FromMaybe(0);
   r = kill(pid, SIGUSR1);
   if (r != 0) {
     return env->ThrowErrnoException(errno, "kill");

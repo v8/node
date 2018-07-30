@@ -234,8 +234,8 @@ void Open(const FunctionCallbackInfo<Value>& args) {
   Agent* agent = env->inspector_agent();
   bool wait_for_connect = false;
 
-  if (args.Length() > 0 && args[0]->IsUint32()) {
-    uint32_t port = args[0]->Uint32Value();
+  uint32_t port;
+  if (args.Length() > 0 && args[0]->Uint32Value(env->context()).To(&port)) {
     agent->options().set_port(static_cast<int>(port));
   }
 

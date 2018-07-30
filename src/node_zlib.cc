@@ -155,7 +155,8 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
 
     CHECK_EQ(false, args[0]->IsUndefined() && "must provide flush value");
 
-    unsigned int flush = args[0]->Uint32Value();
+    unsigned int flush =
+        args[0]->Uint32Value(ctx->env()->context()).FromMaybe(0);
 
     if (flush != Z_NO_FLUSH &&
         flush != Z_PARTIAL_FLUSH &&
@@ -182,8 +183,8 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
       CHECK(Buffer::HasInstance(args[1]));
       Local<Object> in_buf;
       in_buf = args[1]->ToObject(env->context()).ToLocalChecked();
-      in_off = args[2]->Uint32Value();
-      in_len = args[3]->Uint32Value();
+      in_off = args[2]->Uint32Value(env->context()).FromMaybe(0);
+      in_len = args[3]->Uint32Value(env->context()).FromMaybe(0);
 
       CHECK(Buffer::IsWithinBounds(in_off, in_len, Buffer::Length(in_buf)));
       in = reinterpret_cast<Bytef *>(Buffer::Data(in_buf) + in_off);
@@ -191,8 +192,8 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
 
     CHECK(Buffer::HasInstance(args[4]));
     Local<Object> out_buf = args[4]->ToObject(env->context()).ToLocalChecked();
-    out_off = args[5]->Uint32Value();
-    out_len = args[6]->Uint32Value();
+    out_off = args[5]->Uint32Value(env->context()).FromMaybe(0);
+    out_len = args[6]->Uint32Value(env->context()).FromMaybe(0);
     CHECK(Buffer::IsWithinBounds(out_off, out_len, Buffer::Length(out_buf)));
     out = reinterpret_cast<Bytef *>(Buffer::Data(out_buf) + out_off);
 
@@ -415,7 +416,8 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
   static void New(const FunctionCallbackInfo<Value>& args) {
     Environment* env = Environment::GetCurrent(args);
     CHECK(args[0]->IsInt32());
-    node_zlib_mode mode = static_cast<node_zlib_mode>(args[0]->Int32Value());
+    node_zlib_mode mode = static_cast<node_zlib_mode>(
+        args[0]->Int32Value(env->context()).FromMaybe(0));
     new ZCtx(env, args.This(), mode);
   }
 
@@ -441,7 +443,7 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
     // windowBits is special. On the compression side, 0 is an invalid value.
     // But on the decompression side, a value of 0 for windowBits tells zlib
     // to use the window size in the zlib header of the compressed stream.
-    int windowBits = args[0]->Uint32Value();
+    int windowBits = args[0]->Uint32Value(ctx->env()->context()).FromMaybe(0);
     if (!((windowBits == 0) &&
           (ctx->mode_ == INFLATE ||
            ctx->mode_ == GUNZIP ||
@@ -450,15 +452,15 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
              windowBits <= Z_MAX_WINDOWBITS) && "invalid windowBits");
     }
 
-    int level = args[1]->Int32Value();
+    int level = args[1]->Int32Value(ctx->env()->context()).FromMaybe(0);
     CHECK((level >= Z_MIN_LEVEL && level <= Z_MAX_LEVEL) &&
       "invalid compression level");
 
-    int memLevel = args[2]->Uint32Value();
+    int memLevel = args[2]->Uint32Value(ctx->env()->context()).FromMaybe(0);
     CHECK((memLevel >= Z_MIN_MEMLEVEL && memLevel <= Z_MAX_MEMLEVEL) &&
       "invalid memlevel");
 
-    int strategy = args[3]->Uint32Value();
+    int strategy = args[3]->Uint32Value(ctx->env()->context()).FromMaybe(0);
     CHECK((strategy == Z_FILTERED ||
            strategy == Z_HUFFMAN_ONLY ||
            strategy == Z_RLE ||
@@ -496,7 +498,8 @@ class ZCtx : public AsyncWrap, public ThreadPoolWork {
     CHECK(args.Length() == 2 && "params(level, strategy)");
     ZCtx* ctx;
     ASSIGN_OR_RETURN_UNWRAP(&ctx, args.Holder());
-    Params(ctx, args[0]->Int32Value(), args[1]->Int32Value());
+    Params(ctx, args[0]->Int32Value(ctx->env()->context()).FromMaybe(0),
+           args[1]->Int32Value(ctx->env()->context()).FromMaybe(0));
   }
 
   static void Reset(const FunctionCallbackInfo<Value> &args) {
