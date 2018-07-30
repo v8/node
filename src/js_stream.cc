@@ -154,7 +154,7 @@ void JSStream::Finish(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsObject());
   Wrap* w = static_cast<Wrap*>(StreamReq::FromObject(args[0].As<Object>()));
 
-  w->Done(args[1]->Int32Value());
+  w->Done(args[1]->Int32Value(args.Holder()->CreationContext()).FromMaybe(0));
 }
 
 

@@ -45,11 +45,11 @@
     if (!(r)) return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);               \
   } while (0)
 
-#define SLICE_START_END(start_arg, end_arg, end_max)                        \
+#define SLICE_START_END(env, start_arg, end_arg, end_max)                   \
   size_t start;                                                             \
   size_t end;                                                               \
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(start_arg, 0, &start));           \
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(end_arg, end_max, &end));         \
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, start_arg, 0, &start));      \
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, end_arg, end_max, &end));    \
   if (end < start) end = start;                                             \
   THROW_AND_RETURN_IF_OOB(end <= end_max);                                  \
   size_t length = end - start;
@@ -164,7 +164,8 @@ void CallbackInfo::WeakCallback(Isolate* isolate) {
 
 
 // Parse index for external array data.
-inline MUST_USE_RESULT bool ParseArrayIndex(Local<Value> arg,
+inline MUST_USE_RESULT bool ParseArrayIndex(Environment* env,
+                                            Local<Value> arg,
                                             size_t def,
                                             size_t* ret) {
   if (arg->IsUndefined()) {
@@ -172,9 +173,8 @@ inline MUST_USE_RESULT bool ParseArrayIndex(Local<Value> arg,
     return true;
   }
 
-  int64_t tmp_i = arg->IntegerValue();
-
-  if (tmp_i < 0)
+  int64_t tmp_i;
+  if (!arg->IntegerValue(env->context()).To(&tmp_i) || tmp_i < 0)
     return false;
 
   // Check that the result fits in a size_t.
@@ -446,7 +446,7 @@ void StringSlice(const FunctionCallbackInfo<Value>& args) {
   if (ts_obj_length == 0)
     return args.GetReturnValue().SetEmptyString();
 
-  SLICE_START_END(args[0], args[1], ts_obj_length)
+  SLICE_START_END(env, args[0], args[1], ts_obj_length)
 
   Local<Value> error;
   MaybeLocal<Value> ret =
@@ -475,7 +475,7 @@ void StringSlice<UCS2>(const FunctionCallbackInfo<Value>& args) {
   if (ts_obj_length == 0)
     return args.GetReturnValue().SetEmptyString();
 
-  SLICE_START_END(args[0], args[1], ts_obj_length)
+  SLICE_START_END(env, args[0], args[1], ts_obj_length)
   length /= 2;
 
   const char* data = ts_obj_data + start;
@@ -538,9 +538,10 @@ void Copy(const FunctionCallbackInfo<Value> &args) {
   size_t source_start;
   size_t source_end;
 
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[2], 0, &target_start));
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[3], 0, &source_start));
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[4], ts_obj_length, &source_end));
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, args[2], 0, &target_start));
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, args[3], 0, &source_start));
+  THROW_AND_RETURN_IF_OOB(
+      ParseArrayIndex(env, args[4], ts_obj_length, &source_end));
 
   // Copy 0 bytes; we're done
   if (target_start >= target_length || source_start >= source_end)
@@ -567,8 +568,8 @@ void Fill(const FunctionCallbackInfo<Value>& args) {
   THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
 
-  size_t start = args[2]->Uint32Value();
-  size_t end = args[3]->Uint32Value();
+  size_t start = args[2]->Uint32Value(env->context()).FromMaybe(0);
+  size_t end = args[3]->Uint32Value(env->context()).FromMaybe(0);
   size_t fill_length = end - start;
   Local<String> str_obj;
   size_t str_length;
@@ -588,7 +589,7 @@ void Fill(const FunctionCallbackInfo<Value>& args) {
 
   // Then coerce everything that's not a string.
   if (!args[1]->IsString()) {
-    int value = args[1]->Uint32Value() & 255;
+    int value = args[1]->Uint32Value(env->context()).FromMaybe(0) & 255;
     memset(ts_obj_data + start, value, fill_length);
     return;
   }
@@ -599,7 +600,7 @@ void Fill(const FunctionCallbackInfo<Value>& args) {
   // Can't use StringBytes::Write() in all cases. For example if attempting
   // to write a two byte character into a one byte Buffer.
   if (enc == UTF8) {
-    str_length = str_obj->Utf8Length();
+    str_length = str_obj->Utf8Length(env->isolate());
     node::Utf8Value str(env->isolate(), args[1]);
     memcpy(ts_obj_data + start, *str, MIN(str_length, fill_length));
 
@@ -666,14 +667,14 @@ void StringWrite(const FunctionCallbackInfo<Value>& args) {
   size_t offset;
   size_t max_length;
 
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[1], 0, &offset));
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, args[1], 0, &offset));
   if (offset > ts_obj_length) {
     return node::THROW_ERR_BUFFER_OUT_OF_BOUNDS(
         env, "\"offset\" is outside of buffer bounds");
   }
 
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[2], ts_obj_length - offset,
-                                          &max_length));
+  THROW_AND_RETURN_IF_OOB(
+      ParseArrayIndex(env, args[2], ts_obj_length - offset, &max_length));
 
   max_length = MIN(ts_obj_length - offset, max_length);
 
@@ -693,7 +694,8 @@ void ByteLengthUtf8(const FunctionCallbackInfo<Value> &args) {
   CHECK(args[0]->IsString());
 
   // Fast case: avoid StringBytes on UTF8 string. Jump to v8.
-  args.GetReturnValue().Set(args[0].As<String>()->Utf8Length());
+  args.GetReturnValue().Set(
+      args[0].As<String>()->Utf8Length(args.GetIsolate()));
 }
 
 // Normalize val to be an integer in the range of [1, -1] since
@@ -726,10 +728,12 @@ void CompareOffset(const FunctionCallbackInfo<Value> &args) {
   size_t source_end;
   size_t target_end;
 
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[2], 0, &target_start));
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[3], 0, &source_start));
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[4], target_length, &target_end));
-  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(args[5], ts_obj_length, &source_end));
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, args[2], 0, &target_start));
+  THROW_AND_RETURN_IF_OOB(ParseArrayIndex(env, args[3], 0, &source_start));
+  THROW_AND_RETURN_IF_OOB(
+      ParseArrayIndex(env, args[4], target_length, &target_end));
+  THROW_AND_RETURN_IF_OOB(
+      ParseArrayIndex(env, args[5], ts_obj_length, &source_end));
 
   if (source_start > ts_obj_length)
     return node::THROW_ERR_INDEX_OUT_OF_RANGE(env);
@@ -815,11 +819,12 @@ void IndexOfString(const FunctionCallbackInfo<Value>& args) {
                                     args[3],
                                     UTF8);
 
-  THROW_AND_RETURN_UNLESS_BUFFER(Environment::GetCurrent(args), args[0]);
+  Environment* env = Environment::GetCurrent(args);
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
 
   Local<String> needle = args[1].As<String>();
-  int64_t offset_i64 = args[2]->IntegerValue();
+  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
   bool is_forward = args[4]->IsTrue();
 
   const char* haystack = ts_obj_data;
@@ -906,8 +911,8 @@ void IndexOfString(const FunctionCallbackInfo<Value>& args) {
     if (needle_data == nullptr) {
       return args.GetReturnValue().Set(-1);
     }
-    needle->WriteOneByte(
-        needle_data, 0, needle_length, String::NO_NULL_TERMINATION);
+    needle->WriteOneByte(env->isolate(), needle_data, 0, needle_length,
+                         String::NO_NULL_TERMINATION);
 
     result = SearchString(reinterpret_cast<const uint8_t*>(haystack),
                           haystack_length,
@@ -931,11 +936,12 @@ void IndexOfBuffer(const FunctionCallbackInfo<Value>& args) {
                                     args[3],
                                     UTF8);
 
-  THROW_AND_RETURN_UNLESS_BUFFER(Environment::GetCurrent(args), args[0]);
-  THROW_AND_RETURN_UNLESS_BUFFER(Environment::GetCurrent(args), args[1]);
+  Environment* env = Environment::GetCurrent(args);
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[1]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
   SPREAD_BUFFER_ARG(args[1], buf);
-  int64_t offset_i64 = args[2]->IntegerValue();
+  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
   bool is_forward = args[4]->IsTrue();
 
   const char* haystack = ts_obj_data;
@@ -1001,11 +1007,12 @@ void IndexOfNumber(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[2]->IsNumber());
   CHECK(args[3]->IsBoolean());
 
-  THROW_AND_RETURN_UNLESS_BUFFER(Environment::GetCurrent(args), args[0]);
+  Environment* env = Environment::GetCurrent(args);
+  THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
 
-  uint32_t needle = args[1]->Uint32Value();
-  int64_t offset_i64 = args[2]->IntegerValue();
+  uint32_t needle = args[1]->Uint32Value(env->context()).FromMaybe(0);
+  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
   bool is_forward = args[3]->IsTrue();
 
   int64_t opt_offset = IndexOfOffset(ts_obj_length, offset_i64, 1, is_forward);
@@ -1062,10 +1069,10 @@ static void EncodeUtf8String(const FunctionCallbackInfo<Value>& args) {
   CHECK(args[0]->IsString());
 
   Local<String> str = args[0].As<String>();
-  size_t length = str->Utf8Length();
+  size_t length = str->Utf8Length(env->isolate());
   char* data = node::UncheckedMalloc(length);
-  str->WriteUtf8(data,
-                 -1,   // We are certain that `data` is sufficiently large
+  str->WriteUtf8(env->isolate(), data,
+                 -1,  // We are certain that `data` is sufficiently large
                  nullptr,
                  String::NO_NULL_TERMINATION | String::REPLACE_INVALID_UTF8);
   auto array_buf = ArrayBuffer::New(env->isolate(), data, length,

@@ -496,7 +496,8 @@ void Transcode(const FunctionCallbackInfo<Value>&args) {
 
 void ICUErrorName(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-  UErrorCode status = static_cast<UErrorCode>(args[0]->Int32Value());
+  UErrorCode status =
+      static_cast<UErrorCode>(args[0]->Int32Value(env->context()).FromMaybe(0));
   args.GetReturnValue().Set(
       String::NewFromUtf8(env->isolate(),
                           u_errorName(status),
@@ -809,12 +810,14 @@ static void GetStringWidth(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() < 1)
     return;
 
-  bool ambiguous_as_full_width = args[1]->BooleanValue();
-  bool expand_emoji_sequence = args[2]->BooleanValue();
+  bool ambiguous_as_full_width =
+      args[1]->BooleanValue(env->context()).FromMaybe(false);
+  bool expand_emoji_sequence =
+      args[2]->BooleanValue(env->context()).FromMaybe(false);
 
   if (args[0]->IsNumber()) {
     args.GetReturnValue().Set(
-        GetColumnWidth(args[0]->Uint32Value(),
+        GetColumnWidth(args[0]->Uint32Value(env->context()).FromMaybe(0),
                        ambiguous_as_full_width));
     return;
   }

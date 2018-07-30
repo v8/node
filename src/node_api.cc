@@ -1785,13 +1785,15 @@ static napi_status set_error_code(napi_env env,
     if (!maybe_name.IsEmpty()) {
       v8::Local<v8::Value> name = maybe_name.ToLocalChecked();
       if (name->IsString()) {
-        name_string = v8::String::Concat(name_string, name.As<v8::String>());
+        name_string =
+            v8::String::Concat(isolate, name_string, name.As<v8::String>());
       }
     }
-    name_string = v8::String::Concat(name_string,
+    name_string = v8::String::Concat(isolate, name_string,
                                      FIXED_ONE_BYTE_STRING(isolate, " ["));
-    name_string = v8::String::Concat(name_string, code_value.As<v8::String>());
-    name_string = v8::String::Concat(name_string,
+    name_string =
+        v8::String::Concat(isolate, name_string, code_value.As<v8::String>());
+    name_string = v8::String::Concat(isolate, name_string,
                                      FIXED_ONE_BYTE_STRING(isolate, "]"));
 
     set_maybe = err_object->Set(context, name_key, name_string);
@@ -2240,8 +2242,8 @@ napi_status napi_get_value_string_latin1(napi_env env,
     *result = val.As<v8::String>()->Length();
   } else {
     int copied = val.As<v8::String>()->WriteOneByte(
-      reinterpret_cast<uint8_t*>(buf), 0, bufsize - 1,
-      v8::String::NO_NULL_TERMINATION);
+        env->isolate, reinterpret_cast<uint8_t*>(buf), 0, bufsize - 1,
+        v8::String::NO_NULL_TERMINATION);
 
     buf[copied] = '\0';
     if (result != nullptr) {
@@ -2273,11 +2275,11 @@ napi_status napi_get_value_string_utf8(napi_env env,
 
   if (!buf) {
     CHECK_ARG(env, result);
-    *result = val.As<v8::String>()->Utf8Length();
+    *result = val.As<v8::String>()->Utf8Length(env->isolate);
   } else {
     int copied = val.As<v8::String>()->WriteUtf8(
-      buf, bufsize - 1, nullptr, v8::String::REPLACE_INVALID_UTF8 |
-      v8::String::NO_NULL_TERMINATION);
+        env->isolate, buf, bufsize - 1, nullptr,
+        v8::String::REPLACE_INVALID_UTF8 | v8::String::NO_NULL_TERMINATION);
 
     buf[copied] = '\0';
     if (result != nullptr) {
@@ -2313,8 +2315,8 @@ napi_status napi_get_value_string_utf16(napi_env env,
     *result = val.As<v8::String>()->Length();
   } else {
     int copied = val.As<v8::String>()->Write(
-      reinterpret_cast<uint16_t*>(buf), 0, bufsize - 1,
-      v8::String::NO_NULL_TERMINATION);
+        env->isolate, reinterpret_cast<uint16_t*>(buf), 0, bufsize - 1,
+        v8::String::NO_NULL_TERMINATION);
 
     buf[copied] = '\0';
     if (result != nullptr) {

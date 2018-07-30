@@ -174,7 +174,8 @@ void TCPWrap::SetNoDelay(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
-  int enable = static_cast<int>(args[0]->BooleanValue());
+  int enable = static_cast<int>(
+      args[0]->BooleanValue(wrap->env()->context()).FromMaybe(false));
   int err = uv_tcp_nodelay(&wrap->handle_, enable);
   args.GetReturnValue().Set(err);
 }
@@ -185,8 +186,9 @@ void TCPWrap::SetKeepAlive(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
-  int enable = args[0]->Int32Value();
-  unsigned int delay = args[1]->Uint32Value();
+  int enable = args[0]->Int32Value(wrap->env()->context()).FromMaybe(0);
+  unsigned int delay =
+      args[1]->Uint32Value(wrap->env()->context()).FromMaybe(0);
   int err = uv_tcp_keepalive(&wrap->handle_, enable, delay);
   args.GetReturnValue().Set(err);
 }
@@ -198,7 +200,7 @@ void TCPWrap::SetSimultaneousAccepts(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
-  bool enable = args[0]->BooleanValue();
+  bool enable = args[0]->BooleanValue(env->context()).FromMaybe(false);
   int err = uv_tcp_simultaneous_accepts(&wrap->handle_, enable);
   args.GetReturnValue().Set(err);
 }
@@ -210,7 +212,8 @@ void TCPWrap::Open(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
-  int fd = static_cast<int>(args[0]->IntegerValue());
+  int fd = static_cast<int>(
+      args[0]->IntegerValue(wrap->env()->context()).FromMaybe(0));
   int err = uv_tcp_open(&wrap->handle_, fd);
 
   if (err == 0)
@@ -226,7 +229,7 @@ void TCPWrap::Bind(const FunctionCallbackInfo<Value>& args) {
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
   node::Utf8Value ip_address(args.GetIsolate(), args[0]);
-  int port = args[1]->Int32Value();
+  int port = args[1]->Int32Value(wrap->env()->context()).FromMaybe(0);
   sockaddr_in addr;
   int err = uv_ip4_addr(*ip_address, port, &addr);
   if (err == 0) {
@@ -244,7 +247,7 @@ void TCPWrap::Bind6(const FunctionCallbackInfo<Value>& args) {
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
   node::Utf8Value ip6_address(args.GetIsolate(), args[0]);
-  int port = args[1]->Int32Value();
+  int port = args[1]->Int32Value(wrap->env()->context()).FromMaybe(0);
   sockaddr_in6 addr;
   int err = uv_ip6_addr(*ip6_address, port, &addr);
   if (err == 0) {
@@ -261,7 +264,7 @@ void TCPWrap::Listen(const FunctionCallbackInfo<Value>& args) {
   ASSIGN_OR_RETURN_UNWRAP(&wrap,
                           args.Holder(),
                           args.GetReturnValue().Set(UV_EBADF));
-  int backlog = args[0]->Int32Value();
+  int backlog = args[0]->Int32Value(wrap->env()->context()).FromMaybe(0);
   int err = uv_listen(reinterpret_cast<uv_stream_t*>(&wrap->handle_),
                       backlog,
                       OnConnection);
@@ -283,7 +286,7 @@ void TCPWrap::Connect(const FunctionCallbackInfo<Value>& args) {
 
   Local<Object> req_wrap_obj = args[0].As<Object>();
   node::Utf8Value ip_address(env->isolate(), args[1]);
-  int port = args[2]->Uint32Value();
+  int port = args[2]->Uint32Value(wrap->env()->context()).FromMaybe(0);
 
   sockaddr_in addr;
   int err = uv_ip4_addr(*ip_address, port, &addr);
@@ -318,7 +321,7 @@ void TCPWrap::Connect6(const FunctionCallbackInfo<Value>& args) {
 
   Local<Object> req_wrap_obj = args[0].As<Object>();
   node::Utf8Value ip_address(env->isolate(), args[1]);
-  int port = args[2]->Int32Value();
+  int port = args[2]->Int32Value(wrap->env()->context()).FromMaybe(0);
 
   sockaddr_in6 addr;
   int err = uv_ip6_addr(*ip_address, port, &addr);

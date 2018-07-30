@@ -80,7 +80,7 @@ uv_tty_t* TTYWrap::UVHandle() {
 
 void TTYWrap::GuessHandleType(const FunctionCallbackInfo<Value>& args) {
   Environment* env = Environment::GetCurrent(args);
-  int fd = args[0]->Int32Value();
+  int fd = args[0]->Int32Value(env->context()).FromMaybe(0);
   CHECK_GE(fd, 0);
 
   uv_handle_type t = uv_guess_handle(fd);
@@ -102,7 +102,7 @@ void TTYWrap::GuessHandleType(const FunctionCallbackInfo<Value>& args) {
 
 
 void TTYWrap::IsTTY(const FunctionCallbackInfo<Value>& args) {
-  int fd = args[0]->Int32Value();
+  int fd = args[0]->Int32Value(args.Holder()->CreationContext()).FromMaybe(0);
   CHECK_GE(fd, 0);
   bool rc = uv_guess_handle(fd) == UV_TTY;
   args.GetReturnValue().Set(rc);
@@ -149,7 +149,7 @@ void TTYWrap::New(const FunctionCallbackInfo<Value>& args) {
   // normal function.
   CHECK(args.IsConstructCall());
 
-  int fd = args[0]->Int32Value();
+  int fd = args[0]->Int32Value(env->context()).FromMaybe(0);
   CHECK_GE(fd, 0);
 
   int err = 0;
