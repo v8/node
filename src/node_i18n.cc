@@ -93,6 +93,7 @@ using v8::MaybeLocal;
 using v8::Object;
 using v8::ObjectTemplate;
 using v8::String;
+using v8::Uint32;
 using v8::Value;
 
 namespace i18n {
@@ -817,7 +818,7 @@ static void GetStringWidth(const FunctionCallbackInfo<Value>& args) {
 
   if (args[0]->IsNumber()) {
     args.GetReturnValue().Set(
-        GetColumnWidth(args[0]->Uint32Value(env->context()).FromMaybe(0),
+        GetColumnWidth(static_cast<uint32_t>(args[0].As<Uint32>()->Value()),
                        ambiguous_as_full_width));
     return;
   }

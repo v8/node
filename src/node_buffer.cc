@@ -81,6 +81,7 @@ using v8::Isolate;
 using v8::Local;
 using v8::Maybe;
 using v8::MaybeLocal;
+using v8::Number;
 using v8::Object;
 using v8::String;
 using v8::Uint32Array;
@@ -824,7 +825,7 @@ void IndexOfString(const FunctionCallbackInfo<Value>& args) {
   SPREAD_BUFFER_ARG(args[0], ts_obj);
 
   Local<String> needle = args[1].As<String>();
-  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
+  int64_t offset_i64 = args[2].As<Integer>()->Value();
   bool is_forward = args[4]->IsTrue();
 
   const char* haystack = ts_obj_data;
@@ -941,7 +942,7 @@ void IndexOfBuffer(const FunctionCallbackInfo<Value>& args) {
   THROW_AND_RETURN_UNLESS_BUFFER(env, args[1]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
   SPREAD_BUFFER_ARG(args[1], buf);
-  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
+  int64_t offset_i64 = args[2].As<Integer>()->Value();
   bool is_forward = args[4]->IsTrue();
 
   const char* haystack = ts_obj_data;
@@ -1011,8 +1012,8 @@ void IndexOfNumber(const FunctionCallbackInfo<Value>& args) {
   THROW_AND_RETURN_UNLESS_BUFFER(env, args[0]);
   SPREAD_BUFFER_ARG(args[0], ts_obj);
 
-  uint32_t needle = args[1]->Uint32Value(env->context()).FromMaybe(0);
-  int64_t offset_i64 = args[2]->IntegerValue(env->context()).FromMaybe(0);
+  uint32_t needle = static_cast<uint32_t>(args[1].As<Number>()->Value());
+  int64_t offset_i64 = args[2].As<Integer>()->Value();
   bool is_forward = args[3]->IsTrue();
 
   int64_t opt_offset = IndexOfOffset(ts_obj_length, offset_i64, 1, is_forward);

@@ -1041,8 +1041,7 @@ void SecureContext::SetSessionTimeout(const FunctionCallbackInfo<Value>& args) {
         sc->env(), "Session timeout must be a 32-bit integer");
   }
 
-  int32_t sessionTimeout =
-      args[0]->Int32Value(sc->env()->context()).FromMaybe(0);
+  int32_t sessionTimeout = args[0].As<Int32>()->Value();
   SSL_CTX_set_timeout(sc->ctx_.get(), sessionTimeout);
 }
 
@@ -4054,15 +4053,14 @@ void DiffieHellman::New(const FunctionCallbackInfo<Value>& args) {
   if (args.Length() == 2) {
     if (args[0]->IsInt32()) {
       if (args[1]->IsInt32()) {
-        initialized = diffieHellman->Init(
-            args[0]->Int32Value(env->context()).FromMaybe(0),
-            args[1]->Int32Value(env->context()).FromMaybe(0));
+        initialized = diffieHellman->Init(args[0].As<Int32>()->Value(),
+                                          args[1].As<Int32>()->Value());
       }
     } else {
       if (args[1]->IsInt32()) {
-        initialized = diffieHellman->Init(
-            Buffer::Data(args[0]), Buffer::Length(args[0]),
-            args[1]->Int32Value(env->context()).FromMaybe(0));
+        initialized =
+            diffieHellman->Init(Buffer::Data(args[0]), Buffer::Length(args[0]),
+                                args[1].As<Int32>()->Value());
       } else {
         initialized = diffieHellman->Init(Buffer::Data(args[0]),
                                           Buffer::Length(args[0]),
